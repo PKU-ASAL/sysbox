@@ -1,14 +1,17 @@
 # sysbox Phase 2 — Observation & Session Anchor
 
-> **Goal:** 让 sysbox 能观测在 field 里运行的进程，把进程活动绑定到"谁通过 SSH 进来的哪条 session"，输出带 `session_id` 标注的事件 JSONL。Phase 2 结束时，能用一条命令起一个靶场、SSH 进去跑 nmap，然后在 host 上看到带 `is_attack=true` 标注的事件流。
+> **Goal:** 让 sysbox 能观测在 field 里运行的**所有**进程，把进程活动绑定到入口 session（SSH 连接、webshell fork、node 自启动），输出带 `session_id` + `process_tree` 标注的事件 JSONL。Phase 2 结束时，能验证两个场景：① SSH 进去跑 nmap → 事件带 `session_id`；② 模拟 webshell（docker exec 注入 bash）→ 事件带 `process_tree: ["node-init","sh"]`，即使没有 SSH session 也能看到完整进程溯源链。
 
 **Architecture:**
 ```
 sysbox apply field.hcl
   └─ sensor subprocess (per node, Tracee)
-       └─ cgroup v2 session enforcement
-            └─ sshd ForceCommand wrapper
-                 └─ session JSONL sink  →  /runs/<id>/events.jsonl
+       ├─ Process Tree Builder (pid→ancestry map，消费 fork/execve 事件)
+       │     └─ 分层 Labeler
+       │           ├─ cgroup_id → SSH session_id   (有 SSH 时)
+       │           └─ pid → process_tree            (所有进程的溯源链，包括 webshell)
+       ├─ cgroup v2 session enforcement (SSH ForceCommand)
+       └─ session JSONL sink  →  /runs/<id>/events.jsonl
 ```
 
 **Tech additions:**
@@ -28,11 +31,12 @@ sysbox/
 │   ├── sensor/
 │   │   ├── sensor.go          # Sensor interface (Start/Stop/Events)
 │   │   ├── tracee.go          # TraceeBackend: 启动 tracee 进程，解析 JSON 事件流
+│   │   ├── proctree.go        # ProcessTreeBuilder: pid→ancestry map，消费 fork/execve
 │   │   └── sensor_test.go
 │   ├── session/
 │   │   ├── session.go         # Session 数据结构 (ID, NodeID, User, StartTime, CgroupID)
 │   │   ├── cgroup.go          # cgroup v2: 新建 session cgroup, 迁移 PID, 读 cgroup_id
-│   │   ├── labeler.go         # 事件 → session 归属 (cgroup_id lookup table)
+│   │   ├── labeler.go         # 分层 Labeler: cgroup_id→session, pid→process_tree
 │   │   └── session_test.go
 │   └── sink/
 │       ├── sink.go            # EventSink interface
@@ -74,14 +78,25 @@ import "context"
 
 // Event is a normalized observation from inside a node.
 type Event struct {
-    NodeID    string            `json:"node_id"`
-    SessionID string            `json:"session_id,omitempty"`
-    Timestamp int64             `json:"ts"`       // unix nano
-    Type      string            `json:"type"`     // "syscall" | "net" | "file"
-    Name      string            `json:"name"`     // e.g. "execve"
-    Args      map[string]any    `json:"args"`
-    IsAttack  bool              `json:"is_attack,omitempty"`
+    NodeID      string         `json:"node_id"`
+    SessionID   string         `json:"session_id,omitempty"`  // set when SSH entry
+    ProcessTree []string       `json:"process_tree,omitempty"` // ancestry: ["node-init","apache2","php-fpm","sh"]
+    EntryPoint  string         `json:"entry_point,omitempty"`  // "ssh" | "webshell" | "node-init" | "exec"
+    Timestamp   int64          `json:"ts"`       // unix nano
+    PID         int            `json:"pid"`
+    PPID        int            `json:"ppid"`
+    Type        string         `json:"type"`     // "syscall" | "net" | "file"
+    Name        string         `json:"name"`     // e.g. "execve"
+    Args        map[string]any `json:"args"`
+    IsAttack    bool           `json:"is_attack,omitempty"`
 }
+
+// EntryPoint 推断规则（由 Labeler 填充）：
+//   - cgroup_id 命中 SSH session 表  → EntryPoint = "ssh",   SessionID = <id>
+//   - ProcessTree 包含 "sysbox-exec"  → EntryPoint = "exec"
+//   - ProcessTree[0] == "node-init" 且树深度 > 1 且最近父进程是 web server
+//                                    → EntryPoint = "webshell"（Phase 3 Matcher 细化）
+//   - 其他                           → EntryPoint = "node-init"
 
 // Sensor observes a running node.
 type Sensor interface {
@@ -108,7 +123,50 @@ type TraceeBackend struct {
 - `Stop()`: `cmd.Process.Kill()`
 - 测试：mock tracee binary，输入预制 JSON，验证 Event 解析
 
-### Step 3: 集成到 executor.createNode
+### Step 3: Process Tree Builder（`pkg/sensor/proctree.go`）
+
+Tracee 的 raw 事件里每条都带 `pid` / `ppid` / `comm`（进程名）。ProcessTreeBuilder 消费这些原始事件，在内存里维护一张 `pid → ProcInfo{comm, ppid}` 表：
+
+```go
+type ProcInfo struct {
+    Comm string
+    PPID int
+}
+
+type ProcessTreeBuilder struct {
+    mu    sync.RWMutex
+    procs map[int]ProcInfo // pid → info
+}
+
+// Feed 消费一条 raw Tracee 事件，更新内部进程表。
+// 对 clone/fork/execve 事件特别处理：
+//   - fork/clone: 新增子进程条目 (childPid → {comm=parentComm, ppid=parentPid})
+//   - execve:     更新 comm 为新镜像名
+func (b *ProcessTreeBuilder) Feed(raw map[string]any)
+
+// Ancestry 返回 pid 的祖先链（从 pid=1 的 node-init 到当前 pid），
+// 以 comm 列表表示，例如 ["node-init","apache2","php-fpm","bash"]。
+// 查不到的节点用 "?" 占位，避免因事件乱序导致链断。
+func (b *ProcessTreeBuilder) Ancestry(pid int) []string
+```
+
+**重要约束：**
+- 进程树表只在内存里，sensor 重启后从空开始（Phase 3 可持久化到 BoltDB）
+- Tracee 启动时先接收已有进程的 `existing_process` 事件来预热进程表
+- `Ancestry()` 最深追溯到 container 的 PID 1（即 `sleep infinity`，标记为 `node-init`）
+
+**EntryPoint 推断**（在 `Ancestry()` 结果上做）：
+
+| ProcessTree 特征 | EntryPoint |
+|---|---|
+| cgroup_id 命中 SSH session 表 | `"ssh"` |
+| 树中有 `sshd` 但无 SSH session（异常） | `"ssh-orphan"` |
+| 树中有 `sysbox-exec` | `"exec"` |
+| 树根是 `node-init`，深度 ≥ 2 | `"node-init"` |
+
+`"webshell"` 的判断依赖知道哪些进程是 web server，这是 Phase 3 Matcher 的工作，Phase 2 只输出原始 process_tree，不做推断。
+
+### Step 4: 集成到 executor.createNode
 
 在 `StartNode` 后，若 `NodeSpec` 带 `sensor: true`（新字段）或 HCL 里 `sysbox_node` 有 `sensor = true`，自动启动 TraceeBackend 并把 chan 路由到 sink。
 
@@ -150,17 +208,30 @@ type Session struct {
 }
 ```
 
-### Step 3: Labeler
+### Step 3: 分层 Labeler
+
+Labeler 持有两张表，按优先级分层查找：
 
 ```go
-// Labeler maps cgroup_id -> SessionID so the sensor can annotate events.
+// Labeler 分层归因：先查 SSH cgroup 表，查不到则用进程树溯源。
 type Labeler struct {
-    mu   sync.RWMutex
-    table map[uint64]string
+    mu          sync.RWMutex
+    cgroupTable map[uint64]string          // cgroup_id → session_id（SSH 入口）
+    tree        *sensor.ProcessTreeBuilder // pid → ancestry（所有进程）
 }
-func (l *Labeler) Register(cgroupID uint64, sessionID string)
-func (l *Labeler) Lookup(cgroupID uint64) string
+
+// RegisterSSH 在 SSH session 建立时调用（由 sysbox-sshd-hook 通知）。
+func (l *Labeler) RegisterSSH(cgroupID uint64, sessionID string)
+
+// Annotate 填充 Event 的 SessionID / ProcessTree / EntryPoint 字段。
+// 查找顺序：
+//   1. cgroupTable[event.CgroupID] → sessionID（SSH）
+//   2. tree.Ancestry(event.PID)   → processTree（所有进程）
+//   3. EntryPoint 推断（见 Task 1 Step 3 规则表）
+func (l *Labeler) Annotate(e *sensor.Event)
 ```
+
+**node-init session：** apply 时，在容器启动后立刻读取容器 PID 1（`ContainerInspect.State.Pid`），把它写入 ProcessTreeBuilder 作为根节点（`comm = "node-init"`）。后续所有 fork 出来的进程都会自然挂在这棵树上。不需要单独的 node-init cgroup。
 
 ---
 
@@ -258,39 +329,73 @@ sysbox session list    # 列出所有 session（读 runs/<id>/sessions.json）
 
 ---
 
-## Task 7: E2E test — SSH + sensor
+## Task 7: E2E tests — SSH session + webshell process tree
 
 **Files:**
 - Create: `tests/e2e/sensor_test.go`
 
+两个独立测试函数，分别覆盖路径 A 和 SSH session 路径：
+
 ```
-// TestSensorSession:
-// 1. apply two-networks field
+// TestSensorSSHSession（SSH 路径）:
+// 1. apply hello-world field (with sysbox_ssh_access)
 // 2. sysbox sensor start
-// 3. SSH into node_a as attacker: run "nmap 10.0.2.0/24"
-// 4. Wait 2s
-// 5. cat runs/.../events.jsonl | jq 'select(.name=="execve" and .args.pathname=="/usr/bin/nmap")'
-// 6. Assert event has session_id != "" and is_attack candidate fields
+// 3. SSH into node_a: run "nmap 127.0.0.1"
+// 4. sleep 2s
+// 5. parse runs/.../events.jsonl
+// 6. Assert: execve(nmap) event has
+//      session_id != ""
+//      entry_point == "ssh"
+//      process_tree contains "nmap"
+// 7. destroy
+
+// TestSensorWebshellTree（路径 A — 进程树溯源）:
+// 1. apply hello-world field（无需 ssh_access）
+// 2. sysbox sensor start
+// 3. 模拟 webshell 入口：docker exec -it sysbox-node_a sh -c "wget -q google.com"
+//    （docker exec 代替真实 webshell，测试进程树追踪）
+// 4. sleep 2s
+// 5. parse events.jsonl
+// 6. Assert: execve(wget) event has
+//      session_id == ""          // 不是 SSH，没有 session
+//      entry_point == "exec"     // docker exec 入口
+//      process_tree 包含 "sh" 和 "wget"
+//      process_tree[0] == "node-init"
 // 7. destroy
 ```
+
+**说明：** 真实 webshell（通过 HTTP RCE）留给 Phase 3 的靶场场景测试；Phase 2 用 `docker exec` 作为"外部注入 shell"的等效代理，已经能验证进程树溯源逻辑。`docker exec` 会被标记为 `entry_point = "exec"`，而真正的 webshell（从 node-init 派生）会被标记为 `entry_point = "node-init"`——Phase 3 Matcher 再加规则区分。
 
 ---
 
 ## Phase 2 完成检查清单
 
+**SSH session 路径：**
 - [ ] `sysbox apply field.hcl` + `sysbox sensor start` 无报错
 - [ ] SSH 进容器，`~/.profile` 里能看到 SYSBOX_SESSION_ID 环境变量
-- [ ] 运行 nmap，在 events.jsonl 里能看到对应 execve 事件带 session_id
+- [ ] 运行 nmap，在 events.jsonl 里能看到 `session_id != ""`, `entry_point = "ssh"`
 - [ ] `sysbox session list` 显示活跃 session
 - [ ] `sysbox sensor stop` 后事件停止写入
-- [ ] E2E test PASS（不需要 sudo 以外的特殊权限）
+
+**进程树路径 A（webshell 溯源）：**
+- [ ] `docker exec` 注入 sh，在 events.jsonl 里看到 `entry_point = "exec"` + `process_tree`
+- [ ] process_tree 第一个元素是 `"node-init"`
+- [ ] 容器里的 `sleep infinity`（PID 1）正确被识别为 `"node-init"` 根节点
+- [ ] 进程树在 sensor 运行期间持续累积（不会因 exec 乱序而断链）
+
+**通用：**
+- [ ] 所有事件都有 `process_tree`，不管有没有 session_id
+- [ ] E2E TestSensorSSHSession + TestSensorWebshellTree 均 PASS
 
 ---
 
 ## Phase 2 结束后，Phase 3 起步提示
 
-- Prediction Matcher: 读 events.jsonl，用规则匹配 → `is_attack` field
-- Replay Bundle: `sysbox bundle create` 把 events.jsonl + field.hcl + state.json 打包
-- Firecracker substrate: Phase 3 Task 1，需要 firecracker binary + KVM
+- **Prediction Matcher**: 读 events.jsonl，结合 process_tree 特征匹配规则 → `is_attack` field
+  - webshell 规则示例：`process_tree 中存在 [httpd|nginx|php-fpm] → [sh|bash|python]`
+  - 横向移动规则：`process_tree 中存在 [sh] 且 execve = [nmap|masscan|nc]`
+- **Replay Bundle**: `sysbox bundle create` 把 events.jsonl + field.hcl + state.json 打包
+- **HTTP request-level session（路径 B）**：为声明了 HTTP 服务的 node 注入中间件，把每个 HTTP 请求映射为 sub-cgroup，让 webshell 事件也有精确的 `session_id`（而不只有 process_tree）
+- **Firecracker substrate**: Phase 3 Task 1，需要 firecracker binary + KVM
 
 *预估工作量：2 engineers × 3 weeks = ~30 person-days，约 7 个 Task，每个 Task 1-2 天。*
