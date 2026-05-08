@@ -31,14 +31,15 @@ func runApply(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if !plan.HasChanges() {
-		fmt.Println("No changes. Apply is a no-op.")
-		return nil
-	}
 
 	exec := runtime.NewExecutor(g, s)
 	if flagApplyRefresh {
 		exec.Refresh(context.Background(), plan)
+	}
+
+	if !plan.HasChanges() {
+		fmt.Println("No changes. Apply is a no-op.")
+		return nil
 	}
 
 	fmt.Println(plan.Summary())

@@ -38,6 +38,7 @@ func TestTwoNetworksField(t *testing.T) {
 		return cmd.CombinedOutput()
 	}
 
+	forceCleanup(t, statePath, "sysbox-node_a", "sysbox-node_b", "sysbox-edge")
 	t.Cleanup(func() { _, _ = sysbox("destroy") })
 
 	out, err = sysbox("init")
@@ -60,10 +61,26 @@ func TestTwoNetworksField(t *testing.T) {
 	require.NoError(t, err, "cross-network ping failed: %s", pingOut)
 	require.Contains(t, string(pingOut), "1 packets received")
 
-	// drift detection: apply --refresh should report no changes.
+	// drift detection (no-op): healthy field should report no changes.
 	out, err = sysbox("apply", "--refresh")
-	require.NoError(t, err, "apply --refresh: %s", out)
+	require.NoError(t, err, "apply --refresh no-op: %s", out)
 	require.Contains(t, string(out), "No changes")
+
+	// drift detection (re-create): manually kill node_a then apply --refresh.
+	kill := exec.Command("docker", "rm", "-f", "sysbox-node_a")
+	_, _ = kill.CombinedOutput()
+
+	out, err = sysbox("apply", "--refresh")
+	require.NoError(t, err, "apply --refresh after drift: %s", out)
+	require.Contains(t, string(out), "re-creating sysbox_node.node_a")
+	require.Contains(t, string(out), "Apply complete")
+
+	// node_a should be reachable again after re-create.
+	ping2 := exec.Command("docker", "exec", "sysbox-node_a",
+		"ping", "-c", "1", "-W", "3", "10.0.2.20")
+	ping2Out, err := ping2.CombinedOutput()
+	require.NoError(t, err, "ping after drift recovery: %s", ping2Out)
+	require.Contains(t, string(ping2Out), "1 packets received")
 
 	out, err = sysbox("destroy")
 	require.NoError(t, err, "destroy: %s", out)

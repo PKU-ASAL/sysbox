@@ -33,9 +33,8 @@ func TestHelloWorldField(t *testing.T) {
 		return cmd.CombinedOutput()
 	}
 
-	t.Cleanup(func() {
-		_, _ = sysbox("destroy")
-	})
+	forceCleanup(t, statePath, "sysbox-node_a", "sysbox-node_b")
+	t.Cleanup(func() { _, _ = sysbox("destroy") })
 
 	out, err = sysbox("init")
 	require.NoError(t, err, "init: %s", out)

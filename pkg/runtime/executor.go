@@ -62,7 +62,12 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 	case "sysbox_firewall":
 		return e.destroyFirewall(ctx, r)
 	default:
-		return fmt.Errorf("unhandled destroy for %q", r.Type)
+		// sysbox_ssh_access and other Phase-2 resource types are parsed by
+		// config but not yet implemented. Silently remove from state so
+		// destroy doesn't error on a partial deployment.
+		fmt.Printf("[destroy] skipping unimplemented resource type %q (%s) — removing from state\n", r.Type, r.Name)
+		e.state.RemoveResource(r.Type, r.Name)
+		return nil
 	}
 }
 
@@ -239,10 +244,10 @@ func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
 		return err
 	}
 	handle := substrate.NodeHandle{ID: asString(r.Instance["container_id"])}
+	// Ignore stop/destroy errors: container may already be gone (drift recovery).
 	_ = sub.StopNode(ctx, handle)
-	if err := sub.DestroyNode(ctx, handle); err != nil {
-		return err
-	}
+	_ = sub.DestroyNode(ctx, handle)
+	// Always clean up veths and state regardless of container presence.
 	if nics, ok := r.Instance["nics"].([]any); ok {
 		for _, item := range nics {
 			n, _ := item.(map[string]any)
