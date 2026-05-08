@@ -1,0 +1,19 @@
+# binaries
+/bin/
+/sysbox
+*.test
+
+# state / runs
+/runs/
+*.tfstate
+*.tfstate.backup
+state.json
+state.json.lock
+state.json.tmp
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
