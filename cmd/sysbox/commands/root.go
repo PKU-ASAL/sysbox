@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
 )
 
@@ -20,10 +22,13 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagStateFile, "state",
 		"runs/default/state.json", "path to state file")
 
-	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd)
+	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd, validateCmd)
 }
 
 // Execute is called by main(). Returns an error so main() can set exit code.
-func Execute() error {
-	return rootCmd.Execute()
+func Execute() error { return rootCmd.Execute() }
+
+// ExecuteContext passes a context (with signal cancellation) to all commands.
+func ExecuteContext(ctx context.Context) error {
+	return rootCmd.ExecuteContext(ctx)
 }

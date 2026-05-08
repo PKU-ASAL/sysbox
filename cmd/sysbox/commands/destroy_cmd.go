@@ -18,6 +18,7 @@ var destroyCmd = &cobra.Command{
 }
 
 func runDestroy(cmd *cobra.Command, args []string) error {
+	requireRoot()
 	mgr := state.NewManager(flagStateFile)
 	s, err := mgr.Load()
 	if err != nil {
@@ -27,6 +28,14 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	if len(s.Resources) == 0 {
 		fmt.Println("Nothing to destroy.")
 		return nil
+	}
+
+	fmt.Printf("Will destroy %d resource(s).\n", len(s.Resources))
+	if !flagAutoApprove {
+		if ok, err := confirmPrompt("Destroy"); !ok || err != nil {
+			fmt.Println("Aborted.")
+			return err
+		}
 	}
 
 	plan := &runtime.Plan{Destroy: append([]state.Resource(nil), s.Resources...)}

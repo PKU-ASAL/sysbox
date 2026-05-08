@@ -30,16 +30,21 @@ func TestHelloWorldField(t *testing.T) {
 		full := append([]string{"-f", hclPath, "--state", statePath}, args...)
 		cmd := exec.Command(binPath, full...)
 		cmd.Dir = repoRoot
+		cmd.Stdin = nil // non-interactive; apply/destroy use --auto-approve
 		return cmd.CombinedOutput()
 	}
 
+	autoApprove := func(sub string, extra ...string) ([]byte, error) {
+		return sysbox(append([]string{sub, "--auto-approve"}, extra...)...)
+	}
+
 	forceCleanup(t, statePath, "sysbox-node_a", "sysbox-node_b")
-	t.Cleanup(func() { _, _ = sysbox("destroy") })
+	t.Cleanup(func() { autoApprove("destroy") })
 
 	out, err = sysbox("init")
 	require.NoError(t, err, "init: %s", out)
 
-	out, err = sysbox("apply")
+	out, err = autoApprove("apply")
 	require.NoError(t, err, "apply: %s", out)
 	require.Contains(t, string(out), "Apply complete")
 	require.Contains(t, string(out), "4 to add")
@@ -56,7 +61,7 @@ func TestHelloWorldField(t *testing.T) {
 	require.NoError(t, err, "ping failed: %s", pingOut)
 	require.Contains(t, string(pingOut), "1 packets received")
 
-	out, err = sysbox("destroy")
+	out, err = autoApprove("destroy")
 	require.NoError(t, err, "destroy: %s", out)
 	require.Contains(t, string(out), "Destroy complete")
 

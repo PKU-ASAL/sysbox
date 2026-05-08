@@ -11,8 +11,8 @@ type VethSpec struct {
 	GuestEnd   string
 	NetnsName  string
 	BridgeName string
-	GuestIP    string
-	Gateway    string
+	// GuestIP and Gateway are NOT configured here; they are applied later by
+	// substrate.AttachNIC once the guest-end is moved into the container netns.
 }
 
 type VethHandle struct {

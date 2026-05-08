@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"strings"
 
 	"github.com/oslab/sysbox/pkg/config"
@@ -273,14 +274,10 @@ func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link 
 		return substrate.NIC{}, "", fmt.Errorf("network %s not applied yet", netName)
 	}
 
-	hostEnd := fmt.Sprintf("vh-%s-%d", nodeName, idx)
-	guestEnd := fmt.Sprintf("vg-%s-%d", nodeName, idx)
-	if len(hostEnd) > 15 {
-		hostEnd = hostEnd[:15]
-	}
-	if len(guestEnd) > 15 {
-		guestEnd = guestEnd[:15]
-	}
+	// Use a 5-char fnv32 hex hash so the name always fits in 15 chars
+	// regardless of nodeName length: "vh-" + 5 hex + "-" + 1 digit = 10 chars.
+	hostEnd := vethName("vh", nodeName, idx)
+	guestEnd := vethName("vg", nodeName, idx)
 
 	// Only set a default gateway when explicitly requested by the caller.
 	// Router interfaces intentionally omit gw so they don't compete for the
@@ -295,8 +292,6 @@ func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link 
 		GuestEnd:   guestEnd,
 		NetnsName:  nsName,
 		BridgeName: brName,
-		GuestIP:    link.IP,
-		Gateway:    gateway,
 	})
 	if err != nil {
 		return substrate.NIC{}, "", err
@@ -360,6 +355,14 @@ func resolveNetworkRef(ref string) (string, error) {
 		return "", fmt.Errorf("bad network ref %q", ref)
 	}
 	return parts[1], nil
+}
+
+// vethName produces a deterministic ≤15-char interface name.
+// Format: <prefix>-<5hexhash>-<idx>  e.g. "vh-a3f2c-0"
+func vethName(prefix, nodeName string, idx int) string {
+	h := fnv.New32a()
+	h.Write([]byte(nodeName))
+	return fmt.Sprintf("%s-%05x-%d", prefix, h.Sum32()&0xfffff, idx)
 }
 
 func asString(v any) string {

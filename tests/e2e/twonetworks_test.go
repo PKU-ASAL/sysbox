@@ -11,13 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTwoNetworksField verifies that a sysbox_router forwards packets between
-// two isolated networks.
-//
-// Topology:
-//   node_a (10.0.1.10/24, gw=10.0.1.254) <--net_a--> router <--net_b--> node_b (10.0.2.20/24, gw=10.0.2.254)
-//
-// Requires: docker daemon + root.
 func TestTwoNetworksField(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	require.NoError(t, err)
@@ -35,16 +28,20 @@ func TestTwoNetworksField(t *testing.T) {
 		full := append([]string{"-f", hclPath, "--state", statePath}, args...)
 		cmd := exec.Command(binPath, full...)
 		cmd.Dir = repoRoot
+		cmd.Stdin = nil
 		return cmd.CombinedOutput()
+	}
+	autoApprove := func(sub string, extra ...string) ([]byte, error) {
+		return sysbox(append([]string{sub, "--auto-approve"}, extra...)...)
 	}
 
 	forceCleanup(t, statePath, "sysbox-node_a", "sysbox-node_b", "sysbox-edge")
-	t.Cleanup(func() { _, _ = sysbox("destroy") })
+	t.Cleanup(func() { autoApprove("destroy") })
 
 	out, err = sysbox("init")
 	require.NoError(t, err, "init: %s", out)
 
-	out, err = sysbox("apply")
+	out, err = autoApprove("apply")
 	require.NoError(t, err, "apply: %s\n", out)
 	require.Contains(t, string(out), "Apply complete")
 
@@ -54,35 +51,32 @@ func TestTwoNetworksField(t *testing.T) {
 	require.Contains(t, string(out), "sysbox_node.node_a")
 	require.Contains(t, string(out), "sysbox_node.node_b")
 
-	// node_a should reach node_b across the router.
 	ping := exec.Command("docker", "exec", "sysbox-node_a",
 		"ping", "-c", "1", "-W", "3", "10.0.2.20")
 	pingOut, err := ping.CombinedOutput()
 	require.NoError(t, err, "cross-network ping failed: %s", pingOut)
 	require.Contains(t, string(pingOut), "1 packets received")
 
-	// drift detection (no-op): healthy field should report no changes.
-	out, err = sysbox("apply", "--refresh")
+	// drift detection no-op.
+	out, err = autoApprove("apply", "--refresh")
 	require.NoError(t, err, "apply --refresh no-op: %s", out)
 	require.Contains(t, string(out), "No changes")
 
-	// drift detection (re-create): manually kill node_a then apply --refresh.
-	kill := exec.Command("docker", "rm", "-f", "sysbox-node_a")
-	_, _ = kill.CombinedOutput()
+	// drift detection re-create: kill node_a, verify re-creation.
+	exec.Command("docker", "rm", "-f", "sysbox-node_a").Run()
 
-	out, err = sysbox("apply", "--refresh")
+	out, err = autoApprove("apply", "--refresh")
 	require.NoError(t, err, "apply --refresh after drift: %s", out)
 	require.Contains(t, string(out), "re-creating sysbox_node.node_a")
 	require.Contains(t, string(out), "Apply complete")
 
-	// node_a should be reachable again after re-create.
 	ping2 := exec.Command("docker", "exec", "sysbox-node_a",
 		"ping", "-c", "1", "-W", "3", "10.0.2.20")
 	ping2Out, err := ping2.CombinedOutput()
 	require.NoError(t, err, "ping after drift recovery: %s", ping2Out)
 	require.Contains(t, string(ping2Out), "1 packets received")
 
-	out, err = sysbox("destroy")
+	out, err = autoApprove("destroy")
 	require.NoError(t, err, "destroy: %s", out)
 	require.Contains(t, string(out), "Destroy complete")
 }
