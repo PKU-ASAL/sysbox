@@ -15,7 +15,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var sensorTraceeBin string
+var (
+	sensorTraceeBin    string
+	sensorDockerMode   bool
+	sensorDockerImage  string
+)
 
 var sensorCmd = &cobra.Command{
 	Use:   "sensor",
@@ -53,7 +57,9 @@ var sensorStatusCmd = &cobra.Command{
 }
 
 func init() {
-	sensorStartCmd.Flags().StringVar(&sensorTraceeBin, "tracee-bin", "tracee", "path to tracee binary")
+	sensorStartCmd.Flags().StringVar(&sensorTraceeBin, "tracee-bin", "", "path to tracee binary (default: use docker mode)")
+	sensorStartCmd.Flags().BoolVar(&sensorDockerMode, "docker", true, "run tracee via docker run --privileged (no root required)")
+	sensorStartCmd.Flags().StringVar(&sensorDockerImage, "tracee-image", "aquasec/tracee:0.22.0", "tracee Docker image")
 	sensorCmd.AddCommand(sensorStartCmd, sensorStopCmd, sensorStatusCmd)
 }
 
@@ -104,7 +110,12 @@ func runSensorStart(cmd *cobra.Command, _ []string) error {
 			continue
 		}
 
-		backend := sensor.NewTraceeBackend(sensorTraceeBin, lab)
+		var backend *sensor.TraceeBackend
+		if sensorDockerMode || sensorTraceeBin == "" {
+			backend = sensor.NewDockerTraceeBackend(sensorDockerImage, lab)
+		} else {
+			backend = sensor.NewTraceeBackend(sensorTraceeBin, lab)
+		}
 		ch, err := backend.Start(ctx, r.Name, containerID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[sensor] node %s: start failed: %v\n", r.Name, err)

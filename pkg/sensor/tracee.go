@@ -12,19 +12,35 @@ import (
 	"sync"
 )
 
-// TraceeBackend implements Sensor by forking the tracee binary and parsing its
-// JSON event stream from stdout.
+// TraceeBackend implements Sensor by forking the tracee binary (or running the
+// aquasec/tracee Docker image in privileged mode) and parsing its JSON event
+// stream from stdout.
 //
-// When TraceeBin is set to a path that exits immediately and prints pre-canned
-// JSON lines, the backend becomes fully testable without eBPF.
+// Field name reference for tracee v0.22+:
+//
+//	cgroupId, hostProcessId, hostParentProcessId, processName, eventName,
+//	args[{name, type, value}]
 type TraceeBackend struct {
-	TraceeBin string // path to tracee binary (default: "tracee")
-	Labeler   Labeler
+	// TraceeBin is the path to the tracee binary.
+	// Set to "" to use DockerImage mode instead.
+	TraceeBin string
+	// DockerImage is used when TraceeBin == "" or DockerMode is true.
+	// Defaults to "aquasec/tracee:0.22.0".
+	DockerImage string
+	// DockerMode forces running tracee via `docker run --privileged` even
+	// when TraceeBin is set. Useful for non-root users who are in the
+	// docker group.
+	DockerMode bool
+	// Events is the comma-separated list of events to capture.
+	// Defaults to sensible Phase 2 defaults.
+	Events string
 
-	mu    sync.Mutex
-	cmd   *exec.Cmd
-	tree  *ProcessTreeBuilder
-	out   chan Event
+	Labeler Labeler
+
+	mu  sync.Mutex
+	cmd *exec.Cmd
+	tree *ProcessTreeBuilder
+	out  chan Event
 }
 
 // Labeler is the minimal interface TraceeBackend needs to annotate events.
@@ -34,15 +50,33 @@ type Labeler interface {
 
 // NewTraceeBackend creates a backend. labeler may be nil (no session annotation).
 func NewTraceeBackend(bin string, labeler Labeler) *TraceeBackend {
-	if bin == "" {
-		bin = "tracee"
+	return &TraceeBackend{
+		TraceeBin:   bin,
+		DockerImage: "aquasec/tracee:0.22.0",
+		Labeler:     labeler,
 	}
-	return &TraceeBackend{TraceeBin: bin, Labeler: labeler}
 }
 
-// Start forks tracee filtered to the given Docker container ID and returns the
-// event channel. The channel is closed when the tracee process exits or ctx is
-// cancelled.
+// NewDockerTraceeBackend creates a backend that runs tracee via Docker.
+// Use this when running as a non-root user who is in the docker group.
+func NewDockerTraceeBackend(image string, labeler Labeler) *TraceeBackend {
+	if image == "" {
+		image = "aquasec/tracee:0.22.0"
+	}
+	return &TraceeBackend{
+		DockerImage: image,
+		DockerMode:  true,
+		Labeler:     labeler,
+	}
+}
+
+// defaultEvents returns the standard Phase 2 event set.
+func defaultEvents() string {
+	return "execve,execveat,openat,connect,clone,fork,vfork,sched_process_exit"
+}
+
+// Start forks tracee filtered to the given Docker container ID.
+// Scope syntax (v0.22.0): --scope=container=<containerID>
 func (t *TraceeBackend) Start(ctx context.Context, nodeID, containerID string) (<-chan Event, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -50,14 +84,55 @@ func (t *TraceeBackend) Start(ctx context.Context, nodeID, containerID string) (
 	t.tree = NewProcessTreeBuilder(0)
 	t.out = make(chan Event, 512)
 
-	args := []string{
-		"--output", "json",
-		"--scope", fmt.Sprintf("container.id=%s", containerID),
-		"--events", "execve,openat,connect,clone,fork,sched_process_exit",
+	events := t.Events
+	if events == "" {
+		events = defaultEvents()
 	}
 
-	cmd := exec.CommandContext(ctx, t.TraceeBin, args...)
+	var cmd *exec.Cmd
+	if t.DockerMode || t.TraceeBin == "" {
+		// Run tracee inside a privileged Docker container.
+		// Requires the user to be in the docker group.
+		img := t.DockerImage
+		if img == "" {
+			img = "aquasec/tracee:0.22.0"
+		}
+		// Use the first 12 chars of containerID for the scope filter;
+		// tracee v0.22 accepts prefix matching.
+		scopeID := containerID
+		if len(scopeID) > 12 {
+			scopeID = scopeID[:12]
+		}
+		dockerArgs := []string{
+			"run", "--rm", "--privileged",
+			"--pid=host",
+			"--cgroupns=host",
+			"-v", "/etc/os-release:/etc/os-release-host:ro",
+			"-v", "/sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro",
+			"-v", "/sys/fs/bpf:/sys/fs/bpf",
+			"-v", "/sys/fs/cgroup:/sys/fs/cgroup",
+			"-v", "/var/run/docker.sock:/var/run/docker.sock",
+			img,
+			fmt.Sprintf("--scope=container=%s", scopeID),
+			"--cri=docker:/var/run/docker.sock",
+			fmt.Sprintf("--events=%s", events),
+			"--output=json",
+		}
+		cmd = exec.CommandContext(ctx, "docker", dockerArgs...)
+	} else {
+		// Run the tracee binary directly (requires root/CAP_BPF).
+		args := []string{
+			fmt.Sprintf("--scope=container=%s", containerID),
+			"--cri=docker:/var/run/docker.sock",
+			fmt.Sprintf("--events=%s", events),
+			"--output=json",
+		}
+		cmd = exec.CommandContext(ctx, t.TraceeBin, args...)
+	}
+
 	stdout, err := cmd.StdoutPipe()
+	// Discard stderr to avoid noise from tracee's own logging.
+	cmd.Stderr = nil
 	if err != nil {
 		return nil, fmt.Errorf("tracee stdout pipe: %w", err)
 	}

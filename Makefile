@@ -26,5 +26,22 @@ e2e:
 	fi
 	$(GO) test ./tests/e2e/... -tags=e2e -v -timeout 5m
 
+# Phase 2 sensor tests, split by required privilege level:
+#   Layer 1 (no root):   make e2e-sensor-registry
+#   Layer 3 (docker grp): make e2e-sensor-live
+#   Full (root):          sudo -E make e2e-sensor
+e2e-sensor-registry:
+	$(GO) test ./tests/e2e/... -tags=e2e -v -run TestPhase2Registry -timeout 2m
+
+e2e-sensor-live:
+	$(GO) test ./tests/e2e/... -tags=e2e -v -run TestPhase2LiveTracee -timeout 3m
+
+e2e-sensor:
+	@if [ "$$(id -u)" != "0" ]; then \
+		echo "Full sensor e2e requires root. Use: sudo -E make e2e-sensor"; \
+		exit 1; \
+	fi
+	$(GO) test ./tests/e2e/... -tags=e2e -v -run TestPhase2 -timeout 5m
+
 install: build
 	install -m 0755 bin/sysbox /usr/local/bin/sysbox
