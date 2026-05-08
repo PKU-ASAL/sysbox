@@ -94,6 +94,16 @@ func buildGraph(root *config.Root, g *graph.Graph, ctx *hcl.EvalContext) error {
 				deps = append(deps, graph.Ref{Type: "sysbox_network", Name: name})
 			}
 
+		case "sysbox_ssh_access":
+			cfg := &config.SSHAccessConfig{}
+			if err := config.DecodeResource(&r, cfg, ctx); err != nil {
+				return err
+			}
+			data = cfg
+			if name := resolveRef(cfg.Node); name != "" {
+				deps = append(deps, graph.Ref{Type: "sysbox_node", Name: name})
+			}
+
 		default:
 			fmt.Printf("warning: unsupported resource type %q (skipped)\n", r.Type)
 			continue

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/oslab/sysbox/pkg/config"
+	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
@@ -43,6 +44,8 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 		return e.createRouter(ctx, node)
 	case "sysbox_firewall":
 		return e.createFirewall(ctx, node)
+	case "sysbox_ssh_access":
+		return e.createSSHAccess(ctx, node)
 	default:
 		return nil
 	}
@@ -62,11 +65,11 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 		return nil
 	case "sysbox_firewall":
 		return e.destroyFirewall(ctx, r)
+	case "sysbox_ssh_access":
+		e.state.RemoveResource(r.Type, r.Name)
+		return nil
 	default:
-		// sysbox_ssh_access and other Phase-2 resource types are parsed by
-		// config but not yet implemented. Silently remove from state so
-		// destroy doesn't error on a partial deployment.
-		fmt.Printf("[destroy] skipping unimplemented resource type %q (%s) — removing from state\n", r.Type, r.Name)
+		fmt.Printf("[destroy] skipping unimplemented resource type %q (%s)\n", r.Type, r.Name)
 		e.state.RemoveResource(r.Type, r.Name)
 		return nil
 	}
@@ -371,4 +374,79 @@ func asString(v any) string {
 	}
 	s, _ := v.(string)
 	return s
+}
+
+// -- sysbox_ssh_access --
+
+func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
+	cfg, ok := n.Data.(*config.SSHAccessConfig)
+	if !ok {
+		return fmt.Errorf("ssh_access %s: wrong data type", n.ID)
+	}
+
+	nodeName, err := resolveNodeRef(cfg.Node)
+	if err != nil {
+		return err
+	}
+	nodeState := e.state.FindResource("sysbox_node", nodeName)
+	if nodeState == nil {
+		return fmt.Errorf("node %s not applied yet", nodeName)
+	}
+
+	containerID := asString(nodeState.Instance["container_id"])
+	handle := substrate.NodeHandle{
+		ID: containerID,
+		Attributes: map[string]any{"container_name": fmt.Sprintf("sysbox-%s", nodeName)},
+	}
+
+	// Find the docker substrate registered for the node.
+	subName := nodeState.Provider
+	sub, err := substrate.Get(subName)
+	if err != nil {
+		return err
+	}
+	dockerSub, ok := sub.(*dockerprovider.Substrate)
+	if !ok {
+		return fmt.Errorf("sysbox_ssh_access requires a docker substrate, got %T", sub)
+	}
+
+	port := cfg.Port
+	if port == 0 {
+		port = 22
+	}
+
+	accessSpec := dockerprovider.SSHAccessSpec{
+		NodeHandle:     handle,
+		NodeID:         nodeName,
+		AuthorizedKeys: cfg.AuthorizedKeys,
+		Port:           port,
+	}
+	if err := dockerSub.SetupSSHAccess(ctx, accessSpec); err != nil {
+		return fmt.Errorf("setup ssh access on %s: %w", nodeName, err)
+	}
+
+	e.state.AddResource(state.Resource{
+		Type:     "sysbox_ssh_access",
+		Name:     n.ID.Name,
+		Provider: subName,
+		Instance: map[string]any{
+			"node": nodeName,
+			"port": port,
+		},
+	})
+	return nil
+}
+
+func resolveNodeRef(ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("empty node ref")
+	}
+	if !strings.Contains(ref, ".") {
+		return ref, nil
+	}
+	parts := strings.Split(ref, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("bad node ref %q", ref)
+	}
+	return parts[1], nil
 }

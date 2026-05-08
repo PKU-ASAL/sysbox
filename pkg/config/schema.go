@@ -43,6 +43,7 @@ type NodeConfig struct {
 	Memory    string            `hcl:"memory,optional"`
 	Env       map[string]string `hcl:"env,optional"`
 	Links     []LinkConfig      `hcl:"link,block"`
+	Sensor    bool              `hcl:"sensor,optional"` // Phase 2: attach Tracee sensor
 }
 
 type LinkConfig struct {

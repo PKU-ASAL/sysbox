@@ -3,8 +3,11 @@
 # Resolve go binary (sudo strips PATH, so prefer absolute path).
 GO ?= $(shell command -v go 2>/dev/null || echo /usr/local/go/bin/go)
 
-build:
+build: build-hook
 	$(GO) build -o bin/sysbox ./cmd/sysbox
+
+build-hook:
+	$(GO) build -o bin/sysbox-sshd-hook ./cmd/sysbox-sshd-hook
 
 test:
 	$(GO) test ./pkg/... -race -cover

@@ -1,10 +1,13 @@
 package docker
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -52,12 +55,43 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec
 	}, nil
 }
 
-func (s *Substrate) CopyToNode(_ context.Context, _ substrate.NodeHandle, _, _ string) error {
-	return fmt.Errorf("CopyToNode: not implemented in Phase 1")
+// CopyToNode copies the local file at srcPath into the container at dstPath.
+// dstPath must be an absolute path inside the container; the filename is
+// preserved from srcPath if dstPath ends with "/".
+func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcPath, dstPath string) error {
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return fmt.Errorf("read src %s: %w", srcPath, err)
+	}
+
+	// If destination is a directory path, use source filename.
+	dstDir := dstPath
+	dstFile := filepath.Base(srcPath)
+	if !filepath.IsAbs(dstPath) {
+		dstDir = "/"
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{
+		Name: dstFile,
+		Mode: 0o755,
+		Size: int64(len(data)),
+	}); err != nil {
+		return err
+	}
+	if _, err := tw.Write(data); err != nil {
+		return err
+	}
+	tw.Close()
+
+	return s.cli.CopyToContainer(ctx, h.ID, dstDir, &buf, container.CopyToContainerOptions{
+		AllowOverwriteDirWithFile: true,
+	})
 }
 
 func (s *Substrate) CopyFromNode(_ context.Context, _ substrate.NodeHandle, _, _ string) error {
-	return fmt.Errorf("CopyFromNode: not implemented in Phase 1")
+	return fmt.Errorf("CopyFromNode: not implemented in Phase 2")
 }
 
 func (s *Substrate) AttachTTY(_ context.Context, _ substrate.NodeHandle) (io.ReadWriteCloser, error) {

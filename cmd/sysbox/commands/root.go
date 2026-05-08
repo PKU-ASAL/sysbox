@@ -12,8 +12,9 @@ var rootCmd = &cobra.Command{
 }
 
 var (
-	flagConfigFile string
-	flagStateFile  string
+	flagConfigFile  string
+	flagStateFile   string
+	flagAutoApprove bool
 )
 
 func init() {
@@ -21,8 +22,10 @@ func init() {
 		"field.sysbox.hcl", "path to sysbox HCL config")
 	rootCmd.PersistentFlags().StringVar(&flagStateFile, "state",
 		"runs/default/state.json", "path to state file")
+	rootCmd.PersistentFlags().BoolVar(&flagAutoApprove, "auto-approve",
+		false, "skip interactive confirmation prompt")
 
-	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd, validateCmd)
+	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd, validateCmd, sensorCmd, sessionCmd)
 }
 
 // Execute is called by main(). Returns an error so main() can set exit code.

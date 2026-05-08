@@ -9,10 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
-var (
-	flagApplyRefresh  bool
-	flagAutoApprove   bool
-)
+var flagApplyRefresh bool
 
 var applyCmd = &cobra.Command{
 	Use:   "apply",
@@ -22,7 +19,6 @@ var applyCmd = &cobra.Command{
 
 func init() {
 	applyCmd.Flags().BoolVar(&flagApplyRefresh, "refresh", false, "probe existing resources for drift before applying")
-	applyCmd.Flags().BoolVar(&flagAutoApprove, "auto-approve", false, "skip interactive confirmation prompt")
 }
 
 func runApply(cmd *cobra.Command, args []string) error {
