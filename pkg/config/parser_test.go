@@ -30,20 +30,35 @@ func TestDecodeResource(t *testing.T) {
 	path := filepath.Join("..", "..", "tests", "testdata", "valid_field.hcl")
 	root, err := ParseFile(path)
 	require.NoError(t, err)
+	ctx := BuildEvalContext(root)
 
 	netBlock := findResource(root, "sysbox_network", "dmz")
 	require.NotNil(t, netBlock)
 	var netCfg NetworkConfig
-	require.NoError(t, DecodeResource(netBlock, &netCfg))
+	require.NoError(t, DecodeResource(netBlock, &netCfg, ctx))
 	require.Equal(t, "10.0.1.0/24", netCfg.CIDR)
 
 	nodeBlock := findResource(root, "sysbox_node", "web")
 	require.NotNil(t, nodeBlock)
 	var nodeCfg NodeConfig
-	require.NoError(t, DecodeResource(nodeBlock, &nodeCfg))
+	require.NoError(t, DecodeResource(nodeBlock, &nodeCfg, ctx))
 	require.Equal(t, "docker", nodeCfg.Substrate)
+	require.Equal(t, "alpine", nodeCfg.Image)
 	require.Len(t, nodeCfg.Links, 1)
 	require.Equal(t, "10.0.1.10/24", nodeCfg.Links[0].IP)
+	require.Equal(t, "dmz", nodeCfg.Links[0].Network)
+}
+
+func TestEvalContextNamespaces(t *testing.T) {
+	path := filepath.Join("..", "..", "tests", "testdata", "valid_field.hcl")
+	root, err := ParseFile(path)
+	require.NoError(t, err)
+	ctx := BuildEvalContext(root)
+
+	require.Contains(t, ctx.Variables, "substrate")
+	require.Contains(t, ctx.Variables, "sysbox_image")
+	require.Contains(t, ctx.Variables, "sysbox_network")
+	require.Contains(t, ctx.Variables, "sysbox_node")
 }
 
 func TestParseFileInvalid(t *testing.T) {

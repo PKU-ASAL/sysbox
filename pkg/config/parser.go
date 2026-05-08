@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclparse"
 )
@@ -35,12 +36,14 @@ func ParseFile(path string) (*Root, error) {
 
 // DecodeResource decodes a resource block's inner fields into the given
 // target struct (e.g. *NodeConfig, *NetworkConfig). Caller picks the target
-// based on r.Type.
-func DecodeResource(r *ResourceBlock, target any) error {
+// based on r.Type. Pass an EvalContext (from BuildEvalContext) to enable
+// bare-identifier traversals like substrate.docker.light or
+// sysbox_image.alpine.id; pass nil for legacy quoted-string refs.
+func DecodeResource(r *ResourceBlock, target any, ctx *hcl.EvalContext) error {
 	if r.Remain == nil {
 		return fmt.Errorf("resource %s.%s: empty body", r.Type, r.Name)
 	}
-	if diag := gohcl.DecodeBody(r.Remain, nil, target); diag.HasErrors() {
+	if diag := gohcl.DecodeBody(r.Remain, ctx, target); diag.HasErrors() {
 		return fmt.Errorf("decode resource %s.%s: %s", r.Type, r.Name, diag.Error())
 	}
 	return nil

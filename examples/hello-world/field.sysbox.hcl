@@ -7,27 +7,27 @@ resource "sysbox_network" "lan" {
 }
 
 resource "sysbox_image" "alpine" {
-  substrate  = "docker"
+  substrate  = substrate.docker.light
   docker_ref = "alpine:latest"
 }
 
 resource "sysbox_node" "node_a" {
-  image     = "sysbox_image.alpine.id"
-  substrate = "docker"
+  image     = sysbox_image.alpine.id
+  substrate = substrate.docker.light
 
   link {
-    network = "sysbox_network.lan.id"
+    network = sysbox_network.lan.id
     ip      = "10.0.99.10/24"
     gw      = "10.0.99.1"
   }
 }
 
 resource "sysbox_node" "node_b" {
-  image     = "sysbox_image.alpine.id"
-  substrate = "docker"
+  image     = sysbox_image.alpine.id
+  substrate = substrate.docker.light
 
   link {
-    network = "sysbox_network.lan.id"
+    network = sysbox_network.lan.id
     ip      = "10.0.99.20/24"
     gw      = "10.0.99.1"
   }

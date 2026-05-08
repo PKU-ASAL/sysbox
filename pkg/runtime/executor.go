@@ -301,8 +301,17 @@ func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link 
 }
 
 // -- reference resolution helpers --
+//
+// After HCL EvalContext lands, references decode to bare strings:
+//   substrate.docker.light    -> "docker"
+//   sysbox_image.alpine.id    -> "alpine"
+// We still accept legacy "type.name.attr" quoted strings for backwards
+// compatibility with HCL files that don't use traversals.
 
 func resolveSubstrateRef(ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("empty substrate ref")
+	}
 	parts := strings.Split(ref, ".")
 	switch len(parts) {
 	case 1:
@@ -315,6 +324,12 @@ func resolveSubstrateRef(ref string) (string, error) {
 }
 
 func resolveImageRef(ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("empty image ref")
+	}
+	if !strings.Contains(ref, ".") {
+		return ref, nil
+	}
 	parts := strings.Split(ref, ".")
 	if len(parts) < 2 {
 		return "", fmt.Errorf("bad image ref %q", ref)
@@ -323,6 +338,12 @@ func resolveImageRef(ref string) (string, error) {
 }
 
 func resolveNetworkRef(ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("empty network ref")
+	}
+	if !strings.Contains(ref, ".") {
+		return ref, nil
+	}
 	parts := strings.Split(ref, ".")
 	if len(parts) < 2 {
 		return "", fmt.Errorf("bad network ref %q", ref)
