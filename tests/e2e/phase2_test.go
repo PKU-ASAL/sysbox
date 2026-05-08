@@ -387,11 +387,14 @@ func TestPhase2SensorAnnotation(t *testing.T) {
 	lab := session.NewLabeler()
 	lab.RegisterSession(cgroupID, sessionID)
 
-	// 4. Start tracee sensor (via docker run --privileged, no root needed for docker).
+	// 4. Start tracee with NO container scope filter.
+	// Processes that move to /sys/fs/cgroup/sysbox.slice/ leave Docker's cgroup
+	// hierarchy; container-scoped tracee would lose them. Use global scope and
+	// let the Labeler handle session attribution via cgroup_id.
 	backend := sensor.NewDockerTraceeBackend("aquasec/tracee:0.22.0", lab)
-	ch, err := backend.Start(ctx, nodeID, containerID)
+	ch, err := backend.Start(ctx, nodeID, "") // "" = global scope
 	require.NoError(t, err)
-	t.Log("tracee started, waiting for eBPF initialization (~5s)...")
+	t.Log("tracee started (global scope), waiting for eBPF initialization (~5s)...")
 
 	// 5. Give tracee time to load eBPF programs, then trigger activity.
 	time.Sleep(6 * time.Second)
@@ -612,7 +615,6 @@ func TestPhase2RegisteredSessionIDWithTracee(t *testing.T) {
 		"alpine:latest", "sleep", "120",
 	).CombinedOutput()
 	require.NoError(t, err, "docker run: %s", out)
-	containerID := strings.TrimSpace(string(out))
 	defer exec.Command("docker", "rm", "-f", containerName).Run()
 
 	nodeID := "p2-registered-node"
@@ -645,12 +647,13 @@ func TestPhase2RegisteredSessionIDWithTracee(t *testing.T) {
 	lab := session.NewLabeler()
 	lab.RegisterSession(cgroupID, resolved)
 
-	// 4. Start tracee.
+	// 4. Start tracee with global scope (no container filter) so it sees processes
+	// even after they move to the session cgroup outside Docker's cgroup hierarchy.
 	backend := sensor.NewDockerTraceeBackend("aquasec/tracee:0.22.0", lab)
-	ch, err := backend.Start(ctx, nodeID, containerID)
+	ch, err := backend.Start(ctx, nodeID, "") // "" = global scope
 	require.NoError(t, err)
 
-	t.Log("waiting for tracee eBPF init...")
+	t.Log("waiting for tracee eBPF init (global scope)...")
 	time.Sleep(6 * time.Second)
 
 	// Trigger activity.

@@ -75,8 +75,17 @@ func defaultEvents() string {
 	return "execve,execveat,openat,connect,clone,fork,vfork,sched_process_exit"
 }
 
-// Start forks tracee filtered to the given Docker container ID.
-// Scope syntax (v0.22.0): --scope=container=<containerID>
+// Start forks tracee and returns the event channel.
+//
+// containerID controls the scope:
+//   - non-empty: filter to that specific Docker container (best for single-container tests)
+//   - empty:     capture all container events (use when session cgroups may be outside
+//                Docker's cgroup hierarchy, i.e. under /sys/fs/cgroup/sysbox.slice/)
+//
+// When session cgroups are created outside Docker's cgroup subtree (which is the
+// production case with sysbox.slice), pass containerID="" so tracee sees events
+// from those processes after they move to the session cgroup.
+// The Labeler then handles session attribution via cgroup_id mapping.
 func (t *TraceeBackend) Start(ctx context.Context, nodeID, containerID string) (<-chan Event, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -91,19 +100,18 @@ func (t *TraceeBackend) Start(ctx context.Context, nodeID, containerID string) (
 
 	var cmd *exec.Cmd
 	if t.DockerMode || t.TraceeBin == "" {
-		// Run tracee inside a privileged Docker container.
-		// Requires the user to be in the docker group.
 		img := t.DockerImage
 		if img == "" {
 			img = "aquasec/tracee:0.22.0"
 		}
-		// Use the first 12 chars of containerID for the scope filter;
-		// tracee v0.22 accepts prefix matching.
-		scopeID := containerID
-		if len(scopeID) > 12 {
-			scopeID = scopeID[:12]
-		}
-		dockerArgs := []string{
+
+		// Build scope argument.
+		// If containerID is set, scope to that container.
+		// Otherwise use --scope=container to see all container events.
+		// Note: processes that move OUT of the Docker cgroup (into sysbox.slice)
+		// are no longer "in a container" per tracee, so we can't use container
+		// scope for session cgroup tracking. Use global scope instead.
+		baseArgs := []string{
 			"run", "--rm", "--privileged",
 			"--pid=host",
 			"--cgroupns=host",
@@ -113,16 +121,32 @@ func (t *TraceeBackend) Start(ctx context.Context, nodeID, containerID string) (
 			"-v", "/sys/fs/cgroup:/sys/fs/cgroup",
 			"-v", "/var/run/docker.sock:/var/run/docker.sock",
 			img,
-			fmt.Sprintf("--scope=container=%s", scopeID),
+		}
+
+		// Build tracee args.
+		// If containerID is given, scope to that container (single-container mode).
+		// Otherwise omit --scope entirely so tracee captures ALL events.
+		// All-events mode is required when session cgroups live outside Docker's
+		// cgroup hierarchy (/sys/fs/cgroup/sysbox.slice/); the Labeler then does
+		// the session attribution via cgroup_id mapping.
+		traceeArgs := []string{
 			"--cri=docker:/var/run/docker.sock",
 			fmt.Sprintf("--events=%s", events),
 			"--output=json",
 		}
+		if containerID != "" {
+			scopeID := containerID
+			if len(scopeID) > 12 {
+				scopeID = scopeID[:12]
+			}
+			traceeArgs = append([]string{fmt.Sprintf("--scope=container=%s", scopeID)}, traceeArgs...)
+		}
+
+		dockerArgs := append(baseArgs, traceeArgs...)
 		cmd = exec.CommandContext(ctx, "docker", dockerArgs...)
 	} else {
 		// Run the tracee binary directly (requires root/CAP_BPF).
 		args := []string{
-			fmt.Sprintf("--scope=container=%s", containerID),
 			"--cri=docker:/var/run/docker.sock",
 			fmt.Sprintf("--events=%s", events),
 			"--output=json",
