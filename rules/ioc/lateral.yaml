@@ -1,0 +1,13 @@
+- id: "ioc-lateral-ssh-exec"
+  name: "SSH binary execution"
+  ttp: "T1021.004"
+  event: execve
+  match:
+    args.pathname: ["/usr/bin/ssh", "/usr/bin/scp", "/usr/bin/sftp"]
+
+- id: "ioc-lateral-shell-transfer"
+  name: "File transfer tool execution"
+  ttp: "T1105"
+  event: execve
+  match:
+    args.pathname: ["/usr/bin/curl", "/usr/bin/wget", "/usr/bin/rsync"]

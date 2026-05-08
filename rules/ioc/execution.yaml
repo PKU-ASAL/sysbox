@@ -1,0 +1,27 @@
+- id: "ioc-exec-nmap"
+  name: "Network scanner: nmap"
+  ttp: "T1595.001"
+  event: execve
+  match:
+    args.pathname: ["/usr/bin/nmap", "/usr/local/bin/nmap"]
+
+- id: "ioc-exec-masscan"
+  name: "Network scanner: masscan"
+  ttp: "T1595.001"
+  event: execve
+  match:
+    args.pathname: ["/usr/bin/masscan"]
+
+- id: "ioc-exec-netcat"
+  name: "Netcat execution"
+  ttp: "T1059.004"
+  event: execve
+  match:
+    args.pathname: ["/bin/nc", "/usr/bin/nc", "/usr/bin/ncat", "/usr/bin/netcat"]
+
+- id: "ioc-exec-python-shell"
+  name: "Python interactive shell"
+  ttp: "T1059.006"
+  event: execve
+  match:
+    args.pathname: ["/usr/bin/python3", "/usr/bin/python"]

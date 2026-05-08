@@ -1,60 +1,94 @@
-# sysbox Phase 3 — Prediction Matcher & RL Reward Signal
+# sysbox Phase 3 — Hook-based IoC Extraction & Prediction Matcher
 
-> **Goal:** 让 sysbox 成为 RL 训练的评分系统。Agent 在每步行动前声明预测的系统调用行为，Matcher 在全量 tracee 事件流里验证，输出 `match_report.json`。Match report 的命中率直接作为 RL 训练的稠密 reward。
->
-> Phase 3 放弃 cgroup-based session attribution，**以 Prediction Matcher 为唯一归因机制**，IoC 规则作为客观第二信道。
+> **Goal:** 让 sysbox 成为 RL 训练的评分系统，同时对 agent 完全透明。Agent 直接与靶场节点交互（SSH/HTTP/exploit），不感知 sysbox。sysbox 通过 **hook 机制**拦截 agent 的工具调用，用专有 IoC 提取模型翻译成预期的系统调用模式，在全量 tracee 事件流里验证，输出 `match_report.json` 作为 RL reward。
 
 ---
 
-## 设计动机：为什么放弃 cgroup
+## 设计动机
 
-Phase 2 的 cgroup 机制在技术上可行（E2E 测试全部 PASS），但在 RL 训练场景里**引入了不必要的复杂度**：
+### 为什么不让 agent 直接输出 syscall 预测
 
-| 问题 | cgroup 方案 | Prediction Matcher |
-|---|---|---|
-| 覆盖范围 | 只覆盖有 hook 的入口（SSH）| 覆盖所有 agent 行动（SSH/webshell/横向移动）|
-| 真实性 | hook 产生额外 syscall | agent 直接与节点交互，trace 干净 |
-| 扩展性 | 每种入口类型需单独 hook | 一套 Matcher 全覆盖 |
-| RL 适配性 | "cgroup 成员身份"与 agent loop 无关联 | "预测-验证"就是 agentic loop 的自然结构 |
+Phase 3 初稿让 agent 在每步前声明结构化 syscall 预测（`{"event": "execve", "args": {...}}`）。这个方案有两个问题：
 
-**核心洞察：** 在生产 IDS 里你不能信任攻击者，所以需要内核地基。但在 RL 训练里，agent 必须在行动前输出预测——这本身就是 ground truth。Prediction Matcher 直接对接 agent 的思考过程。
+1. **污染 agent 的思考过程**：agent 在思考"如何利用 CVE-XXXX"时还要预测 `execve` 的 `pathname`，两种认知层次混在一起，干扰渗透效果
+2. **无法泛化到 novel exploits**：手写规则只覆盖 nmap/nc 等已知工具
+
+### 核心设计原则
+
+```
+Agent 的职责：只关注攻击策略，像真实红队一样思考和行动
+sysbox 的职责：透明地观测和评分，对 agent 完全不可见
+IoC 提取模型的职责：把 agent 的工具调用翻译成可验证的内核行为预期
+```
+
+**sysbox 对 agent 完全透明**：agent 只看到普通 Linux 机器，通过 SSH/HTTP 与节点交互，不经过也不感知 sysbox API。
 
 ---
 
-## 架构
+## 整体架构
 
 ```
-实验框架
-  │
-  ├─ 管理 sysbox field（apply/destroy）
-  ├─ 启动 sensor（tracee, 全量事件, 无 container scope filter）
-  └─ 驱动 agent loop:
-       │
-       Agent Think: 分析当前状态
-       Agent Predict: 声明下一步预期的 syscall 行为
-       Agent Act: 直接与节点交互（SSH/HTTP/exploit）
-       │
-       ▼
-  Prediction Matcher
-       ├─ 匹配：prediction ∩ tracee events → matched events
-       ├─ IoC 引擎：独立扫描全量事件 → ioc tagged events
-       └─ Match Report: 每 step 的命中率 + RL reward
+┌──────────────────────────────────────────────────────┐
+│                     Agent                            │
+│  Think: "扫描内网找开放服务"                          │
+│  Act:   bash_exec("nmap -p 22,80 10.0.1.0/24")      │
+│  （agent 不感知 sysbox，直接与节点 SSH/HTTP 交互）    │
+└───────────────────────┬──────────────────────────────┘
+                        │ tool call 拦截（pre-execution）
+┌───────────────────────▼──────────────────────────────┐
+│                   Hook Layer                         │
+│  pkg/hook/                                           │
+│  ├─ 拦截 tool call（tool name + command + context）  │
+│  ├─ → IoC Extractor（规则 + 小模型，<100ms）         │
+│  ├─ → 写入 predictions.jsonl                        │
+│  └─ 执行原始 tool call（不修改）                    │
+└──────────────────┬────────────────────────────────────┘
+                   │
+       ┌───────────┴───────────┐
+       │                       │
+┌──────▼──────┐        ┌───────▼──────┐
+│ IoC Extractor│        │ tracee 事件流 │
+│             │        │ events.jsonl  │
+│ tool_call → │        │（全量系统调用）│
+│  syscall    │        │ 全局 scope    │
+│  patterns   │        │ 无 container  │
+└──────┬───────┘        │ scope filter │
+       │                └───────┬──────┘
+       │  predictions.jsonl     │  events.jsonl
+       └───────────┬────────────┘
+                   │
+          ┌────────▼─────────┐
+          │  Prediction Matcher│
+          │  + IoC Rule Engine │
+          └────────┬──────────┘
+                   │
+          match_report.json
+          ├─ prediction_hit_rate    → 主要 reward 分量
+          ├─ unscripted_iocs        → 负向信号（做了没说）
+          └─ ttp_coverage           → 额外奖励
 ```
 
-**sysbox 对 agent 完全透明**：agent 只看到普通 Linux 机器，通过 SSH/HTTP 与节点交互，不经过 sysbox API。
+---
+
+## 核心约束（Phase 3 方案 B 定版）
+
+1. **Agent 完全隔离**：agent 的 context 不含任何 syscall 格式或 sysbox 相关内容
+2. **Hook 透明**：tool executor 被 wrap，agent 感知不到差异
+3. **IoC 提取模型独立训练**：match_report 作为自监督信号，构建数据飞轮
+4. **Matcher 吃全量事件**：tracee 无 container scope filter，Labeler 不再设置 session_id
 
 ---
 
 ## Event Schema（Phase 3 更新）
 
-去掉 `session_id` 作为主要归因字段，由 Matcher 填充归因信息：
+去掉 `session_id` 作为主要归因字段（保留为可选外部 trace 关联），由 Matcher 填充归因信息：
 
 ```go
 // pkg/sensor/sensor.go（更新）
 type Event struct {
     // 原始观测（不变）
     NodeID    string         `json:"node_id"`
-    CgroupID  uint64         `json:"cgroup_id"`  // 保留为元数据，不用于归因
+    CgroupID  uint64         `json:"cgroup_id"`   // 元数据，不用于归因
     Timestamp int64          `json:"ts"`
     PID       int            `json:"pid"`
     PPID      int            `json:"ppid"`
@@ -62,222 +96,266 @@ type Event struct {
     Name      string         `json:"name"`
     Args      map[string]any `json:"args"`
 
-    // 由 Matcher 填充（不再由 Labeler 填充）
+    // 由 Matcher 填充（raw events.jsonl 不含这些字段）
+    // 仅出现在 annotated_events.jsonl 里
     MatchedPrediction bool   `json:"matched_prediction,omitempty"`
     AgentStep         int    `json:"agent_step,omitempty"`
-    TTP               string `json:"ttp,omitempty"`   // MITRE ATT&CK ID
-    IoC               string `json:"ioc,omitempty"`   // IoC rule ID
-    IsAttack          bool   `json:"is_attack"`       // matched_prediction OR ioc != ""
+    TTP               string `json:"ttp,omitempty"`    // MITRE ATT&CK ID
+    IoC               string `json:"ioc,omitempty"`    // IoC rule ID
+    IsAttack          bool   `json:"is_attack"`        // matched_prediction OR ioc != ""
 }
+```
+
+**原则**：`events.jsonl` 是原始干净数据（只有 tracee 观测）；`annotated_events.jsonl` 是 Matcher 运行后的语义增强版。两者分开存储，互不污染。
+
+---
+
+## Hook Layer
+
+### 接口设计
+
+```go
+// pkg/hook/hook.go
+type ToolCall struct {
+    ToolName  string    `json:"tool_name"`   // "bash_exec", "ssh_exec", "http_request"
+    Command   string    `json:"command"`     // 实际执行内容
+    Context   string    `json:"context"`     // agent 的 chain-of-thought（可选）
+    Node      string    `json:"node"`        // 目标节点（从工具参数解析）
+    RunID     string    `json:"run_id"`      // Langfuse run ID
+    AgentStep int       `json:"agent_step"`
+    Timestamp time.Time `json:"timestamp"`
+}
+
+// Hook 包装 tool executor，对 agent 透明。
+type Hook struct {
+    Extractor  Extractor
+    PredWriter *PredictionWriter
+}
+
+func (h *Hook) Wrap(call ToolCall, executeFn func() error) error {
+    // 1. 提取 IoC，生成 Prediction
+    pred := h.Extractor.Extract(call)
+    h.PredWriter.Write(pred)
+    // 2. 执行原始工具调用（不修改）
+    return executeFn()
+}
+```
+
+### IoC Extractor
+
+```go
+// pkg/hook/extractor.go
+
+// Extractor 把 ToolCall 翻译成 Prediction（预期 syscall 模式）。
+// Phase 3.0: 纯规则（覆盖常见攻击工具）
+// Phase 3.1: 规则 + 小模型（Qwen-7B fine-tune）
+// Phase 3.2: 模型用 match_report 自监督 fine-tune
+type Extractor interface {
+    Extract(call ToolCall) Prediction
+}
+
+// RuleExtractor 是 Phase 3.0 的实现。
+// 规则存储在 rules/*.yaml，匹配 tool_name + command 关键词。
+type RuleExtractor struct {
+    rules []ExtractionRule
+}
+```
+
+**规则格式（`rules/extraction/`）：**
+
+```yaml
+# rules/extraction/network_scan.yaml
+- id: "ext-nmap"
+  match:
+    command_contains: ["nmap"]
+  predict:
+    - event: execve
+      args: {pathname: "/usr/bin/nmap"}
+    - event: connect
+      args: {}
+  ttp: "T1595.001"
+
+- id: "ext-masscan"
+  match:
+    command_contains: ["masscan"]
+  predict:
+    - event: execve
+      args: {pathname: "/usr/bin/masscan"}
+  ttp: "T1595.001"
+
+# rules/extraction/credential.yaml
+- id: "ext-shadow-read"
+  match:
+    command_contains: ["cat /etc/shadow", "grep.*shadow", "john", "hashcat"]
+  predict:
+    - event: openat
+      args: {pathname: "/etc/shadow"}
+  ttp: "T1003"
+
+# rules/extraction/lateral.yaml
+- id: "ext-ssh-lateral"
+  match:
+    command_contains: ["ssh ", "scp "]
+  predict:
+    - event: execve
+      args: {pathname: "/usr/bin/ssh"}
+    - event: connect
+      args: {remote_port: 22}
+  ttp: "T1021.004"
+
+# rules/extraction/exploit.yaml
+- id: "ext-python-exploit"
+  match:
+    command_contains: ["python", "exploit", "payload", "reverse"]
+  predict:
+    - event: execve
+      args: {pathname_prefix: "python"}
+    - event: connect
+      args: {}    # RCE 通常产生 connect（reverse shell）
+  ttp: "T1059.006"
 ```
 
 ---
 
-## 核心数据结构
+## Prediction Matcher
 
-### Prediction（Agent 声明）
+### 数据结构
 
 ```go
 // pkg/matcher/prediction.go
 type Prediction struct {
-    RunID      string         `json:"run_id"`      // Langfuse run ID / OTEL trace ID
-    AgentStep  int            `json:"agent_step"`
-    Node       string         `json:"node"`        // 目标节点名
-    TimeWindow int            `json:"time_window"` // 秒，事件匹配的时间窗口
-    SubmittedAt time.Time     `json:"submitted_at"`
+    RunID      string    `json:"run_id"`
+    AgentStep  int       `json:"agent_step"`
+    Node       string    `json:"node"`
+    TimeWindow int       `json:"time_window"` // 秒
+    SubmittedAt time.Time `json:"submitted_at"`
 
-    // Agent 预期触发的事件（AND 关系：都命中才算 step 完全匹配）
-    // 每条 ExpectedEvent 内部的字段是 partial match（subset of args）
     ExpectedEvents []ExpectedEvent `json:"expected_events"`
-
-    TTP         string `json:"ttp,omitempty"`    // 本步操作对应的 MITRE TTP
-    Description string `json:"description,omitempty"` // 人类可读的意图描述
+    TTP            string `json:"ttp,omitempty"`
+    ExtractorRule  string `json:"extractor_rule,omitempty"` // 哪条规则产生了这个预测
 }
 
 type ExpectedEvent struct {
-    Name string         `json:"name"`          // 如 "execve", "connect", "openat"
-    Args map[string]any `json:"args,omitempty"` // 预期 args 的子集（partial match）
+    Name string         `json:"name"`           // "execve", "connect", "openat"
+    Args map[string]any `json:"args,omitempty"`  // partial match
 }
 ```
 
-**示例：**
-```json
-{
-    "run_id": "langfuse-run-abc123",
-    "agent_step": 5,
-    "node": "node_a",
-    "time_window": 30,
-    "submitted_at": "2026-05-09T10:00:00Z",
-    "expected_events": [
-        {"name": "execve", "args": {"pathname": "/usr/bin/nmap"}},
-        {"name": "connect", "args": {}}
-    ],
-    "ttp": "T1595.001",
-    "description": "Scanning internal network for open ports"
-}
+### 匹配算法
+
+```
+对每条 Prediction:
+  1. 时间窗口过滤: events where ts ∈ [submitted_at, submitted_at + time_window]
+  2. 节点过滤: events where node_id == prediction.node
+  3. 对每条 ExpectedEvent:
+       找窗口内第一条满足：
+         event.name == expected.name
+         AND expected.args ⊆ event.args（partial match）
+  4. 命中率 = 命中的 ExpectedEvent 数 / 总 ExpectedEvent 数
+
+Partial match 规则:
+  - 字符串: 精确匹配 或 glob（*）
+  - pathname_prefix: event.args.pathname 以 prefix 开头
+  - remote_port: 精确匹配 或 列表成员
+  - 空 args {}: 只匹配 event name
+  - CIDR (remote_addr): net.Contains(cidr, event.args.remote_addr)
 ```
 
-### MatchReport（每 Step 的评分）
+### Reward 公式
+
+```
+per_step_reward =
+    + w_hit  × prediction_hit_rate          // 预测命中（主要正向）
+    - w_miss × (1 - prediction_hit_rate)    // 预测未命中（轻微负向）
+    - w_unscripted × unscripted_rate        // 做了但没预测（惩罚隐藏行为）
+    + w_ttp  × ttp_novelty                  // 新 TTP 类型（探索奖励）
+
+默认权重: w_hit=1.0, w_miss=0.3, w_unscripted=1.5, w_ttp=0.2
+
+episode_reward = mean(per_step_reward) + terminal_bonus
+```
+
+`unscripted_rate` 权重最高，防止 agent 在 hook 盲区做事。
+
+---
+
+## IoC Rule Engine（独立于 Prediction）
+
+IoC 引擎独立扫描**全量 tracee 事件**，不依赖 agent 预测。用于：
+1. 覆盖 hook 未拦截到的行为（agent 直接改脚本绕过某些工具）
+2. 作为 Prediction Matcher 的验证（两者同时命中 = 高置信度）
+3. 提供 baseline 分析（对比"已知攻击工具"的覆盖率）
+
+规则格式（`rules/ioc/`）：
+
+```yaml
+# rules/ioc/execution.yaml
+- id: "ioc-exec-scanner"
+  ttp: "T1595.001"
+  event: execve
+  match:
+    args.pathname: ["/usr/bin/nmap", "/usr/bin/masscan", "/usr/bin/zmap"]
+
+- id: "ioc-exec-shell-from-webproc"
+  ttp: "T1059.004"
+  event: execve
+  match:
+    args.pathname: ["/bin/sh", "/bin/bash"]
+    processName: ["php-fpm", "httpd", "nginx", "node"]  # 父进程是 web server
+
+# rules/ioc/credential.yaml
+- id: "ioc-shadow-read"
+  ttp: "T1003"
+  event: openat
+  match:
+    args.pathname: ["/etc/shadow", "/root/.ssh/id_rsa", "/root/.ssh/id_ed25519"]
+```
+
+---
+
+## Match Report
 
 ```go
 // pkg/matcher/match_report.go
 type MatchReport struct {
     RunID     string    `json:"run_id"`
-    AgentStep int       `json:"agent_step"`
-    Node      string    `json:"node"`
+    GeneratedAt time.Time `json:"generated_at"`
 
-    MatchedEvents     []MatchedEvent `json:"matched_events"`
-    UnmatchedPreds    []ExpectedEvent `json:"unmatched_predictions"` // 预测了但没发生
-    UnscriptedIoCs    []sensor.Event  `json:"unscripted_iocs"`       // IoC 触发但未预测
+    Steps []StepReport `json:"steps"`
 
-    // Reward 相关指标
-    PredictionHitRate float64 `json:"prediction_hit_rate"` // matched / total_predicted
-    UnscriptedRate    float64 `json:"unscripted_rate"`     // 未声明行动 / 总 IoC 触发
-    Reward            float64 `json:"reward"`              // 最终 reward 值
+    // Episode 级摘要
+    EpisodePredictionHitRate float64 `json:"episode_prediction_hit_rate"`
+    TTPsCovered              []string `json:"ttps_covered"`
+    EpisodeReward            float64 `json:"episode_reward"`
+}
+
+type StepReport struct {
+    AgentStep  int    `json:"agent_step"`
+    Node       string `json:"node"`
+    TTP        string `json:"ttp,omitempty"`
+    ExtractorRule string `json:"extractor_rule,omitempty"`
+
+    MatchedEvents   []MatchedEvent `json:"matched_events"`
+    UnmatchedPreds  []ExpectedEvent `json:"unmatched_predictions"`
+    UnscriptedIoCs  []IoCMatch `json:"unscripted_iocs"`   // IoC 触发但无预测
+
+    PredictionHitRate float64 `json:"prediction_hit_rate"`
+    UnscriptedRate    float64 `json:"unscripted_rate"`
+    StepReward        float64 `json:"step_reward"`
 }
 
 type MatchedEvent struct {
     Event             sensor.Event `json:"event"`
     MatchedPrediction bool         `json:"matched_prediction"`
     IoC               string       `json:"ioc,omitempty"`
-    TTP               string       `json:"ttp"`
-}
-```
-
----
-
-## Prediction Matcher 设计
-
-### 匹配算法
-
-```go
-// pkg/matcher/matcher.go
-type Matcher struct {
-    iocEngine *IoC Engine
 }
 
-// Match 对一条 Prediction 在 events 切片里做匹配。
-// 返回命中的事件 + 未命中的 ExpectedEvent。
-func (m *Matcher) Match(pred Prediction, events []sensor.Event) MatchReport {
-    // 1. 时间窗口过滤：只看 [SubmittedAt, SubmittedAt + TimeWindow] 内的事件
-    // 2. 节点过滤：NodeID == pred.Node（由 sensor 在采集时填充）
-    // 3. 对每条 ExpectedEvent，在窗口内找第一条匹配的 tracee event：
-    //    - event.Name == expected.Name
-    //    - expected.Args 是 event.Args 的子集（partial match）
-    // 4. 同时对所有窗口内的事件跑 IoC 引擎
-    // 5. 汇总，计算 PredictionHitRate 和 Reward
+type IoCMatch struct {
+    Event  sensor.Event `json:"event"`
+    RuleID string       `json:"rule_id"`
+    TTP    string       `json:"ttp"`
 }
 ```
-
-**Partial arg match 规则：**
-- `pathname: "/usr/bin/nmap"` → 精确匹配
-- `pathname: "/usr/bin/*"` → glob 匹配
-- `remote_addr: "10.0.1.0/24"` → CIDR 匹配（对 connect 事件）
-- 空 `args: {}` → 只匹配 event name，不检查 args
-
-### Reward 公式
-
-```
-reward = w_hit  * prediction_hit_rate
-       - w_miss * (1 - prediction_hit_rate)    # 预测了但没做到
-       - w_unscripted * unscripted_rate        # 做了但没预测（隐藏行为）
-       + w_ttp  * ttp_novelty                  # 新 TTP 类型的奖励
-```
-
-默认权重：`w_hit=1.0, w_miss=0.5, w_unscripted=1.5, w_ttp=0.2`
-
-`unscripted_rate` 的负向权重最高——agent 做了却不声明，在 RL 中是欺骗信号。
-
----
-
-## IoC 规则引擎
-
-### 规则格式（YAML）
-
-```yaml
-# rules/execution.yaml
-- id: "ioc-exec-scanner"
-  name: "Network scanner execution"
-  ttp: "T1595.001"
-  event: execve
-  match:
-    args.pathname:
-      - "/usr/bin/nmap"
-      - "/usr/bin/masscan"
-      - "/usr/bin/zmap"
-
-- id: "ioc-exec-shell"
-  name: "Interactive shell from non-terminal parent"
-  ttp: "T1059.004"
-  event: execve
-  match:
-    args.pathname:
-      - "/bin/sh"
-      - "/bin/bash"
-      - "/bin/zsh"
-
-# rules/credential.yaml
-- id: "ioc-cred-read"
-  name: "Credential file access"
-  ttp: "T1003"
-  event: openat
-  match:
-    args.pathname:
-      - "/etc/shadow"
-      - "/etc/passwd"
-      - "/root/.ssh/id_rsa"
-
-# rules/lateral.yaml
-- id: "ioc-lateral-ssh"
-  name: "SSH to internal host"
-  ttp: "T1021.004"
-  event: connect
-  match:
-    args.remote_port: 22
-```
-
-### IoC 引擎接口
-
-```go
-// pkg/matcher/ioc.go
-type IoCEngine struct {
-    rules []IoCRule
-}
-
-func (e *IoCEngine) Scan(event sensor.Event) (ruleID, ttp string, matched bool)
-func (e *IoCEngine) LoadRules(dir string) error  // 加载 rules/*.yaml
-```
-
----
-
-## Agent 接口
-
-Agent 通过两种方式提交预测，取决于 orchestration 框架：
-
-**方式 A：结构化文件**（推荐，解耦 agent 和 sysbox）
-
-```bash
-# Agent 框架在 agent 行动前写入
-cat >> runs/default/predictions.jsonl << 'EOF'
-{"run_id": "abc", "agent_step": 5, "node": "node_a", "time_window": 30,
- "expected_events": [{"name": "execve", "args": {"pathname": "/usr/bin/nmap"}}],
- "ttp": "T1595.001", "submitted_at": "2026-05-09T10:00:00Z"}
-EOF
-```
-
-**方式 B：CLI 命令**
-
-```bash
-sysbox predict submit \
-    --run-id abc \
-    --step 5 \
-    --node node_a \
-    --window 30 \
-    --event "execve:pathname=/usr/bin/nmap" \
-    --ttp T1595.001
-```
-
-**方式 C：gRPC/REST API**（Phase 3 后期，供 Python agent 框架调用）
 
 ---
 
@@ -286,131 +364,195 @@ sysbox predict submit \
 ```
 sysbox/
 ├── pkg/
+│   ├── hook/
+│   │   ├── hook.go            # ToolCall 结构 + Hook wrapper 接口
+│   │   ├── extractor.go       # Extractor 接口 + RuleExtractor 实现
+│   │   ├── writer.go          # PredictionWriter（写 predictions.jsonl）
+│   │   └── hook_test.go
+│   │
 │   └── matcher/
-│       ├── matcher.go          # Matcher 核心逻辑
-│       ├── prediction.go       # Prediction + ExpectedEvent 数据结构
-│       ├── ioc.go              # IoC 规则引擎
-│       ├── match_report.go     # MatchReport + Reward 计算
+│       ├── prediction.go      # Prediction + ExpectedEvent 数据结构
+│       ├── matcher.go         # Prediction Matcher 核心逻辑
+│       ├── ioc.go             # IoC Rule Engine（独立扫描）
+│       ├── match_report.go    # MatchReport + Reward 计算
 │       └── matcher_test.go
 │
-├── rules/                      # 内置 IoC 规则（YAML）
-│   ├── execution.yaml          # execve 类：nmap/masscan/netcat/python...
-│   ├── credential.yaml         # openat 类：/etc/shadow /root/.ssh...
-│   ├── network.yaml            # connect 类：内网扫描/C2 连接
-│   └── lateral.yaml            # 横向移动：SSH/RDP/SMB
+├── rules/
+│   ├── extraction/            # Hook extractor 规则（tool_call → syscalls）
+│   │   ├── network_scan.yaml
+│   │   ├── credential.yaml
+│   │   ├── lateral.yaml
+│   │   └── exploit.yaml
+│   └── ioc/                   # IoC 独立检测规则
+│       ├── execution.yaml
+│       ├── credential.yaml
+│       ├── network.yaml
+│       └── lateral.yaml
 │
 ├── cmd/sysbox/commands/
-│   ├── predict_cmd.go          # sysbox predict submit/list
-│   └── match_cmd.go            # sysbox match run / sysbox match report
+│   ├── predict_cmd.go         # sysbox predict list/submit
+│   └── match_cmd.go           # sysbox match run / report
 │
 └── tests/e2e/
-    └── matcher_test.go         # E2E: agent predicts → tracee captures → match verified
+    └── matcher_test.go        # TestMatcherBasic / TestMatcherUnscripted / TestMatcherWebshell
 ```
 
 ---
 
 ## 实现 Tasks
 
-### Task 1: Prediction 数据结构 + 文件 IO
+### Task 1: pkg/hook — Hook Layer + Rule Extractor
 
-- `pkg/matcher/prediction.go`：Prediction、ExpectedEvent 数据结构
-- JSONL 读写（`predictions.jsonl`）
-- `sysbox predict submit` CLI
+- `hook.go`: ToolCall 结构，Hook wrapper
+- `extractor.go`: RuleExtractor（加载 `rules/extraction/*.yaml`，匹配 command 关键词）
+- `writer.go`: PredictionWriter（append to `predictions.jsonl`）
+- `rules/extraction/*.yaml`: 4 个规则文件，各 ≥3 条规则
+- 单元测试
 
-### Task 2: IoC 规则引擎
+### Task 2: pkg/matcher — Prediction + IoC + MatchReport
 
-- `pkg/matcher/ioc.go`：YAML 规则加载 + 匹配
-- `rules/*.yaml`：4 个内置规则文件，覆盖常见攻击工具
-- 单元测试：每条规则的匹配/不匹配
+- `prediction.go`: 数据结构 + JSONL IO
+- `matcher.go`: 时间窗口过滤 + partial arg match + IoC scan
+- `ioc.go`: IoC Rule Engine（加载 `rules/ioc/*.yaml`）
+- `match_report.go`: MatchReport 生成 + Reward 计算
+- `rules/ioc/*.yaml`: 4 个规则文件
+- 单元测试（命中/未命中/unscripted 三种路径）
 
-### Task 3: Prediction Matcher 核心
-
-- `pkg/matcher/matcher.go`：时间窗口过滤 + partial arg match + IoC scan
-- `pkg/matcher/match_report.go`：MatchReport 生成 + Reward 计算
-- 单元测试：命中/未命中/unscripted 三种路径
-
-### Task 4: `sysbox match` CLI
+### Task 3: CLI 命令
 
 ```bash
-# 对一次 run 的所有 predictions 跑 Matcher
+# 查看当前 run 的 predictions
+sysbox predict list --state runs/default/state.json
+
+# 手动提交 prediction（调试用）
+sysbox predict submit --node node_a --step 5 --command "nmap 10.0.1.0/24"
+
+# 运行 Matcher
 sysbox match run \
     --events runs/default/events.jsonl \
     --predictions runs/default/predictions.jsonl \
     --rules rules/ \
     --output runs/default/match_report.json
 
-# 显示 match report 摘要
+# 显示摘要
 sysbox match report --run runs/default/
 ```
 
-### Task 5: Event Schema 更新
+### Task 4: Event Schema 更新
 
-- 更新 `sensor.Event`：去掉 `session_id` 作为主要字段（保留为可选外部 trace 关联）
-- 由 Matcher 在输出 `match_report.json` 时填充 `matched_prediction/ttp/ioc`
-- 原始 `events.jsonl` 保持干净（只有原始 tracee 数据）
-- Matcher 输出的是带归因的 `annotated_events.jsonl`（不修改原始文件）
+- 更新 `sensor.Event`（添加 Matcher 填充字段，保持向后兼容）
+- 原始 `events.jsonl` 只含 tracee 数据
+- Matcher 输出 `annotated_events.jsonl`
+
+### Task 5: Python Hook SDK（供 agent 框架接入）
+
+```python
+# python/sysbox_hook/hook.py
+# 供 Claude Code / LangChain / AutoGen 等 agent 框架使用
+
+from sysbox_hook import SysboxHook
+
+hook = SysboxHook(
+    predictions_file="runs/default/predictions.jsonl",
+    rules_dir="rules/extraction/",
+    run_id="langfuse-run-abc",
+)
+
+# 包装 tool executor
+@hook.wrap_tool(node="node_a")
+def bash_exec(command: str) -> str:
+    # 原始 tool 逻辑
+    return subprocess.run(command, shell=True, capture_output=True).stdout
+```
 
 ### Task 6: E2E 测试
 
 ```
-TestMatcherBasic:
-  1. 启动 sysbox field（apply）
-  2. sysbox sensor start
-  3. 提交 prediction：execve(nmap) on node_a
-  4. SSH into node_a: run nmap
+TestMatcherBasic（需 root + docker）：
+  1. sysbox apply field（node + network）
+  2. sensor start（tracee 全量）
+  3. hook.Extract("nmap 10.0.1.0/24") → prediction
+  4. SSH into node_a: nmap
   5. sysbox match run
-  6. Assert: match_report.json 有 prediction_hit_rate == 1.0
-  7. Assert: matched event 的 ttp == "T1595.001"
+  6. Assert: prediction_hit_rate == 1.0, ttp == "T1595.001"
 
-TestMatcherUnscripted:
+TestMatcherUnscripted（需 root + docker）：
   1. 启动 field + sensor
-  2. 不提交 prediction
-  3. SSH into node_a: run nmap
+  2. 不提交任何 prediction
+  3. SSH into node_a: nmap
   4. sysbox match run
   5. Assert: unscripted_iocs 包含 nmap execve
-  6. Assert: reward < 0 （未声明的攻击行为）
+  6. Assert: episode_reward < 0
 
-TestMatcherWebshell:
-  1. 启动 field（有 web 服务）+ sensor
-  2. 提交 prediction：node_b 上 php-fpm 派生 /bin/sh，execve(/bin/cat)
-  3. Agent 通过 HTTP 打 webshell：curl http://node_b/shell.php?cmd=cat+/etc/passwd
-  4. sysbox match run
-  5. Assert: execve(cat) 被命中，matched_prediction=true
-  6. cgroup 不需要任何配置
+TestMatcherWebshell（需 root + docker + web container）：
+  1. 启动 field（含 php-based web 服务）
+  2. sensor start
+  3. hook.Extract("curl http://node_b/shell.php?cmd=cat+/etc/passwd") → prediction
+  4. 发 HTTP exploit
+  5. sysbox match run
+  6. Assert: openat(/etc/passwd) 被命中，无需 cgroup
+```
+
+---
+
+## IoC 提取模型训练路径（Phase 3.1+）
+
+Phase 3.0 用纯规则，足够覆盖常见攻击工具。模型化在 Phase 3.1 进行：
+
+```
+训练数据格式：
+  input:  {tool_name, command, context}
+  label:  {predicted_events}（从 match_report 提取，hit = 正样本）
+
+训练信号来源：
+  正样本：tool_call 的 predicted_events 在 match_report 里有命中
+  负样本：predicted_events 在 match_report 里未命中
+
+基础模型选型：
+  Qwen-2.5-7B-Instruct（指令微调，支持结构化输出）
+  目标：< 100ms 推理（tool call 是同步调用，需要快）
+
+输入 token 上限：
+  tool_name + command + context（CoT 最近 3 步） ≤ 512 tokens
 ```
 
 ---
 
 ## Phase 3 完成检查清单
 
-**核心 Matcher：**
-- [ ] `sysbox predict submit` 写入 predictions.jsonl
-- [ ] `sysbox match run` 对指定 events.jsonl 跑完整 Matcher
-- [ ] Partial arg match 支持精确/glob/CIDR 三种形式
-- [ ] Reward 公式正确：命中率/漏报/未声明行为三项权重
+**Hook Layer：**
+- [ ] RuleExtractor 加载 `rules/extraction/*.yaml` 正确
+- [ ] `hook.Extract("nmap ...")` 输出 `{execve, connect}` 预测
+- [ ] PredictionWriter 写入 predictions.jsonl
+- [ ] Python SDK `SysboxHook.wrap_tool()` 可用
 
-**IoC 引擎：**
-- [ ] `rules/*.yaml` 加载正常
-- [ ] 4 个内置规则文件各有 ≥3 条规则
-- [ ] IoC 独立于 Prediction 运行（没有 prediction 时也能 scan）
+**Prediction Matcher：**
+- [ ] 时间窗口过滤正确
+- [ ] Partial match 支持精确/glob/pathname_prefix/CIDR/列表
+- [ ] Reward 公式：命中率/漏报/unscripted 三项权重
+
+**IoC Engine：**
+- [ ] `rules/ioc/*.yaml` 加载正确
+- [ ] `ioc-exec-shell-from-webproc` 正确检测 webshell（父进程为 web server）
+
+**CLI：**
+- [ ] `sysbox match run` 输出 `match_report.json`
+- [ ] `sysbox match report` 打印可读摘要
 
 **E2E：**
 - [ ] TestMatcherBasic PASS（prediction_hit_rate == 1.0）
 - [ ] TestMatcherUnscripted PASS（reward < 0）
 - [ ] TestMatcherWebshell PASS（webshell 无需 cgroup）
 
-**集成：**
-- [ ] `match_report.json` 可直接被 Langfuse SDK 读取（作为 span 的 metadata）
-- [ ] `annotated_events.jsonl` 是 `events.jsonl` 的语义增强版
-
 ---
 
 ## Phase 4 起步提示
 
-- **Firecracker substrate**：microVM 替代 Docker，sensor 通过 virtio-serial 回传 guest 事件
-- **Replay Bundle**：`sysbox bundle create` 打包 events + match_report + field.hcl，产出可字节级复现的 dataset artifact
-- **Multi-agent**：多个 agent 同时在 field 里，Matcher 需要按 run_id 隔离归因
-- **Continuous mode**：长时间运行的 field，sensor 和 Matcher 实时流式处理（而不是批处理）
+- **IoC 提取模型**（Phase 3.1）：用 match_report 数据 fine-tune Qwen-7B，自监督循环
+- **Firecracker substrate**：microVM 替代 Docker，sensor 通过 virtio-serial 回传事件
+- **Replay Bundle**：`sysbox bundle create` 打包 events + match_report + field.hcl
+- **Multi-agent**：多 agent 并发演练，按 run_id 隔离归因
+- **Continuous mode**：长时间 field，Matcher 实时流式处理
 
 ---
 

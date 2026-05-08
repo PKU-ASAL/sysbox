@@ -1,0 +1,30 @@
+- id: "ext-ssh-lateral"
+  match:
+    command_contains: ["ssh ", "scp "]
+  predict:
+    - event: execve
+      args: {pathname: "/usr/bin/ssh"}
+    - event: connect
+      args: {remote_port: 22}
+  ttp: "T1021.004"
+
+- id: "ext-nc-listener"
+  match:
+    command_contains: ["nc ", "netcat", "ncat"]
+  predict:
+    - event: execve
+      args: {}
+    - event: connect
+      args: {}
+  ttp: "T1059.004"
+
+- id: "ext-reverse-shell"
+  match:
+    command_contains: ["bash -i", "/dev/tcp", "python -c", "perl -e", "ruby -e"]
+  predict:
+    - event: execve
+      args: {pathname_prefix: "/bin/"}
+    - event: connect
+      args: {}
+  ttp: "T1059"
+  window: 60

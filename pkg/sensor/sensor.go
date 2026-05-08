@@ -11,21 +11,39 @@ package sensor
 
 import "context"
 
-// Event is a minimal, schema-stable observation from inside a node.
+// Event is a normalized observation from a sysbox node.
 //
-// Fields NOT present by design: ProcessTree, EntryPoint, any heuristic
-// classification. Those are Phase 3 Matcher inputs.
+// Raw events (events.jsonl) contain only tracee-observed fields.
+// Matcher-populated fields (matched_prediction, agent_step, ttp, ioc, is_attack)
+// appear only in annotated_events.jsonl produced by `sysbox match run`.
+//
+// Attribution model (Phase 3):
+//   - Prediction Matcher: compares agent tool-call predictions against events
+//   - IoC Engine: scans events for known attack tool signatures
+//   - is_attack = matched_prediction OR ioc != ""
+//
+// session_id is retained as an optional external trace correlation field
+// (e.g. Langfuse run ID), not as the primary attribution mechanism.
 type Event struct {
+	// Raw tracee fields — always present
 	NodeID    string         `json:"node_id"`
-	SessionID string         `json:"session_id,omitempty"` // non-empty iff cgroup_id is a session cgroup
-	CgroupID  uint64         `json:"cgroup_id"`            // raw kernel value; scrubbed before dataset export
-	Timestamp int64          `json:"ts"`                   // unix nanoseconds
+	CgroupID  uint64         `json:"cgroup_id"`  // kernel cgroup id; metadata only in Phase 3
+	Timestamp int64          `json:"ts"`         // unix nanoseconds
 	PID       int            `json:"pid"`
 	PPID      int            `json:"ppid"`
-	Type      string         `json:"type"`  // "syscall" | "net" | "file"
-	Name      string         `json:"name"`  // e.g. "execve"
+	Type      string         `json:"type"`       // "syscall" | "net" | "file"
+	Name      string         `json:"name"`       // e.g. "execve"
 	Args      map[string]any `json:"args"`
-	IsAttack  bool           `json:"is_attack"` // true iff SessionID != ""
+
+	// External trace correlation (optional)
+	SessionID string `json:"session_id,omitempty"` // Langfuse run ID or similar
+
+	// Matcher-populated — only in annotated_events.jsonl
+	MatchedPrediction bool   `json:"matched_prediction,omitempty"`
+	AgentStep         int    `json:"agent_step,omitempty"`
+	TTP               string `json:"ttp,omitempty"`  // MITRE ATT&CK ID
+	IoC               string `json:"ioc,omitempty"`  // IoC rule ID that fired
+	IsAttack          bool   `json:"is_attack"`      // matched_prediction OR ioc != ""
 }
 
 // Sensor observes a running node via an eBPF backend (Tracee).

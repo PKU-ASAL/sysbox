@@ -1,0 +1,29 @@
+- id: "ext-nmap"
+  match:
+    command_contains: ["nmap"]
+  predict:
+    - event: execve
+      args: {pathname: "/usr/bin/nmap"}
+    - event: connect
+      args: {}
+  ttp: "T1595.001"
+
+- id: "ext-masscan"
+  match:
+    command_contains: ["masscan"]
+  predict:
+    - event: execve
+      args: {pathname: "/usr/bin/masscan"}
+    - event: connect
+      args: {}
+  ttp: "T1595.001"
+
+- id: "ext-ping-sweep"
+  match:
+    command_contains: ["ping -c", "fping", "for i in"]
+  predict:
+    - event: execve
+      args: {}
+    - event: connect
+      args: {}
+  ttp: "T1595"
