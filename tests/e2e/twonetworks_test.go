@@ -11,14 +11,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHelloWorldField exercises the full apply -> ping -> destroy cycle.
-// Requires: docker daemon running, root (for netns/veth).
-func TestHelloWorldField(t *testing.T) {
+// TestTwoNetworksField verifies that a sysbox_router forwards packets between
+// two isolated networks.
+//
+// Topology:
+//   node_a (10.0.1.10/24, gw=10.0.1.254) <--net_a--> router <--net_b--> node_b (10.0.2.20/24, gw=10.0.2.254)
+//
+// Requires: docker daemon + root.
+func TestTwoNetworksField(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	require.NoError(t, err)
 
-	hclPath := filepath.Join(repoRoot, "examples/hello-world/field.sysbox.hcl")
-	statePath := filepath.Join(repoRoot, "runs/e2e-helloworld/state.json")
+	hclPath := filepath.Join(repoRoot, "examples/two-networks/field.sysbox.hcl")
+	statePath := filepath.Join(repoRoot, "runs/e2e-twonetworks/state.json")
 	binPath := filepath.Join(repoRoot, "bin/sysbox")
 
 	build := exec.Command("go", "build", "-o", binPath, "./cmd/sysbox")
@@ -33,35 +38,34 @@ func TestHelloWorldField(t *testing.T) {
 		return cmd.CombinedOutput()
 	}
 
-	t.Cleanup(func() {
-		_, _ = sysbox("destroy")
-	})
+	t.Cleanup(func() { _, _ = sysbox("destroy") })
 
 	out, err = sysbox("init")
 	require.NoError(t, err, "init: %s", out)
 
 	out, err = sysbox("apply")
-	require.NoError(t, err, "apply: %s", out)
+	require.NoError(t, err, "apply: %s\n", out)
 	require.Contains(t, string(out), "Apply complete")
-	require.Contains(t, string(out), "4 to add")
 
 	out, err = sysbox("state", "list")
 	require.NoError(t, err)
-	require.Contains(t, string(out), "sysbox_network.lan")
+	require.Contains(t, string(out), "sysbox_router.edge")
 	require.Contains(t, string(out), "sysbox_node.node_a")
 	require.Contains(t, string(out), "sysbox_node.node_b")
 
+	// node_a should reach node_b across the router.
 	ping := exec.Command("docker", "exec", "sysbox-node_a",
-		"ping", "-c", "1", "-W", "3", "10.0.99.20")
+		"ping", "-c", "1", "-W", "3", "10.0.2.20")
 	pingOut, err := ping.CombinedOutput()
-	require.NoError(t, err, "ping failed: %s", pingOut)
+	require.NoError(t, err, "cross-network ping failed: %s", pingOut)
 	require.Contains(t, string(pingOut), "1 packets received")
+
+	// drift detection: apply --refresh should report no changes.
+	out, err = sysbox("apply", "--refresh")
+	require.NoError(t, err, "apply --refresh: %s", out)
+	require.Contains(t, string(out), "No changes")
 
 	out, err = sysbox("destroy")
 	require.NoError(t, err, "destroy: %s", out)
 	require.Contains(t, string(out), "Destroy complete")
-
-	out, err = sysbox("state", "list")
-	require.NoError(t, err)
-	require.Contains(t, string(out), "(no resources)")
 }

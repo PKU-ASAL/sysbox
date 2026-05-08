@@ -64,6 +64,15 @@ func (s *Substrate) AttachTTY(_ context.Context, _ substrate.NodeHandle) (io.Rea
 	return nil, fmt.Errorf("AttachTTY: not implemented in Phase 1")
 }
 
+// NodeStatus reports true when the container is in the running state.
+func (s *Substrate) NodeStatus(ctx context.Context, h substrate.NodeHandle) (bool, error) {
+	ins, err := s.cli.ContainerInspect(ctx, h.ID)
+	if err != nil {
+		return false, nil // container gone
+	}
+	return ins.State.Running, nil
+}
+
 func (s *Substrate) ObservationHook(ctx context.Context, h substrate.NodeHandle) (substrate.ObservationTarget, error) {
 	ins, err := s.cli.ContainerInspect(ctx, h.ID)
 	if err != nil {

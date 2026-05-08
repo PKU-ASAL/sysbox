@@ -95,19 +95,23 @@ func attachVethToContainer(nic substrate.NIC, sourceNetnsName string, containerP
 		return fmt.Errorf("find link after move: %w", err)
 	}
 
-	// Bring loopback up while we're here.
 	if lo, err := netlink.LinkByName("lo"); err == nil {
 		_ = netlink.LinkSetUp(lo)
+	}
+
+	target := nic.TargetName
+	if target == "" {
+		target = "eth0"
 	}
 
 	if err := netlink.LinkSetDown(containerLink); err != nil {
 		return fmt.Errorf("set link down before rename: %w", err)
 	}
-	if err := netlink.LinkSetName(containerLink, "eth0"); err != nil {
-		return fmt.Errorf("rename to eth0: %w", err)
+	if err := netlink.LinkSetName(containerLink, target); err != nil {
+		return fmt.Errorf("rename to %s: %w", target, err)
 	}
 
-	containerLink, err = netlink.LinkByName("eth0")
+	containerLink, err = netlink.LinkByName(target)
 	if err != nil {
 		return err
 	}

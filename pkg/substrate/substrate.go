@@ -34,4 +34,8 @@ type Substrate interface {
 	AttachNIC(ctx context.Context, handle NodeHandle, nic NIC) error
 
 	ObservationHook(ctx context.Context, handle NodeHandle) (ObservationTarget, error)
+
+	// NodeStatus reports whether the node is healthy (running and reachable).
+	// Used by drift detection; a false result triggers a Change entry in the plan.
+	NodeStatus(ctx context.Context, handle NodeHandle) (bool, error)
 }

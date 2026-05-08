@@ -65,7 +65,7 @@ type ImageConfig struct {
 
 type FirewallConfig struct {
 	AttachTo string         `hcl:"attach_to"`
-	Rules    []FirewallRule `hcl:"rules"`
+	Rules    []FirewallRule `hcl:"rule,block"`
 }
 
 type FirewallRule struct {
@@ -76,14 +76,15 @@ type FirewallRule struct {
 }
 
 type RouterConfig struct {
-	Substrate  string                     `hcl:"substrate"`
-	Image      string                     `hcl:"image"`
-	Interfaces map[string]RouterInterface `hcl:"interfaces"`
-	NatFrom    string                     `hcl:"nat_from,optional"`
-	NatTo      string                     `hcl:"nat_to,optional"`
+	Substrate  string            `hcl:"substrate"`
+	Image      string            `hcl:"image"`
+	Interfaces []RouterInterface `hcl:"interface,block"`
+	NatFrom    string            `hcl:"nat_from,optional"` // interface name (label)
+	NatTo      string            `hcl:"nat_to,optional"`   // interface name (label)
 }
 
 type RouterInterface struct {
+	Name    string `hcl:"name,label"`
 	Network string `hcl:"network"`
 	IP      string `hcl:"ip"`
 }

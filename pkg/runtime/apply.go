@@ -5,23 +5,43 @@ import (
 	"fmt"
 )
 
-// Apply walks the plan forward: create everything in Add in topo order.
+// Apply walks the plan forward: create Add resources and re-create Change
+// (drifted) resources, both in topo order.
 func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 	order, err := e.graph.TopoSort()
 	if err != nil {
 		return err
 	}
 
-	toAdd := map[string]bool{}
+	toCreate := map[string]bool{}
 	for _, id := range plan.Add {
-		toAdd[id.String()] = true
+		toCreate[id.String()] = true
+	}
+
+	// For drifted resources: destroy first (remove from state), then recreate.
+	for _, id := range plan.Change {
+		r := e.state.FindResource(id.Type, id.Name)
+		if r != nil {
+			fmt.Printf("[apply] removing drifted %s before re-create\n", id)
+			if err := e.DestroyResource(ctx, *r); err != nil {
+				fmt.Printf("[apply] warning: cleanup of drifted %s failed: %v\n", id, err)
+			}
+		}
+		toCreate[id.String()] = true
 	}
 
 	for _, id := range order {
-		if !toAdd[id.String()] {
+		if !toCreate[id.String()] {
 			continue
 		}
-		fmt.Printf("[apply] creating %s\n", id)
+		verb := "creating"
+		for _, c := range plan.Change {
+			if c == id {
+				verb = "re-creating"
+				break
+			}
+		}
+		fmt.Printf("[apply] %s %s\n", verb, id)
 		if err := e.CreateResource(ctx, id); err != nil {
 			return fmt.Errorf("create %s: %w", id, err)
 		}

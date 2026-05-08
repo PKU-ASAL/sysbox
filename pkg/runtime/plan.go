@@ -14,6 +14,9 @@ type Plan struct {
 	Add       []graph.NodeID
 	Destroy   []state.Resource
 	Unchanged []graph.NodeID
+	// Change contains resources present in both graph and state but found
+	// to be unhealthy by Refresh (drift detection). Apply will re-create them.
+	Change []graph.NodeID
 }
 
 // ComputePlan diffs the graph vs state.
@@ -51,10 +54,10 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 }
 
 func (p *Plan) HasChanges() bool {
-	return len(p.Add) > 0 || len(p.Destroy) > 0
+	return len(p.Add) > 0 || len(p.Destroy) > 0 || len(p.Change) > 0
 }
 
 func (p *Plan) Summary() string {
-	return fmt.Sprintf("Plan: %d to add, %d to destroy, %d unchanged.",
-		len(p.Add), len(p.Destroy), len(p.Unchanged))
+	return fmt.Sprintf("Plan: %d to add, %d to change, %d to destroy, %d unchanged.",
+		len(p.Add), len(p.Change), len(p.Destroy), len(p.Unchanged))
 }

@@ -25,6 +25,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		&container.HostConfig{
 			NetworkMode: "none",
 			CapAdd:      []string{"NET_ADMIN"},
+			Sysctls:     spec.Sysctls,
 		},
 		&network.NetworkingConfig{},
 		nil,

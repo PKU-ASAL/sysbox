@@ -38,6 +38,10 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 		return e.createImage(ctx, node)
 	case "sysbox_node":
 		return e.createNode(ctx, node)
+	case "sysbox_router":
+		return e.createRouter(ctx, node)
+	case "sysbox_firewall":
+		return e.createFirewall(ctx, node)
 	default:
 		return nil
 	}
@@ -50,9 +54,13 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 		return e.destroyNetwork(ctx, r)
 	case "sysbox_node":
 		return e.destroyNode(ctx, r)
+	case "sysbox_router":
+		return e.destroyRouter(ctx, r)
 	case "sysbox_image":
 		e.state.RemoveResource(r.Type, r.Name)
 		return nil
+	case "sysbox_firewall":
+		return e.destroyFirewall(ctx, r)
 	default:
 		return fmt.Errorf("unhandled destroy for %q", r.Type)
 	}
@@ -192,8 +200,8 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			_ = sub.DestroyNode(ctx, handle)
 			return err
 		}
+		nic.TargetName = fmt.Sprintf("eth%d", i)
 
-		// Tell the substrate where the guest-end currently lives.
 		handleWithSrc := substrate.NodeHandle{
 			ID: handle.ID,
 			Attributes: map[string]any{
@@ -205,10 +213,11 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			return err
 		}
 		nics = append(nics, map[string]any{
-			"host_end":  nic.HostEnd,
-			"guest_end": nic.GuestEnd,
-			"ip":        nic.IP,
-			"netns":     netNetns,
+			"host_end":   nic.HostEnd,
+			"guest_end":  nic.GuestEnd,
+			"target":     nic.TargetName,
+			"ip":         nic.IP,
+			"netns":      netNetns,
 		})
 	}
 
@@ -268,13 +277,10 @@ func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link 
 		guestEnd = guestEnd[:15]
 	}
 
+	// Only set a default gateway when explicitly requested by the caller.
+	// Router interfaces intentionally omit gw so they don't compete for the
+	// default route.
 	gateway := link.Gateway
-	if gateway == "" {
-		// Fall back to network's gateway IP (without /mask).
-		if gw := asString(netState.Instance["gateway"]); gw != "" {
-			gateway = strings.SplitN(gw, "/", 2)[0]
-		}
-	}
 
 	nsName := asString(netState.Instance["netns"])
 	brName := asString(netState.Instance["bridge"])

@@ -16,11 +16,12 @@ type ImageRef struct {
 }
 
 type NodeSpec struct {
-	Name   string
-	Image  ImageRef
-	VCPUs  int
-	Memory string
-	Env    map[string]string
+	Name    string
+	Image   ImageRef
+	VCPUs   int
+	Memory  string
+	Env     map[string]string
+	Sysctls map[string]string // passed to container runtime at create time
 }
 
 type NodeHandle struct {
@@ -41,13 +42,14 @@ type ExecResult struct {
 }
 
 type NIC struct {
-	Kind     string // "veth" | "tap"
-	HostEnd  string
-	GuestEnd string
-	MAC      string
-	IP       string // CIDR notation e.g. "10.0.1.10/24"
-	Gateway  string
-	MTU      int
+	Kind       string // "veth" | "tap"
+	HostEnd    string
+	GuestEnd   string
+	TargetName string // interface name inside the guest (e.g. "eth0", "eth1"); defaults to "eth0"
+	MAC        string
+	IP         string // CIDR notation e.g. "10.0.1.10/24"
+	Gateway    string
+	MTU        int
 }
 
 type Capabilities struct {

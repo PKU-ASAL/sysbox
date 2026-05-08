@@ -9,10 +9,16 @@ import (
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
+var flagApplyRefresh bool
+
 var applyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply the plan: provision missing resources",
 	RunE:  runApply,
+}
+
+func init() {
+	applyCmd.Flags().BoolVar(&flagApplyRefresh, "refresh", false, "probe existing resources for drift before applying")
 }
 
 func runApply(cmd *cobra.Command, args []string) error {
@@ -30,9 +36,12 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println(plan.Summary())
-
 	exec := runtime.NewExecutor(g, s)
+	if flagApplyRefresh {
+		exec.Refresh(context.Background(), plan)
+	}
+
+	fmt.Println(plan.Summary())
 	if err := exec.Apply(context.Background(), plan); err != nil {
 		_ = mgr.Save(s)
 		return fmt.Errorf("apply: %w", err)
