@@ -6,10 +6,12 @@
 //   - Layer 1 (no root):    Registry register/resolve flow via sysbox CLI
 //   - Layer 2 (root):       Real cgroup session creation + Labeler annotation
 //   - Layer 3 (docker grp): Live tracee events via docker run --privileged
+//   - Layer 4 (root+docker): FULL path — tracee sees real cgroup session events
 //
-// Run all:  sudo -E go test ./tests/e2e/... -tags=e2e -v -run TestPhase2 -timeout 5m
-// Layer 1:  go test ./tests/e2e/... -tags=e2e -v -run TestPhase2Registry
-// Layer 3:  go test ./tests/e2e/... -tags=e2e -v -run TestPhase2LiveTracee
+// Run all (needs root):     sudo -E go test ./tests/e2e/... -tags=e2e -v -run TestPhase2 -timeout 5m
+// Layer 1 (no root):        go test ./tests/e2e/... -tags=e2e -v -run TestPhase2Registry
+// Layer 3 (docker group):   go test ./tests/e2e/... -tags=e2e -v -run TestPhase2LiveTracee
+// Full path (root+docker):  sudo -E go test ./tests/e2e/... -tags=e2e -v -run TestPhase2SensorAnnotation
 package e2e
 
 import (
@@ -23,6 +25,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"syscall"
 
 	"github.com/stretchr/testify/require"
 
@@ -323,6 +327,370 @@ func TestPhase2FullFlow(t *testing.T) {
 		nmap.SessionID)
 }
 
+// ─── Layer 4: full path — real tracee + real cgroup → session_id in events ──
+
+// TestPhase2SensorAnnotation is the definitive Phase 2 end-to-end test.
+//
+// It validates the complete sensor pipeline:
+//
+//	session cgroup created on host
+//	  → container process moved into cgroup
+//	  → Labeler maps cgroup_id → session_id
+//	  → tracee sees execve events from container
+//	  → events annotated with session_id != "" and is_attack == true
+//	  → events written to events.jsonl
+//
+// This test requires root (cgroup write access) and docker group membership.
+// Run with:  sudo -E go test ./tests/e2e/... -tags=e2e -v -run TestPhase2SensorAnnotation
+func TestPhase2SensorAnnotation(t *testing.T) {
+	requireRoot(t)
+	requireDocker(t)
+
+	const containerName = "sysbox-p2-annotation-test"
+	forceCleanupContainer(t, containerName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	// 1. Start target container.
+	out, err := exec.CommandContext(ctx, "docker", "run", "-d",
+		"--name", containerName,
+		"alpine:latest", "sleep", "120",
+	).CombinedOutput()
+	require.NoError(t, err, "docker run: %s", out)
+	containerID := strings.TrimSpace(string(out))
+	defer exec.Command("docker", "rm", "-f", containerName).Run()
+	t.Logf("Container started: %s", containerID[:12])
+
+	// 2. Create session cgroup on host and move container's init PID into it.
+	containerPID, err := getContainerPID(ctx, containerName)
+	require.NoError(t, err)
+	require.Greater(t, containerPID, 0)
+
+	nodeID := "p2-annotation-node"
+	sessionID := "annotate-session-" + fmt.Sprintf("%d", time.Now().UnixNano())
+
+	require.NoError(t, session.EnsureSliceExists(nodeID))
+	cgroupID, err := session.CreateSessionCgroup(nodeID, sessionID)
+	require.NoError(t, err)
+	t.Logf("Session cgroup created: id=%d session=%s", cgroupID, sessionID)
+	defer func() {
+		// cgroup.procs must be empty before deletion; processes exit when container stops.
+		session.DeleteSessionCgroup(nodeID, sessionID)
+	}()
+
+	// Move container's init PID to session cgroup.
+	require.NoError(t, session.MoveProcess(nodeID, sessionID, containerPID))
+	t.Logf("Moved container PID %d to session cgroup", containerPID)
+
+	// 3. Start Labeler and register the mapping.
+	lab := session.NewLabeler()
+	lab.RegisterSession(cgroupID, sessionID)
+
+	// 4. Start tracee sensor (via docker run --privileged, no root needed for docker).
+	backend := sensor.NewDockerTraceeBackend("aquasec/tracee:0.22.0", lab)
+	ch, err := backend.Start(ctx, nodeID, containerID)
+	require.NoError(t, err)
+	t.Log("tracee started, waiting for eBPF initialization (~5s)...")
+
+	// 5. Give tracee time to load eBPF programs, then trigger activity.
+	time.Sleep(6 * time.Second)
+
+	// Trigger 3 execve events from inside the session container.
+	for i := 0; i < 3; i++ {
+		exec.Command("docker", "exec", containerName, "ls", "/tmp").Run()
+		time.Sleep(300 * time.Millisecond)
+	}
+	exec.Command("docker", "exec", containerName, "sh", "-c", "echo hello > /tmp/test").Run()
+	time.Sleep(2 * time.Second)
+
+	// 6. Stop tracee and collect events.
+	backend.Stop()
+	var events []sensor.Event
+	drainDone := make(chan struct{})
+	go func() {
+		defer close(drainDone)
+		for ev := range ch {
+			events = append(events, ev)
+		}
+	}()
+	select {
+	case <-drainDone:
+	case <-time.After(5 * time.Second):
+	}
+
+	t.Logf("Collected %d events total", len(events))
+	require.Greater(t, len(events), 0, "tracee must produce at least one event")
+
+	// 7. Write to JSONL.
+	dir := t.TempDir()
+	eventsPath := filepath.Join(dir, "events.jsonl")
+	sk := sink.NewJSONLSink(eventsPath)
+	for _, ev := range events {
+		require.NoError(t, sk.Write(ev))
+	}
+	require.NoError(t, sk.Close())
+
+	// 8. Core assertion: at least one event from the session container
+	// has session_id != "" and is_attack == true.
+	var sessionEvents []sensor.Event
+	var nonSessionEvents []sensor.Event
+	for _, ev := range events {
+		if ev.SessionID != "" {
+			sessionEvents = append(sessionEvents, ev)
+		} else {
+			nonSessionEvents = append(nonSessionEvents, ev)
+		}
+	}
+
+	t.Logf("Session events (is_attack=true):     %d", len(sessionEvents))
+	t.Logf("Non-session events (is_attack=false): %d", len(nonSessionEvents))
+
+	require.Greater(t, len(sessionEvents), 0,
+		"CRITICAL: no events with session_id != ''; "+
+			"the session cgroup → Labeler → tracee annotation chain is broken. "+
+			"Container cgroupID=%d sessionID=%s", cgroupID, sessionID)
+
+	// Verify all session events have correct values.
+	for _, ev := range sessionEvents {
+		require.Equal(t, sessionID, ev.SessionID)
+		require.True(t, ev.IsAttack)
+		require.Equal(t, cgroupID, ev.CgroupID)
+	}
+
+	// Verify non-session events are correctly NOT annotated.
+	for _, ev := range nonSessionEvents {
+		require.Empty(t, ev.SessionID)
+		require.False(t, ev.IsAttack)
+	}
+
+	t.Logf("✓ Phase 2 sensor annotation VERIFIED: %d session events, all with session_id=%s",
+		len(sessionEvents), sessionID)
+	t.Logf("✓ events.jsonl written to: %s", eventsPath)
+}
+
+// TestPhase2SensorAnnotationNoRoot is the key Phase 2 integration test that
+// runs WITHOUT root.
+//
+// It validates the complete live tracee annotation pipeline:
+//
+//	container's existing cgroup_id (read from /proc, no root) registered in Labeler
+//	  → tracee sees real execve events from container
+//	  → Labeler annotates events: session_id != "", is_attack == true
+//	  → events written to events.jsonl
+//
+// This proves the sensor annotation chain works end-to-end with real kernel events.
+// The only difference from production is that cgroup creation is skipped (using
+// the container's own cgroup rather than a dedicated session cgroup), which is
+// the root-only part tested separately in TestPhase2SessionCgroup.
+//
+// Run with:  go test ./tests/e2e/... -tags=e2e -v -run TestPhase2SensorAnnotationNoRoot -timeout 60s
+func TestPhase2SensorAnnotationNoRoot(t *testing.T) {
+	requireDocker(t)
+
+	const containerName = "sysbox-p2-annot-noroot"
+	forceCleanupContainer(t, containerName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// 1. Start container.
+	out, err := exec.CommandContext(ctx, "docker", "run", "-d",
+		"--name", containerName,
+		"alpine:latest", "sleep", "120",
+	).CombinedOutput()
+	require.NoError(t, err, "docker run: %s", out)
+	containerID := strings.TrimSpace(string(out))
+	defer exec.Command("docker", "rm", "-f", containerName).Run()
+
+	containerPID, err := getContainerPID(ctx, containerName)
+	require.NoError(t, err)
+
+	// 2. Read the container's cgroup_id from /proc (no root needed).
+	cgroupID, err := containerCgroupID(containerPID)
+	require.NoError(t, err, "could not read container cgroup_id from /proc")
+	require.Greater(t, cgroupID, uint64(0))
+	t.Logf("Container cgroup_id=%d (from /proc/%d/cgroup)", cgroupID, containerPID)
+
+	// 3. Register this cgroup_id as a session in the Labeler.
+	// In production, this mapping is created after hook→sensor socket notification.
+	// Here we shortcut: register the container's OWN cgroup so all its events
+	// appear as "session" events, proving the annotation pipeline works.
+	sessionID := "noroot-session-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	lab := session.NewLabeler()
+	lab.RegisterSession(cgroupID, sessionID)
+	t.Logf("Registered: cgroup_id=%d → session_id=%s", cgroupID, sessionID)
+
+	// 4. Start tracee (docker mode, no root needed).
+	backend := sensor.NewDockerTraceeBackend("aquasec/tracee:0.22.0", lab)
+	ch, err := backend.Start(ctx, "noroot-node", containerID)
+	require.NoError(t, err)
+	t.Log("tracee started, waiting for eBPF init (~6s)...")
+	time.Sleep(6 * time.Second)
+
+	// 5. Trigger execve events inside the container.
+	for i := 0; i < 5; i++ {
+		exec.Command("docker", "exec", containerName, "ls", "/etc").Run()
+		time.Sleep(200 * time.Millisecond)
+	}
+	time.Sleep(2 * time.Second)
+
+	// 6. Stop and collect.
+	backend.Stop()
+	var allEvents, sessionEvents []sensor.Event
+	drainTimer := time.After(5 * time.Second)
+drain:
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				break drain
+			}
+			allEvents = append(allEvents, ev)
+			if ev.SessionID != "" {
+				sessionEvents = append(sessionEvents, ev)
+			}
+		case <-drainTimer:
+			break drain
+		}
+	}
+
+	t.Logf("Total events: %d  |  Session events (is_attack=true): %d", len(allEvents), len(sessionEvents))
+	require.Greater(t, len(allEvents), 0, "tracee must produce events")
+
+	// 7. Core assertion: events from the registered cgroup must be annotated.
+	require.Greater(t, len(sessionEvents), 0,
+		"FAIL: no events with session_id != ''. "+
+			"The labeler should have annotated events from cgroup_id=%d. "+
+			"Got %d total events — check that tracee is reporting cgroup_id in events.",
+		cgroupID, len(allEvents))
+
+	// Verify annotation correctness.
+	for _, ev := range sessionEvents {
+		require.Equal(t, sessionID, ev.SessionID)
+		require.True(t, ev.IsAttack)
+		require.Equal(t, cgroupID, ev.CgroupID)
+	}
+
+	// Write events.jsonl.
+	dir := t.TempDir()
+	eventsPath := filepath.Join(dir, "events.jsonl")
+	sk := sink.NewJSONLSink(eventsPath)
+	for _, ev := range allEvents {
+		sk.Write(ev)
+	}
+	sk.Close()
+
+	t.Logf("✓ PASS: %d session events written to %s", len(sessionEvents), eventsPath)
+	t.Logf("✓ Annotation chain verified: tracee cgroup_id → Labeler → session_id=%s → is_attack=true", sessionID)
+
+	// Print first session event for inspection.
+	if len(sessionEvents) > 0 {
+		b, _ := json.MarshalIndent(sessionEvents[0], "", "  ")
+		t.Logf("Sample session event:\n%s", b)
+	}
+}
+
+// TestPhase2RegisteredSessionIDWithTracee validates the full session register flow
+// with a real tracee backend. The session_id in events.jsonl must match the
+// pre-declared value (not a random UUID).
+//
+// Run with:  sudo -E go test ./tests/e2e/... -tags=e2e -v -run TestPhase2RegisteredSessionIDWithTracee
+func TestPhase2RegisteredSessionIDWithTracee(t *testing.T) {
+	requireRoot(t)
+	requireDocker(t)
+
+	const containerName = "sysbox-p2-registered-test"
+	forceCleanupContainer(t, containerName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	// Start container.
+	out, err := exec.CommandContext(ctx, "docker", "run", "-d",
+		"--name", containerName,
+		"alpine:latest", "sleep", "120",
+	).CombinedOutput()
+	require.NoError(t, err, "docker run: %s", out)
+	containerID := strings.TrimSpace(string(out))
+	defer exec.Command("docker", "rm", "-f", containerName).Run()
+
+	nodeID := "p2-registered-node"
+	// Pre-declared session_id (simulates what `sysbox session register` does).
+	preSessionID := "langfuse-run-xyz789"
+
+	// 1. Register expectation in registry.
+	dir := t.TempDir()
+	reg := session.NewRegistry(filepath.Join(dir, "session-registry.json"))
+	require.NoError(t, reg.Register(session.Expectation{
+		NodeID:    nodeID,
+		SessionID: preSessionID,
+		ExpiresAt: time.Now().Add(2 * time.Minute),
+	}))
+
+	// 2. Simulate hook: resolve from registry → create session cgroup.
+	resolved := reg.Resolve(nodeID, "")
+	require.Equal(t, preSessionID, resolved)
+
+	containerPID, err := getContainerPID(ctx, containerName)
+	require.NoError(t, err)
+
+	require.NoError(t, session.EnsureSliceExists(nodeID))
+	cgroupID, err := session.CreateSessionCgroup(nodeID, resolved)
+	require.NoError(t, err)
+	defer session.DeleteSessionCgroup(nodeID, resolved)
+	require.NoError(t, session.MoveProcess(nodeID, resolved, containerPID))
+
+	// 3. Labeler maps real cgroup_id → pre-declared session_id.
+	lab := session.NewLabeler()
+	lab.RegisterSession(cgroupID, resolved)
+
+	// 4. Start tracee.
+	backend := sensor.NewDockerTraceeBackend("aquasec/tracee:0.22.0", lab)
+	ch, err := backend.Start(ctx, nodeID, containerID)
+	require.NoError(t, err)
+
+	t.Log("waiting for tracee eBPF init...")
+	time.Sleep(6 * time.Second)
+
+	// Trigger activity.
+	exec.Command("docker", "exec", containerName, "ls", "/etc").Run()
+	exec.Command("docker", "exec", containerName, "cat", "/etc/hostname").Run()
+	time.Sleep(2 * time.Second)
+
+	backend.Stop()
+
+	// Collect events.
+	var sessionEvents []sensor.Event
+	drainTimer := time.After(5 * time.Second)
+loop:
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				break loop
+			}
+			if ev.SessionID != "" {
+				sessionEvents = append(sessionEvents, ev)
+			}
+		case <-drainTimer:
+			break loop
+		}
+	}
+
+	t.Logf("Session events collected: %d", len(sessionEvents))
+	require.Greater(t, len(sessionEvents), 0,
+		"expected events with session_id=%s in events.jsonl", preSessionID)
+
+	for _, ev := range sessionEvents {
+		require.Equal(t, preSessionID, ev.SessionID,
+			"all session events must carry the pre-declared session_id, not a random UUID")
+		require.True(t, ev.IsAttack)
+	}
+
+	t.Logf("✓ session_id=%s flows end-to-end: registry → cgroup → tracee → events", preSessionID)
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 func requireRoot(t *testing.T) {
@@ -368,6 +736,30 @@ func assertEventsFileContains(t *testing.T, path string, match func(sensor.Event
 		}
 	}
 	t.Fatalf("no matching event in %s", path)
+}
+
+// containerCgroupID reads the cgroup_id of a running container's init process
+// from /proc/<pid>/cgroup without root privileges.
+// Returns the inode of the cgroup directory (same value tracee reports as cgroupId).
+func containerCgroupID(containerPID int) (uint64, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", containerPID))
+	if err != nil {
+		return 0, fmt.Errorf("read /proc/%d/cgroup: %w", containerPID, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "0::") {
+			continue
+		}
+		rel := strings.TrimPrefix(line, "0::")
+		rel = strings.TrimSpace(rel)
+		fullPath := "/sys/fs/cgroup" + rel
+		var st syscall.Stat_t
+		if err := syscall.Stat(fullPath, &st); err != nil {
+			return 0, fmt.Errorf("stat %s: %w", fullPath, err)
+		}
+		return st.Ino, nil
+	}
+	return 0, fmt.Errorf("no cgroup v2 entry in /proc/%d/cgroup", containerPID)
 }
 
 func parseEventsFile(t *testing.T, path string) []sensor.Event {
