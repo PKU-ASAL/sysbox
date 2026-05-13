@@ -44,6 +44,9 @@ type RuleExtractor struct {
 	rules []ExtractionRule
 }
 
+// Rules returns all loaded extraction rules (used by CLI status output).
+func (e *RuleExtractor) Rules() []ExtractionRule { return e.rules }
+
 // NewRuleExtractor loads all YAML rule files from a directory.
 func NewRuleExtractor(rulesDir string) (*RuleExtractor, error) {
 	e := &RuleExtractor{}

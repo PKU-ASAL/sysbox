@@ -79,9 +79,10 @@ func matchIoC(rule IoCRule, ev sensor.Event) bool {
 
 	// Optional process name filter.
 	if len(rule.ProcessName) > 0 {
+		procName, _ := ev.Args["processName"].(string)
 		matched := false
 		for _, pn := range rule.ProcessName {
-			if strings.EqualFold(pn, ev.Args["processName"].(string)) {
+			if strings.EqualFold(pn, procName) {
 				matched = true
 				break
 			}

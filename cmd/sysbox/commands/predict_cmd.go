@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -110,10 +111,9 @@ func predictionsPath() string {
 }
 
 func findRulesDir() string {
-	// Look for rules/ relative to the binary location or current directory.
 	candidates := []string{"rules", "../rules", "../../rules"}
 	for _, c := range candidates {
-		if _, err := fmt.Sscanf(c, "%s", new(string)); err == nil {
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
 			return c
 		}
 	}

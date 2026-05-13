@@ -43,5 +43,9 @@ e2e-sensor:
 	fi
 	$(GO) test ./tests/e2e/... -tags=e2e -v -run TestPhase2 -timeout 5m
 
+# Phase 3 Matcher tests — no root/docker required.
+e2e-matcher:
+	$(GO) test ./tests/e2e/... -tags=e2e -v -run TestMatcher -timeout 60s
+
 install: build
 	install -m 0755 bin/sysbox /usr/local/bin/sysbox
