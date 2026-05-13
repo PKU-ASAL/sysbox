@@ -53,6 +53,36 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 	return p, nil
 }
 
+// FilterPlanByTarget returns a new Plan restricted to a single resource.
+// Resources not matching type+name are moved to Unchanged.
+func FilterPlanByTarget(p *Plan, typ, name string) *Plan {
+	matches := func(id graph.NodeID) bool {
+		return id.Type == typ && id.Name == name
+	}
+	out := &Plan{}
+	for _, id := range p.Add {
+		if matches(id) {
+			out.Add = append(out.Add, id)
+		} else {
+			out.Unchanged = append(out.Unchanged, id)
+		}
+	}
+	for _, id := range p.Change {
+		if matches(id) {
+			out.Change = append(out.Change, id)
+		} else {
+			out.Unchanged = append(out.Unchanged, id)
+		}
+	}
+	for _, r := range p.Destroy {
+		if r.Type == typ && r.Name == name {
+			out.Destroy = append(out.Destroy, r)
+		}
+	}
+	out.Unchanged = append(out.Unchanged, p.Unchanged...)
+	return out
+}
+
 func (p *Plan) HasChanges() bool {
 	return len(p.Add) > 0 || len(p.Destroy) > 0 || len(p.Change) > 0
 }

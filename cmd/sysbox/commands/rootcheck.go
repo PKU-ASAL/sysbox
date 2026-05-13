@@ -5,13 +5,14 @@ import (
 	"os"
 )
 
-// requireRoot exits with a clear message if the process is not running as root.
-// Network namespace and netlink operations need CAP_NET_ADMIN / root.
+// requireRoot exits if not running as root.
+// Network namespace creation requires CAP_SYS_ADMIN + write access to
+// /run/netns/ — both effectively require uid 0.
 func requireRoot() {
 	if os.Getuid() != 0 {
 		fmt.Fprintln(os.Stderr,
-			"error: sysbox requires root for netns/netlink operations\n"+
-				"       re-run with: sudo -E sysbox ...")
+			"error: sysbox apply/destroy require root (netns creation + /run/netns/ write).\n"+
+				"  Run: sudo -E sysbox apply ...")
 		os.Exit(1)
 	}
 }

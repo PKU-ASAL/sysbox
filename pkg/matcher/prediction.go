@@ -1,10 +1,12 @@
 // Package matcher implements the Phase 3 Prediction Matcher and IoC Rule Engine.
 //
 // Attribution model:
-//  1. Hook layer intercepts agent tool calls → IoC Extractor → Prediction
-//  2. Prediction Matcher joins Predictions against full tracee event stream
-//  3. IoC Engine independently scans all events for known attack signatures
-//  4. Match Report aggregates per-step results → RL reward signal
+//  1. Observation layer records per-step bash timestamps (StartTS/EndTS in ms)
+//     via the opencode SSE stream or the hook PreToolUse/PostToolUse callbacks.
+//  2. Prediction Matcher joins Predictions against the full tracee event stream
+//     using the exact bash execution window [StartTS, EndTS+buffer].
+//  3. IoC Engine independently scans all in-window events for attack signatures.
+//  4. Match Report aggregates per-step results → RL reward signal.
 package matcher
 
 import (
@@ -12,31 +14,37 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"time"
 )
 
-// Prediction represents what the hook layer extracted from one agent tool call.
-// It declares the syscall events expected to occur on a specific node within
-// a time window after the tool call fires.
+// Prediction represents one agent bash step and the events expected within it.
+//
+// Time attribution uses StartTS and EndTS (unix milliseconds).
+//   - StartTS: when the bash command started executing (required).
+//   - EndTS:   when it finished. 0 means still running or unknown;
+//     the matcher uses StartTS+DefaultEndWindowMs as a fallback.
+//
+// ExpectedEvents may be empty (no extraction rules matched); the matcher then
+// scores hit_rate=1.0 and relies solely on unscripted IoC discovery.
 type Prediction struct {
-	RunID         string    `json:"run_id"`
-	AgentStep     int       `json:"agent_step"`
-	Node          string    `json:"node"`           // target node name (matches sensor.Event.NodeID)
-	TimeWindow    int       `json:"time_window"`    // seconds; events must fall in [SubmittedAt, SubmittedAt+window]
-	SubmittedAt   time.Time `json:"submitted_at"`
+	RunID     string `json:"run_id"`
+	AgentStep int    `json:"agent_step"`
+	Node      string `json:"node"` // must match sensor.Event.NodeID
 
-	ExpectedEvents []ExpectedEvent `json:"expected_events"`
-	TTP            string          `json:"ttp,omitempty"`           // MITRE ATT&CK ID
-	ExtractorRule  string          `json:"extractor_rule,omitempty"` // which extraction rule produced this
-	ToolCall       string          `json:"tool_call,omitempty"`      // original tool call (for debugging)
+	// Timestamps from the opencode SSE stream or hook callbacks (unix milliseconds).
+	StartTS int64 `json:"start_ts"`
+	EndTS   int64 `json:"end_ts,omitempty"` // 0 → DefaultEndWindowMs fallback
+
+	ExpectedEvents []ExpectedEvent `json:"expected_events,omitempty"`
+	TTP            string          `json:"ttp,omitempty"`
+	ExtractorRule  string          `json:"extractor_rule,omitempty"`
+	Command        string          `json:"command,omitempty"` // raw bash command (for debugging)
 }
 
 // ExpectedEvent is one expected syscall pattern inside a Prediction.
-// Matching is partial: only the fields present in Args must match
-// (the event may have additional fields).
+// Matching is partial: only the fields present in Args must match.
 type ExpectedEvent struct {
-	Name string         `json:"name"`           // tracee event name, e.g. "execve"
-	Args map[string]any `json:"args,omitempty"` // partial arg match; empty = match any args
+	Name string         `json:"name"`
+	Args map[string]any `json:"args,omitempty"`
 }
 
 // ReadPredictions reads all Predictions from a JSONL file.

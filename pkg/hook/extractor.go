@@ -12,6 +12,9 @@ import (
 	"github.com/oslab/sysbox/pkg/matcher"
 )
 
+// startTS returns the current time in unix milliseconds.
+func startTS() int64 { return time.Now().UnixMilli() }
+
 // Extractor converts a ToolCall into a Prediction.
 type Extractor interface {
 	Extract(call ToolCall) matcher.Prediction
@@ -19,11 +22,10 @@ type Extractor interface {
 
 // ExtractionRule is one rule in a rules/extraction/*.yaml file.
 type ExtractionRule struct {
-	ID      string          `yaml:"id"`
-	Match   ExtractionMatch `yaml:"match"`
+	ID      string           `yaml:"id"`
+	Match   ExtractionMatch  `yaml:"match"`
 	Predict []PredictedEvent `yaml:"predict"`
-	TTP     string          `yaml:"ttp"`
-	Window  int             `yaml:"window,omitempty"` // override default time window
+	TTP     string           `yaml:"ttp"`
 }
 
 type ExtractionMatch struct {
@@ -76,12 +78,11 @@ func NewRuleExtractor(rulesDir string) (*RuleExtractor, error) {
 // (Matcher treats it as a zero-event prediction → hit rate = 1.0 by convention).
 func (e *RuleExtractor) Extract(call ToolCall) matcher.Prediction {
 	pred := matcher.Prediction{
-		RunID:       call.RunID,
-		AgentStep:   call.AgentStep,
-		Node:        call.Node,
-		SubmittedAt: time.Now(),
-		TimeWindow:  30,
-		ToolCall:    call.Command,
+		RunID:     call.RunID,
+		AgentStep: call.AgentStep,
+		Node:      call.Node,
+		StartTS:   startTS(), // PreToolUse time; EndTS updated by PostToolUse
+		Command:   call.Command,
 	}
 
 	for _, rule := range e.rules {
@@ -90,9 +91,6 @@ func (e *RuleExtractor) Extract(call ToolCall) matcher.Prediction {
 		}
 		pred.ExtractorRule = rule.ID
 		pred.TTP = rule.TTP
-		if rule.Window > 0 {
-			pred.TimeWindow = rule.Window
-		}
 		for _, pe := range rule.Predict {
 			pred.ExpectedEvents = append(pred.ExpectedEvents, matcher.ExpectedEvent{
 				Name: pe.Event,

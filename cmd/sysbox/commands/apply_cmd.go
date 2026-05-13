@@ -4,12 +4,17 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
-var flagApplyRefresh bool
+var (
+	flagApplyRefresh bool
+	flagApplyTarget  string
+)
 
 var applyCmd = &cobra.Command{
 	Use:   "apply",
@@ -19,12 +24,13 @@ var applyCmd = &cobra.Command{
 
 func init() {
 	applyCmd.Flags().BoolVar(&flagApplyRefresh, "refresh", false, "probe existing resources for drift before applying")
+	applyCmd.Flags().StringVar(&flagApplyTarget, "target", "", "apply only this resource (type.name)")
 }
 
 func runApply(cmd *cobra.Command, args []string) error {
 	requireRoot()
 
-	g, mgr, s, err := loadWorkspace()
+	g, mgr, s, root, evalCtx, err := loadWorkspaceWithRoot()
 	if err != nil {
 		return err
 	}
@@ -32,6 +38,16 @@ func runApply(cmd *cobra.Command, args []string) error {
 	plan, err := runtime.ComputePlan(g, s)
 	if err != nil {
 		return err
+	}
+
+	// --target: restrict plan to a single resource.
+	if flagApplyTarget != "" {
+		typ, name, err := splitAddr(flagApplyTarget)
+		if err != nil {
+			return fmt.Errorf("--target: %w", err)
+		}
+		plan = runtime.FilterPlanByTarget(plan, typ, name)
+		fmt.Printf("Targeting: %s.%s\n", typ, name)
 	}
 
 	exec := runtime.NewExecutor(g, s)
@@ -71,5 +87,21 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save state: %w", err)
 	}
 	fmt.Println("Apply complete.")
+	printOutputs(root, evalCtx)
 	return nil
+}
+
+// printOutputs evaluates and prints all output blocks after a successful apply.
+func printOutputs(root *config.Root, ctx *hcl.EvalContext) {
+	if root == nil || len(root.Outputs) == 0 {
+		return
+	}
+	fmt.Println("\nOutputs:")
+	for _, out := range root.Outputs {
+		fmt.Printf("  %-20s = %s", out.Name, out.Value)
+		if out.Description != "" {
+			fmt.Printf("  # %s", out.Description)
+		}
+		fmt.Println()
+	}
 }

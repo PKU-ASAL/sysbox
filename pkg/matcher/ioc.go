@@ -71,15 +71,22 @@ func (e *IoCEngine) Scan(ev sensor.Event) (ruleID, ttp string, matched bool) {
 func (e *IoCEngine) Rules() []IoCRule { return e.rules }
 
 // matchIoC checks whether an event satisfies a rule.
+// Deep field access (event name, args) is done via ev.RawFields() so the
+// normalized Event schema stays shallow while IoC rules retain full fidelity.
 func matchIoC(rule IoCRule, ev sensor.Event) bool {
-	// Event name must match.
-	if rule.Event != "" && rule.Event != ev.Name {
-		return false
+	fields := ev.RawFields()
+
+	// Event name must match (tracee: "eventName" field).
+	if rule.Event != "" {
+		eventName, _ := fields["eventName"].(string)
+		if rule.Event != eventName {
+			return false
+		}
 	}
 
 	// Optional process name filter.
 	if len(rule.ProcessName) > 0 {
-		procName, _ := ev.Args["processName"].(string)
+		procName, _ := fields["processName"].(string)
 		matched := false
 		for _, pn := range rule.ProcessName {
 			if strings.EqualFold(pn, procName) {
@@ -92,9 +99,10 @@ func matchIoC(rule IoCRule, ev sensor.Event) bool {
 		}
 	}
 
-	// Match each field in rule.Match against event args.
+	// Match each field in rule.Match against raw event args.
+	args := extractArgs(fields)
 	for key, expected := range rule.Match {
-		actual, ok := resolveArg(ev.Args, key)
+		actual, ok := resolveArg(args, key)
 		if !ok {
 			return false
 		}
@@ -105,10 +113,32 @@ func matchIoC(rule IoCRule, ev sensor.Event) bool {
 	return true
 }
 
-// resolveArg resolves a dotted key path like "args.pathname" in the event.
+// extractArgs unpacks the tracee args array into a flat map.
+func extractArgs(fields map[string]any) map[string]any {
+	if fields == nil {
+		return nil
+	}
+	argsRaw, ok := fields["args"].([]any)
+	if !ok {
+		return nil
+	}
+	m := make(map[string]any, len(argsRaw))
+	for _, a := range argsRaw {
+		if arg, ok := a.(map[string]any); ok {
+			if name, ok := arg["name"].(string); ok {
+				m[name] = arg["value"]
+			}
+		}
+	}
+	return m
+}
+
+// resolveArg resolves a dotted key path like "args.pathname" in the args map.
 func resolveArg(args map[string]any, key string) (any, bool) {
-	// Remove "args." prefix if present.
 	key = strings.TrimPrefix(key, "args.")
+	if args == nil {
+		return nil, false
+	}
 	v, ok := args[key]
 	return v, ok
 }

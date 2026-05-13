@@ -36,6 +36,15 @@ async def main(run_id: str | None) -> int:
         print("  Run: sudo -E ./lab.sh up")
         return 1
 
+    # Clear per-episode files so the matcher only sees predictions from this run.
+    # events.jsonl is NOT cleared here — the sensor process holds it open and
+    # deleting it would cause writes to go to the unlinked inode (lost).
+    runs_dir = STATE_FILE.parent
+    for fname in ("predictions.jsonl", "match_report.json"):
+        p = runs_dir / fname
+        if p.exists():
+            p.unlink()
+
     prompt = PROMPT_FILE.read_text()
 
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -64,11 +73,10 @@ async def main(run_id: str | None) -> int:
     print(result)
     print()
 
-    # Print detailed step breakdown.
     for step in result.match_report.get("steps", []):
         print(f"  Step {step['agent_step']:2d} [{step['node']}]"
               f"  hit={step['prediction_hit_rate']*100:.0f}%"
-              f"  unscripted={len(step.get('unscripted_iocs', []))}"
+              f"  unscripted={len(step.get('unscripted_iocs') or [])}"
               f"  reward={step['step_reward']:.3f}"
               f"  ttp={step.get('ttp', '-')}")
 

@@ -27,4 +27,3 @@
     - event: connect
       args: {}
   ttp: "T1059"
-  window: 60

@@ -13,10 +13,6 @@ import (
 )
 
 // CreateNetns creates a new named network namespace at /var/run/netns/<name>.
-//
-// netns.NewNamed creates AND enters the namespace. We want to leave the
-// caller's goroutine in its original namespace, so we lock the OS thread,
-// remember the original ns, create the new one, then switch back.
 func CreateNetns(name string) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()

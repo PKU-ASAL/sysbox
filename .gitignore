@@ -15,5 +15,14 @@ state.json.tmp
 .vscode/
 .idea/
 
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
 # macOS
 .DS_Store

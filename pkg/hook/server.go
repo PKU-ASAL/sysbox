@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/oslab/sysbox/pkg/matcher"
 	pkgstate "github.com/oslab/sysbox/pkg/state"
@@ -116,7 +115,6 @@ func (s *Server) handlePreToolUse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pred := s.extractor.Extract(call)
-	pred.SubmittedAt = time.Now()
 
 	var contextMsg string
 	if len(pred.ExpectedEvents) > 0 && s.predictionsPath != "" {

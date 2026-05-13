@@ -1,51 +1,84 @@
-.PHONY: build test lint clean e2e install
+BINARY   := bin/sysbox
+GO       := $(shell which go 2>/dev/null || echo /usr/local/go/bin/go)
+GOFLAGS  := CGO_ENABLED=0
 
-# Resolve go binary (sudo strips PATH, so prefer absolute path).
-GO ?= $(shell command -v go 2>/dev/null || echo /usr/local/go/bin/go)
+.DEFAULT_GOAL := help
 
-build: build-hook
-	$(GO) build -o bin/sysbox ./cmd/sysbox
+# ── Help ──────────────────────────────────────────────────────────────────────
 
-build-hook:
-	$(GO) build -o bin/sysbox-sshd-hook ./cmd/sysbox-sshd-hook
+.PHONY: help
+help:
+	@echo ""
+	@echo "Usage: make <target>"
+	@echo ""
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ { printf "  %-22s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@echo ""
 
-test:
-	$(GO) test ./pkg/... -race -cover
+# ── Build ─────────────────────────────────────────────────────────────────────
 
-lint:
+.PHONY: build
+build: ## Compile bin/sysbox
+	$(GOFLAGS) $(GO) build -o $(BINARY) ./cmd/sysbox
+
+# ── Test ──────────────────────────────────────────────────────────────────────
+
+.PHONY: test
+test: ## Run unit tests (no Docker required)
+	$(GO) test ./...
+
+.PHONY: test-e2e
+test-e2e: build ## Go topology tests: apply/route/drift/destroy (requires Docker + root)
+	sudo -E "$(GO)" test -tags e2e -v -count=1 ./tests/e2e/... -timeout 120s
+
+.PHONY: test-scenario
+test-scenario: build ## Full pipeline scenario: scripted attack + agent + attribution (lab must be up)
+	tests/scenario.sh
+
+.PHONY: test-scenario-no-agent
+test-scenario-no-agent: build ## Full pipeline scenario without agent phase (lab must be up, no API key needed)
+	tests/scenario.sh --skip-agent
+
+# ── Code quality ──────────────────────────────────────────────────────────────
+
+.PHONY: fmt
+fmt: ## Run go fmt
+	$(GO) fmt ./...
+
+.PHONY: vet
+vet: ## Run go vet
 	$(GO) vet ./...
-	gofmt -l . | diff -u /dev/null -
 
-clean:
-	rm -rf ./bin ./runs
+.PHONY: lint
+lint: fmt vet ## fmt + vet
 
-e2e:
-	@if [ "$$(id -u)" != "0" ]; then \
-		echo "e2e tests require root (netns/veth). Use: sudo -E make e2e"; \
-		exit 1; \
-	fi
-	$(GO) test ./tests/e2e/... -tags=e2e -v -timeout 5m
+# ── Lab lifecycle (require sudo -E) ───────────────────────────────────────────
 
-# Phase 2 sensor tests, split by required privilege level:
-#   Layer 1 (no root):   make e2e-sensor-registry
-#   Layer 3 (docker grp): make e2e-sensor-live
-#   Full (root):          sudo -E make e2e-sensor
-e2e-sensor-registry:
-	$(GO) test ./tests/e2e/... -tags=e2e -v -run TestPhase2Registry -timeout 2m
+.PHONY: lab-up
+lab-up: ## Build image, destroy old lab, apply topology, start sensor
+	sudo -E examples/three-nodes/lab.sh up
 
-e2e-sensor-live:
-	$(GO) test ./tests/e2e/... -tags=e2e -v -run TestPhase2LiveTracee -timeout 3m
+.PHONY: lab-down
+lab-down: ## Destroy lab containers and stop sensor
+	sudo -E examples/three-nodes/lab.sh down
 
-e2e-sensor:
-	@if [ "$$(id -u)" != "0" ]; then \
-		echo "Full sensor e2e requires root. Use: sudo -E make e2e-sensor"; \
-		exit 1; \
-	fi
-	$(GO) test ./tests/e2e/... -tags=e2e -v -run TestPhase2 -timeout 5m
+.PHONY: lab-sensor-restart
+lab-sensor-restart: build ## Restart sensor (re-resolves mntns after node reprovision)
+	sudo -E examples/three-nodes/lab.sh sensor-restart
 
-# Phase 3 Matcher tests — no root/docker required.
-e2e-matcher:
-	$(GO) test ./tests/e2e/... -tags=e2e -v -run TestMatcher -timeout 60s
+.PHONY: lab-logs
+lab-logs: ## Tail sensor log
+	examples/three-nodes/lab.sh logs
 
-install: build
-	install -m 0755 bin/sysbox /usr/local/bin/sysbox
+.PHONY: lab-status
+lab-status: ## Show container, state, and sensor status
+	examples/three-nodes/lab.sh status
+
+# ── Clean ─────────────────────────────────────────────────────────────────────
+
+.PHONY: clean
+clean: ## Remove compiled binary
+	rm -f $(BINARY)
+
+.PHONY: clean-runs
+clean-runs: ## Remove per-episode artefacts (keeps state and SSH keys)
+	examples/three-nodes/lab.sh clean

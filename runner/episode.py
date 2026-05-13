@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -191,6 +192,7 @@ class SysboxEpisode:
             return {}
 
         node = self._resolver.resolve(command)
+        start_ts = int(time.time() * 1000)  # unix ms at PreToolUse time
 
         args = [
             self.sysbox_bin,
@@ -200,6 +202,7 @@ class SysboxEpisode:
             "--node", node,
             "--step", str(self._step),
             "--run-id", self.run_id,
+            "--start-ts", str(start_ts),
         ]
         result = subprocess.run(args, capture_output=True, text=True, timeout=10)
 
