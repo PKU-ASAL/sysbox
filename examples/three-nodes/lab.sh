@@ -1,172 +1,323 @@
 #!/usr/bin/env bash
-# lab.sh — 3-node attack lab lifecycle manager
+# lab.sh — sysbox three-node attack lab lifecycle manager
 #
-# Usage:
-#   ./lab.sh up       # build, apply field, prepare nodes, start sensor + hook
-#   ./lab.sh down     # destroy field
-#   ./lab.sh status   # show running containers + hook server status
-#   ./lab.sh exec <node> <cmd...>   # run a command on a node
+# Usage (from sysbox/ project root):
+#   sudo -E examples/three-nodes/lab.sh up             # build → destroy old → apply → sensor
+#   sudo -E examples/three-nodes/lab.sh down            # destroy lab + stop sensor
+#          examples/three-nodes/lab.sh status           # containers, state, sensor
+#          examples/three-nodes/lab.sh exec <node> [cmd...]  # shell into a node
+#   sudo -E examples/three-nodes/lab.sh sensor          # (re)start sensor only
+#   sudo -E examples/three-nodes/lab.sh sensor-restart  # restart sensor after node reprovision
+#          examples/three-nodes/lab.sh match            # run PID-tree matcher for agent 'red'
+#          examples/three-nodes/lab.sh logs             # tail sensor log
+#          examples/three-nodes/lab.sh clean            # remove per-episode artefacts (keep state/keys)
 #
-# Before running: sudo -E ./lab.sh up
+# Prerequisites:
+#   - Docker running
+#   - ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL + SYSBOX_MODEL in .env or environment
+#   - sudo -E (preserve environment) for up/down
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-FIELD_FILE="$(dirname "$0")/field.sysbox.hcl"
+# ── Paths (absolute, script-location-independent) ─────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+FIELD_FILE="${SCRIPT_DIR}/field.sysbox.hcl"
 STATE_FILE="${REPO_ROOT}/runs/default/state.json"
-RULES_DIR="${REPO_ROOT}/rules"
-HOOK_PORT=8081
-
 SYSBOX="${REPO_ROOT}/bin/sysbox"
+SENSOR_LOG="/tmp/sysbox-sensor.log"
+EVENTS_DIR="/tmp/sysbox-events"
+
+GO="${GO:-$(command -v go 2>/dev/null || echo /usr/local/go/bin/go)}"
+
+# Load .env from repo root so env() calls in HCL can see SYSBOX_MODEL etc.
+# We do this early (before sudo context changes anything) and export everything.
+load_dotenv() {
+    local env_file="${REPO_ROOT}/.env"
+    [ -f "${env_file}" ] || return 0
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+        key="${line%%=*}"
+        val="${line#*=}"
+        [[ -n "$key" ]] && export "${key}=${val}"
+    done < "${env_file}"
+}
+load_dotenv
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+require_root() {
+    [ "$(id -u)" = "0" ] || die "This command requires root. Run: sudo -E $0 $*"
+}
+
+sysbox() { "${SYSBOX}" --state "${STATE_FILE}" --file "${FIELD_FILE}" "$@"; }
 
 build_sysbox() {
     echo "==> Building sysbox..."
     cd "${REPO_ROOT}"
-    go build -o bin/sysbox ./cmd/sysbox
-    echo "    bin/sysbox ready"
+    CGO_ENABLED=0 "${GO}" build -o bin/sysbox ./cmd/sysbox
+    echo "    bin/sysbox ready ($(bin/sysbox version 2>/dev/null || echo ok))"
 }
 
+build_image() {
+    echo "==> Building attacker image..."
+    docker build --network=host \
+        -t sysbox-attacker:latest \
+        -f "${SCRIPT_DIR}/Dockerfile.attacker-opencode" \
+        "${SCRIPT_DIR}"
+    echo "    sysbox-attacker:latest ready"
+}
+
+clean_netns() {
+    local count=0
+    for ns in $(ip netns list 2>/dev/null | awk '{print $1}' | grep "^sysbox-"); do
+        ip netns del "$ns" 2>/dev/null && count=$((count+1)) || true
+    done
+    [ $count -gt 0 ] && echo "    cleaned $count stale netns" || true
+}
+
+stop_sensor() {
+    pkill -f "sysbox.*sensor start" 2>/dev/null || true
+    # Also kill tracee running inside the sensor container (docker exec -d
+    # detaches the client; the tracee process itself must be killed separately).
+    docker exec sysbox-sensor pkill -9 tracee 2>/dev/null || true
+    sleep 0.5
+}
+
+start_sensor() {
+    echo "==> Starting eBPF sensor..."
+    stop_sensor
+    mkdir -p "${EVENTS_DIR}"
+
+    # sysbox sensor start reads sysbox_monitor from state, resolves mntns IDs,
+    # starts tracee inside the sensor container, and tails the event stream —
+    # all driven by the TraceeBackend in pkg/monitor/tracee.go.
+    setsid nohup "${SYSBOX}" --state "${STATE_FILE}" --file "${FIELD_FILE}" \
+        sensor start \
+        > "${SENSOR_LOG}" 2>&1 &
+    local spid=$!
+    echo "    sensor PID ${spid}  log: ${SENSOR_LOG}"
+    # Poll until tracee reports "started" (eBPF init takes ~8-10s).
+    local waited=0
+    while [ "${waited}" -lt 20 ]; do
+        sleep 2; waited=$((waited+2))
+        if grep -q "started in sysbox-sensor" "${SENSOR_LOG}" 2>/dev/null; then
+            break
+        fi
+    done
+    grep -E "mntns=|started in|monitor lab|Error" "${SENSOR_LOG}" 2>/dev/null | sed 's/^/    /' || true
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
 cmd_up() {
-    if [ "$(id -u)" != "0" ]; then
-        echo "ERROR: lab up requires root (netns/veth creation)."
-        echo "  Run: sudo -E $0 up"
-        exit 1
-    fi
+    require_root "up"
+    local real_user="${SUDO_USER:-${USER}}"
 
     build_sysbox
+    build_image
 
-    echo ""
-    echo "==> Building attacker image (tools pre-installed for --network none)..."
-    docker build -q -t sysbox-attacker:latest \
-        -f "$(dirname "$0")/Dockerfile.attacker" \
-        "$(dirname "$0")"
-    echo "    sysbox-attacker:latest ready"
+    mkdir -p "$(dirname "${STATE_FILE}")"
 
-    echo ""
-    echo "==> Applying field (${FIELD_FILE})..."
-    "${SYSBOX}" --state "${STATE_FILE}" apply --file "${FIELD_FILE}" --auto-approve
-
-    echo ""
-    echo "==> Configuring SSH on node_attack (tools already in image)..."
-    # Write the host's public key so node_attack can pivot to other nodes.
-    PUB_KEY="$(cat ~/.ssh/id_rsa.pub 2>/dev/null || cat ~/.ssh/id_ed25519.pub 2>/dev/null || echo '')"
-    if [ -n "${PUB_KEY}" ]; then
-        docker exec sysbox-node_attack sh -c \
-            "mkdir -p /root/.ssh && echo '${PUB_KEY}' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys"
-        echo "    SSH key installed"
+    # Generate a lab-specific SSH keypair (never use personal ~/.ssh keys).
+    # The public key is injected into lab nodes via the HCL file provisioner.
+    LAB_KEY="$(dirname "${STATE_FILE}")/lab_key"
+    export LAB_SSH_PUBKEY="${LAB_KEY}.pub"
+    if [ ! -f "${LAB_KEY}" ]; then
+        echo "==> Generating lab SSH keypair..."
+        ssh-keygen -t ed25519 -f "${LAB_KEY}" -N "" -C "sysbox-lab" -q
+        chmod 600 "${LAB_KEY}"
+        chmod 644 "${LAB_SSH_PUBKEY}"
+        chown "${real_user}:${real_user}" "${LAB_KEY}" "${LAB_SSH_PUBKEY}"
+        echo "    ${LAB_KEY} (private, never shared)"
     else
-        echo "    warn: no ~/.ssh/id_rsa.pub found; skipping key install"
+        echo "==> Using existing lab key: ${LAB_SSH_PUBKEY}"
     fi
-    # node_web runs nginx (started automatically by the nginx:alpine CMD).
+
+    # Tear down previous deployment cleanly before rebuilding.
+    if [ -f "${STATE_FILE}" ]; then
+        echo ""
+        echo "==> Destroying previous state..."
+        sysbox destroy --auto-approve 2>/dev/null || true
+    fi
 
     echo ""
-    echo "==> Starting mock DB listener on node_db (port 5432)..."
-    # nc -lk: listen on 5432, respond with fake postgres banner
-    docker exec -d sysbox-node_db sh -c \
-        'while true; do echo "mock-postgres-5.14.3" | nc -l -p 5432; done' || true
+    echo "==> Cleaning stale netns..."
+    clean_netns
 
     echo ""
-    echo "==> Fixing runs/ ownership (apply runs as root, episode runs as user)..."
-    chown -R "${SUDO_USER:-$USER}:${SUDO_USER:-$USER}" "$(dirname "${STATE_FILE}")" 2>/dev/null || true
+    echo "==> Applying field..."
+    sysbox apply --auto-approve
+
+    # Return runs/ ownership to the calling user.
+    chown -R "${real_user}:${real_user}" "$(dirname "${STATE_FILE}")"
 
     echo ""
-    echo "==> Starting sysbox sensor (tracee, global scope)..."
-    # sensor start auto-writes to runs/default/events.jsonl
-    # requires --file so loadWorkspace() can read the HCL
-    "${SYSBOX}" --state "${STATE_FILE}" --file "${FIELD_FILE}" sensor start &
-    SENSOR_PID=$!
-    echo "    sensor PID: ${SENSOR_PID}"
-    sleep 3  # give tracee time to initialize
-
-    echo ""
-    echo "==> Starting hook server (port ${HOOK_PORT})..."
-    "${SYSBOX}" --state "${STATE_FILE}" \
-        hook serve --port ${HOOK_PORT} --rules "${RULES_DIR}" &
-    HOOK_PID=$!
-    echo "    hook PID: ${HOOK_PID}"
-    sleep 1
-
-    echo ""
-    echo "==> Installing Claude Code hook config..."
-    cd "${REPO_ROOT}"
-    "${SYSBOX}" --state "${STATE_FILE}" hook install --port ${HOOK_PORT}
+    start_sensor
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo " Lab is UP. Attack topology:"
+    echo " Lab UP"
     echo ""
-    echo "  node_attack  10.0.1.10   (attacker jump box)"
-    echo "  node_web     10.0.2.10   (nginx web server)"
-    echo "  node_db      10.0.2.20   (mock DB, port 5432)"
+    echo "  node_attack   10.0.1.10 / 172.20.0.10   attacker + opencode"
+    echo "  node_web      10.0.2.10                  nginx"
+    echo "  node_db       10.0.2.20                  postgres:16-alpine :5432"
+    echo "  sensor        (tracee sidecar)            events → ${EVENTS_DIR}/events.jsonl"
     echo ""
-    echo " Connect to attacker:"
-    echo "  docker exec -it sysbox-node_attack sh"
-    echo ""
-    echo " Run a simulated attack step:"
-    echo "  docker exec sysbox-node_attack nmap -sS 10.0.2.0/24"
-    echo "  docker exec sysbox-node_attack ssh root@10.0.2.10 'id'"
-    echo "  docker exec sysbox-node_attack curl http://10.0.2.10/"
-    echo ""
-    echo " After the attack episode:"
-    echo "  sudo ${SYSBOX} --state ${STATE_FILE} match run"
-    echo "  ${SYSBOX} --state ${STATE_FILE} match report"
+    echo "  ACP endpoint:   http://172.20.0.10:4096"
+    echo "  Run episode:    uv run python3 examples/three-nodes/run_opencode.py"
+    echo "  Match:          examples/three-nodes/lab.sh match"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 cmd_down() {
-    if [ "$(id -u)" != "0" ]; then
-        echo "ERROR: lab down requires root."
-        exit 1
-    fi
-    build_sysbox
-    echo "==> Destroying field..."
-    "${SYSBOX}" --state "${STATE_FILE}" destroy --file "${FIELD_FILE}" --auto-approve
-    echo "==> Stopping sensor and hook..."
-    pkill -f "sysbox.*sensor" 2>/dev/null || true
-    pkill -f "sysbox.*hook" 2>/dev/null || true
-    echo "Done."
+    require_root "down"
+    echo "==> Stopping sensor..."
+    stop_sensor
+
+    echo "==> Destroying lab..."
+    sysbox destroy --auto-approve
+
+    echo "==> Cleaning stale netns..."
+    clean_netns
+
+    echo "Down."
 }
 
 cmd_status() {
-    echo "==> Running sysbox containers:"
-    docker ps --filter "name=sysbox-" --format "  {{.Names}}\t{{.Status}}\t{{.Image}}" 2>/dev/null || echo "  (none)"
+    echo "==> Containers"
+    docker ps --filter "name=sysbox-" \
+        --format "  {{.Names}}\t{{.Status}}" 2>/dev/null || true
 
     echo ""
-    echo "==> Hook server:"
-    curl -s "http://127.0.0.1:${HOOK_PORT}/hooks/status" 2>/dev/null | python3 -m json.tool || echo "  not running"
+    echo "==> State"
+    sysbox state list 2>/dev/null || echo "  (no state)"
 
     echo ""
-    echo "==> Events:"
-    EVENTS="${REPO_ROOT}/runs/default/events.jsonl"
-    if [ -f "${EVENTS}" ]; then
-        echo "  $(wc -l < "${EVENTS}") events in ${EVENTS}"
+    echo "==> Actor 'red'"
+    sysbox state show sysbox_actor.red 2>/dev/null \
+        | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+i = d.get('instance', {})
+print(f'  pid={i.get(\"pid\",\"?\")}  port={i.get(\"port\",\"?\")}  acp={i.get(\"acp_url\",\"?\")}  node={i.get(\"node\",\"?\")}')
+" 2>/dev/null || echo "  sysbox_actor.red not in state (try sysbox_agent.red for legacy state)"
+
+    echo ""
+    echo "==> Sensor"
+    if pgrep -f "sysbox.*sensor start" > /dev/null 2>&1; then
+        pgrep -a -f "sysbox.*sensor start" | sed 's/^/  /'
+        echo "  log: ${SENSOR_LOG}"
+        local events_dir="${REPO_ROOT}/runs/default/events"
+        if [ -d "${events_dir}" ]; then
+            for f in "${events_dir}/"*.jsonl; do
+                [ -f "${f}" ] && printf "  %-30s %d lines\n" \
+                    "events/$(basename "${f}")" "$(wc -l < "${f}")"
+            done
+        else
+            echo "  events: (not yet)"
+        fi
     else
-        echo "  no events yet"
-    fi
-
-    echo ""
-    echo "==> Predictions:"
-    PREDS="${REPO_ROOT}/runs/default/predictions.jsonl"
-    if [ -f "${PREDS}" ]; then
-        echo "  $(wc -l < "${PREDS}") predictions in ${PREDS}"
-    else
-        echo "  no predictions yet"
+        echo "  not running"
     fi
 }
 
 cmd_exec() {
-    NODE="${1:-node_attack}"
-    shift
-    docker exec "sysbox-${NODE}" "$@"
+    local node="${1:-node_attack}"
+    shift 2>/dev/null || true
+    local cmd=("${@}")
+    [ ${#cmd[@]} -eq 0 ] && cmd=("/bin/bash")
+    docker exec -it "sysbox-${node}" "${cmd[@]}"
 }
 
-case "${1:-help}" in
-    up)     cmd_up ;;
-    down)   cmd_down ;;
-    status) cmd_status ;;
-    exec)   shift; cmd_exec "$@" ;;
+cmd_sensor() {
+    require_root "sensor"
+    mkdir -p "${EVENTS_DIR}"
+    start_sensor
+}
+
+cmd_sensor_restart() {
+    require_root "sensor-restart"
+    echo "==> Restarting sensor (re-resolves node handles)..."
+    setsid nohup "${SYSBOX}" --state "${STATE_FILE}" --file "${FIELD_FILE}" \
+        sensor restart \
+        > "${SENSOR_LOG}" 2>&1 &
+    local spid=$!
+    echo "    sensor PID ${spid}  log: ${SENSOR_LOG}"
+    # Wait for tracee eBPF init (takes ~8-10s); poll for the "started" line.
+    local waited=0
+    while [ "${waited}" -lt 20 ]; do
+        sleep 2; waited=$((waited+2))
+        if grep -q "started in sysbox-sensor" "${SENSOR_LOG}" 2>/dev/null; then
+            break
+        fi
+    done
+    grep -E "mntns=|started in|monitor lab|Error" "${SENSOR_LOG}" 2>/dev/null | sed 's/^/    /' || true
+}
+
+cmd_match() {
+    echo "==> Running PID-tree matcher for agent 'red'..."
+    sysbox match run --agent red
+    echo ""
+    echo "Report: ${REPO_ROOT}/runs/default/episode_report.json"
+}
+
+cmd_logs() {
+    echo "==> Sensor log (${SENSOR_LOG})"
+    tail -f "${SENSOR_LOG}"
+}
+
+cmd_clean() {
+    local runs_dir="${REPO_ROOT}/runs/default"
+    echo "==> Cleaning per-episode artefacts in ${runs_dir}/"
+    local removed=0
+    for f in step_log.jsonl episode_report.json match_report.json predictions.jsonl; do
+        if [ -f "${runs_dir}/${f}" ]; then
+            rm -f "${runs_dir}/${f}"
+            echo "    removed ${f}"
+            removed=$((removed+1))
+        fi
+    done
+    # Truncate per-node event files (preserve fds held by running sensor).
+    if [ -d "${runs_dir}/events" ]; then
+        for f in "${runs_dir}/events/"*.jsonl; do
+            [ -f "${f}" ] && : > "${f}" && echo "    truncated events/$(basename "${f}")"
+            removed=$((removed+1))
+        done
+    fi
+    # Clean archived episodes older than 7 days.
+    if [ -d "${runs_dir}/episodes" ]; then
+        find "${runs_dir}/episodes" -maxdepth 1 -mindepth 1 -type d -mtime +7 \
+            -exec rm -rf {} + 2>/dev/null && true
+    fi
+    [ $removed -eq 0 ] && echo "    nothing to remove" || true
+    echo "    (state.json and SSH keys preserved)"
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+
+CMD="${1:-help}"
+shift 2>/dev/null || true
+
+case "${CMD}" in
+    up)              cmd_up ;;
+    down)            cmd_down ;;
+    status)          cmd_status ;;
+    exec)            cmd_exec "$@" ;;
+    sensor)          cmd_sensor ;;
+    sensor-restart)  cmd_sensor_restart ;;
+    match)           cmd_match ;;
+    logs)            cmd_logs ;;
+    clean)           cmd_clean ;;
+    help|--help|-h)
+        sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        ;;
     *)
-        echo "Usage: $0 {up|down|status|exec <node> <cmd...>}"
+        echo "Unknown command: ${CMD}"
+        echo "Usage: $0 {up|down|status|exec|sensor|sensor-restart|match|logs|clean}"
         exit 1
         ;;
 esac

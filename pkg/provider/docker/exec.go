@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -64,10 +65,18 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcP
 		return fmt.Errorf("read src %s: %w", srcPath, err)
 	}
 
-	// If destination is a directory path, use source filename.
-	dstDir := dstPath
-	dstFile := filepath.Base(srcPath)
-	if !filepath.IsAbs(dstPath) {
+	// Resolve destination directory and filename.
+	// If dstPath ends with "/" it is a directory; keep source filename.
+	// Otherwise treat dstPath as the full destination path: dir + new name.
+	var dstDir, dstFile string
+	if strings.HasSuffix(dstPath, "/") {
+		dstDir = dstPath
+		dstFile = filepath.Base(srcPath)
+	} else {
+		dstDir = filepath.Dir(dstPath)
+		dstFile = filepath.Base(dstPath)
+	}
+	if !filepath.IsAbs(dstDir) {
 		dstDir = "/"
 	}
 
@@ -88,6 +97,53 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcP
 	return s.cli.CopyToContainer(ctx, h.ID, dstDir, &buf, container.CopyToContainerOptions{
 		AllowOverwriteDirWithFile: true,
 	})
+}
+
+// ExecBackground starts a detached command inside the container and returns
+// the PID of the process as seen inside the container namespace.
+// The process is not attached to any terminal and survives exec-client disconnect.
+func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (int, error) {
+	envs := make([]string, 0, len(spec.Env))
+	for k, v := range spec.Env {
+		envs = append(envs, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	ex, err := s.cli.ContainerExecCreate(ctx, h.ID, container.ExecOptions{
+		Cmd:          spec.Cmd,
+		Env:          envs,
+		WorkingDir:   spec.WorkDir,
+		Detach:       true,
+		AttachStdout: false,
+		AttachStderr: false,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("exec create (background): %w", err)
+	}
+
+	if err := s.cli.ContainerExecStart(ctx, ex.ID, container.ExecStartOptions{Detach: true}); err != nil {
+		return 0, fmt.Errorf("exec start (background): %w", err)
+	}
+
+	inspect, err := s.cli.ContainerExecInspect(ctx, ex.ID)
+	if err != nil {
+		return 0, fmt.Errorf("exec inspect (background): %w", err)
+	}
+	return inspect.Pid, nil
+}
+
+// GetContainerIP returns the container's IP address on its first Docker-managed
+// network. Used to construct ACP URLs for actor resources after apply.
+func (s *Substrate) GetContainerIP(ctx context.Context, containerID string) (string, error) {
+	ins, err := s.cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return "", fmt.Errorf("inspect container %s: %w", containerID, err)
+	}
+	for _, ep := range ins.NetworkSettings.Networks {
+		if ep.IPAddress != "" {
+			return ep.IPAddress, nil
+		}
+	}
+	return "", fmt.Errorf("no Docker-network IP found for container %s", containerID)
 }
 
 func (s *Substrate) CopyFromNode(_ context.Context, _ substrate.NodeHandle, _, _ string) error {
