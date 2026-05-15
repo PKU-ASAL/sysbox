@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -158,7 +159,8 @@ func enableIPForward(ctx context.Context, sub substrate.Substrate, h substrate.N
 
 // ensureIptables makes a best-effort attempt to install iptables in the router
 // container if it isn't already present. Supports alpine (apk) and
-// debian/ubuntu (apt-get). Silent on success.
+// debian/ubuntu (apt-get). Retries up to 3 times with a short delay to
+// tolerate transient DNS/network issues right after container start.
 func ensureIptables(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle) error {
 	check, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{
 		Cmd: []string{"sh", "-c", "command -v iptables >/dev/null 2>&1"},
@@ -170,28 +172,47 @@ func ensureIptables(ctx context.Context, sub substrate.Substrate, h substrate.No
 		return nil // already present
 	}
 
-	// Try alpine first, then debian/ubuntu. Order doesn't matter because
-	// only one package manager is ever installed.
+	// Ensure DNS works: Docker containers sometimes start before the
+	// embedded DNS (127.0.0.11) is ready. Adding a public fallback
+	// resolver unblocks package manager lookups on alpine and debian.
+	_, _ = sub.ExecInNode(ctx, h, substrate.ExecSpec{
+		Cmd: []string{"sh", "-c",
+			"grep -q '8.8.8.8' /etc/resolv.conf 2>/dev/null || echo 'nameserver 8.8.8.8' >> /etc/resolv.conf"},
+	})
+
+	// Install candidates — stderr is NOT silenced so failures are visible
+	// in the apply output for debugging.
 	candidates := [][]string{
-		{"sh", "-c", "apk add --no-cache iptables >/dev/null 2>&1"},
-		{"sh", "-c", "apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq iptables >/dev/null 2>&1"},
+		{"apk", "add", "--no-cache", "iptables"},
+		{"sh", "-c", "apt-get update -qq && apt-get install -y -qq iptables"},
 	}
-	for _, c := range candidates {
-		res, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{Cmd: c})
-		if err != nil {
-			continue
-		}
-		if res.ExitCode == 0 {
-			// Verify it's actually callable now.
-			verify, _ := sub.ExecInNode(ctx, h, substrate.ExecSpec{
-				Cmd: []string{"sh", "-c", "command -v iptables >/dev/null 2>&1"},
-			})
-			if verify.ExitCode == 0 {
-				return nil
+
+	const maxRetries = 3
+	var lastErr string
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		for _, c := range candidates {
+			res, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{Cmd: c})
+			if err != nil {
+				lastErr = fmt.Sprintf("exec %v: %v", c, err)
+				continue
+			}
+			if res.ExitCode == 0 {
+				verify, _ := sub.ExecInNode(ctx, h, substrate.ExecSpec{
+					Cmd: []string{"sh", "-c", "command -v iptables >/dev/null 2>&1"},
+				})
+				if verify.ExitCode == 0 {
+					return nil
+				}
+				lastErr = "installed but command -v failed"
+			} else {
+				lastErr = fmt.Sprintf("%v exit %d: %s", c, res.ExitCode, res.Stderr)
 			}
 		}
+		if attempt < maxRetries {
+			time.Sleep(2 * time.Second)
+		}
 	}
-	return fmt.Errorf("no package manager succeeded in installing iptables")
+	return fmt.Errorf("could not install iptables after %d attempts: %s", maxRetries, lastErr)
 }
 
 // configureNAT installs MASQUERADE on the egress interface and FORWARD rules.
