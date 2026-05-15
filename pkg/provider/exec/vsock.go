@@ -107,6 +107,54 @@ func (c *VsockConnection) ping(ctx context.Context) error {
 	return nil
 }
 
+// FrameHandler is called for each frame received from an OpExec stream.
+// Return io.EOF to stop reading (the connection is closed either way).
+type FrameHandler func(vsockrpc.Frame) error
+
+// ExecStream dials a fresh vsock connection, sends one OpExec request, and
+// calls handler for each Frame the agent returns. Stdout/stderr payloads are
+// delivered verbatim; the caller decides what to do with them. The final
+// frame (Done=true) is also delivered. Returns nil when the command exits
+// cleanly, or the first error from handler / transport.
+func (c *VsockConnection) ExecStream(ctx context.Context, cmd []string, env map[string]string, handler FrameHandler) error {
+	conn, err := c.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	req := vsockrpc.Request{Op: vsockrpc.OpExec, Cmd: cmd, Env: env}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return fmt.Errorf("send request: %w", err)
+	}
+
+	dec := json.NewDecoder(conn)
+	for {
+		var f vsockrpc.Frame
+		if err := dec.Decode(&f); err != nil {
+			if err == io.EOF {
+				return fmt.Errorf("vsock connection closed before exit frame")
+			}
+			return fmt.Errorf("read frame: %w", err)
+		}
+		if err := handler(f); err != nil {
+			if err == io.EOF {
+				return nil // caller requested stop
+			}
+			return err
+		}
+		if f.Done {
+			if f.Error != "" {
+				return fmt.Errorf("%s", f.Error)
+			}
+			if f.ExitCode != 0 {
+				return fmt.Errorf("exit code %d", f.ExitCode)
+			}
+			return nil
+		}
+	}
+}
+
 func (c *VsockConnection) ExecInline(ctx context.Context, cmds []string) error {
 	for _, line := range cmds {
 		if err := c.execOne(ctx, []string{"sh", "-c", line}, nil); err != nil {

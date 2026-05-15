@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
 	"github.com/oslab/sysbox/pkg/sensor"
+	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
 
 // VmVsockBackend implements Backend for Firecracker microVMs by speaking
@@ -93,10 +95,11 @@ type vmTarget struct {
 	conn   *providerexec.VsockConnection
 }
 
-// watch probes the in-guest vsock-agent and holds the session open until
-// the parent context is cancelled. When an in-guest sensor is installed
-// in a future iteration, this is where the event tail goroutine will live.
-func (v *VmVsockBackend) watch(ctx context.Context, vt vmTarget, _ chan<- sensor.Event) {
+// watch probes the in-guest vsock-agent, then launches the vm-sensor
+// inside the VM over OpExec. Each stdout frame is line-split and parsed
+// as tracee-flavoured JSON; events are pushed to ch until the parent
+// context is cancelled or the sensor exits.
+func (v *VmVsockBackend) watch(ctx context.Context, vt vmTarget, ch chan<- sensor.Event) {
 	waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Second)
 	err := vt.conn.WaitReady(waitCtx, 30*time.Second)
 	waitCancel()
@@ -104,6 +107,47 @@ func (v *VmVsockBackend) watch(ctx context.Context, vt vmTarget, _ chan<- sensor
 		fmt.Fprintf(os.Stderr, "[monitor/vm-vsock] %s: vsock-agent unreachable: %v\n", vt.nodeID, err)
 		return
 	}
-	fmt.Printf("[monitor/vm-vsock] %s: vsock-agent reachable; in-VM eBPF sensor not yet bundled (channel idle)\n", vt.nodeID)
-	<-ctx.Done()
+	fmt.Printf("[monitor/vm-vsock] %s: vsock-agent reachable; launching vm-sensor\n", vt.nodeID)
+
+	sensorCmd := []string{"/sysbox-init", "--vm-sensor",
+		"--events", "execve,fork,exit",
+		"--node", vt.nodeID,
+	}
+
+	var partial []byte
+	handler := func(f vsockrpc.Frame) error {
+		if len(f.Stdout) > 0 {
+			data := f.Stdout
+			if len(partial) > 0 {
+				data = append(partial, data...)
+				partial = nil
+			}
+			for {
+				i := bytes.IndexByte(data, '\n')
+				if i < 0 {
+					partial = append(partial, data...)
+					break
+				}
+				line := data[:i]
+				data = data[i+1:]
+				if len(line) == 0 {
+					continue
+				}
+				var e sensor.Event
+				if err := sensor.ParseTraceeJSON(line, &e); err == nil {
+					e.NodeID = vt.nodeID // override with canonical node ID
+					select {
+					case ch <- e:
+					default:
+					}
+				}
+			}
+		}
+		return nil
+	}
+
+	err = vt.conn.ExecStream(ctx, sensorCmd, nil, handler)
+	if err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "[monitor/vm-vsock] %s: vm-sensor ended: %v\n", vt.nodeID, err)
+	}
 }
