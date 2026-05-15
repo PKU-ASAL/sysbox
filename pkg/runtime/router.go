@@ -3,8 +3,8 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -62,17 +62,6 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
-	// Ensure iptables is available BEFORE attaching custom NICs. After
-	// AttachNIC, the routing table may no longer reach package mirrors.
-	// At this point the container still has the docker default bridge,
-	// which provides outbound internet for the apt/apk fetch.
-	if cfg.NatFrom != "" && cfg.NatTo != "" {
-		if err := ensureIptables(ctx, sub, handle); err != nil {
-			fmt.Printf("[router %s] warning: could not install iptables (NAT will be skipped): %v\n",
-				n.ID.Name, err)
-		}
-	}
-
 	nics := []map[string]any{}
 	ifaceByName := map[string]string{} // logical name -> guest interface (eth0/eth1/...)
 	for i, iface := range cfg.Interfaces {
@@ -110,7 +99,7 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 			return fmt.Errorf("nat_from %q / nat_to %q must reference declared interfaces",
 				cfg.NatFrom, cfg.NatTo)
 		}
-		if err := configureNAT(ctx, sub, handle, fromIf, toIf); err != nil {
+		if err := configureNATViaNsenter(handle.ID, fromIf, toIf); err != nil {
 			fmt.Printf("[router %s] warning: NAT setup failed (continuing without NAT): %v\n", n.ID.Name, err)
 		} else {
 			natApplied = true
@@ -158,93 +147,48 @@ func enableIPForward(ctx context.Context, sub substrate.Substrate, h substrate.N
 	return nil
 }
 
-// ensureIptables makes a best-effort attempt to install iptables in the router
-// container if it isn't already present. Supports alpine (apk) and
-// debian/ubuntu (apt-get). Retries up to 3 times with a short delay to
-// tolerate transient DNS/network issues right after container start.
-func ensureIptables(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle) error {
-	check, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{
-		Cmd: []string{"sh", "-c", "command -v iptables >/dev/null 2>&1"},
-	})
+// configureNATViaNsenter configures MASQUERADE and FORWARD rules from the
+// host side using nsenter(1) to enter the container's network namespace.
+// This avoids the need for iptables inside the container (which would
+// require internet access to install via apk/apt-get, and DNS often
+// doesn't work in fresh Alpine containers on the Docker default bridge).
+//
+// The host's iptables binary operates on the kernel's netfilter, which is
+// per-network-namespace — so running it via nsenter -t <pid> -n targets
+// exactly the right namespace.
+func configureNATViaNsenter(containerID, fromIf, toIf string) error {
+	// Resolve container PID.
+	out, err := execCommand("docker", "inspect", containerID, "--format", "{{.State.Pid}}")
 	if err != nil {
-		return fmt.Errorf("probe iptables: %w", err)
+		return fmt.Errorf("docker inspect %s: %w", containerID, err)
 	}
-	if check.ExitCode == 0 {
-		return nil // already present
-	}
-
-	// Fix DNS: Docker's embedded stub resolver (127.0.0.11) does not work
-	// reliably with musl (Alpine). Overwrite resolv.conf with public DNS
-	// servers so apk/apt-get can resolve package repositories.
-	_, _ = sub.ExecInNode(ctx, h, substrate.ExecSpec{
-		Cmd: []string{"sh", "-c",
-			"printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf"},
-	})
-
-	// Give the container's network stack a moment to stabilise after the
-	// DNS rewrite. The docker bridge NAT + iptables rules on the host
-	// may not be fully effective at the instant the container starts.
-	time.Sleep(3 * time.Second)
-
-	// Install candidates — stderr is NOT silenced so failures are visible
-	// in the apply output for debugging.
-	candidates := [][]string{
-		{"apk", "add", "--no-cache", "iptables"},
-		{"sh", "-c", "apt-get update -qq && apt-get install -y -qq iptables"},
+	pid := strings.TrimSpace(string(out))
+	if pid == "0" {
+		return fmt.Errorf("container %s not running (pid 0)", containerID)
 	}
 
-	const maxRetries = 3
-	var errs []string
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		for _, c := range candidates {
-			res, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{Cmd: c})
-			if err != nil {
-				errs = append(errs, fmt.Sprintf("attempt %d exec %v: %v", attempt, c, err))
-				continue
-			}
-			if res.ExitCode == 0 {
-				verify, _ := sub.ExecInNode(ctx, h, substrate.ExecSpec{
-					Cmd: []string{"sh", "-c", "command -v iptables >/dev/null 2>&1"},
-				})
-				if verify.ExitCode == 0 {
-					return nil
-				}
-				errs = append(errs, fmt.Sprintf("attempt %d: installed but command -v failed", attempt))
-			} else {
-				errs = append(errs, fmt.Sprintf("attempt %d %v exit %d: %s", attempt, c, res.ExitCode, res.Stderr))
-			}
-		}
-		if attempt < maxRetries {
-			time.Sleep(2 * time.Second)
-		}
-	}
-	return fmt.Errorf("could not install iptables after %d attempts: %s", maxRetries, strings.Join(errs, "; "))
-}
-
-// configureNAT installs MASQUERADE on the egress interface and FORWARD rules.
-// Best-effort: returns an error if iptables is not present in the container.
-func configureNAT(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle, fromIf, toIf string) error {
-	check, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{Cmd: []string{"sh", "-c", "command -v iptables"}})
-	if err != nil {
-		return err
-	}
-	if check.ExitCode != 0 {
-		return fmt.Errorf("iptables not available in container")
+	// Check that nsenter + iptables are available on the host.
+	if _, err := execCommand("nsenter", "--version"); err != nil {
+		return fmt.Errorf("nsenter not found on host: %w", err)
 	}
 
 	cmds := []string{
-		fmt.Sprintf("iptables -t nat -A POSTROUTING -o %s -j MASQUERADE", toIf),
-		fmt.Sprintf("iptables -A FORWARD -i %s -o %s -j ACCEPT", fromIf, toIf),
-		fmt.Sprintf("iptables -A FORWARD -i %s -o %s -m state --state ESTABLISHED,RELATED -j ACCEPT", toIf, fromIf),
+		fmt.Sprintf("nsenter -t %s -n iptables -t nat -A POSTROUTING -o %s -j MASQUERADE", pid, toIf),
+		fmt.Sprintf("nsenter -t %s -n iptables -A FORWARD -i %s -o %s -j ACCEPT", pid, fromIf, toIf),
+		fmt.Sprintf("nsenter -t %s -n iptables -A FORWARD -i %s -o %s -m state --state ESTABLISHED,RELATED -j ACCEPT", pid, toIf, fromIf),
 	}
 	for _, c := range cmds {
-		res, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{Cmd: []string{"sh", "-c", c}})
+		parts := strings.Fields(c)
+		out, err := execCommand(parts[0], parts[1:]...)
 		if err != nil {
-			return err
-		}
-		if res.ExitCode != 0 {
-			return fmt.Errorf("cmd %q exit %d: %s", c, res.ExitCode, res.Stderr)
+			return fmt.Errorf("cmd %q: %w (%s)", c, err, strings.TrimSpace(string(out)))
 		}
 	}
 	return nil
+}
+
+// execCommand is a small wrapper around exec.Command.CombinedOutput for
+// running host-side commands. Extracted for testability.
+var execCommand = func(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
 }
