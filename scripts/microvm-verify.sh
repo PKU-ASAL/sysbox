@@ -9,6 +9,18 @@ cd "$(dirname "$0")/.."
 HCL=examples/microvm/field.sysbox.hcl
 STATE=runs/microvm/state.json
 
+# When the script runs under sudo, $HOME=/root and the HCL
+# local.rootfs_path resolves incorrectly. Export SYSBOX_ROOTFS.
+if [ -z "${SYSBOX_ROOTFS:-}" ]; then
+  REAL_HOME="${SUDO_USER_HOME:-}"
+  if [ -z "$REAL_HOME" ] && [ -n "${SUDO_USER:-}" ]; then
+    REAL_HOME=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+  fi
+  if [ -n "$REAL_HOME" ]; then
+    export SYSBOX_ROOTFS="$REAL_HOME/.cache/sysbox/rootfs/ubuntu-24.04.ext4"
+  fi
+fi
+
 echo "=== full cleanup (TAPs, veths, netns, fc procs, fc dirs, docker) ==="
 sudo pkill -9 firecracker 2>/dev/null || true
 sudo rm -rf /tmp/fc-images/sysbox-* "$STATE" 2>/dev/null || true
