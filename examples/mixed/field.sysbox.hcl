@@ -94,8 +94,13 @@ resource "sysbox_router" "core" {
     ip      = "10.0.2.254/24"
   }
 
-  nat_from = "dmz"
-  nat_to   = "internal"
+  interface "uplink" {
+    network = sysbox_network.net_uplink.id
+    ip      = "172.20.0.254/24"
+  }
+
+  nat_from = "internal"
+  nat_to   = "uplink"
 }
 
 # ── Docker nodes ─────────────────────────────────────────────────────────────

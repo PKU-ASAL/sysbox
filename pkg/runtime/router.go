@@ -17,8 +17,9 @@ import (
 var _ = enableIPForward
 
 // createRouter provisions a multi-NIC node with IP forwarding enabled.
-// Optional NAT (nat_from -> nat_to) is best-effort: requires iptables in
-// the container. If absent, a warning is printed and only forwarding stays.
+// Interfaces on NAT (Docker-managed) networks are connected via Docker
+// networking; isolated-network interfaces use veth pairs as usual.
+// Optional NAT (nat_from -> nat_to) is configured via host-side nsenter.
 func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 	cfg, ok := n.Data.(*config.RouterConfig)
 	if !ok {
@@ -46,12 +47,32 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		Repository: asString(imgState.Instance["repository"]),
 	}
 
+	// Pre-scan interfaces: find the first NAT network so it can be
+	// connected at container-creation time (required for Docker to
+	// assign the correct eth name and IP).
+	var initialNets []substrate.DockerNetworkAttachment
+	firstNATIdx := -1
+	for i, iface := range cfg.Interfaces {
+		netName, _ := resolveNetworkRef(iface.Network)
+		netState := e.state.FindResource("sysbox_network", netName)
+		if netState == nil {
+			return fmt.Errorf("network %s not applied yet", netName)
+		}
+		if isNAT, _ := netState.Instance["nat"].(bool); isNAT && firstNATIdx < 0 {
+			firstNATIdx = i
+			netID := asString(netState.Instance["docker_network_id"])
+			initialNets = append(initialNets, substrate.DockerNetworkAttachment{
+				NetworkID: netID,
+				IPv4:      iface.IP,
+			})
+		}
+	}
+
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
-		Name:  fmt.Sprintf("sysbox-%s", n.ID.Name),
-		Image: imgRef,
-		Sysctls: map[string]string{
-			"net.ipv4.ip_forward": "1",
-		},
+		Name:              fmt.Sprintf("sysbox-%s", n.ID.Name),
+		Image:             imgRef,
+		Sysctls:           map[string]string{"net.ipv4.ip_forward": "1"},
+		InitialDockerNets: initialNets,
 	})
 	if err != nil {
 		return err
@@ -62,15 +83,60 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
+	// Docker assigns eth names sequentially from eth0 for networks
+	// connected at create time. Isolated-network veths are injected
+	// after, so we must track the correct eth index.
+	connectedAtCreate := map[string]bool{}
+	if len(initialNets) > 0 {
+		connectedAtCreate[initialNets[0].NetworkID] = true
+	}
+	vethIdx := len(initialNets) // veth guest-iface starts after NAT ifaces
+
 	nics := []map[string]any{}
 	ifaceByName := map[string]string{} // logical name -> guest interface (eth0/eth1/...)
+	dockerSub, _ := e.dockerSubstrate()
+
 	for i, iface := range cfg.Interfaces {
-		nic, netNetns, err := e.wireRouterInterface(ctx, n.ID.Name, i, iface)
+		netName, _ := resolveNetworkRef(iface.Network)
+		netState := e.state.FindResource("sysbox_network", netName)
+		if netState == nil {
+			_ = sub.DestroyNode(ctx, handle)
+			return fmt.Errorf("network %s not applied yet", netName)
+		}
+
+		// NAT network: already connected at create time, or connect now.
+		if isNAT, _ := netState.Instance["nat"].(bool); isNAT {
+			netID := asString(netState.Instance["docker_network_id"])
+			if !connectedAtCreate[netID] && dockerSub != nil {
+				if err := dockerSub.ConnectContainerToNetwork(ctx, handle.ID, netID, iface.IP); err != nil {
+					_ = sub.DestroyNode(ctx, handle)
+					return fmt.Errorf("connect router %s to nat network %s: %w", n.ID.Name, netName, err)
+				}
+			}
+			// NAT ifaces are numbered eth0, eth1, ... in the order
+			// Docker attaches them. Since we attached the first at
+			// create time and any extras via network connect, the
+			// index matches the loop order for NAT-only counting.
+			target := fmt.Sprintf("eth%d", i)
+			ifaceByName[iface.Name] = target
+			nics = append(nics, map[string]any{
+				"type":       "docker_nat",
+				"network_id": netID,
+				"ip":         iface.IP,
+				"target":     target,
+				"label":      iface.Name,
+			})
+			continue
+		}
+
+		// Non-NAT (isolated) network: veth pair.
+		nic, netNetns, err := e.wireRouterInterface(ctx, n.ID.Name, vethIdx, iface)
 		if err != nil {
 			_ = sub.DestroyNode(ctx, handle)
 			return err
 		}
-		nic.TargetName = fmt.Sprintf("eth%d", i)
+		nic.TargetName = fmt.Sprintf("eth%d", vethIdx)
+		vethIdx++
 
 		handleWithSrc := substrate.NodeHandle{
 			ID:         handle.ID,

@@ -86,6 +86,14 @@ resource "sysbox_router" "core" {
     network = sysbox_network.net_internal.id
     ip      = "10.0.2.254/24"
   }
+
+  interface "uplink" {
+    network = sysbox_network.net_uplink.id
+    ip      = "172.20.0.254/24"
+  }
+
+  nat_from = "internal"
+  nat_to   = "uplink"
 }
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
