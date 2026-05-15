@@ -218,6 +218,13 @@ func runProcPolling(containerName string, sig chan os.Signal) {
 	enc := json.NewEncoder(os.Stdout)
 	prev := scanProc()
 
+	// Emit the initial process inventory as execve events so the host
+	// sees what's already running, not just processes born after the
+	// sensor started. Without this, idle VMs produce zero events.
+	for _, e := range prev {
+		_ = enc.Encode(procEventToJSON("execve", e, containerName))
+	}
+
 	ticker := time.NewTicker(procPollInterval)
 	defer ticker.Stop()
 
