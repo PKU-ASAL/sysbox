@@ -29,6 +29,7 @@ docker network ls --format '{{.Name}}' 2>/dev/null | grep '^sysbox-' | xargs -r 
 echo "=== apply (streaming; kernel boot lines filtered) ==="
 # stdbuf -oL forces line-buffered output from grep so the user sees progress
 # as VMs boot, not just a wall of text at the end.
+# --state runs/microvm/state.json isolates events to runs/microvm/events/.
 sudo -E ./bin/sysbox apply -f "$HCL" --state "$STATE" --auto-approve 2>&1 | \
   stdbuf -oL grep -vE '^\[\s*[0-9.]+\] |^\[\s*OK\s*\] |systemd\[1\]:|^\s+(Mount|Start|Listen|Reach|Wait|Found|Finish|Crea|Set)'
 
