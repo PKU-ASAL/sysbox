@@ -51,15 +51,13 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 	// connected at container-creation time (required for Docker to
 	// assign the correct eth name and IP).
 	var initialNets []substrate.DockerNetworkAttachment
-	firstNATIdx := -1
-	for i, iface := range cfg.Interfaces {
+	for _, iface := range cfg.Interfaces {
 		netName, _ := resolveNetworkRef(iface.Network)
 		netState := e.state.FindResource("sysbox_network", netName)
 		if netState == nil {
 			return fmt.Errorf("network %s not applied yet", netName)
 		}
-		if isNAT, _ := netState.Instance["nat"].(bool); isNAT && firstNATIdx < 0 {
-			firstNATIdx = i
+		if isNAT, _ := netState.Instance["nat"].(bool); isNAT && len(initialNets) == 0 {
 			netID := asString(netState.Instance["docker_network_id"])
 			initialNets = append(initialNets, substrate.DockerNetworkAttachment{
 				NetworkID: netID,
@@ -90,13 +88,14 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 	if len(initialNets) > 0 {
 		connectedAtCreate[initialNets[0].NetworkID] = true
 	}
+	natIdx := 0                // NAT interfaces: eth0, eth1, ... (Docker-assigned order)
 	vethIdx := len(initialNets) // veth guest-iface starts after NAT ifaces
 
 	nics := []map[string]any{}
 	ifaceByName := map[string]string{} // logical name -> guest interface (eth0/eth1/...)
 	dockerSub, _ := e.dockerSubstrate()
 
-	for i, iface := range cfg.Interfaces {
+	for _, iface := range cfg.Interfaces {
 		netName, _ := resolveNetworkRef(iface.Network)
 		netState := e.state.FindResource("sysbox_network", netName)
 		if netState == nil {
@@ -113,11 +112,12 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 					return fmt.Errorf("connect router %s to nat network %s: %w", n.ID.Name, netName, err)
 				}
 			}
-			// NAT ifaces are numbered eth0, eth1, ... in the order
-			// Docker attaches them. Since we attached the first at
-			// create time and any extras via network connect, the
-			// index matches the loop order for NAT-only counting.
-			target := fmt.Sprintf("eth%d", i)
+			// NAT ifaces are numbered eth0, eth1, ... by Docker in
+			// the order they are attached (first at create time, then
+			// via network connect). Use a separate counter so the
+			// mapping is correct regardless of HCL interface order.
+			target := fmt.Sprintf("eth%d", natIdx)
+			natIdx++
 			ifaceByName[iface.Name] = target
 			nics = append(nics, map[string]any{
 				"type":       "docker_nat",

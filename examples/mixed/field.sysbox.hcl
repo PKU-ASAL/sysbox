@@ -131,6 +131,10 @@ resource "sysbox_node" "node_web" {
     ip      = "10.0.2.10/24"
     gw      = "10.0.2.254"
   }
+
+  depends_on = [
+    "sysbox_router.core",
+  ]
 }
 
 # ── Firecracker node (isolated kernel, vm-vsock observation) ────────────────
@@ -150,6 +154,10 @@ resource "sysbox_node" "node_db" {
 
   ssh_user = "root"
   ssh_pass = "root"
+
+  depends_on = [
+    "sysbox_router.core",
+  ]
 
   provisioner "exec" {
     inline = ["apt-get update -qq && apt-get install -y -qq postgresql 2>/dev/null || true"]
