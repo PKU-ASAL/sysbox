@@ -60,6 +60,17 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
+	// Ensure iptables is available BEFORE attaching custom NICs. After
+	// AttachNIC, the routing table may no longer reach package mirrors.
+	// At this point the container still has the docker default bridge,
+	// which provides outbound internet for the apt/apk fetch.
+	if cfg.NatFrom != "" && cfg.NatTo != "" {
+		if err := ensureIptables(ctx, sub, handle); err != nil {
+			fmt.Printf("[router %s] warning: could not install iptables (NAT will be skipped): %v\n",
+				n.ID.Name, err)
+		}
+	}
+
 	nics := []map[string]any{}
 	ifaceByName := map[string]string{} // logical name -> guest interface (eth0/eth1/...)
 	for i, iface := range cfg.Interfaces {
@@ -128,7 +139,7 @@ func (e *Executor) wireRouterInterface(ctx context.Context, nodeName string, idx
 		Network: iface.Network,
 		IP:      iface.IP,
 	}
-	return e.wireLink(ctx, nodeName, idx, link)
+	return e.wireLink(ctx, nodeName, idx, link, "docker")
 }
 
 // enableIPForward writes 1 to /proc/sys/net/ipv4/ip_forward inside the node.
@@ -143,6 +154,44 @@ func enableIPForward(ctx context.Context, sub substrate.Substrate, h substrate.N
 		return fmt.Errorf("exit %d: %s", res.ExitCode, res.Stderr)
 	}
 	return nil
+}
+
+// ensureIptables makes a best-effort attempt to install iptables in the router
+// container if it isn't already present. Supports alpine (apk) and
+// debian/ubuntu (apt-get). Silent on success.
+func ensureIptables(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle) error {
+	check, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{
+		Cmd: []string{"sh", "-c", "command -v iptables >/dev/null 2>&1"},
+	})
+	if err != nil {
+		return fmt.Errorf("probe iptables: %w", err)
+	}
+	if check.ExitCode == 0 {
+		return nil // already present
+	}
+
+	// Try alpine first, then debian/ubuntu. Order doesn't matter because
+	// only one package manager is ever installed.
+	candidates := [][]string{
+		{"sh", "-c", "apk add --no-cache iptables >/dev/null 2>&1"},
+		{"sh", "-c", "apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq iptables >/dev/null 2>&1"},
+	}
+	for _, c := range candidates {
+		res, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{Cmd: c})
+		if err != nil {
+			continue
+		}
+		if res.ExitCode == 0 {
+			// Verify it's actually callable now.
+			verify, _ := sub.ExecInNode(ctx, h, substrate.ExecSpec{
+				Cmd: []string{"sh", "-c", "command -v iptables >/dev/null 2>&1"},
+			})
+			if verify.ExitCode == 0 {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("no package manager succeeded in installing iptables")
 }
 
 // configureNAT installs MASQUERADE on the egress interface and FORWARD rules.
