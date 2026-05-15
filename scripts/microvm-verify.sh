@@ -9,6 +9,16 @@ cd "$(dirname "$0")/.."
 HCL=examples/microvm/field.sysbox.hcl
 STATE=runs/microvm/state.json
 
+# When the script runs under sudo, root's PATH lacks the user's
+# personal bin dirs (e.g. ~/.local/bin where firecracker lives).
+if [ -n "${SUDO_USER:-}" ] && [ -z "${SYSBOX_PRESERVE_PATH:-}" ]; then
+  export SYSBOX_PRESERVE_PATH=1
+  USER_PATH=$(sudo -u "$SUDO_USER" env | grep '^PATH=' | head -1 | cut -d= -f2-)
+  if [ -n "$USER_PATH" ]; then
+    export PATH="$USER_PATH:$PATH"
+  fi
+fi
+
 # When the script runs under sudo, $HOME=/root and the HCL
 # local.rootfs_path resolves incorrectly. Export SYSBOX_ROOTFS.
 if [ -z "${SYSBOX_ROOTFS:-}" ]; then

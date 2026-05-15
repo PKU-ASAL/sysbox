@@ -12,6 +12,17 @@ HCL=examples/mixed/field.sysbox.hcl
 STATE=runs/mixed/state.json
 EVENTS=runs/mixed/events
 
+# When the script runs under sudo, root's PATH lacks the user's
+# personal bin dirs (e.g. ~/.local/bin where firecracker lives).
+# Preserve the caller's PATH so that `sudo -E` sub-commands find it.
+if [ -n "${SUDO_USER:-}" ] && [ -z "${SYSBOX_PRESERVE_PATH:-}" ]; then
+  export SYSBOX_PRESERVE_PATH=1
+  USER_PATH=$(sudo -u "$SUDO_USER" env | grep '^PATH=' | head -1 | cut -d= -f2-)
+  if [ -n "$USER_PATH" ]; then
+    export PATH="$USER_PATH:$PATH"
+  fi
+fi
+
 # When the script itself runs under sudo, $HOME is /root and the HCL
 # local.rootfs_path (derived from env("HOME")) resolves to the wrong
 # directory. Export SYSBOX_ROOTFS to override it with the real user's
