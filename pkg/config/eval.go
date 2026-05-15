@@ -48,7 +48,15 @@ func BuildEvalContext(root *Root) *hcl.EvalContext {
 		})
 	}
 
-	// Collect locals: merge all locals blocks into one map.
+	// Collect locals: merge all locals blocks into one map. Locals are
+	// evaluated against a context that already exposes top-level functions
+	// (env, ...) so that `locals { x = env("HOME") }` resolves; they do not
+	// yet see other locals or resources (no inter-local references for now).
+	localCtx := &hcl.EvalContext{
+		Functions: map[string]function.Function{
+			"env": envFunc,
+		},
+	}
 	localVals := map[string]cty.Value{}
 	for _, lb := range root.Locals {
 		if lb.Remain == nil {
@@ -59,7 +67,7 @@ func BuildEvalContext(root *Root) *hcl.EvalContext {
 			continue
 		}
 		for name, attr := range attrs {
-			val, diags := attr.Expr.Value(nil)
+			val, diags := attr.Expr.Value(localCtx)
 			if diags.HasErrors() {
 				continue
 			}

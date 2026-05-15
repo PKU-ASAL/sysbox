@@ -1,6 +1,7 @@
-BINARY   := bin/sysbox
-GO       := $(shell which go 2>/dev/null || echo /usr/local/go/bin/go)
-GOFLAGS  := CGO_ENABLED=0
+BINARY     := bin/sysbox
+INIT_EMBED := pkg/provider/firecracker/initbin/sysbox-init.bin
+GO         := $(shell which go 2>/dev/null || echo /usr/local/go/bin/go)
+GOFLAGS    := CGO_ENABLED=0
 
 .DEFAULT_GOAL := help
 
@@ -17,8 +18,14 @@ help:
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 .PHONY: build
-build: ## Compile bin/sysbox
+build: build-init ## Compile bin/sysbox (auto-builds embedded sysbox-init)
 	$(GOFLAGS) $(GO) build -o $(BINARY) ./cmd/sysbox
+
+.PHONY: build-init
+build-init: $(INIT_EMBED) ## Cross-compile sysbox-init for linux/amd64 and embed it
+
+$(INIT_EMBED): cmd/sysbox-init/main.go
+	GOOS=linux GOARCH=amd64 $(GOFLAGS) $(GO) build -ldflags="-s -w" -o $(INIT_EMBED) ./cmd/sysbox-init
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
@@ -29,14 +36,6 @@ test: ## Run unit tests (no Docker required)
 .PHONY: test-e2e
 test-e2e: build ## Go topology tests: apply/route/drift/destroy (requires Docker + root)
 	sudo -E "$(GO)" test -tags e2e -v -count=1 ./tests/e2e/... -timeout 120s
-
-.PHONY: test-scenario
-test-scenario: build ## Full pipeline scenario: scripted attack + agent + attribution (lab must be up)
-	tests/scenario.sh
-
-.PHONY: test-scenario-no-agent
-test-scenario-no-agent: build ## Full pipeline scenario without agent phase (lab must be up, no API key needed)
-	tests/scenario.sh --skip-agent
 
 # ── Code quality ──────────────────────────────────────────────────────────────
 

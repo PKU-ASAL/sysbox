@@ -6,7 +6,9 @@ import (
 	"hash/fnv"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
@@ -40,6 +42,8 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 		return e.createNetwork(ctx, node)
 	case "sysbox_image":
 		return e.createImage(ctx, node)
+	case "sysbox_kernel":
+		return e.createKernel(ctx, node)
 	case "sysbox_node":
 		return e.createNode(ctx, node)
 	case "sysbox_router":
@@ -69,6 +73,10 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 	case "sysbox_router":
 		return e.destroyRouter(ctx, r)
 	case "sysbox_image":
+		e.state.RemoveResource(r.Type, r.Name)
+		return nil
+	case "sysbox_kernel":
+		// Cache files are content-addressed and shared; do not delete from disk.
 		e.state.RemoveResource(r.Type, r.Name)
 		return nil
 	case "sysbox_firewall":
@@ -199,9 +207,28 @@ func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
+	// Resolve rootfs source through the artifact resolver. This makes
+	// URL-based rootfs identical to local-path rootfs from the substrate's
+	// perspective: the substrate always sees an absolute local path.
+	rootfs := cfg.Rootfs
+	var rootfsSHA string
+	if rootfs != "" {
+		res, err := artifact.New().Resolve(artifact.Spec{Source: rootfs, SHA256: cfg.SHA256})
+		if err != nil {
+			return fmt.Errorf("image %s rootfs: %w", n.ID.Name, err)
+		}
+		if res.FromCache {
+			fmt.Printf("[apply] image %s: rootfs cache hit (%s)\n", n.ID.Name, res.Path)
+		} else if artifact.IsURL(cfg.Rootfs) {
+			fmt.Printf("[apply] image %s: rootfs fetched to %s\n", n.ID.Name, res.Path)
+		}
+		rootfs = res.Path
+		rootfsSHA = res.SHA256
+	}
+
 	ref, err := sub.PrepareImage(ctx, substrate.ImageSpec{
 		DockerRef: cfg.DockerRef,
-		Rootfs:    cfg.Rootfs,
+		Rootfs:    rootfs,
 		Size:      cfg.Size,
 	})
 	if err != nil {
@@ -215,6 +242,51 @@ func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
 		Instance: map[string]any{
 			"image_id":   ref.ID,
 			"repository": ref.Repository,
+			"source":     cfg.Rootfs,
+			"sha256":     rootfsSHA,
+		},
+	})
+	return nil
+}
+
+// -- kernels --
+
+// createKernel resolves a sysbox_kernel resource into a local on-disk path
+// via the artifact resolver (downloading + caching as needed) and records it
+// in state. Other resources (sysbox_node) reference the resolved path by
+// looking up state["sysbox_kernel", name].path.
+func (e *Executor) createKernel(_ context.Context, n *graph.Node) error {
+	cfg, ok := n.Data.(*config.KernelConfig)
+	if !ok {
+		return fmt.Errorf("kernel %s: wrong data type", n.ID)
+	}
+	if cfg.Source == "" {
+		return fmt.Errorf("kernel %s: source required", n.ID.Name)
+	}
+	subName, err := resolveSubstrateRef(cfg.Substrate)
+	if err != nil {
+		return err
+	}
+
+	res, err := artifact.New().Resolve(artifact.Spec{Source: cfg.Source, SHA256: cfg.SHA256})
+	if err != nil {
+		return fmt.Errorf("kernel %s: %w", n.ID.Name, err)
+	}
+	if res.FromCache {
+		fmt.Printf("[apply] kernel %s: cache hit (%s)\n", n.ID.Name, res.Path)
+	} else if artifact.IsURL(cfg.Source) {
+		fmt.Printf("[apply] kernel %s: fetched to %s\n", n.ID.Name, res.Path)
+	}
+
+	e.state.AddResource(state.Resource{
+		Type:     "sysbox_kernel",
+		Name:     n.ID.Name,
+		Provider: subName,
+		Instance: map[string]any{
+			"path":             res.Path,
+			"source":           cfg.Source,
+			"sha256":           res.SHA256,
+			"cmdline_template": cfg.CmdlineTemplate,
 		},
 	})
 	return nil
@@ -247,6 +319,26 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	imgRef := substrate.ImageRef{
 		ID:         asString(imgState.Instance["image_id"]),
 		Repository: asString(imgState.Instance["repository"]),
+	}
+
+	// Resolve the kernel field. Three legal forms:
+	//   - empty                          : use the substrate's default kernel
+	//   - "sysbox_kernel.NAME.id" / "NAME": look up the kernel in state
+	//   - "/abs/path" or "rel/path"      : literal filesystem path
+	kernelPath := cfg.Kernel
+	if kernelPath != "" && looksLikeKernelReference(kernelPath) {
+		kname, err := resolveKernelRef(kernelPath)
+		if err != nil {
+			return err
+		}
+		kState := e.state.FindResource("sysbox_kernel", kname)
+		if kState == nil {
+			return fmt.Errorf("kernel %s not applied yet", kname)
+		}
+		kernelPath = asString(kState.Instance["path"])
+		if kernelPath == "" {
+			return fmt.Errorf("kernel %s has no resolved path in state", kname)
+		}
 	}
 
 	// Pre-scan links: collect Docker NAT networks so the first one can be
@@ -288,21 +380,27 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
 		Name:              fmt.Sprintf("sysbox-%s", n.ID.Name),
 		Image:             imgRef,
+		VCPUs:             cfg.Vcpus,
+		Memory:            cfg.Memory,
+		Kernel:            kernelPath,
+		Rootfs:            cfg.Rootfs,
+		SSHUser:           cfg.SSHUser,
+		SSHPass:           cfg.SSHPass,
+		SSHPort:           cfg.SSHPort,
 		Env:               cfg.Env,
 		Privileged:        cfg.Privileged,
 		PidMode:           cfg.PidMode,
 		CgroupnsMode:      cfg.CgroupnsMode,
 		Binds:             cfg.Binds,
 		InitialDockerNets: initialNets,
+		ChainInit:         cfg.ChainInit,
 	})
 	if err != nil {
 		return err
 	}
 
-	if err := sub.StartNode(ctx, handle); err != nil {
-		_ = sub.DestroyNode(ctx, handle)
-		return err
-	}
+	// NOTE: Do NOT call StartNode yet — Firecracker needs all NICs declared
+	// in the boot config before launch. We call StartNode AFTER the NIC loop.
 
 	// Track which NAT networks were already connected at create time.
 	connectedAtCreate := map[string]bool{}
@@ -349,7 +447,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			continue
 		}
 
-		nic, netNetns, err := e.wireLink(ctx, n.ID.Name, vethIdx, link)
+		nic, netNetns, err := e.wireLink(ctx, n.ID.Name, vethIdx, link, subName)
 		if err != nil {
 			_ = sub.DestroyNode(ctx, handle)
 			return err
@@ -359,15 +457,23 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 
 		handleWithSrc := substrate.NodeHandle{
 			ID: handle.ID,
-			Attributes: map[string]any{
-				"network_netns": netNetns,
-			},
+			Attributes: mergeAttr(
+				handle.Attributes,
+				map[string]any{"network_netns": netNetns},
+			),
 		}
-		if err := sub.AttachNIC(ctx, handleWithSrc, nic); err != nil {
+	// Firecracker needs bridge name for TAP attachment.
+	if subName == "firecracker" && netState != nil {
+		if brName := asString(netState.Instance["bridge"]); brName != "" {
+			handleWithSrc.Attributes["network_bridge"] = brName
+		}
+	}
+	if err := sub.AttachNIC(ctx, handleWithSrc, nic); err != nil {
 			_ = sub.DestroyNode(ctx, handle)
 			return err
 		}
 		nics = append(nics, map[string]any{
+			"kind":      nic.Kind, // "veth" or "tap"
 			"host_end":  nic.HostEnd,
 			"guest_end": nic.GuestEnd,
 			"target":    nic.TargetName,
@@ -376,19 +482,75 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		})
 	}
 
+	nodeInstance := map[string]any{
+		"container_id": handle.ID,
+		"nics":         nics,
+	}
+	// For firecracker, persist vsock metadata so post-apply tooling
+	// (sensor, monitor, debugger) can reach the guest without rediscovery.
+	if subName == "firecracker" {
+		if uds, ok := handle.Attributes["vsock_uds"].(string); ok && uds != "" {
+			nodeInstance["vsock_uds"] = uds
+		}
+		if cid, ok := handle.Attributes["vsock_cid"].(uint32); ok && cid != 0 {
+			nodeInstance["vsock_cid"] = float64(cid)
+		}
+		if port, ok := handle.Attributes["vsock_port"].(uint32); ok && port != 0 {
+			nodeInstance["vsock_port"] = float64(port)
+		}
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_node",
 		Name:     n.ID.Name,
 		Provider: subName,
-		Instance: map[string]any{
-			"container_id": handle.ID,
-			"nics":         nics,
-		},
+		Instance: nodeInstance,
 	})
+
+	// Start the node now that all NICs are attached.
+	// For Docker this is a no-op (already started in CreateNode).
+	// For Firecracker this launches the VM with the complete config.
+	if err := sub.StartNode(ctx, handle); err != nil {
+		_ = sub.DestroyNode(ctx, handle)
+		return fmt.Errorf("start node %s: %w", n.ID.Name, err)
+	}
+
+	// For firecracker nodes, record the first link IP as ssh_ip so
+	// provisioners can connect via SSH.
+	if subName == "firecracker" && len(cfg.Links) > 0 {
+		firstIP := cfg.Links[0].IP
+		if firstIP != "" {
+			// Strip CIDR suffix for SSH.
+			if idx := strings.Index(firstIP, "/"); idx >= 0 {
+				firstIP = firstIP[:idx]
+			}
+			if handle.Attributes == nil {
+				handle.Attributes = map[string]any{}
+			}
+			handle.Attributes["ssh_ip"] = firstIP
+			handle.Attributes["ssh_port"] = fmt.Sprintf("%d", cfg.SSHPort)
+		}
+	}
 
 	// Run provisioners after node is up and wired.
 	if len(cfg.Provisioners) > 0 {
 		conn := e.connectionForNode(sub, subName, handle, cfg.Connections)
+		// Block until the chosen connection is reachable.
+		switch c := conn.(type) {
+		case *providerexec.SSHConnection:
+			if c != nil {
+				fmt.Printf("[provisioner] waiting for SSH on %s...\n", c.Host())
+				if err := c.WaitForSSH(ctx, 60*time.Second); err != nil {
+					return fmt.Errorf("ssh not ready on node %s: %w", n.ID.Name, err)
+				}
+			}
+		case *providerexec.VsockConnection:
+			if c != nil {
+				fmt.Printf("[provisioner] waiting for vsock-agent on %s...\n", n.ID.Name)
+				if err := c.WaitReady(ctx, 60*time.Second); err != nil {
+					return fmt.Errorf("vsock-agent not ready on node %s: %w", n.ID.Name, err)
+				}
+			}
+		}
 		if err := e.runProvisioners(ctx, conn, cfg.Provisioners); err != nil {
 			return fmt.Errorf("provisioner on node %s: %w", n.ID.Name, err)
 		}
@@ -406,24 +568,30 @@ func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
 	// Ignore stop/destroy errors: container may already be gone (drift recovery).
 	_ = sub.StopNode(ctx, handle)
 	_ = sub.DestroyNode(ctx, handle)
-	// Always clean up veths and state regardless of container presence.
+	// Always clean up veths/taps and state regardless of container presence.
 	if nics, ok := r.Instance["nics"].([]any); ok {
 		for _, item := range nics {
 			n, _ := item.(map[string]any)
+			kind := asString(n["kind"])
 			hostEnd := asString(n["host_end"])
 			nsName := asString(n["netns"])
-			_ = network.DeleteVethPair(network.VethHandle{HostEnd: hostEnd, NetnsName: nsName})
+			if kind == "tap" {
+				_ = network.DeleteTapDevice(hostEnd, nsName)
+			} else {
+				_ = network.DeleteVethPair(network.VethHandle{HostEnd: hostEnd, NetnsName: nsName})
+			}
 		}
 	}
 	e.state.RemoveResource(r.Type, r.Name)
 	return nil
 }
 
-// wireLink creates a veth pair in the network's netns and returns the NIC
-// spec for the substrate to attach. Returns the network's netns name so
-// the substrate knows where to find the guest-end.
+// wireLink creates a veth pair (Docker) or tap device (Firecracker) in the
+// network's netns and returns the NIC spec for the substrate to attach.
+// Returns the network's netns name so the substrate knows where to find
+// the guest-end / tap device.
 // Caller must ensure the network is not a NAT network before calling wireLink.
-func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link config.LinkConfig) (substrate.NIC, string, error) {
+func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link config.LinkConfig, subName string) (substrate.NIC, string, error) {
 	netName, err := resolveNetworkRef(link.Network)
 	if err != nil {
 		return substrate.NIC{}, "", err
@@ -433,8 +601,29 @@ func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link 
 		return substrate.NIC{}, "", fmt.Errorf("network %s not applied yet", netName)
 	}
 
-	// Use a 5-char fnv32 hex hash so the name always fits in 15 chars
-	// regardless of nodeName length: "vh-" + 5 hex + "-" + 1 digit = 10 chars.
+	nsName := asString(netState.Instance["netns"])
+	brName := asString(netState.Instance["bridge"])
+
+	// Firecracker uses TAP devices; Docker uses veth pairs.
+	if subName == "firecracker" {
+		tapName := fmt.Sprintf("tap-%05x-%d", fnvHash(nodeName)&0xfffff, idx)
+		if len(tapName) > 15 {
+			tapName = tapName[:15]
+		}
+
+		if err := network.CreateTapInNetns(tapName, nsName, brName); err != nil {
+			return substrate.NIC{}, "", fmt.Errorf("create tap %s: %w", tapName, err)
+		}
+
+		return substrate.NIC{
+			Kind:     "tap",
+			HostEnd:  tapName,
+			IP:       link.IP,
+			Gateway:  link.Gateway,
+		}, nsName, nil
+	}
+
+	// Default: Docker veth pair.
 	hostEnd := vethName("vh", nodeName, idx)
 	guestEnd := vethName("vg", nodeName, idx)
 
@@ -442,9 +631,6 @@ func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link 
 	// Router interfaces intentionally omit gw so they don't compete for the
 	// default route.
 	gateway := link.Gateway
-
-	nsName := asString(netState.Instance["netns"])
-	brName := asString(netState.Instance["bridge"])
 
 	pair, err := network.CreateVethPair(network.VethSpec{
 		HostEnd:    hostEnd,
@@ -463,6 +649,13 @@ func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link 
 		IP:       link.IP,
 		Gateway:  gateway,
 	}, nsName, nil
+}
+
+// fnvHash returns the FNV-1a 32-bit hash of s.
+func fnvHash(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
 }
 
 // -- reference resolution helpers --
@@ -502,6 +695,39 @@ func resolveImageRef(ref string) (string, error) {
 	return parts[1], nil
 }
 
+// looksLikeKernelReference matches the same shape as the loader's
+// looksLikeKernelRef but is duplicated here to keep pkg/runtime free of any
+// dependency on cmd/sysbox/commands. Refs that look like literal paths or
+// URLs are returned as-is by the caller (no state lookup).
+func looksLikeKernelReference(s string) bool {
+	if s == "" {
+		return false
+	}
+	if strings.HasPrefix(s, "/") || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") {
+		return false
+	}
+	if strings.Contains(s, "://") {
+		return false
+	}
+	return true
+}
+
+// resolveKernelRef extracts the kernel resource name from either a bare name
+// or a `sysbox_kernel.<name>.attr` traversal string.
+func resolveKernelRef(ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("empty kernel ref")
+	}
+	if !strings.Contains(ref, ".") {
+		return ref, nil
+	}
+	parts := strings.Split(ref, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("bad kernel ref %q", ref)
+	}
+	return parts[1], nil
+}
+
 func resolveNetworkRef(ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("empty network ref")
@@ -530,6 +756,18 @@ func asString(v any) string {
 	}
 	s, _ := v.(string)
 	return s
+}
+
+// mergeAttr merges base and overlay attribute maps (overlay wins on conflict).
+func mergeAttr(base, overlay map[string]any) map[string]any {
+	out := make(map[string]any, len(base)+len(overlay))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		out[k] = v
+	}
+	return out
 }
 
 // -- sysbox_ssh_access --
@@ -624,15 +862,31 @@ func (e *Executor) connectionForNode(
 	}
 
 	switch connType {
-	case "auto", "docker":
+	case "auto":
+		// Auto-select based on substrate.
+		if dockerSub, ok := sub.(*dockerprovider.Substrate); ok {
+			return providerexec.NewDockerConnection(dockerSub, handle)
+		}
+		if subName == "firecracker" {
+			// Prefer vsock (no SSH dependency on the rootfs). Fall back to
+			// SSH only if the handle has no vsock UDS attached (e.g. when
+			// sysbox-init was disabled because the embed binary is missing).
+			if c := vsockConnectionFromHandle(handle); c != nil {
+				return c
+			}
+			return e.sshConnectionFromHandle(handle, conns)
+		}
+	case "docker":
 		if dockerSub, ok := sub.(*dockerprovider.Substrate); ok {
 			return providerexec.NewDockerConnection(dockerSub, handle)
 		}
 	case "ssh":
-		if len(conns) > 0 {
-			c := conns[0]
-			return providerexec.NewSSHConnection(c.Host, c.User, c.PrivateKey, c.Password)
+		return e.sshConnectionFromHandle(handle, conns)
+	case "vsock":
+		if c := vsockConnectionFromHandle(handle); c != nil {
+			return c
 		}
+		return nil
 	}
 
 	// Fallback to docker if substrate supports it.
@@ -640,6 +894,48 @@ func (e *Executor) connectionForNode(
 		return providerexec.NewDockerConnection(dockerSub, handle)
 	}
 	return nil
+}
+
+// vsockConnectionFromHandle builds a Vsock connection from the node handle.
+// Returns nil if the handle does not advertise a vsock UDS (e.g. firecracker
+// with sysbox-init disabled, or any non-firecracker substrate).
+func vsockConnectionFromHandle(handle substrate.NodeHandle) *providerexec.VsockConnection {
+	uds, _ := handle.Attributes["vsock_uds"].(string)
+	if uds == "" {
+		return nil
+	}
+	port, _ := handle.Attributes["vsock_port"].(uint32)
+	return providerexec.NewVsockConnection(uds, port)
+}
+
+// sshConnectionFromHandle builds an SSH connection from the node handle attributes.
+func (e *Executor) sshConnectionFromHandle(handle substrate.NodeHandle, conns []config.ConnectionConfig) providerexec.Connection {
+	host, _ := handle.Attributes["ssh_ip"].(string)
+	port, _ := handle.Attributes["ssh_port"].(string)
+	user := "root"
+	pass := "root"
+	key := ""
+
+	if len(conns) > 0 {
+		c := conns[0]
+		if c.Host != "" {
+			host = c.Host
+		}
+		if c.User != "" {
+			user = c.User
+		}
+		if c.Password != "" {
+			pass = c.Password
+		}
+		if c.PrivateKey != "" {
+			key = c.PrivateKey
+		}
+	}
+
+	if host == "" {
+		return nil
+	}
+	return providerexec.NewSSHConnectionWithPort(host, port, user, key, pass)
 }
 
 // runProvisioners executes provisioner blocks in order.

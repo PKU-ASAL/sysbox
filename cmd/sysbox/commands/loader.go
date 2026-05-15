@@ -141,6 +141,19 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 		}
 		data = cfg
 
+	case "sysbox_kernel":
+		cfg := &config.KernelConfig{}
+		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
+			return err
+		}
+		data = cfg
+		for _, dep := range cfg.DependsOn {
+			parts := strings.SplitN(dep, ".", 2)
+			if len(parts) == 2 {
+				deps = append(deps, graph.Ref{Type: parts[0], Name: parts[1]})
+			}
+		}
+
 	case "sysbox_node":
 		cfg := &config.NodeConfig{}
 		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
@@ -149,6 +162,9 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 		data = cfg
 		if ref := resolveRef(cfg.Image); ref != "" {
 			deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
+		}
+		if ref := resolveRef(cfg.Kernel); ref != "" && looksLikeKernelRef(cfg.Kernel) {
+			deps = append(deps, graph.Ref{Type: "sysbox_kernel", Name: ref})
 		}
 		for _, link := range cfg.Links {
 			if ref := resolveRef(link.Network); ref != "" {
@@ -271,6 +287,23 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 	g.AddNode(r.Type, name, deps)
 	g.SetData(r.Type, name, data)
 	return nil
+}
+
+// looksLikeKernelRef returns true when the value of NodeConfig.Kernel looks
+// like a `sysbox_kernel.<name>.id` reference rather than a literal filesystem
+// path. Literal paths (starting with "/" or "./") and URLs are kept as-is so
+// that pre-resource-era HCL keeps working.
+func looksLikeKernelRef(s string) bool {
+	if s == "" {
+		return false
+	}
+	if strings.HasPrefix(s, "/") || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") {
+		return false
+	}
+	if strings.Contains(s, "://") {
+		return false
+	}
+	return true
 }
 
 // resolveRef accepts either a bare resource name (post-EvalContext) or a

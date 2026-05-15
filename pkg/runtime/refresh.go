@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
@@ -72,6 +73,19 @@ func (e *Executor) probeResource(ctx context.Context, id graph.NodeID) (bool, er
 
 	case "sysbox_image":
 		// Images are pulled once and don't drift in Phase 1.
+		return true, nil
+
+	case "sysbox_kernel":
+		// Cache files are content-addressed; if the file disappeared,
+		// the next createKernel will re-fetch. Treat present-in-state as
+		// healthy.
+		path := asString(r.Instance["path"])
+		if path == "" {
+			return false, nil
+		}
+		if _, err := os.Stat(path); err != nil {
+			return false, nil
+		}
 		return true, nil
 
 	case "sysbox_firewall":

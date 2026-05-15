@@ -114,9 +114,15 @@ type ProvisionerConfig struct {
 
 type NodeConfig struct {
 	Image        string              `hcl:"image"`
-	Substrate    string              `hcl:"substrate"`
+	Substrate    string              `hcl:"substrate"` // "docker" | "firecracker"
 	Vcpus        int                 `hcl:"vcpus,optional"`
-	Memory       string              `hcl:"memory,optional"`
+	Memory       string              `hcl:"memory,optional"` // e.g. "512" (MB)
+	Kernel       string              `hcl:"kernel,optional"` // path to vmlinux (firecracker only)
+	Rootfs       string              `hcl:"rootfs,optional"` // path to ext4 rootfs (firecracker only, overrides image)
+	SSHUser      string              `hcl:"ssh_user,optional"`
+	SSHPass      string              `hcl:"ssh_pass,optional"`
+	SSHPort      int                 `hcl:"ssh_port,optional"`
+	ChainInit    string              `hcl:"chain_init,optional"` // firecracker only; sysbox-init exec()s this after setup
 	Env          map[string]string   `hcl:"env,optional"`
 	DependsOn    []string            `hcl:"depends_on,optional"`
 	Links        []LinkConfig        `hcl:"link,block"`
@@ -195,8 +201,46 @@ type ActorConfig struct {
 type ImageConfig struct {
 	Substrate string `hcl:"substrate"`
 	DockerRef string `hcl:"docker_ref,optional"`
-	Rootfs    string `hcl:"rootfs,optional"`
-	Size      string `hcl:"size,optional"`
+	// Rootfs is either a local path (e.g. "/tmp/rootfs.ext4") or a URL
+	// ("https://.../rootfs.ext4"). URLs are fetched via pkg/artifact at
+	// apply time and cached on disk.
+	Rootfs string `hcl:"rootfs,optional"`
+	// SHA256, if set, is verified against the resolved artifact (URL or
+	// local). Mismatch fails apply.
+	SHA256 string `hcl:"sha256,optional"`
+	Size   string `hcl:"size,optional"`
+}
+
+// KernelConfig is the schema for `resource "sysbox_kernel" "<name>" { ... }`.
+//
+// A kernel resource represents a single fetchable vmlinux binary (or other
+// kernel image). It is referenced from sysbox_node via:
+//
+//	resource "sysbox_node" "vm" {
+//	  kernel = sysbox_kernel.fc_510.id
+//	  ...
+//	}
+//
+// At apply time, the artifact resolver downloads the source if needed,
+// verifies sha256, and stores the local cache path in state. The destroy
+// op removes the state entry but never deletes the cache file (it is a
+// shared, content-addressed cache).
+type KernelConfig struct {
+	Substrate string `hcl:"substrate"`
+	// Source is the artifact reference. Supported schemes:
+	//   - "https://..." / "http://..."   (downloaded into the cache)
+	//   - "/abs/path"                    (local file, no copy)
+	//   - "relative/path"                (resolved against cwd)
+	Source string `hcl:"source"`
+	// SHA256 is the expected hex digest of the kernel image (optional).
+	// When set, the resolver verifies and the cache key becomes
+	// content-addressed.
+	SHA256 string `hcl:"sha256,optional"`
+	// CmdlineTemplate, if set, overrides the substrate's default kernel
+	// command line for nodes that reference this kernel. Reserved for
+	// future use; not yet consumed by the firecracker substrate.
+	CmdlineTemplate string   `hcl:"cmdline_template,optional"`
+	DependsOn       []string `hcl:"depends_on,optional"`
 }
 
 type FirewallConfig struct {
