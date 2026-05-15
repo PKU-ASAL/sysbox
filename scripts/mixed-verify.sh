@@ -21,6 +21,12 @@ if [ -n "${SUDO_USER:-}" ] && [ -z "${SYSBOX_PRESERVE_PATH:-}" ]; then
   if [ -n "$USER_PATH" ]; then
     export PATH="$USER_PATH:$PATH"
   fi
+  # Also set SYSBOX_FC_BIN explicitly — the firecracker provider checks
+  # this env var first and it bypasses PATH/HOME lookups entirely.
+  FC_BIN=$(sudo -u "$SUDO_USER" which firecracker 2>/dev/null || true)
+  if [ -n "$FC_BIN" ]; then
+    export SYSBOX_FC_BIN="$FC_BIN"
+  fi
 fi
 
 # When the script itself runs under sudo, $HOME is /root and the HCL
