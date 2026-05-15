@@ -136,7 +136,7 @@ func attachVethToContainer(nic substrate.NIC, sourceNetnsName string, containerP
 			Dst:       defaultNet,
 			Gw:        gwIP,
 		}
-		if err := netlink.RouteAdd(route); err != nil {
+		if err := netlink.RouteReplace(route); err != nil {
 			return fmt.Errorf("add default route: %w", err)
 		}
 	}

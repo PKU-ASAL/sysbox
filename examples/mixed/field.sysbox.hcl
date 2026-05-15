@@ -109,7 +109,6 @@ resource "sysbox_node" "node_attack" {
   link {
     network = sysbox_network.net_dmz.id
     ip      = "10.0.1.10/24"
-    gw      = "10.0.1.254"
   }
 
   link {
