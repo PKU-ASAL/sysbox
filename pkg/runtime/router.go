@@ -173,13 +173,18 @@ func ensureIptables(ctx context.Context, sub substrate.Substrate, h substrate.No
 		return nil // already present
 	}
 
-	// Ensure DNS works: Docker containers sometimes start before the
-	// embedded DNS (127.0.0.11) is ready. Adding a public fallback
-	// resolver unblocks package manager lookups on alpine and debian.
+	// Fix DNS: Docker's embedded stub resolver (127.0.0.11) does not work
+	// reliably with musl (Alpine). Overwrite resolv.conf with public DNS
+	// servers so apk/apt-get can resolve package repositories.
 	_, _ = sub.ExecInNode(ctx, h, substrate.ExecSpec{
 		Cmd: []string{"sh", "-c",
-			"grep -q '8.8.8.8' /etc/resolv.conf 2>/dev/null || echo 'nameserver 8.8.8.8' >> /etc/resolv.conf"},
+			"printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf"},
 	})
+
+	// Give the container's network stack a moment to stabilise after the
+	// DNS rewrite. The docker bridge NAT + iptables rules on the host
+	// may not be fully effective at the instant the container starts.
+	time.Sleep(3 * time.Second)
 
 	// Install candidates — stderr is NOT silenced so failures are visible
 	// in the apply output for debugging.
