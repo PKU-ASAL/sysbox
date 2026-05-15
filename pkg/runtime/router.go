@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/config"
@@ -188,12 +189,12 @@ func ensureIptables(ctx context.Context, sub substrate.Substrate, h substrate.No
 	}
 
 	const maxRetries = 3
-	var lastErr string
+	var errs []string
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		for _, c := range candidates {
 			res, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{Cmd: c})
 			if err != nil {
-				lastErr = fmt.Sprintf("exec %v: %v", c, err)
+				errs = append(errs, fmt.Sprintf("attempt %d exec %v: %v", attempt, c, err))
 				continue
 			}
 			if res.ExitCode == 0 {
@@ -203,16 +204,16 @@ func ensureIptables(ctx context.Context, sub substrate.Substrate, h substrate.No
 				if verify.ExitCode == 0 {
 					return nil
 				}
-				lastErr = "installed but command -v failed"
+				errs = append(errs, fmt.Sprintf("attempt %d: installed but command -v failed", attempt))
 			} else {
-				lastErr = fmt.Sprintf("%v exit %d: %s", c, res.ExitCode, res.Stderr)
+				errs = append(errs, fmt.Sprintf("attempt %d %v exit %d: %s", attempt, c, res.ExitCode, res.Stderr))
 			}
 		}
 		if attempt < maxRetries {
 			time.Sleep(2 * time.Second)
 		}
 	}
-	return fmt.Errorf("could not install iptables after %d attempts: %s", maxRetries, lastErr)
+	return fmt.Errorf("could not install iptables after %d attempts: %s", maxRetries, strings.Join(errs, "; "))
 }
 
 // configureNAT installs MASQUERADE on the egress interface and FORWARD rules.

@@ -33,11 +33,13 @@ build-init: $(INIT_DEFAULT) ## Cross-compile sysbox-init for the host arch only
 .PHONY: build-init-all
 build-init-all: $(INIT_AMD64) $(INIT_ARM64) ## Cross-compile sysbox-init for amd64 AND arm64
 
-$(INIT_AMD64): cmd/sysbox-init/main.go cmd/sysbox-init/network.go cmd/sysbox-init/server.go
+INIT_SRCS = cmd/sysbox-init/main.go cmd/sysbox-init/network.go cmd/sysbox-init/server.go cmd/sysbox-init/sensor.go
+
+$(INIT_AMD64): $(INIT_SRCS)
 	rm -f $@
 	GOOS=linux GOARCH=amd64 $(GOFLAGS) $(GO) build -ldflags="-s -w" -o $@ ./cmd/sysbox-init
 
-$(INIT_ARM64): cmd/sysbox-init/main.go cmd/sysbox-init/network.go cmd/sysbox-init/server.go
+$(INIT_ARM64): $(INIT_SRCS)
 	rm -f $@
 	GOOS=linux GOARCH=arm64 $(GOFLAGS) $(GO) build -ldflags="-s -w" -o $@ ./cmd/sysbox-init
 
