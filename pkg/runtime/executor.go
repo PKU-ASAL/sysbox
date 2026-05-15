@@ -399,6 +399,17 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
+	// Docker containers must be started BEFORE AttachNIC so the container
+	// has a PID and a network namespace to inject veths into. Firecracker
+	// VMs must NOT be started yet — they need all TAPs declared in the
+	// boot config before launch.
+	if subName != "firecracker" {
+		if err := sub.StartNode(ctx, handle); err != nil {
+			_ = sub.DestroyNode(ctx, handle)
+			return fmt.Errorf("start node %s: %w", n.ID.Name, err)
+		}
+	}
+
 	// NOTE: Do NOT call StartNode yet — Firecracker needs all NICs declared
 	// in the boot config before launch. We call StartNode AFTER the NIC loop.
 
@@ -507,7 +518,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	})
 
 	// Start the node now that all NICs are attached.
-	// For Docker this is a no-op (already started in CreateNode).
+	// Docker nodes were already started above (before AttachNIC).
 	// For Firecracker this launches the VM with the complete config.
 	if err := sub.StartNode(ctx, handle); err != nil {
 		_ = sub.DestroyNode(ctx, handle)

@@ -28,16 +28,34 @@ substrate "firecracker" {
   alias = "fc"
 }
 
-# ── Images ──────────────────────────────────────────────────────────────────
+# ── Locals ──────────────────────────────────────────────────────────────────
+
+locals {
+  rootfs_path = env("SYSBOX_ROOTFS") != "" ? env("SYSBOX_ROOTFS") : "${env("HOME")}/.cache/sysbox/rootfs/ubuntu-24.04.ext4"
+}
+
+# ── Kernel + Images ─────────────────────────────────────────────────────────
+
+# Same firecracker-ci kernel used in the microvm example. Includes
+# CONFIG_VSOCKETS=y and CONFIG_VIRTIO_VSOCKETS=y (required for vsock-rpc).
+resource "sysbox_kernel" "fc_510" {
+  substrate = substrate.firecracker.fc
+  source    = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.14/x86_64/vmlinux-5.10.245"
+}
 
 resource "sysbox_image" "alpine_docker" {
   substrate  = substrate.docker.dk
   docker_ref = "alpine:latest"
 }
 
+resource "sysbox_image" "nginx" {
+  substrate  = substrate.docker.dk
+  docker_ref = "nginx:alpine"
+}
+
 resource "sysbox_image" "alpine_vm" {
   substrate = substrate.firecracker.fc
-  rootfs    = "/tmp/fc-rootfs.ext4"
+  rootfs    = local.rootfs_path
 }
 
 resource "sysbox_image" "attacker_docker" {
@@ -102,16 +120,12 @@ resource "sysbox_node" "node_attack" {
 
 resource "sysbox_node" "node_web" {
   substrate  = substrate.docker.dk
-  image      = sysbox_image.alpine_docker.id
+  image      = sysbox_image.nginx.id
 
   link {
     network = sysbox_network.net_internal.id
     ip      = "10.0.2.10/24"
     gw      = "10.0.2.254"
-  }
-
-  provisioner "exec" {
-    inline = ["apk add --no-cache nginx 2>/dev/null || true"]
   }
 }
 
@@ -120,7 +134,7 @@ resource "sysbox_node" "node_web" {
 resource "sysbox_node" "node_db" {
   substrate = substrate.firecracker.fc
   image     = sysbox_image.alpine_vm.id
-  kernel    = "/tmp/vmlinux"
+  kernel    = sysbox_kernel.fc_510.id
   vcpus     = 1
   memory    = "256"
 
@@ -134,7 +148,7 @@ resource "sysbox_node" "node_db" {
   ssh_pass = "root"
 
   provisioner "exec" {
-    inline = ["apk add --no-cache postgresql 2>/dev/null || true"]
+    inline = ["apt-get update -qq && apt-get install -y -qq postgresql 2>/dev/null || true"]
   }
 }
 
