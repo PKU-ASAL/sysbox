@@ -58,6 +58,11 @@ func applyIPDirective(spec string) error {
 	}
 	if gw != "" {
 		steps = append(steps, []string{"ip", "route", "add", "default", "via", gw})
+		// Add public DNS so apt-get etc. work when the VM has outbound
+		// internet (via router NAT or a direct uplink). If the VM has no
+		// external connectivity this is harmless.
+		steps = append(steps, []string{"sh", "-c",
+			"grep -q 8.8.8.8 /etc/resolv.conf 2>/dev/null || echo 'nameserver 8.8.8.8' >> /etc/resolv.conf"})
 	}
 	for _, args := range steps {
 		out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
