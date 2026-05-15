@@ -161,6 +161,37 @@ resource "sysbox_actor" "red" {
   env      = { DEEPSEEK_API_KEY = env("DEEPSEEK_API_KEY") }
 }
 
+# ── eBPF Sensor (tracee sidecar for Docker nodes) ────────────────────────────
+#
+# Runs aquasec/tracee as a privileged container sharing the host PID namespace.
+# The tracee backend docker-execs into this container to start/stop tracing.
+# Not needed for VM nodes (vm-vsock uses the in-guest agent instead).
+
+resource "sysbox_image" "tracee" {
+  substrate  = substrate.docker.dk
+  docker_ref = "aquasec/tracee:latest"
+}
+
+resource "sysbox_node" "sensor" {
+  image          = sysbox_image.tracee.id
+  substrate      = substrate.docker.dk
+  privileged     = true
+  pid_mode       = "host"
+  cgroupns_mode  = "host"
+  binds = [
+    "/tmp/sysbox-events:/tmp/events:rw",
+    "/etc/os-release:/etc/os-release-host:ro",
+    "/sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro",
+    "/sys/fs/bpf:/sys/fs/bpf",
+    "/sys/fs/cgroup:/sys/fs/cgroup",
+    "/var/run/docker.sock:/var/run/docker.sock",
+  ]
+
+  provisioner "exec" {
+    inline = ["mkdir -p /tmp/events"]
+  }
+}
+
 # ── Monitor: tracee for Docker, vm-vsock for Firecracker ────────────────────
 #
 # Two separate monitor resources are declared, each using the appropriate
@@ -178,6 +209,12 @@ resource "sysbox_monitor" "docker_nodes" {
   extra = {
     sensor_container = "sysbox-sensor"
   }
+
+  depends_on = [
+    "sysbox_node.node_attack",
+    "sysbox_node.node_web",
+    "sysbox_node.sensor",
+  ]
 }
 
 resource "sysbox_monitor" "vm_nodes" {
