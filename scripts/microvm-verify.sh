@@ -26,10 +26,11 @@ done
 docker ps -aq --filter "name=sysbox-" 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
 docker network ls --format '{{.Name}}' 2>/dev/null | grep '^sysbox-' | xargs -r docker network rm >/dev/null 2>&1 || true
 
-echo "=== apply ==="
+echo "=== apply (streaming; kernel boot lines filtered) ==="
+# stdbuf -oL forces line-buffered output from grep so the user sees progress
+# as VMs boot, not just a wall of text at the end.
 sudo -E ./bin/sysbox apply -f "$HCL" --state "$STATE" --auto-approve 2>&1 | \
-  grep -vE '^\[\s*[0-9.]+\] |systemd\[1\]:|^\[OK\]|^\s+(Mount|Start|Listen|Reach|Wait|Found|Finish|Crea|Set)' | \
-  tail -40
+  stdbuf -oL grep -vE '^\[\s*[0-9.]+\] |^\[\s*OK\s*\] |systemd\[1\]:|^\s+(Mount|Start|Listen|Reach|Wait|Found|Finish|Crea|Set)'
 
 echo
 echo "=== state inventory ==="
