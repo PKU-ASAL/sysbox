@@ -264,7 +264,13 @@ func (s *Substrate) StopNode(_ context.Context, h substrate.NodeHandle) error {
 	return vm.cmd.Process.Signal(syscall.SIGTERM)
 }
 
-// DestroyNode kills the VM process and cleans up files.
+// DestroyNode kills the VM process and cleans up files. Tolerates two
+// invocation modes:
+//   - hot: same process that created the VM (vmStore has the cmd handle).
+//   - cold: a fresh CLI invocation after the in-memory map was lost
+//     (e.g. `sysbox destroy` after the apply process exited). In that
+//     case we reconstruct the conventional vm_dir from the VM ID and
+//     kill whatever firecracker process is holding firecracker.sock.
 func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error {
 	vmMu.Lock()
 	vm, ok := vmStore[h.ID]
@@ -276,7 +282,14 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 		_ = vm.cmd.Wait()
 	}
 
-	if dir, _ := h.Attributes["vm_dir"].(string); dir != "" {
+	// Resolve vm_dir from attributes if given, else fall back to the
+	// substrate's conventional layout so cold destroys still clean up.
+	dir, _ := h.Attributes["vm_dir"].(string)
+	if dir == "" && h.ID != "" {
+		dir = filepath.Join(s.rootfsDir, h.ID)
+	}
+	if dir != "" {
+		killStaleFirecracker(filepath.Join(dir, "firecracker.sock"))
 		_ = os.RemoveAll(dir)
 	}
 	return nil

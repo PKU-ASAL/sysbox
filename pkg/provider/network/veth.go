@@ -24,23 +24,40 @@ type VethHandle struct {
 // CreateVethPair creates a veth pair in the netns, attaches the host end
 // to the bridge, and prepares the guest end (caller moves it into the
 // container netns via substrate.AttachNIC).
+//
+// Idempotent: if the host-end already exists in the target netns
+// (leftover from a previous failed apply), it is reused and bridge
+// enslavement is re-asserted instead of returning "file exists".
 func CreateVethPair(spec VethSpec) (VethHandle, error) {
 	err := inNetns(spec.NetnsName, func() error {
-		la := netlink.NewLinkAttrs()
-		la.Name = spec.HostEnd
-
-		veth := &netlink.Veth{
-			LinkAttrs: la,
-			PeerName:  spec.GuestEnd,
-		}
-		if err := netlink.LinkAdd(veth); err != nil {
-			return fmt.Errorf("add veth pair: %w", err)
-		}
-
 		hostLink, err := netlink.LinkByName(spec.HostEnd)
-		if err != nil {
-			return err
+		if err == nil {
+			// Host end exists. Verify the guest end is also present in this
+			// netns; otherwise the pair is broken (the peer was previously
+			// moved into a container netns that has since gone away). Reset
+			// by deleting the orphan and re-creating the pair fresh.
+			if _, perr := netlink.LinkByName(spec.GuestEnd); perr != nil {
+				_ = netlink.LinkDel(hostLink)
+				hostLink = nil
+			}
 		}
+		if hostLink == nil {
+			la := netlink.NewLinkAttrs()
+			la.Name = spec.HostEnd
+
+			veth := &netlink.Veth{
+				LinkAttrs: la,
+				PeerName:  spec.GuestEnd,
+			}
+			if err := netlink.LinkAdd(veth); err != nil {
+				return fmt.Errorf("add veth pair: %w", err)
+			}
+			hostLink, err = netlink.LinkByName(spec.HostEnd)
+			if err != nil {
+				return err
+			}
+		}
+
 		br, err := netlink.LinkByName(spec.BridgeName)
 		if err != nil {
 			return err
@@ -49,8 +66,10 @@ func CreateVethPair(spec VethSpec) (VethHandle, error) {
 		if !ok {
 			return fmt.Errorf("link %s is not a bridge", spec.BridgeName)
 		}
-		if err := netlink.LinkSetMaster(hostLink, bridge); err != nil {
-			return fmt.Errorf("attach host end to bridge: %w", err)
+		if hostLink.Attrs().MasterIndex != bridge.Attrs().Index {
+			if err := netlink.LinkSetMaster(hostLink, bridge); err != nil {
+				return fmt.Errorf("attach host end to bridge: %w", err)
+			}
 		}
 		if err := netlink.LinkSetUp(hostLink); err != nil {
 			return err
