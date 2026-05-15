@@ -296,3 +296,24 @@ class OpenCodeClient:
             except Exception:
                 time.sleep(0.5)
         return False
+
+    # ── Transcript retrieval ──────────────────────────────────────────────────
+
+    def get_transcript(self, session_id: str) -> list[dict]:
+        """Fetch the full message transcript for a completed session.
+
+        Returns a list of message dicts, each with:
+          info:   {id, sessionID, role, time, agent, model, ...}
+          parts:  [{type: "text"|"tool"|"reasoning"|"step-start"|"step-finish", ...}, ...]
+
+        This is the single-source-of-truth record of the entire agent
+        conversation — user prompt, reasoning, tool calls with full
+        input/output/error, and assistant text responses.
+        """
+        resp = self._request("GET", f"/session/{session_id}/message", timeout=10.0)
+        if isinstance(resp, list):
+            return resp
+        # Some versions wrap in a key.
+        if isinstance(resp, dict) and "messages" in resp:
+            return resp["messages"]
+        return []

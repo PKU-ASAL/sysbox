@@ -25,7 +25,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagAutoApprove, "auto-approve",
 		false, "skip interactive confirmation prompt")
 
-	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd, validateCmd, sensorCmd, matchCmd)
+	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd, validateCmd, sensorCmd)
 }
 
 // Execute is called by main(). Returns an error so main() can set exit code.

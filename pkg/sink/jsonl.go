@@ -33,13 +33,10 @@ func (s *JSONLSink) Write(e sensor.Event) error {
 		if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 			return fmt.Errorf("create sink dir: %w", err)
 		}
-		f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
+		f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			return fmt.Errorf("open sink file: %w", err)
 		}
-		// Chmod explicitly so umask doesn't restrict non-root writers (e.g.
-		// the episode runner truncating the file between episodes).
-		_ = os.Chmod(s.path, 0o666)
 		s.f = f
 		s.enc = json.NewEncoder(f)
 	}

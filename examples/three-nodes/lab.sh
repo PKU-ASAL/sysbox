@@ -8,7 +8,6 @@
 #          examples/three-nodes/lab.sh exec <node> [cmd...]  # shell into a node
 #   sudo -E examples/three-nodes/lab.sh sensor          # (re)start sensor only
 #   sudo -E examples/three-nodes/lab.sh sensor-restart  # restart sensor after node reprovision
-#          examples/three-nodes/lab.sh match            # run PID-tree matcher for agent 'red'
 #          examples/three-nodes/lab.sh logs             # tail sensor log
 #          examples/three-nodes/lab.sh clean            # remove per-episode artefacts (keep state/keys)
 #
@@ -169,7 +168,7 @@ cmd_up() {
     echo ""
     echo "  ACP endpoint:   http://172.20.0.10:4096"
     echo "  Run episode:    uv run python3 examples/three-nodes/run_opencode.py"
-    echo "  Match:          examples/three-nodes/lab.sh match"
+    echo "  Inspect events: ls runs/default/events/"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
@@ -258,13 +257,6 @@ cmd_sensor_restart() {
     grep -E "mntns=|started in|monitor lab|Error" "${SENSOR_LOG}" 2>/dev/null | sed 's/^/    /' || true
 }
 
-cmd_match() {
-    echo "==> Running PID-tree matcher for agent 'red'..."
-    sysbox match run --agent red
-    echo ""
-    echo "Report: ${REPO_ROOT}/runs/default/episode_report.json"
-}
-
 cmd_logs() {
     echo "==> Sensor log (${SENSOR_LOG})"
     tail -f "${SENSOR_LOG}"
@@ -272,29 +264,22 @@ cmd_logs() {
 
 cmd_clean() {
     local runs_dir="${REPO_ROOT}/runs/default"
-    echo "==> Cleaning per-episode artefacts in ${runs_dir}/"
-    local removed=0
-    for f in step_log.jsonl episode_report.json match_report.json predictions.jsonl; do
-        if [ -f "${runs_dir}/${f}" ]; then
-            rm -f "${runs_dir}/${f}"
-            echo "    removed ${f}"
-            removed=$((removed+1))
-        fi
-    done
-    # Truncate per-node event files (preserve fds held by running sensor).
-    if [ -d "${runs_dir}/events" ]; then
-        for f in "${runs_dir}/events/"*.jsonl; do
-            [ -f "${f}" ] && : > "${f}" && echo "    truncated events/$(basename "${f}")"
-            removed=$((removed+1))
-        done
-    fi
-    # Clean archived episodes older than 7 days.
+    echo "==> Cleaning episode outputs in ${runs_dir}/episodes/"
+    local count=0
     if [ -d "${runs_dir}/episodes" ]; then
-        find "${runs_dir}/episodes" -maxdepth 1 -mindepth 1 -type d -mtime +7 \
-            -exec rm -rf {} + 2>/dev/null && true
+        count=$(find "${runs_dir}/episodes" -mindepth 1 -maxdepth 1 -type d | wc -l)
+        rm -rf "${runs_dir}/episodes"
+        echo "    removed ${count} episode(s)"
+    else
+        echo "    nothing to remove"
     fi
-    [ $removed -eq 0 ] && echo "    nothing to remove" || true
-    echo "    (state.json and SSH keys preserved)"
+    # Also remove stale root-level step_log (legacy location).
+    rm -f "${runs_dir}/step_log.jsonl" 2>/dev/null
+    echo ""
+    echo "    Preserved:"
+    echo "      state.json         — topology state (sysbox apply)"
+    echo "      events/*.jsonl     — sensor syscall stream (append-only)"
+    echo "      lab_key / lab_key.pub"
 }
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
@@ -309,7 +294,6 @@ case "${CMD}" in
     exec)            cmd_exec "$@" ;;
     sensor)          cmd_sensor ;;
     sensor-restart)  cmd_sensor_restart ;;
-    match)           cmd_match ;;
     logs)            cmd_logs ;;
     clean)           cmd_clean ;;
     help|--help|-h)
@@ -317,7 +301,7 @@ case "${CMD}" in
         ;;
     *)
         echo "Unknown command: ${CMD}"
-        echo "Usage: $0 {up|down|status|exec|sensor|sensor-restart|match|logs|clean}"
+        echo "Usage: $0 {up|down|status|exec|sensor|sensor-restart|logs|clean}"
         exit 1
         ;;
 esac

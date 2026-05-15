@@ -12,7 +12,14 @@ import (
 // Docker's bridge driver automatically sets up iptables MASQUERADE for outbound
 // traffic, giving attached containers internet access via the host's default route.
 // Returns the Docker network ID.
+//
+// Idempotent: if a network with the same name already exists (leftover from
+// a failed apply), its ID is returned instead of failing with a name conflict.
 func (s *Substrate) CreateBridgeNetwork(ctx context.Context, name, cidr string) (string, error) {
+	if existing, err := s.cli.NetworkInspect(ctx, name, network.InspectOptions{}); err == nil {
+		return existing.ID, nil
+	}
+
 	// Parse gateway (first usable host in the subnet).
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {

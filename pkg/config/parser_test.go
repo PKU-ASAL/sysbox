@@ -17,13 +17,12 @@ func TestParseFile(t *testing.T) {
 	require.Equal(t, "docker", root.Substrates[0].Type)
 	require.Equal(t, "light", root.Substrates[0].Alias)
 
-	require.Len(t, root.Resources, 4)
+	require.Len(t, root.Resources, 6)
 
-	network := findResource(root, "sysbox_network", "dmz")
-	require.NotNil(t, network)
-
-	web := findResource(root, "sysbox_node", "web")
-	require.NotNil(t, web)
+	require.NotNil(t, findResource(root, "sysbox_network", "dmz"))
+	require.NotNil(t, findResource(root, "sysbox_node", "web"))
+	require.NotNil(t, findResource(root, "sysbox_actor", "red"))
+	require.NotNil(t, findResource(root, "sysbox_monitor", "lab"))
 }
 
 func TestDecodeResource(t *testing.T) {
@@ -49,6 +48,40 @@ func TestDecodeResource(t *testing.T) {
 	require.Equal(t, "dmz", nodeCfg.Links[0].Network)
 }
 
+func TestDecodeActor(t *testing.T) {
+	path := filepath.Join("..", "..", "tests", "testdata", "valid_field.hcl")
+	root, err := ParseFile(path)
+	require.NoError(t, err)
+	ctx := BuildEvalContext(root)
+
+	actorBlock := findResource(root, "sysbox_actor", "red")
+	require.NotNil(t, actorBlock)
+
+	var cfg ActorConfig
+	require.NoError(t, DecodeResource(actorBlock, &cfg, ctx))
+	require.Equal(t, "internal", cfg.Position)
+	require.Equal(t, "client", cfg.Node)
+	require.Equal(t, 4096, cfg.Port)
+	require.Equal(t, []string{"opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"}, cfg.Command)
+	require.Equal(t, []string{"sysbox_node.client"}, cfg.DependsOn)
+}
+
+func TestDecodeMonitor(t *testing.T) {
+	path := filepath.Join("..", "..", "tests", "testdata", "valid_field.hcl")
+	root, err := ParseFile(path)
+	require.NoError(t, err)
+	ctx := BuildEvalContext(root)
+
+	mBlock := findResource(root, "sysbox_monitor", "lab")
+	require.NotNil(t, mBlock)
+
+	var cfg MonitorConfig
+	require.NoError(t, DecodeResource(mBlock, &cfg, ctx))
+	require.Equal(t, "tracee", cfg.Backend)
+	require.ElementsMatch(t, []string{"web", "client"}, cfg.Nodes)
+	require.Equal(t, []string{"execve", "openat", "connect"}, cfg.Events)
+}
+
 func TestEvalContextNamespaces(t *testing.T) {
 	path := filepath.Join("..", "..", "tests", "testdata", "valid_field.hcl")
 	root, err := ParseFile(path)
@@ -59,6 +92,8 @@ func TestEvalContextNamespaces(t *testing.T) {
 	require.Contains(t, ctx.Variables, "sysbox_image")
 	require.Contains(t, ctx.Variables, "sysbox_network")
 	require.Contains(t, ctx.Variables, "sysbox_node")
+	require.Contains(t, ctx.Variables, "sysbox_actor")
+	require.Contains(t, ctx.Variables, "sysbox_monitor")
 }
 
 func TestParseFileInvalid(t *testing.T) {

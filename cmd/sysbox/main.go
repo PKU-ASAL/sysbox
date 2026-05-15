@@ -9,6 +9,7 @@ import (
 
 	"github.com/oslab/sysbox/cmd/sysbox/commands"
 	docker "github.com/oslab/sysbox/pkg/provider/docker"
+	fc "github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -22,6 +23,19 @@ func main() {
 	} else {
 		substrate.Register(dockerSub)
 	}
+
+	// Register firecracker substrate if binary and kernel are available.
+	// Kernel/rootfs paths can be overridden per-node in HCL; these are defaults.
+	kernelPath := os.Getenv("SYSBOX_FC_KERNEL")
+	if kernelPath == "" {
+		kernelPath = "/tmp/vmlinux"
+	}
+	rootfsDir := os.Getenv("SYSBOX_FC_ROOTFS_DIR")
+	if rootfsDir == "" {
+		rootfsDir = "/tmp/fc-images"
+	}
+	fcSub := fc.New(kernelPath, rootfsDir)
+	substrate.Register(fcSub)
 
 	if err := commands.ExecuteContext(ctx); err != nil {
 		os.Exit(1)

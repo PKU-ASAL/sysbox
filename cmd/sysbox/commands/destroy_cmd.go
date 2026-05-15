@@ -3,9 +3,11 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -18,7 +20,17 @@ var destroyCmd = &cobra.Command{
 }
 
 func runDestroy(cmd *cobra.Command, args []string) error {
-	requireRoot()
+	// Destroy needs root only if the original apply needed it.
+	// We re-check from the HCL file; if the file is absent or
+	// NAT-only, we proceed without root.
+	if root, err := tryLoadRoot(); err == nil {
+		checkRoot(root)
+	} else if os.Getuid() != 0 {
+		// No HCL file available and not root — if the state has
+		// non-NAT networks, we'd fail later anyway. Try anyway;
+		// Docker-only destroys succeed without root.
+	}
+
 	mgr := state.NewManager(flagStateFile)
 	s, err := mgr.Load()
 	if err != nil {
@@ -51,4 +63,10 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("Destroy complete.")
 	return nil
+}
+
+// tryLoadRoot parses the HCL config file without requiring a full workspace.
+// Returns an error if the file doesn't exist or can't be parsed.
+func tryLoadRoot() (*config.Root, error) {
+	return config.ParseFile(flagConfigFile)
 }

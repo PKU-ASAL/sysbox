@@ -28,11 +28,8 @@ func TestRoutingSink_RoutesToNodeFiles(t *testing.T) {
 	}
 	require.NoError(t, rs.Close())
 
-	// node_attack.jsonl should have 2 events
 	assertFileEvents(t, filepath.Join(dir, "node_attack.jsonl"), 2, "node_attack")
-	// node_web.jsonl should have 1 event
 	assertFileEvents(t, filepath.Join(dir, "node_web.jsonl"), 1, "node_web")
-	// node_db.jsonl should have 1 event
 	assertFileEvents(t, filepath.Join(dir, "node_db.jsonl"), 1, "node_db")
 }
 
@@ -69,32 +66,31 @@ func TestRoutingSink_ConcurrentWrites(t *testing.T) {
 	wg.Wait()
 	require.NoError(t, rs.Close())
 
-	// Each node should have workers/2 * perWorker events.
 	countA := countFileLines(t, filepath.Join(dir, "node_a.jsonl"))
 	countB := countFileLines(t, filepath.Join(dir, "node_b.jsonl"))
 	require.Equal(t, workers/2*perWorker, countA)
 	require.Equal(t, workers/2*perWorker, countB)
 }
 
-func TestTruncateAll(t *testing.T) {
+func TestRoutingSink_SessionMarker(t *testing.T) {
 	dir := t.TempDir()
 	rs, err := NewRoutingSink(dir)
 	require.NoError(t, err)
-	rs.Write(sensor.Event{NodeID: "node_attack", PID: 1}) //nolint:errcheck
-	rs.Write(sensor.Event{NodeID: "node_web", PID: 2})    //nolint:errcheck
-	rs.Close()                                             //nolint:errcheck
 
-	// Files have content before truncation.
-	require.Greater(t, fileSize(t, filepath.Join(dir, "node_attack.jsonl")), int64(0))
+	require.NoError(t, rs.WriteSessionMarker([]string{"node_attack", "node_web"}, "run-001"))
+	require.NoError(t, rs.Close())
 
-	require.NoError(t, TruncateAll(dir))
-
-	require.Equal(t, int64(0), fileSize(t, filepath.Join(dir, "node_attack.jsonl")))
-	require.Equal(t, int64(0), fileSize(t, filepath.Join(dir, "node_web.jsonl")))
-}
-
-func TestTruncateAll_NonExistentDir(t *testing.T) {
-	require.NoError(t, TruncateAll("/tmp/sysbox-test-nonexistent-dir-xyz"))
+	for _, n := range []string{"node_attack", "node_web"} {
+		data, err := os.ReadFile(filepath.Join(dir, n+".jsonl"))
+		require.NoError(t, err)
+		lines := splitLines(data)
+		require.Len(t, lines, 1, "node %s should have exactly one marker", n)
+		var ev sensor.Event
+		require.NoError(t, json.Unmarshal(lines[0], &ev))
+		require.Equal(t, "meta", ev.Category)
+		require.Equal(t, n, ev.NodeID)
+		require.Contains(t, string(ev.Raw), `"sensor_run_id":"run-001"`)
+	}
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -121,13 +117,6 @@ func countFileLines(t *testing.T, path string) int {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return len(splitLines(data))
-}
-
-func fileSize(t *testing.T, path string) int64 {
-	t.Helper()
-	fi, err := os.Stat(path)
-	require.NoError(t, err)
-	return fi.Size()
 }
 
 func splitLines(data []byte) [][]byte {

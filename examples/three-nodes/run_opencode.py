@@ -1,27 +1,22 @@
 #!/usr/bin/env python3
-"""run_opencode.py — Episode runner for opencode agent inside node_attack.
+"""run_opencode.py — Drive the opencode agent inside node_attack via ACP.
 
-Architecture:
-  opencode serve (inside sysbox-node_attack, 172.20.0.10:4096)
-      │  ACP-style HTTP API + SSE
-      ▼
-  run_opencode.py (host, this script)
-      │  reads agent PID from sysbox state
-      ▼
-  sysbox match run --agent red
-      │  PID tree BFS → episode_report.json
-      ▼
-  EpisodeReport printed
+Each execution creates a self-contained episode directory:
+  runs/<run-id>/episodes/<ep-id>/
+    meta.json          — episode metadata (prompt, timestamps, step count)
+    step_log.jsonl      — agent tool-call timeline
+
+The sensor's events/ directory is append-only and shared across episodes;
+episode isolation is by timestamp, not by file boundary.
 
 Prerequisites:
-  sudo -E ./lab.sh up          # builds image, applies field, starts sensor
-                               # sysbox_agent.red starts opencode in container
-  set ANTHROPIC_API_KEY in .env or shell
+  sudo -E ./lab.sh up
+  Set DEEPSEEK_API_KEY (or your provider key) in .env or the shell.
 
 Usage:
   uv run python3 examples/three-nodes/run_opencode.py
-  uv run python3 examples/three-nodes/run_opencode.py --run-id ep-001
-  uv run python3 examples/three-nodes/run_opencode.py --agent-url http://172.20.0.10:4096
+  uv run python3 examples/three-nodes/run_opencode.py --episode ep-001
+  uv run python3 examples/three-nodes/run_opencode.py --prompt "Run nmap -sn 10.0.2.0/24"
 """
 
 from __future__ import annotations
@@ -29,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 import uuid
@@ -38,18 +32,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from runner.agent import OpenCodeClient, ToolCallEvent  # noqa: E402
+from runner.agent import OpenCodeClient, ToolCallEvent
 
-# Default agent URL: node_attack uplink IP (Docker bridge, reachable from host).
 DEFAULT_AGENT_URL = "http://172.20.0.10:4096"
-
-STATE_FILE  = REPO_ROOT / "runs" / "default" / "state.json"
-SYSBOX_BIN  = str(REPO_ROOT / "bin" / "sysbox")
-# Use the in-container prompt (agent runs directly, no docker exec prefix).
+STATE_FILE = REPO_ROOT / "runs" / "default" / "state.json"
 PROMPT_FILE = Path(__file__).parent / "prompts" / "attack_in_container.txt"
 
-
-# ── Environment ───────────────────────────────────────────────────────────────
 
 def load_env() -> None:
     env_file = REPO_ROOT / ".env"
@@ -70,8 +58,6 @@ def load_env() -> None:
         )
 
 
-# ── State helpers ─────────────────────────────────────────────────────────────
-
 def load_state() -> dict:
     if not STATE_FILE.exists():
         raise FileNotFoundError(
@@ -81,47 +67,20 @@ def load_state() -> dict:
     return json.loads(STATE_FILE.read_text())
 
 
-def find_agent_resource(state: dict, agent_name: str = "red") -> dict | None:
-    """Find actor/agent resource; prefers sysbox_actor, falls back to sysbox_agent."""
+def find_actor(state: dict, name: str) -> dict | None:
     for r in state.get("resources", []):
-        if r.get("type") == "sysbox_actor" and r.get("name") == agent_name:
-            return r.get("instance", {})
-    for r in state.get("resources", []):
-        if r.get("type") == "sysbox_agent" and r.get("name") == agent_name:
+        if r.get("type") == "sysbox_actor" and r.get("name") == name:
             return r.get("instance", {})
     return None
 
 
-# ── Matcher ───────────────────────────────────────────────────────────────────
-
-def run_match(run_id: str) -> dict:
-    """Call `sysbox match run --agent red` and return the EpisodeReport."""
-    result = subprocess.run(
-        [SYSBOX_BIN, "--state", str(STATE_FILE), "match", "run",
-         "--agent", "red", "--run-id", run_id],
-        capture_output=True, text=True, timeout=60,
-    )
-    if result.returncode != 0:
-        lines = (result.stderr or result.stdout).strip().splitlines()
-        print(f"  warn: match run failed: {lines[-1] if lines else '?'}")
-        return {}
-
-    report_path = STATE_FILE.parent / "episode_report.json"
-    try:
-        return json.loads(report_path.read_text())
-    except Exception:
-        return {}
-
-
-# ── Display ───────────────────────────────────────────────────────────────────
-
-def print_banner(agent_url: str, run_id: str) -> None:
+def print_banner(agent_url: str, ep_id: str, ep_dir: Path) -> None:
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print(" sysbox — opencode episode runner")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(f" agent:  {agent_url}")
-    print(f" state:  {STATE_FILE}")
-    print(f" run_id: {run_id}")
+    print(f" agent:    {agent_url}")
+    print(f" episode:  {ep_id}")
+    print(f" output:   {ep_dir}")
     print()
 
 
@@ -134,101 +93,78 @@ def print_step(i: int, ev: ToolCallEvent) -> None:
     print(f"  [{i:2d}] {status_sym} {cmd_short}{dur}")
 
 
-def print_report(report: dict, step_count: int, events: list | None = None) -> None:
-    print()
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(" Episode Result (PID tree attribution)")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(f"  tool steps:       {step_count}")
-    print(f"  anchor_pid:       {report.get('anchor_pid', '?')}")
-    print(f"  events scanned:   {report.get('total_events_scanned', '?')}")
-    print(f"  attack events:    {len(report.get('attack_events') or [])}")
-    if report.get("events_by_type"):
-        print("  by type:")
-        for evt_type, count in sorted(report["events_by_type"].items()):
-            print(f"    {evt_type:<28} {count}")
-    print()
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="sysbox opencode episode runner")
-    parser.add_argument("--run-id", default=None)
+    parser.add_argument("--episode", default=None, help="episode ID (default: auto-generated)")
+    parser.add_argument("--prompt", default=None, help="prompt text (default: read from prompts/attack_in_container.txt)")
     parser.add_argument("--agent-url", default=None,
-                        help=f"opencode server URL (default: {DEFAULT_AGENT_URL})")
-    parser.add_argument("--agent", default="red",
-                        help="sysbox_actor (or sysbox_agent) name to look up URL from state")
+                        help=f"opencode ACP URL (default: {DEFAULT_AGENT_URL})")
+    parser.add_argument("--actor", default="red",
+                        help="sysbox_actor name to look up ACP URL from state")
     args = parser.parse_args()
 
-    run_id = args.run_id or f"ep-{uuid.uuid4().hex[:8]}"
-
+    ep_id = args.episode or f"ep-{uuid.uuid4().hex[:8]}"
     load_env()
 
-    # Resolve agent URL: CLI flag > state lookup > default
-    agent_url = args.agent_url
-    if not agent_url:
-        try:
-            state = load_state()
-            agent_res = find_agent_resource(state, args.agent)
-            if agent_res:
-                # Prefer acp_url stored at apply time (sysbox_actor).
-                # Fall back to constructing from port (legacy sysbox_agent).
-                agent_url = agent_res.get("acp_url") or \
-                    f"http://172.20.0.10:{int(agent_res.get('port', 4096))}"
-        except FileNotFoundError as exc:
-            print(f"ERROR: {exc}")
-            return 1
-
-    agent_url = agent_url or DEFAULT_AGENT_URL
-
-    print_banner(agent_url, run_id)
-
-    # Verify the lab is up.
     try:
         state = load_state()
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}")
         return 1
 
-    agent_res = find_agent_resource(state, args.agent)
-    if agent_res:
-        pid = int(agent_res.get("pid", 0))
-        print(f" opencode PID (in container): {pid}")
-    else:
-        print(f" warn: sysbox_actor.{args.agent} not found in state")
-        print("  Ensure lab.sh up has completed and sysbox_actor.red was applied.")
+    agent_url = args.agent_url
+    if not agent_url:
+        actor = find_actor(state, args.actor)
+        if actor:
+            agent_url = actor.get("acp_url") or \
+                f"http://172.20.0.10:{int(actor.get('port', 4096))}"
+    agent_url = agent_url or DEFAULT_AGENT_URL
 
-    # Clear per-episode artefacts.
+    # Episode directory: runs/<run-id>/episodes/<ep-id>/
     runs_dir = STATE_FILE.parent
-    for fname in ("episode_report.json", "step_log.jsonl"):
-        p = runs_dir / fname
-        if p.exists():
-            p.unlink()
+    ep_dir = runs_dir / "episodes" / ep_id
+    ep_dir.mkdir(parents=True, exist_ok=True)
 
-    # Truncate per-node event files so this episode starts clean.
-    # The sensor keeps its file descriptors open; truncating (not deleting)
-    # resets each file without breaking the write stream on Linux.
-    events_dir = runs_dir / "events"
-    if events_dir.exists():
-        for f in events_dir.glob("*.jsonl"):
-            open(f, "w").close()
+    print_banner(agent_url, ep_id, ep_dir)
 
-    prompt = PROMPT_FILE.read_text()
+    actor = find_actor(state, args.actor)
+    if actor:
+        print(f" actor: sysbox_actor.{args.actor}  pid={actor.get('pid', '?')}")
+    else:
+        print(f" warn: sysbox_actor.{args.actor} not found in state")
 
+    # Load prompt.
+    prompt = args.prompt or PROMPT_FILE.read_text()
+    prompt_preview = prompt.split("\n")[0][:80]
+
+    # Write meta.json at start (will be updated at the end).
+    meta = {
+        "episode_id": ep_id,
+        "prompt_preview": prompt_preview,
+        "agent_url": agent_url,
+        "status": "running",
+        "started_at": time.time(),
+    }
+    meta_path = ep_dir / "meta.json"
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    # Connect to agent.
     print()
     print("==> Connecting to opencode agent...")
     client = OpenCodeClient(agent_url, timeout=600.0)
     if not client.wait_ready(timeout=30.0):
         print(f"ERROR: Agent not reachable at {agent_url}")
-        print("  Check: docker exec sysbox-node_attack pgrep -a opencode")
+        meta["status"] = "error"
+        meta["error"] = "agent not reachable"
+        meta_path.write_text(json.dumps(meta, indent=2))
         return 1
     print("    Connected.")
 
     session_id = client.create_session()
     print(f"    Session: {session_id}")
     print()
-    print("==> Sending attack prompt (waiting for agent to finish)...")
+    print("==> Sending prompt...")
+    print(f"    {prompt_preview}")
     print()
 
     all_events: list[ToolCallEvent] = []
@@ -243,6 +179,9 @@ def main() -> int:
                 print_step(step_num, ev)
     except Exception as exc:
         print(f"ERROR during agent run: {exc}")
+        meta["status"] = "error"
+        meta["error"] = str(exc)
+        meta_path.write_text(json.dumps(meta, indent=2))
         return 1
 
     elapsed = time.monotonic() - t0
@@ -250,35 +189,31 @@ def main() -> int:
     print()
     print(f"  Done in {elapsed:.1f}s — {step_num} tool calls ({errors} errors)")
 
-    # Write step_log.jsonl for debugging.
-    step_log_path = runs_dir / "step_log.jsonl"
-    with open(step_log_path, "w") as fh:
-        for i, ev in enumerate(all_events, 1):
-            fh.write(json.dumps({
-                "step": i, "run_id": run_id,
-                "call_id": ev.call_id, "tool": ev.tool, "status": ev.status,
-                "command": ev.command, "start_ts": ev.start_ts, "end_ts": ev.end_ts,
-            }) + "\n")
-    print(f"  step_log → {step_log_path}")
+    # Fetch the full transcript from ACP (user prompt + reasoning + tool
+    # calls with full output + assistant text responses).
+    transcript = client.get_transcript(session_id)
+    transcript_path = ep_dir / "transcript.json"
+    transcript_path.write_text(json.dumps(transcript, indent=2))
+    msg_count = len(transcript)
+    print(f"  transcript → {transcript_path}  ({msg_count} messages)")
 
-    # Run PID-tree matcher.
+    # Update meta.json with final status.
+    meta["status"] = "completed"
+    meta["finished_at"] = time.time()
+    meta["duration_s"] = round(elapsed, 1)
+    meta["steps"] = step_num
+    meta["errors"] = errors
+    meta["session_id"] = session_id
+    meta_path.write_text(json.dumps(meta, indent=2))
+
     print()
-    print("==> Running PID-tree matcher...")
-    report = run_match(run_id)
-
-    print_report(report, step_num, all_events)
-
-    # Archive episode artefacts to runs/episodes/{run_id}/ for isolation.
-    import shutil
-    ep_dir = runs_dir / "episodes" / run_id
-    ep_dir.mkdir(parents=True, exist_ok=True)
-    for src in (step_log_path, runs_dir / "episode_report.json"):
-        if src.exists():
-            shutil.copy2(src, ep_dir / src.name)
-    # Archive per-node event files as a snapshot of this episode.
-    if events_dir.exists():
-        shutil.copytree(events_dir, ep_dir / "events", dirs_exist_ok=True)
-    print(f"  archived → {ep_dir}/")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(f" Episode {ep_id} — {meta['status']}")
+    print(f"   steps:    {step_num}")
+    print(f"   duration: {elapsed:.1f}s")
+    print(f"   output:   {ep_dir}/")
+    print(f"   events:   {runs_dir / 'events'}/  (append-only, sensor-managed)")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     return 0
 

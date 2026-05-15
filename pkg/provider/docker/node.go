@@ -11,6 +11,18 @@ import (
 )
 
 func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
+	// Idempotent: if a container with the same name already exists (leftover
+	// from a partial previous apply where wireLink/AttachNIC failed after
+	// CreateNode succeeded), reuse it instead of failing on a name conflict.
+	if existing, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
+		return substrate.NodeHandle{
+			ID: existing.ID,
+			Attributes: map[string]any{
+				"container_name": spec.Name,
+			},
+		}, nil
+	}
+
 	envs := make([]string, 0, len(spec.Env))
 	for k, v := range spec.Env {
 		envs = append(envs, fmt.Sprintf("%s=%s", k, v))

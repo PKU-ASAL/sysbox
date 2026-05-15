@@ -28,12 +28,12 @@ func init() {
 }
 
 func runApply(cmd *cobra.Command, args []string) error {
-	requireRoot()
-
 	g, mgr, s, root, evalCtx, err := loadWorkspaceWithRoot()
 	if err != nil {
 		return err
 	}
+
+	checkRoot(root)
 
 	plan, err := runtime.ComputePlan(g, s)
 	if err != nil {

@@ -18,8 +18,20 @@ type BridgeConfig struct {
 
 // CreateBridge builds a Linux bridge inside the named netns and assigns it
 // an IP (acts as the gateway for nodes attached to the network).
+// Idempotent: if the bridge already exists, it is reused.
 func CreateBridge(cfg BridgeConfig) error {
 	return inNetns(cfg.NetnsName, func() error {
+		// Check if bridge already exists.
+		if existing, err := netlink.LinkByName(cfg.BridgeName); err == nil {
+			// Bridge exists — ensure it's up and has the IP.
+			_ = netlink.LinkSetUp(existing)
+			addr, _ := netlink.ParseAddr(cfg.CIDR)
+			if addr != nil {
+				_ = netlink.AddrAdd(existing, addr) // ignore "file exists" for IP
+			}
+			return nil
+		}
+
 		la := netlink.NewLinkAttrs()
 		la.Name = cfg.BridgeName
 

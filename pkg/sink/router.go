@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/sensor"
 )
@@ -14,9 +15,10 @@ import (
 // Each unique Event.NodeID gets its own file: <dir>/<node_id>.jsonl
 // Events with an empty NodeID go to <dir>/_unknown.jsonl.
 //
-// Files are created lazily on first write; the directory is created up front.
-// Concurrent writes for different nodes are safe: the outer mutex protects
-// the node→sink map, while each JSONLSink carries its own internal lock.
+// Files are created lazily on first write; the directory is created up front
+// with default permissions (0o755 / 0o644). Out-of-process consumers should
+// read these files, not mutate them — episode boundaries are the caller's
+// concern, not the sink's.
 type RoutingSink struct {
 	dir  string
 	mu   sync.Mutex
@@ -28,18 +30,6 @@ type RoutingSink struct {
 func NewRoutingSink(dir string) (*RoutingSink, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create events dir %s: %w", dir, err)
-	}
-	// Ensure the directory and any pre-existing event files are accessible
-	// to non-root users (e.g. episode runner truncating between episodes).
-	// This runs at sensor start, so it covers files left by a previous run
-	// before the first Write call has a chance to chmod newly opened files.
-	_ = os.Chmod(dir, 0o777)
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() && filepath.Ext(e.Name()) == ".jsonl" {
-				_ = os.Chmod(filepath.Join(dir, e.Name()), 0o666)
-			}
-		}
 	}
 	return &RoutingSink{dir: dir, open: make(map[string]*JSONLSink)}, nil
 }
@@ -75,24 +65,24 @@ func (r *RoutingSink) Close() error {
 	return last
 }
 
-// TruncateAll truncates every *.jsonl file in the sink directory to zero bytes.
-// Used by the episode runner at episode start to ensure a clean slate while
-// preserving open file descriptors held by the sensor process.
-func TruncateAll(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+// WriteSessionMarker writes a synthetic meta event to every node file the
+// caller knows about, so downstream analysis can self-describe the boundary
+// of one sensor run without coordinating with the runner.
+//
+// The marker is a regular sensor.Event with Category="meta" and a small JSON
+// payload in Raw. NodeID is the per-file routing key.
+func (r *RoutingSink) WriteSessionMarker(nodes []string, runID string) error {
+	now := time.Now().UnixNano()
+	payload := fmt.Sprintf(`{"meta":"sensor_start","sensor_run_id":%q,"started_at":%d}`, runID, now)
+	for _, n := range nodes {
+		ev := sensor.Event{
+			NodeID:    n,
+			Timestamp: now,
+			Category:  "meta",
+			Raw:       []byte(payload),
 		}
-		return err
-	}
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
-			continue
-		}
-		if f, err := os.OpenFile(filepath.Join(dir, e.Name()),
-			os.O_WRONLY|os.O_TRUNC, 0); err == nil {
-			f.Close()
+		if err := r.Write(ev); err != nil {
+			return err
 		}
 	}
 	return nil

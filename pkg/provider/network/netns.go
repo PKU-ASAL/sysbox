@@ -13,7 +13,13 @@ import (
 )
 
 // CreateNetns creates a new named network namespace at /var/run/netns/<name>.
+// If the namespace already exists (leftover from a failed run), it is reused.
 func CreateNetns(name string) error {
+	// Idempotent: if netns already exists, reuse it.
+	if NetnsExists(name) {
+		return nil
+	}
+
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 

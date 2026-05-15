@@ -30,6 +30,11 @@ type NodeSpec struct {
 	Image             ImageRef
 	VCPUs             int
 	Memory            string
+	Kernel            string // path to vmlinux (firecracker only)
+	Rootfs            string // path to ext4 rootfs override (firecracker only)
+	SSHUser           string
+	SSHPass           string
+	SSHPort           int
 	Env               map[string]string
 	Sysctls           map[string]string         // passed to container runtime at create time
 	Privileged        bool                      // required for eBPF/tracee
@@ -37,6 +42,11 @@ type NodeSpec struct {
 	CgroupnsMode      string                    // "host" shares the host cgroup namespace
 	Binds             []string                  // host:container[:options] volume bind mounts
 	InitialDockerNets []DockerNetworkAttachment // Docker bridge networks attached at create time
+
+	// ChainInit (firecracker only) is the binary sysbox-init exec()s after
+	// applying configuration. Defaults to /sbin/init, falls back to /bin/sh
+	// inside the guest if missing. Empty string keeps the default behaviour.
+	ChainInit string
 }
 
 type NodeHandle struct {
