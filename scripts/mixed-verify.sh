@@ -87,8 +87,8 @@ jq -r '.resources[] | "\(.type) \(.name)"' "$STATE" 2>/dev/null || echo "(state 
 # ── Sensor (10s — tracee needs ~5s to initialize) ──────────────────────────
 
 echo
-echo "=== sensor start (10s probe) ==="
-timeout 10 ./bin/sysbox sensor start -f "$HCL" --state "$STATE" 2>&1 || true
+echo "=== sensor start (20s probe — tracee needs ~10s to initialize) ==="
+timeout 20 ./bin/sysbox sensor start -f "$HCL" --state "$STATE" 2>&1 || true
 
 echo
 echo "=== events per node ==="
