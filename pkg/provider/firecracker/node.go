@@ -237,15 +237,30 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 			"--api-sock", vm.socket,
 		)
 	}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Redirect firecracker stdout (logs) and stderr (serial console) to a
+	// per-VM log file rather than inheriting the parent's tty. Inheriting
+	// caused the apply pipeline to never see EOF: the firecracker children
+	// kept the write end of the parent's stderr pipe alive long after
+	// 'sysbox apply' returned, so the shell appeared to hang at the end.
+	logPath := filepath.Join(filepath.Dir(vm.socket), "firecracker.log")
+	logFD, logErr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if logErr != nil {
+		// Fall back to /dev/null rather than the parent's tty.
+		logFD, _ = os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	}
+	cmd.Stdout = logFD
+	cmd.Stderr = logFD
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}
 
 	if err := cmd.Start(); err != nil {
+		_ = logFD.Close()
 		return fmt.Errorf("start firecracker: %w", err)
 	}
+	// Parent's reference to the log fd is no longer needed; the child has
+	// its own dup. Closing here prevents fd leaks across many VMs.
+	_ = logFD.Close()
 
 	vm.cmd = cmd
 	vm.pid = cmd.Process.Pid
