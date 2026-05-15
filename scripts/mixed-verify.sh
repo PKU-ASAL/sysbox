@@ -12,6 +12,20 @@ HCL=examples/mixed/field.sysbox.hcl
 STATE=runs/mixed/state.json
 EVENTS=runs/mixed/events
 
+# When the script itself runs under sudo, $HOME is /root and the HCL
+# local.rootfs_path (derived from env("HOME")) resolves to the wrong
+# directory. Export SYSBOX_ROOTFS to override it with the real user's
+# cache path. "sudo -E" on individual commands then propagates this.
+if [ -z "${SYSBOX_ROOTFS:-}" ]; then
+  REAL_HOME="${SUDO_USER_HOME:-}"
+  if [ -z "$REAL_HOME" ] && [ -n "${SUDO_USER:-}" ]; then
+    REAL_HOME=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+  fi
+  if [ -n "$REAL_HOME" ]; then
+    export SYSBOX_ROOTFS="$REAL_HOME/.cache/sysbox/rootfs/ubuntu-24.04.ext4"
+  fi
+fi
+
 # ── Cleanup ─────────────────────────────────────────────────────────────────
 
 echo "=== full cleanup ==="
