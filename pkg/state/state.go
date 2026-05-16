@@ -7,12 +7,14 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
 type State struct {
-	Version   int        `json:"version"`
-	RunID     string     `json:"run_id"`
-	Resources []Resource `json:"resources"`
+	mu        sync.RWMutex `json:"-"`
+	Version   int          `json:"version"`
+	RunID     string       `json:"run_id"`
+	Resources []Resource   `json:"resources"`
 }
 
 type Resource struct {
@@ -23,6 +25,8 @@ type Resource struct {
 }
 
 func (s *State) Marshal() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return json.MarshalIndent(s, "", "  ")
 }
 
@@ -35,6 +39,8 @@ func Unmarshal(data []byte) (*State, error) {
 }
 
 func (s *State) FindResource(typ, name string) *Resource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for i := range s.Resources {
 		if s.Resources[i].Type == typ && s.Resources[i].Name == name {
 			return &s.Resources[i]
@@ -44,16 +50,20 @@ func (s *State) FindResource(typ, name string) *Resource {
 }
 
 func (s *State) AddResource(r Resource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.Resources = append(s.Resources, r)
 }
 
 func (s *State) RemoveResource(typ, name string) {
-	out := s.Resources[:0]
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := make([]Resource, 0, len(s.Resources))
 	for _, r := range s.Resources {
 		if r.Type == typ && r.Name == name {
 			continue
 		}
-		out = append(out, r)
+		filtered = append(filtered, r)
 	}
-	s.Resources = out
+	s.Resources = filtered
 }

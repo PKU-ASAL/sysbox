@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 func TestMonitorsTargets_ResolvesFromState(t *testing.T) {
@@ -90,7 +91,7 @@ func TestMonitorConfig_EmptyInstance(t *testing.T) {
 }
 
 func TestAsStringFromMap_NilSafe(t *testing.T) {
-	require.Equal(t, "", asStringFromMap(nil, "k"))
-	require.Equal(t, "v", asStringFromMap(map[string]any{"k": "v"}, "k"))
-	require.Equal(t, "", asStringFromMap(map[string]any{"k": 42}, "k"))
+	require.Equal(t, "", util.AsString(nil))
+	require.Equal(t, "v", util.AsString(map[string]any{"k": "v"}["k"]))
+	require.Equal(t, "", util.AsString(map[string]any{"k": 42}["k"]))
 }

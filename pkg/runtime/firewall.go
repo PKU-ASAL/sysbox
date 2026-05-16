@@ -3,12 +3,12 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
@@ -17,7 +17,7 @@ func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("firewall %s: wrong data type", n.ID)
 	}
 
-	netName := resolveRef(cfg.AttachTo)
+	netName := config.ResolveName(cfg.AttachTo)
 	if netName == "" {
 		return fmt.Errorf("firewall %s: attach_to is empty", n.ID.Name)
 	}
@@ -25,7 +25,7 @@ func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
 	if netState == nil {
 		return fmt.Errorf("firewall %s: network %s not applied yet", n.ID.Name, netName)
 	}
-	nsName := asString(netState.Instance["netns"])
+	nsName := util.AsString(netState.Instance["netns"])
 
 	specs := make([]network.FirewallRuleSpec, 0, len(cfg.Rules))
 	for _, r := range cfg.Rules {
@@ -55,24 +55,13 @@ func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
 }
 
 func (e *Executor) destroyFirewall(ctx context.Context, r state.Resource) error {
-	nsName := asString(r.Instance["netns"])
+	nsName := util.AsString(r.Instance["netns"])
 	if nsName != "" {
-		_ = network.DeleteFirewall(nsName)
+		if err := network.DeleteFirewall(nsName); err != nil {
+			fmt.Printf("[destroy] warning: delete firewall %s: %v\n", r.Name, err)
+		}
 	}
 	e.state.RemoveResource(r.Type, r.Name)
 	return nil
 }
 
-func resolveRef(ref string) string {
-	if ref == "" {
-		return ""
-	}
-	if !strings.Contains(ref, ".") {
-		return ref
-	}
-	parts := strings.Split(ref, ".")
-	if len(parts) >= 2 {
-		return parts[1]
-	}
-	return ""
-}

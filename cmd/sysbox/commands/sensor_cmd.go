@@ -19,6 +19,7 @@ import (
 	"github.com/oslab/sysbox/pkg/sensor"
 	"github.com/oslab/sysbox/pkg/sink"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 var (
@@ -176,7 +177,7 @@ func runMonitorMode(ctx context.Context, monitors []state.Resource, st *state.St
 	var activeBackends []monitor.Backend
 
 	for _, m := range monitors {
-		backendName := asStringFromMap(m.Instance, "backend")
+		backendName := util.AsString(m.Instance["backend"])
 		if backendName == "" {
 			backendName = "tracee"
 		}
@@ -227,12 +228,12 @@ func monitorsTargets(m state.Resource, st *state.State) []monitor.Target {
 			continue
 		}
 		handle := map[string]string{
-			"container_id":   asStringFromMap(nodeState.Instance, "container_id"),
+			"container_id":   util.AsString(nodeState.Instance["container_id"]),
 			"container_name": fmt.Sprintf("sysbox-%s", nodeName),
 		}
 		// Pass through vsock metadata for firecracker nodes so the
 		// vm-vsock backend can talk to the in-guest agent via vsock-rpc.
-		if uds := asStringFromMap(nodeState.Instance, "vsock_uds"); uds != "" {
+		if uds := util.AsString(nodeState.Instance["vsock_uds"]); uds != "" {
 			handle["vsock_uds"] = uds
 		}
 		if cid, ok := nodeState.Instance["vsock_cid"].(float64); ok && cid != 0 {
@@ -353,10 +354,3 @@ func runSidecarTail(ctx context.Context, srcPath string, eventSink sink.EventSin
 	}
 }
 
-func asStringFromMap(m map[string]any, key string) string {
-	if m == nil {
-		return ""
-	}
-	v, _ := m[key].(string)
-	return v
-}

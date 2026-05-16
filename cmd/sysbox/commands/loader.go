@@ -160,14 +160,14 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 			return err
 		}
 		data = cfg
-		if ref := resolveRef(cfg.Image); ref != "" {
+		if ref := config.ResolveName(cfg.Image); ref != "" {
 			deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
 		}
-		if ref := resolveRef(cfg.Kernel); ref != "" && looksLikeKernelRef(cfg.Kernel) {
+		if ref := config.ResolveName(cfg.Kernel); ref != "" && config.LooksLikeKernelRef(cfg.Kernel) {
 			deps = append(deps, graph.Ref{Type: "sysbox_kernel", Name: ref})
 		}
 		for _, link := range cfg.Links {
-			if ref := resolveRef(link.Network); ref != "" {
+			if ref := config.ResolveName(link.Network); ref != "" {
 				deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
 			}
 		}
@@ -184,11 +184,11 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 			return err
 		}
 		data = cfg
-		if ref := resolveRef(cfg.Image); ref != "" {
+		if ref := config.ResolveName(cfg.Image); ref != "" {
 			deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
 		}
 		for _, iface := range cfg.Interfaces {
-			if ref := resolveRef(iface.Network); ref != "" {
+			if ref := config.ResolveName(iface.Network); ref != "" {
 				deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
 			}
 		}
@@ -199,7 +199,7 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 			return err
 		}
 		data = cfg
-		if ref := resolveRef(cfg.AttachTo); ref != "" {
+		if ref := config.ResolveName(cfg.AttachTo); ref != "" {
 			deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
 		}
 
@@ -209,7 +209,7 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 			return err
 		}
 		data = cfg
-		if ref := resolveRef(cfg.Node); ref != "" {
+		if ref := config.ResolveName(cfg.Node); ref != "" {
 			deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
 		}
 
@@ -219,7 +219,7 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 			return err
 		}
 		data = cfg
-		if ref := resolveRef(cfg.Node); ref != "" {
+		if ref := config.ResolveName(cfg.Node); ref != "" {
 			deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
 		}
 		for _, dep := range cfg.DependsOn {
@@ -240,16 +240,16 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 			position = "internal"
 		}
 		if position == "internal" {
-			if ref := resolveRef(cfg.Node); ref != "" {
+			if ref := config.ResolveName(cfg.Node); ref != "" {
 				deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
 			}
 		} else {
 			// external: depends on image + networks
-			if ref := resolveRef(cfg.Image); ref != "" {
+			if ref := config.ResolveName(cfg.Image); ref != "" {
 				deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
 			}
 			for _, link := range cfg.Links {
-				if ref := resolveRef(link.Network); ref != "" {
+				if ref := config.ResolveName(link.Network); ref != "" {
 					deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
 				}
 			}
@@ -268,7 +268,7 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 		}
 		data = cfg
 		for _, nodeRef := range cfg.Nodes {
-			if ref := resolveRef(nodeRef); ref != "" {
+			if ref := config.ResolveName(nodeRef); ref != "" {
 				deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
 			}
 		}
@@ -287,39 +287,4 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 	g.AddNode(r.Type, name, deps)
 	g.SetData(r.Type, name, data)
 	return nil
-}
-
-// looksLikeKernelRef returns true when the value of NodeConfig.Kernel looks
-// like a `sysbox_kernel.<name>.id` reference rather than a literal filesystem
-// path. Literal paths (starting with "/" or "./") and URLs are kept as-is so
-// that pre-resource-era HCL keeps working.
-func looksLikeKernelRef(s string) bool {
-	if s == "" {
-		return false
-	}
-	if strings.HasPrefix(s, "/") || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") {
-		return false
-	}
-	if strings.Contains(s, "://") {
-		return false
-	}
-	return true
-}
-
-// resolveRef accepts either a bare resource name (post-EvalContext) or a
-// legacy quoted "type.name.id" reference and returns the resource name.
-// Empty string means "could not resolve"; the caller should treat that as
-// no dependency rather than an error so optional fields stay optional.
-func resolveRef(ref string) string {
-	if ref == "" {
-		return ""
-	}
-	if !strings.Contains(ref, ".") {
-		return ref
-	}
-	parts := strings.Split(ref, ".")
-	if len(parts) >= 2 {
-		return parts[1]
-	}
-	return ""
 }

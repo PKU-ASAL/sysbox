@@ -10,11 +10,8 @@ import (
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/util"
 )
-
-// enableIPForward is kept for reference but no longer called; ip_forward
-// is now set via HostConfig.Sysctls at container creation time.
-var _ = enableIPForward
 
 // createRouter provisions a multi-NIC node with IP forwarding enabled.
 // Interfaces on NAT (Docker-managed) networks are connected via Docker
@@ -34,17 +31,14 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
-	imageName, err := resolveImageRef(cfg.Image)
-	if err != nil {
-		return err
-	}
+	imageName := config.ResolveName(cfg.Image)
 	imgState := e.state.FindResource("sysbox_image", imageName)
 	if imgState == nil {
 		return fmt.Errorf("image %s not applied yet", imageName)
 	}
 	imgRef := substrate.ImageRef{
-		ID:         asString(imgState.Instance["image_id"]),
-		Repository: asString(imgState.Instance["repository"]),
+		ID:         util.AsString(imgState.Instance["image_id"]),
+		Repository: util.AsString(imgState.Instance["repository"]),
 	}
 
 	// Pre-scan interfaces: find the first NAT network so it can be
@@ -52,13 +46,13 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 	// assign the correct eth name and IP).
 	var initialNets []substrate.DockerNetworkAttachment
 	for _, iface := range cfg.Interfaces {
-		netName, _ := resolveNetworkRef(iface.Network)
+		netName := config.ResolveName(iface.Network)
 		netState := e.state.FindResource("sysbox_network", netName)
 		if netState == nil {
 			return fmt.Errorf("network %s not applied yet", netName)
 		}
 		if isNAT, _ := netState.Instance["nat"].(bool); isNAT && len(initialNets) == 0 {
-			netID := asString(netState.Instance["docker_network_id"])
+			netID := util.AsString(netState.Instance["docker_network_id"])
 			initialNets = append(initialNets, substrate.DockerNetworkAttachment{
 				NetworkID: netID,
 				IPv4:      iface.IP,
@@ -93,10 +87,10 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 
 	nics := []map[string]any{}
 	ifaceByName := map[string]string{} // logical name -> guest interface (eth0/eth1/...)
-	dockerSub, _ := e.dockerSubstrate()
+	dockerCap, _ := e.dockerSubstrate()
 
 	for _, iface := range cfg.Interfaces {
-		netName, _ := resolveNetworkRef(iface.Network)
+		netName := config.ResolveName(iface.Network)
 		netState := e.state.FindResource("sysbox_network", netName)
 		if netState == nil {
 			_ = sub.DestroyNode(ctx, handle)
@@ -105,9 +99,9 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 
 		// NAT network: already connected at create time, or connect now.
 		if isNAT, _ := netState.Instance["nat"].(bool); isNAT {
-			netID := asString(netState.Instance["docker_network_id"])
-			if !connectedAtCreate[netID] && dockerSub != nil {
-				if err := dockerSub.ConnectContainerToNetwork(ctx, handle.ID, netID, iface.IP); err != nil {
+			netID := util.AsString(netState.Instance["docker_network_id"])
+			if !connectedAtCreate[netID] && dockerCap != nil {
+				if err := dockerCap.ConnectContainerToNetwork(ctx, handle.ID, netID, iface.IP); err != nil {
 					_ = sub.DestroyNode(ctx, handle)
 					return fmt.Errorf("connect router %s to nat network %s: %w", n.ID.Name, netName, err)
 				}
@@ -197,20 +191,6 @@ func (e *Executor) wireRouterInterface(ctx context.Context, nodeName string, idx
 		IP:      iface.IP,
 	}
 	return e.wireLink(ctx, nodeName, idx, link, "docker")
-}
-
-// enableIPForward writes 1 to /proc/sys/net/ipv4/ip_forward inside the node.
-func enableIPForward(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle) error {
-	res, err := sub.ExecInNode(ctx, h, substrate.ExecSpec{
-		Cmd: []string{"sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"},
-	})
-	if err != nil {
-		return err
-	}
-	if res.ExitCode != 0 {
-		return fmt.Errorf("exit %d: %s", res.ExitCode, res.Stderr)
-	}
-	return nil
 }
 
 // configureNATViaNsenter configures MASQUERADE and FORWARD rules from the

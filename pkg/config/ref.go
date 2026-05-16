@@ -1,0 +1,39 @@
+package config
+
+import "strings"
+
+// ResolveName extracts the short name from a reference string.
+// Accepts both bare names ("alpine") and dot-qualified references
+// ("sysbox_image.alpine.id") — in both cases returns "alpine".
+// Returns empty string for empty input.
+func ResolveName(ref string) string {
+	if ref == "" {
+		return ""
+	}
+	if !strings.Contains(ref, ".") {
+		return ref
+	}
+	parts := strings.Split(ref, ".")
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return ""
+}
+
+// LooksLikeKernelRef returns true when the value looks like a
+// sysbox_kernel.<name>.id reference rather than a literal filesystem
+// path or URL.  Literal paths (starting with "/" or "./") and URLs
+// (containing "://") are excluded so that pre-resource-era HCL keeps
+// working.
+func LooksLikeKernelRef(ref string) bool {
+	if ref == "" {
+		return false
+	}
+	if strings.HasPrefix(ref, "/") || strings.HasPrefix(ref, "./") || strings.HasPrefix(ref, "../") {
+		return false
+	}
+	if strings.Contains(ref, "://") {
+		return false
+	}
+	return true
+}

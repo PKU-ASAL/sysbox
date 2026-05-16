@@ -8,6 +8,7 @@ import (
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 // Refresh queries each resource in Plan.Unchanged against the real world.
@@ -46,8 +47,8 @@ func (e *Executor) probeResource(ctx context.Context, id graph.NodeID) (bool, er
 
 	switch id.Type {
 	case "sysbox_network":
-		nsName := asString(r.Instance["netns"])
-		brName := asString(r.Instance["bridge"])
+		nsName := util.AsString(r.Instance["netns"])
+		brName := util.AsString(r.Instance["bridge"])
 		if nsName == "" {
 			return true, nil
 		}
@@ -65,7 +66,7 @@ func (e *Executor) probeResource(ctx context.Context, id graph.NodeID) (bool, er
 		if err != nil {
 			return true, nil // substrate not registered; don't disturb
 		}
-		cid := asString(r.Instance["container_id"])
+		cid := util.AsString(r.Instance["container_id"])
 		if cid == "" {
 			return false, nil
 		}
@@ -79,7 +80,7 @@ func (e *Executor) probeResource(ctx context.Context, id graph.NodeID) (bool, er
 		// Cache files are content-addressed; if the file disappeared,
 		// the next createKernel will re-fetch. Treat present-in-state as
 		// healthy.
-		path := asString(r.Instance["path"])
+		path := util.AsString(r.Instance["path"])
 		if path == "" {
 			return false, nil
 		}

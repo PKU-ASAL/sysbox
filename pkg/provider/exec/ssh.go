@@ -52,14 +52,23 @@ func (c *SSHConnection) sshArgs() []string {
 
 func (c *SSHConnection) ExecInline(ctx context.Context, cmds []string) error {
 	for _, cmd := range cmds {
-		if err := c.execOne(ctx, cmd); err != nil {
+		if err := c.execOne(ctx, cmd, nil); err != nil {
 			return fmt.Errorf("ssh exec %q: %w", cmd, err)
 		}
 	}
 	return nil
 }
 
-func (c *SSHConnection) execOne(ctx context.Context, cmd string) error {
+// ExecCapture runs a command over SSH and returns its stdout.
+func (c *SSHConnection) ExecCapture(ctx context.Context, cmd string) ([]byte, error) {
+	var stdout bytes.Buffer
+	if err := c.execOne(ctx, cmd, &stdout); err != nil {
+		return nil, err
+	}
+	return stdout.Bytes(), nil
+}
+
+func (c *SSHConnection) execOne(ctx context.Context, cmd string, stdoutWriter *bytes.Buffer) error {
 	sshArgs := c.sshArgs()
 	sshArgs = append(sshArgs, cmd)
 
@@ -89,7 +98,11 @@ func (c *SSHConnection) execOne(ctx context.Context, cmd string) error {
 
 	var stderr bytes.Buffer
 	execCmd.Stderr = &stderr
-	execCmd.Stdout = os.Stdout
+	if stdoutWriter != nil {
+		execCmd.Stdout = stdoutWriter
+	} else {
+		execCmd.Stdout = os.Stdout
+	}
 
 	if err := execCmd.Run(); err != nil {
 		return fmt.Errorf("%s\n%s", err, stderr.String())
@@ -146,7 +159,7 @@ func (c *SSHConnection) WaitForSSH(ctx context.Context, timeout time.Duration) e
 			return ctx.Err()
 		default:
 		}
-		if err := c.execOne(ctx, "true"); err == nil {
+		if err := c.execOne(ctx, "true", nil); err == nil {
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)

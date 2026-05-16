@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -79,11 +80,17 @@ func TestResolveRefs(t *testing.T) {
 	_, err = resolveSubstrateRef("a.b")
 	require.Error(t, err)
 
-	name, err := resolveImageRef("sysbox_image.alpine.id")
-	require.NoError(t, err)
+	name := config.ResolveName("sysbox_image.alpine.id")
 	require.Equal(t, "alpine", name)
 
-	name, err = resolveNetworkRef("sysbox_network.dmz.id")
-	require.NoError(t, err)
+	name = config.ResolveName("sysbox_network.dmz.id")
 	require.Equal(t, "dmz", name)
+
+	// Bare names pass through unchanged.
+	name = config.ResolveName("alpine")
+	require.Equal(t, "alpine", name)
+
+	// Empty string returns empty.
+	name = config.ResolveName("")
+	require.Equal(t, "", name)
 }

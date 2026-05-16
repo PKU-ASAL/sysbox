@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -307,12 +306,16 @@ func deleteTapDevice(name string) error {
 }
 
 // nicIdxFromHandle determines the next NIC index from handle attributes.
+// After JSON round-trip through state, nic_count becomes float64 not int.
 func nicIdxFromHandle(h substrate.NodeHandle) int {
-	idx := 0
-	if n, ok := h.Attributes["nic_count"].(int); ok {
-		idx = n
+	switch v := h.Attributes["nic_count"].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	default:
+		return 0
 	}
-	return idx
 }
 
 // DeleteTapForNIC removes a TAP device (used during destroy).
@@ -320,6 +323,3 @@ func DeleteTapForNIC(tapName, netnsName string) error {
 	cleanupTap(tapName, netnsName)
 	return nil
 }
-
-// Ensure network package bridge utilities are available.
-var _ = network.CreateBridge // compile-time check
