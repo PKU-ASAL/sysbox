@@ -6,28 +6,92 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+	osexec "os/exec"
 	"strconv"
 	"strings"
 	"time"
 
+	vsockexec "github.com/oslab/sysbox/pkg/provider/exec"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
 
 const (
-	defaultSSHUser     = "root"
-	defaultSSHPass     = "root"
-	defaultSSHPort     = 22
-	sshConnectTimeout  = 30 * time.Second
+	defaultSSHUser    = "root"
+	defaultSSHPass    = "root"
+	defaultSSHPort    = 22
+	sshConnectTimeout = 30 * time.Second
+	vsockReadyTimeout = 30 * time.Second
 )
 
-// ExecInNode runs a command inside the VM via SSH.
+// vsockConnFromHandle builds a VsockConnection from the handle's vsock
+// attributes. Returns nil if vsock metadata is missing (old state or
+// non-vsock VM).
+func vsockConnFromHandle(h substrate.NodeHandle) *vsockexec.VsockConnection {
+	uds, _ := h.Attributes["vsock_uds"].(string)
+	if uds == "" {
+		return nil
+	}
+	port := vsockrpc.DefaultPort
+	if p, ok := h.Attributes["vsock_port"].(uint32); ok && p != 0 {
+		port = p
+	} else if f, ok := h.Attributes["vsock_port"].(float64); ok && f > 0 {
+		port = uint32(f)
+	}
+	return vsockexec.NewVsockConnection(uds, port)
+}
+
+// ExecInNode runs a command inside the VM. Prefers the vsock RPC path
+// (direct, no SSH dependency) and falls back to SSH for legacy handles
+// that lack vsock metadata.
 func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (substrate.ExecResult, error) {
+	if vc := vsockConnFromHandle(h); vc != nil {
+		return s.execInNodeVsock(ctx, vc, spec)
+	}
+	return s.execInNodeSSH(ctx, h, spec)
+}
+
+func (s *Substrate) execInNodeVsock(ctx context.Context, vc *vsockexec.VsockConnection, spec substrate.ExecSpec) (substrate.ExecResult, error) {
+	var stdout, stderr strings.Builder
+	err := vc.ExecStream(ctx, spec.Cmd, spec.Env, func(f vsockrpc.Frame) error {
+		if len(f.Stdout) > 0 {
+			stdout.Write(f.Stdout)
+		}
+		if len(f.Stderr) > 0 {
+			stderr.Write(f.Stderr)
+		}
+		if f.Done {
+			return fmt.Errorf("stop") // break the loop
+		}
+		return nil
+	})
+
+	result := substrate.ExecResult{
+		Stdout: stdout.String(),
+		Stderr: stderr.String(),
+	}
+	if err != nil {
+		// Check for exit-code errors from ExecStream.
+		if strings.HasPrefix(err.Error(), "exit code ") {
+			fmt.Sscanf(err.Error(), "exit code %d", &result.ExitCode)
+			return result, nil
+		}
+		// "stop" is our own signal — command completed with Done frame.
+		if err.Error() == "stop" {
+			return result, nil
+		}
+		result.ExitCode = 1
+		return result, nil
+	}
+	return result, nil
+}
+
+func (s *Substrate) execInNodeSSH(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (substrate.ExecResult, error) {
 	cmd := strings.Join(spec.Cmd, " ")
 	out, err := sshRun(ctx, h, cmd)
 	if err != nil {
 		exitCode := 1
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		if exitErr, ok := err.(*osexec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		}
 		return substrate.ExecResult{
@@ -41,9 +105,16 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec
 	}, nil
 }
 
-// ExecBackground starts a detached command inside the VM via SSH.
-// Returns the PID of the process inside the VM.
+// ExecBackground starts a detached command inside the VM. Prefers vsock
+// and falls back to SSH.
 func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (int, error) {
+	if vc := vsockConnFromHandle(h); vc != nil {
+		return vc.ExecBackground(ctx, spec.Cmd, spec.Env)
+	}
+	return s.execBackgroundSSH(ctx, h, spec)
+}
+
+func (s *Substrate) execBackgroundSSH(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (int, error) {
 	cmd := strings.Join(spec.Cmd, " ")
 	pidCmd := fmt.Sprintf("nohup %s >/dev/null 2>&1 & echo $!", cmd)
 	out, err := sshRun(ctx, h, pidCmd)
@@ -57,8 +128,16 @@ func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, 
 	return pid, nil
 }
 
-// CopyToNode copies a file into the VM via SSH cat.
+// CopyToNode copies a file into the VM. Prefers vsock write_file,
+// falls back to SSH cat.
 func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, src, dst string) error {
+	if vc := vsockConnFromHandle(h); vc != nil {
+		return vc.CopyFile(ctx, src, dst)
+	}
+	return s.copyToNodeSSH(ctx, h, src, dst)
+}
+
+func (s *Substrate) copyToNodeSSH(ctx context.Context, h substrate.NodeHandle, src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return fmt.Errorf("read src %s: %w", src, err)
@@ -68,7 +147,7 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, src,
 	args := sshArgs(ip, port)
 	args = append(args, fmt.Sprintf("cat > '%s'", dst))
 
-	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd := osexec.CommandContext(ctx, "ssh", args...)
 	cmd.Stdin = bytes.NewReader(data)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ssh copy: %w\n%s", err, out)
@@ -124,7 +203,7 @@ func sshRun(ctx context.Context, h substrate.NodeHandle, cmd string) (string, er
 	var out []byte
 	var err error
 	for time.Now().Before(deadline) {
-		out, err = exec.CommandContext(ctx, "ssh", args...).CombinedOutput()
+		out, err = osexec.CommandContext(ctx, "ssh", args...).CombinedOutput()
 		if err == nil {
 			return string(out), nil
 		}

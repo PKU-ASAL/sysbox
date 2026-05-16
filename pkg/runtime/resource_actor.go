@@ -294,7 +294,7 @@ func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
 	return nil
 }
 
-// -- sysbox_agent --
+// -- sysbox_agent (legacy, maps to internal actor) --
 
 func (e *Executor) createAgent(ctx context.Context, n *graph.Node) error {
 	cfg, ok := n.Data.(*config.AgentConfig)
@@ -302,70 +302,18 @@ func (e *Executor) createAgent(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("agent %s: wrong data type", n.ID)
 	}
 
-	nodeName := config.ResolveName(cfg.Node)
-	nodeState := e.state.FindResource("sysbox_node", nodeName)
-	if nodeState == nil {
-		return fmt.Errorf("agent %s: node %s not applied yet", n.ID.Name, nodeName)
+	// Map legacy sysbox_agent to sysbox_actor with position="internal".
+	actorCfg := config.ActorConfig{
+		Position: "internal",
+		Node:     cfg.Node,
+		Command:  cfg.Command,
+		Port:     cfg.Port,
+		Env:      cfg.Env,
+		DependsOn: cfg.DependsOn,
 	}
-
-	containerID := util.AsString(nodeState.Instance["container_id"])
-	subName := nodeState.Provider
-	sub, err := substrate.Get(subName)
-	if err != nil {
-		return err
-	}
-	dockerCap, ok := sub.(substrate.DockerCapable)
-	if !ok {
-		return fmt.Errorf("sysbox_agent requires a DockerCapable substrate, got %T", sub)
-	}
-
-	handle := substrate.NodeHandle{
-		ID:         containerID,
-		Attributes: map[string]any{"container_name": fmt.Sprintf("sysbox-%s", nodeName)},
-	}
-
-	fmt.Printf("[apply] starting agent %s on node %s: %v\n", n.ID.Name, nodeName, cfg.Command)
-	pid, err := dockerCap.ExecBackground(ctx, handle, substrate.ExecSpec{
-		Cmd: cfg.Command,
-		Env: cfg.Env,
-	})
-	if err != nil {
-		return fmt.Errorf("start agent %s: %w", n.ID.Name, err)
-	}
-
-	e.state.AddResource(state.Resource{
-		Type:     "sysbox_agent",
-		Name:     n.ID.Name,
-		Provider: subName,
-		Instance: map[string]any{
-			"node":         nodeName,
-			"container_id": containerID,
-			"pid":          pid,
-			"port":         cfg.Port,
-			"command":      cfg.Command,
-		},
-	})
-	fmt.Printf("[apply] agent %s started (container pid %d, port %d)\n", n.ID.Name, pid, cfg.Port)
-	return nil
+	return e.createInternalActor(ctx, n, &actorCfg)
 }
 
 func (e *Executor) destroyAgent(ctx context.Context, r state.Resource) error {
-	pid, _ := r.Instance["pid"].(float64) // JSON numbers decode as float64
-	containerID := util.AsString(r.Instance["container_id"])
-	subName := r.Provider
-
-	if pid > 0 && containerID != "" {
-		sub, err := substrate.Get(subName)
-		if err == nil {
-			handle := substrate.NodeHandle{ID: containerID}
-			// Kill the process by PID inside the container.
-			killCmd := fmt.Sprintf("kill %d 2>/dev/null || true", int(pid))
-			_, _ = sub.ExecInNode(ctx, handle, substrate.ExecSpec{
-				Cmd: []string{"sh", "-c", killCmd},
-			})
-		}
-	}
-
-	e.state.RemoveResource(r.Type, r.Name)
-	return nil
+	return e.destroyActor(ctx, r)
 }
