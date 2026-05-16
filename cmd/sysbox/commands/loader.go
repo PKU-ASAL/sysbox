@@ -214,20 +214,7 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 		}
 
 	case "sysbox_agent":
-		cfg := &config.AgentConfig{}
-		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-			return err
-		}
-		data = cfg
-		if ref := config.ResolveName(cfg.Node); ref != "" {
-			deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
-		}
-		for _, dep := range cfg.DependsOn {
-			parts := strings.SplitN(dep, ".", 2)
-			if len(parts) == 2 {
-				deps = append(deps, graph.Ref{Type: parts[0], Name: parts[1]})
-			}
-		}
+		return fmt.Errorf("sysbox_agent is removed; use sysbox_actor with position = \"internal\" instead")
 
 	case "sysbox_actor":
 		cfg := &config.ActorConfig{}

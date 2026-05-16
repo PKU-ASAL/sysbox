@@ -46,8 +46,6 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 		return e.createFirewall(ctx, node)
 	case "sysbox_ssh_access":
 		return e.createSSHAccess(ctx, node)
-	case "sysbox_agent":
-		return e.createAgent(ctx, node)
 	case "sysbox_actor":
 		return e.createActor(ctx, node)
 	case "sysbox_monitor":
@@ -78,8 +76,6 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 	case "sysbox_ssh_access":
 		e.state.RemoveResource(r.Type, r.Name)
 		return nil
-	case "sysbox_agent":
-		return e.destroyAgent(ctx, r)
 	case "sysbox_actor":
 		return e.destroyActor(ctx, r)
 	case "sysbox_monitor":

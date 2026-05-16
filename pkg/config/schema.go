@@ -3,8 +3,8 @@
 // Phase 1 supports:
 //   - substrate block (only type="docker")
 //   - sysbox_image, sysbox_node, sysbox_network, sysbox_link,
-//     sysbox_firewall, sysbox_router, sysbox_ssh_access
-//   - sysbox_agent, provisioner blocks, locals, outputs
+//     sysbox_firewall, sysbox_router, sysbox_ssh_access, sysbox_actor,
+//     sysbox_monitor, sysbox_kernel
 //
 // Firecracker/libvirt substrates are Phase 3.
 package config
@@ -147,20 +147,11 @@ type NetworkConfig struct {
 	NAT  bool   `hcl:"nat,optional"`
 }
 
-// AgentConfig is kept for backward compatibility. Use ActorConfig instead.
-type AgentConfig struct {
-	Node      string            `hcl:"node"`
-	Command   []string          `hcl:"command"`
-	Port      int               `hcl:"port,optional"`
-	Env       map[string]string `hcl:"env,optional"`
-	DependsOn []string          `hcl:"depends_on,optional"`
-}
-
 // ActorConfig declares an ACP-driven actor (attacker, noise user, etc.).
 //
 // position = "internal"  — exec the command inside an existing sysbox_node.
 //                          The actor shares the node's network and filesystem.
-//                          Equivalent to the legacy sysbox_agent.
+//                          Equivalent to an internal actor.
 //
 // position = "external"  — create a standalone container outside the topology.
 //                          The actor only reaches the topology through declared

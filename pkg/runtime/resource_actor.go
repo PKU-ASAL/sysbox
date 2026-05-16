@@ -34,7 +34,6 @@ func (e *Executor) createActor(ctx context.Context, n *graph.Node) error {
 }
 
 // createInternalActor runs the actor command inside an existing sysbox_node.
-// Semantics are identical to the legacy sysbox_agent but stored as sysbox_actor.
 func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *config.ActorConfig) error {
 	nodeName := config.ResolveName(cfg.Node)
 	nodeState := e.state.FindResource("sysbox_node", nodeName)
@@ -292,28 +291,4 @@ func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
 		},
 	})
 	return nil
-}
-
-// -- sysbox_agent (legacy, maps to internal actor) --
-
-func (e *Executor) createAgent(ctx context.Context, n *graph.Node) error {
-	cfg, ok := n.Data.(*config.AgentConfig)
-	if !ok {
-		return fmt.Errorf("agent %s: wrong data type", n.ID)
-	}
-
-	// Map legacy sysbox_agent to sysbox_actor with position="internal".
-	actorCfg := config.ActorConfig{
-		Position: "internal",
-		Node:     cfg.Node,
-		Command:  cfg.Command,
-		Port:     cfg.Port,
-		Env:      cfg.Env,
-		DependsOn: cfg.DependsOn,
-	}
-	return e.createInternalActor(ctx, n, &actorCfg)
-}
-
-func (e *Executor) destroyAgent(ctx context.Context, r state.Resource) error {
-	return e.destroyActor(ctx, r)
 }
