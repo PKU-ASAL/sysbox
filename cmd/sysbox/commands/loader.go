@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -267,7 +268,7 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 		}
 
 	default:
-		fmt.Printf("warning: unsupported resource type %q (skipped)\n", r.Type)
+		fmt.Fprintf(os.Stderr, "warning: unsupported resource type %q (skipped)\n", r.Type)
 		return nil
 	}
 

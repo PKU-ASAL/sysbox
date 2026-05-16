@@ -55,7 +55,7 @@ func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
 }
 
 func (e *Executor) destroyFirewall(ctx context.Context, r state.Resource) error {
-	nsName := util.AsString(r.Instance["netns"])
+	nsName := r.Str("netns")
 	if nsName != "" {
 		if err := network.DeleteFirewall(nsName); err != nil {
 			fmt.Printf("[destroy] warning: delete firewall %s: %v\n", r.Name, err)

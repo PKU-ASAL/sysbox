@@ -2,8 +2,8 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha1"
 	"fmt"
-	"hash/fnv"
 	"os"
 	"strings"
 
@@ -116,10 +116,11 @@ func resolveSubstrateRef(ref string) (string, error) {
 
 // vethName produces a deterministic ≤15-char interface name.
 // Format: <prefix>-<5hexhash>-<idx>  e.g. "vh-a3f2c-0"
+// Uses SHA-1 for low collision probability even with large for_each counts.
 func vethName(prefix, nodeName string, idx int) string {
-	h := fnv.New32a()
-	h.Write([]byte(nodeName))
-	return fmt.Sprintf("%s-%05x-%d", prefix, h.Sum32()&0xfffff, idx)
+	h := sha1.Sum([]byte(nodeName))
+	hi := uint(h[0])<<8 | uint(h[1])
+	return fmt.Sprintf("%s-%05x-%d", prefix, hi&0xfffff, idx)
 }
 
 // mergeAttr merges base and overlay attribute maps (overlay wins on conflict).

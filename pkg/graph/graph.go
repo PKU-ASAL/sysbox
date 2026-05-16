@@ -55,3 +55,53 @@ func (g *Graph) All() []*Node {
 	}
 	return out
 }
+
+// Validate checks the graph for dangling references and cycles.
+// Returns the first error encountered, or nil if the graph is valid.
+// This should be called before TopoSort so users get a clear error
+// message instead of a cryptic sort failure.
+func (g *Graph) Validate() error {
+	// Check for dangling references.
+	for id, n := range g.nodes {
+		for _, dep := range n.Deps {
+			if _, ok := g.nodes[dep]; !ok {
+				return fmt.Errorf("resource %s references unknown %s", id, dep)
+			}
+		}
+	}
+	// Check for cycles using DFS with three-colour marking.
+	const (
+		white = 0 // unvisited
+		gray  = 1 // in current path
+		black = 2 // fully explored
+	)
+	color := make(map[NodeID]int, len(g.nodes))
+	var visit func(NodeID) error
+	visit = func(id NodeID) error {
+		switch color[id] {
+		case gray:
+			return fmt.Errorf("cycle detected at %s", id)
+		case black:
+			return nil
+		}
+		color[id] = gray
+		n := g.nodes[id]
+		if n != nil {
+			for _, dep := range n.Deps {
+				if err := visit(dep); err != nil {
+					return err
+				}
+			}
+		}
+		color[id] = black
+		return nil
+	}
+	for id := range g.nodes {
+		if color[id] == white {
+			if err := visit(id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

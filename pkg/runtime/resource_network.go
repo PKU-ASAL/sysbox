@@ -13,7 +13,6 @@ import (
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/oslab/sysbox/pkg/util"
 )
 
 func (e *Executor) createNetwork(ctx context.Context, n *graph.Node) error {
@@ -110,14 +109,14 @@ func (e *Executor) destroyNetwork(ctx context.Context, r state.Resource) error {
 			e.state.RemoveResource(r.Type, r.Name)
 			return nil
 		}
-		netID := util.AsString(r.Instance["docker_network_id"])
+		netID := r.Str("docker_network_id")
 		if netID != "" {
 			if err := dockerSub.RemoveBridgeNetwork(ctx, netID); err != nil {
 				fmt.Printf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
 			}
 		}
 		// Clean up DOCKER-USER ACCEPT rules for this NAT subnet.
-		cidr := util.AsString(r.Instance["cidr"])
+		cidr := r.Str("cidr")
 		if cidr != "" {
 			_ = removeDockerUserAccept(cidr)
 		}
@@ -125,8 +124,8 @@ func (e *Executor) destroyNetwork(ctx context.Context, r state.Resource) error {
 		return nil
 	}
 
-	nsName, _ := r.Instance["netns"].(string)
-	brName, _ := r.Instance["bridge"].(string)
+	nsName := r.Str("netns")
+	brName := r.Str("bridge")
 	if err := network.DeleteBridge(network.BridgeConfig{NetnsName: nsName, BridgeName: brName}); err != nil {
 		fmt.Printf("[destroy] warning: delete bridge %s: %v\n", brName, err)
 	}

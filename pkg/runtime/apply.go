@@ -8,6 +8,9 @@ import (
 // Apply walks the plan forward: create Add resources and re-create Change
 // (drifted) resources, both in topo order.
 func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
+	if err := e.graph.Validate(); err != nil {
+		return fmt.Errorf("graph validation: %w", err)
+	}
 	order, err := e.graph.TopoSort()
 	if err != nil {
 		return err

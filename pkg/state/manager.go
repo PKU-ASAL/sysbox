@@ -1,14 +1,18 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gofrs/flock"
 )
+
+const defaultLockTimeout = 10 * time.Second
 
 type Manager struct {
 	path string
@@ -31,19 +35,35 @@ func (m *Manager) Load() (*State, error) {
 }
 
 // Save atomically writes state to disk: write temp file, then rename.
-// Acquires a file lock to prevent concurrent writers.
+// Acquires a file lock with a timeout so concurrent apply/sensor don't
+// immediately fail when briefly contending.
 func (m *Manager) Save(s *State) error {
+	return m.SaveWithContext(context.Background(), s)
+}
+
+// SaveWithContext is like Save but respects the given context for lock
+// acquisition. Defaults to a 10-second timeout if the context has no
+// deadline.
+func (m *Manager) SaveWithContext(ctx context.Context, s *State) error {
 	if err := os.MkdirAll(filepath.Dir(m.path), 0o755); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}
 
 	lock := flock.New(m.path + ".lock")
-	locked, err := lock.TryLock()
+	timeout := defaultLockTimeout
+	if dl, ok := ctx.Deadline(); ok {
+		timeout = time.Until(dl)
+		if timeout <= 0 {
+			return fmt.Errorf("state lock: context deadline exceeded")
+		}
+	}
+
+	locked, err := lock.TryLockContext(ctx, timeout)
 	if err != nil {
 		return fmt.Errorf("acquire state lock: %w", err)
 	}
 	if !locked {
-		return fmt.Errorf("state is locked by another process")
+		return fmt.Errorf("state is locked by another process (timeout after %v)", timeout)
 	}
 	defer lock.Unlock()
 

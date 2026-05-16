@@ -202,9 +202,9 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 }
 
 func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
-	position, _ := r.Instance["position"].(string)
-	pid, _ := r.Instance["pid"].(float64)
-	containerID := util.AsString(r.Instance["container_id"])
+	position := r.Str("position")
+	pid := r.Int("pid")
+	containerID := r.Str("container_id")
 
 	sub, err := substrate.Get(r.Provider)
 	if err != nil {
@@ -214,7 +214,9 @@ func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
 
 	if pid > 0 && containerID != "" {
 		handle := substrate.NodeHandle{ID: containerID}
-		killCmd := fmt.Sprintf("kill %d 2>/dev/null || true", int(pid))
+		// Kill the entire process group so child processes are also
+		// terminated (e.g. opencode-serve spawns sub-processes).
+		killCmd := fmt.Sprintf("kill -- -%d 2>/dev/null; kill %d 2>/dev/null || true", pid, pid)
 		_, _ = sub.ExecInNode(ctx, handle, substrate.ExecSpec{
 			Cmd: []string{"sh", "-c", killCmd},
 		})

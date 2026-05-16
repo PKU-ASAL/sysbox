@@ -290,10 +290,10 @@ func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
 	if err != nil {
 		return err
 	}
-	handle := substrate.NodeHandle{ID: util.AsString(r.Instance["container_id"])}
+	handle := substrate.NodeHandle{ID: r.Str("container_id")}
 	// Pass vm_dir to DestroyNode for firecracker so cold destroys
 	// (after process restart) can find the working directory.
-	if vmDir := util.AsString(r.Instance["vm_dir"]); vmDir != "" {
+	if vmDir := r.Str("vm_dir"); vmDir != "" {
 		if handle.Attributes == nil {
 			handle.Attributes = map[string]any{}
 		}
