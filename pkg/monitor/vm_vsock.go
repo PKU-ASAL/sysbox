@@ -37,6 +37,8 @@ func (v *VmVsockBackend) Name() string { return "vm-vsock" }
 // Start dials each VM's vsock-agent and spawns a per-VM watcher goroutine.
 // Returns the event channel (currently always idle for vsock targets).
 func (v *VmVsockBackend) Start(ctx context.Context, targets []Target, _ Config) (<-chan sensor.Event, error) {
+	// TODO(W2-PR-07): vm-vsock backend is being replaced by edr-falcon backend
+	// (Deploy/Collect/Remove model). This whole module will be deleted.
 	var vmTargets []vmTarget
 	for _, tgt := range targets {
 		if tgt.Substrate == "docker" {

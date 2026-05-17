@@ -117,6 +117,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	// has a PID and a network namespace to inject veths into. Firecracker
 	// VMs must NOT be started yet — they need all TAPs declared in the
 	// boot config before launch.
+	// TODO(W1-PR-05): replace substrate-name check with Capabilities.NICHotPlug.
 	if subName != "firecracker" {
 		if err := sub.StartNode(ctx, handle); err != nil {
 			_ = sub.DestroyNode(ctx, handle)
@@ -184,6 +185,8 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			),
 		}
 	// Firecracker needs bridge name for TAP attachment.
+	// TODO(W1-PR-04): NIC creation moves into Substrate.AttachNIC; runtime
+	// will pass LinkRequest{bridge, netns, ...} instead of pre-baking the device.
 		if subName == "firecracker" && netState != nil {
 			if brName := util.AsString(netState.Instance["bridge"]); brName != "" {
 				handleWithSrc.Attributes["network_bridge"] = brName
@@ -209,6 +212,8 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	}
 	// For firecracker, persist vsock metadata so post-apply tooling
 	// (sensor, monitor, debugger) can reach the guest without rediscovery.
+	// TODO(W1-PR-02): replace with typed NodeHandle.Provider; state v2 will
+	// store provider-specific blob without runtime knowing the keys.
 	if subName == "firecracker" {
 		if uds, ok := handle.Attributes["vsock_uds"].(string); ok && uds != "" {
 			nodeInstance["vsock_uds"] = uds
@@ -242,6 +247,8 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 
 	// For firecracker nodes, record the first link IP as ssh_ip so
 	// provisioners can connect via SSH.
+	// TODO(W1-PR-06): Substrate.Connection() factory will derive the endpoint
+	// from typed NodeHandle.Net.PrimaryIP; this manual inference goes away.
 	if subName == "firecracker" && len(cfg.Links) > 0 {
 		firstIP := cfg.Links[0].IP
 		if firstIP != "" {
@@ -344,6 +351,8 @@ func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link 
 	brName := util.AsString(netState.Instance["bridge"])
 
 	// Firecracker uses TAP devices; Docker uses veth pairs.
+	// TODO(W1-PR-04): runtime should not create devices. Pass LinkRequest to
+	// Substrate.AttachNIC; each substrate picks veth/tap/macvtap/vfio itself.
 	if subName == "firecracker" {
 		tapName := fmt.Sprintf("tap-%05x-%d", fnvHash(nodeName)&0xfffff, idx)
 		if len(tapName) > 15 {
@@ -419,6 +428,8 @@ func (e *Executor) connectionForNode(
 		if dockerSub, ok := sub.(*dockerprovider.Substrate); ok {
 			return providerexec.NewDockerConnection(dockerSub, handle)
 		}
+		// TODO(W1-PR-06): replace with Substrate.Connection(handle, hint)
+		// factory; runtime stops switching on substrate names.
 		if subName == "firecracker" {
 			// Prefer vsock (no SSH dependency on the rootfs). Fall back to
 			// SSH only if the handle has no vsock UDS attached (e.g. when

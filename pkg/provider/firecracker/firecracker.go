@@ -5,12 +5,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // Substrate is the Firecracker microVM implementation of substrate.Substrate.
 type Substrate struct {
+	substrate.BaseSubstrate // inherits Validate / DecodeProviderConfig defaults
+
 	firecrackerBin string
 	jailerBin      string
 	kernelPath     string
@@ -64,9 +67,25 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 	return substrate.Capabilities{
 		SharedKernel:    false,
 		SupportsWindows: false,
-		BootTime:        "ms",
-		NICType:         "tap",
+		NICHotPlug:      false, // firecracker requires NICs declared in boot config
+		DiskHotPlug:     false,
+		NICKinds:        []string{substrate.NICKindTap},
+		ConsoleKinds:    []string{substrate.ConsoleKindSerial},
+		NeedsCloudinit:  false, // sysbox-init + config drive replaces cloud-init
+		PIDVisibility:   substrate.PIDVisibilityOpaque,
+		SupportsPause:   false, // not wired yet
+		BootTime:        150 * time.Millisecond,
+		Notes:           "microVM via Firecracker; NICs cold-plug only; in-guest agent via vsock-rpc.",
 	}
+}
+
+// Validate ensures the spec carries what the firecracker substrate needs.
+func (s *Substrate) Validate(spec substrate.NodeSpec) error {
+	// Firecracker needs either an image with rootfs metadata (resolved later
+	// in PrepareImage) or an explicit Rootfs override; kernel is optional
+	// because the substrate has a default kernel configured at New() time.
+	_ = spec // PR-01 stub: accept anything; tighter checks land in PR-05.
+	return nil
 }
 
 var _ substrate.Substrate = (*Substrate)(nil)

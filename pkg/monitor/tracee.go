@@ -87,6 +87,8 @@ func (t *TraceeBackend) Start(ctx context.Context, targets []Target, cfg Config)
 	containerSink := orDefault(extra["container_sink_path"], defaultContainerSinkPath)
 
 	// Collect mntns IDs for all Docker targets.
+	// TODO(W2-PR-07): tracee backend is being replaced by edr-falcon backend
+	// (Deploy/Collect/Remove model). This whole module will be deleted.
 	var mntnsIDs []string
 	for _, tgt := range targets {
 		if tgt.Substrate != "docker" {
