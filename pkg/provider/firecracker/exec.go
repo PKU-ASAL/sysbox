@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	osexec "os/exec"
 	"strconv"
@@ -151,14 +150,6 @@ func (s *Substrate) copyToNodeSSH(ctx context.Context, h substrate.NodeHandle, s
 		return fmt.Errorf("ssh copy: %w\n%s", err, out)
 	}
 	return nil
-}
-
-func (s *Substrate) CopyFromNode(_ context.Context, _ substrate.NodeHandle, _, _ string) error {
-	return fmt.Errorf("CopyFromNode: not implemented for firecracker")
-}
-
-func (s *Substrate) AttachTTY(_ context.Context, _ substrate.NodeHandle) (io.ReadWriteCloser, error) {
-	return nil, fmt.Errorf("AttachTTY: not implemented for firecracker")
 }
 
 // ObservationHook returns the vsock observation target for the VM.

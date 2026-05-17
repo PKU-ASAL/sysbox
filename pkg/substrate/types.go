@@ -4,7 +4,10 @@
 // v1.0 supports docker + firecracker; libvirt is in flight (W2).
 package substrate
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type ImageSpec struct {
 	DockerRef string
@@ -97,6 +100,34 @@ type ConnInfo struct {
 	Kind     ConnectionKind
 	Endpoint string // substrate-defined: container ID, "host:port", "uds-path:port", ...
 	User     string // optional
+}
+
+// ConnectionHint carries optional HCL-level overrides for connection selection.
+// The substrate may ignore these if its auto-selection (from NodeHandle.Conn)
+// already picks the right channel.
+type ConnectionHint struct {
+	Type       string // explicit type from HCL: "docker" | "ssh" | "vsock" | "auto"
+	Host       string // SSH host override
+	User       string // SSH user
+	Password   string // SSH password
+	PrivateKey string // SSH private key path
+}
+
+// Connection is the substrate-agnostic interface for reaching a running node
+// (exec, copy, background). Each substrate returns its own implementation.
+// Moved here from pkg/provider/exec so substrates can implement it without
+// import cycles.
+type Connection interface {
+	// ExecInline runs each line as a shell command (sh -c) sequentially.
+	// Returns on first non-zero exit.
+	ExecInline(ctx context.Context, cmds []string) error
+
+	// ExecBackground starts a command detached from the calling session.
+	// Returns the PID of the spawned process.
+	ExecBackground(ctx context.Context, cmd []string, env map[string]string) (int, error)
+
+	// CopyFile copies a local file into the node at dstPath.
+	CopyFile(ctx context.Context, srcPath, dstPath string) error
 }
 
 type ExecSpec struct {

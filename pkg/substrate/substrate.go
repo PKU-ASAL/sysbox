@@ -3,7 +3,6 @@ package substrate
 import (
 	"context"
 	"encoding/json"
-	"io"
 
 	"github.com/hashicorp/hcl/v2"
 )
@@ -51,17 +50,13 @@ type Substrate interface {
 
 	DestroyNode(ctx context.Context, handle NodeHandle) error
 
-	// Deprecated: use Connection(handle, hint).ExecInline. Removed in W1-PR-06.
-	ExecInNode(ctx context.Context, handle NodeHandle, spec ExecSpec) (ExecResult, error)
-
-	// Deprecated: use Connection(handle, hint).CopyFile. Removed in W1-PR-06.
-	CopyToNode(ctx context.Context, handle NodeHandle, src, dst string) error
-
-	// Deprecated: not part of v1.0; removed in W1-PR-06.
-	CopyFromNode(ctx context.Context, handle NodeHandle, src, dst string) error
-
-	// Deprecated: use Console(handle, kind). Removed in W1-PR-06.
-	AttachTTY(ctx context.Context, handle NodeHandle) (io.ReadWriteCloser, error)
+	// Connection returns a providerexec.Connection for reaching the running
+	// node. The substrate inspects NodeHandle.Conn (set by CreateNode or
+	// populateConnInfo) and the optional HCL connection configs to pick the
+	// right implementation (docker-exec, vsock-rpc, SSH, WinRM, ...).
+	// Returns nil if no connection is available (e.g. node not running or
+	// substrate has no control-plane channel).
+	Connection(handle NodeHandle, conns []ConnectionHint) (Connection, error)
 
 	// AttachNIC creates a network device for the node and wires it into the
 	// topology described by the LinkRequest. Each substrate picks its own

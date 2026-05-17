@@ -230,7 +230,10 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 
 	// Run provisioners after node is up and wired.
 	if len(cfg.Provisioners) > 0 {
-		conn := e.connectionForNode(sub, handle, cfg.Connections)
+		conn, err := connectionForNode(sub, handle, cfg.Connections)
+		if err != nil {
+			return fmt.Errorf("connection for node %s: %w", n.ID.Name, err)
+		}
 		// Block until the chosen connection is reachable.
 		switch c := conn.(type) {
 		case *providerexec.SSHConnection:
@@ -301,111 +304,29 @@ func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
 // -- provisioners --
 
 // connectionForNode picks the right Connection implementation based on the
-// substrate type and the optional connection block in the node config.
-// connectionForNode picks the right Connection implementation. When the
-// HCL connection block specifies an explicit type ("docker"/"ssh"/"vsock")
-// that takes precedence. Otherwise ("auto") the decision is driven by
-// NodeHandle.Conn.Kind which the substrate set at CreateNode / populateConnInfo
-// time — no more substrate-name branching.
-func (e *Executor) connectionForNode(
+// connectionForNode delegates to Substrate.Connection(). The substrate
+// inspects NodeHandle.Conn and the optional HCL hints to pick the right
+// implementation (docker-exec, vsock-rpc, SSH, ...).
+func connectionForNode(
 	sub substrate.Substrate,
 	handle substrate.NodeHandle,
 	conns []config.ConnectionConfig,
-) providerexec.Connection {
-	// Determine requested type (default: "auto").
-	connType := "auto"
-	if len(conns) > 0 && conns[0].Type != "" {
-		connType = conns[0].Type
-	}
-
-	// Explicit type requested by HCL — honour it directly.
-	switch connType {
-	case "docker":
-		if dockerSub, ok := sub.(*dockerprovider.Substrate); ok {
-			return providerexec.NewDockerConnection(dockerSub, handle)
-		}
-		return nil
-	case "ssh":
-		return e.sshConnectionFromHandle(handle, conns)
-	case "vsock":
-		if c := vsockConnectionFromHandle(handle); c != nil {
-			return c
-		}
-		return nil
-	}
-
-	// "auto" — drive from NodeHandle.Conn.Kind.
-	switch handle.Conn.Kind {
-	case substrate.ConnKindDocker:
-		if dockerSub, ok := sub.(*dockerprovider.Substrate); ok {
-			return providerexec.NewDockerConnection(dockerSub, handle)
-		}
-	case substrate.ConnKindVsock:
-		if c := vsockConnectionFromHandle(handle); c != nil {
-			return c
-		}
-	case substrate.ConnKindSSH:
-		return e.sshConnectionFromHandle(handle, conns)
-	}
-
-	// Fallback: try docker, then SSH.
-	if dockerSub, ok := sub.(*dockerprovider.Substrate); ok {
-		return providerexec.NewDockerConnection(dockerSub, handle)
-	}
-	return nil
-}
-
-// vsockConnectionFromHandle builds a Vsock connection from the node handle.
-// Returns nil if the handle does not advertise a vsock UDS (e.g. firecracker
-// with sysbox-init disabled, or any non-firecracker substrate).
-func vsockConnectionFromHandle(handle substrate.NodeHandle) *providerexec.VsockConnection {
-	hs, _ := handle.Provider.(*firecrackerprovider.HandleState)
-	if hs == nil || hs.VsockUDS == "" {
-		return nil
-	}
-	return providerexec.NewVsockConnection(hs.VsockUDS, hs.VsockPort)
-}
-
-// sshConnectionFromHandle builds an SSH connection from the node handle.
-// For firecracker the SSH coordinates live in the typed HandleState; for
-// other substrates the connection block must supply Host explicitly.
-func (e *Executor) sshConnectionFromHandle(handle substrate.NodeHandle, conns []config.ConnectionConfig) providerexec.Connection {
-	host := handle.Net.PrimaryIP
-	port := ""
-	if hs, _ := handle.Provider.(*firecrackerprovider.HandleState); hs != nil {
-		if hs.SSHIP != "" {
-			host = hs.SSHIP
-		}
-		port = hs.SSHPort
-	}
-	user := "root"
-	pass := "root"
-	key := ""
-
-	if len(conns) > 0 {
-		c := conns[0]
-		if c.Host != "" {
-			host = c.Host
-		}
-		if c.User != "" {
-			user = c.User
-		}
-		if c.Password != "" {
-			pass = c.Password
-		}
-		if c.PrivateKey != "" {
-			key = c.PrivateKey
+) (substrate.Connection, error) {
+	hints := make([]substrate.ConnectionHint, len(conns))
+	for i, c := range conns {
+		hints[i] = substrate.ConnectionHint{
+			Type:       c.Type,
+			Host:       c.Host,
+			User:       c.User,
+			Password:   c.Password,
+			PrivateKey: c.PrivateKey,
 		}
 	}
-
-	if host == "" {
-		return nil
-	}
-	return providerexec.NewSSHConnectionWithPort(host, port, user, key, pass)
+	return sub.Connection(handle, hints)
 }
 
 // runProvisioners executes provisioner blocks in order.
-func (e *Executor) runProvisioners(ctx context.Context, conn providerexec.Connection, provs []config.ProvisionerConfig) error {
+func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connection, provs []config.ProvisionerConfig) error {
 	if conn == nil {
 		return fmt.Errorf("no connection available for provisioners")
 	}

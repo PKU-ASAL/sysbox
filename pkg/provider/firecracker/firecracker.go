@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
+
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -109,6 +111,63 @@ func (s *Substrate) UnmarshalProviderState(data json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("firecracker: unmarshal handle state: %w", err)
 	}
 	return &hs, nil
+}
+
+// Connection returns a vsock or SSH connection for the VM. Prefers vsock when
+// the handle advertises it (sysbox-init present); falls back to SSH otherwise.
+func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.ConnectionHint) (substrate.Connection, error) {
+	hs, _ := handle.Provider.(*HandleState)
+	// Explicit HCL type overrides auto-selection.
+	if len(hints) > 0 && hints[0].Type != "" && hints[0].Type != "auto" {
+		switch hints[0].Type {
+		case "vsock":
+			if hs == nil || hs.VsockUDS == "" {
+				return nil, fmt.Errorf("vsock connection requested but VM has no vsock channel")
+			}
+			return providerexec.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
+		case "ssh":
+			return s.sshConn(handle, hints), nil
+		}
+	}
+	// Auto: prefer vsock, fall back to SSH.
+	if hs != nil && hs.VsockUDS != "" {
+		return providerexec.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
+	}
+	return s.sshConn(handle, hints), nil
+}
+
+// sshConn builds an SSH connection from the handle state + optional HCL hints.
+func (s *Substrate) sshConn(handle substrate.NodeHandle, hints []substrate.ConnectionHint) substrate.Connection {
+	hs, _ := handle.Provider.(*HandleState)
+	host := handle.Net.PrimaryIP
+	port := "22"
+	user := "root"
+	pass := "root"
+	key := ""
+	if hs != nil {
+		if hs.SSHIP != "" {
+			host = hs.SSHIP
+		}
+		if hs.SSHPort != "" {
+			port = hs.SSHPort
+		}
+	}
+	if len(hints) > 0 {
+		h := hints[0]
+		if h.Host != "" {
+			host = h.Host
+		}
+		if h.User != "" {
+			user = h.User
+		}
+		if h.Password != "" {
+			pass = h.Password
+		}
+		if h.PrivateKey != "" {
+			key = h.PrivateKey
+		}
+	}
+	return providerexec.NewSSHConnectionWithPort(host, port, user, key, pass)
 }
 
 var _ substrate.Substrate = (*Substrate)(nil)

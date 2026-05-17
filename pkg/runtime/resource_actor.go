@@ -220,12 +220,17 @@ func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
 
 	if pid > 0 && containerID != "" {
 		handle := substrate.NodeHandle{ID: containerID}
+		if blob := r.Str("provider_extra"); blob != "" {
+			if p, err := sub.UnmarshalProviderState([]byte(blob)); err == nil {
+				handle.Provider = p
+			}
+		}
 		// Kill the entire process group so child processes are also
 		// terminated (e.g. opencode-serve spawns sub-processes).
 		killCmd := fmt.Sprintf("kill -- -%d 2>/dev/null; kill %d 2>/dev/null || true", pid, pid)
-		_, _ = sub.ExecInNode(ctx, handle, substrate.ExecSpec{
-			Cmd: []string{"sh", "-c", killCmd},
-		})
+		if conn, err := sub.Connection(handle, nil); err == nil && conn != nil {
+			_ = conn.ExecInline(ctx, []string{killCmd})
+		}
 	}
 
 	// External actors own their container; destroy it entirely.

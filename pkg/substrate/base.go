@@ -61,6 +61,12 @@ func (BaseSubstrate) DecodeProviderConfig(hcl.Body, *hcl.EvalContext) (any, erro
 // must apply first.
 func (BaseSubstrate) Dependencies(any) ProviderDeps { return ProviderDeps{} }
 
+// Connection returns nil by default. Substrates that provide a control-plane
+// channel (docker-exec, vsock, SSH, WinRM) must override this.
+func (BaseSubstrate) Connection(NodeHandle, []ConnectionHint) (Connection, error) {
+	return nil, nil
+}
+
 // MarshalProviderState returns (nil, nil) by default: the substrate persists
 // nothing beyond the NodeHandle.ID. Override when there is substrate-specific
 // state to preserve across CLI invocations.
