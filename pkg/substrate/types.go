@@ -111,21 +111,55 @@ type ExecResult struct {
 	ExitCode int
 }
 
-type NIC struct {
-	Kind       string // "veth" | "tap"
-	HostEnd    string
-	GuestEnd   string
-	TargetName string // interface name inside the guest (e.g. "eth0", "eth1"); defaults to "eth0"
-	MAC        string
-	IP         string // CIDR notation e.g. "10.0.1.10/24"
-	Gateway    string
-	MTU        int
+// LinkRequest is the substrate-neutral description of a network attachment
+// that the runtime wants to make. It carries the topology coordinates (which
+// network namespace, bridge, IP, gateway) but does NOT specify the device type
+// or name — each substrate picks those itself (veth for docker, tap for FC,
+// macvtap for libvirt, etc.).
+//
+// This replaces the old NIC struct which conflated topology input with
+// substrate output. The runtime produces LinkRequests; substrates produce
+// AttachedNICs inside their AttachNIC implementation.
+type LinkRequest struct {
+	// NetNS is the network namespace name where the host-side device should
+	// be created / plugged. For Docker this is the isolated netns managed by
+	// sysbox_network; for FC the tap goes there and the VM reads from it.
+	NetNS string
 
-	// Transitional fields (W1-PR-04 will replace with LinkRequest):
-	// per-AttachNIC-call context that tells the substrate which netns/bridge
-	// to plug into. Previously threaded through NodeHandle.Attributes.
-	NetNS  string
+	// Bridge is the Linux bridge inside NetNS to attach the host-end device.
+	// Empty when the network is unbridged (e.g. P2P / host-only).
 	Bridge string
+
+	// IP is the guest-side address in CIDR notation, e.g. "10.0.1.10/24".
+	IP string
+
+	// Gateway is the default gateway for this link. Empty means no gateway
+	// (router interfaces intentionally omit this so they don't install a
+	// default route).
+	Gateway string
+
+	// TargetName is the desired interface name inside the guest (e.g.
+	// "eth0", "eth1"). Substrates that can rename guest interfaces (Docker)
+	// honour this; others (FC kernel cmdline) may ignore it.
+	TargetName string
+
+	// MAC is the desired MAC address. Empty means auto-assign.
+	MAC string
+
+	// MTU is the desired MTU; 0 means use the default.
+	MTU int
+}
+
+// AttachedNIC is what the substrate reports back from AttachNIC so runtime
+// can persist it in state for destroy / drift detection. Only the fields
+// the runtime actually needs are populated; substrate-specific state lives
+// in NodeHandle.Provider.
+type AttachedNIC struct {
+	Kind     string // "veth" | "tap" | "docker_nat" | ...
+	HostEnd  string // host-side device name (veth host-end / tap name)
+	GuestEnd string // guest-side device name (veth guest-end / "" for tap)
+	IP       string // CIDR notation
+	NetNS    string // network namespace name (for cleanup on destroy)
 }
 
 // PIDMode declares how guest processes are visible to the host.

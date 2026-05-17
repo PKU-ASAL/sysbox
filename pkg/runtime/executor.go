@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha1"
 	"fmt"
 	"os"
 
@@ -99,17 +98,6 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 
 func resolveSubstrateRef(ref string) (string, error) {
 	return config.ResolveSubstrateRef(ref)
-}
-
-
-
-// vethName produces a deterministic ≤15-char interface name.
-// Format: <prefix>-<5hexhash>-<idx>  e.g. "vh-a3f2c-0"
-// Uses SHA-1 for low collision probability even with large for_each counts.
-func vethName(prefix, nodeName string, idx int) string {
-	h := sha1.Sum([]byte(nodeName))
-	hi := uint(h[0])<<8 | uint(h[1])
-	return fmt.Sprintf("%s-%05x-%d", prefix, hi&0xfffff, idx)
 }
 
 // expandTilde replaces a leading ~ with the current user's home directory.

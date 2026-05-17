@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"strings"
 	"time"
 
@@ -152,32 +151,28 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			continue
 		}
 
-		nic, netNetns, err := e.wireLink(ctx, n.ID.Name, vethIdx, link, subName)
+		// Non-NAT (isolated) network: delegate NIC creation to the substrate.
+		lreq := substrate.LinkRequest{
+			NetNS:      util.AsString(netState.Instance["netns"]),
+			Bridge:     util.AsString(netState.Instance["bridge"]),
+			IP:         link.IP,
+			Gateway:    link.Gateway,
+			TargetName: fmt.Sprintf("eth%d", vethIdx),
+			MAC:        "",
+		}
+		attached, err := sub.AttachNIC(ctx, handle, lreq)
 		if err != nil {
 			_ = sub.DestroyNode(ctx, handle)
 			return err
 		}
-		nic.TargetName = fmt.Sprintf("eth%d", vethIdx)
 		vethIdx++
-
-		// Thread per-link context to AttachNIC via the transitional nic.NetNS
-		// and nic.Bridge fields. W1-PR-04 will replace this with a typed
-		// LinkRequest and move device creation into the substrate.
-		nic.NetNS = netNetns
-		if netState != nil {
-			nic.Bridge = util.AsString(netState.Instance["bridge"])
-		}
-		if err := sub.AttachNIC(ctx, handle, nic); err != nil {
-			_ = sub.DestroyNode(ctx, handle)
-			return err
-		}
 		nics = append(nics, map[string]any{
-			"kind":      nic.Kind, // "veth" or "tap"
-			"host_end":  nic.HostEnd,
-			"guest_end": nic.GuestEnd,
-			"target":    nic.TargetName,
-			"ip":        nic.IP,
-			"netns":     netNetns,
+			"kind":      attached.Kind,
+			"host_end":  attached.HostEnd,
+			"guest_end": attached.GuestEnd,
+			"target":    lreq.TargetName,
+			"ip":        attached.IP,
+			"netns":     attached.NetNS,
 		})
 	}
 
@@ -307,77 +302,6 @@ func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
 	}
 	e.state.RemoveResource(r.Type, r.Name)
 	return nil
-}
-
-// wireLink creates a veth pair (Docker) or tap device (Firecracker) in the
-// network's netns and returns the NIC spec for the substrate to attach.
-// Returns the network's netns name so the substrate knows where to find
-// the guest-end / tap device.
-// Caller must ensure the network is not a NAT network before calling wireLink.
-func (e *Executor) wireLink(ctx context.Context, nodeName string, idx int, link config.LinkConfig, subName string) (substrate.NIC, string, error) {
-	netName := config.ResolveName(link.Network)
-	netState := e.state.FindResource("sysbox_network", netName)
-	if netState == nil {
-		return substrate.NIC{}, "", fmt.Errorf("network %s not applied yet", netName)
-	}
-
-	nsName := util.AsString(netState.Instance["netns"])
-	brName := util.AsString(netState.Instance["bridge"])
-
-	// Firecracker uses TAP devices; Docker uses veth pairs.
-	// TODO(W1-PR-04): runtime should not create devices. Pass LinkRequest to
-	// Substrate.AttachNIC; each substrate picks veth/tap/macvtap/vfio itself.
-	if subName == "firecracker" {
-		tapName := fmt.Sprintf("tap-%05x-%d", fnvHash(nodeName)&0xfffff, idx)
-		if len(tapName) > 15 {
-			tapName = tapName[:15]
-		}
-
-		if err := network.CreateTapInNetns(tapName, nsName, brName); err != nil {
-			return substrate.NIC{}, "", fmt.Errorf("create tap %s: %w", tapName, err)
-		}
-
-		return substrate.NIC{
-			Kind:     "tap",
-			HostEnd:  tapName,
-			IP:       link.IP,
-			Gateway:  link.Gateway,
-		}, nsName, nil
-	}
-
-	// Default: Docker veth pair.
-	hostEnd := vethName("vh", nodeName, idx)
-	guestEnd := vethName("vg", nodeName, idx)
-
-	// Only set a default gateway when explicitly requested by the caller.
-	// Router interfaces intentionally omit gw so they don't compete for the
-	// default route.
-	gateway := link.Gateway
-
-	pair, err := network.CreateVethPair(network.VethSpec{
-		HostEnd:    hostEnd,
-		GuestEnd:   guestEnd,
-		NetnsName:  nsName,
-		BridgeName: brName,
-	})
-	if err != nil {
-		return substrate.NIC{}, "", err
-	}
-
-	return substrate.NIC{
-		Kind:     "veth",
-		HostEnd:  pair.HostEnd,
-		GuestEnd: pair.GuestEnd,
-		IP:       link.IP,
-		Gateway:  gateway,
-	}, nsName, nil
-}
-
-// fnvHash returns the FNV-1a 32-bit hash of s.
-func fnvHash(s string) uint32 {
-	h := fnv.New32a()
-	h.Write([]byte(s))
-	return h.Sum32()
 }
 
 // -- provisioners --

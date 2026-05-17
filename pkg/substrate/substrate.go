@@ -63,7 +63,11 @@ type Substrate interface {
 	// Deprecated: use Console(handle, kind). Removed in W1-PR-06.
 	AttachTTY(ctx context.Context, handle NodeHandle) (io.ReadWriteCloser, error)
 
-	AttachNIC(ctx context.Context, handle NodeHandle, nic NIC) error
+	// AttachNIC creates a network device for the node and wires it into the
+	// topology described by the LinkRequest. Each substrate picks its own
+	// device type (veth, tap, macvtap, ...), creates it, and attaches it.
+	// Returns an AttachedNIC for runtime to persist in state.
+	AttachNIC(ctx context.Context, handle NodeHandle, req LinkRequest) (AttachedNIC, error)
 
 	ObservationHook(ctx context.Context, handle NodeHandle) (ObservationTarget, error)
 

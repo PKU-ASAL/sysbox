@@ -123,27 +123,26 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 			continue
 		}
 
-		// Non-NAT (isolated) network: veth pair.
-		nic, netNetns, err := e.wireRouterInterface(ctx, n.ID.Name, vethIdx, iface)
+		// Non-NAT (isolated) network: delegate NIC creation to the substrate.
+		lreq := substrate.LinkRequest{
+			NetNS:      util.AsString(netState.Instance["netns"]),
+			Bridge:     util.AsString(netState.Instance["bridge"]),
+			IP:         iface.IP,
+			TargetName: fmt.Sprintf("eth%d", vethIdx),
+		}
+		attached, err := sub.AttachNIC(ctx, handle, lreq)
 		if err != nil {
 			_ = sub.DestroyNode(ctx, handle)
 			return err
 		}
-		nic.TargetName = fmt.Sprintf("eth%d", vethIdx)
 		vethIdx++
-
-		nic.NetNS = netNetns
-		if err := sub.AttachNIC(ctx, handle, nic); err != nil {
-			_ = sub.DestroyNode(ctx, handle)
-			return err
-		}
-		ifaceByName[iface.Name] = nic.TargetName
+		ifaceByName[iface.Name] = lreq.TargetName
 		nics = append(nics, map[string]any{
-			"host_end":  nic.HostEnd,
-			"guest_end": nic.GuestEnd,
-			"target":    nic.TargetName,
-			"ip":        nic.IP,
-			"netns":     netNetns,
+			"host_end":  attached.HostEnd,
+			"guest_end": attached.GuestEnd,
+			"target":    lreq.TargetName,
+			"ip":        attached.IP,
+			"netns":     attached.NetNS,
 			"label":     iface.Name,
 		})
 	}
@@ -179,15 +178,6 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 func (e *Executor) destroyRouter(ctx context.Context, r state.Resource) error {
 	// destroyRouter mirrors destroyNode: stop+remove container, delete veths.
 	return e.destroyNode(ctx, r)
-}
-
-// wireRouterInterface adapts RouterInterface to LinkConfig and reuses wireLink.
-func (e *Executor) wireRouterInterface(ctx context.Context, nodeName string, idx int, iface config.RouterInterface) (substrate.NIC, string, error) {
-	link := config.LinkConfig{
-		Network: iface.Network,
-		IP:      iface.IP,
-	}
-	return e.wireLink(ctx, nodeName, idx, link, "docker")
 }
 
 // configureNATViaNsenter configures MASQUERADE and FORWARD rules from the

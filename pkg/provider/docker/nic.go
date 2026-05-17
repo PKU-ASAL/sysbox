@@ -9,41 +9,79 @@ import (
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-// AttachNIC moves the guest-end of a veth pair into the container's netns,
-// renames it to eth<N>, assigns the IP, and sets the default gateway.
-//
-// Assumptions:
-//   - nic.GuestEnd already exists in the host-side netns where it was created
-//     (the network provider's netns), so we first move it to the global root
-//     netns, then into the container's netns. To keep things simple in Phase
-//     1 we rely on netns.GetFromName to enter the network's netns, move the
-//     link to the container PID, then enter the container netns and configure.
-//   - container is running (StartNode completed)
-//   - nic.Kind == "veth"
-func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, nic substrate.NIC) error {
-	if nic.Kind != "veth" {
-		return fmt.Errorf("docker substrate only supports veth, got %q", nic.Kind)
-	}
-
+// AttachNIC creates a veth pair, wires the host-end into the bridge in the
+// LinkRequest's NetNS, moves the guest-end into the running container's
+// netns, renames it to the requested TargetName, assigns IP, and sets the
+// default gateway.
+func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req substrate.LinkRequest) (substrate.AttachedNIC, error) {
 	ins, err := s.cli.ContainerInspect(ctx, h.ID)
 	if err != nil {
-		return fmt.Errorf("inspect container: %w", err)
+		return substrate.AttachedNIC{}, fmt.Errorf("inspect container: %w", err)
 	}
 	containerPID := ins.State.Pid
 	if containerPID == 0 {
-		return fmt.Errorf("container %s is not running", h.ID)
+		return substrate.AttachedNIC{}, fmt.Errorf("container %s is not running", h.ID)
 	}
 
-	// nic.NetNS is the network's netns (where the host-end + guest-end were
-	// created by runtime/wireLink). W1-PR-04 will move device creation into
-	// this method and replace nic.NetNS with a LinkRequest field.
-	return attachVethToContainer(nic, nic.NetNS, containerPID)
+	hs, _ := h.Provider.(*HandleState)
+	containerName := "sysbox-unknown"
+	if hs != nil && hs.ContainerName != "" {
+		containerName = hs.ContainerName
+	}
+
+	// Derive deterministic veth names from the container name so leftover
+	// cleanup on retry works reliably.
+	hostEnd := vethName("vh", containerName)
+	guestEnd := vethName("vg", containerName)
+
+	// Create the veth pair inside the network's netns and attach the
+	// host-end to the bridge. Idempotent: reuses existing devices.
+	pair, err := network.CreateVethPair(network.VethSpec{
+		HostEnd:    hostEnd,
+		GuestEnd:   guestEnd,
+		NetnsName:  req.NetNS,
+		BridgeName: req.Bridge,
+	})
+	if err != nil {
+		return substrate.AttachedNIC{}, fmt.Errorf("create veth pair: %w", err)
+	}
+
+	// Move the guest-end into the container's netns and configure it.
+	if err := attachVethToContainer(guestEnd, req.TargetName, req.NetNS, containerPID, req.IP, req.Gateway); err != nil {
+		return substrate.AttachedNIC{}, err
+	}
+
+	return substrate.AttachedNIC{
+		Kind:     substrate.NICKindVeth,
+		HostEnd:  pair.HostEnd,
+		GuestEnd: pair.GuestEnd,
+		IP:       req.IP,
+		NetNS:    req.NetNS,
+	}, nil
 }
 
-func attachVethToContainer(nic substrate.NIC, sourceNetnsName string, containerPID int) error {
+// vethName generates a deterministic veth interface name from a prefix and
+// container name. Names must be ≤15 chars.
+func vethName(prefix, containerName string) string {
+	name := containerName
+	if len(name) > 8 && name[:8] == "sysbox-" {
+		name = name[8:]
+	}
+	vn := prefix + "-" + name
+	if len(vn) > 15 {
+		vn = vn[:15]
+	}
+	return vn
+}
+
+// attachVethToContainer moves a guest-end veth from sourceNetns into the
+// container's netns (identified by PID), renames it, assigns IP, and
+// optionally sets the default gateway.
+func attachVethToContainer(guestEnd, targetName, sourceNetnsName string, containerPID int, ip, gateway string) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
@@ -54,7 +92,6 @@ func attachVethToContainer(nic substrate.NIC, sourceNetnsName string, containerP
 	defer origNS.Close()
 	defer func() { _ = netns.Set(origNS) }()
 
-	// Step 1: enter the netns where the guest-end currently lives.
 	if sourceNetnsName != "" {
 		srcNS, err := netns.GetFromName(sourceNetnsName)
 		if err != nil {
@@ -66,18 +103,15 @@ func attachVethToContainer(nic substrate.NIC, sourceNetnsName string, containerP
 		}
 	}
 
-	// Step 2: find the guest-end link.
-	link, err := netlink.LinkByName(nic.GuestEnd)
+	link, err := netlink.LinkByName(guestEnd)
 	if err != nil {
-		return fmt.Errorf("find veth guest end %s: %w", nic.GuestEnd, err)
+		return fmt.Errorf("find veth guest end %s: %w", guestEnd, err)
 	}
 
-	// Step 3: move it directly into the container's netns by PID.
 	if err := netlink.LinkSetNsPid(link, containerPID); err != nil {
 		return fmt.Errorf("move veth to container netns: %w", err)
 	}
 
-	// Step 4: enter container's netns and configure the link.
 	if err := netns.Set(origNS); err != nil {
 		return fmt.Errorf("return to root netns: %w", err)
 	}
@@ -92,7 +126,7 @@ func attachVethToContainer(nic substrate.NIC, sourceNetnsName string, containerP
 		return fmt.Errorf("enter container netns: %w", err)
 	}
 
-	containerLink, err := netlink.LinkByName(nic.GuestEnd)
+	containerLink, err := netlink.LinkByName(guestEnd)
 	if err != nil {
 		return fmt.Errorf("find link after move: %w", err)
 	}
@@ -101,7 +135,7 @@ func attachVethToContainer(nic substrate.NIC, sourceNetnsName string, containerP
 		_ = netlink.LinkSetUp(lo)
 	}
 
-	target := nic.TargetName
+	target := targetName
 	if target == "" {
 		target = "eth0"
 	}
@@ -118,9 +152,9 @@ func attachVethToContainer(nic substrate.NIC, sourceNetnsName string, containerP
 		return err
 	}
 
-	addr, err := netlink.ParseAddr(nic.IP)
+	addr, err := netlink.ParseAddr(ip)
 	if err != nil {
-		return fmt.Errorf("parse IP %s: %w", nic.IP, err)
+		return fmt.Errorf("parse IP %s: %w", ip, err)
 	}
 	if err := netlink.AddrAdd(containerLink, addr); err != nil {
 		return fmt.Errorf("assign IP: %w", err)
@@ -130,9 +164,9 @@ func attachVethToContainer(nic substrate.NIC, sourceNetnsName string, containerP
 		return err
 	}
 
-	if nic.Gateway != "" {
+	if gateway != "" {
 		_, defaultNet, _ := net.ParseCIDR("0.0.0.0/0")
-		gwIP := net.ParseIP(nic.Gateway)
+		gwIP := net.ParseIP(gateway)
 		route := &netlink.Route{
 			LinkIndex: containerLink.Attrs().Index,
 			Dst:       defaultNet,
