@@ -53,8 +53,14 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 
 	handle := substrate.NodeHandle{
-		ID:         containerID,
-		Attributes: map[string]any{"container_name": fmt.Sprintf("sysbox-%s", nodeName)},
+		ID: containerID,
+		Provider: &dockerprovider.HandleState{
+			ContainerName: fmt.Sprintf("sysbox-%s", nodeName),
+		},
+		Conn: substrate.ConnInfo{
+			Kind:     substrate.ConnKindDocker,
+			Endpoint: containerID,
+		},
 	}
 
 	fmt.Printf("[apply] starting actor %s on node %s: %v\n", n.ID.Name, nodeName, cfg.Command)
@@ -254,7 +260,13 @@ func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
 	containerID := util.AsString(nodeState.Instance["container_id"])
 	handle := substrate.NodeHandle{
 		ID: containerID,
-		Attributes: map[string]any{"container_name": fmt.Sprintf("sysbox-%s", nodeName)},
+		Provider: &dockerprovider.HandleState{
+			ContainerName: fmt.Sprintf("sysbox-%s", nodeName),
+		},
+		Conn: substrate.ConnInfo{
+			Kind:     substrate.ConnKindDocker,
+			Endpoint: containerID,
+		},
 	}
 
 	// Find the docker substrate registered for the node.

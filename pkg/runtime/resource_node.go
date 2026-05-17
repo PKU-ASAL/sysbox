@@ -11,6 +11,7 @@ import (
 	"github.com/oslab/sysbox/pkg/graph"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
+	firecrackerprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -177,22 +178,14 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		nic.TargetName = fmt.Sprintf("eth%d", vethIdx)
 		vethIdx++
 
-		handleWithSrc := substrate.NodeHandle{
-			ID: handle.ID,
-			Attributes: mergeAttr(
-				handle.Attributes,
-				map[string]any{"network_netns": netNetns},
-			),
+		// Thread per-link context to AttachNIC via the transitional nic.NetNS
+		// and nic.Bridge fields. W1-PR-04 will replace this with a typed
+		// LinkRequest and move device creation into the substrate.
+		nic.NetNS = netNetns
+		if netState != nil {
+			nic.Bridge = util.AsString(netState.Instance["bridge"])
 		}
-	// Firecracker needs bridge name for TAP attachment.
-	// TODO(W1-PR-04): NIC creation moves into Substrate.AttachNIC; runtime
-	// will pass LinkRequest{bridge, netns, ...} instead of pre-baking the device.
-		if subName == "firecracker" && netState != nil {
-			if brName := util.AsString(netState.Instance["bridge"]); brName != "" {
-				handleWithSrc.Attributes["network_bridge"] = brName
-			}
-		}
-		if err := sub.AttachNIC(ctx, handleWithSrc, nic); err != nil {
+		if err := sub.AttachNIC(ctx, handle, nic); err != nil {
 			_ = sub.DestroyNode(ctx, handle)
 			return err
 		}
@@ -210,25 +203,10 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		"container_id": handle.ID,
 		"nics":         nics,
 	}
-	// For firecracker, persist vsock metadata so post-apply tooling
-	// (sensor, monitor, debugger) can reach the guest without rediscovery.
-	// TODO(W1-PR-02): replace with typed NodeHandle.Provider; state v2 will
-	// store provider-specific blob without runtime knowing the keys.
-	if subName == "firecracker" {
-		if uds, ok := handle.Attributes["vsock_uds"].(string); ok && uds != "" {
-			nodeInstance["vsock_uds"] = uds
-		}
-		if cid, ok := handle.Attributes["vsock_cid"].(uint32); ok && cid != 0 {
-			nodeInstance["vsock_cid"] = float64(cid)
-		}
-		if port, ok := handle.Attributes["vsock_port"].(uint32); ok && port != 0 {
-			nodeInstance["vsock_port"] = float64(port)
-		}
-		// Persist vm_dir so cold destroys (after process restart) can
-		// find the VM's working directory without guessing.
-		if vmDir, ok := handle.Attributes["vm_dir"].(string); ok && vmDir != "" {
-			nodeInstance["vm_dir"] = vmDir
-		}
+	// Substrate-specific state (vsock metadata, vm_dir, etc.) goes through
+	// MarshalProviderState so runtime stays substrate-agnostic.
+	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+		nodeInstance["provider_extra"] = string(blob)
 	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_node",
@@ -245,22 +223,33 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("start node %s: %w", n.ID.Name, err)
 	}
 
-	// For firecracker nodes, record the first link IP as ssh_ip so
-	// provisioners can connect via SSH.
-	// TODO(W1-PR-06): Substrate.Connection() factory will derive the endpoint
-	// from typed NodeHandle.Net.PrimaryIP; this manual inference goes away.
-	if subName == "firecracker" && len(cfg.Links) > 0 {
+	// Populate the substrate-neutral PrimaryIP from the first link so the
+	// Connection factory (W1-PR-06) can derive SSH coordinates uniformly.
+	if len(cfg.Links) > 0 {
 		firstIP := cfg.Links[0].IP
-		if firstIP != "" {
-			// Strip CIDR suffix for SSH.
-			if idx := strings.Index(firstIP, "/"); idx >= 0 {
-				firstIP = firstIP[:idx]
+		if idx := strings.Index(firstIP, "/"); idx >= 0 {
+			firstIP = firstIP[:idx]
+		}
+		handle.Net.PrimaryIP = firstIP
+	}
+
+	// SSH fallback for firecracker VMs whose rootfs lacks sysbox-init: write
+	// the first link IP and configured SSH port into the typed HandleState.
+	// W1-PR-06 will replace this branch with a substrate.Connection() factory.
+	if subName == "firecracker" {
+		if hs, ok := handle.Provider.(*firecrackerprovider.HandleState); ok && hs != nil {
+			hs.SSHIP = handle.Net.PrimaryIP
+			hs.SSHPort = fmt.Sprintf("%d", cfg.SSHPort)
+		}
+	}
+
+	// Re-marshal provider state if mutated above (firecracker SSH fallback).
+	if subName == "firecracker" {
+		if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+			// Update the just-persisted node resource with the refreshed blob.
+			if rec := e.state.FindResource("sysbox_node", n.ID.Name); rec != nil {
+				rec.Instance["provider_extra"] = string(blob)
 			}
-			if handle.Attributes == nil {
-				handle.Attributes = map[string]any{}
-			}
-			handle.Attributes["ssh_ip"] = firstIP
-			handle.Attributes["ssh_port"] = fmt.Sprintf("%d", cfg.SSHPort)
 		}
 	}
 
@@ -298,13 +287,12 @@ func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
 		return err
 	}
 	handle := substrate.NodeHandle{ID: r.Str("container_id")}
-	// Pass vm_dir to DestroyNode for firecracker so cold destroys
-	// (after process restart) can find the working directory.
-	if vmDir := r.Str("vm_dir"); vmDir != "" {
-		if handle.Attributes == nil {
-			handle.Attributes = map[string]any{}
+	// Reconstruct provider-specific state (vm_dir, vsock metadata, etc.) so
+	// cold destroys after a process restart can clean up properly.
+	if blob := r.Str("provider_extra"); blob != "" {
+		if p, err := sub.UnmarshalProviderState([]byte(blob)); err == nil {
+			handle.Provider = p
 		}
-		handle.Attributes["vm_dir"] = vmDir
 	}
 	// Ignore stop/destroy errors: container may already be gone (drift recovery).
 	if err := sub.StopNode(ctx, handle); err != nil {
@@ -463,18 +451,25 @@ func (e *Executor) connectionForNode(
 // Returns nil if the handle does not advertise a vsock UDS (e.g. firecracker
 // with sysbox-init disabled, or any non-firecracker substrate).
 func vsockConnectionFromHandle(handle substrate.NodeHandle) *providerexec.VsockConnection {
-	uds, _ := handle.Attributes["vsock_uds"].(string)
-	if uds == "" {
+	hs, _ := handle.Provider.(*firecrackerprovider.HandleState)
+	if hs == nil || hs.VsockUDS == "" {
 		return nil
 	}
-	port, _ := handle.Attributes["vsock_port"].(uint32)
-	return providerexec.NewVsockConnection(uds, port)
+	return providerexec.NewVsockConnection(hs.VsockUDS, hs.VsockPort)
 }
 
-// sshConnectionFromHandle builds an SSH connection from the node handle attributes.
+// sshConnectionFromHandle builds an SSH connection from the node handle.
+// For firecracker the SSH coordinates live in the typed HandleState; for
+// other substrates the connection block must supply Host explicitly.
 func (e *Executor) sshConnectionFromHandle(handle substrate.NodeHandle, conns []config.ConnectionConfig) providerexec.Connection {
-	host, _ := handle.Attributes["ssh_ip"].(string)
-	port, _ := handle.Attributes["ssh_port"].(string)
+	host := handle.Net.PrimaryIP
+	port := ""
+	if hs, _ := handle.Provider.(*firecrackerprovider.HandleState); hs != nil {
+		if hs.SSHIP != "" {
+			host = hs.SSHIP
+		}
+		port = hs.SSHPort
+	}
 	user := "root"
 	pass := "root"
 	key := ""

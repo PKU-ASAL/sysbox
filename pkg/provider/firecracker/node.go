@@ -28,6 +28,30 @@ type vmProcess struct {
 	started   bool   // true after StartNode
 }
 
+// HandleState is the firecracker-substrate's typed NodeHandle.Provider payload.
+// Persisted via MarshalProviderState so cold-destroy and drift refresh can
+// rebuild the VM's working directory without rediscovery.
+type HandleState struct {
+	VMDir      string `json:"vm_dir,omitempty"`
+	Socket     string `json:"socket,omitempty"`
+	ConfigPath string `json:"config_path,omitempty"`
+
+	VsockUDS  string `json:"vsock_uds,omitempty"`
+	VsockCID  uint32 `json:"vsock_cid,omitempty"`
+	VsockPort uint32 `json:"vsock_port,omitempty"`
+
+	NICCount int    `json:"nic_count,omitempty"`
+	TapName  string `json:"tap_name,omitempty"`
+
+	NetnsName string `json:"netns_name,omitempty"`
+
+	// SSHIP/SSHPort are populated by runtime as a fallback for VMs whose
+	// rootfs lacks sysbox-init (no vsock channel). W1-PR-06 will move this
+	// behind Substrate.Connection().
+	SSHIP   string `json:"ssh_ip,omitempty"`
+	SSHPort string `json:"ssh_port,omitempty"`
+}
+
 var (
 	vmMu    sync.Mutex
 	vmStore = map[string]*vmProcess{} // vm_id → vmProcess
@@ -190,19 +214,23 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	vmStore[vmID] = vm
 	vmMu.Unlock()
 
-	attrs := map[string]any{
-		"vm_socket": socketPath,
-		"vm_dir":    runDir,
-		"vm_cfg":    cfgPath,
+	hs := &HandleState{
+		VMDir:      runDir,
+		Socket:     socketPath,
+		ConfigPath: cfgPath,
 	}
+	conn := substrate.ConnInfo{}
 	if vsockUDS != "" {
-		attrs["vsock_uds"] = vsockUDS
-		attrs["vsock_cid"] = vsockCID
-		attrs["vsock_port"] = uint32(8901)
+		hs.VsockUDS = vsockUDS
+		hs.VsockCID = vsockCID
+		hs.VsockPort = uint32(8901)
+		conn.Kind = substrate.ConnKindVsock
+		conn.Endpoint = fmt.Sprintf("%s:%d", vsockUDS, hs.VsockPort)
 	}
 	return substrate.NodeHandle{
-		ID:         vmID,
-		Attributes: attrs,
+		ID:       vmID,
+		Provider: hs,
+		Conn:     conn,
 	}, nil
 }
 
@@ -297,9 +325,12 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 		_ = vm.cmd.Wait()
 	}
 
-	// Resolve vm_dir from attributes if given, else fall back to the
+	// Resolve vm_dir from typed handle if given, else fall back to the
 	// substrate's conventional layout so cold destroys still clean up.
-	dir, _ := h.Attributes["vm_dir"].(string)
+	dir := ""
+	if hs, _ := h.Provider.(*HandleState); hs != nil {
+		dir = hs.VMDir
+	}
 	if dir == "" && h.ID != "" {
 		dir = filepath.Join(s.rootfsDir, h.ID)
 	}

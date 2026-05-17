@@ -23,6 +23,11 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, nic s
 		return fmt.Errorf("firecracker substrate only supports tap/veth, got %q", nic.Kind)
 	}
 
+	hs, _ := h.Provider.(*HandleState)
+	if hs == nil || hs.ConfigPath == "" {
+		return fmt.Errorf("VM config path not found in handle provider state")
+	}
+
 	tapName := nic.HostEnd
 	if tapName == "" {
 		tapName = fmt.Sprintf("tap-%s", strings.TrimPrefix(h.ID, "sysbox-"))
@@ -34,8 +39,12 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, nic s
 	// Clean up leftover TAP from a previous failed run.
 	// The TAP may be in the root netns or inside a network netns.
 	// Try both locations before creating a new one.
-	netnsName, _ := h.Attributes["network_netns"].(string)
-	bridgeName, _ := h.Attributes["network_bridge"].(string)
+	//
+	// nic.NetNS / nic.Bridge are transitional fields populated by
+	// runtime/wireLink. W1-PR-04 will replace them with a LinkRequest and
+	// move device creation into this method.
+	netnsName := nic.NetNS
+	bridgeName := nic.Bridge
 
 	// Check if TAP exists in root or network netns.
 	tapInRoot := linkExists(tapName)
@@ -66,13 +75,13 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, nic s
 			vm.netnsName = netnsName
 		}
 		vmMu.Unlock()
+		if hs.NetnsName == "" {
+			hs.NetnsName = netnsName
+		}
 	}
 
-	// Add NIC to the VM config JSON.
-	cfgPath, _ := h.Attributes["vm_cfg"].(string)
-	if cfgPath == "" {
-		return fmt.Errorf("vm_cfg path not found in handle attributes")
-	}
+	// Add NIC to the VM config JSON (already verified hs.ConfigPath above).
+	cfgPath := hs.ConfigPath
 
 	nicIdx := nicIdxFromHandle(h)
 	ifaceID := fmt.Sprintf("eth%d", nicIdx)
@@ -101,12 +110,10 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, nic s
 		}
 	}
 
-	// Increment NIC count in handle.
-	if h.Attributes == nil {
-		h.Attributes = map[string]any{}
-	}
-	h.Attributes["nic_count"] = nicIdx + 1
-	h.Attributes["tap_name"] = tapName
+	// Increment NIC count in the typed handle state. NodeHandle is passed by
+	// value, but HandleState is a pointer so the caller sees the mutation.
+	hs.NICCount = nicIdx + 1
+	hs.TapName = tapName
 
 	return nil
 }
@@ -305,17 +312,13 @@ func deleteTapDevice(name string) error {
 	return exec.Command(ipBin, "link", "del", name).Run() //nolint:errcheck
 }
 
-// nicIdxFromHandle determines the next NIC index from handle attributes.
-// After JSON round-trip through state, nic_count becomes float64 not int.
+// nicIdxFromHandle determines the next NIC index from the typed handle state.
 func nicIdxFromHandle(h substrate.NodeHandle) int {
-	switch v := h.Attributes["nic_count"].(type) {
-	case int:
-		return v
-	case float64:
-		return int(v)
-	default:
+	hs, _ := h.Provider.(*HandleState)
+	if hs == nil {
 		return 0
 	}
+	return hs.NICCount
 }
 
 // DeleteTapForNIC removes a TAP device (used during destroy).

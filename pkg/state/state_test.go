@@ -9,7 +9,7 @@ import (
 
 func TestStateRoundTrip(t *testing.T) {
 	original := &State{
-		Version: 1,
+		Version: SchemaVersion,
 		RunID:   "test-run-01",
 		Resources: []Resource{
 			{
@@ -33,6 +33,17 @@ func TestStateRoundTrip(t *testing.T) {
 	require.Equal(t, original.RunID, decoded.RunID)
 	require.Len(t, decoded.Resources, 1)
 	require.Equal(t, "web", decoded.Resources[0].Name)
+}
+
+func TestUnmarshalRejectsV1(t *testing.T) {
+	// A v1 state file (sysbox v0.x). Loading must fail with IncompatibleVersionError.
+	v1 := []byte(`{"version":1,"run_id":"old","resources":[]}`)
+	_, err := Unmarshal(v1)
+	require.Error(t, err)
+	var ve *IncompatibleVersionError
+	require.ErrorAs(t, err, &ve)
+	require.Equal(t, 1, ve.Found)
+	require.Equal(t, SchemaVersion, ve.Expected)
 }
 
 func TestStateFindResource(t *testing.T) {
@@ -68,7 +79,7 @@ func TestManagerSaveLoad(t *testing.T) {
 
 	mgr := NewManager(path)
 
-	s := &State{Version: 1, RunID: "r1", Resources: []Resource{
+	s := &State{Version: SchemaVersion, RunID: "r1", Resources: []Resource{
 		{Type: "sysbox_node", Name: "web", Provider: "docker", Instance: map[string]any{"id": "abc"}},
 	}}
 

@@ -15,7 +15,7 @@ func TestPlanAddsNewResources(t *testing.T) {
 	g.AddNode("sysbox_network", "dmz", nil)
 	g.AddNode("sysbox_node", "web", []graph.Ref{{Type: "sysbox_network", Name: "dmz"}})
 
-	s := &state.State{Version: 1}
+	s := &state.State{Version: state.SchemaVersion}
 
 	plan, err := ComputePlan(g, s)
 	require.NoError(t, err)
@@ -27,7 +27,7 @@ func TestPlanDetectsDestroys(t *testing.T) {
 	g := graph.New()
 
 	s := &state.State{
-		Version: 1,
+		Version: state.SchemaVersion,
 		Resources: []state.Resource{
 			{Type: "sysbox_node", Name: "orphan", Provider: "docker"},
 		},
@@ -44,7 +44,7 @@ func TestPlanPassesThroughUnchanged(t *testing.T) {
 	g.AddNode("sysbox_network", "dmz", nil)
 
 	s := &state.State{
-		Version: 1,
+		Version: state.SchemaVersion,
 		Resources: []state.Resource{
 			{Type: "sysbox_network", Name: "dmz", Provider: "network", Instance: map[string]any{"netns": "sysbox-net-dmz"}},
 		},

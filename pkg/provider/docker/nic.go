@@ -37,8 +37,10 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, nic s
 		return fmt.Errorf("container %s is not running", h.ID)
 	}
 
-	netnsName, _ := h.Attributes["network_netns"].(string)
-	return attachVethToContainer(nic, netnsName, containerPID)
+	// nic.NetNS is the network's netns (where the host-end + guest-end were
+	// created by runtime/wireLink). W1-PR-04 will move device creation into
+	// this method and replace nic.NetNS with a LinkRequest field.
+	return attachVethToContainer(nic, nic.NetNS, containerPID)
 }
 
 func attachVethToContainer(nic substrate.NIC, sourceNetnsName string, containerPID int) error {

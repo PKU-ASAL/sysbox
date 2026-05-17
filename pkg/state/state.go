@@ -2,6 +2,10 @@
 //
 // Each sysbox apply writes resource entries to a JSON state file.
 // The state is the single source of truth for what's currently deployed.
+//
+// SchemaVersion is bumped on every breaking format change. v1.0 introduces
+// schema v2: typed NodeHandle, ProviderExtra json blob, no v1→v2 migration.
+// Loading a v1 file fails with a clear error pointing users to clear runs/.
 package state
 
 import (
@@ -9,6 +13,12 @@ import (
 	"fmt"
 	"sync"
 )
+
+// SchemaVersion is the current persistent format version.
+//
+//	v1 – sysbox v0.x (pre-multi-substrate cleanup)
+//	v2 – sysbox v1.0 (typed NodeHandle, ProviderExtra blob)
+const SchemaVersion = 2
 
 type State struct {
 	mu        sync.RWMutex `json:"-"`
@@ -77,7 +87,27 @@ func Unmarshal(data []byte) (*State, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("unmarshal state: %w", err)
 	}
+	if s.Version != SchemaVersion {
+		return nil, &IncompatibleVersionError{Found: s.Version, Expected: SchemaVersion}
+	}
 	return &s, nil
+}
+
+// IncompatibleVersionError is returned by Unmarshal when the on-disk state
+// version does not match the binary's SchemaVersion. v1.0 deliberately does
+// not auto-migrate v1 state files; users must clear runs/ and re-apply.
+type IncompatibleVersionError struct {
+	Found    int
+	Expected int
+}
+
+func (e *IncompatibleVersionError) Error() string {
+	return fmt.Sprintf(
+		"state schema v%d is incompatible with sysbox binary (expects v%d). "+
+			"sysbox v1.0 deliberately dropped v1 state migration; "+
+			"please clear runs/ (rm -rf runs/) and re-apply.",
+		e.Found, e.Expected,
+	)
 }
 
 func (s *State) FindResource(typ, name string) *Resource {

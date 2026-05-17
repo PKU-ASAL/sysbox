@@ -123,18 +123,6 @@ func vethName(prefix, nodeName string, idx int) string {
 	return fmt.Sprintf("%s-%05x-%d", prefix, hi&0xfffff, idx)
 }
 
-// mergeAttr merges base and overlay attribute maps (overlay wins on conflict).
-func mergeAttr(base, overlay map[string]any) map[string]any {
-	out := make(map[string]any, len(base)+len(overlay))
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range overlay {
-		out[k] = v
-	}
-	return out
-}
-
 // expandTilde replaces a leading ~ with the current user's home directory.
 func expandTilde(path string) string {
 	if len(path) == 0 || path[0] != '~' {

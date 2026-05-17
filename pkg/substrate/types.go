@@ -51,9 +51,47 @@ type NodeSpec struct {
 	ChainInit string
 }
 
+// NodeHandle is the substrate-neutral reference to a created node.
+//
+// Layout:
+//
+//	ID       – substrate-defined identifier (container_id, vm_id, libvirt domain UUID, ...).
+//	           Stable across the node's lifetime; persisted in state.
+//	Net      – substrate-neutral network coordinates (primary IP). Populated post-Start.
+//	Conn     – preferred control-plane channel (docker-exec / ssh / vsock / ...).
+//	Provider – substrate-owned typed value; opaque to runtime. Substrates may put
+//	           any data here (vm_dir, socket path, vsock CID, etc.) and recover it
+//	           on subsequent calls. Persisted in state via Marshal/UnmarshalProviderState.
 type NodeHandle struct {
-	ID         string
-	Attributes map[string]any
+	ID       string
+	Net      NetInfo
+	Conn     ConnInfo
+	Provider any
+}
+
+// NetInfo carries substrate-neutral network info for a node.
+type NetInfo struct {
+	// PrimaryIP is the node's primary IPv4 address (CIDR stripped), used by
+	// Connection factories. Empty if not applicable (yet).
+	PrimaryIP string
+}
+
+// ConnectionKind enumerates control-plane channel types.
+type ConnectionKind string
+
+const (
+	ConnKindNone   ConnectionKind = ""
+	ConnKindDocker ConnectionKind = "docker"
+	ConnKindSSH    ConnectionKind = "ssh"
+	ConnKindVsock  ConnectionKind = "vsock"
+	ConnKindWinRM  ConnectionKind = "winrm"
+)
+
+// ConnInfo carries the preferred control-plane channel coordinates for a node.
+type ConnInfo struct {
+	Kind     ConnectionKind
+	Endpoint string // substrate-defined: container ID, "host:port", "uds-path:port", ...
+	User     string // optional
 }
 
 type ExecSpec struct {
@@ -77,6 +115,12 @@ type NIC struct {
 	IP         string // CIDR notation e.g. "10.0.1.10/24"
 	Gateway    string
 	MTU        int
+
+	// Transitional fields (W1-PR-04 will replace with LinkRequest):
+	// per-AttachNIC-call context that tells the substrate which netns/bridge
+	// to plug into. Previously threaded through NodeHandle.Attributes.
+	NetNS  string
+	Bridge string
 }
 
 // PIDMode declares how guest processes are visible to the host.

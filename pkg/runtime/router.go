@@ -132,11 +132,8 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		nic.TargetName = fmt.Sprintf("eth%d", vethIdx)
 		vethIdx++
 
-		handleWithSrc := substrate.NodeHandle{
-			ID:         handle.ID,
-			Attributes: map[string]any{"network_netns": netNetns},
-		}
-		if err := sub.AttachNIC(ctx, handleWithSrc, nic); err != nil {
+		nic.NetNS = netNetns
+		if err := sub.AttachNIC(ctx, handle, nic); err != nil {
 			_ = sub.DestroyNode(ctx, handle)
 			return err
 		}

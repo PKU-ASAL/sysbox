@@ -27,7 +27,7 @@ func (m *Manager) Load() (*State, error) {
 	data, err := os.ReadFile(m.path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return &State{Version: 1}, nil
+			return &State{Version: SchemaVersion}, nil
 		}
 		return nil, fmt.Errorf("read state: %w", err)
 	}
@@ -66,6 +66,10 @@ func (m *Manager) SaveWithContext(ctx context.Context, s *State) error {
 		return fmt.Errorf("state is locked by another process (timeout after %v)", timeout)
 	}
 	defer lock.Unlock()
+
+	// Stamp the current schema version so callers that forget to set it
+	// (or construct State{} directly) still produce a self-describing file.
+	s.Version = SchemaVersion
 
 	data, err := s.Marshal()
 	if err != nil {

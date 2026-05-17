@@ -1,6 +1,7 @@
 package substrate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -52,3 +53,16 @@ func (BaseSubstrate) Validate(NodeSpec) error { return nil }
 // substrate-specific HCL fields. Override when a `provider "X" {}` block is
 // declared in the schema.
 func (BaseSubstrate) DecodeProviderConfig(hcl.Body) (any, error) { return nil, nil }
+
+// MarshalProviderState returns (nil, nil) by default: the substrate persists
+// nothing beyond the NodeHandle.ID. Override when there is substrate-specific
+// state to preserve across CLI invocations.
+func (BaseSubstrate) MarshalProviderState(NodeHandle) (json.RawMessage, error) {
+	return nil, nil
+}
+
+// UnmarshalProviderState returns (nil, nil) by default. Override in tandem
+// with MarshalProviderState.
+func (BaseSubstrate) UnmarshalProviderState(json.RawMessage) (any, error) {
+	return nil, nil
+}

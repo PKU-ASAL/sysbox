@@ -2,6 +2,7 @@ package substrate
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 
 	"github.com/hashicorp/hcl/v2"
@@ -64,6 +65,19 @@ type Substrate interface {
 	// NodeStatus reports whether the node is healthy (running and reachable).
 	// Used by drift detection; a false result triggers a Change entry in the plan.
 	NodeStatus(ctx context.Context, handle NodeHandle) (bool, error)
+
+	// MarshalProviderState serialises NodeHandle.Provider to JSON for state
+	// persistence. Returning (nil, nil) means "this substrate has no
+	// provider-specific state to persist". Runtime stores the result in
+	// state.Instance under the "provider_extra" key.
+	MarshalProviderState(handle NodeHandle) (json.RawMessage, error)
+
+	// UnmarshalProviderState reconstructs a substrate-owned typed value from
+	// a previously persisted JSON blob, to be assigned to NodeHandle.Provider
+	// when the substrate is invoked from a cold path (destroy, drift refresh).
+	// Returning (nil, nil) is acceptable; substrates may also fall back to
+	// reconstructing state from the bare NodeHandle.ID.
+	UnmarshalProviderState(data json.RawMessage) (any, error)
 }
 
 // DockerCapable is an optional interface that substrates can implement

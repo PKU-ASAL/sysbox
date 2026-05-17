@@ -1,6 +1,8 @@
 package firecracker
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,6 +88,27 @@ func (s *Substrate) Validate(spec substrate.NodeSpec) error {
 	// because the substrate has a default kernel configured at New() time.
 	_ = spec // PR-01 stub: accept anything; tighter checks land in PR-05.
 	return nil
+}
+
+// MarshalProviderState writes the firecracker HandleState as JSON.
+func (s *Substrate) MarshalProviderState(h substrate.NodeHandle) (json.RawMessage, error) {
+	hs, ok := h.Provider.(*HandleState)
+	if !ok || hs == nil {
+		return nil, nil
+	}
+	return json.Marshal(hs)
+}
+
+// UnmarshalProviderState restores HandleState from a previously persisted blob.
+func (s *Substrate) UnmarshalProviderState(data json.RawMessage) (any, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var hs HandleState
+	if err := json.Unmarshal(data, &hs); err != nil {
+		return nil, fmt.Errorf("firecracker: unmarshal handle state: %w", err)
+	}
+	return &hs, nil
 }
 
 var _ substrate.Substrate = (*Substrate)(nil)
