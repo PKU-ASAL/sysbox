@@ -106,10 +106,13 @@ resource "sysbox_router" "core" {
 # ── Docker nodes ─────────────────────────────────────────────────────────────
 
 resource "sysbox_node" "node_attack" {
-  substrate  = substrate.docker.dk
-  image      = sysbox_image.attacker_docker.id
-  privileged = true
-  pid_mode   = "host"
+  substrate = substrate.docker.dk
+  image     = sysbox_image.attacker_docker.id
+
+  provider "docker" {
+    privileged = true
+    pid_mode   = "host"
+  }
 
   link {
     network = sysbox_network.net_dmz.id
@@ -123,8 +126,8 @@ resource "sysbox_node" "node_attack" {
 }
 
 resource "sysbox_node" "node_web" {
-  substrate  = substrate.docker.dk
-  image      = sysbox_image.nginx.id
+  substrate = substrate.docker.dk
+  image     = sysbox_image.nginx.id
 
   link {
     network = sysbox_network.net_internal.id
@@ -142,18 +145,20 @@ resource "sysbox_node" "node_web" {
 resource "sysbox_node" "node_db" {
   substrate = substrate.firecracker.fc
   image     = sysbox_image.alpine_vm.id
-  kernel    = sysbox_kernel.fc_510.id
   vcpus     = 1
   memory    = "256"
+
+  provider "firecracker" {
+    kernel   = sysbox_kernel.fc_510.id
+    ssh_user = "root"
+    ssh_pass = "root"
+  }
 
   link {
     network = sysbox_network.net_internal.id
     ip      = "10.0.2.20/24"
     gw      = "10.0.2.254"
   }
-
-  ssh_user = "root"
-  ssh_pass = "root"
 
   depends_on = [
     "sysbox_router.core",
@@ -186,19 +191,22 @@ resource "sysbox_image" "tracee" {
 }
 
 resource "sysbox_node" "sensor" {
-  image          = sysbox_image.tracee.id
-  substrate      = substrate.docker.dk
-  privileged     = true
-  pid_mode       = "host"
-  cgroupns_mode  = "host"
-  binds = [
-    "/tmp/sysbox-events:/tmp/events:rw",
-    "/etc/os-release:/etc/os-release-host:ro",
-    "/sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro",
-    "/sys/fs/bpf:/sys/fs/bpf",
-    "/sys/fs/cgroup:/sys/fs/cgroup",
-    "/var/run/docker.sock:/var/run/docker.sock",
-  ]
+  image     = sysbox_image.tracee.id
+  substrate = substrate.docker.dk
+
+  provider "docker" {
+    privileged    = true
+    pid_mode      = "host"
+    cgroupns_mode = "host"
+    binds = [
+      "/tmp/sysbox-events:/tmp/events:rw",
+      "/etc/os-release:/etc/os-release-host:ro",
+      "/sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro",
+      "/sys/fs/bpf:/sys/fs/bpf",
+      "/sys/fs/cgroup:/sys/fs/cgroup",
+      "/var/run/docker.sock:/var/run/docker.sock",
+    ]
+  }
 
   provisioner "exec" {
     inline = ["mkdir -p /tmp/events"]

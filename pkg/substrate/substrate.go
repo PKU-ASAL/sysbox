@@ -28,13 +28,18 @@ type Substrate interface {
 
 	// DecodeProviderConfig parses the substrate-specific `provider "X" {}`
 	// HCL block into a substrate-owned typed value (e.g.
-	// *dockerprovider.Config). The returned value is later embedded in
-	// NodeSpec.Provider and is only type-asserted inside the substrate's
-	// own package. Substrates that have no provider block return (nil, nil).
-	//
-	// W1-PR-05 will wire this into the HCL parser; PR-01 only freezes the
-	// signature so providers can start implementing it.
-	DecodeProviderConfig(body hcl.Body) (any, error)
+	// *dockerprovider.Config). The returned value is later attached to
+	// NodeSpec.ProviderConfig and is only type-asserted inside the
+	// substrate's own package. Substrates that have no provider block
+	// return (nil, nil); callers should still pass a usable default into
+	// NodeSpec.ProviderConfig.
+	DecodeProviderConfig(body hcl.Body, ctx *hcl.EvalContext) (any, error)
+
+	// Dependencies inspects a decoded provider config and reports the
+	// resource references the runtime must resolve before CreateNode
+	// (kernels, images, networks). Substrates with no cross-resource refs
+	// return a zero-value ProviderDeps.
+	Dependencies(cfg any) ProviderDeps
 
 	PrepareImage(ctx context.Context, spec ImageSpec) (ImageRef, error)
 

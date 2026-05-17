@@ -5,8 +5,8 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"os"
-	"strings"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -98,18 +98,7 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 // compatibility with HCL files that don't use traversals.
 
 func resolveSubstrateRef(ref string) (string, error) {
-	if ref == "" {
-		return "", fmt.Errorf("empty substrate ref")
-	}
-	parts := strings.Split(ref, ".")
-	switch len(parts) {
-	case 1:
-		return parts[0], nil
-	case 3:
-		return parts[1], nil
-	default:
-		return "", fmt.Errorf("unexpected substrate ref %q", ref)
-	}
+	return config.ResolveSubstrateRef(ref)
 }
 
 

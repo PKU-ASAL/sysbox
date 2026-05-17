@@ -11,6 +11,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // loadWorkspaceWithRoot is like loadWorkspace but also returns the parsed Root
@@ -56,6 +57,39 @@ func loadWorkspace() (*graph.Graph, *state.Manager, *state.State, error) {
 		return nil, nil, nil, fmt.Errorf("load state: %w", err)
 	}
 	return g, mgr, s, nil
+}
+
+// decodeNodeProviderConfig resolves cfg.Substrate, validates the optional
+// `provider "X" {}` label matches, and fills cfg.ProviderConfig with the
+// substrate-owned typed value (via Substrate.DecodeProviderConfig).
+func decodeNodeProviderConfig(cfg *config.NodeConfig, ctx *hcl.EvalContext) error {
+	subName, err := config.ResolveSubstrateRef(cfg.Substrate)
+	if err != nil {
+		return err
+	}
+	sub, err := substrate.Get(subName)
+	if err != nil {
+		return err
+	}
+	var body hcl.Body
+	switch len(cfg.Providers) {
+	case 0:
+		body = nil
+	case 1:
+		pb := cfg.Providers[0]
+		if pb.Type != subName {
+			return fmt.Errorf("provider %q block does not match substrate %q", pb.Type, subName)
+		}
+		body = pb.Remain
+	default:
+		return fmt.Errorf("at most one provider block allowed per node, got %d", len(cfg.Providers))
+	}
+	pc, err := sub.DecodeProviderConfig(body, ctx)
+	if err != nil {
+		return err
+	}
+	cfg.ProviderConfig = pc
+	return nil
 }
 
 func buildGraph(root *config.Root, g *graph.Graph, ctx *hcl.EvalContext) error {
@@ -160,16 +194,32 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 			return err
 		}
+		if err := decodeNodeProviderConfig(cfg, ctx); err != nil {
+			return fmt.Errorf("resource sysbox_node.%s: %w", name, err)
+		}
 		data = cfg
 		if ref := config.ResolveName(cfg.Image); ref != "" {
 			deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
 		}
-		if ref := config.ResolveName(cfg.Kernel); ref != "" && config.LooksLikeKernelRef(cfg.Kernel) {
-			deps = append(deps, graph.Ref{Type: "sysbox_kernel", Name: ref})
-		}
 		for _, link := range cfg.Links {
 			if ref := config.ResolveName(link.Network); ref != "" {
 				deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
+			}
+		}
+		// Substrate-specific dependencies (e.g. firecracker -> sysbox_kernel)
+		// surface through Substrate.Dependencies(cfg.ProviderConfig).
+		if subName, err := config.ResolveSubstrateRef(cfg.Substrate); err == nil {
+			if sub, err := substrate.Get(subName); err == nil {
+				pd := sub.Dependencies(cfg.ProviderConfig)
+				for _, n := range pd.Kernels {
+					deps = append(deps, graph.Ref{Type: "sysbox_kernel", Name: n})
+				}
+				for _, n := range pd.Images {
+					deps = append(deps, graph.Ref{Type: "sysbox_image", Name: n})
+				}
+				for _, n := range pd.Networks {
+					deps = append(deps, graph.Ref{Type: "sysbox_network", Name: n})
+				}
 			}
 		}
 		for _, dep := range cfg.DependsOn {

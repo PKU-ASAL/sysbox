@@ -52,7 +52,14 @@ func (BaseSubstrate) Validate(NodeSpec) error { return nil }
 // DecodeProviderConfig returns (nil, nil) by default: the substrate has no
 // substrate-specific HCL fields. Override when a `provider "X" {}` block is
 // declared in the schema.
-func (BaseSubstrate) DecodeProviderConfig(hcl.Body) (any, error) { return nil, nil }
+func (BaseSubstrate) DecodeProviderConfig(hcl.Body, *hcl.EvalContext) (any, error) {
+	return nil, nil
+}
+
+// Dependencies returns an empty ProviderDeps by default. Override when the
+// substrate's typed Config references kernels/images/networks that runtime
+// must apply first.
+func (BaseSubstrate) Dependencies(any) ProviderDeps { return ProviderDeps{} }
 
 // MarshalProviderState returns (nil, nil) by default: the substrate persists
 // nothing beyond the NodeHandle.ID. Override when there is substrate-specific

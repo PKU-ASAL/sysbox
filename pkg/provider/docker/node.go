@@ -37,17 +37,22 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		envs = append(envs, fmt.Sprintf("%s=%s", k, v))
 	}
 
+	pc, _ := spec.ProviderConfig.(*Config)
+	if pc == nil {
+		pc = &Config{}
+	}
+
 	hostCfg := &container.HostConfig{
 		CapAdd:     []string{"NET_ADMIN"},
 		Sysctls:    spec.Sysctls,
-		Privileged: spec.Privileged,
-		Binds:      spec.Binds,
+		Privileged: pc.Privileged,
+		Binds:      pc.Binds,
 	}
-	if spec.PidMode != "" {
-		hostCfg.PidMode = container.PidMode(spec.PidMode)
+	if pc.PidMode != "" {
+		hostCfg.PidMode = container.PidMode(pc.PidMode)
 	}
-	if spec.CgroupnsMode != "" {
-		hostCfg.CgroupnsMode = container.CgroupnsMode(spec.CgroupnsMode)
+	if pc.CgroupnsMode != "" {
+		hostCfg.CgroupnsMode = container.CgroupnsMode(pc.CgroupnsMode)
 	}
 
 	// Network mode strategy:

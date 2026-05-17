@@ -27,28 +27,33 @@ type DockerNetworkAttachment struct {
 	IPv4      string // CIDR notation, e.g. "172.20.0.10/24"
 }
 
+// NodeSpec carries substrate-neutral coordinates for creating a node.
+// Substrate-specific options (privileged, kernel, vcpus, ...) live in
+// ProviderConfig, a substrate-owned typed value produced by
+// Substrate.DecodeProviderConfig.
 type NodeSpec struct {
 	Name              string
 	Image             ImageRef
 	VCPUs             int
 	Memory            string
-	Kernel            string // path to vmlinux (firecracker only)
-	Rootfs            string // path to ext4 rootfs override (firecracker only)
-	SSHUser           string
-	SSHPass           string
-	SSHPort           int
 	Env               map[string]string
-	Sysctls           map[string]string         // passed to container runtime at create time
-	Privileged        bool                      // required for eBPF/tracee
-	PidMode           string                    // "host" shares the host PID namespace
-	CgroupnsMode      string                    // "host" shares the host cgroup namespace
-	Binds             []string                  // host:container[:options] volume bind mounts
-	InitialDockerNets []DockerNetworkAttachment // Docker bridge networks attached at create time
+	Sysctls           map[string]string
+	InitialDockerNets []DockerNetworkAttachment // shared shortcut (W2-PR-09 may replace with LinkPlan)
 
-	// ChainInit (firecracker only) is the binary sysbox-init exec()s after
-	// applying configuration. Defaults to /sbin/init, falls back to /bin/sh
-	// inside the guest if missing. Empty string keeps the default behaviour.
-	ChainInit string
+	// ProviderConfig is a substrate-owned typed value (e.g. *docker.Config,
+	// *firecracker.Config) produced by Substrate.DecodeProviderConfig. It is
+	// opaque to runtime; substrates type-assert in their own CreateNode.
+	ProviderConfig any
+}
+
+// ProviderDeps lists resource references a substrate's typed Config holds.
+// Runtime translates these into graph edges so the resources get applied
+// before the node is created. Substrates that have no provider block (or no
+// cross-resource refs) return an empty value.
+type ProviderDeps struct {
+	Kernels  []string // sysbox_kernel resource names
+	Images   []string // sysbox_image resource names
+	Networks []string // sysbox_network resource names
 }
 
 // NodeHandle is the substrate-neutral reference to a created node.

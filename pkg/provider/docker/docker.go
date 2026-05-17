@@ -45,16 +45,16 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 	}
 }
 
-// Validate rejects NodeSpecs that depend on hypervisor-only features.
+// Validate rejects NodeSpecs whose provider config carries hypervisor-only
+// fields. With v1.0 the substrate-specific fields live in a `provider "docker"
+// {}` block, so docker simply rejects any non-docker provider config.
 func (s *Substrate) Validate(spec substrate.NodeSpec) error {
-	if spec.Kernel != "" {
-		return substrate.NewValidationError("docker substrate does not accept the kernel field (containers share the host kernel)")
-	}
-	if spec.Rootfs != "" {
-		return substrate.NewValidationError("docker substrate does not accept the rootfs field; use image instead")
-	}
-	if spec.ChainInit != "" {
-		return substrate.NewValidationError("docker substrate does not accept the chain_init field (no sysbox-init in containers)")
+	if spec.ProviderConfig != nil {
+		if _, ok := spec.ProviderConfig.(*Config); !ok {
+			return substrate.NewValidationError(
+				"docker substrate received provider config of type %T; expected *docker.Config",
+				spec.ProviderConfig)
+		}
 	}
 	return nil
 }

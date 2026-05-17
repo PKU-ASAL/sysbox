@@ -28,7 +28,7 @@ func TestBaseSubstrate_Defaults(t *testing.T) {
 		t.Fatalf("BaseSubstrate.Validate should accept any spec by default, got %v", err)
 	}
 
-	v, err := s.DecodeProviderConfig(nil)
+	v, err := s.DecodeProviderConfig(nil, nil)
 	if err != nil {
 		t.Fatalf("BaseSubstrate.DecodeProviderConfig should return nil error, got %v", err)
 	}

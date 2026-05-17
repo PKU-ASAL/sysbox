@@ -42,21 +42,12 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		Repository: util.AsString(imgState.Instance["repository"]),
 	}
 
-	// Resolve the kernel field. Three legal forms:
-	//   - empty                          : use the substrate's default kernel
-	//   - "sysbox_kernel.NAME.id" / "NAME": look up the kernel in state
-	//   - "/abs/path" or "rel/path"      : literal filesystem path
-	kernelPath := cfg.Kernel
-	if kernelPath != "" && config.LooksLikeKernelRef(kernelPath) {
-		kname := config.ResolveName(kernelPath)
-		kState := e.state.FindResource("sysbox_kernel", kname)
-		if kState == nil {
-			return fmt.Errorf("kernel %s not applied yet", kname)
-		}
-		kernelPath = util.AsString(kState.Instance["path"])
-		if kernelPath == "" {
-			return fmt.Errorf("kernel %s has no resolved path in state", kname)
-		}
+	// Resolve sysbox_kernel references inside the substrate's typed
+	// provider config (only firecracker uses this today). We rewrite the
+	// reference to an absolute path so substrate.CreateNode receives a
+	// ready-to-use value.
+	if err := resolveProviderKernel(e.state, cfg.ProviderConfig); err != nil {
+		return err
 	}
 
 	// Pre-scan links: collect Docker NAT networks so the first one can be
@@ -97,18 +88,9 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		Image:             imgRef,
 		VCPUs:             cfg.Vcpus,
 		Memory:            cfg.Memory,
-		Kernel:            kernelPath,
-		Rootfs:            cfg.Rootfs,
-		SSHUser:           cfg.SSHUser,
-		SSHPass:           cfg.SSHPass,
-		SSHPort:           cfg.SSHPort,
 		Env:               cfg.Env,
-		Privileged:        cfg.Privileged,
-		PidMode:           cfg.PidMode,
-		CgroupnsMode:      cfg.CgroupnsMode,
-		Binds:             cfg.Binds,
 		InitialDockerNets: initialNets,
-		ChainInit:         cfg.ChainInit,
+		ProviderConfig:    cfg.ProviderConfig,
 	})
 	if err != nil {
 		return err
@@ -236,10 +218,14 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	// SSH fallback for firecracker VMs whose rootfs lacks sysbox-init: write
 	// the first link IP and configured SSH port into the typed HandleState.
 	// W1-PR-06 will replace this branch with a substrate.Connection() factory.
-	if subName == "firecracker" {
+	if fcCfg, ok := cfg.ProviderConfig.(*firecrackerprovider.Config); ok && fcCfg != nil {
 		if hs, ok := handle.Provider.(*firecrackerprovider.HandleState); ok && hs != nil {
 			hs.SSHIP = handle.Net.PrimaryIP
-			hs.SSHPort = fmt.Sprintf("%d", cfg.SSHPort)
+			port := fcCfg.SSHPort
+			if port == 0 {
+				port = 22
+			}
+			hs.SSHPort = fmt.Sprintf("%d", port)
 		}
 	}
 
@@ -533,5 +519,33 @@ func (e *Executor) runProvisioners(ctx context.Context, conn providerexec.Connec
 			return fmt.Errorf("unknown provisioner type %q", p.Type)
 		}
 	}
+	return nil
+}
+
+// resolveProviderKernel rewrites firecracker provider Config.Kernel from a
+// sysbox_kernel resource reference to an absolute filesystem path by looking
+// up the resolved path in state. Literal paths are left untouched. Substrates
+// other than firecracker have no kernel field and are skipped.
+//
+// W1-PR-05 generalises this into a substrate.Substrate.ResolveRefs hook so
+// runtime stops dispatching on concrete config types here.
+func resolveProviderKernel(st *state.State, pc any) error {
+	fcCfg, ok := pc.(*firecrackerprovider.Config)
+	if !ok || fcCfg == nil {
+		return nil
+	}
+	if fcCfg.Kernel == "" || !config.LooksLikeKernelRef(fcCfg.Kernel) {
+		return nil
+	}
+	kname := config.ResolveName(fcCfg.Kernel)
+	kState := st.FindResource("sysbox_kernel", kname)
+	if kState == nil {
+		return fmt.Errorf("kernel %s not applied yet", kname)
+	}
+	resolved := util.AsString(kState.Instance["path"])
+	if resolved == "" {
+		return fmt.Errorf("kernel %s has no resolved path in state", kname)
+	}
+	fcCfg.Kernel = resolved
 	return nil
 }

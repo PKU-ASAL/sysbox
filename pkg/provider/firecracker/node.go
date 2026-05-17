@@ -102,13 +102,18 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	// A stale FC process holds the TAP fd open, preventing TAP reuse.
 	killStaleFirecracker(filepath.Join(runDir, "firecracker.sock"))
 
+	pc, _ := spec.ProviderConfig.(*Config)
+	if pc == nil {
+		pc = &Config{}
+	}
+
 	// Copy the base rootfs so each VM has its own writable copy.
 	imagePath := spec.Image.Repository
 	vmRootfs := filepath.Join(runDir, "rootfs.ext4")
 
-	// Rootfs override: if spec.Rootfs is set, use it directly.
-	if spec.Rootfs != "" {
-		imagePath = spec.Rootfs
+	// Rootfs override: if provider config specifies rootfs, use it directly.
+	if pc.Rootfs != "" {
+		imagePath = pc.Rootfs
 	}
 
 	if err := copyFile(imagePath, vmRootfs); err != nil {
@@ -130,7 +135,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		initCfg := VMInitConfig{
 			Hostname:  nodeName,
 			Env:       spec.Env,
-			ChainInit: spec.ChainInit,
+			ChainInit: pc.ChainInit,
 		}
 		if err := buildConfigDrive(configDrivePath, initCfg); err != nil {
 			fmt.Printf("[firecracker] config drive build failed for %s: %v\n", vmID, err)
@@ -138,10 +143,10 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		}
 	}
 
-	// Determine kernel path: per-node override > substrate default.
+	// Determine kernel path: provider config override > substrate default.
 	kernelPath := s.kernelPath
-	if spec.Kernel != "" {
-		kernelPath = spec.Kernel
+	if pc.Kernel != "" {
+		kernelPath = pc.Kernel
 	}
 
 	// Generate initial VM config (no NICs yet — added by AttachNIC).

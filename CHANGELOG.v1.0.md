@@ -58,14 +58,13 @@ resource "sysbox_node" "web" {
   substrate = substrate.docker.light
   image     = sysbox_image.web.id
 
-  resources {
-    vcpus  = 2
-    memory = "512Mi"
-  }
+  # 通用资源（每个 substrate 都尊重；docker 转成 --cpus/--memory，FC 转成 vCPU/MB）
+  vcpus  = 2
+  memory = "512"
 
   env = { FOO = "bar" }
 
-  # 一个 node 选一种 substrate provider 块：
+  # 一个 node 选一种 substrate provider 块（label 必须等于 substrate 类型）：
   provider "docker" {
     privileged    = true
     pid_mode      = "host"
@@ -74,9 +73,12 @@ resource "sysbox_node" "web" {
   }
   # 或：
   provider "firecracker" {
-    kernel     = sysbox_kernel.fc.id
+    kernel     = sysbox_kernel.fc.id   # sysbox_kernel.X.id 引用，会自动建图依赖
     rootfs     = "/path/rootfs.ext4"   # 可选，覆盖 image
     chain_init = "/sbin/init"
+    ssh_user   = "root"                # SSH 回退（rootfs 无 sysbox-init 时）
+    ssh_pass   = "root"
+    ssh_port   = 22
   }
 
   connection {
@@ -86,6 +88,8 @@ resource "sysbox_node" "web" {
   }
 }
 ```
+
+> **PR-03 实现说明**：`provider "X" {}` 块由对应 substrate 的 `DecodeProviderConfig(body, ctx)` 自行解码，runtime 不再硬编码字段名。新增 substrate（libvirt、kubevirt）只需在自己包里写 `Config` struct + `DecodeProviderConfig` + `Dependencies` 三个方法，不用碰 `pkg/config/schema.go`。
 
 ### 1.2 `sysbox_monitor` —— 从 syscall 解析器变 EDR 编排器
 

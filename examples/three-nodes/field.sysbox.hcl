@@ -175,19 +175,22 @@ resource "sysbox_image" "tracee" {
 }
 
 resource "sysbox_node" "sensor" {
-  image          = sysbox_image.tracee.id
-  substrate      = substrate.docker.light
-  privileged     = true
-  pid_mode       = "host"
-  cgroupns_mode  = "host"
-  binds = [
-    "/tmp/sysbox-events:/tmp/events:rw",
-    "/etc/os-release:/etc/os-release-host:ro",
-    "/sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro",
-    "/sys/fs/bpf:/sys/fs/bpf",
-    "/sys/fs/cgroup:/sys/fs/cgroup",
-    "/var/run/docker.sock:/var/run/docker.sock",
-  ]
+  image     = sysbox_image.tracee.id
+  substrate = substrate.docker.light
+
+  provider "docker" {
+    privileged    = true
+    pid_mode      = "host"
+    cgroupns_mode = "host"
+    binds = [
+      "/tmp/sysbox-events:/tmp/events:rw",
+      "/etc/os-release:/etc/os-release-host:ro",
+      "/sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro",
+      "/sys/fs/bpf:/sys/fs/bpf",
+      "/sys/fs/cgroup:/sys/fs/cgroup",
+      "/var/run/docker.sock:/var/run/docker.sock",
+    ]
+  }
 
   provisioner "exec" {
     inline = ["mkdir -p /tmp/events"]
