@@ -95,20 +95,18 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
-	// Docker containers must be started BEFORE AttachNIC so the container
-	// has a PID and a network namespace to inject veths into. Firecracker
-	// VMs must NOT be started yet — they need all TAPs declared in the
-	// boot config before launch.
-	// TODO(W1-PR-05): replace substrate-name check with Capabilities.NICHotPlug.
-	if subName != "firecracker" {
+	// Start-node ordering is driven by the substrate's capabilities:
+	//   NICHotPlug=true  (docker):  start first, then AttachNIC injects
+	//                   veths into the running container's netns.
+	//   NICHotPlug=false (FC/VM):  attach NICs first (they must be in the
+	//                   boot config), then start the VM.
+	caps := sub.Capabilities()
+	if caps.NICHotPlug {
 		if err := sub.StartNode(ctx, handle); err != nil {
 			_ = sub.DestroyNode(ctx, handle)
 			return fmt.Errorf("start node %s: %w", n.ID.Name, err)
 		}
 	}
-
-	// NOTE: Do NOT call StartNode yet — Firecracker needs all NICs declared
-	// in the boot config before launch. We call StartNode AFTER the NIC loop.
 
 	// Track which NAT networks were already connected at create time.
 	connectedAtCreate := map[string]bool{}
@@ -192,12 +190,14 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		Instance: nodeInstance,
 	})
 
-	// Start the node now that all NICs are attached.
-	// Docker nodes were already started above (before AttachNIC).
-	// For Firecracker this launches the VM with the complete config.
-	if err := sub.StartNode(ctx, handle); err != nil {
-		_ = sub.DestroyNode(ctx, handle)
-		return fmt.Errorf("start node %s: %w", n.ID.Name, err)
+	// Cold-plug substrates (NICHotPlug=false) start the node AFTER all NICs
+	// are attached (NICs must be in the boot config). Hot-plug substrates
+	// were already started before the NIC loop.
+	if !caps.NICHotPlug {
+		if err := sub.StartNode(ctx, handle); err != nil {
+			_ = sub.DestroyNode(ctx, handle)
+			return fmt.Errorf("start node %s: %w", n.ID.Name, err)
+		}
 	}
 
 	// Populate the substrate-neutral PrimaryIP from the first link so the
@@ -210,33 +210,27 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		handle.Net.PrimaryIP = firstIP
 	}
 
-	// SSH fallback for firecracker VMs whose rootfs lacks sysbox-init: write
-	// the first link IP and configured SSH port into the typed HandleState.
-	// W1-PR-06 will replace this branch with a substrate.Connection() factory.
-	if fcCfg, ok := cfg.ProviderConfig.(*firecrackerprovider.Config); ok && fcCfg != nil {
-		if hs, ok := handle.Provider.(*firecrackerprovider.HandleState); ok && hs != nil {
-			hs.SSHIP = handle.Net.PrimaryIP
-			port := fcCfg.SSHPort
-			if port == 0 {
-				port = 22
-			}
-			hs.SSHPort = fmt.Sprintf("%d", port)
-		}
+	// Let the substrate populate its ConnInfo from the provider config and
+	// the just-assigned PrimaryIP. Each substrate decides what makes sense:
+	// docker → ConnKindDocker, FC with sysbox-init → ConnKindVsock,
+	// FC without sysbox-init → ConnKindSSH. W1-PR-06 will move this into
+	// a Substrate.Connection() factory; for now we dispatch here.
+	if err := populateConnInfo(sub, &handle, cfg.ProviderConfig); err != nil {
+		fmt.Printf("[apply] warning: populate conn for %s: %v\n", n.ID.Name, err)
 	}
 
-	// Re-marshal provider state if mutated above (firecracker SSH fallback).
-	if subName == "firecracker" {
-		if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-			// Update the just-persisted node resource with the refreshed blob.
-			if rec := e.state.FindResource("sysbox_node", n.ID.Name); rec != nil {
-				rec.Instance["provider_extra"] = string(blob)
-			}
+	// Re-marshal provider state (the substrate may have mutated HandleState
+	// during AttachNIC or populateConnInfo). Always try; substrates with no
+	// provider state return (nil, nil) which is harmless.
+	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+		if rec := e.state.FindResource("sysbox_node", n.ID.Name); rec != nil {
+			rec.Instance["provider_extra"] = string(blob)
 		}
 	}
 
 	// Run provisioners after node is up and wired.
 	if len(cfg.Provisioners) > 0 {
-		conn := e.connectionForNode(sub, subName, handle, cfg.Connections)
+		conn := e.connectionForNode(sub, handle, cfg.Connections)
 		// Block until the chosen connection is reachable.
 		switch c := conn.(type) {
 		case *providerexec.SSHConnection:
@@ -308,9 +302,13 @@ func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
 
 // connectionForNode picks the right Connection implementation based on the
 // substrate type and the optional connection block in the node config.
+// connectionForNode picks the right Connection implementation. When the
+// HCL connection block specifies an explicit type ("docker"/"ssh"/"vsock")
+// that takes precedence. Otherwise ("auto") the decision is driven by
+// NodeHandle.Conn.Kind which the substrate set at CreateNode / populateConnInfo
+// time — no more substrate-name branching.
 func (e *Executor) connectionForNode(
 	sub substrate.Substrate,
-	subName string,
 	handle substrate.NodeHandle,
 	conns []config.ConnectionConfig,
 ) providerexec.Connection {
@@ -320,27 +318,13 @@ func (e *Executor) connectionForNode(
 		connType = conns[0].Type
 	}
 
+	// Explicit type requested by HCL — honour it directly.
 	switch connType {
-	case "auto":
-		// Auto-select based on substrate.
-		if dockerSub, ok := sub.(*dockerprovider.Substrate); ok {
-			return providerexec.NewDockerConnection(dockerSub, handle)
-		}
-		// TODO(W1-PR-06): replace with Substrate.Connection(handle, hint)
-		// factory; runtime stops switching on substrate names.
-		if subName == "firecracker" {
-			// Prefer vsock (no SSH dependency on the rootfs). Fall back to
-			// SSH only if the handle has no vsock UDS attached (e.g. when
-			// sysbox-init was disabled because the embed binary is missing).
-			if c := vsockConnectionFromHandle(handle); c != nil {
-				return c
-			}
-			return e.sshConnectionFromHandle(handle, conns)
-		}
 	case "docker":
 		if dockerSub, ok := sub.(*dockerprovider.Substrate); ok {
 			return providerexec.NewDockerConnection(dockerSub, handle)
 		}
+		return nil
 	case "ssh":
 		return e.sshConnectionFromHandle(handle, conns)
 	case "vsock":
@@ -350,7 +334,21 @@ func (e *Executor) connectionForNode(
 		return nil
 	}
 
-	// Fallback to docker if substrate supports it.
+	// "auto" — drive from NodeHandle.Conn.Kind.
+	switch handle.Conn.Kind {
+	case substrate.ConnKindDocker:
+		if dockerSub, ok := sub.(*dockerprovider.Substrate); ok {
+			return providerexec.NewDockerConnection(dockerSub, handle)
+		}
+	case substrate.ConnKindVsock:
+		if c := vsockConnectionFromHandle(handle); c != nil {
+			return c
+		}
+	case substrate.ConnKindSSH:
+		return e.sshConnectionFromHandle(handle, conns)
+	}
+
+	// Fallback: try docker, then SSH.
 	if dockerSub, ok := sub.(*dockerprovider.Substrate); ok {
 		return providerexec.NewDockerConnection(dockerSub, handle)
 	}
@@ -471,5 +469,40 @@ func resolveProviderKernel(st *state.State, pc any) error {
 		return fmt.Errorf("kernel %s has no resolved path in state", kname)
 	}
 	fcCfg.Kernel = resolved
+	return nil
+}
+
+// populateConnInfo lets each substrate fill NodeHandle.Conn from the provider
+// config and the just-assigned PrimaryIP. W1-PR-06 will replace this with a
+// Substrate.Connection() factory; until then we dispatch on concrete config
+// types to avoid exporting a new interface method.
+func populateConnInfo(sub substrate.Substrate, handle *substrate.NodeHandle, pc any) error {
+	// Docker: Conn already set at CreateNode time (ConnKindDocker).
+	if _, ok := sub.(*dockerprovider.Substrate); ok {
+		return nil
+	}
+	// Firecracker: vsock wins when sysbox-init is present (HandleState.VsockUDS
+	// is non-empty), otherwise fall back to SSH from the provider config.
+	fcCfg, ok := pc.(*firecrackerprovider.Config)
+	if !ok || fcCfg == nil {
+		return nil
+	}
+	hs, ok := handle.Provider.(*firecrackerprovider.HandleState)
+	if !ok || hs == nil {
+		return nil
+	}
+	// If vsock is available the handle already has ConnKindVsock from CreateNode.
+	if hs.VsockUDS != "" {
+		return nil
+	}
+	// No vsock — write SSH coordinates into HandleState and set ConnKindSSH.
+	hs.SSHIP = handle.Net.PrimaryIP
+	port := fcCfg.SSHPort
+	if port == 0 {
+		port = 22
+	}
+	hs.SSHPort = fmt.Sprintf("%d", port)
+	handle.Conn.Kind = substrate.ConnKindSSH
+	handle.Conn.Endpoint = fmt.Sprintf("%s:%s", hs.SSHIP, hs.SSHPort)
 	return nil
 }
