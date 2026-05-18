@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -25,8 +26,8 @@ func LoadWorkspace(hclFile, stateFile string) (
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("parse config: %w", err)
 	}
-	ctx := config.BuildEvalContext(root)
-	g, err := BuildGraph(root, ctx)
+	ctx := config.BuildEvalContext(root, filepath.Dir(hclFile))
+	g, err := BuildGraph(root, ctx, hclFile)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("build graph: %w", err)
 	}
@@ -39,10 +40,21 @@ func LoadWorkspace(hclFile, stateFile string) (
 }
 
 // BuildGraph builds a dependency graph from a parsed config root.
-func BuildGraph(root *config.Root, ctx *hcl.EvalContext) (*graph.Graph, error) {
+// hclFile is the source file path; it is used to resolve module source paths.
+// Pass "" when the caller path is not known (module blocks are skipped).
+func BuildGraph(root *config.Root, ctx *hcl.EvalContext, hclFile ...string) (*graph.Graph, error) {
+	callerFile := ""
+	if len(hclFile) > 0 {
+		callerFile = hclFile[0]
+	}
 	g := graph.New()
 	for i := range root.Resources {
 		if err := expandResource(root.Resources[i], g, ctx); err != nil {
+			return nil, err
+		}
+	}
+	for i := range root.Modules {
+		if err := expandModule(root.Modules[i], g, ctx, callerFile); err != nil {
 			return nil, err
 		}
 	}
@@ -152,6 +164,50 @@ func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext
 		}
 		if err := addResourceToGraph(rCopy, rCopy.Name, config.EachEvalContext(ctx, key, elemVal), g); err != nil {
 			return fmt.Errorf("for_each[%s]: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// expandModule loads a module file, builds a variable eval context, and
+// expands all its resources into the main graph with the prefix
+// "module_<name>_". Module nesting is not supported (module-in-module errors).
+func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalContext, callerFile string) error {
+	if callerFile == "" {
+		return fmt.Errorf("module %q: cannot resolve source without a caller file path", mod.Name)
+	}
+	src, err := config.ResolveModuleSource(mod.Source, filepath.Dir(callerFile))
+	if err != nil {
+		return fmt.Errorf("module %q: %w", mod.Name, err)
+	}
+
+	modRoot, err := config.ParseFile(src)
+	if err != nil {
+		return fmt.Errorf("module %q: parse %s: %w", mod.Name, src, err)
+	}
+	if len(modRoot.Modules) > 0 {
+		return fmt.Errorf("module %q: nested modules are not supported", mod.Name)
+	}
+
+	modCtx := config.ModuleEvalContext(mod, modRoot, mod.Name, parentCtx)
+	prefix := "module_" + mod.Name + "_"
+
+	for i := range modRoot.Resources {
+		r := modRoot.Resources[i]
+		// Expand for_each/count inside the module, then prefix all resulting names.
+		sub := graph.New()
+		if err := expandResource(r, sub, modCtx); err != nil {
+			return fmt.Errorf("module %q resource %s.%s: %w", mod.Name, r.Type, r.Name, err)
+		}
+		for _, node := range sub.All() {
+			// Re-prefix the name and rewrite deps that point to other module resources.
+			nsName := prefix + node.ID.Name
+			var nsDeps []graph.Ref
+			for _, dep := range node.Deps {
+				nsDeps = append(nsDeps, graph.Ref{Type: dep.Type, Name: prefix + dep.Name})
+			}
+			g.AddNode(node.ID.Type, nsName, nsDeps)
+			g.SetData(node.ID.Type, nsName, node.Data)
 		}
 	}
 	return nil

@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/spf13/cobra"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -98,7 +99,13 @@ func printOutputs(root *config.Root, ctx *hcl.EvalContext) {
 	}
 	fmt.Println("\nOutputs:")
 	for _, out := range root.Outputs {
-		fmt.Printf("  %-20s = %s", out.Name, out.Value)
+		valStr := "(unevaluated)"
+		if out.Value != nil {
+			if v, diag := out.Value.Value(ctx); !diag.HasErrors() && v.Type() == cty.String {
+				valStr = v.AsString()
+			}
+		}
+		fmt.Printf("  %-20s = %s", out.Name, valStr)
 		if out.Description != "" {
 			fmt.Printf("  # %s", out.Description)
 		}

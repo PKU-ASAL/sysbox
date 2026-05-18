@@ -9,9 +9,38 @@ import "github.com/hashicorp/hcl/v2"
 // Root is the top-level parsed HCL document.
 type Root struct {
 	Substrates []SubstrateBlock `hcl:"substrate,block"`
+	Variables  []VariableBlock  `hcl:"variable,block"`
+	Modules    []ModuleBlock    `hcl:"module,block"`
 	Resources  []ResourceBlock  `hcl:"resource,block"`
 	Locals     []LocalsBlock    `hcl:"locals,block"`
 	Outputs    []OutputBlock    `hcl:"output,block"`
+}
+
+// VariableBlock declares an input variable for a module file.
+//
+//	variable "cidr_dmz" {
+//	  default = "10.0.1.0/24"
+//	}
+type VariableBlock struct {
+	Name   string   `hcl:"name,label"`
+	Remain hcl.Body `hcl:",remain"` // may contain default = <expr>
+}
+
+// ModuleBlock instantiates a reusable HCL topology fragment.
+//
+//	module "lab_net" {
+//	  source        = "./modules/three-tier-net.sysbox.hcl"
+//	  cidr_dmz      = "10.0.1.0/24"
+//	  cidr_internal = "10.0.2.0/24"
+//	}
+//
+// All attributes except source are passed as var.<name> to the module file.
+// The module's resource names are prefixed "module_<name>_" in the graph.
+// Module outputs are accessible as module.<name>.<output_key> in the caller.
+type ModuleBlock struct {
+	Name   string   `hcl:"name,label"`
+	Source string   `hcl:"source"`
+	Remain hcl.Body `hcl:",remain"` // variable assignments
 }
 
 // SubstrateBlock corresponds to:
@@ -64,10 +93,10 @@ type LocalsBlock struct {
 //	  description = "IP of the attacker node"
 //	}
 type OutputBlock struct {
-	Name        string   `hcl:"name,label"`
-	Value       string   `hcl:"value"`
-	Description string   `hcl:"description,optional"`
-	Remain      hcl.Body `hcl:",remain"`
+	Name        string         `hcl:"name,label"`
+	Value       hcl.Expression `hcl:"value"`
+	Description string         `hcl:"description,optional"`
+	Remain      hcl.Body       `hcl:",remain"`
 }
 
 // ConnectionConfig describes how provisioners reach a node.

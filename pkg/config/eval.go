@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -10,18 +12,19 @@ import (
 	"github.com/zclconf/go-cty/cty/function"
 )
 
-// BuildEvalContext returns an *hcl.EvalContext that resolves bare-identifier
-// references in resource bodies into the original block names.
-//
-// Namespaces exposed:
-//
-//   - substrate.<type>.<alias>      -> cty.StringVal("<type>")
-//   - <resource_type>.<name>        -> cty.ObjectVal({"id": "<name>", "name": "<name>"})
-//   - local.<key>                   -> cty.StringVal("<value>")  (from locals blocks)
-//
-// At parse time we don't know runtime IDs yet (e.g. docker container IDs);
-// the executor uses the resource name as a stable lookup key into state.
-func BuildEvalContext(root *Root) *hcl.EvalContext {
+// BuildEvalContext returns an *hcl.EvalContext for the given root. callerDir
+// is the directory of the HCL file (needed to resolve module source paths).
+// Pass "" when the caller directory is not known (module outputs won't be pre-loaded).
+func BuildEvalContext(root *Root, callerDir ...string) *hcl.EvalContext {
+	dir := ""
+	if len(callerDir) > 0 {
+		dir = callerDir[0]
+	}
+	return buildEvalContextInner(root, dir)
+}
+
+// buildEvalContextInner is the actual implementation.
+func buildEvalContextInner(root *Root, callerDir string) *hcl.EvalContext {
 	subTypes := map[string]map[string]cty.Value{}
 	for _, sb := range root.Substrates {
 		if subTypes[sb.Type] == nil {
@@ -112,13 +115,30 @@ func BuildEvalContext(root *Root) *hcl.EvalContext {
 		vars["local"] = cty.ObjectVal(localVals)
 	}
 
-	return &hcl.EvalContext{
+	ctx := &hcl.EvalContext{
 		Variables: vars,
 		Functions: map[string]function.Function{
 			"env":   envFunc,
 			"toset": tosetFunc,
 		},
 	}
+
+	// Pre-load module outputs so that module.<name>.<key> can be referenced
+	// in the caller. Each module resource is exposed with namespaced IDs so
+	// that output expressions evaluate to the correct state lookup key.
+	if callerDir != "" && len(root.Modules) > 0 {
+		moduleVals := map[string]cty.Value{}
+		for _, mod := range root.Modules {
+			outVals := resolveModuleOutputs(mod, callerDir, ctx)
+			if len(outVals) > 0 {
+				moduleVals[mod.Name] = cty.ObjectVal(outVals)
+			}
+		}
+		if len(moduleVals) > 0 {
+			ctx.Variables["module"] = cty.ObjectVal(moduleVals)
+		}
+	}
+	return ctx
 }
 
 // envFunc implements env("VAR_NAME") → string value from the host environment.
@@ -170,6 +190,139 @@ var tosetFunc = function.New(&function.Spec{
 		return cty.SetVal(elems), nil
 	},
 })
+
+// resolveModuleOutputs loads a module file, builds a namespaced eval context
+// for it, evaluates its output blocks, and returns the output values keyed by
+// output name. Errors are silently ignored (best-effort; parse-time only).
+func resolveModuleOutputs(mod ModuleBlock, callerDir string, parentCtx *hcl.EvalContext) map[string]cty.Value {
+	src, err := resolveModuleSource(mod.Source, callerDir)
+	if err != nil {
+		return nil
+	}
+	modRoot, err := ParseFile(src)
+	if err != nil {
+		return nil
+	}
+	// Build the module's eval context with namespaced resource IDs and
+	// variables from the module block's attributes.
+	modCtx := buildModuleEvalContext(mod, modRoot, mod.Name, parentCtx)
+
+	outVals := map[string]cty.Value{}
+	for _, out := range modRoot.Outputs {
+		if out.Value == nil {
+			continue
+		}
+		val, diag := out.Value.Value(modCtx)
+		if diag.HasErrors() {
+			continue
+		}
+		outVals[out.Name] = val
+	}
+	return outVals
+}
+
+// buildModuleEvalContext builds an eval context for a module's resources with
+// namespaced IDs (module_<modName>_<resourceName>) and var.xxx bindings.
+func buildModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, parentCtx *hcl.EvalContext) *hcl.EvalContext {
+	// Compute variable defaults from variable blocks.
+	varDefaults := map[string]cty.Value{}
+	for _, vb := range modRoot.Variables {
+		if vb.Remain == nil {
+			continue
+		}
+		attrs, diag := vb.Remain.JustAttributes()
+		if diag.HasErrors() {
+			continue
+		}
+		if defAttr, ok := attrs["default"]; ok {
+			if val, diag := defAttr.Expr.Value(nil); !diag.HasErrors() {
+				varDefaults[vb.Name] = val
+			}
+		}
+	}
+
+	// Evaluate variable assignments from the module block's Remain body.
+	varVals := make(map[string]cty.Value, len(varDefaults))
+	for k, v := range varDefaults {
+		varVals[k] = v
+	}
+	if mod.Remain != nil {
+		if attrs, diag := mod.Remain.JustAttributes(); !diag.HasErrors() {
+			for k, attr := range attrs {
+				if val, diag := attr.Expr.Value(parentCtx); !diag.HasErrors() {
+					varVals[k] = val
+				}
+			}
+		}
+	}
+
+	// Build namespaced resource type variables: id = "module_<modName>_<name>".
+	prefix := "module_" + modName + "_"
+	resTypes := map[string]map[string]cty.Value{}
+	for _, r := range modRoot.Resources {
+		if resTypes[r.Type] == nil {
+			resTypes[r.Type] = map[string]cty.Value{}
+		}
+		nsName := prefix + r.Name
+		resTypes[r.Type][r.Name] = cty.ObjectVal(map[string]cty.Value{
+			"id":   cty.StringVal(nsName),
+			"name": cty.StringVal(nsName),
+		})
+	}
+
+	vars := map[string]cty.Value{}
+	for typ, byName := range resTypes {
+		vars[typ] = cty.ObjectVal(byName)
+	}
+	if len(varVals) > 0 {
+		vars["var"] = cty.ObjectVal(varVals)
+	}
+
+	child := parentCtx.NewChild()
+	child.Variables = vars
+	return child
+}
+
+// ModuleEvalContext is the public helper used by workspace.go to build the
+// eval context for expanding a module's resources into the main graph.
+func ModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, parentCtx *hcl.EvalContext) *hcl.EvalContext {
+	return buildModuleEvalContext(mod, modRoot, modName, parentCtx)
+}
+
+// ResolveModuleSource converts a module source path to an absolute file path.
+// If source points to a directory, looks for the first *.sysbox.hcl file inside.
+func ResolveModuleSource(source, callerDir string) (string, error) {
+	return resolveModuleSource(source, callerDir)
+}
+
+func resolveModuleSource(source, callerDir string) (string, error) {
+	path := source
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(callerDir, path)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("module source %q: %w", source, err)
+	}
+	if fi.IsDir() {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return "", fmt.Errorf("module source dir %q: %w", source, err)
+		}
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".sysbox.hcl") {
+				return filepath.Join(path, e.Name()), nil
+			}
+		}
+		// Fallback: main.hcl
+		main := filepath.Join(path, "main.hcl")
+		if _, err := os.Stat(main); err == nil {
+			return main, nil
+		}
+		return "", fmt.Errorf("module source dir %q: no *.sysbox.hcl or main.hcl found", source)
+	}
+	return path, nil
+}
 
 // CountEvalContext returns a child EvalContext that exposes count.index
 // for use inside a count-expanded resource body.
