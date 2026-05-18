@@ -64,8 +64,10 @@ func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
 		Name:     n.ID.Name,
 		Provider: subName,
 		Instance: map[string]any{
-			"node": nodeName,
-			"port": port,
+			"node":         nodeName,
+			"port":         port,
+			"container_id": containerID,
+			"key_count":    len(cfg.AuthorizedKeys),
 		},
 	})
 	return nil

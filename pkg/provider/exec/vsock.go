@@ -117,7 +117,7 @@ type FrameHandler func(vsockrpc.Frame) error
 // frame (Done=true) is also delivered. Returns nil when the command exits
 // cleanly, or the first error from handler / transport.
 // ExecFrameStream runs a single command and delivers raw vsock frames to handler.
-// Used by the vm-vsock monitor backend and firecracker exec internals.
+// Used by firecracker exec internals for streaming command output.
 func (c *VsockConnection) ExecFrameStream(ctx context.Context, cmd []string, env map[string]string, handler FrameHandler) error {
 	conn, err := c.dial(ctx)
 	if err != nil {

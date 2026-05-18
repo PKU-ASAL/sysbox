@@ -61,6 +61,8 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 		return e.readDataNode(ctx, node)
 	case "data_sysbox_network":
 		return e.readDataNetwork(ctx, node)
+	case "data_sysbox_image":
+		return e.readDataImage(ctx, node)
 	default:
 		return nil
 	}
@@ -89,7 +91,7 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 		return nil
 	case "sysbox_actor":
 		return e.destroyActor(ctx, r)
-	case "data_sysbox_node", "data_sysbox_network":
+	case "data_sysbox_node", "data_sysbox_network", "data_sysbox_image":
 		// Data sources are read-only; nothing to destroy in the substrate.
 		e.state.RemoveResource(r.Type, r.Name)
 		return nil

@@ -118,7 +118,8 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 			natIdx++
 			ifaceByName[iface.Name] = target
 			nics = append(nics, map[string]any{
-				"type":       "docker_nat",
+				"kind":       "docker_nat",
+				"type":       "docker_nat", // keep for backwards compat
 				"network_id": netID,
 				"ip":         iface.IP,
 				"target":     target,
@@ -142,6 +143,7 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		vethIdx++
 		ifaceByName[iface.Name] = lreq.TargetName
 		nics = append(nics, map[string]any{
+			"kind":      attached.Kind,
 			"host_end":  attached.HostEnd,
 			"guest_end": attached.GuestEnd,
 			"target":    lreq.TargetName,

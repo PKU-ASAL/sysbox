@@ -325,9 +325,6 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 			deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
 		}
 
-	case "sysbox_agent":
-		return fmt.Errorf("sysbox_agent is removed; use sysbox_actor with position = \"internal\" instead")
-
 	case "sysbox_actor":
 		cfg := &config.ActorConfig{}
 		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
@@ -423,8 +420,17 @@ func expandDataBlock(d config.DataBlock, g *graph.Graph, ctx *hcl.EvalContext) e
 			return fmt.Errorf("data sysbox_network.%s: %s", d.Name, diag.Error())
 		}
 		data = cfg
+	case "sysbox_image":
+		cfg := &config.DataImageConfig{}
+		if diag := gohcl.DecodeBody(d.Remain, ctx, cfg); diag.HasErrors() {
+			return fmt.Errorf("data sysbox_image.%s: %s", d.Name, diag.Error())
+		}
+		data = cfg
+		if ref := config.ResolveName(cfg.Substrate); ref != "" {
+			deps = append(deps, graph.Ref{Type: "substrate", Name: ref})
+		}
 	default:
-		return fmt.Errorf("data block type %q not supported", d.Type)
+		return fmt.Errorf("data block type %q not supported; supported: sysbox_node, sysbox_network, sysbox_image", d.Type)
 	}
 
 	// Data blocks use a "data_" prefix in the graph to distinguish from resources.

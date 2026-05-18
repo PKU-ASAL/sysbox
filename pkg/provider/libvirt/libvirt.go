@@ -84,3 +84,11 @@ func (s *Substrate) Validate(spec substrate.NodeSpec) error {
 	}
 	return nil
 }
+
+// Dependencies returns empty deps — the libvirt Config only references
+// the QCow2 image path directly (no cross-resource HCL refs like
+// sysbox_kernel). If future Config fields reference other resources,
+// override this method to declare them.
+func (s *Substrate) Dependencies(_ any) substrate.ProviderDeps {
+	return substrate.ProviderDeps{}
+}

@@ -89,6 +89,13 @@ type DataNetworkConfig struct {
 	Name string `hcl:"name"` // docker network name or bridge name
 }
 
+// DataImageConfig is the decoded form of data "sysbox_image" blocks.
+// Allows querying an existing image's metadata (e.g. docker image inspect).
+type DataImageConfig struct {
+	Substrate string `hcl:"substrate"`
+	DockerRef string `hcl:"docker_ref,optional"` // e.g. "alpine:latest"
+}
+
 // ForEachHeader is decoded first from a ResourceBlock.Remain to extract the
 // optional for_each meta-argument before type-specific decoding.
 //

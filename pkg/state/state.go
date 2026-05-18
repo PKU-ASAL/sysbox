@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // SchemaVersion is the current persistent format version.
@@ -28,10 +29,12 @@ type State struct {
 }
 
 type Resource struct {
-	Type     string         `json:"type"`
-	Name     string         `json:"name"`
-	Provider string         `json:"provider"`
-	Instance map[string]any `json:"instance"`
+	Type      string         `json:"type"`
+	Name      string         `json:"name"`
+	Provider  string         `json:"provider"`
+	Instance  map[string]any `json:"instance"`
+	CreatedAt string         `json:"created_at,omitempty"`
+	UpdatedAt string         `json:"updated_at,omitempty"`
 }
 
 // Int returns the value at key as an int. JSON round-trip stores numbers as
@@ -124,6 +127,10 @@ func (s *State) FindResource(typ, name string) *Resource {
 func (s *State) AddResource(r Resource) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if r.CreatedAt == "" {
+		r.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	r.UpdatedAt = r.CreatedAt
 	s.Resources = append(s.Resources, r)
 }
 

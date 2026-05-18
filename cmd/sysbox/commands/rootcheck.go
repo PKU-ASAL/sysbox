@@ -26,17 +26,6 @@ func needsRoot(root *config.Root) bool {
 	return false
 }
 
-// requireRoot exits if not running as root.
-// Deprecated: use checkRoot instead, which respects NAT-only topologies.
-func requireRoot() {
-	if os.Getuid() != 0 {
-		fmt.Fprintln(os.Stderr,
-			"error: sysbox apply/destroy require root (netns creation + /run/netns/ write).\n"+
-				"  Run: sudo -E sysbox apply ...")
-		os.Exit(1)
-	}
-}
-
 // checkRoot checks root requirement based on the topology.
 // NAT-only topologies (Docker bridge networks) work without root.
 func checkRoot(root *config.Root) {

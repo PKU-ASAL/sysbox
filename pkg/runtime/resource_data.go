@@ -99,3 +99,42 @@ func (e *Executor) readDataNetwork(ctx context.Context, n *graph.Node) error {
 	e.logf("[data] read sysbox_network.%s → %s\n", n.ID.Name, info.Name)
 	return nil
 }
+
+// readDataImage queries an existing Docker image and records its metadata.
+func (e *Executor) readDataImage(ctx context.Context, n *graph.Node) error {
+	cfg, ok := n.Data.(*config.DataImageConfig)
+	if !ok {
+		return fmt.Errorf("data sysbox_image.%s: wrong data type", n.ID.Name)
+	}
+
+	subName, err := resolveSubstrateRef(cfg.Substrate)
+	if err != nil {
+		return fmt.Errorf("data sysbox_image.%s: %w", n.ID.Name, err)
+	}
+	sub, err := substrate.Get(subName)
+	if err != nil {
+		return fmt.Errorf("data sysbox_image.%s: %w", n.ID.Name, err)
+	}
+
+	if cfg.DockerRef == "" {
+		return fmt.Errorf("data sysbox_image.%s: docker_ref is required", n.ID.Name)
+	}
+
+	ref, err := sub.PrepareImage(ctx, substrate.ImageSpec{DockerRef: cfg.DockerRef})
+	if err != nil {
+		return fmt.Errorf("data sysbox_image.%s: %w", n.ID.Name, err)
+	}
+
+	e.state.AddResource(state.Resource{
+		Type:     "data_sysbox_image",
+		Name:     n.ID.Name,
+		Provider: subName,
+		Instance: map[string]any{
+			"image_id":  ref.ID,
+			"repo":      ref.Repository,
+			"data_read": true,
+		},
+	})
+	e.logf("[data] read sysbox_image.%s → %s\n", n.ID.Name, ref.ID)
+	return nil
+}
