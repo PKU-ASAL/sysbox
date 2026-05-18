@@ -18,18 +18,11 @@ type HandleState struct {
 }
 
 func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
-	// Idempotent: if a container with the same name already exists (leftover
-	// from a partial previous apply where wireLink/AttachNIC failed after
-	// CreateNode succeeded), reuse it instead of failing on a name conflict.
-	if existing, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
-		return substrate.NodeHandle{
-			ID:       existing.ID,
-			Provider: &HandleState{ContainerName: spec.Name},
-			Conn: substrate.ConnInfo{
-				Kind:     substrate.ConnKindDocker,
-				Endpoint: existing.ID,
-			},
-		}, nil
+	// If a container with this name exists (leftover from a partial previous
+	// apply), force-remove it. Reusing a partially-wired container would
+	// cause interface rename collisions on the next attach attempt.
+	if _, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
+		_ = s.cli.ContainerRemove(ctx, spec.Name, container.RemoveOptions{Force: true})
 	}
 
 	envs := make([]string, 0, len(spec.Env))
@@ -74,6 +67,11 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	} else {
 		first := natLinks[0]
 		ip := trimCIDR(first.IP)
+		// Set NetworkMode to the custom network so Docker does NOT also attach
+		// the default bridge. Without this, Docker adds an extra eth0 (default
+		// bridge) before our NAT network, pushing all interface indices up by 1
+		// and breaking the vethIdx accounting in resource_node / router.
+		hostCfg.NetworkMode = container.NetworkMode(first.DockerNetID)
 		netCfg.EndpointsConfig = map[string]*network.EndpointSettings{
 			first.DockerNetID: {
 				IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: ip},
