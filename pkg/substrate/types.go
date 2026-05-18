@@ -6,8 +6,26 @@ package substrate
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrNotSupported is returned by optional interface methods whose default
+// implementation in BaseSubstrate is a no-op or unsupported operation.
+var ErrNotSupported = errors.New("operation not supported by this substrate")
+
+// ManagedNetworkSpec describes a substrate-managed network to create.
+type ManagedNetworkSpec struct {
+	Name string // resource name used to derive the network's system identifier
+	CIDR string // IP address range, e.g. "172.20.0.0/24"
+	NAT  bool   // true → internet access via masquerade
+}
+
+// ManagedNetworkInfo is returned by CreateManagedNetwork.
+type ManagedNetworkInfo struct {
+	ID   string // substrate-specific network identifier (docker network ID, etc.)
+	Name string // the system-level name (bridge name, network name)
+}
 
 type ImageSpec struct {
 	DockerRef string
@@ -20,28 +38,25 @@ type ImageRef struct {
 	Repository string
 }
 
-// DockerNetworkAttachment describes a Docker-managed bridge network to connect
-// at container-creation time (not via post-start docker network connect).
-// Attaching at creation keeps NetworkMode:"none" for veth-only nodes while
-// allowing Docker NAT bridges (internet uplink) on nodes that need both.
-// For microVM/VM substrates this maps to a TAP device on the equivalent bridge.
-type DockerNetworkAttachment struct {
-	NetworkID string // Docker network ID
-	IPv4      string // CIDR notation, e.g. "172.20.0.10/24"
-}
-
 // NodeSpec carries substrate-neutral coordinates for creating a node.
 // Substrate-specific options (privileged, kernel, vcpus, ...) live in
 // ProviderConfig, a substrate-owned typed value produced by
 // Substrate.DecodeProviderConfig.
 type NodeSpec struct {
-	Name              string
-	Image             ImageRef
-	VCPUs             int
-	Memory            string
-	Env               map[string]string
-	Sysctls           map[string]string
-	InitialDockerNets []DockerNetworkAttachment // shared shortcut (W2-PR-09 may replace with LinkPlan)
+	Name    string
+	Image   ImageRef
+	VCPUs   int
+	Memory  string
+	Env     map[string]string
+	Sysctls map[string]string
+
+	// InitialLinks lists the first network attachment(s) to establish at
+	// node-creation time. The substrate interprets the LinkRequest fields
+	// appropriate to its device model:
+	//   - Docker: KindHint=NICKindDockerNAT → docker network connect at create
+	//   - FC/libvirt: attached after StartNode via AttachNIC
+	// Additional links are attached post-start via AttachNIC.
+	InitialLinks []LinkRequest
 
 	// ProviderConfig is a substrate-owned typed value (e.g. *docker.Config,
 	// *firecracker.Config) produced by Substrate.DecodeProviderConfig. It is

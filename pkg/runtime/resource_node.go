@@ -8,9 +8,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
-	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
-	firecrackerprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -41,11 +39,10 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		Repository: util.AsString(imgState.Instance["repository"]),
 	}
 
-	// Resolve sysbox_kernel references inside the substrate's typed
-	// provider config (only firecracker uses this today). We rewrite the
-	// reference to an absolute path so substrate.CreateNode receives a
-	// ready-to-use value.
-	if err := resolveProviderKernel(e.state, cfg.ProviderConfig); err != nil {
+	// Resolve cross-resource refs (e.g. kernel ref → local path) before CreateNode.
+	// We do an early PrepareHandle pass with an empty handle (no PrimaryIP yet)
+	// purely for ref resolution. ConnInfo is populated in the second pass below.
+	if err := sub.PrepareHandle(ctx, &substrate.NodeHandle{}, cfg.ProviderConfig, stateAdapter{e.state}); err != nil {
 		return err
 	}
 
@@ -73,23 +70,24 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		}
 	}
 
-	// Build initial Docker network attachments (first NAT link goes at create time).
-	var initialNets []substrate.DockerNetworkAttachment
+	// Build InitialLinks for NAT networks (substrate connects at create time).
+	var initialLinks []substrate.LinkRequest
 	for _, nl := range natLinks {
-		initialNets = append(initialNets, substrate.DockerNetworkAttachment{
-			NetworkID: nl.netID,
-			IPv4:      nl.ip,
+		initialLinks = append(initialLinks, substrate.LinkRequest{
+			KindHint:    substrate.NICKindDockerNAT,
+			DockerNetID: nl.netID,
+			IP:          nl.ip,
 		})
 	}
 
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
-		Name:              fmt.Sprintf("sysbox-%s", n.ID.Name),
-		Image:             imgRef,
-		VCPUs:             cfg.Vcpus,
-		Memory:            cfg.Memory,
-		Env:               cfg.Env,
-		InitialDockerNets: initialNets,
-		ProviderConfig:    cfg.ProviderConfig,
+		Name:           fmt.Sprintf("sysbox-%s", n.ID.Name),
+		Image:          imgRef,
+		VCPUs:          cfg.Vcpus,
+		Memory:         cfg.Memory,
+		Env:            cfg.Env,
+		InitialLinks:   initialLinks,
+		ProviderConfig: cfg.ProviderConfig,
 	})
 	if err != nil {
 		return err
@@ -110,15 +108,15 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 
 	// Track which NAT networks were already connected at create time.
 	connectedAtCreate := map[string]bool{}
-	if len(initialNets) > 0 {
-		connectedAtCreate[initialNets[0].NetworkID] = true
+	if len(initialLinks) > 0 {
+		connectedAtCreate[initialLinks[0].DockerNetID] = true
 	}
 
 	nics := []map[string]any{}
 	// vethIdx tracks the guest interface name for manually-injected veth links.
 	// Docker NAT networks consume ethN names starting at eth0, so veth links
 	// must begin numbering after however many NAT interfaces were attached.
-	vethIdx := len(initialNets)
+	vethIdx := len(initialLinks)
 	for _, link := range cfg.Links {
 		netName := config.ResolveName(link.Network)
 		netState := e.state.FindResource("sysbox_network", netName)
@@ -201,8 +199,8 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		}
 	}
 
-	// Populate the substrate-neutral PrimaryIP from the first link so the
-	// Connection factory (W1-PR-06) can derive SSH coordinates uniformly.
+	// Populate the substrate-neutral PrimaryIP from the first link so that
+	// PrepareHandle / Connection() can derive SSH coordinates uniformly.
 	if len(cfg.Links) > 0 {
 		firstIP := cfg.Links[0].IP
 		if idx := strings.Index(firstIP, "/"); idx >= 0 {
@@ -211,17 +209,15 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		handle.Net.PrimaryIP = firstIP
 	}
 
-	// Let the substrate populate its ConnInfo from the provider config and
-	// the just-assigned PrimaryIP. Each substrate decides what makes sense:
-	// docker → ConnKindDocker, FC with sysbox-init → ConnKindVsock,
-	// FC without sysbox-init → ConnKindSSH. W1-PR-06 will move this into
-	// a Substrate.Connection() factory; for now we dispatch here.
-	if err := populateConnInfo(sub, &handle, cfg.ProviderConfig); err != nil {
-		fmt.Printf("[apply] warning: populate conn for %s: %v\n", n.ID.Name, err)
+	// Let the substrate populate ConnInfo (Kind, Endpoint, Auth) now that
+	// PrimaryIP is set. Each substrate decides what makes sense:
+	// docker → ConnKindDocker (set at CreateNode), FC → vsock or SSH.
+	if err := sub.PrepareHandle(ctx, &handle, cfg.ProviderConfig, stateAdapter{e.state}); err != nil {
+		fmt.Printf("[apply] warning: PrepareHandle for %s: %v\n", n.ID.Name, err)
 	}
 
 	// Re-marshal provider state (the substrate may have mutated HandleState
-	// during AttachNIC or populateConnInfo). Always try; substrates with no
+	// during AttachNIC or PrepareHandle). Always try; substrates with no
 	// provider state return (nil, nil) which is harmless.
 	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
 		if rec := e.state.FindResource("sysbox_node", n.ID.Name); rec != nil {
@@ -366,65 +362,4 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 	return nil
 }
 
-// resolveProviderKernel rewrites firecracker provider Config.Kernel from a
-// sysbox_kernel resource reference to an absolute filesystem path by looking
-// up the resolved path in state. Literal paths are left untouched. Substrates
-// other than firecracker have no kernel field and are skipped.
-//
-// W1-PR-05 generalises this into a substrate.Substrate.ResolveRefs hook so
-// runtime stops dispatching on concrete config types here.
-func resolveProviderKernel(st *state.State, pc any) error {
-	fcCfg, ok := pc.(*firecrackerprovider.Config)
-	if !ok || fcCfg == nil {
-		return nil
-	}
-	if fcCfg.Kernel == "" || !config.LooksLikeKernelRef(fcCfg.Kernel) {
-		return nil
-	}
-	kname := config.ResolveName(fcCfg.Kernel)
-	kState := st.FindResource("sysbox_kernel", kname)
-	if kState == nil {
-		return fmt.Errorf("kernel %s not applied yet", kname)
-	}
-	resolved := util.AsString(kState.Instance["path"])
-	if resolved == "" {
-		return fmt.Errorf("kernel %s has no resolved path in state", kname)
-	}
-	fcCfg.Kernel = resolved
-	return nil
-}
 
-// populateConnInfo lets each substrate fill NodeHandle.Conn from the provider
-// config and the just-assigned PrimaryIP. W1-PR-06 will replace this with a
-// Substrate.Connection() factory; until then we dispatch on concrete config
-// types to avoid exporting a new interface method.
-func populateConnInfo(sub substrate.Substrate, handle *substrate.NodeHandle, pc any) error {
-	// Docker: Conn already set at CreateNode time (ConnKindDocker).
-	if _, ok := sub.(*dockerprovider.Substrate); ok {
-		return nil
-	}
-	// Firecracker: vsock wins when sysbox-init is present (HandleState.VsockUDS
-	// is non-empty), otherwise fall back to SSH from the provider config.
-	fcCfg, ok := pc.(*firecrackerprovider.Config)
-	if !ok || fcCfg == nil {
-		return nil
-	}
-	hs, ok := handle.Provider.(*firecrackerprovider.HandleState)
-	if !ok || hs == nil {
-		return nil
-	}
-	// If vsock is available the handle already has ConnKindVsock from CreateNode.
-	if hs.VsockUDS != "" {
-		return nil
-	}
-	// No vsock — write SSH coordinates into HandleState and set ConnKindSSH.
-	hs.SSHIP = handle.Net.PrimaryIP
-	port := fcCfg.SSHPort
-	if port == 0 {
-		port = 22
-	}
-	hs.SSHPort = fmt.Sprintf("%d", port)
-	handle.Conn.Kind = substrate.ConnKindSSH
-	handle.Conn.Endpoint = fmt.Sprintf("%s:%s", hs.SSHIP, hs.SSHPort)
-	return nil
-}

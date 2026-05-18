@@ -1,6 +1,7 @@
 package firecracker
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
@@ -43,6 +44,53 @@ func (s *Substrate) DecodeProviderConfig(body hcl.Body, ctx *hcl.EvalContext) (a
 		return nil, fmt.Errorf("firecracker: decode provider config: %s", diag.Error())
 	}
 	return cfg, nil
+}
+
+// PrepareHandle resolves kernel references and populates ConnInfo so runtime
+// no longer needs to dispatch on concrete firecracker types.
+//
+// Steps:
+//  1. If Config.Kernel is a sysbox_kernel ref, rewrite it to the local path.
+//  2. If HandleState has a vsock UDS, the Conn is already set (ConnKindVsock);
+//     nothing to do.
+//  3. Otherwise (SSH fallback), populate HandleState.SSHIP/SSHPort and set
+//     handle.Conn.Kind = ConnKindSSH.
+func (s *Substrate) PrepareHandle(_ context.Context, handle *substrate.NodeHandle, pc any, st substrate.StateReader) error {
+	cfg, _ := pc.(*Config)
+	hs, _ := handle.Provider.(*HandleState)
+
+	// Step 1: resolve kernel ref.
+	if cfg != nil && cfg.Kernel != "" && config.LooksLikeKernelRef(cfg.Kernel) {
+		kname := config.ResolveName(cfg.Kernel)
+		inst := st.ResourceInstance("sysbox_kernel", kname)
+		if inst == nil {
+			return fmt.Errorf("kernel %s not applied yet", kname)
+		}
+		path, _ := inst["path"].(string)
+		if path == "" {
+			return fmt.Errorf("kernel %s has no resolved path in state", kname)
+		}
+		cfg.Kernel = path
+	}
+
+	// Steps 2+3: populate ConnInfo.
+	if hs == nil {
+		return nil
+	}
+	// vsock already set by CreateNode — nothing to do.
+	if hs.VsockUDS != "" {
+		return nil
+	}
+	// SSH fallback: write coordinates into HandleState.
+	hs.SSHIP = handle.Net.PrimaryIP
+	port := 22
+	if cfg != nil && cfg.SSHPort != 0 {
+		port = cfg.SSHPort
+	}
+	hs.SSHPort = fmt.Sprintf("%d", port)
+	handle.Conn.Kind = substrate.ConnKindSSH
+	handle.Conn.Endpoint = fmt.Sprintf("%s:%s", hs.SSHIP, hs.SSHPort)
+	return nil
 }
 
 // Dependencies reports the sysbox_kernel references the runtime must apply

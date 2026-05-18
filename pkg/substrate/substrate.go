@@ -58,6 +58,15 @@ type Substrate interface {
 	// substrate has no control-plane channel).
 	Connection(handle NodeHandle, conns []ConnectionHint) (Connection, error)
 
+	// CreateManagedNetwork creates a substrate-managed L2/L3 network segment
+	// (Docker bridge, libvirt NAT network, ...) with internet access (NAT).
+	// Returns a NetworkInfo describing the created network.
+	// Substrates that don't support managed networks return ErrNotSupported.
+	CreateManagedNetwork(ctx context.Context, spec ManagedNetworkSpec) (ManagedNetworkInfo, error)
+
+	// RemoveManagedNetwork tears down a previously created managed network.
+	RemoveManagedNetwork(ctx context.Context, id string) error
+
 	// AttachNIC creates a network device for the node and wires it into the
 	// topology described by the LinkRequest. Each substrate picks its own
 	// device type (veth, tap, macvtap, ...), creates it, and attaches it.
@@ -69,6 +78,19 @@ type Substrate interface {
 	// NodeStatus reports whether the node is healthy (running and reachable).
 	// Used by drift detection; a false result triggers a Change entry in the plan.
 	NodeStatus(ctx context.Context, handle NodeHandle) (bool, error)
+
+	// PrepareHandle is called by runtime after NIC attachment and PrimaryIP
+	// assignment, before provisioners run. The substrate may:
+	//   - rewrite ProviderConfig fields (e.g. resolve kernel ref to local path)
+	//   - populate handle.Conn (Kind, Endpoint, Auth)
+	//   - populate substrate-specific HandleState fields (SSHIP, SSHPort, …)
+	//
+	// The StateReader gives read-only access to applied resources so that
+	// substrates can resolve cross-resource references (e.g. sysbox_kernel →
+	// local path) without importing pkg/state (import-cycle prevention).
+	//
+	// BaseSubstrate provides a no-op default.
+	PrepareHandle(ctx context.Context, handle *NodeHandle, pc any, st StateReader) error
 
 	// MarshalProviderState serialises NodeHandle.Provider to JSON for state
 	// persistence. Returning (nil, nil) means "this substrate has no
@@ -82,4 +104,13 @@ type Substrate interface {
 	// Returning (nil, nil) is acceptable; substrates may also fall back to
 	// reconstructing state from the bare NodeHandle.ID.
 	UnmarshalProviderState(data json.RawMessage) (any, error)
+}
+
+// StateReader is a narrow read-only view of the runtime state that substrates
+// may use inside PrepareHandle to resolve cross-resource references.
+// It avoids a direct import of pkg/state (which would create an import cycle).
+type StateReader interface {
+	// ResourceInstance returns the instance map for a named resource, or nil
+	// if the resource has not yet been applied.
+	ResourceInstance(typ, name string) map[string]any
 }

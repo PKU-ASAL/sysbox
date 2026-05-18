@@ -133,21 +133,22 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		})
 	}
 
-	// Build initial network attachment (first link at create time).
-	var initialNets []substrate.DockerNetworkAttachment
+	// Build InitialLinks (first NAT network attached at create time).
+	var initialLinks []substrate.LinkRequest
 	for _, nl := range natLinks {
-		initialNets = append(initialNets, substrate.DockerNetworkAttachment{
-			NetworkID: nl.netID,
-			IPv4:      nl.ip,
+		initialLinks = append(initialLinks, substrate.LinkRequest{
+			KindHint:    substrate.NICKindDockerNAT,
+			DockerNetID: nl.netID,
+			IP:          nl.ip,
 		})
 	}
 
 	containerName := fmt.Sprintf("sysbox-actor-%s", n.ID.Name)
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
-		Name:              containerName,
-		Image:             imgRef,
-		Env:               cfg.Env,
-		InitialDockerNets: initialNets,
+		Name:         containerName,
+		Image:        imgRef,
+		Env:          cfg.Env,
+		InitialLinks: initialLinks,
 	})
 	if err != nil {
 		return fmt.Errorf("create actor container %s: %w", n.ID.Name, err)
@@ -253,66 +254,4 @@ func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
 	return nil
 }
 
-// -- sysbox_ssh_access --
 
-func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
-	cfg, ok := n.Data.(*config.SSHAccessConfig)
-	if !ok {
-		return fmt.Errorf("ssh_access %s: wrong data type", n.ID)
-	}
-
-	nodeName := config.ResolveName(cfg.Node)
-	nodeState := e.state.FindResource("sysbox_node", nodeName)
-	if nodeState == nil {
-		return fmt.Errorf("node %s not applied yet", nodeName)
-	}
-
-	containerID := util.AsString(nodeState.Instance["container_id"])
-	handle := substrate.NodeHandle{
-		ID: containerID,
-		Provider: &dockerprovider.HandleState{
-			ContainerName: fmt.Sprintf("sysbox-%s", nodeName),
-		},
-		Conn: substrate.ConnInfo{
-			Kind:     substrate.ConnKindDocker,
-			Endpoint: containerID,
-		},
-	}
-
-	// Find the docker substrate registered for the node.
-	subName := nodeState.Provider
-	sub, err := substrate.Get(subName)
-	if err != nil {
-		return err
-	}
-	dockerSub, ok := sub.(*dockerprovider.Substrate)
-	if !ok {
-		return fmt.Errorf("sysbox_ssh_access requires a docker substrate, got %T", sub)
-	}
-
-	port := cfg.Port
-	if port == 0 {
-		port = 22
-	}
-
-	accessSpec := dockerprovider.SSHAccessSpec{
-		NodeHandle:     handle,
-		NodeID:         nodeName,
-		AuthorizedKeys: cfg.AuthorizedKeys,
-		Port:           port,
-	}
-	if err := dockerSub.SetupSSHAccess(ctx, accessSpec); err != nil {
-		return fmt.Errorf("setup ssh access on %s: %w", nodeName, err)
-	}
-
-	e.state.AddResource(state.Resource{
-		Type:     "sysbox_ssh_access",
-		Name:     n.ID.Name,
-		Provider: subName,
-		Instance: map[string]any{
-			"node": nodeName,
-			"port": port,
-		},
-	})
-	return nil
-}

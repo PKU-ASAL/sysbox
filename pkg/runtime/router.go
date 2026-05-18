@@ -44,27 +44,28 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 	// Pre-scan interfaces: find the first NAT network so it can be
 	// connected at container-creation time (required for Docker to
 	// assign the correct eth name and IP).
-	var initialNets []substrate.DockerNetworkAttachment
+	var initialLinks []substrate.LinkRequest
 	for _, iface := range cfg.Interfaces {
 		netName := config.ResolveName(iface.Network)
 		netState := e.state.FindResource("sysbox_network", netName)
 		if netState == nil {
 			return fmt.Errorf("network %s not applied yet", netName)
 		}
-		if isNAT, _ := netState.Instance["nat"].(bool); isNAT && len(initialNets) == 0 {
+		if isNAT, _ := netState.Instance["nat"].(bool); isNAT && len(initialLinks) == 0 {
 			netID := util.AsString(netState.Instance["docker_network_id"])
-			initialNets = append(initialNets, substrate.DockerNetworkAttachment{
-				NetworkID: netID,
-				IPv4:      iface.IP,
+			initialLinks = append(initialLinks, substrate.LinkRequest{
+				KindHint:    substrate.NICKindDockerNAT,
+				DockerNetID: netID,
+				IP:          iface.IP,
 			})
 		}
 	}
 
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
-		Name:              fmt.Sprintf("sysbox-%s", n.ID.Name),
-		Image:             imgRef,
-		Sysctls:           map[string]string{"net.ipv4.ip_forward": "1"},
-		InitialDockerNets: initialNets,
+		Name:         fmt.Sprintf("sysbox-%s", n.ID.Name),
+		Image:        imgRef,
+		Sysctls:      map[string]string{"net.ipv4.ip_forward": "1"},
+		InitialLinks: initialLinks,
 	})
 	if err != nil {
 		return err
@@ -79,11 +80,11 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 	// connected at create time. Isolated-network veths are injected
 	// after, so we must track the correct eth index.
 	connectedAtCreate := map[string]bool{}
-	if len(initialNets) > 0 {
-		connectedAtCreate[initialNets[0].NetworkID] = true
+	if len(initialLinks) > 0 {
+		connectedAtCreate[initialLinks[0].DockerNetID] = true
 	}
-	natIdx := 0                // NAT interfaces: eth0, eth1, ... (Docker-assigned order)
-	vethIdx := len(initialNets) // veth guest-iface starts after NAT ifaces
+	natIdx := 0                 // NAT interfaces: eth0, eth1, ... (Docker-assigned order)
+	vethIdx := len(initialLinks) // veth guest-iface starts after NAT ifaces
 
 	nics := []map[string]any{}
 	ifaceByName := map[string]string{} // logical name -> guest interface (eth0/eth1/...)

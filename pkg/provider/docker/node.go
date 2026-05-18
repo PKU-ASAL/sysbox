@@ -61,14 +61,22 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	//   - One or more Docker bridge networks needed → attach the first one via
 	//     NetworkingConfig at create time (avoids the "cannot connect to multiple
 	//     networks with one in none-mode" error); extras are connected after start.
+	// Collect Docker NAT links from InitialLinks.
+	var natLinks []substrate.LinkRequest
+	for _, l := range spec.InitialLinks {
+		if l.KindHint == substrate.NICKindDockerNAT || l.DockerNetID != "" {
+			natLinks = append(natLinks, l)
+		}
+	}
+
 	netCfg := &network.NetworkingConfig{}
-	if len(spec.InitialDockerNets) == 0 {
+	if len(natLinks) == 0 {
 		hostCfg.NetworkMode = "none"
 	} else {
-		first := spec.InitialDockerNets[0]
-		ip := trimCIDR(first.IPv4)
+		first := natLinks[0]
+		ip := trimCIDR(first.IP)
 		netCfg.EndpointsConfig = map[string]*network.EndpointSettings{
-			first.NetworkID: {
+			first.DockerNetID: {
 				IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: ip},
 			},
 		}

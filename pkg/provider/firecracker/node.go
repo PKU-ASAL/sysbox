@@ -45,9 +45,9 @@ type HandleState struct {
 
 	NetnsName string `json:"netns_name,omitempty"`
 
-	// SSHIP/SSHPort are populated by runtime as a fallback for VMs whose
-	// rootfs lacks sysbox-init (no vsock channel). W1-PR-06 will move this
-	// behind Substrate.Connection().
+	// SSHIP/SSHPort are populated by PrepareHandle as a fallback for VMs whose
+	// rootfs lacks sysbox-init (no vsock channel). Substrate.Connection() reads
+	// these to build the SSH connection.
 	SSHIP   string `json:"ssh_ip,omitempty"`
 	SSHPort string `json:"ssh_port,omitempty"`
 }

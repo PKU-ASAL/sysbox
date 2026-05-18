@@ -8,6 +8,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // Executor wires graph walking to provider calls. It holds references to
@@ -98,6 +99,19 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 func resolveSubstrateRef(ref string) (string, error) {
 	return config.ResolveSubstrateRef(ref)
 }
+
+// stateAdapter wraps *state.State to implement substrate.StateReader.
+type stateAdapter struct{ st *state.State }
+
+func (a stateAdapter) ResourceInstance(typ, name string) map[string]any {
+	r := a.st.FindResource(typ, name)
+	if r == nil {
+		return nil
+	}
+	return r.Instance
+}
+
+var _ substrate.StateReader = stateAdapter{}
 
 // expandTilde replaces a leading ~ with the current user's home directory.
 func expandTilde(path string) string {

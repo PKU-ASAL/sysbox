@@ -1,6 +1,7 @@
 package substrate
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +66,23 @@ func (BaseSubstrate) Dependencies(any) ProviderDeps { return ProviderDeps{} }
 // channel (docker-exec, vsock, SSH, WinRM) must override this.
 func (BaseSubstrate) Connection(NodeHandle, []ConnectionHint) (Connection, error) {
 	return nil, nil
+}
+
+// PrepareHandle is a no-op by default. Substrates that need to resolve
+// cross-resource refs (e.g. kernel path) or populate ConnInfo override this.
+func (BaseSubstrate) PrepareHandle(_ context.Context, _ *NodeHandle, _ any, _ StateReader) error {
+	return nil
+}
+
+// CreateManagedNetwork returns ErrNotSupported by default. Substrates that
+// support managed networks (Docker, libvirt) override this.
+func (BaseSubstrate) CreateManagedNetwork(_ context.Context, _ ManagedNetworkSpec) (ManagedNetworkInfo, error) {
+	return ManagedNetworkInfo{}, ErrNotSupported
+}
+
+// RemoveManagedNetwork returns ErrNotSupported by default.
+func (BaseSubstrate) RemoveManagedNetwork(_ context.Context, _ string) error {
+	return ErrNotSupported
 }
 
 // MarshalProviderState returns (nil, nil) by default: the substrate persists

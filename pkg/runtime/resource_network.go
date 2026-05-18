@@ -9,7 +9,6 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
-	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -57,19 +56,19 @@ func (e *Executor) createNetwork(ctx context.Context, n *graph.Node) error {
 	return nil
 }
 
-// createNATNetwork creates a Docker-native bridge network for internet access.
+// createNATNetwork creates a managed NAT network via the registered substrate.
+// Currently Docker is the only substrate that supports managed networks.
 func (e *Executor) createNATNetwork(ctx context.Context, n *graph.Node, cfg *config.NetworkConfig) error {
 	sub, err := substrate.Get("docker")
 	if err != nil {
 		return fmt.Errorf("nat network requires docker substrate: %w", err)
 	}
-	dockerSub, ok := sub.(*dockerprovider.Substrate)
-	if !ok {
-		return fmt.Errorf("nat network requires *dockerprovider.Substrate, got %T", sub)
-	}
 
-	netName := fmt.Sprintf("sysbox-nat-%s", n.ID.Name)
-	netID, err := dockerSub.CreateBridgeNetwork(ctx, netName, cfg.CIDR)
+	info, err := sub.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
+		Name: n.ID.Name,
+		CIDR: cfg.CIDR,
+		NAT:  true,
+	})
 	if err != nil {
 		return fmt.Errorf("create nat network %s: %w", n.ID.Name, err)
 	}
@@ -89,8 +88,8 @@ func (e *Executor) createNATNetwork(ctx context.Context, n *graph.Node, cfg *con
 		Provider: "docker",
 		Instance: map[string]any{
 			"nat":               true,
-			"docker_network_id": netID,
-			"docker_net_name":   netName,
+			"docker_network_id": info.ID,
+			"docker_net_name":   info.Name,
 			"cidr":              cfg.CIDR,
 		},
 	})
@@ -104,14 +103,9 @@ func (e *Executor) destroyNetwork(ctx context.Context, r state.Resource) error {
 			e.state.RemoveResource(r.Type, r.Name)
 			return nil
 		}
-		dockerSub, ok := sub.(*dockerprovider.Substrate)
-		if !ok {
-			e.state.RemoveResource(r.Type, r.Name)
-			return nil
-		}
 		netID := r.Str("docker_network_id")
 		if netID != "" {
-			if err := dockerSub.RemoveBridgeNetwork(ctx, netID); err != nil {
+			if err := sub.RemoveManagedNetwork(ctx, netID); err != nil {
 				fmt.Printf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
 			}
 		}

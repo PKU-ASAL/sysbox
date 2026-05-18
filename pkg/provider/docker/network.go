@@ -6,6 +6,8 @@ import (
 	"net"
 
 	"github.com/docker/docker/api/types/network"
+
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // CreateBridgeNetwork creates a Docker-managed bridge network with NAT.
@@ -49,6 +51,22 @@ func (s *Substrate) CreateBridgeNetwork(ctx context.Context, name, cidr string) 
 // RemoveBridgeNetwork removes a Docker-managed bridge network by ID.
 func (s *Substrate) RemoveBridgeNetwork(ctx context.Context, networkID string) error {
 	return s.cli.NetworkRemove(ctx, networkID)
+}
+
+// CreateManagedNetwork implements substrate.Substrate by creating a Docker
+// bridge network. Currently always NAT (NAT field is informational).
+func (s *Substrate) CreateManagedNetwork(ctx context.Context, spec substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
+	netName := fmt.Sprintf("sysbox-nat-%s", spec.Name)
+	id, err := s.CreateBridgeNetwork(ctx, netName, spec.CIDR)
+	if err != nil {
+		return substrate.ManagedNetworkInfo{}, err
+	}
+	return substrate.ManagedNetworkInfo{ID: id, Name: netName}, nil
+}
+
+// RemoveManagedNetwork implements substrate.Substrate.
+func (s *Substrate) RemoveManagedNetwork(ctx context.Context, id string) error {
+	return s.RemoveBridgeNetwork(ctx, id)
 }
 
 // ConnectContainerToNetwork attaches a running container to a Docker network
