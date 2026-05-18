@@ -7,6 +7,7 @@ SUITE ?= three-nodes
 _HCL   := examples/$(SUITE)/field.sysbox.hcl
 _STATE := runs/$(SUITE)/state.json
 _SB    := $(BINARY) --state $(_STATE) -f $(_HCL)
+_LAB   := examples/$(SUITE)/lab.sh
 
 .DEFAULT_GOAL := help
 .PHONY: help build build-all test lint ci plan up down lab lab-down sensor-restart logs clean
@@ -60,19 +61,19 @@ up: build ## sysbox apply  (sudo required for firecracker/mixed)
 down: ## sysbox destroy
 	$(_SB) destroy --auto-approve
 
-# ── three-nodes lab  (attacker image + SSH keys + tracee sensor) ──────────────
+# ── lab lifecycle  [SUITE=three-nodes]  (image build + SSH keys + sensor) ─────
 
-lab: ## Build attacker image, apply, start sensor
-	sudo -E examples/three-nodes/lab.sh up
+lab: ## Full lab setup: image build + apply + start sensor
+	sudo -E $(_LAB) up
 
-lab-down: ## Destroy + stop sensor
-	sudo -E examples/three-nodes/lab.sh down
+lab-down: ## Destroy lab + stop sensor
+	sudo -E $(_LAB) down
 
 sensor-restart: build ## Restart tracee sensor (re-resolves mntns)
-	sudo -E examples/three-nodes/lab.sh sensor-restart
+	sudo -E $(_LAB) sensor-restart
 
 logs: ## Tail sensor log
-	examples/three-nodes/lab.sh logs
+	$(_LAB) logs
 
 # ── maintenance ───────────────────────────────────────────────────────────────
 
