@@ -230,23 +230,6 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 			}
 		}
 
-	case "sysbox_monitor":
-		cfg := &config.MonitorConfig{}
-		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-			return err
-		}
-		data = cfg
-		for _, nodeRef := range cfg.Nodes {
-			if ref := config.ResolveName(nodeRef); ref != "" {
-				deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
-			}
-		}
-		for _, dep := range cfg.DependsOn {
-			if parts := strings.SplitN(dep, ".", 2); len(parts) == 2 {
-				deps = append(deps, graph.Ref{Type: parts[0], Name: parts[1]})
-			}
-		}
-
 	default:
 		fmt.Fprintf(os.Stderr, "warning: unsupported resource type %q (skipped)\n", r.Type)
 		return nil

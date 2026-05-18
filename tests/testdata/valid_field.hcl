@@ -40,11 +40,4 @@ resource "sysbox_actor" "red" {
   depends_on = ["sysbox_node.client"]
 }
 
-resource "sysbox_monitor" "lab" {
-  backend = "tracee"
-  nodes = [
-    sysbox_node.web.id,
-    sysbox_node.client.id,
-  ]
-  events = ["execve", "openat", "connect"]
-}
+

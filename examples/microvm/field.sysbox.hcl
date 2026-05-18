@@ -184,23 +184,6 @@ resource "sysbox_node" "node_db" {
   }
 }
 
-# ── Monitor ─────────────────────────────────────────────────────────────────
-
-resource "sysbox_monitor" "lab" {
-  backend = "vm-vsock"
-  nodes = [
-    sysbox_node.node_attack.id,
-    sysbox_node.node_web.id,
-    sysbox_node.node_db.id,
-  ]
-  events = ["execve", "openat", "connect", "clone"]
-
-  extra = {
-    agent_bin   = "/usr/local/bin/vm-sensor"
-    event_file  = "/tmp/vm-sensor-events.jsonl"
-    vsock_port  = "8900"
-  }
-}
 
 # ── Outputs ─────────────────────────────────────────────────────────────────
 

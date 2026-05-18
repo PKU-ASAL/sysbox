@@ -57,8 +57,6 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 		return e.createSSHAccess(ctx, node)
 	case "sysbox_actor":
 		return e.createActor(ctx, node)
-	case "sysbox_monitor":
-		return e.createMonitor(ctx, node)
 	default:
 		return nil
 	}
@@ -87,8 +85,6 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 		return nil
 	case "sysbox_actor":
 		return e.destroyActor(ctx, r)
-	case "sysbox_monitor":
-		return e.destroyMonitor(r)
 	default:
 		e.logf("[destroy] skipping unimplemented resource type %q (%s)\n", r.Type, r.Name)
 		e.state.RemoveResource(r.Type, r.Name)

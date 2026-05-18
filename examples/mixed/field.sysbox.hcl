@@ -213,44 +213,6 @@ resource "sysbox_node" "sensor" {
   }
 }
 
-# ── Monitor: tracee for Docker, vm-vsock for Firecracker ────────────────────
-#
-# Two separate monitor resources are declared, each using the appropriate
-# backend for its substrate. Both feed into the same RoutingSink, so events
-# from Docker and VM nodes end up in the same events/ directory.
-
-resource "sysbox_monitor" "docker_nodes" {
-  backend = "tracee"
-  nodes = [
-    sysbox_node.node_attack.id,
-    sysbox_node.node_web.id,
-  ]
-  events = ["execve", "openat", "connect", "clone"]
-
-  extra = {
-    sensor_container = "sysbox-sensor"
-  }
-
-  depends_on = [
-    "sysbox_node.node_attack",
-    "sysbox_node.node_web",
-    "sysbox_node.sensor",
-  ]
-}
-
-resource "sysbox_monitor" "vm_nodes" {
-  backend = "vm-vsock"
-  nodes = [
-    sysbox_node.node_db.id,
-  ]
-  events = ["execve", "openat", "connect"]
-
-  extra = {
-    agent_bin   = "/usr/local/bin/vm-sensor"
-    event_file  = "/tmp/vm-sensor-events.jsonl"
-    vsock_port  = "8900"
-  }
-}
 
 # ── Outputs ─────────────────────────────────────────────────────────────────
 

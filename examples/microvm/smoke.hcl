@@ -56,17 +56,6 @@ resource "sysbox_node" "vm_attack" {
   }
 }
 
-resource "sysbox_monitor" "lab" {
-  backend = "vm-vsock"
-  nodes   = [sysbox_node.vm_attack.id]
-  events  = ["execve", "connect", "openat"]
-
-  extra = {
-    agent_bin  = "/usr/local/bin/vm-sensor"
-    event_file = "/tmp/vm-sensor-events.jsonl"
-    vsock_port = "8900"
-  }
-}
 
 output "vm_ip" {
   value       = "172.21.0.10"

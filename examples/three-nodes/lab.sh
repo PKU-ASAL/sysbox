@@ -91,9 +91,8 @@ start_sensor() {
     stop_sensor
     mkdir -p "${EVENTS_DIR}"
 
-    # sysbox sensor start reads sysbox_monitor from state, resolves mntns IDs,
-    # starts tracee inside the sensor container, and tails the event stream —
-    # all driven by the TraceeBackend in pkg/monitor/tracee.go.
+    # sysbox sensor start launches tracee inside the sensor container and
+    # tails the event stream.
     setsid nohup "${SYSBOX}" --state "${STATE_FILE}" --file "${FIELD_FILE}" \
         sensor start \
         > "${SENSOR_LOG}" 2>&1 &

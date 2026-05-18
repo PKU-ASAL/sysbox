@@ -203,31 +203,6 @@ resource "sysbox_node" "sensor" {
 # scopes to each node's mount namespace, so events are automatically attributed
 # to the correct node via tracee's container.name enrichment.
 #
-# Activated by: sysbox sensor start  (reads this resource from state)
-# Swap backend: change backend = "tracee" to "sysdig" / your EDR name.
-
-resource "sysbox_monitor" "lab" {
-  backend = "tracee"
-  nodes = [
-    sysbox_node.node_attack.id,
-    sysbox_node.node_web.id,
-    sysbox_node.node_db.id,
-  ]
-  events = [
-    "execve", "execveat",
-    "openat",
-    "connect",
-    "accept4",              # sshd accepts inbound connections → background noise
-    "clone", "fork", "vfork",
-    "sched_process_exit",
-  ]
-  depends_on = [
-    "sysbox_node.node_attack",
-    "sysbox_node.node_web",
-    "sysbox_node.node_db",
-    "sysbox_node.sensor",
-  ]
-}
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
