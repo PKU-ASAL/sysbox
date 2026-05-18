@@ -84,7 +84,7 @@ cmd_up() {
     mkdir -p "$(dirname "${STATE_FILE}")"
     if [ -f "${STATE_FILE}" ]; then
         echo "==> Destroying previous state..."
-        sysbox destroy --auto-approve 2>/dev/null || true
+        sysbox destroy --auto-approve 2>/dev/null || rm -f "${STATE_FILE}" "${STATE_FILE}.lock"
     fi
     echo "==> Applying mixed topology..."
     sysbox apply --auto-approve

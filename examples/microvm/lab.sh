@@ -51,7 +51,7 @@ cmd_up() {
     build_sysbox
     mkdir -p "$(dirname "${STATE_FILE}")"
     if [ -f "${STATE_FILE}" ]; then
-        sysbox destroy --auto-approve 2>/dev/null || true
+        sysbox destroy --auto-approve 2>/dev/null || rm -f "${STATE_FILE}" "${STATE_FILE}.lock"
     fi
     echo "==> Applying microvm topology..."
     sysbox apply --auto-approve

@@ -140,7 +140,7 @@ cmd_up() {
     if [ -f "${STATE_FILE}" ]; then
         echo ""
         echo "==> Destroying previous state..."
-        sysbox destroy --auto-approve 2>/dev/null || true
+        sysbox destroy --auto-approve 2>/dev/null || rm -f "${STATE_FILE}" "${STATE_FILE}.lock"
     fi
 
     echo ""
