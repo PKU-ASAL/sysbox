@@ -60,7 +60,7 @@ resource "sysbox_image" "alpine_vm" {
 
 resource "sysbox_image" "attacker_docker" {
   substrate  = substrate.docker.dk
-  docker_ref = "sysbox-attacker-opencode:latest"
+  docker_ref = "sysbox-attacker:latest"
 }
 
 # ── Networks ────────────────────────────────────────────────────────────────

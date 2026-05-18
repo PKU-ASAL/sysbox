@@ -10,7 +10,7 @@ _SB    := $(BINARY) --state $(_STATE) -f $(_HCL)
 _LAB   := examples/$(SUITE)/lab.sh
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-all test lint ci plan up down lab lab-down sensor-restart logs clean
+.PHONY: help build build-all test lint ci plan up down lab lab-down logs clean
 
 help:
 	@echo "Usage: make <target>  [SUITE=three-nodes|microvm|mixed|two-networks]"
@@ -68,9 +68,6 @@ lab: ## Full lab setup: image build + apply + start sensor
 
 lab-down: ## Destroy lab + stop sensor
 	sudo -E $(_LAB) down
-
-sensor-restart: build ## Restart tracee sensor (re-resolves mntns)
-	sudo -E $(_LAB) sensor-restart
 
 logs: ## Tail sensor log
 	$(_LAB) logs
