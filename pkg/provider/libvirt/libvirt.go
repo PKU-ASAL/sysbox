@@ -71,3 +71,16 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 
 // compile-time interface guard
 var _ substrate.Substrate = (*Substrate)(nil)
+
+// Validate rejects specs that cannot run on the libvirt substrate.
+func (s *Substrate) Validate(spec substrate.NodeSpec) error {
+	// Image validation: libvirt requires a QCow2 image. At plan time we
+	// can't see ImageSpec fields (NodeSpec only has ImageRef); the actual
+	// check happens in PrepareImage. Here we reject obviously wrong configs.
+	if pc, ok := spec.ProviderConfig.(*Config); ok {
+		if pc.SSHUser == "" {
+			return substrate.NewValidationError("libvirt: ssh_user is required (VMs need SSH for provisioners)")
+		}
+	}
+	return nil
+}

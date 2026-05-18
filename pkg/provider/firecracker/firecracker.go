@@ -85,10 +85,16 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 
 // Validate ensures the spec carries what the firecracker substrate needs.
 func (s *Substrate) Validate(spec substrate.NodeSpec) error {
-	// Firecracker needs either an image with rootfs metadata (resolved later
-	// in PrepareImage) or an explicit Rootfs override; kernel is optional
-	// because the substrate has a default kernel configured at New() time.
-	_ = spec // PR-01 stub: accept anything; tighter checks land in PR-05.
+	// FC requires rootfs-based images (not docker_ref) and a kernel.
+	if spec.ProviderConfig != nil {
+		cfg, ok := spec.ProviderConfig.(*Config)
+		if !ok {
+			return substrate.NewValidationError("firecracker: wrong provider config type %T", spec.ProviderConfig)
+		}
+		if cfg.Kernel == "" && s.kernelPath == "" {
+			return substrate.NewValidationError("firecracker: kernel is required (set in provider block or SYSBOX_FC_KERNEL env)")
+		}
+	}
 	return nil
 }
 

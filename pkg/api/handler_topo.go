@@ -84,11 +84,16 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		exec := runtime.NewExecutor(g, st)
 		exec.SetLogger(run.logs)
 		if err := exec.Apply(context.Background(), plan); err != nil {
-			_ = mgr.Save(st)
+			if saveErr := mgr.Save(st); saveErr != nil {
+				run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr))) //nolint:errcheck
+			}
 			s.jobs.finish(run, err)
 			return
 		}
-		_ = mgr.Save(st)
+		if err := mgr.Save(st); err != nil {
+			s.jobs.finish(run, fmt.Errorf("save state: %w", err))
+			return
+		}
 		run.logs.Write([]byte("Apply complete.\n")) //nolint:errcheck
 		s.jobs.finish(run, nil)
 	}()
@@ -118,11 +123,16 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		exec := runtime.NewExecutor(graph.New(), st)
 		exec.SetLogger(run.logs)
 		if err := exec.Destroy(context.Background(), plan); err != nil {
-			_ = mgr.Save(st)
+			if saveErr := mgr.Save(st); saveErr != nil {
+				run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr))) //nolint:errcheck
+			}
 			s.jobs.finish(run, err)
 			return
 		}
-		_ = mgr.Save(st)
+		if err := mgr.Save(st); err != nil {
+			s.jobs.finish(run, fmt.Errorf("save state: %w", err))
+			return
+		}
 		run.logs.Write([]byte("Destroy complete.\n")) //nolint:errcheck
 		s.jobs.finish(run, nil)
 	}()

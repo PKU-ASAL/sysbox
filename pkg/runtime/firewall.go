@@ -46,9 +46,10 @@ func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
 		Name:     n.ID.Name,
 		Provider: "network",
 		Instance: map[string]any{
-			"attach_to": netName,
-			"netns":     nsName,
-			"rules":     len(specs),
+			"attach_to":  netName,
+			"netns":      nsName,
+			"rules":      len(specs),
+			"rule_specs": specs,
 		},
 	})
 	return nil

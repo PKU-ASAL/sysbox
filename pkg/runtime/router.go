@@ -166,15 +166,24 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		}
 	}
 
+	inst := map[string]any{
+		"container_id": handle.ID,
+		"nics":         nics,
+		"nat_applied":  natApplied,
+	}
+	// Persist provider_extra so cold-destroy works for all substrates.
+	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+		inst["provider_extra"] = string(blob)
+	}
+	// Persist lifecycle flags.
+	if lc := cfg.Lifecycle; lc != nil {
+		inst["lifecycle_prevent_destroy"] = lc.PreventDestroy
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_router",
 		Name:     n.ID.Name,
 		Provider: subName,
-		Instance: map[string]any{
-			"container_id": handle.ID,
-			"nics":         nics,
-			"nat_applied":  natApplied,
-		},
+		Instance: inst,
 	})
 	return nil
 }

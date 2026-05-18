@@ -31,7 +31,10 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		// Docker-only destroys succeed without root.
 	}
 
-	mgr := state.NewManager(flagStateFile)
+	mgr, err := newManager()
+	if err != nil {
+		return err
+	}
 	s, err := mgr.Load()
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)

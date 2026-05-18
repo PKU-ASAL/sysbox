@@ -347,17 +347,32 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 }
 
 // NodeStatus checks if the VM process is still alive.
+// Hot path: in-process vmStore has the cmd handle, check via Signal(0).
+// Cold path: process was started by a previous CLI invocation; reconstruct
+// the socket path from HandleState and probe with pkill/pgrep.
 func (s *Substrate) NodeStatus(_ context.Context, h substrate.NodeHandle) (bool, error) {
+	// Hot path: process in current process table.
 	vmMu.Lock()
 	vm, ok := vmStore[h.ID]
 	vmMu.Unlock()
-	if !ok || vm.cmd == nil || vm.cmd.Process == nil {
+	if ok && vm.cmd != nil && vm.cmd.Process != nil {
+		if err := vm.cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			return false, nil
+		}
+		return true, nil
+	}
+
+	// Cold path: check if a firecracker process is still holding the socket.
+	hs, _ := h.Provider.(*HandleState)
+	if hs == nil || hs.Socket == "" {
 		return false, nil
 	}
-	if err := vm.cmd.Process.Signal(syscall.Signal(0)); err != nil {
-		return false, nil
+	if _, err := os.Stat(hs.Socket); err != nil {
+		return false, nil // socket gone → VM not running
 	}
-	return true, nil
+	// Socket exists; check if a process is listening on it.
+	out, _ := exec.Command("pgrep", "-f", hs.Socket).CombinedOutput()
+	return strings.TrimSpace(string(out)) != "", nil
 }
 
 // ── Firecracker config types ────────────────────────────────────────────────

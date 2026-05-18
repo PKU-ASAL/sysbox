@@ -191,7 +191,10 @@ func (s *Substrate) NodeStatus(ctx context.Context, h substrate.NodeHandle) (boo
 	if err != nil {
 		return false, nil
 	}
-	return strings.Contains(string(out), "running"), nil
+	state := strings.TrimSpace(string(out))
+	// Both "running" and "paused" are healthy states; "paused" means the VM
+	// exists and was explicitly suspended (sysbox pause), not crashed.
+	return state == "running" || state == "paused" || state == "in shutdown", nil
 }
 
 func (s *Substrate) PrepareHandle(_ context.Context, h *substrate.NodeHandle, _ any, _ substrate.StateReader) error {

@@ -42,7 +42,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("import only supported for sysbox_node and sysbox_network, got %q", typ)
 	}
 
-	mgr := state.NewManager(flagStateFile)
+	mgr, err := newManager()
+	if err != nil {
+		return err
+	}
 	s, err := mgr.Load()
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)

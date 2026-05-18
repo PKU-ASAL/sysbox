@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/oslab/sysbox/pkg/state"
 )
 
 var showCmd = &cobra.Command{
@@ -18,7 +16,10 @@ var showCmd = &cobra.Command{
 }
 
 func runShow(cmd *cobra.Command, args []string) error {
-	mgr := state.NewManager(flagStateFile)
+	mgr, err := newManager()
+	if err != nil {
+		return err
+	}
 	s, err := mgr.Load()
 	if err != nil {
 		return err

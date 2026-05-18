@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -41,7 +40,10 @@ func pauseResumeOp(addr string, resume bool) error {
 		return fmt.Errorf("pause/resume only supported for sysbox_node, got %q", typ)
 	}
 
-	mgr := state.NewManager(flagStateFile)
+	mgr, err := newManager()
+	if err != nil {
+		return err
+	}
 	s, err := mgr.Load()
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)

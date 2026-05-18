@@ -339,6 +339,7 @@ type RouterConfig struct {
 	Interfaces []RouterInterface `hcl:"interface,block"`
 	NatFrom    string            `hcl:"nat_from,optional"` // interface name (label)
 	NatTo      string            `hcl:"nat_to,optional"`   // interface name (label)
+	Lifecycle  *LifecycleConfig  `hcl:"lifecycle,block"`
 }
 
 type RouterInterface struct {

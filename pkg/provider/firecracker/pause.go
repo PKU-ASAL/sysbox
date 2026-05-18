@@ -35,5 +35,5 @@ func (s *Substrate) Resume(_ context.Context, h substrate.NodeHandle) error {
 // that cannot be re-discovered from a new CLI invocation. Import is only
 // meaningful for persistent substrates (docker, libvirt).
 func (s *Substrate) ReadNode(_ context.Context, _ string) (substrate.NodeHandle, error) {
-	return substrate.NodeHandle{}, fmt.Errorf("firecracker: import not supported (VMs are ephemeral)")
+	return substrate.NodeHandle{}, substrate.ErrNotSupported
 }

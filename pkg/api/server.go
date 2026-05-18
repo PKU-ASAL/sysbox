@@ -54,6 +54,9 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{suite}/nodes", s.handleListNodes)
 	m.HandleFunc("GET /v1/topologies/{suite}/nodes/{node}", s.handleGetNode)
 	m.HandleFunc("POST /v1/topologies/{suite}/nodes/{node}/exec", s.handleNodeExec)
+	m.HandleFunc("POST /v1/topologies/{suite}/nodes/{node}/pause", s.handleNodePause)
+	m.HandleFunc("POST /v1/topologies/{suite}/nodes/{node}/resume", s.handleNodeResume)
+	m.HandleFunc("POST /v1/topologies/{suite}/import", s.handleImport)
 }
 
 // authMiddleware enforces SYSBOX_API_TOKEN when set.

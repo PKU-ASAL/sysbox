@@ -22,6 +22,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	// apply), force-remove it. Reusing a partially-wired container would
 	// cause interface rename collisions on the next attach attempt.
 	if _, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
+		fmt.Printf("[docker] warning: force-removing stale container %q\n", spec.Name)
 		_ = s.cli.ContainerRemove(ctx, spec.Name, container.RemoveOptions{Force: true})
 	}
 

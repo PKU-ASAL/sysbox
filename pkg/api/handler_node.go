@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -113,7 +114,10 @@ func nodeConnection(st *state.State, name string) (substrate.Connection, error) 
 	// Reconstruct provider-specific handle state from the persisted blob.
 	var providerState any
 	if blob := util.AsString(res.Instance["provider_extra"]); blob != "" {
-		providerState, _ = sub.UnmarshalProviderState([]byte(blob))
+		providerState, err = sub.UnmarshalProviderState([]byte(blob))
+		if err != nil {
+			return nil, fmt.Errorf("node %q: corrupt provider state: %w", name, err)
+		}
 	}
 
 	handle := substrate.NodeHandle{
@@ -127,4 +131,127 @@ func nodeConnection(st *state.State, name string) (substrate.Connection, error) 
 		return nil, fmt.Errorf("no connection to node %q: %w", name, err)
 	}
 	return conn, nil
+}
+
+// POST /v1/topologies/{suite}/nodes/{node}/pause
+func (s *Server) handleNodePause(w http.ResponseWriter, r *http.Request) {
+	s.handleNodeLifecycle(r, func(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle) error {
+		return sub.Pause(ctx, h)
+	}, w)
+}
+
+// POST /v1/topologies/{suite}/nodes/{node}/resume
+func (s *Server) handleNodeResume(w http.ResponseWriter, r *http.Request) {
+	s.handleNodeLifecycle(r, func(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle) error {
+		return sub.Resume(ctx, h)
+	}, w)
+}
+
+// handleNodeLifecycle is the shared implementation for pause/resume.
+func (s *Server) handleNodeLifecycle(r *http.Request, fn func(context.Context, substrate.Substrate, substrate.NodeHandle) error, w http.ResponseWriter) {
+	suite := r.PathValue("suite")
+	name := r.PathValue("node")
+
+	st, err := s.loadState(suite)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+
+	res := st.FindResource("sysbox_node", name)
+	if res == nil {
+		writeError(w, http.StatusNotFound, fmt.Errorf("node %q not found", name))
+		return
+	}
+
+	sub, err := substrate.Get(res.Provider)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("substrate %q not registered: %w", res.Provider, err))
+		return
+	}
+
+	if !sub.Capabilities().SupportsPause {
+		writeError(w, http.StatusConflict, fmt.Errorf("substrate %q does not support pause/resume", res.Provider))
+		return
+	}
+
+	handle := substrate.NodeHandle{
+		ID:  util.AsString(res.Instance["container_id"]),
+		Net: substrate.NetInfo{PrimaryIP: util.AsString(res.Instance["primary_ip"])},
+	}
+	if blob := util.AsString(res.Instance["provider_extra"]); blob != "" {
+		if ps, err := sub.UnmarshalProviderState([]byte(blob)); err == nil {
+			handle.Provider = ps
+		}
+	}
+
+	if err := fn(r.Context(), sub, handle); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// POST /v1/topologies/{suite}/import
+// Body: {"type": "sysbox_node", "name": "db", "id": "my-container", "substrate": "docker"}
+func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
+	suite := r.PathValue("suite")
+
+	var body struct {
+		Type      string `json:"type"`
+		Name      string `json:"name"`
+		ID        string `json:"id"`
+		Substrate string `json:"substrate"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid body: %w", err))
+		return
+	}
+	if body.Type != "sysbox_node" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("import only supports sysbox_node, got %q", body.Type))
+		return
+	}
+
+	sub, err := substrate.Get(body.Substrate)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("substrate %q not registered: %w", body.Substrate, err))
+		return
+	}
+
+	handle, err := sub.ReadNode(r.Context(), body.ID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Errorf("read node: %w", err))
+		return
+	}
+
+	stateFile := s.stateFile(suite)
+	mgr := state.NewManager(stateFile)
+	st, err := mgr.Load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("load state: %w", err))
+		return
+	}
+	if r := st.FindResource(body.Type, body.Name); r != nil {
+		writeError(w, http.StatusConflict, fmt.Errorf("resource %s.%s already in state", body.Type, body.Name))
+		return
+	}
+
+	inst := map[string]any{
+		"container_id": handle.ID,
+		"primary_ip":   handle.Net.PrimaryIP,
+	}
+	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+		inst["provider_extra"] = string(blob)
+	}
+	st.AddResource(state.Resource{
+		Type:     body.Type,
+		Name:     body.Name,
+		Provider: body.Substrate,
+		Instance: inst,
+	})
+	if err := mgr.Save(st); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("save state: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "imported", "id": handle.ID})
 }

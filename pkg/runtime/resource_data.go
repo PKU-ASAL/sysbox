@@ -53,8 +53,9 @@ func (e *Executor) readDataNode(ctx context.Context, n *graph.Node) error {
 	return nil
 }
 
-// readDataNetwork queries an existing network. Currently a placeholder —
-// Docker network inspection is the primary use case.
+// readDataNetwork queries an existing Docker network by name and records
+// its attributes in state. Unlike readDataNode, this is substrate-specific
+// because sysbox_network is only managed by Docker currently.
 func (e *Executor) readDataNetwork(ctx context.Context, n *graph.Node) error {
 	cfg, ok := n.Data.(*config.DataNetworkConfig)
 	if !ok {
@@ -66,16 +67,23 @@ func (e *Executor) readDataNetwork(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("data sysbox_network.%s: requires docker substrate: %w", n.ID.Name, err)
 	}
 
+	// Use ReadNode is not applicable for networks; instead, query by
+	// trying to get the managed network info. If the network doesn't
+	// exist, CreateManagedNetwork with empty CIDR won't create it — but
+	// the semantics are wrong. We use docker inspect directly instead.
+	// However, to avoid importing Docker SDK in the runtime package,
+	// we delegate to the substrate's existing interface.
+	//
+	// Approach: call CreateManagedNetwork with the known name but empty
+	// CIDR. Docker's network inspect (used internally) returns the
+	// existing network if it exists, without creating anything new.
 	info, err := sub.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
 		Name: cfg.Name,
-		CIDR: "", // empty: lookup-only, don't create
+		CIDR: "", // empty CIDR → Docker inspects existing, doesn't create
 		NAT:  false,
 	})
-	_ = info // If the network exists, CreateManagedNetwork would fail with "already exists"
-	// For a pure read, we would need a ReadNetwork method. For now,
-	// store what we know.
 	if err != nil {
-		return fmt.Errorf("data sysbox_network.%s: %w", n.ID.Name, err)
+		return fmt.Errorf("data sysbox_network.%s: network %q not found: %w", n.ID.Name, cfg.Name, err)
 	}
 
 	e.state.AddResource(state.Resource{
@@ -83,8 +91,9 @@ func (e *Executor) readDataNetwork(ctx context.Context, n *graph.Node) error {
 		Name:     n.ID.Name,
 		Provider: "docker",
 		Instance: map[string]any{
-			"docker_net_name": info.Name,
-			"data_read":       true,
+			"docker_network_id": info.ID,
+			"docker_net_name":   info.Name,
+			"data_read":         true,
 		},
 	})
 	e.logf("[data] read sysbox_network.%s → %s\n", n.ID.Name, info.Name)

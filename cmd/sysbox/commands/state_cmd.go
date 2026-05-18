@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/oslab/sysbox/pkg/state"
 )
 
 var stateCmd = &cobra.Command{
@@ -47,7 +45,10 @@ func init() {
 }
 
 func runStateList(cmd *cobra.Command, args []string) error {
-	mgr := state.NewManager(flagStateFile)
+	mgr, err := newManager()
+	if err != nil {
+		return err
+	}
 	s, err := mgr.Load()
 	if err != nil {
 		return err
@@ -75,7 +76,10 @@ func runStateMv(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("to: %w", err)
 	}
 
-	mgr := state.NewManager(flagStateFile)
+	mgr, err := newManager()
+	if err != nil {
+		return err
+	}
 	s, err := mgr.Load()
 	if err != nil {
 		return err
@@ -108,7 +112,10 @@ func runStateRm(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr := state.NewManager(flagStateFile)
+	mgr, err := newManager()
+	if err != nil {
+		return err
+	}
 	s, err := mgr.Load()
 	if err != nil {
 		return err
@@ -133,7 +140,10 @@ func runStateShow2(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr := state.NewManager(flagStateFile)
+	mgr, err := newManager()
+	if err != nil {
+		return err
+	}
 	s, err := mgr.Load()
 	if err != nil {
 		return err
