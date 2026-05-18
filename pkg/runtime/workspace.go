@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
@@ -55,6 +56,13 @@ func BuildGraph(root *config.Root, ctx *hcl.EvalContext, hclFile ...string) (*gr
 	}
 	for i := range root.Modules {
 		if err := expandModule(root.Modules[i], g, ctx, callerFile); err != nil {
+			return nil, err
+		}
+	}
+	// Data blocks: add them to the graph as read-only nodes. They are
+	// executed during apply but never create/destroy infrastructure.
+	for i := range root.Data {
+		if err := expandDataBlock(root.Data[i], g, ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -389,5 +397,38 @@ func decodeNodeProviderConfig(cfg *config.NodeConfig, ctx *hcl.EvalContext) erro
 		return err
 	}
 	cfg.ProviderConfig = pc
+	return nil
+}
+
+// expandDataBlock decodes a data block and adds it to the graph as a
+// read-only node. Data nodes carry their decoded config in Data so that
+// the executor can call substrate.ReadNode during apply.
+func expandDataBlock(d config.DataBlock, g *graph.Graph, ctx *hcl.EvalContext) error {
+	var data any
+	var deps []graph.Ref
+
+	switch d.Type {
+	case "sysbox_node":
+		cfg := &config.DataNodeConfig{}
+		if diag := gohcl.DecodeBody(d.Remain, ctx, cfg); diag.HasErrors() {
+			return fmt.Errorf("data sysbox_node.%s: %s", d.Name, diag.Error())
+		}
+		data = cfg
+		if ref := config.ResolveName(cfg.Substrate); ref != "" {
+			deps = append(deps, graph.Ref{Type: "substrate", Name: ref})
+		}
+	case "sysbox_network":
+		cfg := &config.DataNetworkConfig{}
+		if diag := gohcl.DecodeBody(d.Remain, ctx, cfg); diag.HasErrors() {
+			return fmt.Errorf("data sysbox_network.%s: %s", d.Name, diag.Error())
+		}
+		data = cfg
+	default:
+		return fmt.Errorf("data block type %q not supported", d.Type)
+	}
+
+	// Data blocks use a "data_" prefix in the graph to distinguish from resources.
+	g.AddNode("data_"+d.Type, d.Name, deps)
+	g.SetData("data_"+d.Type, d.Name, data)
 	return nil
 }

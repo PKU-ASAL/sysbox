@@ -77,7 +77,7 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 		ConsoleKinds:    []string{substrate.ConsoleKindSerial},
 		NeedsCloudinit:  false, // sysbox-init + config drive replaces cloud-init
 		PIDVisibility:   substrate.PIDVisibilityOpaque,
-		SupportsPause:   false, // not wired yet
+		SupportsPause:   true, // SIGSTOP/SIGCONT on FC process
 		BootTime:        150 * time.Millisecond,
 		Notes:           "microVM via Firecracker; NICs cold-plug only; in-guest agent via vsock-rpc.",
 	}

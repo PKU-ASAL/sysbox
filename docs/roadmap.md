@@ -65,10 +65,10 @@ EDR 事件采集 / 存储 / 分析  ← EDR 自己的事
 | `count` 元参数 | **P1** | 最常用的多实例语法，1–2 天可完成 |
 | `for_each` 完整化 | **P1** | 已有骨架，补全 set 类型和边界情况 |
 | `module` 块 | **P2** | 复用拓扑片段；Wave 3 |
-| `data` source | **P2** | 查询已有网络 / VM；Wave 3 |
-| `import` 命令 | **P3** | 把已有容器/VM 纳入 state |
-| `lifecycle` 块 | **P3** | prevent_destroy / ignore_changes |
-| remote state | **P4** | 当前单机足够 |
+| `data` source | **P2** | ✅ 查询已有网络 / VM |
+| `import` 命令 | **P3** | ✅ 把已有容器/VM 纳入 state |
+| `lifecycle` 块 | **P3** | ✅ prevent_destroy / ignore_changes |
+| remote state | **P4** | ✅ StateBackend 接口 + HTTP/S3 backend |
 | workspace 命名空间 | **P4** | SUITE= 参数已覆盖核心需求 |
 
 ---
@@ -169,16 +169,16 @@ resource "sysbox_node" "attacker" {
 
 ---
 
-## 5. Wave 4 · 远期 backlog（不排期）
+## 5. Wave 4 · 运维增强（已完成）
 
-| 功能 | 触发条件 |
-|---|---|
-| `data` source（查询已有 Docker 网络/VM） | 出现具体需求 |
-| `import` 命令（把已有节点纳入 state） | 出现迁移场景 |
-| `lifecycle` 块（prevent_destroy 等） | 多人协作或 CI 保护 |
-| remote state（S3 / HTTP backend） | 多机部署需求 |
-| Pause / Resume（快速重置靶场） | 高频重置场景 |
-| Windows substrate（WinRM + sysprep） | Windows 靶场需求 |
+| 功能 | 状态 | 实现 |
+|---|---|---|
+| `lifecycle` 块 | ✅ | `LifecycleConfig` in schema, `prevent_destroy` in plan/destroy, `ignore_changes` in state |
+| Pause / Resume | ✅ | `Substrate.Pause/Resume` + `sysbox pause/resume` CLI; docker pause, FC SIGSTOP, virsh suspend |
+| `import` 命令 | ✅ | `Substrate.ReadNode` + `sysbox import` CLI; docker inspect, virsh dominfo |
+| `data` source | ✅ | `DataBlock` in schema, `data "sysbox_node"` / `data "sysbox_network"`, read-only graph nodes |
+| remote state | ✅ | `StateBackend` interface; `LocalBackend` (flock), `HTTPBackend` (PUT/GET), `S3Backend` (aws CLI); `--backend` flag |
+| Windows substrate | ❌ | 不实施（无需求） |
 
 ---
 
@@ -186,9 +186,10 @@ resource "sysbox_node" "attacker" {
 
 ```
 Wave 1  已完成  ─────────────────────────────────  M1: 双 substrate + 接口稳定
-Wave 2  ~10天   PR-07/08 ────────  PR-09 ────────  M2: 运维 API 可用；count/for_each
-Wave 3  ~18天   PR-11 ──  PR-10 ──────────  PR-13  M3: libvirt + module + 三 substrate e2e
-                PR-12 ──────────────────────┘
+Wave 2  已完成  PR-07/08 ────────  PR-09 ────────  M2: 运维 API 可用；count/for_each
+Wave 3  已完成  PR-11 ──  PR-10 ──────────  PR-13  M3: libvirt + module + 三 substrate e2e
+                   PR-12 ──────────────────────┘
+Wave 4  已完成  lifecycle ── pause ── import ── data ── remote  M4: 运维增强全齐
 ```
 
 按 1 人 60% allocation：M2 约 3 周，M3 约 8 周（M2 完成后继续）。

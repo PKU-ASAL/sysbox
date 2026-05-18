@@ -42,16 +42,20 @@ func (e *Executor) createNetwork(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
+	inst := map[string]any{
+		"netns":   nsName,
+		"bridge":  brName,
+		"cidr":    cfg.CIDR,
+		"gateway": gwCIDR,
+	}
+	if lc := cfg.Lifecycle; lc != nil {
+		inst["lifecycle_prevent_destroy"] = lc.PreventDestroy
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_network",
 		Name:     n.ID.Name,
 		Provider: "network",
-		Instance: map[string]any{
-			"netns":   nsName,
-			"bridge":  brName,
-			"cidr":    cfg.CIDR,
-			"gateway": gwCIDR,
-		},
+		Instance: inst,
 	})
 	return nil
 }
@@ -82,16 +86,20 @@ func (e *Executor) createNATNetwork(ctx context.Context, n *graph.Node, cfg *con
 			n.ID.Name, cfg.CIDR, err)
 	}
 
+	natInst := map[string]any{
+		"nat":               true,
+		"docker_network_id": info.ID,
+		"docker_net_name":   info.Name,
+		"cidr":              cfg.CIDR,
+	}
+	if lc := cfg.Lifecycle; lc != nil {
+		natInst["lifecycle_prevent_destroy"] = lc.PreventDestroy
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_network",
 		Name:     n.ID.Name,
 		Provider: "docker",
-		Instance: map[string]any{
-			"nat":               true,
-			"docker_network_id": info.ID,
-			"docker_net_name":   info.Name,
-			"cidr":              cfg.CIDR,
-		},
+		Instance: natInst,
 	})
 	return nil
 }

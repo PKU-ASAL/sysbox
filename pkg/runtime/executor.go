@@ -57,6 +57,10 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 		return e.createSSHAccess(ctx, node)
 	case "sysbox_actor":
 		return e.createActor(ctx, node)
+	case "data_sysbox_node":
+		return e.readDataNode(ctx, node)
+	case "data_sysbox_network":
+		return e.readDataNetwork(ctx, node)
 	default:
 		return nil
 	}
@@ -85,6 +89,10 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 		return nil
 	case "sysbox_actor":
 		return e.destroyActor(ctx, r)
+	case "data_sysbox_node", "data_sysbox_network":
+		// Data sources are read-only; nothing to destroy in the substrate.
+		e.state.RemoveResource(r.Type, r.Name)
+		return nil
 	default:
 		e.logf("[destroy] skipping unimplemented resource type %q (%s)\n", r.Type, r.Name)
 		e.state.RemoveResource(r.Type, r.Name)

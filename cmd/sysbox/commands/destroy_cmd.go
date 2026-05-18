@@ -42,7 +42,22 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("Will destroy %d resource(s).\n", len(s.Resources))
+	// Honour lifecycle.prevent_destroy: remove protected resources from the
+	// destroy list and emit a warning.
+	var toDestroy, protected []state.Resource
+	for _, r := range s.Resources {
+		if pd, _ := r.Instance["lifecycle_prevent_destroy"].(bool); pd {
+			protected = append(protected, r)
+		} else {
+			toDestroy = append(toDestroy, r)
+		}
+	}
+	if len(protected) > 0 {
+		for _, r := range protected {
+			fmt.Printf("  ! %s.%s  (lifecycle.prevent_destroy = true — skipped)\n", r.Type, r.Name)
+		}
+	}
+	fmt.Printf("Will destroy %d resource(s).\n", len(toDestroy))
 	if !flagAutoApprove {
 		if ok, err := confirmPrompt("Destroy"); !ok || err != nil {
 			fmt.Println("Aborted.")
@@ -50,7 +65,10 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	plan := &runtime.Plan{Destroy: append([]state.Resource(nil), s.Resources...)}
+	plan := &runtime.Plan{
+		Destroy:   toDestroy,
+		Protected: protected,
+	}
 
 	exec := runtime.NewExecutor(graph.New(), s)
 	if err := exec.Destroy(context.Background(), plan); err != nil {

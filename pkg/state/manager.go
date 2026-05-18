@@ -2,86 +2,75 @@ package state
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"time"
-
-	"github.com/gofrs/flock"
 )
 
-const defaultLockTimeout = 10 * time.Second
-
+// Manager reads and writes state through a Backend. By default it uses
+// LocalBackend (file on disk with flock). The backend can be swapped for
+// HTTP or S3 by calling SetBackend before Load/Save.
 type Manager struct {
-	path string
+	backend Backend
+	path    string // kept for backwards compat with Path()
 }
 
 func NewManager(path string) *Manager {
-	return &Manager{path: path}
+	return &Manager{
+		backend: &LocalBackend{Path: path},
+		path:    path,
+	}
 }
 
-// Load reads the state file. Missing file returns empty state, not error.
+// NewManagerWithBackend creates a Manager with a custom backend.
+func NewManagerWithBackend(b Backend) *Manager {
+	return &Manager{backend: b}
+}
+
+// SetBackend replaces the active backend. Must be called before Load/Save.
+func (m *Manager) SetBackend(b Backend) { m.backend = b }
+
+// Backend returns the active backend.
+func (m *Manager) Backend() Backend { return m.backend }
+
+// Load reads the state from the active backend.
+// Missing state returns an empty State, not an error.
 func (m *Manager) Load() (*State, error) {
-	data, err := os.ReadFile(m.path)
+	return m.LoadWithContext(context.Background())
+}
+
+// LoadWithContext is like Load but respects the given context.
+func (m *Manager) LoadWithContext(ctx context.Context) (*State, error) {
+	data, err := m.backend.Load(ctx)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return &State{Version: SchemaVersion}, nil
-		}
-		return nil, fmt.Errorf("read state: %w", err)
+		return nil, err
+	}
+	if data == nil {
+		return &State{Version: SchemaVersion}, nil
 	}
 	return Unmarshal(data)
 }
 
-// Save atomically writes state to disk: write temp file, then rename.
-// Acquires a file lock with a timeout so concurrent apply/sensor don't
-// immediately fail when briefly contending.
+// Save writes state through the active backend.
 func (m *Manager) Save(s *State) error {
 	return m.SaveWithContext(context.Background(), s)
 }
 
-// SaveWithContext is like Save but respects the given context for lock
-// acquisition. Defaults to a 10-second timeout if the context has no
-// deadline.
+// SaveWithContext is like Save but respects the given context.
 func (m *Manager) SaveWithContext(ctx context.Context, s *State) error {
-	if err := os.MkdirAll(filepath.Dir(m.path), 0o755); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
-	}
-
-	lock := flock.New(m.path + ".lock")
-	timeout := defaultLockTimeout
-	if dl, ok := ctx.Deadline(); ok {
-		timeout = time.Until(dl)
-		if timeout <= 0 {
-			return fmt.Errorf("state lock: context deadline exceeded")
-		}
-	}
-
-	locked, err := lock.TryLockContext(ctx, timeout)
-	if err != nil {
-		return fmt.Errorf("acquire state lock: %w", err)
-	}
-	if !locked {
-		return fmt.Errorf("state is locked by another process (timeout after %v)", timeout)
-	}
-	defer lock.Unlock()
-
-	// Stamp the current schema version so callers that forget to set it
-	// (or construct State{} directly) still produce a self-describing file.
 	s.Version = SchemaVersion
+
+	unlock, err := m.backend.Lock(ctx)
+	if err != nil {
+		return err
+	}
+	if unlock != nil {
+		defer unlock()
+	}
 
 	data, err := s.Marshal()
 	if err != nil {
 		return err
 	}
-
-	tmp := m.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("write temp state: %w", err)
-	}
-	return os.Rename(tmp, m.path)
+	return m.backend.Save(ctx, data)
 }
 
-// Path returns the state file path managed by this Manager.
+// Path returns the state file path (local backend only).
 func (m *Manager) Path() string { return m.path }

@@ -147,6 +147,44 @@ func (s *Substrate) DestroyNode(ctx context.Context, h substrate.NodeHandle) err
 	return nil
 }
 
+func (s *Substrate) Pause(ctx context.Context, h substrate.NodeHandle) error {
+	hs := hsFrom(h)
+	if out, err := exec.CommandContext(ctx, "virsh", "suspend", hs.DomainName).CombinedOutput(); err != nil {
+		return fmt.Errorf("libvirt: virsh suspend: %w\n%s", err, out)
+	}
+	return nil
+}
+
+func (s *Substrate) Resume(ctx context.Context, h substrate.NodeHandle) error {
+	hs := hsFrom(h)
+	if out, err := exec.CommandContext(ctx, "virsh", "resume", hs.DomainName).CombinedOutput(); err != nil {
+		return fmt.Errorf("libvirt: virsh resume: %w\n%s", err, out)
+	}
+	return nil
+}
+
+// ReadNode queries libvirt for an existing domain by name and returns a
+// NodeHandle suitable for importing into sysbox state.
+func (s *Substrate) ReadNode(ctx context.Context, id string) (substrate.NodeHandle, error) {
+	out, err := exec.CommandContext(ctx, "virsh", "dominfo", id).CombinedOutput()
+	if err != nil {
+		return substrate.NodeHandle{}, fmt.Errorf("libvirt: domain %q not found: %w\n%s", id, err, out)
+	}
+	// Extract the domain UUID from dominfo output.
+	var uuid string
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "UUID:") {
+			uuid = strings.TrimSpace(strings.TrimPrefix(line, "UUID:"))
+		}
+	}
+	hs := &HandleState{DomainName: id}
+	return substrate.NodeHandle{
+		ID:       uuid,
+		Provider: hs,
+		Conn:     substrate.ConnInfo{Kind: substrate.ConnKindSSH},
+	}, nil
+}
+
 func (s *Substrate) NodeStatus(ctx context.Context, h substrate.NodeHandle) (bool, error) {
 	hs := hsFrom(h)
 	out, err := exec.CommandContext(ctx, "virsh", "domstate", hs.DomainName).CombinedOutput()

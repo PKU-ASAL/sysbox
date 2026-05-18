@@ -1,0 +1,109 @@
+package state
+
+import (
+	"testing"
+)
+
+func TestParseBackendURL_Local(t *testing.T) {
+	b, err := ParseBackendURL("/tmp/state.json")
+	if err != nil {
+		t.Fatalf("ParseBackendURL: %v", err)
+	}
+	lb, ok := b.(*LocalBackend)
+	if !ok {
+		t.Fatalf("expected LocalBackend, got %T", b)
+	}
+	if lb.Path != "/tmp/state.json" {
+		t.Errorf("Path = %q, want /tmp/state.json", lb.Path)
+	}
+}
+
+func TestParseBackendURL_FileScheme(t *testing.T) {
+	b, err := ParseBackendURL("file:///tmp/state.json")
+	if err != nil {
+		t.Fatalf("ParseBackendURL: %v", err)
+	}
+	lb, ok := b.(*LocalBackend)
+	if !ok {
+		t.Fatalf("expected LocalBackend, got %T", b)
+	}
+	if lb.Path != "/tmp/state.json" {
+		t.Errorf("Path = %q, want /tmp/state.json", lb.Path)
+	}
+}
+
+func TestParseBackendURL_HTTP(t *testing.T) {
+	b, err := ParseBackendURL("https://myserver.com/state.json")
+	if err != nil {
+		t.Fatalf("ParseBackendURL: %v", err)
+	}
+	hb, ok := b.(*HTTPBackend)
+	if !ok {
+		t.Fatalf("expected HTTPBackend, got %T", b)
+	}
+	if hb.URL != "https://myserver.com/state.json" {
+		t.Errorf("URL = %q", hb.URL)
+	}
+}
+
+func TestParseBackendURL_S3(t *testing.T) {
+	b, err := ParseBackendURL("s3://my-bucket/sysbox/state.json")
+	if err != nil {
+		t.Fatalf("ParseBackendURL: %v", err)
+	}
+	sb, ok := b.(*S3Backend)
+	if !ok {
+		t.Fatalf("expected S3Backend, got %T", b)
+	}
+	if sb.Bucket != "my-bucket" {
+		t.Errorf("Bucket = %q, want my-bucket", sb.Bucket)
+	}
+	if sb.Key != "sysbox/state.json" {
+		t.Errorf("Key = %q, want sysbox/state.json", sb.Key)
+	}
+}
+
+func TestParseBackendURL_S3Invalid(t *testing.T) {
+	_, err := ParseBackendURL("s3://bucket-without-key")
+	if err == nil {
+		t.Error("expected error for s3 URL without key")
+	}
+}
+
+func TestParseBackendURL_Unsupported(t *testing.T) {
+	_, err := ParseBackendURL("ftp://host/path")
+	if err == nil {
+		t.Error("expected error for unsupported scheme")
+	}
+}
+
+func TestLocalBackend_SaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/state.json"
+	b := &LocalBackend{Path: path}
+
+	s := &State{Version: SchemaVersion, Resources: []Resource{
+		{Type: "sysbox_node", Name: "test", Provider: "docker"},
+	}}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if err := b.Save(nil, data); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := b.Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded == nil {
+		t.Fatal("Load returned nil")
+	}
+	s2, err := Unmarshal(loaded)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(s2.Resources) != 1 {
+		t.Errorf("Resources = %d, want 1", len(s2.Resources))
+	}
+}

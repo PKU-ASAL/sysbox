@@ -143,6 +143,40 @@ func (s *Substrate) DestroyNode(ctx context.Context, h substrate.NodeHandle) err
 	return s.cli.ContainerRemove(ctx, h.ID, container.RemoveOptions{Force: true})
 }
 
+func (s *Substrate) Pause(ctx context.Context, h substrate.NodeHandle) error {
+	return s.cli.ContainerPause(ctx, h.ID)
+}
+
+func (s *Substrate) Resume(ctx context.Context, h substrate.NodeHandle) error {
+	return s.cli.ContainerUnpause(ctx, h.ID)
+}
+
+// ReadNode inspects an existing Docker container by name or ID and returns
+// a NodeHandle suitable for importing into sysbox state.
+func (s *Substrate) ReadNode(ctx context.Context, id string) (substrate.NodeHandle, error) {
+	inspect, err := s.cli.ContainerInspect(ctx, id)
+	if err != nil {
+		return substrate.NodeHandle{}, fmt.Errorf("docker: container %q not found: %w", id, err)
+	}
+	hs := &HandleState{ContainerName: inspect.Name}
+	if len(inspect.Name) > 0 && inspect.Name[0] == '/' {
+		hs.ContainerName = inspect.Name[1:]
+	}
+	var primaryIP string
+	for _, net := range inspect.NetworkSettings.Networks {
+		if net.IPAddress != "" {
+			primaryIP = net.IPAddress
+			break
+		}
+	}
+	return substrate.NodeHandle{
+		ID:       inspect.ID[:12],
+		Provider: hs,
+		Conn:     substrate.ConnInfo{Kind: substrate.ConnKindDocker},
+		Net:      substrate.NetInfo{PrimaryIP: primaryIP},
+	}, nil
+}
+
 // trimCIDR strips the prefix length from an IP/CIDR string, returning just the
 // host address. Docker's IPAM config expects a plain IP, not CIDR notation.
 func trimCIDR(cidr string) string {

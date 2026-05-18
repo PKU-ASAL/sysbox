@@ -62,9 +62,10 @@ func (s *Substrate) Name() string { return subName }
 // (NICHotPlug=false); provisioners reach the VM over SSH.
 func (s *Substrate) Capabilities() substrate.Capabilities {
 	return substrate.Capabilities{
-		NICHotPlug:   false,
-		NICKinds:     []string{"tap"},
-		ConsoleKinds: []string{"serial"},
+		NICHotPlug:    false,
+		NICKinds:      []string{"tap"},
+		ConsoleKinds:  []string{"serial"},
+		SupportsPause: true, // virsh suspend/resume
 	}
 }
 

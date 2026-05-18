@@ -71,6 +71,9 @@ func runApply(cmd *cobra.Command, args []string) error {
 	for _, r := range plan.Destroy {
 		fmt.Printf("  - %s.%s\n", r.Type, r.Name)
 	}
+	for _, r := range plan.Protected {
+		fmt.Printf("  ! %s.%s  (lifecycle.prevent_destroy — skipped)\n", r.Type, r.Name)
+	}
 
 	if !flagAutoApprove {
 		if ok, err := confirmPrompt("Apply"); !ok || err != nil {

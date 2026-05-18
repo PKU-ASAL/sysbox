@@ -187,6 +187,14 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		"primary_ip":   handle.Net.PrimaryIP,
 		"nics":         nics,
 	}
+	// Persist lifecycle flags so ComputePlan can honour them on future runs
+	// even if the resource is removed from HCL.
+	if lc := cfg.Lifecycle; lc != nil {
+		nodeInstance["lifecycle_prevent_destroy"] = lc.PreventDestroy
+		if len(lc.IgnoreChanges) > 0 {
+			nodeInstance["lifecycle_ignore_changes"] = lc.IgnoreChanges
+		}
+	}
 	// Substrate-specific state (vsock metadata, vm_dir, etc.) goes through
 	// MarshalProviderState so runtime stays substrate-agnostic.
 	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {

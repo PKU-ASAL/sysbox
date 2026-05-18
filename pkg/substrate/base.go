@@ -85,6 +85,17 @@ func (BaseSubstrate) RemoveManagedNetwork(_ context.Context, _ string) error {
 	return ErrNotSupported
 }
 
+// ReadNode returns ErrNotSupported by default.
+func (BaseSubstrate) ReadNode(_ context.Context, _ string) (NodeHandle, error) {
+	return NodeHandle{}, ErrNotSupported
+}
+
+// Pause returns ErrNotSupported by default.
+func (BaseSubstrate) Pause(_ context.Context, _ NodeHandle) error { return ErrNotSupported }
+
+// Resume returns ErrNotSupported by default.
+func (BaseSubstrate) Resume(_ context.Context, _ NodeHandle) error { return ErrNotSupported }
+
 // MarshalProviderState returns (nil, nil) by default: the substrate persists
 // nothing beyond the NodeHandle.ID. Override when there is substrate-specific
 // state to preserve across CLI invocations.

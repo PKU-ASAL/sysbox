@@ -90,6 +90,19 @@ type Substrate interface {
 	// BaseSubstrate provides a no-op default.
 	PrepareHandle(ctx context.Context, handle *NodeHandle, pc any, st StateReader) error
 
+	// ReadNode queries the substrate for a node that exists outside of sysbox
+	// state (e.g. a pre-existing container or VM). Returns a NodeHandle that
+	// the runtime can store directly in state via `sysbox import`.
+	// Returns ErrNotSupported if the substrate does not implement import.
+	ReadNode(ctx context.Context, id string) (NodeHandle, error)
+
+	// Pause suspends the node (container freeze / VM pause). Returns
+	// ErrNotSupported if the substrate does not implement suspend.
+	Pause(ctx context.Context, handle NodeHandle) error
+
+	// Resume un-suspends a paused node.
+	Resume(ctx context.Context, handle NodeHandle) error
+
 	// MarshalProviderState serialises NodeHandle.Provider to JSON for state
 	// persistence. Returning (nil, nil) means "this substrate has no
 	// provider-specific state to persist". Runtime stores the result in

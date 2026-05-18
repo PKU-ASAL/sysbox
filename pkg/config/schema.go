@@ -12,6 +12,7 @@ type Root struct {
 	Variables  []VariableBlock  `hcl:"variable,block"`
 	Modules    []ModuleBlock    `hcl:"module,block"`
 	Resources  []ResourceBlock  `hcl:"resource,block"`
+	Data       []DataBlock      `hcl:"data,block"`
 	Locals     []LocalsBlock    `hcl:"locals,block"`
 	Outputs    []OutputBlock    `hcl:"output,block"`
 }
@@ -59,6 +60,33 @@ type ResourceBlock struct {
 	Type   string   `hcl:"type,label"`
 	Name   string   `hcl:"name,label"`
 	Remain hcl.Body `hcl:",remain"`
+}
+
+// DataBlock is a read-only query block:
+//
+//	data "sysbox_node" "existing" {
+//	  substrate = substrate.docker.dk
+//	  id        = "my-container"
+//	}
+//
+// Unlike resources, data blocks do not create infrastructure; they query
+// existing nodes and make attributes available in the eval context so
+// other resources can reference them (e.g. data.sysbox_node.existing.ip).
+type DataBlock struct {
+	Type   string   `hcl:"type,label"`
+	Name   string   `hcl:"name,label"`
+	Remain hcl.Body `hcl:",remain"`
+}
+
+// DataNodeConfig is the decoded form of data "sysbox_node" blocks.
+type DataNodeConfig struct {
+	Substrate string `hcl:"substrate"`
+	ID        string `hcl:"id"` // container name, domain name, etc.
+}
+
+// DataNetworkConfig is the decoded form of data "sysbox_network" blocks.
+type DataNetworkConfig struct {
+	Name string `hcl:"name"` // docker network name or bridge name
 }
 
 // ForEachHeader is decoded first from a ResourceBlock.Remain to extract the
@@ -137,6 +165,26 @@ type ProvisionerConfig struct {
 // Typed representations after second-pass decoding.
 
 // NodeConfig is the substrate-neutral HCL shape for `resource "sysbox_node"`.
+// LifecycleConfig is the optional `lifecycle { ... }` sub-block shared by
+// sysbox_node and sysbox_network resources.
+//
+//	resource "sysbox_node" "db" {
+//	  ...
+//	  lifecycle {
+//	    prevent_destroy = true
+//	    ignore_changes  = ["image"]
+//	  }
+//	}
+type LifecycleConfig struct {
+	// PreventDestroy prevents `sysbox destroy` from removing this resource.
+	// The destroy command will print a warning and skip the resource.
+	PreventDestroy bool `hcl:"prevent_destroy,optional"`
+	// IgnoreChanges lists attribute names that should be excluded from drift
+	// detection. When a resource is flagged as Changed (drift), attributes
+	// listed here are not considered for re-creation.
+	IgnoreChanges []string `hcl:"ignore_changes,optional"`
+}
+
 // Substrate-specific options (privileged, kernel, vcpus, ...) live in a
 // nested `provider "X" {}` block decoded by the substrate itself via
 // Substrate.DecodeProviderConfig.
@@ -151,6 +199,7 @@ type NodeConfig struct {
 	Connections  []ConnectionConfig  `hcl:"connection,block"`
 	Provisioners []ProvisionerConfig `hcl:"provisioner,block"`
 	Providers    []ProviderBlock     `hcl:"provider,block"`
+	Lifecycle    *LifecycleConfig    `hcl:"lifecycle,block"`
 	// ProviderConfig is filled by the loader after the substrate is resolved
 	// (substrate.DecodeProviderConfig). Not part of the HCL surface; gohcl
 	// ignores fields with no `hcl:` tag.
@@ -172,9 +221,10 @@ type LinkConfig struct {
 }
 
 type NetworkConfig struct {
-	CIDR string `hcl:"cidr"`
-	Type string `hcl:"type,optional"`
-	NAT  bool   `hcl:"nat,optional"`
+	CIDR      string           `hcl:"cidr"`
+	Type      string           `hcl:"type,optional"`
+	NAT       bool             `hcl:"nat,optional"`
+	Lifecycle *LifecycleConfig `hcl:"lifecycle,block"`
 }
 
 // ActorConfig declares an ACP-driven actor (attacker, noise user, etc.).
