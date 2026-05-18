@@ -19,6 +19,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 FIELD_FILE="${SCRIPT_DIR}/field.sysbox.hcl"
 STATE_FILE="${REPO_ROOT}/runs/three-nodes/state.json"
 SYSBOX="${REPO_ROOT}/bin/sysbox"
+API_ADDR="${SYSBOX_API_ADDR:-:9876}"
+API_PID_FILE="$(dirname "${STATE_FILE}")/api.pid"
 
 GO="${GO:-$(command -v go 2>/dev/null || echo /usr/local/go/bin/go)}"
 
@@ -38,6 +40,34 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 require_root() { [ "$(id -u)" = "0" ] || die "Run: sudo -E $0 $*"; }
 
 sysbox() { "${SYSBOX}" --state "${STATE_FILE}" --file "${FIELD_FILE}" "$@"; }
+
+start_api() {
+    # Stop any previous API server on this port.
+    stop_api 2>/dev/null || true
+    echo "==> Starting API server on ${API_ADDR}..."
+    "${SYSBOX}" serve --addr "${API_ADDR}" &
+    echo $! > "${API_PID_FILE}"
+    sleep 1
+    if kill -0 "$(cat "${API_PID_FILE}")" 2>/dev/null; then
+        echo "    API PID=$(cat "${API_PID_FILE}")  http://localhost${API_ADDR}/v1/health"
+    else
+        echo "    WARNING: API server failed to start (port in use?)"
+        rm -f "${API_PID_FILE}"
+    fi
+}
+
+stop_api() {
+    if [ -f "${API_PID_FILE}" ]; then
+        local pid
+        pid="$(cat "${API_PID_FILE}")"
+        if kill -0 "${pid}" 2>/dev/null; then
+            echo "==> Stopping API server (PID ${pid})..."
+            kill "${pid}" 2>/dev/null
+            wait "${pid}" 2>/dev/null || true
+        fi
+        rm -f "${API_PID_FILE}"
+    fi
+}
 
 build_sysbox() {
     echo "==> Building sysbox..."
@@ -106,11 +136,15 @@ cmd_up() {
     echo "  node_db       10.0.2.20                  postgres:16-alpine :5432"
     echo ""
     echo "  ACP endpoint:   http://172.20.0.10:4096"
+    echo "  API endpoint:   http://localhost${API_ADDR}/v1/health"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    start_api
 }
 
 cmd_down() {
     require_root "down"
+    stop_api
     sysbox destroy --auto-approve
     clean_netns
     echo "Down."
@@ -131,6 +165,12 @@ d = json.load(sys.stdin)
 i = d.get('instance', {})
 print(f'  pid={i.get(\"pid\",\"?\")}  port={i.get(\"port\",\"?\")}  acp={i.get(\"acp_url\",\"?\")}')
 " 2>/dev/null || echo "  not in state"
+    echo ""
+    if [ -f "${API_PID_FILE}" ] && kill -0 "$(cat "${API_PID_FILE}")" 2>/dev/null; then
+        echo "==> API  http://localhost${API_ADDR}/v1/health  (PID $(cat "${API_PID_FILE}"))"
+    else
+        echo "==> API  (not running)"
+    fi
 }
 
 cmd_exec() {
@@ -141,6 +181,18 @@ cmd_exec() {
     docker exec -it "sysbox-${node}" "${cmd[@]}"
 }
 
+cmd_api() {
+    local action="${1:-start}"
+    case "${action}" in
+        start) start_api ;;
+        stop)  stop_api ;;
+        *)
+            echo "Usage: $0 api {start|stop}"
+            echo "  API_ADDR=${API_ADDR}"
+            ;;
+    esac
+}
+
 CMD="${1:-help}"
 shift 2>/dev/null || true
 case "${CMD}" in
@@ -148,6 +200,7 @@ case "${CMD}" in
     down)   cmd_down ;;
     status) cmd_status ;;
     exec)   cmd_exec "$@" ;;
+    api)    cmd_api "$@" ;;
     help|--help|-h) sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
-    *) echo "Usage: $0 {up|down|status|exec}"; exit 1 ;;
+    *) echo "Usage: $0 {up|down|status|exec|api}"; exit 1 ;;
 esac
