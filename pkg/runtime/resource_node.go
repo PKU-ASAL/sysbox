@@ -172,6 +172,16 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		})
 	}
 
+	// Populate PrimaryIP from the first link before writing state, so that
+	// actor resources can read it back from nodeState.Instance["primary_ip"].
+	if len(cfg.Links) > 0 {
+		firstIP := cfg.Links[0].IP
+		if idx := strings.Index(firstIP, "/"); idx >= 0 {
+			firstIP = firstIP[:idx]
+		}
+		handle.Net.PrimaryIP = firstIP
+	}
+
 	nodeInstance := map[string]any{
 		"container_id": handle.ID,
 		"primary_ip":   handle.Net.PrimaryIP,
@@ -197,16 +207,6 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			_ = sub.DestroyNode(ctx, handle)
 			return fmt.Errorf("start node %s: %w", n.ID.Name, err)
 		}
-	}
-
-	// Populate the substrate-neutral PrimaryIP from the first link so that
-	// PrepareHandle / Connection() can derive SSH coordinates uniformly.
-	if len(cfg.Links) > 0 {
-		firstIP := cfg.Links[0].IP
-		if idx := strings.Index(firstIP, "/"); idx >= 0 {
-			firstIP = firstIP[:idx]
-		}
-		handle.Net.PrimaryIP = firstIP
 	}
 
 	// Let the substrate populate ConnInfo (Kind, Endpoint, Auth) now that
