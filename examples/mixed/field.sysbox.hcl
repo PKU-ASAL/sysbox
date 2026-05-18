@@ -1,22 +1,16 @@
 # ── Mixed topology: Docker + Firecracker on shared networks ──────────────────
 #
-# Demonstrates heterogeneous substrate: Docker containers (shared kernel,
-# observed via tracee/mntns) alongside Firecracker microVMs (isolated kernel,
-# observed via vm-vsock in-VM agent). Both types share the same L2 networks
-# and can communicate directly.
-#
-# Key insight: Docker nodes use veth pairs, VM nodes use TAP devices —
-# but both attach to the same Linux bridge, so they share the same L2 domain.
+# Mixed topology: Docker containers + Firecracker microVMs on shared networks.
+# Docker nodes use veth pairs, VM nodes use TAP devices — both attach to the
+# same Linux bridge so they share the same L2 domain.
 #
 # Prerequisites:
 #   - firecracker binary in PATH
-#   - /tmp/vmlinux (uncompressed kernel)
-#   - Docker images built (make images)
+#   - SYSBOX_ROOTFS set, or default ~/.cache/sysbox/rootfs/ubuntu-24.04.ext4
+#   - sysbox-attacker:latest image (built by lab.sh)
 #
 # Usage:
-#   sysbox apply examples/mixed/field.sysbox.hcl
-#   sysbox sensor start
-#   sysbox destroy
+#   sudo -E make lab SUITE=mixed
 
 # ── Substrates ──────────────────────────────────────────────────────────────
 
@@ -177,40 +171,6 @@ resource "sysbox_actor" "red" {
   command  = ["opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
   port     = 4096
   env      = { DEEPSEEK_API_KEY = env("DEEPSEEK_API_KEY") }
-}
-
-# ── eBPF Sensor (tracee sidecar for Docker nodes) ────────────────────────────
-#
-# Runs aquasec/tracee as a privileged container sharing the host PID namespace.
-# The tracee backend docker-execs into this container to start/stop tracing.
-# Not needed for VM nodes (vm-vsock uses the in-guest agent instead).
-
-resource "sysbox_image" "tracee" {
-  substrate  = substrate.docker.dk
-  docker_ref = "aquasec/tracee:latest"
-}
-
-resource "sysbox_node" "sensor" {
-  image     = sysbox_image.tracee.id
-  substrate = substrate.docker.dk
-
-  provider "docker" {
-    privileged    = true
-    pid_mode      = "host"
-    cgroupns_mode = "host"
-    binds = [
-      "/tmp/sysbox-events:/tmp/events:rw",
-      "/etc/os-release:/etc/os-release-host:ro",
-      "/sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro",
-      "/sys/fs/bpf:/sys/fs/bpf",
-      "/sys/fs/cgroup:/sys/fs/cgroup",
-      "/var/run/docker.sock:/var/run/docker.sock",
-    ]
-  }
-
-  provisioner "exec" {
-    inline = ["mkdir -p /tmp/events"]
-  }
 }
 
 

@@ -1,12 +1,7 @@
 // Package config defines sysbox's HCL schema and parser.
 //
-// Phase 1 supports:
-//   - substrate block (only type="docker")
-//   - sysbox_image, sysbox_node, sysbox_network, sysbox_link,
-//     sysbox_firewall, sysbox_router, sysbox_ssh_access, sysbox_actor,
-//     sysbox_monitor, sysbox_kernel
-//
-// Firecracker/libvirt substrates are Phase 3.
+// Resource types: sysbox_image, sysbox_node, sysbox_network, sysbox_kernel,
+// sysbox_router, sysbox_firewall, sysbox_ssh_access, sysbox_actor.
 package config
 
 import "github.com/hashicorp/hcl/v2"
@@ -158,42 +153,44 @@ type NetworkConfig struct {
 // ActorConfig declares an ACP-driven actor (attacker, noise user, etc.).
 //
 // position = "internal"  — exec the command inside an existing sysbox_node.
-//                          The actor shares the node's network and filesystem.
-//                          Equivalent to an internal actor.
+//
+//	The actor shares the node's network and filesystem.
+//	Equivalent to an internal actor.
 //
 // position = "external"  — create a standalone container outside the topology.
-//                          The actor only reaches the topology through declared
-//                          network links (entry_points is informational metadata).
 //
-//	resource "sysbox_actor" "red" {
-//	  position = "internal"
-//	  node     = sysbox_node.node_attack.id
-//	  command  = ["opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
-//	  port     = 4096
-//	  env      = { DEEPSEEK_API_KEY = env("DEEPSEEK_API_KEY") }
-//	}
+//	                         The actor only reaches the topology through declared
+//	                         network links (entry_points is informational metadata).
 //
-//	resource "sysbox_actor" "scanner" {
-//	  position = "external"
-//	  image    = sysbox_image.attacker.id
-//	  link {
-//	    network = sysbox_network.net_uplink.id
-//	    ip      = "172.20.0.30/24"
-//	    gw      = "172.20.0.1"
-//	  }
-//	  command = ["opencode", "serve", "--port", "4097", "--hostname", "0.0.0.0"]
-//	  port    = 4097
-//	  entry_points = { web = "http://172.20.0.10", ssh = "ssh://172.20.0.10:22" }
-//	}
+//		resource "sysbox_actor" "red" {
+//		  position = "internal"
+//		  node     = sysbox_node.node_attack.id
+//		  command  = ["opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
+//		  port     = 4096
+//		  env      = { DEEPSEEK_API_KEY = env("DEEPSEEK_API_KEY") }
+//		}
+//
+//		resource "sysbox_actor" "scanner" {
+//		  position = "external"
+//		  image    = sysbox_image.attacker.id
+//		  link {
+//		    network = sysbox_network.net_uplink.id
+//		    ip      = "172.20.0.30/24"
+//		    gw      = "172.20.0.1"
+//		  }
+//		  command = ["opencode", "serve", "--port", "4097", "--hostname", "0.0.0.0"]
+//		  port    = 4097
+//		  entry_points = { web = "http://172.20.0.10", ssh = "ssh://172.20.0.10:22" }
+//		}
 type ActorConfig struct {
-	Position    string            `hcl:"position,optional"`      // "internal" (default) | "external"
-	Node        string            `hcl:"node,optional"`          // internal: target sysbox_node ref
-	Image       string            `hcl:"image,optional"`         // external: sysbox_image ref
-	Links       []LinkConfig      `hcl:"link,block"`             // external: network attachments
+	Position    string            `hcl:"position,optional"` // "internal" (default) | "external"
+	Node        string            `hcl:"node,optional"`     // internal: target sysbox_node ref
+	Image       string            `hcl:"image,optional"`    // external: sysbox_image ref
+	Links       []LinkConfig      `hcl:"link,block"`        // external: network attachments
 	Command     []string          `hcl:"command"`
 	Port        int               `hcl:"port,optional"`
 	Env         map[string]string `hcl:"env,optional"`
-	EntryPoints map[string]string `hcl:"entry_points,optional"`  // informational: accessible endpoints
+	EntryPoints map[string]string `hcl:"entry_points,optional"` // informational: accessible endpoints
 	DependsOn   []string          `hcl:"depends_on,optional"`
 }
 
@@ -273,34 +270,4 @@ type SSHAccessConfig struct {
 	AuthorizedKeys []string `hcl:"authorized_keys"`
 	BindIP         string   `hcl:"bind_ip,optional"`
 	Port           int      `hcl:"port,optional"`
-}
-
-// MonitorConfig attaches an EDR/sensor backend to a set of nodes.
-// The monitor backend is activated when `sysbox sensor start` is invoked;
-// Apply only records the intent in state.
-//
-// Example:
-//
-//	resource "sysbox_monitor" "lab" {
-//	  backend    = "tracee"
-//	  nodes      = [sysbox_node.node_attack.id, sysbox_node.node_web.id]
-//	  events     = ["execve", "openat", "connect"]
-//	  depends_on = ["sysbox_node.node_attack", "sysbox_node.node_web"]
-//	}
-type MonitorConfig struct {
-	// Backend selects the EDR implementation. Defaults to "tracee".
-	Backend string `hcl:"backend,optional"`
-
-	// Nodes is the list of sysbox_node IDs to monitor.
-	Nodes []string `hcl:"nodes"`
-
-	// Events is the platform-specific event list (tracee event names, sysdig
-	// filter expressions, ETW provider GUIDs, etc.). Nil = backend default.
-	Events []string `hcl:"events,optional"`
-
-	// Extra holds backend-specific key-value config not covered by the
-	// normalised schema (e.g. sensor_container, tracee_bin, host_sink_path).
-	Extra map[string]string `hcl:"extra,optional"`
-
-	DependsOn []string `hcl:"depends_on,optional"`
 }

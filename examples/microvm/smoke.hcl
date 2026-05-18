@@ -1,19 +1,18 @@
 # ── MicroVM smoke test: single NAT node ──────────────────────────────────────
 #
 # Uses Docker NAT networks only (no isolated netns/bridge), suitable for
-# quick verification of the firecracker substrate + vm-vsock monitor.
+# quick verification of the firecracker substrate.
 #
 # Prerequisites:
 #   - firecracker binary in PATH
 #   - mkfs.ext4 + losetup (sysbox-init builds an ext4 config drive)
-#   - /tmp/fc-rootfs-user.ext4 (or change rootfs below; see microvm/README.md)
+#   - /tmp/fc-rootfs-user.ext4 (or change rootfs below)
 #
 # The kernel is fetched on demand from firecracker-ci into
 # ~/.cache/sysbox/artifacts/ and reused across runs.
 #
 # Usage:
 #   sudo -E ./bin/sysbox apply -f examples/microvm/smoke.hcl --auto-approve
-#   sudo ./bin/sysbox sensor start
 
 substrate "firecracker" {
   alias = "fc"

@@ -1,20 +1,14 @@
 # ── MicroVM topology: three Firecracker nodes on isolated networks ─────────
 #
-# This topology demonstrates pure microVM (Firecracker) nodes, where each
-# VM has its own kernel and rootfs. Observation uses the vm-vsock backend
-# (in-VM agent) instead of the tracee/mntns mechanism used for Docker.
+# Three Firecracker microVM nodes on isolated networks.
 #
 # Prerequisites:
 #   - firecracker binary in PATH
 #   - mkfs.ext4 + losetup (for sysbox-init's config drive)
-#
-# kernel + rootfs are fetched on demand by `sysbox apply` via pkg/artifact.
-# Local paths (e.g. "/tmp/vmlinux") and URLs are both accepted.
+#   - SYSBOX_ROOTFS set, or default ~/.cache/sysbox/rootfs/ubuntu-24.04.ext4
 #
 # Usage:
-#   sysbox apply examples/microvm/field.sysbox.hcl
-#   sysbox sensor start
-#   sysbox destroy
+#   sudo -E make lab SUITE=microvm
 
 # ── Substrates ──────────────────────────────────────────────────────────────
 

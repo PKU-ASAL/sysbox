@@ -163,47 +163,6 @@ resource "sysbox_node" "node_db" {
   }
 }
 
-# ── eBPF Sensor (tracee sidecar) ─────────────────────────────────────────────
-#
-# Runs aquasec/tracee as a privileged container sharing the host PID namespace.
-# Events are written to /tmp/sysbox-events/ on the host via bind mount.
-# lab.sh sensor → sysbox sensor start --sidecar reads from that path.
-
-resource "sysbox_image" "tracee" {
-  substrate  = substrate.docker.light
-  docker_ref = "aquasec/tracee:latest"
-}
-
-resource "sysbox_node" "sensor" {
-  image     = sysbox_image.tracee.id
-  substrate = substrate.docker.light
-
-  provider "docker" {
-    privileged    = true
-    pid_mode      = "host"
-    cgroupns_mode = "host"
-    binds = [
-      "/tmp/sysbox-events:/tmp/events:rw",
-      "/etc/os-release:/etc/os-release-host:ro",
-      "/sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro",
-      "/sys/fs/bpf:/sys/fs/bpf",
-      "/sys/fs/cgroup:/sys/fs/cgroup",
-      "/var/run/docker.sock:/var/run/docker.sock",
-    ]
-  }
-
-  provisioner "exec" {
-    inline = ["mkdir -p /tmp/events"]
-  }
-}
-
-# ── Monitor ───────────────────────────────────────────────────────────────────
-#
-# Declares monitoring intent for all lab nodes. The tracee backend (default)
-# scopes to each node's mount namespace, so events are automatically attributed
-# to the correct node via tracee's container.name enrichment.
-#
-
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
 # Red-team actor: opencode inside node_attack (position=internal).
