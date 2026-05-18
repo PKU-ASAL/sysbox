@@ -18,7 +18,7 @@ help:
 	@echo ""
 	@echo "Usage: make <target>"
 	@echo ""
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ { printf "  %-22s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ { printf "  %-28s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo ""
 
 # ── Build ─────────────────────────────────────────────────────────────────────
@@ -66,27 +66,89 @@ vet: ## Run go vet
 .PHONY: lint
 lint: fmt vet ## fmt + vet
 
-# ── Lab lifecycle (require sudo -E) ───────────────────────────────────────────
+.PHONY: plan-examples
+plan-examples: build ## Parse + plan all HCL examples (validates schema, no infra changes)
+	@echo "==> two-networks"
+	@$(BINARY) plan -f examples/two-networks/field.sysbox.hcl
+	@echo "==> three-nodes"
+	@$(BINARY) plan -f examples/three-nodes/field.sysbox.hcl
+	@echo "==> microvm"
+	@$(BINARY) plan -f examples/microvm/field.sysbox.hcl
+	@echo "==> mixed"
+	@$(BINARY) plan -f examples/mixed/field.sysbox.hcl
+	@echo "==> smoke"
+	@$(BINARY) plan -f examples/microvm/smoke.hcl
+
+.PHONY: ci
+ci: lint test plan-examples ## Full CI check: fmt + vet + unit tests + example plans
+
+# ── Lab lifecycle: three-nodes (docker only) ──────────────────────────────────
 
 .PHONY: lab-up
-lab-up: ## Build image, destroy old lab, apply topology, start sensor
+lab-up: ## three-nodes: build image + apply topology + start sensor
 	sudo -E examples/three-nodes/lab.sh up
 
 .PHONY: lab-down
-lab-down: ## Destroy lab containers and stop sensor
+lab-down: ## three-nodes: destroy containers + stop sensor
 	sudo -E examples/three-nodes/lab.sh down
 
 .PHONY: lab-sensor-restart
-lab-sensor-restart: build ## Restart sensor (re-resolves mntns after node reprovision)
+lab-sensor-restart: build ## three-nodes: restart sensor (re-resolves mntns after reprovision)
 	sudo -E examples/three-nodes/lab.sh sensor-restart
 
 .PHONY: lab-logs
-lab-logs: ## Tail sensor log
+lab-logs: ## three-nodes: tail sensor log
 	examples/three-nodes/lab.sh logs
 
 .PHONY: lab-status
-lab-status: ## Show container, state, and sensor status
+lab-status: ## three-nodes: show container, state, and sensor status
 	examples/three-nodes/lab.sh status
+
+.PHONY: lab-exec
+lab-exec: ## three-nodes: open shell in a node (NODE=node_attack)
+	examples/three-nodes/lab.sh exec $(NODE)
+
+# ── Lab lifecycle: microvm (firecracker, requires KVM + rootfs) ───────────────
+#
+# Prereqs:  firecracker binary in PATH, SYSBOX_ROOTFS set (or default cache).
+# See examples/microvm/field.sysbox.hcl for kernel/rootfs configuration.
+
+MICROVM_STATE := runs/microvm/state.json
+MICROVM_HCL   := examples/microvm/field.sysbox.hcl
+
+.PHONY: microvm-up
+microvm-up: build ## microvm: apply firecracker topology (requires KVM + SYSBOX_ROOTFS)
+	@mkdir -p runs/microvm
+	sudo -E $(BINARY) --state $(MICROVM_STATE) -f $(MICROVM_HCL) apply --auto-approve
+
+.PHONY: microvm-down
+microvm-down: ## microvm: destroy firecracker topology
+	sudo -E $(BINARY) --state $(MICROVM_STATE) -f $(MICROVM_HCL) destroy --auto-approve
+
+.PHONY: microvm-status
+microvm-status: ## microvm: show topology state
+	@$(BINARY) --state $(MICROVM_STATE) -f $(MICROVM_HCL) state list 2>/dev/null || echo "(no state)"
+
+# ── Lab lifecycle: mixed (docker + firecracker) ────────────────────────────────
+#
+# Prereqs: firecracker binary in PATH, SYSBOX_ROOTFS set, Docker running.
+# Docker nodes use veth injection; FC node uses TAP on the same Linux bridge.
+
+MIXED_STATE := runs/mixed/state.json
+MIXED_HCL   := examples/mixed/field.sysbox.hcl
+
+.PHONY: mixed-up
+mixed-up: build ## mixed: apply docker+firecracker topology (requires KVM + SYSBOX_ROOTFS)
+	@mkdir -p runs/mixed
+	sudo -E $(BINARY) --state $(MIXED_STATE) -f $(MIXED_HCL) apply --auto-approve
+
+.PHONY: mixed-down
+mixed-down: ## mixed: destroy mixed topology
+	sudo -E $(BINARY) --state $(MIXED_STATE) -f $(MIXED_HCL) destroy --auto-approve
+
+.PHONY: mixed-status
+mixed-status: ## mixed: show topology state
+	@$(BINARY) --state $(MIXED_STATE) -f $(MIXED_HCL) state list 2>/dev/null || echo "(no state)"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
