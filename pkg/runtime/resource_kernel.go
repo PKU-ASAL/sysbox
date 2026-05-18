@@ -32,9 +32,9 @@ func (e *Executor) createKernel(_ context.Context, n *graph.Node) error {
 		return fmt.Errorf("kernel %s: %w", n.ID.Name, err)
 	}
 	if res.FromCache {
-		fmt.Printf("[apply] kernel %s: cache hit (%s)\n", n.ID.Name, res.Path)
+		e.logf("[apply] kernel %s: cache hit (%s)\n", n.ID.Name, res.Path)
 	} else if artifact.IsURL(cfg.Source) {
-		fmt.Printf("[apply] kernel %s: fetched to %s\n", n.ID.Name, res.Path)
+		e.logf("[apply] kernel %s: fetched to %s\n", n.ID.Name, res.Path)
 	}
 
 	e.state.AddResource(state.Resource{

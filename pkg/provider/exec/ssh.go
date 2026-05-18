@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -60,6 +61,17 @@ func (c *SSHConnection) ExecInline(ctx context.Context, cmds []string) error {
 }
 
 // ExecCapture runs a command over SSH and returns its stdout.
+func (c *SSHConnection) ExecStream(ctx context.Context, cmds []string, stdout, stderr io.Writer) error {
+	for _, cmd := range cmds {
+		var buf bytes.Buffer
+		if err := c.execOne(ctx, cmd, &buf); err != nil {
+			return fmt.Errorf("ssh exec %q: %w", cmd, err)
+		}
+		stdout.Write(buf.Bytes()) //nolint:errcheck
+	}
+	return nil
+}
+
 func (c *SSHConnection) ExecCapture(ctx context.Context, cmd string) ([]byte, error) {
 	var stdout bytes.Buffer
 	if err := c.execOne(ctx, cmd, &stdout); err != nil {

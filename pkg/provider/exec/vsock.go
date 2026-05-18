@@ -116,7 +116,9 @@ type FrameHandler func(vsockrpc.Frame) error
 // delivered verbatim; the caller decides what to do with them. The final
 // frame (Done=true) is also delivered. Returns nil when the command exits
 // cleanly, or the first error from handler / transport.
-func (c *VsockConnection) ExecStream(ctx context.Context, cmd []string, env map[string]string, handler FrameHandler) error {
+// ExecFrameStream runs a single command and delivers raw vsock frames to handler.
+// Used by the vm-vsock monitor backend and firecracker exec internals.
+func (c *VsockConnection) ExecFrameStream(ctx context.Context, cmd []string, env map[string]string, handler FrameHandler) error {
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return err
@@ -156,12 +158,28 @@ func (c *VsockConnection) ExecStream(ctx context.Context, cmd []string, env map[
 }
 
 func (c *VsockConnection) ExecInline(ctx context.Context, cmds []string) error {
+	return c.ExecStream(ctx, cmds, os.Stdout, os.Stderr)
+}
+
+func (c *VsockConnection) ExecStream(ctx context.Context, cmds []string, stdout, stderr io.Writer) error {
 	for _, line := range cmds {
-		if err := c.execOne(ctx, []string{"sh", "-c", line}, nil); err != nil {
+		if err := c.execStreamOne(ctx, []string{"sh", "-c", line}, nil, stdout, stderr); err != nil {
 			return fmt.Errorf("vsock exec %q: %w", line, err)
 		}
 	}
 	return nil
+}
+
+func (c *VsockConnection) execStreamOne(ctx context.Context, cmd []string, env map[string]string, stdout, stderr io.Writer) error {
+	return c.ExecFrameStream(ctx, cmd, env, func(f vsockrpc.Frame) error {
+		if len(f.Stdout) > 0 {
+			stdout.Write(f.Stdout) //nolint:errcheck
+		}
+		if len(f.Stderr) > 0 {
+			stderr.Write(f.Stderr) //nolint:errcheck
+		}
+		return nil
+	})
 }
 
 func (c *VsockConnection) execOne(ctx context.Context, cmd []string, env map[string]string) error {

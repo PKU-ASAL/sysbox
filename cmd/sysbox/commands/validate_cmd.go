@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 var validateCmd = &cobra.Command{
@@ -22,8 +22,8 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := config.BuildEvalContext(root)
-	g := graph.New()
-	if err := buildGraph(root, g, ctx); err != nil {
+	g, err := runtime.BuildGraph(root, ctx)
+	if err != nil {
 		return err
 	}
 

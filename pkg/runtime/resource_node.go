@@ -213,7 +213,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	// PrimaryIP is set. Each substrate decides what makes sense:
 	// docker → ConnKindDocker (set at CreateNode), FC → vsock or SSH.
 	if err := sub.PrepareHandle(ctx, &handle, cfg.ProviderConfig, stateAdapter{e.state}); err != nil {
-		fmt.Printf("[apply] warning: PrepareHandle for %s: %v\n", n.ID.Name, err)
+		e.logf("[apply] warning: PrepareHandle for %s: %v\n", n.ID.Name, err)
 	}
 
 	// Re-marshal provider state (the substrate may have mutated HandleState
@@ -235,14 +235,14 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		switch c := conn.(type) {
 		case *providerexec.SSHConnection:
 			if c != nil {
-				fmt.Printf("[provisioner] waiting for SSH on %s...\n", c.Host())
+				e.logf("[provisioner] waiting for SSH on %s...\n", c.Host())
 				if err := c.WaitForSSH(ctx, 60*time.Second); err != nil {
 					return fmt.Errorf("ssh not ready on node %s: %w", n.ID.Name, err)
 				}
 			}
 		case *providerexec.VsockConnection:
 			if c != nil {
-				fmt.Printf("[provisioner] waiting for vsock-agent on %s...\n", n.ID.Name)
+				e.logf("[provisioner] waiting for vsock-agent on %s...\n", n.ID.Name)
 				if err := c.WaitReady(ctx, 60*time.Second); err != nil {
 					return fmt.Errorf("vsock-agent not ready on node %s: %w", n.ID.Name, err)
 				}
@@ -271,10 +271,10 @@ func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
 	}
 	// Ignore stop/destroy errors: container may already be gone (drift recovery).
 	if err := sub.StopNode(ctx, handle); err != nil {
-		fmt.Printf("[destroy] warning: stop node %s: %v\n", r.Name, err)
+		e.logf("[destroy] warning: stop node %s: %v\n", r.Name, err)
 	}
 	if err := sub.DestroyNode(ctx, handle); err != nil {
-		fmt.Printf("[destroy] warning: destroy node %s: %v\n", r.Name, err)
+		e.logf("[destroy] warning: destroy node %s: %v\n", r.Name, err)
 	}
 	// Always clean up veths/taps and state regardless of container presence.
 	if nics, ok := r.Instance["nics"].([]any); ok {
@@ -285,11 +285,11 @@ func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
 			nsName := util.AsString(n["netns"])
 			if kind == "tap" {
 				if err := network.DeleteTapDevice(hostEnd, nsName); err != nil {
-					fmt.Printf("[destroy] warning: delete tap %s: %v\n", hostEnd, err)
+					e.logf("[destroy] warning: delete tap %s: %v\n", hostEnd, err)
 				}
 			} else {
 				if err := network.DeleteVethPair(network.VethHandle{HostEnd: hostEnd, NetnsName: nsName}); err != nil {
-					fmt.Printf("[destroy] warning: delete veth %s: %v\n", hostEnd, err)
+					e.logf("[destroy] warning: delete veth %s: %v\n", hostEnd, err)
 				}
 			}
 		}
@@ -339,9 +339,9 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 				if err != nil {
 					return fmt.Errorf("provisioner exec (background): %w", err)
 				}
-				fmt.Printf("[provisioner] background exec started (pid %d)\n", pid)
+				e.logf("[provisioner] background exec started (pid %d)\n", pid)
 			} else {
-				fmt.Printf("[provisioner] exec: %v\n", p.Inline)
+				e.logf("[provisioner] exec: %v\n", p.Inline)
 				if err := conn.ExecInline(ctx, p.Inline); err != nil {
 					return err
 				}
@@ -351,7 +351,7 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 				return fmt.Errorf("provisioner file: source and destination required")
 			}
 			src := expandTilde(p.Source)
-			fmt.Printf("[provisioner] file: %s → %s\n", src, p.Destination)
+			e.logf("[provisioner] file: %s → %s\n", src, p.Destination)
 			if err := conn.CopyFile(ctx, src, p.Destination); err != nil {
 				return fmt.Errorf("provisioner file %s: %w", src, err)
 			}
@@ -361,5 +361,3 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 	}
 	return nil
 }
-
-

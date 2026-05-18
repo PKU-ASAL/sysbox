@@ -25,9 +25,9 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 	for _, id := range plan.Change {
 		r := e.state.FindResource(id.Type, id.Name)
 		if r != nil {
-			fmt.Printf("[apply] removing drifted %s before re-create\n", id)
+			e.logf("[apply] removing drifted %s before re-create\n", id)
 			if err := e.DestroyResource(ctx, *r); err != nil {
-				fmt.Printf("[apply] warning: cleanup of drifted %s failed: %v\n", id, err)
+				e.logf("[apply] warning: cleanup of drifted %s failed: %v\n", id, err)
 			}
 		}
 		toCreate[id.String()] = true
@@ -44,7 +44,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 				break
 			}
 		}
-		fmt.Printf("[apply] %s %s\n", verb, id)
+		e.logf("[apply] %s %s\n", verb, id)
 		if err := e.CreateResource(ctx, id); err != nil {
 			return fmt.Errorf("create %s: %w", id, err)
 		}

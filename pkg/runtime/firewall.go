@@ -58,10 +58,9 @@ func (e *Executor) destroyFirewall(ctx context.Context, r state.Resource) error 
 	nsName := r.Str("netns")
 	if nsName != "" {
 		if err := network.DeleteFirewall(nsName); err != nil {
-			fmt.Printf("[destroy] warning: delete firewall %s: %v\n", r.Name, err)
+			e.logf("[destroy] warning: delete firewall %s: %v\n", r.Name, err)
 		}
 	}
 	e.state.RemoveResource(r.Type, r.Name)
 	return nil
 }
-

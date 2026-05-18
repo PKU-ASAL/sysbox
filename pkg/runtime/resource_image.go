@@ -36,9 +36,9 @@ func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
 			return fmt.Errorf("image %s rootfs: %w", n.ID.Name, err)
 		}
 		if res.FromCache {
-			fmt.Printf("[apply] image %s: rootfs cache hit (%s)\n", n.ID.Name, res.Path)
+			e.logf("[apply] image %s: rootfs cache hit (%s)\n", n.ID.Name, res.Path)
 		} else if artifact.IsURL(cfg.Rootfs) {
-			fmt.Printf("[apply] image %s: rootfs fetched to %s\n", n.ID.Name, res.Path)
+			e.logf("[apply] image %s: rootfs fetched to %s\n", n.ID.Name, res.Path)
 		}
 		rootfs = res.Path
 		rootfsSHA = res.SHA256

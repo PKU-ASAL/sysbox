@@ -58,7 +58,7 @@ func (e *Executor) createMonitor(_ context.Context, n *graph.Node) error {
 			"extra":   cfg.Extra,
 		},
 	})
-	fmt.Printf("[apply] monitor %s  backend=%s  nodes=%v\n", n.ID.Name, backend, nodeNames)
+	e.logf("[apply] monitor %s  backend=%s  nodes=%v\n", n.ID.Name, backend, nodeNames)
 	return nil
 }
 

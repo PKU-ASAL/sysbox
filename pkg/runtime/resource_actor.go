@@ -60,7 +60,7 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 		},
 	}
 
-	fmt.Printf("[apply] starting actor %s on node %s: %v\n", n.ID.Name, nodeName, cfg.Command)
+	e.logf("[apply] starting actor %s on node %s: %v\n", n.ID.Name, nodeName, cfg.Command)
 	conn, err := sub.Connection(handle, nil)
 	if err != nil {
 		return fmt.Errorf("actor %s: connection: %w", n.ID.Name, err)
@@ -91,7 +91,7 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 			"command":      cfg.Command,
 		},
 	})
-	fmt.Printf("[apply] actor %s started (pid %d, acp %s)\n", n.ID.Name, pid, acpURL)
+	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.ID.Name, pid, acpURL)
 	return nil
 }
 
@@ -172,7 +172,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 
 	// Start the actor command inside the container.
-	fmt.Printf("[apply] starting actor %s (external, %s): %v\n", n.ID.Name, containerName, cfg.Command)
+	e.logf("[apply] starting actor %s (external, %s): %v\n", n.ID.Name, containerName, cfg.Command)
 	conn, err := sub.Connection(handle, nil)
 	if err != nil {
 		_ = sub.DestroyNode(ctx, handle)
@@ -209,7 +209,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 			"command":        cfg.Command,
 		},
 	})
-	fmt.Printf("[apply] actor %s started (pid %d, acp %s)\n", n.ID.Name, pid, acpURL)
+	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.ID.Name, pid, acpURL)
 	return nil
 }
 
@@ -243,15 +243,13 @@ func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
 	if position == "external" && containerID != "" {
 		handle := substrate.NodeHandle{ID: containerID}
 		if err := sub.StopNode(ctx, handle); err != nil {
-			fmt.Printf("[destroy] warning: stop actor %s: %v\n", r.Name, err)
+			e.logf("[destroy] warning: stop actor %s: %v\n", r.Name, err)
 		}
 		if err := sub.DestroyNode(ctx, handle); err != nil {
-			fmt.Printf("[destroy] warning: destroy actor %s: %v\n", r.Name, err)
+			e.logf("[destroy] warning: destroy actor %s: %v\n", r.Name, err)
 		}
 	}
 
 	e.state.RemoveResource(r.Type, r.Name)
 	return nil
 }
-
-

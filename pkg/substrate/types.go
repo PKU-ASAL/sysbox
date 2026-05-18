@@ -7,6 +7,7 @@ package substrate
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 )
 
@@ -134,8 +135,13 @@ type ConnectionHint struct {
 // import cycles.
 type Connection interface {
 	// ExecInline runs each line as a shell command (sh -c) sequentially.
+	// stdout and stderr are written to os.Stdout / os.Stderr.
 	// Returns on first non-zero exit.
 	ExecInline(ctx context.Context, cmds []string) error
+
+	// ExecStream runs cmds sequentially, writing stdout and stderr to the
+	// provided writers. Useful for streaming output over HTTP or to a log.
+	ExecStream(ctx context.Context, cmds []string, stdout, stderr io.Writer) error
 
 	// ExecBackground starts a command detached from the calling session.
 	// Returns the PID of the spawned process.
@@ -233,11 +239,11 @@ const (
 
 // NICKind enumerates link device types a substrate may produce.
 const (
-	NICKindVeth       = "veth"
-	NICKindTap        = "tap"
-	NICKindMacvtap    = "macvtap"
-	NICKindVFIO       = "vfio"
-	NICKindDockerNAT  = "docker-nat" // Docker-managed bridge network (docker network connect)
+	NICKindVeth      = "veth"
+	NICKindTap       = "tap"
+	NICKindMacvtap   = "macvtap"
+	NICKindVFIO      = "vfio"
+	NICKindDockerNAT = "docker-nat" // Docker-managed bridge network (docker network connect)
 )
 
 // ConsoleKind enumerates console attachment modes.

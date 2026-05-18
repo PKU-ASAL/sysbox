@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/oslab/sysbox/pkg/config"
@@ -14,12 +15,21 @@ import (
 // Executor wires graph walking to provider calls. It holds references to
 // registered substrates (via substrate.Get) and updates state after each action.
 type Executor struct {
-	graph *graph.Graph
-	state *state.State
+	graph  *graph.Graph
+	state  *state.State
+	logger io.Writer
 }
 
 func NewExecutor(g *graph.Graph, s *state.State) *Executor {
-	return &Executor{graph: g, state: s}
+	return &Executor{graph: g, state: s, logger: os.Stdout}
+}
+
+// SetLogger redirects all apply/destroy log output (e.g. to capture it for
+// an API SSE stream). Defaults to os.Stdout.
+func (e *Executor) SetLogger(w io.Writer) { e.logger = w }
+
+func (e *Executor) logf(format string, args ...any) {
+	fmt.Fprintf(e.logger, format, args...)
 }
 
 // CreateResource dispatches a node in the graph to the right provider
@@ -80,7 +90,7 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 	case "sysbox_monitor":
 		return e.destroyMonitor(r)
 	default:
-		fmt.Printf("[destroy] skipping unimplemented resource type %q (%s)\n", r.Type, r.Name)
+		e.logf("[destroy] skipping unimplemented resource type %q (%s)\n", r.Type, r.Name)
 		e.state.RemoveResource(r.Type, r.Name)
 		return nil
 	}

@@ -50,7 +50,7 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec
 
 func (s *Substrate) execInNodeVsock(ctx context.Context, vc *vsockexec.VsockConnection, spec substrate.ExecSpec) (substrate.ExecResult, error) {
 	var stdout, stderr strings.Builder
-	err := vc.ExecStream(ctx, spec.Cmd, spec.Env, func(f vsockrpc.Frame) error {
+	err := vc.ExecFrameStream(ctx, spec.Cmd, spec.Env, func(f vsockrpc.Frame) error {
 		if len(f.Stdout) > 0 {
 			stdout.Write(f.Stdout)
 		}

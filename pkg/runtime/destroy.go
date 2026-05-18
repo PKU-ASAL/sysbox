@@ -46,7 +46,7 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 		if r == nil {
 			continue
 		}
-		fmt.Printf("[destroy] removing %s.%s\n", r.Type, r.Name)
+		e.logf("[destroy] removing %s.%s\n", r.Type, r.Name)
 		if err := e.DestroyResource(ctx, *r); err != nil {
 			return fmt.Errorf("destroy %s.%s: %w", r.Type, r.Name, err)
 		}

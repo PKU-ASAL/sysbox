@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/oslab/sysbox/pkg/graph"
@@ -23,14 +22,14 @@ func (e *Executor) Refresh(ctx context.Context, plan *Plan) {
 		healthy, err := e.probeResource(ctx, id)
 		if err != nil {
 			// Treat probe errors as healthy to avoid spurious re-creates.
-			fmt.Printf("[refresh] %s: probe error (treating as healthy): %v\n", id, err)
+			e.logf("[refresh] %s: probe error (treating as healthy): %v\n", id, err)
 			stillOK = append(stillOK, id)
 			continue
 		}
 		if healthy {
 			stillOK = append(stillOK, id)
 		} else {
-			fmt.Printf("[refresh] %s: drifted — will re-create\n", id)
+			e.logf("[refresh] %s: drifted — will re-create\n", id)
 			plan.Change = append(plan.Change, id)
 		}
 	}

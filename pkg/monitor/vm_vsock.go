@@ -148,7 +148,7 @@ func (v *VmVsockBackend) watch(ctx context.Context, vt vmTarget, ch chan<- senso
 		return nil
 	}
 
-	err = vt.conn.ExecStream(ctx, sensorCmd, nil, handler)
+	err = vt.conn.ExecFrameStream(ctx, sensorCmd, nil, handler)
 	if err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "[monitor/vm-vsock] %s: vm-sensor ended: %v\n", vt.nodeID, err)
 	}

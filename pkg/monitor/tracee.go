@@ -22,7 +22,7 @@ const (
 	defaultContainerSinkPath = "/tmp/events/events.jsonl"
 	defaultTraceeEvents      = "execve,execveat,openat,connect,accept4,clone,fork,vfork,sched_process_exit"
 	defaultTraceePidFile     = "/run/tracee.pid"
-	traceeLogFile           = "/tmp/tracee-stdout.log" // host-side log for tracee stdout/stderr
+	traceeLogFile            = "/tmp/tracee-stdout.log" // host-side log for tracee stdout/stderr
 )
 
 // TraceeBackend implements Backend using the tracee eBPF sensor.

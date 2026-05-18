@@ -4,6 +4,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -75,6 +76,10 @@ type dockerConn struct {
 }
 
 func (c *dockerConn) ExecInline(ctx context.Context, cmds []string) error {
+	return c.ExecStream(ctx, cmds, os.Stdout, os.Stderr)
+}
+
+func (c *dockerConn) ExecStream(ctx context.Context, cmds []string, stdout, stderr io.Writer) error {
 	for _, cmd := range cmds {
 		result, err := c.sub.ExecInNode(ctx, c.handle, substrate.ExecSpec{
 			Cmd: []string{"sh", "-c", cmd},
@@ -83,10 +88,10 @@ func (c *dockerConn) ExecInline(ctx context.Context, cmds []string) error {
 			return fmt.Errorf("exec %q: %w", cmd, err)
 		}
 		if result.Stdout != "" {
-			fmt.Print(result.Stdout)
+			fmt.Fprint(stdout, result.Stdout)
 		}
 		if result.Stderr != "" {
-			fmt.Fprint(os.Stderr, result.Stderr)
+			fmt.Fprint(stderr, result.Stderr)
 		}
 		if result.ExitCode != 0 {
 			return fmt.Errorf("exec %q: exit code %d", cmd, result.ExitCode)

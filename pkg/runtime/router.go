@@ -83,7 +83,7 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 	if len(initialLinks) > 0 {
 		connectedAtCreate[initialLinks[0].DockerNetID] = true
 	}
-	natIdx := 0                 // NAT interfaces: eth0, eth1, ... (Docker-assigned order)
+	natIdx := 0                  // NAT interfaces: eth0, eth1, ... (Docker-assigned order)
 	vethIdx := len(initialLinks) // veth guest-iface starts after NAT ifaces
 
 	nics := []map[string]any{}
@@ -160,7 +160,7 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 				cfg.NatFrom, cfg.NatTo)
 		}
 		if err := configureNATViaNsenter(handle.ID, fromIf, toIf); err != nil {
-			fmt.Printf("[router %s] warning: NAT setup failed (continuing without NAT): %v\n", n.ID.Name, err)
+			e.logf("[router %s] warning: NAT setup failed (continuing without NAT): %v\n", n.ID.Name, err)
 		} else {
 			natApplied = true
 		}

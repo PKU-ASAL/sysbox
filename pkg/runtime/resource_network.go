@@ -106,7 +106,7 @@ func (e *Executor) destroyNetwork(ctx context.Context, r state.Resource) error {
 		netID := r.Str("docker_network_id")
 		if netID != "" {
 			if err := sub.RemoveManagedNetwork(ctx, netID); err != nil {
-				fmt.Printf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
+				e.logf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
 			}
 		}
 		// Clean up DOCKER-USER ACCEPT rules for this NAT subnet.
@@ -121,10 +121,10 @@ func (e *Executor) destroyNetwork(ctx context.Context, r state.Resource) error {
 	nsName := r.Str("netns")
 	brName := r.Str("bridge")
 	if err := network.DeleteBridge(network.BridgeConfig{NetnsName: nsName, BridgeName: brName}); err != nil {
-		fmt.Printf("[destroy] warning: delete bridge %s: %v\n", brName, err)
+		e.logf("[destroy] warning: delete bridge %s: %v\n", brName, err)
 	}
 	if err := network.DeleteNetns(nsName); err != nil {
-		fmt.Printf("[destroy] warning: delete netns %s: %v\n", nsName, err)
+		e.logf("[destroy] warning: delete netns %s: %v\n", nsName, err)
 	}
 	e.state.RemoveResource(r.Type, r.Name)
 	return nil
