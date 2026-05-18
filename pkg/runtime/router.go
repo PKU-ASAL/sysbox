@@ -87,7 +87,6 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 
 	nics := []map[string]any{}
 	ifaceByName := map[string]string{} // logical name -> guest interface (eth0/eth1/...)
-	dockerCap, _ := e.dockerSubstrate()
 
 	for _, iface := range cfg.Interfaces {
 		netName := config.ResolveName(iface.Network)
@@ -97,11 +96,15 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 			return fmt.Errorf("network %s not applied yet", netName)
 		}
 
-		// NAT network: already connected at create time, or connect now.
+		// NAT network: already connected at create time, or connect via AttachNIC.
 		if isNAT, _ := netState.Instance["nat"].(bool); isNAT {
 			netID := util.AsString(netState.Instance["docker_network_id"])
-			if !connectedAtCreate[netID] && dockerCap != nil {
-				if err := dockerCap.ConnectContainerToNetwork(ctx, handle.ID, netID, iface.IP); err != nil {
+			if !connectedAtCreate[netID] {
+				if _, err := sub.AttachNIC(ctx, handle, substrate.LinkRequest{
+					KindHint:    substrate.NICKindDockerNAT,
+					DockerNetID: netID,
+					IP:          iface.IP,
+				}); err != nil {
 					_ = sub.DestroyNode(ctx, handle)
 					return fmt.Errorf("connect router %s to nat network %s: %w", n.ID.Name, netName, err)
 				}

@@ -83,22 +83,3 @@ type Substrate interface {
 	// reconstructing state from the bare NodeHandle.ID.
 	UnmarshalProviderState(data json.RawMessage) (any, error)
 }
-
-// DockerCapable is an optional interface that substrates can implement
-// to expose Docker-specific operations. Runtime code should check for
-// this interface with a type assertion rather than depending on the
-// concrete *dockerprovider.Substrate type.
-type DockerCapable interface {
-	// ExecBackground starts a process inside the node and returns its PID.
-	ExecBackground(ctx context.Context, handle NodeHandle, spec ExecSpec) (int, error)
-
-	// GetContainerIP returns the first IPv4 address of the container.
-	GetContainerIP(ctx context.Context, containerID string) (string, error)
-
-	// ConnectContainerToNetwork attaches a running container to a Docker network.
-	ConnectContainerToNetwork(ctx context.Context, containerID, networkID, ip string) error
-}
-
-// Verify Docker substrate satisfies DockerCapable at compile time.
-// The actual check is in the docker provider package; this comment
-// serves as documentation for implementers.

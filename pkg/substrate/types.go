@@ -179,6 +179,16 @@ type LinkRequest struct {
 
 	// MTU is the desired MTU; 0 means use the default.
 	MTU int
+
+	// KindHint is an optional hint telling the substrate what device type
+	// to use (e.g. NICKindDockerNAT for Docker bridge hot-connect).
+	// When empty, the substrate picks based on its own defaults.
+	KindHint string
+
+	// DockerNetID is the Docker-managed network ID for NAT bridge networks.
+	// Only meaningful when KindHint == NICKindDockerNAT. The substrate uses
+	// docker network connect (not veth injection) for this link.
+	DockerNetID string
 }
 
 // AttachedNIC is what the substrate reports back from AttachNIC so runtime
@@ -208,10 +218,11 @@ const (
 
 // NICKind enumerates link device types a substrate may produce.
 const (
-	NICKindVeth    = "veth"
-	NICKindTap     = "tap"
-	NICKindMacvtap = "macvtap"
-	NICKindVFIO    = "vfio"
+	NICKindVeth       = "veth"
+	NICKindTap        = "tap"
+	NICKindMacvtap    = "macvtap"
+	NICKindVFIO       = "vfio"
+	NICKindDockerNAT  = "docker-nat" // Docker-managed bridge network (docker network connect)
 )
 
 // ConsoleKind enumerates console attachment modes.

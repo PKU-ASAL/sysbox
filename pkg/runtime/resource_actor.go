@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -47,10 +48,6 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	if err != nil {
 		return err
 	}
-	dockerCap, ok := sub.(substrate.DockerCapable)
-	if !ok {
-		return fmt.Errorf("sysbox_actor (internal) requires a DockerCapable substrate, got %T", sub)
-	}
 
 	handle := substrate.NodeHandle{
 		ID: containerID,
@@ -64,17 +61,18 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 
 	fmt.Printf("[apply] starting actor %s on node %s: %v\n", n.ID.Name, nodeName, cfg.Command)
-	pid, err := dockerCap.ExecBackground(ctx, handle, substrate.ExecSpec{
-		Cmd: cfg.Command,
-		Env: cfg.Env,
-	})
+	conn, err := sub.Connection(handle, nil)
+	if err != nil {
+		return fmt.Errorf("actor %s: connection: %w", n.ID.Name, err)
+	}
+	pid, err := conn.ExecBackground(ctx, cfg.Command, cfg.Env)
 	if err != nil {
 		return fmt.Errorf("start actor %s: %w", n.ID.Name, err)
 	}
 
-	// Determine ACP URL: use the node's IP on its Docker-managed network.
+	// Determine ACP URL: use the primary IP stored in node state.
 	acpURL := ""
-	if ip, ipErr := dockerCap.GetContainerIP(ctx, containerID); ipErr == nil && cfg.Port > 0 {
+	if ip := util.AsString(nodeState.Instance["primary_ip"]); ip != "" && cfg.Port > 0 {
 		acpURL = fmt.Sprintf("http://%s:%d", ip, cfg.Port)
 	}
 
@@ -104,10 +102,6 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	sub, err := substrate.Get("docker")
 	if err != nil {
 		return fmt.Errorf("actor %s: %w", n.ID.Name, err)
-	}
-	dockerCap, ok := sub.(substrate.DockerCapable)
-	if !ok {
-		return fmt.Errorf("actor %s: docker substrate does not implement DockerCapable", n.ID.Name)
 	}
 
 	// Resolve image.
@@ -164,9 +158,13 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		return fmt.Errorf("start actor container %s: %w", n.ID.Name, err)
 	}
 
-	// Connect remaining NAT networks (all after the first).
+	// Connect remaining NAT networks (all after the first) via AttachNIC.
 	for _, nl := range natLinks[min(1, len(natLinks)):] {
-		if err := dockerCap.ConnectContainerToNetwork(ctx, handle.ID, nl.netID, nl.ip); err != nil {
+		if _, err := sub.AttachNIC(ctx, handle, substrate.LinkRequest{
+			KindHint:    substrate.NICKindDockerNAT,
+			DockerNetID: nl.netID,
+			IP:          nl.ip,
+		}); err != nil {
 			_ = sub.DestroyNode(ctx, handle)
 			return fmt.Errorf("actor %s: connect to network: %w", n.ID.Name, err)
 		}
@@ -174,17 +172,24 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 
 	// Start the actor command inside the container.
 	fmt.Printf("[apply] starting actor %s (external, %s): %v\n", n.ID.Name, containerName, cfg.Command)
-	pid, err := dockerCap.ExecBackground(ctx, handle, substrate.ExecSpec{
-		Cmd: cfg.Command,
-		Env: cfg.Env,
-	})
+	conn, err := sub.Connection(handle, nil)
+	if err != nil {
+		_ = sub.DestroyNode(ctx, handle)
+		return fmt.Errorf("actor %s: connection: %w", n.ID.Name, err)
+	}
+	pid, err := conn.ExecBackground(ctx, cfg.Command, cfg.Env)
 	if err != nil {
 		_ = sub.DestroyNode(ctx, handle)
 		return fmt.Errorf("start actor command %s: %w", n.ID.Name, err)
 	}
 
 	acpURL := ""
-	if ip, ipErr := dockerCap.GetContainerIP(ctx, handle.ID); ipErr == nil && cfg.Port > 0 {
+	// Use primary IP from first NAT link for ACP URL.
+	if len(natLinks) > 0 && cfg.Port > 0 {
+		ip := natLinks[0].ip
+		if idx := strings.Index(ip, "/"); idx >= 0 {
+			ip = ip[:idx]
+		}
 		acpURL = fmt.Sprintf("http://%s:%d", ip, cfg.Port)
 	}
 

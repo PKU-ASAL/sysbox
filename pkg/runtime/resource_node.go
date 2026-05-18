@@ -127,16 +127,16 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			return fmt.Errorf("network %s not applied yet", netName)
 		}
 
-		// NAT network: connected at create time (first) or via docker network connect (extras).
+		// NAT network: connected at create time (first) or via AttachNIC (extras).
 		if isNAT, _ := netState.Instance["nat"].(bool); isNAT {
 			netID := util.AsString(netState.Instance["docker_network_id"])
 			if !connectedAtCreate[netID] {
-				dockerCap, err := e.dockerSubstrate()
+				_, err := sub.AttachNIC(ctx, handle, substrate.LinkRequest{
+					KindHint:    substrate.NICKindDockerNAT,
+					DockerNetID: netID,
+					IP:          link.IP,
+				})
 				if err != nil {
-					_ = sub.DestroyNode(ctx, handle)
-					return err
-				}
-				if err := dockerCap.ConnectContainerToNetwork(ctx, handle.ID, netID, link.IP); err != nil {
 					_ = sub.DestroyNode(ctx, handle)
 					return fmt.Errorf("connect node %s to nat network %s: %w", n.ID.Name, netName, err)
 				}
@@ -176,6 +176,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 
 	nodeInstance := map[string]any{
 		"container_id": handle.ID,
+		"primary_ip":   handle.Net.PrimaryIP,
 		"nics":         nics,
 	}
 	// Substrate-specific state (vsock metadata, vm_dir, etc.) goes through

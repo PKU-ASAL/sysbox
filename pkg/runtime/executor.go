@@ -8,7 +8,6 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // Executor wires graph walking to provider calls. It holds references to
@@ -110,18 +109,4 @@ func expandTilde(path string) string {
 		return path
 	}
 	return home + path[1:]
-}
-
-// dockerSubstrate returns the registered Docker substrate as a DockerCapable
-// interface for use in operations that need Docker-specific methods.
-func (e *Executor) dockerSubstrate() (substrate.DockerCapable, error) {
-	sub, err := substrate.Get("docker")
-	if err != nil {
-		return nil, err
-	}
-	dockerCap, ok := sub.(substrate.DockerCapable)
-	if !ok {
-		return nil, fmt.Errorf("docker substrate does not implement DockerCapable, got %T", sub)
-	}
-	return dockerCap, nil
 }

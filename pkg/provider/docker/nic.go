@@ -13,11 +13,24 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-// AttachNIC creates a veth pair, wires the host-end into the bridge in the
-// LinkRequest's NetNS, moves the guest-end into the running container's
-// netns, renames it to the requested TargetName, assigns IP, and sets the
-// default gateway.
+// AttachNIC creates a network attachment for the container. Two paths:
+//   - KindHint == NICKindDockerNAT (or DockerNetID != ""): uses
+//     docker network connect — the Docker daemon manages the veth/bridge.
+//   - Otherwise: creates a veth pair, wires into isolated netns bridge,
+//     moves guest-end into container netns (the "cold-plug" path).
 func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req substrate.LinkRequest) (substrate.AttachedNIC, error) {
+	// Docker NAT bridge: delegate to docker network connect.
+	if req.DockerNetID != "" || req.KindHint == substrate.NICKindDockerNAT {
+		if err := s.ConnectContainerToNetwork(ctx, h.ID, req.DockerNetID, req.IP); err != nil {
+			return substrate.AttachedNIC{}, fmt.Errorf("docker network connect: %w", err)
+		}
+		return substrate.AttachedNIC{
+			Kind: substrate.NICKindDockerNAT,
+			IP:   req.IP,
+		}, nil
+	}
+
+	// Isolated network: veth pair + netns injection.
 	ins, err := s.cli.ContainerInspect(ctx, h.ID)
 	if err != nil {
 		return substrate.AttachedNIC{}, fmt.Errorf("inspect container: %w", err)
