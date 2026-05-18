@@ -234,8 +234,7 @@ func monitorsTargets(m state.Resource, st *state.State) []monitor.Target {
 		}
 		// Flatten the substrate-specific provider_extra JSON blob into the
 		// handle so backends like vm-vsock can read vsock_uds / vsock_port
-		// without needing to know substrate types. W2-PR-07 removes the
-		// vm-vsock backend; this whole flatten step goes away with it.
+		// without needing to know substrate types.
 		if blob := util.AsString(nodeState.Instance["provider_extra"]); blob != "" {
 			var bag map[string]any
 			if err := json.Unmarshal([]byte(blob), &bag); err == nil {

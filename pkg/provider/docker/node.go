@@ -56,12 +56,11 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	}
 
 	// Network mode strategy:
-	//   - No Docker networks needed  → NetworkMode:"none" (fully isolated netns,
-	//     veth pairs injected manually later).
-	//   - One or more Docker bridge networks needed → attach the first one via
-	//     NetworkingConfig at create time (avoids the "cannot connect to multiple
-	//     networks with one in none-mode" error); extras are connected after start.
-	// Collect Docker NAT links from InitialLinks.
+	//   - No NAT links in InitialLinks → NetworkMode:"none" (fully isolated netns,
+	//     veth pairs injected manually later via AttachNIC).
+	//   - One or more NAT links → attach the first via NetworkingConfig at create
+	//     time (avoids the "cannot connect to multiple networks with none-mode" error);
+	//     extras are hot-connected post-start via AttachNIC.
 	var natLinks []substrate.LinkRequest
 	for _, l := range spec.InitialLinks {
 		if l.KindHint == substrate.NICKindDockerNAT || l.DockerNetID != "" {
