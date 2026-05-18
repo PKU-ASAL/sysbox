@@ -37,17 +37,19 @@ resource "sysbox_network" "net_uplink" {
 resource "sysbox_node" "vm_attack" {
   substrate = substrate.firecracker.fc
   image     = sysbox_image.alpine_vm.id
-  kernel    = sysbox_kernel.fc_510.id
   vcpus     = 2
   memory    = "512"
+
+  provider "firecracker" {
+    kernel   = sysbox_kernel.fc_510.id
+    ssh_user = "root"
+    ssh_pass = "root"
+  }
 
   link {
     network = sysbox_network.net_uplink.id
     ip      = "172.21.0.10/24"
   }
-
-  ssh_user = "root"
-  ssh_pass = "root"
 
   provisioner "exec" {
     inline = ["uname -a"]

@@ -53,8 +53,14 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 
 	handle := substrate.NodeHandle{
-		ID:         containerID,
-		Attributes: map[string]any{"container_name": fmt.Sprintf("sysbox-%s", nodeName)},
+		ID: containerID,
+		Provider: &dockerprovider.HandleState{
+			ContainerName: fmt.Sprintf("sysbox-%s", nodeName),
+		},
+		Conn: substrate.ConnInfo{
+			Kind:     substrate.ConnKindDocker,
+			Endpoint: containerID,
+		},
 	}
 
 	fmt.Printf("[apply] starting actor %s on node %s: %v\n", n.ID.Name, nodeName, cfg.Command)
@@ -214,12 +220,17 @@ func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
 
 	if pid > 0 && containerID != "" {
 		handle := substrate.NodeHandle{ID: containerID}
+		if blob := r.Str("provider_extra"); blob != "" {
+			if p, err := sub.UnmarshalProviderState([]byte(blob)); err == nil {
+				handle.Provider = p
+			}
+		}
 		// Kill the entire process group so child processes are also
 		// terminated (e.g. opencode-serve spawns sub-processes).
 		killCmd := fmt.Sprintf("kill -- -%d 2>/dev/null; kill %d 2>/dev/null || true", pid, pid)
-		_, _ = sub.ExecInNode(ctx, handle, substrate.ExecSpec{
-			Cmd: []string{"sh", "-c", killCmd},
-		})
+		if conn, err := sub.Connection(handle, nil); err == nil && conn != nil {
+			_ = conn.ExecInline(ctx, []string{killCmd})
+		}
 	}
 
 	// External actors own their container; destroy it entirely.
@@ -254,7 +265,13 @@ func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
 	containerID := util.AsString(nodeState.Instance["container_id"])
 	handle := substrate.NodeHandle{
 		ID: containerID,
-		Attributes: map[string]any{"container_name": fmt.Sprintf("sysbox-%s", nodeName)},
+		Provider: &dockerprovider.HandleState{
+			ContainerName: fmt.Sprintf("sysbox-%s", nodeName),
+		},
+		Conn: substrate.ConnInfo{
+			Kind:     substrate.ConnKindDocker,
+			Endpoint: containerID,
+		},
 	}
 
 	// Find the docker substrate registered for the node.

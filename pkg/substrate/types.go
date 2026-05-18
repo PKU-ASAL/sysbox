@@ -1,8 +1,13 @@
 // Package substrate defines the abstraction that every substrate driver
 // (docker, firecracker, libvirt) must implement.
 //
-// Phase 1 only has docker. Phase 3 adds firecracker and libvirt.
+// v1.0 supports docker + firecracker; libvirt is in flight (W2).
 package substrate
+
+import (
+	"context"
+	"time"
+)
 
 type ImageSpec struct {
 	DockerRef string
@@ -25,33 +30,104 @@ type DockerNetworkAttachment struct {
 	IPv4      string // CIDR notation, e.g. "172.20.0.10/24"
 }
 
+// NodeSpec carries substrate-neutral coordinates for creating a node.
+// Substrate-specific options (privileged, kernel, vcpus, ...) live in
+// ProviderConfig, a substrate-owned typed value produced by
+// Substrate.DecodeProviderConfig.
 type NodeSpec struct {
 	Name              string
 	Image             ImageRef
 	VCPUs             int
 	Memory            string
-	Kernel            string // path to vmlinux (firecracker only)
-	Rootfs            string // path to ext4 rootfs override (firecracker only)
-	SSHUser           string
-	SSHPass           string
-	SSHPort           int
 	Env               map[string]string
-	Sysctls           map[string]string         // passed to container runtime at create time
-	Privileged        bool                      // required for eBPF/tracee
-	PidMode           string                    // "host" shares the host PID namespace
-	CgroupnsMode      string                    // "host" shares the host cgroup namespace
-	Binds             []string                  // host:container[:options] volume bind mounts
-	InitialDockerNets []DockerNetworkAttachment // Docker bridge networks attached at create time
+	Sysctls           map[string]string
+	InitialDockerNets []DockerNetworkAttachment // shared shortcut (W2-PR-09 may replace with LinkPlan)
 
-	// ChainInit (firecracker only) is the binary sysbox-init exec()s after
-	// applying configuration. Defaults to /sbin/init, falls back to /bin/sh
-	// inside the guest if missing. Empty string keeps the default behaviour.
-	ChainInit string
+	// ProviderConfig is a substrate-owned typed value (e.g. *docker.Config,
+	// *firecracker.Config) produced by Substrate.DecodeProviderConfig. It is
+	// opaque to runtime; substrates type-assert in their own CreateNode.
+	ProviderConfig any
 }
 
+// ProviderDeps lists resource references a substrate's typed Config holds.
+// Runtime translates these into graph edges so the resources get applied
+// before the node is created. Substrates that have no provider block (or no
+// cross-resource refs) return an empty value.
+type ProviderDeps struct {
+	Kernels  []string // sysbox_kernel resource names
+	Images   []string // sysbox_image resource names
+	Networks []string // sysbox_network resource names
+}
+
+// NodeHandle is the substrate-neutral reference to a created node.
+//
+// Layout:
+//
+//	ID       – substrate-defined identifier (container_id, vm_id, libvirt domain UUID, ...).
+//	           Stable across the node's lifetime; persisted in state.
+//	Net      – substrate-neutral network coordinates (primary IP). Populated post-Start.
+//	Conn     – preferred control-plane channel (docker-exec / ssh / vsock / ...).
+//	Provider – substrate-owned typed value; opaque to runtime. Substrates may put
+//	           any data here (vm_dir, socket path, vsock CID, etc.) and recover it
+//	           on subsequent calls. Persisted in state via Marshal/UnmarshalProviderState.
 type NodeHandle struct {
-	ID         string
-	Attributes map[string]any
+	ID       string
+	Net      NetInfo
+	Conn     ConnInfo
+	Provider any
+}
+
+// NetInfo carries substrate-neutral network info for a node.
+type NetInfo struct {
+	// PrimaryIP is the node's primary IPv4 address (CIDR stripped), used by
+	// Connection factories. Empty if not applicable (yet).
+	PrimaryIP string
+}
+
+// ConnectionKind enumerates control-plane channel types.
+type ConnectionKind string
+
+const (
+	ConnKindNone   ConnectionKind = ""
+	ConnKindDocker ConnectionKind = "docker"
+	ConnKindSSH    ConnectionKind = "ssh"
+	ConnKindVsock  ConnectionKind = "vsock"
+	ConnKindWinRM  ConnectionKind = "winrm"
+)
+
+// ConnInfo carries the preferred control-plane channel coordinates for a node.
+type ConnInfo struct {
+	Kind     ConnectionKind
+	Endpoint string // substrate-defined: container ID, "host:port", "uds-path:port", ...
+	User     string // optional
+}
+
+// ConnectionHint carries optional HCL-level overrides for connection selection.
+// The substrate may ignore these if its auto-selection (from NodeHandle.Conn)
+// already picks the right channel.
+type ConnectionHint struct {
+	Type       string // explicit type from HCL: "docker" | "ssh" | "vsock" | "auto"
+	Host       string // SSH host override
+	User       string // SSH user
+	Password   string // SSH password
+	PrivateKey string // SSH private key path
+}
+
+// Connection is the substrate-agnostic interface for reaching a running node
+// (exec, copy, background). Each substrate returns its own implementation.
+// Moved here from pkg/provider/exec so substrates can implement it without
+// import cycles.
+type Connection interface {
+	// ExecInline runs each line as a shell command (sh -c) sequentially.
+	// Returns on first non-zero exit.
+	ExecInline(ctx context.Context, cmds []string) error
+
+	// ExecBackground starts a command detached from the calling session.
+	// Returns the PID of the spawned process.
+	ExecBackground(ctx context.Context, cmd []string, env map[string]string) (int, error)
+
+	// CopyFile copies a local file into the node at dstPath.
+	CopyFile(ctx context.Context, srcPath, dstPath string) error
 }
 
 type ExecSpec struct {
@@ -66,27 +142,117 @@ type ExecResult struct {
 	ExitCode int
 }
 
-type NIC struct {
-	Kind       string // "veth" | "tap"
-	HostEnd    string
-	GuestEnd   string
-	TargetName string // interface name inside the guest (e.g. "eth0", "eth1"); defaults to "eth0"
-	MAC        string
-	IP         string // CIDR notation e.g. "10.0.1.10/24"
-	Gateway    string
-	MTU        int
+// LinkRequest is the substrate-neutral description of a network attachment
+// that the runtime wants to make. It carries the topology coordinates (which
+// network namespace, bridge, IP, gateway) but does NOT specify the device type
+// or name — each substrate picks those itself (veth for docker, tap for FC,
+// macvtap for libvirt, etc.).
+//
+// This replaces the old NIC struct which conflated topology input with
+// substrate output. The runtime produces LinkRequests; substrates produce
+// AttachedNICs inside their AttachNIC implementation.
+type LinkRequest struct {
+	// NetNS is the network namespace name where the host-side device should
+	// be created / plugged. For Docker this is the isolated netns managed by
+	// sysbox_network; for FC the tap goes there and the VM reads from it.
+	NetNS string
+
+	// Bridge is the Linux bridge inside NetNS to attach the host-end device.
+	// Empty when the network is unbridged (e.g. P2P / host-only).
+	Bridge string
+
+	// IP is the guest-side address in CIDR notation, e.g. "10.0.1.10/24".
+	IP string
+
+	// Gateway is the default gateway for this link. Empty means no gateway
+	// (router interfaces intentionally omit this so they don't install a
+	// default route).
+	Gateway string
+
+	// TargetName is the desired interface name inside the guest (e.g.
+	// "eth0", "eth1"). Substrates that can rename guest interfaces (Docker)
+	// honour this; others (FC kernel cmdline) may ignore it.
+	TargetName string
+
+	// MAC is the desired MAC address. Empty means auto-assign.
+	MAC string
+
+	// MTU is the desired MTU; 0 means use the default.
+	MTU int
 }
 
+// AttachedNIC is what the substrate reports back from AttachNIC so runtime
+// can persist it in state for destroy / drift detection. Only the fields
+// the runtime actually needs are populated; substrate-specific state lives
+// in NodeHandle.Provider.
+type AttachedNIC struct {
+	Kind     string // "veth" | "tap" | "docker_nat" | ...
+	HostEnd  string // host-side device name (veth host-end / tap name)
+	GuestEnd string // guest-side device name (veth guest-end / "" for tap)
+	IP       string // CIDR notation
+	NetNS    string // network namespace name (for cleanup on destroy)
+}
+
+// PIDMode declares how guest processes are visible to the host.
+//
+//	PIDVisibilityHost   – guest PIDs share the host PID namespace (docker --pid=host)
+//	PIDVisibilityNS     – guest has its own PID ns but is reachable from host (default docker)
+//	PIDVisibilityOpaque – guest is an isolated kernel; host cannot see PIDs (microVM, VM)
+type PIDMode string
+
+const (
+	PIDVisibilityHost   PIDMode = "host"
+	PIDVisibilityNS     PIDMode = "ns"
+	PIDVisibilityOpaque PIDMode = "opaque"
+)
+
+// NICKind enumerates link device types a substrate may produce.
+const (
+	NICKindVeth    = "veth"
+	NICKindTap     = "tap"
+	NICKindMacvtap = "macvtap"
+	NICKindVFIO    = "vfio"
+)
+
+// ConsoleKind enumerates console attachment modes.
+const (
+	ConsoleKindTTY    = "tty"
+	ConsoleKindSerial = "serial"
+	ConsoleKindSPICE  = "spice"
+	ConsoleKindVNC    = "vnc"
+)
+
+// Capabilities describes the substrate's runtime semantics. Runtime code uses
+// these flags to make scheduling decisions (NIC hot-plug ordering, console
+// selection, validation) without branching on substrate name.
+//
+// All bool defaults are the safe/conservative value (false means
+// "unsupported"); BaseSubstrate provides usable defaults.
 type Capabilities struct {
-	SharedKernel    bool
-	SupportsWindows bool
-	BootTime        string // "ms" | "seconds"
-	NICType         string // "veth" | "tap"
+	SharedKernel    bool          // guest shares the host kernel (container)
+	SupportsWindows bool          // can boot a Windows guest
+	NICHotPlug      bool          // AttachNIC works after StartNode (true=container; false=microVM/VM cold-plug)
+	DiskHotPlug     bool          // attach extra disks after StartNode
+	NICKinds        []string      // device types this substrate can produce, e.g. ["veth"] or ["tap","macvtap"]
+	ConsoleKinds    []string      // attachable console modes
+	NeedsCloudinit  bool          // PrepareImage / CreateNode requires a cloudinit seed
+	PIDVisibility   PIDMode       // how guest PIDs relate to host PID space
+	SupportsPause   bool          // Substrate.Pause/Resume implemented (W3)
+	BootTime        time.Duration // typical boot latency (best-effort estimate)
+	Notes           string        // free-form documentation, displayed in `sysbox plan`
 }
 
-// ObservationTarget tells the sensor provider how to attach to this node.
-// Phase 1 uses only "host-pid-namespace" (docker); virtio-serial comes in Phase 3.
+// ObservationTarget tells the sensor / monitor provider how to attach to this
+// node. The substrate fills this in via ObservationHook so monitor backends
+// don't need to know substrate-specific details.
 type ObservationTarget struct {
-	Kind  string // "host-pid-namespace" | "virtio-serial"
+	// Kind is one of:
+	//   "host-pid-namespace"  – the value is the host PID of the guest's init
+	//   "virtio-vsock"        – the value is "<uds-path>:<port>"
+	//   "virtio-serial"       – the value is a host-side serial chardev path
+	//   "ssh"                 – the value is "user@host:port"
+	//   "winrm"               – the value is "host:port"
+	//   "none"                – substrate does not expose any observation channel
+	Kind  string
 	Value string
 }

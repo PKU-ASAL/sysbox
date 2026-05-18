@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	osexec "os/exec"
 	"strconv"
@@ -24,21 +23,19 @@ const (
 	vsockReadyTimeout = 30 * time.Second
 )
 
-// vsockConnFromHandle builds a VsockConnection from the handle's vsock
-// attributes. Returns nil if vsock metadata is missing (old state or
-// non-vsock VM).
+// vsockConnFromHandle builds a VsockConnection from the handle's typed
+// HandleState. Returns nil if vsock metadata is missing (rootfs without
+// sysbox-init).
 func vsockConnFromHandle(h substrate.NodeHandle) *vsockexec.VsockConnection {
-	uds, _ := h.Attributes["vsock_uds"].(string)
-	if uds == "" {
+	hs, _ := h.Provider.(*HandleState)
+	if hs == nil || hs.VsockUDS == "" {
 		return nil
 	}
 	port := vsockrpc.DefaultPort
-	if p, ok := h.Attributes["vsock_port"].(uint32); ok && p != 0 {
-		port = p
-	} else if f, ok := h.Attributes["vsock_port"].(float64); ok && f > 0 {
-		port = uint32(f)
+	if hs.VsockPort != 0 {
+		port = hs.VsockPort
 	}
-	return vsockexec.NewVsockConnection(uds, port)
+	return vsockexec.NewVsockConnection(hs.VsockUDS, port)
 }
 
 // ExecInNode runs a command inside the VM. Prefers the vsock RPC path
@@ -155,14 +152,6 @@ func (s *Substrate) copyToNodeSSH(ctx context.Context, h substrate.NodeHandle, s
 	return nil
 }
 
-func (s *Substrate) CopyFromNode(_ context.Context, _ substrate.NodeHandle, _, _ string) error {
-	return fmt.Errorf("CopyFromNode: not implemented for firecracker")
-}
-
-func (s *Substrate) AttachTTY(_ context.Context, _ substrate.NodeHandle) (io.ReadWriteCloser, error) {
-	return nil, fmt.Errorf("AttachTTY: not implemented for firecracker")
-}
-
 // ObservationHook returns the vsock observation target for the VM.
 func (s *Substrate) ObservationHook(_ context.Context, h substrate.NodeHandle) (substrate.ObservationTarget, error) {
 	return substrate.ObservationTarget{
@@ -174,12 +163,15 @@ func (s *Substrate) ObservationHook(_ context.Context, h substrate.NodeHandle) (
 // ── SSH helpers ─────────────────────────────────────────────────────────────
 
 func sshAddrFromHandle(h substrate.NodeHandle) (string, string) {
-	ip, _ := h.Attributes["ssh_ip"].(string)
-	port := "22"
-	if p, ok := h.Attributes["ssh_port"].(string); ok && p != "" {
-		port = p
+	hs, _ := h.Provider.(*HandleState)
+	if hs == nil {
+		return "", "22"
 	}
-	return ip, port
+	port := "22"
+	if hs.SSHPort != "" {
+		port = hs.SSHPort
+	}
+	return hs.SSHIP, port
 }
 
 func sshArgs(ip, port string) []string {

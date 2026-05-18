@@ -2,11 +2,10 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha1"
 	"fmt"
 	"os"
-	"strings"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -98,41 +97,7 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 // compatibility with HCL files that don't use traversals.
 
 func resolveSubstrateRef(ref string) (string, error) {
-	if ref == "" {
-		return "", fmt.Errorf("empty substrate ref")
-	}
-	parts := strings.Split(ref, ".")
-	switch len(parts) {
-	case 1:
-		return parts[0], nil
-	case 3:
-		return parts[1], nil
-	default:
-		return "", fmt.Errorf("unexpected substrate ref %q", ref)
-	}
-}
-
-
-
-// vethName produces a deterministic ≤15-char interface name.
-// Format: <prefix>-<5hexhash>-<idx>  e.g. "vh-a3f2c-0"
-// Uses SHA-1 for low collision probability even with large for_each counts.
-func vethName(prefix, nodeName string, idx int) string {
-	h := sha1.Sum([]byte(nodeName))
-	hi := uint(h[0])<<8 | uint(h[1])
-	return fmt.Sprintf("%s-%05x-%d", prefix, hi&0xfffff, idx)
-}
-
-// mergeAttr merges base and overlay attribute maps (overlay wins on conflict).
-func mergeAttr(base, overlay map[string]any) map[string]any {
-	out := make(map[string]any, len(base)+len(overlay))
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range overlay {
-		out[k] = v
-	}
-	return out
+	return config.ResolveSubstrateRef(ref)
 }
 
 // expandTilde replaces a leading ~ with the current user's home directory.

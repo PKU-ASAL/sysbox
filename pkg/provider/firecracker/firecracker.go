@@ -1,16 +1,23 @@
 package firecracker
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync/atomic"
+	"time"
+
+	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // Substrate is the Firecracker microVM implementation of substrate.Substrate.
 type Substrate struct {
+	substrate.BaseSubstrate // inherits Validate / DecodeProviderConfig defaults
+
 	firecrackerBin string
 	jailerBin      string
 	kernelPath     string
@@ -64,9 +71,103 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 	return substrate.Capabilities{
 		SharedKernel:    false,
 		SupportsWindows: false,
-		BootTime:        "ms",
-		NICType:         "tap",
+		NICHotPlug:      false, // firecracker requires NICs declared in boot config
+		DiskHotPlug:     false,
+		NICKinds:        []string{substrate.NICKindTap},
+		ConsoleKinds:    []string{substrate.ConsoleKindSerial},
+		NeedsCloudinit:  false, // sysbox-init + config drive replaces cloud-init
+		PIDVisibility:   substrate.PIDVisibilityOpaque,
+		SupportsPause:   false, // not wired yet
+		BootTime:        150 * time.Millisecond,
+		Notes:           "microVM via Firecracker; NICs cold-plug only; in-guest agent via vsock-rpc.",
 	}
+}
+
+// Validate ensures the spec carries what the firecracker substrate needs.
+func (s *Substrate) Validate(spec substrate.NodeSpec) error {
+	// Firecracker needs either an image with rootfs metadata (resolved later
+	// in PrepareImage) or an explicit Rootfs override; kernel is optional
+	// because the substrate has a default kernel configured at New() time.
+	_ = spec // PR-01 stub: accept anything; tighter checks land in PR-05.
+	return nil
+}
+
+// MarshalProviderState writes the firecracker HandleState as JSON.
+func (s *Substrate) MarshalProviderState(h substrate.NodeHandle) (json.RawMessage, error) {
+	hs, ok := h.Provider.(*HandleState)
+	if !ok || hs == nil {
+		return nil, nil
+	}
+	return json.Marshal(hs)
+}
+
+// UnmarshalProviderState restores HandleState from a previously persisted blob.
+func (s *Substrate) UnmarshalProviderState(data json.RawMessage) (any, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var hs HandleState
+	if err := json.Unmarshal(data, &hs); err != nil {
+		return nil, fmt.Errorf("firecracker: unmarshal handle state: %w", err)
+	}
+	return &hs, nil
+}
+
+// Connection returns a vsock or SSH connection for the VM. Prefers vsock when
+// the handle advertises it (sysbox-init present); falls back to SSH otherwise.
+func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.ConnectionHint) (substrate.Connection, error) {
+	hs, _ := handle.Provider.(*HandleState)
+	// Explicit HCL type overrides auto-selection.
+	if len(hints) > 0 && hints[0].Type != "" && hints[0].Type != "auto" {
+		switch hints[0].Type {
+		case "vsock":
+			if hs == nil || hs.VsockUDS == "" {
+				return nil, fmt.Errorf("vsock connection requested but VM has no vsock channel")
+			}
+			return providerexec.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
+		case "ssh":
+			return s.sshConn(handle, hints), nil
+		}
+	}
+	// Auto: prefer vsock, fall back to SSH.
+	if hs != nil && hs.VsockUDS != "" {
+		return providerexec.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
+	}
+	return s.sshConn(handle, hints), nil
+}
+
+// sshConn builds an SSH connection from the handle state + optional HCL hints.
+func (s *Substrate) sshConn(handle substrate.NodeHandle, hints []substrate.ConnectionHint) substrate.Connection {
+	hs, _ := handle.Provider.(*HandleState)
+	host := handle.Net.PrimaryIP
+	port := "22"
+	user := "root"
+	pass := "root"
+	key := ""
+	if hs != nil {
+		if hs.SSHIP != "" {
+			host = hs.SSHIP
+		}
+		if hs.SSHPort != "" {
+			port = hs.SSHPort
+		}
+	}
+	if len(hints) > 0 {
+		h := hints[0]
+		if h.Host != "" {
+			host = h.Host
+		}
+		if h.User != "" {
+			user = h.User
+		}
+		if h.Password != "" {
+			pass = h.Password
+		}
+		if h.PrivateKey != "" {
+			key = h.PrivateKey
+		}
+	}
+	return providerexec.NewSSHConnectionWithPort(host, port, user, key, pass)
 }
 
 var _ substrate.Substrate = (*Substrate)(nil)

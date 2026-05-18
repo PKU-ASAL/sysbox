@@ -112,27 +112,35 @@ type ProvisionerConfig struct {
 
 // Typed representations after second-pass decoding.
 
+// NodeConfig is the substrate-neutral HCL shape for `resource "sysbox_node"`.
+// Substrate-specific options (privileged, kernel, vcpus, ...) live in a
+// nested `provider "X" {}` block decoded by the substrate itself via
+// Substrate.DecodeProviderConfig.
 type NodeConfig struct {
 	Image        string              `hcl:"image"`
-	Substrate    string              `hcl:"substrate"` // "docker" | "firecracker"
+	Substrate    string              `hcl:"substrate"` // "docker" | "firecracker" | ...
 	Vcpus        int                 `hcl:"vcpus,optional"`
 	Memory       string              `hcl:"memory,optional"` // e.g. "512" (MB)
-	Kernel       string              `hcl:"kernel,optional"` // path to vmlinux (firecracker only)
-	Rootfs       string              `hcl:"rootfs,optional"` // path to ext4 rootfs (firecracker only, overrides image)
-	SSHUser      string              `hcl:"ssh_user,optional"`
-	SSHPass      string              `hcl:"ssh_pass,optional"`
-	SSHPort      int                 `hcl:"ssh_port,optional"`
-	ChainInit    string              `hcl:"chain_init,optional"` // firecracker only; sysbox-init exec()s this after setup
 	Env          map[string]string   `hcl:"env,optional"`
 	DependsOn    []string            `hcl:"depends_on,optional"`
 	Links        []LinkConfig        `hcl:"link,block"`
 	Connections  []ConnectionConfig  `hcl:"connection,block"`
 	Provisioners []ProvisionerConfig `hcl:"provisioner,block"`
+	Providers    []ProviderBlock     `hcl:"provider,block"`
 	Sensor       bool                `hcl:"sensor,optional"`
-	Privileged    bool     `hcl:"privileged,optional"`
-	PidMode       string   `hcl:"pid_mode,optional"`
-	CgroupnsMode  string   `hcl:"cgroupns_mode,optional"`
-	Binds         []string `hcl:"binds,optional"`
+
+	// ProviderConfig is filled by the loader after the substrate is resolved
+	// (substrate.DecodeProviderConfig). Not part of the HCL surface; gohcl
+	// ignores fields with no `hcl:` tag.
+	ProviderConfig any
+}
+
+// ProviderBlock is the labelled `provider "X" {}` block under a sysbox_node;
+// the label must match the chosen substrate type. Decoded lazily by the
+// loader via substrate.DecodeProviderConfig so substrates own their schema.
+type ProviderBlock struct {
+	Type   string   `hcl:"type,label"`
+	Remain hcl.Body `hcl:",remain"`
 }
 
 type LinkConfig struct {

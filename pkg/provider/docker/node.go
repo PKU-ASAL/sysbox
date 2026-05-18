@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/docker/docker/api/types/container"
@@ -10,15 +11,23 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
+// HandleState is the docker-substrate's typed NodeHandle.Provider payload.
+// Persisted via MarshalProviderState; reconstructed on cold-destroy.
+type HandleState struct {
+	ContainerName string `json:"container_name,omitempty"`
+}
+
 func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
 	// Idempotent: if a container with the same name already exists (leftover
 	// from a partial previous apply where wireLink/AttachNIC failed after
 	// CreateNode succeeded), reuse it instead of failing on a name conflict.
 	if existing, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
 		return substrate.NodeHandle{
-			ID: existing.ID,
-			Attributes: map[string]any{
-				"container_name": spec.Name,
+			ID:       existing.ID,
+			Provider: &HandleState{ContainerName: spec.Name},
+			Conn: substrate.ConnInfo{
+				Kind:     substrate.ConnKindDocker,
+				Endpoint: existing.ID,
 			},
 		}, nil
 	}
@@ -28,17 +37,22 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		envs = append(envs, fmt.Sprintf("%s=%s", k, v))
 	}
 
+	pc, _ := spec.ProviderConfig.(*Config)
+	if pc == nil {
+		pc = &Config{}
+	}
+
 	hostCfg := &container.HostConfig{
 		CapAdd:     []string{"NET_ADMIN"},
 		Sysctls:    spec.Sysctls,
-		Privileged: spec.Privileged,
-		Binds:      spec.Binds,
+		Privileged: pc.Privileged,
+		Binds:      pc.Binds,
 	}
-	if spec.PidMode != "" {
-		hostCfg.PidMode = container.PidMode(spec.PidMode)
+	if pc.PidMode != "" {
+		hostCfg.PidMode = container.PidMode(pc.PidMode)
 	}
-	if spec.CgroupnsMode != "" {
-		hostCfg.CgroupnsMode = container.CgroupnsMode(spec.CgroupnsMode)
+	if pc.CgroupnsMode != "" {
+		hostCfg.CgroupnsMode = container.CgroupnsMode(pc.CgroupnsMode)
 	}
 
 	// Network mode strategy:
@@ -79,11 +93,36 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	}
 
 	return substrate.NodeHandle{
-		ID: resp.ID,
-		Attributes: map[string]any{
-			"container_name": spec.Name,
+		ID:       resp.ID,
+		Provider: &HandleState{ContainerName: spec.Name},
+		Conn: substrate.ConnInfo{
+			Kind:     substrate.ConnKindDocker,
+			Endpoint: resp.ID,
 		},
 	}, nil
+}
+
+// MarshalProviderState writes the docker HandleState as JSON. Persisted
+// alongside the NodeHandle.ID in sysbox state so cold-destroy can reuse the
+// container name.
+func (s *Substrate) MarshalProviderState(h substrate.NodeHandle) (json.RawMessage, error) {
+	hs, ok := h.Provider.(*HandleState)
+	if !ok || hs == nil {
+		return nil, nil
+	}
+	return json.Marshal(hs)
+}
+
+// UnmarshalProviderState restores HandleState from a previously persisted blob.
+func (s *Substrate) UnmarshalProviderState(data json.RawMessage) (any, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var hs HandleState
+	if err := json.Unmarshal(data, &hs); err != nil {
+		return nil, fmt.Errorf("docker: unmarshal handle state: %w", err)
+	}
+	return &hs, nil
 }
 
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {

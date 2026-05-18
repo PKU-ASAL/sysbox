@@ -1,6 +1,26 @@
 package config
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
+
+// ResolveSubstrateRef takes "docker" or "substrate.docker.light" and returns
+// the substrate type ("docker"). Returns an error on malformed input.
+func ResolveSubstrateRef(ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("empty substrate ref")
+	}
+	parts := strings.Split(ref, ".")
+	switch len(parts) {
+	case 1:
+		return parts[0], nil
+	case 3:
+		return parts[1], nil
+	default:
+		return "", fmt.Errorf("unexpected substrate ref %q", ref)
+	}
+}
 
 // ResolveName extracts the short name from a reference string.
 // Accepts both bare names ("alpine") and dot-qualified references

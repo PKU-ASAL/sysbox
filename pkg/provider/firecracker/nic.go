@@ -18,36 +18,29 @@ import (
 //
 // Firecracker does NOT support NIC hot-plug in config-file mode,
 // so we must declare all interfaces before boot.
-func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, nic substrate.NIC) error {
-	if nic.Kind != "tap" && nic.Kind != "veth" {
-		return fmt.Errorf("firecracker substrate only supports tap/veth, got %q", nic.Kind)
+func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req substrate.LinkRequest) (substrate.AttachedNIC, error) {
+	hs, _ := h.Provider.(*HandleState)
+	if hs == nil || hs.ConfigPath == "" {
+		return substrate.AttachedNIC{}, fmt.Errorf("VM config path not found in handle provider state")
 	}
 
-	tapName := nic.HostEnd
-	if tapName == "" {
-		tapName = fmt.Sprintf("tap-%s", strings.TrimPrefix(h.ID, "sysbox-"))
-		if len(tapName) > 15 {
-			tapName = tapName[:15]
-		}
+	tapName := fmt.Sprintf("tap-%s", strings.TrimPrefix(h.ID, "sysbox-"))
+	if len(tapName) > 15 {
+		tapName = tapName[:15]
 	}
 
-	// Clean up leftover TAP from a previous failed run.
-	// The TAP may be in the root netns or inside a network netns.
-	// Try both locations before creating a new one.
-	netnsName, _ := h.Attributes["network_netns"].(string)
-	bridgeName, _ := h.Attributes["network_bridge"].(string)
+	netnsName := req.NetNS
+	bridgeName := req.Bridge
 
-	// Check if TAP exists in root or network netns.
+	// Create or reuse the TAP device.
 	tapInRoot := linkExists(tapName)
 	tapInNetns := netnsName != "" && linkExistsInNetns(tapName, netnsName)
 
 	if !tapInRoot && !tapInNetns {
-		// Create TAP device on the host.
 		if err := createTapDevice(tapName); err != nil {
-			return fmt.Errorf("create tap %s: %w", tapName, err)
+			return substrate.AttachedNIC{}, fmt.Errorf("create tap %s: %w", tapName, err)
 		}
 	} else {
-		// Ensure it's up.
 		if tapInRoot {
 			exec.Command(ipBin, "link", "set", tapName, "up").Run() //nolint:errcheck
 		} else if tapInNetns {
@@ -58,57 +51,51 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, nic s
 	// Attach TAP to the network bridge.
 	if netnsName != "" && bridgeName != "" {
 		if err := attachTapToBridge(tapName, bridgeName, netnsName); err != nil {
-			return fmt.Errorf("attach tap to bridge: %w", err)
+			return substrate.AttachedNIC{}, fmt.Errorf("attach tap to bridge: %w", err)
 		}
-		// Record the netns so StartNode can run Firecracker inside it.
 		vmMu.Lock()
 		if vm, ok := vmStore[h.ID]; ok && vm.netnsName == "" {
 			vm.netnsName = netnsName
 		}
 		vmMu.Unlock()
+		if hs.NetnsName == "" {
+			hs.NetnsName = netnsName
+		}
 	}
 
 	// Add NIC to the VM config JSON.
-	cfgPath, _ := h.Attributes["vm_cfg"].(string)
-	if cfgPath == "" {
-		return fmt.Errorf("vm_cfg path not found in handle attributes")
-	}
-
-	nicIdx := nicIdxFromHandle(h)
+	cfgPath := hs.ConfigPath
+	nicIdx := hs.NICCount
 	ifaceID := fmt.Sprintf("eth%d", nicIdx)
 	fcIface := fcNetworkInterface{
 		IfaceID:     ifaceID,
 		HostDevName: tapName,
 	}
-	if nic.MAC != "" {
-		fcIface.GuestMAC = nic.MAC
+	if req.MAC != "" {
+		fcIface.GuestMAC = req.MAC
 	}
 
 	if err := appendNICtoConfig(cfgPath, fcIface); err != nil {
-		return fmt.Errorf("append NIC to config: %w", err)
+		return substrate.AttachedNIC{}, fmt.Errorf("append NIC to config: %w", err)
 	}
 
-	// Phase A: kernel cmdline IP autoconfig.
-	// Inject `ip=<client>::<gw>:<mask>:<host>:<dev>:off` into boot_args so the
-	// kernel itself brings up the first interface before /init runs.
-	// Linux's CONFIG_IP_PNP only honours one ip= directive, so only the first
-	// NIC gets this treatment; additional NICs are configured later by
-	// sysbox-init (phase C) reading per-link metadata from /proc/cmdline.
-	if nicIdx == 0 && nic.IP != "" {
+	// Phase A: kernel cmdline IP autoconfig for the first interface.
+	if nicIdx == 0 && req.IP != "" {
 		hostname := strings.TrimPrefix(h.ID, "sysbox-")
-		if err := injectKernelIPArg(cfgPath, ifaceID, hostname, nic.IP, nic.Gateway); err != nil {
-			return fmt.Errorf("inject kernel ip= arg: %w", err)
+		if err := injectKernelIPArg(cfgPath, ifaceID, hostname, req.IP, req.Gateway); err != nil {
+			return substrate.AttachedNIC{}, fmt.Errorf("inject kernel ip= arg: %w", err)
 		}
 	}
 
-	// Increment NIC count in handle.
-	if h.Attributes == nil {
-		h.Attributes = map[string]any{}
-	}
-	h.Attributes["nic_count"] = nicIdx + 1
-	h.Attributes["tap_name"] = tapName
+	hs.NICCount = nicIdx + 1
+	hs.TapName = tapName
 
-	return nil
+	return substrate.AttachedNIC{
+		Kind:    substrate.NICKindTap,
+		HostEnd: tapName,
+		IP:      req.IP,
+		NetNS:   netnsName,
+	}, nil
 }
 
 // injectKernelIPArg rewrites the VM config's boot_args to include a kernel
@@ -305,17 +292,13 @@ func deleteTapDevice(name string) error {
 	return exec.Command(ipBin, "link", "del", name).Run() //nolint:errcheck
 }
 
-// nicIdxFromHandle determines the next NIC index from handle attributes.
-// After JSON round-trip through state, nic_count becomes float64 not int.
+// nicIdxFromHandle determines the next NIC index from the typed handle state.
 func nicIdxFromHandle(h substrate.NodeHandle) int {
-	switch v := h.Attributes["nic_count"].(type) {
-	case int:
-		return v
-	case float64:
-		return int(v)
-	default:
+	hs, _ := h.Provider.(*HandleState)
+	if hs == nil {
 		return 0
 	}
+	return hs.NICCount
 }
 
 // DeleteTapForNIC removes a TAP device (used during destroy).

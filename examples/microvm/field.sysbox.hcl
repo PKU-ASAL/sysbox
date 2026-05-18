@@ -112,9 +112,14 @@ resource "sysbox_router" "core" {
 resource "sysbox_node" "node_attack" {
   substrate = substrate.firecracker.fc
   image     = sysbox_image.alpine_vm.id
-  kernel    = sysbox_kernel.fc_510.id
   vcpus     = 2
   memory    = "512"
+
+  provider "firecracker" {
+    kernel   = sysbox_kernel.fc_510.id
+    ssh_user = "root"
+    ssh_pass = "root"
+  }
 
   link {
     network = sysbox_network.net_dmz.id
@@ -127,9 +132,6 @@ resource "sysbox_node" "node_attack" {
     ip      = "172.22.0.10/24"
   }
 
-  ssh_user = "root"
-  ssh_pass = "root"
-
   # ubuntu-24.04 rootfs has apt; use bash for `|| true` etc.
   provisioner "exec" {
     inline = ["uname -a", "ip -4 addr show eth0 | head -3"]
@@ -139,18 +141,20 @@ resource "sysbox_node" "node_attack" {
 resource "sysbox_node" "node_web" {
   substrate = substrate.firecracker.fc
   image     = sysbox_image.alpine_vm.id
-  kernel    = sysbox_kernel.fc_510.id
   vcpus     = 1
   memory    = "256"
+
+  provider "firecracker" {
+    kernel   = sysbox_kernel.fc_510.id
+    ssh_user = "root"
+    ssh_pass = "root"
+  }
 
   link {
     network = sysbox_network.net_internal.id
     ip      = "10.0.12.10/24"
     gw      = "10.0.12.254"
   }
-
-  ssh_user = "root"
-  ssh_pass = "root"
 
   provisioner "exec" {
     inline = ["uname -a", "hostname"]
@@ -160,18 +164,20 @@ resource "sysbox_node" "node_web" {
 resource "sysbox_node" "node_db" {
   substrate = substrate.firecracker.fc
   image     = sysbox_image.alpine_vm.id
-  kernel    = sysbox_kernel.fc_510.id
   vcpus     = 1
   memory    = "256"
+
+  provider "firecracker" {
+    kernel   = sysbox_kernel.fc_510.id
+    ssh_user = "root"
+    ssh_pass = "root"
+  }
 
   link {
     network = sysbox_network.net_internal.id
     ip      = "10.0.12.20/24"
     gw      = "10.0.12.254"
   }
-
-  ssh_user = "root"
-  ssh_pass = "root"
 
   provisioner "exec" {
     inline = ["uname -a", "cat /etc/os-release | head -3"]

@@ -3,6 +3,7 @@ package commands
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -231,16 +232,26 @@ func monitorsTargets(m state.Resource, st *state.State) []monitor.Target {
 			"container_id":   util.AsString(nodeState.Instance["container_id"]),
 			"container_name": fmt.Sprintf("sysbox-%s", nodeName),
 		}
-		// Pass through vsock metadata for firecracker nodes so the
-		// vm-vsock backend can talk to the in-guest agent via vsock-rpc.
-		if uds := util.AsString(nodeState.Instance["vsock_uds"]); uds != "" {
-			handle["vsock_uds"] = uds
-		}
-		if cid, ok := nodeState.Instance["vsock_cid"].(float64); ok && cid != 0 {
-			handle["vsock_cid"] = fmt.Sprintf("%d", uint32(cid))
-		}
-		if port, ok := nodeState.Instance["vsock_port"].(float64); ok && port != 0 {
-			handle["vsock_port"] = fmt.Sprintf("%d", uint32(port))
+		// Flatten the substrate-specific provider_extra JSON blob into the
+		// handle so backends like vm-vsock can read vsock_uds / vsock_port
+		// without needing to know substrate types. W2-PR-07 removes the
+		// vm-vsock backend; this whole flatten step goes away with it.
+		if blob := util.AsString(nodeState.Instance["provider_extra"]); blob != "" {
+			var bag map[string]any
+			if err := json.Unmarshal([]byte(blob), &bag); err == nil {
+				for k, v := range bag {
+					switch x := v.(type) {
+					case string:
+						if x != "" {
+							handle[k] = x
+						}
+					case float64:
+						if x != 0 {
+							handle[k] = fmt.Sprintf("%d", uint64(x))
+						}
+					}
+				}
+			}
 		}
 		targets = append(targets, monitor.Target{
 			NodeID:    nodeName,

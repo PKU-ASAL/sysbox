@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,14 +143,6 @@ func (s *Substrate) GetContainerIP(ctx context.Context, containerID string) (str
 		}
 	}
 	return "", fmt.Errorf("no Docker-network IP found for container %s", containerID)
-}
-
-func (s *Substrate) CopyFromNode(_ context.Context, _ substrate.NodeHandle, _, _ string) error {
-	return fmt.Errorf("CopyFromNode: not implemented in Phase 2")
-}
-
-func (s *Substrate) AttachTTY(_ context.Context, _ substrate.NodeHandle) (io.ReadWriteCloser, error) {
-	return nil, fmt.Errorf("AttachTTY: not implemented in Phase 1")
 }
 
 // NodeStatus reports true when the container is in the running state.
