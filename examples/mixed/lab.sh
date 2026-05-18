@@ -43,7 +43,7 @@ sysbox() { "${SYSBOX}" --state "${STATE_FILE}" --file "${FIELD_FILE}" "$@"; }
 
 build_sysbox() {
     cd "${REPO_ROOT}"
-    CGO_ENABLED=0 "${GO}" build -o bin/sysbox ./cmd/sysbox
+    CGO_ENABLED=0 "${GO}" build -buildvcs=false -o bin/sysbox ./cmd/sysbox
 }
 
 build_image() {
@@ -79,6 +79,10 @@ stop_api() {
             wait "${pid}" 2>/dev/null || true
         fi
         rm -f "${API_PID_FILE}"
+    fi
+    local port="${API_ADDR##*:}"
+    if [ -n "${port}" ] && command -v fuser >/dev/null 2>&1; then
+        fuser -k "${port}/tcp" 2>/dev/null || true
     fi
 }
 

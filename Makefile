@@ -21,7 +21,7 @@ help:
 # ── build ─────────────────────────────────────────────────────────────────────
 
 build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Compile bin/sysbox
-	CGO_ENABLED=0 $(GO) build -o $(BINARY) ./cmd/sysbox
+	CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
 
 build-all: ## Cross-compile sysbox-init for amd64 + arm64
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" \

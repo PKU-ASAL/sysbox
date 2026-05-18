@@ -8,6 +8,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
+	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
@@ -261,6 +262,12 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		}
 	}
 
+	// For Docker nodes, launch the image's original CMD/Entrypoint inside
+	// the container (we overrode it with "sleep infinity" during CreateNode).
+	if err := e.execImageEntry(ctx, handle, subName); err != nil {
+		e.logf("[node] warning: image entry start: %v\n", err)
+	}
+
 	return nil
 }
 
@@ -368,4 +375,41 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 		}
 	}
 	return nil
+}
+
+// execImageEntry launches the image's original CMD/Entrypoint inside a Docker
+// container. During CreateNode we override with "sleep infinity" so provisioners
+// can run; after provisioning we exec the original entrypoint so services
+// (nginx, postgres, etc.) actually start.
+func (e *Executor) execImageEntry(ctx context.Context, handle substrate.NodeHandle, subName string) error {
+	if subName != "docker" {
+		return nil // only Docker overrides the entrypoint
+	}
+	hs, ok := handle.Provider.(*dockerprovider.HandleState)
+	if !ok || hs == nil {
+		return nil
+	}
+	if len(hs.ImageEntrypoint) == 0 && len(hs.ImageCmd) == 0 {
+		return nil // image has no entrypoint (e.g. alpine)
+	}
+
+	// Build the command: entrypoint + cmd, or just cmd
+	cmd := make([]string, 0, len(hs.ImageEntrypoint)+len(hs.ImageCmd))
+	cmd = append(cmd, hs.ImageEntrypoint...)
+	cmd = append(cmd, hs.ImageCmd...)
+
+	conn, err := substrate.Get(subName)
+	if err != nil {
+		return err
+	}
+	dsub := conn.(substrate.Substrate)
+	c, err := dsub.Connection(handle, nil)
+	if err != nil || c == nil {
+		return fmt.Errorf("no connection to start image entry: %w", err)
+	}
+
+	e.logf("[node] starting image entry: %v\n", cmd)
+	// Run as background process so it doesn't block the executor
+	_, err = c.ExecBackground(ctx, cmd, nil)
+	return err
 }

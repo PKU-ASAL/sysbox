@@ -57,6 +57,7 @@ start_api() {
 }
 
 stop_api() {
+    # Kill via pid file if available.
     if [ -f "${API_PID_FILE}" ]; then
         local pid
         pid="$(cat "${API_PID_FILE}")"
@@ -67,12 +68,18 @@ stop_api() {
         fi
         rm -f "${API_PID_FILE}"
     fi
+    # Fallback: kill any process listening on API_ADDR.
+    local port
+    port="${API_ADDR##*:}"
+    if [ -n "${port}" ] && command -v fuser >/dev/null 2>&1; then
+        fuser -k "${port}/tcp" 2>/dev/null || true
+    fi
 }
 
 build_sysbox() {
     echo "==> Building sysbox..."
     cd "${REPO_ROOT}"
-    CGO_ENABLED=0 "${GO}" build -o bin/sysbox ./cmd/sysbox
+    CGO_ENABLED=0 "${GO}" build -buildvcs=false -o bin/sysbox ./cmd/sysbox
 }
 
 build_image() {

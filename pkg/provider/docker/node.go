@@ -14,7 +14,9 @@ import (
 // HandleState is the docker-substrate's typed NodeHandle.Provider payload.
 // Persisted via MarshalProviderState; reconstructed on cold-destroy.
 type HandleState struct {
-	ContainerName string `json:"container_name,omitempty"`
+	ContainerName   string   `json:"container_name,omitempty"`
+	ImageCmd        []string `json:"image_cmd,omitempty"`        // original image CMD (e.g. ["nginx", "-g", "daemon off;"])
+	ImageEntrypoint []string `json:"image_entrypoint,omitempty"` // original image ENTRYPOINT
 }
 
 func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
@@ -80,6 +82,16 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		}
 	}
 
+	// Inspect the image to capture its original CMD/Entrypoint so we can
+	// exec them after provisioners finish (our container overrides them
+	// with "sleep infinity" to keep the container alive for provisioning).
+	var imageCmd []string
+	var imageEntrypoint []string
+	if imgInfo, _, err := s.cli.ImageInspectWithRaw(ctx, spec.Image.Repository); err == nil {
+		imageCmd = imgInfo.Config.Cmd
+		imageEntrypoint = imgInfo.Config.Entrypoint
+	}
+
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
 			Image: spec.Image.Repository,
@@ -99,8 +111,12 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	}
 
 	return substrate.NodeHandle{
-		ID:       resp.ID,
-		Provider: &HandleState{ContainerName: spec.Name},
+		ID: resp.ID,
+		Provider: &HandleState{
+			ContainerName:   spec.Name,
+			ImageCmd:        imageCmd,
+			ImageEntrypoint: imageEntrypoint,
+		},
 		Conn: substrate.ConnInfo{
 			Kind:     substrate.ConnKindDocker,
 			Endpoint: resp.ID,

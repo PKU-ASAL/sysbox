@@ -81,8 +81,8 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req s
 // container name. Names must be ≤15 chars.
 func vethName(prefix, containerName string) string {
 	name := containerName
-	if len(name) > 8 && name[:8] == "sysbox-" {
-		name = name[8:]
+	if len(name) > 7 && name[:7] == "sysbox-" {
+		name = name[7:]
 	}
 	vn := prefix + "-" + name
 	if len(vn) > 15 {
