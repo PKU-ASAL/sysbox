@@ -41,7 +41,7 @@ func BuildEvalContext(root *Root) *hcl.EvalContext {
 
 	// Collect locals first so they are available when evaluating count expressions.
 	localCtx := &hcl.EvalContext{
-		Functions: map[string]function.Function{"env": envFunc},
+		Functions: map[string]function.Function{"env": envFunc, "toset": tosetFunc},
 	}
 	localVals := map[string]cty.Value{}
 	for _, lb := range root.Locals {
@@ -64,7 +64,7 @@ func BuildEvalContext(root *Root) *hcl.EvalContext {
 	// Minimal context for evaluating count = <expr> (literals + local.x).
 	preCtx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{},
-		Functions: map[string]function.Function{"env": envFunc},
+		Functions: map[string]function.Function{"env": envFunc, "toset": tosetFunc},
 	}
 	if len(localVals) > 0 {
 		preCtx.Variables["local"] = cty.ObjectVal(localVals)
@@ -115,7 +115,8 @@ func BuildEvalContext(root *Root) *hcl.EvalContext {
 	return &hcl.EvalContext{
 		Variables: vars,
 		Functions: map[string]function.Function{
-			"env": envFunc,
+			"env":   envFunc,
+			"toset": tosetFunc,
 		},
 	}
 }
@@ -129,6 +130,44 @@ var envFunc = function.New(&function.Spec{
 	Type: function.StaticReturnType(cty.String),
 	Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
 		return cty.StringVal(os.Getenv(args[0].AsString())), nil
+	},
+})
+
+// tosetFunc implements toset([...]) → set of the same element type.
+// Mirrors Terraform's toset() conversion function.
+var tosetFunc = function.New(&function.Spec{
+	Params: []function.Parameter{
+		{Name: "v", Type: cty.DynamicPseudoType, AllowDynamicType: true},
+	},
+	Type: func(args []cty.Value) (cty.Type, error) {
+		arg := args[0]
+		if !arg.Type().IsListType() && !arg.Type().IsTupleType() && !arg.Type().IsSetType() {
+			return cty.NilType, fmt.Errorf("toset requires a list, tuple, or set")
+		}
+		// Determine element type from first non-null element.
+		it := arg.ElementIterator()
+		if !it.Next() {
+			return cty.Set(cty.String), nil // empty → default string set
+		}
+		_, v := it.Element()
+		return cty.Set(v.Type()), nil
+	},
+	Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+		arg := args[0]
+		if arg.LengthInt() == 0 {
+			return cty.SetValEmpty(retType.ElementType()), nil
+		}
+		seen := map[string]cty.Value{}
+		it := arg.ElementIterator()
+		for it.Next() {
+			_, v := it.Element()
+			seen[v.GoString()] = v
+		}
+		elems := make([]cty.Value, 0, len(seen))
+		for _, v := range seen {
+			elems = append(elems, v)
+		}
+		return cty.SetVal(elems), nil
 	},
 })
 

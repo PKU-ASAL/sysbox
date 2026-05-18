@@ -50,8 +50,8 @@ EDR 事件采集 / 存储 / 分析  ← EDR 自己的事
 
 | 模块 | 状态 |
 |---|---|
-| `count` 元参数 | ❌ |
-| `for_each` 完整化 | ⚠️ 骨架已有，边界情况未覆盖 |
+| `count` 元参数 | ✅ |
+| `for_each` 完整化 | ✅ map / object / set(string) + each.key/value |
 | `module` 块 | ❌ |
 | libvirt substrate | ❌ |
 | ImageSpec union（qcow2 / ISO / cloudinit） | ❌ |
@@ -104,7 +104,7 @@ resource "sysbox_node" "attacker" {
 |---|---|---|
 | PR-07 | `sysbox serve` + 拓扑管理 API | ✅ |
 | PR-08 | 节点访问 API（exec / file） | ✅ |
-| PR-09 | `count` + `for_each` 完整化 | ❌ |
+| PR-09 | `count` + `for_each` 完整化 | ✅ |
 
 ---
 

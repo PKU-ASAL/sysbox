@@ -7,6 +7,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -100,9 +101,16 @@ func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext
 	if diag.HasErrors() {
 		return fmt.Errorf("resource %s.%s: for_each eval: %s", r.Type, r.Name, diag.Error())
 	}
-	if !val.Type().IsObjectType() && !val.Type().IsMapType() {
-		return fmt.Errorf("resource %s.%s: for_each must be an object or map, got %s",
+
+	isMap := val.Type().IsObjectType() || val.Type().IsMapType()
+	isSet := val.Type().IsSetType()
+	if !isMap && !isSet {
+		return fmt.Errorf("resource %s.%s: for_each must be a map, object, or set of strings, got %s",
 			r.Type, r.Name, val.Type().FriendlyName())
+	}
+	if isSet && val.Type().ElementType() != cty.String {
+		return fmt.Errorf("resource %s.%s: for_each set must contain strings, got set(%s)",
+			r.Type, r.Name, val.Type().ElementType().FriendlyName())
 	}
 
 	attrsWithout := make(hclsyntax.Attributes, len(synBody.Attributes)-1)
@@ -117,6 +125,25 @@ func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext
 		SrcRange:   synBody.SrcRange,
 		EndRange:   synBody.EndRange,
 	}
+
+	if isSet {
+		// For sets each.key == each.value == element; instance name = element string.
+		it := val.ElementIterator()
+		for it.Next() {
+			_, elemVal := it.Element()
+			key := elemVal.AsString()
+			rCopy := config.ResourceBlock{
+				Type:   r.Type,
+				Name:   r.Name + "_" + key,
+				Remain: remainBody,
+			}
+			if err := addResourceToGraph(rCopy, rCopy.Name, config.EachEvalContext(ctx, key, elemVal), g); err != nil {
+				return fmt.Errorf("for_each[%s]: %w", key, err)
+			}
+		}
+		return nil
+	}
+
 	for key, elemVal := range val.AsValueMap() {
 		rCopy := config.ResourceBlock{
 			Type:   r.Type,
