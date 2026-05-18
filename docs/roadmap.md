@@ -28,20 +28,21 @@ EDR 事件采集 / 存储 / 分析  ← EDR 自己的事
 
 ---
 
-## 1. 当前状态（Wave 1 已完成）
+## 1. 当前状态（Wave 1 + Wave 2 PR-07/08 已完成）
 
 | 模块 | 状态 | 备注 |
 |---|---|---|
-| Substrate 接口（19 方法） | ✅ | |
-| BaseSubstrate（9 个默认实现） | ✅ | |
-| Capabilities（11 字段，typed） | ✅ | |
+| Substrate 接口 | ✅ | |
+| BaseSubstrate（默认实现） | ✅ | |
+| Capabilities（typed） | ✅ | |
 | NodeHandle / NodeSpec / ConnInfo / LinkRequest | ✅ | 全部 typed struct |
 | Docker provider | ✅ | 全接口覆盖，编译期 guard |
 | Firecracker provider | ✅ | 全接口覆盖，编译期 guard |
-| Runtime 零 substrate 硬编码 | ✅ | 无 `if subName ==`，无具体类型断言 |
-| State schema v2 | ✅ | v1 直接报错，不留兼容层 |
+| Runtime 零 substrate 硬编码 | ✅ | |
+| State schema v2 | ✅ | |
 | HCL schema | ✅ | `provider "X" {}`、`connection {}`、`for_each`、`locals`、`output` |
-| CLI（9 个命令） | ✅ | init/plan/apply/destroy/state/show/output/validate/sensor |
+| CLI（9 个命令） | ✅ | init/plan/apply/destroy/state/show/output/validate/serve |
+| 运维 API（`sysbox serve`） | ✅ | `pkg/api/`：topo plan/apply/destroy + 节点 exec，SSE 日志，run 持久化 |
 | 4 个 examples + lab.sh | ✅ | `make lab SUITE=xxx` 全部验证通过 |
 | Makefile（SUITE 参数化） | ✅ | |
 
@@ -49,7 +50,6 @@ EDR 事件采集 / 存储 / 分析  ← EDR 自己的事
 
 | 模块 | 状态 |
 |---|---|
-| 运维 API（`sysbox serve`） | ❌ |
 | `count` 元参数 | ❌ |
 | `for_each` 完整化 | ⚠️ 骨架已有，边界情况未覆盖 |
 | `module` 块 | ❌ |
@@ -73,55 +73,19 @@ EDR 事件采集 / 存储 / 分析  ← EDR 自己的事
 
 ---
 
-## 3. Wave 2 · 运维 API + Terraform P1 差距（~10 天）
+## 3. Wave 2 · 运维 API + Terraform P1 差距
 
-### PR-07 · `sysbox serve` + 拓扑管理 API（4 天）
+### ✅ PR-07 · `sysbox serve` + 拓扑管理 API
 
-新增 `pkg/api/` 和 `cmd/sysbox/commands/serve_cmd.go`。
+已实现。`pkg/api/`（server.go / handler_topo.go / handler_node.go / jobs.go / sse.go）+ `cmd/sysbox/commands/serve_cmd.go`。
 
-**路由**：
+路由：`GET /v1/health`、`GET /v1/topologies`、`{suite}/state|plan`、`POST {suite}/apply|destroy`、`GET /v1/runs/{id}/logs`（SSE）。run 完成后追加到 `runs/{suite}/runs.jsonl`，重启自动恢复。
 
-```
-GET  /v1/health
+### ✅ PR-08 · 节点访问 API
 
-GET  /v1/topologies                          扫描 runs/*/state.json，列出所有 suite
-GET  /v1/topologies/{suite}/state            完整 state JSON
-GET  /v1/topologies/{suite}/plan             计算 plan（只读，不执行）
-POST /v1/topologies/{suite}/apply            触发异步 apply → {run_id}
-POST /v1/topologies/{suite}/destroy          触发异步 destroy → {run_id}
+已实现。`GET /v1/topologies/{suite}/nodes`、`nodes/{name}`、`POST nodes/{name}/exec`（chunked streaming）。
 
-GET  /v1/runs/{run_id}                       run 状态 + summary
-GET  /v1/runs/{run_id}/logs                  SSE 流：apply/destroy 实时日志行
-```
-
-apply / destroy 是阻塞操作，包进 goroutine + in-memory job store（`map[string]*Run`）。
-日志行写入 broadcast buffer，SSE 客户端订阅；apply 完成后 channel 关闭，SSE 连接自然断开。
-
-认证：`SYSBOX_API_TOKEN` 环境变量。设置时要求 `Authorization: Bearer <token>`；未设置则无认证（dev 模式）。
-
-包结构：
-
-```
-pkg/api/
-  server.go        http.Server + middleware（auth / logging）
-  routes.go        chi 路由注册
-  handler_topo.go  plan / apply / destroy handlers
-  jobs.go          Run store（in-memory）
-  sse.go           SSE broadcast buffer
-```
-
-### PR-08 · 节点访问 API（3 天）
-
-```
-GET  /v1/topologies/{suite}/nodes               从 state 列出节点
-GET  /v1/topologies/{suite}/nodes/{name}        节点详情（handle + status）
-POST /v1/topologies/{suite}/nodes/{name}/exec   执行命令，chunked streaming stdout/stderr
-POST /v1/topologies/{suite}/nodes/{name}/files  上传文件（multipart）
-```
-
-exec 实现：从 state 重建 `NodeHandle` → `substrate.Get(provider).Connection(handle).ExecInline(cmd, w, w)`，stdout/stderr 直接写 `http.ResponseWriter`（chunked transfer）。
-
-### PR-09 · `count` + `for_each` 完整化（3 天）
+### PR-09 · `count` + `for_each` 完整化（~3 天）
 
 ```hcl
 resource "sysbox_node" "attacker" {
@@ -131,18 +95,16 @@ resource "sysbox_node" "attacker" {
 }
 ```
 
-- `count` 元参数注入 `count.index` 到 eval context，展开为 N 个独立资源（`attacker[0]` / `attacker[1]` / `attacker[2]`）
-- `for_each` 补全 set 类型支持 + 资源引用 `each.key` / `each.value`
+- `count` 元参数：注入 `count.index` 到 eval context，展开为 N 个独立资源（`attacker[0]` / `attacker[1]` / `attacker[2]`）
+- `for_each` 补全：set 类型支持 + `each.key` / `each.value` 引用
 
 ### Wave 2 汇总
 
-| PR | 内容 | 估时 | 依赖 |
-|---|---|---|---|
-| PR-07 | `sysbox serve` + 拓扑管理 API | 4 天 | — |
-| PR-08 | 节点访问 API（exec / file） | 3 天 | PR-07 |
-| PR-09 | `count` + `for_each` 完整化 | 3 天 | — |
-
-**Wave 2 总人天：~10 天**。PR-07/08 串行，PR-09 可并行。
+| PR | 内容 | 状态 |
+|---|---|---|
+| PR-07 | `sysbox serve` + 拓扑管理 API | ✅ |
+| PR-08 | 节点访问 API（exec / file） | ✅ |
+| PR-09 | `count` + `for_each` 完整化 | ❌ |
 
 ---
 

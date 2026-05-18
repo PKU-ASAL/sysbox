@@ -1,9 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/function"
 )
@@ -37,25 +39,9 @@ func BuildEvalContext(root *Root) *hcl.EvalContext {
 		substrateVal[typ] = cty.ObjectVal(byAlias)
 	}
 
-	resTypes := map[string]map[string]cty.Value{}
-	for _, r := range root.Resources {
-		if resTypes[r.Type] == nil {
-			resTypes[r.Type] = map[string]cty.Value{}
-		}
-		resTypes[r.Type][r.Name] = cty.ObjectVal(map[string]cty.Value{
-			"id":   cty.StringVal(r.Name),
-			"name": cty.StringVal(r.Name),
-		})
-	}
-
-	// Collect locals: merge all locals blocks into one map. Locals are
-	// evaluated against a context that already exposes top-level functions
-	// (env, ...) so that `locals { x = env("HOME") }` resolves; they do not
-	// yet see other locals or resources (no inter-local references for now).
+	// Collect locals first so they are available when evaluating count expressions.
 	localCtx := &hcl.EvalContext{
-		Functions: map[string]function.Function{
-			"env": envFunc,
-		},
+		Functions: map[string]function.Function{"env": envFunc},
 	}
 	localVals := map[string]cty.Value{}
 	for _, lb := range root.Locals {
@@ -73,6 +59,46 @@ func BuildEvalContext(root *Root) *hcl.EvalContext {
 			}
 			localVals[name] = val
 		}
+	}
+
+	// Minimal context for evaluating count = <expr> (literals + local.x).
+	preCtx := &hcl.EvalContext{
+		Variables: map[string]cty.Value{},
+		Functions: map[string]function.Function{"env": envFunc},
+	}
+	if len(localVals) > 0 {
+		preCtx.Variables["local"] = cty.ObjectVal(localVals)
+	}
+
+	resTypes := map[string]map[string]cty.Value{}
+	for _, r := range root.Resources {
+		if resTypes[r.Type] == nil {
+			resTypes[r.Type] = map[string]cty.Value{}
+		}
+		// Check for count: expose as a tuple so sysbox_node.name[i].id resolves.
+		synBody, isSyn := r.Remain.(*hclsyntax.Body)
+		if isSyn {
+			if countAttr, hasCount := synBody.Attributes["count"]; hasCount {
+				if val, diag := countAttr.Expr.Value(preCtx); !diag.HasErrors() {
+					if n, acc := val.AsBigFloat().Int64(); acc == 0 && n > 0 {
+						elems := make([]cty.Value, n)
+						for i := 0; i < int(n); i++ {
+							instanceName := fmt.Sprintf("%s[%d]", r.Name, i)
+							elems[i] = cty.ObjectVal(map[string]cty.Value{
+								"id":   cty.StringVal(instanceName),
+								"name": cty.StringVal(instanceName),
+							})
+						}
+						resTypes[r.Type][r.Name] = cty.TupleVal(elems)
+						continue
+					}
+				}
+			}
+		}
+		resTypes[r.Type][r.Name] = cty.ObjectVal(map[string]cty.Value{
+			"id":   cty.StringVal(r.Name),
+			"name": cty.StringVal(r.Name),
+		})
 	}
 
 	vars := map[string]cty.Value{}
@@ -105,6 +131,18 @@ var envFunc = function.New(&function.Spec{
 		return cty.StringVal(os.Getenv(args[0].AsString())), nil
 	},
 })
+
+// CountEvalContext returns a child EvalContext that exposes count.index
+// for use inside a count-expanded resource body.
+func CountEvalContext(parent *hcl.EvalContext, index int) *hcl.EvalContext {
+	child := parent.NewChild()
+	child.Variables = map[string]cty.Value{
+		"count": cty.ObjectVal(map[string]cty.Value{
+			"index": cty.NumberIntVal(int64(index)),
+		}),
+	}
+	return child
+}
 
 // EachEvalContext returns a child EvalContext that exposes each.key and
 // each.value for use inside a for_each resource body.

@@ -79,25 +79,6 @@ func main() {
 		return
 	}
 
-	// --vm-sensor <events_csv> <node_name>
-	// Re-exec mode: streams tracefs events to stdout until killed.
-	// Invoked by the host-side vm-vsock backend over OpExec.
-	if len(os.Args) >= 2 && os.Args[1] == "--vm-sensor" {
-		eventsCSV := "execve,fork,exit"
-		nodeName := ""
-		for i := 2; i < len(os.Args); i++ {
-			if os.Args[i] == "--events" && i+1 < len(os.Args) {
-				eventsCSV = os.Args[i+1]
-				i++
-			} else if os.Args[i] == "--node" && i+1 < len(os.Args) {
-				nodeName = os.Args[i+1]
-				i++
-			}
-		}
-		runVMSensor(eventsCSV, nodeName)
-		return
-	}
-
 	logf("sysbox-init starting (pid %d)", os.Getpid())
 
 	mountEssentials()

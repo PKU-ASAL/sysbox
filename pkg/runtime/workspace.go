@@ -48,12 +48,49 @@ func BuildGraph(root *config.Root, ctx *hcl.EvalContext) (*graph.Graph, error) {
 	return g, nil
 }
 
-// expandResource handles a single resource block, expanding for_each if present.
+// expandResource handles a single resource block, expanding count or for_each if present.
 func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext) error {
 	synBody, isSyn := r.Remain.(*hclsyntax.Body)
 	if !isSyn {
 		return addResourceToGraph(r, r.Name, ctx, g)
 	}
+
+	// ── count expansion ────────────────────────────────────────────────────
+	if countAttr, hasCount := synBody.Attributes["count"]; hasCount {
+		val, diag := countAttr.Expr.Value(ctx)
+		if diag.HasErrors() {
+			return fmt.Errorf("resource %s.%s: count eval: %s", r.Type, r.Name, diag.Error())
+		}
+		n, acc := val.AsBigFloat().Int64()
+		if acc != 0 || n < 0 {
+			return fmt.Errorf("resource %s.%s: count must be a non-negative integer", r.Type, r.Name)
+		}
+		attrsWithout := make(hclsyntax.Attributes, len(synBody.Attributes)-1)
+		for k, v := range synBody.Attributes {
+			if k != "count" {
+				attrsWithout[k] = v
+			}
+		}
+		remainBody := &hclsyntax.Body{
+			Attributes: attrsWithout,
+			Blocks:     synBody.Blocks,
+			SrcRange:   synBody.SrcRange,
+			EndRange:   synBody.EndRange,
+		}
+		for i := 0; i < int(n); i++ {
+			rCopy := config.ResourceBlock{
+				Type:   r.Type,
+				Name:   fmt.Sprintf("%s[%d]", r.Name, i),
+				Remain: remainBody,
+			}
+			if err := addResourceToGraph(rCopy, rCopy.Name, config.CountEvalContext(ctx, i), g); err != nil {
+				return fmt.Errorf("count[%d]: %w", i, err)
+			}
+		}
+		return nil
+	}
+
+	// ── for_each expansion ─────────────────────────────────────────────────
 	synAttr, hasForEach := synBody.Attributes["for_each"]
 	if !hasForEach {
 		return addResourceToGraph(r, r.Name, ctx, g)
