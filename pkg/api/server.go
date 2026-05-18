@@ -17,7 +17,7 @@ type Server struct {
 func NewServer(runsDir string) *Server {
 	s := &Server{
 		runsDir: runsDir,
-		jobs:    newJobs(),
+		jobs:    newJobs(runsDir),
 		mux:     http.NewServeMux(),
 	}
 	s.registerRoutes()
