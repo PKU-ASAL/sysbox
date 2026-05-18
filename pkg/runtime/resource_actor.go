@@ -70,10 +70,16 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 		return fmt.Errorf("start actor %s: %w", n.ID.Name, err)
 	}
 
-	// Determine ACP URL: use the primary IP stored in node state.
+	// Determine ACP URL: prefer acp_ip if set, otherwise fall back to primary_ip.
 	acpURL := ""
-	if ip := util.AsString(nodeState.Instance["primary_ip"]); ip != "" && cfg.Port > 0 {
-		acpURL = fmt.Sprintf("http://%s:%d", ip, cfg.Port)
+	if cfg.Port > 0 {
+		ip := cfg.ACPIP
+		if ip == "" {
+			ip = util.AsString(nodeState.Instance["primary_ip"])
+		}
+		if ip != "" {
+			acpURL = fmt.Sprintf("http://%s:%d", ip, cfg.Port)
+		}
 	}
 
 	e.state.AddResource(state.Resource{
@@ -185,13 +191,17 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 
 	acpURL := ""
-	// Use primary IP from first NAT link for ACP URL.
-	if len(natLinks) > 0 && cfg.Port > 0 {
-		ip := natLinks[0].ip
-		if idx := strings.Index(ip, "/"); idx >= 0 {
-			ip = ip[:idx]
+	if cfg.Port > 0 {
+		ip := cfg.ACPIP
+		if ip == "" && len(natLinks) > 0 {
+			ip = natLinks[0].ip
+			if idx := strings.Index(ip, "/"); idx >= 0 {
+				ip = ip[:idx]
+			}
 		}
-		acpURL = fmt.Sprintf("http://%s:%d", ip, cfg.Port)
+		if ip != "" {
+			acpURL = fmt.Sprintf("http://%s:%d", ip, cfg.Port)
+		}
 	}
 
 	e.state.AddResource(state.Resource{

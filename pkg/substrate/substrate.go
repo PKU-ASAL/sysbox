@@ -73,8 +73,6 @@ type Substrate interface {
 	// Returns an AttachedNIC for runtime to persist in state.
 	AttachNIC(ctx context.Context, handle NodeHandle, req LinkRequest) (AttachedNIC, error)
 
-	ObservationHook(ctx context.Context, handle NodeHandle) (ObservationTarget, error)
-
 	// NodeStatus reports whether the node is healthy (running and reachable).
 	// Used by drift detection; a false result triggers a Change entry in the plan.
 	NodeStatus(ctx context.Context, handle NodeHandle) (bool, error)

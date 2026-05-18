@@ -122,8 +122,6 @@ type NodeConfig struct {
 	Connections  []ConnectionConfig  `hcl:"connection,block"`
 	Provisioners []ProvisionerConfig `hcl:"provisioner,block"`
 	Providers    []ProviderBlock     `hcl:"provider,block"`
-	Sensor       bool                `hcl:"sensor,optional"`
-
 	// ProviderConfig is filled by the loader after the substrate is resolved
 	// (substrate.DecodeProviderConfig). Not part of the HCL surface; gohcl
 	// ignores fields with no `hcl:` tag.
@@ -183,12 +181,16 @@ type NetworkConfig struct {
 //		  entry_points = { web = "http://172.20.0.10", ssh = "ssh://172.20.0.10:22" }
 //		}
 type ActorConfig struct {
-	Position    string            `hcl:"position,optional"` // "internal" (default) | "external"
-	Node        string            `hcl:"node,optional"`     // internal: target sysbox_node ref
-	Image       string            `hcl:"image,optional"`    // external: sysbox_image ref
-	Links       []LinkConfig      `hcl:"link,block"`        // external: network attachments
-	Command     []string          `hcl:"command"`
-	Port        int               `hcl:"port,optional"`
+	Position string       `hcl:"position,optional"` // "internal" (default) | "external"
+	Node     string       `hcl:"node,optional"`     // internal: target sysbox_node ref
+	Image    string       `hcl:"image,optional"`    // external: sysbox_image ref
+	Links    []LinkConfig `hcl:"link,block"`        // external: network attachments
+	Command  []string     `hcl:"command"`
+	Port     int          `hcl:"port,optional"`
+	// ACPIP overrides the IP used for the ACP URL (http://<acp_ip>:<port>).
+	// If empty, the node's primary_ip (first link) is used. Set this to the
+	// uplink / NAT IP when the episode runner connects from outside the lab.
+	ACPIP       string            `hcl:"acp_ip,optional"`
 	Env         map[string]string `hcl:"env,optional"`
 	EntryPoints map[string]string `hcl:"entry_points,optional"` // informational: accessible endpoints
 	DependsOn   []string          `hcl:"depends_on,optional"`

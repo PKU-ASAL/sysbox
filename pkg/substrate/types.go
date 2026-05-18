@@ -273,18 +273,3 @@ type Capabilities struct {
 	BootTime        time.Duration // typical boot latency (best-effort estimate)
 	Notes           string        // free-form documentation, displayed in `sysbox plan`
 }
-
-// ObservationTarget tells the sensor / monitor provider how to attach to this
-// node. The substrate fills this in via ObservationHook so monitor backends
-// don't need to know substrate-specific details.
-type ObservationTarget struct {
-	// Kind is one of:
-	//   "host-pid-namespace"  – the value is the host PID of the guest's init
-	//   "virtio-vsock"        – the value is "<uds-path>:<port>"
-	//   "virtio-serial"       – the value is a host-side serial chardev path
-	//   "ssh"                 – the value is "user@host:port"
-	//   "winrm"               – the value is "host:port"
-	//   "none"                – substrate does not expose any observation channel
-	Kind  string
-	Value string
-}

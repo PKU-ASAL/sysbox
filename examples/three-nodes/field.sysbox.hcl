@@ -172,6 +172,7 @@ resource "sysbox_actor" "red" {
   node     = sysbox_node.node_attack.id
   command  = ["opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
   port     = 4096
+  acp_ip   = "172.20.0.10"  # uplink IP — reachable from host / episode runner
 
   env = {
     DEEPSEEK_API_KEY = env("DEEPSEEK_API_KEY")

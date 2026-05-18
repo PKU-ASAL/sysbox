@@ -153,14 +153,3 @@ func (s *Substrate) NodeStatus(ctx context.Context, h substrate.NodeHandle) (boo
 	}
 	return ins.State.Running, nil
 }
-
-func (s *Substrate) ObservationHook(ctx context.Context, h substrate.NodeHandle) (substrate.ObservationTarget, error) {
-	ins, err := s.cli.ContainerInspect(ctx, h.ID)
-	if err != nil {
-		return substrate.ObservationTarget{}, err
-	}
-	return substrate.ObservationTarget{
-		Kind:  "host-pid-namespace",
-		Value: fmt.Sprintf("%d", ins.State.Pid),
-	}, nil
-}

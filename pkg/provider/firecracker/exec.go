@@ -152,14 +152,6 @@ func (s *Substrate) copyToNodeSSH(ctx context.Context, h substrate.NodeHandle, s
 	return nil
 }
 
-// ObservationHook returns the vsock observation target for the VM.
-func (s *Substrate) ObservationHook(_ context.Context, h substrate.NodeHandle) (substrate.ObservationTarget, error) {
-	return substrate.ObservationTarget{
-		Kind:  "virtio-serial",
-		Value: fmt.Sprintf("vm-%s-vsock", h.ID),
-	}, nil
-}
-
 // ── SSH helpers ─────────────────────────────────────────────────────────────
 
 func sshAddrFromHandle(h substrate.NodeHandle) (string, string) {
