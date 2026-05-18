@@ -28,9 +28,16 @@ type ManagedNetworkInfo struct {
 	Name string // the system-level name (bridge name, network name)
 }
 
+// ImageSpec describes how to obtain a node image. Exactly one source field
+// should be set; substrates only inspect the field(s) they understand.
+//
+//   - DockerRef — docker image tag/digest (docker substrate)
+//   - Rootfs    — ext4 rootfs file or URL (firecracker substrate)
+//   - QCow2     — qcow2 disk image file or URL (libvirt substrate)
 type ImageSpec struct {
 	DockerRef string
 	Rootfs    string
+	QCow2     string
 	Size      string
 }
 

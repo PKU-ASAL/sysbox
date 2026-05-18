@@ -228,12 +228,13 @@ type ActorConfig struct {
 type ImageConfig struct {
 	Substrate string `hcl:"substrate"`
 	DockerRef string `hcl:"docker_ref,optional"`
-	// Rootfs is either a local path (e.g. "/tmp/rootfs.ext4") or a URL
-	// ("https://.../rootfs.ext4"). URLs are fetched via pkg/artifact at
-	// apply time and cached on disk.
+	// Rootfs is an ext4 rootfs file (local path or URL). Used by the
+	// Firecracker substrate. URLs are fetched via pkg/artifact at apply time.
 	Rootfs string `hcl:"rootfs,optional"`
-	// SHA256, if set, is verified against the resolved artifact (URL or
-	// local). Mismatch fails apply.
+	// QCow2 is a qcow2 disk image (local path or URL). Used by the libvirt
+	// substrate. Resolved through the same artifact cache as Rootfs.
+	QCow2 string `hcl:"qcow2,optional"`
+	// SHA256, if set, is verified against the resolved artifact (URL or local).
 	SHA256 string `hcl:"sha256,optional"`
 	Size   string `hcl:"size,optional"`
 }

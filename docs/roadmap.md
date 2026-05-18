@@ -53,8 +53,8 @@ EDR 事件采集 / 存储 / 分析  ← EDR 自己的事
 | `count` 元参数 | ✅ |
 | `for_each` 完整化 | ✅ map / object / set(string) + each.key/value |
 | `module` 块 | ✅ |
-| libvirt substrate | ❌ |
-| ImageSpec union（qcow2 / ISO / cloudinit） | ❌ |
+| libvirt substrate | ✅ |
+| ImageSpec union（qcow2 / ISO / cloudinit） | ✅ |
 
 ---
 

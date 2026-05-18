@@ -25,28 +25,39 @@ func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
-	// Resolve rootfs source through the artifact resolver. This makes
-	// URL-based rootfs identical to local-path rootfs from the substrate's
-	// perspective: the substrate always sees an absolute local path.
-	rootfs := cfg.Rootfs
-	var rootfsSHA string
-	if rootfs != "" {
-		res, err := artifact.New().Resolve(artifact.Spec{Source: rootfs, SHA256: cfg.SHA256})
+	res := artifact.New()
+
+	// Resolve disk image sources through the artifact cache (URL or local path).
+	rootfs, qcow2 := cfg.Rootfs, cfg.QCow2
+	var resolvedSHA string
+	for _, entry := range []struct {
+		src   string
+		label string
+		dst   *string
+	}{
+		{cfg.Rootfs, "rootfs", &rootfs},
+		{cfg.QCow2, "qcow2", &qcow2},
+	} {
+		if entry.src == "" {
+			continue
+		}
+		r, err := res.Resolve(artifact.Spec{Source: entry.src, SHA256: cfg.SHA256})
 		if err != nil {
-			return fmt.Errorf("image %s rootfs: %w", n.ID.Name, err)
+			return fmt.Errorf("image %s %s: %w", n.ID.Name, entry.label, err)
 		}
-		if res.FromCache {
-			e.logf("[apply] image %s: rootfs cache hit (%s)\n", n.ID.Name, res.Path)
-		} else if artifact.IsURL(cfg.Rootfs) {
-			e.logf("[apply] image %s: rootfs fetched to %s\n", n.ID.Name, res.Path)
+		if r.FromCache {
+			e.logf("[apply] image %s: %s cache hit (%s)\n", n.ID.Name, entry.label, r.Path)
+		} else if artifact.IsURL(entry.src) {
+			e.logf("[apply] image %s: %s fetched to %s\n", n.ID.Name, entry.label, r.Path)
 		}
-		rootfs = res.Path
-		rootfsSHA = res.SHA256
+		*entry.dst = r.Path
+		resolvedSHA = r.SHA256
 	}
 
 	ref, err := sub.PrepareImage(ctx, substrate.ImageSpec{
 		DockerRef: cfg.DockerRef,
 		Rootfs:    rootfs,
+		QCow2:     qcow2,
 		Size:      cfg.Size,
 	})
 	if err != nil {
@@ -60,8 +71,8 @@ func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
 		Instance: map[string]any{
 			"image_id":   ref.ID,
 			"repository": ref.Repository,
-			"source":     cfg.Rootfs,
-			"sha256":     rootfsSHA,
+			"source":     cfg.Rootfs + cfg.QCow2,
+			"sha256":     resolvedSHA,
 		},
 	})
 	return nil

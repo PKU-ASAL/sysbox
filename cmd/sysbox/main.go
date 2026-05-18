@@ -10,6 +10,7 @@ import (
 	"github.com/oslab/sysbox/cmd/sysbox/commands"
 	docker "github.com/oslab/sysbox/pkg/provider/docker"
 	fc "github.com/oslab/sysbox/pkg/provider/firecracker"
+	_ "github.com/oslab/sysbox/pkg/provider/libvirt" // registers "libvirt" substrate via init()
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
