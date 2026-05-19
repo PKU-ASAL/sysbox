@@ -126,6 +126,12 @@ resource "sysbox_node" "node_attack" {
     ip      = "172.22.0.10/24"
   }
 
+  # Declarative static routes for cross-subnet access via router.
+  route {
+    dst = "10.0.12.0/24"
+    via = "10.0.11.254"
+  }
+
   # ubuntu-24.04 rootfs has apt; use bash for `|| true` etc.
   provisioner "exec" {
     inline = ["uname -a", "ip -4 addr show eth0 | head -3"]

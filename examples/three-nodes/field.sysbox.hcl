@@ -103,7 +103,7 @@ resource "sysbox_node" "node_attack" {
   substrate = substrate.docker.light
 
   # DMZ: lab-internal communication (to router and victim nodes).
-  # No gw here — routing is handled by provisioner below.
+  # No gw here — routing is handled by route {} blocks below.
   link {
     network = sysbox_network.net_dmz.id
     ip      = "10.0.1.10/24"

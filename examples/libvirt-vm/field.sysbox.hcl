@@ -86,11 +86,16 @@ resource "sysbox_node" "server" {
 
   # Configure IP on the VM's first interface via a provisioner.
   # sysbox will SSH to ssh_ip (set below) to run these commands.
+  # Static routes are declared via route {} blocks (Terraform-style).
+  route {
+    dst = "0.0.0.0/0"
+    via = "10.0.20.254"
+  }
+
   provisioner "exec" {
     inline = [
       "ip addr add 10.0.20.10/24 dev eth0 || true",
       "ip link set eth0 up",
-      "ip route add default via 10.0.20.254 || true",
     ]
   }
 }
@@ -111,11 +116,15 @@ resource "sysbox_node" "client" {
     ip      = "10.0.20.20/24"
   }
 
+  route {
+    dst = "0.0.0.0/0"
+    via = "10.0.20.254"
+  }
+
   provisioner "exec" {
     inline = [
       "ip addr add 10.0.20.20/24 dev eth0 || true",
       "ip link set eth0 up",
-      "ip route add default via 10.0.20.254 || true",
     ]
   }
 }
