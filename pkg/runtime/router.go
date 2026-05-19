@@ -37,28 +37,24 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("image %s not applied yet", imageName)
 	}
 	imgRef := substrate.ImageRef{
-		ID:         util.AsString(imgState.Instance["image_id"]),
-		Repository: util.AsString(imgState.Instance["repository"]),
+		ID:         imgState.ImageID(),
+		Repository: imgState.Repository(),
 	}
 
-	// Pre-scan interfaces: find the first NAT network so it can be
-	// connected at container-creation time (required for Docker to
-	// assign the correct eth name and IP).
-	var initialLinks []substrate.LinkRequest
+	// Map RouterInterface → NICSpec for the shared wiring loop.
+	var nicSpecs []NICSpec
 	for _, iface := range cfg.Interfaces {
-		netName := config.ResolveName(iface.Network)
-		netState := e.state.FindResource("sysbox_network", netName)
-		if netState == nil {
-			return fmt.Errorf("network %s not applied yet", netName)
-		}
-		if isNAT, _ := netState.Instance["nat"].(bool); isNAT && len(initialLinks) == 0 {
-			netID := util.AsString(netState.Instance["docker_network_id"])
-			initialLinks = append(initialLinks, substrate.LinkRequest{
-				KindHint:    substrate.NICKindDockerNAT,
-				DockerNetID: netID,
-				IP:          iface.IP,
-			})
-		}
+		nicSpecs = append(nicSpecs, NICSpec{
+			Network: config.ResolveName(iface.Network),
+			IP:      iface.IP,
+			Label:   iface.Name,
+		})
+	}
+
+	// Pre-scan: find the first NAT network for InitialLinks.
+	initialLinks, err := collectNATLinks(e.state, nicSpecs, false)
+	if err != nil {
+		return err
 	}
 
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
@@ -72,91 +68,21 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 	}
 
 	if err := sub.StartNode(ctx, handle); err != nil {
-		_ = sub.DestroyNode(ctx, handle)
+		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy router on start failure")
 		return err
 	}
 
-	// Docker assigns eth names sequentially from eth0 for networks
-	// connected at create time. Isolated-network veths are injected
-	// after, so we must track the correct eth index.
-	connectedAtCreate := map[string]bool{}
-	if len(initialLinks) > 0 {
-		connectedAtCreate[initialLinks[0].DockerNetID] = true
-	}
-	natIdx := 0                  // NAT interfaces: eth0, eth1, ... (Docker-assigned order)
-	vethIdx := len(initialLinks) // veth guest-iface starts after NAT ifaces
-
-	nics := []map[string]any{}
-	ifaceByName := map[string]string{} // logical name -> guest interface (eth0/eth1/...)
-
-	for _, iface := range cfg.Interfaces {
-		netName := config.ResolveName(iface.Network)
-		netState := e.state.FindResource("sysbox_network", netName)
-		if netState == nil {
-			_ = sub.DestroyNode(ctx, handle)
-			return fmt.Errorf("network %s not applied yet", netName)
-		}
-
-		// NAT network: already connected at create time, or connect via AttachNIC.
-		if isNAT, _ := netState.Instance["nat"].(bool); isNAT {
-			netID := util.AsString(netState.Instance["docker_network_id"])
-			if !connectedAtCreate[netID] {
-				if _, err := sub.AttachNIC(ctx, handle, substrate.LinkRequest{
-					KindHint:    substrate.NICKindDockerNAT,
-					DockerNetID: netID,
-					IP:          iface.IP,
-				}); err != nil {
-					_ = sub.DestroyNode(ctx, handle)
-					return fmt.Errorf("connect router %s to nat network %s: %w", n.ID.Name, netName, err)
-				}
-			}
-			// NAT ifaces are numbered eth0, eth1, ... by Docker in
-			// the order they are attached (first at create time, then
-			// via network connect). Use a separate counter so the
-			// mapping is correct regardless of HCL interface order.
-			target := fmt.Sprintf("eth%d", natIdx)
-			natIdx++
-			ifaceByName[iface.Name] = target
-			nics = append(nics, map[string]any{
-				"kind":       "docker_nat",
-				"type":       "docker_nat", // keep for backwards compat
-				"network_id": netID,
-				"ip":         iface.IP,
-				"target":     target,
-				"label":      iface.Name,
-			})
-			continue
-		}
-
-		// Non-NAT (isolated) network: delegate NIC creation to the substrate.
-		lreq := substrate.LinkRequest{
-			NetNS:      util.AsString(netState.Instance["netns"]),
-			Bridge:     util.AsString(netState.Instance["bridge"]),
-			IP:         iface.IP,
-			TargetName: fmt.Sprintf("eth%d", vethIdx),
-		}
-		attached, err := sub.AttachNIC(ctx, handle, lreq)
-		if err != nil {
-			_ = sub.DestroyNode(ctx, handle)
-			return err
-		}
-		vethIdx++
-		ifaceByName[iface.Name] = lreq.TargetName
-		nics = append(nics, map[string]any{
-			"kind":      attached.Kind,
-			"host_end":  attached.HostEnd,
-			"guest_end": attached.GuestEnd,
-			"target":    lreq.TargetName,
-			"ip":        attached.IP,
-			"netns":     attached.NetNS,
-			"label":     iface.Name,
-		})
+	// Wire all NICs using the shared helper (trackLabels=true for routers).
+	wireResult, err := wireNICs(ctx, sub, e.state, handle, initialLinks, nicSpecs, true, n.ID.Name)
+	if err != nil {
+		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy router on wire failure")
+		return err
 	}
 
 	natApplied := false
 	if cfg.NatFrom != "" && cfg.NatTo != "" {
-		fromIf, ok1 := ifaceByName[cfg.NatFrom]
-		toIf, ok2 := ifaceByName[cfg.NatTo]
+		fromIf, ok1 := wireResult.IfaceByName[cfg.NatFrom]
+		toIf, ok2 := wireResult.IfaceByName[cfg.NatTo]
 		if !ok1 || !ok2 {
 			return fmt.Errorf("nat_from %q / nat_to %q must reference declared interfaces",
 				cfg.NatFrom, cfg.NatTo)
@@ -170,7 +96,8 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 
 	inst := map[string]any{
 		"container_id": handle.ID,
-		"nics":         nics,
+		"primary_ip":   wireResult.PrimaryIP,
+		"nics":         wireResult.NICs,
 		"nat_applied":  natApplied,
 	}
 	// Persist provider_extra so cold-destroy works for all substrates.

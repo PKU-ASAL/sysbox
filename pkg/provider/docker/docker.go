@@ -31,6 +31,15 @@ func New() (*Substrate, error) {
 	return &Substrate{cli: cli}, nil
 }
 
+// Close releases the Docker client's idle connections and goroutines.
+// Should be called when the substrate is no longer needed.
+func (s *Substrate) Close() error {
+	if s.cli != nil {
+		return s.cli.Close()
+	}
+	return nil
+}
+
 func (s *Substrate) Name() string { return "docker" }
 
 func (s *Substrate) Capabilities() substrate.Capabilities {

@@ -5,12 +5,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/oslab/sysbox/pkg/graph"
 )
 
 // Destroy walks the plan reverse: tear down Destroy set in reverse topo order.
 //
-// Resources in state.Resources were appended in forward topo order during
-// apply, so reversing the slice gives us reverse-dependency destroy order.
+// The reverse topological order is computed from the dependency graph, which
+// ensures correct destroy ordering regardless of how resources are ordered
+// in state (drift re-creation can move resources to the end of the state
+// list, breaking the old assumption that state append-order == topo order).
+//
+// When the graph is empty (e.g. destroy called from the API without HCL),
+// we fall back to reverse state order.
 //
 // Resources with lifecycle.prevent_destroy = true are listed in plan.Protected
 // and are silently skipped (a warning is printed to stderr).
@@ -23,42 +30,39 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 		byID[r.Type+"."+r.Name] = true
 	}
 
-	// Snapshot the resource list so we can iterate while DestroyResource
-	// mutates e.state.Resources.
-	// Note: plan.Protected resources are NOT in plan.Destroy, so we simply
-	// skip them here without any extra check.
-	snapshot := append([]struct {
-		Type string
-		Name string
-	}{}, func() []struct {
-		Type string
-		Name string
-	} {
-		out := make([]struct {
-			Type string
-			Name string
-		}, 0, len(e.state.Resources))
-		for _, r := range e.state.Resources {
-			out = append(out, struct {
-				Type string
-				Name string
-			}{r.Type, r.Name})
+	// Determine destroy order: prefer reverse topological from graph;
+	// fall back to reverse state order when the graph is empty.
+	var destroyOrder []graph.NodeID
+	if len(e.graph.All()) > 0 {
+		topoOrder, err := e.graph.ReverseTopoSort()
+		if err != nil {
+			return fmt.Errorf("topo sort for destroy: %w", err)
 		}
-		return out
-	}()...)
+		destroyOrder = topoOrder
+	} else {
+		// Fallback: build order from state resources in reverse append order.
+		for _, r := range e.state.Resources {
+			destroyOrder = append(destroyOrder, graph.NodeID{Type: r.Type, Name: r.Name})
+		}
+		// Reverse for destroy order.
+		for i, j := 0, len(destroyOrder)-1; i < j; i, j = i+1, j-1 {
+			destroyOrder[i], destroyOrder[j] = destroyOrder[j], destroyOrder[i]
+		}
+	}
 
-	for i := len(snapshot) - 1; i >= 0; i-- {
-		key := snapshot[i].Type + "." + snapshot[i].Name
-		if !byID[key] {
+	for _, id := range destroyOrder {
+		if !byID[id.String()] {
 			continue
 		}
-		r := e.state.FindResource(snapshot[i].Type, snapshot[i].Name)
+		r := e.state.FindResource(id.Type, id.Name)
 		if r == nil {
 			continue
 		}
 		e.logf("[destroy] removing %s.%s\n", r.Type, r.Name)
 		if err := e.DestroyResource(ctx, *r); err != nil {
-			return fmt.Errorf("destroy %s.%s: %w", r.Type, r.Name, err)
+			e.logf("[destroy] warning: destroy %s.%s failed: %v\n", r.Type, r.Name, err)
+			// Continue destroying remaining resources instead of aborting.
+			// A single failure should not prevent cleanup of other resources.
 		}
 	}
 	return nil

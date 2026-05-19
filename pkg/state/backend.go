@@ -141,22 +141,6 @@ type S3Backend struct {
 	Endpoint string
 }
 
-func (b *S3Backend) Load(ctx context.Context) ([]byte, error) {
-	client, err := b.s3Client(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s3GetObject(ctx, client, b.Bucket, b.Key)
-}
-
-func (b *S3Backend) Save(ctx context.Context, data []byte) error {
-	client, err := b.s3Client(ctx)
-	if err != nil {
-		return err
-	}
-	return s3PutObject(ctx, client, b.Bucket, b.Key, data)
-}
-
 func (b *S3Backend) Lock(_ context.Context) (UnlockFunc, error) {
 	// S3 backend uses native conditional writes (PutObject with IfNoneMatch
 	// for lock acquisition). Simple implementation: optimistic.

@@ -62,11 +62,9 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 			// (The resource was removed from HCL but is still in state.)
 			// Because the resource is no longer in the graph we can't look up its
 			// lifecycle from graph.Node.Data — the protection is encoded in state.
-			if r.Instance != nil {
-				if pd, _ := r.Instance["lifecycle_prevent_destroy"].(bool); pd {
-					p.Protected = append(p.Protected, r)
-					continue
-				}
+			if r.LifecyclePreventDestroy() {
+				p.Protected = append(p.Protected, r)
+				continue
 			}
 			p.Destroy = append(p.Destroy, r)
 		}
@@ -136,4 +134,27 @@ func (p *Plan) Summary() string {
 		s += fmt.Sprintf(" (%d protected by lifecycle.prevent_destroy)", len(p.Protected))
 	}
 	return s
+}
+
+// PrintPlan writes a human-readable plan to w. If showProtected is true,
+// resources blocked by lifecycle.prevent_destroy are also listed.
+func PrintPlan(p *Plan, showProtected bool) {
+	fmt.Println(p.Summary())
+	for _, id := range p.Add {
+		fmt.Printf("  + %s\n", id)
+	}
+	for _, id := range p.Change {
+		fmt.Printf("  ~ %s (drifted)\n", id)
+	}
+	for _, r := range p.Destroy {
+		fmt.Printf("  - %s.%s\n", r.Type, r.Name)
+	}
+	if showProtected {
+		for _, r := range p.Protected {
+			fmt.Printf("  ! %s.%s  (lifecycle.prevent_destroy — skipped)\n", r.Type, r.Name)
+		}
+	}
+	for _, id := range p.Unchanged {
+		fmt.Printf("    %s\n", id)
+	}
 }

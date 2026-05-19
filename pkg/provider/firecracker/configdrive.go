@@ -6,19 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/oslab/sysbox/pkg/provider/firecracker/initbin"
+	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
-
-// VMInitConfig is the JSON schema written onto the per-VM config drive.
-// MUST stay in sync with cmd/sysbox-init/main.go::VMConfig.
-type VMInitConfig struct {
-	Hostname       string            `json:"hostname,omitempty"`
-	AuthorizedKeys []string          `json:"authorized_keys,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
-	VsockPort      uint32            `json:"vsock_port,omitempty"`
-	ChainInit      string            `json:"chain_init,omitempty"`
-}
 
 // configDriveSizeMB is the size of the ext4 config drive in MiB. 4 is plenty
 // for a single small JSON file and leaves headroom for future additions.
@@ -30,7 +22,7 @@ const configDriveSizeMB = 4
 //
 // Requires root because we use `mkfs.ext4` + `mount -o loop`. sysbox apply
 // already runs as root, so this matches the project's existing assumptions.
-func buildConfigDrive(outPath string, cfg VMInitConfig) error {
+func buildConfigDrive(outPath string, cfg vsockrpc.VMConfig) error {
 	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(outPath), err)
 	}
@@ -56,8 +48,18 @@ func buildConfigDrive(outPath string, cfg VMInitConfig) error {
 	}
 	defer os.RemoveAll(mountDir)
 
-	if out, err := exec.Command("mount", "-o", "loop", outPath, mountDir).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount %s on %s: %w\n%s", outPath, mountDir, err, out)
+	// Use explicit losetup so we can reliably detach the loop device on
+	// error (defer alone won't run if the process is SIGKILL'd, but at
+	// least normal error paths are covered).
+	loopDev, err := exec.Command("losetup", "--find", "--show", outPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("losetup %s: %w\n%s", outPath, err, loopDev)
+	}
+	loopDevStr := strings.TrimSpace(string(loopDev))
+	defer func() { _, _ = exec.Command("losetup", "-d", loopDevStr).CombinedOutput() }()
+
+	if out, err := exec.Command("mount", loopDevStr, mountDir).CombinedOutput(); err != nil {
+		return fmt.Errorf("mount %s on %s: %w\n%s", loopDevStr, mountDir, err, out)
 	}
 	mounted := true
 	defer func() {
@@ -97,8 +99,15 @@ func injectInitBinary(rootfsPath string) error {
 	}
 	defer os.RemoveAll(mountDir)
 
-	if out, err := exec.Command("mount", "-o", "loop", rootfsPath, mountDir).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount rootfs %s: %w\n%s", rootfsPath, err, out)
+	loopDev, err := exec.Command("losetup", "--find", "--show", rootfsPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("losetup %s: %w\n%s", rootfsPath, err, loopDev)
+	}
+	loopDevStr := strings.TrimSpace(string(loopDev))
+	defer func() { _, _ = exec.Command("losetup", "-d", loopDevStr).CombinedOutput() }()
+
+	if out, err := exec.Command("mount", loopDevStr, mountDir).CombinedOutput(); err != nil {
+		return fmt.Errorf("mount rootfs %s: %w\n%s", loopDevStr, err, out)
 	}
 	mounted := true
 	defer func() {

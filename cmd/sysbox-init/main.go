@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -37,23 +38,6 @@ const (
 	configFile   = "config.json"
 )
 
-// VMConfig is the schema written by sysbox onto the config drive.
-// Keep in sync with pkg/provider/firecracker/configdrive.go.
-type VMConfig struct {
-	Hostname       string            `json:"hostname,omitempty"`
-	AuthorizedKeys []string          `json:"authorized_keys,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
-	VsockPort      uint32            `json:"vsock_port,omitempty"`
-	ChainInit      string            `json:"chain_init,omitempty"`
-}
-
-// defaultPATH is what sysbox-init guarantees to itself and to every child it
-// spawns (including the vsock-agent that handles provisioner commands).
-//
-// The kernel hands PID 1 an empty environment, which means `exec.Command("ip", ...)`
-// or `exec.Command("sh", ...)` would fail with "executable file not found in
-// $PATH". Setting this once covers alpine (`/sbin`, `/bin`), debian/ubuntu
-// (`/usr/sbin`, `/usr/bin`), and locally-installed binaries.
 const defaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 // Argv0 selector: when invoked with the hidden "--vsock-agent" first arg,
@@ -80,6 +64,23 @@ func main() {
 	}
 
 	logf("sysbox-init starting (pid %d)", os.Getpid())
+
+	// Install a minimal SIGCHLD reaper so that any child processes spawned
+	// between now and the exec(chain_init) are properly reaped and don't
+	// become zombies. After exec, the chain_init takes over PID 1 and is
+	// responsible for reaping on its own.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGCHLD)
+	go func() {
+		for range sigCh {
+			// Reap all dead children non-blockingly.
+			for {
+				if _, err := syscall.Wait4(-1, nil, syscall.WNOHANG, nil); err != nil {
+					break
+				}
+			}
+		}
+	}()
 
 	mountEssentials()
 
@@ -170,8 +171,8 @@ func isAlreadyMounted(err error) bool {
 	return ok && errno == syscall.EBUSY
 }
 
-func mountAndReadConfig() (VMConfig, error) {
-	var cfg VMConfig
+func mountAndReadConfig() (vsockrpc.VMConfig, error) {
+	var cfg vsockrpc.VMConfig
 
 	if err := os.MkdirAll(configMount, 0755); err != nil {
 		return cfg, fmt.Errorf("mkdir %s: %w", configMount, err)
@@ -192,7 +193,7 @@ func mountAndReadConfig() (VMConfig, error) {
 	return cfg, nil
 }
 
-func applyConfig(cfg VMConfig) {
+func applyConfig(cfg vsockrpc.VMConfig) {
 	if cfg.Hostname != "" {
 		if err := syscall.Sethostname([]byte(cfg.Hostname)); err != nil {
 			logf("sethostname %q: %v", cfg.Hostname, err)

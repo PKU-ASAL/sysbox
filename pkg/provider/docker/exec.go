@@ -8,18 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (substrate.ExecResult, error) {
-	envs := make([]string, 0, len(spec.Env))
-	for k, v := range spec.Env {
-		envs = append(envs, fmt.Sprintf("%s=%s", k, v))
-	}
+	envs := util.EnvToSlice(spec.Env)
 
 	ex, err := s.cli.ContainerExecCreate(ctx, h.ID, container.ExecOptions{
 		Cmd:          spec.Cmd,
@@ -102,10 +101,7 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcP
 // the PID of the process as seen inside the container namespace.
 // The process is not attached to any terminal and survives exec-client disconnect.
 func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (int, error) {
-	envs := make([]string, 0, len(spec.Env))
-	for k, v := range spec.Env {
-		envs = append(envs, fmt.Sprintf("%s=%s", k, v))
-	}
+	envs := util.EnvToSlice(spec.Env)
 
 	ex, err := s.cli.ContainerExecCreate(ctx, h.ID, container.ExecOptions{
 		Cmd:          spec.Cmd,
@@ -123,11 +119,21 @@ func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, 
 		return 0, fmt.Errorf("exec start (background): %w", err)
 	}
 
-	inspect, err := s.cli.ContainerExecInspect(ctx, ex.ID)
-	if err != nil {
-		return 0, fmt.Errorf("exec inspect (background): %w", err)
+	// Docker daemon creates the detached exec process asynchronously;
+	// an immediate inspect may return Pid=0. Poll until the process
+	// is either running with a real PID or has already exited.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		inspect, err := s.cli.ContainerExecInspect(ctx, ex.ID)
+		if err != nil {
+			return 0, fmt.Errorf("exec inspect (background): %w", err)
+		}
+		if inspect.Pid != 0 || !inspect.Running {
+			return inspect.Pid, nil
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	return inspect.Pid, nil
+	return 0, fmt.Errorf("exec background: timed out waiting for PID")
 }
 
 // GetContainerIP returns the container's IP address on its first Docker-managed

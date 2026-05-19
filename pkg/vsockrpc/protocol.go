@@ -10,9 +10,19 @@
 //	                  with Done=true
 //
 // Streams within a Frame carry payloads as base64 strings so the protocol
-// stays line-delimited and easy to debug. Frames for read_file include a
-// raw body after the Header frame (size declared in Header.Size).
+// stays line-delimited and easy to debug.
 package vsockrpc
+
+// VMConfig is the JSON schema written onto the per-VM config drive and
+// read by sysbox-init inside the guest. MUST be the single source of truth;
+// both pkg/provider/firecracker and cmd/sysbox-init reference this type.
+type VMConfig struct {
+	Hostname       string            `json:"hostname,omitempty"`
+	AuthorizedKeys []string          `json:"authorized_keys,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	VsockPort      uint32            `json:"vsock_port,omitempty"`
+	ChainInit      string            `json:"chain_init,omitempty"`
+}
 
 // DefaultPort is the vsock port the sysbox-init server listens on.
 const DefaultPort uint32 = 8901
@@ -24,7 +34,6 @@ const (
 	OpPing      Op = "ping"
 	OpExec      Op = "exec"
 	OpWriteFile Op = "write_file"
-	OpReadFile  Op = "read_file"
 )
 
 // Request is the single header sent by the client at the start of a connection.
@@ -41,11 +50,10 @@ type Request struct {
 // Pong / Header / Done will be non-empty per frame; Done=true marks the
 // last frame and may carry ExitCode / Error.
 type Frame struct {
-	Stdout   []byte `json:"stdout,omitempty"`   // base64-encoded by the JSON encoder
-	Stderr   []byte `json:"stderr,omitempty"`   // base64-encoded by the JSON encoder
-	Pong     bool   `json:"pong,omitempty"`     // ping reply
-	Size     int64  `json:"size,omitempty"`     // read_file: size of body that follows this frame
-	Done     bool   `json:"done,omitempty"`     // terminal frame
-	ExitCode int    `json:"exit_code,omitempty"`// exec: command exit code
-	Error    string `json:"error,omitempty"`    // any op: error message
+	Stdout   []byte `json:"stdout,omitempty"`    // base64-encoded by the JSON encoder
+	Stderr   []byte `json:"stderr,omitempty"`    // base64-encoded by the JSON encoder
+	Pong     bool   `json:"pong,omitempty"`      // ping reply
+	Done     bool   `json:"done,omitempty"`      // terminal frame
+	ExitCode int    `json:"exit_code,omitempty"` // exec: command exit code
+	Error    string `json:"error,omitempty"`     // any op: error message
 }

@@ -9,13 +9,11 @@ import (
 // HTTP or S3 by calling SetBackend before Load/Save.
 type Manager struct {
 	backend Backend
-	path    string // kept for backwards compat with Path()
 }
 
 func NewManager(path string) *Manager {
 	return &Manager{
 		backend: &LocalBackend{Path: path},
-		path:    path,
 	}
 }
 
@@ -71,6 +69,3 @@ func (m *Manager) SaveWithContext(ctx context.Context, s *State) error {
 	}
 	return m.backend.Save(ctx, data)
 }
-
-// Path returns the state file path (local backend only).
-func (m *Manager) Path() string { return m.path }

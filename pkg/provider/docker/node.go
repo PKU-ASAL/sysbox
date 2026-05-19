@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 // HandleState is the docker-substrate's typed NodeHandle.Provider payload.
@@ -28,10 +29,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		_ = s.cli.ContainerRemove(ctx, spec.Name, container.RemoveOptions{Force: true})
 	}
 
-	envs := make([]string, 0, len(spec.Env))
-	for k, v := range spec.Env {
-		envs = append(envs, fmt.Sprintf("%s=%s", k, v))
-	}
+	envs := util.EnvToSlice(spec.Env)
 
 	pc, _ := spec.ProviderConfig.(*Config)
 	if pc == nil {

@@ -69,6 +69,21 @@ func (s *Substrate) RemoveManagedNetwork(ctx context.Context, id string) error {
 	return s.RemoveBridgeNetwork(ctx, id)
 }
 
+// ReadManagedNetwork queries an existing Docker network by name without
+// creating one. Tries the raw name first, then the sysbox-prefixed variant.
+func (s *Substrate) ReadManagedNetwork(ctx context.Context, spec substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
+	// Try the user-given name directly (e.g. "bridge", "mynet").
+	if existing, err := s.cli.NetworkInspect(ctx, spec.Name, network.InspectOptions{}); err == nil {
+		return substrate.ManagedNetworkInfo{ID: existing.ID, Name: existing.Name}, nil
+	}
+	// Fall back to sysbox-prefixed name.
+	prefixed := fmt.Sprintf("sysbox-nat-%s", spec.Name)
+	if existing, err := s.cli.NetworkInspect(ctx, prefixed, network.InspectOptions{}); err == nil {
+		return substrate.ManagedNetworkInfo{ID: existing.ID, Name: existing.Name}, nil
+	}
+	return substrate.ManagedNetworkInfo{}, fmt.Errorf("docker network %q not found (also tried %q)", spec.Name, prefixed)
+}
+
 // ConnectContainerToNetwork attaches a running container to a Docker network
 // with a static IP address. Used for nat=true networks.
 func (s *Substrate) ConnectContainerToNetwork(ctx context.Context, containerID, networkID, ip string) error {
@@ -78,7 +93,7 @@ func (s *Substrate) ConnectContainerToNetwork(ctx context.Context, containerID, 
 		// ip may already be a bare address.
 		host = net.ParseIP(ip)
 		if host == nil {
-			return fmt.Errorf("parse ip %s: %w", ip, err)
+			return fmt.Errorf("invalid IP address %q", ip)
 		}
 	}
 

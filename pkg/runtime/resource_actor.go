@@ -7,7 +7,6 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
-	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
@@ -42,22 +41,24 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 		return fmt.Errorf("actor %s: node %s not applied yet", n.ID.Name, nodeName)
 	}
 
-	containerID := util.AsString(nodeState.Instance["container_id"])
 	subName := nodeState.Provider
 	sub, err := substrate.Get(subName)
 	if err != nil {
 		return err
 	}
 
-	handle := substrate.NodeHandle{
-		ID: containerID,
-		Provider: &dockerprovider.HandleState{
-			ContainerName: fmt.Sprintf("sysbox-%s", nodeName),
-		},
-		Conn: substrate.ConnInfo{
+	// Reconstruct the handle from the persisted provider state so the
+	// connection works on any substrate (docker, firecracker, libvirt).
+	handle, err := nodeState.ReconstructHandle(sub)
+	if err != nil {
+		return fmt.Errorf("actor %s: %w", n.ID.Name, err)
+	}
+	// Populate connection info from state if available.
+	if handle.ID != "" {
+		handle.Conn = substrate.ConnInfo{
 			Kind:     substrate.ConnKindDocker,
-			Endpoint: containerID,
-		},
+			Endpoint: handle.ID,
+		}
 	}
 
 	e.logf("[apply] starting actor %s on node %s: %v\n", n.ID.Name, nodeName, cfg.Command)
@@ -75,7 +76,7 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	if cfg.Port > 0 {
 		ip := cfg.ACPIP
 		if ip == "" {
-			ip = util.AsString(nodeState.Instance["primary_ip"])
+			ip = nodeState.PrimaryIP()
 		}
 		if ip != "" {
 			acpURL = fmt.Sprintf("http://%s:%d", ip, cfg.Port)
@@ -89,7 +90,7 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 		Instance: map[string]any{
 			"position":     "internal",
 			"node":         nodeName,
-			"container_id": containerID,
+			"container_id": handle.ID,
 			"pid":          pid,
 			"port":         cfg.Port,
 			"acp_url":      acpURL,
@@ -117,8 +118,8 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		return fmt.Errorf("actor %s: image %s not applied yet", n.ID.Name, imageName)
 	}
 	imgRef := substrate.ImageRef{
-		ID:         util.AsString(imgState.Instance["image_id"]),
-		Repository: util.AsString(imgState.Instance["repository"]),
+		ID:         imgState.ImageID(),
+		Repository: imgState.Repository(),
 	}
 
 	// Collect Docker bridge (NAT) network links.
@@ -130,11 +131,11 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		if netState == nil {
 			return fmt.Errorf("actor %s: network %s not applied yet", n.ID.Name, netName)
 		}
-		if isNAT, _ := netState.Instance["nat"].(bool); !isNAT {
+		if !netState.IsNAT() {
 			return fmt.Errorf("actor %s (external): link %s is not a NAT network; external actors only support Docker bridge networks", n.ID.Name, netName)
 		}
 		natLinks = append(natLinks, natLink{
-			netID: util.AsString(netState.Instance["docker_network_id"]),
+			netID: netState.DockerNetID(),
 			ip:    link.IP,
 		})
 	}
@@ -161,7 +162,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 
 	if err := sub.StartNode(ctx, handle); err != nil {
-		_ = sub.DestroyNode(ctx, handle)
+		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on start failure")
 		return fmt.Errorf("start actor container %s: %w", n.ID.Name, err)
 	}
 
@@ -172,7 +173,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 			DockerNetID: nl.netID,
 			IP:          nl.ip,
 		}); err != nil {
-			_ = sub.DestroyNode(ctx, handle)
+			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on attach failure")
 			return fmt.Errorf("actor %s: connect to network: %w", n.ID.Name, err)
 		}
 	}
@@ -181,12 +182,12 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	e.logf("[apply] starting actor %s (external, %s): %v\n", n.ID.Name, containerName, cfg.Command)
 	conn, err := sub.Connection(handle, nil)
 	if err != nil {
-		_ = sub.DestroyNode(ctx, handle)
+		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on connection failure")
 		return fmt.Errorf("actor %s: connection: %w", n.ID.Name, err)
 	}
 	pid, err := conn.ExecBackground(ctx, cfg.Command, cfg.Env)
 	if err != nil {
-		_ = sub.DestroyNode(ctx, handle)
+		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on exec failure")
 		return fmt.Errorf("start actor command %s: %w", n.ID.Name, err)
 	}
 
@@ -245,7 +246,7 @@ func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
 		// terminated (e.g. opencode-serve spawns sub-processes).
 		killCmd := fmt.Sprintf("kill -- -%d 2>/dev/null; kill %d 2>/dev/null || true", pid, pid)
 		if conn, err := sub.Connection(handle, nil); err == nil && conn != nil {
-			_ = conn.ExecInline(ctx, []string{killCmd})
+			util.BestEffortIgnore(func() error { return conn.ExecInline(ctx, []string{killCmd}) }, "kill actor process")
 		}
 	}
 

@@ -8,7 +8,6 @@ import (
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/util"
 )
 
 func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
@@ -25,7 +24,7 @@ func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
 	if netState == nil {
 		return fmt.Errorf("firewall %s: network %s not applied yet", n.ID.Name, netName)
 	}
-	nsName := util.AsString(netState.Instance["netns"])
+	nsName := netState.Str("netns")
 
 	specs := make([]network.FirewallRuleSpec, 0, len(cfg.Rules))
 	for _, r := range cfg.Rules {

@@ -13,8 +13,8 @@ require (
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
 	github.com/zclconf/go-cty v1.18.1
-	golang.org/x/sys v0.42.0
-	gopkg.in/yaml.v3 v3.0.1
+	golang.org/x/sys v0.43.0
+	golang.org/x/term v0.42.0
 )
 
 require (
@@ -58,7 +58,6 @@ require (
 	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
-	kernel.org/pub/linux/libs/security/libcap/cap v1.2.78 // indirect
-	kernel.org/pub/linux/libs/security/libcap/psx v1.2.78 // indirect
 )

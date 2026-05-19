@@ -30,9 +30,14 @@ func ParseBackendURL(raw string) (Backend, error) {
 	case "file", "local":
 		return &LocalBackend{Path: u.Path}, nil
 	case "http", "https":
+		headers := map[string]string{}
+		// Inject Authorization header from environment variable.
+		if token := os.Getenv("SYSBOX_STATE_AUTH"); token != "" {
+			headers["Authorization"] = "Bearer " + token
+		}
 		return &HTTPBackend{
 			URL:     raw,
-			Headers: nil, // auth headers set via env vars or config
+			Headers: headers,
 		}, nil
 	case "s3":
 		bucket := u.Host

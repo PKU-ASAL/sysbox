@@ -8,12 +8,25 @@ import (
 
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/oslab/sysbox/pkg/util"
 )
 
-// GET /v1/topologies/{suite}/nodes
+// maxBodyBytes limits request body size to 1MB across all API handlers
+// to prevent OOM from oversized JSON payloads.
+const maxBodyBytes = 1 << 20
+
+// limitBody wraps r.Body with an http.MaxBytesReader to prevent OOM.
+func limitBody(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+}
+
+// GET /v1/topologies/{topology}/nodes
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
-	st, err := s.loadState(r.PathValue("suite"))
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	st, err := s.loadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -31,17 +44,25 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, nodeInfo{
 			Name:      res.Name,
 			Provider:  res.Provider,
-			PrimaryIP: util.AsString(res.Instance["primary_ip"]),
+			PrimaryIP: res.PrimaryIP(),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes})
 }
 
-// GET /v1/topologies/{suite}/nodes/{node}
+// GET /v1/topologies/{topology}/nodes/{node}
 func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
-	suite := r.PathValue("suite")
+	topology := r.PathValue("topology")
 	name := r.PathValue("node")
-	st, err := s.loadState(suite)
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validatePathSegment(name, "node"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	st, err := s.loadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -51,28 +72,37 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		res = st.FindResource("sysbox_router", name)
 	}
 	if res == nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("node %q not found in suite %q", name, suite))
+		writeError(w, http.StatusNotFound, fmt.Errorf("node %q not found in topology %q", name, topology))
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
 }
 
-// POST /v1/topologies/{suite}/nodes/{node}/exec
+// POST /v1/topologies/{topology}/nodes/{node}/exec
 // Body: {"cmd": ["ls", "-la"]}
 // Response: chunked plain text (stdout+stderr interleaved)
 func (s *Server) handleNodeExec(w http.ResponseWriter, r *http.Request) {
-	suite := r.PathValue("suite")
+	topology := r.PathValue("topology")
 	name := r.PathValue("node")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validatePathSegment(name, "node"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 
 	var body struct {
 		Cmd []string `json:"cmd"`
 	}
+	limitBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Cmd) == 0 {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("body must be {\"cmd\":[...]}"))
 		return
 	}
 
-	st, err := s.loadState(suite)
+	st, err := s.loadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -111,19 +141,9 @@ func nodeConnection(st *state.State, name string) (substrate.Connection, error) 
 		return nil, fmt.Errorf("substrate %q not registered: %w", res.Provider, err)
 	}
 
-	// Reconstruct provider-specific handle state from the persisted blob.
-	var providerState any
-	if blob := util.AsString(res.Instance["provider_extra"]); blob != "" {
-		providerState, err = sub.UnmarshalProviderState([]byte(blob))
-		if err != nil {
-			return nil, fmt.Errorf("node %q: corrupt provider state: %w", name, err)
-		}
-	}
-
-	handle := substrate.NodeHandle{
-		ID:       util.AsString(res.Instance["container_id"]),
-		Net:      substrate.NetInfo{PrimaryIP: util.AsString(res.Instance["primary_ip"])},
-		Provider: providerState,
+	handle, err := res.ReconstructHandle(sub)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", name, err)
 	}
 
 	conn, err := sub.Connection(handle, nil)
@@ -133,14 +153,14 @@ func nodeConnection(st *state.State, name string) (substrate.Connection, error) 
 	return conn, nil
 }
 
-// POST /v1/topologies/{suite}/nodes/{node}/pause
+// POST /v1/topologies/{topology}/nodes/{node}/pause
 func (s *Server) handleNodePause(w http.ResponseWriter, r *http.Request) {
 	s.handleNodeLifecycle(r, func(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle) error {
 		return sub.Pause(ctx, h)
 	}, w)
 }
 
-// POST /v1/topologies/{suite}/nodes/{node}/resume
+// POST /v1/topologies/{topology}/nodes/{node}/resume
 func (s *Server) handleNodeResume(w http.ResponseWriter, r *http.Request) {
 	s.handleNodeLifecycle(r, func(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle) error {
 		return sub.Resume(ctx, h)
@@ -149,10 +169,18 @@ func (s *Server) handleNodeResume(w http.ResponseWriter, r *http.Request) {
 
 // handleNodeLifecycle is the shared implementation for pause/resume.
 func (s *Server) handleNodeLifecycle(r *http.Request, fn func(context.Context, substrate.Substrate, substrate.NodeHandle) error, w http.ResponseWriter) {
-	suite := r.PathValue("suite")
+	topology := r.PathValue("topology")
 	name := r.PathValue("node")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validatePathSegment(name, "node"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 
-	st, err := s.loadState(suite)
+	st, err := s.loadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -175,14 +203,10 @@ func (s *Server) handleNodeLifecycle(r *http.Request, fn func(context.Context, s
 		return
 	}
 
-	handle := substrate.NodeHandle{
-		ID:  util.AsString(res.Instance["container_id"]),
-		Net: substrate.NetInfo{PrimaryIP: util.AsString(res.Instance["primary_ip"])},
-	}
-	if blob := util.AsString(res.Instance["provider_extra"]); blob != "" {
-		if ps, err := sub.UnmarshalProviderState([]byte(blob)); err == nil {
-			handle.Provider = ps
-		}
+	handle, err := res.ReconstructHandle(sub)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
 	}
 
 	if err := fn(r.Context(), sub, handle); err != nil {
@@ -192,10 +216,14 @@ func (s *Server) handleNodeLifecycle(r *http.Request, fn func(context.Context, s
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// POST /v1/topologies/{suite}/import
+// POST /v1/topologies/{topology}/import
 // Body: {"type": "sysbox_node", "name": "db", "id": "my-container", "substrate": "docker"}
 func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
-	suite := r.PathValue("suite")
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 
 	var body struct {
 		Type      string `json:"type"`
@@ -203,6 +231,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		ID        string `json:"id"`
 		Substrate string `json:"substrate"`
 	}
+	limitBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid body: %w", err))
 		return
@@ -224,7 +253,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stateFile := s.stateFile(suite)
+	stateFile := s.stateFile(topology)
 	mgr := state.NewManager(stateFile)
 	st, err := mgr.Load()
 	if err != nil {

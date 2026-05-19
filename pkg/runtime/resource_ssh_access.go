@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -10,7 +11,6 @@ import (
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/oslab/sysbox/pkg/util"
 )
 
 // -- sysbox_ssh_access --
@@ -27,7 +27,7 @@ func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("node %s not applied yet", nodeName)
 	}
 
-	containerID := util.AsString(nodeState.Instance["container_id"])
+	containerID := nodeState.ContainerID()
 	handle := substrate.NodeHandle{
 		ID: containerID,
 		Provider: &dockerprovider.HandleState{
@@ -102,21 +102,25 @@ func setupSSHAccess(ctx context.Context, conn substrate.Connection, nodeID strin
 		}
 	}
 
-	// 4. Write authorized_keys.
+	// 4. Write authorized_keys using base64 to avoid heredoc injection.
+	// A heredoc with a fixed delimiter like 'SYSBOX_KEYS' can be broken if
+	// any key content contains that exact delimiter on its own line,
+	// allowing arbitrary shell command execution as root.
 	keysContent := strings.Join(authorizedKeys, "\n") + "\n"
 	setupKeysCmds := []string{
 		"mkdir -p /etc/sysbox && chmod 700 /etc/sysbox",
-		fmt.Sprintf("cat > /etc/sysbox/authorized_keys << 'SYSBOX_KEYS'\n%sSYSBOX_KEYS", keysContent),
+		fmt.Sprintf("echo %s | base64 -d > /etc/sysbox/authorized_keys",
+			base64.StdEncoding.EncodeToString([]byte(keysContent))),
 	}
 	if err := conn.ExecInline(ctx, setupKeysCmds); err != nil {
 		return fmt.Errorf("write authorized_keys: %w", err)
 	}
 
-	// 5. Write sshd config.
+	// 5. Write sshd config using base64 (same injection protection).
 	sshdConf := buildSSHDConfig(port, hookBinaryPath != "")
 	writeConf := fmt.Sprintf(
-		"mkdir -p /etc/ssh/sshd_config.d && cat > /etc/ssh/sshd_config.d/sysbox.conf << 'SYSBOX_SSHD'\n%sSYSBOX_SSHD",
-		sshdConf,
+		"mkdir -p /etc/ssh/sshd_config.d && echo %s | base64 -d > /etc/ssh/sshd_config.d/sysbox.conf",
+		base64.StdEncoding.EncodeToString([]byte(sshdConf)),
 	)
 	if err := conn.ExecInline(ctx, []string{writeConf}); err != nil {
 		return fmt.Errorf("write sshd config: %w", err)

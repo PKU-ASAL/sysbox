@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -55,9 +53,22 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: invalid memory %q: %w", pc.Memory, err)
 	}
 
-	// Tear down any stale domain with the same name.
-	_, _ = exec.CommandContext(ctx, "virsh", "destroy", spec.Name).CombinedOutput()
-	_, _ = exec.CommandContext(ctx, "virsh", "undefine", spec.Name).CombinedOutput()
+	// Only tear down stale domains that were previously created by sysbox.
+	// Destroying an arbitrary domain with the same name is dangerous on
+	// shared libvirt hosts (e.g. production VMs named "db" or "gateway").
+	if active, _ := domainActive(ctx, spec.Name); active {
+		// Verify the domain is sysbox-managed before destroying it.
+		if !isSysboxManaged(ctx, spec.Name) {
+			return substrate.NodeHandle{}, fmt.Errorf("libvirt: domain %q already exists but is not sysbox-managed; refusing to destroy", spec.Name)
+		}
+		_, _ = exec.CommandContext(ctx, "virsh", "destroy", spec.Name).CombinedOutput()
+	}
+	if _, err := exec.CommandContext(ctx, "virsh", "dominfo", spec.Name).CombinedOutput(); err == nil {
+		if !isSysboxManaged(ctx, spec.Name) {
+			return substrate.NodeHandle{}, fmt.Errorf("libvirt: domain %q already defined but not sysbox-managed; refusing to undefine", spec.Name)
+		}
+		_, _ = exec.CommandContext(ctx, "virsh", "undefine", spec.Name).CombinedOutput()
+	}
 
 	vmDir, err := os.MkdirTemp("", "sysbox-lv-"+spec.Name+"-*")
 	if err != nil {
@@ -115,13 +126,20 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	if err := os.WriteFile(xmlPath, []byte(xmlStr), 0o644); err != nil {
 		return fmt.Errorf("libvirt: write domain xml: %w", err)
 	}
+
+	// Cleanup vmDir on any failure so disk images don't leak.
 	if out, err := exec.CommandContext(ctx, "virsh", "define", xmlPath).CombinedOutput(); err != nil {
+		_ = os.RemoveAll(hs.VMDir)
 		return fmt.Errorf("libvirt: virsh define: %w\n%s", err, out)
 	}
 	if out, err := exec.CommandContext(ctx, "virsh", "start", hs.DomainName).CombinedOutput(); err != nil {
 		_, _ = exec.Command("virsh", "undefine", hs.DomainName).CombinedOutput()
+		_ = os.RemoveAll(hs.VMDir)
 		return fmt.Errorf("libvirt: virsh start: %w\n%s", err, out)
 	}
+	// Mark the domain as sysbox-managed so future CreateNode calls can
+	// safely distinguish our domains from unrelated ones with the same name.
+	setSysboxManaged(ctx, hs.DomainName)
 	return nil
 }
 
@@ -178,6 +196,9 @@ func (s *Substrate) ReadNode(ctx context.Context, id string) (substrate.NodeHand
 		}
 	}
 	hs := &HandleState{DomainName: id}
+	if uuid == "" {
+		return substrate.NodeHandle{}, fmt.Errorf("libvirt: domain %q: could not extract UUID from dominfo", id)
+	}
 	return substrate.NodeHandle{
 		ID:       uuid,
 		Provider: hs,
@@ -229,27 +250,6 @@ func (s *Substrate) UnmarshalProviderState(data json.RawMessage) (any, error) {
 	return &hs, nil
 }
 
-// WaitForSSH polls addr:22 until reachable or ctx/timeout expires.
-func WaitForSSH(ctx context.Context, addr string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		conn, err := net.DialTimeout("tcp", addr+":22", 2*time.Second)
-		if err == nil {
-			conn.Close()
-			return nil
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return fmt.Errorf("libvirt: SSH on %s not reachable after %s", addr, timeout)
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
 func hsFrom(h substrate.NodeHandle) *HandleState {
 	if hs, ok := h.Provider.(*HandleState); ok && hs != nil {
 		return hs
@@ -280,4 +280,26 @@ func domainActive(ctx context.Context, name string) (bool, error) {
 	}
 	state := strings.TrimSpace(string(out))
 	return state != "" && !strings.Contains(state, "shut off"), nil
+}
+
+// isSysboxManaged checks whether a libvirt domain was created by sysbox
+// by looking for the "sysbox-managed" title metadata.
+func isSysboxManaged(ctx context.Context, name string) bool {
+	out, err := exec.CommandContext(ctx, "virsh", "dominfo", name).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		// virsh dominfo shows "Title: sysbox-managed" if set.
+		if strings.Contains(line, "sysbox-managed") {
+			return true
+		}
+	}
+	return false
+}
+
+// setSysboxManaged marks a domain as managed by sysbox via virsh metadata.
+func setSysboxManaged(ctx context.Context, name string) {
+	// Use virsh desc to set a title that identifies sysbox-managed domains.
+	_, _ = exec.CommandContext(ctx, "virsh", "desc", name, "sysbox-managed", "--title").CombinedOutput()
 }

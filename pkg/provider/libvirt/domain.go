@@ -21,7 +21,7 @@ type domainXML struct {
 
 type domMemory struct {
 	Unit  string `xml:"unit,attr"`
-	Value int    `xml:"chardata"`
+	Value int    `xml:",chardata"`
 }
 
 type domOS struct {

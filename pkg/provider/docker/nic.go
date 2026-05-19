@@ -13,6 +13,8 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
+// ... (AttachNIC unchanged)
+
 // AttachNIC creates a network attachment for the container. Two paths:
 //   - KindHint == NICKindDockerNAT (or DockerNetID != ""): uses
 //     docker network connect — the Docker daemon manages the veth/bridge.
@@ -77,18 +79,39 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req s
 	}, nil
 }
 
-// vethName generates a deterministic veth interface name from a prefix and
-// container name. Names must be ≤15 chars.
+// vethName generates a deterministic, collision-resistant veth interface name
+// from a prefix and container name. Names must be ≤15 chars (IFNAMSIZ-1).
+// Uses FNV-1a hash to avoid truncation-based collisions: two containers whose
+// names share a 12-char prefix (e.g. sysbox-frontend-web-1 and
+// sysbox-frontend-web-2) must produce different interface names.
 func vethName(prefix, containerName string) string {
 	name := containerName
 	if len(name) > 7 && name[:7] == "sysbox-" {
 		name = name[7:]
 	}
-	vn := prefix + "-" + name
-	if len(vn) > 15 {
-		vn = vn[:15]
+	// If the name fits within the 15-char limit (prefix + "-" + name),
+	// use it directly; otherwise hash the name for a short stable suffix.
+	maxNameLen := 15 - len(prefix) - 1 // prefix + "-" + suffix
+	if len(name) <= maxNameLen {
+		return prefix + "-" + name
 	}
-	return vn
+	// FNV-1a 32-bit hash, formatted as 8-hex chars.
+	h := fnv32([]byte(name))
+	return fmt.Sprintf("%s-%08x", prefix, h)
+}
+
+// fnv32 computes FNV-1a 32-bit hash (simple, no import needed).
+func fnv32(data []byte) uint32 {
+	const (
+		offsetBasis = uint32(2166136261)
+		prime       = uint32(16777619)
+	)
+	h := offsetBasis
+	for _, b := range data {
+		h ^= uint32(b)
+		h *= prime
+	}
+	return h
 }
 
 // attachVethToContainer moves a guest-end veth from sourceNetns into the
@@ -125,6 +148,11 @@ func attachVethToContainer(guestEnd, targetName, sourceNetnsName string, contain
 		return fmt.Errorf("move veth to container netns: %w", err)
 	}
 
+	// If anything fails after the veth has been moved into the container
+	// netns, clean up the orphaned interface so it doesn't accumulate
+	// and conflict with future attempts.
+	movedToContainer := true
+
 	if err := netns.Set(origNS); err != nil {
 		return fmt.Errorf("return to root netns: %w", err)
 	}
@@ -138,6 +166,18 @@ func attachVethToContainer(guestEnd, targetName, sourceNetnsName string, contain
 	if err := netns.Set(containerNS); err != nil {
 		return fmt.Errorf("enter container netns: %w", err)
 	}
+
+	// Cleanup: if we moved the veth into the container netns but fail
+	// during configuration, remove the orphaned interface so it doesn't
+	// conflict with future veth pairs.
+	var attachSucceeded bool
+	defer func() {
+		if movedToContainer && !attachSucceeded {
+			if orphan, err := netlink.LinkByName(guestEnd); err == nil {
+				_ = netlink.LinkDel(orphan)
+			}
+		}
+	}()
 
 	containerLink, err := netlink.LinkByName(guestEnd)
 	if err != nil {
@@ -190,5 +230,6 @@ func attachVethToContainer(guestEnd, targetName, sourceNetnsName string, contain
 		}
 	}
 
+	attachSucceeded = true
 	return nil
 }

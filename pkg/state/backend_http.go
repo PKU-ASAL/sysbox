@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"time"
 )
 
-var httpClient = &http.Client{}
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
 
 func newRequest(ctx context.Context, method, url string, body []byte, headers map[string]string) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -51,22 +54,26 @@ func (b *S3Backend) s3Client(_ context.Context) (string, error) {
 	return "aws", nil
 }
 
-func s3GetObject(ctx context.Context, _ string, bucket, key string) ([]byte, error) {
-	args := []string{"s3", "api", "get-object",
-		"--bucket", bucket,
-		"--key", key,
-		"-",
+func (b *S3Backend) awsGlobalArgs() []string {
+	var args []string
+	if b.Region != "" {
+		args = append(args, "--region", b.Region)
 	}
-	// aws s3api get-object writes to a file; for stdout, use s3 cp instead.
-	args = []string{"s3", "cp",
+	if b.Endpoint != "" {
+		args = append(args, "--endpoint-url", b.Endpoint)
+	}
+	return args
+}
+
+func (b *S3Backend) s3Get(ctx context.Context, bucket, key string) ([]byte, error) {
+	args := append(b.awsGlobalArgs(), "s3", "cp",
 		fmt.Sprintf("s3://%s/%s", bucket, key),
 		"-",
-	}
+	)
 	return runAWS(ctx, args)
 }
 
-func s3PutObject(ctx context.Context, _ string, bucket, key string, data []byte) error {
-	// aws s3 cp from stdin
+func (b *S3Backend) s3Put(ctx context.Context, bucket, key string, data []byte) error {
 	tmp, err := os.CreateTemp("", "sysbox-state-s3-*")
 	if err != nil {
 		return fmt.Errorf("s3 put: temp file: %w", err)
@@ -78,12 +85,26 @@ func s3PutObject(ctx context.Context, _ string, bucket, key string, data []byte)
 	}
 	tmp.Close()
 
-	args := []string{"s3", "cp",
+	args := append(b.awsGlobalArgs(), "s3", "cp",
 		tmp.Name(),
 		fmt.Sprintf("s3://%s/%s", bucket, key),
-	}
+	)
 	_, err = runAWS(ctx, args)
 	return err
+}
+
+func (b *S3Backend) Load(ctx context.Context) ([]byte, error) {
+	if _, err := b.s3Client(ctx); err != nil {
+		return nil, err
+	}
+	return b.s3Get(ctx, b.Bucket, b.Key)
+}
+
+func (b *S3Backend) Save(ctx context.Context, data []byte) error {
+	if _, err := b.s3Client(ctx); err != nil {
+		return err
+	}
+	return b.s3Put(ctx, b.Bucket, b.Key, data)
 }
 
 func runAWS(ctx context.Context, args []string) ([]byte, error) {

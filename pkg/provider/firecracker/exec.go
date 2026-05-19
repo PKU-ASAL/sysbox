@@ -1,12 +1,10 @@
 package firecracker
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os"
+	"io"
 	osexec "os/exec"
-	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +48,7 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec
 
 func (s *Substrate) execInNodeVsock(ctx context.Context, vc *vsockexec.VsockConnection, spec substrate.ExecSpec) (substrate.ExecResult, error) {
 	var stdout, stderr strings.Builder
+	var exitCode int
 	err := vc.ExecFrameStream(ctx, spec.Cmd, spec.Env, func(f vsockrpc.Frame) error {
 		if len(f.Stdout) > 0 {
 			stdout.Write(f.Stdout)
@@ -58,23 +57,25 @@ func (s *Substrate) execInNodeVsock(ctx context.Context, vc *vsockexec.VsockConn
 			stderr.Write(f.Stderr)
 		}
 		if f.Done {
-			return fmt.Errorf("stop") // break the loop
+			exitCode = f.ExitCode
+			return io.EOF // signal clean stop; ExecFrameStream returns nil
 		}
 		return nil
 	})
 
 	result := substrate.ExecResult{
-		Stdout: stdout.String(),
-		Stderr: stderr.String(),
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		ExitCode: exitCode,
 	}
 	if err != nil {
-		// Check for exit-code errors from ExecStream.
+		// Check for exit-code errors from ExecStream (non-frame-stream callers).
 		if strings.HasPrefix(err.Error(), "exit code ") {
 			fmt.Sscanf(err.Error(), "exit code %d", &result.ExitCode)
 			return result, nil
 		}
-		// "stop" is our own signal — command completed with Done frame.
-		if err.Error() == "stop" {
+		// io.EOF means we signalled stop via Done frame — not an error.
+		if err == io.EOF {
 			return result, nil
 		}
 		result.ExitCode = 1
@@ -84,20 +85,24 @@ func (s *Substrate) execInNodeVsock(ctx context.Context, vc *vsockexec.VsockConn
 }
 
 func (s *Substrate) execInNodeSSH(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (substrate.ExecResult, error) {
+	conn := sshConnFromHandle(h)
+	if conn == nil {
+		return substrate.ExecResult{}, fmt.Errorf("no SSH connection info in handle")
+	}
 	cmd := strings.Join(spec.Cmd, " ")
-	out, err := sshRun(ctx, h, cmd)
+	out, err := conn.ExecCapture(ctx, cmd)
 	if err != nil {
 		exitCode := 1
 		if exitErr, ok := err.(*osexec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		}
 		return substrate.ExecResult{
-			Stdout:   out,
+			Stdout:   string(out),
 			ExitCode: exitCode,
 		}, nil
 	}
 	return substrate.ExecResult{
-		Stdout:   out,
+		Stdout:   string(out),
 		ExitCode: 0,
 	}, nil
 }
@@ -112,15 +117,13 @@ func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, 
 }
 
 func (s *Substrate) execBackgroundSSH(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (int, error) {
-	cmd := strings.Join(spec.Cmd, " ")
-	pidCmd := fmt.Sprintf("nohup %s >/dev/null 2>&1 & echo $!", cmd)
-	out, err := sshRun(ctx, h, pidCmd)
-	if err != nil {
-		return 0, fmt.Errorf("exec background: %w", err)
+	conn := sshConnFromHandle(h)
+	if conn == nil {
+		return 0, fmt.Errorf("no SSH connection info in handle")
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(out))
+	pid, err := conn.ExecBackground(ctx, spec.Cmd, spec.Env)
 	if err != nil {
-		return 0, fmt.Errorf("parse pid: %w", err)
+		return 0, fmt.Errorf("ssh background: %w", err)
 	}
 	return pid, nil
 }
@@ -135,63 +138,23 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, src,
 }
 
 func (s *Substrate) copyToNodeSSH(ctx context.Context, h substrate.NodeHandle, src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return fmt.Errorf("read src %s: %w", src, err)
+	conn := sshConnFromHandle(h)
+	if conn == nil {
+		return fmt.Errorf("no SSH connection info in handle")
 	}
-
-	ip, port := sshAddrFromHandle(h)
-	args := sshArgs(ip, port)
-	args = append(args, fmt.Sprintf("cat > '%s'", dst))
-
-	cmd := osexec.CommandContext(ctx, "ssh", args...)
-	cmd.Stdin = bytes.NewReader(data)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ssh copy: %w\n%s", err, out)
-	}
-	return nil
+	return conn.CopyFile(ctx, src, dst)
 }
 
-// ── SSH helpers ─────────────────────────────────────────────────────────────
-
-func sshAddrFromHandle(h substrate.NodeHandle) (string, string) {
+// sshConnFromHandle constructs an SSHConnection from the firecracker handle's
+// SSH metadata. Returns nil if no SSH info is available.
+func sshConnFromHandle(h substrate.NodeHandle) *vsockexec.SSHConnection {
 	hs, _ := h.Provider.(*HandleState)
-	if hs == nil {
-		return "", "22"
+	if hs == nil || hs.SSHIP == "" {
+		return nil
 	}
 	port := "22"
 	if hs.SSHPort != "" {
 		port = hs.SSHPort
 	}
-	return hs.SSHIP, port
-}
-
-func sshArgs(ip, port string) []string {
-	user := "root"
-	return []string{
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "ConnectTimeout=5",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-p", port,
-		fmt.Sprintf("%s@%s", user, ip),
-	}
-}
-
-func sshRun(ctx context.Context, h substrate.NodeHandle, cmd string) (string, error) {
-	ip, port := sshAddrFromHandle(h)
-	args := sshArgs(ip, port)
-	args = append(args, cmd)
-
-	// Retry: VM may still be booting.
-	deadline := time.Now().Add(sshConnectTimeout)
-	var out []byte
-	var err error
-	for time.Now().Before(deadline) {
-		out, err = osexec.CommandContext(ctx, "ssh", args...).CombinedOutput()
-		if err == nil {
-			return string(out), nil
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return string(out), fmt.Errorf("ssh %s@%s:%s: %w", "root", ip, port, err)
+	return vsockexec.NewSSHConnectionWithPort(hs.SSHIP, port, "root", "", "")
 }

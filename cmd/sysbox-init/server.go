@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/vsockrpc"
@@ -88,42 +90,88 @@ func (c *vsockConn) Write(b []byte) (int, error) {
 	return total, nil
 }
 
-func (c *vsockConn) Close() error                       { return unix.Close(c.fd) }
+func (c *vsockConn) Close() error { return unix.Close(c.fd) }
 func (c *vsockConn) LocalAddr() net.Addr                { return nil }
 func (c *vsockConn) RemoteAddr() net.Addr               { return nil }
-func (c *vsockConn) SetDeadline(t time.Time) error      { return nil }
-func (c *vsockConn) SetReadDeadline(t time.Time) error  { return nil }
-func (c *vsockConn) SetWriteDeadline(t time.Time) error { return nil }
+
+func (c *vsockConn) SetDeadline(t time.Time) error {
+	if err := c.SetReadDeadline(t); err != nil {
+		return err
+	}
+	return c.SetWriteDeadline(t)
+}
+
+func (c *vsockConn) SetReadDeadline(t time.Time) error {
+	if t.IsZero() {
+		return unix.SetsockoptTimeval(c.fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, nil)
+	}
+	tv := unix.NsecToTimeval(t.UnixNano())
+	return unix.SetsockoptTimeval(c.fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
+}
+
+func (c *vsockConn) SetWriteDeadline(t time.Time) error {
+	if t.IsZero() {
+		return unix.SetsockoptTimeval(c.fd, unix.SOL_SOCKET, unix.SO_SNDTIMEO, nil)
+	}
+	tv := unix.NsecToTimeval(t.UnixNano())
+	return unix.SetsockoptTimeval(c.fd, unix.SOL_SOCKET, unix.SO_SNDTIMEO, &tv)
+}
 
 func handleVsockConn(fd int) {
 	conn := &vsockConn{fd: fd}
 	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
+	// mutexWriter serialises all frame writes to this connection,
+	// preventing byte-level interleaving when stdout and stderr
+	// pump goroutines call sendFrame concurrently.
+	mw := &mutexWriter{Writer: conn}
+
+	// 64KB buffer limits the maximum header line size; ReadBytes returns
+	// bufio.ErrBufferFull if the line exceeds this, preventing OOM from
+	// malicious connections that never send '\n'.
+	reader := bufio.NewReaderSize(conn, 64*1024)
+	// Limit header line to 64KB to prevent OOM from malicious connections
+	// that never send '\n'.
 	headerLine, err := reader.ReadBytes('\n')
 	if err != nil {
-		logf("vsock read header: %v", err)
+		if err == bufio.ErrBufferFull {
+			logf("vsock read header: exceeded 64KB limit")
+		} else {
+			logf("vsock read header: %v", err)
+		}
 		return
 	}
 
 	var req vsockrpc.Request
 	if err := json.Unmarshal(headerLine, &req); err != nil {
-		sendFrame(conn, vsockrpc.Frame{Done: true, Error: fmt.Sprintf("bad request: %v", err)})
+		sendFrame(mw, vsockrpc.Frame{Done: true, Error: fmt.Sprintf("bad request: %v", err)})
 		return
 	}
 
 	switch req.Op {
 	case vsockrpc.OpPing:
-		sendFrame(conn, vsockrpc.Frame{Pong: true, Done: true})
+		sendFrame(mw, vsockrpc.Frame{Pong: true, Done: true})
 	case vsockrpc.OpExec:
-		handleExec(conn, req)
+		handleExec(mw, req)
 	case vsockrpc.OpWriteFile:
-		handleWriteFile(conn, reader, req)
-	case vsockrpc.OpReadFile:
-		handleReadFile(conn, req)
+		handleWriteFile(mw, reader, req)
 	default:
-		sendFrame(conn, vsockrpc.Frame{Done: true, Error: fmt.Sprintf("unknown op %q", req.Op)})
+		sendFrame(mw, vsockrpc.Frame{Done: true, Error: fmt.Sprintf("unknown op %q", req.Op)})
 	}
+}
+
+// mutexWriter wraps an io.Writer with a Mutex so concurrent goroutines
+// can write complete logical units (e.g. JSON frames) without byte-level
+// interleaving.
+type mutexWriter struct {
+	io.Writer
+	mu sync.Mutex
+}
+
+func (w *mutexWriter) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.Writer.Write(b)
 }
 
 func sendFrame(w io.Writer, f vsockrpc.Frame) {
@@ -135,17 +183,23 @@ func sendFrame(w io.Writer, f vsockrpc.Frame) {
 	_, _ = w.Write(data)
 }
 
-func handleExec(conn net.Conn, req vsockrpc.Request) {
+func handleExec(w io.Writer, req vsockrpc.Request) {
 	if len(req.Cmd) == 0 {
-		sendFrame(conn, vsockrpc.Frame{Done: true, Error: "empty cmd"})
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: "empty cmd"})
 		return
 	}
 
 	cmd := exec.Command(req.Cmd[0], req.Cmd[1:]...)
-	for k, v := range req.Env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
-	if len(cmd.Env) == 0 {
+	// Merge host-supplied env into the current environment so that
+	// PATH, HOME, etc. are preserved. Without this, any env overrides
+	// from the host would erase the entire environment, breaking
+	// subprocess lookups that depend on PATH.
+	if len(req.Env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range req.Env {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+		}
+	} else {
 		cmd.Env = os.Environ()
 	}
 
@@ -155,13 +209,13 @@ func handleExec(conn net.Conn, req vsockrpc.Request) {
 	cmd.Stderr = stderrW
 
 	if err := cmd.Start(); err != nil {
-		sendFrame(conn, vsockrpc.Frame{Done: true, Error: err.Error()})
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
 		return
 	}
 
 	done := make(chan struct{}, 2)
-	go pumpToFrames(conn, stdoutR, true, done)
-	go pumpToFrames(conn, stderrR, false, done)
+	go pumpToFrames(w, stdoutR, true, done)
+	go pumpToFrames(w, stderrR, false, done)
 
 	waitErr := cmd.Wait()
 	stdoutW.Close()
@@ -177,10 +231,10 @@ func handleExec(conn net.Conn, req vsockrpc.Request) {
 			final.Error = waitErr.Error()
 		}
 	}
-	sendFrame(conn, final)
+	sendFrame(w, final)
 }
 
-func pumpToFrames(conn net.Conn, r io.Reader, isStdout bool, done chan<- struct{}) {
+func pumpToFrames(w io.Writer, r io.Reader, isStdout bool, done chan<- struct{}) {
 	defer func() { done <- struct{}{} }()
 	buf := make([]byte, 8192)
 	for {
@@ -194,7 +248,7 @@ func pumpToFrames(conn net.Conn, r io.Reader, isStdout bool, done chan<- struct{
 			} else {
 				f.Stderr = payload
 			}
-			sendFrame(conn, f)
+			sendFrame(w, f)
 		}
 		if err != nil {
 			return
@@ -202,13 +256,41 @@ func pumpToFrames(conn net.Conn, r io.Reader, isStdout bool, done chan<- struct{
 	}
 }
 
-func handleWriteFile(conn net.Conn, reader *bufio.Reader, req vsockrpc.Request) {
+// allowedWritePaths are the prefixes under which handleWriteFile may write.
+// This prevents a compromised host from overwriting critical system files
+// (e.g. /etc/shadow, /sbin/init) through the vsock agent.
+var allowedWritePaths = []string{
+	"/tmp/",
+	"/opt/",
+	"/root/",
+	"/home/",
+	"/usr/local/bin/",
+	"/etc/sysbox/",
+	"/etc/ssh/sshd_config.d/",
+	"/etc/profile.d/",
+	"/run/",
+}
+
+func handleWriteFile(w io.Writer, reader *bufio.Reader, req vsockrpc.Request) {
 	if req.Path == "" {
-		sendFrame(conn, vsockrpc.Frame{Done: true, Error: "missing path"})
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: "missing path"})
+		return
+	}
+	// Validate the target path is under an allowed prefix.
+	cleanPath := filepath.Clean(req.Path)
+	allowed := false
+	for _, prefix := range allowedWritePaths {
+		if strings.HasPrefix(cleanPath, prefix) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: fmt.Sprintf("path %q is outside allowed write directories", cleanPath)})
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(req.Path), 0755); err != nil {
-		sendFrame(conn, vsockrpc.Frame{Done: true, Error: err.Error()})
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
 		return
 	}
 	mode := os.FileMode(req.Mode)
@@ -217,27 +299,17 @@ func handleWriteFile(conn net.Conn, reader *bufio.Reader, req vsockrpc.Request) 
 	}
 	f, err := os.OpenFile(req.Path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
-		sendFrame(conn, vsockrpc.Frame{Done: true, Error: err.Error()})
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
 		return
 	}
 	defer f.Close()
 
 	if req.Size > 0 {
 		if _, err := io.CopyN(f, reader, req.Size); err != nil {
-			sendFrame(conn, vsockrpc.Frame{Done: true, Error: err.Error()})
+			sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
 			return
 		}
 	}
-	sendFrame(conn, vsockrpc.Frame{Done: true})
+	sendFrame(w, vsockrpc.Frame{Done: true})
 }
 
-func handleReadFile(conn net.Conn, req vsockrpc.Request) {
-	data, err := os.ReadFile(req.Path)
-	if err != nil {
-		sendFrame(conn, vsockrpc.Frame{Done: true, Error: err.Error()})
-		return
-	}
-	sendFrame(conn, vsockrpc.Frame{Size: int64(len(data))})
-	conn.Write(data)
-	sendFrame(conn, vsockrpc.Frame{Done: true})
-}

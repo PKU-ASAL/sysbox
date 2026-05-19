@@ -36,8 +36,8 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("image %s not applied yet", imageName)
 	}
 	imgRef := substrate.ImageRef{
-		ID:         util.AsString(imgState.Instance["image_id"]),
-		Repository: util.AsString(imgState.Instance["repository"]),
+		ID:         imgState.ImageID(),
+		Repository: imgState.Repository(),
 	}
 
 	// Resolve cross-resource refs (e.g. kernel ref → local path) before CreateNode.
@@ -47,38 +47,20 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
-	// Pre-scan links: collect Docker NAT networks so the first one can be
-	// attached at container-creation time (keeping NetworkMode:"none" for
-	// pure-veth nodes, and avoiding the post-start connect restriction).
-	type natLink struct {
-		netName string
-		netID   string
-		ip      string
-	}
-	var natLinks []natLink
+	// Map LinkConfig → NICSpec for the shared wiring loop.
+	var nicSpecs []NICSpec
 	for _, link := range cfg.Links {
-		netName := config.ResolveName(link.Network)
-		netState := e.state.FindResource("sysbox_network", netName)
-		if netState == nil {
-			return fmt.Errorf("network %s not applied yet", netName)
-		}
-		if isNAT, _ := netState.Instance["nat"].(bool); isNAT {
-			natLinks = append(natLinks, natLink{
-				netName: netName,
-				netID:   util.AsString(netState.Instance["docker_network_id"]),
-				ip:      link.IP,
-			})
-		}
+		nicSpecs = append(nicSpecs, NICSpec{
+			Network: config.ResolveName(link.Network),
+			IP:      link.IP,
+			Gateway: link.Gateway,
+		})
 	}
 
-	// Build InitialLinks for NAT networks (substrate connects at create time).
-	var initialLinks []substrate.LinkRequest
-	for _, nl := range natLinks {
-		initialLinks = append(initialLinks, substrate.LinkRequest{
-			KindHint:    substrate.NICKindDockerNAT,
-			DockerNetID: nl.netID,
-			IP:          nl.ip,
-		})
+	// Pre-scan: find Docker NAT networks for InitialLinks.
+	initialLinks, err := collectNATLinks(e.state, nicSpecs, true)
+	if err != nil {
+		return err
 	}
 
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
@@ -102,91 +84,25 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	caps := sub.Capabilities()
 	if caps.NICHotPlug {
 		if err := sub.StartNode(ctx, handle); err != nil {
-			_ = sub.DestroyNode(ctx, handle)
+			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on start failure")
 			return fmt.Errorf("start node %s: %w", n.ID.Name, err)
 		}
 	}
 
-	// Track which NAT networks were already connected at create time.
-	connectedAtCreate := map[string]bool{}
-	if len(initialLinks) > 0 {
-		connectedAtCreate[initialLinks[0].DockerNetID] = true
+	// Wire all NICs using the shared helper.
+	wireResult, err := wireNICs(ctx, sub, e.state, handle, initialLinks, nicSpecs, false, n.ID.Name)
+	if err != nil {
+		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on wire failure")
+		return err
 	}
 
-	nics := []map[string]any{}
-	// vethIdx tracks the guest interface name for manually-injected veth links.
-	// Docker NAT networks consume ethN names starting at eth0, so veth links
-	// must begin numbering after however many NAT interfaces were attached.
-	vethIdx := len(initialLinks)
-	for _, link := range cfg.Links {
-		netName := config.ResolveName(link.Network)
-		netState := e.state.FindResource("sysbox_network", netName)
-		if netState == nil {
-			_ = sub.DestroyNode(ctx, handle)
-			return fmt.Errorf("network %s not applied yet", netName)
-		}
-
-		// NAT network: connected at create time (first) or via AttachNIC (extras).
-		if isNAT, _ := netState.Instance["nat"].(bool); isNAT {
-			netID := util.AsString(netState.Instance["docker_network_id"])
-			if !connectedAtCreate[netID] {
-				_, err := sub.AttachNIC(ctx, handle, substrate.LinkRequest{
-					KindHint:    substrate.NICKindDockerNAT,
-					DockerNetID: netID,
-					IP:          link.IP,
-				})
-				if err != nil {
-					_ = sub.DestroyNode(ctx, handle)
-					return fmt.Errorf("connect node %s to nat network %s: %w", n.ID.Name, netName, err)
-				}
-			}
-			nics = append(nics, map[string]any{
-				"type":       "docker_nat",
-				"network_id": netID,
-				"ip":         link.IP,
-			})
-			continue
-		}
-
-		// Non-NAT (isolated) network: delegate NIC creation to the substrate.
-		lreq := substrate.LinkRequest{
-			NetNS:      util.AsString(netState.Instance["netns"]),
-			Bridge:     util.AsString(netState.Instance["bridge"]),
-			IP:         link.IP,
-			Gateway:    link.Gateway,
-			TargetName: fmt.Sprintf("eth%d", vethIdx),
-			MAC:        "",
-		}
-		attached, err := sub.AttachNIC(ctx, handle, lreq)
-		if err != nil {
-			_ = sub.DestroyNode(ctx, handle)
-			return err
-		}
-		vethIdx++
-		nics = append(nics, map[string]any{
-			"kind":      attached.Kind,
-			"host_end":  attached.HostEnd,
-			"guest_end": attached.GuestEnd,
-			"target":    lreq.TargetName,
-			"ip":        attached.IP,
-			"netns":     attached.NetNS,
-		})
-	}
-
-	// Populate PrimaryIP from the first link before writing state, so that
-	// actor resources can read it back from nodeState.Instance["primary_ip"].
-	if len(cfg.Links) > 0 {
-		firstIP := cfg.Links[0].IP
-		if idx := strings.Index(firstIP, "/"); idx >= 0 {
-			firstIP = firstIP[:idx]
-		}
-		handle.Net.PrimaryIP = firstIP
-	}
+	// Populate PrimaryIP from the wiring result.
+	handle.Net.PrimaryIP = wireResult.PrimaryIP
 
 	nodeInstance := map[string]any{
 		"container_id": handle.ID,
 		"primary_ip":   handle.Net.PrimaryIP,
-		"nics":         nics,
+		"nics":         wireResult.NICs,
 	}
 	// Persist lifecycle flags so ComputePlan can honour them on future runs
 	// even if the resource is removed from HCL.
@@ -213,7 +129,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	// were already started before the NIC loop.
 	if !caps.NICHotPlug {
 		if err := sub.StartNode(ctx, handle); err != nil {
-			_ = sub.DestroyNode(ctx, handle)
+			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on cold-start failure")
 			return fmt.Errorf("start node %s: %w", n.ID.Name, err)
 		}
 	}

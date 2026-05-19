@@ -67,6 +67,11 @@ type Substrate interface {
 	// RemoveManagedNetwork tears down a previously created managed network.
 	RemoveManagedNetwork(ctx context.Context, id string) error
 
+	// ReadManagedNetwork queries an existing managed network by name without
+	// creating one. Returns ErrNotSupported if the substrate cannot inspect
+	// networks. Used by data sources to reference existing infrastructure.
+	ReadManagedNetwork(ctx context.Context, spec ManagedNetworkSpec) (ManagedNetworkInfo, error)
+
 	// AttachNIC creates a network device for the node and wires it into the
 	// topology described by the LinkRequest. Each substrate picks its own
 	// device type (veth, tap, macvtap, ...), creates it, and attaches it.

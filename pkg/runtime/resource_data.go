@@ -67,21 +67,10 @@ func (e *Executor) readDataNetwork(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("data sysbox_network.%s: requires docker substrate: %w", n.ID.Name, err)
 	}
 
-	// Use ReadNode is not applicable for networks; instead, query by
-	// trying to get the managed network info. If the network doesn't
-	// exist, CreateManagedNetwork with empty CIDR won't create it — but
-	// the semantics are wrong. We use docker inspect directly instead.
-	// However, to avoid importing Docker SDK in the runtime package,
-	// we delegate to the substrate's existing interface.
-	//
-	// Approach: call CreateManagedNetwork with the known name but empty
-	// CIDR. Docker's network inspect (used internally) returns the
-	// existing network if it exists, without creating anything new.
-	info, err := sub.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
-		Name: cfg.Name,
-		CIDR: "", // empty CIDR → Docker inspects existing, doesn't create
-		NAT:  false,
-	})
+	// Try the user-given name directly first (e.g. "bridge" or a custom
+	// network). If not found, try the sysbox-prefixed variant. This covers
+	// both externally-managed Docker networks and sysbox-managed ones.
+	info, err := sub.ReadManagedNetwork(ctx, substrate.ManagedNetworkSpec{Name: cfg.Name})
 	if err != nil {
 		return fmt.Errorf("data sysbox_network.%s: network %q not found: %w", n.ID.Name, cfg.Name, err)
 	}

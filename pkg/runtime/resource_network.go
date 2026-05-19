@@ -105,13 +105,13 @@ func (e *Executor) createNATNetwork(ctx context.Context, n *graph.Node, cfg *con
 }
 
 func (e *Executor) destroyNetwork(ctx context.Context, r state.Resource) error {
-	if isNAT, _ := r.Instance["nat"].(bool); isNAT {
+	if r.IsNAT() {
 		sub, err := substrate.Get("docker")
 		if err != nil {
 			e.state.RemoveResource(r.Type, r.Name)
 			return nil
 		}
-		netID := r.Str("docker_network_id")
+		netID := r.DockerNetID()
 		if netID != "" {
 			if err := sub.RemoveManagedNetwork(ctx, netID); err != nil {
 				e.logf("[destroy] warning: remove bridge network %s: %v\n", netID, err)

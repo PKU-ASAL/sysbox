@@ -85,6 +85,11 @@ func (BaseSubstrate) RemoveManagedNetwork(_ context.Context, _ string) error {
 	return ErrNotSupported
 }
 
+// ReadManagedNetwork returns ErrNotSupported by default.
+func (BaseSubstrate) ReadManagedNetwork(_ context.Context, _ ManagedNetworkSpec) (ManagedNetworkInfo, error) {
+	return ManagedNetworkInfo{}, ErrNotSupported
+}
+
 // ReadNode returns ErrNotSupported by default.
 func (BaseSubstrate) ReadNode(_ context.Context, _ string) (NodeHandle, error) {
 	return NodeHandle{}, ErrNotSupported

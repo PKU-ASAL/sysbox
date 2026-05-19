@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // SchemaVersion is the current persistent format version.
@@ -79,6 +81,46 @@ func (r *Resource) Float(key string) float64 {
 	return 0
 }
 
+// Bool returns the value at key as bool. Returns false if missing or wrong type.
+func (r *Resource) Bool(key string) bool {
+	b, _ := r.Instance[key].(bool)
+	return b
+}
+
+// Convenience accessors for well-known instance keys. These centralise
+// key names and eliminate scattered raw type assertions.
+
+func (r *Resource) ContainerID() string  { return r.Str("container_id") }
+func (r *Resource) PrimaryIP() string    { return r.Str("primary_ip") }
+func (r *Resource) ProviderExtra() string { return r.Str("provider_extra") }
+func (r *Resource) IsNAT() bool         { return r.Bool("nat") }
+func (r *Resource) DockerNetID() string  { return r.Str("docker_network_id") }
+func (r *Resource) PID() int             { return r.Int("pid") }
+func (r *Resource) LifecyclePreventDestroy() bool { return r.Bool("lifecycle_prevent_destroy") }
+func (r *Resource) ImageID() string     { return r.Str("image_id") }
+func (r *Resource) Repository() string  { return r.Str("repository") }
+func (r *Resource) NetNS() string       { return r.Str("netns") }
+func (r *Resource) Bridge() string      { return r.Str("bridge") }
+
+// ReconstructHandle rebuilds a substrate.NodeHandle from the resource's
+// persisted instance data. This replaces the hand-assembled pattern of
+// reading container_id + primary_ip + provider_extra that was scattered
+// across the API, commands, and runtime packages.
+func (r *Resource) ReconstructHandle(sub substrate.Substrate) (substrate.NodeHandle, error) {
+	handle := substrate.NodeHandle{
+		ID:  r.ContainerID(),
+		Net: substrate.NetInfo{PrimaryIP: r.PrimaryIP()},
+	}
+	if blob := r.ProviderExtra(); blob != "" {
+		ps, err := sub.UnmarshalProviderState([]byte(blob))
+		if err != nil {
+			return handle, fmt.Errorf("resource %s.%s: corrupt provider state: %w", r.Type, r.Name, err)
+		}
+		handle.Provider = ps
+	}
+	return handle, nil
+}
+
 func (s *State) Marshal() ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -93,7 +135,35 @@ func Unmarshal(data []byte) (*State, error) {
 	if s.Version != SchemaVersion {
 		return nil, &IncompatibleVersionError{Found: s.Version, Expected: SchemaVersion}
 	}
+	// Migrate: older state files for sysbox_router lacked primary_ip.
+	// Backfill from the first NIC that has an IP address.
+	for i := range s.Resources {
+		migratePrimaryIP(&s.Resources[i])
+	}
 	return &s, nil
+}
+
+// migratePrimaryIP fills in a missing primary_ip from NIC data.
+// Pre-v1.0 router entries didn't write primary_ip; the NIC list has it.
+func migratePrimaryIP(r *Resource) {
+	if r.Str("primary_ip") != "" {
+		return
+	}
+	nics, _ := r.Instance["nics"].([]any)
+	for _, n := range nics {
+		m, _ := n.(map[string]any)
+		if ip, _ := m["ip"].(string); ip != "" {
+			// Strip CIDR suffix.
+			for j := 0; j < len(ip); j++ {
+				if ip[j] == '/' {
+					ip = ip[:j]
+					break
+				}
+			}
+			r.Instance["primary_ip"] = ip
+			return
+		}
+	}
 }
 
 // IncompatibleVersionError is returned by Unmarshal when the on-disk state
