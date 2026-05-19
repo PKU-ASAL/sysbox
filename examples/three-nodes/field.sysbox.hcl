@@ -115,6 +115,16 @@ resource "sysbox_node" "node_attack" {
     ip      = "172.20.0.10/24"
   }
 
+  # Declarative static routes (Terraform-style, replaces `ip route add` provisioners).
+  route {
+    dst = "10.0.2.0/24"
+    via = "10.0.1.254"
+  }
+  route {
+    dst = "0.0.0.0/0"
+    via = "172.20.0.1"
+  }
+
   # Copy host SSH pubkey into node so the agent can pivot to victim nodes.
   provisioner "file" {
     source      = env("LAB_SSH_PUBKEY")
@@ -128,10 +138,6 @@ resource "sysbox_node" "node_attack" {
       "cat /tmp/host_pubkey >> /root/.ssh/authorized_keys",
       "chmod 600 /root/.ssh/authorized_keys",
       "rm /tmp/host_pubkey",
-      # Routing: lab traffic via router, internet via uplink.
-      "apt-get install -y -qq iproute2 2>/dev/null || true",
-      "ip route add 10.0.2.0/24 via 10.0.1.254 2>/dev/null || true",
-      "ip route add default via 172.20.0.1 2>/dev/null || true",
     ]
   }
 }

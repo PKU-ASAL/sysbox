@@ -234,6 +234,31 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		}
 	}
 
+	// Configure static routes declared in HCL (before provisioners so they
+	// can use the routes). This replaces `ip route add` in provisioners.
+	if len(cfg.Routes) > 0 {
+		conn, err := connectionForNode(sub, handle, cfg.Connections)
+		if err != nil {
+			return fmt.Errorf("connection for routes on node %s: %w", n.ID.Name, err)
+		}
+		for _, rt := range cfg.Routes {
+			cmd := fmt.Sprintf("ip route add %s via %s", rt.Destination, rt.Via)
+			e.logf("[route] %s: %s\n", n.ID.Name, cmd)
+			if err := conn.ExecInline(ctx, []string{cmd}); err != nil {
+				// Non-fatal: route may already exist or ip not available.
+				e.logf("[route] warning: %s: %v\n", n.ID.Name, err)
+			}
+		}
+		// Persist routes in state for drift detection.
+		routeSpecs := make([]map[string]string, 0, len(cfg.Routes))
+		for _, rt := range cfg.Routes {
+			routeSpecs = append(routeSpecs, map[string]string{"dst": rt.Destination, "via": rt.Via})
+		}
+		if rec := e.state.FindResource("sysbox_node", n.ID.Name); rec != nil {
+			rec.Instance["routes"] = routeSpecs
+		}
+	}
+
 	// Run provisioners after node is up and wired.
 	if len(cfg.Provisioners) > 0 {
 		conn, err := connectionForNode(sub, handle, cfg.Connections)

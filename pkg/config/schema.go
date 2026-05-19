@@ -203,6 +203,7 @@ type NodeConfig struct {
 	Env          map[string]string   `hcl:"env,optional"`
 	DependsOn    []string            `hcl:"depends_on,optional"`
 	Links        []LinkConfig        `hcl:"link,block"`
+	Routes       []RouteConfig       `hcl:"route,block"`
 	Connections  []ConnectionConfig  `hcl:"connection,block"`
 	Provisioners []ProvisionerConfig `hcl:"provisioner,block"`
 	Providers    []ProviderBlock     `hcl:"provider,block"`
@@ -225,6 +226,17 @@ type LinkConfig struct {
 	Network string `hcl:"network"`
 	IP      string `hcl:"ip"`
 	Gateway string `hcl:"gw,optional"`
+}
+
+// RouteConfig declares a static route inside a node (Terraform-style declarative
+// replacement for `ip route add` in provisioners). sysbox configures the route
+// after the node is created and NICs are attached, and tracks it in state for
+// drift detection.
+//
+//	route { dst = "10.0.2.0/24"; via = "10.0.1.254" }
+type RouteConfig struct {
+	Destination string `hcl:"dst"` // CIDR, e.g. "10.0.2.0/24" or "0.0.0.0/0"
+	Via         string `hcl:"via"` // gateway IP, e.g. "10.0.1.254"
 }
 
 type NetworkConfig struct {
