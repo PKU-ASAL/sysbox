@@ -242,7 +242,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			return fmt.Errorf("connection for routes on node %s: %w", n.ID.Name, err)
 		}
 		for _, rt := range cfg.Routes {
-			cmd := fmt.Sprintf("ip route add %s via %s", rt.Destination, rt.Via)
+			cmd := fmt.Sprintf("ip route replace %s via %s", rt.Destination, rt.Via)
 			e.logf("[route] %s: %s\n", n.ID.Name, cmd)
 			if err := conn.ExecInline(ctx, []string{cmd}); err != nil {
 				// Non-fatal: route may already exist or ip not available.
