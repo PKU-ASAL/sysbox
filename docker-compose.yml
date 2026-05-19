@@ -1,0 +1,29 @@
+services:
+  sysbox-api:
+    build: .
+    image: sysbox:latest
+    container_name: sysbox-api
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    pid: host
+    volumes:
+      # Docker substrate: talk to the host Docker daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Firecracker substrate: KVM device.
+      - /dev/kvm:/dev/kvm
+      # Libvirt substrate.
+      - /var/run/libvirt:/var/run/libvirt
+      # User HCL workspaces (read/write — apply creates state here).
+      - ./examples:/workspaces
+      # State files persisted on host.
+      - ./runs:/runs
+      # Shared image/rootfs/kernel cache (reuse host cache).
+      - ~/.cache/sysbox:/var/cache/sysbox
+    environment:
+      - SYSBOX_API_LISTEN=${SYSBOX_API_LISTEN:-:9876}
+      - SYSBOX_RUNS_DIR=/runs
+      - SYSBOX_WORKSPACES_DIR=/workspaces
+      - SYSBOX_API_TOKEN=${SYSBOX_API_TOKEN:-}
+      # Shared cache for artifact resolver.
+      - SYSBOX_CACHE_DIR=/var/cache/sysbox

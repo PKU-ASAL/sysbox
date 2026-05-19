@@ -3,17 +3,21 @@ BINARY  := bin/sysbox
 INITDIR := pkg/provider/firecracker/initbin
 ARCH    := $(shell $(GO) env GOARCH)
 
-SUITE ?= three-nodes
-_HCL   := examples/$(SUITE)/field.sysbox.hcl
-_STATE := runs/$(SUITE)/state.json
+TOPO ?= three-nodes
+API_ADDR ?= :9876
+API_PID  := $(shell pgrep -f '$(BINARY) serve' 2>/dev/null | head -1)
+_HCL   := examples/$(TOPO)/field.sysbox.hcl
+_STATE := runs/$(TOPO)/state.json
 _SB    := $(BINARY) --state $(_STATE) -f $(_HCL)
-_LAB   := examples/$(SUITE)/lab.sh
+_LAB   := examples/$(TOPO)/lab.sh
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-all test lint ci plan up down lab lab-down logs clean
+.PHONY: help build build-all test lint ci plan up down lab lab-down logs \
+        serve serve-restart serve-stop \
+        docker-build docker-up docker-down docker-logs clean
 
 help:
-	@echo "Usage: make <target>  [SUITE=three-nodes|microvm|mixed|two-networks]"
+	@echo "Usage: make <target>  [TOPO=three-nodes|microvm|mixed|two-networks]"
 	@echo ""
 	@awk 'BEGIN{FS=":.*##"} /^[a-z][a-z-]+:.*##/{printf "  %-18s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
 	@echo ""
@@ -49,19 +53,19 @@ ci: build lint test ## CI gate: lint + tests + plan all examples
 	    $(BINARY) -f examples/$$s/field.sysbox.hcl plan 2>&1 | head -1; \
 	done
 
-# ── topology  [SUITE=three-nodes] ────────────────────────────────────────────
+# ── topology  [TOPO=three-nodes] ────────────────────────────────────────────
 
 plan: build ## sysbox plan  (no infra changes)
 	$(_SB) plan
 
 up: build ## sysbox apply  (sudo required for firecracker/mixed)
-	@mkdir -p runs/$(SUITE)
+	@mkdir -p runs/$(TOPO)
 	$(_SB) apply --auto-approve
 
 down: ## sysbox destroy
 	$(_SB) destroy --auto-approve
 
-# ── lab lifecycle  [SUITE=three-nodes]  (image build + SSH keys + sensor) ─────
+# ── lab lifecycle  [TOPO=three-nodes]  (image build + SSH keys + sensor) ─────
 
 lab: ## Full lab setup: image build + apply + start sensor
 	sudo -E $(_LAB) up
@@ -71,6 +75,47 @@ lab-down: ## Destroy lab + stop sensor
 
 logs: ## Tail sensor log
 	$(_LAB) logs
+
+# ── API server  [API_ADDR=:8080] ────────────────────────────────────────────
+
+serve: build ## Start API server (bg, auto-restarts if already running)
+	@if [ -n "$(API_PID)" ]; then \
+	    echo "Stopping existing API server (PID $(API_PID))..."; \
+	    kill $(API_PID) 2>/dev/null || true; \
+	    sleep 0.3; \
+	fi
+	@$(BINARY) serve --addr $(API_ADDR) & APID=$$!; echo "API server started on $(API_ADDR)  PID=$$APID"
+
+serve-restart: build ## Rebuild + restart API server
+	@if [ -n "$(API_PID)" ]; then \
+	    echo "Stopping existing API server (PID $(API_PID))..."; \
+	    kill $(API_PID) 2>/dev/null || true; \
+	    sleep 0.3; \
+	fi
+	@$(BINARY) serve --addr $(API_ADDR) & APID=$$!; echo "API server restarted on $(API_ADDR)  PID=$$APID"
+
+serve-stop: ## Stop the running API server
+	@if [ -z "$(API_PID)" ]; then \
+	    echo "No running API server found."; \
+	else \
+	    echo "Stopping API server (PID $(API_PID))..."; \
+	    kill $(API_PID) 2>/dev/null && echo "Stopped." || echo "Already stopped."; \
+	fi
+
+# ── Docker deployment  [API_ADDR=:9876] ─────────────────────────────────────
+
+docker-build: ## Build sysbox Docker image (no cache)
+	docker build --network=host --no-cache -t sysbox:latest .
+
+docker-up: docker-build ## Start sysbox-api container (privileged, host network)
+	docker compose up -d
+	@echo "API server: http://localhost:9876/v1/health"
+
+docker-down: ## Stop and remove sysbox-api container
+	docker compose down
+
+docker-logs: ## Tail container logs
+	docker compose logs -f
 
 # ── maintenance ───────────────────────────────────────────────────────────────
 
