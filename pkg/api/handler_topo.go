@@ -4,14 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
+
+// safeSegment matches allowed path values for topology / node / id URL segments.
+// Rejects "..", special characters, and URL-encoded traversals.
+var safeSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// validatePathSegment returns an error if the segment could enable path traversal.
+func validatePathSegment(seg, label string) error {
+	if !safeSegment.MatchString(seg) {
+		return fmt.Errorf("invalid %s %q: must match [A-Za-z0-9_-]+", label, seg)
+	}
+	return nil
+}
 
 // GET /v1/health
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -19,23 +33,55 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 // GET /v1/topologies
-// Scans runs/*/state.json and returns the list of known suites.
+// Returns the union of topologies discovered under workspacesDir (HCL present)
+// and runsDir (state file present). Each topology carries flags indicating
+// whether it has been applied yet.
 func (s *Server) handleListTopologies(w http.ResponseWriter, r *http.Request) {
-	entries, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json"))
+	topolist := map[string]map[string]bool{}
+
+	hclEntries, err := filepath.Glob(filepath.Join(s.workspacesDir, "*", "field.sysbox.hcl"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	suites := make([]string, 0, len(entries))
-	for _, e := range entries {
-		suites = append(suites, filepath.Base(filepath.Dir(e)))
+	for _, e := range hclEntries {
+		name := filepath.Base(filepath.Dir(e))
+		topolist[name] = map[string]bool{"hcl": true, "state": false}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"suites": suites})
+
+	stateEntries, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	for _, e := range stateEntries {
+		name := filepath.Base(filepath.Dir(e))
+		if topolist[name] == nil {
+			topolist[name] = map[string]bool{"hcl": false, "state": true}
+		} else {
+			topolist[name]["state"] = true
+		}
+	}
+
+	out := make([]map[string]any, 0, len(topolist))
+	for name, flags := range topolist {
+		out = append(out, map[string]any{
+			"name":       name,
+			"has_hcl":    flags["hcl"],
+			"has_state":  flags["state"],
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"topologies": out})
 }
 
-// GET /v1/topologies/{suite}/state
+// GET /v1/topologies/{topology}/state
 func (s *Server) handleGetState(w http.ResponseWriter, r *http.Request) {
-	st, err := s.loadState(r.PathValue("suite"))
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	st, err := s.loadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -43,10 +89,14 @@ func (s *Server) handleGetState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
-// GET /v1/topologies/{suite}/plan
+// GET /v1/topologies/{topology}/plan
 func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
-	suite := r.PathValue("suite")
-	g, _, st, _, _, err := runtime.LoadWorkspace(s.hclFile(suite), s.stateFile(suite))
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	g, _, st, _, _, err := runtime.LoadWorkspace(s.hclFile(topology), s.stateFile(topology))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -59,13 +109,20 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, planJSON(plan))
 }
 
-// POST /v1/topologies/{suite}/apply
+// POST /v1/topologies/{topology}/apply
 func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
-	suite := r.PathValue("suite")
-	run := s.jobs.start(suite, "apply")
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run := s.jobs.start(topology, "apply")
 
 	go func() {
-		g, mgr, st, _, _, err := runtime.LoadWorkspace(s.hclFile(suite), s.stateFile(suite))
+		unlock := s.jobs.lockTopology(topology)
+		defer unlock()
+
+		g, mgr, st, _, _, err := runtime.LoadWorkspace(s.hclFile(topology), s.stateFile(topology))
 		if err != nil {
 			s.jobs.finish(run, err)
 			return
@@ -76,16 +133,16 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !plan.HasChanges() {
-			run.logs.Write([]byte("No changes. Apply is a no-op.\n")) //nolint:errcheck
+			_, _ = run.logs.Write([]byte("No changes. Apply is a no-op.\n"))
 			s.jobs.finish(run, nil)
 			return
 		}
-		run.logs.Write([]byte(plan.Summary() + "\n")) //nolint:errcheck
+		_, _ = run.logs.Write([]byte(plan.Summary() + "\n"))
 		exec := runtime.NewExecutor(g, st)
 		exec.SetLogger(run.logs)
 		if err := exec.Apply(context.Background(), plan); err != nil {
 			if saveErr := mgr.Save(st); saveErr != nil {
-				run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr))) //nolint:errcheck
+				_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
 			}
 			s.jobs.finish(run, err)
 			return
@@ -94,20 +151,27 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			s.jobs.finish(run, fmt.Errorf("save state: %w", err))
 			return
 		}
-		run.logs.Write([]byte("Apply complete.\n")) //nolint:errcheck
+		_, _ = run.logs.Write([]byte("Apply complete.\n"))
 		s.jobs.finish(run, nil)
 	}()
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID})
 }
 
-// POST /v1/topologies/{suite}/destroy
+// POST /v1/topologies/{topology}/destroy
 func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
-	suite := r.PathValue("suite")
-	run := s.jobs.start(suite, "destroy")
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run := s.jobs.start(topology, "destroy")
 
 	go func() {
-		stateFile := s.stateFile(suite)
+		unlock := s.jobs.lockTopology(topology)
+		defer unlock()
+
+		stateFile := s.stateFile(topology)
 		mgr := state.NewManager(stateFile)
 		st, err := mgr.Load()
 		if err != nil {
@@ -115,7 +179,7 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(st.Resources) == 0 {
-			run.logs.Write([]byte("Nothing to destroy.\n")) //nolint:errcheck
+			_, _ = run.logs.Write([]byte("Nothing to destroy.\n"))
 			s.jobs.finish(run, nil)
 			return
 		}
@@ -124,7 +188,7 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		exec.SetLogger(run.logs)
 		if err := exec.Destroy(context.Background(), plan); err != nil {
 			if saveErr := mgr.Save(st); saveErr != nil {
-				run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr))) //nolint:errcheck
+				_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
 			}
 			s.jobs.finish(run, err)
 			return
@@ -133,7 +197,7 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 			s.jobs.finish(run, fmt.Errorf("save state: %w", err))
 			return
 		}
-		run.logs.Write([]byte("Destroy complete.\n")) //nolint:errcheck
+		_, _ = run.logs.Write([]byte("Destroy complete.\n"))
 		s.jobs.finish(run, nil)
 	}()
 
@@ -142,7 +206,12 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 
 // GET /v1/runs/{id}
 func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
-	run, ok := s.jobs.get(r.PathValue("id"))
+	id := r.PathValue("id")
+	if err := validatePathSegment(id, "id"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run, ok := s.jobs.get(id)
 	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
 		return
@@ -152,7 +221,12 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 
 // GET /v1/runs/{id}/logs  — SSE stream
 func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
-	run, ok := s.jobs.get(r.PathValue("id"))
+	id := r.PathValue("id")
+	if err := validatePathSegment(id, "id"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run, ok := s.jobs.get(id)
 	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
 		return
@@ -162,23 +236,23 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	ch := run.logs.Subscribe()
 	defer run.logs.Unsubscribe(ch)
-	ServeSSE(w, ch)
+	ServeSSE(w, r, ch)
 }
 
 // helpers
 
-func (s *Server) hclFile(suite string) string {
-	return filepath.Join("examples", suite, "field.sysbox.hcl")
+func (s *Server) hclFile(topology string) string {
+	return filepath.Join(s.workspacesDir, topology, "field.sysbox.hcl")
 }
 
-func (s *Server) stateFile(suite string) string {
-	return filepath.Join(s.runsDir, suite, "state.json")
+func (s *Server) stateFile(topology string) string {
+	return filepath.Join(s.runsDir, topology, "state.json")
 }
 
-func (s *Server) loadState(suite string) (*state.State, error) {
-	f := s.stateFile(suite)
+func (s *Server) loadState(topology string) (*state.State, error) {
+	f := s.stateFile(topology)
 	if _, err := os.Stat(f); err != nil {
-		return nil, fmt.Errorf("suite %q: no state file", suite)
+		return nil, fmt.Errorf("topology %q: no state file", topology)
 	}
 	return state.NewManager(f).Load()
 }
@@ -207,7 +281,9 @@ func planJSON(p *runtime.Plan) map[string]any {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v) //nolint:errcheck
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Warn("writeJSON encode failed", "error", err)
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, err error) {

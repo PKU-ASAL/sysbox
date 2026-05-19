@@ -1,24 +1,33 @@
 package api
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 )
 
 // Server holds all API state and registers HTTP routes.
 type Server struct {
-	runsDir string
-	jobs    *Jobs
-	mux     *http.ServeMux
+	runsDir       string
+	workspacesDir string
+	jobs          *Jobs
+	mux           *http.ServeMux
 }
 
-// NewServer creates a Server rooted at runsDir (e.g. "runs").
-func NewServer(runsDir string) *Server {
+// NewServer creates a Server rooted at runsDir (state files) and
+// workspacesDir (HCL files). Pass "" for workspacesDir to keep the
+// legacy "examples" default.
+func NewServer(runsDir, workspacesDir string) *Server {
+	if workspacesDir == "" {
+		workspacesDir = "examples"
+	}
 	s := &Server{
-		runsDir: runsDir,
-		jobs:    newJobs(runsDir),
-		mux:     http.NewServeMux(),
+		runsDir:       runsDir,
+		workspacesDir: workspacesDir,
+		jobs:          newJobs(runsDir),
+		mux:           http.NewServeMux(),
 	}
 	s.registerRoutes()
 	return s
@@ -31,7 +40,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Start binds to addr and serves until the process exits.
 func (s *Server) Start(addr string) error {
 	fmt.Fprintf(os.Stdout, "sysbox API listening on %s\n", addr)
-	return http.ListenAndServe(addr, authMiddleware(s))
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           authMiddleware(s),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		// WriteTimeout intentionally 0: SSE connections are long-lived.
+	}
+	return srv.ListenAndServe()
 }
 
 func (s *Server) registerRoutes() {
@@ -41,31 +57,42 @@ func (s *Server) registerRoutes() {
 
 	// Topologies
 	m.HandleFunc("GET /v1/topologies", s.handleListTopologies)
-	m.HandleFunc("GET /v1/topologies/{suite}/state", s.handleGetState)
-	m.HandleFunc("GET /v1/topologies/{suite}/plan", s.handleGetPlan)
-	m.HandleFunc("POST /v1/topologies/{suite}/apply", s.handleApply)
-	m.HandleFunc("POST /v1/topologies/{suite}/destroy", s.handleDestroy)
+	m.HandleFunc("POST /v1/topologies", s.handleCreateTopology)
+	m.HandleFunc("GET /v1/topologies/{topology}", s.handleGetTopology)
+	m.HandleFunc("GET /v1/topologies/{topology}/hcl", s.handleGetHCL)
+	m.HandleFunc("PUT /v1/topologies/{topology}/hcl", s.handleUpdateHCL)
+	m.HandleFunc("GET /v1/topologies/{topology}/state", s.handleGetState)
+	m.HandleFunc("GET /v1/topologies/{topology}/plan", s.handleGetPlan)
+	m.HandleFunc("GET /v1/topologies/{topology}/graph", s.handleGetGraph)
+	m.HandleFunc("POST /v1/topologies/{topology}/apply", s.handleApply)
+	m.HandleFunc("POST /v1/topologies/{topology}/destroy", s.handleDestroy)
+	m.HandleFunc("DELETE /v1/topologies/{topology}", s.handleDeleteTopology)
 
 	// Runs (async job tracking + SSE logs)
 	m.HandleFunc("GET /v1/runs/{id}", s.handleGetRun)
 	m.HandleFunc("GET /v1/runs/{id}/logs", s.handleRunLogs)
 
 	// Nodes
-	m.HandleFunc("GET /v1/topologies/{suite}/nodes", s.handleListNodes)
-	m.HandleFunc("GET /v1/topologies/{suite}/nodes/{node}", s.handleGetNode)
-	m.HandleFunc("POST /v1/topologies/{suite}/nodes/{node}/exec", s.handleNodeExec)
-	m.HandleFunc("POST /v1/topologies/{suite}/nodes/{node}/pause", s.handleNodePause)
-	m.HandleFunc("POST /v1/topologies/{suite}/nodes/{node}/resume", s.handleNodeResume)
-	m.HandleFunc("POST /v1/topologies/{suite}/import", s.handleImport)
+	m.HandleFunc("GET /v1/topologies/{topology}/nodes", s.handleListNodes)
+	m.HandleFunc("GET /v1/topologies/{topology}/nodes/{node}", s.handleGetNode)
+	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/exec", s.handleNodeExec)
+	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/pause", s.handleNodePause)
+	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/resume", s.handleNodeResume)
+	m.HandleFunc("POST /v1/topologies/{topology}/import", s.handleImport)
 }
 
 // authMiddleware enforces SYSBOX_API_TOKEN when set.
+// Uses constant-time comparison to mitigate timing side-channel attacks.
 func authMiddleware(next http.Handler) http.Handler {
 	token := os.Getenv("SYSBOX_API_TOKEN")
+	expectedPrefix := "Bearer " + token
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if token != "" && r.Header.Get("Authorization") != "Bearer "+token {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-			return
+		if token != "" {
+			got := r.Header.Get("Authorization")
+			if len(got) != len(expectedPrefix) || subtle.ConstantTimeCompare([]byte(got), []byte(expectedPrefix)) != 1 {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

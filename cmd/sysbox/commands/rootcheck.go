@@ -28,14 +28,14 @@ func needsRoot(root *config.Root) bool {
 
 // checkRoot checks root requirement based on the topology.
 // NAT-only topologies (Docker bridge networks) work without root.
-func checkRoot(root *config.Root) {
+// Returns an error instead of calling os.Exit so callers can properly
+// unwind defers and cobra hooks.
+func checkRoot(root *config.Root) error {
 	if os.Getuid() == 0 {
-		return
+		return nil
 	}
 	if needsRoot(root) {
-		fmt.Fprintln(os.Stderr,
-			"error: this topology uses isolated networks (netns) and requires root.\n"+
-				"  Run: sudo -E sysbox apply ...")
-		os.Exit(1)
+		return fmt.Errorf("this topology uses isolated networks (netns) and requires root.\n  Run: sudo -E sysbox apply ...")
 	}
+	return nil
 }

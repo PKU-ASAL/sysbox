@@ -24,7 +24,9 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	// We re-check from the HCL file; if the file is absent or
 	// NAT-only, we proceed without root.
 	if root, err := tryLoadRoot(); err == nil {
-		checkRoot(root)
+		if err := checkRoot(root); err != nil {
+			return err
+		}
 	} else if os.Getuid() != 0 {
 		// No HCL file available and not root — if the state has
 		// non-NAT networks, we'd fail later anyway. Try anyway;
@@ -49,7 +51,7 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	// destroy list and emit a warning.
 	var toDestroy, protected []state.Resource
 	for _, r := range s.Resources {
-		if pd, _ := r.Instance["lifecycle_prevent_destroy"].(bool); pd {
+		if r.LifecyclePreventDestroy() {
 			protected = append(protected, r)
 		} else {
 			toDestroy = append(toDestroy, r)

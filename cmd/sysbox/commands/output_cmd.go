@@ -34,7 +34,7 @@ func runOutput(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	parts := strings.Split(args[0], ".")
+	parts := strings.SplitN(args[0], ".", 3)
 	if len(parts) < 2 {
 		return fmt.Errorf("expected type.name[.attr], got %q", args[0])
 	}

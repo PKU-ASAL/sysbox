@@ -24,7 +24,7 @@ const (
 // Fields are JSON-serialisable so they can be persisted to runs.jsonl.
 type Run struct {
 	ID        string    `json:"id"`
-	Suite     string    `json:"suite"`
+	Topology  string    `json:"topology"`
 	Op        string    `json:"op"` // "apply" | "destroy"
 	Status    RunStatus `json:"status"`
 	Err       string    `json:"error,omitempty"`
@@ -36,18 +36,37 @@ type Run struct {
 
 func (r *Run) LogWriter() *Broadcaster { return r.logs }
 
-// Jobs is a run store backed by in-memory map + per-suite JSONL files.
+// Jobs is a run store backed by in-memory map + per-topology JSONL files.
 // On startup it loads existing runs from disk; on finish it appends a record.
+// Per-topology mutexes prevent concurrent apply/destroy on the same topology.
 type Jobs struct {
 	mu      sync.RWMutex
 	runs    map[string]*Run
 	runsDir string // root directory for runs, e.g. "runs"
+
+	topologyMu    sync.Mutex
+	topologyLocks map[string]*sync.Mutex
 }
 
 func newJobs(runsDir string) *Jobs {
-	j := &Jobs{runs: make(map[string]*Run), runsDir: runsDir}
+	j := &Jobs{runs: make(map[string]*Run), runsDir: runsDir, topologyLocks: make(map[string]*sync.Mutex)}
 	j.load()
 	return j
+}
+
+// lockTopology acquires a per-topology mutex. Returns a function to unlock.
+// This ensures that concurrent apply/destroy requests for the same topology
+// are serialised, preventing state file corruption and double-create bugs.
+func (j *Jobs) lockTopology(topology string) func() {
+	j.topologyMu.Lock()
+	mu, ok := j.topologyLocks[topology]
+	if !ok {
+		mu = &sync.Mutex{}
+		j.topologyLocks[topology] = mu
+	}
+	j.topologyMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
 }
 
 // load scans runs/*/runs.jsonl and populates the in-memory store with
@@ -73,9 +92,9 @@ func (j *Jobs) load() {
 	}
 }
 
-// persist appends a completed run record to runs/{suite}/runs.jsonl.
+// persist appends a completed run record to runs/{topology}/runs.jsonl.
 func (j *Jobs) persist(r *Run) {
-	dir := filepath.Join(j.runsDir, r.Suite)
+	dir := filepath.Join(j.runsDir, r.Topology)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "[api] persist run: mkdir %s: %v\n", dir, err)
 		return
@@ -93,10 +112,10 @@ func (j *Jobs) persist(r *Run) {
 	}
 }
 
-func (j *Jobs) start(suite, op string) *Run {
+func (j *Jobs) start(topology, op string) *Run {
 	r := &Run{
 		ID:        uuid.New().String(),
-		Suite:     suite,
+		Topology:  topology,
 		Op:        op,
 		Status:    RunRunning,
 		StartedAt: time.Now(),
@@ -109,6 +128,7 @@ func (j *Jobs) start(suite, op string) *Run {
 }
 
 func (j *Jobs) finish(r *Run, err error) {
+	j.mu.Lock()
 	r.EndedAt = time.Now()
 	if err != nil {
 		r.Status = RunFailed
@@ -116,6 +136,7 @@ func (j *Jobs) finish(r *Run, err error) {
 	} else {
 		r.Status = RunDone
 	}
+	j.mu.Unlock()
 	r.logs.Close()
 	j.persist(r)
 }

@@ -20,9 +20,14 @@ func ParseFile(path string) (*Root, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read HCL file: %w", err)
 	}
+	return ParseString(string(data), path)
+}
 
+// ParseString parses HCL text into the Root structure. The srcLabel is
+// used in diagnostics (e.g. ".hcl" for API-submitted content).
+func ParseString(src, srcLabel string) (*Root, error) {
 	parser := hclparse.NewParser()
-	file, diag := parser.ParseHCL(data, path)
+	file, diag := parser.ParseHCL([]byte(src), srcLabel)
 	if diag.HasErrors() {
 		return nil, fmt.Errorf("parse HCL: %s", diag.Error())
 	}

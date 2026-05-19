@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -36,18 +35,6 @@ func runPlan(cmd *cobra.Command, args []string) error {
 		runtime.NewExecutor(g, s).Refresh(context.Background(), plan)
 	}
 
-	fmt.Println(plan.Summary())
-	for _, id := range plan.Add {
-		fmt.Printf("  + %s\n", id)
-	}
-	for _, id := range plan.Change {
-		fmt.Printf("  ~ %s (drifted)\n", id)
-	}
-	for _, r := range plan.Destroy {
-		fmt.Printf("  - %s.%s\n", r.Type, r.Name)
-	}
-	for _, id := range plan.Unchanged {
-		fmt.Printf("    %s\n", id)
-	}
+	runtime.PrintPlan(plan, false)
 	return nil
 }

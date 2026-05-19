@@ -83,7 +83,10 @@ func buildEvalContextInner(root *Root, callerDir string) *hcl.EvalContext {
 		if isSyn {
 			if countAttr, hasCount := synBody.Attributes["count"]; hasCount {
 				if val, diag := countAttr.Expr.Value(preCtx); !diag.HasErrors() {
-					if n, acc := val.AsBigFloat().Int64(); acc == 0 && n > 0 {
+					// Guard: count must be a number type. Non-number values
+					// (strings, bools, lists) would panic on AsBigFloat().
+					if val.Type() == cty.Number {
+						if n, acc := val.AsBigFloat().Int64(); acc == 0 && n > 0 {
 						elems := make([]cty.Value, n)
 						for i := 0; i < int(n); i++ {
 							instanceName := fmt.Sprintf("%s[%d]", r.Name, i)
@@ -95,6 +98,7 @@ func buildEvalContextInner(root *Root, callerDir string) *hcl.EvalContext {
 						resTypes[r.Type][r.Name] = cty.TupleVal(elems)
 						continue
 					}
+					} // end if val.Type() == cty.Number
 				}
 			}
 		}

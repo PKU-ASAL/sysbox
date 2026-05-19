@@ -34,7 +34,9 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	checkRoot(root)
+	if err := checkRoot(root); err != nil {
+		return err
+	}
 
 	plan, err := runtime.ComputePlan(g, s)
 	if err != nil {
@@ -61,19 +63,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println(plan.Summary())
-	for _, id := range plan.Add {
-		fmt.Printf("  + %s\n", id)
-	}
-	for _, id := range plan.Change {
-		fmt.Printf("  ~ %s (drifted)\n", id)
-	}
-	for _, r := range plan.Destroy {
-		fmt.Printf("  - %s.%s\n", r.Type, r.Name)
-	}
-	for _, r := range plan.Protected {
-		fmt.Printf("  ! %s.%s  (lifecycle.prevent_destroy — skipped)\n", r.Type, r.Name)
-	}
+	runtime.PrintPlan(plan, true)
 
 	if !flagAutoApprove {
 		if ok, err := confirmPrompt("Apply"); !ok || err != nil {
