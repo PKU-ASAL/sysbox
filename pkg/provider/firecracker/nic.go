@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -42,9 +43,13 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req s
 		}
 	} else {
 		if tapInRoot {
-			exec.Command(ipBin, "link", "set", tapName, "up").Run() //nolint:errcheck
+			if err := exec.Command(ipBin, "link", "set", tapName, "up").Run(); err != nil {
+				slog.Warn("set tap up in root netns", "tap", tapName, "error", err)
+			}
 		} else if tapInNetns {
-			exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "up").Run() //nolint:errcheck
+			if err := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "up").Run(); err != nil {
+				slog.Warn("set tap up in netns", "tap", tapName, "netns", netnsName, "error", err)
+			}
 		}
 	}
 
@@ -214,12 +219,20 @@ func init() {
 func cleanupTap(name, netnsName string) {
 	if netnsName != "" {
 		// Try deleting from inside the netns first.
-		exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "tuntap", "del", "dev", name, "mode", "tap").Run() //nolint:errcheck
-		exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "del", name).Run()                         //nolint:errcheck
+		if err := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "tuntap", "del", "dev", name, "mode", "tap").Run(); err != nil {
+			slog.Debug("cleanup tap tuntap in netns", "tap", name, "error", err)
+		}
+		if err := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "del", name).Run(); err != nil {
+			slog.Debug("cleanup tap link in netns", "tap", name, "error", err)
+		}
 	}
 	// Also try root netns (TAP might not have been moved yet).
-	exec.Command(ipBin, "tuntap", "del", "dev", name, "mode", "tap").Run() //nolint:errcheck
-	exec.Command(ipBin, "link", "del", name).Run()                         //nolint:errcheck
+	if err := exec.Command(ipBin, "tuntap", "del", "dev", name, "mode", "tap").Run(); err != nil {
+		slog.Debug("cleanup tap tuntap in root", "tap", name, "error", err)
+	}
+	if err := exec.Command(ipBin, "link", "del", name).Run(); err != nil {
+		slog.Debug("cleanup tap link in root", "tap", name, "error", err)
+	}
 }
 
 // createTapDevice creates a TAP device using ip tuntap.
@@ -227,8 +240,9 @@ func cleanupTap(name, netnsName string) {
 func createTapDevice(name string) error {
 	// Check if TAP already exists in root netns — reuse it.
 	if linkExists(name) {
-		// Ensure it's up.
-		exec.Command(ipBin, "link", "set", name, "up").Run() //nolint:errcheck
+		if err := exec.Command(ipBin, "link", "set", name, "up").Run(); err != nil {
+			slog.Warn("set existing tap up", "tap", name, "error", err)
+		}
 		return nil
 	}
 
@@ -289,16 +303,7 @@ func attachTapToBridge(tapName, bridgeName, netnsName string) error {
 
 // deleteTapDevice removes a TAP device.
 func deleteTapDevice(name string) error {
-	return exec.Command(ipBin, "link", "del", name).Run() //nolint:errcheck
-}
-
-// nicIdxFromHandle determines the next NIC index from the typed handle state.
-func nicIdxFromHandle(h substrate.NodeHandle) int {
-	hs, _ := h.Provider.(*HandleState)
-	if hs == nil {
-		return 0
-	}
-	return hs.NICCount
+	return exec.Command(ipBin, "link", "del", name).Run()
 }
 
 // DeleteTapForNIC removes a TAP device (used during destroy).

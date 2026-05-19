@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/util"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
 
@@ -173,10 +174,14 @@ func (c *VsockConnection) ExecStream(ctx context.Context, cmds []string, stdout,
 func (c *VsockConnection) execStreamOne(ctx context.Context, cmd []string, env map[string]string, stdout, stderr io.Writer) error {
 	return c.ExecFrameStream(ctx, cmd, env, func(f vsockrpc.Frame) error {
 		if len(f.Stdout) > 0 {
-			stdout.Write(f.Stdout) //nolint:errcheck
+			if _, err := stdout.Write(f.Stdout); err != nil {
+				return fmt.Errorf("write stdout: %w", err)
+			}
 		}
 		if len(f.Stderr) > 0 {
-			stderr.Write(f.Stderr) //nolint:errcheck
+			if _, err := stderr.Write(f.Stderr); err != nil {
+				return fmt.Errorf("write stderr: %w", err)
+			}
 		}
 		return nil
 	})
@@ -229,9 +234,9 @@ func (c *VsockConnection) ExecBackground(ctx context.Context, cmd []string, env 
 	}
 	envPrefix := ""
 	for k, v := range env {
-		envPrefix += fmt.Sprintf("export %s=%q; ", k, v)
+		envPrefix += fmt.Sprintf("export %s=%s; ", k, util.ShellQuote(v))
 	}
-	shell := envPrefix + "nohup " + shellEscapeJoin(cmd) + " >/dev/null 2>&1 & echo $!"
+	shell := envPrefix + "nohup " + util.ShellQuoteJoin(cmd) + " >/dev/null 2>&1 & echo $!"
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return 0, err
@@ -303,21 +308,6 @@ func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string)
 		return fmt.Errorf("%s", f.Error)
 	}
 	return nil
-}
-
-// shellEscapeJoin joins argv into a sh-safe single string. Naive but adequate
-// for provisioner commands that the user already controls.
-func shellEscapeJoin(args []string) string {
-	var b strings.Builder
-	for i, a := range args {
-		if i > 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteByte('\'')
-		b.WriteString(strings.ReplaceAll(a, "'", `'\''`))
-		b.WriteByte('\'')
-	}
-	return b.String()
 }
 
 // bufferedConn wraps a net.Conn with a pre-attached bufio.Reader so reads

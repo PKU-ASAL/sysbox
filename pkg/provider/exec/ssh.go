@@ -9,23 +9,31 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 // SSHConnection implements Connection over standard SSH (cli-based).
 type SSHConnection struct {
-	host       string
-	port       string
-	user       string
-	privateKey string
-	password   string
+	host          string
+	port          string
+	user          string
+	privateKey    string
+	password      string
+	insecureHost  bool // skip host key verification (for lab environments)
 }
 
 func NewSSHConnection(host, user, privateKey, password string) *SSHConnection {
-	return &SSHConnection{host: host, user: user, privateKey: privateKey, password: password}
+	return &SSHConnection{host: host, user: user, privateKey: privateKey, password: password, insecureHost: true}
 }
 
 func NewSSHConnectionWithPort(host, port, user, privateKey, password string) *SSHConnection {
-	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password}
+	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, insecureHost: true}
+}
+
+// NewSSHConnectionSecure creates an SSH connection that validates host keys.
+func NewSSHConnectionSecure(host, port, user, privateKey, password string) *SSHConnection {
+	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, insecureHost: false}
 }
 
 // Host returns the SSH target host.
@@ -42,8 +50,13 @@ func (c *SSHConnection) sshArgs() []string {
 	if c.privateKey != "" {
 		args = append(args, "-i", c.privateKey)
 	}
-	// Strict host key checking off for lab environments.
-	args = append(args, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR")
+	// Host key verification: disabled for lab environments (default),
+	// or strict for production use. Disabling host key verification
+	// allows MITM attacks and should only be used in isolated networks.
+	if c.insecureHost {
+		args = append(args, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
+	}
+	args = append(args, "-o", "LogLevel=ERROR")
 	if c.password != "" {
 		args = append(args, "-o", "PasswordAuthentication=yes")
 	}
@@ -67,7 +80,9 @@ func (c *SSHConnection) ExecStream(ctx context.Context, cmds []string, stdout, s
 		if err := c.execOne(ctx, cmd, &buf); err != nil {
 			return fmt.Errorf("ssh exec %q: %w", cmd, err)
 		}
-		stdout.Write(buf.Bytes()) //nolint:errcheck
+		if _, err := stdout.Write(buf.Bytes()); err != nil {
+			return fmt.Errorf("write stdout: %w", err)
+		}
 	}
 	return nil
 }
@@ -96,12 +111,15 @@ func (c *SSHConnection) execOne(ctx context.Context, cmd string, stdoutWriter *b
 	}
 
 	// Use sshpass for password auth if available.
+	// Use -e (SSHPASS env var) instead of -p to avoid exposing the password
+	// in /proc/<pid>/cmdline where any local user can read it.
 	var execCmd *exec.Cmd
 	if c.password != "" {
 		if sp, err := exec.LookPath("sshpass"); err == nil {
-			spArgs := []string{"-p", c.password, sshBin}
+			spArgs := []string{"-e", sshBin}
 			spArgs = append(spArgs, sshArgs...)
 			execCmd = exec.CommandContext(ctx, sp, spArgs...)
+			execCmd.Env = append(os.Environ(), "SSHPASS="+c.password)
 		}
 	}
 	if execCmd == nil {
@@ -123,15 +141,18 @@ func (c *SSHConnection) execOne(ctx context.Context, cmd string, stdoutWriter *b
 }
 
 func (c *SSHConnection) ExecBackground(ctx context.Context, cmd []string, env map[string]string) (int, error) {
-	// Build env prefix.
+	// Build env prefix. Use single-quote wrapping to prevent the remote
+	// shell from interpreting $, `, !, etc. in env values.
 	envPrefix := ""
 	for k, v := range env {
-		envPrefix += fmt.Sprintf("export %s=%q; ", k, v)
+		envPrefix += fmt.Sprintf("export %s=%s; ", k, util.ShellQuote(v))
 	}
 	shellCmd := envPrefix + strings.Join(cmd, " ")
 
 	sshArgs := c.sshArgs()
-	sshArgs = append(sshArgs, "nohup sh -c "+shellCmd+" & echo $!")
+	// Quote the entire shellCmd as a single argument to `sh -c` so that
+	// multi-word commands are not split by the remote login shell.
+	sshArgs = append(sshArgs, fmt.Sprintf("nohup sh -c %s >/dev/null 2>&1 & echo $!", util.ShellQuote(shellCmd)))
 
 	sshBin := resolveSSHBin()
 	ec := exec.CommandContext(ctx, sshBin, sshArgs...)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
 
 // vmProcess tracks a running Firecracker VM process.
@@ -132,7 +134,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		sysboxInitEnabled = false
 	} else {
 		nodeName := strings.TrimPrefix(vmID, "sysbox-")
-		initCfg := VMInitConfig{
+		initCfg := vsockrpc.VMConfig{
 			Hostname:  nodeName,
 			Env:       spec.Env,
 			ChainInit: pc.ChainInit,
@@ -244,6 +246,11 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
 	vmMu.Lock()
 	vm, ok := vmStore[h.ID]
+	// Read netnsName inside the lock to avoid data race with AttachNIC.
+	netnsName := ""
+	if ok {
+		netnsName = vm.netnsName
+	}
 	vmMu.Unlock()
 	if !ok {
 		return fmt.Errorf("VM %s not found", h.ID)
@@ -253,13 +260,15 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	}
 
 	// Remove stale socket if present.
-	os.Remove(vm.socket) //nolint:errcheck
+	if err := os.Remove(vm.socket); err != nil && !os.IsNotExist(err) {
+		slog.Debug("remove stale socket", "path", vm.socket, "error", err)
+	}
 
 	// If a network netns is set, run Firecracker inside it so it can access
 	// the TAP device and bridge that live in that netns.
 	var cmd *exec.Cmd
-	if vm.netnsName != "" {
-		cmd = exec.CommandContext(ctx, ipBin, "netns", "exec", vm.netnsName,
+	if netnsName != "" {
+		cmd = exec.CommandContext(ctx, ipBin, "netns", "exec", netnsName,
 			s.firecrackerBin,
 			"--config-file", vm.cfgPath,
 			"--api-sock", vm.socket,
@@ -458,7 +467,11 @@ func dockerExportToExt4(dockerRef, outPath string) error {
 		return fmt.Errorf("docker create: %w", err)
 	}
 	cid := string(out)[:12]
-	defer exec.Command("docker", "rm", "-f", cid).Run() //nolint:errcheck
+	defer func() {
+		if err := exec.Command("docker", "rm", "-f", cid).Run(); err != nil {
+			slog.Debug("cleanup helper container", "cid", cid, "error", err)
+		}
+	}()
 
 	exportCmd := exec.Command("docker", "export", cid, "-o", tmpTar)
 	if err := exportCmd.Run(); err != nil {
@@ -494,9 +507,13 @@ func killStaleFirecracker(socketPath string) {
 		return // no socket — no stale process
 	}
 	// pkill on the socket path matches firecracker processes using it.
-	exec.Command("pkill", "-9", "-f", socketPath).Run() //nolint:errcheck
+	if err := exec.Command("pkill", "-9", "-f", socketPath).Run(); err != nil {
+		slog.Debug("pkill stale firecracker", "socket", socketPath, "error", err)
+	}
 	// Give the kernel a moment to release TAP fds.
 	time.Sleep(300 * time.Millisecond)
 	// Remove the stale socket file.
-	os.Remove(socketPath) //nolint:errcheck
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		slog.Debug("remove stale socket", "path", socketPath, "error", err)
+	}
 }
