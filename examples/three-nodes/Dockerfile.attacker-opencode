@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     python3 \
     xz-utils \
+    iproute2 \
+    iputils-ping \
+    traceroute \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22 from TUNA binary mirror

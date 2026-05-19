@@ -129,6 +129,7 @@ resource "sysbox_node" "node_attack" {
       "chmod 600 /root/.ssh/authorized_keys",
       "rm /tmp/host_pubkey",
       # Routing: lab traffic via router, internet via uplink.
+      "apt-get install -y -qq iproute2 2>/dev/null || true",
       "ip route add 10.0.2.0/24 via 10.0.1.254 2>/dev/null || true",
       "ip route add default via 172.20.0.1 2>/dev/null || true",
     ]
