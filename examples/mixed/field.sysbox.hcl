@@ -117,6 +117,13 @@ resource "sysbox_node" "node_attack" {
     network = sysbox_network.net_uplink.id
     ip      = "172.20.0.10/24"
   }
+
+  provisioner "exec" {
+    inline = [
+      "apt-get install -y -qq iproute2 2>/dev/null || true",
+      "ip route add 10.0.2.0/24 via 10.0.1.254 2>/dev/null || true",
+    ]
+  }
 }
 
 resource "sysbox_node" "node_web" {
