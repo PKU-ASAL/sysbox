@@ -108,6 +108,43 @@ func (s *Server) handleGetStateMetadata(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, meta)
 }
 
+func (s *Server) handleGetStateLock(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	info, err := mgr.LockInfo(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+func (s *Server) handleForceUnlockState(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := mgr.ForceUnlock(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "unlocked"})
+}
+
 func (s *Server) handleListStateSnapshots(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
 	if err := validatePathSegment(topology, "topology"); err != nil {
@@ -196,66 +233,66 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run := s.jobs.start(topology, "apply")
-
-	go func() {
-		unlock := s.jobs.lockTopology(topology)
-		defer unlock()
-
-		preflight, err := s.preflightTopology(topology)
-		if err != nil {
-			s.jobs.finish(run, err)
-			return
-		}
-		writePreflightLogs(run, preflight)
-		if err := preflight.err(); err != nil {
-			s.jobs.finish(run, err)
-			return
-		}
-
-		mgr, err := s.stateManager(topology)
-		if err != nil {
-			s.jobs.finish(run, err)
-			return
-		}
-		g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), mgr)
-		if err != nil {
-			s.jobs.finish(run, err)
-			return
-		}
-		plan, err := runtime.ComputePlan(g, st)
-		if err != nil {
-			s.jobs.finish(run, err)
-			return
-		}
-		exec := runtime.NewExecutor(g, st)
-		exec.SetLogger(run.logs)
-		exec.SetRecorder(runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology))
-		exec.Refresh(context.Background(), plan)
-		if !plan.HasChanges() {
-			_, _ = run.logs.Write([]byte("No changes. Apply is a no-op.\n"))
-			s.jobs.finish(run, nil)
-			return
-		}
-		_, _ = run.logs.Write([]byte(plan.Summary() + "\n"))
-		if snap, err := mgr.Snapshot(context.Background(), "before apply "+run.ID); err == nil && snap != nil {
-			_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
-		}
-		if err := exec.Apply(context.Background(), plan); err != nil {
-			if saveErr := mgr.Save(st); saveErr != nil {
-				_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
-			}
-			s.jobs.finish(run, err)
-			return
-		}
-		if err := mgr.Save(st); err != nil {
-			s.jobs.finish(run, fmt.Errorf("save state: %w", err))
-			return
-		}
-		_, _ = run.logs.Write([]byte("Apply complete.\n"))
-		s.jobs.finish(run, nil)
-	}()
-
+	go s.runApply(topology, run)
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID})
+}
+
+func (s *Server) runApply(topology string, run *Run) {
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
+
+	preflight, err := s.preflightTopology(topology)
+	if err != nil {
+		s.jobs.finish(run, err)
+		return
+	}
+	writePreflightLogs(run, preflight)
+	if err := preflight.err(); err != nil {
+		s.jobs.finish(run, err)
+		return
+	}
+
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		s.jobs.finish(run, err)
+		return
+	}
+	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), mgr)
+	if err != nil {
+		s.jobs.finish(run, err)
+		return
+	}
+	plan, err := runtime.ComputePlan(g, st)
+	if err != nil {
+		s.jobs.finish(run, err)
+		return
+	}
+	exec := runtime.NewExecutor(g, st)
+	exec.SetLogger(run.logs)
+	exec.SetRecorder(runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology))
+	exec.Refresh(context.Background(), plan)
+	if !plan.HasChanges() {
+		_, _ = run.logs.Write([]byte("No changes. Apply is a no-op.\n"))
+		s.jobs.finish(run, nil)
+		return
+	}
+	_, _ = run.logs.Write([]byte(plan.Summary() + "\n"))
+	if snap, err := mgr.Snapshot(context.Background(), "before apply "+run.ID); err == nil && snap != nil {
+		_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
+	}
+	if err := exec.Apply(context.Background(), plan); err != nil {
+		if saveErr := mgr.Save(st); saveErr != nil {
+			_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
+		}
+		s.jobs.finish(run, err)
+		return
+	}
+	if err := mgr.Save(st); err != nil {
+		s.jobs.finish(run, fmt.Errorf("save state: %w", err))
+		return
+	}
+	_, _ = run.logs.Write([]byte("Apply complete.\n"))
+	s.jobs.finish(run, nil)
 }
 
 func writePreflightLogs(run *Run, res *preflightResult) {
@@ -288,49 +325,49 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run := s.jobs.start(topology, "destroy")
-
-	go func() {
-		unlock := s.jobs.lockTopology(topology)
-		defer unlock()
-
-		mgr, err := s.stateManager(topology)
-		if err != nil {
-			s.jobs.finish(run, err)
-			return
-		}
-		st, err := mgr.Load()
-		if err != nil {
-			s.jobs.finish(run, err)
-			return
-		}
-		if len(st.Resources) == 0 {
-			_, _ = run.logs.Write([]byte("Nothing to destroy.\n"))
-			s.jobs.finish(run, nil)
-			return
-		}
-		plan := &runtime.Plan{Destroy: append([]state.Resource(nil), st.Resources...)}
-		exec := runtime.NewExecutor(graph.New(), st)
-		exec.SetLogger(run.logs)
-		exec.SetRecorder(runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology))
-		if snap, err := mgr.Snapshot(context.Background(), "before destroy "+run.ID); err == nil && snap != nil {
-			_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
-		}
-		if err := exec.Destroy(context.Background(), plan); err != nil {
-			if saveErr := mgr.Save(st); saveErr != nil {
-				_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
-			}
-			s.jobs.finish(run, err)
-			return
-		}
-		if err := mgr.Save(st); err != nil {
-			s.jobs.finish(run, fmt.Errorf("save state: %w", err))
-			return
-		}
-		_, _ = run.logs.Write([]byte("Destroy complete.\n"))
-		s.jobs.finish(run, nil)
-	}()
-
+	go s.runDestroy(topology, run)
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID})
+}
+
+func (s *Server) runDestroy(topology string, run *Run) {
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
+
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		s.jobs.finish(run, err)
+		return
+	}
+	st, err := mgr.Load()
+	if err != nil {
+		s.jobs.finish(run, err)
+		return
+	}
+	if len(st.Resources) == 0 {
+		_, _ = run.logs.Write([]byte("Nothing to destroy.\n"))
+		s.jobs.finish(run, nil)
+		return
+	}
+	plan := &runtime.Plan{Destroy: append([]state.Resource(nil), st.Resources...)}
+	exec := runtime.NewExecutor(graph.New(), st)
+	exec.SetLogger(run.logs)
+	exec.SetRecorder(runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology))
+	if snap, err := mgr.Snapshot(context.Background(), "before destroy "+run.ID); err == nil && snap != nil {
+		_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
+	}
+	if err := exec.Destroy(context.Background(), plan); err != nil {
+		if saveErr := mgr.Save(st); saveErr != nil {
+			_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
+		}
+		s.jobs.finish(run, err)
+		return
+	}
+	if err := mgr.Save(st); err != nil {
+		s.jobs.finish(run, fmt.Errorf("save state: %w", err))
+		return
+	}
+	_, _ = run.logs.Write([]byte("Destroy complete.\n"))
+	s.jobs.finish(run, nil)
 }
 
 // GET /v1/runs/{id}
@@ -346,6 +383,35 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, run)
+}
+
+func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := validatePathSegment(id, "id"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	parent, ok := s.jobs.get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
+		return
+	}
+	if parent.Status == RunRunning {
+		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
+		return
+	}
+	if parent.Op != "apply" && parent.Op != "destroy" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("run op %q cannot be resumed", parent.Op))
+		return
+	}
+	run := s.jobs.startChild(parent)
+	switch run.Op {
+	case "apply":
+		go s.runApply(run.Topology, run)
+	case "destroy":
+		go s.runDestroy(run.Topology, run)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID})
 }
 
 func (s *Server) handleGetRunCheckpoint(w http.ResponseWriter, r *http.Request) {
@@ -404,15 +470,20 @@ func (s *Server) checkpointFile(topology, runID string) string {
 }
 
 func (s *Server) loadState(topology string) (*state.State, error) {
-	f := s.stateFile(topology)
-	if _, err := os.Stat(f); err != nil {
-		return nil, fmt.Errorf("topology %q: no state file", topology)
-	}
 	mgr, err := s.stateManager(topology)
 	if err != nil {
 		return nil, err
 	}
-	return mgr.Load()
+	st, err := mgr.Load()
+	if err != nil {
+		return nil, err
+	}
+	if s.stateBackend == "" && len(st.Resources) == 0 {
+		if _, err := os.Stat(s.stateFile(topology)); err != nil {
+			return nil, fmt.Errorf("topology %q: no state file", topology)
+		}
+	}
+	return st, nil
 }
 
 func planJSON(p *runtime.Plan) map[string]any {

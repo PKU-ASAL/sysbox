@@ -15,21 +15,24 @@ import (
 type RunStatus string
 
 const (
-	RunRunning RunStatus = "running"
-	RunDone    RunStatus = "done"
-	RunFailed  RunStatus = "failed"
+	RunRunning   RunStatus = "running"
+	RunDone      RunStatus = "done"
+	RunFailed    RunStatus = "failed"
+	RunCancelled RunStatus = "cancelled"
 )
 
 // Run represents one async apply or destroy operation.
 // Fields are JSON-serialisable so they can be persisted to runs.jsonl.
 type Run struct {
-	ID        string    `json:"id"`
-	Topology  string    `json:"topology"`
-	Op        string    `json:"op"` // "apply" | "destroy"
-	Status    RunStatus `json:"status"`
-	Err       string    `json:"error,omitempty"`
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at,omitempty"`
+	ID          string    `json:"id"`
+	Topology    string    `json:"topology"`
+	Op          string    `json:"op"` // "apply" | "destroy"
+	Status      RunStatus `json:"status"`
+	Err         string    `json:"error,omitempty"`
+	ParentID    string    `json:"parent_id,omitempty"`
+	Recoverable bool      `json:"recoverable,omitempty"`
+	StartedAt   time.Time `json:"started_at"`
+	EndedAt     time.Time `json:"ended_at,omitempty"`
 
 	logs *Broadcaster // in-memory only; not persisted
 }
@@ -90,6 +93,53 @@ func (j *Jobs) load() {
 		}
 		fh.Close()
 	}
+	j.loadCheckpoints()
+}
+
+func (j *Jobs) loadCheckpoints() {
+	pattern := filepath.Join(j.runsDir, "*", "runs", "*.checkpoint.json")
+	files, _ := filepath.Glob(pattern)
+	for _, f := range files {
+		id := filepath.Base(f)
+		id = id[:len(id)-len(".checkpoint.json")]
+		if _, ok := j.runs[id]; ok {
+			continue
+		}
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var cp struct {
+			RunID     string    `json:"run_id"`
+			Topology  string    `json:"topology"`
+			Operation string    `json:"operation"`
+			Status    string    `json:"status"`
+			StartedAt time.Time `json:"started_at"`
+			EndedAt   time.Time `json:"ended_at"`
+		}
+		if err := json.Unmarshal(data, &cp); err != nil || cp.RunID == "" {
+			continue
+		}
+		status := RunFailed
+		errMsg := "server restarted before run completion"
+		if cp.Status == "done" {
+			status = RunDone
+			errMsg = ""
+		}
+		r := &Run{
+			ID:          cp.RunID,
+			Topology:    cp.Topology,
+			Op:          cp.Operation,
+			Status:      status,
+			Err:         errMsg,
+			Recoverable: status == RunFailed,
+			StartedAt:   cp.StartedAt,
+			EndedAt:     cp.EndedAt,
+			logs:        &Broadcaster{},
+		}
+		r.logs.Close()
+		j.runs[r.ID] = r
+	}
 }
 
 // persist appends a completed run record to runs/{topology}/runs.jsonl.
@@ -124,6 +174,12 @@ func (j *Jobs) start(topology, op string) *Run {
 	j.mu.Lock()
 	j.runs[r.ID] = r
 	j.mu.Unlock()
+	return r
+}
+
+func (j *Jobs) startChild(parent *Run) *Run {
+	r := j.start(parent.Topology, parent.Op)
+	r.ParentID = parent.ID
 	return r
 }
 

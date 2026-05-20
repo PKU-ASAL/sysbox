@@ -85,6 +85,8 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("PUT /v1/topologies/{topology}/hcl", s.handleUpdateHCL)
 	m.HandleFunc("GET /v1/topologies/{topology}/state", s.handleGetState)
 	m.HandleFunc("GET /v1/topologies/{topology}/state/metadata", s.handleGetStateMetadata)
+	m.HandleFunc("GET /v1/topologies/{topology}/state/lock", s.handleGetStateLock)
+	m.HandleFunc("POST /v1/topologies/{topology}/state/force-unlock", s.handleForceUnlockState)
 	m.HandleFunc("GET /v1/topologies/{topology}/state/snapshots", s.handleListStateSnapshots)
 	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots/{snapshot}/restore", s.handleRestoreStateSnapshot)
 	m.HandleFunc("GET /v1/topologies/{topology}/plan", s.handleGetPlan)
@@ -96,6 +98,7 @@ func (s *Server) registerRoutes() {
 
 	// Runs (async job tracking + SSE logs)
 	m.HandleFunc("GET /v1/runs/{id}", s.handleGetRun)
+	m.HandleFunc("POST /v1/runs/{id}/resume", s.handleResumeRun)
 	m.HandleFunc("GET /v1/runs/{id}/checkpoint", s.handleGetRunCheckpoint)
 	m.HandleFunc("GET /v1/runs/{id}/logs", s.handleRunLogs)
 

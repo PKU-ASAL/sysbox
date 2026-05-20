@@ -225,6 +225,9 @@ func (s *Server) handleDeleteTopology(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Errorf("remove state: %w", err))
 			return
 		}
+	} else if err := mgr.Delete(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("remove state: %w", err))
+		return
 	}
 
 	// Remove workspace directory.

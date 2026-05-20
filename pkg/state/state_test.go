@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -108,4 +109,23 @@ func TestManagerLoadMissingReturnsEmpty(t *testing.T) {
 	s, err := mgr.Load()
 	require.NoError(t, err)
 	require.Equal(t, 0, len(s.Resources))
+}
+
+func TestManagerOptionalBackendOperationsAreNoopsWhenUnsupported(t *testing.T) {
+	mgr := NewManagerWithBackend(noopOptionalBackend{})
+
+	require.NoError(t, mgr.Delete(context.Background()))
+	require.NoError(t, mgr.ForceUnlock(context.Background()))
+
+	info, err := mgr.LockInfo(context.Background())
+	require.NoError(t, err)
+	require.False(t, info.Locked)
+}
+
+type noopOptionalBackend struct{}
+
+func (noopOptionalBackend) Load(context.Context) ([]byte, error) { return nil, nil }
+func (noopOptionalBackend) Save(context.Context, []byte) error   { return nil }
+func (noopOptionalBackend) Lock(context.Context) (UnlockFunc, error) {
+	return nil, nil
 }

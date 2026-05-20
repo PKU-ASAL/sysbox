@@ -69,6 +69,23 @@ type SnapshotBackend interface {
 	RestoreSnapshot(ctx context.Context, id string) error
 }
 
+type DeleteBackend interface {
+	Delete(ctx context.Context) error
+}
+
+type LockInfo struct {
+	Locked    bool      `json:"locked"`
+	Owner     string    `json:"owner,omitempty"`
+	LeaseID   string    `json:"lease_id,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+}
+
+type LockInfoBackend interface {
+	LockInfo(ctx context.Context) (LockInfo, error)
+	ForceUnlock(ctx context.Context) error
+}
+
 // UnlockFunc releases a previously acquired lock.
 type UnlockFunc func()
 

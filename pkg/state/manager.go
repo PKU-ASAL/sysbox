@@ -42,6 +42,27 @@ func (m *Manager) Snapshot(ctx context.Context, reason string) (*Snapshot, error
 	return nil, nil
 }
 
+func (m *Manager) Delete(ctx context.Context) error {
+	if b, ok := m.backend.(DeleteBackend); ok {
+		return b.Delete(ctx)
+	}
+	return nil
+}
+
+func (m *Manager) LockInfo(ctx context.Context) (LockInfo, error) {
+	if b, ok := m.backend.(LockInfoBackend); ok {
+		return b.LockInfo(ctx)
+	}
+	return LockInfo{}, nil
+}
+
+func (m *Manager) ForceUnlock(ctx context.Context) error {
+	if b, ok := m.backend.(LockInfoBackend); ok {
+		return b.ForceUnlock(ctx)
+	}
+	return nil
+}
+
 // Load reads the state from the active backend.
 // Missing state returns an empty State, not an error.
 func (m *Manager) Load() (*State, error) {

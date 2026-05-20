@@ -15,6 +15,7 @@ import (
 )
 
 const postgresDefaultTopology = "default"
+const postgresSchemaVersion = 2
 
 func (b *PostgresBackend) topology() string {
 	if b.Topology != "" {
@@ -47,7 +48,35 @@ func (b *PostgresBackend) connect(ctx context.Context) (*pgx.Conn, error) {
 }
 
 func (b *PostgresBackend) ensureSchema(ctx context.Context, conn *pgx.Conn) error {
-	_, err := conn.Exec(ctx, `
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres migration begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, postgresAdvisoryKey("sysbox:state:migrate")); err != nil {
+		return fmt.Errorf("postgres migration lock: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS sysbox_schema_migrations (
+  component TEXT PRIMARY KEY,
+  version INTEGER NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`); err != nil {
+		return fmt.Errorf("postgres ensure migration table: %w", err)
+	}
+
+	var current int
+	err = tx.QueryRow(ctx, `SELECT version FROM sysbox_schema_migrations WHERE component='state'`).Scan(&current)
+	if err != nil && err != pgx.ErrNoRows {
+		return fmt.Errorf("postgres read migration version: %w", err)
+	}
+	if current > postgresSchemaVersion {
+		return fmt.Errorf("postgres state schema v%d is newer than supported v%d", current, postgresSchemaVersion)
+	}
+	if current < 1 {
+		if _, err := tx.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS sysbox_state (
   topology TEXT PRIMARY KEY,
   version INTEGER NOT NULL,
@@ -64,11 +93,36 @@ CREATE TABLE IF NOT EXISTS sysbox_state_snapshots (
   checksum TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (topology, id)
-);`)
-	if err != nil {
-		return fmt.Errorf("postgres ensure schema: %w", err)
+);`); err != nil {
+			return fmt.Errorf("postgres migrate state schema v1: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO sysbox_schema_migrations (component, version, updated_at)
+VALUES ('state', 1, now())
+ON CONFLICT (component) DO UPDATE SET version=1, updated_at=now()`); err != nil {
+			return fmt.Errorf("postgres record migration v1: %w", err)
+		}
+		current = 1
 	}
-	return nil
+	if current < 2 {
+		if _, err := tx.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS sysbox_state_locks (
+  topology TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  lease_id TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`); err != nil {
+			return fmt.Errorf("postgres migrate state schema v2: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO sysbox_schema_migrations (component, version, updated_at)
+VALUES ('state', 2, now())
+ON CONFLICT (component) DO UPDATE SET version=2, updated_at=now()`); err != nil {
+			return fmt.Errorf("postgres record migration v2: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (b *PostgresBackend) Load(ctx context.Context) ([]byte, error) {
@@ -147,7 +201,24 @@ func (b *PostgresBackend) LockWithOptions(ctx context.Context, opts LockOptions)
 		Owner:     opts.Owner,
 		ExpiresAt: time.Now().UTC().Add(ttl),
 	}
+	if lease.Owner == "" {
+		lease.Owner = "unknown"
+	}
+	if _, err := conn.Exec(ctx, `
+INSERT INTO sysbox_state_locks (topology, owner, lease_id, expires_at, updated_at)
+VALUES ($1, $2, $3, $4, now())
+ON CONFLICT (topology) DO UPDATE SET
+  owner=EXCLUDED.owner,
+  lease_id=EXCLUDED.lease_id,
+  expires_at=EXCLUDED.expires_at,
+  updated_at=now()`,
+		b.topology(), lease.Owner, lease.ID, lease.ExpiresAt); err != nil {
+		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, key)
+		_ = conn.Close(context.Background())
+		return nil, nil, fmt.Errorf("postgres record state lock: %w", err)
+	}
 	unlock := func() {
+		_, _ = conn.Exec(context.Background(), `DELETE FROM sysbox_state_locks WHERE topology=$1 AND lease_id=$2`, b.topology(), lease.ID)
 		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, key)
 		_ = conn.Close(context.Background())
 	}
@@ -168,6 +239,41 @@ func (b *PostgresBackend) Metadata(ctx context.Context) (Metadata, error) {
 		return meta, fmt.Errorf("postgres metadata: %w", err)
 	}
 	return meta, nil
+}
+
+func (b *PostgresBackend) LockInfo(ctx context.Context) (LockInfo, error) {
+	conn, err := b.connect(ctx)
+	if err != nil {
+		return LockInfo{}, err
+	}
+	defer conn.Close(ctx)
+
+	var info LockInfo
+	err = conn.QueryRow(ctx, `
+SELECT owner, lease_id, expires_at, updated_at
+FROM sysbox_state_locks
+WHERE topology=$1`, b.topology()).Scan(&info.Owner, &info.LeaseID, &info.ExpiresAt, &info.UpdatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return LockInfo{}, nil
+		}
+		return LockInfo{}, fmt.Errorf("postgres lock info: %w", err)
+	}
+	info.Locked = time.Now().UTC().Before(info.ExpiresAt)
+	return info, nil
+}
+
+func (b *PostgresBackend) ForceUnlock(ctx context.Context) error {
+	conn, err := b.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	_, err = conn.Exec(ctx, `DELETE FROM sysbox_state_locks WHERE topology=$1`, b.topology())
+	if err != nil {
+		return fmt.Errorf("postgres force unlock: %w", err)
+	}
+	return nil
 }
 
 func (b *PostgresBackend) Snapshot(ctx context.Context, reason string) (*Snapshot, error) {
@@ -252,6 +358,22 @@ WHERE topology=$1 AND id=$2`, b.topology(), id).Scan(&data, &checksum)
 		}
 	}
 	return b.Save(ctx, data)
+}
+
+func (b *PostgresBackend) Delete(ctx context.Context) error {
+	conn, err := b.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	_, err = conn.Exec(ctx, `
+DELETE FROM sysbox_state_locks WHERE topology=$1;
+DELETE FROM sysbox_state_snapshots WHERE topology=$1;
+DELETE FROM sysbox_state WHERE topology=$1;`, b.topology())
+	if err != nil {
+		return fmt.Errorf("postgres delete state: %w", err)
+	}
+	return nil
 }
 
 func (b *PostgresBackend) redactedLocation() string {
