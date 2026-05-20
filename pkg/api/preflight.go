@@ -172,17 +172,23 @@ func addToolCheck(res *preflightResult, tool string, required bool) {
 	if required {
 		severity = "error"
 	}
-	res.add(tool+"_bin", false, severity, tool+" not found", "mount it into SYSBOX_TOOL_DIR or set SYSBOX_"+upperToolEnv(tool)+"_BIN")
+	res.add(tool+"_bin", false, severity, tool+" not found", "mount it into SYSBOX_TOOLS_DIR or set SYSBOX_"+upperToolEnv(tool)+"_PATH")
 }
 
 func explicitToolPath(tool string) string {
 	if tool == "firecracker" {
+		if p := os.Getenv("SYSBOX_FIRECRACKER_PATH"); p != "" {
+			return p
+		}
 		if p := os.Getenv("SYSBOX_FIRECRACKER_BIN"); p != "" {
 			return p
 		}
 		if p := os.Getenv("SYSBOX_FC_BIN"); p != "" {
 			return p
 		}
+	}
+	if dir := os.Getenv("SYSBOX_TOOLS_DIR"); dir != "" {
+		return filepath.Join(dir, tool)
 	}
 	if dir := os.Getenv("SYSBOX_TOOL_DIR"); dir != "" {
 		return filepath.Join(dir, tool)

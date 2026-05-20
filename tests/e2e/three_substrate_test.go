@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 // three_substrate_test.go (PR-13): verifies that docker, firecracker and libvirt
@@ -10,7 +11,7 @@
 // Prerequisites:
 //   - Docker daemon running
 //   - firecracker binary in PATH; SYSBOX_ROOTFS set to a valid ext4 rootfs
-//   - SYSBOX_FC_KERNEL set to a vmlinux with vsock support
+//   - SYSBOX_FIRECRACKER_KERNEL set to a vmlinux with vsock support
 //   - libvirtd running; SYSBOX_QCOW2 set to a valid qcow2 image
 //
 // Each missing substrate causes that node's assertions to be skipped
@@ -38,7 +39,7 @@ substrate "libvirt"     { alias = "kvm" }
 locals {
   rootfs_path = env("SYSBOX_ROOTFS")  != "" ? env("SYSBOX_ROOTFS")  : "/tmp/sysbox-rootfs.ext4"
   qcow2_path  = env("SYSBOX_QCOW2")   != "" ? env("SYSBOX_QCOW2")   : "/tmp/sysbox-base.qcow2"
-  kernel_path = env("SYSBOX_FC_KERNEL") != "" ? env("SYSBOX_FC_KERNEL") : "/tmp/vmlinux"
+  kernel_path = env("SYSBOX_FIRECRACKER_KERNEL") != "" ? env("SYSBOX_FIRECRACKER_KERNEL") : "/tmp/vmlinux"
 }
 
 resource "sysbox_image" "alpine_docker" {

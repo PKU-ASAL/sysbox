@@ -3,9 +3,8 @@ services:
     volumes:
       # Firecracker substrate: KVM device plus explicit host-provided tools.
       - /dev/kvm:/dev/kvm
-      - ${SYSBOX_FIRECRACKER_BIN:?set SYSBOX_FIRECRACKER_BIN to the host firecracker binary}:/opt/sysbox/bin/firecracker:ro
+      - ${SYSBOX_FIRECRACKER_PATH:?set SYSBOX_FIRECRACKER_PATH to the host firecracker binary}:/opt/sysbox/bin/firecracker:ro
       # Libvirt is optional, but useful for mixed virtualization development.
       - /var/run/libvirt:/var/run/libvirt
     environment:
-      - SYSBOX_FIRECRACKER_BIN=/opt/sysbox/bin/firecracker
-      - SYSBOX_FC_BIN=/opt/sysbox/bin/firecracker
+      - SYSBOX_FIRECRACKER_PATH=/opt/sysbox/bin/firecracker

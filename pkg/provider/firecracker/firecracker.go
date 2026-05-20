@@ -45,8 +45,10 @@ func New(kernelPath, rootfsDir string) *Substrate {
 	}
 	// Check common locations.
 	for _, candidate := range []string{
+		os.Getenv("SYSBOX_FIRECRACKER_PATH"),
 		os.Getenv("SYSBOX_FIRECRACKER_BIN"),
-		os.Getenv("SYSBOX_FC_BIN"),
+		os.Getenv("SYSBOX_FC_BIN"), // legacy alias
+		filepath.Join(os.Getenv("SYSBOX_TOOLS_DIR"), "firecracker"),
 		filepath.Join(os.Getenv("SYSBOX_TOOL_DIR"), "firecracker"),
 		filepath.Join(os.Getenv("SYSBOX_CACHE_DIR"), "tools", "firecracker"),
 		filepath.Join(os.Getenv("HOME"), ".local/bin/firecracker"),
@@ -95,7 +97,7 @@ func (s *Substrate) Validate(spec substrate.NodeSpec) error {
 			return substrate.NewValidationError("firecracker: wrong provider config type %T", spec.ProviderConfig)
 		}
 		if cfg.Kernel == "" && s.kernelPath == "" {
-			return substrate.NewValidationError("firecracker: kernel is required (set in provider block or SYSBOX_FC_KERNEL env)")
+			return substrate.NewValidationError("firecracker: kernel is required (set in provider block or SYSBOX_FIRECRACKER_KERNEL env)")
 		}
 	}
 	return nil

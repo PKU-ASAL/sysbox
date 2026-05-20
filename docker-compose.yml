@@ -20,6 +20,6 @@ services:
       - SYSBOX_WORKSPACES_DIR=/var/lib/sysbox/workspaces
       - SYSBOX_API_TOKEN=${SYSBOX_API_TOKEN:-}
       - SYSBOX_CACHE_DIR=/var/cache/sysbox
-      - SYSBOX_TOOL_DIR=/opt/sysbox/bin
+      - SYSBOX_TOOLS_DIR=/opt/sysbox/bin
       - SYSBOX_ROOTFS=/var/cache/sysbox/rootfs/ubuntu-24.04.ext4
       - PATH=/opt/sysbox/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

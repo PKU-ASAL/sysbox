@@ -47,6 +47,8 @@ Environment overrides:
   SYSBOX_API_LISTEN       listen address (default :9876)
   SYSBOX_RUNS_DIR         state dir       (default runs)
   SYSBOX_WORKSPACES_DIR   HCL dir         (default examples)
+  SYSBOX_CACHE_DIR        artifact cache root
+  SYSBOX_TOOLS_DIR        mounted tools dir
   SYSBOX_API_TOKEN        require Bearer token when non-empty`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		addr := envOr("SYSBOX_API_LISTEN", flagServeAddr)
@@ -69,4 +71,3 @@ func init() {
 	serveCmd.Flags().StringVar(&flagServeRunsDir, "runs", "runs", "directory for state.json files")
 	serveCmd.Flags().StringVar(&flagServeWorkspacesDir, "workspaces", "examples", "directory containing per-topology HCL workspaces")
 }
-

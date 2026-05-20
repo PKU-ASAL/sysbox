@@ -124,7 +124,7 @@ docker-up: docker-build docker-seed ## Start sysbox-api container (Docker substr
 	docker compose up -d
 	@echo "API server: http://localhost:9876/v1/health"
 
-docker-up-fc: docker-build docker-seed ## Start sysbox-api with Firecracker override (set SYSBOX_FIRECRACKER_BIN)
+docker-up-fc: docker-build docker-seed ## Start sysbox-api with Firecracker override (set SYSBOX_FIRECRACKER_PATH)
 	docker compose -f docker-compose.yml -f docker-compose.firecracker.yml up -d
 	@echo "API server: http://localhost:9876/v1/health"
 

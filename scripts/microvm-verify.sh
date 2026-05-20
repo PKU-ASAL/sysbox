@@ -30,12 +30,12 @@ if [ -n "${SUDO_USER:-}" ]; then
     fi
   fi
 
-  # Set SYSBOX_FC_BIN explicitly — the firecracker provider checks this
-  # env var first, bypassing PATH/HOME lookups entirely.
-  if [ -z "${SYSBOX_FC_BIN:-}" ] && [ -n "$REAL_HOME" ]; then
+  # Set SYSBOX_FIRECRACKER_PATH explicitly — the firecracker provider checks
+  # this env var first, bypassing PATH/HOME lookups entirely.
+  if [ -z "${SYSBOX_FIRECRACKER_PATH:-}" ] && [ -n "$REAL_HOME" ]; then
     FC_CANDIDATE="$REAL_HOME/.local/bin/firecracker"
     if [ -x "$FC_CANDIDATE" ]; then
-      export SYSBOX_FC_BIN="$FC_CANDIDATE"
+      export SYSBOX_FIRECRACKER_PATH="$FC_CANDIDATE"
     fi
   fi
 

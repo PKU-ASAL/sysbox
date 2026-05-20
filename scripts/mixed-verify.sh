@@ -7,7 +7,7 @@
 #
 # The script is designed to run entirely as root (via sudo on the
 # script itself). All internal commands run without sudo since we
-# are already root. Environment variables (PATH, SYSBOX_FC_BIN,
+# are already root. Environment variables (PATH, SYSBOX_FIRECRACKER_PATH,
 # SYSBOX_ROOTFS) are inherited from the calling user via the
 # SUDO_USER detection at the top.
 set -euo pipefail
@@ -37,14 +37,14 @@ if [ -n "${SUDO_USER:-}" ]; then
     fi
   fi
 
-  # Set SYSBOX_FC_BIN explicitly — the firecracker provider checks this
-  # env var first, bypassing PATH/HOME lookups entirely.
+  # Set SYSBOX_FIRECRACKER_PATH explicitly — the firecracker provider checks
+  # this env var first, bypassing PATH/HOME lookups entirely.
   # Don't rely on "which" (it may not find the binary); construct the
   # path directly from the real home directory.
-  if [ -z "${SYSBOX_FC_BIN:-}" ] && [ -n "$REAL_HOME" ]; then
+  if [ -z "${SYSBOX_FIRECRACKER_PATH:-}" ] && [ -n "$REAL_HOME" ]; then
     FC_CANDIDATE="$REAL_HOME/.local/bin/firecracker"
     if [ -x "$FC_CANDIDATE" ]; then
-      export SYSBOX_FC_BIN="$FC_CANDIDATE"
+      export SYSBOX_FIRECRACKER_PATH="$FC_CANDIDATE"
     fi
   fi
 

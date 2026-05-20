@@ -27,11 +27,17 @@ func main() {
 
 	// Register firecracker substrate if binary and kernel are available.
 	// Kernel/rootfs paths can be overridden per-node in HCL; these are defaults.
-	kernelPath := os.Getenv("SYSBOX_FC_KERNEL")
+	kernelPath := os.Getenv("SYSBOX_FIRECRACKER_KERNEL")
+	if kernelPath == "" {
+		kernelPath = os.Getenv("SYSBOX_FC_KERNEL") // legacy alias
+	}
 	if kernelPath == "" {
 		kernelPath = "/tmp/vmlinux"
 	}
-	rootfsDir := os.Getenv("SYSBOX_FC_ROOTFS_DIR")
+	rootfsDir := os.Getenv("SYSBOX_FIRECRACKER_ROOTFS_DIR")
+	if rootfsDir == "" {
+		rootfsDir = os.Getenv("SYSBOX_FC_ROOTFS_DIR") // legacy alias
+	}
 	if rootfsDir == "" {
 		rootfsDir = "/tmp/fc-images"
 	}
