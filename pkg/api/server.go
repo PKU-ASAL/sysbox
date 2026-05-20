@@ -19,8 +19,8 @@ type Server struct {
 }
 
 // NewServer creates a Server rooted at runsDir (state files) and
-// workspacesDir (HCL files). Pass "" for workspacesDir to keep the
-// legacy "examples" default.
+// workspacesDir (HCL files). Empty values use the service data layout under
+// SYSBOX_HOME.
 func NewServer(runsDir, workspacesDir string) *Server {
 	if workspacesDir == "" {
 		workspacesDir = config.DefaultWorkspacesDir()

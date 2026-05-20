@@ -38,8 +38,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=builder /out/sysbox       /usr/local/bin/sysbox
 COPY --from=builder /out/sysbox-init  /usr/local/bin/sysbox-init
 
-# Default directories inside container.
-RUN mkdir -p /workspaces /runs /var/cache/sysbox
+# Default service and artifact directories inside the container.
+RUN mkdir -p /var/lib/sysbox/workspaces /var/lib/sysbox/runs /var/lib/sysbox/firecracker /var/cache/sysbox
 
 EXPOSE 9876
 
