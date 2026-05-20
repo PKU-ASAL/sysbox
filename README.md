@@ -61,7 +61,7 @@ curl http://127.0.0.1:9876/v1/topologies/two-networks/preflight
 启动 Firecracker 能力时显式挂载宿主机工具和 KVM：
 
 ```bash
-export SYSBOX_FIRECRACKER_PATH=/home/jiandong/.local/bin/firecracker
+export SYSBOX_FIRECRACKER_BIN=/home/jiandong/.local/bin/firecracker
 make docker-up-fc
 curl http://127.0.0.1:9876/v1/capabilities
 curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
@@ -72,22 +72,25 @@ curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
 
 大文件不内置进镜像：kernel/rootfs/qcow2 走 `pkg/artifact` 按需下载或
 显式挂载到 `/var/cache/sysbox`；Firecracker/qemu 等宿主机相关二进制
-通过 `SYSBOX_TOOLS_DIR` 或 `SYSBOX_FIRECRACKER_PATH` 显式注入。
+通过 substrate 专属变量（如 `SYSBOX_FIRECRACKER_BIN`）显式注入。
 
-常用环境变量命名约定：
+服务级环境变量命名约定：
 
 | 变量 | 含义 |
 |---|---|
+| `SYSBOX_HOME` | 服务数据根目录，默认 `/var/lib/sysbox` |
+| `SYSBOX_CACHE` | artifact/cache 根目录，默认 `/var/cache/sysbox` |
 | `SYSBOX_API_LISTEN` | API listen 地址 |
 | `SYSBOX_API_TOKEN` | API Bearer token，空值表示本机开发免鉴权 |
-| `SYSBOX_WORKSPACES_DIR` | API/CLI 读取 HCL workspace 的目录 |
-| `SYSBOX_RUNS_DIR` | API/CLI 写 state 和 run metadata 的目录 |
-| `SYSBOX_CACHE_DIR` | artifact cache 根目录 |
-| `SYSBOX_TOOLS_DIR` | 显式挂载的工具目录，如 Firecracker |
-| `SYSBOX_FIRECRACKER_PATH` | Firecracker binary 的精确路径 |
-| `SYSBOX_FIRECRACKER_KERNEL` | Firecracker 默认 kernel 路径，可被 HCL provider 覆盖 |
-| `SYSBOX_FIRECRACKER_ROOTFS_DIR` | Firecracker 每 VM rootfs copy 的工作目录 |
-| `SYSBOX_ROOTFS` | 示例 HCL 使用的默认 guest rootfs 路径 |
+| `SYSBOX_WORKSPACES_DIR` | 覆盖 HCL workspace 目录，默认 `$SYSBOX_HOME/workspaces` |
+| `SYSBOX_RUNS_DIR` | 覆盖 state/run metadata 目录，默认 `$SYSBOX_HOME/runs` |
+| `SYSBOX_FIRECRACKER_BIN` | Firecracker binary 的精确路径 |
+| `SYSBOX_FIRECRACKER_WORKDIR` | Firecracker 每 VM 工作目录，默认 `$SYSBOX_HOME/firecracker` |
+
+Kernel/rootfs/qcow2 属于 topology artifact 输入，推荐在 HCL 中用
+`sysbox_kernel` / `sysbox_image` 的 `source`、`rootfs`、`qcow2` 和
+`sha256` 声明。`SYSBOX_ROOTFS` 只作为示例 HCL 的本地 CLI 便利变量，
+不建议作为 API 服务配置。
 
 ## 目录结构
 

@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/oslab/sysbox/cmd/sysbox/commands"
+	"github.com/oslab/sysbox/pkg/config"
 	docker "github.com/oslab/sysbox/pkg/provider/docker"
 	fc "github.com/oslab/sysbox/pkg/provider/firecracker"
 	_ "github.com/oslab/sysbox/pkg/provider/libvirt" // registers "libvirt" substrate via init()
@@ -27,19 +28,19 @@ func main() {
 
 	// Register firecracker substrate if binary and kernel are available.
 	// Kernel/rootfs paths can be overridden per-node in HCL; these are defaults.
-	kernelPath := os.Getenv("SYSBOX_FIRECRACKER_KERNEL")
-	if kernelPath == "" {
-		kernelPath = os.Getenv("SYSBOX_FC_KERNEL") // legacy alias
-	}
+	kernelPath := os.Getenv("SYSBOX_FC_KERNEL") // legacy: prefer HCL sysbox_kernel/provider.kernel
 	if kernelPath == "" {
 		kernelPath = "/tmp/vmlinux"
 	}
-	rootfsDir := os.Getenv("SYSBOX_FIRECRACKER_ROOTFS_DIR")
+	rootfsDir := os.Getenv("SYSBOX_FIRECRACKER_WORKDIR")
+	if rootfsDir == "" {
+		rootfsDir = os.Getenv("SYSBOX_FIRECRACKER_ROOTFS_DIR") // legacy alias
+	}
 	if rootfsDir == "" {
 		rootfsDir = os.Getenv("SYSBOX_FC_ROOTFS_DIR") // legacy alias
 	}
 	if rootfsDir == "" {
-		rootfsDir = "/tmp/fc-images"
+		rootfsDir = config.FirecrackerWorkDir()
 	}
 	fcSub := fc.New(kernelPath, rootfsDir)
 	substrate.Register(fcSub)

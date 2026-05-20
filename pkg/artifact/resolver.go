@@ -32,6 +32,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/config"
 )
 
 // Spec describes a single artifact reference.
@@ -76,6 +78,9 @@ func New() *Resolver {
 
 // DefaultCacheDir resolves the standard sysbox artifact cache location.
 func DefaultCacheDir() string {
+	if v := os.Getenv("SYSBOX_CACHE"); v != "" {
+		return filepath.Join(v, "artifacts")
+	}
 	if v := os.Getenv("SYSBOX_CACHE_DIR"); v != "" {
 		return filepath.Join(v, "artifacts")
 	}
@@ -87,6 +92,10 @@ func DefaultCacheDir() string {
 		return filepath.Join(os.TempDir(), "sysbox", "artifacts")
 	}
 	return filepath.Join(home, ".cache", "sysbox", "artifacts")
+}
+
+func DefaultRootCacheDir() string {
+	return filepath.Join(config.SysboxCache(), "rootfs")
 }
 
 // Resolve returns the local path of the artifact described by spec,

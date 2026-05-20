@@ -128,7 +128,7 @@ resource "sysbox_node" "node_db" {
 
 Default location (first that exists / is set):
 
-1. `$SYSBOX_CACHE_DIR/artifacts/`
+1. `$SYSBOX_CACHE/artifacts/`
 2. `$XDG_CACHE_HOME/sysbox/artifacts/`
 3. `~/.cache/sysbox/artifacts/`
 

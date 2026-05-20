@@ -25,7 +25,7 @@ substrate "firecracker" {
 # ── Locals ──────────────────────────────────────────────────────────────────
 
 locals {
-  rootfs_path = env("SYSBOX_ROOTFS") != "" ? env("SYSBOX_ROOTFS") : (env("SYSBOX_CACHE_DIR") != "" ? "${env("SYSBOX_CACHE_DIR")}/rootfs/ubuntu-24.04.ext4" : "${env("HOME")}/.cache/sysbox/rootfs/ubuntu-24.04.ext4")
+  rootfs_path = env("SYSBOX_ROOTFS") != "" ? env("SYSBOX_ROOTFS") : "${env("HOME")}/.cache/sysbox/rootfs/ubuntu-24.04.ext4"
 }
 
 # ── Kernel + Images ─────────────────────────────────────────────────────────

@@ -16,10 +16,7 @@ services:
       - ~/.cache/sysbox:/var/cache/sysbox
     environment:
       - SYSBOX_API_LISTEN=${SYSBOX_API_LISTEN:-:9876}
-      - SYSBOX_RUNS_DIR=/var/lib/sysbox/runs
-      - SYSBOX_WORKSPACES_DIR=/var/lib/sysbox/workspaces
       - SYSBOX_API_TOKEN=${SYSBOX_API_TOKEN:-}
-      - SYSBOX_CACHE_DIR=/var/cache/sysbox
-      - SYSBOX_TOOLS_DIR=/opt/sysbox/bin
-      - SYSBOX_ROOTFS=/var/cache/sysbox/rootfs/ubuntu-24.04.ext4
+      - SYSBOX_HOME=/var/lib/sysbox
+      - SYSBOX_CACHE=/var/cache/sysbox
       - PATH=/opt/sysbox/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

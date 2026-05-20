@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/config"
 )
 
 // Server holds all API state and registers HTTP routes.
@@ -21,7 +23,10 @@ type Server struct {
 // legacy "examples" default.
 func NewServer(runsDir, workspacesDir string) *Server {
 	if workspacesDir == "" {
-		workspacesDir = "examples"
+		workspacesDir = config.DefaultWorkspacesDir()
+	}
+	if runsDir == "" {
+		runsDir = config.DefaultRunsDir()
 	}
 	s := &Server{
 		runsDir:       runsDir,

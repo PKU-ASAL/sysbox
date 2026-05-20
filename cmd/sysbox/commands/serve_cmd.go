@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/api"
+	"github.com/oslab/sysbox/pkg/config"
 )
 
 var (
@@ -45,10 +46,10 @@ Node access:
 
 Environment overrides:
   SYSBOX_API_LISTEN       listen address (default :9876)
-  SYSBOX_RUNS_DIR         state dir       (default runs)
-  SYSBOX_WORKSPACES_DIR   HCL dir         (default examples)
-  SYSBOX_CACHE_DIR        artifact cache root
-  SYSBOX_TOOLS_DIR        mounted tools dir
+  SYSBOX_HOME             service data root (default /var/lib/sysbox)
+  SYSBOX_CACHE            artifact cache root (default /var/cache/sysbox)
+  SYSBOX_RUNS_DIR         override state dir
+  SYSBOX_WORKSPACES_DIR   override HCL dir
   SYSBOX_API_TOKEN        require Bearer token when non-empty`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		addr := envOr("SYSBOX_API_LISTEN", flagServeAddr)
@@ -68,6 +69,6 @@ func envOr(key, fallback string) string {
 
 func init() {
 	serveCmd.Flags().StringVar(&flagServeAddr, "addr", ":9876", "listen address")
-	serveCmd.Flags().StringVar(&flagServeRunsDir, "runs", "runs", "directory for state.json files")
-	serveCmd.Flags().StringVar(&flagServeWorkspacesDir, "workspaces", "examples", "directory containing per-topology HCL workspaces")
+	serveCmd.Flags().StringVar(&flagServeRunsDir, "runs", config.DefaultRunsDir(), "directory for state.json files")
+	serveCmd.Flags().StringVar(&flagServeWorkspacesDir, "workspaces", config.DefaultWorkspacesDir(), "directory containing per-topology HCL workspaces")
 }
