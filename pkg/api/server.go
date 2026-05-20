@@ -54,6 +54,7 @@ func (s *Server) registerRoutes() {
 	m := s.mux
 
 	m.HandleFunc("GET /v1/health", s.handleHealth)
+	m.HandleFunc("GET /v1/capabilities", s.handleCapabilities)
 
 	// Topologies
 	m.HandleFunc("GET /v1/topologies", s.handleListTopologies)
@@ -64,6 +65,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/state", s.handleGetState)
 	m.HandleFunc("GET /v1/topologies/{topology}/plan", s.handleGetPlan)
 	m.HandleFunc("GET /v1/topologies/{topology}/graph", s.handleGetGraph)
+	m.HandleFunc("GET /v1/topologies/{topology}/preflight", s.handlePreflight)
 	m.HandleFunc("POST /v1/topologies/{topology}/apply", s.handleApply)
 	m.HandleFunc("POST /v1/topologies/{topology}/destroy", s.handleDestroy)
 	m.HandleFunc("DELETE /v1/topologies/{topology}", s.handleDeleteTopology)

@@ -39,6 +39,41 @@ make test-e2e       # 运行 e2e 测试（apply/路由/drift/destroy）
 make lab-down       # 销毁实验室
 ```
 
+## API / Docker 部署
+
+API 是服务态控制面，默认使用独立数据目录而不是直接读写 `examples/`
+和 `runs/`：
+
+```
+data/
+├── workspaces/     # API 管理的 HCL
+└── runs/           # state.json + job metadata
+```
+
+启动 Docker-only API：
+
+```bash
+make docker-up
+curl http://127.0.0.1:9876/v1/health
+curl http://127.0.0.1:9876/v1/topologies/two-networks/preflight
+```
+
+启动 Firecracker 能力时显式挂载宿主机工具和 KVM：
+
+```bash
+export SYSBOX_FIRECRACKER_BIN=/home/jiandong/.local/bin/firecracker
+make docker-up-fc
+curl http://127.0.0.1:9876/v1/capabilities
+curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
+```
+
+`make docker-seed` 会把 `examples/*/field.sysbox.hcl` 初次复制到
+`data/workspaces/`。之后 API 修改的是自己的 workspace 副本。
+
+大文件不内置进镜像：kernel/rootfs/qcow2 走 `pkg/artifact` 按需下载或
+显式挂载到 `/var/cache/sysbox`；Firecracker/qemu 等宿主机相关二进制
+通过 `SYSBOX_TOOL_DIR` 或 `SYSBOX_FIRECRACKER_BIN` 显式注入。
+
 ## 目录结构
 
 ```

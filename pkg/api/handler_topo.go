@@ -66,9 +66,9 @@ func (s *Server) handleListTopologies(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(topolist))
 	for name, flags := range topolist {
 		out = append(out, map[string]any{
-			"name":       name,
-			"has_hcl":    flags["hcl"],
-			"has_state":  flags["state"],
+			"name":      name,
+			"has_hcl":   flags["hcl"],
+			"has_state": flags["state"],
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"topologies": out})
@@ -122,6 +122,17 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		unlock := s.jobs.lockTopology(topology)
 		defer unlock()
 
+		preflight, err := s.preflightTopology(topology)
+		if err != nil {
+			s.jobs.finish(run, err)
+			return
+		}
+		writePreflightLogs(run, preflight)
+		if err := preflight.err(); err != nil {
+			s.jobs.finish(run, err)
+			return
+		}
+
 		g, mgr, st, _, _, err := runtime.LoadWorkspace(s.hclFile(topology), s.stateFile(topology))
 		if err != nil {
 			s.jobs.finish(run, err)
@@ -156,6 +167,28 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID})
+}
+
+func writePreflightLogs(run *Run, res *preflightResult) {
+	if res == nil {
+		return
+	}
+	_, _ = run.logs.Write([]byte("Preflight checks:\n"))
+	for _, c := range res.Checks {
+		status := "ok"
+		if !c.OK {
+			status = c.Severity
+		}
+		line := fmt.Sprintf("  [%s] %s", status, c.Name)
+		if c.Message != "" {
+			line += ": " + c.Message
+		}
+		if c.Hint != "" {
+			line += " (" + c.Hint + ")"
+		}
+		line += "\n"
+		_, _ = run.logs.Write([]byte(line))
+	}
 }
 
 // POST /v1/topologies/{topology}/destroy

@@ -10,20 +10,16 @@ services:
     volumes:
       # Docker substrate: talk to the host Docker daemon.
       - /var/run/docker.sock:/var/run/docker.sock
-      # Firecracker substrate: KVM device.
-      - /dev/kvm:/dev/kvm
-      # Libvirt substrate.
-      - /var/run/libvirt:/var/run/libvirt
-      # User HCL workspaces (read/write — apply creates state here).
-      - ./examples:/workspaces
-      # State files persisted on host.
-      - ./runs:/runs
-      # Shared image/rootfs/kernel cache (reuse host cache).
+      # API-owned workspaces, state, and job metadata.
+      - ./data:/var/lib/sysbox
+      # Shared artifact cache (kernels, rootfs, qcow2, downloaded tools).
       - ~/.cache/sysbox:/var/cache/sysbox
     environment:
       - SYSBOX_API_LISTEN=${SYSBOX_API_LISTEN:-:9876}
-      - SYSBOX_RUNS_DIR=/runs
-      - SYSBOX_WORKSPACES_DIR=/workspaces
+      - SYSBOX_RUNS_DIR=/var/lib/sysbox/runs
+      - SYSBOX_WORKSPACES_DIR=/var/lib/sysbox/workspaces
       - SYSBOX_API_TOKEN=${SYSBOX_API_TOKEN:-}
-      # Shared cache for artifact resolver.
       - SYSBOX_CACHE_DIR=/var/cache/sysbox
+      - SYSBOX_TOOL_DIR=/opt/sysbox/bin
+      - SYSBOX_ROOTFS=/var/cache/sysbox/rootfs/ubuntu-24.04.ext4
+      - PATH=/opt/sysbox/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

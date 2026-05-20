@@ -45,7 +45,10 @@ func New(kernelPath, rootfsDir string) *Substrate {
 	}
 	// Check common locations.
 	for _, candidate := range []string{
+		os.Getenv("SYSBOX_FIRECRACKER_BIN"),
 		os.Getenv("SYSBOX_FC_BIN"),
+		filepath.Join(os.Getenv("SYSBOX_TOOL_DIR"), "firecracker"),
+		filepath.Join(os.Getenv("SYSBOX_CACHE_DIR"), "tools", "firecracker"),
 		filepath.Join(os.Getenv("HOME"), ".local/bin/firecracker"),
 		"/usr/local/bin/firecracker",
 	} {

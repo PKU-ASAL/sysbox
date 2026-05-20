@@ -14,7 +14,7 @@ _LAB   := examples/$(TOPO)/lab.sh
 .DEFAULT_GOAL := help
 .PHONY: help build build-all test lint ci plan up down lab lab-down logs \
         serve serve-restart serve-stop \
-        docker-build docker-up docker-down docker-logs clean
+        docker-build docker-seed docker-up docker-up-fc docker-down docker-logs clean
 
 help:
 	@echo "Usage: make <target>  [TOPO=three-nodes|microvm|mixed|two-networks]"
@@ -107,8 +107,25 @@ serve-stop: ## Stop the running API server
 docker-build: ## Build sysbox Docker image (no cache)
 	docker build --network=host --no-cache -t sysbox:latest .
 
-docker-up: docker-build ## Start sysbox-api container (privileged, host network)
+docker-seed: ## Copy examples into API-owned data/workspaces if missing
+	@mkdir -p data/workspaces
+	@for d in examples/*; do \
+	    if [ -f "$$d/field.sysbox.hcl" ]; then \
+	        name=$$(basename "$$d"); \
+	        mkdir -p "data/workspaces/$$name"; \
+	        if [ ! -f "data/workspaces/$$name/field.sysbox.hcl" ]; then \
+	            cp "$$d/field.sysbox.hcl" "data/workspaces/$$name/field.sysbox.hcl"; \
+	            echo "seeded $$name"; \
+	        fi; \
+	    fi; \
+	done
+
+docker-up: docker-build docker-seed ## Start sysbox-api container (Docker substrate only)
 	docker compose up -d
+	@echo "API server: http://localhost:9876/v1/health"
+
+docker-up-fc: docker-build docker-seed ## Start sysbox-api with Firecracker override (set SYSBOX_FIRECRACKER_BIN)
+	docker compose -f docker-compose.yml -f docker-compose.firecracker.yml up -d
 	@echo "API server: http://localhost:9876/v1/health"
 
 docker-down: ## Stop and remove sysbox-api container

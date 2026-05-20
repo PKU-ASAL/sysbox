@@ -5,6 +5,7 @@
 
 # state / runs
 /runs/
+/data/
 *.tfstate
 *.tfstate.backup
 state.json
