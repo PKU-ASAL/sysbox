@@ -106,6 +106,7 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	runtime.NewExecutor(g, st).Refresh(r.Context(), plan)
 	writeJSON(w, http.StatusOK, planJSON(plan))
 }
 
@@ -143,14 +144,15 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			s.jobs.finish(run, err)
 			return
 		}
+		exec := runtime.NewExecutor(g, st)
+		exec.SetLogger(run.logs)
+		exec.Refresh(context.Background(), plan)
 		if !plan.HasChanges() {
 			_, _ = run.logs.Write([]byte("No changes. Apply is a no-op.\n"))
 			s.jobs.finish(run, nil)
 			return
 		}
 		_, _ = run.logs.Write([]byte(plan.Summary() + "\n"))
-		exec := runtime.NewExecutor(g, st)
-		exec.SetLogger(run.logs)
 		if err := exec.Apply(context.Background(), plan); err != nil {
 			if saveErr := mgr.Save(st); saveErr != nil {
 				_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))

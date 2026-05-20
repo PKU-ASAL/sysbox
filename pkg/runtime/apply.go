@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"fmt"
+
+	"github.com/oslab/sysbox/pkg/graph"
 )
 
 // Apply walks the plan forward: create Add resources and re-create Change
@@ -21,16 +23,31 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 		toCreate[id.String()] = true
 	}
 
-	// For drifted resources: destroy first (remove from state), then recreate.
+	// For drifted resources, destroy all affected existing resources in
+	// reverse topo order first (dependents before dependencies), then recreate
+	// them in normal topo order below.
+	changeSet := map[graph.NodeID]bool{}
 	for _, id := range plan.Change {
-		r := e.state.FindResource(id.Type, id.Name)
-		if r != nil {
-			e.logf("[apply] removing drifted %s before re-create\n", id)
-			if err := e.DestroyResource(ctx, *r); err != nil {
-				e.logf("[apply] warning: cleanup of drifted %s failed: %v\n", id, err)
+		changeSet[id] = true
+		toCreate[id.String()] = true
+	}
+	if len(changeSet) > 0 {
+		reverse, err := e.graph.ReverseTopoSort()
+		if err != nil {
+			return err
+		}
+		for _, id := range reverse {
+			if !changeSet[id] {
+				continue
+			}
+			r := e.state.FindResource(id.Type, id.Name)
+			if r != nil {
+				e.logf("[apply] removing drifted %s before re-create\n", id)
+				if err := e.DestroyResource(ctx, *r); err != nil {
+					e.logf("[apply] warning: cleanup of drifted %s failed: %v\n", id, err)
+				}
 			}
 		}
-		toCreate[id.String()] = true
 	}
 
 	for _, id := range order {

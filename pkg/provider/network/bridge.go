@@ -73,6 +73,20 @@ func BridgeExists(nsName, brName string) bool {
 	return exists
 }
 
+func LinkExists(nsName, linkName string) bool {
+	if nsName == "" || linkName == "" {
+		return false
+	}
+	exists := false
+	_ = inNetns(nsName, func() error {
+		if _, err := netlink.LinkByName(linkName); err == nil {
+			exists = true
+		}
+		return nil
+	})
+	return exists
+}
+
 // inNetns runs fn inside the named netns and switches back.
 // Uses runtime.LockOSThread so the netns switch doesn't leak to other goroutines.
 func inNetns(name string, fn func() error) error {

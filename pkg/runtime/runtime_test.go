@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -21,6 +22,36 @@ func TestPlanAddsNewResources(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.Add, 2)
 	require.Empty(t, plan.Destroy)
+}
+
+func TestRefreshCascadesChangedDependents(t *testing.T) {
+	g := graph.New()
+	g.AddNode("sysbox_network", "dmz", nil)
+	g.AddNode("sysbox_node", "web", []graph.Ref{{Type: "sysbox_network", Name: "dmz"}})
+	g.AddNode("sysbox_actor", "agent", []graph.Ref{{Type: "sysbox_node", Name: "web"}})
+
+	s := &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{
+			{Type: "sysbox_network", Name: "dmz", Provider: "network", Instance: map[string]any{"netns": "missing-netns", "bridge": "br-dmz"}},
+			{Type: "sysbox_node", Name: "web", Provider: "docker", Instance: map[string]any{"container_id": "web"}},
+			{Type: "sysbox_actor", Name: "agent", Provider: "docker", Instance: map[string]any{}},
+		},
+	}
+	plan := &Plan{Unchanged: []graph.NodeID{
+		{Type: "sysbox_network", Name: "dmz"},
+		{Type: "sysbox_node", Name: "web"},
+		{Type: "sysbox_actor", Name: "agent"},
+	}}
+
+	NewExecutor(g, s).Refresh(context.Background(), plan)
+
+	require.ElementsMatch(t, []graph.NodeID{
+		{Type: "sysbox_network", Name: "dmz"},
+		{Type: "sysbox_node", Name: "web"},
+		{Type: "sysbox_actor", Name: "agent"},
+	}, plan.Change)
+	require.Empty(t, plan.Unchanged)
 }
 
 func TestPlanDetectsDestroys(t *testing.T) {
