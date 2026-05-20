@@ -1,0 +1,9 @@
+.git
+.claude
+data
+runs
+bin
+sysbox
+sysbox-init
+*.log
+*.tmp

@@ -176,12 +176,9 @@ func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
 	if _, err := os.Stat(s.hclFile(topology)); err == nil {
 		out["has_hcl"] = true
 	}
-	if _, err := os.Stat(s.stateFile(topology)); err == nil {
+	if st, err := s.loadState(topology); err == nil {
 		out["has_state"] = true
-		// Load state to enrich with resource counts.
-		if st, err := s.loadState(topology); err == nil {
-			out["resource_count"] = len(st.Resources)
-		}
+		out["resource_count"] = len(st.Resources)
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -199,26 +196,31 @@ func (s *Server) handleDeleteTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If state has resources, auto-destroy unless ?force=true.
-	statePath := s.stateFile(topology)
-	if _, err := os.Stat(statePath); err == nil {
-		mgr := state.NewManager(statePath)
-		st, err := mgr.Load()
-		if err == nil && len(st.Resources) > 0 {
-			if r.URL.Query().Get("force") == "true" {
-				slog.Warn("force-deleting topology with live resources", "topology", topology, "resources", len(st.Resources))
-			} else {
-				// Auto-destroy: run destroy inline (synchronous).
-				plan := &runtime.Plan{Destroy: append([]state.Resource(nil), st.Resources...)}
-				exec := runtime.NewExecutor(graph.New(), st)
-				if err := exec.Destroy(context.Background(), plan); err != nil {
-					writeError(w, http.StatusConflict, fmt.Errorf("auto-destroy failed: %w", err))
-					return
-				}
-				slog.Info("auto-destroyed topology before deletion", "topology", topology)
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	st, err := mgr.Load()
+	if err == nil && len(st.Resources) > 0 {
+		if r.URL.Query().Get("force") == "true" {
+			slog.Warn("force-deleting topology with live resources", "topology", topology, "resources", len(st.Resources))
+		} else {
+			plan := &runtime.Plan{Destroy: append([]state.Resource(nil), st.Resources...)}
+			exec := runtime.NewExecutor(graph.New(), st)
+			if err := exec.Destroy(context.Background(), plan); err != nil {
+				writeError(w, http.StatusConflict, fmt.Errorf("auto-destroy failed: %w", err))
+				return
 			}
+			if err := mgr.Save(st); err != nil {
+				writeError(w, http.StatusInternalServerError, fmt.Errorf("save state: %w", err))
+				return
+			}
+			slog.Info("auto-destroyed topology before deletion", "topology", topology)
 		}
-		// Remove state directory.
+	}
+	if s.stateBackend == "" {
+		statePath := s.stateFile(topology)
 		if err := os.RemoveAll(filepath.Dir(statePath)); err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Errorf("remove state: %w", err))
 			return

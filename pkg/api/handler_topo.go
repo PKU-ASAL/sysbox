@@ -95,7 +95,11 @@ func (s *Server) handleGetStateMetadata(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	mgr := state.NewManager(s.stateFile(topology))
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	meta, err := mgr.Metadata(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -110,7 +114,12 @@ func (s *Server) handleListStateSnapshots(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	backend := state.NewManager(s.stateFile(topology)).Backend()
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	backend := mgr.Backend()
 	snapshots, ok := backend.(state.SnapshotBackend)
 	if !ok {
 		writeJSON(w, http.StatusOK, map[string]any{"snapshots": []state.Snapshot{}})
@@ -135,7 +144,12 @@ func (s *Server) handleRestoreStateSnapshot(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	backend := state.NewManager(s.stateFile(topology)).Backend()
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	backend := mgr.Backend()
 	snapshots, ok := backend.(state.SnapshotBackend)
 	if !ok {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("state backend does not support snapshots"))
@@ -155,7 +169,12 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	g, _, st, _, _, err := runtime.LoadWorkspace(s.hclFile(topology), s.stateFile(topology))
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), mgr)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -193,7 +212,12 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		g, mgr, st, _, _, err := runtime.LoadWorkspace(s.hclFile(topology), s.stateFile(topology))
+		mgr, err := s.stateManager(topology)
+		if err != nil {
+			s.jobs.finish(run, err)
+			return
+		}
+		g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), mgr)
 		if err != nil {
 			s.jobs.finish(run, err)
 			return
@@ -269,8 +293,11 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		unlock := s.jobs.lockTopology(topology)
 		defer unlock()
 
-		stateFile := s.stateFile(topology)
-		mgr := state.NewManager(stateFile)
+		mgr, err := s.stateManager(topology)
+		if err != nil {
+			s.jobs.finish(run, err)
+			return
+		}
 		st, err := mgr.Load()
 		if err != nil {
 			s.jobs.finish(run, err)
@@ -381,7 +408,11 @@ func (s *Server) loadState(topology string) (*state.State, error) {
 	if _, err := os.Stat(f); err != nil {
 		return nil, fmt.Errorf("topology %q: no state file", topology)
 	}
-	return state.NewManager(f).Load()
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		return nil, err
+	}
+	return mgr.Load()
 }
 
 func planJSON(p *runtime.Plan) map[string]any {

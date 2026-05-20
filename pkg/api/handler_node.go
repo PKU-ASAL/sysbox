@@ -263,8 +263,11 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stateFile := s.stateFile(topology)
-	mgr := state.NewManager(stateFile)
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	st, err := mgr.Load()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("load state: %w", err))

@@ -336,19 +336,3 @@ type PostgresBackend struct {
 	DSN      string
 	Topology string
 }
-
-func (b *PostgresBackend) Load(context.Context) ([]byte, error) {
-	return nil, fmt.Errorf("postgres state backend is declared but not implemented yet")
-}
-
-func (b *PostgresBackend) Save(context.Context, []byte) error {
-	return fmt.Errorf("postgres state backend is declared but not implemented yet")
-}
-
-func (b *PostgresBackend) Lock(context.Context) (UnlockFunc, error) {
-	return func() {}, nil
-}
-
-func (b *PostgresBackend) Metadata(context.Context) (Metadata, error) {
-	return Metadata{Backend: "postgres", Location: b.DSN, Version: SchemaVersion}, nil
-}

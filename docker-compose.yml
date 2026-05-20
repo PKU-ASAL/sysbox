@@ -1,4 +1,22 @@
 services:
+  sysbox-postgres:
+    image: postgres:16-alpine
+    container_name: sysbox-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SYSBOX_POSTGRES_DB:-sysbox}
+      POSTGRES_USER: ${SYSBOX_POSTGRES_USER:-sysbox}
+      POSTGRES_PASSWORD: ${SYSBOX_POSTGRES_PASSWORD:-sysbox}
+    ports:
+      - "${SYSBOX_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - sysbox-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   sysbox-api:
     build: .
     image: sysbox:latest
@@ -7,6 +25,9 @@ services:
     privileged: true
     network_mode: host
     pid: host
+    depends_on:
+      sysbox-postgres:
+        condition: service_healthy
     volumes:
       # Docker substrate: talk to the host Docker daemon.
       - /var/run/docker.sock:/var/run/docker.sock
@@ -19,4 +40,8 @@ services:
       - SYSBOX_API_TOKEN=${SYSBOX_API_TOKEN:-}
       - SYSBOX_HOME=/var/lib/sysbox
       - SYSBOX_CACHE=/var/cache/sysbox
+      - SYSBOX_STATE_BACKEND=${SYSBOX_STATE_BACKEND:-postgres://sysbox:sysbox@127.0.0.1:${SYSBOX_POSTGRES_PORT:-55432}/sysbox?sslmode=disable&topology={topology}}
       - PATH=/opt/sysbox/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+volumes:
+  sysbox-postgres-data:

@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 // Server holds all API state and registers HTTP routes.
 type Server struct {
 	runsDir       string
 	workspacesDir string
+	stateBackend  string
 	jobs          *Jobs
 	mux           *http.ServeMux
 }
@@ -31,11 +34,24 @@ func NewServer(runsDir, workspacesDir string) *Server {
 	s := &Server{
 		runsDir:       runsDir,
 		workspacesDir: workspacesDir,
+		stateBackend:  os.Getenv("SYSBOX_STATE_BACKEND"),
 		jobs:          newJobs(runsDir),
 		mux:           http.NewServeMux(),
 	}
 	s.registerRoutes()
 	return s
+}
+
+func (s *Server) stateManager(topology string) (*state.Manager, error) {
+	if s.stateBackend == "" {
+		return state.NewManager(s.stateFile(topology)), nil
+	}
+	raw := strings.ReplaceAll(s.stateBackend, "{topology}", topology)
+	b, err := state.ParseBackendURL(raw)
+	if err != nil {
+		return nil, fmt.Errorf("state backend: %w", err)
+	}
+	return state.NewManagerWithBackend(b), nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

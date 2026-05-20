@@ -62,7 +62,11 @@ func ParseBackendURL(raw string) (Backend, error) {
 		}
 		return &SQLiteBackend{Path: path, Topology: u.Query().Get("topology")}, nil
 	case "postgres", "postgresql":
-		return &PostgresBackend{DSN: raw, Topology: u.Query().Get("topology")}, nil
+		topology := u.Query().Get("topology")
+		if topology == "" {
+			topology = postgresDefaultTopology
+		}
+		return &PostgresBackend{DSN: raw, Topology: topology}, nil
 	default:
 		return nil, fmt.Errorf("unsupported state backend scheme %q (use local, http, https, s3, sqlite, or postgres)", u.Scheme)
 	}

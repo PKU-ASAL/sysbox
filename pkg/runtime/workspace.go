@@ -23,6 +23,12 @@ import (
 func LoadWorkspace(hclFile, stateFile string) (
 	*graph.Graph, *state.Manager, *state.State, *config.Root, *hcl.EvalContext, error,
 ) {
+	return LoadWorkspaceWithManager(hclFile, state.NewManager(stateFile))
+}
+
+func LoadWorkspaceWithManager(hclFile string, mgr *state.Manager) (
+	*graph.Graph, *state.Manager, *state.State, *config.Root, *hcl.EvalContext, error,
+) {
 	root, err := config.ParseFile(hclFile)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("parse config: %w", err)
@@ -32,7 +38,6 @@ func LoadWorkspace(hclFile, stateFile string) (
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("build graph: %w", err)
 	}
-	mgr := state.NewManager(stateFile)
 	s, err := mgr.Load()
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("load state: %w", err)

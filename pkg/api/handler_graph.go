@@ -12,10 +12,10 @@ import (
 
 // graphNode is the visualization-friendly JSON shape for a resource.
 type graphNode struct {
-	ID        string         `json:"id"`        // "sysbox_node.web"
-	Type      string         `json:"type"`      // "sysbox_node"
-	Label     string         `json:"label"`     // "web"
-	Status    string         `json:"status"`    // "applied" | "planned"
+	ID        string         `json:"id"`     // "sysbox_node.web"
+	Type      string         `json:"type"`   // "sysbox_node"
+	Label     string         `json:"label"`  // "web"
+	Status    string         `json:"status"` // "applied" | "planned"
 	Substrate string         `json:"substrate,omitempty"`
 	IP        string         `json:"ip,omitempty"`
 	CIDR      string         `json:"cidr,omitempty"`
@@ -25,9 +25,9 @@ type graphNode struct {
 
 // graphEdge is a typed link between two graph nodes.
 type graphEdge struct {
-	From  string `json:"from"`  // "sysbox_node.web"
-	To    string `json:"to"`    // "sysbox_network.lan"
-	Kind  string `json:"kind"`  // "link" | "interface" | "image" | "kernel" | "hosts"
+	From  string `json:"from"` // "sysbox_node.web"
+	To    string `json:"to"`   // "sysbox_network.lan"
+	Kind  string `json:"kind"` // "link" | "interface" | "image" | "kernel" | "hosts"
 	Label string `json:"label,omitempty"`
 	IP    string `json:"ip,omitempty"`
 }
@@ -43,7 +43,12 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	g, _, st, _, _, err := runtime.LoadWorkspace(s.hclFile(topology), s.stateFile(topology))
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), mgr)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

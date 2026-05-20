@@ -99,6 +99,16 @@ func TestParseBackendURL_Postgres(t *testing.T) {
 	}
 }
 
+func TestPostgresBackendRedactsPasswordAndDropsTopologyQuery(t *testing.T) {
+	b := &PostgresBackend{DSN: "postgres://user:secret@localhost/sysbox?sslmode=disable&topology=mixed", Topology: "mixed"}
+	if got := b.dsnWithoutSysboxQuery(); got != "postgres://user:secret@localhost/sysbox?sslmode=disable" {
+		t.Fatalf("dsnWithoutSysboxQuery = %q", got)
+	}
+	if got := b.redactedLocation(); got != "postgres://user:xxxxx@localhost/sysbox?sslmode=disable&topology=mixed" {
+		t.Fatalf("redactedLocation = %q", got)
+	}
+}
+
 func TestParseBackendURL_Unsupported(t *testing.T) {
 	_, err := ParseBackendURL("ftp://host/path")
 	if err == nil {
