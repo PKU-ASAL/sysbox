@@ -28,6 +28,20 @@ func (m *Manager) SetBackend(b Backend) { m.backend = b }
 // Backend returns the active backend.
 func (m *Manager) Backend() Backend { return m.backend }
 
+func (m *Manager) Metadata(ctx context.Context) (Metadata, error) {
+	if b, ok := m.backend.(MetadataBackend); ok {
+		return b.Metadata(ctx)
+	}
+	return Metadata{Backend: "unknown", Version: SchemaVersion}, nil
+}
+
+func (m *Manager) Snapshot(ctx context.Context, reason string) (*Snapshot, error) {
+	if b, ok := m.backend.(SnapshotBackend); ok {
+		return b.Snapshot(ctx, reason)
+	}
+	return nil, nil
+}
+
 // Load reads the state from the active backend.
 // Missing state returns an empty State, not an error.
 func (m *Manager) Load() (*State, error) {
@@ -55,7 +69,7 @@ func (m *Manager) Save(s *State) error {
 func (m *Manager) SaveWithContext(ctx context.Context, s *State) error {
 	s.Version = SchemaVersion
 
-	unlock, err := m.backend.Lock(ctx)
+	unlock, err := m.lock(ctx, LockOptions{})
 	if err != nil {
 		return err
 	}
@@ -68,4 +82,12 @@ func (m *Manager) SaveWithContext(ctx context.Context, s *State) error {
 		return err
 	}
 	return m.backend.Save(ctx, data)
+}
+
+func (m *Manager) lock(ctx context.Context, opts LockOptions) (UnlockFunc, error) {
+	if b, ok := m.backend.(LeaseBackend); ok {
+		_, unlock, err := b.LockWithOptions(ctx, opts)
+		return unlock, err
+	}
+	return m.backend.Lock(ctx)
 }

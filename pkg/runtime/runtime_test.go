@@ -94,6 +94,7 @@ func TestPlanDetectsDesiredHashChange(t *testing.T) {
 	n.Data = &config.NetworkConfig{CIDR: "10.0.1.0/24"}
 	oldHash, err := desiredHash(n)
 	require.NoError(t, err)
+	oldPayload, _ := desiredPayload(n)
 
 	n.Data = &config.NetworkConfig{CIDR: "10.0.2.0/24"}
 	s := &state.State{
@@ -104,8 +105,9 @@ func TestPlanDetectsDesiredHashChange(t *testing.T) {
 				Name:     "dmz",
 				Provider: "network",
 				Instance: map[string]any{
-					"cidr":         "10.0.1.0/24",
-					desiredHashKey: oldHash,
+					"cidr":            "10.0.1.0/24",
+					desiredHashKey:    oldHash,
+					desiredPayloadKey: oldPayload,
 				},
 			},
 		},
@@ -117,6 +119,42 @@ func TestPlanDetectsDesiredHashChange(t *testing.T) {
 	require.Empty(t, plan.Destroy)
 	require.Empty(t, plan.Unchanged)
 	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, plan.Change)
+	require.Len(t, plan.Actions, 1)
+	require.Equal(t, PlanActionReplace, plan.Actions[0].Action)
+	require.Equal(t, "10.0.1.0/24", plan.Actions[0].Changes["cidr"].Before)
+	require.Equal(t, "10.0.2.0/24", plan.Actions[0].Changes["cidr"].After)
+	require.True(t, plan.Actions[0].Changes["cidr"].RequiresReplace)
+}
+
+func TestPlanRedactsSensitiveDiffFields(t *testing.T) {
+	g := graph.New()
+	n := g.AddNode("sysbox_node", "web", nil)
+	n.Data = &config.NodeConfig{Image: "sysbox_image.alpine.id", Substrate: "docker", Env: map[string]string{"TOKEN": "old"}}
+	oldHash, err := desiredHash(n)
+	require.NoError(t, err)
+	oldPayload, _ := desiredPayload(n)
+
+	n.Data = &config.NodeConfig{Image: "sysbox_image.alpine.id", Substrate: "docker", Env: map[string]string{"TOKEN": "new"}}
+	s := &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Type:     "sysbox_node",
+			Name:     "web",
+			Provider: "docker",
+			Instance: map[string]any{
+				desiredHashKey:    oldHash,
+				desiredPayloadKey: oldPayload,
+			},
+		}},
+	}
+
+	plan, err := ComputePlan(g, s)
+	require.NoError(t, err)
+	require.Len(t, plan.Change, 1)
+	envChange := plan.Actions[0].Changes["env"]
+	require.True(t, envChange.Sensitive)
+	require.Equal(t, "(sensitive)", envChange.Before)
+	require.Equal(t, "(sensitive)", envChange.After)
 }
 
 func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {

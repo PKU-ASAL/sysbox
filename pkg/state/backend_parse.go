@@ -12,6 +12,8 @@ import (
 //   - "local:///path/to/state.json" or plain path → LocalBackend
 //   - "https://host/path/state.json"            → HTTPBackend
 //   - "s3://bucket/key"                         → S3Backend
+//   - "sqlite:///path/to/sysbox.db?topology=x"  → SQLiteBackend
+//   - "postgres://user:pass@host/db?topology=x" → PostgresBackend
 //
 // For the default (local) case, a plain file path is accepted and
 // wrapped in LocalBackend automatically.
@@ -50,8 +52,19 @@ func ParseBackendURL(raw string) (Backend, error) {
 			Key:    key,
 			Region: envOrDefault("AWS_REGION", envOrDefault("AWS_DEFAULT_REGION", "us-east-1")),
 		}, nil
+	case "sqlite":
+		path := u.Path
+		if path == "" {
+			path = u.Host
+		}
+		if path == "" {
+			return nil, fmt.Errorf("sqlite backend URL must include a database path")
+		}
+		return &SQLiteBackend{Path: path, Topology: u.Query().Get("topology")}, nil
+	case "postgres", "postgresql":
+		return &PostgresBackend{DSN: raw, Topology: u.Query().Get("topology")}, nil
 	default:
-		return nil, fmt.Errorf("unsupported state backend scheme %q (use local, http, https, or s3)", u.Scheme)
+		return nil, fmt.Errorf("unsupported state backend scheme %q (use local, http, https, s3, sqlite, or postgres)", u.Scheme)
 	}
 }
 

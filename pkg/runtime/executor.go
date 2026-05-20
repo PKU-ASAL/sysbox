@@ -15,18 +15,27 @@ import (
 // Executor wires graph walking to provider calls. It holds references to
 // registered substrates (via substrate.Get) and updates state after each action.
 type Executor struct {
-	graph  *graph.Graph
-	state  *state.State
-	logger io.Writer
+	graph    *graph.Graph
+	state    *state.State
+	logger   io.Writer
+	recorder OperationRecorder
 }
 
 func NewExecutor(g *graph.Graph, s *state.State) *Executor {
-	return &Executor{graph: g, state: s, logger: os.Stdout}
+	return &Executor{graph: g, state: s, logger: os.Stdout, recorder: NoopRecorder{}}
 }
 
 // SetLogger redirects all apply/destroy log output (e.g. to capture it for
 // an API SSE stream). Defaults to os.Stdout.
 func (e *Executor) SetLogger(w io.Writer) { e.logger = w }
+
+func (e *Executor) SetRecorder(r OperationRecorder) {
+	if r == nil {
+		e.recorder = NoopRecorder{}
+		return
+	}
+	e.recorder = r
+}
 
 func (e *Executor) logf(format string, args ...any) {
 	fmt.Fprintf(e.logger, format, args...)

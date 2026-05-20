@@ -89,6 +89,65 @@ func (s *Server) handleGetState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
+func (s *Server) handleGetStateMetadata(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	mgr := state.NewManager(s.stateFile(topology))
+	meta, err := mgr.Metadata(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, meta)
+}
+
+func (s *Server) handleListStateSnapshots(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	backend := state.NewManager(s.stateFile(topology)).Backend()
+	snapshots, ok := backend.(state.SnapshotBackend)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"snapshots": []state.Snapshot{}})
+		return
+	}
+	items, err := snapshots.ListSnapshots(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"snapshots": items})
+}
+
+func (s *Server) handleRestoreStateSnapshot(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	snapshot := r.PathValue("snapshot")
+	if err := validatePathSegment(snapshot, "snapshot"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	backend := state.NewManager(s.stateFile(topology)).Backend()
+	snapshots, ok := backend.(state.SnapshotBackend)
+	if !ok {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("state backend does not support snapshots"))
+		return
+	}
+	if err := snapshots.RestoreSnapshot(r.Context(), snapshot); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "restored", "snapshot": snapshot})
+}
+
 // GET /v1/topologies/{topology}/plan
 func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
@@ -146,6 +205,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		}
 		exec := runtime.NewExecutor(g, st)
 		exec.SetLogger(run.logs)
+		exec.SetRecorder(runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology))
 		exec.Refresh(context.Background(), plan)
 		if !plan.HasChanges() {
 			_, _ = run.logs.Write([]byte("No changes. Apply is a no-op.\n"))
@@ -153,6 +213,9 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = run.logs.Write([]byte(plan.Summary() + "\n"))
+		if snap, err := mgr.Snapshot(context.Background(), "before apply "+run.ID); err == nil && snap != nil {
+			_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
+		}
 		if err := exec.Apply(context.Background(), plan); err != nil {
 			if saveErr := mgr.Save(st); saveErr != nil {
 				_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
@@ -221,6 +284,10 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		plan := &runtime.Plan{Destroy: append([]state.Resource(nil), st.Resources...)}
 		exec := runtime.NewExecutor(graph.New(), st)
 		exec.SetLogger(run.logs)
+		exec.SetRecorder(runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology))
+		if snap, err := mgr.Snapshot(context.Background(), "before destroy "+run.ID); err == nil && snap != nil {
+			_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
+		}
 		if err := exec.Destroy(context.Background(), plan); err != nil {
 			if saveErr := mgr.Save(st); saveErr != nil {
 				_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
@@ -254,6 +321,27 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, run)
 }
 
+func (s *Server) handleGetRunCheckpoint(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := validatePathSegment(id, "id"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run, ok := s.jobs.get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
+		return
+	}
+	data, err := os.ReadFile(s.checkpointFile(run.Topology, run.ID))
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Errorf("checkpoint not found"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
 // GET /v1/runs/{id}/logs  — SSE stream
 func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -284,6 +372,10 @@ func (s *Server) stateFile(topology string) string {
 	return filepath.Join(s.runsDir, topology, "state.json")
 }
 
+func (s *Server) checkpointFile(topology, runID string) string {
+	return filepath.Join(s.runsDir, topology, "runs", runID+".checkpoint.json")
+}
+
 func (s *Server) loadState(topology string) (*state.State, error) {
 	f := s.stateFile(topology)
 	if _, err := os.Stat(f); err != nil {
@@ -310,6 +402,7 @@ func planJSON(p *runtime.Plan) map[string]any {
 		"add":     add,
 		"destroy": destroy,
 		"change":  change,
+		"actions": p.Actions,
 	}
 }
 

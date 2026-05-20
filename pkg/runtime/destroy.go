@@ -22,6 +22,12 @@ import (
 // Resources with lifecycle.prevent_destroy = true are listed in plan.Protected
 // and are silently skipped (a warning is printed to stderr).
 func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
+	if err := e.recorder.Begin("destroy", plan); err != nil {
+		return err
+	}
+	var destroyErr error
+	defer func() { e.recorder.Finish(destroyErr) }()
+
 	for _, r := range plan.Protected {
 		fmt.Fprintf(logWriter(e), "[lifecycle] skipping destroy of %s.%s (prevent_destroy = true)\n", r.Type, r.Name)
 	}
@@ -36,7 +42,8 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 	if len(e.graph.All()) > 0 {
 		topoOrder, err := e.graph.ReverseTopoSort()
 		if err != nil {
-			return fmt.Errorf("topo sort for destroy: %w", err)
+			destroyErr = fmt.Errorf("topo sort for destroy: %w", err)
+			return destroyErr
 		}
 		destroyOrder = topoOrder
 	} else {
@@ -59,10 +66,14 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 			continue
 		}
 		e.logf("[destroy] removing %s.%s\n", r.Type, r.Name)
+		step := e.recorder.StepStart(id.String(), PlanActionDelete)
 		if err := e.DestroyResource(ctx, *r); err != nil {
 			e.logf("[destroy] warning: destroy %s.%s failed: %v\n", r.Type, r.Name, err)
+			e.recorder.StepFailed(step, err)
 			// Continue destroying remaining resources instead of aborting.
 			// A single failure should not prevent cleanup of other resources.
+		} else {
+			e.recorder.StepDone(step)
 		}
 	}
 	return nil

@@ -12,6 +12,7 @@ import (
 )
 
 const desiredHashKey = "desired_hash"
+const desiredPayloadKey = "desired"
 
 // desiredHash returns a stable hash of the user-facing desired configuration
 // for a graph node. It deliberately excludes realized provider state such as
@@ -129,6 +130,8 @@ func setDesiredHash(n *graph.Node, inst map[string]any) error {
 		return err
 	}
 	inst[desiredHashKey] = h
+	payload, _ := desiredPayload(n)
+	inst[desiredPayloadKey] = payload
 	return nil
 }
 
@@ -137,4 +140,72 @@ func stateDesiredHash(r *state.Resource) string {
 		return ""
 	}
 	return r.Str(desiredHashKey)
+}
+
+func diffDesiredState(n *graph.Node, r *state.Resource) (map[string]FieldChange, string) {
+	if n == nil || r == nil {
+		return nil, "resource changed"
+	}
+	after, ignore := desiredPayload(n)
+	for _, field := range ignore {
+		delete(after, field)
+	}
+	before, _ := r.Instance[desiredPayloadKey].(map[string]any)
+	if before == nil {
+		return nil, "desired configuration hash changed"
+	}
+	changes := map[string]FieldChange{}
+	keys := map[string]bool{}
+	for k := range before {
+		keys[k] = true
+	}
+	for k := range after {
+		keys[k] = true
+	}
+	schema := ResourceSchemaFor(n.ID.Type)
+	for k := range keys {
+		if schema.IgnoreChanges[k] {
+			continue
+		}
+		if jsonEqual(before[k], after[k]) {
+			continue
+		}
+		attr := schema.Attribute(k)
+		changes[k] = FieldChange{
+			Before:          redactIfSensitive(before[k], attr.Sensitive),
+			After:           redactIfSensitive(after[k], attr.Sensitive),
+			RequiresReplace: attr.RequiresReplace,
+			Sensitive:       attr.Sensitive,
+			Computed:        attr.Computed,
+		}
+	}
+	if len(changes) == 0 {
+		return nil, "desired configuration hash changed"
+	}
+	if anyInPlace(changes) {
+		return changes, "desired configuration changed"
+	}
+	return changes, "desired configuration changed; replacement required"
+}
+
+func jsonEqual(a, b any) bool {
+	aj, _ := json.Marshal(a)
+	bj, _ := json.Marshal(b)
+	return string(aj) == string(bj)
+}
+
+func anyInPlace(changes map[string]FieldChange) bool {
+	for _, ch := range changes {
+		if !ch.RequiresReplace {
+			return true
+		}
+	}
+	return false
+}
+
+func redactIfSensitive(v any, sensitive bool) any {
+	if sensitive {
+		return "(sensitive)"
+	}
+	return v
 }

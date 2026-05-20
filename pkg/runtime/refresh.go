@@ -38,9 +38,10 @@ func (e *Executor) Refresh(ctx context.Context, plan *Plan) {
 		if healthy {
 			stillOK = append(stillOK, id)
 		} else {
-			e.logf("[refresh] %s: drifted — will re-create\n", id)
+			e.logf("[refresh] %s: drifted - will re-create\n", id)
 			changed[id] = true
 			plan.Change = append(plan.Change, id)
+			plan.setAction(id, PlanActionReplace, "runtime drift detected", nil)
 		}
 	}
 	plan.Unchanged = stillOK
@@ -69,7 +70,8 @@ func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[graph.NodeID
 					changed[id] = true
 					delete(unchanged, id)
 					plan.Change = append(plan.Change, id)
-					e.logf("[refresh] %s: dependency %s changed — will re-create\n", id, dep)
+					plan.setAction(id, PlanActionReplace, "dependency "+dep.String()+" changed", nil)
+					e.logf("[refresh] %s: dependency %s changed - will re-create\n", id, dep)
 					progress = true
 					break
 				}
