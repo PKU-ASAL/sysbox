@@ -120,8 +120,15 @@ docker-seed: ## Copy examples into API-owned data/workspaces if missing
 	    fi; \
 	done
 
-docker-up: docker-build docker-seed ## Start sysbox-api container (Docker substrate only)
-	docker compose up -d
+docker-up: docker-build docker-seed ## Start sysbox-api container (auto-enable Firecracker when available)
+	@if [ -n "$${SYSBOX_FIRECRACKER_BIN:-}" ] || command -v firecracker >/dev/null 2>&1; then \
+	    fc_bin="$${SYSBOX_FIRECRACKER_BIN:-$$(command -v firecracker)}"; \
+	    echo "Firecracker detected: $$fc_bin"; \
+	    SYSBOX_FIRECRACKER_BIN="$$fc_bin" docker compose -f docker-compose.yml -f docker-compose.firecracker.yml up -d; \
+	else \
+	    echo "Firecracker not detected; starting Docker substrate only."; \
+	    docker compose up -d; \
+	fi
 	@echo "API server: http://localhost:9876/v1/health"
 
 docker-up-fc: docker-build docker-seed ## Start sysbox-api with Firecracker override (set SYSBOX_FIRECRACKER_BIN)
