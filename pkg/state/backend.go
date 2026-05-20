@@ -60,6 +60,9 @@ func (b *LocalBackend) Save(_ context.Context, data []byte) error {
 }
 
 func (b *LocalBackend) Lock(ctx context.Context) (UnlockFunc, error) {
+	if err := os.MkdirAll(filepath.Dir(b.Path), 0o755); err != nil {
+		return nil, fmt.Errorf("create state dir: %w", err)
+	}
 	lock := flock.New(b.Path + ".lock")
 	timeout := defaultLockTimeout
 	if dl, ok := ctx.Deadline(); ok {

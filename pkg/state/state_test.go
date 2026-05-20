@@ -91,6 +91,16 @@ func TestManagerSaveLoad(t *testing.T) {
 	require.Len(t, loaded.Resources, 1)
 }
 
+func TestManagerSaveCreatesNestedStateDirBeforeLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs", "two-networks", "state.json")
+	mgr := NewManager(path)
+
+	s := &State{Version: SchemaVersion, RunID: "r1"}
+
+	require.NoError(t, mgr.Save(s))
+	require.FileExists(t, path)
+}
+
 func TestManagerLoadMissingReturnsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(filepath.Join(dir, "state.json"))
