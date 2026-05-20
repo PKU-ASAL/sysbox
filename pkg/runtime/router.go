@@ -108,6 +108,9 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 	if lc := cfg.Lifecycle; lc != nil {
 		inst["lifecycle_prevent_destroy"] = lc.PreventDestroy
 	}
+	if err := setDesiredHash(n, inst); err != nil {
+		return err
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_router",
 		Name:     n.ID.Name,

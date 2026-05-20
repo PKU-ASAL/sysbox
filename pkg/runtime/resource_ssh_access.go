@@ -8,7 +8,6 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
-	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -27,22 +26,14 @@ func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("node %s not applied yet", nodeName)
 	}
 
-	containerID := nodeState.ContainerID()
-	handle := substrate.NodeHandle{
-		ID: containerID,
-		Provider: &dockerprovider.HandleState{
-			ContainerName: fmt.Sprintf("sysbox-%s", nodeName),
-		},
-		Conn: substrate.ConnInfo{
-			Kind:     substrate.ConnKindDocker,
-			Endpoint: containerID,
-		},
-	}
-
 	subName := nodeState.Provider
 	sub, err := substrate.Get(subName)
 	if err != nil {
 		return err
+	}
+	handle, err := nodeState.ReconstructHandle(sub)
+	if err != nil {
+		return fmt.Errorf("sysbox_ssh_access: %w", err)
 	}
 
 	conn, err := sub.Connection(handle, nil)
@@ -59,16 +50,20 @@ func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("setup ssh access on %s: %w", nodeName, err)
 	}
 
+	inst := map[string]any{
+		"node":         nodeName,
+		"port":         port,
+		"container_id": handle.ID,
+		"key_count":    len(cfg.AuthorizedKeys),
+	}
+	if err := setDesiredHash(n, inst); err != nil {
+		return err
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_ssh_access",
 		Name:     n.ID.Name,
 		Provider: subName,
-		Instance: map[string]any{
-			"node":         nodeName,
-			"port":         port,
-			"container_id": containerID,
-			"key_count":    len(cfg.AuthorizedKeys),
-		},
+		Instance: inst,
 	})
 	return nil
 }

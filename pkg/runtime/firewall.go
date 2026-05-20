@@ -40,16 +40,20 @@ func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
 		return fmt.Errorf("firewall %s: %w", n.ID.Name, err)
 	}
 
+	inst := map[string]any{
+		"attach_to":  netName,
+		"netns":      nsName,
+		"rules":      len(specs),
+		"rule_specs": specs,
+	}
+	if err := setDesiredHash(n, inst); err != nil {
+		return err
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_firewall",
 		Name:     n.ID.Name,
 		Provider: "network",
-		Instance: map[string]any{
-			"attach_to":  netName,
-			"netns":      nsName,
-			"rules":      len(specs),
-			"rule_specs": specs,
-		},
+		Instance: inst,
 	})
 	return nil
 }

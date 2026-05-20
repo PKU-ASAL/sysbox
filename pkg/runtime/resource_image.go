@@ -64,16 +64,20 @@ func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
+	inst := map[string]any{
+		"image_id":   ref.ID,
+		"repository": ref.Repository,
+		"source":     cfg.Rootfs + cfg.QCow2,
+		"sha256":     resolvedSHA,
+	}
+	if err := setDesiredHash(n, inst); err != nil {
+		return err
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_image",
 		Name:     n.ID.Name,
 		Provider: subName,
-		Instance: map[string]any{
-			"image_id":   ref.ID,
-			"repository": ref.Repository,
-			"source":     cfg.Rootfs + cfg.QCow2,
-			"sha256":     resolvedSHA,
-		},
+		Instance: inst,
 	})
 	return nil
 }

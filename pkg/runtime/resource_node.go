@@ -29,6 +29,10 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	if err != nil {
 		return err
 	}
+	nodeDesiredHash, err := desiredHash(n)
+	if err != nil {
+		return err
+	}
 
 	imageName := config.ResolveName(cfg.Image)
 	imgState := e.state.FindResource("sysbox_image", imageName)
@@ -117,6 +121,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
 		nodeInstance["provider_extra"] = string(blob)
 	}
+	nodeInstance[desiredHashKey] = nodeDesiredHash
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_node",
 		Name:     n.ID.Name,
@@ -217,13 +222,10 @@ func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
 	if err != nil {
 		return err
 	}
-	handle := substrate.NodeHandle{ID: r.Str("container_id")}
-	// Reconstruct provider-specific state (vm_dir, vsock metadata, etc.) so
-	// cold destroys after a process restart can clean up properly.
-	if blob := r.Str("provider_extra"); blob != "" {
-		if p, err := sub.UnmarshalProviderState([]byte(blob)); err == nil {
-			handle.Provider = p
-		}
+	handle, err := r.ReconstructHandle(sub)
+	if err != nil {
+		e.logf("[destroy] warning: reconstruct node %s: %v\n", r.Name, err)
+		handle = substrate.NodeHandle{ID: r.ContainerID()}
 	}
 	// Ignore stop/destroy errors: container may already be gone (drift recovery).
 	if err := sub.StopNode(ctx, handle); err != nil {

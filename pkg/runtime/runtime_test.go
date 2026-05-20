@@ -57,6 +57,64 @@ func TestPlanPassesThroughUnchanged(t *testing.T) {
 	require.Len(t, plan.Unchanged, 1)
 }
 
+func TestPlanDetectsDesiredHashChange(t *testing.T) {
+	g := graph.New()
+	n := g.AddNode("sysbox_network", "dmz", nil)
+	n.Data = &config.NetworkConfig{CIDR: "10.0.1.0/24"}
+	oldHash, err := desiredHash(n)
+	require.NoError(t, err)
+
+	n.Data = &config.NetworkConfig{CIDR: "10.0.2.0/24"}
+	s := &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{
+			{
+				Type:     "sysbox_network",
+				Name:     "dmz",
+				Provider: "network",
+				Instance: map[string]any{
+					"cidr":         "10.0.1.0/24",
+					desiredHashKey: oldHash,
+				},
+			},
+		},
+	}
+
+	plan, err := ComputePlan(g, s)
+	require.NoError(t, err)
+	require.Empty(t, plan.Add)
+	require.Empty(t, plan.Destroy)
+	require.Empty(t, plan.Unchanged)
+	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, plan.Change)
+}
+
+func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {
+	g := graph.New()
+	n := g.AddNode("sysbox_network", "dmz", nil)
+	n.Data = &config.NetworkConfig{CIDR: "10.0.1.0/24"}
+	hash, err := desiredHash(n)
+	require.NoError(t, err)
+
+	s := &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{
+			{
+				Type:     "sysbox_network",
+				Name:     "dmz",
+				Provider: "network",
+				Instance: map[string]any{desiredHashKey: hash},
+			},
+		},
+	}
+
+	plan, err := ComputePlan(g, s)
+	require.NoError(t, err)
+	require.Empty(t, plan.Add)
+	require.Empty(t, plan.Destroy)
+	require.Empty(t, plan.Change)
+	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, plan.Unchanged)
+}
+
 func TestPlanSummary(t *testing.T) {
 	p := &Plan{
 		Add:       []graph.NodeID{{Type: "x", Name: "y"}},

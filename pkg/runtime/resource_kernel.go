@@ -37,16 +37,20 @@ func (e *Executor) createKernel(_ context.Context, n *graph.Node) error {
 		e.logf("[apply] kernel %s: fetched to %s\n", n.ID.Name, res.Path)
 	}
 
+	inst := map[string]any{
+		"path":             res.Path,
+		"source":           cfg.Source,
+		"sha256":           res.SHA256,
+		"cmdline_template": cfg.CmdlineTemplate,
+	}
+	if err := setDesiredHash(n, inst); err != nil {
+		return err
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_kernel",
 		Name:     n.ID.Name,
 		Provider: subName,
-		Instance: map[string]any{
-			"path":             res.Path,
-			"source":           cfg.Source,
-			"sha256":           res.SHA256,
-			"cmdline_template": cfg.CmdlineTemplate,
-		},
+		Instance: inst,
 	})
 	return nil
 }

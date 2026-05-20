@@ -24,8 +24,6 @@ type Plan struct {
 }
 
 // ComputePlan diffs the graph vs state.
-// Phase 1 simplification: no "Change" detection; any resource present in
-// both is Unchanged. Phase 2 adds drift detection.
 //
 // Resources with lifecycle.prevent_destroy = true that would otherwise be
 // destroyed (removed from HCL) are moved to Unchanged and noted in
@@ -47,6 +45,20 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 		if !inState[id] {
 			p.Add = append(p.Add, id)
 		} else {
+			n := g.Get(id.Type, id.Name)
+			r := s.FindResource(id.Type, id.Name)
+			// Older state files do not have desired_hash. Treat them as
+			// unchanged so users are not forced to rebuild every existing lab.
+			if r != nil && stateDesiredHash(r) != "" {
+				want, err := desiredHash(n)
+				if err != nil {
+					return nil, err
+				}
+				if want != stateDesiredHash(r) {
+					p.Change = append(p.Change, id)
+					continue
+				}
+			}
 			p.Unchanged = append(p.Unchanged, id)
 		}
 	}

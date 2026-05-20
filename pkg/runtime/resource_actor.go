@@ -53,14 +53,6 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	if err != nil {
 		return fmt.Errorf("actor %s: %w", n.ID.Name, err)
 	}
-	// Populate connection info from state if available.
-	if handle.ID != "" {
-		handle.Conn = substrate.ConnInfo{
-			Kind:     substrate.ConnKindDocker,
-			Endpoint: handle.ID,
-		}
-	}
-
 	e.logf("[apply] starting actor %s on node %s: %v\n", n.ID.Name, nodeName, cfg.Command)
 	conn, err := sub.Connection(handle, nil)
 	if err != nil {
@@ -83,20 +75,24 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 		}
 	}
 
+	inst := map[string]any{
+		"position":     "internal",
+		"node":         nodeName,
+		"container_id": handle.ID,
+		"pid":          pid,
+		"port":         cfg.Port,
+		"acp_url":      acpURL,
+		"entry_points": cfg.EntryPoints,
+		"command":      cfg.Command,
+	}
+	if err := setDesiredHash(n, inst); err != nil {
+		return err
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_actor",
 		Name:     n.ID.Name,
 		Provider: subName,
-		Instance: map[string]any{
-			"position":     "internal",
-			"node":         nodeName,
-			"container_id": handle.ID,
-			"pid":          pid,
-			"port":         cfg.Port,
-			"acp_url":      acpURL,
-			"entry_points": cfg.EntryPoints,
-			"command":      cfg.Command,
-		},
+		Instance: inst,
 	})
 	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.ID.Name, pid, acpURL)
 	return nil
@@ -205,20 +201,27 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		}
 	}
 
+	inst := map[string]any{
+		"position":       "external",
+		"container_id":   handle.ID,
+		"container_name": containerName,
+		"pid":            pid,
+		"port":           cfg.Port,
+		"acp_url":        acpURL,
+		"entry_points":   cfg.EntryPoints,
+		"command":        cfg.Command,
+	}
+	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+		inst["provider_extra"] = string(blob)
+	}
+	if err := setDesiredHash(n, inst); err != nil {
+		return err
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_actor",
 		Name:     n.ID.Name,
 		Provider: "docker",
-		Instance: map[string]any{
-			"position":       "external",
-			"container_id":   handle.ID,
-			"container_name": containerName,
-			"pid":            pid,
-			"port":           cfg.Port,
-			"acp_url":        acpURL,
-			"entry_points":   cfg.EntryPoints,
-			"command":        cfg.Command,
-		},
+		Instance: inst,
 	})
 	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.ID.Name, pid, acpURL)
 	return nil
@@ -236,11 +239,10 @@ func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
 	}
 
 	if pid > 0 && containerID != "" {
-		handle := substrate.NodeHandle{ID: containerID}
-		if blob := r.Str("provider_extra"); blob != "" {
-			if p, err := sub.UnmarshalProviderState([]byte(blob)); err == nil {
-				handle.Provider = p
-			}
+		handle, err := r.ReconstructHandle(sub)
+		if err != nil {
+			e.logf("[destroy] warning: reconstruct actor %s: %v\n", r.Name, err)
+			handle = substrate.NodeHandle{ID: containerID}
 		}
 		// Kill the entire process group so child processes are also
 		// terminated (e.g. opencode-serve spawns sub-processes).
@@ -252,7 +254,11 @@ func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
 
 	// External actors own their container; destroy it entirely.
 	if position == "external" && containerID != "" {
-		handle := substrate.NodeHandle{ID: containerID}
+		handle, err := r.ReconstructHandle(sub)
+		if err != nil {
+			e.logf("[destroy] warning: reconstruct actor %s: %v\n", r.Name, err)
+			handle = substrate.NodeHandle{ID: containerID}
+		}
 		if err := sub.StopNode(ctx, handle); err != nil {
 			e.logf("[destroy] warning: stop actor %s: %v\n", r.Name, err)
 		}

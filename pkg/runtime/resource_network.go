@@ -51,6 +51,9 @@ func (e *Executor) createNetwork(ctx context.Context, n *graph.Node) error {
 	if lc := cfg.Lifecycle; lc != nil {
 		inst["lifecycle_prevent_destroy"] = lc.PreventDestroy
 	}
+	if err := setDesiredHash(n, inst); err != nil {
+		return err
+	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_network",
 		Name:     n.ID.Name,
@@ -94,6 +97,9 @@ func (e *Executor) createNATNetwork(ctx context.Context, n *graph.Node, cfg *con
 	}
 	if lc := cfg.Lifecycle; lc != nil {
 		natInst["lifecycle_prevent_destroy"] = lc.PreventDestroy
+	}
+	if err := setDesiredHash(n, natInst); err != nil {
+		return err
 	}
 	e.state.AddResource(state.Resource{
 		Type:     "sysbox_network",
