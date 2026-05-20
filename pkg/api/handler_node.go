@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 // maxBodyBytes limits request body size to 1MB across all API handlers
@@ -117,12 +119,20 @@ func (s *Server) handleNodeExec(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Transfer-Encoding", "chunked")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if err := conn.ExecStream(r.Context(), body.Cmd, w, w); err != nil {
+	if err := conn.ExecStream(r.Context(), []string{shellCommand(body.Cmd)}, w, w); err != nil {
 		fmt.Fprintf(w, "\nerror: %v\n", err)
 	}
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+func shellCommand(argv []string) string {
+	parts := make([]string, 0, len(argv))
+	for _, arg := range argv {
+		parts = append(parts, util.ShellQuote(arg))
+	}
+	return strings.Join(parts, " ")
 }
 
 // nodeConnection rebuilds a substrate.Connection from persisted state.
