@@ -6,7 +6,8 @@
 #
 # Prerequisites:
 #   - firecracker binary in PATH
-#   - SYSBOX_ROOTFS set, or default ~/.cache/sysbox/rootfs/ubuntu-24.04.ext4
+#   - SYSBOX_ROOTFS set, or default $SYSBOX_CACHE/rootfs/ubuntu-24.04.ext4
+#     when running in the API container, otherwise ~/.cache/sysbox/rootfs/ubuntu-24.04.ext4
 #   - sysbox-attacker:latest image (built by lab.sh)
 #
 # Usage:
@@ -25,7 +26,7 @@ substrate "firecracker" {
 # ── Locals ──────────────────────────────────────────────────────────────────
 
 locals {
-  rootfs_path = env("SYSBOX_ROOTFS") != "" ? env("SYSBOX_ROOTFS") : "${env("HOME")}/.cache/sysbox/rootfs/ubuntu-24.04.ext4"
+  rootfs_path = env("SYSBOX_ROOTFS") != "" ? env("SYSBOX_ROOTFS") : (env("SYSBOX_CACHE") != "" ? "${env("SYSBOX_CACHE")}/rootfs/ubuntu-24.04.ext4" : "${env("HOME")}/.cache/sysbox/rootfs/ubuntu-24.04.ext4")
 }
 
 # ── Kernel + Images ─────────────────────────────────────────────────────────

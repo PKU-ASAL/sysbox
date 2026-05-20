@@ -5,7 +5,8 @@
 # Prerequisites:
 #   - firecracker binary in PATH
 #   - mkfs.ext4 + losetup (for sysbox-init's config drive)
-#   - SYSBOX_ROOTFS set, or default ~/.cache/sysbox/rootfs/ubuntu-24.04.ext4
+#   - SYSBOX_ROOTFS set, or default $SYSBOX_CACHE/rootfs/ubuntu-24.04.ext4
+#     when running in the API container, otherwise ~/.cache/sysbox/rootfs/ubuntu-24.04.ext4
 #
 # Usage:
 #   sudo -E make lab SUITE=microvm
@@ -22,14 +23,17 @@ substrate "docker" {
 
 # ── Locals ──────────────────────────────────────────────────────────────────
 #
-# rootfs_path follows the same default as scripts/prepare-fc-rootfs.sh:
-#   $SYSBOX_ROOTFS  (override)  →  $HOME/.cache/sysbox/rootfs/ubuntu-24.04.ext4
+# rootfs_path follows the same default as scripts/prepare-fc-rootfs.sh for
+# local CLI usage, while API/docker-compose can use the mounted SYSBOX_CACHE:
+#   $SYSBOX_ROOTFS  (override)
+#   $SYSBOX_CACHE/rootfs/ubuntu-24.04.ext4
+#   $HOME/.cache/sysbox/rootfs/ubuntu-24.04.ext4
 #
 # When running with sudo, pass `sudo -E` so $HOME (and SYSBOX_ROOTFS if set)
 # survive into the sysbox process; otherwise root's $HOME is used.
 
 locals {
-  rootfs_path = env("SYSBOX_ROOTFS") != "" ? env("SYSBOX_ROOTFS") : "${env("HOME")}/.cache/sysbox/rootfs/ubuntu-24.04.ext4"
+  rootfs_path = env("SYSBOX_ROOTFS") != "" ? env("SYSBOX_ROOTFS") : (env("SYSBOX_CACHE") != "" ? "${env("SYSBOX_CACHE")}/rootfs/ubuntu-24.04.ext4" : "${env("HOME")}/.cache/sysbox/rootfs/ubuntu-24.04.ext4")
 }
 
 # ── Kernel + Images ─────────────────────────────────────────────────────────
