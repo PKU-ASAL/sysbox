@@ -25,6 +25,7 @@ type OperationStep struct {
 	Provider      string            `json:"provider,omitempty"`
 	ExternalID    string            `json:"external_id,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
+	StateResource *StateResourceLog `json:"state_resource,omitempty"`
 	StateRecorded bool              `json:"state_recorded,omitempty"`
 	Status        OperationStatus   `json:"status"`
 	StartedAt     time.Time         `json:"started_at"`
@@ -46,6 +47,13 @@ type OperationCheckpoint struct {
 	Steps             []OperationStep `json:"steps"`
 }
 
+type StateResourceLog struct {
+	Type     string         `json:"type"`
+	Name     string         `json:"name"`
+	Provider string         `json:"provider"`
+	Instance map[string]any `json:"instance"`
+}
+
 type OperationRecorder interface {
 	Begin(operation string, plan *Plan) error
 	StepStart(resource string, action PlanActionType) int
@@ -57,6 +65,7 @@ type OperationRecorder interface {
 	SetStateSerialAfter(serial int64)
 	StepStartKind(kind, resource string, action PlanActionType) int
 	StepExternal(index int, provider, externalID string, labels map[string]string)
+	StepStateResource(index int, resource StateResourceLog)
 	StepStateRecorded(index int)
 	MarkResourceStateRecorded()
 }
@@ -75,6 +84,7 @@ func (NoopRecorder) StepStartKind(string, string, PlanActionType) int {
 	return -1
 }
 func (NoopRecorder) StepExternal(int, string, string, map[string]string) {}
+func (NoopRecorder) StepStateResource(int, StateResourceLog)             {}
 func (NoopRecorder) StepStateRecorded(int)                               {}
 func (NoopRecorder) MarkResourceStateRecorded()                          {}
 
@@ -184,6 +194,22 @@ func (r *FileRecorder) StepExternal(index int, provider, externalID string, labe
 	_ = r.flushLocked()
 }
 
+func (r *FileRecorder) StepStateResource(index int, resource StateResourceLog) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if index < 0 || index >= len(r.checkpoint.Steps) {
+		return
+	}
+	copied := StateResourceLog{
+		Type:     resource.Type,
+		Name:     resource.Name,
+		Provider: resource.Provider,
+		Instance: cloneAnyMap(resource.Instance),
+	}
+	r.checkpoint.Steps[index].StateResource = &copied
+	_ = r.flushLocked()
+}
+
 func (r *FileRecorder) StepStateRecorded(index int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -224,6 +250,17 @@ func (r *FileRecorder) finishStep(index int, err error) {
 
 func cloneLabels(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
 	for k, v := range in {
 		out[k] = v
 	}

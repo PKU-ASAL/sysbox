@@ -494,6 +494,35 @@ func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, report)
 }
 
+func (s *Server) handleRecoverRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := validatePathSegment(id, "id"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run, ok := s.jobs.get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
+		return
+	}
+	if run.Status == RunRunning {
+		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
+		return
+	}
+	mgr, err := s.stateManager(run.Topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	owner := fmt.Sprintf("sysbox-api:recover:%s", run.ID)
+	report, err := recoverCheckpointDocker(r.Context(), s.checkpointFile(run.Topology, run.ID), mgr, owner)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
 func (s *Server) handleGetRunCheckpoint(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := validatePathSegment(id, "id"); err != nil {

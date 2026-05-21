@@ -51,6 +51,12 @@ func (e *Executor) recordStepExternal(step int, id graph.NodeID) {
 	}
 	externalID := resourceExternalID(*r)
 	e.recorder.StepExternal(step, r.Provider, externalID, ManagedLabels(e.topology, e.runID, id))
+	e.recorder.StepStateResource(step, StateResourceLog{
+		Type:     r.Type,
+		Name:     r.Name,
+		Provider: r.Provider,
+		Instance: r.Instance,
+	})
 }
 
 func resourceExternalID(r state.Resource) string {
