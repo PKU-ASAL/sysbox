@@ -116,8 +116,6 @@ func TestThreeSubstrate(t *testing.T) {
 
 	// ── Outputs ───────────────────────────────────────────────────────────────
 
-	outCmd, err := run("output")
-	require.NoError(t, err, "output: %s", outCmd)
 	var expectedOutputs []string
 	if dockerOK {
 		expectedOutputs = append(expectedOutputs, "container_ip")
@@ -129,7 +127,12 @@ func TestThreeSubstrate(t *testing.T) {
 		expectedOutputs = append(expectedOutputs, "vm_ip")
 	}
 	for _, expect := range expectedOutputs {
-		require.Contains(t, string(outCmd), expect, "output missing %s", expect)
+		require.Contains(t, applyStr, expect, "apply output missing %s", expect)
+	}
+	if dockerOK {
+		outCmd, err := run("output", "sysbox_node.container.primary_ip")
+		require.NoError(t, err, "output primary_ip: %s", outCmd)
+		require.Contains(t, string(outCmd), "10.99.0.10")
 	}
 
 	// ── Idempotent re-apply ───────────────────────────────────────────────────
