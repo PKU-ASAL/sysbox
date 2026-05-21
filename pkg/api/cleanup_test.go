@@ -10,7 +10,7 @@ import (
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
-func TestCleanupCandidateRequiresDoneDockerUnrecordedResource(t *testing.T) {
+func TestCleanupCandidateRequiresDoneSupportedUnrecordedResource(t *testing.T) {
 	step := runtime.OperationStep{
 		Kind:     "resource",
 		Provider: "docker",
@@ -27,6 +27,16 @@ func TestCleanupCandidateRequiresDoneDockerUnrecordedResource(t *testing.T) {
 
 	step.Status = runtime.OperationDone
 	step.Provider = "firecracker"
+	require.False(t, cleanupCandidate(step))
+
+	step.StateResource = &runtime.StateResourceLog{Type: "sysbox_node", Name: "vm", Provider: "firecracker"}
+	require.True(t, cleanupCandidate(step))
+
+	step.Provider = "network"
+	step.StateResource = &runtime.StateResourceLog{Type: "sysbox_network", Name: "lan", Provider: "network"}
+	require.True(t, cleanupCandidate(step))
+
+	step.Provider = "libvirt"
 	require.False(t, cleanupCandidate(step))
 }
 

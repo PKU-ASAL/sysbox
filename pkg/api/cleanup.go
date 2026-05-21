@@ -5,13 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
+	dockernet "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
+	netprovider "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 type CleanupReport struct {
@@ -19,6 +24,7 @@ type CleanupReport struct {
 	Topology   string          `json:"topology,omitempty"`
 	Containers []CleanupAction `json:"containers,omitempty"`
 	Networks   []CleanupAction `json:"networks,omitempty"`
+	MicroVMs   []CleanupAction `json:"microvms,omitempty"`
 }
 
 type CleanupAction struct {
@@ -28,7 +34,7 @@ type CleanupAction struct {
 	Error      string `json:"error,omitempty"`
 }
 
-func cleanupCheckpointDocker(ctx context.Context, checkpointPath string) (*CleanupReport, error) {
+func cleanupCheckpoint(ctx context.Context, checkpointPath string) (*CleanupReport, error) {
 	raw, err := os.ReadFile(checkpointPath)
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint: %w", err)
@@ -38,27 +44,37 @@ func cleanupCheckpointDocker(ctx context.Context, checkpointPath string) (*Clean
 		return nil, fmt.Errorf("decode checkpoint: %w", err)
 	}
 
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return nil, fmt.Errorf("docker client: %w", err)
-	}
-	defer cli.Close()
-
 	report := &CleanupReport{RunID: cp.RunID, Topology: cp.Topology}
+	var cli *client.Client
+	defer func() {
+		if cli != nil {
+			_ = cli.Close()
+		}
+	}()
 	for i := len(cp.Steps) - 1; i >= 0; i-- {
 		step := cp.Steps[i]
 		if !cleanupCandidate(step) {
 			continue
 		}
-		switch step.Resource {
-		case "state":
-			continue
+		switch step.Provider {
+		case "docker":
+			if cli == nil {
+				var err error
+				cli, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+				if err != nil {
+					return nil, fmt.Errorf("docker client: %w", err)
+				}
+			}
+			if isDockerNetworkStep(step) {
+				report.Networks = append(report.Networks, cleanupDockerNetwork(ctx, cli, step))
+				continue
+			}
+			report.Containers = append(report.Containers, cleanupDockerContainer(ctx, cli, step))
+		case "network":
+			report.Networks = append(report.Networks, cleanupLocalNetwork(step))
+		case "firecracker":
+			report.MicroVMs = append(report.MicroVMs, cleanupFirecrackerNode(ctx, step))
 		}
-		if isDockerNetworkStep(step) {
-			report.Networks = append(report.Networks, cleanupDockerNetwork(ctx, cli, step))
-			continue
-		}
-		report.Containers = append(report.Containers, cleanupDockerContainer(ctx, cli, step))
 	}
 	return report, nil
 }
@@ -66,8 +82,19 @@ func cleanupCheckpointDocker(ctx context.Context, checkpointPath string) (*Clean
 func cleanupCandidate(step runtime.OperationStep) bool {
 	return step.Kind == "resource" &&
 		step.Status == runtime.OperationDone &&
-		step.Provider == "docker" &&
-		!step.StateRecorded
+		!step.StateRecorded &&
+		cleanupProviderSupported(step)
+}
+
+func cleanupProviderSupported(step runtime.OperationStep) bool {
+	switch step.Provider {
+	case "docker":
+		return true
+	case "firecracker", "network":
+		return step.StateResource != nil
+	default:
+		return false
+	}
 }
 
 func isDockerNetworkStep(step runtime.OperationStep) bool {
@@ -115,7 +142,7 @@ func cleanupDockerNetwork(ctx context.Context, cli *client.Client, step runtime.
 	id := step.ExternalID
 	if id == "" {
 		found, err := findDockerObjectByLabels(ctx, step.Labels, func(args filters.Args) ([]string, error) {
-			items, err := cli.NetworkList(ctx, network.ListOptions{Filters: args})
+			items, err := cli.NetworkList(ctx, dockernet.ListOptions{Filters: args})
 			if err != nil {
 				return nil, err
 			}
@@ -144,6 +171,127 @@ func cleanupDockerNetwork(ctx context.Context, cli *client.Client, step runtime.
 	}
 	action.Status = "removed"
 	return action
+}
+
+func cleanupLocalNetwork(step runtime.OperationStep) CleanupAction {
+	action := CleanupAction{Resource: step.Resource, ExternalID: step.ExternalID}
+	if step.StateResource == nil {
+		action.Status = "missing_state_resource"
+		return action
+	}
+	res := stateResourceFromLog(*step.StateResource)
+	nsName := res.Str("netns")
+	brName := res.Str("bridge")
+	action.ExternalID = nsName
+	if nsName == "" {
+		action.Status = "missing_netns"
+		return action
+	}
+	if !netprovider.NetnsExists(nsName) {
+		action.Status = "not_found"
+		return action
+	}
+	if brName != "" {
+		if err := netprovider.DeleteBridge(netprovider.BridgeConfig{NetnsName: nsName, BridgeName: brName}); err != nil {
+			action.Status = "error"
+			action.Error = err.Error()
+			return action
+		}
+	}
+	if err := netprovider.DeleteNetns(nsName); err != nil {
+		action.Status = "error"
+		action.Error = err.Error()
+		return action
+	}
+	action.Status = "removed"
+	return action
+}
+
+func cleanupFirecrackerNode(ctx context.Context, step runtime.OperationStep) CleanupAction {
+	action := CleanupAction{Resource: step.Resource, ExternalID: step.ExternalID}
+	if step.StateResource == nil {
+		action.Status = "missing_state_resource"
+		return action
+	}
+	res := stateResourceFromLog(*step.StateResource)
+	if !isNodeLikeResource(res.Type) {
+		action.Status = "unsupported_resource"
+		return action
+	}
+	if action.ExternalID == "" {
+		action.ExternalID = res.ContainerID()
+	}
+	sub, err := substrate.Get(res.Provider)
+	if err != nil {
+		action.Status = "error"
+		action.Error = err.Error()
+		return action
+	}
+	handle, err := res.ReconstructHandle(sub)
+	if err != nil {
+		action.Status = "error"
+		action.Error = err.Error()
+		return action
+	}
+	_ = sub.StopNode(ctx, handle)
+	if err := sub.DestroyNode(ctx, handle); err != nil {
+		action.Status = "error"
+		action.Error = err.Error()
+		return action
+	}
+	if err := cleanupAttachedNICs(res); err != nil {
+		action.Status = "error"
+		action.Error = err.Error()
+		return action
+	}
+	action.Status = "removed"
+	return action
+}
+
+func cleanupAttachedNICs(res state.Resource) error {
+	nics, ok := res.Instance["nics"].([]any)
+	if !ok {
+		return nil
+	}
+	var errs []string
+	for _, item := range nics {
+		n, _ := item.(map[string]any)
+		kind := util.AsString(n["kind"])
+		hostEnd := util.AsString(n["host_end"])
+		nsName := util.AsString(n["netns"])
+		switch kind {
+		case "tap":
+			if err := netprovider.DeleteTapDevice(hostEnd, nsName); err != nil {
+				errs = append(errs, err.Error())
+			}
+		case "veth":
+			if err := netprovider.DeleteVethPair(netprovider.VethHandle{HostEnd: hostEnd, NetnsName: nsName}); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func stateResourceFromLog(rec runtime.StateResourceLog) state.Resource {
+	return state.Resource{
+		Type:     rec.Type,
+		Name:     rec.Name,
+		Provider: rec.Provider,
+		Instance: cloneInstance(rec.Instance),
+	}
+}
+
+func isNodeLikeResource(resourceType string) bool {
+	switch resourceType {
+	case "sysbox_node", "sysbox_router", "sysbox_actor":
+		return true
+	default:
+		return false
+	}
 }
 
 func findDockerObjectByLabels(ctx context.Context, labels map[string]string, list func(filters.Args) ([]string, error)) (string, error) {

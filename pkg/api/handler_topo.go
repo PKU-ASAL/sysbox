@@ -486,7 +486,7 @@ func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
 		return
 	}
-	report, err := cleanupCheckpointDocker(r.Context(), s.checkpointFile(run.Topology, run.ID))
+	report, err := cleanupCheckpoint(r.Context(), s.checkpointFile(run.Topology, run.ID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -515,7 +515,7 @@ func (s *Server) handleRecoverRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner := fmt.Sprintf("sysbox-api:recover:%s", run.ID)
-	report, err := recoverCheckpointDocker(r.Context(), s.checkpointFile(run.Topology, run.ID), mgr, owner)
+	report, err := recoverCheckpoint(r.Context(), s.checkpointFile(run.Topology, run.ID), mgr, owner)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
