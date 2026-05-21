@@ -12,7 +12,7 @@ _SB    := $(BINARY) --state $(_STATE) -f $(_HCL)
 _LAB   := examples/$(TOPO)/lab.sh
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-all test lint ci plan up down lab lab-down logs \
+.PHONY: help build build-all test test-e2e lint ci plan up down lab lab-down logs \
         serve serve-restart serve-stop \
         docker-build docker-seed docker-up docker-up-fc docker-down docker-logs clean
 
@@ -42,6 +42,9 @@ $(INITDIR)/sysbox-init.linux-%.bin: \
 
 test: ## Unit tests
 	$(GO) test ./...
+
+test-e2e: ## E2E/integration tests (requires root for netns/firecracker paths)
+	$(GO) test -tags e2e ./pkg/api ./tests/e2e/...
 
 lint: ## go fmt + go vet
 	$(GO) fmt ./...

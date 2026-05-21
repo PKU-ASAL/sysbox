@@ -1,0 +1,181 @@
+//go:build e2e
+// +build e2e
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	fcprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
+	netprovider "github.com/oslab/sysbox/pkg/provider/network"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
+)
+
+func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
+	requireRootE2E(t)
+
+	nsName := "sysbox-e2e-recover-net"
+	brName := "br-e2erecover"
+	t.Cleanup(func() { _ = netprovider.DeleteNetns(nsName) })
+
+	require.NoError(t, netprovider.CreateNetns(nsName))
+	require.NoError(t, netprovider.CreateBridge(netprovider.BridgeConfig{
+		NetnsName:  nsName,
+		BridgeName: brName,
+		CIDR:       "10.251.0.1/24",
+	}))
+
+	dir := t.TempDir()
+	checkpointPath := filepath.Join(dir, "run.checkpoint.json")
+	statePath := filepath.Join(dir, "state.json")
+	writeCheckpointE2E(t, checkpointPath, runtime.OperationCheckpoint{
+		RunID:     "run-net",
+		Topology:  "e2e-net",
+		Operation: "apply",
+		Status:    runtime.OperationFailed,
+		Steps: []runtime.OperationStep{{
+			Index:    0,
+			Kind:     "resource",
+			Resource: "sysbox_network.lan",
+			Action:   runtime.PlanActionCreate,
+			Provider: "network",
+			Status:   runtime.OperationDone,
+			StateResource: &runtime.StateResourceLog{
+				Type:     "sysbox_network",
+				Name:     "lan",
+				Provider: "network",
+				Instance: map[string]any{
+					"netns":   nsName,
+					"bridge":  brName,
+					"cidr":    "10.251.0.0/24",
+					"gateway": "10.251.0.1/24",
+				},
+			},
+		}},
+	})
+
+	mgr := state.NewManager(statePath)
+	report, err := recoverCheckpoint(context.Background(), checkpointPath, mgr, "e2e")
+	require.NoError(t, err)
+	require.Len(t, report.Recovered, 1)
+	require.Equal(t, "recovered", report.Recovered[0].Status)
+
+	st, err := mgr.LoadWithContext(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, st.FindResource("sysbox_network", "lan"))
+
+	cleanup, err := cleanupCheckpoint(context.Background(), checkpointPath)
+	require.NoError(t, err)
+	require.Len(t, cleanup.Networks, 1)
+	require.Equal(t, "removed", cleanup.Networks[0].Status)
+	require.False(t, netprovider.NetnsExists(nsName))
+}
+
+func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
+	requireRootE2E(t)
+	registerFirecrackerForE2E(t)
+
+	nsName := "sysbox-e2e-recover-fc"
+	brName := "br-e2efc"
+	tapName := "tap-e2efc"
+	vmDir := filepath.Join(t.TempDir(), "vm")
+	socketPath := filepath.Join(vmDir, "firecracker.sock")
+	configPath := filepath.Join(vmDir, "vm_config.json")
+	t.Cleanup(func() { _ = netprovider.DeleteNetns(nsName) })
+
+	require.NoError(t, os.MkdirAll(vmDir, 0o755))
+	require.NoError(t, os.WriteFile(configPath, []byte("{}"), 0o644))
+	require.NoError(t, netprovider.CreateNetns(nsName))
+	require.NoError(t, netprovider.CreateBridge(netprovider.BridgeConfig{
+		NetnsName:  nsName,
+		BridgeName: brName,
+		CIDR:       "10.252.0.1/24",
+	}))
+	require.NoError(t, netprovider.CreateTapInNetns(tapName, nsName, brName))
+	require.True(t, netprovider.LinkExists(nsName, tapName))
+
+	dir := t.TempDir()
+	checkpointPath := filepath.Join(dir, "run.checkpoint.json")
+	statePath := filepath.Join(dir, "state.json")
+	writeCheckpointE2E(t, checkpointPath, runtime.OperationCheckpoint{
+		RunID:     "run-fc",
+		Topology:  "e2e-fc",
+		Operation: "apply",
+		Status:    runtime.OperationFailed,
+		Steps: []runtime.OperationStep{{
+			Index:      0,
+			Kind:       "resource",
+			Resource:   "sysbox_node.microvm",
+			Action:     runtime.PlanActionCreate,
+			Provider:   "firecracker",
+			ExternalID: "sysbox-microvm",
+			Status:     runtime.OperationDone,
+			StateResource: &runtime.StateResourceLog{
+				Type:     "sysbox_node",
+				Name:     "microvm",
+				Provider: "firecracker",
+				Instance: map[string]any{
+					"container_id": "sysbox-microvm",
+					"primary_ip":   "10.252.0.20",
+					"provider_extra": fmt.Sprintf(
+						`{"vm_dir":%q,"socket":%q,"config_path":%q,"netns_name":%q}`,
+						vmDir, socketPath, configPath, nsName),
+					"nics": []any{map[string]any{
+						"kind":     "tap",
+						"host_end": tapName,
+						"ip":       "10.252.0.20/24",
+						"netns":    nsName,
+					}},
+				},
+			},
+		}},
+	})
+
+	mgr := state.NewManager(statePath)
+	report, err := recoverCheckpoint(context.Background(), checkpointPath, mgr, "e2e")
+	require.NoError(t, err)
+	require.Len(t, report.Recovered, 1)
+	require.Equal(t, "recovered_not_running", report.Recovered[0].Status)
+
+	st, err := mgr.LoadWithContext(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, st.FindResource("sysbox_node", "microvm"))
+
+	cleanup, err := cleanupCheckpoint(context.Background(), checkpointPath)
+	require.NoError(t, err)
+	require.Len(t, cleanup.MicroVMs, 1)
+	require.Equal(t, "removed", cleanup.MicroVMs[0].Status)
+	require.NoDirExists(t, vmDir)
+	require.False(t, netprovider.LinkExists(nsName, tapName))
+}
+
+func requireRootE2E(t *testing.T) {
+	t.Helper()
+	if os.Getuid() != 0 {
+		t.Skip("checkpoint recovery e2e requires root/CAP_NET_ADMIN; run: sudo -E go test -tags e2e ./pkg/api")
+	}
+}
+
+func registerFirecrackerForE2E(t *testing.T) {
+	t.Helper()
+	if _, err := substrate.Get("firecracker"); err == nil {
+		return
+	}
+	substrate.Register(fcprovider.New(filepath.Join(t.TempDir(), "vmlinux"), t.TempDir()))
+}
+
+func writeCheckpointE2E(t *testing.T, path string, cp runtime.OperationCheckpoint) {
+	t.Helper()
+	data, err := json.MarshalIndent(cp, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+}
