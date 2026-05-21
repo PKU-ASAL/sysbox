@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -109,6 +110,28 @@ func TestManagerLoadMissingReturnsEmpty(t *testing.T) {
 	s, err := mgr.Load()
 	require.NoError(t, err)
 	require.Equal(t, 0, len(s.Resources))
+	require.False(t, s.Meta.Exists)
+}
+
+func TestManagerVersionedBackendUsesCAS(t *testing.T) {
+	backend := &recordingVersionedBackend{
+		loaded: &LoadedState{
+			Data:      []byte(`{"version":2,"run_id":"r1","resources":[]}`),
+			Metadata:  Metadata{Backend: "test", Serial: 7},
+			Exists:    true,
+			Serial:    7,
+			UpdatedAt: timeNowUTC(),
+		},
+	}
+	mgr := NewManagerWithBackend(backend)
+
+	st, err := mgr.Load()
+	require.NoError(t, err)
+	require.Equal(t, int64(7), st.Meta.Serial)
+
+	require.NoError(t, mgr.Save(st))
+	require.True(t, backend.lastSave.RequireCAS)
+	require.Equal(t, int64(7), backend.lastSave.ExpectedSerial)
 }
 
 func TestManagerOptionalBackendOperationsAreNoopsWhenUnsupported(t *testing.T) {
@@ -128,4 +151,37 @@ func (noopOptionalBackend) Load(context.Context) ([]byte, error) { return nil, n
 func (noopOptionalBackend) Save(context.Context, []byte) error   { return nil }
 func (noopOptionalBackend) Lock(context.Context) (UnlockFunc, error) {
 	return nil, nil
+}
+
+type recordingVersionedBackend struct {
+	loaded   *LoadedState
+	lastSave SaveOptions
+}
+
+func (b *recordingVersionedBackend) Load(context.Context) ([]byte, error) {
+	if b.loaded == nil || !b.loaded.Exists {
+		return nil, nil
+	}
+	return b.loaded.Data, nil
+}
+
+func (b *recordingVersionedBackend) Save(context.Context, []byte) error { return nil }
+func (b *recordingVersionedBackend) Lock(context.Context) (UnlockFunc, error) {
+	return nil, nil
+}
+
+func (b *recordingVersionedBackend) LoadVersioned(context.Context) (*LoadedState, error) {
+	return b.loaded, nil
+}
+
+func (b *recordingVersionedBackend) SaveVersioned(_ context.Context, _ []byte, opts SaveOptions) error {
+	b.lastSave = opts
+	b.loaded.Serial++
+	b.loaded.Metadata.Serial = b.loaded.Serial
+	b.loaded.Exists = true
+	return nil
+}
+
+func timeNowUTC() time.Time {
+	return time.Now().UTC()
 }

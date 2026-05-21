@@ -17,9 +17,10 @@ var ErrNotSupported = errors.New("operation not supported by this substrate")
 
 // ManagedNetworkSpec describes a substrate-managed network to create.
 type ManagedNetworkSpec struct {
-	Name string // resource name used to derive the network's system identifier
-	CIDR string // IP address range, e.g. "172.20.0.0/24"
-	NAT  bool   // true → internet access via masquerade
+	Name   string            // resource name used to derive the network's system identifier
+	CIDR   string            // IP address range, e.g. "172.20.0.0/24"
+	NAT    bool              // true → internet access via masquerade
+	Labels map[string]string // provider metadata for recovery/cleanup
 }
 
 // ManagedNetworkInfo is returned by CreateManagedNetwork.
@@ -57,6 +58,7 @@ type NodeSpec struct {
 	Memory  string
 	Env     map[string]string
 	Sysctls map[string]string
+	Labels  map[string]string
 
 	// InitialLinks lists the first network attachment(s) to establish at
 	// node-creation time. The substrate interprets the LinkRequest fields

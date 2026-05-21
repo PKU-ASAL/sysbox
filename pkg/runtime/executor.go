@@ -19,6 +19,8 @@ type Executor struct {
 	state    *state.State
 	logger   io.Writer
 	recorder OperationRecorder
+	topology string
+	runID    string
 }
 
 func NewExecutor(g *graph.Graph, s *state.State) *Executor {
@@ -35,6 +37,43 @@ func (e *Executor) SetRecorder(r OperationRecorder) {
 		return
 	}
 	e.recorder = r
+}
+
+func (e *Executor) SetRunContext(topology, runID string) {
+	e.topology = topology
+	e.runID = runID
+}
+
+func (e *Executor) recordStepExternal(step int, id graph.NodeID) {
+	r := e.state.FindResource(id.Type, id.Name)
+	if r == nil {
+		return
+	}
+	externalID := resourceExternalID(*r)
+	e.recorder.StepExternal(step, r.Provider, externalID, ManagedLabels(e.topology, e.runID, id))
+}
+
+func resourceExternalID(r state.Resource) string {
+	switch r.Type {
+	case "sysbox_node", "sysbox_router", "sysbox_actor":
+		if id := r.ContainerID(); id != "" {
+			return id
+		}
+	case "sysbox_network":
+		if id := r.DockerNetID(); id != "" {
+			return id
+		}
+		if ns := r.NetNS(); ns != "" {
+			return ns
+		}
+	case "sysbox_image":
+		if id := r.ImageID(); id != "" {
+			return id
+		}
+	case "sysbox_kernel":
+		return r.Str("path")
+	}
+	return r.Str("id")
 }
 
 func (e *Executor) logf(format string, args ...any) {

@@ -37,6 +37,37 @@ type Metadata struct {
 	LockExpires time.Time `json:"lock_expires,omitempty"`
 }
 
+type LoadedState struct {
+	Data      []byte
+	Metadata  Metadata
+	Exists    bool
+	Serial    int64
+	UpdatedAt time.Time
+}
+
+type SaveOptions struct {
+	ExpectedSerial int64
+	RequireCAS     bool
+}
+
+type TopologyMetadata struct {
+	Name          string    `json:"name"`
+	Backend       string    `json:"backend"`
+	HasState      bool      `json:"has_state"`
+	ResourceCount int       `json:"resource_count,omitempty"`
+	Serial        int64     `json:"serial,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+}
+
+type ConflictError struct {
+	Expected int64
+	Actual   int64
+}
+
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("state serial conflict: expected %d, got %d", e.Expected, e.Actual)
+}
+
 type LockOptions struct {
 	Owner string
 	TTL   time.Duration
@@ -57,6 +88,15 @@ type Snapshot struct {
 
 type MetadataBackend interface {
 	Metadata(ctx context.Context) (Metadata, error)
+}
+
+type VersionedBackend interface {
+	LoadVersioned(ctx context.Context) (*LoadedState, error)
+	SaveVersioned(ctx context.Context, data []byte, opts SaveOptions) error
+}
+
+type TopologyLister interface {
+	ListTopologies(ctx context.Context) ([]TopologyMetadata, error)
 }
 
 type LeaseBackend interface {

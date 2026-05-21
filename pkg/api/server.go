@@ -99,6 +99,7 @@ func (s *Server) registerRoutes() {
 	// Runs (async job tracking + SSE logs)
 	m.HandleFunc("GET /v1/runs/{id}", s.handleGetRun)
 	m.HandleFunc("POST /v1/runs/{id}/resume", s.handleResumeRun)
+	m.HandleFunc("POST /v1/runs/{id}/cleanup", s.handleCleanupRun)
 	m.HandleFunc("GET /v1/runs/{id}/checkpoint", s.handleGetRunCheckpoint)
 	m.HandleFunc("GET /v1/runs/{id}/logs", s.handleRunLogs)
 

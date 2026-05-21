@@ -126,6 +126,14 @@ ON CONFLICT (component) DO UPDATE SET version=2, updated_at=now()`); err != nil 
 }
 
 func (b *PostgresBackend) Load(ctx context.Context) ([]byte, error) {
+	loaded, err := b.LoadVersioned(ctx)
+	if err != nil || loaded == nil || !loaded.Exists {
+		return nil, err
+	}
+	return loaded.Data, nil
+}
+
+func (b *PostgresBackend) LoadVersioned(ctx context.Context) (*LoadedState, error) {
 	conn, err := b.connect(ctx)
 	if err != nil {
 		return nil, err
@@ -134,10 +142,16 @@ func (b *PostgresBackend) Load(ctx context.Context) ([]byte, error) {
 
 	var data []byte
 	var checksum string
-	err = conn.QueryRow(ctx, `SELECT data::text, checksum FROM sysbox_state WHERE topology=$1`, b.topology()).Scan(&data, &checksum)
+	var version int
+	var serial int64
+	var updatedAt time.Time
+	err = conn.QueryRow(ctx, `SELECT version, serial, data::text, checksum, updated_at FROM sysbox_state WHERE topology=$1`, b.topology()).Scan(&version, &serial, &data, &checksum, &updatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, nil
+			return &LoadedState{
+				Metadata: Metadata{Backend: "postgres", Location: b.redactedLocation(), Version: SchemaVersion},
+				Exists:   false,
+			}, nil
 		}
 		return nil, fmt.Errorf("postgres load state: %w", err)
 	}
@@ -146,15 +160,70 @@ func (b *PostgresBackend) Load(ctx context.Context) ([]byte, error) {
 			return nil, fmt.Errorf("postgres state checksum mismatch for topology %q", b.topology())
 		}
 	}
-	return data, nil
+	return &LoadedState{
+		Data: data,
+		Metadata: Metadata{
+			Backend:   "postgres",
+			Location:  b.redactedLocation(),
+			Version:   version,
+			Serial:    serial,
+			UpdatedAt: updatedAt,
+		},
+		Exists:    true,
+		Serial:    serial,
+		UpdatedAt: updatedAt,
+	}, nil
 }
 
 func (b *PostgresBackend) Save(ctx context.Context, data []byte) error {
+	return b.SaveVersioned(ctx, data, SaveOptions{})
+}
+
+func (b *PostgresBackend) SaveVersioned(ctx context.Context, data []byte, opts SaveOptions) error {
 	conn, err := b.connect(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(ctx)
+
+	if opts.RequireCAS {
+		if opts.ExpectedSerial == 0 {
+			tag, err := conn.Exec(ctx, `
+INSERT INTO sysbox_state (topology, version, serial, data, checksum, updated_at)
+VALUES ($1, $2, 1, $3::jsonb, $4, now())
+ON CONFLICT (topology) DO NOTHING`,
+				b.topology(), SchemaVersion, string(data), checksumHex(data))
+			if err != nil {
+				return fmt.Errorf("postgres save state: %w", err)
+			}
+			if tag.RowsAffected() == 1 {
+				return nil
+			}
+		}
+		tag, err := conn.Exec(ctx, `
+UPDATE sysbox_state
+SET version=$2,
+    serial=serial + 1,
+    data=$3::jsonb,
+    checksum=$4,
+    updated_at=now()
+WHERE topology=$1 AND serial=$5`,
+			b.topology(), SchemaVersion, string(data), checksumHex(data), opts.ExpectedSerial)
+		if err != nil {
+			return fmt.Errorf("postgres save state: %w", err)
+		}
+		if tag.RowsAffected() == 1 {
+			return nil
+		}
+		var actual int64
+		err = conn.QueryRow(ctx, `SELECT serial FROM sysbox_state WHERE topology=$1`, b.topology()).Scan(&actual)
+		if err == pgx.ErrNoRows {
+			actual = 0
+		} else if err != nil {
+			return fmt.Errorf("postgres read current serial: %w", err)
+		}
+		return &ConflictError{Expected: opts.ExpectedSerial, Actual: actual}
+	}
 
 	_, err = conn.Exec(ctx, `
 INSERT INTO sysbox_state (topology, version, serial, data, checksum, updated_at)
@@ -170,6 +239,39 @@ ON CONFLICT (topology) DO UPDATE SET
 		return fmt.Errorf("postgres save state: %w", err)
 	}
 	return nil
+}
+
+func (b *PostgresBackend) ListTopologies(ctx context.Context) ([]TopologyMetadata, error) {
+	conn, err := b.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+
+	rows, err := conn.Query(ctx, `
+SELECT topology, serial, updated_at, data::text
+FROM sysbox_state
+ORDER BY topology`)
+	if err != nil {
+		return nil, fmt.Errorf("postgres list topologies: %w", err)
+	}
+	defer rows.Close()
+
+	var out []TopologyMetadata
+	for rows.Next() {
+		var item TopologyMetadata
+		var data []byte
+		item.Backend = "postgres"
+		item.HasState = true
+		if err := rows.Scan(&item.Name, &item.Serial, &item.UpdatedAt, &data); err != nil {
+			return nil, err
+		}
+		if st, err := Unmarshal(data); err == nil {
+			item.ResourceCount = len(st.Resources)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (b *PostgresBackend) Lock(ctx context.Context) (UnlockFunc, error) {

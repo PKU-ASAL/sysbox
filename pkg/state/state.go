@@ -28,6 +28,14 @@ type State struct {
 	Version   int          `json:"version"`
 	RunID     string       `json:"run_id"`
 	Resources []Resource   `json:"resources"`
+	Meta      StateMeta    `json:"-"`
+}
+
+type StateMeta struct {
+	Backend   string
+	Serial    int64
+	Exists    bool
+	UpdatedAt time.Time
 }
 
 type Resource struct {
@@ -90,17 +98,17 @@ func (r *Resource) Bool(key string) bool {
 // Convenience accessors for well-known instance keys. These centralise
 // key names and eliminate scattered raw type assertions.
 
-func (r *Resource) ContainerID() string  { return r.Str("container_id") }
-func (r *Resource) PrimaryIP() string    { return r.Str("primary_ip") }
-func (r *Resource) ProviderExtra() string { return r.Str("provider_extra") }
-func (r *Resource) IsNAT() bool         { return r.Bool("nat") }
-func (r *Resource) DockerNetID() string  { return r.Str("docker_network_id") }
-func (r *Resource) PID() int             { return r.Int("pid") }
+func (r *Resource) ContainerID() string           { return r.Str("container_id") }
+func (r *Resource) PrimaryIP() string             { return r.Str("primary_ip") }
+func (r *Resource) ProviderExtra() string         { return r.Str("provider_extra") }
+func (r *Resource) IsNAT() bool                   { return r.Bool("nat") }
+func (r *Resource) DockerNetID() string           { return r.Str("docker_network_id") }
+func (r *Resource) PID() int                      { return r.Int("pid") }
 func (r *Resource) LifecyclePreventDestroy() bool { return r.Bool("lifecycle_prevent_destroy") }
-func (r *Resource) ImageID() string     { return r.Str("image_id") }
-func (r *Resource) Repository() string  { return r.Str("repository") }
-func (r *Resource) NetNS() string       { return r.Str("netns") }
-func (r *Resource) Bridge() string      { return r.Str("bridge") }
+func (r *Resource) ImageID() string               { return r.Str("image_id") }
+func (r *Resource) Repository() string            { return r.Str("repository") }
+func (r *Resource) NetNS() string                 { return r.Str("netns") }
+func (r *Resource) Bridge() string                { return r.Str("bridge") }
 
 // ReconstructHandle rebuilds a substrate.NodeHandle from the resource's
 // persisted instance data. This replaces the hand-assembled pattern of

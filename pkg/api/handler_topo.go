@@ -37,7 +37,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // and runsDir (state file present). Each topology carries flags indicating
 // whether it has been applied yet.
 func (s *Server) handleListTopologies(w http.ResponseWriter, r *http.Request) {
-	topolist := map[string]map[string]bool{}
+	type topologyInfo struct {
+		Name          string `json:"name"`
+		HasHCL        bool   `json:"has_hcl"`
+		HasState      bool   `json:"has_state"`
+		ResourceCount int    `json:"resource_count,omitempty"`
+		Serial        int64  `json:"serial,omitempty"`
+		Backend       string `json:"backend,omitempty"`
+	}
+	topolist := map[string]*topologyInfo{}
 
 	hclEntries, err := filepath.Glob(filepath.Join(s.workspacesDir, "*", "field.sysbox.hcl"))
 	if err != nil {
@@ -46,30 +54,55 @@ func (s *Server) handleListTopologies(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, e := range hclEntries {
 		name := filepath.Base(filepath.Dir(e))
-		topolist[name] = map[string]bool{"hcl": true, "state": false}
+		topolist[name] = &topologyInfo{Name: name, HasHCL: true}
 	}
 
-	stateEntries, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json"))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	for _, e := range stateEntries {
-		name := filepath.Base(filepath.Dir(e))
-		if topolist[name] == nil {
-			topolist[name] = map[string]bool{"hcl": false, "state": true}
-		} else {
-			topolist[name]["state"] = true
+	if s.stateBackend == "" {
+		stateEntries, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json"))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		for _, e := range stateEntries {
+			name := filepath.Base(filepath.Dir(e))
+			info := topolist[name]
+			if info == nil {
+				info = &topologyInfo{Name: name}
+				topolist[name] = info
+			}
+			info.HasState = true
+			info.Backend = "local"
+		}
+	} else {
+		mgr, err := s.stateManager("__list__")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		items, err := mgr.ListTopologies(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		for _, item := range items {
+			if err := validatePathSegment(item.Name, "topology"); err != nil {
+				continue
+			}
+			info := topolist[item.Name]
+			if info == nil {
+				info = &topologyInfo{Name: item.Name}
+				topolist[item.Name] = info
+			}
+			info.HasState = item.HasState
+			info.ResourceCount = item.ResourceCount
+			info.Serial = item.Serial
+			info.Backend = item.Backend
 		}
 	}
 
-	out := make([]map[string]any, 0, len(topolist))
-	for name, flags := range topolist {
-		out = append(out, map[string]any{
-			"name":      name,
-			"has_hcl":   flags["hcl"],
-			"has_state": flags["state"],
-		})
+	out := make([]topologyInfo, 0, len(topolist))
+	for _, info := range topolist {
+		out = append(out, *info)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"topologies": out})
 }
@@ -268,8 +301,12 @@ func (s *Server) runApply(topology string, run *Run) {
 		return
 	}
 	exec := runtime.NewExecutor(g, st)
+	exec.SetRunContext(topology, run.ID)
 	exec.SetLogger(run.logs)
-	exec.SetRecorder(runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology))
+	recorder := runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology)
+	recorder.SetLeaseOwner(run.LeaseOwner)
+	recorder.SetStateSerialBefore(st.Meta.Serial)
+	exec.SetRecorder(recorder)
 	exec.Refresh(context.Background(), plan)
 	if !plan.HasChanges() {
 		_, _ = run.logs.Write([]byte("No changes. Apply is a no-op.\n"))
@@ -281,16 +318,24 @@ func (s *Server) runApply(topology string, run *Run) {
 		_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
 	if err := exec.Apply(context.Background(), plan); err != nil {
-		if saveErr := mgr.Save(st); saveErr != nil {
+		if saveErr := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
 			_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
+		} else {
+			recorder.SetStateSerialAfter(st.Meta.Serial)
 		}
 		s.jobs.finish(run, err)
 		return
 	}
-	if err := mgr.Save(st); err != nil {
+	saveStep := recorder.StepStartKind("state", "state", runtime.PlanActionUpdate)
+	if err := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
+		recorder.StepFailed(saveStep, err)
+		recorder.Finish(err)
 		s.jobs.finish(run, fmt.Errorf("save state: %w", err))
 		return
 	}
+	recorder.SetStateSerialAfter(st.Meta.Serial)
+	recorder.StepDone(saveStep)
+	recorder.MarkResourceStateRecorded()
 	_, _ = run.logs.Write([]byte("Apply complete.\n"))
 	s.jobs.finish(run, nil)
 }
@@ -350,22 +395,34 @@ func (s *Server) runDestroy(topology string, run *Run) {
 	}
 	plan := &runtime.Plan{Destroy: append([]state.Resource(nil), st.Resources...)}
 	exec := runtime.NewExecutor(graph.New(), st)
+	exec.SetRunContext(topology, run.ID)
 	exec.SetLogger(run.logs)
-	exec.SetRecorder(runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology))
+	recorder := runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology)
+	recorder.SetLeaseOwner(run.LeaseOwner)
+	recorder.SetStateSerialBefore(st.Meta.Serial)
+	exec.SetRecorder(recorder)
 	if snap, err := mgr.Snapshot(context.Background(), "before destroy "+run.ID); err == nil && snap != nil {
 		_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
 	if err := exec.Destroy(context.Background(), plan); err != nil {
-		if saveErr := mgr.Save(st); saveErr != nil {
+		if saveErr := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
 			_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
+		} else {
+			recorder.SetStateSerialAfter(st.Meta.Serial)
 		}
 		s.jobs.finish(run, err)
 		return
 	}
-	if err := mgr.Save(st); err != nil {
+	saveStep := recorder.StepStartKind("state", "state", runtime.PlanActionUpdate)
+	if err := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
+		recorder.StepFailed(saveStep, err)
+		recorder.Finish(err)
 		s.jobs.finish(run, fmt.Errorf("save state: %w", err))
 		return
 	}
+	recorder.SetStateSerialAfter(st.Meta.Serial)
+	recorder.StepDone(saveStep)
+	recorder.MarkResourceStateRecorded()
 	_, _ = run.logs.Write([]byte("Destroy complete.\n"))
 	s.jobs.finish(run, nil)
 }
@@ -412,6 +469,29 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 		go s.runDestroy(run.Topology, run)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID})
+}
+
+func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := validatePathSegment(id, "id"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run, ok := s.jobs.get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
+		return
+	}
+	if run.Status == RunRunning {
+		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
+		return
+	}
+	report, err := cleanupCheckpointDocker(r.Context(), s.checkpointFile(run.Topology, run.ID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleGetRunCheckpoint(w http.ResponseWriter, r *http.Request) {

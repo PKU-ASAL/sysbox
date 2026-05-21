@@ -1,22 +1,22 @@
 # sysbox
 
-> AI 红队的 Terraform —— 一键搭起 Linux 攻防战场，实时采集 eBPF 行为轨迹。
+> AI 红队实验环境的 Terraform-like 控制面：用 HCL 声明拓扑，用 CLI/API 可解释地 plan、apply、destroy，并通过可插拔 substrate 运行 Docker、Firecracker 或 VM 资源。
 
 ## 概览
 
-sysbox 做三件事，且只做这三件事：
+sysbox 当前聚焦三层能力：
 
-1. **拓扑编排**：用 HCL 描述节点/网络/路由/防火墙，底层通过 Docker + linux-bridge 把隔离实验室拉起来。
-2. **全量 syscall 采集**：tracee eBPF（mntns 级 scope）持续把每个节点的事件追加写入 `runs/<id>/events/<node>.jsonl`。
-3. **Agent 远控**：在指定节点里 host 一个 opencode（或任意 ACP 兼容 agent），暴露 HTTP ACP 接口；调用方通过 ACP 操作 agent 干活。
+1. **声明式拓扑运行时**：用 HCL 描述节点、网络、路由、防火墙和 artifact，runtime 负责编图、plan、apply、destroy。
+2. **多 substrate provider**：Docker 适合轻量容器实验，Firecracker/microVM/VM substrate 用于更强隔离的节点运行。
+3. **服务态 API 控制面**：API 使用独立 workspace、state backend、run/checkpoint/lease，把本地 CLI 能力升级为可服务化的控制面。
 
-**不做**的事情：归因、IoC 打分、reward 计算、episode 边界管理。这些都是 sysbox 之上的应用层关注点，由调用方在原始 `events/*.jsonl` 之上自由构建。
+sensor、actor、labeler、episode/reward、归因和 IoC 打分属于上层实验应用或可选资源，不再是 sysbox 核心 runtime 的边界。核心 runtime 只关心“期望拓扑是什么、外部资源当前是什么、如何安全收敛到期望状态”。
 
 ```
 HCL topology
-  └─ sysbox apply       → Docker containers + linux-bridge networks
-  └─ sysbox sensor start→ tracee (mntns-scoped) → per-node events/*.jsonl
-  └─ opencode actor     → ACP HTTP endpoint (operator calls in)
+  └─ sysbox plan/apply/destroy  → runtime graph + provider CRUD
+  └─ sysbox serve               → HTTP API + state backend + run checkpoints
+  └─ artifact cache             → kernels/rootfs/qcow2/tools by explicit mount or on-demand fetch
 ```
 
 ## 要求
@@ -24,7 +24,7 @@ HCL topology
 - Linux kernel（netns 支持，6.x 推荐）
 - Docker daemon（docker substrate 必需）
 - Go 1.22+
-- `apply` / `destroy` / `sensor` 需要 root（netlink + eBPF）
+- `apply` / `destroy` 对部分 substrate 需要 root 或宿主机权限（netlink、tap、KVM、Docker socket）
 - 跑 microVM（firecracker substrate）额外需要：`firecracker` 二进制、`mkfs.ext4`、`losetup`、`/dev/kvm`。
   vmlinux 由 `sysbox_kernel` 资源在 apply 时按 URL 自动拉取并缓存；rootfs 用
   `./scripts/prepare-fc-rootfs.sh` 一键生成（基于 firecracker-ci 官方 ubuntu squashfs，参考 [`docs/firecracker-vmbox.md`](docs/firecracker-vmbox.md)）。
@@ -41,13 +41,12 @@ make lab-down       # 销毁实验室
 
 ## API / Docker 部署
 
-API 是服务态控制面，默认使用独立数据目录而不是直接读写 `examples/`
-和 `runs/`：
+API 是服务态控制面，默认使用独立数据目录和 Postgres state backend，而不是直接读写 CLI 的 `examples/` 和 `runs/`：
 
 ```
 data/
 ├── workspaces/     # API 管理的 HCL
-└── runs/           # state.json + job metadata
+└── runs/           # run metadata + checkpoints；state 默认在 Postgres
 ```
 
 启动 Docker-only API：
@@ -70,6 +69,16 @@ curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
 `make docker-seed` 会把 `examples/*/field.sysbox.hcl` 初次复制到
 `data/workspaces/`。之后 API 修改的是自己的 workspace 副本。
 
+API 的 state backend 默认是 Postgres，并提供：
+
+- topology state metadata/listing
+- serial-based CAS，防止多进程写入时 last-writer-wins
+- backend lease/lock metadata
+- snapshots 和 checkpoint，帮助解释失败 apply/destroy 的进度
+
+本地 CLI 默认仍使用本地 state 文件；需要共享服务态 state 时，可通过
+`SYSBOX_STATE_BACKEND` 指向同一个 backend。
+
 大文件不内置进镜像：kernel/rootfs/qcow2 走 `pkg/artifact` 按需下载或
 显式挂载到 `/var/cache/sysbox`；Firecracker/qemu 等宿主机相关二进制
 通过 substrate 专属变量（如 `SYSBOX_FIRECRACKER_BIN`）显式注入。
@@ -84,6 +93,7 @@ curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
 | `SYSBOX_API_TOKEN` | API Bearer token，空值表示本机开发免鉴权 |
 | `SYSBOX_WORKSPACES_DIR` | 覆盖 HCL workspace 目录，默认 `$SYSBOX_HOME/workspaces` |
 | `SYSBOX_RUNS_DIR` | 覆盖 state/run metadata 目录，默认 `$SYSBOX_HOME/runs` |
+| `SYSBOX_STATE_BACKEND` | 服务态 state backend，compose 默认 Postgres |
 | `SYSBOX_FIRECRACKER_BIN` | Firecracker binary 的精确路径 |
 | `SYSBOX_FIRECRACKER_WORKDIR` | Firecracker 每 VM 工作目录，默认 `$SYSBOX_HOME/firecracker` |
 
@@ -98,7 +108,7 @@ Kernel/rootfs/qcow2 属于 topology artifact 输入，推荐在 HCL 中用
 sysbox/
 ├── bin/                        # 编译产物（gitignore）
 ├── cmd/
-│   ├── sysbox/                 # 主 CLI（apply/plan/sensor/state/output）
+│   ├── sysbox/                 # 主 CLI（plan/apply/destroy/state/serve）
 │   └── sysbox-init/            # firecracker guest PID-1 wrapper（cross-compiled，go:embed 进主二进制）
 ├── examples/
 │   ├── three-nodes/            # Docker 三节点攻防实验室
@@ -107,13 +117,10 @@ sysbox/
 │   ├── artifact/               # URL/本地文件解析 + sha256 校验 + 内容寻址缓存
 │   ├── config/                 # HCL 解析 + schema
 │   ├── graph/                  # 资源依赖图
-│   ├── monitor/                # eBPF 监控 Backend 接口 + TraceeBackend
 │   ├── provider/               # Docker / firecracker / exec / network 底层实现
 │   │   └── firecracker/        # microVM substrate + sysbox-init initbin embed + config drive
-│   ├── runtime/                # apply/destroy executor + drift detection
-│   ├── sensor/                 # Event schema + tracee JSON 解析
-│   ├── sink/                   # JSONLSink + RoutingSink（per-node 文件路由）
-│   ├── state/                  # 状态文件（原子写 + 文件锁）
+│   ├── runtime/                # graph、plan、apply/destroy executor、checkpoint
+│   ├── state/                  # local/Postgres/HTTP/S3/SQLite state backend
 │   ├── substrate/              # 底层抽象注册表
 │   └── vsockrpc/               # firecracker provisioner 的 host/guest 共享 RPC 协议
 ├── runner/                     # Python ACP 客户端
@@ -132,58 +139,36 @@ sysbox/
 | `sysbox_router` | 多接口路由节点 |
 | `sysbox_firewall` | nftables 规则附加到指定网络 |
 | `sysbox_ssh_access` | 给指定节点开 SSH 入口 + 注入 authorized_keys |
-| `sysbox_actor` | 容器内 host 一个 ACP-compatible agent（如 opencode）|
-| `sysbox_monitor` | eBPF 监控声明，指定监控节点列表和事件集 |
+| `sysbox_actor` | 可选：容器内 host 一个 ACP-compatible agent（如 opencode）|
 
 详细的 firecracker / microVM 用法见 [`examples/microvm/README.md`](examples/microvm/README.md)。
-
-## 事件输出
-
-```
-runs/default/events/
-  node_attack.jsonl   # 每节点一个 JSONL，sensor 启动后持续 append
-  node_web.jsonl
-  node_db.jsonl
-```
-
-每次 `sensor start` 会在每个文件的首部写一条 meta 事件：
-
-```json
-{"node_id":"node_attack","category":"meta","raw":{"meta":"sensor_start","sensor_run_id":"...","started_at":1715...}}
-```
-
-下游可以根据这条 marker 自行切片，不需要跟 runner 做任何协调。
 
 ## Make targets
 
 ```
 make build                  编译 bin/sysbox（自动 cross-compile sysbox-init 并 embed）
-make build-init             仅 cross-compile sysbox-init.bin（linux/amd64，静态）
 make test                   单元测试（无需 Docker）
 make test-e2e               Go 拓扑集成测试：apply/route/drift/destroy（需要 Docker + root）
 make lint                   fmt + vet
-make lab-up                 搭建实验室 + 启动传感器
-make lab-down               销毁实验室
-make lab-sensor-restart     传感器重启（节点重建后重新解析 mntns）
-make lab-logs               tail 传感器日志
-make lab-status             查看容器 / state / 传感器状态
+make up TOPO=two-networks   CLI apply 示例拓扑
+make down TOPO=two-networks CLI destroy 示例拓扑
+make docker-up              Docker Compose 启动 API + Postgres
+make docker-down            停止 API + Postgres
 make clean                  删除编译产物
 ```
 
-## 运行一次 Episode
+## API 工作流
 
 ```bash
-# 1. 确保 lab 已启动
-make lab-up
-
-# 2. 配置环境变量（.env 或 export）
-export DEEPSEEK_API_KEY=...
-# 或 ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL，取决于 opencode 的 provider 配置
-
-# 3. 通过 ACP 让 agent 跑一轮
-uv run python3 examples/three-nodes/run_opencode.py
-
-# 4. 查看原始事件（自己分析）
-ls runs/default/events/
-tail -f runs/default/events/node_attack.jsonl
+make docker-up
+curl http://127.0.0.1:9876/v1/topologies
+curl http://127.0.0.1:9876/v1/topologies/two-networks/plan
+curl -X POST http://127.0.0.1:9876/v1/topologies/two-networks/apply
+curl http://127.0.0.1:9876/v1/runs/<run_id>
+curl http://127.0.0.1:9876/v1/runs/<run_id>/checkpoint
+curl -X POST http://127.0.0.1:9876/v1/topologies/two-networks/destroy
 ```
+
+`DELETE /v1/topologies/{name}` 只删除 workspace/state metadata。若 state
+里仍有资源，默认返回 `409`，需要先调用 `POST /destroy` 回收资源；`force=true`
+仅用于明确要删除 metadata 而保留外部资源的场景。

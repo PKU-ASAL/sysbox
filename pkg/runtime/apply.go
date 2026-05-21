@@ -81,6 +81,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 			e.recorder.StepFailed(step, applyErr)
 			return applyErr
 		}
+		e.recordStepExternal(step, id)
 		e.recorder.StepDone(step)
 	}
 	return nil

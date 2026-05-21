@@ -72,9 +72,10 @@ func (e *Executor) createNATNetwork(ctx context.Context, n *graph.Node, cfg *con
 	}
 
 	info, err := sub.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
-		Name: n.ID.Name,
-		CIDR: cfg.CIDR,
-		NAT:  true,
+		Name:   n.ID.Name,
+		CIDR:   cfg.CIDR,
+		NAT:    true,
+		Labels: ManagedLabels(e.topology, e.runID, n.ID),
 	})
 	if err != nil {
 		return fmt.Errorf("create nat network %s: %w", n.ID.Name, err)

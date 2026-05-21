@@ -62,6 +62,7 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		Image:        imgRef,
 		Sysctls:      map[string]string{"net.ipv4.ip_forward": "1"},
 		InitialLinks: initialLinks,
+		Labels:       ManagedLabels(e.topology, e.runID, n.ID),
 	})
 	if err != nil {
 		return err

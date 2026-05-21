@@ -73,6 +73,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		VCPUs:          cfg.Vcpus,
 		Memory:         cfg.Memory,
 		Env:            cfg.Env,
+		Labels:         ManagedLabels(e.topology, e.runID, n.ID),
 		InitialLinks:   initialLinks,
 		ProviderConfig: cfg.ProviderConfig,
 	})

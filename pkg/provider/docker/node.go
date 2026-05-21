@@ -92,8 +92,9 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
-			Image: spec.Image.Repository,
-			Env:   envs,
+			Image:  spec.Image.Repository,
+			Env:    envs,
+			Labels: spec.Labels,
 			// Explicitly override ENTRYPOINT so images with their own default
 			// (e.g. aquasec/tracee) stay alive for provisioner exec calls.
 			Entrypoint: []string{"/bin/sh", "-c"},

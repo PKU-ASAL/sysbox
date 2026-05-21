@@ -31,6 +31,7 @@ type Run struct {
 	Err         string    `json:"error,omitempty"`
 	ParentID    string    `json:"parent_id,omitempty"`
 	Recoverable bool      `json:"recoverable,omitempty"`
+	LeaseOwner  string    `json:"lease_owner,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
 	EndedAt     time.Time `json:"ended_at,omitempty"`
 
@@ -164,13 +165,15 @@ func (j *Jobs) persist(r *Run) {
 
 func (j *Jobs) start(topology, op string) *Run {
 	r := &Run{
-		ID:        uuid.New().String(),
-		Topology:  topology,
-		Op:        op,
-		Status:    RunRunning,
-		StartedAt: time.Now(),
-		logs:      &Broadcaster{},
+		ID:         uuid.New().String(),
+		Topology:   topology,
+		Op:         op,
+		Status:     RunRunning,
+		LeaseOwner: "sysbox-api",
+		StartedAt:  time.Now(),
+		logs:       &Broadcaster{},
 	}
+	r.LeaseOwner = fmt.Sprintf("sysbox-api:%s:%s", r.Op, r.ID)
 	j.mu.Lock()
 	j.runs[r.ID] = r
 	j.mu.Unlock()

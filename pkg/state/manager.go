@@ -35,6 +35,13 @@ func (m *Manager) Metadata(ctx context.Context) (Metadata, error) {
 	return Metadata{Backend: "unknown", Version: SchemaVersion}, nil
 }
 
+func (m *Manager) ListTopologies(ctx context.Context) ([]TopologyMetadata, error) {
+	if b, ok := m.backend.(TopologyLister); ok {
+		return b.ListTopologies(ctx)
+	}
+	return nil, nil
+}
+
 func (m *Manager) Snapshot(ctx context.Context, reason string) (*Snapshot, error) {
 	if b, ok := m.backend.(SnapshotBackend); ok {
 		return b.Snapshot(ctx, reason)
@@ -71,14 +78,42 @@ func (m *Manager) Load() (*State, error) {
 
 // LoadWithContext is like Load but respects the given context.
 func (m *Manager) LoadWithContext(ctx context.Context) (*State, error) {
+	if b, ok := m.backend.(VersionedBackend); ok {
+		loaded, err := b.LoadVersioned(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if loaded == nil || !loaded.Exists {
+			return &State{Version: SchemaVersion, Meta: StateMeta{Exists: false}}, nil
+		}
+		st, err := Unmarshal(loaded.Data)
+		if err != nil {
+			return nil, err
+		}
+		st.Meta = StateMeta{
+			Backend:   loaded.Metadata.Backend,
+			Serial:    loaded.Serial,
+			Exists:    true,
+			UpdatedAt: loaded.UpdatedAt,
+		}
+		if st.Meta.Backend == "" {
+			st.Meta.Backend = loaded.Metadata.Backend
+		}
+		return st, nil
+	}
 	data, err := m.backend.Load(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if data == nil {
-		return &State{Version: SchemaVersion}, nil
+		return &State{Version: SchemaVersion, Meta: StateMeta{Exists: false}}, nil
 	}
-	return Unmarshal(data)
+	st, err := Unmarshal(data)
+	if err != nil {
+		return nil, err
+	}
+	st.Meta = StateMeta{Exists: true}
+	return st, nil
 }
 
 // Save writes state through the active backend.
@@ -101,6 +136,56 @@ func (m *Manager) SaveWithContext(ctx context.Context, s *State) error {
 	data, err := s.Marshal()
 	if err != nil {
 		return err
+	}
+	if b, ok := m.backend.(VersionedBackend); ok {
+		opts := SaveOptions{ExpectedSerial: s.Meta.Serial, RequireCAS: true}
+		if err := b.SaveVersioned(ctx, data, opts); err != nil {
+			return err
+		}
+		next, err := b.LoadVersioned(ctx)
+		if err == nil && next != nil {
+			s.Meta = StateMeta{
+				Backend:   next.Metadata.Backend,
+				Serial:    next.Serial,
+				Exists:    next.Exists,
+				UpdatedAt: next.UpdatedAt,
+			}
+		}
+		return nil
+	}
+	return m.backend.Save(ctx, data)
+}
+
+func (m *Manager) SaveWithLease(ctx context.Context, s *State, lease LockOptions) error {
+	s.Version = SchemaVersion
+
+	unlock, err := m.lock(ctx, lease)
+	if err != nil {
+		return err
+	}
+	if unlock != nil {
+		defer unlock()
+	}
+
+	data, err := s.Marshal()
+	if err != nil {
+		return err
+	}
+	if b, ok := m.backend.(VersionedBackend); ok {
+		opts := SaveOptions{ExpectedSerial: s.Meta.Serial, RequireCAS: true}
+		if err := b.SaveVersioned(ctx, data, opts); err != nil {
+			return err
+		}
+		next, err := b.LoadVersioned(ctx)
+		if err == nil && next != nil {
+			s.Meta = StateMeta{
+				Backend:   next.Metadata.Backend,
+				Serial:    next.Serial,
+				Exists:    next.Exists,
+				UpdatedAt: next.UpdatedAt,
+			}
+		}
+		return nil
 	}
 	return m.backend.Save(ctx, data)
 }

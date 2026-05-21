@@ -17,7 +17,7 @@ import (
 //
 // Idempotent: if a network with the same name already exists (leftover from
 // a failed apply), its ID is returned instead of failing with a name conflict.
-func (s *Substrate) CreateBridgeNetwork(ctx context.Context, name, cidr string) (string, error) {
+func (s *Substrate) CreateBridgeNetwork(ctx context.Context, name, cidr string, labels map[string]string) (string, error) {
 	if existing, err := s.cli.NetworkInspect(ctx, name, network.InspectOptions{}); err == nil {
 		return existing.ID, nil
 	}
@@ -31,6 +31,7 @@ func (s *Substrate) CreateBridgeNetwork(ctx context.Context, name, cidr string) 
 
 	resp, err := s.cli.NetworkCreate(ctx, name, network.CreateOptions{
 		Driver: "bridge",
+		Labels: labels,
 		IPAM: &network.IPAM{
 			Driver: "default",
 			Config: []network.IPAMConfig{
@@ -57,7 +58,7 @@ func (s *Substrate) RemoveBridgeNetwork(ctx context.Context, networkID string) e
 // bridge network. Currently always NAT (NAT field is informational).
 func (s *Substrate) CreateManagedNetwork(ctx context.Context, spec substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
 	netName := fmt.Sprintf("sysbox-nat-%s", spec.Name)
-	id, err := s.CreateBridgeNetwork(ctx, netName, spec.CIDR)
+	id, err := s.CreateBridgeNetwork(ctx, netName, spec.CIDR, spec.Labels)
 	if err != nil {
 		return substrate.ManagedNetworkInfo{}, err
 	}

@@ -152,6 +152,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		Image:        imgRef,
 		Env:          cfg.Env,
 		InitialLinks: initialLinks,
+		Labels:       ManagedLabels(e.topology, e.runID, n.ID),
 	})
 	if err != nil {
 		return fmt.Errorf("create actor container %s: %w", n.ID.Name, err)

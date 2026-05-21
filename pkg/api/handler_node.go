@@ -291,7 +291,8 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		Provider: body.Substrate,
 		Instance: inst,
 	})
-	if err := mgr.Save(st); err != nil {
+	runOwner := fmt.Sprintf("sysbox-api:import:%s:%s.%s", topology, body.Type, body.Name)
+	if err := mgr.SaveWithLease(r.Context(), st, state.LockOptions{Owner: runOwner}); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("save state: %w", err))
 		return
 	}

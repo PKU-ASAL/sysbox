@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,9 +10,6 @@ import (
 	"path/filepath"
 
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/graph"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
 )
 
 // POST /v1/topologies — create a new topology workspace.
@@ -184,11 +180,12 @@ func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// DELETE /v1/topologies/{topology} — remove a topology entirely.
+// DELETE /v1/topologies/{topology} — remove topology metadata/workspace.
 //
-// If the topology has been applied (state has resources), it is destroyed
-// automatically before files are removed. Use ?force=true to skip the
-// destroy step (orphans running containers/VMs).
+// Resource teardown is intentionally handled by POST /destroy. By default this
+// endpoint refuses to delete a topology with live state; use ?force=true only
+// when the caller intentionally wants to remove metadata/workspace without
+// touching external resources.
 func (s *Server) handleDeleteTopology(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
 	if err := validatePathSegment(topology, "topology"); err != nil {
@@ -204,19 +201,10 @@ func (s *Server) handleDeleteTopology(w http.ResponseWriter, r *http.Request) {
 	st, err := mgr.Load()
 	if err == nil && len(st.Resources) > 0 {
 		if r.URL.Query().Get("force") == "true" {
-			slog.Warn("force-deleting topology with live resources", "topology", topology, "resources", len(st.Resources))
+			slog.Warn("force-deleting topology metadata with live resources", "topology", topology, "resources", len(st.Resources))
 		} else {
-			plan := &runtime.Plan{Destroy: append([]state.Resource(nil), st.Resources...)}
-			exec := runtime.NewExecutor(graph.New(), st)
-			if err := exec.Destroy(context.Background(), plan); err != nil {
-				writeError(w, http.StatusConflict, fmt.Errorf("auto-destroy failed: %w", err))
-				return
-			}
-			if err := mgr.Save(st); err != nil {
-				writeError(w, http.StatusInternalServerError, fmt.Errorf("save state: %w", err))
-				return
-			}
-			slog.Info("auto-destroyed topology before deletion", "topology", topology)
+			writeError(w, http.StatusConflict, fmt.Errorf("topology %q has %d resource(s); call POST /v1/topologies/%s/destroy first or use force=true to delete metadata only", topology, len(st.Resources), topology))
+			return
 		}
 	}
 	if s.stateBackend == "" {
