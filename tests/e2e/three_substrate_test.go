@@ -130,7 +130,7 @@ func TestThreeSubstrate(t *testing.T) {
 		require.Contains(t, applyStr, expect, "apply output missing %s", expect)
 	}
 	if dockerOK {
-		outCmd, err := run("output", "sysbox_node.container.primary_ip")
+		outCmd, err := run("state", "get", "sysbox_node.container.primary_ip")
 		require.NoError(t, err, "output primary_ip: %s", outCmd)
 		require.Contains(t, string(outCmd), "10.99.0.10")
 	}

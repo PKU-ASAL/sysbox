@@ -4,12 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hashicorp/hcl/v2"
-	"github.com/spf13/cobra"
-	"github.com/zclconf/go-cty/cty"
-
-	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -81,27 +77,10 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save state: %w", err)
 	}
 	fmt.Println("Apply complete.")
-	printOutputs(root, evalCtx)
+	outputs, err := evaluateOutputs(root, evalCtx)
+	if err != nil {
+		return err
+	}
+	printOutputs(outputs)
 	return nil
-}
-
-// printOutputs evaluates and prints all output blocks after a successful apply.
-func printOutputs(root *config.Root, ctx *hcl.EvalContext) {
-	if root == nil || len(root.Outputs) == 0 {
-		return
-	}
-	fmt.Println("\nOutputs:")
-	for _, out := range root.Outputs {
-		valStr := "(unevaluated)"
-		if out.Value != nil {
-			if v, diag := out.Value.Value(ctx); !diag.HasErrors() && v.Type() == cty.String {
-				valStr = v.AsString()
-			}
-		}
-		fmt.Printf("  %-20s = %s", out.Name, valStr)
-		if out.Description != "" {
-			fmt.Printf("  # %s", out.Description)
-		}
-		fmt.Println()
-	}
 }

@@ -40,8 +40,15 @@ var stateShowCmd2 = &cobra.Command{
 	RunE:  runStateShow2,
 }
 
+var stateGetCmd = &cobra.Command{
+	Use:   "get <type.name[.attr]>",
+	Short: "Print a resource instance or attribute from state",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runStateGet,
+}
+
 func init() {
-	stateCmd.AddCommand(stateListCmd, stateMvCmd, stateRmCmd, stateShowCmd2)
+	stateCmd.AddCommand(stateListCmd, stateMvCmd, stateRmCmd, stateShowCmd2, stateGetCmd)
 }
 
 func runStateList(cmd *cobra.Command, args []string) error {
@@ -157,6 +164,10 @@ func runStateShow2(cmd *cobra.Command, args []string) error {
 	data, _ := json.MarshalIndent(r, "", "  ")
 	fmt.Println(string(data))
 	return nil
+}
+
+func runStateGet(cmd *cobra.Command, args []string) error {
+	return printStateAddress(nil, args[0])
 }
 
 func splitAddr(addr string) (typ, name string, err error) {

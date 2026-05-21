@@ -157,6 +157,24 @@ make docker-down            停止 API + Postgres
 make clean                  删除编译产物
 ```
 
+## CLI 输出
+
+`output` 只负责 HCL 中声明的 topology outputs，语义对齐 Terraform：
+
+```bash
+bin/sysbox -f examples/three-nodes/field.sysbox.hcl output
+bin/sysbox -f examples/three-nodes/field.sysbox.hcl output attacker_lab_ip
+bin/sysbox -f examples/three-nodes/field.sysbox.hcl output --json
+```
+
+查看 state/resource 属性用 `state` 子命令：
+
+```bash
+bin/sysbox --state runs/two-networks/state.json state list
+bin/sysbox --state runs/two-networks/state.json state show sysbox_node.node_a
+bin/sysbox --state runs/two-networks/state.json state get sysbox_node.node_a.primary_ip
+```
+
 ## API 工作流
 
 ```bash
