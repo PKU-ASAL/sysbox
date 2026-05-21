@@ -29,92 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// hclThreeSubstrate is the inline HCL written to a temp file for this test.
-// Using an inline template keeps the test self-contained.
-const hclThreeSubstrate = `
-substrate "docker"      { alias = "dk"  }
-substrate "firecracker" { alias = "fc"  }
-substrate "libvirt"     { alias = "kvm" }
-
-locals {
-  rootfs_path = env("SYSBOX_ROOTFS")  != "" ? env("SYSBOX_ROOTFS")  : "/tmp/sysbox-rootfs.ext4"
-  qcow2_path  = env("SYSBOX_QCOW2")   != "" ? env("SYSBOX_QCOW2")   : "/tmp/sysbox-base.qcow2"
-  kernel_path = env("SYSBOX_E2E_FIRECRACKER_KERNEL") != "" ? env("SYSBOX_E2E_FIRECRACKER_KERNEL") : "/tmp/vmlinux"
-}
-
-resource "sysbox_image" "alpine_docker" {
-  substrate  = substrate.docker.dk
-  docker_ref = "alpine:latest"
-}
-
-resource "sysbox_image" "fc_rootfs" {
-  substrate = substrate.firecracker.fc
-  rootfs    = local.rootfs_path
-}
-
-resource "sysbox_image" "kvm_disk" {
-  substrate = substrate.libvirt.kvm
-  qcow2     = local.qcow2_path
-}
-
-resource "sysbox_kernel" "vmlinux" {
-  substrate = substrate.firecracker.fc
-  source    = local.kernel_path
-}
-
-resource "sysbox_network" "shared" {
-  cidr = "10.99.0.0/24"
-  nat  = false
-}
-
-resource "sysbox_node" "container" {
-  substrate = substrate.docker.dk
-  image     = sysbox_image.alpine_docker.id
-
-  link {
-    network = sysbox_network.shared.id
-    ip      = "10.99.0.10/24"
-  }
-}
-
-resource "sysbox_node" "microvm" {
-  substrate = substrate.firecracker.fc
-  image     = sysbox_image.fc_rootfs.id
-
-  provider "firecracker" {
-    kernel   = sysbox_kernel.vmlinux.id
-    ssh_user = "root"
-    ssh_pass = "root"
-  }
-
-  link {
-    network = sysbox_network.shared.id
-    ip      = "10.99.0.20/24"
-  }
-}
-
-resource "sysbox_node" "vm" {
-  substrate = substrate.libvirt.kvm
-  image     = sysbox_image.kvm_disk.id
-
-  provider "libvirt" {
-    vcpus    = 1
-    memory   = "512"
-    ssh_user = "ubuntu"
-    ssh_pass = "ubuntu"
-  }
-
-  link {
-    network = sysbox_network.shared.id
-    ip      = "10.99.0.30/24"
-  }
-}
-
-output "container_ip" { value = "10.99.0.10" }
-output "microvm_ip"   { value = "10.99.0.20" }
-output "vm_ip"        { value = "10.99.0.30" }
-`
-
 func TestThreeSubstrate(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("three-substrate test requires root; run: sudo -E go test -tags e2e ...")
@@ -122,7 +36,9 @@ func TestThreeSubstrate(t *testing.T) {
 
 	// Check which substrates are available; skip missing ones gracefully.
 	dockerOK := isCommandAvailable("docker")
-	fcOK := isCommandAvailable("firecracker") && fileExists(envOrDefault("SYSBOX_ROOTFS", "/tmp/sysbox-rootfs.ext4"))
+	fcOK := isCommandAvailable("firecracker") &&
+		fileExists(envOrDefault("SYSBOX_ROOTFS", "/tmp/sysbox-rootfs.ext4")) &&
+		fileExists(envOrDefault("SYSBOX_E2E_FIRECRACKER_KERNEL", "/tmp/vmlinux"))
 	kvmOK := isCommandAvailable("virsh") && isCommandAvailable("qemu-img") && fileExists(envOrDefault("SYSBOX_QCOW2", "/tmp/sysbox-base.qcow2"))
 
 	if !dockerOK && !fcOK && !kvmOK {
@@ -140,7 +56,7 @@ func TestThreeSubstrate(t *testing.T) {
 
 	// Write HCL to temp file.
 	hclFile := filepath.Join(t.TempDir(), "three-substrate.sysbox.hcl")
-	require.NoError(t, os.WriteFile(hclFile, []byte(hclThreeSubstrate), 0o644))
+	require.NoError(t, os.WriteFile(hclFile, []byte(hclThreeSubstrate(dockerOK, fcOK, kvmOK)), 0o644))
 
 	statePath := filepath.Join(t.TempDir(), "state.json")
 
@@ -202,7 +118,17 @@ func TestThreeSubstrate(t *testing.T) {
 
 	outCmd, err := run("output")
 	require.NoError(t, err, "output: %s", outCmd)
-	for _, expect := range []string{"container_ip", "microvm_ip", "vm_ip"} {
+	var expectedOutputs []string
+	if dockerOK {
+		expectedOutputs = append(expectedOutputs, "container_ip")
+	}
+	if fcOK {
+		expectedOutputs = append(expectedOutputs, "microvm_ip")
+	}
+	if kvmOK {
+		expectedOutputs = append(expectedOutputs, "vm_ip")
+	}
+	for _, expect := range expectedOutputs {
 		require.Contains(t, string(outCmd), expect, "output missing %s", expect)
 	}
 
@@ -250,6 +176,112 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
-func init() {
-	_ = fmt.Sprintf // ensure fmt is imported
+// hclThreeSubstrate returns a topology containing only the substrates that are
+// actually available on the current host. Missing optional image artifacts
+// should skip that substrate, not make the whole apply fail before assertions.
+func hclThreeSubstrate(dockerOK, fcOK, kvmOK bool) string {
+	var b strings.Builder
+
+	if dockerOK {
+		b.WriteString(`substrate "docker" { alias = "dk" }
+`)
+	}
+	if fcOK {
+		b.WriteString(`substrate "firecracker" { alias = "fc" }
+`)
+	}
+	if kvmOK {
+		b.WriteString(`substrate "libvirt" { alias = "kvm" }
+`)
+	}
+
+	b.WriteString(`
+resource "sysbox_network" "shared" {
+  cidr = "10.99.0.0/24"
+  nat  = false
+}
+`)
+
+	if dockerOK {
+		b.WriteString(`
+resource "sysbox_image" "alpine_docker" {
+  substrate  = substrate.docker.dk
+  docker_ref = "alpine:latest"
+}
+
+resource "sysbox_node" "container" {
+  substrate = substrate.docker.dk
+  image     = sysbox_image.alpine_docker.id
+
+  link {
+    network = sysbox_network.shared.id
+    ip      = "10.99.0.10/24"
+  }
+}
+
+output "container_ip" { value = "10.99.0.10" }
+`)
+	}
+
+	if fcOK {
+		fmt.Fprintf(&b, `
+resource "sysbox_image" "fc_rootfs" {
+  substrate = substrate.firecracker.fc
+  rootfs    = %q
+}
+
+resource "sysbox_kernel" "vmlinux" {
+  substrate = substrate.firecracker.fc
+  source    = %q
+}
+
+resource "sysbox_node" "microvm" {
+  substrate = substrate.firecracker.fc
+  image     = sysbox_image.fc_rootfs.id
+
+  provider "firecracker" {
+    kernel   = sysbox_kernel.vmlinux.id
+    ssh_user = "root"
+    ssh_pass = "root"
+  }
+
+  link {
+    network = sysbox_network.shared.id
+    ip      = "10.99.0.20/24"
+  }
+}
+
+output "microvm_ip" { value = "10.99.0.20" }
+`, envOrDefault("SYSBOX_ROOTFS", "/tmp/sysbox-rootfs.ext4"), envOrDefault("SYSBOX_E2E_FIRECRACKER_KERNEL", "/tmp/vmlinux"))
+	}
+
+	if kvmOK {
+		fmt.Fprintf(&b, `
+resource "sysbox_image" "kvm_disk" {
+  substrate = substrate.libvirt.kvm
+  qcow2     = %q
+}
+
+resource "sysbox_node" "vm" {
+  substrate = substrate.libvirt.kvm
+  image     = sysbox_image.kvm_disk.id
+
+  provider "libvirt" {
+    vcpus    = 1
+    memory   = "512"
+    ssh_user = "ubuntu"
+    ssh_pass = "ubuntu"
+  }
+
+  link {
+    network = sysbox_network.shared.id
+    ip      = "10.99.0.30/24"
+  }
+}
+
+output "vm_ip" { value = "10.99.0.30" }
+`, envOrDefault("SYSBOX_QCOW2", "/tmp/sysbox-base.qcow2"))
+	}
+
+	return b.String()
 }
