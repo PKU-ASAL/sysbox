@@ -15,16 +15,26 @@ import (
 type Supervisor struct {
 	server   *Server
 	interval time.Duration
+	policy   SupervisorPolicy
 	stop     chan struct{}
 	once     sync.Once
 }
+
+type SupervisorPolicy string
+
+const (
+	SupervisorPolicyObserveOnly    SupervisorPolicy = "observe_only"
+	SupervisorPolicyRestartOnCrash SupervisorPolicy = "restart_on_crash"
+)
 
 type HealthSnapshot struct {
 	Topology  string                 `json:"topology"`
 	Observed  time.Time              `json:"observed_at"`
 	Health    runtime.TopologyHealth `json:"health"`
-	Policy    string                 `json:"policy"`
+	Policy    SupervisorPolicy       `json:"policy"`
 	AutoHeal  bool                   `json:"auto_heal"`
+	Action    string                 `json:"action,omitempty"`
+	RunID     string                 `json:"run_id,omitempty"`
 	LastError string                 `json:"last_error,omitempty"`
 }
 
@@ -32,6 +42,7 @@ func newSupervisor(s *Server, interval time.Duration) *Supervisor {
 	return &Supervisor{
 		server:   s,
 		interval: interval,
+		policy:   supervisorPolicyFromEnv(),
 		stop:     make(chan struct{}),
 	}
 }
@@ -85,10 +96,31 @@ func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
 		Topology: topology,
 		Observed: time.Now().UTC(),
 		Health:   runtime.EvaluateTopologyHealth(ctx, st),
-		Policy:   "observe_only",
-		AutoHeal: false,
+		Policy:   s.policy,
+		AutoHeal: s.policy != SupervisorPolicyObserveOnly,
 	}
+	s.maybeRepair(topology, &snap)
 	return s.server.saveHealthSnapshot(topology, snap)
+}
+
+func (s *Supervisor) maybeRepair(topology string, snap *HealthSnapshot) {
+	if s.policy != SupervisorPolicyRestartOnCrash {
+		snap.Action = "observe"
+		return
+	}
+	if snap.Health.Status != runtime.ResourceHealthDrifted {
+		snap.Action = "healthy"
+		return
+	}
+	if s.server.jobs.hasRunning(topology) {
+		snap.Action = "skipped_running_operation"
+		return
+	}
+	run := s.server.jobs.start(topology, "apply")
+	run.ParentID = "supervisor"
+	snap.Action = "restart_apply_started"
+	snap.RunID = run.ID
+	go s.server.runApply(topology, run)
 }
 
 func (s *Server) healthSnapshotFile(topology string) string {
@@ -117,4 +149,13 @@ func (s *Server) loadHealthSnapshot(topology string) (*HealthSnapshot, error) {
 		return nil, fmt.Errorf("decode health snapshot: %w", err)
 	}
 	return &snap, nil
+}
+
+func supervisorPolicyFromEnv() SupervisorPolicy {
+	switch os.Getenv("SYSBOX_SUPERVISOR_POLICY") {
+	case string(SupervisorPolicyRestartOnCrash):
+		return SupervisorPolicyRestartOnCrash
+	default:
+		return SupervisorPolicyObserveOnly
+	}
 }

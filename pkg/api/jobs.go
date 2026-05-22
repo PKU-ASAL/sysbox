@@ -189,6 +189,17 @@ func (j *Jobs) start(topology, op string) *Run {
 	return r
 }
 
+func (j *Jobs) hasRunning(topology string) bool {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	for _, r := range j.runs {
+		if r.Topology == topology && r.Status == RunRunning {
+			return true
+		}
+	}
+	return false
+}
+
 func (j *Jobs) startChild(parent *Run) *Run {
 	r := j.start(parent.Topology, parent.Op)
 	r.ParentID = parent.ID

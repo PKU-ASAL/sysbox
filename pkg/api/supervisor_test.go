@@ -45,7 +45,8 @@ func TestSupervisorScanWritesHealthSnapshot(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &snap))
 	require.Equal(t, "mixed", snap.Topology)
 	require.Equal(t, runtime.ResourceHealthHealthy, snap.Health.Status)
-	require.Equal(t, "observe_only", snap.Policy)
+	require.Equal(t, SupervisorPolicyObserveOnly, snap.Policy)
+	require.Equal(t, "observe", snap.Action)
 }
 
 func TestGetTopologyHealthCached(t *testing.T) {
@@ -59,7 +60,7 @@ func TestGetTopologyHealthCached(t *testing.T) {
 		Health: runtime.TopologyHealth{
 			Status: runtime.ResourceHealthHealthy,
 		},
-		Policy: "observe_only",
+		Policy: SupervisorPolicyObserveOnly,
 	}
 	require.NoError(t, s.saveHealthSnapshot("mixed", snap))
 
@@ -72,4 +73,68 @@ func TestGetTopologyHealthCached(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, "mixed", body.Topology)
 	require.Equal(t, runtime.ResourceHealthHealthy, body.Health.Status)
+}
+
+func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
+	t.Setenv("SYSBOX_SUPERVISOR_POLICY", string(SupervisorPolicyRestartOnCrash))
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	workspaces := filepath.Join(dir, "workspaces")
+	require.NoError(t, os.MkdirAll(filepath.Join(workspaces, "mixed"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspaces, "mixed", "field.sysbox.hcl"), []byte(""), 0o644))
+	writeState(t, runs, "mixed", &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Type:     "sysbox_kernel",
+			Name:     "linux",
+			Provider: "artifact",
+			Instance: map[string]any{"path": filepath.Join(dir, "missing-vmlinux")},
+		}},
+	})
+
+	s := NewServer(runs, workspaces)
+	supervisor := newSupervisor(s, time.Minute)
+	require.NoError(t, supervisor.ScanTopology(context.Background(), "mixed"))
+
+	snap, err := s.loadHealthSnapshot("mixed")
+	require.NoError(t, err)
+	require.Equal(t, SupervisorPolicyRestartOnCrash, snap.Policy)
+	require.Equal(t, "restart_apply_started", snap.Action)
+	require.NotEmpty(t, snap.RunID)
+	run, ok := s.jobs.get(snap.RunID)
+	require.True(t, ok)
+	require.Equal(t, "supervisor", run.ParentID)
+	require.Equal(t, "apply", run.Op)
+	require.Eventually(t, func() bool {
+		run, ok := s.jobs.get(snap.RunID)
+		return ok && run.Status != RunRunning
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestSupervisorRestartOnCrashSkipsWhenRunActive(t *testing.T) {
+	t.Setenv("SYSBOX_SUPERVISOR_POLICY", string(SupervisorPolicyRestartOnCrash))
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	workspaces := filepath.Join(dir, "workspaces")
+	require.NoError(t, os.MkdirAll(filepath.Join(workspaces, "mixed"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspaces, "mixed", "field.sysbox.hcl"), []byte(""), 0o644))
+	writeState(t, runs, "mixed", &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Type:     "sysbox_kernel",
+			Name:     "linux",
+			Provider: "artifact",
+			Instance: map[string]any{"path": filepath.Join(dir, "missing-vmlinux")},
+		}},
+	})
+
+	s := NewServer(runs, workspaces)
+	_ = s.jobs.start("mixed", "apply")
+	supervisor := newSupervisor(s, time.Minute)
+	require.NoError(t, supervisor.ScanTopology(context.Background(), "mixed"))
+
+	snap, err := s.loadHealthSnapshot("mixed")
+	require.NoError(t, err)
+	require.Equal(t, "skipped_running_operation", snap.Action)
+	require.Empty(t, snap.RunID)
 }
