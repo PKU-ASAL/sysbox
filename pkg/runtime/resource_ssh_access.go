@@ -15,30 +15,73 @@ import (
 // -- sysbox_ssh_access --
 
 func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
+	p := mustResourceProvider("sysbox_ssh_access")
+	res, err := p.Create(ctx, e, n)
+	if err != nil {
+		return err
+	}
+	e.state.AddResource(res)
+	return nil
+}
+
+type SSHAccessResourceProvider struct{}
+
+func init() {
+	RegisterResourceProvider(SSHAccessResourceProvider{})
+}
+
+func (SSHAccessResourceProvider) Type() string { return "sysbox_ssh_access" }
+
+func (SSHAccessResourceProvider) Schema() ResourceSchema {
+	return ResourceSchemaFor("sysbox_ssh_access")
+}
+
+func (SSHAccessResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+	return current, nil
+}
+
+func (SSHAccessResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+	return planDiffByDesiredHash(desired, current)
+}
+
+func (SSHAccessResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
+	return exec.createSSHAccessResource(ctx, n)
+}
+
+func (p SSHAccessResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, exec, desired)
+}
+
+func (SSHAccessResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
+	exec.state.RemoveResource(current.Type, current.Name)
+	return nil
+}
+
+func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.SSHAccessConfig)
 	if !ok {
-		return fmt.Errorf("ssh_access %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("ssh_access %s: wrong data type", n.ID)
 	}
 
 	nodeName := config.ResolveName(cfg.Node)
 	nodeState := e.state.FindResource("sysbox_node", nodeName)
 	if nodeState == nil {
-		return fmt.Errorf("node %s not applied yet", nodeName)
+		return state.Resource{}, fmt.Errorf("node %s not applied yet", nodeName)
 	}
 
 	subName := nodeState.Provider
 	sub, err := substrate.Get(subName)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 	handle, err := nodeState.ReconstructHandle(sub)
 	if err != nil {
-		return fmt.Errorf("sysbox_ssh_access: %w", err)
+		return state.Resource{}, fmt.Errorf("sysbox_ssh_access: %w", err)
 	}
 
 	conn, err := sub.Connection(handle, nil)
 	if err != nil || conn == nil {
-		return fmt.Errorf("sysbox_ssh_access: no connection to node %s: %v", nodeName, err)
+		return state.Resource{}, fmt.Errorf("sysbox_ssh_access: no connection to node %s: %v", nodeName, err)
 	}
 
 	port := cfg.Port
@@ -47,7 +90,7 @@ func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
 	}
 
 	if err := setupSSHAccess(ctx, conn, nodeName, cfg.AuthorizedKeys, port, ""); err != nil {
-		return fmt.Errorf("setup ssh access on %s: %w", nodeName, err)
+		return state.Resource{}, fmt.Errorf("setup ssh access on %s: %w", nodeName, err)
 	}
 
 	inst := map[string]any{
@@ -57,15 +100,14 @@ func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
 		"key_count":    len(cfg.AuthorizedKeys),
 	}
 	if err := setDesiredHash(n, inst); err != nil {
-		return err
+		return state.Resource{}, err
 	}
-	e.state.AddResource(state.Resource{
+	return state.Resource{
 		Type:     "sysbox_ssh_access",
 		Name:     n.ID.Name,
 		Provider: subName,
 		Instance: inst,
-	})
-	return nil
+	}, nil
 }
 
 // setupSSHAccess installs openssh-server, writes authorized_keys and sshd

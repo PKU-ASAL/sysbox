@@ -69,35 +69,14 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 		inGraph[n.ID] = true
 	}
 
-	inState := map[graph.NodeID]bool{}
-	for _, r := range s.Resources {
-		inState[graph.NodeID{Type: r.Type, Name: r.Name}] = true
-	}
-
 	for id := range inGraph {
-		if !inState[id] {
-			p.Add = append(p.Add, id)
-			p.addAction(id, PlanActionCreate, "resource not present in state", nil)
-		} else {
-			n := g.Get(id.Type, id.Name)
-			r := s.FindResource(id.Type, id.Name)
-			// Older state files do not have desired_hash. Treat them as
-			// unchanged so users are not forced to rebuild every existing lab.
-			if r != nil && stateDesiredHash(r) != "" {
-				want, err := desiredHash(n)
-				if err != nil {
-					return nil, err
-				}
-				if want != stateDesiredHash(r) {
-					p.Change = append(p.Change, id)
-					changes, reason := diffDesiredState(n, r)
-					p.addAction(id, PlanActionReplace, reason, changes)
-					continue
-				}
-			}
-			p.Unchanged = append(p.Unchanged, id)
-			p.addAction(id, PlanActionNoop, "", nil)
+		n := g.Get(id.Type, id.Name)
+		r := s.FindResource(id.Type, id.Name)
+		action, err := planActionForDesired(n, r)
+		if err != nil {
+			return nil, err
 		}
+		p.addDesiredAction(id, action)
 	}
 
 	for _, r := range s.Resources {
@@ -122,6 +101,63 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 	}
 
 	return p, nil
+}
+
+func planActionForDesired(n *graph.Node, current *state.Resource) (PlanAction, error) {
+	if provider, ok := GetResourceProvider(n.ID.Type); ok {
+		return provider.PlanDiff(n, current)
+	}
+	return planDiffByDesiredHash(n, current)
+}
+
+func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+	if current == nil {
+		return PlanAction{
+			Resource: desired.ID.String(),
+			Type:     desired.ID.Type,
+			Name:     desired.ID.Name,
+			Action:   PlanActionCreate,
+			Reason:   "resource not present in state",
+		}, nil
+	}
+	action := PlanActionNoop
+	reason := ""
+	var changes map[string]FieldChange
+	// Older state files do not have desired_hash. Treat them as unchanged so
+	// users are not forced to rebuild every existing lab.
+	if stateDesiredHash(current) != "" {
+		want, err := desiredHash(desired)
+		if err != nil {
+			return PlanAction{}, err
+		}
+		if want != stateDesiredHash(current) {
+			changes, reason = diffDesiredState(desired, current)
+			action = PlanActionReplace
+		}
+	}
+	if action == PlanActionReplace && reason == "" {
+		reason = "desired configuration changed; replacement required"
+	}
+	return PlanAction{
+		Resource: desired.ID.String(),
+		Type:     desired.ID.Type,
+		Name:     desired.ID.Name,
+		Action:   action,
+		Reason:   reason,
+		Changes:  changes,
+	}, nil
+}
+
+func (p *Plan) addDesiredAction(id graph.NodeID, action PlanAction) {
+	switch action.Action {
+	case PlanActionCreate:
+		p.Add = append(p.Add, id)
+	case PlanActionUpdate, PlanActionReplace:
+		p.Change = append(p.Change, id)
+	default:
+		p.Unchanged = append(p.Unchanged, id)
+	}
+	p.Actions = append(p.Actions, action)
 }
 
 func (p *Plan) addAction(id graph.NodeID, action PlanActionType, reason string, changes map[string]FieldChange) {

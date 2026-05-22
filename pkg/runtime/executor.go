@@ -123,6 +123,15 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 		return fmt.Errorf("node %s not in graph", id)
 	}
 
+	if p, ok := GetResourceProvider(id.Type); ok {
+		res, err := p.Create(ctx, e, node)
+		if err != nil {
+			return err
+		}
+		e.state.AddResource(res)
+		return nil
+	}
+
 	switch id.Type {
 	case "sysbox_network":
 		return e.createNetwork(ctx, node)
@@ -153,6 +162,10 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 
 // DestroyResource tears down a resource listed in state.
 func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error {
+	if p, ok := GetResourceProvider(r.Type); ok {
+		return p.Delete(ctx, e, r)
+	}
+
 	switch r.Type {
 	case "sysbox_network":
 		return e.destroyNetwork(ctx, r)

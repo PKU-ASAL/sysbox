@@ -15,9 +15,51 @@ import (
 // -- sysbox_actor --
 
 func (e *Executor) createActor(ctx context.Context, n *graph.Node) error {
+	p := mustResourceProvider("sysbox_actor")
+	res, err := p.Create(ctx, e, n)
+	if err != nil {
+		return err
+	}
+	e.state.AddResource(res)
+	return nil
+}
+
+type ActorResourceProvider struct{}
+
+func init() {
+	RegisterResourceProvider(ActorResourceProvider{})
+}
+
+func (ActorResourceProvider) Type() string { return "sysbox_actor" }
+
+func (ActorResourceProvider) Schema() ResourceSchema {
+	return ResourceSchemaFor("sysbox_actor")
+}
+
+func (ActorResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+	return current, nil
+}
+
+func (ActorResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+	return planDiffByDesiredHash(desired, current)
+}
+
+func (ActorResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
+	return exec.createActorResource(ctx, n)
+}
+
+func (p ActorResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, exec, desired)
+}
+
+func (ActorResourceProvider) Delete(ctx context.Context, exec *Executor, current state.Resource) error {
+	return exec.destroyActorResource(ctx, current)
+}
+
+func (e *Executor) createActorResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.ActorConfig)
 	if !ok {
-		return fmt.Errorf("actor %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("actor %s: wrong data type", n.ID)
 	}
 	position := cfg.Position
 	if position == "" {
@@ -29,38 +71,38 @@ func (e *Executor) createActor(ctx context.Context, n *graph.Node) error {
 	case "external":
 		return e.createExternalActor(ctx, n, cfg)
 	default:
-		return fmt.Errorf("actor %s: unknown position %q (must be internal or external)", n.ID.Name, position)
+		return state.Resource{}, fmt.Errorf("actor %s: unknown position %q (must be internal or external)", n.ID.Name, position)
 	}
 }
 
 // createInternalActor runs the actor command inside an existing sysbox_node.
-func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *config.ActorConfig) error {
+func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *config.ActorConfig) (state.Resource, error) {
 	nodeName := config.ResolveName(cfg.Node)
 	nodeState := e.state.FindResource("sysbox_node", nodeName)
 	if nodeState == nil {
-		return fmt.Errorf("actor %s: node %s not applied yet", n.ID.Name, nodeName)
+		return state.Resource{}, fmt.Errorf("actor %s: node %s not applied yet", n.ID.Name, nodeName)
 	}
 
 	subName := nodeState.Provider
 	sub, err := substrate.Get(subName)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	// Reconstruct the handle from the persisted provider state so the
 	// connection works on any substrate (docker, firecracker, libvirt).
 	handle, err := nodeState.ReconstructHandle(sub)
 	if err != nil {
-		return fmt.Errorf("actor %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("actor %s: %w", n.ID.Name, err)
 	}
 	e.logf("[apply] starting actor %s on node %s: %v\n", n.ID.Name, nodeName, cfg.Command)
 	conn, err := sub.Connection(handle, nil)
 	if err != nil {
-		return fmt.Errorf("actor %s: connection: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("actor %s: connection: %w", n.ID.Name, err)
 	}
 	pid, err := conn.ExecBackground(ctx, cfg.Command, cfg.Env)
 	if err != nil {
-		return fmt.Errorf("start actor %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("start actor %s: %w", n.ID.Name, err)
 	}
 
 	// Determine ACP URL: prefer acp_ip if set, otherwise fall back to primary_ip.
@@ -86,32 +128,32 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 		"command":      cfg.Command,
 	}
 	if err := setDesiredHash(n, inst); err != nil {
-		return err
+		return state.Resource{}, err
 	}
-	e.state.AddResource(state.Resource{
+	res := state.Resource{
 		Type:     "sysbox_actor",
 		Name:     n.ID.Name,
 		Provider: subName,
 		Instance: inst,
-	})
+	}
 	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.ID.Name, pid, acpURL)
-	return nil
+	return res, nil
 }
 
 // createExternalActor creates a standalone container outside the topology and
 // runs the actor command in it. Only Docker bridge (NAT) network links are
 // supported; the container gets no veth injection and no provisioners.
-func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *config.ActorConfig) error {
+func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *config.ActorConfig) (state.Resource, error) {
 	sub, err := substrate.Get("docker")
 	if err != nil {
-		return fmt.Errorf("actor %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("actor %s: %w", n.ID.Name, err)
 	}
 
 	// Resolve image.
 	imageName := config.ResolveName(cfg.Image)
 	imgState := e.state.FindResource("sysbox_image", imageName)
 	if imgState == nil {
-		return fmt.Errorf("actor %s: image %s not applied yet", n.ID.Name, imageName)
+		return state.Resource{}, fmt.Errorf("actor %s: image %s not applied yet", n.ID.Name, imageName)
 	}
 	imgRef := substrate.ImageRef{
 		ID:         imgState.ImageID(),
@@ -125,10 +167,10 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		netName := config.ResolveName(link.Network)
 		netState := e.state.FindResource("sysbox_network", netName)
 		if netState == nil {
-			return fmt.Errorf("actor %s: network %s not applied yet", n.ID.Name, netName)
+			return state.Resource{}, fmt.Errorf("actor %s: network %s not applied yet", n.ID.Name, netName)
 		}
 		if !netState.IsNAT() {
-			return fmt.Errorf("actor %s (external): link %s is not a NAT network; external actors only support Docker bridge networks", n.ID.Name, netName)
+			return state.Resource{}, fmt.Errorf("actor %s (external): link %s is not a NAT network; external actors only support Docker bridge networks", n.ID.Name, netName)
 		}
 		natLinks = append(natLinks, natLink{
 			netID: netState.DockerNetID(),
@@ -155,12 +197,12 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		Labels:       ManagedLabels(e.topology, e.runID, n.ID),
 	})
 	if err != nil {
-		return fmt.Errorf("create actor container %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("create actor container %s: %w", n.ID.Name, err)
 	}
 
 	if err := sub.StartNode(ctx, handle); err != nil {
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on start failure")
-		return fmt.Errorf("start actor container %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("start actor container %s: %w", n.ID.Name, err)
 	}
 
 	// Connect remaining NAT networks (all after the first) via AttachNIC.
@@ -171,7 +213,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 			IP:          nl.ip,
 		}); err != nil {
 			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on attach failure")
-			return fmt.Errorf("actor %s: connect to network: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("actor %s: connect to network: %w", n.ID.Name, err)
 		}
 	}
 
@@ -180,12 +222,12 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	conn, err := sub.Connection(handle, nil)
 	if err != nil {
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on connection failure")
-		return fmt.Errorf("actor %s: connection: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("actor %s: connection: %w", n.ID.Name, err)
 	}
 	pid, err := conn.ExecBackground(ctx, cfg.Command, cfg.Env)
 	if err != nil {
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on exec failure")
-		return fmt.Errorf("start actor command %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("start actor command %s: %w", n.ID.Name, err)
 	}
 
 	acpURL := ""
@@ -216,19 +258,24 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		inst["provider_extra"] = string(blob)
 	}
 	if err := setDesiredHash(n, inst); err != nil {
-		return err
+		return state.Resource{}, err
 	}
-	e.state.AddResource(state.Resource{
+	res := state.Resource{
 		Type:     "sysbox_actor",
 		Name:     n.ID.Name,
 		Provider: "docker",
 		Instance: inst,
-	})
+	}
 	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.ID.Name, pid, acpURL)
-	return nil
+	return res, nil
 }
 
 func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
+	p := mustResourceProvider("sysbox_actor")
+	return p.Delete(ctx, e, r)
+}
+
+func (e *Executor) destroyActorResource(ctx context.Context, r state.Resource) error {
 	position := r.Str("position")
 	pid := r.Int("pid")
 	containerID := r.Str("container_id")

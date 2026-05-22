@@ -126,6 +126,36 @@ func TestPlanDetectsDesiredHashChange(t *testing.T) {
 	require.True(t, plan.Actions[0].Changes["cidr"].RequiresReplace)
 }
 
+func TestComputePlanUsesRegisteredProviderPlanDiff(t *testing.T) {
+	g := graph.New()
+	n := g.AddNode("sysbox_actor", "agent", nil)
+	n.Data = &config.ActorConfig{Position: "internal", Node: "sysbox_node.web.id", Command: []string{"sleep", "60"}}
+	oldHash, err := desiredHash(n)
+	require.NoError(t, err)
+	oldPayload, _ := desiredPayload(n)
+
+	n.Data = &config.ActorConfig{Position: "internal", Node: "sysbox_node.web.id", Command: []string{"sleep", "120"}}
+	s := &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Type:     "sysbox_actor",
+			Name:     "agent",
+			Provider: "docker",
+			Instance: map[string]any{
+				desiredHashKey:    oldHash,
+				desiredPayloadKey: oldPayload,
+			},
+		}},
+	}
+
+	plan, err := ComputePlan(g, s)
+	require.NoError(t, err)
+	require.Equal(t, []graph.NodeID{{Type: "sysbox_actor", Name: "agent"}}, plan.Change)
+	require.Len(t, plan.Actions, 1)
+	require.Equal(t, PlanActionReplace, plan.Actions[0].Action)
+	require.Contains(t, plan.Actions[0].Changes, "command")
+}
+
 func TestPlanRedactsSensitiveDiffFields(t *testing.T) {
 	g := graph.New()
 	n := g.AddNode("sysbox_node", "web", nil)

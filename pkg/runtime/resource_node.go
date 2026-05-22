@@ -43,39 +43,7 @@ func (NodeResourceProvider) Read(_ context.Context, current state.Resource) (sta
 }
 
 func (NodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
-	if current == nil {
-		return PlanAction{
-			Resource: desired.ID.String(),
-			Type:     desired.ID.Type,
-			Name:     desired.ID.Name,
-			Action:   PlanActionCreate,
-			Reason:   "resource not present in state",
-		}, nil
-	}
-	action := PlanActionNoop
-	reason := ""
-	var changes map[string]FieldChange
-	if stateDesiredHash(current) != "" {
-		want, err := desiredHash(desired)
-		if err != nil {
-			return PlanAction{}, err
-		}
-		if want != stateDesiredHash(current) {
-			changes, reason = diffDesiredState(desired, current)
-			action = PlanActionReplace
-		}
-	}
-	if action == PlanActionReplace && reason == "" {
-		reason = "desired configuration changed; replacement required"
-	}
-	return PlanAction{
-		Resource: desired.ID.String(),
-		Type:     desired.ID.Type,
-		Name:     desired.ID.Name,
-		Action:   action,
-		Reason:   reason,
-		Changes:  changes,
-	}, nil
+	return planDiffByDesiredHash(desired, current)
 }
 
 func (NodeResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {

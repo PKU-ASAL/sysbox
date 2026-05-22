@@ -11,18 +11,67 @@ import (
 )
 
 func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
+	p := mustResourceProvider("sysbox_firewall")
+	res, err := p.Create(ctx, e, n)
+	if err != nil {
+		return err
+	}
+	e.state.AddResource(res)
+	return nil
+}
+
+type FirewallResourceProvider struct{}
+
+func init() {
+	RegisterResourceProvider(FirewallResourceProvider{})
+}
+
+func (FirewallResourceProvider) Type() string { return "sysbox_firewall" }
+
+func (FirewallResourceProvider) Schema() ResourceSchema {
+	return ResourceSchemaFor("sysbox_firewall")
+}
+
+func (FirewallResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+	return current, nil
+}
+
+func (FirewallResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+	return planDiffByDesiredHash(desired, current)
+}
+
+func (FirewallResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
+	return exec.createFirewallResource(ctx, n)
+}
+
+func (p FirewallResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, exec, desired)
+}
+
+func (FirewallResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
+	nsName := current.Str("netns")
+	if nsName != "" {
+		if err := network.DeleteFirewall(nsName); err != nil {
+			exec.logf("[destroy] warning: delete firewall %s: %v\n", current.Name, err)
+		}
+	}
+	exec.state.RemoveResource(current.Type, current.Name)
+	return nil
+}
+
+func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.FirewallConfig)
 	if !ok {
-		return fmt.Errorf("firewall %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("firewall %s: wrong data type", n.ID)
 	}
 
 	netName := config.ResolveName(cfg.AttachTo)
 	if netName == "" {
-		return fmt.Errorf("firewall %s: attach_to is empty", n.ID.Name)
+		return state.Resource{}, fmt.Errorf("firewall %s: attach_to is empty", n.ID.Name)
 	}
 	netState := e.state.FindResource("sysbox_network", netName)
 	if netState == nil {
-		return fmt.Errorf("firewall %s: network %s not applied yet", n.ID.Name, netName)
+		return state.Resource{}, fmt.Errorf("firewall %s: network %s not applied yet", n.ID.Name, netName)
 	}
 	nsName := netState.Str("netns")
 
@@ -37,7 +86,7 @@ func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
 	}
 
 	if err := network.ApplyFirewall(nsName, specs); err != nil {
-		return fmt.Errorf("firewall %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("firewall %s: %w", n.ID.Name, err)
 	}
 
 	inst := map[string]any{
@@ -47,24 +96,17 @@ func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
 		"rule_specs": specs,
 	}
 	if err := setDesiredHash(n, inst); err != nil {
-		return err
+		return state.Resource{}, err
 	}
-	e.state.AddResource(state.Resource{
+	return state.Resource{
 		Type:     "sysbox_firewall",
 		Name:     n.ID.Name,
 		Provider: "network",
 		Instance: inst,
-	})
-	return nil
+	}, nil
 }
 
 func (e *Executor) destroyFirewall(ctx context.Context, r state.Resource) error {
-	nsName := r.Str("netns")
-	if nsName != "" {
-		if err := network.DeleteFirewall(nsName); err != nil {
-			e.logf("[destroy] warning: delete firewall %s: %v\n", r.Name, err)
-		}
-	}
-	e.state.RemoveResource(r.Type, r.Name)
-	return nil
+	p := mustResourceProvider("sysbox_firewall")
+	return p.Delete(ctx, e, r)
 }
