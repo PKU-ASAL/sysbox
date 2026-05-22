@@ -232,6 +232,35 @@ func (s *Server) handleRestoreStateSnapshot(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]string{"status": "restored", "snapshot": snapshot})
 }
 
+func (s *Server) handleGetOutputs(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	_, _, _, root, evalCtx, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), state.NewManager(s.stateFile(topology)))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	outputs, err := runtime.EvaluateOutputs(root, evalCtx)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name != "" {
+		out, ok := outputs[name]
+		if !ok {
+			writeError(w, http.StatusNotFound, fmt.Errorf("output %q not found", name))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"outputs": map[string]runtime.OutputValue{name: out}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"outputs": outputs})
+}
+
 // GET /v1/topologies/{topology}/plan
 func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")

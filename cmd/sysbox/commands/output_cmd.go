@@ -3,15 +3,11 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/hashicorp/hcl/v2"
 	"github.com/spf13/cobra"
-	"github.com/zclconf/go-cty/cty"
-	ctyjson "github.com/zclconf/go-cty/cty/json"
 
-	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -33,7 +29,7 @@ func runOutput(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	outputs, err := evaluateOutputs(root, evalCtx)
+	outputs, err := runtime.EvaluateOutputs(root, evalCtx)
 	if err != nil {
 		return err
 	}
@@ -42,7 +38,7 @@ func runOutput(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		if out, ok := outputs[name]; ok {
 			if flagOutputJSON {
-				return printOutputsJSON(map[string]OutputValue{name: out})
+				return printOutputsJSON(map[string]runtime.OutputValue{name: out})
 			}
 			fmt.Println(out.Display)
 			return nil
@@ -57,48 +53,7 @@ func runOutput(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-type OutputValue struct {
-	Name        string    `json:"-"`
-	Value       any       `json:"value"`
-	Type        string    `json:"type"`
-	Description string    `json:"description,omitempty"`
-	Display     string    `json:"-"`
-	Raw         cty.Value `json:"-"`
-}
-
-func evaluateOutputs(root *config.Root, ctx *hcl.EvalContext) (map[string]OutputValue, error) {
-	out := map[string]OutputValue{}
-	if root == nil {
-		return out, nil
-	}
-	for _, block := range root.Outputs {
-		val := cty.NilVal
-		display := "(unevaluated)"
-		var native any
-		typeName := "dynamic"
-		if block.Value != nil {
-			v, diags := block.Value.Value(ctx)
-			if diags.HasErrors() {
-				return nil, fmt.Errorf("output %s: %s", block.Name, diags.Error())
-			}
-			val = v
-			display = outputDisplayValue(v)
-			native = outputNativeValue(v)
-			typeName = v.Type().FriendlyName()
-		}
-		out[block.Name] = OutputValue{
-			Name:        block.Name,
-			Value:       native,
-			Type:        typeName,
-			Description: block.Description,
-			Display:     display,
-			Raw:         val,
-		}
-	}
-	return out, nil
-}
-
-func printOutputs(outputs map[string]OutputValue) {
+func printOutputs(outputs map[string]runtime.OutputValue) {
 	if len(outputs) == 0 {
 		return
 	}
@@ -106,8 +61,8 @@ func printOutputs(outputs map[string]OutputValue) {
 	printOutputsHuman(outputs)
 }
 
-func printOutputsHuman(outputs map[string]OutputValue) {
-	for _, name := range sortedOutputNames(outputs) {
+func printOutputsHuman(outputs map[string]runtime.OutputValue) {
+	for _, name := range runtime.SortedOutputNames(outputs) {
 		out := outputs[name]
 		fmt.Printf("  %-20s = %s", name, out.Display)
 		if out.Description != "" {
@@ -117,64 +72,13 @@ func printOutputsHuman(outputs map[string]OutputValue) {
 	}
 }
 
-func printOutputsJSON(outputs map[string]OutputValue) error {
+func printOutputsJSON(outputs map[string]runtime.OutputValue) error {
 	data, err := json.MarshalIndent(outputs, "", "  ")
 	if err != nil {
 		return err
 	}
 	fmt.Println(string(data))
 	return nil
-}
-
-func sortedOutputNames(outputs map[string]OutputValue) []string {
-	names := make([]string, 0, len(outputs))
-	for name := range outputs {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-func outputDisplayValue(v cty.Value) string {
-	if !v.IsKnown() {
-		return "(unknown)"
-	}
-	if v.IsNull() {
-		return "null"
-	}
-	if v.Type() == cty.String {
-		return v.AsString()
-	}
-	data, err := ctyjson.Marshal(v, v.Type())
-	if err != nil {
-		return v.GoString()
-	}
-	return string(data)
-}
-
-func outputNativeValue(v cty.Value) any {
-	if !v.IsKnown() || v.IsNull() {
-		return nil
-	}
-	if v.Type() == cty.String {
-		return v.AsString()
-	}
-	if v.Type() == cty.Bool {
-		return v.True()
-	}
-	if v.Type() == cty.Number {
-		f, _ := v.AsBigFloat().Float64()
-		return f
-	}
-	data, err := ctyjson.Marshal(v, v.Type())
-	if err != nil {
-		return v.GoString()
-	}
-	var native any
-	if err := json.Unmarshal(data, &native); err != nil {
-		return string(data)
-	}
-	return native
 }
 
 func printStateAddress(s stateReader, addr string) error {

@@ -127,6 +127,7 @@ Important API endpoints:
 ```bash
 GET  /v1/topologies
 GET  /v1/topologies/{name}/plan
+GET  /v1/topologies/{name}/outputs
 GET  /v1/topologies/{name}/preflight
 POST /v1/topologies/{name}/apply
 POST /v1/topologies/{name}/destroy

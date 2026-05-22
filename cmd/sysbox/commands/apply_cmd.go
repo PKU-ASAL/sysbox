@@ -77,7 +77,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save state: %w", err)
 	}
 	fmt.Println("Apply complete.")
-	outputs, err := evaluateOutputs(root, evalCtx)
+	outputs, err := runtime.EvaluateOutputs(root, evalCtx)
 	if err != nil {
 		return err
 	}
