@@ -164,7 +164,9 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 		e.state.RemoveResource(r.Type, r.Name)
 		return nil
 	case "sysbox_kernel":
-		// Cache files are content-addressed and shared; do not delete from disk.
+		if p, ok := GetResourceProvider(r.Type); ok {
+			return p.Delete(ctx, e, r)
+		}
 		e.state.RemoveResource(r.Type, r.Name)
 		return nil
 	case "sysbox_firewall":

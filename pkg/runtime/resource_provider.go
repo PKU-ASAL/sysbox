@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"fmt"
+	"sync"
 
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -22,4 +24,30 @@ type ResourceProvider interface {
 	Create(ctx context.Context, exec *Executor, desired *graph.Node) (state.Resource, error)
 	Update(ctx context.Context, exec *Executor, desired *graph.Node, current state.Resource) (state.Resource, error)
 	Delete(ctx context.Context, exec *Executor, current state.Resource) error
+}
+
+var (
+	resourceProvidersMu sync.RWMutex
+	resourceProviders   = map[string]ResourceProvider{}
+)
+
+func RegisterResourceProvider(p ResourceProvider) {
+	resourceProvidersMu.Lock()
+	defer resourceProvidersMu.Unlock()
+	resourceProviders[p.Type()] = p
+}
+
+func GetResourceProvider(typ string) (ResourceProvider, bool) {
+	resourceProvidersMu.RLock()
+	defer resourceProvidersMu.RUnlock()
+	p, ok := resourceProviders[typ]
+	return p, ok
+}
+
+func mustResourceProvider(typ string) ResourceProvider {
+	p, ok := GetResourceProvider(typ)
+	if !ok {
+		panic(fmt.Sprintf("resource provider %q not registered", typ))
+	}
+	return p
 }
