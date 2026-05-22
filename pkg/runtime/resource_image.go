@@ -12,17 +12,79 @@ import (
 )
 
 func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
+	p := mustResourceProvider("sysbox_image")
+	res, err := p.Create(ctx, e, n)
+	if err != nil {
+		return err
+	}
+	e.state.AddResource(res)
+	return nil
+}
+
+type ImageResourceProvider struct{}
+
+func init() {
+	RegisterResourceProvider(ImageResourceProvider{})
+}
+
+func (ImageResourceProvider) Type() string { return "sysbox_image" }
+
+func (ImageResourceProvider) Schema() ResourceSchema {
+	return ResourceSchemaFor("sysbox_image")
+}
+
+func (ImageResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+	return current, nil
+}
+
+func (ImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+	if current == nil {
+		return PlanAction{
+			Resource: desired.ID.String(),
+			Type:     desired.ID.Type,
+			Name:     desired.ID.Name,
+			Action:   PlanActionCreate,
+			Reason:   "resource not present in state",
+		}, nil
+	}
+	action := PlanActionNoop
+	reason := ""
+	var changes map[string]FieldChange
+	if stateDesiredHash(current) != "" {
+		want, err := desiredHash(desired)
+		if err != nil {
+			return PlanAction{}, err
+		}
+		if want != stateDesiredHash(current) {
+			changes, reason = diffDesiredState(desired, current)
+			action = PlanActionReplace
+		}
+	}
+	if action == PlanActionReplace && reason == "" {
+		reason = "desired configuration changed; replacement required"
+	}
+	return PlanAction{
+		Resource: desired.ID.String(),
+		Type:     desired.ID.Type,
+		Name:     desired.ID.Name,
+		Action:   action,
+		Reason:   reason,
+		Changes:  changes,
+	}, nil
+}
+
+func (ImageResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.ImageConfig)
 	if !ok {
-		return fmt.Errorf("image %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("image %s: wrong data type", n.ID)
 	}
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 	sub, err := substrate.Get(subName)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	res := artifact.New()
@@ -43,12 +105,12 @@ func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
 		}
 		r, err := res.Resolve(artifact.Spec{Source: entry.src, SHA256: cfg.SHA256})
 		if err != nil {
-			return fmt.Errorf("image %s %s: %w", n.ID.Name, entry.label, err)
+			return state.Resource{}, fmt.Errorf("image %s %s: %w", n.ID.Name, entry.label, err)
 		}
 		if r.FromCache {
-			e.logf("[apply] image %s: %s cache hit (%s)\n", n.ID.Name, entry.label, r.Path)
+			exec.logf("[apply] image %s: %s cache hit (%s)\n", n.ID.Name, entry.label, r.Path)
 		} else if artifact.IsURL(entry.src) {
-			e.logf("[apply] image %s: %s fetched to %s\n", n.ID.Name, entry.label, r.Path)
+			exec.logf("[apply] image %s: %s fetched to %s\n", n.ID.Name, entry.label, r.Path)
 		}
 		*entry.dst = r.Path
 		resolvedSHA = r.SHA256
@@ -61,7 +123,7 @@ func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
 		Size:      cfg.Size,
 	})
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	inst := map[string]any{
@@ -71,13 +133,21 @@ func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
 		"sha256":     resolvedSHA,
 	}
 	if err := setDesiredHash(n, inst); err != nil {
-		return err
+		return state.Resource{}, err
 	}
-	e.state.AddResource(state.Resource{
+	return state.Resource{
 		Type:     "sysbox_image",
 		Name:     n.ID.Name,
 		Provider: subName,
 		Instance: inst,
-	})
+	}, nil
+}
+
+func (p ImageResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, exec, desired)
+}
+
+func (ImageResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
+	exec.state.RemoveResource(current.Type, current.Name)
 	return nil
 }

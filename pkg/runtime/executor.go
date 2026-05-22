@@ -161,6 +161,9 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 	case "sysbox_router":
 		return e.destroyRouter(ctx, r)
 	case "sysbox_image":
+		if p, ok := GetResourceProvider(r.Type); ok {
+			return p.Delete(ctx, e, r)
+		}
 		e.state.RemoveResource(r.Type, r.Name)
 		return nil
 	case "sysbox_kernel":
