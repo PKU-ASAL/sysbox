@@ -14,16 +14,6 @@ import (
 
 // -- sysbox_ssh_access --
 
-func (e *Executor) createSSHAccess(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("sysbox_ssh_access")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
-
 type SSHAccessResourceProvider struct{}
 
 func init() {

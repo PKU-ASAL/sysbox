@@ -14,16 +14,6 @@ import (
 
 // -- sysbox_actor --
 
-func (e *Executor) createActor(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("sysbox_actor")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
-
 type ActorResourceProvider struct{}
 
 func init() {
@@ -36,7 +26,10 @@ func (ActorResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_actor")
 }
 
-func (ActorResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+func (ActorResourceProvider) Read(ctx context.Context, current state.Resource) (state.Resource, error) {
+	if current.Str("position") == "external" || current.ContainerID() != "" {
+		return readNodeLikeResource(ctx, current)
+	}
 	return current, nil
 }
 
@@ -268,11 +261,6 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.ID.Name, pid, acpURL)
 	return res, nil
-}
-
-func (e *Executor) destroyActor(ctx context.Context, r state.Resource) error {
-	p := mustResourceProvider("sysbox_actor")
-	return p.Delete(ctx, e, r)
 }
 
 func (e *Executor) destroyActorResource(ctx context.Context, r state.Resource) error {

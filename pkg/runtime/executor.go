@@ -132,16 +132,7 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 		return nil
 	}
 
-	switch id.Type {
-	case "data_sysbox_node":
-		return e.readDataNode(ctx, node)
-	case "data_sysbox_network":
-		return e.readDataNetwork(ctx, node)
-	case "data_sysbox_image":
-		return e.readDataImage(ctx, node)
-	default:
-		return nil
-	}
+	return nil
 }
 
 // DestroyResource tears down a resource listed in state.
@@ -150,16 +141,9 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 		return p.Delete(ctx, e, r)
 	}
 
-	switch r.Type {
-	case "data_sysbox_node", "data_sysbox_network", "data_sysbox_image":
-		// Data sources are read-only; nothing to destroy in the substrate.
-		e.state.RemoveResource(r.Type, r.Name)
-		return nil
-	default:
-		e.logf("[destroy] skipping unimplemented resource type %q (%s)\n", r.Type, r.Name)
-		e.state.RemoveResource(r.Type, r.Name)
-		return nil
-	}
+	e.logf("[destroy] skipping unimplemented resource type %q (%s)\n", r.Type, r.Name)
+	e.state.RemoveResource(r.Type, r.Name)
+	return nil
 }
 
 // -- reference resolution helpers --

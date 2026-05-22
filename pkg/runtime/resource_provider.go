@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -24,6 +25,59 @@ type ResourceProvider interface {
 	Create(ctx context.Context, exec *Executor, desired *graph.Node) (state.Resource, error)
 	Update(ctx context.Context, exec *Executor, desired *graph.Node, current state.Resource) (state.Resource, error)
 	Delete(ctx context.Context, exec *Executor, current state.Resource) error
+}
+
+type ResourceReadStatus string
+
+const (
+	ResourceReadDrifted ResourceReadStatus = "drifted"
+	ResourceReadUnknown ResourceReadStatus = "unknown"
+)
+
+type ResourceReadError struct {
+	Status ResourceReadStatus
+	Reason string
+	Err    error
+}
+
+func (e *ResourceReadError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Err != nil && e.Reason != "" {
+		return e.Reason + ": " + e.Err.Error()
+	}
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return e.Reason
+}
+
+func (e *ResourceReadError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func driftedResource(reason string) error {
+	return &ResourceReadError{Status: ResourceReadDrifted, Reason: reason}
+}
+
+func unknownResource(reason string, err error) error {
+	return &ResourceReadError{Status: ResourceReadUnknown, Reason: reason, Err: err}
+}
+
+func classifyResourceReadError(err error) (ResourceReadStatus, string, bool) {
+	var readErr *ResourceReadError
+	if !errors.As(err, &readErr) {
+		return ResourceReadUnknown, err.Error(), false
+	}
+	reason := readErr.Reason
+	if reason == "" && readErr.Err != nil {
+		reason = readErr.Err.Error()
+	}
+	return readErr.Status, reason, true
 }
 
 var (

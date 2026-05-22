@@ -3,26 +3,13 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
-
-// createKernel resolves a sysbox_kernel resource into a local on-disk path
-// via the artifact resolver (downloading + caching as needed) and records it
-// in state. Other resources (sysbox_node) reference the resolved path by
-// looking up state["sysbox_kernel", name].path.
-func (e *Executor) createKernel(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("sysbox_kernel")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
 
 type KernelResourceProvider struct{}
 
@@ -37,44 +24,18 @@ func (KernelResourceProvider) Schema() ResourceSchema {
 }
 
 func (KernelResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+	path := current.Str("path")
+	if path == "" {
+		return current, driftedResource("kernel path missing from state")
+	}
+	if _, err := os.Stat(path); err != nil {
+		return current, driftedResource(err.Error())
+	}
 	return current, nil
 }
 
 func (p KernelResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
-	if current == nil {
-		return PlanAction{
-			Resource: desired.ID.String(),
-			Type:     desired.ID.Type,
-			Name:     desired.ID.Name,
-			Action:   PlanActionCreate,
-			Reason:   "resource not present in state",
-		}, nil
-	}
-	action := PlanActionNoop
-	reason := ""
-	var changes map[string]FieldChange
-	if stateDesiredHash(current) != "" {
-		want, err := desiredHash(desired)
-		if err != nil {
-			return PlanAction{}, err
-		}
-		if want != stateDesiredHash(current) {
-			changes, reason = diffDesiredState(desired, current)
-			action = PlanActionReplace
-		}
-	}
-	if action == PlanActionReplace && reason == "" {
-		action = PlanActionReplace
-		reason = "desired configuration changed; replacement required"
-	}
-	return PlanAction{
-		Resource: desired.ID.String(),
-		Type:     desired.ID.Type,
-		Name:     desired.ID.Name,
-		Action:   action,
-		Reason:   reason,
-		Changes:  changes,
-	}, nil
+	return planDiffByDesiredHash(desired, current)
 }
 
 func (KernelResourceProvider) Create(_ context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {

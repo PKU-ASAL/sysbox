@@ -14,16 +14,6 @@ import (
 // state. Unlike createNode, this does not create any infrastructure — it
 // merely reads the node's current attributes so other resources can reference
 // them in the eval context.
-func (e *Executor) readDataNode(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("data_sysbox_node")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
-
 type DataNodeResourceProvider struct{}
 
 func init() {
@@ -104,16 +94,6 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 // readDataNetwork queries an existing Docker network by name and records
 // its attributes in state. Unlike readDataNode, this is substrate-specific
 // because sysbox_network is only managed by Docker currently.
-func (e *Executor) readDataNetwork(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("data_sysbox_network")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
-
 type DataNetworkResourceProvider struct{}
 
 func (DataNetworkResourceProvider) Type() string { return "data_sysbox_network" }
@@ -181,16 +161,6 @@ func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (
 }
 
 // readDataImage queries an existing Docker image and records its metadata.
-func (e *Executor) readDataImage(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("data_sysbox_image")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
-
 type DataImageResourceProvider struct{}
 
 func (DataImageResourceProvider) Type() string { return "data_sysbox_image" }

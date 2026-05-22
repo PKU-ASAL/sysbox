@@ -75,6 +75,21 @@ func EvaluateResourceHealth(ctx context.Context, res *state.Resource) ResourceHe
 		Provider: res.Provider,
 		Status:   ResourceHealthHealthy,
 	}
+	if provider, ok := GetResourceProvider(res.Type); ok {
+		if _, err := provider.Read(ctx, *res); err != nil {
+			status, reason, known := classifyResourceReadError(err)
+			if !known || status == ResourceReadUnknown {
+				rh.Status = ResourceHealthUnknown
+				rh.Decision = RecoveryDecisionUnknown
+				rh.Reason = reason
+				return rh
+			}
+			rh.Status = ResourceHealthDrifted
+			rh.Decision = RecoveryDecisionMarkDrift
+			rh.Reason = reason
+			return rh
+		}
+	}
 	switch res.Type {
 	case "sysbox_node", "sysbox_router", "sysbox_actor":
 		return evaluateNodeHealth(ctx, res, rh)

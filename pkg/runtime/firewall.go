@@ -10,16 +10,6 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-func (e *Executor) createFirewall(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("sysbox_firewall")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
-
 type FirewallResourceProvider struct{}
 
 func init() {
@@ -104,9 +94,4 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 		Provider: "network",
 		Instance: inst,
 	}, nil
-}
-
-func (e *Executor) destroyFirewall(ctx context.Context, r state.Resource) error {
-	p := mustResourceProvider("sysbox_firewall")
-	return p.Delete(ctx, e, r)
 }

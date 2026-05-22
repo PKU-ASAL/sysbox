@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
@@ -95,83 +94,55 @@ func (e *Executor) probeResource(ctx context.Context, id graph.NodeID) (bool, er
 		return false, nil
 	}
 
-	switch id.Type {
-	case "sysbox_network":
-		nsName := r.Str("netns")
-		brName := r.Str("bridge")
-		if nsName == "" {
-			return true, nil
+	if provider, ok := GetResourceProvider(id.Type); ok {
+		if _, err := provider.Read(ctx, *r); err != nil {
+			status, _, known := classifyResourceReadError(err)
+			if known && status == ResourceReadDrifted {
+				return false, nil
+			}
+			return true, err
 		}
-		if !network.NetnsExists(nsName) {
-			return false, nil
-		}
-		if brName != "" && !network.BridgeExists(nsName, brName) {
-			return false, nil
-		}
-		return true, nil
-
-	case "sysbox_node", "sysbox_router":
-		providerName := r.Provider
-		sub, err := substrate.Get(providerName)
-		if err != nil {
-			return true, nil // substrate not registered; don't disturb
-		}
-		cid := r.Str("container_id")
-		if cid == "" {
-			return false, nil
-		}
-		obs, err := sub.ObserveNode(ctx, substrate.NodeHandle{ID: cid, Provider: providerState(sub, r)})
-		if err != nil {
-			return false, err
-		}
-		recovery := DecideNodeRecovery(RecoveryInput{
-			Context:      RecoveryContextRefresh,
-			ResourceType: id.Type,
-			Provider:     providerName,
-			HasState:     true,
-			Observation:  obs,
-		})
-		switch recovery.Decision {
-		case RecoveryDecisionNoop:
-		case RecoveryDecisionUnknown:
-			e.logf("[refresh] %s: observed status unknown reason=%s (treating as healthy)\n", id, recovery.Reason)
-			return true, nil
-		default:
-			e.logf("[refresh] %s: observed status=%s decision=%s reason=%s\n", id, obs.Status, recovery.Decision, recovery.Reason)
-			return false, nil
-		}
-		if !networkAttachmentsHealthy(r) {
-			return false, nil
-		}
-		if !nodeRoutesHealthy(ctx, sub, r) {
-			return false, nil
-		}
-		return true, nil
-
-	case "sysbox_image":
-		// Images are pulled once and don't drift in Phase 1.
-		return true, nil
-
-	case "sysbox_kernel":
-		// Cache files are content-addressed; if the file disappeared,
-		// the next createKernel will re-fetch. Treat present-in-state as
-		// healthy.
-		path := r.Str("path")
-		if path == "" {
-			return false, nil
-		}
-		if _, err := os.Stat(path); err != nil {
-			return false, nil
-		}
-		return true, nil
-
-	case "sysbox_firewall":
-		// Phase 1: no re-apply of firewall rules on drift. Always report healthy.
-		return true, nil
-
-	default:
 		return true, nil
 	}
+
+	return true, nil
+}
+
+func readNodeLikeResource(ctx context.Context, current state.Resource) (state.Resource, error) {
+	providerName := current.Provider
+	sub, err := substrate.Get(providerName)
+	if err != nil {
+		return current, unknownResource("substrate not registered", err)
+	}
+	cid := current.Str("container_id")
+	if cid == "" {
+		return current, driftedResource("node has no persisted external id")
+	}
+	obs, err := sub.ObserveNode(ctx, substrate.NodeHandle{ID: cid, Provider: providerState(sub, &current)})
+	if err != nil {
+		return current, unknownResource("observe node", err)
+	}
+	recovery := DecideNodeRecovery(RecoveryInput{
+		Context:      RecoveryContextRefresh,
+		ResourceType: current.Type,
+		Provider:     providerName,
+		HasState:     true,
+		Observation:  obs,
+	})
+	switch recovery.Decision {
+	case RecoveryDecisionNoop:
+	case RecoveryDecisionUnknown:
+		return current, unknownResource(recovery.Reason, nil)
+	default:
+		return current, driftedResource(recovery.Reason)
+	}
+	if !networkAttachmentsHealthy(&current) {
+		return current, driftedResource("network attachment missing")
+	}
+	if !nodeRoutesHealthy(ctx, sub, &current) {
+		return current, driftedResource("route missing")
+	}
+	return current, nil
 }
 
 func providerState(sub substrate.Substrate, r *state.Resource) any {

@@ -16,16 +16,6 @@ import (
 	"github.com/oslab/sysbox/pkg/util"
 )
 
-func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("sysbox_node")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
-
 type NodeResourceProvider struct{}
 
 func init() {
@@ -38,8 +28,8 @@ func (NodeResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_node")
 }
 
-func (NodeResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
-	return current, nil
+func (NodeResourceProvider) Read(ctx context.Context, current state.Resource) (state.Resource, error) {
+	return readNodeLikeResource(ctx, current)
 }
 
 func (NodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
@@ -303,11 +293,6 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		resource = *rec
 	}
 	return resource, nil
-}
-
-func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
-	p := mustResourceProvider("sysbox_node")
-	return p.Delete(ctx, e, r)
 }
 
 func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) error {

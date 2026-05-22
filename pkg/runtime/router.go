@@ -17,16 +17,6 @@ import (
 // Interfaces on NAT (Docker-managed) networks are connected via Docker
 // networking; isolated-network interfaces use veth pairs as usual.
 // Optional NAT (nat_from -> nat_to) is configured via host-side nsenter.
-func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("sysbox_router")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
-
 type RouterResourceProvider struct{}
 
 func init() {
@@ -39,8 +29,8 @@ func (RouterResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_router")
 }
 
-func (RouterResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
-	return current, nil
+func (RouterResourceProvider) Read(ctx context.Context, current state.Resource) (state.Resource, error) {
+	return readNodeLikeResource(ctx, current)
 }
 
 func (RouterResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
@@ -160,11 +150,6 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		Provider: subName,
 		Instance: inst,
 	}, nil
-}
-
-func (e *Executor) destroyRouter(ctx context.Context, r state.Resource) error {
-	p := mustResourceProvider("sysbox_router")
-	return p.Delete(ctx, e, r)
 }
 
 // configureNATViaNsenter configures MASQUERADE and FORWARD rules from the

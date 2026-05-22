@@ -60,6 +60,21 @@ func TestEvaluateTopologyHealthMissingKernelDrifts(t *testing.T) {
 	require.Equal(t, RecoveryDecisionMarkDrift, health.Resources[0].Decision)
 }
 
+func TestEvaluateResourceHealthUsesProviderRead(t *testing.T) {
+	res := &state.Resource{
+		Type:     "sysbox_kernel",
+		Name:     "linux",
+		Provider: "artifact",
+		Instance: map[string]any{"path": ""},
+	}
+
+	health := EvaluateResourceHealth(context.Background(), res)
+
+	require.Equal(t, ResourceHealthDrifted, health.Status)
+	require.Equal(t, RecoveryDecisionMarkDrift, health.Decision)
+	require.Equal(t, "kernel path missing from state", health.Reason)
+}
+
 func TestEvaluateResourceHealthUnsupportedResourceIsHealthyUnknownProbe(t *testing.T) {
 	res := &state.Resource{
 		Type:     "sysbox_image",

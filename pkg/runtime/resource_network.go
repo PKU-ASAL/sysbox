@@ -21,16 +21,6 @@ var (
 	deleteBridgeFn = network.DeleteBridge
 )
 
-func (e *Executor) createNetwork(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("sysbox_network")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
-
 type NetworkResourceProvider struct{}
 
 func init() {
@@ -44,43 +34,25 @@ func (NetworkResourceProvider) Schema() ResourceSchema {
 }
 
 func (NetworkResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+	if current.IsNAT() {
+		return current, nil
+	}
+	nsName := current.Str("netns")
+	brName := current.Str("bridge")
+	if nsName == "" {
+		return current, nil
+	}
+	if !network.NetnsExists(nsName) {
+		return current, driftedResource("network namespace missing")
+	}
+	if brName != "" && !network.BridgeExists(nsName, brName) {
+		return current, driftedResource("bridge missing")
+	}
 	return current, nil
 }
 
 func (NetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
-	if current == nil {
-		return PlanAction{
-			Resource: desired.ID.String(),
-			Type:     desired.ID.Type,
-			Name:     desired.ID.Name,
-			Action:   PlanActionCreate,
-			Reason:   "resource not present in state",
-		}, nil
-	}
-	action := PlanActionNoop
-	reason := ""
-	var changes map[string]FieldChange
-	if stateDesiredHash(current) != "" {
-		want, err := desiredHash(desired)
-		if err != nil {
-			return PlanAction{}, err
-		}
-		if want != stateDesiredHash(current) {
-			changes, reason = diffDesiredState(desired, current)
-			action = PlanActionReplace
-		}
-	}
-	if action == PlanActionReplace && reason == "" {
-		reason = "desired configuration changed; replacement required"
-	}
-	return PlanAction{
-		Resource: desired.ID.String(),
-		Type:     desired.ID.Type,
-		Name:     desired.ID.Name,
-		Action:   action,
-		Reason:   reason,
-		Changes:  changes,
-	}, nil
+	return planDiffByDesiredHash(desired, current)
 }
 
 func (NetworkResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
@@ -214,11 +186,6 @@ func (NetworkResourceProvider) Delete(ctx context.Context, exec *Executor, r sta
 	}
 	exec.state.RemoveResource(r.Type, r.Name)
 	return nil
-}
-
-func (e *Executor) destroyNetwork(ctx context.Context, r state.Resource) error {
-	p := mustResourceProvider("sysbox_network")
-	return p.Delete(ctx, e, r)
 }
 
 // ensureDockerUserAccept inserts ACCEPT rules into the DOCKER-USER iptables

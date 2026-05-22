@@ -11,16 +11,6 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-func (e *Executor) createImage(ctx context.Context, n *graph.Node) error {
-	p := mustResourceProvider("sysbox_image")
-	res, err := p.Create(ctx, e, n)
-	if err != nil {
-		return err
-	}
-	e.state.AddResource(res)
-	return nil
-}
-
 type ImageResourceProvider struct{}
 
 func init() {

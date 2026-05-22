@@ -214,6 +214,28 @@ func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {
 	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, plan.Unchanged)
 }
 
+func TestRefreshUsesProviderReadForDrift(t *testing.T) {
+	g := graph.New()
+	g.AddNode("sysbox_kernel", "linux", nil)
+	s := &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Type:     "sysbox_kernel",
+			Name:     "linux",
+			Provider: "artifact",
+			Instance: map[string]any{"path": "/tmp/sysbox-missing-kernel-for-refresh-test"},
+		}},
+	}
+	plan := &Plan{Unchanged: []graph.NodeID{{Type: "sysbox_kernel", Name: "linux"}}}
+
+	NewExecutor(g, s).Refresh(context.Background(), plan)
+
+	require.Empty(t, plan.Unchanged)
+	require.Equal(t, []graph.NodeID{{Type: "sysbox_kernel", Name: "linux"}}, plan.Change)
+	require.Equal(t, PlanActionReplace, plan.Actions[0].Action)
+	require.Equal(t, "runtime drift detected", plan.Actions[0].Reason)
+}
+
 func TestPlanSummary(t *testing.T) {
 	p := &Plan{
 		Add:       []graph.NodeID{{Type: "x", Name: "y"}},
