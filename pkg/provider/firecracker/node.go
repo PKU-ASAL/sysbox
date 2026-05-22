@@ -315,7 +315,15 @@ func (s *Substrate) StopNode(_ context.Context, h substrate.NodeHandle) error {
 	vmMu.Lock()
 	vm, ok := vmStore[h.ID]
 	vmMu.Unlock()
-	if !ok || vm.cmd == nil || vm.cmd.Process == nil {
+	if !ok {
+		return nil
+	}
+	if vm.cmd == nil || vm.cmd.Process == nil {
+		if vm.pid > 0 {
+			if proc, err := os.FindProcess(vm.pid); err == nil {
+				return proc.Signal(syscall.SIGTERM)
+			}
+		}
 		return nil
 	}
 	return vm.cmd.Process.Signal(syscall.SIGTERM)
@@ -337,6 +345,10 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 	if ok && vm.cmd != nil && vm.cmd.Process != nil {
 		_ = vm.cmd.Process.Signal(syscall.SIGKILL)
 		_ = vm.cmd.Wait()
+	} else if ok && vm.pid > 0 {
+		if proc, err := os.FindProcess(vm.pid); err == nil {
+			_ = proc.Signal(syscall.SIGKILL)
+		}
 	}
 
 	// Resolve vm_dir from typed handle if given, else fall back to the
@@ -382,6 +394,46 @@ func (s *Substrate) NodeStatus(_ context.Context, h substrate.NodeHandle) (bool,
 	// Socket exists; check if a process is listening on it.
 	out, _ := exec.Command("pgrep", "-f", hs.Socket).CombinedOutput()
 	return strings.TrimSpace(string(out)) != "", nil
+}
+
+// AdoptNode reconnects this process to an already-running Firecracker VM.
+// It does not recreate the original exec.Cmd, but it records the PID/socket in
+// vmStore so later status/stop/destroy calls have an explicit ownership anchor.
+func (s *Substrate) AdoptNode(ctx context.Context, h substrate.NodeHandle) (substrate.NodeHandle, error) {
+	hs, _ := h.Provider.(*HandleState)
+	if hs == nil || hs.Socket == "" {
+		return h, fmt.Errorf("firecracker adopt %s: missing provider socket", h.ID)
+	}
+	running, err := s.NodeStatus(ctx, h)
+	if err != nil {
+		return h, err
+	}
+	if !running {
+		return h, fmt.Errorf("firecracker adopt %s: process not running", h.ID)
+	}
+	pid := firecrackerPIDForSocket(hs.Socket)
+	vmMu.Lock()
+	vmStore[h.ID] = &vmProcess{
+		vmID:      h.ID,
+		socket:    hs.Socket,
+		cfgPath:   hs.ConfigPath,
+		netnsName: hs.NetnsName,
+		pid:       pid,
+		started:   true,
+	}
+	vmMu.Unlock()
+	return h, nil
+}
+
+func firecrackerPIDForSocket(socketPath string) int {
+	out, _ := exec.Command("pgrep", "-f", socketPath).CombinedOutput()
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return 0
+	}
+	var pid int
+	_, _ = fmt.Sscanf(fields[0], "%d", &pid)
+	return pid
 }
 
 // ── Firecracker config types ────────────────────────────────────────────────

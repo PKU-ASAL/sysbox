@@ -95,6 +95,12 @@ func (BaseSubstrate) ReadNode(_ context.Context, _ string) (NodeHandle, error) {
 	return NodeHandle{}, ErrNotSupported
 }
 
+// AdoptNode returns ErrNotSupported by default. Substrates that can reconnect
+// to an existing long-lived node should override this.
+func (BaseSubstrate) AdoptNode(_ context.Context, _ NodeHandle) (NodeHandle, error) {
+	return NodeHandle{}, ErrNotSupported
+}
+
 // Pause returns ErrNotSupported by default.
 func (BaseSubstrate) Pause(_ context.Context, _ NodeHandle) error { return ErrNotSupported }
 

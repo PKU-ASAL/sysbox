@@ -90,7 +90,9 @@ func recoverCheckpoint(ctx context.Context, checkpointPath string, mgr *state.Ma
 }
 
 func actionRecovered(action RecoverAction) bool {
-	return action.Status == "recovered" || action.Status == "recovered_not_running"
+	return action.Status == "recovered" ||
+		action.Status == "recovered_adopted" ||
+		action.Status == "recovered_not_running"
 }
 
 func recoverCandidate(step runtime.OperationStep) bool {
@@ -202,6 +204,21 @@ func recoverFirecrackerNode(ctx context.Context, st *state.State, step runtime.O
 	}
 	if !firecrackerRecoverable(res) {
 		action.Status = "not_found"
+		return action
+	}
+	if running, err := sub.NodeStatus(ctx, handle); err == nil && running {
+		if adopted, err := sub.AdoptNode(ctx, handle); err == nil {
+			if inst := substrate.HandleToInstance(adopted, sub); len(inst) > 0 {
+				for k, v := range inst {
+					rec.Instance[k] = v
+				}
+			}
+			adoptStateResource(st, *rec, "")
+			action.Status = "recovered_adopted"
+			return action
+		}
+		adoptStateResource(st, *rec, "")
+		action.Status = "recovered"
 		return action
 	}
 	if running, err := sub.NodeStatus(ctx, handle); err == nil && !running {

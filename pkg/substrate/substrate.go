@@ -82,6 +82,13 @@ type Substrate interface {
 	// Used by drift detection; a false result triggers a Change entry in the plan.
 	NodeStatus(ctx context.Context, handle NodeHandle) (bool, error)
 
+	// AdoptNode reconnects a fresh control-plane process to a node that was
+	// created earlier and still exists outside the current process memory.
+	// Substrates with no takeover semantics return ErrNotSupported via
+	// BaseSubstrate. Firecracker uses this to rebuild its in-memory vmStore
+	// from persisted provider state after an API server restart.
+	AdoptNode(ctx context.Context, handle NodeHandle) (NodeHandle, error)
+
 	// PrepareHandle is called by runtime after NIC attachment and PrimaryIP
 	// assignment, before provisioners run. The substrate may:
 	//   - rewrite ProviderConfig fields (e.g. resolve kernel ref to local path)

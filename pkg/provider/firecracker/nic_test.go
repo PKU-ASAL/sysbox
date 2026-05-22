@@ -44,3 +44,9 @@ func TestSplitCIDR_Rejects(t *testing.T) {
 		t.Fatal("expected error for invalid CIDR, got nil")
 	}
 }
+
+func TestFirecrackerPIDForSocketReturnsZeroWhenMissing(t *testing.T) {
+	if got := firecrackerPIDForSocket("/tmp/sysbox-no-such-firecracker.sock"); got != 0 {
+		t.Fatalf("firecrackerPIDForSocket missing = %d, want 0", got)
+	}
+}

@@ -22,10 +22,13 @@ type OperationStep struct {
 	Resource      string            `json:"resource"`
 	Action        PlanActionType    `json:"action"`
 	Kind          string            `json:"kind,omitempty"`
+	Phase         string            `json:"phase,omitempty"`
 	Provider      string            `json:"provider,omitempty"`
 	ExternalID    string            `json:"external_id,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	StateResource *StateResourceLog `json:"state_resource,omitempty"`
+	Details       map[string]any    `json:"details,omitempty"`
+	Parent        int               `json:"parent,omitempty"`
 	StateRecorded bool              `json:"state_recorded,omitempty"`
 	Status        OperationStatus   `json:"status"`
 	StartedAt     time.Time         `json:"started_at"`
@@ -68,6 +71,7 @@ type OperationRecorder interface {
 	StepStateResource(index int, resource StateResourceLog)
 	StepStateRecorded(index int)
 	MarkResourceStateRecorded()
+	SubstepStart(parent int, phase string, details map[string]any) int
 }
 
 type NoopRecorder struct{}
@@ -87,6 +91,7 @@ func (NoopRecorder) StepExternal(int, string, string, map[string]string) {}
 func (NoopRecorder) StepStateResource(int, StateResourceLog)             {}
 func (NoopRecorder) StepStateRecorded(int)                               {}
 func (NoopRecorder) MarkResourceStateRecorded()                          {}
+func (NoopRecorder) SubstepStart(int, string, map[string]any) int        { return -1 }
 
 type FileRecorder struct {
 	mu         sync.Mutex
@@ -131,6 +136,31 @@ func (r *FileRecorder) StepStartKind(kind, resource string, action PlanActionTyp
 		Resource:  resource,
 		Action:    action,
 		Kind:      kind,
+		Status:    OperationStarted,
+		StartedAt: time.Now().UTC(),
+	})
+	_ = r.flushLocked()
+	return idx
+}
+
+func (r *FileRecorder) SubstepStart(parent int, phase string, details map[string]any) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	idx := len(r.checkpoint.Steps)
+	resource := ""
+	action := PlanActionNoop
+	if parent >= 0 && parent < len(r.checkpoint.Steps) {
+		resource = r.checkpoint.Steps[parent].Resource
+		action = r.checkpoint.Steps[parent].Action
+	}
+	r.checkpoint.Steps = append(r.checkpoint.Steps, OperationStep{
+		Index:     idx,
+		Resource:  resource,
+		Action:    action,
+		Kind:      "subaction",
+		Phase:     phase,
+		Parent:    parent,
+		Details:   cloneAnyMap(details),
 		Status:    OperationStarted,
 		StartedAt: time.Now().UTC(),
 	})

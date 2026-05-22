@@ -44,6 +44,17 @@ func (e *Executor) SetRunContext(topology, runID string) {
 	e.runID = runID
 }
 
+func (e *Executor) recordSubstep(parent int, phase string, details map[string]any, fn func() error) error {
+	step := e.recorder.SubstepStart(parent, phase, details)
+	err := fn()
+	if err != nil {
+		e.recorder.StepFailed(step, err)
+		return err
+	}
+	e.recorder.StepDone(step)
+	return nil
+}
+
 func (e *Executor) recordStepExternal(step int, id graph.NodeID) {
 	r := e.state.FindResource(id.Type, id.Name)
 	if r == nil {
