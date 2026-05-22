@@ -79,7 +79,7 @@ api-seed: ## Seed data/workspaces from examples when missing
 		fi; \
 	done
 
-api-up: api-build api-seed ## Start API + Postgres with Docker Compose
+api-up: api-build api-seed ## Start API + Postgres; auto-mount Firecracker when available
 	@if [ -n "$${SYSBOX_FIRECRACKER_BIN:-}" ] || command -v firecracker >/dev/null 2>&1; then \
 		fc_bin="$${SYSBOX_FIRECRACKER_BIN:-$$(command -v firecracker)}"; \
 		echo "Firecracker detected: $$fc_bin"; \
@@ -90,7 +90,7 @@ api-up: api-build api-seed ## Start API + Postgres with Docker Compose
 	fi
 	@echo "API server: http://localhost:9876/v1/health"
 
-api-up-fc: api-build api-seed ## Start API with Firecracker mounts; set SYSBOX_FIRECRACKER_BIN if needed
+api-up-fc: api-build api-seed ## Start API + Postgres with explicit Firecracker mounts
 	docker compose -f docker-compose.yml -f docker-compose.firecracker.yml up -d
 	@echo "API server: http://localhost:9876/v1/health"
 

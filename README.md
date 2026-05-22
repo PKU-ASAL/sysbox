@@ -101,7 +101,7 @@ bin/sysbox --state runs/two-networks/state.json state get sysbox_node.node_a.pri
 
 ## API / Docker Compose
 
-The API server is the service-mode control plane. It uses API-owned workspaces under `data/workspaces` and run/checkpoint metadata under `data/runs`. Compose defaults to a Postgres state backend, so state does not have to live beside local CLI state files.
+The API server is the service-mode control plane. It uses API-owned workspaces under `data/workspaces`. Compose defaults to Postgres for state, run records, checkpoints/action logs, and health snapshots, so API state does not have to live beside local CLI state files. The local `data/` mount still holds workspaces and acts as the fallback store when no Postgres backend is configured.
 
 ```bash
 make api-up
@@ -111,7 +111,7 @@ curl http://127.0.0.1:9876/v1/topologies/two-networks/preflight
 curl -X POST http://127.0.0.1:9876/v1/topologies/two-networks/apply
 ```
 
-For Firecracker-capable API containers:
+`make api-up` starts Docker + Postgres and auto-enables the Firecracker compose override when `SYSBOX_FIRECRACKER_BIN` is set or `firecracker` is found on the host. To require Firecracker mounts explicitly:
 
 ```bash
 export SYSBOX_FIRECRACKER_BIN=/home/jiandong/.local/bin/firecracker
@@ -133,6 +133,8 @@ POST /v1/topologies/{name}/apply
 POST /v1/topologies/{name}/destroy
 GET  /v1/runs/{run_id}
 GET  /v1/runs/{run_id}/checkpoint
+GET  /v1/runs/{run_id}/actions
+POST /v1/runs/{run_id}/resume
 POST /v1/runs/{run_id}/recover
 POST /v1/runs/{run_id}/cleanup
 ```
@@ -146,12 +148,13 @@ sysbox supports local state and service backends. The service path now includes:
 - topology metadata/listing from the backend
 - serial/CAS writes to avoid last-writer-wins
 - backend lease/lock metadata
-- run persistence
-- action checkpoints
+- run persistence in the API store
+- checkpoint/action log persistence in the API store
+- health snapshot persistence in the API store
 - checkpoint-driven recover/cleanup for Docker, local networks, and microVM leftovers
 - snapshots where the backend supports them
 
-Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used.
+Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used. When `SYSBOX_STATE_BACKEND` is a Postgres URL, the API also stores runs/checkpoints/health in Postgres tables.
 
 ## Artifacts And Environment
 
@@ -164,9 +167,12 @@ Recommended configuration:
 | `SYSBOX_API_LISTEN` | API listen address |
 | `SYSBOX_API_TOKEN` | Optional API Bearer token |
 | `SYSBOX_WORKSPACES_DIR` | Override API workspace directory |
-| `SYSBOX_RUNS_DIR` | Override run/checkpoint directory |
-| `SYSBOX_STATE_BACKEND` | State backend URL for service mode |
+| `SYSBOX_RUNS_DIR` | Override local run/checkpoint directory when no API database is used |
+| `SYSBOX_STATE_BACKEND` | State/API backend URL for service mode; compose uses Postgres |
+| `SYSBOX_SUPERVISOR_POLICY` | `observe_only` or `restart_on_crash`, default `observe_only` |
+| `SYSBOX_SUPERVISOR_INTERVAL` | Supervisor scan interval, default `30s`; set `0`/`off` to disable |
 | `SYSBOX_FIRECRACKER_BIN` | Exact Firecracker binary path |
+| `SYSBOX_FIRECRACKER_KERNEL` | Default Firecracker kernel path; HCL `sysbox_kernel` is preferred |
 | `SYSBOX_FIRECRACKER_WORKDIR` | Per-VM Firecracker work directory |
 
 Kernel/rootfs/qcow2 are topology artifacts, not service configuration. Prefer HCL `sysbox_kernel` and `sysbox_image` with `source`, `rootfs`, `qcow2`, and `sha256`. `SYSBOX_ROOTFS` remains a local example convenience variable, not an API deployment contract.
