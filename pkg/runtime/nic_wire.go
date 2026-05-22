@@ -22,10 +22,12 @@ type NICSpec struct {
 // creation need: the per-NIC state entries and the name→guest-iface mapping
 // (used by router for nat_from/nat_to resolution).
 type NICWireResult struct {
-	NICs         []map[string]any
-	IfaceByName  map[string]string // label → guest iface (e.g. "lan" → "eth1")
-	PrimaryIP    string            // first non-empty IP
+	NICs        []map[string]any
+	IfaceByName map[string]string // label → guest iface (e.g. "lan" → "eth1")
+	PrimaryIP   string            // first non-empty IP
 }
+
+type NICWireHook func(phase string, details map[string]any, fn func() error) error
 
 // collectNATLinks pre-scans specs to find Docker-NAT networks.
 // When allNAT is true, every NAT network is returned as an InitialLink
@@ -74,6 +76,13 @@ func wireNICs(ctx context.Context, sub substrate.Substrate, st *state.State,
 	handle substrate.NodeHandle, initialLinks []substrate.LinkRequest,
 	specs []NICSpec, trackLabels bool, nodeName string,
 ) (*NICWireResult, error) {
+	return wireNICsWithHook(ctx, sub, st, handle, initialLinks, specs, trackLabels, nodeName, nil)
+}
+
+func wireNICsWithHook(ctx context.Context, sub substrate.Substrate, st *state.State,
+	handle substrate.NodeHandle, initialLinks []substrate.LinkRequest,
+	specs []NICSpec, trackLabels bool, nodeName string, hook NICWireHook,
+) (*NICWireResult, error) {
 
 	connectedAtCreate := map[string]bool{}
 	for _, il := range initialLinks {
@@ -98,11 +107,20 @@ func wireNICs(ctx context.Context, sub substrate.Substrate, st *state.State,
 		if netState.IsNAT() {
 			netID := netState.DockerNetID()
 			if !connectedAtCreate[netID] {
-				if _, err := sub.AttachNIC(ctx, handle, substrate.LinkRequest{
-					KindHint:    substrate.NICKindDockerNAT,
-					DockerNetID: netID,
-					IP:          spec.IP,
-				}); err != nil {
+				attach := func() error {
+					_, err := sub.AttachNIC(ctx, handle, substrate.LinkRequest{
+						KindHint:    substrate.NICKindDockerNAT,
+						DockerNetID: netID,
+						IP:          spec.IP,
+					})
+					return err
+				}
+				if err := runNICWireHook(hook, "attach_nat_network", map[string]any{
+					"node":       nodeName,
+					"network":    spec.Network,
+					"network_id": netID,
+					"ip":         spec.IP,
+				}, attach); err != nil {
 					return nil, fmt.Errorf("connect %s to nat network %s: %w", nodeName, spec.Network, err)
 				}
 			}
@@ -140,8 +158,19 @@ func wireNICs(ctx context.Context, sub substrate.Substrate, st *state.State,
 			Gateway:    spec.Gateway,
 			TargetName: fmt.Sprintf("eth%d", vethIdx),
 		}
-		attached, err := sub.AttachNIC(ctx, handle, lreq)
-		if err != nil {
+		var attached substrate.AttachedNIC
+		if err := runNICWireHook(hook, "attach_nic", map[string]any{
+			"node":    nodeName,
+			"network": spec.Network,
+			"netns":   lreq.NetNS,
+			"bridge":  lreq.Bridge,
+			"ip":      lreq.IP,
+			"target":  lreq.TargetName,
+		}, func() error {
+			var err error
+			attached, err = sub.AttachNIC(ctx, handle, lreq)
+			return err
+		}); err != nil {
 			return nil, err
 		}
 		vethIdx++
@@ -168,6 +197,13 @@ func wireNICs(ctx context.Context, sub substrate.Substrate, st *state.State,
 	}
 
 	return result, nil
+}
+
+func runNICWireHook(hook NICWireHook, phase string, details map[string]any, fn func() error) error {
+	if hook == nil {
+		return fn()
+	}
+	return hook(phase, details, fn)
 }
 
 // stripCIDR removes the /NN suffix from an IP/CIDR string.

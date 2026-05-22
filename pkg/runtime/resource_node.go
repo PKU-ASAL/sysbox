@@ -44,10 +44,17 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		Repository: imgState.Repository(),
 	}
 
+	parentStep := e.currentResourceStep
+
 	// Resolve cross-resource refs (e.g. kernel ref → local path) before CreateNode.
 	// We do an early PrepareHandle pass with an empty handle (no PrimaryIP yet)
 	// purely for ref resolution. ConnInfo is populated in the second pass below.
-	if err := sub.PrepareHandle(ctx, &substrate.NodeHandle{}, cfg.ProviderConfig, stateAdapter{e.state}); err != nil {
+	if err := e.recordSubstep(parentStep, "prepare_node_config", map[string]any{
+		"resource":  n.ID.String(),
+		"substrate": subName,
+	}, func() error {
+		return sub.PrepareHandle(ctx, &substrate.NodeHandle{}, cfg.ProviderConfig, stateAdapter{e.state})
+	}); err != nil {
 		return err
 	}
 
@@ -67,17 +74,26 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		return err
 	}
 
-	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
-		Name:           fmt.Sprintf("sysbox-%s", n.ID.Name),
-		Image:          imgRef,
-		VCPUs:          cfg.Vcpus,
-		Memory:         cfg.Memory,
-		Env:            cfg.Env,
-		Labels:         ManagedLabels(e.topology, e.runID, n.ID),
-		InitialLinks:   initialLinks,
-		ProviderConfig: cfg.ProviderConfig,
-	})
-	if err != nil {
+	var handle substrate.NodeHandle
+	if err := e.recordSubstep(parentStep, "create_node", map[string]any{
+		"resource":  n.ID.String(),
+		"substrate": subName,
+		"name":      fmt.Sprintf("sysbox-%s", n.ID.Name),
+		"image":     imgRef.Repository,
+	}, func() error {
+		var err error
+		handle, err = sub.CreateNode(ctx, substrate.NodeSpec{
+			Name:           fmt.Sprintf("sysbox-%s", n.ID.Name),
+			Image:          imgRef,
+			VCPUs:          cfg.Vcpus,
+			Memory:         cfg.Memory,
+			Env:            cfg.Env,
+			Labels:         ManagedLabels(e.topology, e.runID, n.ID),
+			InitialLinks:   initialLinks,
+			ProviderConfig: cfg.ProviderConfig,
+		})
+		return err
+	}); err != nil {
 		return err
 	}
 
@@ -88,14 +104,20 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	//                   boot config), then start the VM.
 	caps := sub.Capabilities()
 	if caps.NICHotPlug {
-		if err := sub.StartNode(ctx, handle); err != nil {
+		if err := e.recordSubstep(parentStep, "start_node", map[string]any{
+			"resource":  n.ID.String(),
+			"substrate": subName,
+			"node_id":   handle.ID,
+		}, func() error {
+			return sub.StartNode(ctx, handle)
+		}); err != nil {
 			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on start failure")
 			return fmt.Errorf("start node %s: %w", n.ID.Name, err)
 		}
 	}
 
 	// Wire all NICs using the shared helper.
-	wireResult, err := wireNICs(ctx, sub, e.state, handle, initialLinks, nicSpecs, false, n.ID.Name)
+	wireResult, err := wireNICsWithHook(ctx, sub, e.state, handle, initialLinks, nicSpecs, false, n.ID.Name, e.substepHook(parentStep))
 	if err != nil {
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on wire failure")
 		return err
@@ -134,7 +156,13 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	// are attached (NICs must be in the boot config). Hot-plug substrates
 	// were already started before the NIC loop.
 	if !caps.NICHotPlug {
-		if err := sub.StartNode(ctx, handle); err != nil {
+		if err := e.recordSubstep(parentStep, "start_node", map[string]any{
+			"resource":  n.ID.String(),
+			"substrate": subName,
+			"node_id":   handle.ID,
+		}, func() error {
+			return sub.StartNode(ctx, handle)
+		}); err != nil {
 			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on cold-start failure")
 			return fmt.Errorf("start node %s: %w", n.ID.Name, err)
 		}
@@ -143,7 +171,13 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	// Let the substrate populate ConnInfo (Kind, Endpoint, Auth) now that
 	// PrimaryIP is set. Each substrate decides what makes sense:
 	// docker → ConnKindDocker (set at CreateNode), FC → vsock or SSH.
-	if err := sub.PrepareHandle(ctx, &handle, cfg.ProviderConfig, stateAdapter{e.state}); err != nil {
+	if err := e.recordSubstep(parentStep, "prepare_connection", map[string]any{
+		"resource":  n.ID.String(),
+		"substrate": subName,
+		"node_id":   handle.ID,
+	}, func() error {
+		return sub.PrepareHandle(ctx, &handle, cfg.ProviderConfig, stateAdapter{e.state})
+	}); err != nil {
 		e.logf("[apply] warning: PrepareHandle for %s: %v\n", n.ID.Name, err)
 	}
 
@@ -166,7 +200,13 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		for _, rt := range cfg.Routes {
 			cmd := fmt.Sprintf("ip route replace %s via %s", rt.Destination, rt.Via)
 			e.logf("[route] %s: %s\n", n.ID.Name, cmd)
-			if err := conn.ExecInline(ctx, []string{cmd}); err != nil {
+			if err := e.recordSubstep(parentStep, "attach_route", map[string]any{
+				"resource": n.ID.String(),
+				"dst":      rt.Destination,
+				"via":      rt.Via,
+			}, func() error {
+				return conn.ExecInline(ctx, []string{cmd})
+			}); err != nil {
 				// Non-fatal: route may already exist or ip not available.
 				e.logf("[route] warning: %s: %v\n", n.ID.Name, err)
 			}

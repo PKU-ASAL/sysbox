@@ -15,16 +15,17 @@ import (
 // Executor wires graph walking to provider calls. It holds references to
 // registered substrates (via substrate.Get) and updates state after each action.
 type Executor struct {
-	graph    *graph.Graph
-	state    *state.State
-	logger   io.Writer
-	recorder OperationRecorder
-	topology string
-	runID    string
+	graph               *graph.Graph
+	state               *state.State
+	logger              io.Writer
+	recorder            OperationRecorder
+	topology            string
+	runID               string
+	currentResourceStep int
 }
 
 func NewExecutor(g *graph.Graph, s *state.State) *Executor {
-	return &Executor{graph: g, state: s, logger: os.Stdout, recorder: NoopRecorder{}}
+	return &Executor{graph: g, state: s, logger: os.Stdout, recorder: NoopRecorder{}, currentResourceStep: -1}
 }
 
 // SetLogger redirects all apply/destroy log output (e.g. to capture it for
@@ -53,6 +54,23 @@ func (e *Executor) recordSubstep(parent int, phase string, details map[string]an
 	}
 	e.recorder.StepDone(step)
 	return nil
+}
+
+func (e *Executor) substepHook(parent int) NICWireHook {
+	if parent < 0 {
+		return nil
+	}
+	return func(phase string, details map[string]any, fn func() error) error {
+		return e.recordSubstep(parent, phase, details, fn)
+	}
+}
+
+func (e *Executor) setCurrentResourceStep(step int) func() {
+	prev := e.currentResourceStep
+	e.currentResourceStep = step
+	return func() {
+		e.currentResourceStep = prev
+	}
 }
 
 func (e *Executor) recordStepExternal(step int, id graph.NodeID) {

@@ -76,13 +76,16 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 		}
 		e.logf("[apply] %s %s\n", verb, id)
 		step := e.recorder.StepStart(id.String(), actionFor(plan, id))
+		restoreStep := e.setCurrentResourceStep(step)
 		if err := e.recordSubstep(step, "create_resource", map[string]any{"resource": id.String()}, func() error {
 			return e.CreateResource(ctx, id)
 		}); err != nil {
+			restoreStep()
 			applyErr = fmt.Errorf("create %s: %w", id, err)
 			e.recorder.StepFailed(step, applyErr)
 			return applyErr
 		}
+		restoreStep()
 		if err := e.recordSubstep(step, "capture_state_resource", map[string]any{"resource": id.String()}, func() error {
 			e.recordStepExternal(step, id)
 			return nil
