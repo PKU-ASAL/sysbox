@@ -23,15 +23,19 @@ func (KernelResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_kernel")
 }
 
-func (KernelResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+func (KernelResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+	result := resourceReadOK(current)
 	path := current.Str("path")
 	if path == "" {
-		return current, driftedResource("kernel path missing from state")
+		result.Checks = map[string]ResourceCheckHealth{"file": {OK: false, Reason: "kernel path missing from state"}}
+		return result, driftedResource("kernel path missing from state")
 	}
 	if _, err := os.Stat(path); err != nil {
-		return current, driftedResource(err.Error())
+		result.Checks = map[string]ResourceCheckHealth{"file": {OK: false, Reason: err.Error()}}
+		return result, driftedResource(err.Error())
 	}
-	return current, nil
+	result.Checks = map[string]ResourceCheckHealth{"file": {OK: true}}
+	return result, nil
 }
 
 func (p KernelResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {

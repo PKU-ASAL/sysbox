@@ -29,7 +29,7 @@ func (RouterResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_router")
 }
 
-func (RouterResourceProvider) Read(ctx context.Context, current state.Resource) (state.Resource, error) {
+func (RouterResourceProvider) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
 	return readNodeLikeResource(ctx, current)
 }
 

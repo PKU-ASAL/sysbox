@@ -28,8 +28,8 @@ func (DataNodeResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("data_sysbox_node")
 }
 
-func (DataNodeResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
-	return current, nil
+func (DataNodeResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+	return resourceReadOK(current), nil
 }
 
 func (DataNodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
@@ -102,8 +102,8 @@ func (DataNetworkResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("data_sysbox_network")
 }
 
-func (DataNetworkResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
-	return current, nil
+func (DataNetworkResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+	return resourceReadOK(current), nil
 }
 
 func (DataNetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
@@ -169,8 +169,8 @@ func (DataImageResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("data_sysbox_image")
 }
 
-func (DataImageResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
-	return current, nil
+func (DataImageResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+	return resourceReadOK(current), nil
 }
 
 func (DataImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {

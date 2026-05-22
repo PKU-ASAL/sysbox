@@ -28,7 +28,7 @@ func (NodeResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_node")
 }
 
-func (NodeResourceProvider) Read(ctx context.Context, current state.Resource) (state.Resource, error) {
+func (NodeResourceProvider) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
 	return readNodeLikeResource(ctx, current)
 }
 

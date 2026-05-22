@@ -22,8 +22,8 @@ func (FirewallResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_firewall")
 }
 
-func (FirewallResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
-	return current, nil
+func (FirewallResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+	return resourceReadOK(current), nil
 }
 
 func (FirewallResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {

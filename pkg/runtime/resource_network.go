@@ -33,22 +33,34 @@ func (NetworkResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_network")
 }
 
-func (NetworkResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+func (NetworkResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+	result := resourceReadOK(current)
 	if current.IsNAT() {
-		return current, nil
+		result.Checks = map[string]ResourceCheckHealth{"docker_network": {OK: true}}
+		return result, nil
 	}
 	nsName := current.Str("netns")
 	brName := current.Str("bridge")
 	if nsName == "" {
-		return current, nil
+		result.Reason = "network has no isolated namespace"
+		return result, nil
 	}
+	checks := map[string]ResourceCheckHealth{"netns": {OK: network.NetnsExists(nsName)}}
 	if !network.NetnsExists(nsName) {
-		return current, driftedResource("network namespace missing")
+		checks["netns"] = ResourceCheckHealth{OK: false, Reason: "network namespace missing"}
+		result.Checks = checks
+		return result, driftedResource("network namespace missing")
 	}
 	if brName != "" && !network.BridgeExists(nsName, brName) {
-		return current, driftedResource("bridge missing")
+		checks["bridge"] = ResourceCheckHealth{OK: false, Reason: "bridge missing"}
+		result.Checks = checks
+		return result, driftedResource("bridge missing")
 	}
-	return current, nil
+	if brName != "" {
+		checks["bridge"] = ResourceCheckHealth{OK: true}
+	}
+	result.Checks = checks
+	return result, nil
 }
 
 func (NetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {

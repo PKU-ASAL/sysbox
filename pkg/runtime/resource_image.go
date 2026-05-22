@@ -23,8 +23,10 @@ func (ImageResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_image")
 }
 
-func (ImageResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
-	return current, nil
+func (ImageResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+	result := resourceReadOK(current)
+	result.Reason = "resource has no runtime health probe"
+	return result, nil
 }
 
 func (ImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {

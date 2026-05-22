@@ -26,8 +26,8 @@ func (SSHAccessResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_ssh_access")
 }
 
-func (SSHAccessResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
-	return current, nil
+func (SSHAccessResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+	return resourceReadOK(current), nil
 }
 
 func (SSHAccessResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {

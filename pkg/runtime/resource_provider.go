@@ -8,6 +8,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // ResourceProvider is the target boundary for sysbox resource lifecycle
@@ -20,11 +21,26 @@ import (
 type ResourceProvider interface {
 	Type() string
 	Schema() ResourceSchema
-	Read(ctx context.Context, current state.Resource) (state.Resource, error)
+	Read(ctx context.Context, current state.Resource) (ResourceReadResult, error)
 	PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error)
 	Create(ctx context.Context, exec *Executor, desired *graph.Node) (state.Resource, error)
 	Update(ctx context.Context, exec *Executor, desired *graph.Node, current state.Resource) (state.Resource, error)
 	Delete(ctx context.Context, exec *Executor, current state.Resource) error
+}
+
+type ResourceReadResult struct {
+	Resource    state.Resource
+	Reason      string
+	Decision    RecoveryDecision
+	Observation *substrate.NodeObservation
+	Checks      map[string]ResourceCheckHealth
+}
+
+func resourceReadOK(current state.Resource) ResourceReadResult {
+	return ResourceReadResult{
+		Resource: current,
+		Decision: RecoveryDecisionNoop,
+	}
 }
 
 type ResourceReadStatus string

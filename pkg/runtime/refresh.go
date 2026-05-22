@@ -108,20 +108,28 @@ func (e *Executor) probeResource(ctx context.Context, id graph.NodeID) (bool, er
 	return true, nil
 }
 
-func readNodeLikeResource(ctx context.Context, current state.Resource) (state.Resource, error) {
+func readNodeLikeResource(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
+	result := resourceReadOK(current)
 	providerName := current.Provider
 	sub, err := substrate.Get(providerName)
 	if err != nil {
-		return current, unknownResource("substrate not registered", err)
+		result.Decision = RecoveryDecisionUnknown
+		result.Reason = "substrate not registered"
+		return result, unknownResource("substrate not registered", err)
 	}
 	cid := current.Str("container_id")
 	if cid == "" {
-		return current, driftedResource("node has no persisted external id")
+		result.Decision = RecoveryDecisionMarkDrift
+		result.Reason = "node has no persisted external id"
+		return result, driftedResource("node has no persisted external id")
 	}
 	obs, err := sub.ObserveNode(ctx, substrate.NodeHandle{ID: cid, Provider: providerState(sub, &current)})
 	if err != nil {
-		return current, unknownResource("observe node", err)
+		result.Decision = RecoveryDecisionUnknown
+		result.Reason = "observe node"
+		return result, unknownResource("observe node", err)
 	}
+	result.Observation = &obs
 	recovery := DecideNodeRecovery(RecoveryInput{
 		Context:      RecoveryContextRefresh,
 		ResourceType: current.Type,
@@ -129,20 +137,34 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (state.Re
 		HasState:     true,
 		Observation:  obs,
 	})
+	result.Decision = recovery.Decision
+	result.Reason = recovery.Reason
 	switch recovery.Decision {
 	case RecoveryDecisionNoop:
 	case RecoveryDecisionUnknown:
-		return current, unknownResource(recovery.Reason, nil)
+		return result, unknownResource(recovery.Reason, nil)
 	default:
-		return current, driftedResource(recovery.Reason)
+		return result, driftedResource(recovery.Reason)
 	}
-	if !networkAttachmentsHealthy(&current) {
-		return current, driftedResource("network attachment missing")
+	checks := map[string]ResourceCheckHealth{}
+	if ok, reason := networkAttachmentsCheck(&current); !ok {
+		checks["network_attachments"] = ResourceCheckHealth{OK: false, Reason: reason}
+		result.Checks = checks
+		result.Decision = RecoveryDecisionMarkDrift
+		result.Reason = reason
+		return result, driftedResource(reason)
 	}
 	if !nodeRoutesHealthy(ctx, sub, &current) {
-		return current, driftedResource("route missing")
+		checks["routes"] = ResourceCheckHealth{OK: false, Reason: "route missing"}
+		result.Checks = checks
+		result.Decision = RecoveryDecisionMarkDrift
+		result.Reason = "route missing"
+		return result, driftedResource("route missing")
 	}
-	return current, nil
+	if len(checks) > 0 {
+		result.Checks = checks
+	}
+	return result, nil
 }
 
 func providerState(sub substrate.Substrate, r *state.Resource) any {

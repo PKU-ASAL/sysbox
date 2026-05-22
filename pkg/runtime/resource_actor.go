@@ -26,11 +26,11 @@ func (ActorResourceProvider) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_actor")
 }
 
-func (ActorResourceProvider) Read(ctx context.Context, current state.Resource) (state.Resource, error) {
+func (ActorResourceProvider) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
 	if current.Str("position") == "external" || current.ContainerID() != "" {
 		return readNodeLikeResource(ctx, current)
 	}
-	return current, nil
+	return resourceReadOK(current), nil
 }
 
 func (ActorResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
