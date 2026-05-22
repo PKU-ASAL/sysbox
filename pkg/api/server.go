@@ -18,6 +18,7 @@ type Server struct {
 	workspacesDir string
 	stateBackend  string
 	jobs          *Jobs
+	supervisor    *Supervisor
 	mux           *http.ServeMux
 }
 
@@ -61,6 +62,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Start binds to addr and serves until the process exits.
 func (s *Server) Start(addr string) error {
 	fmt.Fprintf(os.Stdout, "sysbox API listening on %s\n", addr)
+	if s.supervisor == nil {
+		s.supervisor = newSupervisor(s, supervisorIntervalFromEnv())
+	}
+	s.supervisor.Start()
+	defer s.supervisor.Stop()
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           authMiddleware(s),
@@ -69,6 +75,21 @@ func (s *Server) Start(addr string) error {
 		// WriteTimeout intentionally 0: SSE connections are long-lived.
 	}
 	return srv.ListenAndServe()
+}
+
+func supervisorIntervalFromEnv() time.Duration {
+	raw := os.Getenv("SYSBOX_SUPERVISOR_INTERVAL")
+	if raw == "" {
+		raw = "30s"
+	}
+	if raw == "0" || raw == "off" || raw == "disabled" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 30 * time.Second
+	}
+	return d
 }
 
 func (s *Server) registerRoutes() {

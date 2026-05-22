@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -266,6 +267,15 @@ func (s *Server) handleGetTopologyHealth(w http.ResponseWriter, r *http.Request)
 	topology := r.PathValue("topology")
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if r.URL.Query().Get("cached") == "true" {
+		snap, err := s.loadHealthSnapshot(topology)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, snap)
 		return
 	}
 	st, err := s.loadState(topology)
@@ -668,6 +678,46 @@ func (s *Server) loadState(topology string) (*state.State, error) {
 		}
 	}
 	return st, nil
+}
+
+func (s *Server) topologyNames(ctx context.Context) ([]string, error) {
+	names := map[string]bool{}
+	hclEntries, err := filepath.Glob(filepath.Join(s.workspacesDir, "*", "field.sysbox.hcl"))
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range hclEntries {
+		names[filepath.Base(filepath.Dir(e))] = true
+	}
+	if s.stateBackend == "" {
+		stateEntries, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json"))
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range stateEntries {
+			names[filepath.Base(filepath.Dir(e))] = true
+		}
+	} else {
+		mgr, err := s.stateManager("__list__")
+		if err != nil {
+			return nil, err
+		}
+		items, err := mgr.ListTopologies(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			names[item.Name] = true
+		}
+	}
+	out := make([]string, 0, len(names))
+	for name := range names {
+		if validatePathSegment(name, "topology") == nil {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func planJSON(p *runtime.Plan) map[string]any {
