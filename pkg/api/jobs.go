@@ -87,7 +87,15 @@ func (j *Jobs) load() {
 		for sc.Scan() {
 			var r Run
 			if err := json.Unmarshal(sc.Bytes(), &r); err == nil {
-				r.logs = &Broadcaster{} // closed; SSE log is gone
+				if r.Status == RunRunning {
+					r.Status = RunFailed
+					r.Err = "server restarted before run completion"
+					r.Recoverable = true
+					if r.EndedAt.IsZero() {
+						r.EndedAt = time.Now().UTC()
+					}
+				}
+				r.logs = &Broadcaster{}
 				r.logs.Close()
 				j.runs[r.ID] = &r
 			}
@@ -177,6 +185,7 @@ func (j *Jobs) start(topology, op string) *Run {
 	j.mu.Lock()
 	j.runs[r.ID] = r
 	j.mu.Unlock()
+	j.persist(r)
 	return r
 }
 
@@ -192,8 +201,11 @@ func (j *Jobs) finish(r *Run, err error) {
 	if err != nil {
 		r.Status = RunFailed
 		r.Err = err.Error()
+		r.Recoverable = true
 	} else {
 		r.Status = RunDone
+		r.Err = ""
+		r.Recoverable = false
 	}
 	j.mu.Unlock()
 	r.logs.Close()
@@ -205,4 +217,16 @@ func (j *Jobs) get(id string) (*Run, bool) {
 	defer j.mu.RUnlock()
 	r, ok := j.runs[id]
 	return r, ok
+}
+
+func (j *Jobs) list(topology string) []*Run {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	out := make([]*Run, 0, len(j.runs))
+	for _, r := range j.runs {
+		if topology == "" || r.Topology == topology {
+			out = append(out, r)
+		}
+	}
+	return out
 }

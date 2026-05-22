@@ -64,3 +64,16 @@ func TestJobsLoadCheckpointsDoesNotOverridePersistedRun(t *testing.T) {
 	require.Equal(t, RunDone, run.Status)
 	require.False(t, run.Recoverable)
 }
+
+func TestJobsPersistsStartedRunAndReloadsAsRecoverable(t *testing.T) {
+	runsDir := t.TempDir()
+	jobs := newJobs(runsDir)
+	run := jobs.start("mixed", "apply")
+
+	reloaded := newJobs(runsDir)
+	got, ok := reloaded.get(run.ID)
+	require.True(t, ok)
+	require.Equal(t, RunFailed, got.Status)
+	require.True(t, got.Recoverable)
+	require.Equal(t, "server restarted before run completion", got.Err)
+}

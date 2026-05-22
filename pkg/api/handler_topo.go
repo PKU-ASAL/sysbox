@@ -473,6 +473,17 @@ func (s *Server) runDestroy(topology string, run *Run) {
 }
 
 // GET /v1/runs/{id}
+func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
+	topology := r.URL.Query().Get("topology")
+	if topology != "" {
+		if err := validatePathSegment(topology, "topology"); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": s.jobs.list(topology)})
+}
+
 func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := validatePathSegment(id, "id"); err != nil {
@@ -587,6 +598,25 @@ func (s *Server) handleGetRunCheckpoint(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+func (s *Server) handleGetRunActions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := validatePathSegment(id, "id"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run, ok := s.jobs.get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
+		return
+	}
+	log, err := loadRunActionLog(s.checkpointFile(run.Topology, run.ID))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, log)
 }
 
 // GET /v1/runs/{id}/logs  — SSE stream

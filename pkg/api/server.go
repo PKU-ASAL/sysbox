@@ -99,11 +99,13 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("DELETE /v1/topologies/{topology}", s.handleDeleteTopology)
 
 	// Runs (async job tracking + SSE logs)
+	m.HandleFunc("GET /v1/runs", s.handleListRuns)
 	m.HandleFunc("GET /v1/runs/{id}", s.handleGetRun)
 	m.HandleFunc("POST /v1/runs/{id}/resume", s.handleResumeRun)
 	m.HandleFunc("POST /v1/runs/{id}/recover", s.handleRecoverRun)
 	m.HandleFunc("POST /v1/runs/{id}/cleanup", s.handleCleanupRun)
 	m.HandleFunc("GET /v1/runs/{id}/checkpoint", s.handleGetRunCheckpoint)
+	m.HandleFunc("GET /v1/runs/{id}/actions", s.handleGetRunActions)
 	m.HandleFunc("GET /v1/runs/{id}/logs", s.handleRunLogs)
 
 	// Nodes
@@ -113,6 +115,8 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/pause", s.handleNodePause)
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/resume", s.handleNodeResume)
 	m.HandleFunc("POST /v1/topologies/{topology}/import", s.handleImport)
+	m.HandleFunc("GET /v1/topologies/{topology}/resources", s.handleListResources)
+	m.HandleFunc("GET /v1/topologies/{topology}/resources/{resource}/health", s.handleGetResourceHealth)
 }
 
 // authMiddleware enforces SYSBOX_API_TOKEN when set.
