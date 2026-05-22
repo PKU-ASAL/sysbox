@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -153,9 +154,60 @@ func (s *Substrate) GetContainerIP(ctx context.Context, containerID string) (str
 
 // NodeStatus reports true when the container is in the running state.
 func (s *Substrate) NodeStatus(ctx context.Context, h substrate.NodeHandle) (bool, error) {
+	obs, err := s.ObserveNode(ctx, h)
+	if err != nil {
+		return false, err
+	}
+	return obs.Running, nil
+}
+
+func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (substrate.NodeObservation, error) {
 	ins, err := s.cli.ContainerInspect(ctx, h.ID)
 	if err != nil {
-		return false, nil // container gone
+		if errdefs.IsNotFound(err) {
+			return substrate.NodeObservation{
+				Exists:     false,
+				Running:    false,
+				Healthy:    false,
+				Status:     substrate.NodeStatusMissing,
+				ExternalID: h.ID,
+				Reason:     "container not found",
+				LastSeen:   time.Now().UTC(),
+			}, nil
+		}
+		return substrate.NodeObservation{
+			Status:     substrate.NodeStatusUnknown,
+			ExternalID: h.ID,
+			Reason:     err.Error(),
+			LastSeen:   time.Now().UTC(),
+		}, err
 	}
-	return ins.State.Running, nil
+	status := substrate.NodeStatusExited
+	if ins.State.Running {
+		status = substrate.NodeStatusRunning
+	}
+	if ins.State.Paused {
+		status = substrate.NodeStatusPaused
+	}
+	healthy := ins.State.Running
+	if ins.State.Health != nil && ins.State.Health.Status == "unhealthy" {
+		status = substrate.NodeStatusUnhealthy
+		healthy = false
+	}
+	var exitCode *int
+	if !ins.State.Running {
+		code := ins.State.ExitCode
+		exitCode = &code
+	}
+	return substrate.NodeObservation{
+		Exists:     true,
+		Running:    ins.State.Running,
+		Healthy:    healthy,
+		Status:     status,
+		PID:        ins.State.Pid,
+		ExitCode:   exitCode,
+		ExternalID: ins.ID,
+		Reason:     ins.State.Status,
+		LastSeen:   time.Now().UTC(),
+	}, nil
 }

@@ -37,6 +37,8 @@ type HandleState struct {
 	VMDir      string `json:"vm_dir,omitempty"`
 	Socket     string `json:"socket,omitempty"`
 	ConfigPath string `json:"config_path,omitempty"`
+	PIDFile    string `json:"pid_file,omitempty"`
+	MetaPath   string `json:"meta_path,omitempty"`
 
 	VsockUDS  string `json:"vsock_uds,omitempty"`
 	VsockCID  uint32 `json:"vsock_cid,omitempty"`
@@ -163,6 +165,8 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 
 	socketPath := filepath.Join(runDir, "firecracker.sock")
 	cfgPath := filepath.Join(runDir, "vm_config.json")
+	pidPath := filepath.Join(runDir, "firecracker.pid")
+	metaPath := filepath.Join(runDir, "sysbox.json")
 
 	bootArgs := "console=ttyS0 reboot=k panic=1 pci=off init=/init root=/dev/vda rw"
 	drives := []fcDrive{
@@ -225,7 +229,10 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		VMDir:      runDir,
 		Socket:     socketPath,
 		ConfigPath: cfgPath,
+		PIDFile:    pidPath,
+		MetaPath:   metaPath,
 	}
+	_ = writeVMMetadata(metaPath, spec.Name, socketPath, cfgPath, pidPath)
 	conn := substrate.ConnInfo{}
 	if vsockUDS != "" {
 		hs.VsockUDS = vsockUDS
@@ -307,6 +314,9 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	vm.cmd = cmd
 	vm.pid = cmd.Process.Pid
 	vm.started = true
+	if hs, _ := h.Provider.(*HandleState); hs != nil && hs.PIDFile != "" {
+		_ = os.WriteFile(hs.PIDFile, []byte(fmt.Sprintf("%d\n", vm.pid)), 0644)
+	}
 	return nil
 }
 
@@ -372,28 +382,102 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 // Cold path: process was started by a previous CLI invocation; reconstruct
 // the socket path from HandleState and probe with pkill/pgrep.
 func (s *Substrate) NodeStatus(_ context.Context, h substrate.NodeHandle) (bool, error) {
+	obs, err := s.ObserveNode(context.Background(), h)
+	if err != nil {
+		return false, err
+	}
+	return obs.Running, nil
+}
+
+func (s *Substrate) ObserveNode(_ context.Context, h substrate.NodeHandle) (substrate.NodeObservation, error) {
+	now := time.Now().UTC()
 	// Hot path: process in current process table.
 	vmMu.Lock()
 	vm, ok := vmStore[h.ID]
 	vmMu.Unlock()
 	if ok && vm.cmd != nil && vm.cmd.Process != nil {
 		if err := vm.cmd.Process.Signal(syscall.Signal(0)); err != nil {
-			return false, nil
+			return substrate.NodeObservation{
+				Exists:     true,
+				Running:    false,
+				Healthy:    false,
+				Status:     substrate.NodeStatusExited,
+				PID:        vm.pid,
+				ExternalID: h.ID,
+				Reason:     err.Error(),
+				LastSeen:   now,
+			}, nil
 		}
-		return true, nil
+		return substrate.NodeObservation{
+			Exists:     true,
+			Running:    true,
+			Healthy:    true,
+			Status:     substrate.NodeStatusRunning,
+			PID:        vm.pid,
+			ExternalID: h.ID,
+			Reason:     "process alive",
+			LastSeen:   now,
+		}, nil
 	}
 
 	// Cold path: check if a firecracker process is still holding the socket.
 	hs, _ := h.Provider.(*HandleState)
 	if hs == nil || hs.Socket == "" {
-		return false, nil
+		return substrate.NodeObservation{
+			Exists:     false,
+			Running:    false,
+			Healthy:    false,
+			Status:     substrate.NodeStatusMissing,
+			ExternalID: h.ID,
+			Reason:     "missing firecracker socket metadata",
+			LastSeen:   now,
+		}, nil
 	}
+	vmDirExists := hs.VMDir != ""
+	if vmDirExists {
+		if _, err := os.Stat(hs.VMDir); err != nil {
+			vmDirExists = false
+		}
+	}
+	socketExists := true
 	if _, err := os.Stat(hs.Socket); err != nil {
-		return false, nil // socket gone → VM not running
+		socketExists = false
 	}
-	// Socket exists; check if a process is listening on it.
-	out, _ := exec.Command("pgrep", "-f", hs.Socket).CombinedOutput()
-	return strings.TrimSpace(string(out)) != "", nil
+	pid := firecrackerPIDForSocket(hs.Socket)
+	if pid == 0 && hs.PIDFile != "" {
+		pid = readPIDFile(hs.PIDFile)
+		if pid > 0 && !processAlive(pid) {
+			pid = 0
+		}
+	}
+	if socketExists && pid > 0 {
+		return substrate.NodeObservation{
+			Exists:     true,
+			Running:    true,
+			Healthy:    true,
+			Status:     substrate.NodeStatusRunning,
+			PID:        pid,
+			ExternalID: h.ID,
+			Reason:     "socket and process found",
+			LastSeen:   now,
+		}, nil
+	}
+	status := substrate.NodeStatusMissing
+	reason := "vm artifacts missing"
+	if vmDirExists || socketExists {
+		status = substrate.NodeStatusExited
+		reason = "vm artifacts exist but process is not running"
+	}
+	return substrate.NodeObservation{
+		Exists:     vmDirExists || socketExists,
+		Running:    false,
+		Healthy:    false,
+		Status:     status,
+		PID:        pid,
+		ExternalID: h.ID,
+		Reason:     reason,
+		LastSeen:   now,
+	}, nil
 }
 
 // AdoptNode reconnects this process to an already-running Firecracker VM.
@@ -412,6 +496,12 @@ func (s *Substrate) AdoptNode(ctx context.Context, h substrate.NodeHandle) (subs
 		return h, fmt.Errorf("firecracker adopt %s: process not running", h.ID)
 	}
 	pid := firecrackerPIDForSocket(hs.Socket)
+	if pid == 0 && hs.PIDFile != "" {
+		pid = readPIDFile(hs.PIDFile)
+		if pid > 0 && !processAlive(pid) {
+			pid = 0
+		}
+	}
 	vmMu.Lock()
 	vmStore[h.ID] = &vmProcess{
 		vmID:      h.ID,
@@ -434,6 +524,45 @@ func firecrackerPIDForSocket(socketPath string) int {
 	var pid int
 	_, _ = fmt.Sscanf(fields[0], "%d", &pid)
 	return pid
+}
+
+func readPIDFile(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var pid int
+	_, _ = fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid)
+	return pid
+}
+
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+func writeVMMetadata(path, vmID, socketPath, configPath, pidPath string) error {
+	if path == "" {
+		return nil
+	}
+	data, err := json.MarshalIndent(map[string]any{
+		"managed_by":  "sysbox",
+		"vm_id":       vmID,
+		"socket":      socketPath,
+		"config_path": configPath,
+		"pid_file":    pidPath,
+		"created_at":  time.Now().UTC().Format(time.RFC3339),
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 // ── Firecracker config types ────────────────────────────────────────────────

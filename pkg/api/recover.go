@@ -206,7 +206,13 @@ func recoverFirecrackerNode(ctx context.Context, st *state.State, step runtime.O
 		action.Status = "not_found"
 		return action
 	}
-	if running, err := sub.NodeStatus(ctx, handle); err == nil && running {
+	obs, err := sub.ObserveNode(ctx, handle)
+	if err != nil {
+		action.Status = "error"
+		action.Error = err.Error()
+		return action
+	}
+	if obs.Running {
 		if adopted, err := sub.AdoptNode(ctx, handle); err == nil {
 			if inst := substrate.HandleToInstance(adopted, sub); len(inst) > 0 {
 				for k, v := range inst {
@@ -221,7 +227,7 @@ func recoverFirecrackerNode(ctx context.Context, st *state.State, step runtime.O
 		action.Status = "recovered"
 		return action
 	}
-	if running, err := sub.NodeStatus(ctx, handle); err == nil && !running {
+	if !obs.Running {
 		action.Status = "recovered_not_running"
 		adoptStateResource(st, *rec, "")
 		return action

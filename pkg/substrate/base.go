@@ -95,6 +95,17 @@ func (BaseSubstrate) ReadNode(_ context.Context, _ string) (NodeHandle, error) {
 	return NodeHandle{}, ErrNotSupported
 }
 
+// ObserveNode returns unknown by default.
+func (BaseSubstrate) ObserveNode(_ context.Context, h NodeHandle) (NodeObservation, error) {
+	return NodeObservation{
+		Exists:     false,
+		Running:    false,
+		Healthy:    false,
+		Status:     NodeStatusUnknown,
+		ExternalID: h.ID,
+	}, ErrNotSupported
+}
+
 // AdoptNode returns ErrNotSupported by default. Substrates that can reconnect
 // to an existing long-lived node should override this.
 func (BaseSubstrate) AdoptNode(_ context.Context, _ NodeHandle) (NodeHandle, error) {

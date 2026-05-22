@@ -120,9 +120,13 @@ func (e *Executor) probeResource(ctx context.Context, id graph.NodeID) (bool, er
 		if cid == "" {
 			return false, nil
 		}
-		ok, err := sub.NodeStatus(ctx, substrate.NodeHandle{ID: cid, Provider: providerState(sub, r)})
-		if err != nil || !ok {
-			return ok, err
+		obs, err := sub.ObserveNode(ctx, substrate.NodeHandle{ID: cid, Provider: providerState(sub, r)})
+		if err != nil {
+			return false, err
+		}
+		if !obs.Running || !obs.Healthy {
+			e.logf("[refresh] %s: observed status=%s reason=%s\n", id, obs.Status, obs.Reason)
+			return false, nil
 		}
 		if !networkAttachmentsHealthy(r) {
 			return false, nil

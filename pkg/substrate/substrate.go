@@ -82,6 +82,11 @@ type Substrate interface {
 	// Used by drift detection; a false result triggers a Change entry in the plan.
 	NodeStatus(ctx context.Context, handle NodeHandle) (bool, error)
 
+	// ObserveNode returns a structured lifecycle observation for a node. This
+	// is the common supervisor surface across daemon-backed substrates
+	// (Docker/libvirt) and process-backed substrates (Firecracker/raw qemu).
+	ObserveNode(ctx context.Context, handle NodeHandle) (NodeObservation, error)
+
 	// AdoptNode reconnects a fresh control-plane process to a node that was
 	// created earlier and still exists outside the current process memory.
 	// Substrates with no takeover semantics return ErrNotSupported via

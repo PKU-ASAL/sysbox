@@ -1,6 +1,11 @@
 package firecracker
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestUpsertCmdlineArg_Appends(t *testing.T) {
 	got := upsertCmdlineArg("console=ttyS0 reboot=k", "ip", "ip=10.0.12.20::10.0.12.254:255.255.255.0:node_db:eth0:off")
@@ -48,5 +53,38 @@ func TestSplitCIDR_Rejects(t *testing.T) {
 func TestFirecrackerPIDForSocketReturnsZeroWhenMissing(t *testing.T) {
 	if got := firecrackerPIDForSocket("/tmp/sysbox-no-such-firecracker.sock"); got != 0 {
 		t.Fatalf("firecrackerPIDForSocket missing = %d, want 0", got)
+	}
+}
+
+func TestReadPIDFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firecracker.pid")
+	if got := readPIDFile(path); got != 0 {
+		t.Fatalf("read missing pid = %d, want 0", got)
+	}
+	if err := os.WriteFile(path, []byte("1234\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readPIDFile(path); got != 1234 {
+		t.Fatalf("read pid = %d, want 1234", got)
+	}
+}
+
+func TestProcessAliveRejectsInvalidPID(t *testing.T) {
+	if processAlive(0) {
+		t.Fatal("pid 0 should not be considered alive")
+	}
+}
+
+func TestWriteVMMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sysbox.json")
+	if err := writeVMMetadata(path, "vm-1", "/tmp/fc.sock", "/tmp/vm.json", "/tmp/fc.pid"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) == "" || !strings.Contains(string(data), `"managed_by": "sysbox"`) {
+		t.Fatalf("metadata missing managed_by: %s", data)
 	}
 }

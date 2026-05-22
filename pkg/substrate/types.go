@@ -102,6 +102,33 @@ type NodeHandle struct {
 	Provider any
 }
 
+type NodeLifecycleStatus string
+
+const (
+	NodeStatusUnknown   NodeLifecycleStatus = "unknown"
+	NodeStatusMissing   NodeLifecycleStatus = "missing"
+	NodeStatusRunning   NodeLifecycleStatus = "running"
+	NodeStatusExited    NodeLifecycleStatus = "exited"
+	NodeStatusPaused    NodeLifecycleStatus = "paused"
+	NodeStatusUnhealthy NodeLifecycleStatus = "unhealthy"
+)
+
+// NodeObservation is the substrate-neutral lifecycle snapshot for a node.
+// Docker derives it from dockerd; Firecracker derives it from pid/socket/vsock
+// anchors; libvirt can derive it from domain state.
+type NodeObservation struct {
+	Exists     bool                `json:"exists"`
+	Running    bool                `json:"running"`
+	Healthy    bool                `json:"healthy"`
+	Adopted    bool                `json:"adopted,omitempty"`
+	Status     NodeLifecycleStatus `json:"status"`
+	PID        int                 `json:"pid,omitempty"`
+	ExitCode   *int                `json:"exit_code,omitempty"`
+	ExternalID string              `json:"external_id,omitempty"`
+	Reason     string              `json:"reason,omitempty"`
+	LastSeen   time.Time           `json:"last_seen,omitempty"`
+}
+
 // NetInfo carries substrate-neutral network info for a node.
 type NetInfo struct {
 	// PrimaryIP is the node's primary IPv4 address (CIDR stripped), used by
