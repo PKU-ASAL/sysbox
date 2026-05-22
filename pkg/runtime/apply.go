@@ -57,7 +57,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 					e.logf("[apply] warning: cleanup of drifted %s failed: %v\n", id, err)
 					e.recorder.StepFailed(step, err)
 				} else {
-					e.recordDeletePatch(step, *r)
+					e.recordDeletePatch(step, *r, PlanActionDelete)
 					e.recorder.StepDone(step)
 				}
 			}
@@ -88,7 +88,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 		}
 		restoreStep()
 		if err := e.recordSubstep(step, "capture_state_resource", map[string]any{"resource": id.String()}, func() error {
-			e.recordStepExternal(step, id)
+			e.recordStepExternal(step, id, actionFor(plan, id))
 			return nil
 		}); err != nil {
 			applyErr = err

@@ -19,6 +19,7 @@ type Executor struct {
 	state               *state.State
 	logger              io.Writer
 	recorder            OperationRecorder
+	patchSink           StatePatchSink
 	topology            string
 	runID               string
 	currentResourceStep int
@@ -38,6 +39,10 @@ func (e *Executor) SetRecorder(r OperationRecorder) {
 		return
 	}
 	e.recorder = r
+}
+
+func (e *Executor) SetStatePatchSink(sink StatePatchSink) {
+	e.patchSink = sink
 }
 
 func (e *Executor) SetRunContext(topology, runID string) {
@@ -73,7 +78,7 @@ func (e *Executor) setCurrentResourceStep(step int) func() {
 	}
 }
 
-func (e *Executor) recordStepExternal(step int, id graph.NodeID) {
+func (e *Executor) recordStepExternal(step int, id graph.NodeID, action PlanActionType) {
 	r := e.state.FindResource(id.Type, id.Name)
 	if r == nil {
 		return
@@ -90,10 +95,24 @@ func (e *Executor) recordStepExternal(step int, id graph.NodeID) {
 		Instance: r.Instance,
 	}
 	e.recorder.StepStateResource(step, log)
+	patch := StatePatch{
+		Index:    step,
+		Resource: id.String(),
+		Action:   action,
+		Op:       StatePatchUpsert,
+		State:    &log,
+	}
 	e.recorder.StepStatePatch(step, StatePatchUpsert, &log)
+	if e.patchSink != nil {
+		if err := e.patchSink.ApplyStatePatch(context.Background(), patch); err != nil {
+			e.logf("[state] warning: persist patch for %s: %v\n", id, err)
+		} else {
+			e.recorder.StepStateRecorded(step)
+		}
+	}
 }
 
-func (e *Executor) recordDeletePatch(step int, r state.Resource) {
+func (e *Executor) recordDeletePatch(step int, r state.Resource, action PlanActionType) {
 	log := StateResourceLog{
 		Type:     r.Type,
 		Name:     r.Name,
@@ -101,6 +120,20 @@ func (e *Executor) recordDeletePatch(step int, r state.Resource) {
 		Instance: r.Instance,
 	}
 	e.recorder.StepStatePatch(step, StatePatchDelete, &log)
+	if e.patchSink != nil {
+		patch := StatePatch{
+			Index:    step,
+			Resource: r.Type + "." + r.Name,
+			Action:   action,
+			Op:       StatePatchDelete,
+			State:    &log,
+		}
+		if err := e.patchSink.ApplyStatePatch(context.Background(), patch); err != nil {
+			e.logf("[state] warning: persist delete patch for %s.%s: %v\n", r.Type, r.Name, err)
+		} else {
+			e.recorder.StepStateRecorded(step)
+		}
+	}
 }
 
 func (e *Executor) logf(format string, args ...any) {

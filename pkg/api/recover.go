@@ -40,18 +40,6 @@ func recoverCheckpoint(ctx context.Context, checkpointPath string, mgr *state.Ma
 	}
 	report := &RecoverReport{RunID: cp.RunID, Topology: cp.Topology}
 	patchRecovered := false
-	for _, patch := range cp.StatePatches {
-		if !recoverPatchCandidate(patch) {
-			continue
-		}
-		action := recoverStatePatch(st, patch)
-		if actionRecovered(action) {
-			patchRecovered = true
-			report.Recovered = append(report.Recovered, action)
-		} else {
-			report.Skipped = append(report.Skipped, action)
-		}
-	}
 	for _, step := range cp.Steps {
 		if !recoverCandidate(step) {
 			continue
@@ -79,30 +67,11 @@ func recoverCheckpoint(ctx context.Context, checkpointPath string, mgr *state.Ma
 	return report, nil
 }
 
-func recoverPatchCandidate(patch runtime.StatePatch) bool {
-	return !patch.Recorded && patch.State != nil && patch.Op == runtime.StatePatchUpsert
-}
-
-func recoverStatePatch(st *state.State, patch runtime.StatePatch) RecoverAction {
-	action := RecoverAction{Resource: patch.Resource, Status: "recovered_from_patch"}
-	rec := patch.State
-	if rec == nil {
-		action.Status = "missing_state_patch"
-		return action
-	}
-	if existing := st.FindResource(rec.Type, rec.Name); existing != nil {
-		action.Status = "already_in_state"
-		return action
-	}
-	runtime.AdoptStateResource(st, *rec, "")
-	return action
-}
-
 func actionRecovered(action RecoverAction) bool {
 	return action.Status == "recovered" ||
 		action.Status == "recovered_adopted" ||
 		action.Status == "recovered_not_running" ||
-		action.Status == "recovered_from_patch"
+		action.Status == "replayed_state_patch"
 }
 
 func recoverCandidate(step runtime.OperationStep) bool {

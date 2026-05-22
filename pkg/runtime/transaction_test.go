@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func TestFileRecorderPersistsPlanLeaseAndStateSerials(t *testing.T) {
@@ -95,4 +97,33 @@ func TestFileRecorderPersistsStatePatches(t *testing.T) {
 	require.Equal(t, "sysbox_node.web", cp.StatePatches[0].Resource)
 	require.True(t, cp.StatePatches[0].Recorded)
 	require.Equal(t, "abc", cp.StatePatches[0].State.Instance["container_id"])
+}
+
+func TestApplyStatePatchUpsertAndDelete(t *testing.T) {
+	st := &state.State{Version: state.SchemaVersion}
+	patch := StatePatch{
+		Resource: "sysbox_node.web",
+		Action:   PlanActionCreate,
+		Op:       StatePatchUpsert,
+		State: &StateResourceLog{
+			Type:     "sysbox_node",
+			Name:     "web",
+			Provider: "docker",
+			Instance: map[string]any{"container_id": "abc"},
+		},
+	}
+	require.True(t, ApplyStatePatch(st, patch))
+	require.Equal(t, "abc", st.FindResource("sysbox_node", "web").ContainerID())
+
+	patch.State.Instance["container_id"] = "def"
+	require.True(t, ApplyStatePatch(st, patch))
+	require.Equal(t, "def", st.FindResource("sysbox_node", "web").ContainerID())
+	require.Len(t, st.Resources, 1)
+
+	require.True(t, ApplyStatePatch(st, StatePatch{
+		Resource: "sysbox_node.web",
+		Action:   PlanActionDelete,
+		Op:       StatePatchDelete,
+	}))
+	require.Nil(t, st.FindResource("sysbox_node", "web"))
 }

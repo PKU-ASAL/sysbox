@@ -1,12 +1,15 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 type OperationStatus string
@@ -91,6 +94,10 @@ type OperationRecorder interface {
 	StepStateRecorded(index int)
 	MarkResourceStateRecorded()
 	SubstepStart(parent int, phase string, details map[string]any) int
+}
+
+type StatePatchSink interface {
+	ApplyStatePatch(ctx context.Context, patch StatePatch) error
 }
 
 type NoopRecorder struct{}
@@ -352,20 +359,90 @@ func cloneAnyMap(in map[string]any) map[string]any {
 	return out
 }
 
-func (r *FileRecorder) flushLocked() error {
-	if r.path == "" {
+func ApplyStatePatch(st *state.State, patch StatePatch) bool {
+	switch patch.Op {
+	case StatePatchUpsert:
+		if patch.State == nil {
+			return false
+		}
+		rec := patch.State
+		if existing := st.FindResource(rec.Type, rec.Name); existing != nil {
+			st.RemoveResource(rec.Type, rec.Name)
+		}
+		AdoptStateResource(st, *rec, "")
+		return true
+	case StatePatchDelete:
+		if patch.State != nil {
+			st.RemoveResource(patch.State.Type, patch.State.Name)
+			return true
+		}
+		typ, name, ok := splitResourceAddr(patch.Resource)
+		if !ok {
+			return false
+		}
+		st.RemoveResource(typ, name)
+		return true
+	default:
+		return false
+	}
+}
+
+func UnrecordedStatePatches(cp OperationCheckpoint) []StatePatch {
+	out := make([]StatePatch, 0, len(cp.StatePatches))
+	for _, patch := range cp.StatePatches {
+		if !patch.Recorded {
+			out = append(out, patch)
+		}
+	}
+	return out
+}
+
+func MarkStatePatchesRecorded(cp *OperationCheckpoint, indexes map[int]bool) {
+	if cp == nil || len(indexes) == 0 {
+		return
+	}
+	for i := range cp.StatePatches {
+		if indexes[cp.StatePatches[i].Index] {
+			cp.StatePatches[i].Recorded = true
+		}
+	}
+	for i := range cp.Steps {
+		if indexes[cp.Steps[i].Index] {
+			cp.Steps[i].StateRecorded = true
+		}
+	}
+}
+
+func WriteCheckpoint(path string, cp OperationCheckpoint) error {
+	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create checkpoint dir: %w", err)
 	}
-	data, err := json.MarshalIndent(&r.checkpoint, "", "  ")
+	data, err := json.MarshalIndent(&cp, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := r.path + ".tmp"
+	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, r.path)
+	return os.Rename(tmp, path)
+}
+
+func splitResourceAddr(addr string) (string, string, bool) {
+	for i := 0; i < len(addr); i++ {
+		if addr[i] == '.' {
+			if i == 0 || i == len(addr)-1 {
+				return "", "", false
+			}
+			return addr[:i], addr[i+1:], true
+		}
+	}
+	return "", "", false
+}
+
+func (r *FileRecorder) flushLocked() error {
+	return WriteCheckpoint(r.path, r.checkpoint)
 }

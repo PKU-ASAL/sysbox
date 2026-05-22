@@ -362,6 +362,7 @@ func (s *Server) runApply(topology string, run *Run) {
 	recorder.SetLeaseOwner(run.LeaseOwner)
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
+	exec.SetStatePatchSink(&statePatchSink{mgr: mgr, state: st, owner: run.LeaseOwner})
 	exec.Refresh(context.Background(), plan)
 	if !plan.HasChanges() {
 		_, _ = run.logs.Write([]byte("No changes. Apply is a no-op.\n"))
@@ -465,6 +466,7 @@ func (s *Server) runDestroy(topology string, run *Run) {
 	recorder.SetLeaseOwner(run.LeaseOwner)
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
+	exec.SetStatePatchSink(&statePatchSink{mgr: mgr, state: st, owner: run.LeaseOwner})
 	if snap, err := mgr.Snapshot(context.Background(), "before destroy "+run.ID); err == nil && snap != nil {
 		_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
@@ -539,11 +541,52 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 	run := s.jobs.startChild(parent)
 	switch run.Op {
 	case "apply":
-		go s.runApply(run.Topology, run)
+		go s.runResumeApply(parent, run)
 	case "destroy":
-		go s.runDestroy(run.Topology, run)
+		go s.runResumeDestroy(parent, run)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID})
+}
+
+func (s *Server) runResumeApply(parent, run *Run) {
+	if err := s.reconcileParentJournal(parent, run); err != nil {
+		s.jobs.finish(run, err)
+		return
+	}
+	s.runApply(run.Topology, run)
+}
+
+func (s *Server) runResumeDestroy(parent, run *Run) {
+	if err := s.reconcileParentJournal(parent, run); err != nil {
+		s.jobs.finish(run, err)
+		return
+	}
+	s.runDestroy(run.Topology, run)
+}
+
+func (s *Server) reconcileParentJournal(parent, run *Run) error {
+	mgr, err := s.stateManager(parent.Topology)
+	if err != nil {
+		return err
+	}
+	report, err := reconcileCheckpointJournal(context.Background(), s.checkpointFile(parent.Topology, parent.ID), mgr, run.LeaseOwner)
+	if err != nil {
+		return err
+	}
+	if report == nil {
+		return nil
+	}
+	for _, action := range report.Recovered {
+		_, _ = run.logs.Write([]byte(fmt.Sprintf("[resume] %s %s", action.Status, action.Resource)))
+		if action.ExternalID != "" {
+			_, _ = run.logs.Write([]byte(fmt.Sprintf(" (%s)", action.ExternalID)))
+		}
+		_, _ = run.logs.Write([]byte("\n"))
+	}
+	for _, action := range report.Skipped {
+		_, _ = run.logs.Write([]byte(fmt.Sprintf("[resume] skipped %s: %s\n", action.Resource, action.Status)))
+	}
+	return nil
 }
 
 func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
@@ -590,7 +633,7 @@ func (s *Server) handleRecoverRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner := fmt.Sprintf("sysbox-api:recover:%s", run.ID)
-	report, err := recoverCheckpoint(r.Context(), s.checkpointFile(run.Topology, run.ID), mgr, owner)
+	report, err := reconcileCheckpointJournal(r.Context(), s.checkpointFile(run.Topology, run.ID), mgr, owner)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

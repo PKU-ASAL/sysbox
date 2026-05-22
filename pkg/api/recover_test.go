@@ -64,16 +64,21 @@ func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 	require.NoError(t, os.WriteFile(checkpointPath, raw, 0o644))
 
 	mgr := state.NewManager(filepath.Join(dir, "state.json"))
-	report, err := recoverCheckpoint(context.Background(), checkpointPath, mgr, "test")
+	report, err := reconcileCheckpointJournal(context.Background(), checkpointPath, mgr, "test")
 	require.NoError(t, err)
 	require.Len(t, report.Recovered, 1)
-	require.Equal(t, "recovered_from_patch", report.Recovered[0].Status)
+	require.Equal(t, "replayed_state_patch", report.Recovered[0].Status)
 
 	st, err := mgr.Load()
 	require.NoError(t, err)
 	res := st.FindResource("sysbox_node", "web")
 	require.NotNil(t, res)
 	require.Equal(t, "abc", res.ContainerID())
+
+	raw, err = os.ReadFile(checkpointPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &cp))
+	require.True(t, cp.StatePatches[0].Recorded)
 }
 
 func TestAdoptFirecrackerStateResourceKeepsProviderExtra(t *testing.T) {
