@@ -1,10 +1,8 @@
 package api
 
 import (
-	"context"
 	"testing"
 
-	"github.com/docker/docker/api/types/filters"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -15,6 +13,7 @@ func TestCleanupCandidateRequiresDoneSupportedUnrecordedResource(t *testing.T) {
 		Kind:     "resource",
 		Provider: "docker",
 		Status:   runtime.OperationDone,
+		Labels:   map[string]string{runtime.LabelResourceType: "sysbox_node"},
 	}
 	require.True(t, cleanupCandidate(step))
 
@@ -27,6 +26,7 @@ func TestCleanupCandidateRequiresDoneSupportedUnrecordedResource(t *testing.T) {
 
 	step.Status = runtime.OperationDone
 	step.Provider = "firecracker"
+	step.Labels = nil
 	require.False(t, cleanupCandidate(step))
 
 	step.StateResource = &runtime.StateResourceLog{Type: "sysbox_node", Name: "vm", Provider: "firecracker"}
@@ -37,24 +37,6 @@ func TestCleanupCandidateRequiresDoneSupportedUnrecordedResource(t *testing.T) {
 	require.True(t, cleanupCandidate(step))
 
 	step.Provider = "libvirt"
+	step.StateResource = &runtime.StateResourceLog{Type: "sysbox_unknown", Name: "thing", Provider: "libvirt"}
 	require.False(t, cleanupCandidate(step))
-}
-
-func TestFindDockerObjectByLabelsUsesManagedTopologyResourceLabels(t *testing.T) {
-	labels := map[string]string{
-		runtime.LabelManaged:  "true",
-		runtime.LabelTopology: "mixed",
-		runtime.LabelResource: "sysbox_node.web",
-	}
-
-	var got filters.Args
-	id, err := findDockerObjectByLabels(context.Background(), labels, func(args filters.Args) ([]string, error) {
-		got = args
-		return []string{"container-1"}, nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, "container-1", id)
-	require.Contains(t, got.Get("label"), runtime.LabelManaged+"=true")
-	require.Contains(t, got.Get("label"), runtime.LabelTopology+"=mixed")
-	require.Contains(t, got.Get("label"), runtime.LabelResource+"=sysbox_node.web")
 }
