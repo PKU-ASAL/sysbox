@@ -261,6 +261,22 @@ func (s *Server) handleGetOutputs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"outputs": outputs})
 }
 
+// GET /v1/topologies/{topology}/health
+func (s *Server) handleGetTopologyHealth(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	st, err := s.loadState(topology)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	health := runtime.EvaluateTopologyHealth(r.Context(), st)
+	writeJSON(w, http.StatusOK, health)
+}
+
 // GET /v1/topologies/{topology}/plan
 func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")

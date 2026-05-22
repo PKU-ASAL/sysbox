@@ -90,6 +90,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/state/snapshots", s.handleListStateSnapshots)
 	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots/{snapshot}/restore", s.handleRestoreStateSnapshot)
 	m.HandleFunc("GET /v1/topologies/{topology}/outputs", s.handleGetOutputs)
+	m.HandleFunc("GET /v1/topologies/{topology}/health", s.handleGetTopologyHealth)
 	m.HandleFunc("GET /v1/topologies/{topology}/plan", s.handleGetPlan)
 	m.HandleFunc("GET /v1/topologies/{topology}/graph", s.handleGetGraph)
 	m.HandleFunc("GET /v1/topologies/{topology}/preflight", s.handlePreflight)
