@@ -14,32 +14,101 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
+var (
+	createNetnsFn  = network.CreateNetns
+	deleteNetnsFn  = network.DeleteNetns
+	createBridgeFn = network.CreateBridge
+	deleteBridgeFn = network.DeleteBridge
+)
+
 func (e *Executor) createNetwork(ctx context.Context, n *graph.Node) error {
+	p := mustResourceProvider("sysbox_network")
+	res, err := p.Create(ctx, e, n)
+	if err != nil {
+		return err
+	}
+	e.state.AddResource(res)
+	return nil
+}
+
+type NetworkResourceProvider struct{}
+
+func init() {
+	RegisterResourceProvider(NetworkResourceProvider{})
+}
+
+func (NetworkResourceProvider) Type() string { return "sysbox_network" }
+
+func (NetworkResourceProvider) Schema() ResourceSchema {
+	return ResourceSchemaFor("sysbox_network")
+}
+
+func (NetworkResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+	return current, nil
+}
+
+func (NetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+	if current == nil {
+		return PlanAction{
+			Resource: desired.ID.String(),
+			Type:     desired.ID.Type,
+			Name:     desired.ID.Name,
+			Action:   PlanActionCreate,
+			Reason:   "resource not present in state",
+		}, nil
+	}
+	action := PlanActionNoop
+	reason := ""
+	var changes map[string]FieldChange
+	if stateDesiredHash(current) != "" {
+		want, err := desiredHash(desired)
+		if err != nil {
+			return PlanAction{}, err
+		}
+		if want != stateDesiredHash(current) {
+			changes, reason = diffDesiredState(desired, current)
+			action = PlanActionReplace
+		}
+	}
+	if action == PlanActionReplace && reason == "" {
+		reason = "desired configuration changed; replacement required"
+	}
+	return PlanAction{
+		Resource: desired.ID.String(),
+		Type:     desired.ID.Type,
+		Name:     desired.ID.Name,
+		Action:   action,
+		Reason:   reason,
+		Changes:  changes,
+	}, nil
+}
+
+func (NetworkResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.NetworkConfig)
 	if !ok {
-		return fmt.Errorf("network %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("network %s: wrong data type", n.ID)
 	}
 
 	// nat=true: use Docker's bridge driver for internet access.
 	if cfg.NAT {
-		return e.createNATNetwork(ctx, n, cfg)
+		return createNATNetwork(ctx, exec, n, cfg)
 	}
 
 	// Default: isolated netns/bridge/veth topology.
 	nsName := fmt.Sprintf("sysbox-net-%s", n.ID.Name)
-	if err := network.CreateNetns(nsName); err != nil {
-		return err
+	if err := createNetnsFn(nsName); err != nil {
+		return state.Resource{}, err
 	}
 
 	brName := fmt.Sprintf("br-%s", n.ID.Name)
 	gwCIDR, err := network.GatewayCIDR(cfg.CIDR)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
-	if err := network.CreateBridge(network.BridgeConfig{
+	if err := createBridgeFn(network.BridgeConfig{
 		NetnsName: nsName, BridgeName: brName, CIDR: gwCIDR,
 	}); err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	inst := map[string]any{
@@ -52,33 +121,32 @@ func (e *Executor) createNetwork(ctx context.Context, n *graph.Node) error {
 		inst["lifecycle_prevent_destroy"] = lc.PreventDestroy
 	}
 	if err := setDesiredHash(n, inst); err != nil {
-		return err
+		return state.Resource{}, err
 	}
-	e.state.AddResource(state.Resource{
+	return state.Resource{
 		Type:     "sysbox_network",
 		Name:     n.ID.Name,
 		Provider: "network",
 		Instance: inst,
-	})
-	return nil
+	}, nil
 }
 
 // createNATNetwork creates a managed NAT network via the registered substrate.
 // Currently Docker is the only substrate that supports managed networks.
-func (e *Executor) createNATNetwork(ctx context.Context, n *graph.Node, cfg *config.NetworkConfig) error {
+func createNATNetwork(ctx context.Context, exec *Executor, n *graph.Node, cfg *config.NetworkConfig) (state.Resource, error) {
 	sub, err := substrate.Get("docker")
 	if err != nil {
-		return fmt.Errorf("nat network requires docker substrate: %w", err)
+		return state.Resource{}, fmt.Errorf("nat network requires docker substrate: %w", err)
 	}
 
 	info, err := sub.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
 		Name:   n.ID.Name,
 		CIDR:   cfg.CIDR,
 		NAT:    true,
-		Labels: ManagedLabels(e.topology, e.runID, n.ID),
+		Labels: ManagedLabels(exec.topology, exec.runID, n.ID),
 	})
 	if err != nil {
-		return fmt.Errorf("create nat network %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("create nat network %s: %w", n.ID.Name, err)
 	}
 
 	// Ensure Docker containers on this NAT network can reach the internet.
@@ -100,28 +168,31 @@ func (e *Executor) createNATNetwork(ctx context.Context, n *graph.Node, cfg *con
 		natInst["lifecycle_prevent_destroy"] = lc.PreventDestroy
 	}
 	if err := setDesiredHash(n, natInst); err != nil {
-		return err
+		return state.Resource{}, err
 	}
-	e.state.AddResource(state.Resource{
+	return state.Resource{
 		Type:     "sysbox_network",
 		Name:     n.ID.Name,
 		Provider: "docker",
 		Instance: natInst,
-	})
-	return nil
+	}, nil
 }
 
-func (e *Executor) destroyNetwork(ctx context.Context, r state.Resource) error {
+func (p NetworkResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, exec, desired)
+}
+
+func (NetworkResourceProvider) Delete(ctx context.Context, exec *Executor, r state.Resource) error {
 	if r.IsNAT() {
 		sub, err := substrate.Get("docker")
 		if err != nil {
-			e.state.RemoveResource(r.Type, r.Name)
+			exec.state.RemoveResource(r.Type, r.Name)
 			return nil
 		}
 		netID := r.DockerNetID()
 		if netID != "" {
 			if err := sub.RemoveManagedNetwork(ctx, netID); err != nil {
-				e.logf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
+				exec.logf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
 			}
 		}
 		// Clean up DOCKER-USER ACCEPT rules for this NAT subnet.
@@ -129,20 +200,25 @@ func (e *Executor) destroyNetwork(ctx context.Context, r state.Resource) error {
 		if cidr != "" {
 			_ = removeDockerUserAccept(cidr)
 		}
-		e.state.RemoveResource(r.Type, r.Name)
+		exec.state.RemoveResource(r.Type, r.Name)
 		return nil
 	}
 
 	nsName := r.Str("netns")
 	brName := r.Str("bridge")
-	if err := network.DeleteBridge(network.BridgeConfig{NetnsName: nsName, BridgeName: brName}); err != nil {
-		e.logf("[destroy] warning: delete bridge %s: %v\n", brName, err)
+	if err := deleteBridgeFn(network.BridgeConfig{NetnsName: nsName, BridgeName: brName}); err != nil {
+		exec.logf("[destroy] warning: delete bridge %s: %v\n", brName, err)
 	}
-	if err := network.DeleteNetns(nsName); err != nil {
-		e.logf("[destroy] warning: delete netns %s: %v\n", nsName, err)
+	if err := deleteNetnsFn(nsName); err != nil {
+		exec.logf("[destroy] warning: delete netns %s: %v\n", nsName, err)
 	}
-	e.state.RemoveResource(r.Type, r.Name)
+	exec.state.RemoveResource(r.Type, r.Name)
 	return nil
+}
+
+func (e *Executor) destroyNetwork(ctx context.Context, r state.Resource) error {
+	p := mustResourceProvider("sysbox_network")
+	return p.Delete(ctx, e, r)
 }
 
 // ensureDockerUserAccept inserts ACCEPT rules into the DOCKER-USER iptables
