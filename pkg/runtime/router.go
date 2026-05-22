@@ -18,23 +18,97 @@ import (
 // networking; isolated-network interfaces use veth pairs as usual.
 // Optional NAT (nat_from -> nat_to) is configured via host-side nsenter.
 func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
+	p := mustResourceProvider("sysbox_router")
+	res, err := p.Create(ctx, e, n)
+	if err != nil {
+		return err
+	}
+	e.state.AddResource(res)
+	return nil
+}
+
+type RouterResourceProvider struct{}
+
+func init() {
+	RegisterResourceProvider(RouterResourceProvider{})
+}
+
+func (RouterResourceProvider) Type() string { return "sysbox_router" }
+
+func (RouterResourceProvider) Schema() ResourceSchema {
+	return ResourceSchemaFor("sysbox_router")
+}
+
+func (RouterResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+	return current, nil
+}
+
+func (RouterResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+	if current == nil {
+		return PlanAction{
+			Resource: desired.ID.String(),
+			Type:     desired.ID.Type,
+			Name:     desired.ID.Name,
+			Action:   PlanActionCreate,
+			Reason:   "resource not present in state",
+		}, nil
+	}
+	action := PlanActionNoop
+	reason := ""
+	var changes map[string]FieldChange
+	if stateDesiredHash(current) != "" {
+		want, err := desiredHash(desired)
+		if err != nil {
+			return PlanAction{}, err
+		}
+		if want != stateDesiredHash(current) {
+			changes, reason = diffDesiredState(desired, current)
+			action = PlanActionReplace
+		}
+	}
+	if action == PlanActionReplace && reason == "" {
+		reason = "desired configuration changed; replacement required"
+	}
+	return PlanAction{
+		Resource: desired.ID.String(),
+		Type:     desired.ID.Type,
+		Name:     desired.ID.Name,
+		Action:   action,
+		Reason:   reason,
+		Changes:  changes,
+	}, nil
+}
+
+func (RouterResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
+	return exec.createRouterResource(ctx, n)
+}
+
+func (p RouterResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, exec, desired)
+}
+
+func (RouterResourceProvider) Delete(ctx context.Context, exec *Executor, current state.Resource) error {
+	return exec.destroyNodeResource(ctx, current)
+}
+
+func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.RouterConfig)
 	if !ok {
-		return fmt.Errorf("router %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("router %s: wrong data type", n.ID)
 	}
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 	sub, err := substrate.Get(subName)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	imageName := config.ResolveName(cfg.Image)
 	imgState := e.state.FindResource("sysbox_image", imageName)
 	if imgState == nil {
-		return fmt.Errorf("image %s not applied yet", imageName)
+		return state.Resource{}, fmt.Errorf("image %s not applied yet", imageName)
 	}
 	imgRef := substrate.ImageRef{
 		ID:         imgState.ImageID(),
@@ -54,7 +128,7 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 	// Pre-scan: find the first NAT network for InitialLinks.
 	initialLinks, err := collectNATLinks(e.state, nicSpecs, false)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
@@ -65,19 +139,19 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		Labels:       ManagedLabels(e.topology, e.runID, n.ID),
 	})
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	if err := sub.StartNode(ctx, handle); err != nil {
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy router on start failure")
-		return err
+		return state.Resource{}, err
 	}
 
 	// Wire all NICs using the shared helper (trackLabels=true for routers).
 	wireResult, err := wireNICs(ctx, sub, e.state, handle, initialLinks, nicSpecs, true, n.ID.Name)
 	if err != nil {
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy router on wire failure")
-		return err
+		return state.Resource{}, err
 	}
 
 	natApplied := false
@@ -85,7 +159,7 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		fromIf, ok1 := wireResult.IfaceByName[cfg.NatFrom]
 		toIf, ok2 := wireResult.IfaceByName[cfg.NatTo]
 		if !ok1 || !ok2 {
-			return fmt.Errorf("nat_from %q / nat_to %q must reference declared interfaces",
+			return state.Resource{}, fmt.Errorf("nat_from %q / nat_to %q must reference declared interfaces",
 				cfg.NatFrom, cfg.NatTo)
 		}
 		if err := configureNATViaNsenter(handle.ID, fromIf, toIf); err != nil {
@@ -110,20 +184,19 @@ func (e *Executor) createRouter(ctx context.Context, n *graph.Node) error {
 		inst["lifecycle_prevent_destroy"] = lc.PreventDestroy
 	}
 	if err := setDesiredHash(n, inst); err != nil {
-		return err
+		return state.Resource{}, err
 	}
-	e.state.AddResource(state.Resource{
+	return state.Resource{
 		Type:     "sysbox_router",
 		Name:     n.ID.Name,
 		Provider: subName,
 		Instance: inst,
-	})
-	return nil
+	}, nil
 }
 
 func (e *Executor) destroyRouter(ctx context.Context, r state.Resource) error {
-	// destroyRouter mirrors destroyNode: stop+remove container, delete veths.
-	return e.destroyNode(ctx, r)
+	p := mustResourceProvider("sysbox_router")
+	return p.Delete(ctx, e, r)
 }
 
 // configureNATViaNsenter configures MASQUERADE and FORWARD rules from the
