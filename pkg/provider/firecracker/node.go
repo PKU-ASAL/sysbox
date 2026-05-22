@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
@@ -22,6 +23,9 @@ type vmProcess struct {
 	mu        sync.Mutex
 	cmd       *exec.Cmd
 	pid       int
+	startTime string
+	exitCode  *int
+	exitError string
 	socket    string // API socket path
 	vmID      string
 	rootfs    string // per-VM rootfs copy
@@ -34,11 +38,17 @@ type vmProcess struct {
 // Persisted via MarshalProviderState so cold-destroy and drift refresh can
 // rebuild the VM's working directory without rediscovery.
 type HandleState struct {
-	VMDir      string `json:"vm_dir,omitempty"`
-	Socket     string `json:"socket,omitempty"`
-	ConfigPath string `json:"config_path,omitempty"`
-	PIDFile    string `json:"pid_file,omitempty"`
-	MetaPath   string `json:"meta_path,omitempty"`
+	VMDir       string `json:"vm_dir,omitempty"`
+	Socket      string `json:"socket,omitempty"`
+	ConfigPath  string `json:"config_path,omitempty"`
+	PIDFile     string `json:"pid_file,omitempty"`
+	MetaPath    string `json:"meta_path,omitempty"`
+	PID         int    `json:"pid,omitempty"`
+	PIDStart    string `json:"pid_start,omitempty"`
+	Ready       bool   `json:"ready,omitempty"`
+	ExitCode    *int   `json:"exit_code,omitempty"`
+	ExitError   string `json:"exit_error,omitempty"`
+	CrashPolicy string `json:"crash_policy,omitempty"`
 
 	VsockUDS  string `json:"vsock_uds,omitempty"`
 	VsockCID  uint32 `json:"vsock_cid,omitempty"`
@@ -226,13 +236,14 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	vmMu.Unlock()
 
 	hs := &HandleState{
-		VMDir:      runDir,
-		Socket:     socketPath,
-		ConfigPath: cfgPath,
-		PIDFile:    pidPath,
-		MetaPath:   metaPath,
+		VMDir:       runDir,
+		Socket:      socketPath,
+		ConfigPath:  cfgPath,
+		PIDFile:     pidPath,
+		MetaPath:    metaPath,
+		CrashPolicy: "observe_only",
 	}
-	_ = writeVMMetadata(metaPath, spec.Name, socketPath, cfgPath, pidPath)
+	_ = writeVMMetadata(metaPath, hs)
 	conn := substrate.ConnInfo{}
 	if vsockUDS != "" {
 		hs.VsockUDS = vsockUDS
@@ -313,10 +324,20 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 
 	vm.cmd = cmd
 	vm.pid = cmd.Process.Pid
+	vm.startTime = processStartTime(vm.pid)
 	vm.started = true
-	if hs, _ := h.Provider.(*HandleState); hs != nil && hs.PIDFile != "" {
-		_ = os.WriteFile(hs.PIDFile, []byte(fmt.Sprintf("%d\n", vm.pid)), 0644)
+	if hs, _ := h.Provider.(*HandleState); hs != nil {
+		hs.PID = vm.pid
+		hs.PIDStart = vm.startTime
+		hs.Ready = waitFirecrackerBoot(ctx, hs, 5*time.Second) == nil
+		if hs.PIDFile != "" {
+			_ = writeProcessAnchor(hs.PIDFile, processAnchor{PID: hs.PID, StartTime: hs.PIDStart, Socket: hs.Socket, VMID: h.ID})
+		}
+		if hs.MetaPath != "" {
+			_ = writeVMMetadata(hs.MetaPath, hs)
+		}
 	}
+	go reapVMProcess(h.ID, cmd)
 	return nil
 }
 
@@ -396,26 +417,31 @@ func (s *Substrate) ObserveNode(_ context.Context, h substrate.NodeHandle) (subs
 	vm, ok := vmStore[h.ID]
 	vmMu.Unlock()
 	if ok && vm.cmd != nil && vm.cmd.Process != nil {
-		if err := vm.cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		if err := vm.cmd.Process.Signal(syscall.Signal(0)); err != nil || processReaped(vm) {
+			vm.mu.Lock()
+			exitCode := vm.exitCode
+			vm.mu.Unlock()
 			return substrate.NodeObservation{
 				Exists:     true,
 				Running:    false,
 				Healthy:    false,
 				Status:     substrate.NodeStatusExited,
 				PID:        vm.pid,
+				ExitCode:   exitCode,
 				ExternalID: h.ID,
-				Reason:     err.Error(),
+				Reason:     vmExitReason(vm, err),
 				LastSeen:   now,
 			}, nil
 		}
+		ready := vmReady(h)
 		return substrate.NodeObservation{
 			Exists:     true,
 			Running:    true,
-			Healthy:    true,
+			Healthy:    ready,
 			Status:     substrate.NodeStatusRunning,
 			PID:        vm.pid,
 			ExternalID: h.ID,
-			Reason:     "process alive",
+			Reason:     readyReason(ready),
 			LastSeen:   now,
 		}, nil
 	}
@@ -445,20 +471,22 @@ func (s *Substrate) ObserveNode(_ context.Context, h substrate.NodeHandle) (subs
 	}
 	pid := firecrackerPIDForSocket(hs.Socket)
 	if pid == 0 && hs.PIDFile != "" {
-		pid = readPIDFile(hs.PIDFile)
-		if pid > 0 && !processAlive(pid) {
+		anchor := readProcessAnchor(hs.PIDFile)
+		pid = anchor.PID
+		if pid > 0 && !processMatches(pid, anchor.StartTime) {
 			pid = 0
 		}
 	}
 	if socketExists && pid > 0 {
+		ready := vmReady(h)
 		return substrate.NodeObservation{
 			Exists:     true,
 			Running:    true,
-			Healthy:    true,
+			Healthy:    ready,
 			Status:     substrate.NodeStatusRunning,
 			PID:        pid,
 			ExternalID: h.ID,
-			Reason:     "socket and process found",
+			Reason:     readyReason(ready),
 			LastSeen:   now,
 		}, nil
 	}
@@ -497,10 +525,14 @@ func (s *Substrate) AdoptNode(ctx context.Context, h substrate.NodeHandle) (subs
 	}
 	pid := firecrackerPIDForSocket(hs.Socket)
 	if pid == 0 && hs.PIDFile != "" {
-		pid = readPIDFile(hs.PIDFile)
-		if pid > 0 && !processAlive(pid) {
+		anchor := readProcessAnchor(hs.PIDFile)
+		pid = anchor.PID
+		if pid > 0 && !processMatches(pid, anchor.StartTime) {
 			pid = 0
 		}
+	}
+	if pid == 0 {
+		return h, fmt.Errorf("firecracker adopt %s: process anchor not found", h.ID)
 	}
 	vmMu.Lock()
 	vmStore[h.ID] = &vmProcess{
@@ -509,9 +541,12 @@ func (s *Substrate) AdoptNode(ctx context.Context, h substrate.NodeHandle) (subs
 		cfgPath:   hs.ConfigPath,
 		netnsName: hs.NetnsName,
 		pid:       pid,
+		startTime: processStartTime(pid),
 		started:   true,
 	}
 	vmMu.Unlock()
+	hs.PID = pid
+	hs.PIDStart = processStartTime(pid)
 	return h, nil
 }
 
@@ -526,14 +561,40 @@ func firecrackerPIDForSocket(socketPath string) int {
 	return pid
 }
 
-func readPIDFile(path string) int {
+type processAnchor struct {
+	PID       int    `json:"pid"`
+	StartTime string `json:"start_time,omitempty"`
+	Socket    string `json:"socket,omitempty"`
+	VMID      string `json:"vm_id,omitempty"`
+}
+
+func writeProcessAnchor(path string, anchor processAnchor) error {
+	if path == "" {
+		return nil
+	}
+	raw, err := json.MarshalIndent(anchor, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0644)
+}
+
+func readProcessAnchor(path string) processAnchor {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0
+		return processAnchor{}
+	}
+	var anchor processAnchor
+	if err := json.Unmarshal(data, &anchor); err == nil && anchor.PID > 0 {
+		return anchor
 	}
 	var pid int
 	_, _ = fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid)
-	return pid
+	return processAnchor{PID: pid}
+}
+
+func readPIDFile(path string) int {
+	return readProcessAnchor(path).PID
 }
 
 func processAlive(pid int) bool {
@@ -547,17 +608,114 @@ func processAlive(pid int) bool {
 	return proc.Signal(syscall.Signal(0)) == nil
 }
 
-func writeVMMetadata(path, vmID, socketPath, configPath, pidPath string) error {
+func processStartTime(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 22 {
+		return ""
+	}
+	return fields[21]
+}
+
+func processMatches(pid int, startTime string) bool {
+	if !processAlive(pid) {
+		return false
+	}
+	if startTime == "" {
+		return true
+	}
+	return processStartTime(pid) == startTime
+}
+
+func reapVMProcess(vmID string, cmd *exec.Cmd) {
+	err := cmd.Wait()
+	vmMu.Lock()
+	vm, ok := vmStore[vmID]
+	if ok && vm.cmd == cmd {
+		vm.mu.Lock()
+		vm.started = false
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+					code := status.ExitStatus()
+					vm.exitCode = &code
+				}
+			}
+			vm.exitError = err.Error()
+		}
+		vm.mu.Unlock()
+	}
+	vmMu.Unlock()
+}
+
+func processReaped(vm *vmProcess) bool {
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	return !vm.started && vm.pid > 0
+}
+
+func vmExitReason(vm *vmProcess, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	if vm.exitError != "" {
+		return vm.exitError
+	}
+	if !vm.started {
+		return "firecracker process exited"
+	}
+	return "firecracker process not running"
+}
+
+func vmReady(h substrate.NodeHandle) bool {
+	hs, _ := h.Provider.(*HandleState)
+	if hs == nil {
+		return true
+	}
+	if hs.VsockUDS == "" {
+		return true
+	}
+	return hs.Ready
+}
+
+func readyReason(ready bool) string {
+	if ready {
+		return "process alive and ready"
+	}
+	return "process alive but guest readiness not confirmed"
+}
+
+func waitFirecrackerBoot(ctx context.Context, hs *HandleState, timeout time.Duration) error {
+	if hs == nil || hs.VsockUDS == "" {
+		return nil
+	}
+	conn := providerexec.NewVsockConnection(hs.VsockUDS, hs.VsockPort)
+	return conn.WaitReady(ctx, timeout)
+}
+
+func writeVMMetadata(path string, hs *HandleState) error {
 	if path == "" {
 		return nil
 	}
 	data, err := json.MarshalIndent(map[string]any{
-		"managed_by":  "sysbox",
-		"vm_id":       vmID,
-		"socket":      socketPath,
-		"config_path": configPath,
-		"pid_file":    pidPath,
-		"created_at":  time.Now().UTC().Format(time.RFC3339),
+		"managed_by":   "sysbox",
+		"vm_id":        filepath.Base(hs.VMDir),
+		"socket":       hs.Socket,
+		"config_path":  hs.ConfigPath,
+		"pid_file":     hs.PIDFile,
+		"pid":          hs.PID,
+		"pid_start":    hs.PIDStart,
+		"ready":        hs.Ready,
+		"crash_policy": hs.CrashPolicy,
+		"updated_at":   time.Now().UTC().Format(time.RFC3339),
 	}, "", "  ")
 	if err != nil {
 		return err

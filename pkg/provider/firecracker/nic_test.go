@@ -77,7 +77,13 @@ func TestProcessAliveRejectsInvalidPID(t *testing.T) {
 
 func TestWriteVMMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sysbox.json")
-	if err := writeVMMetadata(path, "vm-1", "/tmp/fc.sock", "/tmp/vm.json", "/tmp/fc.pid"); err != nil {
+	if err := writeVMMetadata(path, &HandleState{
+		VMDir:       filepath.Join(t.TempDir(), "vm-1"),
+		Socket:      "/tmp/fc.sock",
+		ConfigPath:  "/tmp/vm.json",
+		PIDFile:     "/tmp/fc.pid",
+		CrashPolicy: "observe_only",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -86,5 +92,34 @@ func TestWriteVMMetadata(t *testing.T) {
 	}
 	if string(data) == "" || !strings.Contains(string(data), `"managed_by": "sysbox"`) {
 		t.Fatalf("metadata missing managed_by: %s", data)
+	}
+}
+
+func TestProcessAnchorSupportsJSONAndLegacyPID(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "firecracker.json.pid")
+	want := processAnchor{PID: 1234, StartTime: "999", Socket: "/tmp/fc.sock", VMID: "vm-1"}
+	if err := writeProcessAnchor(jsonPath, want); err != nil {
+		t.Fatal(err)
+	}
+	if got := readProcessAnchor(jsonPath); got != want {
+		t.Fatalf("json anchor = %+v, want %+v", got, want)
+	}
+
+	legacyPath := filepath.Join(dir, "firecracker.pid")
+	if err := os.WriteFile(legacyPath, []byte("4321\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readProcessAnchor(legacyPath); got.PID != 4321 {
+		t.Fatalf("legacy pid = %+v, want pid 4321", got)
+	}
+}
+
+func TestProcessMatchesRejectsMismatchedStartTime(t *testing.T) {
+	if processMatches(os.Getpid(), "definitely-not-current-start-time") {
+		t.Fatal("processMatches should reject mismatched start time")
+	}
+	if !processMatches(os.Getpid(), processStartTime(os.Getpid())) {
+		t.Fatal("processMatches should accept current process start time")
 	}
 }
