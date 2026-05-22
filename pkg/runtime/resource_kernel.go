@@ -44,7 +44,7 @@ func (p KernelResourceProvider) PlanDiff(desired *graph.Node, current *state.Res
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (KernelResourceProvider) Create(_ context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
+func (KernelResourceProvider) Create(_ context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.KernelConfig)
 	if !ok {
 		return state.Resource{}, fmt.Errorf("kernel %s: wrong data type", n.ID)
@@ -62,9 +62,9 @@ func (KernelResourceProvider) Create(_ context.Context, exec *Executor, n *graph
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.ID.Name, err)
 	}
 	if res.FromCache {
-		exec.logf("[apply] kernel %s: cache hit (%s)\n", n.ID.Name, res.Path)
+		pc.Logf("[apply] kernel %s: cache hit (%s)\n", n.ID.Name, res.Path)
 	} else if artifact.IsURL(cfg.Source) {
-		exec.logf("[apply] kernel %s: fetched to %s\n", n.ID.Name, res.Path)
+		pc.Logf("[apply] kernel %s: fetched to %s\n", n.ID.Name, res.Path)
 	}
 
 	inst := map[string]any{
@@ -84,12 +84,12 @@ func (KernelResourceProvider) Create(_ context.Context, exec *Executor, n *graph
 	}, nil
 }
 
-func (p KernelResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, exec, desired)
+func (p KernelResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, pc, desired)
 }
 
-func (KernelResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
-	exec.state.RemoveResource(current.Type, current.Name)
+func (KernelResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+	pc.State().RemoveResource(current.Type, current.Name)
 	return nil
 }
 

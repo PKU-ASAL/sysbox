@@ -39,16 +39,16 @@ func (RouterResourceProvider) PlanDiff(desired *graph.Node, current *state.Resou
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (RouterResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
-	return exec.createRouterResource(ctx, n)
+func (RouterResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+	return pc.createRouterResource(ctx, n)
 }
 
-func (p RouterResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, exec, desired)
+func (p RouterResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, pc, desired)
 }
 
-func (RouterResourceProvider) Delete(ctx context.Context, exec *Executor, current state.Resource) error {
-	return exec.destroyNodeResource(ctx, current)
+func (RouterResourceProvider) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
+	return pc.destroyNodeResource(ctx, current)
 }
 
 func (RouterResourceProvider) ExternalID(current state.Resource) string {

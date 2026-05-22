@@ -64,6 +64,6 @@ func TestDataResourceProviderDeleteRemovesState(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{res}}
 	exec := NewExecutor(graph.New(), st)
 
-	require.NoError(t, DataNodeResourceProvider{}.Delete(context.Background(), exec, res))
+	require.NoError(t, DataNodeResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res))
 	require.Nil(t, st.FindResource("data_sysbox_node", "existing"))
 }

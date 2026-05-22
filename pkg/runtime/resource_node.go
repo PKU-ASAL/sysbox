@@ -38,16 +38,16 @@ func (NodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resourc
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (NodeResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
-	return exec.createNodeResource(ctx, n)
+func (NodeResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+	return pc.createNodeResource(ctx, n)
 }
 
-func (p NodeResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, exec, desired)
+func (p NodeResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, pc, desired)
 }
 
-func (NodeResourceProvider) Delete(ctx context.Context, exec *Executor, current state.Resource) error {
-	return exec.destroyNodeResource(ctx, current)
+func (NodeResourceProvider) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
+	return pc.destroyNodeResource(ctx, current)
 }
 
 func (NodeResourceProvider) ExternalID(current state.Resource) string {

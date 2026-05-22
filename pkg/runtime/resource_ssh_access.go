@@ -36,16 +36,16 @@ func (SSHAccessResourceProvider) PlanDiff(desired *graph.Node, current *state.Re
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (SSHAccessResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
-	return exec.createSSHAccessResource(ctx, n)
+func (SSHAccessResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+	return pc.createSSHAccessResource(ctx, n)
 }
 
-func (p SSHAccessResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, exec, desired)
+func (p SSHAccessResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, pc, desired)
 }
 
-func (SSHAccessResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
-	exec.state.RemoveResource(current.Type, current.Name)
+func (SSHAccessResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+	pc.State().RemoveResource(current.Type, current.Name)
 	return nil
 }
 

@@ -35,7 +35,7 @@ func (ImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resour
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (ImageResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
+func (ImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.ImageConfig)
 	if !ok {
 		return state.Resource{}, fmt.Errorf("image %s: wrong data type", n.ID)
@@ -70,9 +70,9 @@ func (ImageResourceProvider) Create(ctx context.Context, exec *Executor, n *grap
 			return state.Resource{}, fmt.Errorf("image %s %s: %w", n.ID.Name, entry.label, err)
 		}
 		if r.FromCache {
-			exec.logf("[apply] image %s: %s cache hit (%s)\n", n.ID.Name, entry.label, r.Path)
+			pc.Logf("[apply] image %s: %s cache hit (%s)\n", n.ID.Name, entry.label, r.Path)
 		} else if artifact.IsURL(entry.src) {
-			exec.logf("[apply] image %s: %s fetched to %s\n", n.ID.Name, entry.label, r.Path)
+			pc.Logf("[apply] image %s: %s fetched to %s\n", n.ID.Name, entry.label, r.Path)
 		}
 		*entry.dst = r.Path
 		resolvedSHA = r.SHA256
@@ -105,12 +105,12 @@ func (ImageResourceProvider) Create(ctx context.Context, exec *Executor, n *grap
 	}, nil
 }
 
-func (p ImageResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, exec, desired)
+func (p ImageResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, pc, desired)
 }
 
-func (ImageResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
-	exec.state.RemoveResource(current.Type, current.Name)
+func (ImageResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+	pc.State().RemoveResource(current.Type, current.Name)
 	return nil
 }
 

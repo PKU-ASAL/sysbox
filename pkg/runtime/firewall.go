@@ -32,22 +32,22 @@ func (FirewallResourceProvider) PlanDiff(desired *graph.Node, current *state.Res
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (FirewallResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
-	return exec.createFirewallResource(ctx, n)
+func (FirewallResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+	return pc.createFirewallResource(ctx, n)
 }
 
-func (p FirewallResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, exec, desired)
+func (p FirewallResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, pc, desired)
 }
 
-func (FirewallResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
+func (FirewallResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
 	nsName := current.Str("netns")
 	if nsName != "" {
 		if err := network.DeleteFirewall(nsName); err != nil {
-			exec.logf("[destroy] warning: delete firewall %s: %v\n", current.Name, err)
+			pc.Logf("[destroy] warning: delete firewall %s: %v\n", current.Name, err)
 		}
 	}
-	exec.state.RemoveResource(current.Type, current.Name)
+	pc.State().RemoveResource(current.Type, current.Name)
 	return nil
 }
 

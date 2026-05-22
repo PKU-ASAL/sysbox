@@ -69,7 +69,7 @@ func (NetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Reso
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (NetworkResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
+func (NetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.NetworkConfig)
 	if !ok {
 		return state.Resource{}, fmt.Errorf("network %s: wrong data type", n.ID)
@@ -77,7 +77,7 @@ func (NetworkResourceProvider) Create(ctx context.Context, exec *Executor, n *gr
 
 	// nat=true: use Docker's bridge driver for internet access.
 	if cfg.NAT {
-		return createNATNetwork(ctx, exec, n, cfg)
+		return createNATNetwork(ctx, pc, n, cfg)
 	}
 
 	// Default: isolated netns/bridge/veth topology.
@@ -119,7 +119,7 @@ func (NetworkResourceProvider) Create(ctx context.Context, exec *Executor, n *gr
 
 // createNATNetwork creates a managed NAT network via the registered substrate.
 // Currently Docker is the only substrate that supports managed networks.
-func createNATNetwork(ctx context.Context, exec *Executor, n *graph.Node, cfg *config.NetworkConfig) (state.Resource, error) {
+func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, cfg *config.NetworkConfig) (state.Resource, error) {
 	sub, err := substrate.Get("docker")
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("nat network requires docker substrate: %w", err)
@@ -129,7 +129,7 @@ func createNATNetwork(ctx context.Context, exec *Executor, n *graph.Node, cfg *c
 		Name:   n.ID.Name,
 		CIDR:   cfg.CIDR,
 		NAT:    true,
-		Labels: ManagedLabels(exec.topology, exec.runID, n.ID),
+		Labels: ManagedLabels(pc.Topology(), pc.RunID(), n.ID),
 	})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("create nat network %s: %w", n.ID.Name, err)
@@ -164,21 +164,21 @@ func createNATNetwork(ctx context.Context, exec *Executor, n *graph.Node, cfg *c
 	}, nil
 }
 
-func (p NetworkResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, exec, desired)
+func (p NetworkResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, pc, desired)
 }
 
-func (NetworkResourceProvider) Delete(ctx context.Context, exec *Executor, r state.Resource) error {
+func (NetworkResourceProvider) Delete(ctx context.Context, pc *ProviderContext, r state.Resource) error {
 	if r.IsNAT() {
 		sub, err := substrate.Get("docker")
 		if err != nil {
-			exec.state.RemoveResource(r.Type, r.Name)
+			pc.State().RemoveResource(r.Type, r.Name)
 			return nil
 		}
 		netID := r.DockerNetID()
 		if netID != "" {
 			if err := sub.RemoveManagedNetwork(ctx, netID); err != nil {
-				exec.logf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
+				pc.Logf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
 			}
 		}
 		// Clean up DOCKER-USER ACCEPT rules for this NAT subnet.
@@ -186,19 +186,19 @@ func (NetworkResourceProvider) Delete(ctx context.Context, exec *Executor, r sta
 		if cidr != "" {
 			_ = removeDockerUserAccept(cidr)
 		}
-		exec.state.RemoveResource(r.Type, r.Name)
+		pc.State().RemoveResource(r.Type, r.Name)
 		return nil
 	}
 
 	nsName := r.Str("netns")
 	brName := r.Str("bridge")
 	if err := deleteBridgeFn(network.BridgeConfig{NetnsName: nsName, BridgeName: brName}); err != nil {
-		exec.logf("[destroy] warning: delete bridge %s: %v\n", brName, err)
+		pc.Logf("[destroy] warning: delete bridge %s: %v\n", brName, err)
 	}
 	if err := deleteNetnsFn(nsName); err != nil {
-		exec.logf("[destroy] warning: delete netns %s: %v\n", nsName, err)
+		pc.Logf("[destroy] warning: delete netns %s: %v\n", nsName, err)
 	}
-	exec.state.RemoveResource(r.Type, r.Name)
+	pc.State().RemoveResource(r.Type, r.Name)
 	return nil
 }
 

@@ -64,7 +64,7 @@ func TestImageResourceProviderCreateDockerRef(t *testing.T) {
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 
-	res, err := ImageResourceProvider{}.Create(context.Background(), exec, n)
+	res, err := ImageResourceProvider{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
 	require.NoError(t, err)
 	require.Equal(t, "sysbox_image", res.Type)
@@ -90,7 +90,7 @@ func TestImageResourceProviderCreateRootfsArtifact(t *testing.T) {
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 
-	res, err := ImageResourceProvider{}.Create(context.Background(), exec, n)
+	res, err := ImageResourceProvider{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
 	require.NoError(t, err)
 	require.Equal(t, rootfs, sub.lastSpec.Rootfs)
@@ -104,7 +104,7 @@ func TestImageResourceProviderDelete(t *testing.T) {
 	res := state.Resource{Type: "sysbox_image", Name: "alpine", Provider: "image-test", Instance: map[string]any{}}
 	exec.state.AddResource(res)
 
-	require.NoError(t, ImageResourceProvider{}.Delete(context.Background(), exec, res))
+	require.NoError(t, ImageResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res))
 	require.Nil(t, exec.state.FindResource("sysbox_image", "alpine"))
 }
 

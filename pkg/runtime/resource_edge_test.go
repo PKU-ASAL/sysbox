@@ -139,7 +139,7 @@ func TestEdgeProviderDeleteRemovesState(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{tc.res}}
 			exec := NewExecutor(graph.New(), st)
-			require.NoError(t, tc.p.Delete(context.Background(), exec, tc.res))
+			require.NoError(t, tc.p.Delete(context.Background(), &ProviderContext{exec: exec}, tc.res))
 			require.Nil(t, st.FindResource(tc.res.Type, tc.res.Name))
 		})
 	}

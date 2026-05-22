@@ -26,7 +26,7 @@ func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	p := KernelResourceProvider{}
 
-	res, err := p.Create(context.Background(), exec, n)
+	res, err := p.Create(context.Background(), &ProviderContext{exec: exec}, n)
 	require.NoError(t, err)
 	require.Equal(t, "sysbox_kernel", res.Type)
 	require.Equal(t, "fc", res.Name)
@@ -37,7 +37,7 @@ func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
 	require.NotEmpty(t, res.Str(desiredHashKey))
 
 	exec.state.AddResource(res)
-	require.NoError(t, p.Delete(context.Background(), exec, res))
+	require.NoError(t, p.Delete(context.Background(), &ProviderContext{exec: exec}, res))
 	require.Nil(t, exec.state.FindResource("sysbox_kernel", "fc"))
 	_, err = os.Stat(src)
 	require.NoError(t, err)

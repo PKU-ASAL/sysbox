@@ -24,7 +24,7 @@ func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	p := NetworkResourceProvider{}
 
-	res, err := p.Create(context.Background(), exec, n)
+	res, err := p.Create(context.Background(), &ProviderContext{exec: exec}, n)
 	require.NoError(t, err)
 	require.Equal(t, "sysbox_network", res.Type)
 	require.Equal(t, "dmz", res.Name)
@@ -35,7 +35,7 @@ func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
 	require.NotEmpty(t, res.Str(desiredHashKey))
 
 	exec.state.AddResource(res)
-	require.NoError(t, p.Delete(context.Background(), exec, res))
+	require.NoError(t, p.Delete(context.Background(), &ProviderContext{exec: exec}, res))
 	require.Nil(t, exec.state.FindResource("sysbox_network", "dmz"))
 }
 

@@ -38,16 +38,16 @@ func (DataNodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Res
 	return planDiffForDataSource(desired, current)
 }
 
-func (DataNodeResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
-	return exec.readDataNodeResource(ctx, n)
+func (DataNodeResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+	return pc.readDataNodeResource(ctx, n)
 }
 
-func (p DataNodeResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, exec, desired)
+func (p DataNodeResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, pc, desired)
 }
 
-func (DataNodeResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
-	exec.state.RemoveResource(current.Type, current.Name)
+func (DataNodeResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+	pc.State().RemoveResource(current.Type, current.Name)
 	return nil
 }
 
@@ -119,16 +119,16 @@ func (DataNetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.
 	return planDiffForDataSource(desired, current)
 }
 
-func (DataNetworkResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
-	return exec.readDataNetworkResource(ctx, n)
+func (DataNetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+	return pc.readDataNetworkResource(ctx, n)
 }
 
-func (p DataNetworkResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, exec, desired)
+func (p DataNetworkResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, pc, desired)
 }
 
-func (DataNetworkResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
-	exec.state.RemoveResource(current.Type, current.Name)
+func (DataNetworkResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+	pc.State().RemoveResource(current.Type, current.Name)
 	return nil
 }
 
@@ -201,16 +201,16 @@ func (DataImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Re
 	return planDiffForDataSource(desired, current)
 }
 
-func (DataImageResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
-	return exec.readDataImageResource(ctx, n)
+func (DataImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+	return pc.readDataImageResource(ctx, n)
 }
 
-func (p DataImageResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, exec, desired)
+func (p DataImageResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, pc, desired)
 }
 
-func (DataImageResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
-	exec.state.RemoveResource(current.Type, current.Name)
+func (DataImageResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+	pc.State().RemoveResource(current.Type, current.Name)
 	return nil
 }
 

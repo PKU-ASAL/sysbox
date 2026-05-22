@@ -64,6 +64,6 @@ func TestRouterResourceProviderDeleteMissingSubstrateReturnsError(t *testing.T) 
 		Instance: map[string]any{"container_id": "router"},
 	}
 
-	err := RouterResourceProvider{}.Delete(context.Background(), exec, res)
+	err := RouterResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res)
 	require.Error(t, err)
 }

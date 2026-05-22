@@ -149,7 +149,7 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 	}
 
 	if p, ok := GetResourceProvider(id.Type); ok {
-		res, err := p.Create(ctx, e, node)
+		res, err := p.Create(ctx, &ProviderContext{exec: e}, node)
 		if err != nil {
 			return err
 		}
@@ -163,7 +163,7 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 // DestroyResource tears down a resource listed in state.
 func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error {
 	if p, ok := GetResourceProvider(r.Type); ok {
-		return p.Delete(ctx, e, r)
+		return p.Delete(ctx, &ProviderContext{exec: e}, r)
 	}
 
 	e.logf("[destroy] skipping unimplemented resource type %q (%s)\n", r.Type, r.Name)

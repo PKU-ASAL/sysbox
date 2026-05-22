@@ -15,20 +15,16 @@ import (
 )
 
 // ResourceProvider is the target boundary for sysbox resource lifecycle
-// implementations. Runtime should eventually schedule graph actions and state
-// transactions, while each resource provider owns schema, diff, read, and CRUD.
-//
-// The current executor still contains legacy switch-based dispatch. This
-// interface is intentionally introduced first so new resource types can adopt
-// the provider shape without forcing a high-risk migration of existing code.
+// implementations. Runtime schedules graph actions and state transactions,
+// while each resource provider owns schema, diff, read, and CRUD.
 type ResourceProvider interface {
 	Type() string
 	Schema() ResourceSchema
 	Read(ctx context.Context, current state.Resource) (ResourceReadResult, error)
 	PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error)
-	Create(ctx context.Context, exec *Executor, desired *graph.Node) (state.Resource, error)
-	Update(ctx context.Context, exec *Executor, desired *graph.Node, current state.Resource) (state.Resource, error)
-	Delete(ctx context.Context, exec *Executor, current state.Resource) error
+	Create(ctx context.Context, pc *ProviderContext, desired *graph.Node) (state.Resource, error)
+	Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, current state.Resource) (state.Resource, error)
+	Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error
 	ExternalID(current state.Resource) string
 }
 
