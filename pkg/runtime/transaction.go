@@ -36,6 +36,23 @@ type OperationStep struct {
 	Error         string            `json:"error,omitempty"`
 }
 
+type StatePatchOp string
+
+const (
+	StatePatchUpsert StatePatchOp = "upsert"
+	StatePatchDelete StatePatchOp = "delete"
+)
+
+type StatePatch struct {
+	Index    int               `json:"index"`
+	Resource string            `json:"resource"`
+	Action   PlanActionType    `json:"action"`
+	Op       StatePatchOp      `json:"op"`
+	State    *StateResourceLog `json:"state,omitempty"`
+	At       time.Time         `json:"at"`
+	Recorded bool              `json:"recorded,omitempty"`
+}
+
 type OperationCheckpoint struct {
 	RunID             string          `json:"run_id"`
 	Topology          string          `json:"topology,omitempty"`
@@ -48,6 +65,7 @@ type OperationCheckpoint struct {
 	StateSerialAfter  int64           `json:"state_serial_after,omitempty"`
 	Plan              []PlanAction    `json:"plan,omitempty"`
 	Steps             []OperationStep `json:"steps"`
+	StatePatches      []StatePatch    `json:"state_patches,omitempty"`
 }
 
 type StateResourceLog struct {
@@ -69,6 +87,7 @@ type OperationRecorder interface {
 	StepStartKind(kind, resource string, action PlanActionType) int
 	StepExternal(index int, provider, externalID string, labels map[string]string)
 	StepStateResource(index int, resource StateResourceLog)
+	StepStatePatch(index int, op StatePatchOp, resource *StateResourceLog)
 	StepStateRecorded(index int)
 	MarkResourceStateRecorded()
 	SubstepStart(parent int, phase string, details map[string]any) int
@@ -89,6 +108,7 @@ func (NoopRecorder) StepStartKind(string, string, PlanActionType) int {
 }
 func (NoopRecorder) StepExternal(int, string, string, map[string]string) {}
 func (NoopRecorder) StepStateResource(int, StateResourceLog)             {}
+func (NoopRecorder) StepStatePatch(int, StatePatchOp, *StateResourceLog) {}
 func (NoopRecorder) StepStateRecorded(int)                               {}
 func (NoopRecorder) MarkResourceStateRecorded()                          {}
 func (NoopRecorder) SubstepStart(int, string, map[string]any) int        { return -1 }
@@ -240,6 +260,33 @@ func (r *FileRecorder) StepStateResource(index int, resource StateResourceLog) {
 	_ = r.flushLocked()
 }
 
+func (r *FileRecorder) StepStatePatch(index int, op StatePatchOp, resource *StateResourceLog) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if index < 0 || index >= len(r.checkpoint.Steps) {
+		return
+	}
+	step := r.checkpoint.Steps[index]
+	patch := StatePatch{
+		Index:    index,
+		Resource: step.Resource,
+		Action:   step.Action,
+		Op:       op,
+		At:       time.Now().UTC(),
+	}
+	if resource != nil {
+		copied := StateResourceLog{
+			Type:     resource.Type,
+			Name:     resource.Name,
+			Provider: resource.Provider,
+			Instance: cloneAnyMap(resource.Instance),
+		}
+		patch.State = &copied
+	}
+	r.checkpoint.StatePatches = append(r.checkpoint.StatePatches, patch)
+	_ = r.flushLocked()
+}
+
 func (r *FileRecorder) StepStateRecorded(index int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -247,6 +294,11 @@ func (r *FileRecorder) StepStateRecorded(index int) {
 		return
 	}
 	r.checkpoint.Steps[index].StateRecorded = true
+	for i := range r.checkpoint.StatePatches {
+		if r.checkpoint.StatePatches[i].Index == index {
+			r.checkpoint.StatePatches[i].Recorded = true
+		}
+	}
 	_ = r.flushLocked()
 }
 
@@ -257,6 +309,9 @@ func (r *FileRecorder) MarkResourceStateRecorded() {
 		if r.checkpoint.Steps[i].Kind == "resource" && r.checkpoint.Steps[i].Status == OperationDone {
 			r.checkpoint.Steps[i].StateRecorded = true
 		}
+	}
+	for i := range r.checkpoint.StatePatches {
+		r.checkpoint.StatePatches[i].Recorded = true
 	}
 	_ = r.flushLocked()
 }

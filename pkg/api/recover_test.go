@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,6 +38,41 @@ func TestRecoverCandidateRequiresSupportedDoneUnrecordedStateResource(t *testing
 
 	step.Provider = "libvirt"
 	require.False(t, recoverCandidate(step))
+}
+
+func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
+	dir := t.TempDir()
+	checkpointPath := filepath.Join(dir, "run.checkpoint.json")
+	cp := runtime.OperationCheckpoint{
+		RunID:    "run-1",
+		Topology: "mixed",
+		StatePatches: []runtime.StatePatch{{
+			Resource: "sysbox_node.web",
+			Action:   runtime.PlanActionCreate,
+			Op:       runtime.StatePatchUpsert,
+			State: &runtime.StateResourceLog{
+				Type:     "sysbox_node",
+				Name:     "web",
+				Provider: "docker",
+				Instance: map[string]any{"container_id": "abc"},
+			},
+		}},
+	}
+	raw, err := json.Marshal(cp)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(checkpointPath, raw, 0o644))
+
+	mgr := state.NewManager(filepath.Join(dir, "state.json"))
+	report, err := recoverCheckpoint(context.Background(), checkpointPath, mgr, "test")
+	require.NoError(t, err)
+	require.Len(t, report.Recovered, 1)
+	require.Equal(t, "recovered_from_patch", report.Recovered[0].Status)
+
+	st, err := mgr.Load()
+	require.NoError(t, err)
+	res := st.FindResource("sysbox_node", "web")
+	require.NotNil(t, res)
+	require.Equal(t, "abc", res.ContainerID())
 }
 
 func TestAdoptStateResourceRewritesExternalID(t *testing.T) {

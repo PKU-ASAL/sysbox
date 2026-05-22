@@ -83,12 +83,24 @@ func (e *Executor) recordStepExternal(step int, id graph.NodeID) {
 		externalID = p.ExternalID(*r)
 	}
 	e.recorder.StepExternal(step, r.Provider, externalID, ManagedLabels(e.topology, e.runID, id))
-	e.recorder.StepStateResource(step, StateResourceLog{
+	log := StateResourceLog{
 		Type:     r.Type,
 		Name:     r.Name,
 		Provider: r.Provider,
 		Instance: r.Instance,
-	})
+	}
+	e.recorder.StepStateResource(step, log)
+	e.recorder.StepStatePatch(step, StatePatchUpsert, &log)
+}
+
+func (e *Executor) recordDeletePatch(step int, r state.Resource) {
+	log := StateResourceLog{
+		Type:     r.Type,
+		Name:     r.Name,
+		Provider: r.Provider,
+		Instance: r.Instance,
+	}
+	e.recorder.StepStatePatch(step, StatePatchDelete, &log)
 }
 
 func (e *Executor) logf(format string, args ...any) {

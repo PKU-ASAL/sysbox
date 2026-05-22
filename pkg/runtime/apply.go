@@ -57,6 +57,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 					e.logf("[apply] warning: cleanup of drifted %s failed: %v\n", id, err)
 					e.recorder.StepFailed(step, err)
 				} else {
+					e.recordDeletePatch(step, *r)
 					e.recorder.StepDone(step)
 				}
 			}

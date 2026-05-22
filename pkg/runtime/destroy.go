@@ -73,6 +73,7 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 			// Continue destroying remaining resources instead of aborting.
 			// A single failure should not prevent cleanup of other resources.
 		} else {
+			e.recordDeletePatch(step, *r)
 			e.recorder.StepDone(step)
 		}
 	}

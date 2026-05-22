@@ -67,3 +67,32 @@ func TestFileRecorderPersistsSubsteps(t *testing.T) {
 	require.Equal(t, "sysbox_node.vm", cp.Steps[1].Details["resource"])
 	require.Equal(t, OperationDone, cp.Steps[1].Status)
 }
+
+func TestFileRecorderPersistsStatePatches(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.checkpoint.json")
+	rec := NewFileRecorder(path, "run-1", "mixed")
+	require.NoError(t, rec.Begin("apply", nil))
+
+	step := rec.StepStart("sysbox_node.web", PlanActionCreate)
+	stateLog := StateResourceLog{
+		Type:     "sysbox_node",
+		Name:     "web",
+		Provider: "docker",
+		Instance: map[string]any{"container_id": "abc"},
+	}
+	rec.StepStateResource(step, stateLog)
+	rec.StepStatePatch(step, StatePatchUpsert, &stateLog)
+	rec.StepDone(step)
+	rec.StepStateRecorded(step)
+	rec.Finish(nil)
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var cp OperationCheckpoint
+	require.NoError(t, json.Unmarshal(raw, &cp))
+	require.Len(t, cp.StatePatches, 1)
+	require.Equal(t, StatePatchUpsert, cp.StatePatches[0].Op)
+	require.Equal(t, "sysbox_node.web", cp.StatePatches[0].Resource)
+	require.True(t, cp.StatePatches[0].Recorded)
+	require.Equal(t, "abc", cp.StatePatches[0].State.Instance["container_id"])
+}
