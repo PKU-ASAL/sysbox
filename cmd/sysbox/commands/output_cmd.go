@@ -29,7 +29,7 @@ func init() {
 }
 
 func runOutput(cmd *cobra.Command, args []string) error {
-	_, _, s, root, evalCtx, err := loadWorkspaceWithRoot()
+	_, _, _, root, evalCtx, err := loadWorkspaceWithRoot()
 	if err != nil {
 		return err
 	}
@@ -46,11 +46,6 @@ func runOutput(cmd *cobra.Command, args []string) error {
 			}
 			fmt.Println(out.Display)
 			return nil
-		}
-		// Backward compatibility for the old, state-inspection meaning of
-		// `sysbox output type.name[.attr]`. New callers should use state get.
-		if strings.Contains(name, ".") {
-			return printStateAddress(s, name)
 		}
 		return fmt.Errorf("output %q not found", name)
 	}
