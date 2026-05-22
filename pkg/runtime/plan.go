@@ -110,6 +110,20 @@ func planActionForDesired(n *graph.Node, current *state.Resource) (PlanAction, e
 	return planDiffByDesiredHash(n, current)
 }
 
+func planDiffForDataSource(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+	action, err := planDiffByDesiredHash(desired, current)
+	if err != nil {
+		return PlanAction{}, err
+	}
+	if action.Action == PlanActionCreate || action.Action == PlanActionReplace {
+		action.Action = PlanActionRead
+		if action.Reason == "resource not present in state" {
+			action.Reason = "data source not present in state"
+		}
+	}
+	return action, nil
+}
+
 func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (PlanAction, error) {
 	if current == nil {
 		return PlanAction{
@@ -150,7 +164,7 @@ func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (PlanAc
 
 func (p *Plan) addDesiredAction(id graph.NodeID, action PlanAction) {
 	switch action.Action {
-	case PlanActionCreate:
+	case PlanActionCreate, PlanActionRead:
 		p.Add = append(p.Add, id)
 	case PlanActionUpdate, PlanActionReplace:
 		p.Change = append(p.Change, id)
@@ -286,6 +300,10 @@ func (p *Plan) Summary() string {
 func PrintPlan(p *Plan, showProtected bool) {
 	fmt.Println(p.Summary())
 	for _, id := range p.Add {
+		if actionFor(p, id) == PlanActionRead {
+			fmt.Printf("  <= %s\n", id)
+			continue
+		}
 		fmt.Printf("  + %s\n", id)
 	}
 	for _, id := range p.Change {

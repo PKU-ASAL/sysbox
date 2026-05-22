@@ -133,22 +133,6 @@ func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
 	}
 
 	switch id.Type {
-	case "sysbox_network":
-		return e.createNetwork(ctx, node)
-	case "sysbox_image":
-		return e.createImage(ctx, node)
-	case "sysbox_kernel":
-		return e.createKernel(ctx, node)
-	case "sysbox_node":
-		return e.createNode(ctx, node)
-	case "sysbox_router":
-		return e.createRouter(ctx, node)
-	case "sysbox_firewall":
-		return e.createFirewall(ctx, node)
-	case "sysbox_ssh_access":
-		return e.createSSHAccess(ctx, node)
-	case "sysbox_actor":
-		return e.createActor(ctx, node)
 	case "data_sysbox_node":
 		return e.readDataNode(ctx, node)
 	case "data_sysbox_network":
@@ -167,31 +151,6 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 	}
 
 	switch r.Type {
-	case "sysbox_network":
-		return e.destroyNetwork(ctx, r)
-	case "sysbox_node":
-		return e.destroyNode(ctx, r)
-	case "sysbox_router":
-		return e.destroyRouter(ctx, r)
-	case "sysbox_image":
-		if p, ok := GetResourceProvider(r.Type); ok {
-			return p.Delete(ctx, e, r)
-		}
-		e.state.RemoveResource(r.Type, r.Name)
-		return nil
-	case "sysbox_kernel":
-		if p, ok := GetResourceProvider(r.Type); ok {
-			return p.Delete(ctx, e, r)
-		}
-		e.state.RemoveResource(r.Type, r.Name)
-		return nil
-	case "sysbox_firewall":
-		return e.destroyFirewall(ctx, r)
-	case "sysbox_ssh_access":
-		e.state.RemoveResource(r.Type, r.Name)
-		return nil
-	case "sysbox_actor":
-		return e.destroyActor(ctx, r)
 	case "data_sysbox_node", "data_sysbox_network", "data_sysbox_image":
 		// Data sources are read-only; nothing to destroy in the substrate.
 		e.state.RemoveResource(r.Type, r.Name)

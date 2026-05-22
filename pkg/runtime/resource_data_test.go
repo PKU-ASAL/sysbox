@@ -1,0 +1,69 @@
+package runtime
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/state"
+)
+
+func TestDataResourceProvidersRegistered(t *testing.T) {
+	for _, typ := range []string{"data_sysbox_node", "data_sysbox_network", "data_sysbox_image"} {
+		p, ok := GetResourceProvider(typ)
+		require.True(t, ok, typ)
+		require.Equal(t, typ, p.Type())
+		require.Equal(t, typ, p.Schema().Type)
+	}
+}
+
+func TestDataResourceProviderPlanDiffReads(t *testing.T) {
+	n := &graph.Node{
+		ID:   graph.NodeID{Type: "data_sysbox_image", Name: "alpine"},
+		Data: &config.DataImageConfig{Substrate: "docker", DockerRef: "alpine:latest"},
+	}
+	p := DataImageResourceProvider{}
+
+	action, err := p.PlanDiff(n, nil)
+	require.NoError(t, err)
+	require.Equal(t, PlanActionRead, action.Action)
+	require.Equal(t, "data source not present in state", action.Reason)
+
+	inst := map[string]any{}
+	require.NoError(t, setDesiredHash(n, inst))
+	current := &state.Resource{Type: "data_sysbox_image", Name: "alpine", Provider: "docker", Instance: inst}
+	action, err = p.PlanDiff(n, current)
+	require.NoError(t, err)
+	require.Equal(t, PlanActionNoop, action.Action)
+
+	n.Data = &config.DataImageConfig{Substrate: "docker", DockerRef: "busybox:latest"}
+	action, err = p.PlanDiff(n, current)
+	require.NoError(t, err)
+	require.Equal(t, PlanActionRead, action.Action)
+	require.Contains(t, action.Changes, "data")
+}
+
+func TestComputePlanSchedulesDataSourcesAsRead(t *testing.T) {
+	g := graph.New()
+	n := g.AddNode("data_sysbox_image", "alpine", nil)
+	n.Data = &config.DataImageConfig{Substrate: "docker", DockerRef: "alpine:latest"}
+
+	plan, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
+	require.NoError(t, err)
+	require.Equal(t, []graph.NodeID{{Type: "data_sysbox_image", Name: "alpine"}}, plan.Add)
+	require.Len(t, plan.Actions, 1)
+	require.Equal(t, PlanActionRead, plan.Actions[0].Action)
+	require.True(t, plan.HasChanges())
+}
+
+func TestDataResourceProviderDeleteRemovesState(t *testing.T) {
+	res := state.Resource{Type: "data_sysbox_node", Name: "existing", Instance: map[string]any{"data_read": true}}
+	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{res}}
+	exec := NewExecutor(graph.New(), st)
+
+	require.NoError(t, DataNodeResourceProvider{}.Delete(context.Background(), exec, res))
+	require.Nil(t, st.FindResource("data_sysbox_node", "existing"))
+}
