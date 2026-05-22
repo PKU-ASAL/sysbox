@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -110,4 +112,31 @@ func (p ImageResourceProvider) Update(ctx context.Context, exec *Executor, desir
 func (ImageResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
 	exec.state.RemoveResource(current.Type, current.Name)
 	return nil
+}
+
+func (ImageResourceProvider) ExternalID(current state.Resource) string {
+	if id := current.ImageID(); id != "" {
+		return id
+	}
+	return current.Str("id")
+}
+
+func (ImageResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+	cfg := &config.ImageConfig{}
+	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
+		return nil, nil, err
+	}
+	return cfg, nil, nil
+}
+
+func (DataImageResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+	cfg := &config.DataImageConfig{}
+	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_image", d.Name); err != nil {
+		return nil, nil, err
+	}
+	var deps []graph.Ref
+	if ref := config.ResolveName(cfg.Substrate); ref != "" {
+		deps = append(deps, graph.Ref{Type: "substrate", Name: ref})
+	}
+	return cfg, deps, nil
 }

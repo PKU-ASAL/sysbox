@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -89,4 +91,19 @@ func (p KernelResourceProvider) Update(ctx context.Context, exec *Executor, desi
 func (KernelResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
 	exec.state.RemoveResource(current.Type, current.Name)
 	return nil
+}
+
+func (KernelResourceProvider) ExternalID(current state.Resource) string {
+	if path := current.Str("path"); path != "" {
+		return path
+	}
+	return current.Str("id")
+}
+
+func (KernelResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+	cfg := &config.KernelConfig{}
+	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
+		return nil, nil, err
+	}
+	return cfg, decodeDependsOn(nil, cfg.DependsOn), nil
 }

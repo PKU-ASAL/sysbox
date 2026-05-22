@@ -214,6 +214,17 @@ func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {
 	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, plan.Unchanged)
 }
 
+func TestPlanHasChangesUsesActions(t *testing.T) {
+	p := &Plan{Actions: []PlanAction{{
+		Resource: "sysbox_network.dmz",
+		Type:     "sysbox_network",
+		Name:     "dmz",
+		Action:   PlanActionCreate,
+	}}}
+
+	require.True(t, p.HasChanges())
+}
+
 func TestRefreshUsesProviderReadForDrift(t *testing.T) {
 	g := graph.New()
 	g.AddNode("sysbox_kernel", "linux", nil)

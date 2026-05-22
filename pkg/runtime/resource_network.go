@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
@@ -198,6 +200,24 @@ func (NetworkResourceProvider) Delete(ctx context.Context, exec *Executor, r sta
 	}
 	exec.state.RemoveResource(r.Type, r.Name)
 	return nil
+}
+
+func (NetworkResourceProvider) ExternalID(current state.Resource) string {
+	if id := current.DockerNetID(); id != "" {
+		return id
+	}
+	if ns := current.NetNS(); ns != "" {
+		return ns
+	}
+	return current.Str("id")
+}
+
+func (NetworkResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+	cfg := &config.NetworkConfig{}
+	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
+		return nil, nil, err
+	}
+	return cfg, nil, nil
 }
 
 // ensureDockerUserAccept inserts ACCEPT rules into the DOCKER-USER iptables

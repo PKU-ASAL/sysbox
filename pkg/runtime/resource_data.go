@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -47,6 +49,13 @@ func (p DataNodeResourceProvider) Update(ctx context.Context, exec *Executor, de
 func (DataNodeResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
 	exec.state.RemoveResource(current.Type, current.Name)
 	return nil
+}
+
+func (DataNodeResourceProvider) ExternalID(current state.Resource) string {
+	if id := current.ContainerID(); id != "" {
+		return id
+	}
+	return current.Str("id")
 }
 
 func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
@@ -123,6 +132,21 @@ func (DataNetworkResourceProvider) Delete(_ context.Context, exec *Executor, cur
 	return nil
 }
 
+func (DataNetworkResourceProvider) ExternalID(current state.Resource) string {
+	if id := current.DockerNetID(); id != "" {
+		return id
+	}
+	return current.Str("id")
+}
+
+func (DataNetworkResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+	cfg := &config.DataNetworkConfig{}
+	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_network", d.Name); err != nil {
+		return nil, nil, err
+	}
+	return cfg, nil, nil
+}
+
 func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.DataNetworkConfig)
 	if !ok {
@@ -188,6 +212,13 @@ func (p DataImageResourceProvider) Update(ctx context.Context, exec *Executor, d
 func (DataImageResourceProvider) Delete(_ context.Context, exec *Executor, current state.Resource) error {
 	exec.state.RemoveResource(current.Type, current.Name)
 	return nil
+}
+
+func (DataImageResourceProvider) ExternalID(current state.Resource) string {
+	if id := current.ImageID(); id != "" {
+		return id
+	}
+	return current.Str("id")
 }
 
 func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (state.Resource, error) {

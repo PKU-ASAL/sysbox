@@ -449,6 +449,15 @@ func (s *Server) runDestroy(topology string, run *Run) {
 		return
 	}
 	plan := &runtime.Plan{Destroy: append([]state.Resource(nil), st.Resources...)}
+	for _, r := range plan.Destroy {
+		plan.Actions = append(plan.Actions, runtime.PlanAction{
+			Resource: r.Type + "." + r.Name,
+			Type:     r.Type,
+			Name:     r.Name,
+			Action:   runtime.PlanActionDelete,
+			Reason:   "destroy requested",
+		})
+	}
 	exec := runtime.NewExecutor(graph.New(), st)
 	exec.SetRunContext(topology, run.ID)
 	exec.SetLogger(run.logs)

@@ -32,8 +32,8 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 		fmt.Fprintf(logWriter(e), "[lifecycle] skipping destroy of %s.%s (prevent_destroy = true)\n", r.Type, r.Name)
 	}
 	byID := map[string]bool{}
-	for _, r := range plan.Destroy {
-		byID[r.Type+"."+r.Name] = true
+	for _, action := range plan.actionsByType(PlanActionDelete) {
+		byID[action.Resource] = true
 	}
 
 	// Determine destroy order: prefer reverse topological from graph;

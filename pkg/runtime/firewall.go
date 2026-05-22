@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
@@ -47,6 +49,22 @@ func (FirewallResourceProvider) Delete(_ context.Context, exec *Executor, curren
 	}
 	exec.state.RemoveResource(current.Type, current.Name)
 	return nil
+}
+
+func (FirewallResourceProvider) ExternalID(current state.Resource) string {
+	return current.Str("id")
+}
+
+func (FirewallResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+	cfg := &config.FirewallConfig{}
+	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
+		return nil, nil, err
+	}
+	var deps []graph.Ref
+	if ref := config.ResolveName(cfg.AttachTo); ref != "" {
+		deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
+	}
+	return cfg, deps, nil
 }
 
 func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (state.Resource, error) {

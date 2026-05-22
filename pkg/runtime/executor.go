@@ -78,7 +78,10 @@ func (e *Executor) recordStepExternal(step int, id graph.NodeID) {
 	if r == nil {
 		return
 	}
-	externalID := resourceExternalID(*r)
+	externalID := r.Str("id")
+	if p, ok := GetResourceProvider(r.Type); ok {
+		externalID = p.ExternalID(*r)
+	}
 	e.recorder.StepExternal(step, r.Provider, externalID, ManagedLabels(e.topology, e.runID, id))
 	e.recorder.StepStateResource(step, StateResourceLog{
 		Type:     r.Type,
@@ -86,29 +89,6 @@ func (e *Executor) recordStepExternal(step int, id graph.NodeID) {
 		Provider: r.Provider,
 		Instance: r.Instance,
 	})
-}
-
-func resourceExternalID(r state.Resource) string {
-	switch r.Type {
-	case "sysbox_node", "sysbox_router", "sysbox_actor":
-		if id := r.ContainerID(); id != "" {
-			return id
-		}
-	case "sysbox_network":
-		if id := r.DockerNetID(); id != "" {
-			return id
-		}
-		if ns := r.NetNS(); ns != "" {
-			return ns
-		}
-	case "sysbox_image":
-		if id := r.ImageID(); id != "" {
-			return id
-		}
-	case "sysbox_kernel":
-		return r.Str("path")
-	}
-	return r.Str("id")
 }
 
 func (e *Executor) logf(format string, args ...any) {

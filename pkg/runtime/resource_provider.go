@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/hashicorp/hcl/v2"
+
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -26,6 +29,15 @@ type ResourceProvider interface {
 	Create(ctx context.Context, exec *Executor, desired *graph.Node) (state.Resource, error)
 	Update(ctx context.Context, exec *Executor, desired *graph.Node, current state.Resource) (state.Resource, error)
 	Delete(ctx context.Context, exec *Executor, current state.Resource) error
+	ExternalID(current state.Resource) string
+}
+
+type ResourceGraphDecoder interface {
+	DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (data any, deps []graph.Ref, err error)
+}
+
+type DataGraphDecoder interface {
+	DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (data any, deps []graph.Ref, err error)
 }
 
 type ResourceReadResult struct {

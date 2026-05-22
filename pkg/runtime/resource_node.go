@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
@@ -46,6 +48,60 @@ func (p NodeResourceProvider) Update(ctx context.Context, exec *Executor, desire
 
 func (NodeResourceProvider) Delete(ctx context.Context, exec *Executor, current state.Resource) error {
 	return exec.destroyNodeResource(ctx, current)
+}
+
+func (NodeResourceProvider) ExternalID(current state.Resource) string {
+	if id := current.ContainerID(); id != "" {
+		return id
+	}
+	return current.Str("id")
+}
+
+func (NodeResourceProvider) DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+	cfg := &config.NodeConfig{}
+	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
+		return nil, nil, err
+	}
+	if err := decodeNodeProviderConfig(cfg, ctx); err != nil {
+		return nil, nil, fmt.Errorf("resource sysbox_node.%s: %w", name, err)
+	}
+	var deps []graph.Ref
+	if ref := config.ResolveName(cfg.Image); ref != "" {
+		deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
+	}
+	for _, link := range cfg.Links {
+		if ref := config.ResolveName(link.Network); ref != "" {
+			deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
+		}
+	}
+	if subName, err := config.ResolveSubstrateRef(cfg.Substrate); err == nil {
+		if sub, err := substrate.Get(subName); err == nil {
+			pd := sub.Dependencies(cfg.ProviderConfig)
+			for _, n := range pd.Kernels {
+				deps = append(deps, graph.Ref{Type: "sysbox_kernel", Name: n})
+			}
+			for _, n := range pd.Images {
+				deps = append(deps, graph.Ref{Type: "sysbox_image", Name: n})
+			}
+			for _, n := range pd.Networks {
+				deps = append(deps, graph.Ref{Type: "sysbox_network", Name: n})
+			}
+		}
+	}
+	deps = decodeDependsOn(deps, cfg.DependsOn)
+	return cfg, deps, nil
+}
+
+func (DataNodeResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+	cfg := &config.DataNodeConfig{}
+	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_node", d.Name); err != nil {
+		return nil, nil, err
+	}
+	var deps []graph.Ref
+	if ref := config.ResolveName(cfg.Substrate); ref != "" {
+		deps = append(deps, graph.Ref{Type: "substrate", Name: ref})
+	}
+	return cfg, deps, nil
 }
 
 func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state.Resource, error) {

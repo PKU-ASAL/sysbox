@@ -56,6 +56,43 @@ type PlanAction struct {
 	Changes  map[string]FieldChange `json:"changes,omitempty"`
 }
 
+func (a PlanAction) NodeID() graph.NodeID {
+	return graph.NodeID{Type: a.Type, Name: a.Name}
+}
+
+func (p *Plan) ensureActions() {
+	if len(p.Actions) > 0 {
+		return
+	}
+	for _, id := range p.Add {
+		p.addAction(id, PlanActionCreate, "resource not present in state", nil)
+	}
+	for _, id := range p.Change {
+		p.addAction(id, PlanActionReplace, "resource changed", nil)
+	}
+	for _, r := range p.Destroy {
+		p.addAction(graph.NodeID{Type: r.Type, Name: r.Name}, PlanActionDelete, "resource no longer declared", nil)
+	}
+	for _, id := range p.Unchanged {
+		p.addAction(id, PlanActionNoop, "", nil)
+	}
+}
+
+func (p *Plan) actionsByType(types ...PlanActionType) []PlanAction {
+	p.ensureActions()
+	want := map[PlanActionType]bool{}
+	for _, typ := range types {
+		want[typ] = true
+	}
+	out := make([]PlanAction, 0)
+	for _, action := range p.Actions {
+		if want[action.Action] {
+			out = append(out, action)
+		}
+	}
+	return out
+}
+
 // ComputePlan diffs the graph vs state.
 //
 // Resources with lifecycle.prevent_destroy = true that would otherwise be
@@ -263,6 +300,12 @@ func changesFor(p *Plan, id graph.NodeID) map[string]FieldChange {
 }
 
 func (p *Plan) HasChanges() bool {
+	for _, action := range p.Actions {
+		switch action.Action {
+		case PlanActionCreate, PlanActionRead, PlanActionUpdate, PlanActionReplace, PlanActionDelete:
+			return true
+		}
+	}
 	return len(p.Add) > 0 || len(p.Destroy) > 0 || len(p.Change) > 0
 }
 

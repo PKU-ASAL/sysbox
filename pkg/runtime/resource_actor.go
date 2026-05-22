@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -47,6 +49,41 @@ func (p ActorResourceProvider) Update(ctx context.Context, exec *Executor, desir
 
 func (ActorResourceProvider) Delete(ctx context.Context, exec *Executor, current state.Resource) error {
 	return exec.destroyActorResource(ctx, current)
+}
+
+func (ActorResourceProvider) ExternalID(current state.Resource) string {
+	if id := current.ContainerID(); id != "" {
+		return id
+	}
+	return current.Str("id")
+}
+
+func (ActorResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+	cfg := &config.ActorConfig{}
+	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
+		return nil, nil, err
+	}
+	var deps []graph.Ref
+	position := cfg.Position
+	if position == "" {
+		position = "internal"
+	}
+	if position == "internal" {
+		if ref := config.ResolveName(cfg.Node); ref != "" {
+			deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
+		}
+	} else {
+		if ref := config.ResolveName(cfg.Image); ref != "" {
+			deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
+		}
+		for _, link := range cfg.Links {
+			if ref := config.ResolveName(link.Network); ref != "" {
+				deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
+			}
+		}
+	}
+	deps = decodeDependsOn(deps, cfg.DependsOn)
+	return cfg, deps, nil
 }
 
 func (e *Executor) createActorResource(ctx context.Context, n *graph.Node) (state.Resource, error) {

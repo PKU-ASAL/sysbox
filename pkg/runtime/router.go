@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -47,6 +49,30 @@ func (p RouterResourceProvider) Update(ctx context.Context, exec *Executor, desi
 
 func (RouterResourceProvider) Delete(ctx context.Context, exec *Executor, current state.Resource) error {
 	return exec.destroyNodeResource(ctx, current)
+}
+
+func (RouterResourceProvider) ExternalID(current state.Resource) string {
+	if id := current.ContainerID(); id != "" {
+		return id
+	}
+	return current.Str("id")
+}
+
+func (RouterResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+	cfg := &config.RouterConfig{}
+	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
+		return nil, nil, err
+	}
+	var deps []graph.Ref
+	if ref := config.ResolveName(cfg.Image); ref != "" {
+		deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
+	}
+	for _, iface := range cfg.Interfaces {
+		if ref := config.ResolveName(iface.Network); ref != "" {
+			deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
+		}
+	}
+	return cfg, deps, nil
 }
 
 func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (state.Resource, error) {

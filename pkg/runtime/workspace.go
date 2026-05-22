@@ -4,17 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // LoadWorkspace parses hclFile and loads stateFile, returning all objects
@@ -228,141 +225,18 @@ func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalCon
 
 // addResourceToGraph decodes one resource block and adds it (with deps) to g.
 func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContext, g *graph.Graph) error {
-	var deps []graph.Ref
-	var data any
-
-	switch r.Type {
-	case "sysbox_network":
-		cfg := &config.NetworkConfig{}
-		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-			return err
-		}
-		data = cfg
-
-	case "sysbox_image":
-		cfg := &config.ImageConfig{}
-		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-			return err
-		}
-		data = cfg
-
-	case "sysbox_kernel":
-		cfg := &config.KernelConfig{}
-		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-			return err
-		}
-		data = cfg
-		for _, dep := range cfg.DependsOn {
-			if parts := strings.SplitN(dep, ".", 2); len(parts) == 2 {
-				deps = append(deps, graph.Ref{Type: parts[0], Name: parts[1]})
-			}
-		}
-
-	case "sysbox_node":
-		cfg := &config.NodeConfig{}
-		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-			return err
-		}
-		if err := decodeNodeProviderConfig(cfg, ctx); err != nil {
-			return fmt.Errorf("resource sysbox_node.%s: %w", name, err)
-		}
-		data = cfg
-		if ref := config.ResolveName(cfg.Image); ref != "" {
-			deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
-		}
-		for _, link := range cfg.Links {
-			if ref := config.ResolveName(link.Network); ref != "" {
-				deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
-			}
-		}
-		if subName, err := config.ResolveSubstrateRef(cfg.Substrate); err == nil {
-			if sub, err := substrate.Get(subName); err == nil {
-				pd := sub.Dependencies(cfg.ProviderConfig)
-				for _, n := range pd.Kernels {
-					deps = append(deps, graph.Ref{Type: "sysbox_kernel", Name: n})
-				}
-				for _, n := range pd.Images {
-					deps = append(deps, graph.Ref{Type: "sysbox_image", Name: n})
-				}
-				for _, n := range pd.Networks {
-					deps = append(deps, graph.Ref{Type: "sysbox_network", Name: n})
-				}
-			}
-		}
-		for _, dep := range cfg.DependsOn {
-			if parts := strings.SplitN(dep, ".", 2); len(parts) == 2 {
-				deps = append(deps, graph.Ref{Type: parts[0], Name: parts[1]})
-			}
-		}
-
-	case "sysbox_router":
-		cfg := &config.RouterConfig{}
-		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-			return err
-		}
-		data = cfg
-		if ref := config.ResolveName(cfg.Image); ref != "" {
-			deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
-		}
-		for _, iface := range cfg.Interfaces {
-			if ref := config.ResolveName(iface.Network); ref != "" {
-				deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
-			}
-		}
-
-	case "sysbox_firewall":
-		cfg := &config.FirewallConfig{}
-		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-			return err
-		}
-		data = cfg
-		if ref := config.ResolveName(cfg.AttachTo); ref != "" {
-			deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
-		}
-
-	case "sysbox_ssh_access":
-		cfg := &config.SSHAccessConfig{}
-		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-			return err
-		}
-		data = cfg
-		if ref := config.ResolveName(cfg.Node); ref != "" {
-			deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
-		}
-
-	case "sysbox_actor":
-		cfg := &config.ActorConfig{}
-		if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-			return err
-		}
-		data = cfg
-		position := cfg.Position
-		if position == "" {
-			position = "internal"
-		}
-		if position == "internal" {
-			if ref := config.ResolveName(cfg.Node); ref != "" {
-				deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
-			}
-		} else {
-			if ref := config.ResolveName(cfg.Image); ref != "" {
-				deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
-			}
-			for _, link := range cfg.Links {
-				if ref := config.ResolveName(link.Network); ref != "" {
-					deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
-				}
-			}
-		}
-		for _, dep := range cfg.DependsOn {
-			if parts := strings.SplitN(dep, ".", 2); len(parts) == 2 {
-				deps = append(deps, graph.Ref{Type: parts[0], Name: parts[1]})
-			}
-		}
-
-	default:
+	provider, ok := GetResourceProvider(r.Type)
+	if !ok {
 		fmt.Fprintf(os.Stderr, "warning: unsupported resource type %q (skipped)\n", r.Type)
 		return nil
+	}
+	decoder, ok := provider.(ResourceGraphDecoder)
+	if !ok {
+		return fmt.Errorf("resource type %q does not support graph decoding", r.Type)
+	}
+	data, deps, err := decoder.DecodeResource(r, name, ctx)
+	if err != nil {
+		return err
 	}
 
 	g.AddNode(r.Type, name, deps)
@@ -370,76 +244,26 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 	return nil
 }
 
-// decodeNodeProviderConfig resolves cfg.Substrate, validates the optional
-// provider block label, and fills cfg.ProviderConfig.
-func decodeNodeProviderConfig(cfg *config.NodeConfig, ctx *hcl.EvalContext) error {
-	subName, err := config.ResolveSubstrateRef(cfg.Substrate)
-	if err != nil {
-		return err
-	}
-	sub, err := substrate.Get(subName)
-	if err != nil {
-		return err
-	}
-	var body hcl.Body
-	switch len(cfg.Providers) {
-	case 0:
-		body = nil
-	case 1:
-		pb := cfg.Providers[0]
-		if pb.Type != subName {
-			return fmt.Errorf("provider %q block does not match substrate %q", pb.Type, subName)
-		}
-		body = pb.Remain
-	default:
-		return fmt.Errorf("at most one provider block allowed per node, got %d", len(cfg.Providers))
-	}
-	pc, err := sub.DecodeProviderConfig(body, ctx)
-	if err != nil {
-		return err
-	}
-	cfg.ProviderConfig = pc
-	return nil
-}
-
 // expandDataBlock decodes a data block and adds it to the graph as a
 // read-only node. Data nodes carry their decoded config in Data so that
 // the executor can call substrate.ReadNode during apply.
 func expandDataBlock(d config.DataBlock, g *graph.Graph, ctx *hcl.EvalContext) error {
-	var data any
-	var deps []graph.Ref
-
-	switch d.Type {
-	case "sysbox_node":
-		cfg := &config.DataNodeConfig{}
-		if diag := gohcl.DecodeBody(d.Remain, ctx, cfg); diag.HasErrors() {
-			return fmt.Errorf("data sysbox_node.%s: %s", d.Name, diag.Error())
-		}
-		data = cfg
-		if ref := config.ResolveName(cfg.Substrate); ref != "" {
-			deps = append(deps, graph.Ref{Type: "substrate", Name: ref})
-		}
-	case "sysbox_network":
-		cfg := &config.DataNetworkConfig{}
-		if diag := gohcl.DecodeBody(d.Remain, ctx, cfg); diag.HasErrors() {
-			return fmt.Errorf("data sysbox_network.%s: %s", d.Name, diag.Error())
-		}
-		data = cfg
-	case "sysbox_image":
-		cfg := &config.DataImageConfig{}
-		if diag := gohcl.DecodeBody(d.Remain, ctx, cfg); diag.HasErrors() {
-			return fmt.Errorf("data sysbox_image.%s: %s", d.Name, diag.Error())
-		}
-		data = cfg
-		if ref := config.ResolveName(cfg.Substrate); ref != "" {
-			deps = append(deps, graph.Ref{Type: "substrate", Name: ref})
-		}
-	default:
+	typ := "data_" + d.Type
+	provider, ok := GetResourceProvider(typ)
+	if !ok {
 		return fmt.Errorf("data block type %q not supported; supported: sysbox_node, sysbox_network, sysbox_image", d.Type)
+	}
+	decoder, ok := provider.(DataGraphDecoder)
+	if !ok {
+		return fmt.Errorf("data block type %q does not support graph decoding", d.Type)
+	}
+	data, deps, err := decoder.DecodeData(d, ctx)
+	if err != nil {
+		return err
 	}
 
 	// Data blocks use a "data_" prefix in the graph to distinguish from resources.
-	g.AddNode("data_"+d.Type, d.Name, deps)
-	g.SetData("data_"+d.Type, d.Name, data)
+	g.AddNode(typ, d.Name, deps)
+	g.SetData(typ, d.Name, data)
 	return nil
 }

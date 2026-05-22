@@ -27,17 +27,17 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 	}
 
 	toCreate := map[string]bool{}
-	for _, id := range plan.Add {
-		toCreate[id.String()] = true
+	for _, action := range plan.actionsByType(PlanActionCreate, PlanActionRead, PlanActionUpdate, PlanActionReplace) {
+		toCreate[action.Resource] = true
 	}
 
 	// For drifted resources, destroy all affected existing resources in
 	// reverse topo order first (dependents before dependencies), then recreate
 	// them in normal topo order below.
 	changeSet := map[graph.NodeID]bool{}
-	for _, id := range plan.Change {
+	for _, action := range plan.actionsByType(PlanActionUpdate, PlanActionReplace) {
+		id := action.NodeID()
 		changeSet[id] = true
-		toCreate[id.String()] = true
 	}
 	if len(changeSet) > 0 {
 		reverse, err := e.graph.ReverseTopoSort()
@@ -68,11 +68,11 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 			continue
 		}
 		verb := "creating"
-		for _, c := range plan.Change {
-			if c == id {
-				verb = "re-creating"
-				break
-			}
+		switch actionFor(plan, id) {
+		case PlanActionReplace, PlanActionUpdate:
+			verb = "re-creating"
+		case PlanActionRead:
+			verb = "reading"
 		}
 		e.logf("[apply] %s %s\n", verb, id)
 		step := e.recorder.StepStart(id.String(), actionFor(plan, id))

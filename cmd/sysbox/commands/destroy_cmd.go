@@ -74,6 +74,15 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		Destroy:   toDestroy,
 		Protected: protected,
 	}
+	for _, r := range toDestroy {
+		plan.Actions = append(plan.Actions, runtime.PlanAction{
+			Resource: r.Type + "." + r.Name,
+			Type:     r.Type,
+			Name:     r.Name,
+			Action:   runtime.PlanActionDelete,
+			Reason:   "destroy requested",
+		})
+	}
 
 	exec := runtime.NewExecutor(graph.New(), s)
 	if err := exec.Destroy(context.Background(), plan); err != nil {
