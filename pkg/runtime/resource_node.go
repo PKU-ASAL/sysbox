@@ -17,27 +17,101 @@ import (
 )
 
 func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
+	p := mustResourceProvider("sysbox_node")
+	res, err := p.Create(ctx, e, n)
+	if err != nil {
+		return err
+	}
+	e.state.AddResource(res)
+	return nil
+}
+
+type NodeResourceProvider struct{}
+
+func init() {
+	RegisterResourceProvider(NodeResourceProvider{})
+}
+
+func (NodeResourceProvider) Type() string { return "sysbox_node" }
+
+func (NodeResourceProvider) Schema() ResourceSchema {
+	return ResourceSchemaFor("sysbox_node")
+}
+
+func (NodeResourceProvider) Read(_ context.Context, current state.Resource) (state.Resource, error) {
+	return current, nil
+}
+
+func (NodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+	if current == nil {
+		return PlanAction{
+			Resource: desired.ID.String(),
+			Type:     desired.ID.Type,
+			Name:     desired.ID.Name,
+			Action:   PlanActionCreate,
+			Reason:   "resource not present in state",
+		}, nil
+	}
+	action := PlanActionNoop
+	reason := ""
+	var changes map[string]FieldChange
+	if stateDesiredHash(current) != "" {
+		want, err := desiredHash(desired)
+		if err != nil {
+			return PlanAction{}, err
+		}
+		if want != stateDesiredHash(current) {
+			changes, reason = diffDesiredState(desired, current)
+			action = PlanActionReplace
+		}
+	}
+	if action == PlanActionReplace && reason == "" {
+		reason = "desired configuration changed; replacement required"
+	}
+	return PlanAction{
+		Resource: desired.ID.String(),
+		Type:     desired.ID.Type,
+		Name:     desired.ID.Name,
+		Action:   action,
+		Reason:   reason,
+		Changes:  changes,
+	}, nil
+}
+
+func (NodeResourceProvider) Create(ctx context.Context, exec *Executor, n *graph.Node) (state.Resource, error) {
+	return exec.createNodeResource(ctx, n)
+}
+
+func (p NodeResourceProvider) Update(ctx context.Context, exec *Executor, desired *graph.Node, _ state.Resource) (state.Resource, error) {
+	return p.Create(ctx, exec, desired)
+}
+
+func (NodeResourceProvider) Delete(ctx context.Context, exec *Executor, current state.Resource) error {
+	return exec.destroyNodeResource(ctx, current)
+}
+
+func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.NodeConfig)
 	if !ok {
-		return fmt.Errorf("node %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("node %s: wrong data type", n.ID)
 	}
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 	sub, err := substrate.Get(subName)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 	nodeDesiredHash, err := desiredHash(n)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	imageName := config.ResolveName(cfg.Image)
 	imgState := e.state.FindResource("sysbox_image", imageName)
 	if imgState == nil {
-		return fmt.Errorf("image %s not applied yet", imageName)
+		return state.Resource{}, fmt.Errorf("image %s not applied yet", imageName)
 	}
 	imgRef := substrate.ImageRef{
 		ID:         imgState.ImageID(),
@@ -55,7 +129,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	}, func() error {
 		return sub.PrepareHandle(ctx, &substrate.NodeHandle{}, cfg.ProviderConfig, stateAdapter{e.state})
 	}); err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	// Map LinkConfig → NICSpec for the shared wiring loop.
@@ -71,7 +145,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	// Pre-scan: find Docker NAT networks for InitialLinks.
 	initialLinks, err := collectNATLinks(e.state, nicSpecs, true)
 	if err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	var handle substrate.NodeHandle
@@ -94,7 +168,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		})
 		return err
 	}); err != nil {
-		return err
+		return state.Resource{}, err
 	}
 
 	// Start-node ordering is driven by the substrate's capabilities:
@@ -112,7 +186,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			return sub.StartNode(ctx, handle)
 		}); err != nil {
 			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on start failure")
-			return fmt.Errorf("start node %s: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("start node %s: %w", n.ID.Name, err)
 		}
 	}
 
@@ -120,7 +194,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	wireResult, err := wireNICsWithHook(ctx, sub, e.state, handle, initialLinks, nicSpecs, false, n.ID.Name, e.substepHook(parentStep))
 	if err != nil {
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on wire failure")
-		return err
+		return state.Resource{}, err
 	}
 
 	// Populate PrimaryIP from the wiring result.
@@ -145,12 +219,14 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		nodeInstance["provider_extra"] = string(blob)
 	}
 	nodeInstance[desiredHashKey] = nodeDesiredHash
-	e.state.AddResource(state.Resource{
+	resource := state.Resource{
 		Type:     "sysbox_node",
 		Name:     n.ID.Name,
 		Provider: subName,
 		Instance: nodeInstance,
-	})
+	}
+	e.state.AddResource(resource)
+	defer e.state.RemoveResource(resource.Type, resource.Name)
 
 	// Cold-plug substrates (NICHotPlug=false) start the node AFTER all NICs
 	// are attached (NICs must be in the boot config). Hot-plug substrates
@@ -164,7 +240,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			return sub.StartNode(ctx, handle)
 		}); err != nil {
 			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on cold-start failure")
-			return fmt.Errorf("start node %s: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("start node %s: %w", n.ID.Name, err)
 		}
 	}
 
@@ -195,7 +271,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	if len(cfg.Routes) > 0 {
 		conn, err := connectionForNode(sub, handle, cfg.Connections)
 		if err != nil {
-			return fmt.Errorf("connection for routes on node %s: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("connection for routes on node %s: %w", n.ID.Name, err)
 		}
 		for _, rt := range cfg.Routes {
 			cmd := fmt.Sprintf("ip route replace %s via %s", rt.Destination, rt.Via)
@@ -225,7 +301,7 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 	if len(cfg.Provisioners) > 0 {
 		conn, err := connectionForNode(sub, handle, cfg.Connections)
 		if err != nil {
-			return fmt.Errorf("connection for node %s: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("connection for node %s: %w", n.ID.Name, err)
 		}
 		// Block until the chosen connection is reachable.
 		switch c := conn.(type) {
@@ -233,19 +309,19 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 			if c != nil {
 				e.logf("[provisioner] waiting for SSH on %s...\n", c.Host())
 				if err := c.WaitForSSH(ctx, 60*time.Second); err != nil {
-					return fmt.Errorf("ssh not ready on node %s: %w", n.ID.Name, err)
+					return state.Resource{}, fmt.Errorf("ssh not ready on node %s: %w", n.ID.Name, err)
 				}
 			}
 		case *providerexec.VsockConnection:
 			if c != nil {
 				e.logf("[provisioner] waiting for vsock-agent on %s...\n", n.ID.Name)
 				if err := c.WaitReady(ctx, 60*time.Second); err != nil {
-					return fmt.Errorf("vsock-agent not ready on node %s: %w", n.ID.Name, err)
+					return state.Resource{}, fmt.Errorf("vsock-agent not ready on node %s: %w", n.ID.Name, err)
 				}
 			}
 		}
 		if err := e.runProvisioners(ctx, conn, cfg.Provisioners); err != nil {
-			return fmt.Errorf("provisioner on node %s: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("provisioner on node %s: %w", n.ID.Name, err)
 		}
 	}
 
@@ -255,10 +331,18 @@ func (e *Executor) createNode(ctx context.Context, n *graph.Node) error {
 		e.logf("[node] warning: image entry start: %v\n", err)
 	}
 
-	return nil
+	if rec := e.state.FindResource("sysbox_node", n.ID.Name); rec != nil {
+		resource = *rec
+	}
+	return resource, nil
 }
 
 func (e *Executor) destroyNode(ctx context.Context, r state.Resource) error {
+	p := mustResourceProvider("sysbox_node")
+	return p.Delete(ctx, e, r)
+}
+
+func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) error {
 	sub, err := substrate.Get(r.Provider)
 	if err != nil {
 		return err
