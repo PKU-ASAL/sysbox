@@ -202,17 +202,24 @@ func recoverFirecrackerNode(ctx context.Context, st *state.State, step runtime.O
 		action.Error = err.Error()
 		return action
 	}
-	if !firecrackerRecoverable(res) {
-		action.Status = "not_found"
-		return action
-	}
 	obs, err := sub.ObserveNode(ctx, handle)
 	if err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
 		return action
 	}
-	if obs.Running {
+	recovery := runtime.DecideNodeRecovery(runtime.RecoveryInput{
+		Context:              runtime.RecoveryContextCheckpoint,
+		ResourceType:         rec.Type,
+		Provider:             rec.Provider,
+		HasState:             false,
+		HasCheckpoint:        true,
+		StateRecorded:        step.StateRecorded,
+		RecoverableArtifacts: firecrackerRecoverable(res),
+		Observation:          obs,
+	})
+	switch recovery.Decision {
+	case runtime.RecoveryDecisionAdopt:
 		if adopted, err := sub.AdoptNode(ctx, handle); err == nil {
 			if inst := substrate.HandleToInstance(adopted, sub); len(inst) > 0 {
 				for k, v := range inst {
@@ -226,15 +233,26 @@ func recoverFirecrackerNode(ctx context.Context, st *state.State, step runtime.O
 		adoptStateResource(st, *rec, "")
 		action.Status = "recovered"
 		return action
-	}
-	if !obs.Running {
+	case runtime.RecoveryDecisionRecoverState:
 		action.Status = "recovered_not_running"
 		adoptStateResource(st, *rec, "")
 		return action
+	case runtime.RecoveryDecisionNoop:
+		action.Status = "already_in_state"
+		return action
+	case runtime.RecoveryDecisionNotFound:
+		action.Status = "not_found"
+		action.Error = recovery.Reason
+		return action
+	case runtime.RecoveryDecisionUnknown:
+		action.Status = "error"
+		action.Error = recovery.Reason
+		return action
+	default:
+		action.Status = "error"
+		action.Error = recovery.Reason
+		return action
 	}
-	adoptStateResource(st, *rec, "")
-	action.Status = "recovered"
-	return action
 }
 
 func adoptStateResource(st *state.State, rec runtime.StateResourceLog, externalID string) {

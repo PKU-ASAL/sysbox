@@ -124,8 +124,20 @@ func (e *Executor) probeResource(ctx context.Context, id graph.NodeID) (bool, er
 		if err != nil {
 			return false, err
 		}
-		if !obs.Running || !obs.Healthy {
-			e.logf("[refresh] %s: observed status=%s reason=%s\n", id, obs.Status, obs.Reason)
+		recovery := DecideNodeRecovery(RecoveryInput{
+			Context:      RecoveryContextRefresh,
+			ResourceType: id.Type,
+			Provider:     providerName,
+			HasState:     true,
+			Observation:  obs,
+		})
+		switch recovery.Decision {
+		case RecoveryDecisionNoop:
+		case RecoveryDecisionUnknown:
+			e.logf("[refresh] %s: observed status unknown reason=%s (treating as healthy)\n", id, recovery.Reason)
+			return true, nil
+		default:
+			e.logf("[refresh] %s: observed status=%s decision=%s reason=%s\n", id, obs.Status, recovery.Decision, recovery.Reason)
 			return false, nil
 		}
 		if !networkAttachmentsHealthy(r) {
