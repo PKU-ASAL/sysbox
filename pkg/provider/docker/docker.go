@@ -42,6 +42,10 @@ func (s *Substrate) Close() error {
 
 func (s *Substrate) Name() string { return "docker" }
 
+func (s *Substrate) PreflightChecks(required bool) []substrate.PreflightCheck {
+	return substrate.DockerPreflightChecks(required)
+}
+
 func (s *Substrate) Capabilities() substrate.Capabilities {
 	return substrate.Capabilities{
 		SharedKernel:    true,

@@ -358,7 +358,9 @@ func (s *Server) runApply(topology string, run *Run) {
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(topology, run.ID)
 	exec.SetLogger(run.logs)
-	recorder := runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology)
+	checkpointPath := s.checkpointFile(topology, run.ID)
+	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, topology)
+	recorder := newStoreRecorder(fileRecorder, s.apiStore, topology, run.ID, checkpointPath)
 	recorder.SetLeaseOwner(run.LeaseOwner)
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
@@ -462,7 +464,9 @@ func (s *Server) runDestroy(topology string, run *Run) {
 	exec := runtime.NewExecutor(graph.New(), st)
 	exec.SetRunContext(topology, run.ID)
 	exec.SetLogger(run.logs)
-	recorder := runtime.NewFileRecorder(s.checkpointFile(topology, run.ID), run.ID, topology)
+	checkpointPath := s.checkpointFile(topology, run.ID)
+	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, topology)
+	recorder := newStoreRecorder(fileRecorder, s.apiStore, topology, run.ID, checkpointPath)
 	recorder.SetLeaseOwner(run.LeaseOwner)
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
@@ -569,7 +573,7 @@ func (s *Server) reconcileParentJournal(parent, run *Run) error {
 	if err != nil {
 		return err
 	}
-	report, err := reconcileCheckpointJournal(context.Background(), s.checkpointFile(parent.Topology, parent.ID), mgr, run.LeaseOwner)
+	report, err := reconcileCheckpointJournal(context.Background(), s.apiStore, parent.Topology, parent.ID, mgr, run.LeaseOwner)
 	if err != nil {
 		return err
 	}
@@ -604,7 +608,7 @@ func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
 		return
 	}
-	report, err := cleanupCheckpoint(r.Context(), s.checkpointFile(run.Topology, run.ID))
+	report, err := cleanupCheckpoint(r.Context(), s.apiStore, run.Topology, run.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -633,7 +637,7 @@ func (s *Server) handleRecoverRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner := fmt.Sprintf("sysbox-api:recover:%s", run.ID)
-	report, err := reconcileCheckpointJournal(r.Context(), s.checkpointFile(run.Topology, run.ID), mgr, owner)
+	report, err := reconcileCheckpointJournal(r.Context(), s.apiStore, run.Topology, run.ID, mgr, owner)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -652,9 +656,14 @@ func (s *Server) handleGetRunCheckpoint(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
 		return
 	}
-	data, err := os.ReadFile(s.checkpointFile(run.Topology, run.ID))
+	cp, err := s.apiStore.LoadCheckpoint(r.Context(), run.Topology, run.ID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Errorf("checkpoint not found"))
+		return
+	}
+	data, err := json.MarshalIndent(cp, "", "  ")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -673,12 +682,12 @@ func (s *Server) handleGetRunActions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
 		return
 	}
-	log, err := loadRunActionLog(s.checkpointFile(run.Topology, run.ID))
+	cp, err := s.apiStore.LoadCheckpoint(r.Context(), run.Topology, run.ID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, log)
+	writeJSON(w, http.StatusOK, runActionLogFromCheckpoint(*cp))
 }
 
 // GET /v1/runs/{id}/logs  — SSE stream

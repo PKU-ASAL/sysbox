@@ -129,6 +129,26 @@ func (ImageResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ct
 	return cfg, nil, nil
 }
 
+func (ImageResourceProvider) PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []PreflightCheck {
+	cfg := &config.ImageConfig{}
+	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
+		return []PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
+	}
+	var checks []PreflightCheck
+	for _, item := range []struct {
+		name string
+		src  string
+	}{
+		{"image:" + r.Name + ":rootfs", cfg.Rootfs},
+		{"image:" + r.Name + ":qcow2", cfg.QCow2},
+	} {
+		if check := ArtifactPreflightCheck(item.name, item.src, cfg.SHA256); check != nil {
+			checks = append(checks, *check)
+		}
+	}
+	return checks
+}
+
 func (DataImageResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
 	cfg := &config.DataImageConfig{}
 	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_image", d.Name); err != nil {

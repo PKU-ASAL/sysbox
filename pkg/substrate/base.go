@@ -46,6 +46,8 @@ func IsValidationError(err error) bool {
 // flags missing implementations.
 type BaseSubstrate struct{}
 
+func (BaseSubstrate) PreflightChecks(bool) []PreflightCheck { return nil }
+
 // Validate accepts any NodeSpec by default. Override to reject specs the
 // substrate cannot honour (e.g. a docker substrate rejecting Kernel != "").
 func (BaseSubstrate) Validate(NodeSpec) error { return nil }

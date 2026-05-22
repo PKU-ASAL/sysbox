@@ -37,7 +37,7 @@ func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
 	dir := t.TempDir()
 	checkpointPath := filepath.Join(dir, "run.checkpoint.json")
 	statePath := filepath.Join(dir, "state.json")
-	writeCheckpointE2E(t, checkpointPath, runtime.OperationCheckpoint{
+	cp := runtime.OperationCheckpoint{
 		RunID:     "run-net",
 		Topology:  "e2e-net",
 		Operation: "apply",
@@ -61,10 +61,13 @@ func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
 				},
 			},
 		}},
-	})
+	}
+	writeCheckpointE2E(t, checkpointPath, cp)
 
 	mgr := state.NewManager(statePath)
-	report, err := recoverCheckpoint(context.Background(), checkpointPath, mgr, "e2e")
+	store := &localAPIStore{runsDir: dir}
+	require.NoError(t, store.SaveCheckpoint(context.Background(), "e2e-net", "run-net", cp))
+	report, err := recoverCheckpoint(context.Background(), store, "e2e-net", "run-net", mgr, "e2e")
 	require.NoError(t, err)
 	require.Len(t, report.Recovered, 1)
 	require.Equal(t, "recovered", report.Recovered[0].Status)
@@ -73,7 +76,7 @@ func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, st.FindResource("sysbox_network", "lan"))
 
-	cleanup, err := cleanupCheckpoint(context.Background(), checkpointPath)
+	cleanup, err := cleanupCheckpoint(context.Background(), store, "e2e-net", "run-net")
 	require.NoError(t, err)
 	require.Len(t, cleanup.Networks, 1)
 	require.Equal(t, "removed", cleanup.Networks[0].Status)
@@ -106,7 +109,7 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 	dir := t.TempDir()
 	checkpointPath := filepath.Join(dir, "run.checkpoint.json")
 	statePath := filepath.Join(dir, "state.json")
-	writeCheckpointE2E(t, checkpointPath, runtime.OperationCheckpoint{
+	cp := runtime.OperationCheckpoint{
 		RunID:     "run-fc",
 		Topology:  "e2e-fc",
 		Operation: "apply",
@@ -138,10 +141,13 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 				},
 			},
 		}},
-	})
+	}
+	writeCheckpointE2E(t, checkpointPath, cp)
 
 	mgr := state.NewManager(statePath)
-	report, err := recoverCheckpoint(context.Background(), checkpointPath, mgr, "e2e")
+	store := &localAPIStore{runsDir: dir}
+	require.NoError(t, store.SaveCheckpoint(context.Background(), "e2e-fc", "run-fc", cp))
+	report, err := recoverCheckpoint(context.Background(), store, "e2e-fc", "run-fc", mgr, "e2e")
 	require.NoError(t, err)
 	require.Len(t, report.Recovered, 1)
 	require.Equal(t, "recovered_not_running", report.Recovered[0].Status)
@@ -150,7 +156,7 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, st.FindResource("sysbox_node", "microvm"))
 
-	cleanup, err := cleanupCheckpoint(context.Background(), checkpointPath)
+	cleanup, err := cleanupCheckpoint(context.Background(), store, "e2e-fc", "run-fc")
 	require.NoError(t, err)
 	require.Len(t, cleanup.MicroVMs, 1)
 	require.Equal(t, "removed", cleanup.MicroVMs[0].Status)

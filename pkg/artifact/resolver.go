@@ -81,9 +81,6 @@ func DefaultCacheDir() string {
 	if v := os.Getenv("SYSBOX_CACHE"); v != "" {
 		return filepath.Join(v, "artifacts")
 	}
-	if v := os.Getenv("SYSBOX_CACHE_DIR"); v != "" {
-		return filepath.Join(v, "artifacts")
-	}
 	if v := os.Getenv("XDG_CACHE_HOME"); v != "" {
 		return filepath.Join(v, "sysbox", "artifacts")
 	}

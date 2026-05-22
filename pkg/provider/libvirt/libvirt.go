@@ -58,6 +58,10 @@ func init() {
 
 func (s *Substrate) Name() string { return subName }
 
+func (s *Substrate) PreflightChecks(required bool) []substrate.PreflightCheck {
+	return substrate.LibvirtPreflightChecks(required)
+}
+
 // Capabilities: NICs are declared in the domain XML before StartNode
 // (NICHotPlug=false); provisioners reach the VM over SSH.
 func (s *Substrate) Capabilities() substrate.Capabilities {

@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -43,7 +41,6 @@ func TestRecoverCandidateRequiresSupportedDoneUnrecordedStateResource(t *testing
 
 func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 	dir := t.TempDir()
-	checkpointPath := filepath.Join(dir, "run.checkpoint.json")
 	cp := runtime.OperationCheckpoint{
 		RunID:    "run-1",
 		Topology: "mixed",
@@ -59,12 +56,10 @@ func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 			},
 		}},
 	}
-	raw, err := json.Marshal(cp)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(checkpointPath, raw, 0o644))
-
 	mgr := state.NewManager(filepath.Join(dir, "state.json"))
-	report, err := reconcileCheckpointJournal(context.Background(), checkpointPath, mgr, "test")
+	store := &localAPIStore{runsDir: dir}
+	require.NoError(t, store.SaveCheckpoint(context.Background(), "mixed", "run-1", cp))
+	report, err := reconcileCheckpointJournal(context.Background(), store, "mixed", "run-1", mgr, "test")
 	require.NoError(t, err)
 	require.Len(t, report.Recovered, 1)
 	require.Equal(t, "replayed_state_patch", report.Recovered[0].Status)
@@ -75,10 +70,9 @@ func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 	require.NotNil(t, res)
 	require.Equal(t, "abc", res.ContainerID())
 
-	raw, err = os.ReadFile(checkpointPath)
+	cpPtr, err := store.LoadCheckpoint(context.Background(), "mixed", "run-1")
 	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(raw, &cp))
-	require.True(t, cp.StatePatches[0].Recorded)
+	require.True(t, cpPtr.StatePatches[0].Recorded)
 }
 
 func TestAdoptFirecrackerStateResourceKeepsProviderExtra(t *testing.T) {

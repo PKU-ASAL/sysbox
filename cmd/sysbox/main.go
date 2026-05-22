@@ -26,19 +26,12 @@ func main() {
 		substrate.Register(dockerSub)
 	}
 
-	// Register firecracker substrate if binary and kernel are available.
 	// Kernel/rootfs paths can be overridden per-node in HCL; these are defaults.
-	kernelPath := os.Getenv("SYSBOX_FC_KERNEL") // legacy: prefer HCL sysbox_kernel/provider.kernel
+	kernelPath := os.Getenv("SYSBOX_FIRECRACKER_KERNEL")
 	if kernelPath == "" {
 		kernelPath = "/tmp/vmlinux"
 	}
 	rootfsDir := os.Getenv("SYSBOX_FIRECRACKER_WORKDIR")
-	if rootfsDir == "" {
-		rootfsDir = os.Getenv("SYSBOX_FIRECRACKER_ROOTFS_DIR") // legacy alias
-	}
-	if rootfsDir == "" {
-		rootfsDir = os.Getenv("SYSBOX_FC_ROOTFS_DIR") // legacy alias
-	}
 	if rootfsDir == "" {
 		rootfsDir = config.FirecrackerWorkDir()
 	}

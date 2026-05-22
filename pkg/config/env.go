@@ -18,7 +18,7 @@ func SysboxHome() string {
 
 // SysboxCache returns the shared artifact cache root.
 func SysboxCache() string {
-	return envOr("SYSBOX_CACHE", envOr("SYSBOX_CACHE_DIR", DefaultCacheDir))
+	return envOr("SYSBOX_CACHE", DefaultCacheDir)
 }
 
 func DefaultWorkspacesDir() string {

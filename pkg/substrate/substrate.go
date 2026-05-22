@@ -20,6 +20,10 @@ type Substrate interface {
 
 	Capabilities() Capabilities
 
+	// PreflightChecks reports host/API-container prerequisites for this
+	// substrate, such as Docker socket access, KVM, or required binaries.
+	PreflightChecks(required bool) []PreflightCheck
+
 	// Validate is invoked during `sysbox plan` to reject specs the substrate
 	// cannot honour (e.g. docker rejecting a NodeSpec with a kernel field).
 	// Returning nil means "spec is acceptable to this substrate".

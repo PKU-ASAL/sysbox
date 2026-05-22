@@ -2,9 +2,7 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -24,15 +22,12 @@ type RecoverAction struct {
 	Error      string `json:"error,omitempty"`
 }
 
-func recoverCheckpoint(ctx context.Context, checkpointPath string, mgr *state.Manager, owner string) (*RecoverReport, error) {
-	raw, err := os.ReadFile(checkpointPath)
+func recoverCheckpoint(ctx context.Context, store apiStore, topology, runID string, mgr *state.Manager, owner string) (*RecoverReport, error) {
+	cpPtr, err := store.LoadCheckpoint(ctx, topology, runID)
 	if err != nil {
-		return nil, fmt.Errorf("read checkpoint: %w", err)
+		return nil, err
 	}
-	var cp runtime.OperationCheckpoint
-	if err := json.Unmarshal(raw, &cp); err != nil {
-		return nil, fmt.Errorf("decode checkpoint: %w", err)
-	}
+	cp := *cpPtr
 
 	st, err := mgr.LoadWithContext(ctx)
 	if err != nil {

@@ -29,15 +29,12 @@ type JournalReplayReport struct {
 	Skipped []RecoverAction `json:"skipped,omitempty"`
 }
 
-func replayCheckpointJournal(ctx context.Context, checkpointPath string, mgr *state.Manager, owner string) (*JournalReplayReport, error) {
-	raw, err := os.ReadFile(checkpointPath)
+func replayCheckpointJournal(ctx context.Context, store apiStore, topology, runID string, mgr *state.Manager, owner string) (*JournalReplayReport, error) {
+	cpPtr, err := store.LoadCheckpoint(ctx, topology, runID)
 	if err != nil {
-		return nil, fmt.Errorf("read checkpoint: %w", err)
+		return nil, err
 	}
-	var cp runtime.OperationCheckpoint
-	if err := json.Unmarshal(raw, &cp); err != nil {
-		return nil, fmt.Errorf("decode checkpoint: %w", err)
-	}
+	cp := *cpPtr
 	st, err := mgr.LoadWithContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load state: %w", err)
@@ -70,19 +67,31 @@ func replayCheckpointJournal(ctx context.Context, checkpointPath string, mgr *st
 			return nil, fmt.Errorf("save replayed state patches: %w", err)
 		}
 		runtime.MarkStatePatchesRecorded(&cp, recorded)
-		if err := runtime.WriteCheckpoint(checkpointPath, cp); err != nil {
+		if err := store.SaveCheckpoint(ctx, topology, runID, cp); err != nil {
 			return nil, fmt.Errorf("mark replayed state patches recorded: %w", err)
 		}
 	}
 	return report, nil
 }
 
-func reconcileCheckpointJournal(ctx context.Context, checkpointPath string, mgr *state.Manager, owner string) (*RecoverReport, error) {
-	journal, err := replayCheckpointJournal(ctx, checkpointPath, mgr, owner)
+func loadCheckpointFile(path string) (*runtime.OperationCheckpoint, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read checkpoint: %w", err)
+	}
+	var cp runtime.OperationCheckpoint
+	if err := json.Unmarshal(raw, &cp); err != nil {
+		return nil, fmt.Errorf("decode checkpoint: %w", err)
+	}
+	return &cp, nil
+}
+
+func reconcileCheckpointJournal(ctx context.Context, store apiStore, topology, runID string, mgr *state.Manager, owner string) (*RecoverReport, error) {
+	journal, err := replayCheckpointJournal(ctx, store, topology, runID, mgr, owner)
 	if err != nil {
 		return nil, err
 	}
-	recovered, err := recoverCheckpoint(ctx, checkpointPath, mgr, owner)
+	recovered, err := recoverCheckpoint(ctx, store, topology, runID, mgr, owner)
 	if err != nil {
 		return nil, err
 	}

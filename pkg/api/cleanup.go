@@ -2,9 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"os"
 
 	"github.com/oslab/sysbox/pkg/runtime"
 )
@@ -25,14 +22,10 @@ type CleanupAction struct {
 	Class      string `json:"-"`
 }
 
-func cleanupCheckpoint(ctx context.Context, checkpointPath string) (*CleanupReport, error) {
-	raw, err := os.ReadFile(checkpointPath)
+func cleanupCheckpoint(ctx context.Context, store apiStore, topology, runID string) (*CleanupReport, error) {
+	cp, err := store.LoadCheckpoint(ctx, topology, runID)
 	if err != nil {
-		return nil, fmt.Errorf("read checkpoint: %w", err)
-	}
-	var cp runtime.OperationCheckpoint
-	if err := json.Unmarshal(raw, &cp); err != nil {
-		return nil, fmt.Errorf("decode checkpoint: %w", err)
+		return nil, err
 	}
 
 	report := &CleanupReport{RunID: cp.RunID, Topology: cp.Topology}

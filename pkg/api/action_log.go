@@ -26,6 +26,10 @@ func loadRunActionLog(path string) (*RunActionLog, error) {
 	if err := json.Unmarshal(raw, &cp); err != nil {
 		return nil, fmt.Errorf("decode checkpoint: %w", err)
 	}
+	return runActionLogFromCheckpoint(cp), nil
+}
+
+func runActionLogFromCheckpoint(cp runtime.OperationCheckpoint) *RunActionLog {
 	return &RunActionLog{
 		RunID:     cp.RunID,
 		Topology:  cp.Topology,
@@ -33,5 +37,5 @@ func loadRunActionLog(path string) (*RunActionLog, error) {
 		Status:    cp.Status,
 		Plan:      cp.Plan,
 		Actions:   cp.Steps,
-	}, nil
+	}
 }

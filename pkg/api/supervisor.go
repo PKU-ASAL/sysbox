@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -128,27 +126,11 @@ func (s *Server) healthSnapshotFile(topology string) string {
 }
 
 func (s *Server) saveHealthSnapshot(topology string, snap HealthSnapshot) error {
-	path := s.healthSnapshotFile(topology)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(snap, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, raw, 0o644)
+	return s.apiStore.SaveHealth(context.Background(), topology, snap)
 }
 
 func (s *Server) loadHealthSnapshot(topology string) (*HealthSnapshot, error) {
-	raw, err := os.ReadFile(s.healthSnapshotFile(topology))
-	if err != nil {
-		return nil, fmt.Errorf("health snapshot not found")
-	}
-	var snap HealthSnapshot
-	if err := json.Unmarshal(raw, &snap); err != nil {
-		return nil, fmt.Errorf("decode health snapshot: %w", err)
-	}
-	return &snap, nil
+	return s.apiStore.LoadHealth(context.Background(), topology)
 }
 
 func supervisorPolicyFromEnv() SupervisorPolicy {

@@ -17,6 +17,7 @@ type Server struct {
 	runsDir       string
 	workspacesDir string
 	stateBackend  string
+	apiStore      apiStore
 	jobs          *Jobs
 	supervisor    *Supervisor
 	mux           *http.ServeMux
@@ -32,11 +33,14 @@ func NewServer(runsDir, workspacesDir string) *Server {
 	if runsDir == "" {
 		runsDir = config.DefaultRunsDir()
 	}
+	stateBackend := os.Getenv("SYSBOX_STATE_BACKEND")
+	apiStore := newAPIStore(runsDir, stateBackend)
 	s := &Server{
 		runsDir:       runsDir,
 		workspacesDir: workspacesDir,
-		stateBackend:  os.Getenv("SYSBOX_STATE_BACKEND"),
-		jobs:          newJobs(runsDir),
+		stateBackend:  stateBackend,
+		apiStore:      apiStore,
+		jobs:          newJobs(runsDir, apiStore),
 		mux:           http.NewServeMux(),
 	}
 	s.registerRoutes()

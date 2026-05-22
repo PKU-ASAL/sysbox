@@ -1,7 +1,7 @@
 package api
 
 import (
-	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,7 +22,7 @@ const (
 )
 
 // Run represents one async apply or destroy operation.
-// Fields are JSON-serialisable so they can be persisted to runs.jsonl.
+// Fields are JSON-serialisable so they can be persisted by the API store.
 type Run struct {
 	ID          string    `json:"id"`
 	Topology    string    `json:"topology"`
@@ -40,20 +40,23 @@ type Run struct {
 
 func (r *Run) LogWriter() *Broadcaster { return r.logs }
 
-// Jobs is a run store backed by in-memory map + per-topology JSONL files.
-// On startup it loads existing runs from disk; on finish it appends a record.
+// Jobs is a run store backed by in-memory map + the API persistence store.
 // Per-topology mutexes prevent concurrent apply/destroy on the same topology.
 type Jobs struct {
 	mu      sync.RWMutex
 	runs    map[string]*Run
 	runsDir string // root directory for runs, e.g. "runs"
+	store   apiStore
 
 	topologyMu    sync.Mutex
 	topologyLocks map[string]*sync.Mutex
 }
 
-func newJobs(runsDir string) *Jobs {
-	j := &Jobs{runs: make(map[string]*Run), runsDir: runsDir, topologyLocks: make(map[string]*sync.Mutex)}
+func newJobs(runsDir string, store apiStore) *Jobs {
+	if store == nil {
+		store = &localAPIStore{runsDir: runsDir}
+	}
+	j := &Jobs{runs: make(map[string]*Run), runsDir: runsDir, store: store, topologyLocks: make(map[string]*sync.Mutex)}
 	j.load()
 	return j
 }
@@ -73,34 +76,18 @@ func (j *Jobs) lockTopology(topology string) func() {
 	return mu.Unlock
 }
 
-// load scans runs/*/runs.jsonl and populates the in-memory store with
-// completed runs from previous server sessions.
+// load populates the in-memory store from persisted run records.
 func (j *Jobs) load() {
-	pattern := filepath.Join(j.runsDir, "*", "runs.jsonl")
-	files, _ := filepath.Glob(pattern)
-	for _, f := range files {
-		fh, err := os.Open(f)
-		if err != nil {
-			continue
-		}
-		sc := bufio.NewScanner(fh)
-		for sc.Scan() {
-			var r Run
-			if err := json.Unmarshal(sc.Bytes(), &r); err == nil {
-				if r.Status == RunRunning {
-					r.Status = RunFailed
-					r.Err = "server restarted before run completion"
-					r.Recoverable = true
-					if r.EndedAt.IsZero() {
-						r.EndedAt = time.Now().UTC()
-					}
-				}
-				r.logs = &Broadcaster{}
-				r.logs.Close()
-				j.runs[r.ID] = &r
-			}
-		}
-		fh.Close()
+	runs, err := j.store.LoadRuns(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[api] load runs: %v\n", err)
+		return
+	}
+	for _, r := range markInterruptedRuns(runs) {
+		run := r
+		run.logs = &Broadcaster{}
+		run.logs.Close()
+		j.runs[run.ID] = &run
 	}
 	j.loadCheckpoints()
 }
@@ -151,24 +138,16 @@ func (j *Jobs) loadCheckpoints() {
 	}
 }
 
-// persist appends a completed run record to runs/{topology}/runs.jsonl.
+// persist writes a run record through the configured API store.
 func (j *Jobs) persist(r *Run) {
-	dir := filepath.Join(j.runsDir, r.Topology)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "[api] persist run: mkdir %s: %v\n", dir, err)
-		return
+	if err := j.store.SaveRun(context.Background(), runRecord(*r)); err != nil {
+		fmt.Fprintf(os.Stderr, "[api] persist run: %v\n", err)
 	}
-	path := filepath.Join(dir, "runs.jsonl")
-	fh, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[api] persist run: open %s: %v\n", path, err)
-		return
-	}
-	defer fh.Close()
-	enc := json.NewEncoder(fh)
-	if err := enc.Encode(r); err != nil {
-		fmt.Fprintf(os.Stderr, "[api] persist run: encode: %v\n", err)
-	}
+}
+
+func runRecord(r Run) Run {
+	r.logs = nil
+	return r
 }
 
 func (j *Jobs) start(topology, op string) *Run {

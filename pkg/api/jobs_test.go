@@ -27,7 +27,7 @@ func TestJobsLoadCheckpointsMarksInterruptedRunRecoverable(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(cpDir, runID+".checkpoint.json"), data, 0o644))
 
-	jobs := newJobs(runsDir)
+	jobs := newJobs(runsDir, nil)
 	run, ok := jobs.get(runID)
 	require.True(t, ok)
 	require.Equal(t, "mixed", run.Topology)
@@ -58,7 +58,7 @@ func TestJobsLoadCheckpointsDoesNotOverridePersistedRun(t *testing.T) {
 	checkpoint := []byte(`{"run_id":"run-done","topology":"mixed","operation":"apply","status":"started"}`)
 	require.NoError(t, os.WriteFile(filepath.Join(runsDir, "mixed", "runs", runID+".checkpoint.json"), checkpoint, 0o644))
 
-	jobs := newJobs(runsDir)
+	jobs := newJobs(runsDir, nil)
 	run, ok := jobs.get(runID)
 	require.True(t, ok)
 	require.Equal(t, RunDone, run.Status)
@@ -67,10 +67,10 @@ func TestJobsLoadCheckpointsDoesNotOverridePersistedRun(t *testing.T) {
 
 func TestJobsPersistsStartedRunAndReloadsAsRecoverable(t *testing.T) {
 	runsDir := t.TempDir()
-	jobs := newJobs(runsDir)
+	jobs := newJobs(runsDir, nil)
 	run := jobs.start("mixed", "apply")
 
-	reloaded := newJobs(runsDir)
+	reloaded := newJobs(runsDir, nil)
 	got, ok := reloaded.get(run.ID)
 	require.True(t, ok)
 	require.Equal(t, RunFailed, got.Status)
