@@ -1,0 +1,10 @@
+services:
+  sysbox-api:
+    # Required for real Linux netns/veth/tap topologies. Keep this opt-in so
+    # the default API deployment can run as an ordinary containerized service.
+    privileged: true
+    network_mode: host
+    pid: host
+    ports: !reset []
+    environment:
+      SYSBOX_STATE_BACKEND: ${SYSBOX_STATE_BACKEND:-postgres://sysbox:sysbox@127.0.0.1:${SYSBOX_POSTGRES_PORT:-55432}/sysbox?sslmode=disable&topology={topology}}

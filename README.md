@@ -64,13 +64,16 @@ make plan TOPO=two-networks        # plan an example
 sudo -E make apply TOPO=two-networks
 sudo -E make destroy TOPO=two-networks
 
-make api-up                        # build image, seed workspaces, start API + Postgres
-make api-up-fc                     # same, with Firecracker compose override
+make api-up                        # API + Postgres, default service mode
+make api-up-netns                  # add host netns privileges for veth/tap labs
+make api-up-fc                     # add host netns + Firecracker mounts
+make api-up-libvirt                # add host netns + libvirt socket
+make api-up-full                   # host netns + Firecracker + libvirt
 make api-down
 make api-logs
 ```
 
-Compatibility aliases are kept for muscle memory: `make up`, `make down`, `make docker-up`, `make docker-down`, and `make docker-logs`.
+Compatibility aliases are kept for muscle memory: `make up`, `make down`, `make docker-up`, `make docker-up-fc`, `make docker-down`, and `make docker-logs`.
 
 ## CLI
 
@@ -111,7 +114,19 @@ curl http://127.0.0.1:9876/v1/topologies/two-networks/preflight
 curl -X POST http://127.0.0.1:9876/v1/topologies/two-networks/apply
 ```
 
-`make api-up` starts Docker + Postgres and auto-enables the Firecracker compose override when `SYSBOX_FIRECRACKER_BIN` is set or `firecracker` is found on the host. To require Firecracker mounts explicitly:
+Compose deployment modes are explicit:
+
+| Target | Use when | Extra host access |
+|---|---|---|
+| `make api-up` | API management, Postgres state, Docker socket access | Docker socket only |
+| `make api-up-netns` | Real Linux bridge/netns/veth/tap topologies | `privileged`, host network, host pid |
+| `make api-up-fc` | Firecracker/microVM topologies | netns mode, `/dev/kvm`, Firecracker binary |
+| `make api-up-libvirt` | libvirt/QEMU VM topologies | netns mode, `/var/run/libvirt` |
+| `make api-up-full` | mixed virtualization development | netns mode, Firecracker, libvirt |
+
+Default `make api-up` runs the API as a normal Compose service and connects to Postgres through Compose DNS (`sysbox-postgres:5432`). Netns/Firecracker/libvirt modes intentionally opt into host-level privileges; in host networking mode the API reaches Postgres through `127.0.0.1:${SYSBOX_POSTGRES_PORT:-55432}`.
+
+Firecracker is never auto-mounted. Set the binary path and choose the explicit Firecracker mode:
 
 ```bash
 export SYSBOX_FIRECRACKER_BIN=/home/jiandong/.local/bin/firecracker
@@ -154,7 +169,7 @@ sysbox supports local state and service backends. The service path now includes:
 - checkpoint-driven recover/cleanup for Docker, local networks, and microVM leftovers
 - snapshots where the backend supports them
 
-Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used. When `SYSBOX_STATE_BACKEND` is a Postgres URL, the API also stores runs/checkpoints/health in Postgres tables.
+Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used. When `SYSBOX_STATE_BACKEND` is a Postgres URL, the API also stores runs/checkpoints/health in Postgres tables. The default Compose URL uses the service name; the netns override switches to the host-published Postgres port because host networking cannot use Compose service DNS.
 
 ## Artifacts And Environment
 

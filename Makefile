@@ -16,14 +16,14 @@ SYSBOX := $(BINARY) --state $(STATE) -f $(HCL)
 .DEFAULT_GOAL := help
 .PHONY: help build build-all test test-e2e lint ci \
 	plan apply destroy up down \
-	api-build api-seed api-up api-up-fc api-down api-logs \
-	docker-build docker-seed docker-up docker-up-fc docker-down docker-logs \
+	api-build api-seed api-up api-up-netns api-up-fc api-up-libvirt api-up-full api-down api-logs \
+	docker-build docker-seed docker-up docker-up-netns docker-up-fc docker-up-libvirt docker-up-full docker-down docker-logs \
 	clean
 
 help: ## Show available targets
 	@echo "Usage: make <target> [TOPO=two-networks|three-nodes|microvm|mixed|libvirt-vm]"
 	@echo ""
-	@awk 'BEGIN{FS=":.*##"} /^[a-z][a-z0-9-]+:.*##/{printf "  %-14s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN{FS=":.*##"} /^[a-z][a-z0-9-]+:.*##/{printf "  %-18s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
 
 build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
@@ -79,19 +79,24 @@ api-seed: ## Seed data/workspaces from examples when missing
 		fi; \
 	done
 
-api-up: api-build api-seed ## Start API + Postgres; auto-mount Firecracker when available
-	@if [ -n "$${SYSBOX_FIRECRACKER_BIN:-}" ] || command -v firecracker >/dev/null 2>&1; then \
-		fc_bin="$${SYSBOX_FIRECRACKER_BIN:-$$(command -v firecracker)}"; \
-		echo "Firecracker detected: $$fc_bin"; \
-		SYSBOX_FIRECRACKER_BIN="$$fc_bin" docker compose -f docker-compose.yml -f docker-compose.firecracker.yml up -d; \
-	else \
-		echo "Firecracker not detected; starting Docker substrate only."; \
-		docker compose up -d; \
-	fi
+api-up: api-build api-seed ## Start API + Postgres in default service mode
+	docker compose up -d
 	@echo "API server: http://localhost:9876/v1/health"
 
-api-up-fc: api-build api-seed ## Start API + Postgres with explicit Firecracker mounts
-	docker compose -f docker-compose.yml -f docker-compose.firecracker.yml up -d
+api-up-netns: api-build api-seed ## Start API with host netns privileges for veth/tap topologies
+	docker compose -f docker-compose.yml -f docker-compose.netns.yml up -d
+	@echo "API server: http://localhost:9876/v1/health"
+
+api-up-fc: api-build api-seed ## Start API with host netns + Firecracker mounts
+	docker compose -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.firecracker.yml up -d
+	@echo "API server: http://localhost:9876/v1/health"
+
+api-up-libvirt: api-build api-seed ## Start API with host netns + libvirt socket
+	docker compose -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.libvirt.yml up -d
+	@echo "API server: http://localhost:9876/v1/health"
+
+api-up-full: api-build api-seed ## Start API with host netns + Firecracker + libvirt
+	docker compose -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.firecracker.yml -f docker-compose.libvirt.yml up -d
 	@echo "API server: http://localhost:9876/v1/health"
 
 api-down: ## Stop API + Postgres
@@ -103,7 +108,10 @@ api-logs: ## Tail API compose logs
 docker-build: api-build ## Alias for api-build
 docker-seed: api-seed ## Alias for api-seed
 docker-up: api-up ## Alias for api-up
+docker-up-netns: api-up-netns ## Alias for api-up-netns
 docker-up-fc: api-up-fc ## Alias for api-up-fc
+docker-up-libvirt: api-up-libvirt ## Alias for api-up-libvirt
+docker-up-full: api-up-full ## Alias for api-up-full
 docker-down: api-down ## Alias for api-down
 docker-logs: api-logs ## Alias for api-logs
 
