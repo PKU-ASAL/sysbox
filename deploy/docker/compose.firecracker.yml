@@ -4,6 +4,3 @@ services:
       # Firecracker substrate: KVM device plus explicit host-provided tools.
       - /dev/kvm:/dev/kvm
       - ${SYSBOX_FIRECRACKER_BIN:?set SYSBOX_FIRECRACKER_BIN to the host firecracker binary}:/opt/sysbox/bin/firecracker:ro
-    environment:
-      SYSBOX_FIRECRACKER_BIN: /opt/sysbox/bin/firecracker
-      SYSBOX_FIRECRACKER_WORKDIR: /var/lib/sysbox/firecracker

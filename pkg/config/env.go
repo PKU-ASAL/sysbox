@@ -1,10 +1,5 @@
 package config
 
-import (
-	"os"
-	"path/filepath"
-)
-
 const (
 	DefaultHomeDir  = "/var/lib/sysbox"
 	DefaultCacheDir = "/var/cache/sysbox"
@@ -13,29 +8,22 @@ const (
 // SysboxHome returns the service data root. API deployments should mount this
 // as persistent storage; CLI users can leave it unset and use explicit flags.
 func SysboxHome() string {
-	return envOr("SYSBOX_HOME", DefaultHomeDir)
+	return MustLoadServiceConfig("").Paths.Home
 }
 
 // SysboxCache returns the shared artifact cache root.
 func SysboxCache() string {
-	return envOr("SYSBOX_CACHE", DefaultCacheDir)
+	return MustLoadServiceConfig("").Paths.Cache
 }
 
 func DefaultWorkspacesDir() string {
-	return filepath.Join(SysboxHome(), "workspaces")
+	return MustLoadServiceConfig("").Paths.WorkspacesDir
 }
 
 func DefaultRunsDir() string {
-	return filepath.Join(SysboxHome(), "runs")
+	return MustLoadServiceConfig("").Paths.RunsDir
 }
 
 func FirecrackerWorkDir() string {
-	return filepath.Join(SysboxHome(), "firecracker")
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+	return MustLoadServiceConfig("").Providers.Firecracker.Workdir
 }

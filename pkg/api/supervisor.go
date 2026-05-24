@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -40,7 +39,7 @@ func newSupervisor(s *Server, interval time.Duration) *Supervisor {
 	return &Supervisor{
 		server:   s,
 		interval: interval,
-		policy:   supervisorPolicyFromEnv(),
+		policy:   supervisorPolicyFromConfig(s.cfg.Supervisor.Policy),
 		stop:     make(chan struct{}),
 	}
 }
@@ -133,8 +132,8 @@ func (s *Server) loadHealthSnapshot(topology string) (*HealthSnapshot, error) {
 	return s.apiStore.LoadHealth(context.Background(), topology)
 }
 
-func supervisorPolicyFromEnv() SupervisorPolicy {
-	switch os.Getenv("SYSBOX_SUPERVISOR_POLICY") {
+func supervisorPolicyFromConfig(raw string) SupervisorPolicy {
+	switch raw {
 	case string(SupervisorPolicyRestartOnCrash):
 		return SupervisorPolicyRestartOnCrash
 	default:

@@ -1,0 +1,24 @@
+api:
+  listen: ":9876"
+
+paths:
+  home: /var/lib/sysbox
+  cache: /var/cache/sysbox
+  workspaces_dir: /var/lib/sysbox/workspaces
+  runs_dir: /var/lib/sysbox/runs
+
+state:
+  backend: "postgres://sysbox:sysbox@sysbox-postgres:5432/sysbox?sslmode=disable&topology={topology}"
+
+supervisor:
+  policy: observe_only
+  interval: 30s
+
+providers:
+  firecracker:
+    binary: /opt/sysbox/bin/firecracker
+    workdir: /var/lib/sysbox/firecracker
+
+artifacts:
+  roots:
+    - /var/cache/sysbox

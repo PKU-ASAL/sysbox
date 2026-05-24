@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/config"
 	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
 
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -44,9 +45,10 @@ func New(kernelPath, rootfsDir string) *Substrate {
 		fcBin = p
 	}
 	// Check common locations.
+	cfg := config.MustLoadServiceConfig("")
 	for _, candidate := range []string{
-		os.Getenv("SYSBOX_FIRECRACKER_BIN"),
-		filepath.Join(os.Getenv("SYSBOX_CACHE"), "tools", "firecracker"),
+		cfg.Providers.Firecracker.Binary,
+		filepath.Join(cfg.Paths.Cache, "tools", "firecracker"),
 		filepath.Join(os.Getenv("HOME"), ".local/bin/firecracker"),
 		"/usr/local/bin/firecracker",
 	} {

@@ -247,13 +247,36 @@ CloudFormation-style control plane concepts:
 | Policy | Advisory policy object placeholder for pre-apply gates |
 | Snapshot | State backend snapshot/restore point |
 
-## Artifacts And Environment
+## Service Configuration
 
-Recommended configuration:
+API deployments load service defaults from `sysbox.yaml` and use environment
+variables only as deploy-time overrides. Docker Compose mounts
+`deploy/docker/sysbox.yaml` at `/etc/sysbox/sysbox.yaml`; set `SYSBOX_CONFIG`
+to point at another file.
+
+```yaml
+api:
+  listen: ":9876"
+paths:
+  home: /var/lib/sysbox
+  cache: /var/cache/sysbox
+state:
+  backend: "postgres://sysbox:sysbox@sysbox-postgres:5432/sysbox?sslmode=disable&topology={topology}"
+supervisor:
+  policy: observe_only
+  interval: 30s
+providers:
+  firecracker:
+    binary: /opt/sysbox/bin/firecracker
+    workdir: /var/lib/sysbox/firecracker
+```
+
+Recommended environment overrides:
 
 | Variable | Meaning |
 |---|---|
 | `SYSBOX_DEPLOYMENT` | Compose deployment profile: `service`, `netns`, `firecracker`, `libvirt`, or `full` |
+| `SYSBOX_CONFIG` | Service config file path, default `/etc/sysbox/sysbox.yaml` |
 | `SYSBOX_HOME` | Service data root, default `/var/lib/sysbox` |
 | `SYSBOX_CACHE` | Artifact/cache root, default `/var/cache/sysbox` |
 | `SYSBOX_DATA_DIR` | Host directory mounted to `SYSBOX_HOME`, default `.sysbox/api` |
@@ -271,6 +294,8 @@ Recommended configuration:
 | `SYSBOX_FIRECRACKER_WORKDIR` | Per-VM Firecracker work directory |
 
 Kernel/rootfs/qcow2 are topology artifacts, not service configuration. Prefer HCL `sysbox_kernel` and `sysbox_image` with `source`, `rootfs`, `qcow2`, and `sha256`. `SYSBOX_ROOTFS` remains a local example convenience variable, not an API deployment contract.
+
+## Artifacts
 
 ## HCL Resources
 

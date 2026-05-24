@@ -1,8 +1,9 @@
 # sysbox Deployment
 
-sysbox uses a 12-factor style deployment model:
+sysbox uses a layered deployment model:
 
-- `.env` describes deploy-time configuration for this host.
+- `sysbox.yaml` describes API service defaults.
+- `.env` describes deploy-time overrides for this host.
 - HCL describes topology intent.
 - Docker Compose files describe capability layers.
 - `make api-up` is the stable operational entrypoint.
@@ -35,6 +36,17 @@ make api-up
 `make api-config` prints the resolved Compose config, which is the best quick
 check before starting a privileged profile.
 
+## Service Config
+
+The API reads `/etc/sysbox/sysbox.yaml` by default. Docker Compose mounts
+`deploy/docker/sysbox.yaml` there. Use `SYSBOX_CONFIG` or `sysbox serve --config`
+to point at another file.
+
+Environment variables remain useful for 12-factor deployment wiring, but should
+not become the product model. Keep project/workspace intent in HCL and control
+plane objects; keep provider defaults, state backend, paths, and supervisor
+defaults in `sysbox.yaml`.
+
 ## Local Runtime Layout
 
 By default, generated local state lives under `.sysbox/`:
@@ -48,10 +60,10 @@ repository root.
 
 ## State Backend
 
-Leave `SYSBOX_STATE_BACKEND` empty for the normal Compose defaults:
+Leave `SYSBOX_STATE_BACKEND` empty for the normal Compose config:
 
-- `service`: `postgres://...@sysbox-postgres:5432/...`
-- host-network profiles: `postgres://...@127.0.0.1:${SYSBOX_POSTGRES_PORT}/...`
+- `service`: `deploy/docker/sysbox.yaml` uses `postgres://...@sysbox-postgres:5432/...`
+- host-network profiles: `compose.netns.yml` overrides it to `postgres://...@127.0.0.1:${SYSBOX_POSTGRES_PORT}/...`
 
 Set `SYSBOX_STATE_BACKEND` only when using an external backend.
 

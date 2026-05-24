@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/oslab/sysbox/pkg/config"
 )
 
 type PreflightCheck struct {
@@ -68,7 +70,7 @@ func ToolPreflightCheck(tool string, required bool) []PreflightCheck {
 
 func explicitToolPath(tool string) string {
 	if tool == "firecracker" {
-		if p := os.Getenv("SYSBOX_FIRECRACKER_BIN"); p != "" {
+		if p := config.MustLoadServiceConfig("").Providers.Firecracker.Binary; p != "" {
 			return p
 		}
 	}

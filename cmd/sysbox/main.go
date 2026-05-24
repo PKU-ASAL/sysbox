@@ -26,15 +26,13 @@ func main() {
 		substrate.Register(dockerSub)
 	}
 
+	cfg := config.MustLoadServiceConfig("")
 	// Kernel/rootfs paths can be overridden per-node in HCL; these are defaults.
-	kernelPath := os.Getenv("SYSBOX_FIRECRACKER_KERNEL")
+	kernelPath := cfg.Providers.Firecracker.Kernel
 	if kernelPath == "" {
 		kernelPath = "/tmp/vmlinux"
 	}
-	rootfsDir := os.Getenv("SYSBOX_FIRECRACKER_WORKDIR")
-	if rootfsDir == "" {
-		rootfsDir = config.FirecrackerWorkDir()
-	}
+	rootfsDir := cfg.Providers.Firecracker.Workdir
 	fcSub := fc.New(kernelPath, rootfsDir)
 	substrate.Register(fcSub)
 

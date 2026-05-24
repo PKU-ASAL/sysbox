@@ -1,8 +1,6 @@
 package commands
 
 import (
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/api"
@@ -13,6 +11,7 @@ var (
 	flagServeAddr          string
 	flagServeRunsDir       string
 	flagServeWorkspacesDir string
+	flagServeConfig        string
 )
 
 var serveCmd = &cobra.Command{
@@ -44,37 +43,33 @@ Node access:
   GET  /v1/topologies/{topology}/nodes/{node}
   POST /v1/topologies/{topology}/nodes/{node}/exec
 
-Environment overrides:
-  SYSBOX_API_LISTEN       listen address (default :9876)
-  SYSBOX_API_TOKEN        require Bearer token when non-empty
-  SYSBOX_HOME             service data root (default /var/lib/sysbox)
-  SYSBOX_CACHE            artifact cache root (default /var/cache/sysbox)
-  SYSBOX_WORKSPACES_DIR   override HCL dir
-  SYSBOX_RUNS_DIR         override local run/checkpoint dir
-  SYSBOX_STATE_BACKEND    backend URL, e.g. postgres://...?topology={topology}
-  SYSBOX_SUPERVISOR_POLICY    observe_only | restart_on_crash
-  SYSBOX_SUPERVISOR_INTERVAL  scan interval, default 30s
-  SYSBOX_FIRECRACKER_BIN      explicit firecracker binary path
-  SYSBOX_FIRECRACKER_KERNEL   default Firecracker kernel path
-  SYSBOX_FIRECRACKER_WORKDIR  per-VM Firecracker work directory`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		addr := envOr("SYSBOX_API_LISTEN", flagServeAddr)
-		runs := envOr("SYSBOX_RUNS_DIR", flagServeRunsDir)
-		workspaces := envOr("SYSBOX_WORKSPACES_DIR", flagServeWorkspacesDir)
-		srv := api.NewServer(runs, workspaces)
-		return srv.Start(addr)
-	},
-}
+Configuration:
+  sysbox serve --config /etc/sysbox/sysbox.yaml
 
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+Environment variables remain deployment overrides for API listen/token,
+state backend, mounted paths, supervisor policy, and provider binaries.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.LoadServiceConfig(flagServeConfig)
+		if err != nil {
+			return err
+		}
+		if cmd.Flags().Changed("addr") {
+			cfg.API.Listen = flagServeAddr
+		}
+		if cmd.Flags().Changed("runs") {
+			cfg.Paths.RunsDir = flagServeRunsDir
+		}
+		if cmd.Flags().Changed("workspaces") {
+			cfg.Paths.WorkspacesDir = flagServeWorkspacesDir
+		}
+		srv := api.NewServerWithConfig(cfg)
+		return srv.Start(cfg.API.Listen)
+	},
 }
 
 func init() {
 	serveCmd.Flags().StringVar(&flagServeAddr, "addr", ":9876", "listen address")
 	serveCmd.Flags().StringVar(&flagServeRunsDir, "runs", config.DefaultRunsDir(), "directory for local run/checkpoint files")
 	serveCmd.Flags().StringVar(&flagServeWorkspacesDir, "workspaces", config.DefaultWorkspacesDir(), "directory containing per-topology HCL workspaces")
+	serveCmd.Flags().StringVar(&flagServeConfig, "config", "", "path to sysbox service YAML config")
 }
