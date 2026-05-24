@@ -155,18 +155,36 @@ curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
 Important API endpoints:
 
 ```bash
+GET  /v1/projects
+GET  /v1/projects/default
+GET  /v1/projects/default/workspaces
+
 GET  /v1/topologies
 GET  /v1/topologies/{name}/plan
+POST /v1/topologies/{name}/plans
+GET  /v1/topologies/{name}/plans
+GET  /v1/topologies/{name}/plans/{plan_id}
+POST /v1/topologies/{name}/revisions
+GET  /v1/topologies/{name}/revisions
 GET  /v1/topologies/{name}/outputs
 GET  /v1/topologies/{name}/preflight
+GET  /v1/topologies/{name}/stack-state
+GET  /v1/topologies/{name}/lease
+GET  /v1/topologies/{name}/snapshots
 POST /v1/topologies/{name}/apply
 POST /v1/topologies/{name}/destroy
+
 GET  /v1/runs/{run_id}
 GET  /v1/runs/{run_id}/checkpoint
 GET  /v1/runs/{run_id}/actions
+GET  /v1/runs/{run_id}/events
 POST /v1/runs/{run_id}/resume
 POST /v1/runs/{run_id}/recover
 POST /v1/runs/{run_id}/cleanup
+
+GET  /v1/artifacts
+GET  /v1/policies
+POST /v1/policies
 ```
 
 `DELETE /v1/topologies/{name}` removes workspace/state metadata only when the topology is empty. If state still contains resources, it returns `409`; call `POST /destroy` first. `force=true` is intentionally explicit for metadata-only deletion while leaving external resources behind.
@@ -197,6 +215,25 @@ sysbox supports local state and service backends. The service path now includes:
 - snapshots where the backend supports them
 
 Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used. When `SYSBOX_STATE_BACKEND` is a Postgres URL, the API also stores runs/checkpoints/health in Postgres tables. Leave `SYSBOX_STATE_BACKEND` empty in `.env` to let compose choose the correct default for the selected deployment profile. The default Compose URL uses the service name; the netns override switches to the host-published Postgres port because host networking cannot use Compose service DNS.
+
+## Product Objects
+
+The API exposes product-level objects that map sysbox to Terraform Cloud /
+CloudFormation-style control plane concepts:
+
+| Object | Current sysbox representation |
+|---|---|
+| Project | `/v1/projects`, currently a default project namespace |
+| Workspace / Topology | HCL workspace under `.sysbox/api/workspaces` plus state backend entry |
+| Revision | SHA256-addressed HCL revision |
+| Plan | Stored plan record for a workspace revision |
+| Run | Async apply/destroy/recover operation |
+| Stack State | Current state plus backend metadata |
+| Event / Action | Checkpoint/action-log steps exposed as run events |
+| Artifact | Files in the sysbox artifact cache |
+| Lease | State lock/lease metadata |
+| Policy | Advisory policy object placeholder for pre-apply gates |
+| Snapshot | State backend snapshot/restore point |
 
 ## Artifacts And Environment
 

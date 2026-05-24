@@ -101,6 +101,12 @@ func (s *Server) registerRoutes() {
 
 	m.HandleFunc("GET /v1/health", s.handleHealth)
 	m.HandleFunc("GET /v1/capabilities", s.handleCapabilities)
+	m.HandleFunc("GET /v1/projects", s.handleListProjects)
+	m.HandleFunc("GET /v1/projects/{project}", s.handleGetProject)
+	m.HandleFunc("GET /v1/projects/{project}/workspaces", s.handleListProjectWorkspaces)
+	m.HandleFunc("GET /v1/artifacts", s.handleListArtifacts)
+	m.HandleFunc("GET /v1/policies", s.handleListPolicies)
+	m.HandleFunc("POST /v1/policies", s.handleCreatePolicy)
 
 	// Topologies
 	m.HandleFunc("GET /v1/topologies", s.handleListTopologies)
@@ -114,6 +120,15 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/topologies/{topology}/state/force-unlock", s.handleForceUnlockState)
 	m.HandleFunc("GET /v1/topologies/{topology}/state/snapshots", s.handleListStateSnapshots)
 	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots/{snapshot}/restore", s.handleRestoreStateSnapshot)
+	m.HandleFunc("GET /v1/topologies/{topology}/stack-state", s.handleGetStackState)
+	m.HandleFunc("GET /v1/topologies/{topology}/lease", s.handleGetWorkspaceLease)
+	m.HandleFunc("GET /v1/topologies/{topology}/snapshots", s.handleListWorkspaceSnapshots)
+	m.HandleFunc("GET /v1/topologies/{topology}/revisions", s.handleListRevisions)
+	m.HandleFunc("POST /v1/topologies/{topology}/revisions", s.handleCreateRevision)
+	m.HandleFunc("GET /v1/topologies/{topology}/revisions/{revision}", s.handleGetRevision)
+	m.HandleFunc("GET /v1/topologies/{topology}/plans", s.handleListPlans)
+	m.HandleFunc("POST /v1/topologies/{topology}/plans", s.handleCreatePlan)
+	m.HandleFunc("GET /v1/topologies/{topology}/plans/{plan}", s.handleGetStoredPlan)
 	m.HandleFunc("GET /v1/topologies/{topology}/outputs", s.handleGetOutputs)
 	m.HandleFunc("GET /v1/topologies/{topology}/health", s.handleGetTopologyHealth)
 	m.HandleFunc("GET /v1/topologies/{topology}/plan", s.handleGetPlan)
@@ -131,6 +146,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/runs/{id}/cleanup", s.handleCleanupRun)
 	m.HandleFunc("GET /v1/runs/{id}/checkpoint", s.handleGetRunCheckpoint)
 	m.HandleFunc("GET /v1/runs/{id}/actions", s.handleGetRunActions)
+	m.HandleFunc("GET /v1/runs/{id}/events", s.handleListRunEvents)
 	m.HandleFunc("GET /v1/runs/{id}/logs", s.handleRunLogs)
 
 	// Nodes
