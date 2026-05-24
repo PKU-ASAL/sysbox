@@ -197,7 +197,7 @@ curl -X POST http://127.0.0.1:9876/v1/topologies/two-networks/apply \
   -d "{\"plan_id\":\"${PLAN_ID}\"}"
 ```
 
-Runs keep the linked `revision` and `plan_id`, so `/v1/runs/{run_id}/events` remains explainable after an API restart.
+When `plan_id` is supplied, apply executes the stored plan actions instead of recomputing a new diff. The plan records the state serial it was created against; if state changed meanwhile, apply rejects it as stale. Runs keep the linked `revision` and `plan_id`, so `/v1/runs/{run_id}/events` remains explainable after an API restart.
 
 `DELETE /v1/topologies/{name}` removes workspace/state metadata only when the topology is empty. If state still contains resources, it returns `409`; call `POST /destroy` first. `force=true` is intentionally explicit for metadata-only deletion while leaving external resources behind.
 

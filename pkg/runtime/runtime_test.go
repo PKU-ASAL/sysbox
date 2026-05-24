@@ -225,6 +225,25 @@ func TestPlanHasChangesUsesActions(t *testing.T) {
 	require.True(t, p.HasChanges())
 }
 
+func TestPlanFromActionsRebuildsExecutableIndexes(t *testing.T) {
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(state.Resource{Type: "sysbox_node", Name: "old", Provider: "docker", Instance: map[string]any{}})
+
+	p := PlanFromActions([]PlanAction{
+		{Resource: "sysbox_network.dmz", Type: "sysbox_network", Name: "dmz", Action: PlanActionCreate},
+		{Resource: "sysbox_node.web", Type: "sysbox_node", Name: "web", Action: PlanActionReplace},
+		{Resource: "sysbox_node.old", Type: "sysbox_node", Name: "old", Action: PlanActionDelete},
+		{Resource: "sysbox_kernel.linux", Type: "sysbox_kernel", Name: "linux", Action: PlanActionNoop},
+	}, st)
+
+	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, p.Add)
+	require.Equal(t, []graph.NodeID{{Type: "sysbox_node", Name: "web"}}, p.Change)
+	require.Len(t, p.Destroy, 1)
+	require.Equal(t, "old", p.Destroy[0].Name)
+	require.Equal(t, []graph.NodeID{{Type: "sysbox_kernel", Name: "linux"}}, p.Unchanged)
+	require.True(t, p.HasChanges())
+}
+
 func TestRefreshUsesProviderReadForDrift(t *testing.T) {
 	g := graph.New()
 	g.AddNode("sysbox_kernel", "linux", nil)

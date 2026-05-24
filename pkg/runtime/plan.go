@@ -222,6 +222,39 @@ func (p *Plan) addAction(id graph.NodeID, action PlanActionType, reason string, 
 	})
 }
 
+// PlanFromActions rebuilds the executable legacy plan indexes from structured
+// actions. It lets API-stored plans become the execution input without
+// recomputing a fresh diff.
+func PlanFromActions(actions []PlanAction, current *state.State) *Plan {
+	p := &Plan{Actions: append([]PlanAction(nil), actions...)}
+	for _, action := range p.Actions {
+		id := action.NodeID()
+		switch action.Action {
+		case PlanActionCreate, PlanActionRead:
+			p.Add = append(p.Add, id)
+		case PlanActionUpdate, PlanActionReplace:
+			p.Change = append(p.Change, id)
+		case PlanActionDelete:
+			if current != nil {
+				if r := current.FindResource(action.Type, action.Name); r != nil {
+					p.Destroy = append(p.Destroy, *r)
+					continue
+				}
+			}
+			p.Destroy = append(p.Destroy, state.Resource{Type: action.Type, Name: action.Name})
+		case PlanActionSkip:
+			if current != nil {
+				if r := current.FindResource(action.Type, action.Name); r != nil {
+					p.Protected = append(p.Protected, *r)
+				}
+			}
+		default:
+			p.Unchanged = append(p.Unchanged, id)
+		}
+	}
+	return p
+}
+
 func (p *Plan) setAction(id graph.NodeID, action PlanActionType, reason string, changes map[string]FieldChange) {
 	for i := range p.Actions {
 		if p.Actions[i].Type == id.Type && p.Actions[i].Name == id.Name {

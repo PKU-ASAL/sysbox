@@ -326,7 +326,12 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.PlanID != "" {
-		plan, err := s.validateStoredPlanForApply(r.Context(), topology, req.PlanID)
+		currentSerial, err := s.currentStateSerial(r.Context(), topology)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		plan, err := s.validateStoredPlanForApply(r.Context(), topology, req.PlanID, currentSerial)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
@@ -370,6 +375,18 @@ func decodeApplyRequest(r *http.Request) (applyRequest, error) {
 	return req, nil
 }
 
+func (s *Server) currentStateSerial(ctx context.Context, topology string) (int64, error) {
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		return 0, err
+	}
+	meta, err := mgr.Metadata(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return meta.Serial, nil
+}
+
 func (s *Server) runApply(topology string, run *Run) {
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()
@@ -395,10 +412,21 @@ func (s *Server) runApply(topology string, run *Run) {
 		s.jobs.finish(run, err)
 		return
 	}
-	plan, err := runtime.ComputePlan(g, st)
-	if err != nil {
-		s.jobs.finish(run, err)
-		return
+	meta, _ := mgr.Metadata(context.Background())
+	var plan *runtime.Plan
+	if run.PlanID != "" {
+		stored, err := s.validateStoredPlanForApply(context.Background(), topology, run.PlanID, meta.Serial)
+		if err != nil {
+			s.jobs.finish(run, err)
+			return
+		}
+		plan = runtime.PlanFromActions(stored.Actions, st)
+	} else {
+		plan, err = runtime.ComputePlan(g, st)
+		if err != nil {
+			s.jobs.finish(run, err)
+			return
+		}
 	}
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(topology, run.ID)
@@ -410,7 +438,9 @@ func (s *Server) runApply(topology string, run *Run) {
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
 	exec.SetStatePatchSink(&statePatchSink{mgr: mgr, state: st, owner: run.LeaseOwner})
-	exec.Refresh(context.Background(), plan)
+	if run.PlanID == "" {
+		exec.Refresh(context.Background(), plan)
+	}
 	if !plan.HasChanges() {
 		_, _ = run.logs.Write([]byte("No changes. Apply is a no-op.\n"))
 		s.jobs.finish(run, nil)

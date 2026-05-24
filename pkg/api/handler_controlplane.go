@@ -333,6 +333,7 @@ func (s *Server) computeStoredPlan(ctx context.Context, topology string) (contro
 	if err != nil {
 		return controlplane.Plan{}, err
 	}
+	meta, _ := mgr.Metadata(ctx)
 	plan, err := runtime.ComputePlan(g, st)
 	if err != nil {
 		return controlplane.Plan{}, err
@@ -345,18 +346,19 @@ func (s *Server) computeStoredPlan(ctx context.Context, topology string) (contro
 		_ = s.apiStore.SaveRevision(ctx, rev)
 	}
 	return controlplane.Plan{
-		ID:        uuid.NewString(),
-		ProjectID: controlplane.DefaultProjectID,
-		Workspace: topology,
-		Revision:  revID,
-		Status:    "planned",
-		Summary:   plan.Summary(),
-		Actions:   plan.Actions,
-		CreatedAt: time.Now().UTC(),
+		ID:          uuid.NewString(),
+		ProjectID:   controlplane.DefaultProjectID,
+		Workspace:   topology,
+		Revision:    revID,
+		StateSerial: meta.Serial,
+		Status:      "planned",
+		Summary:     plan.Summary(),
+		Actions:     plan.Actions,
+		CreatedAt:   time.Now().UTC(),
 	}, nil
 }
 
-func (s *Server) validateStoredPlanForApply(ctx context.Context, topology, planID string) (*controlplane.Plan, error) {
+func (s *Server) validateStoredPlanForApply(ctx context.Context, topology, planID string, currentSerial int64) (*controlplane.Plan, error) {
 	plan, err := s.apiStore.GetPlan(ctx, topology, planID)
 	if err != nil {
 		return nil, err
@@ -370,6 +372,12 @@ func (s *Server) validateStoredPlanForApply(ctx context.Context, topology, planI
 	}
 	if plan.Status != "" && plan.Status != "planned" {
 		return nil, fmt.Errorf("plan %s status is %s", plan.ID, plan.Status)
+	}
+	if plan.StateSerial != currentSerial {
+		return nil, fmt.Errorf("plan state serial %d is stale; current serial is %d", plan.StateSerial, currentSerial)
+	}
+	if len(plan.Actions) == 0 {
+		return nil, fmt.Errorf("plan %s has no actions", plan.ID)
 	}
 	return plan, nil
 }
