@@ -18,6 +18,7 @@ import (
 
 type apiStore interface {
 	LoadRuns(ctx context.Context) ([]Run, error)
+	GetRun(ctx context.Context, id string) (*Run, error)
 	SaveRun(ctx context.Context, run Run) error
 	SaveCheckpoint(ctx context.Context, topology, runID string, checkpoint runtime.OperationCheckpoint) error
 	LoadCheckpoint(ctx context.Context, topology, runID string) (*runtime.OperationCheckpoint, error)
@@ -65,7 +66,22 @@ func (s *localAPIStore) LoadRuns(_ context.Context) ([]Run, error) {
 	return out, nil
 }
 
+func (s *localAPIStore) GetRun(ctx context.Context, id string) (*Run, error) {
+	runs, err := s.LoadRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range runs {
+		if runs[i].ID == id {
+			normalizeRunProductFields(&runs[i])
+			return &runs[i], nil
+		}
+	}
+	return nil, fmt.Errorf("run not found")
+}
+
 func (s *localAPIStore) SaveRun(_ context.Context, run Run) error {
+	normalizeRunProductFields(&run)
 	dir := filepath.Join(s.runsDir, run.Topology)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -287,12 +303,36 @@ func (s *postgresAPIStore) LoadRuns(ctx context.Context) ([]Run, error) {
 		if err := json.Unmarshal(raw, &run); err != nil {
 			return nil, fmt.Errorf("decode run: %w", err)
 		}
+		normalizeRunProductFields(&run)
 		out = append(out, run)
 	}
 	return out, rows.Err()
 }
 
+func (s *postgresAPIStore) GetRun(ctx context.Context, id string) (*Run, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	var raw []byte
+	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_runs WHERE id=$1`, id).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, fmt.Errorf("run not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres get run: %w", err)
+	}
+	var run Run
+	if err := json.Unmarshal(raw, &run); err != nil {
+		return nil, fmt.Errorf("decode run: %w", err)
+	}
+	normalizeRunProductFields(&run)
+	return &run, nil
+}
+
 func (s *postgresAPIStore) SaveRun(ctx context.Context, run Run) error {
+	normalizeRunProductFields(&run)
 	conn, err := s.connect(ctx)
 	if err != nil {
 		return err

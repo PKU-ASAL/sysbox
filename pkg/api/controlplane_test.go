@@ -53,6 +53,48 @@ func TestControlPlaneObjects(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
+func TestApplyCanReferenceStoredPlan(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+
+	hcl := `resource "sysbox_network" "lab" {
+  cidr = "10.77.0.0/24"
+}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/topologies", bytes.NewBufferString(hcl))
+	req.Header.Set("Content-Type", "text/plain")
+	q := req.URL.Query()
+	q.Set("name", "lab")
+	req.URL.RawQuery = q.Encode()
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/plans", nil))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var plan struct {
+		ID       string `json:"id"`
+		Revision string `json:"revision"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &plan))
+	require.NotEmpty(t, plan.ID)
+	require.NotEmpty(t, plan.Revision)
+
+	body := bytes.NewBufferString(`{"plan_id":"` + plan.ID + `"}`)
+	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/apply", body))
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	var started struct {
+		RunID string `json:"run_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &started))
+	require.NotEmpty(t, started.RunID)
+
+	run, ok := s.jobs.get(started.RunID)
+	require.True(t, ok)
+	require.Equal(t, plan.ID, run.PlanID)
+	require.Equal(t, plan.Revision, run.Revision)
+}
+
 func TestPolicyObjects(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 

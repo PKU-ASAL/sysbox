@@ -215,9 +215,9 @@ func (s *Server) handleListRunEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, ok := s.jobs.get(id)
-	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
+	run, err := s.getRunRecord(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
 		return
 	}
 	cp, err := s.apiStore.LoadCheckpoint(r.Context(), run.Topology, run.ID)
@@ -239,6 +239,14 @@ func (s *Server) handleListRunEvents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
+func (s *Server) getRunRecord(ctx context.Context, id string) (*Run, error) {
+	if run, ok := s.jobs.get(id); ok {
+		normalizeRunProductFields(run)
+		return run, nil
+	}
+	return s.apiStore.GetRun(ctx, id)
 }
 
 func (s *Server) handleListArtifacts(w http.ResponseWriter, _ *http.Request) {
@@ -346,6 +354,24 @@ func (s *Server) computeStoredPlan(ctx context.Context, topology string) (contro
 		Actions:   plan.Actions,
 		CreatedAt: time.Now().UTC(),
 	}, nil
+}
+
+func (s *Server) validateStoredPlanForApply(ctx context.Context, topology, planID string) (*controlplane.Plan, error) {
+	plan, err := s.apiStore.GetPlan(ctx, topology, planID)
+	if err != nil {
+		return nil, err
+	}
+	current, err := s.computeStoredPlan(ctx, topology)
+	if err != nil {
+		return nil, err
+	}
+	if plan.Revision != "" && current.Revision != "" && plan.Revision != current.Revision {
+		return nil, fmt.Errorf("plan revision %s is stale; current revision is %s", plan.Revision, current.Revision)
+	}
+	if plan.Status != "" && plan.Status != "planned" {
+		return nil, fmt.Errorf("plan %s status is %s", plan.ID, plan.Status)
+	}
+	return plan, nil
 }
 
 func (s *Server) listSnapshots(ctx context.Context, topology string) ([]state.Snapshot, error) {

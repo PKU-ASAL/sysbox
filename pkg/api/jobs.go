@@ -25,11 +25,15 @@ const (
 // Fields are JSON-serialisable so they can be persisted by the API store.
 type Run struct {
 	ID          string    `json:"id"`
+	ProjectID   string    `json:"project_id,omitempty"`
+	Workspace   string    `json:"workspace,omitempty"`
 	Topology    string    `json:"topology"`
 	Op          string    `json:"op"` // "apply" | "destroy"
 	Status      RunStatus `json:"status"`
 	Err         string    `json:"error,omitempty"`
 	ParentID    string    `json:"parent_id,omitempty"`
+	Revision    string    `json:"revision,omitempty"`
+	PlanID      string    `json:"plan_id,omitempty"`
 	Recoverable bool      `json:"recoverable,omitempty"`
 	LeaseOwner  string    `json:"lease_owner,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
@@ -50,6 +54,12 @@ type Jobs struct {
 
 	topologyMu    sync.Mutex
 	topologyLocks map[string]*sync.Mutex
+}
+
+type runStartOptions struct {
+	ParentID string
+	Revision string
+	PlanID   string
 }
 
 func newJobs(runsDir string, store apiStore) *Jobs {
@@ -85,6 +95,7 @@ func (j *Jobs) load() {
 	}
 	for _, r := range markInterruptedRuns(runs) {
 		run := r
+		normalizeRunProductFields(&run)
 		run.logs = &Broadcaster{}
 		run.logs.Close()
 		j.runs[run.ID] = &run
@@ -124,6 +135,8 @@ func (j *Jobs) loadCheckpoints() {
 		}
 		r := &Run{
 			ID:          cp.RunID,
+			ProjectID:   "default",
+			Workspace:   cp.Topology,
 			Topology:    cp.Topology,
 			Op:          cp.Operation,
 			Status:      status,
@@ -146,16 +159,38 @@ func (j *Jobs) persist(r *Run) {
 }
 
 func runRecord(r Run) Run {
+	normalizeRunProductFields(&r)
 	r.logs = nil
 	return r
 }
 
+func normalizeRunProductFields(r *Run) {
+	if r == nil {
+		return
+	}
+	if r.ProjectID == "" {
+		r.ProjectID = "default"
+	}
+	if r.Workspace == "" {
+		r.Workspace = r.Topology
+	}
+}
+
 func (j *Jobs) start(topology, op string) *Run {
+	return j.startWithOptions(topology, op, runStartOptions{})
+}
+
+func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *Run {
 	r := &Run{
 		ID:         uuid.New().String(),
+		ProjectID:  "default",
+		Workspace:  topology,
 		Topology:   topology,
 		Op:         op,
 		Status:     RunRunning,
+		ParentID:   opts.ParentID,
+		Revision:   opts.Revision,
+		PlanID:     opts.PlanID,
 		LeaseOwner: "sysbox-api",
 		StartedAt:  time.Now(),
 		logs:       &Broadcaster{},
@@ -180,9 +215,11 @@ func (j *Jobs) hasRunning(topology string) bool {
 }
 
 func (j *Jobs) startChild(parent *Run) *Run {
-	r := j.start(parent.Topology, parent.Op)
-	r.ParentID = parent.ID
-	return r
+	return j.startWithOptions(parent.Topology, parent.Op, runStartOptions{
+		ParentID: parent.ID,
+		Revision: parent.Revision,
+		PlanID:   parent.PlanID,
+	})
 }
 
 func (j *Jobs) finish(r *Run, err error) {

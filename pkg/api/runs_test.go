@@ -92,6 +92,49 @@ func TestGetRunActions(t *testing.T) {
 	require.Equal(t, "sysbox_node.vm", body.Actions[0].Resource)
 }
 
+func TestRunEventsLoadFromPersistedRunAfterServerRestart(t *testing.T) {
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	run := Run{
+		ID:        "run-events",
+		ProjectID: "default",
+		Workspace: "mixed",
+		Topology:  "mixed",
+		Op:        "apply",
+		Status:    RunDone,
+		StartedAt: time.Now().UTC(),
+		EndedAt:   time.Now().UTC(),
+	}
+	writeRunRecord(t, runs, run)
+	cp := runtime.OperationCheckpoint{
+		RunID:     run.ID,
+		Topology:  run.Topology,
+		Operation: run.Op,
+		Status:    runtime.OperationDone,
+		Steps: []runtime.OperationStep{{
+			Index:     0,
+			Resource:  "sysbox_node.vm",
+			Action:    runtime.PlanActionCreate,
+			Kind:      "resource",
+			Status:    runtime.OperationDone,
+			StartedAt: time.Now().UTC(),
+		}},
+	}
+	raw, err := json.Marshal(cp)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(runs, run.Topology, "runs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(runs, run.Topology, "runs", run.ID+".checkpoint.json"), raw, 0o644))
+
+	s := NewServer(runs, filepath.Join(dir, "workspaces"))
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs/run-events/events", nil)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"workspace":"mixed"`)
+	require.Contains(t, rec.Body.String(), `"resource":"sysbox_node.vm"`)
+}
+
 func writeRunRecord(t *testing.T, runsDir string, run Run) {
 	t.Helper()
 	dir := filepath.Join(runsDir, run.Topology)

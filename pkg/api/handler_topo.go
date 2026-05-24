@@ -320,9 +320,54 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run := s.jobs.start(topology, "apply")
+	req, err := decodeApplyRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.PlanID != "" {
+		plan, err := s.validateStoredPlanForApply(r.Context(), topology, req.PlanID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		req.Revision = plan.Revision
+	}
+	run := s.jobs.startWithOptions(topology, "apply", runStartOptions{
+		Revision: req.Revision,
+		PlanID:   req.PlanID,
+	})
 	go s.runApply(topology, run)
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID})
+}
+
+type applyRequest struct {
+	PlanID   string `json:"plan_id"`
+	Revision string `json:"revision,omitempty"`
+}
+
+func decodeApplyRequest(r *http.Request) (applyRequest, error) {
+	if r.Body == nil || r.ContentLength == 0 {
+		return applyRequest{}, nil
+	}
+	defer r.Body.Close()
+	var req applyRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		return applyRequest{}, fmt.Errorf("decode apply request: %w", err)
+	}
+	if req.PlanID != "" {
+		if err := validatePathSegment(req.PlanID, "plan_id"); err != nil {
+			return applyRequest{}, err
+		}
+	}
+	if req.Revision != "" {
+		if err := validatePathSegment(req.Revision, "revision"); err != nil {
+			return applyRequest{}, err
+		}
+	}
+	return req, nil
 }
 
 func (s *Server) runApply(topology string, run *Run) {

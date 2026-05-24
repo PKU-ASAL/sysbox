@@ -187,6 +187,18 @@ GET  /v1/policies
 POST /v1/policies
 ```
 
+Product-level apply flow:
+
+```bash
+curl -X POST http://127.0.0.1:9876/v1/topologies/two-networks/revisions
+PLAN_ID=$(curl -s -X POST http://127.0.0.1:9876/v1/topologies/two-networks/plans | jq -r .id)
+curl -X POST http://127.0.0.1:9876/v1/topologies/two-networks/apply \
+  -H 'Content-Type: application/json' \
+  -d "{\"plan_id\":\"${PLAN_ID}\"}"
+```
+
+Runs keep the linked `revision` and `plan_id`, so `/v1/runs/{run_id}/events` remains explainable after an API restart.
+
 `DELETE /v1/topologies/{name}` removes workspace/state metadata only when the topology is empty. If state still contains resources, it returns `409`; call `POST /destroy` first. `force=true` is intentionally explicit for metadata-only deletion while leaving external resources behind.
 
 ## Runtime Layout
