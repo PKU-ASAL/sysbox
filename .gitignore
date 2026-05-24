@@ -1,6 +1,7 @@
 # binaries
 /bin/
 /sysbox
+/sysbox-init
 *.test
 
 # state / runs
@@ -15,6 +16,9 @@ state.json.tmp
 # IDE
 .vscode/
 .idea/
+.claude/
+.agents/
+.codex/
 
 # Environment / secrets
 .env

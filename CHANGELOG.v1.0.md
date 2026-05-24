@@ -1,9 +1,6 @@
 # sysbox v1.0 — Breaking Changes
 
 > sysbox v1.0 是一次系统性收口升级，**不向后兼容** v0.x。本文件汇总所有破坏点 + 用户迁移操作。
->
-> 设计依据：[`docs/architecture-review-multi-substrate.md`](docs/architecture-review-multi-substrate.md)
-> 执行计划：[`docs/refactor-plan-multi-substrate.md`](docs/refactor-plan-multi-substrate.md)
 
 ---
 
