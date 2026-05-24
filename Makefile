@@ -2,26 +2,39 @@ GO ?= $(shell command -v go 2>/dev/null || echo /usr/local/go/bin/go)
 GOCACHE ?= /tmp/sysbox-gocache
 GOENV := GOCACHE=$(GOCACHE)
 
+ifneq (,$(wildcard .env))
+include .env
+endif
+
 BINARY := bin/sysbox
 INITDIR := pkg/provider/firecracker/initbin
 ARCH := $(shell $(GO) env GOARCH)
 
 TOPO ?= two-networks
 API_ADDR ?= :9876
+SYSBOX_DEPLOYMENT ?= service
 
 HCL := examples/$(TOPO)/field.sysbox.hcl
 STATE := runs/$(TOPO)/state.json
 SYSBOX := $(BINARY) --state $(STATE) -f $(HCL)
 
+COMPOSE_FILES_service := -f docker-compose.yml
+COMPOSE_FILES_netns := -f docker-compose.yml -f docker-compose.netns.yml
+COMPOSE_FILES_firecracker := -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.firecracker.yml
+COMPOSE_FILES_libvirt := -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.libvirt.yml
+COMPOSE_FILES_full := -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.firecracker.yml -f docker-compose.libvirt.yml
+COMPOSE_FILES = $(COMPOSE_FILES_$(SYSBOX_DEPLOYMENT))
+
 .DEFAULT_GOAL := help
 .PHONY: help build build-all test test-e2e lint ci \
 	plan apply destroy up down \
-	api-build api-seed api-up api-up-netns api-up-fc api-up-libvirt api-up-full api-down api-logs \
-	docker-build docker-seed docker-up docker-up-netns docker-up-fc docker-up-libvirt docker-up-full docker-down docker-logs \
+	api-build api-seed api-config api-up api-up-netns api-up-fc api-up-libvirt api-up-full api-down api-logs \
+	docker-build docker-seed docker-config docker-up docker-up-netns docker-up-fc docker-up-libvirt docker-up-full docker-down docker-logs \
 	clean
 
 help: ## Show available targets
 	@echo "Usage: make <target> [TOPO=two-networks|three-nodes|microvm|mixed|libvirt-vm]"
+	@echo "       make api-up [SYSBOX_DEPLOYMENT=service|netns|firecracker|libvirt|full]"
 	@echo ""
 	@awk 'BEGIN{FS=":.*##"} /^[a-z][a-z0-9-]+:.*##/{printf "  %-18s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
 
@@ -79,41 +92,46 @@ api-seed: ## Seed data/workspaces from examples when missing
 		fi; \
 	done
 
-api-up: api-build api-seed ## Start API + Postgres in default service mode
-	docker compose up -d
+api-config: ## Print resolved Docker Compose config for SYSBOX_DEPLOYMENT
+	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
+	docker compose $(COMPOSE_FILES) config
+
+api-up: api-build api-seed ## Start API + Postgres using SYSBOX_DEPLOYMENT
+	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
+	@echo "Deployment: $(SYSBOX_DEPLOYMENT)"
+	docker compose $(COMPOSE_FILES) up -d
 	@echo "API server: http://localhost:9876/v1/health"
 
-api-up-netns: api-build api-seed ## Start API with host netns privileges for veth/tap topologies
-	docker compose -f docker-compose.yml -f docker-compose.netns.yml up -d
-	@echo "API server: http://localhost:9876/v1/health"
+api-up-netns: SYSBOX_DEPLOYMENT=netns
+api-up-netns: api-up
 
-api-up-fc: api-build api-seed ## Start API with host netns + Firecracker mounts
-	docker compose -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.firecracker.yml up -d
-	@echo "API server: http://localhost:9876/v1/health"
+api-up-fc: SYSBOX_DEPLOYMENT=firecracker
+api-up-fc: api-up
 
-api-up-libvirt: api-build api-seed ## Start API with host netns + libvirt socket
-	docker compose -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.libvirt.yml up -d
-	@echo "API server: http://localhost:9876/v1/health"
+api-up-libvirt: SYSBOX_DEPLOYMENT=libvirt
+api-up-libvirt: api-up
 
-api-up-full: api-build api-seed ## Start API with host netns + Firecracker + libvirt
-	docker compose -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.firecracker.yml -f docker-compose.libvirt.yml up -d
-	@echo "API server: http://localhost:9876/v1/health"
+api-up-full: SYSBOX_DEPLOYMENT=full
+api-up-full: api-up
 
 api-down: ## Stop API + Postgres
-	docker compose down
+	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
+	docker compose $(COMPOSE_FILES) down
 
 api-logs: ## Tail API compose logs
-	docker compose logs -f
+	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
+	docker compose $(COMPOSE_FILES) logs -f
 
-docker-build: api-build ## Alias for api-build
-docker-seed: api-seed ## Alias for api-seed
-docker-up: api-up ## Alias for api-up
-docker-up-netns: api-up-netns ## Alias for api-up-netns
-docker-up-fc: api-up-fc ## Alias for api-up-fc
-docker-up-libvirt: api-up-libvirt ## Alias for api-up-libvirt
-docker-up-full: api-up-full ## Alias for api-up-full
-docker-down: api-down ## Alias for api-down
-docker-logs: api-logs ## Alias for api-logs
+docker-build: api-build
+docker-seed: api-seed
+docker-config: api-config
+docker-up: api-up
+docker-up-netns: api-up-netns
+docker-up-fc: api-up-fc
+docker-up-libvirt: api-up-libvirt
+docker-up-full: api-up-full
+docker-down: api-down
+docker-logs: api-logs
 
 clean: ## Remove build outputs
 	rm -f $(BINARY)

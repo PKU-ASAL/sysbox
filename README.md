@@ -64,11 +64,9 @@ make plan TOPO=two-networks        # plan an example
 sudo -E make apply TOPO=two-networks
 sudo -E make destroy TOPO=two-networks
 
-make api-up                        # API + Postgres, default service mode
-make api-up-netns                  # add host netns privileges for veth/tap labs
-make api-up-fc                     # add host netns + Firecracker mounts
-make api-up-libvirt                # add host netns + libvirt socket
-make api-up-full                   # host netns + Firecracker + libvirt
+cp .env.example .env               # one local 12-factor config file
+make api-up                        # API + Postgres using SYSBOX_DEPLOYMENT
+make api-config                    # inspect resolved compose config
 make api-down
 make api-logs
 ```
@@ -106,7 +104,10 @@ bin/sysbox --state runs/two-networks/state.json state get sysbox_node.node_a.pri
 
 The API server is the service-mode control plane. It uses API-owned workspaces under `data/workspaces`. Compose defaults to Postgres for state, run records, checkpoints/action logs, and health snapshots, so API state does not have to live beside local CLI state files. The local `data/` mount still holds workspaces and acts as the fallback store when no Postgres backend is configured.
 
+For the full deployment model, see [docs/deployment.md](docs/deployment.md).
+
 ```bash
+cp .env.example .env
 make api-up
 curl http://127.0.0.1:9876/v1/health
 curl http://127.0.0.1:9876/v1/topologies
@@ -114,23 +115,37 @@ curl http://127.0.0.1:9876/v1/topologies/two-networks/preflight
 curl -X POST http://127.0.0.1:9876/v1/topologies/two-networks/apply
 ```
 
-Compose deployment modes are explicit:
-
-| Target | Use when | Extra host access |
-|---|---|---|
-| `make api-up` | API management, Postgres state, Docker socket access | Docker socket only |
-| `make api-up-netns` | Real Linux bridge/netns/veth/tap topologies | `privileged`, host network, host pid |
-| `make api-up-fc` | Firecracker/microVM topologies | netns mode, `/dev/kvm`, Firecracker binary |
-| `make api-up-libvirt` | libvirt/QEMU VM topologies | netns mode, `/var/run/libvirt` |
-| `make api-up-full` | mixed virtualization development | netns mode, Firecracker, libvirt |
-
-Default `make api-up` runs the API as a normal Compose service and connects to Postgres through Compose DNS (`sysbox-postgres:5432`). Netns/Firecracker/libvirt modes intentionally opt into host-level privileges; in host networking mode the API reaches Postgres through `127.0.0.1:${SYSBOX_POSTGRES_PORT:-55432}`.
-
-Firecracker is never auto-mounted. Set the binary path and choose the explicit Firecracker mode:
+Deployment follows a 12-factor style: keep deploy-time choices in `.env`, keep topology intent in HCL, and keep the command surface small. Start by copying the template:
 
 ```bash
-export SYSBOX_FIRECRACKER_BIN=/home/jiandong/.local/bin/firecracker
-make api-up-fc
+cp .env.example .env
+```
+
+Choose one deployment profile in `.env`:
+
+| `SYSBOX_DEPLOYMENT` | Use when | Extra host access |
+|---|---|---|
+| `service` | API management, Postgres state, Docker socket access | Docker socket only |
+| `netns` | Real Linux bridge/netns/veth/tap topologies | `privileged`, host network, host pid |
+| `firecracker` | Firecracker/microVM topologies | netns mode, `/dev/kvm`, Firecracker binary |
+| `libvirt` | libvirt/QEMU VM topologies | netns mode, `/var/run/libvirt` |
+| `full` | mixed virtualization development | netns mode, Firecracker, libvirt |
+
+Then use the same commands for every mode:
+
+```bash
+make api-config
+make api-up
+```
+
+Default `SYSBOX_DEPLOYMENT=service` runs the API as a normal Compose service and connects to Postgres through Compose DNS (`sysbox-postgres:5432`). Netns/Firecracker/libvirt modes intentionally opt into host-level privileges; in host networking mode the API reaches Postgres through `127.0.0.1:${SYSBOX_POSTGRES_PORT:-55432}`.
+
+Firecracker is never auto-mounted. Configure it in `.env`:
+
+```bash
+SYSBOX_DEPLOYMENT=firecracker
+SYSBOX_FIRECRACKER_BIN=/home/jiandong/.local/bin/firecracker
+make api-up
 curl http://127.0.0.1:9876/v1/capabilities
 curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
 ```
@@ -169,7 +184,7 @@ sysbox supports local state and service backends. The service path now includes:
 - checkpoint-driven recover/cleanup for Docker, local networks, and microVM leftovers
 - snapshots where the backend supports them
 
-Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used. When `SYSBOX_STATE_BACKEND` is a Postgres URL, the API also stores runs/checkpoints/health in Postgres tables. The default Compose URL uses the service name; the netns override switches to the host-published Postgres port because host networking cannot use Compose service DNS.
+Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used. When `SYSBOX_STATE_BACKEND` is a Postgres URL, the API also stores runs/checkpoints/health in Postgres tables. Leave `SYSBOX_STATE_BACKEND` empty in `.env` to let compose choose the correct default for the selected deployment profile. The default Compose URL uses the service name; the netns override switches to the host-published Postgres port because host networking cannot use Compose service DNS.
 
 ## Artifacts And Environment
 
@@ -177,8 +192,12 @@ Recommended configuration:
 
 | Variable | Meaning |
 |---|---|
+| `SYSBOX_DEPLOYMENT` | Compose deployment profile: `service`, `netns`, `firecracker`, `libvirt`, or `full` |
 | `SYSBOX_HOME` | Service data root, default `/var/lib/sysbox` |
 | `SYSBOX_CACHE` | Artifact/cache root, default `/var/cache/sysbox` |
+| `SYSBOX_DATA_DIR` | Host directory mounted to `SYSBOX_HOME`, default `./data` |
+| `SYSBOX_CACHE_DIR` | Host directory mounted to `SYSBOX_CACHE`, default `~/.cache/sysbox` |
+| `SYSBOX_DOCKER_SOCKET` | Host Docker socket path, default `/var/run/docker.sock` |
 | `SYSBOX_API_LISTEN` | API listen address |
 | `SYSBOX_API_TOKEN` | Optional API Bearer token |
 | `SYSBOX_WORKSPACES_DIR` | Override API workspace directory |

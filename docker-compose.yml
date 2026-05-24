@@ -29,16 +29,16 @@ services:
       - "${SYSBOX_API_PORT:-9876}:9876"
     volumes:
       # Docker substrate: talk to the host Docker daemon.
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SYSBOX_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       # API-owned workspaces, state, and job metadata.
-      - ./data:/var/lib/sysbox
+      - ${SYSBOX_DATA_DIR:-./data}:${SYSBOX_HOME:-/var/lib/sysbox}
       # Shared artifact cache (kernels, rootfs, qcow2, downloaded tools).
-      - ~/.cache/sysbox:/var/cache/sysbox
+      - ${SYSBOX_CACHE_DIR:-~/.cache/sysbox}:${SYSBOX_CACHE:-/var/cache/sysbox}
     environment:
       SYSBOX_API_LISTEN: ${SYSBOX_API_LISTEN:-:9876}
       SYSBOX_API_TOKEN: ${SYSBOX_API_TOKEN:-}
-      SYSBOX_HOME: /var/lib/sysbox
-      SYSBOX_CACHE: /var/cache/sysbox
+      SYSBOX_HOME: ${SYSBOX_HOME:-/var/lib/sysbox}
+      SYSBOX_CACHE: ${SYSBOX_CACHE:-/var/cache/sysbox}
       SYSBOX_STATE_BACKEND: ${SYSBOX_STATE_BACKEND:-postgres://sysbox:sysbox@sysbox-postgres:5432/sysbox?sslmode=disable&topology={topology}}
       SYSBOX_SUPERVISOR_POLICY: ${SYSBOX_SUPERVISOR_POLICY:-observe_only}
       SYSBOX_SUPERVISOR_INTERVAL: ${SYSBOX_SUPERVISOR_INTERVAL:-30s}
