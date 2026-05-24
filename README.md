@@ -65,8 +65,8 @@ sudo -E make apply TOPO=two-networks
 sudo -E make destroy TOPO=two-networks
 
 cp .env.example .env               # one local 12-factor config file
-make api-up                        # API + Postgres using SYSBOX_DEPLOYMENT
 make api-config                    # inspect resolved compose config
+make api-up                        # API + Postgres using SYSBOX_DEPLOYMENT
 make api-down
 make api-logs
 ```
@@ -171,6 +171,18 @@ POST /v1/runs/{run_id}/cleanup
 
 `DELETE /v1/topologies/{name}` removes workspace/state metadata only when the topology is empty. If state still contains resources, it returns `409`; call `POST /destroy` first. `force=true` is intentionally explicit for metadata-only deletion while leaving external resources behind.
 
+## Runtime Layout
+
+Generated local state is intentionally kept out of the project tree surface:
+
+| Path | Purpose |
+|---|---|
+| `.sysbox/api` | API workspaces, fallback state, run records, checkpoints, health snapshots |
+| `.sysbox/runs` | CLI/example/e2e state files and local event logs |
+| `~/.cache/sysbox` | Kernels, rootfs images, qcow2 files, downloaded tools |
+
+`.sysbox/`, old `data/`, and old `runs/` are ignored. New commands and docs use `.sysbox/` so runtime files do not spread across the repository root.
+
 ## State And Recovery
 
 sysbox supports local state and service backends. The service path now includes:
@@ -229,6 +241,8 @@ Kernel/rootfs/qcow2 are topology artifacts, not service configuration. Prefer HC
 ```
 cmd/sysbox/                 CLI and API server entrypoint
 cmd/sysbox-init/            Firecracker guest init/RPC helper
+deploy/docker/              Docker Compose base file and capability overlays
+docs/                       Current docs
 examples/                   Example topologies
 pkg/artifact/               Artifact resolver/cache
 pkg/api/                    HTTP API, jobs, recovery/cleanup
@@ -238,5 +252,8 @@ pkg/provider/               Docker, Firecracker, network, libvirt providers
 pkg/runtime/                Plan/apply/destroy/checkpoint runtime
 pkg/state/                  Local/Postgres/HTTP/S3/SQLite state backends
 pkg/substrate/              Provider abstraction
+runner/                     Optional Python episode runner for agent examples
+scripts/                    Artifact preparation and verification helpers
 tests/e2e/                  Integration tests with build tag e2e
+.sysbox/                    Ignored local runtime data
 ```
