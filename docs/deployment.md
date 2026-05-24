@@ -73,6 +73,6 @@ Large artifacts should not be baked into the API image. Prefer:
 
 - host-mounted cache via `SYSBOX_CACHE_DIR`
 - HCL `sysbox_kernel` / `sysbox_image` artifact declarations
-- explicit Firecracker binary mount via `SYSBOX_FIRECRACKER_BIN`
+- explicit tools directory mount via `SYSBOX_TOOLS_DIR`
 
 This keeps images small while still allowing reproducible, pinned artifacts.

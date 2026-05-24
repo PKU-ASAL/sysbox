@@ -127,7 +127,7 @@ Choose one deployment profile in `.env`:
 |---|---|---|
 | `service` | API management, Postgres state, Docker socket access | Docker socket only |
 | `netns` | Real Linux bridge/netns/veth/tap topologies | `privileged`, host network, host pid |
-| `firecracker` | Firecracker/microVM topologies | netns mode, `/dev/kvm`, Firecracker binary |
+| `firecracker` | Firecracker/microVM topologies | netns mode, `/dev/kvm`, tools directory |
 | `libvirt` | libvirt/QEMU VM topologies | netns mode, `/var/run/libvirt` |
 | `full` | mixed virtualization development | netns mode, Firecracker, libvirt |
 
@@ -140,11 +140,13 @@ make api-up
 
 Default `SYSBOX_DEPLOYMENT=service` runs the API as a normal Compose service and connects to Postgres through Compose DNS (`sysbox-postgres:5432`). Netns/Firecracker/libvirt modes intentionally opt into host-level privileges; in host networking mode the API reaches Postgres through `127.0.0.1:${SYSBOX_POSTGRES_PORT:-55432}`.
 
-Firecracker is never auto-mounted. Configure it in `.env`:
+Firecracker is mounted through a host tools directory. Put the binary at
+`${SYSBOX_TOOLS_DIR}/firecracker`; inside the API container it appears as
+`/opt/sysbox/bin/firecracker`, which is configured in `deploy/docker/sysbox.yaml`.
 
 ```bash
 SYSBOX_DEPLOYMENT=firecracker
-SYSBOX_FIRECRACKER_BIN=/home/jiandong/.local/bin/firecracker
+SYSBOX_TOOLS_DIR=/home/jiandong/.local/bin
 make api-up
 curl http://127.0.0.1:9876/v1/capabilities
 curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
@@ -281,6 +283,7 @@ Recommended environment overrides:
 | `SYSBOX_CACHE` | Artifact/cache root, default `/var/cache/sysbox` |
 | `SYSBOX_DATA_DIR` | Host directory mounted to `SYSBOX_HOME`, default `.sysbox/api` |
 | `SYSBOX_CACHE_DIR` | Host directory mounted to `SYSBOX_CACHE`, default `~/.cache/sysbox` |
+| `SYSBOX_TOOLS_DIR` | Host tools directory mounted to `/opt/sysbox/bin`, default `~/.local/bin` |
 | `SYSBOX_DOCKER_SOCKET` | Host Docker socket path, default `/var/run/docker.sock` |
 | `SYSBOX_API_LISTEN` | API listen address |
 | `SYSBOX_API_TOKEN` | Optional API Bearer token |
@@ -289,7 +292,7 @@ Recommended environment overrides:
 | `SYSBOX_STATE_BACKEND` | State/API backend URL for service mode; compose uses Postgres |
 | `SYSBOX_SUPERVISOR_POLICY` | `observe_only` or `restart_on_crash`, default `observe_only` |
 | `SYSBOX_SUPERVISOR_INTERVAL` | Supervisor scan interval, default `30s`; set `0`/`off` to disable |
-| `SYSBOX_FIRECRACKER_BIN` | Exact Firecracker binary path |
+| `SYSBOX_FIRECRACKER_BIN` | Optional override for the Firecracker binary path; prefer `SYSBOX_TOOLS_DIR` for Compose |
 | `SYSBOX_FIRECRACKER_KERNEL` | Default Firecracker kernel path; HCL `sysbox_kernel` is preferred |
 | `SYSBOX_FIRECRACKER_WORKDIR` | Per-VM Firecracker work directory |
 
