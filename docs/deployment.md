@@ -13,10 +13,10 @@ Set `SYSBOX_DEPLOYMENT` in `.env`:
 
 | Profile | Compose files | Purpose |
 |---|---|---|
-| `service` | `docker-compose.yml` | API + Postgres + Docker socket |
-| `netns` | base + `docker-compose.netns.yml` | host netns/veth/tap labs |
-| `firecracker` | netns + `docker-compose.firecracker.yml` | Firecracker microVM labs |
-| `libvirt` | netns + `docker-compose.libvirt.yml` | libvirt/QEMU VM labs |
+| `service` | `deploy/docker/compose.yml` | API + Postgres + Docker socket |
+| `netns` | base + `deploy/docker/compose.netns.yml` | host netns/veth/tap labs |
+| `firecracker` | netns + `deploy/docker/compose.firecracker.yml` | Firecracker microVM labs |
+| `libvirt` | netns + `deploy/docker/compose.libvirt.yml` | libvirt/QEMU VM labs |
 | `full` | netns + Firecracker + libvirt | mixed virtualization development |
 
 The base profile avoids host networking and host PID namespace. Profiles that
@@ -34,6 +34,17 @@ make api-up
 
 `make api-config` prints the resolved Compose config, which is the best quick
 check before starting a privileged profile.
+
+## Local Runtime Layout
+
+By default, generated local state lives under `.sysbox/`:
+
+- `.sysbox/api`: API workspaces, fallback state, run metadata, checkpoints.
+- `.sysbox/runs`: CLI/example state and e2e state files.
+
+The legacy `data/` and `runs/` directories are ignored, but new docs and
+Makefile targets use `.sysbox/` so runtime files do not spread across the
+repository root.
 
 ## State Backend
 

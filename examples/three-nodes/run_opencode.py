@@ -2,7 +2,7 @@
 """run_opencode.py — Drive the opencode agent inside node_attack via ACP.
 
 Each execution creates a self-contained episode directory:
-  runs/<run-id>/episodes/<ep-id>/
+  .sysbox/runs/<run-id>/episodes/<ep-id>/
     meta.json          — episode metadata (prompt, timestamps, step count)
     step_log.jsonl      — agent tool-call timeline
 
@@ -120,7 +120,7 @@ def main() -> int:
                 f"http://172.20.0.10:{int(actor.get('port', 4096))}"
     agent_url = agent_url or DEFAULT_AGENT_URL
 
-    # Episode directory: runs/<run-id>/episodes/<ep-id>/
+    # Episode directory: .sysbox/runs/<run-id>/episodes/<ep-id>/
     runs_dir = STATE_FILE.parent
     ep_dir = runs_dir / "episodes" / ep_id
     ep_dir.mkdir(parents=True, exist_ok=True)

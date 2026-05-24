@@ -78,10 +78,10 @@ Compatibility aliases are kept for muscle memory: `make up`, `make down`, `make 
 Common commands:
 
 ```bash
-bin/sysbox -f examples/two-networks/field.sysbox.hcl --state runs/two-networks/state.json validate
-bin/sysbox -f examples/two-networks/field.sysbox.hcl --state runs/two-networks/state.json plan
-sudo -E bin/sysbox -f examples/two-networks/field.sysbox.hcl --state runs/two-networks/state.json apply --auto-approve
-sudo -E bin/sysbox -f examples/two-networks/field.sysbox.hcl --state runs/two-networks/state.json destroy --auto-approve
+bin/sysbox -f examples/two-networks/field.sysbox.hcl --state .sysbox/runs/two-networks/state.json validate
+bin/sysbox -f examples/two-networks/field.sysbox.hcl --state .sysbox/runs/two-networks/state.json plan
+sudo -E bin/sysbox -f examples/two-networks/field.sysbox.hcl --state .sysbox/runs/two-networks/state.json apply --auto-approve
+sudo -E bin/sysbox -f examples/two-networks/field.sysbox.hcl --state .sysbox/runs/two-networks/state.json destroy --auto-approve
 ```
 
 `output` is reserved for HCL topology outputs, matching Terraform-style semantics:
@@ -95,14 +95,14 @@ bin/sysbox -f examples/three-nodes/field.sysbox.hcl output --json
 State/resource inspection lives under `state`:
 
 ```bash
-bin/sysbox --state runs/two-networks/state.json state list
-bin/sysbox --state runs/two-networks/state.json state show sysbox_node.node_a
-bin/sysbox --state runs/two-networks/state.json state get sysbox_node.node_a.primary_ip
+bin/sysbox --state .sysbox/runs/two-networks/state.json state list
+bin/sysbox --state .sysbox/runs/two-networks/state.json state show sysbox_node.node_a
+bin/sysbox --state .sysbox/runs/two-networks/state.json state get sysbox_node.node_a.primary_ip
 ```
 
 ## API / Docker Compose
 
-The API server is the service-mode control plane. It uses API-owned workspaces under `data/workspaces`. Compose defaults to Postgres for state, run records, checkpoints/action logs, and health snapshots, so API state does not have to live beside local CLI state files. The local `data/` mount still holds workspaces and acts as the fallback store when no Postgres backend is configured.
+The API server is the service-mode control plane. Compose defaults to Postgres for state, run records, checkpoints/action logs, and health snapshots, so API state does not have to live beside local CLI state files. Local runtime data is consolidated under `.sysbox/`: `.sysbox/api` for API-owned data and `.sysbox/runs` for CLI/example state.
 
 For the full deployment model, see [docs/deployment.md](docs/deployment.md).
 
@@ -150,7 +150,7 @@ curl http://127.0.0.1:9876/v1/capabilities
 curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
 ```
 
-`make api-seed` copies `examples/*/field.sysbox.hcl` into `data/workspaces` only when a workspace is missing. After that, API-managed HCL is independent from `examples/`.
+`make api-seed` copies `examples/*/field.sysbox.hcl` into `.sysbox/api/workspaces` only when a workspace is missing. After that, API-managed HCL is independent from `examples/`.
 
 Important API endpoints:
 
@@ -195,7 +195,7 @@ Recommended configuration:
 | `SYSBOX_DEPLOYMENT` | Compose deployment profile: `service`, `netns`, `firecracker`, `libvirt`, or `full` |
 | `SYSBOX_HOME` | Service data root, default `/var/lib/sysbox` |
 | `SYSBOX_CACHE` | Artifact/cache root, default `/var/cache/sysbox` |
-| `SYSBOX_DATA_DIR` | Host directory mounted to `SYSBOX_HOME`, default `./data` |
+| `SYSBOX_DATA_DIR` | Host directory mounted to `SYSBOX_HOME`, default `.sysbox/api` |
 | `SYSBOX_CACHE_DIR` | Host directory mounted to `SYSBOX_CACHE`, default `~/.cache/sysbox` |
 | `SYSBOX_DOCKER_SOCKET` | Host Docker socket path, default `/var/run/docker.sock` |
 | `SYSBOX_API_LISTEN` | API listen address |

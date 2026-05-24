@@ -22,7 +22,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagConfigFile, "file", "f",
 		"field.sysbox.hcl", "path to sysbox HCL config")
 	rootCmd.PersistentFlags().StringVar(&flagStateFile, "state",
-		"runs/default/state.json", "path to state file (or URL for remote backend)")
+		".sysbox/runs/default/state.json", "path to state file (or URL for remote backend)")
 	rootCmd.PersistentFlags().StringVar(&flagBackend, "backend", "",
 		"state backend URL (s3://bucket/key, https://host/path); overrides --state")
 	rootCmd.PersistentFlags().BoolVar(&flagAutoApprove, "auto-approve",

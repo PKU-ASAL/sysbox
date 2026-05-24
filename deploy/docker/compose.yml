@@ -31,7 +31,7 @@ services:
       # Docker substrate: talk to the host Docker daemon.
       - ${SYSBOX_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       # API-owned workspaces, state, and job metadata.
-      - ${SYSBOX_DATA_DIR:-./data}:${SYSBOX_HOME:-/var/lib/sysbox}
+      - ${SYSBOX_DATA_DIR:-.sysbox/api}:${SYSBOX_HOME:-/var/lib/sysbox}
       # Shared artifact cache (kernels, rootfs, qcow2, downloaded tools).
       - ${SYSBOX_CACHE_DIR:-~/.cache/sysbox}:${SYSBOX_CACHE:-/var/cache/sysbox}
     environment:

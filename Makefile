@@ -13,17 +13,20 @@ ARCH := $(shell $(GO) env GOARCH)
 TOPO ?= two-networks
 API_ADDR ?= :9876
 SYSBOX_DEPLOYMENT ?= service
+API_DATA_DIR ?= $(or $(SYSBOX_DATA_DIR),.sysbox/api)
 
 HCL := examples/$(TOPO)/field.sysbox.hcl
-STATE := runs/$(TOPO)/state.json
+STATE := .sysbox/runs/$(TOPO)/state.json
 SYSBOX := $(BINARY) --state $(STATE) -f $(HCL)
 
-COMPOSE_FILES_service := -f docker-compose.yml
-COMPOSE_FILES_netns := -f docker-compose.yml -f docker-compose.netns.yml
-COMPOSE_FILES_firecracker := -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.firecracker.yml
-COMPOSE_FILES_libvirt := -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.libvirt.yml
-COMPOSE_FILES_full := -f docker-compose.yml -f docker-compose.netns.yml -f docker-compose.firecracker.yml -f docker-compose.libvirt.yml
+COMPOSE_DIR := deploy/docker
+COMPOSE_FILES_service := -f $(COMPOSE_DIR)/compose.yml
+COMPOSE_FILES_netns := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.netns.yml
+COMPOSE_FILES_firecracker := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.netns.yml -f $(COMPOSE_DIR)/compose.firecracker.yml
+COMPOSE_FILES_libvirt := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.netns.yml -f $(COMPOSE_DIR)/compose.libvirt.yml
+COMPOSE_FILES_full := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.netns.yml -f $(COMPOSE_DIR)/compose.firecracker.yml -f $(COMPOSE_DIR)/compose.libvirt.yml
 COMPOSE_FILES = $(COMPOSE_FILES_$(SYSBOX_DEPLOYMENT))
+COMPOSE := docker compose --project-directory .
 
 .DEFAULT_GOAL := help
 .PHONY: help build build-all test test-e2e lint ci \
@@ -67,7 +70,7 @@ plan: build ## Plan an example topology
 	$(SYSBOX) plan
 
 apply: build ## Apply an example topology
-	@mkdir -p runs/$(TOPO)
+	@mkdir -p .sysbox/runs/$(TOPO)
 	$(SYSBOX) apply --auto-approve
 
 destroy: build ## Destroy an example topology
@@ -79,14 +82,14 @@ down: destroy ## Alias for destroy
 api-build: ## Build the sysbox API container image
 	docker build --network=host --no-cache -t sysbox:latest .
 
-api-seed: ## Seed data/workspaces from examples when missing
-	@mkdir -p data/workspaces
+api-seed: ## Seed API workspaces from examples when missing
+	@mkdir -p "$(API_DATA_DIR)/workspaces"
 	@for dir in examples/*; do \
 		if [ -f "$$dir/field.sysbox.hcl" ]; then \
 			name=$$(basename "$$dir"); \
-			mkdir -p "data/workspaces/$$name"; \
-			if [ ! -f "data/workspaces/$$name/field.sysbox.hcl" ]; then \
-				cp "$$dir/field.sysbox.hcl" "data/workspaces/$$name/field.sysbox.hcl"; \
+			mkdir -p "$(API_DATA_DIR)/workspaces/$$name"; \
+			if [ ! -f "$(API_DATA_DIR)/workspaces/$$name/field.sysbox.hcl" ]; then \
+				cp "$$dir/field.sysbox.hcl" "$(API_DATA_DIR)/workspaces/$$name/field.sysbox.hcl"; \
 				echo "seeded $$name"; \
 			fi; \
 		fi; \
@@ -94,12 +97,12 @@ api-seed: ## Seed data/workspaces from examples when missing
 
 api-config: ## Print resolved Docker Compose config for SYSBOX_DEPLOYMENT
 	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
-	docker compose $(COMPOSE_FILES) config
+	$(COMPOSE) $(COMPOSE_FILES) config
 
 api-up: api-build api-seed ## Start API + Postgres using SYSBOX_DEPLOYMENT
 	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
 	@echo "Deployment: $(SYSBOX_DEPLOYMENT)"
-	docker compose $(COMPOSE_FILES) up -d
+	$(COMPOSE) $(COMPOSE_FILES) up -d
 	@echo "API server: http://localhost:9876/v1/health"
 
 api-up-netns: SYSBOX_DEPLOYMENT=netns
@@ -116,11 +119,11 @@ api-up-full: api-up
 
 api-down: ## Stop API + Postgres
 	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
-	docker compose $(COMPOSE_FILES) down
+	$(COMPOSE) $(COMPOSE_FILES) down
 
 api-logs: ## Tail API compose logs
 	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
-	docker compose $(COMPOSE_FILES) logs -f
+	$(COMPOSE) $(COMPOSE_FILES) logs -f
 
 docker-build: api-build
 docker-seed: api-seed

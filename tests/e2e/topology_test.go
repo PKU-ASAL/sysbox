@@ -30,7 +30,7 @@ func TestTwoNetworksTopology(t *testing.T) {
 	require.NoError(t, err)
 
 	hclPath := filepath.Join(repoRoot, "examples/two-networks/field.sysbox.hcl")
-	statePath := filepath.Join(repoRoot, "runs/e2e-topology/state.json")
+	statePath := filepath.Join(repoRoot, ".sysbox/runs/e2e-topology/state.json")
 	binPath := filepath.Join(repoRoot, "bin/sysbox")
 
 	// Build binary from source so the test always uses the current code.

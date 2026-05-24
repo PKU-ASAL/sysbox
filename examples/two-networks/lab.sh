@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 FIELD_FILE="${SCRIPT_DIR}/field.sysbox.hcl"
-STATE_FILE="${REPO_ROOT}/runs/two-networks/state.json"
+STATE_FILE="${REPO_ROOT}/.sysbox/runs/two-networks/state.json"
 SYSBOX="${REPO_ROOT}/bin/sysbox"
 API_ADDR="${SYSBOX_API_ADDR:-:9876}"
 API_PID_FILE="$(dirname "${STATE_FILE}")/api.pid"

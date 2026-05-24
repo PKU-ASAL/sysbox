@@ -5,6 +5,7 @@
 *.test
 
 # state / runs
+/.sysbox/
 /runs/
 /data/
 *.tfstate

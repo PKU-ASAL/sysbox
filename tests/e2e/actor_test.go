@@ -97,7 +97,7 @@ func TestActorACP(t *testing.T) {
 	hclPath := filepath.Join(tmpDir, "actor.sysbox.hcl")
 	require.NoError(t, os.WriteFile(hclPath, []byte(actorHCL), 0o644))
 
-	statePath := filepath.Join(repoRoot, "runs/e2e-actor/state.json")
+	statePath := filepath.Join(repoRoot, ".sysbox/runs/e2e-actor/state.json")
 	binPath := filepath.Join(repoRoot, "bin/sysbox")
 
 	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/sysbox")

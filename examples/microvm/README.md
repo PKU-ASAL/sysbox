@@ -237,17 +237,17 @@ make build
 # 4. Apply — first run also downloads kernel into ~/.cache/sysbox/artifacts/
 sudo -E ./bin/sysbox apply \
   -f examples/microvm/field.sysbox.hcl \
-  --state runs/microvm/state.json \
+  --state .sysbox/runs/microvm/state.json \
   --auto-approve
 
 # 5. Inspect
-sudo ./bin/sysbox state -f runs/microvm/state.json
+sudo ./bin/sysbox state -f .sysbox/runs/microvm/state.json
 ls ~/.cache/sysbox/artifacts/ ~/.cache/sysbox/rootfs/
 
 # 6. Destroy (cache files persist for reuse)
 sudo ./bin/sysbox destroy \
   -f examples/microvm/field.sysbox.hcl \
-  --state runs/microvm/state.json \
+  --state .sysbox/runs/microvm/state.json \
   --auto-approve
 ```
 

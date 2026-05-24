@@ -5,7 +5,7 @@
 //
 // SchemaVersion is bumped on every breaking format change. v1.0 introduces
 // schema v2: typed NodeHandle, ProviderExtra json blob, no v1→v2 migration.
-// Loading a v1 file fails with a clear error pointing users to clear runs/.
+// Loading a v1 file fails with a clear error pointing users to clear .sysbox/runs/.
 package state
 
 import (
@@ -176,7 +176,7 @@ func migratePrimaryIP(r *Resource) {
 
 // IncompatibleVersionError is returned by Unmarshal when the on-disk state
 // version does not match the binary's SchemaVersion. v1.0 deliberately does
-// not auto-migrate v1 state files; users must clear runs/ and re-apply.
+// not auto-migrate v1 state files; users must clear .sysbox/runs/ and re-apply.
 type IncompatibleVersionError struct {
 	Found    int
 	Expected int
@@ -186,7 +186,7 @@ func (e *IncompatibleVersionError) Error() string {
 	return fmt.Sprintf(
 		"state schema v%d is incompatible with sysbox binary (expects v%d). "+
 			"sysbox v1.0 deliberately dropped v1 state migration; "+
-			"please clear runs/ (rm -rf runs/) and re-apply.",
+			"please clear .sysbox/runs/ (rm -rf .sysbox/runs/) and re-apply.",
 		e.Found, e.Expected,
 	)
 }

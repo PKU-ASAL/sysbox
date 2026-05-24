@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Mixed topology verification: apply → sensor → destroy → audit.
-# Uses --state runs/mixed/state.json so events are isolated to
-# runs/mixed/events/ (not mixed with other topologies).
+# Uses --state .sysbox/runs/mixed/state.json so events are isolated to
+# .sysbox/runs/mixed/events/ (not mixed with other topologies).
 #
 # Usage:  sudo ./scripts/mixed-verify.sh
 #
@@ -15,8 +15,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 HCL=examples/mixed/field.sysbox.hcl
-STATE=runs/mixed/state.json
-EVENTS=runs/mixed/events
+STATE=.sysbox/runs/mixed/state.json
+EVENTS=.sysbox/runs/mixed/events
 
 # ── Environment fixup when running under sudo ───────────────────────────────
 #
