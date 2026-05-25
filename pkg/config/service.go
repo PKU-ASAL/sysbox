@@ -138,6 +138,9 @@ func applyEnvOverrides(c *ServiceConfig) {
 	set(&c.Providers.Firecracker.Binary, "SYSBOX_FIRECRACKER_BIN")
 	set(&c.Providers.Firecracker.Kernel, "SYSBOX_FIRECRACKER_KERNEL")
 	set(&c.Providers.Firecracker.Workdir, "SYSBOX_FIRECRACKER_WORKDIR")
+	set(&c.Providers.Firecracker.Binary, "SYSBOX_PROVIDER_FIRECRACKER_BIN")
+	set(&c.Providers.Firecracker.Kernel, "SYSBOX_PROVIDER_FIRECRACKER_KERNEL")
+	set(&c.Providers.Firecracker.Workdir, "SYSBOX_PROVIDER_FIRECRACKER_WORKDIR")
 }
 
 func applyDerivedDefaults(c *ServiceConfig) {

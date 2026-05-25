@@ -4,11 +4,11 @@ services:
     container_name: sysbox-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${SYSBOX_POSTGRES_DB:-sysbox}
-      POSTGRES_USER: ${SYSBOX_POSTGRES_USER:-sysbox}
-      POSTGRES_PASSWORD: ${SYSBOX_POSTGRES_PASSWORD:-sysbox}
+      POSTGRES_DB: ${SYSBOX_POSTGRES_DATABASE:-sysbox}
+      POSTGRES_USER: ${SYSBOX_POSTGRES_USERNAME:-sysbox}
+      POSTGRES_PASSWORD: ${SYSBOX_POSTGRES_PASSWORD:?set SYSBOX_POSTGRES_PASSWORD in .env}
     ports:
-      - "${SYSBOX_POSTGRES_PORT:-55432}:5432"
+      - "${SYSBOX_POSTGRES_HOST_PORT:-55432}:5432"
     volumes:
       - sysbox-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -26,20 +26,21 @@ services:
       sysbox-postgres:
         condition: service_healthy
     ports:
-      - "${SYSBOX_API_PORT:-9876}:9876"
+      - "${SYSBOX_API_HOST_PORT:-9876}:9876"
     volumes:
       # Docker substrate: talk to the host Docker daemon.
-      - ${SYSBOX_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - ${SYSBOX_HOST_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       # API-owned workspaces, state, and job metadata.
-      - ${SYSBOX_DATA_DIR:-.sysbox/api}:${SYSBOX_HOME:-/var/lib/sysbox}
+      - ${SYSBOX_HOST_DATA_DIR:-.sysbox/api}:${SYSBOX_SERVICE_HOME:-/var/lib/sysbox}
       # Shared artifact cache (kernels, rootfs, qcow2, downloaded tools).
-      - ${SYSBOX_CACHE_DIR:-~/.cache/sysbox}:${SYSBOX_CACHE:-/var/cache/sysbox}
+      - ${SYSBOX_HOST_CACHE_DIR:-~/.cache/sysbox}:${SYSBOX_SERVICE_CACHE:-/var/cache/sysbox}
       - ./deploy/docker/sysbox.yaml:/etc/sysbox/sysbox.yaml:ro
     environment:
       SYSBOX_CONFIG: ${SYSBOX_CONFIG:-/etc/sysbox/sysbox.yaml}
       SYSBOX_API_TOKEN: ${SYSBOX_API_TOKEN:-}
-      SYSBOX_HOME: ${SYSBOX_HOME:-/var/lib/sysbox}
-      SYSBOX_CACHE: ${SYSBOX_CACHE:-/var/cache/sysbox}
+      SYSBOX_HOME: ${SYSBOX_SERVICE_HOME:-/var/lib/sysbox}
+      SYSBOX_CACHE: ${SYSBOX_SERVICE_CACHE:-/var/cache/sysbox}
+      SYSBOX_STATE_BACKEND: ${SYSBOX_STATE_BACKEND:-postgres://${SYSBOX_POSTGRES_USERNAME:-sysbox}:${SYSBOX_POSTGRES_PASSWORD}@sysbox-postgres:5432/${SYSBOX_POSTGRES_DATABASE:-sysbox}?sslmode=disable&topology={topology}}
       PATH: /opt/sysbox/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 volumes:

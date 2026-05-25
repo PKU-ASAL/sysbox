@@ -7,9 +7,6 @@ paths:
   workspaces_dir: /var/lib/sysbox/workspaces
   runs_dir: /var/lib/sysbox/runs
 
-state:
-  backend: "postgres://sysbox:sysbox@sysbox-postgres:5432/sysbox?sslmode=disable&topology={topology}"
-
 supervisor:
   policy: observe_only
   interval: 30s

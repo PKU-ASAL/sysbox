@@ -3,4 +3,4 @@ services:
     volumes:
       # Firecracker substrate: KVM device plus explicit host-provided tools.
       - /dev/kvm:/dev/kvm
-      - ${SYSBOX_TOOLS_DIR:-~/.local/bin}:/opt/sysbox/bin:ro
+      - ${SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR:-~/.local/bin}:/opt/sysbox/bin:ro

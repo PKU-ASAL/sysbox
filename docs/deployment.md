@@ -33,6 +33,8 @@ make api-config
 make api-up
 ```
 
+Change `SYSBOX_POSTGRES_PASSWORD` before starting the stack.
+
 `make api-config` prints the resolved Compose config, which is the best quick
 check before starting a privileged profile.
 
@@ -62,17 +64,23 @@ repository root.
 
 Leave `SYSBOX_STATE_BACKEND` empty for the normal Compose config:
 
-- `service`: `deploy/docker/sysbox.yaml` uses `postgres://...@sysbox-postgres:5432/...`
-- host-network profiles: `compose.netns.yml` overrides it to `postgres://...@127.0.0.1:${SYSBOX_POSTGRES_PORT}/...`
+- `service`: `compose.yml` assembles a DSN for `sysbox-postgres:5432`
+- host-network profiles: `compose.netns.yml` overrides it to `postgres://...@127.0.0.1:${SYSBOX_POSTGRES_HOST_PORT}/...`
 
-Set `SYSBOX_STATE_BACKEND` only when using an external backend.
+Set `SYSBOX_STATE_BACKEND` only when using an external backend. Keep real
+credentials in local `.env` or your deployment secret manager, not in
+`deploy/docker/sysbox.yaml`.
+
+`docker compose config` expands environment variables, so its output can include
+the effective Postgres DSN. Treat that output as sensitive when it contains real
+credentials.
 
 ## Artifacts
 
 Large artifacts should not be baked into the API image. Prefer:
 
-- host-mounted cache via `SYSBOX_CACHE_DIR`
+- host-mounted cache via `SYSBOX_HOST_CACHE_DIR`
 - HCL `sysbox_kernel` / `sysbox_image` artifact declarations
-- explicit tools directory mount via `SYSBOX_TOOLS_DIR`
+- explicit tools directory mount via `SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR`
 
 This keeps images small while still allowing reproducible, pinned artifacts.

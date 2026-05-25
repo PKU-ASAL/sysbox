@@ -51,10 +51,11 @@ providers:
 	t.Setenv("SYSBOX_API_LISTEN", ":7777")
 	t.Setenv("SYSBOX_STATE_BACKEND", "postgres://override/sysbox?topology={topology}")
 	t.Setenv("SYSBOX_FIRECRACKER_BIN", "/from/env/firecracker")
+	t.Setenv("SYSBOX_PROVIDER_FIRECRACKER_BIN", "/from/provider/env/firecracker")
 
 	cfg, err := LoadServiceConfig(path)
 	require.NoError(t, err)
 	require.Equal(t, ":7777", cfg.API.Listen)
 	require.Equal(t, "postgres://override/sysbox?topology={topology}", cfg.State.Backend)
-	require.Equal(t, "/from/env/firecracker", cfg.Providers.Firecracker.Binary)
+	require.Equal(t, "/from/provider/env/firecracker", cfg.Providers.Firecracker.Binary)
 }

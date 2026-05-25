@@ -134,19 +134,21 @@ Choose one deployment profile in `.env`:
 Then use the same commands for every mode:
 
 ```bash
+cp .env.example .env
+$EDITOR .env        # change SYSBOX_POSTGRES_PASSWORD
 make api-config
 make api-up
 ```
 
-Default `SYSBOX_DEPLOYMENT=service` runs the API as a normal Compose service and connects to Postgres through Compose DNS (`sysbox-postgres:5432`). Netns/Firecracker/libvirt modes intentionally opt into host-level privileges; in host networking mode the API reaches Postgres through `127.0.0.1:${SYSBOX_POSTGRES_PORT:-55432}`.
+Default `SYSBOX_DEPLOYMENT=service` runs the API as a normal Compose service and connects to Postgres through Compose DNS (`sysbox-postgres:5432`). Netns/Firecracker/libvirt modes intentionally opt into host-level privileges; in host networking mode the API reaches Postgres through `127.0.0.1:${SYSBOX_POSTGRES_HOST_PORT:-55432}`.
 
 Firecracker is mounted through a host tools directory. Put the binary at
-`${SYSBOX_TOOLS_DIR}/firecracker`; inside the API container it appears as
+`${SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR}/firecracker`; inside the API container it appears as
 `/opt/sysbox/bin/firecracker`, which is configured in `deploy/docker/sysbox.yaml`.
 
 ```bash
 SYSBOX_DEPLOYMENT=firecracker
-SYSBOX_TOOLS_DIR=/home/jiandong/.local/bin
+SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR=/home/jiandong/.local/bin
 make api-up
 curl http://127.0.0.1:9876/v1/capabilities
 curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
@@ -262,8 +264,6 @@ api:
 paths:
   home: /var/lib/sysbox
   cache: /var/cache/sysbox
-state:
-  backend: "postgres://sysbox:sysbox@sysbox-postgres:5432/sysbox?sslmode=disable&topology={topology}"
 supervisor:
   policy: observe_only
   interval: 30s
@@ -273,26 +273,29 @@ providers:
     workdir: /var/lib/sysbox/firecracker
 ```
 
+The Postgres DSN is assembled by Compose from `.env` and passed as
+`SYSBOX_STATE_BACKEND`, so `sysbox.yaml` does not carry a password.
+
 Recommended environment overrides:
 
 | Variable | Meaning |
 |---|---|
 | `SYSBOX_DEPLOYMENT` | Compose deployment profile: `service`, `netns`, `firecracker`, `libvirt`, or `full` |
 | `SYSBOX_CONFIG` | Service config file path, default `/etc/sysbox/sysbox.yaml` |
-| `SYSBOX_HOME` | Service data root, default `/var/lib/sysbox` |
-| `SYSBOX_CACHE` | Artifact/cache root, default `/var/cache/sysbox` |
-| `SYSBOX_DATA_DIR` | Host directory mounted to `SYSBOX_HOME`, default `.sysbox/api` |
-| `SYSBOX_CACHE_DIR` | Host directory mounted to `SYSBOX_CACHE`, default `~/.cache/sysbox` |
-| `SYSBOX_TOOLS_DIR` | Host tools directory mounted to `/opt/sysbox/bin`, default `~/.local/bin` |
-| `SYSBOX_DOCKER_SOCKET` | Host Docker socket path, default `/var/run/docker.sock` |
-| `SYSBOX_API_LISTEN` | API listen address |
+| `SYSBOX_API_HOST_PORT` | Host port published for the API, default `9876` |
 | `SYSBOX_API_TOKEN` | Optional API Bearer token |
-| `SYSBOX_WORKSPACES_DIR` | Override API workspace directory |
-| `SYSBOX_RUNS_DIR` | Override local run/checkpoint directory when no API database is used |
-| `SYSBOX_STATE_BACKEND` | State/API backend URL for service mode; compose uses Postgres |
-| `SYSBOX_SUPERVISOR_POLICY` | `observe_only` or `restart_on_crash`, default `observe_only` |
-| `SYSBOX_SUPERVISOR_INTERVAL` | Supervisor scan interval, default `30s`; set `0`/`off` to disable |
-| `SYSBOX_FIRECRACKER_BIN` | Optional override for the Firecracker binary path; prefer `SYSBOX_TOOLS_DIR` for Compose |
+| `SYSBOX_SERVICE_HOME` | Container service data root, default `/var/lib/sysbox` |
+| `SYSBOX_SERVICE_CACHE` | Container artifact/cache root, default `/var/cache/sysbox` |
+| `SYSBOX_HOST_DATA_DIR` | Host directory mounted to `SYSBOX_SERVICE_HOME`, default `.sysbox/api` |
+| `SYSBOX_HOST_CACHE_DIR` | Host directory mounted to `SYSBOX_SERVICE_CACHE`, default `~/.cache/sysbox` |
+| `SYSBOX_HOST_DOCKER_SOCKET` | Host Docker socket path, default `/var/run/docker.sock` |
+| `SYSBOX_POSTGRES_DATABASE` | Compose Postgres database name |
+| `SYSBOX_POSTGRES_USERNAME` | Compose Postgres username |
+| `SYSBOX_POSTGRES_PASSWORD` | Compose Postgres password; set in local `.env`, do not commit real values |
+| `SYSBOX_POSTGRES_HOST_PORT` | Host port published for Postgres, default `55432` |
+| `SYSBOX_STATE_BACKEND` | Optional external state/API backend URL; overrides Compose-generated DSN |
+| `SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR` | Host tools directory mounted to `/opt/sysbox/bin`, default `~/.local/bin` |
+| `SYSBOX_FIRECRACKER_BIN` | Optional override for the Firecracker binary path; prefer `SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR` for Compose |
 | `SYSBOX_FIRECRACKER_KERNEL` | Default Firecracker kernel path; HCL `sysbox_kernel` is preferred |
 | `SYSBOX_FIRECRACKER_WORKDIR` | Per-VM Firecracker work directory |
 
