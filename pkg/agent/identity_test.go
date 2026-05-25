@@ -26,7 +26,7 @@ func TestSaveAndLoadIdentity(t *testing.T) {
 	require.Equal(t, []string{"docker"}, loaded.Capabilities)
 }
 
-func TestIdentityWorkerProjection(t *testing.T) {
+func TestIdentityAgentProjection(t *testing.T) {
 	ident := &Identity{
 		ID:           "host-a",
 		Name:         "Host A",
@@ -34,13 +34,13 @@ func TestIdentityWorkerProjection(t *testing.T) {
 		Labels:       map[string]string{"role": "lab"},
 	}
 
-	worker := ident.Worker()
-	require.Equal(t, "host-a", worker.ID)
-	require.Equal(t, "Host A", worker.Name)
-	require.Equal(t, "online", worker.Status)
-	require.Equal(t, []string{"docker", "network"}, worker.Capabilities)
-	require.Equal(t, "lab", worker.Labels["role"])
-	require.False(t, worker.LastHeartbeat.IsZero())
+	agent := ident.Agent()
+	require.Equal(t, "host-a", agent.ID)
+	require.Equal(t, "Host A", agent.Name)
+	require.Equal(t, "online", agent.Status)
+	require.Equal(t, []string{"docker", "network"}, agent.Capabilities)
+	require.Equal(t, "lab", agent.Labels["role"])
+	require.False(t, agent.LastHeartbeat.IsZero())
 }
 
 func TestRegisterPersistsIdentityAndRegistersRemote(t *testing.T) {

@@ -97,7 +97,7 @@ func TestApplyCanReferenceStoredPlan(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, plan.ID, run.PlanID)
 	require.Equal(t, plan.Revision, run.Revision)
-	require.Equal(t, DefaultWorkerID, run.WorkerID)
+	require.Equal(t, DefaultAgentID, run.AgentID)
 	require.Equal(t, RunAssigned, run.Status)
 }
 

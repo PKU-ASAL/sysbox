@@ -10,7 +10,7 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-// ExecutionBridge is the temporary compatibility surface used by pkg/worker
+// ExecutionBridge is the temporary compatibility surface used by pkg/agent
 // while apply/destroy execution is being moved out of the API package.
 type ExecutionBridge struct {
 	server *Server

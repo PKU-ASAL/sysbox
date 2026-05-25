@@ -1,4 +1,4 @@
-package worker
+package agentexec
 
 import (
 	"context"
@@ -24,6 +24,10 @@ type Bridge interface {
 	ParentRun(ctx context.Context, id string) (*controlplane.Run, error)
 	ReconcileParentJournal(parent, run *controlplane.Run) error
 	Preflight(ctx context.Context, topology string, log io.Writer) error
+}
+
+type Reporter interface {
+	ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error
 }
 
 type ApplyHook interface {
@@ -56,7 +60,7 @@ func (e *Executor) Execute(run *controlplane.Run) {
 		if run.ParentID != "" {
 			if parent, err := e.bridge.ParentRun(context.Background(), run.ParentID); err == nil {
 				e.executeResumeApply(parent, run, log)
-				return
+				break
 			}
 		}
 		e.executeApply(run, log)
@@ -64,13 +68,45 @@ func (e *Executor) Execute(run *controlplane.Run) {
 		if run.ParentID != "" {
 			if parent, err := e.bridge.ParentRun(context.Background(), run.ParentID); err == nil {
 				e.executeResumeDestroy(parent, run, log)
-				return
+				break
 			}
 		}
 		e.executeDestroy(run, log)
 	default:
 		e.bridge.Finish(run, fmt.Errorf("unsupported run op %q", run.Op))
 	}
+	e.reportCompletion(run)
+}
+
+func (e *Executor) reportCompletion(run *controlplane.Run) {
+	reporter, ok := e.bridge.(Reporter)
+	if !ok || run == nil {
+		return
+	}
+	proj := controlplane.Projection{
+		AgentID:   run.AgentID,
+		Workspace: run.Workspace,
+		Topology:  run.Topology,
+		UpdatedAt: run.EndedAt,
+	}
+	if mgr, err := e.bridge.StateManager(run.Topology); err == nil {
+		if meta, err := mgr.Metadata(context.Background()); err == nil {
+			proj.Backend = meta.Backend
+			proj.Serial = meta.Serial
+			proj.UpdatedAt = meta.UpdatedAt
+		}
+		if st, err := mgr.Load(); err == nil && st != nil {
+			proj.ResourceCount = len(st.Resources)
+		}
+	}
+	if proj.Health == "" {
+		if run.Status == controlplane.RunDone {
+			proj.Health = "healthy"
+		} else {
+			proj.Health = "unknown"
+		}
+	}
+	_ = reporter.ReportRunComplete(context.Background(), run, proj)
 }
 
 func (e *Executor) executeApply(run *controlplane.Run, log io.Writer) {

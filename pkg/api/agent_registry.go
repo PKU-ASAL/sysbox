@@ -10,25 +10,55 @@ import (
 )
 
 type agentRegistry struct {
-	mu      sync.RWMutex
-	agents  map[string]controlplane.Worker
-	streams map[string]*Broadcaster
+	mu          sync.RWMutex
+	agents      map[string]controlplane.Agent
+	streams     map[string]*Broadcaster
+	projections map[string]controlplane.Projection
 }
 
 func newAgentRegistry() *agentRegistry {
 	return &agentRegistry{
-		agents:  map[string]controlplane.Worker{},
-		streams: map[string]*Broadcaster{},
+		agents:      map[string]controlplane.Agent{},
+		streams:     map[string]*Broadcaster{},
+		projections: map[string]controlplane.Projection{},
 	}
 }
 
-func (r *agentRegistry) Save(agent controlplane.Worker) {
+func (r *agentRegistry) SaveProjection(proj controlplane.Projection) {
+	if proj.AgentID == "" || (proj.Workspace == "" && proj.Topology == "") {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := proj.AgentID + "/" + proj.Workspace + "/" + proj.Topology
+	r.projections[key] = proj
+}
+
+func (r *agentRegistry) ListProjections(agentID string) []controlplane.Projection {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]controlplane.Projection, 0, len(r.projections))
+	for _, proj := range r.projections {
+		if agentID == "" || proj.AgentID == agentID {
+			out = append(out, proj)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AgentID == out[j].AgentID {
+			return out[i].Topology < out[j].Topology
+		}
+		return out[i].AgentID < out[j].AgentID
+	})
+	return out
+}
+
+func (r *agentRegistry) Save(agent controlplane.Agent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.agents[agent.ID] = agent
 }
 
-func (r *agentRegistry) Get(id string) (*controlplane.Worker, error) {
+func (r *agentRegistry) Get(id string) (*controlplane.Agent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	agent, ok := r.agents[id]
@@ -38,10 +68,10 @@ func (r *agentRegistry) Get(id string) (*controlplane.Worker, error) {
 	return &agent, nil
 }
 
-func (r *agentRegistry) List() []controlplane.Worker {
+func (r *agentRegistry) List() []controlplane.Agent {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]controlplane.Worker, 0, len(r.agents))
+	out := make([]controlplane.Agent, 0, len(r.agents))
 	for _, agent := range r.agents {
 		out = append(out, agent)
 	}

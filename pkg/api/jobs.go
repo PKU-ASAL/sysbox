@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	DefaultWorkerID = "local"
+	DefaultAgentID = "local"
 )
 
 type Run = controlplane.Run
@@ -50,7 +50,7 @@ type runStartOptions struct {
 	ParentID string
 	Revision string
 	PlanID   string
-	WorkerID string
+	AgentID  string
 }
 
 func newJobs(runsDir string, store apiStore) *Jobs {
@@ -176,8 +176,8 @@ func normalizeRunProductFields(r *Run) {
 	if r.Workspace == "" {
 		r.Workspace = r.Topology
 	}
-	if r.WorkerID == "" {
-		r.WorkerID = DefaultWorkerID
+	if r.AgentID == "" {
+		r.AgentID = DefaultAgentID
 	}
 }
 
@@ -197,7 +197,7 @@ func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *Run 
 		ParentID:   opts.ParentID,
 		Revision:   opts.Revision,
 		PlanID:     opts.PlanID,
-		WorkerID:   opts.WorkerID,
+		AgentID:    opts.AgentID,
 		LeaseOwner: "sysbox-api",
 		QueuedAt:   now,
 		StartedAt:  now,
@@ -212,9 +212,9 @@ func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *Run 
 	return r
 }
 
-func (j *Jobs) assign(r *Run, workerID string) {
+func (j *Jobs) assign(r *Run, agentID string) {
 	j.mu.Lock()
-	r.WorkerID = workerID
+	r.AgentID = agentID
 	r.Status = RunAssigned
 	r.AssignedAt = time.Now()
 	j.mu.Unlock()
@@ -231,7 +231,7 @@ func (j *Jobs) markRunning(r *Run) {
 	j.persist(r)
 }
 
-func (j *Jobs) claim(runID, workerID string) (*Run, error) {
+func (j *Jobs) claim(runID, agentID string) (*Run, error) {
 	if stored, err := j.store.GetRun(context.Background(), runID); err == nil && stored != nil {
 		j.mu.Lock()
 		j.runs[runID] = stored
@@ -244,9 +244,9 @@ func (j *Jobs) claim(runID, workerID string) (*Run, error) {
 		j.mu.Unlock()
 		return nil, fmt.Errorf("run not found")
 	}
-	if run.WorkerID != workerID {
+	if run.AgentID != agentID {
 		j.mu.Unlock()
-		return nil, fmt.Errorf("run assigned to worker %q", run.WorkerID)
+		return nil, fmt.Errorf("run assigned to agent %q", run.AgentID)
 	}
 	if run.Status != RunAssigned {
 		j.mu.Unlock()
@@ -262,12 +262,12 @@ func (j *Jobs) claim(runID, workerID string) (*Run, error) {
 	return &out, nil
 }
 
-func (j *Jobs) runnableForWorker(workerID string) []*Run {
+func (j *Jobs) runnableForAgent(agentID string) []*Run {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	out := make([]*Run, 0)
 	for _, r := range j.runs {
-		if r.WorkerID == workerID && r.Status == RunAssigned {
+		if r.AgentID == agentID && r.Status == RunAssigned {
 			out = append(out, r)
 		}
 	}
@@ -333,7 +333,7 @@ func (j *Jobs) startChild(parent *Run) *Run {
 		ParentID: parent.ID,
 		Revision: parent.Revision,
 		PlanID:   parent.PlanID,
-		WorkerID: parent.WorkerID,
+		AgentID:  parent.AgentID,
 	})
 }
 
@@ -351,6 +351,20 @@ func (j *Jobs) finish(r *Run, err error) {
 	}
 	j.mu.Unlock()
 	j.closeLogs(r.ID)
+	j.persist(r)
+}
+
+func (j *Jobs) replace(r *Run) {
+	if r == nil {
+		return
+	}
+	normalizeRunProductFields(r)
+	j.mu.Lock()
+	j.runs[r.ID] = r
+	j.mu.Unlock()
+	if r.Status == RunDone || r.Status == RunFailed || r.Status == RunCancelled {
+		j.closeLogs(r.ID)
+	}
 	j.persist(r)
 }
 

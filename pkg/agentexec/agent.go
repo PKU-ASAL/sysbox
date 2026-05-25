@@ -1,4 +1,4 @@
-package worker
+package agentexec
 
 import (
 	"bufio"
@@ -14,7 +14,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-const DefaultWorkerID = "local"
+const DefaultAgentID = "local"
 
 type Options struct {
 	APIURL       string
@@ -32,10 +32,10 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 		return fmt.Errorf("api url is required")
 	}
 	if bridge == nil {
-		return fmt.Errorf("worker bridge is required")
+		return fmt.Errorf("agent bridge is required")
 	}
 	if opts.ID == "" {
-		opts.ID = DefaultWorkerID
+		opts.ID = DefaultAgentID
 	}
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = 2 * time.Second
@@ -44,7 +44,7 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	if len(opts.Capabilities) == 0 {
 		opts.Capabilities = []string{"docker", "network", "firecracker", "kvm", "libvirt"}
 	}
-	if err := post(ctx, opts, opts.APIURL+"/v1/agents", controlplane.Worker{
+	if err := post(ctx, opts, opts.APIURL+"/v1/agents", controlplane.Agent{
 		ID:           opts.ID,
 		Name:         opts.Name,
 		Status:       "online",
@@ -55,16 +55,16 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 		return err
 	}
 
-	executor := NewExecutorWithBridge(bridge)
+	executor := NewExecutorWithBridge(remoteBridge{Bridge: bridge, reporter: opts})
 	for {
 		if err := heartbeat(ctx, opts); err != nil {
-			fmt.Printf("[worker] heartbeat failed: %v\n", err)
+			fmt.Printf("[agent] heartbeat failed: %v\n", err)
 		}
 		if err := drainAssignedRuns(ctx, executor, opts); err != nil {
-			fmt.Printf("[worker] drain assigned runs failed: %v\n", err)
+			fmt.Printf("[agent] drain assigned runs failed: %v\n", err)
 		}
 		if err := streamAndExecute(ctx, executor, opts); err != nil && ctx.Err() == nil {
-			fmt.Printf("[worker] command stream disconnected: %v\n", err)
+			fmt.Printf("[agent] command stream disconnected: %v\n", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -75,7 +75,7 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 }
 
 func heartbeat(ctx context.Context, opts Options) error {
-	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/heartbeat", controlplane.Worker{
+	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/heartbeat", controlplane.Agent{
 		ID:           opts.ID,
 		Name:         opts.Name,
 		Status:       "online",
@@ -95,7 +95,7 @@ func drainAssignedRuns(ctx context.Context, executor *Executor, opts Options) er
 	for _, run := range listed.Runs {
 		claimed, err := claim(ctx, opts, run.ID)
 		if err != nil {
-			fmt.Printf("[worker] claim %s failed: %v\n", run.ID, err)
+			fmt.Printf("[agent] claim %s failed: %v\n", run.ID, err)
 			continue
 		}
 		executor.Execute(claimed)
@@ -140,7 +140,7 @@ func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, 
 		}
 		var cmd command
 		if err := json.Unmarshal([]byte(line), &cmd); err != nil {
-			fmt.Printf("[worker] decode command: %v\n", err)
+			fmt.Printf("[agent] decode command: %v\n", err)
 			continue
 		}
 		switch cmd.Type {
@@ -150,12 +150,12 @@ func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, 
 			}
 			claimed, err := claim(ctx, opts, cmd.Run.ID)
 			if err != nil {
-				fmt.Printf("[worker] claim %s failed: %v\n", cmd.Run.ID, err)
+				fmt.Printf("[agent] claim %s failed: %v\n", cmd.Run.ID, err)
 				continue
 			}
 			executor.Execute(claimed)
 		default:
-			fmt.Printf("[worker] unknown command type %q\n", cmd.Type)
+			fmt.Printf("[agent] unknown command type %q\n", cmd.Type)
 		}
 	}
 	return scanner.Err()
@@ -164,6 +164,28 @@ func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, 
 type command struct {
 	Type string            `json:"type"`
 	Run  *controlplane.Run `json:"run,omitempty"`
+}
+
+type remoteBridge struct {
+	Bridge
+	reporter Options
+}
+
+func (b remoteBridge) ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error {
+	return b.reporter.ReportRunComplete(ctx, run, projection)
+}
+
+func (opts Options) ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error {
+	if run == nil || opts.APIURL == "" || opts.ID == "" {
+		return nil
+	}
+	if projection.AgentID == "" {
+		projection.AgentID = opts.ID
+	}
+	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/complete", controlplane.RunCompletion{
+		Run:        *run,
+		Projection: projection,
+	}, nil)
 }
 
 func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {

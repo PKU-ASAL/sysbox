@@ -12,37 +12,37 @@ import (
 )
 
 func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string) error {
-	worker, err := s.selectWorker(ctx, required)
+	agent, err := s.selectAgent(ctx, required)
 	if err != nil {
 		s.jobs.finish(run, err)
 		return err
 	}
-	s.jobs.assign(run, worker.ID)
+	s.jobs.assign(run, agent.ID)
 	if s.agents != nil {
-		if err := s.agents.PublishRun(worker.ID, runRecord(*run)); err != nil {
+		if err := s.agents.PublishRun(agent.ID, runRecord(*run)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Server) selectWorker(ctx context.Context, required []string) (controlplane.Worker, error) {
+func (s *Server) selectAgent(ctx context.Context, required []string) (controlplane.Agent, error) {
 	_ = ctx
 	if s.agents == nil {
 		s.agents = newAgentRegistry()
 	}
-	workers := ensureLocalAgent(s.agents.List())
+	agents := ensureLocalAgent(s.agents.List())
 	required = normalizeCapabilities(required)
-	sort.Slice(workers, func(i, j int) bool { return workers[i].ID < workers[j].ID })
-	for _, worker := range workers {
-		if worker.Status != "online" {
+	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+	for _, agent := range agents {
+		if agent.Status != "online" {
 			continue
 		}
-		if hasCapabilities(worker.Capabilities, required) {
-			return worker, nil
+		if hasCapabilities(agent.Capabilities, required) {
+			return agent, nil
 		}
 	}
-	return controlplane.Worker{}, fmt.Errorf("no online worker satisfies capabilities: %v", required)
+	return controlplane.Agent{}, fmt.Errorf("no online agent satisfies capabilities: %v", required)
 }
 
 func requiredCapabilitiesForTopology(path string) ([]string, error) {

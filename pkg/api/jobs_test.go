@@ -82,7 +82,7 @@ func TestJobsReloadsAssignedRunAsRecoverable(t *testing.T) {
 	runsDir := t.TempDir()
 	jobs := newJobs(runsDir, nil)
 	run := jobs.start("mixed", "apply")
-	jobs.assign(run, DefaultWorkerID)
+	jobs.assign(run, DefaultAgentID)
 
 	reloaded := newJobs(runsDir, nil)
 	got, ok := reloaded.get(run.ID)

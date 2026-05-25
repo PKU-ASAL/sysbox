@@ -39,29 +39,29 @@ resource "sysbox_node" "microvm" {
 	require.Equal(t, []string{"firecracker", "kvm", "network"}, caps)
 }
 
-func TestSelectWorkerByCapabilities(t *testing.T) {
+func TestSelectAgentByCapabilities(t *testing.T) {
 	s := &Server{agents: newAgentRegistry()}
 	ctx := context.Background()
-	s.agents.Save(controlplane.Worker{
-		ID:           "docker-worker",
+	s.agents.Save(controlplane.Agent{
+		ID:           "docker-agent",
 		Status:       "online",
 		Capabilities: []string{"docker"},
 	})
-	s.agents.Save(controlplane.Worker{
-		ID:           "vm-worker",
+	s.agents.Save(controlplane.Agent{
+		ID:           "vm-agent",
 		Status:       "online",
 		Capabilities: []string{"docker", "network", "kvm", "firecracker"},
 	})
 
-	worker, err := s.selectWorker(ctx, []string{"firecracker", "kvm", "network"})
+	agent, err := s.selectAgent(ctx, []string{"firecracker", "kvm", "network"})
 	require.NoError(t, err)
-	require.Equal(t, "vm-worker", worker.ID)
+	require.Equal(t, "vm-agent", agent.ID)
 
-	_, err = s.selectWorker(ctx, []string{"gpu"})
-	require.ErrorContains(t, err, "no online worker")
+	_, err = s.selectAgent(ctx, []string{"gpu"})
+	require.ErrorContains(t, err, "no online agent")
 }
 
-func TestDispatchRunAssignsWorkerBeforeExecution(t *testing.T) {
+func TestDispatchRunAssignsAgentBeforeExecution(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	run := s.jobs.start("mixed", "apply")
 
@@ -70,24 +70,24 @@ func TestDispatchRunAssignsWorkerBeforeExecution(t *testing.T) {
 
 	got, ok := s.jobs.get(run.ID)
 	require.True(t, ok)
-	require.Equal(t, DefaultWorkerID, got.WorkerID)
+	require.Equal(t, DefaultAgentID, got.AgentID)
 	require.Equal(t, RunAssigned, got.Status)
 	require.False(t, got.AssignedAt.IsZero())
 }
 
-func TestWorkerClaimRun(t *testing.T) {
+func TestAgentClaimRun(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	run := s.jobs.start("mixed", "apply")
 	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
 
-	assigned := s.assignedRunsForWorker(context.Background(), DefaultWorkerID)
+	assigned := s.assignedRunsForAgent(context.Background(), DefaultAgentID)
 	require.Len(t, assigned, 1)
 	require.Equal(t, run.ID, assigned[0].ID)
 
-	claimed, err := s.jobs.claim(run.ID, DefaultWorkerID)
+	claimed, err := s.jobs.claim(run.ID, DefaultAgentID)
 	require.NoError(t, err)
 	require.Equal(t, RunRunning, claimed.Status)
 
-	assigned = s.assignedRunsForWorker(context.Background(), DefaultWorkerID)
+	assigned = s.assignedRunsForAgent(context.Background(), DefaultAgentID)
 	require.Empty(t, assigned)
 }

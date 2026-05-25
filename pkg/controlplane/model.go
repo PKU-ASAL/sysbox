@@ -65,13 +65,18 @@ type Run struct {
 	ParentID    string    `json:"parent_id,omitempty"`
 	Revision    string    `json:"revision,omitempty"`
 	PlanID      string    `json:"plan_id,omitempty"`
-	WorkerID    string    `json:"worker_id,omitempty"`
+	AgentID     string    `json:"agent_id,omitempty"`
 	Recoverable bool      `json:"recoverable,omitempty"`
 	LeaseOwner  string    `json:"lease_owner,omitempty"`
 	QueuedAt    time.Time `json:"queued_at,omitempty"`
 	AssignedAt  time.Time `json:"assigned_at,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
 	EndedAt     time.Time `json:"ended_at,omitempty"`
+}
+
+type RunCompletion struct {
+	Run        Run        `json:"run"`
+	Projection Projection `json:"projection,omitempty"`
 }
 
 type RunStatus string
@@ -85,7 +90,7 @@ const (
 	RunCancelled RunStatus = "cancelled"
 )
 
-type Worker struct {
+type Agent struct {
 	ID            string            `json:"id"`
 	Name          string            `json:"name,omitempty"`
 	Status        string            `json:"status"`
@@ -95,6 +100,17 @@ type Worker struct {
 	LastHeartbeat time.Time         `json:"last_heartbeat,omitempty"`
 	CreatedAt     time.Time         `json:"created_at,omitempty"`
 	UpdatedAt     time.Time         `json:"updated_at,omitempty"`
+}
+
+type Projection struct {
+	AgentID       string    `json:"agent_id,omitempty"`
+	Workspace     string    `json:"workspace,omitempty"`
+	Topology      string    `json:"topology,omitempty"`
+	Backend       string    `json:"backend,omitempty"`
+	Serial        int64     `json:"serial,omitempty"`
+	ResourceCount int       `json:"resource_count,omitempty"`
+	Health        string    `json:"health,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
 }
 
 type StackState struct {

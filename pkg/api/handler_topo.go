@@ -352,7 +352,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "worker_id": run.WorkerID})
+	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "agent_id": run.AgentID})
 }
 
 type applyRequest struct {
@@ -436,7 +436,7 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "worker_id": run.WorkerID})
+	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "agent_id": run.AgentID})
 }
 
 // GET /v1/runs/{id}
@@ -509,7 +509,7 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID, "worker_id": run.WorkerID})
+	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID, "agent_id": run.AgentID})
 }
 
 func (s *Server) reconcileParentJournal(parent, run *Run) error {

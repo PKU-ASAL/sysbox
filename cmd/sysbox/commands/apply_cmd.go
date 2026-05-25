@@ -8,9 +8,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
+	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/worker"
 )
 
 var (
@@ -43,7 +43,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	run := newLocalRun("apply", localTopology())
 	aborted := false
-	bridge := worker.NewLocalBridge(worker.LocalOptions{
+	bridge := agentexec.NewLocalBridge(agentexec.LocalOptions{
 		Topology:   run.Topology,
 		ConfigFile: flagConfigFile,
 		StatePath:  statePath(),
@@ -69,7 +69,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 			return nil
 		},
 	})
-	worker.NewExecutorWithBridge(bridge).Execute(run)
+	agentexec.NewExecutorWithBridge(bridge).Execute(run)
 	if aborted {
 		return nil
 	}
@@ -94,7 +94,7 @@ func newLocalRun(op, topology string) *controlplane.Run {
 		Topology:   topology,
 		Op:         op,
 		Status:     controlplane.RunRunning,
-		WorkerID:   worker.DefaultWorkerID,
+		AgentID:    agentexec.DefaultAgentID,
 		LeaseOwner: fmt.Sprintf("sysbox-cli:%s:%s", op, id),
 		QueuedAt:   now,
 		AssignedAt: now,

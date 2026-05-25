@@ -220,7 +220,7 @@ CloudFormation-style control plane concepts:
 | Workspace / Topology | HCL workspace under `.sysbox/api/workspaces` plus state backend entry |
 | Revision | SHA256-addressed HCL revision |
 | Plan | Stored plan record for a workspace revision |
-| Run | Async apply/destroy/recover operation with worker ownership |
+| Run | Async apply/destroy/recover operation with agent ownership |
 | Agent | Host-local execution node registered through `/v1/agents`; current in-process API execution appears as `local` |
 | Stack State | Current state plus backend metadata |
 | Event / Action | Checkpoint/action-log steps exposed as run events |
@@ -326,7 +326,7 @@ pkg/runtime/                Plan/apply/destroy/checkpoint runtime and execution 
 pkg/state/                  Local/Postgres/HTTP/S3/SQLite state backends
 pkg/substrate/              Provider abstraction
 pkg/agent/                  Agent identity and registration
-pkg/worker/                 Agent loop, local bridge, and apply/destroy execution
+pkg/agentexec/              Agent loop, local bridge, and apply/destroy execution
 runner/                     Optional Python episode runner for agent examples
 scripts/                    Artifact preparation and verification helpers
 tests/e2e/                  Integration tests with build tag e2e

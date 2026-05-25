@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/worker"
 )
 
 var destroyCmd = &cobra.Command{
@@ -46,7 +46,7 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 
 	run := newLocalRun("destroy", localTopology())
 	aborted := false
-	bridge := worker.NewLocalBridge(worker.LocalOptions{
+	bridge := agentexec.NewLocalBridge(agentexec.LocalOptions{
 		Topology:   run.Topology,
 		ConfigFile: flagConfigFile,
 		StatePath:  statePath(),
@@ -75,7 +75,7 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 			return nil
 		},
 	})
-	worker.NewExecutorWithBridge(bridge).Execute(run)
+	agentexec.NewExecutorWithBridge(bridge).Execute(run)
 	if aborted {
 		return nil
 	}

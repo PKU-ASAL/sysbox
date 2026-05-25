@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/api"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/worker"
 )
 
 var (
@@ -63,7 +63,7 @@ var agentStartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return worker.Run(cmd.Context(), worker.Options{
+		return agentexec.Run(cmd.Context(), agentexec.Options{
 			APIURL:       ident.APIURL,
 			Token:        ident.Token,
 			ID:           ident.ID,
@@ -128,4 +128,16 @@ func agentIdentityPath() string {
 		return agent.DefaultIdentityPath
 	}
 	return flagAgentIdentity
+}
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

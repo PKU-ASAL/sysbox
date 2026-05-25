@@ -141,12 +141,12 @@ func RemoveIdentity(path string) error {
 }
 
 func RegisterRemote(ctx context.Context, ident *Identity) error {
-	return postAgent(ctx, ident, ident.APIURL+"/v1/agents", ident.Worker())
+	return postAgent(ctx, ident, ident.APIURL+"/v1/agents", ident.Agent())
 }
 
-func (i *Identity) Worker() controlplane.Worker {
+func (i *Identity) Agent() controlplane.Agent {
 	now := time.Now().UTC()
-	return controlplane.Worker{
+	return controlplane.Agent{
 		ID:            i.ID,
 		Name:          i.Name,
 		Status:        "online",

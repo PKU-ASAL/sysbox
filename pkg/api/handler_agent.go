@@ -12,38 +12,14 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-func (s *Server) handleListWorkers(w http.ResponseWriter, r *http.Request) {
-	s.handleListAgents(w, r)
-}
-
-func (s *Server) handleRegisterWorker(w http.ResponseWriter, r *http.Request) {
-	s.handleRegisterAgent(w, r)
-}
-
-func (s *Server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
-	s.handleGetAgentByID(w, r.PathValue("worker"))
-}
-
-func (s *Server) handleListWorkerRuns(w http.ResponseWriter, r *http.Request) {
-	s.handleListAgentRunsByID(w, r.PathValue("worker"))
-}
-
-func (s *Server) handleClaimWorkerRun(w http.ResponseWriter, r *http.Request) {
-	s.handleClaimAgentRunByID(w, r.PathValue("worker"), r.PathValue("id"))
-}
-
-func (s *Server) handleWorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
-	s.handleAgentHeartbeatByID(w, r, r.PathValue("worker"))
-}
-
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	agents := ensureLocalAgent(s.agents.List())
 	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
-	writeJSON(w, http.StatusOK, map[string]any{"agents": agents, "workers": agents})
+	writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
 }
 
 func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
-	var req controlplane.Worker
+	var req controlplane.Agent
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent: %w", err))
 		return
@@ -66,7 +42,7 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if id == DefaultWorkerID {
+	if id == DefaultAgentID {
 		writeJSON(w, http.StatusOK, localAgent())
 		return
 	}
@@ -87,7 +63,7 @@ func (s *Server) handleListAgentRunsByID(w http.ResponseWriter, id string) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"runs": s.assignedRunsForWorker(context.Background(), id)})
+	writeJSON(w, http.StatusOK, map[string]any{"runs": s.assignedRunsForAgent(context.Background(), id)})
 }
 
 func (s *Server) handleClaimAgentRun(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +87,62 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 	writeJSON(w, http.StatusOK, run)
 }
 
+func (s *Server) handleCompleteAgentRun(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	runID := r.PathValue("id")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validatePathSegment(runID, "id"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var req controlplane.RunCompletion
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode run completion: %w", err))
+		return
+	}
+	if req.Run.ID == "" {
+		req.Run.ID = runID
+	}
+	if req.Run.ID != runID {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("completion run id mismatch"))
+		return
+	}
+	if req.Run.AgentID == "" {
+		req.Run.AgentID = agentID
+	}
+	if req.Run.AgentID != agentID {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("completion agent id mismatch"))
+		return
+	}
+	s.jobs.replace(&req.Run)
+	if req.Projection.AgentID == "" {
+		req.Projection.AgentID = agentID
+	}
+	if req.Projection.Topology == "" {
+		req.Projection.Topology = req.Run.Topology
+	}
+	if req.Projection.Workspace == "" {
+		req.Projection.Workspace = req.Run.Workspace
+	}
+	if req.Projection.UpdatedAt.IsZero() {
+		req.Projection.UpdatedAt = time.Now().UTC()
+	}
+	s.agents.SaveProjection(req.Projection)
+	writeJSON(w, http.StatusOK, req)
+}
+
+func (s *Server) handleListAgentProjections(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projections": s.agents.ListProjections(agentID)})
+}
+
 func (s *Server) handleAgentStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("agent")
 	if err := validatePathSegment(id, "agent"); err != nil {
@@ -120,7 +152,7 @@ func (s *Server) handleAgentStream(w http.ResponseWriter, r *http.Request) {
 	if s.agents == nil {
 		s.agents = newAgentRegistry()
 	}
-	if _, err := s.agents.Get(id); err != nil && id != DefaultWorkerID {
+	if _, err := s.agents.Get(id); err != nil && id != DefaultAgentID {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
@@ -142,7 +174,7 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	var req controlplane.Worker
+	var req controlplane.Agent
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent heartbeat: %w", err))
@@ -177,12 +209,12 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, agent)
 }
 
-func normalizeAgent(in controlplane.Worker) (controlplane.Worker, error) {
+func normalizeAgent(in controlplane.Agent) (controlplane.Agent, error) {
 	if in.ID == "" {
 		in.ID = in.Name
 	}
 	if err := validatePathSegment(in.ID, "agent"); err != nil {
-		return controlplane.Worker{}, err
+		return controlplane.Agent{}, err
 	}
 	now := time.Now().UTC()
 	if in.Name == "" {
@@ -203,7 +235,7 @@ func normalizeAgent(in controlplane.Worker) (controlplane.Worker, error) {
 	return in, nil
 }
 
-func (s *Server) assignedRunsForWorker(ctx context.Context, workerID string) []Run {
+func (s *Server) assignedRunsForAgent(ctx context.Context, agentID string) []Run {
 	runs, err := s.apiStore.LoadRuns(ctx)
 	if err != nil {
 		return nil
@@ -211,7 +243,7 @@ func (s *Server) assignedRunsForWorker(ctx context.Context, workerID string) []R
 	out := make([]Run, 0)
 	for _, run := range latestRunsByID(runs) {
 		normalizeRunProductFields(&run)
-		if run.WorkerID == workerID && run.Status == RunAssigned {
+		if run.AgentID == agentID && run.Status == RunAssigned {
 			out = append(out, run)
 		}
 	}
@@ -219,19 +251,19 @@ func (s *Server) assignedRunsForWorker(ctx context.Context, workerID string) []R
 	return out
 }
 
-func ensureLocalAgent(agents []controlplane.Worker) []controlplane.Worker {
+func ensureLocalAgent(agents []controlplane.Agent) []controlplane.Agent {
 	for _, agent := range agents {
-		if agent.ID == DefaultWorkerID {
+		if agent.ID == DefaultAgentID {
 			return agents
 		}
 	}
 	return append(agents, localAgent())
 }
 
-func localAgent() controlplane.Worker {
+func localAgent() controlplane.Agent {
 	now := time.Now().UTC()
-	return controlplane.Worker{
-		ID:            DefaultWorkerID,
+	return controlplane.Agent{
+		ID:            DefaultAgentID,
 		Name:          "local API agent",
 		Status:        "online",
 		Capabilities:  []string{"docker", "network", "firecracker", "libvirt"},
