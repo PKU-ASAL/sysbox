@@ -59,8 +59,8 @@ type Result struct {
 
 // Resolver fetches artifacts on demand.
 type Resolver struct {
-	// CacheDir holds downloaded artifacts. Defaults to
-	// $SYSBOX_CACHE/artifacts when set, then the user cache fallback.
+	// CacheDir holds downloaded artifacts. Defaults to the configured sysbox
+	// cache root, then the user cache fallback.
 	CacheDir string
 
 	// HTTPClient is used for URL fetches. Defaults to a 30-minute-timeout
@@ -78,7 +78,7 @@ func New() *Resolver {
 
 // DefaultCacheDir resolves the standard sysbox artifact cache location.
 func DefaultCacheDir() string {
-	if v := os.Getenv("SYSBOX_CACHE"); v != "" {
+	if v := config.SysboxCache(); v != "" {
 		return filepath.Join(v, "artifacts")
 	}
 	if v := os.Getenv("XDG_CACHE_HOME"); v != "" {

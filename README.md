@@ -156,40 +156,7 @@ curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
 
 `make api-seed` copies `examples/*/field.sysbox.hcl` into `.sysbox/api/workspaces` only when a workspace is missing. After that, API-managed HCL is independent from `examples/`.
 
-Important API endpoints:
-
-```bash
-GET  /v1/projects
-GET  /v1/projects/default
-GET  /v1/projects/default/workspaces
-
-GET  /v1/topologies
-GET  /v1/topologies/{name}/plan
-POST /v1/topologies/{name}/plans
-GET  /v1/topologies/{name}/plans
-GET  /v1/topologies/{name}/plans/{plan_id}
-POST /v1/topologies/{name}/revisions
-GET  /v1/topologies/{name}/revisions
-GET  /v1/topologies/{name}/outputs
-GET  /v1/topologies/{name}/preflight
-GET  /v1/topologies/{name}/stack-state
-GET  /v1/topologies/{name}/lease
-GET  /v1/topologies/{name}/snapshots
-POST /v1/topologies/{name}/apply
-POST /v1/topologies/{name}/destroy
-
-GET  /v1/runs/{run_id}
-GET  /v1/runs/{run_id}/checkpoint
-GET  /v1/runs/{run_id}/actions
-GET  /v1/runs/{run_id}/events
-POST /v1/runs/{run_id}/resume
-POST /v1/runs/{run_id}/recover
-POST /v1/runs/{run_id}/cleanup
-
-GET  /v1/artifacts
-GET  /v1/policies
-POST /v1/policies
-```
+Important API endpoints are documented in [docs/api.md](docs/api.md).
 
 Product-level apply flow:
 
@@ -259,6 +226,7 @@ variables only as deploy-time overrides. Docker Compose mounts
 to point at another file.
 
 ```yaml
+version: 1
 api:
   listen: ":9876"
 paths:
@@ -268,9 +236,22 @@ supervisor:
   policy: observe_only
   interval: 30s
 providers:
+  default_policy:
+    preflight: warn
+  docker:
+    enabled: true
+  network:
+    enabled: true
   firecracker:
+    enabled: true
     binary: /opt/sysbox/bin/firecracker
     workdir: /var/lib/sysbox/firecracker
+  libvirt:
+    enabled: true
+artifacts:
+  policy:
+    cache_mode: on_demand
+    verify: warn
 ```
 
 The Postgres DSN is assembled by Compose from `.env` and passed as
@@ -293,17 +274,15 @@ Recommended environment overrides:
 | `SYSBOX_POSTGRES_HOST_PORT` | Host port published for Postgres, default `55432` |
 | `SYSBOX_STATE_BACKEND` | Optional external state/API backend URL; overrides Compose-generated DSN |
 | `SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR` | Host tools directory mounted to `/opt/sysbox/bin`, default `~/.local/bin` |
-| `SYSBOX_FIRECRACKER_BIN` | Optional override for the Firecracker binary path; prefer `SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR` for Compose |
-| `SYSBOX_FIRECRACKER_KERNEL` | Default Firecracker kernel path; HCL `sysbox_kernel` is preferred |
-| `SYSBOX_FIRECRACKER_WORKDIR` | Per-VM Firecracker work directory |
+| `SYSBOX_PROVIDER_FIRECRACKER_BIN` | Optional override for the Firecracker binary path; prefer `SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR` for Compose |
+| `SYSBOX_PROVIDER_FIRECRACKER_KERNEL` | Default Firecracker kernel path; HCL `sysbox_kernel` is preferred |
+| `SYSBOX_PROVIDER_FIRECRACKER_WORKDIR` | Per-VM Firecracker work directory |
 
 The container paths `/var/lib/sysbox` and `/var/cache/sysbox` are fixed by the
 sysbox image and service config. `.env` only chooses the host directories that
 back those paths.
 
 Kernel/rootfs/qcow2 are topology artifacts, not service configuration. Prefer HCL `sysbox_kernel` and `sysbox_image` with `source`, `rootfs`, `qcow2`, and `sha256`. `SYSBOX_ROOTFS` remains a local example convenience variable, not an API deployment contract.
-
-## Artifacts
 
 ## HCL Resources
 

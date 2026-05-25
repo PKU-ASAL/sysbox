@@ -38,8 +38,6 @@ services:
     environment:
       SYSBOX_CONFIG: ${SYSBOX_CONFIG:-/etc/sysbox/sysbox.yaml}
       SYSBOX_API_TOKEN: ${SYSBOX_API_TOKEN:-}
-      SYSBOX_HOME: /var/lib/sysbox
-      SYSBOX_CACHE: /var/cache/sysbox
       SYSBOX_STATE_BACKEND: ${SYSBOX_STATE_BACKEND:-postgres://${SYSBOX_POSTGRES_USERNAME:-sysbox}:${SYSBOX_POSTGRES_PASSWORD}@sysbox-postgres:5432/${SYSBOX_POSTGRES_DATABASE:-sysbox}?sslmode=disable&topology={topology}}
       PATH: /opt/sysbox/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -76,7 +77,6 @@ func TestGetTopologyHealthCached(t *testing.T) {
 }
 
 func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
-	t.Setenv("SYSBOX_SUPERVISOR_POLICY", string(SupervisorPolicyRestartOnCrash))
 	dir := t.TempDir()
 	runs := filepath.Join(dir, "runs")
 	workspaces := filepath.Join(dir, "workspaces")
@@ -92,7 +92,11 @@ func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
 		}},
 	})
 
-	s := NewServer(runs, workspaces)
+	cfg := config.MustLoadServiceConfig("")
+	cfg.Paths.RunsDir = runs
+	cfg.Paths.WorkspacesDir = workspaces
+	cfg.Supervisor.Policy = string(SupervisorPolicyRestartOnCrash)
+	s := NewServerWithConfig(cfg)
 	supervisor := newSupervisor(s, time.Minute)
 	require.NoError(t, supervisor.ScanTopology(context.Background(), "mixed"))
 
@@ -112,7 +116,6 @@ func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
 }
 
 func TestSupervisorRestartOnCrashSkipsWhenRunActive(t *testing.T) {
-	t.Setenv("SYSBOX_SUPERVISOR_POLICY", string(SupervisorPolicyRestartOnCrash))
 	dir := t.TempDir()
 	runs := filepath.Join(dir, "runs")
 	workspaces := filepath.Join(dir, "workspaces")
@@ -128,7 +131,11 @@ func TestSupervisorRestartOnCrashSkipsWhenRunActive(t *testing.T) {
 		}},
 	})
 
-	s := NewServer(runs, workspaces)
+	cfg := config.MustLoadServiceConfig("")
+	cfg.Paths.RunsDir = runs
+	cfg.Paths.WorkspacesDir = workspaces
+	cfg.Supervisor.Policy = string(SupervisorPolicyRestartOnCrash)
+	s := NewServerWithConfig(cfg)
 	_ = s.jobs.start("mixed", "apply")
 	supervisor := newSupervisor(s, time.Minute)
 	require.NoError(t, supervisor.ScanTopology(context.Background(), "mixed"))

@@ -1,3 +1,5 @@
+version: 1
+
 api:
   listen: ":9876"
 
@@ -12,10 +14,23 @@ supervisor:
   interval: 30s
 
 providers:
+  default_policy:
+    preflight: warn
+  docker:
+    enabled: true
+  network:
+    enabled: true
   firecracker:
+    enabled: true
     binary: /opt/sysbox/bin/firecracker
     workdir: /var/lib/sysbox/firecracker
+  libvirt:
+    enabled: true
 
 artifacts:
   roots:
     - /var/cache/sysbox
+  policy:
+    cache_mode: on_demand
+    verify: warn
+  registries: []

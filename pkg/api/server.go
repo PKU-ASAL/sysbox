@@ -25,8 +25,8 @@ type Server struct {
 }
 
 // NewServer creates a Server rooted at runsDir (state files) and
-// workspacesDir (HCL files). Empty values use the service data layout under
-// SYSBOX_HOME.
+// workspacesDir (HCL files). Empty values use the service data layout from
+// sysbox.yaml.
 func NewServer(runsDir, workspacesDir string) *Server {
 	cfg := config.MustLoadServiceConfig("")
 	if runsDir != "" {
