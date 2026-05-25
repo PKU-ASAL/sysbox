@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -77,48 +76,6 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
-}
-
-// POST /v1/topologies/{topology}/nodes/{node}/exec
-// Body: {"cmd": ["ls", "-la"]}
-// Compatibility entry point that now creates an agent-backed console session.
-// Attach to /v1/sessions/{session}/attach over WebSocket to stream I/O.
-func (s *Server) handleNodeExec(w http.ResponseWriter, r *http.Request) {
-	topology := r.PathValue("topology")
-	name := r.PathValue("node")
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := validatePathSegment(name, "node"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-
-	var body controlplane.ConsoleRequest
-	limitBody(w, r)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Cmd) == 0 {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("body must be {\"cmd\":[...]}"))
-		return
-	}
-	v := false
-	body.TTY = &v
-	required, err := requiredCapabilitiesForNode(s.hclFile(topology), name)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	agent, err := s.selectAgent(r.Context(), required)
-	if err != nil {
-		writeError(w, http.StatusConflict, err)
-		return
-	}
-	sess := s.consoles.Create(topology, name, agent.ID, body)
-	if err := s.agents.PublishConsole(agent.ID, sess, body); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, sess)
 }
 
 // POST /v1/topologies/{topology}/nodes/{node}/pause

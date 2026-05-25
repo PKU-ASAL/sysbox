@@ -174,7 +174,6 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/nodes", s.handleListNodes)
 	m.HandleFunc("GET /v1/topologies/{topology}/nodes/{node}", s.handleGetNode)
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/sessions", s.handleCreateConsoleSession)
-	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/exec", s.handleNodeExec)
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/pause", s.handleNodePause)
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/resume", s.handleNodeResume)
 	m.HandleFunc("POST /v1/topologies/{topology}/import", s.handleImport)

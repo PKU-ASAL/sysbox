@@ -118,13 +118,11 @@ WebSocket frames; the owning agent opens the substrate console locally.
 
 ```bash
 POST /v1/topologies/{name}/nodes/{node}/sessions
-POST /v1/topologies/{name}/nodes/{node}/exec
 GET  /v1/sessions/{session_id}
 GET  /v1/sessions/{session_id}/attach
 GET  /v1/agents/{agent_id}/sessions/{session_id}/attach
 ```
 
-`/exec` is a compatibility entry point that now returns a session object.
 Browsers attach to `/v1/sessions/{session_id}/attach`. Agents attach to the
 agent-side URL after receiving a `session_open` command on their SSE stream.
 
@@ -144,7 +142,6 @@ encoded so the same envelope works across browser terminals and simple tools.
 ```bash
 GET  /v1/topologies/{name}/nodes
 GET  /v1/topologies/{name}/nodes/{node}
-POST /v1/topologies/{name}/nodes/{node}/exec
 POST /v1/topologies/{name}/nodes/{node}/pause
 POST /v1/topologies/{name}/nodes/{node}/resume
 ```

@@ -41,7 +41,8 @@ Async run tracking:
 Node access:
   GET  /v1/topologies/{topology}/nodes
   GET  /v1/topologies/{topology}/nodes/{node}
-  POST /v1/topologies/{topology}/nodes/{node}/exec
+  POST /v1/topologies/{topology}/nodes/{node}/sessions
+  GET  /v1/sessions/{session}/attach              (WebSocket)
 
 Configuration:
   sysbox serve --config /etc/sysbox/sysbox.yaml
