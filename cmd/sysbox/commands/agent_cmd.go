@@ -71,6 +71,7 @@ var agentStartCmd = &cobra.Command{
 			Capabilities: ident.Capabilities,
 			Labels:       ident.Labels,
 			PollInterval: flagAgentPollInterval,
+			Policy:       cfg.Agent.Policy,
 		}, api.NewExecutionBridge(cfg))
 	},
 }

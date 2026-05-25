@@ -17,6 +17,7 @@ const DefaultConfigPath = "/etc/sysbox/sysbox.yaml"
 type ServiceConfig struct {
 	Version    int              `yaml:"version" json:"version"`
 	API        APIConfig        `yaml:"api" json:"api"`
+	Agent      AgentConfig      `yaml:"agent" json:"agent,omitempty"`
 	Paths      PathsConfig      `yaml:"paths" json:"paths"`
 	State      StateConfig      `yaml:"state" json:"state"`
 	Supervisor SupervisorConfig `yaml:"supervisor" json:"supervisor"`
@@ -50,6 +51,18 @@ type APIAuditConfig struct {
 type APIHeadersConfig struct {
 	User  string `yaml:"user" json:"user,omitempty"`
 	Roles string `yaml:"roles" json:"roles,omitempty"`
+}
+
+type AgentConfig struct {
+	Policy AgentPolicyConfig `yaml:"policy" json:"policy,omitempty"`
+}
+
+type AgentPolicyConfig struct {
+	AllowedWorkspaces []string `yaml:"allowed_workspaces" json:"allowed_workspaces,omitempty"`
+	AllowedSubstrates []string `yaml:"allowed_substrates" json:"allowed_substrates,omitempty"`
+	AllowedCommands   []string `yaml:"allowed_commands" json:"allowed_commands,omitempty"`
+	AllowConsole      *bool    `yaml:"allow_console" json:"allow_console,omitempty"`
+	AllowImport       *bool    `yaml:"allow_import" json:"allow_import,omitempty"`
 }
 
 type PathsConfig struct {
@@ -110,6 +123,7 @@ type ArtifactPolicy struct {
 }
 
 func DefaultServiceConfig() ServiceConfig {
+	allow := true
 	return ServiceConfig{
 		Version: 1,
 		API: APIConfig{
@@ -125,6 +139,13 @@ func DefaultServiceConfig() ServiceConfig {
 			Headers: APIHeadersConfig{
 				User:  "X-Sysbox-User",
 				Roles: "X-Sysbox-Roles",
+			},
+		},
+		Agent: AgentConfig{
+			Policy: AgentPolicyConfig{
+				AllowedCommands: []string{"run_assigned", "session_open", "node_operation"},
+				AllowConsole:    &allow,
+				AllowImport:     &allow,
 			},
 		},
 		Paths: PathsConfig{
@@ -257,6 +278,17 @@ func applyDerivedDefaults(c *ServiceConfig) {
 	if c.API.Headers.Roles == "" {
 		c.API.Headers.Roles = "X-Sysbox-Roles"
 	}
+	if len(c.Agent.Policy.AllowedCommands) == 0 {
+		c.Agent.Policy.AllowedCommands = []string{"run_assigned", "session_open", "node_operation"}
+	}
+	if c.Agent.Policy.AllowConsole == nil {
+		v := true
+		c.Agent.Policy.AllowConsole = &v
+	}
+	if c.Agent.Policy.AllowImport == nil {
+		v := true
+		c.Agent.Policy.AllowImport = &v
+	}
 	if c.Providers.DefaultPolicy.Preflight == "" {
 		c.Providers.DefaultPolicy.Preflight = "warn"
 	}
@@ -312,6 +344,13 @@ func (c ServiceConfig) Validate() error {
 	for _, reg := range c.Artifacts.Registries {
 		if reg.Name == "" || reg.URI == "" {
 			return fmt.Errorf("artifacts.registries entries require name and uri")
+		}
+	}
+	for _, command := range c.Agent.Policy.AllowedCommands {
+		switch command {
+		case "run_assigned", "session_open", "node_operation":
+		default:
+			return fmt.Errorf("agent.policy.allowed_commands contains unsupported command %q", command)
 		}
 	}
 	return nil

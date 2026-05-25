@@ -15,6 +15,17 @@ api:
     user: X-Sysbox-User
     roles: X-Sysbox-Roles
 
+agent:
+  policy:
+    allowed_commands:
+      - run_assigned
+      - session_open
+      - node_operation
+    allowed_workspaces: []
+    allowed_substrates: []
+    allow_console: true
+    allow_import: true
+
 paths:
   home: /var/lib/sysbox
   cache: /var/cache/sysbox

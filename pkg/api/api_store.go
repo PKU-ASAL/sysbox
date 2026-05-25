@@ -38,6 +38,8 @@ type apiStore interface {
 	SaveNodeOperation(ctx context.Context, op controlplane.NodeOperation) error
 	GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error)
 	ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error)
+	SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error
+	ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error)
 }
 
 type localAPIStore struct {
@@ -258,6 +260,50 @@ func (s *localAPIStore) ListNodeOperations(_ context.Context, workspace string) 
 	return readLocalObjects[controlplane.NodeOperation](filepath.Join(s.runsDir, workspace, "node-ops", "*.json"))
 }
 
+func (s *localAPIStore) SaveAgentCommandEvent(_ context.Context, event controlplane.AgentCommandEvent) error {
+	agentID := event.AgentID
+	if agentID == "" {
+		agentID = "_unknown"
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	path := filepath.Join(s.runsDir, "_agents", agentID, "command-events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	fh, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer fh.Close()
+	return json.NewEncoder(fh).Encode(event)
+}
+
+func (s *localAPIStore) ListAgentCommandEvents(_ context.Context, agentID string) ([]controlplane.AgentCommandEvent, error) {
+	pattern := filepath.Join(s.runsDir, "_agents", "*", "command-events.jsonl")
+	if agentID != "" {
+		pattern = filepath.Join(s.runsDir, "_agents", agentID, "command-events.jsonl")
+	}
+	files, _ := filepath.Glob(pattern)
+	var out []controlplane.AgentCommandEvent
+	for _, f := range files {
+		fh, err := os.Open(f)
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(fh)
+		for sc.Scan() {
+			var event controlplane.AgentCommandEvent
+			if err := json.Unmarshal(sc.Bytes(), &event); err == nil {
+				out = append(out, event)
+			}
+		}
+		fh.Close()
+	}
+	return out, nil
+}
+
 func writeLocalObject(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -349,6 +395,13 @@ CREATE TABLE IF NOT EXISTS sysbox_node_operations (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_agent_command_events (
+  agent_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`)
 	if err != nil {
 		return fmt.Errorf("postgres ensure api tables: %w", err)
@@ -702,6 +755,64 @@ func (s *postgresAPIStore) ListNodeOperations(ctx context.Context, workspace str
 			return nil, err
 		}
 		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *postgresAPIStore) SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error {
+	if event.AgentID == "" {
+		event.AgentID = "_unknown"
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(ctx, `
+INSERT INTO sysbox_agent_command_events (agent_id, command_id, status, data, created_at)
+VALUES ($1, $2, $3, $4::jsonb, $5)`,
+		event.AgentID, event.CommandID, event.Status, string(raw), event.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("postgres save agent command event: %w", err)
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	query := `SELECT data::text FROM sysbox_agent_command_events ORDER BY created_at DESC LIMIT 512`
+	args := []any{}
+	if agentID != "" {
+		query = `SELECT data::text FROM sysbox_agent_command_events WHERE agent_id=$1 ORDER BY created_at DESC LIMIT 512`
+		args = append(args, agentID)
+	}
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres list agent command events: %w", err)
+	}
+	defer rows.Close()
+	var out []controlplane.AgentCommandEvent
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var event controlplane.AgentCommandEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
 	}
 	return out, rows.Err()
 }

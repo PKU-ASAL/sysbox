@@ -118,6 +118,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/agents/{agent}", s.handleGetAgent)
 	m.HandleFunc("POST /v1/agents/{agent}/heartbeat", s.handleAgentHeartbeat)
 	m.HandleFunc("GET /v1/agents/{agent}/projections", s.handleListAgentProjections)
+	m.HandleFunc("GET /v1/agents/{agent}/command-events", s.handleListAgentCommandEvents)
 	m.HandleFunc("POST /v1/agents/{agent}/projections/resources", s.handlePostAgentResourceProjection)
 	m.HandleFunc("GET /v1/agents/{agent}/runs", s.handleListAgentRuns)
 	m.HandleFunc("POST /v1/agents/{agent}/node-operations/{operation}/complete", s.handleCompleteNodeOperation)

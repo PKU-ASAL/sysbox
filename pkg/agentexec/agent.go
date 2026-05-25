@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
@@ -29,6 +31,7 @@ type Options struct {
 	Labels       map[string]string
 	Version      string
 	PollInterval time.Duration
+	Policy       config.AgentPolicyConfig
 }
 
 func Run(ctx context.Context, opts Options, bridge Bridge) error {
@@ -239,6 +242,10 @@ func executeAgentCommand(ctx context.Context, executor *Executor, opts Options, 
 		}
 		report(event)
 	}
+	if err := authorizeAgentCommand(opts.Policy, cmd); err != nil {
+		emit("denied", "command denied by local agent policy", err)
+		return
+	}
 	emit("started", "command started", nil)
 	switch cmd.Type {
 	case "run_assigned":
@@ -282,6 +289,68 @@ func executeAgentCommand(ctx context.Context, executor *Executor, opts Options, 
 		fmt.Printf("[agent] %v\n", err)
 		emit("failed", "unknown command type", err)
 	}
+}
+
+func authorizeAgentCommand(policy config.AgentPolicyConfig, cmd *controlplane.AgentCommand) error {
+	if cmd == nil {
+		return fmt.Errorf("missing command")
+	}
+	if len(policy.AllowedCommands) > 0 && !slices.Contains(policy.AllowedCommands, cmd.Type) {
+		return fmt.Errorf("command %q is not allowed", cmd.Type)
+	}
+	switch cmd.Type {
+	case "run_assigned":
+		if cmd.Run == nil {
+			return fmt.Errorf("missing run")
+		}
+		if err := allowWorkspace(policy, cmd.Run.Workspace, cmd.Run.Topology); err != nil {
+			return err
+		}
+	case "session_open":
+		if policy.AllowConsole != nil && !*policy.AllowConsole {
+			return fmt.Errorf("console sessions are disabled")
+		}
+		if cmd.Session == nil {
+			return fmt.Errorf("missing session")
+		}
+		if err := allowWorkspace(policy, cmd.Session.Workspace, cmd.Session.Topology); err != nil {
+			return err
+		}
+	case "node_operation":
+		if err := allowWorkspace(policy, cmd.Operation.Workspace, cmd.Operation.Topology); err != nil {
+			return err
+		}
+		if err := allowSubstrate(policy, cmd.Operation.Substrate); err != nil {
+			return err
+		}
+		if cmd.Operation.Operation == "import" && policy.AllowImport != nil && !*policy.AllowImport {
+			return fmt.Errorf("import is disabled")
+		}
+	}
+	return nil
+}
+
+func allowWorkspace(policy config.AgentPolicyConfig, workspace, topology string) error {
+	if len(policy.AllowedWorkspaces) == 0 {
+		return nil
+	}
+	if workspace == "" {
+		workspace = topology
+	}
+	if slices.Contains(policy.AllowedWorkspaces, workspace) {
+		return nil
+	}
+	return fmt.Errorf("workspace %q is not allowed", workspace)
+}
+
+func allowSubstrate(policy config.AgentPolicyConfig, substrate string) error {
+	if len(policy.AllowedSubstrates) == 0 || substrate == "" {
+		return nil
+	}
+	if slices.Contains(policy.AllowedSubstrates, substrate) {
+		return nil
+	}
+	return fmt.Errorf("substrate %q is not allowed", substrate)
 }
 
 type commandEventReporter struct {

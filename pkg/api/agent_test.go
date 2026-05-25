@@ -101,6 +101,12 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 			events := s.agents.ListCommandEvents("host-a")
 			return len(events) == 1 && events[0].CommandID == event.CommandID && events[0].Status == "ack"
 		}, time.Second, 10*time.Millisecond)
+
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/agents/host-a/command-events", nil))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), event.CommandID)
+		require.Contains(t, rec.Body.String(), `"status":"ack"`)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for command websocket")
 	}

@@ -24,6 +24,7 @@ GET  /v1/agents/{agent_id}
 POST /v1/agents/{agent_id}/heartbeat
 GET  /v1/agents/{agent_id}/stream
 GET  /v1/agents/{agent_id}/commands
+GET  /v1/agents/{agent_id}/command-events
 GET  /v1/agents/{agent_id}/projections
 GET  /v1/agents/{agent_id}/runs
 POST /v1/agents/{agent_id}/runs/{run_id}/claim
@@ -105,7 +106,8 @@ Run records include the owning `agent_id`. The API creates and assigns command
 intent; agents keep an outbound WebSocket command stream open at
 `/v1/agents/{agent_id}/commands`. Commands use a durable envelope with
 `id`, `type`, and command-specific payload. Agents ACK, start, complete, and
-fail commands on the same WebSocket. The older SSE
+fail commands on the same WebSocket; command events are persisted and available
+from `/v1/agents/{agent_id}/command-events`. The older SSE
 `/v1/agents/{agent_id}/stream` endpoint remains as a compatibility/debug
 projection while agents prefer WebSocket. When a run is assigned, the API
 pushes a `run_assigned` command; the agent then claims the run and executes it
@@ -116,6 +118,11 @@ agent posts the final run status and a state projection to
 ```text
 queued -> assigned -> running -> done|failed|cancelled
 ```
+
+Agents also enforce a local host policy before executing commands. Configure
+`agent.policy.allowed_workspaces`, `allowed_substrates`, `allowed_commands`,
+`allow_console`, and `allow_import` in `sysbox.yaml` to keep host-local
+capabilities scoped even if the control plane is misconfigured.
 
 ## Console Sessions
 

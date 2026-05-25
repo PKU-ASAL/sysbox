@@ -182,6 +182,23 @@ func (s *Server) handleListAgentProjections(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"projections": s.agents.ListProjections(agentID)})
 }
 
+func (s *Server) handleListAgentCommandEvents(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	events, err := s.apiStore.ListAgentCommandEvents(r.Context(), agentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if len(events) == 0 {
+		events = s.agents.ListCommandEvents(agentID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
 func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
 	if err := validatePathSegment(agentID, "agent"); err != nil {
@@ -309,6 +326,9 @@ func (s *Server) readAgentCommandEvents(ctx context.Context, agentID string, con
 			event.CreatedAt = time.Now().UTC()
 		}
 		s.agents.SaveCommandEvent(event)
+		if s.apiStore != nil {
+			_ = s.apiStore.SaveAgentCommandEvent(ctx, event)
+		}
 		fmt.Printf("[agent:%s] command %s %s %s\n", event.AgentID, event.CommandID, event.Type, event.Status)
 	}
 }

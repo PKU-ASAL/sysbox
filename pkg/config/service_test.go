@@ -23,6 +23,17 @@ api:
     admin_roles:
       - admin
       - platform
+agent:
+  policy:
+    allowed_workspaces:
+      - lab
+    allowed_substrates:
+      - docker
+    allowed_commands:
+      - run_assigned
+      - node_operation
+    allow_console: false
+    allow_import: false
 paths:
   home: /srv/sysbox
   cache: /srv/cache
@@ -53,6 +64,11 @@ artifacts:
 	require.Equal(t, "2h", cfg.API.Console.MaxTimeout)
 	require.Equal(t, []string{"console"}, cfg.API.Console.AllowedRoles)
 	require.Equal(t, []string{"admin", "platform"}, cfg.API.RBAC.AdminRoles)
+	require.Equal(t, []string{"lab"}, cfg.Agent.Policy.AllowedWorkspaces)
+	require.Equal(t, []string{"docker"}, cfg.Agent.Policy.AllowedSubstrates)
+	require.Equal(t, []string{"run_assigned", "node_operation"}, cfg.Agent.Policy.AllowedCommands)
+	require.False(t, *cfg.Agent.Policy.AllowConsole)
+	require.False(t, *cfg.Agent.Policy.AllowImport)
 	require.Equal(t, "/srv/sysbox/workspaces", cfg.Paths.WorkspacesDir)
 	require.Equal(t, "/srv/sysbox/runs", cfg.Paths.RunsDir)
 	require.Equal(t, "/srv/sysbox/firecracker", cfg.Providers.Firecracker.Workdir)
