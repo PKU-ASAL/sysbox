@@ -18,6 +18,11 @@ func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string) e
 		return err
 	}
 	s.jobs.assign(run, worker.ID)
+	if s.agents != nil {
+		if err := s.agents.PublishRun(worker.ID, runRecord(*run)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 func TestWorkerRegistry(t *testing.T) {
@@ -63,4 +67,44 @@ func TestRunDefaultsToLocalWorker(t *testing.T) {
 	stored, err := s.apiStore.GetRun(context.Background(), run.ID)
 	require.NoError(t, err)
 	require.Equal(t, DefaultWorkerID, stored.WorkerID)
+}
+
+func TestAgentStreamReceivesAssignedRun(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	s.agents.Save(controlplane.Worker{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
+	server := httptest.NewServer(s)
+	defer server.Close()
+
+	errCh := make(chan error, 1)
+	bodyCh := make(chan string, 1)
+	go func() {
+		resp, err := http.Get(server.URL + "/v1/agents/host-a/stream")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer resp.Body.Close()
+		data := make([]byte, 4096)
+		n, err := resp.Body.Read(data)
+		if err != nil && err != io.EOF {
+			errCh <- err
+			return
+		}
+		bodyCh <- string(data[:n])
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	run := s.jobs.start("mixed", "apply")
+	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case body := <-bodyCh:
+		require.Contains(t, body, "data:")
+		require.Contains(t, body, "run_assigned")
+		require.Contains(t, body, run.ID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for agent stream command")
+	}
 }

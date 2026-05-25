@@ -22,6 +22,7 @@ GET  /v1/agents
 POST /v1/agents
 GET  /v1/agents/{agent_id}
 POST /v1/agents/{agent_id}/heartbeat
+GET  /v1/agents/{agent_id}/stream
 GET  /v1/agents/{agent_id}/runs
 POST /v1/agents/{agent_id}/runs/{run_id}/claim
 ```
@@ -97,9 +98,10 @@ POST /v1/runs/{run_id}/cleanup
 ```
 
 Run records include `worker_id` for compatibility; conceptually this is the
-owning `agent_id`. The API creates and assigns command intent; agents poll
-`/v1/agents/{agent_id}/runs`, claim one assigned run, then execute it on the
-host.
+owning `agent_id`. The API creates and assigns command intent; agents keep an
+outbound SSE command stream open at `/v1/agents/{agent_id}/stream`. When a run
+is assigned, the API pushes a `run_assigned` command; the agent then claims the
+run and executes it on the host. `/runs` remains as reconnect/backfill support.
 
 ```text
 queued -> assigned -> running -> done|failed|cancelled

@@ -1,10 +1,12 @@
 package worker
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -54,19 +56,20 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	}
 
 	executor := NewExecutorWithBridge(bridge)
-	ticker := time.NewTicker(opts.PollInterval)
-	defer ticker.Stop()
 	for {
 		if err := heartbeat(ctx, opts); err != nil {
 			fmt.Printf("[worker] heartbeat failed: %v\n", err)
 		}
-		if err := pollAndExecute(ctx, executor, opts); err != nil {
-			fmt.Printf("[worker] poll failed: %v\n", err)
+		if err := drainAssignedRuns(ctx, executor, opts); err != nil {
+			fmt.Printf("[worker] drain assigned runs failed: %v\n", err)
+		}
+		if err := streamAndExecute(ctx, executor, opts); err != nil && ctx.Err() == nil {
+			fmt.Printf("[worker] command stream disconnected: %v\n", err)
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case <-time.After(opts.PollInterval):
 		}
 	}
 }
@@ -82,7 +85,7 @@ func heartbeat(ctx context.Context, opts Options) error {
 	}, nil)
 }
 
-func pollAndExecute(ctx context.Context, executor *Executor, opts Options) error {
+func drainAssignedRuns(ctx context.Context, executor *Executor, opts Options) error {
 	var listed struct {
 		Runs []controlplane.Run `json:"runs"`
 	}
@@ -98,6 +101,69 @@ func pollAndExecute(ctx context.Context, executor *Executor, opts Options) error
 		executor.Execute(claimed)
 	}
 	return nil
+}
+
+func streamAndExecute(ctx context.Context, executor *Executor, opts Options) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, opts.APIURL+"/v1/agents/"+opts.ID+"/stream", nil)
+	if err != nil {
+		return err
+	}
+	authorize(req, opts)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("GET %s: %s", req.URL.String(), resp.Status)
+	}
+	return readCommandStream(ctx, resp.Body, executor, opts)
+}
+
+func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, opts Options) error {
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		}
+		if line == "" {
+			continue
+		}
+		var cmd command
+		if err := json.Unmarshal([]byte(line), &cmd); err != nil {
+			fmt.Printf("[worker] decode command: %v\n", err)
+			continue
+		}
+		switch cmd.Type {
+		case "run_assigned":
+			if cmd.Run == nil {
+				continue
+			}
+			claimed, err := claim(ctx, opts, cmd.Run.ID)
+			if err != nil {
+				fmt.Printf("[worker] claim %s failed: %v\n", cmd.Run.ID, err)
+				continue
+			}
+			executor.Execute(claimed)
+		default:
+			fmt.Printf("[worker] unknown command type %q\n", cmd.Type)
+		}
+	}
+	return scanner.Err()
+}
+
+type command struct {
+	Type string            `json:"type"`
+	Run  *controlplane.Run `json:"run,omitempty"`
 }
 
 func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {

@@ -111,6 +111,28 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 	writeJSON(w, http.StatusOK, run)
 }
 
+func (s *Server) handleAgentStream(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("agent")
+	if err := validatePathSegment(id, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if s.agents == nil {
+		s.agents = newAgentRegistry()
+	}
+	if _, err := s.agents.Get(id); err != nil && id != DefaultWorkerID {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	stream := s.agents.Stream(id)
+	ch := stream.Subscribe()
+	defer stream.Unsubscribe(ch)
+	ServeSSE(w, r, ch)
+}
+
 func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	s.handleAgentHeartbeatByID(w, r, r.PathValue("agent"))
 }
