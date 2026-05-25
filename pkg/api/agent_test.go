@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
@@ -114,6 +115,49 @@ resource "sysbox_node" "web" {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for session command")
 	}
+}
+
+func TestConsoleSessionRBACAndAudit(t *testing.T) {
+	runs := t.TempDir()
+	workspaces := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspaces, "lab"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspaces, "lab", "field.sysbox.hcl"), []byte(`
+resource "sysbox_image" "alpine" {
+  substrate = "docker"
+  docker_ref = "alpine:latest"
+}
+
+resource "sysbox_node" "web" {
+  substrate = "docker"
+  image = sysbox_image.alpine.id
+}
+`), 0o644))
+	cfg := config.DefaultServiceConfig()
+	cfg.Paths.RunsDir = runs
+	cfg.Paths.WorkspacesDir = workspaces
+	cfg.API.Console.AllowedRoles = []string{"console"}
+	s := NewServerWithConfig(cfg)
+	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/nodes/web/sessions", bytes.NewBufferString(`{"shell":"/bin/sh"}`))
+	req.Header.Set("X-Sysbox-User", "alice")
+	req.Header.Set("X-Sysbox-Roles", "viewer")
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"status":"denied"`)
+	require.Contains(t, rec.Body.String(), `"actor":"alice"`)
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/nodes/web/sessions", bytes.NewBufferString(`{"shell":"/bin/sh"}`))
+	req.Header.Set("X-Sysbox-User", "bob")
+	req.Header.Set("X-Sysbox-Roles", "console")
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"requested_by":"bob"`)
+	require.Contains(t, rec.Body.String(), `"roles":["console"]`)
+	require.Contains(t, rec.Body.String(), `"policy":"console.rbac"`)
+	require.Contains(t, rec.Body.String(), `"action":"allow"`)
 }
 
 func TestRunDefaultsToLocalAgent(t *testing.T) {
@@ -233,4 +277,32 @@ func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
 	projections := s.agents.ListResourceProjections("mixed")
 	require.Len(t, projections, 1)
 	require.Equal(t, "sysbox_node.web", projections[0].Resources[0].Resource)
+}
+
+func TestNodeOperationCompletionPersists(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	op := s.nodeOps.Create(controlplane.NodeOperation{
+		Topology:    "mixed",
+		Workspace:   "mixed",
+		Operation:   "pause",
+		Node:        "web",
+		AgentID:     "host-a",
+		RequestedBy: "alice",
+		Roles:       []string{"operator"},
+	})
+	op.Status = "done"
+	op.Audit = append(op.Audit, controlplane.Event{Action: "complete", Status: "done", Actor: "alice"})
+
+	raw, err := json.Marshal(op)
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/node-operations/"+op.ID+"/complete", bytes.NewReader(raw)))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/node-operations/"+op.ID, nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"status":"done"`)
+	require.Contains(t, rec.Body.String(), `"requested_by":"alice"`)
+	require.Contains(t, rec.Body.String(), `"actor":"alice"`)
 }

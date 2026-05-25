@@ -114,18 +114,23 @@ type Projection struct {
 }
 
 type ConsoleSession struct {
-	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id,omitempty"`
-	Workspace string    `json:"workspace,omitempty"`
-	Topology  string    `json:"topology"`
-	Node      string    `json:"node"`
-	AgentID   string    `json:"agent_id"`
-	Status    string    `json:"status"`
-	Err       string    `json:"error,omitempty"`
-	ExitCode  *int      `json:"exit_code,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	StartedAt time.Time `json:"started_at,omitempty"`
-	EndedAt   time.Time `json:"ended_at,omitempty"`
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"project_id,omitempty"`
+	Workspace   string    `json:"workspace,omitempty"`
+	Topology    string    `json:"topology"`
+	Node        string    `json:"node"`
+	AgentID     string    `json:"agent_id"`
+	Status      string    `json:"status"`
+	Err         string    `json:"error,omitempty"`
+	ExitCode    *int      `json:"exit_code,omitempty"`
+	RequestedBy string    `json:"requested_by,omitempty"`
+	Roles       []string  `json:"roles,omitempty"`
+	Policy      string    `json:"policy,omitempty"`
+	TTY         bool      `json:"tty"`
+	Audit       []Event   `json:"audit,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	StartedAt   time.Time `json:"started_at,omitempty"`
+	EndedAt     time.Time `json:"ended_at,omitempty"`
 }
 
 type ResourceProjection struct {
@@ -147,12 +152,52 @@ type ConsoleRequest struct {
 	Cols           int               `json:"cols,omitempty"`
 	Rows           int               `json:"rows,omitempty"`
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
+	RequestedBy    string            `json:"requested_by,omitempty"`
+	Roles          []string          `json:"roles,omitempty"`
+	Policy         string            `json:"policy,omitempty"`
 }
 
 type ConsoleCommand struct {
 	Type    string          `json:"type"`
 	Session *ConsoleSession `json:"session,omitempty"`
 	Request ConsoleRequest  `json:"request,omitempty"`
+}
+
+type NodeOperation struct {
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"project_id,omitempty"`
+	Workspace   string    `json:"workspace,omitempty"`
+	Topology    string    `json:"topology"`
+	Operation   string    `json:"operation"`
+	Node        string    `json:"node,omitempty"`
+	Type        string    `json:"type,omitempty"`
+	Name        string    `json:"name,omitempty"`
+	ExternalID  string    `json:"external_id,omitempty"`
+	Substrate   string    `json:"substrate,omitempty"`
+	AgentID     string    `json:"agent_id"`
+	Status      string    `json:"status"`
+	Err         string    `json:"error,omitempty"`
+	RequestedBy string    `json:"requested_by,omitempty"`
+	Roles       []string  `json:"roles,omitempty"`
+	Audit       []Event   `json:"audit,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	StartedAt   time.Time `json:"started_at,omitempty"`
+	EndedAt     time.Time `json:"ended_at,omitempty"`
+}
+
+type NodeOperationCommand struct {
+	Type      string        `json:"type"`
+	Operation NodeOperation `json:"operation"`
+}
+
+func (op NodeOperation) Resource() string {
+	if op.Type != "" && op.Name != "" {
+		return op.Type + "." + op.Name
+	}
+	if op.Node != "" {
+		return "sysbox_node." + op.Node
+	}
+	return ""
 }
 
 type StackState struct {
@@ -169,6 +214,8 @@ type Event struct {
 	Resource  string    `json:"resource,omitempty"`
 	Action    string    `json:"action,omitempty"`
 	Status    string    `json:"status,omitempty"`
+	Actor     string    `json:"actor,omitempty"`
+	Roles     []string  `json:"roles,omitempty"`
 	Message   string    `json:"message,omitempty"`
 	CreatedAt time.Time `json:"created_at,omitempty"`
 }

@@ -124,13 +124,20 @@ GET  /v1/sessions/{session_id}/attach
 POST /v1/sessions/{session_id}/cancel
 GET  /v1/agents/{agent_id}/sessions/{session_id}/attach
 POST /v1/agents/{agent_id}/projections/resources
+POST /v1/agents/{agent_id}/node-operations/{operation_id}/complete
 ```
 
 Browsers attach to `/v1/sessions/{session_id}/attach`. Agents attach to the
 agent-side URL after receiving a `session_open` command on their SSE stream.
 Session metadata is persisted by the API store; interrupted sessions are marked
 `lost` on API restart. `timeout_seconds` on session creation auto-cancels long
-running sessions.
+running sessions. Console requests accept `requested_by`; if absent, the API
+uses the configured user header (`X-Sysbox-User` by default) or `api`. Roles
+come from `X-Sysbox-Roles` by default. Console RBAC is configured in
+`api.console.allowed_roles` plus `api.rbac.admin_roles`; when no console roles
+are configured, local development remains permissive. Session records include
+the policy name and audit events for create, allow/deny, attach, cancel,
+timeout, and close.
 
 Agents also post resource-level observation projections to
 `/v1/agents/{agent_id}/projections/resources`. UI clients can subscribe to
@@ -154,7 +161,15 @@ GET  /v1/topologies/{name}/nodes
 GET  /v1/topologies/{name}/nodes/{node}
 POST /v1/topologies/{name}/nodes/{node}/pause
 POST /v1/topologies/{name}/nodes/{node}/resume
+POST /v1/topologies/{name}/import
+GET  /v1/node-operations/{operation_id}
 ```
+
+Pause, resume, and import are agent-backed node operations. The API creates an
+operation intent, assigns it to a capable agent, and the agent completes the
+local substrate call before posting the final operation status back to the API.
+Operation records persist requester, roles, status, and audit events so API/UI
+users can explain who requested a host-local action and how it completed.
 
 ## Artifacts And Policies
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -36,6 +37,25 @@ func TestLocalBridgeFilterApplyPlanByTarget(t *testing.T) {
 	}
 	require.Len(t, creates, 1)
 	require.Equal(t, "sysbox_node.web", creates[0].Resource)
+}
+
+func TestExecuteNodeOperationRejectsMissingNode(t *testing.T) {
+	runs := t.TempDir()
+	topology := "lab"
+	statePath := filepath.Join(runs, topology, "state.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
+	require.NoError(t, state.NewManager(statePath).Save(&state.State{Version: state.SchemaVersion}))
+
+	bridge := NewLocalBridge(LocalOptions{Topology: topology, StatePath: statePath, RunsDir: runs})
+	exec := NewExecutorWithBridge(bridge)
+	op := exec.ExecuteNodeOperation(context.Background(), controlplane.NodeOperation{
+		ID:        "op1",
+		Topology:  topology,
+		Operation: "pause",
+		Node:      "missing",
+	})
+	require.Equal(t, "failed", op.Status)
+	require.Contains(t, op.Err, "not found")
 }
 
 func TestObserveLocalBridgeReportsStateHealth(t *testing.T) {

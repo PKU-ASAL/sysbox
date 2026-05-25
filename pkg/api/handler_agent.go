@@ -87,6 +87,43 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 	writeJSON(w, http.StatusOK, run)
 }
 
+func (s *Server) handleCompleteNodeOperation(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	opID := r.PathValue("operation")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validatePathSegment(opID, "operation"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var op controlplane.NodeOperation
+	if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode node operation: %w", err))
+		return
+	}
+	if op.ID == "" {
+		op.ID = opID
+	}
+	if op.ID != opID {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("operation id mismatch"))
+		return
+	}
+	if op.AgentID == "" {
+		op.AgentID = agentID
+	}
+	if op.AgentID != agentID {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("operation agent id mismatch"))
+		return
+	}
+	if op.EndedAt.IsZero() && (op.Status == "done" || op.Status == "failed") {
+		op.EndedAt = time.Now().UTC()
+	}
+	s.nodeOps.Save(op)
+	writeJSON(w, http.StatusOK, op)
+}
+
 func (s *Server) handleCompleteAgentRun(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
 	runID := r.PathValue("id")

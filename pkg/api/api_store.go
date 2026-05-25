@@ -35,6 +35,9 @@ type apiStore interface {
 	SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error
 	GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error)
 	ListConsoleSessions(ctx context.Context, workspace string) ([]controlplane.ConsoleSession, error)
+	SaveNodeOperation(ctx context.Context, op controlplane.NodeOperation) error
+	GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error)
+	ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error)
 }
 
 type localAPIStore struct {
@@ -227,6 +230,34 @@ func (s *localAPIStore) ListConsoleSessions(_ context.Context, workspace string)
 	return readLocalObjects[controlplane.ConsoleSession](filepath.Join(s.runsDir, workspace, "sessions", "*.json"))
 }
 
+func (s *localAPIStore) SaveNodeOperation(_ context.Context, op controlplane.NodeOperation) error {
+	workspace := op.Workspace
+	if workspace == "" {
+		workspace = op.Topology
+	}
+	return writeLocalObject(filepath.Join(s.runsDir, workspace, "node-ops", op.ID+".json"), op)
+}
+
+func (s *localAPIStore) GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error) {
+	items, err := s.ListNodeOperations(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return &item, nil
+		}
+	}
+	return nil, fmt.Errorf("node operation not found")
+}
+
+func (s *localAPIStore) ListNodeOperations(_ context.Context, workspace string) ([]controlplane.NodeOperation, error) {
+	if workspace == "" {
+		return readLocalObjects[controlplane.NodeOperation](filepath.Join(s.runsDir, "*", "node-ops", "*.json"))
+	}
+	return readLocalObjects[controlplane.NodeOperation](filepath.Join(s.runsDir, workspace, "node-ops", "*.json"))
+}
+
 func writeLocalObject(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -308,6 +339,12 @@ CREATE TABLE IF NOT EXISTS sysbox_policies (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS sysbox_console_sessions (
+  workspace TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_node_operations (
   workspace TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
@@ -583,6 +620,84 @@ func (s *postgresAPIStore) ListConsoleSessions(ctx context.Context, workspace st
 			return nil, err
 		}
 		var item controlplane.ConsoleSession
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *postgresAPIStore) SaveNodeOperation(ctx context.Context, op controlplane.NodeOperation) error {
+	workspace := op.Workspace
+	if workspace == "" {
+		workspace = op.Topology
+	}
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	raw, err := json.Marshal(op)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(ctx, `
+INSERT INTO sysbox_node_operations (workspace, id, data, updated_at)
+VALUES ($1, $2, $3::jsonb, now())
+ON CONFLICT (id) DO UPDATE SET workspace=EXCLUDED.workspace, data=EXCLUDED.data, updated_at=now()`,
+		workspace, op.ID, string(raw))
+	if err != nil {
+		return fmt.Errorf("postgres save node operation: %w", err)
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	var raw []byte
+	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_node_operations WHERE id=$1`, id).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, fmt.Errorf("node operation not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres get node operation: %w", err)
+	}
+	var op controlplane.NodeOperation
+	if err := json.Unmarshal(raw, &op); err != nil {
+		return nil, err
+	}
+	return &op, nil
+}
+
+func (s *postgresAPIStore) ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	query := `SELECT data::text FROM sysbox_node_operations ORDER BY updated_at DESC`
+	args := []any{}
+	if workspace != "" {
+		query = `SELECT data::text FROM sysbox_node_operations WHERE workspace=$1 ORDER BY updated_at DESC`
+		args = append(args, workspace)
+	}
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres list node operations: %w", err)
+	}
+	defer rows.Close()
+	var out []controlplane.NodeOperation
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var item controlplane.NodeOperation
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return nil, err
 		}

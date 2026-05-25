@@ -2,6 +2,18 @@ version: 1
 
 api:
   listen: ":9876"
+  console:
+    default_timeout: 1h
+    max_timeout: 24h
+    allowed_roles: []
+  rbac:
+    admin_roles:
+      - admin
+  audit:
+    enabled: true
+  headers:
+    user: X-Sysbox-User
+    roles: X-Sysbox-Roles
 
 paths:
   home: /var/lib/sysbox

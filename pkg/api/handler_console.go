@@ -42,6 +42,29 @@ func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Reque
 	if req.Rows == 0 {
 		req.Rows = 32
 	}
+	defaultTimeout, _ := time.ParseDuration(s.cfg.API.Console.DefaultTimeout)
+	maxTimeout, _ := time.ParseDuration(s.cfg.API.Console.MaxTimeout)
+	if defaultTimeout <= 0 {
+		defaultTimeout = time.Hour
+	}
+	if maxTimeout <= 0 {
+		maxTimeout = 24 * time.Hour
+	}
+	if req.TimeoutSeconds == 0 && defaultTimeout > 0 {
+		req.TimeoutSeconds = int(defaultTimeout.Seconds())
+	}
+	if req.TimeoutSeconds < 0 || time.Duration(req.TimeoutSeconds)*time.Second > maxTimeout {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("timeout_seconds must be between 0 and %d", int(maxTimeout.Seconds())))
+		return
+	}
+	subj := s.requestSubject(r)
+	if req.RequestedBy == "" {
+		req.RequestedBy = subj.User
+	}
+	if len(req.Roles) == 0 {
+		req.Roles = subj.Roles
+	}
+	req.Policy = "console.rbac"
 	required, err := requiredCapabilitiesForNode(s.hclFile(topology), node)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -53,6 +76,21 @@ func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	sess := s.consoles.Create(topology, node, agent.ID, req)
+	if err := s.authorizeConsole(requestSubject{User: req.RequestedBy, Roles: req.Roles}, sess); err != nil {
+		s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
+			sess.Status = "denied"
+			sess.Err = err.Error()
+			sess.EndedAt = time.Now().UTC()
+			sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "deny", err.Error()))
+		})
+		got, _ := s.consoles.Snapshot(sess.ID)
+		writeJSON(w, http.StatusForbidden, got)
+		return
+	}
+	s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
+		sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "allow", "console session allowed by policy"))
+	})
+	sess, _ = s.consoles.Snapshot(sess.ID)
 	if err := s.agents.PublishConsole(agent.ID, sess, req); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -80,7 +118,8 @@ func (s *Server) handleCancelConsoleSession(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.consoles.Cancel(id, "cancelled by api request"); err != nil {
+	subj := s.requestSubject(r)
+	if err := s.consoles.Cancel(id, "cancelled by api request", subj.User); err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
@@ -133,6 +172,7 @@ func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side 
 			if sess.StartedAt.IsZero() {
 				sess.StartedAt = time.Now().UTC()
 			}
+			sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "attach", "agent attached"))
 		})
 		select {
 		case st.agent <- peer:
@@ -143,6 +183,9 @@ func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side 
 	}
 	select {
 	case st.browser <- peer:
+		s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
+			sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "attach", "browser attached"))
+		})
 	default:
 		_ = conn.Close(websocket.StatusPolicyViolation, "browser already attached")
 		return
@@ -179,7 +222,7 @@ func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
 		go func() {
 			select {
 			case <-time.After(time.Duration(st.request.TimeoutSeconds) * time.Second):
-				_ = s.consoles.Cancel(id, "console session timed out")
+				_ = s.consoles.Cancel(id, "console session timed out", "system")
 			case <-ctx.Done():
 			}
 		}()
@@ -200,6 +243,20 @@ func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
 		}
 		sess.EndedAt = time.Now().UTC()
 	})
+}
+
+func consoleAuditEvent(sess controlplane.ConsoleSession, action, message string) controlplane.Event {
+	return controlplane.Event{
+		ProjectID: sess.ProjectID,
+		Workspace: sess.Workspace,
+		Resource:  "sysbox_node." + sess.Node,
+		Action:    action,
+		Status:    sess.Status,
+		Actor:     sess.RequestedBy,
+		Roles:     append([]string{}, sess.Roles...),
+		Message:   message,
+		CreatedAt: time.Now().UTC(),
+	}
 }
 
 func relayWebSocket(ctx context.Context, src, dst *websocket.Conn, done chan<- struct{}) {

@@ -14,6 +14,15 @@ func TestLoadServiceConfigFromYAML(t *testing.T) {
 version: 1
 api:
   listen: ":9999"
+  console:
+    default_timeout: 30m
+    max_timeout: 2h
+    allowed_roles:
+      - console
+  rbac:
+    admin_roles:
+      - admin
+      - platform
 paths:
   home: /srv/sysbox
   cache: /srv/cache
@@ -40,6 +49,10 @@ artifacts:
 	cfg, err := LoadServiceConfig(path)
 	require.NoError(t, err)
 	require.Equal(t, ":9999", cfg.API.Listen)
+	require.Equal(t, "30m", cfg.API.Console.DefaultTimeout)
+	require.Equal(t, "2h", cfg.API.Console.MaxTimeout)
+	require.Equal(t, []string{"console"}, cfg.API.Console.AllowedRoles)
+	require.Equal(t, []string{"admin", "platform"}, cfg.API.RBAC.AdminRoles)
 	require.Equal(t, "/srv/sysbox/workspaces", cfg.Paths.WorkspacesDir)
 	require.Equal(t, "/srv/sysbox/runs", cfg.Paths.RunsDir)
 	require.Equal(t, "/srv/sysbox/firecracker", cfg.Providers.Firecracker.Workdir)

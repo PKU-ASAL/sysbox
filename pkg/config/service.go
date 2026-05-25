@@ -25,8 +25,31 @@ type ServiceConfig struct {
 }
 
 type APIConfig struct {
-	Listen string `yaml:"listen" json:"listen"`
-	Token  string `yaml:"token" json:"token,omitempty"`
+	Listen  string           `yaml:"listen" json:"listen"`
+	Token   string           `yaml:"token" json:"token,omitempty"`
+	Console APIConsoleConfig `yaml:"console" json:"console,omitempty"`
+	RBAC    APIRBACConfig    `yaml:"rbac" json:"rbac,omitempty"`
+	Audit   APIAuditConfig   `yaml:"audit" json:"audit,omitempty"`
+	Headers APIHeadersConfig `yaml:"headers" json:"headers,omitempty"`
+}
+
+type APIConsoleConfig struct {
+	DefaultTimeout string   `yaml:"default_timeout" json:"default_timeout,omitempty"`
+	MaxTimeout     string   `yaml:"max_timeout" json:"max_timeout,omitempty"`
+	AllowedRoles   []string `yaml:"allowed_roles" json:"allowed_roles,omitempty"`
+}
+
+type APIRBACConfig struct {
+	AdminRoles []string `yaml:"admin_roles" json:"admin_roles,omitempty"`
+}
+
+type APIAuditConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+}
+
+type APIHeadersConfig struct {
+	User  string `yaml:"user" json:"user,omitempty"`
+	Roles string `yaml:"roles" json:"roles,omitempty"`
 }
 
 type PathsConfig struct {
@@ -89,7 +112,21 @@ type ArtifactPolicy struct {
 func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
 		Version: 1,
-		API:     APIConfig{Listen: ":9876"},
+		API: APIConfig{
+			Listen: ":9876",
+			Console: APIConsoleConfig{
+				DefaultTimeout: "1h",
+				MaxTimeout:     "24h",
+			},
+			RBAC: APIRBACConfig{
+				AdminRoles: []string{"admin"},
+			},
+			Audit: APIAuditConfig{Enabled: true},
+			Headers: APIHeadersConfig{
+				User:  "X-Sysbox-User",
+				Roles: "X-Sysbox-Roles",
+			},
+		},
 		Paths: PathsConfig{
 			Home:  DefaultHomeDir,
 			Cache: DefaultCacheDir,
@@ -205,6 +242,21 @@ func applyDerivedDefaults(c *ServiceConfig) {
 	if c.Version == 0 {
 		c.Version = 1
 	}
+	if c.API.Console.DefaultTimeout == "" {
+		c.API.Console.DefaultTimeout = "1h"
+	}
+	if c.API.Console.MaxTimeout == "" {
+		c.API.Console.MaxTimeout = "24h"
+	}
+	if len(c.API.RBAC.AdminRoles) == 0 {
+		c.API.RBAC.AdminRoles = []string{"admin"}
+	}
+	if c.API.Headers.User == "" {
+		c.API.Headers.User = "X-Sysbox-User"
+	}
+	if c.API.Headers.Roles == "" {
+		c.API.Headers.Roles = "X-Sysbox-Roles"
+	}
 	if c.Providers.DefaultPolicy.Preflight == "" {
 		c.Providers.DefaultPolicy.Preflight = "warn"
 	}
@@ -222,6 +274,12 @@ func (c ServiceConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.API.Listen) == "" {
 		return fmt.Errorf("api.listen is required")
+	}
+	if _, err := time.ParseDuration(c.API.Console.DefaultTimeout); err != nil {
+		return fmt.Errorf("api.console.default_timeout: %w", err)
+	}
+	if _, err := time.ParseDuration(c.API.Console.MaxTimeout); err != nil {
+		return fmt.Errorf("api.console.max_timeout: %w", err)
 	}
 	if _, err := time.ParseDuration(c.Supervisor.Interval); err != nil && c.Supervisor.Interval != "0" && c.Supervisor.Interval != "off" && c.Supervisor.Interval != "disabled" {
 		return fmt.Errorf("supervisor.interval: %w", err)

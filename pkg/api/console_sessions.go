@@ -50,14 +50,33 @@ func newConsoleSessionHub(store apiStore) *consoleSessionHub {
 
 func (h *consoleSessionHub) Create(topology, node, agentID string, req controlplane.ConsoleRequest) controlplane.ConsoleSession {
 	now := time.Now().UTC()
+	actor := req.RequestedBy
+	if actor == "" {
+		actor = "api"
+	}
 	sess := controlplane.ConsoleSession{
-		ID:        uuid.New().String(),
-		ProjectID: "default",
-		Workspace: topology,
-		Topology:  topology,
-		Node:      node,
-		AgentID:   agentID,
-		Status:    "queued",
+		ID:          uuid.New().String(),
+		ProjectID:   "default",
+		Workspace:   topology,
+		Topology:    topology,
+		Node:        node,
+		AgentID:     agentID,
+		Status:      "queued",
+		RequestedBy: actor,
+		Roles:       append([]string{}, req.Roles...),
+		Policy:      req.Policy,
+		TTY:         req.TTY == nil || *req.TTY,
+		Audit: []controlplane.Event{{
+			ProjectID: "default",
+			Workspace: topology,
+			Resource:  "sysbox_node." + node,
+			Action:    "create",
+			Status:    "queued",
+			Actor:     actor,
+			Roles:     append([]string{}, req.Roles...),
+			Message:   "console session created",
+			CreatedAt: now,
+		}},
 		CreatedAt: now,
 	}
 	h.mu.Lock()
@@ -98,7 +117,7 @@ func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSessi
 	}
 }
 
-func (h *consoleSessionHub) Cancel(id, reason string) error {
+func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
 	h.mu.Lock()
 	st := h.sessions[id]
 	if st == nil {
@@ -109,6 +128,17 @@ func (h *consoleSessionHub) Cancel(id, reason string) error {
 		st.session.Status = "cancelled"
 		st.session.Err = reason
 		st.session.EndedAt = time.Now().UTC()
+		st.session.Audit = append(st.session.Audit, controlplane.Event{
+			ProjectID: st.session.ProjectID,
+			Workspace: st.session.Workspace,
+			Resource:  "sysbox_node." + st.session.Node,
+			Action:    "cancel",
+			Status:    "cancelled",
+			Actor:     actor,
+			Roles:     append([]string{}, st.session.Roles...),
+			Message:   reason + " by " + actor,
+			CreatedAt: time.Now().UTC(),
+		})
 	}
 	select {
 	case <-st.cancel:

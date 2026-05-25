@@ -22,6 +22,7 @@ type Server struct {
 	agents        *agentRegistry
 	jobs          *Jobs
 	consoles      *consoleSessionHub
+	nodeOps       *nodeOperationStore
 	supervisor    *Supervisor
 	mux           *http.ServeMux
 }
@@ -60,6 +61,7 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		agents:        newAgentRegistry(),
 		jobs:          newJobs(runsDir, apiStore),
 		consoles:      newConsoleSessionHub(apiStore),
+		nodeOps:       newNodeOperationStore(apiStore),
 		mux:           http.NewServeMux(),
 	}
 	s.registerRoutes()
@@ -118,6 +120,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/agents/{agent}/projections", s.handleListAgentProjections)
 	m.HandleFunc("POST /v1/agents/{agent}/projections/resources", s.handlePostAgentResourceProjection)
 	m.HandleFunc("GET /v1/agents/{agent}/runs", s.handleListAgentRuns)
+	m.HandleFunc("POST /v1/agents/{agent}/node-operations/{operation}/complete", s.handleCompleteNodeOperation)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/claim", s.handleClaimAgentRun)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/complete", s.handleCompleteAgentRun)
 	m.HandleFunc("GET /v1/agents/{agent}/stream", s.handleAgentStream)
@@ -173,6 +176,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/sessions/{session}/cancel", s.handleCancelConsoleSession)
 
 	// Nodes
+	m.HandleFunc("GET /v1/node-operations/{operation}", s.handleGetNodeOperation)
 	m.HandleFunc("GET /v1/topologies/{topology}/nodes", s.handleListNodes)
 	m.HandleFunc("GET /v1/topologies/{topology}/nodes/{node}", s.handleGetNode)
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/sessions", s.handleCreateConsoleSession)

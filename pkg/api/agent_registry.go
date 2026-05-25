@@ -157,6 +157,15 @@ func (r *agentRegistry) PublishConsole(agentID string, session controlplane.Cons
 	return err
 }
 
+func (r *agentRegistry) PublishNodeOperation(agentID string, op controlplane.NodeOperation) error {
+	raw, err := json.Marshal(controlplane.NodeOperationCommand{Type: "node_operation", Operation: op})
+	if err != nil {
+		return err
+	}
+	_, err = r.Stream(agentID).Write(append(raw, '\n'))
+	return err
+}
+
 type agentCommand struct {
 	Type string            `json:"type"`
 	Run  *controlplane.Run `json:"run,omitempty"`

@@ -189,6 +189,13 @@ func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, 
 					fmt.Printf("[agent] console session %s failed: %v\n", sess.ID, err)
 				}
 			}(*cmd.Session, cmd.Request)
+		case "node_operation":
+			go func(op controlplane.NodeOperation) {
+				completed := executor.ExecuteNodeOperation(ctx, op)
+				if err := opts.ReportNodeOperationComplete(ctx, completed); err != nil {
+					fmt.Printf("[agent] report node operation %s failed: %v\n", completed.ID, err)
+				}
+			}(cmd.Operation)
 		default:
 			fmt.Printf("[agent] unknown command type %q\n", cmd.Type)
 		}
@@ -197,10 +204,11 @@ func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, 
 }
 
 type command struct {
-	Type    string                       `json:"type"`
-	Run     *controlplane.Run            `json:"run,omitempty"`
-	Session *controlplane.ConsoleSession `json:"session,omitempty"`
-	Request controlplane.ConsoleRequest  `json:"request,omitempty"`
+	Type      string                       `json:"type"`
+	Run       *controlplane.Run            `json:"run,omitempty"`
+	Session   *controlplane.ConsoleSession `json:"session,omitempty"`
+	Request   controlplane.ConsoleRequest  `json:"request,omitempty"`
+	Operation controlplane.NodeOperation   `json:"operation,omitempty"`
 }
 
 func openConsoleSession(ctx context.Context, opts Options, bridge Bridge, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest) error {
@@ -249,6 +257,16 @@ func (opts Options) ReportResourceProjection(ctx context.Context, projection con
 		projection.AgentID = opts.ID
 	}
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/projections/resources", projection, nil)
+}
+
+func (opts Options) ReportNodeOperationComplete(ctx context.Context, op controlplane.NodeOperation) error {
+	if opts.APIURL == "" || opts.ID == "" || op.ID == "" {
+		return nil
+	}
+	if op.AgentID == "" {
+		op.AgentID = opts.ID
+	}
+	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/node-operations/"+op.ID+"/complete", op, nil)
 }
 
 func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {

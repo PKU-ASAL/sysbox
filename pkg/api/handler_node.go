@@ -1,12 +1,11 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
-	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -80,20 +79,16 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/topologies/{topology}/nodes/{node}/pause
 func (s *Server) handleNodePause(w http.ResponseWriter, r *http.Request) {
-	s.handleNodeLifecycle(r, func(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle) error {
-		return sub.Pause(ctx, h)
-	}, w)
+	s.handleNodeLifecycle(r, "pause", w)
 }
 
 // POST /v1/topologies/{topology}/nodes/{node}/resume
 func (s *Server) handleNodeResume(w http.ResponseWriter, r *http.Request) {
-	s.handleNodeLifecycle(r, func(ctx context.Context, sub substrate.Substrate, h substrate.NodeHandle) error {
-		return sub.Resume(ctx, h)
-	}, w)
+	s.handleNodeLifecycle(r, "resume", w)
 }
 
 // handleNodeLifecycle is the shared implementation for pause/resume.
-func (s *Server) handleNodeLifecycle(r *http.Request, fn func(context.Context, substrate.Substrate, substrate.NodeHandle) error, w http.ResponseWriter) {
+func (s *Server) handleNodeLifecycle(r *http.Request, operation string, w http.ResponseWriter) {
 	topology := r.PathValue("topology")
 	name := r.PathValue("node")
 	if err := validatePathSegment(topology, "topology"); err != nil {
@@ -128,17 +123,28 @@ func (s *Server) handleNodeLifecycle(r *http.Request, fn func(context.Context, s
 		return
 	}
 
-	handle, err := res.ReconstructHandle(sub)
+	subj := s.requestSubject(r)
+	required := []string{res.Provider}
+	agent, err := s.selectAgent(r.Context(), required)
 	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	op := s.nodeOps.Create(controlplane.NodeOperation{
+		Topology:    topology,
+		Workspace:   topology,
+		Operation:   operation,
+		Node:        name,
+		Substrate:   res.Provider,
+		AgentID:     agent.ID,
+		RequestedBy: subj.User,
+		Roles:       subj.Roles,
+	})
+	if err := s.agents.PublishNodeOperation(agent.ID, op); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-
-	if err := fn(r.Context(), sub, handle); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusAccepted, op)
 }
 
 // POST /v1/topologies/{topology}/import
@@ -165,51 +171,44 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("import only supports sysbox_node, got %q", body.Type))
 		return
 	}
+	if err := validatePathSegment(body.Name, "name"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if body.ID == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("id is required"))
+		return
+	}
+	if body.Substrate == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("substrate is required"))
+		return
+	}
 
-	sub, err := substrate.Get(body.Substrate)
-	if err != nil {
+	if _, err := substrate.Get(body.Substrate); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("substrate %q not registered: %w", body.Substrate, err))
 		return
 	}
-
-	handle, err := sub.ReadNode(r.Context(), body.ID)
+	subj := s.requestSubject(r)
+	agent, err := s.selectAgent(r.Context(), []string{body.Substrate})
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("read node: %w", err))
+		writeError(w, http.StatusConflict, err)
 		return
 	}
-
-	mgr, err := s.stateManager(topology)
-	if err != nil {
+	op := s.nodeOps.Create(controlplane.NodeOperation{
+		Topology:    topology,
+		Workspace:   topology,
+		Operation:   "import",
+		Type:        body.Type,
+		Name:        body.Name,
+		ExternalID:  body.ID,
+		Substrate:   body.Substrate,
+		AgentID:     agent.ID,
+		RequestedBy: subj.User,
+		Roles:       subj.Roles,
+	})
+	if err := s.agents.PublishNodeOperation(agent.ID, op); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	st, err := mgr.Load()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("load state: %w", err))
-		return
-	}
-	if r := st.FindResource(body.Type, body.Name); r != nil {
-		writeError(w, http.StatusConflict, fmt.Errorf("resource %s.%s already in state", body.Type, body.Name))
-		return
-	}
-
-	inst := map[string]any{
-		"container_id": handle.ID,
-		"primary_ip":   handle.Net.PrimaryIP,
-	}
-	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-		inst["provider_extra"] = string(blob)
-	}
-	st.AddResource(state.Resource{
-		Type:     body.Type,
-		Name:     body.Name,
-		Provider: body.Substrate,
-		Instance: inst,
-	})
-	runOwner := fmt.Sprintf("sysbox-api:import:%s:%s.%s", topology, body.Type, body.Name)
-	if err := mgr.SaveWithLease(r.Context(), st, state.LockOptions{Owner: runOwner}); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("save state: %w", err))
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "imported", "id": handle.ID})
+	writeJSON(w, http.StatusAccepted, op)
 }
