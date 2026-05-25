@@ -284,10 +284,10 @@ Recommended environment overrides:
 | `SYSBOX_CONFIG` | Service config file path, default `/etc/sysbox/sysbox.yaml` |
 | `SYSBOX_API_HOST_PORT` | Host port published for the API, default `9876` |
 | `SYSBOX_API_TOKEN` | Optional API Bearer token |
-| `SYSBOX_SERVICE_HOME` | Container service data root, default `/var/lib/sysbox` |
-| `SYSBOX_SERVICE_CACHE` | Container artifact/cache root, default `/var/cache/sysbox` |
-| `SYSBOX_HOST_DATA_DIR` | Host directory mounted to `SYSBOX_SERVICE_HOME`, default `.sysbox/api` |
-| `SYSBOX_HOST_CACHE_DIR` | Host directory mounted to `SYSBOX_SERVICE_CACHE`, default `~/.cache/sysbox` |
+| `SYSBOX_CONTAINER_HOME` | Container service data root, default `/var/lib/sysbox` |
+| `SYSBOX_CONTAINER_CACHE` | Container artifact/cache root, default `/var/cache/sysbox` |
+| `SYSBOX_HOST_HOME_DIR` | Host directory mounted to `SYSBOX_CONTAINER_HOME`, default `.sysbox/api` |
+| `SYSBOX_HOST_CACHE_DIR` | Host directory mounted to `SYSBOX_CONTAINER_CACHE`, default `~/.cache/sysbox` |
 | `SYSBOX_HOST_DOCKER_SOCKET` | Host Docker socket path, default `/var/run/docker.sock` |
 | `SYSBOX_POSTGRES_DATABASE` | Compose Postgres database name |
 | `SYSBOX_POSTGRES_USERNAME` | Compose Postgres username |
@@ -298,6 +298,10 @@ Recommended environment overrides:
 | `SYSBOX_FIRECRACKER_BIN` | Optional override for the Firecracker binary path; prefer `SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR` for Compose |
 | `SYSBOX_FIRECRACKER_KERNEL` | Default Firecracker kernel path; HCL `sysbox_kernel` is preferred |
 | `SYSBOX_FIRECRACKER_WORKDIR` | Per-VM Firecracker work directory |
+
+The mount pairs are intentionally named by side:
+`SYSBOX_HOST_HOME_DIR:SYSBOX_CONTAINER_HOME` and
+`SYSBOX_HOST_CACHE_DIR:SYSBOX_CONTAINER_CACHE`.
 
 Kernel/rootfs/qcow2 are topology artifacts, not service configuration. Prefer HCL `sysbox_kernel` and `sysbox_image` with `source`, `rootfs`, `qcow2`, and `sha256`. `SYSBOX_ROOTFS` remains a local example convenience variable, not an API deployment contract.
 

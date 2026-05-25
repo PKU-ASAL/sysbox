@@ -56,6 +56,10 @@ By default, generated local state lives under `.sysbox/`:
 - `.sysbox/api`: API workspaces, fallback state, run metadata, checkpoints.
 - `.sysbox/runs`: CLI/example state and e2e state files.
 
+Compose path variables are named by side. For example,
+`SYSBOX_HOST_HOME_DIR` is mounted to `SYSBOX_CONTAINER_HOME`, and
+`SYSBOX_HOST_CACHE_DIR` is mounted to `SYSBOX_CONTAINER_CACHE`.
+
 The legacy `data/` and `runs/` directories are ignored, but new docs and
 Makefile targets use `.sysbox/` so runtime files do not spread across the
 repository root.

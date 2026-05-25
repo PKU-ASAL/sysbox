@@ -13,7 +13,7 @@ ARCH := $(shell $(GO) env GOARCH)
 TOPO ?= two-networks
 API_ADDR ?= :9876
 SYSBOX_DEPLOYMENT ?= service
-API_DATA_DIR ?= $(or $(SYSBOX_HOST_DATA_DIR),.sysbox/api)
+API_DATA_DIR ?= $(or $(SYSBOX_HOST_HOME_DIR),.sysbox/api)
 
 HCL := examples/$(TOPO)/field.sysbox.hcl
 STATE := .sysbox/runs/$(TOPO)/state.json
