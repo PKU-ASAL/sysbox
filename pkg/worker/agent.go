@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
@@ -25,9 +24,12 @@ type Options struct {
 	PollInterval time.Duration
 }
 
-func Run(ctx context.Context, cfg config.ServiceConfig, opts Options) error {
+func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	if opts.APIURL == "" {
 		return fmt.Errorf("api url is required")
+	}
+	if bridge == nil {
+		return fmt.Errorf("worker bridge is required")
 	}
 	if opts.ID == "" {
 		opts.ID = DefaultWorkerID
@@ -50,7 +52,7 @@ func Run(ctx context.Context, cfg config.ServiceConfig, opts Options) error {
 		return err
 	}
 
-	executor := NewExecutor(cfg)
+	executor := NewExecutorWithBridge(bridge)
 	ticker := time.NewTicker(opts.PollInterval)
 	defer ticker.Stop()
 	for {

@@ -1,16 +1,14 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/worker"
 )
 
 var destroyCmd = &cobra.Command{
@@ -41,59 +39,49 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
-
 	if len(s.Resources) == 0 {
 		fmt.Println("Nothing to destroy.")
 		return nil
 	}
 
-	// Honour lifecycle.prevent_destroy: remove protected resources from the
-	// destroy list and emit a warning.
-	var toDestroy, protected []state.Resource
-	for _, r := range s.Resources {
-		if r.LifecyclePreventDestroy() {
-			protected = append(protected, r)
-		} else {
-			toDestroy = append(toDestroy, r)
-		}
+	run := newLocalRun("destroy", localTopology())
+	aborted := false
+	bridge := worker.NewLocalBridge(worker.LocalOptions{
+		Topology:   run.Topology,
+		ConfigFile: flagConfigFile,
+		StatePath:  statePath(),
+		BackendURL: flagBackend,
+		RunsDir:    localRunsDir(),
+		BeforeDestroy: func(plan *runtime.Plan) error {
+			if len(plan.Protected) > 0 {
+				for _, r := range plan.Protected {
+					fmt.Printf("  ! %s.%s  (lifecycle.prevent_destroy = true — skipped)\n", r.Type, r.Name)
+				}
+			}
+			fmt.Printf("Will destroy %d resource(s).\n", len(plan.Destroy))
+			if flagAutoApprove {
+				return nil
+			}
+			ok, err := confirmPrompt("Destroy")
+			if err != nil {
+				fmt.Println("Aborted.")
+				return err
+			}
+			if !ok {
+				aborted = true
+				fmt.Println("Aborted.")
+				return errCommandAborted
+			}
+			return nil
+		},
+	})
+	worker.NewExecutorWithBridge(bridge).Execute(run)
+	if aborted {
+		return nil
 	}
-	if len(protected) > 0 {
-		for _, r := range protected {
-			fmt.Printf("  ! %s.%s  (lifecycle.prevent_destroy = true — skipped)\n", r.Type, r.Name)
-		}
+	if run.Err != "" {
+		return fmt.Errorf("destroy: %s", run.Err)
 	}
-	fmt.Printf("Will destroy %d resource(s).\n", len(toDestroy))
-	if !flagAutoApprove {
-		if ok, err := confirmPrompt("Destroy"); !ok || err != nil {
-			fmt.Println("Aborted.")
-			return err
-		}
-	}
-
-	plan := &runtime.Plan{
-		Destroy:   toDestroy,
-		Protected: protected,
-	}
-	for _, r := range toDestroy {
-		plan.Actions = append(plan.Actions, runtime.PlanAction{
-			Resource: r.Type + "." + r.Name,
-			Type:     r.Type,
-			Name:     r.Name,
-			Action:   runtime.PlanActionDelete,
-			Reason:   "destroy requested",
-		})
-	}
-
-	exec := runtime.NewExecutor(graph.New(), s)
-	if err := exec.Destroy(context.Background(), plan); err != nil {
-		_ = mgr.Save(s)
-		return fmt.Errorf("destroy: %w", err)
-	}
-
-	if err := mgr.Save(s); err != nil {
-		return err
-	}
-	fmt.Println("Destroy complete.")
 	return nil
 }
 

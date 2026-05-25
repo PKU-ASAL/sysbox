@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/oslab/sysbox/pkg/api"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/worker"
 )
@@ -27,14 +28,14 @@ var workerCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return worker.Run(cmd.Context(), cfg, worker.Options{
+		return worker.Run(cmd.Context(), worker.Options{
 			APIURL:       flagWorkerAPI,
 			ID:           flagWorkerID,
 			Name:         flagWorkerName,
 			Capabilities: splitCSV(flagWorkerCapabilities),
 			Labels:       map[string]string{"mode": "agent"},
 			PollInterval: flagWorkerPollInterval,
-		})
+		}, api.NewExecutionBridge(cfg))
 	},
 }
 

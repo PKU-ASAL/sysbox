@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/oslab/sysbox/pkg/config"
@@ -36,4 +37,24 @@ func newManager() (*state.Manager, error) {
 		return state.NewManagerWithBackend(b), nil
 	}
 	return state.NewManager(flagStateFile), nil
+}
+
+func localRunsDir() string {
+	dir := filepath.Dir(flagStateFile)
+	if localTopology() == "local" {
+		return dir
+	}
+	parent := filepath.Dir(dir)
+	if parent == "." || parent == "" {
+		return dir
+	}
+	return parent
+}
+
+func localTopology() string {
+	dir := filepath.Base(filepath.Dir(flagStateFile))
+	if dir == "." || dir == string(filepath.Separator) || dir == "" {
+		return "local"
+	}
+	return dir
 }

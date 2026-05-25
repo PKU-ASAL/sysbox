@@ -170,8 +170,9 @@ When `plan_id` is supplied, apply executes the stored plan actions instead of re
 
 Runs are scheduled onto workers by declared topology capabilities. The API only
 creates and assigns runs; a worker agent polls, claims, and executes the run
-against the shared backend. The built-in `local` worker follows the same
-`queued -> assigned -> running -> done|failed` state machine as other agents.
+against the shared backend. Local CLI `apply`/`destroy` and API-assigned worker
+runs both execute through `pkg/worker.Executor`; CLI uses a local bridge, while
+API workers use the control-plane bridge.
 
 ```bash
 sysbox worker --api http://127.0.0.1:9876 \
@@ -324,7 +325,7 @@ pkg/provider/               Docker, Firecracker, network, libvirt providers
 pkg/runtime/                Plan/apply/destroy/checkpoint runtime and execution journal primitives
 pkg/state/                  Local/Postgres/HTTP/S3/SQLite state backends
 pkg/substrate/              Provider abstraction
-pkg/worker/                 Worker agent loop and apply/destroy execution
+pkg/worker/                 Worker agent loop, local bridge, and apply/destroy execution
 runner/                     Optional Python episode runner for agent examples
 scripts/                    Artifact preparation and verification helpers
 tests/e2e/                  Integration tests with build tag e2e

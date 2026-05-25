@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/oslab/sysbox/pkg/api"
-	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -28,12 +26,19 @@ type Bridge interface {
 	Preflight(ctx context.Context, topology string, log io.Writer) error
 }
 
-type Executor struct {
-	bridge Bridge
+type ApplyHook interface {
+	FilterApplyPlan(plan *runtime.Plan) (*runtime.Plan, error)
+	RefreshApply() bool
+	BeforeApply(plan *runtime.Plan) error
 }
 
-func NewExecutor(cfg config.ServiceConfig) *Executor {
-	return NewExecutorWithBridge(api.NewExecutionBridge(cfg))
+type DestroyHook interface {
+	BuildDestroyPlan(st *state.State) (*runtime.Plan, error)
+	BeforeDestroy(plan *runtime.Plan) error
+}
+
+type Executor struct {
+	bridge Bridge
 }
 
 func NewExecutorWithBridge(bridge Bridge) *Executor {
@@ -41,6 +46,9 @@ func NewExecutorWithBridge(bridge Bridge) *Executor {
 }
 
 func (e *Executor) Execute(run *controlplane.Run) {
+	if e.bridge == nil || run == nil {
+		return
+	}
 	e.bridge.AttachRun(run)
 	log := e.bridge.LogWriter(run.ID)
 	switch run.Op {
@@ -100,6 +108,13 @@ func (e *Executor) executeApply(run *controlplane.Run, log io.Writer) {
 			return
 		}
 	}
+	if hook, ok := e.bridge.(ApplyHook); ok {
+		plan, err = hook.FilterApplyPlan(plan)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+	}
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
 	exec.SetLogger(log)
@@ -110,13 +125,23 @@ func (e *Executor) executeApply(run *controlplane.Run, log io.Writer) {
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
 	exec.SetStatePatchSink(&runtime.StatePatchManagerSink{Manager: mgr, State: st, Owner: run.LeaseOwner})
-	if run.PlanID == "" {
+	refresh := run.PlanID == ""
+	if hook, ok := e.bridge.(ApplyHook); ok {
+		refresh = hook.RefreshApply()
+	}
+	if refresh {
 		exec.Refresh(context.Background(), plan)
 	}
 	if !plan.HasChanges() {
 		_, _ = log.Write([]byte("No changes. Apply is a no-op.\n"))
 		e.bridge.Finish(run, nil)
 		return
+	}
+	if hook, ok := e.bridge.(ApplyHook); ok {
+		if err := hook.BeforeApply(plan); err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
 	}
 	_, _ = log.Write([]byte(plan.Summary() + "\n"))
 	if snap, err := mgr.Snapshot(context.Background(), "before apply "+run.ID); err == nil && snap != nil {
@@ -164,15 +189,17 @@ func (e *Executor) executeDestroy(run *controlplane.Run, log io.Writer) {
 		e.bridge.Finish(run, nil)
 		return
 	}
-	plan := &runtime.Plan{Destroy: append([]state.Resource(nil), st.Resources...)}
-	for _, r := range plan.Destroy {
-		plan.Actions = append(plan.Actions, runtime.PlanAction{
-			Resource: r.Type + "." + r.Name,
-			Type:     r.Type,
-			Name:     r.Name,
-			Action:   runtime.PlanActionDelete,
-			Reason:   "destroy requested",
-		})
+	plan := defaultDestroyPlan(st)
+	if hook, ok := e.bridge.(DestroyHook); ok {
+		plan, err = hook.BuildDestroyPlan(st)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		if err := hook.BeforeDestroy(plan); err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
 	}
 	exec := runtime.NewExecutor(graph.New(), st)
 	exec.SetRunContext(run.Topology, run.ID)
@@ -224,4 +251,30 @@ func (e *Executor) executeResumeDestroy(parent, run *controlplane.Run, log io.Wr
 		return
 	}
 	e.executeDestroy(run, log)
+}
+
+func defaultDestroyPlan(st *state.State) *runtime.Plan {
+	plan := &runtime.Plan{}
+	for _, r := range st.Resources {
+		if r.LifecyclePreventDestroy() {
+			plan.Protected = append(plan.Protected, r)
+			plan.Actions = append(plan.Actions, runtime.PlanAction{
+				Resource: r.Type + "." + r.Name,
+				Type:     r.Type,
+				Name:     r.Name,
+				Action:   runtime.PlanActionSkip,
+				Reason:   "blocked by lifecycle.prevent_destroy",
+			})
+			continue
+		}
+		plan.Destroy = append(plan.Destroy, r)
+		plan.Actions = append(plan.Actions, runtime.PlanAction{
+			Resource: r.Type + "." + r.Name,
+			Type:     r.Type,
+			Name:     r.Name,
+			Action:   runtime.PlanActionDelete,
+			Reason:   "destroy requested",
+		})
+	}
+	return plan
 }

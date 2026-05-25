@@ -1,17 +1,24 @@
 package commands
 
 import (
-	"context"
+	"errors"
 	"fmt"
+	"time"
 
-	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/worker"
 )
 
 var (
 	flagApplyRefresh bool
 	flagApplyTarget  string
 )
+
+var errCommandAborted = errors.New("aborted")
 
 var applyCmd = &cobra.Command{
 	Use:   "apply",
@@ -25,7 +32,7 @@ func init() {
 }
 
 func runApply(cmd *cobra.Command, args []string) error {
-	g, mgr, s, root, evalCtx, err := loadWorkspaceWithRoot()
+	_, _, _, root, evalCtx, err := loadWorkspaceWithRoot()
 	if err != nil {
 		return err
 	}
@@ -34,53 +41,63 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	plan, err := runtime.ComputePlan(g, s)
-	if err != nil {
-		return err
-	}
-
-	// --target: restrict plan to a single resource.
-	if flagApplyTarget != "" {
-		typ, name, err := splitAddr(flagApplyTarget)
-		if err != nil {
-			return fmt.Errorf("--target: %w", err)
-		}
-		plan = runtime.FilterPlanByTarget(plan, typ, name)
-		fmt.Printf("Targeting: %s.%s\n", typ, name)
-	}
-
-	exec := runtime.NewExecutor(g, s)
-	if flagApplyRefresh {
-		exec.Refresh(context.Background(), plan)
-	}
-
-	if !plan.HasChanges() {
-		fmt.Println("No changes. Apply is a no-op.")
+	run := newLocalRun("apply", localTopology())
+	aborted := false
+	bridge := worker.NewLocalBridge(worker.LocalOptions{
+		Topology:   run.Topology,
+		ConfigFile: flagConfigFile,
+		StatePath:  statePath(),
+		BackendURL: flagBackend,
+		RunsDir:    localRunsDir(),
+		Refresh:    flagApplyRefresh,
+		Target:     flagApplyTarget,
+		BeforeApply: func(plan *runtime.Plan) error {
+			runtime.PrintPlan(plan, true)
+			if flagAutoApprove {
+				return nil
+			}
+			ok, err := confirmPrompt("Apply")
+			if err != nil {
+				fmt.Println("Aborted.")
+				return err
+			}
+			if !ok {
+				aborted = true
+				fmt.Println("Aborted.")
+				return errCommandAborted
+			}
+			return nil
+		},
+	})
+	worker.NewExecutorWithBridge(bridge).Execute(run)
+	if aborted {
 		return nil
 	}
-
-	runtime.PrintPlan(plan, true)
-
-	if !flagAutoApprove {
-		if ok, err := confirmPrompt("Apply"); !ok || err != nil {
-			fmt.Println("Aborted.")
-			return err
-		}
+	if run.Err != "" {
+		return fmt.Errorf("apply: %s", run.Err)
 	}
-
-	if err := exec.Apply(context.Background(), plan); err != nil {
-		_ = mgr.Save(s)
-		return fmt.Errorf("apply: %w", err)
-	}
-
-	if err := mgr.Save(s); err != nil {
-		return fmt.Errorf("save state: %w", err)
-	}
-	fmt.Println("Apply complete.")
 	outputs, err := runtime.EvaluateOutputs(root, evalCtx)
 	if err != nil {
 		return err
 	}
 	printOutputs(outputs)
 	return nil
+}
+
+func newLocalRun(op, topology string) *controlplane.Run {
+	now := time.Now().UTC()
+	id := uuid.New().String()
+	return &controlplane.Run{
+		ID:         id,
+		ProjectID:  controlplane.DefaultProjectID,
+		Workspace:  topology,
+		Topology:   topology,
+		Op:         op,
+		Status:     controlplane.RunRunning,
+		WorkerID:   worker.DefaultWorkerID,
+		LeaseOwner: fmt.Sprintf("sysbox-cli:%s:%s", op, id),
+		QueuedAt:   now,
+		AssignedAt: now,
+		StartedAt:  now,
+	}
 }
