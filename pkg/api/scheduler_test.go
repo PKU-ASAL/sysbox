@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -66,25 +65,30 @@ func TestSelectWorkerByCapabilities(t *testing.T) {
 func TestDispatchRunAssignsWorkerBeforeExecution(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	run := s.jobs.start("mixed", "apply")
-	done := make(chan struct{})
 
-	err := s.dispatchRun(context.Background(), run, []string{"docker"}, func(run *Run) {
-		require.Equal(t, DefaultWorkerID, run.WorkerID)
-		require.Equal(t, RunRunning, run.Status)
-		close(done)
-	})
+	err := s.dispatchRun(context.Background(), run, []string{"docker"})
 	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		select {
-		case <-done:
-			return true
-		default:
-			return false
-		}
-	}, time.Second, 10*time.Millisecond)
 
 	got, ok := s.jobs.get(run.ID)
 	require.True(t, ok)
 	require.Equal(t, DefaultWorkerID, got.WorkerID)
+	require.Equal(t, RunAssigned, got.Status)
 	require.False(t, got.AssignedAt.IsZero())
+}
+
+func TestWorkerClaimRun(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	run := s.jobs.start("mixed", "apply")
+	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
+
+	assigned := s.assignedRunsForWorker(context.Background(), DefaultWorkerID)
+	require.Len(t, assigned, 1)
+	require.Equal(t, run.ID, assigned[0].ID)
+
+	claimed, err := s.jobs.claim(run.ID, DefaultWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, RunRunning, claimed.Status)
+
+	assigned = s.assignedRunsForWorker(context.Background(), DefaultWorkerID)
+	require.Empty(t, assigned)
 }

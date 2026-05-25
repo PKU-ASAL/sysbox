@@ -111,6 +111,8 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/workers", s.handleRegisterWorker)
 	m.HandleFunc("GET /v1/workers/{worker}", s.handleGetWorker)
 	m.HandleFunc("POST /v1/workers/{worker}/heartbeat", s.handleWorkerHeartbeat)
+	m.HandleFunc("GET /v1/workers/{worker}/runs", s.handleListWorkerRuns)
+	m.HandleFunc("POST /v1/workers/{worker}/runs/{id}/claim", s.handleClaimWorkerRun)
 	m.HandleFunc("GET /v1/artifacts", s.handleListArtifacts)
 	m.HandleFunc("GET /v1/policies", s.handleListPolicies)
 	m.HandleFunc("POST /v1/policies", s.handleCreatePolicy)

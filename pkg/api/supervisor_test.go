@@ -109,10 +109,7 @@ func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "supervisor", run.ParentID)
 	require.Equal(t, "apply", run.Op)
-	require.Eventually(t, func() bool {
-		run, ok := s.jobs.get(snap.RunID)
-		return ok && run.Status != RunRunning
-	}, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, RunAssigned, run.Status)
 }
 
 func TestSupervisorRestartOnCrashSkipsWhenRunActive(t *testing.T) {

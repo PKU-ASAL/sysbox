@@ -74,10 +74,10 @@ func (s *localAPIStore) GetRun(ctx context.Context, id string) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i := range runs {
-		if runs[i].ID == id {
-			normalizeRunProductFields(&runs[i])
-			return &runs[i], nil
+	for _, run := range latestRunsByID(runs) {
+		if run.ID == id {
+			normalizeRunProductFields(&run)
+			return &run, nil
 		}
 	}
 	return nil, fmt.Errorf("run not found")
@@ -651,7 +651,7 @@ func dsnWithoutSysboxQuery(raw string) string {
 
 func markInterruptedRuns(runs []Run) []Run {
 	for i := range runs {
-		if runs[i].Status == RunQueued || runs[i].Status == RunAssigned || runs[i].Status == RunRunning {
+		if runs[i].Status == RunAssigned || runs[i].Status == RunRunning {
 			runs[i].Status = RunFailed
 			runs[i].Err = "server restarted before run completion"
 			runs[i].Recoverable = true

@@ -28,7 +28,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagAutoApprove, "auto-approve",
 		false, "skip interactive confirmation prompt")
 
-	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd, validateCmd, serveCmd,
+	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd, validateCmd, serveCmd, workerCmd,
 		pauseCmd, resumeCmd, importCmd)
 }
 

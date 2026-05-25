@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -99,10 +98,7 @@ func TestApplyCanReferenceStoredPlan(t *testing.T) {
 	require.Equal(t, plan.ID, run.PlanID)
 	require.Equal(t, plan.Revision, run.Revision)
 	require.Equal(t, DefaultWorkerID, run.WorkerID)
-	require.Eventually(t, func() bool {
-		run, ok := s.jobs.get(started.RunID)
-		return ok && run.Status != RunQueued && run.Status != RunAssigned && run.Status != RunRunning
-	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, RunAssigned, run.Status)
 }
 
 func TestApplyRejectsStaleStoredPlan(t *testing.T) {

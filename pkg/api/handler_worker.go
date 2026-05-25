@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,6 +57,34 @@ func (s *Server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, worker)
+}
+
+func (s *Server) handleListWorkerRuns(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("worker")
+	if err := validatePathSegment(id, "worker"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": s.assignedRunsForWorker(r.Context(), id)})
+}
+
+func (s *Server) handleClaimWorkerRun(w http.ResponseWriter, r *http.Request) {
+	workerID := r.PathValue("worker")
+	runID := r.PathValue("id")
+	if err := validatePathSegment(workerID, "worker"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validatePathSegment(runID, "id"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run, err := s.jobs.claim(runID, workerID)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
 }
 
 func (s *Server) handleWorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +155,22 @@ func normalizeWorker(in controlplane.Worker) (controlplane.Worker, error) {
 		in.LastHeartbeat = now
 	}
 	return in, nil
+}
+
+func (s *Server) assignedRunsForWorker(ctx context.Context, workerID string) []Run {
+	runs, err := s.apiStore.LoadRuns(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]Run, 0)
+	for _, run := range latestRunsByID(runs) {
+		normalizeRunProductFields(&run)
+		if run.WorkerID == workerID && run.Status == RunAssigned {
+			out = append(out, run)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].QueuedAt.Before(out[j].QueuedAt) })
+	return out
 }
 
 func ensureLocalWorker(workers []controlplane.Worker) []controlplane.Worker {

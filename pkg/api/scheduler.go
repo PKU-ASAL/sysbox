@@ -11,19 +11,13 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-type runExecutor func(*Run)
-
-func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string, execute runExecutor) error {
+func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string) error {
 	worker, err := s.selectWorker(ctx, required)
 	if err != nil {
 		s.jobs.finish(run, err)
 		return err
 	}
 	s.jobs.assign(run, worker.ID)
-	go func() {
-		s.jobs.markRunning(run)
-		execute(run)
-	}()
 	return nil
 }
 

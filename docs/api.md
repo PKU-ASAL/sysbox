@@ -21,6 +21,8 @@ GET  /v1/workers
 POST /v1/workers
 GET  /v1/workers/{worker_id}
 POST /v1/workers/{worker_id}/heartbeat
+GET  /v1/workers/{worker_id}/runs
+POST /v1/workers/{worker_id}/runs/{run_id}/claim
 ```
 
 Example registration:
@@ -93,9 +95,10 @@ POST /v1/runs/{run_id}/recover
 POST /v1/runs/{run_id}/cleanup
 ```
 
-Run records include `worker_id`, so API/UI users can see which worker owned the
-operation. Run scheduling uses the same state machine for all workers, including
-the built-in `local` worker:
+Run records include `worker_id`, so API/UI users can see which worker owns the
+operation. The API creates and assigns runs; worker agents poll
+`/v1/workers/{worker_id}/runs`, claim one assigned run, then execute it in the
+worker process against the shared backend.
 
 ```text
 queued -> assigned -> running -> done|failed|cancelled

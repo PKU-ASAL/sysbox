@@ -54,10 +54,11 @@ func (r *Run) LogWriter() *Broadcaster { return r.logs }
 // Jobs is a run store backed by in-memory map + the API persistence store.
 // Per-topology mutexes prevent concurrent apply/destroy on the same topology.
 type Jobs struct {
-	mu      sync.RWMutex
-	runs    map[string]*Run
-	runsDir string // root directory for runs, e.g. "runs"
-	store   apiStore
+	mu                 sync.RWMutex
+	runs               map[string]*Run
+	runsDir            string // root directory for runs, e.g. "runs"
+	store              apiStore
+	recoverInterrupted bool
 
 	topologyMu    sync.Mutex
 	topologyLocks map[string]*sync.Mutex
@@ -71,10 +72,20 @@ type runStartOptions struct {
 }
 
 func newJobs(runsDir string, store apiStore) *Jobs {
+	return newJobsWithRecovery(runsDir, store, true)
+}
+
+func newJobsWithRecovery(runsDir string, store apiStore, recoverInterrupted bool) *Jobs {
 	if store == nil {
 		store = &localAPIStore{runsDir: runsDir}
 	}
-	j := &Jobs{runs: make(map[string]*Run), runsDir: runsDir, store: store, topologyLocks: make(map[string]*sync.Mutex)}
+	j := &Jobs{
+		runs:               make(map[string]*Run),
+		runsDir:            runsDir,
+		store:              store,
+		recoverInterrupted: recoverInterrupted,
+		topologyLocks:      make(map[string]*sync.Mutex),
+	}
 	j.load()
 	return j
 }
@@ -101,7 +112,10 @@ func (j *Jobs) load() {
 		fmt.Fprintf(os.Stderr, "[api] load runs: %v\n", err)
 		return
 	}
-	for _, r := range markInterruptedRuns(runs) {
+	if j.recoverInterrupted {
+		runs = markInterruptedRuns(runs)
+	}
+	for _, r := range runs {
 		run := r
 		normalizeRunProductFields(&run)
 		run.logs = &Broadcaster{}
@@ -237,6 +251,96 @@ func (j *Jobs) markRunning(r *Run) {
 	j.persist(r)
 }
 
+func (j *Jobs) claim(runID, workerID string) (*Run, error) {
+	if stored, err := j.store.GetRun(context.Background(), runID); err == nil && stored != nil {
+		j.mu.Lock()
+		if existing, ok := j.runs[runID]; ok {
+			stored.logs = existing.logs
+		} else {
+			stored.logs = &Broadcaster{}
+		}
+		j.runs[runID] = stored
+		j.mu.Unlock()
+	}
+	j.mu.Lock()
+	run, ok := j.runs[runID]
+	if !ok {
+		j.mu.Unlock()
+		return nil, fmt.Errorf("run not found")
+	}
+	if run.WorkerID != workerID {
+		j.mu.Unlock()
+		return nil, fmt.Errorf("run assigned to worker %q", run.WorkerID)
+	}
+	if run.Status != RunAssigned {
+		j.mu.Unlock()
+		return nil, fmt.Errorf("run status %q cannot be claimed", run.Status)
+	}
+	run.Status = RunRunning
+	if run.StartedAt.IsZero() || run.StartedAt.Equal(run.QueuedAt) {
+		run.StartedAt = time.Now()
+	}
+	out := runRecord(*run)
+	j.mu.Unlock()
+	j.persist(run)
+	return &out, nil
+}
+
+func (j *Jobs) runnableForWorker(workerID string) []*Run {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	out := make([]*Run, 0)
+	for _, r := range j.runs {
+		if r.WorkerID == workerID && r.Status == RunAssigned {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func latestRunsByID(runs []Run) []Run {
+	latest := map[string]Run{}
+	for _, run := range runs {
+		prev, ok := latest[run.ID]
+		if !ok || runStatusRank(run.Status) >= runStatusRank(prev.Status) || runRecordTime(run).After(runRecordTime(prev)) {
+			latest[run.ID] = run
+		}
+	}
+	out := make([]Run, 0, len(latest))
+	for _, run := range latest {
+		out = append(out, run)
+	}
+	return out
+}
+
+func runStatusRank(status RunStatus) int {
+	switch status {
+	case RunQueued:
+		return 1
+	case RunAssigned:
+		return 2
+	case RunRunning:
+		return 3
+	case RunDone, RunFailed, RunCancelled:
+		return 4
+	default:
+		return 0
+	}
+}
+
+func runRecordTime(run Run) time.Time {
+	switch {
+	case !run.EndedAt.IsZero():
+		return run.EndedAt
+	case !run.StartedAt.IsZero():
+		return run.StartedAt
+	case !run.AssignedAt.IsZero():
+		return run.AssignedAt
+	default:
+		return run.QueuedAt
+	}
+}
+
 func (j *Jobs) hasRunning(topology string) bool {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
@@ -275,10 +379,42 @@ func (j *Jobs) finish(r *Run, err error) {
 }
 
 func (j *Jobs) get(id string) (*Run, bool) {
+	if run, err := j.store.GetRun(context.Background(), id); err == nil && run != nil {
+		j.mu.Lock()
+		if existing, ok := j.runs[id]; ok {
+			if preferRun(existing, run) {
+				j.mu.Unlock()
+				return existing, true
+			}
+			run.logs = existing.logs
+		} else {
+			run.logs = &Broadcaster{}
+			if run.Status != RunQueued && run.Status != RunAssigned && run.Status != RunRunning {
+				run.logs.Close()
+			}
+		}
+		j.runs[id] = run
+		j.mu.Unlock()
+		return run, true
+	}
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	r, ok := j.runs[id]
 	return r, ok
+}
+
+func preferRun(a, b *Run) bool {
+	if a == nil {
+		return false
+	}
+	if b == nil {
+		return true
+	}
+	ar, br := runStatusRank(a.Status), runStatusRank(b.Status)
+	if ar != br {
+		return ar > br
+	}
+	return runRecordTime(*a).After(runRecordTime(*b))
 }
 
 func (j *Jobs) list(topology string) []*Run {

@@ -348,9 +348,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.dispatchRun(r.Context(), run, required, func(run *Run) {
-		s.runApply(topology, run)
-	}); err != nil {
+	if err := s.dispatchRun(r.Context(), run, required); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
@@ -520,9 +518,7 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.dispatchRun(r.Context(), run, required, func(run *Run) {
-		s.runDestroy(topology, run)
-	}); err != nil {
+	if err := s.dispatchRun(r.Context(), run, required); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
@@ -648,9 +644,7 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		if err := s.dispatchRun(r.Context(), run, required, func(run *Run) {
-			s.runResumeApply(parent, run)
-		}); err != nil {
+		if err := s.dispatchRun(r.Context(), run, required); err != nil {
 			writeError(w, http.StatusConflict, err)
 			return
 		}
@@ -661,9 +655,7 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		if err := s.dispatchRun(r.Context(), run, required, func(run *Run) {
-			s.runResumeDestroy(parent, run)
-		}); err != nil {
+		if err := s.dispatchRun(r.Context(), run, required); err != nil {
 			writeError(w, http.StatusConflict, err)
 			return
 		}
