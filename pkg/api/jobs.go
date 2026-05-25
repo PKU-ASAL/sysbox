@@ -15,6 +15,8 @@ import (
 type RunStatus string
 
 const (
+	RunQueued    RunStatus = "queued"
+	RunAssigned  RunStatus = "assigned"
 	RunRunning   RunStatus = "running"
 	RunDone      RunStatus = "done"
 	RunFailed    RunStatus = "failed"
@@ -39,6 +41,8 @@ type Run struct {
 	WorkerID    string    `json:"worker_id,omitempty"`
 	Recoverable bool      `json:"recoverable,omitempty"`
 	LeaseOwner  string    `json:"lease_owner,omitempty"`
+	QueuedAt    time.Time `json:"queued_at,omitempty"`
+	AssignedAt  time.Time `json:"assigned_at,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
 	EndedAt     time.Time `json:"ended_at,omitempty"`
 
@@ -188,19 +192,21 @@ func (j *Jobs) start(topology, op string) *Run {
 }
 
 func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *Run {
+	now := time.Now()
 	r := &Run{
 		ID:         uuid.New().String(),
 		ProjectID:  "default",
 		Workspace:  topology,
 		Topology:   topology,
 		Op:         op,
-		Status:     RunRunning,
+		Status:     RunQueued,
 		ParentID:   opts.ParentID,
 		Revision:   opts.Revision,
 		PlanID:     opts.PlanID,
 		WorkerID:   opts.WorkerID,
 		LeaseOwner: "sysbox-api",
-		StartedAt:  time.Now(),
+		QueuedAt:   now,
+		StartedAt:  now,
 		logs:       &Broadcaster{},
 	}
 	normalizeRunProductFields(r)
@@ -212,11 +218,30 @@ func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *Run 
 	return r
 }
 
+func (j *Jobs) assign(r *Run, workerID string) {
+	j.mu.Lock()
+	r.WorkerID = workerID
+	r.Status = RunAssigned
+	r.AssignedAt = time.Now()
+	j.mu.Unlock()
+	j.persist(r)
+}
+
+func (j *Jobs) markRunning(r *Run) {
+	j.mu.Lock()
+	r.Status = RunRunning
+	if r.StartedAt.IsZero() || r.StartedAt.Equal(r.QueuedAt) {
+		r.StartedAt = time.Now()
+	}
+	j.mu.Unlock()
+	j.persist(r)
+}
+
 func (j *Jobs) hasRunning(topology string) bool {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	for _, r := range j.runs {
-		if r.Topology == topology && r.Status == RunRunning {
+		if r.Topology == topology && (r.Status == RunQueued || r.Status == RunAssigned || r.Status == RunRunning) {
 			return true
 		}
 	}

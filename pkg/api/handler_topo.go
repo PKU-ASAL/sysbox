@@ -342,8 +342,19 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		Revision: req.Revision,
 		PlanID:   req.PlanID,
 	})
-	go s.runApply(topology, run)
-	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID})
+	required, err := requiredCapabilitiesForTopology(s.hclFile(topology))
+	if err != nil {
+		s.jobs.finish(run, err)
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.dispatchRun(r.Context(), run, required, func(run *Run) {
+		s.runApply(topology, run)
+	}); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "worker_id": run.WorkerID})
 }
 
 type applyRequest struct {
@@ -503,8 +514,19 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run := s.jobs.start(topology, "destroy")
-	go s.runDestroy(topology, run)
-	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID})
+	required, err := requiredCapabilitiesForTopology(s.hclFile(topology))
+	if err != nil {
+		s.jobs.finish(run, err)
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.dispatchRun(r.Context(), run, required, func(run *Run) {
+		s.runDestroy(topology, run)
+	}); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "worker_id": run.WorkerID})
 }
 
 func (s *Server) runDestroy(topology string, run *Run) {
@@ -620,11 +642,33 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 	run := s.jobs.startChild(parent)
 	switch run.Op {
 	case "apply":
-		go s.runResumeApply(parent, run)
+		required, err := requiredCapabilitiesForTopology(s.hclFile(run.Topology))
+		if err != nil {
+			s.jobs.finish(run, err)
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := s.dispatchRun(r.Context(), run, required, func(run *Run) {
+			s.runResumeApply(parent, run)
+		}); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
 	case "destroy":
-		go s.runResumeDestroy(parent, run)
+		required, err := requiredCapabilitiesForTopology(s.hclFile(run.Topology))
+		if err != nil {
+			s.jobs.finish(run, err)
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := s.dispatchRun(r.Context(), run, required, func(run *Run) {
+			s.runResumeDestroy(parent, run)
+		}); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID})
+	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID, "worker_id": run.WorkerID})
 }
 
 func (s *Server) runResumeApply(parent, run *Run) {

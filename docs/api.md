@@ -94,7 +94,12 @@ POST /v1/runs/{run_id}/cleanup
 ```
 
 Run records include `worker_id`, so API/UI users can see which worker owned the
-operation. Today this is `local` for in-process API execution.
+operation. Run scheduling uses the same state machine for all workers, including
+the built-in `local` worker:
+
+```text
+queued -> assigned -> running -> done|failed|cancelled
+```
 
 ## Nodes
 

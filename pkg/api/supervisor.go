@@ -117,7 +117,17 @@ func (s *Supervisor) maybeRepair(topology string, snap *HealthSnapshot) {
 	run.ParentID = "supervisor"
 	snap.Action = "restart_apply_started"
 	snap.RunID = run.ID
-	go s.server.runApply(topology, run)
+	required, err := requiredCapabilitiesForTopology(s.server.hclFile(topology))
+	if err != nil {
+		s.server.jobs.finish(run, err)
+		snap.Action = "restart_apply_failed"
+		return
+	}
+	if err := s.server.dispatchRun(context.Background(), run, required, func(run *Run) {
+		s.server.runApply(topology, run)
+	}); err != nil {
+		snap.Action = "restart_apply_failed"
+	}
 }
 
 func (s *Server) healthSnapshotFile(topology string) string {

@@ -651,7 +651,7 @@ func dsnWithoutSysboxQuery(raw string) string {
 
 func markInterruptedRuns(runs []Run) []Run {
 	for i := range runs {
-		if runs[i].Status == RunRunning {
+		if runs[i].Status == RunQueued || runs[i].Status == RunAssigned || runs[i].Status == RunRunning {
 			runs[i].Status = RunFailed
 			runs[i].Err = "server restarted before run completion"
 			runs[i].Recoverable = true
