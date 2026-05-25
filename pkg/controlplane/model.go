@@ -54,15 +54,36 @@ type Plan struct {
 }
 
 type Run struct {
-	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id"`
-	Workspace string    `json:"workspace"`
-	Operation string    `json:"operation"`
-	Status    string    `json:"status"`
-	WorkerID  string    `json:"worker_id,omitempty"`
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at,omitempty"`
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"project_id,omitempty"`
+	Workspace   string    `json:"workspace,omitempty"`
+	Topology    string    `json:"topology"`
+	Operation   string    `json:"operation,omitempty"`
+	Op          string    `json:"op,omitempty"`
+	Status      RunStatus `json:"status"`
+	Err         string    `json:"error,omitempty"`
+	ParentID    string    `json:"parent_id,omitempty"`
+	Revision    string    `json:"revision,omitempty"`
+	PlanID      string    `json:"plan_id,omitempty"`
+	WorkerID    string    `json:"worker_id,omitempty"`
+	Recoverable bool      `json:"recoverable,omitempty"`
+	LeaseOwner  string    `json:"lease_owner,omitempty"`
+	QueuedAt    time.Time `json:"queued_at,omitempty"`
+	AssignedAt  time.Time `json:"assigned_at,omitempty"`
+	StartedAt   time.Time `json:"started_at"`
+	EndedAt     time.Time `json:"ended_at,omitempty"`
 }
+
+type RunStatus string
+
+const (
+	RunQueued    RunStatus = "queued"
+	RunAssigned  RunStatus = "assigned"
+	RunRunning   RunStatus = "running"
+	RunDone      RunStatus = "done"
+	RunFailed    RunStatus = "failed"
+	RunCancelled RunStatus = "cancelled"
+)
 
 type Worker struct {
 	ID            string            `json:"id"`

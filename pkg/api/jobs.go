@@ -10,47 +10,28 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-type RunStatus string
+const (
+	DefaultWorkerID = "local"
+)
+
+type Run = controlplane.Run
+type RunStatus = controlplane.RunStatus
 
 const (
-	RunQueued    RunStatus = "queued"
-	RunAssigned  RunStatus = "assigned"
-	RunRunning   RunStatus = "running"
-	RunDone      RunStatus = "done"
-	RunFailed    RunStatus = "failed"
-	RunCancelled RunStatus = "cancelled"
-
-	DefaultWorkerID = "local"
+	RunQueued    = controlplane.RunQueued
+	RunAssigned  = controlplane.RunAssigned
+	RunRunning   = controlplane.RunRunning
+	RunDone      = controlplane.RunDone
+	RunFailed    = controlplane.RunFailed
+	RunCancelled = controlplane.RunCancelled
 )
 
 // Run represents one async apply or destroy operation.
 // Fields are JSON-serialisable so they can be persisted by the API store.
-type Run struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id,omitempty"`
-	Workspace   string    `json:"workspace,omitempty"`
-	Topology    string    `json:"topology"`
-	Op          string    `json:"op"` // "apply" | "destroy"
-	Status      RunStatus `json:"status"`
-	Err         string    `json:"error,omitempty"`
-	ParentID    string    `json:"parent_id,omitempty"`
-	Revision    string    `json:"revision,omitempty"`
-	PlanID      string    `json:"plan_id,omitempty"`
-	WorkerID    string    `json:"worker_id,omitempty"`
-	Recoverable bool      `json:"recoverable,omitempty"`
-	LeaseOwner  string    `json:"lease_owner,omitempty"`
-	QueuedAt    time.Time `json:"queued_at,omitempty"`
-	AssignedAt  time.Time `json:"assigned_at,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
-	EndedAt     time.Time `json:"ended_at,omitempty"`
-
-	logs *Broadcaster // in-memory only; not persisted
-}
-
-func (r *Run) LogWriter() *Broadcaster { return r.logs }
-
 // Jobs is a run store backed by in-memory map + the API persistence store.
 // Per-topology mutexes prevent concurrent apply/destroy on the same topology.
 type Jobs struct {
@@ -59,6 +40,7 @@ type Jobs struct {
 	runsDir            string // root directory for runs, e.g. "runs"
 	store              apiStore
 	recoverInterrupted bool
+	logs               map[string]*Broadcaster
 
 	topologyMu    sync.Mutex
 	topologyLocks map[string]*sync.Mutex
@@ -84,6 +66,7 @@ func newJobsWithRecovery(runsDir string, store apiStore, recoverInterrupted bool
 		runsDir:            runsDir,
 		store:              store,
 		recoverInterrupted: recoverInterrupted,
+		logs:               make(map[string]*Broadcaster),
 		topologyLocks:      make(map[string]*sync.Mutex),
 	}
 	j.load()
@@ -118,8 +101,7 @@ func (j *Jobs) load() {
 	for _, r := range runs {
 		run := r
 		normalizeRunProductFields(&run)
-		run.logs = &Broadcaster{}
-		run.logs.Close()
+		j.ensureLogs(run.ID, true)
 		j.runs[run.ID] = &run
 	}
 	j.loadCheckpoints()
@@ -166,9 +148,8 @@ func (j *Jobs) loadCheckpoints() {
 			Recoverable: status == RunFailed,
 			StartedAt:   cp.StartedAt,
 			EndedAt:     cp.EndedAt,
-			logs:        &Broadcaster{},
 		}
-		r.logs.Close()
+		j.ensureLogs(r.ID, true)
 		j.runs[r.ID] = r
 	}
 }
@@ -182,7 +163,6 @@ func (j *Jobs) persist(r *Run) {
 
 func runRecord(r Run) Run {
 	normalizeRunProductFields(&r)
-	r.logs = nil
 	return r
 }
 
@@ -221,12 +201,12 @@ func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *Run 
 		LeaseOwner: "sysbox-api",
 		QueuedAt:   now,
 		StartedAt:  now,
-		logs:       &Broadcaster{},
 	}
 	normalizeRunProductFields(r)
 	r.LeaseOwner = fmt.Sprintf("sysbox-api:%s:%s", r.Op, r.ID)
 	j.mu.Lock()
 	j.runs[r.ID] = r
+	j.ensureLogsLocked(r.ID, false)
 	j.mu.Unlock()
 	j.persist(r)
 	return r
@@ -254,12 +234,8 @@ func (j *Jobs) markRunning(r *Run) {
 func (j *Jobs) claim(runID, workerID string) (*Run, error) {
 	if stored, err := j.store.GetRun(context.Background(), runID); err == nil && stored != nil {
 		j.mu.Lock()
-		if existing, ok := j.runs[runID]; ok {
-			stored.logs = existing.logs
-		} else {
-			stored.logs = &Broadcaster{}
-		}
 		j.runs[runID] = stored
+		j.ensureLogsLocked(runID, false)
 		j.mu.Unlock()
 	}
 	j.mu.Lock()
@@ -374,7 +350,7 @@ func (j *Jobs) finish(r *Run, err error) {
 		r.Recoverable = false
 	}
 	j.mu.Unlock()
-	r.logs.Close()
+	j.closeLogs(r.ID)
 	j.persist(r)
 }
 
@@ -386,12 +362,8 @@ func (j *Jobs) get(id string) (*Run, bool) {
 				j.mu.Unlock()
 				return existing, true
 			}
-			run.logs = existing.logs
 		} else {
-			run.logs = &Broadcaster{}
-			if run.Status != RunQueued && run.Status != RunAssigned && run.Status != RunRunning {
-				run.logs.Close()
-			}
+			j.ensureLogsLocked(run.ID, run.Status != RunQueued && run.Status != RunAssigned && run.Status != RunRunning)
 		}
 		j.runs[id] = run
 		j.mu.Unlock()
@@ -427,4 +399,37 @@ func (j *Jobs) list(topology string) []*Run {
 		}
 	}
 	return out
+}
+
+func (j *Jobs) logWriter(runID string) *Broadcaster {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.ensureLogsLocked(runID, false)
+}
+
+func (j *Jobs) ensureLogs(runID string, closed bool) *Broadcaster {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.ensureLogsLocked(runID, closed)
+}
+
+func (j *Jobs) ensureLogsLocked(runID string, closed bool) *Broadcaster {
+	if j.logs == nil {
+		j.logs = make(map[string]*Broadcaster)
+	}
+	b, ok := j.logs[runID]
+	if !ok {
+		b = &Broadcaster{}
+		j.logs[runID] = b
+	}
+	if closed {
+		b.Close()
+	}
+	return b
+}
+
+func (j *Jobs) closeLogs(runID string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.ensureLogsLocked(runID, false).Close()
 }

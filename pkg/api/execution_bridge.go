@@ -22,21 +22,25 @@ func NewExecutionBridge(cfg config.ServiceConfig) *ExecutionBridge {
 	return &ExecutionBridge{server: s}
 }
 
-func (b *ExecutionBridge) AttachRun(run *Run) {
+func (b *ExecutionBridge) AttachRun(run *controlplane.Run) {
 	if run == nil {
 		return
 	}
-	run.logs = &Broadcaster{}
 	b.server.jobs.mu.Lock()
 	b.server.jobs.runs[run.ID] = run
+	b.server.jobs.ensureLogsLocked(run.ID, false)
 	b.server.jobs.mu.Unlock()
+}
+
+func (b *ExecutionBridge) LogWriter(runID string) io.Writer {
+	return b.server.jobs.logWriter(runID)
 }
 
 func (b *ExecutionBridge) LockTopology(topology string) func() {
 	return b.server.jobs.lockTopology(topology)
 }
 
-func (b *ExecutionBridge) Finish(run *Run, err error) {
+func (b *ExecutionBridge) Finish(run *controlplane.Run, err error) {
 	b.server.jobs.finish(run, err)
 }
 
@@ -60,11 +64,11 @@ func (b *ExecutionBridge) ValidateStoredPlanForApply(ctx context.Context, topolo
 	return b.server.validateStoredPlanForApply(ctx, topology, planID, currentSerial)
 }
 
-func (b *ExecutionBridge) ParentRun(ctx context.Context, id string) (*Run, error) {
+func (b *ExecutionBridge) ParentRun(ctx context.Context, id string) (*controlplane.Run, error) {
 	return b.server.apiStore.GetRun(ctx, id)
 }
 
-func (b *ExecutionBridge) ReconcileParentJournal(parent, run *Run) error {
+func (b *ExecutionBridge) ReconcileParentJournal(parent, run *controlplane.Run) error {
 	return b.server.reconcileParentJournal(parent, run)
 }
 

@@ -3,51 +3,73 @@ package worker
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/oslab/sysbox/pkg/api"
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
+type Bridge interface {
+	AttachRun(run *controlplane.Run)
+	LogWriter(runID string) io.Writer
+	LockTopology(topology string) func()
+	Finish(run *controlplane.Run, err error)
+	StateManager(topology string) (*state.Manager, error)
+	HCLFile(topology string) string
+	CheckpointFile(topology, runID string) string
+	CheckpointStore() runtime.CheckpointStore
+	ValidateStoredPlanForApply(ctx context.Context, topology, planID string, currentSerial int64) (*controlplane.Plan, error)
+	ParentRun(ctx context.Context, id string) (*controlplane.Run, error)
+	ReconcileParentJournal(parent, run *controlplane.Run) error
+	Preflight(ctx context.Context, topology string, log io.Writer) error
+}
+
 type Executor struct {
-	bridge *api.ExecutionBridge
+	bridge Bridge
 }
 
 func NewExecutor(cfg config.ServiceConfig) *Executor {
-	return &Executor{bridge: api.NewExecutionBridge(cfg)}
+	return NewExecutorWithBridge(api.NewExecutionBridge(cfg))
 }
 
-func (e *Executor) Execute(run *api.Run) {
+func NewExecutorWithBridge(bridge Bridge) *Executor {
+	return &Executor{bridge: bridge}
+}
+
+func (e *Executor) Execute(run *controlplane.Run) {
 	e.bridge.AttachRun(run)
+	log := e.bridge.LogWriter(run.ID)
 	switch run.Op {
 	case "apply":
 		if run.ParentID != "" {
 			if parent, err := e.bridge.ParentRun(context.Background(), run.ParentID); err == nil {
-				e.executeResumeApply(parent, run)
+				e.executeResumeApply(parent, run, log)
 				return
 			}
 		}
-		e.executeApply(run)
+		e.executeApply(run, log)
 	case "destroy":
 		if run.ParentID != "" {
 			if parent, err := e.bridge.ParentRun(context.Background(), run.ParentID); err == nil {
-				e.executeResumeDestroy(parent, run)
+				e.executeResumeDestroy(parent, run, log)
 				return
 			}
 		}
-		e.executeDestroy(run)
+		e.executeDestroy(run, log)
 	default:
 		e.bridge.Finish(run, fmt.Errorf("unsupported run op %q", run.Op))
 	}
 }
 
-func (e *Executor) executeApply(run *api.Run) {
+func (e *Executor) executeApply(run *controlplane.Run, log io.Writer) {
 	unlock := e.bridge.LockTopology(run.Topology)
 	defer unlock()
 
-	if err := e.bridge.Preflight(context.Background(), run.Topology, run.LogWriter()); err != nil {
+	if err := e.bridge.Preflight(context.Background(), run.Topology, log); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
@@ -80,7 +102,7 @@ func (e *Executor) executeApply(run *api.Run) {
 	}
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetLogger(run.LogWriter())
+	exec.SetLogger(log)
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
 	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath)
@@ -92,17 +114,17 @@ func (e *Executor) executeApply(run *api.Run) {
 		exec.Refresh(context.Background(), plan)
 	}
 	if !plan.HasChanges() {
-		_, _ = run.LogWriter().Write([]byte("No changes. Apply is a no-op.\n"))
+		_, _ = log.Write([]byte("No changes. Apply is a no-op.\n"))
 		e.bridge.Finish(run, nil)
 		return
 	}
-	_, _ = run.LogWriter().Write([]byte(plan.Summary() + "\n"))
+	_, _ = log.Write([]byte(plan.Summary() + "\n"))
 	if snap, err := mgr.Snapshot(context.Background(), "before apply "+run.ID); err == nil && snap != nil {
-		_, _ = run.LogWriter().Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
+		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
 	if err := exec.Apply(context.Background(), plan); err != nil {
 		if saveErr := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
-			_, _ = run.LogWriter().Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
+			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
 		} else {
 			recorder.SetStateSerialAfter(st.Meta.Serial)
 		}
@@ -119,11 +141,11 @@ func (e *Executor) executeApply(run *api.Run) {
 	recorder.SetStateSerialAfter(st.Meta.Serial)
 	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
-	_, _ = run.LogWriter().Write([]byte("Apply complete.\n"))
+	_, _ = log.Write([]byte("Apply complete.\n"))
 	e.bridge.Finish(run, nil)
 }
 
-func (e *Executor) executeDestroy(run *api.Run) {
+func (e *Executor) executeDestroy(run *controlplane.Run, log io.Writer) {
 	unlock := e.bridge.LockTopology(run.Topology)
 	defer unlock()
 
@@ -138,7 +160,7 @@ func (e *Executor) executeDestroy(run *api.Run) {
 		return
 	}
 	if len(st.Resources) == 0 {
-		_, _ = run.LogWriter().Write([]byte("Nothing to destroy.\n"))
+		_, _ = log.Write([]byte("Nothing to destroy.\n"))
 		e.bridge.Finish(run, nil)
 		return
 	}
@@ -154,7 +176,7 @@ func (e *Executor) executeDestroy(run *api.Run) {
 	}
 	exec := runtime.NewExecutor(graph.New(), st)
 	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetLogger(run.LogWriter())
+	exec.SetLogger(log)
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
 	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath)
@@ -163,11 +185,11 @@ func (e *Executor) executeDestroy(run *api.Run) {
 	exec.SetRecorder(recorder)
 	exec.SetStatePatchSink(&runtime.StatePatchManagerSink{Manager: mgr, State: st, Owner: run.LeaseOwner})
 	if snap, err := mgr.Snapshot(context.Background(), "before destroy "+run.ID); err == nil && snap != nil {
-		_, _ = run.LogWriter().Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
+		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
 	if err := exec.Destroy(context.Background(), plan); err != nil {
 		if saveErr := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
-			_, _ = run.LogWriter().Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
+			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
 		} else {
 			recorder.SetStateSerialAfter(st.Meta.Serial)
 		}
@@ -184,22 +206,22 @@ func (e *Executor) executeDestroy(run *api.Run) {
 	recorder.SetStateSerialAfter(st.Meta.Serial)
 	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
-	_, _ = run.LogWriter().Write([]byte("Destroy complete.\n"))
+	_, _ = log.Write([]byte("Destroy complete.\n"))
 	e.bridge.Finish(run, nil)
 }
 
-func (e *Executor) executeResumeApply(parent, run *api.Run) {
+func (e *Executor) executeResumeApply(parent, run *controlplane.Run, log io.Writer) {
 	if err := e.bridge.ReconcileParentJournal(parent, run); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
-	e.executeApply(run)
+	e.executeApply(run, log)
 }
 
-func (e *Executor) executeResumeDestroy(parent, run *api.Run) {
+func (e *Executor) executeResumeDestroy(parent, run *controlplane.Run, log io.Writer) {
 	if err := e.bridge.ReconcileParentJournal(parent, run); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
-	e.executeDestroy(run)
+	e.executeDestroy(run, log)
 }

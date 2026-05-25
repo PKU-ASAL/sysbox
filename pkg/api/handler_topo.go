@@ -396,13 +396,6 @@ func (s *Server) currentStateSerial(ctx context.Context, topology string) (int64
 	return meta.Serial, nil
 }
 
-func writePreflightLogs(run *Run, res *preflightResult) {
-	if run == nil {
-		return
-	}
-	writePreflightLogsTo(run.logs, res)
-}
-
 func writePreflightLogsTo(w io.Writer, res *preflightResult) {
 	if res == nil {
 		return
@@ -531,15 +524,16 @@ func (s *Server) reconcileParentJournal(parent, run *Run) error {
 	if report == nil {
 		return nil
 	}
+	logs := s.jobs.logWriter(run.ID)
 	for _, action := range report.Recovered {
-		_, _ = run.logs.Write([]byte(fmt.Sprintf("[resume] %s %s", action.Status, action.Resource)))
+		_, _ = logs.Write([]byte(fmt.Sprintf("[resume] %s %s", action.Status, action.Resource)))
 		if action.ExternalID != "" {
-			_, _ = run.logs.Write([]byte(fmt.Sprintf(" (%s)", action.ExternalID)))
+			_, _ = logs.Write([]byte(fmt.Sprintf(" (%s)", action.ExternalID)))
 		}
-		_, _ = run.logs.Write([]byte("\n"))
+		_, _ = logs.Write([]byte("\n"))
 	}
 	for _, action := range report.Skipped {
-		_, _ = run.logs.Write([]byte(fmt.Sprintf("[resume] skipped %s: %s\n", action.Resource, action.Status)))
+		_, _ = logs.Write([]byte(fmt.Sprintf("[resume] skipped %s: %s\n", action.Resource, action.Status)))
 	}
 	return nil
 }
@@ -656,8 +650,9 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	ch := run.logs.Subscribe()
-	defer run.logs.Unsubscribe(ch)
+	logs := s.jobs.logWriter(run.ID)
+	ch := logs.Subscribe()
+	defer logs.Unsubscribe(ch)
 	ServeSSE(w, r, ch)
 }
 

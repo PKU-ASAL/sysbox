@@ -9,10 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oslab/sysbox/pkg/api"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
+
+const DefaultWorkerID = "local"
 
 type Options struct {
 	APIURL       string
@@ -29,7 +30,7 @@ func Run(ctx context.Context, cfg config.ServiceConfig, opts Options) error {
 		return fmt.Errorf("api url is required")
 	}
 	if opts.ID == "" {
-		opts.ID = api.DefaultWorkerID
+		opts.ID = DefaultWorkerID
 	}
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = 2 * time.Second
@@ -80,7 +81,7 @@ func heartbeat(ctx context.Context, opts Options) error {
 
 func pollAndExecute(ctx context.Context, executor *Executor, opts Options) error {
 	var listed struct {
-		Runs []api.Run `json:"runs"`
+		Runs []controlplane.Run `json:"runs"`
 	}
 	if err := get(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/runs", &listed); err != nil {
 		return err
@@ -96,8 +97,8 @@ func pollAndExecute(ctx context.Context, executor *Executor, opts Options) error
 	return nil
 }
 
-func claim(ctx context.Context, opts Options, runID string) (*api.Run, error) {
-	var run api.Run
+func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {
+	var run controlplane.Run
 	if err := post(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/runs/"+runID+"/claim", nil, &run); err != nil {
 		return nil, err
 	}

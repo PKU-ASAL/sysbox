@@ -318,6 +318,7 @@ examples/                   Example topologies
 pkg/artifact/               Artifact resolver/cache
 pkg/api/                    HTTP control plane, scheduling, jobs, recovery/cleanup
 pkg/config/                 HCL schema and eval
+pkg/controlplane/           Product-level objects such as Project, Plan, Run, Worker
 pkg/graph/                  Dependency graph
 pkg/provider/               Docker, Firecracker, network, libvirt providers
 pkg/runtime/                Plan/apply/destroy/checkpoint runtime and execution journal primitives
