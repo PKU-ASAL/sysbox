@@ -32,6 +32,9 @@ type apiStore interface {
 	GetPlan(ctx context.Context, workspace, planID string) (*controlplane.Plan, error)
 	SavePolicy(ctx context.Context, policy controlplane.Policy) error
 	ListPolicies(ctx context.Context, workspace string) ([]controlplane.Policy, error)
+	SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error
+	GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error)
+	ListConsoleSessions(ctx context.Context, workspace string) ([]controlplane.ConsoleSession, error)
 }
 
 type localAPIStore struct {
@@ -196,6 +199,34 @@ func (s *localAPIStore) ListPolicies(_ context.Context, workspace string) ([]con
 	return readLocalObjects[controlplane.Policy](filepath.Join(s.runsDir, workspace, "policies", "*.json"))
 }
 
+func (s *localAPIStore) SaveConsoleSession(_ context.Context, sess controlplane.ConsoleSession) error {
+	workspace := sess.Workspace
+	if workspace == "" {
+		workspace = sess.Topology
+	}
+	return writeLocalObject(filepath.Join(s.runsDir, workspace, "sessions", sess.ID+".json"), sess)
+}
+
+func (s *localAPIStore) GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error) {
+	items, err := s.ListConsoleSessions(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return &item, nil
+		}
+	}
+	return nil, fmt.Errorf("session not found")
+}
+
+func (s *localAPIStore) ListConsoleSessions(_ context.Context, workspace string) ([]controlplane.ConsoleSession, error) {
+	if workspace == "" {
+		return readLocalObjects[controlplane.ConsoleSession](filepath.Join(s.runsDir, "*", "sessions", "*.json"))
+	}
+	return readLocalObjects[controlplane.ConsoleSession](filepath.Join(s.runsDir, workspace, "sessions", "*.json"))
+}
+
 func writeLocalObject(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -275,6 +306,12 @@ CREATE TABLE IF NOT EXISTS sysbox_policies (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_console_sessions (
+  workspace TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`)
 	if err != nil {
 		return fmt.Errorf("postgres ensure api tables: %w", err)
@@ -474,6 +511,84 @@ func (s *postgresAPIStore) ListPolicies(ctx context.Context, workspace string) (
 		workspace = "_project"
 	}
 	return listPostgresObjects[controlplane.Policy](ctx, s, "sysbox_policies", workspace)
+}
+
+func (s *postgresAPIStore) SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error {
+	workspace := sess.Workspace
+	if workspace == "" {
+		workspace = sess.Topology
+	}
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	raw, err := json.Marshal(sess)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(ctx, `
+INSERT INTO sysbox_console_sessions (workspace, id, data, updated_at)
+VALUES ($1, $2, $3::jsonb, now())
+ON CONFLICT (id) DO UPDATE SET workspace=EXCLUDED.workspace, data=EXCLUDED.data, updated_at=now()`,
+		workspace, sess.ID, string(raw))
+	if err != nil {
+		return fmt.Errorf("postgres save console session: %w", err)
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	var raw []byte
+	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_console_sessions WHERE id=$1`, id).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, fmt.Errorf("session not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres get console session: %w", err)
+	}
+	var sess controlplane.ConsoleSession
+	if err := json.Unmarshal(raw, &sess); err != nil {
+		return nil, err
+	}
+	return &sess, nil
+}
+
+func (s *postgresAPIStore) ListConsoleSessions(ctx context.Context, workspace string) ([]controlplane.ConsoleSession, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	query := `SELECT data::text FROM sysbox_console_sessions ORDER BY updated_at DESC`
+	args := []any{}
+	if workspace != "" {
+		query = `SELECT data::text FROM sysbox_console_sessions WHERE workspace=$1 ORDER BY updated_at DESC`
+		args = append(args, workspace)
+	}
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres list console sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []controlplane.ConsoleSession
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var item controlplane.ConsoleSession
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (s *postgresAPIStore) saveObject(ctx context.Context, table, workspace, id string, v any) error {

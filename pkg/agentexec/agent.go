@@ -58,6 +58,7 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	}
 
 	executor := NewExecutorWithBridge(remoteBridge{Bridge: bridge, reporter: opts})
+	go observeLoop(ctx, opts, bridge)
 	for {
 		if err := heartbeat(ctx, opts); err != nil {
 			fmt.Printf("[agent] heartbeat failed: %v\n", err)
@@ -72,6 +73,29 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(opts.PollInterval):
+		}
+	}
+}
+
+func observeLoop(ctx context.Context, opts Options, bridge Bridge) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	reportObserved(ctx, opts, bridge)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			reportObserved(ctx, opts, bridge)
+		}
+	}
+}
+
+func reportObserved(ctx context.Context, opts Options, bridge Bridge) {
+	projections := Observe(ctx, opts.ID, bridge)
+	for _, proj := range projections {
+		if err := opts.ReportResourceProjection(ctx, proj); err != nil {
+			fmt.Printf("[agent] report projection %s failed: %v\n", proj.Topology, err)
 		}
 	}
 }
@@ -215,6 +239,16 @@ func (opts Options) ReportRunComplete(ctx context.Context, run *controlplane.Run
 		Run:        *run,
 		Projection: projection,
 	}, nil)
+}
+
+func (opts Options) ReportResourceProjection(ctx context.Context, projection controlplane.ResourceProjection) error {
+	if opts.APIURL == "" || opts.ID == "" || projection.Topology == "" {
+		return nil
+	}
+	if projection.AgentID == "" {
+		projection.AgentID = opts.ID
+	}
+	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/projections/resources", projection, nil)
 }
 
 func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {

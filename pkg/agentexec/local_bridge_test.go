@@ -1,6 +1,9 @@
 package agentexec
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -33,6 +36,25 @@ func TestLocalBridgeFilterApplyPlanByTarget(t *testing.T) {
 	}
 	require.Len(t, creates, 1)
 	require.Equal(t, "sysbox_node.web", creates[0].Resource)
+}
+
+func TestObserveLocalBridgeReportsStateHealth(t *testing.T) {
+	runs := t.TempDir()
+	topology := "lab"
+	statePath := filepath.Join(runs, topology, "state.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
+	mgr := state.NewManager(statePath)
+	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{
+		{Type: "sysbox_image", Name: "alpine", Provider: "docker", Instance: map[string]any{"repository": "alpine:latest"}},
+	}}
+	require.NoError(t, mgr.Save(st))
+
+	bridge := NewLocalBridge(LocalOptions{Topology: topology, StatePath: statePath, RunsDir: runs})
+	projections := Observe(context.Background(), "local", bridge)
+	require.Len(t, projections, 1)
+	require.Equal(t, topology, projections[0].Topology)
+	require.Equal(t, "local", projections[0].AgentID)
+	require.Len(t, projections[0].Resources, 1)
 }
 
 func TestLocalBridgeBuildDestroyPlanHonorsPreventDestroy(t *testing.T) {

@@ -13,15 +13,53 @@ type agentRegistry struct {
 	mu          sync.RWMutex
 	agents      map[string]controlplane.Agent
 	streams     map[string]*Broadcaster
+	status      map[string]*Broadcaster
 	projections map[string]controlplane.Projection
+	resources   map[string]controlplane.ResourceProjection
 }
 
 func newAgentRegistry() *agentRegistry {
 	return &agentRegistry{
 		agents:      map[string]controlplane.Agent{},
 		streams:     map[string]*Broadcaster{},
+		status:      map[string]*Broadcaster{},
 		projections: map[string]controlplane.Projection{},
+		resources:   map[string]controlplane.ResourceProjection{},
 	}
+}
+
+func (r *agentRegistry) SaveResourceProjection(proj controlplane.ResourceProjection) {
+	if proj.AgentID == "" || proj.Topology == "" {
+		return
+	}
+	r.mu.Lock()
+	key := proj.AgentID + "/" + proj.Workspace + "/" + proj.Topology
+	r.resources[key] = proj
+	stream := r.status[proj.Topology]
+	r.mu.Unlock()
+	if stream != nil {
+		if raw, err := json.Marshal(proj); err == nil {
+			_, _ = stream.Write(append(raw, '\n'))
+		}
+	}
+}
+
+func (r *agentRegistry) ListResourceProjections(topology string) []controlplane.ResourceProjection {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]controlplane.ResourceProjection, 0, len(r.resources))
+	for _, proj := range r.resources {
+		if topology == "" || proj.Topology == topology {
+			out = append(out, proj)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Topology == out[j].Topology {
+			return out[i].AgentID < out[j].AgentID
+		}
+		return out[i].Topology < out[j].Topology
+	})
+	return out
 }
 
 func (r *agentRegistry) SaveProjection(proj controlplane.Projection) {
@@ -86,6 +124,17 @@ func (r *agentRegistry) Stream(id string) *Broadcaster {
 	if stream == nil {
 		stream = &Broadcaster{}
 		r.streams[id] = stream
+	}
+	return stream
+}
+
+func (r *agentRegistry) StatusStream(topology string) *Broadcaster {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stream := r.status[topology]
+	if stream == nil {
+		stream = &Broadcaster{}
+		r.status[topology] = stream
 	}
 	return stream
 }

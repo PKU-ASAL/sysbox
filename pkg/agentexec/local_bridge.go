@@ -113,6 +113,13 @@ func (b *LocalBridge) HCLFile(string) string {
 	return b.opts.ConfigFile
 }
 
+func (b *LocalBridge) Topologies(context.Context) []string {
+	if b.opts.Topology != "" {
+		return []string{b.opts.Topology}
+	}
+	return topologiesFromRunsDir(b.opts.RunsDir)
+}
+
 func (b *LocalBridge) CheckpointFile(topology, runID string) string {
 	if topology == "" {
 		topology = b.opts.Topology

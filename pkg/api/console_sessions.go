@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 type consoleSessionHub struct {
 	mu       sync.RWMutex
 	sessions map[string]*consoleSessionState
+	store    apiStore
 }
 
 type consoleSessionState struct {
@@ -21,14 +23,29 @@ type consoleSessionState struct {
 	request controlplane.ConsoleRequest
 	browser chan *wsPeer
 	agent   chan *wsPeer
+	cancel  chan struct{}
 }
 
 type wsPeer struct {
 	conn *websocket.Conn
 }
 
-func newConsoleSessionHub() *consoleSessionHub {
-	return &consoleSessionHub{sessions: map[string]*consoleSessionState{}}
+func newConsoleSessionHub(store apiStore) *consoleSessionHub {
+	h := &consoleSessionHub{sessions: map[string]*consoleSessionState{}, store: store}
+	if store != nil {
+		if items, err := store.ListConsoleSessions(context.Background(), ""); err == nil {
+			for _, sess := range items {
+				if sess.Status == "queued" || sess.Status == "running" {
+					sess.Status = "lost"
+					sess.Err = "api restarted before console session completion"
+					sess.EndedAt = time.Now().UTC()
+					_ = store.SaveConsoleSession(context.Background(), sess)
+				}
+				h.sessions[sess.ID] = newConsoleSessionState(sess, controlplane.ConsoleRequest{})
+			}
+		}
+	}
+	return h
 }
 
 func (h *consoleSessionHub) Create(topology, node, agentID string, req controlplane.ConsoleRequest) controlplane.ConsoleSession {
@@ -44,13 +61,9 @@ func (h *consoleSessionHub) Create(topology, node, agentID string, req controlpl
 		CreatedAt: now,
 	}
 	h.mu.Lock()
-	h.sessions[sess.ID] = &consoleSessionState{
-		session: sess,
-		request: req,
-		browser: make(chan *wsPeer, 1),
-		agent:   make(chan *wsPeer, 1),
-	}
+	h.sessions[sess.ID] = newConsoleSessionState(sess, req)
 	h.mu.Unlock()
+	h.persist(sess)
 	return sess
 }
 
@@ -73,9 +86,53 @@ func (h *consoleSessionHub) Snapshot(id string) (controlplane.ConsoleSession, er
 }
 
 func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSession)) {
+	var sess controlplane.ConsoleSession
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if st := h.sessions[id]; st != nil {
 		fn(&st.session)
+		sess = st.session
+	}
+	h.mu.Unlock()
+	if sess.ID != "" {
+		h.persist(sess)
+	}
+}
+
+func (h *consoleSessionHub) Cancel(id, reason string) error {
+	h.mu.Lock()
+	st := h.sessions[id]
+	if st == nil {
+		h.mu.Unlock()
+		return fmt.Errorf("session not found")
+	}
+	if st.session.Status != "closed" && st.session.Status != "failed" && st.session.Status != "cancelled" {
+		st.session.Status = "cancelled"
+		st.session.Err = reason
+		st.session.EndedAt = time.Now().UTC()
+	}
+	select {
+	case <-st.cancel:
+	default:
+		close(st.cancel)
+	}
+	sess := st.session
+	h.mu.Unlock()
+	h.persist(sess)
+	return nil
+}
+
+func newConsoleSessionState(sess controlplane.ConsoleSession, req controlplane.ConsoleRequest) *consoleSessionState {
+	return &consoleSessionState{
+		session: sess,
+		request: req,
+		browser: make(chan *wsPeer, 1),
+		agent:   make(chan *wsPeer, 1),
+		cancel:  make(chan struct{}),
+	}
+}
+
+func (h *consoleSessionHub) persist(sess controlplane.ConsoleSession) {
+	if h.store != nil {
+		_ = h.store.SaveConsoleSession(context.Background(), sess)
 	}
 }

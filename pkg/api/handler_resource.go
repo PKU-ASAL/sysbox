@@ -22,7 +22,25 @@ func (s *Server) handleListResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	health := runtime.EvaluateTopologyHealth(r.Context(), st)
-	writeJSON(w, http.StatusOK, map[string]any{"resources": health.Resources})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"resources":   health.Resources,
+		"projections": s.agents.ListResourceProjections(topology),
+	})
+}
+
+func (s *Server) handleTopologyStatusStream(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	stream := s.agents.StatusStream(topology)
+	ch := stream.Subscribe()
+	defer stream.Unsubscribe(ch)
+	ServeSSE(w, r, ch)
 }
 
 // GET /v1/topologies/{topology}/resources/{type.name}/health

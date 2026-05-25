@@ -59,7 +59,7 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		apiStore:      apiStore,
 		agents:        newAgentRegistry(),
 		jobs:          newJobs(runsDir, apiStore),
-		consoles:      newConsoleSessionHub(),
+		consoles:      newConsoleSessionHub(apiStore),
 		mux:           http.NewServeMux(),
 	}
 	s.registerRoutes()
@@ -116,6 +116,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/agents/{agent}", s.handleGetAgent)
 	m.HandleFunc("POST /v1/agents/{agent}/heartbeat", s.handleAgentHeartbeat)
 	m.HandleFunc("GET /v1/agents/{agent}/projections", s.handleListAgentProjections)
+	m.HandleFunc("POST /v1/agents/{agent}/projections/resources", s.handlePostAgentResourceProjection)
 	m.HandleFunc("GET /v1/agents/{agent}/runs", s.handleListAgentRuns)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/claim", s.handleClaimAgentRun)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/complete", s.handleCompleteAgentRun)
@@ -169,6 +170,7 @@ func (s *Server) registerRoutes() {
 	// Console sessions
 	m.HandleFunc("GET /v1/sessions/{session}", s.handleGetConsoleSession)
 	m.HandleFunc("GET /v1/sessions/{session}/attach", s.handleAttachConsoleSession)
+	m.HandleFunc("POST /v1/sessions/{session}/cancel", s.handleCancelConsoleSession)
 
 	// Nodes
 	m.HandleFunc("GET /v1/topologies/{topology}/nodes", s.handleListNodes)
@@ -178,6 +180,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/resume", s.handleNodeResume)
 	m.HandleFunc("POST /v1/topologies/{topology}/import", s.handleImport)
 	m.HandleFunc("GET /v1/topologies/{topology}/resources", s.handleListResources)
+	m.HandleFunc("GET /v1/topologies/{topology}/status/stream", s.handleTopologyStatusStream)
 	m.HandleFunc("GET /v1/topologies/{topology}/resources/{resource}/health", s.handleGetResourceHealth)
 }
 

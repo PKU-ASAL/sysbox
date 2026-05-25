@@ -143,6 +143,41 @@ func (s *Server) handleListAgentProjections(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"projections": s.agents.ListProjections(agentID)})
 }
 
+func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var req controlplane.ResourceProjection
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode resource projection: %w", err))
+		return
+	}
+	if req.AgentID == "" {
+		req.AgentID = agentID
+	}
+	if req.AgentID != agentID {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("projection agent id mismatch"))
+		return
+	}
+	if req.Topology == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("projection topology is required"))
+		return
+	}
+	if req.Workspace == "" {
+		req.Workspace = req.Topology
+	}
+	if req.ObservedAt.IsZero() {
+		req.ObservedAt = time.Now().UTC()
+	}
+	if len(req.Resources) == 0 {
+		req.Resources = req.Health.Resources
+	}
+	s.agents.SaveResourceProjection(req)
+	writeJSON(w, http.StatusAccepted, req)
+}
+
 func (s *Server) handleAgentStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("agent")
 	if err := validatePathSegment(id, "agent"); err != nil {

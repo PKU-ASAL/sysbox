@@ -82,6 +82,7 @@ GET /v1/topologies/{name}/lease
 GET /v1/topologies/{name}/snapshots
 GET /v1/topologies/{name}/health
 GET /v1/topologies/{name}/resources
+GET /v1/topologies/{name}/status/stream
 GET /v1/topologies/{name}/resources/{resource}/health
 ```
 
@@ -120,11 +121,20 @@ WebSocket frames; the owning agent opens the substrate console locally.
 POST /v1/topologies/{name}/nodes/{node}/sessions
 GET  /v1/sessions/{session_id}
 GET  /v1/sessions/{session_id}/attach
+POST /v1/sessions/{session_id}/cancel
 GET  /v1/agents/{agent_id}/sessions/{session_id}/attach
+POST /v1/agents/{agent_id}/projections/resources
 ```
 
 Browsers attach to `/v1/sessions/{session_id}/attach`. Agents attach to the
 agent-side URL after receiving a `session_open` command on their SSE stream.
+Session metadata is persisted by the API store; interrupted sessions are marked
+`lost` on API restart. `timeout_seconds` on session creation auto-cancels long
+running sessions.
+
+Agents also post resource-level observation projections to
+`/v1/agents/{agent_id}/projections/resources`. UI clients can subscribe to
+`/v1/topologies/{name}/status/stream` for live topology health updates.
 
 WebSocket text frames use a small JSON envelope. Binary payloads are base64
 encoded so the same envelope works across browser terminals and simple tools.

@@ -207,3 +207,30 @@ func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"topology":"mixed"`)
 	require.Contains(t, rec.Body.String(), `"resource_count":3`)
 }
+
+func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	body := bytes.NewBufferString(`{
+  "agent_id": "host-a",
+  "topology": "mixed",
+  "workspace": "mixed",
+  "health": {
+    "status": "healthy",
+    "healthy": 1,
+    "resources": [
+      {"resource":"sysbox_node.web","type":"sysbox_node","name":"web","provider":"docker","status":"healthy"}
+    ]
+  }
+}`)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", body))
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/topologies/mixed/resources", nil))
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+
+	projections := s.agents.ListResourceProjections("mixed")
+	require.Len(t, projections, 1)
+	require.Equal(t, "sysbox_node.web", projections[0].Resources[0].Resource)
+}

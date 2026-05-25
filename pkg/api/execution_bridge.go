@@ -55,6 +55,24 @@ func (b *ExecutionBridge) HCLFile(topology string) string {
 	return b.server.hclFile(topology)
 }
 
+func (b *ExecutionBridge) Topologies(ctx context.Context) []string {
+	mgr, err := b.server.stateManager("__list__")
+	if err != nil {
+		return nil
+	}
+	items, err := mgr.ListTopologies(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.HasState {
+			out = append(out, item.Name)
+		}
+	}
+	return out
+}
+
 func (b *ExecutionBridge) CheckpointFile(topology, runID string) string {
 	return b.server.checkpointFile(topology, runID)
 }

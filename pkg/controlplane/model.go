@@ -128,6 +128,16 @@ type ConsoleSession struct {
 	EndedAt   time.Time `json:"ended_at,omitempty"`
 }
 
+type ResourceProjection struct {
+	AgentID    string                   `json:"agent_id,omitempty"`
+	Workspace  string                   `json:"workspace,omitempty"`
+	Topology   string                   `json:"topology,omitempty"`
+	Serial     int64                    `json:"serial,omitempty"`
+	ObservedAt time.Time                `json:"observed_at,omitempty"`
+	Health     runtime.TopologyHealth   `json:"health"`
+	Resources  []runtime.ResourceHealth `json:"resources,omitempty"`
+}
+
 type ConsoleRequest struct {
 	Cmd            []string          `json:"cmd,omitempty"`
 	Shell          string            `json:"shell,omitempty"`

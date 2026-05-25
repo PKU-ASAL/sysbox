@@ -27,6 +27,7 @@ type Bridge interface {
 	ReconcileParentJournal(parent, run *controlplane.Run) error
 	Preflight(ctx context.Context, topology string, log io.Writer) error
 	OpenConsole(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error
+	Topologies(ctx context.Context) []string
 }
 
 type Reporter interface {

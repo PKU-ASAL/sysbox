@@ -74,6 +74,20 @@ func (s *Server) handleGetConsoleSession(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, sess)
 }
 
+func (s *Server) handleCancelConsoleSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("session")
+	if err := validatePathSegment(id, "session"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.consoles.Cancel(id, "cancelled by api request"); err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	sess, _ := s.consoles.Snapshot(id)
+	writeJSON(w, http.StatusOK, sess)
+}
+
 func (s *Server) handleAttachConsoleSession(w http.ResponseWriter, r *http.Request) {
 	s.attachConsolePeer(w, r, "browser")
 }
@@ -161,10 +175,22 @@ func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if st.request.TimeoutSeconds > 0 {
+		go func() {
+			select {
+			case <-time.After(time.Duration(st.request.TimeoutSeconds) * time.Second):
+				_ = s.consoles.Cancel(id, "console session timed out")
+			case <-ctx.Done():
+			}
+		}()
+	}
 	done := make(chan struct{}, 2)
 	go relayWebSocket(ctx, browser.conn, agent.conn, done)
 	go relayWebSocket(ctx, agent.conn, browser.conn, done)
-	<-done
+	select {
+	case <-done:
+	case <-st.cancel:
+	}
 	cancel()
 	_ = browser.conn.Close(websocket.StatusNormalClosure, "")
 	_ = agent.conn.Close(websocket.StatusNormalClosure, "")
