@@ -71,7 +71,7 @@ make api-down
 make api-logs
 ```
 
-Compatibility aliases are kept for muscle memory: `make up`, `make down`, `make docker-up`, `make docker-up-fc`, `make docker-down`, and `make docker-logs`.
+Compatibility aliases are kept for muscle memory: `make up`, `make down`, `make docker-up`, `make docker-down`, and `make docker-logs`.
 
 ## CLI
 
@@ -125,11 +125,9 @@ Choose one deployment profile in `.env`:
 
 | `SYSBOX_DEPLOYMENT` | Use when | Extra host access |
 |---|---|---|
-| `service` | API management, Postgres state, Docker socket access | Docker socket only |
-| `netns` | Real Linux bridge/netns/veth/tap topologies | `privileged`, host network, host pid |
-| `firecracker` | Firecracker/microVM topologies | netns mode, `/dev/kvm`, tools directory |
-| `libvirt` | libvirt/QEMU VM topologies | netns mode, `/var/run/libvirt` |
-| `full` | mixed virtualization development | netns mode, Firecracker, libvirt |
+| `docker` | Docker-only topologies and control-plane development | Docker socket only |
+| `vm` | Network + Firecracker/VM labs | `privileged`, host network/pid, `/dev/kvm`, tools directory |
+| `full` | All local substrates including libvirt | `vm` access plus libvirt socket |
 
 Then use the same commands for every mode:
 
@@ -140,14 +138,14 @@ make api-config
 make api-up
 ```
 
-Default `SYSBOX_DEPLOYMENT=service` runs the API as a normal Compose service and connects to Postgres through Compose DNS (`sysbox-postgres:5432`). Netns/Firecracker/libvirt modes intentionally opt into host-level privileges; in host networking mode the API reaches Postgres through `127.0.0.1:${SYSBOX_POSTGRES_HOST_PORT:-55432}`.
+Default `SYSBOX_DEPLOYMENT=docker` runs the API as a normal Compose service and connects to Postgres through Compose DNS (`sysbox-postgres:5432`). `vm` and `full` intentionally opt into host-level privileges; in host networking mode the API reaches Postgres through `127.0.0.1:${SYSBOX_POSTGRES_HOST_PORT:-55432}`.
 
 Firecracker is mounted through a host tools directory. Put the binary at
 `${SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR}/firecracker`; inside the API container it appears as
 `/opt/sysbox/bin/firecracker`, which is configured in `deploy/docker/sysbox.yaml`.
 
 ```bash
-SYSBOX_DEPLOYMENT=firecracker
+SYSBOX_DEPLOYMENT=vm
 SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR=/home/jiandong/.local/bin
 make api-up
 curl http://127.0.0.1:9876/v1/capabilities
@@ -261,7 +259,7 @@ Recommended environment overrides:
 
 | Variable | Meaning |
 |---|---|
-| `SYSBOX_DEPLOYMENT` | Compose deployment profile: `service`, `netns`, `firecracker`, `libvirt`, or `full` |
+| `SYSBOX_DEPLOYMENT` | Compose deployment profile: `docker`, `vm`, or `full` |
 | `SYSBOX_CONFIG` | Service config file path, default `/etc/sysbox/sysbox.yaml` |
 | `SYSBOX_API_HOST_PORT` | Host port published for the API, default `9876` |
 | `SYSBOX_API_TOKEN` | Optional API Bearer token |

@@ -1,5 +1,0 @@
-services:
-  sysbox-api:
-    volumes:
-      # Libvirt substrate: talk to the host libvirtd socket.
-      - /var/run/libvirt:/var/run/libvirt

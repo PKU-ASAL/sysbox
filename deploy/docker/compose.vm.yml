@@ -1,10 +1,12 @@
 services:
   sysbox-api:
-    # Required for real Linux netns/veth/tap topologies. Keep this opt-in so
-    # the default API deployment can run as an ordinary containerized service.
+    # VM-capable mode for local labs: host networking/netns plus KVM and tools.
     privileged: true
     network_mode: host
     pid: host
     ports: !reset []
+    volumes:
+      - /dev/kvm:/dev/kvm
+      - ${SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR:-~/.local/bin}:/opt/sysbox/bin:ro
     environment:
       SYSBOX_STATE_BACKEND: ${SYSBOX_STATE_BACKEND:-postgres://${SYSBOX_POSTGRES_USERNAME:-sysbox}:${SYSBOX_POSTGRES_PASSWORD}@127.0.0.1:${SYSBOX_POSTGRES_HOST_PORT:-55432}/${SYSBOX_POSTGRES_DATABASE:-sysbox}?sslmode=disable&topology={topology}}

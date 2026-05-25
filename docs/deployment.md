@@ -14,15 +14,13 @@ Set `SYSBOX_DEPLOYMENT` in `.env`:
 
 | Profile | Compose files | Purpose |
 |---|---|---|
-| `service` | `deploy/docker/compose.yml` | API + Postgres + Docker socket |
-| `netns` | base + `deploy/docker/compose.netns.yml` | host netns/veth/tap labs |
-| `firecracker` | netns + `deploy/docker/compose.firecracker.yml` | Firecracker microVM labs |
-| `libvirt` | netns + `deploy/docker/compose.libvirt.yml` | libvirt/QEMU VM labs |
-| `full` | netns + Firecracker + libvirt | mixed virtualization development |
+| `docker` | `deploy/docker/compose.yml` | Docker-only topologies and API/control-plane work |
+| `vm` | base + `deploy/docker/compose.vm.yml` | network + Firecracker/VM labs |
+| `full` | vm + `deploy/docker/compose.full.yml` | all local substrates including libvirt |
 
-The base profile avoids host networking and host PID namespace. Profiles that
-touch Linux netns, tap devices, KVM, or libvirt opt into those host privileges
-explicitly.
+The `docker` profile avoids host networking and host PID namespace. `vm` opts
+into local lab capabilities such as host netns, tap devices, and KVM. `full`
+adds libvirt socket access.
 
 ## Workflow
 
@@ -68,8 +66,8 @@ repository root.
 
 Leave `SYSBOX_STATE_BACKEND` empty for the normal Compose config:
 
-- `service`: `compose.yml` assembles a DSN for `sysbox-postgres:5432`
-- host-network profiles: `compose.netns.yml` overrides it to `postgres://...@127.0.0.1:${SYSBOX_POSTGRES_HOST_PORT}/...`
+- `docker`: `compose.yml` assembles a DSN for `sysbox-postgres:5432`
+- `vm` / `full`: `compose.vm.yml` overrides it to `postgres://...@127.0.0.1:${SYSBOX_POSTGRES_HOST_PORT}/...`
 
 Set `SYSBOX_STATE_BACKEND` only when using an external backend. Keep real
 credentials in local `.env` or your deployment secret manager, not in
