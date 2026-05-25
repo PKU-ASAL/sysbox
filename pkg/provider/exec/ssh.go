@@ -10,17 +10,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
 )
 
 // SSHConnection implements Connection over standard SSH (cli-based).
 type SSHConnection struct {
-	host          string
-	port          string
-	user          string
-	privateKey    string
-	password      string
-	insecureHost  bool // skip host key verification (for lab environments)
+	host         string
+	port         string
+	user         string
+	privateKey   string
+	password     string
+	insecureHost bool // skip host key verification (for lab environments)
 }
 
 func NewSSHConnection(host, user, privateKey, password string) *SSHConnection {
@@ -62,6 +63,10 @@ func (c *SSHConnection) sshArgs() []string {
 	}
 	args = append(args, fmt.Sprintf("%s@%s", c.user, c.host))
 	return args
+}
+
+func (c *SSHConnection) OpenConsole(ctx context.Context, req ConsoleRequest) (substrate.ConsoleSession, error) {
+	return NewSSHConsoleSession(ctx, c.sshArgs(), req)
 }
 
 func (c *SSHConnection) ExecInline(ctx context.Context, cmds []string) error {

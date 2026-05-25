@@ -1,6 +1,7 @@
 package libvirt
 
 import (
+	"context"
 	"fmt"
 
 	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
@@ -48,3 +49,23 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 
 	return providerexec.NewSSHConnectionWithPort(host, port, user, key, pass), nil
 }
+
+func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
+	conn, err := s.Connection(handle, nil)
+	if err != nil {
+		return nil, err
+	}
+	ssh, ok := conn.(*providerexec.SSHConnection)
+	if !ok {
+		return nil, substrate.ErrNotSupported
+	}
+	return ssh.OpenConsole(ctx, providerexec.ConsoleRequest{
+		Cmd:   req.Cmd,
+		Shell: req.Shell,
+		Env:   req.Env,
+		Cols:  req.Cols,
+		Rows:  req.Rows,
+	})
+}
+
+var _ substrate.ConsoleProvider = (*Substrate)(nil)

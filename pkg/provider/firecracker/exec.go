@@ -46,6 +46,31 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec
 	return s.execInNodeSSH(ctx, h, spec)
 }
 
+func (s *Substrate) OpenConsole(ctx context.Context, h substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
+	if vc := vsockConnFromHandle(h); vc != nil {
+		return vc.OpenConsole(ctx, vsockexec.ConsoleRequest{
+			Cmd:   req.Cmd,
+			Shell: req.Shell,
+			Env:   req.Env,
+			Cols:  req.Cols,
+			Rows:  req.Rows,
+		})
+	}
+	ssh := sshConnFromHandle(h)
+	if ssh == nil {
+		return nil, fmt.Errorf("no vsock or SSH console info in handle")
+	}
+	return ssh.OpenConsole(ctx, vsockexec.ConsoleRequest{
+		Cmd:   req.Cmd,
+		Shell: req.Shell,
+		Env:   req.Env,
+		Cols:  req.Cols,
+		Rows:  req.Rows,
+	})
+}
+
+var _ substrate.ConsoleProvider = (*Substrate)(nil)
+
 func (s *Substrate) execInNodeVsock(ctx context.Context, vc *vsockexec.VsockConnection, spec substrate.ExecSpec) (substrate.ExecResult, error) {
 	var stdout, stderr strings.Builder
 	var exitCode int

@@ -33,6 +33,7 @@ type Op string
 const (
 	OpPing      Op = "ping"
 	OpExec      Op = "exec"
+	OpConsole   Op = "console"
 	OpWriteFile Op = "write_file"
 )
 
@@ -41,6 +42,9 @@ type Request struct {
 	Op   Op                `json:"op"`
 	Cmd  []string          `json:"cmd,omitempty"`  // exec
 	Env  map[string]string `json:"env,omitempty"`  // exec
+	TTY  bool              `json:"tty,omitempty"`  // console
+	Cols int               `json:"cols,omitempty"` // console
+	Rows int               `json:"rows,omitempty"` // console
 	Path string            `json:"path,omitempty"` // write_file / read_file
 	Mode uint32            `json:"mode,omitempty"` // write_file (file mode bits)
 	Size int64             `json:"size,omitempty"` // write_file (body bytes following the header)

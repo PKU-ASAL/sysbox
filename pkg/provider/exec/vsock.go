@@ -26,6 +26,33 @@ type VsockConnection struct {
 	port    uint32 // guest port the sysbox-init agent listens on
 }
 
+func (c *VsockConnection) OpenConsole(ctx context.Context, req ConsoleRequest) (*RawConsoleSession, error) {
+	conn, err := c.dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cmd := req.Cmd
+	if len(cmd) == 0 {
+		shell := req.Shell
+		if shell == "" {
+			shell = "/bin/sh"
+		}
+		cmd = []string{shell}
+	}
+	if err := json.NewEncoder(conn).Encode(vsockrpc.Request{
+		Op:   vsockrpc.OpConsole,
+		Cmd:  cmd,
+		Env:  req.Env,
+		TTY:  true,
+		Cols: req.Cols,
+		Rows: req.Rows,
+	}); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("send console request: %w", err)
+	}
+	return NewRawConsoleSession(conn), nil
+}
+
 // NewVsockConnection builds a vsock-based Connection for the given VM.
 func NewVsockConnection(udsPath string, guestPort uint32) *VsockConnection {
 	if guestPort == 0 {
