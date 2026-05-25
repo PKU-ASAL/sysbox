@@ -59,8 +59,21 @@ type Run struct {
 	Workspace string    `json:"workspace"`
 	Operation string    `json:"operation"`
 	Status    string    `json:"status"`
+	WorkerID  string    `json:"worker_id,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at,omitempty"`
+}
+
+type Worker struct {
+	ID            string            `json:"id"`
+	Name          string            `json:"name,omitempty"`
+	Status        string            `json:"status"`
+	Capabilities  []string          `json:"capabilities,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Version       string            `json:"version,omitempty"`
+	LastHeartbeat time.Time         `json:"last_heartbeat,omitempty"`
+	CreatedAt     time.Time         `json:"created_at,omitempty"`
+	UpdatedAt     time.Time         `json:"updated_at,omitempty"`
 }
 
 type StackState struct {

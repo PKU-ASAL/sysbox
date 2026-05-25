@@ -32,6 +32,9 @@ type apiStore interface {
 	GetPlan(ctx context.Context, workspace, planID string) (*controlplane.Plan, error)
 	SavePolicy(ctx context.Context, policy controlplane.Policy) error
 	ListPolicies(ctx context.Context, workspace string) ([]controlplane.Policy, error)
+	SaveWorker(ctx context.Context, worker controlplane.Worker) error
+	ListWorkers(ctx context.Context) ([]controlplane.Worker, error)
+	GetWorker(ctx context.Context, id string) (*controlplane.Worker, error)
 }
 
 type localAPIStore struct {
@@ -196,6 +199,27 @@ func (s *localAPIStore) ListPolicies(_ context.Context, workspace string) ([]con
 	return readLocalObjects[controlplane.Policy](filepath.Join(s.runsDir, workspace, "policies", "*.json"))
 }
 
+func (s *localAPIStore) SaveWorker(_ context.Context, worker controlplane.Worker) error {
+	return writeLocalObject(filepath.Join(s.runsDir, "_controlplane", "workers", worker.ID+".json"), worker)
+}
+
+func (s *localAPIStore) ListWorkers(_ context.Context) ([]controlplane.Worker, error) {
+	return readLocalObjects[controlplane.Worker](filepath.Join(s.runsDir, "_controlplane", "workers", "*.json"))
+}
+
+func (s *localAPIStore) GetWorker(ctx context.Context, id string) (*controlplane.Worker, error) {
+	items, err := s.ListWorkers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return &item, nil
+		}
+	}
+	return nil, fmt.Errorf("worker not found")
+}
+
 func writeLocalObject(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -275,6 +299,11 @@ CREATE TABLE IF NOT EXISTS sysbox_policies (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_workers (
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`)
 	if err != nil {
 		return fmt.Errorf("postgres ensure api tables: %w", err)
@@ -474,6 +503,74 @@ func (s *postgresAPIStore) ListPolicies(ctx context.Context, workspace string) (
 		workspace = "_project"
 	}
 	return listPostgresObjects[controlplane.Policy](ctx, s, "sysbox_policies", workspace)
+}
+
+func (s *postgresAPIStore) SaveWorker(ctx context.Context, worker controlplane.Worker) error {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	raw, err := json.Marshal(worker)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(ctx, `
+INSERT INTO sysbox_workers (id, data, updated_at)
+VALUES ($1, $2::jsonb, now())
+ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`,
+		worker.ID, string(raw))
+	if err != nil {
+		return fmt.Errorf("postgres save worker: %w", err)
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) ListWorkers(ctx context.Context) ([]controlplane.Worker, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	rows, err := conn.Query(ctx, `SELECT data::text FROM sysbox_workers ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("postgres list workers: %w", err)
+	}
+	defer rows.Close()
+	var out []controlplane.Worker
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var item controlplane.Worker
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *postgresAPIStore) GetWorker(ctx context.Context, id string) (*controlplane.Worker, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	var raw []byte
+	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_workers WHERE id=$1`, id).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, fmt.Errorf("worker not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres get worker: %w", err)
+	}
+	var worker controlplane.Worker
+	if err := json.Unmarshal(raw, &worker); err != nil {
+		return nil, fmt.Errorf("decode worker: %w", err)
+	}
+	return &worker, nil
 }
 
 func (s *postgresAPIStore) saveObject(ctx context.Context, table, workspace, id string, v any) error {

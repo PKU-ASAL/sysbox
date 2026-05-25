@@ -8,7 +8,7 @@ sysbox focuses on three layers:
 
 1. **Declarative topology runtime**: parse HCL, build a dependency graph, plan changes, and converge external resources with apply/destroy.
 2. **Provider/substrate execution**: Docker for fast container labs, Firecracker/microVM and VM substrates for stronger isolation, plus Linux network primitives.
-3. **Service control plane**: an API server with managed workspaces, state backends, leases, run records, checkpoints, recovery, and cleanup.
+3. **Service control plane**: an API server with managed workspaces, worker/agent registry, state backends, leases, run records, checkpoints, recovery, and cleanup.
 
 The core runtime intentionally does not own research-story concepts such as sensors, labelers, reward, attribution, or IOC scoring. Those belong above sysbox as optional lab/application layers. sysbox’s job is narrower: make topology lifecycle explainable, repeatable, and recoverable.
 
@@ -208,7 +208,8 @@ CloudFormation-style control plane concepts:
 | Workspace / Topology | HCL workspace under `.sysbox/api/workspaces` plus state backend entry |
 | Revision | SHA256-addressed HCL revision |
 | Plan | Stored plan record for a workspace revision |
-| Run | Async apply/destroy/recover operation |
+| Run | Async apply/destroy/recover operation with worker ownership |
+| Worker / Agent | Execution-plane node registered through `/v1/workers`; current in-process API execution appears as `local` |
 | Stack State | Current state plus backend metadata |
 | Event / Action | Checkpoint/action-log steps exposed as run events |
 | Artifact | Files in the sysbox artifact cache |

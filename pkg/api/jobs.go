@@ -19,6 +19,8 @@ const (
 	RunDone      RunStatus = "done"
 	RunFailed    RunStatus = "failed"
 	RunCancelled RunStatus = "cancelled"
+
+	DefaultWorkerID = "local"
 )
 
 // Run represents one async apply or destroy operation.
@@ -34,6 +36,7 @@ type Run struct {
 	ParentID    string    `json:"parent_id,omitempty"`
 	Revision    string    `json:"revision,omitempty"`
 	PlanID      string    `json:"plan_id,omitempty"`
+	WorkerID    string    `json:"worker_id,omitempty"`
 	Recoverable bool      `json:"recoverable,omitempty"`
 	LeaseOwner  string    `json:"lease_owner,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
@@ -60,6 +63,7 @@ type runStartOptions struct {
 	ParentID string
 	Revision string
 	PlanID   string
+	WorkerID string
 }
 
 func newJobs(runsDir string, store apiStore) *Jobs {
@@ -174,6 +178,9 @@ func normalizeRunProductFields(r *Run) {
 	if r.Workspace == "" {
 		r.Workspace = r.Topology
 	}
+	if r.WorkerID == "" {
+		r.WorkerID = DefaultWorkerID
+	}
 }
 
 func (j *Jobs) start(topology, op string) *Run {
@@ -191,10 +198,12 @@ func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *Run 
 		ParentID:   opts.ParentID,
 		Revision:   opts.Revision,
 		PlanID:     opts.PlanID,
+		WorkerID:   opts.WorkerID,
 		LeaseOwner: "sysbox-api",
 		StartedAt:  time.Now(),
 		logs:       &Broadcaster{},
 	}
+	normalizeRunProductFields(r)
 	r.LeaseOwner = fmt.Sprintf("sysbox-api:%s:%s", r.Op, r.ID)
 	j.mu.Lock()
 	j.runs[r.ID] = r
@@ -219,6 +228,7 @@ func (j *Jobs) startChild(parent *Run) *Run {
 		ParentID: parent.ID,
 		Revision: parent.Revision,
 		PlanID:   parent.PlanID,
+		WorkerID: parent.WorkerID,
 	})
 }
 

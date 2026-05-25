@@ -10,6 +10,27 @@ GET /v1/projects/default
 GET /v1/projects/default/workspaces
 ```
 
+## Workers
+
+Workers are execution-plane agents. The current API process exposes an implicit
+`local` worker for in-process execution; external agents can register and
+heartbeat against the same surface.
+
+```bash
+GET  /v1/workers
+POST /v1/workers
+GET  /v1/workers/{worker_id}
+POST /v1/workers/{worker_id}/heartbeat
+```
+
+Example registration:
+
+```bash
+curl -X POST http://127.0.0.1:9876/v1/workers \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"host-a","capabilities":["docker","network","kvm"],"labels":{"role":"lab"}}'
+```
+
 ## Topologies And Workspaces
 
 ```bash
@@ -71,6 +92,9 @@ POST /v1/runs/{run_id}/resume
 POST /v1/runs/{run_id}/recover
 POST /v1/runs/{run_id}/cleanup
 ```
+
+Run records include `worker_id`, so API/UI users can see which worker owned the
+operation. Today this is `local` for in-process API execution.
 
 ## Nodes
 
