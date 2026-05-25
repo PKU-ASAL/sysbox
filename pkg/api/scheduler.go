@@ -22,11 +22,11 @@ func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string) e
 }
 
 func (s *Server) selectWorker(ctx context.Context, required []string) (controlplane.Worker, error) {
-	workers, err := s.apiStore.ListWorkers(ctx)
-	if err != nil {
-		return controlplane.Worker{}, err
+	_ = ctx
+	if s.agents == nil {
+		s.agents = newAgentRegistry()
 	}
-	workers = ensureLocalWorker(workers)
+	workers := ensureLocalAgent(s.agents.List())
 	required = normalizeCapabilities(required)
 	sort.Slice(workers, func(i, j int) bool { return workers[i].ID < workers[j].ID })
 	for _, worker := range workers {

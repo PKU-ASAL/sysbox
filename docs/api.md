@@ -10,25 +10,26 @@ GET /v1/projects/default
 GET /v1/projects/default/workspaces
 ```
 
-## Workers
+## Agents
 
-Workers are execution-plane agents. The current API process exposes an implicit
-`local` worker for in-process execution; external agents can register and
-heartbeat against the same surface.
+Agents are host-local execution nodes. The API keeps only an online projection
+from registration/heartbeat data; durable topology state, checkpoints, and
+artifact metadata remain on the agent host unless a shared backend is
+explicitly configured. `/v1/workers` remains as a compatibility alias.
 
 ```bash
-GET  /v1/workers
-POST /v1/workers
-GET  /v1/workers/{worker_id}
-POST /v1/workers/{worker_id}/heartbeat
-GET  /v1/workers/{worker_id}/runs
-POST /v1/workers/{worker_id}/runs/{run_id}/claim
+GET  /v1/agents
+POST /v1/agents
+GET  /v1/agents/{agent_id}
+POST /v1/agents/{agent_id}/heartbeat
+GET  /v1/agents/{agent_id}/runs
+POST /v1/agents/{agent_id}/runs/{run_id}/claim
 ```
 
 Example registration:
 
 ```bash
-curl -X POST http://127.0.0.1:9876/v1/workers \
+curl -X POST http://127.0.0.1:9876/v1/agents \
   -H 'Content-Type: application/json' \
   -d '{"id":"host-a","capabilities":["docker","network","kvm"],"labels":{"role":"lab"}}'
 ```
@@ -95,10 +96,10 @@ POST /v1/runs/{run_id}/recover
 POST /v1/runs/{run_id}/cleanup
 ```
 
-Run records include `worker_id`, so API/UI users can see which worker owns the
-operation. The API creates and assigns runs; worker agents poll
-`/v1/workers/{worker_id}/runs`, claim one assigned run, then execute it in the
-worker process against the shared backend.
+Run records include `worker_id` for compatibility; conceptually this is the
+owning `agent_id`. The API creates and assigns command intent; agents poll
+`/v1/agents/{agent_id}/runs`, claim one assigned run, then execute it on the
+host.
 
 ```text
 queued -> assigned -> running -> done|failed|cancelled

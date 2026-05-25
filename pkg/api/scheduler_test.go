@@ -40,19 +40,18 @@ resource "sysbox_node" "microvm" {
 }
 
 func TestSelectWorkerByCapabilities(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
-	s := &Server{apiStore: store}
+	s := &Server{agents: newAgentRegistry()}
 	ctx := context.Background()
-	require.NoError(t, store.SaveWorker(ctx, controlplane.Worker{
+	s.agents.Save(controlplane.Worker{
 		ID:           "docker-worker",
 		Status:       "online",
 		Capabilities: []string{"docker"},
-	}))
-	require.NoError(t, store.SaveWorker(ctx, controlplane.Worker{
+	})
+	s.agents.Save(controlplane.Worker{
 		ID:           "vm-worker",
 		Status:       "online",
 		Capabilities: []string{"docker", "network", "kvm", "firecracker"},
-	}))
+	})
 
 	worker, err := s.selectWorker(ctx, []string{"firecracker", "kvm", "network"})
 	require.NoError(t, err)

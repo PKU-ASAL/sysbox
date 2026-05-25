@@ -16,6 +16,7 @@ const DefaultWorkerID = "local"
 
 type Options struct {
 	APIURL       string
+	Token        string
 	ID           string
 	Name         string
 	Capabilities []string
@@ -41,7 +42,7 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	if len(opts.Capabilities) == 0 {
 		opts.Capabilities = []string{"docker", "network", "firecracker", "kvm", "libvirt"}
 	}
-	if err := post(ctx, opts.APIURL+"/v1/workers", controlplane.Worker{
+	if err := post(ctx, opts, opts.APIURL+"/v1/agents", controlplane.Worker{
 		ID:           opts.ID,
 		Name:         opts.Name,
 		Status:       "online",
@@ -71,7 +72,7 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 }
 
 func heartbeat(ctx context.Context, opts Options) error {
-	return post(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/heartbeat", controlplane.Worker{
+	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/heartbeat", controlplane.Worker{
 		ID:           opts.ID,
 		Name:         opts.Name,
 		Status:       "online",
@@ -85,7 +86,7 @@ func pollAndExecute(ctx context.Context, executor *Executor, opts Options) error
 	var listed struct {
 		Runs []controlplane.Run `json:"runs"`
 	}
-	if err := get(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/runs", &listed); err != nil {
+	if err := get(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs", &listed); err != nil {
 		return err
 	}
 	for _, run := range listed.Runs {
@@ -101,17 +102,18 @@ func pollAndExecute(ctx context.Context, executor *Executor, opts Options) error
 
 func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {
 	var run controlplane.Run
-	if err := post(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/runs/"+runID+"/claim", nil, &run); err != nil {
+	if err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+runID+"/claim", nil, &run); err != nil {
 		return nil, err
 	}
 	return &run, nil
 }
 
-func get(ctx context.Context, url string, out any) error {
+func get(ctx context.Context, opts Options, url string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
+	authorize(req, opts)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -123,7 +125,7 @@ func get(ctx context.Context, url string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-func post(ctx context.Context, url string, in any, out any) error {
+func post(ctx context.Context, opts Options, url string, in any, out any) error {
 	var body bytes.Buffer
 	if in != nil {
 		if err := json.NewEncoder(&body).Encode(in); err != nil {
@@ -135,6 +137,7 @@ func post(ctx context.Context, url string, in any, out any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	authorize(req, opts)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -147,4 +150,10 @@ func post(ctx context.Context, url string, in any, out any) error {
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func authorize(req *http.Request, opts Options) {
+	if opts.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+opts.Token)
+	}
 }

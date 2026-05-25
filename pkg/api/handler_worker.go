@@ -13,65 +13,89 @@ import (
 )
 
 func (s *Server) handleListWorkers(w http.ResponseWriter, r *http.Request) {
-	workers, err := s.apiStore.ListWorkers(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	workers = ensureLocalWorker(workers)
-	sort.Slice(workers, func(i, j int) bool { return workers[i].ID < workers[j].ID })
-	writeJSON(w, http.StatusOK, map[string]any{"workers": workers})
+	s.handleListAgents(w, r)
 }
 
 func (s *Server) handleRegisterWorker(w http.ResponseWriter, r *http.Request) {
+	s.handleRegisterAgent(w, r)
+}
+
+func (s *Server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
+	s.handleGetAgentByID(w, r.PathValue("worker"))
+}
+
+func (s *Server) handleListWorkerRuns(w http.ResponseWriter, r *http.Request) {
+	s.handleListAgentRunsByID(w, r.PathValue("worker"))
+}
+
+func (s *Server) handleClaimWorkerRun(w http.ResponseWriter, r *http.Request) {
+	s.handleClaimAgentRunByID(w, r.PathValue("worker"), r.PathValue("id"))
+}
+
+func (s *Server) handleWorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
+	s.handleAgentHeartbeatByID(w, r, r.PathValue("worker"))
+}
+
+func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
+	agents := ensureLocalAgent(s.agents.List())
+	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+	writeJSON(w, http.StatusOK, map[string]any{"agents": agents, "workers": agents})
+}
+
+func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	var req controlplane.Worker
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("decode worker: %w", err))
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent: %w", err))
 		return
 	}
-	worker, err := normalizeWorker(req)
+	agent, err := normalizeAgent(req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.apiStore.SaveWorker(r.Context(), worker); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, worker)
+	s.agents.Save(agent)
+	writeJSON(w, http.StatusCreated, agent)
 }
 
-func (s *Server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("worker")
-	if err := validatePathSegment(id, "worker"); err != nil {
+func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
+	s.handleGetAgentByID(w, r.PathValue("agent"))
+}
+
+func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
+	if err := validatePathSegment(id, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	if id == DefaultWorkerID {
-		writeJSON(w, http.StatusOK, localWorker())
+		writeJSON(w, http.StatusOK, localAgent())
 		return
 	}
-	worker, err := s.apiStore.GetWorker(r.Context(), id)
+	agent, err := s.agents.Get(id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, worker)
+	writeJSON(w, http.StatusOK, agent)
 }
 
-func (s *Server) handleListWorkerRuns(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("worker")
-	if err := validatePathSegment(id, "worker"); err != nil {
+func (s *Server) handleListAgentRuns(w http.ResponseWriter, r *http.Request) {
+	s.handleListAgentRunsByID(w, r.PathValue("agent"))
+}
+
+func (s *Server) handleListAgentRunsByID(w http.ResponseWriter, id string) {
+	if err := validatePathSegment(id, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"runs": s.assignedRunsForWorker(r.Context(), id)})
+	writeJSON(w, http.StatusOK, map[string]any{"runs": s.assignedRunsForWorker(context.Background(), id)})
 }
 
-func (s *Server) handleClaimWorkerRun(w http.ResponseWriter, r *http.Request) {
-	workerID := r.PathValue("worker")
-	runID := r.PathValue("id")
-	if err := validatePathSegment(workerID, "worker"); err != nil {
+func (s *Server) handleClaimAgentRun(w http.ResponseWriter, r *http.Request) {
+	s.handleClaimAgentRunByID(w, r.PathValue("agent"), r.PathValue("id"))
+}
+
+func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID string) {
+	if err := validatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -79,7 +103,7 @@ func (s *Server) handleClaimWorkerRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, err := s.jobs.claim(runID, workerID)
+	run, err := s.jobs.claim(runID, agentID)
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
@@ -87,55 +111,55 @@ func (s *Server) handleClaimWorkerRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, run)
 }
 
-func (s *Server) handleWorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("worker")
-	if err := validatePathSegment(id, "worker"); err != nil {
+func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
+	s.handleAgentHeartbeatByID(w, r, r.PathValue("agent"))
+}
+
+func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request, id string) {
+	if err := validatePathSegment(id, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	var req controlplane.Worker
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("decode worker heartbeat: %w", err))
+			writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent heartbeat: %w", err))
 			return
 		}
 	}
 	req.ID = id
 	req.Status = "online"
-	worker, err := normalizeWorker(req)
+	agent, err := normalizeAgent(req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if existing, err := s.apiStore.GetWorker(r.Context(), id); err == nil && existing != nil {
-		if worker.Name == "" {
-			worker.Name = existing.Name
+	if existing, err := s.agents.Get(id); err == nil && existing != nil {
+		if agent.Name == "" {
+			agent.Name = existing.Name
 		}
-		if len(worker.Capabilities) == 0 {
-			worker.Capabilities = existing.Capabilities
+		if len(agent.Capabilities) == 0 {
+			agent.Capabilities = existing.Capabilities
 		}
-		if len(worker.Labels) == 0 {
-			worker.Labels = existing.Labels
+		if len(agent.Labels) == 0 {
+			agent.Labels = existing.Labels
 		}
-		if worker.Version == "" {
-			worker.Version = existing.Version
+		if agent.Version == "" {
+			agent.Version = existing.Version
 		}
-		worker.CreatedAt = existing.CreatedAt
+		agent.CreatedAt = existing.CreatedAt
 	}
-	worker.LastHeartbeat = time.Now().UTC()
-	worker.UpdatedAt = worker.LastHeartbeat
-	if err := s.apiStore.SaveWorker(r.Context(), worker); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, worker)
+	agent.LastHeartbeat = time.Now().UTC()
+	agent.UpdatedAt = agent.LastHeartbeat
+	s.agents.Save(agent)
+	writeJSON(w, http.StatusOK, agent)
 }
 
-func normalizeWorker(in controlplane.Worker) (controlplane.Worker, error) {
+func normalizeAgent(in controlplane.Worker) (controlplane.Worker, error) {
 	if in.ID == "" {
 		in.ID = in.Name
 	}
-	if err := validatePathSegment(in.ID, "worker"); err != nil {
+	if err := validatePathSegment(in.ID, "agent"); err != nil {
 		return controlplane.Worker{}, err
 	}
 	now := time.Now().UTC()
@@ -173,20 +197,20 @@ func (s *Server) assignedRunsForWorker(ctx context.Context, workerID string) []R
 	return out
 }
 
-func ensureLocalWorker(workers []controlplane.Worker) []controlplane.Worker {
-	for _, worker := range workers {
-		if worker.ID == DefaultWorkerID {
-			return workers
+func ensureLocalAgent(agents []controlplane.Worker) []controlplane.Worker {
+	for _, agent := range agents {
+		if agent.ID == DefaultWorkerID {
+			return agents
 		}
 	}
-	return append(workers, localWorker())
+	return append(agents, localAgent())
 }
 
-func localWorker() controlplane.Worker {
+func localAgent() controlplane.Worker {
 	now := time.Now().UTC()
 	return controlplane.Worker{
 		ID:            DefaultWorkerID,
-		Name:          "local API worker",
+		Name:          "local API agent",
 		Status:        "online",
 		Capabilities:  []string{"docker", "network", "firecracker", "libvirt"},
 		Labels:        map[string]string{"execution": "in-process"},

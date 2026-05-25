@@ -22,7 +22,7 @@ var (
 
 var workerCmd = &cobra.Command{
 	Use:   "worker",
-	Short: "Start a sysbox worker agent",
+	Short: "Start a legacy sysbox worker agent (use `sysbox agent start`)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.LoadServiceConfig(flagWorkerConfig)
 		if err != nil {

@@ -19,6 +19,7 @@ type Server struct {
 	stateBackend  string
 	cfg           config.ServiceConfig
 	apiStore      apiStore
+	agents        *agentRegistry
 	jobs          *Jobs
 	supervisor    *Supervisor
 	mux           *http.ServeMux
@@ -55,6 +56,7 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		stateBackend:  stateBackend,
 		cfg:           cfg,
 		apiStore:      apiStore,
+		agents:        newAgentRegistry(),
 		jobs:          newJobs(runsDir, apiStore),
 		mux:           http.NewServeMux(),
 	}
@@ -113,6 +115,12 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/workers/{worker}/heartbeat", s.handleWorkerHeartbeat)
 	m.HandleFunc("GET /v1/workers/{worker}/runs", s.handleListWorkerRuns)
 	m.HandleFunc("POST /v1/workers/{worker}/runs/{id}/claim", s.handleClaimWorkerRun)
+	m.HandleFunc("GET /v1/agents", s.handleListAgents)
+	m.HandleFunc("POST /v1/agents", s.handleRegisterAgent)
+	m.HandleFunc("GET /v1/agents/{agent}", s.handleGetAgent)
+	m.HandleFunc("POST /v1/agents/{agent}/heartbeat", s.handleAgentHeartbeat)
+	m.HandleFunc("GET /v1/agents/{agent}/runs", s.handleListAgentRuns)
+	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/claim", s.handleClaimAgentRun)
 	m.HandleFunc("GET /v1/artifacts", s.handleListArtifacts)
 	m.HandleFunc("GET /v1/policies", s.handleListPolicies)
 	m.HandleFunc("POST /v1/policies", s.handleCreatePolicy)

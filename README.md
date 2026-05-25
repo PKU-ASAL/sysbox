@@ -8,7 +8,7 @@ sysbox focuses on three layers:
 
 1. **Declarative topology runtime**: parse HCL, build a dependency graph, plan changes, and converge external resources with apply/destroy.
 2. **Provider/substrate execution**: Docker for fast container labs, Firecracker/microVM and VM substrates for stronger isolation, plus Linux network primitives.
-3. **Service control plane + worker execution plane**: an API server owns workspaces, run scheduling, state backends, leases, checkpoints, recovery, and cleanup; workers poll/claim runs and execute topology changes.
+3. **Optional control plane + host agent execution**: local CLI owns single-host state by default; registered agents can receive control-plane commands while keeping durable topology state on the host.
 
 The core runtime intentionally does not own research-story concepts such as sensors, labelers, reward, attribution, or IOC scoring. Those belong above sysbox as optional lab/application layers. sysbox’s job is narrower: make topology lifecycle explainable, repeatable, and recoverable.
 
@@ -168,16 +168,16 @@ curl -X POST http://127.0.0.1:9876/v1/topologies/two-networks/apply \
 
 When `plan_id` is supplied, apply executes the stored plan actions instead of recomputing a new diff. The plan records the state serial it was created against; if state changed meanwhile, apply rejects it as stale. Runs keep the linked `revision` and `plan_id`, so `/v1/runs/{run_id}/events` remains explainable after an API restart.
 
-Runs are scheduled onto workers by declared topology capabilities. The API only
-creates and assigns runs; a worker agent polls, claims, and executes the run
-against the shared backend. Local CLI `apply`/`destroy` and API-assigned worker
-runs both execute through `pkg/worker.Executor`; CLI uses a local bridge, while
-API workers use the control-plane bridge.
+Runs are scheduled onto agents by declared topology capabilities. The API only
+creates and assigns command intent; the host agent executes topology changes and
+keeps durable state/checkpoints locally unless configured otherwise. Local CLI
+`apply`/`destroy` and API-assigned agent runs both execute through the same
+executor; CLI uses a local bridge, while registered agents use the control-plane
+bridge.
 
 ```bash
-sysbox worker --api http://127.0.0.1:9876 \
-  --id local \
-  --capabilities docker,network,firecracker,kvm,libvirt
+sysbox agent register --api http://127.0.0.1:9876 --id host-a
+sysbox agent start
 ```
 
 `DELETE /v1/topologies/{name}` removes workspace/state metadata only when the topology is empty. If state still contains resources, it returns `409`; call `POST /destroy` first. `force=true` is intentionally explicit for metadata-only deletion while leaving external resources behind.
@@ -221,7 +221,7 @@ CloudFormation-style control plane concepts:
 | Revision | SHA256-addressed HCL revision |
 | Plan | Stored plan record for a workspace revision |
 | Run | Async apply/destroy/recover operation with worker ownership |
-| Worker / Agent | Execution-plane node registered through `/v1/workers`; current in-process API execution appears as `local` |
+| Agent | Host-local execution node registered through `/v1/agents`; current in-process API execution appears as `local` |
 | Stack State | Current state plus backend metadata |
 | Event / Action | Checkpoint/action-log steps exposed as run events |
 | Artifact | Files in the sysbox artifact cache |
@@ -319,13 +319,14 @@ examples/                   Example topologies
 pkg/artifact/               Artifact resolver/cache
 pkg/api/                    HTTP control plane, scheduling, jobs, recovery/cleanup
 pkg/config/                 HCL schema and eval
-pkg/controlplane/           Product-level objects such as Project, Plan, Run, Worker
+pkg/controlplane/           Product-level objects such as Project, Plan, Run, Agent
 pkg/graph/                  Dependency graph
 pkg/provider/               Docker, Firecracker, network, libvirt providers
 pkg/runtime/                Plan/apply/destroy/checkpoint runtime and execution journal primitives
 pkg/state/                  Local/Postgres/HTTP/S3/SQLite state backends
 pkg/substrate/              Provider abstraction
-pkg/worker/                 Worker agent loop, local bridge, and apply/destroy execution
+pkg/agent/                  Agent identity and registration
+pkg/worker/                 Agent loop, local bridge, and apply/destroy execution
 runner/                     Optional Python episode runner for agent examples
 scripts/                    Artifact preparation and verification helpers
 tests/e2e/                  Integration tests with build tag e2e
