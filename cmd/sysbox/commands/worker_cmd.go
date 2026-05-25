@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/oslab/sysbox/pkg/api"
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/worker"
 )
 
 var (
@@ -27,7 +27,7 @@ var workerCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return api.RunWorker(cmd.Context(), cfg, api.WorkerOptions{
+		return worker.Run(cmd.Context(), cfg, worker.Options{
 			APIURL:       flagWorkerAPI,
 			ID:           flagWorkerID,
 			Name:         flagWorkerName,
@@ -40,7 +40,7 @@ var workerCmd = &cobra.Command{
 
 func init() {
 	workerCmd.Flags().StringVar(&flagWorkerAPI, "api", "http://127.0.0.1:9876", "sysbox API URL")
-	workerCmd.Flags().StringVar(&flagWorkerID, "id", api.DefaultWorkerID, "worker id")
+	workerCmd.Flags().StringVar(&flagWorkerID, "id", "local", "worker id")
 	workerCmd.Flags().StringVar(&flagWorkerName, "name", "", "worker display name")
 	workerCmd.Flags().StringVar(&flagWorkerCapabilities, "capabilities", "docker,network,firecracker,kvm,libvirt", "comma-separated worker capabilities")
 	workerCmd.Flags().StringVar(&flagWorkerConfig, "config", "", "path to sysbox service YAML config")

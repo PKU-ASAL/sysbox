@@ -1,4 +1,4 @@
-package api
+package worker
 
 import (
 	"bytes"
@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/api"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-type WorkerOptions struct {
+type Options struct {
 	APIURL       string
 	ID           string
 	Name         string
@@ -23,21 +24,21 @@ type WorkerOptions struct {
 	PollInterval time.Duration
 }
 
-func RunWorker(ctx context.Context, cfg config.ServiceConfig, opts WorkerOptions) error {
+func Run(ctx context.Context, cfg config.ServiceConfig, opts Options) error {
 	if opts.APIURL == "" {
 		return fmt.Errorf("api url is required")
 	}
 	if opts.ID == "" {
-		opts.ID = DefaultWorkerID
+		opts.ID = api.DefaultWorkerID
 	}
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = 2 * time.Second
 	}
 	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
 	if len(opts.Capabilities) == 0 {
-		opts.Capabilities = localWorker().Capabilities
+		opts.Capabilities = []string{"docker", "network", "firecracker", "kvm", "libvirt"}
 	}
-	if err := workerPost(ctx, opts.APIURL+"/v1/workers", controlplane.Worker{
+	if err := post(ctx, opts.APIURL+"/v1/workers", controlplane.Worker{
 		ID:           opts.ID,
 		Name:         opts.Name,
 		Status:       "online",
@@ -48,15 +49,14 @@ func RunWorker(ctx context.Context, cfg config.ServiceConfig, opts WorkerOptions
 		return err
 	}
 
-	execServer := NewServerWithConfig(cfg)
-	execServer.jobs = newJobsWithRecovery(execServer.runsDir, execServer.apiStore, false)
+	executor := NewExecutor(cfg)
 	ticker := time.NewTicker(opts.PollInterval)
 	defer ticker.Stop()
 	for {
-		if err := heartbeatWorker(ctx, opts); err != nil {
+		if err := heartbeat(ctx, opts); err != nil {
 			fmt.Printf("[worker] heartbeat failed: %v\n", err)
 		}
-		if err := pollAndExecuteWorkerRun(ctx, execServer, opts); err != nil {
+		if err := pollAndExecute(ctx, executor, opts); err != nil {
 			fmt.Printf("[worker] poll failed: %v\n", err)
 		}
 		select {
@@ -67,8 +67,8 @@ func RunWorker(ctx context.Context, cfg config.ServiceConfig, opts WorkerOptions
 	}
 }
 
-func heartbeatWorker(ctx context.Context, opts WorkerOptions) error {
-	return workerPost(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/heartbeat", controlplane.Worker{
+func heartbeat(ctx context.Context, opts Options) error {
+	return post(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/heartbeat", controlplane.Worker{
 		ID:           opts.ID,
 		Name:         opts.Name,
 		Status:       "online",
@@ -78,63 +78,33 @@ func heartbeatWorker(ctx context.Context, opts WorkerOptions) error {
 	}, nil)
 }
 
-func pollAndExecuteWorkerRun(ctx context.Context, execServer *Server, opts WorkerOptions) error {
+func pollAndExecute(ctx context.Context, executor *Executor, opts Options) error {
 	var listed struct {
-		Runs []Run `json:"runs"`
+		Runs []api.Run `json:"runs"`
 	}
-	if err := workerGet(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/runs", &listed); err != nil {
+	if err := get(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/runs", &listed); err != nil {
 		return err
 	}
 	for _, run := range listed.Runs {
-		claimed, err := claimWorkerRun(ctx, opts, run.ID)
+		claimed, err := claim(ctx, opts, run.ID)
 		if err != nil {
 			fmt.Printf("[worker] claim %s failed: %v\n", run.ID, err)
 			continue
 		}
-		execServer.executeRunLocally(claimed)
+		executor.Execute(claimed)
 	}
 	return nil
 }
 
-func claimWorkerRun(ctx context.Context, opts WorkerOptions, runID string) (*Run, error) {
-	var run Run
-	if err := workerPost(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/runs/"+runID+"/claim", nil, &run); err != nil {
+func claim(ctx context.Context, opts Options, runID string) (*api.Run, error) {
+	var run api.Run
+	if err := post(ctx, opts.APIURL+"/v1/workers/"+opts.ID+"/runs/"+runID+"/claim", nil, &run); err != nil {
 		return nil, err
 	}
 	return &run, nil
 }
 
-func (s *Server) executeRunLocally(run *Run) {
-	if run == nil {
-		return
-	}
-	run.logs = &Broadcaster{}
-	s.jobs.mu.Lock()
-	s.jobs.runs[run.ID] = run
-	s.jobs.mu.Unlock()
-	switch run.Op {
-	case "apply":
-		if run.ParentID != "" {
-			if parent, err := s.apiStore.GetRun(context.Background(), run.ParentID); err == nil {
-				s.runResumeApply(parent, run)
-				return
-			}
-		}
-		s.runApply(run.Topology, run)
-	case "destroy":
-		if run.ParentID != "" {
-			if parent, err := s.apiStore.GetRun(context.Background(), run.ParentID); err == nil {
-				s.runResumeDestroy(parent, run)
-				return
-			}
-		}
-		s.runDestroy(run.Topology, run)
-	default:
-		s.jobs.finish(run, fmt.Errorf("unsupported run op %q", run.Op))
-	}
-}
-
-func workerGet(ctx context.Context, url string, out any) error {
+func get(ctx context.Context, url string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -150,7 +120,7 @@ func workerGet(ctx context.Context, url string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-func workerPost(ctx context.Context, url string, in any, out any) error {
+func post(ctx context.Context, url string, in any, out any) error {
 	var body bytes.Buffer
 	if in != nil {
 		if err := json.NewEncoder(&body).Encode(in); err != nil {

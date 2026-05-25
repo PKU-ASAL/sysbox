@@ -323,6 +323,7 @@ pkg/provider/               Docker, Firecracker, network, libvirt providers
 pkg/runtime/                Plan/apply/destroy/checkpoint runtime
 pkg/state/                  Local/Postgres/HTTP/S3/SQLite state backends
 pkg/substrate/              Provider abstraction
+pkg/worker/                 Worker agent loop for claim/poll execution
 runner/                     Optional Python episode runner for agent examples
 scripts/                    Artifact preparation and verification helpers
 tests/e2e/                  Integration tests with build tag e2e
