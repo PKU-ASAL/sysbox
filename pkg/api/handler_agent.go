@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
@@ -235,6 +237,80 @@ func (s *Server) handleAgentStream(w http.ResponseWriter, r *http.Request) {
 	ch := stream.Subscribe()
 	defer stream.Unsubscribe(ch)
 	ServeSSE(w, r, ch)
+}
+
+func (s *Server) handleAgentCommands(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("agent")
+	if err := validatePathSegment(id, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if s.agents == nil {
+		s.agents = newAgentRegistry()
+	}
+	if _, err := s.agents.Get(id); err != nil && id != DefaultAgentID {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	stream := s.agents.Stream(id)
+	ch := stream.Subscribe()
+	defer stream.Unsubscribe(ch)
+	ctx := r.Context()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.readAgentCommandEvents(ctx, id, conn)
+	}()
+	for {
+		select {
+		case line, ok := <-ch:
+			if !ok {
+				return
+			}
+			var cmd controlplane.AgentCommand
+			if err := json.Unmarshal([]byte(line), &cmd); err != nil {
+				continue
+			}
+			if cmd.ID == "" {
+				continue
+			}
+			if err := conn.Write(ctx, websocket.MessageText, []byte(line)); err != nil {
+				return
+			}
+		case err := <-errCh:
+			if err != nil && ctx.Err() == nil {
+				return
+			}
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Server) readAgentCommandEvents(ctx context.Context, agentID string, conn *websocket.Conn) error {
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return err
+		}
+		var event controlplane.AgentCommandEvent
+		if err := json.Unmarshal(data, &event); err != nil {
+			continue
+		}
+		if event.AgentID == "" {
+			event.AgentID = agentID
+		}
+		if event.CreatedAt.IsZero() {
+			event.CreatedAt = time.Now().UTC()
+		}
+		s.agents.SaveCommandEvent(event)
+		fmt.Printf("[agent:%s] command %s %s %s\n", event.AgentID, event.CommandID, event.Type, event.Status)
+	}
 }
 
 func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {

@@ -23,6 +23,7 @@ POST /v1/agents
 GET  /v1/agents/{agent_id}
 POST /v1/agents/{agent_id}/heartbeat
 GET  /v1/agents/{agent_id}/stream
+GET  /v1/agents/{agent_id}/commands
 GET  /v1/agents/{agent_id}/projections
 GET  /v1/agents/{agent_id}/runs
 POST /v1/agents/{agent_id}/runs/{run_id}/claim
@@ -101,11 +102,15 @@ POST /v1/runs/{run_id}/cleanup
 ```
 
 Run records include the owning `agent_id`. The API creates and assigns command
-intent; agents keep an outbound SSE command stream open at
-`/v1/agents/{agent_id}/stream`. When a run is assigned, the API pushes a
-`run_assigned` command; the agent then claims the run and executes it on the
-host. `/runs` remains as reconnect/backfill support. On completion, the agent
-posts the final run status and a state projection to
+intent; agents keep an outbound WebSocket command stream open at
+`/v1/agents/{agent_id}/commands`. Commands use a durable envelope with
+`id`, `type`, and command-specific payload. Agents ACK, start, complete, and
+fail commands on the same WebSocket. The older SSE
+`/v1/agents/{agent_id}/stream` endpoint remains as a compatibility/debug
+projection while agents prefer WebSocket. When a run is assigned, the API
+pushes a `run_assigned` command; the agent then claims the run and executes it
+on the host. `/runs` remains as reconnect/backfill support. On completion, the
+agent posts the final run status and a state projection to
 `/v1/agents/{agent_id}/runs/{run_id}/complete`.
 
 ```text
@@ -128,7 +133,8 @@ POST /v1/agents/{agent_id}/node-operations/{operation_id}/complete
 ```
 
 Browsers attach to `/v1/sessions/{session_id}/attach`. Agents attach to the
-agent-side URL after receiving a `session_open` command on their SSE stream.
+agent-side URL after receiving a `session_open` command on their command
+stream.
 Session metadata is persisted by the API store; interrupted sessions are marked
 `lost` on API restart. `timeout_seconds` on session creation auto-cancels long
 running sessions. Console requests accept `requested_by`; if absent, the API

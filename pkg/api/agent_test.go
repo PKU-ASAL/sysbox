@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/config"
@@ -59,6 +60,50 @@ func TestAgentRegistry(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &listed))
 	require.Len(t, listed.Agents, 2)
 	require.ElementsMatch(t, []string{"host-a", "local"}, []string{listed.Agents[0].ID, listed.Agents[1].ID})
+}
+
+func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
+	server := httptest.NewServer(s)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[len("http"):] + "/v1/agents/host-a/commands"
+	conn, _, err := websocket.Dial(context.Background(), wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	eventCh := make(chan controlplane.AgentCommandEvent, 1)
+	go func() {
+		var event controlplane.AgentCommandEvent
+		_, data, err := conn.Read(context.Background())
+		if err == nil {
+			var cmd controlplane.AgentCommand
+			require.NoError(t, json.Unmarshal(data, &cmd))
+			require.Equal(t, "run_assigned", cmd.Type)
+			require.NotEmpty(t, cmd.ID)
+			require.NotNil(t, cmd.Run)
+			event = controlplane.AgentCommandEvent{CommandID: cmd.ID, Type: cmd.Type, Status: "ack"}
+			raw, _ := json.Marshal(event)
+			_ = conn.Write(context.Background(), websocket.MessageText, raw)
+		}
+		eventCh <- event
+	}()
+
+	run := s.jobs.start("mixed", "apply")
+	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
+
+	select {
+	case event := <-eventCh:
+		require.Equal(t, "ack", event.Status)
+		require.NotEmpty(t, event.CommandID)
+		require.Eventually(t, func() bool {
+			events := s.agents.ListCommandEvents("host-a")
+			return len(events) == 1 && events[0].CommandID == event.CommandID && events[0].Status == "ack"
+		}, time.Second, 10*time.Millisecond)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for command websocket")
+	}
 }
 
 func TestConsoleSessionPublishesAgentCommand(t *testing.T) {

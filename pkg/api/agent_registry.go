@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
@@ -16,6 +19,7 @@ type agentRegistry struct {
 	status      map[string]*Broadcaster
 	projections map[string]controlplane.Projection
 	resources   map[string]controlplane.ResourceProjection
+	events      map[string][]controlplane.AgentCommandEvent
 }
 
 func newAgentRegistry() *agentRegistry {
@@ -25,7 +29,35 @@ func newAgentRegistry() *agentRegistry {
 		status:      map[string]*Broadcaster{},
 		projections: map[string]controlplane.Projection{},
 		resources:   map[string]controlplane.ResourceProjection{},
+		events:      map[string][]controlplane.AgentCommandEvent{},
 	}
+}
+
+func (r *agentRegistry) SaveCommandEvent(event controlplane.AgentCommandEvent) {
+	if event.AgentID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	items := append(r.events[event.AgentID], event)
+	if len(items) > 512 {
+		items = items[len(items)-512:]
+	}
+	r.events[event.AgentID] = items
+}
+
+func (r *agentRegistry) ListCommandEvents(agentID string) []controlplane.AgentCommandEvent {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if agentID != "" {
+		return append([]controlplane.AgentCommandEvent{}, r.events[agentID]...)
+	}
+	var out []controlplane.AgentCommandEvent
+	for _, items := range r.events {
+		out = append(out, items...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out
 }
 
 func (r *agentRegistry) SaveResourceProjection(proj controlplane.ResourceProjection) {
@@ -140,33 +172,28 @@ func (r *agentRegistry) StatusStream(topology string) *Broadcaster {
 }
 
 func (r *agentRegistry) PublishRun(agentID string, run controlplane.Run) error {
-	raw, err := json.Marshal(agentCommand{Type: "run_assigned", Run: &run})
-	if err != nil {
-		return err
-	}
-	_, err = r.Stream(agentID).Write(append(raw, '\n'))
-	return err
+	return r.PublishCommand(agentID, controlplane.AgentCommand{Type: "run_assigned", Run: &run})
 }
 
 func (r *agentRegistry) PublishConsole(agentID string, session controlplane.ConsoleSession, req controlplane.ConsoleRequest) error {
-	raw, err := json.Marshal(controlplane.ConsoleCommand{Type: "session_open", Session: &session, Request: req})
-	if err != nil {
-		return err
-	}
-	_, err = r.Stream(agentID).Write(append(raw, '\n'))
-	return err
+	return r.PublishCommand(agentID, controlplane.AgentCommand{Type: "session_open", Session: &session, Request: req})
 }
 
 func (r *agentRegistry) PublishNodeOperation(agentID string, op controlplane.NodeOperation) error {
-	raw, err := json.Marshal(controlplane.NodeOperationCommand{Type: "node_operation", Operation: op})
+	return r.PublishCommand(agentID, controlplane.AgentCommand{Type: "node_operation", Operation: op})
+}
+
+func (r *agentRegistry) PublishCommand(agentID string, cmd controlplane.AgentCommand) error {
+	if cmd.ID == "" {
+		cmd.ID = uuid.New().String()
+	}
+	if cmd.CreatedAt.IsZero() {
+		cmd.CreatedAt = time.Now().UTC()
+	}
+	raw, err := json.Marshal(cmd)
 	if err != nil {
 		return err
 	}
 	_, err = r.Stream(agentID).Write(append(raw, '\n'))
 	return err
-}
-
-type agentCommand struct {
-	Type string            `json:"type"`
-	Run  *controlplane.Run `json:"run,omitempty"`
 }

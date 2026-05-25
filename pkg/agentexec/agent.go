@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -66,8 +68,11 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 		if err := drainAssignedRuns(ctx, executor, opts); err != nil {
 			fmt.Printf("[agent] drain assigned runs failed: %v\n", err)
 		}
-		if err := streamAndExecute(ctx, executor, opts); err != nil && ctx.Err() == nil {
-			fmt.Printf("[agent] command stream disconnected: %v\n", err)
+		if err := commandWebSocketAndExecute(ctx, executor, opts); err != nil && ctx.Err() == nil {
+			fmt.Printf("[agent] command websocket disconnected: %v\n", err)
+			if err := streamAndExecute(ctx, executor, opts); err != nil && ctx.Err() == nil {
+				fmt.Printf("[agent] command stream disconnected: %v\n", err)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -146,6 +151,47 @@ func streamAndExecute(ctx context.Context, executor *Executor, opts Options) err
 	return readCommandStream(ctx, resp.Body, executor, opts)
 }
 
+func commandWebSocketAndExecute(ctx context.Context, executor *Executor, opts Options) error {
+	wsURL := strings.TrimRight(opts.APIURL, "/") + "/v1/agents/" + opts.ID + "/commands"
+	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
+	headers := http.Header{}
+	if opts.Token != "" {
+		headers.Set("Authorization", "Bearer "+opts.Token)
+	}
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		return err
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	reporter := &commandEventReporter{conn: conn, opts: opts}
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return err
+		}
+		var cmd controlplane.AgentCommand
+		if err := json.Unmarshal(data, &cmd); err != nil {
+			reporter.Report(ctx, controlplane.AgentCommandEvent{
+				Type:    "decode",
+				Status:  "failed",
+				Error:   err.Error(),
+				Message: "failed to decode command",
+			})
+			continue
+		}
+		reporter.Report(ctx, controlplane.AgentCommandEvent{
+			CommandID: cmd.ID,
+			Type:      cmd.Type,
+			Status:    "ack",
+			Message:   "command received",
+		})
+		go executeAgentCommand(ctx, executor, opts, &cmd, func(event controlplane.AgentCommandEvent) {
+			reporter.Report(ctx, event)
+		})
+	}
+}
+
 func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, opts Options) error {
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
@@ -164,51 +210,103 @@ func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, 
 		if line == "" {
 			continue
 		}
-		var cmd command
+		var cmd controlplane.AgentCommand
 		if err := json.Unmarshal([]byte(line), &cmd); err != nil {
 			fmt.Printf("[agent] decode command: %v\n", err)
 			continue
 		}
-		switch cmd.Type {
-		case "run_assigned":
-			if cmd.Run == nil {
-				continue
-			}
-			claimed, err := claim(ctx, opts, cmd.Run.ID)
-			if err != nil {
-				fmt.Printf("[agent] claim %s failed: %v\n", cmd.Run.ID, err)
-				continue
-			}
-			executor.Execute(claimed)
-		case "session_open":
-			if cmd.Session == nil {
-				continue
-			}
-			go func(sess controlplane.ConsoleSession, req controlplane.ConsoleRequest) {
-				if err := openConsoleSession(ctx, opts, executor.bridge, sess, req); err != nil {
-					fmt.Printf("[agent] console session %s failed: %v\n", sess.ID, err)
-				}
-			}(*cmd.Session, cmd.Request)
-		case "node_operation":
-			go func(op controlplane.NodeOperation) {
-				completed := executor.ExecuteNodeOperation(ctx, op)
-				if err := opts.ReportNodeOperationComplete(ctx, completed); err != nil {
-					fmt.Printf("[agent] report node operation %s failed: %v\n", completed.ID, err)
-				}
-			}(cmd.Operation)
-		default:
-			fmt.Printf("[agent] unknown command type %q\n", cmd.Type)
-		}
+		executeAgentCommand(ctx, executor, opts, &cmd, nil)
 	}
 	return scanner.Err()
 }
 
-type command struct {
-	Type      string                       `json:"type"`
-	Run       *controlplane.Run            `json:"run,omitempty"`
-	Session   *controlplane.ConsoleSession `json:"session,omitempty"`
-	Request   controlplane.ConsoleRequest  `json:"request,omitempty"`
-	Operation controlplane.NodeOperation   `json:"operation,omitempty"`
+func executeAgentCommand(ctx context.Context, executor *Executor, opts Options, cmd *controlplane.AgentCommand, report func(controlplane.AgentCommandEvent)) {
+	if cmd == nil {
+		return
+	}
+	emit := func(status, message string, err error) {
+		if report == nil {
+			return
+		}
+		event := controlplane.AgentCommandEvent{
+			CommandID: cmd.ID,
+			Type:      cmd.Type,
+			Status:    status,
+			Message:   message,
+		}
+		if err != nil {
+			event.Error = err.Error()
+		}
+		report(event)
+	}
+	emit("started", "command started", nil)
+	switch cmd.Type {
+	case "run_assigned":
+		if cmd.Run == nil {
+			emit("failed", "missing run", fmt.Errorf("missing run"))
+			return
+		}
+		claimed, err := claim(ctx, opts, cmd.Run.ID)
+		if err != nil {
+			fmt.Printf("[agent] claim %s failed: %v\n", cmd.Run.ID, err)
+			emit("failed", "run claim failed", err)
+			return
+		}
+		executor.Execute(claimed)
+		emit("completed", "run command completed", nil)
+	case "session_open":
+		if cmd.Session == nil {
+			emit("failed", "missing session", fmt.Errorf("missing session"))
+			return
+		}
+		if err := openConsoleSession(ctx, opts, executor.bridge, *cmd.Session, cmd.Request); err != nil {
+			fmt.Printf("[agent] console session %s failed: %v\n", cmd.Session.ID, err)
+			emit("failed", "console session failed", err)
+			return
+		}
+		emit("completed", "console session completed", nil)
+	case "node_operation":
+		completed := executor.ExecuteNodeOperation(ctx, cmd.Operation)
+		if err := opts.ReportNodeOperationComplete(ctx, completed); err != nil {
+			fmt.Printf("[agent] report node operation %s failed: %v\n", completed.ID, err)
+			emit("failed", "node operation report failed", err)
+			return
+		}
+		if completed.Status == "failed" {
+			emit("failed", "node operation failed", errors.New(completed.Err))
+			return
+		}
+		emit("completed", "node operation completed", nil)
+	default:
+		err := fmt.Errorf("unknown command type %q", cmd.Type)
+		fmt.Printf("[agent] %v\n", err)
+		emit("failed", "unknown command type", err)
+	}
+}
+
+type commandEventReporter struct {
+	mu   sync.Mutex
+	conn *websocket.Conn
+	opts Options
+}
+
+func (r *commandEventReporter) Report(ctx context.Context, event controlplane.AgentCommandEvent) {
+	if r == nil || r.conn == nil {
+		return
+	}
+	if event.AgentID == "" {
+		event.AgentID = r.opts.ID
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_ = r.conn.Write(ctx, websocket.MessageText, raw)
 }
 
 func openConsoleSession(ctx context.Context, opts Options, bridge Bridge, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest) error {

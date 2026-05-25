@@ -163,6 +163,26 @@ type ConsoleCommand struct {
 	Request ConsoleRequest  `json:"request,omitempty"`
 }
 
+type AgentCommand struct {
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`
+	Run       *Run            `json:"run,omitempty"`
+	Session   *ConsoleSession `json:"session,omitempty"`
+	Request   ConsoleRequest  `json:"request,omitempty"`
+	Operation NodeOperation   `json:"operation,omitempty"`
+	CreatedAt time.Time       `json:"created_at,omitempty"`
+}
+
+type AgentCommandEvent struct {
+	CommandID string    `json:"command_id,omitempty"`
+	Type      string    `json:"type"`
+	AgentID   string    `json:"agent_id,omitempty"`
+	Status    string    `json:"status,omitempty"`
+	Message   string    `json:"message,omitempty"`
+	Error     string    `json:"error,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
+}
+
 type NodeOperation struct {
 	ID          string    `json:"id"`
 	ProjectID   string    `json:"project_id,omitempty"`

@@ -124,6 +124,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/claim", s.handleClaimAgentRun)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/complete", s.handleCompleteAgentRun)
 	m.HandleFunc("GET /v1/agents/{agent}/stream", s.handleAgentStream)
+	m.HandleFunc("GET /v1/agents/{agent}/commands", s.handleAgentCommands)
 	m.HandleFunc("GET /v1/agents/{agent}/sessions/{session}/attach", s.handleAgentAttachConsole)
 	m.HandleFunc("GET /v1/artifacts", s.handleListArtifacts)
 	m.HandleFunc("GET /v1/policies", s.handleListPolicies)
