@@ -113,6 +113,38 @@ type Projection struct {
 	UpdatedAt     time.Time `json:"updated_at,omitempty"`
 }
 
+type ConsoleSession struct {
+	ID        string    `json:"id"`
+	ProjectID string    `json:"project_id,omitempty"`
+	Workspace string    `json:"workspace,omitempty"`
+	Topology  string    `json:"topology"`
+	Node      string    `json:"node"`
+	AgentID   string    `json:"agent_id"`
+	Status    string    `json:"status"`
+	Err       string    `json:"error,omitempty"`
+	ExitCode  *int      `json:"exit_code,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	StartedAt time.Time `json:"started_at,omitempty"`
+	EndedAt   time.Time `json:"ended_at,omitempty"`
+}
+
+type ConsoleRequest struct {
+	Cmd            []string          `json:"cmd,omitempty"`
+	Shell          string            `json:"shell,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	WorkDir        string            `json:"work_dir,omitempty"`
+	TTY            *bool             `json:"tty,omitempty"`
+	Cols           int               `json:"cols,omitempty"`
+	Rows           int               `json:"rows,omitempty"`
+	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
+}
+
+type ConsoleCommand struct {
+	Type    string          `json:"type"`
+	Session *ConsoleSession `json:"session,omitempty"`
+	Request ConsoleRequest  `json:"request,omitempty"`
+}
+
 type StackState struct {
 	ProjectID string         `json:"project_id"`
 	Workspace string         `json:"workspace"`

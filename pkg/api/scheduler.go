@@ -84,6 +84,32 @@ func requiredCapabilitiesForTopology(path string) ([]string, error) {
 	return capabilitiesFromSet(set), nil
 }
 
+func requiredCapabilitiesForNode(path, node string) ([]string, error) {
+	root, err := config.ParseFile(path)
+	if err != nil {
+		return nil, err
+	}
+	evalCtx := config.BuildEvalContext(root)
+	set := map[string]bool{}
+	for _, r := range root.Resources {
+		if r.Name != node || (r.Type != "sysbox_node" && r.Type != "sysbox_router") {
+			continue
+		}
+		cfg, err := decodeCapabilityResource(r, evalCtx)
+		if err != nil {
+			return nil, err
+		}
+		switch cfg := cfg.(type) {
+		case *config.NodeConfig:
+			addSubstrateCapabilities(set, cfg.Substrate)
+		case *config.RouterConfig:
+			addSubstrateCapabilities(set, cfg.Substrate)
+		}
+		return capabilitiesFromSet(set), nil
+	}
+	return nil, fmt.Errorf("node %q not found in topology", node)
+}
+
 func decodeCapabilityResource(r config.ResourceBlock, evalCtx *hcl.EvalContext) (any, error) {
 	switch r.Type {
 	case "sysbox_node":

@@ -111,6 +111,34 @@ posts the final run status and a state projection to
 queued -> assigned -> running -> done|failed|cancelled
 ```
 
+## Console Sessions
+
+Node exec is agent-backed. The API creates the session intent and relays
+WebSocket frames; the owning agent opens the substrate console locally.
+
+```bash
+POST /v1/topologies/{name}/nodes/{node}/sessions
+POST /v1/topologies/{name}/nodes/{node}/exec
+GET  /v1/sessions/{session_id}
+GET  /v1/sessions/{session_id}/attach
+GET  /v1/agents/{agent_id}/sessions/{session_id}/attach
+```
+
+`/exec` is a compatibility entry point that now returns a session object.
+Browsers attach to `/v1/sessions/{session_id}/attach`. Agents attach to the
+agent-side URL after receiving a `session_open` command on their SSE stream.
+
+WebSocket text frames use a small JSON envelope. Binary payloads are base64
+encoded so the same envelope works across browser terminals and simple tools.
+
+```json
+{"type":"stdin","data":"bHMK"}
+{"type":"resize","cols":120,"rows":40}
+{"type":"stdout","data":"..."}
+{"type":"stderr","data":"..."}
+{"type":"exit","code":0}
+```
+
 ## Nodes
 
 ```bash

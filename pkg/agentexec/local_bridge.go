@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -136,6 +138,18 @@ func (b *LocalBridge) ReconcileParentJournal(_, _ *controlplane.Run) error {
 
 func (b *LocalBridge) Preflight(context.Context, string, io.Writer) error {
 	return nil
+}
+
+func (b *LocalBridge) OpenConsole(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error {
+	mgr, err := b.StateManager(sess.Topology)
+	if err != nil {
+		return err
+	}
+	st, err := mgr.Load()
+	if err != nil {
+		return err
+	}
+	return OpenConsoleFromState(ctx, st, sess, req, ws)
 }
 
 func (b *LocalBridge) FilterApplyPlan(plan *runtime.Plan) (*runtime.Plan, error) {

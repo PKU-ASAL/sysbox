@@ -99,6 +99,15 @@ func (r *agentRegistry) PublishRun(agentID string, run controlplane.Run) error {
 	return err
 }
 
+func (r *agentRegistry) PublishConsole(agentID string, session controlplane.ConsoleSession, req controlplane.ConsoleRequest) error {
+	raw, err := json.Marshal(controlplane.ConsoleCommand{Type: "session_open", Session: &session, Request: req})
+	if err != nil {
+		return err
+	}
+	_, err = r.Stream(agentID).Write(append(raw, '\n'))
+	return err
+}
+
 type agentCommand struct {
 	Type string            `json:"type"`
 	Run  *controlplane.Run `json:"run,omitempty"`

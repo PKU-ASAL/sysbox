@@ -70,6 +70,12 @@ func (BaseSubstrate) Connection(NodeHandle, []ConnectionHint) (Connection, error
 	return nil, nil
 }
 
+// OpenConsole returns ErrNotSupported by default. Substrates that provide
+// interactive terminal sessions should override this optional capability.
+func (BaseSubstrate) OpenConsole(context.Context, NodeHandle, ConsoleRequest) (ConsoleSession, error) {
+	return nil, ErrNotSupported
+}
+
 // PrepareHandle is a no-op by default. Substrates that need to resolve
 // cross-resource refs (e.g. kernel path) or populate ConnInfo override this.
 func (BaseSubstrate) PrepareHandle(_ context.Context, _ *NodeHandle, _ any, _ StateReader) error {

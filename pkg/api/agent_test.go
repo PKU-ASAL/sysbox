@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -56,6 +58,62 @@ func TestAgentRegistry(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &listed))
 	require.Len(t, listed.Agents, 2)
 	require.ElementsMatch(t, []string{"host-a", "local"}, []string{listed.Agents[0].ID, listed.Agents[1].ID})
+}
+
+func TestConsoleSessionPublishesAgentCommand(t *testing.T) {
+	runs := t.TempDir()
+	workspaces := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspaces, "lab"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspaces, "lab", "field.sysbox.hcl"), []byte(`
+resource "sysbox_image" "alpine" {
+  substrate = "docker"
+  docker_ref = "alpine:latest"
+}
+
+resource "sysbox_node" "web" {
+  substrate = "docker"
+  image = sysbox_image.alpine.id
+}
+`), 0o644))
+	s := NewServer(runs, workspaces)
+	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
+	server := httptest.NewServer(s)
+	defer server.Close()
+
+	errCh := make(chan error, 1)
+	bodyCh := make(chan string, 1)
+	go func() {
+		resp, err := http.Get(server.URL + "/v1/agents/host-a/stream")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer resp.Body.Close()
+		data := make([]byte, 4096)
+		n, err := resp.Body.Read(data)
+		if err != nil && err != io.EOF {
+			errCh <- err
+			return
+		}
+		bodyCh <- string(data[:n])
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/nodes/web/sessions", bytes.NewBufferString(`{"shell":"/bin/sh","cols":80,"rows":24}`))
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"agent_id":"host-a"`)
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case body := <-bodyCh:
+		require.Contains(t, body, "session_open")
+		require.Contains(t, body, "web")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for session command")
+	}
 }
 
 func TestRunDefaultsToLocalAgent(t *testing.T) {

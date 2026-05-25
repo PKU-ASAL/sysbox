@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/oslab/sysbox/pkg/util"
 )
 
 // maxBodyBytes limits request body size to 1MB across all API handlers
@@ -82,7 +81,8 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/topologies/{topology}/nodes/{node}/exec
 // Body: {"cmd": ["ls", "-la"]}
-// Response: chunked plain text (stdout+stderr interleaved)
+// Compatibility entry point that now creates an agent-backed console session.
+// Attach to /v1/sessions/{session}/attach over WebSocket to stream I/O.
 func (s *Server) handleNodeExec(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
 	name := r.PathValue("node")
@@ -95,72 +95,30 @@ func (s *Server) handleNodeExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body struct {
-		Cmd []string `json:"cmd"`
-	}
+	var body controlplane.ConsoleRequest
 	limitBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Cmd) == 0 {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("body must be {\"cmd\":[...]}"))
 		return
 	}
-
-	st, err := s.loadState(topology)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-
-	conn, err := nodeConnection(st, name)
+	v := false
+	body.TTY = &v
+	required, err := requiredCapabilitiesForNode(s.hclFile(topology), name)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Transfer-Encoding", "chunked")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if err := conn.ExecStream(r.Context(), []string{shellCommand(body.Cmd)}, w, w); err != nil {
-		fmt.Fprintf(w, "\nerror: %v\n", err)
-	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func shellCommand(argv []string) string {
-	parts := make([]string, 0, len(argv))
-	for _, arg := range argv {
-		parts = append(parts, util.ShellQuote(arg))
-	}
-	return strings.Join(parts, " ")
-}
-
-// nodeConnection rebuilds a substrate.Connection from persisted state.
-// Works for Docker (container_id) and Firecracker (provider_extra SSH info).
-func nodeConnection(st *state.State, name string) (substrate.Connection, error) {
-	res := st.FindResource("sysbox_node", name)
-	if res == nil {
-		res = st.FindResource("sysbox_router", name)
-	}
-	if res == nil {
-		return nil, fmt.Errorf("node %q not in state", name)
-	}
-
-	sub, err := substrate.Get(res.Provider)
+	agent, err := s.selectAgent(r.Context(), required)
 	if err != nil {
-		return nil, fmt.Errorf("substrate %q not registered: %w", res.Provider, err)
+		writeError(w, http.StatusConflict, err)
+		return
 	}
-
-	handle, err := res.ReconstructHandle(sub)
-	if err != nil {
-		return nil, fmt.Errorf("node %q: %w", name, err)
+	sess := s.consoles.Create(topology, name, agent.ID, body)
+	if err := s.agents.PublishConsole(agent.ID, sess, body); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
 	}
-
-	conn, err := sub.Connection(handle, nil)
-	if err != nil || conn == nil {
-		return nil, fmt.Errorf("no connection to node %q: %w", name, err)
-	}
-	return conn, nil
+	writeJSON(w, http.StatusAccepted, sess)
 }
 
 // POST /v1/topologies/{topology}/nodes/{node}/pause

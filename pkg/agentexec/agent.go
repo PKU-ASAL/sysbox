@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
@@ -154,6 +156,15 @@ func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, 
 				continue
 			}
 			executor.Execute(claimed)
+		case "session_open":
+			if cmd.Session == nil {
+				continue
+			}
+			go func(sess controlplane.ConsoleSession, req controlplane.ConsoleRequest) {
+				if err := openConsoleSession(ctx, opts, executor.bridge, sess, req); err != nil {
+					fmt.Printf("[agent] console session %s failed: %v\n", sess.ID, err)
+				}
+			}(*cmd.Session, cmd.Request)
 		default:
 			fmt.Printf("[agent] unknown command type %q\n", cmd.Type)
 		}
@@ -162,8 +173,26 @@ func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, 
 }
 
 type command struct {
-	Type string            `json:"type"`
-	Run  *controlplane.Run `json:"run,omitempty"`
+	Type    string                       `json:"type"`
+	Run     *controlplane.Run            `json:"run,omitempty"`
+	Session *controlplane.ConsoleSession `json:"session,omitempty"`
+	Request controlplane.ConsoleRequest  `json:"request,omitempty"`
+}
+
+func openConsoleSession(ctx context.Context, opts Options, bridge Bridge, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest) error {
+	wsURL := strings.TrimRight(opts.APIURL, "/") + "/v1/agents/" + opts.ID + "/sessions/" + sess.ID + "/attach"
+	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
+	headers := http.Header{}
+	if opts.Token != "" {
+		headers.Set("Authorization", "Bearer "+opts.Token)
+	}
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		return err
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	return bridge.OpenConsole(ctx, sess, req, conn)
 }
 
 type remoteBridge struct {

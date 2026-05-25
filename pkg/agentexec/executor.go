@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/coder/websocket"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -24,6 +26,7 @@ type Bridge interface {
 	ParentRun(ctx context.Context, id string) (*controlplane.Run, error)
 	ReconcileParentJournal(parent, run *controlplane.Run) error
 	Preflight(ctx context.Context, topology string, log io.Writer) error
+	OpenConsole(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error
 }
 
 type Reporter interface {

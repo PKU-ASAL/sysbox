@@ -4,6 +4,9 @@ import (
 	"context"
 	"io"
 
+	"github.com/coder/websocket"
+
+	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -79,4 +82,16 @@ func (b *ExecutionBridge) Preflight(ctx context.Context, topology string, log io
 	}
 	writePreflightLogsTo(log, res)
 	return res.err()
+}
+
+func (b *ExecutionBridge) OpenConsole(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error {
+	mgr, err := b.StateManager(sess.Topology)
+	if err != nil {
+		return err
+	}
+	st, err := mgr.Load()
+	if err != nil {
+		return err
+	}
+	return agentexec.OpenConsoleFromState(ctx, st, sess, req, ws)
 }

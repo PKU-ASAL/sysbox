@@ -187,6 +187,33 @@ type Connection interface {
 	CopyFile(ctx context.Context, srcPath, dstPath string) error
 }
 
+// ConsoleProvider is an optional substrate capability for an interactive
+// console session. It is intentionally separate from Connection: provisioners
+// need simple command execution, while browser consoles need bidirectional
+// stdin/stdout, TTY sizing, and lifecycle control.
+type ConsoleProvider interface {
+	OpenConsole(ctx context.Context, handle NodeHandle, req ConsoleRequest) (ConsoleSession, error)
+}
+
+type ConsoleRequest struct {
+	Cmd     []string          `json:"cmd,omitempty"`
+	Shell   string            `json:"shell,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	WorkDir string            `json:"work_dir,omitempty"`
+	TTY     bool              `json:"tty"`
+	Cols    int               `json:"cols,omitempty"`
+	Rows    int               `json:"rows,omitempty"`
+}
+
+type ConsoleSession interface {
+	Stdin() io.WriteCloser
+	Stdout() io.Reader
+	Stderr() io.Reader
+	Resize(ctx context.Context, cols, rows int) error
+	Wait() (int, error)
+	Close() error
+}
+
 // HandleToInstance builds the standard state.Instance map from a NodeHandle
 // and its substrate. This eliminates the hand-assembled instance map that
 // was duplicated across ReadNode implementations and the API layer.
