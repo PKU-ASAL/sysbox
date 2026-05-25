@@ -8,7 +8,7 @@ sysbox focuses on three layers:
 
 1. **Declarative topology runtime**: parse HCL, build a dependency graph, plan changes, and converge external resources with apply/destroy.
 2. **Provider/substrate execution**: Docker for fast container labs, Firecracker/microVM and VM substrates for stronger isolation, plus Linux network primitives.
-3. **Service control plane**: an API server with managed workspaces, worker/agent registry, state backends, leases, run records, checkpoints, recovery, and cleanup.
+3. **Service control plane + worker execution plane**: an API server owns workspaces, run scheduling, state backends, leases, checkpoints, recovery, and cleanup; workers poll/claim runs and execute topology changes.
 
 The core runtime intentionally does not own research-story concepts such as sensors, labelers, reward, attribution, or IOC scoring. Those belong above sysbox as optional lab/application layers. sysbox’s job is narrower: make topology lifecycle explainable, repeatable, and recoverable.
 
@@ -316,14 +316,14 @@ deploy/docker/              Docker Compose base file and capability overlays
 docs/                       Current docs
 examples/                   Example topologies
 pkg/artifact/               Artifact resolver/cache
-pkg/api/                    HTTP API, jobs, recovery/cleanup
+pkg/api/                    HTTP control plane, scheduling, jobs, recovery/cleanup
 pkg/config/                 HCL schema and eval
 pkg/graph/                  Dependency graph
 pkg/provider/               Docker, Firecracker, network, libvirt providers
-pkg/runtime/                Plan/apply/destroy/checkpoint runtime
+pkg/runtime/                Plan/apply/destroy/checkpoint runtime and execution journal primitives
 pkg/state/                  Local/Postgres/HTTP/S3/SQLite state backends
 pkg/substrate/              Provider abstraction
-pkg/worker/                 Worker agent loop for claim/poll execution
+pkg/worker/                 Worker agent loop and apply/destroy execution
 runner/                     Optional Python episode runner for agent examples
 scripts/                    Artifact preparation and verification helpers
 tests/e2e/                  Integration tests with build tag e2e

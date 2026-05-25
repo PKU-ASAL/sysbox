@@ -2,27 +2,11 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
-
-type statePatchSink struct {
-	mgr   *state.Manager
-	state *state.State
-	owner string
-}
-
-func (s *statePatchSink) ApplyStatePatch(ctx context.Context, patch runtime.StatePatch) error {
-	if s == nil || s.mgr == nil || s.state == nil {
-		return nil
-	}
-	runtime.ApplyStatePatch(s.state, patch)
-	return s.mgr.SaveWithLease(ctx, s.state, state.LockOptions{Owner: s.owner})
-}
 
 type JournalReplayReport struct {
 	Applied []RecoverAction `json:"applied,omitempty"`
@@ -72,18 +56,6 @@ func replayCheckpointJournal(ctx context.Context, store apiStore, topology, runI
 		}
 	}
 	return report, nil
-}
-
-func loadCheckpointFile(path string) (*runtime.OperationCheckpoint, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read checkpoint: %w", err)
-	}
-	var cp runtime.OperationCheckpoint
-	if err := json.Unmarshal(raw, &cp); err != nil {
-		return nil, fmt.Errorf("decode checkpoint: %w", err)
-	}
-	return &cp, nil
 }
 
 func reconcileCheckpointJournal(ctx context.Context, store apiStore, topology, runID string, mgr *state.Manager, owner string) (*RecoverReport, error) {

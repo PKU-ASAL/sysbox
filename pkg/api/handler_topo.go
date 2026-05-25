@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,7 +12,6 @@ import (
 	"regexp"
 	"sort"
 
-	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -396,97 +396,18 @@ func (s *Server) currentStateSerial(ctx context.Context, topology string) (int64
 	return meta.Serial, nil
 }
 
-func (s *Server) runApply(topology string, run *Run) {
-	unlock := s.jobs.lockTopology(topology)
-	defer unlock()
-
-	preflight, err := s.preflightTopology(topology)
-	if err != nil {
-		s.jobs.finish(run, err)
+func writePreflightLogs(run *Run, res *preflightResult) {
+	if run == nil {
 		return
 	}
-	writePreflightLogs(run, preflight)
-	if err := preflight.err(); err != nil {
-		s.jobs.finish(run, err)
-		return
-	}
-
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		s.jobs.finish(run, err)
-		return
-	}
-	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), mgr)
-	if err != nil {
-		s.jobs.finish(run, err)
-		return
-	}
-	meta, _ := mgr.Metadata(context.Background())
-	var plan *runtime.Plan
-	if run.PlanID != "" {
-		stored, err := s.validateStoredPlanForApply(context.Background(), topology, run.PlanID, meta.Serial)
-		if err != nil {
-			s.jobs.finish(run, err)
-			return
-		}
-		plan = runtime.PlanFromActions(stored.Actions, st)
-	} else {
-		plan, err = runtime.ComputePlan(g, st)
-		if err != nil {
-			s.jobs.finish(run, err)
-			return
-		}
-	}
-	exec := runtime.NewExecutor(g, st)
-	exec.SetRunContext(topology, run.ID)
-	exec.SetLogger(run.logs)
-	checkpointPath := s.checkpointFile(topology, run.ID)
-	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, topology)
-	recorder := newStoreRecorder(fileRecorder, s.apiStore, topology, run.ID, checkpointPath)
-	recorder.SetLeaseOwner(run.LeaseOwner)
-	recorder.SetStateSerialBefore(st.Meta.Serial)
-	exec.SetRecorder(recorder)
-	exec.SetStatePatchSink(&statePatchSink{mgr: mgr, state: st, owner: run.LeaseOwner})
-	if run.PlanID == "" {
-		exec.Refresh(context.Background(), plan)
-	}
-	if !plan.HasChanges() {
-		_, _ = run.logs.Write([]byte("No changes. Apply is a no-op.\n"))
-		s.jobs.finish(run, nil)
-		return
-	}
-	_, _ = run.logs.Write([]byte(plan.Summary() + "\n"))
-	if snap, err := mgr.Snapshot(context.Background(), "before apply "+run.ID); err == nil && snap != nil {
-		_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
-	}
-	if err := exec.Apply(context.Background(), plan); err != nil {
-		if saveErr := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
-			_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
-		} else {
-			recorder.SetStateSerialAfter(st.Meta.Serial)
-		}
-		s.jobs.finish(run, err)
-		return
-	}
-	saveStep := recorder.StepStartKind("state", "state", runtime.PlanActionUpdate)
-	if err := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
-		recorder.StepFailed(saveStep, err)
-		recorder.Finish(err)
-		s.jobs.finish(run, fmt.Errorf("save state: %w", err))
-		return
-	}
-	recorder.SetStateSerialAfter(st.Meta.Serial)
-	recorder.StepDone(saveStep)
-	recorder.MarkResourceStateRecorded()
-	_, _ = run.logs.Write([]byte("Apply complete.\n"))
-	s.jobs.finish(run, nil)
+	writePreflightLogsTo(run.logs, res)
 }
 
-func writePreflightLogs(run *Run, res *preflightResult) {
+func writePreflightLogsTo(w io.Writer, res *preflightResult) {
 	if res == nil {
 		return
 	}
-	_, _ = run.logs.Write([]byte("Preflight checks:\n"))
+	_, _ = w.Write([]byte("Preflight checks:\n"))
 	for _, c := range res.Checks {
 		status := "ok"
 		if !c.OK {
@@ -500,7 +421,7 @@ func writePreflightLogs(run *Run, res *preflightResult) {
 			line += " (" + c.Hint + ")"
 		}
 		line += "\n"
-		_, _ = run.logs.Write([]byte(line))
+		_, _ = w.Write([]byte(line))
 	}
 }
 
@@ -523,71 +444,6 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "worker_id": run.WorkerID})
-}
-
-func (s *Server) runDestroy(topology string, run *Run) {
-	unlock := s.jobs.lockTopology(topology)
-	defer unlock()
-
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		s.jobs.finish(run, err)
-		return
-	}
-	st, err := mgr.Load()
-	if err != nil {
-		s.jobs.finish(run, err)
-		return
-	}
-	if len(st.Resources) == 0 {
-		_, _ = run.logs.Write([]byte("Nothing to destroy.\n"))
-		s.jobs.finish(run, nil)
-		return
-	}
-	plan := &runtime.Plan{Destroy: append([]state.Resource(nil), st.Resources...)}
-	for _, r := range plan.Destroy {
-		plan.Actions = append(plan.Actions, runtime.PlanAction{
-			Resource: r.Type + "." + r.Name,
-			Type:     r.Type,
-			Name:     r.Name,
-			Action:   runtime.PlanActionDelete,
-			Reason:   "destroy requested",
-		})
-	}
-	exec := runtime.NewExecutor(graph.New(), st)
-	exec.SetRunContext(topology, run.ID)
-	exec.SetLogger(run.logs)
-	checkpointPath := s.checkpointFile(topology, run.ID)
-	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, topology)
-	recorder := newStoreRecorder(fileRecorder, s.apiStore, topology, run.ID, checkpointPath)
-	recorder.SetLeaseOwner(run.LeaseOwner)
-	recorder.SetStateSerialBefore(st.Meta.Serial)
-	exec.SetRecorder(recorder)
-	exec.SetStatePatchSink(&statePatchSink{mgr: mgr, state: st, owner: run.LeaseOwner})
-	if snap, err := mgr.Snapshot(context.Background(), "before destroy "+run.ID); err == nil && snap != nil {
-		_, _ = run.logs.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
-	}
-	if err := exec.Destroy(context.Background(), plan); err != nil {
-		if saveErr := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
-			_, _ = run.logs.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
-		} else {
-			recorder.SetStateSerialAfter(st.Meta.Serial)
-		}
-		s.jobs.finish(run, err)
-		return
-	}
-	saveStep := recorder.StepStartKind("state", "state", runtime.PlanActionUpdate)
-	if err := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
-		recorder.StepFailed(saveStep, err)
-		recorder.Finish(err)
-		s.jobs.finish(run, fmt.Errorf("save state: %w", err))
-		return
-	}
-	recorder.SetStateSerialAfter(st.Meta.Serial)
-	recorder.StepDone(saveStep)
-	recorder.MarkResourceStateRecorded()
-	_, _ = run.logs.Write([]byte("Destroy complete.\n"))
-	s.jobs.finish(run, nil)
 }
 
 // GET /v1/runs/{id}
@@ -661,22 +517,6 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID, "worker_id": run.WorkerID})
-}
-
-func (s *Server) runResumeApply(parent, run *Run) {
-	if err := s.reconcileParentJournal(parent, run); err != nil {
-		s.jobs.finish(run, err)
-		return
-	}
-	s.runApply(run.Topology, run)
-}
-
-func (s *Server) runResumeDestroy(parent, run *Run) {
-	if err := s.reconcileParentJournal(parent, run); err != nil {
-		s.jobs.finish(run, err)
-		return
-	}
-	s.runDestroy(run.Topology, run)
 }
 
 func (s *Server) reconcileParentJournal(parent, run *Run) error {

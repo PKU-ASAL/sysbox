@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
-	"fmt"
+	"io"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 // ExecutionBridge is the temporary compatibility surface used by pkg/worker
@@ -19,36 +22,57 @@ func NewExecutionBridge(cfg config.ServiceConfig) *ExecutionBridge {
 	return &ExecutionBridge{server: s}
 }
 
-func (b *ExecutionBridge) Execute(run *Run) {
-	b.server.executeRunLocally(run)
-}
-
-func (s *Server) executeRunLocally(run *Run) {
+func (b *ExecutionBridge) AttachRun(run *Run) {
 	if run == nil {
 		return
 	}
 	run.logs = &Broadcaster{}
-	s.jobs.mu.Lock()
-	s.jobs.runs[run.ID] = run
-	s.jobs.mu.Unlock()
-	switch run.Op {
-	case "apply":
-		if run.ParentID != "" {
-			if parent, err := s.apiStore.GetRun(context.Background(), run.ParentID); err == nil {
-				s.runResumeApply(parent, run)
-				return
-			}
-		}
-		s.runApply(run.Topology, run)
-	case "destroy":
-		if run.ParentID != "" {
-			if parent, err := s.apiStore.GetRun(context.Background(), run.ParentID); err == nil {
-				s.runResumeDestroy(parent, run)
-				return
-			}
-		}
-		s.runDestroy(run.Topology, run)
-	default:
-		s.jobs.finish(run, fmt.Errorf("unsupported run op %q", run.Op))
+	b.server.jobs.mu.Lock()
+	b.server.jobs.runs[run.ID] = run
+	b.server.jobs.mu.Unlock()
+}
+
+func (b *ExecutionBridge) LockTopology(topology string) func() {
+	return b.server.jobs.lockTopology(topology)
+}
+
+func (b *ExecutionBridge) Finish(run *Run, err error) {
+	b.server.jobs.finish(run, err)
+}
+
+func (b *ExecutionBridge) StateManager(topology string) (*state.Manager, error) {
+	return b.server.stateManager(topology)
+}
+
+func (b *ExecutionBridge) HCLFile(topology string) string {
+	return b.server.hclFile(topology)
+}
+
+func (b *ExecutionBridge) CheckpointFile(topology, runID string) string {
+	return b.server.checkpointFile(topology, runID)
+}
+
+func (b *ExecutionBridge) CheckpointStore() runtime.CheckpointStore {
+	return b.server.apiStore
+}
+
+func (b *ExecutionBridge) ValidateStoredPlanForApply(ctx context.Context, topology, planID string, currentSerial int64) (*controlplane.Plan, error) {
+	return b.server.validateStoredPlanForApply(ctx, topology, planID, currentSerial)
+}
+
+func (b *ExecutionBridge) ParentRun(ctx context.Context, id string) (*Run, error) {
+	return b.server.apiStore.GetRun(ctx, id)
+}
+
+func (b *ExecutionBridge) ReconcileParentJournal(parent, run *Run) error {
+	return b.server.reconcileParentJournal(parent, run)
+}
+
+func (b *ExecutionBridge) Preflight(ctx context.Context, topology string, log io.Writer) error {
+	res, err := b.server.preflightTopology(topology)
+	if err != nil {
+		return err
 	}
+	writePreflightLogsTo(log, res)
+	return res.err()
 }
