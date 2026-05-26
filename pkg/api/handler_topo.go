@@ -39,6 +39,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // whether it has been applied yet.
 func (s *Server) handleListTopologies(w http.ResponseWriter, r *http.Request) {
 	type topologyInfo struct {
+		ArtifactID    string `json:"artifact_id"`
+		TopologyID    string `json:"topology_id,omitempty"`
 		Name          string `json:"name"`
 		HasHCL        bool   `json:"has_hcl"`
 		HasState      bool   `json:"has_state"`
@@ -55,7 +57,7 @@ func (s *Server) handleListTopologies(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, e := range hclEntries {
 		name := filepath.Base(filepath.Dir(e))
-		topolist[name] = &topologyInfo{Name: name, HasHCL: true}
+		topolist[name] = &topologyInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name, HasHCL: true}
 	}
 
 	if s.stateBackend == "" {
@@ -68,7 +70,7 @@ func (s *Server) handleListTopologies(w http.ResponseWriter, r *http.Request) {
 			name := filepath.Base(filepath.Dir(e))
 			info := topolist[name]
 			if info == nil {
-				info = &topologyInfo{Name: name}
+				info = &topologyInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name}
 				topolist[name] = info
 			}
 			info.HasState = true
@@ -91,9 +93,11 @@ func (s *Server) handleListTopologies(w http.ResponseWriter, r *http.Request) {
 			}
 			info := topolist[item.Name]
 			if info == nil {
-				info = &topologyInfo{Name: item.Name}
+				info = &topologyInfo{ArtifactID: artifactID(item.Name), TopologyID: topologyID(item.Name), Name: item.Name}
 				topolist[item.Name] = info
 			}
+			info.ArtifactID = artifactID(item.Name)
+			info.TopologyID = topologyID(item.Name)
 			info.HasState = item.HasState
 			info.ResourceCount = item.ResourceCount
 			info.Serial = item.Serial

@@ -21,6 +21,8 @@ type Project struct {
 
 type Workspace struct {
 	ProjectID      string    `json:"project_id"`
+	ArtifactID     string    `json:"artifact_id,omitempty"`
+	TopologyID     string    `json:"topology_id,omitempty"`
 	Name           string    `json:"name"`
 	HasHCL         bool      `json:"has_hcl"`
 	HasState       bool      `json:"has_state"`

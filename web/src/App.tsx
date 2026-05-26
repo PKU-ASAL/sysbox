@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom"
 import {
-  ArrowLeft,
   CheckCircle2,
   Cloud,
   Database,
@@ -46,7 +45,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { usePolling } from "@/hooks/usePolling"
-import { api, getToken, setToken } from "@/lib/api"
+import { api } from "@/lib/api"
 import type { Agent, GraphEdge, GraphNode, NodeInfo, OutputValue, Plan, ResourceHealth, Run, Topology, TopologyHealth } from "@/types/api"
 
 const starterHcl = `substrate "docker" {
@@ -95,7 +94,6 @@ export default function App() {
   const [detail, setDetail] = useState<Detail>({})
   const [notice, setNotice] = useState("")
   const [busy, setBusy] = useState("")
-  const [tokenValue, setTokenValue] = useState(getToken())
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState("docker-service")
   const [newHcl, setNewHcl] = useState(starterHcl)
@@ -116,21 +114,22 @@ export default function App() {
   const deployedTopologies = useMemo(() => topologies.filter((topology) => topology.has_state), [topologies])
   const activePage = pageFromPath(location.pathname)
   const selectedResource = selectedResourceFromPath(location.pathname)
+  const selectedName = resolveRouteName(activePage, selectedResource, topologies)
 
   const refreshDetail = useCallback(async () => {
-    if (!selectedResource || activePage === "agents" || activePage === "dashboard") {
+    if (!selectedName || activePage === "agents" || activePage === "dashboard") {
       setDetail({})
       return
     }
     const result: Detail = {}
     const tasks = await Promise.allSettled([
-      api.getHcl(selectedResource),
-      api.plans(selectedResource),
-      api.outputs(selectedResource),
-      api.healthOfTopology(selectedResource),
-      api.resources(selectedResource),
-      api.nodes(selectedResource),
-      api.graph(selectedResource),
+      api.getHcl(selectedName),
+      api.plans(selectedName),
+      api.outputs(selectedName),
+      api.healthOfTopology(selectedName),
+      api.resources(selectedName),
+      api.nodes(selectedName),
+      api.graph(selectedName),
     ])
     if (tasks[0].status === "fulfilled") result.hcl = tasks[0].value
     if (tasks[1].status === "fulfilled") result.plans = tasks[1].value.plans
@@ -140,7 +139,7 @@ export default function App() {
     if (tasks[5].status === "fulfilled") result.nodes = tasks[5].value.nodes
     if (tasks[6].status === "fulfilled") result.graph = { nodes: tasks[6].value.nodes, edges: tasks[6].value.edges }
     setDetail(result)
-  }, [activePage, selectedResource])
+  }, [activePage, selectedName])
 
   useEffect(() => {
     void refreshDetail()
@@ -169,44 +168,44 @@ export default function App() {
   async function createTopology() {
     await mutate("create topology", async () => {
       await api.createTopology(newName, newHcl)
-      navigate(`/artifacts/${encodeURIComponent(newName)}`)
+      navigate(`/artifacts/${encodeURIComponent(artifactID({ name: newName }))}`)
       setCreateOpen(false)
     })
   }
 
   async function saveHcl() {
-    if (!selectedResource || detail.hcl === undefined) return
-    await mutate("save HCL", () => api.updateHcl(selectedResource, detail.hcl || ""))
+    if (!selectedName || detail.hcl === undefined) return
+    await mutate("save HCL", () => api.updateHcl(selectedName, detail.hcl || ""))
   }
 
   async function createPlan() {
-    if (!selectedResource) return
+    if (!selectedName) return
     await mutate("create plan", async () => {
-      const plan = await api.createPlan(selectedResource)
+      const plan = await api.createPlan(selectedName)
       setDetail((prev) => ({ ...prev, plan }))
     })
   }
 
   async function applyPlan() {
-    if (!selectedResource) return
+    if (!selectedName) return
     await mutate("apply", async () => {
       const planID = detail.plan?.id || detail.plans?.[0]?.id
-      const run = await api.apply(selectedResource, planID)
+      const run = await api.apply(selectedName, planID)
       await waitRun(run.run_id)
     })
   }
 
   async function destroyTopology() {
-    if (!selectedResource) return
+    if (!selectedName) return
     await mutate("destroy", async () => {
-      const run = await api.destroy(selectedResource)
+      const run = await api.destroy(selectedName)
       await waitRun(run.run_id)
     })
   }
 
   async function deleteTopology() {
-    if (!selectedResource) return
-    const name = selectedResource
+    if (!selectedName) return
+    const name = selectedName
     await mutate("delete topology", async () => {
       await api.deleteTopology(name)
       navigate("/artifacts")
@@ -225,11 +224,6 @@ export default function App() {
     throw new Error("run timed out")
   }
 
-  function saveToken() {
-    setToken(tokenValue)
-    void overview.refresh()
-    void refreshDetail()
-  }
   const pageTitle = titleFromPath(location.pathname)
   const pageDescription = descriptionFromPage(activePage)
 
@@ -243,19 +237,14 @@ export default function App() {
         topologies={topologies}
       />
       <SidebarInset>
-        <header className="sticky top-0 z-10 flex min-h-16 shrink-0 items-center gap-3 border-b bg-background/85 px-4 py-3 backdrop-blur lg:px-6">
+        <header className="sticky top-0 z-10 flex min-h-12 shrink-0 items-center gap-3 border-b bg-background/85 px-4 py-2 backdrop-blur lg:px-5">
           <SidebarTrigger className="-ml-1" />
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="sysbox-eyebrow">sysbox console</div>
-              <h1 className="mt-1 text-lg font-semibold tracking-normal">{pageTitle}</h1>
+              <h1 className="text-base font-semibold tracking-normal">{pageTitle}</h1>
               <p className="text-xs text-muted-foreground">{pageDescription}</p>
             </div>
             <div className="flex items-center gap-2">
-              <Input className="w-48" placeholder="API token" value={tokenValue} onChange={(event) => setTokenValue(event.target.value)} />
-              <Button variant="outline" onClick={saveToken}>
-                Save
-              </Button>
               <Button variant="outline" size="icon" onClick={() => void overview.refresh()} aria-label="Refresh">
                 <RefreshCw />
               </Button>
@@ -327,7 +316,7 @@ export default function App() {
         </div>
       </SidebarInset>
 
-      <ConsoleDialog topology={selectedResource || ""} node={consoleNode} open={Boolean(consoleNode)} onOpenChange={(open) => !open && setConsoleNode(undefined)} />
+      <ConsoleDialog topology={selectedName || ""} node={consoleNode} open={Boolean(consoleNode)} onOpenChange={(open) => !open && setConsoleNode(undefined)} />
     </SidebarProvider>
   )
 }
@@ -345,6 +334,25 @@ function selectedResourceFromPath(pathname: string) {
     return decodeURIComponent(segments[1])
   }
   return ""
+}
+
+function resolveRouteName(page: AppPage, routeID: string, topologies: Topology[]) {
+  if (!routeID) return ""
+  if (page === "artifacts") {
+    return topologies.find((topology) => artifactID(topology) === routeID)?.name || routeID
+  }
+  if (page === "topologies") {
+    return topologies.find((topology) => topologyID(topology) === routeID)?.name || routeID
+  }
+  return routeID
+}
+
+function artifactID(topology: Pick<Topology, "name" | "artifact_id">) {
+  return topology.artifact_id || `art_${topology.name}`
+}
+
+function topologyID(topology: Pick<Topology, "name" | "topology_id">) {
+  return topology.topology_id || `topo_${topology.name}`
 }
 
 function titleFromPath(pathname: string) {
@@ -461,9 +469,6 @@ function AgentsListPage({ agents }: { agents: Agent[] }) {
           )}
         </TableBody>
       </Table>
-      <p className="mt-3 text-xs text-muted-foreground">
-        local API is the in-process fallback executor; local-docker is the Docker compose agent registered through the agent protocol.
-      </p>
     </EuiPanel>
   )
 }
@@ -479,32 +484,24 @@ function AgentDetailRoute({ agents, runs }: { agents: Agent[]; runs: Run[] }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <DetailHeader backTo="/agents" eyebrow="agents" title={agent.name || agent.id} description={agent.id} />
-      <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Agent state</CardTitle>
-            <CardDescription>Identity, protocol, and current availability.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3 text-sm">
-            <KeyValue label="Status" value={<StatusBadge status={agent.disabled ? "disabled" : agent.quarantined ? "quarantined" : agent.status} />} />
-            <KeyValue label="Mode" value={agent.labels?.execution === "in-process" ? "local API" : agent.labels?.mode || "agent"} />
-            <KeyValue label="Protocol" value={agent.protocol || "unknown"} />
-            <KeyValue label="Version" value={agent.version || "unknown"} />
-            <KeyValue label="Last heartbeat" value={agent.last_heartbeat || "never"} />
-          </CardContent>
-        </Card>
-        <div className="flex flex-col gap-4">
-          <EuiPanel title="Capabilities" description="Substrates and operations advertised by this agent.">
-            <div className="flex flex-wrap gap-2 p-4">
-              {(agent.capabilities || []).length === 0 ? <EmptyLine text="No capabilities" /> : agent.capabilities?.map((capability) => <Badge key={capability} variant="secondary">{capability}</Badge>)}
-            </div>
-          </EuiPanel>
-          <EuiPanel title="Recent runs" description="Runs assigned to this agent.">
-            <RunsTable runs={agentRuns} />
-          </EuiPanel>
-        </div>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard title="State" value={agent.disabled ? "disabled" : agent.quarantined ? "quarantined" : agent.status} description={agent.name || agent.id} icon={Cloud} />
+        <MetricCard title="Capabilities" value={(agent.capabilities || []).length} description={(agent.capabilities || []).slice(0, 3).join(", ") || "none advertised"} icon={Cloud} />
+        <MetricCard title="Protocol" value={agent.protocol || "unknown"} description={agent.version || "version unknown"} icon={GitBranch} />
+        <MetricCard title="Runs" value={agentRuns.length} description="Recent assigned operations" icon={Play} />
       </div>
+      <EuiPanel title="Recent runs" description={`Agent ${agent.id}`}>
+        <RunsTable runs={agentRuns} />
+      </EuiPanel>
+      <Card>
+        <CardHeader>
+          <CardTitle>Capabilities</CardTitle>
+          <CardDescription>Substrates and operations advertised by this agent.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          {(agent.capabilities || []).length === 0 ? <EmptyLine text="No capabilities" /> : agent.capabilities?.map((capability) => <Badge key={capability} variant="secondary">{capability}</Badge>)}
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -541,10 +538,10 @@ function ArtifactsListPage({ topologies }: { topologies: Topology[] }) {
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault()
-                    navigate(`/artifacts/${encodeURIComponent(topology.name)}`)
+                    navigate(`/artifacts/${encodeURIComponent(artifactID(topology))}`)
                   }
                 }}
-                onClick={() => navigate(`/artifacts/${encodeURIComponent(topology.name)}`)}
+                onClick={() => navigate(`/artifacts/${encodeURIComponent(artifactID(topology))}`)}
               >
                 <TableCell className="font-medium">{topology.name}</TableCell>
                 <TableCell>
@@ -560,7 +557,7 @@ function ArtifactsListPage({ topologies }: { topologies: Topology[] }) {
                     size="sm"
                     onClick={(event) => {
                       event.stopPropagation()
-                      navigate(`/artifacts/${encodeURIComponent(topology.name)}`)
+                      navigate(`/artifacts/${encodeURIComponent(artifactID(topology))}`)
                     }}
                   >
                     <MousePointer2 data-icon="inline-start" />
@@ -601,8 +598,9 @@ function ArtifactDetailRoute({
 }) {
   const { artifactId = "" } = useParams()
   const artifactName = decodeURIComponent(artifactId)
-  const artifact = topologies.find((topology) => topology.name === artifactName)
-  const artifactRuns = runs.filter((run) => run.topology === artifactName || run.workspace === artifactName).slice(0, 8)
+  const artifact = topologies.find((topology) => artifactID(topology) === artifactName || topology.name === artifactName)
+  const workspaceName = artifact?.name || artifactName
+  const artifactRuns = runs.filter((run) => run.topology === workspaceName || run.workspace === workspaceName).slice(0, 8)
 
   if (!artifact) {
     return <ResourceNotFound backTo="/artifacts" title="Artifact not found" />
@@ -610,64 +608,57 @@ function ArtifactDetailRoute({
 
   return (
     <div className="flex flex-col gap-4">
-      <DetailHeader backTo="/artifacts" eyebrow="artifacts" title={artifact.name} description="HCL configuration artifact" />
-      <section className="min-w-0">
-          <EuiPanel title={artifact.name} description={`${artifact.backend || "local"} · serial ${artifact.serial || 0}`}>
-            <CardHeader>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <FileCode2 />
-                  HCL artifact detail
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" onClick={onCreatePlan} disabled={busy !== ""}>
-                    <GitBranch data-icon="inline-start" />
-                    Plan
-                  </Button>
-                  <Button onClick={onApplyPlan} disabled={busy !== ""}>
-                    <Play data-icon="inline-start" />
-                    Apply
-                  </Button>
-                  <Button variant="outline" onClick={onDestroy} disabled={busy !== "" || !artifact.has_state}>
-                    Destroy
-                  </Button>
-                  <Button variant="destructive" size="icon" onClick={onDelete} disabled={busy !== ""} aria-label="Delete">
-                    <Trash2 />
-                  </Button>
-                </div>
+      <Card className="sysbox-panel-glow overflow-hidden rounded-md">
+        <CardHeader className="border-b bg-muted/30 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <FileCode2 />
+                <CardTitle className="truncate text-sm">{artifact.name}.sysbox.hcl</CardTitle>
+                <StatusBadge status={artifact.has_state ? "applied" : "draft"} />
               </div>
-            </CardHeader>
-            <CardContent>
-              <Tabs defaultValue="hcl">
-                <TabsList>
-                  <TabsTrigger value="hcl">HCL</TabsTrigger>
-                  <TabsTrigger value="plan">Plan</TabsTrigger>
-                  <TabsTrigger value="runs">Runs</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="hcl">
-                  <div className="flex flex-col gap-3">
-                    <Textarea className="min-h-[520px] font-mono" value={detail.hcl || ""} onChange={(event) => onHclChange(event.target.value)} />
-                    <div className="flex justify-end">
-                      <Button onClick={onSaveHcl} disabled={busy !== ""}>
-                        <FileCode2 data-icon="inline-start" />
-                        Save HCL
-                      </Button>
-                    </div>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="plan">
-                  <PlanView plan={detail.plan || detail.plans?.[0]} />
-                </TabsContent>
-
-                <TabsContent value="runs">
-                  <RunsTable runs={artifactRuns} />
-                </TabsContent>
-              </Tabs>
-            </CardContent>
-          </EuiPanel>
-      </section>
+              <CardDescription className="mt-1 font-mono text-xs">{artifactID(artifact)} · serial {artifact.serial || 0}</CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={onSaveHcl} disabled={busy !== ""}>
+                <FileCode2 data-icon="inline-start" />
+                Save
+              </Button>
+              <Button variant="outline" onClick={onCreatePlan} disabled={busy !== ""}>
+                <GitBranch data-icon="inline-start" />
+                Plan
+              </Button>
+              <Button onClick={onApplyPlan} disabled={busy !== ""}>
+                <Play data-icon="inline-start" />
+                Apply
+              </Button>
+              <Button variant="outline" onClick={onDestroy} disabled={busy !== "" || !artifact.has_state}>
+                Destroy
+              </Button>
+              <Button variant="destructive" size="icon" onClick={onDelete} disabled={busy !== ""} aria-label="Delete">
+                <Trash2 />
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Textarea
+            className="min-h-[560px] resize-y rounded-none border-0 bg-background/95 p-4 font-mono text-sm leading-6 shadow-none focus-visible:ring-0"
+            value={detail.hcl || ""}
+            onChange={(event) => onHclChange(event.target.value)}
+          />
+        </CardContent>
+      </Card>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <EuiPanel title="Plan" description="Latest field-level diff for this HCL artifact.">
+          <div className="p-4">
+            <PlanView plan={detail.plan || detail.plans?.[0]} />
+          </div>
+        </EuiPanel>
+        <EuiPanel title="Runs" description="Plan/apply/destroy task history.">
+          <RunsTable runs={artifactRuns} />
+        </EuiPanel>
+      </div>
     </div>
   )
 }
@@ -708,10 +699,10 @@ function TopologiesListPage({
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault()
-                    navigate(`/topologies/${encodeURIComponent(topology.name)}`)
+                    navigate(`/topologies/${encodeURIComponent(topologyID(topology))}`)
                   }
                 }}
-                onClick={() => navigate(`/topologies/${encodeURIComponent(topology.name)}`)}
+                onClick={() => navigate(`/topologies/${encodeURIComponent(topologyID(topology))}`)}
               >
                 <TableCell className="font-medium">{topology.name}</TableCell>
                 <TableCell>
@@ -726,7 +717,7 @@ function TopologiesListPage({
                     size="sm"
                     onClick={(event) => {
                       event.stopPropagation()
-                      navigate(`/topologies/${encodeURIComponent(topology.name)}`)
+                      navigate(`/topologies/${encodeURIComponent(topologyID(topology))}`)
                     }}
                   >
                     <MousePointer2 data-icon="inline-start" />
@@ -746,7 +737,7 @@ function TopologiesListPage({
 function TopologyDetailRoute({ topologies, detail, onConsole }: { topologies: Topology[]; detail: Detail; onConsole: (node: string) => void }) {
   const { topologyId = "" } = useParams()
   const topologyName = decodeURIComponent(topologyId)
-  const topology = topologies.find((item) => item.name === topologyName)
+  const topology = topologies.find((item) => topologyID(item) === topologyName || item.name === topologyName)
 
   if (!topology) {
     return <ResourceNotFound backTo="/topologies" title="Topology not found" />
@@ -754,7 +745,6 @@ function TopologyDetailRoute({ topologies, detail, onConsole }: { topologies: To
 
   return (
     <div className="flex flex-col gap-4">
-      <DetailHeader backTo="/topologies" eyebrow="topologies" title={topology.name} description="Deployed topology environment" />
       <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
         <TopologyGraph nodes={detail.graph?.nodes || []} edges={detail.graph?.edges || []} />
         <div className="flex flex-col gap-4">
@@ -789,37 +779,22 @@ function EuiPanel({ title, description, children }: { title: string; description
   )
 }
 
-function DetailHeader({ backTo, eyebrow, title, description }: { backTo: string; eyebrow: string; title: string; description: string }) {
+function ResourceNotFound({ backTo, title }: { backTo: string; title: string }) {
   const navigate = useNavigate()
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <div className="sysbox-eyebrow">{eyebrow}</div>
-        <h2 className="mt-1 text-lg font-semibold tracking-normal">{title}</h2>
-        <p className="text-sm text-muted-foreground">{description}</p>
-      </div>
-      <Button variant="outline" onClick={() => navigate(backTo)}>
-        <ArrowLeft data-icon="inline-start" />
-        Back
-      </Button>
-    </div>
-  )
-}
-
-function ResourceNotFound({ backTo, title }: { backTo: string; title: string }) {
-  return (
     <div className="flex flex-col gap-4">
-      <DetailHeader backTo={backTo} eyebrow="not found" title={title} description="The requested resource was not returned by the API." />
+      <Card>
+        <CardHeader>
+          <CardTitle>{title}</CardTitle>
+          <CardDescription>The requested resource was not returned by the API.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" onClick={() => navigate(backTo)}>
+            Back
+          </Button>
+        </CardContent>
+      </Card>
       <EmptyLine text={title} />
-    </div>
-  )
-}
-
-function KeyValue({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
-      <span className="text-xs uppercase tracking-[0.12em] text-muted-foreground">{label}</span>
-      <span className="min-w-0 truncate text-right">{value}</span>
     </div>
   )
 }

@@ -83,9 +83,11 @@ func (s *Server) handleCreateTopology(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"name":      name,
-		"has_hcl":   true,
-		"has_state": false,
+		"artifact_id": artifactID(name),
+		"topology_id": topologyID(name),
+		"name":        name,
+		"has_hcl":     true,
+		"has_state":   false,
 	})
 }
 
@@ -164,9 +166,11 @@ func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := map[string]any{
-		"name":      topology,
-		"has_hcl":   false,
-		"has_state": false,
+		"artifact_id": artifactID(topology),
+		"topology_id": topologyID(topology),
+		"name":        topology,
+		"has_hcl":     false,
+		"has_state":   false,
 	}
 
 	if _, err := os.Stat(s.hclFile(topology)); err == nil {

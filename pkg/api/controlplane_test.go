@@ -30,6 +30,12 @@ func TestControlPlaneObjects(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/topologies", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"artifact_id":"art_lab"`)
+	require.Contains(t, rec.Body.String(), `"topology_id":"topo_lab"`)
+
+	rec = httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/projects", nil))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"id":"default"`)

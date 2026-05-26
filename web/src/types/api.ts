@@ -14,6 +14,8 @@ export type Agent = {
 
 export type Topology = {
   project_id?: string
+  artifact_id?: string
+  topology_id?: string
   name: string
   has_hcl: boolean
   has_state: boolean
@@ -120,4 +122,3 @@ export type OutputValue = {
   value: unknown
   sensitive?: boolean
 }
-
