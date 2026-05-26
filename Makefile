@@ -32,7 +32,7 @@ COMPOSE_ALL := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.agent.yml
 .DEFAULT_GOAL := help
 .PHONY: help build build-all web-build test test-e2e lint ci \
 	plan apply destroy up down \
-	image image-web seed deploy deploy-full deploy-ui status undeploy reset logs config \
+	image image-web seed deploy deploy-full deploy-ui deploy-ui-dev status undeploy reset logs config \
 	.agent-register clean
 
 help: ## Show available targets
@@ -113,6 +113,11 @@ deploy-ui: image-web ## Deploy Web UI for the running API
 	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml up -d sysbox-web
 	@echo "Web UI: $(WEB_URL)"
 	@echo "Remote: http://<host-ip>:$(WEB_HOST_PORT)"
+
+deploy-ui-dev: ## Start Web UI in local Vite dev mode
+	npm --prefix web install
+	@echo "Web UI dev: $(WEB_URL)"
+	SYSBOX_WEB_API_TARGET=$(API_URL) npm --prefix web run dev -- --host $(WEB_HOST_ADDR) --port $(WEB_HOST_PORT) --strictPort
 
 status: ## Show compose service, port, and health status
 	@$(COMPOSE) $(COMPOSE_ALL) ps

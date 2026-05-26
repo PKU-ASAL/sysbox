@@ -1,24 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
-  Activity,
-  Box,
-  Braces,
-  Cable,
   CheckCircle2,
   Cloud,
-  Container,
   FileCode2,
   GitBranch,
-  LayoutDashboard,
   Loader2,
   Play,
   Plus,
   RefreshCw,
-  Server,
   SquareTerminal,
   Trash2,
 } from "lucide-react"
 
+import { AppSidebar } from "@/components/app-sidebar"
 import { ConsoleDialog } from "@/components/ConsoleDialog"
 import { StatusBadge } from "@/components/StatusBadge"
 import { TopologyGraph } from "@/components/TopologyGraph"
@@ -36,7 +30,11 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
@@ -77,7 +75,6 @@ type Detail = {
   hcl?: string
   plan?: Plan
   plans?: Plan[]
-  runs?: Run[]
   outputs?: Record<string, OutputValue>
   health?: TopologyHealth
   resources?: ResourceHealth[]
@@ -231,39 +228,17 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r bg-muted/20 lg:block">
-        <div className="flex h-full flex-col">
-          <div className="flex h-16 items-center gap-3 px-5">
-            <div className="flex size-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <Box />
-            </div>
-            <div>
-              <div className="font-semibold">sysbox</div>
-              <div className="text-xs text-muted-foreground">Control plane</div>
-            </div>
-          </div>
-          <nav className="flex flex-1 flex-col gap-1 px-3 py-3">
-            <NavItem icon={LayoutDashboard} active label="Workspaces" />
-            <NavItem icon={Server} label="Agents" />
-            <NavItem icon={Activity} label="Runs" />
-            <NavItem icon={Braces} label="Artifacts" />
-          </nav>
-          <div className="p-4">
-            <div className="rounded-lg border bg-background p-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium">API</span>
-                <StatusBadge status={overview.data?.health.status || (overview.error ? "offline" : "checking")} />
-              </div>
-              <div className="mt-2 text-xs text-muted-foreground">/v1 via same-origin proxy</div>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      <main className="lg:pl-64">
-        <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
-          <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 px-4 py-3 lg:px-6">
+    <SidebarProvider>
+      <AppSidebar
+        apiStatus={overview.data?.health.status || (overview.error ? "offline" : "checking")}
+        agents={agents}
+        runs={runs}
+        topologies={topologies}
+      />
+      <SidebarInset>
+        <header className="sticky top-0 z-10 flex min-h-16 shrink-0 items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur lg:px-6">
+          <SidebarTrigger className="-ml-1" />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold tracking-normal">Workspaces</h1>
               <p className="text-sm text-muted-foreground">Plan, apply, observe, and connect to sysbox topologies.</p>
@@ -442,19 +417,10 @@ export default function App() {
             )}
           </section>
         </div>
-      </main>
+      </SidebarInset>
 
       <ConsoleDialog topology={selected} node={consoleNode} open={Boolean(consoleNode)} onOpenChange={(open) => !open && setConsoleNode(undefined)} />
-    </div>
-  )
-}
-
-function NavItem({ icon: Icon, label, active }: { icon: typeof LayoutDashboard; label: string; active?: boolean }) {
-  return (
-    <div className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm ${active ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}>
-      <Icon />
-      {label}
-    </div>
+    </SidebarProvider>
   )
 }
 
