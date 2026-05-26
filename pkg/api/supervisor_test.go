@@ -98,6 +98,11 @@ func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
 	cfg.Paths.WorkspacesDir = workspaces
 	cfg.Supervisor.Policy = string(SupervisorPolicyRestartOnCrash)
 	s := NewServerWithConfig(cfg)
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+		ID:           "host-a",
+		Status:       "online",
+		Capabilities: []string{"docker"},
+	}))
 	supervisor := newSupervisor(s, time.Minute)
 	require.NoError(t, supervisor.ScanTopology(context.Background(), "mixed"))
 

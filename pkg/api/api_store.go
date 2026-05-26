@@ -604,7 +604,7 @@ func (s *postgresAPIStore) connect(ctx context.Context) (*pgx.Conn, error) {
 
 func (s *postgresAPIStore) ensureSchema(ctx context.Context, conn *pgx.Conn) error {
 	_, err := conn.Exec(ctx, `
-CREATE TABLE IF NOT EXISTS sysbox_schema_migrations (
+CREATE TABLE IF NOT EXISTS sysbox_api_schema_migrations (
   name TEXT PRIMARY KEY,
   version INTEGER NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -630,16 +630,16 @@ func (s *postgresAPIStore) applyMigration(ctx context.Context, conn *pgx.Conn, m
 		return fmt.Errorf("postgres apply api migration %03d_%s: %w", migration.Version, migration.Name, err)
 	}
 	_, err = tx.Exec(ctx, `
-INSERT INTO sysbox_schema_migrations (name, version, updated_at)
+INSERT INTO sysbox_api_schema_migrations (name, version, updated_at)
 VALUES ('api', $1, now())
 ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version, updated_at=now()
-WHERE sysbox_schema_migrations.version < EXCLUDED.version`, migration.Version)
+WHERE sysbox_api_schema_migrations.version < EXCLUDED.version`, migration.Version)
 	if err != nil {
 		return fmt.Errorf("postgres record api schema version: %w", err)
 	}
 	stepName := fmt.Sprintf("api/%03d_%s", migration.Version, migration.Name)
 	_, err = tx.Exec(ctx, `
-INSERT INTO sysbox_schema_migrations (name, version, updated_at)
+INSERT INTO sysbox_api_schema_migrations (name, version, updated_at)
 VALUES ($1, $2, now())
 ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version, updated_at=now()`,
 		stepName, migration.Version)
@@ -656,7 +656,7 @@ func (s *postgresAPIStore) SchemaVersion(ctx context.Context) (int, error) {
 	}
 	defer conn.Close(ctx)
 	var version int
-	err = conn.QueryRow(ctx, `SELECT version FROM sysbox_schema_migrations WHERE name='api'`).Scan(&version)
+	err = conn.QueryRow(ctx, `SELECT version FROM sysbox_api_schema_migrations WHERE name='api'`).Scan(&version)
 	if err != nil {
 		return 0, fmt.Errorf("postgres api schema version: %w", err)
 	}

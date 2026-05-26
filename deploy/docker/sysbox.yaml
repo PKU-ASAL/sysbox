@@ -55,11 +55,11 @@ providers:
   network:
     enabled: true
   firecracker:
-    enabled: true
+    enabled: false
     binary: /opt/sysbox/bin/firecracker
     workdir: /var/lib/sysbox/firecracker
   libvirt:
-    enabled: true
+    enabled: false
 
 artifacts:
   roots:

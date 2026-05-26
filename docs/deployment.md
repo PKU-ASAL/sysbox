@@ -1,73 +1,65 @@
 # sysbox Deployment
 
-sysbox uses a layered deployment model:
+sysbox keeps deployment small and explicit:
 
-- `sysbox.yaml` describes API service defaults.
-- `.env` describes deploy-time overrides for this host.
+- `sysbox.yaml` describes API/agent service defaults.
+- `.env` describes deploy-time host wiring.
 - HCL describes topology intent.
-- Docker Compose files describe capability layers.
-- `make api-up` is the stable operational entrypoint.
+- Docker Compose starts the control plane and, optionally, one local Docker
+  agent.
 
-## Profiles
-
-Set `SYSBOX_DEPLOYMENT` in `.env`:
-
-| Profile | Compose files | Purpose |
-|---|---|---|
-| `docker` | `deploy/docker/compose.yml` | Docker-only topologies and API/control-plane work |
-| `vm` | base + `deploy/docker/compose.vm.yml` | network + Firecracker/VM labs |
-| `full` | vm + `deploy/docker/compose.full.yml` | all local substrates including libvirt |
-
-The `docker` profile avoids host networking and host PID namespace. `vm` opts
-into local lab capabilities such as host netns, tap devices, and KVM. `full`
-adds libvirt socket access.
-
-## Workflow
+## Targets
 
 ```bash
 cp .env.example .env
-$EDITOR .env
-make api-config
-make api-up
+$EDITOR .env        # change SYSBOX_POSTGRES_PASSWORD outside disposable labs
+
+make deploy       # API + Postgres
+make deploy-full  # API + Postgres + Docker agent
+make undeploy
+make reset        # stop compose and remove local Postgres volume
+make logs
 ```
 
-Change `SYSBOX_POSTGRES_PASSWORD` before starting the stack.
+`make deploy` starts only the control plane. It does not mount the host Docker
+socket into the API container.
 
-`make api-config` prints the resolved Compose config, which is the best quick
-check before starting a privileged profile.
+`make deploy-full` first registers an agent identity, then starts a
+`sysbox-agent` container. The agent mounts the host Docker socket and executes
+Docker-substrate runs assigned by the API.
+
+If you change `SYSBOX_POSTGRES_PASSWORD` after Postgres has already initialized,
+the existing Docker volume keeps the old database password. For local disposable
+labs, run `make reset` and deploy again.
 
 ## Service Config
 
-The API reads `/etc/sysbox/sysbox.yaml` by default. Docker Compose mounts
-`deploy/docker/sysbox.yaml` there. Use `SYSBOX_CONFIG` or `sysbox serve --config`
-to point at another file.
+The containers read `/etc/sysbox/sysbox.yaml` by default. Docker Compose mounts
+`deploy/docker/sysbox.yaml` there. Use `SYSBOX_CONFIG` only when pointing at a
+different mounted config path.
 
-Environment variables remain useful for 12-factor deployment wiring, but should
-not become the product model. Keep project/workspace intent in HCL and control
-plane objects; keep provider defaults, state backend, paths, and supervisor
-defaults in `sysbox.yaml`.
+Environment variables are for deployment wiring, not product intent. Keep
+project/workspace intent in HCL and control-plane objects; keep provider
+defaults, state backend, paths, lease policy, and supervisor defaults in
+`sysbox.yaml`.
 
 ## Local Runtime Layout
 
 By default, generated local state lives under `.sysbox/`:
 
-- `.sysbox/api`: API workspaces, fallback state, run metadata, checkpoints.
+- `.sysbox/api`: API workspaces, agent identity, fallback state, run metadata,
+  checkpoints.
 - `.sysbox/runs`: CLI/example state and e2e state files.
 
 Compose exposes only host-side path variables. `SYSBOX_HOST_HOME_DIR` is mounted
 to container `/var/lib/sysbox`, and `SYSBOX_HOST_CACHE_DIR` is mounted to
 container `/var/cache/sysbox`.
 
-The legacy `data/` and `runs/` directories are ignored, but new docs and
-Makefile targets use `.sysbox/` so runtime files do not spread across the
-repository root.
-
 ## State Backend
 
-Leave `SYSBOX_STATE_BACKEND` empty for the normal Compose config:
-
-- `docker`: `compose.yml` assembles a DSN for `sysbox-postgres:5432`
-- `vm` / `full`: `compose.vm.yml` overrides it to `postgres://...@127.0.0.1:${SYSBOX_POSTGRES_HOST_PORT}/...`
+Leave `SYSBOX_STATE_BACKEND` empty for the normal Compose config. Compose
+assembles a Postgres DSN for `sysbox-postgres:5432` and passes it to both API
+and agent.
 
 Set `SYSBOX_STATE_BACKEND` only when using an external backend. Keep real
 credentials in local `.env` or your deployment secret manager, not in
@@ -77,12 +69,14 @@ credentials in local `.env` or your deployment secret manager, not in
 the effective Postgres DSN. Treat that output as sensitive when it contains real
 credentials.
 
-## Artifacts
+## Smoke Test
 
-Large artifacts should not be baked into the API image. Prefer:
+```bash
+make deploy-full
+curl http://127.0.0.1:9876/v1/agents
+curl -X POST http://127.0.0.1:9876/v1/topologies/docker-service/apply
+curl http://127.0.0.1:9876/v1/runs
+```
 
-- host-mounted cache via `SYSBOX_HOST_CACHE_DIR`
-- HCL `sysbox_kernel` / `sysbox_image` artifact declarations
-- explicit tools directory mount via `SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR`
-
-This keeps images small while still allowing reproducible, pinned artifacts.
+`examples/docker-service` is intentionally Docker-only so it can run through the
+containerized agent with just the Docker socket mounted.

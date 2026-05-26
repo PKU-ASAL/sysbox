@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -57,6 +59,11 @@ func TestControlPlaneObjects(t *testing.T) {
 
 func TestApplyCanReferenceStoredPlan(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+		ID:           "host-a",
+		Status:       "online",
+		Capabilities: []string{"network"},
+	}))
 
 	hcl := `resource "sysbox_network" "lab" {
   cidr = "10.77.0.0/24"
@@ -97,7 +104,7 @@ func TestApplyCanReferenceStoredPlan(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, plan.ID, run.PlanID)
 	require.Equal(t, plan.Revision, run.Revision)
-	require.Equal(t, DefaultAgentID, run.AgentID)
+	require.Equal(t, "host-a", run.AgentID)
 	require.Equal(t, RunAssigned, run.Status)
 }
 

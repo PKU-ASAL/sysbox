@@ -58,20 +58,22 @@ The Makefile is intentionally small. Main targets:
 make build                         # build bin/sysbox
 make test                          # unit tests
 sudo -E make test-e2e              # integration tests using Docker/netns paths
-make lint                          # gofmt + go vet
+make lint                          # go vet
 
 make plan TOPO=two-networks        # plan an example
 sudo -E make apply TOPO=two-networks
 sudo -E make destroy TOPO=two-networks
 
 cp .env.example .env               # one local 12-factor config file
-make api-config                    # inspect resolved compose config
-make api-up                        # API + Postgres using SYSBOX_DEPLOYMENT
-make api-down
-make api-logs
+make config                        # inspect resolved compose config
+make deploy                        # API + Postgres
+make deploy-full                   # API + Postgres + Docker agent
+make undeploy
+make reset                         # stop compose and remove local Postgres volume
+make logs
 ```
 
-Compatibility aliases are kept for muscle memory: `make up`, `make down`, `make docker-up`, `make docker-down`, and `make docker-logs`.
+`make up` and `make down` remain local CLI aliases for `apply` and `destroy`.
 
 ## CLI
 
@@ -108,11 +110,9 @@ For the full deployment model, see [docs/deployment.md](docs/deployment.md).
 
 ```bash
 cp .env.example .env
-make api-up
+make deploy
 curl http://127.0.0.1:9876/v1/health
 curl http://127.0.0.1:9876/v1/topologies
-curl http://127.0.0.1:9876/v1/topologies/two-networks/preflight
-curl -X POST http://127.0.0.1:9876/v1/topologies/two-networks/apply
 ```
 
 Deployment follows a 12-factor style: keep deploy-time choices in `.env`, keep topology intent in HCL, and keep the command surface small. Start by copying the template:
@@ -121,38 +121,29 @@ Deployment follows a 12-factor style: keep deploy-time choices in `.env`, keep t
 cp .env.example .env
 ```
 
-Choose one deployment profile in `.env`:
-
-| `SYSBOX_DEPLOYMENT` | Use when | Extra host access |
-|---|---|---|
-| `docker` | Docker-only topologies and control-plane development | Docker socket only |
-| `vm` | Network + Firecracker/VM labs | `privileged`, host network/pid, `/dev/kvm`, tools directory |
-| `full` | All local substrates including libvirt | `vm` access plus libvirt socket |
-
-Then use the same commands for every mode:
+Use one of two deployment targets:
 
 ```bash
-cp .env.example .env
-$EDITOR .env        # change SYSBOX_POSTGRES_PASSWORD
-make api-config
-make api-up
+make deploy       # control plane only: API + Postgres
+make deploy-full  # control plane + Docker agent
+make reset        # local reset: removes the Compose Postgres volume
 ```
 
-Default `SYSBOX_DEPLOYMENT=docker` runs the API as a normal Compose service and connects to Postgres through Compose DNS (`sysbox-postgres:5432`). `vm` and `full` intentionally opt into host-level privileges; in host networking mode the API reaches Postgres through `127.0.0.1:${SYSBOX_POSTGRES_HOST_PORT:-55432}`.
+`deploy` is the clean control-plane mode. It does not mount the Docker socket
+into the API container. `deploy-full` adds `sysbox-agent`, which mounts the
+host Docker socket and executes Docker-substrate runs assigned by the API.
 
-Firecracker is mounted through a host tools directory. Put the binary at
-`${SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR}/firecracker`; inside the API container it appears as
-`/opt/sysbox/bin/firecracker`, which is configured in `deploy/docker/sysbox.yaml`.
+For a quick API-driven smoke test:
 
 ```bash
-SYSBOX_DEPLOYMENT=vm
-SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR=/home/jiandong/.local/bin
-make api-up
-curl http://127.0.0.1:9876/v1/capabilities
-curl http://127.0.0.1:9876/v1/topologies/mixed/preflight
+make deploy-full
+curl -X POST http://127.0.0.1:9876/v1/topologies/docker-service/apply
+curl http://127.0.0.1:9876/v1/runs
 ```
 
-`make api-seed` copies `examples/*/field.sysbox.hcl` into `.sysbox/api/workspaces` only when a workspace is missing. After that, API-managed HCL is independent from `examples/`.
+`make seed` copies `examples/*/field.sysbox.hcl` into `.sysbox/api/workspaces`
+only when a workspace is missing. After that, API-managed HCL is independent
+from `examples/`.
 
 Important API endpoints are documented in [docs/api.md](docs/api.md).
 
@@ -207,7 +198,7 @@ sysbox supports local state and service backends. The service path now includes:
 - checkpoint-driven recover/cleanup for Docker, local networks, and microVM leftovers
 - snapshots where the backend supports them
 
-Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used. When `SYSBOX_STATE_BACKEND` is a Postgres URL, the API also stores runs/checkpoints/health in Postgres tables. Leave `SYSBOX_STATE_BACKEND` empty in `.env` to let compose choose the correct default for the selected deployment profile. The default Compose URL uses the service name; the netns override switches to the host-published Postgres port because host networking cannot use Compose service DNS.
+Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used. When `SYSBOX_STATE_BACKEND` is a Postgres URL, the API also stores runs/checkpoints/health in Postgres tables. Leave `SYSBOX_STATE_BACKEND` empty in `.env` to let Compose choose the default API/agent Postgres URL.
 
 ## Product Objects
 
@@ -221,7 +212,7 @@ CloudFormation-style control plane concepts:
 | Revision | SHA256-addressed HCL revision |
 | Plan | Stored plan record for a workspace revision |
 | Run | Async apply/destroy/recover operation with agent ownership |
-| Agent | Host-local execution node registered through `/v1/agents`; current in-process API execution appears as `local` |
+| Agent | Host-local execution node registered through `/v1/agents`; Compose `deploy-full` starts a Docker-capable agent |
 | Stack State | Current state plus backend metadata |
 | Event / Action | Checkpoint/action-log steps exposed as run events |
 | Artifact | Files in the sysbox artifact cache |
@@ -272,22 +263,17 @@ Recommended environment overrides:
 
 | Variable | Meaning |
 |---|---|
-| `SYSBOX_DEPLOYMENT` | Compose deployment profile: `docker`, `vm`, or `full` |
 | `SYSBOX_CONFIG` | Service config file path, default `/etc/sysbox/sysbox.yaml` |
 | `SYSBOX_API_HOST_PORT` | Host port published for the API, default `9876` |
 | `SYSBOX_API_TOKEN` | Optional API Bearer token |
 | `SYSBOX_HOST_HOME_DIR` | Host directory mounted to container `/var/lib/sysbox`, default `.sysbox/api` |
 | `SYSBOX_HOST_CACHE_DIR` | Host directory mounted to container `/var/cache/sysbox`, default `~/.cache/sysbox` |
-| `SYSBOX_HOST_DOCKER_SOCKET` | Host Docker socket path, default `/var/run/docker.sock` |
+| `SYSBOX_HOST_DOCKER_SOCKET` | Host Docker socket path for `deploy-full`, default `/var/run/docker.sock` |
 | `SYSBOX_POSTGRES_DATABASE` | Compose Postgres database name |
 | `SYSBOX_POSTGRES_USERNAME` | Compose Postgres username |
 | `SYSBOX_POSTGRES_PASSWORD` | Compose Postgres password; set in local `.env`, do not commit real values |
 | `SYSBOX_POSTGRES_HOST_PORT` | Host port published for Postgres, default `55432` |
 | `SYSBOX_STATE_BACKEND` | Optional external state/API backend URL; overrides Compose-generated DSN |
-| `SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR` | Host tools directory mounted to `/opt/sysbox/bin`, default `~/.local/bin` |
-| `SYSBOX_PROVIDER_FIRECRACKER_BIN` | Optional override for the Firecracker binary path; prefer `SYSBOX_PROVIDER_FIRECRACKER_TOOLS_DIR` for Compose |
-| `SYSBOX_PROVIDER_FIRECRACKER_KERNEL` | Default Firecracker kernel path; HCL `sysbox_kernel` is preferred |
-| `SYSBOX_PROVIDER_FIRECRACKER_WORKDIR` | Per-VM Firecracker work directory |
 
 The container paths `/var/lib/sysbox` and `/var/cache/sysbox` are fixed by the
 sysbox image and service config. `.env` only chooses the host directories that

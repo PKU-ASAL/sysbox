@@ -68,6 +68,11 @@ func TestSelectAgentByCapabilities(t *testing.T) {
 
 func TestDispatchRunAssignsAgentBeforeExecution(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+		ID:           "host-a",
+		Status:       "online",
+		Capabilities: []string{"docker"},
+	}))
 	run := s.jobs.start("mixed", "apply")
 
 	err := s.dispatchRun(context.Background(), run, []string{"docker"})
@@ -75,7 +80,7 @@ func TestDispatchRunAssignsAgentBeforeExecution(t *testing.T) {
 
 	got, ok := s.jobs.get(run.ID)
 	require.True(t, ok)
-	require.Equal(t, DefaultAgentID, got.AgentID)
+	require.Equal(t, "host-a", got.AgentID)
 	require.Equal(t, RunAssigned, got.Status)
 	require.False(t, got.AssignedAt.IsZero())
 }
@@ -86,16 +91,21 @@ func TestAgentClaimRun(t *testing.T) {
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	cfg.Run.Lease.ClaimTTL = "2m"
 	s := NewServerWithConfig(cfg)
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+		ID:           "host-a",
+		Status:       "online",
+		Capabilities: []string{"docker"},
+	}))
 	run := s.jobs.start("mixed", "apply")
 	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
 
-	commands, err := s.apiStore.ListAgentCommands(context.Background(), DefaultAgentID)
+	commands, err := s.apiStore.ListAgentCommands(context.Background(), "host-a")
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
 	require.Equal(t, "run_assigned", commands[0].Type)
 	require.Equal(t, run.ID, commands[0].Run.ID)
 
-	claimed, err := s.jobs.claim(run.ID, DefaultAgentID)
+	claimed, err := s.jobs.claim(run.ID, "host-a")
 	require.NoError(t, err)
 	require.Equal(t, RunRunning, claimed.Status)
 	require.Equal(t, 1, claimed.Attempt)
@@ -103,7 +113,7 @@ func TestAgentClaimRun(t *testing.T) {
 	require.False(t, claimed.LeaseUntil.IsZero())
 	require.WithinDuration(t, time.Now().UTC().Add(2*time.Minute), claimed.LeaseUntil, 5*time.Second)
 
-	_, err = s.jobs.claim(run.ID, DefaultAgentID)
+	_, err = s.jobs.claim(run.ID, "host-a")
 	require.ErrorContains(t, err, "cannot be claimed")
 }
 
@@ -113,15 +123,20 @@ func TestAgentRenewRunLeaseEndpoint(t *testing.T) {
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	cfg.Run.Lease.RenewTTL = "3m"
 	s := NewServerWithConfig(cfg)
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+		ID:           "host-a",
+		Status:       "online",
+		Capabilities: []string{"docker"},
+	}))
 	run := s.jobs.start("mixed", "apply")
 	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
-	claimed, err := s.jobs.claim(run.ID, DefaultAgentID)
+	claimed, err := s.jobs.claim(run.ID, "host-a")
 	require.NoError(t, err)
 	before := claimed.LeaseUntil
 
 	body := bytes.NewBufferString(`{"lease_owner":"` + claimed.LeaseOwner + `","ttl_seconds":3600}`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/local/runs/"+run.ID+"/renew", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/runs/"+run.ID+"/renew", body))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	got, ok := s.jobs.get(run.ID)
 	require.True(t, ok)
@@ -134,14 +149,19 @@ func TestAgentRenewRunLeaseEndpointUsesConfiguredDefaultTTL(t *testing.T) {
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	cfg.Run.Lease.RenewTTL = "90s"
 	s := NewServerWithConfig(cfg)
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+		ID:           "host-a",
+		Status:       "online",
+		Capabilities: []string{"docker"},
+	}))
 	run := s.jobs.start("mixed", "apply")
 	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
-	claimed, err := s.jobs.claim(run.ID, DefaultAgentID)
+	claimed, err := s.jobs.claim(run.ID, "host-a")
 	require.NoError(t, err)
 
 	body := bytes.NewBufferString(`{"lease_owner":"` + claimed.LeaseOwner + `"}`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/local/runs/"+run.ID+"/renew", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/runs/"+run.ID+"/renew", body))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	got, ok := s.jobs.get(run.ID)
 	require.True(t, ok)

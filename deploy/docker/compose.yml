@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: ${SYSBOX_POSTGRES_DATABASE:-sysbox}
       POSTGRES_USER: ${SYSBOX_POSTGRES_USERNAME:-sysbox}
-      POSTGRES_PASSWORD: ${SYSBOX_POSTGRES_PASSWORD:?set SYSBOX_POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${SYSBOX_POSTGRES_PASSWORD:-change-me}
     ports:
       - "${SYSBOX_POSTGRES_HOST_PORT:-55432}:5432"
     volumes:
@@ -28,17 +28,15 @@ services:
     ports:
       - "${SYSBOX_API_HOST_PORT:-9876}:9876"
     volumes:
-      # Docker substrate: talk to the host Docker daemon.
-      - ${SYSBOX_HOST_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
-      # API-owned workspaces, state, and job metadata.
+      # API-owned workspaces and control-plane metadata.
       - ${SYSBOX_HOST_HOME_DIR:-.sysbox/api}:/var/lib/sysbox
-      # Shared artifact cache (kernels, rootfs, qcow2, downloaded tools).
+      # Shared artifact cache metadata. Execution agents mount the same path.
       - ${SYSBOX_HOST_CACHE_DIR:-~/.cache/sysbox}:/var/cache/sysbox
       - ./deploy/docker/sysbox.yaml:/etc/sysbox/sysbox.yaml:ro
     environment:
       SYSBOX_CONFIG: ${SYSBOX_CONFIG:-/etc/sysbox/sysbox.yaml}
       SYSBOX_API_TOKEN: ${SYSBOX_API_TOKEN:-}
-      SYSBOX_STATE_BACKEND: ${SYSBOX_STATE_BACKEND:-postgres://${SYSBOX_POSTGRES_USERNAME:-sysbox}:${SYSBOX_POSTGRES_PASSWORD}@sysbox-postgres:5432/${SYSBOX_POSTGRES_DATABASE:-sysbox}?sslmode=disable&topology={topology}}
+      SYSBOX_STATE_BACKEND: ${SYSBOX_STATE_BACKEND:-postgres://${SYSBOX_POSTGRES_USERNAME:-sysbox}:${SYSBOX_POSTGRES_PASSWORD:-change-me}@sysbox-postgres:5432/${SYSBOX_POSTGRES_DATABASE:-sysbox}?sslmode=disable&topology={topology}}
       PATH: /opt/sysbox/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 volumes:

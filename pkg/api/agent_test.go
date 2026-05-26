@@ -197,9 +197,8 @@ func TestAgentDisableAndQuarantineBlockSchedulingAndStream(t *testing.T) {
 	require.True(t, stored.Disabled)
 	require.Equal(t, "disabled", stored.Status)
 
-	agent, err := s.selectAgent(context.Background(), []string{"docker"})
-	require.NoError(t, err)
-	require.NotEqual(t, "host-a", agent.ID)
+	_, err = s.selectAgent(context.Background(), []string{"docker"})
+	require.ErrorContains(t, err, "no online agent")
 
 	server := httptest.NewServer(s)
 	defer server.Close()

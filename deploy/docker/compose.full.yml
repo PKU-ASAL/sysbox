@@ -1,4 +1,0 @@
-services:
-  sysbox-api:
-    volumes:
-      - ${SYSBOX_PROVIDER_LIBVIRT_SOCKET:-/var/run/libvirt}:/var/run/libvirt

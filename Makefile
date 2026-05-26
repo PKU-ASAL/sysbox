@@ -11,33 +11,30 @@ INITDIR := pkg/provider/firecracker/initbin
 ARCH := $(shell $(GO) env GOARCH)
 
 TOPO ?= two-networks
-API_ADDR ?= :9876
-SYSBOX_DEPLOYMENT ?= docker
+API_URL ?= http://127.0.0.1:9876
+AGENT_API_URL ?= http://sysbox-api:9876
 API_DATA_DIR ?= $(or $(SYSBOX_HOST_HOME_DIR),.sysbox/api)
+AGENT_ID ?= local-docker
 
 HCL := examples/$(TOPO)/field.sysbox.hcl
 STATE := .sysbox/runs/$(TOPO)/state.json
 SYSBOX := $(BINARY) --state $(STATE) -f $(HCL)
 
 COMPOSE_DIR := deploy/docker
-COMPOSE_FILES_docker := -f $(COMPOSE_DIR)/compose.yml
-COMPOSE_FILES_vm := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.vm.yml
-COMPOSE_FILES_full := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.vm.yml -f $(COMPOSE_DIR)/compose.full.yml
-COMPOSE_FILES = $(COMPOSE_FILES_$(SYSBOX_DEPLOYMENT))
 COMPOSE := docker compose --project-directory .
+COMPOSE_API := -f $(COMPOSE_DIR)/compose.yml
+COMPOSE_FULL := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.agent.yml
 
 .DEFAULT_GOAL := help
 .PHONY: help build build-all test test-e2e lint ci \
 	plan apply destroy up down \
-	api-build api-seed api-config api-up api-up-docker api-up-vm api-up-full api-down api-logs \
-	docker-build docker-seed docker-config docker-up docker-up-docker docker-up-vm docker-up-full docker-down docker-logs \
-	clean
+	image seed deploy deploy-full undeploy reset logs config \
+	.agent-register clean
 
 help: ## Show available targets
 	@echo "Usage: make <target> [TOPO=two-networks|three-nodes|microvm|mixed|libvirt-vm]"
-	@echo "       make api-up [SYSBOX_DEPLOYMENT=docker|vm|full]"
 	@echo ""
-	@awk 'BEGIN{FS=":.*##"} /^[a-z][a-z0-9-]+:.*##/{printf "  %-18s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN{FS=":.*##"} /^[a-z][a-z0-9-]+:.*##/{printf "  %-16s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
 
 build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
@@ -64,23 +61,23 @@ ci: build lint test ## Run the local CI gate
 		$(BINARY) -f examples/$$topo/field.sysbox.hcl --state /tmp/sysbox-ci-$$topo.json plan 2>&1 | head -1; \
 	done
 
-plan: build ## Plan an example topology
+plan: build ## Plan an example topology locally
 	$(SYSBOX) plan
 
-apply: build ## Apply an example topology
+apply: build ## Apply an example topology locally
 	@mkdir -p .sysbox/runs/$(TOPO)
 	$(SYSBOX) apply --auto-approve
 
-destroy: build ## Destroy an example topology
+destroy: build ## Destroy an example topology locally
 	$(SYSBOX) destroy --auto-approve
 
 up: apply ## Alias for apply
 down: destroy ## Alias for destroy
 
-api-build: ## Build the sysbox API container image
+image: ## Build the sysbox container image
 	docker build --network=host --no-cache -t sysbox:latest .
 
-api-seed: ## Seed API workspaces from examples when missing
+seed: ## Seed API workspaces from examples when missing
 	@mkdir -p "$(API_DATA_DIR)/workspaces"
 	@for dir in examples/*; do \
 		if [ -f "$$dir/field.sysbox.hcl" ]; then \
@@ -93,42 +90,29 @@ api-seed: ## Seed API workspaces from examples when missing
 		fi; \
 	done
 
-api-config: ## Print resolved Docker Compose config for SYSBOX_DEPLOYMENT
-	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
-	$(COMPOSE) $(COMPOSE_FILES) config
+deploy: image seed ## Deploy API + Postgres
+	$(COMPOSE) $(COMPOSE_API) up -d
+	@echo "API server: $(API_URL)/v1/health"
 
-api-up: api-build api-seed ## Start API + Postgres using SYSBOX_DEPLOYMENT
-	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
-	@echo "Deployment: $(SYSBOX_DEPLOYMENT)"
-	$(COMPOSE) $(COMPOSE_FILES) up -d
-	@echo "API server: http://localhost:9876/v1/health"
+deploy-full: deploy .agent-register ## Deploy API + Postgres + Docker agent
+	$(COMPOSE) $(COMPOSE_FULL) up -d sysbox-agent
+	@echo "Agent: $(AGENT_ID)"
 
-api-up-docker: SYSBOX_DEPLOYMENT=docker
-api-up-docker: api-up
+.agent-register:
+	$(COMPOSE) $(COMPOSE_FULL) run --rm --no-deps --entrypoint sysbox sysbox-agent \
+		agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) --capabilities docker --identity /var/lib/sysbox/agent/identity.json
 
-api-up-vm: SYSBOX_DEPLOYMENT=vm
-api-up-vm: api-up
+undeploy: ## Stop API, Postgres, and agent
+	$(COMPOSE) $(COMPOSE_FULL) down
 
-api-up-full: SYSBOX_DEPLOYMENT=full
-api-up-full: api-up
+reset: ## Stop compose and remove local Postgres volume
+	$(COMPOSE) $(COMPOSE_FULL) down -v
 
-api-down: ## Stop API + Postgres
-	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
-	$(COMPOSE) $(COMPOSE_FILES) down
+logs: ## Tail compose logs
+	$(COMPOSE) $(COMPOSE_FULL) logs -f
 
-api-logs: ## Tail API compose logs
-	@test -n "$(COMPOSE_FILES)" || { echo "unknown SYSBOX_DEPLOYMENT=$(SYSBOX_DEPLOYMENT)"; exit 2; }
-	$(COMPOSE) $(COMPOSE_FILES) logs -f
-
-docker-build: api-build
-docker-seed: api-seed
-docker-config: api-config
-docker-up: api-up
-docker-up-docker: api-up-docker
-docker-up-vm: api-up-vm
-docker-up-full: api-up-full
-docker-down: api-down
-docker-logs: api-logs
+config: ## Print resolved compose config
+	$(COMPOSE) $(COMPOSE_FULL) config
 
 clean: ## Remove build outputs
 	rm -f $(BINARY)

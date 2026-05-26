@@ -36,6 +36,9 @@ func (s *Server) selectAgent(ctx context.Context, required []string) (controlpla
 	agents := s.listAgents(ctx)
 	required = normalizeCapabilities(required)
 	for _, agent := range agents {
+		if agent.ID == DefaultAgentID {
+			continue
+		}
 		if agent.Status != "online" || agent.Disabled || agent.Quarantined {
 			continue
 		}

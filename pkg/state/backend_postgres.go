@@ -59,6 +59,22 @@ func (b *PostgresBackend) ensureSchema(ctx context.Context, conn *pgx.Conn) erro
 	}
 
 	if _, err := tx.Exec(ctx, `
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='sysbox_schema_migrations' AND column_name='name'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='sysbox_schema_migrations' AND column_name='component'
+  ) THEN
+    ALTER TABLE sysbox_schema_migrations RENAME COLUMN name TO component;
+  END IF;
+END $$;`); err != nil {
+		return fmt.Errorf("postgres normalize migration table: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS sysbox_schema_migrations (
   component TEXT PRIMARY KEY,
   version INTEGER NOT NULL,
