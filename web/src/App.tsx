@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   CheckCircle2,
   Cloud,
+  Database,
   FileCode2,
   GitBranch,
   Loader2,
@@ -12,7 +13,7 @@ import {
   Trash2,
 } from "lucide-react"
 
-import { AppSidebar } from "@/components/app-sidebar"
+import { AppSidebar, type AppPage } from "@/components/app-sidebar"
 import { ConsoleDialog } from "@/components/ConsoleDialog"
 import { StatusBadge } from "@/components/StatusBadge"
 import { TopologyGraph } from "@/components/TopologyGraph"
@@ -83,6 +84,7 @@ type Detail = {
 }
 
 export default function App() {
+  const [page, setPage] = useState<AppPage>("dashboard")
   const [selected, setSelected] = useState<string>("")
   const [detail, setDetail] = useState<Detail>({})
   const [notice, setNotice] = useState("")
@@ -104,12 +106,19 @@ export default function App() {
   const topologies = overview.data?.topologies || []
   const agents = overview.data?.agents || []
   const runs = overview.data?.runs || []
+  const deployedTopologies = useMemo(() => topologies.filter((topology) => topology.has_state), [topologies])
 
   useEffect(() => {
     if (!selected && topologies.length > 0) {
       setSelected(topologies[0].name)
     }
   }, [selected, topologies])
+
+  useEffect(() => {
+    if (page === "topologies" && deployedTopologies.length > 0 && !deployedTopologies.some((topology) => topology.name === selected)) {
+      setSelected(deployedTopologies[0].name)
+    }
+  }, [deployedTopologies, page, selected])
 
   const selectedTopology = useMemo(() => topologies.find((topology) => topology.name === selected), [selected, topologies])
 
@@ -166,6 +175,7 @@ export default function App() {
     await mutate("create topology", async () => {
       await api.createTopology(newName, newHcl)
       setSelected(newName)
+      setPage("artifacts")
       setCreateOpen(false)
     })
   }
@@ -227,21 +237,37 @@ export default function App() {
     void refreshDetail()
   }
 
+  const pageTitle = {
+    dashboard: "Dashboard",
+    agents: "Agents",
+    artifacts: "Artifacts",
+    topologies: "Topologies",
+  }[page]
+
+  const pageDescription = {
+    dashboard: "A compact overview of API, agents, topologies, and runs.",
+    agents: "Registered executors connected to the control plane.",
+    artifacts: "Create HCL, plan changes, apply revisions, and inspect run history.",
+    topologies: "Currently deployed HCL topologies and their live resources.",
+  }[page]
+
   return (
     <SidebarProvider>
       <AppSidebar
+        activePage={page}
         apiStatus={overview.data?.health.status || (overview.error ? "offline" : "checking")}
         agents={agents}
         runs={runs}
         topologies={topologies}
+        onPageChange={setPage}
       />
       <SidebarInset>
         <header className="sticky top-0 z-10 flex min-h-16 shrink-0 items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur lg:px-6">
           <SidebarTrigger className="-ml-1" />
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl font-semibold tracking-normal">Workspaces</h1>
-              <p className="text-sm text-muted-foreground">Plan, apply, observe, and connect to sysbox topologies.</p>
+              <h1 className="text-xl font-semibold tracking-normal">{pageTitle}</h1>
+              <p className="text-sm text-muted-foreground">{pageDescription}</p>
             </div>
             <div className="flex items-center gap-2">
               <Input className="w-48" placeholder="API token" value={tokenValue} onChange={(event) => setTokenValue(event.target.value)} />
@@ -251,171 +277,81 @@ export default function App() {
               <Button variant="outline" size="icon" onClick={() => void overview.refresh()} aria-label="Refresh">
                 <RefreshCw />
               </Button>
-              <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus data-icon="inline-start" />
-                    New workspace
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-3xl">
-                  <DialogHeader>
-                    <DialogTitle>Create workspace</DialogTitle>
-                    <DialogDescription>Upload HCL and start from a plan.</DialogDescription>
-                  </DialogHeader>
-                  <div className="flex flex-col gap-4">
-                    <div className="flex flex-col gap-2">
-                      <Label htmlFor="workspace-name">Name</Label>
-                      <Input id="workspace-name" value={newName} onChange={(event) => setNewName(event.target.value)} />
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      <Label htmlFor="workspace-hcl">HCL</Label>
-                      <Textarea id="workspace-hcl" className="min-h-80 font-mono" value={newHcl} onChange={(event) => setNewHcl(event.target.value)} />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setCreateOpen(false)}>
-                      Cancel
+              {page === "artifacts" ? (
+                <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+                  <DialogTrigger asChild>
+                    <Button>
+                      <Plus data-icon="inline-start" />
+                      New HCL
                     </Button>
-                    <Button onClick={createTopology} disabled={busy !== ""}>
-                      Create
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-3xl">
+                    <DialogHeader>
+                      <DialogTitle>Create HCL artifact</DialogTitle>
+                      <DialogDescription>Save HCL, create a plan, then apply it.</DialogDescription>
+                    </DialogHeader>
+                    <div className="flex flex-col gap-4">
+                      <div className="flex flex-col gap-2">
+                        <Label htmlFor="workspace-name">Name</Label>
+                        <Input id="workspace-name" value={newName} onChange={(event) => setNewName(event.target.value)} />
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <Label htmlFor="workspace-hcl">HCL</Label>
+                        <Textarea id="workspace-hcl" className="min-h-80 font-mono" value={newHcl} onChange={(event) => setNewHcl(event.target.value)} />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setCreateOpen(false)}>
+                        Cancel
+                      </Button>
+                      <Button onClick={createTopology} disabled={busy !== ""}>
+                        Create
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              ) : null}
             </div>
           </div>
         </header>
 
-        <div className="grid gap-6 p-4 lg:grid-cols-[320px_1fr] lg:p-6">
-          <section className="flex flex-col gap-4">
-            <MetricGrid topologies={topologies} agents={agents} runs={runs} />
-            <Card>
-              <CardHeader>
-                <CardTitle>Workspaces</CardTitle>
-                <CardDescription>{topologies.length} topology configuration units</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                {topologies.length === 0 ? (
-                  <EmptyLine text="No workspaces yet" />
-                ) : (
-                  topologies.map((topology) => (
-                    <button
-                      key={topology.name}
-                      className={`rounded-md border p-3 text-left transition-colors hover:bg-muted/60 ${selected === topology.name ? "border-primary bg-muted" : "bg-background"}`}
-                      onClick={() => setSelected(topology.name)}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">{topology.name}</div>
-                          <div className="truncate text-xs text-muted-foreground">
-                            serial {topology.serial || 0} · {topology.resource_count || 0} resources
-                          </div>
-                        </div>
-                        <StatusBadge status={topology.has_state ? "applied" : "new"} />
-                      </div>
-                    </button>
-                  ))
-                )}
-              </CardContent>
-            </Card>
-            <AgentsCard agents={agents} />
-          </section>
+        <div className="p-4 lg:p-6">
+          {notice ? <div className="mb-4 rounded-md border bg-muted px-3 py-2 text-sm">{notice}</div> : null}
+          {busy ? (
+            <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="animate-spin" />
+              {busy}
+            </div>
+          ) : null}
 
-          <section className="min-w-0">
-            {!selectedTopology ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>No workspace selected</CardTitle>
-                  <CardDescription>Create or select a workspace to begin.</CardDescription>
-                </CardHeader>
-              </Card>
-            ) : (
-              <div className="flex flex-col gap-4">
-                <Card>
-                  <CardHeader>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <CardTitle>{selectedTopology.name}</CardTitle>
-                        <CardDescription>
-                          {selectedTopology.backend || "local"} · serial {selectedTopology.serial || 0}
-                        </CardDescription>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button variant="outline" onClick={createPlan} disabled={busy !== ""}>
-                          <GitBranch data-icon="inline-start" />
-                          Plan
-                        </Button>
-                        <Button onClick={applyPlan} disabled={busy !== ""}>
-                          <Play data-icon="inline-start" />
-                          Apply
-                        </Button>
-                        <Button variant="outline" onClick={destroyTopology} disabled={busy !== ""}>
-                          Destroy
-                        </Button>
-                        <Button variant="destructive" size="icon" onClick={deleteTopology} disabled={busy !== ""} aria-label="Delete">
-                          <Trash2 />
-                        </Button>
-                      </div>
-                    </div>
-                    {notice ? <div className="rounded-md border bg-muted px-3 py-2 text-sm">{notice}</div> : null}
-                    {busy ? (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Loader2 className="animate-spin" />
-                        {busy}
-                      </div>
-                    ) : null}
-                  </CardHeader>
-                  <CardContent>
-                    <Tabs defaultValue="overview">
-                      <TabsList>
-                        <TabsTrigger value="overview">Overview</TabsTrigger>
-                        <TabsTrigger value="plan">Plan</TabsTrigger>
-                        <TabsTrigger value="resources">Resources</TabsTrigger>
-                        <TabsTrigger value="hcl">HCL</TabsTrigger>
-                        <TabsTrigger value="runs">Runs</TabsTrigger>
-                      </TabsList>
-
-                      <TabsContent value="overview">
-                        <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
-                          <TopologyGraph nodes={detail.graph?.nodes || []} edges={detail.graph?.edges || []} />
-                          <div className="flex flex-col gap-4">
-                            <SummaryCard title="Health" value={detail.health?.status || "unknown"} icon={CheckCircle2} />
-                            <OutputsCard outputs={detail.outputs || {}} />
-                            <NodesCard topology={selectedTopology.name} nodes={detail.nodes || []} onConsole={setConsoleNode} />
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent value="plan">
-                        <PlanView plan={detail.plan || detail.plans?.[0]} />
-                      </TabsContent>
-
-                      <TabsContent value="resources">
-                        <ResourcesTable resources={detail.resources || []} />
-                      </TabsContent>
-
-                      <TabsContent value="hcl">
-                        <div className="flex flex-col gap-3">
-                          <Textarea className="min-h-[520px] font-mono" value={detail.hcl || ""} onChange={(event) => setDetail((prev) => ({ ...prev, hcl: event.target.value }))} />
-                          <div className="flex justify-end">
-                            <Button onClick={saveHcl} disabled={busy !== ""}>
-                              <FileCode2 data-icon="inline-start" />
-                              Save HCL
-                            </Button>
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent value="runs">
-                        <RunsTable runs={selectedRuns} />
-                      </TabsContent>
-                    </Tabs>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
-          </section>
+          {page === "dashboard" ? <DashboardPage topologies={topologies} deployedTopologies={deployedTopologies} agents={agents} runs={runs} apiStatus={overview.data?.health.status || (overview.error ? "offline" : "checking")} /> : null}
+          {page === "agents" ? <AgentsPage agents={agents} /> : null}
+          {page === "artifacts" ? (
+            <ArtifactsPage
+              selected={selected}
+              selectedTopology={selectedTopology}
+              selectedRuns={selectedRuns}
+              topologies={topologies}
+              detail={detail}
+              busy={busy}
+              onSelect={setSelected}
+              onCreatePlan={createPlan}
+              onApplyPlan={applyPlan}
+              onDestroy={destroyTopology}
+              onDelete={deleteTopology}
+              onSaveHcl={saveHcl}
+              onHclChange={(hcl) => setDetail((prev) => ({ ...prev, hcl }))}
+            />
+          ) : null}
+          {page === "topologies" ? (
+            <TopologiesPage
+              topologies={deployedTopologies}
+              selectedTopology={selectedTopology?.has_state ? selectedTopology : deployedTopologies[0]}
+              detail={detail}
+              onSelect={setSelected}
+              onConsole={setConsoleNode}
+            />
+          ) : null}
         </div>
       </SidebarInset>
 
@@ -430,6 +366,267 @@ function MetricGrid({ topologies, agents, runs }: { topologies: Topology[]; agen
       <MiniMetric label="Workspaces" value={topologies.length} />
       <MiniMetric label="Agents" value={agents.filter((agent) => agent.status === "online").length} />
       <MiniMetric label="Runs" value={runs.filter((run) => run.status === "running" || run.status === "queued" || run.status === "assigned").length} />
+    </div>
+  )
+}
+
+function DashboardPage({
+  topologies,
+  deployedTopologies,
+  agents,
+  runs,
+  apiStatus,
+}: {
+  topologies: Topology[]
+  deployedTopologies: Topology[]
+  agents: Agent[]
+  runs: Run[]
+  apiStatus: string
+}) {
+  const activeRuns = runs.filter((run) => run.status === "running" || run.status === "queued" || run.status === "assigned").length
+  const failedRuns = runs.filter((run) => run.status === "failed").length
+  const onlineAgents = agents.filter((agent) => agent.status === "online" && !agent.disabled && !agent.quarantined).length
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <MetricCard title="API" value={apiStatus} description="Control plane status" icon={CheckCircle2} />
+      <MetricCard title="Agents" value={`${onlineAgents}/${agents.length}`} description="Online registered agents" icon={Cloud} />
+      <MetricCard title="Topologies" value={deployedTopologies.length} description={`${topologies.length} HCL artifacts total`} icon={Database} />
+      <MetricCard title="Runs" value={activeRuns} description={`${failedRuns} failed in history`} icon={Play} />
+    </div>
+  )
+}
+
+function MetricCard({ title, value, description, icon: Icon }: { title: string; value: string | number; description: string; icon: typeof Cloud }) {
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between">
+        <div>
+          <CardDescription>{title}</CardDescription>
+          <CardTitle className="text-2xl">{value}</CardTitle>
+        </div>
+        <Icon />
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </CardContent>
+    </Card>
+  )
+}
+
+function AgentsPage({ agents }: { agents: Agent[] }) {
+  return <AgentsCard agents={agents} />
+}
+
+function WorkspaceList({
+  topologies,
+  selected,
+  onSelect,
+}: {
+  topologies: Topology[]
+  selected: string
+  onSelect: (name: string) => void
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>HCL Artifacts</CardTitle>
+        <CardDescription>{topologies.length} saved configuration units</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {topologies.length === 0 ? (
+          <EmptyLine text="No HCL artifacts yet" />
+        ) : (
+          topologies.map((topology) => (
+            <button
+              key={topology.name}
+              className={`rounded-md border p-3 text-left transition-colors hover:bg-muted/60 ${selected === topology.name ? "border-primary bg-muted" : "bg-background"}`}
+              onClick={() => onSelect(topology.name)}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{topology.name}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    serial {topology.serial || 0} · {topology.resource_count || 0} resources
+                  </div>
+                </div>
+                <StatusBadge status={topology.has_state ? "applied" : "draft"} />
+              </div>
+            </button>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ArtifactsPage({
+  selected,
+  selectedTopology,
+  selectedRuns,
+  topologies,
+  detail,
+  busy,
+  onSelect,
+  onCreatePlan,
+  onApplyPlan,
+  onDestroy,
+  onDelete,
+  onSaveHcl,
+  onHclChange,
+}: {
+  selected: string
+  selectedTopology?: Topology
+  selectedRuns: Run[]
+  topologies: Topology[]
+  detail: Detail
+  busy: string
+  onSelect: (name: string) => void
+  onCreatePlan: () => void
+  onApplyPlan: () => void
+  onDestroy: () => void
+  onDelete: () => void
+  onSaveHcl: () => void
+  onHclChange: (hcl: string) => void
+}) {
+  return (
+    <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
+      <WorkspaceList topologies={topologies} selected={selected} onSelect={onSelect} />
+      <section className="min-w-0">
+        {!selectedTopology ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>No HCL selected</CardTitle>
+              <CardDescription>Create or select an HCL artifact to plan and apply.</CardDescription>
+            </CardHeader>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle>{selectedTopology.name}</CardTitle>
+                  <CardDescription>
+                    {selectedTopology.backend || "local"} · serial {selectedTopology.serial || 0}
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="outline" onClick={onCreatePlan} disabled={busy !== ""}>
+                    <GitBranch data-icon="inline-start" />
+                    Plan
+                  </Button>
+                  <Button onClick={onApplyPlan} disabled={busy !== ""}>
+                    <Play data-icon="inline-start" />
+                    Apply
+                  </Button>
+                  <Button variant="outline" onClick={onDestroy} disabled={busy !== "" || !selectedTopology.has_state}>
+                    Destroy
+                  </Button>
+                  <Button variant="destructive" size="icon" onClick={onDelete} disabled={busy !== ""} aria-label="Delete">
+                    <Trash2 />
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="hcl">
+                <TabsList>
+                  <TabsTrigger value="hcl">HCL</TabsTrigger>
+                  <TabsTrigger value="plan">Plan</TabsTrigger>
+                  <TabsTrigger value="runs">Runs</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="hcl">
+                  <div className="flex flex-col gap-3">
+                    <Textarea className="min-h-[520px] font-mono" value={detail.hcl || ""} onChange={(event) => onHclChange(event.target.value)} />
+                    <div className="flex justify-end">
+                      <Button onClick={onSaveHcl} disabled={busy !== ""}>
+                        <FileCode2 data-icon="inline-start" />
+                        Save HCL
+                      </Button>
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="plan">
+                  <PlanView plan={detail.plan || detail.plans?.[0]} />
+                </TabsContent>
+
+                <TabsContent value="runs">
+                  <RunsTable runs={selectedRuns} />
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function TopologiesPage({
+  topologies,
+  selectedTopology,
+  detail,
+  onSelect,
+  onConsole,
+}: {
+  topologies: Topology[]
+  selectedTopology?: Topology
+  detail: Detail
+  onSelect: (name: string) => void
+  onConsole: (node: string) => void
+}) {
+  return (
+    <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
+      <Card>
+        <CardHeader>
+          <CardTitle>Online Topologies</CardTitle>
+          <CardDescription>{topologies.length} deployed HCL artifacts</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {topologies.length === 0 ? (
+            <EmptyLine text="No deployed topologies" />
+          ) : (
+            topologies.map((topology) => (
+              <button
+                key={topology.name}
+                className={`rounded-md border p-3 text-left transition-colors hover:bg-muted/60 ${selectedTopology?.name === topology.name ? "border-primary bg-muted" : "bg-background"}`}
+                onClick={() => onSelect(topology.name)}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{topology.name}</div>
+                    <div className="truncate text-xs text-muted-foreground">{topology.resource_count || 0} resources</div>
+                  </div>
+                  <StatusBadge status="online" />
+                </div>
+              </button>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      <section className="min-w-0">
+        {!selectedTopology ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>No deployed topology</CardTitle>
+              <CardDescription>Apply an HCL artifact to see it here.</CardDescription>
+            </CardHeader>
+          </Card>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
+            <TopologyGraph nodes={detail.graph?.nodes || []} edges={detail.graph?.edges || []} />
+            <div className="flex flex-col gap-4">
+              <SummaryCard title="Health" value={detail.health?.status || "unknown"} icon={CheckCircle2} />
+              <OutputsCard outputs={detail.outputs || {}} />
+              <NodesCard topology={selectedTopology.name} nodes={detail.nodes || []} onConsole={onConsole} />
+              <ResourcesTable resources={detail.resources || []} />
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   )
 }

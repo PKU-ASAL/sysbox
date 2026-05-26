@@ -2,14 +2,12 @@ import * as React from "react"
 import {
   Activity,
   Boxes,
-  CircuitBoard,
+  Database,
   CloudCog,
   DatabaseZap,
-  Layers3,
+  LayoutDashboard,
   Package,
-  PlayCircle,
   RadioTower,
-  SquareTerminal,
 } from "lucide-react"
 
 import {
@@ -28,27 +26,36 @@ import {
 } from "@/components/ui/sidebar"
 import type { Agent, Run, Topology } from "@/types/api"
 
+export type AppPage = "dashboard" | "agents" | "artifacts" | "topologies"
+
 type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
+  activePage: AppPage
   apiStatus: string
   agents: Agent[]
   runs: Run[]
   topologies: Topology[]
+  onPageChange: (page: AppPage) => void
 }
 
 const primaryNav = [
-  { title: "Workspaces", icon: Layers3, badge: "topologies" },
-  { title: "Agents", icon: RadioTower, badge: "agents" },
-  { title: "Runs", icon: PlayCircle, badge: "runs" },
-  { title: "Artifacts", icon: Package },
-  { title: "Console", icon: SquareTerminal },
+  { page: "dashboard", title: "Dashboard", icon: LayoutDashboard },
+  { page: "agents", title: "Agents", icon: RadioTower, badge: "agents" },
+  { page: "artifacts", title: "Artifacts", icon: Package, badge: "runs" },
+  { page: "topologies", title: "Topologies", icon: Database, badge: "topologies" },
+] satisfies Array<{ page: AppPage; title: string; icon: typeof LayoutDashboard; badge?: "agents" | "runs" | "topologies" }>
+
+const pageHints = [
+  { title: "HCL", description: "Create, plan, and apply" },
+  { title: "Runs", description: "Task history and status" },
 ]
 
-export function AppSidebar({ apiStatus, agents, runs, topologies, ...props }: AppSidebarProps) {
+export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, onPageChange, ...props }: AppSidebarProps) {
   const activeRuns = runs.filter((run) => run.status === "queued" || run.status === "assigned" || run.status === "running").length
   const onlineAgents = agents.filter((agent) => agent.status === "online" && !agent.disabled && !agent.quarantined).length
+  const deployedTopologies = topologies.filter((topology) => topology.has_state).length
 
   function badgeValue(key?: string) {
-    if (key === "topologies") return topologies.length
+    if (key === "topologies") return deployedTopologies
     if (key === "agents") return onlineAgents
     if (key === "runs") return activeRuns
     return undefined
@@ -81,7 +88,7 @@ export function AppSidebar({ apiStatus, agents, runs, topologies, ...props }: Ap
                 const value = badgeValue(item.badge)
                 return (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton tooltip={item.title} isActive={item.title === "Workspaces"}>
+                    <SidebarMenuButton tooltip={item.title} isActive={activePage === item.page} onClick={() => onPageChange(item.page)}>
                       <item.icon />
                       <span>{item.title}</span>
                     </SidebarMenuButton>
@@ -94,27 +101,17 @@ export function AppSidebar({ apiStatus, agents, runs, topologies, ...props }: Ap
         </SidebarGroup>
 
         <SidebarGroup>
-          <SidebarGroupLabel>Recent workspaces</SidebarGroupLabel>
+          <SidebarGroupLabel>Artifacts</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {topologies.length === 0 ? (
+              {pageHints.map((item) => (
                 <SidebarMenuItem>
-                  <SidebarMenuButton tooltip="No workspaces" disabled>
-                    <CircuitBoard />
-                    <span>No workspaces</span>
+                  <SidebarMenuButton tooltip={item.description} onClick={() => onPageChange("artifacts")}>
+                    <Package />
+                    <span>{item.title}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-              ) : (
-                topologies.slice(0, 6).map((topology) => (
-                  <SidebarMenuItem key={topology.name}>
-                    <SidebarMenuButton tooltip={topology.name}>
-                      <CircuitBoard />
-                      <span>{topology.name}</span>
-                    </SidebarMenuButton>
-                    <SidebarMenuBadge>{topology.resource_count || 0}</SidebarMenuBadge>
-                  </SidebarMenuItem>
-                ))
-              )}
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
