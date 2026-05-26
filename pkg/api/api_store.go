@@ -20,6 +20,7 @@ type apiStore interface {
 	LoadRuns(ctx context.Context) ([]Run, error)
 	GetRun(ctx context.Context, id string) (*Run, error)
 	SaveRun(ctx context.Context, run Run) error
+	ClaimRun(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*Run, bool, error)
 	SaveCheckpoint(ctx context.Context, topology, runID string, checkpoint runtime.OperationCheckpoint) error
 	LoadCheckpoint(ctx context.Context, topology, runID string) (*runtime.OperationCheckpoint, error)
 	SaveHealth(ctx context.Context, topology string, snap HealthSnapshot) error
@@ -38,6 +39,9 @@ type apiStore interface {
 	SaveNodeOperation(ctx context.Context, op controlplane.NodeOperation) error
 	GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error)
 	ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error)
+	SaveAgent(ctx context.Context, agent controlplane.Agent) error
+	GetAgent(ctx context.Context, id string) (*controlplane.Agent, error)
+	ListAgents(ctx context.Context) ([]controlplane.Agent, error)
 	SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error
 	ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error)
 	SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error
@@ -106,6 +110,28 @@ func (s *localAPIStore) SaveRun(_ context.Context, run Run) error {
 	}
 	defer fh.Close()
 	return json.NewEncoder(fh).Encode(run)
+}
+
+func (s *localAPIStore) ClaimRun(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*Run, bool, error) {
+	run, err := s.GetRun(ctx, runID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !runLeasable(*run, agentID, time.Now().UTC()) {
+		return run, false, nil
+	}
+	now := time.Now().UTC()
+	run.Status = RunRunning
+	run.LeaseOwner = owner
+	run.LeaseUntil = now.Add(ttl)
+	run.Attempt++
+	if run.StartedAt.IsZero() || run.StartedAt.Equal(run.QueuedAt) {
+		run.StartedAt = now
+	}
+	if err := s.SaveRun(ctx, *run); err != nil {
+		return nil, false, err
+	}
+	return run, true, nil
 }
 
 func (s *localAPIStore) SaveCheckpoint(_ context.Context, topology, runID string, checkpoint runtime.OperationCheckpoint) error {
@@ -314,6 +340,9 @@ func (s *localAPIStore) SaveAgentCommand(_ context.Context, cmd controlplane.Age
 	if agentID == "" {
 		agentID = "_unknown"
 	}
+	if cmd.Protocol == "" {
+		cmd.Protocol = controlplane.AgentProtocolVersion
+	}
 	return writeLocalObject(filepath.Join(s.runsDir, "_agents", agentID, "commands", cmd.ID+".json"), cmd)
 }
 
@@ -369,6 +398,32 @@ func (s *localAPIStore) GetAgentInventory(_ context.Context, agentID string) (*c
 	return &inv, nil
 }
 
+func (s *localAPIStore) SaveAgent(_ context.Context, agent controlplane.Agent) error {
+	if agent.ID == "" {
+		return fmt.Errorf("agent id is required")
+	}
+	if agent.Protocol == "" {
+		agent.Protocol = controlplane.AgentProtocolVersion
+	}
+	return writeLocalObject(filepath.Join(s.runsDir, "_agents", agent.ID, "agent.json"), agent)
+}
+
+func (s *localAPIStore) GetAgent(_ context.Context, id string) (*controlplane.Agent, error) {
+	raw, err := os.ReadFile(filepath.Join(s.runsDir, "_agents", id, "agent.json"))
+	if err != nil {
+		return nil, fmt.Errorf("agent not found")
+	}
+	var agent controlplane.Agent
+	if err := json.Unmarshal(raw, &agent); err != nil {
+		return nil, err
+	}
+	return &agent, nil
+}
+
+func (s *localAPIStore) ListAgents(_ context.Context) ([]controlplane.Agent, error) {
+	return readLocalObjects[controlplane.Agent](filepath.Join(s.runsDir, "_agents", "*", "agent.json"))
+}
+
 func writeLocalObject(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -417,6 +472,11 @@ func (s *postgresAPIStore) ensureSchema(ctx context.Context, conn *pgx.Conn) err
 CREATE TABLE IF NOT EXISTS sysbox_runs (
   topology TEXT NOT NULL,
   id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT '',
+  agent_id TEXT NOT NULL DEFAULT '',
+  lease_owner TEXT NOT NULL DEFAULT '',
+  lease_until TIMESTAMPTZ,
+  attempt INTEGER NOT NULL DEFAULT 0,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -461,6 +521,16 @@ CREATE TABLE IF NOT EXISTS sysbox_node_operations (
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS sysbox_agents (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  disabled BOOLEAN NOT NULL DEFAULT false,
+  quarantined BOOLEAN NOT NULL DEFAULT false,
+  protocol TEXT NOT NULL DEFAULT '',
+  secret_hash TEXT NOT NULL DEFAULT '',
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS sysbox_agent_command_events (
   agent_id TEXT NOT NULL,
   command_id TEXT NOT NULL,
@@ -489,7 +559,16 @@ CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
 	_, err = conn.Exec(ctx, `
 ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS lease_owner TEXT NOT NULL DEFAULT '';
 ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
-ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0;`)
+ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT '';
+ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS agent_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS lease_owner TEXT NOT NULL DEFAULT '';
+ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS disabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS quarantined BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT '';
+ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS secret_hash TEXT NOT NULL DEFAULT '';`)
 	if err != nil {
 		return fmt.Errorf("postgres ensure api command lease columns: %w", err)
 	}
@@ -557,14 +636,89 @@ func (s *postgresAPIStore) SaveRun(ctx context.Context, run Run) error {
 		return err
 	}
 	_, err = conn.Exec(ctx, `
-INSERT INTO sysbox_runs (topology, id, data, updated_at)
-VALUES ($1, $2, $3::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET topology=EXCLUDED.topology, data=EXCLUDED.data, updated_at=now()`,
-		run.Topology, run.ID, string(raw))
+INSERT INTO sysbox_runs (topology, id, status, agent_id, lease_owner, lease_until, attempt, data, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, now())
+ON CONFLICT (id) DO UPDATE SET topology=EXCLUDED.topology, status=EXCLUDED.status, agent_id=EXCLUDED.agent_id, lease_owner=EXCLUDED.lease_owner, lease_until=EXCLUDED.lease_until, attempt=EXCLUDED.attempt, data=EXCLUDED.data, updated_at=now()`,
+		run.Topology, run.ID, string(run.Status), run.AgentID, run.LeaseOwner, nullableTime(run.LeaseUntil), run.Attempt, string(raw))
 	if err != nil {
 		return fmt.Errorf("postgres save run: %w", err)
 	}
 	return nil
+}
+
+func (s *postgresAPIStore) ClaimRun(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*Run, bool, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer conn.Close(ctx)
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var raw []byte
+	var status string
+	var leaseUntil *time.Time
+	err = tx.QueryRow(ctx, `
+SELECT data::text, status, lease_until
+FROM sysbox_runs
+WHERE id=$1
+FOR UPDATE`, runID).Scan(&raw, &status, &leaseUntil)
+	if err == pgx.ErrNoRows {
+		return nil, false, fmt.Errorf("run not found")
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("postgres load run lease row: %w", err)
+	}
+	var run Run
+	if err := json.Unmarshal(raw, &run); err != nil {
+		return nil, false, err
+	}
+	run.Status = RunStatus(status)
+	if leaseUntil != nil {
+		run.LeaseUntil = *leaseUntil
+	}
+	now := time.Now().UTC()
+	if !runLeasable(run, agentID, now) {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, err
+		}
+		return &run, false, nil
+	}
+	run.Status = RunRunning
+	run.LeaseOwner = owner
+	run.LeaseUntil = now.Add(ttl)
+	run.Attempt++
+	if run.StartedAt.IsZero() || run.StartedAt.Equal(run.QueuedAt) {
+		run.StartedAt = now
+	}
+	nextRaw, err := json.Marshal(run)
+	if err != nil {
+		return nil, false, err
+	}
+	tag, err := tx.Exec(ctx, `
+UPDATE sysbox_runs
+SET status=$3, lease_owner=$4, lease_until=$5, attempt=$6, data=$7::jsonb, updated_at=now()
+WHERE id=$1
+  AND agent_id=$2
+  AND status='assigned'
+  AND (lease_until IS NULL OR lease_until <= $8)`,
+		runID, agentID, string(run.Status), run.LeaseOwner, run.LeaseUntil, run.Attempt, string(nextRaw), now)
+	if err != nil {
+		return nil, false, fmt.Errorf("postgres claim run: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, err
+		}
+		return &run, false, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, err
+	}
+	return &run, true, nil
 }
 
 func (s *postgresAPIStore) SaveCheckpoint(ctx context.Context, topology, runID string, checkpoint runtime.OperationCheckpoint) error {
@@ -846,6 +1000,77 @@ func (s *postgresAPIStore) ListNodeOperations(ctx context.Context, workspace str
 	return out, rows.Err()
 }
 
+func (s *postgresAPIStore) SaveAgent(ctx context.Context, agent controlplane.Agent) error {
+	if agent.ID == "" {
+		return fmt.Errorf("agent id is required")
+	}
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	raw, err := json.Marshal(agent)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(ctx, `
+INSERT INTO sysbox_agents (id, status, disabled, quarantined, protocol, secret_hash, data, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now())
+ON CONFLICT (id) DO UPDATE SET status=EXCLUDED.status, disabled=EXCLUDED.disabled, quarantined=EXCLUDED.quarantined, protocol=EXCLUDED.protocol, secret_hash=EXCLUDED.secret_hash, data=EXCLUDED.data, updated_at=now()`,
+		agent.ID, agent.Status, agent.Disabled, agent.Quarantined, agent.Protocol, agent.SecretHash, string(raw))
+	if err != nil {
+		return fmt.Errorf("postgres save agent: %w", err)
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) GetAgent(ctx context.Context, id string) (*controlplane.Agent, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	var raw []byte
+	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_agents WHERE id=$1`, id).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, fmt.Errorf("agent not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres get agent: %w", err)
+	}
+	var agent controlplane.Agent
+	if err := json.Unmarshal(raw, &agent); err != nil {
+		return nil, err
+	}
+	return &agent, nil
+}
+
+func (s *postgresAPIStore) ListAgents(ctx context.Context) ([]controlplane.Agent, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	rows, err := conn.Query(ctx, `SELECT data::text FROM sysbox_agents ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("postgres list agents: %w", err)
+	}
+	defer rows.Close()
+	var out []controlplane.Agent
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var agent controlplane.Agent
+		if err := json.Unmarshal(raw, &agent); err != nil {
+			return nil, err
+		}
+		out = append(out, agent)
+	}
+	return out, rows.Err()
+}
+
 func (s *postgresAPIStore) SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error {
 	if event.AgentID == "" {
 		event.AgentID = "_unknown"
@@ -1082,6 +1307,13 @@ func (s *postgresAPIStore) GetAgentInventory(ctx context.Context, agentID string
 		return nil, err
 	}
 	return &inv, nil
+}
+
+func nullableTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }
 
 func (s *postgresAPIStore) saveObject(ctx context.Context, table, workspace, id string, v any) error {

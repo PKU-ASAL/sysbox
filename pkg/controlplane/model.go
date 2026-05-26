@@ -9,6 +9,7 @@ import (
 )
 
 const DefaultProjectID = "default"
+const AgentProtocolVersion = "agent.v1"
 
 type Project struct {
 	ID          string    `json:"id"`
@@ -67,7 +68,10 @@ type Run struct {
 	PlanID      string    `json:"plan_id,omitempty"`
 	AgentID     string    `json:"agent_id,omitempty"`
 	Recoverable bool      `json:"recoverable,omitempty"`
+	Protocol    string    `json:"protocol,omitempty"`
 	LeaseOwner  string    `json:"lease_owner,omitempty"`
+	LeaseUntil  time.Time `json:"lease_until,omitempty"`
+	Attempt     int       `json:"attempt,omitempty"`
 	QueuedAt    time.Time `json:"queued_at,omitempty"`
 	AssignedAt  time.Time `json:"assigned_at,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
@@ -99,6 +103,7 @@ type Agent struct {
 	Reason        string            `json:"reason,omitempty"`
 	AuthSecret    string            `json:"auth_secret,omitempty"`
 	SecretHash    string            `json:"secret_hash,omitempty"`
+	Protocol      string            `json:"protocol,omitempty"`
 	Capabilities  []string          `json:"capabilities,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	Version       string            `json:"version,omitempty"`
@@ -198,6 +203,7 @@ type AgentCommand struct {
 	Type       string          `json:"type"`
 	Status     string          `json:"status,omitempty"`
 	Err        string          `json:"error,omitempty"`
+	Protocol   string          `json:"protocol,omitempty"`
 	Run        *Run            `json:"run,omitempty"`
 	Session    *ConsoleSession `json:"session,omitempty"`
 	Request    ConsoleRequest  `json:"request,omitempty"`

@@ -152,6 +152,7 @@ func (i *Identity) Agent() controlplane.Agent {
 		Status:        "online",
 		AuthSecret:    i.Secret,
 		SecretHash:    SecretHash(i.Secret),
+		Protocol:      controlplane.AgentProtocolVersion,
 		Capabilities:  i.Capabilities,
 		Labels:        i.Labels,
 		LastHeartbeat: now,

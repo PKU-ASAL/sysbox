@@ -30,13 +30,11 @@ func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string) e
 func ptrRun(run controlplane.Run) *controlplane.Run { return &run }
 
 func (s *Server) selectAgent(ctx context.Context, required []string) (controlplane.Agent, error) {
-	_ = ctx
 	if s.agents == nil {
 		s.agents = newAgentRegistry()
 	}
-	agents := ensureLocalAgent(s.agents.List())
+	agents := s.listAgents(ctx)
 	required = normalizeCapabilities(required)
-	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
 	for _, agent := range agents {
 		if agent.Status != "online" || agent.Disabled || agent.Quarantined {
 			continue

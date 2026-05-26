@@ -40,18 +40,18 @@ resource "sysbox_node" "microvm" {
 }
 
 func TestSelectAgentByCapabilities(t *testing.T) {
-	s := &Server{agents: newAgentRegistry()}
+	s := NewServer(t.TempDir(), t.TempDir())
 	ctx := context.Background()
-	s.agents.Save(controlplane.Agent{
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
 		ID:           "docker-agent",
 		Status:       "online",
 		Capabilities: []string{"docker"},
-	})
-	s.agents.Save(controlplane.Agent{
+	}))
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
 		ID:           "vm-agent",
 		Status:       "online",
 		Capabilities: []string{"docker", "network", "kvm", "firecracker"},
-	})
+	}))
 
 	agent, err := s.selectAgent(ctx, []string{"firecracker", "kvm", "network"})
 	require.NoError(t, err)
@@ -89,4 +89,10 @@ func TestAgentClaimRun(t *testing.T) {
 	claimed, err := s.jobs.claim(run.ID, DefaultAgentID)
 	require.NoError(t, err)
 	require.Equal(t, RunRunning, claimed.Status)
+	require.Equal(t, 1, claimed.Attempt)
+	require.NotEmpty(t, claimed.LeaseOwner)
+	require.False(t, claimed.LeaseUntil.IsZero())
+
+	_, err = s.jobs.claim(run.ID, DefaultAgentID)
+	require.ErrorContains(t, err, "cannot be claimed")
 }

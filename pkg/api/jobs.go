@@ -198,6 +198,7 @@ func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *Run 
 		Revision:   opts.Revision,
 		PlanID:     opts.PlanID,
 		AgentID:    opts.AgentID,
+		Protocol:   controlplane.AgentProtocolVersion,
 		LeaseOwner: "sysbox-api",
 		QueuedAt:   now,
 		StartedAt:  now,
@@ -224,6 +225,7 @@ func (j *Jobs) assign(r *Run, agentID string) {
 func (j *Jobs) markRunning(r *Run) {
 	j.mu.Lock()
 	r.Status = RunRunning
+	r.Attempt++
 	if r.StartedAt.IsZero() || r.StartedAt.Equal(r.QueuedAt) {
 		r.StartedAt = time.Now()
 	}
@@ -232,11 +234,17 @@ func (j *Jobs) markRunning(r *Run) {
 }
 
 func (j *Jobs) claim(runID, agentID string) (*Run, error) {
-	if stored, err := j.store.GetRun(context.Background(), runID); err == nil && stored != nil {
+	owner := fmt.Sprintf("%s:%s:%d", agentID, runID, time.Now().UnixNano())
+	if claimed, ok, err := j.store.ClaimRun(context.Background(), runID, agentID, owner, 30*time.Minute); err != nil {
+		return nil, err
+	} else if ok && claimed != nil {
 		j.mu.Lock()
-		j.runs[runID] = stored
+		j.runs[runID] = claimed
 		j.ensureLogsLocked(runID, false)
 		j.mu.Unlock()
+		return claimed, nil
+	} else if claimed != nil {
+		return nil, fmt.Errorf("run status %q cannot be claimed", claimed.Status)
 	}
 	j.mu.Lock()
 	run, ok := j.runs[runID]
@@ -253,6 +261,9 @@ func (j *Jobs) claim(runID, agentID string) (*Run, error) {
 		return nil, fmt.Errorf("run status %q cannot be claimed", run.Status)
 	}
 	run.Status = RunRunning
+	run.LeaseOwner = owner
+	run.LeaseUntil = time.Now().Add(30 * time.Minute)
+	run.Attempt++
 	if run.StartedAt.IsZero() || run.StartedAt.Equal(run.QueuedAt) {
 		run.StartedAt = time.Now()
 	}
@@ -260,6 +271,13 @@ func (j *Jobs) claim(runID, agentID string) (*Run, error) {
 	j.mu.Unlock()
 	j.persist(run)
 	return &out, nil
+}
+
+func runLeasable(run Run, agentID string, now time.Time) bool {
+	if run.AgentID != agentID || run.Status != RunAssigned {
+		return false
+	}
+	return run.LeaseUntil.IsZero() || !run.LeaseUntil.After(now)
 }
 
 func (j *Jobs) runnableForAgent(agentID string) []*Run {

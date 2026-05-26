@@ -20,6 +20,9 @@ func (s *Server) publishAgentCommand(ctx context.Context, agentID string, cmd co
 	if cmd.Status == "" {
 		cmd.Status = "queued"
 	}
+	if cmd.Protocol == "" {
+		cmd.Protocol = controlplane.AgentProtocolVersion
+	}
 	if cmd.CreatedAt.IsZero() {
 		cmd.CreatedAt = time.Now().UTC()
 	}

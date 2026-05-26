@@ -17,7 +17,7 @@ func (s *Server) verifyAgentRequest(r *http.Request, agentID string) error {
 	if agentID == DefaultAgentID {
 		return nil
 	}
-	stored, err := s.agents.Get(agentID)
+	stored, err := s.getAgent(r.Context(), agentID)
 	if err != nil {
 		return err
 	}

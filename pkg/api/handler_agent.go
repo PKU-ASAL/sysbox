@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/coder/websocket"
@@ -15,8 +14,7 @@ import (
 )
 
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
-	agents := ensureLocalAgent(s.agents.List())
-	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+	agents := s.listAgents(r.Context())
 	scrubAgentSecretValues(agents)
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
 }
@@ -32,7 +30,10 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	s.agents.Save(agent)
+	if err := s.saveAgent(r.Context(), agent); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	scrubAgentSecret(&agent)
 	writeJSON(w, http.StatusCreated, agent)
 }
@@ -47,7 +48,7 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	agent, err := s.agents.Get(id)
+	agent, err := s.getAgent(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -80,7 +81,10 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		agent.Reason = ""
 	}
 	agent.UpdatedAt = time.Now().UTC()
-	s.agents.Save(*agent)
+	if err := s.saveAgent(r.Context(), *agent); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	scrubAgentSecret(agent)
 	writeJSON(w, http.StatusOK, agent)
 }
@@ -96,7 +100,7 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 		writeJSON(w, http.StatusOK, agent)
 		return
 	}
-	agent, err := s.agents.Get(id)
+	agent, err := s.getAgent(context.Background(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -393,7 +397,7 @@ func (s *Server) handleAgentCommandStream(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
-	agent, err := s.agents.Get(id)
+	agent, err := s.getAgent(r.Context(), id)
 	if err != nil && id != DefaultAgentID {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -584,7 +588,7 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if existing, err := s.agents.Get(id); err == nil && existing != nil {
+	if existing, err := s.getAgent(r.Context(), id); err == nil && existing != nil {
 		if existing.Disabled || existing.Quarantined {
 			agent.Disabled = existing.Disabled
 			agent.Quarantined = existing.Quarantined
@@ -617,7 +621,10 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 	}
 	agent.LastHeartbeat = time.Now().UTC()
 	agent.UpdatedAt = agent.LastHeartbeat
-	s.agents.Save(agent)
+	if err := s.saveAgent(r.Context(), agent); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	scrubAgentSecret(&agent)
 	writeJSON(w, http.StatusOK, agent)
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -32,4 +33,39 @@ func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	gotHealth, err := store.LoadHealth(ctx, "mixed")
 	require.NoError(t, err)
 	require.Equal(t, "mixed", gotHealth.Topology)
+}
+
+func TestLocalAPIStorePersistsAgentAndClaimLease(t *testing.T) {
+	store := &localAPIStore{runsDir: t.TempDir()}
+	ctx := context.Background()
+
+	agent := controlplane.Agent{ID: "host-a", Status: "online", Disabled: true, Capabilities: []string{"docker"}}
+	require.NoError(t, store.SaveAgent(ctx, agent))
+	gotAgent, err := store.GetAgent(ctx, "host-a")
+	require.NoError(t, err)
+	require.Equal(t, "host-a", gotAgent.ID)
+	require.True(t, gotAgent.Disabled)
+	require.Equal(t, controlplane.AgentProtocolVersion, gotAgent.Protocol)
+
+	run := Run{
+		ID:         "run-1",
+		Topology:   "mixed",
+		Workspace:  "mixed",
+		AgentID:    "host-a",
+		Status:     RunAssigned,
+		QueuedAt:   time.Now().UTC(),
+		AssignedAt: time.Now().UTC(),
+		StartedAt:  time.Now().UTC(),
+	}
+	require.NoError(t, store.SaveRun(ctx, run))
+	claimed, ok, err := store.ClaimRun(ctx, "run-1", "host-a", "owner-1", time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, RunRunning, claimed.Status)
+	require.Equal(t, 1, claimed.Attempt)
+	require.Equal(t, "owner-1", claimed.LeaseOwner)
+
+	_, ok, err = store.ClaimRun(ctx, "run-1", "host-a", "owner-2", time.Minute)
+	require.NoError(t, err)
+	require.False(t, ok)
 }

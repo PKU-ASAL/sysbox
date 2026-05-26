@@ -104,20 +104,22 @@ POST /v1/runs/{run_id}/recover
 POST /v1/runs/{run_id}/cleanup
 ```
 
-Run records include the owning `agent_id`. The API creates and assigns command
-intent; agents keep an outbound WebSocket command stream open at
+Run records include the owning `agent_id`, protocol version, lease owner, lease
+expiry, and attempt count. The API creates and assigns command intent; agents
+keep an outbound WebSocket command stream open at
 `/v1/agents/{agent_id}/commands/stream`. Commands use a durable envelope with
-`id`, `type`, and command-specific payload. Agents ACK, start, complete, and
-fail commands on the same WebSocket; command events are persisted and available
-from `/v1/agents/{agent_id}/command-events`. Commands are persisted before
-delivery, leased with an atomic store operation before WebSocket delivery,
-replayed to reconnecting agents after lease expiry, and can be cancelled with
-`cancel_command`. Postgres stores command lease owner, lease expiry, and
-attempt count so multiple API replicas do not deliver the same command
-concurrently. The legacy SSE command stream has been removed. When a run is
-assigned, the API pushes a `run_assigned` command; the agent then claims the run
-and executes it on the host. On completion, the agent posts the final run status
-and a state projection to
+`id`, `type`, `protocol`, and command-specific payload. Agents ACK, start,
+complete, and fail commands on the same WebSocket; command events are persisted
+and available from `/v1/agents/{agent_id}/command-events`. Commands are
+persisted before delivery, leased with an atomic store operation before
+WebSocket delivery, replayed to reconnecting agents after lease expiry, and can
+be cancelled with `cancel_command`. Postgres stores command/run lease owner,
+lease expiry, and attempt count so multiple API replicas do not deliver or
+claim the same work concurrently. The legacy SSE command stream has been
+removed. When a run is assigned, the API pushes a `run_assigned` command; the
+agent then claims the run through the same lease/attempt model and executes it
+on the host. On completion, the agent posts the final run status and a state
+projection to
 `/v1/agents/{agent_id}/runs/{run_id}/complete`.
 
 ```text
@@ -129,12 +131,13 @@ Agents also enforce a local host policy before executing commands. Configure
 `allow_console`, and `allow_import` in `sysbox.yaml` to keep host-local
 capabilities scoped even if the control plane is misconfigured.
 
-Registered agents have a per-agent secret. API responses expose only
-`secret_hash`; agent-originated heartbeat, inventory, projection, run
-completion, console attach, and command stream requests are signed with
-`X-Sysbox-Agent-*` headers. `PATCH /v1/agents/{agent_id}` can disable or
-quarantine an agent; disabled or quarantined agents are skipped by scheduling
-and cannot open the command stream.
+Registered agents are persisted in the API store. They have a per-agent secret,
+`secret_hash`, protocol version, capabilities, heartbeat, and operational
+status. API responses expose only `secret_hash`; agent-originated heartbeat,
+inventory, projection, run completion, console attach, and command stream
+requests are signed with `X-Sysbox-Agent-*` headers.
+`PATCH /v1/agents/{agent_id}` persists disabled/quarantined state; disabled or
+quarantined agents are skipped by scheduling and cannot open the command stream.
 
 Agents periodically sync inventory to `/v1/agents/{agent_id}/inventory`,
 including local topologies, serials, resource counts, health, labels, and
