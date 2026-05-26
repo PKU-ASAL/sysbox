@@ -24,6 +24,9 @@ api:
       - admin
       - platform
 agent:
+  lease:
+    offline_after: 45s
+    command_ttl: 15s
   policy:
     allowed_workspaces:
       - lab
@@ -35,6 +38,12 @@ agent:
       - cancel_command
     allow_console: false
     allow_import: false
+run:
+  lease:
+    claim_ttl: 10m
+    renew_interval: 10s
+    renew_ttl: 1m
+    expired_policy: fail_recoverable
 paths:
   home: /srv/sysbox
   cache: /srv/cache
@@ -70,6 +79,12 @@ artifacts:
 	require.Equal(t, []string{"run_assigned", "node_operation", "cancel_command"}, cfg.Agent.Policy.AllowedCommands)
 	require.False(t, *cfg.Agent.Policy.AllowConsole)
 	require.False(t, *cfg.Agent.Policy.AllowImport)
+	require.Equal(t, "45s", cfg.Agent.Lease.OfflineAfter)
+	require.Equal(t, "15s", cfg.Agent.Lease.CommandTTL)
+	require.Equal(t, "10m", cfg.Run.Lease.ClaimTTL)
+	require.Equal(t, "10s", cfg.Run.Lease.RenewInterval)
+	require.Equal(t, "1m", cfg.Run.Lease.RenewTTL)
+	require.Equal(t, "fail_recoverable", cfg.Run.Lease.ExpiredPolicy)
 	require.Equal(t, "/srv/sysbox/workspaces", cfg.Paths.WorkspacesDir)
 	require.Equal(t, "/srv/sysbox/runs", cfg.Paths.RunsDir)
 	require.Equal(t, "/srv/sysbox/firecracker", cfg.Providers.Firecracker.Workdir)
@@ -142,4 +157,19 @@ supervisor:
 	_, err := LoadServiceConfig(path)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "supervisor.policy")
+}
+
+func TestLoadServiceConfigRejectsInvalidLeasePolicy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sysbox.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+version: 1
+run:
+  lease:
+    renew_interval: 2m
+    renew_ttl: 1m
+`), 0o644))
+
+	_, err := LoadServiceConfig(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "run.lease.renew_interval")
 }

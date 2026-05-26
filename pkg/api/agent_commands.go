@@ -74,8 +74,9 @@ func (s *Server) acquireAgentCommandLease(ctx context.Context, agentID string, c
 		return cmd, false
 	}
 	owner := fmt.Sprintf("%s:%d", agentID, now.UnixNano())
+	ttl := s.cfg.AgentCommandTTL()
 	if s.apiStore != nil {
-		leased, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, agentID, cmd.ID, owner, 30*time.Second)
+		leased, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, agentID, cmd.ID, owner, ttl)
 		if err != nil || !ok || leased == nil {
 			return cmd, false
 		}
@@ -83,7 +84,7 @@ func (s *Server) acquireAgentCommandLease(ctx context.Context, agentID string, c
 	}
 	cmd.Status = "leased"
 	cmd.LeaseOwner = owner
-	cmd.LeaseUntil = now.Add(30 * time.Second)
+	cmd.LeaseUntil = now.Add(ttl)
 	cmd.Attempt++
 	return cmd, true
 }

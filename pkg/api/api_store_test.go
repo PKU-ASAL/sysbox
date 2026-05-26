@@ -39,6 +39,19 @@ func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	require.Equal(t, "mixed", gotHealth.Topology)
 }
 
+func TestAPIMigrationsMatchSchemaVersion(t *testing.T) {
+	require.NotEmpty(t, apiMigrations)
+	seen := map[int]bool{}
+	for i, migration := range apiMigrations {
+		require.Equal(t, i+1, migration.Version)
+		require.NotEmpty(t, migration.Name)
+		require.NotEmpty(t, migration.SQL)
+		require.False(t, seen[migration.Version])
+		seen[migration.Version] = true
+	}
+	require.Equal(t, apiSchemaVersion, apiMigrations[len(apiMigrations)-1].Version)
+}
+
 func TestLocalAPIStorePersistsAgentAndClaimLease(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	ctx := context.Background()

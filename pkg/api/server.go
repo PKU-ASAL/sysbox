@@ -59,7 +59,7 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		cfg:           cfg,
 		apiStore:      apiStore,
 		agents:        newAgentRegistry(),
-		jobs:          newJobs(runsDir, apiStore),
+		jobs:          newJobsWithPolicy(runsDir, apiStore, true, cfg.RunClaimTTL(), cfg.RunExpiredPolicy()),
 		consoles:      newConsoleSessionHub(apiStore),
 		nodeOps:       newNodeOperationStore(apiStore),
 		mux:           http.NewServeMux(),

@@ -64,15 +64,17 @@ var agentStartCmd = &cobra.Command{
 			return err
 		}
 		return agentexec.Run(cmd.Context(), agentexec.Options{
-			APIURL:       ident.APIURL,
-			Token:        ident.Token,
-			ID:           ident.ID,
-			Name:         ident.Name,
-			Capabilities: ident.Capabilities,
-			Labels:       ident.Labels,
-			Secret:       ident.Secret,
-			PollInterval: flagAgentPollInterval,
-			Policy:       cfg.Agent.Policy,
+			APIURL:           ident.APIURL,
+			Token:            ident.Token,
+			ID:               ident.ID,
+			Name:             ident.Name,
+			Capabilities:     ident.Capabilities,
+			Labels:           ident.Labels,
+			Secret:           ident.Secret,
+			PollInterval:     flagAgentPollInterval,
+			RunRenewInterval: cfg.RunRenewInterval(),
+			RunRenewTTL:      cfg.RunRenewTTL(),
+			Policy:           cfg.Agent.Policy,
 		}, api.NewExecutionBridge(cfg))
 	},
 }

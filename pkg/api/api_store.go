@@ -59,6 +59,118 @@ type localAPIStore struct {
 
 const apiSchemaVersion = 3
 
+type apiMigration struct {
+	Version int
+	Name    string
+	SQL     string
+}
+
+var apiMigrations = []apiMigration{
+	{
+		Version: 1,
+		Name:    "base_control_plane",
+		SQL: `
+CREATE TABLE IF NOT EXISTS sysbox_runs (
+  topology TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_checkpoints (
+  topology TEXT NOT NULL,
+  run_id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_health (
+  topology TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_revisions (
+  workspace TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_plans (
+  workspace TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_policies (
+  workspace TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_console_sessions (
+  workspace TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_node_operations (
+  workspace TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`,
+	},
+	{
+		Version: 2,
+		Name:    "agent_registry_and_commands",
+		SQL: `
+CREATE TABLE IF NOT EXISTS sysbox_agents (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  disabled BOOLEAN NOT NULL DEFAULT false,
+  quarantined BOOLEAN NOT NULL DEFAULT false,
+  protocol TEXT NOT NULL DEFAULT '',
+  secret_hash TEXT NOT NULL DEFAULT '',
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_agent_command_events (
+  agent_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
+  agent_id TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
+  agent_id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS disabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS quarantined BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT '';
+ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS secret_hash TEXT NOT NULL DEFAULT '';`,
+	},
+	{
+		Version: 3,
+		Name:    "run_and_command_leases",
+		SQL: `
+ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT '';
+ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS agent_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS lease_owner TEXT NOT NULL DEFAULT '';
+ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS lease_owner TEXT NOT NULL DEFAULT '';
+ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0;`,
+	},
+}
+
 func (s *localAPIStore) SchemaVersion(context.Context) (int, error) {
 	return apiSchemaVersion, nil
 }
@@ -496,119 +608,45 @@ CREATE TABLE IF NOT EXISTS sysbox_schema_migrations (
   name TEXT PRIMARY KEY,
   version INTEGER NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_runs (
-  topology TEXT NOT NULL,
-  id TEXT PRIMARY KEY,
-  status TEXT NOT NULL DEFAULT '',
-  agent_id TEXT NOT NULL DEFAULT '',
-  lease_owner TEXT NOT NULL DEFAULT '',
-  lease_until TIMESTAMPTZ,
-  attempt INTEGER NOT NULL DEFAULT 0,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_checkpoints (
-  topology TEXT NOT NULL,
-  run_id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_health (
-  topology TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_revisions (
-  workspace TEXT NOT NULL,
-  id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_plans (
-  workspace TEXT NOT NULL,
-  id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_policies (
-  workspace TEXT NOT NULL,
-  id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_console_sessions (
-  workspace TEXT NOT NULL,
-  id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_node_operations (
-  workspace TEXT NOT NULL,
-  id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_agents (
-  id TEXT PRIMARY KEY,
-  status TEXT NOT NULL,
-  disabled BOOLEAN NOT NULL DEFAULT false,
-  quarantined BOOLEAN NOT NULL DEFAULT false,
-  protocol TEXT NOT NULL DEFAULT '',
-  secret_hash TEXT NOT NULL DEFAULT '',
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_agent_command_events (
-  agent_id TEXT NOT NULL,
-  command_id TEXT NOT NULL,
-  status TEXT NOT NULL,
-  data JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
-  agent_id TEXT NOT NULL,
-  id TEXT PRIMARY KEY,
-  status TEXT NOT NULL,
-  lease_owner TEXT NOT NULL DEFAULT '',
-  lease_until TIMESTAMPTZ,
-  attempt INTEGER NOT NULL DEFAULT 0,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
-  agent_id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`)
 	if err != nil {
-		return fmt.Errorf("postgres ensure api tables: %w", err)
+		return fmt.Errorf("postgres ensure schema migrations table: %w", err)
 	}
-	_, err = conn.Exec(ctx, `
-ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS lease_owner TEXT NOT NULL DEFAULT '';
-ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
-ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT '';
-ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS agent_id TEXT NOT NULL DEFAULT '';
-ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS lease_owner TEXT NOT NULL DEFAULT '';
-ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
-ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS disabled BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS quarantined BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT '';
-ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS secret_hash TEXT NOT NULL DEFAULT '';`)
+	for _, migration := range apiMigrations {
+		if err := s.applyMigration(ctx, conn, migration); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) applyMigration(ctx context.Context, conn *pgx.Conn, migration apiMigration) error {
+	tx, err := conn.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("postgres ensure api command lease columns: %w", err)
+		return err
 	}
-	_, err = conn.Exec(ctx, `
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, migration.SQL); err != nil {
+		return fmt.Errorf("postgres apply api migration %03d_%s: %w", migration.Version, migration.Name, err)
+	}
+	_, err = tx.Exec(ctx, `
 INSERT INTO sysbox_schema_migrations (name, version, updated_at)
 VALUES ('api', $1, now())
 ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version, updated_at=now()
-WHERE sysbox_schema_migrations.version < EXCLUDED.version`, apiSchemaVersion)
+WHERE sysbox_schema_migrations.version < EXCLUDED.version`, migration.Version)
 	if err != nil {
 		return fmt.Errorf("postgres record api schema version: %w", err)
 	}
-	return nil
+	stepName := fmt.Sprintf("api/%03d_%s", migration.Version, migration.Name)
+	_, err = tx.Exec(ctx, `
+INSERT INTO sysbox_schema_migrations (name, version, updated_at)
+VALUES ($1, $2, now())
+ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version, updated_at=now()`,
+		stepName, migration.Version)
+	if err != nil {
+		return fmt.Errorf("postgres record api migration step: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *postgresAPIStore) SchemaVersion(ctx context.Context) (int, error) {

@@ -9,8 +9,6 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-const agentOfflineAfter = 2 * time.Minute
-
 func (s *Server) saveAgent(ctx context.Context, agent controlplane.Agent) error {
 	if agent.Protocol == "" {
 		agent.Protocol = controlplane.AgentProtocolVersion
@@ -64,11 +62,12 @@ func (s *Server) markStaleAgentsOffline(ctx context.Context, now time.Time) {
 	if s.apiStore == nil {
 		return
 	}
+	offlineAfter := s.cfg.AgentOfflineAfter()
 	for _, agent := range s.listAgents(ctx) {
 		if agent.ID == DefaultAgentID || agent.Disabled || agent.Quarantined || agent.LastHeartbeat.IsZero() {
 			continue
 		}
-		if agent.Status == "offline" || !agent.LastHeartbeat.Before(now.Add(-agentOfflineAfter)) {
+		if agent.Status == "offline" || !agent.LastHeartbeat.Before(now.Add(-offlineAfter)) {
 			continue
 		}
 		agent.Status = "offline"

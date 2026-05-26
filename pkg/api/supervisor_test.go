@@ -145,7 +145,11 @@ func TestSupervisorRestartOnCrashSkipsWhenRunActive(t *testing.T) {
 }
 
 func TestSupervisorMarksStaleAgentOfflineAndExpiredRunFailed(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
+	cfg := config.MustLoadServiceConfig("")
+	cfg.Paths.RunsDir = t.TempDir()
+	cfg.Paths.WorkspacesDir = t.TempDir()
+	cfg.Agent.Lease.OfflineAfter = "5m"
+	s := NewServerWithConfig(cfg)
 	ctx := context.Background()
 	require.NoError(t, s.saveAgent(ctx, controlplane.Agent{
 		ID:            "host-a",

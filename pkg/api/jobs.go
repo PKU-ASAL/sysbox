@@ -40,6 +40,8 @@ type Jobs struct {
 	runsDir            string // root directory for runs, e.g. "runs"
 	store              apiStore
 	recoverInterrupted bool
+	runLeaseTTL        time.Duration
+	expiredPolicy      string
 	logs               map[string]*Broadcaster
 
 	topologyMu    sync.Mutex
@@ -58,14 +60,26 @@ func newJobs(runsDir string, store apiStore) *Jobs {
 }
 
 func newJobsWithRecovery(runsDir string, store apiStore, recoverInterrupted bool) *Jobs {
+	return newJobsWithPolicy(runsDir, store, recoverInterrupted, 30*time.Minute, "fail_recoverable")
+}
+
+func newJobsWithPolicy(runsDir string, store apiStore, recoverInterrupted bool, runLeaseTTL time.Duration, expiredPolicy string) *Jobs {
 	if store == nil {
 		store = &localAPIStore{runsDir: runsDir}
+	}
+	if runLeaseTTL <= 0 {
+		runLeaseTTL = 30 * time.Minute
+	}
+	if expiredPolicy == "" {
+		expiredPolicy = "fail_recoverable"
 	}
 	j := &Jobs{
 		runs:               make(map[string]*Run),
 		runsDir:            runsDir,
 		store:              store,
 		recoverInterrupted: recoverInterrupted,
+		runLeaseTTL:        runLeaseTTL,
+		expiredPolicy:      expiredPolicy,
 		logs:               make(map[string]*Broadcaster),
 		topologyLocks:      make(map[string]*sync.Mutex),
 	}
@@ -235,7 +249,11 @@ func (j *Jobs) markRunning(r *Run) {
 
 func (j *Jobs) claim(runID, agentID string) (*Run, error) {
 	owner := fmt.Sprintf("%s:%s:%d", agentID, runID, time.Now().UnixNano())
-	if claimed, ok, err := j.store.ClaimRun(context.Background(), runID, agentID, owner, 30*time.Minute); err != nil {
+	ttl := j.runLeaseTTL
+	if ttl <= 0 {
+		ttl = 30 * time.Minute
+	}
+	if claimed, ok, err := j.store.ClaimRun(context.Background(), runID, agentID, owner, ttl); err != nil {
 		return nil, err
 	} else if ok && claimed != nil {
 		j.mu.Lock()
@@ -262,7 +280,7 @@ func (j *Jobs) claim(runID, agentID string) (*Run, error) {
 	}
 	run.Status = RunRunning
 	run.LeaseOwner = owner
-	run.LeaseUntil = time.Now().Add(30 * time.Minute)
+	run.LeaseUntil = time.Now().Add(ttl)
 	run.Attempt++
 	if run.StartedAt.IsZero() || run.StartedAt.Equal(run.QueuedAt) {
 		run.StartedAt = time.Now()
@@ -295,6 +313,9 @@ func runLeasable(run Run, agentID string, now time.Time) bool {
 }
 
 func (j *Jobs) markExpiredLeases(now time.Time) {
+	if j.expiredPolicy != "" && j.expiredPolicy != "fail_recoverable" {
+		return
+	}
 	runs, err := j.store.LoadRuns(context.Background())
 	if err != nil {
 		return

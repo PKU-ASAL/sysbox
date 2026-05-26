@@ -21,7 +21,7 @@ type ExecutionBridge struct {
 
 func NewExecutionBridge(cfg config.ServiceConfig) *ExecutionBridge {
 	s := NewServerWithConfig(cfg)
-	s.jobs = newJobsWithRecovery(s.runsDir, s.apiStore, false)
+	s.jobs = newJobsWithPolicy(s.runsDir, s.apiStore, false, cfg.RunClaimTTL(), cfg.RunExpiredPolicy())
 	return &ExecutionBridge{server: s}
 }
 

@@ -23,16 +23,18 @@ import (
 const DefaultAgentID = "local"
 
 type Options struct {
-	APIURL       string
-	Token        string
-	ID           string
-	Name         string
-	Capabilities []string
-	Labels       map[string]string
-	Version      string
-	Secret       string
-	PollInterval time.Duration
-	Policy       config.AgentPolicyConfig
+	APIURL           string
+	Token            string
+	ID               string
+	Name             string
+	Capabilities     []string
+	Labels           map[string]string
+	Version          string
+	Secret           string
+	PollInterval     time.Duration
+	RunRenewInterval time.Duration
+	RunRenewTTL      time.Duration
+	Policy           config.AgentPolicyConfig
 }
 
 func Run(ctx context.Context, opts Options, bridge Bridge) error {
@@ -47,6 +49,12 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	}
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = 2 * time.Second
+	}
+	if opts.RunRenewInterval <= 0 {
+		opts.RunRenewInterval = 30 * time.Second
+	}
+	if opts.RunRenewTTL <= 0 {
+		opts.RunRenewTTL = 30 * time.Minute
 	}
 	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
 	if len(opts.Capabilities) == 0 {
@@ -490,14 +498,14 @@ func renewRunLease(ctx context.Context, opts Options, run *controlplane.Run) err
 	}
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/renew", map[string]any{
 		"lease_owner": run.LeaseOwner,
-		"ttl_seconds": 1800,
+		"ttl_seconds": int(opts.RunRenewTTL.Seconds()),
 	}, run)
 }
 
 func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.Run) func() {
 	renewCtx, cancel := context.WithCancel(ctx)
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(opts.RunRenewInterval)
 		defer ticker.Stop()
 		for {
 			select {

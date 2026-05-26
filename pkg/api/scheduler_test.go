@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
@@ -79,7 +81,11 @@ func TestDispatchRunAssignsAgentBeforeExecution(t *testing.T) {
 }
 
 func TestAgentClaimRun(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
+	cfg := config.MustLoadServiceConfig("")
+	cfg.Paths.RunsDir = t.TempDir()
+	cfg.Paths.WorkspacesDir = t.TempDir()
+	cfg.Run.Lease.ClaimTTL = "2m"
+	s := NewServerWithConfig(cfg)
 	run := s.jobs.start("mixed", "apply")
 	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
 
@@ -95,13 +101,18 @@ func TestAgentClaimRun(t *testing.T) {
 	require.Equal(t, 1, claimed.Attempt)
 	require.NotEmpty(t, claimed.LeaseOwner)
 	require.False(t, claimed.LeaseUntil.IsZero())
+	require.WithinDuration(t, time.Now().UTC().Add(2*time.Minute), claimed.LeaseUntil, 5*time.Second)
 
 	_, err = s.jobs.claim(run.ID, DefaultAgentID)
 	require.ErrorContains(t, err, "cannot be claimed")
 }
 
 func TestAgentRenewRunLeaseEndpoint(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
+	cfg := config.MustLoadServiceConfig("")
+	cfg.Paths.RunsDir = t.TempDir()
+	cfg.Paths.WorkspacesDir = t.TempDir()
+	cfg.Run.Lease.RenewTTL = "3m"
+	s := NewServerWithConfig(cfg)
 	run := s.jobs.start("mixed", "apply")
 	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
 	claimed, err := s.jobs.claim(run.ID, DefaultAgentID)
@@ -115,4 +126,24 @@ func TestAgentRenewRunLeaseEndpoint(t *testing.T) {
 	got, ok := s.jobs.get(run.ID)
 	require.True(t, ok)
 	require.True(t, got.LeaseUntil.After(before))
+}
+
+func TestAgentRenewRunLeaseEndpointUsesConfiguredDefaultTTL(t *testing.T) {
+	cfg := config.MustLoadServiceConfig("")
+	cfg.Paths.RunsDir = t.TempDir()
+	cfg.Paths.WorkspacesDir = t.TempDir()
+	cfg.Run.Lease.RenewTTL = "90s"
+	s := NewServerWithConfig(cfg)
+	run := s.jobs.start("mixed", "apply")
+	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
+	claimed, err := s.jobs.claim(run.ID, DefaultAgentID)
+	require.NoError(t, err)
+
+	body := bytes.NewBufferString(`{"lease_owner":"` + claimed.LeaseOwner + `"}`)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/local/runs/"+run.ID+"/renew", body))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got, ok := s.jobs.get(run.ID)
+	require.True(t, ok)
+	require.WithinDuration(t, time.Now().UTC().Add(90*time.Second), got.LeaseUntil, 5*time.Second)
 }

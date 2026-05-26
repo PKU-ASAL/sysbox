@@ -157,7 +157,7 @@ func (s *Server) handleRenewAgentRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("lease_owner is required"))
 		return
 	}
-	ttl := 30 * time.Minute
+	ttl := s.cfg.RunRenewTTL()
 	if req.TTLSeconds > 0 {
 		ttl = time.Duration(req.TTLSeconds) * time.Second
 	}

@@ -18,6 +18,7 @@ type ServiceConfig struct {
 	Version    int              `yaml:"version" json:"version"`
 	API        APIConfig        `yaml:"api" json:"api"`
 	Agent      AgentConfig      `yaml:"agent" json:"agent,omitempty"`
+	Run        RunConfig        `yaml:"run" json:"run,omitempty"`
 	Paths      PathsConfig      `yaml:"paths" json:"paths"`
 	State      StateConfig      `yaml:"state" json:"state"`
 	Supervisor SupervisorConfig `yaml:"supervisor" json:"supervisor"`
@@ -55,6 +56,7 @@ type APIHeadersConfig struct {
 
 type AgentConfig struct {
 	Policy AgentPolicyConfig `yaml:"policy" json:"policy,omitempty"`
+	Lease  AgentLeaseConfig  `yaml:"lease" json:"lease,omitempty"`
 }
 
 type AgentPolicyConfig struct {
@@ -63,6 +65,22 @@ type AgentPolicyConfig struct {
 	AllowedCommands   []string `yaml:"allowed_commands" json:"allowed_commands,omitempty"`
 	AllowConsole      *bool    `yaml:"allow_console" json:"allow_console,omitempty"`
 	AllowImport       *bool    `yaml:"allow_import" json:"allow_import,omitempty"`
+}
+
+type AgentLeaseConfig struct {
+	OfflineAfter string `yaml:"offline_after" json:"offline_after,omitempty"`
+	CommandTTL   string `yaml:"command_ttl" json:"command_ttl,omitempty"`
+}
+
+type RunConfig struct {
+	Lease RunLeaseConfig `yaml:"lease" json:"lease,omitempty"`
+}
+
+type RunLeaseConfig struct {
+	ClaimTTL      string `yaml:"claim_ttl" json:"claim_ttl,omitempty"`
+	RenewInterval string `yaml:"renew_interval" json:"renew_interval,omitempty"`
+	RenewTTL      string `yaml:"renew_ttl" json:"renew_ttl,omitempty"`
+	ExpiredPolicy string `yaml:"expired_policy" json:"expired_policy,omitempty"`
 }
 
 type PathsConfig struct {
@@ -142,10 +160,22 @@ func DefaultServiceConfig() ServiceConfig {
 			},
 		},
 		Agent: AgentConfig{
+			Lease: AgentLeaseConfig{
+				OfflineAfter: "2m",
+				CommandTTL:   "30s",
+			},
 			Policy: AgentPolicyConfig{
 				AllowedCommands: []string{"run_assigned", "session_open", "node_operation", "cancel_command"},
 				AllowConsole:    &allow,
 				AllowImport:     &allow,
+			},
+		},
+		Run: RunConfig{
+			Lease: RunLeaseConfig{
+				ClaimTTL:      "30m",
+				RenewInterval: "30s",
+				RenewTTL:      "30m",
+				ExpiredPolicy: "fail_recoverable",
 			},
 		},
 		Paths: PathsConfig{
@@ -211,16 +241,46 @@ func MustLoadServiceConfig(path string) ServiceConfig {
 }
 
 func (c ServiceConfig) SupervisorInterval() time.Duration {
-	raw := c.Supervisor.Interval
-	if raw == "" {
-		raw = "30s"
+	return durationOrDefault(c.Supervisor.Interval, 30*time.Second, true)
+}
+
+func (c ServiceConfig) AgentOfflineAfter() time.Duration {
+	return durationOrDefault(c.Agent.Lease.OfflineAfter, 2*time.Minute, false)
+}
+
+func (c ServiceConfig) AgentCommandTTL() time.Duration {
+	return durationOrDefault(c.Agent.Lease.CommandTTL, 30*time.Second, false)
+}
+
+func (c ServiceConfig) RunClaimTTL() time.Duration {
+	return durationOrDefault(c.Run.Lease.ClaimTTL, 30*time.Minute, false)
+}
+
+func (c ServiceConfig) RunRenewInterval() time.Duration {
+	return durationOrDefault(c.Run.Lease.RenewInterval, 30*time.Second, false)
+}
+
+func (c ServiceConfig) RunRenewTTL() time.Duration {
+	return durationOrDefault(c.Run.Lease.RenewTTL, 30*time.Minute, false)
+}
+
+func (c ServiceConfig) RunExpiredPolicy() string {
+	if c.Run.Lease.ExpiredPolicy == "" {
+		return "fail_recoverable"
 	}
-	if raw == "0" || raw == "off" || raw == "disabled" {
+	return c.Run.Lease.ExpiredPolicy
+}
+
+func durationOrDefault(raw string, fallback time.Duration, allowDisabled bool) time.Duration {
+	if raw == "" {
+		return fallback
+	}
+	if allowDisabled && (raw == "0" || raw == "off" || raw == "disabled") {
 		return 0
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil {
-		return 30 * time.Second
+		return fallback
 	}
 	return d
 }
@@ -259,6 +319,24 @@ func applyDerivedDefaults(c *ServiceConfig) {
 	}
 	if c.Supervisor.Interval == "" {
 		c.Supervisor.Interval = "30s"
+	}
+	if c.Agent.Lease.OfflineAfter == "" {
+		c.Agent.Lease.OfflineAfter = "2m"
+	}
+	if c.Agent.Lease.CommandTTL == "" {
+		c.Agent.Lease.CommandTTL = "30s"
+	}
+	if c.Run.Lease.ClaimTTL == "" {
+		c.Run.Lease.ClaimTTL = "30m"
+	}
+	if c.Run.Lease.RenewInterval == "" {
+		c.Run.Lease.RenewInterval = "30s"
+	}
+	if c.Run.Lease.RenewTTL == "" {
+		c.Run.Lease.RenewTTL = "30m"
+	}
+	if c.Run.Lease.ExpiredPolicy == "" {
+		c.Run.Lease.ExpiredPolicy = "fail_recoverable"
 	}
 	if c.Version == 0 {
 		c.Version = 1
@@ -315,6 +393,29 @@ func (c ServiceConfig) Validate() error {
 	}
 	if _, err := time.ParseDuration(c.Supervisor.Interval); err != nil && c.Supervisor.Interval != "0" && c.Supervisor.Interval != "off" && c.Supervisor.Interval != "disabled" {
 		return fmt.Errorf("supervisor.interval: %w", err)
+	}
+	if _, err := time.ParseDuration(c.Agent.Lease.OfflineAfter); err != nil {
+		return fmt.Errorf("agent.lease.offline_after: %w", err)
+	}
+	if _, err := time.ParseDuration(c.Agent.Lease.CommandTTL); err != nil {
+		return fmt.Errorf("agent.lease.command_ttl: %w", err)
+	}
+	if _, err := time.ParseDuration(c.Run.Lease.ClaimTTL); err != nil {
+		return fmt.Errorf("run.lease.claim_ttl: %w", err)
+	}
+	if _, err := time.ParseDuration(c.Run.Lease.RenewInterval); err != nil {
+		return fmt.Errorf("run.lease.renew_interval: %w", err)
+	}
+	if _, err := time.ParseDuration(c.Run.Lease.RenewTTL); err != nil {
+		return fmt.Errorf("run.lease.renew_ttl: %w", err)
+	}
+	if c.RunRenewInterval() >= c.RunRenewTTL() {
+		return fmt.Errorf("run.lease.renew_interval must be shorter than run.lease.renew_ttl")
+	}
+	switch c.Run.Lease.ExpiredPolicy {
+	case "", "fail_recoverable":
+	default:
+		return fmt.Errorf("run.lease.expired_policy must be fail_recoverable")
 	}
 	switch c.Supervisor.Policy {
 	case "", "observe_only", "restart_on_crash":
