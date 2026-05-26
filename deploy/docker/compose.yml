@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${SYSBOX_POSTGRES_USERNAME:-sysbox}
       POSTGRES_PASSWORD: ${SYSBOX_POSTGRES_PASSWORD:-change-me}
     ports:
-      - "${SYSBOX_POSTGRES_HOST_PORT:-55432}:5432"
+      - "${SYSBOX_POSTGRES_HOST_ADDR:-127.0.0.1}:${SYSBOX_POSTGRES_HOST_PORT:-55432}:5432"
     volumes:
       - sysbox-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -26,7 +26,7 @@ services:
       sysbox-postgres:
         condition: service_healthy
     ports:
-      - "${SYSBOX_API_HOST_PORT:-9876}:9876"
+      - "${SYSBOX_API_HOST_ADDR:-0.0.0.0}:${SYSBOX_API_HOST_PORT:-9876}:9876"
     volumes:
       # API-owned workspaces and control-plane metadata.
       - ${SYSBOX_HOST_HOME_DIR:-.sysbox/api}:/var/lib/sysbox

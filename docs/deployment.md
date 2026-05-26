@@ -30,8 +30,11 @@ socket into the API container.
 Docker-substrate runs assigned by the API.
 
 `make deploy-ui` starts the browser console on
-`http://127.0.0.1:${SYSBOX_WEB_HOST_PORT:-3000}`. The UI uses the same-origin
-`/v1` proxy for HTTP and WebSocket console traffic.
+`http://${SYSBOX_WEB_HOST_ADDR:-0.0.0.0}:${SYSBOX_WEB_HOST_PORT:-3000}`. The UI
+uses the same-origin `/v1` proxy for HTTP and WebSocket console traffic.
+
+API and Web are published on `0.0.0.0` by default so another machine can reach
+them through the host IP. Postgres is bound to `127.0.0.1` by default.
 
 If you change `SYSBOX_POSTGRES_PASSWORD` after Postgres has already initialized,
 the existing Docker volume keeps the old database password. For local disposable

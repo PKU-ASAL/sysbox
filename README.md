@@ -124,6 +124,7 @@ sessions both go through `/v1`.
 make deploy-full
 make deploy-ui
 open http://127.0.0.1:3000
+# or from another machine: http://<host-ip>:3000
 ```
 
 Deployment follows a 12-factor style: keep deploy-time choices in `.env`, keep topology intent in HCL, and keep the command surface small. Start by copying the template:
@@ -276,7 +277,10 @@ Recommended environment overrides:
 | Variable | Meaning |
 |---|---|
 | `SYSBOX_CONFIG` | Service config file path, default `/etc/sysbox/sysbox.yaml` |
+| `SYSBOX_API_HOST_ADDR` | Host address published for the API, default `0.0.0.0` |
 | `SYSBOX_API_HOST_PORT` | Host port published for the API, default `9876` |
+| `SYSBOX_WEB_HOST_ADDR` | Host address published for the Web UI, default `0.0.0.0` |
+| `SYSBOX_WEB_HOST_PORT` | Host port published for the Web UI, default `3000` |
 | `SYSBOX_API_TOKEN` | Optional API Bearer token |
 | `SYSBOX_HOST_HOME_DIR` | Host directory mounted to container `/var/lib/sysbox`, default `.sysbox/api` |
 | `SYSBOX_HOST_CACHE_DIR` | Host directory mounted to container `/var/cache/sysbox`, default `~/.cache/sysbox` |
@@ -284,6 +288,7 @@ Recommended environment overrides:
 | `SYSBOX_POSTGRES_DATABASE` | Compose Postgres database name |
 | `SYSBOX_POSTGRES_USERNAME` | Compose Postgres username |
 | `SYSBOX_POSTGRES_PASSWORD` | Compose Postgres password; set in local `.env`, do not commit real values |
+| `SYSBOX_POSTGRES_HOST_ADDR` | Host address published for Postgres, default `127.0.0.1` |
 | `SYSBOX_POSTGRES_HOST_PORT` | Host port published for Postgres, default `55432` |
 | `SYSBOX_STATE_BACKEND` | Optional external state/API backend URL; overrides Compose-generated DSN |
 

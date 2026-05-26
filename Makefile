@@ -15,6 +15,8 @@ API_URL ?= http://127.0.0.1:9876
 AGENT_API_URL ?= http://sysbox-api:9876
 API_DATA_DIR ?= $(or $(SYSBOX_HOST_HOME_DIR),.sysbox/api)
 AGENT_ID ?= local-docker
+WEB_HOST_ADDR ?= $(or $(SYSBOX_WEB_HOST_ADDR),0.0.0.0)
+WEB_HOST_PORT ?= $(or $(SYSBOX_WEB_HOST_PORT),3000)
 
 HCL := examples/$(TOPO)/field.sysbox.hcl
 STATE := .sysbox/runs/$(TOPO)/state.json
@@ -107,7 +109,7 @@ deploy-full: deploy .agent-register ## Deploy API + Postgres + Docker agent
 
 deploy-ui: image-web ## Deploy Web UI for the running API
 	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml up -d sysbox-web
-	@echo "Web UI: http://127.0.0.1:$${SYSBOX_WEB_HOST_PORT:-3000}"
+	@echo "Web UI: http://$(WEB_HOST_ADDR):$(WEB_HOST_PORT)"
 
 .agent-register:
 	$(COMPOSE) $(COMPOSE_FULL) run --rm --no-deps --entrypoint sysbox sysbox-agent \
