@@ -26,11 +26,12 @@ COMPOSE_DIR := deploy/docker
 COMPOSE := docker compose --project-directory .
 COMPOSE_API := -f $(COMPOSE_DIR)/compose.yml
 COMPOSE_FULL := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.agent.yml
+COMPOSE_ALL := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.agent.yml -f $(COMPOSE_DIR)/compose.web.yml
 
 .DEFAULT_GOAL := help
 .PHONY: help build build-all web-build test test-e2e lint ci \
 	plan apply destroy up down \
-	image image-web seed deploy deploy-full deploy-ui undeploy reset logs config \
+	image image-web seed deploy deploy-full deploy-ui status undeploy reset logs config \
 	.agent-register clean
 
 help: ## Show available targets
@@ -110,6 +111,14 @@ deploy-full: deploy .agent-register ## Deploy API + Postgres + Docker agent
 deploy-ui: image-web ## Deploy Web UI for the running API
 	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml up -d sysbox-web
 	@echo "Web UI: http://$(WEB_HOST_ADDR):$(WEB_HOST_PORT)"
+
+status: ## Show compose service, port, and health status
+	@$(COMPOSE) $(COMPOSE_ALL) ps
+	@echo ""
+	@printf "API health: "
+	@curl -sf "$(API_URL)/v1/health" 2>/dev/null || echo "unreachable"
+	@printf "Web health: "
+	@curl -sf "http://127.0.0.1:$(WEB_HOST_PORT)/v1/health" 2>/dev/null || echo "unreachable"
 
 .agent-register:
 	$(COMPOSE) $(COMPOSE_FULL) run --rm --no-deps --entrypoint sysbox sysbox-agent \
