@@ -3,7 +3,6 @@ import {
   Activity,
   Boxes,
   Database,
-  DatabaseZap,
   LayoutDashboard,
   Package,
   RadioTower,
@@ -107,12 +106,6 @@ export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, on
                 <span className="truncate font-medium">API {apiStatus}</span>
                 <span className="truncate font-mono text-[10px] uppercase tracking-[0.16em] text-sidebar-foreground/70">{activeRuns} active runs</span>
               </div>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton tooltip="State backend">
-              <DatabaseZap />
-              <span>Postgres state</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

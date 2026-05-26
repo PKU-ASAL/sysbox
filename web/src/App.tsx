@@ -7,10 +7,13 @@ import {
   Filter,
   GitBranch,
   Loader2,
+  Moon,
+  MousePointer2,
   Play,
   Plus,
   RefreshCw,
   SquareTerminal,
+  Sun,
   Trash2,
 } from "lucide-react"
 
@@ -95,6 +98,7 @@ export default function App() {
   const [newName, setNewName] = useState("docker-service")
   const [newHcl, setNewHcl] = useState(starterHcl)
   const [consoleNode, setConsoleNode] = useState<string | undefined>()
+  const [theme, setTheme] = useState(() => localStorage.getItem("sysbox.theme") || "dark")
 
   const overview = usePolling(
     async () => {
@@ -156,6 +160,11 @@ export default function App() {
   useEffect(() => {
     void refreshDetail()
   }, [refreshDetail])
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("light", theme === "light")
+    localStorage.setItem("sysbox.theme", theme)
+  }, [theme])
 
   async function mutate(label: string, fn: () => Promise<unknown>) {
     setBusy(label)
@@ -238,6 +247,18 @@ export default function App() {
     void refreshDetail()
   }
 
+  function selectArtifact(name: string) {
+    setDetail({})
+    setSelected(name)
+    setPage("artifacts")
+  }
+
+  function selectTopology(name: string) {
+    setDetail({})
+    setSelected(name)
+    setPage("topologies")
+  }
+
   const pageTitle = {
     dashboard: "Dashboard",
     agents: "Agents",
@@ -278,6 +299,14 @@ export default function App() {
               </Button>
               <Button variant="outline" size="icon" onClick={() => void overview.refresh()} aria-label="Refresh">
                 <RefreshCw />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+                aria-label="Toggle theme"
+              >
+                {theme === "dark" ? <Sun /> : <Moon />}
               </Button>
               {page === "artifacts" ? (
                 <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -336,7 +365,7 @@ export default function App() {
               topologies={topologies}
               detail={detail}
               busy={busy}
-              onSelect={setSelected}
+              onSelect={selectArtifact}
               onCreatePlan={createPlan}
               onApplyPlan={applyPlan}
               onDestroy={destroyTopology}
@@ -350,7 +379,7 @@ export default function App() {
               topologies={deployedTopologies}
               selectedTopology={selectedTopology?.has_state ? selectedTopology : deployedTopologies[0]}
               detail={detail}
-              onSelect={setSelected}
+              onSelect={selectTopology}
               onConsole={setConsoleNode}
             />
           ) : null}
@@ -473,12 +502,13 @@ function ArtifactTable({
             <TableHead>Serial</TableHead>
             <TableHead>Backend</TableHead>
             <TableHead>Revision</TableHead>
+            <TableHead>Action</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {topologies.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6}>
+              <TableCell colSpan={7}>
                 <EmptyLine text="No HCL artifacts yet" />
               </TableCell>
             </TableRow>
@@ -487,6 +517,13 @@ function ArtifactTable({
               <TableRow
                 key={topology.name}
                 className={`cursor-pointer ${selected === topology.name ? "bg-muted/70" : ""}`}
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault()
+                    onSelect(topology.name)
+                  }
+                }}
                 onClick={() => onSelect(topology.name)}
               >
                 <TableCell className="font-medium">{topology.name}</TableCell>
@@ -497,6 +534,19 @@ function ArtifactTable({
                 <TableCell>{topology.serial || 0}</TableCell>
                 <TableCell>{topology.backend || "local"}</TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">{topology.latest_revision || ""}</TableCell>
+                <TableCell>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onSelect(topology.name)
+                    }}
+                  >
+                    <MousePointer2 data-icon="inline-start" />
+                    Open
+                  </Button>
+                </TableCell>
               </TableRow>
             ))
           )}
@@ -625,12 +675,13 @@ function TopologiesPage({
               <TableHead>Resources</TableHead>
               <TableHead>Serial</TableHead>
               <TableHead>Backend</TableHead>
+              <TableHead>Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
           {topologies.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5}>
+              <TableCell colSpan={6}>
                 <EmptyLine text="No deployed topologies" />
               </TableCell>
             </TableRow>
@@ -639,6 +690,13 @@ function TopologiesPage({
               <TableRow
                 key={topology.name}
                 className={`cursor-pointer ${selectedTopology?.name === topology.name ? "bg-muted/70" : ""}`}
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault()
+                    onSelect(topology.name)
+                  }
+                }}
                 onClick={() => onSelect(topology.name)}
               >
                 <TableCell className="font-medium">{topology.name}</TableCell>
@@ -648,6 +706,19 @@ function TopologiesPage({
                 <TableCell>{topology.resource_count || 0}</TableCell>
                 <TableCell>{topology.serial || 0}</TableCell>
                 <TableCell>{topology.backend || "local"}</TableCell>
+                <TableCell>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onSelect(topology.name)
+                    }}
+                  >
+                    <MousePointer2 data-icon="inline-start" />
+                    Open
+                  </Button>
+                </TableCell>
               </TableRow>
             ))
           )}
