@@ -91,7 +91,11 @@ func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Reque
 		sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "allow", "console session allowed by policy"))
 	})
 	sess, _ = s.consoles.Snapshot(sess.ID)
-	if err := s.agents.PublishConsole(agent.ID, sess, req); err != nil {
+	if _, err := s.publishAgentCommand(r.Context(), agent.ID, controlplane.AgentCommand{
+		Type:    "session_open",
+		Session: &sess,
+		Request: req,
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -124,6 +128,12 @@ func (s *Server) handleCancelConsoleSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	sess, _ := s.consoles.Snapshot(id)
+	_, _ = s.publishAgentCommand(r.Context(), sess.AgentID, controlplane.AgentCommand{
+		Type: "cancel_command",
+		Session: &controlplane.ConsoleSession{
+			ID: sess.ID,
+		},
+	})
 	writeJSON(w, http.StatusOK, sess)
 }
 

@@ -171,21 +171,15 @@ func (r *agentRegistry) StatusStream(topology string) *Broadcaster {
 	return stream
 }
 
-func (r *agentRegistry) PublishRun(agentID string, run controlplane.Run) error {
-	return r.PublishCommand(agentID, controlplane.AgentCommand{Type: "run_assigned", Run: &run})
-}
-
-func (r *agentRegistry) PublishConsole(agentID string, session controlplane.ConsoleSession, req controlplane.ConsoleRequest) error {
-	return r.PublishCommand(agentID, controlplane.AgentCommand{Type: "session_open", Session: &session, Request: req})
-}
-
-func (r *agentRegistry) PublishNodeOperation(agentID string, op controlplane.NodeOperation) error {
-	return r.PublishCommand(agentID, controlplane.AgentCommand{Type: "node_operation", Operation: op})
-}
-
 func (r *agentRegistry) PublishCommand(agentID string, cmd controlplane.AgentCommand) error {
 	if cmd.ID == "" {
 		cmd.ID = uuid.New().String()
+	}
+	if cmd.AgentID == "" {
+		cmd.AgentID = agentID
+	}
+	if cmd.Status == "" {
+		cmd.Status = "queued"
 	}
 	if cmd.CreatedAt.IsZero() {
 		cmd.CreatedAt = time.Now().UTC()

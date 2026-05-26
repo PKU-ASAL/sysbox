@@ -56,18 +56,6 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 	writeJSON(w, http.StatusOK, agent)
 }
 
-func (s *Server) handleListAgentRuns(w http.ResponseWriter, r *http.Request) {
-	s.handleListAgentRunsByID(w, r.PathValue("agent"))
-}
-
-func (s *Server) handleListAgentRunsByID(w http.ResponseWriter, id string) {
-	if err := validatePathSegment(id, "agent"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"runs": s.assignedRunsForAgent(context.Background(), id)})
-}
-
 func (s *Server) handleClaimAgentRun(w http.ResponseWriter, r *http.Request) {
 	s.handleClaimAgentRunByID(w, r.PathValue("agent"), r.PathValue("id"))
 }
@@ -199,6 +187,53 @@ func (s *Server) handleListAgentCommandEvents(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
+func (s *Server) handleListAgentCommands(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	commands, err := s.apiStore.ListAgentCommands(r.Context(), agentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commands": commands})
+}
+
+func (s *Server) handleCancelAgentCommand(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	commandID := r.PathValue("command")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validatePathSegment(commandID, "command"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	cmd, err := s.findAgentCommand(r.Context(), agentID, commandID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if commandTerminal(cmd.Status) {
+		writeJSON(w, http.StatusOK, cmd)
+		return
+	}
+	cancelCmd, err := s.publishAgentCommand(r.Context(), agentID, controlplane.AgentCommand{
+		Type: "cancel_command",
+		Operation: controlplane.NodeOperation{
+			ExternalID: commandID,
+		},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, cancelCmd)
+}
+
 func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
 	if err := validatePathSegment(agentID, "agent"); err != nil {
@@ -234,26 +269,46 @@ func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *htt
 	writeJSON(w, http.StatusAccepted, req)
 }
 
-func (s *Server) handleAgentStream(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("agent")
-	if err := validatePathSegment(id, "agent"); err != nil {
+func (s *Server) handlePostAgentInventory(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if s.agents == nil {
-		s.agents = newAgentRegistry()
+	var inv controlplane.AgentInventory
+	if err := json.NewDecoder(r.Body).Decode(&inv); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode inventory: %w", err))
+		return
 	}
-	if _, err := s.agents.Get(id); err != nil && id != DefaultAgentID {
+	if inv.AgentID == "" {
+		inv.AgentID = agentID
+	}
+	if inv.AgentID != agentID {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("inventory agent id mismatch"))
+		return
+	}
+	if inv.ObservedAt.IsZero() {
+		inv.ObservedAt = time.Now().UTC()
+	}
+	if err := s.apiStore.SaveAgentInventory(r.Context(), inv); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, inv)
+}
+
+func (s *Server) handleGetAgentInventory(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	inv, err := s.apiStore.GetAgentInventory(r.Context(), agentID)
+	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	stream := s.agents.Stream(id)
-	ch := stream.Subscribe()
-	defer stream.Unsubscribe(ch)
-	ServeSSE(w, r, ch)
+	writeJSON(w, http.StatusOK, inv)
 }
 
 func (s *Server) handleAgentCommands(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +333,7 @@ func (s *Server) handleAgentCommands(w http.ResponseWriter, r *http.Request) {
 	ch := stream.Subscribe()
 	defer stream.Unsubscribe(ch)
 	ctx := r.Context()
+	s.pushPendingAgentCommands(ctx, id, conn)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- s.readAgentCommandEvents(ctx, id, conn)
@@ -295,7 +351,16 @@ func (s *Server) handleAgentCommands(w http.ResponseWriter, r *http.Request) {
 			if cmd.ID == "" {
 				continue
 			}
-			if err := conn.Write(ctx, websocket.MessageText, []byte(line)); err != nil {
+			cmd.Status = "delivered"
+			cmd.Delivered = time.Now().UTC()
+			if s.apiStore != nil {
+				_ = s.apiStore.SaveAgentCommand(ctx, cmd)
+			}
+			raw, err := json.Marshal(cmd)
+			if err != nil {
+				continue
+			}
+			if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
 				return
 			}
 		case err := <-errCh:
@@ -325,12 +390,78 @@ func (s *Server) readAgentCommandEvents(ctx context.Context, agentID string, con
 		if event.CreatedAt.IsZero() {
 			event.CreatedAt = time.Now().UTC()
 		}
+		s.updateAgentCommandFromEvent(ctx, event)
 		s.agents.SaveCommandEvent(event)
 		if s.apiStore != nil {
 			_ = s.apiStore.SaveAgentCommandEvent(ctx, event)
 		}
 		fmt.Printf("[agent:%s] command %s %s %s\n", event.AgentID, event.CommandID, event.Type, event.Status)
 	}
+}
+
+func (s *Server) pushPendingAgentCommands(ctx context.Context, agentID string, conn *websocket.Conn) {
+	if s.apiStore == nil {
+		return
+	}
+	commands, err := s.apiStore.ListAgentCommands(ctx, agentID)
+	if err != nil {
+		return
+	}
+	for _, cmd := range commands {
+		if !commandIsPending(cmd) {
+			continue
+		}
+		cmd.Status = "delivered"
+		cmd.Delivered = time.Now().UTC()
+		_ = s.apiStore.SaveAgentCommand(ctx, cmd)
+		raw, err := json.Marshal(cmd)
+		if err != nil {
+			continue
+		}
+		_ = conn.Write(ctx, websocket.MessageText, raw)
+	}
+}
+
+func (s *Server) updateAgentCommandFromEvent(ctx context.Context, event controlplane.AgentCommandEvent) {
+	if s.apiStore == nil || event.CommandID == "" || event.AgentID == "" {
+		return
+	}
+	cmd, err := s.findAgentCommand(ctx, event.AgentID, event.CommandID)
+	if err != nil {
+		return
+	}
+	now := event.CreatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	switch event.Status {
+	case "ack":
+		cmd.Status = "acked"
+		cmd.AckedAt = now
+	case "started":
+		cmd.Status = "running"
+	case "completed":
+		cmd.Status = "completed"
+		cmd.EndedAt = now
+	case "failed", "denied", "cancelled":
+		cmd.Status = event.Status
+		cmd.Err = event.Error
+		cmd.EndedAt = now
+	}
+	_ = s.apiStore.SaveAgentCommand(ctx, cmd)
+}
+
+func (s *Server) findAgentCommand(ctx context.Context, agentID, commandID string) (controlplane.AgentCommand, error) {
+	commands, err := s.apiStore.ListAgentCommands(ctx, agentID)
+	if err != nil {
+		return controlplane.AgentCommand{}, err
+	}
+	for _, cmd := range commands {
+		if cmd.ID == commandID {
+			return cmd, nil
+		}
+	}
+	return controlplane.AgentCommand{}, fmt.Errorf("agent command not found")
 }
 
 func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -401,22 +532,6 @@ func normalizeAgent(in controlplane.Agent) (controlplane.Agent, error) {
 		in.LastHeartbeat = now
 	}
 	return in, nil
-}
-
-func (s *Server) assignedRunsForAgent(ctx context.Context, agentID string) []Run {
-	runs, err := s.apiStore.LoadRuns(ctx)
-	if err != nil {
-		return nil
-	}
-	out := make([]Run, 0)
-	for _, run := range latestRunsByID(runs) {
-		normalizeRunProductFields(&run)
-		if run.AgentID == agentID && run.Status == RunAssigned {
-			out = append(out, run)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].QueuedAt.Before(out[j].QueuedAt) })
-	return out
 }
 
 func ensureLocalAgent(agents []controlplane.Agent) []controlplane.Agent {

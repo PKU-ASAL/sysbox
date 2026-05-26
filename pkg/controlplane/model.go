@@ -113,6 +113,23 @@ type Projection struct {
 	UpdatedAt     time.Time `json:"updated_at,omitempty"`
 }
 
+type AgentInventory struct {
+	AgentID      string            `json:"agent_id"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Topologies   []InventoryItem   `json:"topologies,omitempty"`
+	ObservedAt   time.Time         `json:"observed_at"`
+}
+
+type InventoryItem struct {
+	Workspace     string `json:"workspace,omitempty"`
+	Topology      string `json:"topology"`
+	Backend       string `json:"backend,omitempty"`
+	Serial        int64  `json:"serial,omitempty"`
+	ResourceCount int    `json:"resource_count,omitempty"`
+	Health        string `json:"health,omitempty"`
+}
+
 type ConsoleSession struct {
 	ID          string    `json:"id"`
 	ProjectID   string    `json:"project_id,omitempty"`
@@ -165,12 +182,18 @@ type ConsoleCommand struct {
 
 type AgentCommand struct {
 	ID        string          `json:"id"`
+	AgentID   string          `json:"agent_id,omitempty"`
 	Type      string          `json:"type"`
+	Status    string          `json:"status,omitempty"`
+	Err       string          `json:"error,omitempty"`
 	Run       *Run            `json:"run,omitempty"`
 	Session   *ConsoleSession `json:"session,omitempty"`
 	Request   ConsoleRequest  `json:"request,omitempty"`
 	Operation NodeOperation   `json:"operation,omitempty"`
 	CreatedAt time.Time       `json:"created_at,omitempty"`
+	Delivered time.Time       `json:"delivered_at,omitempty"`
+	AckedAt   time.Time       `json:"acked_at,omitempty"`
+	EndedAt   time.Time       `json:"ended_at,omitempty"`
 }
 
 type AgentCommandEvent struct {

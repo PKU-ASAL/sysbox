@@ -1,13 +1,11 @@
 package agentexec
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -64,18 +62,13 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 
 	executor := NewExecutorWithBridge(remoteBridge{Bridge: bridge, reporter: opts})
 	go observeLoop(ctx, opts, bridge)
+	runner := newCommandRunner(executor, opts)
 	for {
 		if err := heartbeat(ctx, opts); err != nil {
 			fmt.Printf("[agent] heartbeat failed: %v\n", err)
 		}
-		if err := drainAssignedRuns(ctx, executor, opts); err != nil {
-			fmt.Printf("[agent] drain assigned runs failed: %v\n", err)
-		}
-		if err := commandWebSocketAndExecute(ctx, executor, opts); err != nil && ctx.Err() == nil {
+		if err := commandWebSocketAndExecute(ctx, runner, opts); err != nil && ctx.Err() == nil {
 			fmt.Printf("[agent] command websocket disconnected: %v\n", err)
-			if err := streamAndExecute(ctx, executor, opts); err != nil && ctx.Err() == nil {
-				fmt.Printf("[agent] command stream disconnected: %v\n", err)
-			}
 		}
 		select {
 		case <-ctx.Done():
@@ -106,6 +99,9 @@ func reportObserved(ctx context.Context, opts Options, bridge Bridge) {
 			fmt.Printf("[agent] report projection %s failed: %v\n", proj.Topology, err)
 		}
 	}
+	if err := opts.ReportInventory(ctx, Inventory(ctx, opts, bridge)); err != nil {
+		fmt.Printf("[agent] report inventory failed: %v\n", err)
+	}
 }
 
 func heartbeat(ctx context.Context, opts Options) error {
@@ -119,42 +115,7 @@ func heartbeat(ctx context.Context, opts Options) error {
 	}, nil)
 }
 
-func drainAssignedRuns(ctx context.Context, executor *Executor, opts Options) error {
-	var listed struct {
-		Runs []controlplane.Run `json:"runs"`
-	}
-	if err := get(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs", &listed); err != nil {
-		return err
-	}
-	for _, run := range listed.Runs {
-		claimed, err := claim(ctx, opts, run.ID)
-		if err != nil {
-			fmt.Printf("[agent] claim %s failed: %v\n", run.ID, err)
-			continue
-		}
-		executor.Execute(claimed)
-	}
-	return nil
-}
-
-func streamAndExecute(ctx context.Context, executor *Executor, opts Options) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, opts.APIURL+"/v1/agents/"+opts.ID+"/stream", nil)
-	if err != nil {
-		return err
-	}
-	authorize(req, opts)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("GET %s: %s", req.URL.String(), resp.Status)
-	}
-	return readCommandStream(ctx, resp.Body, executor, opts)
-}
-
-func commandWebSocketAndExecute(ctx context.Context, executor *Executor, opts Options) error {
+func commandWebSocketAndExecute(ctx context.Context, runner *commandRunner, opts Options) error {
 	wsURL := strings.TrimRight(opts.APIURL, "/") + "/v1/agents/" + opts.ID + "/commands"
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
 	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
@@ -189,41 +150,24 @@ func commandWebSocketAndExecute(ctx context.Context, executor *Executor, opts Op
 			Status:    "ack",
 			Message:   "command received",
 		})
-		go executeAgentCommand(ctx, executor, opts, &cmd, func(event controlplane.AgentCommandEvent) {
+		go runner.Execute(ctx, &cmd, func(event controlplane.AgentCommandEvent) {
 			reporter.Report(ctx, event)
 		})
 	}
 }
 
-func readCommandStream(ctx context.Context, body io.Reader, executor *Executor, opts Options) error {
-	scanner := bufio.NewScanner(body)
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") {
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		}
-		if line == "" {
-			continue
-		}
-		var cmd controlplane.AgentCommand
-		if err := json.Unmarshal([]byte(line), &cmd); err != nil {
-			fmt.Printf("[agent] decode command: %v\n", err)
-			continue
-		}
-		executeAgentCommand(ctx, executor, opts, &cmd, nil)
-	}
-	return scanner.Err()
+type commandRunner struct {
+	mu       sync.Mutex
+	executor *Executor
+	opts     Options
+	running  map[string]context.CancelFunc
 }
 
-func executeAgentCommand(ctx context.Context, executor *Executor, opts Options, cmd *controlplane.AgentCommand, report func(controlplane.AgentCommandEvent)) {
+func newCommandRunner(executor *Executor, opts Options) *commandRunner {
+	return &commandRunner{executor: executor, opts: opts, running: map[string]context.CancelFunc{}}
+}
+
+func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentCommand, report func(controlplane.AgentCommandEvent)) {
 	if cmd == nil {
 		return
 	}
@@ -242,10 +186,25 @@ func executeAgentCommand(ctx context.Context, executor *Executor, opts Options, 
 		}
 		report(event)
 	}
-	if err := authorizeAgentCommand(opts.Policy, cmd); err != nil {
+	if cmd.Type == "cancel_command" {
+		target := cmd.Operation.ExternalID
+		if target == "" && cmd.Session != nil {
+			target = cmd.Session.ID
+		}
+		if r.cancel(target) {
+			emit("completed", "command cancelled", nil)
+			return
+		}
+		emit("failed", "command not running", fmt.Errorf("command %q is not running", target))
+		return
+	}
+	if err := authorizeAgentCommand(r.opts.Policy, cmd); err != nil {
 		emit("denied", "command denied by local agent policy", err)
 		return
 	}
+	runCtx, cancel := context.WithCancel(ctx)
+	r.track(cmd, cancel)
+	defer r.untrack(cmd)
 	emit("started", "command started", nil)
 	switch cmd.Type {
 	case "run_assigned":
@@ -253,28 +212,28 @@ func executeAgentCommand(ctx context.Context, executor *Executor, opts Options, 
 			emit("failed", "missing run", fmt.Errorf("missing run"))
 			return
 		}
-		claimed, err := claim(ctx, opts, cmd.Run.ID)
+		claimed, err := claim(runCtx, r.opts, cmd.Run.ID)
 		if err != nil {
 			fmt.Printf("[agent] claim %s failed: %v\n", cmd.Run.ID, err)
 			emit("failed", "run claim failed", err)
 			return
 		}
-		executor.Execute(claimed)
+		r.executor.Execute(claimed)
 		emit("completed", "run command completed", nil)
 	case "session_open":
 		if cmd.Session == nil {
 			emit("failed", "missing session", fmt.Errorf("missing session"))
 			return
 		}
-		if err := openConsoleSession(ctx, opts, executor.bridge, *cmd.Session, cmd.Request); err != nil {
+		if err := openConsoleSession(runCtx, r.opts, r.executor.bridge, *cmd.Session, cmd.Request); err != nil {
 			fmt.Printf("[agent] console session %s failed: %v\n", cmd.Session.ID, err)
 			emit("failed", "console session failed", err)
 			return
 		}
 		emit("completed", "console session completed", nil)
 	case "node_operation":
-		completed := executor.ExecuteNodeOperation(ctx, cmd.Operation)
-		if err := opts.ReportNodeOperationComplete(ctx, completed); err != nil {
+		completed := r.executor.ExecuteNodeOperation(runCtx, cmd.Operation)
+		if err := r.opts.ReportNodeOperationComplete(runCtx, completed); err != nil {
 			fmt.Printf("[agent] report node operation %s failed: %v\n", completed.ID, err)
 			emit("failed", "node operation report failed", err)
 			return
@@ -289,6 +248,48 @@ func executeAgentCommand(ctx context.Context, executor *Executor, opts Options, 
 		fmt.Printf("[agent] %v\n", err)
 		emit("failed", "unknown command type", err)
 	}
+}
+
+func (r *commandRunner) track(cmd *controlplane.AgentCommand, cancel context.CancelFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.running[cmd.ID] = cancel
+	if cmd.Session != nil && cmd.Session.ID != "" {
+		r.running[cmd.Session.ID] = cancel
+	}
+	if cmd.Run != nil && cmd.Run.ID != "" {
+		r.running[cmd.Run.ID] = cancel
+	}
+	if cmd.Operation.ID != "" {
+		r.running[cmd.Operation.ID] = cancel
+	}
+}
+
+func (r *commandRunner) untrack(cmd *controlplane.AgentCommand) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.running, cmd.ID)
+	if cmd.Session != nil {
+		delete(r.running, cmd.Session.ID)
+	}
+	if cmd.Run != nil {
+		delete(r.running, cmd.Run.ID)
+	}
+	delete(r.running, cmd.Operation.ID)
+}
+
+func (r *commandRunner) cancel(id string) bool {
+	if id == "" {
+		return false
+	}
+	r.mu.Lock()
+	cancel := r.running[id]
+	r.mu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
 }
 
 func authorizeAgentCommand(policy config.AgentPolicyConfig, cmd *controlplane.AgentCommand) error {
@@ -424,6 +425,16 @@ func (opts Options) ReportResourceProjection(ctx context.Context, projection con
 		projection.AgentID = opts.ID
 	}
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/projections/resources", projection, nil)
+}
+
+func (opts Options) ReportInventory(ctx context.Context, inv controlplane.AgentInventory) error {
+	if opts.APIURL == "" || opts.ID == "" {
+		return nil
+	}
+	if inv.AgentID == "" {
+		inv.AgentID = opts.ID
+	}
+	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/inventory", inv, nil)
 }
 
 func (opts Options) ReportNodeOperationComplete(ctx context.Context, op controlplane.NodeOperation) error {

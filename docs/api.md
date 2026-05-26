@@ -22,11 +22,13 @@ GET  /v1/agents
 POST /v1/agents
 GET  /v1/agents/{agent_id}
 POST /v1/agents/{agent_id}/heartbeat
-GET  /v1/agents/{agent_id}/stream
 GET  /v1/agents/{agent_id}/commands
+GET  /v1/agents/{agent_id}/commands/list
+POST /v1/agents/{agent_id}/commands/{command_id}/cancel
 GET  /v1/agents/{agent_id}/command-events
 GET  /v1/agents/{agent_id}/projections
-GET  /v1/agents/{agent_id}/runs
+GET  /v1/agents/{agent_id}/inventory
+POST /v1/agents/{agent_id}/inventory
 POST /v1/agents/{agent_id}/runs/{run_id}/claim
 POST /v1/agents/{agent_id}/runs/{run_id}/complete
 ```
@@ -107,12 +109,12 @@ intent; agents keep an outbound WebSocket command stream open at
 `/v1/agents/{agent_id}/commands`. Commands use a durable envelope with
 `id`, `type`, and command-specific payload. Agents ACK, start, complete, and
 fail commands on the same WebSocket; command events are persisted and available
-from `/v1/agents/{agent_id}/command-events`. The older SSE
-`/v1/agents/{agent_id}/stream` endpoint remains as a compatibility/debug
-projection while agents prefer WebSocket. When a run is assigned, the API
-pushes a `run_assigned` command; the agent then claims the run and executes it
-on the host. `/runs` remains as reconnect/backfill support. On completion, the
-agent posts the final run status and a state projection to
+from `/v1/agents/{agent_id}/command-events`. Commands are persisted before
+delivery, replayed to reconnecting agents while pending, and can be cancelled
+with `cancel_command`. The legacy SSE command stream has been removed. When a
+run is assigned, the API pushes a `run_assigned` command; the agent then claims
+the run and executes it on the host. On completion, the agent posts the final
+run status and a state projection to
 `/v1/agents/{agent_id}/runs/{run_id}/complete`.
 
 ```text
@@ -123,6 +125,10 @@ Agents also enforce a local host policy before executing commands. Configure
 `agent.policy.allowed_workspaces`, `allowed_substrates`, `allowed_commands`,
 `allow_console`, and `allow_import` in `sysbox.yaml` to keep host-local
 capabilities scoped even if the control plane is misconfigured.
+
+Agents periodically sync inventory to `/v1/agents/{agent_id}/inventory`,
+including local topologies, serials, resource counts, health, labels, and
+capabilities. The API treats this as a projection of agent-local truth.
 
 ## Console Sessions
 

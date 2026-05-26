@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -107,9 +106,58 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		require.Contains(t, rec.Body.String(), event.CommandID)
 		require.Contains(t, rec.Body.String(), `"status":"ack"`)
+
+		rec = httptest.NewRecorder()
+		s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/agents/host-a/commands/list", nil))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), `"status":"acked"`)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for command websocket")
 	}
+}
+
+func TestAgentCommandWebSocketReplaysPendingCommand(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
+	cmd, err := s.publishAgentCommand(context.Background(), "host-a", controlplane.AgentCommand{
+		Type: "run_assigned",
+		Run:  &controlplane.Run{ID: "run-1", Topology: "mixed", Workspace: "mixed", AgentID: "host-a"},
+	})
+	require.NoError(t, err)
+
+	server := httptest.NewServer(s)
+	defer server.Close()
+	wsURL := "ws" + server.URL[len("http"):] + "/v1/agents/host-a/commands"
+	conn, _, err := websocket.Dial(context.Background(), wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	_, data, err := conn.Read(context.Background())
+	require.NoError(t, err)
+	var got controlplane.AgentCommand
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, cmd.ID, got.ID)
+	require.Equal(t, "delivered", got.Status)
+}
+
+func TestAgentCommandCancelPublishesCancelCommand(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	cmd, err := s.publishAgentCommand(context.Background(), "host-a", controlplane.AgentCommand{
+		Type: "node_operation",
+		Operation: controlplane.NodeOperation{
+			ID:        "op-1",
+			Topology:  "mixed",
+			Workspace: "mixed",
+			Operation: "pause",
+		},
+	})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/commands/"+cmd.ID+"/cancel", nil))
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"type":"cancel_command"`)
+	require.Contains(t, rec.Body.String(), cmd.ID)
 }
 
 func TestConsoleSessionPublishesAgentCommand(t *testing.T) {
@@ -132,22 +180,18 @@ resource "sysbox_node" "web" {
 	server := httptest.NewServer(s)
 	defer server.Close()
 
-	errCh := make(chan error, 1)
-	bodyCh := make(chan string, 1)
+	wsURL := "ws" + server.URL[len("http"):] + "/v1/agents/host-a/commands"
+	conn, _, err := websocket.Dial(context.Background(), wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	cmdCh := make(chan controlplane.AgentCommand, 1)
 	go func() {
-		resp, err := http.Get(server.URL + "/v1/agents/host-a/stream")
-		if err != nil {
-			errCh <- err
-			return
+		var cmd controlplane.AgentCommand
+		_, data, err := conn.Read(context.Background())
+		if err == nil {
+			_ = json.Unmarshal(data, &cmd)
 		}
-		defer resp.Body.Close()
-		data := make([]byte, 4096)
-		n, err := resp.Body.Read(data)
-		if err != nil && err != io.EOF {
-			errCh <- err
-			return
-		}
-		bodyCh <- string(data[:n])
+		cmdCh <- cmd
 	}()
 
 	time.Sleep(50 * time.Millisecond)
@@ -158,11 +202,10 @@ resource "sysbox_node" "web" {
 	require.Contains(t, rec.Body.String(), `"agent_id":"host-a"`)
 
 	select {
-	case err := <-errCh:
-		require.NoError(t, err)
-	case body := <-bodyCh:
-		require.Contains(t, body, "session_open")
-		require.Contains(t, body, "web")
+	case cmd := <-cmdCh:
+		require.Equal(t, "session_open", cmd.Type)
+		require.NotNil(t, cmd.Session)
+		require.Equal(t, "web", cmd.Session.Node)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for session command")
 	}
@@ -222,44 +265,11 @@ func TestRunDefaultsToLocalAgent(t *testing.T) {
 	require.Equal(t, DefaultAgentID, stored.AgentID)
 }
 
-func TestAgentStreamReceivesAssignedRun(t *testing.T) {
+func TestAgentStreamEndpointRemoved(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
-	server := httptest.NewServer(s)
-	defer server.Close()
-
-	errCh := make(chan error, 1)
-	bodyCh := make(chan string, 1)
-	go func() {
-		resp, err := http.Get(server.URL + "/v1/agents/host-a/stream")
-		if err != nil {
-			errCh <- err
-			return
-		}
-		defer resp.Body.Close()
-		data := make([]byte, 4096)
-		n, err := resp.Body.Read(data)
-		if err != nil && err != io.EOF {
-			errCh <- err
-			return
-		}
-		bodyCh <- string(data[:n])
-	}()
-
-	time.Sleep(50 * time.Millisecond)
-	run := s.jobs.start("mixed", "apply")
-	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
-
-	select {
-	case err := <-errCh:
-		require.NoError(t, err)
-	case body := <-bodyCh:
-		require.Contains(t, body, "data:")
-		require.Contains(t, body, "run_assigned")
-		require.Contains(t, body, run.ID)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for agent stream command")
-	}
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/agents/host-a/stream", nil))
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
@@ -328,6 +338,25 @@ func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
 	projections := s.agents.ListResourceProjections("mixed")
 	require.Len(t, projections, 1)
 	require.Equal(t, "sysbox_node.web", projections[0].Resources[0].Resource)
+}
+
+func TestAgentInventoryPersists(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	body := bytes.NewBufferString(`{
+  "agent_id": "host-a",
+  "capabilities": ["docker"],
+  "labels": {"role":"lab"},
+  "topologies": [{"workspace":"mixed","topology":"mixed","serial":3,"resource_count":2,"health":"healthy"}]
+}`)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/inventory", body))
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/agents/host-a/inventory", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"topology":"mixed"`)
+	require.Contains(t, rec.Body.String(), `"resource_count":2`)
 }
 
 func TestNodeOperationCompletionPersists(t *testing.T) {

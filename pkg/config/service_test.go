@@ -32,6 +32,7 @@ agent:
     allowed_commands:
       - run_assigned
       - node_operation
+      - cancel_command
     allow_console: false
     allow_import: false
 paths:
@@ -66,7 +67,7 @@ artifacts:
 	require.Equal(t, []string{"admin", "platform"}, cfg.API.RBAC.AdminRoles)
 	require.Equal(t, []string{"lab"}, cfg.Agent.Policy.AllowedWorkspaces)
 	require.Equal(t, []string{"docker"}, cfg.Agent.Policy.AllowedSubstrates)
-	require.Equal(t, []string{"run_assigned", "node_operation"}, cfg.Agent.Policy.AllowedCommands)
+	require.Equal(t, []string{"run_assigned", "node_operation", "cancel_command"}, cfg.Agent.Policy.AllowedCommands)
 	require.False(t, *cfg.Agent.Policy.AllowConsole)
 	require.False(t, *cfg.Agent.Policy.AllowImport)
 	require.Equal(t, "/srv/sysbox/workspaces", cfg.Paths.WorkspacesDir)

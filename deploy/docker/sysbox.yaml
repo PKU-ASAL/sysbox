@@ -21,6 +21,7 @@ agent:
       - run_assigned
       - session_open
       - node_operation
+      - cancel_command
     allowed_workspaces: []
     allowed_substrates: []
     allow_console: true

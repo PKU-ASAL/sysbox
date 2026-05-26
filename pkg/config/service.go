@@ -143,7 +143,7 @@ func DefaultServiceConfig() ServiceConfig {
 		},
 		Agent: AgentConfig{
 			Policy: AgentPolicyConfig{
-				AllowedCommands: []string{"run_assigned", "session_open", "node_operation"},
+				AllowedCommands: []string{"run_assigned", "session_open", "node_operation", "cancel_command"},
 				AllowConsole:    &allow,
 				AllowImport:     &allow,
 			},
@@ -279,7 +279,7 @@ func applyDerivedDefaults(c *ServiceConfig) {
 		c.API.Headers.Roles = "X-Sysbox-Roles"
 	}
 	if len(c.Agent.Policy.AllowedCommands) == 0 {
-		c.Agent.Policy.AllowedCommands = []string{"run_assigned", "session_open", "node_operation"}
+		c.Agent.Policy.AllowedCommands = []string{"run_assigned", "session_open", "node_operation", "cancel_command"}
 	}
 	if c.Agent.Policy.AllowConsole == nil {
 		v := true
@@ -348,7 +348,7 @@ func (c ServiceConfig) Validate() error {
 	}
 	for _, command := range c.Agent.Policy.AllowedCommands {
 		switch command {
-		case "run_assigned", "session_open", "node_operation":
+		case "run_assigned", "session_open", "node_operation", "cancel_command":
 		default:
 			return fmt.Errorf("agent.policy.allowed_commands contains unsupported command %q", command)
 		}

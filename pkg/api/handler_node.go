@@ -140,7 +140,10 @@ func (s *Server) handleNodeLifecycle(r *http.Request, operation string, w http.R
 		RequestedBy: subj.User,
 		Roles:       subj.Roles,
 	})
-	if err := s.agents.PublishNodeOperation(agent.ID, op); err != nil {
+	if _, err := s.publishAgentCommand(r.Context(), agent.ID, controlplane.AgentCommand{
+		Type:      "node_operation",
+		Operation: op,
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -206,7 +209,10 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		RequestedBy: subj.User,
 		Roles:       subj.Roles,
 	})
-	if err := s.agents.PublishNodeOperation(agent.ID, op); err != nil {
+	if _, err := s.publishAgentCommand(r.Context(), agent.ID, controlplane.AgentCommand{
+		Type:      "node_operation",
+		Operation: op,
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

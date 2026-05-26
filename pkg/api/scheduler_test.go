@@ -80,14 +80,13 @@ func TestAgentClaimRun(t *testing.T) {
 	run := s.jobs.start("mixed", "apply")
 	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
 
-	assigned := s.assignedRunsForAgent(context.Background(), DefaultAgentID)
-	require.Len(t, assigned, 1)
-	require.Equal(t, run.ID, assigned[0].ID)
+	commands, err := s.apiStore.ListAgentCommands(context.Background(), DefaultAgentID)
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+	require.Equal(t, "run_assigned", commands[0].Type)
+	require.Equal(t, run.ID, commands[0].Run.ID)
 
 	claimed, err := s.jobs.claim(run.ID, DefaultAgentID)
 	require.NoError(t, err)
 	require.Equal(t, RunRunning, claimed.Status)
-
-	assigned = s.assignedRunsForAgent(context.Background(), DefaultAgentID)
-	require.Empty(t, assigned)
 }

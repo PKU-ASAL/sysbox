@@ -18,13 +18,16 @@ func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string) e
 		return err
 	}
 	s.jobs.assign(run, agent.ID)
-	if s.agents != nil {
-		if err := s.agents.PublishRun(agent.ID, runRecord(*run)); err != nil {
-			return err
-		}
+	if _, err := s.publishAgentCommand(ctx, agent.ID, controlplane.AgentCommand{
+		Type: "run_assigned",
+		Run:  ptrRun(runRecord(*run)),
+	}); err != nil {
+		return err
 	}
 	return nil
 }
+
+func ptrRun(run controlplane.Run) *controlplane.Run { return &run }
 
 func (s *Server) selectAgent(ctx context.Context, required []string) (controlplane.Agent, error) {
 	_ = ctx

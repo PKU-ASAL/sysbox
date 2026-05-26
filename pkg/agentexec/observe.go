@@ -40,6 +40,27 @@ func Observe(ctx context.Context, agentID string, bridge Bridge) []controlplane.
 	return out
 }
 
+func Inventory(ctx context.Context, opts Options, bridge Bridge) controlplane.AgentInventory {
+	projections := Observe(ctx, opts.ID, bridge)
+	items := make([]controlplane.InventoryItem, 0, len(projections))
+	for _, proj := range projections {
+		items = append(items, controlplane.InventoryItem{
+			Workspace:     proj.Workspace,
+			Topology:      proj.Topology,
+			Serial:        proj.Serial,
+			ResourceCount: len(proj.Resources),
+			Health:        string(proj.Health.Status),
+		})
+	}
+	return controlplane.AgentInventory{
+		AgentID:      opts.ID,
+		Capabilities: append([]string{}, opts.Capabilities...),
+		Labels:       opts.Labels,
+		Topologies:   items,
+		ObservedAt:   time.Now().UTC(),
+	}
+}
+
 func topologiesFromRunsDir(runsDir string) []string {
 	entries, _ := filepath.Glob(filepath.Join(runsDir, "*", "state.json"))
 	out := make([]string, 0, len(entries))

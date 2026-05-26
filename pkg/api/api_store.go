@@ -40,6 +40,10 @@ type apiStore interface {
 	ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error)
 	SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error
 	ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error)
+	SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error
+	ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error)
+	SaveAgentInventory(ctx context.Context, inv controlplane.AgentInventory) error
+	GetAgentInventory(ctx context.Context, agentID string) (*controlplane.AgentInventory, error)
 }
 
 type localAPIStore struct {
@@ -304,6 +308,41 @@ func (s *localAPIStore) ListAgentCommandEvents(_ context.Context, agentID string
 	return out, nil
 }
 
+func (s *localAPIStore) SaveAgentCommand(_ context.Context, cmd controlplane.AgentCommand) error {
+	agentID := cmd.AgentID
+	if agentID == "" {
+		agentID = "_unknown"
+	}
+	return writeLocalObject(filepath.Join(s.runsDir, "_agents", agentID, "commands", cmd.ID+".json"), cmd)
+}
+
+func (s *localAPIStore) ListAgentCommands(_ context.Context, agentID string) ([]controlplane.AgentCommand, error) {
+	if agentID == "" {
+		return readLocalObjects[controlplane.AgentCommand](filepath.Join(s.runsDir, "_agents", "*", "commands", "*.json"))
+	}
+	return readLocalObjects[controlplane.AgentCommand](filepath.Join(s.runsDir, "_agents", agentID, "commands", "*.json"))
+}
+
+func (s *localAPIStore) SaveAgentInventory(_ context.Context, inv controlplane.AgentInventory) error {
+	agentID := inv.AgentID
+	if agentID == "" {
+		agentID = "_unknown"
+	}
+	return writeLocalObject(filepath.Join(s.runsDir, "_agents", agentID, "inventory.json"), inv)
+}
+
+func (s *localAPIStore) GetAgentInventory(_ context.Context, agentID string) (*controlplane.AgentInventory, error) {
+	raw, err := os.ReadFile(filepath.Join(s.runsDir, "_agents", agentID, "inventory.json"))
+	if err != nil {
+		return nil, fmt.Errorf("agent inventory not found")
+	}
+	var inv controlplane.AgentInventory
+	if err := json.Unmarshal(raw, &inv); err != nil {
+		return nil, err
+	}
+	return &inv, nil
+}
+
 func writeLocalObject(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -402,6 +441,18 @@ CREATE TABLE IF NOT EXISTS sysbox_agent_command_events (
   status TEXT NOT NULL,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
+  agent_id TEXT NOT NULL,
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
+  agent_id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`)
 	if err != nil {
 		return fmt.Errorf("postgres ensure api tables: %w", err)
@@ -815,6 +866,110 @@ func (s *postgresAPIStore) ListAgentCommandEvents(ctx context.Context, agentID s
 		out = append(out, event)
 	}
 	return out, rows.Err()
+}
+
+func (s *postgresAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error {
+	if cmd.AgentID == "" {
+		cmd.AgentID = "_unknown"
+	}
+	if cmd.Status == "" {
+		cmd.Status = "queued"
+	}
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	raw, err := json.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(ctx, `
+INSERT INTO sysbox_agent_commands (agent_id, id, status, data, updated_at)
+VALUES ($1, $2, $3, $4::jsonb, now())
+ON CONFLICT (id) DO UPDATE SET agent_id=EXCLUDED.agent_id, status=EXCLUDED.status, data=EXCLUDED.data, updated_at=now()`,
+		cmd.AgentID, cmd.ID, cmd.Status, string(raw))
+	if err != nil {
+		return fmt.Errorf("postgres save agent command: %w", err)
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	query := `SELECT data::text FROM sysbox_agent_commands ORDER BY updated_at DESC LIMIT 512`
+	args := []any{}
+	if agentID != "" {
+		query = `SELECT data::text FROM sysbox_agent_commands WHERE agent_id=$1 ORDER BY updated_at DESC LIMIT 512`
+		args = append(args, agentID)
+	}
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres list agent commands: %w", err)
+	}
+	defer rows.Close()
+	var out []controlplane.AgentCommand
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var cmd controlplane.AgentCommand
+		if err := json.Unmarshal(raw, &cmd); err != nil {
+			return nil, err
+		}
+		out = append(out, cmd)
+	}
+	return out, rows.Err()
+}
+
+func (s *postgresAPIStore) SaveAgentInventory(ctx context.Context, inv controlplane.AgentInventory) error {
+	if inv.AgentID == "" {
+		inv.AgentID = "_unknown"
+	}
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	raw, err := json.Marshal(inv)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(ctx, `
+INSERT INTO sysbox_agent_inventory (agent_id, data, updated_at)
+VALUES ($1, $2::jsonb, now())
+ON CONFLICT (agent_id) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`,
+		inv.AgentID, string(raw))
+	if err != nil {
+		return fmt.Errorf("postgres save agent inventory: %w", err)
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) GetAgentInventory(ctx context.Context, agentID string) (*controlplane.AgentInventory, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	var raw []byte
+	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_agent_inventory WHERE agent_id=$1`, agentID).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, fmt.Errorf("agent inventory not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres get agent inventory: %w", err)
+	}
+	var inv controlplane.AgentInventory
+	if err := json.Unmarshal(raw, &inv); err != nil {
+		return nil, err
+	}
+	return &inv, nil
 }
 
 func (s *postgresAPIStore) saveObject(ctx context.Context, table, workspace, id string, v any) error {
