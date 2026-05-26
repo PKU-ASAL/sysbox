@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -141,4 +142,36 @@ func TestSupervisorRestartOnCrashSkipsWhenRunActive(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "skipped_running_operation", snap.Action)
 	require.Empty(t, snap.RunID)
+}
+
+func TestSupervisorMarksStaleAgentOfflineAndExpiredRunFailed(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	ctx := context.Background()
+	require.NoError(t, s.saveAgent(ctx, controlplane.Agent{
+		ID:            "host-a",
+		Status:        "online",
+		Capabilities:  []string{"docker"},
+		LastHeartbeat: time.Now().UTC().Add(-10 * time.Minute),
+	}))
+	run := s.jobs.start("mixed", "apply")
+	run.AgentID = "host-a"
+	run.Status = RunRunning
+	run.LeaseOwner = "host-a:run"
+	run.LeaseUntil = time.Now().UTC().Add(-time.Minute)
+	s.jobs.replace(run)
+
+	supervisor := newSupervisor(s, time.Minute)
+	supervisor.server.markStaleAgentsOffline(ctx, time.Now().UTC())
+	supervisor.server.jobs.markExpiredLeases(time.Now().UTC())
+
+	agent, err := s.apiStore.GetAgent(ctx, "host-a")
+	require.NoError(t, err)
+	require.Equal(t, "offline", agent.Status)
+	require.Equal(t, "heartbeat stale", agent.Reason)
+
+	got, ok := s.jobs.get(run.ID)
+	require.True(t, ok)
+	require.Equal(t, RunFailed, got.Status)
+	require.Equal(t, "run lease expired", got.Err)
+	require.True(t, got.Recoverable)
 }

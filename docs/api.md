@@ -2,6 +2,10 @@
 
 The sysbox API exposes product-level control plane objects over `/v1`.
 
+```bash
+GET /v1/schema
+```
+
 ## Projects
 
 ```bash
@@ -12,10 +16,11 @@ GET /v1/projects/default/workspaces
 
 ## Agents
 
-Agents are host-local execution nodes. The API keeps only an online projection
-from registration/heartbeat data; durable topology state, checkpoints, and
-artifact metadata remain on the agent host unless a shared backend is
-explicitly configured.
+Agents are host-local execution nodes. Agent identity, protocol version,
+capabilities, disabled/quarantined state, and heartbeat projection are
+persisted in the API store. Durable topology state, checkpoints, and artifact
+metadata remain on the agent host unless a shared backend is explicitly
+configured.
 
 ```bash
 GET  /v1/agents
@@ -30,6 +35,7 @@ GET  /v1/agents/{agent_id}/projections
 GET  /v1/agents/{agent_id}/inventory
 POST /v1/agents/{agent_id}/inventory
 POST /v1/agents/{agent_id}/runs/{run_id}/claim
+POST /v1/agents/{agent_id}/runs/{run_id}/renew
 POST /v1/agents/{agent_id}/runs/{run_id}/complete
 ```
 
@@ -118,8 +124,10 @@ lease expiry, and attempt count so multiple API replicas do not deliver or
 claim the same work concurrently. The legacy SSE command stream has been
 removed. When a run is assigned, the API pushes a `run_assigned` command; the
 agent then claims the run through the same lease/attempt model and executes it
-on the host. On completion, the agent posts the final run status and a state
-projection to
+on the host. While a run is active, the agent renews its run lease through
+`/v1/agents/{agent_id}/runs/{run_id}/renew`; expired running leases are marked
+failed/recoverable by the supervisor. On completion, the agent posts the final
+run status and a state projection to
 `/v1/agents/{agent_id}/runs/{run_id}/complete`.
 
 ```text
@@ -138,6 +146,8 @@ inventory, projection, run completion, console attach, and command stream
 requests are signed with `X-Sysbox-Agent-*` headers.
 `PATCH /v1/agents/{agent_id}` persists disabled/quarantined state; disabled or
 quarantined agents are skipped by scheduling and cannot open the command stream.
+Agents whose heartbeat becomes stale are marked `offline` by the supervisor and
+will not be selected until a fresh heartbeat restores them to `online`.
 
 Agents periodically sync inventory to `/v1/agents/{agent_id}/inventory`,
 including local topologies, serials, resource counts, health, labels, and

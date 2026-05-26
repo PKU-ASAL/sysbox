@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -95,4 +98,21 @@ func TestAgentClaimRun(t *testing.T) {
 
 	_, err = s.jobs.claim(run.ID, DefaultAgentID)
 	require.ErrorContains(t, err, "cannot be claimed")
+}
+
+func TestAgentRenewRunLeaseEndpoint(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	run := s.jobs.start("mixed", "apply")
+	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
+	claimed, err := s.jobs.claim(run.ID, DefaultAgentID)
+	require.NoError(t, err)
+	before := claimed.LeaseUntil
+
+	body := bytes.NewBufferString(`{"lease_owner":"` + claimed.LeaseOwner + `","ttl_seconds":3600}`)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/local/runs/"+run.ID+"/renew", body))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got, ok := s.jobs.get(run.ID)
+	require.True(t, ok)
+	require.True(t, got.LeaseUntil.After(before))
 }

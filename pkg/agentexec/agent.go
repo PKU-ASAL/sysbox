@@ -240,6 +240,8 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "run claim failed", err)
 			return
 		}
+		stopRenew := startRunLeaseRenewal(runCtx, r.opts, claimed)
+		defer stopRenew()
 		r.executor.ExecuteContext(runCtx, claimed)
 		emit("completed", "run command completed", nil)
 	case "session_open":
@@ -480,6 +482,35 @@ func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, 
 		return nil, err
 	}
 	return &run, nil
+}
+
+func renewRunLease(ctx context.Context, opts Options, run *controlplane.Run) error {
+	if run == nil || run.ID == "" || run.LeaseOwner == "" {
+		return nil
+	}
+	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/renew", map[string]any{
+		"lease_owner": run.LeaseOwner,
+		"ttl_seconds": 1800,
+	}, run)
+}
+
+func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.Run) func() {
+	renewCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-renewCtx.Done():
+				return
+			case <-ticker.C:
+				if err := renewRunLease(renewCtx, opts, run); err != nil && renewCtx.Err() == nil {
+					fmt.Printf("[agent] renew run lease %s failed: %v\n", run.ID, err)
+				}
+			}
+		}
+	}()
+	return cancel
 }
 
 func get(ctx context.Context, opts Options, url string, out any) error {

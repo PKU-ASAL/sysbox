@@ -75,6 +75,9 @@ func (s *Supervisor) loop() {
 }
 
 func (s *Supervisor) Scan(ctx context.Context) {
+	now := time.Now().UTC()
+	s.server.markStaleAgentsOffline(ctx, now)
+	s.server.jobs.markExpiredLeases(now)
 	names, err := s.server.topologyNames(ctx)
 	if err != nil {
 		return

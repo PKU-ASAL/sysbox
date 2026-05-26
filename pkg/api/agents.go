@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
+
+const agentOfflineAfter = 2 * time.Minute
 
 func (s *Server) saveAgent(ctx context.Context, agent controlplane.Agent) error {
 	if agent.Protocol == "" {
@@ -55,4 +58,22 @@ func (s *Server) listAgents(ctx context.Context) []controlplane.Agent {
 	agents = ensureLocalAgent(agents)
 	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
 	return agents
+}
+
+func (s *Server) markStaleAgentsOffline(ctx context.Context, now time.Time) {
+	if s.apiStore == nil {
+		return
+	}
+	for _, agent := range s.listAgents(ctx) {
+		if agent.ID == DefaultAgentID || agent.Disabled || agent.Quarantined || agent.LastHeartbeat.IsZero() {
+			continue
+		}
+		if agent.Status == "offline" || !agent.LastHeartbeat.Before(now.Add(-agentOfflineAfter)) {
+			continue
+		}
+		agent.Status = "offline"
+		agent.Reason = "heartbeat stale"
+		agent.UpdatedAt = now
+		_ = s.saveAgent(ctx, agent)
+	}
 }

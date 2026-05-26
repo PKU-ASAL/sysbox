@@ -130,6 +130,45 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 	writeJSON(w, http.StatusOK, run)
 }
 
+func (s *Server) handleRenewAgentRun(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	runID := r.PathValue("id")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	if err := validatePathSegment(runID, "id"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var req struct {
+		LeaseOwner string `json:"lease_owner"`
+		TTLSeconds int    `json:"ttl_seconds,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode run renew: %w", err))
+		return
+	}
+	if req.LeaseOwner == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("lease_owner is required"))
+		return
+	}
+	ttl := 30 * time.Minute
+	if req.TTLSeconds > 0 {
+		ttl = time.Duration(req.TTLSeconds) * time.Second
+	}
+	run, err := s.jobs.renewLease(runID, agentID, req.LeaseOwner, ttl)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
 func (s *Server) handleCompleteNodeOperation(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
 	opID := r.PathValue("operation")
@@ -652,6 +691,12 @@ func normalizeAgent(in controlplane.Agent) (controlplane.Agent, error) {
 	if in.Status == "online" && in.LastHeartbeat.IsZero() {
 		in.LastHeartbeat = now
 	}
+	if in.Protocol == "" {
+		in.Protocol = controlplane.AgentProtocolVersion
+	}
+	if in.Protocol != controlplane.AgentProtocolVersion {
+		return controlplane.Agent{}, fmt.Errorf("unsupported agent protocol %q", in.Protocol)
+	}
 	return in, nil
 }
 
@@ -682,6 +727,7 @@ func localAgent() controlplane.Agent {
 		ID:            DefaultAgentID,
 		Name:          "local API agent",
 		Status:        "online",
+		Protocol:      controlplane.AgentProtocolVersion,
 		Capabilities:  []string{"docker", "network", "firecracker", "libvirt"},
 		Labels:        map[string]string{"execution": "in-process"},
 		LastHeartbeat: now,

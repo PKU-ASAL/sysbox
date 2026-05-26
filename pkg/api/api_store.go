@@ -17,10 +17,12 @@ import (
 )
 
 type apiStore interface {
+	SchemaVersion(ctx context.Context) (int, error)
 	LoadRuns(ctx context.Context) ([]Run, error)
 	GetRun(ctx context.Context, id string) (*Run, error)
 	SaveRun(ctx context.Context, run Run) error
 	ClaimRun(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*Run, bool, error)
+	RenewRunLease(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*Run, bool, error)
 	SaveCheckpoint(ctx context.Context, topology, runID string, checkpoint runtime.OperationCheckpoint) error
 	LoadCheckpoint(ctx context.Context, topology, runID string) (*runtime.OperationCheckpoint, error)
 	SaveHealth(ctx context.Context, topology string, snap HealthSnapshot) error
@@ -53,6 +55,12 @@ type apiStore interface {
 
 type localAPIStore struct {
 	runsDir string
+}
+
+const apiSchemaVersion = 3
+
+func (s *localAPIStore) SchemaVersion(context.Context) (int, error) {
+	return apiSchemaVersion, nil
 }
 
 func newAPIStore(runsDir, backendURL string) apiStore {
@@ -128,6 +136,21 @@ func (s *localAPIStore) ClaimRun(ctx context.Context, runID, agentID, owner stri
 	if run.StartedAt.IsZero() || run.StartedAt.Equal(run.QueuedAt) {
 		run.StartedAt = now
 	}
+	if err := s.SaveRun(ctx, *run); err != nil {
+		return nil, false, err
+	}
+	return run, true, nil
+}
+
+func (s *localAPIStore) RenewRunLease(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*Run, bool, error) {
+	run, err := s.GetRun(ctx, runID)
+	if err != nil {
+		return nil, false, err
+	}
+	if run.AgentID != agentID || run.Status != RunRunning || run.LeaseOwner != owner {
+		return run, false, nil
+	}
+	run.LeaseUntil = time.Now().UTC().Add(ttl)
 	if err := s.SaveRun(ctx, *run); err != nil {
 		return nil, false, err
 	}
@@ -469,6 +492,11 @@ func (s *postgresAPIStore) connect(ctx context.Context) (*pgx.Conn, error) {
 
 func (s *postgresAPIStore) ensureSchema(ctx context.Context, conn *pgx.Conn) error {
 	_, err := conn.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS sysbox_schema_migrations (
+  name TEXT PRIMARY KEY,
+  version INTEGER NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS sysbox_runs (
   topology TEXT NOT NULL,
   id TEXT PRIMARY KEY,
@@ -572,7 +600,29 @@ ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS secret_hash TEXT NOT NULL DEF
 	if err != nil {
 		return fmt.Errorf("postgres ensure api command lease columns: %w", err)
 	}
+	_, err = conn.Exec(ctx, `
+INSERT INTO sysbox_schema_migrations (name, version, updated_at)
+VALUES ('api', $1, now())
+ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version, updated_at=now()
+WHERE sysbox_schema_migrations.version < EXCLUDED.version`, apiSchemaVersion)
+	if err != nil {
+		return fmt.Errorf("postgres record api schema version: %w", err)
+	}
 	return nil
+}
+
+func (s *postgresAPIStore) SchemaVersion(ctx context.Context) (int, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close(ctx)
+	var version int
+	err = conn.QueryRow(ctx, `SELECT version FROM sysbox_schema_migrations WHERE name='api'`).Scan(&version)
+	if err != nil {
+		return 0, fmt.Errorf("postgres api schema version: %w", err)
+	}
+	return version, nil
 }
 
 func (s *postgresAPIStore) LoadRuns(ctx context.Context) ([]Run, error) {
@@ -708,6 +758,65 @@ WHERE id=$1
 		runID, agentID, string(run.Status), run.LeaseOwner, run.LeaseUntil, run.Attempt, string(nextRaw), now)
 	if err != nil {
 		return nil, false, fmt.Errorf("postgres claim run: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, err
+		}
+		return &run, false, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, err
+	}
+	return &run, true, nil
+}
+
+func (s *postgresAPIStore) RenewRunLease(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*Run, bool, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer conn.Close(ctx)
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var raw []byte
+	err = tx.QueryRow(ctx, `
+SELECT data::text
+FROM sysbox_runs
+WHERE id=$1
+FOR UPDATE`, runID).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, false, fmt.Errorf("run not found")
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("postgres load run renew row: %w", err)
+	}
+	var run Run
+	if err := json.Unmarshal(raw, &run); err != nil {
+		return nil, false, err
+	}
+	if run.AgentID != agentID || run.Status != RunRunning || run.LeaseOwner != owner {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, err
+		}
+		return &run, false, nil
+	}
+	run.LeaseUntil = time.Now().UTC().Add(ttl)
+	nextRaw, err := json.Marshal(run)
+	if err != nil {
+		return nil, false, err
+	}
+	tag, err := tx.Exec(ctx, `
+UPDATE sysbox_runs
+SET lease_until=$4, data=$5::jsonb, updated_at=now()
+WHERE id=$1 AND agent_id=$2 AND lease_owner=$3 AND status='running'`,
+		runID, agentID, owner, run.LeaseUntil, string(nextRaw))
+	if err != nil {
+		return nil, false, fmt.Errorf("postgres renew run lease: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
 		if err := tx.Commit(ctx); err != nil {

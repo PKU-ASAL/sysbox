@@ -233,6 +233,15 @@ func TestAgentSignatureRequiredWhenSecretRegistered(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "auth_secret")
 }
 
+func TestAgentProtocolMismatchRejected(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/agents", bytes.NewBufferString(`{"id":"host-a","protocol":"agent.v0"}`))
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "unsupported agent protocol")
+}
+
 func TestAgentCommandLeaseExpiresAndRedelivers(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	ctx := context.Background()

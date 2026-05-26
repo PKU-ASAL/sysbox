@@ -273,11 +273,42 @@ func (j *Jobs) claim(runID, agentID string) (*Run, error) {
 	return &out, nil
 }
 
+func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*Run, error) {
+	renewed, ok, err := j.store.RenewRunLease(context.Background(), runID, agentID, owner, ttl)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || renewed == nil {
+		return nil, fmt.Errorf("run lease cannot be renewed")
+	}
+	j.mu.Lock()
+	j.runs[runID] = renewed
+	j.mu.Unlock()
+	return renewed, nil
+}
+
 func runLeasable(run Run, agentID string, now time.Time) bool {
 	if run.AgentID != agentID || run.Status != RunAssigned {
 		return false
 	}
 	return run.LeaseUntil.IsZero() || !run.LeaseUntil.After(now)
+}
+
+func (j *Jobs) markExpiredLeases(now time.Time) {
+	runs, err := j.store.LoadRuns(context.Background())
+	if err != nil {
+		return
+	}
+	for _, run := range latestRunsByID(runs) {
+		if run.Status != RunRunning || run.LeaseUntil.IsZero() || run.LeaseUntil.After(now) {
+			continue
+		}
+		run.Status = RunFailed
+		run.Err = "run lease expired"
+		run.Recoverable = true
+		run.EndedAt = now
+		j.replace(&run)
+	}
 }
 
 func (j *Jobs) runnableForAgent(agentID string) []*Run {

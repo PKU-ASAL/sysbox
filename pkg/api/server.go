@@ -109,6 +109,7 @@ func (s *Server) registerRoutes() {
 	m := s.mux
 
 	m.HandleFunc("GET /v1/health", s.handleHealth)
+	m.HandleFunc("GET /v1/schema", s.handleSchema)
 	m.HandleFunc("GET /v1/capabilities", s.handleCapabilities)
 	m.HandleFunc("GET /v1/projects", s.handleListProjects)
 	m.HandleFunc("GET /v1/projects/{project}", s.handleGetProject)
@@ -127,6 +128,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/agents/{agent}/projections/resources", s.handlePostAgentResourceProjection)
 	m.HandleFunc("POST /v1/agents/{agent}/node-operations/{operation}/complete", s.handleCompleteNodeOperation)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/claim", s.handleClaimAgentRun)
+	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/renew", s.handleRenewAgentRun)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/complete", s.handleCompleteAgentRun)
 	m.HandleFunc("GET /v1/agents/{agent}/commands/stream", s.handleAgentCommandStream)
 	m.HandleFunc("GET /v1/agents/{agent}/sessions/{session}/attach", s.handleAgentAttachConsole)
