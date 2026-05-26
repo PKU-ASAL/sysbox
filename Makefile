@@ -117,6 +117,8 @@ deploy-ui: image-web ## Deploy Web UI for the running API
 deploy-ui-dev: ## Start Web UI in local Vite dev mode
 	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml stop sysbox-web >/dev/null 2>&1 || true
 	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml rm -f sysbox-web >/dev/null 2>&1 || true
+	@pids=$$(ps -eo pid=,comm=,args= | awk -v web="$(CURDIR)/web/node_modules/.bin/vite" '$$2 == "node" && index($$0, web) {print $$1}'); \
+	if [ -n "$$pids" ]; then echo "Stopping stale Web UI dev server: $$pids"; kill $$pids; fi
 	npm --prefix web install
 	@echo "Web UI dev: $(WEB_URL)"
 	SYSBOX_WEB_API_TARGET=$(API_URL) npm --prefix web run dev -- --host $(WEB_HOST_ADDR) --port $(WEB_HOST_PORT) --strictPort
