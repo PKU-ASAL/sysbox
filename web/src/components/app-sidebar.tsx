@@ -66,7 +66,7 @@ export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, on
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-semibold">sysbox</span>
-                <span className="truncate text-xs">Control plane</span>
+                <span className="truncate font-mono text-[10px] uppercase tracking-[0.16em] text-sidebar-foreground/70">Control plane</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -105,7 +105,7 @@ export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, on
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">API {apiStatus}</span>
-                <span className="truncate text-xs">{activeRuns} active runs</span>
+                <span className="truncate font-mono text-[10px] uppercase tracking-[0.16em] text-sidebar-foreground/70">{activeRuns} active runs</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>

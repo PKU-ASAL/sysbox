@@ -263,12 +263,13 @@ export default function App() {
         onPageChange={setPage}
       />
       <SidebarInset>
-        <header className="sticky top-0 z-10 flex min-h-16 shrink-0 items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur lg:px-6">
+        <header className="sticky top-0 z-10 flex min-h-16 shrink-0 items-center gap-3 border-b bg-background/85 px-4 py-3 backdrop-blur lg:px-6">
           <SidebarTrigger className="-ml-1" />
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl font-semibold tracking-normal">{pageTitle}</h1>
-              <p className="text-sm text-muted-foreground">{pageDescription}</p>
+              <div className="sysbox-eyebrow">sysbox console</div>
+              <h1 className="mt-1 text-lg font-semibold tracking-normal">{pageTitle}</h1>
+              <p className="text-xs text-muted-foreground">{pageDescription}</p>
             </div>
             <div className="flex items-center gap-2">
               <Input className="w-48" placeholder="API token" value={tokenValue} onChange={(event) => setTokenValue(event.target.value)} />
@@ -317,7 +318,7 @@ export default function App() {
         </header>
 
         <div className="p-4 lg:p-6">
-          {notice ? <div className="mb-4 rounded-md border bg-muted px-3 py-2 text-sm">{notice}</div> : null}
+          {notice ? <div className="mb-4 rounded-md border bg-muted/70 px-3 py-2 text-xs">{notice}</div> : null}
           {busy ? (
             <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="animate-spin" />
@@ -391,10 +392,10 @@ function DashboardPage({
 function MetricCard({ title, value, description, icon: Icon }: { title: string; value: string | number; description: string; icon: typeof Cloud }) {
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between">
+      <CardHeader className="flex-row items-center justify-between border-b bg-muted/25">
         <div>
-          <CardDescription>{title}</CardDescription>
-          <CardTitle className="text-2xl">{value}</CardTitle>
+          <div className="sysbox-eyebrow">{title}</div>
+          <CardTitle className="mt-2 text-2xl">{value}</CardTitle>
         </div>
         <Icon />
       </CardHeader>
@@ -673,14 +674,15 @@ function TopologiesPage({
 
 function EuiPanel({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <Card className="rounded-md">
-      <CardHeader className="border-b bg-muted/30 py-3">
+    <Card className="sysbox-panel-glow rounded-md">
+      <CardHeader className="border-b bg-muted/35 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <CardTitle className="text-base">{title}</CardTitle>
+            <div className="sysbox-eyebrow">resource view</div>
+            <CardTitle className="mt-1 text-sm">{title}</CardTitle>
             {description ? <CardDescription>{description}</CardDescription> : null}
           </div>
-          <div className="flex items-center gap-2 rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 rounded-md border bg-background/70 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
             <Filter />
             EUI table
           </div>
