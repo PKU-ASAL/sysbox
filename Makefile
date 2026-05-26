@@ -115,6 +115,8 @@ deploy-ui: image-web ## Deploy Web UI for the running API
 	@echo "Remote: http://<host-ip>:$(WEB_HOST_PORT)"
 
 deploy-ui-dev: ## Start Web UI in local Vite dev mode
+	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml stop sysbox-web >/dev/null 2>&1 || true
+	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml rm -f sysbox-web >/dev/null 2>&1 || true
 	npm --prefix web install
 	@echo "Web UI dev: $(WEB_URL)"
 	SYSBOX_WEB_API_TARGET=$(API_URL) npm --prefix web run dev -- --host $(WEB_HOST_ADDR) --port $(WEB_HOST_PORT) --strictPort
