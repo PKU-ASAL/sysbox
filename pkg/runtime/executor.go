@@ -78,7 +78,7 @@ func (e *Executor) setCurrentResourceStep(step int) func() {
 	}
 }
 
-func (e *Executor) recordStepExternal(step int, id graph.NodeID, action PlanActionType) {
+func (e *Executor) recordStepExternal(ctx context.Context, step int, id graph.NodeID, action PlanActionType) {
 	r := e.state.FindResource(id.Type, id.Name)
 	if r == nil {
 		return
@@ -104,7 +104,7 @@ func (e *Executor) recordStepExternal(step int, id graph.NodeID, action PlanActi
 	}
 	e.recorder.StepStatePatch(step, StatePatchUpsert, &log)
 	if e.patchSink != nil {
-		if err := e.patchSink.ApplyStatePatch(context.Background(), patch); err != nil {
+		if err := e.patchSink.ApplyStatePatch(ctx, patch); err != nil {
 			e.logf("[state] warning: persist patch for %s: %v\n", id, err)
 		} else {
 			e.recorder.StepStateRecorded(step)
@@ -112,7 +112,7 @@ func (e *Executor) recordStepExternal(step int, id graph.NodeID, action PlanActi
 	}
 }
 
-func (e *Executor) recordDeletePatch(step int, r state.Resource, action PlanActionType) {
+func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action PlanActionType) {
 	log := StateResourceLog{
 		Type:     r.Type,
 		Name:     r.Name,
@@ -128,7 +128,7 @@ func (e *Executor) recordDeletePatch(step int, r state.Resource, action PlanActi
 			Op:       StatePatchDelete,
 			State:    &log,
 		}
-		if err := e.patchSink.ApplyStatePatch(context.Background(), patch); err != nil {
+		if err := e.patchSink.ApplyStatePatch(ctx, patch); err != nil {
 			e.logf("[state] warning: persist delete patch for %s.%s: %v\n", r.Type, r.Name, err)
 		} else {
 			e.recorder.StepStateRecorded(step)

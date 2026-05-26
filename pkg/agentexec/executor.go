@@ -83,13 +83,16 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	default:
 		e.bridge.Finish(run, fmt.Errorf("unsupported run op %q", run.Op))
 	}
-	e.reportCompletion(run)
+	e.reportCompletion(ctx, run)
 }
 
-func (e *Executor) reportCompletion(run *controlplane.Run) {
+func (e *Executor) reportCompletion(ctx context.Context, run *controlplane.Run) {
 	reporter, ok := e.bridge.(Reporter)
 	if !ok || run == nil {
 		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	proj := controlplane.Projection{
 		AgentID:   run.AgentID,
@@ -98,12 +101,12 @@ func (e *Executor) reportCompletion(run *controlplane.Run) {
 		UpdatedAt: run.EndedAt,
 	}
 	if mgr, err := e.bridge.StateManager(run.Topology); err == nil {
-		if meta, err := mgr.Metadata(context.Background()); err == nil {
+		if meta, err := mgr.Metadata(ctx); err == nil {
 			proj.Backend = meta.Backend
 			proj.Serial = meta.Serial
 			proj.UpdatedAt = meta.UpdatedAt
 		}
-		if st, err := mgr.Load(); err == nil && st != nil {
+		if st, err := mgr.LoadWithContext(ctx); err == nil && st != nil {
 			proj.ResourceCount = len(st.Resources)
 		}
 	}
@@ -114,7 +117,7 @@ func (e *Executor) reportCompletion(run *controlplane.Run) {
 			proj.Health = "unknown"
 		}
 	}
-	_ = reporter.ReportRunComplete(context.Background(), run, proj)
+	_ = reporter.ReportRunComplete(ctx, run, proj)
 }
 
 func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log io.Writer) {
@@ -168,7 +171,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	exec.SetLogger(log)
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
-	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath)
+	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath).WithContext(ctx)
 	recorder.SetLeaseOwner(run.LeaseOwner)
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
@@ -268,7 +271,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	exec.SetLogger(log)
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
-	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath)
+	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath).WithContext(ctx)
 	recorder.SetLeaseOwner(run.LeaseOwner)
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)

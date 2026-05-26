@@ -17,6 +17,7 @@ import (
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	agents := ensureLocalAgent(s.agents.List())
 	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+	scrubAgentSecretValues(agents)
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
 }
 
@@ -32,6 +33,7 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.agents.Save(agent)
+	scrubAgentSecret(&agent)
 	writeJSON(w, http.StatusCreated, agent)
 }
 
@@ -79,6 +81,7 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	agent.UpdatedAt = time.Now().UTC()
 	s.agents.Save(*agent)
+	scrubAgentSecret(agent)
 	writeJSON(w, http.StatusOK, agent)
 }
 
@@ -88,7 +91,9 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 		return
 	}
 	if id == DefaultAgentID {
-		writeJSON(w, http.StatusOK, localAgent())
+		agent := localAgent()
+		scrubAgentSecret(&agent)
+		writeJSON(w, http.StatusOK, agent)
 		return
 	}
 	agent, err := s.agents.Get(id)
@@ -96,6 +101,7 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	scrubAgentSecret(agent)
 	writeJSON(w, http.StatusOK, agent)
 }
 
@@ -125,6 +131,10 @@ func (s *Server) handleCompleteNodeOperation(w http.ResponseWriter, r *http.Requ
 	opID := r.PathValue("operation")
 	if err := validatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
 	if err := validatePathSegment(opID, "operation"); err != nil {
@@ -162,6 +172,10 @@ func (s *Server) handleCompleteAgentRun(w http.ResponseWriter, r *http.Request) 
 	runID := r.PathValue("id")
 	if err := validatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
 	if err := validatePathSegment(runID, "id"); err != nil {
@@ -283,6 +297,10 @@ func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
 	var req controlplane.ResourceProjection
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode resource projection: %w", err))
@@ -316,6 +334,10 @@ func (s *Server) handlePostAgentInventory(w http.ResponseWriter, r *http.Request
 	agentID := r.PathValue("agent")
 	if err := validatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
 	var inv controlplane.AgentInventory
@@ -366,6 +388,10 @@ func (s *Server) handleAgentCommandStream(w http.ResponseWriter, r *http.Request
 	}
 	if s.agents == nil {
 		s.agents = newAgentRegistry()
+	}
+	if err := s.verifyAgentRequest(r, id); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
 	}
 	agent, err := s.agents.Get(id)
 	if err != nil && id != DefaultAgentID {
@@ -540,6 +566,10 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if err := s.verifyAgentRequest(r, id); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
 	var req controlplane.Agent
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
@@ -577,11 +607,18 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 		if agent.Version == "" {
 			agent.Version = existing.Version
 		}
+		if agent.SecretHash == "" {
+			agent.SecretHash = existing.SecretHash
+		}
+		if agent.AuthSecret == "" {
+			agent.AuthSecret = existing.AuthSecret
+		}
 		agent.CreatedAt = existing.CreatedAt
 	}
 	agent.LastHeartbeat = time.Now().UTC()
 	agent.UpdatedAt = agent.LastHeartbeat
 	s.agents.Save(agent)
+	scrubAgentSecret(&agent)
 	writeJSON(w, http.StatusOK, agent)
 }
 
@@ -618,6 +655,18 @@ func ensureLocalAgent(agents []controlplane.Agent) []controlplane.Agent {
 		}
 	}
 	return append(agents, localAgent())
+}
+
+func scrubAgentSecret(agent *controlplane.Agent) {
+	if agent != nil {
+		agent.AuthSecret = ""
+	}
+}
+
+func scrubAgentSecretValues(values []controlplane.Agent) {
+	for i := range values {
+		values[i].AuthSecret = ""
+	}
 }
 
 func localAgent() controlplane.Agent {

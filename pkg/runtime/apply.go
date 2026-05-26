@@ -10,6 +10,9 @@ import (
 // Apply walks the plan forward: create Add resources and re-create Change
 // (drifted) resources, both in topo order.
 func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := e.recorder.Begin("apply", plan); err != nil {
 		return err
 	}
@@ -46,6 +49,10 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 			return applyErr
 		}
 		for _, id := range reverse {
+			if err := ctx.Err(); err != nil {
+				applyErr = err
+				return applyErr
+			}
 			if !changeSet[id] {
 				continue
 			}
@@ -57,7 +64,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 					e.logf("[apply] warning: cleanup of drifted %s failed: %v\n", id, err)
 					e.recorder.StepFailed(step, err)
 				} else {
-					e.recordDeletePatch(step, *r, PlanActionDelete)
+					e.recordDeletePatch(ctx, step, *r, PlanActionDelete)
 					e.recorder.StepDone(step)
 				}
 			}
@@ -65,6 +72,10 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 	}
 
 	for _, id := range order {
+		if err := ctx.Err(); err != nil {
+			applyErr = err
+			return applyErr
+		}
 		if !toCreate[id.String()] {
 			continue
 		}
@@ -88,7 +99,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 		}
 		restoreStep()
 		if err := e.recordSubstep(step, "capture_state_resource", map[string]any{"resource": id.String()}, func() error {
-			e.recordStepExternal(step, id, actionFor(plan, id))
+			e.recordStepExternal(ctx, step, id, actionFor(plan, id))
 			return nil
 		}); err != nil {
 			applyErr = err

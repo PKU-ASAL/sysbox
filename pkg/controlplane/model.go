@@ -97,6 +97,8 @@ type Agent struct {
 	Disabled      bool              `json:"disabled,omitempty"`
 	Quarantined   bool              `json:"quarantined,omitempty"`
 	Reason        string            `json:"reason,omitempty"`
+	AuthSecret    string            `json:"auth_secret,omitempty"`
+	SecretHash    string            `json:"secret_hash,omitempty"`
 	Capabilities  []string          `json:"capabilities,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	Version       string            `json:"version,omitempty"`

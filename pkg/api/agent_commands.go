@@ -43,6 +43,13 @@ func commandIsPending(cmd controlplane.AgentCommand) bool {
 	}
 }
 
+func agentCommandLeasable(cmd controlplane.AgentCommand, now time.Time) bool {
+	if !commandIsPending(cmd) {
+		return false
+	}
+	return cmd.LeaseOwner == "" || cmd.LeaseUntil.IsZero() || !cmd.LeaseUntil.After(now)
+}
+
 func commandTerminal(status string) bool {
 	switch status {
 	case "completed", "failed", "denied", "cancelled":
@@ -60,18 +67,21 @@ func (s *Server) acquireAgentCommandLease(ctx context.Context, agentID string, c
 	if !commandIsPending(cmd) {
 		return cmd, false
 	}
-	if !cmd.LeaseUntil.IsZero() && cmd.LeaseUntil.After(now) && cmd.LeaseOwner != "" {
+	if !agentCommandLeasable(cmd, now) {
 		return cmd, false
 	}
-	cmd.Status = "leased"
-	cmd.LeaseOwner = fmt.Sprintf("%s:%d", agentID, now.UnixNano())
-	cmd.LeaseUntil = now.Add(30 * time.Second)
-	cmd.Attempt++
+	owner := fmt.Sprintf("%s:%d", agentID, now.UnixNano())
 	if s.apiStore != nil {
-		if err := s.apiStore.SaveAgentCommand(ctx, cmd); err != nil {
+		leased, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, agentID, cmd.ID, owner, 30*time.Second)
+		if err != nil || !ok || leased == nil {
 			return cmd, false
 		}
+		return *leased, true
 	}
+	cmd.Status = "leased"
+	cmd.LeaseOwner = owner
+	cmd.LeaseUntil = now.Add(30 * time.Second)
+	cmd.Attempt++
 	return cmd, true
 }
 

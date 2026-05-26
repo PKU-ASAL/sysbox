@@ -147,6 +147,10 @@ func (s *Server) handleAgentAttachConsole(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
 	sessID := r.PathValue("session")
 	st, err := s.consoles.Get(sessID)
 	if err != nil {

@@ -16,13 +16,22 @@ type CheckpointStore interface {
 type StoreRecorder struct {
 	OperationRecorder
 	store    CheckpointStore
+	ctx      context.Context
 	topology string
 	runID    string
 	path     string
 }
 
 func NewStoreRecorder(inner OperationRecorder, store CheckpointStore, topology, runID, path string) *StoreRecorder {
-	return &StoreRecorder{OperationRecorder: inner, store: store, topology: topology, runID: runID, path: path}
+	return &StoreRecorder{OperationRecorder: inner, store: store, ctx: context.Background(), topology: topology, runID: runID, path: path}
+}
+
+func (r *StoreRecorder) WithContext(ctx context.Context) *StoreRecorder {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r.ctx = ctx
+	return r
 }
 
 func (r *StoreRecorder) Begin(operation string, plan *Plan) error {
@@ -114,7 +123,7 @@ func (r *StoreRecorder) persist() {
 	if err != nil {
 		return
 	}
-	if err := r.store.SaveCheckpoint(context.Background(), r.topology, r.runID, *cp); err != nil {
+	if err := r.store.SaveCheckpoint(r.ctx, r.topology, r.runID, *cp); err != nil {
 		fmt.Fprintf(os.Stderr, "[runtime] persist checkpoint: %v\n", err)
 	}
 }

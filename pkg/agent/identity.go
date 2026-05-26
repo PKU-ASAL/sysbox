@@ -150,6 +150,8 @@ func (i *Identity) Agent() controlplane.Agent {
 		ID:            i.ID,
 		Name:          i.Name,
 		Status:        "online",
+		AuthSecret:    i.Secret,
+		SecretHash:    SecretHash(i.Secret),
 		Capabilities:  i.Capabilities,
 		Labels:        i.Labels,
 		LastHeartbeat: now,
@@ -170,6 +172,9 @@ func postAgent(ctx context.Context, ident *Identity, url string, in any) error {
 	req.Header.Set("Content-Type", "application/json")
 	if ident.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+ident.Token)
+	}
+	if err := SignRequest(req, ident.ID, ident.Secret, time.Now()); err != nil {
+		return err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

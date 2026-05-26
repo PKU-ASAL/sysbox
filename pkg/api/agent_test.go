@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
@@ -195,6 +197,88 @@ func TestAgentDisableAndQuarantineBlockSchedulingAndStream(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, resp.StatusCode)
 }
 
+func TestAgentSignatureRequiredWhenSecretRegistered(t *testing.T) {
+	secret := "agent-secret"
+	s := NewServer(t.TempDir(), t.TempDir())
+	s.agents.Save(controlplane.Agent{
+		ID:           "host-a",
+		Status:       "online",
+		AuthSecret:   secret,
+		SecretHash:   agent.SecretHash(secret),
+		Capabilities: []string{"docker"},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/heartbeat", bytes.NewBufferString(`{"id":"host-a"}`))
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/heartbeat", bytes.NewBufferString(`{"id":"host-a"}`))
+	require.NoError(t, agent.SignRequest(req, "host-a", secret, time.Now()))
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotContains(t, rec.Body.String(), "auth_secret")
+}
+
+func TestAgentCommandLeaseExpiresAndRedelivers(t *testing.T) {
+	store := &localAPIStore{runsDir: t.TempDir()}
+	ctx := context.Background()
+	cmd := controlplane.AgentCommand{
+		ID:        "cmd-1",
+		AgentID:   "host-a",
+		Type:      "node_operation",
+		Status:    "queued",
+		CreatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, store.SaveAgentCommand(ctx, cmd))
+
+	leased, ok, err := store.AcquireAgentCommandLease(ctx, "host-a", "cmd-1", "owner-1", time.Hour)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 1, leased.Attempt)
+	require.Equal(t, "owner-1", leased.LeaseOwner)
+
+	_, ok, err = store.AcquireAgentCommandLease(ctx, "host-a", "cmd-1", "owner-2", time.Hour)
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	leased.LeaseUntil = time.Now().Add(-time.Second)
+	leased.Status = "queued"
+	require.NoError(t, store.SaveAgentCommand(ctx, *leased))
+	leased, ok, err = store.AcquireAgentCommandLease(ctx, "host-a", "cmd-1", "owner-2", time.Hour)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 2, leased.Attempt)
+	require.Equal(t, "owner-2", leased.LeaseOwner)
+}
+
+func TestAgentCommandsRoutes(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
+	_, err := s.publishAgentCommand(context.Background(), "host-a", controlplane.AgentCommand{Type: "node_operation"})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/agents/host-a/commands", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"commands"`)
+
+	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/agents/host-a/commands/list", nil))
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	server := httptest.NewServer(s)
+	defer server.Close()
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	u.Scheme = "ws"
+	u.Path = "/v1/agents/host-a/commands/stream"
+	conn, _, err := websocket.Dial(context.Background(), u.String(), nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+}
+
 func TestConsoleSessionPublishesAgentCommand(t *testing.T) {
 	runs := t.TempDir()
 	workspaces := t.TempDir()
@@ -309,6 +393,7 @@ func TestAgentStreamEndpointRemoved(t *testing.T) {
 
 func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
+	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
 	run := s.jobs.start("mixed", "apply")
 	s.jobs.assign(run, "host-a")
 	run.Status = RunDone
@@ -350,6 +435,7 @@ func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
 
 func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
+	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
 	body := bytes.NewBufferString(`{
   "agent_id": "host-a",
   "topology": "mixed",
@@ -377,6 +463,7 @@ func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
 
 func TestAgentInventoryPersists(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
+	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
 	body := bytes.NewBufferString(`{
   "agent_id": "host-a",
   "capabilities": ["docker"],
@@ -396,6 +483,7 @@ func TestAgentInventoryPersists(t *testing.T) {
 
 func TestNodeOperationCompletionPersists(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
+	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
 	op := s.nodeOps.Create(controlplane.NodeOperation{
 		Topology:    "mixed",
 		Workspace:   "mixed",

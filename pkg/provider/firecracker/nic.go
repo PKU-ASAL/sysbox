@@ -43,11 +43,11 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req s
 		}
 	} else {
 		if tapInRoot {
-			if err := exec.Command(ipBin, "link", "set", tapName, "up").Run(); err != nil {
+			if err := exec.CommandContext(ctx, ipBin, "link", "set", tapName, "up").Run(); err != nil {
 				slog.Warn("set tap up in root netns", "tap", tapName, "error", err)
 			}
 		} else if tapInNetns {
-			if err := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "up").Run(); err != nil {
+			if err := exec.CommandContext(ctx, ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "up").Run(); err != nil {
 				slog.Warn("set tap up in netns", "tap", tapName, "netns", netnsName, "error", err)
 			}
 		}
@@ -55,7 +55,7 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req s
 
 	// Attach TAP to the network bridge.
 	if netnsName != "" && bridgeName != "" {
-		if err := attachTapToBridge(tapName, bridgeName, netnsName); err != nil {
+		if err := attachTapToBridge(ctx, tapName, bridgeName, netnsName); err != nil {
 			return substrate.AttachedNIC{}, fmt.Errorf("attach tap to bridge: %w", err)
 		}
 		vmMu.Lock()
@@ -269,19 +269,19 @@ func linkExistsInNetns(name, netnsName string) bool {
 
 // attachTapToBridge moves the TAP into the network's netns and enslaves it
 // to the bridge.
-func attachTapToBridge(tapName, bridgeName, netnsName string) error {
+func attachTapToBridge(ctx context.Context, tapName, bridgeName, netnsName string) error {
 	// Check if TAP is already in the target netns and enslaved to bridge.
 	// Idempotent: skip if already configured.
-	nsCheck := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "show", tapName)
+	nsCheck := exec.CommandContext(ctx, ipBin, "netns", "exec", netnsName, ipBin, "link", "show", tapName)
 	if nsCheck.Run() == nil {
 		// TAP already in netns — check if it's mastered by the bridge.
-		brCheck := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "show", tapName)
+		brCheck := exec.CommandContext(ctx, ipBin, "netns", "exec", netnsName, ipBin, "link", "show", tapName)
 		out, _ := brCheck.CombinedOutput()
 		if strings.Contains(string(out), "master "+bridgeName) {
 			return nil // already configured
 		}
 		// TAP in netns but not on bridge — enslave it.
-		cmd := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "master", bridgeName)
+		cmd := exec.CommandContext(ctx, ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "master", bridgeName)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("enslave tap to bridge: %w\n%s", err, out)
 		}
@@ -294,7 +294,7 @@ func attachTapToBridge(tapName, bridgeName, netnsName string) error {
 		{ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "master", bridgeName},
 	}
 	for _, args := range cmds {
-		if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {
+		if out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput(); err != nil {
 			return fmt.Errorf("%s: %w\n%s", strings.Join(args, " "), err, out)
 		}
 	}

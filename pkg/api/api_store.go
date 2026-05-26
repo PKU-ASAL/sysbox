@@ -42,6 +42,7 @@ type apiStore interface {
 	ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error)
 	SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error
 	ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error)
+	AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error)
 	SaveAgentInventory(ctx context.Context, inv controlplane.AgentInventory) error
 	GetAgentInventory(ctx context.Context, agentID string) (*controlplane.AgentInventory, error)
 }
@@ -323,6 +324,31 @@ func (s *localAPIStore) ListAgentCommands(_ context.Context, agentID string) ([]
 	return readLocalObjects[controlplane.AgentCommand](filepath.Join(s.runsDir, "_agents", agentID, "commands", "*.json"))
 }
 
+func (s *localAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error) {
+	commands, err := s.ListAgentCommands(ctx, agentID)
+	if err != nil {
+		return nil, false, err
+	}
+	now := time.Now().UTC()
+	for _, cmd := range commands {
+		if cmd.ID != commandID || cmd.AgentID != agentID {
+			continue
+		}
+		if !agentCommandLeasable(cmd, now) {
+			return &cmd, false, nil
+		}
+		cmd.Status = "leased"
+		cmd.LeaseOwner = owner
+		cmd.LeaseUntil = now.Add(ttl)
+		cmd.Attempt++
+		if err := s.SaveAgentCommand(ctx, cmd); err != nil {
+			return nil, false, err
+		}
+		return &cmd, true, nil
+	}
+	return nil, false, fmt.Errorf("agent command not found")
+}
+
 func (s *localAPIStore) SaveAgentInventory(_ context.Context, inv controlplane.AgentInventory) error {
 	agentID := inv.AgentID
 	if agentID == "" {
@@ -446,6 +472,9 @@ CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
   agent_id TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL,
+  lease_owner TEXT NOT NULL DEFAULT '',
+  lease_until TIMESTAMPTZ,
+  attempt INTEGER NOT NULL DEFAULT 0,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -456,6 +485,13 @@ CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
 );`)
 	if err != nil {
 		return fmt.Errorf("postgres ensure api tables: %w", err)
+	}
+	_, err = conn.Exec(ctx, `
+ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS lease_owner TEXT NOT NULL DEFAULT '';
+ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0;`)
+	if err != nil {
+		return fmt.Errorf("postgres ensure api command lease columns: %w", err)
 	}
 	return nil
 }
@@ -884,15 +920,91 @@ func (s *postgresAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplan
 	if err != nil {
 		return err
 	}
+	var leaseUntil any
+	if !cmd.LeaseUntil.IsZero() {
+		leaseUntil = cmd.LeaseUntil
+	}
 	_, err = conn.Exec(ctx, `
-INSERT INTO sysbox_agent_commands (agent_id, id, status, data, updated_at)
-VALUES ($1, $2, $3, $4::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET agent_id=EXCLUDED.agent_id, status=EXCLUDED.status, data=EXCLUDED.data, updated_at=now()`,
-		cmd.AgentID, cmd.ID, cmd.Status, string(raw))
+INSERT INTO sysbox_agent_commands (agent_id, id, status, lease_owner, lease_until, attempt, data, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now())
+ON CONFLICT (id) DO UPDATE SET agent_id=EXCLUDED.agent_id, status=EXCLUDED.status, lease_owner=EXCLUDED.lease_owner, lease_until=EXCLUDED.lease_until, attempt=EXCLUDED.attempt, data=EXCLUDED.data, updated_at=now()`,
+		cmd.AgentID, cmd.ID, cmd.Status, cmd.LeaseOwner, leaseUntil, cmd.Attempt, string(raw))
 	if err != nil {
 		return fmt.Errorf("postgres save agent command: %w", err)
 	}
 	return nil
+}
+
+func (s *postgresAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer conn.Close(ctx)
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var raw []byte
+	var status string
+	var leaseUntil *time.Time
+	err = tx.QueryRow(ctx, `
+SELECT data::text, status, lease_until
+FROM sysbox_agent_commands
+WHERE agent_id=$1 AND id=$2
+FOR UPDATE`, agentID, commandID).Scan(&raw, &status, &leaseUntil)
+	if err == pgx.ErrNoRows {
+		return nil, false, fmt.Errorf("agent command not found")
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("postgres load agent command lease row: %w", err)
+	}
+	var cmd controlplane.AgentCommand
+	if err := json.Unmarshal(raw, &cmd); err != nil {
+		return nil, false, err
+	}
+	cmd.Status = status
+	if leaseUntil != nil {
+		cmd.LeaseUntil = *leaseUntil
+	}
+	now := time.Now().UTC()
+	if !agentCommandLeasable(cmd, now) {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, err
+		}
+		return &cmd, false, nil
+	}
+	cmd.Status = "leased"
+	cmd.LeaseOwner = owner
+	cmd.LeaseUntil = now.Add(ttl)
+	cmd.Attempt++
+	nextRaw, err := json.Marshal(cmd)
+	if err != nil {
+		return nil, false, err
+	}
+	tag, err := tx.Exec(ctx, `
+UPDATE sysbox_agent_commands
+SET status=$3, lease_owner=$4, lease_until=$5, attempt=$6, data=$7::jsonb, updated_at=now()
+WHERE agent_id=$1
+  AND id=$2
+  AND status IN ('queued','delivered','')
+  AND (lease_until IS NULL OR lease_until <= $8)`,
+		agentID, commandID, cmd.Status, cmd.LeaseOwner, cmd.LeaseUntil, cmd.Attempt, string(nextRaw), now)
+	if err != nil {
+		return nil, false, fmt.Errorf("postgres acquire agent command lease: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, err
+		}
+		return &cmd, false, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, err
+	}
+	return &cmd, true, nil
 }
 
 func (s *postgresAPIStore) ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error) {

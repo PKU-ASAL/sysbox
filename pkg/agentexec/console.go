@@ -72,6 +72,10 @@ func OpenConsoleFromState(ctx context.Context, st *state.State, sess controlplan
 
 func relayConsole(ctx context.Context, cs substrate.ConsoleSession, ws *websocket.Conn) error {
 	defer cs.Close()
+	go func() {
+		<-ctx.Done()
+		_ = cs.Close()
+	}()
 	done := make(chan error, 3)
 	if out := cs.Stdout(); out != nil {
 		go copyConsoleOutput(ctx, ws, "stdout", out, done)
@@ -82,6 +86,9 @@ func relayConsole(ctx context.Context, cs substrate.ConsoleSession, ws *websocke
 	go copyConsoleInput(ctx, ws, cs, done)
 	go func() {
 		code, err := cs.Wait()
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		_ = writeConsoleFrame(ctx, ws, consoleFrame{Type: "exit", Code: code})
 		done <- err
 	}()

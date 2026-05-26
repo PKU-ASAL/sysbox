@@ -22,6 +22,9 @@ import (
 // Resources with lifecycle.prevent_destroy = true are listed in plan.Protected
 // and are silently skipped (a warning is printed to stderr).
 func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := e.recorder.Begin("destroy", plan); err != nil {
 		return err
 	}
@@ -58,6 +61,10 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 	}
 
 	for _, id := range destroyOrder {
+		if err := ctx.Err(); err != nil {
+			destroyErr = err
+			return destroyErr
+		}
 		if !byID[id.String()] {
 			continue
 		}
@@ -73,7 +80,7 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 			// Continue destroying remaining resources instead of aborting.
 			// A single failure should not prevent cleanup of other resources.
 		} else {
-			e.recordDeletePatch(step, *r, PlanActionDelete)
+			e.recordDeletePatch(ctx, step, *r, PlanActionDelete)
 			e.recorder.StepDone(step)
 		}
 	}

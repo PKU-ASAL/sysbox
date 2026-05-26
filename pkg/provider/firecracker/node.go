@@ -94,7 +94,7 @@ func (s *Substrate) PrepareImage(ctx context.Context, spec substrate.ImageSpec) 
 		return substrate.ImageRef{}, fmt.Errorf("create rootfs dir: %w", err)
 	}
 
-	if err := dockerExportToExt4(spec.DockerRef, outPath); err != nil {
+	if err := dockerExportToExt4(ctx, spec.DockerRef, outPath); err != nil {
 		return substrate.ImageRef{}, fmt.Errorf("build rootfs from %s: %w", spec.DockerRef, err)
 	}
 
@@ -798,9 +798,9 @@ func copyFile(src, dst string) error {
 
 // dockerExportToExt4 creates an ext4 image from a Docker image.
 // It requires a privileged container (via docker run --privileged) to mount.
-func dockerExportToExt4(dockerRef, outPath string) error {
+func dockerExportToExt4(ctx context.Context, dockerRef, outPath string) error {
 	tmpTar := outPath + ".tar"
-	createCmd := exec.Command("docker", "create", dockerRef, "sleep", "infinity")
+	createCmd := exec.CommandContext(ctx, "docker", "create", dockerRef, "sleep", "infinity")
 	out, err := createCmd.Output()
 	if err != nil {
 		return fmt.Errorf("docker create: %w", err)
@@ -812,13 +812,13 @@ func dockerExportToExt4(dockerRef, outPath string) error {
 		}
 	}()
 
-	exportCmd := exec.Command("docker", "export", cid, "-o", tmpTar)
+	exportCmd := exec.CommandContext(ctx, "docker", "export", cid, "-o", tmpTar)
 	if err := exportCmd.Run(); err != nil {
 		return fmt.Errorf("docker export: %w", err)
 	}
 	defer os.Remove(tmpTar)
 
-	buildCmd := exec.Command("docker", "run", "--rm",
+	buildCmd := exec.CommandContext(ctx, "docker", "run", "--rm",
 		"-v", filepath.Dir(outPath)+":/out",
 		"-v", tmpTar+":/rootfs.tar",
 		"--privileged",

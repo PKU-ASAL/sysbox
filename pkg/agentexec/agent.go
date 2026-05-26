@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
@@ -28,6 +30,7 @@ type Options struct {
 	Capabilities []string
 	Labels       map[string]string
 	Version      string
+	Secret       string
 	PollInterval time.Duration
 	Policy       config.AgentPolicyConfig
 }
@@ -53,6 +56,8 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 		ID:           opts.ID,
 		Name:         opts.Name,
 		Status:       "online",
+		AuthSecret:   opts.Secret,
+		SecretHash:   agent.SecretHash(opts.Secret),
 		Capabilities: opts.Capabilities,
 		Labels:       opts.Labels,
 		Version:      opts.Version,
@@ -109,6 +114,8 @@ func heartbeat(ctx context.Context, opts Options) error {
 		ID:           opts.ID,
 		Name:         opts.Name,
 		Status:       "online",
+		AuthSecret:   opts.Secret,
+		SecretHash:   agent.SecretHash(opts.Secret),
 		Capabilities: opts.Capabilities,
 		Labels:       opts.Labels,
 		Version:      opts.Version,
@@ -122,6 +129,11 @@ func commandWebSocketAndExecute(ctx context.Context, runner *commandRunner, opts
 	headers := http.Header{}
 	if opts.Token != "" {
 		headers.Set("Authorization", "Bearer "+opts.Token)
+	}
+	if opts.Secret != "" {
+		headers.Set(agent.HeaderAgentID, opts.ID)
+		headers.Set(agent.HeaderAgentTimestamp, strconv.FormatInt(time.Now().UTC().Unix(), 10))
+		headers.Set(agent.HeaderAgentSignature, agent.Signature("GET", "/v1/agents/"+opts.ID+"/commands/stream", headers.Get(agent.HeaderAgentTimestamp), nil, opts.Secret))
 	}
 	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
@@ -395,6 +407,11 @@ func openConsoleSession(ctx context.Context, opts Options, bridge Bridge, sess c
 	if opts.Token != "" {
 		headers.Set("Authorization", "Bearer "+opts.Token)
 	}
+	if opts.Secret != "" {
+		headers.Set(agent.HeaderAgentID, opts.ID)
+		headers.Set(agent.HeaderAgentTimestamp, strconv.FormatInt(time.Now().UTC().Unix(), 10))
+		headers.Set(agent.HeaderAgentSignature, agent.Signature("GET", "/v1/agents/"+opts.ID+"/sessions/"+sess.ID+"/attach", headers.Get(agent.HeaderAgentTimestamp), nil, opts.Secret))
+	}
 	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
 		return err
@@ -511,4 +528,5 @@ func authorize(req *http.Request, opts Options) {
 	if opts.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+opts.Token)
 	}
+	_ = agent.SignRequest(req, opts.ID, opts.Secret, time.Now())
 }
