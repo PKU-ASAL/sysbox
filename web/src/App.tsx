@@ -5,7 +5,6 @@ import {
   Cloud,
   Database,
   FileCode2,
-  Filter,
   GitBranch,
   Loader2,
   Moon,
@@ -92,6 +91,7 @@ export default function App() {
   const location = useLocation()
   const navigate = useNavigate()
   const [detail, setDetail] = useState<Detail>({})
+  const [selectedCanvasNode, setSelectedCanvasNode] = useState<GraphNode | undefined>()
   const [notice, setNotice] = useState("")
   const [busy, setBusy] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
@@ -310,7 +310,7 @@ export default function App() {
             <Route path="/artifacts" element={<ArtifactsListPage topologies={topologies} />} />
             <Route path="/artifacts/:artifactId" element={<ArtifactDetailRoute topologies={topologies} runs={runs} detail={detail} busy={busy} onCreatePlan={createPlan} onApplyPlan={applyPlan} onDestroy={destroyTopology} onDelete={deleteTopology} onSaveHcl={saveHcl} onHclChange={(hcl) => setDetail((prev) => ({ ...prev, hcl }))} />} />
             <Route path="/topologies" element={<TopologiesListPage topologies={deployedTopologies} />} />
-            <Route path="/topologies/:topologyId" element={<TopologyDetailRoute topologies={deployedTopologies} detail={detail} onConsole={setConsoleNode} />} />
+            <Route path="/topologies/:topologyId" element={<TopologyDetailRoute topologies={deployedTopologies} detail={detail} selectedNode={selectedCanvasNode} onSelectNode={setSelectedCanvasNode} onConsole={setConsoleNode} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
@@ -734,7 +734,19 @@ function TopologiesListPage({
   )
 }
 
-function TopologyDetailRoute({ topologies, detail, onConsole }: { topologies: Topology[]; detail: Detail; onConsole: (node: string) => void }) {
+function TopologyDetailRoute({
+  topologies,
+  detail,
+  selectedNode,
+  onSelectNode,
+  onConsole,
+}: {
+  topologies: Topology[]
+  detail: Detail
+  selectedNode?: GraphNode
+  onSelectNode: (node: GraphNode | undefined) => void
+  onConsole: (node: string) => void
+}) {
   const { topologyId = "" } = useParams()
   const topologyName = decodeURIComponent(topologyId)
   const topology = topologies.find((item) => topologyID(item) === topologyName || item.name === topologyName)
@@ -744,15 +756,16 @@ function TopologyDetailRoute({ topologies, detail, onConsole }: { topologies: To
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
-        <TopologyGraph nodes={detail.graph?.nodes || []} edges={detail.graph?.edges || []} />
-        <div className="flex flex-col gap-4">
+    <div className="-m-4 lg:-m-6">
+      <div className="grid min-h-[calc(100vh-3.5rem)] xl:grid-cols-[1fr_320px]">
+        <TopologyGraph nodes={detail.graph?.nodes || []} edges={detail.graph?.edges || []} onSelectNode={onSelectNode} />
+        <aside className="flex flex-col gap-4 border-l bg-background/95 p-4">
+          <CanvasSelectionCard node={selectedNode} onClear={() => onSelectNode(undefined)} />
           <SummaryCard title="Health" value={detail.health?.status || "unknown"} icon={CheckCircle2} />
           <OutputsCard outputs={detail.outputs || {}} />
           <NodesCard topology={topology.name} nodes={detail.nodes || []} onConsole={onConsole} />
           <ResourcesTable resources={detail.resources || []} />
-        </div>
+        </aside>
       </div>
     </div>
   )
@@ -762,16 +775,9 @@ function EuiPanel({ title, description, children }: { title: string; description
   return (
     <Card className="sysbox-panel-glow rounded-md">
       <CardHeader className="border-b bg-muted/35 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="sysbox-eyebrow">resource view</div>
-            <CardTitle className="mt-1 text-sm">{title}</CardTitle>
-            {description ? <CardDescription>{description}</CardDescription> : null}
-          </div>
-          <div className="flex items-center gap-2 rounded-md border bg-background/70 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-            <Filter />
-            EUI table
-          </div>
+        <div>
+          <CardTitle className="text-sm">{title}</CardTitle>
+          {description ? <CardDescription>{description}</CardDescription> : null}
         </div>
       </CardHeader>
       <CardContent className="p-0">{children}</CardContent>
@@ -796,6 +802,40 @@ function ResourceNotFound({ backTo, title }: { backTo: string; title: string }) 
       </Card>
       <EmptyLine text={title} />
     </div>
+  )
+}
+
+function CanvasSelectionCard({ node, onClear }: { node?: GraphNode; onClear: () => void }) {
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between">
+        <div>
+          <CardTitle>Selection</CardTitle>
+          <CardDescription>Click a canvas node to inspect it.</CardDescription>
+        </div>
+        {node ? (
+          <Button variant="outline" size="sm" onClick={onClear}>
+            Clear
+          </Button>
+        ) : null}
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {!node ? (
+          <EmptyLine text="No node selected" />
+        ) : (
+          <>
+            <div className="text-sm font-medium">{node.label}</div>
+            <div className="font-mono text-xs text-muted-foreground">{node.id}</div>
+            <div className="flex flex-wrap gap-2 pt-2">
+              <Badge variant="secondary">{node.type}</Badge>
+              <Badge variant="secondary">{node.status}</Badge>
+              {node.substrate ? <Badge variant="secondary">{node.substrate}</Badge> : null}
+            </div>
+            {node.ip ? <div className="rounded-md border px-3 py-2 font-mono text-xs">{node.ip}</div> : null}
+          </>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

@@ -38,9 +38,9 @@ type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
 const primaryNav = [
   { page: "dashboard", title: "Dashboard", icon: LayoutDashboard },
   { page: "agents", title: "Agents", icon: RadioTower, badge: "agents" },
-  { page: "artifacts", title: "Artifacts", icon: Package, badge: "runs" },
+  { page: "artifacts", title: "Artifacts", icon: Package, badge: "artifacts" },
   { page: "topologies", title: "Topologies", icon: Database, badge: "topologies" },
-] satisfies Array<{ page: AppPage; title: string; icon: typeof LayoutDashboard; badge?: "agents" | "runs" | "topologies" }>
+] satisfies Array<{ page: AppPage; title: string; icon: typeof LayoutDashboard; badge?: "agents" | "artifacts" | "topologies" }>
 
 export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, ...props }: AppSidebarProps) {
   const navigate = useNavigate()
@@ -51,7 +51,7 @@ export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, ..
   function badgeValue(key?: string) {
     if (key === "topologies") return deployedTopologies
     if (key === "agents") return onlineAgents
-    if (key === "runs") return activeRuns
+    if (key === "artifacts") return topologies.length
     return undefined
   }
 

@@ -7,20 +7,15 @@ import type { GraphEdge, GraphNode } from "@/types/api"
 type Props = {
   nodes: GraphNode[]
   edges: GraphEdge[]
+  onSelectNode?: (node: GraphNode) => void
 }
 
-export function TopologyGraph({ nodes, edges }: Props) {
+export function TopologyGraph({ nodes, edges, onSelectNode }: Props) {
   const flow = toFlow(nodes, edges)
+  const graphByID = new Map(nodes.map((node) => [node.id, node]))
 
   return (
-    <div className="sysbox-panel-glow h-[680px] overflow-hidden rounded-md border bg-card">
-      <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
-        <div>
-          <div className="text-sm font-medium">Topology</div>
-          <div className="text-xs text-muted-foreground">{nodes.length} resources · {edges.length} links</div>
-        </div>
-        <div className="rounded-md border bg-background/70 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">interactive canvas</div>
-      </div>
+    <div className="h-[calc(100vh-8rem)] min-h-[680px] overflow-hidden bg-background">
       <ReactFlow
         nodes={flow.nodes}
         edges={flow.edges}
@@ -30,6 +25,10 @@ export function TopologyGraph({ nodes, edges }: Props) {
         nodesDraggable
         nodesConnectable={false}
         elementsSelectable
+        onNodeClick={(_, node) => {
+          const graphNode = graphByID.get(node.id)
+          if (graphNode) onSelectNode?.(graphNode)
+        }}
       >
         <Background gap={24} color="hsl(var(--border))" />
         <Controls showInteractive={false} />

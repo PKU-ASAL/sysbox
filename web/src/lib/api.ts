@@ -17,6 +17,7 @@ type RequestOptions = {
   body?: unknown
   rawBody?: string
   headers?: Record<string, string>
+  responseType?: "json" | "text"
 }
 
 export class ApiError extends Error {
@@ -72,6 +73,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   if (!text) {
     return undefined as T
   }
+  if (options.responseType === "text") {
+    return text as T
+  }
   return JSON.parse(text) as T
 }
 
@@ -82,7 +86,7 @@ export const api = {
   topology: (name: string) => request<Topology>(`/v1/topologies/${encodeURIComponent(name)}`),
   createTopology: (name: string, hcl: string) =>
     request<Topology>("/v1/topologies", { method: "POST", body: { name, hcl } }),
-  getHcl: (name: string) => request<string>(`/v1/topologies/${encodeURIComponent(name)}/hcl`, { headers: { Accept: "text/plain" } }),
+  getHcl: (name: string) => request<string>(`/v1/topologies/${encodeURIComponent(name)}/hcl`, { headers: { Accept: "text/plain" }, responseType: "text" }),
   updateHcl: (name: string, hcl: string) =>
     request<{ name: string; message: string }>(`/v1/topologies/${encodeURIComponent(name)}/hcl`, {
       method: "PUT",
@@ -124,4 +128,3 @@ export function sessionAttachURL(sessionID: string) {
   const path = `${base}/v1/sessions/${encodeURIComponent(sessionID)}/attach`
   return token ? `${path}?token=${encodeURIComponent(token)}` : path
 }
-
