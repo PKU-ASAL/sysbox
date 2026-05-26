@@ -101,7 +101,7 @@ export default function App() {
       const [health, agents, topologies, runs] = await Promise.all([api.health(), api.agents(), api.topologies(), api.runs()])
       return { health, agents: agents.agents, topologies: topologies.topologies, runs: runs.runs }
     },
-    4000,
+    10000,
   )
 
   const topologies = overview.data?.topologies || []
@@ -115,6 +115,11 @@ export default function App() {
   }, [selected, topologies])
 
   const selectedTopology = useMemo(() => topologies.find((topology) => topology.name === selected), [selected, topologies])
+
+  const selectedRuns = useMemo(
+    () => runs.filter((run) => run.topology === selected || run.workspace === selected).slice(0, 8),
+    [runs, selected],
+  )
 
   const refreshDetail = useCallback(async () => {
     if (!selected) {
@@ -138,9 +143,8 @@ export default function App() {
     if (tasks[4].status === "fulfilled") result.resources = tasks[4].value.resources
     if (tasks[5].status === "fulfilled") result.nodes = tasks[5].value.nodes
     if (tasks[6].status === "fulfilled") result.graph = { nodes: tasks[6].value.nodes, edges: tasks[6].value.edges }
-    result.runs = runs.filter((run) => run.topology === selected || run.workspace === selected).slice(0, 8)
     setDetail(result)
-  }, [runs, selected])
+  }, [selected])
 
   useEffect(() => {
     void refreshDetail()
@@ -429,7 +433,7 @@ export default function App() {
                       </TabsContent>
 
                       <TabsContent value="runs">
-                        <RunsTable runs={detail.runs || []} />
+                        <RunsTable runs={selectedRuns} />
                       </TabsContent>
                     </Tabs>
                   </CardContent>
@@ -693,4 +697,3 @@ function EmptyLine({ text }: { text: string }) {
     </div>
   )
 }
-
