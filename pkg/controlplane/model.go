@@ -94,6 +94,9 @@ type Agent struct {
 	ID            string            `json:"id"`
 	Name          string            `json:"name,omitempty"`
 	Status        string            `json:"status"`
+	Disabled      bool              `json:"disabled,omitempty"`
+	Quarantined   bool              `json:"quarantined,omitempty"`
+	Reason        string            `json:"reason,omitempty"`
 	Capabilities  []string          `json:"capabilities,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	Version       string            `json:"version,omitempty"`
@@ -118,6 +121,10 @@ type AgentInventory struct {
 	Capabilities []string          `json:"capabilities,omitempty"`
 	Labels       map[string]string `json:"labels,omitempty"`
 	Topologies   []InventoryItem   `json:"topologies,omitempty"`
+	Artifacts    []InventoryItem   `json:"artifacts,omitempty"`
+	Tools        []InventoryItem   `json:"tools,omitempty"`
+	Status       string            `json:"status,omitempty"`
+	Stale        bool              `json:"stale,omitempty"`
 	ObservedAt   time.Time         `json:"observed_at"`
 }
 
@@ -128,6 +135,9 @@ type InventoryItem struct {
 	Serial        int64  `json:"serial,omitempty"`
 	ResourceCount int    `json:"resource_count,omitempty"`
 	Health        string `json:"health,omitempty"`
+	Path          string `json:"path,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Available     bool   `json:"available,omitempty"`
 }
 
 type ConsoleSession struct {
@@ -181,19 +191,22 @@ type ConsoleCommand struct {
 }
 
 type AgentCommand struct {
-	ID        string          `json:"id"`
-	AgentID   string          `json:"agent_id,omitempty"`
-	Type      string          `json:"type"`
-	Status    string          `json:"status,omitempty"`
-	Err       string          `json:"error,omitempty"`
-	Run       *Run            `json:"run,omitempty"`
-	Session   *ConsoleSession `json:"session,omitempty"`
-	Request   ConsoleRequest  `json:"request,omitempty"`
-	Operation NodeOperation   `json:"operation,omitempty"`
-	CreatedAt time.Time       `json:"created_at,omitempty"`
-	Delivered time.Time       `json:"delivered_at,omitempty"`
-	AckedAt   time.Time       `json:"acked_at,omitempty"`
-	EndedAt   time.Time       `json:"ended_at,omitempty"`
+	ID         string          `json:"id"`
+	AgentID    string          `json:"agent_id,omitempty"`
+	Type       string          `json:"type"`
+	Status     string          `json:"status,omitempty"`
+	Err        string          `json:"error,omitempty"`
+	Run        *Run            `json:"run,omitempty"`
+	Session    *ConsoleSession `json:"session,omitempty"`
+	Request    ConsoleRequest  `json:"request,omitempty"`
+	Operation  NodeOperation   `json:"operation,omitempty"`
+	CreatedAt  time.Time       `json:"created_at,omitempty"`
+	Delivered  time.Time       `json:"delivered_at,omitempty"`
+	AckedAt    time.Time       `json:"acked_at,omitempty"`
+	EndedAt    time.Time       `json:"ended_at,omitempty"`
+	LeaseOwner string          `json:"lease_owner,omitempty"`
+	LeaseUntil time.Time       `json:"lease_until,omitempty"`
+	Attempt    int             `json:"attempt,omitempty"`
 }
 
 type AgentCommandEvent struct {

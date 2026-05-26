@@ -39,6 +39,49 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	s.handleGetAgentByID(w, r.PathValue("agent"))
 }
 
+func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("agent")
+	if err := validatePathSegment(id, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	agent, err := s.agents.Get(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	var req struct {
+		Disabled    *bool  `json:"disabled"`
+		Quarantined *bool  `json:"quarantined"`
+		Reason      string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent update: %w", err))
+		return
+	}
+	if req.Disabled != nil {
+		agent.Disabled = *req.Disabled
+	}
+	if req.Quarantined != nil {
+		agent.Quarantined = *req.Quarantined
+	}
+	if req.Reason != "" {
+		agent.Reason = req.Reason
+	}
+	switch {
+	case agent.Disabled:
+		agent.Status = "disabled"
+	case agent.Quarantined:
+		agent.Status = "quarantined"
+	default:
+		agent.Status = "online"
+		agent.Reason = ""
+	}
+	agent.UpdatedAt = time.Now().UTC()
+	s.agents.Save(*agent)
+	writeJSON(w, http.StatusOK, agent)
+}
+
 func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 	if err := validatePathSegment(id, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -290,6 +333,8 @@ func (s *Server) handlePostAgentInventory(w http.ResponseWriter, r *http.Request
 	if inv.ObservedAt.IsZero() {
 		inv.ObservedAt = time.Now().UTC()
 	}
+	inv.Status = inventoryStatus(inv.ObservedAt)
+	inv.Stale = inv.Status == "stale"
 	if err := s.apiStore.SaveAgentInventory(r.Context(), inv); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -308,10 +353,12 @@ func (s *Server) handleGetAgentInventory(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	inv.Status = inventoryStatus(inv.ObservedAt)
+	inv.Stale = inv.Status == "stale"
 	writeJSON(w, http.StatusOK, inv)
 }
 
-func (s *Server) handleAgentCommands(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAgentCommandStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("agent")
 	if err := validatePathSegment(id, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -320,8 +367,13 @@ func (s *Server) handleAgentCommands(w http.ResponseWriter, r *http.Request) {
 	if s.agents == nil {
 		s.agents = newAgentRegistry()
 	}
-	if _, err := s.agents.Get(id); err != nil && id != DefaultAgentID {
+	agent, err := s.agents.Get(id)
+	if err != nil && id != DefaultAgentID {
 		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if agent != nil && (agent.Disabled || agent.Quarantined || agent.Status == "disabled" || agent.Status == "quarantined") {
+		writeError(w, http.StatusForbidden, fmt.Errorf("agent %q is %s", id, agent.Status))
 		return
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
@@ -351,8 +403,12 @@ func (s *Server) handleAgentCommands(w http.ResponseWriter, r *http.Request) {
 			if cmd.ID == "" {
 				continue
 			}
-			cmd.Status = "delivered"
-			cmd.Delivered = time.Now().UTC()
+			var leased bool
+			cmd, leased = s.acquireAgentCommandLease(ctx, id, cmd)
+			if !leased {
+				continue
+			}
+			cmd = deliverAgentCommand(cmd)
 			if s.apiStore != nil {
 				_ = s.apiStore.SaveAgentCommand(ctx, cmd)
 			}
@@ -408,11 +464,12 @@ func (s *Server) pushPendingAgentCommands(ctx context.Context, agentID string, c
 		return
 	}
 	for _, cmd := range commands {
-		if !commandIsPending(cmd) {
+		var ok bool
+		cmd, ok = s.acquireAgentCommandLease(ctx, agentID, cmd)
+		if !ok {
 			continue
 		}
-		cmd.Status = "delivered"
-		cmd.Delivered = time.Now().UTC()
+		cmd = deliverAgentCommand(cmd)
 		_ = s.apiStore.SaveAgentCommand(ctx, cmd)
 		raw, err := json.Marshal(cmd)
 		if err != nil {
@@ -449,6 +506,16 @@ func (s *Server) updateAgentCommandFromEvent(ctx context.Context, event controlp
 		cmd.EndedAt = now
 	}
 	_ = s.apiStore.SaveAgentCommand(ctx, cmd)
+}
+
+func inventoryStatus(observed time.Time) string {
+	if observed.IsZero() {
+		return "unknown"
+	}
+	if time.Since(observed) > 2*time.Minute {
+		return "stale"
+	}
+	return "fresh"
 }
 
 func (s *Server) findAgentCommand(ctx context.Context, agentID, commandID string) (controlplane.AgentCommand, error) {
@@ -488,6 +555,16 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if existing, err := s.agents.Get(id); err == nil && existing != nil {
+		if existing.Disabled || existing.Quarantined {
+			agent.Disabled = existing.Disabled
+			agent.Quarantined = existing.Quarantined
+			agent.Reason = existing.Reason
+			if existing.Disabled {
+				agent.Status = "disabled"
+			} else {
+				agent.Status = "quarantined"
+			}
+		}
 		if agent.Name == "" {
 			agent.Name = existing.Name
 		}

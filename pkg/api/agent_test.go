@@ -67,7 +67,7 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 	server := httptest.NewServer(s)
 	defer server.Close()
 
-	wsURL := "ws" + server.URL[len("http"):] + "/v1/agents/host-a/commands"
+	wsURL := "ws" + server.URL[len("http"):] + "/v1/agents/host-a/commands/stream"
 	conn, _, err := websocket.Dial(context.Background(), wsURL, nil)
 	require.NoError(t, err)
 	defer conn.Close(websocket.StatusNormalClosure, "")
@@ -108,7 +108,7 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 		require.Contains(t, rec.Body.String(), `"status":"ack"`)
 
 		rec = httptest.NewRecorder()
-		s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/agents/host-a/commands/list", nil))
+		s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/agents/host-a/commands", nil))
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		require.Contains(t, rec.Body.String(), `"status":"acked"`)
 	case <-time.After(2 * time.Second):
@@ -127,7 +127,7 @@ func TestAgentCommandWebSocketReplaysPendingCommand(t *testing.T) {
 
 	server := httptest.NewServer(s)
 	defer server.Close()
-	wsURL := "ws" + server.URL[len("http"):] + "/v1/agents/host-a/commands"
+	wsURL := "ws" + server.URL[len("http"):] + "/v1/agents/host-a/commands/stream"
 	conn, _, err := websocket.Dial(context.Background(), wsURL, nil)
 	require.NoError(t, err)
 	defer conn.Close(websocket.StatusNormalClosure, "")
@@ -138,6 +138,19 @@ func TestAgentCommandWebSocketReplaysPendingCommand(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &got))
 	require.Equal(t, cmd.ID, got.ID)
 	require.Equal(t, "delivered", got.Status)
+	require.Equal(t, 1, got.Attempt)
+	require.NotEmpty(t, got.LeaseOwner)
+	require.False(t, got.LeaseUntil.IsZero())
+
+	server2 := httptest.NewServer(s)
+	defer server2.Close()
+	conn2, _, err := websocket.Dial(context.Background(), "ws"+server2.URL[len("http"):]+"/v1/agents/host-a/commands/stream", nil)
+	require.NoError(t, err)
+	defer conn2.Close(websocket.StatusNormalClosure, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	_, _, err = conn2.Read(ctx)
+	require.Error(t, err)
 }
 
 func TestAgentCommandCancelPublishesCancelCommand(t *testing.T) {
@@ -160,6 +173,28 @@ func TestAgentCommandCancelPublishesCancelCommand(t *testing.T) {
 	require.Contains(t, rec.Body.String(), cmd.ID)
 }
 
+func TestAgentDisableAndQuarantineBlockSchedulingAndStream(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	s.agents.Save(controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/agents/host-a", bytes.NewBufferString(`{"disabled":true,"reason":"maintenance"}`))
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"status":"disabled"`)
+
+	agent, err := s.selectAgent(context.Background(), []string{"docker"})
+	require.NoError(t, err)
+	require.NotEqual(t, "host-a", agent.ID)
+
+	server := httptest.NewServer(s)
+	defer server.Close()
+	_, resp, err := websocket.Dial(context.Background(), "ws"+server.URL[len("http"):]+"/v1/agents/host-a/commands/stream", nil)
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+}
+
 func TestConsoleSessionPublishesAgentCommand(t *testing.T) {
 	runs := t.TempDir()
 	workspaces := t.TempDir()
@@ -180,7 +215,7 @@ resource "sysbox_node" "web" {
 	server := httptest.NewServer(s)
 	defer server.Close()
 
-	wsURL := "ws" + server.URL[len("http"):] + "/v1/agents/host-a/commands"
+	wsURL := "ws" + server.URL[len("http"):] + "/v1/agents/host-a/commands/stream"
 	conn, _, err := websocket.Dial(context.Background(), wsURL, nil)
 	require.NoError(t, err)
 	defer conn.Close(websocket.StatusNormalClosure, "")

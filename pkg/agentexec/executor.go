@@ -54,6 +54,10 @@ func NewExecutorWithBridge(bridge Bridge) *Executor {
 }
 
 func (e *Executor) Execute(run *controlplane.Run) {
+	e.ExecuteContext(context.Background(), run)
+}
+
+func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	if e.bridge == nil || run == nil {
 		return
 	}
@@ -62,20 +66,20 @@ func (e *Executor) Execute(run *controlplane.Run) {
 	switch run.Op {
 	case "apply":
 		if run.ParentID != "" {
-			if parent, err := e.bridge.ParentRun(context.Background(), run.ParentID); err == nil {
-				e.executeResumeApply(parent, run, log)
+			if parent, err := e.bridge.ParentRun(ctx, run.ParentID); err == nil {
+				e.executeResumeApply(ctx, parent, run, log)
 				break
 			}
 		}
-		e.executeApply(run, log)
+		e.executeApply(ctx, run, log)
 	case "destroy":
 		if run.ParentID != "" {
-			if parent, err := e.bridge.ParentRun(context.Background(), run.ParentID); err == nil {
-				e.executeResumeDestroy(parent, run, log)
+			if parent, err := e.bridge.ParentRun(ctx, run.ParentID); err == nil {
+				e.executeResumeDestroy(ctx, parent, run, log)
 				break
 			}
 		}
-		e.executeDestroy(run, log)
+		e.executeDestroy(ctx, run, log)
 	default:
 		e.bridge.Finish(run, fmt.Errorf("unsupported run op %q", run.Op))
 	}
@@ -113,11 +117,15 @@ func (e *Executor) reportCompletion(run *controlplane.Run) {
 	_ = reporter.ReportRunComplete(context.Background(), run, proj)
 }
 
-func (e *Executor) executeApply(run *controlplane.Run, log io.Writer) {
+func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log io.Writer) {
 	unlock := e.bridge.LockTopology(run.Topology)
 	defer unlock()
 
-	if err := e.bridge.Preflight(context.Background(), run.Topology, log); err != nil {
+	if err := ctx.Err(); err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	if err := e.bridge.Preflight(ctx, run.Topology, log); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
@@ -132,10 +140,10 @@ func (e *Executor) executeApply(run *controlplane.Run, log io.Writer) {
 		e.bridge.Finish(run, err)
 		return
 	}
-	meta, _ := mgr.Metadata(context.Background())
+	meta, _ := mgr.Metadata(ctx)
 	var plan *runtime.Plan
 	if run.PlanID != "" {
-		stored, err := e.bridge.ValidateStoredPlanForApply(context.Background(), run.Topology, run.PlanID, meta.Serial)
+		stored, err := e.bridge.ValidateStoredPlanForApply(ctx, run.Topology, run.PlanID, meta.Serial)
 		if err != nil {
 			e.bridge.Finish(run, err)
 			return
@@ -170,7 +178,11 @@ func (e *Executor) executeApply(run *controlplane.Run, log io.Writer) {
 		refresh = hook.RefreshApply()
 	}
 	if refresh {
-		exec.Refresh(context.Background(), plan)
+		exec.Refresh(ctx, plan)
+	}
+	if err := ctx.Err(); err != nil {
+		e.bridge.Finish(run, err)
+		return
 	}
 	if !plan.HasChanges() {
 		_, _ = log.Write([]byte("No changes. Apply is a no-op.\n"))
@@ -184,11 +196,11 @@ func (e *Executor) executeApply(run *controlplane.Run, log io.Writer) {
 		}
 	}
 	_, _ = log.Write([]byte(plan.Summary() + "\n"))
-	if snap, err := mgr.Snapshot(context.Background(), "before apply "+run.ID); err == nil && snap != nil {
+	if snap, err := mgr.Snapshot(ctx, "before apply "+run.ID); err == nil && snap != nil {
 		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
-	if err := exec.Apply(context.Background(), plan); err != nil {
-		if saveErr := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
+	if err := exec.Apply(ctx, plan); err != nil {
+		if saveErr := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
 			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
 		} else {
 			recorder.SetStateSerialAfter(st.Meta.Serial)
@@ -197,7 +209,13 @@ func (e *Executor) executeApply(run *controlplane.Run, log io.Writer) {
 		return
 	}
 	saveStep := recorder.StepStartKind("state", "state", runtime.PlanActionUpdate)
-	if err := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
+	if err := ctx.Err(); err != nil {
+		recorder.StepFailed(saveStep, err)
+		recorder.Finish(err)
+		e.bridge.Finish(run, err)
+		return
+	}
+	if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
 		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
 		e.bridge.Finish(run, fmt.Errorf("save state: %w", err))
@@ -210,10 +228,14 @@ func (e *Executor) executeApply(run *controlplane.Run, log io.Writer) {
 	e.bridge.Finish(run, nil)
 }
 
-func (e *Executor) executeDestroy(run *controlplane.Run, log io.Writer) {
+func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, log io.Writer) {
 	unlock := e.bridge.LockTopology(run.Topology)
 	defer unlock()
 
+	if err := ctx.Err(); err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
 	mgr, err := e.bridge.StateManager(run.Topology)
 	if err != nil {
 		e.bridge.Finish(run, err)
@@ -251,11 +273,11 @@ func (e *Executor) executeDestroy(run *controlplane.Run, log io.Writer) {
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
 	exec.SetStatePatchSink(&runtime.StatePatchManagerSink{Manager: mgr, State: st, Owner: run.LeaseOwner})
-	if snap, err := mgr.Snapshot(context.Background(), "before destroy "+run.ID); err == nil && snap != nil {
+	if snap, err := mgr.Snapshot(ctx, "before destroy "+run.ID); err == nil && snap != nil {
 		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
-	if err := exec.Destroy(context.Background(), plan); err != nil {
-		if saveErr := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
+	if err := exec.Destroy(ctx, plan); err != nil {
+		if saveErr := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
 			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
 		} else {
 			recorder.SetStateSerialAfter(st.Meta.Serial)
@@ -264,7 +286,13 @@ func (e *Executor) executeDestroy(run *controlplane.Run, log io.Writer) {
 		return
 	}
 	saveStep := recorder.StepStartKind("state", "state", runtime.PlanActionUpdate)
-	if err := mgr.SaveWithLease(context.Background(), st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
+	if err := ctx.Err(); err != nil {
+		recorder.StepFailed(saveStep, err)
+		recorder.Finish(err)
+		e.bridge.Finish(run, err)
+		return
+	}
+	if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
 		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
 		e.bridge.Finish(run, fmt.Errorf("save state: %w", err))
@@ -277,20 +305,20 @@ func (e *Executor) executeDestroy(run *controlplane.Run, log io.Writer) {
 	e.bridge.Finish(run, nil)
 }
 
-func (e *Executor) executeResumeApply(parent, run *controlplane.Run, log io.Writer) {
+func (e *Executor) executeResumeApply(ctx context.Context, parent, run *controlplane.Run, log io.Writer) {
 	if err := e.bridge.ReconcileParentJournal(parent, run); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
-	e.executeApply(run, log)
+	e.executeApply(ctx, run, log)
 }
 
-func (e *Executor) executeResumeDestroy(parent, run *controlplane.Run, log io.Writer) {
+func (e *Executor) executeResumeDestroy(ctx context.Context, parent, run *controlplane.Run, log io.Writer) {
 	if err := e.bridge.ReconcileParentJournal(parent, run); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
-	e.executeDestroy(run, log)
+	e.executeDestroy(ctx, run, log)
 }
 
 func defaultDestroyPlan(st *state.State) *runtime.Plan {

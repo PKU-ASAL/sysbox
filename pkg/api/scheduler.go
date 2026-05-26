@@ -38,7 +38,7 @@ func (s *Server) selectAgent(ctx context.Context, required []string) (controlpla
 	required = normalizeCapabilities(required)
 	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
 	for _, agent := range agents {
-		if agent.Status != "online" {
+		if agent.Status != "online" || agent.Disabled || agent.Quarantined {
 			continue
 		}
 		if hasCapabilities(agent.Capabilities, required) {

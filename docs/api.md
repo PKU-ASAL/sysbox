@@ -23,7 +23,7 @@ POST /v1/agents
 GET  /v1/agents/{agent_id}
 POST /v1/agents/{agent_id}/heartbeat
 GET  /v1/agents/{agent_id}/commands
-GET  /v1/agents/{agent_id}/commands/list
+GET  /v1/agents/{agent_id}/commands/stream
 POST /v1/agents/{agent_id}/commands/{command_id}/cancel
 GET  /v1/agents/{agent_id}/command-events
 GET  /v1/agents/{agent_id}/projections
@@ -106,7 +106,7 @@ POST /v1/runs/{run_id}/cleanup
 
 Run records include the owning `agent_id`. The API creates and assigns command
 intent; agents keep an outbound WebSocket command stream open at
-`/v1/agents/{agent_id}/commands`. Commands use a durable envelope with
+`/v1/agents/{agent_id}/commands/stream`. Commands use a durable envelope with
 `id`, `type`, and command-specific payload. Agents ACK, start, complete, and
 fail commands on the same WebSocket; command events are persisted and available
 from `/v1/agents/{agent_id}/command-events`. Commands are persisted before

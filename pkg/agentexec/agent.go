@@ -116,7 +116,7 @@ func heartbeat(ctx context.Context, opts Options) error {
 }
 
 func commandWebSocketAndExecute(ctx context.Context, runner *commandRunner, opts Options) error {
-	wsURL := strings.TrimRight(opts.APIURL, "/") + "/v1/agents/" + opts.ID + "/commands"
+	wsURL := strings.TrimRight(opts.APIURL, "/") + "/v1/agents/" + opts.ID + "/commands/stream"
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
 	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
 	headers := http.Header{}
@@ -192,6 +192,14 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			target = cmd.Session.ID
 		}
 		if r.cancel(target) {
+			if report != nil {
+				report(controlplane.AgentCommandEvent{
+					CommandID: target,
+					Type:      "cancelled",
+					Status:    "cancelled",
+					Message:   "command cancelled by cancel_command",
+				})
+			}
 			emit("completed", "command cancelled", nil)
 			return
 		}
@@ -218,7 +226,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "run claim failed", err)
 			return
 		}
-		r.executor.Execute(claimed)
+		r.executor.ExecuteContext(runCtx, claimed)
 		emit("completed", "run command completed", nil)
 	case "session_open":
 		if cmd.Session == nil {
