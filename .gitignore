@@ -34,8 +34,9 @@ __pycache__/
 /web/node_modules/
 /web/dist/
 /web/*.tsbuildinfo
-/web/*.js
 /web/*.d.ts
+/web/tailwind.config.js
+/web/vite.config.js
 
 # macOS
 .DS_Store
