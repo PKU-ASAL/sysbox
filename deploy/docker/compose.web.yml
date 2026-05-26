@@ -1,0 +1,10 @@
+services:
+  sysbox-web:
+    image: sysbox-web:latest
+    container_name: sysbox-web
+    restart: unless-stopped
+    depends_on:
+      sysbox-api:
+        condition: service_started
+    ports:
+      - "${SYSBOX_WEB_HOST_PORT:-3000}:3000"

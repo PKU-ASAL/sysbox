@@ -16,6 +16,7 @@ $EDITOR .env        # change SYSBOX_POSTGRES_PASSWORD outside disposable labs
 
 make deploy       # API + Postgres
 make deploy-full  # API + Postgres + Docker agent
+make deploy-ui    # Web UI for the running API
 make undeploy
 make reset        # stop compose and remove local Postgres volume
 make logs
@@ -27,6 +28,10 @@ socket into the API container.
 `make deploy-full` first registers an agent identity, then starts a
 `sysbox-agent` container. The agent mounts the host Docker socket and executes
 Docker-substrate runs assigned by the API.
+
+`make deploy-ui` starts the browser console on
+`http://127.0.0.1:${SYSBOX_WEB_HOST_PORT:-3000}`. The UI uses the same-origin
+`/v1` proxy for HTTP and WebSocket console traffic.
 
 If you change `SYSBOX_POSTGRES_PASSWORD` after Postgres has already initialized,
 the existing Docker volume keeps the old database password. For local disposable

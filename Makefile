@@ -26,9 +26,9 @@ COMPOSE_API := -f $(COMPOSE_DIR)/compose.yml
 COMPOSE_FULL := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.agent.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-all test test-e2e lint ci \
+.PHONY: help build build-all web-build test test-e2e lint ci \
 	plan apply destroy up down \
-	image seed deploy deploy-full undeploy reset logs config \
+	image image-web seed deploy deploy-full deploy-ui undeploy reset logs config \
 	.agent-register clean
 
 help: ## Show available targets
@@ -51,6 +51,10 @@ test: ## Run unit tests
 
 test-e2e: ## Run black-box API e2e tests against make deploy-full
 	bash tests/e2e/api_smoke.sh
+
+web-build: ## Build the Web UI
+	npm --prefix web install
+	npm --prefix web run build
 
 lint: ## Run go vet
 	$(GOENV) $(GO) vet ./...
@@ -77,6 +81,9 @@ down: destroy ## Alias for destroy
 image: ## Build the sysbox container image
 	docker build --network=host --no-cache -t sysbox:latest .
 
+image-web: web-build ## Build the sysbox Web UI image
+	docker build --network=host -t sysbox-web:latest ./web
+
 seed: ## Seed API workspaces from examples when missing
 	@mkdir -p "$(API_DATA_DIR)/workspaces"
 	@for dir in examples/*; do \
@@ -97,6 +104,10 @@ deploy: image seed ## Deploy API + Postgres
 deploy-full: deploy .agent-register ## Deploy API + Postgres + Docker agent
 	$(COMPOSE) $(COMPOSE_FULL) up -d sysbox-agent
 	@echo "Agent: $(AGENT_ID)"
+
+deploy-ui: image-web ## Deploy Web UI for the running API
+	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml up -d sysbox-web
+	@echo "Web UI: http://127.0.0.1:$${SYSBOX_WEB_HOST_PORT:-3000}"
 
 .agent-register:
 	$(COMPOSE) $(COMPOSE_FULL) run --rm --no-deps --entrypoint sysbox sysbox-agent \

@@ -206,6 +206,9 @@ func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token != "" {
 			got := r.Header.Get("Authorization")
+			if got == "" && r.URL.Query().Get("token") != "" {
+				got = "Bearer " + r.URL.Query().Get("token")
+			}
 			if len(got) != len(expectedPrefix) || subtle.ConstantTimeCompare([]byte(got), []byte(expectedPrefix)) != 1 {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return

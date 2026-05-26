@@ -68,6 +68,7 @@ cp .env.example .env               # one local 12-factor config file
 make config                        # inspect resolved compose config
 make deploy                        # API + Postgres
 make deploy-full                   # API + Postgres + Docker agent
+make deploy-ui                     # Web UI for the running API
 make undeploy
 make reset                         # stop compose and remove local Postgres volume
 make logs
@@ -115,6 +116,16 @@ curl http://127.0.0.1:9876/v1/health
 curl http://127.0.0.1:9876/v1/topologies
 ```
 
+The optional Web UI is a shadcn-style React console served on port 3000. It
+talks to the API through the same origin, so API calls and WebSocket console
+sessions both go through `/v1`.
+
+```bash
+make deploy-full
+make deploy-ui
+open http://127.0.0.1:3000
+```
+
 Deployment follows a 12-factor style: keep deploy-time choices in `.env`, keep topology intent in HCL, and keep the command surface small. Start by copying the template:
 
 ```bash
@@ -126,6 +137,7 @@ Use one of two deployment targets:
 ```bash
 make deploy       # control plane only: API + Postgres
 make deploy-full  # control plane + Docker agent
+make deploy-ui    # browser console for the running API
 make reset        # local reset: removes the Compose Postgres volume
 ```
 

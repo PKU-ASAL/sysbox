@@ -30,6 +30,13 @@ __pycache__/
 *.pyo
 .venv/
 
+# Web UI
+/web/node_modules/
+/web/dist/
+/web/*.tsbuildinfo
+/web/*.js
+/web/*.d.ts
+
 # macOS
 .DS_Store
 
