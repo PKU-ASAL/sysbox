@@ -96,10 +96,10 @@ export const api = {
   createRevision: (name: string) => request<{ id: string }>(`/v1/topologies/${encodeURIComponent(name)}/revisions`, { method: "POST" }),
   createPlan: (name: string) => request<Plan>(`/v1/topologies/${encodeURIComponent(name)}/plans`, { method: "POST" }),
   plans: (name: string) => request<{ plans: Plan[] }>(`/v1/topologies/${encodeURIComponent(name)}/plans`),
-  apply: (name: string, planID?: string) =>
+  apply: (name: string, planID?: string, agentID?: string) =>
     request<{ run_id: string; agent_id?: string }>(`/v1/topologies/${encodeURIComponent(name)}/apply`, {
       method: "POST",
-      body: planID ? { plan_id: planID } : {},
+      body: { ...(planID ? { plan_id: planID } : {}), ...(agentID ? { agent_id: agentID } : {}) },
     }),
   destroy: (name: string) =>
     request<{ run_id: string; agent_id?: string }>(`/v1/topologies/${encodeURIComponent(name)}/destroy`, {

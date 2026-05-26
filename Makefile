@@ -15,6 +15,7 @@ API_URL ?= http://127.0.0.1:9876
 AGENT_API_URL ?= http://sysbox-api:9876
 API_DATA_DIR ?= $(or $(SYSBOX_HOST_HOME_DIR),.sysbox/api)
 AGENT_ID ?= local-docker
+AGENT_CAPABILITIES ?= docker,network
 WEB_HOST_ADDR ?= $(or $(SYSBOX_WEB_HOST_ADDR),0.0.0.0)
 WEB_HOST_PORT ?= $(or $(SYSBOX_WEB_HOST_PORT),3000)
 WEB_URL ?= http://127.0.0.1:$(WEB_HOST_PORT)
@@ -133,7 +134,7 @@ status: ## Show compose service, port, and health status
 
 .agent-register:
 	$(COMPOSE) $(COMPOSE_FULL) run --rm --no-deps --entrypoint sysbox sysbox-agent \
-		agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) --capabilities docker --identity /var/lib/sysbox/agent/identity.json
+		agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) --capabilities $(AGENT_CAPABILITIES) --identity /var/lib/sysbox/agent/identity.json
 
 undeploy: ## Stop API, Postgres, and agent
 	$(COMPOSE) $(COMPOSE_FULL) down

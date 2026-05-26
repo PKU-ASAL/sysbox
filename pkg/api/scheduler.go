@@ -12,7 +12,7 @@ import (
 )
 
 func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string) error {
-	agent, err := s.selectAgent(ctx, required)
+	agent, err := s.selectAgent(ctx, required, run.AgentID)
 	if err != nil {
 		s.jobs.finish(run, err)
 		return err
@@ -29,12 +29,26 @@ func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string) e
 
 func ptrRun(run controlplane.Run) *controlplane.Run { return &run }
 
-func (s *Server) selectAgent(ctx context.Context, required []string) (controlplane.Agent, error) {
+func (s *Server) selectAgent(ctx context.Context, required []string, preferred string) (controlplane.Agent, error) {
 	if s.agents == nil {
 		s.agents = newAgentRegistry()
 	}
 	agents := s.listAgents(ctx)
 	required = normalizeCapabilities(required)
+	if preferred != "" && preferred != DefaultAgentID {
+		for _, agent := range agents {
+			if agent.ID == preferred {
+				if agent.Status != "online" || agent.Disabled || agent.Quarantined {
+					return controlplane.Agent{}, fmt.Errorf("agent %q is not online", preferred)
+				}
+				if !hasCapabilities(agent.Capabilities, required) {
+					return controlplane.Agent{}, fmt.Errorf("agent %q does not satisfy capabilities: required %v, has %v", preferred, required, normalizeCapabilities(agent.Capabilities))
+				}
+				return agent, nil
+			}
+		}
+		return controlplane.Agent{}, fmt.Errorf("agent %q not found", preferred)
+	}
 	for _, agent := range agents {
 		if agent.ID == DefaultAgentID {
 			continue

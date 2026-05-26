@@ -70,7 +70,7 @@ func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	agent, err := s.selectAgent(r.Context(), required)
+	agent, err := s.selectAgent(r.Context(), required, "")
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return

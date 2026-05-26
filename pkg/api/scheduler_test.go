@@ -58,12 +58,33 @@ func TestSelectAgentByCapabilities(t *testing.T) {
 		Capabilities: []string{"docker", "network", "kvm", "firecracker"},
 	}))
 
-	agent, err := s.selectAgent(ctx, []string{"firecracker", "kvm", "network"})
+	agent, err := s.selectAgent(ctx, []string{"firecracker", "kvm", "network"}, "")
 	require.NoError(t, err)
 	require.Equal(t, "vm-agent", agent.ID)
 
-	_, err = s.selectAgent(ctx, []string{"gpu"})
+	_, err = s.selectAgent(ctx, []string{"gpu"}, "")
 	require.ErrorContains(t, err, "no online agent")
+}
+
+func TestSelectPreferredAgentByCapabilities(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+		ID:           "docker-agent",
+		Status:       "online",
+		Capabilities: []string{"docker"},
+	}))
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+		ID:           "net-agent",
+		Status:       "online",
+		Capabilities: []string{"docker", "network"},
+	}))
+
+	agent, err := s.selectAgent(context.Background(), []string{"docker", "network"}, "net-agent")
+	require.NoError(t, err)
+	require.Equal(t, "net-agent", agent.ID)
+
+	_, err = s.selectAgent(context.Background(), []string{"docker", "network"}, "docker-agent")
+	require.ErrorContains(t, err, `agent "docker-agent" does not satisfy capabilities`)
 }
 
 func TestDispatchRunAssignsAgentBeforeExecution(t *testing.T) {

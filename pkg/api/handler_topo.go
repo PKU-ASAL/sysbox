@@ -345,6 +345,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	run := s.jobs.startWithOptions(topology, "apply", runStartOptions{
 		Revision: req.Revision,
 		PlanID:   req.PlanID,
+		AgentID:  req.AgentID,
 	})
 	required, err := requiredCapabilitiesForTopology(s.hclFile(topology))
 	if err != nil {
@@ -362,6 +363,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 type applyRequest struct {
 	PlanID   string `json:"plan_id"`
 	Revision string `json:"revision,omitempty"`
+	AgentID  string `json:"agent_id,omitempty"`
 }
 
 func decodeApplyRequest(r *http.Request) (applyRequest, error) {
@@ -382,6 +384,11 @@ func decodeApplyRequest(r *http.Request) (applyRequest, error) {
 	}
 	if req.Revision != "" {
 		if err := validatePathSegment(req.Revision, "revision"); err != nil {
+			return applyRequest{}, err
+		}
+	}
+	if req.AgentID != "" {
+		if err := validatePathSegment(req.AgentID, "agent_id"); err != nil {
 			return applyRequest{}, err
 		}
 	}

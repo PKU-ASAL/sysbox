@@ -70,6 +70,11 @@ func TestApplyCanReferenceStoredPlan(t *testing.T) {
 		Status:       "online",
 		Capabilities: []string{"network"},
 	}))
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+		ID:           "host-b",
+		Status:       "online",
+		Capabilities: []string{"network"},
+	}))
 
 	hcl := `resource "sysbox_network" "lab" {
   cidr = "10.77.0.0/24"
@@ -96,7 +101,7 @@ func TestApplyCanReferenceStoredPlan(t *testing.T) {
 	require.NotEmpty(t, plan.Revision)
 	require.Zero(t, plan.StateSerial)
 
-	body := bytes.NewBufferString(`{"plan_id":"` + plan.ID + `"}`)
+	body := bytes.NewBufferString(`{"plan_id":"` + plan.ID + `","agent_id":"host-b"}`)
 	rec = httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/apply", body))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
@@ -110,7 +115,7 @@ func TestApplyCanReferenceStoredPlan(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, plan.ID, run.PlanID)
 	require.Equal(t, plan.Revision, run.Revision)
-	require.Equal(t, "host-a", run.AgentID)
+	require.Equal(t, "host-b", run.AgentID)
 	require.Equal(t, RunAssigned, run.Status)
 }
 

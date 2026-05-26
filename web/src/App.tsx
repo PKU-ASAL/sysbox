@@ -40,6 +40,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
@@ -98,6 +99,7 @@ export default function App() {
   const [newName, setNewName] = useState("docker-service")
   const [newHcl, setNewHcl] = useState(starterHcl)
   const [consoleNode, setConsoleNode] = useState<string | undefined>()
+  const [selectedAgentID, setSelectedAgentID] = useState("auto")
   const [theme, setTheme] = useState(() => localStorage.getItem("sysbox.theme") || "dark")
 
   const overview = usePolling(
@@ -190,7 +192,7 @@ export default function App() {
     if (!selectedName) return
     await mutate("apply", async () => {
       const planID = detail.plan?.id || detail.plans?.[0]?.id
-      const run = await api.apply(selectedName, planID)
+      const run = await api.apply(selectedName, planID, selectedAgentID === "auto" ? undefined : selectedAgentID)
       await waitRun(run.run_id)
     })
   }
@@ -308,7 +310,7 @@ export default function App() {
             <Route path="/agents" element={<AgentsListPage agents={agents} />} />
             <Route path="/agents/:agentId" element={<AgentDetailRoute agents={agents} runs={runs} />} />
             <Route path="/artifacts" element={<ArtifactsListPage topologies={topologies} />} />
-            <Route path="/artifacts/:artifactId" element={<ArtifactDetailRoute topologies={topologies} runs={runs} detail={detail} busy={busy} onCreatePlan={createPlan} onApplyPlan={applyPlan} onDestroy={destroyTopology} onDelete={deleteTopology} onSaveHcl={saveHcl} onHclChange={(hcl) => setDetail((prev) => ({ ...prev, hcl }))} />} />
+            <Route path="/artifacts/:artifactId" element={<ArtifactDetailRoute agents={agents} selectedAgentID={selectedAgentID} onAgentChange={setSelectedAgentID} topologies={topologies} runs={runs} detail={detail} busy={busy} onCreatePlan={createPlan} onApplyPlan={applyPlan} onDestroy={destroyTopology} onDelete={deleteTopology} onSaveHcl={saveHcl} onHclChange={(hcl) => setDetail((prev) => ({ ...prev, hcl }))} />} />
             <Route path="/topologies" element={<TopologiesListPage topologies={deployedTopologies} />} />
             <Route path="/topologies/:topologyId" element={<TopologyDetailRoute topologies={deployedTopologies} detail={detail} selectedNode={selectedCanvasNode} onSelectNode={setSelectedCanvasNode} onConsole={setConsoleNode} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
@@ -574,6 +576,9 @@ function ArtifactsListPage({ topologies }: { topologies: Topology[] }) {
 }
 
 function ArtifactDetailRoute({
+  agents,
+  selectedAgentID,
+  onAgentChange,
   topologies,
   runs,
   detail,
@@ -585,6 +590,9 @@ function ArtifactDetailRoute({
   onSaveHcl,
   onHclChange,
 }: {
+  agents: Agent[]
+  selectedAgentID: string
+  onAgentChange: (agentID: string) => void
   topologies: Topology[]
   runs: Run[]
   detail: Detail
@@ -607,7 +615,7 @@ function ArtifactDetailRoute({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
       <Card className="sysbox-panel-glow overflow-hidden rounded-md">
         <CardHeader className="border-b bg-muted/30 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -619,11 +627,41 @@ function ArtifactDetailRoute({
               </div>
               <CardDescription className="mt-1 font-mono text-xs">{artifactID(artifact)} · serial {artifact.serial || 0}</CardDescription>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" onClick={onSaveHcl} disabled={busy !== ""}>
-                <FileCode2 data-icon="inline-start" />
-                Save
-              </Button>
+            <Button variant="outline" onClick={onSaveHcl} disabled={busy !== ""}>
+              <FileCode2 data-icon="inline-start" />
+              Save
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Textarea
+            className="min-h-[560px] resize-y rounded-none border-0 bg-background/95 p-4 font-mono text-sm leading-6 shadow-none focus-visible:ring-0"
+            value={detail.hcl || ""}
+            onChange={(event) => onHclChange(event.target.value)}
+          />
+        </CardContent>
+      </Card>
+      <aside className="flex flex-col gap-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Execution</CardTitle>
+            <CardDescription>Select where this HCL artifact should run.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <Select value={selectedAgentID} onValueChange={onAgentChange}>
+              <SelectTrigger>
+                <SelectValue placeholder="Auto select agent" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Auto select agent</SelectItem>
+                {agents.filter((agent) => agent.id !== "local").map((agent) => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {agent.name || agent.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="grid gap-2">
               <Button variant="outline" onClick={onCreatePlan} disabled={busy !== ""}>
                 <GitBranch data-icon="inline-start" />
                 Plan
@@ -635,30 +673,22 @@ function ArtifactDetailRoute({
               <Button variant="outline" onClick={onDestroy} disabled={busy !== "" || !artifact.has_state}>
                 Destroy
               </Button>
-              <Button variant="destructive" size="icon" onClick={onDelete} disabled={busy !== ""} aria-label="Delete">
-                <Trash2 />
+              <Button variant="destructive" onClick={onDelete} disabled={busy !== ""}>
+                <Trash2 data-icon="inline-start" />
+                Delete
               </Button>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <Textarea
-            className="min-h-[560px] resize-y rounded-none border-0 bg-background/95 p-4 font-mono text-sm leading-6 shadow-none focus-visible:ring-0"
-            value={detail.hcl || ""}
-            onChange={(event) => onHclChange(event.target.value)}
-          />
-        </CardContent>
-      </Card>
-      <div className="grid gap-4 xl:grid-cols-2">
-        <EuiPanel title="Plan" description="Latest field-level diff for this HCL artifact.">
+          </CardContent>
+        </Card>
+        <EuiPanel title="Plan" description="Latest field-level diff.">
           <div className="p-4">
             <PlanView plan={detail.plan || detail.plans?.[0]} />
           </div>
         </EuiPanel>
-        <EuiPanel title="Runs" description="Plan/apply/destroy task history.">
+        <EuiPanel title="Runs" description="Task history.">
           <RunsTable runs={artifactRuns} />
         </EuiPanel>
-      </div>
+      </aside>
     </div>
   )
 }

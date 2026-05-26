@@ -125,7 +125,7 @@ func (s *Server) handleNodeLifecycle(r *http.Request, operation string, w http.R
 
 	subj := s.requestSubject(r)
 	required := []string{res.Provider}
-	agent, err := s.selectAgent(r.Context(), required)
+	agent, err := s.selectAgent(r.Context(), required, "")
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
@@ -192,7 +192,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	subj := s.requestSubject(r)
-	agent, err := s.selectAgent(r.Context(), []string{body.Substrate})
+	agent, err := s.selectAgent(r.Context(), []string{body.Substrate}, "")
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
