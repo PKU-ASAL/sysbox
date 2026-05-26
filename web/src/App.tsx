@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom"
 import {
+  ArrowLeft,
   CheckCircle2,
   Cloud,
   Database,
@@ -88,8 +90,8 @@ type Detail = {
 }
 
 export default function App() {
-  const [page, setPage] = useState<AppPage>("dashboard")
-  const [selected, setSelected] = useState<string>("")
+  const location = useLocation()
+  const navigate = useNavigate()
   const [detail, setDetail] = useState<Detail>({})
   const [notice, setNotice] = useState("")
   const [busy, setBusy] = useState("")
@@ -112,40 +114,23 @@ export default function App() {
   const agents = overview.data?.agents || []
   const runs = overview.data?.runs || []
   const deployedTopologies = useMemo(() => topologies.filter((topology) => topology.has_state), [topologies])
-
-  useEffect(() => {
-    if (!selected && topologies.length > 0) {
-      setSelected(topologies[0].name)
-    }
-  }, [selected, topologies])
-
-  useEffect(() => {
-    if (page === "topologies" && deployedTopologies.length > 0 && !deployedTopologies.some((topology) => topology.name === selected)) {
-      setSelected(deployedTopologies[0].name)
-    }
-  }, [deployedTopologies, page, selected])
-
-  const selectedTopology = useMemo(() => topologies.find((topology) => topology.name === selected), [selected, topologies])
-
-  const selectedRuns = useMemo(
-    () => runs.filter((run) => run.topology === selected || run.workspace === selected).slice(0, 8),
-    [runs, selected],
-  )
+  const activePage = pageFromPath(location.pathname)
+  const selectedResource = selectedResourceFromPath(location.pathname)
 
   const refreshDetail = useCallback(async () => {
-    if (!selected) {
+    if (!selectedResource || activePage === "agents" || activePage === "dashboard") {
       setDetail({})
       return
     }
     const result: Detail = {}
     const tasks = await Promise.allSettled([
-      api.getHcl(selected),
-      api.plans(selected),
-      api.outputs(selected),
-      api.healthOfTopology(selected),
-      api.resources(selected),
-      api.nodes(selected),
-      api.graph(selected),
+      api.getHcl(selectedResource),
+      api.plans(selectedResource),
+      api.outputs(selectedResource),
+      api.healthOfTopology(selectedResource),
+      api.resources(selectedResource),
+      api.nodes(selectedResource),
+      api.graph(selectedResource),
     ])
     if (tasks[0].status === "fulfilled") result.hcl = tasks[0].value
     if (tasks[1].status === "fulfilled") result.plans = tasks[1].value.plans
@@ -155,7 +140,7 @@ export default function App() {
     if (tasks[5].status === "fulfilled") result.nodes = tasks[5].value.nodes
     if (tasks[6].status === "fulfilled") result.graph = { nodes: tasks[6].value.nodes, edges: tasks[6].value.edges }
     setDetail(result)
-  }, [selected])
+  }, [activePage, selectedResource])
 
   useEffect(() => {
     void refreshDetail()
@@ -184,48 +169,47 @@ export default function App() {
   async function createTopology() {
     await mutate("create topology", async () => {
       await api.createTopology(newName, newHcl)
-      setSelected(newName)
-      setPage("artifacts")
+      navigate(`/artifacts/${encodeURIComponent(newName)}`)
       setCreateOpen(false)
     })
   }
 
   async function saveHcl() {
-    if (!selected || detail.hcl === undefined) return
-    await mutate("save HCL", () => api.updateHcl(selected, detail.hcl || ""))
+    if (!selectedResource || detail.hcl === undefined) return
+    await mutate("save HCL", () => api.updateHcl(selectedResource, detail.hcl || ""))
   }
 
   async function createPlan() {
-    if (!selected) return
+    if (!selectedResource) return
     await mutate("create plan", async () => {
-      const plan = await api.createPlan(selected)
+      const plan = await api.createPlan(selectedResource)
       setDetail((prev) => ({ ...prev, plan }))
     })
   }
 
   async function applyPlan() {
-    if (!selected) return
+    if (!selectedResource) return
     await mutate("apply", async () => {
       const planID = detail.plan?.id || detail.plans?.[0]?.id
-      const run = await api.apply(selected, planID)
+      const run = await api.apply(selectedResource, planID)
       await waitRun(run.run_id)
     })
   }
 
   async function destroyTopology() {
-    if (!selected) return
+    if (!selectedResource) return
     await mutate("destroy", async () => {
-      const run = await api.destroy(selected)
+      const run = await api.destroy(selectedResource)
       await waitRun(run.run_id)
     })
   }
 
   async function deleteTopology() {
-    if (!selected) return
-    const name = selected
+    if (!selectedResource) return
+    const name = selectedResource
     await mutate("delete topology", async () => {
       await api.deleteTopology(name)
-      setSelected("")
+      navigate("/artifacts")
     })
   }
 
@@ -246,42 +230,17 @@ export default function App() {
     void overview.refresh()
     void refreshDetail()
   }
-
-  function selectArtifact(name: string) {
-    setDetail({})
-    setSelected(name)
-    setPage("artifacts")
-  }
-
-  function selectTopology(name: string) {
-    setDetail({})
-    setSelected(name)
-    setPage("topologies")
-  }
-
-  const pageTitle = {
-    dashboard: "Dashboard",
-    agents: "Agents",
-    artifacts: "Artifacts",
-    topologies: "Topologies",
-  }[page]
-
-  const pageDescription = {
-    dashboard: "A compact overview of API, agents, topologies, and runs.",
-    agents: "Registered executors connected to the control plane.",
-    artifacts: "Create HCL, plan changes, apply revisions, and inspect run history.",
-    topologies: "Currently deployed HCL topologies and their live resources.",
-  }[page]
+  const pageTitle = titleFromPath(location.pathname)
+  const pageDescription = descriptionFromPage(activePage)
 
   return (
     <SidebarProvider>
       <AppSidebar
-        activePage={page}
+        activePage={activePage}
         apiStatus={overview.data?.health.status || (overview.error ? "offline" : "checking")}
         agents={agents}
         runs={runs}
         topologies={topologies}
-        onPageChange={setPage}
       />
       <SidebarInset>
         <header className="sticky top-0 z-10 flex min-h-16 shrink-0 items-center gap-3 border-b bg-background/85 px-4 py-3 backdrop-blur lg:px-6">
@@ -308,7 +267,7 @@ export default function App() {
               >
                 {theme === "dark" ? <Sun /> : <Moon />}
               </Button>
-              {page === "artifacts" ? (
+              {activePage === "artifacts" ? (
                 <Dialog open={createOpen} onOpenChange={setCreateOpen}>
                   <DialogTrigger asChild>
                     <Button>
@@ -355,40 +314,55 @@ export default function App() {
             </div>
           ) : null}
 
-          {page === "dashboard" ? <DashboardPage topologies={topologies} deployedTopologies={deployedTopologies} agents={agents} runs={runs} apiStatus={overview.data?.health.status || (overview.error ? "offline" : "checking")} /> : null}
-          {page === "agents" ? <AgentsPage agents={agents} /> : null}
-          {page === "artifacts" ? (
-            <ArtifactsPage
-              selected={selected}
-              selectedTopology={selectedTopology}
-              selectedRuns={selectedRuns}
-              topologies={topologies}
-              detail={detail}
-              busy={busy}
-              onSelect={selectArtifact}
-              onCreatePlan={createPlan}
-              onApplyPlan={applyPlan}
-              onDestroy={destroyTopology}
-              onDelete={deleteTopology}
-              onSaveHcl={saveHcl}
-              onHclChange={(hcl) => setDetail((prev) => ({ ...prev, hcl }))}
-            />
-          ) : null}
-          {page === "topologies" ? (
-            <TopologiesPage
-              topologies={deployedTopologies}
-              selectedTopology={selectedTopology?.has_state ? selectedTopology : deployedTopologies[0]}
-              detail={detail}
-              onSelect={selectTopology}
-              onConsole={setConsoleNode}
-            />
-          ) : null}
+          <Routes>
+            <Route path="/" element={<DashboardPage topologies={topologies} deployedTopologies={deployedTopologies} agents={agents} runs={runs} apiStatus={overview.data?.health.status || (overview.error ? "offline" : "checking")} />} />
+            <Route path="/agents" element={<AgentsListPage agents={agents} />} />
+            <Route path="/agents/:agentId" element={<AgentDetailRoute agents={agents} runs={runs} />} />
+            <Route path="/artifacts" element={<ArtifactsListPage topologies={topologies} />} />
+            <Route path="/artifacts/:artifactId" element={<ArtifactDetailRoute topologies={topologies} runs={runs} detail={detail} busy={busy} onCreatePlan={createPlan} onApplyPlan={applyPlan} onDestroy={destroyTopology} onDelete={deleteTopology} onSaveHcl={saveHcl} onHclChange={(hcl) => setDetail((prev) => ({ ...prev, hcl }))} />} />
+            <Route path="/topologies" element={<TopologiesListPage topologies={deployedTopologies} />} />
+            <Route path="/topologies/:topologyId" element={<TopologyDetailRoute topologies={deployedTopologies} detail={detail} onConsole={setConsoleNode} />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </div>
       </SidebarInset>
 
-      <ConsoleDialog topology={selected} node={consoleNode} open={Boolean(consoleNode)} onOpenChange={(open) => !open && setConsoleNode(undefined)} />
+      <ConsoleDialog topology={selectedResource || ""} node={consoleNode} open={Boolean(consoleNode)} onOpenChange={(open) => !open && setConsoleNode(undefined)} />
     </SidebarProvider>
   )
+}
+
+function pageFromPath(pathname: string): AppPage {
+  if (pathname.startsWith("/agents")) return "agents"
+  if (pathname.startsWith("/artifacts")) return "artifacts"
+  if (pathname.startsWith("/topologies")) return "topologies"
+  return "dashboard"
+}
+
+function selectedResourceFromPath(pathname: string) {
+  const segments = pathname.split("/").filter(Boolean)
+  if ((segments[0] === "artifacts" || segments[0] === "topologies") && segments[1]) {
+    return decodeURIComponent(segments[1])
+  }
+  return ""
+}
+
+function titleFromPath(pathname: string) {
+  const segments = pathname.split("/").filter(Boolean)
+  if (segments.length >= 2) return `${segments[0]}/${decodeURIComponent(segments[1])}`
+  if (segments[0] === "agents") return "Agents"
+  if (segments[0] === "artifacts") return "Artifacts"
+  if (segments[0] === "topologies") return "Topologies"
+  return "Dashboard"
+}
+
+function descriptionFromPage(page: AppPage) {
+  return {
+    dashboard: "A compact overview of API, agents, topologies, and runs.",
+    agents: "Registered executors connected to the control plane.",
+    artifacts: "HCL configuration artifacts. Create, review, plan, and apply revisions.",
+    topologies: "Deployed topology environments and their live resources.",
+  }[page]
 }
 
 function DashboardPage({
@@ -435,7 +409,8 @@ function MetricCard({ title, value, description, icon: Icon }: { title: string; 
   )
 }
 
-function AgentsPage({ agents }: { agents: Agent[] }) {
+function AgentsListPage({ agents }: { agents: Agent[] }) {
+  const navigate = useNavigate()
   return (
     <EuiPanel title="Agents" description="Registered executors and their advertised capabilities.">
       <Table>
@@ -458,7 +433,18 @@ function AgentsPage({ agents }: { agents: Agent[] }) {
             </TableRow>
           ) : (
             agents.map((agent) => (
-              <TableRow key={agent.id}>
+              <TableRow
+                key={agent.id}
+                className="cursor-pointer"
+                tabIndex={0}
+                onClick={() => navigate(`/agents/${encodeURIComponent(agent.id)}`)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault()
+                    navigate(`/agents/${encodeURIComponent(agent.id)}`)
+                  }
+                }}
+              >
                 <TableCell>
                   <div className="font-medium">{agent.name || agent.id}</div>
                   <div className="font-mono text-xs text-muted-foreground">{agent.id}</div>
@@ -482,15 +468,49 @@ function AgentsPage({ agents }: { agents: Agent[] }) {
   )
 }
 
-function ArtifactTable({
-  topologies,
-  selected,
-  onSelect,
-}: {
-  topologies: Topology[]
-  selected: string
-  onSelect: (name: string) => void
-}) {
+function AgentDetailRoute({ agents, runs }: { agents: Agent[]; runs: Run[] }) {
+  const { agentId = "" } = useParams()
+  const agent = agents.find((item) => item.id === agentId)
+  const agentRuns = runs.filter((run) => run.agent_id === agentId).slice(0, 12)
+
+  if (!agent) {
+    return <ResourceNotFound backTo="/agents" title="Agent not found" />
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <DetailHeader backTo="/agents" eyebrow="agents" title={agent.name || agent.id} description={agent.id} />
+      <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle>Agent state</CardTitle>
+            <CardDescription>Identity, protocol, and current availability.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 text-sm">
+            <KeyValue label="Status" value={<StatusBadge status={agent.disabled ? "disabled" : agent.quarantined ? "quarantined" : agent.status} />} />
+            <KeyValue label="Mode" value={agent.labels?.execution === "in-process" ? "local API" : agent.labels?.mode || "agent"} />
+            <KeyValue label="Protocol" value={agent.protocol || "unknown"} />
+            <KeyValue label="Version" value={agent.version || "unknown"} />
+            <KeyValue label="Last heartbeat" value={agent.last_heartbeat || "never"} />
+          </CardContent>
+        </Card>
+        <div className="flex flex-col gap-4">
+          <EuiPanel title="Capabilities" description="Substrates and operations advertised by this agent.">
+            <div className="flex flex-wrap gap-2 p-4">
+              {(agent.capabilities || []).length === 0 ? <EmptyLine text="No capabilities" /> : agent.capabilities?.map((capability) => <Badge key={capability} variant="secondary">{capability}</Badge>)}
+            </div>
+          </EuiPanel>
+          <EuiPanel title="Recent runs" description="Runs assigned to this agent.">
+            <RunsTable runs={agentRuns} />
+          </EuiPanel>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ArtifactsListPage({ topologies }: { topologies: Topology[] }) {
+  const navigate = useNavigate()
   return (
     <EuiPanel title="HCL artifacts" description={`${topologies.length} saved configuration units`}>
       <Table>
@@ -516,15 +536,15 @@ function ArtifactTable({
             topologies.map((topology) => (
               <TableRow
                 key={topology.name}
-                className={`cursor-pointer ${selected === topology.name ? "bg-muted/70" : ""}`}
+                className="cursor-pointer"
                 tabIndex={0}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault()
-                    onSelect(topology.name)
+                    navigate(`/artifacts/${encodeURIComponent(topology.name)}`)
                   }
                 }}
-                onClick={() => onSelect(topology.name)}
+                onClick={() => navigate(`/artifacts/${encodeURIComponent(topology.name)}`)}
               >
                 <TableCell className="font-medium">{topology.name}</TableCell>
                 <TableCell>
@@ -540,7 +560,7 @@ function ArtifactTable({
                     size="sm"
                     onClick={(event) => {
                       event.stopPropagation()
-                      onSelect(topology.name)
+                      navigate(`/artifacts/${encodeURIComponent(topology.name)}`)
                     }}
                   >
                     <MousePointer2 data-icon="inline-start" />
@@ -556,14 +576,11 @@ function ArtifactTable({
   )
 }
 
-function ArtifactsPage({
-  selected,
-  selectedTopology,
-  selectedRuns,
+function ArtifactDetailRoute({
   topologies,
+  runs,
   detail,
   busy,
-  onSelect,
   onCreatePlan,
   onApplyPlan,
   onDestroy,
@@ -571,13 +588,10 @@ function ArtifactsPage({
   onSaveHcl,
   onHclChange,
 }: {
-  selected: string
-  selectedTopology?: Topology
-  selectedRuns: Run[]
   topologies: Topology[]
+  runs: Run[]
   detail: Detail
   busy: string
-  onSelect: (name: string) => void
   onCreatePlan: () => void
   onApplyPlan: () => void
   onDestroy: () => void
@@ -585,12 +599,20 @@ function ArtifactsPage({
   onSaveHcl: () => void
   onHclChange: (hcl: string) => void
 }) {
+  const { artifactId = "" } = useParams()
+  const artifactName = decodeURIComponent(artifactId)
+  const artifact = topologies.find((topology) => topology.name === artifactName)
+  const artifactRuns = runs.filter((run) => run.topology === artifactName || run.workspace === artifactName).slice(0, 8)
+
+  if (!artifact) {
+    return <ResourceNotFound backTo="/artifacts" title="Artifact not found" />
+  }
+
   return (
     <div className="flex flex-col gap-4">
-      <ArtifactTable topologies={topologies} selected={selected} onSelect={onSelect} />
+      <DetailHeader backTo="/artifacts" eyebrow="artifacts" title={artifact.name} description="HCL configuration artifact" />
       <section className="min-w-0">
-        {selectedTopology ? (
-          <EuiPanel title={selectedTopology.name} description={`${selectedTopology.backend || "local"} · serial ${selectedTopology.serial || 0}`}>
+          <EuiPanel title={artifact.name} description={`${artifact.backend || "local"} · serial ${artifact.serial || 0}`}>
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -606,7 +628,7 @@ function ArtifactsPage({
                     <Play data-icon="inline-start" />
                     Apply
                   </Button>
-                  <Button variant="outline" onClick={onDestroy} disabled={busy !== "" || !selectedTopology.has_state}>
+                  <Button variant="outline" onClick={onDestroy} disabled={busy !== "" || !artifact.has_state}>
                     Destroy
                   </Button>
                   <Button variant="destructive" size="icon" onClick={onDelete} disabled={busy !== ""} aria-label="Delete">
@@ -640,30 +662,22 @@ function ArtifactsPage({
                 </TabsContent>
 
                 <TabsContent value="runs">
-                  <RunsTable runs={selectedRuns} />
+                  <RunsTable runs={artifactRuns} />
                 </TabsContent>
               </Tabs>
             </CardContent>
           </EuiPanel>
-        ) : null}
       </section>
     </div>
   )
 }
 
-function TopologiesPage({
+function TopologiesListPage({
   topologies,
-  selectedTopology,
-  detail,
-  onSelect,
-  onConsole,
 }: {
   topologies: Topology[]
-  selectedTopology?: Topology
-  detail: Detail
-  onSelect: (name: string) => void
-  onConsole: (node: string) => void
 }) {
+  const navigate = useNavigate()
   return (
     <div className="flex flex-col gap-4">
       <EuiPanel title="Online topologies" description={`${topologies.length} deployed HCL artifacts`}>
@@ -689,15 +703,15 @@ function TopologiesPage({
             topologies.map((topology) => (
               <TableRow
                 key={topology.name}
-                className={`cursor-pointer ${selectedTopology?.name === topology.name ? "bg-muted/70" : ""}`}
+                className="cursor-pointer"
                 tabIndex={0}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault()
-                    onSelect(topology.name)
+                    navigate(`/topologies/${encodeURIComponent(topology.name)}`)
                   }
                 }}
-                onClick={() => onSelect(topology.name)}
+                onClick={() => navigate(`/topologies/${encodeURIComponent(topology.name)}`)}
               >
                 <TableCell className="font-medium">{topology.name}</TableCell>
                 <TableCell>
@@ -712,7 +726,7 @@ function TopologiesPage({
                     size="sm"
                     onClick={(event) => {
                       event.stopPropagation()
-                      onSelect(topology.name)
+                      navigate(`/topologies/${encodeURIComponent(topology.name)}`)
                     }}
                   >
                     <MousePointer2 data-icon="inline-start" />
@@ -725,20 +739,31 @@ function TopologiesPage({
           </TableBody>
         </Table>
       </EuiPanel>
+    </div>
+  )
+}
 
-      <section className="min-w-0">
-        {selectedTopology ? (
-          <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
-            <TopologyGraph nodes={detail.graph?.nodes || []} edges={detail.graph?.edges || []} />
-            <div className="flex flex-col gap-4">
-              <SummaryCard title="Health" value={detail.health?.status || "unknown"} icon={CheckCircle2} />
-              <OutputsCard outputs={detail.outputs || {}} />
-              <NodesCard topology={selectedTopology.name} nodes={detail.nodes || []} onConsole={onConsole} />
-              <ResourcesTable resources={detail.resources || []} />
-            </div>
-          </div>
-        ) : null}
-      </section>
+function TopologyDetailRoute({ topologies, detail, onConsole }: { topologies: Topology[]; detail: Detail; onConsole: (node: string) => void }) {
+  const { topologyId = "" } = useParams()
+  const topologyName = decodeURIComponent(topologyId)
+  const topology = topologies.find((item) => item.name === topologyName)
+
+  if (!topology) {
+    return <ResourceNotFound backTo="/topologies" title="Topology not found" />
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <DetailHeader backTo="/topologies" eyebrow="topologies" title={topology.name} description="Deployed topology environment" />
+      <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
+        <TopologyGraph nodes={detail.graph?.nodes || []} edges={detail.graph?.edges || []} />
+        <div className="flex flex-col gap-4">
+          <SummaryCard title="Health" value={detail.health?.status || "unknown"} icon={CheckCircle2} />
+          <OutputsCard outputs={detail.outputs || {}} />
+          <NodesCard topology={topology.name} nodes={detail.nodes || []} onConsole={onConsole} />
+          <ResourcesTable resources={detail.resources || []} />
+        </div>
+      </div>
     </div>
   )
 }
@@ -761,6 +786,41 @@ function EuiPanel({ title, description, children }: { title: string; description
       </CardHeader>
       <CardContent className="p-0">{children}</CardContent>
     </Card>
+  )
+}
+
+function DetailHeader({ backTo, eyebrow, title, description }: { backTo: string; eyebrow: string; title: string; description: string }) {
+  const navigate = useNavigate()
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div className="sysbox-eyebrow">{eyebrow}</div>
+        <h2 className="mt-1 text-lg font-semibold tracking-normal">{title}</h2>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+      <Button variant="outline" onClick={() => navigate(backTo)}>
+        <ArrowLeft data-icon="inline-start" />
+        Back
+      </Button>
+    </div>
+  )
+}
+
+function ResourceNotFound({ backTo, title }: { backTo: string; title: string }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <DetailHeader backTo={backTo} eyebrow="not found" title={title} description="The requested resource was not returned by the API." />
+      <EmptyLine text={title} />
+    </div>
+  )
+}
+
+function KeyValue({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+      <span className="text-xs uppercase tracking-[0.12em] text-muted-foreground">{label}</span>
+      <span className="min-w-0 truncate text-right">{value}</span>
+    </div>
   )
 }
 

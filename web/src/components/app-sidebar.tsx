@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useNavigate } from "react-router-dom"
 import {
   Activity,
   Boxes,
@@ -32,7 +33,6 @@ type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
   agents: Agent[]
   runs: Run[]
   topologies: Topology[]
-  onPageChange: (page: AppPage) => void
 }
 
 const primaryNav = [
@@ -42,7 +42,8 @@ const primaryNav = [
   { page: "topologies", title: "Topologies", icon: Database, badge: "topologies" },
 ] satisfies Array<{ page: AppPage; title: string; icon: typeof LayoutDashboard; badge?: "agents" | "runs" | "topologies" }>
 
-export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, onPageChange, ...props }: AppSidebarProps) {
+export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, ...props }: AppSidebarProps) {
+  const navigate = useNavigate()
   const activeRuns = runs.filter((run) => run.status === "queued" || run.status === "assigned" || run.status === "running").length
   const onlineAgents = agents.filter((agent) => agent.status === "online" && !agent.disabled && !agent.quarantined).length
   const deployedTopologies = topologies.filter((topology) => topology.has_state).length
@@ -81,7 +82,7 @@ export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, on
                 const value = badgeValue(item.badge)
                 return (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton tooltip={item.title} isActive={activePage === item.page} onClick={() => onPageChange(item.page)}>
+                    <SidebarMenuButton tooltip={item.title} isActive={activePage === item.page} onClick={() => navigate(item.page === "dashboard" ? "/" : `/${item.page}`)}>
                       <item.icon />
                       <span>{item.title}</span>
                     </SidebarMenuButton>
