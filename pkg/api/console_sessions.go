@@ -24,6 +24,7 @@ type consoleSessionState struct {
 	browser chan *wsPeer
 	agent   chan *wsPeer
 	cancel  chan struct{}
+	done    chan struct{}
 }
 
 type wsPeer struct {
@@ -158,6 +159,7 @@ func newConsoleSessionState(sess controlplane.ConsoleSession, req controlplane.C
 		browser: make(chan *wsPeer, 1),
 		agent:   make(chan *wsPeer, 1),
 		cancel:  make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 }
 

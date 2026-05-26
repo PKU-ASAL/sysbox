@@ -190,6 +190,7 @@ func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side 
 		})
 		select {
 		case st.agent <- peer:
+			<-st.done
 		default:
 			_ = conn.Close(websocket.StatusPolicyViolation, "agent already attached")
 		}
@@ -205,9 +206,11 @@ func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side 
 		return
 	}
 	go s.relayConsoleWhenReady(id, st)
+	<-st.done
 }
 
 func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
+	defer closeConsoleSessionDone(st)
 	var browser, agent *wsPeer
 	timer := time.NewTimer(30 * time.Second)
 	defer timer.Stop()
@@ -257,6 +260,14 @@ func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
 		}
 		sess.EndedAt = time.Now().UTC()
 	})
+}
+
+func closeConsoleSessionDone(st *consoleSessionState) {
+	select {
+	case <-st.done:
+	default:
+		close(st.done)
+	}
 }
 
 func consoleAuditEvent(sess controlplane.ConsoleSession, action, message string) controlplane.Event {

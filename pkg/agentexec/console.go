@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -76,24 +77,69 @@ func relayConsole(ctx context.Context, cs substrate.ConsoleSession, ws *websocke
 		<-ctx.Done()
 		_ = cs.Close()
 	}()
-	done := make(chan error, 3)
+	outputDone := make(chan error, 2)
+	outputs := 0
 	if out := cs.Stdout(); out != nil {
-		go copyConsoleOutput(ctx, ws, "stdout", out, done)
+		outputs++
+		go copyConsoleOutput(ctx, ws, "stdout", out, outputDone)
 	}
 	if errOut := cs.Stderr(); errOut != nil {
-		go copyConsoleOutput(ctx, ws, "stderr", errOut, done)
+		outputs++
+		go copyConsoleOutput(ctx, ws, "stderr", errOut, outputDone)
 	}
-	go copyConsoleInput(ctx, ws, cs, done)
+	inputDone := make(chan error, 1)
+	go copyConsoleInput(ctx, ws, cs, inputDone)
+	type waitResult struct {
+		code int
+		err  error
+	}
+	waitDone := make(chan waitResult, 1)
 	go func() {
 		code, err := cs.Wait()
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		_ = writeConsoleFrame(ctx, ws, consoleFrame{Type: "exit", Code: code})
-		done <- err
+		waitDone <- waitResult{code: code, err: err}
 	}()
-	err := <-done
-	return err
+	for {
+		select {
+		case err := <-inputDone:
+			return err
+		case err := <-outputDone:
+			outputs--
+			if err != nil {
+				return err
+			}
+		case res := <-waitDone:
+			if err := drainConsoleOutput(ctx, outputDone, outputs); err != nil {
+				return err
+			}
+			_ = writeConsoleFrame(ctx, ws, consoleFrame{Type: "exit", Code: res.code})
+			return res.err
+		}
+	}
+}
+
+func drainConsoleOutput(ctx context.Context, outputDone <-chan error, outputs int) error {
+	if outputs <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for outputs > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-outputDone:
+			outputs--
+			if err != nil {
+				return err
+			}
+		case <-timer.C:
+			return nil
+		}
+	}
+	return nil
 }
 
 func runConsoleFallback(ctx context.Context, conn substrate.Connection, req substrate.ConsoleRequest, ws *websocket.Conn) error {

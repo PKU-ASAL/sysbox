@@ -192,6 +192,14 @@ if command -v docker >/dev/null 2>&1; then
 	docker ps --filter "name=sysbox-${node_name}" --format '{{.Names}}' | grep -qx "sysbox-${node_name}" || fail "container sysbox-${node_name} not found"
 fi
 
+log "executing command in node ${node_name} through agent console"
+session_payload="$(jq -n '{cmd:["/bin/sh","-c","printf sysbox-console-ok"], tty:false, timeout_seconds:90, requested_by:"e2e", roles:["admin"]}')"
+session="$(api_post "/v1/topologies/${topology}/nodes/${node_name}/sessions" "$session_payload" 202)"
+session_id="$(printf '%s' "$session" | jq -r '.id')"
+console_out="$(go run ./tests/e2e/console_client.go -api "$API_URL" -token "$TOKEN" -session "$session_id" -expect "sysbox-console-ok" -timeout 90s)"
+printf '%s' "$console_out" | grep -q "sysbox-console-ok" || fail "unexpected console output: ${console_out}"
+api_get "/v1/sessions/${session_id}" | jq -e '.status == "closed" or .status == "running"' >/dev/null
+
 log "destroying topology ${topology}"
 destroy_run="$(api_post "/v1/topologies/${topology}/destroy" "" 202)"
 destroy_run_id="$(printf '%s' "$destroy_run" | jq -r '.run_id')"
