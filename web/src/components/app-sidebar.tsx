@@ -3,7 +3,6 @@ import {
   Activity,
   Boxes,
   Database,
-  CloudCog,
   DatabaseZap,
   LayoutDashboard,
   Package,
@@ -43,11 +42,6 @@ const primaryNav = [
   { page: "artifacts", title: "Artifacts", icon: Package, badge: "runs" },
   { page: "topologies", title: "Topologies", icon: Database, badge: "topologies" },
 ] satisfies Array<{ page: AppPage; title: string; icon: typeof LayoutDashboard; badge?: "agents" | "runs" | "topologies" }>
-
-const pageHints = [
-  { title: "HCL", description: "Create, plan, and apply" },
-  { title: "Runs", description: "Task history and status" },
-]
 
 export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, onPageChange, ...props }: AppSidebarProps) {
   const activeRuns = runs.filter((run) => run.status === "queued" || run.status === "assigned" || run.status === "running").length
@@ -100,47 +94,6 @@ export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, on
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup>
-          <SidebarGroupLabel>Artifacts</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {pageHints.map((item) => (
-                <SidebarMenuItem>
-                  <SidebarMenuButton tooltip={item.description} onClick={() => onPageChange("artifacts")}>
-                    <Package />
-                    <span>{item.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Agents</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {agents.length === 0 ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton tooltip="No agents" disabled>
-                    <CloudCog />
-                    <span>No agents</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ) : (
-                agents.slice(0, 5).map((agent) => (
-                  <SidebarMenuItem key={agent.id}>
-                    <SidebarMenuButton tooltip={agent.name || agent.id}>
-                      <CloudCog />
-                      <span>{agent.name || agent.id}</span>
-                    </SidebarMenuButton>
-                    <SidebarMenuBadge>{agent.status}</SidebarMenuBadge>
-                  </SidebarMenuItem>
-                ))
-              )}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter>

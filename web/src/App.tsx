@@ -4,6 +4,7 @@ import {
   Cloud,
   Database,
   FileCode2,
+  Filter,
   GitBranch,
   Loader2,
   Play,
@@ -360,16 +361,6 @@ export default function App() {
   )
 }
 
-function MetricGrid({ topologies, agents, runs }: { topologies: Topology[]; agents: Agent[]; runs: Run[] }) {
-  return (
-    <div className="grid grid-cols-3 gap-2">
-      <MiniMetric label="Workspaces" value={topologies.length} />
-      <MiniMetric label="Agents" value={agents.filter((agent) => agent.status === "online").length} />
-      <MiniMetric label="Runs" value={runs.filter((run) => run.status === "running" || run.status === "queued" || run.status === "assigned").length} />
-    </div>
-  )
-}
-
 function DashboardPage({
   topologies,
   deployedTopologies,
@@ -415,10 +406,53 @@ function MetricCard({ title, value, description, icon: Icon }: { title: string; 
 }
 
 function AgentsPage({ agents }: { agents: Agent[] }) {
-  return <AgentsCard agents={agents} />
+  return (
+    <EuiPanel title="Agents" description="Registered executors and their advertised capabilities.">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Agent</TableHead>
+            <TableHead>Mode</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Capabilities</TableHead>
+            <TableHead>Protocol</TableHead>
+            <TableHead>Last heartbeat</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {agents.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={6}>
+                <EmptyLine text="No agents registered" />
+              </TableCell>
+            </TableRow>
+          ) : (
+            agents.map((agent) => (
+              <TableRow key={agent.id}>
+                <TableCell>
+                  <div className="font-medium">{agent.name || agent.id}</div>
+                  <div className="font-mono text-xs text-muted-foreground">{agent.id}</div>
+                </TableCell>
+                <TableCell>{agent.labels?.execution === "in-process" ? "local API" : agent.labels?.mode || "agent"}</TableCell>
+                <TableCell>
+                  <StatusBadge status={agent.disabled ? "disabled" : agent.quarantined ? "quarantined" : agent.status} />
+                </TableCell>
+                <TableCell className="max-w-72 truncate">{agent.capabilities?.join(", ") || "none"}</TableCell>
+                <TableCell>{agent.protocol || "unknown"}</TableCell>
+                <TableCell className="text-muted-foreground">{agent.last_heartbeat || ""}</TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+      <p className="mt-3 text-xs text-muted-foreground">
+        local API is the in-process fallback executor; local-docker is the Docker compose agent registered through the agent protocol.
+      </p>
+    </EuiPanel>
+  )
 }
 
-function WorkspaceList({
+function ArtifactTable({
   topologies,
   selected,
   onSelect,
@@ -428,35 +462,46 @@ function WorkspaceList({
   onSelect: (name: string) => void
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>HCL Artifacts</CardTitle>
-        <CardDescription>{topologies.length} saved configuration units</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {topologies.length === 0 ? (
-          <EmptyLine text="No HCL artifacts yet" />
-        ) : (
-          topologies.map((topology) => (
-            <button
-              key={topology.name}
-              className={`rounded-md border p-3 text-left transition-colors hover:bg-muted/60 ${selected === topology.name ? "border-primary bg-muted" : "bg-background"}`}
-              onClick={() => onSelect(topology.name)}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{topology.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    serial {topology.serial || 0} · {topology.resource_count || 0} resources
-                  </div>
-                </div>
-                <StatusBadge status={topology.has_state ? "applied" : "draft"} />
-              </div>
-            </button>
-          ))
-        )}
-      </CardContent>
-    </Card>
+    <EuiPanel title="HCL artifacts" description={`${topologies.length} saved configuration units`}>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Resources</TableHead>
+            <TableHead>Serial</TableHead>
+            <TableHead>Backend</TableHead>
+            <TableHead>Revision</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {topologies.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={6}>
+                <EmptyLine text="No HCL artifacts yet" />
+              </TableCell>
+            </TableRow>
+          ) : (
+            topologies.map((topology) => (
+              <TableRow
+                key={topology.name}
+                className={`cursor-pointer ${selected === topology.name ? "bg-muted/70" : ""}`}
+                onClick={() => onSelect(topology.name)}
+              >
+                <TableCell className="font-medium">{topology.name}</TableCell>
+                <TableCell>
+                  <StatusBadge status={topology.has_state ? "applied" : "draft"} />
+                </TableCell>
+                <TableCell>{topology.resource_count || 0}</TableCell>
+                <TableCell>{topology.serial || 0}</TableCell>
+                <TableCell>{topology.backend || "local"}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">{topology.latest_revision || ""}</TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </EuiPanel>
   )
 }
 
@@ -490,25 +535,16 @@ function ArtifactsPage({
   onHclChange: (hcl: string) => void
 }) {
   return (
-    <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-      <WorkspaceList topologies={topologies} selected={selected} onSelect={onSelect} />
+    <div className="flex flex-col gap-4">
+      <ArtifactTable topologies={topologies} selected={selected} onSelect={onSelect} />
       <section className="min-w-0">
-        {!selectedTopology ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>No HCL selected</CardTitle>
-              <CardDescription>Create or select an HCL artifact to plan and apply.</CardDescription>
-            </CardHeader>
-          </Card>
-        ) : (
-          <Card>
+        {selectedTopology ? (
+          <EuiPanel title={selectedTopology.name} description={`${selectedTopology.backend || "local"} · serial ${selectedTopology.serial || 0}`}>
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <CardTitle>{selectedTopology.name}</CardTitle>
-                  <CardDescription>
-                    {selectedTopology.backend || "local"} · serial {selectedTopology.serial || 0}
-                  </CardDescription>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <FileCode2 />
+                  HCL artifact detail
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="outline" onClick={onCreatePlan} disabled={busy !== ""}>
@@ -557,8 +593,8 @@ function ArtifactsPage({
                 </TabsContent>
               </Tabs>
             </CardContent>
-          </Card>
-        )}
+          </EuiPanel>
+        ) : null}
       </section>
     </div>
   )
@@ -578,44 +614,48 @@ function TopologiesPage({
   onConsole: (node: string) => void
 }) {
   return (
-    <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-      <Card>
-        <CardHeader>
-          <CardTitle>Online Topologies</CardTitle>
-          <CardDescription>{topologies.length} deployed HCL artifacts</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
+    <div className="flex flex-col gap-4">
+      <EuiPanel title="Online topologies" description={`${topologies.length} deployed HCL artifacts`}>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Resources</TableHead>
+              <TableHead>Serial</TableHead>
+              <TableHead>Backend</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
           {topologies.length === 0 ? (
-            <EmptyLine text="No deployed topologies" />
+            <TableRow>
+              <TableCell colSpan={5}>
+                <EmptyLine text="No deployed topologies" />
+              </TableCell>
+            </TableRow>
           ) : (
             topologies.map((topology) => (
-              <button
+              <TableRow
                 key={topology.name}
-                className={`rounded-md border p-3 text-left transition-colors hover:bg-muted/60 ${selectedTopology?.name === topology.name ? "border-primary bg-muted" : "bg-background"}`}
+                className={`cursor-pointer ${selectedTopology?.name === topology.name ? "bg-muted/70" : ""}`}
                 onClick={() => onSelect(topology.name)}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{topology.name}</div>
-                    <div className="truncate text-xs text-muted-foreground">{topology.resource_count || 0} resources</div>
-                  </div>
+                <TableCell className="font-medium">{topology.name}</TableCell>
+                <TableCell>
                   <StatusBadge status="online" />
-                </div>
-              </button>
+                </TableCell>
+                <TableCell>{topology.resource_count || 0}</TableCell>
+                <TableCell>{topology.serial || 0}</TableCell>
+                <TableCell>{topology.backend || "local"}</TableCell>
+              </TableRow>
             ))
           )}
-        </CardContent>
-      </Card>
+          </TableBody>
+        </Table>
+      </EuiPanel>
 
       <section className="min-w-0">
-        {!selectedTopology ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>No deployed topology</CardTitle>
-              <CardDescription>Apply an HCL artifact to see it here.</CardDescription>
-            </CardHeader>
-          </Card>
-        ) : (
+        {selectedTopology ? (
           <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
             <TopologyGraph nodes={detail.graph?.nodes || []} edges={detail.graph?.edges || []} />
             <div className="flex flex-col gap-4">
@@ -625,45 +665,28 @@ function TopologiesPage({
               <ResourcesTable resources={detail.resources || []} />
             </div>
           </div>
-        )}
+        ) : null}
       </section>
     </div>
   )
 }
 
-function MiniMetric({ label, value }: { label: string; value: number }) {
+function EuiPanel({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg border bg-card p-3">
-      <div className="text-lg font-semibold">{value}</div>
-      <div className="truncate text-xs text-muted-foreground">{label}</div>
-    </div>
-  )
-}
-
-function AgentsCard({ agents }: { agents: Agent[] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Agents</CardTitle>
-        <CardDescription>Host executors connected to the control plane</CardDescription>
+    <Card className="rounded-md">
+      <CardHeader className="border-b bg-muted/30 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">{title}</CardTitle>
+            {description ? <CardDescription>{description}</CardDescription> : null}
+          </div>
+          <div className="flex items-center gap-2 rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground">
+            <Filter />
+            EUI table
+          </div>
+        </div>
       </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {agents.length === 0 ? (
-          <EmptyLine text="No agents registered" />
-        ) : (
-          agents.map((agent) => (
-            <div key={agent.id} className="rounded-md border p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{agent.name || agent.id}</div>
-                  <div className="truncate text-xs text-muted-foreground">{agent.capabilities?.join(", ") || "no capabilities"}</div>
-                </div>
-                <StatusBadge status={agent.disabled ? "disabled" : agent.quarantined ? "quarantined" : agent.status} />
-              </div>
-            </div>
-          ))
-        )}
-      </CardContent>
+      <CardContent className="p-0">{children}</CardContent>
     </Card>
   )
 }
