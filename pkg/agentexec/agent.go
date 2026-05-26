@@ -75,12 +75,10 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	}
 
 	executor := NewExecutorWithBridge(remoteBridge{Bridge: bridge, reporter: opts})
+	go heartbeatLoop(ctx, opts)
 	go observeLoop(ctx, opts, bridge)
 	runner := newCommandRunner(executor, opts)
 	for {
-		if err := heartbeat(ctx, opts); err != nil {
-			fmt.Printf("[agent] heartbeat failed: %v\n", err)
-		}
 		if err := commandWebSocketAndExecute(ctx, runner, opts); err != nil && ctx.Err() == nil {
 			fmt.Printf("[agent] command websocket disconnected: %v\n", err)
 		}
@@ -88,6 +86,28 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(opts.PollInterval):
+		}
+	}
+}
+
+func heartbeatLoop(ctx context.Context, opts Options) {
+	interval := opts.PollInterval
+	if interval < 10*time.Second {
+		interval = 10 * time.Second
+	}
+	if err := heartbeat(ctx, opts); err != nil && ctx.Err() == nil {
+		fmt.Printf("[agent] heartbeat failed: %v\n", err)
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := heartbeat(ctx, opts); err != nil && ctx.Err() == nil {
+				fmt.Printf("[agent] heartbeat failed: %v\n", err)
+			}
 		}
 	}
 }

@@ -76,6 +76,7 @@ make deploy-full
 curl http://127.0.0.1:9876/v1/agents
 curl -X POST http://127.0.0.1:9876/v1/topologies/docker-service/apply
 curl http://127.0.0.1:9876/v1/runs
+make test-e2e
 ```
 
 `examples/docker-service` is intentionally Docker-only so it can run through the

@@ -57,7 +57,7 @@ The Makefile is intentionally small. Main targets:
 ```bash
 make build                         # build bin/sysbox
 make test                          # unit tests
-sudo -E make test-e2e              # integration tests using Docker/netns paths
+make test-e2e                      # black-box API smoke test; requires make deploy-full
 make lint                          # go vet
 
 make plan TOPO=two-networks        # plan an example
@@ -315,6 +315,6 @@ pkg/agent/                  Agent identity and registration
 pkg/agentexec/              Agent loop, local bridge, and apply/destroy execution
 runner/                     Optional Python episode runner for agent examples
 scripts/                    Artifact preparation and verification helpers
-tests/e2e/                  Integration tests with build tag e2e
+tests/e2e/                  Black-box API e2e scripts using curl
 .sysbox/                    Ignored local runtime data
 ```

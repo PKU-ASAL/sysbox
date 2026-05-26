@@ -484,12 +484,22 @@ func (b *PostgresBackend) Delete(ctx context.Context) error {
 		return err
 	}
 	defer conn.Close(ctx)
-	_, err = conn.Exec(ctx, `
-DELETE FROM sysbox_state_locks WHERE topology=$1;
-DELETE FROM sysbox_state_snapshots WHERE topology=$1;
-DELETE FROM sysbox_state WHERE topology=$1;`, b.topology())
+	tx, err := conn.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("postgres delete state: %w", err)
+		return fmt.Errorf("postgres delete state begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	for _, stmt := range []string{
+		`DELETE FROM sysbox_state_locks WHERE topology=$1`,
+		`DELETE FROM sysbox_state_snapshots WHERE topology=$1`,
+		`DELETE FROM sysbox_state WHERE topology=$1`,
+	} {
+		if _, err := tx.Exec(ctx, stmt, b.topology()); err != nil {
+			return fmt.Errorf("postgres delete state: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("postgres delete state commit: %w", err)
 	}
 	return nil
 }

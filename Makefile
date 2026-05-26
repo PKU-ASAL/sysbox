@@ -49,8 +49,8 @@ $(INITDIR)/sysbox-init.linux-%.bin: cmd/sysbox-init/main.go cmd/sysbox-init/netw
 test: ## Run unit tests
 	$(GOENV) $(GO) test ./...
 
-test-e2e: ## Run integration tests; root/CAP_NET_ADMIN required for real netns paths
-	$(GOENV) $(GO) test -tags e2e ./pkg/api ./tests/e2e/...
+test-e2e: ## Run black-box API e2e tests against make deploy-full
+	bash tests/e2e/api_smoke.sh
 
 lint: ## Run go vet
 	$(GOENV) $(GO) vet ./...
