@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -42,9 +42,9 @@ func TestGetTopologyHealth(t *testing.T) {
 	s.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body runtime.TopologyHealth
+	var body controlplane.TopologyHealth
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Equal(t, runtime.ResourceHealthHealthy, body.Status)
+	require.Equal(t, controlplane.ResourceHealthHealthy, body.Status)
 	require.Equal(t, 1, body.Healthy)
 	require.Len(t, body.Resources, 1)
 	require.Equal(t, "sysbox_kernel.linux", body.Resources[0].Resource)

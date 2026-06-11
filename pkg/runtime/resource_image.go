@@ -8,6 +8,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -31,7 +32,7 @@ func (ImageResourceProvider) Read(_ context.Context, current state.Resource) (Re
 	return result, nil
 }
 
-func (ImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func (ImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 

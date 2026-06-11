@@ -179,6 +179,10 @@ func newAPIStore(runsDir, backendURL string) apiStore {
 	if strings.HasPrefix(backendURL, "postgres://") || strings.HasPrefix(backendURL, "postgresql://") {
 		return &postgresAPIStore{dsn: backendURL}
 	}
+	if strings.HasPrefix(backendURL, "sqlite://") {
+		path := strings.TrimPrefix(backendURL, "sqlite://")
+		return &sqliteAPIStore{dbPath: path, runsDir: runsDir}
+	}
 	return &localAPIStore{runsDir: runsDir}
 }
 

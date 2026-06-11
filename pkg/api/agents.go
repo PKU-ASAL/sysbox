@@ -25,10 +25,6 @@ func (s *Server) saveAgent(ctx context.Context, agent controlplane.Agent) error 
 }
 
 func (s *Server) getAgent(ctx context.Context, id string) (*controlplane.Agent, error) {
-	if id == DefaultAgentID {
-		agent := localAgent()
-		return &agent, nil
-	}
 	if s.apiStore != nil {
 		if agent, err := s.apiStore.GetAgent(ctx, id); err == nil {
 			if s.agents != nil {
@@ -44,7 +40,7 @@ func (s *Server) getAgent(ctx context.Context, id string) (*controlplane.Agent, 
 }
 
 func (s *Server) listAgents(ctx context.Context) []controlplane.Agent {
-	var agents []controlplane.Agent
+	agents := []controlplane.Agent{}
 	if s.apiStore != nil {
 		if stored, err := s.apiStore.ListAgents(ctx); err == nil {
 			agents = append(agents, stored...)
@@ -53,7 +49,6 @@ func (s *Server) listAgents(ctx context.Context) []controlplane.Agent {
 	if len(agents) == 0 && s.agents != nil {
 		agents = append(agents, s.agents.List()...)
 	}
-	agents = ensureLocalAgent(agents)
 	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
 	return agents
 }
@@ -64,7 +59,7 @@ func (s *Server) markStaleAgentsOffline(ctx context.Context, now time.Time) {
 	}
 	offlineAfter := s.cfg.AgentOfflineAfter()
 	for _, agent := range s.listAgents(ctx) {
-		if agent.ID == DefaultAgentID || agent.Disabled || agent.Quarantined || agent.LastHeartbeat.IsZero() {
+		if agent.Disabled || agent.Quarantined || agent.LastHeartbeat.IsZero() {
 			continue
 		}
 		if agent.Status == "offline" || !agent.LastHeartbeat.Before(now.Add(-offlineAfter)) {

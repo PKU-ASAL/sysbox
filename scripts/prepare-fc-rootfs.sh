@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Build a firecracker-ready ext4 rootfs from the firecracker-team-maintained
-# ubuntu-24.04 squashfs image. Mirrors the procedure documented in
-# docs/firecracker-vmbox.md.
+# ubuntu-24.04 squashfs image. See docs/firecracker-artifacts.md.
 #
 # Idempotent: cached output is reused; pass --force to rebuild.
 #
@@ -43,7 +42,7 @@ Environment:
                      (default: $OUT)
   SYSBOX_ROOTFS_CACHE  override cache dir (default \$XDG_CACHE_HOME/sysbox/rootfs)
 
-Reference: docs/firecracker-vmbox.md
+Reference: docs/firecracker-artifacts.md
 EOF
   exit "$rc"
 }

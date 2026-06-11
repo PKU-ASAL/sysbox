@@ -20,6 +20,15 @@ type RequestOptions = {
   responseType?: "json" | "text"
 }
 
+export type ConsoleSessionRequest = {
+  cmd?: string[]
+  shell?: string
+  tty?: boolean
+  timeout_seconds?: number
+  requested_by?: string
+  roles?: string[]
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -111,14 +120,20 @@ export const api = {
   outputs: (name: string) => request<{ outputs: Record<string, OutputValue> }>(`/v1/topologies/${encodeURIComponent(name)}/outputs`),
   healthOfTopology: (name: string) => request<TopologyHealth>(`/v1/topologies/${encodeURIComponent(name)}/health?cached=true`),
   resources: (name: string) =>
-    request<{ resources: ResourceHealth[]; projections?: unknown[] }>(`/v1/topologies/${encodeURIComponent(name)}/resources`),
+    request<{ resources: ResourceHealth[]; health?: TopologyHealth }>(`/v1/topologies/${encodeURIComponent(name)}/resources`),
+  repair: (name: string, agentID?: string) =>
+    request<{ run_id: string; agent_id?: string; operation?: string }>(`/v1/topologies/${encodeURIComponent(name)}/repair`, {
+      method: "POST",
+      body: { ...(agentID ? { agent_id: agentID } : {}) },
+    }),
   graph: (name: string) =>
     request<{ topology: string; nodes: GraphNode[]; edges: GraphEdge[] }>(`/v1/topologies/${encodeURIComponent(name)}/graph`),
   nodes: (name: string) => request<{ nodes: NodeInfo[] }>(`/v1/topologies/${encodeURIComponent(name)}/nodes`),
-  createSession: (topology: string, node: string, cmd: string[]) =>
+  session: (id: string) => request<ConsoleSession>(`/v1/sessions/${encodeURIComponent(id)}`),
+  createSession: (topology: string, node: string, sessionRequest: ConsoleSessionRequest) =>
     request<ConsoleSession>(`/v1/topologies/${encodeURIComponent(topology)}/nodes/${encodeURIComponent(node)}/sessions`, {
       method: "POST",
-      body: { cmd, tty: true, timeout_seconds: 3600, requested_by: "web", roles: ["admin"] },
+      body: { tty: true, timeout_seconds: 3600, requested_by: "web", roles: ["admin"], ...sessionRequest },
     }),
 }
 

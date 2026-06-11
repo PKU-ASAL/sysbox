@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -21,43 +22,11 @@ type Plan struct {
 	// Protected lists resources that would have been destroyed but are guarded
 	// by lifecycle.prevent_destroy = true. Destroy is a no-op for these.
 	Protected []state.Resource
-	// Actions is the structured plan surface used by the API and future UI.
-	// The legacy Add/Change/Destroy/Unchanged fields remain the execution
-	// contract for now so existing CLI callers keep working.
-	Actions []PlanAction
-}
-
-type PlanActionType string
-
-const (
-	PlanActionNoop    PlanActionType = "no-op"
-	PlanActionCreate  PlanActionType = "create"
-	PlanActionUpdate  PlanActionType = "update"
-	PlanActionReplace PlanActionType = "replace"
-	PlanActionDelete  PlanActionType = "delete"
-	PlanActionRead    PlanActionType = "read"
-	PlanActionSkip    PlanActionType = "skip"
-)
-
-type FieldChange struct {
-	Before          any  `json:"before,omitempty"`
-	After           any  `json:"after,omitempty"`
-	RequiresReplace bool `json:"requires_replace,omitempty"`
-	Sensitive       bool `json:"sensitive,omitempty"`
-	Computed        bool `json:"computed,omitempty"`
-}
-
-type PlanAction struct {
-	Resource string                 `json:"resource"`
-	Type     string                 `json:"type"`
-	Name     string                 `json:"name"`
-	Action   PlanActionType         `json:"action"`
-	Reason   string                 `json:"reason,omitempty"`
-	Changes  map[string]FieldChange `json:"changes,omitempty"`
-}
-
-func (a PlanAction) NodeID() graph.NodeID {
-	return graph.NodeID{Type: a.Type, Name: a.Name}
+	// Actions is the structured plan surface used by the API and UI.
+	// The Add/Change/Destroy/Unchanged index slices above remain the
+	// execution contract consumed by Executor.Apply/Destroy; migrating the
+	// executor walk loops to Actions-only is a separate, future task.
+	Actions []controlplane.PlanAction
 }
 
 func (p *Plan) ensureActions() {
@@ -65,26 +34,26 @@ func (p *Plan) ensureActions() {
 		return
 	}
 	for _, id := range p.Add {
-		p.addAction(id, PlanActionCreate, "resource not present in state", nil)
+		p.addAction(id, controlplane.PlanActionCreate, "resource not present in state", nil)
 	}
 	for _, id := range p.Change {
-		p.addAction(id, PlanActionReplace, "resource changed", nil)
+		p.addAction(id, controlplane.PlanActionReplace, "resource changed", nil)
 	}
 	for _, r := range p.Destroy {
-		p.addAction(graph.NodeID{Type: r.Type, Name: r.Name}, PlanActionDelete, "resource no longer declared", nil)
+		p.addAction(graph.NodeID{Type: r.Type, Name: r.Name}, controlplane.PlanActionDelete, "resource no longer declared", nil)
 	}
 	for _, id := range p.Unchanged {
-		p.addAction(id, PlanActionNoop, "", nil)
+		p.addAction(id, controlplane.PlanActionNoop, "", nil)
 	}
 }
 
-func (p *Plan) actionsByType(types ...PlanActionType) []PlanAction {
+func (p *Plan) actionsByType(types ...controlplane.PlanActionType) []controlplane.PlanAction {
 	p.ensureActions()
-	want := map[PlanActionType]bool{}
+	want := map[controlplane.PlanActionType]bool{}
 	for _, typ := range types {
 		want[typ] = true
 	}
-	out := make([]PlanAction, 0)
+	out := make([]controlplane.PlanAction, 0)
 	for _, action := range p.Actions {
 		if want[action.Action] {
 			out = append(out, action)
@@ -129,31 +98,31 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 			// lifecycle from graph.Node.Data — the protection is encoded in state.
 			if r.LifecyclePreventDestroy() {
 				p.Protected = append(p.Protected, r)
-				p.addAction(id, PlanActionSkip, "blocked by lifecycle.prevent_destroy", nil)
+				p.addAction(id, controlplane.PlanActionSkip, "blocked by lifecycle.prevent_destroy", nil)
 				continue
 			}
 			p.Destroy = append(p.Destroy, r)
-			p.addAction(id, PlanActionDelete, "resource no longer declared", nil)
+			p.addAction(id, controlplane.PlanActionDelete, "resource no longer declared", nil)
 		}
 	}
 
 	return p, nil
 }
 
-func planActionForDesired(n *graph.Node, current *state.Resource) (PlanAction, error) {
+func planActionForDesired(n *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	if provider, ok := GetResourceProvider(n.ID.Type); ok {
 		return provider.PlanDiff(n, current)
 	}
 	return planDiffByDesiredHash(n, current)
 }
 
-func planDiffForDataSource(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func planDiffForDataSource(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	action, err := planDiffByDesiredHash(desired, current)
 	if err != nil {
-		return PlanAction{}, err
+		return controlplane.PlanAction{}, err
 	}
-	if action.Action == PlanActionCreate || action.Action == PlanActionReplace {
-		action.Action = PlanActionRead
+	if action.Action == controlplane.PlanActionCreate || action.Action == controlplane.PlanActionReplace {
+		action.Action = controlplane.PlanActionRead
 		if action.Reason == "resource not present in state" {
 			action.Reason = "data source not present in state"
 		}
@@ -161,35 +130,35 @@ func planDiffForDataSource(desired *graph.Node, current *state.Resource) (PlanAc
 	return action, nil
 }
 
-func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	if current == nil {
-		return PlanAction{
+		return controlplane.PlanAction{
 			Resource: desired.ID.String(),
 			Type:     desired.ID.Type,
 			Name:     desired.ID.Name,
-			Action:   PlanActionCreate,
+			Action:   controlplane.PlanActionCreate,
 			Reason:   "resource not present in state",
 		}, nil
 	}
-	action := PlanActionNoop
+	action := controlplane.PlanActionNoop
 	reason := ""
-	var changes map[string]FieldChange
+	var changes map[string]controlplane.FieldChange
 	// Older state files do not have desired_hash. Treat them as unchanged so
 	// users are not forced to rebuild every existing lab.
 	if stateDesiredHash(current) != "" {
 		want, err := desiredHash(desired)
 		if err != nil {
-			return PlanAction{}, err
+			return controlplane.PlanAction{}, err
 		}
 		if want != stateDesiredHash(current) {
 			changes, reason = diffDesiredState(desired, current)
-			action = PlanActionReplace
+			action = controlplane.PlanActionReplace
 		}
 	}
-	if action == PlanActionReplace && reason == "" {
+	if action == controlplane.PlanActionReplace && reason == "" {
 		reason = "desired configuration changed; replacement required"
 	}
-	return PlanAction{
+	return controlplane.PlanAction{
 		Resource: desired.ID.String(),
 		Type:     desired.ID.Type,
 		Name:     desired.ID.Name,
@@ -199,11 +168,11 @@ func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (PlanAc
 	}, nil
 }
 
-func (p *Plan) addDesiredAction(id graph.NodeID, action PlanAction) {
+func (p *Plan) addDesiredAction(id graph.NodeID, action controlplane.PlanAction) {
 	switch action.Action {
-	case PlanActionCreate, PlanActionRead:
+	case controlplane.PlanActionCreate, controlplane.PlanActionRead:
 		p.Add = append(p.Add, id)
-	case PlanActionUpdate, PlanActionReplace:
+	case controlplane.PlanActionUpdate, controlplane.PlanActionReplace:
 		p.Change = append(p.Change, id)
 	default:
 		p.Unchanged = append(p.Unchanged, id)
@@ -211,8 +180,8 @@ func (p *Plan) addDesiredAction(id graph.NodeID, action PlanAction) {
 	p.Actions = append(p.Actions, action)
 }
 
-func (p *Plan) addAction(id graph.NodeID, action PlanActionType, reason string, changes map[string]FieldChange) {
-	p.Actions = append(p.Actions, PlanAction{
+func (p *Plan) addAction(id graph.NodeID, action controlplane.PlanActionType, reason string, changes map[string]controlplane.FieldChange) {
+	p.Actions = append(p.Actions, controlplane.PlanAction{
 		Resource: id.String(),
 		Type:     id.Type,
 		Name:     id.Name,
@@ -225,16 +194,16 @@ func (p *Plan) addAction(id graph.NodeID, action PlanActionType, reason string, 
 // PlanFromActions rebuilds the executable legacy plan indexes from structured
 // actions. It lets API-stored plans become the execution input without
 // recomputing a fresh diff.
-func PlanFromActions(actions []PlanAction, current *state.State) *Plan {
-	p := &Plan{Actions: append([]PlanAction(nil), actions...)}
+func PlanFromActions(actions []controlplane.PlanAction, current *state.State) *Plan {
+	p := &Plan{Actions: append([]controlplane.PlanAction(nil), actions...)}
 	for _, action := range p.Actions {
 		id := action.NodeID()
 		switch action.Action {
-		case PlanActionCreate, PlanActionRead:
+		case controlplane.PlanActionCreate, controlplane.PlanActionRead:
 			p.Add = append(p.Add, id)
-		case PlanActionUpdate, PlanActionReplace:
+		case controlplane.PlanActionUpdate, controlplane.PlanActionReplace:
 			p.Change = append(p.Change, id)
-		case PlanActionDelete:
+		case controlplane.PlanActionDelete:
 			if current != nil {
 				if r := current.FindResource(action.Type, action.Name); r != nil {
 					p.Destroy = append(p.Destroy, *r)
@@ -242,7 +211,7 @@ func PlanFromActions(actions []PlanAction, current *state.State) *Plan {
 				}
 			}
 			p.Destroy = append(p.Destroy, state.Resource{Type: action.Type, Name: action.Name})
-		case PlanActionSkip:
+		case controlplane.PlanActionSkip:
 			if current != nil {
 				if r := current.FindResource(action.Type, action.Name); r != nil {
 					p.Protected = append(p.Protected, *r)
@@ -255,7 +224,7 @@ func PlanFromActions(actions []PlanAction, current *state.State) *Plan {
 	return p
 }
 
-func (p *Plan) setAction(id graph.NodeID, action PlanActionType, reason string, changes map[string]FieldChange) {
+func (p *Plan) setAction(id graph.NodeID, action controlplane.PlanActionType, reason string, changes map[string]controlplane.FieldChange) {
 	for i := range p.Actions {
 		if p.Actions[i].Type == id.Type && p.Actions[i].Name == id.Name {
 			p.Actions[i].Action = action
@@ -277,10 +246,10 @@ func FilterPlanByTarget(p *Plan, typ, name string) *Plan {
 	for _, id := range p.Add {
 		if matches(id) {
 			out.Add = append(out.Add, id)
-			out.setAction(id, PlanActionCreate, "resource not present in state", nil)
+			out.setAction(id, controlplane.PlanActionCreate, "resource not present in state", nil)
 		} else {
 			out.Unchanged = append(out.Unchanged, id)
-			out.setAction(id, PlanActionNoop, "", nil)
+			out.setAction(id, controlplane.PlanActionNoop, "", nil)
 		}
 	}
 	for _, id := range p.Change {
@@ -289,29 +258,29 @@ func FilterPlanByTarget(p *Plan, typ, name string) *Plan {
 			out.setAction(id, actionFor(p, id), reasonFor(p, id), changesFor(p, id))
 		} else {
 			out.Unchanged = append(out.Unchanged, id)
-			out.setAction(id, PlanActionNoop, "", nil)
+			out.setAction(id, controlplane.PlanActionNoop, "", nil)
 		}
 	}
 	for _, r := range p.Destroy {
 		if r.Type == typ && r.Name == name {
 			out.Destroy = append(out.Destroy, r)
-			out.setAction(graph.NodeID{Type: r.Type, Name: r.Name}, PlanActionDelete, "resource no longer declared", nil)
+			out.setAction(graph.NodeID{Type: r.Type, Name: r.Name}, controlplane.PlanActionDelete, "resource no longer declared", nil)
 		}
 	}
 	out.Unchanged = append(out.Unchanged, p.Unchanged...)
 	for _, id := range p.Unchanged {
-		out.setAction(id, PlanActionNoop, "", nil)
+		out.setAction(id, controlplane.PlanActionNoop, "", nil)
 	}
 	return out
 }
 
-func actionFor(p *Plan, id graph.NodeID) PlanActionType {
+func actionFor(p *Plan, id graph.NodeID) controlplane.PlanActionType {
 	for _, a := range p.Actions {
 		if a.Type == id.Type && a.Name == id.Name {
 			return a.Action
 		}
 	}
-	return PlanActionReplace
+	return controlplane.PlanActionReplace
 }
 
 func reasonFor(p *Plan, id graph.NodeID) string {
@@ -323,7 +292,7 @@ func reasonFor(p *Plan, id graph.NodeID) string {
 	return "resource changed"
 }
 
-func changesFor(p *Plan, id graph.NodeID) map[string]FieldChange {
+func changesFor(p *Plan, id graph.NodeID) map[string]controlplane.FieldChange {
 	for _, a := range p.Actions {
 		if a.Type == id.Type && a.Name == id.Name {
 			return a.Changes
@@ -335,7 +304,7 @@ func changesFor(p *Plan, id graph.NodeID) map[string]FieldChange {
 func (p *Plan) HasChanges() bool {
 	for _, action := range p.Actions {
 		switch action.Action {
-		case PlanActionCreate, PlanActionRead, PlanActionUpdate, PlanActionReplace, PlanActionDelete:
+		case controlplane.PlanActionCreate, controlplane.PlanActionRead, controlplane.PlanActionUpdate, controlplane.PlanActionReplace, controlplane.PlanActionDelete:
 			return true
 		}
 	}
@@ -376,7 +345,7 @@ func (p *Plan) Summary() string {
 func PrintPlan(p *Plan, showProtected bool) {
 	fmt.Println(p.Summary())
 	for _, id := range p.Add {
-		if actionFor(p, id) == PlanActionRead {
+		if actionFor(p, id) == controlplane.PlanActionRead {
 			fmt.Printf("  <= %s\n", id)
 			continue
 		}

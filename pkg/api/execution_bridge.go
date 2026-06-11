@@ -13,8 +13,9 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-// ExecutionBridge is the temporary compatibility surface used by pkg/agent
-// while apply/destroy execution is being moved out of the API package.
+// ExecutionBridge is the API-side implementation of agentexec.Bridge: it
+// gives the run executor access to control-plane services (run tracking,
+// state, checkpoints, console) without agentexec importing this package.
 type ExecutionBridge struct {
 	server *Server
 }

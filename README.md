@@ -10,13 +10,13 @@ sysbox focuses on three layers:
 2. **Provider/substrate execution**: Docker for fast container labs, Firecracker/microVM and VM substrates for stronger isolation, plus Linux network primitives.
 3. **Optional control plane + host agent execution**: local CLI owns single-host state by default; registered agents can receive control-plane commands while keeping durable topology state on the host.
 
-The core runtime intentionally does not own research-story concepts such as sensors, labelers, reward, attribution, or IOC scoring. Those belong above sysbox as optional lab/application layers. sysbox’s job is narrower: make topology lifecycle explainable, repeatable, and recoverable.
+The core runtime intentionally does not own research-story concepts such as sensors, labelers, reward, attribution, or IOC scoring. Those belong above sysbox as optional lab/application layers. sysbox's job is narrower: make topology lifecycle explainable, repeatable, and recoverable.
 
 ```
 HCL topology
   -> sysbox plan/apply/destroy
   -> runtime graph + provider CRUD
-  -> local/Postgres state + checkpointed runs
+  -> local/Postgres/SQLite state + checkpointed runs
   -> optional API server for multi-process/service use
 ```
 
@@ -29,15 +29,15 @@ HCL topology
 - Firecracker examples additionally need `firecracker`, `/dev/kvm`, `mkfs.ext4`, and `losetup`.
 - libvirt examples additionally need libvirt/qemu tooling and a qcow2 image.
 
-Large artifacts are not baked into the sysbox image. Kernels, rootfs images, and qcow2 images should be declared in HCL as `sysbox_kernel` / `sysbox_image` inputs and either mounted explicitly or fetched through the artifact cache. For Firecracker rootfs preparation, see `scripts/prepare-fc-rootfs.sh` and [docs/firecracker-vmbox.md](docs/firecracker-vmbox.md).
+Large artifacts are not baked into the sysbox image. Kernels, rootfs images, and qcow2 images should be declared in HCL as `sysbox_kernel` / `sysbox_image` inputs and either mounted explicitly or fetched through the artifact cache. For Firecracker rootfs preparation, see `scripts/prepare-fc-rootfs.sh` and [docs/firecracker-artifacts.md](docs/firecracker-artifacts.md).
 
 ## Quick Start
 
 ```bash
 make build
-make plan TOPO=two-networks
-sudo -E make apply TOPO=two-networks
-sudo -E make destroy TOPO=two-networks
+make cli plan TOPO=two-networks
+sudo -E make cli apply TOPO=two-networks
+sudo -E make cli destroy TOPO=two-networks
 ```
 
 Useful example topologies:
@@ -57,24 +57,27 @@ The Makefile is intentionally small. Main targets:
 ```bash
 make build                         # build bin/sysbox
 make test                          # unit tests
-make test-e2e                      # black-box API smoke test; requires make deploy-full
+make test-e2e                      # black-box API smoke test; requires make api deploy-full
 make lint                          # go vet
 
-make plan TOPO=two-networks        # plan an example
-sudo -E make apply TOPO=two-networks
-sudo -E make destroy TOPO=two-networks
+make cli plan TOPO=two-networks    # plan an example
+sudo -E make cli apply TOPO=two-networks
+sudo -E make cli destroy TOPO=two-networks
 
 cp .env.example .env               # one local 12-factor config file
-make config                        # inspect resolved compose config
-make deploy                        # API + Postgres
-make deploy-full                   # API + Postgres + Docker agent
-make deploy-ui                     # Web UI for the running API
-make undeploy
-make reset                         # stop compose and remove local Postgres volume
-make logs
+make api config                    # inspect resolved compose config
+make api build-api                 # rebuild the API/agent image only
+make api deploy                    # API + Postgres
+make api deploy-full               # API + Postgres + Docker agent
+make api seed                      # copy examples into API workspaces
+make api build-ui                  # build and start Web UI for the running API
+make api down
+make api clean                     # stop compose, remove Postgres volume, clear API workspaces
+make api logs
 ```
 
-`make up` and `make down` remain local CLI aliases for `apply` and `destroy`.
+Top-level compatibility aliases still exist, but grouped `make cli ...` and
+`make api ...` commands are preferred.
 
 ## CLI
 
@@ -111,20 +114,20 @@ For the full deployment model, see [docs/deployment.md](docs/deployment.md).
 
 ```bash
 cp .env.example .env
-make deploy
+make api deploy
 curl http://127.0.0.1:9876/v1/health
 curl http://127.0.0.1:9876/v1/topologies
 ```
 
-The optional Web UI is a shadcn-style React console served on port 3000. It
+The optional Web UI is a shadcn-style React console served on port 3001. It
 talks to the API through the same origin, so API calls and WebSocket console
 sessions both go through `/v1`.
 
 ```bash
-make deploy-full
-make deploy-ui
-open http://127.0.0.1:3000
-# or from another machine: http://<host-ip>:3000
+make api deploy-full
+make api build-ui
+open http://127.0.0.1:3001
+# or from another machine: http://<host-ip>:3001
 ```
 
 Deployment follows a 12-factor style: keep deploy-time choices in `.env`, keep topology intent in HCL, and keep the command surface small. Start by copying the template:
@@ -136,10 +139,11 @@ cp .env.example .env
 Use one of two deployment targets:
 
 ```bash
-make deploy       # control plane only: API + Postgres
-make deploy-full  # control plane + Docker agent
-make deploy-ui    # browser console for the running API
-make reset        # local reset: removes the Compose Postgres volume
+make api deploy       # control plane only: API + Postgres
+make api deploy-full  # control plane + Docker agent
+make api seed         # copy examples into API workspaces
+make api build-ui     # browser console for the running API
+make api clean        # removes Compose Postgres volume and API workspaces
 ```
 
 `deploy` is the clean control-plane mode. It does not mount the Docker socket
@@ -149,14 +153,16 @@ host Docker socket and executes Docker-substrate runs assigned by the API.
 For a quick API-driven smoke test:
 
 ```bash
-make deploy-full
+make api deploy-full
+make api seed
 curl -X POST http://127.0.0.1:9876/v1/topologies/docker-service/apply
 curl http://127.0.0.1:9876/v1/runs
 ```
 
-`make seed` copies `examples/*/field.sysbox.hcl` into `.sysbox/api/workspaces`
-only when a workspace is missing. After that, API-managed HCL is independent
-from `examples/`.
+`make api seed` copies `examples/*/field.sysbox.hcl` into
+`.sysbox/api/workspaces` only when a workspace is missing. Deploy no longer
+seeds examples automatically, so a fresh API starts with no HCL workspaces until
+you create or seed them.
 
 Important API endpoints are documented in [docs/api.md](docs/api.md).
 
@@ -186,6 +192,76 @@ sysbox agent start
 
 `DELETE /v1/topologies/{name}` removes workspace/state metadata only when the topology is empty. If state still contains resources, it returns `409`; call `POST /destroy` first. `force=true` is intentionally explicit for metadata-only deletion while leaving external resources behind.
 
+## Architecture
+
+sysbox follows a layered, dependency-directed architecture. Each layer imports
+only layers below it; no circular dependencies exist between packages.
+
+```
+cmd/sysbox ── cmd/sysbox-init
+    │
+pkg/api          (HTTP + jobs + scheduler + supervisor)
+    │
+pkg/agentexec    (run-level executor + Bridge interface)
+    │
+pkg/runtime      (resource-level execution engine: plan, apply, destroy, health)
+    │
+pkg/controlplane (pure DTO layer: Run, Plan, Agent, health projections, ...)
+    │
+pkg/state ──► pkg/substrate   (state holds substrate.NodeHandle by design)
+    │
+pkg/provider/{docker,firecracker,libvirt} ──► pkg/transport (SSH, vsock, console)
+    │                                           pkg/provider/network
+pkg/config / pkg/graph / pkg/util / pkg/vsockrpc / pkg/artifact (leaf packages)
+```
+
+Key design decisions:
+
+- **`pkg/controlplane`** owns shared types (`PlanAction`, `TopologyHealth`,
+  `ResourceHealth`, `RecoveryDecision`, ...). It does not import `pkg/runtime`;
+  `pkg/runtime` references `controlplane` types directly (no aliases). The API, web UI,
+  and agent never depend on the execution engine for their DTOs.
+- **`pkg/runtime`** calls providers only through the `substrate.Substrate`
+  interface and optional capability interfaces (`ConnectionWaiter`,
+  `ImageEntryStarter`). It imports no concrete provider package (the one
+  exception is `pkg/provider/network` — a pure leaf utility for link-existence
+  checks and netlink operations that carries no upward dependencies and isn't
+  worth abstracting away).
+- **`pkg/transport`** (formerly `pkg/provider/exec`) implements
+  `substrate.Connection` — SSH, vsock, console sessions — for all substrates.
+  Renaming it to `transport` avoids the `os/exec` naming collision.
+- **Bridge pattern**: `pkg/agentexec` defines a `Bridge` interface; `pkg/api`
+  implements it (`ExecutionBridge`) so the agent executor accesses control-plane
+  services without `agentexec` knowing about `api`. No import cycle; no
+  temporary shim — this is the permanent architecture.
+- **Substrate registration** is uniform: all three substrates (docker,
+  firecracker, libvirt) are explicitly constructed and registered in
+  `cmd/sysbox/main.go`. The scheduler derives agent capabilities directly from
+  `substrate.Capabilities()` rather than a hardcoded name switch.
+- **Preflight checks** share a single `substrate.PreflightCheck` type;
+  `pkg/runtime` and `pkg/api` use it directly (three copies consolidated into one).
+
+## State Backends
+
+| Backend | Use case | CAS | Lock | Snapshots | Delete |
+|---|---|---|---|---|---|
+| **Local** (file + flock) | CLI / single-host dev | serial file, atomic rename | flock | file snapshots | yes |
+| **SQLite** (`sqlite://`) | local API with transaction guarantees | `UPDATE ... WHERE serial=?` | `BEGIN IMMEDIATE` | table snapshots | yes |
+| **Postgres** (`postgres://`) | multi-host production | `UPDATE ... WHERE serial=$5` | `pg_try_advisory_lock` | table snapshots | yes |
+| **HTTP** (`https://`) | Terraform HTTP backend compatibility | no | no (optimistic) | no | no |
+| **S3** (`s3://`) | lightweight remote state (shells out to `aws` CLI) | no | no (optimistic) | no | no |
+
+Local and SQLite are local-only. Postgres is the recommended backend for
+multi-agent deployments. HTTP and S3 backends are provided for compatibility
+but do not implement locking, CAS, snapshots, or delete — concurrent writers
+can overwrite each other. Use Postgres (or a local SQLite single-writer) when
+those guarantees matter.
+
+The API store (runs, agents, commands, console sessions, health snapshots, ...)
+uses the same backend URL: Postgres for clustered deployments, SQLite
+(`sqlite://`) for a local API with transactional correctness, or local JSONL
+files when no backend URL is configured (zero-dependency quick start).
+
 ## Runtime Layout
 
 Generated local state is intentionally kept out of the project tree surface:
@@ -211,7 +287,7 @@ sysbox supports local state and service backends. The service path now includes:
 - checkpoint-driven recover/cleanup for Docker, local networks, and microVM leftovers
 - snapshots where the backend supports them
 
-Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used. When `SYSBOX_STATE_BACKEND` is a Postgres URL, the API also stores runs/checkpoints/health in Postgres tables. Leave `SYSBOX_STATE_BACKEND` empty in `.env` to let Compose choose the default API/agent Postgres URL.
+Postgres is the default backend in Docker Compose. Local CLI still defaults to local state files unless `--backend` or `SYSBOX_STATE_BACKEND` is used. When `SYSBOX_STATE_BACKEND` is a Postgres or SQLite URL, the API also stores runs/checkpoints/health in the corresponding database. Leave `SYSBOX_STATE_BACKEND` empty in `.env` to let Compose choose the default API/agent Postgres URL.
 
 ## Product Objects
 
@@ -244,6 +320,7 @@ to point at another file.
 version: 1
 api:
   listen: ":9876"
+  # allowed_origins: ["http://localhost:3001"]  # restrict WebSocket origins
 paths:
   home: /var/lib/sysbox
   cache: /var/cache/sysbox
@@ -280,7 +357,7 @@ Recommended environment overrides:
 | `SYSBOX_API_HOST_ADDR` | Host address published for the API, default `0.0.0.0` |
 | `SYSBOX_API_HOST_PORT` | Host port published for the API, default `9876` |
 | `SYSBOX_WEB_HOST_ADDR` | Host address published for the Web UI, default `0.0.0.0` |
-| `SYSBOX_WEB_HOST_PORT` | Host port published for the Web UI, default `3000` |
+| `SYSBOX_WEB_HOST_PORT` | Host port published for the Web UI, default `3001` |
 | `SYSBOX_API_TOKEN` | Optional API Bearer token |
 | `SYSBOX_HOST_HOME_DIR` | Host directory mounted to container `/var/lib/sysbox`, default `.sysbox/api` |
 | `SYSBOX_HOST_CACHE_DIR` | Host directory mounted to container `/var/cache/sysbox`, default `~/.cache/sysbox` |
@@ -324,12 +401,13 @@ pkg/api/                    HTTP control plane, scheduling, jobs, recovery/clean
 pkg/config/                 HCL schema and eval
 pkg/controlplane/           Product-level objects such as Project, Plan, Run, Agent
 pkg/graph/                  Dependency graph
-pkg/provider/               Docker, Firecracker, network, libvirt providers
 pkg/runtime/                Plan/apply/destroy/checkpoint runtime and execution journal primitives
-pkg/state/                  Local/Postgres/HTTP/S3/SQLite state backends
+pkg/state/                  Local/Postgres/SQLite/HTTP/S3 state backends
 pkg/substrate/              Provider abstraction
+pkg/transport/              Connection implementations (SSH, vsock, console)
+pkg/provider/               Docker, Firecracker, network, libvirt providers
 pkg/agent/                  Agent identity and registration
-pkg/agentexec/              Agent loop, local bridge, and apply/destroy execution
+pkg/agentexec/              Agent command loop, local/remote Bridge, and run-level executor
 runner/                     Optional Python episode runner for agent examples
 scripts/                    Artifact preparation and verification helpers
 tests/e2e/                  Black-box API e2e scripts using curl

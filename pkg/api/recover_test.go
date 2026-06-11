@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -46,7 +47,7 @@ func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 		Topology: "mixed",
 		StatePatches: []runtime.StatePatch{{
 			Resource: "sysbox_node.web",
-			Action:   runtime.PlanActionCreate,
+			Action:   controlplane.PlanActionCreate,
 			Op:       runtime.StatePatchUpsert,
 			State: &runtime.StateResourceLog{
 				Type:     "sysbox_node",

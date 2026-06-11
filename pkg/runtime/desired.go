@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -142,7 +143,7 @@ func stateDesiredHash(r *state.Resource) string {
 	return r.Str(desiredHashKey)
 }
 
-func diffDesiredState(n *graph.Node, r *state.Resource) (map[string]FieldChange, string) {
+func diffDesiredState(n *graph.Node, r *state.Resource) (map[string]controlplane.FieldChange, string) {
 	if n == nil || r == nil {
 		return nil, "resource changed"
 	}
@@ -154,7 +155,7 @@ func diffDesiredState(n *graph.Node, r *state.Resource) (map[string]FieldChange,
 	if before == nil {
 		return nil, "desired configuration hash changed"
 	}
-	changes := map[string]FieldChange{}
+	changes := map[string]controlplane.FieldChange{}
 	keys := map[string]bool{}
 	for k := range before {
 		keys[k] = true
@@ -171,7 +172,7 @@ func diffDesiredState(n *graph.Node, r *state.Resource) (map[string]FieldChange,
 			continue
 		}
 		attr := schema.Attribute(k)
-		changes[k] = FieldChange{
+		changes[k] = controlplane.FieldChange{
 			Before:          redactIfSensitive(before[k], attr.Sensitive),
 			After:           redactIfSensitive(after[k], attr.Sensitive),
 			RequiresReplace: attr.RequiresReplace,
@@ -194,7 +195,7 @@ func jsonEqual(a, b any) bool {
 	return string(aj) == string(bj)
 }
 
-func anyInPlace(changes map[string]FieldChange) bool {
+func anyInPlace(changes map[string]controlplane.FieldChange) bool {
 	for _, ch := range changes {
 		if !ch.RequiresReplace {
 			return true

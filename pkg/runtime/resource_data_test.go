@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -29,7 +30,7 @@ func TestDataResourceProviderPlanDiffReads(t *testing.T) {
 
 	action, err := p.PlanDiff(n, nil)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionRead, action.Action)
+	require.Equal(t, controlplane.PlanActionRead, action.Action)
 	require.Equal(t, "data source not present in state", action.Reason)
 
 	inst := map[string]any{}
@@ -37,12 +38,12 @@ func TestDataResourceProviderPlanDiffReads(t *testing.T) {
 	current := &state.Resource{Type: "data_sysbox_image", Name: "alpine", Provider: "docker", Instance: inst}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionNoop, action.Action)
+	require.Equal(t, controlplane.PlanActionNoop, action.Action)
 
 	n.Data = &config.DataImageConfig{Substrate: "docker", DockerRef: "busybox:latest"}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionRead, action.Action)
+	require.Equal(t, controlplane.PlanActionRead, action.Action)
 	require.Contains(t, action.Changes, "data")
 }
 
@@ -55,7 +56,7 @@ func TestComputePlanSchedulesDataSourcesAsRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []graph.NodeID{{Type: "data_sysbox_image", Name: "alpine"}}, plan.Add)
 	require.Len(t, plan.Actions, 1)
-	require.Equal(t, PlanActionRead, plan.Actions[0].Action)
+	require.Equal(t, controlplane.PlanActionRead, plan.Actions[0].Action)
 	require.True(t, plan.HasChanges())
 }
 

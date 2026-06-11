@@ -9,9 +9,8 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
-	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
-	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -34,7 +33,7 @@ func (NodeResourceProvider) Read(ctx context.Context, current state.Resource) (R
 	return readNodeLikeResource(ctx, current)
 }
 
-func (NodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func (NodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -163,15 +162,16 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 
 	var handle substrate.NodeHandle
+	containerName := runtimeExternalName(e.topology, "node", n.ID.Name)
 	if err := e.recordSubstep(parentStep, "create_node", map[string]any{
 		"resource":  n.ID.String(),
 		"substrate": subName,
-		"name":      fmt.Sprintf("sysbox-%s", n.ID.Name),
+		"name":      containerName,
 		"image":     imgRef.Repository,
 	}, func() error {
 		var err error
 		handle, err = sub.CreateNode(ctx, substrate.NodeSpec{
-			Name:           fmt.Sprintf("sysbox-%s", n.ID.Name),
+			Name:           containerName,
 			Image:          imgRef,
 			VCPUs:          cfg.Vcpus,
 			Memory:         cfg.Memory,
@@ -317,21 +317,13 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		if err != nil {
 			return state.Resource{}, fmt.Errorf("connection for node %s: %w", n.ID.Name, err)
 		}
-		// Block until the chosen connection is reachable.
-		switch c := conn.(type) {
-		case *providerexec.SSHConnection:
-			if c != nil {
-				e.logf("[provisioner] waiting for SSH on %s...\n", c.Host())
-				if err := c.WaitForSSH(ctx, 60*time.Second); err != nil {
-					return state.Resource{}, fmt.Errorf("ssh not ready on node %s: %w", n.ID.Name, err)
-				}
-			}
-		case *providerexec.VsockConnection:
-			if c != nil {
-				e.logf("[provisioner] waiting for vsock-agent on %s...\n", n.ID.Name)
-				if err := c.WaitReady(ctx, 60*time.Second); err != nil {
-					return state.Resource{}, fmt.Errorf("vsock-agent not ready on node %s: %w", n.ID.Name, err)
-				}
+		// Block until the chosen connection is reachable (SSH up, vsock
+		// agent listening, ...). Transports that need no wait simply don't
+		// implement ConnectionWaiter.
+		if waiter, ok := conn.(substrate.ConnectionWaiter); ok {
+			e.logf("[provisioner] waiting for connection on %s...\n", n.ID.Name)
+			if err := waiter.WaitReady(ctx, 60*time.Second); err != nil {
+				return state.Resource{}, fmt.Errorf("connection not ready on node %s: %w", n.ID.Name, err)
 			}
 		}
 		if err := e.runProvisioners(ctx, conn, cfg.Provisioners); err != nil {
@@ -454,39 +446,18 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 	return nil
 }
 
-// execImageEntry launches the image's original CMD/Entrypoint inside a Docker
-// container. During CreateNode we override with "sleep infinity" so provisioners
-// can run; after provisioning we exec the original entrypoint so services
-// (nginx, postgres, etc.) actually start.
+// execImageEntry launches the image's original CMD/Entrypoint on substrates
+// that override it at create time (probed via substrate.ImageEntryStarter,
+// currently only docker).
 func (e *Executor) execImageEntry(ctx context.Context, handle substrate.NodeHandle, subName string) error {
-	if subName != "docker" {
-		return nil // only Docker overrides the entrypoint
-	}
-	hs, ok := handle.Provider.(*dockerprovider.HandleState)
-	if !ok || hs == nil {
-		return nil
-	}
-	if len(hs.ImageEntrypoint) == 0 && len(hs.ImageCmd) == 0 {
-		return nil // image has no entrypoint (e.g. alpine)
-	}
-
-	// Build the command: entrypoint + cmd, or just cmd
-	cmd := make([]string, 0, len(hs.ImageEntrypoint)+len(hs.ImageCmd))
-	cmd = append(cmd, hs.ImageEntrypoint...)
-	cmd = append(cmd, hs.ImageCmd...)
-
-	conn, err := substrate.Get(subName)
+	sub, err := substrate.Get(subName)
 	if err != nil {
 		return err
 	}
-	dsub := conn.(substrate.Substrate)
-	c, err := dsub.Connection(handle, nil)
-	if err != nil || c == nil {
-		return fmt.Errorf("no connection to start image entry: %w", err)
+	starter, ok := sub.(substrate.ImageEntryStarter)
+	if !ok {
+		return nil // substrate runs the image entry natively
 	}
-
-	e.logf("[node] starting image entry: %v\n", cmd)
-	// Run as background process so it doesn't block the executor
-	_, err = c.ExecBackground(ctx, cmd, nil)
-	return err
+	e.logf("[node] starting image entry on %s\n", handle.ID)
+	return starter.ExecImageEntry(ctx, handle)
 }

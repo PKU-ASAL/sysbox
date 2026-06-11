@@ -13,9 +13,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	fcprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	netprovider "github.com/oslab/sysbox/pkg/provider/network"
-	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -46,7 +46,7 @@ func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
 			Index:    0,
 			Kind:     "resource",
 			Resource: "sysbox_network.lan",
-			Action:   runtime.PlanActionCreate,
+			Action:   controlplane.PlanActionCreate,
 			Provider: "network",
 			Status:   runtime.OperationDone,
 			StateResource: &runtime.StateResourceLog{
@@ -118,7 +118,7 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 			Index:      0,
 			Kind:       "resource",
 			Resource:   "sysbox_node.microvm",
-			Action:     runtime.PlanActionCreate,
+			Action:     controlplane.PlanActionCreate,
 			Provider:   "firecracker",
 			ExternalID: "sysbox-microvm",
 			Status:     runtime.OperationDone,

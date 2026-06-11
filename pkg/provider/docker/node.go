@@ -24,7 +24,10 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	// If a container with this name exists (leftover from a partial previous
 	// apply), force-remove it. Reusing a partially-wired container would
 	// cause interface rename collisions on the next attach attempt.
-	if _, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
+	if existing, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
+		if existing.Config == nil || existing.Config.Labels["sysbox.managed"] != "true" {
+			return substrate.NodeHandle{}, fmt.Errorf("container name %q is already used by an unmanaged container", spec.Name)
+		}
 		fmt.Printf("[docker] warning: force-removing stale container %q\n", spec.Name)
 		_ = s.cli.ContainerRemove(ctx, spec.Name, container.RemoveOptions{Force: true})
 	}
@@ -191,6 +194,35 @@ func (s *Substrate) ReadNode(ctx context.Context, id string) (substrate.NodeHand
 		Conn:     substrate.ConnInfo{Kind: substrate.ConnKindDocker},
 		Net:      substrate.NetInfo{PrimaryIP: primaryIP},
 	}, nil
+}
+
+// ExecImageEntry implements substrate.ImageEntryStarter: it launches the
+// image's original CMD/Entrypoint inside the running container. CreateNode
+// overrides the entrypoint with "sleep infinity" so provisioners can run
+// first; the runtime calls this after provisioning so services (nginx,
+// postgres, ...) actually start.
+func (s *Substrate) ExecImageEntry(ctx context.Context, handle substrate.NodeHandle) error {
+	hs, ok := handle.Provider.(*HandleState)
+	if !ok || hs == nil {
+		return nil
+	}
+	if len(hs.ImageEntrypoint) == 0 && len(hs.ImageCmd) == 0 {
+		return nil // image has no entrypoint (e.g. alpine)
+	}
+
+	// Build the command: entrypoint + cmd, or just cmd
+	cmd := make([]string, 0, len(hs.ImageEntrypoint)+len(hs.ImageCmd))
+	cmd = append(cmd, hs.ImageEntrypoint...)
+	cmd = append(cmd, hs.ImageCmd...)
+
+	c, err := s.Connection(handle, nil)
+	if err != nil || c == nil {
+		return fmt.Errorf("no connection to start image entry: %w", err)
+	}
+
+	// Run as background process so it doesn't block the executor.
+	_, err = c.ExecBackground(ctx, cmd, nil)
+	return err
 }
 
 // trimCIDR strips the prefix length from an IP/CIDR string, returning just the

@@ -9,6 +9,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string) error {
@@ -50,9 +51,6 @@ func (s *Server) selectAgent(ctx context.Context, required []string, preferred s
 		return controlplane.Agent{}, fmt.Errorf("agent %q not found", preferred)
 	}
 	for _, agent := range agents {
-		if agent.ID == DefaultAgentID {
-			continue
-		}
 		if agent.Status != "online" || agent.Disabled || agent.Quarantined {
 			continue
 		}
@@ -183,8 +181,22 @@ func decodeCapabilityResource(r config.ResourceBlock, evalCtx *hcl.EvalContext) 
 	}
 }
 
-func addSubstrateCapabilities(set map[string]bool, substrate string) {
-	switch substrate {
+func addSubstrateCapabilities(set map[string]bool, substrateName string) {
+	// Prefer the registered substrate's self-declared capabilities so adding
+	// a new substrate does not require editing this function.
+	if sub, err := substrate.Get(substrateName); err == nil {
+		caps := sub.Capabilities()
+		if caps.SharedKernel {
+			set["docker"] = true
+		}
+		for _, kind := range caps.NICKinds {
+			set[kind] = true
+		}
+		set[substrateName] = true
+		return
+	}
+	// Fallback for unregistered substrate identifiers (HCL aliases, etc.).
+	switch substrateName {
 	case "", "docker":
 		set["docker"] = true
 	case "firecracker", "microvm":
@@ -198,7 +210,7 @@ func addSubstrateCapabilities(set map[string]bool, substrate string) {
 	case "network":
 		set["network"] = true
 	default:
-		set[substrate] = true
+		set[substrateName] = true
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/config"
-	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
+	"github.com/oslab/sysbox/pkg/transport"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -20,7 +20,6 @@ type Substrate struct {
 	substrate.BaseSubstrate // inherits Validate / DecodeProviderConfig defaults
 
 	firecrackerBin string
-	jailerBin      string
 	kernelPath     string
 	rootfsDir      string // base directory for per-VM rootfs copies
 
@@ -60,9 +59,10 @@ func New(kernelPath, rootfsDir string) *Substrate {
 		}
 	}
 
+	// TODO: jailer-based sandboxing is not implemented; VMs run as direct
+	// firecracker child processes with the daemon's privileges.
 	return &Substrate{
 		firecrackerBin: fcBin,
-		jailerBin:      "jailer",
 		kernelPath:     kernelPath,
 		rootfsDir:      rootfsDir,
 	}
@@ -137,14 +137,14 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 			if hs == nil || hs.VsockUDS == "" {
 				return nil, fmt.Errorf("vsock connection requested but VM has no vsock channel")
 			}
-			return providerexec.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
+			return transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
 		case "ssh":
 			return s.sshConn(handle, hints), nil
 		}
 	}
 	// Auto: prefer vsock, fall back to SSH.
 	if hs != nil && hs.VsockUDS != "" {
-		return providerexec.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
+		return transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
 	}
 	return s.sshConn(handle, hints), nil
 }
@@ -180,7 +180,7 @@ func (s *Substrate) sshConn(handle substrate.NodeHandle, hints []substrate.Conne
 			key = h.PrivateKey
 		}
 	}
-	return providerexec.NewSSHConnectionWithPort(host, port, user, key, pass)
+	return transport.NewSSHConnectionWithPort(host, port, user, key, pass)
 }
 
 var _ substrate.Substrate = (*Substrate)(nil)

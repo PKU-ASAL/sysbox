@@ -11,7 +11,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	docker "github.com/oslab/sysbox/pkg/provider/docker"
 	fc "github.com/oslab/sysbox/pkg/provider/firecracker"
-	_ "github.com/oslab/sysbox/pkg/provider/libvirt" // registers "libvirt" substrate via init()
+	libvirt "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -35,6 +35,8 @@ func main() {
 	rootfsDir := cfg.Providers.Firecracker.Workdir
 	fcSub := fc.New(kernelPath, rootfsDir)
 	substrate.Register(fcSub)
+
+	substrate.Register(libvirt.New())
 
 	if err := commands.ExecuteContext(ctx); err != nil {
 		os.Exit(1)

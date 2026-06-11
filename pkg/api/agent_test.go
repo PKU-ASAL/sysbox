@@ -18,6 +18,7 @@ import (
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func TestAgentRegistry(t *testing.T) {
@@ -26,7 +27,7 @@ func TestAgentRegistry(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/agents", nil))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), `"id":"local"`)
+	require.Contains(t, rec.Body.String(), `"agents":[]`)
 
 	body := bytes.NewBufferString(`{
   "id": "host-a",
@@ -59,8 +60,8 @@ func TestAgentRegistry(t *testing.T) {
 		} `json:"agents"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &listed))
-	require.Len(t, listed.Agents, 2)
-	require.ElementsMatch(t, []string{"host-a", "local"}, []string{listed.Agents[0].ID, listed.Agents[1].ID})
+	require.Len(t, listed.Agents, 1)
+	require.Equal(t, "host-a", listed.Agents[0].ID)
 
 	stored, err := s.apiStore.GetAgent(context.Background(), "host-a")
 	require.NoError(t, err)
@@ -314,8 +315,18 @@ resource "sysbox_node" "web" {
   image = sysbox_image.alpine.id
 }
 `), 0o644))
+	writeState(t, runs, "lab", &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Type:     "sysbox_node",
+			Name:     "web",
+			Provider: "docker",
+			Instance: map[string]any{"container_id": "container-web"},
+		}},
+	})
 	s := NewServer(runs, workspaces)
 	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	saveHealthyNodeProjection(t, s, "host-a", "lab", "web")
 	server := httptest.NewServer(s)
 	defer server.Close()
 
@@ -371,6 +382,16 @@ resource "sysbox_node" "web" {
 	cfg.API.Console.AllowedRoles = []string{"console"}
 	s := NewServerWithConfig(cfg)
 	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	writeState(t, runs, "lab", &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Type:     "sysbox_node",
+			Name:     "web",
+			Provider: "docker",
+			Instance: map[string]any{"container_id": "container-web"},
+		}},
+	})
+	saveHealthyNodeProjection(t, s, "host-a", "lab", "web")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/nodes/web/sessions", bytes.NewBufferString(`{"shell":"/bin/sh"}`))
@@ -393,15 +414,75 @@ resource "sysbox_node" "web" {
 	require.Contains(t, rec.Body.String(), `"action":"allow"`)
 }
 
-func TestRunDefaultsToLocalAgent(t *testing.T) {
+func TestConsoleSessionRejectsUnhealthyNode(t *testing.T) {
+	runs := t.TempDir()
+	workspaces := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspaces, "lab"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspaces, "lab", "field.sysbox.hcl"), []byte(`
+resource "sysbox_image" "alpine" {
+  substrate = "docker"
+  docker_ref = "alpine:latest"
+}
+
+resource "sysbox_node" "web" {
+  substrate = "docker"
+  image = sysbox_image.alpine.id
+}
+`), 0o644))
+	writeState(t, runs, "lab", &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Type:     "sysbox_node",
+			Name:     "web",
+			Provider: "docker",
+			Instance: map[string]any{"container_id": "deadbeef"},
+		}},
+	})
+	s := NewServer(runs, workspaces)
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	body := bytes.NewBufferString(`{
+  "agent_id": "host-a",
+  "topology": "lab",
+  "workspace": "lab",
+  "resources": [
+    {"resource":"sysbox_node.web","type":"sysbox_node","name":"web","provider":"docker","status":"drifted","reason":"exited","decision":"mark_drift","observation":{"exists":true,"running":false,"status":"exited"}}
+  ]
+}`)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", body))
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/nodes/web/sessions", bytes.NewBufferString(`{"shell":"/bin/sh"}`))
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "repair required")
+}
+
+func saveHealthyNodeProjection(t *testing.T, s *Server, agentID, topology, node string) {
+	t.Helper()
+	body := bytes.NewBufferString(`{
+  "agent_id": "` + agentID + `",
+  "topology": "` + topology + `",
+  "workspace": "` + topology + `",
+  "resources": [
+    {"resource":"sysbox_node.` + node + `","type":"sysbox_node","name":"` + node + `","provider":"docker","status":"healthy","reason":"running","decision":"noop","observation":{"exists":true,"running":true,"healthy":true,"status":"running"}}
+  ]
+}`)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/"+agentID+"/projections/resources", body))
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+}
+
+func TestRunStartsWithoutImplicitAgent(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 
 	run := s.jobs.start("mixed", "apply")
-	require.Equal(t, DefaultAgentID, run.AgentID)
+	require.Empty(t, run.AgentID)
 
 	stored, err := s.apiStore.GetRun(context.Background(), run.ID)
 	require.NoError(t, err)
-	require.Equal(t, DefaultAgentID, stored.AgentID)
+	require.Empty(t, stored.AgentID)
 }
 
 func TestAgentStreamEndpointRemoved(t *testing.T) {

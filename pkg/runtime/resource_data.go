@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -34,7 +35,7 @@ func (DataNodeResourceProvider) Read(_ context.Context, current state.Resource) 
 	return resourceReadOK(current), nil
 }
 
-func (DataNodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func (DataNodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	return planDiffForDataSource(desired, current)
 }
 
@@ -115,7 +116,7 @@ func (DataNetworkResourceProvider) Read(_ context.Context, current state.Resourc
 	return resourceReadOK(current), nil
 }
 
-func (DataNetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func (DataNetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	return planDiffForDataSource(desired, current)
 }
 
@@ -197,7 +198,7 @@ func (DataImageResourceProvider) Read(_ context.Context, current state.Resource)
 	return resourceReadOK(current), nil
 }
 
-func (DataImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func (DataImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	return planDiffForDataSource(desired, current)
 }
 

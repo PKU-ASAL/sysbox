@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"path/filepath"
 	"sync"
 	"time"
@@ -25,14 +26,14 @@ const (
 )
 
 type HealthSnapshot struct {
-	Topology  string                 `json:"topology"`
-	Observed  time.Time              `json:"observed_at"`
-	Health    runtime.TopologyHealth `json:"health"`
-	Policy    SupervisorPolicy       `json:"policy"`
-	AutoHeal  bool                   `json:"auto_heal"`
-	Action    string                 `json:"action,omitempty"`
-	RunID     string                 `json:"run_id,omitempty"`
-	LastError string                 `json:"last_error,omitempty"`
+	Topology  string                      `json:"topology"`
+	Observed  time.Time                   `json:"observed_at"`
+	Health    controlplane.TopologyHealth `json:"health"`
+	Policy    SupervisorPolicy            `json:"policy"`
+	AutoHeal  bool                        `json:"auto_heal"`
+	Action    string                      `json:"action,omitempty"`
+	RunID     string                      `json:"run_id,omitempty"`
+	LastError string                      `json:"last_error,omitempty"`
 }
 
 func newSupervisor(s *Server, interval time.Duration) *Supervisor {
@@ -108,7 +109,7 @@ func (s *Supervisor) maybeRepair(topology string, snap *HealthSnapshot) {
 		snap.Action = "observe"
 		return
 	}
-	if snap.Health.Status != runtime.ResourceHealthDrifted {
+	if snap.Health.Status != controlplane.ResourceHealthDrifted {
 		snap.Action = "healthy"
 		return
 	}

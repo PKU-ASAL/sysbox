@@ -1,6 +1,7 @@
 package agentexec
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -15,6 +16,49 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
+func TestExecutorRunsRepairThroughApplyReconcile(t *testing.T) {
+	dir := t.TempDir()
+	topology := "lab"
+	kernelPath := filepath.Join(dir, "vmlinux")
+	require.NoError(t, os.WriteFile(kernelPath, []byte("kernel"), 0o644))
+	hclPath := filepath.Join(dir, "field.sysbox.hcl")
+	statePath := filepath.Join(dir, "state.json")
+	require.NoError(t, os.WriteFile(hclPath, []byte(`
+resource "sysbox_kernel" "linux" {
+  substrate = "docker"
+  source = "`+kernelPath+`"
+}
+`), 0o644))
+	require.NoError(t, state.NewManager(statePath).Save(&state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Type:     "sysbox_kernel",
+			Name:     "linux",
+			Provider: "artifact",
+			Instance: map[string]any{"path": filepath.Join(dir, "missing")},
+		}},
+	}))
+	var log bytes.Buffer
+	bridge := NewLocalBridge(LocalOptions{
+		Topology:   topology,
+		ConfigFile: hclPath,
+		StatePath:  statePath,
+		RunsDir:    dir,
+		Log:        &log,
+		Refresh:    true,
+	})
+	run := &controlplane.Run{ID: "run-repair", Topology: topology, Workspace: topology, Op: "repair", Operation: "repair", Status: controlplane.RunRunning}
+
+	NewExecutorWithBridge(bridge).ExecuteContext(context.Background(), run)
+
+	require.Empty(t, run.Err)
+	require.Equal(t, controlplane.RunDone, run.Status)
+	require.Contains(t, log.String(), "Apply complete")
+	cp, err := runtime.LoadCheckpointFile(filepath.Join(dir, topology, "runs", "run-repair.checkpoint.json"))
+	require.NoError(t, err)
+	require.Equal(t, "repair", cp.Operation)
+}
+
 func TestLocalBridgeFilterApplyPlanByTarget(t *testing.T) {
 	bridge := NewLocalBridge(LocalOptions{Target: "sysbox_node.web"})
 	plan := &runtime.Plan{
@@ -22,17 +66,17 @@ func TestLocalBridgeFilterApplyPlanByTarget(t *testing.T) {
 			{Type: "sysbox_network", Name: "shared"},
 			{Type: "sysbox_node", Name: "web"},
 		},
-		Actions: []runtime.PlanAction{
-			{Resource: "sysbox_network.shared", Type: "sysbox_network", Name: "shared", Action: runtime.PlanActionCreate},
-			{Resource: "sysbox_node.web", Type: "sysbox_node", Name: "web", Action: runtime.PlanActionCreate},
+		Actions: []controlplane.PlanAction{
+			{Resource: "sysbox_network.shared", Type: "sysbox_network", Name: "shared", Action: controlplane.PlanActionCreate},
+			{Resource: "sysbox_node.web", Type: "sysbox_node", Name: "web", Action: controlplane.PlanActionCreate},
 		},
 	}
 
 	filtered, err := bridge.FilterApplyPlan(plan)
 	require.NoError(t, err)
-	var creates []runtime.PlanAction
+	var creates []controlplane.PlanAction
 	for _, action := range filtered.Actions {
-		if action.Action == runtime.PlanActionCreate {
+		if action.Action == controlplane.PlanActionCreate {
 			creates = append(creates, action)
 		}
 	}

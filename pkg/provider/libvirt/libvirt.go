@@ -52,8 +52,10 @@ type Substrate struct {
 	substrate.BaseSubstrate
 }
 
-func init() {
-	substrate.Register(&Substrate{})
+// New creates a libvirt substrate. Registration happens explicitly in
+// cmd/sysbox/main.go alongside the other substrates.
+func New() *Substrate {
+	return &Substrate{}
 }
 
 func (s *Substrate) Name() string { return subName }

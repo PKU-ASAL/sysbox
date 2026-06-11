@@ -9,6 +9,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -29,18 +30,18 @@ func (KernelResourceProvider) Read(_ context.Context, current state.Resource) (R
 	result := resourceReadOK(current)
 	path := current.Str("path")
 	if path == "" {
-		result.Checks = map[string]ResourceCheckHealth{"file": {OK: false, Reason: "kernel path missing from state"}}
+		result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: false, Reason: "kernel path missing from state"}}
 		return result, driftedResource("kernel path missing from state")
 	}
 	if _, err := os.Stat(path); err != nil {
-		result.Checks = map[string]ResourceCheckHealth{"file": {OK: false, Reason: err.Error()}}
+		result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: false, Reason: err.Error()}}
 		return result, driftedResource(err.Error())
 	}
-	result.Checks = map[string]ResourceCheckHealth{"file": {OK: true}}
+	result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: true}}
 	return result, nil
 }
 
-func (p KernelResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func (p KernelResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 

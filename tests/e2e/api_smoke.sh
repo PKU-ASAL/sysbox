@@ -125,7 +125,7 @@ log "checking Docker agent ${AGENT_ID}"
 api_get /v1/agents | jq -e --arg id "$AGENT_ID" '
 	.agents[]
 	| select(.id == $id and .status == "online" and (.capabilities | index("docker")))
-' >/dev/null || fail "agent ${AGENT_ID} is not online with docker capability; run: make deploy-full"
+' >/dev/null || fail "agent ${AGENT_ID} is not online with docker capability; run: make api deploy-full"
 
 hcl="$(cat <<HCL
 substrate "docker" {

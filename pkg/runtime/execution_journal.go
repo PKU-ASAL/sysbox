@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -42,7 +43,7 @@ func (r *StoreRecorder) Begin(operation string, plan *Plan) error {
 	return nil
 }
 
-func (r *StoreRecorder) StepStart(resource string, action PlanActionType) int {
+func (r *StoreRecorder) StepStart(resource string, action controlplane.PlanActionType) int {
 	idx := r.OperationRecorder.StepStart(resource, action)
 	r.persist()
 	return idx
@@ -78,7 +79,7 @@ func (r *StoreRecorder) SetStateSerialAfter(serial int64) {
 	r.persist()
 }
 
-func (r *StoreRecorder) StepStartKind(kind, resource string, action PlanActionType) int {
+func (r *StoreRecorder) StepStartKind(kind, resource string, action controlplane.PlanActionType) int {
 	idx := r.OperationRecorder.StepStartKind(kind, resource, action)
 	r.persist()
 	return idx

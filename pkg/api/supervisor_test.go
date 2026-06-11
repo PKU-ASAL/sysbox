@@ -14,7 +14,6 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -46,7 +45,7 @@ func TestSupervisorScanWritesHealthSnapshot(t *testing.T) {
 	var snap HealthSnapshot
 	require.NoError(t, json.Unmarshal(raw, &snap))
 	require.Equal(t, "mixed", snap.Topology)
-	require.Equal(t, runtime.ResourceHealthHealthy, snap.Health.Status)
+	require.Equal(t, controlplane.ResourceHealthHealthy, snap.Health.Status)
 	require.Equal(t, SupervisorPolicyObserveOnly, snap.Policy)
 	require.Equal(t, "observe", snap.Action)
 }
@@ -59,8 +58,8 @@ func TestGetTopologyHealthCached(t *testing.T) {
 	snap := HealthSnapshot{
 		Topology: "mixed",
 		Observed: time.Now().UTC(),
-		Health: runtime.TopologyHealth{
-			Status: runtime.ResourceHealthHealthy,
+		Health: controlplane.TopologyHealth{
+			Status: controlplane.ResourceHealthHealthy,
 		},
 		Policy: SupervisorPolicyObserveOnly,
 	}
@@ -74,7 +73,7 @@ func TestGetTopologyHealthCached(t *testing.T) {
 	var body HealthSnapshot
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, "mixed", body.Topology)
-	require.Equal(t, runtime.ResourceHealthHealthy, body.Health.Status)
+	require.Equal(t, controlplane.ResourceHealthHealthy, body.Health.Status)
 }
 
 func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {

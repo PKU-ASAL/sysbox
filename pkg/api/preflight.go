@@ -56,7 +56,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 	res := preflightResult{OK: true}
 	for _, name := range []string{"docker", "firecracker", "libvirt"} {
 		if sub, err := substrate.Get(name); err == nil {
-			addSubstrateChecks(&res, sub.PreflightChecks(false))
+			addPreflightChecks(&res, sub.PreflightChecks(false))
 		}
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -92,24 +92,18 @@ func (s *Server) preflightTopology(topology string) (*preflightResult, error) {
 
 	for name := range needed {
 		if sub, err := substrate.Get(name); err == nil {
-			addSubstrateChecks(res, sub.PreflightChecks(true))
+			addPreflightChecks(res, sub.PreflightChecks(true))
 		}
 	}
 
 	for _, rb := range root.Resources {
-		addRuntimeChecks(res, runtime.ResourcePreflightChecks(rb, ctx))
+		addPreflightChecks(res, runtime.ResourcePreflightChecks(rb, ctx))
 	}
 
 	return res, nil
 }
 
-func addRuntimeChecks(res *preflightResult, checks []runtime.PreflightCheck) {
-	for _, c := range checks {
-		res.add(c.Name, c.OK, c.Severity, c.Message, c.Hint)
-	}
-}
-
-func addSubstrateChecks(res *preflightResult, checks []substrate.PreflightCheck) {
+func addPreflightChecks(res *preflightResult, checks []substrate.PreflightCheck) {
 	for _, c := range checks {
 		res.add(c.Name, c.OK, c.Severity, c.Message, c.Hint)
 	}

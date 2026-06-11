@@ -94,12 +94,6 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if id == DefaultAgentID {
-		agent := localAgent()
-		scrubAgentSecret(&agent)
-		writeJSON(w, http.StatusOK, agent)
-		return
-	}
 	agent, err := s.getAgent(context.Background(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
@@ -437,7 +431,7 @@ func (s *Server) handleAgentCommandStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 	agent, err := s.getAgent(r.Context(), id)
-	if err != nil && id != DefaultAgentID {
+	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
@@ -445,7 +439,7 @@ func (s *Server) handleAgentCommandStream(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusForbidden, fmt.Errorf("agent %q is %s", id, agent.Status))
 		return
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.originPatterns()})
 	if err != nil {
 		return
 	}
@@ -566,15 +560,53 @@ func (s *Server) updateAgentCommandFromEvent(ctx context.Context, event controlp
 		cmd.AckedAt = now
 	case "started":
 		cmd.Status = "running"
+		s.updateConsoleSessionFromCommandEvent(cmd, event)
 	case "completed":
 		cmd.Status = "completed"
 		cmd.EndedAt = now
+		s.updateConsoleSessionFromCommandEvent(cmd, event)
 	case "failed", "denied", "cancelled":
 		cmd.Status = event.Status
 		cmd.Err = event.Error
 		cmd.EndedAt = now
+		s.updateConsoleSessionFromCommandEvent(cmd, event)
 	}
 	_ = s.apiStore.SaveAgentCommand(ctx, cmd)
+}
+
+func (s *Server) updateConsoleSessionFromCommandEvent(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) {
+	if cmd.Type != "session_open" || cmd.Session == nil || cmd.Session.ID == "" {
+		return
+	}
+	now := event.CreatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	s.consoles.Update(cmd.Session.ID, func(sess *controlplane.ConsoleSession) {
+		switch event.Status {
+		case "started":
+			if sess.Status == "queued" {
+				sess.Status = "running"
+			}
+			if sess.StartedAt.IsZero() {
+				sess.StartedAt = now
+			}
+		case "completed":
+			if sess.Status != "failed" && sess.Status != "cancelled" {
+				sess.Status = "closed"
+			}
+			if sess.EndedAt.IsZero() {
+				sess.EndedAt = now
+			}
+		case "failed", "denied", "cancelled":
+			sess.Status = event.Status
+			sess.Err = event.Error
+			if sess.Err == "" {
+				sess.Err = event.Message
+			}
+			sess.EndedAt = now
+		}
+	})
 }
 
 func inventoryStatus(observed time.Time) string {
@@ -700,15 +732,6 @@ func normalizeAgent(in controlplane.Agent) (controlplane.Agent, error) {
 	return in, nil
 }
 
-func ensureLocalAgent(agents []controlplane.Agent) []controlplane.Agent {
-	for _, agent := range agents {
-		if agent.ID == DefaultAgentID {
-			return agents
-		}
-	}
-	return append(agents, localAgent())
-}
-
 func scrubAgentSecret(agent *controlplane.Agent) {
 	if agent != nil {
 		agent.AuthSecret = ""
@@ -718,20 +741,5 @@ func scrubAgentSecret(agent *controlplane.Agent) {
 func scrubAgentSecretValues(values []controlplane.Agent) {
 	for i := range values {
 		values[i].AuthSecret = ""
-	}
-}
-
-func localAgent() controlplane.Agent {
-	now := time.Now().UTC()
-	return controlplane.Agent{
-		ID:            DefaultAgentID,
-		Name:          "local API agent",
-		Status:        "online",
-		Protocol:      controlplane.AgentProtocolVersion,
-		Capabilities:  []string{"docker", "network", "firecracker", "libvirt"},
-		Labels:        map[string]string{"execution": "in-process"},
-		LastHeartbeat: now,
-		CreatedAt:     now,
-		UpdatedAt:     now,
 	}
 }

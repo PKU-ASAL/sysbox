@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 )
 
@@ -35,7 +36,7 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 		fmt.Fprintf(logWriter(e), "[lifecycle] skipping destroy of %s.%s (prevent_destroy = true)\n", r.Type, r.Name)
 	}
 	byID := map[string]bool{}
-	for _, action := range plan.actionsByType(PlanActionDelete) {
+	for _, action := range plan.actionsByType(controlplane.PlanActionDelete) {
 		byID[action.Resource] = true
 	}
 
@@ -73,14 +74,14 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 			continue
 		}
 		e.logf("[destroy] removing %s.%s\n", r.Type, r.Name)
-		step := e.recorder.StepStart(id.String(), PlanActionDelete)
+		step := e.recorder.StepStart(id.String(), controlplane.PlanActionDelete)
 		if err := e.DestroyResource(ctx, *r); err != nil {
 			e.logf("[destroy] warning: destroy %s.%s failed: %v\n", r.Type, r.Name, err)
 			e.recorder.StepFailed(step, err)
 			// Continue destroying remaining resources instead of aborting.
 			// A single failure should not prevent cleanup of other resources.
 		} else {
-			e.recordDeletePatch(ctx, step, *r, PlanActionDelete)
+			e.recordDeletePatch(ctx, step, *r, controlplane.PlanActionDelete)
 			e.recorder.StepDone(step)
 		}
 	}

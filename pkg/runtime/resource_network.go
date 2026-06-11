@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
@@ -38,7 +39,7 @@ func (NetworkResourceProvider) Schema() ResourceSchema {
 func (NetworkResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
 	if current.IsNAT() {
-		result.Checks = map[string]ResourceCheckHealth{"docker_network": {OK: true}}
+		result.Checks = map[string]controlplane.ResourceCheckHealth{"docker_network": {OK: true}}
 		return result, nil
 	}
 	nsName := current.Str("netns")
@@ -47,25 +48,25 @@ func (NetworkResourceProvider) Read(_ context.Context, current state.Resource) (
 		result.Reason = "network has no isolated namespace"
 		return result, nil
 	}
-	checks := map[string]ResourceCheckHealth{"netns": {OK: network.NetnsExists(nsName)}}
+	checks := map[string]controlplane.ResourceCheckHealth{"netns": {OK: network.NetnsExists(nsName)}}
 	if !network.NetnsExists(nsName) {
-		checks["netns"] = ResourceCheckHealth{OK: false, Reason: "network namespace missing"}
+		checks["netns"] = controlplane.ResourceCheckHealth{OK: false, Reason: "network namespace missing"}
 		result.Checks = checks
 		return result, driftedResource("network namespace missing")
 	}
 	if brName != "" && !network.BridgeExists(nsName, brName) {
-		checks["bridge"] = ResourceCheckHealth{OK: false, Reason: "bridge missing"}
+		checks["bridge"] = controlplane.ResourceCheckHealth{OK: false, Reason: "bridge missing"}
 		result.Checks = checks
 		return result, driftedResource("bridge missing")
 	}
 	if brName != "" {
-		checks["bridge"] = ResourceCheckHealth{OK: true}
+		checks["bridge"] = controlplane.ResourceCheckHealth{OK: true}
 	}
 	result.Checks = checks
 	return result, nil
 }
 
-func (NetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func (NetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -81,12 +82,13 @@ func (NetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, 
 	}
 
 	// Default: isolated netns/bridge/veth topology.
-	nsName := fmt.Sprintf("sysbox-net-%s", n.ID.Name)
+	networkName := networkExternalName(pc.Topology(), n.ID.Name)
+	nsName := fmt.Sprintf("sysbox-net-%s", networkName)
 	if err := createNetnsFn(nsName); err != nil {
 		return state.Resource{}, err
 	}
 
-	brName := fmt.Sprintf("br-%s", n.ID.Name)
+	brName := shortLinuxName("br", networkName)
 	gwCIDR, err := network.GatewayCIDR(cfg.CIDR)
 	if err != nil {
 		return state.Resource{}, err
@@ -126,7 +128,7 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 	}
 
 	info, err := sub.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
-		Name:   n.ID.Name,
+		Name:   networkExternalName(pc.Topology(), n.ID.Name),
 		CIDR:   cfg.CIDR,
 		NAT:    true,
 		Labels: ManagedLabels(pc.Topology(), pc.RunID(), n.ID),

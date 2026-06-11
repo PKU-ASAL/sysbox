@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
@@ -28,7 +29,7 @@ func (FirewallResourceProvider) Read(_ context.Context, current state.Resource) 
 	return resourceReadOK(current), nil
 }
 
-func (FirewallResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func (FirewallResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 

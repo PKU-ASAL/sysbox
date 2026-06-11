@@ -8,13 +8,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
 func TestEvaluateTopologyHealthEmptyState(t *testing.T) {
 	health := EvaluateTopologyHealth(context.Background(), &state.State{Version: state.SchemaVersion})
 
-	require.Equal(t, ResourceHealthHealthy, health.Status)
+	require.Equal(t, controlplane.ResourceHealthHealthy, health.Status)
 	require.Empty(t, health.Resources)
 	require.Zero(t, health.Drifted)
 	require.Zero(t, health.Unknown)
@@ -36,8 +37,8 @@ func TestEvaluateTopologyHealthKernelFile(t *testing.T) {
 
 	health := EvaluateTopologyHealth(context.Background(), st)
 
-	require.Equal(t, ResourceHealthHealthy, health.Status)
-	require.Equal(t, ResourceHealthHealthy, health.Resources[0].Status)
+	require.Equal(t, controlplane.ResourceHealthHealthy, health.Status)
+	require.Equal(t, controlplane.ResourceHealthHealthy, health.Resources[0].Status)
 	require.True(t, health.Resources[0].Checks["file"].OK)
 }
 
@@ -54,10 +55,10 @@ func TestEvaluateTopologyHealthMissingKernelDrifts(t *testing.T) {
 
 	health := EvaluateTopologyHealth(context.Background(), st)
 
-	require.Equal(t, ResourceHealthDrifted, health.Status)
+	require.Equal(t, controlplane.ResourceHealthDrifted, health.Status)
 	require.Equal(t, 1, health.Drifted)
-	require.Equal(t, ResourceHealthDrifted, health.Resources[0].Status)
-	require.Equal(t, RecoveryDecisionMarkDrift, health.Resources[0].Decision)
+	require.Equal(t, controlplane.ResourceHealthDrifted, health.Resources[0].Status)
+	require.Equal(t, controlplane.RecoveryDecisionMarkDrift, health.Resources[0].Decision)
 }
 
 func TestEvaluateResourceHealthUsesProviderRead(t *testing.T) {
@@ -70,8 +71,8 @@ func TestEvaluateResourceHealthUsesProviderRead(t *testing.T) {
 
 	health := EvaluateResourceHealth(context.Background(), res)
 
-	require.Equal(t, ResourceHealthDrifted, health.Status)
-	require.Equal(t, RecoveryDecisionMarkDrift, health.Decision)
+	require.Equal(t, controlplane.ResourceHealthDrifted, health.Status)
+	require.Equal(t, controlplane.RecoveryDecisionMarkDrift, health.Decision)
 	require.Equal(t, "kernel path missing from state", health.Reason)
 }
 
@@ -85,7 +86,7 @@ func TestEvaluateResourceHealthUnsupportedResourceIsHealthyUnknownProbe(t *testi
 
 	health := EvaluateResourceHealth(context.Background(), res)
 
-	require.Equal(t, ResourceHealthHealthy, health.Status)
+	require.Equal(t, controlplane.ResourceHealthHealthy, health.Status)
 	require.Equal(t, "resource has no runtime health probe", health.Reason)
 }
 

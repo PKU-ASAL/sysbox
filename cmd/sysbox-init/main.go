@@ -10,7 +10,8 @@
 //     - sethostname()
 //     - install authorized_keys to /root/.ssh/authorized_keys
 //     - drop env into /etc/profile.d/sysbox-env.sh
-//  5. Start background vsock-agent (phase D — for now just a stub goroutine).
+//  5. Re-exec itself as a detached --vsock-agent child that serves the
+//     vsock RPC API (exec / console / write_file; see server.go).
 //  6. exec(chain_init), default /sbin/init, fallback /bin/sh.
 //
 // The rootfs supplies only the chain_init binary (any standard init or a

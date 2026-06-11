@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -22,6 +23,7 @@ type Executor struct {
 	patchSink           StatePatchSink
 	topology            string
 	runID               string
+	operation           string
 	currentResourceStep int
 }
 
@@ -48,6 +50,10 @@ func (e *Executor) SetStatePatchSink(sink StatePatchSink) {
 func (e *Executor) SetRunContext(topology, runID string) {
 	e.topology = topology
 	e.runID = runID
+}
+
+func (e *Executor) SetOperation(operation string) {
+	e.operation = operation
 }
 
 func (e *Executor) recordSubstep(parent int, phase string, details map[string]any, fn func() error) error {
@@ -78,7 +84,7 @@ func (e *Executor) setCurrentResourceStep(step int) func() {
 	}
 }
 
-func (e *Executor) recordStepExternal(ctx context.Context, step int, id graph.NodeID, action PlanActionType) {
+func (e *Executor) recordStepExternal(ctx context.Context, step int, id graph.NodeID, action controlplane.PlanActionType) {
 	r := e.state.FindResource(id.Type, id.Name)
 	if r == nil {
 		return
@@ -112,7 +118,7 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id graph.No
 	}
 }
 
-func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action PlanActionType) {
+func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action controlplane.PlanActionType) {
 	log := StateResourceLog{
 		Type:     r.Type,
 		Name:     r.Name,

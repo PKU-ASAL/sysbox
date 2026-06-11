@@ -9,15 +9,12 @@ import (
 
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-type PreflightCheck struct {
-	Name     string `json:"name"`
-	OK       bool   `json:"ok"`
-	Severity string `json:"severity"`
-	Message  string `json:"message,omitempty"`
-	Hint     string `json:"hint,omitempty"`
-}
+// PreflightCheck aliases the canonical check type owned by pkg/substrate so
+// resource-level and substrate-level checks share one shape.
+type PreflightCheck = substrate.PreflightCheck
 
 type ResourcePreflightProvider interface {
 	PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []PreflightCheck

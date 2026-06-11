@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionNoop, action.Action)
+	require.Equal(t, controlplane.PlanActionNoop, action.Action)
 
 	n.Data = &config.FirewallConfig{
 		AttachTo: "sysbox_network.dmz.id",
@@ -53,7 +54,7 @@ func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 	}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionReplace, action.Action)
+	require.Equal(t, controlplane.PlanActionReplace, action.Action)
 	require.Contains(t, action.Changes, "rules")
 }
 
@@ -73,7 +74,7 @@ func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionNoop, action.Action)
+	require.Equal(t, controlplane.PlanActionNoop, action.Action)
 
 	n.Data = &config.SSHAccessConfig{
 		Node:           "sysbox_node.web.id",
@@ -82,7 +83,7 @@ func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 	}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionReplace, action.Action)
+	require.Equal(t, controlplane.PlanActionReplace, action.Action)
 	require.Contains(t, action.Changes, "authorized_keys")
 	require.True(t, action.Changes["authorized_keys"].Sensitive)
 }
@@ -104,7 +105,7 @@ func TestActorResourceProviderPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionNoop, action.Action)
+	require.Equal(t, controlplane.PlanActionNoop, action.Action)
 
 	n.Data = &config.ActorConfig{
 		Position: "internal",
@@ -114,7 +115,7 @@ func TestActorResourceProviderPlanDiff(t *testing.T) {
 	}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionReplace, action.Action)
+	require.Equal(t, controlplane.PlanActionReplace, action.Action)
 	require.Contains(t, action.Changes, "env")
 	require.True(t, action.Changes["env"].Sensitive)
 }

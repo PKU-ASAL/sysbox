@@ -5,12 +5,6 @@ const (
 	DefaultCacheDir = "/var/cache/sysbox"
 )
 
-// SysboxHome returns the service data root. API deployments should mount this
-// as persistent storage; CLI users can leave it unset and use explicit flags.
-func SysboxHome() string {
-	return MustLoadServiceConfig("").Paths.Home
-}
-
 // SysboxCache returns the shared artifact cache root.
 func SysboxCache() string {
 	return MustLoadServiceConfig("").Paths.Cache

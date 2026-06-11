@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -35,7 +36,7 @@ func (ActorResourceProvider) Read(ctx context.Context, current state.Resource) (
 	return resourceReadOK(current), nil
 }
 
-func (ActorResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func (ActorResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -218,7 +219,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		})
 	}
 
-	containerName := fmt.Sprintf("sysbox-actor-%s", n.ID.Name)
+	containerName := runtimeExternalName(e.topology, "actor", n.ID.Name)
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
 		Name:         containerName,
 		Image:        imgRef,

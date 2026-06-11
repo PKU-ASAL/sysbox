@@ -4,7 +4,6 @@ package controlplane
 import (
 	"time"
 
-	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -45,15 +44,15 @@ type Revision struct {
 }
 
 type Plan struct {
-	ID          string               `json:"id"`
-	ProjectID   string               `json:"project_id"`
-	Workspace   string               `json:"workspace"`
-	Revision    string               `json:"revision,omitempty"`
-	StateSerial int64                `json:"state_serial,omitempty"`
-	Status      string               `json:"status"`
-	Summary     string               `json:"summary,omitempty"`
-	Actions     []runtime.PlanAction `json:"actions"`
-	CreatedAt   time.Time            `json:"created_at"`
+	ID          string       `json:"id"`
+	ProjectID   string       `json:"project_id"`
+	Workspace   string       `json:"workspace"`
+	Revision    string       `json:"revision,omitempty"`
+	StateSerial int64        `json:"state_serial,omitempty"`
+	Status      string       `json:"status"`
+	Summary     string       `json:"summary,omitempty"`
+	Actions     []PlanAction `json:"actions"`
+	CreatedAt   time.Time    `json:"created_at"`
 }
 
 type Run struct {
@@ -170,13 +169,13 @@ type ConsoleSession struct {
 }
 
 type ResourceProjection struct {
-	AgentID    string                   `json:"agent_id,omitempty"`
-	Workspace  string                   `json:"workspace,omitempty"`
-	Topology   string                   `json:"topology,omitempty"`
-	Serial     int64                    `json:"serial,omitempty"`
-	ObservedAt time.Time                `json:"observed_at,omitempty"`
-	Health     runtime.TopologyHealth   `json:"health"`
-	Resources  []runtime.ResourceHealth `json:"resources,omitempty"`
+	AgentID    string           `json:"agent_id,omitempty"`
+	Workspace  string           `json:"workspace,omitempty"`
+	Topology   string           `json:"topology,omitempty"`
+	Serial     int64            `json:"serial,omitempty"`
+	ObservedAt time.Time        `json:"observed_at,omitempty"`
+	Health     TopologyHealth   `json:"health"`
+	Resources  []ResourceHealth `json:"resources,omitempty"`
 }
 
 type ConsoleRequest struct {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
@@ -40,7 +41,7 @@ func (e *Executor) Refresh(ctx context.Context, plan *Plan) {
 			e.logf("[refresh] %s: drifted - will re-create\n", id)
 			changed[id] = true
 			plan.Change = append(plan.Change, id)
-			plan.setAction(id, PlanActionReplace, "runtime drift detected", nil)
+			plan.setAction(id, controlplane.PlanActionReplace, "runtime drift detected", nil)
 		}
 	}
 	plan.Unchanged = stillOK
@@ -69,7 +70,7 @@ func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[graph.NodeID
 					changed[id] = true
 					delete(unchanged, id)
 					plan.Change = append(plan.Change, id)
-					plan.setAction(id, PlanActionReplace, "dependency "+dep.String()+" changed", nil)
+					plan.setAction(id, controlplane.PlanActionReplace, "dependency "+dep.String()+" changed", nil)
 					e.logf("[refresh] %s: dependency %s changed - will re-create\n", id, dep)
 					progress = true
 					break
@@ -113,19 +114,19 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 	providerName := current.Provider
 	sub, err := substrate.Get(providerName)
 	if err != nil {
-		result.Decision = RecoveryDecisionUnknown
+		result.Decision = controlplane.RecoveryDecisionUnknown
 		result.Reason = "substrate not registered"
 		return result, unknownResource("substrate not registered", err)
 	}
 	cid := current.Str("container_id")
 	if cid == "" {
-		result.Decision = RecoveryDecisionMarkDrift
+		result.Decision = controlplane.RecoveryDecisionMarkDrift
 		result.Reason = "node has no persisted external id"
 		return result, driftedResource("node has no persisted external id")
 	}
 	obs, err := sub.ObserveNode(ctx, substrate.NodeHandle{ID: cid, Provider: providerState(sub, &current)})
 	if err != nil {
-		result.Decision = RecoveryDecisionUnknown
+		result.Decision = controlplane.RecoveryDecisionUnknown
 		result.Reason = "observe node"
 		return result, unknownResource("observe node", err)
 	}
@@ -140,24 +141,24 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 	result.Decision = recovery.Decision
 	result.Reason = recovery.Reason
 	switch recovery.Decision {
-	case RecoveryDecisionNoop:
-	case RecoveryDecisionUnknown:
+	case controlplane.RecoveryDecisionNoop:
+	case controlplane.RecoveryDecisionUnknown:
 		return result, unknownResource(recovery.Reason, nil)
 	default:
 		return result, driftedResource(recovery.Reason)
 	}
-	checks := map[string]ResourceCheckHealth{}
+	checks := map[string]controlplane.ResourceCheckHealth{}
 	if ok, reason := networkAttachmentsCheck(&current); !ok {
-		checks["network_attachments"] = ResourceCheckHealth{OK: false, Reason: reason}
+		checks["network_attachments"] = controlplane.ResourceCheckHealth{OK: false, Reason: reason}
 		result.Checks = checks
-		result.Decision = RecoveryDecisionMarkDrift
+		result.Decision = controlplane.RecoveryDecisionMarkDrift
 		result.Reason = reason
 		return result, driftedResource(reason)
 	}
 	if !nodeRoutesHealthy(ctx, sub, &current) {
-		checks["routes"] = ResourceCheckHealth{OK: false, Reason: "route missing"}
+		checks["routes"] = controlplane.ResourceCheckHealth{OK: false, Reason: "route missing"}
 		result.Checks = checks
-		result.Decision = RecoveryDecisionMarkDrift
+		result.Decision = controlplane.RecoveryDecisionMarkDrift
 		result.Reason = "route missing"
 		return result, driftedResource("route missing")
 	}

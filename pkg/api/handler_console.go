@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/coder/websocket"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"io"
 	"net/http"
 	"time"
-
-	"github.com/coder/websocket"
-
-	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +89,16 @@ func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Reque
 		sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "allow", "console session allowed by policy"))
 	})
 	sess, _ = s.consoles.Snapshot(sess.ID)
+	if err := s.ensureConsoleNodeRunning(r.Context(), topology, node); err != nil {
+		s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
+			sess.Status = "failed"
+			sess.Err = err.Error()
+			sess.EndedAt = time.Now().UTC()
+			sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "reject", err.Error()))
+		})
+		writeError(w, http.StatusConflict, err)
+		return
+	}
 	if _, err := s.publishAgentCommand(r.Context(), agent.ID, controlplane.AgentCommand{
 		Type:    "session_open",
 		Session: &sess,
@@ -100,6 +108,41 @@ func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusAccepted, sess)
+}
+
+func (s *Server) ensureConsoleNodeRunning(ctx context.Context, topology, node string) error {
+	st, err := s.loadState(topology)
+	if err != nil {
+		return err
+	}
+	health := s.authoritativeTopologyHealth(ctx, topology, st)
+	resourceID := "sysbox_node." + node
+	for _, resource := range health.Resources {
+		if resource.Resource != resourceID {
+			continue
+		}
+		if resource.Status != "healthy" {
+			return fmt.Errorf("node %q is %s; repair required before opening a console", node, consoleHealthReason(resource))
+		}
+		if resource.Observation != nil && !resource.Observation.Running {
+			return fmt.Errorf("node %q is %s; repair required before opening a console", node, consoleHealthReason(resource))
+		}
+		return nil
+	}
+	return fmt.Errorf("node %q has no health observation; repair required before opening a console", node)
+}
+
+func consoleHealthReason(resource controlplane.ResourceHealth) string {
+	if resource.Reason != "" {
+		return resource.Reason
+	}
+	if resource.Observation != nil && resource.Observation.Status != "" {
+		return string(resource.Observation.Status)
+	}
+	if resource.Status != "" {
+		return string(resource.Status)
+	}
+	return "unknown"
 }
 
 func (s *Server) handleGetConsoleSession(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +218,7 @@ func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side 
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.originPatterns()})
 	if err != nil {
 		return
 	}

@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
 
@@ -697,7 +697,7 @@ func waitFirecrackerBoot(ctx context.Context, hs *HandleState, timeout time.Dura
 	if hs == nil || hs.VsockUDS == "" {
 		return nil
 	}
-	conn := providerexec.NewVsockConnection(hs.VsockUDS, hs.VsockPort)
+	conn := transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort)
 	return conn.WaitReady(ctx, timeout)
 }
 

@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -21,11 +24,59 @@ func (s *Server) handleListResources(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	health := runtime.EvaluateTopologyHealth(r.Context(), st)
+	health := s.authoritativeTopologyHealth(r.Context(), topology, st)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"resources":   health.Resources,
-		"projections": s.agents.ListResourceProjections(topology),
+		"resources": health.Resources,
+		"health":    health,
 	})
+}
+
+func (s *Server) authoritativeTopologyHealth(ctx context.Context, topology string, st *state.State) controlplane.TopologyHealth {
+	if proj, ok := latestResourceProjection(s.agents.ListResourceProjections(topology)); ok {
+		if len(proj.Resources) > 0 {
+			return topologyHealthFromResources(proj.Resources)
+		}
+		if len(proj.Health.Resources) > 0 {
+			return proj.Health
+		}
+	}
+	if st == nil {
+		return controlplane.TopologyHealth{Status: controlplane.ResourceHealthUnknown}
+	}
+	return runtime.EvaluateTopologyHealth(ctx, st)
+}
+
+func latestResourceProjection(projections []controlplane.ResourceProjection) (controlplane.ResourceProjection, bool) {
+	if len(projections) == 0 {
+		return controlplane.ResourceProjection{}, false
+	}
+	sort.SliceStable(projections, func(i, j int) bool {
+		return projections[i].ObservedAt.After(projections[j].ObservedAt)
+	})
+	return projections[0], true
+}
+
+func topologyHealthFromResources(resources []controlplane.ResourceHealth) controlplane.TopologyHealth {
+	out := controlplane.TopologyHealth{
+		Status:    controlplane.ResourceHealthHealthy,
+		Resources: append([]controlplane.ResourceHealth{}, resources...),
+	}
+	for _, resource := range resources {
+		switch resource.Status {
+		case controlplane.ResourceHealthHealthy:
+			out.Healthy++
+		case controlplane.ResourceHealthDrifted:
+			out.Drifted++
+		default:
+			out.Unknown++
+		}
+	}
+	if out.Drifted > 0 {
+		out.Status = controlplane.ResourceHealthDrifted
+	} else if out.Unknown > 0 {
+		out.Status = controlplane.ResourceHealthUnknown
+	}
+	return out
 }
 
 func (s *Server) handleTopologyStatusStream(w http.ResponseWriter, r *http.Request) {

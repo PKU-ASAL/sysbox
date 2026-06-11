@@ -14,23 +14,25 @@ sysbox keeps deployment small and explicit:
 cp .env.example .env
 $EDITOR .env        # change SYSBOX_POSTGRES_PASSWORD outside disposable labs
 
-make deploy       # API + Postgres
-make deploy-full  # API + Postgres + Docker agent
-make deploy-ui    # Web UI for the running API
-make undeploy
-make reset        # stop compose and remove local Postgres volume
-make logs
+make api build-api    # rebuild API/agent image only
+make api deploy       # API + Postgres
+make api deploy-full  # API + Postgres + Docker agent
+make api seed         # copy example HCL workspaces
+make api build-ui     # build and start Web UI for the running API
+make api down
+make api clean        # stop compose, remove Postgres volume, clear API workspaces
+make api logs
 ```
 
-`make deploy` starts only the control plane. It does not mount the host Docker
+`make api deploy` starts only the control plane. It does not mount the host Docker
 socket into the API container.
 
-`make deploy-full` first registers an agent identity, then starts a
+`make api deploy-full` first registers an agent identity, then starts a
 `sysbox-agent` container. The agent mounts the host Docker socket and executes
 Docker-substrate runs assigned by the API.
 
-`make deploy-ui` starts the browser console on
-`http://${SYSBOX_WEB_HOST_ADDR:-0.0.0.0}:${SYSBOX_WEB_HOST_PORT:-3000}`. The UI
+`make api build-ui` builds and starts the browser console on
+`http://${SYSBOX_WEB_HOST_ADDR:-0.0.0.0}:${SYSBOX_WEB_HOST_PORT:-3001}`. The UI
 uses the same-origin `/v1` proxy for HTTP and WebSocket console traffic.
 
 API and Web are published on `0.0.0.0` by default so another machine can reach
@@ -38,7 +40,10 @@ them through the host IP. Postgres is bound to `127.0.0.1` by default.
 
 If you change `SYSBOX_POSTGRES_PASSWORD` after Postgres has already initialized,
 the existing Docker volume keeps the old database password. For local disposable
-labs, run `make reset` and deploy again.
+labs, run `make api clean` and deploy again.
+
+`make api deploy` does not seed example HCL workspaces. Run `make api seed`
+explicitly when you want the bundled examples in the API workspace list.
 
 ## Service Config
 
@@ -80,7 +85,8 @@ credentials.
 ## Smoke Test
 
 ```bash
-make deploy-full
+make api deploy-full
+make api seed
 curl http://127.0.0.1:9876/v1/agents
 curl -X POST http://127.0.0.1:9876/v1/topologies/docker-service/apply
 curl http://127.0.0.1:9876/v1/runs

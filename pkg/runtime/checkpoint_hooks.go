@@ -12,6 +12,7 @@ import (
 	dockernet "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	netprovider "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -301,7 +302,7 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 		Observation:          obs,
 	})
 	switch recovery.Decision {
-	case RecoveryDecisionAdopt:
+	case controlplane.RecoveryDecisionAdopt:
 		if adopted, err := sub.AdoptNode(ctx, handle); err == nil {
 			if inst := substrate.HandleToInstance(adopted, sub); len(inst) > 0 {
 				for k, v := range inst {
@@ -314,12 +315,12 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 		}
 		AdoptStateResource(st, *rec, "")
 		action.Status = "recovered"
-	case RecoveryDecisionRecoverState:
+	case controlplane.RecoveryDecisionRecoverState:
 		AdoptStateResource(st, *rec, "")
 		action.Status = "recovered_not_running"
-	case RecoveryDecisionNoop:
+	case controlplane.RecoveryDecisionNoop:
 		action.Status = "already_in_state"
-	case RecoveryDecisionNotFound:
+	case controlplane.RecoveryDecisionNotFound:
 		action.Status = "not_found"
 		action.Error = recovery.Reason
 	default:

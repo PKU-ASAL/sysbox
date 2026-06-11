@@ -167,7 +167,7 @@ type ConnectionHint struct {
 
 // Connection is the substrate-agnostic interface for reaching a running node
 // (exec, copy, background). Each substrate returns its own implementation.
-// Moved here from pkg/provider/exec so substrates can implement it without
+// Moved here from pkg/transport so substrates can implement it without
 // import cycles.
 type Connection interface {
 	// ExecInline runs each line as a shell command (sh -c) sequentially.
@@ -185,6 +185,23 @@ type Connection interface {
 
 	// CopyFile copies a local file into the node at dstPath.
 	CopyFile(ctx context.Context, srcPath, dstPath string) error
+}
+
+// ConnectionWaiter is an optional Connection capability: block until the
+// transport is ready to execute commands (SSH reachable, vsock agent up).
+// The runtime probes for it before running provisioners so it never has to
+// know concrete transport types.
+type ConnectionWaiter interface {
+	WaitReady(ctx context.Context, timeout time.Duration) error
+}
+
+// ImageEntryStarter is an optional Substrate capability: launch the image's
+// original entrypoint/CMD inside an already-running node. Substrates that
+// override the entrypoint at create time (e.g. docker's "sleep infinity" so
+// provisioners can run first) implement this; the runtime probes for it after
+// provisioning. A no-op return means the image had no entry to start.
+type ImageEntryStarter interface {
+	ExecImageEntry(ctx context.Context, handle NodeHandle) error
 }
 
 // ConsoleProvider is an optional substrate capability for an interactive

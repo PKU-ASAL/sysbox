@@ -1,4 +1,4 @@
-package exec
+package transport
 
 import (
 	"bytes"
@@ -203,6 +203,11 @@ func (c *SSHConnection) WaitForSSH(ctx context.Context, timeout time.Duration) e
 		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("ssh not ready after %v", timeout)
+}
+
+// WaitReady implements substrate.ConnectionWaiter.
+func (c *SSHConnection) WaitReady(ctx context.Context, timeout time.Duration) error {
+	return c.WaitForSSH(ctx, timeout)
 }
 
 func resolveSSHBin() string {

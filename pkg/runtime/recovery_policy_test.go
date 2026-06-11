@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -21,7 +22,7 @@ func TestDecideNodeRecoveryRefreshHealthy(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, RecoveryDecisionNoop, plan.Decision)
+	require.Equal(t, controlplane.RecoveryDecisionNoop, plan.Decision)
 	require.Equal(t, "process alive", plan.Reason)
 }
 
@@ -38,7 +39,7 @@ func TestDecideNodeRecoveryRefreshMissingMarksDrift(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, RecoveryDecisionMarkDrift, plan.Decision)
+	require.Equal(t, controlplane.RecoveryDecisionMarkDrift, plan.Decision)
 	require.Equal(t, "container not found", plan.Reason)
 }
 
@@ -56,7 +57,7 @@ func TestDecideNodeRecoveryCheckpointRunningAdopts(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, RecoveryDecisionAdopt, plan.Decision)
+	require.Equal(t, controlplane.RecoveryDecisionAdopt, plan.Decision)
 	require.Equal(t, "socket and process found", plan.Reason)
 }
 
@@ -74,7 +75,7 @@ func TestDecideNodeRecoveryCheckpointStoppedRecoversState(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, RecoveryDecisionRecoverState, plan.Decision)
+	require.Equal(t, controlplane.RecoveryDecisionRecoverState, plan.Decision)
 	require.Equal(t, "vm artifacts exist but process is not running", plan.Reason)
 }
 
@@ -91,6 +92,6 @@ func TestDecideNodeRecoveryCheckpointWithoutArtifactsIsNotFound(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, RecoveryDecisionNotFound, plan.Decision)
+	require.Equal(t, controlplane.RecoveryDecisionNotFound, plan.Decision)
 	require.Equal(t, "recoverable artifacts missing", plan.Reason)
 }

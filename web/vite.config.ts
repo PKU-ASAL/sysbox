@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 3000,
+      port: Number(env.SYSBOX_WEB_DEV_PORT || 3001),
       proxy: {
         "/v1": {
           target: apiTarget,
@@ -22,6 +22,19 @@ export default defineConfig(({ mode }) => {
           ws: true,
         },
       },
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes("elkjs")) return "topology-layout"
+            if (id.includes("node_modules/@xyflow")) return "topology-canvas"
+            if (id.includes("node_modules/@xterm")) return "terminal"
+            if (id.includes("node_modules")) return "vendor"
+          },
+        },
+      },
+      chunkSizeWarningLimit: 1500,
     },
   }
 })

@@ -106,6 +106,26 @@ func TestDispatchRunAssignsAgentBeforeExecution(t *testing.T) {
 	require.False(t, got.AssignedAt.IsZero())
 }
 
+func TestRepairRunIsFirstClassOperation(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+		ID:           "host-a",
+		Status:       "online",
+		Capabilities: []string{"docker"},
+	}))
+	run := s.jobs.start("mixed", "repair")
+
+	err := s.dispatchRun(context.Background(), run, []string{"docker"})
+	require.NoError(t, err)
+
+	got, ok := s.jobs.get(run.ID)
+	require.True(t, ok)
+	require.Equal(t, "repair", got.Op)
+	require.Equal(t, "repair", got.Operation)
+	require.Equal(t, "host-a", got.AgentID)
+	require.Equal(t, RunAssigned, got.Status)
+}
+
 func TestAgentClaimRun(t *testing.T) {
 	cfg := config.MustLoadServiceConfig("")
 	cfg.Paths.RunsDir = t.TempDir()

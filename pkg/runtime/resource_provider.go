@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -21,7 +22,7 @@ type ResourceProvider interface {
 	Type() string
 	Schema() ResourceSchema
 	Read(ctx context.Context, current state.Resource) (ResourceReadResult, error)
-	PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error)
+	PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error)
 	Create(ctx context.Context, pc *ProviderContext, desired *graph.Node) (state.Resource, error)
 	Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, current state.Resource) (state.Resource, error)
 	Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error
@@ -39,15 +40,15 @@ type DataGraphDecoder interface {
 type ResourceReadResult struct {
 	Resource    state.Resource
 	Reason      string
-	Decision    RecoveryDecision
+	Decision    controlplane.RecoveryDecision
 	Observation *substrate.NodeObservation
-	Checks      map[string]ResourceCheckHealth
+	Checks      map[string]controlplane.ResourceCheckHealth
 }
 
 func resourceReadOK(current state.Resource) ResourceReadResult {
 	return ResourceReadResult{
 		Resource: current,
-		Decision: RecoveryDecisionNoop,
+		Decision: controlplane.RecoveryDecisionNoop,
 	}
 }
 

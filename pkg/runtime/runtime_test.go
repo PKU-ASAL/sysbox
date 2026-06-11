@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -120,7 +121,7 @@ func TestPlanDetectsDesiredHashChange(t *testing.T) {
 	require.Empty(t, plan.Unchanged)
 	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, plan.Change)
 	require.Len(t, plan.Actions, 1)
-	require.Equal(t, PlanActionReplace, plan.Actions[0].Action)
+	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
 	require.Equal(t, "10.0.1.0/24", plan.Actions[0].Changes["cidr"].Before)
 	require.Equal(t, "10.0.2.0/24", plan.Actions[0].Changes["cidr"].After)
 	require.True(t, plan.Actions[0].Changes["cidr"].RequiresReplace)
@@ -152,7 +153,7 @@ func TestComputePlanUsesRegisteredProviderPlanDiff(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []graph.NodeID{{Type: "sysbox_actor", Name: "agent"}}, plan.Change)
 	require.Len(t, plan.Actions, 1)
-	require.Equal(t, PlanActionReplace, plan.Actions[0].Action)
+	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
 	require.Contains(t, plan.Actions[0].Changes, "command")
 }
 
@@ -215,11 +216,11 @@ func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {
 }
 
 func TestPlanHasChangesUsesActions(t *testing.T) {
-	p := &Plan{Actions: []PlanAction{{
+	p := &Plan{Actions: []controlplane.PlanAction{{
 		Resource: "sysbox_network.dmz",
 		Type:     "sysbox_network",
 		Name:     "dmz",
-		Action:   PlanActionCreate,
+		Action:   controlplane.PlanActionCreate,
 	}}}
 
 	require.True(t, p.HasChanges())
@@ -229,11 +230,11 @@ func TestPlanFromActionsRebuildsExecutableIndexes(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion}
 	st.AddResource(state.Resource{Type: "sysbox_node", Name: "old", Provider: "docker", Instance: map[string]any{}})
 
-	p := PlanFromActions([]PlanAction{
-		{Resource: "sysbox_network.dmz", Type: "sysbox_network", Name: "dmz", Action: PlanActionCreate},
-		{Resource: "sysbox_node.web", Type: "sysbox_node", Name: "web", Action: PlanActionReplace},
-		{Resource: "sysbox_node.old", Type: "sysbox_node", Name: "old", Action: PlanActionDelete},
-		{Resource: "sysbox_kernel.linux", Type: "sysbox_kernel", Name: "linux", Action: PlanActionNoop},
+	p := PlanFromActions([]controlplane.PlanAction{
+		{Resource: "sysbox_network.dmz", Type: "sysbox_network", Name: "dmz", Action: controlplane.PlanActionCreate},
+		{Resource: "sysbox_node.web", Type: "sysbox_node", Name: "web", Action: controlplane.PlanActionReplace},
+		{Resource: "sysbox_node.old", Type: "sysbox_node", Name: "old", Action: controlplane.PlanActionDelete},
+		{Resource: "sysbox_kernel.linux", Type: "sysbox_kernel", Name: "linux", Action: controlplane.PlanActionNoop},
 	}, st)
 
 	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, p.Add)
@@ -262,7 +263,7 @@ func TestRefreshUsesProviderReadForDrift(t *testing.T) {
 
 	require.Empty(t, plan.Unchanged)
 	require.Equal(t, []graph.NodeID{{Type: "sysbox_kernel", Name: "linux"}}, plan.Change)
-	require.Equal(t, PlanActionReplace, plan.Actions[0].Action)
+	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
 	require.Equal(t, "runtime drift detected", plan.Actions[0].Reason)
 }
 

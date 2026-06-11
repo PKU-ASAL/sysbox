@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"errors"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,14 +19,14 @@ func TestFileRecorderPersistsPlanLeaseAndStateSerials(t *testing.T) {
 	rec.SetLeaseOwner("sysbox-api:apply:run-1")
 	rec.SetStateSerialBefore(4)
 
-	plan := &Plan{Actions: []PlanAction{{
+	plan := &Plan{Actions: []controlplane.PlanAction{{
 		Resource: "sysbox_node.web",
 		Type:     "sysbox_node",
 		Name:     "web",
-		Action:   PlanActionCreate,
+		Action:   controlplane.PlanActionCreate,
 	}}}
 	require.NoError(t, rec.Begin("apply", plan))
-	step := rec.StepStartKind("state", "state", PlanActionUpdate)
+	step := rec.StepStartKind("state", "state", controlplane.PlanActionUpdate)
 	rec.StepFailed(step, errors.New("cas conflict"))
 	rec.SetStateSerialAfter(5)
 	rec.Finish(errors.New("failed"))
@@ -51,7 +52,7 @@ func TestFileRecorderPersistsSubsteps(t *testing.T) {
 	rec := NewFileRecorder(path, "run-1", "mixed")
 	require.NoError(t, rec.Begin("apply", nil))
 
-	parent := rec.StepStart("sysbox_node.vm", PlanActionCreate)
+	parent := rec.StepStart("sysbox_node.vm", controlplane.PlanActionCreate)
 	child := rec.SubstepStart(parent, "create_resource", map[string]any{"resource": "sysbox_node.vm"})
 	rec.StepDone(child)
 	rec.StepDone(parent)
@@ -75,7 +76,7 @@ func TestFileRecorderPersistsStatePatches(t *testing.T) {
 	rec := NewFileRecorder(path, "run-1", "mixed")
 	require.NoError(t, rec.Begin("apply", nil))
 
-	step := rec.StepStart("sysbox_node.web", PlanActionCreate)
+	step := rec.StepStart("sysbox_node.web", controlplane.PlanActionCreate)
 	stateLog := StateResourceLog{
 		Type:     "sysbox_node",
 		Name:     "web",
@@ -103,7 +104,7 @@ func TestApplyStatePatchUpsertAndDelete(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion}
 	patch := StatePatch{
 		Resource: "sysbox_node.web",
-		Action:   PlanActionCreate,
+		Action:   controlplane.PlanActionCreate,
 		Op:       StatePatchUpsert,
 		State: &StateResourceLog{
 			Type:     "sysbox_node",
@@ -122,7 +123,7 @@ func TestApplyStatePatchUpsertAndDelete(t *testing.T) {
 
 	require.True(t, ApplyStatePatch(st, StatePatch{
 		Resource: "sysbox_node.web",
-		Action:   PlanActionDelete,
+		Action:   controlplane.PlanActionDelete,
 		Op:       StatePatchDelete,
 	}))
 	require.Nil(t, st.FindResource("sysbox_node", "web"))

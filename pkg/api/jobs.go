@@ -184,14 +184,17 @@ func normalizeRunProductFields(r *Run) {
 	if r == nil {
 		return
 	}
+	if r.Operation == "" {
+		r.Operation = r.Op
+	}
+	if r.Op == "" {
+		r.Op = r.Operation
+	}
 	if r.ProjectID == "" {
 		r.ProjectID = "default"
 	}
 	if r.Workspace == "" {
 		r.Workspace = r.Topology
-	}
-	if r.AgentID == "" {
-		r.AgentID = DefaultAgentID
 	}
 }
 

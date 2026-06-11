@@ -105,6 +105,14 @@ func (s *Server) Start(addr string) error {
 	return srv.ListenAndServe()
 }
 
+func (s *Server) originPatterns() []string {
+	origins := s.cfg.API.AllowedOrigins
+	if len(origins) == 0 {
+		return []string{"*"} // dev default: accept all origins
+	}
+	return origins
+}
+
 func (s *Server) registerRoutes() {
 	m := s.mux
 
@@ -163,6 +171,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/graph", s.handleGetGraph)
 	m.HandleFunc("GET /v1/topologies/{topology}/preflight", s.handlePreflight)
 	m.HandleFunc("POST /v1/topologies/{topology}/apply", s.handleApply)
+	m.HandleFunc("POST /v1/topologies/{topology}/repair", s.handleRepair)
 	m.HandleFunc("POST /v1/topologies/{topology}/destroy", s.handleDestroy)
 	m.HandleFunc("DELETE /v1/topologies/{topology}", s.handleDeleteTopology)
 

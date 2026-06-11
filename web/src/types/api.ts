@@ -68,6 +68,14 @@ export type ResourceHealth = {
   status?: string
   reason?: string
   decision?: string
+  observation?: {
+    exists?: boolean
+    running?: boolean
+    healthy?: boolean
+    status?: string
+    exit_code?: number
+    reason?: string
+  }
   checks?: Record<string, { ok?: boolean; message?: string }>
 }
 

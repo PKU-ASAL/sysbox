@@ -27,12 +27,13 @@ type ServiceConfig struct {
 }
 
 type APIConfig struct {
-	Listen  string           `yaml:"listen" json:"listen"`
-	Token   string           `yaml:"token" json:"token,omitempty"`
-	Console APIConsoleConfig `yaml:"console" json:"console,omitempty"`
-	RBAC    APIRBACConfig    `yaml:"rbac" json:"rbac,omitempty"`
-	Audit   APIAuditConfig   `yaml:"audit" json:"audit,omitempty"`
-	Headers APIHeadersConfig `yaml:"headers" json:"headers,omitempty"`
+	Listen         string           `yaml:"listen" json:"listen"`
+	Token          string           `yaml:"token" json:"token,omitempty"`
+	AllowedOrigins []string         `yaml:"allowed_origins" json:"allowed_origins,omitempty"`
+	Console        APIConsoleConfig `yaml:"console" json:"console,omitempty"`
+	RBAC           APIRBACConfig    `yaml:"rbac" json:"rbac,omitempty"`
+	Audit          APIAuditConfig   `yaml:"audit" json:"audit,omitempty"`
+	Headers        APIHeadersConfig `yaml:"headers" json:"headers,omitempty"`
 }
 
 type APIConsoleConfig struct {

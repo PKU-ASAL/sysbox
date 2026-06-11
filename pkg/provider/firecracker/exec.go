@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	vsockexec "github.com/oslab/sysbox/pkg/provider/exec"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
 
@@ -24,7 +24,7 @@ const (
 // vsockConnFromHandle builds a VsockConnection from the handle's typed
 // HandleState. Returns nil if vsock metadata is missing (rootfs without
 // sysbox-init).
-func vsockConnFromHandle(h substrate.NodeHandle) *vsockexec.VsockConnection {
+func vsockConnFromHandle(h substrate.NodeHandle) *transport.VsockConnection {
 	hs, _ := h.Provider.(*HandleState)
 	if hs == nil || hs.VsockUDS == "" {
 		return nil
@@ -33,7 +33,7 @@ func vsockConnFromHandle(h substrate.NodeHandle) *vsockexec.VsockConnection {
 	if hs.VsockPort != 0 {
 		port = hs.VsockPort
 	}
-	return vsockexec.NewVsockConnection(hs.VsockUDS, port)
+	return transport.NewVsockConnection(hs.VsockUDS, port)
 }
 
 // ExecInNode runs a command inside the VM. Prefers the vsock RPC path
@@ -48,7 +48,7 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec
 
 func (s *Substrate) OpenConsole(ctx context.Context, h substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
 	if vc := vsockConnFromHandle(h); vc != nil {
-		return vc.OpenConsole(ctx, vsockexec.ConsoleRequest{
+		return vc.OpenConsole(ctx, transport.ConsoleRequest{
 			Cmd:   req.Cmd,
 			Shell: req.Shell,
 			Env:   req.Env,
@@ -60,7 +60,7 @@ func (s *Substrate) OpenConsole(ctx context.Context, h substrate.NodeHandle, req
 	if ssh == nil {
 		return nil, fmt.Errorf("no vsock or SSH console info in handle")
 	}
-	return ssh.OpenConsole(ctx, vsockexec.ConsoleRequest{
+	return ssh.OpenConsole(ctx, transport.ConsoleRequest{
 		Cmd:   req.Cmd,
 		Shell: req.Shell,
 		Env:   req.Env,
@@ -71,7 +71,7 @@ func (s *Substrate) OpenConsole(ctx context.Context, h substrate.NodeHandle, req
 
 var _ substrate.ConsoleProvider = (*Substrate)(nil)
 
-func (s *Substrate) execInNodeVsock(ctx context.Context, vc *vsockexec.VsockConnection, spec substrate.ExecSpec) (substrate.ExecResult, error) {
+func (s *Substrate) execInNodeVsock(ctx context.Context, vc *transport.VsockConnection, spec substrate.ExecSpec) (substrate.ExecResult, error) {
 	var stdout, stderr strings.Builder
 	var exitCode int
 	err := vc.ExecFrameStream(ctx, spec.Cmd, spec.Env, func(f vsockrpc.Frame) error {
@@ -172,7 +172,7 @@ func (s *Substrate) copyToNodeSSH(ctx context.Context, h substrate.NodeHandle, s
 
 // sshConnFromHandle constructs an SSHConnection from the firecracker handle's
 // SSH metadata. Returns nil if no SSH info is available.
-func sshConnFromHandle(h substrate.NodeHandle) *vsockexec.SSHConnection {
+func sshConnFromHandle(h substrate.NodeHandle) *transport.SSHConnection {
 	hs, _ := h.Provider.(*HandleState)
 	if hs == nil || hs.SSHIP == "" {
 		return nil
@@ -181,5 +181,5 @@ func sshConnFromHandle(h substrate.NodeHandle) *vsockexec.SSHConnection {
 	if hs.SSHPort != "" {
 		port = hs.SSHPort
 	}
-	return vsockexec.NewSSHConnectionWithPort(hs.SSHIP, port, "root", "", "")
+	return transport.NewSSHConnectionWithPort(hs.SSHIP, port, "root", "", "")
 }

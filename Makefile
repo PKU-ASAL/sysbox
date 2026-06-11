@@ -14,10 +14,11 @@ TOPO ?= two-networks
 API_URL ?= http://127.0.0.1:9876
 AGENT_API_URL ?= http://sysbox-api:9876
 API_DATA_DIR ?= $(or $(SYSBOX_HOST_HOME_DIR),.sysbox/api)
+API_DATA_ABS := $(abspath $(API_DATA_DIR))
 AGENT_ID ?= local-docker
 AGENT_CAPABILITIES ?= docker,network
 WEB_HOST_ADDR ?= $(or $(SYSBOX_WEB_HOST_ADDR),0.0.0.0)
-WEB_HOST_PORT ?= $(or $(SYSBOX_WEB_HOST_PORT),3000)
+WEB_HOST_PORT ?= $(or $(SYSBOX_WEB_HOST_PORT),3001)
 WEB_URL ?= http://127.0.0.1:$(WEB_HOST_PORT)
 
 HCL := examples/$(TOPO)/field.sysbox.hcl
@@ -30,16 +31,29 @@ COMPOSE_API := -f $(COMPOSE_DIR)/compose.yml
 COMPOSE_FULL := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.agent.yml
 COMPOSE_ALL := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.agent.yml -f $(COMPOSE_DIR)/compose.web.yml
 
-.DEFAULT_GOAL := help
-.PHONY: help build build-all web-build test test-e2e lint ci \
-	plan apply destroy up down \
-	image image-web seed deploy deploy-full deploy-ui deploy-ui-dev status undeploy reset logs config \
-	.agent-register clean
+FIRST_GOAL := $(firstword $(MAKECMDGOALS))
+SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
-help: ## Show available targets
-	@echo "Usage: make <target> [TOPO=two-networks|three-nodes|microvm|mixed|libvirt-vm]"
+.DEFAULT_GOAL := help
+
+.PHONY: help build build-all web-build test test-e2e lint ci clean \
+	cli api \
+	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
+	api-help api-build-api api-build-ui api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
+	validate plan apply destroy output state up \
+	build-api build-ui seed deploy deploy-full status down logs config \
+	.agent-register
+
+help: ## Show command groups
+	@echo "Usage:"
+	@echo "  make cli <validate|plan|apply|destroy|output|state> [TOPO=two-networks]"
+	@echo "  make api <build-api|build-ui|seed|deploy|deploy-full|status|down|clean|logs|config>"
 	@echo ""
-	@awk 'BEGIN{FS=":.*##"} /^[a-z][a-z0-9-]+:.*##/{printf "  %-16s %s\n",$$1,$$2}' $(MAKEFILE_LIST)
+	@echo "Common:"
+	@echo "  make build          Build bin/sysbox"
+	@echo "  make test           Run unit tests"
+	@echo "  make lint           Run go vet"
+	@echo "  make test-e2e       Run API e2e smoke test against make api deploy-full"
 
 build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
@@ -48,13 +62,13 @@ build-all: ## Build sysbox-init for amd64 and arm64
 	$(GOENV) GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $(INITDIR)/sysbox-init.linux-amd64.bin ./cmd/sysbox-init
 	$(GOENV) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $(INITDIR)/sysbox-init.linux-arm64.bin ./cmd/sysbox-init
 
-$(INITDIR)/sysbox-init.linux-%.bin: cmd/sysbox-init/main.go cmd/sysbox-init/network.go cmd/sysbox-init/server.go cmd/sysbox-init/sensor.go
+$(INITDIR)/sysbox-init.linux-%.bin: cmd/sysbox-init/main.go cmd/sysbox-init/network.go cmd/sysbox-init/server.go
 	$(GOENV) GOOS=linux GOARCH=$* CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $@ ./cmd/sysbox-init
 
 test: ## Run unit tests
 	$(GOENV) $(GO) test ./...
 
-test-e2e: ## Run black-box API e2e tests against make deploy-full
+test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
 
 web-build: ## Build the Web UI
@@ -70,26 +84,50 @@ ci: build lint test ## Run the local CI gate
 		$(BINARY) -f examples/$$topo/field.sysbox.hcl --state /tmp/sysbox-ci-$$topo.json plan 2>&1 | head -1; \
 	done
 
-plan: build ## Plan an example topology locally
+clean: ## Remove build outputs, or API data when called as "make api clean"
+	@if [ "$(FIRST_GOAL)" = "api" ]; then :; else rm -f $(BINARY); fi
+
+cli:
+	@$(MAKE) --no-print-directory cli-$(or $(SUBCOMMAND),help)
+
+cli-help:
+	@echo "Usage: make cli <validate|plan|apply|destroy|output|state> [TOPO=$(TOPO)]"
+
+cli-validate: build
+	$(SYSBOX) validate
+
+cli-plan: build
 	$(SYSBOX) plan
 
-apply: build ## Apply an example topology locally
+cli-apply: build
 	@mkdir -p .sysbox/runs/$(TOPO)
 	$(SYSBOX) apply --auto-approve
 
-destroy: build ## Destroy an example topology locally
+cli-destroy: build
 	$(SYSBOX) destroy --auto-approve
 
-up: apply ## Alias for apply
-down: destroy ## Alias for destroy
+cli-output: build
+	$(SYSBOX) output
 
-image: ## Build the sysbox container image
+cli-state: build
+	$(BINARY) --state $(STATE) state list
+
+api:
+	@$(MAKE) --no-print-directory api-$(or $(SUBCOMMAND),help)
+
+api-help:
+	@echo "Usage: make api <build-api|build-ui|seed|deploy|deploy-full|status|down|clean|logs|config>"
+
+api-build-api:
 	docker build --network=host --no-cache -t sysbox:latest .
 
-image-web: web-build ## Build the sysbox Web UI image
+api-build-ui: web-build
 	docker build --network=host -t sysbox-web:latest ./web
+	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml up -d sysbox-web
+	@echo "Web UI: $(WEB_URL)"
+	@echo "Remote: http://<host-ip>:$(WEB_HOST_PORT)"
 
-seed: ## Seed API workspaces from examples when missing
+api-seed:
 	@mkdir -p "$(API_DATA_DIR)/workspaces"
 	@for dir in examples/*; do \
 		if [ -f "$$dir/field.sysbox.hcl" ]; then \
@@ -102,29 +140,16 @@ seed: ## Seed API workspaces from examples when missing
 		fi; \
 	done
 
-deploy: image seed ## Deploy API + Postgres
+api-deploy: api-build-api
 	$(COMPOSE) $(COMPOSE_API) up -d
 	@echo "API server: $(API_URL)/v1/health"
+	@echo "Seed examples with: make api seed"
 
-deploy-full: deploy .agent-register ## Deploy API + Postgres + Docker agent
+api-deploy-full: api-deploy .agent-register
 	$(COMPOSE) $(COMPOSE_FULL) up -d sysbox-agent
 	@echo "Agent: $(AGENT_ID)"
 
-deploy-ui: image-web ## Deploy Web UI for the running API
-	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml up -d sysbox-web
-	@echo "Web UI: $(WEB_URL)"
-	@echo "Remote: http://<host-ip>:$(WEB_HOST_PORT)"
-
-deploy-ui-dev: ## Start Web UI in local Vite dev mode
-	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml stop sysbox-web >/dev/null 2>&1 || true
-	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml rm -f sysbox-web >/dev/null 2>&1 || true
-	@pids=$$(ps -eo pid=,comm=,args= | awk -v web="$(CURDIR)/web/node_modules/.bin/vite" '$$2 == "node" && index($$0, web) {print $$1}'); \
-	if [ -n "$$pids" ]; then echo "Stopping stale Web UI dev server: $$pids"; kill $$pids; fi
-	npm --prefix web install
-	@echo "Web UI dev: $(WEB_URL)"
-	SYSBOX_WEB_API_TARGET=$(API_URL) npm --prefix web run dev -- --host $(WEB_HOST_ADDR) --port $(WEB_HOST_PORT) --strictPort
-
-status: ## Show compose service, port, and health status
+api-status:
 	@$(COMPOSE) $(COMPOSE_ALL) ps
 	@echo ""
 	@printf "API health: "
@@ -136,17 +161,31 @@ status: ## Show compose service, port, and health status
 	$(COMPOSE) $(COMPOSE_FULL) run --rm --no-deps --entrypoint sysbox sysbox-agent \
 		agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) --capabilities $(AGENT_CAPABILITIES) --identity /var/lib/sysbox/agent/identity.json
 
-undeploy: ## Stop API, Postgres, and agent
+api-down:
 	$(COMPOSE) $(COMPOSE_FULL) down
 
-reset: ## Stop compose and remove local Postgres volume
+api-clean:
 	$(COMPOSE) $(COMPOSE_FULL) down -v
+	@echo "Removing API workspaces under $(API_DATA_DIR)/workspaces"
+	@if [ -d "$(API_DATA_DIR)/workspaces" ]; then \
+		rm -rf "$(API_DATA_DIR)/workspaces" 2>/dev/null || \
+		docker run --rm -v "$(API_DATA_ABS):/var/lib/sysbox" --entrypoint sh sysbox:latest -c 'rm -rf /var/lib/sysbox/workspaces'; \
+	fi
 
-logs: ## Tail compose logs
+api-logs:
 	$(COMPOSE) $(COMPOSE_FULL) logs -f
 
-config: ## Print resolved compose config
+api-config:
 	$(COMPOSE) $(COMPOSE_FULL) config
 
-clean: ## Remove build outputs
-	rm -f $(BINARY)
+# Compatibility aliases. Prefer the grouped commands above.
+validate plan apply destroy output state:
+	@if [ "$(FIRST_GOAL)" = "cli" ]; then :; else $(MAKE) --no-print-directory cli-$@; fi
+
+up: apply
+
+build-api build-ui seed deploy deploy-full status logs config:
+	@if [ "$(FIRST_GOAL)" = "api" ]; then :; else $(MAKE) --no-print-directory api-$@; fi
+
+down:
+	@if [ "$(FIRST_GOAL)" = "api" ]; then :; else $(MAKE) --no-print-directory api-down; fi

@@ -287,7 +287,7 @@ func (s *Server) handleGetTopologyHealth(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	health := runtime.EvaluateTopologyHealth(r.Context(), st)
+	health := s.authoritativeTopologyHealth(r.Context(), topology, st)
 	writeJSON(w, http.StatusOK, health)
 }
 
@@ -358,6 +358,35 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "agent_id": run.AgentID})
+}
+
+// POST /v1/topologies/{topology}/repair
+func (s *Server) handleRepair(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	req, err := decodeApplyRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run := s.jobs.startWithOptions(topology, "repair", runStartOptions{
+		Revision: req.Revision,
+		AgentID:  req.AgentID,
+	})
+	required, err := requiredCapabilitiesForTopology(s.hclFile(topology))
+	if err != nil {
+		s.jobs.finish(run, err)
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.dispatchRun(r.Context(), run, required); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "agent_id": run.AgentID, "operation": "repair"})
 }
 
 type applyRequest struct {

@@ -449,7 +449,11 @@ func openConsoleSession(ctx context.Context, opts Options, bridge Bridge, sess c
 		return err
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
-	return bridge.OpenConsole(ctx, sess, req, conn)
+	if err := bridge.OpenConsole(ctx, sess, req, conn); err != nil {
+		_ = writeConsoleFrame(ctx, conn, consoleFrame{Type: "error", Error: err.Error()})
+		return err
+	}
+	return nil
 }
 
 type remoteBridge struct {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"path/filepath"
 	"sync"
 	"time"
@@ -21,22 +23,22 @@ const (
 )
 
 type OperationStep struct {
-	Index         int               `json:"index"`
-	Resource      string            `json:"resource"`
-	Action        PlanActionType    `json:"action"`
-	Kind          string            `json:"kind,omitempty"`
-	Phase         string            `json:"phase,omitempty"`
-	Provider      string            `json:"provider,omitempty"`
-	ExternalID    string            `json:"external_id,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	StateResource *StateResourceLog `json:"state_resource,omitempty"`
-	Details       map[string]any    `json:"details,omitempty"`
-	Parent        int               `json:"parent,omitempty"`
-	StateRecorded bool              `json:"state_recorded,omitempty"`
-	Status        OperationStatus   `json:"status"`
-	StartedAt     time.Time         `json:"started_at"`
-	EndedAt       time.Time         `json:"ended_at,omitempty"`
-	Error         string            `json:"error,omitempty"`
+	Index         int                         `json:"index"`
+	Resource      string                      `json:"resource"`
+	Action        controlplane.PlanActionType `json:"action"`
+	Kind          string                      `json:"kind,omitempty"`
+	Phase         string                      `json:"phase,omitempty"`
+	Provider      string                      `json:"provider,omitempty"`
+	ExternalID    string                      `json:"external_id,omitempty"`
+	Labels        map[string]string           `json:"labels,omitempty"`
+	StateResource *StateResourceLog           `json:"state_resource,omitempty"`
+	Details       map[string]any              `json:"details,omitempty"`
+	Parent        int                         `json:"parent,omitempty"`
+	StateRecorded bool                        `json:"state_recorded,omitempty"`
+	Status        OperationStatus             `json:"status"`
+	StartedAt     time.Time                   `json:"started_at"`
+	EndedAt       time.Time                   `json:"ended_at,omitempty"`
+	Error         string                      `json:"error,omitempty"`
 }
 
 type StatePatchOp string
@@ -47,28 +49,28 @@ const (
 )
 
 type StatePatch struct {
-	Index    int               `json:"index"`
-	Resource string            `json:"resource"`
-	Action   PlanActionType    `json:"action"`
-	Op       StatePatchOp      `json:"op"`
-	State    *StateResourceLog `json:"state,omitempty"`
-	At       time.Time         `json:"at"`
-	Recorded bool              `json:"recorded,omitempty"`
+	Index    int                         `json:"index"`
+	Resource string                      `json:"resource"`
+	Action   controlplane.PlanActionType `json:"action"`
+	Op       StatePatchOp                `json:"op"`
+	State    *StateResourceLog           `json:"state,omitempty"`
+	At       time.Time                   `json:"at"`
+	Recorded bool                        `json:"recorded,omitempty"`
 }
 
 type OperationCheckpoint struct {
-	RunID             string          `json:"run_id"`
-	Topology          string          `json:"topology,omitempty"`
-	Operation         string          `json:"operation"`
-	Status            OperationStatus `json:"status"`
-	StartedAt         time.Time       `json:"started_at"`
-	EndedAt           time.Time       `json:"ended_at,omitempty"`
-	LeaseOwner        string          `json:"lease_owner,omitempty"`
-	StateSerialBefore int64           `json:"state_serial_before,omitempty"`
-	StateSerialAfter  int64           `json:"state_serial_after,omitempty"`
-	Plan              []PlanAction    `json:"plan,omitempty"`
-	Steps             []OperationStep `json:"steps"`
-	StatePatches      []StatePatch    `json:"state_patches,omitempty"`
+	RunID             string                    `json:"run_id"`
+	Topology          string                    `json:"topology,omitempty"`
+	Operation         string                    `json:"operation"`
+	Status            OperationStatus           `json:"status"`
+	StartedAt         time.Time                 `json:"started_at"`
+	EndedAt           time.Time                 `json:"ended_at,omitempty"`
+	LeaseOwner        string                    `json:"lease_owner,omitempty"`
+	StateSerialBefore int64                     `json:"state_serial_before,omitempty"`
+	StateSerialAfter  int64                     `json:"state_serial_after,omitempty"`
+	Plan              []controlplane.PlanAction `json:"plan,omitempty"`
+	Steps             []OperationStep           `json:"steps"`
+	StatePatches      []StatePatch              `json:"state_patches,omitempty"`
 }
 
 type StateResourceLog struct {
@@ -80,14 +82,14 @@ type StateResourceLog struct {
 
 type OperationRecorder interface {
 	Begin(operation string, plan *Plan) error
-	StepStart(resource string, action PlanActionType) int
+	StepStart(resource string, action controlplane.PlanActionType) int
 	StepDone(index int)
 	StepFailed(index int, err error)
 	Finish(err error)
 	SetLeaseOwner(owner string)
 	SetStateSerialBefore(serial int64)
 	SetStateSerialAfter(serial int64)
-	StepStartKind(kind, resource string, action PlanActionType) int
+	StepStartKind(kind, resource string, action controlplane.PlanActionType) int
 	StepExternal(index int, provider, externalID string, labels map[string]string)
 	StepStateResource(index int, resource StateResourceLog)
 	StepStatePatch(index int, op StatePatchOp, resource *StateResourceLog)
@@ -102,15 +104,15 @@ type StatePatchSink interface {
 
 type NoopRecorder struct{}
 
-func (NoopRecorder) Begin(string, *Plan) error            { return nil }
-func (NoopRecorder) StepStart(string, PlanActionType) int { return -1 }
-func (NoopRecorder) StepDone(int)                         {}
-func (NoopRecorder) StepFailed(int, error)                {}
-func (NoopRecorder) Finish(error)                         {}
-func (NoopRecorder) SetLeaseOwner(string)                 {}
-func (NoopRecorder) SetStateSerialBefore(int64)           {}
-func (NoopRecorder) SetStateSerialAfter(int64)            {}
-func (NoopRecorder) StepStartKind(string, string, PlanActionType) int {
+func (NoopRecorder) Begin(string, *Plan) error                         { return nil }
+func (NoopRecorder) StepStart(string, controlplane.PlanActionType) int { return -1 }
+func (NoopRecorder) StepDone(int)                                      {}
+func (NoopRecorder) StepFailed(int, error)                             {}
+func (NoopRecorder) Finish(error)                                      {}
+func (NoopRecorder) SetLeaseOwner(string)                              {}
+func (NoopRecorder) SetStateSerialBefore(int64)                        {}
+func (NoopRecorder) SetStateSerialAfter(int64)                         {}
+func (NoopRecorder) StepStartKind(string, string, controlplane.PlanActionType) int {
 	return -1
 }
 func (NoopRecorder) StepExternal(int, string, string, map[string]string) {}
@@ -145,16 +147,16 @@ func (r *FileRecorder) Begin(operation string, plan *Plan) error {
 	r.checkpoint.Status = OperationStarted
 	r.checkpoint.StartedAt = time.Now().UTC()
 	if plan != nil {
-		r.checkpoint.Plan = append([]PlanAction(nil), plan.Actions...)
+		r.checkpoint.Plan = append([]controlplane.PlanAction(nil), plan.Actions...)
 	}
 	return r.flushLocked()
 }
 
-func (r *FileRecorder) StepStart(resource string, action PlanActionType) int {
+func (r *FileRecorder) StepStart(resource string, action controlplane.PlanActionType) int {
 	return r.StepStartKind("resource", resource, action)
 }
 
-func (r *FileRecorder) StepStartKind(kind, resource string, action PlanActionType) int {
+func (r *FileRecorder) StepStartKind(kind, resource string, action controlplane.PlanActionType) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	idx := len(r.checkpoint.Steps)
@@ -175,7 +177,7 @@ func (r *FileRecorder) SubstepStart(parent int, phase string, details map[string
 	defer r.mu.Unlock()
 	idx := len(r.checkpoint.Steps)
 	resource := ""
-	action := PlanActionNoop
+	action := controlplane.PlanActionNoop
 	if parent >= 0 && parent < len(r.checkpoint.Steps) {
 		resource = r.checkpoint.Steps[parent].Resource
 		action = r.checkpoint.Steps[parent].Action

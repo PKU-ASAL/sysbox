@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 )
 
@@ -13,7 +14,11 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := e.recorder.Begin("apply", plan); err != nil {
+	operation := e.operation
+	if operation == "" {
+		operation = "apply"
+	}
+	if err := e.recorder.Begin(operation, plan); err != nil {
 		return err
 	}
 	var applyErr error
@@ -30,7 +35,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 	}
 
 	toCreate := map[string]bool{}
-	for _, action := range plan.actionsByType(PlanActionCreate, PlanActionRead, PlanActionUpdate, PlanActionReplace) {
+	for _, action := range plan.actionsByType(controlplane.PlanActionCreate, controlplane.PlanActionRead, controlplane.PlanActionUpdate, controlplane.PlanActionReplace) {
 		toCreate[action.Resource] = true
 	}
 
@@ -38,7 +43,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 	// reverse topo order first (dependents before dependencies), then recreate
 	// them in normal topo order below.
 	changeSet := map[graph.NodeID]bool{}
-	for _, action := range plan.actionsByType(PlanActionUpdate, PlanActionReplace) {
+	for _, action := range plan.actionsByType(controlplane.PlanActionUpdate, controlplane.PlanActionReplace) {
 		id := action.NodeID()
 		changeSet[id] = true
 	}
@@ -59,12 +64,12 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 			r := e.state.FindResource(id.Type, id.Name)
 			if r != nil {
 				e.logf("[apply] removing drifted %s before re-create\n", id)
-				step := e.recorder.StepStart(id.String(), PlanActionDelete)
+				step := e.recorder.StepStart(id.String(), controlplane.PlanActionDelete)
 				if err := e.DestroyResource(ctx, *r); err != nil {
 					e.logf("[apply] warning: cleanup of drifted %s failed: %v\n", id, err)
 					e.recorder.StepFailed(step, err)
 				} else {
-					e.recordDeletePatch(ctx, step, *r, PlanActionDelete)
+					e.recordDeletePatch(ctx, step, *r, controlplane.PlanActionDelete)
 					e.recorder.StepDone(step)
 				}
 			}
@@ -81,9 +86,9 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 		}
 		verb := "creating"
 		switch actionFor(plan, id) {
-		case PlanActionReplace, PlanActionUpdate:
+		case controlplane.PlanActionReplace, controlplane.PlanActionUpdate:
 			verb = "re-creating"
-		case PlanActionRead:
+		case controlplane.PlanActionRead:
 			verb = "reading"
 		}
 		e.logf("[apply] %s %s\n", verb, id)

@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -35,7 +36,7 @@ func (RouterResourceProvider) Read(ctx context.Context, current state.Resource) 
 	return readNodeLikeResource(ctx, current)
 }
 
-func (RouterResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (PlanAction, error) {
+func (RouterResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -116,7 +117,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	}
 
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
-		Name:         fmt.Sprintf("sysbox-%s", n.ID.Name),
+		Name:         runtimeExternalName(e.topology, "router", n.ID.Name),
 		Image:        imgRef,
 		Sysctls:      map[string]string{"net.ipv4.ip_forward": "1"},
 		InitialLinks: initialLinks,

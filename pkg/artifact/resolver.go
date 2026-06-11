@@ -91,10 +91,6 @@ func DefaultCacheDir() string {
 	return filepath.Join(home, ".cache", "sysbox", "artifacts")
 }
 
-func DefaultRootCacheDir() string {
-	return filepath.Join(config.SysboxCache(), "rootfs")
-}
-
 // Resolve returns the local path of the artifact described by spec,
 // downloading it into the cache when necessary.
 func (r *Resolver) Resolve(spec Spec) (Result, error) {

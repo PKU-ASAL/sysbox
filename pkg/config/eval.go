@@ -87,17 +87,17 @@ func buildEvalContextInner(root *Root, callerDir string) *hcl.EvalContext {
 					// (strings, bools, lists) would panic on AsBigFloat().
 					if val.Type() == cty.Number {
 						if n, acc := val.AsBigFloat().Int64(); acc == 0 && n > 0 {
-						elems := make([]cty.Value, n)
-						for i := 0; i < int(n); i++ {
-							instanceName := fmt.Sprintf("%s[%d]", r.Name, i)
-							elems[i] = cty.ObjectVal(map[string]cty.Value{
-								"id":   cty.StringVal(instanceName),
-								"name": cty.StringVal(instanceName),
-							})
+							elems := make([]cty.Value, n)
+							for i := 0; i < int(n); i++ {
+								instanceName := fmt.Sprintf("%s[%d]", r.Name, i)
+								elems[i] = cty.ObjectVal(map[string]cty.Value{
+									"id":   cty.StringVal(instanceName),
+									"name": cty.StringVal(instanceName),
+								})
+							}
+							resTypes[r.Type][r.Name] = cty.TupleVal(elems)
+							continue
 						}
-						resTypes[r.Type][r.Name] = cty.TupleVal(elems)
-						continue
-					}
 					} // end if val.Type() == cty.Number
 				}
 			}
@@ -352,29 +352,4 @@ func EachEvalContext(parent *hcl.EvalContext, key string, value cty.Value) *hcl.
 		}),
 	}
 	return child
-}
-
-// ParseLocals extracts the resolved local values from the root for use
-// by the apply command (e.g. output printing). Returns an empty map if none.
-func ParseLocals(root *Root, ctx *hcl.EvalContext) map[string]string {
-	out := map[string]string{}
-	for _, lb := range root.Locals {
-		if lb.Remain == nil {
-			continue
-		}
-		attrs, diags := lb.Remain.JustAttributes()
-		if diags.HasErrors() {
-			continue
-		}
-		for name, attr := range attrs {
-			val, diags := attr.Expr.Value(ctx)
-			if diags.HasErrors() {
-				continue
-			}
-			if val.Type() == cty.String {
-				out[name] = val.AsString()
-			}
-		}
-	}
-	return out
 }

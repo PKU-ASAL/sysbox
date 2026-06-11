@@ -296,6 +296,11 @@ func readSerial(path string) (int64, error) {
 // HTTPBackend stores state via HTTP PUT/GET (compatible with Terraform's
 // HTTP backend). The URL is the state endpoint; optional headers provide
 // auth (e.g. Authorization: Bearer ...).
+//
+// Limitations: HTTPBackend implements only the base Backend interface — no
+// versioned CAS saves, snapshots, deletes, or locking. Versioned features
+// silently fall back to plain Save/Load. Use the Postgres backend when those
+// guarantees matter.
 type HTTPBackend struct {
 	URL     string
 	Headers map[string]string
@@ -337,8 +342,9 @@ func (b *HTTPBackend) Save(ctx context.Context, data []byte) error {
 }
 
 func (b *HTTPBackend) Lock(_ context.Context) (UnlockFunc, error) {
-	// HTTP backend relies on optimistic concurrency (ETag / If-Match)
-	// rather than explicit locking.
+	// The HTTP backend implements no locking: Save is a plain PUT with no
+	// conditional headers, so concurrent writers can overwrite each other.
+	// Use the Postgres backend when multiple writers share a topology.
 	return func() {}, nil
 }
 
@@ -348,8 +354,14 @@ func (b *HTTPBackend) Metadata(_ context.Context) (Metadata, error) {
 
 // ── S3 backend ────────────────────────────────────────────────────────────────
 
-// S3Backend stores state in an S3-compatible object store.
-// It uses the standard AWS SDK v2 credential chain (env, profile, IAM role).
+// S3Backend stores state in an S3-compatible object store by shelling out to
+// the `aws` CLI (no SDK dependency); credentials come from the CLI's standard
+// chain (env, profile, IAM role).
+//
+// Limitations: like HTTPBackend, it implements only the base Backend
+// interface — no versioned CAS saves, snapshots, deletes, or locking.
+// Concurrent writers can overwrite each other; use Postgres for multi-writer
+// setups.
 type S3Backend struct {
 	Bucket string
 	Key    string
@@ -359,34 +371,13 @@ type S3Backend struct {
 }
 
 func (b *S3Backend) Lock(_ context.Context) (UnlockFunc, error) {
-	// S3 backend uses native conditional writes (PutObject with IfNoneMatch
-	// for lock acquisition). Simple implementation: optimistic.
+	// No locking: Save is a plain `aws s3 cp` upload with no conditional
+	// headers, so concurrent writers can overwrite each other.
 	return func() {}, nil
 }
 
 func (b *S3Backend) Metadata(_ context.Context) (Metadata, error) {
 	return Metadata{Backend: "s3", Location: fmt.Sprintf("s3://%s/%s", b.Bucket, b.Key), Version: SchemaVersion}, nil
-}
-
-type SQLiteBackend struct {
-	Path     string
-	Topology string
-}
-
-func (b *SQLiteBackend) Load(context.Context) ([]byte, error) {
-	return nil, fmt.Errorf("sqlite state backend is declared but not implemented yet")
-}
-
-func (b *SQLiteBackend) Save(context.Context, []byte) error {
-	return fmt.Errorf("sqlite state backend is declared but not implemented yet")
-}
-
-func (b *SQLiteBackend) Lock(context.Context) (UnlockFunc, error) {
-	return func() {}, nil
-}
-
-func (b *SQLiteBackend) Metadata(context.Context) (Metadata, error) {
-	return Metadata{Backend: "sqlite", Location: b.Path, Version: SchemaVersion}, nil
 }
 
 type PostgresBackend struct {

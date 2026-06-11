@@ -64,7 +64,7 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	e.bridge.AttachRun(run)
 	log := e.bridge.LogWriter(run.ID)
 	switch run.Op {
-	case "apply":
+	case "apply", "repair":
 		if run.ParentID != "" {
 			if parent, err := e.bridge.ParentRun(ctx, run.ParentID); err == nil {
 				e.executeResumeApply(ctx, parent, run, log)
@@ -168,6 +168,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	}
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
+	exec.SetOperation(run.Op)
 	exec.SetLogger(log)
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
@@ -211,7 +212,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	saveStep := recorder.StepStartKind("state", "state", runtime.PlanActionUpdate)
+	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionUpdate)
 	if err := ctx.Err(); err != nil {
 		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
@@ -288,7 +289,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 		e.bridge.Finish(run, err)
 		return
 	}
-	saveStep := recorder.StepStartKind("state", "state", runtime.PlanActionUpdate)
+	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionUpdate)
 	if err := ctx.Err(); err != nil {
 		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
@@ -329,21 +330,21 @@ func defaultDestroyPlan(st *state.State) *runtime.Plan {
 	for _, r := range st.Resources {
 		if r.LifecyclePreventDestroy() {
 			plan.Protected = append(plan.Protected, r)
-			plan.Actions = append(plan.Actions, runtime.PlanAction{
+			plan.Actions = append(plan.Actions, controlplane.PlanAction{
 				Resource: r.Type + "." + r.Name,
 				Type:     r.Type,
 				Name:     r.Name,
-				Action:   runtime.PlanActionSkip,
+				Action:   controlplane.PlanActionSkip,
 				Reason:   "blocked by lifecycle.prevent_destroy",
 			})
 			continue
 		}
 		plan.Destroy = append(plan.Destroy, r)
-		plan.Actions = append(plan.Actions, runtime.PlanAction{
+		plan.Actions = append(plan.Actions, controlplane.PlanAction{
 			Resource: r.Type + "." + r.Name,
 			Type:     r.Type,
 			Name:     r.Name,
-			Action:   runtime.PlanActionDelete,
+			Action:   controlplane.PlanActionDelete,
 			Reason:   "destroy requested",
 		})
 	}

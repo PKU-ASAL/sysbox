@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -51,12 +52,12 @@ func TestNetworkResourceProviderPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionNoop, action.Action)
+	require.Equal(t, controlplane.PlanActionNoop, action.Action)
 
 	n.Data = &config.NetworkConfig{CIDR: "10.20.0.0/24"}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, PlanActionReplace, action.Action)
+	require.Equal(t, controlplane.PlanActionReplace, action.Action)
 	require.Contains(t, action.Changes, "cidr")
 }
 

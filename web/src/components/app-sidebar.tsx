@@ -3,10 +3,11 @@ import { useNavigate } from "react-router-dom"
 import {
   Activity,
   Boxes,
-  Database,
-  LayoutDashboard,
-  Package,
+  ClipboardList,
+  FolderKanban,
+  Network,
   RadioTower,
+  ServerCog,
 } from "lucide-react"
 
 import {
@@ -25,7 +26,7 @@ import {
 } from "@/components/ui/sidebar"
 import type { Agent, Run, Topology } from "@/types/api"
 
-export type AppPage = "dashboard" | "agents" | "artifacts" | "topologies"
+export type AppPage = "workspaces" | "runs" | "topologies" | "agents" | "system"
 
 type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
   activePage: AppPage
@@ -36,11 +37,12 @@ type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
 }
 
 const primaryNav = [
-  { page: "dashboard", title: "Dashboard", icon: LayoutDashboard },
+  { page: "workspaces", title: "Workspaces", icon: FolderKanban, badge: "workspaces" },
+  { page: "runs", title: "Runs", icon: ClipboardList, badge: "runs" },
+  { page: "topologies", title: "Topologies", icon: Network, badge: "topologies" },
   { page: "agents", title: "Agents", icon: RadioTower, badge: "agents" },
-  { page: "artifacts", title: "Artifacts", icon: Package, badge: "artifacts" },
-  { page: "topologies", title: "Topologies", icon: Database, badge: "topologies" },
-] satisfies Array<{ page: AppPage; title: string; icon: typeof LayoutDashboard; badge?: "agents" | "artifacts" | "topologies" }>
+  { page: "system", title: "System", icon: ServerCog },
+] satisfies Array<{ page: AppPage; title: string; icon: typeof FolderKanban; badge?: "agents" | "runs" | "topologies" | "workspaces" }>
 
 export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, ...props }: AppSidebarProps) {
   const navigate = useNavigate()
@@ -51,7 +53,8 @@ export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, ..
   function badgeValue(key?: string) {
     if (key === "topologies") return deployedTopologies
     if (key === "agents") return onlineAgents
-    if (key === "artifacts") return topologies.length
+    if (key === "runs") return activeRuns
+    if (key === "workspaces") return topologies.length
     return undefined
   }
 
@@ -82,7 +85,7 @@ export function AppSidebar({ activePage, apiStatus, agents, runs, topologies, ..
                 const value = badgeValue(item.badge)
                 return (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton tooltip={item.title} isActive={activePage === item.page} onClick={() => navigate(item.page === "dashboard" ? "/" : `/${item.page}`)}>
+                    <SidebarMenuButton tooltip={item.title} isActive={activePage === item.page} onClick={() => navigate(`/${item.page}`)}>
                       <item.icon />
                       <span>{item.title}</span>
                     </SidebarMenuButton>

@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -11,17 +12,6 @@ type RecoveryContext string
 const (
 	RecoveryContextRefresh    RecoveryContext = "refresh"
 	RecoveryContextCheckpoint RecoveryContext = "checkpoint"
-)
-
-type RecoveryDecision string
-
-const (
-	RecoveryDecisionNoop         RecoveryDecision = "noop"
-	RecoveryDecisionAdopt        RecoveryDecision = "adopt"
-	RecoveryDecisionRecoverState RecoveryDecision = "recover_state"
-	RecoveryDecisionMarkDrift    RecoveryDecision = "mark_drift"
-	RecoveryDecisionNotFound     RecoveryDecision = "not_found"
-	RecoveryDecisionUnknown      RecoveryDecision = "unknown"
 )
 
 type RecoveryInput struct {
@@ -36,7 +26,7 @@ type RecoveryInput struct {
 }
 
 type RecoveryPlan struct {
-	Decision RecoveryDecision
+	Decision controlplane.RecoveryDecision
 	Reason   string
 }
 
@@ -48,7 +38,7 @@ func DecideNodeRecovery(in RecoveryInput) RecoveryPlan {
 		return decideCheckpointRecovery(in)
 	default:
 		return RecoveryPlan{
-			Decision: RecoveryDecisionUnknown,
+			Decision: controlplane.RecoveryDecisionUnknown,
 			Reason:   "unknown recovery context",
 		}
 	}
@@ -57,44 +47,44 @@ func DecideNodeRecovery(in RecoveryInput) RecoveryPlan {
 func decideRefreshRecovery(in RecoveryInput) RecoveryPlan {
 	obs := in.Observation
 	if !in.HasState {
-		return RecoveryPlan{Decision: RecoveryDecisionMarkDrift, Reason: "resource missing from state"}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionMarkDrift, Reason: "resource missing from state"}
 	}
 	if obs.Status == substrate.NodeStatusUnknown {
-		return RecoveryPlan{Decision: RecoveryDecisionUnknown, Reason: observationReason(obs, "node status unknown")}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionUnknown, Reason: observationReason(obs, "node status unknown")}
 	}
 	if obs.Running && obs.Healthy {
-		return RecoveryPlan{Decision: RecoveryDecisionNoop, Reason: observationReason(obs, "node running")}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionNoop, Reason: observationReason(obs, "node running")}
 	}
 	if !obs.Exists || obs.Status == substrate.NodeStatusMissing {
-		return RecoveryPlan{Decision: RecoveryDecisionMarkDrift, Reason: observationReason(obs, "node missing")}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionMarkDrift, Reason: observationReason(obs, "node missing")}
 	}
 	if obs.Running && !obs.Healthy {
-		return RecoveryPlan{Decision: RecoveryDecisionMarkDrift, Reason: observationReason(obs, "node unhealthy")}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionMarkDrift, Reason: observationReason(obs, "node unhealthy")}
 	}
-	return RecoveryPlan{Decision: RecoveryDecisionMarkDrift, Reason: observationReason(obs, fmt.Sprintf("node %s", obs.Status))}
+	return RecoveryPlan{Decision: controlplane.RecoveryDecisionMarkDrift, Reason: observationReason(obs, fmt.Sprintf("node %s", obs.Status))}
 }
 
 func decideCheckpointRecovery(in RecoveryInput) RecoveryPlan {
 	obs := in.Observation
 	if in.HasState || in.StateRecorded {
-		return RecoveryPlan{Decision: RecoveryDecisionNoop, Reason: "resource already recorded in state"}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionNoop, Reason: "resource already recorded in state"}
 	}
 	if !in.HasCheckpoint {
-		return RecoveryPlan{Decision: RecoveryDecisionNotFound, Reason: "checkpoint missing"}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionNotFound, Reason: "checkpoint missing"}
 	}
 	if !in.RecoverableArtifacts {
-		return RecoveryPlan{Decision: RecoveryDecisionNotFound, Reason: "recoverable artifacts missing"}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionNotFound, Reason: "recoverable artifacts missing"}
 	}
 	if obs.Status == substrate.NodeStatusUnknown {
-		return RecoveryPlan{Decision: RecoveryDecisionUnknown, Reason: observationReason(obs, "node status unknown")}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionUnknown, Reason: observationReason(obs, "node status unknown")}
 	}
 	if obs.Running && obs.Healthy {
-		return RecoveryPlan{Decision: RecoveryDecisionAdopt, Reason: observationReason(obs, "node still running")}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionAdopt, Reason: observationReason(obs, "node still running")}
 	}
 	if obs.Exists || !obs.Running {
-		return RecoveryPlan{Decision: RecoveryDecisionRecoverState, Reason: observationReason(obs, "node not running but artifacts are recoverable")}
+		return RecoveryPlan{Decision: controlplane.RecoveryDecisionRecoverState, Reason: observationReason(obs, "node not running but artifacts are recoverable")}
 	}
-	return RecoveryPlan{Decision: RecoveryDecisionNotFound, Reason: observationReason(obs, "node not recoverable")}
+	return RecoveryPlan{Decision: controlplane.RecoveryDecisionNotFound, Reason: observationReason(obs, "node not recoverable")}
 }
 
 func observationReason(obs substrate.NodeObservation, fallback string) string {

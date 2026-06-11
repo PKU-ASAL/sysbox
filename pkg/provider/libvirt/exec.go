@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	providerexec "github.com/oslab/sysbox/pkg/provider/exec"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
 )
 
 // Connection returns an SSH connection to the VM. The SSHIP is either set
@@ -47,7 +47,7 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 		return nil, fmt.Errorf("libvirt: no SSH IP for %s; set ssh_ip in provider block or use a provisioner to configure it", handle.ID)
 	}
 
-	return providerexec.NewSSHConnectionWithPort(host, port, user, key, pass), nil
+	return transport.NewSSHConnectionWithPort(host, port, user, key, pass), nil
 }
 
 func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
@@ -55,11 +55,11 @@ func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle
 	if err != nil {
 		return nil, err
 	}
-	ssh, ok := conn.(*providerexec.SSHConnection)
+	ssh, ok := conn.(*transport.SSHConnection)
 	if !ok {
 		return nil, substrate.ErrNotSupported
 	}
-	return ssh.OpenConsole(ctx, providerexec.ConsoleRequest{
+	return ssh.OpenConsole(ctx, transport.ConsoleRequest{
 		Cmd:   req.Cmd,
 		Shell: req.Shell,
 		Env:   req.Env,
