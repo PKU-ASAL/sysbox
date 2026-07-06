@@ -72,6 +72,7 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		payload["env"] = cfg.Env
 		payload["depends_on"] = cfg.DependsOn
 		payload["links"] = normalizeLinks(cfg.Links)
+		payload["ports"] = normalizePortConfigs(cfg.Ports)
 		payload["routes"] = cfg.Routes
 		payload["connections"] = cfg.Connections
 		payload["provisioners"] = cfg.Provisioners

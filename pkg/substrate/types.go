@@ -59,6 +59,7 @@ type NodeSpec struct {
 	Env     map[string]string
 	Sysctls map[string]string
 	Labels  map[string]string
+	Ports   []PortSpec
 
 	// InitialLinks lists the first network attachment(s) to establish at
 	// node-creation time. The substrate interprets the LinkRequest fields
@@ -73,6 +74,32 @@ type NodeSpec struct {
 	// opaque to runtime; substrates type-assert in their own CreateNode.
 	ProviderConfig any
 }
+
+type PortSpec struct {
+	Name      string `json:"name,omitempty"`
+	Target    int    `json:"target"`
+	Published int    `json:"published,omitempty"`
+	Protocol  string `json:"protocol,omitempty"`
+	Exposure  string `json:"exposure,omitempty"`
+	HostIP    string `json:"host_ip,omitempty"`
+}
+
+type ResolvedPort struct {
+	Name       string `json:"name,omitempty"`
+	Target     int    `json:"target"`
+	Published  int    `json:"published,omitempty"`
+	Protocol   string `json:"protocol"`
+	Exposure   string `json:"exposure"`
+	Host       string `json:"host,omitempty"`
+	URL        string `json:"url,omitempty"`
+	TargetHost string `json:"target_host,omitempty"`
+}
+
+const (
+	PortExposureNone   = "none"
+	PortExposureDirect = "direct"
+	PortExposureHost   = "host"
+)
 
 // ProviderDeps lists resource references a substrate's typed Config holds.
 // Runtime translates these into graph edges so the resources get applied
@@ -364,6 +391,7 @@ type Capabilities struct {
 	NeedsCloudinit  bool          // PrepareImage / CreateNode requires a cloudinit seed
 	PIDVisibility   PIDMode       // how guest PIDs relate to host PID space
 	SupportsPause   bool          // Substrate.Pause/Resume implemented (W3)
+	PortExposures   []string      // supported port exposure modes: none, direct, host
 	BootTime        time.Duration // typical boot latency (best-effort estimate)
 	Notes           string        // free-form documentation, displayed in `sysbox plan`
 }

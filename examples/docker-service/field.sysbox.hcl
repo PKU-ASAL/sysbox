@@ -20,8 +20,21 @@ resource "sysbox_node" "web" {
     network = sysbox_network.app.id
     ip      = "172.31.10.10/24"
   }
+
+  port {
+    name      = "http"
+    target    = 80
+    published = 18080
+    protocol  = "http"
+    exposure  = "host"
+    host_ip   = "127.0.0.1"
+  }
 }
 
 output "web_ip" {
   value = "172.31.10.10"
+}
+
+output "web_url" {
+  value = "http://127.0.0.1:18080"
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/go-connections/nat"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
@@ -50,6 +51,13 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	}
 	if pc.CgroupnsMode != "" {
 		hostCfg.CgroupnsMode = container.CgroupnsMode(pc.CgroupnsMode)
+	}
+	exposedPorts, portBindings, err := dockerPortConfig(spec.Ports)
+	if err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	if len(portBindings) > 0 {
+		hostCfg.PortBindings = portBindings
 	}
 
 	// Network mode strategy:
@@ -95,9 +103,10 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
-			Image:  spec.Image.Repository,
-			Env:    envs,
-			Labels: spec.Labels,
+			Image:        spec.Image.Repository,
+			Env:          envs,
+			Labels:       spec.Labels,
+			ExposedPorts: exposedPorts,
 			// Explicitly override ENTRYPOINT so images with their own default
 			// (e.g. aquasec/tracee) stay alive for provisioner exec calls.
 			Entrypoint: []string{"/bin/sh", "-c"},
@@ -124,6 +133,45 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 			Endpoint: resp.ID,
 		},
 	}, nil
+}
+
+func dockerPortConfig(ports []substrate.PortSpec) (nat.PortSet, nat.PortMap, error) {
+	exposed := nat.PortSet{}
+	bindings := nat.PortMap{}
+	for _, p := range ports {
+		exposure := p.Exposure
+		if exposure == "" {
+			exposure = substrate.PortExposureDirect
+		}
+		if exposure != substrate.PortExposureHost {
+			continue
+		}
+		if p.Target <= 0 {
+			return nil, nil, fmt.Errorf("docker port %q: target must be positive", p.Name)
+		}
+		if p.Published <= 0 {
+			return nil, nil, fmt.Errorf("docker port %q: published must be positive for host exposure", p.Name)
+		}
+		port, err := nat.NewPort(dockerPortProtocol(p.Protocol), fmt.Sprintf("%d", p.Target))
+		if err != nil {
+			return nil, nil, fmt.Errorf("docker port %q: %w", p.Name, err)
+		}
+		exposed[port] = struct{}{}
+		bindings[port] = append(bindings[port], nat.PortBinding{
+			HostIP:   p.HostIP,
+			HostPort: fmt.Sprintf("%d", p.Published),
+		})
+	}
+	return exposed, bindings, nil
+}
+
+func dockerPortProtocol(protocol string) string {
+	switch protocol {
+	case "udp":
+		return "udp"
+	default:
+		return "tcp"
+	}
 }
 
 // MarshalProviderState writes the docker HandleState as JSON. Persisted

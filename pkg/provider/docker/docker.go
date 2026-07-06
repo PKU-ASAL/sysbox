@@ -57,6 +57,7 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 		NeedsCloudinit:  false,
 		PIDVisibility:   substrate.PIDVisibilityHost,
 		SupportsPause:   true, // docker pause/unpause
+		PortExposures:   []string{substrate.PortExposureNone, substrate.PortExposureDirect, substrate.PortExposureHost},
 		BootTime:        100 * time.Millisecond,
 		Notes:           "Linux container; shares host kernel; eBPF works only with privileged + cap_sys_admin.",
 	}
@@ -73,7 +74,29 @@ func (s *Substrate) Validate(spec substrate.NodeSpec) error {
 				spec.ProviderConfig)
 		}
 	}
+	if hasHostPortExposure(spec.Ports) && !hasDockerNATLink(spec.InitialLinks) {
+		return substrate.NewValidationError(
+			"docker host port exposure requires at least one nat=true sysbox_network link")
+	}
 	return nil
+}
+
+func hasHostPortExposure(ports []substrate.PortSpec) bool {
+	for _, p := range ports {
+		if p.Exposure == substrate.PortExposureHost {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDockerNATLink(links []substrate.LinkRequest) bool {
+	for _, link := range links {
+		if link.KindHint == substrate.NICKindDockerNAT || link.DockerNetID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Connection returns a DockerConnection for reaching the container.

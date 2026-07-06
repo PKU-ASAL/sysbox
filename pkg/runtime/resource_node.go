@@ -116,6 +116,13 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if err != nil {
 		return state.Resource{}, err
 	}
+	portSpecs, err := normalizePortSpecs(cfg.Ports)
+	if err != nil {
+		return state.Resource{}, fmt.Errorf("node %s: %w", n.ID.Name, err)
+	}
+	if err := validatePortExposures(n.ID.Name, sub, portSpecs); err != nil {
+		return state.Resource{}, err
+	}
 	nodeDesiredHash, err := desiredHash(n)
 	if err != nil {
 		return state.Resource{}, err
@@ -160,9 +167,23 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if err != nil {
 		return state.Resource{}, err
 	}
+	containerName := runtimeExternalName(e.topology, "node", n.ID.Name)
+	nodeSpec := substrate.NodeSpec{
+		Name:           containerName,
+		Image:          imgRef,
+		VCPUs:          cfg.Vcpus,
+		Memory:         cfg.Memory,
+		Env:            cfg.Env,
+		Labels:         ManagedLabels(e.topology, e.runID, n.ID),
+		Ports:          portSpecs,
+		InitialLinks:   initialLinks,
+		ProviderConfig: cfg.ProviderConfig,
+	}
+	if err := sub.Validate(nodeSpec); err != nil {
+		return state.Resource{}, err
+	}
 
 	var handle substrate.NodeHandle
-	containerName := runtimeExternalName(e.topology, "node", n.ID.Name)
 	if err := e.recordSubstep(parentStep, "create_node", map[string]any{
 		"resource":  n.ID.String(),
 		"substrate": subName,
@@ -170,16 +191,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		"image":     imgRef.Repository,
 	}, func() error {
 		var err error
-		handle, err = sub.CreateNode(ctx, substrate.NodeSpec{
-			Name:           containerName,
-			Image:          imgRef,
-			VCPUs:          cfg.Vcpus,
-			Memory:         cfg.Memory,
-			Env:            cfg.Env,
-			Labels:         ManagedLabels(e.topology, e.runID, n.ID),
-			InitialLinks:   initialLinks,
-			ProviderConfig: cfg.ProviderConfig,
-		})
+		handle, err = sub.CreateNode(ctx, nodeSpec)
 		return err
 	}); err != nil {
 		return state.Resource{}, err
@@ -214,10 +226,12 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// Populate PrimaryIP from the wiring result.
 	handle.Net.PrimaryIP = wireResult.PrimaryIP
 
+	resolvedPorts := resolvePorts(portSpecs, handle.Net.PrimaryIP)
 	nodeInstance := map[string]any{
 		"container_id": handle.ID,
 		"primary_ip":   handle.Net.PrimaryIP,
 		"nics":         wireResult.NICs,
+		"ports":        resolvedPorts,
 	}
 	// Persist lifecycle flags so ComputePlan can honour them on future runs
 	// even if the resource is removed from HCL.

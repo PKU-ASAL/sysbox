@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -45,6 +46,40 @@ func TestDecodeResource(t *testing.T) {
 	require.Len(t, nodeCfg.Links, 1)
 	require.Equal(t, "10.0.1.10/24", nodeCfg.Links[0].IP)
 	require.Equal(t, "dmz", nodeCfg.Links[0].Network)
+}
+
+func TestDecodeNodePorts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "field.sysbox.hcl")
+	require.NoError(t, os.WriteFile(path, []byte(`
+substrate "docker" { alias = "local" }
+resource "sysbox_node" "web" {
+  image = "sysbox_image.nginx.id"
+  substrate = substrate.docker.local
+  port {
+    name = "http"
+    target = 80
+    published = 28080
+    protocol = "http"
+    exposure = "host"
+    host_ip = "127.0.0.1"
+  }
+}
+`), 0o644))
+	root, err := ParseFile(path)
+	require.NoError(t, err)
+	ctx := BuildEvalContext(root)
+
+	nodeBlock := findResource(root, "sysbox_node", "web")
+	require.NotNil(t, nodeBlock)
+	var nodeCfg NodeConfig
+	require.NoError(t, DecodeResource(nodeBlock, &nodeCfg, ctx))
+	require.Len(t, nodeCfg.Ports, 1)
+	require.Equal(t, "http", nodeCfg.Ports[0].Name)
+	require.Equal(t, 80, nodeCfg.Ports[0].Target)
+	require.Equal(t, 28080, nodeCfg.Ports[0].Published)
+	require.Equal(t, "http", nodeCfg.Ports[0].Protocol)
+	require.Equal(t, "host", nodeCfg.Ports[0].Exposure)
+	require.Equal(t, "127.0.0.1", nodeCfg.Ports[0].HostIP)
 }
 
 func TestDecodeActor(t *testing.T) {

@@ -60,6 +60,7 @@ func ResourceSchemaFor(typ string) ResourceSchema {
 		add("env", false, true, true)
 		add("depends_on", false, false, true)
 		add("links", false, false, true)
+		add("ports", false, false, true)
 		add("routes", false, false, true)
 		add("connections", false, true, true)
 		add("provisioners", false, true, true)

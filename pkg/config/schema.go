@@ -203,6 +203,7 @@ type NodeConfig struct {
 	Env          map[string]string   `hcl:"env,optional"`
 	DependsOn    []string            `hcl:"depends_on,optional"`
 	Links        []LinkConfig        `hcl:"link,block"`
+	Ports        []PortConfig        `hcl:"port,block"`
 	Routes       []RouteConfig       `hcl:"route,block"`
 	Connections  []ConnectionConfig  `hcl:"connection,block"`
 	Provisioners []ProvisionerConfig `hcl:"provisioner,block"`
@@ -226,6 +227,27 @@ type LinkConfig struct {
 	Network string `hcl:"network"`
 	IP      string `hcl:"ip"`
 	Gateway string `hcl:"gw,optional"`
+}
+
+// PortConfig declares a node-local port and how sysbox should expose it.
+//
+//	port {
+//	  name      = "http"
+//	  target    = 80
+//	  protocol  = "tcp"
+//	  exposure  = "host"
+//	  published = 28080
+//	}
+//
+// target is the guest/container port. published is the host port when
+// exposure="host". exposure defaults to "direct"; protocol defaults to "tcp".
+type PortConfig struct {
+	Name      string `hcl:"name,optional"`
+	Target    int    `hcl:"target"`
+	Published int    `hcl:"published,optional"`
+	Protocol  string `hcl:"protocol,optional"`
+	Exposure  string `hcl:"exposure,optional"`
+	HostIP    string `hcl:"host_ip,optional"`
 }
 
 // RouteConfig declares a static route inside a node (Terraform-style declarative

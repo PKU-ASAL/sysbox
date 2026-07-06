@@ -72,6 +72,7 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 		NICKinds:      []string{"tap"},
 		ConsoleKinds:  []string{"serial"},
 		SupportsPause: true, // virsh suspend/resume
+		PortExposures: []string{substrate.PortExposureNone, substrate.PortExposureDirect},
 	}
 }
 
