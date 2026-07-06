@@ -106,12 +106,12 @@ func TestProcessAnchorSupportsJSONAndLegacyPID(t *testing.T) {
 		t.Fatalf("json anchor = %+v, want %+v", got, want)
 	}
 
-	legacyPath := filepath.Join(dir, "firecracker.pid")
-	if err := os.WriteFile(legacyPath, []byte("4321\n"), 0644); err != nil {
+	pidPath := filepath.Join(dir, "firecracker.pid")
+	if err := os.WriteFile(pidPath, []byte("4321\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got := readProcessAnchor(legacyPath); got.PID != 4321 {
-		t.Fatalf("legacy pid = %+v, want pid 4321", got)
+	if got := readProcessAnchor(pidPath); got.PID != 4321 {
+		t.Fatalf("pid anchor = %+v, want pid 4321", got)
 	}
 }
 

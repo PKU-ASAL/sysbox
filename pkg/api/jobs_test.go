@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,7 +33,7 @@ func TestJobsLoadCheckpointsMarksInterruptedRunRecoverable(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "mixed", run.Topology)
 	require.Equal(t, "apply", run.Op)
-	require.Equal(t, RunFailed, run.Status)
+	require.Equal(t, controlplane.RunFailed, run.Status)
 	require.True(t, run.Recoverable)
 	require.Equal(t, "server restarted before run completion", run.Err)
 }
@@ -43,11 +44,11 @@ func TestJobsLoadCheckpointsDoesNotOverridePersistedRun(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(runsDir, "mixed", "runs"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(runsDir, "mixed"), 0o755))
 
-	persisted := Run{
+	persisted := controlplane.Run{
 		ID:        runID,
 		Topology:  "mixed",
 		Op:        "apply",
-		Status:    RunDone,
+		Status:    controlplane.RunDone,
 		StartedAt: time.Now().UTC(),
 		EndedAt:   time.Now().UTC(),
 	}
@@ -61,7 +62,7 @@ func TestJobsLoadCheckpointsDoesNotOverridePersistedRun(t *testing.T) {
 	jobs := newJobs(runsDir, nil)
 	run, ok := jobs.get(runID)
 	require.True(t, ok)
-	require.Equal(t, RunDone, run.Status)
+	require.Equal(t, controlplane.RunDone, run.Status)
 	require.False(t, run.Recoverable)
 }
 
@@ -73,7 +74,7 @@ func TestJobsPersistsQueuedRunAndReloadsAsQueued(t *testing.T) {
 	reloaded := newJobs(runsDir, nil)
 	got, ok := reloaded.get(run.ID)
 	require.True(t, ok)
-	require.Equal(t, RunQueued, got.Status)
+	require.Equal(t, controlplane.RunQueued, got.Status)
 	require.False(t, got.Recoverable)
 	require.Empty(t, got.Err)
 }
@@ -87,7 +88,7 @@ func TestJobsReloadsAssignedRunAsRecoverable(t *testing.T) {
 	reloaded := newJobs(runsDir, nil)
 	got, ok := reloaded.get(run.ID)
 	require.True(t, ok)
-	require.Equal(t, RunFailed, got.Status)
+	require.Equal(t, controlplane.RunFailed, got.Status)
 	require.True(t, got.Recoverable)
 	require.Equal(t, "server restarted before run completion", got.Err)
 }

@@ -179,7 +179,7 @@ func (r *agentRegistry) PublishCommand(agentID string, cmd controlplane.AgentCom
 		cmd.AgentID = agentID
 	}
 	if cmd.Status == "" {
-		cmd.Status = "queued"
+		cmd.Status = controlplane.AgentCommandStatusQueued
 	}
 	if cmd.CreatedAt.IsZero() {
 		cmd.CreatedAt = time.Now().UTC()

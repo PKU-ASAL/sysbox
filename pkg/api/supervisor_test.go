@@ -97,7 +97,7 @@ func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
 	cfg.Paths.WorkspacesDir = workspaces
 	cfg.Supervisor.Policy = string(SupervisorPolicyRestartOnCrash)
 	s := NewServerWithConfig(cfg)
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-a",
 		Status:       "online",
 		Capabilities: []string{"docker"},
@@ -114,7 +114,7 @@ func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "supervisor", run.ParentID)
 	require.Equal(t, "apply", run.Op)
-	require.Equal(t, RunAssigned, run.Status)
+	require.Equal(t, controlplane.RunAssigned, run.Status)
 }
 
 func TestSupervisorRestartOnCrashSkipsWhenRunActive(t *testing.T) {
@@ -155,7 +155,7 @@ func TestSupervisorMarksStaleAgentOfflineAndExpiredRunFailed(t *testing.T) {
 	cfg.Agent.Lease.OfflineAfter = "5m"
 	s := NewServerWithConfig(cfg)
 	ctx := context.Background()
-	require.NoError(t, s.saveAgent(ctx, controlplane.Agent{
+	require.NoError(t, s.agentService().Save(ctx, controlplane.Agent{
 		ID:            "host-a",
 		Status:        "online",
 		Capabilities:  []string{"docker"},
@@ -163,13 +163,13 @@ func TestSupervisorMarksStaleAgentOfflineAndExpiredRunFailed(t *testing.T) {
 	}))
 	run := s.jobs.start("mixed", "apply")
 	run.AgentID = "host-a"
-	run.Status = RunRunning
+	run.Status = controlplane.RunRunning
 	run.LeaseOwner = "host-a:run"
 	run.LeaseUntil = time.Now().UTC().Add(-time.Minute)
 	s.jobs.replace(run)
 
 	supervisor := newSupervisor(s, time.Minute)
-	supervisor.server.markStaleAgentsOffline(ctx, time.Now().UTC())
+	supervisor.server.agentService().MarkStaleOffline(ctx, time.Now().UTC())
 	supervisor.server.jobs.markExpiredLeases(time.Now().UTC())
 
 	agent, err := s.apiStore.GetAgent(ctx, "host-a")
@@ -179,7 +179,7 @@ func TestSupervisorMarksStaleAgentOfflineAndExpiredRunFailed(t *testing.T) {
 
 	got, ok := s.jobs.get(run.ID)
 	require.True(t, ok)
-	require.Equal(t, RunFailed, got.Status)
+	require.Equal(t, controlplane.RunFailed, got.Status)
 	require.Equal(t, "run lease expired", got.Err)
 	require.True(t, got.Recoverable)
 }

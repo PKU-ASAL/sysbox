@@ -47,75 +47,75 @@ resource "sysbox_node" "microvm" {
 func TestSelectAgentByCapabilities(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	ctx := context.Background()
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "docker-agent",
 		Status:       "online",
 		Capabilities: []string{"docker"},
 	}))
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "vm-agent",
 		Status:       "online",
 		Capabilities: []string{"docker", "network", "kvm", "firecracker"},
 	}))
 
-	agent, err := s.selectAgent(ctx, []string{"firecracker", "kvm", "network"}, "")
+	agent, err := s.scheduling().SelectAgent(ctx, []string{"firecracker", "kvm", "network"}, "")
 	require.NoError(t, err)
 	require.Equal(t, "vm-agent", agent.ID)
 
-	_, err = s.selectAgent(ctx, []string{"gpu"}, "")
+	_, err = s.scheduling().SelectAgent(ctx, []string{"gpu"}, "")
 	require.ErrorContains(t, err, "no online agent")
 }
 
 func TestSelectPreferredAgentByCapabilities(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "docker-agent",
 		Status:       "online",
 		Capabilities: []string{"docker"},
 	}))
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "net-agent",
 		Status:       "online",
 		Capabilities: []string{"docker", "network"},
 	}))
 
-	agent, err := s.selectAgent(context.Background(), []string{"docker", "network"}, "net-agent")
+	agent, err := s.scheduling().SelectAgent(context.Background(), []string{"docker", "network"}, "net-agent")
 	require.NoError(t, err)
 	require.Equal(t, "net-agent", agent.ID)
 
-	_, err = s.selectAgent(context.Background(), []string{"docker", "network"}, "docker-agent")
+	_, err = s.scheduling().SelectAgent(context.Background(), []string{"docker", "network"}, "docker-agent")
 	require.ErrorContains(t, err, `agent "docker-agent" does not satisfy capabilities`)
 }
 
 func TestDispatchRunAssignsAgentBeforeExecution(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-a",
 		Status:       "online",
 		Capabilities: []string{"docker"},
 	}))
 	run := s.jobs.start("mixed", "apply")
 
-	err := s.dispatchRun(context.Background(), run, []string{"docker"})
+	err := s.scheduling().DispatchRun(context.Background(), run, []string{"docker"})
 	require.NoError(t, err)
 
 	got, ok := s.jobs.get(run.ID)
 	require.True(t, ok)
 	require.Equal(t, "host-a", got.AgentID)
-	require.Equal(t, RunAssigned, got.Status)
+	require.Equal(t, controlplane.RunAssigned, got.Status)
 	require.False(t, got.AssignedAt.IsZero())
 }
 
 func TestRepairRunIsFirstClassOperation(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-a",
 		Status:       "online",
 		Capabilities: []string{"docker"},
 	}))
 	run := s.jobs.start("mixed", "repair")
 
-	err := s.dispatchRun(context.Background(), run, []string{"docker"})
+	err := s.scheduling().DispatchRun(context.Background(), run, []string{"docker"})
 	require.NoError(t, err)
 
 	got, ok := s.jobs.get(run.ID)
@@ -123,7 +123,7 @@ func TestRepairRunIsFirstClassOperation(t *testing.T) {
 	require.Equal(t, "repair", got.Op)
 	require.Equal(t, "repair", got.Operation)
 	require.Equal(t, "host-a", got.AgentID)
-	require.Equal(t, RunAssigned, got.Status)
+	require.Equal(t, controlplane.RunAssigned, got.Status)
 }
 
 func TestAgentClaimRun(t *testing.T) {
@@ -132,13 +132,13 @@ func TestAgentClaimRun(t *testing.T) {
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	cfg.Run.Lease.ClaimTTL = "2m"
 	s := NewServerWithConfig(cfg)
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-a",
 		Status:       "online",
 		Capabilities: []string{"docker"},
 	}))
 	run := s.jobs.start("mixed", "apply")
-	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
+	require.NoError(t, s.scheduling().DispatchRun(context.Background(), run, []string{"docker"}))
 
 	commands, err := s.apiStore.ListAgentCommands(context.Background(), "host-a")
 	require.NoError(t, err)
@@ -148,7 +148,7 @@ func TestAgentClaimRun(t *testing.T) {
 
 	claimed, err := s.jobs.claim(run.ID, "host-a")
 	require.NoError(t, err)
-	require.Equal(t, RunRunning, claimed.Status)
+	require.Equal(t, controlplane.RunRunning, claimed.Status)
 	require.Equal(t, 1, claimed.Attempt)
 	require.NotEmpty(t, claimed.LeaseOwner)
 	require.False(t, claimed.LeaseUntil.IsZero())
@@ -164,13 +164,13 @@ func TestAgentRenewRunLeaseEndpoint(t *testing.T) {
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	cfg.Run.Lease.RenewTTL = "3m"
 	s := NewServerWithConfig(cfg)
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-a",
 		Status:       "online",
 		Capabilities: []string{"docker"},
 	}))
 	run := s.jobs.start("mixed", "apply")
-	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
+	require.NoError(t, s.scheduling().DispatchRun(context.Background(), run, []string{"docker"}))
 	claimed, err := s.jobs.claim(run.ID, "host-a")
 	require.NoError(t, err)
 	before := claimed.LeaseUntil
@@ -190,13 +190,13 @@ func TestAgentRenewRunLeaseEndpointUsesConfiguredDefaultTTL(t *testing.T) {
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	cfg.Run.Lease.RenewTTL = "90s"
 	s := NewServerWithConfig(cfg)
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-a",
 		Status:       "online",
 		Capabilities: []string{"docker"},
 	}))
 	run := s.jobs.start("mixed", "apply")
-	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
+	require.NoError(t, s.scheduling().DispatchRun(context.Background(), run, []string{"docker"}))
 	claimed, err := s.jobs.claim(run.ID, "host-a")
 	require.NoError(t, err)
 

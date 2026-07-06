@@ -184,8 +184,7 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 //	substrate.docker.light    -> "docker"
 //	sysbox_image.alpine.id    -> "alpine"
 //
-// We still accept legacy "type.name.attr" quoted strings for backwards
-// compatibility with HCL files that don't use traversals.
+// Quoted "type.name.attr" strings are normalized here as reference literals.
 
 func resolveSubstrateRef(ref string) (string, error) {
 	return config.ResolveSubstrateRef(ref)

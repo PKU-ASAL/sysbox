@@ -36,9 +36,8 @@ func vsockConnFromHandle(h substrate.NodeHandle) *transport.VsockConnection {
 	return transport.NewVsockConnection(hs.VsockUDS, port)
 }
 
-// ExecInNode runs a command inside the VM. Prefers the vsock RPC path
-// (direct, no SSH dependency) and falls back to SSH for legacy handles
-// that lack vsock metadata.
+// ExecInNode runs a command inside the VM. It uses vsock RPC when the handle
+// contains vsock metadata, otherwise it uses SSH.
 func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (substrate.ExecResult, error) {
 	if vc := vsockConnFromHandle(h); vc != nil {
 		return s.execInNodeVsock(ctx, vc, spec)

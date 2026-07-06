@@ -65,12 +65,12 @@ func TestControlPlaneObjects(t *testing.T) {
 
 func TestApplyCanReferenceStoredPlan(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-a",
 		Status:       "online",
 		Capabilities: []string{"network"},
 	}))
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-b",
 		Status:       "online",
 		Capabilities: []string{"network"},
@@ -116,7 +116,7 @@ func TestApplyCanReferenceStoredPlan(t *testing.T) {
 	require.Equal(t, plan.ID, run.PlanID)
 	require.Equal(t, plan.Revision, run.Revision)
 	require.Equal(t, "host-b", run.AgentID)
-	require.Equal(t, RunAssigned, run.Status)
+	require.Equal(t, controlplane.RunAssigned, run.Status)
 }
 
 func TestApplyRejectsStaleStoredPlan(t *testing.T) {

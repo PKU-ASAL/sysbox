@@ -77,9 +77,9 @@ func (s *Supervisor) loop() {
 
 func (s *Supervisor) Scan(ctx context.Context) {
 	now := time.Now().UTC()
-	s.server.markStaleAgentsOffline(ctx, now)
+	s.server.agentService().MarkStaleOffline(ctx, now)
 	s.server.jobs.markExpiredLeases(now)
-	names, err := s.server.topologyNames(ctx)
+	names, err := s.server.workspaceService().Names(ctx)
 	if err != nil {
 		return
 	}
@@ -89,7 +89,7 @@ func (s *Supervisor) Scan(ctx context.Context) {
 }
 
 func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
-	st, err := s.server.loadState(topology)
+	st, err := s.server.workspaceService().LoadState(topology)
 	if err != nil {
 		return err
 	}
@@ -122,13 +122,13 @@ func (s *Supervisor) maybeRepair(topology string, snap *HealthSnapshot) {
 	s.server.jobs.persist(run)
 	snap.Action = "restart_apply_started"
 	snap.RunID = run.ID
-	required, err := requiredCapabilitiesForTopology(s.server.hclFile(topology))
+	required, err := requiredCapabilitiesForTopology(s.server.workspaceService().HCLFile(topology))
 	if err != nil {
 		s.server.jobs.finish(run, err)
 		snap.Action = "restart_apply_failed"
 		return
 	}
-	if err := s.server.dispatchRun(context.Background(), run, required); err != nil {
+	if err := s.server.scheduling().DispatchRun(context.Background(), run, required); err != nil {
 		snap.Action = "restart_apply_failed"
 	}
 }

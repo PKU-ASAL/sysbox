@@ -12,6 +12,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type KernelResourceProvider struct{}
@@ -109,13 +110,13 @@ func (KernelResourceProvider) DecodeResource(r config.ResourceBlock, _ string, c
 	return cfg, decodeDependsOn(nil, cfg.DependsOn), nil
 }
 
-func (KernelResourceProvider) PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []PreflightCheck {
+func (KernelResourceProvider) PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []substrate.PreflightCheck {
 	cfg := &config.KernelConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-		return []PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
+		return []substrate.PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
 	}
 	if check := ArtifactPreflightCheck("kernel:"+r.Name, cfg.Source, cfg.SHA256); check != nil {
-		return []PreflightCheck{*check}
+		return []substrate.PreflightCheck{*check}
 	}
 	return nil
 }

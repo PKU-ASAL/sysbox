@@ -19,19 +19,19 @@ func TestListRuns(t *testing.T) {
 	dir := t.TempDir()
 	runs := filepath.Join(dir, "runs")
 	require.NoError(t, os.MkdirAll(filepath.Join(runs, "mixed"), 0o755))
-	writeRunRecord(t, runs, Run{
+	writeRunRecord(t, runs, controlplane.Run{
 		ID:        "run-1",
 		Topology:  "mixed",
 		Op:        "apply",
-		Status:    RunDone,
+		Status:    controlplane.RunDone,
 		StartedAt: time.Now().UTC(),
 		EndedAt:   time.Now().UTC(),
 	})
-	writeRunRecord(t, runs, Run{
+	writeRunRecord(t, runs, controlplane.Run{
 		ID:        "run-2",
 		Topology:  "other",
 		Op:        "destroy",
-		Status:    RunFailed,
+		Status:    controlplane.RunFailed,
 		StartedAt: time.Now().UTC(),
 		EndedAt:   time.Now().UTC(),
 	})
@@ -43,7 +43,7 @@ func TestListRuns(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var body struct {
-		Runs []Run `json:"runs"`
+		Runs []controlplane.Run `json:"runs"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Runs, 1)
@@ -53,11 +53,11 @@ func TestListRuns(t *testing.T) {
 func TestGetRunActions(t *testing.T) {
 	dir := t.TempDir()
 	runs := filepath.Join(dir, "runs")
-	run := Run{
+	run := controlplane.Run{
 		ID:        "run-actions",
 		Topology:  "mixed",
 		Op:        "apply",
-		Status:    RunDone,
+		Status:    controlplane.RunDone,
 		StartedAt: time.Now().UTC(),
 		EndedAt:   time.Now().UTC(),
 	}
@@ -96,13 +96,13 @@ func TestGetRunActions(t *testing.T) {
 func TestRunEventsLoadFromPersistedRunAfterServerRestart(t *testing.T) {
 	dir := t.TempDir()
 	runs := filepath.Join(dir, "runs")
-	run := Run{
+	run := controlplane.Run{
 		ID:        "run-events",
 		ProjectID: "default",
 		Workspace: "mixed",
 		Topology:  "mixed",
 		Op:        "apply",
-		Status:    RunDone,
+		Status:    controlplane.RunDone,
 		StartedAt: time.Now().UTC(),
 		EndedAt:   time.Now().UTC(),
 	}
@@ -136,7 +136,7 @@ func TestRunEventsLoadFromPersistedRunAfterServerRestart(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"resource":"sysbox_node.vm"`)
 }
 
-func writeRunRecord(t *testing.T, runsDir string, run Run) {
+func writeRunRecord(t *testing.T, runsDir string, run controlplane.Run) {
 	t.Helper()
 	dir := filepath.Join(runsDir, run.Topology)
 	require.NoError(t, os.MkdirAll(dir, 0o755))

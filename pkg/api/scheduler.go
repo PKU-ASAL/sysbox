@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"sort"
 
@@ -12,54 +11,14 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-func (s *Server) dispatchRun(ctx context.Context, run *Run, required []string) error {
-	agent, err := s.selectAgent(ctx, required, run.AgentID)
-	if err != nil {
-		s.jobs.finish(run, err)
-		return err
-	}
-	s.jobs.assign(run, agent.ID)
-	if _, err := s.publishAgentCommand(ctx, agent.ID, controlplane.AgentCommand{
+func controlplaneRunAssignedCommand(run *controlplane.Run) controlplane.AgentCommand {
+	return controlplane.AgentCommand{
 		Type: "run_assigned",
 		Run:  ptrRun(runRecord(*run)),
-	}); err != nil {
-		return err
 	}
-	return nil
 }
 
 func ptrRun(run controlplane.Run) *controlplane.Run { return &run }
-
-func (s *Server) selectAgent(ctx context.Context, required []string, preferred string) (controlplane.Agent, error) {
-	if s.agents == nil {
-		s.agents = newAgentRegistry()
-	}
-	agents := s.listAgents(ctx)
-	required = normalizeCapabilities(required)
-	if preferred != "" && preferred != DefaultAgentID {
-		for _, agent := range agents {
-			if agent.ID == preferred {
-				if agent.Status != "online" || agent.Disabled || agent.Quarantined {
-					return controlplane.Agent{}, fmt.Errorf("agent %q is not online", preferred)
-				}
-				if !hasCapabilities(agent.Capabilities, required) {
-					return controlplane.Agent{}, fmt.Errorf("agent %q does not satisfy capabilities: required %v, has %v", preferred, required, normalizeCapabilities(agent.Capabilities))
-				}
-				return agent, nil
-			}
-		}
-		return controlplane.Agent{}, fmt.Errorf("agent %q not found", preferred)
-	}
-	for _, agent := range agents {
-		if agent.Status != "online" || agent.Disabled || agent.Quarantined {
-			continue
-		}
-		if hasCapabilities(agent.Capabilities, required) {
-			return agent, nil
-		}
-	}
-	return controlplane.Agent{}, fmt.Errorf("no online agent satisfies capabilities: %v", required)
-}
 
 func requiredCapabilitiesForTopology(path string) ([]string, error) {
 	root, err := config.ParseFile(path)

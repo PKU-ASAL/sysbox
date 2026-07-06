@@ -16,7 +16,6 @@ import (
 
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -49,7 +48,7 @@ func (s *Server) handleCreateRevision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	hcl, err := os.ReadFile(s.hclFile(topology))
+	hcl, err := os.ReadFile(s.workspaceService().HCLFile(topology))
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Errorf("workspace HCL not found"))
 		return
@@ -74,7 +73,7 @@ func (s *Server) handleListRevisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(revs) == 0 {
-		if hcl, err := os.ReadFile(s.hclFile(topology)); err == nil {
+		if hcl, err := os.ReadFile(s.workspaceService().HCLFile(topology)); err == nil {
 			revs = append(revs, revisionFromHCL(topology, hcl, "workspace_hcl"))
 		}
 	}
@@ -106,7 +105,7 @@ func (s *Server) handleCreatePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	plan, err := s.computeStoredPlan(r.Context(), topology)
+	plan, err := s.plans().ComputeStoredPlan(r.Context(), topology)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -241,7 +240,7 @@ func (s *Server) handleListRunEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
-func (s *Server) getRunRecord(ctx context.Context, id string) (*Run, error) {
+func (s *Server) getRunRecord(ctx context.Context, id string) (*controlplane.Run, error) {
 	if run, ok := s.jobs.get(id); ok {
 		normalizeRunProductFields(run)
 		return run, nil
@@ -322,64 +321,6 @@ func revisionFromHCL(workspace string, hcl []byte, source string) controlplane.R
 		Size:      len(hcl),
 		CreatedAt: now,
 	}
-}
-
-func (s *Server) computeStoredPlan(ctx context.Context, topology string) (controlplane.Plan, error) {
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		return controlplane.Plan{}, err
-	}
-	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), mgr)
-	if err != nil {
-		return controlplane.Plan{}, err
-	}
-	meta, _ := mgr.Metadata(ctx)
-	plan, err := runtime.ComputePlan(g, st)
-	if err != nil {
-		return controlplane.Plan{}, err
-	}
-	runtime.NewExecutor(g, st).Refresh(ctx, plan)
-	var revID string
-	if hcl, err := os.ReadFile(s.hclFile(topology)); err == nil {
-		rev := revisionFromHCL(topology, hcl, "workspace_hcl")
-		revID = rev.ID
-		_ = s.apiStore.SaveRevision(ctx, rev)
-	}
-	return controlplane.Plan{
-		ID:          uuid.NewString(),
-		ProjectID:   controlplane.DefaultProjectID,
-		Workspace:   topology,
-		Revision:    revID,
-		StateSerial: meta.Serial,
-		Status:      "planned",
-		Summary:     plan.Summary(),
-		Actions:     plan.Actions,
-		CreatedAt:   time.Now().UTC(),
-	}, nil
-}
-
-func (s *Server) validateStoredPlanForApply(ctx context.Context, topology, planID string, currentSerial int64) (*controlplane.Plan, error) {
-	plan, err := s.apiStore.GetPlan(ctx, topology, planID)
-	if err != nil {
-		return nil, err
-	}
-	current, err := s.computeStoredPlan(ctx, topology)
-	if err != nil {
-		return nil, err
-	}
-	if plan.Revision != "" && current.Revision != "" && plan.Revision != current.Revision {
-		return nil, fmt.Errorf("plan revision %s is stale; current revision is %s", plan.Revision, current.Revision)
-	}
-	if plan.Status != "" && plan.Status != "planned" {
-		return nil, fmt.Errorf("plan %s status is %s", plan.ID, plan.Status)
-	}
-	if plan.StateSerial != currentSerial {
-		return nil, fmt.Errorf("plan state serial %d is stale; current serial is %d", plan.StateSerial, currentSerial)
-	}
-	if len(plan.Actions) == 0 {
-		return nil, fmt.Errorf("plan %s has no actions", plan.ID)
-	}
-	return plan, nil
 }
 
 func (s *Server) listSnapshots(ctx context.Context, topology string) ([]state.Snapshot, error) {

@@ -137,8 +137,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	// Inject sysbox-init into the per-VM rootfs copy and build a per-VM
 	// config drive. Both are best-effort: if sysbox-init was not built into
 	// the host binary (placeholder embed), or mkfs.ext4/mount aren't
-	// available, we fall back to the legacy "init=/init" path and let the
-	// rootfs handle everything (compatible with the pre-phase-C behaviour).
+	// available, boot continues with the rootfs-provided init path.
 	sysboxInitEnabled := true
 	configDrivePath := filepath.Join(runDir, "config.ext4")
 	if err := injectInitBinary(vmRootfs); err != nil {

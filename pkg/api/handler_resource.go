@@ -19,7 +19,7 @@ func (s *Server) handleListResources(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	st, err := s.loadState(topology)
+	st, err := s.workspaceService().LoadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -106,7 +106,7 @@ func (s *Server) handleGetResourceHealth(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	st, err := s.loadState(topology)
+	st, err := s.workspaceService().LoadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return

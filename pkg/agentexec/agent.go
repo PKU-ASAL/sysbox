@@ -290,7 +290,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "node operation report failed", err)
 			return
 		}
-		if completed.Status == "failed" {
+		if completed.Status == controlplane.NodeOperationStatusFailed {
 			emit("failed", "node operation failed", errors.New(completed.Err))
 			return
 		}

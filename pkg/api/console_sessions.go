@@ -36,8 +36,8 @@ func newConsoleSessionHub(store apiStore) *consoleSessionHub {
 	if store != nil {
 		if items, err := store.ListConsoleSessions(context.Background(), ""); err == nil {
 			for _, sess := range items {
-				if sess.Status == "queued" || sess.Status == "running" {
-					sess.Status = "lost"
+				if sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning {
+					sess.Status = controlplane.ConsoleSessionStatusLost
 					sess.Err = "api restarted before console session completion"
 					sess.EndedAt = time.Now().UTC()
 					_ = store.SaveConsoleSession(context.Background(), sess)
@@ -62,7 +62,7 @@ func (h *consoleSessionHub) Create(topology, node, agentID string, req controlpl
 		Topology:    topology,
 		Node:        node,
 		AgentID:     agentID,
-		Status:      "queued",
+		Status:      controlplane.ConsoleSessionStatusQueued,
 		RequestedBy: actor,
 		Roles:       append([]string{}, req.Roles...),
 		Policy:      req.Policy,
@@ -72,7 +72,7 @@ func (h *consoleSessionHub) Create(topology, node, agentID string, req controlpl
 			Workspace: topology,
 			Resource:  "sysbox_node." + node,
 			Action:    "create",
-			Status:    "queued",
+			Status:    controlplane.ConsoleSessionStatusQueued,
 			Actor:     actor,
 			Roles:     append([]string{}, req.Roles...),
 			Message:   "console session created",
@@ -125,8 +125,8 @@ func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
 		h.mu.Unlock()
 		return fmt.Errorf("session not found")
 	}
-	if st.session.Status != "closed" && st.session.Status != "failed" && st.session.Status != "cancelled" {
-		st.session.Status = "cancelled"
+	if st.session.Status != controlplane.ConsoleSessionStatusClosed && st.session.Status != controlplane.ConsoleSessionStatusFailed && st.session.Status != controlplane.ConsoleSessionStatusCancelled {
+		st.session.Status = controlplane.ConsoleSessionStatusCancelled
 		st.session.Err = reason
 		st.session.EndedAt = time.Now().UTC()
 		st.session.Audit = append(st.session.Audit, controlplane.Event{
@@ -134,7 +134,7 @@ func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
 			Workspace: st.session.Workspace,
 			Resource:  "sysbox_node." + st.session.Node,
 			Action:    "cancel",
-			Status:    "cancelled",
+			Status:    controlplane.ConsoleSessionStatusCancelled,
 			Actor:     actor,
 			Roles:     append([]string{}, st.session.Roles...),
 			Message:   reason + " by " + actor,

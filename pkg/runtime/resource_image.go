@@ -130,12 +130,12 @@ func (ImageResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ct
 	return cfg, nil, nil
 }
 
-func (ImageResourceProvider) PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []PreflightCheck {
+func (ImageResourceProvider) PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []substrate.PreflightCheck {
 	cfg := &config.ImageConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
-		return []PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
+		return []substrate.PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
 	}
-	var checks []PreflightCheck
+	var checks []substrate.PreflightCheck
 	for _, item := range []struct {
 		name string
 		src  string

@@ -32,8 +32,8 @@ func (b *ExecutionBridge) AttachRun(run *controlplane.Run) {
 	}
 	b.server.jobs.mu.Lock()
 	b.server.jobs.runs[run.ID] = run
-	b.server.jobs.ensureLogsLocked(run.ID, false)
 	b.server.jobs.mu.Unlock()
+	b.server.jobs.logs.Ensure(run.ID, false)
 }
 
 func (b *ExecutionBridge) LogWriter(runID string) io.Writer {
@@ -53,7 +53,7 @@ func (b *ExecutionBridge) StateManager(topology string) (*state.Manager, error) 
 }
 
 func (b *ExecutionBridge) HCLFile(topology string) string {
-	return b.server.hclFile(topology)
+	return b.server.workspaceService().HCLFile(topology)
 }
 
 func (b *ExecutionBridge) Topologies(ctx context.Context) []string {
@@ -83,7 +83,7 @@ func (b *ExecutionBridge) CheckpointStore() runtime.CheckpointStore {
 }
 
 func (b *ExecutionBridge) ValidateStoredPlanForApply(ctx context.Context, topology, planID string, currentSerial int64) (*controlplane.Plan, error) {
-	return b.server.validateStoredPlanForApply(ctx, topology, planID, currentSerial)
+	return b.server.runs().ValidateStoredPlanForApply(ctx, topology, planID, currentSerial)
 }
 
 func (b *ExecutionBridge) ParentRun(ctx context.Context, id string) (*controlplane.Run, error) {

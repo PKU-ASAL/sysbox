@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,7 +21,15 @@ type Server struct {
 	cfg           config.ServiceConfig
 	apiStore      apiStore
 	agents        *agentRegistry
+	agentSvc      *AgentService
+	agentStream   *AgentStreamService
 	jobs          *Jobs
+	runService    *RunService
+	planService   *PlanService
+	scheduler     *SchedulerService
+	workspaces    *WorkspaceService
+	nodeService   *NodeOperationService
+	consoleSvc    *ConsoleService
 	consoles      *consoleSessionHub
 	nodeOps       *nodeOperationStore
 	supervisor    *Supervisor
@@ -64,13 +73,33 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		nodeOps:       newNodeOperationStore(apiStore),
 		mux:           http.NewServeMux(),
 	}
+	s.agentSvc = newAgentService(s)
+	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager)
+	s.planService = newPlanService(s)
+	s.scheduler = newSchedulerService(s)
+	s.nodeService = newNodeOperationService(s.workspaceService(), s.scheduling(), s.nodeOps, s.agentService().PublishCommand)
+	defaultConsoleTimeout, _ := time.ParseDuration(s.cfg.API.Console.DefaultTimeout)
+	maxConsoleTimeout, _ := time.ParseDuration(s.cfg.API.Console.MaxTimeout)
+	s.consoleSvc = newConsoleService(
+		s.consoles,
+		s.scheduling(),
+		s.agentService().PublishCommand,
+		s.authorizeConsole,
+		s.workspaceService().HCLFile,
+		s.workspaceService().LoadState,
+		s.authoritativeTopologyHealth,
+		defaultConsoleTimeout,
+		maxConsoleTimeout,
+	)
+	s.agentStream = newAgentStreamService(s)
+	s.runService = newRunService(s)
 	s.registerRoutes()
 	return s
 }
 
 func (s *Server) stateManager(topology string) (*state.Manager, error) {
 	if s.stateBackend == "" {
-		return state.NewManager(s.stateFile(topology)), nil
+		return state.NewManager(filepath.Join(s.runsDir, topology, "state.json")), nil
 	}
 	raw := strings.ReplaceAll(s.stateBackend, "{topology}", topology)
 	b, err := state.ParseBackendURL(raw)
@@ -78,6 +107,74 @@ func (s *Server) stateManager(topology string) (*state.Manager, error) {
 		return nil, fmt.Errorf("state backend: %w", err)
 	}
 	return state.NewManagerWithBackend(b), nil
+}
+
+func (s *Server) runs() *RunService {
+	if s.runService == nil {
+		s.runService = newRunService(s)
+	}
+	return s.runService
+}
+
+func (s *Server) plans() *PlanService {
+	if s.planService == nil {
+		s.planService = newPlanService(s)
+	}
+	return s.planService
+}
+
+func (s *Server) scheduling() *SchedulerService {
+	if s.scheduler == nil {
+		s.scheduler = newSchedulerService(s)
+	}
+	return s.scheduler
+}
+
+func (s *Server) workspaceService() *WorkspaceService {
+	if s.workspaces == nil {
+		s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager)
+	}
+	return s.workspaces
+}
+
+func (s *Server) nodeOperations() *NodeOperationService {
+	if s.nodeService == nil {
+		s.nodeService = newNodeOperationService(s.workspaceService(), s.scheduling(), s.nodeOps, s.agentService().PublishCommand)
+	}
+	return s.nodeService
+}
+
+func (s *Server) consoleService() *ConsoleService {
+	if s.consoleSvc == nil {
+		defaultConsoleTimeout, _ := time.ParseDuration(s.cfg.API.Console.DefaultTimeout)
+		maxConsoleTimeout, _ := time.ParseDuration(s.cfg.API.Console.MaxTimeout)
+		s.consoleSvc = newConsoleService(
+			s.consoles,
+			s.scheduling(),
+			s.agentService().PublishCommand,
+			s.authorizeConsole,
+			s.workspaceService().HCLFile,
+			s.workspaceService().LoadState,
+			s.authoritativeTopologyHealth,
+			defaultConsoleTimeout,
+			maxConsoleTimeout,
+		)
+	}
+	return s.consoleSvc
+}
+
+func (s *Server) agentService() *AgentService {
+	if s.agentSvc == nil {
+		s.agentSvc = newAgentService(s)
+	}
+	return s.agentSvc
+}
+
+func (s *Server) agentStreams() *AgentStreamService {
+	if s.agentStream == nil {
+		s.agentStream = newAgentStreamService(s)
+	}
+	return s.agentStream
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

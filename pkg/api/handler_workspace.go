@@ -4,12 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
-
-	"github.com/oslab/sysbox/pkg/config"
+	"strings"
 )
 
 // POST /v1/topologies — create a new topology workspace.
@@ -59,36 +55,13 @@ func (s *Server) handleCreateTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate HCL before persisting.
-	if _, err := config.ParseString(hcl, ".hcl"); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid HCL: %w", err))
+	info, err := s.workspaceService().Create(r.Context(), name, hcl)
+	if err != nil {
+		writeError(w, workspaceStatus(err), err)
 		return
 	}
 
-	dir := filepath.Join(s.workspacesDir, name)
-	hclPath := filepath.Join(dir, "field.sysbox.hcl")
-
-	if _, err := os.Stat(hclPath); err == nil {
-		writeError(w, http.StatusConflict, fmt.Errorf("topology %q already exists", name))
-		return
-	}
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("create directory: %w", err))
-		return
-	}
-	if err := os.WriteFile(hclPath, []byte(hcl), 0o644); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("write hcl: %w", err))
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"artifact_id": artifactID(name),
-		"topology_id": topologyID(name),
-		"name":        name,
-		"has_hcl":     true,
-		"has_state":   false,
-	})
+	writeJSON(w, http.StatusCreated, info)
 }
 
 // PUT /v1/topologies/{topology}/hcl — replace the HCL content of an existing topology.
@@ -105,30 +78,14 @@ func (s *Server) handleUpdateHCL(w http.ResponseWriter, r *http.Request) {
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()
 
-	hclPath := s.hclFile(topology)
-	if _, err := os.Stat(hclPath); err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("topology %q not found", topology))
-		return
-	}
-
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 	hclBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("read body: %w", err))
 		return
 	}
-	if len(hclBytes) == 0 {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("empty HCL"))
-		return
-	}
-
-	if _, err := config.ParseString(string(hclBytes), ".hcl"); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid HCL: %w", err))
-		return
-	}
-
-	if err := os.WriteFile(hclPath, hclBytes, 0o644); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("write hcl: %w", err))
+	if err := s.workspaceService().UpdateHCL(r.Context(), topology, hclBytes); err != nil {
+		writeError(w, workspaceStatus(err), err)
 		return
 	}
 
@@ -146,10 +103,9 @@ func (s *Server) handleGetHCL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hclPath := s.hclFile(topology)
-	data, err := os.ReadFile(hclPath)
+	data, err := s.workspaceService().HCL(topology)
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("topology %q not found", topology))
+		writeError(w, workspaceStatus(err), err)
 		return
 	}
 
@@ -165,20 +121,10 @@ func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := map[string]any{
-		"artifact_id": artifactID(topology),
-		"topology_id": topologyID(topology),
-		"name":        topology,
-		"has_hcl":     false,
-		"has_state":   false,
-	}
-
-	if _, err := os.Stat(s.hclFile(topology)); err == nil {
-		out["has_hcl"] = true
-	}
-	if st, err := s.loadState(topology); err == nil {
-		out["has_state"] = true
-		out["resource_count"] = len(st.Resources)
+	out, err := s.workspaceService().Get(r.Context(), topology)
+	if err != nil {
+		writeError(w, workspaceStatus(err), err)
+		return
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -197,35 +143,8 @@ func (s *Server) handleDeleteTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	st, err := mgr.Load()
-	if err == nil && len(st.Resources) > 0 {
-		if r.URL.Query().Get("force") == "true" {
-			slog.Warn("force-deleting topology metadata with live resources", "topology", topology, "resources", len(st.Resources))
-		} else {
-			writeError(w, http.StatusConflict, fmt.Errorf("topology %q has %d resource(s); call POST /v1/topologies/%s/destroy first or use force=true to delete metadata only", topology, len(st.Resources), topology))
-			return
-		}
-	}
-	if s.stateBackend == "" {
-		statePath := s.stateFile(topology)
-		if err := os.RemoveAll(filepath.Dir(statePath)); err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Errorf("remove state: %w", err))
-			return
-		}
-	} else if err := mgr.Delete(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("remove state: %w", err))
-		return
-	}
-
-	// Remove workspace directory.
-	wsDir := filepath.Join(s.workspacesDir, topology)
-	if err := os.RemoveAll(wsDir); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("remove workspace: %w", err))
+	if err := s.workspaceService().Delete(r.Context(), topology, r.URL.Query().Get("force") == "true"); err != nil {
+		writeError(w, workspaceStatus(err), err)
 		return
 	}
 
@@ -233,4 +152,18 @@ func (s *Server) handleDeleteTopology(w http.ResponseWriter, r *http.Request) {
 		"name":    topology,
 		"message": "topology deleted",
 	})
+}
+
+func workspaceStatus(err error) int {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "already exists"), strings.Contains(msg, "resource(s)"):
+		return http.StatusConflict
+	case strings.Contains(msg, "not found"), strings.Contains(msg, "no state file"):
+		return http.StatusNotFound
+	case strings.Contains(msg, "invalid"), strings.Contains(msg, "required"), strings.Contains(msg, "empty HCL"), strings.Contains(msg, "does not support"):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }

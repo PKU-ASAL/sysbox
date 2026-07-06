@@ -12,15 +12,11 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-// PreflightCheck aliases the canonical check type owned by pkg/substrate so
-// resource-level and substrate-level checks share one shape.
-type PreflightCheck = substrate.PreflightCheck
-
 type ResourcePreflightProvider interface {
-	PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []PreflightCheck
+	PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []substrate.PreflightCheck
 }
 
-func ResourcePreflightChecks(r config.ResourceBlock, ctx *hcl.EvalContext) []PreflightCheck {
+func ResourcePreflightChecks(r config.ResourceBlock, ctx *hcl.EvalContext) []substrate.PreflightCheck {
 	p, ok := GetResourceProvider(r.Type)
 	if !ok {
 		return nil
@@ -32,16 +28,16 @@ func ResourcePreflightChecks(r config.ResourceBlock, ctx *hcl.EvalContext) []Pre
 	return hook.PreflightResource(r, ctx)
 }
 
-func ArtifactPreflightCheck(name, source, sha string) *PreflightCheck {
+func ArtifactPreflightCheck(name, source, sha string) *substrate.PreflightCheck {
 	if source == "" {
 		return nil
 	}
 	if artifact.IsURL(source) {
 		msg := "remote artifact will be fetched on demand"
 		if sha == "" {
-			return &PreflightCheck{Name: name, OK: true, Severity: "warning", Message: msg, Hint: "set sha256 for reproducible artifact caching"}
+			return &substrate.PreflightCheck{Name: name, OK: true, Severity: "warning", Message: msg, Hint: "set sha256 for reproducible artifact caching"}
 		}
-		return &PreflightCheck{Name: name, OK: true, Severity: "info", Message: msg}
+		return &substrate.PreflightCheck{Name: name, OK: true, Severity: "info", Message: msg}
 	}
 	p := source
 	if len(p) >= 7 && p[:7] == "file://" {
@@ -53,15 +49,15 @@ func ArtifactPreflightCheck(name, source, sha string) *PreflightCheck {
 		}
 	}
 	if st, err := os.Stat(p); err != nil {
-		return &PreflightCheck{Name: name, OK: false, Severity: "error", Message: err.Error(), Hint: "mount the artifact into the API container or use a URL source"}
+		return &substrate.PreflightCheck{Name: name, OK: false, Severity: "error", Message: err.Error(), Hint: "mount the artifact into the API container or use a URL source"}
 	} else if st.IsDir() {
-		return &PreflightCheck{Name: name, OK: false, Severity: "error", Message: p + " is a directory", Hint: "point the HCL field at a file"}
+		return &substrate.PreflightCheck{Name: name, OK: false, Severity: "error", Message: p + " is a directory", Hint: "point the HCL field at a file"}
 	}
-	return &PreflightCheck{Name: name, OK: true, Severity: "info", Message: p}
+	return &substrate.PreflightCheck{Name: name, OK: true, Severity: "info", Message: p}
 }
 
-func DecodePreflightError(resourceType, name string, err error) PreflightCheck {
-	return PreflightCheck{
+func DecodePreflightError(resourceType, name string, err error) substrate.PreflightCheck {
+	return substrate.PreflightCheck{
 		Name:     fmt.Sprintf("resource:%s.%s", resourceType, name),
 		OK:       false,
 		Severity: "error",

@@ -19,7 +19,7 @@ func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, apiSchemaVersion, version)
 
-	run := Run{ID: "run-1", Topology: "mixed", Op: "apply", Status: RunRunning, StartedAt: time.Now().UTC()}
+	run := controlplane.Run{ID: "run-1", Topology: "mixed", Op: "apply", Status: controlplane.RunRunning, StartedAt: time.Now().UTC()}
 	require.NoError(t, store.SaveRun(ctx, run))
 	runs, err := store.LoadRuns(ctx)
 	require.NoError(t, err)
@@ -64,12 +64,12 @@ func TestLocalAPIStorePersistsAgentAndClaimLease(t *testing.T) {
 	require.True(t, gotAgent.Disabled)
 	require.Equal(t, controlplane.AgentProtocolVersion, gotAgent.Protocol)
 
-	run := Run{
+	run := controlplane.Run{
 		ID:         "run-1",
 		Topology:   "mixed",
 		Workspace:  "mixed",
 		AgentID:    "host-a",
-		Status:     RunAssigned,
+		Status:     controlplane.RunAssigned,
 		QueuedAt:   time.Now().UTC(),
 		AssignedAt: time.Now().UTC(),
 		StartedAt:  time.Now().UTC(),
@@ -78,7 +78,7 @@ func TestLocalAPIStorePersistsAgentAndClaimLease(t *testing.T) {
 	claimed, ok, err := store.ClaimRun(ctx, "run-1", "host-a", "owner-1", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, RunRunning, claimed.Status)
+	require.Equal(t, controlplane.RunRunning, claimed.Status)
 	require.Equal(t, 1, claimed.Attempt)
 	require.Equal(t, "owner-1", claimed.LeaseOwner)
 

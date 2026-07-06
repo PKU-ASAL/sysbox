@@ -18,34 +18,18 @@ const (
 	DefaultAgentID = "local"
 )
 
-type Run = controlplane.Run
-type RunStatus = controlplane.RunStatus
-
-const (
-	RunQueued    = controlplane.RunQueued
-	RunAssigned  = controlplane.RunAssigned
-	RunRunning   = controlplane.RunRunning
-	RunDone      = controlplane.RunDone
-	RunFailed    = controlplane.RunFailed
-	RunCancelled = controlplane.RunCancelled
-)
-
-// Run represents one async apply or destroy operation.
-// Fields are JSON-serialisable so they can be persisted by the API store.
 // Jobs is a run store backed by in-memory map + the API persistence store.
 // Per-topology mutexes prevent concurrent apply/destroy on the same topology.
 type Jobs struct {
 	mu                 sync.RWMutex
-	runs               map[string]*Run
+	runs               map[string]*controlplane.Run
 	runsDir            string // root directory for runs, e.g. "runs"
 	store              apiStore
 	recoverInterrupted bool
 	runLeaseTTL        time.Duration
 	expiredPolicy      string
-	logs               map[string]*Broadcaster
-
-	topologyMu    sync.Mutex
-	topologyLocks map[string]*sync.Mutex
+	logs               *RunLogHub
+	topologyLocks      *TopologyLocks
 }
 
 type runStartOptions struct {
@@ -74,14 +58,14 @@ func newJobsWithPolicy(runsDir string, store apiStore, recoverInterrupted bool, 
 		expiredPolicy = "fail_recoverable"
 	}
 	j := &Jobs{
-		runs:               make(map[string]*Run),
+		runs:               make(map[string]*controlplane.Run),
 		runsDir:            runsDir,
 		store:              store,
 		recoverInterrupted: recoverInterrupted,
 		runLeaseTTL:        runLeaseTTL,
 		expiredPolicy:      expiredPolicy,
-		logs:               make(map[string]*Broadcaster),
-		topologyLocks:      make(map[string]*sync.Mutex),
+		logs:               newRunLogHub(),
+		topologyLocks:      newTopologyLocks(),
 	}
 	j.load()
 	return j
@@ -91,15 +75,7 @@ func newJobsWithPolicy(runsDir string, store apiStore, recoverInterrupted bool, 
 // This ensures that concurrent apply/destroy requests for the same topology
 // are serialised, preventing state file corruption and double-create bugs.
 func (j *Jobs) lockTopology(topology string) func() {
-	j.topologyMu.Lock()
-	mu, ok := j.topologyLocks[topology]
-	if !ok {
-		mu = &sync.Mutex{}
-		j.topologyLocks[topology] = mu
-	}
-	j.topologyMu.Unlock()
-	mu.Lock()
-	return mu.Unlock
+	return j.topologyLocks.Lock(topology)
 }
 
 // load populates the in-memory store from persisted run records.
@@ -115,7 +91,7 @@ func (j *Jobs) load() {
 	for _, r := range runs {
 		run := r
 		normalizeRunProductFields(&run)
-		j.ensureLogs(run.ID, true)
+		j.logs.Ensure(run.ID, true)
 		j.runs[run.ID] = &run
 	}
 	j.loadCheckpoints()
@@ -145,13 +121,13 @@ func (j *Jobs) loadCheckpoints() {
 		if err := json.Unmarshal(data, &cp); err != nil || cp.RunID == "" {
 			continue
 		}
-		status := RunFailed
+		status := controlplane.RunFailed
 		errMsg := "server restarted before run completion"
 		if cp.Status == "done" {
-			status = RunDone
+			status = controlplane.RunDone
 			errMsg = ""
 		}
-		r := &Run{
+		r := &controlplane.Run{
 			ID:          cp.RunID,
 			ProjectID:   "default",
 			Workspace:   cp.Topology,
@@ -159,28 +135,28 @@ func (j *Jobs) loadCheckpoints() {
 			Op:          cp.Operation,
 			Status:      status,
 			Err:         errMsg,
-			Recoverable: status == RunFailed,
+			Recoverable: status == controlplane.RunFailed,
 			StartedAt:   cp.StartedAt,
 			EndedAt:     cp.EndedAt,
 		}
-		j.ensureLogs(r.ID, true)
+		j.logs.Ensure(r.ID, true)
 		j.runs[r.ID] = r
 	}
 }
 
 // persist writes a run record through the configured API store.
-func (j *Jobs) persist(r *Run) {
+func (j *Jobs) persist(r *controlplane.Run) {
 	if err := j.store.SaveRun(context.Background(), runRecord(*r)); err != nil {
 		fmt.Fprintf(os.Stderr, "[api] persist run: %v\n", err)
 	}
 }
 
-func runRecord(r Run) Run {
+func runRecord(r controlplane.Run) controlplane.Run {
 	normalizeRunProductFields(&r)
 	return r
 }
 
-func normalizeRunProductFields(r *Run) {
+func normalizeRunProductFields(r *controlplane.Run) {
 	if r == nil {
 		return
 	}
@@ -198,19 +174,19 @@ func normalizeRunProductFields(r *Run) {
 	}
 }
 
-func (j *Jobs) start(topology, op string) *Run {
+func (j *Jobs) start(topology, op string) *controlplane.Run {
 	return j.startWithOptions(topology, op, runStartOptions{})
 }
 
-func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *Run {
+func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *controlplane.Run {
 	now := time.Now()
-	r := &Run{
+	r := &controlplane.Run{
 		ID:         uuid.New().String(),
 		ProjectID:  "default",
 		Workspace:  topology,
 		Topology:   topology,
 		Op:         op,
-		Status:     RunQueued,
+		Status:     controlplane.RunQueued,
 		ParentID:   opts.ParentID,
 		Revision:   opts.Revision,
 		PlanID:     opts.PlanID,
@@ -224,24 +200,22 @@ func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *Run 
 	r.LeaseOwner = fmt.Sprintf("sysbox-api:%s:%s", r.Op, r.ID)
 	j.mu.Lock()
 	j.runs[r.ID] = r
-	j.ensureLogsLocked(r.ID, false)
 	j.mu.Unlock()
+	j.logs.Ensure(r.ID, false)
 	j.persist(r)
 	return r
 }
 
-func (j *Jobs) assign(r *Run, agentID string) {
+func (j *Jobs) assign(r *controlplane.Run, agentID string) {
 	j.mu.Lock()
-	r.AgentID = agentID
-	r.Status = RunAssigned
-	r.AssignedAt = time.Now()
+	r.MarkAssigned(agentID, time.Now())
 	j.mu.Unlock()
 	j.persist(r)
 }
 
-func (j *Jobs) markRunning(r *Run) {
+func (j *Jobs) markRunning(r *controlplane.Run) {
 	j.mu.Lock()
-	r.Status = RunRunning
+	r.Status = controlplane.RunRunning
 	r.Attempt++
 	if r.StartedAt.IsZero() || r.StartedAt.Equal(r.QueuedAt) {
 		r.StartedAt = time.Now()
@@ -250,7 +224,7 @@ func (j *Jobs) markRunning(r *Run) {
 	j.persist(r)
 }
 
-func (j *Jobs) claim(runID, agentID string) (*Run, error) {
+func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
 	owner := fmt.Sprintf("%s:%s:%d", agentID, runID, time.Now().UnixNano())
 	ttl := j.runLeaseTTL
 	if ttl <= 0 {
@@ -261,8 +235,8 @@ func (j *Jobs) claim(runID, agentID string) (*Run, error) {
 	} else if ok && claimed != nil {
 		j.mu.Lock()
 		j.runs[runID] = claimed
-		j.ensureLogsLocked(runID, false)
 		j.mu.Unlock()
+		j.logs.Ensure(runID, false)
 		return claimed, nil
 	} else if claimed != nil {
 		return nil, fmt.Errorf("run status %q cannot be claimed", claimed.Status)
@@ -277,24 +251,19 @@ func (j *Jobs) claim(runID, agentID string) (*Run, error) {
 		j.mu.Unlock()
 		return nil, fmt.Errorf("run assigned to agent %q", run.AgentID)
 	}
-	if run.Status != RunAssigned {
+	now := time.Now()
+	if !run.CanBeClaimedBy(agentID, now) {
 		j.mu.Unlock()
 		return nil, fmt.Errorf("run status %q cannot be claimed", run.Status)
 	}
-	run.Status = RunRunning
-	run.LeaseOwner = owner
-	run.LeaseUntil = time.Now().Add(ttl)
-	run.Attempt++
-	if run.StartedAt.IsZero() || run.StartedAt.Equal(run.QueuedAt) {
-		run.StartedAt = time.Now()
-	}
+	run.MarkRunning(owner, ttl, now)
 	out := runRecord(*run)
 	j.mu.Unlock()
 	j.persist(run)
 	return &out, nil
 }
 
-func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*Run, error) {
+func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, error) {
 	renewed, ok, err := j.store.RenewRunLease(context.Background(), runID, agentID, owner, ttl)
 	if err != nil {
 		return nil, err
@@ -308,11 +277,8 @@ func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*Run
 	return renewed, nil
 }
 
-func runLeasable(run Run, agentID string, now time.Time) bool {
-	if run.AgentID != agentID || run.Status != RunAssigned {
-		return false
-	}
-	return run.LeaseUntil.IsZero() || !run.LeaseUntil.After(now)
+func runLeasable(run controlplane.Run, agentID string, now time.Time) bool {
+	return run.CanBeClaimedBy(agentID, now)
 }
 
 func (j *Jobs) markExpiredLeases(now time.Time) {
@@ -324,60 +290,46 @@ func (j *Jobs) markExpiredLeases(now time.Time) {
 		return
 	}
 	for _, run := range latestRunsByID(runs) {
-		if run.Status != RunRunning || run.LeaseUntil.IsZero() || run.LeaseUntil.After(now) {
+		if run.Status != controlplane.RunRunning || run.LeaseUntil.IsZero() || run.LeaseUntil.After(now) {
 			continue
 		}
-		run.Status = RunFailed
-		run.Err = "run lease expired"
-		run.Recoverable = true
-		run.EndedAt = now
+		run.MarkLeaseExpired(now)
 		j.replace(&run)
 	}
 }
 
-func (j *Jobs) runnableForAgent(agentID string) []*Run {
+func (j *Jobs) runnableForAgent(agentID string) []*controlplane.Run {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
-	out := make([]*Run, 0)
+	out := make([]*controlplane.Run, 0)
 	for _, r := range j.runs {
-		if r.AgentID == agentID && r.Status == RunAssigned {
+		if r.AgentID == agentID && r.Status == controlplane.RunAssigned {
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-func latestRunsByID(runs []Run) []Run {
-	latest := map[string]Run{}
+func latestRunsByID(runs []controlplane.Run) []controlplane.Run {
+	latest := map[string]controlplane.Run{}
 	for _, run := range runs {
 		prev, ok := latest[run.ID]
 		if !ok || runStatusRank(run.Status) >= runStatusRank(prev.Status) || runRecordTime(run).After(runRecordTime(prev)) {
 			latest[run.ID] = run
 		}
 	}
-	out := make([]Run, 0, len(latest))
+	out := make([]controlplane.Run, 0, len(latest))
 	for _, run := range latest {
 		out = append(out, run)
 	}
 	return out
 }
 
-func runStatusRank(status RunStatus) int {
-	switch status {
-	case RunQueued:
-		return 1
-	case RunAssigned:
-		return 2
-	case RunRunning:
-		return 3
-	case RunDone, RunFailed, RunCancelled:
-		return 4
-	default:
-		return 0
-	}
+func runStatusRank(status controlplane.RunStatus) int {
+	return status.Rank()
 }
 
-func runRecordTime(run Run) time.Time {
+func runRecordTime(run controlplane.Run) time.Time {
 	switch {
 	case !run.EndedAt.IsZero():
 		return run.EndedAt
@@ -394,14 +346,14 @@ func (j *Jobs) hasRunning(topology string) bool {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	for _, r := range j.runs {
-		if r.Topology == topology && (r.Status == RunQueued || r.Status == RunAssigned || r.Status == RunRunning) {
+		if r.Topology == topology && r.Status.IsActive() {
 			return true
 		}
 	}
 	return false
 }
 
-func (j *Jobs) startChild(parent *Run) *Run {
+func (j *Jobs) startChild(parent *controlplane.Run) *controlplane.Run {
 	return j.startWithOptions(parent.Topology, parent.Op, runStartOptions{
 		ParentID: parent.ID,
 		Revision: parent.Revision,
@@ -410,24 +362,15 @@ func (j *Jobs) startChild(parent *Run) *Run {
 	})
 }
 
-func (j *Jobs) finish(r *Run, err error) {
+func (j *Jobs) finish(r *controlplane.Run, err error) {
 	j.mu.Lock()
-	r.EndedAt = time.Now()
-	if err != nil {
-		r.Status = RunFailed
-		r.Err = err.Error()
-		r.Recoverable = true
-	} else {
-		r.Status = RunDone
-		r.Err = ""
-		r.Recoverable = false
-	}
+	r.MarkFinished(err, time.Now())
 	j.mu.Unlock()
-	j.closeLogs(r.ID)
+	j.logs.Close(r.ID)
 	j.persist(r)
 }
 
-func (j *Jobs) replace(r *Run) {
+func (j *Jobs) replace(r *controlplane.Run) {
 	if r == nil {
 		return
 	}
@@ -435,13 +378,13 @@ func (j *Jobs) replace(r *Run) {
 	j.mu.Lock()
 	j.runs[r.ID] = r
 	j.mu.Unlock()
-	if r.Status == RunDone || r.Status == RunFailed || r.Status == RunCancelled {
-		j.closeLogs(r.ID)
+	if r.Status.IsTerminal() {
+		j.logs.Close(r.ID)
 	}
 	j.persist(r)
 }
 
-func (j *Jobs) get(id string) (*Run, bool) {
+func (j *Jobs) get(id string) (*controlplane.Run, bool) {
 	if run, err := j.store.GetRun(context.Background(), id); err == nil && run != nil {
 		j.mu.Lock()
 		if existing, ok := j.runs[id]; ok {
@@ -450,7 +393,7 @@ func (j *Jobs) get(id string) (*Run, bool) {
 				return existing, true
 			}
 		} else {
-			j.ensureLogsLocked(run.ID, run.Status != RunQueued && run.Status != RunAssigned && run.Status != RunRunning)
+			j.logs.Ensure(run.ID, run.Status.IsTerminal())
 		}
 		j.runs[id] = run
 		j.mu.Unlock()
@@ -462,7 +405,7 @@ func (j *Jobs) get(id string) (*Run, bool) {
 	return r, ok
 }
 
-func preferRun(a, b *Run) bool {
+func preferRun(a, b *controlplane.Run) bool {
 	if a == nil {
 		return false
 	}
@@ -476,10 +419,10 @@ func preferRun(a, b *Run) bool {
 	return runRecordTime(*a).After(runRecordTime(*b))
 }
 
-func (j *Jobs) list(topology string) []*Run {
+func (j *Jobs) list(topology string) []*controlplane.Run {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
-	out := make([]*Run, 0, len(j.runs))
+	out := make([]*controlplane.Run, 0, len(j.runs))
 	for _, r := range j.runs {
 		if topology == "" || r.Topology == topology {
 			out = append(out, r)
@@ -489,34 +432,5 @@ func (j *Jobs) list(topology string) []*Run {
 }
 
 func (j *Jobs) logWriter(runID string) *Broadcaster {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	return j.ensureLogsLocked(runID, false)
-}
-
-func (j *Jobs) ensureLogs(runID string, closed bool) *Broadcaster {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	return j.ensureLogsLocked(runID, closed)
-}
-
-func (j *Jobs) ensureLogsLocked(runID string, closed bool) *Broadcaster {
-	if j.logs == nil {
-		j.logs = make(map[string]*Broadcaster)
-	}
-	b, ok := j.logs[runID]
-	if !ok {
-		b = &Broadcaster{}
-		j.logs[runID] = b
-	}
-	if closed {
-		b.Close()
-	}
-	return b
-}
-
-func (j *Jobs) closeLogs(runID string) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.ensureLogsLocked(runID, false).Close()
+	return j.logs.Writer(runID)
 }

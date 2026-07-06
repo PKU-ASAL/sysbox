@@ -48,7 +48,7 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), mgr)
+	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

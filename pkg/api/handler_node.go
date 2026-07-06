@@ -4,9 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // maxBodyBytes limits request body size to 1MB across all API handlers
@@ -25,7 +22,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	st, err := s.loadState(topology)
+	st, err := s.workspaceService().LoadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -61,7 +58,7 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	st, err := s.loadState(topology)
+	st, err := s.workspaceService().LoadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -100,51 +97,9 @@ func (s *Server) handleNodeLifecycle(r *http.Request, operation string, w http.R
 		return
 	}
 
-	st, err := s.loadState(topology)
+	op, err := s.nodeOperations().Lifecycle(r.Context(), topology, name, operation, s.requestSubject(r))
 	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-
-	res := st.FindResource("sysbox_node", name)
-	if res == nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("node %q not found", name))
-		return
-	}
-
-	sub, err := substrate.Get(res.Provider)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("substrate %q not registered: %w", res.Provider, err))
-		return
-	}
-
-	if !sub.Capabilities().SupportsPause {
-		writeError(w, http.StatusConflict, fmt.Errorf("substrate %q does not support pause/resume", res.Provider))
-		return
-	}
-
-	subj := s.requestSubject(r)
-	required := []string{res.Provider}
-	agent, err := s.selectAgent(r.Context(), required, "")
-	if err != nil {
-		writeError(w, http.StatusConflict, err)
-		return
-	}
-	op := s.nodeOps.Create(controlplane.NodeOperation{
-		Topology:    topology,
-		Workspace:   topology,
-		Operation:   operation,
-		Node:        name,
-		Substrate:   res.Provider,
-		AgentID:     agent.ID,
-		RequestedBy: subj.User,
-		Roles:       subj.Roles,
-	})
-	if _, err := s.publishAgentCommand(r.Context(), agent.ID, controlplane.AgentCommand{
-		Type:      "node_operation",
-		Operation: op,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, nodeOperationStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, op)
@@ -170,51 +125,29 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid body: %w", err))
 		return
 	}
-	if body.Type != "sysbox_node" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("import only supports sysbox_node, got %q", body.Type))
-		return
-	}
-	if err := validatePathSegment(body.Name, "name"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if body.ID == "" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("id is required"))
-		return
-	}
-	if body.Substrate == "" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("substrate is required"))
-		return
-	}
-
-	if _, err := substrate.Get(body.Substrate); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("substrate %q not registered: %w", body.Substrate, err))
-		return
-	}
-	subj := s.requestSubject(r)
-	agent, err := s.selectAgent(r.Context(), []string{body.Substrate}, "")
+	op, err := s.nodeOperations().Import(r.Context(), topology, ImportNodeRequest{
+		Type:      body.Type,
+		Name:      body.Name,
+		ID:        body.ID,
+		Substrate: body.Substrate,
+	}, s.requestSubject(r))
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
-		return
-	}
-	op := s.nodeOps.Create(controlplane.NodeOperation{
-		Topology:    topology,
-		Workspace:   topology,
-		Operation:   "import",
-		Type:        body.Type,
-		Name:        body.Name,
-		ExternalID:  body.ID,
-		Substrate:   body.Substrate,
-		AgentID:     agent.ID,
-		RequestedBy: subj.User,
-		Roles:       subj.Roles,
-	})
-	if _, err := s.publishAgentCommand(r.Context(), agent.ID, controlplane.AgentCommand{
-		Type:      "node_operation",
-		Operation: op,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, nodeOperationStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, op)
+}
+
+func nodeOperationStatus(err error) int {
+	msg := err.Error()
+	switch {
+	case containsAny(msg, "not found"):
+		return http.StatusNotFound
+	case containsAny(msg, "required", "invalid", "only supports", "not registered"):
+		return http.StatusBadRequest
+	case containsAny(msg, "does not support", "no online agent", "does not satisfy"):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }

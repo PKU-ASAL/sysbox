@@ -8,13 +8,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/coder/websocket"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
-	agents := s.listAgents(r.Context())
+	agents := s.agentService().List(r.Context())
 	scrubAgentSecretValues(agents)
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
 }
@@ -30,7 +28,7 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.saveAgent(r.Context(), agent); err != nil {
+	if err := s.agentService().Save(r.Context(), agent); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -48,7 +46,7 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	agent, err := s.getAgent(r.Context(), id)
+	agent, err := s.agentService().Get(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -71,17 +69,12 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Reason != "" {
 		agent.Reason = req.Reason
 	}
-	switch {
-	case agent.Disabled:
-		agent.Status = "disabled"
-	case agent.Quarantined:
-		agent.Status = "quarantined"
-	default:
-		agent.Status = "online"
+	agent.Status = controlplane.AgentStatusForPolicy(agent.Disabled, agent.Quarantined)
+	if agent.Status == controlplane.AgentStatusOnline {
 		agent.Reason = ""
 	}
 	agent.UpdatedAt = time.Now().UTC()
-	if err := s.saveAgent(r.Context(), *agent); err != nil {
+	if err := s.agentService().Save(r.Context(), *agent); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -94,7 +87,7 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	agent, err := s.getAgent(context.Background(), id)
+	agent, err := s.agentService().Get(context.Background(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -183,24 +176,11 @@ func (s *Server) handleCompleteNodeOperation(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode node operation: %w", err))
 		return
 	}
-	if op.ID == "" {
-		op.ID = opID
-	}
-	if op.ID != opID {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("operation id mismatch"))
+	op, err := s.nodeOperations().CompleteFromAgent(agentID, opID, op)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if op.AgentID == "" {
-		op.AgentID = agentID
-	}
-	if op.AgentID != agentID {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("operation agent id mismatch"))
-		return
-	}
-	if op.EndedAt.IsZero() && (op.Status == "done" || op.Status == "failed") {
-		op.EndedAt = time.Now().UTC()
-	}
-	s.nodeOps.Save(op)
 	writeJSON(w, http.StatusOK, op)
 }
 
@@ -224,34 +204,11 @@ func (s *Server) handleCompleteAgentRun(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode run completion: %w", err))
 		return
 	}
-	if req.Run.ID == "" {
-		req.Run.ID = runID
-	}
-	if req.Run.ID != runID {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("completion run id mismatch"))
+	req, err := s.agentService().CompleteRun(agentID, runID, req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if req.Run.AgentID == "" {
-		req.Run.AgentID = agentID
-	}
-	if req.Run.AgentID != agentID {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("completion agent id mismatch"))
-		return
-	}
-	s.jobs.replace(&req.Run)
-	if req.Projection.AgentID == "" {
-		req.Projection.AgentID = agentID
-	}
-	if req.Projection.Topology == "" {
-		req.Projection.Topology = req.Run.Topology
-	}
-	if req.Projection.Workspace == "" {
-		req.Projection.Workspace = req.Run.Workspace
-	}
-	if req.Projection.UpdatedAt.IsZero() {
-		req.Projection.UpdatedAt = time.Now().UTC()
-	}
-	s.agents.SaveProjection(req.Projection)
 	writeJSON(w, http.StatusOK, req)
 }
 
@@ -306,7 +263,7 @@ func (s *Server) handleCancelAgentCommand(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	cmd, err := s.findAgentCommand(r.Context(), agentID, commandID)
+	cmd, err := s.agentService().FindCommand(r.Context(), agentID, commandID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -315,7 +272,7 @@ func (s *Server) handleCancelAgentCommand(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, cmd)
 		return
 	}
-	cancelCmd, err := s.publishAgentCommand(r.Context(), agentID, controlplane.AgentCommand{
+	cancelCmd, err := s.agentService().PublishCommand(r.Context(), agentID, controlplane.AgentCommand{
 		Type: "cancel_command",
 		Operation: controlplane.NodeOperation{
 			ExternalID: commandID,
@@ -423,190 +380,7 @@ func (s *Server) handleAgentCommandStream(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if s.agents == nil {
-		s.agents = newAgentRegistry()
-	}
-	if err := s.verifyAgentRequest(r, id); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
-	agent, err := s.getAgent(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	if agent != nil && (agent.Disabled || agent.Quarantined || agent.Status == "disabled" || agent.Status == "quarantined") {
-		writeError(w, http.StatusForbidden, fmt.Errorf("agent %q is %s", id, agent.Status))
-		return
-	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.originPatterns()})
-	if err != nil {
-		return
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-	stream := s.agents.Stream(id)
-	ch := stream.Subscribe()
-	defer stream.Unsubscribe(ch)
-	ctx := r.Context()
-	s.pushPendingAgentCommands(ctx, id, conn)
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- s.readAgentCommandEvents(ctx, id, conn)
-	}()
-	for {
-		select {
-		case line, ok := <-ch:
-			if !ok {
-				return
-			}
-			var cmd controlplane.AgentCommand
-			if err := json.Unmarshal([]byte(line), &cmd); err != nil {
-				continue
-			}
-			if cmd.ID == "" {
-				continue
-			}
-			var leased bool
-			cmd, leased = s.acquireAgentCommandLease(ctx, id, cmd)
-			if !leased {
-				continue
-			}
-			cmd = deliverAgentCommand(cmd)
-			if s.apiStore != nil {
-				_ = s.apiStore.SaveAgentCommand(ctx, cmd)
-			}
-			raw, err := json.Marshal(cmd)
-			if err != nil {
-				continue
-			}
-			if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
-				return
-			}
-		case err := <-errCh:
-			if err != nil && ctx.Err() == nil {
-				return
-			}
-			return
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func (s *Server) readAgentCommandEvents(ctx context.Context, agentID string, conn *websocket.Conn) error {
-	for {
-		_, data, err := conn.Read(ctx)
-		if err != nil {
-			return err
-		}
-		var event controlplane.AgentCommandEvent
-		if err := json.Unmarshal(data, &event); err != nil {
-			continue
-		}
-		if event.AgentID == "" {
-			event.AgentID = agentID
-		}
-		if event.CreatedAt.IsZero() {
-			event.CreatedAt = time.Now().UTC()
-		}
-		s.updateAgentCommandFromEvent(ctx, event)
-		s.agents.SaveCommandEvent(event)
-		if s.apiStore != nil {
-			_ = s.apiStore.SaveAgentCommandEvent(ctx, event)
-		}
-		fmt.Printf("[agent:%s] command %s %s %s\n", event.AgentID, event.CommandID, event.Type, event.Status)
-	}
-}
-
-func (s *Server) pushPendingAgentCommands(ctx context.Context, agentID string, conn *websocket.Conn) {
-	if s.apiStore == nil {
-		return
-	}
-	commands, err := s.apiStore.ListAgentCommands(ctx, agentID)
-	if err != nil {
-		return
-	}
-	for _, cmd := range commands {
-		var ok bool
-		cmd, ok = s.acquireAgentCommandLease(ctx, agentID, cmd)
-		if !ok {
-			continue
-		}
-		cmd = deliverAgentCommand(cmd)
-		_ = s.apiStore.SaveAgentCommand(ctx, cmd)
-		raw, err := json.Marshal(cmd)
-		if err != nil {
-			continue
-		}
-		_ = conn.Write(ctx, websocket.MessageText, raw)
-	}
-}
-
-func (s *Server) updateAgentCommandFromEvent(ctx context.Context, event controlplane.AgentCommandEvent) {
-	if s.apiStore == nil || event.CommandID == "" || event.AgentID == "" {
-		return
-	}
-	cmd, err := s.findAgentCommand(ctx, event.AgentID, event.CommandID)
-	if err != nil {
-		return
-	}
-	now := event.CreatedAt
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	switch event.Status {
-	case "ack":
-		cmd.Status = "acked"
-		cmd.AckedAt = now
-	case "started":
-		cmd.Status = "running"
-		s.updateConsoleSessionFromCommandEvent(cmd, event)
-	case "completed":
-		cmd.Status = "completed"
-		cmd.EndedAt = now
-		s.updateConsoleSessionFromCommandEvent(cmd, event)
-	case "failed", "denied", "cancelled":
-		cmd.Status = event.Status
-		cmd.Err = event.Error
-		cmd.EndedAt = now
-		s.updateConsoleSessionFromCommandEvent(cmd, event)
-	}
-	_ = s.apiStore.SaveAgentCommand(ctx, cmd)
-}
-
-func (s *Server) updateConsoleSessionFromCommandEvent(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) {
-	if cmd.Type != "session_open" || cmd.Session == nil || cmd.Session.ID == "" {
-		return
-	}
-	now := event.CreatedAt
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	s.consoles.Update(cmd.Session.ID, func(sess *controlplane.ConsoleSession) {
-		switch event.Status {
-		case "started":
-			if sess.Status == "queued" {
-				sess.Status = "running"
-			}
-			if sess.StartedAt.IsZero() {
-				sess.StartedAt = now
-			}
-		case "completed":
-			if sess.Status != "failed" && sess.Status != "cancelled" {
-				sess.Status = "closed"
-			}
-			if sess.EndedAt.IsZero() {
-				sess.EndedAt = now
-			}
-		case "failed", "denied", "cancelled":
-			sess.Status = event.Status
-			sess.Err = event.Error
-			if sess.Err == "" {
-				sess.Err = event.Message
-			}
-			sess.EndedAt = now
-		}
-	})
+	s.agentStreams().ServeCommands(w, r, id)
 }
 
 func inventoryStatus(observed time.Time) string {
@@ -617,19 +391,6 @@ func inventoryStatus(observed time.Time) string {
 		return "stale"
 	}
 	return "fresh"
-}
-
-func (s *Server) findAgentCommand(ctx context.Context, agentID, commandID string) (controlplane.AgentCommand, error) {
-	commands, err := s.apiStore.ListAgentCommands(ctx, agentID)
-	if err != nil {
-		return controlplane.AgentCommand{}, err
-	}
-	for _, cmd := range commands {
-		if cmd.ID == commandID {
-			return cmd, nil
-		}
-	}
-	return controlplane.AgentCommand{}, fmt.Errorf("agent command not found")
 }
 
 func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -653,22 +414,18 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 		}
 	}
 	req.ID = id
-	req.Status = "online"
+	req.Status = controlplane.AgentStatusOnline
 	agent, err := normalizeAgent(req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if existing, err := s.getAgent(r.Context(), id); err == nil && existing != nil {
+	if existing, err := s.agentService().Get(r.Context(), id); err == nil && existing != nil {
 		if existing.Disabled || existing.Quarantined {
 			agent.Disabled = existing.Disabled
 			agent.Quarantined = existing.Quarantined
 			agent.Reason = existing.Reason
-			if existing.Disabled {
-				agent.Status = "disabled"
-			} else {
-				agent.Status = "quarantined"
-			}
+			agent.Status = controlplane.AgentStatusForPolicy(existing.Disabled, existing.Quarantined)
 		}
 		if agent.Name == "" {
 			agent.Name = existing.Name
@@ -692,7 +449,7 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 	}
 	agent.LastHeartbeat = time.Now().UTC()
 	agent.UpdatedAt = agent.LastHeartbeat
-	if err := s.saveAgent(r.Context(), agent); err != nil {
+	if err := s.agentService().Save(r.Context(), agent); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -712,7 +469,7 @@ func normalizeAgent(in controlplane.Agent) (controlplane.Agent, error) {
 		in.Name = in.ID
 	}
 	if in.Status == "" {
-		in.Status = "online"
+		in.Status = controlplane.AgentStatusOnline
 	}
 	if in.CreatedAt.IsZero() {
 		in.CreatedAt = now
@@ -720,7 +477,7 @@ func normalizeAgent(in controlplane.Agent) (controlplane.Agent, error) {
 	if in.UpdatedAt.IsZero() {
 		in.UpdatedAt = now
 	}
-	if in.Status == "online" && in.LastHeartbeat.IsZero() {
+	if in.Status == controlplane.AgentStatusOnline && in.LastHeartbeat.IsZero() {
 		in.LastHeartbeat = now
 	}
 	if in.Protocol == "" {

@@ -191,9 +191,9 @@ func (p *Plan) addAction(id graph.NodeID, action controlplane.PlanActionType, re
 	})
 }
 
-// PlanFromActions rebuilds the executable legacy plan indexes from structured
-// actions. It lets API-stored plans become the execution input without
-// recomputing a fresh diff.
+// PlanFromActions rebuilds the executable plan indexes from structured actions.
+// It lets API-stored plans become the execution input without recomputing a
+// fresh diff.
 func PlanFromActions(actions []controlplane.PlanAction, current *state.State) *Plan {
 	p := &Plan{Actions: append([]controlplane.PlanAction(nil), actions...)}
 	for _, action := range p.Actions {

@@ -30,7 +30,7 @@ func (s *nodeOperationStore) Create(op controlplane.NodeOperation) controlplane.
 		op.Workspace = op.Topology
 	}
 	if op.Status == "" {
-		op.Status = "queued"
+		op.Status = controlplane.NodeOperationStatusQueued
 	}
 	if op.CreatedAt.IsZero() {
 		op.CreatedAt = now

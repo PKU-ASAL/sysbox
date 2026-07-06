@@ -11,19 +11,19 @@ import (
 )
 
 func (e *Executor) ExecuteNodeOperation(ctx context.Context, op controlplane.NodeOperation) controlplane.NodeOperation {
-	op.Status = "running"
+	op.Status = controlplane.NodeOperationStatusRunning
 	op.StartedAt = time.Now().UTC()
-	op.Audit = append(op.Audit, nodeOperationEvent(op, "start", "running", "node operation started"))
+	op.Audit = append(op.Audit, nodeOperationEvent(op, "start", controlplane.NodeOperationStatusRunning, "node operation started"))
 	err := e.executeNodeOperation(ctx, &op)
 	op.EndedAt = time.Now().UTC()
 	if err != nil {
-		op.Status = "failed"
+		op.Status = controlplane.NodeOperationStatusFailed
 		op.Err = err.Error()
-		op.Audit = append(op.Audit, nodeOperationEvent(op, "complete", "failed", err.Error()))
+		op.Audit = append(op.Audit, nodeOperationEvent(op, "complete", controlplane.NodeOperationStatusFailed, err.Error()))
 	} else {
-		op.Status = "done"
+		op.Status = controlplane.NodeOperationStatusDone
 		op.Err = ""
-		op.Audit = append(op.Audit, nodeOperationEvent(op, "complete", "done", "node operation completed"))
+		op.Audit = append(op.Audit, nodeOperationEvent(op, "complete", controlplane.NodeOperationStatusDone, "node operation completed"))
 	}
 	return op
 }

@@ -18,9 +18,8 @@ import (
 //     step) → reuse it and just move it across.
 //  3. TAP does not exist anywhere → create it in root, then move it in.
 //
-// The non-idempotent legacy behaviour (blindly running `ip tuntap add`)
-// surfaced as `ioctl(TUNSETIFF): Device or resource busy` whenever a leftover
-// TAP from a failed run was still present in any netns.
+// This avoids `ioctl(TUNSETIFF): Device or resource busy` when a failed run
+// leaves the TAP behind in any netns.
 func CreateTapInNetns(tapName, netnsName, bridgeName string) error {
 	inTargetNs := linkExistsInNetnsViaNetlink(netnsName, tapName)
 

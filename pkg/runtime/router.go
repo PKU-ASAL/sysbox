@@ -219,8 +219,7 @@ func configureNATViaNsenter(containerID, fromIf, toIf string) error {
 	return nil
 }
 
-// execCommand is a small wrapper around exec.Command.CombinedOutput for
-// running host-side commands. Extracted for testability.
+// execCommand runs host-side commands and is replaceable in tests.
 var execCommand = func(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).CombinedOutput()
 }

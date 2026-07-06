@@ -236,7 +236,7 @@ func (s *sqliteAPIStore) SchemaVersion(context.Context) (int, error) {
 	return apiSchemaVersion, nil
 }
 
-func (s *sqliteAPIStore) LoadRuns(ctx context.Context) ([]Run, error) {
+func (s *sqliteAPIStore) LoadRuns(ctx context.Context) ([]controlplane.Run, error) {
 	db, err := s.open()
 	if err != nil {
 		return nil, err
@@ -246,9 +246,9 @@ func (s *sqliteAPIStore) LoadRuns(ctx context.Context) ([]Run, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Run
+	var out []controlplane.Run
 	for rows.Next() {
-		var r Run
+		var r controlplane.Run
 		var leaseUntil, queuedAt, assignedAt, startedAt, endedAt string
 		var recoverable int
 		if err := rows.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.PlanID, &r.AgentID, &recoverable, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt); err != nil {
@@ -265,13 +265,13 @@ func (s *sqliteAPIStore) LoadRuns(ctx context.Context) ([]Run, error) {
 	return out, rows.Err()
 }
 
-func (s *sqliteAPIStore) GetRun(ctx context.Context, id string) (*Run, error) {
+func (s *sqliteAPIStore) GetRun(ctx context.Context, id string) (*controlplane.Run, error) {
 	db, err := s.open()
 	if err != nil {
 		return nil, err
 	}
 	row := db.QueryRowContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, plan_id, agent_id, recoverable, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at FROM sysbox_runs WHERE id=?`, id)
-	var r Run
+	var r controlplane.Run
 	var leaseUntil, queuedAt, assignedAt, startedAt, endedAt string
 	var recoverable int
 	if err := row.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.PlanID, &r.AgentID, &recoverable, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt); err != nil {
@@ -290,7 +290,7 @@ func (s *sqliteAPIStore) GetRun(ctx context.Context, id string) (*Run, error) {
 	return &r, nil
 }
 
-func (s *sqliteAPIStore) SaveRun(ctx context.Context, run Run) error {
+func (s *sqliteAPIStore) SaveRun(ctx context.Context, run controlplane.Run) error {
 	normalizeRunProductFields(&run)
 	db, err := s.open()
 	if err != nil {
@@ -307,7 +307,7 @@ func (s *sqliteAPIStore) SaveRun(ctx context.Context, run Run) error {
 	return err
 }
 
-func (s *sqliteAPIStore) ClaimRun(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*Run, bool, error) {
+func (s *sqliteAPIStore) ClaimRun(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, bool, error) {
 	db, err := s.open()
 	if err != nil {
 		return nil, false, err
@@ -329,8 +329,8 @@ func (s *sqliteAPIStore) ClaimRun(ctx context.Context, runID, agentID, owner str
 		return nil, false, err
 	}
 	lu := parseSQLiteTime(leaseUntilStr)
-	if !runLeasable(Run{Status: controlplane.RunStatus(status), AgentID: colAgentID, LeaseOwner: leaseOwner, LeaseUntil: lu, Recoverable: recoverable != 0, ID: runID}, agentID, time.Now().UTC()) {
-		return &Run{ID: runID, Status: controlplane.RunStatus(status), AgentID: colAgentID, LeaseOwner: leaseOwner, LeaseUntil: lu}, false, nil
+	if !runLeasable(controlplane.Run{Status: controlplane.RunStatus(status), AgentID: colAgentID, LeaseOwner: leaseOwner, LeaseUntil: lu, Recoverable: recoverable != 0, ID: runID}, agentID, time.Now().UTC()) {
+		return &controlplane.Run{ID: runID, Status: controlplane.RunStatus(status), AgentID: colAgentID, LeaseOwner: leaseOwner, LeaseUntil: lu}, false, nil
 	}
 	now := time.Now().UTC()
 	if _, err := tx.ExecContext(ctx,
@@ -348,7 +348,7 @@ func (s *sqliteAPIStore) ClaimRun(ctx context.Context, runID, agentID, owner str
 	return r, true, nil
 }
 
-func (s *sqliteAPIStore) RenewRunLease(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*Run, bool, error) {
+func (s *sqliteAPIStore) RenewRunLease(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, bool, error) {
 	db, err := s.open()
 	if err != nil {
 		return nil, false, err
@@ -367,8 +367,9 @@ func (s *sqliteAPIStore) RenewRunLease(ctx context.Context, runID, agentID, owne
 	if err != nil {
 		return nil, false, err
 	}
-	if colAgentID != agentID || status != "running" || leaseOwner != owner {
-		return &Run{ID: runID, Status: controlplane.RunStatus(status), LeaseOwner: leaseOwner, AgentID: colAgentID}, false, nil
+	run := &controlplane.Run{ID: runID, Status: controlplane.RunStatus(status), LeaseOwner: leaseOwner, AgentID: colAgentID}
+	if !run.CanRenewLease(agentID, owner) {
+		return run, false, nil
 	}
 	newLU := formatSQLiteTime(time.Now().UTC().Add(ttl))
 	if _, err := tx.ExecContext(ctx, `UPDATE sysbox_runs SET lease_until=? WHERE id=?`, newLU, runID); err != nil {
@@ -969,11 +970,9 @@ func (s *sqliteAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, 
 	}
 	lu := parseSQLiteTime(leaseUntilStr)
 	now := time.Now().UTC()
-	if status == "done" || status == "failed" || status == "cancelled" {
-		return &controlplane.AgentCommand{ID: commandID, AgentID: agentID, Status: status}, false, nil
-	}
-	if leaseOwner != "" && lu.After(now) && leaseOwner != owner {
-		return &controlplane.AgentCommand{ID: commandID, AgentID: agentID, Status: status, LeaseOwner: leaseOwner, LeaseUntil: lu}, false, nil
+	current := &controlplane.AgentCommand{ID: commandID, AgentID: agentID, Status: status, LeaseOwner: leaseOwner, LeaseUntil: lu}
+	if !current.Leasable(now) {
+		return current, false, nil
 	}
 	newLU := formatSQLiteTime(now.Add(ttl))
 	if _, err := tx.ExecContext(ctx,

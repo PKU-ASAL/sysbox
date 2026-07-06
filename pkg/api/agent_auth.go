@@ -14,7 +14,7 @@ import (
 const agentSignatureSkew = 5 * time.Minute
 
 func (s *Server) verifyAgentRequest(r *http.Request, agentID string) error {
-	stored, err := s.getAgent(r.Context(), agentID)
+	stored, err := s.agentService().Get(r.Context(), agentID)
 	if err != nil {
 		return err
 	}

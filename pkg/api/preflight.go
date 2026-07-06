@@ -78,11 +78,11 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) preflightTopology(topology string) (*preflightResult, error) {
-	root, err := config.ParseFile(s.hclFile(topology))
+	root, err := config.ParseFile(s.workspaceService().HCLFile(topology))
 	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	ctx := config.BuildEvalContext(root, filepath.Dir(s.hclFile(topology)))
+	ctx := config.BuildEvalContext(root, filepath.Dir(s.workspaceService().HCLFile(topology)))
 	res := &preflightResult{OK: true}
 
 	needed := map[string]bool{}

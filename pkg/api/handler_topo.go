@@ -7,11 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"strings"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -38,76 +38,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // and runsDir (state file present). Each topology carries flags indicating
 // whether it has been applied yet.
 func (s *Server) handleListTopologies(w http.ResponseWriter, r *http.Request) {
-	type topologyInfo struct {
-		ArtifactID    string `json:"artifact_id"`
-		TopologyID    string `json:"topology_id,omitempty"`
-		Name          string `json:"name"`
-		HasHCL        bool   `json:"has_hcl"`
-		HasState      bool   `json:"has_state"`
-		ResourceCount int    `json:"resource_count,omitempty"`
-		Serial        int64  `json:"serial,omitempty"`
-		Backend       string `json:"backend,omitempty"`
-	}
-	topolist := map[string]*topologyInfo{}
-
-	hclEntries, err := filepath.Glob(filepath.Join(s.workspacesDir, "*", "field.sysbox.hcl"))
+	out, err := s.workspaceService().List(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
-	}
-	for _, e := range hclEntries {
-		name := filepath.Base(filepath.Dir(e))
-		topolist[name] = &topologyInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name, HasHCL: true}
-	}
-
-	if s.stateBackend == "" {
-		stateEntries, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json"))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		for _, e := range stateEntries {
-			name := filepath.Base(filepath.Dir(e))
-			info := topolist[name]
-			if info == nil {
-				info = &topologyInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name}
-				topolist[name] = info
-			}
-			info.HasState = true
-			info.Backend = "local"
-		}
-	} else {
-		mgr, err := s.stateManager("__list__")
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		items, err := mgr.ListTopologies(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		for _, item := range items {
-			if err := validatePathSegment(item.Name, "topology"); err != nil {
-				continue
-			}
-			info := topolist[item.Name]
-			if info == nil {
-				info = &topologyInfo{ArtifactID: artifactID(item.Name), TopologyID: topologyID(item.Name), Name: item.Name}
-				topolist[item.Name] = info
-			}
-			info.ArtifactID = artifactID(item.Name)
-			info.TopologyID = topologyID(item.Name)
-			info.HasState = item.HasState
-			info.ResourceCount = item.ResourceCount
-			info.Serial = item.Serial
-			info.Backend = item.Backend
-		}
-	}
-
-	out := make([]topologyInfo, 0, len(topolist))
-	for _, info := range topolist {
-		out = append(out, *info)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"topologies": out})
 }
@@ -119,7 +53,7 @@ func (s *Server) handleGetState(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	st, err := s.loadState(topology)
+	st, err := s.workspaceService().LoadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -133,12 +67,7 @@ func (s *Server) handleGetStateMetadata(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	meta, err := mgr.Metadata(r.Context())
+	meta, err := s.workspaceService().Metadata(r.Context(), topology)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -152,12 +81,7 @@ func (s *Server) handleGetStateLock(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	info, err := mgr.LockInfo(r.Context())
+	info, err := s.workspaceService().LockInfo(r.Context(), topology)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -171,12 +95,7 @@ func (s *Server) handleForceUnlockState(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if err := mgr.ForceUnlock(r.Context()); err != nil {
+	if err := s.workspaceService().ForceUnlock(r.Context(), topology); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -189,18 +108,7 @@ func (s *Server) handleListStateSnapshots(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	backend := mgr.Backend()
-	snapshots, ok := backend.(state.SnapshotBackend)
-	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"snapshots": []state.Snapshot{}})
-		return
-	}
-	items, err := snapshots.ListSnapshots(r.Context())
+	items, err := s.workspaceService().StateSnapshots(r.Context(), topology)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -219,18 +127,7 @@ func (s *Server) handleRestoreStateSnapshot(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	backend := mgr.Backend()
-	snapshots, ok := backend.(state.SnapshotBackend)
-	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("state backend does not support snapshots"))
-		return
-	}
-	if err := snapshots.RestoreSnapshot(r.Context(), snapshot); err != nil {
+	if err := s.workspaceService().RestoreStateSnapshot(r.Context(), topology, snapshot); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -243,7 +140,7 @@ func (s *Server) handleGetOutputs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	_, _, _, root, evalCtx, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), state.NewManager(s.stateFile(topology)))
+	_, _, _, root, evalCtx, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), state.NewManager(s.workspaceService().StateFile(topology)))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -282,7 +179,7 @@ func (s *Server) handleGetTopologyHealth(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusOK, snap)
 		return
 	}
-	st, err := s.loadState(topology)
+	st, err := s.workspaceService().LoadState(topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -303,7 +200,7 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.hclFile(topology), mgr)
+	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -329,32 +226,9 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if req.PlanID != "" {
-		currentSerial, err := s.currentStateSerial(r.Context(), topology)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		plan, err := s.validateStoredPlanForApply(r.Context(), topology, req.PlanID, currentSerial)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		req.Revision = plan.Revision
-	}
-	run := s.jobs.startWithOptions(topology, "apply", runStartOptions{
-		Revision: req.Revision,
-		PlanID:   req.PlanID,
-		AgentID:  req.AgentID,
-	})
-	required, err := requiredCapabilitiesForTopology(s.hclFile(topology))
+	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest(req))
 	if err != nil {
-		s.jobs.finish(run, err)
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.dispatchRun(r.Context(), run, required); err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeError(w, runServiceStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "agent_id": run.AgentID})
@@ -372,18 +246,9 @@ func (s *Server) handleRepair(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run := s.jobs.startWithOptions(topology, "repair", runStartOptions{
-		Revision: req.Revision,
-		AgentID:  req.AgentID,
-	})
-	required, err := requiredCapabilitiesForTopology(s.hclFile(topology))
+	run, err := s.runs().StartRepair(r.Context(), topology, RunStartRequest(req))
 	if err != nil {
-		s.jobs.finish(run, err)
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.dispatchRun(r.Context(), run, required); err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeError(w, runServiceStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "agent_id": run.AgentID, "operation": "repair"})
@@ -424,18 +289,6 @@ func decodeApplyRequest(r *http.Request) (applyRequest, error) {
 	return req, nil
 }
 
-func (s *Server) currentStateSerial(ctx context.Context, topology string) (int64, error) {
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		return 0, err
-	}
-	meta, err := mgr.Metadata(ctx)
-	if err != nil {
-		return 0, err
-	}
-	return meta.Serial, nil
-}
-
 func writePreflightLogsTo(w io.Writer, res *preflightResult) {
 	if res == nil {
 		return
@@ -465,15 +318,9 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run := s.jobs.start(topology, "destroy")
-	required, err := requiredCapabilitiesForTopology(s.hclFile(topology))
+	run, err := s.runs().StartDestroy(r.Context(), topology)
 	if err != nil {
-		s.jobs.finish(run, err)
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.dispatchRun(r.Context(), run, required); err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeError(w, runServiceStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "agent_id": run.AgentID})
@@ -511,48 +358,15 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	parent, ok := s.jobs.get(id)
-	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
+	run, parent, err := s.runs().Resume(r.Context(), id)
+	if err != nil {
+		writeError(w, runServiceStatus(err), err)
 		return
-	}
-	if parent.Status == RunRunning {
-		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
-		return
-	}
-	if parent.Op != "apply" && parent.Op != "destroy" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("run op %q cannot be resumed", parent.Op))
-		return
-	}
-	run := s.jobs.startChild(parent)
-	switch run.Op {
-	case "apply":
-		required, err := requiredCapabilitiesForTopology(s.hclFile(run.Topology))
-		if err != nil {
-			s.jobs.finish(run, err)
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		if err := s.dispatchRun(r.Context(), run, required); err != nil {
-			writeError(w, http.StatusConflict, err)
-			return
-		}
-	case "destroy":
-		required, err := requiredCapabilitiesForTopology(s.hclFile(run.Topology))
-		if err != nil {
-			s.jobs.finish(run, err)
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		if err := s.dispatchRun(r.Context(), run, required); err != nil {
-			writeError(w, http.StatusConflict, err)
-			return
-		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID, "agent_id": run.AgentID})
 }
 
-func (s *Server) reconcileParentJournal(parent, run *Run) error {
+func (s *Server) reconcileParentJournal(parent, run *controlplane.Run) error {
 	mgr, err := s.stateManager(parent.Topology)
 	if err != nil {
 		return err
@@ -589,7 +403,7 @@ func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
 		return
 	}
-	if run.Status == RunRunning {
+	if run.Status == controlplane.RunRunning {
 		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
 		return
 	}
@@ -612,7 +426,7 @@ func (s *Server) handleRecoverRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
 		return
 	}
-	if run.Status == RunRunning {
+	if run.Status == controlplane.RunRunning {
 		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
 		return
 	}
@@ -698,73 +512,8 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 
 // helpers
 
-func (s *Server) hclFile(topology string) string {
-	return filepath.Join(s.workspacesDir, topology, "field.sysbox.hcl")
-}
-
-func (s *Server) stateFile(topology string) string {
-	return filepath.Join(s.runsDir, topology, "state.json")
-}
-
 func (s *Server) checkpointFile(topology, runID string) string {
 	return filepath.Join(s.runsDir, topology, "runs", runID+".checkpoint.json")
-}
-
-func (s *Server) loadState(topology string) (*state.State, error) {
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		return nil, err
-	}
-	st, err := mgr.Load()
-	if err != nil {
-		return nil, err
-	}
-	if s.stateBackend == "" && len(st.Resources) == 0 {
-		if _, err := os.Stat(s.stateFile(topology)); err != nil {
-			return nil, fmt.Errorf("topology %q: no state file", topology)
-		}
-	}
-	return st, nil
-}
-
-func (s *Server) topologyNames(ctx context.Context) ([]string, error) {
-	names := map[string]bool{}
-	hclEntries, err := filepath.Glob(filepath.Join(s.workspacesDir, "*", "field.sysbox.hcl"))
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range hclEntries {
-		names[filepath.Base(filepath.Dir(e))] = true
-	}
-	if s.stateBackend == "" {
-		stateEntries, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json"))
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range stateEntries {
-			names[filepath.Base(filepath.Dir(e))] = true
-		}
-	} else {
-		mgr, err := s.stateManager("__list__")
-		if err != nil {
-			return nil, err
-		}
-		items, err := mgr.ListTopologies(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, item := range items {
-			names[item.Name] = true
-		}
-	}
-	out := make([]string, 0, len(names))
-	for name := range names {
-		if validatePathSegment(name, "topology") == nil {
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out, nil
 }
 
 func planJSON(p *runtime.Plan) map[string]any {
@@ -799,4 +548,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+func containsAny(s string, values ...string) bool {
+	for _, value := range values {
+		if strings.Contains(s, value) {
+			return true
+		}
+	}
+	return false
 }

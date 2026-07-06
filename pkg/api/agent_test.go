@@ -72,7 +72,7 @@ func TestAgentRegistry(t *testing.T) {
 
 func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	server := httptest.NewServer(s)
 	defer server.Close()
 
@@ -99,7 +99,7 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 	}()
 
 	run := s.jobs.start("mixed", "apply")
-	require.NoError(t, s.dispatchRun(context.Background(), run, []string{"docker"}))
+	require.NoError(t, s.scheduling().DispatchRun(context.Background(), run, []string{"docker"}))
 
 	select {
 	case event := <-eventCh:
@@ -127,8 +127,8 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 
 func TestAgentCommandWebSocketReplaysPendingCommand(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
-	cmd, err := s.publishAgentCommand(context.Background(), "host-a", controlplane.AgentCommand{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	cmd, err := s.agentService().PublishCommand(context.Background(), "host-a", controlplane.AgentCommand{
 		Type: "run_assigned",
 		Run:  &controlplane.Run{ID: "run-1", Topology: "mixed", Workspace: "mixed", AgentID: "host-a"},
 	})
@@ -165,7 +165,7 @@ func TestAgentCommandWebSocketReplaysPendingCommand(t *testing.T) {
 
 func TestAgentCommandCancelPublishesCancelCommand(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	cmd, err := s.publishAgentCommand(context.Background(), "host-a", controlplane.AgentCommand{
+	cmd, err := s.agentService().PublishCommand(context.Background(), "host-a", controlplane.AgentCommand{
 		Type: "node_operation",
 		Operation: controlplane.NodeOperation{
 			ID:        "op-1",
@@ -185,7 +185,7 @@ func TestAgentCommandCancelPublishesCancelCommand(t *testing.T) {
 
 func TestAgentDisableAndQuarantineBlockSchedulingAndStream(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPatch, "/v1/agents/host-a", bytes.NewBufferString(`{"disabled":true,"reason":"maintenance"}`))
@@ -198,7 +198,7 @@ func TestAgentDisableAndQuarantineBlockSchedulingAndStream(t *testing.T) {
 	require.True(t, stored.Disabled)
 	require.Equal(t, "disabled", stored.Status)
 
-	_, err = s.selectAgent(context.Background(), []string{"docker"}, "")
+	_, err = s.scheduling().SelectAgent(context.Background(), []string{"docker"}, "")
 	require.ErrorContains(t, err, "no online agent")
 
 	server := httptest.NewServer(s)
@@ -212,7 +212,7 @@ func TestAgentDisableAndQuarantineBlockSchedulingAndStream(t *testing.T) {
 func TestAgentSignatureRequiredWhenSecretRegistered(t *testing.T) {
 	secret := "agent-secret"
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-a",
 		Status:       "online",
 		AuthSecret:   secret,
@@ -265,7 +265,7 @@ func TestAgentCommandLeaseExpiresAndRedelivers(t *testing.T) {
 	require.False(t, ok)
 
 	leased.LeaseUntil = time.Now().Add(-time.Second)
-	leased.Status = "queued"
+	leased.Status = controlplane.AgentCommandStatusQueued
 	require.NoError(t, store.SaveAgentCommand(ctx, *leased))
 	leased, ok, err = store.AcquireAgentCommandLease(ctx, "host-a", "cmd-1", "owner-2", time.Hour)
 	require.NoError(t, err)
@@ -276,8 +276,8 @@ func TestAgentCommandLeaseExpiresAndRedelivers(t *testing.T) {
 
 func TestAgentCommandsRoutes(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
-	_, err := s.publishAgentCommand(context.Background(), "host-a", controlplane.AgentCommand{Type: "node_operation"})
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	_, err := s.agentService().PublishCommand(context.Background(), "host-a", controlplane.AgentCommand{Type: "node_operation"})
 	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
@@ -325,7 +325,7 @@ resource "sysbox_node" "web" {
 		}},
 	})
 	s := NewServer(runs, workspaces)
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	saveHealthyNodeProjection(t, s, "host-a", "lab", "web")
 	server := httptest.NewServer(s)
 	defer server.Close()
@@ -381,7 +381,7 @@ resource "sysbox_node" "web" {
 	cfg.Paths.WorkspacesDir = workspaces
 	cfg.API.Console.AllowedRoles = []string{"console"}
 	s := NewServerWithConfig(cfg)
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	writeState(t, runs, "lab", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
@@ -439,7 +439,7 @@ resource "sysbox_node" "web" {
 		}},
 	})
 	s := NewServer(runs, workspaces)
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	body := bytes.NewBufferString(`{
   "agent_id": "host-a",
   "topology": "lab",
@@ -494,10 +494,10 @@ func TestAgentStreamEndpointRemoved(t *testing.T) {
 
 func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	run := s.jobs.start("mixed", "apply")
 	s.jobs.assign(run, "host-a")
-	run.Status = RunDone
+	run.Status = controlplane.RunDone
 	run.AgentID = "host-a"
 
 	body := bytes.NewBufferString(`{
@@ -524,7 +524,7 @@ func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
 
 	got, ok := s.jobs.get(run.ID)
 	require.True(t, ok)
-	require.Equal(t, RunDone, got.Status)
+	require.Equal(t, controlplane.RunDone, got.Status)
 	require.Equal(t, "host-a", got.AgentID)
 
 	rec = httptest.NewRecorder()
@@ -536,7 +536,7 @@ func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
 
 func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	body := bytes.NewBufferString(`{
   "agent_id": "host-a",
   "topology": "mixed",
@@ -564,7 +564,7 @@ func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
 
 func TestAgentInventoryPersists(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	body := bytes.NewBufferString(`{
   "agent_id": "host-a",
   "capabilities": ["docker"],
@@ -584,7 +584,7 @@ func TestAgentInventoryPersists(t *testing.T) {
 
 func TestNodeOperationCompletionPersists(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	require.NoError(t, s.saveAgent(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	op := s.nodeOps.Create(controlplane.NodeOperation{
 		Topology:    "mixed",
 		Workspace:   "mixed",
@@ -594,7 +594,7 @@ func TestNodeOperationCompletionPersists(t *testing.T) {
 		RequestedBy: "alice",
 		Roles:       []string{"operator"},
 	})
-	op.Status = "done"
+	op.Status = controlplane.NodeOperationStatusDone
 	op.Audit = append(op.Audit, controlplane.Event{Action: "complete", Status: "done", Actor: "alice"})
 
 	raw, err := json.Marshal(op)
