@@ -4,9 +4,9 @@
 #                  node_web (nginx) → node_db (postgres:16-alpine)
 #
 #   [host / episode runner]
-#        │  ACP HTTP  172.20.0.10:4096
+#        │  ACP HTTP  172.30.0.10:4096
 #        ▼
-#   node_attack  (10.0.1.10 / 172.20.0.10)
+#   node_attack  (10.0.1.10 / 172.30.0.10)
 #        │  10.0.1.254 router  │  internet (LLM API)
 #   net_dmz                net_uplink (NAT → host → internet)
 #        │
@@ -23,8 +23,8 @@ substrate "docker" {
 locals {
   dmz_cidr      = "10.0.1.0/24"
   internal_cidr = "10.0.2.0/24"
-  uplink_cidr   = "172.20.0.0/24"
-  uplink_gw     = "172.20.0.1"
+  uplink_cidr   = "172.30.0.0/24"
+  uplink_gw     = "172.30.0.1"
   router_dmz_ip = "10.0.1.254"
   opencode_port = "4096"
 }
@@ -41,7 +41,7 @@ resource "sysbox_network" "net_internal" {
 
 # nat=true: Docker bridge with iptables MASQUERADE.
 # Gives node_attack internet access for LLM API calls.
-# Also accessible from the host at 172.20.0.10 (episode runner connects here).
+# Also accessible from the host at 172.30.0.10 (episode runner connects here).
 resource "sysbox_network" "net_uplink" {
   cidr = local.uplink_cidr
   nat  = true
@@ -89,7 +89,7 @@ resource "sysbox_router" "core" {
 
   interface "uplink" {
     network = sysbox_network.net_uplink.id
-    ip      = "172.20.0.254/24"
+    ip      = "172.30.0.254/24"
   }
 
   nat_from = "internal"
@@ -112,7 +112,7 @@ resource "sysbox_node" "node_attack" {
   # Uplink: internet access (LLM API) + reachable from host (episode runner).
   link {
     network = sysbox_network.net_uplink.id
-    ip      = "172.20.0.10/24"
+    ip      = "172.30.0.10/24"
   }
 
   # Declarative static routes (Terraform-style, replaces `ip route add` provisioners).
@@ -122,7 +122,7 @@ resource "sysbox_node" "node_attack" {
   }
   route {
     dst = "0.0.0.0/0"
-    via = "172.20.0.1"
+    via = "172.30.0.1"
   }
 
   # Copy host SSH pubkey into node so the agent can pivot to victim nodes.
@@ -179,7 +179,7 @@ resource "sysbox_actor" "red" {
   node     = sysbox_node.node_attack.id
   command  = ["opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
   port     = 4096
-  acp_ip   = "172.20.0.10"  # uplink IP — reachable from host / episode runner
+  acp_ip   = "172.30.0.10"  # uplink IP — reachable from host / episode runner
 
   env = {
     DEEPSEEK_API_KEY = env("DEEPSEEK_API_KEY")
@@ -196,12 +196,12 @@ output "attacker_lab_ip" {
 }
 
 output "attacker_uplink_ip" {
-  value       = "172.20.0.10"
+  value       = "172.30.0.10"
   description = "node_attack uplink IP (reachable from host)"
 }
 
 output "agent_acp_url" {
-  value       = "http://172.20.0.10:4096"
+  value       = "http://172.30.0.10:4096"
   description = "opencode ACP endpoint for the episode runner"
 }
 

@@ -24,6 +24,8 @@ WEB_URL ?= http://127.0.0.1:$(WEB_HOST_PORT)
 HCL := examples/$(TOPO)/field.sysbox.hcl
 STATE := .sysbox/runs/$(TOPO)/state.json
 SYSBOX := $(BINARY) --state $(STATE) -f $(HCL)
+LAB_SSH_KEY ?= .sysbox/runs/$(TOPO)/lab_key
+LAB_SSH_PUBKEY ?= $(LAB_SSH_KEY).pub
 
 COMPOSE_DIR := deploy/docker
 COMPOSE := docker compose --project-directory .
@@ -101,7 +103,13 @@ cli-plan: build
 
 cli-apply: build
 	@mkdir -p .sysbox/runs/$(TOPO)
-	$(SYSBOX) apply --auto-approve
+	@if [ "$(TOPO)" = "three-nodes" ] && [ ! -f "$(LAB_SSH_KEY)" ]; then \
+		echo "Generating lab SSH keypair: $(LAB_SSH_KEY)"; \
+		ssh-keygen -t ed25519 -f "$(LAB_SSH_KEY)" -N "" -C "sysbox-lab" -q; \
+		chmod 600 "$(LAB_SSH_KEY)"; \
+		chmod 644 "$(LAB_SSH_PUBKEY)"; \
+	fi
+	LAB_SSH_PUBKEY="$(LAB_SSH_PUBKEY)" $(SYSBOX) apply --auto-approve
 
 cli-destroy: build
 	$(SYSBOX) destroy --auto-approve

@@ -19,7 +19,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from runner.agent import OpenCodeClient
 
-ACP_URL = "http://172.20.0.10:4096"
+ACP_URL = "http://172.30.0.10:4096"
 PROMPT = "Run this single command and report the output: nmap -sn 10.0.2.0/24"
 
 

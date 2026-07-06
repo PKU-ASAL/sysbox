@@ -34,7 +34,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from runner.agent import OpenCodeClient, ToolCallEvent
 
-DEFAULT_AGENT_URL = "http://172.20.0.10:4096"
+DEFAULT_AGENT_URL = "http://172.30.0.10:4096"
 STATE_FILE = REPO_ROOT / "runs" / "default" / "state.json"
 PROMPT_FILE = Path(__file__).parent / "prompts" / "attack_in_container.txt"
 
@@ -117,7 +117,7 @@ def main() -> int:
         actor = find_actor(state, args.actor)
         if actor:
             agent_url = actor.get("acp_url") or \
-                f"http://172.20.0.10:{int(actor.get('port', 4096))}"
+                f"http://172.30.0.10:{int(actor.get('port', 4096))}"
     agent_url = agent_url or DEFAULT_AGENT_URL
 
     # Episode directory: .sysbox/runs/<run-id>/episodes/<ep-id>/

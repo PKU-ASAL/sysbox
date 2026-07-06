@@ -70,7 +70,7 @@ resource "sysbox_network" "net_internal" {
 }
 
 resource "sysbox_network" "net_uplink" {
-  cidr = "172.20.0.0/24"
+  cidr = "172.30.1.0/24"
   nat  = true
 }
 
@@ -92,7 +92,7 @@ resource "sysbox_router" "core" {
 
   interface "uplink" {
     network = sysbox_network.net_uplink.id
-    ip      = "172.20.0.254/24"
+    ip      = "172.30.1.254/24"
   }
 
   nat_from = "internal"
@@ -117,7 +117,7 @@ resource "sysbox_node" "node_attack" {
 
   link {
     network = sysbox_network.net_uplink.id
-    ip      = "172.20.0.10/24"
+    ip      = "172.30.1.10/24"
   }
 
   # Declarative static routes for cross-subnet access via router.
@@ -178,7 +178,7 @@ resource "sysbox_actor" "red" {
   node     = sysbox_node.node_attack.id
   command  = ["opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
   port     = 4096
-  acp_ip   = "172.20.0.10"
+  acp_ip   = "172.30.1.10"
   env      = { DEEPSEEK_API_KEY = env("DEEPSEEK_API_KEY") }
 }
 
@@ -186,7 +186,7 @@ resource "sysbox_actor" "red" {
 # ── Outputs ─────────────────────────────────────────────────────────────────
 
 output "attacker_acp" {
-  value       = "http://172.20.0.10:4096"
+  value       = "http://172.30.1.10:4096"
   description = "ACP URL for the attacker agent"
 }
 

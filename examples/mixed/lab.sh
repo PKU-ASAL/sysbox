@@ -101,11 +101,11 @@ cmd_up() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo " Lab UP  (docker + firecracker)"
     echo ""
-    echo "  node_attack  10.0.1.10 / 172.20.0.10  attacker (docker)"
+    echo "  node_attack  10.0.1.10 / 172.30.1.10  attacker (docker)"
     echo "  node_web     10.0.2.10                nginx    (docker)"
     echo "  node_db      10.0.2.20                db       (firecracker)"
     echo ""
-    echo "  ACP endpoint:  http://172.20.0.10:4096"
+    echo "  ACP endpoint:  http://172.30.1.10:4096"
     echo "  API endpoint:  http://localhost${API_ADDR}/v1/health"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
