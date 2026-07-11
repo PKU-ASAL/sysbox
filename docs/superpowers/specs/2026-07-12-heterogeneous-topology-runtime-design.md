@@ -43,8 +43,9 @@ Sysbox, not Sysbox resources.
    assume that the previous process completed successfully.
 8. Sensitive values are references until execution and are not persisted in
    plans, state, checkpoints, API payloads, or logs.
-9. Backward compatibility is explicit. State and address migrations are
-   versioned and testable; silent reinterpretation is forbidden.
+9. This is a deliberate breaking architecture release. Legacy HCL addressing,
+   state schemas, internal APIs, and compatibility adapters are not preserved.
+   Old state is rejected without mutation and users recreate managed labs.
 10. Features not required by heterogeneous security topologies are excluded.
 
 ## 3. Target Architecture
@@ -312,10 +313,10 @@ password/private key, provisioner content, authorized keys, and provider config.
 
 ## 6. Batch 3: Resource And Driver Boundaries
 
-### 6.1 Migration Strategy
+### 6.1 Replacement Strategy
 
-The current `ResourceProvider` is adapted to `ResourceHandler` first. Existing
-substrates are wrapped by capability adapters. Resources migrate one at a time:
+The current `ResourceProvider` is replaced by `ResourceHandler`. Existing
+substrates are replaced by capability drivers. Resources move one at a time:
 
 1. image and kernel;
 2. network and attachment;
@@ -324,8 +325,9 @@ substrates are wrapped by capability adapters. Resources migrate one at a time:
 5. firewall and access;
 6. actor.
 
-Compatibility adapters are deleted after every built-in resource uses the new
-contracts. New resources cannot use the legacy path.
+No compatibility adapter or permanent dual path is introduced. A branch must
+compile and pass tests after each resource moves, and the legacy interface is
+deleted as soon as its last consumer moves.
 
 ### 6.2 Runtime Purity
 
@@ -562,23 +564,26 @@ sockets, manipulate host networking, or execute arbitrary shell commands.
 Remote actions are structured and constrained by workspace, driver capability,
 artifact policy, and ownership.
 
-## 11. Compatibility And Delivery
+## 11. Breaking Delivery
 
-Each batch must be independently releasable. Compatibility is maintained using
-explicit adapters and migrations, not dual permanent implementations.
+Each batch must be independently testable and mergeable. Compatibility with the
+pre-redesign internal architecture, HCL instance addressing, and state format is
+not a requirement.
 
 Delivery rules:
 
 1. Add tests that capture current supported behavior before changing a boundary.
-2. Introduce the new model behind an adapter.
-3. Migrate one resource or state consumer at a time.
+2. Introduce the new model at one narrow ownership boundary.
+3. Replace one resource or state consumer at a time.
 4. Run unit, integration, recovery, and privileged topology tests.
-5. Remove the legacy path after every built-in consumer migrates.
-6. Publish state and HCL migration notes for breaking changes.
+5. Remove the legacy path with its final consumer.
+6. Publish breaking HCL and state reset notes.
 
-The migration introduces a new major state schema. Existing state is either
-migrated by a tested command with backup or rejected without mutation. Sysbox
-must never instruct users to delete state as the normal upgrade path.
+The redesign introduces a new major state schema. Existing state is rejected
+without mutation with a precise incompatibility error. Because Sysbox manages
+disposable local labs, users destroy them with the old binary before upgrading,
+then apply the new configuration with the new binary. No state migration command
+is implemented.
 
 ## 12. Test Strategy
 
@@ -587,7 +592,8 @@ Testing scales by layer:
 - Address and schema: table-driven unit tests and round-trip properties.
 - Configuration: diagnostic golden tests with exact source locations.
 - Plan: golden action sets and apply/plan conformance tests.
-- State: versioned fixtures, migration, CAS, lock, and secret-canary tests.
+- State: current-version fixtures, incompatible-version rejection, CAS, lock,
+  and secret-canary tests.
 - Handlers: contract tests with fake capability drivers.
 - Drivers: integration tests against Docker, libvirt, Firecracker, and Linux
   namespaces where available.
