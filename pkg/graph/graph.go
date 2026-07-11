@@ -27,8 +27,11 @@ func (g *Graph) AddNode(addr address.Address, deps []address.Address) error {
 	if _, exists := g.nodes[key]; exists {
 		return fmt.Errorf("duplicate resource %s", addr)
 	}
-	ownedDeps := append([]address.Address(nil), deps...)
-	g.nodes[key] = &Node{Address: addr, Deps: ownedDeps}
+	ownedDeps := make([]address.Address, len(deps))
+	for i := range deps {
+		ownedDeps[i] = deps[i].Clone()
+	}
+	g.nodes[key] = &Node{Address: addr.Clone(), Deps: ownedDeps}
 	return nil
 }
 

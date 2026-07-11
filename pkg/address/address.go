@@ -76,6 +76,16 @@ func (a Address) WithModule(module ModuleInstance) Address {
 	return a
 }
 
+func (a Address) Clone() Address {
+	if len(a.ModulePath) == 0 {
+		return a
+	}
+	path := make([]ModuleInstance, len(a.ModulePath))
+	copy(path, a.ModulePath)
+	a.ModulePath = path
+	return a
+}
+
 func (a Address) IsZero() bool {
 	return len(a.ModulePath) == 0 && a.Type == "" && a.Name == "" && !a.Key.IsSet()
 }

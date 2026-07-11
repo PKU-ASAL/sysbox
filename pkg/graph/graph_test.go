@@ -41,6 +41,22 @@ func TestAddNodeRejectsDuplicateAddress(t *testing.T) {
 	require.ErrorContains(t, g.AddNode(addr, nil), "duplicate resource node.web")
 }
 
+func TestAddNodeOwnsAddressAndDependencies(t *testing.T) {
+	g := New()
+	addr := address.Resource("node", "web").WithModule(address.ModuleInstance{Name: "lab"})
+	dep := address.Resource("network", "dmz").WithModule(address.ModuleInstance{Name: "lab"})
+	require.NoError(t, g.AddNode(dep, nil))
+	require.NoError(t, g.AddNode(addr, []address.Address{dep}))
+
+	addr.ModulePath[0].Name = "mutated"
+	dep.ModulePath[0].Name = "mutated"
+
+	stored := g.Get(address.Resource("node", "web").WithModule(address.ModuleInstance{Name: "lab"}))
+	require.NotNil(t, stored)
+	require.Equal(t, `module.lab.node.web`, stored.Address.String())
+	require.Equal(t, `module.lab.network.dmz`, stored.Deps[0].String())
+}
+
 func TestAllAndTopoSortAreDeterministic(t *testing.T) {
 	g := New()
 	for _, addr := range []address.Address{
