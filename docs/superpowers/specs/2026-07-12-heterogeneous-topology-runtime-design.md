@@ -263,9 +263,10 @@ type ResourceState struct {
 schema. `Private` belongs exclusively to the selected driver. Driver-private
 state has its own versioned codec.
 
-State migration occurs through explicit, idempotent version steps. Loading an
-unsupported version fails without modifying the state. Migration tests include
-golden fixtures for every supported prior version.
+State loading accepts only the current schema version. Loading an unsupported
+version fails without modifying the state and identifies the binary version
+required to destroy the old lab before upgrading. Golden fixtures cover the
+current schema and incompatible-version rejection.
 
 ### 5.3 Read And Refresh
 
@@ -305,7 +306,8 @@ password/private key, provisioner content, authorized keys, and provider config.
 ### 5.6 Batch 2 Acceptance
 
 - Resource diffing is typed and reports nested attribute paths.
-- State fixtures migrate deterministically without losing external identity.
+- Current state fixtures round-trip deterministically and incompatible state is
+  rejected without mutation.
 - Refresh writes computed observations and distinguishes absence from read error.
 - Unsafe backend mutation is rejected by default.
 - Secret canary values do not occur in plan, state, checkpoint, API, or log
@@ -398,9 +400,9 @@ nat         address translation
 firewall    stateful L3/L4 policy
 ```
 
-The public HCL migrates incrementally with explicit compatibility decoding, but
-internal handlers and state follow these boundaries before new features are
-added.
+The public HCL changes with the new internal boundaries. Examples, tests, and
+documentation move in the same commit as each breaking syntax change; no
+compatibility decoder is retained.
 
 ### 7.3 Atomic Firewall Rulesets
 
