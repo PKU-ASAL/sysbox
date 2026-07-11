@@ -9,9 +9,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -62,7 +62,7 @@ resource "sysbox_kernel" "linux" {
 func TestLocalBridgeFilterApplyPlanByTarget(t *testing.T) {
 	bridge := NewLocalBridge(LocalOptions{Target: "sysbox_node.web"})
 	plan := &runtime.Plan{
-		Add: []graph.NodeID{
+		Add: []address.Address{
 			{Type: "sysbox_network", Name: "shared"},
 			{Type: "sysbox_node", Name: "web"},
 		},

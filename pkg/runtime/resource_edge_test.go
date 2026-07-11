@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -23,7 +25,7 @@ func TestEdgeResourceProvidersRegistered(t *testing.T) {
 
 func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_firewall", Name: "allow_ssh"},
+		Address: address.Address{Type: "sysbox_firewall", Name: "allow_ssh"},
 		Data: &config.FirewallConfig{
 			AttachTo: "sysbox_network.dmz.id",
 			Rules: []config.FirewallRule{{
@@ -60,7 +62,7 @@ func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 
 func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_ssh_access", Name: "admin"},
+		Address: address.Address{Type: "sysbox_ssh_access", Name: "admin"},
 		Data: &config.SSHAccessConfig{
 			Node:           "sysbox_node.web.id",
 			AuthorizedKeys: []string{"ssh-ed25519 old"},
@@ -90,7 +92,7 @@ func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 
 func TestActorResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_actor", Name: "agent"},
+		Address: address.Address{Type: "sysbox_actor", Name: "agent"},
 		Data: &config.ActorConfig{
 			Position: "internal",
 			Node:     "sysbox_node.web.id",

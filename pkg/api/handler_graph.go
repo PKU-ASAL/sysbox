@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -72,7 +74,7 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		Label string // interface name for routers
 	}
 	linkMap := map[string][]linkInfo{} // key = "fromType.fromName→depType.depName"
-	addLink := func(from, to graph.NodeID, ip, label string) {
+	addLink := func(from, to address.Address, ip, label string) {
 		key := from.String() + "→" + to.String()
 		linkMap[key] = append(linkMap[key], linkInfo{IP: stripCIDRSuffix(ip), Label: label})
 	}
@@ -82,19 +84,19 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		case *config.NodeConfig:
 			for _, link := range cfg.Links {
 				if ref := config.ResolveName(link.Network); ref != "" {
-					addLink(n.ID, graph.NodeID{Type: "sysbox_network", Name: ref}, link.IP, "")
+					addLink(n.Address, address.Address{Type: "sysbox_network", Name: ref}, link.IP, "")
 				}
 			}
 		case *config.RouterConfig:
 			for _, iface := range cfg.Interfaces {
 				if ref := config.ResolveName(iface.Network); ref != "" {
-					addLink(n.ID, graph.NodeID{Type: "sysbox_network", Name: ref}, iface.IP, iface.Name)
+					addLink(n.Address, address.Address{Type: "sysbox_network", Name: ref}, iface.IP, iface.Name)
 				}
 			}
 		case *config.ActorConfig:
 			for _, link := range cfg.Links {
 				if ref := config.ResolveName(link.Network); ref != "" {
-					addLink(n.ID, graph.NodeID{Type: "sysbox_network", Name: ref}, link.IP, "")
+					addLink(n.Address, address.Address{Type: "sysbox_network", Name: ref}, link.IP, "")
 				}
 			}
 		}
@@ -102,12 +104,12 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 
 	for _, n := range g.All() {
 		gn := graphNode{
-			ID:     n.ID.String(),
-			Type:   n.ID.Type,
-			Label:  n.ID.Name,
+			ID:     n.Address.String(),
+			Type:   n.Address.Type,
+			Label:  n.Address.Name,
 			Status: "planned",
 		}
-		if rs, ok := stateByID[n.ID.String()]; ok {
+		if rs, ok := stateByID[n.Address.String()]; ok {
 			gn.Status = "applied"
 			if ip := rs.PrimaryIP(); ip != "" {
 				gn.IP = ip
@@ -151,20 +153,20 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 			}
 
 			edge := graphEdge{
-				From: n.ID.String(),
+				From: n.Address.String(),
 				To:   dep.String(),
 				Kind: kind,
 			}
 
 			// Enrich link edges with IP and interface label from config.
 			if kind == "link" {
-				key := n.ID.String() + "→" + dep.String()
+				key := n.Address.String() + "→" + dep.String()
 				if infos := linkMap[key]; len(infos) > 0 {
 					// If there are multiple links to the same network,
 					// emit one edge per link.
 					for i, info := range infos {
 						e := graphEdge{
-							From:  n.ID.String(),
+							From:  n.Address.String(),
 							To:    dep.String(),
 							Kind:  kind,
 							IP:    info.IP,

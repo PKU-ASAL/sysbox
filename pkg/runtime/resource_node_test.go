@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -22,7 +24,7 @@ func TestNodeResourceProviderRegistered(t *testing.T) {
 
 func TestNodeResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_node", Name: "web"},
+		Address: address.Address{Type: "sysbox_node", Name: "web"},
 		Data: &config.NodeConfig{
 			Image:     "sysbox_image.alpine.id",
 			Substrate: "docker",
@@ -121,7 +123,7 @@ func TestNodeResourceProviderPortsArePassedAndResolved(t *testing.T) {
 		},
 	})
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_node", Name: "web"},
+		Address: address.Address{Type: "sysbox_node", Name: "web"},
 		Data: &config.NodeConfig{
 			Image:     "sysbox_image.nginx.id",
 			Substrate: "port-test",
@@ -160,7 +162,7 @@ func TestNodeResourceProviderRejectsUnsupportedPortExposure(t *testing.T) {
 		},
 	})
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_node", Name: "web"},
+		Address: address.Address{Type: "sysbox_node", Name: "web"},
 		Data: &config.NodeConfig{
 			Image:     "sysbox_image.nginx.id",
 			Substrate: "port-direct-only",

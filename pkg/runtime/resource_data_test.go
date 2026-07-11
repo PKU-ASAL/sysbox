@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -23,8 +25,8 @@ func TestDataResourceProvidersRegistered(t *testing.T) {
 
 func TestDataResourceProviderPlanDiffReads(t *testing.T) {
 	n := &graph.Node{
-		ID:   graph.NodeID{Type: "data_sysbox_image", Name: "alpine"},
-		Data: &config.DataImageConfig{Substrate: "docker", DockerRef: "alpine:latest"},
+		Address: address.Address{Type: "data_sysbox_image", Name: "alpine"},
+		Data:    &config.DataImageConfig{Substrate: "docker", DockerRef: "alpine:latest"},
 	}
 	p := DataImageResourceProvider{}
 
@@ -49,12 +51,14 @@ func TestDataResourceProviderPlanDiffReads(t *testing.T) {
 
 func TestComputePlanSchedulesDataSourcesAsRead(t *testing.T) {
 	g := graph.New()
-	n := g.AddNode("data_sysbox_image", "alpine", nil)
+	addr := address.Resource("data_sysbox_image", "alpine")
+	require.NoError(t, g.AddNode(addr, nil))
+	n := g.Get(addr)
 	n.Data = &config.DataImageConfig{Substrate: "docker", DockerRef: "alpine:latest"}
 
 	plan, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
 	require.NoError(t, err)
-	require.Equal(t, []graph.NodeID{{Type: "data_sysbox_image", Name: "alpine"}}, plan.Add)
+	require.Equal(t, []address.Address{{Type: "data_sysbox_image", Name: "alpine"}}, plan.Add)
 	require.Len(t, plan.Actions, 1)
 	require.Equal(t, controlplane.PlanActionRead, plan.Actions[0].Action)
 	require.True(t, plan.HasChanges())

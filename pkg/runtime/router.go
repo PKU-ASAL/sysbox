@@ -8,6 +8,8 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -59,18 +61,18 @@ func (RouterResourceProvider) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (RouterResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+func (RouterResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.RouterConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
 	}
-	var deps []graph.Ref
+	var deps []address.Address
 	if ref := config.ResolveName(cfg.Image); ref != "" {
-		deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
+		deps = append(deps, address.Address{Type: "sysbox_image", Name: ref})
 	}
 	for _, iface := range cfg.Interfaces {
 		if ref := config.ResolveName(iface.Network); ref != "" {
-			deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
+			deps = append(deps, address.Address{Type: "sysbox_network", Name: ref})
 		}
 	}
 	return cfg, deps, nil
@@ -79,7 +81,7 @@ func (RouterResourceProvider) DecodeResource(r config.ResourceBlock, _ string, c
 func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.RouterConfig)
 	if !ok {
-		return state.Resource{}, fmt.Errorf("router %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("router %s: wrong data type", n.Address)
 	}
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
@@ -117,11 +119,11 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	}
 
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
-		Name:         runtimeExternalName(e.topology, "router", n.ID.Name),
+		Name:         runtimeExternalName(e.topology, "router", n.Address.Name),
 		Image:        imgRef,
 		Sysctls:      map[string]string{"net.ipv4.ip_forward": "1"},
 		InitialLinks: initialLinks,
-		Labels:       ManagedLabels(e.topology, e.runID, n.ID),
+		Labels:       ManagedLabels(e.topology, e.runID, n.Address),
 	})
 	if err != nil {
 		return state.Resource{}, err
@@ -133,7 +135,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	}
 
 	// Wire all NICs using the shared helper (trackLabels=true for routers).
-	wireResult, err := wireNICs(ctx, sub, e.state, handle, initialLinks, nicSpecs, true, n.ID.Name)
+	wireResult, err := wireNICs(ctx, sub, e.state, handle, initialLinks, nicSpecs, true, n.Address.Name)
 	if err != nil {
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy router on wire failure")
 		return state.Resource{}, err
@@ -148,7 +150,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 				cfg.NatFrom, cfg.NatTo)
 		}
 		if err := configureNATViaNsenter(handle.ID, fromIf, toIf); err != nil {
-			e.logf("[router %s] warning: NAT setup failed (continuing without NAT): %v\n", n.ID.Name, err)
+			e.logf("[router %s] warning: NAT setup failed (continuing without NAT): %v\n", n.Address.Name, err)
 		} else {
 			natApplied = true
 		}
@@ -173,7 +175,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	}
 	return state.Resource{
 		Type:     "sysbox_router",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: subName,
 		Instance: inst,
 	}, nil

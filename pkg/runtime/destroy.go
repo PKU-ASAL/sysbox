@@ -3,11 +3,12 @@ package runtime
 import (
 	"context"
 	"fmt"
+
+	"github.com/oslab/sysbox/pkg/address"
 	"io"
 	"os"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/graph"
 )
 
 // Destroy walks the plan reverse: tear down Destroy set in reverse topo order.
@@ -42,7 +43,7 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 
 	// Determine destroy order: prefer reverse topological from graph;
 	// fall back to reverse state order when the graph is empty.
-	var destroyOrder []graph.NodeID
+	var destroyOrder []address.Address
 	if len(e.graph.All()) > 0 {
 		topoOrder, err := e.graph.ReverseTopoSort()
 		if err != nil {
@@ -53,7 +54,7 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 	} else {
 		// Fallback: build order from state resources in reverse append order.
 		for _, r := range e.state.Resources {
-			destroyOrder = append(destroyOrder, graph.NodeID{Type: r.Type, Name: r.Name})
+			destroyOrder = append(destroyOrder, address.Address{Type: r.Type, Name: r.Name})
 		}
 		// Reverse for destroy order.
 		for i, j := 0, len(destroyOrder)-1; i < j; i, j = i+1, j-1 {

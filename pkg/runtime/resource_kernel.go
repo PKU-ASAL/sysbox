@@ -7,6 +7,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -49,10 +50,10 @@ func (p KernelResourceProvider) PlanDiff(desired *graph.Node, current *state.Res
 func (KernelResourceProvider) Create(_ context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.KernelConfig)
 	if !ok {
-		return state.Resource{}, fmt.Errorf("kernel %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("kernel %s: wrong data type", n.Address)
 	}
 	if cfg.Source == "" {
-		return state.Resource{}, fmt.Errorf("kernel %s: source required", n.ID.Name)
+		return state.Resource{}, fmt.Errorf("kernel %s: source required", n.Address.Name)
 	}
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
@@ -61,12 +62,12 @@ func (KernelResourceProvider) Create(_ context.Context, pc *ProviderContext, n *
 
 	res, err := artifact.New().Resolve(artifact.Spec{Source: cfg.Source, SHA256: cfg.SHA256})
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}
 	if res.FromCache {
-		pc.Logf("[apply] kernel %s: cache hit (%s)\n", n.ID.Name, res.Path)
+		pc.Logf("[apply] kernel %s: cache hit (%s)\n", n.Address.Name, res.Path)
 	} else if artifact.IsURL(cfg.Source) {
-		pc.Logf("[apply] kernel %s: fetched to %s\n", n.ID.Name, res.Path)
+		pc.Logf("[apply] kernel %s: fetched to %s\n", n.Address.Name, res.Path)
 	}
 
 	inst := map[string]any{
@@ -80,7 +81,7 @@ func (KernelResourceProvider) Create(_ context.Context, pc *ProviderContext, n *
 	}
 	return state.Resource{
 		Type:     "sysbox_kernel",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: subName,
 		Instance: inst,
 	}, nil
@@ -102,7 +103,7 @@ func (KernelResourceProvider) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (KernelResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+func (KernelResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.KernelConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err

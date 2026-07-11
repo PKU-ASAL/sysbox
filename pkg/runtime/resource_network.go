@@ -9,6 +9,8 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -73,7 +75,7 @@ func (NetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Reso
 func (NetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.NetworkConfig)
 	if !ok {
-		return state.Resource{}, fmt.Errorf("network %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("network %s: wrong data type", n.Address)
 	}
 
 	// nat=true: use Docker's bridge driver for internet access.
@@ -82,7 +84,7 @@ func (NetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, 
 	}
 
 	// Default: isolated netns/bridge/veth topology.
-	networkName := networkExternalName(pc.Topology(), n.ID.Name)
+	networkName := networkExternalName(pc.Topology(), n.Address.Name)
 	nsName := fmt.Sprintf("sysbox-net-%s", networkName)
 	if err := createNetnsFn(nsName); err != nil {
 		return state.Resource{}, err
@@ -113,7 +115,7 @@ func (NetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, 
 	}
 	return state.Resource{
 		Type:     "sysbox_network",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: "network",
 		Instance: inst,
 	}, nil
@@ -128,13 +130,13 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 	}
 
 	info, err := sub.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
-		Name:   networkExternalName(pc.Topology(), n.ID.Name),
+		Name:   networkExternalName(pc.Topology(), n.Address.Name),
 		CIDR:   cfg.CIDR,
 		NAT:    true,
-		Labels: ManagedLabels(pc.Topology(), pc.RunID(), n.ID),
+		Labels: ManagedLabels(pc.Topology(), pc.RunID(), n.Address),
 	})
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("create nat network %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("create nat network %s: %w", n.Address.Name, err)
 	}
 
 	// Ensure Docker containers on this NAT network can reach the internet.
@@ -143,7 +145,7 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 	// subnet before any DROP rules so container traffic is allowed.
 	if err := ensureDockerUserAccept(cfg.CIDR); err != nil {
 		fmt.Printf("[network %s] warning: could not add DOCKER-USER ACCEPT for %s: %v\n",
-			n.ID.Name, cfg.CIDR, err)
+			n.Address.Name, cfg.CIDR, err)
 	}
 
 	natInst := map[string]any{
@@ -160,7 +162,7 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 	}
 	return state.Resource{
 		Type:     "sysbox_network",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: "docker",
 		Instance: natInst,
 	}, nil
@@ -214,7 +216,7 @@ func (NetworkResourceProvider) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (NetworkResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+func (NetworkResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.NetworkConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err

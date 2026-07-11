@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -57,7 +59,7 @@ func TestImageResourceProviderCreateDockerRef(t *testing.T) {
 	sub := &imageProviderSubstrate{}
 	substrate.Register(sub)
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_image", Name: "alpine"},
+		Address: address.Address{Type: "sysbox_image", Name: "alpine"},
 		Data: &config.ImageConfig{
 			Substrate: "image-test",
 			DockerRef: "alpine:latest",
@@ -83,7 +85,7 @@ func TestImageResourceProviderCreateRootfsArtifact(t *testing.T) {
 	rootfs := filepath.Join(t.TempDir(), "rootfs.ext4")
 	require.NoError(t, os.WriteFile(rootfs, []byte("rootfs"), 0o644))
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_image", Name: "rootfs"},
+		Address: address.Address{Type: "sysbox_image", Name: "rootfs"},
 		Data: &config.ImageConfig{
 			Substrate: "image-test",
 			Rootfs:    rootfs,
@@ -111,8 +113,8 @@ func TestImageResourceProviderDelete(t *testing.T) {
 
 func TestImageResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		ID:   graph.NodeID{Type: "sysbox_image", Name: "alpine"},
-		Data: &config.ImageConfig{Substrate: "docker", DockerRef: "alpine:3.20"},
+		Address: address.Address{Type: "sysbox_image", Name: "alpine"},
+		Data:    &config.ImageConfig{Substrate: "docker", DockerRef: "alpine:3.20"},
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))

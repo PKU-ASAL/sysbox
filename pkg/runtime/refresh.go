@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -20,11 +20,11 @@ import (
 // Refresh is a best-effort pass: a probe error (e.g. transient timeout)
 // is treated as "unknown" and the resource stays Unchanged.
 func (e *Executor) Refresh(ctx context.Context, plan *Plan) {
-	var stillOK []graph.NodeID
+	var stillOK []address.Address
 
-	changed := map[graph.NodeID]bool{}
+	changed := map[string]bool{}
 	for _, id := range plan.Change {
-		changed[id] = true
+		changed[id.String()] = true
 	}
 
 	for _, id := range plan.Unchanged {
@@ -39,7 +39,7 @@ func (e *Executor) Refresh(ctx context.Context, plan *Plan) {
 			stillOK = append(stillOK, id)
 		} else {
 			e.logf("[refresh] %s: drifted - will re-create\n", id)
-			changed[id] = true
+			changed[id.String()] = true
 			plan.Change = append(plan.Change, id)
 			plan.setAction(id, controlplane.PlanActionReplace, "runtime drift detected", nil)
 		}
@@ -48,27 +48,27 @@ func (e *Executor) Refresh(ctx context.Context, plan *Plan) {
 	e.cascadeChangedDependents(plan, changed)
 }
 
-func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[graph.NodeID]bool) {
+func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[string]bool) {
 	if len(changed) == 0 || e.graph == nil {
 		return
 	}
-	unchanged := map[graph.NodeID]bool{}
+	unchanged := map[string]bool{}
 	for _, id := range plan.Unchanged {
-		unchanged[id] = true
+		unchanged[id.String()] = true
 	}
 
 	progress := true
 	for progress {
 		progress = false
 		for _, n := range e.graph.All() {
-			id := n.ID
-			if changed[id] || !unchanged[id] {
+			id := n.Address
+			if changed[id.String()] || !unchanged[id.String()] {
 				continue
 			}
 			for _, dep := range n.Deps {
-				if changed[dep] {
-					changed[id] = true
-					delete(unchanged, id)
+				if changed[dep.String()] {
+					changed[id.String()] = true
+					delete(unchanged, id.String())
 					plan.Change = append(plan.Change, id)
 					plan.setAction(id, controlplane.PlanActionReplace, "dependency "+dep.String()+" changed", nil)
 					e.logf("[refresh] %s: dependency %s changed - will re-create\n", id, dep)
@@ -79,9 +79,9 @@ func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[graph.NodeID
 		}
 	}
 
-	filtered := make([]graph.NodeID, 0, len(plan.Unchanged))
+	filtered := make([]address.Address, 0, len(plan.Unchanged))
 	for _, id := range plan.Unchanged {
-		if unchanged[id] {
+		if unchanged[id.String()] {
 			filtered = append(filtered, id)
 		}
 	}
@@ -89,7 +89,7 @@ func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[graph.NodeID
 }
 
 // probeResource checks whether a resource is still up.
-func (e *Executor) probeResource(ctx context.Context, id graph.NodeID) (bool, error) {
+func (e *Executor) probeResource(ctx context.Context, id address.Address) (bool, error) {
 	r := e.state.FindResource(id.Type, id.Name)
 	if r == nil {
 		return false, nil

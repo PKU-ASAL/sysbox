@@ -6,6 +6,7 @@ package runtime
 import (
 	"fmt"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -13,12 +14,12 @@ import (
 )
 
 type Plan struct {
-	Add       []graph.NodeID
+	Add       []address.Address
 	Destroy   []state.Resource
-	Unchanged []graph.NodeID
+	Unchanged []address.Address
 	// Change contains resources present in both graph and state but found
 	// to be unhealthy by Refresh (drift detection). Apply will re-create them.
-	Change []graph.NodeID
+	Change []address.Address
 	// Protected lists resources that would have been destroyed but are guarded
 	// by lifecycle.prevent_destroy = true. Destroy is a no-op for these.
 	Protected []state.Resource
@@ -40,7 +41,7 @@ func (p *Plan) ensureActions() {
 		p.addAction(id, controlplane.PlanActionReplace, "resource changed", nil)
 	}
 	for _, r := range p.Destroy {
-		p.addAction(graph.NodeID{Type: r.Type, Name: r.Name}, controlplane.PlanActionDelete, "resource no longer declared", nil)
+		p.addAction(address.Resource(r.Type, r.Name), controlplane.PlanActionDelete, "resource no longer declared", nil)
 	}
 	for _, id := range p.Unchanged {
 		p.addAction(id, controlplane.PlanActionNoop, "", nil)
@@ -70,13 +71,13 @@ func (p *Plan) actionsByType(types ...controlplane.PlanActionType) []controlplan
 func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 	p := &Plan{}
 
-	inGraph := map[graph.NodeID]bool{}
+	inGraph := map[string]address.Address{}
 	for _, n := range g.All() {
-		inGraph[n.ID] = true
+		inGraph[n.Address.String()] = n.Address
 	}
 
-	for id := range inGraph {
-		n := g.Get(id.Type, id.Name)
+	for _, id := range inGraph {
+		n := g.Get(id)
 		r := s.FindResource(id.Type, id.Name)
 		action, err := planActionForDesired(n, r)
 		if err != nil {
@@ -86,8 +87,8 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 	}
 
 	for _, r := range s.Resources {
-		id := graph.NodeID{Type: r.Type, Name: r.Name}
-		if !inGraph[id] {
+		id := address.Resource(r.Type, r.Name)
+		if _, exists := inGraph[id.String()]; !exists {
 			// Data sources are read-only; skip destroying them.
 			if isDataType(r.Type) {
 				continue
@@ -110,7 +111,7 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 }
 
 func planActionForDesired(n *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
-	if provider, ok := GetResourceProvider(n.ID.Type); ok {
+	if provider, ok := GetResourceProvider(n.Address.Type); ok {
 		return provider.PlanDiff(n, current)
 	}
 	return planDiffByDesiredHash(n, current)
@@ -133,9 +134,9 @@ func planDiffForDataSource(desired *graph.Node, current *state.Resource) (contro
 func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
 	if current == nil {
 		return controlplane.PlanAction{
-			Resource: desired.ID.String(),
-			Type:     desired.ID.Type,
-			Name:     desired.ID.Name,
+			Resource: desired.Address.String(),
+			Type:     desired.Address.Type,
+			Name:     desired.Address.Name,
 			Action:   controlplane.PlanActionCreate,
 			Reason:   "resource not present in state",
 		}, nil
@@ -159,16 +160,16 @@ func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (contro
 		reason = "desired configuration changed; replacement required"
 	}
 	return controlplane.PlanAction{
-		Resource: desired.ID.String(),
-		Type:     desired.ID.Type,
-		Name:     desired.ID.Name,
+		Resource: desired.Address.String(),
+		Type:     desired.Address.Type,
+		Name:     desired.Address.Name,
 		Action:   action,
 		Reason:   reason,
 		Changes:  changes,
 	}, nil
 }
 
-func (p *Plan) addDesiredAction(id graph.NodeID, action controlplane.PlanAction) {
+func (p *Plan) addDesiredAction(id address.Address, action controlplane.PlanAction) {
 	switch action.Action {
 	case controlplane.PlanActionCreate, controlplane.PlanActionRead:
 		p.Add = append(p.Add, id)
@@ -180,7 +181,7 @@ func (p *Plan) addDesiredAction(id graph.NodeID, action controlplane.PlanAction)
 	p.Actions = append(p.Actions, action)
 }
 
-func (p *Plan) addAction(id graph.NodeID, action controlplane.PlanActionType, reason string, changes map[string]controlplane.FieldChange) {
+func (p *Plan) addAction(id address.Address, action controlplane.PlanActionType, reason string, changes map[string]controlplane.FieldChange) {
 	p.Actions = append(p.Actions, controlplane.PlanAction{
 		Resource: id.String(),
 		Type:     id.Type,
@@ -197,7 +198,7 @@ func (p *Plan) addAction(id graph.NodeID, action controlplane.PlanActionType, re
 func PlanFromActions(actions []controlplane.PlanAction, current *state.State) *Plan {
 	p := &Plan{Actions: append([]controlplane.PlanAction(nil), actions...)}
 	for _, action := range p.Actions {
-		id := action.NodeID()
+		id := action.Address()
 		switch action.Action {
 		case controlplane.PlanActionCreate, controlplane.PlanActionRead:
 			p.Add = append(p.Add, id)
@@ -224,7 +225,7 @@ func PlanFromActions(actions []controlplane.PlanAction, current *state.State) *P
 	return p
 }
 
-func (p *Plan) setAction(id graph.NodeID, action controlplane.PlanActionType, reason string, changes map[string]controlplane.FieldChange) {
+func (p *Plan) setAction(id address.Address, action controlplane.PlanActionType, reason string, changes map[string]controlplane.FieldChange) {
 	for i := range p.Actions {
 		if p.Actions[i].Type == id.Type && p.Actions[i].Name == id.Name {
 			p.Actions[i].Action = action
@@ -239,7 +240,7 @@ func (p *Plan) setAction(id graph.NodeID, action controlplane.PlanActionType, re
 // FilterPlanByTarget returns a new Plan restricted to a single resource.
 // Resources not matching type+name are moved to Unchanged.
 func FilterPlanByTarget(p *Plan, typ, name string) *Plan {
-	matches := func(id graph.NodeID) bool {
+	matches := func(id address.Address) bool {
 		return id.Type == typ && id.Name == name
 	}
 	out := &Plan{}
@@ -264,7 +265,7 @@ func FilterPlanByTarget(p *Plan, typ, name string) *Plan {
 	for _, r := range p.Destroy {
 		if r.Type == typ && r.Name == name {
 			out.Destroy = append(out.Destroy, r)
-			out.setAction(graph.NodeID{Type: r.Type, Name: r.Name}, controlplane.PlanActionDelete, "resource no longer declared", nil)
+			out.setAction(address.Resource(r.Type, r.Name), controlplane.PlanActionDelete, "resource no longer declared", nil)
 		}
 	}
 	out.Unchanged = append(out.Unchanged, p.Unchanged...)
@@ -274,7 +275,7 @@ func FilterPlanByTarget(p *Plan, typ, name string) *Plan {
 	return out
 }
 
-func actionFor(p *Plan, id graph.NodeID) controlplane.PlanActionType {
+func actionFor(p *Plan, id address.Address) controlplane.PlanActionType {
 	for _, a := range p.Actions {
 		if a.Type == id.Type && a.Name == id.Name {
 			return a.Action
@@ -283,7 +284,7 @@ func actionFor(p *Plan, id graph.NodeID) controlplane.PlanActionType {
 	return controlplane.PlanActionReplace
 }
 
-func reasonFor(p *Plan, id graph.NodeID) string {
+func reasonFor(p *Plan, id address.Address) string {
 	for _, a := range p.Actions {
 		if a.Type == id.Type && a.Name == id.Name {
 			return a.Reason
@@ -292,7 +293,7 @@ func reasonFor(p *Plan, id graph.NodeID) string {
 	return "resource changed"
 }
 
-func changesFor(p *Plan, id graph.NodeID) map[string]controlplane.FieldChange {
+func changesFor(p *Plan, id address.Address) map[string]controlplane.FieldChange {
 	for _, a := range p.Actions {
 		if a.Type == id.Type && a.Name == id.Name {
 			return a.Changes

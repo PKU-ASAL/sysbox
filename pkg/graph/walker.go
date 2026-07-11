@@ -3,78 +3,74 @@ package graph
 import (
 	"fmt"
 	"sort"
+
+	"github.com/oslab/sysbox/pkg/address"
 )
 
-// TopoSort returns node IDs in dependency order (deps before dependents).
-// Returns an error if the graph contains a cycle.
-//
-// To make output deterministic across runs, ties at each "ready" frontier
-// are broken by NodeID.String().
-func (g *Graph) TopoSort() ([]NodeID, error) {
-	inDegree := make(map[NodeID]int)
-	neighbors := make(map[NodeID][]NodeID)
-
-	for id := range g.nodes {
-		inDegree[id] = 0
+func (g *Graph) TopoSort() ([]address.Address, error) {
+	inDegree := make(map[string]int, len(g.nodes))
+	neighbors := make(map[string][]address.Address, len(g.nodes))
+	addresses := make(map[string]address.Address, len(g.nodes))
+	for _, node := range g.nodes {
+		key := node.Address.String()
+		inDegree[key] = 0
+		addresses[key] = node.Address
 	}
-
-	for id, n := range g.nodes {
-		for _, dep := range n.Deps {
-			if _, ok := g.nodes[dep]; !ok {
-				return nil, fmt.Errorf("resource %s references unknown %s", id, dep)
+	for _, node := range g.nodes {
+		for _, dep := range node.Deps {
+			if g.Get(dep) == nil {
+				return nil, fmt.Errorf("resource %s references unknown %s", node.Address, dep)
 			}
-			neighbors[dep] = append(neighbors[dep], id)
-			inDegree[id]++
+			neighbors[dep.String()] = append(neighbors[dep.String()], node.Address)
+			inDegree[node.Address.String()]++
 		}
 	}
 
-	var queue []NodeID
-	for id, deg := range inDegree {
-		if deg == 0 {
-			queue = append(queue, id)
+	queue := make([]address.Address, 0)
+	for key, degree := range inDegree {
+		if degree == 0 {
+			queue = append(queue, addresses[key])
 		}
 	}
-	sortNodeIDs(queue)
+	sortAddresses(queue)
 
-	var order []NodeID
+	order := make([]address.Address, 0, len(g.nodes))
 	for len(queue) > 0 {
-		cur := queue[0]
+		current := queue[0]
 		queue = queue[1:]
-		order = append(order, cur)
+		order = append(order, current)
 
-		var freed []NodeID
-		for _, next := range neighbors[cur] {
-			inDegree[next]--
-			if inDegree[next] == 0 {
+		freed := make([]address.Address, 0)
+		for _, next := range neighbors[current.String()] {
+			key := next.String()
+			inDegree[key]--
+			if inDegree[key] == 0 {
 				freed = append(freed, next)
 			}
 		}
-		sortNodeIDs(freed)
+		sortAddresses(freed)
 		queue = append(queue, freed...)
 	}
-
 	if len(order) != len(g.nodes) {
 		return nil, fmt.Errorf("graph has cycle: resolved %d of %d nodes", len(order), len(g.nodes))
 	}
 	return order, nil
 }
 
-// ReverseTopoSort is TopoSort reversed (dependents before deps).
-// Used by destroy: tear down dependents first.
-func (g *Graph) ReverseTopoSort() ([]NodeID, error) {
+func (g *Graph) ReverseTopoSort() ([]address.Address, error) {
 	order, err := g.TopoSort()
 	if err != nil {
 		return nil, err
 	}
-	reversed := make([]NodeID, len(order))
-	for i, id := range order {
-		reversed[len(order)-1-i] = id
+	reversed := make([]address.Address, len(order))
+	for i, addr := range order {
+		reversed[len(order)-1-i] = addr
 	}
 	return reversed, nil
 }
 
-func sortNodeIDs(ids []NodeID) {
-	sort.Slice(ids, func(i, j int) bool {
-		return ids[i].String() < ids[j].String()
+func sortAddresses(addresses []address.Address) {
+	sort.Slice(addresses, func(i, j int) bool {
+		return addresses[i].Less(addresses[j])
 	})
 }

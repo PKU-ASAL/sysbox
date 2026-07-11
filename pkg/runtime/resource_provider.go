@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -30,11 +31,11 @@ type ResourceProvider interface {
 }
 
 type ResourceGraphDecoder interface {
-	DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (data any, deps []graph.Ref, err error)
+	DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (data any, deps []address.Address, err error)
 }
 
 type DataGraphDecoder interface {
-	DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (data any, deps []graph.Ref, err error)
+	DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (data any, deps []address.Address, err error)
 }
 
 type ResourceReadResult struct {

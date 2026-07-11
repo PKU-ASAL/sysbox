@@ -5,7 +5,7 @@
 package controlplane
 
 import (
-	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -38,8 +38,8 @@ type PlanAction struct {
 	Changes  map[string]FieldChange `json:"changes,omitempty"`
 }
 
-func (a PlanAction) NodeID() graph.NodeID {
-	return graph.NodeID{Type: a.Type, Name: a.Name}
+func (a PlanAction) Address() address.Address {
+	return address.Resource(a.Type, a.Name)
 }
 
 type ResourceHealthStatus string

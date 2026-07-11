@@ -9,6 +9,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -211,13 +213,18 @@ func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalCon
 		}
 		for _, node := range sub.All() {
 			// Re-prefix the name and rewrite deps that point to other module resources.
-			nsName := prefix + node.ID.Name
-			var nsDeps []graph.Ref
+			nsName := prefix + node.Address.Name
+			var nsDeps []address.Address
 			for _, dep := range node.Deps {
-				nsDeps = append(nsDeps, graph.Ref{Type: dep.Type, Name: prefix + dep.Name})
+				nsDeps = append(nsDeps, address.Address{Type: dep.Type, Name: prefix + dep.Name})
 			}
-			g.AddNode(node.ID.Type, nsName, nsDeps)
-			g.SetData(node.ID.Type, nsName, node.Data)
+			nsAddress := address.Resource(node.Address.Type, nsName)
+			if err := g.AddNode(nsAddress, nsDeps); err != nil {
+				return err
+			}
+			if err := g.SetData(nsAddress, node.Data); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -239,8 +246,13 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 		return err
 	}
 
-	g.AddNode(r.Type, name, deps)
-	g.SetData(r.Type, name, data)
+	addr := address.Resource(r.Type, name)
+	if err := g.AddNode(addr, deps); err != nil {
+		return err
+	}
+	if err := g.SetData(addr, data); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -263,7 +275,9 @@ func expandDataBlock(d config.DataBlock, g *graph.Graph, ctx *hcl.EvalContext) e
 	}
 
 	// Data blocks use a "data_" prefix in the graph to distinguish from resources.
-	g.AddNode(typ, d.Name, deps)
-	g.SetData(typ, d.Name, data)
-	return nil
+	addr := address.Resource(typ, d.Name)
+	if err := g.AddNode(addr, deps); err != nil {
+		return err
+	}
+	return g.SetData(addr, data)
 }

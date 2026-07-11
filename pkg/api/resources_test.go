@@ -135,7 +135,7 @@ func (testResourceProvider) Read(context.Context, state.Resource) (runtime.Resou
 	return runtime.ResourceReadResult{Decision: controlplane.RecoveryDecisionNoop}, nil
 }
 func (testResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
-	return controlplane.PlanAction{Resource: desired.ID.String(), Type: desired.ID.Type, Name: desired.ID.Name, Action: controlplane.PlanActionNoop}, nil
+	return controlplane.PlanAction{Resource: desired.Address.String(), Type: desired.Address.Type, Name: desired.Address.Name, Action: controlplane.PlanActionNoop}, nil
 }
 func (testResourceProvider) Create(context.Context, *runtime.ProviderContext, *graph.Node) (state.Resource, error) {
 	return state.Resource{}, nil

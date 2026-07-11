@@ -7,8 +7,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/graph"
 )
 
 func writeHCL(t *testing.T, content string) string {
@@ -33,10 +34,10 @@ resource "sysbox_network" "lab" {
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 3)
-	require.NotNil(t, g.Get("sysbox_network", "lab[0]"))
-	require.NotNil(t, g.Get("sysbox_network", "lab[1]"))
-	require.NotNil(t, g.Get("sysbox_network", "lab[2]"))
-	require.Nil(t, g.Get("sysbox_network", "lab"))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab[0]")))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab[1]")))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab[2]")))
+	require.Nil(t, g.Get(address.Resource("sysbox_network", "lab")))
 }
 
 func TestBuildGraphCountZero(t *testing.T) {
@@ -73,8 +74,8 @@ resource "sysbox_network" "lab" {
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 2)
-	require.NotNil(t, g.Get("sysbox_network", "lab_dmz"))
-	require.NotNil(t, g.Get("sysbox_network", "lab_internal"))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_dmz")))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_internal")))
 }
 
 func TestBuildGraphForEachSet(t *testing.T) {
@@ -92,9 +93,9 @@ resource "sysbox_network" "lab" {
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 3)
-	require.NotNil(t, g.Get("sysbox_network", "lab_dmz"))
-	require.NotNil(t, g.Get("sysbox_network", "lab_internal"))
-	require.NotNil(t, g.Get("sysbox_network", "lab_uplink"))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_dmz")))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_internal")))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_uplink")))
 }
 
 func TestBuildGraphForEachSetEachKeyValue(t *testing.T) {
@@ -114,7 +115,7 @@ resource "sysbox_network" "seg" {
 
 	require.Len(t, g.All(), 2)
 	// Each instance carries its config decoded without error.
-	n := g.Get("sysbox_network", "seg_red")
+	n := g.Get(address.Resource("sysbox_network", "seg_red"))
 	require.NotNil(t, n)
 	cfg, ok := n.Data.(*config.NetworkConfig)
 	require.True(t, ok)
@@ -136,11 +137,11 @@ func TestBuildGraphModule(t *testing.T) {
 
 	// Module expands to two networks, namespaced as module_net_dmz and module_net_internal.
 	require.Len(t, g.All(), 2)
-	require.NotNil(t, g.Get("sysbox_network", "module_net_dmz"))
-	require.NotNil(t, g.Get("sysbox_network", "module_net_internal"))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "module_net_dmz")))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "module_net_internal")))
 
 	// Config data is decoded and carries the passed cidr values.
-	dmzNode := g.Get("sysbox_network", "module_net_dmz")
+	dmzNode := g.Get(address.Resource("sysbox_network", "module_net_dmz"))
 	require.NotNil(t, dmzNode)
 	cfg, ok := dmzNode.Data.(*config.NetworkConfig)
 	require.True(t, ok)
@@ -191,7 +192,7 @@ resource "sysbox_network" "net" { cidr = var.cidr }
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 1)
-	n := g.Get("sysbox_network", "module_net_net")
+	n := g.Get(address.Resource("sysbox_network", "module_net_net"))
 	require.NotNil(t, n)
 	cfg := n.Data.(*config.NetworkConfig)
 	require.Equal(t, "192.168.1.0/24", cfg.CIDR)
@@ -244,12 +245,12 @@ module "net" { source = "./mod" }
 
 	// for_each expands to seg_dmz, seg_internal; module prefixes → module_net_seg_dmz, ...
 	require.Len(t, g.All(), 2)
-	require.NotNil(t, g.Get("sysbox_network", "module_net_seg_dmz"))
-	require.NotNil(t, g.Get("sysbox_network", "module_net_seg_internal"))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "module_net_seg_dmz")))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "module_net_seg_internal")))
 }
 
-// Ensure graph.Ref is usable in tests.
-var _ = graph.Ref{}
+// Ensure address.Address is usable in tests.
+var _ = address.Address{}
 
 func TestBuildGraphForEachNonStringSetError(t *testing.T) {
 	f := writeHCL(t, `

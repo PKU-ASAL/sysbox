@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/graph"
 )
 
 // Apply walks the plan forward: create Add resources and re-create Change
@@ -42,10 +41,10 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 	// For drifted resources, destroy all affected existing resources in
 	// reverse topo order first (dependents before dependencies), then recreate
 	// them in normal topo order below.
-	changeSet := map[graph.NodeID]bool{}
+	changeSet := map[string]bool{}
 	for _, action := range plan.actionsByType(controlplane.PlanActionUpdate, controlplane.PlanActionReplace) {
-		id := action.NodeID()
-		changeSet[id] = true
+		id := action.Address()
+		changeSet[id.String()] = true
 	}
 	if len(changeSet) > 0 {
 		reverse, err := e.graph.ReverseTopoSort()
@@ -58,7 +57,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 				applyErr = err
 				return applyErr
 			}
-			if !changeSet[id] {
+			if !changeSet[id.String()] {
 				continue
 			}
 			r := e.state.FindResource(id.Type, id.Name)

@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -62,21 +64,21 @@ func (DataNodeResourceProvider) ExternalID(current state.Resource) string {
 func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.DataNodeConfig)
 	if !ok {
-		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: wrong data type", n.ID.Name)
+		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: wrong data type", n.Address.Name)
 	}
 
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: %w", n.Address.Name, err)
 	}
 	sub, err := substrate.Get(subName)
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: %w", n.Address.Name, err)
 	}
 
 	handle, err := sub.ReadNode(ctx, cfg.ID)
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: read %q: %w", n.ID.Name, cfg.ID, err)
+		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: read %q: %w", n.Address.Name, cfg.ID, err)
 	}
 
 	inst := map[string]any{
@@ -93,11 +95,11 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 
 	res := state.Resource{
 		Type:     "data_sysbox_node",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: subName,
 		Instance: inst,
 	}
-	e.logf("[data] read sysbox_node.%s → id=%s ip=%s\n", n.ID.Name, handle.ID, handle.Net.PrimaryIP)
+	e.logf("[data] read sysbox_node.%s → id=%s ip=%s\n", n.Address.Name, handle.ID, handle.Net.PrimaryIP)
 	return res, nil
 }
 
@@ -140,7 +142,7 @@ func (DataNetworkResourceProvider) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (DataNetworkResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+func (DataNetworkResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.DataNetworkConfig{}
 	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_network", d.Name); err != nil {
 		return nil, nil, err
@@ -151,12 +153,12 @@ func (DataNetworkResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalC
 func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.DataNetworkConfig)
 	if !ok {
-		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: wrong data type", n.ID.Name)
+		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: wrong data type", n.Address.Name)
 	}
 
 	sub, err := substrate.Get("docker")
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: requires docker substrate: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: requires docker substrate: %w", n.Address.Name, err)
 	}
 
 	// Try the user-given name directly first (e.g. "bridge" or a custom
@@ -164,7 +166,7 @@ func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (
 	// both externally-managed Docker networks and sysbox-managed ones.
 	info, err := sub.ReadManagedNetwork(ctx, substrate.ManagedNetworkSpec{Name: cfg.Name})
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: network %q not found: %w", n.ID.Name, cfg.Name, err)
+		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: network %q not found: %w", n.Address.Name, cfg.Name, err)
 	}
 
 	inst := map[string]any{
@@ -177,11 +179,11 @@ func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (
 	}
 	res := state.Resource{
 		Type:     "data_sysbox_network",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: "docker",
 		Instance: inst,
 	}
-	e.logf("[data] read sysbox_network.%s → %s\n", n.ID.Name, info.Name)
+	e.logf("[data] read sysbox_network.%s → %s\n", n.Address.Name, info.Name)
 	return res, nil
 }
 
@@ -225,25 +227,25 @@ func (DataImageResourceProvider) ExternalID(current state.Resource) string {
 func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.DataImageConfig)
 	if !ok {
-		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: wrong data type", n.ID.Name)
+		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: wrong data type", n.Address.Name)
 	}
 
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}
 	sub, err := substrate.Get(subName)
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}
 
 	if cfg.DockerRef == "" {
-		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: docker_ref is required", n.ID.Name)
+		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: docker_ref is required", n.Address.Name)
 	}
 
 	ref, err := sub.PrepareImage(ctx, substrate.ImageSpec{DockerRef: cfg.DockerRef})
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}
 
 	inst := map[string]any{
@@ -256,10 +258,10 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 	}
 	res := state.Resource{
 		Type:     "data_sysbox_image",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: subName,
 		Instance: inst,
 	}
-	e.logf("[data] read sysbox_image.%s → %s\n", n.ID.Name, ref.ID)
+	e.logf("[data] read sysbox_image.%s → %s\n", n.Address.Name, ref.ID)
 	return res, nil
 }

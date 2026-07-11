@@ -8,6 +8,8 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -56,7 +58,7 @@ func (NodeResourceProvider) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (NodeResourceProvider) DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+func (NodeResourceProvider) DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.NodeConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
@@ -64,26 +66,26 @@ func (NodeResourceProvider) DecodeResource(r config.ResourceBlock, name string, 
 	if err := decodeNodeProviderConfig(cfg, ctx); err != nil {
 		return nil, nil, fmt.Errorf("resource sysbox_node.%s: %w", name, err)
 	}
-	var deps []graph.Ref
+	var deps []address.Address
 	if ref := config.ResolveName(cfg.Image); ref != "" {
-		deps = append(deps, graph.Ref{Type: "sysbox_image", Name: ref})
+		deps = append(deps, address.Address{Type: "sysbox_image", Name: ref})
 	}
 	for _, link := range cfg.Links {
 		if ref := config.ResolveName(link.Network); ref != "" {
-			deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
+			deps = append(deps, address.Address{Type: "sysbox_network", Name: ref})
 		}
 	}
 	if subName, err := config.ResolveSubstrateRef(cfg.Substrate); err == nil {
 		if sub, err := substrate.Get(subName); err == nil {
 			pd := sub.Dependencies(cfg.ProviderConfig)
 			for _, n := range pd.Kernels {
-				deps = append(deps, graph.Ref{Type: "sysbox_kernel", Name: n})
+				deps = append(deps, address.Address{Type: "sysbox_kernel", Name: n})
 			}
 			for _, n := range pd.Images {
-				deps = append(deps, graph.Ref{Type: "sysbox_image", Name: n})
+				deps = append(deps, address.Address{Type: "sysbox_image", Name: n})
 			}
 			for _, n := range pd.Networks {
-				deps = append(deps, graph.Ref{Type: "sysbox_network", Name: n})
+				deps = append(deps, address.Address{Type: "sysbox_network", Name: n})
 			}
 		}
 	}
@@ -91,14 +93,14 @@ func (NodeResourceProvider) DecodeResource(r config.ResourceBlock, name string, 
 	return cfg, deps, nil
 }
 
-func (DataNodeResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+func (DataNodeResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.DataNodeConfig{}
 	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_node", d.Name); err != nil {
 		return nil, nil, err
 	}
-	var deps []graph.Ref
+	var deps []address.Address
 	if ref := config.ResolveName(cfg.Substrate); ref != "" {
-		deps = append(deps, graph.Ref{Type: "substrate", Name: ref})
+		deps = append(deps, address.Address{Type: "substrate", Name: ref})
 	}
 	return cfg, deps, nil
 }
@@ -106,7 +108,7 @@ func (DataNodeResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalCont
 func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.NodeConfig)
 	if !ok {
-		return state.Resource{}, fmt.Errorf("node %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("node %s: wrong data type", n.Address)
 	}
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
@@ -118,9 +120,9 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 	portSpecs, err := normalizePortSpecs(cfg.Ports)
 	if err != nil {
-		return state.Resource{}, fmt.Errorf("node %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("node %s: %w", n.Address.Name, err)
 	}
-	if err := validatePortExposures(n.ID.Name, sub, portSpecs); err != nil {
+	if err := validatePortExposures(n.Address.Name, sub, portSpecs); err != nil {
 		return state.Resource{}, err
 	}
 	nodeDesiredHash, err := desiredHash(n)
@@ -144,7 +146,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// We do an early PrepareHandle pass with an empty handle (no PrimaryIP yet)
 	// purely for ref resolution. ConnInfo is populated in the second pass below.
 	if err := e.recordSubstep(parentStep, "prepare_node_config", map[string]any{
-		"resource":  n.ID.String(),
+		"resource":  n.Address.String(),
 		"substrate": subName,
 	}, func() error {
 		return sub.PrepareHandle(ctx, &substrate.NodeHandle{}, cfg.ProviderConfig, stateAdapter{e.state})
@@ -167,14 +169,14 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if err != nil {
 		return state.Resource{}, err
 	}
-	containerName := runtimeExternalName(e.topology, "node", n.ID.Name)
+	containerName := runtimeExternalName(e.topology, "node", n.Address.Name)
 	nodeSpec := substrate.NodeSpec{
 		Name:           containerName,
 		Image:          imgRef,
 		VCPUs:          cfg.Vcpus,
 		Memory:         cfg.Memory,
 		Env:            cfg.Env,
-		Labels:         ManagedLabels(e.topology, e.runID, n.ID),
+		Labels:         ManagedLabels(e.topology, e.runID, n.Address),
 		Ports:          portSpecs,
 		InitialLinks:   initialLinks,
 		ProviderConfig: cfg.ProviderConfig,
@@ -185,7 +187,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 
 	var handle substrate.NodeHandle
 	if err := e.recordSubstep(parentStep, "create_node", map[string]any{
-		"resource":  n.ID.String(),
+		"resource":  n.Address.String(),
 		"substrate": subName,
 		"name":      containerName,
 		"image":     imgRef.Repository,
@@ -205,19 +207,19 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	caps := sub.Capabilities()
 	if caps.NICHotPlug {
 		if err := e.recordSubstep(parentStep, "start_node", map[string]any{
-			"resource":  n.ID.String(),
+			"resource":  n.Address.String(),
 			"substrate": subName,
 			"node_id":   handle.ID,
 		}, func() error {
 			return sub.StartNode(ctx, handle)
 		}); err != nil {
 			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on start failure")
-			return state.Resource{}, fmt.Errorf("start node %s: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("start node %s: %w", n.Address.Name, err)
 		}
 	}
 
 	// Wire all NICs using the shared helper.
-	wireResult, err := wireNICsWithHook(ctx, sub, e.state, handle, initialLinks, nicSpecs, false, n.ID.Name, e.substepHook(parentStep))
+	wireResult, err := wireNICsWithHook(ctx, sub, e.state, handle, initialLinks, nicSpecs, false, n.Address.Name, e.substepHook(parentStep))
 	if err != nil {
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on wire failure")
 		return state.Resource{}, err
@@ -249,7 +251,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	nodeInstance[desiredHashKey] = nodeDesiredHash
 	resource := state.Resource{
 		Type:     "sysbox_node",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: subName,
 		Instance: nodeInstance,
 	}
@@ -261,14 +263,14 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// were already started before the NIC loop.
 	if !caps.NICHotPlug {
 		if err := e.recordSubstep(parentStep, "start_node", map[string]any{
-			"resource":  n.ID.String(),
+			"resource":  n.Address.String(),
 			"substrate": subName,
 			"node_id":   handle.ID,
 		}, func() error {
 			return sub.StartNode(ctx, handle)
 		}); err != nil {
 			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on cold-start failure")
-			return state.Resource{}, fmt.Errorf("start node %s: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("start node %s: %w", n.Address.Name, err)
 		}
 	}
 
@@ -276,20 +278,20 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// PrimaryIP is set. Each substrate decides what makes sense:
 	// docker → ConnKindDocker (set at CreateNode), FC → vsock or SSH.
 	if err := e.recordSubstep(parentStep, "prepare_connection", map[string]any{
-		"resource":  n.ID.String(),
+		"resource":  n.Address.String(),
 		"substrate": subName,
 		"node_id":   handle.ID,
 	}, func() error {
 		return sub.PrepareHandle(ctx, &handle, cfg.ProviderConfig, stateAdapter{e.state})
 	}); err != nil {
-		e.logf("[apply] warning: PrepareHandle for %s: %v\n", n.ID.Name, err)
+		e.logf("[apply] warning: PrepareHandle for %s: %v\n", n.Address.Name, err)
 	}
 
 	// Re-marshal provider state (the substrate may have mutated HandleState
 	// during AttachNIC or PrepareHandle). Always try; substrates with no
 	// provider state return (nil, nil) which is harmless.
 	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-		if rec := e.state.FindResource("sysbox_node", n.ID.Name); rec != nil {
+		if rec := e.state.FindResource("sysbox_node", n.Address.Name); rec != nil {
 			rec.Instance["provider_extra"] = string(blob)
 		}
 	}
@@ -299,20 +301,20 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if len(cfg.Routes) > 0 {
 		conn, err := connectionForNode(sub, handle, cfg.Connections)
 		if err != nil {
-			return state.Resource{}, fmt.Errorf("connection for routes on node %s: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("connection for routes on node %s: %w", n.Address.Name, err)
 		}
 		for _, rt := range cfg.Routes {
 			cmd := fmt.Sprintf("ip route replace %s via %s", rt.Destination, rt.Via)
-			e.logf("[route] %s: %s\n", n.ID.Name, cmd)
+			e.logf("[route] %s: %s\n", n.Address.Name, cmd)
 			if err := e.recordSubstep(parentStep, "attach_route", map[string]any{
-				"resource": n.ID.String(),
+				"resource": n.Address.String(),
 				"dst":      rt.Destination,
 				"via":      rt.Via,
 			}, func() error {
 				return conn.ExecInline(ctx, []string{cmd})
 			}); err != nil {
 				// Non-fatal: route may already exist or ip not available.
-				e.logf("[route] warning: %s: %v\n", n.ID.Name, err)
+				e.logf("[route] warning: %s: %v\n", n.Address.Name, err)
 			}
 		}
 		// Persist routes in state for drift detection.
@@ -320,7 +322,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		for _, rt := range cfg.Routes {
 			routeSpecs = append(routeSpecs, map[string]string{"dst": rt.Destination, "via": rt.Via})
 		}
-		if rec := e.state.FindResource("sysbox_node", n.ID.Name); rec != nil {
+		if rec := e.state.FindResource("sysbox_node", n.Address.Name); rec != nil {
 			rec.Instance["routes"] = routeSpecs
 		}
 	}
@@ -329,19 +331,19 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if len(cfg.Provisioners) > 0 {
 		conn, err := connectionForNode(sub, handle, cfg.Connections)
 		if err != nil {
-			return state.Resource{}, fmt.Errorf("connection for node %s: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("connection for node %s: %w", n.Address.Name, err)
 		}
 		// Block until the chosen connection is reachable (SSH up, vsock
 		// agent listening, ...). Transports that need no wait simply don't
 		// implement ConnectionWaiter.
 		if waiter, ok := conn.(substrate.ConnectionWaiter); ok {
-			e.logf("[provisioner] waiting for connection on %s...\n", n.ID.Name)
+			e.logf("[provisioner] waiting for connection on %s...\n", n.Address.Name)
 			if err := waiter.WaitReady(ctx, 60*time.Second); err != nil {
-				return state.Resource{}, fmt.Errorf("connection not ready on node %s: %w", n.ID.Name, err)
+				return state.Resource{}, fmt.Errorf("connection not ready on node %s: %w", n.Address.Name, err)
 			}
 		}
 		if err := e.runProvisioners(ctx, conn, cfg.Provisioners); err != nil {
-			return state.Resource{}, fmt.Errorf("provisioner on node %s: %w", n.ID.Name, err)
+			return state.Resource{}, fmt.Errorf("provisioner on node %s: %w", n.Address.Name, err)
 		}
 	}
 
@@ -351,7 +353,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		e.logf("[node] warning: image entry start: %v\n", err)
 	}
 
-	if rec := e.state.FindResource("sysbox_node", n.ID.Name); rec != nil {
+	if rec := e.state.FindResource("sysbox_node", n.Address.Name); rec != nil {
 		resource = *rec
 	}
 	return resource, nil

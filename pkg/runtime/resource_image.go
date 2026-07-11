@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -39,7 +40,7 @@ func (ImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resour
 func (ImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.ImageConfig)
 	if !ok {
-		return state.Resource{}, fmt.Errorf("image %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("image %s: wrong data type", n.Address)
 	}
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
@@ -68,12 +69,12 @@ func (ImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n 
 		}
 		r, err := res.Resolve(artifact.Spec{Source: entry.src, SHA256: cfg.SHA256})
 		if err != nil {
-			return state.Resource{}, fmt.Errorf("image %s %s: %w", n.ID.Name, entry.label, err)
+			return state.Resource{}, fmt.Errorf("image %s %s: %w", n.Address.Name, entry.label, err)
 		}
 		if r.FromCache {
-			pc.Logf("[apply] image %s: %s cache hit (%s)\n", n.ID.Name, entry.label, r.Path)
+			pc.Logf("[apply] image %s: %s cache hit (%s)\n", n.Address.Name, entry.label, r.Path)
 		} else if artifact.IsURL(entry.src) {
-			pc.Logf("[apply] image %s: %s fetched to %s\n", n.ID.Name, entry.label, r.Path)
+			pc.Logf("[apply] image %s: %s fetched to %s\n", n.Address.Name, entry.label, r.Path)
 		}
 		*entry.dst = r.Path
 		resolvedSHA = r.SHA256
@@ -100,7 +101,7 @@ func (ImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n 
 	}
 	return state.Resource{
 		Type:     "sysbox_image",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: subName,
 		Instance: inst,
 	}, nil
@@ -122,7 +123,7 @@ func (ImageResourceProvider) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (ImageResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+func (ImageResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.ImageConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
@@ -150,14 +151,14 @@ func (ImageResourceProvider) PreflightResource(r config.ResourceBlock, ctx *hcl.
 	return checks
 }
 
-func (DataImageResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+func (DataImageResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.DataImageConfig{}
 	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_image", d.Name); err != nil {
 		return nil, nil, err
 	}
-	var deps []graph.Ref
+	var deps []address.Address
 	if ref := config.ResolveName(cfg.Substrate); ref != "" {
-		deps = append(deps, graph.Ref{Type: "substrate", Name: ref})
+		deps = append(deps, address.Address{Type: "substrate", Name: ref})
 	}
 	return cfg, deps, nil
 }

@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -56,14 +58,14 @@ func (FirewallResourceProvider) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (FirewallResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+func (FirewallResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.FirewallConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
 	}
-	var deps []graph.Ref
+	var deps []address.Address
 	if ref := config.ResolveName(cfg.AttachTo); ref != "" {
-		deps = append(deps, graph.Ref{Type: "sysbox_network", Name: ref})
+		deps = append(deps, address.Address{Type: "sysbox_network", Name: ref})
 	}
 	return cfg, deps, nil
 }
@@ -71,16 +73,16 @@ func (FirewallResourceProvider) DecodeResource(r config.ResourceBlock, _ string,
 func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.FirewallConfig)
 	if !ok {
-		return state.Resource{}, fmt.Errorf("firewall %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("firewall %s: wrong data type", n.Address)
 	}
 
 	netName := config.ResolveName(cfg.AttachTo)
 	if netName == "" {
-		return state.Resource{}, fmt.Errorf("firewall %s: attach_to is empty", n.ID.Name)
+		return state.Resource{}, fmt.Errorf("firewall %s: attach_to is empty", n.Address.Name)
 	}
 	netState := e.state.FindResource("sysbox_network", netName)
 	if netState == nil {
-		return state.Resource{}, fmt.Errorf("firewall %s: network %s not applied yet", n.ID.Name, netName)
+		return state.Resource{}, fmt.Errorf("firewall %s: network %s not applied yet", n.Address.Name, netName)
 	}
 	nsName := netState.Str("netns")
 
@@ -95,7 +97,7 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	}
 
 	if err := network.ApplyFirewall(nsName, specs); err != nil {
-		return state.Resource{}, fmt.Errorf("firewall %s: %w", n.ID.Name, err)
+		return state.Resource{}, fmt.Errorf("firewall %s: %w", n.Address.Name, err)
 	}
 
 	inst := map[string]any{
@@ -109,7 +111,7 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	}
 	return state.Resource{
 		Type:     "sysbox_firewall",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: "network",
 		Instance: inst,
 	}, nil

@@ -1,6 +1,6 @@
 package runtime
 
-import "github.com/oslab/sysbox/pkg/graph"
+import "github.com/oslab/sysbox/pkg/address"
 
 const (
 	LabelManaged      = "sysbox.managed"
@@ -11,7 +11,7 @@ const (
 	LabelResourceName = "sysbox.resource_name"
 )
 
-func ManagedLabels(topology, runID string, id graph.NodeID) map[string]string {
+func ManagedLabels(topology, runID string, id address.Address) map[string]string {
 	labels := map[string]string{
 		LabelManaged:      "true",
 		LabelResource:     id.String(),

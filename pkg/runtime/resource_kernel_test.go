@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -18,7 +20,7 @@ func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "vmlinux")
 	require.NoError(t, os.WriteFile(src, []byte("kernel"), 0o644))
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_kernel", Name: "fc"},
+		Address: address.Address{Type: "sysbox_kernel", Name: "fc"},
 		Data: &config.KernelConfig{
 			Substrate: "firecracker",
 			Source:    src,
@@ -46,7 +48,7 @@ func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
 
 func TestKernelResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_kernel", Name: "fc"},
+		Address: address.Address{Type: "sysbox_kernel", Name: "fc"},
 		Data: &config.KernelConfig{
 			Substrate: "firecracker",
 			Source:    "/tmp/vmlinux-a",

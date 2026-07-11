@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -21,7 +23,7 @@ func TestRouterResourceProviderRegistered(t *testing.T) {
 
 func TestRouterResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_router", Name: "r1"},
+		Address: address.Address{Type: "sysbox_router", Name: "r1"},
 		Data: &config.RouterConfig{
 			Image:     "sysbox_image.alpine.id",
 			Substrate: "docker",

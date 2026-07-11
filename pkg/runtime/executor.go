@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -84,7 +85,7 @@ func (e *Executor) setCurrentResourceStep(step int) func() {
 	}
 }
 
-func (e *Executor) recordStepExternal(ctx context.Context, step int, id graph.NodeID, action controlplane.PlanActionType) {
+func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.Address, action controlplane.PlanActionType) {
 	r := e.state.FindResource(id.Type, id.Name)
 	if r == nil {
 		return
@@ -148,8 +149,8 @@ func (e *Executor) logf(format string, args ...any) {
 
 // CreateResource dispatches a node in the graph to the right provider
 // and records the result in state.
-func (e *Executor) CreateResource(ctx context.Context, id graph.NodeID) error {
-	node := e.graph.Get(id.Type, id.Name)
+func (e *Executor) CreateResource(ctx context.Context, id address.Address) error {
+	node := e.graph.Get(id)
 	if node == nil {
 		return fmt.Errorf("node %s not in graph", id)
 	}

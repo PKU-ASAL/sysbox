@@ -8,6 +8,8 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -57,14 +59,14 @@ func (SSHAccessResourceProvider) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (SSHAccessResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []graph.Ref, error) {
+func (SSHAccessResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.SSHAccessConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
 	}
-	var deps []graph.Ref
+	var deps []address.Address
 	if ref := config.ResolveName(cfg.Node); ref != "" {
-		deps = append(deps, graph.Ref{Type: "sysbox_node", Name: ref})
+		deps = append(deps, address.Address{Type: "sysbox_node", Name: ref})
 	}
 	return cfg, deps, nil
 }
@@ -72,7 +74,7 @@ func (SSHAccessResourceProvider) DecodeResource(r config.ResourceBlock, _ string
 func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.SSHAccessConfig)
 	if !ok {
-		return state.Resource{}, fmt.Errorf("ssh_access %s: wrong data type", n.ID)
+		return state.Resource{}, fmt.Errorf("ssh_access %s: wrong data type", n.Address)
 	}
 
 	nodeName := config.ResolveName(cfg.Node)
@@ -116,7 +118,7 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 	}
 	return state.Resource{
 		Type:     "sysbox_ssh_access",
-		Name:     n.ID.Name,
+		Name:     n.Address.Name,
 		Provider: subName,
 		Instance: inst,
 	}, nil

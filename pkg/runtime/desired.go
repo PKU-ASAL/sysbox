@@ -30,7 +30,7 @@ func desiredHash(n *graph.Node) (string, error) {
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("hash desired %s: %w", n.ID, err)
+		return "", fmt.Errorf("hash desired %s: %w", n.Address, err)
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
@@ -38,8 +38,8 @@ func desiredHash(n *graph.Node) (string, error) {
 
 func desiredPayload(n *graph.Node) (map[string]any, []string) {
 	payload := map[string]any{
-		"type": n.ID.Type,
-		"name": n.ID.Name,
+		"type": n.Address.Type,
+		"name": n.Address.Name,
 	}
 	var ignore []string
 
@@ -164,7 +164,7 @@ func diffDesiredState(n *graph.Node, r *state.Resource) (map[string]controlplane
 	for k := range after {
 		keys[k] = true
 	}
-	schema := ResourceSchemaFor(n.ID.Type)
+	schema := ResourceSchemaFor(n.Address.Type)
 	for k := range keys {
 		if schema.IgnoreChanges[k] {
 			continue

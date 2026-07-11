@@ -7,15 +7,16 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-func decodeDependsOn(deps []graph.Ref, items []string) []graph.Ref {
+func decodeDependsOn(deps []address.Address, items []string) []address.Address {
 	for _, dep := range items {
 		if parts := strings.SplitN(dep, ".", 2); len(parts) == 2 {
-			deps = append(deps, graph.Ref{Type: parts[0], Name: parts[1]})
+			deps = append(deps, address.Address{Type: parts[0], Name: parts[1]})
 		}
 	}
 	return deps

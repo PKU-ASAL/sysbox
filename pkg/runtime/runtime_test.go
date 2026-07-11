@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -14,8 +16,8 @@ import (
 
 func TestPlanAddsNewResources(t *testing.T) {
 	g := graph.New()
-	g.AddNode("sysbox_network", "dmz", nil)
-	g.AddNode("sysbox_node", "web", []graph.Ref{{Type: "sysbox_network", Name: "dmz"}})
+	require.NoError(t, g.AddNode(address.Resource("sysbox_network", "dmz"), nil))
+	require.NoError(t, g.AddNode(address.Resource("sysbox_node", "web"), []address.Address{{Type: "sysbox_network", Name: "dmz"}}))
 
 	s := &state.State{Version: state.SchemaVersion}
 
@@ -27,9 +29,9 @@ func TestPlanAddsNewResources(t *testing.T) {
 
 func TestRefreshCascadesChangedDependents(t *testing.T) {
 	g := graph.New()
-	g.AddNode("sysbox_network", "dmz", nil)
-	g.AddNode("sysbox_node", "web", []graph.Ref{{Type: "sysbox_network", Name: "dmz"}})
-	g.AddNode("sysbox_actor", "agent", []graph.Ref{{Type: "sysbox_node", Name: "web"}})
+	require.NoError(t, g.AddNode(address.Resource("sysbox_network", "dmz"), nil))
+	require.NoError(t, g.AddNode(address.Resource("sysbox_node", "web"), []address.Address{{Type: "sysbox_network", Name: "dmz"}}))
+	require.NoError(t, g.AddNode(address.Resource("sysbox_actor", "agent"), []address.Address{{Type: "sysbox_node", Name: "web"}}))
 
 	s := &state.State{
 		Version: state.SchemaVersion,
@@ -39,7 +41,7 @@ func TestRefreshCascadesChangedDependents(t *testing.T) {
 			{Type: "sysbox_actor", Name: "agent", Provider: "docker", Instance: map[string]any{}},
 		},
 	}
-	plan := &Plan{Unchanged: []graph.NodeID{
+	plan := &Plan{Unchanged: []address.Address{
 		{Type: "sysbox_network", Name: "dmz"},
 		{Type: "sysbox_node", Name: "web"},
 		{Type: "sysbox_actor", Name: "agent"},
@@ -47,7 +49,7 @@ func TestRefreshCascadesChangedDependents(t *testing.T) {
 
 	NewExecutor(g, s).Refresh(context.Background(), plan)
 
-	require.ElementsMatch(t, []graph.NodeID{
+	require.ElementsMatch(t, []address.Address{
 		{Type: "sysbox_network", Name: "dmz"},
 		{Type: "sysbox_node", Name: "web"},
 		{Type: "sysbox_actor", Name: "agent"},
@@ -73,7 +75,7 @@ func TestPlanDetectsDestroys(t *testing.T) {
 
 func TestPlanPassesThroughUnchanged(t *testing.T) {
 	g := graph.New()
-	g.AddNode("sysbox_network", "dmz", nil)
+	require.NoError(t, g.AddNode(address.Resource("sysbox_network", "dmz"), nil))
 
 	s := &state.State{
 		Version: state.SchemaVersion,
@@ -91,7 +93,9 @@ func TestPlanPassesThroughUnchanged(t *testing.T) {
 
 func TestPlanDetectsDesiredHashChange(t *testing.T) {
 	g := graph.New()
-	n := g.AddNode("sysbox_network", "dmz", nil)
+	addr := address.Resource("sysbox_network", "dmz")
+	require.NoError(t, g.AddNode(addr, nil))
+	n := g.Get(addr)
 	n.Data = &config.NetworkConfig{CIDR: "10.0.1.0/24"}
 	oldHash, err := desiredHash(n)
 	require.NoError(t, err)
@@ -119,7 +123,7 @@ func TestPlanDetectsDesiredHashChange(t *testing.T) {
 	require.Empty(t, plan.Add)
 	require.Empty(t, plan.Destroy)
 	require.Empty(t, plan.Unchanged)
-	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, plan.Change)
+	require.Equal(t, []address.Address{{Type: "sysbox_network", Name: "dmz"}}, plan.Change)
 	require.Len(t, plan.Actions, 1)
 	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
 	require.Equal(t, "10.0.1.0/24", plan.Actions[0].Changes["cidr"].Before)
@@ -129,7 +133,9 @@ func TestPlanDetectsDesiredHashChange(t *testing.T) {
 
 func TestComputePlanUsesRegisteredProviderPlanDiff(t *testing.T) {
 	g := graph.New()
-	n := g.AddNode("sysbox_actor", "agent", nil)
+	addr := address.Resource("sysbox_actor", "agent")
+	require.NoError(t, g.AddNode(addr, nil))
+	n := g.Get(addr)
 	n.Data = &config.ActorConfig{Position: "internal", Node: "sysbox_node.web.id", Command: []string{"sleep", "60"}}
 	oldHash, err := desiredHash(n)
 	require.NoError(t, err)
@@ -151,7 +157,7 @@ func TestComputePlanUsesRegisteredProviderPlanDiff(t *testing.T) {
 
 	plan, err := ComputePlan(g, s)
 	require.NoError(t, err)
-	require.Equal(t, []graph.NodeID{{Type: "sysbox_actor", Name: "agent"}}, plan.Change)
+	require.Equal(t, []address.Address{{Type: "sysbox_actor", Name: "agent"}}, plan.Change)
 	require.Len(t, plan.Actions, 1)
 	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
 	require.Contains(t, plan.Actions[0].Changes, "command")
@@ -159,7 +165,9 @@ func TestComputePlanUsesRegisteredProviderPlanDiff(t *testing.T) {
 
 func TestPlanRedactsSensitiveDiffFields(t *testing.T) {
 	g := graph.New()
-	n := g.AddNode("sysbox_node", "web", nil)
+	addr := address.Resource("sysbox_node", "web")
+	require.NoError(t, g.AddNode(addr, nil))
+	n := g.Get(addr)
 	n.Data = &config.NodeConfig{Image: "sysbox_image.alpine.id", Substrate: "docker", Env: map[string]string{"TOKEN": "old"}}
 	oldHash, err := desiredHash(n)
 	require.NoError(t, err)
@@ -190,7 +198,9 @@ func TestPlanRedactsSensitiveDiffFields(t *testing.T) {
 
 func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {
 	g := graph.New()
-	n := g.AddNode("sysbox_network", "dmz", nil)
+	addr := address.Resource("sysbox_network", "dmz")
+	require.NoError(t, g.AddNode(addr, nil))
+	n := g.Get(addr)
 	n.Data = &config.NetworkConfig{CIDR: "10.0.1.0/24"}
 	hash, err := desiredHash(n)
 	require.NoError(t, err)
@@ -212,7 +222,7 @@ func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {
 	require.Empty(t, plan.Add)
 	require.Empty(t, plan.Destroy)
 	require.Empty(t, plan.Change)
-	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, plan.Unchanged)
+	require.Equal(t, []address.Address{{Type: "sysbox_network", Name: "dmz"}}, plan.Unchanged)
 }
 
 func TestPlanHasChangesUsesActions(t *testing.T) {
@@ -237,17 +247,17 @@ func TestPlanFromActionsRebuildsExecutableIndexes(t *testing.T) {
 		{Resource: "sysbox_kernel.linux", Type: "sysbox_kernel", Name: "linux", Action: controlplane.PlanActionNoop},
 	}, st)
 
-	require.Equal(t, []graph.NodeID{{Type: "sysbox_network", Name: "dmz"}}, p.Add)
-	require.Equal(t, []graph.NodeID{{Type: "sysbox_node", Name: "web"}}, p.Change)
+	require.Equal(t, []address.Address{{Type: "sysbox_network", Name: "dmz"}}, p.Add)
+	require.Equal(t, []address.Address{{Type: "sysbox_node", Name: "web"}}, p.Change)
 	require.Len(t, p.Destroy, 1)
 	require.Equal(t, "old", p.Destroy[0].Name)
-	require.Equal(t, []graph.NodeID{{Type: "sysbox_kernel", Name: "linux"}}, p.Unchanged)
+	require.Equal(t, []address.Address{{Type: "sysbox_kernel", Name: "linux"}}, p.Unchanged)
 	require.True(t, p.HasChanges())
 }
 
 func TestRefreshUsesProviderReadForDrift(t *testing.T) {
 	g := graph.New()
-	g.AddNode("sysbox_kernel", "linux", nil)
+	require.NoError(t, g.AddNode(address.Resource("sysbox_kernel", "linux"), nil))
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
@@ -257,19 +267,19 @@ func TestRefreshUsesProviderReadForDrift(t *testing.T) {
 			Instance: map[string]any{"path": "/tmp/sysbox-missing-kernel-for-refresh-test"},
 		}},
 	}
-	plan := &Plan{Unchanged: []graph.NodeID{{Type: "sysbox_kernel", Name: "linux"}}}
+	plan := &Plan{Unchanged: []address.Address{{Type: "sysbox_kernel", Name: "linux"}}}
 
 	NewExecutor(g, s).Refresh(context.Background(), plan)
 
 	require.Empty(t, plan.Unchanged)
-	require.Equal(t, []graph.NodeID{{Type: "sysbox_kernel", Name: "linux"}}, plan.Change)
+	require.Equal(t, []address.Address{{Type: "sysbox_kernel", Name: "linux"}}, plan.Change)
 	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
 	require.Equal(t, "runtime drift detected", plan.Actions[0].Reason)
 }
 
 func TestPlanSummary(t *testing.T) {
 	p := &Plan{
-		Add:       []graph.NodeID{{Type: "x", Name: "y"}},
+		Add:       []address.Address{{Type: "x", Name: "y"}},
 		Destroy:   []state.Resource{{Type: "a", Name: "b"}},
 		Unchanged: nil,
 	}

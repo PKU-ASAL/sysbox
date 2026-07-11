@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	netprovider "github.com/oslab/sysbox/pkg/provider/network"
@@ -17,7 +19,7 @@ func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
 	restore := stubNetworkOps(t)
 	defer restore()
 	n := &graph.Node{
-		ID: graph.NodeID{Type: "sysbox_network", Name: "dmz"},
+		Address: address.Address{Type: "sysbox_network", Name: "dmz"},
 		Data: &config.NetworkConfig{
 			CIDR: "10.10.0.0/24",
 		},
@@ -42,8 +44,8 @@ func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
 
 func TestNetworkResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		ID:   graph.NodeID{Type: "sysbox_network", Name: "dmz"},
-		Data: &config.NetworkConfig{CIDR: "10.10.0.0/24"},
+		Address: address.Address{Type: "sysbox_network", Name: "dmz"},
+		Data:    &config.NetworkConfig{CIDR: "10.10.0.0/24"},
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
