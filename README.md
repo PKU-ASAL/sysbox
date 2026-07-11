@@ -48,6 +48,7 @@ sudo -E make cli destroy TOPO=two-networks
 | `three-nodes` | Docker attacker/web/db 实验拓扑，可选 actor 资源 |
 | `microvm` | Firecracker 专有拓扑 |
 | `mixed` | Docker + Firecracker 混合拓扑 |
+| `mixed-capture` | 复用 `mixed` 的 opencode + Tetragon 研究采集流程 |
 | `libvirt-vm` | Docker + libvirt VM 混合拓扑 |
 
 ## Make 命令

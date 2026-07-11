@@ -27,5 +27,9 @@ boot flow.
 
 ## Verification
 
-`scripts/microvm-verify.sh` applies a minimal Firecracker topology end to end
-and is the quickest way to confirm kernel + rootfs artifacts are usable.
+Use the microVM example to verify kernel + rootfs artifacts end to end:
+
+```sh
+sudo -E examples/microvm/lab.sh up
+sudo -E examples/microvm/lab.sh down
+```
