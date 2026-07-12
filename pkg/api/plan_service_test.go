@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -45,4 +46,16 @@ func TestPlanServiceRejectsStaleStoredPlan(t *testing.T) {
 
 	_, err = s.plans().ValidateStoredPlanForApply(context.Background(), "lab", plan.ID, plan.StateSerial+1)
 	require.ErrorContains(t, err, "stale")
+}
+
+func TestPlanServiceRejectsPlanAfterConfigurationChanges(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	writeRunServiceTopology(t, s, "lab", `resource "sysbox_network" "lab" { cidr = "10.77.0.0/24" }`)
+	plan, err := s.plans().ComputeStoredPlan(context.Background(), "lab")
+	require.NoError(t, err)
+	require.NoError(t, s.apiStore.SavePlan(context.Background(), plan))
+
+	require.NoError(t, os.WriteFile(s.workspaceService().HCLFile("lab"), []byte(`resource "sysbox_network" "lab" { cidr = "10.88.0.0/24" }`), 0o600))
+	_, err = s.plans().ValidateStoredPlanForApply(context.Background(), "lab", plan.ID, plan.StateSerial)
+	require.ErrorContains(t, err, "configuration changed")
 }
