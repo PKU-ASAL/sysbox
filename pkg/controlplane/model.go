@@ -80,6 +80,7 @@ type Run struct {
 	PlanID      string    `json:"plan_id,omitempty"`
 	AgentID     string    `json:"agent_id,omitempty"`
 	Recoverable bool      `json:"recoverable,omitempty"`
+	UnsafeState bool      `json:"unsafe_state,omitempty"`
 	Protocol    string    `json:"protocol,omitempty"`
 	LeaseOwner  string    `json:"lease_owner,omitempty"`
 	LeaseUntil  time.Time `json:"lease_until,omitempty"`

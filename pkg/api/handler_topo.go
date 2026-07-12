@@ -262,9 +262,10 @@ func (s *Server) handleRepair(w http.ResponseWriter, r *http.Request) {
 }
 
 type applyRequest struct {
-	PlanID   string `json:"plan_id"`
-	Revision string `json:"revision,omitempty"`
-	AgentID  string `json:"agent_id,omitempty"`
+	PlanID           string `json:"plan_id"`
+	Revision         string `json:"revision,omitempty"`
+	AgentID          string `json:"agent_id,omitempty"`
+	AllowUnsafeState bool   `json:"allow_unsafe_state,omitempty"`
 }
 
 func decodeApplyRequest(r *http.Request) (applyRequest, error) {
@@ -325,7 +326,7 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, err := s.runs().StartDestroy(r.Context(), topology)
+	run, err := s.runs().StartDestroyWithOptions(r.Context(), topology, r.URL.Query().Get("allow_unsafe_state") == "true")
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
 		return

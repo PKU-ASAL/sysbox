@@ -20,9 +20,10 @@ type RunService struct {
 }
 
 type RunStartRequest struct {
-	PlanID   string
-	Revision string
-	AgentID  string
+	PlanID           string
+	Revision         string
+	AgentID          string
+	AllowUnsafeState bool
 }
 
 type runServiceErrorKind string
@@ -96,9 +97,10 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 		req.Revision = plan.Revision
 	}
 	run := s.jobs.startWithOptions(topology, "apply", runStartOptions{
-		Revision: req.Revision,
-		PlanID:   req.PlanID,
-		AgentID:  req.AgentID,
+		Revision:    req.Revision,
+		PlanID:      req.PlanID,
+		AgentID:     req.AgentID,
+		UnsafeState: req.AllowUnsafeState,
 	})
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
@@ -112,8 +114,9 @@ func (s *RunService) ValidateStoredPlanForApply(ctx context.Context, topology, p
 
 func (s *RunService) StartRepair(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
 	run := s.jobs.startWithOptions(topology, "repair", runStartOptions{
-		Revision: req.Revision,
-		AgentID:  req.AgentID,
+		Revision:    req.Revision,
+		AgentID:     req.AgentID,
+		UnsafeState: req.AllowUnsafeState,
 	})
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
@@ -122,7 +125,11 @@ func (s *RunService) StartRepair(ctx context.Context, topology string, req RunSt
 }
 
 func (s *RunService) StartDestroy(ctx context.Context, topology string) (*controlplane.Run, error) {
-	run := s.jobs.start(topology, "destroy")
+	return s.StartDestroyWithOptions(ctx, topology, false)
+}
+
+func (s *RunService) StartDestroyWithOptions(ctx context.Context, topology string, allowUnsafe bool) (*controlplane.Run, error) {
+	run := s.jobs.startWithOptions(topology, "destroy", runStartOptions{UnsafeState: allowUnsafe})
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
 	}

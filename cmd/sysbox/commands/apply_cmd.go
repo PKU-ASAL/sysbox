@@ -42,6 +42,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	}
 
 	run := newLocalRun("apply", localTopology())
+	run.UnsafeState = flagAllowUnsafeState
 	aborted := false
 	bridge := agentexec.NewLocalBridge(agentexec.LocalOptions{
 		Topology:         run.Topology,

@@ -138,6 +138,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
+	mgr.AllowUnsafeMutation(run.UnsafeState)
 	if err := mgr.CheckMutationSafety(); err != nil {
 		e.bridge.Finish(run, err)
 		return
@@ -253,6 +254,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 		e.bridge.Finish(run, err)
 		return
 	}
+	mgr.AllowUnsafeMutation(run.UnsafeState)
 	if err := mgr.CheckMutationSafety(); err != nil {
 		e.bridge.Finish(run, err)
 		return

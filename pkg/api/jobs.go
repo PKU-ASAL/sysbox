@@ -33,10 +33,11 @@ type Jobs struct {
 }
 
 type runStartOptions struct {
-	ParentID string
-	Revision string
-	PlanID   string
-	AgentID  string
+	ParentID    string
+	Revision    string
+	PlanID      string
+	AgentID     string
+	UnsafeState bool
 }
 
 func newJobs(runsDir string, store apiStore) *Jobs {
@@ -181,20 +182,21 @@ func (j *Jobs) start(topology, op string) *controlplane.Run {
 func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *controlplane.Run {
 	now := time.Now()
 	r := &controlplane.Run{
-		ID:         uuid.New().String(),
-		ProjectID:  "default",
-		Workspace:  topology,
-		Topology:   topology,
-		Op:         op,
-		Status:     controlplane.RunQueued,
-		ParentID:   opts.ParentID,
-		Revision:   opts.Revision,
-		PlanID:     opts.PlanID,
-		AgentID:    opts.AgentID,
-		Protocol:   controlplane.AgentProtocolVersion,
-		LeaseOwner: "sysbox-api",
-		QueuedAt:   now,
-		StartedAt:  now,
+		ID:          uuid.New().String(),
+		ProjectID:   "default",
+		Workspace:   topology,
+		Topology:    topology,
+		Op:          op,
+		Status:      controlplane.RunQueued,
+		ParentID:    opts.ParentID,
+		Revision:    opts.Revision,
+		PlanID:      opts.PlanID,
+		AgentID:     opts.AgentID,
+		UnsafeState: opts.UnsafeState,
+		Protocol:    controlplane.AgentProtocolVersion,
+		LeaseOwner:  "sysbox-api",
+		QueuedAt:    now,
+		StartedAt:   now,
 	}
 	normalizeRunProductFields(r)
 	r.LeaseOwner = fmt.Sprintf("sysbox-api:%s:%s", r.Op, r.ID)
