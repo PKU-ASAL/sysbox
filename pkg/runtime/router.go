@@ -131,15 +131,17 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		Repository: imgState.Repository(),
 	}
 
-	// Map RouterInterface → NICSpec for the shared wiring loop.
-	var nicSpecs []NICSpec
+	inputs := make([]AttachmentInput, 0, len(cfg.Interfaces))
 	for _, iface := range cfg.Interfaces {
-		nicSpecs = append(nicSpecs, NICSpec{
-			Network: iface.Network,
-			IP:      iface.IP,
-			Label:   iface.Name,
+		inputs = append(inputs, AttachmentInput{
+			Name: iface.Name, Network: iface.Network, IPPrefixes: []string{iface.IP},
 		})
 	}
+	intents, err := NormalizeAttachmentIntents(e.topology, n.Address, inputs)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	nicSpecs := nicSpecsFromAttachmentIntents(intents)
 
 	// Pre-scan: find the first NAT network for InitialLinks.
 	initialLinks, err := collectNATLinks(e.state, nicSpecs, false)

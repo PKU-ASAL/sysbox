@@ -183,7 +183,7 @@ git commit -m "feat(config): require logical attachment names"
 - Produces: `AttachmentIntent` and `NormalizeAttachmentIntents(topology string, owner address.Address, links []LinkInput) ([]AttachmentIntent, error)`.
 - Produces: `DeterministicMAC(topology string, owner address.Address, logicalName string) net.HardwareAddr`.
 
-- [ ] **Step 1: Write failing normalization tests**
+- [x] **Step 1: Write failing normalization tests**
 
 ```go
 func TestDeterministicMACIsStableLocalUnicast(t *testing.T) {
@@ -197,13 +197,13 @@ func TestDeterministicMACIsStableLocalUnicast(t *testing.T) {
 
 Also test explicit override, duplicate names/prefixes, invalid multicast MAC, invalid prefix, and gateway outside all prefixes.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/runtime -run 'Test(DeterministicMAC|NormalizeAttachment)'`
 
 Expected: FAIL because normalization functions do not exist.
 
-- [ ] **Step 3: Implement normalized intent**
+- [x] **Step 3: Implement normalized intent**
 
 ```go
 type AttachmentIntent struct {
@@ -217,17 +217,20 @@ type AttachmentIntent struct {
 
 Derive the six MAC bytes from SHA-256 over length-delimited topology, canonical owner address, and logical name; set the local bit and clear the multicast bit. Normalize IP prefixes with `netip.ParsePrefix(...).Masked()` and validate the gateway with `netip.ParseAddr`.
 
-- [ ] **Step 4: Replace `NICSpec.Label` and eliminate runtime `ethN` assignment**
+- [x] **Step 4: Replace `NICSpec.Label` and pass logical identity and MAC through wiring**
 
-Make logical name mandatory in the shared wire input. Remove `natIdx`, `vethIdx`, `TargetName: fmt.Sprintf("eth%d", ...)`, and `IfaceByName`; later execution resolves observed device names through driver output.
+Make logical name mandatory in the shared wire input and pass normalized MACs
+to the existing driver request. Remove `natIdx`, `vethIdx`, `TargetName`, and
+`IfaceByName` in Task 4 when the new attachment lifecycle contract lets drivers
+return and resolve observed device names without breaking router NAT.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/runtime`
 
-Expected: PASS and `rg -n 'fmt.Sprintf\("eth%d"|IfaceByName|natIdx|vethIdx' pkg/runtime` returns no results.
+Expected: PASS; logical names and normalized MACs reach driver requests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pkg/runtime

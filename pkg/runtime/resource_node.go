@@ -234,15 +234,18 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		return state.Resource{}, err
 	}
 
-	// Map LinkConfig → NICSpec for the shared wiring loop.
-	var nicSpecs []NICSpec
+	inputs := make([]AttachmentInput, 0, len(cfg.Links))
 	for _, link := range cfg.Links {
-		nicSpecs = append(nicSpecs, NICSpec{
-			Network: link.Network,
-			IP:      link.IP,
-			Gateway: link.Gateway,
+		inputs = append(inputs, AttachmentInput{
+			Name: link.Name, Network: link.Network, MAC: link.MAC,
+			IPPrefixes: []string{link.IP}, Gateway: link.Gateway,
 		})
 	}
+	intents, err := NormalizeAttachmentIntents(e.topology, n.Address, inputs)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	nicSpecs := nicSpecsFromAttachmentIntents(intents)
 
 	// Pre-scan: find Docker NAT networks for InitialLinks.
 	initialLinks, err := collectNATLinks(e.state, nicSpecs, true)

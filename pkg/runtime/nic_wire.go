@@ -14,10 +14,11 @@ import (
 // request. Both NodeConfig.Links and RouterConfig.Interfaces are mapped onto
 // this before wiring, so the shared wiring loop doesn't depend on config types.
 type NICSpec struct {
+	Name    string
 	Network string // resolved resource name
 	IP      string
 	Gateway string // empty for router interfaces
-	Label   string // logical name (router interface name); empty for node links
+	MAC     string
 }
 
 // NICWireResult holds the outputs of wireNICs that both node and router
@@ -54,6 +55,7 @@ func collectNATLinks(st *state.State, specs []NICSpec, allNAT bool) ([]substrate
 					KindHint:    substrate.NICKindDockerNAT,
 					DockerNetID: netState.DockerNetID(),
 					IP:          spec.IP,
+					MAC:         spec.MAC,
 				})
 			}
 		}
@@ -122,6 +124,7 @@ func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State
 						KindHint:    substrate.NICKindDockerNAT,
 						DockerNetID: netID,
 						IP:          spec.IP,
+						MAC:         spec.MAC,
 					})
 					return err
 				}
@@ -145,9 +148,9 @@ func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State
 				target := fmt.Sprintf("eth%d", natIdx)
 				natIdx++
 				entry["target"] = target
-				entry["label"] = spec.Label
-				if spec.Label != "" {
-					result.IfaceByName[spec.Label] = target
+				entry["label"] = spec.Name
+				if spec.Name != "" {
+					result.IfaceByName[spec.Name] = target
 				}
 			}
 			result.NICs = append(result.NICs, entry)
@@ -166,6 +169,7 @@ func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State
 			Bridge:     netState.Str("bridge"),
 			IP:         spec.IP,
 			Gateway:    spec.Gateway,
+			MAC:        spec.MAC,
 			TargetName: fmt.Sprintf("eth%d", vethIdx),
 		}
 		var attached substrate.AttachedNIC
@@ -194,9 +198,9 @@ func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State
 			"netns":     attached.NetNS,
 		}
 		if trackLabels {
-			entry["label"] = spec.Label
-			if spec.Label != "" {
-				result.IfaceByName[spec.Label] = lreq.TargetName
+			entry["label"] = spec.Name
+			if spec.Name != "" {
+				result.IfaceByName[spec.Name] = lreq.TargetName
 			}
 		}
 		result.NICs = append(result.NICs, entry)

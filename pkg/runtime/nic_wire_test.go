@@ -87,3 +87,32 @@ func TestWireNICsWithHookRecordsAttachPhases(t *testing.T) {
 	require.Len(t, result.NICs, 2)
 	require.Equal(t, "172.20.0.10", result.PrimaryIP)
 }
+
+func TestWireNICsPassesNormalizedMACToDriver(t *testing.T) {
+	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{{
+		Address: address.Resource("sysbox_network", "isolated"),
+		Driver:  "network",
+		Attributes: map[string]any{
+			"netns": "sysbox-net-isolated", "bridge": "br-isolated",
+		},
+	}}}
+	var requests []substrate.LinkRequest
+	driver := recordingNIC{requests: &requests}
+
+	_, err := wireNICs(context.Background(), driver, st, substrate.NodeHandle{ID: "node"}, nil, []NICSpec{{
+		Name: "internal", Network: "isolated", IP: "10.10.0.10/24", MAC: "02:00:00:00:00:01",
+	}}, false, "node")
+
+	require.NoError(t, err)
+	require.Len(t, requests, 1)
+	require.Equal(t, "02:00:00:00:00:01", requests[0].MAC)
+}
+
+type recordingNIC struct {
+	requests *[]substrate.LinkRequest
+}
+
+func (s recordingNIC) AttachNIC(_ context.Context, _ substrate.NodeHandle, req substrate.LinkRequest) (substrate.AttachedNIC, error) {
+	*s.requests = append(*s.requests, req)
+	return substrate.AttachedNIC{Kind: substrate.NICKindTap, IP: req.IP, NetNS: req.NetNS}, nil
+}
