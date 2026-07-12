@@ -7,19 +7,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/address"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	fcprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	netprovider "github.com/oslab/sysbox/pkg/provider/network"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
@@ -49,12 +49,13 @@ func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
 			Kind:     "resource",
 			Resource: "sysbox_network.lan",
 			Action:   controlplane.PlanActionCreate,
-			Driver:   "network",
+			Provider: "network",
 			Status:   runtime.OperationDone,
 			StateResource: &runtime.StateResourceLog{
-				Address: address.Resource("sysbox_network", "lan"),
-				Driver:  "network",
-				Attributes: map[string]any{
+				Type:     "sysbox_network",
+				Name:     "lan",
+				Provider: "network",
+				Instance: map[string]any{
 					"netns":   nsName,
 					"bridge":  brName,
 					"cidr":    "10.251.0.0/24",
@@ -76,6 +77,13 @@ func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
 	st, err := mgr.LoadWithContext(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, st.FindResource(address.Resource("sysbox_network", "lan")))
+
+	second, err := recoverCheckpoint(context.Background(), store, "e2e-net", "run-net", mgr, "e2e")
+	require.NoError(t, err)
+	require.Len(t, second.Recovered, 1)
+	st, err = mgr.LoadWithContext(context.Background())
+	require.NoError(t, err)
+	require.Len(t, st.Resources, 1)
 
 	cleanup, err := cleanupCheckpoint(context.Background(), store, "e2e-net", "run-net")
 	require.NoError(t, err)
@@ -120,7 +128,7 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 			Kind:       "resource",
 			Resource:   "sysbox_node.microvm",
 			Action:     controlplane.PlanActionCreate,
-			Driver:     "firecracker",
+			Provider:   "firecracker",
 			ExternalID: "sysbox-microvm",
 			Status:     runtime.OperationDone,
 			StateResource: &runtime.StateResourceLog{
@@ -148,12 +156,23 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, st.FindResource(address.Resource("sysbox_node", "microvm")))
 
+	second, err := recoverCheckpoint(context.Background(), store, "e2e-fc", "run-fc", mgr, "e2e")
+	require.NoError(t, err)
+	require.Len(t, second.Recovered, 1)
+	st, err = mgr.LoadWithContext(context.Background())
+	require.NoError(t, err)
+	resource := st.FindResource(address.Resource("sysbox_node", "microvm"))
+	require.NotNil(t, resource)
+	require.Len(t, resource.Attachments, 1)
+	require.Equal(t, "internal", resource.Attachments[0].Name)
+
 	cleanup, err := cleanupCheckpoint(context.Background(), store, "e2e-fc", "run-fc")
 	require.NoError(t, err)
 	require.Len(t, cleanup.MicroVMs, 1)
 	require.Equal(t, "removed", cleanup.MicroVMs[0].Status)
 	require.NoDirExists(t, vmDir)
 	require.False(t, netprovider.LinkExists(nsName, tapName))
+	require.False(t, netprovider.NetnsExists(nsName))
 }
 
 func mustPrivateState(t *testing.T, providerState any) json.RawMessage {
@@ -170,6 +189,11 @@ func requireRootE2E(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("checkpoint recovery e2e requires root/CAP_NET_ADMIN; run: sudo -E go test -tags e2e ./pkg/api")
 	}
+	probe := fmt.Sprintf("sysbox-e2e-cap-%d", os.Getpid())
+	if err := netprovider.CreateNetns(probe); err != nil {
+		t.Skipf("checkpoint recovery e2e requires CAP_NET_ADMIN: %v", err)
+	}
+	require.NoError(t, netprovider.DeleteNetns(probe))
 }
 
 func registerFirecrackerForE2E(t *testing.T) {

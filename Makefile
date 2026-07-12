@@ -38,7 +38,7 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-all web-build test test-e2e lint ci clean \
+.PHONY: help build build-all web-build test test-e2e test-privileged-compile test-privileged lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
 	api-help api-build-api api-build-ui api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
@@ -56,6 +56,8 @@ help: ## Show command groups
 	@echo "  make test           Run unit tests"
 	@echo "  make lint           Run go vet"
 	@echo "  make test-e2e       Run API e2e smoke test against make api deploy-full"
+	@echo "  make test-privileged-compile  Compile privileged recovery tests without running them"
+	@echo "  make test-privileged          Run privileged recovery tests (requires root/CAP_NET_ADMIN)"
 
 build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
@@ -72,6 +74,12 @@ test: ## Run unit tests
 
 test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
+
+test-privileged-compile: ## Compile privileged recovery tests without running them
+	$(GOENV) $(GO) test -tags e2e -run '^$$' ./pkg/api
+
+test-privileged: ## Run privileged recovery tests (requires root/CAP_NET_ADMIN)
+	$(GOENV) $(GO) test -tags e2e -v -run '^TestCheckpoint.*E2E$$' ./pkg/api
 
 web-build: ## Build the Web UI
 	npm --prefix web install
