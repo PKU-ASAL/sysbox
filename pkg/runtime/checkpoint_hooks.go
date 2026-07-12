@@ -15,7 +15,6 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
-	netprovider "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
@@ -171,12 +170,15 @@ func (NetworkResourceHandler) RecoverCheckpointResource(ctx context.Context, st 
 		action.Status = "missing_netns"
 		return action, nil
 	}
-	if !netprovider.NetnsExists(nsName) {
-		action.Status = "not_found"
+	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	if err != nil {
+		action.Status = "error"
+		action.Error = err.Error()
 		return action, nil
 	}
-	if brName != "" && !netprovider.BridgeExists(nsName, brName) {
-		action.Status = "bridge_not_found"
+	if ok, reason := linuxNetwork.NetworkHealthy(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName}); !ok {
+		action.Status = "not_found"
+		action.Error = reason
 		return action, nil
 	}
 	AdoptStateResource(st, *rec, "")
@@ -204,18 +206,17 @@ func (NetworkResourceHandler) CleanupCheckpointResource(ctx context.Context, ste
 		action.Status = "missing_netns"
 		return action, nil
 	}
-	if !netprovider.NetnsExists(nsName) {
+	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	if err != nil {
+		action.Status = "error"
+		action.Error = err.Error()
+		return action, nil
+	}
+	if ok, _ := linuxNetwork.NetworkHealthy(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName}); !ok {
 		action.Status = "not_found"
 		return action, nil
 	}
-	if brName != "" {
-		if err := netprovider.DeleteBridge(netprovider.BridgeConfig{NetnsName: nsName, BridgeName: brName}); err != nil {
-			action.Status = "error"
-			action.Error = err.Error()
-			return action, nil
-		}
-	}
-	if err := netprovider.DeleteNetns(nsName); err != nil {
+	if err := linuxNetwork.DeleteIsolated(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName}); err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
 		return action, nil
@@ -595,6 +596,10 @@ func findDockerObjectByLabels(_ context.Context, labels map[string]string, list 
 }
 
 func cleanupAttachedNICs(res state.Resource) error {
+	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	if err != nil {
+		return err
+	}
 	nics, ok := res.AttributeMap()["nics"].([]any)
 	if !ok {
 		return nil
@@ -605,13 +610,8 @@ func cleanupAttachedNICs(res state.Resource) error {
 		kind := util.AsString(n["kind"])
 		hostEnd := util.AsString(n["host_end"])
 		nsName := util.AsString(n["netns"])
-		switch kind {
-		case "tap":
-			if err := netprovider.DeleteTapDevice(hostEnd, nsName); err != nil {
-				errs = append(errs, err.Error())
-			}
-		case "veth":
-			if err := netprovider.DeleteVethPair(netprovider.VethHandle{HostEnd: hostEnd, NetnsName: nsName}); err != nil {
+		if kind == "tap" || kind == "veth" {
+			if err := linuxNetwork.DeleteAttachment(context.Background(), kind, hostEnd, nsName); err != nil {
 				errs = append(errs, err.Error())
 			}
 		}

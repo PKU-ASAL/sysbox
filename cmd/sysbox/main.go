@@ -13,12 +13,14 @@ import (
 	docker "github.com/oslab/sysbox/pkg/provider/docker"
 	fc "github.com/oslab/sysbox/pkg/provider/firecracker"
 	libvirt "github.com/oslab/sysbox/pkg/provider/libvirt"
+	networkprovider "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	mustRegisterDriver(driver.Descriptor{Name: "network", Version: "1", LinuxNetwork: networkprovider.Driver{}})
 
 	dockerSub, err := docker.New()
 	if err != nil {

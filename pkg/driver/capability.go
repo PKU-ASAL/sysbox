@@ -24,6 +24,7 @@ const (
 	CapabilityImageEntry    Capability = "image-entry"
 	CapabilityPower         Capability = "power"
 	CapabilityRouterNetwork Capability = "router-network"
+	CapabilityLinuxNetwork  Capability = "linux-network"
 )
 
 type Node interface {
@@ -94,6 +95,22 @@ type RouterNetwork interface {
 	ConfigureNAT(context.Context, substrate.NodeHandle, string, string) error
 }
 
+type IsolatedNetworkSpec struct{ Name, Bridge, CIDR string }
+type FirewallRule struct {
+	Proto          string
+	DPort          int
+	SrcNet, Action string
+}
+type LinuxNetwork interface {
+	CreateIsolated(context.Context, IsolatedNetworkSpec) error
+	DeleteIsolated(context.Context, IsolatedNetworkSpec) error
+	NetworkHealthy(context.Context, IsolatedNetworkSpec) (bool, string)
+	LinkHealthy(context.Context, string, string) bool
+	DeleteAttachment(context.Context, string, string, string) error
+	ApplyFirewall(context.Context, string, []FirewallRule) error
+	DeleteFirewall(context.Context, string) error
+}
+
 type Descriptor struct {
 	Name          string
 	Version       string
@@ -109,6 +126,7 @@ type Descriptor struct {
 	ImageEntry    ImageEntry
 	Power         Power
 	RouterNetwork RouterNetwork
+	LinuxNetwork  LinuxNetwork
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -137,6 +155,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.Power
 	case CapabilityRouterNetwork:
 		return d.RouterNetwork
+	case CapabilityLinuxNetwork:
+		return d.LinuxNetwork
 	default:
 		return nil
 	}

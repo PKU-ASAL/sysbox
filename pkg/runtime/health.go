@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/provider/network"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -68,6 +68,10 @@ func EvaluateResourceHealth(ctx context.Context, res *state.Resource) controlpla
 }
 
 func networkAttachmentsCheck(res *state.Resource) (bool, string) {
+	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	if err != nil {
+		return false, err.Error()
+	}
 	items, ok := res.AttributeMap()["nics"].([]any)
 	if !ok {
 		return true, ""
@@ -79,7 +83,7 @@ func networkAttachmentsCheck(res *state.Resource) (bool, string) {
 		case "veth", "tap":
 			nsName, _ := nic["netns"].(string)
 			hostEnd, _ := nic["host_end"].(string)
-			if !network.LinkExists(nsName, hostEnd) {
+			if !linuxNetwork.LinkHealthy(context.Background(), nsName, hostEnd) {
 				return false, "network attachment missing"
 			}
 		case "docker-nat":

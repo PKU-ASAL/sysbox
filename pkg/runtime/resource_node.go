@@ -14,7 +14,6 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
-	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -419,19 +418,16 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 		e.logf("[destroy] warning: destroy node %s: %v\n", r.Address, err)
 	}
 	// Always clean up veths/taps and state regardless of container presence.
+	linuxNetwork, networkErr := driver.DefaultRegistry.RequireLinuxNetwork("network")
 	if nics, ok := r.AttributeMap()["nics"].([]any); ok {
 		for _, item := range nics {
 			n, _ := item.(map[string]any)
 			kind := util.AsString(n["kind"])
 			hostEnd := util.AsString(n["host_end"])
 			nsName := util.AsString(n["netns"])
-			if kind == "tap" {
-				if err := network.DeleteTapDevice(hostEnd, nsName); err != nil {
-					e.logf("[destroy] warning: delete tap %s: %v\n", hostEnd, err)
-				}
-			} else {
-				if err := network.DeleteVethPair(network.VethHandle{HostEnd: hostEnd, NetnsName: nsName}); err != nil {
-					e.logf("[destroy] warning: delete veth %s: %v\n", hostEnd, err)
+			if networkErr == nil {
+				if err := linuxNetwork.DeleteAttachment(ctx, kind, hostEnd, nsName); err != nil {
+					e.logf("[destroy] warning: delete attachment %s: %v\n", hostEnd, err)
 				}
 			}
 		}

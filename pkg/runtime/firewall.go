@@ -10,8 +10,8 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
-	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -42,7 +42,11 @@ func (FirewallResourceHandler) Create(ctx context.Context, pc *ProviderContext, 
 func (FirewallResourceHandler) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
 	nsName := current.Str("netns")
 	if nsName != "" {
-		if err := network.DeleteFirewall(nsName); err != nil {
+		linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+		if err != nil {
+			return err
+		}
+		if err := linuxNetwork.DeleteFirewall(context.Background(), nsName); err != nil {
 			pc.Logf("[destroy] warning: delete firewall %s: %v\n", current.Address, err)
 		}
 	}
@@ -89,9 +93,9 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	}
 	nsName := netState.Str("netns")
 
-	specs := make([]network.FirewallRuleSpec, 0, len(cfg.Rules))
+	specs := make([]driver.FirewallRule, 0, len(cfg.Rules))
 	for _, r := range cfg.Rules {
-		specs = append(specs, network.FirewallRuleSpec{
+		specs = append(specs, driver.FirewallRule{
 			Proto:  r.Proto,
 			DPort:  r.DPort,
 			SrcNet: r.SrcNet,
@@ -99,7 +103,11 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 		})
 	}
 
-	if err := network.ApplyFirewall(nsName, specs); err != nil {
+	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	if err != nil {
+		return state.Resource{}, err
+	}
+	if err := linuxNetwork.ApplyFirewall(ctx, nsName, specs); err != nil {
 		return state.Resource{}, fmt.Errorf("firewall %s: %w", n.Address.Name, err)
 	}
 

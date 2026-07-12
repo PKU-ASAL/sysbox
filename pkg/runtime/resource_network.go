@@ -15,16 +15,8 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
-	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-)
-
-var (
-	createNetnsFn  = network.CreateNetns
-	deleteNetnsFn  = network.DeleteNetns
-	createBridgeFn = network.CreateBridge
-	deleteBridgeFn = network.DeleteBridge
 )
 
 type NetworkResourceHandler struct{}
@@ -51,23 +43,18 @@ func (NetworkResourceHandler) Read(_ context.Context, current state.Resource) (R
 		result.Reason = "network has no isolated namespace"
 		return result, nil
 	}
-	checks := map[string]controlplane.ResourceCheckHealth{"netns": {OK: network.NetnsExists(nsName)}}
-	if !network.NetnsExists(nsName) {
-		checks["netns"] = controlplane.ResourceCheckHealth{OK: false, Reason: "network namespace missing"}
+	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	if err != nil {
+		result.Status = state.ResourceUnknown
+		return result, err
+	}
+	ok, reason := linuxNetwork.NetworkHealthy(context.Background(), driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName})
+	checks := map[string]controlplane.ResourceCheckHealth{"network": {OK: ok, Reason: reason}}
+	if !ok {
 		result.Checks = checks
 		result.Status = state.ResourceDrifted
-		result.Reason = "network namespace missing"
+		result.Reason = reason
 		return result, nil
-	}
-	if brName != "" && !network.BridgeExists(nsName, brName) {
-		checks["bridge"] = controlplane.ResourceCheckHealth{OK: false, Reason: "bridge missing"}
-		result.Checks = checks
-		result.Status = state.ResourceDrifted
-		result.Reason = "bridge missing"
-		return result, nil
-	}
-	if brName != "" {
-		checks["bridge"] = controlplane.ResourceCheckHealth{OK: true}
 	}
 	result.Checks = checks
 	return result, nil
@@ -91,18 +78,16 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 	// Default: isolated netns/bridge/veth topology.
 	networkName := networkExternalName(pc.Topology(), n.Address.Name)
 	nsName := fmt.Sprintf("sysbox-net-%s", networkName)
-	if err := createNetnsFn(nsName); err != nil {
-		return state.Resource{}, err
-	}
-
 	brName := shortLinuxName("br", networkName)
-	gwCIDR, err := network.GatewayCIDR(cfg.CIDR)
+	gwCIDR, err := gatewayCIDR(cfg.CIDR)
 	if err != nil {
 		return state.Resource{}, err
 	}
-	if err := createBridgeFn(network.BridgeConfig{
-		NetnsName: nsName, BridgeName: brName, CIDR: gwCIDR,
-	}); err != nil {
+	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	if err != nil {
+		return state.Resource{}, err
+	}
+	if err := linuxNetwork.CreateIsolated(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName, CIDR: gwCIDR}); err != nil {
 		return state.Resource{}, err
 	}
 
@@ -195,10 +180,11 @@ func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r
 
 	nsName := r.Str("netns")
 	brName := r.Str("bridge")
-	if err := deleteBridgeFn(network.BridgeConfig{NetnsName: nsName, BridgeName: brName}); err != nil {
-		pc.Logf("[destroy] warning: delete bridge %s: %v\n", brName, err)
+	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	if err != nil {
+		return err
 	}
-	if err := deleteNetnsFn(nsName); err != nil {
+	if err := linuxNetwork.DeleteIsolated(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName}); err != nil {
 		pc.Logf("[destroy] warning: delete netns %s: %v\n", nsName, err)
 	}
 	pc.State().RemoveResource(r.Address)
@@ -213,6 +199,17 @@ func (NetworkResourceHandler) ExternalID(current state.Resource) string {
 		return ns
 	}
 	return current.Str("id")
+}
+
+func gatewayCIDR(cidr string) (string, error) {
+	ip, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", err
+	}
+	ones, _ := network.Mask.Size()
+	address := append(net.IP(nil), ip...)
+	address[len(address)-1]++
+	return fmt.Sprintf("%s/%d", address.String(), ones), nil
 }
 
 func (NetworkResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {

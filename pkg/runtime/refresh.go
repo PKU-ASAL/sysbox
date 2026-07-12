@@ -9,7 +9,6 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/util"
 )
@@ -183,7 +182,8 @@ func networkAttachmentsHealthy(r *state.Resource) bool {
 		kind := util.AsString(nic["kind"])
 		switch kind {
 		case "veth", "tap":
-			if !network.LinkExists(util.AsString(nic["netns"]), util.AsString(nic["host_end"])) {
+			linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+			if err != nil || !linuxNetwork.LinkHealthy(context.Background(), util.AsString(nic["netns"]), util.AsString(nic["host_end"])) {
 				return false
 			}
 		case "docker-nat":

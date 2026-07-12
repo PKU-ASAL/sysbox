@@ -10,8 +10,8 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
-	netprovider "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -72,18 +72,22 @@ func TestNetworkResourceProviderRegistered(t *testing.T) {
 
 func stubNetworkOps(t *testing.T) func() {
 	t.Helper()
-	oldCreateNetns := createNetnsFn
-	oldDeleteNetns := deleteNetnsFn
-	oldCreateBridge := createBridgeFn
-	oldDeleteBridge := deleteBridgeFn
-	createNetnsFn = func(string) error { return nil }
-	deleteNetnsFn = func(string) error { return nil }
-	createBridgeFn = func(netprovider.BridgeConfig) error { return nil }
-	deleteBridgeFn = func(netprovider.BridgeConfig) error { return nil }
-	return func() {
-		createNetnsFn = oldCreateNetns
-		deleteNetnsFn = oldDeleteNetns
-		createBridgeFn = oldCreateBridge
-		deleteBridgeFn = oldDeleteBridge
-	}
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "network", Version: "test", LinuxNetwork: fakeLinuxNetwork{}}))
+	return func() { driver.DefaultRegistry = previous }
 }
+
+type fakeLinuxNetwork struct{}
+
+func (fakeLinuxNetwork) CreateIsolated(context.Context, driver.IsolatedNetworkSpec) error { return nil }
+func (fakeLinuxNetwork) DeleteIsolated(context.Context, driver.IsolatedNetworkSpec) error { return nil }
+func (fakeLinuxNetwork) NetworkHealthy(context.Context, driver.IsolatedNetworkSpec) (bool, string) {
+	return true, ""
+}
+func (fakeLinuxNetwork) LinkHealthy(context.Context, string, string) bool               { return true }
+func (fakeLinuxNetwork) DeleteAttachment(context.Context, string, string, string) error { return nil }
+func (fakeLinuxNetwork) ApplyFirewall(context.Context, string, []driver.FirewallRule) error {
+	return nil
+}
+func (fakeLinuxNetwork) DeleteFirewall(context.Context, string) error { return nil }
