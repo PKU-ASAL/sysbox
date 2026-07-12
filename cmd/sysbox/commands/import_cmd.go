@@ -5,10 +5,9 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/spf13/cobra"
 
-	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 var (
@@ -47,6 +46,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := mgr.CheckMutationSafety(); err != nil {
+		return err
+	}
 	s, err := mgr.Load()
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
@@ -71,32 +73,20 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	switch addr.Type {
 	case "sysbox_node":
-		importDriver, err := driver.DefaultRegistry.RequireImport(subName)
-		if err != nil {
-			return err
+		handler, ok := runtime.GetResourceHandler(addr.Type)
+		if !ok {
+			return fmt.Errorf("resource handler %q not registered", addr.Type)
 		}
-		handle, err := importDriver.ReadNode(ctx, externalID)
+		importer, ok := handler.(runtime.ResourceImporter)
+		if !ok {
+			return fmt.Errorf("resource %s does not support import", addr.Type)
+		}
+		resource, err := importer.Import(ctx, addr, subName, externalID)
 		if err != nil {
 			return fmt.Errorf("import: %w", err)
 		}
-		inst := map[string]any{
-			"container_id": handle.ID,
-			"primary_ip":   handle.Net.PrimaryIP,
-		}
-		resource := state.Resource{
-			Address:    addr,
-			Driver:     subName,
-			Attributes: state.MustAttributes(inst),
-		}
-		stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
-		if err != nil {
-			return err
-		}
-		if blob, err := stateDriver.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-			_ = resource.SetProviderState(blob)
-		}
 		s.AddResource(resource)
-		fmt.Printf("Imported %s (id=%s)\n", addr, handle.ID)
+		fmt.Printf("Imported %s (id=%s)\n", addr, resource.ExternalID)
 
 	case "sysbox_network":
 		// For networks, ReadNode is not applicable; check the substrate

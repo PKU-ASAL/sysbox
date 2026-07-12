@@ -7,6 +7,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -47,7 +48,21 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 	inGraph := make(map[string]struct{}, len(order))
 	for _, resourceAddress := range order {
 		inGraph[resourceAddress.String()] = struct{}{}
-		change, err := planActionForDesired(g.Get(resourceAddress), s.FindResource(resourceAddress))
+		node := g.Get(resourceAddress)
+		if declarer, ok := GetResourceHandler(resourceAddress.Type); ok {
+			if required, ok := declarer.(CapabilityDeclarer); ok {
+				requirements, err := required.RequiredCapabilities(node)
+				if err != nil {
+					return nil, err
+				}
+				for _, requirement := range requirements {
+					if _, err := driver.DefaultRegistry.Require(requirement.Driver, requirement.Capability); err != nil {
+						return nil, fmt.Errorf("%s: %w", resourceAddress, err)
+					}
+				}
+			}
+		}
+		change, err := planActionForDesired(node, s.FindResource(resourceAddress))
 		if err != nil {
 			return nil, err
 		}

@@ -10,6 +10,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -28,6 +29,17 @@ type ResourceHandler interface {
 
 type ResourceGraphDecoder interface {
 	DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (data any, deps []address.Address, err error)
+}
+
+type CapabilityRequirement struct {
+	Driver     string
+	Capability driver.Capability
+}
+type CapabilityDeclarer interface {
+	RequiredCapabilities(*graph.Node) ([]CapabilityRequirement, error)
+}
+type ResourceImporter interface {
+	Import(context.Context, address.Address, string, string) (state.Resource, error)
 }
 
 type DataGraphDecoder interface {

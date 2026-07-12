@@ -15,7 +15,7 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
+func TestNetworkResourceHandlerCreateAndDeleteIsolated(t *testing.T) {
 	restore := stubNetworkOps(t)
 	defer restore()
 	n := &graph.Node{
@@ -42,7 +42,7 @@ func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
 	require.Nil(t, exec.state.FindResource(address.Resource("sysbox_network", "dmz")))
 }
 
-func TestNetworkResourceProviderPlanDiff(t *testing.T) {
+func TestNetworkResourceHandlerPlanDiff(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_network", "dmz"),
 		Data:    &config.NetworkConfig{CIDR: "10.10.0.0/24"},
@@ -64,7 +64,7 @@ func TestNetworkResourceProviderPlanDiff(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestNetworkResourceProviderRegistered(t *testing.T) {
+func TestNetworkResourceHandlerRegistered(t *testing.T) {
 	p, ok := GetResourceHandler("sysbox_network")
 	require.True(t, ok)
 	require.Equal(t, "sysbox_network", p.Type())

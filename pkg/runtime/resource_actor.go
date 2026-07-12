@@ -57,6 +57,13 @@ func (ActorResourceHandler) ExternalID(current state.Resource) string {
 	}
 	return current.Str("id")
 }
+func (ActorResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
+	cfg, ok := node.Data.(*config.ActorConfig)
+	if !ok || cfg.Position == "internal" || cfg.Position == "" {
+		return nil, nil
+	}
+	return []CapabilityRequirement{{"docker", driver.CapabilityNode}, {"docker", driver.CapabilityNIC}, {"docker", driver.CapabilityNodeState}}, nil
+}
 
 func (ActorResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.ActorConfig{}

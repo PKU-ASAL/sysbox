@@ -16,7 +16,7 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
+func TestKernelResourceHandlerCreateAndDelete(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "vmlinux")
 	require.NoError(t, os.WriteFile(src, []byte("kernel"), 0o644))
 	n := &graph.Node{
@@ -46,7 +46,7 @@ func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestKernelResourceProviderPlanDiff(t *testing.T) {
+func TestKernelResourceHandlerPlanDiff(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_kernel", "fc"),
 		Data: &config.KernelConfig{
@@ -75,7 +75,7 @@ func TestKernelResourceProviderPlanDiff(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestKernelResourceProviderRegistered(t *testing.T) {
+func TestKernelResourceHandlerRegistered(t *testing.T) {
 	p, ok := GetResourceHandler("sysbox_kernel")
 	require.True(t, ok)
 	require.Equal(t, "sysbox_kernel", p.Type())

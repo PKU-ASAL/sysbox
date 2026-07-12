@@ -16,14 +16,14 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-func TestNodeResourceProviderRegistered(t *testing.T) {
+func TestNodeResourceHandlerRegistered(t *testing.T) {
 	p, ok := GetResourceHandler("sysbox_node")
 	require.True(t, ok)
 	require.Equal(t, "sysbox_node", p.Type())
 	require.Equal(t, "sysbox_node", p.Schema().Type)
 }
 
-func TestNodeResourceProviderPlanDiff(t *testing.T) {
+func TestNodeResourceHandlerPlanDiff(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_node", "web"),
 		Data: &config.NodeConfig{
@@ -54,7 +54,7 @@ func TestNodeResourceProviderPlanDiff(t *testing.T) {
 	require.True(t, change.Sensitive)
 }
 
-func TestNodeResourceProviderDeleteMissingSubstrateReturnsError(t *testing.T) {
+func TestNodeResourceHandlerDeleteMissingSubstrateReturnsError(t *testing.T) {
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	res := state.Resource{
 		Address:    address.Resource("sysbox_node", "web"),
@@ -118,7 +118,7 @@ func registerPortTestDriver(t *testing.T, sub *portTestSubstrate) {
 	}))
 }
 
-func TestNodeResourceProviderPortsArePassedAndResolved(t *testing.T) {
+func TestNodeResourceHandlerPortsArePassedAndResolved(t *testing.T) {
 	sub := &portTestSubstrate{
 		name:      "port-test",
 		exposures: []string{substrate.PortExposureNone, substrate.PortExposureDirect, substrate.PortExposureHost},
@@ -158,7 +158,7 @@ func TestNodeResourceProviderPortsArePassedAndResolved(t *testing.T) {
 	require.Equal(t, "host", resolved["exposure"])
 }
 
-func TestNodeResourceProviderRejectsUnsupportedPortExposure(t *testing.T) {
+func TestNodeResourceHandlerRejectsUnsupportedPortExposure(t *testing.T) {
 	sub := &portTestSubstrate{
 		name:      "port-direct-only",
 		exposures: []string{substrate.PortExposureNone, substrate.PortExposureDirect},

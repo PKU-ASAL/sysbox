@@ -14,7 +14,7 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-func TestEdgeResourceProvidersRegistered(t *testing.T) {
+func TestEdgeResourceHandlersRegistered(t *testing.T) {
 	for _, typ := range []string{"sysbox_firewall", "sysbox_ssh_access", "sysbox_actor"} {
 		p, ok := GetResourceHandler(typ)
 		require.True(t, ok, typ)
@@ -23,7 +23,7 @@ func TestEdgeResourceProvidersRegistered(t *testing.T) {
 	}
 }
 
-func TestFirewallResourceProviderPlanDiff(t *testing.T) {
+func TestFirewallResourceHandlerPlanDiff(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_firewall", "allow_ssh"),
 		Data: &config.FirewallConfig{
@@ -61,7 +61,7 @@ func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
+func TestSSHAccessResourceHandlerPlanDiff(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_ssh_access", "admin"),
 		Data: &config.SSHAccessConfig{
@@ -92,7 +92,7 @@ func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 	require.True(t, change.Sensitive)
 }
 
-func TestActorResourceProviderPlanDiff(t *testing.T) {
+func TestActorResourceHandlerPlanDiff(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_actor", "agent"),
 		Data: &config.ActorConfig{

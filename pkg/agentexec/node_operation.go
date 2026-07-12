@@ -8,8 +8,8 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func (e *Executor) ExecuteNodeOperation(ctx context.Context, op controlplane.NodeOperation) controlplane.NodeOperation {
@@ -89,14 +89,6 @@ func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOpera
 	if err := mgr.CheckMutationSafety(); err != nil {
 		return err
 	}
-	importDriver, err := driver.DefaultRegistry.RequireImport(op.Substrate)
-	if err != nil {
-		return fmt.Errorf("substrate %q not registered: %w", op.Substrate, err)
-	}
-	handle, err := importDriver.ReadNode(ctx, op.ExternalID)
-	if err != nil {
-		return fmt.Errorf("read node: %w", err)
-	}
 	st, err := mgr.Load()
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
@@ -105,17 +97,17 @@ func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOpera
 	if r := st.FindResource(addr); r != nil {
 		return fmt.Errorf("resource %s.%s already in state", op.Type, op.Name)
 	}
-	resource := state.Resource{
-		Address:    addr,
-		Driver:     op.Substrate,
-		Attributes: state.MustAttributes(substrate.HandlePublicAttributes(handle)),
+	handler, ok := runtime.GetResourceHandler(op.Type)
+	if !ok {
+		return fmt.Errorf("resource handler %q not registered", op.Type)
 	}
-	stateDriver, err := driver.DefaultRegistry.RequireNodeState(op.Substrate)
+	importer, ok := handler.(runtime.ResourceImporter)
+	if !ok {
+		return fmt.Errorf("resource %s does not support import", op.Type)
+	}
+	resource, err := importer.Import(ctx, addr, op.Substrate, op.ExternalID)
 	if err != nil {
 		return err
-	}
-	if blob, err := stateDriver.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-		_ = resource.SetProviderState(blob)
 	}
 	st.AddResource(resource)
 	owner := fmt.Sprintf("sysbox-agent:import:%s:%s.%s", op.Topology, op.Type, op.Name)

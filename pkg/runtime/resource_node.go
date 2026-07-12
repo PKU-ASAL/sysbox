@@ -55,6 +55,49 @@ func (NodeResourceHandler) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
+func (NodeResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
+	if node.Data == nil {
+		return nil, nil
+	}
+	cfg, ok := node.Data.(*config.NodeConfig)
+	if !ok {
+		return nil, fmt.Errorf("node %s: wrong data type", node.Address)
+	}
+	name, err := resolveSubstrateRef(cfg.Substrate)
+	if err != nil {
+		return nil, err
+	}
+	required := []CapabilityRequirement{{name, driver.CapabilityNode}, {name, driver.CapabilityNIC}, {name, driver.CapabilityNodeState}}
+	if len(cfg.Routes) > 0 {
+		required = append(required, CapabilityRequirement{name, driver.CapabilityGuestNetwork})
+	}
+	return required, nil
+}
+
+func (NodeResourceHandler) Import(ctx context.Context, addr address.Address, driverName, externalID string) (state.Resource, error) {
+	importDriver, err := driver.DefaultRegistry.RequireImport(driverName)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(driverName)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	handle, err := importDriver.ReadNode(ctx, externalID)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	resource := state.Resource{Address: addr, Driver: driverName, ExternalID: handle.ID, Attributes: state.MustAttributes(substrate.HandlePublicAttributes(handle))}
+	if blob, err := stateDriver.MarshalProviderState(handle); err != nil {
+		return state.Resource{}, err
+	} else if len(blob) > 0 {
+		if err := resource.SetProviderState(blob); err != nil {
+			return state.Resource{}, err
+		}
+	}
+	return resource, nil
+}
+
 func (NodeResourceHandler) DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.NodeConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {

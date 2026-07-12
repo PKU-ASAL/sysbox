@@ -198,6 +198,16 @@ func (NetworkResourceHandler) ExternalID(current state.Resource) string {
 	}
 	return current.Str("id")
 }
+func (NetworkResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
+	cfg, ok := node.Data.(*config.NetworkConfig)
+	if !ok {
+		return nil, nil
+	}
+	if cfg.NAT {
+		return []CapabilityRequirement{{"docker", driver.CapabilityNetwork}}, nil
+	}
+	return []CapabilityRequirement{{"network", driver.CapabilityLinuxNetwork}}, nil
+}
 
 func gatewayCIDR(cidr string) (string, error) {
 	ip, network, err := net.ParseCIDR(cidr)

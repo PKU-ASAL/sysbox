@@ -20,37 +20,37 @@
 
 **Files:** create `pkg/driver/capability.go`, `registry.go`, `errors.go`; rewrite `pkg/runtime/resource_provider.go`.
 
-- [ ] Test handler duplicate registration, driver capability lookup, unsupported capability, and stable error categories.
-- [ ] Replace `ResourceProvider` with `ResourceHandler` everywhere and delete old symbols.
-- [ ] Define Node, NIC, Snapshot, Console, GuestExec, Network, Artifact and Import capability interfaces.
-- [ ] Run full tests and commit `refactor(runtime): establish handler and driver registries`.
+- [x] Test handler duplicate registration, driver capability lookup, unsupported capability, and stable error categories.
+- [x] Replace `ResourceProvider` with `ResourceHandler` everywhere and delete old symbols.
+- [x] Define Node, NIC, Snapshot, Console, GuestExec, Network, Artifact and Import capability interfaces.
+- [x] Run full tests and commit `refactor(runtime): establish handler and driver registries`.
 
 ### Task 2: Image And Kernel Drivers
 
-- [ ] Move image/kernel external operations behind ArtifactDriver and image preparation capability.
-- [ ] Add planning-time capability validation and stable driver errors.
-- [ ] Remove image/kernel substrate lookups from handlers and commit.
+- [x] Move image/kernel external operations behind ArtifactDriver and image preparation capability.
+- [x] Add planning-time capability validation and stable driver errors.
+- [x] Remove image/kernel substrate lookups from handlers and commit.
 
 ### Task 3: Network, Node, And Attachment Drivers
 
-- [ ] Move managed network, node lifecycle, NIC attach, observation, connection, and state codecs behind capability interfaces.
-- [ ] Make attachment handles typed state dependencies.
-- [ ] Remove substrate lookups from node/network/data handlers and commit.
+- [x] Move managed network, node lifecycle, NIC attach, observation, connection, and state codecs behind capability interfaces.
+- [x] Make attachment handles typed state dependencies.
+- [x] Remove substrate lookups from node/network/data handlers and commit.
 
 ### Task 4: Router, Firewall, Access, And Actor Drivers
 
-- [ ] Move router NAT, route execution, firewall, SSH access, and actor guest execution behind NetworkDriver/GuestExecDriver.
-- [ ] Delete runtime `exec.Command`, nsenter, iptables, ip route, Docker inspect and concrete network imports.
-- [ ] Commit each resource group with focused/full tests.
+- [x] Move router NAT, route execution, firewall, SSH access, and actor guest execution behind NetworkDriver/GuestExecDriver.
+- [x] Delete runtime `exec.Command`, nsenter, iptables, ip route, Docker inspect and concrete network imports.
+- [x] Commit each resource group with focused/full tests.
 
 ### Task 5: Capability Preflight And Handler-Owned Import
 
-- [ ] Add handler `RequiredCapabilities` and validate combinations during plan.
-- [ ] Add handler import parse/read/normalize contract and route CLI/API import through it with lock+CAS.
-- [ ] Test unsupported combinations and deterministic post-import NoOp plan.
+- [x] Add handler `RequiredCapabilities` and validate combinations during plan.
+- [x] Add handler import parse/read/normalize contract and route CLI/API import through it with lock+CAS.
+- [x] Test unsupported combinations and deterministic post-import NoOp plan.
 
 ### Task 6: Removal Audit And Documentation
 
-- [ ] Delete legacy Substrate interface/registry after the final consumer moves.
-- [ ] Add dependency tests forbidding concrete driver imports and infrastructure commands in runtime/API.
-- [ ] Document handler/driver contracts; run full tests, vet, focused race, and removal searches.
+- [x] Delete legacy Substrate interface/registry after the final consumer moves.
+- [x] Add dependency tests forbidding concrete driver imports and infrastructure commands in runtime/API.
+- [x] Document handler/driver contracts; run full tests, vet, focused race, and removal searches.

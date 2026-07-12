@@ -14,14 +14,14 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-func TestRouterResourceProviderRegistered(t *testing.T) {
+func TestRouterResourceHandlerRegistered(t *testing.T) {
 	p, ok := GetResourceHandler("sysbox_router")
 	require.True(t, ok)
 	require.Equal(t, "sysbox_router", p.Type())
 	require.Equal(t, "sysbox_router", p.Schema().Type)
 }
 
-func TestRouterResourceProviderPlanDiff(t *testing.T) {
+func TestRouterResourceHandlerPlanDiff(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_router", "r1"),
 		Data: &config.RouterConfig{
@@ -59,7 +59,7 @@ func TestRouterResourceProviderPlanDiff(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestRouterResourceProviderDeleteMissingSubstrateReturnsError(t *testing.T) {
+func TestRouterResourceHandlerDeleteMissingSubstrateReturnsError(t *testing.T) {
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	res := state.Resource{
 		Address:    address.Resource("sysbox_router", "r1"),

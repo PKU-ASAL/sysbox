@@ -14,7 +14,7 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-func TestDataResourceProvidersRegistered(t *testing.T) {
+func TestDataResourceHandlersRegistered(t *testing.T) {
 	for _, typ := range []string{"data_sysbox_node", "data_sysbox_network", "data_sysbox_image"} {
 		p, ok := GetResourceHandler(typ)
 		require.True(t, ok, typ)
@@ -23,7 +23,7 @@ func TestDataResourceProvidersRegistered(t *testing.T) {
 	}
 }
 
-func TestDataResourceProviderPlanDiffReads(t *testing.T) {
+func TestDataResourceHandlerPlanDiffReads(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("data_sysbox_image", "alpine"),
 		Data:    &config.DataImageConfig{Substrate: "docker", DockerRef: "alpine:latest"},
@@ -66,7 +66,7 @@ func TestComputePlanSchedulesDataSourcesAsRead(t *testing.T) {
 	require.True(t, plan.HasChanges())
 }
 
-func TestDataResourceProviderDeleteRemovesState(t *testing.T) {
+func TestDataResourceHandlerDeleteRemovesState(t *testing.T) {
 	res := state.Resource{Address: address.Resource("data_sysbox_node", "existing"), Attributes: map[string]any{"data_read": true}}
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{res}}
 	exec := NewExecutor(graph.New(), st)

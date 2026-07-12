@@ -55,6 +55,21 @@ func (RouterResourceHandler) ExternalID(current state.Resource) string {
 	}
 	return current.Str("id")
 }
+func (RouterResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
+	cfg, ok := node.Data.(*config.RouterConfig)
+	if !ok {
+		return nil, nil
+	}
+	name, err := resolveSubstrateRef(cfg.Substrate)
+	if err != nil {
+		return nil, err
+	}
+	required := []CapabilityRequirement{{name, driver.CapabilityNode}, {name, driver.CapabilityNIC}, {name, driver.CapabilityNodeState}}
+	if cfg.NatFrom != "" || cfg.NatTo != "" {
+		required = append(required, CapabilityRequirement{name, driver.CapabilityRouterNetwork})
+	}
+	return required, nil
+}
 
 func (RouterResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.RouterConfig{}

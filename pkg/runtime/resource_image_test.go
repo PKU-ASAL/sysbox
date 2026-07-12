@@ -41,7 +41,7 @@ func registerImageArtifactDriver(t *testing.T, artifactDriver driver.Artifact) {
 	}))
 }
 
-func TestImageResourceProviderCreateDockerRef(t *testing.T) {
+func TestImageResourceHandlerCreateDockerRef(t *testing.T) {
 	sub := &imageArtifactDriver{}
 	registerImageArtifactDriver(t, sub)
 	n := &graph.Node{
@@ -65,7 +65,7 @@ func TestImageResourceProviderCreateDockerRef(t *testing.T) {
 	require.NotEmpty(t, res.Str(desiredHashKey))
 }
 
-func TestImageResourceProviderCreateRootfsArtifact(t *testing.T) {
+func TestImageResourceHandlerCreateRootfsArtifact(t *testing.T) {
 	sub := &imageArtifactDriver{}
 	registerImageArtifactDriver(t, sub)
 	rootfs := filepath.Join(t.TempDir(), "rootfs.ext4")
@@ -88,7 +88,7 @@ func TestImageResourceProviderCreateRootfsArtifact(t *testing.T) {
 	require.NotEmpty(t, res.Str("sha256"))
 }
 
-func TestImageResourceProviderDelete(t *testing.T) {
+func TestImageResourceHandlerDelete(t *testing.T) {
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	res := state.Resource{Address: address.Resource("sysbox_image", "alpine"), Driver: "image-test", Attributes: map[string]any{}}
 	exec.state.AddResource(res)
@@ -97,7 +97,7 @@ func TestImageResourceProviderDelete(t *testing.T) {
 	require.Nil(t, exec.state.FindResource(address.Resource("sysbox_image", "alpine")))
 }
 
-func TestImageResourceProviderPlanDiff(t *testing.T) {
+func TestImageResourceHandlerPlanDiff(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_image", "alpine"),
 		Data:    &config.ImageConfig{Substrate: "docker", DockerRef: "alpine:3.20"},

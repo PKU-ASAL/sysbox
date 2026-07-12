@@ -118,6 +118,17 @@ func (ImageResourceHandler) ExternalID(current state.Resource) string {
 	}
 	return current.Str("id")
 }
+func (ImageResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
+	cfg, ok := node.Data.(*config.ImageConfig)
+	if !ok {
+		return nil, nil
+	}
+	name, err := resolveSubstrateRef(cfg.Substrate)
+	if err != nil {
+		return nil, err
+	}
+	return []CapabilityRequirement{{name, driver.CapabilityArtifact}}, nil
+}
 
 func (ImageResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.ImageConfig{}
