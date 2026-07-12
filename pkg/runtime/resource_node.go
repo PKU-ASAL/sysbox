@@ -12,6 +12,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/secret"
@@ -81,8 +82,8 @@ func (NodeResourceHandler) DecodeResource(r config.ResourceBlock, name string, c
 		}
 	}
 	if subName, err := config.ResolveSubstrateRef(cfg.Substrate); err == nil {
-		if sub, err := substrate.Get(subName); err == nil {
-			pd := sub.Dependencies(cfg.ProviderConfig)
+		if nodeDriver, err := driver.DefaultRegistry.RequireNode(subName); err == nil {
+			pd := nodeDriver.Dependencies(cfg.ProviderConfig)
 			for _, ref := range pd.Kernels {
 				addr, err := config.ResolveResourceAddress(ref, "sysbox_kernel")
 				if err != nil {
@@ -140,7 +141,15 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if err != nil {
 		return state.Resource{}, err
 	}
-	sub, err := substrate.Get(subName)
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(subName)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	nicDriver, err := driver.DefaultRegistry.RequireNIC(subName)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -148,7 +157,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("node %s: %w", n.Address.Name, err)
 	}
-	if err := validatePortExposures(n.Address.Name, sub, portSpecs); err != nil {
+	if err := validatePortExposures(n.Address.Name, subName, nodeDriver, portSpecs); err != nil {
 		return state.Resource{}, err
 	}
 	nodeDesiredHash, err := desiredHash(n)
@@ -178,7 +187,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		"resource":  n.Address.String(),
 		"substrate": subName,
 	}, func() error {
-		return sub.PrepareHandle(ctx, &substrate.NodeHandle{}, providerConfig, stateAdapter{e.state})
+		return nodeDriver.PrepareHandle(ctx, &substrate.NodeHandle{}, providerConfig, stateAdapter{e.state})
 	}); err != nil {
 		return state.Resource{}, err
 	}
@@ -210,7 +219,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		InitialLinks:   initialLinks,
 		ProviderConfig: providerConfig,
 	}
-	if err := sub.Validate(nodeSpec); err != nil {
+	if err := nodeDriver.Validate(nodeSpec); err != nil {
 		return state.Resource{}, err
 	}
 
@@ -222,7 +231,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		"image":     imgRef.Repository,
 	}, func() error {
 		var err error
-		handle, err = sub.CreateNode(ctx, nodeSpec)
+		handle, err = nodeDriver.CreateNode(ctx, nodeSpec)
 		return err
 	}); err != nil {
 		return state.Resource{}, err
@@ -233,24 +242,24 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	//                   veths into the running container's netns.
 	//   NICHotPlug=false (FC/VM):  attach NICs first (they must be in the
 	//                   boot config), then start the VM.
-	caps := sub.Capabilities()
+	caps := nodeDriver.Capabilities()
 	if caps.NICHotPlug {
 		if err := e.recordSubstep(parentStep, "start_node", map[string]any{
 			"resource":  n.Address.String(),
 			"substrate": subName,
 			"node_id":   handle.ID,
 		}, func() error {
-			return sub.StartNode(ctx, handle)
+			return nodeDriver.StartNode(ctx, handle)
 		}); err != nil {
-			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on start failure")
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on start failure")
 			return state.Resource{}, fmt.Errorf("start node %s: %w", n.Address.Name, err)
 		}
 	}
 
 	// Wire all NICs using the shared helper.
-	wireResult, err := wireNICsWithHook(ctx, sub, e.state, handle, initialLinks, nicSpecs, false, n.Address.Name, e.substepHook(parentStep))
+	wireResult, err := wireNICsWithHook(ctx, nicDriver, e.state, handle, initialLinks, nicSpecs, false, n.Address.Name, e.substepHook(parentStep))
 	if err != nil {
-		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on wire failure")
+		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on wire failure")
 		return state.Resource{}, err
 	}
 
@@ -274,7 +283,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 	// Substrate-specific state (vsock metadata, vm_dir, etc.) goes through
 	// MarshalProviderState so runtime stays substrate-agnostic.
-	providerState, _ := sub.MarshalProviderState(handle)
+	providerState, _ := stateDriver.MarshalProviderState(handle)
 	nodeInstance[desiredHashKey] = nodeDesiredHash
 	resource := state.Resource{
 		Address:    n.Address,
@@ -296,9 +305,9 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 			"substrate": subName,
 			"node_id":   handle.ID,
 		}, func() error {
-			return sub.StartNode(ctx, handle)
+			return nodeDriver.StartNode(ctx, handle)
 		}); err != nil {
-			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy node on cold-start failure")
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on cold-start failure")
 			return state.Resource{}, fmt.Errorf("start node %s: %w", n.Address.Name, err)
 		}
 	}
@@ -311,7 +320,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		"substrate": subName,
 		"node_id":   handle.ID,
 	}, func() error {
-		return sub.PrepareHandle(ctx, &handle, providerConfig, stateAdapter{e.state})
+		return nodeDriver.PrepareHandle(ctx, &handle, providerConfig, stateAdapter{e.state})
 	}); err != nil {
 		e.logf("[apply] warning: PrepareHandle for %s: %v\n", n.Address.Name, err)
 	}
@@ -319,7 +328,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// Re-marshal provider state (the substrate may have mutated HandleState
 	// during AttachNIC or PrepareHandle). Always try; substrates with no
 	// provider state return (nil, nil) which is harmless.
-	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+	if blob, err := stateDriver.MarshalProviderState(handle); err == nil && len(blob) > 0 {
 		if rec := e.state.FindResource(address.Resource("sysbox_node", n.Address.Name)); rec != nil {
 			_ = rec.SetProviderState(blob)
 		}
@@ -328,7 +337,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// Configure static routes declared in HCL (before provisioners so they
 	// can use the routes). This replaces `ip route add` in provisioners.
 	if len(cfg.Routes) > 0 {
-		conn, err := connectionForNode(ctx, sub, handle, cfg.Connections)
+		conn, err := connectionForNode(ctx, nodeDriver, handle, cfg.Connections)
 		if err != nil {
 			return state.Resource{}, fmt.Errorf("connection for routes on node %s: %w", n.Address.Name, err)
 		}
@@ -358,7 +367,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 
 	// Run provisioners after node is up and wired.
 	if len(cfg.Provisioners) > 0 {
-		conn, err := connectionForNode(ctx, sub, handle, cfg.Connections)
+		conn, err := connectionForNode(ctx, nodeDriver, handle, cfg.Connections)
 		if err != nil {
 			return state.Resource{}, fmt.Errorf("connection for node %s: %w", n.Address.Name, err)
 		}
@@ -435,7 +444,7 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 // implementation (docker-exec, vsock-rpc, SSH, ...).
 func connectionForNode(
 	ctx context.Context,
-	sub substrate.Substrate,
+	nodeDriver driver.Node,
 	handle substrate.NodeHandle,
 	conns []config.ConnectionConfig,
 ) (substrate.Connection, error) {
@@ -456,7 +465,7 @@ func connectionForNode(
 			Password: password, PrivateKey: privateKey,
 		}
 	}
-	return sub.Connection(handle, hints)
+	return nodeDriver.Connection(handle, hints)
 }
 
 // runProvisioners executes provisioner blocks in order.

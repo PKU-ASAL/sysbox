@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -77,14 +78,14 @@ func collectNATLinks(st *state.State, specs []NICSpec, allNAT bool) ([]substrate
 //   - trackLabels: when true, populates IfaceByName and adds "label"/"kind"
 //     keys to NIC entries (needed by router for nat_from/nat_to)
 //   - nodeName: used in error messages
-func wireNICs(ctx context.Context, sub substrate.Substrate, st *state.State,
+func wireNICs(ctx context.Context, nicDriver driver.NIC, st *state.State,
 	handle substrate.NodeHandle, initialLinks []substrate.LinkRequest,
 	specs []NICSpec, trackLabels bool, nodeName string,
 ) (*NICWireResult, error) {
-	return wireNICsWithHook(ctx, sub, st, handle, initialLinks, specs, trackLabels, nodeName, nil)
+	return wireNICsWithHook(ctx, nicDriver, st, handle, initialLinks, specs, trackLabels, nodeName, nil)
 }
 
-func wireNICsWithHook(ctx context.Context, sub substrate.Substrate, st *state.State,
+func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State,
 	handle substrate.NodeHandle, initialLinks []substrate.LinkRequest,
 	specs []NICSpec, trackLabels bool, nodeName string, hook NICWireHook,
 ) (*NICWireResult, error) {
@@ -117,7 +118,7 @@ func wireNICsWithHook(ctx context.Context, sub substrate.Substrate, st *state.St
 			netID := netState.DockerNetID()
 			if !connectedAtCreate[netID] {
 				attach := func() error {
-					_, err := sub.AttachNIC(ctx, handle, substrate.LinkRequest{
+					_, err := nicDriver.AttachNIC(ctx, handle, substrate.LinkRequest{
 						KindHint:    substrate.NICKindDockerNAT,
 						DockerNetID: netID,
 						IP:          spec.IP,
@@ -177,7 +178,7 @@ func wireNICsWithHook(ctx context.Context, sub substrate.Substrate, st *state.St
 			"target":  lreq.TargetName,
 		}, func() error {
 			var err error
-			attached, err = sub.AttachNIC(ctx, handle, lreq)
+			attached, err = nicDriver.AttachNIC(ctx, handle, lreq)
 			return err
 		}); err != nil {
 			return nil, err

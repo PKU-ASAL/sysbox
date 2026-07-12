@@ -10,6 +10,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -107,12 +108,22 @@ func (s *portTestSubstrate) NodeStatus(context.Context, substrate.NodeHandle) (b
 	return true, nil
 }
 
+func registerPortTestDriver(t *testing.T, sub *portTestSubstrate) {
+	t.Helper()
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{
+		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub,
+	}))
+}
+
 func TestNodeResourceProviderPortsArePassedAndResolved(t *testing.T) {
 	sub := &portTestSubstrate{
 		name:      "port-test",
 		exposures: []string{substrate.PortExposureNone, substrate.PortExposureDirect, substrate.PortExposureHost},
 	}
-	substrate.Register(sub)
+	registerPortTestDriver(t, sub)
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	exec.state.AddResource(state.Resource{
 		Address: address.Resource("sysbox_image", "nginx"),
@@ -152,7 +163,7 @@ func TestNodeResourceProviderRejectsUnsupportedPortExposure(t *testing.T) {
 		name:      "port-direct-only",
 		exposures: []string{substrate.PortExposureNone, substrate.PortExposureDirect},
 	}
-	substrate.Register(sub)
+	registerPortTestDriver(t, sub)
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	exec.state.AddResource(state.Resource{
 		Address: address.Resource("sysbox_image", "nginx"),

@@ -9,7 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type fakeNodeDriver struct{}
+type fakeNodeDriver struct{ substrate.BaseSubstrate }
+
+func (*fakeNodeDriver) Capabilities() substrate.Capabilities { return substrate.Capabilities{} }
 
 func (*fakeNodeDriver) CreateNode(context.Context, substrate.NodeSpec) (substrate.NodeHandle, error) {
 	return substrate.NodeHandle{}, nil

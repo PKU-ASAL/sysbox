@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -63,17 +64,17 @@ func normalizePortSpecs(in []config.PortConfig) ([]substrate.PortSpec, error) {
 	return out, nil
 }
 
-func validatePortExposures(nodeName string, sub substrate.Substrate, ports []substrate.PortSpec) error {
+func validatePortExposures(nodeName, driverName string, nodeDriver driver.Node, ports []substrate.PortSpec) error {
 	if len(ports) == 0 {
 		return nil
 	}
 	supported := map[string]bool{}
-	for _, exposure := range sub.Capabilities().PortExposures {
+	for _, exposure := range nodeDriver.Capabilities().PortExposures {
 		supported[exposure] = true
 	}
 	for _, p := range ports {
 		if !supported[p.Exposure] {
-			return fmt.Errorf("node %s port %q: exposure %q is not supported by substrate %s", nodeName, p.Name, p.Exposure, sub.Name())
+			return fmt.Errorf("node %s port %q: exposure %q is not supported by driver %s", nodeName, p.Name, p.Exposure, driverName)
 		}
 	}
 	return nil

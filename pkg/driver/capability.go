@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -22,6 +24,13 @@ const (
 )
 
 type Node interface {
+	Capabilities() substrate.Capabilities
+	PreflightChecks(bool) []substrate.PreflightCheck
+	Validate(substrate.NodeSpec) error
+	DecodeProviderConfig(hcl.Body, *hcl.EvalContext) (any, error)
+	Dependencies(any) substrate.ProviderDeps
+	PrepareHandle(context.Context, *substrate.NodeHandle, any, substrate.StateReader) error
+	Connection(substrate.NodeHandle, []substrate.ConnectionHint) (substrate.Connection, error)
 	CreateNode(context.Context, substrate.NodeSpec) (substrate.NodeHandle, error)
 	StartNode(context.Context, substrate.NodeHandle) error
 	StopNode(context.Context, substrate.NodeHandle) error

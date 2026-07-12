@@ -9,7 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/driver"
 )
 
 func decodeDependsOn(deps []address.Address, items []string) ([]address.Address, error) {
@@ -28,7 +28,7 @@ func decodeNodeProviderConfig(cfg *config.NodeConfig, ctx *hcl.EvalContext) erro
 	if err != nil {
 		return err
 	}
-	sub, err := substrate.Get(subName)
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(subName)
 	if err != nil {
 		return err
 	}
@@ -45,7 +45,7 @@ func decodeNodeProviderConfig(cfg *config.NodeConfig, ctx *hcl.EvalContext) erro
 	default:
 		return fmt.Errorf("at most one provider block allowed per node, got %d", len(cfg.Providers))
 	}
-	pc, err := sub.DecodeProviderConfig(body, ctx)
+	pc, err := nodeDriver.DecodeProviderConfig(body, ctx)
 	if err != nil {
 		return err
 	}
