@@ -13,6 +13,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
@@ -127,12 +128,12 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 // createNATNetwork creates a managed NAT network via the registered substrate.
 // Currently Docker is the only substrate that supports managed networks.
 func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, cfg *config.NetworkConfig) (state.Resource, error) {
-	sub, err := substrate.Get("docker")
+	networkDriver, err := driver.DefaultRegistry.RequireNetwork("docker")
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("nat network requires docker substrate: %w", err)
 	}
 
-	info, err := sub.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
+	info, err := networkDriver.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
 		Name:   networkExternalName(pc.Topology(), n.Address.Name),
 		CIDR:   cfg.CIDR,
 		NAT:    true,
@@ -172,14 +173,14 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 
 func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r state.Resource) error {
 	if r.IsNAT() {
-		sub, err := substrate.Get("docker")
+		networkDriver, err := driver.DefaultRegistry.RequireNetwork("docker")
 		if err != nil {
 			pc.State().RemoveResource(r.Address)
 			return nil
 		}
 		netID := r.DockerNetID()
 		if netID != "" {
-			if err := sub.RemoveManagedNetwork(ctx, netID); err != nil {
+			if err := networkDriver.RemoveManagedNetwork(ctx, netID); err != nil {
 				pc.Logf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
 			}
 		}

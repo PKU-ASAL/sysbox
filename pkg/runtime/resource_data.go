@@ -10,6 +10,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -148,7 +149,7 @@ func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (
 		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: wrong data type", n.Address.Name)
 	}
 
-	sub, err := substrate.Get("docker")
+	networkDriver, err := driver.DefaultRegistry.RequireNetwork("docker")
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: requires docker substrate: %w", n.Address.Name, err)
 	}
@@ -156,7 +157,7 @@ func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (
 	// Try the user-given name directly first (e.g. "bridge" or a custom
 	// network). If not found, try the sysbox-prefixed variant. This covers
 	// both externally-managed Docker networks and sysbox-managed ones.
-	info, err := sub.ReadManagedNetwork(ctx, substrate.ManagedNetworkSpec{Name: cfg.Name})
+	info, err := networkDriver.ReadManagedNetwork(ctx, substrate.ManagedNetworkSpec{Name: cfg.Name})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: network %q not found: %w", n.Address.Name, cfg.Name, err)
 	}
@@ -221,7 +222,7 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}
-	sub, err := substrate.Get(subName)
+	artifactDriver, err := driver.DefaultRegistry.RequireArtifact(subName)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}
@@ -230,7 +231,7 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: docker_ref is required", n.Address.Name)
 	}
 
-	ref, err := sub.PrepareImage(ctx, substrate.ImageSpec{DockerRef: cfg.DockerRef})
+	ref, err := artifactDriver.PrepareImage(ctx, substrate.ImageSpec{DockerRef: cfg.DockerRef})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}
