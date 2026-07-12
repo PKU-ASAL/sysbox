@@ -104,4 +104,12 @@ func (r *Registry) RequireImport(name string) (Import, error) {
 	return d.Import, nil
 }
 
+func (r *Registry) RequireNodeState(name string) (NodeState, error) {
+	d, err := r.Require(name, CapabilityNodeState)
+	if err != nil {
+		return nil, err
+	}
+	return d.NodeState, nil
+}
+
 var DefaultRegistry = NewRegistry()

@@ -27,6 +27,12 @@ const SchemaVersion = 4
 
 type ResourceStatus string
 
+// NodeStateCodec reconstructs driver-owned state without coupling persistence
+// to node lifecycle, networking, or execution capabilities.
+type NodeStateCodec interface {
+	UnmarshalProviderState(json.RawMessage) (any, error)
+}
+
 const (
 	ResourcePresent  ResourceStatus = "present"
 	ResourceAbsent   ResourceStatus = "absent"
@@ -186,7 +192,7 @@ func (r *Resource) NetNS() string                 { return r.Str("netns") }
 func (r *Resource) Bridge() string                { return r.Str("bridge") }
 
 // ReconstructHandle combines public observations with opaque driver state.
-func (r *Resource) ReconstructHandle(sub substrate.Substrate) (substrate.NodeHandle, error) {
+func (r *Resource) ReconstructHandle(codec NodeStateCodec) (substrate.NodeHandle, error) {
 	handle := substrate.NodeHandle{
 		ID:  r.ContainerID(),
 		Net: substrate.NetInfo{PrimaryIP: r.PrimaryIP()},
@@ -194,7 +200,7 @@ func (r *Resource) ReconstructHandle(sub substrate.Substrate) (substrate.NodeHan
 	if blob, err := r.ProviderState(); err != nil {
 		return handle, err
 	} else if len(blob) > 0 {
-		ps, err := sub.UnmarshalProviderState(blob)
+		ps, err := codec.UnmarshalProviderState(blob)
 		if err != nil {
 			return handle, fmt.Errorf("resource %s: corrupt provider state: %w", r.Address, err)
 		}

@@ -28,6 +28,7 @@ func main() {
 			Name: "docker", Version: "1", Node: dockerSub, NIC: dockerSub,
 			Console: dockerSub, GuestExec: dockerSub, Network: dockerSub,
 			Artifact: dockerSub, Import: dockerSub,
+			NodeState: dockerSub,
 		})
 		substrate.Register(dockerSub)
 	}
@@ -43,6 +44,7 @@ func main() {
 	mustRegisterDriver(driver.Descriptor{
 		Name: "firecracker", Version: "1", Node: fcSub, NIC: fcSub,
 		Console: fcSub, GuestExec: fcSub, Artifact: fcSub,
+		NodeState: fcSub,
 	})
 	substrate.Register(fcSub)
 
@@ -50,6 +52,7 @@ func main() {
 	mustRegisterDriver(driver.Descriptor{
 		Name: "libvirt", Version: "1", Node: libvirtSub, NIC: libvirtSub,
 		Console: libvirtSub, Artifact: libvirtSub, Import: libvirtSub,
+		NodeState: libvirtSub,
 	})
 	substrate.Register(libvirtSub)
 

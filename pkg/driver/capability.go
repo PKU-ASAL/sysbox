@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -17,6 +18,7 @@ const (
 	CapabilityNetwork   Capability = "network"
 	CapabilityArtifact  Capability = "artifact"
 	CapabilityImport    Capability = "import"
+	CapabilityNodeState Capability = "node-state"
 )
 
 type Node interface {
@@ -62,6 +64,11 @@ type Import interface {
 	ReadNode(context.Context, string) (substrate.NodeHandle, error)
 }
 
+type NodeState interface {
+	MarshalProviderState(substrate.NodeHandle) (json.RawMessage, error)
+	UnmarshalProviderState(json.RawMessage) (any, error)
+}
+
 type Descriptor struct {
 	Name      string
 	Version   string
@@ -73,6 +80,7 @@ type Descriptor struct {
 	Network   Network
 	Artifact  Artifact
 	Import    Import
+	NodeState NodeState
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -93,6 +101,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.Artifact
 	case CapabilityImport:
 		return d.Import
+	case CapabilityNodeState:
+		return d.NodeState
 	default:
 		return nil
 	}
