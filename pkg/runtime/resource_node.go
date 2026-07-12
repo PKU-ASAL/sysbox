@@ -246,12 +246,23 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		return state.Resource{}, err
 	}
 	nicSpecs := nicSpecsFromAttachmentIntents(intents)
-
-	// Pre-scan: find Docker NAT networks for InitialLinks.
-	initialLinks, err := collectNATLinks(e.state, nicSpecs, true)
-	if err != nil {
-		return state.Resource{}, err
+	if hasHostPort(portSpecs) {
+		hasNAT := false
+		for _, spec := range nicSpecs {
+			netAddr, resolveErr := config.ResolveResourceAddress(spec.Network, "sysbox_network")
+			if resolveErr != nil {
+				return state.Resource{}, resolveErr
+			}
+			if network := e.state.FindResource(netAddr); network != nil && network.IsNAT() {
+				hasNAT = true
+				break
+			}
+		}
+		if !hasNAT {
+			return state.Resource{}, fmt.Errorf("node %s: host port exposure requires at least one nat=true network attachment", n.Address)
+		}
 	}
+
 	containerName := runtimeExternalName(e.topology, "node", n.Address.Name)
 	nodeSpec := substrate.NodeSpec{
 		Name:           containerName,
@@ -261,7 +272,6 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		Env:            resolvedEnv,
 		Labels:         ManagedLabels(e.topology, e.runID, n.Address),
 		Ports:          portSpecs,
-		InitialLinks:   initialLinks,
 		ProviderConfig: providerConfig,
 	}
 	if err := nodeDriver.Validate(nodeSpec); err != nil {
@@ -302,7 +312,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 
 	// Wire all NICs using the shared helper.
-	wireResult, err := wireNICsWithHook(ctx, nicDriver, e.state, handle, initialLinks, nicSpecs, false, n.Address.Name, e.substepHook(parentStep))
+	wireResult, err := wireNICsWithHook(ctx, nicDriver, e.state, handle, nicSpecs, n.Address, e.substepHook(parentStep))
 	if err != nil {
 		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on wire failure")
 		return state.Resource{}, err
@@ -315,7 +325,6 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	nodeInstance := map[string]any{
 		"container_id": handle.ID,
 		"primary_ip":   handle.Net.PrimaryIP,
-		"nics":         wireResult.NICs,
 		"ports":        resolvedPorts,
 	}
 	// Persist lifecycle flags so ComputePlan can honour them on future runs
@@ -331,9 +340,10 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	providerState, _ := stateDriver.MarshalProviderState(handle)
 	nodeInstance[desiredHashKey] = nodeDesiredHash
 	resource := state.Resource{
-		Address:    n.Address,
-		Driver:     subName,
-		Attributes: state.MustAttributes(nodeInstance),
+		Address:     n.Address,
+		Driver:      subName,
+		Attributes:  state.MustAttributes(nodeInstance),
+		Attachments: wireResult.Attachments,
 	}
 	if len(providerState) > 0 {
 		_ = resource.SetProviderState(providerState)
@@ -441,6 +451,15 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	return resource, nil
 }
 
+func hasHostPort(ports []substrate.PortSpec) bool {
+	for _, port := range ports {
+		if port.Exposure == substrate.PortExposureHost {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) error {
 	nodeDriver, err := driver.DefaultRegistry.RequireNode(r.Driver)
 	if err != nil {
@@ -459,23 +478,20 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 	if err := nodeDriver.StopNode(ctx, handle); err != nil {
 		e.logf("[destroy] warning: stop node %s: %v\n", r.Address, err)
 	}
-	if err := nodeDriver.DestroyNode(ctx, handle); err != nil {
-		e.logf("[destroy] warning: destroy node %s: %v\n", r.Address, err)
-	}
-	// Always clean up veths/taps and state regardless of container presence.
-	linuxNetwork, networkErr := driver.DefaultRegistry.RequireLinuxNetwork("network")
-	if nics, ok := r.AttributeMap()["nics"].([]any); ok {
-		for _, item := range nics {
-			n, _ := item.(map[string]any)
-			kind := util.AsString(n["kind"])
-			hostEnd := util.AsString(n["host_end"])
-			nsName := util.AsString(n["netns"])
-			if networkErr == nil {
-				if err := linuxNetwork.DeleteAttachment(ctx, kind, hostEnd, nsName); err != nil {
-					e.logf("[destroy] warning: delete attachment %s: %v\n", hostEnd, err)
-				}
+	if nicDriver, nicErr := driver.DefaultRegistry.RequireNIC(r.Driver); nicErr == nil {
+		for _, attachment := range r.Attachments {
+			request, reqErr := attachmentRequestFromState(e.state, attachment)
+			if reqErr != nil {
+				e.logf("[destroy] warning: attachment %s: %v\n", attachment.Name, reqErr)
+				continue
+			}
+			if err := nicDriver.Delete(ctx, handle, request, attachment.DriverState); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
+				e.logf("[destroy] warning: delete attachment %s: %v\n", attachment.Name, err)
 			}
 		}
+	}
+	if err := nodeDriver.DestroyNode(ctx, handle); err != nil {
+		e.logf("[destroy] warning: destroy node %s: %v\n", r.Address, err)
 	}
 	e.state.RemoveResource(r.Address)
 	return nil

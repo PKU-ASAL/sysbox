@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
@@ -25,86 +27,25 @@ type NICSpec struct {
 // creation need: the per-NIC state entries and the name→guest-iface mapping
 // (used by router for nat_from/nat_to resolution).
 type NICWireResult struct {
-	NICs        []map[string]any
-	IfaceByName map[string]string // label → guest iface (e.g. "lan" → "eth1")
-	PrimaryIP   string            // first non-empty IP
+	Attachments []state.Attachment
+	Requests    map[string]driver.AttachmentRequest
+	Results     map[string]driver.AttachmentResult
+	PrimaryIP   string
 }
 
 type NICWireHook func(phase string, details map[string]any, fn func() error) error
 
-// collectNATLinks pre-scans specs to find Docker-NAT networks.
-// When allNAT is true, every NAT network is returned as an InitialLink
-// (used by node creation which can attach multiple NAT nets at create time).
-// When allNAT is false, only the first NAT network is returned
-// (used by router creation which attaches the first at create time and
-// the rest post-start via AttachNIC, to control eth naming).
-func collectNATLinks(st *state.State, specs []NICSpec, allNAT bool) ([]substrate.LinkRequest, error) {
-	var initial []substrate.LinkRequest
-	for _, spec := range specs {
-		netAddr, err := config.ResolveResourceAddress(spec.Network, "sysbox_network")
-		if err != nil {
-			return nil, err
-		}
-		netState := st.FindResource(netAddr)
-		if netState == nil {
-			return nil, fmt.Errorf("network %s not applied yet", spec.Network)
-		}
-		if netState.IsNAT() {
-			if allNAT || len(initial) == 0 {
-				initial = append(initial, substrate.LinkRequest{
-					KindHint:    substrate.NICKindDockerNAT,
-					DockerNetID: netState.DockerNetID(),
-					IP:          spec.IP,
-					MAC:         spec.MAC,
-				})
-			}
-		}
-	}
-	return initial, nil
-}
-
-// wireNICs attaches all network interfaces to a node that has already been
-// created (and possibly started). It handles:
-//   - NAT networks already connected at create-time (skipped),
-//   - Extra NAT networks attached via docker network connect,
-//   - Isolated (non-NAT) networks attached via substrate.AttachNIC.
-//
-// Parameters:
-//   - ctx: cancellation context
-//   - sub: substrate to call AttachNIC on
-//   - st: state for looking up network resources
-//   - handle: the created node handle (for AttachNIC calls)
-//   - initialLinks: the InitialLinks that were passed to CreateNode (so we
-//     can skip re-attaching the first NAT network)
-//   - specs: the NICSpec list (one per link/interface)
-//   - trackLabels: when true, populates IfaceByName and adds "label"/"kind"
-//     keys to NIC entries (needed by router for nat_from/nat_to)
-//   - nodeName: used in error messages
+// wireNICs applies normalized logical attachments through the owning driver.
 func wireNICs(ctx context.Context, nicDriver driver.NIC, st *state.State,
-	handle substrate.NodeHandle, initialLinks []substrate.LinkRequest,
-	specs []NICSpec, trackLabels bool, nodeName string,
+	handle substrate.NodeHandle, specs []NICSpec, owner address.Address,
 ) (*NICWireResult, error) {
-	return wireNICsWithHook(ctx, nicDriver, st, handle, initialLinks, specs, trackLabels, nodeName, nil)
+	return wireNICsWithHook(ctx, nicDriver, st, handle, specs, owner, nil)
 }
 
 func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State,
-	handle substrate.NodeHandle, initialLinks []substrate.LinkRequest,
-	specs []NICSpec, trackLabels bool, nodeName string, hook NICWireHook,
+	handle substrate.NodeHandle, specs []NICSpec, owner address.Address, hook NICWireHook,
 ) (*NICWireResult, error) {
-
-	connectedAtCreate := map[string]bool{}
-	for _, il := range initialLinks {
-		if il.DockerNetID != "" {
-			connectedAtCreate[il.DockerNetID] = true
-		}
-	}
-
-	natIdx := 0                  // NAT ifaces numbered eth0, eth1, ... by Docker
-	vethIdx := len(initialLinks) // veth guest-iface starts after NAT ifaces
-
-	result := &NICWireResult{
-		IfaceByName: map[string]string{},
-	}
+	result := &NICWireResult{Requests: map[string]driver.AttachmentRequest{}, Results: map[string]driver.AttachmentResult{}}
 
 	for _, spec := range specs {
 		netAddr, err := config.ResolveResourceAddress(spec.Network, "sysbox_network")
@@ -116,97 +57,30 @@ func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State
 			return nil, fmt.Errorf("network %s not applied yet", spec.Network)
 		}
 
-		if netState.IsNAT() {
-			netID := netState.DockerNetID()
-			if !connectedAtCreate[netID] {
-				attach := func() error {
-					_, err := nicDriver.AttachNIC(ctx, handle, substrate.LinkRequest{
-						KindHint:    substrate.NICKindDockerNAT,
-						DockerNetID: netID,
-						IP:          spec.IP,
-						MAC:         spec.MAC,
-					})
-					return err
-				}
-				if err := runNICWireHook(hook, "attach_nat_network", map[string]any{
-					"node":       nodeName,
-					"network":    spec.Network,
-					"network_id": netID,
-					"ip":         spec.IP,
-				}, attach); err != nil {
-					return nil, fmt.Errorf("connect %s to nat network %s: %w", nodeName, spec.Network, err)
-				}
-			}
-
-			entry := map[string]any{
-				"kind":       substrate.NICKindDockerNAT,
-				"network_id": netID,
-				"ip":         spec.IP,
-			}
-			// Router-mode: track eth naming and labels for nat_from/nat_to.
-			if trackLabels {
-				target := fmt.Sprintf("eth%d", natIdx)
-				natIdx++
-				entry["target"] = target
-				entry["label"] = spec.Name
-				if spec.Name != "" {
-					result.IfaceByName[spec.Name] = target
-				}
-			}
-			result.NICs = append(result.NICs, entry)
-
-			// Record primary IP from first link that has one.
-			if result.PrimaryIP == "" && spec.IP != "" {
-				// Strip CIDR suffix for PrimaryIP.
-				result.PrimaryIP = stripCIDR(spec.IP)
-			}
-			continue
+		networkState, err := json.Marshal(netState.AttributeMap())
+		if err != nil {
+			return nil, err
 		}
-
-		// Non-NAT (isolated) network: delegate NIC creation to the substrate.
-		lreq := substrate.LinkRequest{
-			NetNS:      netState.Str("netns"),
-			Bridge:     netState.Str("bridge"),
-			IP:         spec.IP,
-			Gateway:    spec.Gateway,
-			MAC:        spec.MAC,
-			TargetName: fmt.Sprintf("eth%d", vethIdx),
-		}
-		var attached substrate.AttachedNIC
-		if err := runNICWireHook(hook, "attach_nic", map[string]any{
-			"node":    nodeName,
+		request := driver.AttachmentRequest{Name: spec.Name, Network: netAddr, MAC: spec.MAC, IPPrefixes: []string{spec.IP}, Gateway: spec.Gateway, NetworkState: networkState}
+		var attached driver.AttachmentResult
+		if err := runNICWireHook(hook, "attach", map[string]any{
+			"node":    owner.String(),
 			"network": spec.Network,
-			"netns":   lreq.NetNS,
-			"bridge":  lreq.Bridge,
-			"ip":      lreq.IP,
-			"target":  lreq.TargetName,
+			"name":    spec.Name,
+			"ip":      spec.IP,
 		}, func() error {
 			var err error
-			attached, err = nicDriver.AttachNIC(ctx, handle, lreq)
+			attached, err = nicDriver.Attach(ctx, handle, request)
 			return err
 		}); err != nil {
 			return nil, err
 		}
-		vethIdx++
+		result.Requests[spec.Name] = request
+		result.Results[spec.Name] = attached
+		result.Attachments = append(result.Attachments, state.Attachment{Name: spec.Name, Node: owner, Network: netAddr, MAC: spec.MAC, IPPrefixes: []string{spec.IP}, Gateway: spec.Gateway, Driver: attached.Driver, Observation: state.AttachmentObservation{GuestDevice: attached.GuestDevice}, DriverState: attached.State})
 
-		entry := map[string]any{
-			"kind":      attached.Kind,
-			"host_end":  attached.HostEnd,
-			"guest_end": attached.GuestEnd,
-			"target":    lreq.TargetName,
-			"ip":        attached.IP,
-			"netns":     attached.NetNS,
-		}
-		if trackLabels {
-			entry["label"] = spec.Name
-			if spec.Name != "" {
-				result.IfaceByName[spec.Name] = lreq.TargetName
-			}
-		}
-		result.NICs = append(result.NICs, entry)
-
-		if result.PrimaryIP == "" && attached.IP != "" {
-			result.PrimaryIP = stripCIDR(attached.IP)
+		if result.PrimaryIP == "" && spec.IP != "" {
+			result.PrimaryIP = stripCIDR(spec.IP)
 		}
 	}
 
@@ -218,6 +92,19 @@ func runNICWireHook(hook NICWireHook, phase string, details map[string]any, fn f
 		return fn()
 	}
 	return hook(phase, details, fn)
+}
+
+func attachmentRequestFromState(st *state.State, attachment state.Attachment) (driver.AttachmentRequest, error) {
+	network := st.FindResource(attachment.Network)
+	if network == nil {
+		return driver.AttachmentRequest{}, fmt.Errorf("network %s not found for attachment %s", attachment.Network, attachment.Name)
+	}
+	raw, err := json.Marshal(network.AttributeMap())
+	if err != nil {
+		return driver.AttachmentRequest{}, err
+	}
+	return driver.AttachmentRequest{Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC,
+		IPPrefixes: append([]string(nil), attachment.IPPrefixes...), Gateway: attachment.Gateway, NetworkState: raw}, nil
 }
 
 // stripCIDR removes the /NN suffix from an IP/CIDR string.

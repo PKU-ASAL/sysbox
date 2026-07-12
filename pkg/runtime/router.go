@@ -143,39 +143,41 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	}
 	nicSpecs := nicSpecsFromAttachmentIntents(intents)
 
-	// Pre-scan: find the first NAT network for InitialLinks.
-	initialLinks, err := collectNATLinks(e.state, nicSpecs, false)
-	if err != nil {
-		return state.Resource{}, err
-	}
-
 	handle, err := nodeDriver.CreateNode(ctx, substrate.NodeSpec{
-		Name:         runtimeExternalName(e.topology, "router", n.Address.Name),
-		Image:        imgRef,
-		Sysctls:      map[string]string{"net.ipv4.ip_forward": "1"},
-		InitialLinks: initialLinks,
-		Labels:       ManagedLabels(e.topology, e.runID, n.Address),
+		Name:    runtimeExternalName(e.topology, "router", n.Address.Name),
+		Image:   imgRef,
+		Sysctls: map[string]string{"net.ipv4.ip_forward": "1"},
+		Labels:  ManagedLabels(e.topology, e.runID, n.Address),
 	})
 	if err != nil {
 		return state.Resource{}, err
 	}
 
-	if err := nodeDriver.StartNode(ctx, handle); err != nil {
-		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy router on start failure")
-		return state.Resource{}, err
+	caps := nodeDriver.Capabilities()
+	if caps.NICHotPlug {
+		if err := nodeDriver.StartNode(ctx, handle); err != nil {
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy router on start failure")
+			return state.Resource{}, err
+		}
 	}
 
 	// Wire all NICs using the shared helper (trackLabels=true for routers).
-	wireResult, err := wireNICs(ctx, nicDriver, e.state, handle, initialLinks, nicSpecs, true, n.Address.Name)
+	wireResult, err := wireNICs(ctx, nicDriver, e.state, handle, nicSpecs, n.Address)
 	if err != nil {
 		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy router on wire failure")
 		return state.Resource{}, err
 	}
+	if !caps.NICHotPlug {
+		if err := nodeDriver.StartNode(ctx, handle); err != nil {
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy router on cold-start failure")
+			return state.Resource{}, err
+		}
+	}
 
 	natApplied := false
 	if cfg.NatFrom != "" && cfg.NatTo != "" {
-		fromIf, ok1 := wireResult.IfaceByName[cfg.NatFrom]
-		toIf, ok2 := wireResult.IfaceByName[cfg.NatTo]
+		fromReq, ok1 := wireResult.Requests[cfg.NatFrom]
+		toReq, ok2 := wireResult.Requests[cfg.NatTo]
 		if !ok1 || !ok2 {
 			return state.Resource{}, fmt.Errorf("nat_from %q / nat_to %q must reference declared interfaces",
 				cfg.NatFrom, cfg.NatTo)
@@ -184,7 +186,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		if err != nil {
 			return state.Resource{}, err
 		}
-		if err := routerNetwork.ConfigureNAT(ctx, handle, fromIf, toIf); err != nil {
+		if err := routerNetwork.ConfigureNAT(ctx, handle, fromReq, wireResult.Results[cfg.NatFrom], toReq, wireResult.Results[cfg.NatTo]); err != nil {
 			e.logf("[router %s] warning: NAT setup failed (continuing without NAT): %v\n", n.Address.Name, err)
 		} else {
 			natApplied = true
@@ -194,7 +196,6 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	inst := map[string]any{
 		"container_id": handle.ID,
 		"primary_ip":   wireResult.PrimaryIP,
-		"nics":         wireResult.NICs,
 		"nat_applied":  natApplied,
 	}
 	// Persist opaque provider state so cold-destroy works for all substrates.
@@ -207,9 +208,10 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		return state.Resource{}, err
 	}
 	resource := state.Resource{
-		Address:    n.Address,
-		Driver:     subName,
-		Attributes: state.MustAttributes(inst),
+		Address:     n.Address,
+		Driver:      subName,
+		Attributes:  state.MustAttributes(inst),
+		Attachments: wireResult.Attachments,
 	}
 	if len(blob) > 0 {
 		_ = resource.SetProviderState(blob)

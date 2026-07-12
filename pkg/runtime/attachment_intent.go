@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 )
@@ -49,6 +50,9 @@ func NormalizeAttachmentIntents(topology string, owner address.Address, inputs [
 	for _, input := range inputs {
 		if input.Name == "" {
 			return nil, fmt.Errorf("%s: attachment name is required", owner)
+		}
+		if !hclsyntax.ValidIdentifier(input.Name) {
+			return nil, fmt.Errorf("%s: invalid attachment name %q", owner, input.Name)
 		}
 		if _, ok := seenNames[input.Name]; ok {
 			return nil, fmt.Errorf("%s: duplicate attachment name %q", owner, input.Name)

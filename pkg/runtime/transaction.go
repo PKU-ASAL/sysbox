@@ -74,10 +74,13 @@ type OperationCheckpoint struct {
 }
 
 type StateResourceLog struct {
-	Type     string         `json:"type"`
-	Name     string         `json:"name"`
-	Provider string         `json:"provider"`
-	Instance map[string]any `json:"instance"`
+	Type        string               `json:"type"`
+	Name        string               `json:"name"`
+	Provider    string               `json:"provider"`
+	Instance    map[string]any       `json:"instance"`
+	Attachments []state.Attachment   `json:"attachments,omitempty"`
+	Private     json.RawMessage      `json:"private,omitempty"`
+	Status      state.ResourceStatus `json:"status,omitempty"`
 }
 
 type OperationRecorder interface {
@@ -260,10 +263,13 @@ func (r *FileRecorder) StepStateResource(index int, resource StateResourceLog) {
 		return
 	}
 	copied := StateResourceLog{
-		Type:     resource.Type,
-		Name:     resource.Name,
-		Provider: resource.Provider,
-		Instance: cloneAnyMap(resource.Instance),
+		Type:        resource.Type,
+		Name:        resource.Name,
+		Provider:    resource.Provider,
+		Instance:    cloneAnyMap(resource.Instance),
+		Attachments: cloneAttachments(resource.Attachments),
+		Private:     append(json.RawMessage(nil), resource.Private...),
+		Status:      resource.Status,
 	}
 	r.checkpoint.Steps[index].StateResource = &copied
 	_ = r.flushLocked()
@@ -285,15 +291,28 @@ func (r *FileRecorder) StepStatePatch(index int, op StatePatchOp, resource *Stat
 	}
 	if resource != nil {
 		copied := StateResourceLog{
-			Type:     resource.Type,
-			Name:     resource.Name,
-			Provider: resource.Provider,
-			Instance: cloneAnyMap(resource.Instance),
+			Type:        resource.Type,
+			Name:        resource.Name,
+			Provider:    resource.Provider,
+			Instance:    cloneAnyMap(resource.Instance),
+			Attachments: cloneAttachments(resource.Attachments),
+			Private:     append(json.RawMessage(nil), resource.Private...),
+			Status:      resource.Status,
 		}
 		patch.State = &copied
 	}
 	r.checkpoint.StatePatches = append(r.checkpoint.StatePatches, patch)
 	_ = r.flushLocked()
+}
+
+func cloneAttachments(input []state.Attachment) []state.Attachment {
+	if len(input) == 0 {
+		return nil
+	}
+	raw, _ := json.Marshal(input)
+	var output []state.Attachment
+	_ = json.Unmarshal(raw, &output)
+	return output
 }
 
 func (r *FileRecorder) StepStateRecorded(index int) {

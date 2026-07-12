@@ -250,6 +250,8 @@ git commit -m "refactor(network): normalize logical attachment intent"
 
 **Interfaces:**
 - Replaces the one-shot NIC contract with logical attach/observe/delete operations.
+- Replaces `RouterNetwork.ConfigureNAT` physical interface arguments with
+  logical attachment requests and observations; the driver resolves devices.
 
 ```go
 type AttachmentRequest struct {
@@ -270,29 +272,33 @@ type NIC interface {
     Observe(context.Context, substrate.NodeHandle, AttachmentRequest, json.RawMessage) (AttachmentResult, error)
     Delete(context.Context, substrate.NodeHandle, AttachmentRequest, json.RawMessage) error
 }
+
+type RouterNetwork interface {
+    ConfigureNAT(context.Context, substrate.NodeHandle, AttachmentRequest, AttachmentResult, AttachmentRequest, AttachmentResult) error
+}
 ```
 
-- [ ] **Step 1: Write failing registry and provider contract tests**
+- [x] **Step 1: Write failing registry and provider contract tests**
 
 Require all three built-in node drivers to preserve request logical name/MAC/prefix semantics and return opaque JSON sufficient for observe/delete. Require `Observe` not-found to use `driver.CategoryNotFound`.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/driver ./pkg/provider/docker ./pkg/provider/firecracker ./pkg/provider/libvirt`
 
 Expected: compile/test failure because the old `AttachNIC` contract lacks observe/delete and logical identity.
 
-- [ ] **Step 3: Implement the capability and providers**
+- [x] **Step 3: Implement the capability and providers**
 
-Move concrete host end, tap, namespace, Docker network ID, and provider device data into provider-owned JSON structs. Drivers choose concrete guest names; runtime supplies no target name. Wrap errors with existing stable driver categories.
+Move concrete host end, tap, namespace, Docker network ID, and provider device data into provider-owned JSON structs. Drivers choose concrete guest names; runtime supplies no target name. Migrate NAT to logical attachment inputs in the same atomic change. Wrap errors with existing stable driver categories.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/driver ./pkg/provider/...`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pkg/driver pkg/provider
@@ -314,7 +320,7 @@ git commit -m "feat(driver): add attachment lifecycle capability"
 - Consumes: Task 1 `state.Attachment`, Task 3 normalized intent, Task 4 attachment lifecycle capability.
 - Produces: node/router resources whose `Attachments` are the only attachment semantic state.
 
-- [ ] **Step 1: Write failing persistence and logical NAT tests**
+- [x] **Step 1: Write failing persistence and logical NAT tests**
 
 ```go
 func TestWireAttachmentsPersistsTypedState(t *testing.T) {
@@ -328,17 +334,17 @@ func TestWireAttachmentsPersistsTypedState(t *testing.T) {
 
 Add a router test proving `nat_from = "internal"` and `nat_to = "uplink"` reach the driver as logical names without runtime `ethN` lookup.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/runtime -run 'Test(WireAttachmentsPersistsTypedState|RouterNATUsesLogicalAttachments)$'`
 
 Expected: FAIL because runtime still writes `Attributes["nics"]` and resolves NAT to `ethN`.
 
-- [ ] **Step 3: Wire typed state through node and router creation/deletion**
+- [x] **Step 3: Wire typed state through node and router creation/deletion**
 
 Persist `Resource.Attachments`, pass opaque state back only to the owning capability, and make NAT/route requests carry logical attachment names. Remove all `nics` map construction and parsing from production runtime.
 
-- [ ] **Step 4: Run GREEN and removal audit**
+- [x] **Step 4: Run GREEN and removal audit**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/runtime ./pkg/api ./pkg/agentexec`
 
@@ -346,7 +352,7 @@ Run: `rg -n 'Attribute(Map)?\(\)\["nics"\]|"nics"\s*:' pkg/runtime pkg/api pkg/a
 
 Expected: tests PASS; search has no production matches.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pkg/runtime pkg/api pkg/agentexec
@@ -368,21 +374,21 @@ git commit -m "refactor(runtime): persist typed attachments"
 - Consumes: typed attachments and driver observe/delete lifecycle.
 - Produces: attachment status classification and idempotent checkpoint recovery keyed by owner/logical name.
 
-- [ ] **Step 1: Write failing refresh and recovery tests**
+- [x] **Step 1: Write failing refresh and recovery tests**
 
 Cover: concrete device rename updates observation without replacement; `not-found` yields drifted; unavailable yields unknown without durable rewrite; completed attach checkpoint plus external attachment is adopted rather than attached twice.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/runtime -run 'Test(RefreshAttachment|RecoverAttachment)'`
 
 Expected: FAIL because health/recovery still parse legacy NIC maps.
 
-- [ ] **Step 3: Implement observe-first refresh and recovery**
+- [x] **Step 3: Implement observe-first refresh and recovery**
 
 Enumerate `Resource.Attachments`, call the owning NIC capability, compare semantic fields independently of `GuestDevice`, update observation only after successful reads, and key checkpoint details by canonical owner address plus logical name.
 
-- [ ] **Step 4: Update contracts documentation and run final removal audit**
+- [x] **Step 4: Update contracts documentation and run final removal audit**
 
 Document schema v5 hard break, typed/opaque ownership, logical identity, and observe-first recovery.
 
@@ -390,7 +396,7 @@ Run: `rg -n 'Attributes\["nics"\]|AttributeMap\(\)\["nics"\]|TargetName|IfaceByN
 
 Expected: no production matches; any remaining provider-local physical-device fields are documented opaque implementation details.
 
-- [ ] **Step 5: Run full verification**
+- [x] **Step 5: Run full verification**
 
 ```bash
 GOCACHE=/tmp/sysbox-gocache go test ./...
@@ -401,7 +407,7 @@ git diff --check
 
 Expected: all commands PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pkg docs

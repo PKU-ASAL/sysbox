@@ -17,7 +17,6 @@ import (
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/oslab/sysbox/pkg/util"
 )
 
 type CheckpointRecoverer interface {
@@ -112,9 +111,12 @@ func StateResourceFromLog(rec StateResourceLog) state.Resource {
 	attributes := cloneInstance(rec.Instance)
 	delete(attributes, "provider_extra")
 	resource := state.Resource{
-		Address:    address.Resource(rec.Type, rec.Name),
-		Driver:     rec.Provider,
-		Attributes: state.MustAttributes(attributes),
+		Address:     address.Resource(rec.Type, rec.Name),
+		Driver:      rec.Provider,
+		Attributes:  state.MustAttributes(attributes),
+		Attachments: cloneAttachments(rec.Attachments),
+		Private:     append(json.RawMessage(nil), rec.Private...),
+		Status:      rec.Status,
 	}
 	return resource
 }
@@ -302,6 +304,17 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 		action.Error = err.Error()
 		return action, nil
 	}
+	attachmentStatus, attachmentReason, attachmentErr := observeAttachments(ctx, handle, &res)
+	if attachmentErr != nil {
+		action.Status = "error"
+		action.Error = attachmentReason
+		return action, nil
+	}
+	rec.Attachments = cloneAttachments(res.Attachments)
+	attachmentsDrifted := attachmentStatus == state.ResourceDrifted
+	if attachmentsDrifted {
+		rec.Status = state.ResourceDrifted
+	}
 	recovery := DecideNodeRecovery(RecoveryInput{
 		Context:              RecoveryContextCheckpoint,
 		ResourceType:         rec.Type,
@@ -326,14 +339,24 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 					_ = resource.SetProviderState(blob)
 				}
 			}
-			action.Status = "recovered_adopted"
+			if attachmentsDrifted {
+				action.Status = "recovered_drifted"
+				action.Error = attachmentReason
+			} else {
+				action.Status = "recovered_adopted"
+			}
 			return action, nil
 		}
 		AdoptStateResource(st, *rec, "")
 		action.Status = "recovered"
 	case controlplane.RecoveryDecisionRecoverState:
 		AdoptStateResource(st, *rec, "")
-		action.Status = "recovered_not_running"
+		if attachmentsDrifted {
+			action.Status = "recovered_drifted"
+			action.Error = attachmentReason
+		} else {
+			action.Status = "recovered_not_running"
+		}
 	case controlplane.RecoveryDecisionNoop:
 		action.Status = "already_in_state"
 	case controlplane.RecoveryDecisionNotFound:
@@ -381,12 +404,12 @@ func cleanupNodeLikeCheckpoint(ctx context.Context, step OperationStep) (Checkpo
 		return action, nil
 	}
 	_ = nodeDriver.StopNode(ctx, handle)
-	if err := nodeDriver.DestroyNode(ctx, handle); err != nil {
+	if err := cleanupAttachments(ctx, res, handle); err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
 		return action, nil
 	}
-	if err := cleanupAttachedNICs(res); err != nil {
+	if err := nodeDriver.DestroyNode(ctx, handle); err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
 		return action, nil
@@ -417,8 +440,24 @@ func recoverDockerManagedNetwork(ctx context.Context, st *state.State, step Oper
 		action.Status = "not_found"
 		return action, nil
 	}
+	res := StateResourceFromLog(*rec)
+	attachmentStatus, attachmentReason, attachmentErr := observeAttachments(ctx, substrate.NodeHandle{ID: id}, &res)
+	if attachmentErr != nil {
+		action.Status = "error"
+		action.Error = attachmentReason
+		return action, nil
+	}
+	rec.Attachments = cloneAttachments(res.Attachments)
+	if attachmentStatus == state.ResourceDrifted {
+		rec.Status = state.ResourceDrifted
+	}
 	AdoptStateResource(st, *rec, id)
-	action.Status = "recovered"
+	if attachmentStatus == state.ResourceDrifted {
+		action.Status = "recovered_drifted"
+		action.Error = attachmentReason
+	} else {
+		action.Status = "recovered"
+	}
 	return action, nil
 }
 
@@ -514,6 +553,20 @@ func cleanupDockerNodeLikeByLabels(ctx context.Context, step OperationStep) (Che
 		return action, err
 	}
 	defer cli.Close()
+	if step.StateResource != nil {
+		res := StateResourceFromLog(*step.StateResource)
+		if nic, nicErr := driver.DefaultRegistry.RequireNIC(res.Driver); nicErr == nil {
+			handle := substrate.NodeHandle{ID: id}
+			for _, attachment := range res.Attachments {
+				request := driver.AttachmentRequest{Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC, IPPrefixes: attachment.IPPrefixes, Gateway: attachment.Gateway}
+				if err := nic.Delete(ctx, handle, request, attachment.DriverState); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
+					action.Status = "error"
+					action.Error = err.Error()
+					return action, nil
+				}
+			}
+		}
+	}
 	if err := cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
@@ -595,25 +648,16 @@ func findDockerObjectByLabels(_ context.Context, labels map[string]string, list 
 	return found[0], nil
 }
 
-func cleanupAttachedNICs(res state.Resource) error {
-	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+func cleanupAttachments(ctx context.Context, res state.Resource, handle substrate.NodeHandle) error {
+	nic, err := driver.DefaultRegistry.RequireNIC(res.Driver)
 	if err != nil {
 		return err
 	}
-	nics, ok := res.AttributeMap()["nics"].([]any)
-	if !ok {
-		return nil
-	}
 	var errs []string
-	for _, item := range nics {
-		n, _ := item.(map[string]any)
-		kind := util.AsString(n["kind"])
-		hostEnd := util.AsString(n["host_end"])
-		nsName := util.AsString(n["netns"])
-		if kind == "tap" || kind == "veth" {
-			if err := linuxNetwork.DeleteAttachment(context.Background(), kind, hostEnd, nsName); err != nil {
-				errs = append(errs, err.Error())
-			}
+	for _, attachment := range res.Attachments {
+		request := driver.AttachmentRequest{Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC, IPPrefixes: attachment.IPPrefixes, Gateway: attachment.Gateway}
+		if err := nic.Delete(ctx, handle, request, attachment.DriverState); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
+			errs = append(errs, err.Error())
 		}
 	}
 	if len(errs) > 0 {

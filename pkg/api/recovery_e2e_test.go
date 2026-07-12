@@ -124,21 +124,13 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 			ExternalID: "sysbox-microvm",
 			Status:     runtime.OperationDone,
 			StateResource: &runtime.StateResourceLog{
-				Address: address.Resource("sysbox_node", "microvm"),
-				Driver:  "firecracker",
-				Attributes: map[string]any{
+				Type: "sysbox_node", Name: "microvm", Provider: "firecracker",
+				Instance: map[string]any{
 					"container_id": "sysbox-microvm",
 					"primary_ip":   "10.252.0.20",
-					"provider_extra": fmt.Sprintf(
-						`{"vm_dir":%q,"socket":%q,"config_path":%q,"netns_name":%q}`,
-						vmDir, socketPath, configPath, nsName),
-					"nics": []any{map[string]any{
-						"kind":     "tap",
-						"host_end": tapName,
-						"ip":       "10.252.0.20/24",
-						"netns":    nsName,
-					}},
 				},
+				Private:     mustPrivateState(t, map[string]any{"vm_dir": vmDir, "socket": socketPath, "config_path": configPath, "netns_name": nsName}),
+				Attachments: []state.Attachment{{Name: "internal", Node: address.Resource("sysbox_node", "microvm"), Network: address.Resource("sysbox_network", "internal"), MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.252.0.20/24"}, Driver: "firecracker", DriverState: json.RawMessage(fmt.Sprintf(`{"tap":%q,"netns":%q,"guest_device":"eth0"}`, tapName, nsName))}},
 			},
 		}},
 	}
@@ -162,6 +154,15 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 	require.Equal(t, "removed", cleanup.MicroVMs[0].Status)
 	require.NoDirExists(t, vmDir)
 	require.False(t, netprovider.LinkExists(nsName, tapName))
+}
+
+func mustPrivateState(t *testing.T, providerState any) json.RawMessage {
+	t.Helper()
+	payload, err := json.Marshal(providerState)
+	require.NoError(t, err)
+	private, err := state.EncodePrivate(1, state.DriverPrivate{ProviderState: payload})
+	require.NoError(t, err)
+	return private
 }
 
 func requireRootE2E(t *testing.T) {

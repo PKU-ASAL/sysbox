@@ -81,10 +81,11 @@ lint: ## Run go vet
 	$(GOENV) $(GO) vet ./...
 
 ci: build lint test ## Run the local CI gate
-	@for topo in two-networks three-nodes microvm mixed libvirt-vm; do \
-		printf "  %-14s" "$$topo:"; \
-		$(BINARY) -f examples/$$topo/field.sysbox.hcl --state /tmp/sysbox-ci-$$topo.json plan 2>&1 | head -1; \
-	done
+	@status=0; for topo in two-networks three-nodes microvm mixed libvirt-vm; do \
+		output="$$( $(BINARY) -f examples/$$topo/field.sysbox.hcl --state /tmp/sysbox-ci-$$topo.json plan 2>&1 )"; rc=$$?; \
+		printf "  %-14s%s\n" "$$topo:" "$$(printf '%s\n' "$$output" | head -1)"; \
+		if [ $$rc -ne 0 ]; then status=$$rc; fi; \
+	done; exit $$status
 
 clean: ## Remove build outputs, or API data when called as "make api clean"
 	@if [ "$(FIRST_GOAL)" = "api" ]; then :; else rm -f $(BINARY); fi

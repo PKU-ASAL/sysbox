@@ -87,6 +87,21 @@ func TestDecodeNodeLinksRejectDuplicateLogicalName(t *testing.T) {
 	require.ErrorContains(t, err, `duplicate link name "uplink"`)
 }
 
+func TestDecodeNodeLinksRejectInvalidLogicalName(t *testing.T) {
+	root, err := ParseString(`resource "sysbox_node" "web" {
+  image = "alpine"
+  substrate = "docker"
+  link "not a name" {
+    network = "sysbox_network.public"
+    ip = "10.0.0.2/24"
+  }
+}`, "test.hcl")
+	require.NoError(t, err)
+	var cfg NodeConfig
+	err = DecodeResource(&root.Resources[0], &cfg, nil)
+	require.ErrorContains(t, err, `invalid link name "not a name"`)
+}
+
 func TestDecodeNodePorts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "field.sysbox.hcl")
 	require.NoError(t, os.WriteFile(path, []byte(`

@@ -235,8 +235,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 
 	// Collect Docker bridge (NAT) network links.
-	type natLink struct{ netID, ip string }
-	var natLinks []natLink
+	var attachmentInputs []AttachmentInput
 	for _, link := range cfg.Links {
 		netAddr, err := config.ResolveResourceAddress(link.Network, "sysbox_network")
 		if err != nil {
@@ -249,21 +248,13 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		if !netState.IsNAT() {
 			return state.Resource{}, fmt.Errorf("actor %s (external): link %s is not a NAT network; external actors only support Docker bridge networks", n.Address.Name, netAddr)
 		}
-		natLinks = append(natLinks, natLink{
-			netID: netState.DockerNetID(),
-			ip:    link.IP,
-		})
+		attachmentInputs = append(attachmentInputs, AttachmentInput{Name: link.Name, Network: link.Network, MAC: link.MAC, IPPrefixes: []string{link.IP}, Gateway: link.Gateway})
 	}
-
-	// Build InitialLinks (first NAT network attached at create time).
-	var initialLinks []substrate.LinkRequest
-	for _, nl := range natLinks {
-		initialLinks = append(initialLinks, substrate.LinkRequest{
-			KindHint:    substrate.NICKindDockerNAT,
-			DockerNetID: nl.netID,
-			IP:          nl.ip,
-		})
+	intents, err := NormalizeAttachmentIntents(e.topology, n.Address, attachmentInputs)
+	if err != nil {
+		return state.Resource{}, err
 	}
+	nicSpecs := nicSpecsFromAttachmentIntents(intents)
 
 	containerName := runtimeExternalName(e.topology, "actor", n.Address.Name)
 	resolvedEnv, err := resolveSecretMap(ctx, cfg.Env)
@@ -271,11 +262,10 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		return state.Resource{}, err
 	}
 	handle, err := nodeDriver.CreateNode(ctx, substrate.NodeSpec{
-		Name:         containerName,
-		Image:        imgRef,
-		Env:          resolvedEnv,
-		InitialLinks: initialLinks,
-		Labels:       ManagedLabels(e.topology, e.runID, n.Address),
+		Name:   containerName,
+		Image:  imgRef,
+		Env:    resolvedEnv,
+		Labels: ManagedLabels(e.topology, e.runID, n.Address),
 	})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("create actor container %s: %w", n.Address.Name, err)
@@ -286,16 +276,10 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		return state.Resource{}, fmt.Errorf("start actor container %s: %w", n.Address.Name, err)
 	}
 
-	// Connect remaining NAT networks (all after the first) via AttachNIC.
-	for _, nl := range natLinks[min(1, len(natLinks)):] {
-		if _, err := nicDriver.AttachNIC(ctx, handle, substrate.LinkRequest{
-			KindHint:    substrate.NICKindDockerNAT,
-			DockerNetID: nl.netID,
-			IP:          nl.ip,
-		}); err != nil {
-			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy actor on attach failure")
-			return state.Resource{}, fmt.Errorf("actor %s: connect to network: %w", n.Address.Name, err)
-		}
+	wireResult, err := wireNICs(ctx, nicDriver, e.state, handle, nicSpecs, n.Address)
+	if err != nil {
+		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy actor on attach failure")
+		return state.Resource{}, fmt.Errorf("actor %s: connect to network: %w", n.Address.Name, err)
 	}
 
 	// Start the actor command inside the container.
@@ -318,8 +302,8 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	acpURL := ""
 	if cfg.Port > 0 {
 		ip := cfg.ACPIP
-		if ip == "" && len(natLinks) > 0 {
-			ip = natLinks[0].ip
+		if ip == "" && len(nicSpecs) > 0 {
+			ip = nicSpecs[0].IP
 			if idx := strings.Index(ip, "/"); idx >= 0 {
 				ip = ip[:idx]
 			}
@@ -344,9 +328,10 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		return state.Resource{}, err
 	}
 	res := state.Resource{
-		Address:    n.Address,
-		Driver:     "docker",
-		Attributes: state.MustAttributes(inst),
+		Address:     n.Address,
+		Driver:      "docker",
+		Attributes:  state.MustAttributes(inst),
+		Attachments: wireResult.Attachments,
 	}
 	if len(blob) > 0 {
 		_ = res.SetProviderState(blob)
@@ -394,6 +379,16 @@ func (e *Executor) destroyActorResource(ctx context.Context, r state.Resource) e
 		}
 		if err := nodeDriver.StopNode(ctx, handle); err != nil {
 			e.logf("[destroy] warning: stop actor %s: %v\n", r.Address.Name, err)
+		}
+		if nic, nicErr := driver.DefaultRegistry.RequireNIC(r.Driver); nicErr == nil {
+			for _, attachment := range r.Attachments {
+				request, reqErr := attachmentRequestFromState(e.state, attachment)
+				if reqErr == nil {
+					if err := nic.Delete(ctx, handle, request, attachment.DriverState); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
+						e.logf("[destroy] warning: delete actor attachment %s: %v\n", attachment.Name, err)
+					}
+				}
+			}
 		}
 		if err := nodeDriver.DestroyNode(ctx, handle); err != nil {
 			e.logf("[destroy] warning: destroy actor %s: %v\n", r.Address.Name, err)

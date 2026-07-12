@@ -34,21 +34,11 @@ func TestDockerPortConfigRequiresPublishedForHostExposure(t *testing.T) {
 	require.ErrorContains(t, err, "published must be positive")
 }
 
-func TestValidateHostPortExposureRequiresDockerNATLink(t *testing.T) {
+func TestValidateHostPortExposureIsValidatedByRuntimeAttachments(t *testing.T) {
 	sub := &Substrate{}
 	err := sub.Validate(substrate.NodeSpec{
 		Ports: []substrate.PortSpec{
 			{Name: "http", Target: 80, Published: 28080, Exposure: substrate.PortExposureHost},
-		},
-	})
-	require.ErrorContains(t, err, "requires at least one nat=true sysbox_network link")
-
-	err = sub.Validate(substrate.NodeSpec{
-		Ports: []substrate.PortSpec{
-			{Name: "http", Target: 80, Published: 28080, Exposure: substrate.PortExposureHost},
-		},
-		InitialLinks: []substrate.LinkRequest{
-			{KindHint: substrate.NICKindDockerNAT, DockerNetID: "net-1"},
 		},
 	})
 	require.NoError(t, err)

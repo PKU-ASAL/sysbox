@@ -70,3 +70,18 @@ func TestRouterResourceHandlerDeleteMissingSubstrateReturnsError(t *testing.T) {
 	err := RouterResourceHandler{}.Delete(context.Background(), &ProviderContext{exec: exec}, res)
 	require.Error(t, err)
 }
+
+func TestRouterNATUsesLogicalAttachments(t *testing.T) {
+	sub := &portTestSubstrate{name: "router-test"}
+	registerPortTestDriver(t, sub)
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_image", "router"), Attributes: map[string]any{"image_id": "image", "repository": "router:latest"}})
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_network", "internal"), Attributes: map[string]any{"netns": "ns", "bridge": "br"}})
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_network", "public"), Attributes: map[string]any{"nat": true, "docker_network_id": "net-1"}})
+	exec := NewExecutor(graph.New(), st)
+	n := &graph.Node{Address: address.Resource("sysbox_router", "edge"), Data: &config.RouterConfig{Image: "sysbox_image.router", Substrate: sub.name, NatFrom: "internal", NatTo: "uplink", Interfaces: []config.RouterInterface{{Name: "internal", Network: "sysbox_network.internal", IP: "10.0.0.1/24"}, {Name: "uplink", Network: "sysbox_network.public", IP: "172.20.0.2/24"}}}}
+	res, err := RouterResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+	require.NoError(t, err)
+	require.Equal(t, []string{"internal", "uplink"}, sub.natNames)
+	require.Len(t, res.Attachments, 2)
+}

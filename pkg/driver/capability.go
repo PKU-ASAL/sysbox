@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -46,7 +47,24 @@ type Node interface {
 }
 
 type NIC interface {
-	AttachNIC(context.Context, substrate.NodeHandle, substrate.LinkRequest) (substrate.AttachedNIC, error)
+	Attach(context.Context, substrate.NodeHandle, AttachmentRequest) (AttachmentResult, error)
+	Observe(context.Context, substrate.NodeHandle, AttachmentRequest, json.RawMessage) (AttachmentResult, error)
+	Delete(context.Context, substrate.NodeHandle, AttachmentRequest, json.RawMessage) error
+}
+
+type AttachmentRequest struct {
+	Name         string
+	Network      address.Address
+	MAC          string
+	IPPrefixes   []string
+	Gateway      string
+	NetworkState json.RawMessage
+}
+
+type AttachmentResult struct {
+	Driver      string
+	GuestDevice string
+	State       json.RawMessage
 }
 
 type Snapshot interface {
@@ -100,7 +118,7 @@ type Power interface {
 }
 
 type RouterNetwork interface {
-	ConfigureNAT(context.Context, substrate.NodeHandle, string, string) error
+	ConfigureNAT(context.Context, substrate.NodeHandle, AttachmentRequest, AttachmentResult, AttachmentRequest, AttachmentResult) error
 }
 
 type IsolatedNetworkSpec struct{ Name, Bridge, CIDR string }

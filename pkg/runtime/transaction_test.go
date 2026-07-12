@@ -76,10 +76,12 @@ func TestFileRecorderPersistsStatePatches(t *testing.T) {
 
 	step := rec.StepStart("sysbox_node.web", controlplane.PlanActionCreate)
 	stateLog := StateResourceLog{
-		Type:     "sysbox_node",
-		Name:     "web",
-		Provider: "docker",
-		Instance: map[string]any{"container_id": "abc"},
+		Type:        "sysbox_node",
+		Name:        "web",
+		Provider:    "docker",
+		Instance:    map[string]any{"container_id": "abc"},
+		Attachments: []state.Attachment{{Name: "uplink", Node: address.Resource("sysbox_node", "web"), Network: address.Resource("sysbox_network", "public"), Driver: "docker", DriverState: json.RawMessage(`{"id":"opaque"}`)}},
+		Private:     json.RawMessage(`{"version":1,"payload":{"provider_state":{"id":"node"}}}`),
 	}
 	rec.StepStateResource(step, stateLog)
 	rec.StepStatePatch(step, StatePatchUpsert, &stateLog)
@@ -96,6 +98,9 @@ func TestFileRecorderPersistsStatePatches(t *testing.T) {
 	require.Equal(t, "sysbox_node.web", cp.StatePatches[0].Resource)
 	require.True(t, cp.StatePatches[0].Recorded)
 	require.Equal(t, "abc", cp.StatePatches[0].State.Instance["container_id"])
+	require.Equal(t, "uplink", cp.StatePatches[0].State.Attachments[0].Name)
+	require.JSONEq(t, `{"id":"opaque"}`, string(cp.StatePatches[0].State.Attachments[0].DriverState))
+	require.JSONEq(t, string(stateLog.Private), string(cp.StatePatches[0].State.Private))
 }
 
 func TestApplyStatePatchUpsertAndDelete(t *testing.T) {

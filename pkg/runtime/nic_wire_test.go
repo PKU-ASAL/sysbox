@@ -2,11 +2,13 @@ package runtime
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/address"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -37,16 +39,14 @@ func (hookSubstrate) NodeStatus(context.Context, substrate.NodeHandle) (bool, er
 	return true, nil
 }
 
-func (hookSubstrate) AttachNIC(_ context.Context, _ substrate.NodeHandle, req substrate.LinkRequest) (substrate.AttachedNIC, error) {
-	if req.KindHint == substrate.NICKindDockerNAT {
-		return substrate.AttachedNIC{Kind: substrate.NICKindDockerNAT, IP: req.IP}, nil
-	}
-	return substrate.AttachedNIC{
-		Kind:    substrate.NICKindTap,
-		HostEnd: "tap0",
-		IP:      req.IP,
-		NetNS:   req.NetNS,
-	}, nil
+func (hookSubstrate) Attach(_ context.Context, _ substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
+	return driver.AttachmentResult{Driver: "hook", GuestDevice: req.Name, State: json.RawMessage(`{"id":"x"}`)}, nil
+}
+func (hookSubstrate) Observe(context.Context, substrate.NodeHandle, driver.AttachmentRequest, json.RawMessage) (driver.AttachmentResult, error) {
+	return driver.AttachmentResult{}, nil
+}
+func (hookSubstrate) Delete(context.Context, substrate.NodeHandle, driver.AttachmentRequest, json.RawMessage) error {
+	return nil
 }
 
 func TestWireNICsWithHookRecordsAttachPhases(t *testing.T) {
@@ -77,14 +77,15 @@ func TestWireNICsWithHookRecordsAttachPhases(t *testing.T) {
 		return fn()
 	}
 
-	result, err := wireNICsWithHook(context.Background(), hookSubstrate{}, st, substrate.NodeHandle{ID: "node"}, nil, []NICSpec{
-		{Network: "nat", IP: "172.20.0.10"},
-		{Network: "isolated", IP: "10.10.0.10/24"},
-	}, false, "node", hook)
+	owner := address.Resource("sysbox_node", "node")
+	result, err := wireNICsWithHook(context.Background(), hookSubstrate{}, st, substrate.NodeHandle{ID: "node"}, []NICSpec{
+		{Name: "uplink", Network: "nat", IP: "172.20.0.10"},
+		{Name: "internal", Network: "isolated", IP: "10.10.0.10/24"},
+	}, owner, hook)
 
 	require.NoError(t, err)
-	require.Equal(t, []string{"attach_nat_network", "attach_nic"}, phases)
-	require.Len(t, result.NICs, 2)
+	require.Equal(t, []string{"attach", "attach"}, phases)
+	require.Len(t, result.Attachments, 2)
 	require.Equal(t, "172.20.0.10", result.PrimaryIP)
 }
 
@@ -96,12 +97,12 @@ func TestWireNICsPassesNormalizedMACToDriver(t *testing.T) {
 			"netns": "sysbox-net-isolated", "bridge": "br-isolated",
 		},
 	}}}
-	var requests []substrate.LinkRequest
+	var requests []driver.AttachmentRequest
 	driver := recordingNIC{requests: &requests}
 
-	_, err := wireNICs(context.Background(), driver, st, substrate.NodeHandle{ID: "node"}, nil, []NICSpec{{
+	_, err := wireNICs(context.Background(), driver, st, substrate.NodeHandle{ID: "node"}, []NICSpec{{
 		Name: "internal", Network: "isolated", IP: "10.10.0.10/24", MAC: "02:00:00:00:00:01",
-	}}, false, "node")
+	}}, address.Resource("sysbox_node", "node"))
 
 	require.NoError(t, err)
 	require.Len(t, requests, 1)
@@ -109,10 +110,16 @@ func TestWireNICsPassesNormalizedMACToDriver(t *testing.T) {
 }
 
 type recordingNIC struct {
-	requests *[]substrate.LinkRequest
+	requests *[]driver.AttachmentRequest
 }
 
-func (s recordingNIC) AttachNIC(_ context.Context, _ substrate.NodeHandle, req substrate.LinkRequest) (substrate.AttachedNIC, error) {
+func (s recordingNIC) Attach(_ context.Context, _ substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
 	*s.requests = append(*s.requests, req)
-	return substrate.AttachedNIC{Kind: substrate.NICKindTap, IP: req.IP, NetNS: req.NetNS}, nil
+	return driver.AttachmentResult{Driver: "recording", GuestDevice: req.Name}, nil
+}
+func (s recordingNIC) Observe(context.Context, substrate.NodeHandle, driver.AttachmentRequest, json.RawMessage) (driver.AttachmentResult, error) {
+	return driver.AttachmentResult{}, nil
+}
+func (s recordingNIC) Delete(context.Context, substrate.NodeHandle, driver.AttachmentRequest, json.RawMessage) error {
+	return nil
 }

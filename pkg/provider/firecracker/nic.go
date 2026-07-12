@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -19,16 +21,86 @@ import (
 //
 // Firecracker does NOT support NIC hot-plug in config-file mode,
 // so we must declare all interfaces before boot.
-func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req substrate.LinkRequest) (substrate.AttachedNIC, error) {
+type attachmentState struct {
+	Tap         string `json:"tap"`
+	NetNS       string `json:"netns"`
+	GuestDevice string `json:"guest_device"`
+}
+type networkState struct {
+	NetNS  string `json:"netns"`
+	Bridge string `json:"bridge"`
+}
+type linkRequest struct{ Name, NetNS, Bridge, IP, Gateway, MAC string }
+type attachedNIC struct{ Kind, HostEnd, GuestEnd, IP, NetNS string }
+
+func attachmentTapName(nodeID, logicalName string) string {
+	value := strings.TrimPrefix(nodeID, "sysbox-") + "-" + logicalName
+	if len(value) <= 11 {
+		return "tap-" + value
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(value))
+	return fmt.Sprintf("tap-%08x", h.Sum32())
+}
+
+func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
+	hs, ok := h.Provider.(*HandleState)
+	if !ok || hs == nil || hs.ConfigPath == "" {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "firecracker", "VM config path missing", nil)
+	}
+	var target networkState
+	if err := json.Unmarshal(req.NetworkState, &target); err != nil {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "firecracker", "decode network state", err)
+	}
+	ip := ""
+	if len(req.IPPrefixes) > 0 {
+		ip = req.IPPrefixes[0]
+	}
+	attached, err := s.attachNIC(ctx, h, linkRequest{Name: req.Name, NetNS: target.NetNS, Bridge: target.Bridge, IP: ip, Gateway: req.Gateway, MAC: req.MAC})
+	if err != nil {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "firecracker", "attach network", err)
+	}
+	guest := fmt.Sprintf("eth%d", hs.NICCount-1)
+	raw, _ := json.Marshal(attachmentState{Tap: attached.HostEnd, NetNS: attached.NetNS, GuestDevice: guest})
+	return driver.AttachmentResult{Driver: "firecracker", GuestDevice: guest, State: raw}, nil
+}
+func (s *Substrate) Observe(_ context.Context, _ substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
+	var st attachmentState
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "firecracker", "decode attachment state", err)
+	}
+	if !linkExists(st.Tap) && !linkExistsInNetns(st.Tap, st.NetNS) {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorNotFound, "firecracker", "tap not found", nil)
+	}
+	return driver.AttachmentResult{Driver: "firecracker", GuestDevice: st.GuestDevice, State: raw}, nil
+}
+func (s *Substrate) Delete(ctx context.Context, _ substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
+	var st attachmentState
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return driver.Wrap(driver.ErrorInvalidState, "firecracker", "decode attachment state", err)
+	}
+	if !linkExists(st.Tap) && !linkExistsInNetns(st.Tap, st.NetNS) {
+		return nil
+	}
+	if st.NetNS != "" {
+		if err := exec.CommandContext(ctx, ipBin, "netns", "exec", st.NetNS, ipBin, "link", "del", st.Tap).Run(); err != nil {
+			return driver.Wrap(driver.ErrorUnavailable, "firecracker", "delete tap", err)
+		}
+		return nil
+	}
+	if err := deleteTapDevice(st.Tap); err != nil {
+		return driver.Wrap(driver.ErrorUnavailable, "firecracker", "delete tap", err)
+	}
+	return nil
+}
+
+func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req linkRequest) (attachedNIC, error) {
 	hs, _ := h.Provider.(*HandleState)
 	if hs == nil || hs.ConfigPath == "" {
-		return substrate.AttachedNIC{}, fmt.Errorf("VM config path not found in handle provider state")
+		return attachedNIC{}, fmt.Errorf("VM config path not found in handle provider state")
 	}
 
-	tapName := fmt.Sprintf("tap-%s", strings.TrimPrefix(h.ID, "sysbox-"))
-	if len(tapName) > 15 {
-		tapName = tapName[:15]
-	}
+	tapName := attachmentTapName(h.ID, req.Name)
 
 	netnsName := req.NetNS
 	bridgeName := req.Bridge
@@ -39,7 +111,7 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req s
 
 	if !tapInRoot && !tapInNetns {
 		if err := createTapDevice(tapName); err != nil {
-			return substrate.AttachedNIC{}, fmt.Errorf("create tap %s: %w", tapName, err)
+			return attachedNIC{}, fmt.Errorf("create tap %s: %w", tapName, err)
 		}
 	} else {
 		if tapInRoot {
@@ -56,7 +128,7 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req s
 	// Attach TAP to the network bridge.
 	if netnsName != "" && bridgeName != "" {
 		if err := attachTapToBridge(ctx, tapName, bridgeName, netnsName); err != nil {
-			return substrate.AttachedNIC{}, fmt.Errorf("attach tap to bridge: %w", err)
+			return attachedNIC{}, fmt.Errorf("attach tap to bridge: %w", err)
 		}
 		vmMu.Lock()
 		if vm, ok := vmStore[h.ID]; ok && vm.netnsName == "" {
@@ -81,21 +153,21 @@ func (s *Substrate) AttachNIC(ctx context.Context, h substrate.NodeHandle, req s
 	}
 
 	if err := appendNICtoConfig(cfgPath, fcIface); err != nil {
-		return substrate.AttachedNIC{}, fmt.Errorf("append NIC to config: %w", err)
+		return attachedNIC{}, fmt.Errorf("append NIC to config: %w", err)
 	}
 
 	// Phase A: kernel cmdline IP autoconfig for the first interface.
 	if nicIdx == 0 && req.IP != "" {
 		hostname := strings.TrimPrefix(h.ID, "sysbox-")
 		if err := injectKernelIPArg(cfgPath, ifaceID, hostname, req.IP, req.Gateway); err != nil {
-			return substrate.AttachedNIC{}, fmt.Errorf("inject kernel ip= arg: %w", err)
+			return attachedNIC{}, fmt.Errorf("inject kernel ip= arg: %w", err)
 		}
 	}
 
 	hs.NICCount = nicIdx + 1
 	hs.TapName = tapName
 
-	return substrate.AttachedNIC{
+	return attachedNIC{
 		Kind:    substrate.NICKindTap,
 		HostEnd: tapName,
 		IP:      req.IP,

@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 
 	"github.com/oslab/sysbox/pkg/address"
 )
@@ -88,6 +89,9 @@ func validateLogicalAttachmentNames(target any) error {
 	}
 	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
+		if !hclsyntax.ValidIdentifier(name) {
+			return fmt.Errorf("invalid %s name %q: expected an HCL identifier", kind, name)
+		}
 		if _, ok := seen[name]; ok {
 			return fmt.Errorf("duplicate %s name %q", kind, name)
 		}

@@ -47,6 +47,7 @@ func TestNormalizeAttachmentIntentsRejectsInvalidInput(t *testing.T) {
 		want   string
 	}{
 		{name: "duplicate name", inputs: []AttachmentInput{{Name: "uplink", Network: "sysbox_network.public"}, {Name: "uplink", Network: "sysbox_network.backup"}}, want: `duplicate attachment name "uplink"`},
+		{name: "invalid name", inputs: []AttachmentInput{{Name: "not a name", Network: "sysbox_network.public"}}, want: `invalid attachment name "not a name"`},
 		{name: "duplicate prefix", inputs: []AttachmentInput{{Name: "uplink", Network: "sysbox_network.public", IPPrefixes: []string{"10.0.0.10/24", "10.0.0.10/24"}}}, want: `duplicate IP prefix "10.0.0.10/24"`},
 		{name: "multicast mac", inputs: []AttachmentInput{{Name: "uplink", Network: "sysbox_network.public", MAC: "01:00:5e:00:00:01"}}, want: "unicast"},
 		{name: "invalid prefix", inputs: []AttachmentInput{{Name: "uplink", Network: "sysbox_network.public", IPPrefixes: []string{"bad"}}}, want: "invalid IP prefix"},

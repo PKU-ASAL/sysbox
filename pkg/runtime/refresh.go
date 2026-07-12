@@ -9,6 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
 )
 
@@ -34,6 +35,7 @@ func (e *Executor) Refresh(ctx context.Context, plan *Plan) (*Plan, error) {
 			if !result.Resource.Address.IsZero() {
 				current.Attributes = result.Resource.Attributes
 				current.ExternalID = result.Resource.ExternalID
+				current.Attachments = cloneAttachments(result.Resource.Attachments)
 				current.UpdatedAt = time.Now().UTC()
 			}
 		}
@@ -149,14 +151,18 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		return result, nil
 	}
 	checks := map[string]controlplane.ResourceCheckHealth{}
-	if ok, reason := networkAttachmentsCheck(&current); !ok {
+	if status, reason, err := observeAttachments(ctx, handle, &current); status != state.ResourcePresent {
 		checks["network_attachments"] = controlplane.ResourceCheckHealth{OK: false, Reason: reason}
 		result.Checks = checks
 		result.Decision = controlplane.RecoveryDecisionMarkDrift
 		result.Reason = reason
-		result.Status = state.ResourceDrifted
+		result.Status = status
+		if err != nil {
+			return result, err
+		}
 		return result, nil
 	}
+	result.Resource = current
 	if !nodeRoutesHealthy(ctx, nodeDriver, stateDriver, &current) {
 		checks["routes"] = controlplane.ResourceCheckHealth{OK: false, Reason: "route missing"}
 		result.Checks = checks
@@ -171,27 +177,30 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 	return result, nil
 }
 
-func networkAttachmentsHealthy(r *state.Resource) bool {
-	items, ok := r.AttributeMap()["nics"].([]any)
-	if !ok {
-		return true
+func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *state.Resource) (state.ResourceStatus, string, error) {
+	if len(r.Attachments) == 0 {
+		return state.ResourcePresent, "", nil
 	}
-	for _, item := range items {
-		nic, _ := item.(map[string]any)
-		kind := util.AsString(nic["kind"])
-		switch kind {
-		case "veth", "tap":
-			linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
-			if err != nil || !linuxNetwork.LinkHealthy(context.Background(), util.AsString(nic["netns"]), util.AsString(nic["host_end"])) {
-				return false
+	nic, err := driver.DefaultRegistry.RequireNIC(r.Driver)
+	if err != nil {
+		return state.ResourceUnknown, err.Error(), err
+	}
+	for i := range r.Attachments {
+		a := &r.Attachments[i]
+		request := driver.AttachmentRequest{Name: a.Name, Network: a.Network, MAC: a.MAC, IPPrefixes: append([]string(nil), a.IPPrefixes...), Gateway: a.Gateway}
+		observed, err := nic.Observe(ctx, handle, request, a.DriverState)
+		if err != nil {
+			if driver.IsCategory(err, driver.ErrorNotFound) {
+				return state.ResourceDrifted, fmt.Sprintf("attachment %s missing", a.Name), nil
 			}
-		case "docker-nat":
-			continue
-		default:
-			continue
+			return state.ResourceUnknown, fmt.Sprintf("observe attachment %s: %v", a.Name, err), err
+		}
+		a.Observation.GuestDevice = observed.GuestDevice
+		if len(observed.State) > 0 {
+			a.DriverState = observed.State
 		}
 	}
-	return true
+	return state.ResourcePresent, "", nil
 }
 
 func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver driver.NodeState, r *state.Resource) bool {

@@ -61,14 +61,6 @@ type NodeSpec struct {
 	Labels  map[string]string
 	Ports   []PortSpec
 
-	// InitialLinks lists the first network attachment(s) to establish at
-	// node-creation time. The substrate interprets the LinkRequest fields
-	// appropriate to its device model:
-	//   - Docker: KindHint=NICKindDockerNAT → docker network connect at create
-	//   - FC/libvirt: attached after StartNode via AttachNIC
-	// Additional links are attached post-start via AttachNIC.
-	InitialLinks []LinkRequest
-
 	// ProviderConfig is a substrate-owned typed value (e.g. *docker.Config,
 	// *firecracker.Config) produced by Substrate.DecodeProviderConfig. It is
 	// opaque to runtime; substrates type-assert in their own CreateNode.
@@ -278,67 +270,6 @@ type ExecResult struct {
 	ExitCode int
 }
 
-// LinkRequest is the substrate-neutral description of a network attachment
-// that the runtime wants to make. It carries the topology coordinates (which
-// network namespace, bridge, IP, gateway) but does NOT specify the device type
-// or name — each substrate picks those itself (veth for docker, tap for FC,
-// macvtap for libvirt, etc.).
-//
-// This replaces the old NIC struct which conflated topology input with
-// substrate output. The runtime produces LinkRequests; substrates produce
-// AttachedNICs inside their AttachNIC implementation.
-type LinkRequest struct {
-	// NetNS is the network namespace name where the host-side device should
-	// be created / plugged. For Docker this is the isolated netns managed by
-	// sysbox_network; for FC the tap goes there and the VM reads from it.
-	NetNS string
-
-	// Bridge is the Linux bridge inside NetNS to attach the host-end device.
-	// Empty when the network is unbridged (e.g. P2P / host-only).
-	Bridge string
-
-	// IP is the guest-side address in CIDR notation, e.g. "10.0.1.10/24".
-	IP string
-
-	// Gateway is the default gateway for this link. Empty means no gateway
-	// (router interfaces intentionally omit this so they don't install a
-	// default route).
-	Gateway string
-
-	// TargetName is the desired interface name inside the guest (e.g.
-	// "eth0", "eth1"). Substrates that can rename guest interfaces (Docker)
-	// honour this; others (FC kernel cmdline) may ignore it.
-	TargetName string
-
-	// MAC is the desired MAC address. Empty means auto-assign.
-	MAC string
-
-	// MTU is the desired MTU; 0 means use the default.
-	MTU int
-
-	// KindHint is an optional hint telling the substrate what device type
-	// to use (e.g. NICKindDockerNAT for Docker bridge hot-connect).
-	// When empty, the substrate picks based on its own defaults.
-	KindHint string
-
-	// DockerNetID is the Docker-managed network ID for NAT bridge networks.
-	// Only meaningful when KindHint == NICKindDockerNAT. The substrate uses
-	// docker network connect (not veth injection) for this link.
-	DockerNetID string
-}
-
-// AttachedNIC is what the substrate reports back from AttachNIC so runtime
-// can persist it in state for destroy / drift detection. Only the fields
-// the runtime actually needs are populated; substrate-specific state lives
-// in NodeHandle.Provider.
-type AttachedNIC struct {
-	Kind     string // "veth" | "tap" | "docker_nat" | ...
-	HostEnd  string // host-side device name (veth host-end / tap name)
-	GuestEnd string // guest-side device name (veth guest-end / "" for tap)
-	IP       string // CIDR notation
-	NetNS    string // network namespace name (for cleanup on destroy)
-}
-
 // PIDMode declares how guest processes are visible to the host.
 //
 //	PIDVisibilityHost   – guest PIDs share the host PID namespace (docker --pid=host)
@@ -378,7 +309,7 @@ const (
 type Capabilities struct {
 	SharedKernel    bool          // guest shares the host kernel (container)
 	SupportsWindows bool          // can boot a Windows guest
-	NICHotPlug      bool          // AttachNIC works after StartNode (true=container; false=microVM/VM cold-plug)
+	NICHotPlug      bool          // attachment lifecycle works after StartNode (true=container; false=microVM/VM cold-plug)
 	DiskHotPlug     bool          // attach extra disks after StartNode
 	NICKinds        []string      // device types this substrate can produce, e.g. ["veth"] or ["tap","macvtap"]
 	ConsoleKinds    []string      // attachable console modes

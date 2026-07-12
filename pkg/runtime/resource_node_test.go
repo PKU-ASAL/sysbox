@@ -2,14 +2,14 @@ package runtime
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
@@ -68,9 +68,11 @@ func TestNodeResourceHandlerDeleteMissingSubstrateReturnsError(t *testing.T) {
 
 type portTestSubstrate struct {
 	substrate.BaseSubstrate
-	name      string
-	exposures []string
-	lastSpec  substrate.NodeSpec
+	name               string
+	exposures          []string
+	lastSpec           substrate.NodeSpec
+	deletedAttachments []json.RawMessage
+	natNames           []string
 }
 
 func (s *portTestSubstrate) Name() string { return s.name }
@@ -100,12 +102,36 @@ func (s *portTestSubstrate) StopNode(context.Context, substrate.NodeHandle) erro
 
 func (s *portTestSubstrate) DestroyNode(context.Context, substrate.NodeHandle) error { return nil }
 
-func (s *portTestSubstrate) AttachNIC(context.Context, substrate.NodeHandle, substrate.LinkRequest) (substrate.AttachedNIC, error) {
-	return substrate.AttachedNIC{}, nil
+func (s *portTestSubstrate) Attach(context.Context, substrate.NodeHandle, driver.AttachmentRequest) (driver.AttachmentResult, error) {
+	return driver.AttachmentResult{Driver: s.name}, nil
+}
+func (s *portTestSubstrate) Observe(context.Context, substrate.NodeHandle, driver.AttachmentRequest, json.RawMessage) (driver.AttachmentResult, error) {
+	return driver.AttachmentResult{}, nil
+}
+func (s *portTestSubstrate) Delete(_ context.Context, _ substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
+	s.deletedAttachments = append(s.deletedAttachments, append(json.RawMessage(nil), raw...))
+	return nil
+}
+func (s *portTestSubstrate) ConfigureNAT(_ context.Context, _ substrate.NodeHandle, from driver.AttachmentRequest, _ driver.AttachmentResult, to driver.AttachmentRequest, _ driver.AttachmentResult) error {
+	s.natNames = []string{from.Name, to.Name}
+	return nil
 }
 
 func (s *portTestSubstrate) NodeStatus(context.Context, substrate.NodeHandle) (bool, error) {
 	return true, nil
+}
+
+func TestDestroyNodeDeletesTypedAttachments(t *testing.T) {
+	sub := &portTestSubstrate{name: "delete-test"}
+	registerPortTestDriver(t, sub)
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_network", "public"), Attributes: map[string]any{"nat": true, "docker_network_id": "net-1"}})
+	resource := state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: sub.name, Attributes: map[string]any{"container_id": "node-id"}, Attachments: []state.Attachment{{Name: "uplink", Network: address.Resource("sysbox_network", "public"), Driver: sub.name, DriverState: json.RawMessage(`{"id":"opaque"}`)}}}
+	st.AddResource(resource)
+	exec := NewExecutor(graph.New(), st)
+	require.NoError(t, exec.destroyNodeResource(context.Background(), resource))
+	require.Len(t, sub.deletedAttachments, 1)
+	require.JSONEq(t, `{"id":"opaque"}`, string(sub.deletedAttachments[0]))
 }
 
 func registerPortTestDriver(t *testing.T, sub *portTestSubstrate) {
@@ -114,7 +140,7 @@ func registerPortTestDriver(t *testing.T, sub *portTestSubstrate) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = previous })
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{
-		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub,
+		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub, RouterNetwork: sub,
 	}))
 }
 
@@ -133,11 +159,13 @@ func TestNodeResourceHandlerPortsArePassedAndResolved(t *testing.T) {
 			"repository": "nginx:alpine",
 		},
 	})
+	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_network", "public"), Driver: "docker", Attributes: map[string]any{"nat": true, "docker_network_id": "net-1"}})
 	n := &graph.Node{
 		Address: address.Resource("sysbox_node", "web"),
 		Data: &config.NodeConfig{
 			Image:     "sysbox_image.nginx.id",
 			Substrate: "port-test",
+			Links:     []config.LinkConfig{{Name: "uplink", Network: "sysbox_network.public", IP: "10.0.0.10/24"}},
 			Ports: []config.PortConfig{
 				{Name: "http", Target: 80, Published: 28080, Protocol: "http", Exposure: "host", HostIP: "127.0.0.1"},
 			},

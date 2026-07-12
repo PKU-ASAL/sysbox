@@ -7,10 +7,19 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-func (s *Substrate) ConfigureNAT(ctx context.Context, handle substrate.NodeHandle, fromIf, toIf string) error {
+func (s *Substrate) ConfigureNAT(ctx context.Context, handle substrate.NodeHandle, fromReq driver.AttachmentRequest, from driver.AttachmentResult, toReq driver.AttachmentRequest, to driver.AttachmentResult) error {
+	fromIf, err := s.resolveAttachmentDevice(ctx, handle, fromReq, from)
+	if err != nil {
+		return err
+	}
+	toIf, err := s.resolveAttachmentDevice(ctx, handle, toReq, to)
+	if err != nil {
+		return err
+	}
 	container, err := s.cli.ContainerInspect(ctx, handle.ID)
 	if err != nil {
 		return fmt.Errorf("inspect router %s: %w", handle.ID, err)
@@ -30,4 +39,24 @@ func (s *Substrate) ConfigureNAT(ctx context.Context, handle substrate.NodeHandl
 		}
 	}
 	return nil
+}
+
+func (s *Substrate) resolveAttachmentDevice(ctx context.Context, handle substrate.NodeHandle, req driver.AttachmentRequest, result driver.AttachmentResult) (string, error) {
+	if result.GuestDevice != "" {
+		return result.GuestDevice, nil
+	}
+	if len(req.IPPrefixes) == 0 {
+		return "", fmt.Errorf("attachment %q has no observed device or IP", req.Name)
+	}
+	ip := strings.SplitN(req.IPPrefixes[0], "/", 2)[0]
+	command := fmt.Sprintf(`ip -o addr show | awk '$4 ~ /^%s\// {print $2; exit}'`, ip)
+	resolved, err := s.ExecInNode(ctx, handle, substrate.ExecSpec{Cmd: []string{"sh", "-c", command}})
+	if err != nil {
+		return "", fmt.Errorf("resolve attachment %q: %w", req.Name, err)
+	}
+	device := strings.TrimSpace(resolved.Stdout)
+	if device == "" {
+		return "", fmt.Errorf("resolve attachment %q: no interface has IP %s", req.Name, ip)
+	}
+	return device, nil
 }

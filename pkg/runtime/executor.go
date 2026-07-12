@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -96,10 +97,13 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 	}
 	e.recorder.StepExternal(step, r.Driver, externalID, ManagedLabels(e.topology, e.runID, id))
 	log := StateResourceLog{
-		Type:     r.Address.Type,
-		Name:     r.Address.Name,
-		Provider: r.Driver,
-		Instance: r.AttributeMap(),
+		Type:        r.Address.Type,
+		Name:        r.Address.Name,
+		Provider:    r.Driver,
+		Instance:    r.AttributeMap(),
+		Attachments: cloneAttachments(r.Attachments),
+		Private:     append(json.RawMessage(nil), r.Private...),
+		Status:      r.Status,
 	}
 	e.recorder.StepStateResource(step, log)
 	patch := StatePatch{
@@ -121,10 +125,13 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 
 func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action controlplane.PlanActionType) {
 	log := StateResourceLog{
-		Type:     r.Address.Type,
-		Name:     r.Address.Name,
-		Provider: r.Driver,
-		Instance: r.AttributeMap(),
+		Type:        r.Address.Type,
+		Name:        r.Address.Name,
+		Provider:    r.Driver,
+		Instance:    r.AttributeMap(),
+		Attachments: cloneAttachments(r.Attachments),
+		Private:     append(json.RawMessage(nil), r.Private...),
+		Status:      r.Status,
 	}
 	e.recorder.StepStatePatch(step, StatePatchDelete, &log)
 	if e.patchSink != nil {

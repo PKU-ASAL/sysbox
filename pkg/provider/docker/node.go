@@ -16,9 +16,10 @@ import (
 // HandleState is the docker-substrate's typed NodeHandle.Provider payload.
 // Persisted via MarshalProviderState; reconstructed on cold-destroy.
 type HandleState struct {
-	ContainerName   string   `json:"container_name,omitempty"`
-	ImageCmd        []string `json:"image_cmd,omitempty"`        // original image CMD (e.g. ["nginx", "-g", "daemon off;"])
-	ImageEntrypoint []string `json:"image_entrypoint,omitempty"` // original image ENTRYPOINT
+	ContainerName       string   `json:"container_name,omitempty"`
+	ImageCmd            []string `json:"image_cmd,omitempty"`        // original image CMD (e.g. ["nginx", "-g", "daemon off;"])
+	ImageEntrypoint     []string `json:"image_entrypoint,omitempty"` // original image ENTRYPOINT
+	RemoveDefaultBridge bool     `json:"remove_default_bridge,omitempty"`
 }
 
 func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
@@ -60,35 +61,12 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		hostCfg.PortBindings = portBindings
 	}
 
-	// Network mode strategy:
-	//   - No NAT links in InitialLinks → NetworkMode:"none" (fully isolated netns,
-	//     veth pairs injected manually later via AttachNIC).
-	//   - One or more NAT links → attach the first via NetworkingConfig at create
-	//     time (avoids the "cannot connect to multiple networks with none-mode" error);
-	//     extras are hot-connected post-start via AttachNIC.
-	var natLinks []substrate.LinkRequest
-	for _, l := range spec.InitialLinks {
-		if l.KindHint == substrate.NICKindDockerNAT || l.DockerNetID != "" {
-			natLinks = append(natLinks, l)
-		}
-	}
-
+	// Host port bindings require Docker's default bridge during create. The
+	// first declared NAT attachment replaces it through the NIC capability.
 	netCfg := &network.NetworkingConfig{}
-	if len(natLinks) == 0 {
+	removeDefaultBridge := len(portBindings) > 0
+	if !removeDefaultBridge {
 		hostCfg.NetworkMode = "none"
-	} else {
-		first := natLinks[0]
-		ip := trimCIDR(first.IP)
-		// Set NetworkMode to the custom network so Docker does NOT also attach
-		// the default bridge. Without this, Docker adds an extra eth0 (default
-		// bridge) before our NAT network, pushing all interface indices up by 1
-		// and breaking the vethIdx accounting in resource_node / router.
-		hostCfg.NetworkMode = container.NetworkMode(first.DockerNetID)
-		netCfg.EndpointsConfig = map[string]*network.EndpointSettings{
-			first.DockerNetID: {
-				IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: ip},
-			},
-		}
 	}
 
 	// Inspect the image to capture its original CMD/Entrypoint so we can
@@ -124,9 +102,10 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	return substrate.NodeHandle{
 		ID: resp.ID,
 		Provider: &HandleState{
-			ContainerName:   spec.Name,
-			ImageCmd:        imageCmd,
-			ImageEntrypoint: imageEntrypoint,
+			ContainerName:       spec.Name,
+			ImageCmd:            imageCmd,
+			ImageEntrypoint:     imageEntrypoint,
+			RemoveDefaultBridge: removeDefaultBridge,
 		},
 		Conn: substrate.ConnInfo{
 			Kind:     substrate.ConnKindDocker,
@@ -271,15 +250,4 @@ func (s *Substrate) ExecImageEntry(ctx context.Context, handle substrate.NodeHan
 	// Run as background process so it doesn't block the executor.
 	_, err = c.ExecBackground(ctx, cmd, nil)
 	return err
-}
-
-// trimCIDR strips the prefix length from an IP/CIDR string, returning just the
-// host address. Docker's IPAM config expects a plain IP, not CIDR notation.
-func trimCIDR(cidr string) string {
-	for i, c := range cidr {
-		if c == '/' {
-			return cidr[:i]
-		}
-	}
-	return cidr
 }
