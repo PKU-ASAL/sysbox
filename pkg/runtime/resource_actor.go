@@ -144,7 +144,15 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("actor %s: connection: %w", n.Address.Name, err)
 	}
-	pid, err := conn.ExecBackground(ctx, cfg.Command, cfg.Env)
+	resolvedCommand, err := resolveSecretStrings(ctx, cfg.Command)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	resolvedEnv, err := resolveSecretMap(ctx, cfg.Env)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	pid, err := conn.ExecBackground(ctx, resolvedCommand, resolvedEnv)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("start actor %s: %w", n.Address.Name, err)
 	}
@@ -238,10 +246,14 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 
 	containerName := runtimeExternalName(e.topology, "actor", n.Address.Name)
+	resolvedEnv, err := resolveSecretMap(ctx, cfg.Env)
+	if err != nil {
+		return state.Resource{}, err
+	}
 	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
 		Name:         containerName,
 		Image:        imgRef,
-		Env:          cfg.Env,
+		Env:          resolvedEnv,
 		InitialLinks: initialLinks,
 		Labels:       ManagedLabels(e.topology, e.runID, n.Address),
 	})
@@ -273,7 +285,11 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on connection failure")
 		return state.Resource{}, fmt.Errorf("actor %s: connection: %w", n.Address.Name, err)
 	}
-	pid, err := conn.ExecBackground(ctx, cfg.Command, cfg.Env)
+	resolvedCommand, err := resolveSecretStrings(ctx, cfg.Command)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	pid, err := conn.ExecBackground(ctx, resolvedCommand, resolvedEnv)
 	if err != nil {
 		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on exec failure")
 		return state.Resource{}, fmt.Errorf("start actor command %s: %w", n.Address.Name, err)

@@ -27,7 +27,7 @@ substrate "docker" {
 # ── Locals ───────────────────────────────────────────────────────────────────
 
 locals {
-  qcow2_path = env("SYSBOX_QCOW2") != "" ? env("SYSBOX_QCOW2") : "${env("HOME")}/.cache/sysbox/images/ubuntu-22.04.qcow2"
+  qcow2_path = env_optional("SYSBOX_QCOW2") != "" ? env_optional("SYSBOX_QCOW2") : "${env_optional("HOME")}/.cache/sysbox/images/ubuntu-22.04.qcow2"
 }
 
 # ── Images ───────────────────────────────────────────────────────────────────

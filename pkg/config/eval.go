@@ -13,6 +13,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/diag"
+	"github.com/oslab/sysbox/pkg/secret"
 )
 
 // BuildEvalContext returns an *hcl.EvalContext for the given root. callerDir
@@ -48,7 +49,7 @@ func buildEvalContextInner(root *Root, callerDir string) (*hcl.EvalContext, erro
 
 	// Collect locals first so they are available when evaluating count expressions.
 	localCtx := &hcl.EvalContext{
-		Functions: map[string]function.Function{"env": envFunc, "toset": tosetFunc},
+		Functions: map[string]function.Function{"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc},
 	}
 	localVals := map[string]cty.Value{}
 	for _, lb := range root.Locals {
@@ -73,7 +74,7 @@ func buildEvalContextInner(root *Root, callerDir string) (*hcl.EvalContext, erro
 	// Minimal context for evaluating count = <expr> (literals + local.x).
 	preCtx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{},
-		Functions: map[string]function.Function{"env": envFunc, "toset": tosetFunc},
+		Functions: map[string]function.Function{"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc},
 	}
 	if len(localVals) > 0 {
 		preCtx.Variables["local"] = cty.ObjectVal(localVals)
@@ -141,8 +142,7 @@ func buildEvalContextInner(root *Root, callerDir string) (*hcl.EvalContext, erro
 	ctx := &hcl.EvalContext{
 		Variables: vars,
 		Functions: map[string]function.Function{
-			"env":   envFunc,
-			"toset": tosetFunc,
+			"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc,
 		},
 	}
 
@@ -174,9 +174,13 @@ var envFunc = function.New(&function.Spec{
 	},
 	Type: function.StaticReturnType(cty.String),
 	Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
-		return cty.StringVal(os.Getenv(args[0].AsString())), nil
+		return cty.StringVal(secret.Environment(args[0].AsString()).String()), nil
 	},
 })
+
+var envOptionalFunc = function.New(&function.Spec{Params: []function.Parameter{{Name: "name", Type: cty.String}}, Type: function.StaticReturnType(cty.String), Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+	return cty.StringVal(os.Getenv(args[0].AsString())), nil
+}})
 
 // tosetFunc implements toset([...]) → set of the same element type.
 // Mirrors Terraform's toset() conversion function.

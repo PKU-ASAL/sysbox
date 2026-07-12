@@ -106,7 +106,11 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 		port = 22
 	}
 
-	if err := setupSSHAccess(ctx, conn, nodeAddr.String(), cfg.AuthorizedKeys, port, ""); err != nil {
+	keys, err := resolveSecretStrings(ctx, cfg.AuthorizedKeys)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	if err := setupSSHAccess(ctx, conn, nodeAddr.String(), keys, port, ""); err != nil {
 		return state.Resource{}, fmt.Errorf("setup ssh access on %s: %w", nodeAddr.String(), err)
 	}
 

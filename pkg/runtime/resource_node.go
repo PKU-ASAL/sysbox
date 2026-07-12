@@ -14,6 +14,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/provider/network"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
@@ -126,6 +127,15 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if !ok {
 		return state.Resource{}, fmt.Errorf("node %s: wrong data type", n.Address)
 	}
+	resolvedEnv, err := resolveSecretMap(ctx, cfg.Env)
+	if err != nil {
+		return state.Resource{}, fmt.Errorf("node %s environment: %w", n.Address, err)
+	}
+	resolvedProviderConfig, err := secret.ResolveAny(ctx, executionSecretResolver, cfg.ProviderConfig)
+	if err != nil {
+		return state.Resource{}, fmt.Errorf("node %s provider config: %w", n.Address, err)
+	}
+	providerConfig, _ := resolvedProviderConfig.(map[string]any)
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
 		return state.Resource{}, err
@@ -168,7 +178,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		"resource":  n.Address.String(),
 		"substrate": subName,
 	}, func() error {
-		return sub.PrepareHandle(ctx, &substrate.NodeHandle{}, cfg.ProviderConfig, stateAdapter{e.state})
+		return sub.PrepareHandle(ctx, &substrate.NodeHandle{}, providerConfig, stateAdapter{e.state})
 	}); err != nil {
 		return state.Resource{}, err
 	}
@@ -194,11 +204,11 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		Image:          imgRef,
 		VCPUs:          cfg.Vcpus,
 		Memory:         cfg.Memory,
-		Env:            cfg.Env,
+		Env:            resolvedEnv,
 		Labels:         ManagedLabels(e.topology, e.runID, n.Address),
 		Ports:          portSpecs,
 		InitialLinks:   initialLinks,
-		ProviderConfig: cfg.ProviderConfig,
+		ProviderConfig: providerConfig,
 	}
 	if err := sub.Validate(nodeSpec); err != nil {
 		return state.Resource{}, err
@@ -301,7 +311,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		"substrate": subName,
 		"node_id":   handle.ID,
 	}, func() error {
-		return sub.PrepareHandle(ctx, &handle, cfg.ProviderConfig, stateAdapter{e.state})
+		return sub.PrepareHandle(ctx, &handle, providerConfig, stateAdapter{e.state})
 	}); err != nil {
 		e.logf("[apply] warning: PrepareHandle for %s: %v\n", n.Address.Name, err)
 	}
@@ -318,7 +328,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// Configure static routes declared in HCL (before provisioners so they
 	// can use the routes). This replaces `ip route add` in provisioners.
 	if len(cfg.Routes) > 0 {
-		conn, err := connectionForNode(sub, handle, cfg.Connections)
+		conn, err := connectionForNode(ctx, sub, handle, cfg.Connections)
 		if err != nil {
 			return state.Resource{}, fmt.Errorf("connection for routes on node %s: %w", n.Address.Name, err)
 		}
@@ -348,7 +358,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 
 	// Run provisioners after node is up and wired.
 	if len(cfg.Provisioners) > 0 {
-		conn, err := connectionForNode(sub, handle, cfg.Connections)
+		conn, err := connectionForNode(ctx, sub, handle, cfg.Connections)
 		if err != nil {
 			return state.Resource{}, fmt.Errorf("connection for node %s: %w", n.Address.Name, err)
 		}
@@ -424,18 +434,26 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 // inspects NodeHandle.Conn and the optional HCL hints to pick the right
 // implementation (docker-exec, vsock-rpc, SSH, ...).
 func connectionForNode(
+	ctx context.Context,
 	sub substrate.Substrate,
 	handle substrate.NodeHandle,
 	conns []config.ConnectionConfig,
 ) (substrate.Connection, error) {
 	hints := make([]substrate.ConnectionHint, len(conns))
 	for i, c := range conns {
+		password, err := secret.ResolveString(ctx, executionSecretResolver, c.Password)
+		if err != nil {
+			return nil, err
+		}
+		privateKey, err := secret.ResolveString(ctx, executionSecretResolver, c.PrivateKey)
+		if err != nil {
+			return nil, err
+		}
 		hints[i] = substrate.ConnectionHint{
-			Type:       c.Type,
-			Host:       c.Host,
-			User:       c.User,
-			Password:   c.Password,
-			PrivateKey: c.PrivateKey,
+			Type:     c.Type,
+			Host:     c.Host,
+			User:     c.User,
+			Password: password, PrivateKey: privateKey,
 		}
 	}
 	return sub.Connection(handle, hints)
@@ -452,16 +470,20 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 			if len(p.Inline) == 0 {
 				continue
 			}
+			resolvedInline, err := resolveSecretStrings(ctx, p.Inline)
+			if err != nil {
+				return err
+			}
 			if p.Background {
-				cmd := []string{"sh", "-c", strings.Join(p.Inline, " && ")}
+				cmd := []string{"sh", "-c", strings.Join(resolvedInline, " && ")}
 				pid, err := conn.ExecBackground(ctx, cmd, nil)
 				if err != nil {
 					return fmt.Errorf("provisioner exec (background): %w", err)
 				}
 				e.logf("[provisioner] background exec started (pid %d)\n", pid)
 			} else {
-				e.logf("[provisioner] exec: %v\n", p.Inline)
-				if err := conn.ExecInline(ctx, p.Inline); err != nil {
+				e.logf("[provisioner] exec: %d command(s)\n", len(resolvedInline))
+				if err := conn.ExecInline(ctx, resolvedInline); err != nil {
 					return err
 				}
 			}

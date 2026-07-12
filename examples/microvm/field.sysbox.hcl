@@ -33,7 +33,7 @@ substrate "docker" {
 # survive into the sysbox process; otherwise root's $HOME is used.
 
 locals {
-  rootfs_path = env("SYSBOX_ROOTFS") != "" ? env("SYSBOX_ROOTFS") : (env("SYSBOX_CACHE") != "" ? "${env("SYSBOX_CACHE")}/rootfs/ubuntu-24.04.ext4" : "${env("HOME")}/.cache/sysbox/rootfs/ubuntu-24.04.ext4")
+  rootfs_path = env_optional("SYSBOX_ROOTFS") != "" ? env_optional("SYSBOX_ROOTFS") : (env_optional("SYSBOX_CACHE") != "" ? "${env_optional("SYSBOX_CACHE")}/rootfs/ubuntu-24.04.ext4" : "${env_optional("HOME")}/.cache/sysbox/rootfs/ubuntu-24.04.ext4")
 }
 
 # ── Kernel + Images ─────────────────────────────────────────────────────────
