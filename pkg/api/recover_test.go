@@ -76,7 +76,7 @@ func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 	require.True(t, cpPtr.StatePatches[0].Recorded)
 }
 
-func TestAdoptFirecrackerStateResourceKeepsProviderExtra(t *testing.T) {
+func TestAdoptStateResourceDropsLegacyProviderExtra(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion}
 	runtime.AdoptStateResource(st, runtime.StateResourceLog{
 		Type: "sysbox_node", Name: "vm",
@@ -93,5 +93,6 @@ func TestAdoptFirecrackerStateResourceKeepsProviderExtra(t *testing.T) {
 	require.Equal(t, "sysbox-vm", res.ContainerID())
 	providerState, err := res.ProviderState()
 	require.NoError(t, err)
-	require.JSONEq(t, `{"vm_dir":"/tmp/sysbox-vm"}`, string(providerState))
+	require.Empty(t, providerState)
+	require.NotContains(t, res.Attributes, "provider_extra")
 }

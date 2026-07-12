@@ -110,6 +110,7 @@ func checkpointResourceType(step OperationStep) string {
 
 func StateResourceFromLog(rec StateResourceLog) state.Resource {
 	attributes := cloneInstance(rec.Instance)
+	delete(attributes, "provider_extra")
 	resource := state.Resource{
 		Address:    address.Resource(rec.Type, rec.Name),
 		Driver:     rec.Provider,
