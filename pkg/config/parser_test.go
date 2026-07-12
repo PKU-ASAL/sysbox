@@ -42,10 +42,10 @@ func TestDecodeResource(t *testing.T) {
 	var nodeCfg NodeConfig
 	require.NoError(t, DecodeResource(nodeBlock, &nodeCfg, ctx))
 	require.Equal(t, "docker", nodeCfg.Substrate)
-	require.Equal(t, "alpine", nodeCfg.Image)
+	require.Equal(t, "sysbox_image.alpine", nodeCfg.Image)
 	require.Len(t, nodeCfg.Links, 1)
 	require.Equal(t, "10.0.1.10/24", nodeCfg.Links[0].IP)
-	require.Equal(t, "dmz", nodeCfg.Links[0].Network)
+	require.Equal(t, "sysbox_network.dmz", nodeCfg.Links[0].Network)
 }
 
 func TestDecodeNodePorts(t *testing.T) {
@@ -94,7 +94,7 @@ func TestDecodeActor(t *testing.T) {
 	var cfg ActorConfig
 	require.NoError(t, DecodeResource(actorBlock, &cfg, ctx))
 	require.Equal(t, "internal", cfg.Position)
-	require.Equal(t, "client", cfg.Node)
+	require.Equal(t, "sysbox_node.client", cfg.Node)
 	require.Equal(t, 4096, cfg.Port)
 	require.Equal(t, []string{"opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"}, cfg.Command)
 	require.Equal(t, []string{"sysbox_node.client"}, cfg.DependsOn)

@@ -67,12 +67,20 @@ func (RouterResourceProvider) DecodeResource(r config.ResourceBlock, _ string, c
 		return nil, nil, err
 	}
 	var deps []address.Address
-	if ref := config.ResolveName(cfg.Image); ref != "" {
-		deps = append(deps, address.Address{Type: "sysbox_image", Name: ref})
+	if cfg.Image != "" {
+		ref, err := config.ResolveResourceAddress(cfg.Image, "sysbox_image")
+		if err != nil {
+			return nil, nil, err
+		}
+		deps = append(deps, ref)
 	}
 	for _, iface := range cfg.Interfaces {
-		if ref := config.ResolveName(iface.Network); ref != "" {
-			deps = append(deps, address.Address{Type: "sysbox_network", Name: ref})
+		if iface.Network != "" {
+			ref, err := config.ResolveResourceAddress(iface.Network, "sysbox_network")
+			if err != nil {
+				return nil, nil, err
+			}
+			deps = append(deps, ref)
 		}
 	}
 	return cfg, deps, nil
@@ -92,10 +100,13 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		return state.Resource{}, err
 	}
 
-	imageName := config.ResolveName(cfg.Image)
-	imgState := e.state.FindResource(address.Resource("sysbox_image", imageName))
+	imageAddr, err := config.ResolveResourceAddress(cfg.Image, "sysbox_image")
+	if err != nil {
+		return state.Resource{}, err
+	}
+	imgState := e.state.FindResource(imageAddr)
 	if imgState == nil {
-		return state.Resource{}, fmt.Errorf("image %s not applied yet", imageName)
+		return state.Resource{}, fmt.Errorf("image %s not applied yet", imageAddr)
 	}
 	imgRef := substrate.ImageRef{
 		ID:         imgState.ImageID(),
@@ -106,7 +117,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	var nicSpecs []NICSpec
 	for _, iface := range cfg.Interfaces {
 		nicSpecs = append(nicSpecs, NICSpec{
-			Network: config.ResolveName(iface.Network),
+			Network: iface.Network,
 			IP:      iface.IP,
 			Label:   iface.Name,
 		})

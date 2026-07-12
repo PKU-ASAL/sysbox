@@ -65,7 +65,7 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		payload["cmdline_template"] = cfg.CmdlineTemplate
 		payload["depends_on"] = cfg.DependsOn
 	case *config.NodeConfig:
-		payload["image"] = config.ResolveName(cfg.Image)
+		payload["image"] = cfg.Image
 		payload["substrate"] = cfg.Substrate
 		payload["vcpus"] = cfg.Vcpus
 		payload["memory"] = cfg.Memory
@@ -82,7 +82,7 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		}
 	case *config.RouterConfig:
 		payload["substrate"] = cfg.Substrate
-		payload["image"] = config.ResolveName(cfg.Image)
+		payload["image"] = cfg.Image
 		payload["interfaces"] = cfg.Interfaces
 		payload["nat_from"] = cfg.NatFrom
 		payload["nat_to"] = cfg.NatTo
@@ -90,17 +90,17 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 			ignore = cfg.Lifecycle.IgnoreChanges
 		}
 	case *config.FirewallConfig:
-		payload["attach_to"] = config.ResolveName(cfg.AttachTo)
+		payload["attach_to"] = cfg.AttachTo
 		payload["rules"] = cfg.Rules
 	case *config.SSHAccessConfig:
-		payload["node"] = config.ResolveName(cfg.Node)
+		payload["node"] = cfg.Node
 		payload["authorized_keys"] = cfg.AuthorizedKeys
 		payload["bind_ip"] = cfg.BindIP
 		payload["port"] = cfg.Port
 	case *config.ActorConfig:
 		payload["position"] = cfg.Position
-		payload["node"] = config.ResolveName(cfg.Node)
-		payload["image"] = config.ResolveName(cfg.Image)
+		payload["node"] = cfg.Node
+		payload["image"] = cfg.Image
 		payload["links"] = normalizeLinks(cfg.Links)
 		payload["command"] = cfg.Command
 		payload["port"] = cfg.Port
@@ -117,7 +117,6 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 func normalizeLinks(in []config.LinkConfig) []config.LinkConfig {
 	out := make([]config.LinkConfig, 0, len(in))
 	for _, link := range in {
-		link.Network = config.ResolveName(link.Network)
 		out = append(out, link)
 	}
 	return out

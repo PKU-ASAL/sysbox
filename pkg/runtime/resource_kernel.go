@@ -107,7 +107,8 @@ func (KernelResourceProvider) DecodeResource(r config.ResourceBlock, _ string, c
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
 	}
-	return cfg, decodeDependsOn(nil, cfg.DependsOn), nil
+	deps, err := decodeDependsOn(nil, cfg.DependsOn)
+	return cfg, deps, err
 }
 
 func (KernelResourceProvider) PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []substrate.PreflightCheck {

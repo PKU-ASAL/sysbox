@@ -65,8 +65,12 @@ func (SSHAccessResourceProvider) DecodeResource(r config.ResourceBlock, _ string
 		return nil, nil, err
 	}
 	var deps []address.Address
-	if ref := config.ResolveName(cfg.Node); ref != "" {
-		deps = append(deps, address.Address{Type: "sysbox_node", Name: ref})
+	if cfg.Node != "" {
+		ref, err := config.ResolveResourceAddress(cfg.Node, "sysbox_node")
+		if err != nil {
+			return nil, nil, err
+		}
+		deps = append(deps, ref)
 	}
 	return cfg, deps, nil
 }
@@ -77,10 +81,13 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 		return state.Resource{}, fmt.Errorf("ssh_access %s: wrong data type", n.Address)
 	}
 
-	nodeName := config.ResolveName(cfg.Node)
-	nodeState := e.state.FindResource(address.Resource("sysbox_node", nodeName))
+	nodeAddr, err := config.ResolveResourceAddress(cfg.Node, "sysbox_node")
+	if err != nil {
+		return state.Resource{}, err
+	}
+	nodeState := e.state.FindResource(nodeAddr)
 	if nodeState == nil {
-		return state.Resource{}, fmt.Errorf("node %s not applied yet", nodeName)
+		return state.Resource{}, fmt.Errorf("node %s not applied yet", nodeAddr)
 	}
 
 	subName := nodeState.Driver
@@ -95,7 +102,7 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 
 	conn, err := sub.Connection(handle, nil)
 	if err != nil || conn == nil {
-		return state.Resource{}, fmt.Errorf("sysbox_ssh_access: no connection to node %s: %v", nodeName, err)
+		return state.Resource{}, fmt.Errorf("sysbox_ssh_access: no connection to node %s: %v", nodeAddr.String(), err)
 	}
 
 	port := cfg.Port
@@ -103,12 +110,12 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 		port = 22
 	}
 
-	if err := setupSSHAccess(ctx, conn, nodeName, cfg.AuthorizedKeys, port, ""); err != nil {
-		return state.Resource{}, fmt.Errorf("setup ssh access on %s: %w", nodeName, err)
+	if err := setupSSHAccess(ctx, conn, nodeAddr.String(), cfg.AuthorizedKeys, port, ""); err != nil {
+		return state.Resource{}, fmt.Errorf("setup ssh access on %s: %w", nodeAddr.String(), err)
 	}
 
 	inst := map[string]any{
-		"node":         nodeName,
+		"node":         nodeAddr.String(),
 		"port":         port,
 		"container_id": handle.ID,
 		"key_count":    len(cfg.AuthorizedKeys),

@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/function"
+
+	"github.com/oslab/sysbox/pkg/address"
 )
 
 // BuildEvalContext returns an *hcl.EvalContext for the given root. callerDir
@@ -89,7 +91,7 @@ func buildEvalContextInner(root *Root, callerDir string) *hcl.EvalContext {
 						if n, acc := val.AsBigFloat().Int64(); acc == 0 && n > 0 {
 							elems := make([]cty.Value, n)
 							for i := 0; i < int(n); i++ {
-								instanceName := fmt.Sprintf("%s[%d]", r.Name, i)
+								instanceName := address.IntInstance(r.Type, r.Name, i).String()
 								elems[i] = cty.ObjectVal(map[string]cty.Value{
 									"id":   cty.StringVal(instanceName),
 									"name": cty.StringVal(instanceName),
@@ -102,9 +104,10 @@ func buildEvalContextInner(root *Root, callerDir string) *hcl.EvalContext {
 				}
 			}
 		}
+		resourceAddress := address.Resource(r.Type, r.Name).String()
 		resTypes[r.Type][r.Name] = cty.ObjectVal(map[string]cty.Value{
-			"id":   cty.StringVal(r.Name),
-			"name": cty.StringVal(r.Name),
+			"id":   cty.StringVal(resourceAddress),
+			"name": cty.StringVal(resourceAddress),
 		})
 	}
 
@@ -225,8 +228,8 @@ func resolveModuleOutputs(mod ModuleBlock, callerDir string, parentCtx *hcl.Eval
 	return outVals
 }
 
-// buildModuleEvalContext builds an eval context for a module's resources with
-// namespaced IDs (module_<modName>_<resourceName>) and var.xxx bindings.
+// buildModuleEvalContext builds an eval context with canonical module resource
+// addresses and var.xxx bindings.
 func buildModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, parentCtx *hcl.EvalContext) *hcl.EvalContext {
 	// Compute variable defaults from variable blocks.
 	varDefaults := map[string]cty.Value{}
@@ -260,14 +263,13 @@ func buildModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, pare
 		}
 	}
 
-	// Build namespaced resource type variables: id = "module_<modName>_<name>".
-	prefix := "module_" + modName + "_"
+	// Build canonical module resource addresses for references and outputs.
 	resTypes := map[string]map[string]cty.Value{}
 	for _, r := range modRoot.Resources {
 		if resTypes[r.Type] == nil {
 			resTypes[r.Type] = map[string]cty.Value{}
 		}
-		nsName := prefix + r.Name
+		nsName := address.Resource(r.Type, r.Name).WithModule(address.ModuleInstance{Name: modName}).String()
 		resTypes[r.Type][r.Name] = cty.ObjectVal(map[string]cty.Value{
 			"id":   cty.StringVal(nsName),
 			"name": cty.StringVal(nsName),

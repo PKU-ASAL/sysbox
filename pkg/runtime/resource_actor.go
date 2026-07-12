@@ -72,21 +72,33 @@ func (ActorResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ct
 		position = "internal"
 	}
 	if position == "internal" {
-		if ref := config.ResolveName(cfg.Node); ref != "" {
-			deps = append(deps, address.Address{Type: "sysbox_node", Name: ref})
+		if cfg.Node != "" {
+			ref, err := config.ResolveResourceAddress(cfg.Node, "sysbox_node")
+			if err != nil {
+				return nil, nil, err
+			}
+			deps = append(deps, ref)
 		}
 	} else {
-		if ref := config.ResolveName(cfg.Image); ref != "" {
-			deps = append(deps, address.Address{Type: "sysbox_image", Name: ref})
+		if cfg.Image != "" {
+			ref, err := config.ResolveResourceAddress(cfg.Image, "sysbox_image")
+			if err != nil {
+				return nil, nil, err
+			}
+			deps = append(deps, ref)
 		}
 		for _, link := range cfg.Links {
-			if ref := config.ResolveName(link.Network); ref != "" {
-				deps = append(deps, address.Address{Type: "sysbox_network", Name: ref})
+			if link.Network != "" {
+				ref, err := config.ResolveResourceAddress(link.Network, "sysbox_network")
+				if err != nil {
+					return nil, nil, err
+				}
+				deps = append(deps, ref)
 			}
 		}
 	}
-	deps = decodeDependsOn(deps, cfg.DependsOn)
-	return cfg, deps, nil
+	deps, err := decodeDependsOn(deps, cfg.DependsOn)
+	return cfg, deps, err
 }
 
 func (e *Executor) createActorResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
@@ -110,10 +122,13 @@ func (e *Executor) createActorResource(ctx context.Context, n *graph.Node) (stat
 
 // createInternalActor runs the actor command inside an existing sysbox_node.
 func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *config.ActorConfig) (state.Resource, error) {
-	nodeName := config.ResolveName(cfg.Node)
-	nodeState := e.state.FindResource(address.Resource("sysbox_node", nodeName))
+	nodeAddr, err := config.ResolveResourceAddress(cfg.Node, "sysbox_node")
+	if err != nil {
+		return state.Resource{}, err
+	}
+	nodeState := e.state.FindResource(nodeAddr)
 	if nodeState == nil {
-		return state.Resource{}, fmt.Errorf("actor %s: node %s not applied yet", n.Address.Name, nodeName)
+		return state.Resource{}, fmt.Errorf("actor %s: node %s not applied yet", n.Address.Name, nodeAddr)
 	}
 
 	subName := nodeState.Driver
@@ -128,7 +143,7 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("actor %s: %w", n.Address.Name, err)
 	}
-	e.logf("[apply] starting actor %s on node %s: %v\n", n.Address.Name, nodeName, cfg.Command)
+	e.logf("[apply] starting actor %s on node %s: %v\n", n.Address.Name, nodeAddr, cfg.Command)
 	conn, err := sub.Connection(handle, nil)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("actor %s: connection: %w", n.Address.Name, err)
@@ -152,7 +167,7 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 
 	inst := map[string]any{
 		"position":     "internal",
-		"node":         nodeName,
+		"node":         nodeAddr.String(),
 		"container_id": handle.ID,
 		"pid":          pid,
 		"port":         cfg.Port,
@@ -182,10 +197,13 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 
 	// Resolve image.
-	imageName := config.ResolveName(cfg.Image)
-	imgState := e.state.FindResource(address.Resource("sysbox_image", imageName))
+	imageAddr, err := config.ResolveResourceAddress(cfg.Image, "sysbox_image")
+	if err != nil {
+		return state.Resource{}, err
+	}
+	imgState := e.state.FindResource(imageAddr)
 	if imgState == nil {
-		return state.Resource{}, fmt.Errorf("actor %s: image %s not applied yet", n.Address.Name, imageName)
+		return state.Resource{}, fmt.Errorf("actor %s: image %s not applied yet", n.Address.Name, imageAddr)
 	}
 	imgRef := substrate.ImageRef{
 		ID:         imgState.ImageID(),
@@ -196,13 +214,16 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	type natLink struct{ netID, ip string }
 	var natLinks []natLink
 	for _, link := range cfg.Links {
-		netName := config.ResolveName(link.Network)
-		netState := e.state.FindResource(address.Resource("sysbox_network", netName))
+		netAddr, err := config.ResolveResourceAddress(link.Network, "sysbox_network")
+		if err != nil {
+			return state.Resource{}, err
+		}
+		netState := e.state.FindResource(netAddr)
 		if netState == nil {
-			return state.Resource{}, fmt.Errorf("actor %s: network %s not applied yet", n.Address.Name, netName)
+			return state.Resource{}, fmt.Errorf("actor %s: network %s not applied yet", n.Address.Name, netAddr)
 		}
 		if !netState.IsNAT() {
-			return state.Resource{}, fmt.Errorf("actor %s (external): link %s is not a NAT network; external actors only support Docker bridge networks", n.Address.Name, netName)
+			return state.Resource{}, fmt.Errorf("actor %s (external): link %s is not a NAT network; external actors only support Docker bridge networks", n.Address.Name, netAddr)
 		}
 		natLinks = append(natLinks, natLink{
 			netID: netState.DockerNetID(),

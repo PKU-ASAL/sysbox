@@ -75,9 +75,13 @@ func BuildGraph(root *config.Root, ctx *hcl.EvalContext, hclFile ...string) (*gr
 
 // expandResource handles a single resource block, expanding count or for_each if present.
 func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext) error {
+	return expandResourceAt(r, g, ctx, nil)
+}
+
+func expandResourceAt(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext, modules []address.ModuleInstance) error {
 	synBody, isSyn := r.Remain.(*hclsyntax.Body)
 	if !isSyn {
-		return addResourceToGraph(r, r.Name, ctx, g)
+		return addResourceToGraph(r, withModulePath(address.Resource(r.Type, r.Name), modules), ctx, g)
 	}
 
 	// ── count expansion ────────────────────────────────────────────────────
@@ -103,12 +107,9 @@ func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext
 			EndRange:   synBody.EndRange,
 		}
 		for i := 0; i < int(n); i++ {
-			rCopy := config.ResourceBlock{
-				Type:   r.Type,
-				Name:   fmt.Sprintf("%s[%d]", r.Name, i),
-				Remain: remainBody,
-			}
-			if err := addResourceToGraph(rCopy, rCopy.Name, config.CountEvalContext(ctx, i), g); err != nil {
+			rCopy := config.ResourceBlock{Type: r.Type, Name: r.Name, Remain: remainBody}
+			addr := withModulePath(address.IntInstance(r.Type, r.Name, i), modules)
+			if err := addResourceToGraph(rCopy, addr, config.CountEvalContext(ctx, i), g); err != nil {
 				return fmt.Errorf("count[%d]: %w", i, err)
 			}
 		}
@@ -118,7 +119,7 @@ func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext
 	// ── for_each expansion ─────────────────────────────────────────────────
 	synAttr, hasForEach := synBody.Attributes["for_each"]
 	if !hasForEach {
-		return addResourceToGraph(r, r.Name, ctx, g)
+		return addResourceToGraph(r, withModulePath(address.Resource(r.Type, r.Name), modules), ctx, g)
 	}
 
 	val, diag := synAttr.Expr.Value(ctx)
@@ -156,12 +157,9 @@ func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext
 		for it.Next() {
 			_, elemVal := it.Element()
 			key := elemVal.AsString()
-			rCopy := config.ResourceBlock{
-				Type:   r.Type,
-				Name:   r.Name + "_" + key,
-				Remain: remainBody,
-			}
-			if err := addResourceToGraph(rCopy, rCopy.Name, config.EachEvalContext(ctx, key, elemVal), g); err != nil {
+			rCopy := config.ResourceBlock{Type: r.Type, Name: r.Name, Remain: remainBody}
+			addr := withModulePath(address.StringInstance(r.Type, r.Name, key), modules)
+			if err := addResourceToGraph(rCopy, addr, config.EachEvalContext(ctx, key, elemVal), g); err != nil {
 				return fmt.Errorf("for_each[%s]: %w", key, err)
 			}
 		}
@@ -169,21 +167,17 @@ func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext
 	}
 
 	for key, elemVal := range val.AsValueMap() {
-		rCopy := config.ResourceBlock{
-			Type:   r.Type,
-			Name:   r.Name + "_" + key,
-			Remain: remainBody,
-		}
-		if err := addResourceToGraph(rCopy, rCopy.Name, config.EachEvalContext(ctx, key, elemVal), g); err != nil {
+		rCopy := config.ResourceBlock{Type: r.Type, Name: r.Name, Remain: remainBody}
+		addr := withModulePath(address.StringInstance(r.Type, r.Name, key), modules)
+		if err := addResourceToGraph(rCopy, addr, config.EachEvalContext(ctx, key, elemVal), g); err != nil {
 			return fmt.Errorf("for_each[%s]: %w", key, err)
 		}
 	}
 	return nil
 }
 
-// expandModule loads a module file, builds a variable eval context, and
-// expands all its resources into the main graph with the prefix
-// "module_<name>_". Module nesting is not supported (module-in-module errors).
+// expandModule loads a module file and expands its resources with a structured
+// module path. Module nesting is not supported.
 func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalContext, callerFile string) error {
 	if callerFile == "" {
 		return fmt.Errorf("module %q: cannot resolve source without a caller file path", mod.Name)
@@ -202,36 +196,19 @@ func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalCon
 	}
 
 	modCtx := config.ModuleEvalContext(mod, modRoot, mod.Name, parentCtx)
-	prefix := "module_" + mod.Name + "_"
+	modulePath := []address.ModuleInstance{{Name: mod.Name}}
 
 	for i := range modRoot.Resources {
 		r := modRoot.Resources[i]
-		// Expand for_each/count inside the module, then prefix all resulting names.
-		sub := graph.New()
-		if err := expandResource(r, sub, modCtx); err != nil {
+		if err := expandResourceAt(r, g, modCtx, modulePath); err != nil {
 			return fmt.Errorf("module %q resource %s.%s: %w", mod.Name, r.Type, r.Name, err)
-		}
-		for _, node := range sub.All() {
-			// Re-prefix the name and rewrite deps that point to other module resources.
-			nsName := prefix + node.Address.Name
-			var nsDeps []address.Address
-			for _, dep := range node.Deps {
-				nsDeps = append(nsDeps, address.Address{Type: dep.Type, Name: prefix + dep.Name})
-			}
-			nsAddress := address.Resource(node.Address.Type, nsName)
-			if err := g.AddNode(nsAddress, nsDeps); err != nil {
-				return err
-			}
-			if err := g.SetData(nsAddress, node.Data); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
 }
 
 // addResourceToGraph decodes one resource block and adds it (with deps) to g.
-func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContext, g *graph.Graph) error {
+func addResourceToGraph(r config.ResourceBlock, addr address.Address, ctx *hcl.EvalContext, g *graph.Graph) error {
 	provider, ok := GetResourceProvider(r.Type)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "warning: unsupported resource type %q (skipped)\n", r.Type)
@@ -241,12 +218,18 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 	if !ok {
 		return fmt.Errorf("resource type %q does not support graph decoding", r.Type)
 	}
-	data, deps, err := decoder.DecodeResource(r, name, ctx)
+	data, deps, err := decoder.DecodeResource(r, addr.Name, ctx)
 	if err != nil {
 		return err
 	}
 
-	addr := address.Resource(r.Type, name)
+	if len(addr.ModulePath) > 0 {
+		for i := range deps {
+			if len(deps[i].ModulePath) == 0 && deps[i].Type != "substrate" {
+				deps[i] = withModulePath(deps[i], addr.ModulePath)
+			}
+		}
+	}
 	if err := g.AddNode(addr, deps); err != nil {
 		return err
 	}
@@ -254,6 +237,13 @@ func addResourceToGraph(r config.ResourceBlock, name string, ctx *hcl.EvalContex
 		return err
 	}
 	return nil
+}
+
+func withModulePath(addr address.Address, modules []address.ModuleInstance) address.Address {
+	for _, module := range modules {
+		addr = addr.WithModule(module)
+	}
+	return addr
 }
 
 // expandDataBlock decodes a data block and adds it to the graph as a

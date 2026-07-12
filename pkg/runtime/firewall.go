@@ -64,8 +64,12 @@ func (FirewallResourceProvider) DecodeResource(r config.ResourceBlock, _ string,
 		return nil, nil, err
 	}
 	var deps []address.Address
-	if ref := config.ResolveName(cfg.AttachTo); ref != "" {
-		deps = append(deps, address.Address{Type: "sysbox_network", Name: ref})
+	if cfg.AttachTo != "" {
+		ref, err := config.ResolveResourceAddress(cfg.AttachTo, "sysbox_network")
+		if err != nil {
+			return nil, nil, err
+		}
+		deps = append(deps, ref)
 	}
 	return cfg, deps, nil
 }
@@ -76,13 +80,16 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 		return state.Resource{}, fmt.Errorf("firewall %s: wrong data type", n.Address)
 	}
 
-	netName := config.ResolveName(cfg.AttachTo)
-	if netName == "" {
+	if cfg.AttachTo == "" {
 		return state.Resource{}, fmt.Errorf("firewall %s: attach_to is empty", n.Address.Name)
 	}
-	netState := e.state.FindResource(address.Resource("sysbox_network", netName))
+	netAddr, err := config.ResolveResourceAddress(cfg.AttachTo, "sysbox_network")
+	if err != nil {
+		return state.Resource{}, err
+	}
+	netState := e.state.FindResource(netAddr)
 	if netState == nil {
-		return state.Resource{}, fmt.Errorf("firewall %s: network %s not applied yet", n.Address.Name, netName)
+		return state.Resource{}, fmt.Errorf("firewall %s: network %s not applied yet", n.Address.Name, netAddr)
 	}
 	nsName := netState.Str("netns")
 
@@ -101,7 +108,7 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	}
 
 	inst := map[string]any{
-		"attach_to":  netName,
+		"attach_to":  netAddr.String(),
 		"netns":      nsName,
 		"rules":      len(specs),
 		"rule_specs": specs,

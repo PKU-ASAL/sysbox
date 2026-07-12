@@ -61,14 +61,17 @@ func (s *Substrate) PrepareHandle(_ context.Context, handle *substrate.NodeHandl
 
 	// Step 1: resolve kernel ref.
 	if cfg != nil && cfg.Kernel != "" && config.LooksLikeKernelRef(cfg.Kernel) {
-		kname := config.ResolveName(cfg.Kernel)
-		inst := st.ResourceInstance("sysbox_kernel", kname)
+		kernelAddr, err := config.ResolveResourceAddress(cfg.Kernel, "sysbox_kernel")
+		if err != nil {
+			return err
+		}
+		inst := st.ResourceInstance(kernelAddr)
 		if inst == nil {
-			return fmt.Errorf("kernel %s not applied yet", kname)
+			return fmt.Errorf("kernel %s not applied yet", kernelAddr)
 		}
 		path, _ := inst["path"].(string)
 		if path == "" {
-			return fmt.Errorf("kernel %s has no resolved path in state", kname)
+			return fmt.Errorf("kernel %s has no resolved path in state", kernelAddr)
 		}
 		cfg.Kernel = path
 	}
@@ -102,8 +105,8 @@ func (s *Substrate) Dependencies(raw any) substrate.ProviderDeps {
 	}
 	deps := substrate.ProviderDeps{}
 	if cfg.Kernel != "" && config.LooksLikeKernelRef(cfg.Kernel) {
-		if name := config.ResolveName(cfg.Kernel); name != "" {
-			deps.Kernels = append(deps.Kernels, name)
+		if kernelAddr, err := config.ResolveResourceAddress(cfg.Kernel, "sysbox_kernel"); err == nil {
+			deps.Kernels = append(deps.Kernels, kernelAddr.String())
 		}
 	}
 	return deps

@@ -3,7 +3,27 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"github.com/oslab/sysbox/pkg/address"
 )
+
+func ResolveResourceAddress(ref, expectedType string) (address.Address, error) {
+	if ref == "" {
+		return address.Address{}, fmt.Errorf("empty %s reference", expectedType)
+	}
+	ref = strings.TrimSuffix(ref, ".id")
+	addr, err := address.Parse(ref)
+	if err != nil {
+		addr, err = address.Parse(expectedType + "." + ref)
+	}
+	if err != nil {
+		return address.Address{}, fmt.Errorf("invalid %s reference %q: %w", expectedType, ref, err)
+	}
+	if addr.Type != expectedType {
+		return address.Address{}, fmt.Errorf("reference %q has type %s; expected %s", ref, addr.Type, expectedType)
+	}
+	return addr, nil
+}
 
 // ResolveSubstrateRef takes "docker" or "substrate.docker.light" and returns
 // the substrate type ("docker"). Returns an error on malformed input.

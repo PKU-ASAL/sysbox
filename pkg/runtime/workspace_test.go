@@ -34,9 +34,9 @@ resource "sysbox_network" "lab" {
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 3)
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab[0]")))
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab[1]")))
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab[2]")))
+	require.NotNil(t, g.Get(address.IntInstance("sysbox_network", "lab", 0)))
+	require.NotNil(t, g.Get(address.IntInstance("sysbox_network", "lab", 1)))
+	require.NotNil(t, g.Get(address.IntInstance("sysbox_network", "lab", 2)))
 	require.Nil(t, g.Get(address.Resource("sysbox_network", "lab")))
 }
 
@@ -74,8 +74,8 @@ resource "sysbox_network" "lab" {
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 2)
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_dmz")))
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_internal")))
+	require.NotNil(t, g.Get(address.StringInstance("sysbox_network", "lab", "dmz")))
+	require.NotNil(t, g.Get(address.StringInstance("sysbox_network", "lab", "internal")))
 }
 
 func TestBuildGraphForEachSet(t *testing.T) {
@@ -93,9 +93,9 @@ resource "sysbox_network" "lab" {
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 3)
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_dmz")))
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_internal")))
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_uplink")))
+	require.NotNil(t, g.Get(address.StringInstance("sysbox_network", "lab", "dmz")))
+	require.NotNil(t, g.Get(address.StringInstance("sysbox_network", "lab", "internal")))
+	require.NotNil(t, g.Get(address.StringInstance("sysbox_network", "lab", "uplink")))
 }
 
 func TestBuildGraphForEachSetEachKeyValue(t *testing.T) {
@@ -115,11 +115,30 @@ resource "sysbox_network" "seg" {
 
 	require.Len(t, g.All(), 2)
 	// Each instance carries its config decoded without error.
-	n := g.Get(address.Resource("sysbox_network", "seg_red"))
+	n := g.Get(address.StringInstance("sysbox_network", "seg", "red"))
 	require.NotNil(t, n)
 	cfg, ok := n.Data.(*config.NetworkConfig)
 	require.True(t, ok)
 	require.Equal(t, "10.0.0.0/24", cfg.CIDR)
+}
+
+func TestBuildGraphForEachDoesNotCollideWithLiteralName(t *testing.T) {
+	f := writeHCL(t, `
+resource "sysbox_network" "lab" {
+  for_each = { dmz = "10.0.1.0/24" }
+  cidr = each.value
+}
+resource "sysbox_network" "lab_dmz" {
+  cidr = "10.0.2.0/24"
+}
+`)
+	root, err := config.ParseFile(f)
+	require.NoError(t, err)
+	g, err := BuildGraph(root, config.BuildEvalContext(root))
+	require.NoError(t, err)
+	require.Len(t, g.All(), 2)
+	require.NotNil(t, g.Get(address.StringInstance("sysbox_network", "lab", "dmz")))
+	require.NotNil(t, g.Get(address.Resource("sysbox_network", "lab_dmz")))
 }
 
 func TestBuildGraphModule(t *testing.T) {
@@ -135,13 +154,15 @@ func TestBuildGraphModule(t *testing.T) {
 	g, err := BuildGraph(root, ctx, callerFile)
 	require.NoError(t, err)
 
-	// Module expands to two networks, namespaced as module_net_dmz and module_net_internal.
+	// Module expands to two networks under module.net.
 	require.Len(t, g.All(), 2)
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "module_net_dmz")))
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "module_net_internal")))
+	dmzAddr := address.Resource("sysbox_network", "dmz").WithModule(address.ModuleInstance{Name: "net"})
+	internalAddr := address.Resource("sysbox_network", "internal").WithModule(address.ModuleInstance{Name: "net"})
+	require.NotNil(t, g.Get(dmzAddr))
+	require.NotNil(t, g.Get(internalAddr))
 
 	// Config data is decoded and carries the passed cidr values.
-	dmzNode := g.Get(address.Resource("sysbox_network", "module_net_dmz"))
+	dmzNode := g.Get(dmzAddr)
 	require.NotNil(t, dmzNode)
 	cfg, ok := dmzNode.Data.(*config.NetworkConfig)
 	require.True(t, ok)
@@ -162,7 +183,7 @@ func TestBuildGraphModuleOutputsInContext(t *testing.T) {
 	require.True(t, ok)
 	netVal := modVal.GetAttr("net")
 	dmzID := netVal.GetAttr("dmz_id")
-	require.Equal(t, "module_net_dmz", dmzID.AsString())
+	require.Equal(t, "module.net.sysbox_network.dmz", dmzID.AsString())
 }
 
 func TestBuildGraphModuleDefaultVars(t *testing.T) {
@@ -192,7 +213,7 @@ resource "sysbox_network" "net" { cidr = var.cidr }
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 1)
-	n := g.Get(address.Resource("sysbox_network", "module_net_net"))
+	n := g.Get(address.Resource("sysbox_network", "net").WithModule(address.ModuleInstance{Name: "net"}))
 	require.NotNil(t, n)
 	cfg := n.Data.(*config.NetworkConfig)
 	require.Equal(t, "192.168.1.0/24", cfg.CIDR)
@@ -243,10 +264,38 @@ module "net" { source = "./mod" }
 	g, err := BuildGraph(root, ctx, callerFile)
 	require.NoError(t, err)
 
-	// for_each expands to seg_dmz, seg_internal; module prefixes → module_net_seg_dmz, ...
+	// for_each keys and the module path remain separate address components.
 	require.Len(t, g.All(), 2)
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "module_net_seg_dmz")))
-	require.NotNil(t, g.Get(address.Resource("sysbox_network", "module_net_seg_internal")))
+	module := address.ModuleInstance{Name: "net"}
+	require.NotNil(t, g.Get(address.StringInstance("sysbox_network", "seg", "dmz").WithModule(module)))
+	require.NotNil(t, g.Get(address.StringInstance("sysbox_network", "seg", "internal").WithModule(module)))
+}
+
+func TestBuildGraphModuleKeepsInternalDependencyAddresses(t *testing.T) {
+	dir := t.TempDir()
+	modDir := filepath.Join(dir, "mod")
+	require.NoError(t, os.MkdirAll(modDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(modDir, "main.sysbox.hcl"), []byte(`
+resource "sysbox_network" "dmz" { cidr = "10.0.1.0/24" }
+resource "sysbox_firewall" "edge" {
+  attach_to = sysbox_network.dmz.id
+  rule {
+    proto = "tcp"
+    dport = 443
+    action = "accept"
+  }
+}
+`), 0o644))
+	callerFile := filepath.Join(dir, "field.sysbox.hcl")
+	require.NoError(t, os.WriteFile(callerFile, []byte(`module "lab" { source = "./mod" }`), 0o644))
+	root, err := config.ParseFile(callerFile)
+	require.NoError(t, err)
+	g, err := BuildGraph(root, config.BuildEvalContext(root, dir), callerFile)
+	require.NoError(t, err)
+	module := address.ModuleInstance{Name: "lab"}
+	firewall := address.Resource("sysbox_firewall", "edge").WithModule(module)
+	network := address.Resource("sysbox_network", "dmz").WithModule(module)
+	require.Equal(t, []address.Address{network}, g.Get(firewall).Deps)
 }
 
 // Ensure address.Address is usable in tests.

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 
 	"github.com/hashicorp/hcl/v2"
+
+	"github.com/oslab/sysbox/pkg/address"
 )
 
 // Substrate is the contract every node provider must fulfill.
@@ -144,5 +146,5 @@ type Substrate interface {
 type StateReader interface {
 	// ResourceInstance returns the instance map for a named resource, or nil
 	// if the resource has not yet been applied.
-	ResourceInstance(typ, name string) map[string]any
+	ResourceInstance(address.Address) map[string]any
 }

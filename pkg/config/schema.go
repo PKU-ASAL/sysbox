@@ -36,7 +36,7 @@ type VariableBlock struct {
 //	}
 //
 // All attributes except source are passed as var.<name> to the module file.
-// The module's resource names are prefixed "module_<name>_" in the graph.
+// Module resources keep their declared name and carry a structured module path.
 // Module outputs are accessible as module.<name>.<output_key> in the caller.
 type ModuleBlock struct {
 	Name   string   `hcl:"name,label"`

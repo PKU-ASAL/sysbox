@@ -194,8 +194,8 @@ func resolveSubstrateRef(ref string) (string, error) {
 // stateAdapter wraps *state.State to implement substrate.StateReader.
 type stateAdapter struct{ st *state.State }
 
-func (a stateAdapter) ResourceInstance(typ, name string) map[string]any {
-	r := a.st.FindResource(address.Resource(typ, name))
+func (a stateAdapter) ResourceInstance(addr address.Address) map[string]any {
+	r := a.st.FindResource(addr)
 	if r == nil {
 		return nil
 	}

@@ -67,30 +67,50 @@ func (NodeResourceProvider) DecodeResource(r config.ResourceBlock, name string, 
 		return nil, nil, fmt.Errorf("resource sysbox_node.%s: %w", name, err)
 	}
 	var deps []address.Address
-	if ref := config.ResolveName(cfg.Image); ref != "" {
-		deps = append(deps, address.Address{Type: "sysbox_image", Name: ref})
+	if cfg.Image != "" {
+		ref, err := config.ResolveResourceAddress(cfg.Image, "sysbox_image")
+		if err != nil {
+			return nil, nil, err
+		}
+		deps = append(deps, ref)
 	}
 	for _, link := range cfg.Links {
-		if ref := config.ResolveName(link.Network); ref != "" {
-			deps = append(deps, address.Address{Type: "sysbox_network", Name: ref})
+		if link.Network != "" {
+			ref, err := config.ResolveResourceAddress(link.Network, "sysbox_network")
+			if err != nil {
+				return nil, nil, err
+			}
+			deps = append(deps, ref)
 		}
 	}
 	if subName, err := config.ResolveSubstrateRef(cfg.Substrate); err == nil {
 		if sub, err := substrate.Get(subName); err == nil {
 			pd := sub.Dependencies(cfg.ProviderConfig)
-			for _, n := range pd.Kernels {
-				deps = append(deps, address.Address{Type: "sysbox_kernel", Name: n})
+			for _, ref := range pd.Kernels {
+				addr, err := config.ResolveResourceAddress(ref, "sysbox_kernel")
+				if err != nil {
+					return nil, nil, err
+				}
+				deps = append(deps, addr)
 			}
-			for _, n := range pd.Images {
-				deps = append(deps, address.Address{Type: "sysbox_image", Name: n})
+			for _, ref := range pd.Images {
+				addr, err := config.ResolveResourceAddress(ref, "sysbox_image")
+				if err != nil {
+					return nil, nil, err
+				}
+				deps = append(deps, addr)
 			}
-			for _, n := range pd.Networks {
-				deps = append(deps, address.Address{Type: "sysbox_network", Name: n})
+			for _, ref := range pd.Networks {
+				addr, err := config.ResolveResourceAddress(ref, "sysbox_network")
+				if err != nil {
+					return nil, nil, err
+				}
+				deps = append(deps, addr)
 			}
 		}
 	}
-	deps = decodeDependsOn(deps, cfg.DependsOn)
-	return cfg, deps, nil
+	deps, err := decodeDependsOn(deps, cfg.DependsOn)
+	return cfg, deps, err
 }
 
 func (DataNodeResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
@@ -130,10 +150,13 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		return state.Resource{}, err
 	}
 
-	imageName := config.ResolveName(cfg.Image)
-	imgState := e.state.FindResource(address.Resource("sysbox_image", imageName))
+	imageAddr, err := config.ResolveResourceAddress(cfg.Image, "sysbox_image")
+	if err != nil {
+		return state.Resource{}, err
+	}
+	imgState := e.state.FindResource(imageAddr)
 	if imgState == nil {
-		return state.Resource{}, fmt.Errorf("image %s not applied yet", imageName)
+		return state.Resource{}, fmt.Errorf("image %s not applied yet", imageAddr)
 	}
 	imgRef := substrate.ImageRef{
 		ID:         imgState.ImageID(),
@@ -158,7 +181,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	var nicSpecs []NICSpec
 	for _, link := range cfg.Links {
 		nicSpecs = append(nicSpecs, NICSpec{
-			Network: config.ResolveName(link.Network),
+			Network: link.Network,
 			IP:      link.IP,
 			Gateway: link.Gateway,
 		})

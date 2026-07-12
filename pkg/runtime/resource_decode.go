@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
@@ -13,13 +12,15 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-func decodeDependsOn(deps []address.Address, items []string) []address.Address {
+func decodeDependsOn(deps []address.Address, items []string) ([]address.Address, error) {
 	for _, dep := range items {
-		if parts := strings.SplitN(dep, ".", 2); len(parts) == 2 {
-			deps = append(deps, address.Address{Type: parts[0], Name: parts[1]})
+		addr, err := address.Parse(dep)
+		if err != nil {
+			return nil, fmt.Errorf("invalid depends_on address %q: %w", dep, err)
 		}
+		deps = append(deps, addr)
 	}
-	return deps
+	return deps, nil
 }
 
 func decodeNodeProviderConfig(cfg *config.NodeConfig, ctx *hcl.EvalContext) error {
