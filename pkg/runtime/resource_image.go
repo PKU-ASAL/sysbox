@@ -10,6 +10,7 @@ import (
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -46,7 +47,7 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 	if err != nil {
 		return state.Resource{}, err
 	}
-	sub, err := substrate.Get(subName)
+	artifactDriver, err := driver.DefaultRegistry.RequireArtifact(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -80,7 +81,7 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 		resolvedSHA = r.SHA256
 	}
 
-	ref, err := sub.PrepareImage(ctx, substrate.ImageSpec{
+	ref, err := artifactDriver.PrepareImage(ctx, substrate.ImageSpec{
 		DockerRef: cfg.DockerRef,
 		Rootfs:    rootfs,
 		QCow2:     qcow2,

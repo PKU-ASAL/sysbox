@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,23 +11,18 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-type imageProviderSubstrate struct {
-	substrate.BaseSubstrate
+type imageArtifactDriver struct {
 	lastSpec substrate.ImageSpec
 }
 
-func (s *imageProviderSubstrate) Name() string { return "image-test" }
-
-func (s *imageProviderSubstrate) Capabilities() substrate.Capabilities {
-	return substrate.Capabilities{}
-}
-
-func (s *imageProviderSubstrate) PrepareImage(_ context.Context, spec substrate.ImageSpec) (substrate.ImageRef, error) {
+func (s *imageArtifactDriver) PrepareImage(_ context.Context, spec substrate.ImageSpec) (substrate.ImageRef, error) {
 	s.lastSpec = spec
 	repo := spec.DockerRef
 	if repo == "" {
@@ -37,27 +31,19 @@ func (s *imageProviderSubstrate) PrepareImage(_ context.Context, spec substrate.
 	return substrate.ImageRef{ID: "image-id", Repository: repo}, nil
 }
 
-func (*imageProviderSubstrate) CreateNode(context.Context, substrate.NodeSpec) (substrate.NodeHandle, error) {
-	return substrate.NodeHandle{}, nil
-}
-
-func (*imageProviderSubstrate) StartNode(context.Context, substrate.NodeHandle) error { return nil }
-
-func (*imageProviderSubstrate) StopNode(context.Context, substrate.NodeHandle) error { return nil }
-
-func (*imageProviderSubstrate) DestroyNode(context.Context, substrate.NodeHandle) error { return nil }
-
-func (*imageProviderSubstrate) AttachNIC(context.Context, substrate.NodeHandle, substrate.LinkRequest) (substrate.AttachedNIC, error) {
-	return substrate.AttachedNIC{}, nil
-}
-
-func (*imageProviderSubstrate) NodeStatus(context.Context, substrate.NodeHandle) (bool, error) {
-	return true, nil
+func registerImageArtifactDriver(t *testing.T, artifactDriver driver.Artifact) {
+	t.Helper()
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{
+		Name: "image-test", Version: "test", Artifact: artifactDriver,
+	}))
 }
 
 func TestImageResourceProviderCreateDockerRef(t *testing.T) {
-	sub := &imageProviderSubstrate{}
-	substrate.Register(sub)
+	sub := &imageArtifactDriver{}
+	registerImageArtifactDriver(t, sub)
 	n := &graph.Node{
 		Address: address.Resource("sysbox_image", "alpine"),
 		Data: &config.ImageConfig{
@@ -80,8 +66,8 @@ func TestImageResourceProviderCreateDockerRef(t *testing.T) {
 }
 
 func TestImageResourceProviderCreateRootfsArtifact(t *testing.T) {
-	sub := &imageProviderSubstrate{}
-	substrate.Register(sub)
+	sub := &imageArtifactDriver{}
+	registerImageArtifactDriver(t, sub)
 	rootfs := filepath.Join(t.TempDir(), "rootfs.ext4")
 	require.NoError(t, os.WriteFile(rootfs, []byte("rootfs"), 0o644))
 	n := &graph.Node{
