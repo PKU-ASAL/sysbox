@@ -11,6 +11,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -128,19 +129,23 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 
 	subName := nodeState.Driver
-	sub, err := substrate.Get(subName)
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
 
 	// Reconstruct the handle from the persisted provider state so the
 	// connection works on any substrate (docker, firecracker, libvirt).
-	handle, err := nodeState.ReconstructHandle(sub)
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	handle, err := nodeState.ReconstructHandle(stateDriver)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("actor %s: %w", n.Address.Name, err)
 	}
 	e.logf("[apply] starting actor %s on node %s: %v\n", n.Address.Name, nodeAddr, cfg.Command)
-	conn, err := sub.Connection(handle, nil)
+	conn, err := nodeDriver.Connection(handle, nil)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("actor %s: connection: %w", n.Address.Name, err)
 	}
@@ -195,9 +200,17 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 // runs the actor command in it. Only Docker bridge (NAT) network links are
 // supported; the container gets no veth injection and no provisioners.
 func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *config.ActorConfig) (state.Resource, error) {
-	sub, err := substrate.Get("docker")
+	nodeDriver, err := driver.DefaultRegistry.RequireNode("docker")
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("actor %s: %w", n.Address.Name, err)
+	}
+	nicDriver, err := driver.DefaultRegistry.RequireNIC("docker")
+	if err != nil {
+		return state.Resource{}, err
+	}
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState("docker")
+	if err != nil {
+		return state.Resource{}, err
 	}
 
 	// Resolve image.
@@ -250,7 +263,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	if err != nil {
 		return state.Resource{}, err
 	}
-	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
+	handle, err := nodeDriver.CreateNode(ctx, substrate.NodeSpec{
 		Name:         containerName,
 		Image:        imgRef,
 		Env:          resolvedEnv,
@@ -261,28 +274,28 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		return state.Resource{}, fmt.Errorf("create actor container %s: %w", n.Address.Name, err)
 	}
 
-	if err := sub.StartNode(ctx, handle); err != nil {
-		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on start failure")
+	if err := nodeDriver.StartNode(ctx, handle); err != nil {
+		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy actor on start failure")
 		return state.Resource{}, fmt.Errorf("start actor container %s: %w", n.Address.Name, err)
 	}
 
 	// Connect remaining NAT networks (all after the first) via AttachNIC.
 	for _, nl := range natLinks[min(1, len(natLinks)):] {
-		if _, err := sub.AttachNIC(ctx, handle, substrate.LinkRequest{
+		if _, err := nicDriver.AttachNIC(ctx, handle, substrate.LinkRequest{
 			KindHint:    substrate.NICKindDockerNAT,
 			DockerNetID: nl.netID,
 			IP:          nl.ip,
 		}); err != nil {
-			util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on attach failure")
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy actor on attach failure")
 			return state.Resource{}, fmt.Errorf("actor %s: connect to network: %w", n.Address.Name, err)
 		}
 	}
 
 	// Start the actor command inside the container.
 	e.logf("[apply] starting actor %s (external, %s): %v\n", n.Address.Name, containerName, cfg.Command)
-	conn, err := sub.Connection(handle, nil)
+	conn, err := nodeDriver.Connection(handle, nil)
 	if err != nil {
-		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on connection failure")
+		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy actor on connection failure")
 		return state.Resource{}, fmt.Errorf("actor %s: connection: %w", n.Address.Name, err)
 	}
 	resolvedCommand, err := resolveSecretStrings(ctx, cfg.Command)
@@ -291,7 +304,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	}
 	pid, err := conn.ExecBackground(ctx, resolvedCommand, resolvedEnv)
 	if err != nil {
-		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy actor on exec failure")
+		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy actor on exec failure")
 		return state.Resource{}, fmt.Errorf("start actor command %s: %w", n.Address.Name, err)
 	}
 
@@ -319,7 +332,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		"entry_points":   cfg.EntryPoints,
 		"command":        cfg.Command,
 	}
-	blob, _ := sub.MarshalProviderState(handle)
+	blob, _ := stateDriver.MarshalProviderState(handle)
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
 	}
@@ -340,14 +353,19 @@ func (e *Executor) destroyActorResource(ctx context.Context, r state.Resource) e
 	pid := r.Int("pid")
 	containerID := r.Str("container_id")
 
-	sub, err := substrate.Get(r.Driver)
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(r.Driver)
+	if err != nil {
+		e.state.RemoveResource(r.Address)
+		return nil
+	}
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(r.Driver)
 	if err != nil {
 		e.state.RemoveResource(r.Address)
 		return nil
 	}
 
 	if pid > 0 && containerID != "" {
-		handle, err := r.ReconstructHandle(sub)
+		handle, err := r.ReconstructHandle(stateDriver)
 		if err != nil {
 			e.logf("[destroy] warning: reconstruct actor %s: %v\n", r.Address.Name, err)
 			handle = substrate.NodeHandle{ID: containerID}
@@ -355,22 +373,22 @@ func (e *Executor) destroyActorResource(ctx context.Context, r state.Resource) e
 		// Kill the entire process group so child processes are also
 		// terminated (e.g. opencode-serve spawns sub-processes).
 		killCmd := fmt.Sprintf("kill -- -%d 2>/dev/null; kill %d 2>/dev/null || true", pid, pid)
-		if conn, err := sub.Connection(handle, nil); err == nil && conn != nil {
+		if conn, err := nodeDriver.Connection(handle, nil); err == nil && conn != nil {
 			util.BestEffortIgnore(func() error { return conn.ExecInline(ctx, []string{killCmd}) }, "kill actor process")
 		}
 	}
 
 	// External actors own their container; destroy it entirely.
 	if position == "external" && containerID != "" {
-		handle, err := r.ReconstructHandle(sub)
+		handle, err := r.ReconstructHandle(stateDriver)
 		if err != nil {
 			e.logf("[destroy] warning: reconstruct actor %s: %v\n", r.Address.Name, err)
 			handle = substrate.NodeHandle{ID: containerID}
 		}
-		if err := sub.StopNode(ctx, handle); err != nil {
+		if err := nodeDriver.StopNode(ctx, handle); err != nil {
 			e.logf("[destroy] warning: stop actor %s: %v\n", r.Address.Name, err)
 		}
-		if err := sub.DestroyNode(ctx, handle); err != nil {
+		if err := nodeDriver.DestroyNode(ctx, handle); err != nil {
 			e.logf("[destroy] warning: destroy actor %s: %v\n", r.Address.Name, err)
 		}
 	}

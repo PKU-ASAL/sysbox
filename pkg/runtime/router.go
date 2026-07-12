@@ -12,6 +12,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -91,7 +92,15 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	if err != nil {
 		return state.Resource{}, err
 	}
-	sub, err := substrate.Get(subName)
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(subName)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	nicDriver, err := driver.DefaultRegistry.RequireNIC(subName)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -125,7 +134,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		return state.Resource{}, err
 	}
 
-	handle, err := sub.CreateNode(ctx, substrate.NodeSpec{
+	handle, err := nodeDriver.CreateNode(ctx, substrate.NodeSpec{
 		Name:         runtimeExternalName(e.topology, "router", n.Address.Name),
 		Image:        imgRef,
 		Sysctls:      map[string]string{"net.ipv4.ip_forward": "1"},
@@ -136,15 +145,15 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		return state.Resource{}, err
 	}
 
-	if err := sub.StartNode(ctx, handle); err != nil {
-		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy router on start failure")
+	if err := nodeDriver.StartNode(ctx, handle); err != nil {
+		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy router on start failure")
 		return state.Resource{}, err
 	}
 
 	// Wire all NICs using the shared helper (trackLabels=true for routers).
-	wireResult, err := wireNICs(ctx, sub, e.state, handle, initialLinks, nicSpecs, true, n.Address.Name)
+	wireResult, err := wireNICs(ctx, nicDriver, e.state, handle, initialLinks, nicSpecs, true, n.Address.Name)
 	if err != nil {
-		util.BestEffortIgnore(func() error { return sub.DestroyNode(ctx, handle) }, "destroy router on wire failure")
+		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy router on wire failure")
 		return state.Resource{}, err
 	}
 
@@ -170,7 +179,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		"nat_applied":  natApplied,
 	}
 	// Persist opaque provider state so cold-destroy works for all substrates.
-	blob, _ := sub.MarshalProviderState(handle)
+	blob, _ := stateDriver.MarshalProviderState(handle)
 	// Persist lifecycle flags.
 	if lc := cfg.Lifecycle; lc != nil {
 		inst["lifecycle_prevent_destroy"] = lc.PreventDestroy

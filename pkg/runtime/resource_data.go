@@ -68,12 +68,12 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: %w", n.Address.Name, err)
 	}
-	sub, err := substrate.Get(subName)
+	importDriver, err := driver.DefaultRegistry.RequireImport(subName)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: %w", n.Address.Name, err)
 	}
 
-	handle, err := sub.ReadNode(ctx, cfg.ID)
+	handle, err := importDriver.ReadNode(ctx, cfg.ID)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: read %q: %w", n.Address.Name, cfg.ID, err)
 	}
@@ -82,7 +82,11 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 		"container_id": handle.ID,
 		"primary_ip":   handle.Net.PrimaryIP,
 	}
-	blob, _ := sub.MarshalProviderState(handle)
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	blob, _ := stateDriver.MarshalProviderState(handle)
 	inst["data_read"] = true // mark as read-only so destroy skips it
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err

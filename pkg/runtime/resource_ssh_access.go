@@ -12,6 +12,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -87,16 +88,20 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 	}
 
 	subName := nodeState.Driver
-	sub, err := substrate.Get(subName)
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
-	handle, err := nodeState.ReconstructHandle(sub)
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	handle, err := nodeState.ReconstructHandle(stateDriver)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("sysbox_ssh_access: %w", err)
 	}
 
-	conn, err := sub.Connection(handle, nil)
+	conn, err := nodeDriver.Connection(handle, nil)
 	if err != nil || conn == nil {
 		return state.Resource{}, fmt.Errorf("sysbox_ssh_access: no connection to node %s: %v", nodeAddr.String(), err)
 	}
