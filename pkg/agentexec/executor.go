@@ -138,6 +138,10 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
+	if err := mgr.CheckMutationSafety(); err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
 	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(e.bridge.HCLFile(run.Topology), mgr)
 	if err != nil {
 		e.bridge.Finish(run, err)
@@ -246,6 +250,10 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	}
 	mgr, err := e.bridge.StateManager(run.Topology)
 	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	if err := mgr.CheckMutationSafety(); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}

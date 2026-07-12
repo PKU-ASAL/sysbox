@@ -59,6 +59,9 @@ func replayCheckpointJournal(ctx context.Context, store apiStore, topology, runI
 }
 
 func reconcileCheckpointJournal(ctx context.Context, store apiStore, topology, runID string, mgr *state.Manager, owner string) (*RecoverReport, error) {
+	if err := mgr.CheckMutationSafety(); err != nil {
+		return nil, err
+	}
 	journal, err := replayCheckpointJournal(ctx, store, topology, runID, mgr, owner)
 	if err != nil {
 		return nil, err

@@ -45,6 +45,7 @@ func (m *Manager) RequireMutationSafety(allowUnsafe bool) error {
 }
 
 func (m *Manager) AllowUnsafeMutation(allow bool) { m.allowUnsafeMutation = allow }
+func (m *Manager) CheckMutationSafety() error     { return m.RequireMutationSafety(m.allowUnsafeMutation) }
 
 func (m *Manager) Metadata(ctx context.Context) (Metadata, error) {
 	if b, ok := m.backend.(MetadataBackend); ok {

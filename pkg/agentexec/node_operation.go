@@ -80,6 +80,13 @@ func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOpera
 	if op.Type != "sysbox_node" {
 		return fmt.Errorf("import only supports sysbox_node, got %q", op.Type)
 	}
+	mgr, err := e.bridge.StateManager(op.Topology)
+	if err != nil {
+		return err
+	}
+	if err := mgr.CheckMutationSafety(); err != nil {
+		return err
+	}
 	sub, err := substrate.Get(op.Substrate)
 	if err != nil {
 		return fmt.Errorf("substrate %q not registered: %w", op.Substrate, err)
@@ -87,10 +94,6 @@ func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOpera
 	handle, err := sub.ReadNode(ctx, op.ExternalID)
 	if err != nil {
 		return fmt.Errorf("read node: %w", err)
-	}
-	mgr, err := e.bridge.StateManager(op.Topology)
-	if err != nil {
-		return err
 	}
 	st, err := mgr.Load()
 	if err != nil {
