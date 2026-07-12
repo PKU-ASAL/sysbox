@@ -48,12 +48,12 @@ func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
 			Kind:     "resource",
 			Resource: "sysbox_network.lan",
 			Action:   controlplane.PlanActionCreate,
-			Provider: "network",
+			Driver:   "network",
 			Status:   runtime.OperationDone,
 			StateResource: &runtime.StateResourceLog{
-				Address:  address.Resource("sysbox_network", "lan"),
-				Provider: "network",
-				Instance: map[string]any{
+				Address: address.Resource("sysbox_network", "lan"),
+				Driver:  "network",
+				Attributes: map[string]any{
 					"netns":   nsName,
 					"bridge":  brName,
 					"cidr":    "10.251.0.0/24",
@@ -119,13 +119,13 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 			Kind:       "resource",
 			Resource:   "sysbox_node.microvm",
 			Action:     controlplane.PlanActionCreate,
-			Provider:   "firecracker",
+			Driver:     "firecracker",
 			ExternalID: "sysbox-microvm",
 			Status:     runtime.OperationDone,
 			StateResource: &runtime.StateResourceLog{
-				Address:  address.Resource("sysbox_node", "microvm"),
-				Provider: "firecracker",
-				Instance: map[string]any{
+				Address: address.Resource("sysbox_node", "microvm"),
+				Driver:  "firecracker",
+				Attributes: map[string]any{
 					"container_id": "sysbox-microvm",
 					"primary_ip":   "10.252.0.20",
 					"provider_extra": fmt.Sprintf(

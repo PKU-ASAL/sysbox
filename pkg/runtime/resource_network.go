@@ -114,9 +114,9 @@ func (NetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, 
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Address:  n.Address,
-		Provider: "network",
-		Instance: inst,
+		Address:    n.Address,
+		Driver:     "network",
+		Attributes: inst,
 	}, nil
 }
 
@@ -160,9 +160,9 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Address:  n.Address,
-		Provider: "docker",
-		Instance: natInst,
+		Address:    n.Address,
+		Driver:     "docker",
+		Attributes: natInst,
 	}, nil
 }
 

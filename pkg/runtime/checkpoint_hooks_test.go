@@ -68,11 +68,11 @@ func TestFirecrackerRecoverableArtifactsChecksProviderExtraAnchors(t *testing.T)
 	vmDir := filepath.Join(dir, "vm")
 	require.NoError(t, os.Mkdir(vmDir, 0755))
 
-	res := state.Resource{Instance: map[string]any{
+	res := state.Resource{Attributes: map[string]any{
 		"provider_extra": `{"vm_dir":"` + vmDir + `"}`,
 	}}
 	require.True(t, FirecrackerRecoverableArtifacts(res))
 
-	res.Instance["provider_extra"] = `{"vm_dir":"` + filepath.Join(dir, "missing") + `"}`
+	res.Attributes["provider_extra"] = `{"vm_dir":"` + filepath.Join(dir, "missing") + `"}`
 	require.False(t, FirecrackerRecoverableArtifacts(res))
 }

@@ -174,9 +174,9 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Address:  n.Address,
-		Provider: subName,
-		Instance: inst,
+		Address:    n.Address,
+		Driver:     subName,
+		Attributes: inst,
 	}, nil
 }
 

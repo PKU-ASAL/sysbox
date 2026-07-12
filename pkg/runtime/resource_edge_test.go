@@ -38,7 +38,7 @@ func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Address: address.Resource("sysbox_firewall", "allow_ssh"), Provider: "network", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_firewall", "allow_ssh"), Driver: "network", Attributes: inst}
 	p := FirewallResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)
@@ -71,7 +71,7 @@ func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Address: address.Resource("sysbox_ssh_access", "admin"), Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_ssh_access", "admin"), Driver: "docker", Attributes: inst}
 	p := SSHAccessResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)
@@ -102,7 +102,7 @@ func TestActorResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Address: address.Resource("sysbox_actor", "agent"), Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_actor", "agent"), Driver: "docker", Attributes: inst}
 	p := ActorResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)
@@ -136,7 +136,7 @@ func TestEdgeProviderDeleteRemovesState(t *testing.T) {
 		{
 			name: "actor_missing_substrate",
 			p:    ActorResourceProvider{},
-			res:  state.Resource{Address: address.Resource("sysbox_actor", "agent"), Provider: "missing"},
+			res:  state.Resource{Address: address.Resource("sysbox_actor", "agent"), Driver: "missing"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

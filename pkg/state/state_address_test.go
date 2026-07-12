@@ -11,8 +11,8 @@ func TestStateResourceIdentityUsesCanonicalAddress(t *testing.T) {
 	blue := address.StringInstance("sysbox_node", "web", "blue")
 	green := address.StringInstance("sysbox_node", "web", "green")
 	st := &State{Version: SchemaVersion, Resources: []Resource{
-		{Address: blue, Provider: "docker", Instance: map[string]any{"id": "blue-id"}},
-		{Address: green, Provider: "docker", Instance: map[string]any{"id": "green-id"}},
+		{Address: blue, Driver: "docker", Attributes: map[string]any{"id": "blue-id"}},
+		{Address: green, Driver: "docker", Attributes: map[string]any{"id": "green-id"}},
 	}}
 
 	require.Equal(t, "blue-id", st.FindResource(blue).Str("id"))

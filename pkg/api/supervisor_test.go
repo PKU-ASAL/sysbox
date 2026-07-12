@@ -30,9 +30,9 @@ func TestSupervisorScanWritesHealthSnapshot(t *testing.T) {
 	writeState(t, runs, "mixed", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_kernel", "linux"),
-			Provider: "artifact",
-			Instance: map[string]any{"path": kernel},
+			Address:    address.Resource("sysbox_kernel", "linux"),
+			Driver:     "artifact",
+			Attributes: map[string]any{"path": kernel},
 		}},
 	})
 
@@ -85,9 +85,9 @@ func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
 	writeState(t, runs, "mixed", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_kernel", "linux"),
-			Provider: "artifact",
-			Instance: map[string]any{"path": filepath.Join(dir, "missing-vmlinux")},
+			Address:    address.Resource("sysbox_kernel", "linux"),
+			Driver:     "artifact",
+			Attributes: map[string]any{"path": filepath.Join(dir, "missing-vmlinux")},
 		}},
 	})
 
@@ -125,9 +125,9 @@ func TestSupervisorRestartOnCrashSkipsWhenRunActive(t *testing.T) {
 	writeState(t, runs, "mixed", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_kernel", "linux"),
-			Provider: "artifact",
-			Instance: map[string]any{"path": filepath.Join(dir, "missing-vmlinux")},
+			Address:    address.Resource("sysbox_kernel", "linux"),
+			Driver:     "artifact",
+			Attributes: map[string]any{"path": filepath.Join(dir, "missing-vmlinux")},
 		}},
 	})
 

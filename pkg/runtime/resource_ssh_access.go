@@ -83,7 +83,7 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 		return state.Resource{}, fmt.Errorf("node %s not applied yet", nodeName)
 	}
 
-	subName := nodeState.Provider
+	subName := nodeState.Driver
 	sub, err := substrate.Get(subName)
 	if err != nil {
 		return state.Resource{}, err
@@ -117,9 +117,9 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Address:  n.Address,
-		Provider: subName,
-		Instance: inst,
+		Address:    n.Address,
+		Driver:     subName,
+		Attributes: inst,
 	}, nil
 }
 

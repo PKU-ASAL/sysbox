@@ -62,14 +62,14 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	if res == nil {
 		return controlplane.NodeOperation{}, fmt.Errorf("node %q not found", name)
 	}
-	sub, err := substrate.Get(res.Provider)
+	sub, err := substrate.Get(res.Driver)
 	if err != nil {
-		return controlplane.NodeOperation{}, fmt.Errorf("substrate %q not registered: %w", res.Provider, err)
+		return controlplane.NodeOperation{}, fmt.Errorf("substrate %q not registered: %w", res.Driver, err)
 	}
 	if !sub.Capabilities().SupportsPause {
-		return controlplane.NodeOperation{}, fmt.Errorf("substrate %q does not support pause/resume", res.Provider)
+		return controlplane.NodeOperation{}, fmt.Errorf("substrate %q does not support pause/resume", res.Driver)
 	}
-	agent, err := s.scheduler.SelectAgent(ctx, []string{res.Provider}, "")
+	agent, err := s.scheduler.SelectAgent(ctx, []string{res.Driver}, "")
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
@@ -78,7 +78,7 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 		Workspace:   topology,
 		Operation:   operation,
 		Node:        name,
-		Substrate:   res.Provider,
+		Substrate:   res.Driver,
 		AgentID:     agent.ID,
 		RequestedBy: subj.User,
 		Roles:       subj.Roles,

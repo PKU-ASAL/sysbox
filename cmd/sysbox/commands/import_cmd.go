@@ -89,9 +89,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 			inst["provider_extra"] = string(blob)
 		}
 		s.AddResource(state.Resource{
-			Address:  addr,
-			Provider: subName,
-			Instance: inst,
+			Address:    addr,
+			Driver:     subName,
+			Attributes: inst,
 		})
 		fmt.Printf("Imported %s.%s (id=%s)\n", typ, name, handle.ID)
 

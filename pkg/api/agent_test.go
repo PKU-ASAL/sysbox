@@ -319,9 +319,9 @@ resource "sysbox_node" "web" {
 	writeState(t, runs, "lab", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_node", "web"),
-			Provider: "docker",
-			Instance: map[string]any{"container_id": "container-web"},
+			Address:    address.Resource("sysbox_node", "web"),
+			Driver:     "docker",
+			Attributes: map[string]any{"container_id": "container-web"},
 		}},
 	})
 	s := NewServer(runs, workspaces)
@@ -385,9 +385,9 @@ resource "sysbox_node" "web" {
 	writeState(t, runs, "lab", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_node", "web"),
-			Provider: "docker",
-			Instance: map[string]any{"container_id": "container-web"},
+			Address:    address.Resource("sysbox_node", "web"),
+			Driver:     "docker",
+			Attributes: map[string]any{"container_id": "container-web"},
 		}},
 	})
 	saveHealthyNodeProjection(t, s, "host-a", "lab", "web")
@@ -431,9 +431,9 @@ resource "sysbox_node" "web" {
 	writeState(t, runs, "lab", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_node", "web"),
-			Provider: "docker",
-			Instance: map[string]any{"container_id": "deadbeef"},
+			Address:    address.Resource("sysbox_node", "web"),
+			Driver:     "docker",
+			Attributes: map[string]any{"container_id": "deadbeef"},
 		}},
 	})
 	s := NewServer(runs, workspaces)

@@ -37,7 +37,7 @@ func TestDataResourceProviderPlanDiffReads(t *testing.T) {
 
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Address: address.Resource("data_sysbox_image", "alpine"), Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("data_sysbox_image", "alpine"), Driver: "docker", Attributes: inst}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionNoop, action.Action)
@@ -65,7 +65,7 @@ func TestComputePlanSchedulesDataSourcesAsRead(t *testing.T) {
 }
 
 func TestDataResourceProviderDeleteRemovesState(t *testing.T) {
-	res := state.Resource{Address: address.Resource("data_sysbox_node", "existing"), Instance: map[string]any{"data_read": true}}
+	res := state.Resource{Address: address.Resource("data_sysbox_node", "existing"), Attributes: map[string]any{"data_read": true}}
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{res}}
 	exec := NewExecutor(graph.New(), st)
 

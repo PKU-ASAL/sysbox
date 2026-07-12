@@ -54,17 +54,17 @@ func TestWireNICsWithHookRecordsAttachPhases(t *testing.T) {
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
 			{
-				Address:  address.Resource("sysbox_network", "nat"),
-				Provider: "docker",
-				Instance: map[string]any{
+				Address: address.Resource("sysbox_network", "nat"),
+				Driver:  "docker",
+				Attributes: map[string]any{
 					"nat":               true,
 					"docker_network_id": "net-1",
 				},
 			},
 			{
-				Address:  address.Resource("sysbox_network", "isolated"),
-				Provider: "network",
-				Instance: map[string]any{
+				Address: address.Resource("sysbox_network", "isolated"),
+				Driver:  "network",
+				Attributes: map[string]any{
 					"netns":  "sysbox-net-isolated",
 					"bridge": "br-isolated",
 				},

@@ -33,7 +33,7 @@ func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "sysbox_kernel", res.Address.Type)
 	require.Equal(t, "fc", res.Address.Name)
-	require.Equal(t, "firecracker", res.Provider)
+	require.Equal(t, "firecracker", res.Driver)
 	require.Equal(t, src, res.Str("path"))
 	require.Equal(t, src, res.Str("source"))
 	require.NotEmpty(t, res.Str("sha256"))
@@ -57,9 +57,9 @@ func TestKernelResourceProviderPlanDiff(t *testing.T) {
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
 	current := &state.Resource{
-		Address:  address.Resource("sysbox_kernel", "fc"),
-		Provider: "firecracker",
-		Instance: inst,
+		Address:    address.Resource("sysbox_kernel", "fc"),
+		Driver:     "firecracker",
+		Attributes: inst,
 	}
 	p := KernelResourceProvider{}
 

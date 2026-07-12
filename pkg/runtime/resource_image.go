@@ -100,9 +100,9 @@ func (ImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n 
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Address:  n.Address,
-		Provider: subName,
-		Instance: inst,
+		Address:    n.Address,
+		Driver:     subName,
+		Attributes: inst,
 	}, nil
 }
 

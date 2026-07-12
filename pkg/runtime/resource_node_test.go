@@ -33,7 +33,7 @@ func TestNodeResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Address: address.Resource("sysbox_node", "web"), Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: "docker", Attributes: inst}
 	p := NodeResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)
@@ -54,9 +54,9 @@ func TestNodeResourceProviderPlanDiff(t *testing.T) {
 func TestNodeResourceProviderDeleteMissingSubstrateReturnsError(t *testing.T) {
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	res := state.Resource{
-		Address:  address.Resource("sysbox_node", "web"),
-		Provider: "missing-node-provider",
-		Instance: map[string]any{"container_id": "node"},
+		Address:    address.Resource("sysbox_node", "web"),
+		Driver:     "missing-node-provider",
+		Attributes: map[string]any{"container_id": "node"},
 	}
 
 	err := NodeResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res)
@@ -113,9 +113,9 @@ func TestNodeResourceProviderPortsArePassedAndResolved(t *testing.T) {
 	substrate.Register(sub)
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	exec.state.AddResource(state.Resource{
-		Address:  address.Resource("sysbox_image", "nginx"),
-		Provider: "port-test",
-		Instance: map[string]any{
+		Address: address.Resource("sysbox_image", "nginx"),
+		Driver:  "port-test",
+		Attributes: map[string]any{
 			"image_id":   "image-id",
 			"repository": "nginx:alpine",
 		},
@@ -136,7 +136,7 @@ func TestNodeResourceProviderPortsArePassedAndResolved(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sub.lastSpec.Ports, 1)
 	require.Equal(t, substrate.PortSpec{Name: "http", Target: 80, Published: 28080, Protocol: "http", Exposure: "host", HostIP: "127.0.0.1"}, sub.lastSpec.Ports[0])
-	ports, ok := res.Instance["ports"].([]substrate.ResolvedPort)
+	ports, ok := res.Attributes["ports"].([]substrate.ResolvedPort)
 	require.True(t, ok)
 	require.Len(t, ports, 1)
 	require.Equal(t, "http://127.0.0.1:28080", ports[0].URL)
@@ -151,9 +151,9 @@ func TestNodeResourceProviderRejectsUnsupportedPortExposure(t *testing.T) {
 	substrate.Register(sub)
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	exec.state.AddResource(state.Resource{
-		Address:  address.Resource("sysbox_image", "nginx"),
-		Provider: "port-direct-only",
-		Instance: map[string]any{
+		Address: address.Resource("sysbox_image", "nginx"),
+		Driver:  "port-direct-only",
+		Attributes: map[string]any{
 			"image_id":   "image-id",
 			"repository": "nginx:alpine",
 		},

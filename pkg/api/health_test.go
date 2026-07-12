@@ -28,9 +28,9 @@ func TestGetTopologyHealth(t *testing.T) {
 	st := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_kernel", "linux"),
-			Provider: "artifact",
-			Instance: map[string]any{"path": kernel},
+			Address:    address.Resource("sysbox_kernel", "linux"),
+			Driver:     "artifact",
+			Attributes: map[string]any{"path": kernel},
 		}},
 	}
 	mgr := state.NewManager(filepath.Join(runs, "health", "state.json"))

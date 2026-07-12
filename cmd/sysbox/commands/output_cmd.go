@@ -105,12 +105,12 @@ func printStateAddress(s stateReader, addr string) error {
 	}
 
 	if len(parts) == 2 {
-		bytes, _ := json.MarshalIndent(r.Instance, "", "  ")
+		bytes, _ := json.MarshalIndent(r.Attributes, "", "  ")
 		fmt.Println(string(bytes))
 		return nil
 	}
 
-	val, ok := r.Instance[parts[2]]
+	val, ok := r.Attributes[parts[2]]
 	if !ok {
 		return fmt.Errorf("attribute %s not found on %s.%s", parts[2], parts[0], parts[1])
 	}

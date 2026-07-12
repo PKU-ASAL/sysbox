@@ -111,7 +111,7 @@ func (e *Executor) probeResource(ctx context.Context, id address.Address) (bool,
 
 func readNodeLikeResource(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
-	providerName := current.Provider
+	providerName := current.Driver
 	sub, err := substrate.Get(providerName)
 	if err != nil {
 		result.Decision = controlplane.RecoveryDecisionUnknown
@@ -177,7 +177,7 @@ func providerState(sub substrate.Substrate, r *state.Resource) any {
 }
 
 func networkAttachmentsHealthy(r *state.Resource) bool {
-	items, ok := r.Instance["nics"].([]any)
+	items, ok := r.Attributes["nics"].([]any)
 	if !ok {
 		return true
 	}
@@ -199,7 +199,7 @@ func networkAttachmentsHealthy(r *state.Resource) bool {
 }
 
 func nodeRoutesHealthy(ctx context.Context, sub substrate.Substrate, r *state.Resource) bool {
-	items, ok := r.Instance["routes"].([]any)
+	items, ok := r.Attributes["routes"].([]any)
 	if !ok || len(items) == 0 {
 		return true
 	}

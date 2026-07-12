@@ -116,7 +116,7 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 		return state.Resource{}, fmt.Errorf("actor %s: node %s not applied yet", n.Address.Name, nodeName)
 	}
 
-	subName := nodeState.Provider
+	subName := nodeState.Driver
 	sub, err := substrate.Get(subName)
 	if err != nil {
 		return state.Resource{}, err
@@ -164,9 +164,9 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 		return state.Resource{}, err
 	}
 	res := state.Resource{
-		Address:  n.Address,
-		Provider: subName,
-		Instance: inst,
+		Address:    n.Address,
+		Driver:     subName,
+		Attributes: inst,
 	}
 	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.Address.Name, pid, acpURL)
 	return res, nil
@@ -293,9 +293,9 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		return state.Resource{}, err
 	}
 	res := state.Resource{
-		Address:  n.Address,
-		Provider: "docker",
-		Instance: inst,
+		Address:    n.Address,
+		Driver:     "docker",
+		Attributes: inst,
 	}
 	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.Address.Name, pid, acpURL)
 	return res, nil
@@ -306,7 +306,7 @@ func (e *Executor) destroyActorResource(ctx context.Context, r state.Resource) e
 	pid := r.Int("pid")
 	containerID := r.Str("container_id")
 
-	sub, err := substrate.Get(r.Provider)
+	sub, err := substrate.Get(r.Driver)
 	if err != nil {
 		e.state.RemoveResource(r.Address)
 		return nil

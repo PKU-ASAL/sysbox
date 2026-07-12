@@ -36,9 +36,9 @@ func TestRefreshCascadesChangedDependents(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
-			{Address: address.Resource("sysbox_network", "dmz"), Provider: "network", Instance: map[string]any{"netns": "missing-netns", "bridge": "br-dmz"}},
-			{Address: address.Resource("sysbox_node", "web"), Provider: "docker", Instance: map[string]any{"container_id": "web"}},
-			{Address: address.Resource("sysbox_actor", "agent"), Provider: "docker", Instance: map[string]any{}},
+			{Address: address.Resource("sysbox_network", "dmz"), Driver: "network", Attributes: map[string]any{"netns": "missing-netns", "bridge": "br-dmz"}},
+			{Address: address.Resource("sysbox_node", "web"), Driver: "docker", Attributes: map[string]any{"container_id": "web"}},
+			{Address: address.Resource("sysbox_actor", "agent"), Driver: "docker", Attributes: map[string]any{}},
 		},
 	}
 	plan := &Plan{Unchanged: []address.Address{
@@ -63,7 +63,7 @@ func TestPlanDetectsDestroys(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
-			{Address: address.Resource("sysbox_node", "orphan"), Provider: "docker"},
+			{Address: address.Resource("sysbox_node", "orphan"), Driver: "docker"},
 		},
 	}
 
@@ -80,7 +80,7 @@ func TestPlanPassesThroughUnchanged(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
-			{Address: address.Resource("sysbox_network", "dmz"), Provider: "network", Instance: map[string]any{"netns": "sysbox-net-dmz"}},
+			{Address: address.Resource("sysbox_network", "dmz"), Driver: "network", Attributes: map[string]any{"netns": "sysbox-net-dmz"}},
 		},
 	}
 
@@ -106,9 +106,9 @@ func TestPlanDetectsDesiredHashChange(t *testing.T) {
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
 			{
-				Address:  address.Resource("sysbox_network", "dmz"),
-				Provider: "network",
-				Instance: map[string]any{
+				Address: address.Resource("sysbox_network", "dmz"),
+				Driver:  "network",
+				Attributes: map[string]any{
 					"cidr":            "10.0.1.0/24",
 					desiredHashKey:    oldHash,
 					desiredPayloadKey: oldPayload,
@@ -144,9 +144,9 @@ func TestComputePlanUsesRegisteredProviderPlanDiff(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_actor", "agent"),
-			Provider: "docker",
-			Instance: map[string]any{
+			Address: address.Resource("sysbox_actor", "agent"),
+			Driver:  "docker",
+			Attributes: map[string]any{
 				desiredHashKey:    oldHash,
 				desiredPayloadKey: oldPayload,
 			},
@@ -175,9 +175,9 @@ func TestPlanRedactsSensitiveDiffFields(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_node", "web"),
-			Provider: "docker",
-			Instance: map[string]any{
+			Address: address.Resource("sysbox_node", "web"),
+			Driver:  "docker",
+			Attributes: map[string]any{
 				desiredHashKey:    oldHash,
 				desiredPayloadKey: oldPayload,
 			},
@@ -206,9 +206,9 @@ func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
 			{
-				Address:  address.Resource("sysbox_network", "dmz"),
-				Provider: "network",
-				Instance: map[string]any{desiredHashKey: hash},
+				Address:    address.Resource("sysbox_network", "dmz"),
+				Driver:     "network",
+				Attributes: map[string]any{desiredHashKey: hash},
 			},
 		},
 	}
@@ -233,7 +233,7 @@ func TestPlanHasChangesUsesActions(t *testing.T) {
 
 func TestPlanFromActionsRebuildsExecutableIndexes(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion}
-	st.AddResource(state.Resource{Address: address.Resource("sysbox_node", "old"), Provider: "docker", Instance: map[string]any{}})
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_node", "old"), Driver: "docker", Attributes: map[string]any{}})
 
 	p := PlanFromActions([]controlplane.PlanAction{
 		{Resource: "sysbox_network.dmz", Type: "sysbox_network", Name: "dmz", Action: controlplane.PlanActionCreate},
@@ -256,9 +256,9 @@ func TestRefreshUsesProviderReadForDrift(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_kernel", "linux"),
-			Provider: "artifact",
-			Instance: map[string]any{"path": "/tmp/sysbox-missing-kernel-for-refresh-test"},
+			Address:    address.Resource("sysbox_kernel", "linux"),
+			Driver:     "artifact",
+			Attributes: map[string]any{"path": "/tmp/sysbox-missing-kernel-for-refresh-test"},
 		}},
 	}
 	plan := &Plan{Unchanged: []address.Address{address.Resource("sysbox_kernel", "linux")}}

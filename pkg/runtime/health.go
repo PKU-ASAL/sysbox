@@ -38,7 +38,7 @@ func EvaluateResourceHealth(ctx context.Context, res *state.Resource) controlpla
 		Resource: res.Address.String(),
 		Type:     res.Address.Type,
 		Name:     res.Address.Name,
-		Provider: res.Provider,
+		Provider: res.Driver,
 		Status:   controlplane.ResourceHealthHealthy,
 	}
 	if provider, ok := GetResourceProvider(res.Address.Type); ok {
@@ -67,7 +67,7 @@ func EvaluateResourceHealth(ctx context.Context, res *state.Resource) controlpla
 }
 
 func networkAttachmentsCheck(res *state.Resource) (bool, string) {
-	items, ok := res.Instance["nics"].([]any)
+	items, ok := res.Attributes["nics"].([]any)
 	if !ok {
 		return true, ""
 	}

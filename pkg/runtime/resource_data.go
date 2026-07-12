@@ -94,9 +94,9 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 	}
 
 	res := state.Resource{
-		Address:  n.Address,
-		Provider: subName,
-		Instance: inst,
+		Address:    n.Address,
+		Driver:     subName,
+		Attributes: inst,
 	}
 	e.logf("[data] read sysbox_node.%s → id=%s ip=%s\n", n.Address.Name, handle.ID, handle.Net.PrimaryIP)
 	return res, nil
@@ -177,9 +177,9 @@ func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (
 		return state.Resource{}, err
 	}
 	res := state.Resource{
-		Address:  n.Address,
-		Provider: "docker",
-		Instance: inst,
+		Address:    n.Address,
+		Driver:     "docker",
+		Attributes: inst,
 	}
 	e.logf("[data] read sysbox_network.%s → %s\n", n.Address.Name, info.Name)
 	return res, nil
@@ -255,9 +255,9 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 		return state.Resource{}, err
 	}
 	res := state.Resource{
-		Address:  n.Address,
-		Provider: subName,
-		Instance: inst,
+		Address:    n.Address,
+		Driver:     subName,
+		Attributes: inst,
 	}
 	e.logf("[data] read sysbox_image.%s → %s\n", n.Address.Name, ref.ID)
 	return res, nil

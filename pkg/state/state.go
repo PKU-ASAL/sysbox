@@ -40,18 +40,19 @@ type StateMeta struct {
 }
 
 type Resource struct {
-	Address   address.Address `json:"address"`
-	Provider  string          `json:"provider"`
-	Instance  map[string]any  `json:"instance"`
-	CreatedAt string          `json:"created_at,omitempty"`
-	UpdatedAt string          `json:"updated_at,omitempty"`
+	Address    address.Address `json:"address"`
+	Driver     string          `json:"driver"`
+	Attributes map[string]any  `json:"attributes"`
+	Private    json.RawMessage `json:"private,omitempty"`
+	CreatedAt  string          `json:"created_at,omitempty"`
+	UpdatedAt  string          `json:"updated_at,omitempty"`
 }
 
 // Int returns the value at key as an int. JSON round-trip stores numbers as
 // float64, so both int and float64 are accepted. Returns 0 if the key is
 // missing or the type doesn't match.
 func (r *Resource) Int(key string) int {
-	switch v := r.Instance[key].(type) {
+	switch v := r.Attributes[key].(type) {
 	case int:
 		return v
 	case float64:
@@ -62,25 +63,25 @@ func (r *Resource) Int(key string) int {
 
 // Str returns the value at key as a string. Returns "" if missing or wrong type.
 func (r *Resource) Str(key string) string {
-	s, _ := r.Instance[key].(string)
+	s, _ := r.Attributes[key].(string)
 	return s
 }
 
 // Slice returns the value at key as []any. Returns nil if missing or wrong type.
 func (r *Resource) Slice(key string) []any {
-	v, _ := r.Instance[key].([]any)
+	v, _ := r.Attributes[key].([]any)
 	return v
 }
 
 // Map returns the value at key as map[string]any. Returns nil if missing.
 func (r *Resource) Map(key string) map[string]any {
-	v, _ := r.Instance[key].(map[string]any)
+	v, _ := r.Attributes[key].(map[string]any)
 	return v
 }
 
 // Float returns the value at key as float64. Returns 0 if missing or wrong type.
 func (r *Resource) Float(key string) float64 {
-	switch v := r.Instance[key].(type) {
+	switch v := r.Attributes[key].(type) {
 	case float64:
 		return v
 	case int:
@@ -91,7 +92,7 @@ func (r *Resource) Float(key string) float64 {
 
 // Bool returns the value at key as bool. Returns false if missing or wrong type.
 func (r *Resource) Bool(key string) bool {
-	b, _ := r.Instance[key].(bool)
+	b, _ := r.Attributes[key].(bool)
 	return b
 }
 
@@ -157,7 +158,7 @@ func migratePrimaryIP(r *Resource) {
 	if r.Str("primary_ip") != "" {
 		return
 	}
-	nics, _ := r.Instance["nics"].([]any)
+	nics, _ := r.Attributes["nics"].([]any)
 	for _, n := range nics {
 		m, _ := n.(map[string]any)
 		if ip, _ := m["ip"].(string); ip != "" {
@@ -168,7 +169,7 @@ func migratePrimaryIP(r *Resource) {
 					break
 				}
 			}
-			r.Instance["primary_ip"] = ip
+			r.Attributes["primary_ip"] = ip
 			return
 		}
 	}

@@ -16,9 +16,9 @@ func TestStateRoundTrip(t *testing.T) {
 		RunID:   "test-run-01",
 		Resources: []Resource{
 			{
-				Address:  address.Resource("sysbox_node", "web"),
-				Provider: "docker",
-				Instance: map[string]any{
+				Address: address.Resource("sysbox_node", "web"),
+				Driver:  "docker",
+				Attributes: map[string]any{
 					"id":      "container-abc123",
 					"image":   "alpine:3.19",
 					"running": true,
@@ -82,7 +82,7 @@ func TestManagerSaveLoad(t *testing.T) {
 	mgr := NewManager(path)
 
 	s := &State{Version: SchemaVersion, RunID: "r1", Resources: []Resource{
-		{Address: address.Resource("sysbox_node", "web"), Provider: "docker", Instance: map[string]any{"id": "abc"}},
+		{Address: address.Resource("sysbox_node", "web"), Driver: "docker", Attributes: map[string]any{"id": "abc"}},
 	}}
 
 	require.NoError(t, mgr.Save(s))

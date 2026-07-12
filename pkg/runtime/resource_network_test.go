@@ -31,7 +31,7 @@ func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "sysbox_network", res.Address.Type)
 	require.Equal(t, "dmz", res.Address.Name)
-	require.Equal(t, "network", res.Provider)
+	require.Equal(t, "network", res.Driver)
 	require.Equal(t, "sysbox-net-dmz", res.NetNS())
 	require.Equal(t, "br-dmz", res.Bridge())
 	require.Equal(t, "10.10.0.1/24", res.Str("gateway"))
@@ -49,7 +49,7 @@ func TestNetworkResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Address: address.Resource("sysbox_network", "dmz"), Provider: "network", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_network", "dmz"), Driver: "network", Attributes: inst}
 	p := NetworkResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)

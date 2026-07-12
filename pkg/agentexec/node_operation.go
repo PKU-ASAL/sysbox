@@ -59,12 +59,12 @@ func (e *Executor) executePauseResume(ctx context.Context, op *controlplane.Node
 	if res == nil {
 		return fmt.Errorf("node %q not found", op.Node)
 	}
-	sub, err := substrate.Get(res.Provider)
+	sub, err := substrate.Get(res.Driver)
 	if err != nil {
-		return fmt.Errorf("substrate %q not registered: %w", res.Provider, err)
+		return fmt.Errorf("substrate %q not registered: %w", res.Driver, err)
 	}
 	if !sub.Capabilities().SupportsPause {
-		return fmt.Errorf("substrate %q does not support pause/resume", res.Provider)
+		return fmt.Errorf("substrate %q does not support pause/resume", res.Driver)
 	}
 	handle, err := res.ReconstructHandle(sub)
 	if err != nil {
@@ -101,9 +101,9 @@ func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOpera
 		return fmt.Errorf("resource %s.%s already in state", op.Type, op.Name)
 	}
 	st.AddResource(state.Resource{
-		Address:  addr,
-		Provider: op.Substrate,
-		Instance: substrate.HandleToInstance(handle, sub),
+		Address:    addr,
+		Driver:     op.Substrate,
+		Attributes: substrate.HandleToInstance(handle, sub),
 	})
 	owner := fmt.Sprintf("sysbox-agent:import:%s:%s.%s", op.Topology, op.Type, op.Name)
 	return mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: owner})

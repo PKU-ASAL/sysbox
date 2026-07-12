@@ -41,7 +41,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		}
 		nodes = append(nodes, nodeInfo{
 			Name:      res.Address.Name,
-			Provider:  res.Provider,
+			Provider:  res.Driver,
 			PrimaryIP: res.PrimaryIP(),
 		})
 	}

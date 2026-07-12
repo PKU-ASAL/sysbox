@@ -123,7 +123,7 @@ func TestLocalBackend_SaveLoad(t *testing.T) {
 	b := &LocalBackend{Path: path}
 
 	s := &State{Version: SchemaVersion, Resources: []Resource{
-		{Address: address.Resource("sysbox_node", "test"), Provider: "docker"},
+		{Address: address.Resource("sysbox_node", "test"), Driver: "docker"},
 	}}
 	data, err := s.Marshal()
 	if err != nil {

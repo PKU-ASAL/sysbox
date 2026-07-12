@@ -32,9 +32,9 @@ resource "sysbox_kernel" "linux" {
 	require.NoError(t, state.NewManager(statePath).Save(&state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_kernel", "linux"),
-			Provider: "artifact",
-			Instance: map[string]any{"path": filepath.Join(dir, "missing")},
+			Address:    address.Resource("sysbox_kernel", "linux"),
+			Driver:     "artifact",
+			Attributes: map[string]any{"path": filepath.Join(dir, "missing")},
 		}},
 	}))
 	var log bytes.Buffer
@@ -152,7 +152,7 @@ func TestObserveLocalBridgeReportsStateHealth(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
 	mgr := state.NewManager(statePath)
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{
-		{Address: address.Resource("sysbox_image", "alpine"), Provider: "docker", Instance: map[string]any{"repository": "alpine:latest"}},
+		{Address: address.Resource("sysbox_image", "alpine"), Driver: "docker", Attributes: map[string]any{"repository": "alpine:latest"}},
 	}}
 	require.NoError(t, mgr.Save(st))
 
@@ -167,8 +167,8 @@ func TestObserveLocalBridgeReportsStateHealth(t *testing.T) {
 func TestLocalBridgeBuildDestroyPlanHonorsPreventDestroy(t *testing.T) {
 	bridge := NewLocalBridge(LocalOptions{})
 	st := &state.State{Resources: []state.Resource{
-		{Address: address.Resource("sysbox_node", "web"), Instance: map[string]any{}},
-		{Address: address.Resource("sysbox_node", "db"), Instance: map[string]any{"lifecycle_prevent_destroy": true}},
+		{Address: address.Resource("sysbox_node", "web"), Attributes: map[string]any{}},
+		{Address: address.Resource("sysbox_node", "db"), Attributes: map[string]any{"lifecycle_prevent_destroy": true}},
 	}}
 
 	plan, err := bridge.BuildDestroyPlan(st)

@@ -72,7 +72,7 @@ func TestImageResourceProviderCreateDockerRef(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "sysbox_image", res.Address.Type)
 	require.Equal(t, "alpine", res.Address.Name)
-	require.Equal(t, "image-test", res.Provider)
+	require.Equal(t, "image-test", res.Driver)
 	require.Equal(t, "image-id", res.ImageID())
 	require.Equal(t, "alpine:latest", res.Repository())
 	require.Equal(t, "alpine:latest", sub.lastSpec.DockerRef)
@@ -104,7 +104,7 @@ func TestImageResourceProviderCreateRootfsArtifact(t *testing.T) {
 
 func TestImageResourceProviderDelete(t *testing.T) {
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
-	res := state.Resource{Address: address.Resource("sysbox_image", "alpine"), Provider: "image-test", Instance: map[string]any{}}
+	res := state.Resource{Address: address.Resource("sysbox_image", "alpine"), Driver: "image-test", Attributes: map[string]any{}}
 	exec.state.AddResource(res)
 
 	require.NoError(t, ImageResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res))
@@ -118,7 +118,7 @@ func TestImageResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Address: address.Resource("sysbox_image", "alpine"), Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_image", "alpine"), Driver: "docker", Attributes: inst}
 	p := ImageResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)

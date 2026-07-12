@@ -152,7 +152,7 @@ func diffDesiredState(n *graph.Node, r *state.Resource) (map[string]controlplane
 	for _, field := range ignore {
 		delete(after, field)
 	}
-	before, _ := r.Instance[desiredPayloadKey].(map[string]any)
+	before, _ := r.Attributes[desiredPayloadKey].(map[string]any)
 	if before == nil {
 		return nil, "desired configuration hash changed"
 	}

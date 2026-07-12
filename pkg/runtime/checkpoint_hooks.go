@@ -110,9 +110,9 @@ func checkpointResourceType(step OperationStep) string {
 
 func StateResourceFromLog(rec StateResourceLog) state.Resource {
 	return state.Resource{
-		Address:  address.Resource(rec.Type, rec.Name),
-		Provider: rec.Provider,
-		Instance: cloneInstance(rec.Instance),
+		Address:    address.Resource(rec.Type, rec.Name),
+		Driver:     rec.Provider,
+		Attributes: cloneInstance(rec.Instance),
 	}
 }
 
@@ -121,9 +121,9 @@ func AdoptStateResource(st *state.State, rec StateResourceLog, externalID string
 	if externalID != "" {
 		switch rec.Type {
 		case "sysbox_network":
-			res.Instance["docker_network_id"] = externalID
+			res.Attributes["docker_network_id"] = externalID
 		case "sysbox_node", "sysbox_router", "sysbox_actor":
-			res.Instance["container_id"] = externalID
+			res.Attributes["container_id"] = externalID
 		}
 	}
 	st.AddResource(res)
@@ -157,7 +157,7 @@ func (NetworkResourceProvider) RecoverCheckpointResource(ctx context.Context, st
 		return action, nil
 	}
 	res := StateResourceFromLog(*rec)
-	if res.Provider == "docker" || res.IsNAT() {
+	if res.Driver == "docker" || res.IsNAT() {
 		return recoverDockerManagedNetwork(ctx, st, step)
 	}
 	nsName := res.Str("netns")
@@ -190,7 +190,7 @@ func (NetworkResourceProvider) CleanupCheckpointResource(ctx context.Context, st
 		return action, nil
 	}
 	res := StateResourceFromLog(*step.StateResource)
-	if res.Provider == "docker" || res.IsNAT() {
+	if res.Driver == "docker" || res.IsNAT() {
 		return cleanupDockerManagedNetwork(ctx, step)
 	}
 	nsName := res.Str("netns")
@@ -270,10 +270,10 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 	if action.ExternalID == "" {
 		action.ExternalID = res.ContainerID()
 	}
-	if res.Provider == "docker" {
+	if res.Driver == "docker" {
 		return recoverDockerNodeLike(ctx, st, step)
 	}
-	sub, err := substrate.Get(res.Provider)
+	sub, err := substrate.Get(res.Driver)
 	if err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
@@ -337,16 +337,16 @@ func cleanupNodeLikeCheckpoint(ctx context.Context, step OperationStep) (Checkpo
 		return cleanupDockerNodeLikeByLabels(ctx, step)
 	}
 	res := StateResourceFromLog(*rec)
-	if res.Provider == "firecracker" {
+	if res.Driver == "firecracker" {
 		action.Class = CheckpointCleanupMicroVM
 	}
 	if action.ExternalID == "" {
 		action.ExternalID = res.ContainerID()
 	}
-	if res.Provider == "docker" {
+	if res.Driver == "docker" {
 		return cleanupDockerNodeLike(ctx, step)
 	}
-	sub, err := substrate.Get(res.Provider)
+	sub, err := substrate.Get(res.Driver)
 	if err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
@@ -574,7 +574,7 @@ func findDockerObjectByLabels(_ context.Context, labels map[string]string, list 
 }
 
 func cleanupAttachedNICs(res state.Resource) error {
-	nics, ok := res.Instance["nics"].([]any)
+	nics, ok := res.Attributes["nics"].([]any)
 	if !ok {
 		return nil
 	}

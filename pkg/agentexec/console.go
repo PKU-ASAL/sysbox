@@ -34,9 +34,9 @@ func OpenConsoleFromState(ctx context.Context, st *state.State, sess controlplan
 	if res == nil {
 		return fmt.Errorf("node %q not found in state", sess.Node)
 	}
-	sub, err := substrate.Get(res.Provider)
+	sub, err := substrate.Get(res.Driver)
 	if err != nil {
-		return fmt.Errorf("substrate %q not registered: %w", res.Provider, err)
+		return fmt.Errorf("substrate %q not registered: %w", res.Driver, err)
 	}
 	handle, err := res.ReconstructHandle(sub)
 	if err != nil {

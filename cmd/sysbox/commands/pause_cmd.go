@@ -55,7 +55,7 @@ func pauseResumeOp(addr string, resume bool) error {
 		return fmt.Errorf("resource %s.%s not found in state", typ, name)
 	}
 
-	subName := r.Provider
+	subName := r.Driver
 	sub, err := substrate.Get(subName)
 	if err != nil {
 		return fmt.Errorf("substrate %q: %w", subName, err)

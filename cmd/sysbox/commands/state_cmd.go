@@ -69,7 +69,7 @@ func runStateList(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, r := range s.Resources {
-		fmt.Printf("%s [provider=%s]\n", r.Address, r.Provider)
+		fmt.Printf("%s [provider=%s]\n", r.Address, r.Driver)
 	}
 	return nil
 }

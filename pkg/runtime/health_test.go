@@ -29,9 +29,9 @@ func TestEvaluateTopologyHealthKernelFile(t *testing.T) {
 	st := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_kernel", "linux"),
-			Provider: "artifact",
-			Instance: map[string]any{"path": kernel},
+			Address:    address.Resource("sysbox_kernel", "linux"),
+			Driver:     "artifact",
+			Attributes: map[string]any{"path": kernel},
 		}},
 	}
 
@@ -46,9 +46,9 @@ func TestEvaluateTopologyHealthMissingKernelDrifts(t *testing.T) {
 	st := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Address:  address.Resource("sysbox_kernel", "linux"),
-			Provider: "artifact",
-			Instance: map[string]any{"path": filepath.Join(t.TempDir(), "missing")},
+			Address:    address.Resource("sysbox_kernel", "linux"),
+			Driver:     "artifact",
+			Attributes: map[string]any{"path": filepath.Join(t.TempDir(), "missing")},
 		}},
 	}
 
@@ -62,9 +62,9 @@ func TestEvaluateTopologyHealthMissingKernelDrifts(t *testing.T) {
 
 func TestEvaluateResourceHealthUsesProviderRead(t *testing.T) {
 	res := &state.Resource{
-		Address:  address.Resource("sysbox_kernel", "linux"),
-		Provider: "artifact",
-		Instance: map[string]any{"path": ""},
+		Address:    address.Resource("sysbox_kernel", "linux"),
+		Driver:     "artifact",
+		Attributes: map[string]any{"path": ""},
 	}
 
 	health := EvaluateResourceHealth(context.Background(), res)
@@ -76,9 +76,9 @@ func TestEvaluateResourceHealthUsesProviderRead(t *testing.T) {
 
 func TestEvaluateResourceHealthUnsupportedResourceIsHealthyUnknownProbe(t *testing.T) {
 	res := &state.Resource{
-		Address:  address.Resource("sysbox_image", "alpine"),
-		Provider: "docker",
-		Instance: map[string]any{"repository": "alpine:latest"},
+		Address:    address.Resource("sysbox_image", "alpine"),
+		Driver:     "docker",
+		Attributes: map[string]any{"repository": "alpine:latest"},
 	}
 
 	health := EvaluateResourceHealth(context.Background(), res)
