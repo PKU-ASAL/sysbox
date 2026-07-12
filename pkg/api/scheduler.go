@@ -25,7 +25,10 @@ func requiredCapabilitiesForTopology(path string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	evalCtx := config.BuildEvalContext(root)
+	evalCtx, err := config.BuildEvalContext(root)
+	if err != nil {
+		return nil, err
+	}
 	set := map[string]bool{}
 	for _, r := range root.Resources {
 		cfg, err := decodeCapabilityResource(r, evalCtx)
@@ -64,7 +67,10 @@ func requiredCapabilitiesForNode(path, node string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	evalCtx := config.BuildEvalContext(root)
+	evalCtx, err := config.BuildEvalContext(root)
+	if err != nil {
+		return nil, err
+	}
 	set := map[string]bool{}
 	for _, r := range root.Resources {
 		if r.Name != node || (r.Type != "sysbox_node" && r.Type != "sysbox_router") {

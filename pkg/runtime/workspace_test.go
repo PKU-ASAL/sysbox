@@ -29,7 +29,8 @@ resource "sysbox_network" "lab" {
 	root, err := config.ParseFile(f)
 	require.NoError(t, err)
 
-	ctx := config.BuildEvalContext(root)
+	ctx, err := config.BuildEvalContext(root)
+	require.NoError(t, err)
 	g, err := BuildGraph(root, ctx)
 	require.NoError(t, err)
 
@@ -51,7 +52,8 @@ resource "sysbox_network" "dmz" {
 	root, err := config.ParseFile(f)
 	require.NoError(t, err)
 
-	ctx := config.BuildEvalContext(root)
+	ctx, err := config.BuildEvalContext(root)
+	require.NoError(t, err)
 	g, err := BuildGraph(root, ctx)
 	require.NoError(t, err)
 
@@ -69,7 +71,8 @@ resource "sysbox_network" "lab" {
 	root, err := config.ParseFile(f)
 	require.NoError(t, err)
 
-	ctx := config.BuildEvalContext(root)
+	ctx, err := config.BuildEvalContext(root)
+	require.NoError(t, err)
 	g, err := BuildGraph(root, ctx)
 	require.NoError(t, err)
 
@@ -88,7 +91,8 @@ resource "sysbox_network" "lab" {
 	root, err := config.ParseFile(f)
 	require.NoError(t, err)
 
-	ctx := config.BuildEvalContext(root)
+	ctx, err := config.BuildEvalContext(root)
+	require.NoError(t, err)
 	g, err := BuildGraph(root, ctx)
 	require.NoError(t, err)
 
@@ -109,7 +113,8 @@ resource "sysbox_network" "seg" {
 	root, err := config.ParseFile(f)
 	require.NoError(t, err)
 
-	ctx := config.BuildEvalContext(root)
+	ctx, err := config.BuildEvalContext(root)
+	require.NoError(t, err)
 	g, err := BuildGraph(root, ctx)
 	require.NoError(t, err)
 
@@ -134,7 +139,9 @@ resource "sysbox_network" "lab_dmz" {
 `)
 	root, err := config.ParseFile(f)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, config.BuildEvalContext(root))
+	ctx, err := config.BuildEvalContext(root)
+	require.NoError(t, err)
+	g, err := BuildGraph(root, ctx)
 	require.NoError(t, err)
 	require.Len(t, g.All(), 2)
 	require.NotNil(t, g.Get(address.StringInstance("sysbox_network", "lab", "dmz")))
@@ -150,7 +157,8 @@ func TestBuildGraphModule(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, root.Modules, 1)
 
-	ctx := config.BuildEvalContext(root, filepath.Dir(callerFile))
+	ctx, err := config.BuildEvalContext(root, filepath.Dir(callerFile))
+	require.NoError(t, err)
 	g, err := BuildGraph(root, ctx, callerFile)
 	require.NoError(t, err)
 
@@ -176,7 +184,8 @@ func TestBuildGraphModuleOutputsInContext(t *testing.T) {
 	root, err := config.ParseFile(callerFile)
 	require.NoError(t, err)
 
-	ctx := config.BuildEvalContext(root, filepath.Dir(callerFile))
+	ctx, err := config.BuildEvalContext(root, filepath.Dir(callerFile))
+	require.NoError(t, err)
 
 	// module.net.dmz_id should resolve to the namespaced resource name.
 	modVal, ok := ctx.Variables["module"]
@@ -208,7 +217,8 @@ resource "sysbox_network" "net" { cidr = var.cidr }
 	root, err := config.ParseFile(callerFile)
 	require.NoError(t, err)
 
-	ctx := config.BuildEvalContext(root, dir)
+	ctx, err := config.BuildEvalContext(root, dir)
+	require.NoError(t, err)
 	g, err := BuildGraph(root, ctx, callerFile)
 	require.NoError(t, err)
 
@@ -234,7 +244,8 @@ module "outer" { source = "./mod" }
 
 	root, err := config.ParseFile(callerFile)
 	require.NoError(t, err)
-	ctx := config.BuildEvalContext(root, dir)
+	ctx, err := config.BuildEvalContext(root, dir)
+	require.NoError(t, err)
 	_, err = BuildGraph(root, ctx, callerFile)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nested modules")
@@ -260,7 +271,8 @@ module "net" { source = "./mod" }
 
 	root, err := config.ParseFile(callerFile)
 	require.NoError(t, err)
-	ctx := config.BuildEvalContext(root, dir)
+	ctx, err := config.BuildEvalContext(root, dir)
+	require.NoError(t, err)
 	g, err := BuildGraph(root, ctx, callerFile)
 	require.NoError(t, err)
 
@@ -290,7 +302,9 @@ resource "sysbox_firewall" "edge" {
 	require.NoError(t, os.WriteFile(callerFile, []byte(`module "lab" { source = "./mod" }`), 0o644))
 	root, err := config.ParseFile(callerFile)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, config.BuildEvalContext(root, dir), callerFile)
+	ctx, err := config.BuildEvalContext(root, dir)
+	require.NoError(t, err)
+	g, err := BuildGraph(root, ctx, callerFile)
 	require.NoError(t, err)
 	module := address.ModuleInstance{Name: "lab"}
 	firewall := address.Resource("sysbox_firewall", "edge").WithModule(module)
@@ -311,7 +325,8 @@ resource "sysbox_network" "lab" {
 	root, err := config.ParseFile(f)
 	require.NoError(t, err)
 
-	ctx := config.BuildEvalContext(root)
+	ctx, err := config.BuildEvalContext(root)
+	require.NoError(t, err)
 	_, err = BuildGraph(root, ctx)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "set must contain strings")

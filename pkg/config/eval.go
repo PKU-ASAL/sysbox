@@ -12,12 +12,13 @@ import (
 	"github.com/zclconf/go-cty/cty/function"
 
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/diag"
 )
 
 // BuildEvalContext returns an *hcl.EvalContext for the given root. callerDir
 // is the directory of the HCL file (needed to resolve module source paths).
 // Pass "" when the caller directory is not known (module outputs won't be pre-loaded).
-func BuildEvalContext(root *Root, callerDir ...string) *hcl.EvalContext {
+func BuildEvalContext(root *Root, callerDir ...string) (*hcl.EvalContext, error) {
 	dir := ""
 	if len(callerDir) > 0 {
 		dir = callerDir[0]
@@ -26,7 +27,8 @@ func BuildEvalContext(root *Root, callerDir ...string) *hcl.EvalContext {
 }
 
 // buildEvalContextInner is the actual implementation.
-func buildEvalContextInner(root *Root, callerDir string) *hcl.EvalContext {
+func buildEvalContextInner(root *Root, callerDir string) (*hcl.EvalContext, error) {
+	var diagnostics diag.Diagnostics
 	subTypes := map[string]map[string]cty.Value{}
 	for _, sb := range root.Substrates {
 		if subTypes[sb.Type] == nil {
@@ -55,11 +57,13 @@ func buildEvalContextInner(root *Root, callerDir string) *hcl.EvalContext {
 		}
 		attrs, diags := lb.Remain.JustAttributes()
 		if diags.HasErrors() {
+			diagnostics = append(diagnostics, fromHCLDiagnostics(diags)...)
 			continue
 		}
 		for name, attr := range attrs {
 			val, diags := attr.Expr.Value(localCtx)
 			if diags.HasErrors() {
+				diagnostics = append(diagnostics, fromHCLDiagnostics(diags)...)
 				continue
 			}
 			localVals[name] = val
@@ -136,7 +140,8 @@ func buildEvalContextInner(root *Root, callerDir string) *hcl.EvalContext {
 	if callerDir != "" && len(root.Modules) > 0 {
 		moduleVals := map[string]cty.Value{}
 		for _, mod := range root.Modules {
-			outVals := resolveModuleOutputs(mod, callerDir, ctx)
+			outVals, moduleDiagnostics := resolveModuleOutputs(mod, callerDir, ctx)
+			diagnostics = append(diagnostics, moduleDiagnostics...)
 			if len(outVals) > 0 {
 				moduleVals[mod.Name] = cty.ObjectVal(outVals)
 			}
@@ -145,7 +150,8 @@ func buildEvalContextInner(root *Root, callerDir string) *hcl.EvalContext {
 			ctx.Variables["module"] = cty.ObjectVal(moduleVals)
 		}
 	}
-	return ctx
+	diagnostics.Sort()
+	return ctx, diagnostics.Err()
 }
 
 // envFunc implements env("VAR_NAME") → string value from the host environment.
@@ -201,14 +207,15 @@ var tosetFunc = function.New(&function.Spec{
 // resolveModuleOutputs loads a module file, builds a namespaced eval context
 // for it, evaluates its output blocks, and returns the output values keyed by
 // output name. Errors are silently ignored (best-effort; parse-time only).
-func resolveModuleOutputs(mod ModuleBlock, callerDir string, parentCtx *hcl.EvalContext) map[string]cty.Value {
+func resolveModuleOutputs(mod ModuleBlock, callerDir string, parentCtx *hcl.EvalContext) (map[string]cty.Value, diag.Diagnostics) {
+	var diagnostics diag.Diagnostics
 	src, err := resolveModuleSource(mod.Source, callerDir)
 	if err != nil {
-		return nil
+		return nil, diag.Diagnostics{{Severity: diag.Error, Summary: "Failed to resolve module source", Detail: err.Error()}}
 	}
 	modRoot, err := ParseFile(src)
 	if err != nil {
-		return nil
+		return nil, diag.Diagnostics{{Severity: diag.Error, Summary: "Failed to parse module", Detail: err.Error()}}
 	}
 	// Build the module's eval context with namespaced resource IDs and
 	// variables from the module block's attributes.
@@ -221,11 +228,12 @@ func resolveModuleOutputs(mod ModuleBlock, callerDir string, parentCtx *hcl.Eval
 		}
 		val, diag := out.Value.Value(modCtx)
 		if diag.HasErrors() {
+			diagnostics = append(diagnostics, fromHCLDiagnostics(diag)...)
 			continue
 		}
 		outVals[out.Name] = val
 	}
-	return outVals
+	return outVals, diagnostics
 }
 
 // buildModuleEvalContext builds an eval context with canonical module resource

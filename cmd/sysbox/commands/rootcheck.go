@@ -14,7 +14,10 @@ func needsRoot(root *config.Root) bool {
 	for _, r := range root.Resources {
 		if r.Type == "sysbox_network" {
 			cfg := &config.NetworkConfig{}
-			ctx := config.BuildEvalContext(root)
+			ctx, err := config.BuildEvalContext(root)
+			if err != nil {
+				return true
+			}
 			if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 				return true // can't decode → assume root needed
 			}

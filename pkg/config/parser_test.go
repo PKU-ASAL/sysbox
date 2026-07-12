@@ -29,7 +29,8 @@ func TestDecodeResource(t *testing.T) {
 	path := filepath.Join("..", "..", "tests", "testdata", "valid_field.hcl")
 	root, err := ParseFile(path)
 	require.NoError(t, err)
-	ctx := BuildEvalContext(root)
+	ctx, err := BuildEvalContext(root)
+	require.NoError(t, err)
 
 	netBlock := findResource(root, "sysbox_network", "dmz")
 	require.NotNil(t, netBlock)
@@ -67,7 +68,8 @@ resource "sysbox_node" "web" {
 `), 0o644))
 	root, err := ParseFile(path)
 	require.NoError(t, err)
-	ctx := BuildEvalContext(root)
+	ctx, err := BuildEvalContext(root)
+	require.NoError(t, err)
 
 	nodeBlock := findResource(root, "sysbox_node", "web")
 	require.NotNil(t, nodeBlock)
@@ -86,7 +88,8 @@ func TestDecodeActor(t *testing.T) {
 	path := filepath.Join("..", "..", "tests", "testdata", "valid_field.hcl")
 	root, err := ParseFile(path)
 	require.NoError(t, err)
-	ctx := BuildEvalContext(root)
+	ctx, err := BuildEvalContext(root)
+	require.NoError(t, err)
 
 	actorBlock := findResource(root, "sysbox_actor", "red")
 	require.NotNil(t, actorBlock)
@@ -104,7 +107,8 @@ func TestEvalContextNamespaces(t *testing.T) {
 	path := filepath.Join("..", "..", "tests", "testdata", "valid_field.hcl")
 	root, err := ParseFile(path)
 	require.NoError(t, err)
-	ctx := BuildEvalContext(root)
+	ctx, err := BuildEvalContext(root)
+	require.NoError(t, err)
 
 	require.Contains(t, ctx.Variables, "substrate")
 	require.Contains(t, ctx.Variables, "sysbox_image")

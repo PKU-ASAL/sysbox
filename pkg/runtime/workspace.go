@@ -32,7 +32,10 @@ func LoadWorkspaceWithManager(hclFile string, mgr *state.Manager) (
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("parse config: %w", err)
 	}
-	ctx := config.BuildEvalContext(root, filepath.Dir(hclFile))
+	ctx, err := config.BuildEvalContext(root, filepath.Dir(hclFile))
+	if err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("evaluate config: %w", err)
+	}
 	g, err := BuildGraph(root, ctx, hclFile)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("build graph: %w", err)

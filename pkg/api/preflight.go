@@ -82,7 +82,10 @@ func (s *Server) preflightTopology(topology string) (*preflightResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	ctx := config.BuildEvalContext(root, filepath.Dir(s.workspaceService().HCLFile(topology)))
+	ctx, err := config.BuildEvalContext(root, filepath.Dir(s.workspaceService().HCLFile(topology)))
+	if err != nil {
+		return nil, fmt.Errorf("evaluate config: %w", err)
+	}
 	res := &preflightResult{OK: true}
 
 	needed := map[string]bool{}

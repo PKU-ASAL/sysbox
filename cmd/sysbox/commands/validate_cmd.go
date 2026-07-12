@@ -21,7 +21,10 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx := config.BuildEvalContext(root)
+	ctx, err := config.BuildEvalContext(root)
+	if err != nil {
+		return err
+	}
 	g, err := runtime.BuildGraph(root, ctx)
 	if err != nil {
 		return err
