@@ -27,6 +27,23 @@ type Backend interface {
 	Lock(ctx context.Context) (UnlockFunc, error)
 }
 
+type BackendCapabilities struct {
+	Locking, CAS, Snapshot, Delete, Lease, ForceUnlock bool
+}
+
+func (c BackendCapabilities) SafeMutation() bool { return c.Locking && c.CAS }
+
+type CapabilityBackend interface{ Capabilities() BackendCapabilities }
+
+func (*LocalBackend) Capabilities() BackendCapabilities {
+	return BackendCapabilities{Locking: true, CAS: true, Snapshot: true, Delete: true, Lease: true, ForceUnlock: true}
+}
+func (*HTTPBackend) Capabilities() BackendCapabilities { return BackendCapabilities{} }
+func (*S3Backend) Capabilities() BackendCapabilities   { return BackendCapabilities{} }
+func (*PostgresBackend) Capabilities() BackendCapabilities {
+	return BackendCapabilities{Locking: true, CAS: true, Snapshot: true, Delete: true, Lease: true, ForceUnlock: true}
+}
+
 type Metadata struct {
 	Backend     string    `json:"backend"`
 	Location    string    `json:"location"`

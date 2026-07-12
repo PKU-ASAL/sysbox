@@ -12,10 +12,11 @@ var rootCmd = &cobra.Command{
 }
 
 var (
-	flagConfigFile  string
-	flagStateFile   string
-	flagBackend     string
-	flagAutoApprove bool
+	flagConfigFile       string
+	flagStateFile        string
+	flagBackend          string
+	flagAutoApprove      bool
+	flagAllowUnsafeState bool
 )
 
 func init() {
@@ -27,6 +28,8 @@ func init() {
 		"state backend URL (s3://bucket/key, https://host/path); overrides --state")
 	rootCmd.PersistentFlags().BoolVar(&flagAutoApprove, "auto-approve",
 		false, "skip interactive confirmation prompt")
+	rootCmd.PersistentFlags().BoolVar(&flagAllowUnsafeState, "allow-unsafe-state",
+		false, "allow mutation with a backend that lacks locking or CAS")
 
 	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd, validateCmd, serveCmd,
 		pauseCmd, resumeCmd, importCmd)

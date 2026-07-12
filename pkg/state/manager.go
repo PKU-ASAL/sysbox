@@ -2,13 +2,15 @@ package state
 
 import (
 	"context"
+	"fmt"
 )
 
 // Manager reads and writes state through a Backend. By default it uses
 // LocalBackend (file on disk with flock). The backend can be swapped for
 // HTTP or S3 by calling SetBackend before Load/Save.
 type Manager struct {
-	backend Backend
+	backend             Backend
+	allowUnsafeMutation bool
 }
 
 func NewManager(path string) *Manager {
@@ -27,6 +29,22 @@ func (m *Manager) SetBackend(b Backend) { m.backend = b }
 
 // Backend returns the active backend.
 func (m *Manager) Backend() Backend { return m.backend }
+
+func (m *Manager) Capabilities() BackendCapabilities {
+	if backend, ok := m.backend.(CapabilityBackend); ok {
+		return backend.Capabilities()
+	}
+	return BackendCapabilities{}
+}
+
+func (m *Manager) RequireMutationSafety(allowUnsafe bool) error {
+	if m.Capabilities().SafeMutation() || allowUnsafe {
+		return nil
+	}
+	return fmt.Errorf("unsafe state backend: mutation requires locking and CAS; explicit unsafe override required")
+}
+
+func (m *Manager) AllowUnsafeMutation(allow bool) { m.allowUnsafeMutation = allow }
 
 func (m *Manager) Metadata(ctx context.Context) (Metadata, error) {
 	if b, ok := m.backend.(MetadataBackend); ok {
@@ -123,6 +141,9 @@ func (m *Manager) Save(s *State) error {
 
 // SaveWithContext is like Save but respects the given context.
 func (m *Manager) SaveWithContext(ctx context.Context, s *State) error {
+	if err := m.RequireMutationSafety(m.allowUnsafeMutation); err != nil {
+		return err
+	}
 	s.Version = SchemaVersion
 
 	unlock, err := m.lock(ctx, LockOptions{})
@@ -157,6 +178,9 @@ func (m *Manager) SaveWithContext(ctx context.Context, s *State) error {
 }
 
 func (m *Manager) SaveWithLease(ctx context.Context, s *State, lease LockOptions) error {
+	if err := m.RequireMutationSafety(m.allowUnsafeMutation); err != nil {
+		return err
+	}
 	s.Version = SchemaVersion
 
 	unlock, err := m.lock(ctx, lease)

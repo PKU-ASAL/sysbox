@@ -18,18 +18,19 @@ import (
 )
 
 type LocalOptions struct {
-	Topology        string
-	ConfigFile      string
-	StatePath       string
-	BackendURL      string
-	RunsDir         string
-	Log             io.Writer
-	Refresh         bool
-	Target          string
-	BeforeApply     func(*runtime.Plan) error
-	BeforeDestroy   func(*runtime.Plan) error
-	AfterRun        func(*controlplane.Run)
-	CheckpointStore runtime.CheckpointStore
+	Topology         string
+	ConfigFile       string
+	StatePath        string
+	BackendURL       string
+	AllowUnsafeState bool
+	RunsDir          string
+	Log              io.Writer
+	Refresh          bool
+	Target           string
+	BeforeApply      func(*runtime.Plan) error
+	BeforeDestroy    func(*runtime.Plan) error
+	AfterRun         func(*controlplane.Run)
+	CheckpointStore  runtime.CheckpointStore
 }
 
 type LocalBridge struct {
@@ -104,9 +105,13 @@ func (b *LocalBridge) StateManager(topology string) (*state.Manager, error) {
 		if err != nil {
 			return nil, fmt.Errorf("state backend: %w", err)
 		}
-		return state.NewManagerWithBackend(backend), nil
+		manager := state.NewManagerWithBackend(backend)
+		manager.AllowUnsafeMutation(b.opts.AllowUnsafeState)
+		return manager, nil
 	}
-	return state.NewManager(b.opts.StatePath), nil
+	manager := state.NewManager(b.opts.StatePath)
+	manager.AllowUnsafeMutation(b.opts.AllowUnsafeState)
+	return manager, nil
 }
 
 func (b *LocalBridge) HCLFile(string) string {

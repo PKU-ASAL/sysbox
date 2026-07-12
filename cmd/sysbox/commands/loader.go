@@ -34,9 +34,13 @@ func newManager() (*state.Manager, error) {
 		if err != nil {
 			return nil, fmt.Errorf("--backend: %w", err)
 		}
-		return state.NewManagerWithBackend(b), nil
+		manager := state.NewManagerWithBackend(b)
+		manager.AllowUnsafeMutation(flagAllowUnsafeState)
+		return manager, nil
 	}
-	return state.NewManager(flagStateFile), nil
+	manager := state.NewManager(flagStateFile)
+	manager.AllowUnsafeMutation(flagAllowUnsafeState)
+	return manager, nil
 }
 
 func localRunsDir() string {

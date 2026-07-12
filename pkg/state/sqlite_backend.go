@@ -22,6 +22,10 @@ type SQLiteBackend struct {
 	Topology string // topology key (maps to a row in the sysbox_state table)
 }
 
+func (*SQLiteBackend) Capabilities() BackendCapabilities {
+	return BackendCapabilities{Locking: true, CAS: true, Snapshot: true, Delete: true, Lease: true, ForceUnlock: true}
+}
+
 // ── low‑level helpers ────────────────────────────────────────────────────────
 
 func (b *SQLiteBackend) topology() string {

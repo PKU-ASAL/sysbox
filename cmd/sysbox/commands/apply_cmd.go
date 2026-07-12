@@ -44,13 +44,14 @@ func runApply(cmd *cobra.Command, args []string) error {
 	run := newLocalRun("apply", localTopology())
 	aborted := false
 	bridge := agentexec.NewLocalBridge(agentexec.LocalOptions{
-		Topology:   run.Topology,
-		ConfigFile: flagConfigFile,
-		StatePath:  statePath(),
-		BackendURL: flagBackend,
-		RunsDir:    localRunsDir(),
-		Refresh:    flagApplyRefresh,
-		Target:     flagApplyTarget,
+		Topology:         run.Topology,
+		ConfigFile:       flagConfigFile,
+		StatePath:        statePath(),
+		BackendURL:       flagBackend,
+		AllowUnsafeState: flagAllowUnsafeState,
+		RunsDir:          localRunsDir(),
+		Refresh:          flagApplyRefresh,
+		Target:           flagApplyTarget,
 		BeforeApply: func(plan *runtime.Plan) error {
 			runtime.PrintPlan(plan, true)
 			if flagAutoApprove {

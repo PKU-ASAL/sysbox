@@ -158,6 +158,10 @@ type recordingVersionedBackend struct {
 	lastSave SaveOptions
 }
 
+func (*recordingVersionedBackend) Capabilities() BackendCapabilities {
+	return BackendCapabilities{Locking: true, CAS: true}
+}
+
 func (b *recordingVersionedBackend) Load(context.Context) ([]byte, error) {
 	if b.loaded == nil || !b.loaded.Exists {
 		return nil, nil

@@ -47,11 +47,12 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	run := newLocalRun("destroy", localTopology())
 	aborted := false
 	bridge := agentexec.NewLocalBridge(agentexec.LocalOptions{
-		Topology:   run.Topology,
-		ConfigFile: flagConfigFile,
-		StatePath:  statePath(),
-		BackendURL: flagBackend,
-		RunsDir:    localRunsDir(),
+		Topology:         run.Topology,
+		ConfigFile:       flagConfigFile,
+		StatePath:        statePath(),
+		BackendURL:       flagBackend,
+		AllowUnsafeState: flagAllowUnsafeState,
+		RunsDir:          localRunsDir(),
 		BeforeDestroy: func(plan *runtime.Plan) error {
 			fmt.Printf("Will destroy %d resource(s).\n", len(plan.Actions))
 			if flagAutoApprove {
