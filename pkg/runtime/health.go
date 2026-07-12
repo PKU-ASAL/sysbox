@@ -48,17 +48,18 @@ func EvaluateResourceHealth(ctx context.Context, res *state.Resource) controlpla
 		rh.Observation = result.Observation
 		rh.Checks = result.Checks
 		if err != nil {
-			status, reason, known := classifyResourceReadError(err)
-			if !known || status == ResourceReadUnknown {
-				rh.Status = controlplane.ResourceHealthUnknown
-				rh.Decision = controlplane.RecoveryDecisionUnknown
-				rh.Reason = reason
-				return rh
-			}
+			rh.Status = controlplane.ResourceHealthUnknown
+			rh.Decision = controlplane.RecoveryDecisionUnknown
+			rh.Reason = err.Error()
+			return rh
+		}
+		switch result.Status {
+		case state.ResourceAbsent, state.ResourceDrifted:
 			rh.Status = controlplane.ResourceHealthDrifted
 			rh.Decision = controlplane.RecoveryDecisionMarkDrift
-			rh.Reason = reason
-			return rh
+		case state.ResourceUnknown:
+			rh.Status = controlplane.ResourceHealthUnknown
+			rh.Decision = controlplane.RecoveryDecisionUnknown
 		}
 		return rh
 	}

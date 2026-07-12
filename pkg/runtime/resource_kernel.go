@@ -33,11 +33,15 @@ func (KernelResourceProvider) Read(_ context.Context, current state.Resource) (R
 	path := current.Str("path")
 	if path == "" {
 		result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: false, Reason: "kernel path missing from state"}}
-		return result, driftedResource("kernel path missing from state")
+		result.Status = state.ResourceDrifted
+		result.Reason = "kernel path missing from state"
+		return result, nil
 	}
 	if _, err := os.Stat(path); err != nil {
 		result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: false, Reason: err.Error()}}
-		return result, driftedResource(err.Error())
+		result.Status = state.ResourceDrifted
+		result.Reason = err.Error()
+		return result, nil
 	}
 	result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: true}}
 	return result, nil

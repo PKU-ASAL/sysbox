@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -21,89 +22,79 @@ import (
 // is treated as "unknown" and the resource stays Unchanged.
 func (e *Executor) Refresh(ctx context.Context, plan *Plan) (*Plan, error) {
 	refreshed := &Plan{Actions: append([]controlplane.PlannedChange(nil), plan.Actions...)}
-	changed := map[string]bool{}
 	for i := range refreshed.Actions {
 		change := &refreshed.Actions[i]
 		if change.Action == controlplane.PlanActionReplace {
-			changed[change.Address.String()] = true
 			continue
 		}
 		if change.Action != controlplane.PlanActionNoop {
 			continue
 		}
-		healthy, err := e.probeResource(ctx, change.Address)
+		result, err := e.observeResource(ctx, change.Address)
+		if current := e.state.FindResource(change.Address); current != nil {
+			current.Status = result.Status
+			if !result.Resource.Address.IsZero() {
+				current.Attributes = result.Resource.Attributes
+				current.ExternalID = result.Resource.ExternalID
+				current.UpdatedAt = time.Now().UTC()
+			}
+		}
 		if err != nil {
 			change.Action = controlplane.PlanActionUnknown
 			change.Reason = "probe failed: " + err.Error()
 			continue
 		}
-		if !healthy {
+		switch result.Status {
+		case state.ResourceAbsent, state.ResourceDrifted:
 			e.logf("[refresh] %s: drifted - will re-create\n", change.Address)
-			changed[change.Address.String()] = true
 			change.Action = controlplane.PlanActionReplace
-			change.Reason = "runtime drift detected"
+			change.Reason = result.Reason
+			if change.Reason == "" {
+				change.Reason = "runtime drift detected"
+			}
+		case state.ResourceUnknown:
+			change.Action = controlplane.PlanActionUnknown
+			change.Reason = result.Reason
+		case state.ResourceDegraded, state.ResourcePresent:
+			// Degraded resources remain present; health exposes the degradation.
 		}
 	}
-	e.cascadeChangedDependents(refreshed, changed)
 	return refreshed, refreshed.Validate()
 }
 
-func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[string]bool) {
-	if len(changed) == 0 || e.graph == nil {
-		return
+func (e *Executor) RefreshAndPersist(ctx context.Context, plan *Plan, manager *state.Manager) (*Plan, error) {
+	refreshed, err := e.Refresh(ctx, plan)
+	if err != nil {
+		return nil, err
 	}
-	unchanged := map[string]int{}
-	for i, change := range plan.Actions {
-		if change.Action == controlplane.PlanActionNoop {
-			unchanged[change.Address.String()] = i
-		}
+	if err := manager.SaveWithContext(ctx, e.state); err != nil {
+		return nil, fmt.Errorf("persist refreshed state: %w", err)
 	}
-
-	progress := true
-	for progress {
-		progress = false
-		for _, n := range e.graph.All() {
-			id := n.Address
-			index, isUnchanged := unchanged[id.String()]
-			if changed[id.String()] || !isUnchanged {
-				continue
-			}
-			for _, dep := range n.Deps {
-				if changed[dep.String()] {
-					changed[id.String()] = true
-					delete(unchanged, id.String())
-					plan.Actions[index].Action = controlplane.PlanActionReplace
-					plan.Actions[index].Reason = "dependency changed"
-					plan.Actions[index].DependencyReason = dep.String()
-					e.logf("[refresh] %s: dependency %s changed - will re-create\n", id, dep)
-					progress = true
-					break
-				}
-			}
-		}
-	}
-
+	return refreshed, nil
 }
 
 // probeResource checks whether a resource is still up.
-func (e *Executor) probeResource(ctx context.Context, id address.Address) (bool, error) {
+func (e *Executor) observeResource(ctx context.Context, id address.Address) (ResourceReadResult, error) {
 	r := e.state.FindResource(id)
 	if r == nil {
-		return false, nil
+		return ResourceReadResult{Status: state.ResourceAbsent, Reason: "resource absent from state"}, nil
 	}
 
 	if provider, ok := GetResourceProvider(id.Type); ok {
-		if _, err := provider.Read(ctx, *r); err != nil {
-			status, _, known := classifyResourceReadError(err)
-			if known && status == ResourceReadDrifted {
-				return false, nil
+		result, err := provider.Read(ctx, *r)
+		if err != nil {
+			result.Status = state.ResourceUnknown
+			if result.Reason == "" {
+				result.Reason = err.Error()
 			}
-			return true, err
+			return result, err
 		}
-		return true, nil
+		if result.Status == "" {
+			result.Status = state.ResourcePresent
+		}
+		return result, nil
 	}
-
-	return true, nil
+	return ResourceReadResult{Status: state.ResourcePresent, Resource: *r}, nil
 }
 
 func readNodeLikeResource(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
@@ -113,19 +104,22 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 	if err != nil {
 		result.Decision = controlplane.RecoveryDecisionUnknown
 		result.Reason = "substrate not registered"
-		return result, unknownResource("substrate not registered", err)
+		result.Status = state.ResourceUnknown
+		return result, err
 	}
 	cid := current.Str("container_id")
 	if cid == "" {
 		result.Decision = controlplane.RecoveryDecisionMarkDrift
 		result.Reason = "node has no persisted external id"
-		return result, driftedResource("node has no persisted external id")
+		result.Status = state.ResourceDrifted
+		return result, nil
 	}
 	obs, err := sub.ObserveNode(ctx, substrate.NodeHandle{ID: cid, Provider: providerState(sub, &current)})
 	if err != nil {
 		result.Decision = controlplane.RecoveryDecisionUnknown
 		result.Reason = "observe node"
-		return result, unknownResource("observe node", err)
+		result.Status = state.ResourceUnknown
+		return result, err
 	}
 	result.Observation = &obs
 	recovery := DecideNodeRecovery(RecoveryInput{
@@ -140,9 +134,11 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 	switch recovery.Decision {
 	case controlplane.RecoveryDecisionNoop:
 	case controlplane.RecoveryDecisionUnknown:
-		return result, unknownResource(recovery.Reason, nil)
+		result.Status = state.ResourceUnknown
+		return result, nil
 	default:
-		return result, driftedResource(recovery.Reason)
+		result.Status = state.ResourceDrifted
+		return result, nil
 	}
 	checks := map[string]controlplane.ResourceCheckHealth{}
 	if ok, reason := networkAttachmentsCheck(&current); !ok {
@@ -150,14 +146,16 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		result.Checks = checks
 		result.Decision = controlplane.RecoveryDecisionMarkDrift
 		result.Reason = reason
-		return result, driftedResource(reason)
+		result.Status = state.ResourceDrifted
+		return result, nil
 	}
 	if !nodeRoutesHealthy(ctx, sub, &current) {
 		checks["routes"] = controlplane.ResourceCheckHealth{OK: false, Reason: "route missing"}
 		result.Checks = checks
 		result.Decision = controlplane.RecoveryDecisionMarkDrift
 		result.Reason = "route missing"
-		return result, driftedResource("route missing")
+		result.Status = state.ResourceDrifted
+		return result, nil
 	}
 	if len(checks) > 0 {
 		result.Checks = checks

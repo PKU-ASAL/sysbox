@@ -54,12 +54,16 @@ func (NetworkResourceProvider) Read(_ context.Context, current state.Resource) (
 	if !network.NetnsExists(nsName) {
 		checks["netns"] = controlplane.ResourceCheckHealth{OK: false, Reason: "network namespace missing"}
 		result.Checks = checks
-		return result, driftedResource("network namespace missing")
+		result.Status = state.ResourceDrifted
+		result.Reason = "network namespace missing"
+		return result, nil
 	}
 	if brName != "" && !network.BridgeExists(nsName, brName) {
 		checks["bridge"] = controlplane.ResourceCheckHealth{OK: false, Reason: "bridge missing"}
 		result.Checks = checks
-		return result, driftedResource("bridge missing")
+		result.Status = state.ResourceDrifted
+		result.Reason = "bridge missing"
+		return result, nil
 	}
 	if brName != "" {
 		checks["bridge"] = controlplane.ResourceCheckHealth{OK: true}
