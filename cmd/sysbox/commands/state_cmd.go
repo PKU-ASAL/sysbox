@@ -3,7 +3,6 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -76,11 +75,11 @@ func runStateList(cmd *cobra.Command, args []string) error {
 
 func runStateMv(cmd *cobra.Command, args []string) error {
 	from, to := args[0], args[1]
-	fromType, fromName, err := splitAddr(from)
+	fromAddr, err := address.Parse(from)
 	if err != nil {
 		return fmt.Errorf("from: %w", err)
 	}
-	toType, toName, err := splitAddr(to)
+	toAddr, err := address.Parse(to)
 	if err != nil {
 		return fmt.Errorf("to: %w", err)
 	}
@@ -94,8 +93,6 @@ func runStateMv(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fromAddr := address.Resource(fromType, fromName)
-	toAddr := address.Resource(toType, toName)
 	r := s.FindResource(fromAddr)
 	if r == nil {
 		return fmt.Errorf("resource %s not found in state", from)
@@ -117,7 +114,7 @@ func runStateMv(cmd *cobra.Command, args []string) error {
 }
 
 func runStateRm(cmd *cobra.Command, args []string) error {
-	typ, name, err := splitAddr(args[0])
+	addr, err := address.Parse(args[0])
 	if err != nil {
 		return err
 	}
@@ -131,9 +128,8 @@ func runStateRm(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	addr := address.Resource(typ, name)
 	if s.FindResource(addr) == nil {
-		return fmt.Errorf("resource %s.%s not found in state", typ, name)
+		return fmt.Errorf("resource %s not found in state", addr)
 	}
 
 	s.RemoveResource(addr)
@@ -141,12 +137,12 @@ func runStateRm(cmd *cobra.Command, args []string) error {
 	if err := mgr.Save(s); err != nil {
 		return err
 	}
-	fmt.Printf("Removed %s.%s from state\n", typ, name)
+	fmt.Printf("Removed %s from state\n", addr)
 	return nil
 }
 
 func runStateShow2(cmd *cobra.Command, args []string) error {
-	typ, name, err := splitAddr(args[0])
+	addr, err := address.Parse(args[0])
 	if err != nil {
 		return err
 	}
@@ -160,9 +156,9 @@ func runStateShow2(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	r := s.FindResource(address.Resource(typ, name))
+	r := s.FindResource(addr)
 	if r == nil {
-		return fmt.Errorf("resource %s.%s not found in state", typ, name)
+		return fmt.Errorf("resource %s not found in state", addr)
 	}
 
 	data, _ := json.MarshalIndent(r, "", "  ")
@@ -172,12 +168,4 @@ func runStateShow2(cmd *cobra.Command, args []string) error {
 
 func runStateGet(cmd *cobra.Command, args []string) error {
 	return printStateAddress(nil, args[0])
-}
-
-func splitAddr(addr string) (typ, name string, err error) {
-	parts := strings.SplitN(addr, ".", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("%q: expected type.name", addr)
-	}
-	return parts[0], parts[1], nil
 }

@@ -33,14 +33,14 @@ func init() {
 }
 
 func runImport(cmd *cobra.Command, args []string) error {
-	typ, name, err := splitAddr(args[0])
+	addr, err := address.Parse(args[0])
 	if err != nil {
 		return fmt.Errorf("import: %w", err)
 	}
 	externalID := args[1]
 
-	if typ != "sysbox_node" && typ != "sysbox_network" {
-		return fmt.Errorf("import only supported for sysbox_node and sysbox_network, got %q", typ)
+	if addr.Type != "sysbox_node" && addr.Type != "sysbox_network" {
+		return fmt.Errorf("import only supported for sysbox_node and sysbox_network, got %q", addr.Type)
 	}
 
 	mgr, err := newManager()
@@ -53,15 +53,14 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check that the resource doesn't already exist in state.
-	addr := address.Resource(typ, name)
 	if r := s.FindResource(addr); r != nil {
-		return fmt.Errorf("resource %s.%s already exists in state; remove it first", typ, name)
+		return fmt.Errorf("resource %s already exists in state; remove it first", addr)
 	}
 
 	subName := flagImportSubstrate
 	if subName == "" {
 		// Try to infer substrate from resource type.
-		if typ == "sysbox_network" {
+		if addr.Type == "sysbox_network" {
 			subName = "network" // isolated networks
 		} else {
 			return fmt.Errorf("--substrate is required for sysbox_node import")
@@ -75,7 +74,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 
-	switch typ {
+	switch addr.Type {
 	case "sysbox_node":
 		handle, err := sub.ReadNode(ctx, externalID)
 		if err != nil {
@@ -93,7 +92,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 			Driver:     subName,
 			Attributes: inst,
 		})
-		fmt.Printf("Imported %s.%s (id=%s)\n", typ, name, handle.ID)
+		fmt.Printf("Imported %s (id=%s)\n", addr, handle.ID)
 
 	case "sysbox_network":
 		// For networks, ReadNode is not applicable; check the substrate
@@ -101,7 +100,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("import for sysbox_network is not yet supported; use apply instead")
 
 	default:
-		return fmt.Errorf("import not supported for resource type %q", typ)
+		return fmt.Errorf("import not supported for resource type %q", addr.Type)
 	}
 
 	if err := mgr.Save(s); err != nil {

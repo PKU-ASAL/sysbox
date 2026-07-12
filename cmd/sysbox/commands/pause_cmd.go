@@ -33,12 +33,12 @@ func runResume(cmd *cobra.Command, args []string) error {
 }
 
 func pauseResumeOp(addr string, resume bool) error {
-	typ, name, err := splitAddr(addr)
+	resourceAddress, err := address.Parse(addr)
 	if err != nil {
 		return err
 	}
-	if typ != "sysbox_node" {
-		return fmt.Errorf("pause/resume only supported for sysbox_node, got %q", typ)
+	if resourceAddress.Type != "sysbox_node" {
+		return fmt.Errorf("pause/resume only supported for sysbox_node, got %q", resourceAddress.Type)
 	}
 
 	mgr, err := newManager()
@@ -50,9 +50,9 @@ func pauseResumeOp(addr string, resume bool) error {
 		return fmt.Errorf("load state: %w", err)
 	}
 
-	r := s.FindResource(address.Resource(typ, name))
+	r := s.FindResource(resourceAddress)
 	if r == nil {
-		return fmt.Errorf("resource %s.%s not found in state", typ, name)
+		return fmt.Errorf("resource %s not found in state", resourceAddress)
 	}
 
 	subName := r.Driver
@@ -63,7 +63,7 @@ func pauseResumeOp(addr string, resume bool) error {
 
 	handle := substrate.NodeHandle{ID: r.Str("container_id")}
 	if handle.ID == "" {
-		handle.ID = name
+		handle.ID = resourceAddress.Name
 	}
 
 	// Reconstruct provider state if available.
@@ -90,8 +90,8 @@ func pauseResumeOp(addr string, resume bool) error {
 		err = sub.Pause(ctx, handle)
 	}
 	if err != nil {
-		return fmt.Errorf("%s %s.%s: %w", op, typ, name, err)
+		return fmt.Errorf("%s %s: %w", op, resourceAddress, err)
 	}
-	fmt.Printf("%sed %s.%s\n", op, typ, name)
+	fmt.Printf("%sed %s\n", op, resourceAddress)
 	return nil
 }

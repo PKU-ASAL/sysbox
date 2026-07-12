@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"sort"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
@@ -79,13 +78,4 @@ func cloneStringIntMap(source map[string]int) map[string]int {
 		result[key] = value
 	}
 	return result
-}
-
-func SortedFingerprintKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }

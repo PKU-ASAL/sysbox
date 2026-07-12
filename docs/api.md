@@ -1,5 +1,10 @@
 # sysbox API
 
+Plan action 使用 canonical `address`。Stored plan 带完整输入指纹；配置、
+state、schema、driver、artifact 或变量变化时，会在执行前拒绝。配置验证
+错误返回 HTTP 422 和结构化 `diagnostics` 数组。参见
+[`architecture/resource-addresses.md`](architecture/resource-addresses.md)。
+
 The sysbox API exposes product-level control plane objects over `/v1`.
 
 ```bash

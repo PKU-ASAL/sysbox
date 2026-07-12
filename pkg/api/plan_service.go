@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/google/uuid"
@@ -97,11 +98,19 @@ func (s *PlanService) ValidateStoredPlanForApply(ctx context.Context, topology, 
 
 func planFingerprintInputs(hcl []byte, st *state.State, serial int64, g *graph.Graph) runtime.PlanInputs {
 	schemas := map[string]int{}
-	for _, node := range g.All() {
-		schemas[node.Address.Type] = 1
-	}
 	drivers := map[string]string{}
 	artifacts := map[string]string{}
+	for _, node := range g.All() {
+		schemas[node.Address.Type] = 1
+		driver := desiredStringField(node.Data, "Substrate")
+		if driver == "" {
+			driver = node.Address.Type
+		}
+		drivers[node.Address.String()] = driver + "@builtin-v1"
+		if digest := desiredStringField(node.Data, "SHA256"); digest != "" {
+			artifacts[node.Address.String()] = digest
+		}
+	}
 	for _, resource := range st.Resources {
 		if resource.Driver != "" {
 			drivers[resource.Address.String()] = resource.Driver
@@ -111,4 +120,25 @@ func planFingerprintInputs(hcl []byte, st *state.State, serial int64, g *graph.G
 		}
 	}
 	return runtime.PlanInputs{Config: hcl, StateLineage: st.RunID, StateSerial: serial, ResourceSchemas: schemas, Drivers: drivers, Artifacts: artifacts, Variables: map[string]any{}}
+}
+
+func desiredStringField(value any, name string) string {
+	ref := reflect.ValueOf(value)
+	if !ref.IsValid() {
+		return ""
+	}
+	if ref.Kind() == reflect.Pointer {
+		if ref.IsNil() {
+			return ""
+		}
+		ref = ref.Elem()
+	}
+	if ref.Kind() != reflect.Struct {
+		return ""
+	}
+	field := ref.FieldByName(name)
+	if !field.IsValid() || field.Kind() != reflect.String {
+		return ""
+	}
+	return field.String()
 }

@@ -3,7 +3,6 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/spf13/cobra"
@@ -26,12 +25,11 @@ func runShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	parts := strings.SplitN(args[0], ".", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("expected type.name (e.g. sysbox_node.web), got %q", args[0])
+	addr, err := address.Parse(args[0])
+	if err != nil {
+		return err
 	}
-
-	r := s.FindResource(address.Resource(parts[0], parts[1]))
+	r := s.FindResource(addr)
 	if r == nil {
 		return fmt.Errorf("resource %s not found in state", args[0])
 	}

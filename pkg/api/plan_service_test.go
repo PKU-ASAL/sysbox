@@ -23,6 +23,8 @@ func TestPlanServiceComputeAndValidateStoredPlan(t *testing.T) {
 	require.NotEmpty(t, plan.ID)
 	require.NotEmpty(t, plan.Revision)
 	require.NotEmpty(t, plan.Actions)
+	require.NotEmpty(t, plan.Fingerprint.ConfigSHA256)
+	require.Equal(t, "sysbox_network@builtin-v1", plan.Fingerprint.Drivers["sysbox_network.lab"])
 
 	require.NoError(t, s.apiStore.SavePlan(context.Background(), plan))
 	got, err := s.plans().ValidateStoredPlanForApply(context.Background(), "lab", plan.ID, plan.StateSerial)

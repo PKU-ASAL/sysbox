@@ -95,27 +95,45 @@ func printStateAddress(s stateReader, addr string) error {
 		s = loaded
 	}
 
-	parts := strings.SplitN(addr, ".", 3)
-	if len(parts) < 2 {
-		return fmt.Errorf("expected type.name[.attr], got %q", addr)
+	resourceAddress, attribute, err := parseStateGetAddress(addr)
+	if err != nil {
+		return err
 	}
-	r := s.FindResource(address.Resource(parts[0], parts[1]))
+	r := s.FindResource(resourceAddress)
 	if r == nil {
-		return fmt.Errorf("resource %s.%s not found", parts[0], parts[1])
+		return fmt.Errorf("resource %s not found", resourceAddress)
 	}
 
-	if len(parts) == 2 {
+	if attribute == "" {
 		bytes, _ := json.MarshalIndent(r.Attributes, "", "  ")
 		fmt.Println(string(bytes))
 		return nil
 	}
 
-	val, ok := r.Attributes[parts[2]]
+	val, ok := r.Attributes[attribute]
 	if !ok {
-		return fmt.Errorf("attribute %s not found on %s.%s", parts[2], parts[0], parts[1])
+		return fmt.Errorf("attribute %s not found on %s", attribute, resourceAddress)
 	}
 	fmt.Println(val)
 	return nil
+}
+
+func parseStateGetAddress(input string) (address.Address, string, error) {
+	if parsed, err := address.Parse(input); err == nil {
+		return parsed, "", nil
+	}
+	index := strings.LastIndexByte(input, '.')
+	if index < 0 {
+		return address.Address{}, "", fmt.Errorf("expected canonical resource address[.attribute], got %q", input)
+	}
+	parsed, err := address.Parse(input[:index])
+	if err != nil {
+		return address.Address{}, "", err
+	}
+	if input[index+1:] == "" {
+		return address.Address{}, "", fmt.Errorf("attribute is empty")
+	}
+	return parsed, input[index+1:], nil
 }
 
 type stateReader interface {
