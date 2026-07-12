@@ -58,7 +58,8 @@ func TestComputePlanSchedulesDataSourcesAsRead(t *testing.T) {
 
 	plan, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
 	require.NoError(t, err)
-	require.Equal(t, []address.Address{address.Resource("data_sysbox_image", "alpine")}, plan.Add)
+	require.Equal(t, address.Resource("data_sysbox_image", "alpine").String(), plan.Actions[0].Address.String())
+	require.Equal(t, controlplane.PlanActionRead, plan.Actions[0].Action)
 	require.Len(t, plan.Actions, 1)
 	require.Equal(t, controlplane.PlanActionRead, plan.Actions[0].Action)
 	require.True(t, plan.HasChanges())

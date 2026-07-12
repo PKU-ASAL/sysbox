@@ -32,7 +32,10 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	}
 
 	if flagRefresh {
-		runtime.NewExecutor(g, s).Refresh(context.Background(), plan)
+		plan, err = runtime.NewExecutor(g, s).Refresh(context.Background(), plan)
+		if err != nil {
+			return err
+		}
 	}
 
 	runtime.PrintPlan(plan, false)

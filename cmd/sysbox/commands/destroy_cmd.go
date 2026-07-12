@@ -53,12 +53,7 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		BackendURL: flagBackend,
 		RunsDir:    localRunsDir(),
 		BeforeDestroy: func(plan *runtime.Plan) error {
-			if len(plan.Protected) > 0 {
-				for _, r := range plan.Protected {
-					fmt.Printf("  ! %s  (lifecycle.prevent_destroy = true — skipped)\n", r.Address)
-				}
-			}
-			fmt.Printf("Will destroy %d resource(s).\n", len(plan.Destroy))
+			fmt.Printf("Will destroy %d resource(s).\n", len(plan.Actions))
 			if flagAutoApprove {
 				return nil
 			}

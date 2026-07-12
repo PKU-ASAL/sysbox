@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/address"
 )
 
 func TestRunLifecycleHelpers(t *testing.T) {
@@ -59,7 +61,7 @@ func TestPlanCanApply(t *testing.T) {
 		Revision:    "rev-a",
 		StateSerial: 7,
 		Status:      PlanStatusPlanned,
-		Actions:     []PlanAction{{Resource: "sysbox_node.web", Action: PlanActionCreate}},
+		Actions:     []PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: PlanActionCreate}},
 	}
 
 	require.NoError(t, plan.CanApply("rev-a", 7))

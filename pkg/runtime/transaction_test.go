@@ -20,14 +20,11 @@ func TestFileRecorderPersistsPlanLeaseAndStateSerials(t *testing.T) {
 	rec.SetLeaseOwner("sysbox-api:apply:run-1")
 	rec.SetStateSerialBefore(4)
 
-	plan := &Plan{Actions: []controlplane.PlanAction{{
-		Resource: "sysbox_node.web",
-		Type:     "sysbox_node",
-		Name:     "web",
-		Action:   controlplane.PlanActionCreate,
+	plan := &Plan{Actions: []controlplane.PlannedChange{{
+		Address: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate,
 	}}}
 	require.NoError(t, rec.Begin("apply", plan))
-	step := rec.StepStartKind("state", "state", controlplane.PlanActionUpdate)
+	step := rec.StepStartKind("state", "state", controlplane.PlanActionNoop)
 	rec.StepFailed(step, errors.New("cas conflict"))
 	rec.SetStateSerialAfter(5)
 	rec.Finish(errors.New("failed"))

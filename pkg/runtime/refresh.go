@@ -19,42 +19,44 @@ import (
 //
 // Refresh is a best-effort pass: a probe error (e.g. transient timeout)
 // is treated as "unknown" and the resource stays Unchanged.
-func (e *Executor) Refresh(ctx context.Context, plan *Plan) {
-	var stillOK []address.Address
-
+func (e *Executor) Refresh(ctx context.Context, plan *Plan) (*Plan, error) {
+	refreshed := &Plan{Actions: append([]controlplane.PlannedChange(nil), plan.Actions...)}
 	changed := map[string]bool{}
-	for _, id := range plan.Change {
-		changed[id.String()] = true
-	}
-
-	for _, id := range plan.Unchanged {
-		healthy, err := e.probeResource(ctx, id)
-		if err != nil {
-			// Treat probe errors as healthy to avoid spurious re-creates.
-			e.logf("[refresh] %s: probe error (treating as healthy): %v\n", id, err)
-			stillOK = append(stillOK, id)
+	for i := range refreshed.Actions {
+		change := &refreshed.Actions[i]
+		if change.Action == controlplane.PlanActionReplace {
+			changed[change.Address.String()] = true
 			continue
 		}
-		if healthy {
-			stillOK = append(stillOK, id)
-		} else {
-			e.logf("[refresh] %s: drifted - will re-create\n", id)
-			changed[id.String()] = true
-			plan.Change = append(plan.Change, id)
-			plan.setAction(id, controlplane.PlanActionReplace, "runtime drift detected", nil)
+		if change.Action != controlplane.PlanActionNoop {
+			continue
+		}
+		healthy, err := e.probeResource(ctx, change.Address)
+		if err != nil {
+			change.Action = controlplane.PlanActionUnknown
+			change.Reason = "probe failed: " + err.Error()
+			continue
+		}
+		if !healthy {
+			e.logf("[refresh] %s: drifted - will re-create\n", change.Address)
+			changed[change.Address.String()] = true
+			change.Action = controlplane.PlanActionReplace
+			change.Reason = "runtime drift detected"
 		}
 	}
-	plan.Unchanged = stillOK
-	e.cascadeChangedDependents(plan, changed)
+	e.cascadeChangedDependents(refreshed, changed)
+	return refreshed, refreshed.Validate()
 }
 
 func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[string]bool) {
 	if len(changed) == 0 || e.graph == nil {
 		return
 	}
-	unchanged := map[string]bool{}
-	for _, id := range plan.Unchanged {
-		unchanged[id.String()] = true
+	unchanged := map[string]int{}
+	for i, change := range plan.Actions {
+		if change.Action == controlplane.PlanActionNoop {
+			unchanged[change.Address.String()] = i
+		}
 	}
 
 	progress := true
@@ -62,15 +64,17 @@ func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[string]bool)
 		progress = false
 		for _, n := range e.graph.All() {
 			id := n.Address
-			if changed[id.String()] || !unchanged[id.String()] {
+			index, isUnchanged := unchanged[id.String()]
+			if changed[id.String()] || !isUnchanged {
 				continue
 			}
 			for _, dep := range n.Deps {
 				if changed[dep.String()] {
 					changed[id.String()] = true
 					delete(unchanged, id.String())
-					plan.Change = append(plan.Change, id)
-					plan.setAction(id, controlplane.PlanActionReplace, "dependency "+dep.String()+" changed", nil)
+					plan.Actions[index].Action = controlplane.PlanActionReplace
+					plan.Actions[index].Reason = "dependency changed"
+					plan.Actions[index].DependencyReason = dep.String()
 					e.logf("[refresh] %s: dependency %s changed - will re-create\n", id, dep)
 					progress = true
 					break
@@ -79,13 +83,6 @@ func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[string]bool)
 		}
 	}
 
-	filtered := make([]address.Address, 0, len(plan.Unchanged))
-	for _, id := range plan.Unchanged {
-		if unchanged[id.String()] {
-			filtered = append(filtered, id)
-		}
-	}
-	plan.Unchanged = filtered
 }
 
 // probeResource checks whether a resource is still up.

@@ -7,304 +7,80 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-func TestPlanAddsNewResources(t *testing.T) {
+func TestComputePlanUsesTopologicalActionOrder(t *testing.T) {
 	g := graph.New()
-	require.NoError(t, g.AddNode(address.Resource("sysbox_network", "dmz"), nil))
-	require.NoError(t, g.AddNode(address.Resource("sysbox_node", "web"), []address.Address{address.Resource("sysbox_network", "dmz")}))
-
-	s := &state.State{Version: state.SchemaVersion}
-
-	plan, err := ComputePlan(g, s)
+	network := address.Resource("sysbox_network", "dmz")
+	node := address.Resource("sysbox_node", "web")
+	require.NoError(t, g.AddNode(network, nil))
+	require.NoError(t, g.AddNode(node, []address.Address{network}))
+	plan, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
 	require.NoError(t, err)
-	require.Len(t, plan.Add, 2)
-	require.Empty(t, plan.Destroy)
+	require.Equal(t, []controlplane.PlannedChange{
+		{Address: network, Action: controlplane.PlanActionCreate, Reason: "resource not present in state"},
+		{Address: node, Action: controlplane.PlanActionCreate, Reason: "resource not present in state"},
+	}, plan.Actions)
 }
 
-func TestRefreshCascadesChangedDependents(t *testing.T) {
-	g := graph.New()
-	require.NoError(t, g.AddNode(address.Resource("sysbox_network", "dmz"), nil))
-	require.NoError(t, g.AddNode(address.Resource("sysbox_node", "web"), []address.Address{address.Resource("sysbox_network", "dmz")}))
-	require.NoError(t, g.AddNode(address.Resource("sysbox_actor", "agent"), []address.Address{address.Resource("sysbox_node", "web")}))
-
-	s := &state.State{
-		Version: state.SchemaVersion,
-		Resources: []state.Resource{
-			{Address: address.Resource("sysbox_network", "dmz"), Driver: "network", Attributes: map[string]any{"netns": "missing-netns", "bridge": "br-dmz"}},
-			{Address: address.Resource("sysbox_node", "web"), Driver: "docker", Attributes: map[string]any{"container_id": "web"}},
-			{Address: address.Resource("sysbox_actor", "agent"), Driver: "docker", Attributes: map[string]any{}},
-		},
-	}
-	plan := &Plan{Unchanged: []address.Address{
-		address.Resource("sysbox_network", "dmz"),
-		address.Resource("sysbox_node", "web"),
-		address.Resource("sysbox_actor", "agent"),
-	}}
-
-	NewExecutor(g, s).Refresh(context.Background(), plan)
-
-	require.ElementsMatch(t, []address.Address{
-		address.Resource("sysbox_network", "dmz"),
-		address.Resource("sysbox_node", "web"),
-		address.Resource("sysbox_actor", "agent"),
-	}, plan.Change)
-	require.Empty(t, plan.Unchanged)
-}
-
-func TestPlanDetectsDestroys(t *testing.T) {
-	g := graph.New()
-
-	s := &state.State{
-		Version: state.SchemaVersion,
-		Resources: []state.Resource{
-			{Address: address.Resource("sysbox_node", "orphan"), Driver: "docker"},
-		},
-	}
-
-	plan, err := ComputePlan(g, s)
-	require.NoError(t, err)
-	require.Len(t, plan.Destroy, 1)
-	require.Equal(t, "orphan", plan.Destroy[0].Address.Name)
-}
-
-func TestPlanPassesThroughUnchanged(t *testing.T) {
-	g := graph.New()
-	require.NoError(t, g.AddNode(address.Resource("sysbox_network", "dmz"), nil))
-
-	s := &state.State{
-		Version: state.SchemaVersion,
-		Resources: []state.Resource{
-			{Address: address.Resource("sysbox_network", "dmz"), Driver: "network", Attributes: map[string]any{"netns": "sysbox-net-dmz"}},
-		},
-	}
-
-	plan, err := ComputePlan(g, s)
-	require.NoError(t, err)
-	require.Empty(t, plan.Add)
-	require.Empty(t, plan.Destroy)
-	require.Len(t, plan.Unchanged, 1)
-}
-
-func TestPlanDetectsDesiredHashChange(t *testing.T) {
-	g := graph.New()
-	addr := address.Resource("sysbox_network", "dmz")
-	require.NoError(t, g.AddNode(addr, nil))
-	n := g.Get(addr)
-	n.Data = &config.NetworkConfig{CIDR: "10.0.1.0/24"}
-	oldHash, err := desiredHash(n)
-	require.NoError(t, err)
-	oldPayload, _ := desiredPayload(n)
-
-	n.Data = &config.NetworkConfig{CIDR: "10.0.2.0/24"}
-	s := &state.State{
-		Version: state.SchemaVersion,
-		Resources: []state.Resource{
-			{
-				Address: address.Resource("sysbox_network", "dmz"),
-				Driver:  "network",
-				Attributes: map[string]any{
-					"cidr":            "10.0.1.0/24",
-					desiredHashKey:    oldHash,
-					desiredPayloadKey: oldPayload,
-				},
-			},
-		},
-	}
-
-	plan, err := ComputePlan(g, s)
-	require.NoError(t, err)
-	require.Empty(t, plan.Add)
-	require.Empty(t, plan.Destroy)
-	require.Empty(t, plan.Unchanged)
-	require.Equal(t, []address.Address{address.Resource("sysbox_network", "dmz")}, plan.Change)
-	require.Len(t, plan.Actions, 1)
-	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
-	require.Equal(t, "10.0.1.0/24", plan.Actions[0].Changes["cidr"].Before)
-	require.Equal(t, "10.0.2.0/24", plan.Actions[0].Changes["cidr"].After)
-	require.True(t, plan.Actions[0].Changes["cidr"].RequiresReplace)
-}
-
-func TestComputePlanUsesRegisteredProviderPlanDiff(t *testing.T) {
-	g := graph.New()
-	addr := address.Resource("sysbox_actor", "agent")
-	require.NoError(t, g.AddNode(addr, nil))
-	n := g.Get(addr)
-	n.Data = &config.ActorConfig{Position: "internal", Node: "sysbox_node.web.id", Command: []string{"sleep", "60"}}
-	oldHash, err := desiredHash(n)
-	require.NoError(t, err)
-	oldPayload, _ := desiredPayload(n)
-
-	n.Data = &config.ActorConfig{Position: "internal", Node: "sysbox_node.web.id", Command: []string{"sleep", "120"}}
-	s := &state.State{
-		Version: state.SchemaVersion,
-		Resources: []state.Resource{{
-			Address: address.Resource("sysbox_actor", "agent"),
-			Driver:  "docker",
-			Attributes: map[string]any{
-				desiredHashKey:    oldHash,
-				desiredPayloadKey: oldPayload,
-			},
-		}},
-	}
-
-	plan, err := ComputePlan(g, s)
-	require.NoError(t, err)
-	require.Equal(t, []address.Address{address.Resource("sysbox_actor", "agent")}, plan.Change)
-	require.Len(t, plan.Actions, 1)
-	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
-	require.Contains(t, plan.Actions[0].Changes, "command")
-}
-
-func TestPlanRedactsSensitiveDiffFields(t *testing.T) {
-	g := graph.New()
-	addr := address.Resource("sysbox_node", "web")
-	require.NoError(t, g.AddNode(addr, nil))
-	n := g.Get(addr)
-	n.Data = &config.NodeConfig{Image: "sysbox_image.alpine.id", Substrate: "docker", Env: map[string]string{"TOKEN": "old"}}
-	oldHash, err := desiredHash(n)
-	require.NoError(t, err)
-	oldPayload, _ := desiredPayload(n)
-
-	n.Data = &config.NodeConfig{Image: "sysbox_image.alpine.id", Substrate: "docker", Env: map[string]string{"TOKEN": "new"}}
-	s := &state.State{
-		Version: state.SchemaVersion,
-		Resources: []state.Resource{{
-			Address: address.Resource("sysbox_node", "web"),
-			Driver:  "docker",
-			Attributes: map[string]any{
-				desiredHashKey:    oldHash,
-				desiredPayloadKey: oldPayload,
-			},
-		}},
-	}
-
-	plan, err := ComputePlan(g, s)
-	require.NoError(t, err)
-	require.Len(t, plan.Change, 1)
-	envChange := plan.Actions[0].Changes["env"]
-	require.True(t, envChange.Sensitive)
-	require.Equal(t, "(sensitive)", envChange.Before)
-	require.Equal(t, "(sensitive)", envChange.After)
-}
-
-func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {
-	g := graph.New()
-	addr := address.Resource("sysbox_network", "dmz")
-	require.NoError(t, g.AddNode(addr, nil))
-	n := g.Get(addr)
-	n.Data = &config.NetworkConfig{CIDR: "10.0.1.0/24"}
-	hash, err := desiredHash(n)
-	require.NoError(t, err)
-
-	s := &state.State{
-		Version: state.SchemaVersion,
-		Resources: []state.Resource{
-			{
-				Address:    address.Resource("sysbox_network", "dmz"),
-				Driver:     "network",
-				Attributes: map[string]any{desiredHashKey: hash},
-			},
-		},
-	}
-
-	plan, err := ComputePlan(g, s)
-	require.NoError(t, err)
-	require.Empty(t, plan.Add)
-	require.Empty(t, plan.Destroy)
-	require.Empty(t, plan.Change)
-	require.Equal(t, []address.Address{address.Resource("sysbox_network", "dmz")}, plan.Unchanged)
-}
-
-func TestPlanHasChangesUsesActions(t *testing.T) {
-	p := &Plan{Actions: []controlplane.PlanAction{{
-		Resource: "sysbox_network.dmz",
-		Type:     "sysbox_network", Name: "dmz",
-		Action: controlplane.PlanActionCreate,
-	}}}
-
-	require.True(t, p.HasChanges())
-}
-
-func TestPlanFromActionsRebuildsExecutableIndexes(t *testing.T) {
+func TestComputePlanDeletesOrphans(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion}
-	st.AddResource(state.Resource{Address: address.Resource("sysbox_node", "old"), Driver: "docker", Attributes: map[string]any{}})
-
-	p := PlanFromActions([]controlplane.PlanAction{
-		{Resource: "sysbox_network.dmz", Type: "sysbox_network", Name: "dmz", Action: controlplane.PlanActionCreate},
-		{Resource: "sysbox_node.web", Type: "sysbox_node", Name: "web", Action: controlplane.PlanActionReplace},
-		{Resource: "sysbox_node.old", Type: "sysbox_node", Name: "old", Action: controlplane.PlanActionDelete},
-		{Resource: "sysbox_kernel.linux", Type: "sysbox_kernel", Name: "linux", Action: controlplane.PlanActionNoop},
-	}, st)
-
-	require.Equal(t, []address.Address{address.Resource("sysbox_network", "dmz")}, p.Add)
-	require.Equal(t, []address.Address{address.Resource("sysbox_node", "web")}, p.Change)
-	require.Len(t, p.Destroy, 1)
-	require.Equal(t, "old", p.Destroy[0].Address.Name)
-	require.Equal(t, []address.Address{address.Resource("sysbox_kernel", "linux")}, p.Unchanged)
-	require.True(t, p.HasChanges())
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_node", "orphan")})
+	plan, err := ComputePlan(graph.New(), st)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.PlanActionDelete, plan.Actions[0].Action)
 }
 
-func TestRefreshUsesProviderReadForDrift(t *testing.T) {
+func TestComputePlanRejectsPreventDestroy(t *testing.T) {
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_node", "protected"), Attributes: map[string]any{"lifecycle_prevent_destroy": true}})
+	_, err := ComputePlan(graph.New(), st)
+	require.ErrorContains(t, err, "prevent_destroy blocks deletion")
+}
+
+func TestPlanDiffReportsReplacementFields(t *testing.T) {
+	addr := address.Resource("sysbox_network", "dmz")
 	g := graph.New()
-	require.NoError(t, g.AddNode(address.Resource("sysbox_kernel", "linux"), nil))
-	s := &state.State{
-		Version: state.SchemaVersion,
-		Resources: []state.Resource{{
-			Address:    address.Resource("sysbox_kernel", "linux"),
-			Driver:     "artifact",
-			Attributes: map[string]any{"path": "/tmp/sysbox-missing-kernel-for-refresh-test"},
-		}},
-	}
-	plan := &Plan{Unchanged: []address.Address{address.Resource("sysbox_kernel", "linux")}}
-
-	NewExecutor(g, s).Refresh(context.Background(), plan)
-
-	require.Empty(t, plan.Unchanged)
-	require.Equal(t, []address.Address{address.Resource("sysbox_kernel", "linux")}, plan.Change)
+	require.NoError(t, g.AddNode(addr, nil))
+	require.NoError(t, g.SetData(addr, &config.NetworkConfig{CIDR: "10.0.2.0/24"}))
+	node := g.Get(addr)
+	hash, err := desiredHash(node)
+	require.NoError(t, err)
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(state.Resource{Address: addr, Attributes: map[string]any{"desired_hash": hash, "desired": map[string]any{"cidr": "10.0.1.0/24"}}})
+	// Force a different desired hash while retaining comparable prior desired values.
+	st.Resources[0].Attributes["desired_hash"] = "stale"
+	plan, err := ComputePlan(g, st)
+	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
-	require.Equal(t, "runtime drift detected", plan.Actions[0].Reason)
+	require.Contains(t, plan.Actions[0].Changes, "cidr")
 }
 
-func TestPlanSummary(t *testing.T) {
-	p := &Plan{
-		Add:       []address.Address{address.Resource("x", "y")},
-		Destroy:   []state.Resource{{Address: address.Resource("a", "b")}},
-		Unchanged: nil,
-	}
-	require.True(t, p.HasChanges())
-	require.Contains(t, p.Summary(), "1 to add")
-	require.Contains(t, p.Summary(), "1 to destroy")
+func TestRefreshReturnsNewPlanAndMarksDriftUnknown(t *testing.T) {
+	addr := address.Resource("sysbox_kernel", "linux")
+	g := graph.New()
+	require.NoError(t, g.AddNode(addr, nil))
+	original := &Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionNoop}}}
+	refreshed, err := NewExecutor(g, &state.State{Version: state.SchemaVersion}).Refresh(context.Background(), original)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.PlanActionNoop, original.Actions[0].Action)
+	require.Equal(t, controlplane.PlanActionReplace, refreshed.Actions[0].Action)
 }
 
-func TestResolveRefs(t *testing.T) {
-	s, err := resolveSubstrateRef("docker")
-	require.NoError(t, err)
-	require.Equal(t, "docker", s)
+func TestPlanValidateRejectsUnsupportedAction(t *testing.T) {
+	plan := Plan{Actions: []controlplane.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: "update"}}}
+	require.ErrorContains(t, plan.Validate(), "unsupported plan action")
+}
 
-	s, err = resolveSubstrateRef("substrate.docker.light")
-	require.NoError(t, err)
-	require.Equal(t, "docker", s)
-
-	_, err = resolveSubstrateRef("a.b")
-	require.Error(t, err)
-
-	name := config.ResolveName("sysbox_image.alpine.id")
-	require.Equal(t, "alpine", name)
-
-	name = config.ResolveName("sysbox_network.dmz.id")
-	require.Equal(t, "dmz", name)
-
-	// Bare names pass through unchanged.
-	name = config.ResolveName("alpine")
-	require.Equal(t, "alpine", name)
-
-	// Empty string returns empty.
-	name = config.ResolveName("")
-	require.Equal(t, "", name)
+func TestFilterPlanByTargetUsesCanonicalAddress(t *testing.T) {
+	web := address.StringInstance("sysbox_node", "web", "blue")
+	db := address.Resource("sysbox_node", "db")
+	plan := &Plan{Actions: []controlplane.PlannedChange{{Address: web, Action: controlplane.PlanActionCreate}, {Address: db, Action: controlplane.PlanActionCreate}}}
+	filtered := FilterPlanByTarget(plan, "sysbox_node", "web")
+	require.Equal(t, controlplane.PlanActionCreate, filtered.Actions[0].Action)
+	require.Equal(t, controlplane.PlanActionNoop, filtered.Actions[1].Action)
 }

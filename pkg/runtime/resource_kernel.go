@@ -43,7 +43,7 @@ func (KernelResourceProvider) Read(_ context.Context, current state.Resource) (R
 	return result, nil
 }
 
-func (p KernelResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func (p KernelResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -84,10 +84,6 @@ func (KernelResourceProvider) Create(_ context.Context, pc *ProviderContext, n *
 		Driver:     subName,
 		Attributes: inst,
 	}, nil
-}
-
-func (p KernelResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, pc, desired)
 }
 
 func (KernelResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {

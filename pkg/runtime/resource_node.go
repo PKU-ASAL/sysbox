@@ -35,16 +35,12 @@ func (NodeResourceProvider) Read(ctx context.Context, current state.Resource) (R
 	return readNodeLikeResource(ctx, current)
 }
 
-func (NodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func (NodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
 func (NodeResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.createNodeResource(ctx, n)
-}
-
-func (p NodeResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, pc, desired)
 }
 
 func (NodeResourceProvider) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {

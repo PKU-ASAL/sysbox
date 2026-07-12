@@ -68,7 +68,7 @@ func (NetworkResourceProvider) Read(_ context.Context, current state.Resource) (
 	return result, nil
 }
 
-func (NetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func (NetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -164,10 +164,6 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 		Driver:     "docker",
 		Attributes: natInst,
 	}, nil
-}
-
-func (p NetworkResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, pc, desired)
 }
 
 func (NetworkResourceProvider) Delete(ctx context.Context, pc *ProviderContext, r state.Resource) error {

@@ -37,16 +37,12 @@ func (DataNodeResourceProvider) Read(_ context.Context, current state.Resource) 
 	return resourceReadOK(current), nil
 }
 
-func (DataNodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func (DataNodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffForDataSource(desired, current)
 }
 
 func (DataNodeResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.readDataNodeResource(ctx, n)
-}
-
-func (p DataNodeResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, pc, desired)
 }
 
 func (DataNodeResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
@@ -117,16 +113,12 @@ func (DataNetworkResourceProvider) Read(_ context.Context, current state.Resourc
 	return resourceReadOK(current), nil
 }
 
-func (DataNetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func (DataNetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffForDataSource(desired, current)
 }
 
 func (DataNetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.readDataNetworkResource(ctx, n)
-}
-
-func (p DataNetworkResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, pc, desired)
 }
 
 func (DataNetworkResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
@@ -198,16 +190,12 @@ func (DataImageResourceProvider) Read(_ context.Context, current state.Resource)
 	return resourceReadOK(current), nil
 }
 
-func (DataImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func (DataImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffForDataSource(desired, current)
 }
 
 func (DataImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.readDataImageResource(ctx, n)
-}
-
-func (p DataImageResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, pc, desired)
 }
 
 func (DataImageResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {

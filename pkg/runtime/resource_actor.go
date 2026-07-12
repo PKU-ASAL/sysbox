@@ -38,16 +38,12 @@ func (ActorResourceProvider) Read(ctx context.Context, current state.Resource) (
 	return resourceReadOK(current), nil
 }
 
-func (ActorResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func (ActorResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
 func (ActorResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.createActorResource(ctx, n)
-}
-
-func (p ActorResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, pc, desired)
 }
 
 func (ActorResourceProvider) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {

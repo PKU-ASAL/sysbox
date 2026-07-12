@@ -23,9 +23,8 @@ type ResourceProvider interface {
 	Type() string
 	Schema() ResourceSchema
 	Read(ctx context.Context, current state.Resource) (ResourceReadResult, error)
-	PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error)
+	PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error)
 	Create(ctx context.Context, pc *ProviderContext, desired *graph.Node) (state.Resource, error)
-	Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, current state.Resource) (state.Resource, error)
 	Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error
 	ExternalID(current state.Resource) string
 }

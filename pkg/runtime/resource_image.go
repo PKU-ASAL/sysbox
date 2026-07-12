@@ -33,7 +33,7 @@ func (ImageResourceProvider) Read(_ context.Context, current state.Resource) (Re
 	return result, nil
 }
 
-func (ImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func (ImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -104,10 +104,6 @@ func (ImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n 
 		Driver:     subName,
 		Attributes: inst,
 	}, nil
-}
-
-func (p ImageResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, pc, desired)
 }
 
 func (ImageResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {

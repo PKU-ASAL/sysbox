@@ -35,16 +35,12 @@ func (SSHAccessResourceProvider) Read(_ context.Context, current state.Resource)
 	return resourceReadOK(current), nil
 }
 
-func (SSHAccessResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func (SSHAccessResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
 func (SSHAccessResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.createSSHAccessResource(ctx, n)
-}
-
-func (p SSHAccessResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, pc, desired)
 }
 
 func (SSHAccessResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {

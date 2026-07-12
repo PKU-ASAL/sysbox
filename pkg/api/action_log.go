@@ -10,12 +10,12 @@ import (
 )
 
 type RunActionLog struct {
-	RunID     string                    `json:"run_id"`
-	Topology  string                    `json:"topology,omitempty"`
-	Operation string                    `json:"operation,omitempty"`
-	Status    runtime.OperationStatus   `json:"status,omitempty"`
-	Plan      []controlplane.PlanAction `json:"plan,omitempty"`
-	Actions   []runtime.OperationStep   `json:"actions"`
+	RunID     string                       `json:"run_id"`
+	Topology  string                       `json:"topology,omitempty"`
+	Operation string                       `json:"operation,omitempty"`
+	Status    runtime.OperationStatus      `json:"status,omitempty"`
+	Plan      []controlplane.PlannedChange `json:"plan,omitempty"`
+	Actions   []runtime.OperationStep      `json:"actions"`
 }
 
 func loadRunActionLog(path string) (*RunActionLog, error) {

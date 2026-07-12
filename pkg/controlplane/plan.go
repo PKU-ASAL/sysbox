@@ -14,11 +14,10 @@ type PlanActionType string
 const (
 	PlanActionNoop    PlanActionType = "no-op"
 	PlanActionCreate  PlanActionType = "create"
-	PlanActionUpdate  PlanActionType = "update"
 	PlanActionReplace PlanActionType = "replace"
 	PlanActionDelete  PlanActionType = "delete"
 	PlanActionRead    PlanActionType = "read"
-	PlanActionSkip    PlanActionType = "skip"
+	PlanActionUnknown PlanActionType = "unknown"
 )
 
 type FieldChange struct {
@@ -29,17 +28,12 @@ type FieldChange struct {
 	Computed        bool `json:"computed,omitempty"`
 }
 
-type PlanAction struct {
-	Resource string                 `json:"resource"`
-	Type     string                 `json:"type"`
-	Name     string                 `json:"name"`
-	Action   PlanActionType         `json:"action"`
-	Reason   string                 `json:"reason,omitempty"`
-	Changes  map[string]FieldChange `json:"changes,omitempty"`
-}
-
-func (a PlanAction) Address() address.Address {
-	return address.Resource(a.Type, a.Name)
+type PlannedChange struct {
+	Address          address.Address        `json:"address"`
+	Action           PlanActionType         `json:"action"`
+	Reason           string                 `json:"reason,omitempty"`
+	DependencyReason string                 `json:"dependency_reason,omitempty"`
+	Changes          map[string]FieldChange `json:"changes,omitempty"`
 }
 
 type ResourceHealthStatus string

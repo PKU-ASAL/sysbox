@@ -43,7 +43,10 @@ func (s *PlanService) ComputeStoredPlan(ctx context.Context, topology string) (c
 	if err != nil {
 		return controlplane.Plan{}, err
 	}
-	runtime.NewExecutor(g, st).Refresh(ctx, plan)
+	plan, err = runtime.NewExecutor(g, st).Refresh(ctx, plan)
+	if err != nil {
+		return controlplane.Plan{}, err
+	}
 	var revID string
 	if hcl, err := os.ReadFile(hclFile); err == nil {
 		rev := revisionFromHCL(topology, hcl, "workspace_hcl")

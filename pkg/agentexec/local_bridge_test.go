@@ -61,26 +61,22 @@ resource "sysbox_kernel" "linux" {
 func TestLocalBridgeFilterApplyPlanByTarget(t *testing.T) {
 	bridge := NewLocalBridge(LocalOptions{Target: "sysbox_node.web"})
 	plan := &runtime.Plan{
-		Add: []address.Address{
-			{Type: "sysbox_network", Name: "shared"},
-			{Type: "sysbox_node", Name: "web"},
-		},
-		Actions: []controlplane.PlanAction{
-			{Resource: "sysbox_network.shared", Type: "sysbox_network", Name: "shared", Action: controlplane.PlanActionCreate},
-			{Resource: "sysbox_node.web", Type: "sysbox_node", Name: "web", Action: controlplane.PlanActionCreate},
+		Actions: []controlplane.PlannedChange{
+			{Address: address.Resource("sysbox_network", "shared"), Action: controlplane.PlanActionCreate},
+			{Address: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate},
 		},
 	}
 
 	filtered, err := bridge.FilterApplyPlan(plan)
 	require.NoError(t, err)
-	var creates []controlplane.PlanAction
+	var creates []controlplane.PlannedChange
 	for _, action := range filtered.Actions {
 		if action.Action == controlplane.PlanActionCreate {
 			creates = append(creates, action)
 		}
 	}
 	require.Len(t, creates, 1)
-	require.Equal(t, "sysbox_node.web", creates[0].Resource)
+	require.Equal(t, "sysbox_node.web", creates[0].Address.String())
 }
 
 func TestExecuteNodeOperationRejectsMissingNode(t *testing.T) {
@@ -171,11 +167,6 @@ func TestLocalBridgeBuildDestroyPlanHonorsPreventDestroy(t *testing.T) {
 		{Address: address.Resource("sysbox_node", "db"), Attributes: map[string]any{"lifecycle_prevent_destroy": true}},
 	}}
 
-	plan, err := bridge.BuildDestroyPlan(st)
-	require.NoError(t, err)
-	require.Len(t, plan.Destroy, 1)
-	require.Equal(t, "web", plan.Destroy[0].Address.Name)
-	require.Len(t, plan.Protected, 1)
-	require.Equal(t, "db", plan.Protected[0].Address.Name)
-	require.Len(t, plan.Actions, 2)
+	_, err := bridge.BuildDestroyPlan(st)
+	require.ErrorContains(t, err, "prevent_destroy blocks deletion")
 }

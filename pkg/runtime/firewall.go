@@ -31,16 +31,12 @@ func (FirewallResourceProvider) Read(_ context.Context, current state.Resource) 
 	return resourceReadOK(current), nil
 }
 
-func (FirewallResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func (FirewallResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
 func (FirewallResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.createFirewallResource(ctx, n)
-}
-
-func (p FirewallResourceProvider) Update(ctx context.Context, pc *ProviderContext, desired *graph.Node, _ state.Resource) (state.Resource, error) {
-	return p.Create(ctx, pc, desired)
 }
 
 func (FirewallResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {

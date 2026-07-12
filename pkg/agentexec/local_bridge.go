@@ -184,25 +184,13 @@ func (b *LocalBridge) BeforeApply(plan *runtime.Plan) error {
 
 func (b *LocalBridge) BuildDestroyPlan(st *state.State) (*runtime.Plan, error) {
 	plan := &runtime.Plan{}
-	for _, r := range st.Resources {
+	for i := len(st.Resources) - 1; i >= 0; i-- {
+		r := st.Resources[i]
 		if r.LifecyclePreventDestroy() {
-			plan.Protected = append(plan.Protected, r)
-			plan.Actions = append(plan.Actions, controlplane.PlanAction{
-				Resource: r.Address.String(),
-				Type:     r.Address.Type,
-				Name:     r.Address.Name,
-				Action:   controlplane.PlanActionSkip,
-				Reason:   "blocked by lifecycle.prevent_destroy",
-			})
-			continue
+			return nil, fmt.Errorf("%s: lifecycle.prevent_destroy blocks deletion", r.Address)
 		}
-		plan.Destroy = append(plan.Destroy, r)
-		plan.Actions = append(plan.Actions, controlplane.PlanAction{
-			Resource: r.Address.String(),
-			Type:     r.Address.Type,
-			Name:     r.Address.Name,
-			Action:   controlplane.PlanActionDelete,
-			Reason:   "destroy requested",
+		plan.Actions = append(plan.Actions, controlplane.PlannedChange{
+			Address: r.Address, Action: controlplane.PlanActionDelete, Reason: "destroy requested",
 		})
 	}
 	return plan, nil

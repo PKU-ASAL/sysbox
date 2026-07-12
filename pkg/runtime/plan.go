@@ -1,10 +1,8 @@
-// Package runtime is the execution engine: computes plans by diffing
-// the desired graph against the current state, and executes them by
-// walking the graph and calling providers.
 package runtime
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
@@ -14,367 +12,202 @@ import (
 )
 
 type Plan struct {
-	Add       []address.Address
-	Destroy   []state.Resource
-	Unchanged []address.Address
-	// Change contains resources present in both graph and state but found
-	// to be unhealthy by Refresh (drift detection). Apply will re-create them.
-	Change []address.Address
-	// Protected lists resources that would have been destroyed but are guarded
-	// by lifecycle.prevent_destroy = true. Destroy is a no-op for these.
-	Protected []state.Resource
-	// Actions is the structured plan surface used by the API and UI.
-	// The Add/Change/Destroy/Unchanged index slices above remain the
-	// execution contract consumed by Executor.Apply/Destroy; migrating the
-	// executor walk loops to Actions-only is a separate, future task.
-	Actions []controlplane.PlanAction
+	Actions []controlplane.PlannedChange `json:"actions"`
 }
 
-func (p *Plan) ensureActions() {
-	if len(p.Actions) > 0 {
-		return
-	}
-	for _, id := range p.Add {
-		p.addAction(id, controlplane.PlanActionCreate, "resource not present in state", nil)
-	}
-	for _, id := range p.Change {
-		p.addAction(id, controlplane.PlanActionReplace, "resource changed", nil)
-	}
-	for _, r := range p.Destroy {
-		p.addAction(r.Address, controlplane.PlanActionDelete, "resource no longer declared", nil)
-	}
-	for _, id := range p.Unchanged {
-		p.addAction(id, controlplane.PlanActionNoop, "", nil)
-	}
-}
-
-func (p *Plan) actionsByType(types ...controlplane.PlanActionType) []controlplane.PlanAction {
-	p.ensureActions()
-	want := map[controlplane.PlanActionType]bool{}
-	for _, typ := range types {
-		want[typ] = true
-	}
-	out := make([]controlplane.PlanAction, 0)
-	for _, action := range p.Actions {
-		if want[action.Action] {
-			out = append(out, action)
+func (p Plan) Validate() error {
+	seen := make(map[string]struct{}, len(p.Actions))
+	for _, change := range p.Actions {
+		if change.Address.IsZero() {
+			return fmt.Errorf("plan action has an empty address")
+		}
+		if _, exists := seen[change.Address.String()]; exists {
+			return fmt.Errorf("duplicate plan action for %s", change.Address)
+		}
+		seen[change.Address.String()] = struct{}{}
+		switch change.Action {
+		case controlplane.PlanActionNoop, controlplane.PlanActionCreate, controlplane.PlanActionRead,
+			controlplane.PlanActionReplace, controlplane.PlanActionDelete, controlplane.PlanActionUnknown:
+		default:
+			return fmt.Errorf("unsupported plan action %q for %s", change.Action, change.Address)
 		}
 	}
-	return out
+	return nil
 }
 
-// ComputePlan diffs the graph vs state.
-//
-// Resources with lifecycle.prevent_destroy = true that would otherwise be
-// destroyed (removed from HCL) are moved to Unchanged and noted in
-// Plan.Protected.
 func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
-	p := &Plan{}
-
-	inGraph := map[string]address.Address{}
-	for _, n := range g.All() {
-		inGraph[n.Address.String()] = n.Address
+	if err := g.Validate(); err != nil {
+		return nil, fmt.Errorf("validate graph: %w", err)
 	}
-
-	for _, id := range inGraph {
-		n := g.Get(id)
-		r := s.FindResource(id)
-		action, err := planActionForDesired(n, r)
+	order, err := g.TopoSort()
+	if err != nil {
+		return nil, err
+	}
+	plan := &Plan{}
+	inGraph := make(map[string]struct{}, len(order))
+	for _, resourceAddress := range order {
+		inGraph[resourceAddress.String()] = struct{}{}
+		change, err := planActionForDesired(g.Get(resourceAddress), s.FindResource(resourceAddress))
 		if err != nil {
 			return nil, err
 		}
-		p.addDesiredAction(id, action)
-	}
-
-	for _, r := range s.Resources {
-		id := r.Address
-		if _, exists := inGraph[id.String()]; !exists {
-			// Data sources are read-only; skip destroying them.
-			if isDataType(r.Address.Type) {
-				continue
-			}
-			// Check if a lifecycle block in the graph still protects this resource.
-			// (The resource was removed from HCL but is still in state.)
-			// Because the resource is no longer in the graph we can't look up its
-			// lifecycle from graph.Node.Data — the protection is encoded in state.
-			if r.LifecyclePreventDestroy() {
-				p.Protected = append(p.Protected, r)
-				p.addAction(id, controlplane.PlanActionSkip, "blocked by lifecycle.prevent_destroy", nil)
-				continue
-			}
-			p.Destroy = append(p.Destroy, r)
-			p.addAction(id, controlplane.PlanActionDelete, "resource no longer declared", nil)
+		if change.Action == controlplane.PlanActionReplace && resourcePreventDestroy(g.Get(resourceAddress), s.FindResource(resourceAddress)) {
+			return nil, fmt.Errorf("%s: lifecycle.prevent_destroy blocks replacement", resourceAddress)
 		}
+		plan.Actions = append(plan.Actions, change)
 	}
 
-	return p, nil
-}
-
-func planActionForDesired(n *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
-	if provider, ok := GetResourceProvider(n.Address.Type); ok {
-		return provider.PlanDiff(n, current)
+	deletes := make([]controlplane.PlannedChange, 0)
+	for _, resource := range s.Resources {
+		if _, exists := inGraph[resource.Address.String()]; exists || isDataType(resource.Address.Type) {
+			continue
+		}
+		if resource.LifecyclePreventDestroy() {
+			return nil, fmt.Errorf("%s: lifecycle.prevent_destroy blocks deletion", resource.Address)
+		}
+		deletes = append(deletes, controlplane.PlannedChange{Address: resource.Address, Action: controlplane.PlanActionDelete, Reason: "resource no longer declared"})
 	}
-	return planDiffByDesiredHash(n, current)
+	sort.Slice(deletes, func(i, j int) bool { return deletes[j].Address.Less(deletes[i].Address) })
+	plan.Actions = append(plan.Actions, deletes...)
+	return plan, plan.Validate()
 }
 
-func planDiffForDataSource(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
-	action, err := planDiffByDesiredHash(desired, current)
+func resourcePreventDestroy(node *graph.Node, current *state.Resource) bool {
+	if lifecycle := lifecycleOf(node); lifecycle != nil && lifecycle.PreventDestroy {
+		return true
+	}
+	return current != nil && current.LifecyclePreventDestroy()
+}
+
+func planActionForDesired(node *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+	if provider, ok := GetResourceProvider(node.Address.Type); ok {
+		return provider.PlanDiff(node, current)
+	}
+	return planDiffByDesiredHash(node, current)
+}
+
+func planDiffForDataSource(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+	change, err := planDiffByDesiredHash(desired, current)
 	if err != nil {
-		return controlplane.PlanAction{}, err
+		return controlplane.PlannedChange{}, err
 	}
-	if action.Action == controlplane.PlanActionCreate || action.Action == controlplane.PlanActionReplace {
-		action.Action = controlplane.PlanActionRead
-		if action.Reason == "resource not present in state" {
-			action.Reason = "data source not present in state"
+	if change.Action == controlplane.PlanActionCreate || change.Action == controlplane.PlanActionReplace {
+		change.Action = controlplane.PlanActionRead
+		if change.Reason == "resource not present in state" {
+			change.Reason = "data source not present in state"
 		}
 	}
-	return action, nil
+	return change, nil
 }
 
-func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
+func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+	change := controlplane.PlannedChange{Address: desired.Address, Action: controlplane.PlanActionNoop}
 	if current == nil {
-		return controlplane.PlanAction{
-			Resource: desired.Address.String(),
-			Type:     desired.Address.Type,
-			Name:     desired.Address.Name,
-			Action:   controlplane.PlanActionCreate,
-			Reason:   "resource not present in state",
-		}, nil
+		change.Action = controlplane.PlanActionCreate
+		change.Reason = "resource not present in state"
+		return change, nil
 	}
-	action := controlplane.PlanActionNoop
-	reason := ""
-	var changes map[string]controlplane.FieldChange
-	// Older state files do not have desired_hash. Treat them as unchanged so
-	// users are not forced to rebuild every existing lab.
-	if stateDesiredHash(current) != "" {
-		want, err := desiredHash(desired)
-		if err != nil {
-			return controlplane.PlanAction{}, err
-		}
-		if want != stateDesiredHash(current) {
-			changes, reason = diffDesiredState(desired, current)
-			action = controlplane.PlanActionReplace
-		}
+	if stateDesiredHash(current) == "" {
+		return change, nil
 	}
-	if action == controlplane.PlanActionReplace && reason == "" {
-		reason = "desired configuration changed; replacement required"
+	want, err := desiredHash(desired)
+	if err != nil {
+		return controlplane.PlannedChange{}, err
 	}
-	return controlplane.PlanAction{
-		Resource: desired.Address.String(),
-		Type:     desired.Address.Type,
-		Name:     desired.Address.Name,
-		Action:   action,
-		Reason:   reason,
-		Changes:  changes,
-	}, nil
+	if want == stateDesiredHash(current) {
+		return change, nil
+	}
+	change.Changes, change.Reason = diffDesiredState(desired, current)
+	change.Action = controlplane.PlanActionReplace
+	if change.Reason == "" {
+		change.Reason = "desired configuration changed; replacement required"
+	}
+	return change, nil
 }
 
-func (p *Plan) addDesiredAction(id address.Address, action controlplane.PlanAction) {
-	switch action.Action {
-	case controlplane.PlanActionCreate, controlplane.PlanActionRead:
-		p.Add = append(p.Add, id)
-	case controlplane.PlanActionUpdate, controlplane.PlanActionReplace:
-		p.Change = append(p.Change, id)
-	default:
-		p.Unchanged = append(p.Unchanged, id)
-	}
-	p.Actions = append(p.Actions, action)
-}
-
-func (p *Plan) addAction(id address.Address, action controlplane.PlanActionType, reason string, changes map[string]controlplane.FieldChange) {
-	p.Actions = append(p.Actions, controlplane.PlanAction{
-		Resource: id.String(),
-		Type:     id.Type,
-		Name:     id.Name,
-		Action:   action,
-		Reason:   reason,
-		Changes:  changes,
-	})
-}
-
-// PlanFromActions rebuilds the executable plan indexes from structured actions.
-// It lets API-stored plans become the execution input without recomputing a
-// fresh diff.
-func PlanFromActions(actions []controlplane.PlanAction, current *state.State) *Plan {
-	p := &Plan{Actions: append([]controlplane.PlanAction(nil), actions...)}
-	for _, action := range p.Actions {
-		id := action.Address()
-		switch action.Action {
-		case controlplane.PlanActionCreate, controlplane.PlanActionRead:
-			p.Add = append(p.Add, id)
-		case controlplane.PlanActionUpdate, controlplane.PlanActionReplace:
-			p.Change = append(p.Change, id)
-		case controlplane.PlanActionDelete:
-			if current != nil {
-				if r := current.FindResource(id); r != nil {
-					p.Destroy = append(p.Destroy, *r)
-					continue
-				}
+func FilterPlanByTarget(plan *Plan, typ, name string) *Plan {
+	filtered := &Plan{Actions: make([]controlplane.PlannedChange, 0, len(plan.Actions))}
+	for _, change := range plan.Actions {
+		if change.Address.Type != typ || change.Address.Name != name {
+			if change.Action != controlplane.PlanActionDelete {
+				change.Action = controlplane.PlanActionNoop
+				change.Reason = ""
+				change.Changes = nil
+				filtered.Actions = append(filtered.Actions, change)
 			}
-			p.Destroy = append(p.Destroy, state.Resource{Address: id})
-		case controlplane.PlanActionSkip:
-			if current != nil {
-				if r := current.FindResource(id); r != nil {
-					p.Protected = append(p.Protected, *r)
-				}
-			}
-		default:
-			p.Unchanged = append(p.Unchanged, id)
+			continue
 		}
+		filtered.Actions = append(filtered.Actions, change)
 	}
-	return p
+	return filtered
 }
 
-func (p *Plan) setAction(id address.Address, action controlplane.PlanActionType, reason string, changes map[string]controlplane.FieldChange) {
-	for i := range p.Actions {
-		if p.Actions[i].Type == id.Type && p.Actions[i].Name == id.Name {
-			p.Actions[i].Action = action
-			p.Actions[i].Reason = reason
-			p.Actions[i].Changes = changes
-			return
-		}
-	}
-	p.addAction(id, action, reason, changes)
-}
-
-// FilterPlanByTarget returns a new Plan restricted to a single resource.
-// Resources not matching type+name are moved to Unchanged.
-func FilterPlanByTarget(p *Plan, typ, name string) *Plan {
-	matches := func(id address.Address) bool {
-		return id.Type == typ && id.Name == name
-	}
-	out := &Plan{}
-	for _, id := range p.Add {
-		if matches(id) {
-			out.Add = append(out.Add, id)
-			out.setAction(id, controlplane.PlanActionCreate, "resource not present in state", nil)
-		} else {
-			out.Unchanged = append(out.Unchanged, id)
-			out.setAction(id, controlplane.PlanActionNoop, "", nil)
-		}
-	}
-	for _, id := range p.Change {
-		if matches(id) {
-			out.Change = append(out.Change, id)
-			out.setAction(id, actionFor(p, id), reasonFor(p, id), changesFor(p, id))
-		} else {
-			out.Unchanged = append(out.Unchanged, id)
-			out.setAction(id, controlplane.PlanActionNoop, "", nil)
-		}
-	}
-	for _, r := range p.Destroy {
-		if r.Address.Type == typ && r.Address.Name == name {
-			out.Destroy = append(out.Destroy, r)
-			out.setAction(r.Address, controlplane.PlanActionDelete, "resource no longer declared", nil)
-		}
-	}
-	out.Unchanged = append(out.Unchanged, p.Unchanged...)
-	for _, id := range p.Unchanged {
-		out.setAction(id, controlplane.PlanActionNoop, "", nil)
-	}
-	return out
-}
-
-func actionFor(p *Plan, id address.Address) controlplane.PlanActionType {
-	for _, a := range p.Actions {
-		if a.Type == id.Type && a.Name == id.Name {
-			return a.Action
-		}
-	}
-	return controlplane.PlanActionReplace
-}
-
-func reasonFor(p *Plan, id address.Address) string {
-	for _, a := range p.Actions {
-		if a.Type == id.Type && a.Name == id.Name {
-			return a.Reason
-		}
-	}
-	return "resource changed"
-}
-
-func changesFor(p *Plan, id address.Address) map[string]controlplane.FieldChange {
-	for _, a := range p.Actions {
-		if a.Type == id.Type && a.Name == id.Name {
-			return a.Changes
-		}
-	}
-	return nil
-}
-
-func (p *Plan) HasChanges() bool {
-	for _, action := range p.Actions {
-		switch action.Action {
-		case controlplane.PlanActionCreate, controlplane.PlanActionRead, controlplane.PlanActionUpdate, controlplane.PlanActionReplace, controlplane.PlanActionDelete:
+func (p Plan) HasChanges() bool {
+	for _, change := range p.Actions {
+		switch change.Action {
+		case controlplane.PlanActionCreate, controlplane.PlanActionRead, controlplane.PlanActionReplace, controlplane.PlanActionDelete, controlplane.PlanActionUnknown:
 			return true
 		}
 	}
-	return len(p.Add) > 0 || len(p.Destroy) > 0 || len(p.Change) > 0
+	return false
 }
 
-// lifecycleOf extracts the LifecycleConfig from a graph node's Data, returning
-// nil if the node type doesn't carry lifecycle (images, kernels, etc.).
-func lifecycleOf(n *graph.Node) *config.LifecycleConfig {
-	if n == nil {
+func (p Plan) ChangeFor(resourceAddress address.Address) (controlplane.PlannedChange, bool) {
+	for _, change := range p.Actions {
+		if change.Address.Equal(resourceAddress) {
+			return change, true
+		}
+	}
+	return controlplane.PlannedChange{}, false
+}
+
+func (p Plan) Summary() string {
+	counts := map[controlplane.PlanActionType]int{}
+	for _, change := range p.Actions {
+		counts[change.Action]++
+	}
+	return fmt.Sprintf("Plan: %d to add, %d to replace, %d to destroy, %d unchanged.", counts[controlplane.PlanActionCreate]+counts[controlplane.PlanActionRead], counts[controlplane.PlanActionReplace], counts[controlplane.PlanActionDelete], counts[controlplane.PlanActionNoop])
+}
+
+func PrintPlan(plan *Plan, _ bool) {
+	fmt.Println(plan.Summary())
+	for _, change := range plan.Actions {
+		symbol := map[controlplane.PlanActionType]string{
+			controlplane.PlanActionCreate: "+", controlplane.PlanActionRead: "<=", controlplane.PlanActionReplace: "-/+",
+			controlplane.PlanActionDelete: "-", controlplane.PlanActionNoop: " ", controlplane.PlanActionUnknown: "?",
+		}[change.Action]
+		fmt.Printf("  %s %s", symbol, change.Address)
+		if change.Reason != "" {
+			fmt.Printf(" (%s)", change.Reason)
+		}
+		fmt.Println()
+		keys := make([]string, 0, len(change.Changes))
+		for key := range change.Changes {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			field := change.Changes[key]
+			if field.Sensitive {
+				fmt.Printf("      %s: (sensitive) -> (sensitive)\n", key)
+			} else {
+				fmt.Printf("      %s: %v -> %v\n", key, field.Before, field.After)
+			}
+		}
+	}
+}
+
+func lifecycleOf(node *graph.Node) *config.LifecycleConfig {
+	if node == nil {
 		return nil
 	}
-	switch v := n.Data.(type) {
+	switch value := node.Data.(type) {
 	case *config.NodeConfig:
-		return v.Lifecycle
+		return value.Lifecycle
 	case *config.NetworkConfig:
-		return v.Lifecycle
+		return value.Lifecycle
 	}
 	return nil
 }
 
-// isDataType returns true for data source resource types (data_sysbox_node, etc.).
-func isDataType(typ string) bool {
-	return len(typ) > 5 && typ[:5] == "data_"
-}
-
-func (p *Plan) Summary() string {
-	s := fmt.Sprintf("Plan: %d to add, %d to change, %d to destroy, %d unchanged.",
-		len(p.Add), len(p.Change), len(p.Destroy), len(p.Unchanged))
-	if len(p.Protected) > 0 {
-		s += fmt.Sprintf(" (%d protected by lifecycle.prevent_destroy)", len(p.Protected))
-	}
-	return s
-}
-
-// PrintPlan writes a human-readable plan to w. If showProtected is true,
-// resources blocked by lifecycle.prevent_destroy are also listed.
-func PrintPlan(p *Plan, showProtected bool) {
-	fmt.Println(p.Summary())
-	for _, id := range p.Add {
-		if actionFor(p, id) == controlplane.PlanActionRead {
-			fmt.Printf("  <= %s\n", id)
-			continue
-		}
-		fmt.Printf("  + %s\n", id)
-	}
-	for _, id := range p.Change {
-		reason := reasonFor(p, id)
-		if reason == "" {
-			reason = "changed"
-		}
-		fmt.Printf("  ~ %s (%s)\n", id, reason)
-		for field, ch := range changesFor(p, id) {
-			if ch.Sensitive {
-				fmt.Printf("      %s: (sensitive) -> (sensitive)\n", field)
-				continue
-			}
-			fmt.Printf("      %s: %v -> %v\n", field, ch.Before, ch.After)
-		}
-	}
-	for _, r := range p.Destroy {
-		fmt.Printf("  - %s\n", r.Address)
-	}
-	if showProtected {
-		for _, r := range p.Protected {
-			fmt.Printf("  ! %s  (lifecycle.prevent_destroy — skipped)\n", r.Address)
-		}
-	}
-	for _, id := range p.Unchanged {
-		fmt.Printf("    %s\n", id)
-	}
-}
+func isDataType(typ string) bool { return len(typ) > 5 && typ[:5] == "data_" }

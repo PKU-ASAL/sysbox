@@ -151,7 +151,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 			e.bridge.Finish(run, err)
 			return
 		}
-		plan = runtime.PlanFromActions(stored.Actions, st)
+		plan = &runtime.Plan{Actions: append([]controlplane.PlannedChange(nil), stored.Actions...)}
 	} else {
 		plan, err = runtime.ComputePlan(g, st)
 		if err != nil {
@@ -182,7 +182,11 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		refresh = hook.RefreshApply()
 	}
 	if refresh {
-		exec.Refresh(ctx, plan)
+		plan, err = exec.Refresh(ctx, plan)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		e.bridge.Finish(run, err)
@@ -212,7 +216,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionUpdate)
+	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionNoop)
 	if err := ctx.Err(); err != nil {
 		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
@@ -289,7 +293,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 		e.bridge.Finish(run, err)
 		return
 	}
-	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionUpdate)
+	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionNoop)
 	if err := ctx.Err(); err != nil {
 		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
@@ -327,25 +331,13 @@ func (e *Executor) executeResumeDestroy(ctx context.Context, parent, run *contro
 
 func defaultDestroyPlan(st *state.State) *runtime.Plan {
 	plan := &runtime.Plan{}
-	for _, r := range st.Resources {
+	for i := len(st.Resources) - 1; i >= 0; i-- {
+		r := st.Resources[i]
 		if r.LifecyclePreventDestroy() {
-			plan.Protected = append(plan.Protected, r)
-			plan.Actions = append(plan.Actions, controlplane.PlanAction{
-				Resource: r.Address.String(),
-				Type:     r.Address.Type,
-				Name:     r.Address.Name,
-				Action:   controlplane.PlanActionSkip,
-				Reason:   "blocked by lifecycle.prevent_destroy",
-			})
-			continue
+			return &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: r.Address, Action: controlplane.PlanActionUnknown, Reason: "lifecycle.prevent_destroy blocks deletion"}}}
 		}
-		plan.Destroy = append(plan.Destroy, r)
-		plan.Actions = append(plan.Actions, controlplane.PlanAction{
-			Resource: r.Address.String(),
-			Type:     r.Address.Type,
-			Name:     r.Address.Name,
-			Action:   controlplane.PlanActionDelete,
-			Reason:   "destroy requested",
+		plan.Actions = append(plan.Actions, controlplane.PlannedChange{
+			Address: r.Address, Action: controlplane.PlanActionDelete, Reason: "destroy requested",
 		})
 	}
 	return plan

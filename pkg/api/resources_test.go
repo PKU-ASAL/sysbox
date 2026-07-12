@@ -132,13 +132,10 @@ func (testResourceProvider) Schema() runtime.ResourceSchema {
 func (testResourceProvider) Read(context.Context, state.Resource) (runtime.ResourceReadResult, error) {
 	return runtime.ResourceReadResult{Decision: controlplane.RecoveryDecisionNoop}, nil
 }
-func (testResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlanAction, error) {
-	return controlplane.PlanAction{Resource: desired.Address.String(), Type: desired.Address.Type, Name: desired.Address.Name, Action: controlplane.PlanActionNoop}, nil
+func (testResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+	return controlplane.PlannedChange{Address: desired.Address, Action: controlplane.PlanActionNoop}, nil
 }
 func (testResourceProvider) Create(context.Context, *runtime.ProviderContext, *graph.Node) (state.Resource, error) {
-	return state.Resource{}, nil
-}
-func (testResourceProvider) Update(context.Context, *runtime.ProviderContext, *graph.Node, state.Resource) (state.Resource, error) {
 	return state.Resource{}, nil
 }
 func (testResourceProvider) Delete(context.Context, *runtime.ProviderContext, state.Resource) error {

@@ -213,7 +213,11 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	runtime.NewExecutor(g, st).Refresh(r.Context(), plan)
+	plan, err = runtime.NewExecutor(g, st).Refresh(r.Context(), plan)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, planJSON(plan))
 }
 
@@ -520,23 +524,8 @@ func (s *Server) checkpointFile(topology, runID string) string {
 }
 
 func planJSON(p *runtime.Plan) map[string]any {
-	add := make([]string, 0, len(p.Add))
-	for _, id := range p.Add {
-		add = append(add, id.String())
-	}
-	destroy := make([]string, 0, len(p.Destroy))
-	for _, r := range p.Destroy {
-		destroy = append(destroy, r.Address.String())
-	}
-	change := make([]string, 0, len(p.Change))
-	for _, id := range p.Change {
-		change = append(change, id.String())
-	}
 	return map[string]any{
 		"summary": p.Summary(),
-		"add":     add,
-		"destroy": destroy,
-		"change":  change,
 		"actions": p.Actions,
 	}
 }

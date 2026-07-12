@@ -59,18 +59,18 @@ type StatePatch struct {
 }
 
 type OperationCheckpoint struct {
-	RunID             string                    `json:"run_id"`
-	Topology          string                    `json:"topology,omitempty"`
-	Operation         string                    `json:"operation"`
-	Status            OperationStatus           `json:"status"`
-	StartedAt         time.Time                 `json:"started_at"`
-	EndedAt           time.Time                 `json:"ended_at,omitempty"`
-	LeaseOwner        string                    `json:"lease_owner,omitempty"`
-	StateSerialBefore int64                     `json:"state_serial_before,omitempty"`
-	StateSerialAfter  int64                     `json:"state_serial_after,omitempty"`
-	Plan              []controlplane.PlanAction `json:"plan,omitempty"`
-	Steps             []OperationStep           `json:"steps"`
-	StatePatches      []StatePatch              `json:"state_patches,omitempty"`
+	RunID             string                       `json:"run_id"`
+	Topology          string                       `json:"topology,omitempty"`
+	Operation         string                       `json:"operation"`
+	Status            OperationStatus              `json:"status"`
+	StartedAt         time.Time                    `json:"started_at"`
+	EndedAt           time.Time                    `json:"ended_at,omitempty"`
+	LeaseOwner        string                       `json:"lease_owner,omitempty"`
+	StateSerialBefore int64                        `json:"state_serial_before,omitempty"`
+	StateSerialAfter  int64                        `json:"state_serial_after,omitempty"`
+	Plan              []controlplane.PlannedChange `json:"plan,omitempty"`
+	Steps             []OperationStep              `json:"steps"`
+	StatePatches      []StatePatch                 `json:"state_patches,omitempty"`
 }
 
 type StateResourceLog struct {
@@ -147,7 +147,7 @@ func (r *FileRecorder) Begin(operation string, plan *Plan) error {
 	r.checkpoint.Status = OperationStarted
 	r.checkpoint.StartedAt = time.Now().UTC()
 	if plan != nil {
-		r.checkpoint.Plan = append([]controlplane.PlanAction(nil), plan.Actions...)
+		r.checkpoint.Plan = append([]controlplane.PlannedChange(nil), plan.Actions...)
 	}
 	return r.flushLocked()
 }

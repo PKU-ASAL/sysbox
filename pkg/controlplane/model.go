@@ -44,15 +44,15 @@ type Revision struct {
 }
 
 type Plan struct {
-	ID          string       `json:"id"`
-	ProjectID   string       `json:"project_id"`
-	Workspace   string       `json:"workspace"`
-	Revision    string       `json:"revision,omitempty"`
-	StateSerial int64        `json:"state_serial,omitempty"`
-	Status      string       `json:"status"`
-	Summary     string       `json:"summary,omitempty"`
-	Actions     []PlanAction `json:"actions"`
-	CreatedAt   time.Time    `json:"created_at"`
+	ID          string          `json:"id"`
+	ProjectID   string          `json:"project_id"`
+	Workspace   string          `json:"workspace"`
+	Revision    string          `json:"revision,omitempty"`
+	StateSerial int64           `json:"state_serial,omitempty"`
+	Status      string          `json:"status"`
+	Summary     string          `json:"summary,omitempty"`
+	Actions     []PlannedChange `json:"actions"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 type Run struct {
