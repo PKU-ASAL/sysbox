@@ -45,8 +45,46 @@ func TestDecodeResource(t *testing.T) {
 	require.Equal(t, "docker", nodeCfg.Substrate)
 	require.Equal(t, "sysbox_image.alpine", nodeCfg.Image)
 	require.Len(t, nodeCfg.Links, 1)
+	require.Equal(t, "dmz", nodeCfg.Links[0].Name)
 	require.Equal(t, "10.0.1.10/24", nodeCfg.Links[0].IP)
 	require.Equal(t, "sysbox_network.dmz", nodeCfg.Links[0].Network)
+}
+
+func TestDecodeNodeLinksRequireLogicalName(t *testing.T) {
+	root, err := ParseString(`resource "sysbox_node" "web" {
+  image = "alpine"
+  substrate = "docker"
+  link {
+    network = "sysbox_network.public"
+    ip = "10.0.0.2/24"
+  }
+}`, "test.hcl")
+	require.NoError(t, err)
+
+	var cfg NodeConfig
+	err = DecodeResource(&root.Resources[0], &cfg, nil)
+	require.ErrorContains(t, err, "link")
+	require.ErrorContains(t, err, "label")
+}
+
+func TestDecodeNodeLinksRejectDuplicateLogicalName(t *testing.T) {
+	root, err := ParseString(`resource "sysbox_node" "web" {
+  image = "alpine"
+  substrate = "docker"
+  link "uplink" {
+    network = "sysbox_network.public"
+    ip = "10.0.0.2/24"
+  }
+  link "uplink" {
+    network = "sysbox_network.backup"
+    ip = "10.1.0.2/24"
+  }
+}`, "test.hcl")
+	require.NoError(t, err)
+
+	var cfg NodeConfig
+	err = DecodeResource(&root.Resources[0], &cfg, nil)
+	require.ErrorContains(t, err, `duplicate link name "uplink"`)
 }
 
 func TestDecodeNodePorts(t *testing.T) {

@@ -45,7 +45,7 @@ resource "sysbox_node" "vm_attack" {
     ssh_pass = "root"
   }
 
-  link {
+  link "uplink" {
     network = sysbox_network.net_uplink.id
     ip      = "172.21.0.10/24"
   }

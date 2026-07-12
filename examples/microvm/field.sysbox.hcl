@@ -119,13 +119,13 @@ resource "sysbox_node" "node_attack" {
     ssh_pass = "root"
   }
 
-  link {
+  link "dmz" {
     network = sysbox_network.net_dmz.id
     ip      = "10.0.11.10/24"
     gw      = "10.0.11.254"
   }
 
-  link {
+  link "uplink" {
     network = sysbox_network.net_uplink_fc.id
     ip      = "172.22.0.10/24"
   }
@@ -154,7 +154,7 @@ resource "sysbox_node" "node_web" {
     ssh_pass = "root"
   }
 
-  link {
+  link "internal" {
     network = sysbox_network.net_internal.id
     ip      = "10.0.12.10/24"
     gw      = "10.0.12.254"
@@ -177,7 +177,7 @@ resource "sysbox_node" "node_db" {
     ssh_pass = "root"
   }
 
-  link {
+  link "internal" {
     network = sysbox_network.net_internal.id
     ip      = "10.0.12.20/24"
     gw      = "10.0.12.254"

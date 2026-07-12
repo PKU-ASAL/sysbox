@@ -32,7 +32,7 @@ resource "sysbox_image" "rootfs" {
 resource "sysbox_node" "microvm" {
   substrate = "firecracker"
   image = sysbox_image.rootfs.id
-  link {
+  link "lab" {
     network = sysbox_network.shared.id
     ip = "10.99.0.10/24"
   }

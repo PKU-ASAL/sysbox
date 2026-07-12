@@ -112,7 +112,7 @@ resource "sysbox_node" "node_db" {
   # keeps running regardless.
   chain_init = "/bin/sh"
 
-  link {
+  link "internal" {
     network = sysbox_network.net_internal.id
     ip      = "10.0.12.20/24"
     gw      = "10.0.12.254"

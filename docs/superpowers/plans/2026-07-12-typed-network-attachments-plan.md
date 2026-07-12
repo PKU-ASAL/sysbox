@@ -117,7 +117,7 @@ git commit -m "feat(state): add typed network attachments"
 - Produces: `LinkConfig.Name string` decoded from the block label and validated as unique per node.
 - Router `RouterInterface.Name` remains the same public label and follows the same validation rules.
 
-- [ ] **Step 1: Write failing decode tests**
+- [x] **Step 1: Write failing decode tests**
 
 ```go
 func TestNodeLinksRequireUniqueLogicalNames(t *testing.T) {
@@ -133,13 +133,13 @@ func TestNodeLinksRequireUniqueLogicalNames(t *testing.T) {
 
 Add a second test with two `link "uplink"` blocks and require a duplicate-name error.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/config -run TestNodeLinksRequireUniqueLogicalNames`
 
 Expected: FAIL because unlabeled links currently decode successfully.
 
-- [ ] **Step 3: Require the label and validate uniqueness**
+- [x] **Step 3: Require the label and validate uniqueness**
 
 ```go
 type LinkConfig struct {
@@ -153,17 +153,17 @@ type LinkConfig struct {
 
 Use the existing resource validation path to reject empty/duplicate node link and router interface names with the owning resource address in the diagnostic.
 
-- [ ] **Step 4: Convert all repository HCL**
+- [x] **Step 4: Convert all repository HCL**
 
 Choose semantic labels such as `uplink`, `internal`, and `dmz`; do not generate labels from declaration order. Update references and docs in the same change.
 
-- [ ] **Step 5: Run GREEN and parse all examples**
+- [x] **Step 5: Run GREEN and parse all examples**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/config ./pkg/runtime ./cmd/sysbox/commands`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pkg/config tests/testdata examples docs

@@ -104,13 +104,13 @@ resource "sysbox_node" "node_attack" {
 
   # DMZ: lab-internal communication (to router and victim nodes).
   # No gw here — routing is handled by route {} blocks below.
-  link {
+  link "dmz" {
     network = sysbox_network.net_dmz.id
     ip      = "10.0.1.10/24"
   }
 
   # Uplink: internet access (LLM API) + reachable from host (episode runner).
-  link {
+  link "uplink" {
     network = sysbox_network.net_uplink.id
     ip      = "172.30.0.10/24"
   }
@@ -146,7 +146,7 @@ resource "sysbox_node" "node_web" {
   image     = sysbox_image.nginx.id
   substrate = substrate.docker.light
 
-  link {
+  link "internal" {
     network = sysbox_network.net_internal.id
     ip      = "10.0.2.10/24"
     gw      = "10.0.2.254"
@@ -157,7 +157,7 @@ resource "sysbox_node" "node_db" {
   image     = sysbox_image.postgres.id
   substrate = substrate.docker.light
 
-  link {
+  link "internal" {
     network = sysbox_network.net_internal.id
     ip      = "10.0.2.20/24"
     gw      = "10.0.2.254"

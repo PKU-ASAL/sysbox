@@ -110,12 +110,12 @@ resource "sysbox_node" "node_attack" {
     pid_mode   = "host"
   }
 
-  link {
+  link "dmz" {
     network = sysbox_network.net_dmz.id
     ip      = "10.0.1.10/24"
   }
 
-  link {
+  link "uplink" {
     network = sysbox_network.net_uplink.id
     ip      = "172.30.1.10/24"
   }
@@ -131,7 +131,7 @@ resource "sysbox_node" "node_web" {
   substrate = substrate.docker.dk
   image     = sysbox_image.nginx.id
 
-  link {
+  link "internal" {
     network = sysbox_network.net_internal.id
     ip      = "10.0.2.10/24"
     gw      = "10.0.2.254"
@@ -156,7 +156,7 @@ resource "sysbox_node" "node_db" {
     ssh_pass = "root"
   }
 
-  link {
+  link "internal" {
     network = sysbox_network.net_internal.id
     ip      = "10.0.2.20/24"
     gw      = "10.0.2.254"

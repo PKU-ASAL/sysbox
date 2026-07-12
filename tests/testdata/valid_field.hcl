@@ -15,7 +15,7 @@ resource "sysbox_node" "web" {
   image     = sysbox_image.alpine.id
   substrate = substrate.docker.light
 
-  link {
+  link "dmz" {
     network = sysbox_network.dmz.id
     ip      = "10.0.1.10/24"
   }
@@ -25,7 +25,7 @@ resource "sysbox_node" "client" {
   image     = sysbox_image.alpine.id
   substrate = substrate.docker.light
 
-  link {
+  link "dmz" {
     network = sysbox_network.dmz.id
     ip      = "10.0.1.20/24"
   }
@@ -39,5 +39,4 @@ resource "sysbox_actor" "red" {
 
   depends_on = ["sysbox_node.client"]
 }
-
 

@@ -63,5 +63,35 @@ func DecodeResource(r *ResourceBlock, target any, ctx *hcl.EvalContext) error {
 		diagnostics.Sort()
 		return diagnostics
 	}
+	if err := validateLogicalAttachmentNames(target); err != nil {
+		return fmt.Errorf("resource %s.%s: %w", r.Type, r.Name, err)
+	}
+	return nil
+}
+
+func validateLogicalAttachmentNames(target any) error {
+	var names []string
+	var kind string
+	switch cfg := target.(type) {
+	case *NodeConfig:
+		kind = "link"
+		for _, link := range cfg.Links {
+			names = append(names, link.Name)
+		}
+	case *RouterConfig:
+		kind = "interface"
+		for _, iface := range cfg.Interfaces {
+			names = append(names, iface.Name)
+		}
+	default:
+		return nil
+	}
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if _, ok := seen[name]; ok {
+			return fmt.Errorf("duplicate %s name %q", kind, name)
+		}
+		seen[name] = struct{}{}
+	}
 	return nil
 }

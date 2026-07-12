@@ -16,7 +16,7 @@ resource "sysbox_node" "web" {
   substrate = substrate.docker.local
   image     = sysbox_image.nginx.id
 
-  link {
+  link "app" {
     network = sysbox_network.app.id
     ip      = "172.31.10.10/24"
   }

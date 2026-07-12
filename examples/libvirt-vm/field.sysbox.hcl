@@ -79,7 +79,7 @@ resource "sysbox_node" "server" {
   }
 
   # Link to the internal network (libvirt creates a TAP and attaches to bridge)
-  link {
+  link "internal" {
     network = sysbox_network.internal.id
     ip      = "10.0.20.10/24"
   }
@@ -111,7 +111,7 @@ resource "sysbox_node" "client" {
     ssh_pass = "ubuntu"
   }
 
-  link {
+  link "internal" {
     network = sysbox_network.internal.id
     ip      = "10.0.20.20/24"
   }

@@ -47,7 +47,7 @@ resource "sysbox_node" "node_a" {
   image     = sysbox_image.alpine.id
   substrate = substrate.docker.light
 
-  link {
+  link "net_a" {
     network = sysbox_network.net_a.id
     ip      = "10.0.1.10/24"
     gw      = "10.0.1.254"
@@ -58,7 +58,7 @@ resource "sysbox_node" "node_b" {
   image     = sysbox_image.alpine.id
   substrate = substrate.docker.light
 
-  link {
+  link "net_b" {
     network = sysbox_network.net_b.id
     ip      = "10.0.2.20/24"
     gw      = "10.0.2.254"
