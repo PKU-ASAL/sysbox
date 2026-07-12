@@ -120,4 +120,12 @@ func (r *Registry) RequirePower(name string) (Power, error) {
 	return d.Power, nil
 }
 
+func (r *Registry) RequireRouterNetwork(name string) (RouterNetwork, error) {
+	d, err := r.Require(name, CapabilityRouterNetwork)
+	if err != nil {
+		return nil, err
+	}
+	return d.RouterNetwork, nil
+}
+
 var DefaultRegistry = NewRegistry()

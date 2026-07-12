@@ -12,17 +12,18 @@ import (
 type Capability string
 
 const (
-	CapabilityNode       Capability = "node"
-	CapabilityNIC        Capability = "nic"
-	CapabilitySnapshot   Capability = "snapshot"
-	CapabilityConsole    Capability = "console"
-	CapabilityGuestExec  Capability = "guest-exec"
-	CapabilityNetwork    Capability = "network"
-	CapabilityArtifact   Capability = "artifact"
-	CapabilityImport     Capability = "import"
-	CapabilityNodeState  Capability = "node-state"
-	CapabilityImageEntry Capability = "image-entry"
-	CapabilityPower      Capability = "power"
+	CapabilityNode          Capability = "node"
+	CapabilityNIC           Capability = "nic"
+	CapabilitySnapshot      Capability = "snapshot"
+	CapabilityConsole       Capability = "console"
+	CapabilityGuestExec     Capability = "guest-exec"
+	CapabilityNetwork       Capability = "network"
+	CapabilityArtifact      Capability = "artifact"
+	CapabilityImport        Capability = "import"
+	CapabilityNodeState     Capability = "node-state"
+	CapabilityImageEntry    Capability = "image-entry"
+	CapabilityPower         Capability = "power"
+	CapabilityRouterNetwork Capability = "router-network"
 )
 
 type Node interface {
@@ -89,20 +90,25 @@ type Power interface {
 	Resume(context.Context, substrate.NodeHandle) error
 }
 
+type RouterNetwork interface {
+	ConfigureNAT(context.Context, substrate.NodeHandle, string, string) error
+}
+
 type Descriptor struct {
-	Name       string
-	Version    string
-	Node       Node
-	NIC        NIC
-	Snapshot   Snapshot
-	Console    Console
-	GuestExec  GuestExec
-	Network    Network
-	Artifact   Artifact
-	Import     Import
-	NodeState  NodeState
-	ImageEntry ImageEntry
-	Power      Power
+	Name          string
+	Version       string
+	Node          Node
+	NIC           NIC
+	Snapshot      Snapshot
+	Console       Console
+	GuestExec     GuestExec
+	Network       Network
+	Artifact      Artifact
+	Import        Import
+	NodeState     NodeState
+	ImageEntry    ImageEntry
+	Power         Power
+	RouterNetwork RouterNetwork
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -129,6 +135,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.ImageEntry
 	case CapabilityPower:
 		return d.Power
+	case CapabilityRouterNetwork:
+		return d.RouterNetwork
 	default:
 		return nil
 	}

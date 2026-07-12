@@ -3,8 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"os/exec"
-	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 
@@ -165,7 +163,11 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 			return state.Resource{}, fmt.Errorf("nat_from %q / nat_to %q must reference declared interfaces",
 				cfg.NatFrom, cfg.NatTo)
 		}
-		if err := configureNATViaNsenter(handle.ID, fromIf, toIf); err != nil {
+		routerNetwork, err := driver.DefaultRegistry.RequireRouterNetwork(subName)
+		if err != nil {
+			return state.Resource{}, err
+		}
+		if err := routerNetwork.ConfigureNAT(ctx, handle, fromIf, toIf); err != nil {
 			e.logf("[router %s] warning: NAT setup failed (continuing without NAT): %v\n", n.Address.Name, err)
 		} else {
 			natApplied = true
@@ -196,49 +198,4 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		_ = resource.SetProviderState(blob)
 	}
 	return resource, nil
-}
-
-// configureNATViaNsenter configures MASQUERADE and FORWARD rules from the
-// host side using nsenter(1) to enter the container's network namespace.
-// This avoids the need for iptables inside the container (which would
-// require internet access to install via apk/apt-get, and DNS often
-// doesn't work in fresh Alpine containers on the Docker default bridge).
-//
-// The host's iptables binary operates on the kernel's netfilter, which is
-// per-network-namespace — so running it via nsenter -t <pid> -n targets
-// exactly the right namespace.
-func configureNATViaNsenter(containerID, fromIf, toIf string) error {
-	// Resolve container PID.
-	out, err := execCommand("docker", "inspect", containerID, "--format", "{{.State.Pid}}")
-	if err != nil {
-		return fmt.Errorf("docker inspect %s: %w", containerID, err)
-	}
-	pid := strings.TrimSpace(string(out))
-	if pid == "0" {
-		return fmt.Errorf("container %s not running (pid 0)", containerID)
-	}
-
-	// Check that nsenter + iptables are available on the host.
-	if _, err := execCommand("nsenter", "--version"); err != nil {
-		return fmt.Errorf("nsenter not found on host: %w", err)
-	}
-
-	cmds := []string{
-		fmt.Sprintf("nsenter -t %s -n iptables -t nat -A POSTROUTING -o %s -j MASQUERADE", pid, toIf),
-		fmt.Sprintf("nsenter -t %s -n iptables -A FORWARD -i %s -o %s -j ACCEPT", pid, fromIf, toIf),
-		fmt.Sprintf("nsenter -t %s -n iptables -A FORWARD -i %s -o %s -m state --state ESTABLISHED,RELATED -j ACCEPT", pid, toIf, fromIf),
-	}
-	for _, c := range cmds {
-		parts := strings.Fields(c)
-		out, err := execCommand(parts[0], parts[1:]...)
-		if err != nil {
-			return fmt.Errorf("cmd %q: %w (%s)", c, err, strings.TrimSpace(string(out)))
-		}
-	}
-	return nil
-}
-
-// execCommand runs host-side commands and is replaceable in tests.
-var execCommand = func(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
 }

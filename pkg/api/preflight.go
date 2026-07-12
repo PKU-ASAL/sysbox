@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -55,8 +56,8 @@ func (r *preflightResult) err() error {
 func (s *Server) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 	res := preflightResult{OK: true}
 	for _, name := range []string{"docker", "firecracker", "libvirt"} {
-		if sub, err := substrate.Get(name); err == nil {
-			addPreflightChecks(&res, sub.PreflightChecks(false))
+		if nodeDriver, err := driver.DefaultRegistry.RequireNode(name); err == nil {
+			addPreflightChecks(&res, nodeDriver.PreflightChecks(false))
 		}
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -94,8 +95,8 @@ func (s *Server) preflightTopology(topology string) (*preflightResult, error) {
 	}
 
 	for name := range needed {
-		if sub, err := substrate.Get(name); err == nil {
-			addPreflightChecks(res, sub.PreflightChecks(true))
+		if nodeDriver, err := driver.DefaultRegistry.RequireNode(name); err == nil {
+			addPreflightChecks(res, nodeDriver.PreflightChecks(true))
 		}
 	}
 
