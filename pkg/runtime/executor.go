@@ -15,7 +15,7 @@ import (
 )
 
 // Executor wires graph walking to provider calls. It holds references to
-// registered substrates (via substrate.Get) and updates state after each action.
+// registered capability drivers and updates state after each action.
 type Executor struct {
 	graph               *graph.Graph
 	state               *state.State

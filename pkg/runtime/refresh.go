@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -204,8 +203,8 @@ func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver 
 	if err != nil {
 		return false
 	}
-	conn, err := nodeDriver.Connection(handle, nil)
-	if err != nil || conn == nil {
+	guestNetwork, err := driver.DefaultRegistry.RequireGuestNetwork(r.Driver)
+	if err != nil {
 		return false
 	}
 	for _, item := range items {
@@ -215,8 +214,8 @@ func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver 
 		if dst == "" || via == "" {
 			continue
 		}
-		cmd := fmt.Sprintf("ip route show %s | grep -F %s", util.ShellQuote(dst), util.ShellQuote("via "+via))
-		if err := conn.ExecStream(ctx, []string{cmd}, io.Discard, io.Discard); err != nil {
+		ok, err := guestNetwork.HasRoute(ctx, handle, dst, via)
+		if err != nil || !ok {
 			return false
 		}
 	}

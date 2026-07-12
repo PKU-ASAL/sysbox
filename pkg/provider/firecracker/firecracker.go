@@ -183,5 +183,3 @@ func (s *Substrate) sshConn(handle substrate.NodeHandle, hints []substrate.Conne
 	}
 	return transport.NewSSHConnectionWithPort(host, port, user, key, pass)
 }
-
-var _ substrate.Substrate = (*Substrate)(nil)

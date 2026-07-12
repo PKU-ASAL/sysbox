@@ -20,7 +20,7 @@ import (
 // createRouter provisions a multi-NIC node with IP forwarding enabled.
 // Interfaces on NAT (Docker-managed) networks are connected via Docker
 // networking; isolated-network interfaces use veth pairs as usual.
-// Optional NAT (nat_from -> nat_to) is configured via host-side nsenter.
+// Optional NAT (nat_from -> nat_to) is delegated to the router network driver.
 type RouterResourceHandler struct{}
 
 func init() {

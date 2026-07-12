@@ -5,9 +5,8 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/spf13/cobra"
-
-	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 var pauseCmd = &cobra.Command{
@@ -56,21 +55,17 @@ func pauseResumeOp(addr string, resume bool) error {
 	}
 
 	subName := r.Driver
-	sub, err := substrate.Get(subName)
+	powerDriver, err := driver.DefaultRegistry.RequirePower(subName)
 	if err != nil {
-		return fmt.Errorf("substrate %q: %w", subName, err)
+		return err
 	}
-
-	handle := substrate.NodeHandle{ID: r.Str("container_id")}
-	if handle.ID == "" {
-		handle.ID = resourceAddress.Name
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
+	if err != nil {
+		return err
 	}
-
-	// Reconstruct provider state if available.
-	if extra, _ := r.ProviderState(); len(extra) > 0 {
-		if v, err := sub.UnmarshalProviderState(extra); err == nil {
-			handle.Provider = v
-		}
+	handle, err := r.ReconstructHandle(stateDriver)
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()
@@ -79,15 +74,10 @@ func pauseResumeOp(addr string, resume bool) error {
 		op = "resume"
 	}
 
-	caps := sub.Capabilities()
-	if !caps.SupportsPause {
-		return fmt.Errorf("substrate %q does not support pause/resume", subName)
-	}
-
 	if resume {
-		err = sub.Resume(ctx, handle)
+		err = powerDriver.Resume(ctx, handle)
 	} else {
-		err = sub.Pause(ctx, handle)
+		err = powerDriver.Pause(ctx, handle)
 	}
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", op, resourceAddress, err)

@@ -136,4 +136,12 @@ func (r *Registry) RequireLinuxNetwork(name string) (LinuxNetwork, error) {
 	return d.LinuxNetwork, nil
 }
 
+func (r *Registry) RequireGuestNetwork(name string) (GuestNetwork, error) {
+	d, err := r.Require(name, CapabilityGuestNetwork)
+	if err != nil {
+		return nil, err
+	}
+	return d.GuestNetwork, nil
+}
+
 var DefaultRegistry = NewRegistry()

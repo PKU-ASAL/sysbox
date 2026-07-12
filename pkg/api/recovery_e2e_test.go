@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	fcprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	netprovider "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
@@ -172,10 +173,11 @@ func requireRootE2E(t *testing.T) {
 
 func registerFirecrackerForE2E(t *testing.T) {
 	t.Helper()
-	if _, err := substrate.Get("firecracker"); err == nil {
+	if _, ok := driver.DefaultRegistry.Get("firecracker"); ok {
 		return
 	}
-	substrate.Register(fcprovider.New(filepath.Join(t.TempDir(), "vmlinux"), t.TempDir()))
+	fc := fcprovider.New(filepath.Join(t.TempDir(), "vmlinux"), t.TempDir())
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "firecracker", Version: "e2e", Node: fc, NIC: fc, Artifact: fc, GuestExec: fc, Console: fc, Power: fc, NodeState: fc, GuestNetwork: fc}))
 }
 
 func writeCheckpointE2E(t *testing.T, path string, cp runtime.OperationCheckpoint) {

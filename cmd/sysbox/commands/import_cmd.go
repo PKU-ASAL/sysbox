@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 var (
@@ -67,16 +67,15 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	sub, err := substrate.Get(subName)
-	if err != nil {
-		return fmt.Errorf("substrate %q not registered: %w", subName, err)
-	}
-
 	ctx := context.Background()
 
 	switch addr.Type {
 	case "sysbox_node":
-		handle, err := sub.ReadNode(ctx, externalID)
+		importDriver, err := driver.DefaultRegistry.RequireImport(subName)
+		if err != nil {
+			return err
+		}
+		handle, err := importDriver.ReadNode(ctx, externalID)
 		if err != nil {
 			return fmt.Errorf("import: %w", err)
 		}
@@ -89,7 +88,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 			Driver:     subName,
 			Attributes: state.MustAttributes(inst),
 		}
-		if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+		stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
+		if err != nil {
+			return err
+		}
+		if blob, err := stateDriver.MarshalProviderState(handle); err == nil && len(blob) > 0 {
 			_ = resource.SetProviderState(blob)
 		}
 		s.AddResource(resource)

@@ -334,21 +334,20 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 
 	// Configure static routes declared in HCL (before provisioners so they
-	// can use the routes). This replaces `ip route add` in provisioners.
+	// can use the routes).
 	if len(cfg.Routes) > 0 {
-		conn, err := connectionForNode(ctx, nodeDriver, handle, cfg.Connections)
+		guestNetwork, err := driver.DefaultRegistry.RequireGuestNetwork(subName)
 		if err != nil {
-			return state.Resource{}, fmt.Errorf("connection for routes on node %s: %w", n.Address.Name, err)
+			return state.Resource{}, err
 		}
 		for _, rt := range cfg.Routes {
-			cmd := fmt.Sprintf("ip route replace %s via %s", rt.Destination, rt.Via)
-			e.logf("[route] %s: %s\n", n.Address.Name, cmd)
+			e.logf("[route] %s: %s via %s\n", n.Address.Name, rt.Destination, rt.Via)
 			if err := e.recordSubstep(parentStep, "attach_route", map[string]any{
 				"resource": n.Address.String(),
 				"dst":      rt.Destination,
 				"via":      rt.Via,
 			}, func() error {
-				return conn.ExecInline(ctx, []string{cmd})
+				return guestNetwork.EnsureRoute(ctx, handle, rt.Destination, rt.Via)
 			}); err != nil {
 				// Non-fatal: route may already exist or ip not available.
 				e.logf("[route] warning: %s: %v\n", n.Address.Name, err)

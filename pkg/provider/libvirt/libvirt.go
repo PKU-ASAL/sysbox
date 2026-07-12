@@ -77,7 +77,6 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 }
 
 // compile-time interface guard
-var _ substrate.Substrate = (*Substrate)(nil)
 
 // Validate rejects specs that cannot run on the libvirt substrate.
 func (s *Substrate) Validate(spec substrate.NodeSpec) error {

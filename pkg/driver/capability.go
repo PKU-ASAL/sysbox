@@ -25,6 +25,7 @@ const (
 	CapabilityPower         Capability = "power"
 	CapabilityRouterNetwork Capability = "router-network"
 	CapabilityLinuxNetwork  Capability = "linux-network"
+	CapabilityGuestNetwork  Capability = "guest-network"
 )
 
 type Node interface {
@@ -67,6 +68,13 @@ type Network interface {
 	CreateManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error)
 	RemoveManagedNetwork(context.Context, string) error
 	ReadManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error)
+	AllowEgress(context.Context, string) error
+	RemoveEgress(context.Context, string) error
+}
+
+type GuestNetwork interface {
+	EnsureRoute(context.Context, substrate.NodeHandle, string, string) error
+	HasRoute(context.Context, substrate.NodeHandle, string, string) (bool, error)
 }
 
 type Artifact interface {
@@ -127,6 +135,7 @@ type Descriptor struct {
 	Power         Power
 	RouterNetwork RouterNetwork
 	LinuxNetwork  LinuxNetwork
+	GuestNetwork  GuestNetwork
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -157,6 +166,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.RouterNetwork
 	case CapabilityLinuxNetwork:
 		return d.LinuxNetwork
+	case CapabilityGuestNetwork:
+		return d.GuestNetwork
 	default:
 		return nil
 	}

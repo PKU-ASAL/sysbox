@@ -14,7 +14,6 @@ import (
 	fc "github.com/oslab/sysbox/pkg/provider/firecracker"
 	libvirt "github.com/oslab/sysbox/pkg/provider/libvirt"
 	networkprovider "github.com/oslab/sysbox/pkg/provider/network"
-	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func main() {
@@ -34,8 +33,8 @@ func main() {
 			ImageEntry:    dockerSub,
 			Power:         dockerSub,
 			RouterNetwork: dockerSub,
+			GuestNetwork:  dockerSub,
 		})
-		substrate.Register(dockerSub)
 	}
 
 	cfg := config.MustLoadServiceConfig("")
@@ -49,10 +48,10 @@ func main() {
 	mustRegisterDriver(driver.Descriptor{
 		Name: "firecracker", Version: "1", Node: fcSub, NIC: fcSub,
 		Console: fcSub, GuestExec: fcSub, Artifact: fcSub,
-		NodeState: fcSub,
-		Power:     fcSub,
+		NodeState:    fcSub,
+		Power:        fcSub,
+		GuestNetwork: fcSub,
 	})
-	substrate.Register(fcSub)
 
 	libvirtSub := libvirt.New()
 	mustRegisterDriver(driver.Descriptor{
@@ -61,7 +60,6 @@ func main() {
 		NodeState: libvirtSub,
 		Power:     libvirtSub,
 	})
-	substrate.Register(libvirtSub)
 
 	if err := commands.ExecuteContext(ctx); err != nil {
 		os.Exit(1)

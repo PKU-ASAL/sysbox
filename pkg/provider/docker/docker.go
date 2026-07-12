@@ -150,5 +150,3 @@ func (c *dockerConn) ExecBackground(ctx context.Context, cmd []string, env map[s
 func (c *dockerConn) CopyFile(ctx context.Context, srcPath, dstPath string) error {
 	return c.sub.CopyToNode(ctx, c.handle, srcPath, dstPath)
 }
-
-var _ substrate.Substrate = (*Substrate)(nil)
