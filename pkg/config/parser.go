@@ -7,6 +7,8 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclparse"
+
+	"github.com/oslab/sysbox/pkg/address"
 )
 
 // ParseFile parses an HCL file into the Root structure.
@@ -29,12 +31,16 @@ func ParseString(src, srcLabel string) (*Root, error) {
 	parser := hclparse.NewParser()
 	file, diag := parser.ParseHCL([]byte(src), srcLabel)
 	if diag.HasErrors() {
-		return nil, fmt.Errorf("parse HCL: %s", diag.Error())
+		diagnostics := fromHCLDiagnostics(diag)
+		diagnostics.Sort()
+		return nil, diagnostics
 	}
 
 	var root Root
 	if diag := gohcl.DecodeBody(file.Body, nil, &root); diag.HasErrors() {
-		return nil, fmt.Errorf("decode HCL: %s", diag.Error())
+		diagnostics := fromHCLDiagnostics(diag)
+		diagnostics.Sort()
+		return nil, diagnostics
 	}
 	return &root, nil
 }
@@ -49,7 +55,13 @@ func DecodeResource(r *ResourceBlock, target any, ctx *hcl.EvalContext) error {
 		return fmt.Errorf("resource %s.%s: empty body", r.Type, r.Name)
 	}
 	if diag := gohcl.DecodeBody(r.Remain, ctx, target); diag.HasErrors() {
-		return fmt.Errorf("decode resource %s.%s: %s", r.Type, r.Name, diag.Error())
+		diagnostics := fromHCLDiagnostics(diag)
+		resourceAddress := address.Resource(r.Type, r.Name)
+		for i := range diagnostics {
+			diagnostics[i].Address = &resourceAddress
+		}
+		diagnostics.Sort()
+		return diagnostics
 	}
 	return nil
 }

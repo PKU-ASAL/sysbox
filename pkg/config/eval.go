@@ -88,24 +88,36 @@ func buildEvalContextInner(root *Root, callerDir string) (*hcl.EvalContext, erro
 		synBody, isSyn := r.Remain.(*hclsyntax.Body)
 		if isSyn {
 			if countAttr, hasCount := synBody.Attributes["count"]; hasCount {
-				if val, diag := countAttr.Expr.Value(preCtx); !diag.HasErrors() {
-					// Guard: count must be a number type. Non-number values
-					// (strings, bools, lists) would panic on AsBigFloat().
-					if val.Type() == cty.Number {
-						if n, acc := val.AsBigFloat().Int64(); acc == 0 && n > 0 {
-							elems := make([]cty.Value, n)
-							for i := 0; i < int(n); i++ {
-								instanceName := address.IntInstance(r.Type, r.Name, i).String()
-								elems[i] = cty.ObjectVal(map[string]cty.Value{
-									"id":   cty.StringVal(instanceName),
-									"name": cty.StringVal(instanceName),
-								})
-							}
-							resTypes[r.Type][r.Name] = cty.TupleVal(elems)
-							continue
-						}
-					} // end if val.Type() == cty.Number
+				val, countDiagnostics := countAttr.Expr.Value(preCtx)
+				if countDiagnostics.HasErrors() {
+					diagnostics = append(diagnostics, fromHCLDiagnostics(countDiagnostics)...)
+					continue
 				}
+				if val.Type() != cty.Number {
+					rng := countAttr.Expr.Range()
+					diagnostics = append(diagnostics, diag.Diagnostic{Severity: diag.Error, Summary: "Invalid count", Detail: "count must be a non-negative integer", Subject: fromHCLRange(&rng)})
+					continue
+				}
+				n, acc := val.AsBigFloat().Int64()
+				if acc != 0 || n < 0 {
+					rng := countAttr.Expr.Range()
+					diagnostics = append(diagnostics, diag.Diagnostic{Severity: diag.Error, Summary: "Invalid count", Detail: "count must be a non-negative integer", Subject: fromHCLRange(&rng)})
+					continue
+				}
+				elems := make([]cty.Value, n)
+				for i := 0; i < int(n); i++ {
+					instanceName := address.IntInstance(r.Type, r.Name, i).String()
+					elems[i] = cty.ObjectVal(map[string]cty.Value{
+						"id":   cty.StringVal(instanceName),
+						"name": cty.StringVal(instanceName),
+					})
+				}
+				if len(elems) == 0 {
+					resTypes[r.Type][r.Name] = cty.EmptyTupleVal
+				} else {
+					resTypes[r.Type][r.Name] = cty.TupleVal(elems)
+				}
+				continue
 			}
 		}
 		resourceAddress := address.Resource(r.Type, r.Name).String()
@@ -219,7 +231,8 @@ func resolveModuleOutputs(mod ModuleBlock, callerDir string, parentCtx *hcl.Eval
 	}
 	// Build the module's eval context with namespaced resource IDs and
 	// variables from the module block's attributes.
-	modCtx := buildModuleEvalContext(mod, modRoot, mod.Name, parentCtx)
+	modCtx, contextDiagnostics := buildModuleEvalContext(mod, modRoot, mod.Name, parentCtx)
+	diagnostics = append(diagnostics, contextDiagnostics...)
 
 	outVals := map[string]cty.Value{}
 	for _, out := range modRoot.Outputs {
@@ -238,7 +251,8 @@ func resolveModuleOutputs(mod ModuleBlock, callerDir string, parentCtx *hcl.Eval
 
 // buildModuleEvalContext builds an eval context with canonical module resource
 // addresses and var.xxx bindings.
-func buildModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, parentCtx *hcl.EvalContext) *hcl.EvalContext {
+func buildModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, parentCtx *hcl.EvalContext) (*hcl.EvalContext, diag.Diagnostics) {
+	var diagnostics diag.Diagnostics
 	// Compute variable defaults from variable blocks.
 	varDefaults := map[string]cty.Value{}
 	for _, vb := range modRoot.Variables {
@@ -247,12 +261,16 @@ func buildModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, pare
 		}
 		attrs, diag := vb.Remain.JustAttributes()
 		if diag.HasErrors() {
+			diagnostics = append(diagnostics, fromHCLDiagnostics(diag)...)
 			continue
 		}
 		if defAttr, ok := attrs["default"]; ok {
-			if val, diag := defAttr.Expr.Value(nil); !diag.HasErrors() {
-				varDefaults[vb.Name] = val
+			val, valueDiagnostics := defAttr.Expr.Value(nil)
+			if valueDiagnostics.HasErrors() {
+				diagnostics = append(diagnostics, fromHCLDiagnostics(valueDiagnostics)...)
+				continue
 			}
+			varDefaults[vb.Name] = val
 		}
 	}
 
@@ -262,11 +280,17 @@ func buildModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, pare
 		varVals[k] = v
 	}
 	if mod.Remain != nil {
-		if attrs, diag := mod.Remain.JustAttributes(); !diag.HasErrors() {
+		attrs, attributeDiagnostics := mod.Remain.JustAttributes()
+		if attributeDiagnostics.HasErrors() {
+			diagnostics = append(diagnostics, fromHCLDiagnostics(attributeDiagnostics)...)
+		} else {
 			for k, attr := range attrs {
-				if val, diag := attr.Expr.Value(parentCtx); !diag.HasErrors() {
-					varVals[k] = val
+				val, valueDiagnostics := attr.Expr.Value(parentCtx)
+				if valueDiagnostics.HasErrors() {
+					diagnostics = append(diagnostics, fromHCLDiagnostics(valueDiagnostics)...)
+					continue
 				}
+				varVals[k] = val
 			}
 		}
 	}
@@ -294,13 +318,15 @@ func buildModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, pare
 
 	child := parentCtx.NewChild()
 	child.Variables = vars
-	return child
+	diagnostics.Sort()
+	return child, diagnostics
 }
 
 // ModuleEvalContext is the public helper used by workspace.go to build the
 // eval context for expanding a module's resources into the main graph.
-func ModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, parentCtx *hcl.EvalContext) *hcl.EvalContext {
-	return buildModuleEvalContext(mod, modRoot, modName, parentCtx)
+func ModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, parentCtx *hcl.EvalContext) (*hcl.EvalContext, error) {
+	ctx, diagnostics := buildModuleEvalContext(mod, modRoot, modName, parentCtx)
+	return ctx, diagnostics.Err()
 }
 
 // ResolveModuleSource converts a module source path to an absolute file path.

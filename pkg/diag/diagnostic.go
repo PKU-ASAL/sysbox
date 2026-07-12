@@ -10,21 +10,21 @@ const (
 )
 
 type SourcePos struct {
-	Line   int
-	Column int
-	Byte   int
+	Line   int `json:"line"`
+	Column int `json:"column"`
+	Byte   int `json:"byte"`
 }
 
 type SourceRange struct {
-	Filename string
-	Start    SourcePos
-	End      SourcePos
+	Filename string    `json:"filename"`
+	Start    SourcePos `json:"start"`
+	End      SourcePos `json:"end"`
 }
 
 type Diagnostic struct {
-	Severity Severity
-	Summary  string
-	Detail   string
-	Subject  *SourceRange
-	Address  *address.Address
+	Severity Severity         `json:"severity"`
+	Summary  string           `json:"summary"`
+	Detail   string           `json:"detail,omitempty"`
+	Subject  *SourceRange     `json:"subject,omitempty"`
+	Address  *address.Address `json:"address,omitempty"`
 }

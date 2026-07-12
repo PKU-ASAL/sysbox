@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
@@ -21,4 +22,29 @@ func TestFromHCLDiagnosticsPreservesSourceRange(t *testing.T) {
 	require.Equal(t, diag.Error, got[0].Severity)
 	require.Equal(t, "lab.hcl", got[0].Subject.Filename)
 	require.Equal(t, 24, got[0].Subject.Start.Byte)
+}
+
+func TestParseStringReturnsStructuredDiagnostics(t *testing.T) {
+	_, err := ParseString(`resource "sysbox_node" "web" {`, "broken.hcl")
+	require.Error(t, err)
+	var diagnostics diag.Diagnostics
+	require.True(t, errors.As(err, &diagnostics))
+	require.Equal(t, "broken.hcl", diagnostics[0].Subject.Filename)
+}
+
+func TestDecodeResourceDiagnosticIncludesAddress(t *testing.T) {
+	root, err := ParseString(`
+resource "sysbox_network" "lab" {
+  cidr = missing.value
+}
+`, "network.hcl")
+	require.NoError(t, err)
+	ctx, err := BuildEvalContext(root)
+	require.NoError(t, err)
+
+	err = DecodeResource(&root.Resources[0], &NetworkConfig{}, ctx)
+	require.Error(t, err)
+	var diagnostics diag.Diagnostics
+	require.True(t, errors.As(err, &diagnostics))
+	require.Equal(t, "sysbox_network.lab", diagnostics[0].Address.String())
 }

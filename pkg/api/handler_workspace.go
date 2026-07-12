@@ -2,10 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/oslab/sysbox/pkg/diag"
 )
 
 // POST /v1/topologies — create a new topology workspace.
@@ -155,6 +158,10 @@ func (s *Server) handleDeleteTopology(w http.ResponseWriter, r *http.Request) {
 }
 
 func workspaceStatus(err error) int {
+	var diagnostics diag.Diagnostics
+	if errors.As(err, &diagnostics) {
+		return http.StatusUnprocessableEntity
+	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "already exists"), strings.Contains(msg, "resource(s)"):

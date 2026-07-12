@@ -198,7 +198,10 @@ func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalCon
 		return fmt.Errorf("module %q: nested modules are not supported", mod.Name)
 	}
 
-	modCtx := config.ModuleEvalContext(mod, modRoot, mod.Name, parentCtx)
+	modCtx, err := config.ModuleEvalContext(mod, modRoot, mod.Name, parentCtx)
+	if err != nil {
+		return fmt.Errorf("module %q variables: %w", mod.Name, err)
+	}
 	modulePath := []address.ModuleInstance{{Name: mod.Name}}
 
 	for i := range modRoot.Resources {

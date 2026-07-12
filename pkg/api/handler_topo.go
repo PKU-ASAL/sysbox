@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/oslab/sysbox/pkg/diag"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -547,6 +550,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, err error) {
+	var diagnostics diag.Diagnostics
+	if errors.As(err, &diagnostics) {
+		writeJSON(w, status, map[string]any{"error": err.Error(), "diagnostics": diagnostics})
+		return
+	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
 
