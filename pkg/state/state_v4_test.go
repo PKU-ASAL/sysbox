@@ -9,7 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 )
 
-func TestStateV4RoundTripPreservesTypedResource(t *testing.T) {
+func TestCurrentStateRoundTripPreservesTypedResource(t *testing.T) {
 	attributes, err := NewAttributes(map[string]any{"primary_ip": "10.0.0.2", "vcpus": 2})
 	require.NoError(t, err)
 	private, err := EncodePrivate(1, map[string]any{"container_id": "abc", "pid": 42})
@@ -31,11 +31,13 @@ func TestStateV4RoundTripPreservesTypedResource(t *testing.T) {
 	require.Equal(t, "abc", payload["container_id"])
 }
 
-func TestStateV4RejectsV3WithoutMutation(t *testing.T) {
-	raw := []byte(`{"version":3,"resources":[]}`)
+func TestStateV5RejectsV4WithoutMutation(t *testing.T) {
+	raw := []byte(`{"version":4,"resources":[]}`)
 	before := append([]byte(nil), raw...)
 	_, err := Unmarshal(raw)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "state schema v4")
+	require.ErrorContains(t, err, "expects v5")
+	require.ErrorContains(t, err, "remove")
 	require.Equal(t, before, raw)
 }
 

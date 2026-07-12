@@ -23,7 +23,7 @@ import (
 //
 //	v1 – sysbox v0.x (pre-multi-substrate cleanup)
 //	v2 – sysbox v1.0 (typed NodeHandle, ProviderExtra blob)
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 type ResourceStatus string
 
@@ -65,6 +65,7 @@ type Resource struct {
 	Attributes    Attributes        `json:"attributes"`
 	Private       json.RawMessage   `json:"private,omitempty"`
 	Dependencies  []address.Address `json:"dependencies,omitempty"`
+	Attachments   []Attachment      `json:"attachments,omitempty"`
 	Status        ResourceStatus    `json:"status"`
 	CreatedAt     time.Time         `json:"created_at,omitempty"`
 	UpdatedAt     time.Time         `json:"updated_at,omitempty"`
@@ -239,7 +240,7 @@ type IncompatibleVersionError struct {
 func (e *IncompatibleVersionError) Error() string {
 	return fmt.Sprintf(
 		"state schema v%d is incompatible with sysbox binary (expects v%d). "+
-			"destroy the lab with the binary that created this state before upgrading",
+			"remove the old state or rebuild the topology before continuing",
 		e.Found, e.Expected,
 	)
 }

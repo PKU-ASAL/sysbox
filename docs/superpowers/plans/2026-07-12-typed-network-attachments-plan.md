@@ -32,7 +32,7 @@
 - Produces: `state.Attachment`, `state.AttachmentObservation`, `Resource.Attachments []Attachment`, and `SchemaVersion == 5`.
 - `Attachment.DriverState` is opaque `json.RawMessage`; core may copy but not decode it.
 
-- [ ] **Step 1: Write failing v4 rejection and v5 round-trip tests**
+- [x] **Step 1: Write failing v4 rejection and v5 round-trip tests**
 
 ```go
 func TestDecodeRejectsV4AfterAttachmentSchemaBreak(t *testing.T) {
@@ -64,13 +64,13 @@ func TestAttachmentRoundTripsDeterministically(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/state -run 'Test(DecodeRejectsV4AfterAttachmentSchemaBreak|AttachmentRoundTripsDeterministically)$'`
 
 Expected: FAIL because schema is v4 and attachment types/field do not exist.
 
-- [ ] **Step 3: Add the typed model and bump the schema**
+- [x] **Step 3: Add the typed model and bump the schema**
 
 ```go
 type Attachment struct {
@@ -92,13 +92,13 @@ type AttachmentObservation struct {
 
 Set `SchemaVersion = 5`, add `Attachments []Attachment` to `Resource`, and update the incompatible-version error to instruct removal/rebuild without mutating input.
 
-- [ ] **Step 4: Run GREEN and repository state tests**
+- [x] **Step 4: Run GREEN and repository state tests**
 
 Run: `GOCACHE=/tmp/sysbox-gocache go test ./pkg/state`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pkg/state

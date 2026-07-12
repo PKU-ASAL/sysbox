@@ -116,7 +116,7 @@ func TestManagerLoadMissingReturnsEmpty(t *testing.T) {
 func TestManagerVersionedBackendUsesCAS(t *testing.T) {
 	backend := &recordingVersionedBackend{
 		loaded: &LoadedState{
-			Data:      []byte(`{"version":4,"lineage":"r1","resources":[]}`),
+			Data:      []byte(`{"version":5,"lineage":"r1","resources":[]}`),
 			Metadata:  Metadata{Backend: "test", Serial: 7},
 			Exists:    true,
 			Serial:    7,
