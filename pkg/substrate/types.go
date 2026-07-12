@@ -258,18 +258,12 @@ type ConsoleSession interface {
 	Close() error
 }
 
-// HandleToInstance builds the standard state.Instance map from a NodeHandle
-// and its substrate. This eliminates the hand-assembled instance map that
-// was duplicated across ReadNode implementations and the API layer.
-func HandleToInstance(h NodeHandle, sub Substrate) map[string]any {
-	inst := map[string]any{
+// HandlePublicAttributes returns provider-independent computed attributes.
+func HandlePublicAttributes(h NodeHandle) map[string]any {
+	return map[string]any{
 		"container_id": h.ID,
 		"primary_ip":   h.Net.PrimaryIP,
 	}
-	if blob, err := sub.MarshalProviderState(h); err == nil && len(blob) > 0 {
-		inst["provider_extra"] = string(blob)
-	}
-	return inst
 }
 
 type ExecSpec struct {

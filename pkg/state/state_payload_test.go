@@ -1,7 +1,6 @@
 package state
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -13,7 +12,6 @@ func TestStateResourceSeparatesAttributesAndDriverPrivateData(t *testing.T) {
 		Address:    address.Resource("sysbox_node", "web"),
 		Driver:     "docker",
 		Attributes: map[string]any{"container_id": "abc"},
-		Private:    json.RawMessage(`{"runtime":"opaque"}`),
 	}}}
 
 	raw, err := want.Marshal()
@@ -28,5 +26,7 @@ func TestStateResourceSeparatesAttributesAndDriverPrivateData(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "docker", got.Resources[0].Driver)
 	require.Equal(t, "abc", got.Resources[0].Str("container_id"))
-	require.JSONEq(t, `{"runtime":"opaque"}`, string(got.Resources[0].Private))
+	var private DriverPrivate
+	require.NoError(t, DecodePrivate(got.Resources[0].Private, 1, &private))
+	require.Equal(t, "abc", private.Runtime["container_id"])
 }

@@ -5,6 +5,9 @@ state、schema、driver、artifact 或变量变化时，会在执行前拒绝。
 错误返回 HTTP 422 和结构化 `diagnostics` 数组。参见
 [`architecture/resource-addresses.md`](architecture/resource-addresses.md)。
 
+State v4 的 observation status 为 `present/absent/drifted/degraded/unknown`。
+API 不返回 driver-private payload 或已解析秘密值。
+
 The sysbox API exposes product-level control plane objects over `/v1`.
 
 ```bash

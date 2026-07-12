@@ -160,6 +160,13 @@ func (e *Executor) CreateResource(ctx context.Context, id address.Address) error
 		if err != nil {
 			return err
 		}
+		res.ResourceType = id.Type
+		res.SchemaVersion = p.Schema().Version
+		res.Dependencies = append([]address.Address(nil), node.Deps...)
+		res.Status = state.ResourcePresent
+		if res.ExternalID == "" {
+			res.ExternalID = p.ExternalID(res)
+		}
 		e.state.AddResource(res)
 		return nil
 	}

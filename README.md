@@ -4,6 +4,11 @@
 [Resource Addresses](docs/architecture/resource-addresses.md) 和
 [Stored Plan Contract](docs/architecture/stored-plan-contract.md)。
 
+Typed state、backend safety 与秘密值边界见
+[Typed State](docs/architecture/typed-state.md)、
+[Backend Safety](docs/architecture/backend-safety.md) 和
+[Secrets](docs/architecture/secrets.md)。
+
 > 面向 Linux 实验拓扑的类 Terraform 控制面。sysbox 将 HCL 描述转换为 Docker、Firecracker、VM 及网络资源，通过本地 CLI 或服务级 HTTP API 驱动整个过程。
 
 ## 项目定位

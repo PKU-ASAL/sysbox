@@ -110,15 +110,10 @@ func checkpointResourceType(step OperationStep) string {
 
 func StateResourceFromLog(rec StateResourceLog) state.Resource {
 	attributes := cloneInstance(rec.Instance)
-	providerState, _ := attributes["provider_extra"].(string)
-	delete(attributes, "provider_extra")
 	resource := state.Resource{
 		Address:    address.Resource(rec.Type, rec.Name),
 		Driver:     rec.Provider,
 		Attributes: state.MustAttributes(attributes),
-	}
-	if providerState != "" {
-		_ = resource.SetProviderState([]byte(providerState))
 	}
 	return resource
 }
@@ -311,12 +306,17 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 	switch recovery.Decision {
 	case controlplane.RecoveryDecisionAdopt:
 		if adopted, err := sub.AdoptNode(ctx, handle); err == nil {
-			if inst := substrate.HandleToInstance(adopted, sub); len(inst) > 0 {
+			if inst := substrate.HandlePublicAttributes(adopted); len(inst) > 0 {
 				for k, v := range inst {
 					rec.Instance[k] = v
 				}
 			}
 			AdoptStateResource(st, *rec, "")
+			if blob, err := sub.MarshalProviderState(adopted); err == nil && len(blob) > 0 {
+				if resource := st.FindResource(address.Resource(rec.Type, rec.Name)); resource != nil {
+					_ = resource.SetProviderState(blob)
+				}
+			}
 			action.Status = "recovered_adopted"
 			return action, nil
 		}

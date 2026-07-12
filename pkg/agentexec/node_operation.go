@@ -100,11 +100,15 @@ func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOpera
 	if r := st.FindResource(addr); r != nil {
 		return fmt.Errorf("resource %s.%s already in state", op.Type, op.Name)
 	}
-	st.AddResource(state.Resource{
+	resource := state.Resource{
 		Address:    addr,
 		Driver:     op.Substrate,
-		Attributes: state.MustAttributes(substrate.HandleToInstance(handle, sub)),
-	})
+		Attributes: state.MustAttributes(substrate.HandlePublicAttributes(handle)),
+	}
+	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+		_ = resource.SetProviderState(blob)
+	}
+	st.AddResource(resource)
 	owner := fmt.Sprintf("sysbox-agent:import:%s:%s.%s", op.Topology, op.Type, op.Name)
 	return mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: owner})
 }

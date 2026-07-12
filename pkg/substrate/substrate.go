@@ -129,7 +129,7 @@ type Substrate interface {
 	// MarshalProviderState serialises NodeHandle.Provider to JSON for state
 	// persistence. Returning (nil, nil) means "this substrate has no
 	// provider-specific state to persist". Runtime stores the result in
-	// state.Instance under the "provider_extra" key.
+	// the opaque state.Private envelope.
 	MarshalProviderState(handle NodeHandle) (json.RawMessage, error)
 
 	// UnmarshalProviderState reconstructs a substrate-owned typed value from

@@ -169,7 +169,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		"nics":         wireResult.NICs,
 		"nat_applied":  natApplied,
 	}
-	// Persist provider_extra so cold-destroy works for all substrates.
+	// Persist opaque provider state so cold-destroy works for all substrates.
 	blob, _ := sub.MarshalProviderState(handle)
 	// Persist lifecycle flags.
 	if lc := cfg.Lifecycle; lc != nil {

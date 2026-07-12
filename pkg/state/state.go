@@ -68,7 +68,7 @@ type Resource struct {
 // float64, so both int and float64 are accepted. Returns 0 if the key is
 // missing or the type doesn't match.
 func (r *Resource) Int(key string) int {
-	switch v := r.attributeMap()[key].(type) {
+	switch v := r.lookup(key).(type) {
 	case int:
 		return v
 	case float64:
@@ -79,25 +79,25 @@ func (r *Resource) Int(key string) int {
 
 // Str returns the value at key as a string. Returns "" if missing or wrong type.
 func (r *Resource) Str(key string) string {
-	s, _ := r.attributeMap()[key].(string)
+	s, _ := r.lookup(key).(string)
 	return s
 }
 
 // Slice returns the value at key as []any. Returns nil if missing or wrong type.
 func (r *Resource) Slice(key string) []any {
-	v, _ := r.attributeMap()[key].([]any)
+	v, _ := r.lookup(key).([]any)
 	return v
 }
 
 // Map returns the value at key as map[string]any. Returns nil if missing.
 func (r *Resource) Map(key string) map[string]any {
-	v, _ := r.attributeMap()[key].(map[string]any)
+	v, _ := r.lookup(key).(map[string]any)
 	return v
 }
 
 // Float returns the value at key as float64. Returns 0 if missing or wrong type.
 func (r *Resource) Float(key string) float64 {
-	switch v := r.attributeMap()[key].(type) {
+	switch v := r.lookup(key).(type) {
 	case float64:
 		return v
 	case int:
@@ -108,7 +108,7 @@ func (r *Resource) Float(key string) float64 {
 
 // Bool returns the value at key as bool. Returns false if missing or wrong type.
 func (r *Resource) Bool(key string) bool {
-	b, _ := r.attributeMap()[key].(bool)
+	b, _ := r.lookup(key).(bool)
 	return b
 }
 
@@ -137,6 +137,15 @@ func (r *Resource) attributeMap() map[string]any {
 	return map[string]any(r.Attributes)
 }
 func (r *Resource) AttributeMap() map[string]any { return r.attributeMap() }
+func (r *Resource) lookup(key string) any {
+	if value, ok := r.attributeMap()[key]; ok {
+		return value
+	}
+	return r.RuntimeValue(key)
+}
+
+var runtimePrivateKeys = map[string]bool{"container_id": true, "pid": true, "netns": true, "bridge": true, "docker_network_id": true, "image_id": true, "vm_dir": true, "tap_name": true}
+
 func MustAttributes(input map[string]any) Attributes {
 	result, err := NewAttributes(input)
 	if err != nil {
@@ -145,6 +154,10 @@ func MustAttributes(input map[string]any) Attributes {
 	return result
 }
 func (r *Resource) SetAttribute(key string, item any) error {
+	if runtimePrivateKeys[key] {
+		delete(r.Attributes, key)
+		return r.SetRuntimeValue(key, item)
+	}
 	values := r.attributeMap()
 	if values == nil {
 		values = map[string]any{}
@@ -172,10 +185,7 @@ func (r *Resource) Repository() string            { return r.Str("repository") }
 func (r *Resource) NetNS() string                 { return r.Str("netns") }
 func (r *Resource) Bridge() string                { return r.Str("bridge") }
 
-// ReconstructHandle rebuilds a substrate.NodeHandle from the resource's
-// persisted instance data. This replaces the hand-assembled pattern of
-// reading container_id + primary_ip + provider_extra that was scattered
-// across the API, commands, and runtime packages.
+// ReconstructHandle combines public observations with opaque driver state.
 func (r *Resource) ReconstructHandle(sub substrate.Substrate) (substrate.NodeHandle, error) {
 	handle := substrate.NodeHandle{
 		ID:  r.ContainerID(),
@@ -194,8 +204,11 @@ func (r *Resource) ReconstructHandle(sub substrate.Substrate) (substrate.NodeHan
 }
 
 func (s *State) Marshal() ([]byte, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Resources {
+		normalizeResource(&s.Resources[i])
+	}
 	return json.MarshalIndent(s, "", "  ")
 }
 
@@ -240,6 +253,7 @@ func (s *State) AddResource(r Resource) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r.Address = r.Address.Clone()
+	normalizeResource(&r)
 	if r.ResourceType == "" {
 		r.ResourceType = r.Address.Type
 	}
@@ -254,6 +268,30 @@ func (s *State) AddResource(r Resource) {
 	}
 	r.UpdatedAt = r.CreatedAt
 	s.Resources = append(s.Resources, r)
+}
+
+func normalizeResource(r *Resource) {
+	for key := range runtimePrivateKeys {
+		if item, exists := r.Attributes[key]; exists {
+			delete(r.Attributes, key)
+			_ = r.SetRuntimeValue(key, item)
+		}
+	}
+	if r.ExternalID == "" {
+		r.ExternalID = r.Str("container_id")
+		if r.ExternalID == "" {
+			r.ExternalID = r.Str("docker_network_id")
+		}
+	}
+	if r.ResourceType == "" {
+		r.ResourceType = r.Address.Type
+	}
+	if r.SchemaVersion == 0 {
+		r.SchemaVersion = 1
+	}
+	if r.Status == "" {
+		r.Status = ResourcePresent
+	}
 }
 
 func (s *State) RemoveResource(addr address.Address) {
