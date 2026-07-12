@@ -26,19 +26,19 @@ var (
 	deleteBridgeFn = network.DeleteBridge
 )
 
-type NetworkResourceProvider struct{}
+type NetworkResourceHandler struct{}
 
 func init() {
-	RegisterResourceProvider(NetworkResourceProvider{})
+	RegisterResourceHandler(NetworkResourceHandler{})
 }
 
-func (NetworkResourceProvider) Type() string { return "sysbox_network" }
+func (NetworkResourceHandler) Type() string { return "sysbox_network" }
 
-func (NetworkResourceProvider) Schema() ResourceSchema {
+func (NetworkResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_network")
 }
 
-func (NetworkResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (NetworkResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
 	if current.IsNAT() {
 		result.Checks = map[string]controlplane.ResourceCheckHealth{"docker_network": {OK: true}}
@@ -72,11 +72,11 @@ func (NetworkResourceProvider) Read(_ context.Context, current state.Resource) (
 	return result, nil
 }
 
-func (NetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (NetworkResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (NetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.NetworkConfig)
 	if !ok {
 		return state.Resource{}, fmt.Errorf("network %s: wrong data type", n.Address)
@@ -170,7 +170,7 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 	}, nil
 }
 
-func (NetworkResourceProvider) Delete(ctx context.Context, pc *ProviderContext, r state.Resource) error {
+func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r state.Resource) error {
 	if r.IsNAT() {
 		sub, err := substrate.Get("docker")
 		if err != nil {
@@ -204,7 +204,7 @@ func (NetworkResourceProvider) Delete(ctx context.Context, pc *ProviderContext, 
 	return nil
 }
 
-func (NetworkResourceProvider) ExternalID(current state.Resource) string {
+func (NetworkResourceHandler) ExternalID(current state.Resource) string {
 	if id := current.DockerNetID(); id != "" {
 		return id
 	}
@@ -214,7 +214,7 @@ func (NetworkResourceProvider) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (NetworkResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (NetworkResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.NetworkConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err

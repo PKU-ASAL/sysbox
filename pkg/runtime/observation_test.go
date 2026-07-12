@@ -37,6 +37,13 @@ func (p observationProvider) Delete(context.Context, *ProviderContext, state.Res
 }
 func (p observationProvider) ExternalID(state.Resource) string { return "" }
 
+func isolateHandlerRegistry(t *testing.T) {
+	t.Helper()
+	previous := resourceHandlers
+	resourceHandlers = newHandlerRegistry()
+	t.Cleanup(func() { resourceHandlers = previous })
+}
+
 func TestRefreshMapsExplicitObservationStatus(t *testing.T) {
 	addr := address.Resource("test_observation", "item")
 	g := graph.New()
@@ -53,7 +60,8 @@ func TestRefreshMapsExplicitObservationStatus(t *testing.T) {
 		{state.ResourceUnknown, controlplane.PlanActionUnknown},
 	} {
 		t.Run(string(tc.status), func(t *testing.T) {
-			RegisterResourceProvider(observationProvider{status: tc.status})
+			isolateHandlerRegistry(t)
+			RegisterResourceHandler(observationProvider{status: tc.status})
 			refreshed, err := NewExecutor(g, st).Refresh(context.Background(), plan)
 			require.NoError(t, err)
 			require.Equal(t, tc.action, refreshed.Actions[0].Action)
@@ -63,6 +71,7 @@ func TestRefreshMapsExplicitObservationStatus(t *testing.T) {
 }
 
 func TestRefreshDoesNotCascadeDependencyReplacement(t *testing.T) {
+	isolateHandlerRegistry(t)
 	dep := address.Resource("test_observation", "dep")
 	child := address.Resource("test_observation", "child")
 	g := graph.New()
@@ -70,7 +79,7 @@ func TestRefreshDoesNotCascadeDependencyReplacement(t *testing.T) {
 	require.NoError(t, g.AddNode(child, []address.Address{dep}))
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{{Address: dep}, {Address: child}}}
 	plan := &Plan{Actions: []controlplane.PlannedChange{{Address: dep, Action: controlplane.PlanActionNoop}, {Address: child, Action: controlplane.PlanActionNoop}}}
-	RegisterResourceProvider(observationProvider{statuses: map[string]state.ResourceStatus{"dep": state.ResourceAbsent, "child": state.ResourcePresent}})
+	RegisterResourceHandler(observationProvider{statuses: map[string]state.ResourceStatus{"dep": state.ResourceAbsent, "child": state.ResourcePresent}})
 	refreshed, err := NewExecutor(g, st).Refresh(context.Background(), plan)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, refreshed.Actions[0].Action)

@@ -16,19 +16,19 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-type KernelResourceProvider struct{}
+type KernelResourceHandler struct{}
 
 func init() {
-	RegisterResourceProvider(KernelResourceProvider{})
+	RegisterResourceHandler(KernelResourceHandler{})
 }
 
-func (KernelResourceProvider) Type() string { return "sysbox_kernel" }
+func (KernelResourceHandler) Type() string { return "sysbox_kernel" }
 
-func (KernelResourceProvider) Schema() ResourceSchema {
+func (KernelResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_kernel")
 }
 
-func (KernelResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (KernelResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
 	path := current.Str("path")
 	if path == "" {
@@ -47,11 +47,11 @@ func (KernelResourceProvider) Read(_ context.Context, current state.Resource) (R
 	return result, nil
 }
 
-func (p KernelResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (p KernelResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (KernelResourceProvider) Create(_ context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (KernelResourceHandler) Create(_ context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.KernelConfig)
 	if !ok {
 		return state.Resource{}, fmt.Errorf("kernel %s: wrong data type", n.Address)
@@ -90,19 +90,19 @@ func (KernelResourceProvider) Create(_ context.Context, pc *ProviderContext, n *
 	}, nil
 }
 
-func (KernelResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+func (KernelResourceHandler) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
 	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
-func (KernelResourceProvider) ExternalID(current state.Resource) string {
+func (KernelResourceHandler) ExternalID(current state.Resource) string {
 	if path := current.Str("path"); path != "" {
 		return path
 	}
 	return current.Str("id")
 }
 
-func (KernelResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (KernelResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.KernelConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
@@ -111,7 +111,7 @@ func (KernelResourceProvider) DecodeResource(r config.ResourceBlock, _ string, c
 	return cfg, deps, err
 }
 
-func (KernelResourceProvider) PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []substrate.PreflightCheck {
+func (KernelResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []substrate.PreflightCheck {
 	cfg := &config.KernelConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return []substrate.PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}

@@ -20,42 +20,42 @@ import (
 	"github.com/oslab/sysbox/pkg/util"
 )
 
-type NodeResourceProvider struct{}
+type NodeResourceHandler struct{}
 
 func init() {
-	RegisterResourceProvider(NodeResourceProvider{})
+	RegisterResourceHandler(NodeResourceHandler{})
 }
 
-func (NodeResourceProvider) Type() string { return "sysbox_node" }
+func (NodeResourceHandler) Type() string { return "sysbox_node" }
 
-func (NodeResourceProvider) Schema() ResourceSchema {
+func (NodeResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_node")
 }
 
-func (NodeResourceProvider) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
+func (NodeResourceHandler) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
 	return readNodeLikeResource(ctx, current)
 }
 
-func (NodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (NodeResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (NodeResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (NodeResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.createNodeResource(ctx, n)
 }
 
-func (NodeResourceProvider) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
+func (NodeResourceHandler) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
 	return pc.destroyNodeResource(ctx, current)
 }
 
-func (NodeResourceProvider) ExternalID(current state.Resource) string {
+func (NodeResourceHandler) ExternalID(current state.Resource) string {
 	if id := current.ContainerID(); id != "" {
 		return id
 	}
 	return current.Str("id")
 }
 
-func (NodeResourceProvider) DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (NodeResourceHandler) DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.NodeConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
@@ -110,7 +110,7 @@ func (NodeResourceProvider) DecodeResource(r config.ResourceBlock, name string, 
 	return cfg, deps, err
 }
 
-func (DataNodeResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (DataNodeResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.DataNodeConfig{}
 	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_node", d.Name); err != nil {
 		return nil, nil, err

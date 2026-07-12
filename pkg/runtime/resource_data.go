@@ -19,38 +19,38 @@ import (
 // state. Unlike createNode, this does not create any infrastructure — it
 // merely reads the node's current attributes so other resources can reference
 // them in the eval context.
-type DataNodeResourceProvider struct{}
+type DataNodeResourceHandler struct{}
 
 func init() {
-	RegisterResourceProvider(DataNodeResourceProvider{})
-	RegisterResourceProvider(DataNetworkResourceProvider{})
-	RegisterResourceProvider(DataImageResourceProvider{})
+	RegisterResourceHandler(DataNodeResourceHandler{})
+	RegisterResourceHandler(DataNetworkResourceHandler{})
+	RegisterResourceHandler(DataImageResourceHandler{})
 }
 
-func (DataNodeResourceProvider) Type() string { return "data_sysbox_node" }
+func (DataNodeResourceHandler) Type() string { return "data_sysbox_node" }
 
-func (DataNodeResourceProvider) Schema() ResourceSchema {
+func (DataNodeResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("data_sysbox_node")
 }
 
-func (DataNodeResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (DataNodeResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
 	return resourceReadOK(current), nil
 }
 
-func (DataNodeResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (DataNodeResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffForDataSource(desired, current)
 }
 
-func (DataNodeResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (DataNodeResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.readDataNodeResource(ctx, n)
 }
 
-func (DataNodeResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+func (DataNodeResourceHandler) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
 	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
-func (DataNodeResourceProvider) ExternalID(current state.Resource) string {
+func (DataNodeResourceHandler) ExternalID(current state.Resource) string {
 	if id := current.ContainerID(); id != "" {
 		return id
 	}
@@ -102,39 +102,39 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 // readDataNetwork queries an existing Docker network by name and records
 // its attributes in state. Unlike readDataNode, this is substrate-specific
 // because sysbox_network is only managed by Docker currently.
-type DataNetworkResourceProvider struct{}
+type DataNetworkResourceHandler struct{}
 
-func (DataNetworkResourceProvider) Type() string { return "data_sysbox_network" }
+func (DataNetworkResourceHandler) Type() string { return "data_sysbox_network" }
 
-func (DataNetworkResourceProvider) Schema() ResourceSchema {
+func (DataNetworkResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("data_sysbox_network")
 }
 
-func (DataNetworkResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (DataNetworkResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
 	return resourceReadOK(current), nil
 }
 
-func (DataNetworkResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (DataNetworkResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffForDataSource(desired, current)
 }
 
-func (DataNetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (DataNetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.readDataNetworkResource(ctx, n)
 }
 
-func (DataNetworkResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+func (DataNetworkResourceHandler) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
 	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
-func (DataNetworkResourceProvider) ExternalID(current state.Resource) string {
+func (DataNetworkResourceHandler) ExternalID(current state.Resource) string {
 	if id := current.DockerNetID(); id != "" {
 		return id
 	}
 	return current.Str("id")
 }
 
-func (DataNetworkResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (DataNetworkResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.DataNetworkConfig{}
 	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_network", d.Name); err != nil {
 		return nil, nil, err
@@ -179,32 +179,32 @@ func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (
 }
 
 // readDataImage queries an existing Docker image and records its metadata.
-type DataImageResourceProvider struct{}
+type DataImageResourceHandler struct{}
 
-func (DataImageResourceProvider) Type() string { return "data_sysbox_image" }
+func (DataImageResourceHandler) Type() string { return "data_sysbox_image" }
 
-func (DataImageResourceProvider) Schema() ResourceSchema {
+func (DataImageResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("data_sysbox_image")
 }
 
-func (DataImageResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (DataImageResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
 	return resourceReadOK(current), nil
 }
 
-func (DataImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (DataImageResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffForDataSource(desired, current)
 }
 
-func (DataImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (DataImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.readDataImageResource(ctx, n)
 }
 
-func (DataImageResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+func (DataImageResourceHandler) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
 	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
-func (DataImageResourceProvider) ExternalID(current state.Resource) string {
+func (DataImageResourceHandler) ExternalID(current state.Resource) string {
 	if id := current.ImageID(); id != "" {
 		return id
 	}

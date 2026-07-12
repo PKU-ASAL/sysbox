@@ -16,7 +16,7 @@ import (
 
 func TestDataResourceProvidersRegistered(t *testing.T) {
 	for _, typ := range []string{"data_sysbox_node", "data_sysbox_network", "data_sysbox_image"} {
-		p, ok := GetResourceProvider(typ)
+		p, ok := GetResourceHandler(typ)
 		require.True(t, ok, typ)
 		require.Equal(t, typ, p.Type())
 		require.Equal(t, typ, p.Schema().Type)
@@ -28,7 +28,7 @@ func TestDataResourceProviderPlanDiffReads(t *testing.T) {
 		Address: address.Resource("data_sysbox_image", "alpine"),
 		Data:    &config.DataImageConfig{Substrate: "docker", DockerRef: "alpine:latest"},
 	}
-	p := DataImageResourceProvider{}
+	p := DataImageResourceHandler{}
 
 	action, err := p.PlanDiff(n, nil)
 	require.NoError(t, err)
@@ -71,6 +71,6 @@ func TestDataResourceProviderDeleteRemovesState(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{res}}
 	exec := NewExecutor(graph.New(), st)
 
-	require.NoError(t, DataNodeResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res))
+	require.NoError(t, DataNodeResourceHandler{}.Delete(context.Background(), &ProviderContext{exec: exec}, res))
 	require.Nil(t, st.FindResource(address.Resource("data_sysbox_node", "existing")))
 }

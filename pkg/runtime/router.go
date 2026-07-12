@@ -22,42 +22,42 @@ import (
 // Interfaces on NAT (Docker-managed) networks are connected via Docker
 // networking; isolated-network interfaces use veth pairs as usual.
 // Optional NAT (nat_from -> nat_to) is configured via host-side nsenter.
-type RouterResourceProvider struct{}
+type RouterResourceHandler struct{}
 
 func init() {
-	RegisterResourceProvider(RouterResourceProvider{})
+	RegisterResourceHandler(RouterResourceHandler{})
 }
 
-func (RouterResourceProvider) Type() string { return "sysbox_router" }
+func (RouterResourceHandler) Type() string { return "sysbox_router" }
 
-func (RouterResourceProvider) Schema() ResourceSchema {
+func (RouterResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_router")
 }
 
-func (RouterResourceProvider) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
+func (RouterResourceHandler) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
 	return readNodeLikeResource(ctx, current)
 }
 
-func (RouterResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (RouterResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (RouterResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (RouterResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.createRouterResource(ctx, n)
 }
 
-func (RouterResourceProvider) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
+func (RouterResourceHandler) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
 	return pc.destroyNodeResource(ctx, current)
 }
 
-func (RouterResourceProvider) ExternalID(current state.Resource) string {
+func (RouterResourceHandler) ExternalID(current state.Resource) string {
 	if id := current.ContainerID(); id != "" {
 		return id
 	}
 	return current.Str("id")
 }
 
-func (RouterResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (RouterResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.RouterConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err

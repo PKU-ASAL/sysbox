@@ -16,7 +16,7 @@ import (
 )
 
 func TestNodeResourceProviderRegistered(t *testing.T) {
-	p, ok := GetResourceProvider("sysbox_node")
+	p, ok := GetResourceHandler("sysbox_node")
 	require.True(t, ok)
 	require.Equal(t, "sysbox_node", p.Type())
 	require.Equal(t, "sysbox_node", p.Schema().Type)
@@ -34,7 +34,7 @@ func TestNodeResourceProviderPlanDiff(t *testing.T) {
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
 	current := &state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: "docker", Attributes: inst}
-	p := NodeResourceProvider{}
+	p := NodeResourceHandler{}
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
@@ -61,7 +61,7 @@ func TestNodeResourceProviderDeleteMissingSubstrateReturnsError(t *testing.T) {
 		Attributes: map[string]any{"container_id": "node"},
 	}
 
-	err := NodeResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res)
+	err := NodeResourceHandler{}.Delete(context.Background(), &ProviderContext{exec: exec}, res)
 	require.Error(t, err)
 }
 
@@ -133,7 +133,7 @@ func TestNodeResourceProviderPortsArePassedAndResolved(t *testing.T) {
 		},
 	}
 
-	res, err := NodeResourceProvider{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+	res, err := NodeResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
 	require.NoError(t, err)
 	require.Len(t, sub.lastSpec.Ports, 1)
@@ -173,7 +173,7 @@ func TestNodeResourceProviderRejectsUnsupportedPortExposure(t *testing.T) {
 		},
 	}
 
-	_, err := NodeResourceProvider{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+	_, err := NodeResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
 	require.ErrorContains(t, err, `exposure "host" is not supported`)
 }

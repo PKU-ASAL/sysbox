@@ -16,7 +16,7 @@ import (
 
 func TestEdgeResourceProvidersRegistered(t *testing.T) {
 	for _, typ := range []string{"sysbox_firewall", "sysbox_ssh_access", "sysbox_actor"} {
-		p, ok := GetResourceProvider(typ)
+		p, ok := GetResourceHandler(typ)
 		require.True(t, ok, typ)
 		require.Equal(t, typ, p.Type())
 		require.Equal(t, typ, p.Schema().Type)
@@ -39,7 +39,7 @@ func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
 	current := &state.Resource{Address: address.Resource("sysbox_firewall", "allow_ssh"), Driver: "network", Attributes: inst}
-	p := FirewallResourceProvider{}
+	p := FirewallResourceHandler{}
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
 	current := &state.Resource{Address: address.Resource("sysbox_ssh_access", "admin"), Driver: "docker", Attributes: inst}
-	p := SSHAccessResourceProvider{}
+	p := SSHAccessResourceHandler{}
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestActorResourceProviderPlanDiff(t *testing.T) {
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
 	current := &state.Resource{Address: address.Resource("sysbox_actor", "agent"), Driver: "docker", Attributes: inst}
-	p := ActorResourceProvider{}
+	p := ActorResourceHandler{}
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
@@ -128,17 +128,17 @@ func TestActorResourceProviderPlanDiff(t *testing.T) {
 func TestEdgeProviderDeleteRemovesState(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		p    ResourceProvider
+		p    ResourceHandler
 		res  state.Resource
 	}{
 		{
 			name: "ssh_access",
-			p:    SSHAccessResourceProvider{},
+			p:    SSHAccessResourceHandler{},
 			res:  state.Resource{Address: address.Resource("sysbox_ssh_access", "admin")},
 		},
 		{
 			name: "actor_missing_substrate",
-			p:    ActorResourceProvider{},
+			p:    ActorResourceHandler{},
 			res:  state.Resource{Address: address.Resource("sysbox_actor", "agent"), Driver: "missing"},
 		},
 	} {

@@ -41,7 +41,7 @@ func EvaluateResourceHealth(ctx context.Context, res *state.Resource) controlpla
 		Provider: res.Driver,
 		Status:   controlplane.ResourceHealthHealthy,
 	}
-	if provider, ok := GetResourceProvider(res.Address.Type); ok {
+	if provider, ok := GetResourceHandler(res.Address.Type); ok {
 		result, err := provider.Read(ctx, *res)
 		rh.Reason = result.Reason
 		rh.Decision = result.Decision

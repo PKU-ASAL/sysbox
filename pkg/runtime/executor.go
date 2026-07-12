@@ -91,7 +91,7 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 		return
 	}
 	externalID := r.Str("id")
-	if p, ok := GetResourceProvider(r.Address.Type); ok {
+	if p, ok := GetResourceHandler(r.Address.Type); ok {
 		externalID = p.ExternalID(*r)
 	}
 	e.recorder.StepExternal(step, r.Driver, externalID, ManagedLabels(e.topology, e.runID, id))
@@ -155,7 +155,7 @@ func (e *Executor) CreateResource(ctx context.Context, id address.Address) error
 		return fmt.Errorf("node %s not in graph", id)
 	}
 
-	if p, ok := GetResourceProvider(id.Type); ok {
+	if p, ok := GetResourceHandler(id.Type); ok {
 		res, err := p.Create(ctx, &ProviderContext{exec: e}, node)
 		if err != nil {
 			return err
@@ -176,7 +176,7 @@ func (e *Executor) CreateResource(ctx context.Context, id address.Address) error
 
 // DestroyResource tears down a resource listed in state.
 func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error {
-	if p, ok := GetResourceProvider(r.Address.Type); ok {
+	if p, ok := GetResourceHandler(r.Address.Type); ok {
 		return p.Delete(ctx, &ProviderContext{exec: e}, r)
 	}
 

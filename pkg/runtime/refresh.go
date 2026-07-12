@@ -80,7 +80,7 @@ func (e *Executor) observeResource(ctx context.Context, id address.Address) (Res
 		return ResourceReadResult{Status: state.ResourceAbsent, Reason: "resource absent from state"}, nil
 	}
 
-	if provider, ok := GetResourceProvider(id.Type); ok {
+	if provider, ok := GetResourceHandler(id.Type); ok {
 		result, err := provider.Read(ctx, *r)
 		if err != nil {
 			result.Status = state.ResourceUnknown

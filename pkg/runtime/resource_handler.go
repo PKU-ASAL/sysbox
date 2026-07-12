@@ -15,10 +15,8 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-// ResourceProvider is the target boundary for sysbox resource lifecycle
-// implementations. Runtime schedules graph actions and state transactions,
-// while each resource provider owns schema, diff, read, and CRUD.
-type ResourceProvider interface {
+// ResourceHandler owns resource schema, plan semantics, and state lifecycle.
+type ResourceHandler interface {
 	Type() string
 	Schema() ResourceSchema
 	Read(ctx context.Context, current state.Resource) (ResourceReadResult, error)
@@ -53,28 +51,46 @@ func resourceReadOK(current state.Resource) ResourceReadResult {
 	}
 }
 
-var (
-	resourceProvidersMu sync.RWMutex
-	resourceProviders   = map[string]ResourceProvider{}
-)
-
-func RegisterResourceProvider(p ResourceProvider) {
-	resourceProvidersMu.Lock()
-	defer resourceProvidersMu.Unlock()
-	resourceProviders[p.Type()] = p
+type handlerRegistry struct {
+	mu       sync.RWMutex
+	handlers map[string]ResourceHandler
 }
 
-func GetResourceProvider(typ string) (ResourceProvider, bool) {
-	resourceProvidersMu.RLock()
-	defer resourceProvidersMu.RUnlock()
-	p, ok := resourceProviders[typ]
-	return p, ok
+func newHandlerRegistry() *handlerRegistry {
+	return &handlerRegistry{handlers: map[string]ResourceHandler{}}
+}
+func (r *handlerRegistry) Register(handler ResourceHandler) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.handlers[handler.Type()]; exists {
+		return fmt.Errorf("resource handler %q already registered", handler.Type())
+	}
+	r.handlers[handler.Type()] = handler
+	return nil
+}
+func (r *handlerRegistry) Get(typ string) (ResourceHandler, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	handler, ok := r.handlers[typ]
+	return handler, ok
 }
 
-func mustResourceProvider(typ string) ResourceProvider {
-	p, ok := GetResourceProvider(typ)
+var resourceHandlers = newHandlerRegistry()
+
+func RegisterResourceHandler(p ResourceHandler) {
+	if err := resourceHandlers.Register(p); err != nil {
+		panic(err)
+	}
+}
+
+func GetResourceHandler(typ string) (ResourceHandler, bool) {
+	return resourceHandlers.Get(typ)
+}
+
+func mustResourceHandler(typ string) ResourceHandler {
+	p, ok := GetResourceHandler(typ)
 	if !ok {
-		panic(fmt.Sprintf("resource provider %q not registered", typ))
+		panic(fmt.Sprintf("resource handler %q not registered", typ))
 	}
 	return p
 }

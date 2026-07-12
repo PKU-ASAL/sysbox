@@ -27,7 +27,7 @@ func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
 		},
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
-	p := KernelResourceProvider{}
+	p := KernelResourceHandler{}
 
 	res, err := p.Create(context.Background(), &ProviderContext{exec: exec}, n)
 	require.NoError(t, err)
@@ -61,7 +61,7 @@ func TestKernelResourceProviderPlanDiff(t *testing.T) {
 		Driver:     "firecracker",
 		Attributes: inst,
 	}
-	p := KernelResourceProvider{}
+	p := KernelResourceHandler{}
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestKernelResourceProviderPlanDiff(t *testing.T) {
 }
 
 func TestKernelResourceProviderRegistered(t *testing.T) {
-	p, ok := GetResourceProvider("sysbox_kernel")
+	p, ok := GetResourceHandler("sysbox_kernel")
 	require.True(t, ok)
 	require.Equal(t, "sysbox_kernel", p.Type())
 	require.Equal(t, "sysbox_kernel", p.Schema().Type)

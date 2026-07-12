@@ -17,7 +17,7 @@ type ResourcePreflightProvider interface {
 }
 
 func ResourcePreflightChecks(r config.ResourceBlock, ctx *hcl.EvalContext) []substrate.PreflightCheck {
-	p, ok := GetResourceProvider(r.Type)
+	p, ok := GetResourceHandler(r.Type)
 	if !ok {
 		return nil
 	}

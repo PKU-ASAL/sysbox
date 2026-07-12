@@ -15,29 +15,29 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-type ImageResourceProvider struct{}
+type ImageResourceHandler struct{}
 
 func init() {
-	RegisterResourceProvider(ImageResourceProvider{})
+	RegisterResourceHandler(ImageResourceHandler{})
 }
 
-func (ImageResourceProvider) Type() string { return "sysbox_image" }
+func (ImageResourceHandler) Type() string { return "sysbox_image" }
 
-func (ImageResourceProvider) Schema() ResourceSchema {
+func (ImageResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_image")
 }
 
-func (ImageResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (ImageResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
 	result.Reason = "resource has no runtime health probe"
 	return result, nil
 }
 
-func (ImageResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (ImageResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (ImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.ImageConfig)
 	if !ok {
 		return state.Resource{}, fmt.Errorf("image %s: wrong data type", n.Address)
@@ -106,19 +106,19 @@ func (ImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n 
 	}, nil
 }
 
-func (ImageResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+func (ImageResourceHandler) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
 	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
-func (ImageResourceProvider) ExternalID(current state.Resource) string {
+func (ImageResourceHandler) ExternalID(current state.Resource) string {
 	if id := current.ImageID(); id != "" {
 		return id
 	}
 	return current.Str("id")
 }
 
-func (ImageResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (ImageResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.ImageConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
@@ -126,7 +126,7 @@ func (ImageResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ct
 	return cfg, nil, nil
 }
 
-func (ImageResourceProvider) PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []substrate.PreflightCheck {
+func (ImageResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.EvalContext) []substrate.PreflightCheck {
 	cfg := &config.ImageConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return []substrate.PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
@@ -146,7 +146,7 @@ func (ImageResourceProvider) PreflightResource(r config.ResourceBlock, ctx *hcl.
 	return checks
 }
 
-func (DataImageResourceProvider) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (DataImageResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.DataImageConfig{}
 	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_image", d.Name); err != nil {
 		return nil, nil, err

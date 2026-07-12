@@ -15,7 +15,7 @@ import (
 )
 
 func TestRouterResourceProviderRegistered(t *testing.T) {
-	p, ok := GetResourceProvider("sysbox_router")
+	p, ok := GetResourceHandler("sysbox_router")
 	require.True(t, ok)
 	require.Equal(t, "sysbox_router", p.Type())
 	require.Equal(t, "sysbox_router", p.Schema().Type)
@@ -37,7 +37,7 @@ func TestRouterResourceProviderPlanDiff(t *testing.T) {
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
 	current := &state.Resource{Address: address.Resource("sysbox_router", "r1"), Driver: "docker", Attributes: inst}
-	p := RouterResourceProvider{}
+	p := RouterResourceHandler{}
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
@@ -67,6 +67,6 @@ func TestRouterResourceProviderDeleteMissingSubstrateReturnsError(t *testing.T) 
 		Attributes: map[string]any{"container_id": "router"},
 	}
 
-	err := RouterResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res)
+	err := RouterResourceHandler{}.Delete(context.Background(), &ProviderContext{exec: exec}, res)
 	require.Error(t, err)
 }

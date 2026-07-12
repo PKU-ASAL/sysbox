@@ -123,26 +123,26 @@ func writeState(t *testing.T, runsDir, topology string, st *state.State) {
 	require.NoError(t, mgr.Save(st))
 }
 
-type testResourceProvider struct{}
+type testResourceHandler struct{}
 
-func (testResourceProvider) Type() string { return "test_resource" }
-func (testResourceProvider) Schema() runtime.ResourceSchema {
+func (testResourceHandler) Type() string { return "test_resource" }
+func (testResourceHandler) Schema() runtime.ResourceSchema {
 	return runtime.ResourceSchemaFor("test_resource")
 }
-func (testResourceProvider) Read(context.Context, state.Resource) (runtime.ResourceReadResult, error) {
+func (testResourceHandler) Read(context.Context, state.Resource) (runtime.ResourceReadResult, error) {
 	return runtime.ResourceReadResult{Decision: controlplane.RecoveryDecisionNoop}, nil
 }
-func (testResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (testResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return controlplane.PlannedChange{Address: desired.Address, Action: controlplane.PlanActionNoop}, nil
 }
-func (testResourceProvider) Create(context.Context, *runtime.ProviderContext, *graph.Node) (state.Resource, error) {
+func (testResourceHandler) Create(context.Context, *runtime.ProviderContext, *graph.Node) (state.Resource, error) {
 	return state.Resource{}, nil
 }
-func (testResourceProvider) Delete(context.Context, *runtime.ProviderContext, state.Resource) error {
+func (testResourceHandler) Delete(context.Context, *runtime.ProviderContext, state.Resource) error {
 	return nil
 }
-func (testResourceProvider) ExternalID(state.Resource) string { return "" }
+func (testResourceHandler) ExternalID(state.Resource) string { return "" }
 
 func init() {
-	runtime.RegisterResourceProvider(testResourceProvider{})
+	runtime.RegisterResourceHandler(testResourceHandler{})
 }

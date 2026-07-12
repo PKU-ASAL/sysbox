@@ -81,7 +81,7 @@ func resourcePreventDestroy(node *graph.Node, current *state.Resource) bool {
 }
 
 func planActionForDesired(node *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
-	if provider, ok := GetResourceProvider(node.Address.Type); ok {
+	if provider, ok := GetResourceHandler(node.Address.Type); ok {
 		return provider.PlanDiff(node, current)
 	}
 	return planDiffByDesiredHash(node, current)

@@ -25,7 +25,7 @@ func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
 		},
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
-	p := NetworkResourceProvider{}
+	p := NetworkResourceHandler{}
 
 	res, err := p.Create(context.Background(), &ProviderContext{exec: exec}, n)
 	require.NoError(t, err)
@@ -50,7 +50,7 @@ func TestNetworkResourceProviderPlanDiff(t *testing.T) {
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
 	current := &state.Resource{Address: address.Resource("sysbox_network", "dmz"), Driver: "network", Attributes: inst}
-	p := NetworkResourceProvider{}
+	p := NetworkResourceHandler{}
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestNetworkResourceProviderPlanDiff(t *testing.T) {
 }
 
 func TestNetworkResourceProviderRegistered(t *testing.T) {
-	p, ok := GetResourceProvider("sysbox_network")
+	p, ok := GetResourceHandler("sysbox_network")
 	require.True(t, ok)
 	require.Equal(t, "sysbox_network", p.Type())
 }

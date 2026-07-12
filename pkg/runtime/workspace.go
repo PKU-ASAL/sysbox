@@ -215,7 +215,7 @@ func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalCon
 
 // addResourceToGraph decodes one resource block and adds it (with deps) to g.
 func addResourceToGraph(r config.ResourceBlock, addr address.Address, ctx *hcl.EvalContext, g *graph.Graph) error {
-	provider, ok := GetResourceProvider(r.Type)
+	provider, ok := GetResourceHandler(r.Type)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "warning: unsupported resource type %q (skipped)\n", r.Type)
 		return nil
@@ -257,7 +257,7 @@ func withModulePath(addr address.Address, modules []address.ModuleInstance) addr
 // the executor can call substrate.ReadNode during apply.
 func expandDataBlock(d config.DataBlock, g *graph.Graph, ctx *hcl.EvalContext) error {
 	typ := "data_" + d.Type
-	provider, ok := GetResourceProvider(typ)
+	provider, ok := GetResourceHandler(typ)
 	if !ok {
 		return fmt.Errorf("data block type %q not supported; supported: sysbox_node, sysbox_network, sysbox_image", d.Type)
 	}

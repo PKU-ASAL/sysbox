@@ -67,7 +67,7 @@ func TestImageResourceProviderCreateDockerRef(t *testing.T) {
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 
-	res, err := ImageResourceProvider{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+	res, err := ImageResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
 	require.NoError(t, err)
 	require.Equal(t, "sysbox_image", res.Address.Type)
@@ -93,7 +93,7 @@ func TestImageResourceProviderCreateRootfsArtifact(t *testing.T) {
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 
-	res, err := ImageResourceProvider{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+	res, err := ImageResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
 	require.NoError(t, err)
 	require.Equal(t, rootfs, sub.lastSpec.Rootfs)
@@ -107,7 +107,7 @@ func TestImageResourceProviderDelete(t *testing.T) {
 	res := state.Resource{Address: address.Resource("sysbox_image", "alpine"), Driver: "image-test", Attributes: map[string]any{}}
 	exec.state.AddResource(res)
 
-	require.NoError(t, ImageResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res))
+	require.NoError(t, ImageResourceHandler{}.Delete(context.Background(), &ProviderContext{exec: exec}, res))
 	require.Nil(t, exec.state.FindResource(address.Resource("sysbox_image", "alpine")))
 }
 
@@ -119,7 +119,7 @@ func TestImageResourceProviderPlanDiff(t *testing.T) {
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
 	current := &state.Resource{Address: address.Resource("sysbox_image", "alpine"), Driver: "docker", Attributes: inst}
-	p := ImageResourceProvider{}
+	p := ImageResourceHandler{}
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)

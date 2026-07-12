@@ -19,43 +19,43 @@ import (
 
 // -- sysbox_ssh_access --
 
-type SSHAccessResourceProvider struct{}
+type SSHAccessResourceHandler struct{}
 
 func init() {
-	RegisterResourceProvider(SSHAccessResourceProvider{})
+	RegisterResourceHandler(SSHAccessResourceHandler{})
 }
 
-func (SSHAccessResourceProvider) Type() string { return "sysbox_ssh_access" }
+func (SSHAccessResourceHandler) Type() string { return "sysbox_ssh_access" }
 
-func (SSHAccessResourceProvider) Schema() ResourceSchema {
+func (SSHAccessResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_ssh_access")
 }
 
-func (SSHAccessResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (SSHAccessResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
 	return resourceReadOK(current), nil
 }
 
-func (SSHAccessResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (SSHAccessResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (SSHAccessResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.createSSHAccessResource(ctx, n)
 }
 
-func (SSHAccessResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+func (SSHAccessResourceHandler) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
 	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
-func (SSHAccessResourceProvider) ExternalID(current state.Resource) string {
+func (SSHAccessResourceHandler) ExternalID(current state.Resource) string {
 	if id := current.ContainerID(); id != "" {
 		return id
 	}
 	return current.Str("id")
 }
 
-func (SSHAccessResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (SSHAccessResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.SSHAccessConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err

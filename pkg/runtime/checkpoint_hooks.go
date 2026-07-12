@@ -52,7 +52,7 @@ type CheckpointCleanupResult struct {
 }
 
 func RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, bool) {
-	p, ok := GetResourceProvider(checkpointResourceType(step))
+	p, ok := GetResourceHandler(checkpointResourceType(step))
 	if !ok {
 		return CheckpointRecoverResult{}, false
 	}
@@ -68,7 +68,7 @@ func RecoverCheckpointResource(ctx context.Context, st *state.State, step Operat
 }
 
 func CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, bool) {
-	p, ok := GetResourceProvider(checkpointResourceType(step))
+	p, ok := GetResourceHandler(checkpointResourceType(step))
 	if !ok {
 		return CheckpointCleanupResult{}, false
 	}
@@ -84,7 +84,7 @@ func CleanupCheckpointResource(ctx context.Context, step OperationStep) (Checkpo
 }
 
 func SupportsCheckpointRecover(step OperationStep) bool {
-	p, ok := GetResourceProvider(checkpointResourceType(step))
+	p, ok := GetResourceHandler(checkpointResourceType(step))
 	if !ok {
 		return false
 	}
@@ -93,7 +93,7 @@ func SupportsCheckpointRecover(step OperationStep) bool {
 }
 
 func SupportsCheckpointCleanup(step OperationStep) bool {
-	p, ok := GetResourceProvider(checkpointResourceType(step))
+	p, ok := GetResourceHandler(checkpointResourceType(step))
 	if !ok {
 		return false
 	}
@@ -148,7 +148,7 @@ func recoverStateResourceFromCheckpoint(st *state.State, step OperationStep) Che
 	return action
 }
 
-func (NetworkResourceProvider) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
+func (NetworkResourceHandler) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
 	action := CheckpointRecoverResult{Resource: step.Resource, ExternalID: step.ExternalID}
 	rec := step.StateResource
 	if rec == nil {
@@ -183,7 +183,7 @@ func (NetworkResourceProvider) RecoverCheckpointResource(ctx context.Context, st
 	return action, nil
 }
 
-func (NetworkResourceProvider) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
+func (NetworkResourceHandler) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
 	action := CheckpointCleanupResult{Resource: step.Resource, ExternalID: step.ExternalID, Class: CheckpointCleanupNetwork}
 	if step.StateResource == nil {
 		if step.Provider == "docker" {
@@ -223,15 +223,15 @@ func (NetworkResourceProvider) CleanupCheckpointResource(ctx context.Context, st
 	return action, nil
 }
 
-func (NodeResourceProvider) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
+func (NodeResourceHandler) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
 	return recoverNodeLikeCheckpoint(ctx, st, step)
 }
 
-func (RouterResourceProvider) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
+func (RouterResourceHandler) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
 	return recoverNodeLikeCheckpoint(ctx, st, step)
 }
 
-func (ActorResourceProvider) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
+func (ActorResourceHandler) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
 	if step.StateResource != nil {
 		res := StateResourceFromLog(*step.StateResource)
 		if res.Str("position") == "internal" {
@@ -241,15 +241,15 @@ func (ActorResourceProvider) RecoverCheckpointResource(ctx context.Context, st *
 	return recoverNodeLikeCheckpoint(ctx, st, step)
 }
 
-func (NodeResourceProvider) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
+func (NodeResourceHandler) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
 	return cleanupNodeLikeCheckpoint(ctx, step)
 }
 
-func (RouterResourceProvider) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
+func (RouterResourceHandler) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
 	return cleanupNodeLikeCheckpoint(ctx, step)
 }
 
-func (ActorResourceProvider) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
+func (ActorResourceHandler) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
 	if step.StateResource != nil {
 		res := StateResourceFromLog(*step.StateResource)
 		if res.Str("position") == "internal" {

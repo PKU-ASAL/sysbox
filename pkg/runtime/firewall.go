@@ -15,31 +15,31 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-type FirewallResourceProvider struct{}
+type FirewallResourceHandler struct{}
 
 func init() {
-	RegisterResourceProvider(FirewallResourceProvider{})
+	RegisterResourceHandler(FirewallResourceHandler{})
 }
 
-func (FirewallResourceProvider) Type() string { return "sysbox_firewall" }
+func (FirewallResourceHandler) Type() string { return "sysbox_firewall" }
 
-func (FirewallResourceProvider) Schema() ResourceSchema {
+func (FirewallResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_firewall")
 }
 
-func (FirewallResourceProvider) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (FirewallResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
 	return resourceReadOK(current), nil
 }
 
-func (FirewallResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (FirewallResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (FirewallResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (FirewallResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.createFirewallResource(ctx, n)
 }
 
-func (FirewallResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
+func (FirewallResourceHandler) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
 	nsName := current.Str("netns")
 	if nsName != "" {
 		if err := network.DeleteFirewall(nsName); err != nil {
@@ -50,11 +50,11 @@ func (FirewallResourceProvider) Delete(_ context.Context, pc *ProviderContext, c
 	return nil
 }
 
-func (FirewallResourceProvider) ExternalID(current state.Resource) string {
+func (FirewallResourceHandler) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (FirewallResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (FirewallResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.FirewallConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err

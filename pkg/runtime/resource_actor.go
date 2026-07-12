@@ -19,45 +19,45 @@ import (
 
 // -- sysbox_actor --
 
-type ActorResourceProvider struct{}
+type ActorResourceHandler struct{}
 
 func init() {
-	RegisterResourceProvider(ActorResourceProvider{})
+	RegisterResourceHandler(ActorResourceHandler{})
 }
 
-func (ActorResourceProvider) Type() string { return "sysbox_actor" }
+func (ActorResourceHandler) Type() string { return "sysbox_actor" }
 
-func (ActorResourceProvider) Schema() ResourceSchema {
+func (ActorResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_actor")
 }
 
-func (ActorResourceProvider) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
+func (ActorResourceHandler) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
 	if current.Str("position") == "external" || current.ContainerID() != "" {
 		return readNodeLikeResource(ctx, current)
 	}
 	return resourceReadOK(current), nil
 }
 
-func (ActorResourceProvider) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (ActorResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (ActorResourceProvider) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (ActorResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	return pc.createActorResource(ctx, n)
 }
 
-func (ActorResourceProvider) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
+func (ActorResourceHandler) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
 	return pc.destroyActorResource(ctx, current)
 }
 
-func (ActorResourceProvider) ExternalID(current state.Resource) string {
+func (ActorResourceHandler) ExternalID(current state.Resource) string {
 	if id := current.ContainerID(); id != "" {
 		return id
 	}
 	return current.Str("id")
 }
 
-func (ActorResourceProvider) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (ActorResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.ActorConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
