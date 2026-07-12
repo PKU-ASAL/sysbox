@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -98,7 +99,7 @@ func printStateAddress(s stateReader, addr string) error {
 	if len(parts) < 2 {
 		return fmt.Errorf("expected type.name[.attr], got %q", addr)
 	}
-	r := s.FindResource(parts[0], parts[1])
+	r := s.FindResource(address.Resource(parts[0], parts[1]))
 	if r == nil {
 		return fmt.Errorf("resource %s.%s not found", parts[0], parts[1])
 	}
@@ -118,5 +119,5 @@ func printStateAddress(s stateReader, addr string) error {
 }
 
 type stateReader interface {
-	FindResource(typ, name string) *state.Resource
+	FindResource(address.Address) *state.Resource
 }

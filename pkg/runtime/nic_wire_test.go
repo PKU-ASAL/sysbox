@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"github.com/oslab/sysbox/pkg/address"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -53,8 +54,7 @@ func TestWireNICsWithHookRecordsAttachPhases(t *testing.T) {
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
 			{
-				Type:     "sysbox_network",
-				Name:     "nat",
+				Address:  address.Resource("sysbox_network", "nat"),
 				Provider: "docker",
 				Instance: map[string]any{
 					"nat":               true,
@@ -62,8 +62,7 @@ func TestWireNICsWithHookRecordsAttachPhases(t *testing.T) {
 				},
 			},
 			{
-				Type:     "sysbox_network",
-				Name:     "isolated",
+				Address:  address.Resource("sysbox_network", "isolated"),
 				Provider: "network",
 				Instance: map[string]any{
 					"netns":  "sysbox-net-isolated",

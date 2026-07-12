@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -57,7 +58,7 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	res := st.FindResource("sysbox_node", name)
+	res := st.FindResource(address.Resource("sysbox_node", name))
 	if res == nil {
 		return controlplane.NodeOperation{}, fmt.Errorf("node %q not found", name)
 	}

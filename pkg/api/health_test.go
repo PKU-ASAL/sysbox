@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/oslab/sysbox/pkg/address"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,8 +28,7 @@ func TestGetTopologyHealth(t *testing.T) {
 	st := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_kernel",
-			Name:     "linux",
+			Address:  address.Resource("sysbox_kernel", "linux"),
 			Provider: "artifact",
 			Instance: map[string]any{"path": kernel},
 		}},

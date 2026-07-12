@@ -50,7 +50,7 @@ func (p DataNodeResourceProvider) Update(ctx context.Context, pc *ProviderContex
 }
 
 func (DataNodeResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
-	pc.State().RemoveResource(current.Type, current.Name)
+	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
@@ -94,8 +94,7 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 	}
 
 	res := state.Resource{
-		Type:     "data_sysbox_node",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: subName,
 		Instance: inst,
 	}
@@ -131,7 +130,7 @@ func (p DataNetworkResourceProvider) Update(ctx context.Context, pc *ProviderCon
 }
 
 func (DataNetworkResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
-	pc.State().RemoveResource(current.Type, current.Name)
+	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
@@ -178,8 +177,7 @@ func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (
 		return state.Resource{}, err
 	}
 	res := state.Resource{
-		Type:     "data_sysbox_network",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: "docker",
 		Instance: inst,
 	}
@@ -213,7 +211,7 @@ func (p DataImageResourceProvider) Update(ctx context.Context, pc *ProviderConte
 }
 
 func (DataImageResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
-	pc.State().RemoveResource(current.Type, current.Name)
+	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
@@ -257,8 +255,7 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 		return state.Resource{}, err
 	}
 	res := state.Resource{
-		Type:     "data_sysbox_image",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: subName,
 		Instance: inst,
 	}

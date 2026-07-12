@@ -20,7 +20,7 @@ func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "vmlinux")
 	require.NoError(t, os.WriteFile(src, []byte("kernel"), 0o644))
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_kernel", Name: "fc"},
+		Address: address.Resource("sysbox_kernel", "fc"),
 		Data: &config.KernelConfig{
 			Substrate: "firecracker",
 			Source:    src,
@@ -31,8 +31,8 @@ func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
 
 	res, err := p.Create(context.Background(), &ProviderContext{exec: exec}, n)
 	require.NoError(t, err)
-	require.Equal(t, "sysbox_kernel", res.Type)
-	require.Equal(t, "fc", res.Name)
+	require.Equal(t, "sysbox_kernel", res.Address.Type)
+	require.Equal(t, "fc", res.Address.Name)
 	require.Equal(t, "firecracker", res.Provider)
 	require.Equal(t, src, res.Str("path"))
 	require.Equal(t, src, res.Str("source"))
@@ -41,14 +41,14 @@ func TestKernelResourceProviderCreateAndDelete(t *testing.T) {
 
 	exec.state.AddResource(res)
 	require.NoError(t, p.Delete(context.Background(), &ProviderContext{exec: exec}, res))
-	require.Nil(t, exec.state.FindResource("sysbox_kernel", "fc"))
+	require.Nil(t, exec.state.FindResource(address.Resource("sysbox_kernel", "fc")))
 	_, err = os.Stat(src)
 	require.NoError(t, err)
 }
 
 func TestKernelResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_kernel", Name: "fc"},
+		Address: address.Resource("sysbox_kernel", "fc"),
 		Data: &config.KernelConfig{
 			Substrate: "firecracker",
 			Source:    "/tmp/vmlinux-a",
@@ -57,8 +57,7 @@ func TestKernelResourceProviderPlanDiff(t *testing.T) {
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
 	current := &state.Resource{
-		Type:     "sysbox_kernel",
-		Name:     "fc",
+		Address:  address.Resource("sysbox_kernel", "fc"),
 		Provider: "firecracker",
 		Instance: inst,
 	}

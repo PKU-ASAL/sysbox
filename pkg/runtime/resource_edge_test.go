@@ -25,7 +25,7 @@ func TestEdgeResourceProvidersRegistered(t *testing.T) {
 
 func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_firewall", Name: "allow_ssh"},
+		Address: address.Resource("sysbox_firewall", "allow_ssh"),
 		Data: &config.FirewallConfig{
 			AttachTo: "sysbox_network.dmz.id",
 			Rules: []config.FirewallRule{{
@@ -38,7 +38,7 @@ func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Type: "sysbox_firewall", Name: "allow_ssh", Provider: "network", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_firewall", "allow_ssh"), Provider: "network", Instance: inst}
 	p := FirewallResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)
@@ -62,7 +62,7 @@ func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 
 func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_ssh_access", Name: "admin"},
+		Address: address.Resource("sysbox_ssh_access", "admin"),
 		Data: &config.SSHAccessConfig{
 			Node:           "sysbox_node.web.id",
 			AuthorizedKeys: []string{"ssh-ed25519 old"},
@@ -71,7 +71,7 @@ func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Type: "sysbox_ssh_access", Name: "admin", Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_ssh_access", "admin"), Provider: "docker", Instance: inst}
 	p := SSHAccessResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)
@@ -92,7 +92,7 @@ func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 
 func TestActorResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_actor", Name: "agent"},
+		Address: address.Resource("sysbox_actor", "agent"),
 		Data: &config.ActorConfig{
 			Position: "internal",
 			Node:     "sysbox_node.web.id",
@@ -102,7 +102,7 @@ func TestActorResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Type: "sysbox_actor", Name: "agent", Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_actor", "agent"), Provider: "docker", Instance: inst}
 	p := ActorResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)
@@ -131,19 +131,19 @@ func TestEdgeProviderDeleteRemovesState(t *testing.T) {
 		{
 			name: "ssh_access",
 			p:    SSHAccessResourceProvider{},
-			res:  state.Resource{Type: "sysbox_ssh_access", Name: "admin"},
+			res:  state.Resource{Address: address.Resource("sysbox_ssh_access", "admin")},
 		},
 		{
 			name: "actor_missing_substrate",
 			p:    ActorResourceProvider{},
-			res:  state.Resource{Type: "sysbox_actor", Name: "agent", Provider: "missing"},
+			res:  state.Resource{Address: address.Resource("sysbox_actor", "agent"), Provider: "missing"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{tc.res}}
 			exec := NewExecutor(graph.New(), st)
 			require.NoError(t, tc.p.Delete(context.Background(), &ProviderContext{exec: exec}, tc.res))
-			require.Nil(t, st.FindResource(tc.res.Type, tc.res.Name))
+			require.Nil(t, st.FindResource(tc.res.Address))
 		})
 	}
 }

@@ -34,7 +34,7 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 	defer func() { e.recorder.Finish(destroyErr) }()
 
 	for _, r := range plan.Protected {
-		fmt.Fprintf(logWriter(e), "[lifecycle] skipping destroy of %s.%s (prevent_destroy = true)\n", r.Type, r.Name)
+		fmt.Fprintf(logWriter(e), "[lifecycle] skipping destroy of %s (prevent_destroy = true)\n", r.Address)
 	}
 	byID := map[string]bool{}
 	for _, action := range plan.actionsByType(controlplane.PlanActionDelete) {
@@ -54,7 +54,7 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 	} else {
 		// Fallback: build order from state resources in reverse append order.
 		for _, r := range e.state.Resources {
-			destroyOrder = append(destroyOrder, address.Address{Type: r.Type, Name: r.Name})
+			destroyOrder = append(destroyOrder, r.Address)
 		}
 		// Reverse for destroy order.
 		for i, j := 0, len(destroyOrder)-1; i < j; i, j = i+1, j-1 {
@@ -70,14 +70,14 @@ func (e *Executor) Destroy(ctx context.Context, plan *Plan) error {
 		if !byID[id.String()] {
 			continue
 		}
-		r := e.state.FindResource(id.Type, id.Name)
+		r := e.state.FindResource(id)
 		if r == nil {
 			continue
 		}
-		e.logf("[destroy] removing %s.%s\n", r.Type, r.Name)
+		e.logf("[destroy] removing %s\n", r.Address)
 		step := e.recorder.StepStart(id.String(), controlplane.PlanActionDelete)
 		if err := e.DestroyResource(ctx, *r); err != nil {
-			e.logf("[destroy] warning: destroy %s.%s failed: %v\n", r.Type, r.Name, err)
+			e.logf("[destroy] warning: destroy %s failed: %v\n", r.Address, err)
 			e.recorder.StepFailed(step, err)
 			// Continue destroying remaining resources instead of aborting.
 			// A single failure should not prevent cleanup of other resources.

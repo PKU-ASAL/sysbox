@@ -114,8 +114,7 @@ func (NetworkResourceProvider) Create(ctx context.Context, pc *ProviderContext, 
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Type:     "sysbox_network",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: "network",
 		Instance: inst,
 	}, nil
@@ -161,8 +160,7 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Type:     "sysbox_network",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: "docker",
 		Instance: natInst,
 	}, nil
@@ -176,7 +174,7 @@ func (NetworkResourceProvider) Delete(ctx context.Context, pc *ProviderContext, 
 	if r.IsNAT() {
 		sub, err := substrate.Get("docker")
 		if err != nil {
-			pc.State().RemoveResource(r.Type, r.Name)
+			pc.State().RemoveResource(r.Address)
 			return nil
 		}
 		netID := r.DockerNetID()
@@ -190,7 +188,7 @@ func (NetworkResourceProvider) Delete(ctx context.Context, pc *ProviderContext, 
 		if cidr != "" {
 			_ = removeDockerUserAccept(cidr)
 		}
-		pc.State().RemoveResource(r.Type, r.Name)
+		pc.State().RemoveResource(r.Address)
 		return nil
 	}
 
@@ -202,7 +200,7 @@ func (NetworkResourceProvider) Delete(ctx context.Context, pc *ProviderContext, 
 	if err := deleteNetnsFn(nsName); err != nil {
 		pc.Logf("[destroy] warning: delete netns %s: %v\n", nsName, err)
 	}
-	pc.State().RemoveResource(r.Type, r.Name)
+	pc.State().RemoveResource(r.Address)
 	return nil
 }
 

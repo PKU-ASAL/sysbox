@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/oslab/sysbox/pkg/address"
 )
 
 // maxBodyBytes limits request body size to 1MB across all API handlers
@@ -34,11 +36,11 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	var nodes []nodeInfo
 	for _, res := range st.Resources {
-		if res.Type != "sysbox_node" && res.Type != "sysbox_router" {
+		if res.Address.Type != "sysbox_node" && res.Address.Type != "sysbox_router" {
 			continue
 		}
 		nodes = append(nodes, nodeInfo{
-			Name:      res.Name,
+			Name:      res.Address.Name,
 			Provider:  res.Provider,
 			PrimaryIP: res.PrimaryIP(),
 		})
@@ -63,9 +65,9 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	res := st.FindResource("sysbox_node", name)
+	res := st.FindResource(address.Resource("sysbox_node", name))
 	if res == nil {
-		res = st.FindResource("sysbox_router", name)
+		res = st.FindResource(address.Resource("sysbox_router", name))
 	}
 	if res == nil {
 		writeError(w, http.StatusNotFound, fmt.Errorf("node %q not found in topology %q", name, topology))

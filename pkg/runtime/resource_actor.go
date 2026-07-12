@@ -111,7 +111,7 @@ func (e *Executor) createActorResource(ctx context.Context, n *graph.Node) (stat
 // createInternalActor runs the actor command inside an existing sysbox_node.
 func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *config.ActorConfig) (state.Resource, error) {
 	nodeName := config.ResolveName(cfg.Node)
-	nodeState := e.state.FindResource("sysbox_node", nodeName)
+	nodeState := e.state.FindResource(address.Resource("sysbox_node", nodeName))
 	if nodeState == nil {
 		return state.Resource{}, fmt.Errorf("actor %s: node %s not applied yet", n.Address.Name, nodeName)
 	}
@@ -164,8 +164,7 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 		return state.Resource{}, err
 	}
 	res := state.Resource{
-		Type:     "sysbox_actor",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: subName,
 		Instance: inst,
 	}
@@ -184,7 +183,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 
 	// Resolve image.
 	imageName := config.ResolveName(cfg.Image)
-	imgState := e.state.FindResource("sysbox_image", imageName)
+	imgState := e.state.FindResource(address.Resource("sysbox_image", imageName))
 	if imgState == nil {
 		return state.Resource{}, fmt.Errorf("actor %s: image %s not applied yet", n.Address.Name, imageName)
 	}
@@ -198,7 +197,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	var natLinks []natLink
 	for _, link := range cfg.Links {
 		netName := config.ResolveName(link.Network)
-		netState := e.state.FindResource("sysbox_network", netName)
+		netState := e.state.FindResource(address.Resource("sysbox_network", netName))
 		if netState == nil {
 			return state.Resource{}, fmt.Errorf("actor %s: network %s not applied yet", n.Address.Name, netName)
 		}
@@ -294,8 +293,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		return state.Resource{}, err
 	}
 	res := state.Resource{
-		Type:     "sysbox_actor",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: "docker",
 		Instance: inst,
 	}
@@ -310,14 +308,14 @@ func (e *Executor) destroyActorResource(ctx context.Context, r state.Resource) e
 
 	sub, err := substrate.Get(r.Provider)
 	if err != nil {
-		e.state.RemoveResource(r.Type, r.Name)
+		e.state.RemoveResource(r.Address)
 		return nil
 	}
 
 	if pid > 0 && containerID != "" {
 		handle, err := r.ReconstructHandle(sub)
 		if err != nil {
-			e.logf("[destroy] warning: reconstruct actor %s: %v\n", r.Name, err)
+			e.logf("[destroy] warning: reconstruct actor %s: %v\n", r.Address.Name, err)
 			handle = substrate.NodeHandle{ID: containerID}
 		}
 		// Kill the entire process group so child processes are also
@@ -332,17 +330,17 @@ func (e *Executor) destroyActorResource(ctx context.Context, r state.Resource) e
 	if position == "external" && containerID != "" {
 		handle, err := r.ReconstructHandle(sub)
 		if err != nil {
-			e.logf("[destroy] warning: reconstruct actor %s: %v\n", r.Name, err)
+			e.logf("[destroy] warning: reconstruct actor %s: %v\n", r.Address.Name, err)
 			handle = substrate.NodeHandle{ID: containerID}
 		}
 		if err := sub.StopNode(ctx, handle); err != nil {
-			e.logf("[destroy] warning: stop actor %s: %v\n", r.Name, err)
+			e.logf("[destroy] warning: stop actor %s: %v\n", r.Address.Name, err)
 		}
 		if err := sub.DestroyNode(ctx, handle); err != nil {
-			e.logf("[destroy] warning: destroy actor %s: %v\n", r.Name, err)
+			e.logf("[destroy] warning: destroy actor %s: %v\n", r.Address.Name, err)
 		}
 	}
 
-	e.state.RemoveResource(r.Type, r.Name)
+	e.state.RemoveResource(r.Address)
 	return nil
 }

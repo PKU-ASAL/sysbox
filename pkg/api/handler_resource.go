@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/oslab/sysbox/pkg/address"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -131,11 +133,11 @@ func validateResourceSegment(resource string) error {
 }
 
 func findResourceByID(st *state.State, id string) (*state.Resource, error) {
-	typ, name, ok := strings.Cut(id, ".")
-	if !ok {
+	addr, err := address.Parse(id)
+	if err != nil {
 		return nil, fmt.Errorf("invalid resource %q", id)
 	}
-	res := st.FindResource(typ, name)
+	res := st.FindResource(addr)
 	if res == nil {
 		return nil, fmt.Errorf("resource %q not found", id)
 	}

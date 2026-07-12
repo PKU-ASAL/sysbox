@@ -60,7 +60,7 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 	if st != nil {
 		for i := range st.Resources {
 			r := &st.Resources[i]
-			stateByID[r.Type+"."+r.Name] = r
+			stateByID[r.Address.String()] = r
 		}
 	}
 

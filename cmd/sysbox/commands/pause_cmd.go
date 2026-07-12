@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -49,7 +50,7 @@ func pauseResumeOp(addr string, resume bool) error {
 		return fmt.Errorf("load state: %w", err)
 	}
 
-	r := s.FindResource(typ, name)
+	r := s.FindResource(address.Resource(typ, name))
 	if r == nil {
 		return fmt.Errorf("resource %s.%s not found in state", typ, name)
 	}

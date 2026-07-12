@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -26,9 +27,9 @@ type consoleFrame struct {
 }
 
 func OpenConsoleFromState(ctx context.Context, st *state.State, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error {
-	res := st.FindResource("sysbox_node", sess.Node)
+	res := st.FindResource(address.Resource("sysbox_node", sess.Node))
 	if res == nil {
-		res = st.FindResource("sysbox_router", sess.Node)
+		res = st.FindResource(address.Resource("sysbox_router", sess.Node))
 	}
 	if res == nil {
 		return fmt.Errorf("node %q not found in state", sess.Node)

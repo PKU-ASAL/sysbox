@@ -188,9 +188,9 @@ func (b *LocalBridge) BuildDestroyPlan(st *state.State) (*runtime.Plan, error) {
 		if r.LifecyclePreventDestroy() {
 			plan.Protected = append(plan.Protected, r)
 			plan.Actions = append(plan.Actions, controlplane.PlanAction{
-				Resource: r.Type + "." + r.Name,
-				Type:     r.Type,
-				Name:     r.Name,
+				Resource: r.Address.String(),
+				Type:     r.Address.Type,
+				Name:     r.Address.Name,
 				Action:   controlplane.PlanActionSkip,
 				Reason:   "blocked by lifecycle.prevent_destroy",
 			})
@@ -198,9 +198,9 @@ func (b *LocalBridge) BuildDestroyPlan(st *state.State) (*runtime.Plan, error) {
 		}
 		plan.Destroy = append(plan.Destroy, r)
 		plan.Actions = append(plan.Actions, controlplane.PlanAction{
-			Resource: r.Type + "." + r.Name,
-			Type:     r.Type,
-			Name:     r.Name,
+			Resource: r.Address.String(),
+			Type:     r.Address.Type,
+			Name:     r.Address.Name,
 			Action:   controlplane.PlanActionDelete,
 			Reason:   "destroy requested",
 		})

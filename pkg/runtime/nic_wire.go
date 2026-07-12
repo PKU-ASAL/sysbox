@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -38,7 +39,7 @@ type NICWireHook func(phase string, details map[string]any, fn func() error) err
 func collectNATLinks(st *state.State, specs []NICSpec, allNAT bool) ([]substrate.LinkRequest, error) {
 	var initial []substrate.LinkRequest
 	for _, spec := range specs {
-		netState := st.FindResource("sysbox_network", spec.Network)
+		netState := st.FindResource(address.Resource("sysbox_network", spec.Network))
 		if netState == nil {
 			return nil, fmt.Errorf("network %s not applied yet", spec.Network)
 		}
@@ -99,7 +100,7 @@ func wireNICsWithHook(ctx context.Context, sub substrate.Substrate, st *state.St
 	}
 
 	for _, spec := range specs {
-		netState := st.FindResource("sysbox_network", spec.Network)
+		netState := st.FindResource(address.Resource("sysbox_network", spec.Network))
 		if netState == nil {
 			return nil, fmt.Errorf("network %s not applied yet", spec.Network)
 		}

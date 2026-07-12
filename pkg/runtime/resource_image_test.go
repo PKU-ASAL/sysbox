@@ -59,7 +59,7 @@ func TestImageResourceProviderCreateDockerRef(t *testing.T) {
 	sub := &imageProviderSubstrate{}
 	substrate.Register(sub)
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_image", Name: "alpine"},
+		Address: address.Resource("sysbox_image", "alpine"),
 		Data: &config.ImageConfig{
 			Substrate: "image-test",
 			DockerRef: "alpine:latest",
@@ -70,8 +70,8 @@ func TestImageResourceProviderCreateDockerRef(t *testing.T) {
 	res, err := ImageResourceProvider{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
 	require.NoError(t, err)
-	require.Equal(t, "sysbox_image", res.Type)
-	require.Equal(t, "alpine", res.Name)
+	require.Equal(t, "sysbox_image", res.Address.Type)
+	require.Equal(t, "alpine", res.Address.Name)
 	require.Equal(t, "image-test", res.Provider)
 	require.Equal(t, "image-id", res.ImageID())
 	require.Equal(t, "alpine:latest", res.Repository())
@@ -85,7 +85,7 @@ func TestImageResourceProviderCreateRootfsArtifact(t *testing.T) {
 	rootfs := filepath.Join(t.TempDir(), "rootfs.ext4")
 	require.NoError(t, os.WriteFile(rootfs, []byte("rootfs"), 0o644))
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_image", Name: "rootfs"},
+		Address: address.Resource("sysbox_image", "rootfs"),
 		Data: &config.ImageConfig{
 			Substrate: "image-test",
 			Rootfs:    rootfs,
@@ -104,21 +104,21 @@ func TestImageResourceProviderCreateRootfsArtifact(t *testing.T) {
 
 func TestImageResourceProviderDelete(t *testing.T) {
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
-	res := state.Resource{Type: "sysbox_image", Name: "alpine", Provider: "image-test", Instance: map[string]any{}}
+	res := state.Resource{Address: address.Resource("sysbox_image", "alpine"), Provider: "image-test", Instance: map[string]any{}}
 	exec.state.AddResource(res)
 
 	require.NoError(t, ImageResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res))
-	require.Nil(t, exec.state.FindResource("sysbox_image", "alpine"))
+	require.Nil(t, exec.state.FindResource(address.Resource("sysbox_image", "alpine")))
 }
 
 func TestImageResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_image", Name: "alpine"},
+		Address: address.Resource("sysbox_image", "alpine"),
 		Data:    &config.ImageConfig{Substrate: "docker", DockerRef: "alpine:3.20"},
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Type: "sysbox_image", Name: "alpine", Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_image", "alpine"), Provider: "docker", Instance: inst}
 	p := ImageResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)

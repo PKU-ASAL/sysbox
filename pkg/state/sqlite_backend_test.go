@@ -24,7 +24,7 @@ func TestSQLiteBackend_LoadSaveAndVersionedCAS(t *testing.T) {
 	}
 
 	// Save initial state.
-	data := []byte(`{"version":2,"resources":[]}`)
+	data := []byte(`{"version":3,"resources":[]}`)
 	if err := backend.Save(ctx, data); err != nil {
 		t.Fatalf("Save error: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestSQLiteBackend_LoadSaveAndVersionedCAS(t *testing.T) {
 	}
 
 	// CAS save with correct serial.
-	data2 := []byte(`{"version":2,"resources":[{"type":"a","name":"b"}]}`)
+	data2 := []byte(`{"version":3,"resources":[{"type":"a","name":"b"}]}`)
 	err = backend.SaveVersioned(ctx, data2, SaveOptions{RequireCAS: true, ExpectedSerial: 1})
 	if err != nil {
 		t.Fatalf("CAS save error: %v", err)

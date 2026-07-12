@@ -523,7 +523,7 @@ func planJSON(p *runtime.Plan) map[string]any {
 	}
 	destroy := make([]string, 0, len(p.Destroy))
 	for _, r := range p.Destroy {
-		destroy = append(destroy, r.Type+"."+r.Name)
+		destroy = append(destroy, r.Address.String())
 	}
 	change := make([]string, 0, len(p.Change))
 	for _, id := range p.Change {

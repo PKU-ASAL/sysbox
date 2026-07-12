@@ -23,7 +23,7 @@ func TestRouterResourceProviderRegistered(t *testing.T) {
 
 func TestRouterResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_router", Name: "r1"},
+		Address: address.Resource("sysbox_router", "r1"),
 		Data: &config.RouterConfig{
 			Image:     "sysbox_image.alpine.id",
 			Substrate: "docker",
@@ -36,7 +36,7 @@ func TestRouterResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Type: "sysbox_router", Name: "r1", Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_router", "r1"), Provider: "docker", Instance: inst}
 	p := RouterResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)
@@ -61,8 +61,7 @@ func TestRouterResourceProviderPlanDiff(t *testing.T) {
 func TestRouterResourceProviderDeleteMissingSubstrateReturnsError(t *testing.T) {
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	res := state.Resource{
-		Type:     "sysbox_router",
-		Name:     "r1",
+		Address:  address.Resource("sysbox_router", "r1"),
 		Provider: "missing-router-provider",
 		Instance: map[string]any{"container_id": "router"},
 	}

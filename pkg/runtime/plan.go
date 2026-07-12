@@ -41,7 +41,7 @@ func (p *Plan) ensureActions() {
 		p.addAction(id, controlplane.PlanActionReplace, "resource changed", nil)
 	}
 	for _, r := range p.Destroy {
-		p.addAction(address.Resource(r.Type, r.Name), controlplane.PlanActionDelete, "resource no longer declared", nil)
+		p.addAction(r.Address, controlplane.PlanActionDelete, "resource no longer declared", nil)
 	}
 	for _, id := range p.Unchanged {
 		p.addAction(id, controlplane.PlanActionNoop, "", nil)
@@ -78,7 +78,7 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 
 	for _, id := range inGraph {
 		n := g.Get(id)
-		r := s.FindResource(id.Type, id.Name)
+		r := s.FindResource(id)
 		action, err := planActionForDesired(n, r)
 		if err != nil {
 			return nil, err
@@ -87,10 +87,10 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 	}
 
 	for _, r := range s.Resources {
-		id := address.Resource(r.Type, r.Name)
+		id := r.Address
 		if _, exists := inGraph[id.String()]; !exists {
 			// Data sources are read-only; skip destroying them.
-			if isDataType(r.Type) {
+			if isDataType(r.Address.Type) {
 				continue
 			}
 			// Check if a lifecycle block in the graph still protects this resource.
@@ -206,15 +206,15 @@ func PlanFromActions(actions []controlplane.PlanAction, current *state.State) *P
 			p.Change = append(p.Change, id)
 		case controlplane.PlanActionDelete:
 			if current != nil {
-				if r := current.FindResource(action.Type, action.Name); r != nil {
+				if r := current.FindResource(id); r != nil {
 					p.Destroy = append(p.Destroy, *r)
 					continue
 				}
 			}
-			p.Destroy = append(p.Destroy, state.Resource{Type: action.Type, Name: action.Name})
+			p.Destroy = append(p.Destroy, state.Resource{Address: id})
 		case controlplane.PlanActionSkip:
 			if current != nil {
-				if r := current.FindResource(action.Type, action.Name); r != nil {
+				if r := current.FindResource(id); r != nil {
 					p.Protected = append(p.Protected, *r)
 				}
 			}
@@ -263,9 +263,9 @@ func FilterPlanByTarget(p *Plan, typ, name string) *Plan {
 		}
 	}
 	for _, r := range p.Destroy {
-		if r.Type == typ && r.Name == name {
+		if r.Address.Type == typ && r.Address.Name == name {
 			out.Destroy = append(out.Destroy, r)
-			out.setAction(address.Resource(r.Type, r.Name), controlplane.PlanActionDelete, "resource no longer declared", nil)
+			out.setAction(r.Address, controlplane.PlanActionDelete, "resource no longer declared", nil)
 		}
 	}
 	out.Unchanged = append(out.Unchanged, p.Unchanged...)
@@ -367,11 +367,11 @@ func PrintPlan(p *Plan, showProtected bool) {
 		}
 	}
 	for _, r := range p.Destroy {
-		fmt.Printf("  - %s.%s\n", r.Type, r.Name)
+		fmt.Printf("  - %s\n", r.Address)
 	}
 	if showProtected {
 		for _, r := range p.Protected {
-			fmt.Printf("  ! %s.%s  (lifecycle.prevent_destroy — skipped)\n", r.Type, r.Name)
+			fmt.Printf("  ! %s  (lifecycle.prevent_destroy — skipped)\n", r.Address)
 		}
 	}
 	for _, id := range p.Unchanged {

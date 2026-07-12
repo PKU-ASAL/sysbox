@@ -90,7 +90,7 @@ func (e *Executor) cascadeChangedDependents(plan *Plan, changed map[string]bool)
 
 // probeResource checks whether a resource is still up.
 func (e *Executor) probeResource(ctx context.Context, id address.Address) (bool, error) {
-	r := e.state.FindResource(id.Type, id.Name)
+	r := e.state.FindResource(id)
 	if r == nil {
 		return false, nil
 	}
@@ -133,7 +133,7 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 	result.Observation = &obs
 	recovery := DecideNodeRecovery(RecoveryInput{
 		Context:      RecoveryContextRefresh,
-		ResourceType: current.Type,
+		ResourceType: current.Address.Type,
 		Provider:     providerName,
 		HasState:     true,
 		Observation:  obs,

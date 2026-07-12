@@ -131,7 +131,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 
 	imageName := config.ResolveName(cfg.Image)
-	imgState := e.state.FindResource("sysbox_image", imageName)
+	imgState := e.state.FindResource(address.Resource("sysbox_image", imageName))
 	if imgState == nil {
 		return state.Resource{}, fmt.Errorf("image %s not applied yet", imageName)
 	}
@@ -250,13 +250,12 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 	nodeInstance[desiredHashKey] = nodeDesiredHash
 	resource := state.Resource{
-		Type:     "sysbox_node",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: subName,
 		Instance: nodeInstance,
 	}
 	e.state.AddResource(resource)
-	defer e.state.RemoveResource(resource.Type, resource.Name)
+	defer e.state.RemoveResource(resource.Address)
 
 	// Cold-plug substrates (NICHotPlug=false) start the node AFTER all NICs
 	// are attached (NICs must be in the boot config). Hot-plug substrates
@@ -291,7 +290,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// during AttachNIC or PrepareHandle). Always try; substrates with no
 	// provider state return (nil, nil) which is harmless.
 	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-		if rec := e.state.FindResource("sysbox_node", n.Address.Name); rec != nil {
+		if rec := e.state.FindResource(address.Resource("sysbox_node", n.Address.Name)); rec != nil {
 			rec.Instance["provider_extra"] = string(blob)
 		}
 	}
@@ -322,7 +321,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		for _, rt := range cfg.Routes {
 			routeSpecs = append(routeSpecs, map[string]string{"dst": rt.Destination, "via": rt.Via})
 		}
-		if rec := e.state.FindResource("sysbox_node", n.Address.Name); rec != nil {
+		if rec := e.state.FindResource(address.Resource("sysbox_node", n.Address.Name)); rec != nil {
 			rec.Instance["routes"] = routeSpecs
 		}
 	}
@@ -353,7 +352,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		e.logf("[node] warning: image entry start: %v\n", err)
 	}
 
-	if rec := e.state.FindResource("sysbox_node", n.Address.Name); rec != nil {
+	if rec := e.state.FindResource(address.Resource("sysbox_node", n.Address.Name)); rec != nil {
 		resource = *rec
 	}
 	return resource, nil
@@ -366,15 +365,15 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 	}
 	handle, err := r.ReconstructHandle(sub)
 	if err != nil {
-		e.logf("[destroy] warning: reconstruct node %s: %v\n", r.Name, err)
+		e.logf("[destroy] warning: reconstruct node %s: %v\n", r.Address, err)
 		handle = substrate.NodeHandle{ID: r.ContainerID()}
 	}
 	// Ignore stop/destroy errors: container may already be gone (drift recovery).
 	if err := sub.StopNode(ctx, handle); err != nil {
-		e.logf("[destroy] warning: stop node %s: %v\n", r.Name, err)
+		e.logf("[destroy] warning: stop node %s: %v\n", r.Address, err)
 	}
 	if err := sub.DestroyNode(ctx, handle); err != nil {
-		e.logf("[destroy] warning: destroy node %s: %v\n", r.Name, err)
+		e.logf("[destroy] warning: destroy node %s: %v\n", r.Address, err)
 	}
 	// Always clean up veths/taps and state regardless of container presence.
 	if nics, ok := r.Instance["nics"].([]any); ok {
@@ -394,7 +393,7 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 			}
 		}
 	}
-	e.state.RemoveResource(r.Type, r.Name)
+	e.state.RemoveResource(r.Address)
 	return nil
 }
 

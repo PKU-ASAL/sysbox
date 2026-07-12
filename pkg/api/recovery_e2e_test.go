@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/address"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,8 +51,7 @@ func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
 			Provider: "network",
 			Status:   runtime.OperationDone,
 			StateResource: &runtime.StateResourceLog{
-				Type:     "sysbox_network",
-				Name:     "lan",
+				Address:  address.Resource("sysbox_network", "lan"),
 				Provider: "network",
 				Instance: map[string]any{
 					"netns":   nsName,
@@ -74,7 +74,7 @@ func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
 
 	st, err := mgr.LoadWithContext(context.Background())
 	require.NoError(t, err)
-	require.NotNil(t, st.FindResource("sysbox_network", "lan"))
+	require.NotNil(t, st.FindResource(address.Resource("sysbox_network", "lan")))
 
 	cleanup, err := cleanupCheckpoint(context.Background(), store, "e2e-net", "run-net")
 	require.NoError(t, err)
@@ -123,8 +123,7 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 			ExternalID: "sysbox-microvm",
 			Status:     runtime.OperationDone,
 			StateResource: &runtime.StateResourceLog{
-				Type:     "sysbox_node",
-				Name:     "microvm",
+				Address:  address.Resource("sysbox_node", "microvm"),
 				Provider: "firecracker",
 				Instance: map[string]any{
 					"container_id": "sysbox-microvm",
@@ -154,7 +153,7 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 
 	st, err := mgr.LoadWithContext(context.Background())
 	require.NoError(t, err)
-	require.NotNil(t, st.FindResource("sysbox_node", "microvm"))
+	require.NotNil(t, st.FindResource(address.Resource("sysbox_node", "microvm")))
 
 	cleanup, err := cleanupCheckpoint(context.Background(), store, "e2e-fc", "run-fc")
 	require.NoError(t, err)

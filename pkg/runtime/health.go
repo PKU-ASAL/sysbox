@@ -35,13 +35,13 @@ func EvaluateTopologyHealth(ctx context.Context, st *state.State) controlplane.T
 
 func EvaluateResourceHealth(ctx context.Context, res *state.Resource) controlplane.ResourceHealth {
 	rh := controlplane.ResourceHealth{
-		Resource: res.Type + "." + res.Name,
-		Type:     res.Type,
-		Name:     res.Name,
+		Resource: res.Address.String(),
+		Type:     res.Address.Type,
+		Name:     res.Address.Name,
 		Provider: res.Provider,
 		Status:   controlplane.ResourceHealthHealthy,
 	}
-	if provider, ok := GetResourceProvider(res.Type); ok {
+	if provider, ok := GetResourceProvider(res.Address.Type); ok {
 		result, err := provider.Read(ctx, *res)
 		rh.Reason = result.Reason
 		rh.Decision = result.Decision

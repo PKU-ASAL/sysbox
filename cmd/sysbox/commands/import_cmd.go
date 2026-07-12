@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/state"
@@ -52,7 +53,8 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check that the resource doesn't already exist in state.
-	if r := s.FindResource(typ, name); r != nil {
+	addr := address.Resource(typ, name)
+	if r := s.FindResource(addr); r != nil {
 		return fmt.Errorf("resource %s.%s already exists in state; remove it first", typ, name)
 	}
 
@@ -87,8 +89,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 			inst["provider_extra"] = string(blob)
 		}
 		s.AddResource(state.Resource{
-			Type:     typ,
-			Name:     name,
+			Address:  addr,
 			Provider: subName,
 			Instance: inst,
 		})

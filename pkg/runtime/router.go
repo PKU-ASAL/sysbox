@@ -93,7 +93,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	}
 
 	imageName := config.ResolveName(cfg.Image)
-	imgState := e.state.FindResource("sysbox_image", imageName)
+	imgState := e.state.FindResource(address.Resource("sysbox_image", imageName))
 	if imgState == nil {
 		return state.Resource{}, fmt.Errorf("image %s not applied yet", imageName)
 	}
@@ -174,8 +174,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Type:     "sysbox_router",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: subName,
 		Instance: inst,
 	}, nil

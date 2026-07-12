@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/oslab/sysbox/pkg/address"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -318,8 +319,7 @@ resource "sysbox_node" "web" {
 	writeState(t, runs, "lab", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_node",
-			Name:     "web",
+			Address:  address.Resource("sysbox_node", "web"),
 			Provider: "docker",
 			Instance: map[string]any{"container_id": "container-web"},
 		}},
@@ -385,8 +385,7 @@ resource "sysbox_node" "web" {
 	writeState(t, runs, "lab", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_node",
-			Name:     "web",
+			Address:  address.Resource("sysbox_node", "web"),
 			Provider: "docker",
 			Instance: map[string]any{"container_id": "container-web"},
 		}},
@@ -432,8 +431,7 @@ resource "sysbox_node" "web" {
 	writeState(t, runs, "lab", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_node",
-			Name:     "web",
+			Address:  address.Resource("sysbox_node", "web"),
 			Provider: "docker",
 			Instance: map[string]any{"container_id": "deadbeef"},
 		}},

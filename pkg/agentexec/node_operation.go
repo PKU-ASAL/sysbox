@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -51,9 +52,9 @@ func (e *Executor) executePauseResume(ctx context.Context, op *controlplane.Node
 	if err != nil {
 		return err
 	}
-	res := st.FindResource("sysbox_node", op.Node)
+	res := st.FindResource(address.Resource("sysbox_node", op.Node))
 	if res == nil {
-		res = st.FindResource("sysbox_router", op.Node)
+		res = st.FindResource(address.Resource("sysbox_router", op.Node))
 	}
 	if res == nil {
 		return fmt.Errorf("node %q not found", op.Node)
@@ -95,12 +96,12 @@ func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOpera
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
-	if r := st.FindResource(op.Type, op.Name); r != nil {
+	addr := address.Resource(op.Type, op.Name)
+	if r := st.FindResource(addr); r != nil {
 		return fmt.Errorf("resource %s.%s already in state", op.Type, op.Name)
 	}
 	st.AddResource(state.Resource{
-		Type:     op.Type,
-		Name:     op.Name,
+		Address:  addr,
 		Provider: op.Substrate,
 		Instance: substrate.HandleToInstance(handle, sub),
 	})

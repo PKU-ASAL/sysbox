@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"github.com/oslab/sysbox/pkg/address"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,8 +29,7 @@ func TestEvaluateTopologyHealthKernelFile(t *testing.T) {
 	st := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_kernel",
-			Name:     "linux",
+			Address:  address.Resource("sysbox_kernel", "linux"),
 			Provider: "artifact",
 			Instance: map[string]any{"path": kernel},
 		}},
@@ -46,8 +46,7 @@ func TestEvaluateTopologyHealthMissingKernelDrifts(t *testing.T) {
 	st := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_kernel",
-			Name:     "linux",
+			Address:  address.Resource("sysbox_kernel", "linux"),
 			Provider: "artifact",
 			Instance: map[string]any{"path": filepath.Join(t.TempDir(), "missing")},
 		}},
@@ -63,8 +62,7 @@ func TestEvaluateTopologyHealthMissingKernelDrifts(t *testing.T) {
 
 func TestEvaluateResourceHealthUsesProviderRead(t *testing.T) {
 	res := &state.Resource{
-		Type:     "sysbox_kernel",
-		Name:     "linux",
+		Address:  address.Resource("sysbox_kernel", "linux"),
 		Provider: "artifact",
 		Instance: map[string]any{"path": ""},
 	}
@@ -78,8 +76,7 @@ func TestEvaluateResourceHealthUsesProviderRead(t *testing.T) {
 
 func TestEvaluateResourceHealthUnsupportedResourceIsHealthyUnknownProbe(t *testing.T) {
 	res := &state.Resource{
-		Type:     "sysbox_image",
-		Name:     "alpine",
+		Address:  address.Resource("sysbox_image", "alpine"),
 		Provider: "docker",
 		Instance: map[string]any{"repository": "alpine:latest"},
 	}

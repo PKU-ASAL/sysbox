@@ -12,6 +12,7 @@ import (
 	dockernet "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	netprovider "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
@@ -109,8 +110,7 @@ func checkpointResourceType(step OperationStep) string {
 
 func StateResourceFromLog(rec StateResourceLog) state.Resource {
 	return state.Resource{
-		Type:     rec.Type,
-		Name:     rec.Name,
+		Address:  address.Resource(rec.Type, rec.Name),
 		Provider: rec.Provider,
 		Instance: cloneInstance(rec.Instance),
 	}
@@ -136,7 +136,7 @@ func recoverStateResourceFromCheckpoint(st *state.State, step OperationStep) Che
 		action.Status = "missing_state_resource"
 		return action
 	}
-	if existing := st.FindResource(rec.Type, rec.Name); existing != nil {
+	if existing := st.FindResource(address.Resource(rec.Type, rec.Name)); existing != nil {
 		action.Status = "already_in_state"
 		return action
 	}
@@ -152,7 +152,7 @@ func (NetworkResourceProvider) RecoverCheckpointResource(ctx context.Context, st
 		action.Status = "missing_state_resource"
 		return action, nil
 	}
-	if existing := st.FindResource(rec.Type, rec.Name); existing != nil {
+	if existing := st.FindResource(address.Resource(rec.Type, rec.Name)); existing != nil {
 		action.Status = "already_in_state"
 		return action, nil
 	}
@@ -262,7 +262,7 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 	if rec == nil {
 		return recoverDockerNodeLikeByLabels(ctx, st, step)
 	}
-	if existing := st.FindResource(rec.Type, rec.Name); existing != nil {
+	if existing := st.FindResource(address.Resource(rec.Type, rec.Name)); existing != nil {
 		action.Status = "already_in_state"
 		return action, nil
 	}
@@ -380,7 +380,7 @@ func recoverDockerManagedNetwork(ctx context.Context, st *state.State, step Oper
 		action.Status = "missing_state_resource"
 		return action, nil
 	}
-	if existing := st.FindResource(rec.Type, rec.Name); existing != nil {
+	if existing := st.FindResource(address.Resource(rec.Type, rec.Name)); existing != nil {
 		action.Status = "already_in_state"
 		return action, nil
 	}
@@ -406,7 +406,7 @@ func recoverDockerNodeLike(ctx context.Context, st *state.State, step OperationS
 	if rec == nil {
 		return recoverDockerNodeLikeByLabels(ctx, st, step)
 	}
-	if existing := st.FindResource(rec.Type, rec.Name); existing != nil {
+	if existing := st.FindResource(address.Resource(rec.Type, rec.Name)); existing != nil {
 		action.Status = "already_in_state"
 		return action, nil
 	}

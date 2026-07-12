@@ -32,8 +32,7 @@ resource "sysbox_kernel" "linux" {
 	require.NoError(t, state.NewManager(statePath).Save(&state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_kernel",
-			Name:     "linux",
+			Address:  address.Resource("sysbox_kernel", "linux"),
 			Provider: "artifact",
 			Instance: map[string]any{"path": filepath.Join(dir, "missing")},
 		}},
@@ -153,7 +152,7 @@ func TestObserveLocalBridgeReportsStateHealth(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
 	mgr := state.NewManager(statePath)
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{
-		{Type: "sysbox_image", Name: "alpine", Provider: "docker", Instance: map[string]any{"repository": "alpine:latest"}},
+		{Address: address.Resource("sysbox_image", "alpine"), Provider: "docker", Instance: map[string]any{"repository": "alpine:latest"}},
 	}}
 	require.NoError(t, mgr.Save(st))
 
@@ -168,15 +167,15 @@ func TestObserveLocalBridgeReportsStateHealth(t *testing.T) {
 func TestLocalBridgeBuildDestroyPlanHonorsPreventDestroy(t *testing.T) {
 	bridge := NewLocalBridge(LocalOptions{})
 	st := &state.State{Resources: []state.Resource{
-		{Type: "sysbox_node", Name: "web", Instance: map[string]any{}},
-		{Type: "sysbox_node", Name: "db", Instance: map[string]any{"lifecycle_prevent_destroy": true}},
+		{Address: address.Resource("sysbox_node", "web"), Instance: map[string]any{}},
+		{Address: address.Resource("sysbox_node", "db"), Instance: map[string]any{"lifecycle_prevent_destroy": true}},
 	}}
 
 	plan, err := bridge.BuildDestroyPlan(st)
 	require.NoError(t, err)
 	require.Len(t, plan.Destroy, 1)
-	require.Equal(t, "web", plan.Destroy[0].Name)
+	require.Equal(t, "web", plan.Destroy[0].Address.Name)
 	require.Len(t, plan.Protected, 1)
-	require.Equal(t, "db", plan.Protected[0].Name)
+	require.Equal(t, "db", plan.Protected[0].Address.Name)
 	require.Len(t, plan.Actions, 2)
 }

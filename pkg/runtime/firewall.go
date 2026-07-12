@@ -47,10 +47,10 @@ func (FirewallResourceProvider) Delete(_ context.Context, pc *ProviderContext, c
 	nsName := current.Str("netns")
 	if nsName != "" {
 		if err := network.DeleteFirewall(nsName); err != nil {
-			pc.Logf("[destroy] warning: delete firewall %s: %v\n", current.Name, err)
+			pc.Logf("[destroy] warning: delete firewall %s: %v\n", current.Address, err)
 		}
 	}
-	pc.State().RemoveResource(current.Type, current.Name)
+	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
@@ -80,7 +80,7 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	if netName == "" {
 		return state.Resource{}, fmt.Errorf("firewall %s: attach_to is empty", n.Address.Name)
 	}
-	netState := e.state.FindResource("sysbox_network", netName)
+	netState := e.state.FindResource(address.Resource("sysbox_network", netName))
 	if netState == nil {
 		return state.Resource{}, fmt.Errorf("firewall %s: network %s not applied yet", n.Address.Name, netName)
 	}
@@ -110,8 +110,7 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Type:     "sysbox_firewall",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: "network",
 		Instance: inst,
 	}, nil

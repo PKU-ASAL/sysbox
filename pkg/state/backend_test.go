@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"github.com/oslab/sysbox/pkg/address"
 	"testing"
 )
 
@@ -122,7 +123,7 @@ func TestLocalBackend_SaveLoad(t *testing.T) {
 	b := &LocalBackend{Path: path}
 
 	s := &State{Version: SchemaVersion, Resources: []Resource{
-		{Type: "sysbox_node", Name: "test", Provider: "docker"},
+		{Address: address.Resource("sysbox_node", "test"), Provider: "docker"},
 	}}
 	data, err := s.Marshal()
 	if err != nil {
@@ -153,7 +154,7 @@ func TestLocalBackend_MetadataAndSnapshot(t *testing.T) {
 	b := &LocalBackend{Path: path}
 	ctx := context.Background()
 
-	s := &State{Version: SchemaVersion, Resources: []Resource{{Type: "sysbox_network", Name: "dmz"}}}
+	s := &State{Version: SchemaVersion, Resources: []Resource{{Address: address.Resource("sysbox_network", "dmz")}}}
 	data, err := s.Marshal()
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

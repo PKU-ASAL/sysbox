@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"github.com/oslab/sysbox/pkg/address"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,8 +16,7 @@ func TestStateRoundTrip(t *testing.T) {
 		RunID:   "test-run-01",
 		Resources: []Resource{
 			{
-				Type:     "sysbox_node",
-				Name:     "web",
+				Address:  address.Resource("sysbox_node", "web"),
 				Provider: "docker",
 				Instance: map[string]any{
 					"id":      "container-abc123",
@@ -34,7 +34,7 @@ func TestStateRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, original.RunID, decoded.RunID)
 	require.Len(t, decoded.Resources, 1)
-	require.Equal(t, "web", decoded.Resources[0].Name)
+	require.Equal(t, "web", decoded.Resources[0].Address.Name)
 }
 
 func TestUnmarshalRejectsV1(t *testing.T) {
@@ -51,28 +51,28 @@ func TestUnmarshalRejectsV1(t *testing.T) {
 func TestStateFindResource(t *testing.T) {
 	s := &State{
 		Resources: []Resource{
-			{Type: "sysbox_node", Name: "web"},
-			{Type: "sysbox_node", Name: "db"},
+			{Address: address.Resource("sysbox_node", "web")},
+			{Address: address.Resource("sysbox_node", "db")},
 		},
 	}
 
-	r := s.FindResource("sysbox_node", "web")
+	r := s.FindResource(address.Resource("sysbox_node", "web"))
 	require.NotNil(t, r)
-	require.Equal(t, "web", r.Name)
+	require.Equal(t, "web", r.Address.Name)
 
-	require.Nil(t, s.FindResource("sysbox_node", "notfound"))
+	require.Nil(t, s.FindResource(address.Resource("sysbox_node", "notfound")))
 }
 
 func TestStateRemoveResource(t *testing.T) {
 	s := &State{
 		Resources: []Resource{
-			{Type: "sysbox_node", Name: "web"},
-			{Type: "sysbox_node", Name: "db"},
+			{Address: address.Resource("sysbox_node", "web")},
+			{Address: address.Resource("sysbox_node", "db")},
 		},
 	}
-	s.RemoveResource("sysbox_node", "web")
+	s.RemoveResource(address.Resource("sysbox_node", "web"))
 	require.Len(t, s.Resources, 1)
-	require.Equal(t, "db", s.Resources[0].Name)
+	require.Equal(t, "db", s.Resources[0].Address.Name)
 }
 
 func TestManagerSaveLoad(t *testing.T) {
@@ -82,7 +82,7 @@ func TestManagerSaveLoad(t *testing.T) {
 	mgr := NewManager(path)
 
 	s := &State{Version: SchemaVersion, RunID: "r1", Resources: []Resource{
-		{Type: "sysbox_node", Name: "web", Provider: "docker", Instance: map[string]any{"id": "abc"}},
+		{Address: address.Resource("sysbox_node", "web"), Provider: "docker", Instance: map[string]any{"id": "abc"}},
 	}}
 
 	require.NoError(t, mgr.Save(s))
@@ -116,7 +116,7 @@ func TestManagerLoadMissingReturnsEmpty(t *testing.T) {
 func TestManagerVersionedBackendUsesCAS(t *testing.T) {
 	backend := &recordingVersionedBackend{
 		loaded: &LoadedState{
-			Data:      []byte(`{"version":2,"run_id":"r1","resources":[]}`),
+			Data:      []byte(`{"version":3,"run_id":"r1","resources":[]}`),
 			Metadata:  Metadata{Backend: "test", Serial: 7},
 			Exists:    true,
 			Serial:    7,

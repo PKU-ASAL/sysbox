@@ -48,7 +48,7 @@ func (p SSHAccessResourceProvider) Update(ctx context.Context, pc *ProviderConte
 }
 
 func (SSHAccessResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
-	pc.State().RemoveResource(current.Type, current.Name)
+	pc.State().RemoveResource(current.Address)
 	return nil
 }
 
@@ -78,7 +78,7 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 	}
 
 	nodeName := config.ResolveName(cfg.Node)
-	nodeState := e.state.FindResource("sysbox_node", nodeName)
+	nodeState := e.state.FindResource(address.Resource("sysbox_node", nodeName))
 	if nodeState == nil {
 		return state.Resource{}, fmt.Errorf("node %s not applied yet", nodeName)
 	}
@@ -117,8 +117,7 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Type:     "sysbox_ssh_access",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: subName,
 		Instance: inst,
 	}, nil

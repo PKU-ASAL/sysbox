@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/oslab/sysbox/pkg/address"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,8 +27,7 @@ func TestListResources(t *testing.T) {
 	writeState(t, runs, "mixed", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_kernel",
-			Name:     "linux",
+			Address:  address.Resource("sysbox_kernel", "linux"),
 			Provider: "artifact",
 			Instance: map[string]any{"path": kernel},
 		}},
@@ -54,8 +54,7 @@ func TestListResourcesUsesLatestAgentProjectionAsAuthoritative(t *testing.T) {
 	writeState(t, runs, "mixed", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "test_resource",
-			Name:     "web",
+			Address:  address.Resource("test_resource", "web"),
 			Provider: "test",
 			Instance: map[string]any{},
 		}},
@@ -99,8 +98,7 @@ func TestGetResourceHealth(t *testing.T) {
 	writeState(t, runs, "mixed", &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_kernel",
-			Name:     "linux",
+			Address:  address.Resource("sysbox_kernel", "linux"),
 			Provider: "artifact",
 			Instance: map[string]any{"path": kernel},
 		}},

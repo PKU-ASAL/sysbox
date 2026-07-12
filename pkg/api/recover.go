@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -39,7 +40,7 @@ func recoverCheckpoint(ctx context.Context, store apiStore, topology, runID stri
 		if !recoverCandidate(step) {
 			continue
 		}
-		if patchRecovered && step.StateResource != nil && st.FindResource(step.StateResource.Type, step.StateResource.Name) != nil {
+		if patchRecovered && step.StateResource != nil && st.FindResource(address.Resource(step.StateResource.Type, step.StateResource.Name)) != nil {
 			continue
 		}
 		result, ok := runtime.RecoverCheckpointResource(ctx, st, step)

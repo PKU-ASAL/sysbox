@@ -100,8 +100,7 @@ func (ImageResourceProvider) Create(ctx context.Context, pc *ProviderContext, n 
 		return state.Resource{}, err
 	}
 	return state.Resource{
-		Type:     "sysbox_image",
-		Name:     n.Address.Name,
+		Address:  n.Address,
 		Provider: subName,
 		Instance: inst,
 	}, nil
@@ -112,7 +111,7 @@ func (p ImageResourceProvider) Update(ctx context.Context, pc *ProviderContext, 
 }
 
 func (ImageResourceProvider) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
-	pc.State().RemoveResource(current.Type, current.Name)
+	pc.State().RemoveResource(current.Address)
 	return nil
 }
 

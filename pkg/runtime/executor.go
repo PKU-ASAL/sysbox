@@ -86,18 +86,18 @@ func (e *Executor) setCurrentResourceStep(step int) func() {
 }
 
 func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.Address, action controlplane.PlanActionType) {
-	r := e.state.FindResource(id.Type, id.Name)
+	r := e.state.FindResource(id)
 	if r == nil {
 		return
 	}
 	externalID := r.Str("id")
-	if p, ok := GetResourceProvider(r.Type); ok {
+	if p, ok := GetResourceProvider(r.Address.Type); ok {
 		externalID = p.ExternalID(*r)
 	}
 	e.recorder.StepExternal(step, r.Provider, externalID, ManagedLabels(e.topology, e.runID, id))
 	log := StateResourceLog{
-		Type:     r.Type,
-		Name:     r.Name,
+		Type:     r.Address.Type,
+		Name:     r.Address.Name,
 		Provider: r.Provider,
 		Instance: r.Instance,
 	}
@@ -121,8 +121,8 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 
 func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action controlplane.PlanActionType) {
 	log := StateResourceLog{
-		Type:     r.Type,
-		Name:     r.Name,
+		Type:     r.Address.Type,
+		Name:     r.Address.Name,
 		Provider: r.Provider,
 		Instance: r.Instance,
 	}
@@ -130,13 +130,13 @@ func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Reso
 	if e.patchSink != nil {
 		patch := StatePatch{
 			Index:    step,
-			Resource: r.Type + "." + r.Name,
+			Resource: r.Address.String(),
 			Action:   action,
 			Op:       StatePatchDelete,
 			State:    &log,
 		}
 		if err := e.patchSink.ApplyStatePatch(ctx, patch); err != nil {
-			e.logf("[state] warning: persist delete patch for %s.%s: %v\n", r.Type, r.Name, err)
+			e.logf("[state] warning: persist delete patch for %s: %v\n", r.Address, err)
 		} else {
 			e.recorder.StepStateRecorded(step)
 		}
@@ -169,12 +169,12 @@ func (e *Executor) CreateResource(ctx context.Context, id address.Address) error
 
 // DestroyResource tears down a resource listed in state.
 func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error {
-	if p, ok := GetResourceProvider(r.Type); ok {
+	if p, ok := GetResourceProvider(r.Address.Type); ok {
 		return p.Delete(ctx, &ProviderContext{exec: e}, r)
 	}
 
-	e.logf("[destroy] skipping unimplemented resource type %q (%s)\n", r.Type, r.Name)
-	e.state.RemoveResource(r.Type, r.Name)
+	e.logf("[destroy] skipping unimplemented resource %s\n", r.Address)
+	e.state.RemoveResource(r.Address)
 	return nil
 }
 
@@ -195,7 +195,7 @@ func resolveSubstrateRef(ref string) (string, error) {
 type stateAdapter struct{ st *state.State }
 
 func (a stateAdapter) ResourceInstance(typ, name string) map[string]any {
-	r := a.st.FindResource(typ, name)
+	r := a.st.FindResource(address.Resource(typ, name))
 	if r == nil {
 		return nil
 	}

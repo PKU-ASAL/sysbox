@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/oslab/sysbox/pkg/address"
 )
 
 var stateCmd = &cobra.Command{
@@ -67,7 +69,7 @@ func runStateList(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, r := range s.Resources {
-		fmt.Printf("%s.%s [provider=%s]\n", r.Type, r.Name, r.Provider)
+		fmt.Printf("%s [provider=%s]\n", r.Address, r.Provider)
 	}
 	return nil
 }
@@ -92,16 +94,17 @@ func runStateMv(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	r := s.FindResource(fromType, fromName)
+	fromAddr := address.Resource(fromType, fromName)
+	toAddr := address.Resource(toType, toName)
+	r := s.FindResource(fromAddr)
 	if r == nil {
 		return fmt.Errorf("resource %s not found in state", from)
 	}
 
 	// Update in-place.
 	for i := range s.Resources {
-		if s.Resources[i].Type == fromType && s.Resources[i].Name == fromName {
-			s.Resources[i].Type = toType
-			s.Resources[i].Name = toName
+		if s.Resources[i].Address.Equal(fromAddr) {
+			s.Resources[i].Address = toAddr
 			break
 		}
 	}
@@ -128,11 +131,12 @@ func runStateRm(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if s.FindResource(typ, name) == nil {
+	addr := address.Resource(typ, name)
+	if s.FindResource(addr) == nil {
 		return fmt.Errorf("resource %s.%s not found in state", typ, name)
 	}
 
-	s.RemoveResource(typ, name)
+	s.RemoveResource(addr)
 
 	if err := mgr.Save(s); err != nil {
 		return err
@@ -156,7 +160,7 @@ func runStateShow2(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	r := s.FindResource(typ, name)
+	r := s.FindResource(address.Resource(typ, name))
 	if r == nil {
 		return fmt.Errorf("resource %s.%s not found in state", typ, name)
 	}

@@ -55,7 +55,7 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		BeforeDestroy: func(plan *runtime.Plan) error {
 			if len(plan.Protected) > 0 {
 				for _, r := range plan.Protected {
-					fmt.Printf("  ! %s.%s  (lifecycle.prevent_destroy = true — skipped)\n", r.Type, r.Name)
+					fmt.Printf("  ! %s  (lifecycle.prevent_destroy = true — skipped)\n", r.Address)
 				}
 			}
 			fmt.Printf("Will destroy %d resource(s).\n", len(plan.Destroy))

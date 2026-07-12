@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -21,7 +22,7 @@ import (
 //
 //	v1 – sysbox v0.x (pre-multi-substrate cleanup)
 //	v2 – sysbox v1.0 (typed NodeHandle, ProviderExtra blob)
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 type State struct {
 	mu        sync.RWMutex `json:"-"`
@@ -39,12 +40,11 @@ type StateMeta struct {
 }
 
 type Resource struct {
-	Type      string         `json:"type"`
-	Name      string         `json:"name"`
-	Provider  string         `json:"provider"`
-	Instance  map[string]any `json:"instance"`
-	CreatedAt string         `json:"created_at,omitempty"`
-	UpdatedAt string         `json:"updated_at,omitempty"`
+	Address   address.Address `json:"address"`
+	Provider  string          `json:"provider"`
+	Instance  map[string]any  `json:"instance"`
+	CreatedAt string          `json:"created_at,omitempty"`
+	UpdatedAt string          `json:"updated_at,omitempty"`
 }
 
 // Int returns the value at key as an int. JSON round-trip stores numbers as
@@ -122,7 +122,7 @@ func (r *Resource) ReconstructHandle(sub substrate.Substrate) (substrate.NodeHan
 	if blob := r.ProviderExtra(); blob != "" {
 		ps, err := sub.UnmarshalProviderState([]byte(blob))
 		if err != nil {
-			return handle, fmt.Errorf("resource %s.%s: corrupt provider state: %w", r.Type, r.Name, err)
+			return handle, fmt.Errorf("resource %s: corrupt provider state: %w", r.Address, err)
 		}
 		handle.Provider = ps
 	}
@@ -174,9 +174,8 @@ func migratePrimaryIP(r *Resource) {
 	}
 }
 
-// IncompatibleVersionError is returned by Unmarshal when the on-disk state
-// version does not match the binary's SchemaVersion. v1.0 deliberately does
-// not auto-migrate v1 state files; users must clear .sysbox/runs/ and re-apply.
+// IncompatibleVersionError is returned when state belongs to another breaking
+// schema generation. Sysbox never mutates incompatible state implicitly.
 type IncompatibleVersionError struct {
 	Found    int
 	Expected int
@@ -185,17 +184,16 @@ type IncompatibleVersionError struct {
 func (e *IncompatibleVersionError) Error() string {
 	return fmt.Sprintf(
 		"state schema v%d is incompatible with sysbox binary (expects v%d). "+
-			"sysbox v1.0 deliberately dropped v1 state migration; "+
-			"please clear .sysbox/runs/ (rm -rf .sysbox/runs/) and re-apply.",
+			"destroy the lab with the binary that created this state before upgrading",
 		e.Found, e.Expected,
 	)
 }
 
-func (s *State) FindResource(typ, name string) *Resource {
+func (s *State) FindResource(addr address.Address) *Resource {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for i := range s.Resources {
-		if s.Resources[i].Type == typ && s.Resources[i].Name == name {
+		if s.Resources[i].Address.Equal(addr) {
 			return &s.Resources[i]
 		}
 	}
@@ -205,6 +203,7 @@ func (s *State) FindResource(typ, name string) *Resource {
 func (s *State) AddResource(r Resource) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	r.Address = r.Address.Clone()
 	if r.CreatedAt == "" {
 		r.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -212,12 +211,12 @@ func (s *State) AddResource(r Resource) {
 	s.Resources = append(s.Resources, r)
 }
 
-func (s *State) RemoveResource(typ, name string) {
+func (s *State) RemoveResource(addr address.Address) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	filtered := make([]Resource, 0, len(s.Resources))
 	for _, r := range s.Resources {
-		if r.Type == typ && r.Name == name {
+		if r.Address.Equal(addr) {
 			continue
 		}
 		filtered = append(filtered, r)

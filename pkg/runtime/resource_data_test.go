@@ -25,7 +25,7 @@ func TestDataResourceProvidersRegistered(t *testing.T) {
 
 func TestDataResourceProviderPlanDiffReads(t *testing.T) {
 	n := &graph.Node{
-		Address: address.Address{Type: "data_sysbox_image", Name: "alpine"},
+		Address: address.Resource("data_sysbox_image", "alpine"),
 		Data:    &config.DataImageConfig{Substrate: "docker", DockerRef: "alpine:latest"},
 	}
 	p := DataImageResourceProvider{}
@@ -37,7 +37,7 @@ func TestDataResourceProviderPlanDiffReads(t *testing.T) {
 
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Type: "data_sysbox_image", Name: "alpine", Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("data_sysbox_image", "alpine"), Provider: "docker", Instance: inst}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionNoop, action.Action)
@@ -58,17 +58,17 @@ func TestComputePlanSchedulesDataSourcesAsRead(t *testing.T) {
 
 	plan, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
 	require.NoError(t, err)
-	require.Equal(t, []address.Address{{Type: "data_sysbox_image", Name: "alpine"}}, plan.Add)
+	require.Equal(t, []address.Address{address.Resource("data_sysbox_image", "alpine")}, plan.Add)
 	require.Len(t, plan.Actions, 1)
 	require.Equal(t, controlplane.PlanActionRead, plan.Actions[0].Action)
 	require.True(t, plan.HasChanges())
 }
 
 func TestDataResourceProviderDeleteRemovesState(t *testing.T) {
-	res := state.Resource{Type: "data_sysbox_node", Name: "existing", Instance: map[string]any{"data_read": true}}
+	res := state.Resource{Address: address.Resource("data_sysbox_node", "existing"), Instance: map[string]any{"data_read": true}}
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{res}}
 	exec := NewExecutor(graph.New(), st)
 
 	require.NoError(t, DataNodeResourceProvider{}.Delete(context.Background(), &ProviderContext{exec: exec}, res))
-	require.Nil(t, st.FindResource("data_sysbox_node", "existing"))
+	require.Nil(t, st.FindResource(address.Resource("data_sysbox_node", "existing")))
 }

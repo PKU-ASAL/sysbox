@@ -24,7 +24,7 @@ func TestNodeResourceProviderRegistered(t *testing.T) {
 
 func TestNodeResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_node", Name: "web"},
+		Address: address.Resource("sysbox_node", "web"),
 		Data: &config.NodeConfig{
 			Image:     "sysbox_image.alpine.id",
 			Substrate: "docker",
@@ -33,7 +33,7 @@ func TestNodeResourceProviderPlanDiff(t *testing.T) {
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Type: "sysbox_node", Name: "web", Provider: "docker", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_node", "web"), Provider: "docker", Instance: inst}
 	p := NodeResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)
@@ -54,8 +54,7 @@ func TestNodeResourceProviderPlanDiff(t *testing.T) {
 func TestNodeResourceProviderDeleteMissingSubstrateReturnsError(t *testing.T) {
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	res := state.Resource{
-		Type:     "sysbox_node",
-		Name:     "web",
+		Address:  address.Resource("sysbox_node", "web"),
 		Provider: "missing-node-provider",
 		Instance: map[string]any{"container_id": "node"},
 	}
@@ -114,8 +113,7 @@ func TestNodeResourceProviderPortsArePassedAndResolved(t *testing.T) {
 	substrate.Register(sub)
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	exec.state.AddResource(state.Resource{
-		Type:     "sysbox_image",
-		Name:     "nginx",
+		Address:  address.Resource("sysbox_image", "nginx"),
 		Provider: "port-test",
 		Instance: map[string]any{
 			"image_id":   "image-id",
@@ -123,7 +121,7 @@ func TestNodeResourceProviderPortsArePassedAndResolved(t *testing.T) {
 		},
 	})
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_node", Name: "web"},
+		Address: address.Resource("sysbox_node", "web"),
 		Data: &config.NodeConfig{
 			Image:     "sysbox_image.nginx.id",
 			Substrate: "port-test",
@@ -153,8 +151,7 @@ func TestNodeResourceProviderRejectsUnsupportedPortExposure(t *testing.T) {
 	substrate.Register(sub)
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 	exec.state.AddResource(state.Resource{
-		Type:     "sysbox_image",
-		Name:     "nginx",
+		Address:  address.Resource("sysbox_image", "nginx"),
 		Provider: "port-direct-only",
 		Instance: map[string]any{
 			"image_id":   "image-id",
@@ -162,7 +159,7 @@ func TestNodeResourceProviderRejectsUnsupportedPortExposure(t *testing.T) {
 		},
 	})
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_node", Name: "web"},
+		Address: address.Resource("sysbox_node", "web"),
 		Data: &config.NodeConfig{
 			Image:     "sysbox_image.nginx.id",
 			Substrate: "port-direct-only",

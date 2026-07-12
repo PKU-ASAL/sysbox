@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -368,21 +368,22 @@ func ApplyStatePatch(st *state.State, patch StatePatch) bool {
 			return false
 		}
 		rec := patch.State
-		if existing := st.FindResource(rec.Type, rec.Name); existing != nil {
-			st.RemoveResource(rec.Type, rec.Name)
+		addr := address.Resource(rec.Type, rec.Name)
+		if existing := st.FindResource(addr); existing != nil {
+			st.RemoveResource(addr)
 		}
 		AdoptStateResource(st, *rec, "")
 		return true
 	case StatePatchDelete:
 		if patch.State != nil {
-			st.RemoveResource(patch.State.Type, patch.State.Name)
+			st.RemoveResource(address.Resource(patch.State.Type, patch.State.Name))
 			return true
 		}
-		typ, name, ok := splitResourceAddr(patch.Resource)
-		if !ok {
+		addr, err := address.Parse(patch.Resource)
+		if err != nil {
 			return false
 		}
-		st.RemoveResource(typ, name)
+		st.RemoveResource(addr)
 		return true
 	default:
 		return false

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/oslab/sysbox/pkg/address"
 	"path/filepath"
 	"testing"
 
@@ -50,8 +51,7 @@ func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 			Action:   controlplane.PlanActionCreate,
 			Op:       runtime.StatePatchUpsert,
 			State: &runtime.StateResourceLog{
-				Type:     "sysbox_node",
-				Name:     "web",
+				Type: "sysbox_node", Name: "web",
 				Provider: "docker",
 				Instance: map[string]any{"container_id": "abc"},
 			},
@@ -67,7 +67,7 @@ func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 
 	st, err := mgr.Load()
 	require.NoError(t, err)
-	res := st.FindResource("sysbox_node", "web")
+	res := st.FindResource(address.Resource("sysbox_node", "web"))
 	require.NotNil(t, res)
 	require.Equal(t, "abc", res.ContainerID())
 
@@ -79,8 +79,7 @@ func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 func TestAdoptFirecrackerStateResourceKeepsProviderExtra(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion}
 	runtime.AdoptStateResource(st, runtime.StateResourceLog{
-		Type:     "sysbox_node",
-		Name:     "vm",
+		Type: "sysbox_node", Name: "vm",
 		Provider: "firecracker",
 		Instance: map[string]any{
 			"container_id":    "sysbox-vm",
@@ -89,7 +88,7 @@ func TestAdoptFirecrackerStateResourceKeepsProviderExtra(t *testing.T) {
 		},
 	}, "")
 
-	res := st.FindResource("sysbox_node", "vm")
+	res := st.FindResource(address.Resource("sysbox_node", "vm"))
 	require.NotNil(t, res)
 	require.Equal(t, "sysbox-vm", res.ContainerID())
 	require.Equal(t, `{"vm_dir":"/tmp/sysbox-vm"}`, res.ProviderExtra())

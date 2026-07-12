@@ -19,7 +19,7 @@ func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
 	restore := stubNetworkOps(t)
 	defer restore()
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_network", Name: "dmz"},
+		Address: address.Resource("sysbox_network", "dmz"),
 		Data: &config.NetworkConfig{
 			CIDR: "10.10.0.0/24",
 		},
@@ -29,8 +29,8 @@ func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
 
 	res, err := p.Create(context.Background(), &ProviderContext{exec: exec}, n)
 	require.NoError(t, err)
-	require.Equal(t, "sysbox_network", res.Type)
-	require.Equal(t, "dmz", res.Name)
+	require.Equal(t, "sysbox_network", res.Address.Type)
+	require.Equal(t, "dmz", res.Address.Name)
 	require.Equal(t, "network", res.Provider)
 	require.Equal(t, "sysbox-net-dmz", res.NetNS())
 	require.Equal(t, "br-dmz", res.Bridge())
@@ -39,17 +39,17 @@ func TestNetworkResourceProviderCreateAndDeleteIsolated(t *testing.T) {
 
 	exec.state.AddResource(res)
 	require.NoError(t, p.Delete(context.Background(), &ProviderContext{exec: exec}, res))
-	require.Nil(t, exec.state.FindResource("sysbox_network", "dmz"))
+	require.Nil(t, exec.state.FindResource(address.Resource("sysbox_network", "dmz")))
 }
 
 func TestNetworkResourceProviderPlanDiff(t *testing.T) {
 	n := &graph.Node{
-		Address: address.Address{Type: "sysbox_network", Name: "dmz"},
+		Address: address.Resource("sysbox_network", "dmz"),
 		Data:    &config.NetworkConfig{CIDR: "10.10.0.0/24"},
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Type: "sysbox_network", Name: "dmz", Provider: "network", Instance: inst}
+	current := &state.Resource{Address: address.Resource("sysbox_network", "dmz"), Provider: "network", Instance: inst}
 	p := NetworkResourceProvider{}
 
 	action, err := p.PlanDiff(n, current)

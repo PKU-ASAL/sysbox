@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"errors"
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"os"
 	"path/filepath"
@@ -114,11 +115,11 @@ func TestApplyStatePatchUpsertAndDelete(t *testing.T) {
 		},
 	}
 	require.True(t, ApplyStatePatch(st, patch))
-	require.Equal(t, "abc", st.FindResource("sysbox_node", "web").ContainerID())
+	require.Equal(t, "abc", st.FindResource(address.Resource("sysbox_node", "web")).ContainerID())
 
 	patch.State.Instance["container_id"] = "def"
 	require.True(t, ApplyStatePatch(st, patch))
-	require.Equal(t, "def", st.FindResource("sysbox_node", "web").ContainerID())
+	require.Equal(t, "def", st.FindResource(address.Resource("sysbox_node", "web")).ContainerID())
 	require.Len(t, st.Resources, 1)
 
 	require.True(t, ApplyStatePatch(st, StatePatch{
@@ -126,5 +127,5 @@ func TestApplyStatePatchUpsertAndDelete(t *testing.T) {
 		Action:   controlplane.PlanActionDelete,
 		Op:       StatePatchDelete,
 	}))
-	require.Nil(t, st.FindResource("sysbox_node", "web"))
+	require.Nil(t, st.FindResource(address.Resource("sysbox_node", "web")))
 }

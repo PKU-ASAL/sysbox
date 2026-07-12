@@ -60,7 +60,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 			if !changeSet[id.String()] {
 				continue
 			}
-			r := e.state.FindResource(id.Type, id.Name)
+			r := e.state.FindResource(id)
 			if r != nil {
 				e.logf("[apply] removing drifted %s before re-create\n", id)
 				step := e.recorder.StepStart(id.String(), controlplane.PlanActionDelete)

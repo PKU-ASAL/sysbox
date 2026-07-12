@@ -17,7 +17,7 @@ import (
 func TestPlanAddsNewResources(t *testing.T) {
 	g := graph.New()
 	require.NoError(t, g.AddNode(address.Resource("sysbox_network", "dmz"), nil))
-	require.NoError(t, g.AddNode(address.Resource("sysbox_node", "web"), []address.Address{{Type: "sysbox_network", Name: "dmz"}}))
+	require.NoError(t, g.AddNode(address.Resource("sysbox_node", "web"), []address.Address{address.Resource("sysbox_network", "dmz")}))
 
 	s := &state.State{Version: state.SchemaVersion}
 
@@ -30,29 +30,29 @@ func TestPlanAddsNewResources(t *testing.T) {
 func TestRefreshCascadesChangedDependents(t *testing.T) {
 	g := graph.New()
 	require.NoError(t, g.AddNode(address.Resource("sysbox_network", "dmz"), nil))
-	require.NoError(t, g.AddNode(address.Resource("sysbox_node", "web"), []address.Address{{Type: "sysbox_network", Name: "dmz"}}))
-	require.NoError(t, g.AddNode(address.Resource("sysbox_actor", "agent"), []address.Address{{Type: "sysbox_node", Name: "web"}}))
+	require.NoError(t, g.AddNode(address.Resource("sysbox_node", "web"), []address.Address{address.Resource("sysbox_network", "dmz")}))
+	require.NoError(t, g.AddNode(address.Resource("sysbox_actor", "agent"), []address.Address{address.Resource("sysbox_node", "web")}))
 
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
-			{Type: "sysbox_network", Name: "dmz", Provider: "network", Instance: map[string]any{"netns": "missing-netns", "bridge": "br-dmz"}},
-			{Type: "sysbox_node", Name: "web", Provider: "docker", Instance: map[string]any{"container_id": "web"}},
-			{Type: "sysbox_actor", Name: "agent", Provider: "docker", Instance: map[string]any{}},
+			{Address: address.Resource("sysbox_network", "dmz"), Provider: "network", Instance: map[string]any{"netns": "missing-netns", "bridge": "br-dmz"}},
+			{Address: address.Resource("sysbox_node", "web"), Provider: "docker", Instance: map[string]any{"container_id": "web"}},
+			{Address: address.Resource("sysbox_actor", "agent"), Provider: "docker", Instance: map[string]any{}},
 		},
 	}
 	plan := &Plan{Unchanged: []address.Address{
-		{Type: "sysbox_network", Name: "dmz"},
-		{Type: "sysbox_node", Name: "web"},
-		{Type: "sysbox_actor", Name: "agent"},
+		address.Resource("sysbox_network", "dmz"),
+		address.Resource("sysbox_node", "web"),
+		address.Resource("sysbox_actor", "agent"),
 	}}
 
 	NewExecutor(g, s).Refresh(context.Background(), plan)
 
 	require.ElementsMatch(t, []address.Address{
-		{Type: "sysbox_network", Name: "dmz"},
-		{Type: "sysbox_node", Name: "web"},
-		{Type: "sysbox_actor", Name: "agent"},
+		address.Resource("sysbox_network", "dmz"),
+		address.Resource("sysbox_node", "web"),
+		address.Resource("sysbox_actor", "agent"),
 	}, plan.Change)
 	require.Empty(t, plan.Unchanged)
 }
@@ -63,14 +63,14 @@ func TestPlanDetectsDestroys(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
-			{Type: "sysbox_node", Name: "orphan", Provider: "docker"},
+			{Address: address.Resource("sysbox_node", "orphan"), Provider: "docker"},
 		},
 	}
 
 	plan, err := ComputePlan(g, s)
 	require.NoError(t, err)
 	require.Len(t, plan.Destroy, 1)
-	require.Equal(t, "orphan", plan.Destroy[0].Name)
+	require.Equal(t, "orphan", plan.Destroy[0].Address.Name)
 }
 
 func TestPlanPassesThroughUnchanged(t *testing.T) {
@@ -80,7 +80,7 @@ func TestPlanPassesThroughUnchanged(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
-			{Type: "sysbox_network", Name: "dmz", Provider: "network", Instance: map[string]any{"netns": "sysbox-net-dmz"}},
+			{Address: address.Resource("sysbox_network", "dmz"), Provider: "network", Instance: map[string]any{"netns": "sysbox-net-dmz"}},
 		},
 	}
 
@@ -106,8 +106,7 @@ func TestPlanDetectsDesiredHashChange(t *testing.T) {
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
 			{
-				Type:     "sysbox_network",
-				Name:     "dmz",
+				Address:  address.Resource("sysbox_network", "dmz"),
 				Provider: "network",
 				Instance: map[string]any{
 					"cidr":            "10.0.1.0/24",
@@ -123,7 +122,7 @@ func TestPlanDetectsDesiredHashChange(t *testing.T) {
 	require.Empty(t, plan.Add)
 	require.Empty(t, plan.Destroy)
 	require.Empty(t, plan.Unchanged)
-	require.Equal(t, []address.Address{{Type: "sysbox_network", Name: "dmz"}}, plan.Change)
+	require.Equal(t, []address.Address{address.Resource("sysbox_network", "dmz")}, plan.Change)
 	require.Len(t, plan.Actions, 1)
 	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
 	require.Equal(t, "10.0.1.0/24", plan.Actions[0].Changes["cidr"].Before)
@@ -145,8 +144,7 @@ func TestComputePlanUsesRegisteredProviderPlanDiff(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_actor",
-			Name:     "agent",
+			Address:  address.Resource("sysbox_actor", "agent"),
 			Provider: "docker",
 			Instance: map[string]any{
 				desiredHashKey:    oldHash,
@@ -157,7 +155,7 @@ func TestComputePlanUsesRegisteredProviderPlanDiff(t *testing.T) {
 
 	plan, err := ComputePlan(g, s)
 	require.NoError(t, err)
-	require.Equal(t, []address.Address{{Type: "sysbox_actor", Name: "agent"}}, plan.Change)
+	require.Equal(t, []address.Address{address.Resource("sysbox_actor", "agent")}, plan.Change)
 	require.Len(t, plan.Actions, 1)
 	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
 	require.Contains(t, plan.Actions[0].Changes, "command")
@@ -177,8 +175,7 @@ func TestPlanRedactsSensitiveDiffFields(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_node",
-			Name:     "web",
+			Address:  address.Resource("sysbox_node", "web"),
 			Provider: "docker",
 			Instance: map[string]any{
 				desiredHashKey:    oldHash,
@@ -209,8 +206,7 @@ func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{
 			{
-				Type:     "sysbox_network",
-				Name:     "dmz",
+				Address:  address.Resource("sysbox_network", "dmz"),
 				Provider: "network",
 				Instance: map[string]any{desiredHashKey: hash},
 			},
@@ -222,15 +218,14 @@ func TestPlanKeepsMatchingDesiredHashUnchanged(t *testing.T) {
 	require.Empty(t, plan.Add)
 	require.Empty(t, plan.Destroy)
 	require.Empty(t, plan.Change)
-	require.Equal(t, []address.Address{{Type: "sysbox_network", Name: "dmz"}}, plan.Unchanged)
+	require.Equal(t, []address.Address{address.Resource("sysbox_network", "dmz")}, plan.Unchanged)
 }
 
 func TestPlanHasChangesUsesActions(t *testing.T) {
 	p := &Plan{Actions: []controlplane.PlanAction{{
 		Resource: "sysbox_network.dmz",
-		Type:     "sysbox_network",
-		Name:     "dmz",
-		Action:   controlplane.PlanActionCreate,
+		Type:     "sysbox_network", Name: "dmz",
+		Action: controlplane.PlanActionCreate,
 	}}}
 
 	require.True(t, p.HasChanges())
@@ -238,7 +233,7 @@ func TestPlanHasChangesUsesActions(t *testing.T) {
 
 func TestPlanFromActionsRebuildsExecutableIndexes(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion}
-	st.AddResource(state.Resource{Type: "sysbox_node", Name: "old", Provider: "docker", Instance: map[string]any{}})
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_node", "old"), Provider: "docker", Instance: map[string]any{}})
 
 	p := PlanFromActions([]controlplane.PlanAction{
 		{Resource: "sysbox_network.dmz", Type: "sysbox_network", Name: "dmz", Action: controlplane.PlanActionCreate},
@@ -247,11 +242,11 @@ func TestPlanFromActionsRebuildsExecutableIndexes(t *testing.T) {
 		{Resource: "sysbox_kernel.linux", Type: "sysbox_kernel", Name: "linux", Action: controlplane.PlanActionNoop},
 	}, st)
 
-	require.Equal(t, []address.Address{{Type: "sysbox_network", Name: "dmz"}}, p.Add)
-	require.Equal(t, []address.Address{{Type: "sysbox_node", Name: "web"}}, p.Change)
+	require.Equal(t, []address.Address{address.Resource("sysbox_network", "dmz")}, p.Add)
+	require.Equal(t, []address.Address{address.Resource("sysbox_node", "web")}, p.Change)
 	require.Len(t, p.Destroy, 1)
-	require.Equal(t, "old", p.Destroy[0].Name)
-	require.Equal(t, []address.Address{{Type: "sysbox_kernel", Name: "linux"}}, p.Unchanged)
+	require.Equal(t, "old", p.Destroy[0].Address.Name)
+	require.Equal(t, []address.Address{address.Resource("sysbox_kernel", "linux")}, p.Unchanged)
 	require.True(t, p.HasChanges())
 }
 
@@ -261,26 +256,25 @@ func TestRefreshUsesProviderReadForDrift(t *testing.T) {
 	s := &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
-			Type:     "sysbox_kernel",
-			Name:     "linux",
+			Address:  address.Resource("sysbox_kernel", "linux"),
 			Provider: "artifact",
 			Instance: map[string]any{"path": "/tmp/sysbox-missing-kernel-for-refresh-test"},
 		}},
 	}
-	plan := &Plan{Unchanged: []address.Address{{Type: "sysbox_kernel", Name: "linux"}}}
+	plan := &Plan{Unchanged: []address.Address{address.Resource("sysbox_kernel", "linux")}}
 
 	NewExecutor(g, s).Refresh(context.Background(), plan)
 
 	require.Empty(t, plan.Unchanged)
-	require.Equal(t, []address.Address{{Type: "sysbox_kernel", Name: "linux"}}, plan.Change)
+	require.Equal(t, []address.Address{address.Resource("sysbox_kernel", "linux")}, plan.Change)
 	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
 	require.Equal(t, "runtime drift detected", plan.Actions[0].Reason)
 }
 
 func TestPlanSummary(t *testing.T) {
 	p := &Plan{
-		Add:       []address.Address{{Type: "x", Name: "y"}},
-		Destroy:   []state.Resource{{Type: "a", Name: "b"}},
+		Add:       []address.Address{address.Resource("x", "y")},
+		Destroy:   []state.Resource{{Address: address.Resource("a", "b")}},
 		Unchanged: nil,
 	}
 	require.True(t, p.HasChanges())
