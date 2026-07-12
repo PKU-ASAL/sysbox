@@ -8,9 +8,9 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
 )
 
@@ -100,10 +100,10 @@ func (e *Executor) observeResource(ctx context.Context, id address.Address) (Res
 func readNodeLikeResource(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
 	providerName := current.Driver
-	sub, err := substrate.Get(providerName)
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(providerName)
 	if err != nil {
 		result.Decision = controlplane.RecoveryDecisionUnknown
-		result.Reason = "substrate not registered"
+		result.Reason = "node driver unavailable"
 		result.Status = state.ResourceUnknown
 		return result, err
 	}
@@ -114,7 +114,17 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		result.Status = state.ResourceDrifted
 		return result, nil
 	}
-	obs, err := sub.ObserveNode(ctx, substrate.NodeHandle{ID: cid, Provider: providerState(sub, &current)})
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(providerName)
+	if err != nil {
+		result.Status = state.ResourceUnknown
+		return result, err
+	}
+	handle, err := current.ReconstructHandle(stateDriver)
+	if err != nil {
+		result.Status = state.ResourceUnknown
+		return result, err
+	}
+	obs, err := nodeDriver.ObserveNode(ctx, handle)
 	if err != nil {
 		result.Decision = controlplane.RecoveryDecisionUnknown
 		result.Reason = "observe node"
@@ -149,7 +159,7 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		result.Status = state.ResourceDrifted
 		return result, nil
 	}
-	if !nodeRoutesHealthy(ctx, sub, &current) {
+	if !nodeRoutesHealthy(ctx, nodeDriver, stateDriver, &current) {
 		checks["routes"] = controlplane.ResourceCheckHealth{OK: false, Reason: "route missing"}
 		result.Checks = checks
 		result.Decision = controlplane.RecoveryDecisionMarkDrift
@@ -161,14 +171,6 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		result.Checks = checks
 	}
 	return result, nil
-}
-
-func providerState(sub substrate.Substrate, r *state.Resource) any {
-	handle, err := r.ReconstructHandle(sub)
-	if err != nil {
-		return nil
-	}
-	return handle.Provider
 }
 
 func networkAttachmentsHealthy(r *state.Resource) bool {
@@ -193,16 +195,16 @@ func networkAttachmentsHealthy(r *state.Resource) bool {
 	return true
 }
 
-func nodeRoutesHealthy(ctx context.Context, sub substrate.Substrate, r *state.Resource) bool {
+func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver driver.NodeState, r *state.Resource) bool {
 	items, ok := r.AttributeMap()["routes"].([]any)
 	if !ok || len(items) == 0 {
 		return true
 	}
-	handle, err := r.ReconstructHandle(sub)
+	handle, err := r.ReconstructHandle(stateDriver)
 	if err != nil {
 		return false
 	}
-	conn, err := sub.Connection(handle, nil)
+	conn, err := nodeDriver.Connection(handle, nil)
 	if err != nil || conn == nil {
 		return false
 	}

@@ -398,20 +398,24 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 }
 
 func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) error {
-	sub, err := substrate.Get(r.Driver)
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(r.Driver)
 	if err != nil {
 		return err
 	}
-	handle, err := r.ReconstructHandle(sub)
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(r.Driver)
+	if err != nil {
+		return err
+	}
+	handle, err := r.ReconstructHandle(stateDriver)
 	if err != nil {
 		e.logf("[destroy] warning: reconstruct node %s: %v\n", r.Address, err)
 		handle = substrate.NodeHandle{ID: r.ContainerID()}
 	}
 	// Ignore stop/destroy errors: container may already be gone (drift recovery).
-	if err := sub.StopNode(ctx, handle); err != nil {
+	if err := nodeDriver.StopNode(ctx, handle); err != nil {
 		e.logf("[destroy] warning: stop node %s: %v\n", r.Address, err)
 	}
-	if err := sub.DestroyNode(ctx, handle); err != nil {
+	if err := nodeDriver.DestroyNode(ctx, handle); err != nil {
 		e.logf("[destroy] warning: destroy node %s: %v\n", r.Address, err)
 	}
 	// Always clean up veths/taps and state regardless of container presence.
@@ -516,14 +520,13 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 // that override it at create time (probed via substrate.ImageEntryStarter,
 // currently only docker).
 func (e *Executor) execImageEntry(ctx context.Context, handle substrate.NodeHandle, subName string) error {
-	sub, err := substrate.Get(subName)
-	if err != nil {
-		return err
-	}
-	starter, ok := sub.(substrate.ImageEntryStarter)
+	descriptor, ok := driver.DefaultRegistry.Get(subName)
 	if !ok {
+		return driver.Wrap(driver.ErrorNotFound, subName, "driver is not registered", nil)
+	}
+	if descriptor.ImageEntry == nil {
 		return nil // substrate runs the image entry natively
 	}
 	e.logf("[node] starting image entry on %s\n", handle.ID)
-	return starter.ExecImageEntry(ctx, handle)
+	return descriptor.ImageEntry.ExecImageEntry(ctx, handle)
 }

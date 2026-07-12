@@ -12,15 +12,16 @@ import (
 type Capability string
 
 const (
-	CapabilityNode      Capability = "node"
-	CapabilityNIC       Capability = "nic"
-	CapabilitySnapshot  Capability = "snapshot"
-	CapabilityConsole   Capability = "console"
-	CapabilityGuestExec Capability = "guest-exec"
-	CapabilityNetwork   Capability = "network"
-	CapabilityArtifact  Capability = "artifact"
-	CapabilityImport    Capability = "import"
-	CapabilityNodeState Capability = "node-state"
+	CapabilityNode       Capability = "node"
+	CapabilityNIC        Capability = "nic"
+	CapabilitySnapshot   Capability = "snapshot"
+	CapabilityConsole    Capability = "console"
+	CapabilityGuestExec  Capability = "guest-exec"
+	CapabilityNetwork    Capability = "network"
+	CapabilityArtifact   Capability = "artifact"
+	CapabilityImport     Capability = "import"
+	CapabilityNodeState  Capability = "node-state"
+	CapabilityImageEntry Capability = "image-entry"
 )
 
 type Node interface {
@@ -78,18 +79,23 @@ type NodeState interface {
 	UnmarshalProviderState(json.RawMessage) (any, error)
 }
 
+type ImageEntry interface {
+	ExecImageEntry(context.Context, substrate.NodeHandle) error
+}
+
 type Descriptor struct {
-	Name      string
-	Version   string
-	Node      Node
-	NIC       NIC
-	Snapshot  Snapshot
-	Console   Console
-	GuestExec GuestExec
-	Network   Network
-	Artifact  Artifact
-	Import    Import
-	NodeState NodeState
+	Name       string
+	Version    string
+	Node       Node
+	NIC        NIC
+	Snapshot   Snapshot
+	Console    Console
+	GuestExec  GuestExec
+	Network    Network
+	Artifact   Artifact
+	Import     Import
+	NodeState  NodeState
+	ImageEntry ImageEntry
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -112,6 +118,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.Import
 	case CapabilityNodeState:
 		return d.NodeState
+	case CapabilityImageEntry:
+		return d.ImageEntry
 	default:
 		return nil
 	}

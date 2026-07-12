@@ -28,7 +28,8 @@ func main() {
 			Name: "docker", Version: "1", Node: dockerSub, NIC: dockerSub,
 			Console: dockerSub, GuestExec: dockerSub, Network: dockerSub,
 			Artifact: dockerSub, Import: dockerSub,
-			NodeState: dockerSub,
+			NodeState:  dockerSub,
+			ImageEntry: dockerSub,
 		})
 		substrate.Register(dockerSub)
 	}

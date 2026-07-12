@@ -14,6 +14,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	netprovider "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -276,19 +277,25 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 	if res.Driver == "docker" {
 		return recoverDockerNodeLike(ctx, st, step)
 	}
-	sub, err := substrate.Get(res.Driver)
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(res.Driver)
 	if err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
 		return action, nil
 	}
-	handle, err := res.ReconstructHandle(sub)
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(res.Driver)
 	if err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
 		return action, nil
 	}
-	obs, err := sub.ObserveNode(ctx, handle)
+	handle, err := res.ReconstructHandle(stateDriver)
+	if err != nil {
+		action.Status = "error"
+		action.Error = err.Error()
+		return action, nil
+	}
+	obs, err := nodeDriver.ObserveNode(ctx, handle)
 	if err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
@@ -306,14 +313,14 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 	})
 	switch recovery.Decision {
 	case controlplane.RecoveryDecisionAdopt:
-		if adopted, err := sub.AdoptNode(ctx, handle); err == nil {
+		if adopted, err := nodeDriver.AdoptNode(ctx, handle); err == nil {
 			if inst := substrate.HandlePublicAttributes(adopted); len(inst) > 0 {
 				for k, v := range inst {
 					rec.Instance[k] = v
 				}
 			}
 			AdoptStateResource(st, *rec, "")
-			if blob, err := sub.MarshalProviderState(adopted); err == nil && len(blob) > 0 {
+			if blob, err := stateDriver.MarshalProviderState(adopted); err == nil && len(blob) > 0 {
 				if resource := st.FindResource(address.Resource(rec.Type, rec.Name)); resource != nil {
 					_ = resource.SetProviderState(blob)
 				}
@@ -354,20 +361,26 @@ func cleanupNodeLikeCheckpoint(ctx context.Context, step OperationStep) (Checkpo
 	if res.Driver == "docker" {
 		return cleanupDockerNodeLike(ctx, step)
 	}
-	sub, err := substrate.Get(res.Driver)
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(res.Driver)
 	if err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
 		return action, nil
 	}
-	handle, err := res.ReconstructHandle(sub)
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(res.Driver)
 	if err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
 		return action, nil
 	}
-	_ = sub.StopNode(ctx, handle)
-	if err := sub.DestroyNode(ctx, handle); err != nil {
+	handle, err := res.ReconstructHandle(stateDriver)
+	if err != nil {
+		action.Status = "error"
+		action.Error = err.Error()
+		return action, nil
+	}
+	_ = nodeDriver.StopNode(ctx, handle)
+	if err := nodeDriver.DestroyNode(ctx, handle); err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
 		return action, nil
