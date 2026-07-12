@@ -60,7 +60,8 @@ func TestNetworkResourceProviderPlanDiff(t *testing.T) {
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	require.Contains(t, action.Changes, "cidr")
+	_, ok := fieldChangeAt(action.Changes, "cidr")
+	require.True(t, ok)
 }
 
 func TestNetworkResourceProviderRegistered(t *testing.T) {

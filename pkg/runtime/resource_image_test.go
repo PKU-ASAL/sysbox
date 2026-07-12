@@ -129,5 +129,6 @@ func TestImageResourceProviderPlanDiff(t *testing.T) {
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	require.Contains(t, action.Changes, "docker_ref")
+	_, ok := fieldChangeAt(action.Changes, "docker_ref")
+	require.True(t, ok)
 }

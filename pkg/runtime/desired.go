@@ -10,6 +10,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/value"
 )
 
 const desiredHashKey = "desired_hash"
@@ -143,7 +144,7 @@ func stateDesiredHash(r *state.Resource) string {
 	return r.Str(desiredHashKey)
 }
 
-func diffDesiredState(n *graph.Node, r *state.Resource) (map[string]controlplane.FieldChange, string) {
+func diffDesiredState(n *graph.Node, r *state.Resource) ([]controlplane.FieldChange, string) {
 	if n == nil || r == nil {
 		return nil, "resource changed"
 	}
@@ -155,30 +156,19 @@ func diffDesiredState(n *graph.Node, r *state.Resource) (map[string]controlplane
 	if before == nil {
 		return nil, "desired configuration hash changed"
 	}
-	changes := map[string]controlplane.FieldChange{}
-	keys := map[string]bool{}
-	for k := range before {
-		keys[k] = true
-	}
-	for k := range after {
-		keys[k] = true
-	}
 	schema := ResourceSchemaFor(n.Address.Type)
-	for k := range keys {
-		if schema.IgnoreChanges[k] {
-			continue
-		}
-		if jsonEqual(before[k], after[k]) {
-			continue
-		}
-		attr := schema.Attribute(k)
-		changes[k] = controlplane.FieldChange{
-			Before:          redactIfSensitive(before[k], attr.Sensitive),
-			After:           redactIfSensitive(after[k], attr.Sensitive),
-			RequiresReplace: attr.RequiresReplace,
-			Sensitive:       attr.Sensitive,
-			Computed:        attr.Computed,
-		}
+	beforeValue, err := dynamicValue(before)
+	if err != nil {
+		return nil, "prior desired value is invalid"
+	}
+	afterValue, err := dynamicValue(after)
+	if err != nil {
+		return nil, "desired value is invalid"
+	}
+	typedChanges := schema.Diff(beforeValue, afterValue)
+	changes := make([]controlplane.FieldChange, len(typedChanges))
+	for i, change := range typedChanges {
+		changes[i] = controlplane.FieldChange{Path: change.Path.String(), Before: change.Before, After: change.After, RequiresReplace: change.RequiresReplace, Sensitive: change.Sensitive, Computed: change.Computed}
 	}
 	if len(changes) == 0 {
 		return nil, "desired configuration hash changed"
@@ -195,13 +185,25 @@ func jsonEqual(a, b any) bool {
 	return string(aj) == string(bj)
 }
 
-func anyInPlace(changes map[string]controlplane.FieldChange) bool {
+func anyInPlace(changes []controlplane.FieldChange) bool {
 	for _, ch := range changes {
 		if !ch.RequiresReplace {
 			return true
 		}
 	}
 	return false
+}
+
+func dynamicValue(input any) (value.Value, error) {
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return value.Value{}, err
+	}
+	var result value.Value
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return value.Value{}, err
+	}
+	return result, nil
 }
 
 func redactIfSensitive(v any, sensitive bool) any {

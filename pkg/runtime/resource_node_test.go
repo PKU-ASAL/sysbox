@@ -48,7 +48,9 @@ func TestNodeResourceProviderPlanDiff(t *testing.T) {
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	require.True(t, action.Changes["env"].Sensitive)
+	change, ok := fieldChangeAt(action.Changes, "env.TOKEN")
+	require.True(t, ok)
+	require.True(t, change.Sensitive)
 }
 
 func TestNodeResourceProviderDeleteMissingSubstrateReturnsError(t *testing.T) {

@@ -19,7 +19,7 @@ func String(v string) Value  { return Value{typ: StringType, data: v} }
 func Number(v float64) Value { return Value{typ: NumberType, data: v} }
 
 func (v Value) Type() Type   { return v.typ }
-func (v Value) IsNull() bool { return v.typ == NullType }
+func (v Value) IsNull() bool { return v.typ == "" || v.typ == NullType }
 
 func FromGo(input any) (Value, error) {
 	switch value := input.(type) {
@@ -107,6 +107,18 @@ func (v Value) GoValue() any {
 
 func (v Value) Equal(other Value) bool {
 	return v.typ == other.typ && reflect.DeepEqual(v.data, other.data)
+}
+
+func (v Value) Object() (map[string]Value, bool) {
+	if v.typ != ObjectType {
+		return nil, false
+	}
+	items := v.data.(map[string]Value)
+	result := make(map[string]Value, len(items))
+	for key, item := range items {
+		result[key] = item
+	}
+	return result, true
 }
 
 func (v Value) MarshalJSON() ([]byte, error) { return json.Marshal(v.GoValue()) }

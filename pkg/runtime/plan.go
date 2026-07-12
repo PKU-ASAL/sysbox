@@ -108,17 +108,13 @@ func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (contro
 		change.Reason = "resource not present in state"
 		return change, nil
 	}
-	if stateDesiredHash(current) == "" {
-		return change, nil
-	}
-	want, err := desiredHash(desired)
-	if err != nil {
-		return controlplane.PlannedChange{}, err
-	}
-	if want == stateDesiredHash(current) {
+	if current.Attributes[desiredPayloadKey] == nil {
 		return change, nil
 	}
 	change.Changes, change.Reason = diffDesiredState(desired, current)
+	if len(change.Changes) == 0 {
+		return change, nil
+	}
 	change.Action = controlplane.PlanActionReplace
 	if change.Reason == "" {
 		change.Reason = "desired configuration changed; replacement required"
@@ -182,17 +178,11 @@ func PrintPlan(plan *Plan, _ bool) {
 			fmt.Printf(" (%s)", change.Reason)
 		}
 		fmt.Println()
-		keys := make([]string, 0, len(change.Changes))
-		for key := range change.Changes {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			field := change.Changes[key]
+		for _, field := range change.Changes {
 			if field.Sensitive {
-				fmt.Printf("      %s: (sensitive) -> (sensitive)\n", key)
+				fmt.Printf("      %s: (sensitive) -> (sensitive)\n", field.Path)
 			} else {
-				fmt.Printf("      %s: %v -> %v\n", key, field.Before, field.After)
+				fmt.Printf("      %s: %v -> %v\n", field.Path, field.Before, field.After)
 			}
 		}
 	}

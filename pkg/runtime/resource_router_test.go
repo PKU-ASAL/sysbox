@@ -55,7 +55,8 @@ func TestRouterResourceProviderPlanDiff(t *testing.T) {
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	require.Contains(t, action.Changes, "interfaces")
+	_, ok := fieldChangeAt(action.Changes, "interfaces[0].IP")
+	require.True(t, ok)
 }
 
 func TestRouterResourceProviderDeleteMissingSubstrateReturnsError(t *testing.T) {

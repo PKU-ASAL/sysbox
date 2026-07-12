@@ -21,19 +21,20 @@ const (
 )
 
 type FieldChange struct {
-	Before          any  `json:"before,omitempty"`
-	After           any  `json:"after,omitempty"`
-	RequiresReplace bool `json:"requires_replace,omitempty"`
-	Sensitive       bool `json:"sensitive,omitempty"`
-	Computed        bool `json:"computed,omitempty"`
+	Path            string `json:"path"`
+	Before          any    `json:"before,omitempty"`
+	After           any    `json:"after,omitempty"`
+	RequiresReplace bool   `json:"requires_replace,omitempty"`
+	Sensitive       bool   `json:"sensitive,omitempty"`
+	Computed        bool   `json:"computed,omitempty"`
 }
 
 type PlannedChange struct {
-	Address          address.Address        `json:"address"`
-	Action           PlanActionType         `json:"action"`
-	Reason           string                 `json:"reason,omitempty"`
-	DependencyReason string                 `json:"dependency_reason,omitempty"`
-	Changes          map[string]FieldChange `json:"changes,omitempty"`
+	Address          address.Address `json:"address"`
+	Action           PlanActionType  `json:"action"`
+	Reason           string          `json:"reason,omitempty"`
+	DependencyReason string          `json:"dependency_reason,omitempty"`
+	Changes          []FieldChange   `json:"changes,omitempty"`
 }
 
 type ResourceHealthStatus string

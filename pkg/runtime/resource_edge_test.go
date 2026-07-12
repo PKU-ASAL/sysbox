@@ -57,7 +57,8 @@ func TestFirewallResourceProviderPlanDiff(t *testing.T) {
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	require.Contains(t, action.Changes, "rules")
+	_, ok := fieldChangeAt(action.Changes, "rules[0].DPort")
+	require.True(t, ok)
 }
 
 func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
@@ -86,8 +87,9 @@ func TestSSHAccessResourceProviderPlanDiff(t *testing.T) {
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	require.Contains(t, action.Changes, "authorized_keys")
-	require.True(t, action.Changes["authorized_keys"].Sensitive)
+	change, ok := fieldChangeAt(action.Changes, "authorized_keys[0]")
+	require.True(t, ok)
+	require.True(t, change.Sensitive)
 }
 
 func TestActorResourceProviderPlanDiff(t *testing.T) {
@@ -118,8 +120,9 @@ func TestActorResourceProviderPlanDiff(t *testing.T) {
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	require.Contains(t, action.Changes, "env")
-	require.True(t, action.Changes["env"].Sensitive)
+	change, ok := fieldChangeAt(action.Changes, "env.TOKEN")
+	require.True(t, ok)
+	require.True(t, change.Sensitive)
 }
 
 func TestEdgeProviderDeleteRemovesState(t *testing.T) {

@@ -46,7 +46,8 @@ func TestDataResourceProviderPlanDiffReads(t *testing.T) {
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionRead, action.Action)
-	require.Contains(t, action.Changes, "data")
+	_, ok := fieldChangeAt(action.Changes, "data.DockerRef")
+	require.True(t, ok)
 }
 
 func TestComputePlanSchedulesDataSourcesAsRead(t *testing.T) {

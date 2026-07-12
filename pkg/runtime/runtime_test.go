@@ -72,7 +72,31 @@ func TestPlanDiffReportsReplacementFields(t *testing.T) {
 	plan, err := ComputePlan(g, st)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
-	require.Contains(t, plan.Actions[0].Changes, "cidr")
+	_, ok := fieldChangeAt(plan.Actions[0].Changes, "cidr")
+	require.True(t, ok)
+}
+
+func TestPlanDiffDoesNotUseDesiredHashAsSemanticInput(t *testing.T) {
+	addr := address.Resource("sysbox_network", "dmz")
+	g := graph.New()
+	require.NoError(t, g.AddNode(addr, nil))
+	require.NoError(t, g.SetData(addr, &config.NetworkConfig{CIDR: "10.0.1.0/24"}))
+	payload, _ := desiredPayload(g.Get(addr))
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(state.Resource{Address: addr, Attributes: map[string]any{"desired_hash": "deliberately-wrong", "desired": payload}})
+
+	plan, err := ComputePlan(g, st)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.PlanActionNoop, plan.Actions[0].Action)
+}
+
+func fieldChangeAt(changes []controlplane.FieldChange, path string) (controlplane.FieldChange, bool) {
+	for _, change := range changes {
+		if change.Path == path {
+			return change, true
+		}
+	}
+	return controlplane.FieldChange{}, false
 }
 
 func TestRefreshReturnsNewPlanAndMarksDriftUnknown(t *testing.T) {

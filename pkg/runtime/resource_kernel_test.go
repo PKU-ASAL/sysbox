@@ -71,7 +71,8 @@ func TestKernelResourceProviderPlanDiff(t *testing.T) {
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	require.Contains(t, action.Changes, "source")
+	_, ok := fieldChangeAt(action.Changes, "source")
+	require.True(t, ok)
 }
 
 func TestKernelResourceProviderRegistered(t *testing.T) {
