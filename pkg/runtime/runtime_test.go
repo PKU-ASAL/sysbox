@@ -42,6 +42,21 @@ func TestComputePlanRejectsPreventDestroy(t *testing.T) {
 	require.ErrorContains(t, err, "prevent_destroy blocks deletion")
 }
 
+func TestReplacementCanRemovePriorPreventDestroy(t *testing.T) {
+	addr := address.Resource("sysbox_network", "lab")
+	g := graph.New()
+	require.NoError(t, g.AddNode(addr, nil))
+	require.NoError(t, g.SetData(addr, &config.NetworkConfig{CIDR: "10.0.2.0/24"}))
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(state.Resource{Address: addr, Attributes: map[string]any{
+		"desired_hash": "stale", "desired": map[string]any{"cidr": "10.0.1.0/24"}, "lifecycle_prevent_destroy": true,
+	}})
+
+	plan, err := ComputePlan(g, st)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.PlanActionReplace, plan.Actions[0].Action)
+}
+
 func TestPlanDiffReportsReplacementFields(t *testing.T) {
 	addr := address.Resource("sysbox_network", "dmz")
 	g := graph.New()

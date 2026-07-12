@@ -73,8 +73,9 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 }
 
 func resourcePreventDestroy(node *graph.Node, current *state.Resource) bool {
-	if lifecycle := lifecycleOf(node); lifecycle != nil && lifecycle.PreventDestroy {
-		return true
+	if node != nil {
+		lifecycle := lifecycleOf(node)
+		return lifecycle != nil && lifecycle.PreventDestroy
 	}
 	return current != nil && current.LifecyclePreventDestroy()
 }
