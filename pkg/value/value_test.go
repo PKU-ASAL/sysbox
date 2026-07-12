@@ -46,3 +46,9 @@ func TestFromGoRejectsUnsupportedValues(t *testing.T) {
 	_, err := FromGo(make(chan int))
 	require.ErrorContains(t, err, "unsupported value type")
 }
+
+func TestFromGoNormalizesTypedCollections(t *testing.T) {
+	got, err := FromGo(map[string][]string{"depends_on": {"a", "b"}})
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"depends_on": []any{"a", "b"}}, got.GoValue())
+}

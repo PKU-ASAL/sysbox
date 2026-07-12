@@ -103,7 +103,7 @@ func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOpera
 	st.AddResource(state.Resource{
 		Address:    addr,
 		Driver:     op.Substrate,
-		Attributes: substrate.HandleToInstance(handle, sub),
+		Attributes: state.MustAttributes(substrate.HandleToInstance(handle, sub)),
 	})
 	owner := fmt.Sprintf("sysbox-agent:import:%s:%s.%s", op.Topology, op.Type, op.Name)
 	return mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: owner})

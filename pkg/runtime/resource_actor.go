@@ -177,7 +177,7 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	res := state.Resource{
 		Address:    n.Address,
 		Driver:     subName,
-		Attributes: inst,
+		Attributes: state.MustAttributes(inst),
 	}
 	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.Address.Name, pid, acpURL)
 	return res, nil
@@ -303,16 +303,17 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 		"entry_points":   cfg.EntryPoints,
 		"command":        cfg.Command,
 	}
-	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-		inst["provider_extra"] = string(blob)
-	}
+	blob, _ := sub.MarshalProviderState(handle)
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
 	}
 	res := state.Resource{
 		Address:    n.Address,
 		Driver:     "docker",
-		Attributes: inst,
+		Attributes: state.MustAttributes(inst),
+	}
+	if len(blob) > 0 {
+		_ = res.SetProviderState(blob)
 	}
 	e.logf("[apply] actor %s started (pid %d, acp %s)\n", n.Address.Name, pid, acpURL)
 	return res, nil

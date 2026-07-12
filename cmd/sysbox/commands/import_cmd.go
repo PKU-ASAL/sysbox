@@ -84,14 +84,15 @@ func runImport(cmd *cobra.Command, args []string) error {
 			"container_id": handle.ID,
 			"primary_ip":   handle.Net.PrimaryIP,
 		}
-		if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-			inst["provider_extra"] = string(blob)
-		}
-		s.AddResource(state.Resource{
+		resource := state.Resource{
 			Address:    addr,
 			Driver:     subName,
-			Attributes: inst,
-		})
+			Attributes: state.MustAttributes(inst),
+		}
+		if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+			_ = resource.SetProviderState(blob)
+		}
+		s.AddResource(resource)
 		fmt.Printf("Imported %s (id=%s)\n", addr, handle.ID)
 
 	case "sysbox_network":

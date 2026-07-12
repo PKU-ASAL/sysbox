@@ -105,12 +105,12 @@ func printStateAddress(s stateReader, addr string) error {
 	}
 
 	if attribute == "" {
-		bytes, _ := json.MarshalIndent(r.Attributes, "", "  ")
+		bytes, _ := json.MarshalIndent(r.Attributes.GoValue(), "", "  ")
 		fmt.Println(string(bytes))
 		return nil
 	}
 
-	val, ok := r.Attributes[attribute]
+	val, ok := r.AttributeMap()[attribute]
 	if !ok {
 		return fmt.Errorf("attribute %s not found on %s", attribute, resourceAddress)
 	}

@@ -70,6 +70,36 @@ func FromGo(input any) (Value, error) {
 		}
 		return Value{typ: ObjectType, data: items}, nil
 	default:
+		ref := reflect.ValueOf(input)
+		switch ref.Kind() {
+		case reflect.Slice, reflect.Array:
+			items := make([]any, ref.Len())
+			for i := range items {
+				items[i] = ref.Index(i).Interface()
+			}
+			return FromGo(items)
+		case reflect.Map:
+			if ref.Type().Key().Kind() != reflect.String {
+				break
+			}
+			items := make(map[string]any, ref.Len())
+			iterator := ref.MapRange()
+			for iterator.Next() {
+				items[iterator.Key().String()] = iterator.Value().Interface()
+			}
+			return FromGo(items)
+		case reflect.Struct:
+			raw, err := json.Marshal(input)
+			if err != nil {
+				break
+			}
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			decoder.UseNumber()
+			var normalized any
+			if err := decoder.Decode(&normalized); err == nil {
+				return FromGo(normalized)
+			}
+		}
 		return Value{}, fmt.Errorf("unsupported value type %T", input)
 	}
 }

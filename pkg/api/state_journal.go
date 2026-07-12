@@ -46,7 +46,7 @@ func replayCheckpointJournal(ctx context.Context, store apiStore, topology, runI
 		}
 	}
 	if changed {
-		st.RunID = cp.RunID
+		st.Lineage = cp.RunID
 		if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: owner}); err != nil {
 			return nil, fmt.Errorf("save replayed state patches: %w", err)
 		}

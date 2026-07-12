@@ -122,7 +122,7 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 	return state.Resource{
 		Address:    n.Address,
 		Driver:     subName,
-		Attributes: inst,
+		Attributes: state.MustAttributes(inst),
 	}, nil
 }
 

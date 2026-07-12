@@ -264,14 +264,15 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 	// Substrate-specific state (vsock metadata, vm_dir, etc.) goes through
 	// MarshalProviderState so runtime stays substrate-agnostic.
-	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-		nodeInstance["provider_extra"] = string(blob)
-	}
+	providerState, _ := sub.MarshalProviderState(handle)
 	nodeInstance[desiredHashKey] = nodeDesiredHash
 	resource := state.Resource{
 		Address:    n.Address,
 		Driver:     subName,
-		Attributes: nodeInstance,
+		Attributes: state.MustAttributes(nodeInstance),
+	}
+	if len(providerState) > 0 {
+		_ = resource.SetProviderState(providerState)
 	}
 	e.state.AddResource(resource)
 	defer e.state.RemoveResource(resource.Address)
@@ -310,7 +311,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// provider state return (nil, nil) which is harmless.
 	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
 		if rec := e.state.FindResource(address.Resource("sysbox_node", n.Address.Name)); rec != nil {
-			rec.Attributes["provider_extra"] = string(blob)
+			_ = rec.SetProviderState(blob)
 		}
 	}
 
@@ -341,7 +342,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 			routeSpecs = append(routeSpecs, map[string]string{"dst": rt.Destination, "via": rt.Via})
 		}
 		if rec := e.state.FindResource(address.Resource("sysbox_node", n.Address.Name)); rec != nil {
-			rec.Attributes["routes"] = routeSpecs
+			_ = rec.SetAttribute("routes", routeSpecs)
 		}
 	}
 
@@ -395,7 +396,7 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 		e.logf("[destroy] warning: destroy node %s: %v\n", r.Address, err)
 	}
 	// Always clean up veths/taps and state regardless of container presence.
-	if nics, ok := r.Attributes["nics"].([]any); ok {
+	if nics, ok := r.AttributeMap()["nics"].([]any); ok {
 		for _, item := range nics {
 			n, _ := item.(map[string]any)
 			kind := util.AsString(n["kind"])

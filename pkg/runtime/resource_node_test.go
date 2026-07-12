@@ -138,11 +138,13 @@ func TestNodeResourceProviderPortsArePassedAndResolved(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sub.lastSpec.Ports, 1)
 	require.Equal(t, substrate.PortSpec{Name: "http", Target: 80, Published: 28080, Protocol: "http", Exposure: "host", HostIP: "127.0.0.1"}, sub.lastSpec.Ports[0])
-	ports, ok := res.Attributes["ports"].([]substrate.ResolvedPort)
+	ports, ok := res.Attributes["ports"].([]any)
 	require.True(t, ok)
 	require.Len(t, ports, 1)
-	require.Equal(t, "http://127.0.0.1:28080", ports[0].URL)
-	require.Equal(t, "host", ports[0].Exposure)
+	resolved, ok := ports[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "http://127.0.0.1:28080", resolved["url"])
+	require.Equal(t, "host", resolved["exposure"])
 }
 
 func TestNodeResourceProviderRejectsUnsupportedPortExposure(t *testing.T) {

@@ -108,7 +108,7 @@ func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (contro
 		change.Reason = "resource not present in state"
 		return change, nil
 	}
-	if current.Attributes[desiredPayloadKey] == nil {
+	if current.AttributeMap()[desiredPayloadKey] == nil {
 		return change, nil
 	}
 	change.Changes, change.Reason = diffDesiredState(desired, current)

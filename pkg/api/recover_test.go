@@ -91,5 +91,7 @@ func TestAdoptFirecrackerStateResourceKeepsProviderExtra(t *testing.T) {
 	res := st.FindResource(address.Resource("sysbox_node", "vm"))
 	require.NotNil(t, res)
 	require.Equal(t, "sysbox-vm", res.ContainerID())
-	require.Equal(t, `{"vm_dir":"/tmp/sysbox-vm"}`, res.ProviderExtra())
+	providerState, err := res.ProviderState()
+	require.NoError(t, err)
+	require.JSONEq(t, `{"vm_dir":"/tmp/sysbox-vm"}`, string(providerState))
 }

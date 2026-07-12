@@ -174,7 +174,7 @@ func providerState(sub substrate.Substrate, r *state.Resource) any {
 }
 
 func networkAttachmentsHealthy(r *state.Resource) bool {
-	items, ok := r.Attributes["nics"].([]any)
+	items, ok := r.AttributeMap()["nics"].([]any)
 	if !ok {
 		return true
 	}
@@ -196,7 +196,7 @@ func networkAttachmentsHealthy(r *state.Resource) bool {
 }
 
 func nodeRoutesHealthy(ctx context.Context, sub substrate.Substrate, r *state.Resource) bool {
-	items, ok := r.Attributes["routes"].([]any)
+	items, ok := r.AttributeMap()["routes"].([]any)
 	if !ok || len(items) == 0 {
 		return true
 	}

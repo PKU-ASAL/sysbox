@@ -67,8 +67,8 @@ func pauseResumeOp(addr string, resume bool) error {
 	}
 
 	// Reconstruct provider state if available.
-	if extra := r.Str("provider_extra"); extra != "" {
-		if v, err := sub.UnmarshalProviderState([]byte(extra)); err == nil {
+	if extra, _ := r.ProviderState(); len(extra) > 0 {
+		if v, err := sub.UnmarshalProviderState(extra); err == nil {
 			handle.Provider = v
 		}
 	}

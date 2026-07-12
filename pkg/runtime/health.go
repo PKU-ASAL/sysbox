@@ -67,7 +67,7 @@ func EvaluateResourceHealth(ctx context.Context, res *state.Resource) controlpla
 }
 
 func networkAttachmentsCheck(res *state.Resource) (bool, string) {
-	items, ok := res.Attributes["nics"].([]any)
+	items, ok := res.AttributeMap()["nics"].([]any)
 	if !ok {
 		return true, ""
 	}

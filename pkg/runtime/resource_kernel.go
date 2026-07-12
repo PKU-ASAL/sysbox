@@ -82,7 +82,7 @@ func (KernelResourceProvider) Create(_ context.Context, pc *ProviderContext, n *
 	return state.Resource{
 		Address:    n.Address,
 		Driver:     subName,
-		Attributes: inst,
+		Attributes: state.MustAttributes(inst),
 	}, nil
 }
 

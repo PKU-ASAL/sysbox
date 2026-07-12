@@ -170,9 +170,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		"nat_applied":  natApplied,
 	}
 	// Persist provider_extra so cold-destroy works for all substrates.
-	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-		inst["provider_extra"] = string(blob)
-	}
+	blob, _ := sub.MarshalProviderState(handle)
 	// Persist lifecycle flags.
 	if lc := cfg.Lifecycle; lc != nil {
 		inst["lifecycle_prevent_destroy"] = lc.PreventDestroy
@@ -180,11 +178,15 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
 	}
-	return state.Resource{
+	resource := state.Resource{
 		Address:    n.Address,
 		Driver:     subName,
-		Attributes: inst,
-	}, nil
+		Attributes: state.MustAttributes(inst),
+	}
+	if len(blob) > 0 {
+		_ = resource.SetProviderState(blob)
+	}
+	return resource, nil
 }
 
 // configureNATViaNsenter configures MASQUERADE and FORWARD rules from the

@@ -99,7 +99,7 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 		Type:     r.Address.Type,
 		Name:     r.Address.Name,
 		Provider: r.Driver,
-		Instance: r.Attributes,
+		Instance: r.AttributeMap(),
 	}
 	e.recorder.StepStateResource(step, log)
 	patch := StatePatch{
@@ -124,7 +124,7 @@ func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Reso
 		Type:     r.Address.Type,
 		Name:     r.Address.Name,
 		Provider: r.Driver,
-		Instance: r.Attributes,
+		Instance: r.AttributeMap(),
 	}
 	e.recorder.StepStatePatch(step, StatePatchDelete, &log)
 	if e.patchSink != nil {
@@ -199,7 +199,7 @@ func (a stateAdapter) ResourceInstance(addr address.Address) map[string]any {
 	if r == nil {
 		return nil
 	}
-	return r.Attributes
+	return r.AttributeMap()
 }
 
 var _ substrate.StateReader = stateAdapter{}

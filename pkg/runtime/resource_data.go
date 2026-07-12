@@ -81,9 +81,7 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 		"container_id": handle.ID,
 		"primary_ip":   handle.Net.PrimaryIP,
 	}
-	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
-		inst["provider_extra"] = string(blob)
-	}
+	blob, _ := sub.MarshalProviderState(handle)
 	inst["data_read"] = true // mark as read-only so destroy skips it
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
@@ -92,7 +90,10 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 	res := state.Resource{
 		Address:    n.Address,
 		Driver:     subName,
-		Attributes: inst,
+		Attributes: state.MustAttributes(inst),
+	}
+	if len(blob) > 0 {
+		_ = res.SetProviderState(blob)
 	}
 	e.logf("[data] read sysbox_node.%s → id=%s ip=%s\n", n.Address.Name, handle.ID, handle.Net.PrimaryIP)
 	return res, nil
@@ -171,7 +172,7 @@ func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (
 	res := state.Resource{
 		Address:    n.Address,
 		Driver:     "docker",
-		Attributes: inst,
+		Attributes: state.MustAttributes(inst),
 	}
 	e.logf("[data] read sysbox_network.%s → %s\n", n.Address.Name, info.Name)
 	return res, nil
@@ -245,7 +246,7 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 	res := state.Resource{
 		Address:    n.Address,
 		Driver:     subName,
-		Attributes: inst,
+		Attributes: state.MustAttributes(inst),
 	}
 	e.logf("[data] read sysbox_image.%s → %s\n", n.Address.Name, ref.ID)
 	return res, nil

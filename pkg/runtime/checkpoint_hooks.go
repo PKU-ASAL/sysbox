@@ -109,11 +109,18 @@ func checkpointResourceType(step OperationStep) string {
 }
 
 func StateResourceFromLog(rec StateResourceLog) state.Resource {
-	return state.Resource{
+	attributes := cloneInstance(rec.Instance)
+	providerState, _ := attributes["provider_extra"].(string)
+	delete(attributes, "provider_extra")
+	resource := state.Resource{
 		Address:    address.Resource(rec.Type, rec.Name),
 		Driver:     rec.Provider,
-		Attributes: cloneInstance(rec.Instance),
+		Attributes: state.MustAttributes(attributes),
 	}
+	if providerState != "" {
+		_ = resource.SetProviderState([]byte(providerState))
+	}
+	return resource
 }
 
 func AdoptStateResource(st *state.State, rec StateResourceLog, externalID string) {
@@ -121,9 +128,9 @@ func AdoptStateResource(st *state.State, rec StateResourceLog, externalID string
 	if externalID != "" {
 		switch rec.Type {
 		case "sysbox_network":
-			res.Attributes["docker_network_id"] = externalID
+			_ = res.SetAttribute("docker_network_id", externalID)
 		case "sysbox_node", "sysbox_router", "sysbox_actor":
-			res.Attributes["container_id"] = externalID
+			_ = res.SetAttribute("container_id", externalID)
 		}
 	}
 	st.AddResource(res)
@@ -574,7 +581,7 @@ func findDockerObjectByLabels(_ context.Context, labels map[string]string, list 
 }
 
 func cleanupAttachedNICs(res state.Resource) error {
-	nics, ok := res.Attributes["nics"].([]any)
+	nics, ok := res.AttributeMap()["nics"].([]any)
 	if !ok {
 		return nil
 	}
@@ -602,12 +609,12 @@ func cleanupAttachedNICs(res state.Resource) error {
 }
 
 func FirecrackerRecoverableArtifacts(res state.Resource) bool {
-	providerExtra := res.ProviderExtra()
-	if providerExtra == "" {
+	providerExtra, err := res.ProviderState()
+	if err != nil || len(providerExtra) == 0 {
 		return false
 	}
 	var raw map[string]any
-	if err := json.Unmarshal([]byte(providerExtra), &raw); err != nil {
+	if err := json.Unmarshal(providerExtra, &raw); err != nil {
 		return false
 	}
 	for _, key := range []string{"vm_dir", "socket", "config_path"} {

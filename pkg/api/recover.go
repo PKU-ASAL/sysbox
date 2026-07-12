@@ -55,7 +55,7 @@ func recoverCheckpoint(ctx context.Context, store apiStore, topology, runID stri
 		}
 	}
 	if len(report.Recovered) > 0 {
-		st.RunID = cp.RunID
+		st.Lineage = cp.RunID
 		if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: owner}); err != nil {
 			return nil, fmt.Errorf("save recovered state: %w", err)
 		}

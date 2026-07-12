@@ -119,7 +119,7 @@ func planFingerprintInputs(hcl []byte, st *state.State, serial int64, g *graph.G
 			artifacts[resource.Address.String()] = digest
 		}
 	}
-	return runtime.PlanInputs{Config: hcl, StateLineage: st.RunID, StateSerial: serial, ResourceSchemas: schemas, Drivers: drivers, Artifacts: artifacts, Variables: map[string]any{}}
+	return runtime.PlanInputs{Config: hcl, StateLineage: st.Lineage, StateSerial: serial, ResourceSchemas: schemas, Drivers: drivers, Artifacts: artifacts, Variables: map[string]any{}}
 }
 
 func desiredStringField(value any, name string) string {

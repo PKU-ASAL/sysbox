@@ -13,7 +13,7 @@ import (
 func TestStateRoundTrip(t *testing.T) {
 	original := &State{
 		Version: SchemaVersion,
-		RunID:   "test-run-01",
+		Lineage: "test-run-01",
 		Resources: []Resource{
 			{
 				Address: address.Resource("sysbox_node", "web"),
@@ -32,7 +32,7 @@ func TestStateRoundTrip(t *testing.T) {
 
 	decoded, err := Unmarshal(bytes)
 	require.NoError(t, err)
-	require.Equal(t, original.RunID, decoded.RunID)
+	require.Equal(t, original.Lineage, decoded.Lineage)
 	require.Len(t, decoded.Resources, 1)
 	require.Equal(t, "web", decoded.Resources[0].Address.Name)
 }
@@ -81,7 +81,7 @@ func TestManagerSaveLoad(t *testing.T) {
 
 	mgr := NewManager(path)
 
-	s := &State{Version: SchemaVersion, RunID: "r1", Resources: []Resource{
+	s := &State{Version: SchemaVersion, Lineage: "r1", Resources: []Resource{
 		{Address: address.Resource("sysbox_node", "web"), Driver: "docker", Attributes: map[string]any{"id": "abc"}},
 	}}
 
@@ -89,7 +89,7 @@ func TestManagerSaveLoad(t *testing.T) {
 
 	loaded, err := mgr.Load()
 	require.NoError(t, err)
-	require.Equal(t, "r1", loaded.RunID)
+	require.Equal(t, "r1", loaded.Lineage)
 	require.Len(t, loaded.Resources, 1)
 }
 
@@ -97,7 +97,7 @@ func TestManagerSaveCreatesNestedStateDirBeforeLock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runs", "two-networks", "state.json")
 	mgr := NewManager(path)
 
-	s := &State{Version: SchemaVersion, RunID: "r1"}
+	s := &State{Version: SchemaVersion, Lineage: "r1"}
 
 	require.NoError(t, mgr.Save(s))
 	require.FileExists(t, path)
@@ -116,7 +116,7 @@ func TestManagerLoadMissingReturnsEmpty(t *testing.T) {
 func TestManagerVersionedBackendUsesCAS(t *testing.T) {
 	backend := &recordingVersionedBackend{
 		loaded: &LoadedState{
-			Data:      []byte(`{"version":3,"run_id":"r1","resources":[]}`),
+			Data:      []byte(`{"version":4,"lineage":"r1","resources":[]}`),
 			Metadata:  Metadata{Backend: "test", Serial: 7},
 			Exists:    true,
 			Serial:    7,

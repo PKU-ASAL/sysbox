@@ -115,6 +115,6 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	return state.Resource{
 		Address:    n.Address,
 		Driver:     "network",
-		Attributes: inst,
+		Attributes: state.MustAttributes(inst),
 	}, nil
 }
