@@ -30,6 +30,7 @@ func main() {
 			Artifact: dockerSub, Import: dockerSub,
 			NodeState:  dockerSub,
 			ImageEntry: dockerSub,
+			Power:      dockerSub,
 		})
 		substrate.Register(dockerSub)
 	}
@@ -46,6 +47,7 @@ func main() {
 		Name: "firecracker", Version: "1", Node: fcSub, NIC: fcSub,
 		Console: fcSub, GuestExec: fcSub, Artifact: fcSub,
 		NodeState: fcSub,
+		Power:     fcSub,
 	})
 	substrate.Register(fcSub)
 
@@ -54,6 +56,7 @@ func main() {
 		Name: "libvirt", Version: "1", Node: libvirtSub, NIC: libvirtSub,
 		Console: libvirtSub, Artifact: libvirtSub, Import: libvirtSub,
 		NodeState: libvirtSub,
+		Power:     libvirtSub,
 	})
 	substrate.Register(libvirtSub)
 

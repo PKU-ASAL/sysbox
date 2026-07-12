@@ -13,6 +13,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -34,11 +35,14 @@ func OpenConsoleFromState(ctx context.Context, st *state.State, sess controlplan
 	if res == nil {
 		return fmt.Errorf("node %q not found in state", sess.Node)
 	}
-	sub, err := substrate.Get(res.Driver)
-	if err != nil {
-		return fmt.Errorf("substrate %q not registered: %w", res.Driver, err)
+	descriptor, ok := driver.DefaultRegistry.Get(res.Driver)
+	if !ok {
+		return driver.Wrap(driver.ErrorNotFound, res.Driver, "driver is not registered", nil)
 	}
-	handle, err := res.ReconstructHandle(sub)
+	if descriptor.NodeState == nil {
+		return driver.Wrap(driver.ErrorUnsupported, res.Driver, "node-state capability is not supported", nil)
+	}
+	handle, err := res.ReconstructHandle(descriptor.NodeState)
 	if err != nil {
 		return err
 	}
@@ -55,14 +59,17 @@ func OpenConsoleFromState(ctx context.Context, st *state.State, sess controlplan
 		Cols:    req.Cols,
 		Rows:    req.Rows,
 	}
-	if cp, ok := sub.(substrate.ConsoleProvider); ok {
-		cs, err := cp.OpenConsole(ctx, handle, creq)
+	if descriptor.Console != nil {
+		cs, err := descriptor.Console.OpenConsole(ctx, handle, creq)
 		if err != nil {
 			return err
 		}
 		return relayConsole(ctx, cs, ws)
 	}
-	conn, err := sub.Connection(handle, nil)
+	if descriptor.Node == nil {
+		return driver.Wrap(driver.ErrorUnsupported, res.Driver, "node capability is not supported", nil)
+	}
+	conn, err := descriptor.Node.Connection(handle, nil)
 	if err != nil {
 		return err
 	}

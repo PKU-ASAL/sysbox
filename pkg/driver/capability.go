@@ -22,6 +22,7 @@ const (
 	CapabilityImport     Capability = "import"
 	CapabilityNodeState  Capability = "node-state"
 	CapabilityImageEntry Capability = "image-entry"
+	CapabilityPower      Capability = "power"
 )
 
 type Node interface {
@@ -83,6 +84,11 @@ type ImageEntry interface {
 	ExecImageEntry(context.Context, substrate.NodeHandle) error
 }
 
+type Power interface {
+	Pause(context.Context, substrate.NodeHandle) error
+	Resume(context.Context, substrate.NodeHandle) error
+}
+
 type Descriptor struct {
 	Name       string
 	Version    string
@@ -96,6 +102,7 @@ type Descriptor struct {
 	Import     Import
 	NodeState  NodeState
 	ImageEntry ImageEntry
+	Power      Power
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -120,6 +127,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.NodeState
 	case CapabilityImageEntry:
 		return d.ImageEntry
+	case CapabilityPower:
+		return d.Power
 	default:
 		return nil
 	}

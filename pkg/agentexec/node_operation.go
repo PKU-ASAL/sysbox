@@ -7,6 +7,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -59,21 +60,22 @@ func (e *Executor) executePauseResume(ctx context.Context, op *controlplane.Node
 	if res == nil {
 		return fmt.Errorf("node %q not found", op.Node)
 	}
-	sub, err := substrate.Get(res.Driver)
+	powerDriver, err := driver.DefaultRegistry.RequirePower(res.Driver)
 	if err != nil {
-		return fmt.Errorf("substrate %q not registered: %w", res.Driver, err)
+		return err
 	}
-	if !sub.Capabilities().SupportsPause {
-		return fmt.Errorf("substrate %q does not support pause/resume", res.Driver)
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(res.Driver)
+	if err != nil {
+		return err
 	}
-	handle, err := res.ReconstructHandle(sub)
+	handle, err := res.ReconstructHandle(stateDriver)
 	if err != nil {
 		return err
 	}
 	if op.Operation == "pause" {
-		return sub.Pause(ctx, handle)
+		return powerDriver.Pause(ctx, handle)
 	}
-	return sub.Resume(ctx, handle)
+	return powerDriver.Resume(ctx, handle)
 }
 
 func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOperation) error {
@@ -87,11 +89,11 @@ func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOpera
 	if err := mgr.CheckMutationSafety(); err != nil {
 		return err
 	}
-	sub, err := substrate.Get(op.Substrate)
+	importDriver, err := driver.DefaultRegistry.RequireImport(op.Substrate)
 	if err != nil {
 		return fmt.Errorf("substrate %q not registered: %w", op.Substrate, err)
 	}
-	handle, err := sub.ReadNode(ctx, op.ExternalID)
+	handle, err := importDriver.ReadNode(ctx, op.ExternalID)
 	if err != nil {
 		return fmt.Errorf("read node: %w", err)
 	}
@@ -108,7 +110,11 @@ func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOpera
 		Driver:     op.Substrate,
 		Attributes: state.MustAttributes(substrate.HandlePublicAttributes(handle)),
 	}
-	if blob, err := sub.MarshalProviderState(handle); err == nil && len(blob) > 0 {
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(op.Substrate)
+	if err != nil {
+		return err
+	}
+	if blob, err := stateDriver.MarshalProviderState(handle); err == nil && len(blob) > 0 {
 		_ = resource.SetProviderState(blob)
 	}
 	st.AddResource(resource)

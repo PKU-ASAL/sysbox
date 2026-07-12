@@ -112,4 +112,12 @@ func (r *Registry) RequireNodeState(name string) (NodeState, error) {
 	return d.NodeState, nil
 }
 
+func (r *Registry) RequirePower(name string) (Power, error) {
+	d, err := r.Require(name, CapabilityPower)
+	if err != nil {
+		return nil, err
+	}
+	return d.Power, nil
+}
+
 var DefaultRegistry = NewRegistry()

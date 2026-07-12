@@ -7,7 +7,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/driver"
 )
 
 type NodeOperationService struct {
@@ -62,12 +62,8 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	if res == nil {
 		return controlplane.NodeOperation{}, fmt.Errorf("node %q not found", name)
 	}
-	sub, err := substrate.Get(res.Driver)
-	if err != nil {
-		return controlplane.NodeOperation{}, fmt.Errorf("substrate %q not registered: %w", res.Driver, err)
-	}
-	if !sub.Capabilities().SupportsPause {
-		return controlplane.NodeOperation{}, fmt.Errorf("substrate %q does not support pause/resume", res.Driver)
+	if _, err := driver.DefaultRegistry.RequirePower(res.Driver); err != nil {
+		return controlplane.NodeOperation{}, err
 	}
 	agent, err := s.scheduler.SelectAgent(ctx, []string{res.Driver}, "")
 	if err != nil {
@@ -105,8 +101,8 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	if req.Substrate == "" {
 		return controlplane.NodeOperation{}, fmt.Errorf("substrate is required")
 	}
-	if _, err := substrate.Get(req.Substrate); err != nil {
-		return controlplane.NodeOperation{}, fmt.Errorf("substrate %q not registered: %w", req.Substrate, err)
+	if _, err := driver.DefaultRegistry.RequireImport(req.Substrate); err != nil {
+		return controlplane.NodeOperation{}, err
 	}
 	agent, err := s.scheduler.SelectAgent(ctx, []string{req.Substrate}, "")
 	if err != nil {
