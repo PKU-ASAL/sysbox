@@ -13,20 +13,21 @@ import (
 type Capability string
 
 const (
-	CapabilityNode         Capability = "node"
-	CapabilityNIC          Capability = "nic"
-	CapabilitySnapshot     Capability = "snapshot"
-	CapabilityConsole      Capability = "console"
-	CapabilityGuestExec    Capability = "guest-exec"
-	CapabilityNetwork      Capability = "network"
-	CapabilityArtifact     Capability = "artifact"
-	CapabilityImport       Capability = "import"
-	CapabilityNodeState    Capability = "node-state"
-	CapabilityImageEntry   Capability = "image-entry"
-	CapabilityPower        Capability = "power"
-	CapabilityLinuxNetwork Capability = "linux-network"
-	CapabilityGuestNetwork Capability = "guest-network"
-	CapabilityPolicy       Capability = "policy"
+	CapabilityNode             Capability = "node"
+	CapabilityNIC              Capability = "nic"
+	CapabilitySnapshot         Capability = "snapshot"
+	CapabilityConsole          Capability = "console"
+	CapabilityGuestExec        Capability = "guest-exec"
+	CapabilityNetwork          Capability = "network"
+	CapabilityArtifact         Capability = "artifact"
+	CapabilityImport           Capability = "import"
+	CapabilityNodeState        Capability = "node-state"
+	CapabilityImageEntry       Capability = "image-entry"
+	CapabilityPower            Capability = "power"
+	CapabilityLinuxNetwork     Capability = "linux-network"
+	CapabilityGuestNetwork     Capability = "guest-network"
+	CapabilityGuestNetworkInit Capability = "guest-network-init"
+	CapabilityPolicy           Capability = "policy"
 )
 
 type Node interface {
@@ -93,6 +94,11 @@ type GuestNetwork interface {
 	HasRoute(context.Context, substrate.NodeHandle, string, string) (bool, error)
 }
 
+type GuestNetworkInit interface {
+	PrepareGuestNetwork(context.Context, substrate.NodeHandle) error
+	ObserveGuestNetwork(context.Context, substrate.NodeHandle) (substrate.GuestNetworkInitObservation, error)
+}
+
 type Artifact interface {
 	PrepareImage(context.Context, substrate.ImageSpec) (substrate.ImageRef, error)
 }
@@ -128,22 +134,23 @@ type LinuxNetwork interface {
 }
 
 type Descriptor struct {
-	Name         string
-	Version      string
-	Node         Node
-	NIC          NIC
-	Snapshot     Snapshot
-	Console      Console
-	GuestExec    GuestExec
-	Network      Network
-	Artifact     Artifact
-	Import       Import
-	NodeState    NodeState
-	ImageEntry   ImageEntry
-	Power        Power
-	Policy       Policy
-	LinuxNetwork LinuxNetwork
-	GuestNetwork GuestNetwork
+	Name             string
+	Version          string
+	Node             Node
+	NIC              NIC
+	Snapshot         Snapshot
+	Console          Console
+	GuestExec        GuestExec
+	Network          Network
+	Artifact         Artifact
+	Import           Import
+	NodeState        NodeState
+	ImageEntry       ImageEntry
+	Power            Power
+	Policy           Policy
+	LinuxNetwork     LinuxNetwork
+	GuestNetwork     GuestNetwork
+	GuestNetworkInit GuestNetworkInit
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -174,6 +181,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.LinuxNetwork
 	case CapabilityGuestNetwork:
 		return d.GuestNetwork
+	case CapabilityGuestNetworkInit:
+		return d.GuestNetworkInit
 	case CapabilityPolicy:
 		return d.Policy
 	default:

@@ -136,6 +136,14 @@ func (r *Registry) RequireGuestNetwork(name string) (GuestNetwork, error) {
 	return d.GuestNetwork, nil
 }
 
+func (r *Registry) RequireGuestNetworkInit(name string) (GuestNetworkInit, error) {
+	d, err := r.Require(name, CapabilityGuestNetworkInit)
+	if err != nil {
+		return nil, err
+	}
+	return d.GuestNetworkInit, nil
+}
+
 func (r *Registry) RequirePolicy(name string) (Policy, error) {
 	d, err := r.Require(name, CapabilityPolicy)
 	if err != nil {

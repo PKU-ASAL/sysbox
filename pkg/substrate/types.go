@@ -29,6 +29,28 @@ type ManagedNetworkInfo struct {
 	Name string // the system-level name (bridge name, network name)
 }
 
+type GuestNetworkInitMode string
+
+const (
+	GuestNetworkInitCloudInit     GuestNetworkInitMode = "cloud_init"
+	GuestNetworkInitPreconfigured GuestNetworkInitMode = "preconfigured"
+)
+
+type GuestNetworkInterfaceObservation struct {
+	Name       string   `json:"name"`
+	MAC        string   `json:"mac,omitempty"`
+	IPPrefixes []string `json:"ip_prefixes,omitempty"`
+	Converged  bool     `json:"converged"`
+	Reason     string   `json:"reason,omitempty"`
+}
+
+type GuestNetworkInitObservation struct {
+	Mode       GuestNetworkInitMode               `json:"mode"`
+	Converged  bool                               `json:"converged"`
+	Interfaces []GuestNetworkInterfaceObservation `json:"interfaces,omitempty"`
+	Reason     string                             `json:"reason,omitempty"`
+}
+
 // ImageSpec describes how to obtain a node image. Exactly one source field
 // should be set; substrates only inspect the field(s) they understand.
 //
@@ -310,16 +332,17 @@ const (
 // All bool defaults are the safe/conservative value (false means
 // "unsupported"); BaseSubstrate provides usable defaults.
 type Capabilities struct {
-	SharedKernel    bool          // guest shares the host kernel (container)
-	SupportsWindows bool          // can boot a Windows guest
-	NICHotPlug      bool          // attachment lifecycle works after StartNode (true=container; false=microVM/VM cold-plug)
-	DiskHotPlug     bool          // attach extra disks after StartNode
-	NICKinds        []string      // device types this substrate can produce, e.g. ["veth"] or ["tap","macvtap"]
-	ConsoleKinds    []string      // attachable console modes
-	NeedsCloudinit  bool          // PrepareImage / CreateNode requires a cloudinit seed
-	PIDVisibility   PIDMode       // how guest PIDs relate to host PID space
-	SupportsPause   bool          // Substrate.Pause/Resume implemented (W3)
-	PortExposures   []string      // supported port exposure modes: none, direct, host
-	BootTime        time.Duration // typical boot latency (best-effort estimate)
-	Notes           string        // free-form documentation, displayed in `sysbox plan`
+	SharedKernel          bool                   // guest shares the host kernel (container)
+	SupportsWindows       bool                   // can boot a Windows guest
+	NICHotPlug            bool                   // attachment lifecycle works after StartNode (true=container; false=microVM/VM cold-plug)
+	DiskHotPlug           bool                   // attach extra disks after StartNode
+	NICKinds              []string               // device types this substrate can produce, e.g. ["veth"] or ["tap","macvtap"]
+	ConsoleKinds          []string               // attachable console modes
+	NeedsCloudinit        bool                   // PrepareImage / CreateNode requires a cloudinit seed
+	PIDVisibility         PIDMode                // how guest PIDs relate to host PID space
+	SupportsPause         bool                   // Substrate.Pause/Resume implemented (W3)
+	PortExposures         []string               // supported port exposure modes: none, direct, host
+	GuestNetworkInitModes []GuestNetworkInitMode // explicit guest network initialization strategies
+	BootTime              time.Duration          // typical boot latency (best-effort estimate)
+	Notes                 string                 // free-form documentation, displayed in `sysbox plan`
 }
