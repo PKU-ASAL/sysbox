@@ -112,8 +112,14 @@ func (s *portTestSubstrate) Delete(_ context.Context, _ substrate.NodeHandle, _ 
 	s.deletedAttachments = append(s.deletedAttachments, append(json.RawMessage(nil), raw...))
 	return nil
 }
-func (s *portTestSubstrate) ConfigureNAT(_ context.Context, _ substrate.NodeHandle, from driver.AttachmentRequest, _ driver.AttachmentResult, to driver.AttachmentRequest, _ driver.AttachmentResult) error {
-	s.natNames = []string{from.Name, to.Name}
+func (s *portTestSubstrate) ApplyRuleset(_ context.Context, _ driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
+	s.natNames = []string{spec.NAT.SourceAttachment, spec.NAT.UplinkAttachment}
+	return driver.RulesetObservation{Table: driver.RulesetTableName(spec.Owner), Digest: "digest"}, nil
+}
+func (s *portTestSubstrate) ObserveRuleset(context.Context, driver.PolicyTarget, string) (driver.RulesetObservation, error) {
+	return driver.RulesetObservation{}, nil
+}
+func (s *portTestSubstrate) DeleteRuleset(context.Context, driver.PolicyTarget, string) error {
 	return nil
 }
 
@@ -140,7 +146,7 @@ func registerPortTestDriver(t *testing.T, sub *portTestSubstrate) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = previous })
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{
-		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub, RouterNetwork: sub,
+		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub, Policy: sub,
 	}))
 }
 

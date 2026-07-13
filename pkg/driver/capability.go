@@ -13,21 +13,20 @@ import (
 type Capability string
 
 const (
-	CapabilityNode          Capability = "node"
-	CapabilityNIC           Capability = "nic"
-	CapabilitySnapshot      Capability = "snapshot"
-	CapabilityConsole       Capability = "console"
-	CapabilityGuestExec     Capability = "guest-exec"
-	CapabilityNetwork       Capability = "network"
-	CapabilityArtifact      Capability = "artifact"
-	CapabilityImport        Capability = "import"
-	CapabilityNodeState     Capability = "node-state"
-	CapabilityImageEntry    Capability = "image-entry"
-	CapabilityPower         Capability = "power"
-	CapabilityRouterNetwork Capability = "router-network"
-	CapabilityLinuxNetwork  Capability = "linux-network"
-	CapabilityGuestNetwork  Capability = "guest-network"
-	CapabilityPolicy        Capability = "policy"
+	CapabilityNode         Capability = "node"
+	CapabilityNIC          Capability = "nic"
+	CapabilitySnapshot     Capability = "snapshot"
+	CapabilityConsole      Capability = "console"
+	CapabilityGuestExec    Capability = "guest-exec"
+	CapabilityNetwork      Capability = "network"
+	CapabilityArtifact     Capability = "artifact"
+	CapabilityImport       Capability = "import"
+	CapabilityNodeState    Capability = "node-state"
+	CapabilityImageEntry   Capability = "image-entry"
+	CapabilityPower        Capability = "power"
+	CapabilityLinuxNetwork Capability = "linux-network"
+	CapabilityGuestNetwork Capability = "guest-network"
+	CapabilityPolicy       Capability = "policy"
 )
 
 type Node interface {
@@ -116,44 +115,32 @@ type Power interface {
 	Resume(context.Context, substrate.NodeHandle) error
 }
 
-type RouterNetwork interface {
-	ConfigureNAT(context.Context, substrate.NodeHandle, AttachmentRequest, AttachmentResult, AttachmentRequest, AttachmentResult) error
-}
-
 type IsolatedNetworkSpec struct{ Name, Bridge, CIDR string }
-type FirewallRule struct {
-	Proto          string
-	DPort          int
-	SrcNet, Action string
-}
 type LinuxNetwork interface {
 	CreateIsolated(context.Context, IsolatedNetworkSpec) error
 	DeleteIsolated(context.Context, IsolatedNetworkSpec) error
 	NetworkHealthy(context.Context, IsolatedNetworkSpec) (bool, string)
 	LinkHealthy(context.Context, string, string) bool
 	DeleteAttachment(context.Context, string, string, string) error
-	ApplyFirewall(context.Context, string, []FirewallRule) error
-	DeleteFirewall(context.Context, string) error
 }
 
 type Descriptor struct {
-	Name          string
-	Version       string
-	Node          Node
-	NIC           NIC
-	Snapshot      Snapshot
-	Console       Console
-	GuestExec     GuestExec
-	Network       Network
-	Artifact      Artifact
-	Import        Import
-	NodeState     NodeState
-	ImageEntry    ImageEntry
-	Power         Power
-	RouterNetwork RouterNetwork
-	Policy        Policy
-	LinuxNetwork  LinuxNetwork
-	GuestNetwork  GuestNetwork
+	Name         string
+	Version      string
+	Node         Node
+	NIC          NIC
+	Snapshot     Snapshot
+	Console      Console
+	GuestExec    GuestExec
+	Network      Network
+	Artifact     Artifact
+	Import       Import
+	NodeState    NodeState
+	ImageEntry   ImageEntry
+	Power        Power
+	Policy       Policy
+	LinuxNetwork LinuxNetwork
+	GuestNetwork GuestNetwork
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -180,8 +167,6 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.ImageEntry
 	case CapabilityPower:
 		return d.Power
-	case CapabilityRouterNetwork:
-		return d.RouterNetwork
 	case CapabilityLinuxNetwork:
 		return d.LinuxNetwork
 	case CapabilityGuestNetwork:

@@ -10,11 +10,13 @@ import (
 
 	"github.com/oslab/sysbox/pkg/driver"
 	networkprovider "github.com/oslab/sysbox/pkg/provider/network"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type dockerPolicyTarget struct {
-	ContainerID string            `json:"container_id"`
-	Bindings    map[string]string `json:"bindings"`
+	ContainerID   string              `json:"container_id"`
+	Bindings      map[string]string   `json:"bindings"`
+	AttachmentIPs map[string][]string `json:"attachment_ips,omitempty"`
 }
 
 func decodeDockerPolicyTarget(target driver.PolicyTarget) (dockerPolicyTarget, error) {
@@ -35,6 +37,16 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 	state, err := decodeDockerPolicyTarget(target)
 	if err != nil {
 		return driver.RulesetObservation{}, err
+	}
+	for logical, prefixes := range state.AttachmentIPs {
+		if state.Bindings[logical] != "" {
+			continue
+		}
+		device, resolveErr := s.resolveAttachmentDevice(ctx, substrate.NodeHandle{ID: state.ContainerID}, driver.AttachmentRequest{Name: logical, IPPrefixes: prefixes}, driver.AttachmentResult{})
+		if resolveErr != nil {
+			return driver.RulesetObservation{}, resolveErr
+		}
+		state.Bindings[logical] = device
 	}
 	var observation driver.RulesetObservation
 	err = s.withContainerNetNS(ctx, state.ContainerID, func(fd int) error {

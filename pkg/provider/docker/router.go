@@ -2,40 +2,12 @@ package docker
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
-
-func (s *Substrate) ConfigureNAT(ctx context.Context, handle substrate.NodeHandle, fromReq driver.AttachmentRequest, from driver.AttachmentResult, toReq driver.AttachmentRequest, to driver.AttachmentResult) error {
-	fromIf, err := s.resolveAttachmentDevice(ctx, handle, fromReq, from)
-	if err != nil {
-		return err
-	}
-	toIf, err := s.resolveAttachmentDevice(ctx, handle, toReq, to)
-	if err != nil {
-		return err
-	}
-	bindings := map[string]string{fromReq.Name: fromIf, toReq.Name: toIf}
-	targetState, err := json.Marshal(dockerPolicyTarget{ContainerID: handle.ID, Bindings: bindings})
-	if err != nil {
-		return err
-	}
-	spec := driver.RulesetSpec{
-		Owner: "docker-router/" + handle.ID, Family: driver.FamilyIPv4,
-		DefaultInput: driver.VerdictAccept, DefaultOutput: driver.VerdictAccept, DefaultForward: driver.VerdictDrop,
-		Rules: []driver.PolicyRule{
-			{ID: "nat-forward", Direction: driver.DirectionForward, InputAttachment: fromReq.Name, OutputAttachment: toReq.Name, Protocol: driver.ProtocolAll, Verdict: driver.VerdictAccept, Counter: true},
-			{ID: "nat-return", Direction: driver.DirectionForward, InputAttachment: toReq.Name, OutputAttachment: fromReq.Name, Protocol: driver.ProtocolAll, States: []driver.ConnectionState{driver.StateEstablished, driver.StateRelated}, Verdict: driver.VerdictAccept, Counter: true},
-		},
-		NAT: &driver.NATPolicy{SourceAttachment: fromReq.Name, UplinkAttachment: toReq.Name, SourceCIDRs: append([]string(nil), fromReq.IPPrefixes...), Masquerade: true},
-	}
-	_, err = s.ApplyRuleset(ctx, driver.PolicyTarget{Resource: handle.ID, State: targetState}, spec)
-	return err
-}
 
 func (s *Substrate) resolveAttachmentDevice(ctx context.Context, handle substrate.NodeHandle, req driver.AttachmentRequest, result driver.AttachmentResult) (string, error) {
 	if result.GuestDevice != "" {

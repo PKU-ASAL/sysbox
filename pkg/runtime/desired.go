@@ -92,6 +92,10 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		}
 	case *config.FirewallConfig:
 		payload["attach_to"] = cfg.AttachTo
+		payload["family"] = cfg.Family
+		payload["default_input"] = cfg.DefaultInput
+		payload["default_output"] = cfg.DefaultOutput
+		payload["default_forward"] = cfg.DefaultForward
 		payload["rules"] = cfg.Rules
 	case *config.SSHAccessConfig:
 		payload["node"] = cfg.Node

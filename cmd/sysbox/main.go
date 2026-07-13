@@ -29,12 +29,11 @@ func main() {
 			Name: "docker", Version: "1", Node: dockerSub, NIC: dockerSub,
 			Console: dockerSub, GuestExec: dockerSub, Network: dockerSub,
 			Artifact: dockerSub, Import: dockerSub,
-			NodeState:     dockerSub,
-			ImageEntry:    dockerSub,
-			Power:         dockerSub,
-			RouterNetwork: dockerSub,
-			GuestNetwork:  dockerSub,
-			Policy:        dockerSub,
+			NodeState:    dockerSub,
+			ImageEntry:   dockerSub,
+			Power:        dockerSub,
+			GuestNetwork: dockerSub,
+			Policy:       dockerSub,
 		})
 	}
 

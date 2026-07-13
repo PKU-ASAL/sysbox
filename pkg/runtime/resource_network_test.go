@@ -87,7 +87,3 @@ func (fakeLinuxNetwork) NetworkHealthy(context.Context, driver.IsolatedNetworkSp
 }
 func (fakeLinuxNetwork) LinkHealthy(context.Context, string, string) bool               { return true }
 func (fakeLinuxNetwork) DeleteAttachment(context.Context, string, string, string) error { return nil }
-func (fakeLinuxNetwork) ApplyFirewall(context.Context, string, []driver.FirewallRule) error {
-	return nil
-}
-func (fakeLinuxNetwork) DeleteFirewall(context.Context, string) error { return nil }

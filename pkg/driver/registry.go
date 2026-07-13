@@ -120,14 +120,6 @@ func (r *Registry) RequirePower(name string) (Power, error) {
 	return d.Power, nil
 }
 
-func (r *Registry) RequireRouterNetwork(name string) (RouterNetwork, error) {
-	d, err := r.Require(name, CapabilityRouterNetwork)
-	if err != nil {
-		return nil, err
-	}
-	return d.RouterNetwork, nil
-}
-
 func (r *Registry) RequireLinuxNetwork(name string) (LinuxNetwork, error) {
 	d, err := r.Require(name, CapabilityLinuxNetwork)
 	if err != nil {

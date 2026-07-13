@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"testing"
 
@@ -10,9 +11,53 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
+
+type firewallPolicyFake struct{ applied driver.RulesetSpec }
+
+func (f *firewallPolicyFake) ApplyRuleset(_ context.Context, _ driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
+	f.applied = spec
+	return driver.RulesetObservation{Table: "sysbox_owned", Digest: "verified"}, nil
+}
+func (*firewallPolicyFake) ObserveRuleset(context.Context, driver.PolicyTarget, string) (driver.RulesetObservation, error) {
+	return driver.RulesetObservation{}, nil
+}
+func (*firewallPolicyFake) DeleteRuleset(context.Context, driver.PolicyTarget, string) error {
+	return nil
+}
+
+func TestFirewallRulesetRejectsIPv6AndDefaultsDrop(t *testing.T) {
+	_, err := firewallRuleset("owner", &config.FirewallConfig{Family: "ipv6"})
+	require.ErrorContains(t, err, "only IPv4")
+	spec, err := firewallRuleset("owner", &config.FirewallConfig{})
+	require.NoError(t, err)
+	require.Equal(t, driver.VerdictDrop, spec.DefaultInput)
+	require.Equal(t, driver.VerdictDrop, spec.DefaultOutput)
+	require.Equal(t, driver.VerdictDrop, spec.DefaultForward)
+}
+
+func TestCreateFirewallPersistsVerifiedObservation(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	fake := &firewallPolicyFake{}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), Driver: "policy-test", Attributes: state.MustAttributes(map[string]any{"container_id": "router"}), Attachments: []state.Attachment{{Name: "inside", Observation: state.AttachmentObservation{GuestDevice: "eth1"}}}})
+	exec := NewExecutor(graph.New(), st)
+	n := &graph.Node{Address: address.Resource("sysbox_firewall", "edge"), Data: &config.FirewallConfig{AttachTo: "sysbox_router.edge", Rules: []config.FirewallRule{{Name: "allow", Direction: "forward", Protocol: "all", InputAttachment: "inside", Verdict: "accept"}}}}
+	res, err := exec.createFirewallResource(context.Background(), n)
+	require.NoError(t, err)
+	require.Equal(t, "sysbox_owned", res.Str("table"))
+	require.Equal(t, "verified", res.Str("desired_digest"))
+	require.Equal(t, "inside", fake.applied.Rules[0].InputAttachment)
+	var target map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Str("policy_target_state")), &target))
+	require.Equal(t, "router", target["container_id"])
+}
 
 func TestEdgeResourceHandlersRegistered(t *testing.T) {
 	for _, typ := range []string{"sysbox_firewall", "sysbox_ssh_access", "sysbox_actor"} {
@@ -27,12 +72,10 @@ func TestFirewallResourceHandlerPlanDiff(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_firewall", "allow_ssh"),
 		Data: &config.FirewallConfig{
-			AttachTo: "sysbox_network.dmz.id",
+			AttachTo: "sysbox_router.edge.id",
 			Rules: []config.FirewallRule{{
-				Proto:  "tcp",
-				DPort:  22,
-				SrcNet: "10.0.0.0/24",
-				Action: "accept",
+				Name: "ssh", Direction: "forward", Protocol: "tcp",
+				DestinationPorts: []string{"22"}, SourceCIDRs: []string{"10.0.0.0/24"}, Verdict: "accept",
 			}},
 		},
 	}
@@ -46,18 +89,16 @@ func TestFirewallResourceHandlerPlanDiff(t *testing.T) {
 	require.Equal(t, controlplane.PlanActionNoop, action.Action)
 
 	n.Data = &config.FirewallConfig{
-		AttachTo: "sysbox_network.dmz.id",
+		AttachTo: "sysbox_router.edge.id",
 		Rules: []config.FirewallRule{{
-			Proto:  "tcp",
-			DPort:  443,
-			SrcNet: "10.0.0.0/24",
-			Action: "accept",
+			Name: "https", Direction: "forward", Protocol: "tcp",
+			DestinationPorts: []string{"443"}, SourceCIDRs: []string{"10.0.0.0/24"}, Verdict: "accept",
 		}},
 	}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	_, ok := fieldChangeAt(action.Changes, "rules[0].DPort")
+	_, ok := fieldChangeAt(action.Changes, "rules[0].DestinationPorts[0]")
 	require.True(t, ok)
 }
 

@@ -289,12 +289,25 @@ func TestBuildGraphModuleKeepsInternalDependencyAddresses(t *testing.T) {
 	require.NoError(t, os.MkdirAll(modDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(modDir, "main.sysbox.hcl"), []byte(`
 resource "sysbox_network" "dmz" { cidr = "10.0.1.0/24" }
+resource "sysbox_image" "router" {
+  substrate = "docker"
+  docker_ref = "alpine:latest"
+}
+resource "sysbox_router" "gateway" {
+  substrate = "docker"
+  image = sysbox_image.router.id
+  interface "dmz" {
+    network = sysbox_network.dmz.id
+    ip = "10.0.1.1/24"
+  }
+}
 resource "sysbox_firewall" "edge" {
-  attach_to = sysbox_network.dmz.id
-  rule {
-    proto = "tcp"
-    dport = 443
-    action = "accept"
+  attach_to = sysbox_router.gateway.id
+  rule "https" {
+    direction = "forward"
+    protocol = "tcp"
+    destination_ports = ["443"]
+    verdict = "accept"
   }
 }
 `), 0o644))
@@ -308,8 +321,8 @@ resource "sysbox_firewall" "edge" {
 	require.NoError(t, err)
 	module := address.ModuleInstance{Name: "lab"}
 	firewall := address.Resource("sysbox_firewall", "edge").WithModule(module)
-	network := address.Resource("sysbox_network", "dmz").WithModule(module)
-	require.Equal(t, []address.Address{network}, g.Get(firewall).Deps)
+	router := address.Resource("sysbox_router", "gateway").WithModule(module)
+	require.Equal(t, []address.Address{router}, g.Get(firewall).Deps)
 }
 
 // Ensure address.Address is usable in tests.

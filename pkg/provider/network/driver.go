@@ -38,13 +38,3 @@ func (Driver) DeleteAttachment(_ context.Context, kind, hostEnd, namespace strin
 	}
 	return DeleteVethPair(VethHandle{HostEnd: hostEnd, NetnsName: namespace})
 }
-func (Driver) ApplyFirewall(_ context.Context, namespace string, rules []driver.FirewallRule) error {
-	specs := make([]FirewallRuleSpec, len(rules))
-	for i, rule := range rules {
-		specs[i] = FirewallRuleSpec{Proto: rule.Proto, DPort: rule.DPort, SrcNet: rule.SrcNet, Action: rule.Action}
-	}
-	return ApplyFirewall(namespace, specs)
-}
-func (Driver) DeleteFirewall(_ context.Context, namespace string) error {
-	return DeleteFirewall(namespace)
-}

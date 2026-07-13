@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
@@ -34,7 +35,25 @@ func (RouterResourceHandler) Schema() ResourceSchema {
 }
 
 func (RouterResourceHandler) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
-	return readNodeLikeResource(ctx, current)
+	result, err := readNodeLikeResource(ctx, current)
+	if err != nil || result.Status != state.ResourcePresent || current.Str("policy_owner") == "" {
+		return result, err
+	}
+	policy, err := driver.DefaultRegistry.RequirePolicy(current.Driver)
+	if err != nil {
+		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
+	}
+	observation, err := policy.ObserveRuleset(ctx, driver.PolicyTarget{Resource: current.Address.String(), State: json.RawMessage(current.Str("policy_target_state"))}, current.Str("policy_owner"))
+	if err != nil {
+		if driver.IsCategory(err, driver.ErrorNotFound) {
+			return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: "router policy table not found"}, nil
+		}
+		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
+	}
+	if observation.Digest != current.Str("policy_digest") {
+		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: "router policy digest mismatch"}, nil
+	}
+	return result, nil
 }
 
 func (RouterResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
@@ -46,6 +65,16 @@ func (RouterResourceHandler) Create(ctx context.Context, pc *ProviderContext, n 
 }
 
 func (RouterResourceHandler) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
+	if owner := current.Str("policy_owner"); owner != "" {
+		policy, err := driver.DefaultRegistry.RequirePolicy(current.Driver)
+		if err != nil {
+			return err
+		}
+		target := driver.PolicyTarget{Resource: current.Address.String(), State: json.RawMessage(current.Str("policy_target_state"))}
+		if err := policy.DeleteRuleset(ctx, target, owner); err != nil {
+			return fmt.Errorf("delete router %s policy: %w", current.Address, err)
+		}
+	}
 	return pc.destroyNodeResource(ctx, current)
 }
 
@@ -66,7 +95,7 @@ func (RouterResourceHandler) RequiredCapabilities(node *graph.Node) ([]Capabilit
 	}
 	required := []CapabilityRequirement{{name, driver.CapabilityNode}, {name, driver.CapabilityNIC}, {name, driver.CapabilityNodeState}}
 	if cfg.NatFrom != "" || cfg.NatTo != "" {
-		required = append(required, CapabilityRequirement{name, driver.CapabilityRouterNetwork})
+		required = append(required, CapabilityRequirement{name, driver.CapabilityPolicy})
 	}
 	return required, nil
 }
@@ -175,28 +204,49 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	}
 
 	natApplied := false
+	var policyOwner, policyTable, policyDigest, policyTargetState string
 	if cfg.NatFrom != "" && cfg.NatTo != "" {
 		fromReq, ok1 := wireResult.Requests[cfg.NatFrom]
-		toReq, ok2 := wireResult.Requests[cfg.NatTo]
+		_, ok2 := wireResult.Requests[cfg.NatTo]
 		if !ok1 || !ok2 {
 			return state.Resource{}, fmt.Errorf("nat_from %q / nat_to %q must reference declared interfaces",
 				cfg.NatFrom, cfg.NatTo)
 		}
-		routerNetwork, err := driver.DefaultRegistry.RequireRouterNetwork(subName)
+		policy, err := driver.DefaultRegistry.RequirePolicy(subName)
 		if err != nil {
 			return state.Resource{}, err
 		}
-		if err := routerNetwork.ConfigureNAT(ctx, handle, fromReq, wireResult.Results[cfg.NatFrom], toReq, wireResult.Results[cfg.NatTo]); err != nil {
-			e.logf("[router %s] warning: NAT setup failed (continuing without NAT): %v\n", n.Address.Name, err)
-		} else {
-			natApplied = true
+		bindings := map[string]string{}
+		attachmentIPs := map[string][]string{}
+		for name, result := range wireResult.Results {
+			bindings[name] = result.GuestDevice
+			attachmentIPs[name] = append([]string(nil), wireResult.Requests[name].IPPrefixes...)
 		}
+		targetRaw, err := json.Marshal(map[string]any{"container_id": handle.ID, "bindings": bindings, "attachment_ips": attachmentIPs})
+		if err != nil {
+			return state.Resource{}, err
+		}
+		policyOwner = e.topology + "/" + n.Address.String()
+		spec := driver.RulesetSpec{Owner: policyOwner, Family: driver.FamilyIPv4, DefaultInput: driver.VerdictAccept, DefaultOutput: driver.VerdictAccept, DefaultForward: driver.VerdictDrop,
+			Rules: []driver.PolicyRule{
+				{ID: "nat-forward", Direction: driver.DirectionForward, InputAttachment: cfg.NatFrom, OutputAttachment: cfg.NatTo, Protocol: driver.ProtocolAll, Verdict: driver.VerdictAccept, Counter: true},
+				{ID: "nat-return", Direction: driver.DirectionForward, InputAttachment: cfg.NatTo, OutputAttachment: cfg.NatFrom, Protocol: driver.ProtocolAll, States: []driver.ConnectionState{driver.StateEstablished, driver.StateRelated}, Verdict: driver.VerdictAccept, Counter: true},
+			}, NAT: &driver.NATPolicy{SourceAttachment: cfg.NatFrom, UplinkAttachment: cfg.NatTo, SourceCIDRs: append([]string(nil), fromReq.IPPrefixes...), Masquerade: true}}
+		observation, err := policy.ApplyRuleset(ctx, driver.PolicyTarget{Resource: n.Address.String(), State: targetRaw}, spec)
+		if err != nil {
+			return state.Resource{}, fmt.Errorf("router %s NAT policy: %w", n.Address.Name, err)
+		}
+		natApplied, policyTable, policyDigest, policyTargetState = true, observation.Table, observation.Digest, string(targetRaw)
 	}
 
 	inst := map[string]any{
-		"container_id": handle.ID,
-		"primary_ip":   wireResult.PrimaryIP,
-		"nat_applied":  natApplied,
+		"container_id":        handle.ID,
+		"primary_ip":          wireResult.PrimaryIP,
+		"nat_applied":         natApplied,
+		"policy_owner":        policyOwner,
+		"policy_table":        policyTable,
+		"policy_digest":       policyDigest,
+		"policy_target_state": policyTargetState,
 	}
 	// Persist opaque provider state so cold-destroy works for all substrates.
 	blob, _ := stateDriver.MarshalProviderState(handle)

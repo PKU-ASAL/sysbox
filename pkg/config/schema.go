@@ -365,15 +365,28 @@ type KernelConfig struct {
 }
 
 type FirewallConfig struct {
-	AttachTo string         `hcl:"attach_to"`
-	Rules    []FirewallRule `hcl:"rule,block"`
+	AttachTo       string         `hcl:"attach_to"`
+	Family         string         `hcl:"family,optional"`
+	DefaultInput   string         `hcl:"default_input,optional"`
+	DefaultOutput  string         `hcl:"default_output,optional"`
+	DefaultForward string         `hcl:"default_forward,optional"`
+	Rules          []FirewallRule `hcl:"rule,block"`
 }
 
 type FirewallRule struct {
-	Proto  string `hcl:"proto"`
-	DPort  int    `hcl:"dport,optional"`
-	SrcNet string `hcl:"src_net,optional"`
-	Action string `hcl:"action"`
+	Name             string   `hcl:"name,label"`
+	Direction        string   `hcl:"direction"`
+	SourceCIDRs      []string `hcl:"source_cidrs,optional"`
+	DestinationCIDRs []string `hcl:"destination_cidrs,optional"`
+	SourcePorts      []string `hcl:"source_ports,optional"`
+	DestinationPorts []string `hcl:"destination_ports,optional"`
+	Protocol         string   `hcl:"protocol,optional"`
+	InputAttachment  string   `hcl:"input_attachment,optional"`
+	OutputAttachment string   `hcl:"output_attachment,optional"`
+	States           []string `hcl:"states,optional"`
+	Verdict          string   `hcl:"verdict"`
+	Counter          bool     `hcl:"counter,optional"`
+	Log              bool     `hcl:"log,optional"`
 }
 
 type RouterConfig struct {

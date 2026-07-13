@@ -181,7 +181,9 @@ func ResourceSchemaFor(typ string) ResourceSchema {
 		}
 		add("interfaces", value.ListType, false, false)
 	case "sysbox_firewall":
-		add("attach_to", value.StringType, false, false)
+		for _, name := range []string{"attach_to", "family", "default_input", "default_output", "default_forward"} {
+			add(name, value.StringType, false, false)
+		}
 		add("rules", value.ListType, false, false)
 	case "sysbox_ssh_access":
 		add("node", value.StringType, false, false)
