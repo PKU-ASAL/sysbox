@@ -73,14 +73,19 @@ type portTestSubstrate struct {
 	lastSpec           substrate.NodeSpec
 	deletedAttachments []json.RawMessage
 	natNames           []string
+	guestInitModes     []substrate.GuestNetworkInitMode
+	guestObservation   substrate.GuestNetworkInitObservation
+	lifecycle          []string
+	coldPlug           bool
 }
 
 func (s *portTestSubstrate) Name() string { return s.name }
 
 func (s *portTestSubstrate) Capabilities() substrate.Capabilities {
 	return substrate.Capabilities{
-		NICHotPlug:    true,
-		PortExposures: s.exposures,
+		NICHotPlug:            !s.coldPlug,
+		PortExposures:         s.exposures,
+		GuestNetworkInitModes: s.guestInitModes,
 	}
 }
 
@@ -96,14 +101,28 @@ func (s *portTestSubstrate) CreateNode(_ context.Context, spec substrate.NodeSpe
 	}, nil
 }
 
-func (s *portTestSubstrate) StartNode(context.Context, substrate.NodeHandle) error { return nil }
+func (s *portTestSubstrate) StartNode(context.Context, substrate.NodeHandle) error {
+	s.lifecycle = append(s.lifecycle, "start")
+	return nil
+}
 
 func (s *portTestSubstrate) StopNode(context.Context, substrate.NodeHandle) error { return nil }
 
 func (s *portTestSubstrate) DestroyNode(context.Context, substrate.NodeHandle) error { return nil }
 
 func (s *portTestSubstrate) Attach(context.Context, substrate.NodeHandle, driver.AttachmentRequest) (driver.AttachmentResult, error) {
+	s.lifecycle = append(s.lifecycle, "attach")
 	return driver.AttachmentResult{Driver: s.name}, nil
+}
+
+func (s *portTestSubstrate) PrepareGuestNetwork(context.Context, substrate.NodeHandle) error {
+	s.lifecycle = append(s.lifecycle, "prepare_guest_network")
+	return nil
+}
+
+func (s *portTestSubstrate) ObserveGuestNetwork(context.Context, substrate.NodeHandle) (substrate.GuestNetworkInitObservation, error) {
+	s.lifecycle = append(s.lifecycle, "observe_guest_network")
+	return s.guestObservation, nil
 }
 func (s *portTestSubstrate) Observe(context.Context, substrate.NodeHandle, driver.AttachmentRequest, json.RawMessage) (driver.AttachmentResult, error) {
 	return driver.AttachmentResult{}, nil
@@ -146,8 +165,49 @@ func registerPortTestDriver(t *testing.T, sub *portTestSubstrate) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = previous })
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{
-		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub, Policy: sub,
+		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub, Policy: sub, GuestNetworkInit: sub,
 	}))
+}
+
+func TestNodeResourceHandlerRunsGuestNetworkInitLifecycle(t *testing.T) {
+	sub := &portTestSubstrate{
+		name:             "guest-init-test",
+		guestInitModes:   []substrate.GuestNetworkInitMode{substrate.GuestNetworkInitCloudInit},
+		guestObservation: substrate.GuestNetworkInitObservation{Mode: substrate.GuestNetworkInitCloudInit, Converged: true},
+		coldPlug:         true,
+	}
+	registerPortTestDriver(t, sub)
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_image", "base"), Driver: sub.name, Attributes: map[string]any{"image_id": "image-id", "repository": "base"}})
+	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_network", "matrix"), Driver: "network", Attributes: map[string]any{"cidr": "10.44.0.0/24"}})
+	n := &graph.Node{Address: address.Resource("sysbox_node", "node"), Data: &config.NodeConfig{
+		Image: "sysbox_image.base.id", Substrate: sub.name,
+		Links: []config.LinkConfig{{Name: "matrix", Network: "sysbox_network.matrix", IP: "10.44.0.30/24"}},
+	}}
+
+	resource, err := NodeResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"attach", "prepare_guest_network", "start", "observe_guest_network"}, sub.lifecycle)
+	require.Equal(t, string(substrate.GuestNetworkInitCloudInit), resource.Str("guest_network_init_mode"))
+	require.True(t, resource.Bool("guest_network_init_converged"))
+}
+
+func TestNodeResourceHandlerRejectsNonConvergedGuestNetwork(t *testing.T) {
+	sub := &portTestSubstrate{
+		name:             "guest-init-fail-test",
+		guestInitModes:   []substrate.GuestNetworkInitMode{substrate.GuestNetworkInitCloudInit},
+		guestObservation: substrate.GuestNetworkInitObservation{Mode: substrate.GuestNetworkInitCloudInit, Converged: false, Reason: "address unavailable"},
+		coldPlug:         true,
+	}
+	registerPortTestDriver(t, sub)
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_image", "base"), Driver: sub.name, Attributes: map[string]any{"image_id": "image-id", "repository": "base"}})
+	n := &graph.Node{Address: address.Resource("sysbox_node", "node"), Data: &config.NodeConfig{Image: "sysbox_image.base.id", Substrate: sub.name}}
+
+	_, err := NodeResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+
+	require.ErrorContains(t, err, "address unavailable")
 }
 
 func TestNodeResourceHandlerPortsArePassedAndResolved(t *testing.T) {

@@ -5,10 +5,13 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
+
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // Config is the provider "libvirt" { ... } block decoded from HCL.
 type Config struct {
+	NetworkInit substrate.GuestNetworkInitMode `hcl:"network_init"`
 	// VCPUs is the number of virtual CPUs. Defaults to 1.
 	VCPUs int `hcl:"vcpus,optional"`
 	// Memory is the RAM in MiB (e.g. "512", "2048"). Defaults to "512".
@@ -23,7 +26,8 @@ type Config struct {
 	// SSHPass is the password for SSH access (used only when SSHKey is empty).
 	SSHPass string `hcl:"ssh_pass,optional"`
 	// SSHKey is the path to a private key for SSH access.
-	SSHKey string `hcl:"ssh_key,optional"`
+	SSHKey           string `hcl:"ssh_key,optional"`
+	SSHAuthorizedKey string `hcl:"ssh_authorized_key,optional"`
 }
 
 func (s *Substrate) DecodeProviderConfig(body hcl.Body, ctx *hcl.EvalContext) (any, error) {
@@ -34,7 +38,7 @@ func (s *Substrate) DecodeProviderConfig(body hcl.Body, ctx *hcl.EvalContext) (a
 		SSHUser:     "root",
 	}
 	if body == nil {
-		return cfg, nil
+		return nil, fmt.Errorf("libvirt provider config: network_init is required")
 	}
 	if diag := gohcl.DecodeBody(body, ctx, cfg); diag.HasErrors() {
 		return nil, fmt.Errorf("libvirt provider config: %s", diag.Error())
@@ -48,5 +52,12 @@ func (s *Substrate) DecodeProviderConfig(body hcl.Body, ctx *hcl.EvalContext) (a
 	if cfg.SSHUser == "" {
 		cfg.SSHUser = "root"
 	}
+	if !supportedNetworkInitMode(cfg.NetworkInit) {
+		return nil, fmt.Errorf("libvirt provider config: network_init must be %q or %q, got %q", substrate.GuestNetworkInitCloudInit, substrate.GuestNetworkInitPreconfigured, cfg.NetworkInit)
+	}
 	return cfg, nil
+}
+
+func supportedNetworkInitMode(mode substrate.GuestNetworkInitMode) bool {
+	return mode == substrate.GuestNetworkInitCloudInit || mode == substrate.GuestNetworkInitPreconfigured
 }

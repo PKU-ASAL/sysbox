@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -70,6 +71,13 @@ func (NodeResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityR
 	required := []CapabilityRequirement{{name, driver.CapabilityNode}, {name, driver.CapabilityNIC}, {name, driver.CapabilityNodeState}}
 	if len(cfg.Routes) > 0 {
 		required = append(required, CapabilityRequirement{name, driver.CapabilityGuestNetwork})
+	}
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(name)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodeDriver.Capabilities().GuestNetworkInitModes) > 0 {
+		required = append(required, CapabilityRequirement{name, driver.CapabilityGuestNetworkInit})
 	}
 	return required, nil
 }
@@ -321,6 +329,20 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 
 	// Populate PrimaryIP from the wiring result.
 	handle.Net.PrimaryIP = wireResult.PrimaryIP
+	var guestInitDriver driver.GuestNetworkInit
+	if len(caps.GuestNetworkInitModes) > 0 {
+		guestInitDriver, err = driver.DefaultRegistry.RequireGuestNetworkInit(subName)
+		if err != nil {
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node without guest network init capability")
+			return state.Resource{}, err
+		}
+		if err := e.recordSubstep(parentStep, "prepare_guest_network", map[string]any{
+			"resource": n.Address.String(), "substrate": subName, "node_id": handle.ID,
+		}, func() error { return guestInitDriver.PrepareGuestNetwork(ctx, handle) }); err != nil {
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on guest network preparation failure")
+			return state.Resource{}, fmt.Errorf("prepare guest network for %s: %w", n.Address.Name, err)
+		}
+	}
 
 	resolvedPorts := resolvePorts(portSpecs, handle.Net.PrimaryIP)
 	nodeInstance := map[string]any{
@@ -365,6 +387,36 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		}); err != nil {
 			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on cold-start failure")
 			return state.Resource{}, fmt.Errorf("start node %s: %w", n.Address.Name, err)
+		}
+	}
+
+	if guestInitDriver != nil {
+		observation, observeErr := guestInitDriver.ObserveGuestNetwork(ctx, handle)
+		if observeErr != nil {
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on guest network observation failure")
+			return state.Resource{}, fmt.Errorf("observe guest network for %s: %w", n.Address.Name, observeErr)
+		}
+		if !observation.Converged {
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on guest network convergence failure")
+			return state.Resource{}, fmt.Errorf("guest network for %s did not converge: %s", n.Address.Name, observation.Reason)
+		}
+		observationState, marshalErr := guestNetworkObservationState(observation)
+		if marshalErr != nil {
+			return state.Resource{}, marshalErr
+		}
+		for key, value := range map[string]any{
+			"guest_network_init_mode":        string(observation.Mode),
+			"guest_network_init_converged":   observation.Converged,
+			"guest_network_init_observation": observationState,
+		} {
+			if setErr := resource.SetRuntimeValue(key, value); setErr != nil {
+				return state.Resource{}, setErr
+			}
+			if record := e.state.FindResource(resource.Address); record != nil {
+				if setErr := record.SetRuntimeValue(key, value); setErr != nil {
+					return state.Resource{}, setErr
+				}
+			}
 		}
 	}
 
@@ -450,6 +502,18 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		resource = *rec
 	}
 	return resource, nil
+}
+
+func guestNetworkObservationState(observation substrate.GuestNetworkInitObservation) (map[string]any, error) {
+	raw, err := json.Marshal(observation)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func hasHostPort(ports []substrate.PortSpec) bool {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 )
 
@@ -70,27 +71,90 @@ func ResolveStringMap(ctx context.Context, resolver Resolver, input map[string]s
 }
 
 func ResolveAny(ctx context.Context, resolver Resolver, input any) (any, error) {
-	switch value := input.(type) {
-	case string:
-		return ResolveString(ctx, resolver, value)
-	case []any:
-		output := make([]any, len(value))
-		for i := range value {
-			resolved, err := ResolveAny(ctx, resolver, value[i])
-			if err != nil {
-				return nil, err
+	if input == nil {
+		return nil, nil
+	}
+	resolved, err := resolveValue(ctx, resolver, reflect.ValueOf(input))
+	if err != nil {
+		return nil, err
+	}
+	return resolved.Interface(), nil
+}
+
+func resolveValue(ctx context.Context, resolver Resolver, input reflect.Value) (reflect.Value, error) {
+	if !input.IsValid() {
+		return input, nil
+	}
+	switch input.Kind() {
+	case reflect.String:
+		resolved, err := ResolveString(ctx, resolver, input.String())
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		output := reflect.New(input.Type()).Elem()
+		output.SetString(resolved)
+		return output, nil
+	case reflect.Pointer:
+		if input.IsNil() {
+			return reflect.Zero(input.Type()), nil
+		}
+		resolved, err := resolveValue(ctx, resolver, input.Elem())
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		output := reflect.New(input.Type().Elem())
+		output.Elem().Set(resolved)
+		return output, nil
+	case reflect.Interface:
+		if input.IsNil() {
+			return reflect.Zero(input.Type()), nil
+		}
+		resolved, err := resolveValue(ctx, resolver, input.Elem())
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		output := reflect.New(input.Type()).Elem()
+		output.Set(resolved)
+		return output, nil
+	case reflect.Struct:
+		output := reflect.New(input.Type()).Elem()
+		output.Set(input)
+		for i := 0; i < input.NumField(); i++ {
+			if !output.Field(i).CanSet() || input.Type().Field(i).PkgPath != "" {
+				continue
 			}
-			output[i] = resolved
+			resolved, err := resolveValue(ctx, resolver, input.Field(i))
+			if err != nil {
+				return reflect.Value{}, fmt.Errorf("resolve %s: %w", input.Type().Field(i).Name, err)
+			}
+			output.Field(i).Set(resolved)
 		}
 		return output, nil
-	case map[string]any:
-		output := make(map[string]any, len(value))
-		for key, item := range value {
-			resolved, err := ResolveAny(ctx, resolver, item)
+	case reflect.Slice:
+		if input.IsNil() {
+			return reflect.Zero(input.Type()), nil
+		}
+		output := reflect.MakeSlice(input.Type(), input.Len(), input.Len())
+		for i := 0; i < input.Len(); i++ {
+			resolved, err := resolveValue(ctx, resolver, input.Index(i))
 			if err != nil {
-				return nil, fmt.Errorf("resolve %s: %w", key, err)
+				return reflect.Value{}, fmt.Errorf("resolve item %d: %w", i, err)
 			}
-			output[key] = resolved
+			output.Index(i).Set(resolved)
+		}
+		return output, nil
+	case reflect.Map:
+		if input.IsNil() {
+			return reflect.Zero(input.Type()), nil
+		}
+		output := reflect.MakeMapWithSize(input.Type(), input.Len())
+		iterator := input.MapRange()
+		for iterator.Next() {
+			resolved, err := resolveValue(ctx, resolver, iterator.Value())
+			if err != nil {
+				return reflect.Value{}, fmt.Errorf("resolve %v: %w", iterator.Key(), err)
+			}
+			output.SetMapIndex(iterator.Key(), resolved)
 		}
 		return output, nil
 	default:

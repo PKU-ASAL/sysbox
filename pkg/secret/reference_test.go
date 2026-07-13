@@ -31,3 +31,26 @@ func TestResolveStringLeavesPlainValuesUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "plain", value)
 }
+
+func TestResolveAnyPreservesTypedPointerAndResolvesFields(t *testing.T) {
+	type nested struct {
+		Token string
+	}
+	type config struct {
+		Name   string
+		Nested nested
+		Values []string
+	}
+	input := &config{Name: "plain", Nested: nested{Token: Environment("TOKEN").String()}, Values: []string{Environment("VALUE").String()}}
+	resolver := EnvironmentResolver{Lookup: func(name string) (string, bool) { return "resolved-" + name, true }}
+
+	resolved, err := ResolveAny(context.Background(), resolver, input)
+	require.NoError(t, err)
+	got, ok := resolved.(*config)
+	require.True(t, ok)
+	require.NotSame(t, input, got)
+	require.Equal(t, "plain", got.Name)
+	require.Equal(t, "resolved-TOKEN", got.Nested.Token)
+	require.Equal(t, []string{"resolved-VALUE"}, got.Values)
+	require.Equal(t, Environment("TOKEN").String(), input.Nested.Token)
+}

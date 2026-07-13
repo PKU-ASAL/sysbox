@@ -68,11 +68,12 @@ func (s *Substrate) PreflightChecks(required bool) []substrate.PreflightCheck {
 // (NICHotPlug=false); provisioners reach the VM over SSH.
 func (s *Substrate) Capabilities() substrate.Capabilities {
 	return substrate.Capabilities{
-		NICHotPlug:    false,
-		NICKinds:      []string{"tap"},
-		ConsoleKinds:  []string{"serial"},
-		SupportsPause: true, // virsh suspend/resume
-		PortExposures: []string{substrate.PortExposureNone, substrate.PortExposureDirect},
+		NICHotPlug:            false,
+		NICKinds:              []string{"tap"},
+		ConsoleKinds:          []string{"serial"},
+		SupportsPause:         true, // virsh suspend/resume
+		PortExposures:         []string{substrate.PortExposureNone, substrate.PortExposureDirect},
+		GuestNetworkInitModes: []substrate.GuestNetworkInitMode{substrate.GuestNetworkInitCloudInit, substrate.GuestNetworkInitPreconfigured},
 	}
 }
 
@@ -84,6 +85,9 @@ func (s *Substrate) Validate(spec substrate.NodeSpec) error {
 	// can't see ImageSpec fields (NodeSpec only has ImageRef); the actual
 	// check happens in PrepareImage. Here we reject obviously wrong configs.
 	if pc, ok := spec.ProviderConfig.(*Config); ok {
+		if !supportedNetworkInitMode(pc.NetworkInit) {
+			return substrate.NewValidationError("libvirt: explicit network_init must be %q or %q", substrate.GuestNetworkInitCloudInit, substrate.GuestNetworkInitPreconfigured)
+		}
 		if pc.SSHUser == "" {
 			return substrate.NewValidationError("libvirt: ssh_user is required (VMs need SSH for provisioners)")
 		}
