@@ -19,7 +19,7 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	mustRegisterDriver(driver.Descriptor{Name: "network", Version: "1", LinuxNetwork: networkprovider.Driver{}})
+	mustRegisterDriver(driver.Descriptor{Name: "network", Version: "1", LinuxNetwork: networkprovider.Driver{}, Policy: networkprovider.Driver{}})
 
 	dockerSub, err := docker.New()
 	if err != nil {
