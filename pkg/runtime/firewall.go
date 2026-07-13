@@ -125,15 +125,84 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("firewall %s: %w", n.Address.Name, err)
 	}
+	specRaw, err := json.Marshal(spec)
+	if err != nil {
+		return state.Resource{}, err
+	}
 	inst := map[string]any{
 		"attach_to": targetAddr.String(), "family": string(driver.FamilyIPv4), "owner": owner,
 		"table": observation.Table, "desired_digest": observation.Digest, "observed_digest": observation.Digest,
-		"policy_target_state": string(targetRaw), "rules": len(spec.Rules),
+		"policy_target_state": string(targetRaw), "policy_spec": string(specRaw), "rules": len(spec.Rules),
 	}
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
 	}
 	return state.Resource{Address: n.Address, Driver: targetResource.Driver, Attributes: state.MustAttributes(inst)}, nil
+}
+
+func (FirewallResourceHandler) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
+	action := CheckpointRecoverResult{Resource: step.Resource, ExternalID: step.ExternalID}
+	if step.StateResource == nil {
+		action.Status = "missing_state_resource"
+		return action, nil
+	}
+	res := StateResourceFromLog(*step.StateResource)
+	if st.FindResource(res.Address) != nil {
+		action.Status = "already_in_state"
+		return action, nil
+	}
+	target, owner, err := policyState(res)
+	if err != nil {
+		action.Status, action.Error = "invalid_state", err.Error()
+		return action, nil
+	}
+	policy, err := driver.DefaultRegistry.RequirePolicy(res.Driver)
+	if err != nil {
+		return action, err
+	}
+	observation, observeErr := policy.ObserveRuleset(ctx, target, owner)
+	if observeErr == nil && observation.Digest == res.Str("desired_digest") {
+		st.AddResource(res)
+		action.Status = "recovered_adopted"
+		return action, nil
+	}
+	var spec driver.RulesetSpec
+	if err := json.Unmarshal([]byte(res.Str("policy_spec")), &spec); err != nil {
+		return action, fmt.Errorf("recover firewall policy spec: %w", err)
+	}
+	observation, err = policy.ApplyRuleset(ctx, target, spec)
+	if err != nil {
+		return action, err
+	}
+	_ = res.SetAttribute("desired_digest", observation.Digest)
+	_ = res.SetAttribute("observed_digest", observation.Digest)
+	_ = res.SetAttribute("table", observation.Table)
+	st.AddResource(res)
+	action.Status = "recovered"
+	return action, nil
+}
+
+func (FirewallResourceHandler) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
+	action := CheckpointCleanupResult{Resource: step.Resource, ExternalID: step.ExternalID, Class: CheckpointCleanupNetwork}
+	if step.StateResource == nil {
+		action.Status = "missing_state_resource"
+		return action, nil
+	}
+	res := StateResourceFromLog(*step.StateResource)
+	target, owner, err := policyState(res)
+	if err != nil {
+		action.Status, action.Error = "invalid_state", err.Error()
+		return action, nil
+	}
+	policy, err := driver.DefaultRegistry.RequirePolicy(res.Driver)
+	if err != nil {
+		return action, err
+	}
+	if err := policy.DeleteRuleset(ctx, target, owner); err != nil {
+		return action, err
+	}
+	action.Status = "removed"
+	return action, nil
 }
 
 func firewallRuleset(owner string, cfg *config.FirewallConfig) (driver.RulesetSpec, error) {

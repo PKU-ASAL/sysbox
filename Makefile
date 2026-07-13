@@ -76,10 +76,10 @@ test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
 
 test-privileged-compile: ## Compile privileged recovery tests without running them
-	$(GOENV) $(GO) test -tags e2e -run '^$$' ./pkg/api
+	$(GOENV) $(GO) test -tags e2e -run '^$$' ./pkg/api ./pkg/provider/network
 
 test-privileged: ## Run privileged recovery tests (requires root/CAP_NET_ADMIN)
-	$(GOENV) $(GO) test -tags e2e -v -run '^TestCheckpoint.*E2E$$' ./pkg/api
+	$(GOENV) $(GO) test -tags e2e -v -run '^Test(Checkpoint|OwnedPolicy).*E2E$$' ./pkg/api ./pkg/provider/network
 
 web-build: ## Build the Web UI
 	npm --prefix web install

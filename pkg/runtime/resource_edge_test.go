@@ -16,14 +16,46 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-type firewallPolicyFake struct{ applied driver.RulesetSpec }
+type firewallPolicyFake struct {
+	applied     driver.RulesetSpec
+	applyCount  int
+	observation driver.RulesetObservation
+}
 
 func (f *firewallPolicyFake) ApplyRuleset(_ context.Context, _ driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
 	f.applied = spec
+	f.applyCount++
 	return driver.RulesetObservation{Table: "sysbox_owned", Digest: "verified"}, nil
 }
-func (*firewallPolicyFake) ObserveRuleset(context.Context, driver.PolicyTarget, string) (driver.RulesetObservation, error) {
-	return driver.RulesetObservation{}, nil
+func (f *firewallPolicyFake) ObserveRuleset(context.Context, driver.PolicyTarget, string) (driver.RulesetObservation, error) {
+	return f.observation, nil
+}
+
+func TestRecoverFirewallAdoptsMatchingAndReplacesMismatch(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	fake := &firewallPolicyFake{observation: driver.RulesetObservation{Table: "sysbox_owned", Digest: "verified"}}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
+	spec := driver.RulesetSpec{Owner: "lab/sysbox_firewall.edge", Family: driver.FamilyIPv4}
+	specRaw, err := json.Marshal(spec)
+	require.NoError(t, err)
+	rec := &StateResourceLog{Type: "sysbox_firewall", Name: "edge", Provider: "policy-test", Instance: map[string]any{
+		"owner": spec.Owner, "attach_to": "sysbox_router.edge", "policy_target_state": `{"container_id":"router","bindings":{}}`, "policy_spec": string(specRaw), "desired_digest": "verified",
+	}}
+	step := OperationStep{Resource: "sysbox_firewall.edge", StateResource: rec}
+	st := &state.State{Version: state.SchemaVersion}
+	result, err := (FirewallResourceHandler{}).RecoverCheckpointResource(context.Background(), st, step)
+	require.NoError(t, err)
+	require.Equal(t, "recovered_adopted", result.Status)
+	require.Zero(t, fake.applyCount)
+
+	st = &state.State{Version: state.SchemaVersion}
+	fake.observation.Digest = "drifted"
+	result, err = (FirewallResourceHandler{}).RecoverCheckpointResource(context.Background(), st, step)
+	require.NoError(t, err)
+	require.Equal(t, "recovered", result.Status)
+	require.Equal(t, 1, fake.applyCount)
 }
 func (*firewallPolicyFake) DeleteRuleset(context.Context, driver.PolicyTarget, string) error {
 	return nil

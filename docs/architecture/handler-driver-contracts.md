@@ -23,10 +23,20 @@ owns its opaque attachment state and implements attach, observe, and delete.
 Runtime never assigns or interprets guest `ethN`, veth, tap, namespace, Docker
 endpoint, or libvirt device names.
 
-Router NAT receives logical attachment requests and driver observations. The
-router-network capability resolves current physical devices at the execution
-boundary. Docker-managed interfaces are resolved by their configured IP; a
-concrete device-name change is an observation update, not semantic drift.
+Router NAT and `sysbox_firewall` use the typed `Policy` capability. Core owns
+IPv4 policy semantics, logical attachment references, deterministic ownership,
+and desired digests. The provider resolves current physical devices and applies
+one topology-owned nftables table atomically. Apply succeeds only after
+readback; refresh compares the observed digest; destroy verifies the full owner
+marker before deletion and reports residue. Runtime never executes `iptables`,
+`nft`, or `nsenter` and never persists nftables handles or physical devices.
+
+Policy is IPv4-only. IPv6 policy input fails validation explicitly, while the
+driver contract carries an address family for a future IPv6 compiler. The old
+fixed `sysbox_fw`, append-style iptables rules, and `RouterNetwork` capability
+have no compatibility path. `sysbox_firewall.attach_to` must reference a node
+or router; rules use explicit direction, verdict, logical interfaces, CIDRs,
+port ranges, protocol, connection states, counters, and rate-limited logging.
 
 State schema v5 is a hard break. Older state is rejected without mutation or
 migration. Operation checkpoints persist typed attachments and resource private

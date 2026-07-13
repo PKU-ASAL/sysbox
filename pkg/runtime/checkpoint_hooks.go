@@ -383,6 +383,16 @@ func cleanupNodeLikeCheckpoint(ctx context.Context, step OperationStep) (Checkpo
 		action.ExternalID = res.ContainerID()
 	}
 	if res.Driver == "docker" {
+		if rec.Type == "sysbox_router" && res.Str("policy_owner") != "" {
+			policy, err := driver.DefaultRegistry.RequirePolicy(res.Driver)
+			if err != nil {
+				return action, err
+			}
+			target := driver.PolicyTarget{Resource: res.Address.String(), State: json.RawMessage(res.Str("policy_target_state"))}
+			if err := policy.DeleteRuleset(ctx, target, res.Str("policy_owner")); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
+				return action, err
+			}
+		}
 		return cleanupDockerNodeLike(ctx, step)
 	}
 	nodeDriver, err := driver.DefaultRegistry.RequireNode(res.Driver)
@@ -416,6 +426,28 @@ func cleanupNodeLikeCheckpoint(ctx context.Context, step OperationStep) (Checkpo
 	}
 	action.Status = "removed"
 	return action, nil
+}
+
+func recoverCheckpointPolicy(ctx context.Context, res state.Resource, ownerKey, digestKey string) error {
+	owner := res.Str(ownerKey)
+	if owner == "" {
+		return nil
+	}
+	policy, err := driver.DefaultRegistry.RequirePolicy(res.Driver)
+	if err != nil {
+		return err
+	}
+	target := driver.PolicyTarget{Resource: res.Address.String(), State: json.RawMessage(res.Str("policy_target_state"))}
+	observation, observeErr := policy.ObserveRuleset(ctx, target, owner)
+	if observeErr == nil && observation.Digest == res.Str(digestKey) {
+		return nil
+	}
+	var spec driver.RulesetSpec
+	if err := json.Unmarshal([]byte(res.Str("policy_spec")), &spec); err != nil {
+		return fmt.Errorf("recover policy spec: %w", err)
+	}
+	_, err = policy.ApplyRuleset(ctx, target, spec)
+	return err
 }
 
 func recoverDockerManagedNetwork(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
@@ -481,6 +513,13 @@ func recoverDockerNodeLike(ctx context.Context, st *state.State, step OperationS
 	if !exists {
 		action.Status = "not_found"
 		return action, nil
+	}
+	if rec.Type == "sysbox_router" {
+		res := StateResourceFromLog(*rec)
+		if err := recoverCheckpointPolicy(ctx, res, "policy_owner", "policy_digest"); err != nil {
+			action.Status, action.Error = "error", err.Error()
+			return action, nil
+		}
 	}
 	AdoptStateResource(st, *rec, id)
 	action.Status = "recovered"

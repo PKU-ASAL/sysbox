@@ -71,7 +71,7 @@ func (RouterResourceHandler) Delete(ctx context.Context, pc *ProviderContext, cu
 			return err
 		}
 		target := driver.PolicyTarget{Resource: current.Address.String(), State: json.RawMessage(current.Str("policy_target_state"))}
-		if err := policy.DeleteRuleset(ctx, target, owner); err != nil {
+		if err := policy.DeleteRuleset(ctx, target, owner); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
 			return fmt.Errorf("delete router %s policy: %w", current.Address, err)
 		}
 	}
@@ -204,7 +204,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	}
 
 	natApplied := false
-	var policyOwner, policyTable, policyDigest, policyTargetState string
+	var policyOwner, policyTable, policyDigest, policyTargetState, policySpec string
 	if cfg.NatFrom != "" && cfg.NatTo != "" {
 		fromReq, ok1 := wireResult.Requests[cfg.NatFrom]
 		_, ok2 := wireResult.Requests[cfg.NatTo]
@@ -236,7 +236,12 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		if err != nil {
 			return state.Resource{}, fmt.Errorf("router %s NAT policy: %w", n.Address.Name, err)
 		}
+		specRaw, err := json.Marshal(spec)
+		if err != nil {
+			return state.Resource{}, err
+		}
 		natApplied, policyTable, policyDigest, policyTargetState = true, observation.Table, observation.Digest, string(targetRaw)
+		policySpec = string(specRaw)
 	}
 
 	inst := map[string]any{
@@ -247,6 +252,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		"policy_table":        policyTable,
 		"policy_digest":       policyDigest,
 		"policy_target_state": policyTargetState,
+		"policy_spec":         policySpec,
 	}
 	// Persist opaque provider state so cold-destroy works for all substrates.
 	blob, _ := stateDriver.MarshalProviderState(handle)
