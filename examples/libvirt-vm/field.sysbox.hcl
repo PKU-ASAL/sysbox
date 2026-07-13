@@ -72,6 +72,7 @@ resource "sysbox_node" "server" {
   image     = sysbox_image.ubuntu_kvm.id
 
   provider "libvirt" {
+    network_init = "preconfigured"
     vcpus    = 2
     memory   = "1024"
     ssh_user = "ubuntu"
@@ -105,6 +106,7 @@ resource "sysbox_node" "client" {
   image     = sysbox_image.ubuntu_kvm.id
 
   provider "libvirt" {
+    network_init = "preconfigured"
     vcpus    = 1
     memory   = "512"
     ssh_user = "ubuntu"

@@ -64,14 +64,14 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		payload["source"] = cfg.Source
 		payload["sha256"] = cfg.SHA256
 		payload["cmdline_template"] = cfg.CmdlineTemplate
-		payload["depends_on"] = cfg.DependsOn
+		payload["depends_on"] = normalizeStrings(cfg.DependsOn)
 	case *config.NodeConfig:
 		payload["image"] = cfg.Image
 		payload["substrate"] = cfg.Substrate
 		payload["vcpus"] = cfg.Vcpus
 		payload["memory"] = cfg.Memory
 		payload["env"] = cfg.Env
-		payload["depends_on"] = cfg.DependsOn
+		payload["depends_on"] = normalizeStrings(cfg.DependsOn)
 		payload["links"] = normalizeLinks(cfg.Links)
 		payload["ports"] = normalizePortConfigs(cfg.Ports)
 		payload["routes"] = cfg.Routes
@@ -112,7 +112,7 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		payload["acp_ip"] = cfg.ACPIP
 		payload["env"] = cfg.Env
 		payload["entry_points"] = cfg.EntryPoints
-		payload["depends_on"] = cfg.DependsOn
+		payload["depends_on"] = normalizeStrings(cfg.DependsOn)
 	default:
 		payload["data"] = cfg
 	}
@@ -125,6 +125,10 @@ func normalizeLinks(in []config.LinkConfig) []config.LinkConfig {
 		out = append(out, link)
 	}
 	return out
+}
+
+func normalizeStrings(in []string) []string {
+	return append([]string{}, in...)
 }
 
 func setDesiredHash(n *graph.Node, inst map[string]any) error {

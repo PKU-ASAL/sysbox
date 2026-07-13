@@ -95,6 +95,20 @@ func TestPlanDiffDoesNotUseDesiredHashAsSemanticInput(t *testing.T) {
 	require.Equal(t, controlplane.PlanActionNoop, plan.Actions[0].Action)
 }
 
+func TestDesiredHashNormalizesNilAndEmptyDependsOn(t *testing.T) {
+	addr := address.Resource("sysbox_kernel", "linux")
+	nilNode := &graph.Node{Address: addr, Data: &config.KernelConfig{Source: "/tmp/vmlinux"}}
+	emptyNode := &graph.Node{Address: addr, Data: &config.KernelConfig{Source: "/tmp/vmlinux", DependsOn: []string{}}}
+
+	nilHash, err := desiredHash(nilNode)
+	require.NoError(t, err)
+	emptyHash, err := desiredHash(emptyNode)
+	require.NoError(t, err)
+	require.Equal(t, emptyHash, nilHash)
+	payload, _ := desiredPayload(nilNode)
+	require.Equal(t, []string{}, payload["depends_on"])
+}
+
 func fieldChangeAt(changes []controlplane.FieldChange, path string) (controlplane.FieldChange, bool) {
 	for _, change := range changes {
 		if change.Path == path {

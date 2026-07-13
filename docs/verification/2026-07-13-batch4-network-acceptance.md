@@ -7,8 +7,10 @@ Date: 2026-07-13
 - Host user: non-root, member of `docker`, `libvirt`, and `kvm` groups.
 - Docker Engine: 27.5.1.
 - Firecracker binary and cached vmlinux/rootfs: present.
-- Libvirt: reachable; the Ubuntu 22.04 Vagrant qcow2 base is present at
-  `/var/lib/libvirt/images/generic-VAGRANTSLASH-ubuntu2204_vagrant_box_image_4.3.12_box.img`.
+- Libvirt: reachable; acceptance uses the official Ubuntu 24.04 cloud image at
+  `https://cloud-images.ubuntu.com/releases/noble/release-20260615/ubuntu-24.04-server-cloudimg-amd64.img`,
+  pinned to SHA-256
+  `5fa5b05e5ec239858c4531485d6023b0896448c2df7c63b34f8dae6ea6051a44`.
 - Privileged evidence ran offline in the existing `golang:1.26-alpine` image.
 
 ## Passed Evidence
@@ -53,29 +55,19 @@ The following passed after implementation:
 
 ## Heterogeneous Matrix Evidence
 
-`examples/heterogeneous-matrix` plans as eight resources and repeatedly reached
-`Apply complete` with Docker, Firecracker, and libvirt domains attached to the
-same declared IPv4 network. The Linux network driver creates an owned root-netns
-libvirt bridge joined by an owned veth transit to the isolated network bridge;
-this removed the system libvirt daemon's namespace visibility failure. Docker
-to Firecracker ICMP (`10.44.0.20`) passed immediately through that topology.
+`make test-heterogeneous-matrix` prepared the digest-pinned image, generated an
+ephemeral Ed25519 key, and applied eight resources on one declared IPv4 network.
+The libvirt provider's explicit `cloud_init` mode configured `10.44.0.30/24`
+through NoCloud. All six directed ICMP edges passed:
 
-Full Docker/Firecracker/libvirt guest-to-guest communication remains unproven
-with the available qcow2. The generated NoCloud seed contains the declared MAC
-and `10.44.0.30/24`, the libvirt domain starts, and its vnet is attached to the
-owned root bridge, but the Vagrant guest never claims `10.44.0.30`. A temporary
-explicit DHCP bootstrap experiment obtained a `192.168.122.x` lease but the
-guest SSH service never became reachable and the lease subsequently stopped
-responding. The experiment was removed from the implementation because it did
-not meet the acceptance contract.
+- Docker to Firecracker and libvirt;
+- Firecracker to Docker and libvirt;
+- libvirt to Docker and Firecracker.
 
-Every failed or diagnostic apply ran under a destroy trap. Post-run audits
-found no heterogeneous-matrix Docker container, libvirt domain, named network
-namespace, root bridge, transit veth, tap, or Firecracker process residue. The
-pre-existing `mixed`, `recon`, `docker-service`, and `env_*` resources were not
-modified.
-
-Do not report the full heterogeneous guest communication matrix as passed until
-a cloud-init-capable libvirt image claims the declared static address and the
-runner records communication, an unchanged repeated plan, destroy, and zero
-residue.
+The repeated plan reported exactly
+`Plan: 0 to add, 0 to replace, 0 to destroy, 8 unchanged.` Destroy then removed
+all eight resources. Post-destroy audits found no matrix Docker container,
+libvirt domain, named network namespace, root bridge, transit veth, libvirt VM
+directory, or Firecracker process residue. The runner also removed its state,
+ephemeral key, and writable qcow2 copy. The pre-existing `mixed`, `recon`,
+`docker-service`, and `env_*` resources were not modified.

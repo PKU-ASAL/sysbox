@@ -67,9 +67,12 @@ resource "sysbox_node" "libvirt" {
   memory    = "2048"
 
   provider "libvirt" {
-    vcpus    = 1
-    memory   = "2048"
-    ssh_user = "vagrant"
+    vcpus             = 1
+    memory            = "1024"
+    network_init       = "cloud_init"
+    ssh_user           = "sysbox"
+    ssh_key            = env("SYSBOX_MATRIX_SSH_PRIVATE_KEY")
+    ssh_authorized_key = env("SYSBOX_MATRIX_SSH_PUBLIC_KEY")
   }
 
   link "matrix" {

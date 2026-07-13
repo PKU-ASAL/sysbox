@@ -38,7 +38,7 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-all web-build test test-e2e test-privileged-compile test-privileged test-privileged-container lint ci clean \
+.PHONY: help build build-all web-build test test-e2e test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
 	api-help api-build-api api-build-ui api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
@@ -59,6 +59,8 @@ help: ## Show command groups
 	@echo "  make test-privileged-compile  Compile privileged recovery tests without running them"
 	@echo "  make test-privileged          Run privileged recovery tests (requires root/CAP_NET_ADMIN)"
 	@echo "  make test-privileged-container  Run privileged acceptance tests through Docker"
+	@echo "  make prepare-libvirt-cloud-image  Cache the pinned Ubuntu libvirt image"
+	@echo "  make test-heterogeneous-matrix  Run the full Docker/Firecracker/libvirt matrix"
 
 build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
@@ -84,6 +86,12 @@ test-privileged: ## Run privileged recovery tests (requires root/CAP_NET_ADMIN)
 
 test-privileged-container: ## Run privileged acceptance tests through Docker
 	bash tests/e2e/privileged_container.sh
+
+prepare-libvirt-cloud-image: ## Cache and verify the pinned Ubuntu libvirt image
+	bash scripts/prepare-libvirt-cloud-image.sh
+
+test-heterogeneous-matrix: ## Run the full heterogeneous IPv4 acceptance matrix
+	bash tests/e2e/heterogeneous_matrix.sh
 
 web-build: ## Build the Web UI
 	npm --prefix web install
