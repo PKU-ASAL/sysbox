@@ -152,6 +152,7 @@ type Descriptor struct {
 	ImageEntry    ImageEntry
 	Power         Power
 	RouterNetwork RouterNetwork
+	Policy        Policy
 	LinuxNetwork  LinuxNetwork
 	GuestNetwork  GuestNetwork
 }
