@@ -2,9 +2,8 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"os/exec"
-	"strconv"
 	"strings"
 
 	"github.com/oslab/sysbox/pkg/driver"
@@ -20,25 +19,22 @@ func (s *Substrate) ConfigureNAT(ctx context.Context, handle substrate.NodeHandl
 	if err != nil {
 		return err
 	}
-	container, err := s.cli.ContainerInspect(ctx, handle.ID)
+	bindings := map[string]string{fromReq.Name: fromIf, toReq.Name: toIf}
+	targetState, err := json.Marshal(dockerPolicyTarget{ContainerID: handle.ID, Bindings: bindings})
 	if err != nil {
-		return fmt.Errorf("inspect router %s: %w", handle.ID, err)
+		return err
 	}
-	if container.State == nil || container.State.Pid == 0 {
-		return fmt.Errorf("router %s is not running", handle.ID)
+	spec := driver.RulesetSpec{
+		Owner: "docker-router/" + handle.ID, Family: driver.FamilyIPv4,
+		DefaultInput: driver.VerdictAccept, DefaultOutput: driver.VerdictAccept, DefaultForward: driver.VerdictDrop,
+		Rules: []driver.PolicyRule{
+			{ID: "nat-forward", Direction: driver.DirectionForward, InputAttachment: fromReq.Name, OutputAttachment: toReq.Name, Protocol: driver.ProtocolAll, Verdict: driver.VerdictAccept, Counter: true},
+			{ID: "nat-return", Direction: driver.DirectionForward, InputAttachment: toReq.Name, OutputAttachment: fromReq.Name, Protocol: driver.ProtocolAll, States: []driver.ConnectionState{driver.StateEstablished, driver.StateRelated}, Verdict: driver.VerdictAccept, Counter: true},
+		},
+		NAT: &driver.NATPolicy{SourceAttachment: fromReq.Name, UplinkAttachment: toReq.Name, SourceCIDRs: append([]string(nil), fromReq.IPPrefixes...), Masquerade: true},
 	}
-	pid := strconv.Itoa(container.State.Pid)
-	commands := [][]string{
-		{"-t", pid, "-n", "iptables", "-t", "nat", "-A", "POSTROUTING", "-o", toIf, "-j", "MASQUERADE"},
-		{"-t", pid, "-n", "iptables", "-A", "FORWARD", "-i", fromIf, "-o", toIf, "-j", "ACCEPT"},
-		{"-t", pid, "-n", "iptables", "-A", "FORWARD", "-i", toIf, "-o", fromIf, "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"},
-	}
-	for _, args := range commands {
-		if output, err := exec.CommandContext(ctx, "nsenter", args...).CombinedOutput(); err != nil {
-			return fmt.Errorf("nsenter %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
-		}
-	}
-	return nil
+	_, err = s.ApplyRuleset(ctx, driver.PolicyTarget{Resource: handle.ID, State: targetState}, spec)
+	return err
 }
 
 func (s *Substrate) resolveAttachmentDevice(ctx context.Context, handle substrate.NodeHandle, req driver.AttachmentRequest, result driver.AttachmentResult) (string, error) {

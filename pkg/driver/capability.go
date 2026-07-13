@@ -87,8 +87,6 @@ type Network interface {
 	CreateManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error)
 	RemoveManagedNetwork(context.Context, string) error
 	ReadManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error)
-	AllowEgress(context.Context, string) error
-	RemoveEgress(context.Context, string) error
 }
 
 type GuestNetwork interface {

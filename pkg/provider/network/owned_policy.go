@@ -103,6 +103,10 @@ func applyCompiledRuleset(plan compiledRuleset) error {
 	if err != nil {
 		return err
 	}
+	return applyCompiledRulesetConn(conn, plan)
+}
+
+func applyCompiledRulesetConn(conn *nftables.Conn, plan compiledRuleset) error {
 	table := &nftables.Table{Family: nftables.TableFamilyIPv4, Name: plan.Table}
 	conn.DelTable(table)
 	table = conn.AddTable(table)
@@ -153,6 +157,10 @@ func observeOwnedRuleset(owner string) (driver.RulesetObservation, error) {
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "network", "open nftables", err)
 	}
+	return observeOwnedRulesetConn(conn, owner)
+}
+
+func observeOwnedRulesetConn(conn *nftables.Conn, owner string) (driver.RulesetObservation, error) {
 	tableName := driver.RulesetTableName(owner)
 	tables, err := conn.ListTablesOfFamily(nftables.TableFamilyIPv4)
 	if err != nil {
@@ -203,6 +211,62 @@ func observeOwnedRuleset(owner string) (driver.RulesetObservation, error) {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "table name exists without matching ownership marker", nil)
 	}
 	return observation, nil
+}
+
+func ApplyRulesetInNetNSFD(fd int, spec driver.RulesetSpec, bindings map[string]string) (driver.RulesetObservation, error) {
+	plan, err := compileRuleset(spec, bindings)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	conn, err := nftables.New(nftables.WithNetNSFd(fd))
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	if err := applyCompiledRulesetConn(conn, plan); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	read, err := nftables.New(nftables.WithNetNSFd(fd))
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	return observeOwnedRulesetConn(read, spec.Owner)
+}
+
+func ObserveRulesetInNetNSFD(fd int, owner string) (driver.RulesetObservation, error) {
+	conn, err := nftables.New(nftables.WithNetNSFd(fd))
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	return observeOwnedRulesetConn(conn, owner)
+}
+
+func DeleteRulesetInNetNSFD(fd int, owner string) error {
+	conn, err := nftables.New(nftables.WithNetNSFd(fd))
+	if err != nil {
+		return err
+	}
+	observation, err := observeOwnedRulesetConn(conn, owner)
+	if driver.IsCategory(err, driver.ErrorNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	conn.DelTable(&nftables.Table{Family: nftables.TableFamilyIPv4, Name: observation.Table})
+	if err := conn.Flush(); err != nil {
+		return err
+	}
+	read, err := nftables.New(nftables.WithNetNSFd(fd))
+	if err != nil {
+		return err
+	}
+	if _, err := observeOwnedRulesetConn(read, owner); !driver.IsCategory(err, driver.ErrorNotFound) {
+		if err == nil {
+			return fmt.Errorf("owned policy residue remains: table %s", observation.Table)
+		}
+		return err
+	}
+	return nil
 }
 
 func ownershipMarker(owner, digest string) string {

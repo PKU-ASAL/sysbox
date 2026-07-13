@@ -126,15 +126,6 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 		return state.Resource{}, fmt.Errorf("create nat network %s: %w", n.Address.Name, err)
 	}
 
-	// Ensure Docker containers on this NAT network can reach the internet.
-	// Some hosts have restrictive DOCKER-USER iptables policies (e.g. campus
-	// networks that DROP outbound HTTP). Insert ACCEPT rules for the NAT
-	// subnet before any DROP rules so container traffic is allowed.
-	if err := networkDriver.AllowEgress(ctx, cfg.CIDR); err != nil {
-		fmt.Printf("[network %s] warning: could not add DOCKER-USER ACCEPT for %s: %v\n",
-			n.Address.Name, cfg.CIDR, err)
-	}
-
 	natInst := map[string]any{
 		"nat":               true,
 		"docker_network_id": info.ID,
@@ -166,11 +157,6 @@ func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r
 			if err := networkDriver.RemoveManagedNetwork(ctx, netID); err != nil {
 				pc.Logf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
 			}
-		}
-		// Clean up DOCKER-USER ACCEPT rules for this NAT subnet.
-		cidr := r.Str("cidr")
-		if cidr != "" {
-			_ = networkDriver.RemoveEgress(ctx, cidr)
 		}
 		pc.State().RemoveResource(r.Address)
 		return nil
