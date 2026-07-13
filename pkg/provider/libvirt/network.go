@@ -16,7 +16,8 @@ type attachmentState struct {
 	MAC    string `json:"mac"`
 }
 type networkState struct {
-	Bridge string `json:"bridge"`
+	Bridge        string `json:"bridge"`
+	LibvirtBridge string `json:"libvirt_bridge"`
 }
 
 func (s *Substrate) Attach(_ context.Context, h substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
@@ -25,8 +26,12 @@ func (s *Substrate) Attach(_ context.Context, h substrate.NodeHandle, req driver
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "libvirt", "decode network state", err)
 	}
 	hs := hsFrom(h)
-	hs.Bridges = append(hs.Bridges, BridgeAttach{Bridge: target.Bridge, MAC: req.MAC})
-	raw, _ := json.Marshal(attachmentState{Bridge: target.Bridge, MAC: req.MAC})
+	bridge := target.LibvirtBridge
+	if bridge == "" {
+		bridge = target.Bridge
+	}
+	hs.Bridges = append(hs.Bridges, BridgeAttach{Name: req.Name, Bridge: bridge, MAC: req.MAC, IPPrefixes: append([]string(nil), req.IPPrefixes...), Gateway: req.Gateway})
+	raw, _ := json.Marshal(attachmentState{Bridge: bridge, MAC: req.MAC})
 	return driver.AttachmentResult{Driver: "libvirt", State: raw}, nil
 }
 func (s *Substrate) Observe(_ context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {

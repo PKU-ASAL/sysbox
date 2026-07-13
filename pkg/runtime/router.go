@@ -171,12 +171,24 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		return state.Resource{}, err
 	}
 	nicSpecs := nicSpecsFromAttachmentIntents(intents)
+	hasManagedNetwork := false
+	for _, spec := range nicSpecs {
+		netAddr, resolveErr := config.ResolveResourceAddress(spec.Network, "sysbox_network")
+		if resolveErr != nil {
+			return state.Resource{}, resolveErr
+		}
+		if network := e.state.FindResource(netAddr); network != nil && network.IsNAT() {
+			hasManagedNetwork = true
+			break
+		}
+	}
 
 	handle, err := nodeDriver.CreateNode(ctx, substrate.NodeSpec{
-		Name:    runtimeExternalName(e.topology, "router", n.Address.Name),
-		Image:   imgRef,
-		Sysctls: map[string]string{"net.ipv4.ip_forward": "1"},
-		Labels:  ManagedLabels(e.topology, e.runID, n.Address),
+		Name:           runtimeExternalName(e.topology, "router", n.Address.Name),
+		Image:          imgRef,
+		Sysctls:        map[string]string{"net.ipv4.ip_forward": "1"},
+		Labels:         ManagedLabels(e.topology, e.runID, n.Address),
+		ManagedNetwork: hasManagedNetwork,
 	})
 	if err != nil {
 		return state.Resource{}, err

@@ -8,15 +8,16 @@ import (
 
 // domainXML is the libvirt domain definition.
 type domainXML struct {
-	XMLName xml.Name   `xml:"domain"`
-	Type    string     `xml:"type,attr"`
-	Name    string     `xml:"name"`
-	Memory  domMemory  `xml:"memory"`
-	VCPU    int        `xml:"vcpu"`
-	OS      domOS      `xml:"os"`
-	CPU     domCPU     `xml:"cpu"`
-	Devices domDevices `xml:"devices"`
-	OnCrash string     `xml:"on_crash"`
+	XMLName  xml.Name    `xml:"domain"`
+	Type     string      `xml:"type,attr"`
+	Name     string      `xml:"name"`
+	Memory   domMemory   `xml:"memory"`
+	VCPU     int         `xml:"vcpu"`
+	OS       domOS       `xml:"os"`
+	Features domFeatures `xml:"features"`
+	CPU      domCPU      `xml:"cpu"`
+	Devices  domDevices  `xml:"devices"`
+	OnCrash  string      `xml:"on_crash"`
 }
 
 type domMemory struct {
@@ -43,6 +44,12 @@ type domCPU struct {
 	Mode string `xml:"mode,attr,omitempty"`
 }
 
+type domFeatures struct {
+	ACPI struct{} `xml:"acpi"`
+	APIC struct{} `xml:"apic"`
+	PAE  struct{} `xml:"pae"`
+}
+
 type domDevices struct {
 	Emulator   string      `xml:"emulator,omitempty"`
 	Disks      []domDisk   `xml:"disk"`
@@ -53,11 +60,12 @@ type domDevices struct {
 }
 
 type domDisk struct {
-	Type   string     `xml:"type,attr"`
-	Device string     `xml:"device,attr"`
-	Driver domDiskDrv `xml:"driver"`
-	Source domDiskSrc `xml:"source"`
-	Target domDiskTgt `xml:"target"`
+	Type     string     `xml:"type,attr"`
+	Device   string     `xml:"device,attr"`
+	Driver   domDiskDrv `xml:"driver"`
+	Source   domDiskSrc `xml:"source"`
+	Target   domDiskTgt `xml:"target"`
+	ReadOnly *struct{}  `xml:"readonly,omitempty"`
 }
 
 type domDiskDrv struct {
@@ -125,19 +133,23 @@ type DomainSpec struct {
 	MemoryMiB   int
 	MachineType string
 	DiskPath    string // absolute path to the per-VM qcow2 copy
+	SeedISO     string
 	Bridges     []BridgeAttach
 }
 
 // BridgeAttach describes one network interface attached to a host bridge.
 type BridgeAttach struct {
-	Bridge string
-	MAC    string // empty → libvirt auto-generates
+	Name       string
+	Bridge     string
+	MAC        string // empty → libvirt auto-generates
+	IPPrefixes []string
+	Gateway    string
 }
 
 // GenerateDomainXML produces the virsh-compatible domain XML for the given spec.
 func GenerateDomainXML(spec DomainSpec) (string, error) {
-	ifaces := make([]domIface, len(spec.Bridges))
-	for i, b := range spec.Bridges {
+	ifaces := make([]domIface, 0, len(spec.Bridges))
+	for _, b := range spec.Bridges {
 		iface := domIface{
 			Type:   "bridge",
 			Source: domIfaceSrc{Bridge: b.Bridge},
@@ -146,7 +158,7 @@ func GenerateDomainXML(spec DomainSpec) (string, error) {
 		if b.MAC != "" {
 			iface.MAC = &domIfaceMAC{Address: b.MAC}
 		}
-		ifaces[i] = iface
+		ifaces = append(ifaces, iface)
 	}
 
 	machine := spec.MachineType
@@ -170,7 +182,8 @@ func GenerateDomainXML(spec DomainSpec) (string, error) {
 			},
 			Boot: domBoot{Dev: "hd"},
 		},
-		CPU: domCPU{Mode: "host-passthrough"},
+		Features: domFeatures{},
+		CPU:      domCPU{Mode: "host-passthrough"},
 		Devices: domDevices{
 			Emulator: "/usr/bin/qemu-system-x86_64",
 			Disks: []domDisk{
@@ -190,6 +203,9 @@ func GenerateDomainXML(spec DomainSpec) (string, error) {
 			Serial: &domSerial{Type: "pty"},
 		},
 		OnCrash: "destroy",
+	}
+	if spec.SeedISO != "" {
+		d.Devices.Disks = append(d.Devices.Disks, domDisk{Type: "file", Device: "cdrom", Driver: domDiskDrv{Name: "qemu", Type: "raw"}, Source: domDiskSrc{File: spec.SeedISO}, Target: domDiskTgt{Dev: "sda", Bus: "sata"}, ReadOnly: &struct{}{}})
 	}
 
 	out, err := xml.MarshalIndent(d, "", "  ")

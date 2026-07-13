@@ -12,6 +12,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -68,7 +69,11 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 		if entry.src == "" {
 			continue
 		}
-		r, err := res.Resolve(artifact.Spec{Source: entry.src, SHA256: cfg.SHA256})
+		resolvedSource, err := secret.ResolveString(ctx, executionSecretResolver, entry.src)
+		if err != nil {
+			return state.Resource{}, fmt.Errorf("image %s %s: %w", n.Address.Name, entry.label, err)
+		}
+		r, err := res.Resolve(artifact.Spec{Source: resolvedSource, SHA256: cfg.SHA256})
 		if err != nil {
 			return state.Resource{}, fmt.Errorf("image %s %s: %w", n.Address.Name, entry.label, err)
 		}

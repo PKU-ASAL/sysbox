@@ -36,7 +36,6 @@ func (NetworkResourceHandler) Read(_ context.Context, current state.Resource) (R
 		return result, nil
 	}
 	nsName := current.Str("netns")
-	brName := current.Str("bridge")
 	if nsName == "" {
 		result.Reason = "network has no isolated namespace"
 		return result, nil
@@ -46,7 +45,7 @@ func (NetworkResourceHandler) Read(_ context.Context, current state.Resource) (R
 		result.Status = state.ResourceUnknown
 		return result, err
 	}
-	ok, reason := linuxNetwork.NetworkHealthy(context.Background(), driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName})
+	ok, reason := linuxNetwork.NetworkHealthy(context.Background(), isolatedNetworkSpec(current))
 	checks := map[string]controlplane.ResourceCheckHealth{"network": {OK: ok, Reason: reason}}
 	if !ok {
 		result.Checks = checks
@@ -77,6 +76,9 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 	networkName := networkExternalName(pc.Topology(), n.Address.Name)
 	nsName := fmt.Sprintf("sysbox-net-%s", networkName)
 	brName := shortLinuxName("br", networkName)
+	libvirtBridge := shortLinuxName("lv", networkName)
+	rootEnd := shortLinuxName("lvr", networkName)
+	namespaceEnd := shortLinuxName("lvn", networkName)
 	gwCIDR, err := gatewayCIDR(cfg.CIDR)
 	if err != nil {
 		return state.Resource{}, err
@@ -85,15 +87,18 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 	if err != nil {
 		return state.Resource{}, err
 	}
-	if err := linuxNetwork.CreateIsolated(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName, CIDR: gwCIDR}); err != nil {
+	if err := linuxNetwork.CreateIsolated(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName, CIDR: gwCIDR, RootBridge: libvirtBridge, RootEnd: rootEnd, NamespaceEnd: namespaceEnd}); err != nil {
 		return state.Resource{}, err
 	}
 
 	inst := map[string]any{
-		"netns":   nsName,
-		"bridge":  brName,
-		"cidr":    cfg.CIDR,
-		"gateway": gwCIDR,
+		"netns":          nsName,
+		"bridge":         brName,
+		"cidr":           cfg.CIDR,
+		"gateway":        gwCIDR,
+		"libvirt_bridge": libvirtBridge,
+		"root_veth":      rootEnd,
+		"netns_veth":     namespaceEnd,
 	}
 	if lc := cfg.Lifecycle; lc != nil {
 		inst["lifecycle_prevent_destroy"] = lc.PreventDestroy
@@ -168,7 +173,7 @@ func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r
 	if err != nil {
 		return err
 	}
-	if err := linuxNetwork.DeleteIsolated(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName}); err != nil {
+	if err := linuxNetwork.DeleteIsolated(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName, RootBridge: r.Str("libvirt_bridge"), RootEnd: r.Str("root_veth"), NamespaceEnd: r.Str("netns_veth")}); err != nil {
 		pc.Logf("[destroy] warning: delete netns %s: %v\n", nsName, err)
 	}
 	pc.State().RemoveResource(r.Address)
@@ -183,6 +188,16 @@ func (NetworkResourceHandler) ExternalID(current state.Resource) string {
 		return ns
 	}
 	return current.Str("id")
+}
+
+func isolatedNetworkSpec(resource state.Resource) driver.IsolatedNetworkSpec {
+	return driver.IsolatedNetworkSpec{
+		Name:         resource.Str("netns"),
+		Bridge:       resource.Str("bridge"),
+		RootBridge:   resource.Str("libvirt_bridge"),
+		RootEnd:      resource.Str("root_veth"),
+		NamespaceEnd: resource.Str("netns_veth"),
+	}
 }
 func (NetworkResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
 	cfg, ok := node.Data.(*config.NetworkConfig)

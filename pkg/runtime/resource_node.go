@@ -178,7 +178,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("node %s provider config: %w", n.Address, err)
 	}
-	providerConfig, _ := resolvedProviderConfig.(map[string]any)
+	providerConfig := resolvedProviderConfig
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
 		return state.Resource{}, err
@@ -246,18 +246,18 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		return state.Resource{}, err
 	}
 	nicSpecs := nicSpecsFromAttachmentIntents(intents)
-	if hasHostPort(portSpecs) {
-		hasNAT := false
-		for _, spec := range nicSpecs {
-			netAddr, resolveErr := config.ResolveResourceAddress(spec.Network, "sysbox_network")
-			if resolveErr != nil {
-				return state.Resource{}, resolveErr
-			}
-			if network := e.state.FindResource(netAddr); network != nil && network.IsNAT() {
-				hasNAT = true
-				break
-			}
+	hasNAT := false
+	for _, spec := range nicSpecs {
+		netAddr, resolveErr := config.ResolveResourceAddress(spec.Network, "sysbox_network")
+		if resolveErr != nil {
+			return state.Resource{}, resolveErr
 		}
+		if network := e.state.FindResource(netAddr); network != nil && network.IsNAT() {
+			hasNAT = true
+			break
+		}
+	}
+	if hasHostPort(portSpecs) {
 		if !hasNAT {
 			return state.Resource{}, fmt.Errorf("node %s: host port exposure requires at least one nat=true network attachment", n.Address)
 		}
@@ -272,6 +272,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		Env:            resolvedEnv,
 		Labels:         ManagedLabels(e.topology, e.runID, n.Address),
 		Ports:          portSpecs,
+		ManagedNetwork: hasNAT,
 		ProviderConfig: providerConfig,
 	}
 	if err := nodeDriver.Validate(nodeSpec); err != nil {

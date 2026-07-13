@@ -7,10 +7,10 @@ image="${SYSBOX_GO_TEST_IMAGE:-golang:1.26-alpine}"
 common=(--rm --privileged --pid=host -v "${root}:/src" -v "${modcache}:/go/pkg/mod:ro" -w /src -e GOPROXY=off -e GOCACHE=/tmp/go-build)
 
 docker run "${common[@]}" "${image}" \
-	go test -count=1 -tags e2e -v -run '^TestOwnedPolicy.*E2E$' ./pkg/provider/network
+	go test -count=1 -tags e2e -v -run '^Test(OwnedPolicy.*|RootBridgeProxyLifecycle)E2E$' ./pkg/provider/network
 
 docker run "${common[@]}" -v /var/run/docker.sock:/var/run/docker.sock "${image}" \
-	go test -count=1 -tags e2e -v -run '^TestDockerOwnedPolicyLifecycleE2E$' ./pkg/provider/docker
+	go test -count=1 -tags e2e -v -run '^TestDocker(OwnedPolicyLifecycle|StartPreservesNamedNetworkNamespace)E2E$' ./pkg/provider/docker
 
 docker run "${common[@]}" \
 	-v /usr/sbin/ip:/usr/sbin/ip:ro \

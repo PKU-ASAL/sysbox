@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,7 +11,9 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -44,6 +45,28 @@ func TestKernelResourceHandlerCreateAndDelete(t *testing.T) {
 	require.Nil(t, exec.state.FindResource(address.Resource("sysbox_kernel", "fc")))
 	_, err = os.Stat(src)
 	require.NoError(t, err)
+}
+
+func TestKernelResourceHandlerResolvesSourceSecretReferenceAtExecution(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "vmlinux")
+	require.NoError(t, os.WriteFile(src, []byte("kernel"), 0o644))
+	previousResolver := executionSecretResolver
+	executionSecretResolver = secret.EnvironmentResolver{Lookup: func(name string) (string, bool) {
+		return src, name == "SYSBOX_KERNEL"
+	}}
+	t.Cleanup(func() { executionSecretResolver = previousResolver })
+	reference := secret.Environment("SYSBOX_KERNEL").String()
+	n := &graph.Node{
+		Address: address.Resource("sysbox_kernel", "fc"),
+		Data:    &config.KernelConfig{Substrate: "firecracker", Source: reference},
+	}
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+
+	res, err := KernelResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+
+	require.NoError(t, err)
+	require.Equal(t, src, res.Str("path"))
+	require.Equal(t, reference, res.Str("source"))
 }
 
 func TestKernelResourceHandlerPlanDiff(t *testing.T) {

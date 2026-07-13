@@ -12,6 +12,7 @@ func TestGenerateDomainXML_Basic(t *testing.T) {
 		MemoryMiB:   512,
 		MachineType: "q35",
 		DiskPath:    "/tmp/disk.qcow2",
+		SeedISO:     "/tmp/seed.iso",
 		Bridges:     []BridgeAttach{{Bridge: "sysbox-br0"}},
 	})
 	if err != nil {
@@ -22,6 +23,13 @@ func TestGenerateDomainXML_Basic(t *testing.T) {
 		"test-vm",
 		"q35",
 		"/tmp/disk.qcow2",
+		"/tmp/seed.iso",
+		"cdrom",
+		"readonly",
+		"<features>",
+		"<acpi></acpi>",
+		"<apic></apic>",
+		"<pae></pae>",
 		"sysbox-br0",
 		"kvm",
 		"virtio",

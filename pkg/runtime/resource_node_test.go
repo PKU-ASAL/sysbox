@@ -192,6 +192,32 @@ func TestNodeResourceHandlerPortsArePassedAndResolved(t *testing.T) {
 	require.Equal(t, "host", resolved["exposure"])
 }
 
+func TestNodeResourceHandlerPreservesTypedProviderConfig(t *testing.T) {
+	sub := &portTestSubstrate{name: "typed-config-test"}
+	registerPortTestDriver(t, sub)
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec.state.AddResource(state.Resource{
+		Address:    address.Resource("sysbox_image", "base"),
+		Driver:     sub.name,
+		Attributes: map[string]any{"image_id": "image-id", "repository": "base"},
+	})
+	type providerConfig struct{ Value string }
+	provider := &providerConfig{Value: "preserved"}
+	n := &graph.Node{
+		Address: address.Resource("sysbox_node", "node"),
+		Data: &config.NodeConfig{
+			Image:          "sysbox_image.base.id",
+			Substrate:      sub.name,
+			ProviderConfig: provider,
+		},
+	}
+
+	_, err := NodeResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+
+	require.NoError(t, err)
+	require.Equal(t, provider, sub.lastSpec.ProviderConfig)
+}
+
 func TestNodeResourceHandlerRejectsUnsupportedPortExposure(t *testing.T) {
 	sub := &portTestSubstrate{
 		name:      "port-direct-only",

@@ -7,7 +7,8 @@ Date: 2026-07-13
 - Host user: non-root, member of `docker`, `libvirt`, and `kvm` groups.
 - Docker Engine: 27.5.1.
 - Firecracker binary and cached vmlinux/rootfs: present.
-- Libvirt: reachable; no configured Batch 4 qcow2 base image was found.
+- Libvirt: reachable; the Ubuntu 22.04 Vagrant qcow2 base is present at
+  `/var/lib/libvirt/images/generic-VAGRANTSLASH-ubuntu2204_vagrant_box_image_4.3.12_box.img`.
 - Privileged evidence ran offline in the existing `golang:1.26-alpine` image.
 
 ## Passed Evidence
@@ -50,15 +51,31 @@ The following passed after implementation:
 - legacy removal audit
 - `git diff --check`
 
-## Unproven External Matrix
+## Heterogeneous Matrix Evidence
 
-Full Docker/Firecracker/libvirt guest-to-guest communication through one
-applied topology remains unproven on this host. The libvirt qcow2 fixture is
-missing. A nested privileged-container attempt reached router creation but its
-named-network-namespace wiring to a sibling Docker container returned `EINVAL`;
-the trap destroyed all resources recorded by that attempt. This nested mount
-namespace limitation does not affect the provider-level Docker policy or
-three-namespace kernel tests above.
+`examples/heterogeneous-matrix` plans as eight resources and repeatedly reached
+`Apply complete` with Docker, Firecracker, and libvirt domains attached to the
+same declared IPv4 network. The Linux network driver creates an owned root-netns
+libvirt bridge joined by an owned veth transit to the isolated network bridge;
+this removed the system libvirt daemon's namespace visibility failure. Docker
+to Firecracker ICMP (`10.44.0.20`) passed immediately through that topology.
 
-Do not report the heterogeneous guest communication matrix as passed until a
-root-capable host with the qcow2 fixture runs it and records zero residue.
+Full Docker/Firecracker/libvirt guest-to-guest communication remains unproven
+with the available qcow2. The generated NoCloud seed contains the declared MAC
+and `10.44.0.30/24`, the libvirt domain starts, and its vnet is attached to the
+owned root bridge, but the Vagrant guest never claims `10.44.0.30`. A temporary
+explicit DHCP bootstrap experiment obtained a `192.168.122.x` lease but the
+guest SSH service never became reachable and the lease subsequently stopped
+responding. The experiment was removed from the implementation because it did
+not meet the acceptance contract.
+
+Every failed or diagnostic apply ran under a destroy trap. Post-run audits
+found no heterogeneous-matrix Docker container, libvirt domain, named network
+namespace, root bridge, transit veth, tap, or Firecracker process residue. The
+pre-existing `mixed`, `recon`, `docker-service`, and `env_*` resources were not
+modified.
+
+Do not report the full heterogeneous guest communication matrix as passed until
+a cloud-init-capable libvirt image claims the declared static address and the
+runner records communication, an unchanged repeated plan, destroy, and zero
+residue.

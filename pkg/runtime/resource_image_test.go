@@ -14,6 +14,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -86,6 +87,30 @@ func TestImageResourceHandlerCreateRootfsArtifact(t *testing.T) {
 	require.Equal(t, rootfs, res.Repository())
 	require.Equal(t, rootfs, res.Str("source"))
 	require.NotEmpty(t, res.Str("sha256"))
+}
+
+func TestImageResourceHandlerResolvesRootfsSecretReferenceAtExecution(t *testing.T) {
+	sub := &imageArtifactDriver{}
+	registerImageArtifactDriver(t, sub)
+	rootfs := filepath.Join(t.TempDir(), "rootfs.ext4")
+	require.NoError(t, os.WriteFile(rootfs, []byte("rootfs"), 0o644))
+	previousResolver := executionSecretResolver
+	executionSecretResolver = secret.EnvironmentResolver{Lookup: func(name string) (string, bool) {
+		return rootfs, name == "SYSBOX_ROOTFS"
+	}}
+	t.Cleanup(func() { executionSecretResolver = previousResolver })
+	reference := secret.Environment("SYSBOX_ROOTFS").String()
+	n := &graph.Node{
+		Address: address.Resource("sysbox_image", "rootfs"),
+		Data:    &config.ImageConfig{Substrate: "image-test", Rootfs: reference},
+	}
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+
+	res, err := ImageResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+
+	require.NoError(t, err)
+	require.Equal(t, rootfs, sub.lastSpec.Rootfs)
+	require.Equal(t, reference, res.Str("source"))
 }
 
 func TestImageResourceHandlerDelete(t *testing.T) {

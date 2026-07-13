@@ -74,6 +74,10 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	if err != nil {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: create vm dir: %w", err)
 	}
+	if err := os.Chmod(vmDir, 0o755); err != nil {
+		_ = os.RemoveAll(vmDir)
+		return substrate.NodeHandle{}, fmt.Errorf("libvirt: make vm dir accessible: %w", err)
+	}
 
 	diskPath := filepath.Join(vmDir, "disk.qcow2")
 	qiArgs := []string{"create", "-f", "qcow2", "-b", baseImage, "-F", "qcow2", diskPath}
@@ -83,6 +87,10 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	if out, err := exec.CommandContext(ctx, "qemu-img", qiArgs...).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(vmDir)
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: qemu-img create: %w\n%s", err, out)
+	}
+	if err := os.Chmod(diskPath, 0o644); err != nil {
+		_ = os.RemoveAll(vmDir)
+		return substrate.NodeHandle{}, fmt.Errorf("libvirt: make overlay accessible: %w", err)
 	}
 
 	machine := pc.MachineType
@@ -109,6 +117,11 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
 	hs := hsFrom(h)
+	seedISO, err := createNoCloudSeed(hs.VMDir, hs.DomainName, hs.Bridges)
+	if err != nil {
+		_ = os.RemoveAll(hs.VMDir)
+		return fmt.Errorf("libvirt: create network seed: %w", err)
+	}
 
 	xmlStr, err := GenerateDomainXML(DomainSpec{
 		Name:        hs.DomainName,
@@ -116,6 +129,7 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 		MemoryMiB:   hs.MemoryMiB,
 		MachineType: hs.MachineType,
 		DiskPath:    hs.DiskPath,
+		SeedISO:     seedISO,
 		Bridges:     hs.Bridges,
 	})
 	if err != nil {

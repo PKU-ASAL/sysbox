@@ -60,6 +60,9 @@ type NodeSpec struct {
 	Sysctls map[string]string
 	Labels  map[string]string
 	Ports   []PortSpec
+	// ManagedNetwork signals that an external network manager must attach at
+	// least one declared network after node creation.
+	ManagedNetwork bool
 
 	// ProviderConfig is a substrate-owned typed value (e.g. *docker.Config,
 	// *firecracker.Config) produced by Substrate.DecodeProviderConfig. It is

@@ -91,6 +91,28 @@ func TestCreateFirewallPersistsVerifiedObservation(t *testing.T) {
 	require.Equal(t, "router", target["container_id"])
 }
 
+func TestCreateFirewallDelegatesMissingDeviceResolutionToPolicyDriver(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	fake := &firewallPolicyFake{}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), Driver: "policy-test", Attributes: state.MustAttributes(map[string]any{"container_id": "router"}), Attachments: []state.Attachment{{Name: "uplink", IPPrefixes: []string{"172.31.42.2/24"}}}})
+	exec := NewExecutor(graph.New(), st)
+	n := &graph.Node{Address: address.Resource("sysbox_firewall", "edge"), Data: &config.FirewallConfig{AttachTo: "sysbox_router.edge", Rules: []config.FirewallRule{{Name: "allow", Direction: "forward", Protocol: "all", OutputAttachment: "uplink", Verdict: "accept"}}}}
+
+	res, err := exec.createFirewallResource(context.Background(), n)
+	require.NoError(t, err)
+	var target struct {
+		Bindings      map[string]string   `json:"bindings"`
+		AttachmentIPs map[string][]string `json:"attachment_ips"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(res.Str("policy_target_state")), &target))
+	require.Empty(t, target.Bindings["uplink"])
+	require.Equal(t, []string{"172.31.42.2/24"}, target.AttachmentIPs["uplink"])
+}
+
 func TestEdgeResourceHandlersRegistered(t *testing.T) {
 	for _, typ := range []string{"sysbox_firewall", "sysbox_ssh_access", "sysbox_actor"} {
 		p, ok := GetResourceHandler(typ)

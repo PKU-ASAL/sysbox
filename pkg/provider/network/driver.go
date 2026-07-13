@@ -12,9 +12,21 @@ func (Driver) CreateIsolated(_ context.Context, spec driver.IsolatedNetworkSpec)
 	if err := CreateNetns(spec.Name); err != nil {
 		return err
 	}
-	return CreateBridge(BridgeConfig{NetnsName: spec.Name, BridgeName: spec.Bridge, CIDR: spec.CIDR})
+	if err := CreateBridge(BridgeConfig{NetnsName: spec.Name, BridgeName: spec.Bridge, CIDR: spec.CIDR}); err != nil {
+		return err
+	}
+	if err := CreateRootBridgeProxy(spec); err != nil {
+		_ = DeleteBridge(BridgeConfig{NetnsName: spec.Name, BridgeName: spec.Bridge})
+		_ = DeleteNetns(spec.Name)
+		_ = DeleteRootBridgeProxy(spec)
+		return err
+	}
+	return nil
 }
 func (Driver) DeleteIsolated(_ context.Context, spec driver.IsolatedNetworkSpec) error {
+	if err := DeleteRootBridgeProxy(spec); err != nil {
+		return err
+	}
 	if err := DeleteBridge(BridgeConfig{NetnsName: spec.Name, BridgeName: spec.Bridge}); err != nil {
 		return err
 	}
@@ -26,6 +38,9 @@ func (Driver) NetworkHealthy(_ context.Context, spec driver.IsolatedNetworkSpec)
 	}
 	if spec.Bridge != "" && !BridgeExists(spec.Name, spec.Bridge) {
 		return false, "bridge missing"
+	}
+	if spec.RootBridge != "" && !RootBridgeProxyExists(spec) {
+		return false, "libvirt root bridge proxy missing"
 	}
 	return true, ""
 }

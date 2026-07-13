@@ -106,7 +106,7 @@ func inNetns(name string, fn func() error) error {
 	defer ns.Close()
 
 	if err := netns.Set(ns); err != nil {
-		return fmt.Errorf("enter netns: %w", err)
+		return fmt.Errorf("enter netns %s: %w", name, err)
 	}
 	defer func() { _ = netns.Set(orig) }()
 

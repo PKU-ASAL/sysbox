@@ -12,6 +12,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -51,7 +52,7 @@ func (p KernelResourceHandler) PlanDiff(desired *graph.Node, current *state.Reso
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (KernelResourceHandler) Create(_ context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+func (KernelResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.KernelConfig)
 	if !ok {
 		return state.Resource{}, fmt.Errorf("kernel %s: wrong data type", n.Address)
@@ -64,7 +65,11 @@ func (KernelResourceHandler) Create(_ context.Context, pc *ProviderContext, n *g
 		return state.Resource{}, err
 	}
 
-	res, err := artifact.New().Resolve(artifact.Spec{Source: cfg.Source, SHA256: cfg.SHA256})
+	resolvedSource, err := secret.ResolveString(ctx, executionSecretResolver, cfg.Source)
+	if err != nil {
+		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
+	}
+	res, err := artifact.New().Resolve(artifact.Spec{Source: resolvedSource, SHA256: cfg.SHA256})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}

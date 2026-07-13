@@ -64,7 +64,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	// Host port bindings require Docker's default bridge during create. The
 	// first declared NAT attachment replaces it through the NIC capability.
 	netCfg := &network.NetworkingConfig{}
-	removeDefaultBridge := len(portBindings) > 0
+	removeDefaultBridge := len(portBindings) > 0 || spec.ManagedNetwork
 	if !removeDefaultBridge {
 		hostCfg.NetworkMode = "none"
 	}

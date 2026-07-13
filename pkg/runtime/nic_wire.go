@@ -57,7 +57,7 @@ func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State
 			return nil, fmt.Errorf("network %s not applied yet", spec.Network)
 		}
 
-		networkState, err := json.Marshal(netState.AttributeMap())
+		networkState, err := networkAttachmentState(*netState)
 		if err != nil {
 			return nil, err
 		}
@@ -99,12 +99,27 @@ func attachmentRequestFromState(st *state.State, attachment state.Attachment) (d
 	if network == nil {
 		return driver.AttachmentRequest{}, fmt.Errorf("network %s not found for attachment %s", attachment.Network, attachment.Name)
 	}
-	raw, err := json.Marshal(network.AttributeMap())
+	raw, err := networkAttachmentState(*network)
 	if err != nil {
 		return driver.AttachmentRequest{}, err
 	}
 	return driver.AttachmentRequest{Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC,
 		IPPrefixes: append([]string(nil), attachment.IPPrefixes...), Gateway: attachment.Gateway, NetworkState: raw}, nil
+}
+
+func networkAttachmentState(network state.Resource) (json.RawMessage, error) {
+	projection := make(map[string]any, len(network.AttributeMap()))
+	for key, value := range network.AttributeMap() {
+		projection[key] = value
+	}
+	runtimeState, err := network.RuntimeState()
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range runtimeState {
+		projection[key] = value
+	}
+	return json.Marshal(projection)
 }
 
 // stripCIDR removes the /NN suffix from an IP/CIDR string.

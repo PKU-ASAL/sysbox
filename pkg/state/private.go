@@ -68,6 +68,18 @@ func (r *Resource) RuntimeValue(key string) any {
 	}
 	return current.Runtime[key]
 }
+
+func (r *Resource) RuntimeState() (map[string]any, error) {
+	current, err := r.privateData()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]any, len(current.Runtime))
+	for key, value := range current.Runtime {
+		result[key] = value
+	}
+	return result, nil
+}
 func (r *Resource) SetRuntimeValue(key string, value any) error {
 	current, err := r.privateData()
 	if err != nil {

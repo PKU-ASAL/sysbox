@@ -101,13 +101,12 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 		return state.Resource{}, fmt.Errorf("firewall %s: target %s not applied yet", n.Address.Name, targetAddr)
 	}
 	bindings := map[string]string{}
+	attachmentIPs := map[string][]string{}
 	for _, attachment := range targetResource.Attachments {
-		if attachment.Observation.GuestDevice == "" {
-			return state.Resource{}, fmt.Errorf("firewall %s: attachment %q has no observed device", n.Address.Name, attachment.Name)
-		}
 		bindings[attachment.Name] = attachment.Observation.GuestDevice
+		attachmentIPs[attachment.Name] = append([]string(nil), attachment.IPPrefixes...)
 	}
-	targetRaw, err := json.Marshal(map[string]any{"container_id": targetResource.ContainerID(), "bindings": bindings})
+	targetRaw, err := json.Marshal(map[string]any{"container_id": targetResource.ContainerID(), "bindings": bindings, "attachment_ips": attachmentIPs})
 	if err != nil {
 		return state.Resource{}, err
 	}

@@ -109,6 +109,30 @@ func TestWireNICsPassesNormalizedMACToDriver(t *testing.T) {
 	require.Equal(t, "02:00:00:00:00:01", requests[0].MAC)
 }
 
+func TestWireNICsPassesNetworkRuntimeStateToDriver(t *testing.T) {
+	network := state.Resource{Address: address.Resource("sysbox_network", "isolated"), Driver: "network", Attributes: state.MustAttributes(map[string]any{"cidr": "10.10.0.0/24"})}
+	require.NoError(t, network.SetAttribute("netns", "sysbox-net-isolated"))
+	require.NoError(t, network.SetAttribute("bridge", "br-isolated"))
+	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{network}}
+	var requests []driver.AttachmentRequest
+
+	_, err := wireNICs(context.Background(), recordingNIC{requests: &requests}, st, substrate.NodeHandle{ID: "node"}, []NICSpec{{
+		Name: "internal", Network: "isolated", IP: "10.10.0.10/24",
+	}}, address.Resource("sysbox_node", "node"))
+
+	require.NoError(t, err)
+	require.Len(t, requests, 1)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(requests[0].NetworkState, &got))
+	require.Equal(t, "10.10.0.0/24", got["cidr"])
+	require.Equal(t, "sysbox-net-isolated", got["netns"])
+	require.Equal(t, "br-isolated", got["bridge"])
+
+	recovered, err := attachmentRequestFromState(st, state.Attachment{Name: "internal", Network: network.Address})
+	require.NoError(t, err)
+	require.JSONEq(t, string(requests[0].NetworkState), string(recovered.NetworkState))
+}
+
 type recordingNIC struct {
 	requests *[]driver.AttachmentRequest
 }

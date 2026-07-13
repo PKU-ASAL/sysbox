@@ -166,7 +166,6 @@ func (NetworkResourceHandler) RecoverCheckpointResource(ctx context.Context, st 
 		return recoverDockerManagedNetwork(ctx, st, step)
 	}
 	nsName := res.Str("netns")
-	brName := res.Str("bridge")
 	action.ExternalID = nsName
 	if nsName == "" {
 		action.Status = "missing_netns"
@@ -178,7 +177,7 @@ func (NetworkResourceHandler) RecoverCheckpointResource(ctx context.Context, st 
 		action.Error = err.Error()
 		return action, nil
 	}
-	if ok, reason := linuxNetwork.NetworkHealthy(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName}); !ok {
+	if ok, reason := linuxNetwork.NetworkHealthy(ctx, isolatedNetworkSpec(res)); !ok {
 		action.Status = "not_found"
 		action.Error = reason
 		return action, nil
@@ -202,7 +201,6 @@ func (NetworkResourceHandler) CleanupCheckpointResource(ctx context.Context, ste
 		return cleanupDockerManagedNetwork(ctx, step)
 	}
 	nsName := res.Str("netns")
-	brName := res.Str("bridge")
 	action.ExternalID = nsName
 	if nsName == "" {
 		action.Status = "missing_netns"
@@ -214,11 +212,11 @@ func (NetworkResourceHandler) CleanupCheckpointResource(ctx context.Context, ste
 		action.Error = err.Error()
 		return action, nil
 	}
-	if ok, _ := linuxNetwork.NetworkHealthy(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName}); !ok {
+	if ok, _ := linuxNetwork.NetworkHealthy(ctx, isolatedNetworkSpec(res)); !ok {
 		action.Status = "not_found"
 		return action, nil
 	}
-	if err := linuxNetwork.DeleteIsolated(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName}); err != nil {
+	if err := linuxNetwork.DeleteIsolated(ctx, isolatedNetworkSpec(res)); err != nil {
 		action.Status = "error"
 		action.Error = err.Error()
 		return action, nil

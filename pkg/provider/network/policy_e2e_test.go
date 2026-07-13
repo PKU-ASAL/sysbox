@@ -257,3 +257,32 @@ func requirePolicyE2E(t *testing.T) {
 	}
 	require.NoError(t, DeleteNetns(probe))
 }
+
+func TestRootBridgeProxyLifecycleE2E(t *testing.T) {
+	requirePolicyE2E(t)
+	suffix := fmt.Sprintf("%x", os.Getpid())
+	spec := driver.IsolatedNetworkSpec{
+		Name:         "sbpx-" + suffix,
+		Bridge:       "bpx" + suffix,
+		CIDR:         "10.253.0.1/24",
+		RootBridge:   "lvx" + suffix,
+		RootEnd:      "lvr" + suffix,
+		NamespaceEnd: "lvn" + suffix,
+	}
+	provider := Driver{}
+	t.Cleanup(func() { _ = provider.DeleteIsolated(context.Background(), spec) })
+
+	require.NoError(t, provider.CreateIsolated(context.Background(), spec))
+	ok, reason := provider.NetworkHealthy(context.Background(), spec)
+	require.True(t, ok, reason)
+	require.True(t, LinkExists(spec.Name, spec.NamespaceEnd))
+	_, err := netlink.LinkByName(spec.RootBridge)
+	require.NoError(t, err)
+
+	require.NoError(t, provider.DeleteIsolated(context.Background(), spec))
+	require.False(t, NetnsExists(spec.Name))
+	_, err = netlink.LinkByName(spec.RootBridge)
+	require.Error(t, err)
+	_, err = netlink.LinkByName(spec.RootEnd)
+	require.Error(t, err)
+}

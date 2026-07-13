@@ -115,7 +115,10 @@ type Power interface {
 	Resume(context.Context, substrate.NodeHandle) error
 }
 
-type IsolatedNetworkSpec struct{ Name, Bridge, CIDR string }
+type IsolatedNetworkSpec struct {
+	Name, Bridge, CIDR                string
+	RootBridge, RootEnd, NamespaceEnd string
+}
 type LinuxNetwork interface {
 	CreateIsolated(context.Context, IsolatedNetworkSpec) error
 	DeleteIsolated(context.Context, IsolatedNetworkSpec) error
