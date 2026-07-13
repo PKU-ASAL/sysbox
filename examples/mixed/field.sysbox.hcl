@@ -74,7 +74,7 @@ resource "sysbox_network" "net_uplink" {
   nat  = true
 }
 
-# ── Router (Docker — needs iptables for NAT) ────────────────────────────────
+# ── Router (Docker — topology-owned nftables NAT) ────────────────────────────────
 
 resource "sysbox_router" "core" {
   substrate = substrate.docker.dk

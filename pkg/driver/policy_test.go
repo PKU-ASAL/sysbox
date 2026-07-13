@@ -34,6 +34,11 @@ func TestNormalizeRulesetRejectsIPv6(t *testing.T) {
 	require.ErrorContains(t, err, "IPv6 is not supported")
 }
 
+func TestNormalizeRulesetRejectsOwnerTooLongForKernelMarker(t *testing.T) {
+	_, err := NormalizeRuleset(RulesetSpec{Owner: strings.Repeat("x", 129), Family: FamilyIPv4})
+	require.ErrorContains(t, err, "128 bytes")
+}
+
 func TestNormalizeRulesetCanonicalizesCIDRsAndStates(t *testing.T) {
 	got, err := NormalizeRuleset(RulesetSpec{
 		Owner:         "topology.lab/sysbox_firewall.edge",

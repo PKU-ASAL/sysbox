@@ -39,7 +39,7 @@ resource "sysbox_network" "net_internal" {
   cidr = local.internal_cidr
 }
 
-# nat=true: Docker bridge with iptables MASQUERADE.
+# nat=true: Docker-managed bridge masquerading (owned by the Docker daemon).
 # Gives node_attack internet access for LLM API calls.
 # Also accessible from the host at 172.30.0.10 (episode runner connects here).
 resource "sysbox_network" "net_uplink" {

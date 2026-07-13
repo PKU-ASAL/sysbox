@@ -98,6 +98,9 @@ func NormalizeRuleset(spec RulesetSpec) (RulesetSpec, error) {
 	if spec.Owner == "" {
 		return spec, fmt.Errorf("policy owner is required")
 	}
+	if len(spec.Owner) > 128 {
+		return spec, fmt.Errorf("policy owner exceeds 128 bytes required for nftables ownership markers")
+	}
 	if spec.Family == "" {
 		spec.Family = FamilyIPv4
 	}

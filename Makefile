@@ -38,7 +38,7 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-all web-build test test-e2e test-privileged-compile test-privileged lint ci clean \
+.PHONY: help build build-all web-build test test-e2e test-privileged-compile test-privileged test-privileged-container lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
 	api-help api-build-api api-build-ui api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
@@ -58,6 +58,7 @@ help: ## Show command groups
 	@echo "  make test-e2e       Run API e2e smoke test against make api deploy-full"
 	@echo "  make test-privileged-compile  Compile privileged recovery tests without running them"
 	@echo "  make test-privileged          Run privileged recovery tests (requires root/CAP_NET_ADMIN)"
+	@echo "  make test-privileged-container  Run privileged acceptance tests through Docker"
 
 build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
@@ -76,10 +77,13 @@ test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
 
 test-privileged-compile: ## Compile privileged recovery tests without running them
-	$(GOENV) $(GO) test -tags e2e -run '^$$' ./pkg/api ./pkg/provider/network
+	$(GOENV) $(GO) test -tags e2e -run '^$$' ./pkg/api ./pkg/provider/network ./pkg/provider/docker
 
 test-privileged: ## Run privileged recovery tests (requires root/CAP_NET_ADMIN)
-	$(GOENV) $(GO) test -tags e2e -v -run '^Test(Checkpoint|OwnedPolicy).*E2E$$' ./pkg/api ./pkg/provider/network
+	$(GOENV) $(GO) test -tags e2e -v -run '^Test(Checkpoint|OwnedPolicy|DockerOwnedPolicy).*E2E$$' ./pkg/api ./pkg/provider/network ./pkg/provider/docker
+
+test-privileged-container: ## Run privileged acceptance tests through Docker
+	bash tests/e2e/privileged_container.sh
 
 web-build: ## Build the Web UI
 	npm --prefix web install
@@ -89,7 +93,7 @@ lint: ## Run go vet
 	$(GOENV) $(GO) vet ./...
 
 ci: build lint test ## Run the local CI gate
-	@status=0; for topo in two-networks three-nodes microvm mixed libvirt-vm; do \
+	@status=0; for topo in two-networks three-nodes microvm mixed libvirt-vm controlled-egress; do \
 		output="$$( $(BINARY) -f examples/$$topo/field.sysbox.hcl --state /tmp/sysbox-ci-$$topo.json plan 2>&1 )"; rc=$$?; \
 		printf "  %-14s%s\n" "$$topo:" "$$(printf '%s\n' "$$output" | head -1)"; \
 		if [ $$rc -ne 0 ]; then status=$$rc; fi; \

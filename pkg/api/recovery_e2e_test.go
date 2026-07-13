@@ -80,7 +80,9 @@ func TestCheckpointRecoverAndCleanupLocalNetworkE2E(t *testing.T) {
 
 	second, err := recoverCheckpoint(context.Background(), store, "e2e-net", "run-net", mgr, "e2e")
 	require.NoError(t, err)
-	require.Len(t, second.Recovered, 1)
+	require.Empty(t, second.Recovered)
+	require.Len(t, second.Skipped, 1)
+	require.Equal(t, "already_in_state", second.Skipped[0].Status)
 	st, err = mgr.LoadWithContext(context.Background())
 	require.NoError(t, err)
 	require.Len(t, st.Resources, 1)
@@ -158,7 +160,9 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 
 	second, err := recoverCheckpoint(context.Background(), store, "e2e-fc", "run-fc", mgr, "e2e")
 	require.NoError(t, err)
-	require.Len(t, second.Recovered, 1)
+	require.Empty(t, second.Recovered)
+	require.Len(t, second.Skipped, 1)
+	require.Equal(t, "already_in_state", second.Skipped[0].Status)
 	st, err = mgr.LoadWithContext(context.Background())
 	require.NoError(t, err)
 	resource := st.FindResource(address.Resource("sysbox_node", "microvm"))
@@ -172,7 +176,7 @@ func TestCheckpointRecoverAndCleanupFirecrackerNodeE2E(t *testing.T) {
 	require.Equal(t, "removed", cleanup.MicroVMs[0].Status)
 	require.NoDirExists(t, vmDir)
 	require.False(t, netprovider.LinkExists(nsName, tapName))
-	require.False(t, netprovider.NetnsExists(nsName))
+	require.True(t, netprovider.NetnsExists(nsName), "node cleanup must not delete the shared network namespace")
 }
 
 func mustPrivateState(t *testing.T, providerState any) json.RawMessage {

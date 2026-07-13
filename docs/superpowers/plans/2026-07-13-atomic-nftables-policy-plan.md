@@ -48,12 +48,12 @@
 - Consumes: Task 1 policy types and digest functions.
 - Produces: pure `compileRuleset(spec, bindings)` expression plan tests plus `Driver.ApplyRuleset`, `Driver.ObserveRuleset`, and `Driver.DeleteRuleset` for isolated namespaces.
 
-- [ ] Write tests for base-chain policies, TCP/UDP ports, IPv4 source/destination matches, conntrack states, logical iif/oif bindings, accept/drop/reject, counter/log expressions, masquerade, ownership comments, and inventory digest.
-- [ ] Run `go test ./pkg/provider/network -run 'Test(CompileRuleset|OwnedInventory)'` and confirm RED.
-- [ ] Implement preflight compilation and a single `google/nftables` batch that replaces the deterministic table.
-- [ ] Implement readback ownership verification, canonical observation, delete-then-observe residue checks, and stable driver errors.
-- [ ] Run `go test ./pkg/provider/network ./pkg/driver` and confirm GREEN.
-- [ ] Commit as `feat(network): add owned nftables rulesets`.
+- [x] Write tests for base-chain policies, TCP/UDP ports, IPv4 source/destination matches, conntrack states, logical iif/oif bindings, accept/drop/reject, counter/log expressions, masquerade, ownership comments, and inventory digest.
+- [x] Run `go test ./pkg/provider/network -run 'Test(CompileRuleset|OwnedInventory)'` and confirm RED.
+- [x] Implement preflight compilation and a single `google/nftables` batch that replaces the deterministic table.
+- [x] Implement readback ownership verification, canonical observation, delete-then-observe residue checks, and stable driver errors.
+- [x] Run `go test ./pkg/provider/network ./pkg/driver` and confirm GREEN.
+- [x] Commit as `feat(network): add owned nftables rulesets`.
 
 ### Task 3: Docker Policy Execution And Router NAT Migration
 
@@ -68,13 +68,13 @@
 - Consumes: Task 1 `Policy` contract and Task 2 nftables compiler/lifecycle primitives through an explicit namespace executor.
 - Produces: Docker `Policy` capability resolving logical attachment observations inside its owned container namespace.
 
-- [ ] Write tests proving logical attachment binding, deterministic target identity, NAT compilation, fatal inspect/resolution failures, and no `iptables` command construction.
-- [ ] Run focused Docker tests and confirm RED.
-- [ ] Implement Docker namespace execution using the container PID and structured nftables connection; keep PID and interface names provider-local.
-- [ ] Migrate router NAT to one `RulesetSpec`; return any apply/readback error instead of warning continuation.
-- [ ] Remove append-style egress helpers after `sysbox_network` stops calling them.
-- [ ] Run `go test ./pkg/provider/docker ./pkg/runtime` and confirm GREEN.
-- [ ] Commit as `refactor(docker): replace iptables router policy`.
+- [x] Write tests proving logical attachment binding, deterministic target identity, NAT compilation, fatal inspect/resolution failures, and no `iptables` command construction.
+- [x] Run focused Docker tests and confirm RED.
+- [x] Implement Docker namespace execution using the container PID and structured nftables connection; keep PID and interface names provider-local.
+- [x] Migrate router NAT to one `RulesetSpec`; return any apply/readback error instead of warning continuation.
+- [x] Remove append-style egress helpers after `sysbox_network` stops calling them.
+- [x] Run `go test ./pkg/provider/docker ./pkg/runtime` and confirm GREEN.
+- [x] Commit as `refactor(docker): replace iptables router policy`.
 
 ### Task 4: Firewall Schema, Runtime State, And Refresh
 
@@ -93,14 +93,14 @@
 - Consumes: Task 1 `RulesetSpec` and provider `Policy` capability.
 - Produces: HCL fields for target, family, default policies, typed rules, logging/counters, and normalized policy state with table/desired/observed digests.
 
-- [ ] Write config tests for all typed fields, logical interface validation, IPv6 rejection, default drop, and invalid rule combinations.
-- [ ] Write runtime tests for apply/readback persistence, fatal NAT failure, matching/missing/mismatched/unavailable refresh, replacement, and delete residue propagation.
-- [ ] Run focused config/runtime tests and confirm RED.
-- [ ] Implement schema normalization and policy target resolution against typed attachments.
-- [ ] Persist semantic policy, table identity, and digests only after verified apply.
-- [ ] Implement observe-first refresh and delete through `Policy`; remove legacy runtime egress and NAT calls.
-- [ ] Run `go test ./pkg/config ./pkg/runtime ./pkg/provider/docker ./pkg/provider/network` and confirm GREEN.
-- [ ] Commit as `feat(runtime): converge atomic firewall policy`.
+- [x] Write config tests for all typed fields, logical interface validation, IPv6 rejection, default drop, and invalid rule combinations.
+- [x] Write runtime tests for apply/readback persistence, fatal NAT failure, matching/missing/mismatched/unavailable refresh, replacement, and delete residue propagation.
+- [x] Run focused config/runtime tests and confirm RED.
+- [x] Implement schema normalization and policy target resolution against typed attachments.
+- [x] Persist semantic policy, table identity, and digests only after verified apply.
+- [x] Implement observe-first refresh and delete through `Policy`; remove legacy runtime egress and NAT calls.
+- [x] Run `go test ./pkg/config ./pkg/runtime ./pkg/provider/docker ./pkg/provider/network` and confirm GREEN.
+- [x] Commit as `feat(runtime): converge atomic firewall policy`.
 
 ### Task 5: Recovery, Privileged E2E, Documentation, And Removal
 
@@ -116,9 +116,9 @@
 - Consumes: complete owned policy lifecycle.
 - Produces: observe-first checkpoint adoption/replacement and privileged default-deny/NAT/idempotency/residue evidence.
 
-- [ ] Write recovery tests for matching adoption, mismatched atomic replacement, and repeated recovery without duplicate owned objects.
-- [ ] Write build-tagged privileged tests for default deny, explicit allow, established return traffic, masquerade, stable repeated digest, and zero-residue delete.
-- [ ] Run compile-only privileged gate, then the capability test; unavailable CAP_NET_ADMIN must be SKIP.
-- [ ] Update contracts/examples and remove all production append-style iptables, fixed `sysbox_fw`, and legacy capability symbols.
-- [ ] Run `go test ./...`, `go vet ./...`, focused `go test -race`, `make ci`, privileged compile/run gates, removal audit, and `git diff --check`.
-- [ ] Commit as `test(network): verify atomic policy convergence`.
+- [x] Write recovery tests for matching adoption, mismatched atomic replacement, and repeated recovery without duplicate owned objects.
+- [x] Write build-tagged privileged tests for default deny, explicit allow, established return traffic, masquerade, stable repeated digest, and zero-residue delete.
+- [x] Run compile-only privileged gate, then the capability test; unavailable CAP_NET_ADMIN must be SKIP.
+- [x] Update contracts/examples and remove all production append-style iptables, fixed `sysbox_fw`, and legacy capability symbols.
+- [x] Run `go test ./...`, `go vet ./...`, focused `go test -race`, `make ci`, privileged compile/run gates, removal audit, and `git diff --check`.
+- [x] Commit as `test(network): verify atomic policy convergence`.

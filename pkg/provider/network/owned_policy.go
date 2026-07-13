@@ -2,7 +2,9 @@ package network
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -32,7 +34,13 @@ func (Driver) ApplyRuleset(_ context.Context, target driver.PolicyTarget, spec d
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "compile ruleset", err)
 	}
-	err = inNetns(state.Namespace, func() error { return applyCompiledRuleset(plan) })
+	err = inNetns(state.Namespace, func() error {
+		replace, err := ownedRulesetExists(spec.Owner)
+		if err != nil {
+			return err
+		}
+		return applyCompiledRuleset(plan, replace)
+	})
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "network", "apply ruleset", err)
 	}
@@ -98,17 +106,19 @@ func decodePolicyTarget(target driver.PolicyTarget) (policyTargetState, error) {
 	return state, nil
 }
 
-func applyCompiledRuleset(plan compiledRuleset) error {
+func applyCompiledRuleset(plan compiledRuleset, replace bool) error {
 	conn, err := nftables.New()
 	if err != nil {
 		return err
 	}
-	return applyCompiledRulesetConn(conn, plan)
+	return applyCompiledRulesetConn(conn, plan, replace)
 }
 
-func applyCompiledRulesetConn(conn *nftables.Conn, plan compiledRuleset) error {
+func applyCompiledRulesetConn(conn *nftables.Conn, plan compiledRuleset, replace bool) error {
 	table := &nftables.Table{Family: nftables.TableFamilyIPv4, Name: plan.Table}
-	conn.DelTable(table)
+	if replace {
+		conn.DelTable(table)
+	}
 	table = conn.AddTable(table)
 	chains := map[driver.Direction]*nftables.Chain{}
 	for _, item := range []struct {
@@ -127,16 +137,13 @@ func applyCompiledRulesetConn(conn *nftables.Conn, plan compiledRuleset) error {
 		chains[item.direction] = conn.AddChain(&nftables.Chain{Name: item.name, Table: table, Type: nftables.ChainTypeFilter, Hooknum: item.hook, Priority: nftables.ChainPriorityFilter, Policy: &policy})
 	}
 	marker := ownershipMarker(plan.Owner, plan.Digest)
-	conn.AddRule(&nftables.Rule{Table: table, Chain: chains[driver.DirectionInput], UserData: userdata.AppendString(nil, userdata.TypeComment, marker)})
+	conn.AddRule(&nftables.Rule{Table: table, Chain: chains[driver.DirectionInput], UserData: userdata.AppendString(nil, userdata.TypeComment, expressionMarker(marker, nil))})
 	for _, rule := range plan.Rules {
 		expressions, err := policyExpressions(rule)
 		if err != nil {
 			return err
 		}
-		comment := marker
-		if rule.Rule.ID != "" {
-			comment += ";rule=" + rule.Rule.ID
-		}
+		comment := expressionMarker(marker, expressions)
 		conn.AddRule(&nftables.Rule{Table: table, Chain: chains[rule.Rule.Direction], Exprs: expressions, UserData: userdata.AppendString(nil, userdata.TypeComment, comment)})
 	}
 	if plan.NAT != nil && plan.NAT.Policy.Masquerade {
@@ -147,7 +154,7 @@ func applyCompiledRulesetConn(conn *nftables.Conn, plan compiledRuleset) error {
 			expressions = append(expressions, match...)
 		}
 		expressions = append(expressions, &expr.Masq{})
-		conn.AddRule(&nftables.Rule{Table: table, Chain: chain, Exprs: expressions, UserData: userdata.AppendString(nil, userdata.TypeComment, marker+";nat=masquerade")})
+		conn.AddRule(&nftables.Rule{Table: table, Chain: chain, Exprs: expressions, UserData: userdata.AppendString(nil, userdata.TypeComment, expressionMarker(marker+";nat=masquerade", expressions))})
 	}
 	return conn.Flush()
 }
@@ -203,6 +210,9 @@ func observeOwnedRulesetConn(conn *nftables.Conn, owner string) (driver.RulesetO
 			if observation.Digest != "" && observation.Digest != digest {
 				return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "owned table contains inconsistent policy digests", nil)
 			}
+			if signature, ok := markerValue(comment, "expr"); !ok || signature != expressionSignature(rule.Exprs) {
+				return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "owned rule expression digest mismatch", nil)
+			}
 			observation.Digest = digest
 			observation.Inventory = append(observation.Inventory, driver.OwnedObject{Kind: "rule", Name: chain.Name})
 		}
@@ -222,14 +232,34 @@ func ApplyRulesetInNetNSFD(fd int, spec driver.RulesetSpec, bindings map[string]
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	if err := applyCompiledRulesetConn(conn, plan); err != nil {
-		return driver.RulesetObservation{}, err
-	}
 	read, err := nftables.New(nftables.WithNetNSFd(fd))
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
+	_, observeErr := observeOwnedRulesetConn(read, spec.Owner)
+	replace := observeErr == nil
+	if observeErr != nil && !driver.IsCategory(observeErr, driver.ErrorNotFound) {
+		return driver.RulesetObservation{}, observeErr
+	}
+	if err := applyCompiledRulesetConn(conn, plan, replace); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	read, err = nftables.New(nftables.WithNetNSFd(fd))
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
 	return observeOwnedRulesetConn(read, spec.Owner)
+}
+
+func ownedRulesetExists(owner string) (bool, error) {
+	_, err := observeOwnedRuleset(owner)
+	if err == nil {
+		return true, nil
+	}
+	if driver.IsCategory(err, driver.ErrorNotFound) {
+		return false, nil
+	}
+	return false, err
 }
 
 func ObserveRulesetInNetNSFD(fd int, owner string) (driver.RulesetObservation, error) {
@@ -272,6 +302,40 @@ func DeleteRulesetInNetNSFD(fd int, owner string) error {
 func ownershipMarker(owner, digest string) string {
 	return ownershipPrefix + owner + ";digest=" + digest
 }
+
+func expressionMarker(marker string, expressions []expr.Any) string {
+	return marker + ";expr=" + expressionSignature(expressions)
+}
+
+func expressionSignature(expressions []expr.Any) string {
+	canonical := make([]json.RawMessage, 0, len(expressions))
+	for _, expression := range expressions {
+		var payload []byte
+		if _, ok := expression.(*expr.Counter); ok {
+			payload = []byte(`"counter"`)
+		} else {
+			payload, _ = json.Marshal(struct {
+				Type string `json:"type"`
+				Data any    `json:"data"`
+			}{fmt.Sprintf("%T", expression), expression})
+		}
+		canonical = append(canonical, payload)
+	}
+	payload, _ := json.Marshal(canonical)
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:8])
+}
+
+func markerValue(comment, key string) (string, bool) {
+	prefix := key + "="
+	for _, part := range strings.Split(comment, ";") {
+		if strings.HasPrefix(part, prefix) {
+			return strings.TrimPrefix(part, prefix), true
+		}
+	}
+	return "", false
+}
+
 func parseOwnershipMarker(comment string) (string, string, bool) {
 	if !strings.HasPrefix(comment, ownershipPrefix) {
 		return "", "", false
