@@ -15,17 +15,20 @@ import (
 
 // HandleState is the libvirt substrate's typed NodeHandle.Provider payload.
 type HandleState struct {
-	DomainName  string         `json:"domain_name"`
-	VMDir       string         `json:"vm_dir"`
-	DiskPath    string         `json:"disk_path"`
-	VCPUs       int            `json:"vcpus"`
-	MemoryMiB   int            `json:"memory_mib"`
-	MachineType string         `json:"machine_type"`
-	Bridges     []BridgeAttach `json:"bridges,omitempty"`
-	SSHIP       string         `json:"ssh_ip,omitempty"`
-	SSHUser     string         `json:"ssh_user,omitempty"`
-	SSHPass     string         `json:"ssh_pass,omitempty"`
-	SSHKey      string         `json:"ssh_key,omitempty"`
+	DomainName       string                         `json:"domain_name"`
+	VMDir            string                         `json:"vm_dir"`
+	DiskPath         string                         `json:"disk_path"`
+	VCPUs            int                            `json:"vcpus"`
+	MemoryMiB        int                            `json:"memory_mib"`
+	MachineType      string                         `json:"machine_type"`
+	Bridges          []BridgeAttach                 `json:"bridges,omitempty"`
+	SSHIP            string                         `json:"ssh_ip,omitempty"`
+	SSHUser          string                         `json:"ssh_user,omitempty"`
+	SSHPass          string                         `json:"-"`
+	SSHKey           string                         `json:"ssh_key,omitempty"`
+	SSHAuthorizedKey string                         `json:"-"`
+	NetworkInit      substrate.GuestNetworkInitMode `json:"network_init"`
+	SeedISO          string                         `json:"seed_iso,omitempty"`
 }
 
 func (s *Substrate) PrepareImage(_ context.Context, spec substrate.ImageSpec) (substrate.ImageRef, error) {
@@ -98,15 +101,17 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		machine = "q35"
 	}
 	hs := &HandleState{
-		DomainName:  spec.Name,
-		VMDir:       vmDir,
-		DiskPath:    diskPath,
-		VCPUs:       pc.VCPUs,
-		MemoryMiB:   mem,
-		MachineType: machine,
-		SSHUser:     pc.SSHUser,
-		SSHPass:     pc.SSHPass,
-		SSHKey:      pc.SSHKey,
+		DomainName:       spec.Name,
+		VMDir:            vmDir,
+		DiskPath:         diskPath,
+		VCPUs:            pc.VCPUs,
+		MemoryMiB:        mem,
+		MachineType:      machine,
+		SSHUser:          pc.SSHUser,
+		SSHPass:          pc.SSHPass,
+		SSHKey:           pc.SSHKey,
+		SSHAuthorizedKey: pc.SSHAuthorizedKey,
+		NetworkInit:      pc.NetworkInit,
 	}
 	return substrate.NodeHandle{
 		ID:       spec.Name,
@@ -117,10 +122,8 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
 	hs := hsFrom(h)
-	seedISO, err := createNoCloudSeed(hs.VMDir, hs.DomainName, hs.Bridges)
-	if err != nil {
-		_ = os.RemoveAll(hs.VMDir)
-		return fmt.Errorf("libvirt: create network seed: %w", err)
+	if hs.NetworkInit == substrate.GuestNetworkInitCloudInit && hs.SeedISO == "" {
+		return fmt.Errorf("libvirt: cloud_init seed was not prepared")
 	}
 
 	xmlStr, err := GenerateDomainXML(DomainSpec{
@@ -129,7 +132,7 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 		MemoryMiB:   hs.MemoryMiB,
 		MachineType: hs.MachineType,
 		DiskPath:    hs.DiskPath,
-		SeedISO:     seedISO,
+		SeedISO:     hs.SeedISO,
 		Bridges:     hs.Bridges,
 	})
 	if err != nil {
@@ -232,8 +235,14 @@ func (s *Substrate) NodeStatus(ctx context.Context, h substrate.NodeHandle) (boo
 	return state == "running" || state == "paused" || state == "in shutdown", nil
 }
 
-func (s *Substrate) PrepareHandle(_ context.Context, h *substrate.NodeHandle, _ any, _ substrate.StateReader) error {
+func (s *Substrate) PrepareHandle(_ context.Context, h *substrate.NodeHandle, providerConfig any, _ substrate.StateReader) error {
 	hs := hsFrom(*h)
+	if cfg, ok := providerConfig.(*Config); ok && cfg != nil {
+		hs.SSHUser = cfg.SSHUser
+		hs.SSHPass = cfg.SSHPass
+		hs.SSHKey = cfg.SSHKey
+		hs.SSHAuthorizedKey = cfg.SSHAuthorizedKey
+	}
 	if hs.SSHIP == "" {
 		return nil // SSH IP not yet known; provisioners will configure it
 	}

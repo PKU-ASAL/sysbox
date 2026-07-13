@@ -16,6 +16,7 @@ type attachmentState struct {
 	MAC    string `json:"mac"`
 }
 type networkState struct {
+	Netns         string `json:"netns"`
 	Bridge        string `json:"bridge"`
 	LibvirtBridge string `json:"libvirt_bridge"`
 }
@@ -30,7 +31,7 @@ func (s *Substrate) Attach(_ context.Context, h substrate.NodeHandle, req driver
 	if bridge == "" {
 		bridge = target.Bridge
 	}
-	hs.Bridges = append(hs.Bridges, BridgeAttach{Name: req.Name, Bridge: bridge, MAC: req.MAC, IPPrefixes: append([]string(nil), req.IPPrefixes...), Gateway: req.Gateway})
+	hs.Bridges = append(hs.Bridges, BridgeAttach{Name: req.Name, Netns: target.Netns, Bridge: bridge, MAC: req.MAC, IPPrefixes: append([]string(nil), req.IPPrefixes...), Gateway: req.Gateway})
 	raw, _ := json.Marshal(attachmentState{Bridge: bridge, MAC: req.MAC})
 	return driver.AttachmentResult{Driver: "libvirt", State: raw}, nil
 }

@@ -14,9 +14,9 @@ import (
 func TestAttachmentPersistsStableMACInDomainState(t *testing.T) {
 	handleState := &HandleState{}
 	s := New()
-	result, err := s.Attach(context.Background(), substrate.NodeHandle{ID: "vm", Provider: handleState}, driver.AttachmentRequest{Name: "internal", MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.20.0.10/24"}, Gateway: "10.20.0.1", NetworkState: json.RawMessage(`{"bridge":"br0"}`)})
+	result, err := s.Attach(context.Background(), substrate.NodeHandle{ID: "vm", Provider: handleState}, driver.AttachmentRequest{Name: "internal", MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.20.0.10/24"}, Gateway: "10.20.0.1", NetworkState: json.RawMessage(`{"netns":"matrix-ns","bridge":"br0"}`)})
 	require.NoError(t, err)
-	require.Equal(t, []BridgeAttach{{Name: "internal", Bridge: "br0", MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.20.0.10/24"}, Gateway: "10.20.0.1"}}, handleState.Bridges)
+	require.Equal(t, []BridgeAttach{{Name: "internal", Netns: "matrix-ns", Bridge: "br0", MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.20.0.10/24"}, Gateway: "10.20.0.1"}}, handleState.Bridges)
 	require.Empty(t, result.GuestDevice)
 	require.JSONEq(t, `{"bridge":"br0","mac":"02:00:00:00:00:01"}`, string(result.State))
 }

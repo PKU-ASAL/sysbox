@@ -26,6 +26,17 @@ type noCloudRoute struct {
 	Via string `yaml:"via"`
 }
 
+type noCloudUserData struct {
+	Users []noCloudUser `yaml:"users,omitempty"`
+}
+
+type noCloudUser struct {
+	Name              string   `yaml:"name"`
+	Shell             string   `yaml:"shell"`
+	Sudo              string   `yaml:"sudo"`
+	SSHAuthorizedKeys []string `yaml:"ssh_authorized_keys"`
+}
+
 func buildNoCloudNetworkConfig(bridges []BridgeAttach) ([]byte, error) {
 	config := noCloudNetwork{Version: 2, Ethernets: map[string]noCloudEthernet{}}
 	for i, bridge := range bridges {
@@ -41,8 +52,25 @@ func buildNoCloudNetworkConfig(bridges []BridgeAttach) ([]byte, error) {
 	return yaml.Marshal(config)
 }
 
-func createNoCloudSeed(vmDir, name string, bridges []BridgeAttach) (string, error) {
+func buildNoCloudUserData(user, authorizedKey string) ([]byte, error) {
+	if authorizedKey == "" {
+		return []byte("#cloud-config\n"), nil
+	}
+	data, err := yaml.Marshal(noCloudUserData{Users: []noCloudUser{{
+		Name: user, Shell: "/bin/bash", Sudo: "ALL=(ALL) NOPASSWD:ALL", SSHAuthorizedKeys: []string{authorizedKey},
+	}}})
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte("#cloud-config\n"), data...), nil
+}
+
+func createNoCloudSeed(vmDir, name string, bridges []BridgeAttach, user, authorizedKey string) (string, error) {
 	networkConfig, err := buildNoCloudNetworkConfig(bridges)
+	if err != nil {
+		return "", err
+	}
+	userData, err := buildNoCloudUserData(user, authorizedKey)
 	if err != nil {
 		return "", err
 	}
@@ -52,7 +80,7 @@ func createNoCloudSeed(vmDir, name string, bridges []BridgeAttach) (string, erro
 	}
 	files := map[string][]byte{
 		"meta-data":      []byte("instance-id: " + name + "\nlocal-hostname: " + name + "\n"),
-		"user-data":      []byte("#cloud-config\n"),
+		"user-data":      userData,
 		"network-config": networkConfig,
 	}
 	for filename, data := range files {

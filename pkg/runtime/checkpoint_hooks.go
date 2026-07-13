@@ -308,6 +308,18 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 		action.Error = attachmentReason
 		return action, nil
 	}
+	if obs.Running {
+		guestDrifted, guestReason, guestErr := observeRecoveredGuestNetwork(ctx, nodeDriver, handle, res.Driver)
+		if guestErr != nil {
+			action.Status = "error"
+			action.Error = guestErr.Error()
+			return action, nil
+		}
+		if guestDrifted {
+			attachmentStatus = state.ResourceDrifted
+			attachmentReason = guestReason
+		}
+	}
 	rec.Attachments = cloneAttachments(res.Attachments)
 	attachmentsDrifted := attachmentStatus == state.ResourceDrifted
 	if attachmentsDrifted {
@@ -365,6 +377,24 @@ func recoverNodeLikeCheckpoint(ctx context.Context, st *state.State, step Operat
 		action.Error = recovery.Reason
 	}
 	return action, nil
+}
+
+func observeRecoveredGuestNetwork(ctx context.Context, nodeDriver driver.Node, handle substrate.NodeHandle, driverName string) (bool, string, error) {
+	if len(nodeDriver.Capabilities().GuestNetworkInitModes) == 0 {
+		return false, "", nil
+	}
+	guestInit, err := driver.DefaultRegistry.RequireGuestNetworkInit(driverName)
+	if err != nil {
+		return false, "", err
+	}
+	observation, err := guestInit.ObserveGuestNetwork(ctx, handle)
+	if err != nil {
+		return false, "", err
+	}
+	if !observation.Converged {
+		return true, observation.Reason, nil
+	}
+	return false, "", nil
 }
 
 func cleanupNodeLikeCheckpoint(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {

@@ -140,6 +140,7 @@ type DomainSpec struct {
 // BridgeAttach describes one network interface attached to a host bridge.
 type BridgeAttach struct {
 	Name       string
+	Netns      string
 	Bridge     string
 	MAC        string // empty → libvirt auto-generates
 	IPPrefixes []string

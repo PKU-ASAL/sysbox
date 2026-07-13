@@ -10,8 +10,35 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
+
+func TestObserveRecoveredGuestNetworkReportsDrift(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	sub := &portTestSubstrate{
+		name:             "recovery-guest-init",
+		guestInitModes:   []substrate.GuestNetworkInitMode{substrate.GuestNetworkInitCloudInit},
+		guestObservation: substrate.GuestNetworkInitObservation{Mode: substrate.GuestNetworkInitCloudInit, Converged: false, Reason: "address missing"},
+	}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: sub.name, Version: "test", GuestNetworkInit: sub}))
+
+	drifted, reason, err := observeRecoveredGuestNetwork(context.Background(), sub, substrate.NodeHandle{ID: "node"}, sub.name)
+
+	require.NoError(t, err)
+	require.True(t, drifted)
+	require.Equal(t, "address missing", reason)
+
+	sub.guestInitModes = nil
+	driver.DefaultRegistry = driver.NewRegistry()
+	drifted, reason, err = observeRecoveredGuestNetwork(context.Background(), sub, substrate.NodeHandle{ID: "node"}, sub.name)
+	require.NoError(t, err)
+	require.False(t, drifted)
+	require.Empty(t, reason)
+}
 
 func TestFindDockerObjectByLabelsUsesManagedTopologyResourceLabels(t *testing.T) {
 	labels := map[string]string{
