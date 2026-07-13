@@ -144,4 +144,12 @@ func (r *Registry) RequireGuestNetwork(name string) (GuestNetwork, error) {
 	return d.GuestNetwork, nil
 }
 
+func (r *Registry) RequirePolicy(name string) (Policy, error) {
+	d, err := r.Require(name, CapabilityPolicy)
+	if err != nil {
+		return nil, err
+	}
+	return d.Policy, nil
+}
+
 var DefaultRegistry = NewRegistry()

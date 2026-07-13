@@ -27,6 +27,7 @@ const (
 	CapabilityRouterNetwork Capability = "router-network"
 	CapabilityLinuxNetwork  Capability = "linux-network"
 	CapabilityGuestNetwork  Capability = "guest-network"
+	CapabilityPolicy        Capability = "policy"
 )
 
 type Node interface {
@@ -187,6 +188,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.LinuxNetwork
 	case CapabilityGuestNetwork:
 		return d.GuestNetwork
+	case CapabilityPolicy:
+		return d.Policy
 	default:
 		return nil
 	}

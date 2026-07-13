@@ -1,11 +1,29 @@
 package driver
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+type testPolicy struct{}
+
+func (testPolicy) ApplyRuleset(context.Context, PolicyTarget, RulesetSpec) (RulesetObservation, error) {
+	return RulesetObservation{}, nil
+}
+func (testPolicy) ObserveRuleset(context.Context, PolicyTarget, string) (RulesetObservation, error) {
+	return RulesetObservation{}, nil
+}
+func (testPolicy) DeleteRuleset(context.Context, PolicyTarget, string) error { return nil }
+
+func TestRegistryRequiresPolicyCapability(t *testing.T) {
+	r := NewRegistry()
+	require.NoError(t, r.Register(Descriptor{Name: "policy", Version: "1", Policy: testPolicy{}}))
+	_, err := r.RequirePolicy("policy")
+	require.NoError(t, err)
+}
 
 func TestNormalizeRulesetRejectsIPv6(t *testing.T) {
 	_, err := NormalizeRuleset(RulesetSpec{
