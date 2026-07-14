@@ -41,6 +41,7 @@ ip netns exec "${netns}" ssh -i "${SYSBOX_MATRIX_SSH_PRIVATE_KEY}" -o BatchMode=
 plan_output="$(./bin/sysbox --state "${state}" -f "${config}" plan)"
 printf '%s\n' "${plan_output}"
 printf '%s\n' "${plan_output}" | grep -q 'Plan: 0 to add, 0 to replace, 0 to destroy, 8 unchanged.'
+! printf '%s\n' "${plan_output}" | grep -q 'desired configuration hash changed'
 
 ./bin/sysbox --state "${state}" -f "${config}" destroy --auto-approve
 trap - EXIT INT TERM

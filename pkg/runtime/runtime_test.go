@@ -93,6 +93,8 @@ func TestPlanDiffDoesNotUseDesiredHashAsSemanticInput(t *testing.T) {
 	plan, err := ComputePlan(g, st)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionNoop, plan.Actions[0].Action)
+	require.Empty(t, plan.Actions[0].Changes)
+	require.Empty(t, plan.Actions[0].Reason)
 }
 
 func TestDesiredHashNormalizesNilAndEmptyDependsOn(t *testing.T) {

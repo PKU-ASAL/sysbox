@@ -179,7 +179,7 @@ func diffDesiredState(n *graph.Node, r *state.Resource) ([]controlplane.FieldCha
 		changes[i] = controlplane.FieldChange{Path: change.Path.String(), Before: change.Before, After: change.After, RequiresReplace: change.RequiresReplace, Sensitive: change.Sensitive, Computed: change.Computed}
 	}
 	if len(changes) == 0 {
-		return nil, "desired configuration hash changed"
+		return nil, ""
 	}
 	if anyInPlace(changes) {
 		return changes, "desired configuration changed"

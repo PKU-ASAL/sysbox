@@ -27,7 +27,7 @@
 - Consumes: `planDiffByDesiredHash(*graph.Node, *state.Resource) (controlplane.PlannedChange, error)` and `diffDesiredState(*graph.Node, *state.Resource) ([]controlplane.FieldChange, string)`.
 - Produces: unchanged resources with `PlanActionNoop`, `nil` changes, and an empty reason.
 
-- [ ] **Step 1: Strengthen the existing audit-hash regression test**
+- [x] **Step 1: Strengthen the existing audit-hash regression test**
 
 Add these assertions after the existing action assertion in `TestPlanDiffDoesNotUseDesiredHashAsSemanticInput`:
 
@@ -36,7 +36,7 @@ require.Empty(t, plan.Actions[0].Changes)
 require.Empty(t, plan.Actions[0].Reason)
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -46,7 +46,7 @@ go test ./pkg/runtime -run '^TestPlanDiffDoesNotUseDesiredHashAsSemanticInput$' 
 
 Expected: FAIL because `Reason` is `desired configuration hash changed`.
 
-- [ ] **Step 3: Implement the minimal semantic fix**
+- [x] **Step 3: Implement the minimal semantic fix**
 
 Change the empty typed-diff branch in `diffDesiredState`:
 
@@ -56,7 +56,7 @@ if len(changes) == 0 {
 }
 ```
 
-- [ ] **Step 4: Verify focused and package tests are GREEN**
+- [x] **Step 4: Verify focused and package tests are GREEN**
 
 Run:
 
@@ -67,13 +67,13 @@ go test ./pkg/runtime
 
 Expected: PASS.
 
-- [ ] **Step 5: Update completed Batch 4 plan bookkeeping**
+- [x] **Step 5: Update completed Batch 4 plan bookkeeping**
 
 Mark every completed checkbox in
 `docs/superpowers/plans/2026-07-13-guest-network-init-plan.md` as `[x]`.
 Do not alter requirements or acceptance evidence.
 
-- [ ] **Step 6: Run final verification**
+- [x] **Step 6: Run final verification**
 
 Run:
 
@@ -89,7 +89,7 @@ Expected: all commands pass; repeated matrix plan reports exactly
 `Plan: 0 to add, 0 to replace, 0 to destroy, 8 unchanged.` and contains no
 `desired configuration hash changed` line.
 
-- [ ] **Step 7: Commit atomically**
+- [x] **Step 7: Commit atomically**
 
 ```bash
 git add pkg/runtime/desired.go pkg/runtime/runtime_test.go \

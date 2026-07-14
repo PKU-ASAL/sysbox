@@ -32,17 +32,17 @@
 **Interfaces:**
 - Produces: `substrate.GuestNetworkInitMode`, `substrate.GuestNetworkInitObservation`, `driver.GuestNetworkInit`, `driver.CapabilityGuestNetworkInit`, and registry lookup.
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Add assertions that a descriptor exposing `GuestNetworkInit` can be required by capability name and that the public mode constants equal `cloud_init` and `preconfigured`.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run: `go test ./pkg/driver -run 'Test.*GuestNetworkInit' -count=1`
 
 Expected: compile failure because the capability and public types do not exist.
 
-- [ ] **Step 3: Implement the minimal public contract**
+- [x] **Step 3: Implement the minimal public contract**
 
 ```go
 type GuestNetworkInit interface {
@@ -53,13 +53,13 @@ type GuestNetworkInit interface {
 
 Add the two modes, interface observations, capability constant, descriptor field, switch lookup, and typed registry requirement following existing capability patterns.
 
-- [ ] **Step 4: Run driver and substrate tests**
+- [x] **Step 4: Run driver and substrate tests**
 
 Run: `go test ./pkg/driver ./pkg/substrate`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pkg/substrate/types.go pkg/driver/capability.go pkg/driver/capability_test.go pkg/driver/registry.go
@@ -82,17 +82,17 @@ git commit -m "feat(driver): add guest network initialization capability"
 - Consumes: Task 1 capability types.
 - Produces: typed secret-preserving provider config, mandatory libvirt mode validation, and runtime prepare/observe lifecycle calls.
 
-- [ ] **Step 1: Write failing typed-secret and mode tests**
+- [x] **Step 1: Write failing typed-secret and mode tests**
 
 Test that `secret.ResolveAny` preserves `*libvirt.Config` while resolving string fields; decoding a libvirt block without `network_init` fails; unknown modes fail; both supported modes pass; libvirt advertises both modes.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `go test ./pkg/secret ./pkg/provider/libvirt -run 'Test.*(ResolveAny|NetworkInit)' -count=1`
 
 Expected: failures for untraversed typed structs and missing mode validation.
 
-- [ ] **Step 3: Implement typed resolution and explicit config**
+- [x] **Step 3: Implement typed resolution and explicit config**
 
 Use reflection in `secret.ResolveAny` to copy pointers, structs, slices, and maps while preserving concrete types and resolving exported string values. Reject unsupported secret references through the existing resolver.
 
@@ -105,7 +105,7 @@ SSHAuthorizedKey string                          `hcl:"ssh_authorized_key,option
 
 Validate the mode against `Capabilities().GuestNetworkInitModes`.
 
-- [ ] **Step 4: Write and run failing runtime lifecycle tests**
+- [x] **Step 4: Write and run failing runtime lifecycle tests**
 
 Use a recording provider to assert runtime calls `PrepareGuestNetwork` after cold attachments and before `StartNode`, then calls `ObserveGuestNetwork` after start and persists the converged observation. Assert non-convergence fails creation.
 
@@ -113,7 +113,7 @@ Run: `go test ./pkg/runtime -run 'Test.*GuestNetworkInit' -count=1`
 
 Expected: RED before lifecycle wiring, then PASS after implementation.
 
-- [ ] **Step 5: Run affected packages and commit**
+- [x] **Step 5: Run affected packages and commit**
 
 Run: `go test ./pkg/secret ./pkg/provider/libvirt ./pkg/runtime`
 
@@ -137,27 +137,27 @@ git commit -m "feat(runtime): enforce explicit guest network initialization"
 - Consumes: Task 1 driver capability and Task 2 typed config.
 - Produces: pre-start seed preparation, preconfigured no-op, bounded IPv4 convergence observations, and explicit IPv6 rejection.
 
-- [ ] **Step 1: Write failing cloud-init tests**
+- [x] **Step 1: Write failing cloud-init tests**
 
 Assert `cloud_init` creates metadata, v2 MAC-matched IPv4 config, and optional cloud-config SSH user/key; assert `preconfigured` creates no seed; assert handle state persists mode, namespace, bridge, MAC, and prefixes.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `go test ./pkg/provider/libvirt -run 'Test.*(CloudInit|Preconfigured|GuestNetwork)' -count=1`
 
-- [ ] **Step 3: Implement provider preparation**
+- [x] **Step 3: Implement provider preparation**
 
 Move seed creation out of `StartNode` into `PrepareGuestNetwork`. Store `SeedISO` in `HandleState`; `StartNode` only consumes prepared state. Build user data with YAML structured APIs and mode `0600` temporary inputs, producing a `0644` read-only ISO for qemu.
 
-- [ ] **Step 4: Write failing observation tests**
+- [x] **Step 4: Write failing observation tests**
 
 Inject a probe function and assert all IPv4 prefixes converge, a failed prefix produces a detailed observation, empty attachments converge, cancellation stops polling, and IPv6 returns an unsupported-family error.
 
-- [ ] **Step 5: Implement bounded observation**
+- [x] **Step 5: Implement bounded observation**
 
 Persist the isolated namespace on `BridgeAttach`. Probe each stripped IPv4 address from that namespace with a cancellation-aware command/function. Return one observation per logical attachment and never silently omit a prefix.
 
-- [ ] **Step 6: Run provider tests and commit**
+- [x] **Step 6: Run provider tests and commit**
 
 Run: `go test ./pkg/provider/libvirt ./pkg/provider/network`
 
@@ -180,7 +180,7 @@ git commit -m "feat(libvirt): initialize and observe guest networking"
 - Consumes: Task 3 converged libvirt provider.
 - Produces: verified cache artifact and reproducible six-edge communication acceptance.
 
-- [ ] **Step 1: Implement and test the image preparation script**
+- [x] **Step 1: Implement and test the image preparation script**
 
 The script uses `curl --fail --location`, writes to a temporary cache file,
 verifies the fixed SHA256 with `sha256sum --check`, atomically renames it to
@@ -191,13 +191,13 @@ deleted and rebuilt.
 Run twice and verify the second run is a cache hit and both digests equal
 `5fa5b05e5ec239858c4531485d6023b0896448c2df7c63b34f8dae6ea6051a44`.
 
-- [ ] **Step 2: Update the fixture**
+- [x] **Step 2: Update the fixture**
 
 Set `network_init = "cloud_init"`, `ssh_user = "sysbox"`, and
 `ssh_authorized_key = env("SYSBOX_MATRIX_SSH_PUBLIC_KEY")`. Use
 `SYSBOX_QCOW2` for the verified image path.
 
-- [ ] **Step 3: Implement the acceptance runner**
+- [x] **Step 3: Implement the acceptance runner**
 
 Generate an Ed25519 keypair in a private temporary directory; install a destroy
 trap; run apply; use Docker exec, Firecracker's connection, and libvirt SSH to
@@ -205,13 +205,13 @@ prove all six directed ping edges; assert `Plan: 0 to add, 0 to replace, 0 to
 destroy, 8 unchanged`; destroy; audit exact topology labels/names plus domain,
 netns, bridge, veth, tap, process, VM directory, seed, and state residue.
 
-- [ ] **Step 4: Add durable Make targets and documentation**
+- [x] **Step 4: Add durable Make targets and documentation**
 
 Add `prepare-libvirt-cloud-image` and `test-heterogeneous-matrix` targets. Record
 the exact image URL, digest, commands, six edge results, idempotent plan, destroy,
 and zero-residue inventory in the verification document.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/prepare-libvirt-cloud-image.sh tests/e2e/heterogeneous_matrix.sh examples/heterogeneous-matrix Makefile docs/verification
@@ -227,7 +227,7 @@ git commit -m "test(network): verify complete heterogeneous matrix"
 - Consumes: Tasks 1-4.
 - Produces: merge-ready commits with complete acceptance evidence.
 
-- [ ] **Step 1: Run standard gates**
+- [x] **Step 1: Run standard gates**
 
 ```bash
 go test ./...
@@ -239,20 +239,20 @@ make test-heterogeneous-matrix
 git diff --check
 ```
 
-- [ ] **Step 2: Run removal and residue audits**
+- [x] **Step 2: Run removal and residue audits**
 
 Search for implicit libvirt network-init defaults, bootstrap fallback code, and
 legacy guest-network paths. Audit exact heterogeneous topology Docker labels,
 libvirt domain name, netns, root bridge, veths, taps, Firecracker processes,
 temporary directories, seed ISOs, and state files.
 
-- [ ] **Step 3: Perform code review**
+- [x] **Step 3: Perform code review**
 
 Review capability boundaries, secret persistence, cleanup ordering, retry
 bounds, state recovery, unmanaged-resource protection, and test assertions.
 Fix all critical and important findings and rerun affected gates.
 
-- [ ] **Step 4: Commit final corrections**
+- [x] **Step 4: Commit final corrections**
 
 ```bash
 git add -A
