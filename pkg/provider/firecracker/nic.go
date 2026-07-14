@@ -256,7 +256,17 @@ func appendNICtoConfig(cfgPath string, iface fcNetworkInterface) error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 
-	cfg.NetworkInterfaces = append(cfg.NetworkInterfaces, iface)
+	replaced := false
+	for i := range cfg.NetworkInterfaces {
+		if cfg.NetworkInterfaces[i].IfaceID == iface.IfaceID {
+			cfg.NetworkInterfaces[i] = iface
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		cfg.NetworkInterfaces = append(cfg.NetworkInterfaces, iface)
+	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

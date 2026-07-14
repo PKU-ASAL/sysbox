@@ -52,6 +52,7 @@ func main() {
 		NodeState:    fcSub,
 		Power:        fcSub,
 		GuestNetwork: fcSub,
+		Reset:        fcSub,
 	})
 
 	libvirtSub := libvirt.New()

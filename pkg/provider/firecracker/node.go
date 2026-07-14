@@ -93,7 +93,10 @@ func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSou
 // This two-phase approach is needed because Firecracker requires all
 // network interfaces to be declared in the boot config — no hot-plug.
 func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
-	vmID := spec.Name // e.g. "sysbox-node_attack"
+	return s.createNodeWithID(ctx, spec, spec.Name)
+}
+
+func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpec, vmID string) (substrate.NodeHandle, error) {
 	runDir := filepath.Join(s.rootfsDir, vmID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		return substrate.NodeHandle{}, fmt.Errorf("create VM run dir: %w", err)
@@ -131,7 +134,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		fmt.Printf("[firecracker] sysbox-init disabled for %s: %v\n", vmID, err)
 		sysboxInitEnabled = false
 	} else {
-		nodeName := strings.TrimPrefix(vmID, "sysbox-")
+		nodeName := strings.TrimPrefix(spec.Name, "sysbox-")
 		initCfg := vsockrpc.VMConfig{
 			Hostname:  nodeName,
 			Env:       spec.Env,

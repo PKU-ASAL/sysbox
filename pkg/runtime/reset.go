@@ -375,7 +375,24 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 	err := e.recordSubstep(item.step, "apply_reset", nil, func() error {
 		var applyErr error
 		handle, applyErr = item.resetDriver.ApplyReset(ctx, item.handle)
-		return applyErr
+		if applyErr != nil {
+			return applyErr
+		}
+		raw, marshalErr := item.resetDriver.MarshalResetHandle(item.handle)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if setErr := item.current.SetRuntimeValue("reset_handle", string(raw)); setErr != nil {
+			return setErr
+		}
+		if patchErr := e.recordStepExternal(ctx, item.step, item.action.Address, controlplane.PlanActionReset); patchErr != nil {
+			return patchErr
+		}
+		item.current = e.state.FindResource(item.action.Address)
+		if item.current == nil {
+			return fmt.Errorf("reset node %s disappeared after persisting apply state", item.action.Address)
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("apply reset %s: %w", item.action.Address, err)
@@ -391,6 +408,9 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 		return err
 	}
 	handle.Net.PrimaryIP = wired.PrimaryIP
+	if err := e.persistResetHandleCheckpoint(ctx, item, "checkpoint_wired_reset"); err != nil {
+		return err
+	}
 	var guestInit driver.GuestNetworkInit
 	if len(caps.GuestNetworkInitModes) > 0 {
 		guestInit, err = driver.DefaultRegistry.RequireGuestNetworkInit(item.current.Driver)
@@ -405,6 +425,9 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 		if err := e.recordSubstep(item.step, "start_node", nil, func() error { return item.nodeDriver.StartNode(ctx, handle) }); err != nil {
 			return err
 		}
+	}
+	if err := e.persistResetHandleCheckpoint(ctx, item, "checkpoint_started_reset"); err != nil {
+		return err
 	}
 	if guestInit != nil {
 		var observation substrate.GuestNetworkInitObservation
@@ -507,4 +530,24 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 	}
 	*item.current = updated
 	return nil
+}
+
+func (e *Executor) persistResetHandleCheckpoint(ctx context.Context, item *resetNodeContext, phase string) error {
+	return e.recordSubstep(item.step, phase, nil, func() error {
+		raw, err := item.resetDriver.MarshalResetHandle(item.handle)
+		if err != nil {
+			return err
+		}
+		if err := item.current.SetRuntimeValue("reset_handle", string(raw)); err != nil {
+			return err
+		}
+		if err := e.recordStepExternal(ctx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
+			return err
+		}
+		item.current = e.state.FindResource(item.action.Address)
+		if item.current == nil {
+			return fmt.Errorf("reset node %s disappeared after %s", item.action.Address, phase)
+		}
+		return nil
+	})
 }

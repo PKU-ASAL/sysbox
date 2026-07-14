@@ -301,11 +301,11 @@ Commit `feat(libvirt): reset guests with qcow2 overlays`.
 - Modify: Firecracker node creation to always use an owned writable rootfs
 - Test: Firecracker reset unit and privileged recovery tests
 
-- [ ] **Step 1: Write failing rootfs ownership tests**
+- [x] **Step 1: Write failing rootfs ownership tests**
 
 Assert baseline digest stability, old VMM/socket/rootfs/VM-dir deletion, fresh owned rootfs, stable logical identity, recovery after each checkpoint, and residue reporting.
 
-- [ ] **Step 2: Implement reset mechanics**
+- [x] **Step 2: Implement reset mechanics**
 
 Stop the old VMM, discard only owned mutable artifacts, recreate the writable rootfs and VM directory from immutable baseline, and return a stopped handle.
 
