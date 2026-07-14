@@ -259,15 +259,15 @@ Commit `feat(runtime): add checkpointed topology reset`.
 - Test: `pkg/provider/docker/reset_test.go`
 - Test: privileged Docker reset E2E
 
-- [ ] **Step 1: Write failing reset lifecycle tests**
+- [x] **Step 1: Write failing reset lifecycle tests**
 
 Assert digest-pinned recreate, changed external ID, stable declared identity, exact owned old-container deletion, retry idempotency, and residue observation.
 
-- [ ] **Step 2: Implement provider-owned Docker reset**
+- [x] **Step 2: Implement provider-owned Docker reset**
 
 Persist old/new container ownership anchors in the opaque reset handle. Recreate from immutable OCI ID and resolved NodeSpec; return a stopped handle for runtime NIC restoration.
 
-- [ ] **Step 3: Run unit/privileged tests and commit**
+- [x] **Step 3: Run unit/privileged tests and commit**
 
 Commit `feat(docker): reset nodes from immutable images`.
 

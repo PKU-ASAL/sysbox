@@ -34,6 +34,7 @@ func main() {
 			Power:        dockerSub,
 			GuestNetwork: dockerSub,
 			Policy:       dockerSub,
+			Reset:        dockerSub,
 		})
 	}
 

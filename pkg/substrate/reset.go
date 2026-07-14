@@ -17,6 +17,9 @@ type ResetRequest struct {
 
 type ResetHandle struct {
 	Provider any
+	// Request is runtime-owned execution context. Provider serializers must not
+	// persist it because it may contain freshly resolved secrets.
+	Request ResetRequest `json:"-"`
 }
 
 type ResetObservation struct {

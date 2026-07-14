@@ -286,8 +286,9 @@ func (e *Executor) prepareResetNode(ctx context.Context, item *resetNodeContext)
 			return fmt.Errorf("restore reset handle for %s: %w", item.action.Address, err)
 		}
 		item.handle = handle
+		item.handle.Request = item.request
 		if err := e.recordSubstep(item.step, "resume_observe_reset", nil, func() error {
-			_, err := item.resetDriver.ObserveReset(ctx, handle)
+			_, err := item.resetDriver.ObserveReset(ctx, item.handle)
 			return err
 		}); err != nil {
 			return fmt.Errorf("observe reset for %s: %w", item.action.Address, err)
@@ -322,6 +323,7 @@ func (e *Executor) prepareResetNode(ctx context.Context, item *resetNodeContext)
 			return fmt.Errorf("encode reset handle %s: %w", item.action.Address, marshalErr)
 		}
 		item.handle = handle
+		item.handle.Request = item.request
 		if setErr := item.current.SetRuntimeValue("reset_handle", string(raw)); setErr != nil {
 			return setErr
 		}

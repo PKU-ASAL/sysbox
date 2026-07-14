@@ -23,10 +23,17 @@ type HandleState struct {
 }
 
 func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
+	return s.createNode(ctx, spec, false)
+}
+
+func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, strictName bool) (substrate.NodeHandle, error) {
 	// If a container with this name exists (leftover from a partial previous
 	// apply), force-remove it. Reusing a partially-wired container would
 	// cause interface rename collisions on the next attach attempt.
 	if existing, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
+		if strictName {
+			return substrate.NodeHandle{}, fmt.Errorf("container name %q appeared during reset; refusing destructive replacement", spec.Name)
+		}
 		if existing.Config == nil || existing.Config.Labels["sysbox.managed"] != "true" {
 			return substrate.NodeHandle{}, fmt.Errorf("container name %q is already used by an unmanaged container", spec.Name)
 		}
