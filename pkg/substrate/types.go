@@ -51,31 +51,13 @@ type GuestNetworkInitObservation struct {
 	Reason     string                             `json:"reason,omitempty"`
 }
 
-// ImageSpec describes how to obtain a node image. Exactly one source field
-// should be set; substrates only inspect the field(s) they understand.
-//
-//   - DockerRef — docker image tag/digest (docker substrate)
-//   - Rootfs    — ext4 rootfs file or URL (firecracker substrate)
-//   - QCow2     — qcow2 disk image file or URL (libvirt substrate)
-type ImageSpec struct {
-	DockerRef string
-	Rootfs    string
-	QCow2     string
-	Size      string
-}
-
-type ImageRef struct {
-	ID         string
-	Repository string
-}
-
 // NodeSpec carries substrate-neutral coordinates for creating a node.
 // Substrate-specific options (privileged, kernel, vcpus, ...) live in
 // ProviderConfig, a substrate-owned typed value produced by
 // Substrate.DecodeProviderConfig.
 type NodeSpec struct {
 	Name    string
-	Image   ImageRef
+	Image   ArtifactHandle
 	VCPUs   int
 	Memory  string
 	Env     map[string]string
@@ -322,7 +304,7 @@ type Capabilities struct {
 	DiskHotPlug           bool                   // attach extra disks after StartNode
 	NICKinds              []string               // device types this substrate can produce, e.g. ["veth"] or ["tap","macvtap"]
 	ConsoleKinds          []string               // attachable console modes
-	NeedsCloudinit        bool                   // PrepareImage / CreateNode requires a cloudinit seed
+	NeedsCloudinit        bool                   // ResolveImage / CreateNode requires a cloudinit seed
 	PIDVisibility         PIDMode                // how guest PIDs relate to host PID space
 	SupportsPause         bool                   // Substrate.Pause/Resume implemented (W3)
 	PortExposures         []string               // supported port exposure modes: none, direct, host

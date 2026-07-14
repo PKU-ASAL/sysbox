@@ -10,7 +10,43 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/substrate"
 )
+
+func TestResolveIdentityReturnsContentAddressedArtifact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rootfs.ext4")
+	require.NoError(t, os.WriteFile(path, []byte("rootfs"), 0o644))
+
+	resolved, err := New().ResolveIdentity(IdentitySpec{
+		Kind: substrate.ArtifactRootFS, Source: path, Architecture: "amd64", GuestFamily: substrate.GuestFamilyLinux,
+	})
+	require.NoError(t, err)
+	require.Equal(t, path, resolved.Path)
+	require.Equal(t, substrate.ArtifactRootFS, resolved.Identity.Kind)
+	require.Equal(t, path, resolved.Identity.Source)
+	require.Equal(t, "sha256:"+hashOf([]byte("rootfs")), resolved.Identity.Digest)
+	require.Equal(t, "amd64", resolved.Identity.Architecture)
+	require.Equal(t, substrate.GuestFamilyLinux, resolved.Identity.GuestFamily)
+	require.NoError(t, resolved.Identity.Validate())
+}
+
+func TestResolveIdentityReobservesMutableHTTPSource(t *testing.T) {
+	body := []byte("first")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(body) }))
+	defer server.Close()
+	resolver := &Resolver{CacheDir: t.TempDir(), HTTPClient: server.Client()}
+	spec := IdentitySpec{Kind: substrate.ArtifactRootFS, Source: server.URL + "/rootfs", Architecture: "amd64", GuestFamily: substrate.GuestFamilyLinux}
+
+	first, err := resolver.ResolveIdentity(spec)
+	require.NoError(t, err)
+	body = []byte("second")
+	second, err := resolver.ResolveIdentity(spec)
+	require.NoError(t, err)
+	require.NotEqual(t, first.Identity.Digest, second.Identity.Digest)
+}
 
 func mustWriteFile(t *testing.T, path string, data []byte) {
 	t.Helper()

@@ -36,6 +36,7 @@ locals {
 resource "sysbox_kernel" "fc_510" {
   substrate = substrate.firecracker.fc
   source    = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.14/x86_64/vmlinux-5.10.245"
+  architecture = "amd64"
   sha256    = "643096c1fabf0fbbda1d03c100b9e86b4e6965fd5a01d3c6fb9e8c0ecb7fbfc9"
 }
 

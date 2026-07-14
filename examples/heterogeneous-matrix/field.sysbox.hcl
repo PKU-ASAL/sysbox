@@ -13,6 +13,7 @@ substrate "libvirt" {
 resource "sysbox_kernel" "linux" {
   substrate = substrate.firecracker.local
   source    = env("SYSBOX_KERNEL")
+  architecture = "amd64"
 }
 
 resource "sysbox_image" "docker" {

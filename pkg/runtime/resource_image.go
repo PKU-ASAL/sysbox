@@ -7,7 +7,6 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
@@ -53,47 +52,31 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 		return state.Resource{}, err
 	}
 
-	kind := substrate.ArtifactKind(cfg.Kind)
-	if err := substrate.ValidateArtifactKind(kind); err != nil {
-		return state.Resource{}, fmt.Errorf("image %s: %w", n.Address.Name, err)
-	}
-	family := substrate.GuestFamily(cfg.GuestFamily)
-	if err := substrate.ValidateGuestFamily(family); err != nil {
-		return state.Resource{}, fmt.Errorf("image %s: %w", n.Address.Name, err)
-	}
 	resolvedSource, err := secret.ResolveString(ctx, executionSecretResolver, cfg.Source)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("image %s source: %w", n.Address.Name, err)
 	}
-	providerSource := resolvedSource
-	resolvedSHA := cfg.SHA256
-	if kind != substrate.ArtifactOCI {
-		r, err := artifact.New().Resolve(artifact.Spec{Source: resolvedSource, SHA256: cfg.SHA256})
-		if err != nil {
-			return state.Resource{}, fmt.Errorf("image %s source: %w", n.Address.Name, err)
-		}
-		if r.FromCache {
-			pc.Logf("[apply] image %s: cache hit (%s)\n", n.Address.Name, r.Path)
-		} else if artifact.IsURL(cfg.Source) {
-			pc.Logf("[apply] image %s: fetched to %s\n", n.Address.Name, r.Path)
-		}
-		providerSource = r.Path
-		resolvedSHA = r.SHA256
-	}
-
-	ref, err := artifactDriver.PrepareImage(ctx, providerImageSpec(kind, providerSource, cfg.Size))
+	handle, err := artifactDriver.ResolveImage(ctx, substrate.ArtifactSource{
+		Kind: substrate.ArtifactKind(cfg.Kind), Source: cfg.Source, ResolvedSource: resolvedSource,
+		ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture,
+		GuestFamily: substrate.GuestFamily(cfg.GuestFamily), Size: cfg.Size,
+	})
 	if err != nil {
 		return state.Resource{}, err
 	}
+	if err := handle.Validate(); err != nil {
+		return state.Resource{}, fmt.Errorf("image %s: invalid resolved identity: %w", n.Address.Name, err)
+	}
 
 	inst := map[string]any{
-		"image_id":     ref.ID,
-		"repository":   ref.Repository,
-		"kind":         cfg.Kind,
-		"source":       cfg.Source,
-		"sha256":       resolvedSHA,
-		"architecture": cfg.Architecture,
-		"guest_family": cfg.GuestFamily,
+		"image_id":     handle.ID,
+		"repository":   handle.Identity.Source,
+		"kind":         string(handle.Identity.Kind),
+		"source":       handle.Identity.Source,
+		"sha256":       handle.Identity.Digest,
+		"architecture": handle.Identity.Architecture,
+		"guest_family": string(handle.Identity.GuestFamily),
+		"metadata":     handle.Identity.Metadata,
 	}
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
@@ -103,19 +86,6 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 		Driver:     subName,
 		Attributes: state.MustAttributes(inst),
 	}, nil
-}
-
-func providerImageSpec(kind substrate.ArtifactKind, source, size string) substrate.ImageSpec {
-	spec := substrate.ImageSpec{Size: size}
-	switch kind {
-	case substrate.ArtifactOCI:
-		spec.DockerRef = source
-	case substrate.ArtifactRootFS:
-		spec.Rootfs = source
-	case substrate.ArtifactQCow2:
-		spec.QCow2 = source
-	}
-	return spec
 }
 
 func (ImageResourceHandler) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
@@ -128,6 +98,16 @@ func (ImageResourceHandler) ExternalID(current state.Resource) string {
 		return id
 	}
 	return current.Str("id")
+}
+
+func artifactHandleFromState(resource *state.Resource) substrate.ArtifactHandle {
+	if resource == nil {
+		return substrate.ArtifactHandle{}
+	}
+	return substrate.ArtifactHandle{ID: resource.ImageID(), Identity: substrate.ArtifactIdentity{
+		Kind: substrate.ArtifactKind(resource.Str("kind")), Source: resource.Str("source"), Digest: resource.Str("sha256"),
+		Architecture: resource.Str("architecture"), GuestFamily: substrate.GuestFamily(resource.Str("guest_family")),
+	}}
 }
 func (ImageResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
 	cfg, ok := node.Data.(*config.ImageConfig)

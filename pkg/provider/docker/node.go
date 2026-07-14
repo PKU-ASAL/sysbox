@@ -74,14 +74,14 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	// with "sleep infinity" to keep the container alive for provisioning).
 	var imageCmd []string
 	var imageEntrypoint []string
-	if imgInfo, _, err := s.cli.ImageInspectWithRaw(ctx, spec.Image.Repository); err == nil {
+	if imgInfo, _, err := s.cli.ImageInspectWithRaw(ctx, spec.Image.ID); err == nil {
 		imageCmd = imgInfo.Config.Cmd
 		imageEntrypoint = imgInfo.Config.Entrypoint
 	}
 
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
-			Image:        spec.Image.Repository,
+			Image:        spec.Image.ID,
 			Env:          envs,
 			Labels:       spec.Labels,
 			ExposedPorts: exposedPorts,

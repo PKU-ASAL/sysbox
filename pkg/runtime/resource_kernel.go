@@ -69,7 +69,7 @@ func (KernelResourceHandler) Create(ctx context.Context, pc *ProviderContext, n 
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}
-	res, err := artifact.New().Resolve(artifact.Spec{Source: resolvedSource, SHA256: cfg.SHA256})
+	res, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamilyUnknown})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}
@@ -82,7 +82,10 @@ func (KernelResourceHandler) Create(ctx context.Context, pc *ProviderContext, n 
 	inst := map[string]any{
 		"path":             res.Path,
 		"source":           cfg.Source,
-		"sha256":           res.SHA256,
+		"sha256":           res.Identity.Digest,
+		"kind":             string(res.Identity.Kind),
+		"architecture":     res.Identity.Architecture,
+		"guest_family":     string(res.Identity.GuestFamily),
 		"cmdline_template": cfg.CmdlineTemplate,
 	}
 	if err := setDesiredHash(n, inst); err != nil {

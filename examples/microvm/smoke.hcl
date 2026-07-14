@@ -21,6 +21,7 @@ substrate "firecracker" {
 resource "sysbox_kernel" "fc_510" {
   substrate = substrate.firecracker.fc
   source    = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.14/x86_64/vmlinux-5.10.245"
+  architecture = "amd64"
 }
 
 resource "sysbox_image" "alpine_vm" {

@@ -27,6 +27,7 @@ func TestExecutorRunsRepairThroughApplyReconcile(t *testing.T) {
 resource "sysbox_kernel" "linux" {
   substrate = "docker"
   source = "`+kernelPath+`"
+  architecture = "amd64"
 }
 `), 0o644))
 	require.NoError(t, state.NewManager(statePath).Save(&state.State{

@@ -223,10 +223,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if imgState == nil {
 		return state.Resource{}, fmt.Errorf("image %s not applied yet", imageAddr)
 	}
-	imgRef := substrate.ImageRef{
-		ID:         imgState.ImageID(),
-		Repository: imgState.Repository(),
-	}
+	imgRef := artifactHandleFromState(imgState)
 	guestFamily, err := resolveGuestFamily(substrate.GuestFamily(imgState.Str("guest_family")), substrate.GuestFamily(cfg.GuestFamily))
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("node %s: %w", n.Address.Name, err)
@@ -296,7 +293,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		"resource":  n.Address.String(),
 		"substrate": subName,
 		"name":      containerName,
-		"image":     imgRef.Repository,
+		"image":     imgRef.Identity.Source,
 	}, func() error {
 		var err error
 		handle, err = nodeDriver.CreateNode(ctx, nodeSpec)

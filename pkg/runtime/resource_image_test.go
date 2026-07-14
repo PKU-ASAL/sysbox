@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/artifact"
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -20,16 +21,20 @@ import (
 )
 
 type imageArtifactDriver struct {
-	lastSpec substrate.ImageSpec
+	lastSource substrate.ArtifactSource
 }
 
-func (s *imageArtifactDriver) PrepareImage(_ context.Context, spec substrate.ImageSpec) (substrate.ImageRef, error) {
-	s.lastSpec = spec
-	repo := spec.DockerRef
-	if repo == "" {
-		repo = spec.Rootfs + spec.QCow2
+func (s *imageArtifactDriver) ResolveImage(_ context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
+	s.lastSource = source
+	if source.Kind == substrate.ArtifactOCI {
+		return substrate.ArtifactHandle{ID: "image-id", Identity: substrate.ArtifactIdentity{Kind: source.Kind, Source: source.Source, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Architecture: source.Architecture, GuestFamily: source.GuestFamily}}, nil
 	}
-	return substrate.ImageRef{ID: "image-id", Repository: repo}, nil
+	resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: source.Kind, Source: source.ResolvedSource, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily})
+	if err != nil {
+		return substrate.ArtifactHandle{}, err
+	}
+	resolved.Identity.Source = source.Source
+	return substrate.ArtifactHandle{ID: resolved.Path, Identity: resolved.Identity}, nil
 }
 
 func registerImageArtifactDriver(t *testing.T, artifactDriver driver.Artifact) {
@@ -62,7 +67,7 @@ func TestImageResourceHandlerCreateOCIArtifact(t *testing.T) {
 	require.Equal(t, "image-test", res.Driver)
 	require.Equal(t, "image-id", res.ImageID())
 	require.Equal(t, "alpine:latest", res.Repository())
-	require.Equal(t, "alpine:latest", sub.lastSpec.DockerRef)
+	require.Equal(t, "alpine:latest", sub.lastSource.ResolvedSource)
 	require.Equal(t, "linux", res.Str("guest_family"))
 	require.NotEmpty(t, res.Str(desiredHashKey))
 }
@@ -84,7 +89,7 @@ func TestImageResourceHandlerCreateRootfsArtifact(t *testing.T) {
 	res, err := ImageResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
 	require.NoError(t, err)
-	require.Equal(t, rootfs, sub.lastSpec.Rootfs)
+	require.Equal(t, rootfs, sub.lastSource.ResolvedSource)
 	require.Equal(t, rootfs, res.Repository())
 	require.Equal(t, rootfs, res.Str("source"))
 	require.NotEmpty(t, res.Str("sha256"))
@@ -111,7 +116,7 @@ func TestImageResourceHandlerResolvesRootfsSecretReferenceAtExecution(t *testing
 	res, err := ImageResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
 	require.NoError(t, err)
-	require.Equal(t, rootfs, sub.lastSpec.Rootfs)
+	require.Equal(t, rootfs, sub.lastSource.ResolvedSource)
 	require.Equal(t, reference, res.Str("source"))
 }
 

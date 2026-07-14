@@ -155,10 +155,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	if imgState == nil {
 		return state.Resource{}, fmt.Errorf("image %s not applied yet", imageAddr)
 	}
-	imgRef := substrate.ImageRef{
-		ID:         imgState.ImageID(),
-		Repository: imgState.Repository(),
-	}
+	imgRef := artifactHandleFromState(imgState)
 
 	inputs := make([]AttachmentInput, 0, len(cfg.Interfaces))
 	for _, iface := range cfg.Interfaces {

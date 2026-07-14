@@ -230,10 +230,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	if imgState == nil {
 		return state.Resource{}, fmt.Errorf("actor %s: image %s not applied yet", n.Address.Name, imageAddr)
 	}
-	imgRef := substrate.ImageRef{
-		ID:         imgState.ImageID(),
-		Repository: imgState.Repository(),
-	}
+	imgRef := artifactHandleFromState(imgState)
 
 	// Collect Docker bridge (NAT) network links.
 	var attachmentInputs []AttachmentInput

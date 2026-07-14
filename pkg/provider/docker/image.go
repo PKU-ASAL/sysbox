@@ -4,40 +4,58 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/docker/docker/api/types/image"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-// PrepareImage ensures the docker image is available locally.
+// ResolveImage ensures the Docker image is available and returns its immutable identity.
 // Inspects first; if missing, pulls. This avoids unnecessary network
 // round-trips and lets the tool work offline when the image is cached.
-func (s *Substrate) PrepareImage(ctx context.Context, spec substrate.ImageSpec) (substrate.ImageRef, error) {
-	if spec.DockerRef == "" {
-		return substrate.ImageRef{}, fmt.Errorf("docker substrate requires ImageSpec.DockerRef")
+func (s *Substrate) ResolveImage(ctx context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
+	if source.Kind != substrate.ArtifactOCI {
+		return substrate.ArtifactHandle{}, fmt.Errorf("docker substrate requires artifact kind %q", substrate.ArtifactOCI)
 	}
 
-	if img, _, err := s.cli.ImageInspectWithRaw(ctx, spec.DockerRef); err == nil {
-		return substrate.ImageRef{ID: img.ID, Repository: spec.DockerRef}, nil
+	reference := source.ResolvedSource
+	if reference == "" {
+		reference = source.Source
 	}
-
-	rc, err := s.cli.ImagePull(ctx, spec.DockerRef, image.PullOptions{})
+	img, _, err := s.cli.ImageInspectWithRaw(ctx, reference)
 	if err != nil {
-		return substrate.ImageRef{}, fmt.Errorf("docker pull %s: %w", spec.DockerRef, err)
+		rc, pullErr := s.cli.ImagePull(ctx, reference, image.PullOptions{})
+		if pullErr != nil {
+			return substrate.ArtifactHandle{}, fmt.Errorf("docker pull %s: %w", source.Source, pullErr)
+		}
+		defer rc.Close()
+		if _, pullErr := io.Copy(io.Discard, rc); pullErr != nil {
+			return substrate.ArtifactHandle{}, fmt.Errorf("drain image pull: %w", pullErr)
+		}
+		img, _, err = s.cli.ImageInspectWithRaw(ctx, reference)
+		if err != nil {
+			return substrate.ArtifactHandle{}, fmt.Errorf("inspect image after pull: %w", err)
+		}
 	}
-	defer rc.Close()
-	if _, err := io.Copy(io.Discard, rc); err != nil {
-		return substrate.ImageRef{}, fmt.Errorf("drain image pull: %w", err)
+	digest := strings.ToLower(img.ID)
+	if expected := normalizeDigest(source.ExpectedDigest); expected != "" && expected != digest {
+		return substrate.ArtifactHandle{}, fmt.Errorf("docker image digest mismatch for %s: have %s, want %s", source.Source, digest, expected)
 	}
+	handle := substrate.ArtifactHandle{Identity: substrate.ArtifactIdentity{
+		Kind: source.Kind, Source: source.Source, Digest: digest, Architecture: source.Architecture,
+		GuestFamily: source.GuestFamily, Metadata: source.Metadata,
+	}, ID: img.ID}
+	if err := handle.Validate(); err != nil {
+		return substrate.ArtifactHandle{}, err
+	}
+	return handle, nil
+}
 
-	img, _, err := s.cli.ImageInspectWithRaw(ctx, spec.DockerRef)
-	if err != nil {
-		return substrate.ImageRef{}, fmt.Errorf("inspect image after pull: %w", err)
+func normalizeDigest(digest string) string {
+	digest = strings.ToLower(digest)
+	if digest != "" && !strings.HasPrefix(digest, "sha256:") {
+		digest = "sha256:" + digest
 	}
-
-	return substrate.ImageRef{
-		ID:         img.ID,
-		Repository: spec.DockerRef,
-	}, nil
+	return digest
 }

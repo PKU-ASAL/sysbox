@@ -235,19 +235,20 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: kind must be %q", n.Address.Name, substrate.ArtifactOCI)
 	}
 
-	ref, err := artifactDriver.PrepareImage(ctx, substrate.ImageSpec{DockerRef: cfg.Source})
+	handle, err := artifactDriver.ResolveImage(ctx, substrate.ArtifactSource{Kind: substrate.ArtifactOCI, Source: cfg.Source, ResolvedSource: cfg.Source, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamily(cfg.GuestFamily)})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}
 
 	inst := map[string]any{
-		"image_id":     ref.ID,
-		"repo":         ref.Repository,
+		"image_id":     handle.ID,
+		"repo":         handle.Identity.Source,
 		"data_read":    true,
 		"kind":         cfg.Kind,
 		"source":       cfg.Source,
 		"architecture": cfg.Architecture,
 		"guest_family": cfg.GuestFamily,
+		"sha256":       handle.Identity.Digest,
 	}
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
@@ -257,6 +258,6 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 		Driver:     subName,
 		Attributes: state.MustAttributes(inst),
 	}
-	e.logf("[data] read sysbox_image.%s → %s\n", n.Address.Name, ref.ID)
+	e.logf("[data] read sysbox_image.%s → %s\n", n.Address.Name, handle.ID)
 	return res, nil
 }

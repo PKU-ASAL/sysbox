@@ -89,8 +89,8 @@ func (s *portTestSubstrate) Capabilities() substrate.Capabilities {
 	}
 }
 
-func (s *portTestSubstrate) PrepareImage(context.Context, substrate.ImageSpec) (substrate.ImageRef, error) {
-	return substrate.ImageRef{}, nil
+func (s *portTestSubstrate) ResolveImage(context.Context, substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
+	return substrate.ArtifactHandle{}, nil
 }
 
 func (s *portTestSubstrate) CreateNode(_ context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {

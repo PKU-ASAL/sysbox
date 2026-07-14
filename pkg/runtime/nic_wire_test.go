@@ -21,8 +21,8 @@ func (hookSubstrate) Name() string { return "hook" }
 
 func (hookSubstrate) Capabilities() substrate.Capabilities { return substrate.Capabilities{} }
 
-func (hookSubstrate) PrepareImage(context.Context, substrate.ImageSpec) (substrate.ImageRef, error) {
-	return substrate.ImageRef{}, nil
+func (hookSubstrate) ResolveImage(context.Context, substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
+	return substrate.ArtifactHandle{}, nil
 }
 
 func (hookSubstrate) CreateNode(context.Context, substrate.NodeSpec) (substrate.NodeHandle, error) {

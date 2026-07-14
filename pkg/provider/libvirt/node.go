@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -31,20 +32,26 @@ type HandleState struct {
 	SeedISO          string                         `json:"seed_iso,omitempty"`
 }
 
-func (s *Substrate) PrepareImage(_ context.Context, spec substrate.ImageSpec) (substrate.ImageRef, error) {
-	if spec.QCow2 == "" {
-		return substrate.ImageRef{}, fmt.Errorf("libvirt substrate requires ImageSpec.QCow2")
+func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
+	if source.Kind != substrate.ArtifactQCow2 {
+		return substrate.ArtifactHandle{}, fmt.Errorf("libvirt substrate requires artifact kind %q", substrate.ArtifactQCow2)
 	}
-	if _, err := os.Stat(spec.QCow2); err != nil {
-		return substrate.ImageRef{}, fmt.Errorf("libvirt: qcow2 image not found: %w", err)
+	effective := source.ResolvedSource
+	if effective == "" {
+		effective = source.Source
 	}
-	return substrate.ImageRef{ID: spec.QCow2, Repository: spec.QCow2}, nil
+	resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: source.Kind, Source: effective, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily, Metadata: source.Metadata})
+	if err != nil {
+		return substrate.ArtifactHandle{}, fmt.Errorf("libvirt: resolve qcow2: %w", err)
+	}
+	resolved.Identity.Source = source.Source
+	return substrate.ArtifactHandle{Identity: resolved.Identity, ID: resolved.Path}, nil
 }
 
 func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
 	baseImage := spec.Image.ID
 	if baseImage == "" {
-		return substrate.NodeHandle{}, fmt.Errorf("libvirt: no qcow2 base image in ImageRef")
+		return substrate.NodeHandle{}, fmt.Errorf("libvirt: no qcow2 base image in artifact handle")
 	}
 
 	pc, _ := spec.ProviderConfig.(*Config)

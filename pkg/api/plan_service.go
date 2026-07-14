@@ -45,7 +45,11 @@ func (s *PlanService) ComputeStoredPlan(ctx context.Context, topology string) (c
 	if err != nil {
 		return controlplane.Plan{}, err
 	}
-	fingerprint, err := runtime.BuildPlanFingerprint(planFingerprintInputs(hcl, st, meta.Serial, g))
+	artifacts, err := runtime.ResolvePlanArtifactDigests(ctx, g)
+	if err != nil {
+		return controlplane.Plan{}, err
+	}
+	fingerprint, err := runtime.BuildPlanFingerprint(planFingerprintInputs(hcl, st, meta.Serial, g, artifacts))
 	if err != nil {
 		return controlplane.Plan{}, err
 	}
@@ -96,10 +100,10 @@ func (s *PlanService) ValidateStoredPlanForApply(ctx context.Context, topology, 
 	return plan, nil
 }
 
-func planFingerprintInputs(hcl []byte, st *state.State, serial int64, g *graph.Graph) runtime.PlanInputs {
+func planFingerprintInputs(hcl []byte, st *state.State, serial int64, g *graph.Graph, resolvedArtifacts map[string]string) runtime.PlanInputs {
 	schemas := map[string]int{}
 	drivers := map[string]string{}
-	artifacts := map[string]string{}
+	artifacts := cloneStringMap(resolvedArtifacts)
 	for _, node := range g.All() {
 		schemas[node.Address.Type] = 1
 		driver := desiredStringField(node.Data, "Substrate")
@@ -107,19 +111,26 @@ func planFingerprintInputs(hcl []byte, st *state.State, serial int64, g *graph.G
 			driver = node.Address.Type
 		}
 		drivers[node.Address.String()] = driver + "@builtin-v1"
-		if digest := desiredStringField(node.Data, "SHA256"); digest != "" {
-			artifacts[node.Address.String()] = digest
-		}
 	}
 	for _, resource := range st.Resources {
 		if resource.Driver != "" {
 			drivers[resource.Address.String()] = resource.Driver
 		}
 		if digest := resource.Str("sha256"); digest != "" {
-			artifacts[resource.Address.String()] = digest
+			if _, reobserved := artifacts[resource.Address.String()]; !reobserved {
+				artifacts[resource.Address.String()] = digest
+			}
 		}
 	}
 	return runtime.PlanInputs{Config: hcl, StateLineage: st.Lineage, StateSerial: serial, ResourceSchemas: schemas, Drivers: drivers, Artifacts: artifacts, Variables: map[string]any{}}
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	output := make(map[string]string, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
 }
 
 func desiredStringField(value any, name string) string {

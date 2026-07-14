@@ -189,23 +189,23 @@ Run `go test ./...`, `go vet ./...`, focused race on runtime/providers, and requ
 - Consumes: `ArtifactIdentity` and strict image HCL.
 - Produces: `artifact.ResolveIdentity(ctx, spec)`, immutable provider preparation, stored-plan digest verification.
 
-- [ ] **Step 1: Write failing identity and stored-plan tests**
+- [x] **Step 1: Write failing identity and stored-plan tests**
 
 Cover local/HTTP digest computation, OCI tag-to-image-ID binding, metadata copy safety, image and kernel fingerprint inclusion, source mutation rejection, and secret canary exclusion.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `go test ./pkg/artifact ./pkg/runtime ./pkg/api -run 'Identity|Immutable|StoredPlan|Digest' -count=1`
 
-- [ ] **Step 3: Resolve immutable identities before apply**
+- [x] **Step 3: Resolve immutable identities before apply**
 
 Canonicalize kind/source/architecture/family, calculate `sha256:<hex>`, and make provider `PrepareImage` consume only `ArtifactIdentity`. OCI resolution stores immutable image ID/digest, never only the mutable tag.
 
-- [ ] **Step 4: Bind and verify stored plans**
+- [x] **Step 4: Bind and verify stored plans**
 
 Serialize resolved image and kernel identities into plan inputs and fingerprint them. Stored-plan execution re-observes each source and rejects digest changes before provider mutation.
 
-- [ ] **Step 5: Delete loose artifact types and commit**
+- [x] **Step 5: Delete loose artifact types and commit**
 
 Remove `ImageSpec`, old `ImageRef` fields that duplicate identity, and URL-hash-as-identity behavior. Run full/vet/race and commit `feat(artifact): bind plans to immutable identities`.
 

@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
@@ -71,34 +72,20 @@ var (
 	vmStore = map[string]*vmProcess{} // vm_id → vmProcess
 )
 
-// PrepareImage builds a rootfs ext4 image from a Docker image or returns
-// a direct rootfs path unchanged.
-func (s *Substrate) PrepareImage(ctx context.Context, spec substrate.ImageSpec) (substrate.ImageRef, error) {
-	if spec.Rootfs != "" {
-		return substrate.ImageRef{
-			ID:         spec.Rootfs,
-			Repository: spec.Rootfs,
-		}, nil
+func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
+	if source.Kind != substrate.ArtifactRootFS {
+		return substrate.ArtifactHandle{}, fmt.Errorf("firecracker substrate requires artifact kind %q", substrate.ArtifactRootFS)
 	}
-
-	if spec.DockerRef == "" {
-		return substrate.ImageRef{}, fmt.Errorf("firecracker image: either rootfs or docker_ref required")
+	effective := source.ResolvedSource
+	if effective == "" {
+		effective = source.Source
 	}
-
-	outPath := filepath.Join(s.rootfsDir, sanitizeName(spec.DockerRef)+".ext4")
-	if _, err := os.Stat(outPath); err == nil {
-		return substrate.ImageRef{ID: outPath, Repository: outPath}, nil
+	resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: source.Kind, Source: effective, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily, Metadata: source.Metadata})
+	if err != nil {
+		return substrate.ArtifactHandle{}, fmt.Errorf("firecracker: resolve rootfs: %w", err)
 	}
-
-	if err := os.MkdirAll(s.rootfsDir, 0755); err != nil {
-		return substrate.ImageRef{}, fmt.Errorf("create rootfs dir: %w", err)
-	}
-
-	if err := dockerExportToExt4(ctx, spec.DockerRef, outPath); err != nil {
-		return substrate.ImageRef{}, fmt.Errorf("build rootfs from %s: %w", spec.DockerRef, err)
-	}
-
-	return substrate.ImageRef{ID: outPath, Repository: outPath}, nil
+	resolved.Identity.Source = source.Source
+	return substrate.ArtifactHandle{Identity: resolved.Identity, ID: resolved.Path}, nil
 }
 
 // CreateNode prepares the VM config but does NOT start the VM yet.
@@ -122,7 +109,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	}
 
 	// Copy the base rootfs so each VM has its own writable copy.
-	imagePath := spec.Image.Repository
+	imagePath := spec.Image.ID
 	vmRootfs := filepath.Join(runDir, "rootfs.ext4")
 
 	// Rootfs override: if provider config specifies rootfs, use it directly.

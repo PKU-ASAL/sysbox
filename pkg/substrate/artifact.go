@@ -37,6 +37,32 @@ type ArtifactIdentity struct {
 	Metadata     map[string]string
 }
 
+type ArtifactSource struct {
+	Kind           ArtifactKind
+	Source         string
+	ResolvedSource string
+	ExpectedDigest string
+	Architecture   string
+	GuestFamily    GuestFamily
+	Metadata       map[string]string
+	Size           string
+}
+
+type ArtifactHandle struct {
+	Identity ArtifactIdentity
+	ID       string
+}
+
+func (h ArtifactHandle) Validate() error {
+	if err := h.Identity.Validate(); err != nil {
+		return err
+	}
+	if h.ID == "" {
+		return fmt.Errorf("provider artifact ID is required")
+	}
+	return nil
+}
+
 func (i ArtifactIdentity) Validate() error {
 	if err := ValidateArtifactKind(i.Kind); err != nil {
 		return err

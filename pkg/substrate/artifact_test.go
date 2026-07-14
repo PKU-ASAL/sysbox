@@ -23,3 +23,13 @@ func TestArtifactIdentityValidateAndClone(t *testing.T) {
 	require.ErrorContains(t, (ArtifactIdentity{Kind: "vmdk"}).Validate(), "artifact kind")
 	require.ErrorContains(t, (ArtifactIdentity{Kind: ArtifactQCow2, Source: "x", Digest: "bad", Architecture: "amd64", GuestFamily: GuestFamilyLinux}).Validate(), "digest")
 }
+
+func TestArtifactHandleRequiresImmutableIdentityAndProviderID(t *testing.T) {
+	handle := ArtifactHandle{
+		Identity: ArtifactIdentity{Kind: ArtifactOCI, Source: "alpine:latest", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Architecture: "amd64", GuestFamily: GuestFamilyLinux},
+		ID:       "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	require.NoError(t, handle.Validate())
+	handle.ID = ""
+	require.ErrorContains(t, handle.Validate(), "provider artifact ID")
+}

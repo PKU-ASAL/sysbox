@@ -62,6 +62,7 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		payload["size"] = cfg.Size
 	case *config.KernelConfig:
 		payload["substrate"] = cfg.Substrate
+		payload["architecture"] = cfg.Architecture
 		payload["source"] = cfg.Source
 		payload["sha256"] = cfg.SHA256
 		payload["cmdline_template"] = cfg.CmdlineTemplate

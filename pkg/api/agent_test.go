@@ -308,7 +308,10 @@ func TestConsoleSessionPublishesAgentCommand(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspaces, "lab", "field.sysbox.hcl"), []byte(`
 resource "sysbox_image" "alpine" {
   substrate = "docker"
-  docker_ref = "alpine:latest"
+  kind = "oci"
+  source = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_node" "web" {
@@ -368,7 +371,10 @@ func TestConsoleSessionRBACAndAudit(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspaces, "lab", "field.sysbox.hcl"), []byte(`
 resource "sysbox_image" "alpine" {
   substrate = "docker"
-  docker_ref = "alpine:latest"
+  kind = "oci"
+  source = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_node" "web" {
@@ -420,7 +426,10 @@ func TestConsoleSessionRejectsUnhealthyNode(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspaces, "lab", "field.sysbox.hcl"), []byte(`
 resource "sysbox_image" "alpine" {
   substrate = "docker"
-  docker_ref = "alpine:latest"
+  kind = "oci"
+  source = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_node" "web" {

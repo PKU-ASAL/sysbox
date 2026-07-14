@@ -352,7 +352,8 @@ type ImageConfig struct {
 // op removes the state entry but never deletes the cache file (it is a
 // shared, content-addressed cache).
 type KernelConfig struct {
-	Substrate string `hcl:"substrate"`
+	Substrate    string `hcl:"substrate"`
+	Architecture string `hcl:"architecture"`
 	// Source is the artifact reference. Supported schemes:
 	//   - "https://..." / "http://..."   (downloaded into the cache)
 	//   - "/abs/path"                    (local file, no copy)

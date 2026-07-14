@@ -23,8 +23,9 @@ func TestKernelResourceHandlerCreateAndDelete(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_kernel", "fc"),
 		Data: &config.KernelConfig{
-			Substrate: "firecracker",
-			Source:    src,
+			Substrate:    "firecracker",
+			Source:       src,
+			Architecture: "amd64",
 		},
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
@@ -38,6 +39,8 @@ func TestKernelResourceHandlerCreateAndDelete(t *testing.T) {
 	require.Equal(t, src, res.Str("path"))
 	require.Equal(t, src, res.Str("source"))
 	require.NotEmpty(t, res.Str("sha256"))
+	require.Equal(t, "kernel", res.Str("kind"))
+	require.Equal(t, "amd64", res.Str("architecture"))
 	require.NotEmpty(t, res.Str(desiredHashKey))
 
 	exec.state.AddResource(res)
@@ -58,7 +61,7 @@ func TestKernelResourceHandlerResolvesSourceSecretReferenceAtExecution(t *testin
 	reference := secret.Environment("SYSBOX_KERNEL").String()
 	n := &graph.Node{
 		Address: address.Resource("sysbox_kernel", "fc"),
-		Data:    &config.KernelConfig{Substrate: "firecracker", Source: reference},
+		Data:    &config.KernelConfig{Substrate: "firecracker", Source: reference, Architecture: "amd64"},
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 

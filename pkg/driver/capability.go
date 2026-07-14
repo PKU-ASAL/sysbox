@@ -108,7 +108,7 @@ type Reset interface {
 }
 
 type Artifact interface {
-	PrepareImage(context.Context, substrate.ImageSpec) (substrate.ImageRef, error)
+	ResolveImage(context.Context, substrate.ArtifactSource) (substrate.ArtifactHandle, error)
 }
 
 type Import interface {

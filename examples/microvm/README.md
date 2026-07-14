@@ -7,7 +7,7 @@ NAT between them. Demonstrates:
   config injection, no sshd required in the rootfs)
 - The **`sysbox_kernel` resource** for URL-based kernel fetching with
   sha256 verification and content-addressed cache
-- **`sysbox_image.rootfs` URL support** (symmetric with `docker_ref`)
+- Strict `sysbox_image` rootfs artifacts with verified immutable identities
 - **`chain_init`** to work around incomplete rootfs init systems
 
 ## Topology

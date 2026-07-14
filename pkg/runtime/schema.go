@@ -158,7 +158,7 @@ func ResourceSchemaFor(typ string) ResourceSchema {
 		}
 		add("size", value.NumberType, false, false)
 	case "sysbox_kernel":
-		for _, name := range []string{"substrate", "source", "sha256", "cmdline_template"} {
+		for _, name := range []string{"substrate", "source", "sha256", "architecture", "cmdline_template"} {
 			add(name, value.StringType, false, false)
 		}
 		add("depends_on", value.ListType, false, false)
