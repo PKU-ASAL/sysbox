@@ -28,7 +28,7 @@ func (p Plan) Validate() error {
 		seen[change.Address.String()] = struct{}{}
 		switch change.Action {
 		case controlplane.PlanActionNoop, controlplane.PlanActionCreate, controlplane.PlanActionRead,
-			controlplane.PlanActionReplace, controlplane.PlanActionDelete, controlplane.PlanActionUnknown:
+			controlplane.PlanActionReplace, controlplane.PlanActionDelete, controlplane.PlanActionReset, controlplane.PlanActionUnknown:
 		default:
 			return fmt.Errorf("unsupported plan action %q for %s", change.Action, change.Address)
 		}
@@ -160,7 +160,7 @@ func FilterPlanByTarget(plan *Plan, typ, name string) *Plan {
 func (p Plan) HasChanges() bool {
 	for _, change := range p.Actions {
 		switch change.Action {
-		case controlplane.PlanActionCreate, controlplane.PlanActionRead, controlplane.PlanActionReplace, controlplane.PlanActionDelete, controlplane.PlanActionUnknown:
+		case controlplane.PlanActionCreate, controlplane.PlanActionRead, controlplane.PlanActionReplace, controlplane.PlanActionDelete, controlplane.PlanActionReset, controlplane.PlanActionUnknown:
 			return true
 		}
 	}
@@ -181,6 +181,9 @@ func (p Plan) Summary() string {
 	for _, change := range p.Actions {
 		counts[change.Action]++
 	}
+	if counts[controlplane.PlanActionReset] > 0 {
+		return fmt.Sprintf("Plan: %d to reset.", counts[controlplane.PlanActionReset])
+	}
 	return fmt.Sprintf("Plan: %d to add, %d to replace, %d to destroy, %d unchanged.", counts[controlplane.PlanActionCreate]+counts[controlplane.PlanActionRead], counts[controlplane.PlanActionReplace], counts[controlplane.PlanActionDelete], counts[controlplane.PlanActionNoop])
 }
 
@@ -190,6 +193,7 @@ func PrintPlan(plan *Plan, _ bool) {
 		symbol := map[controlplane.PlanActionType]string{
 			controlplane.PlanActionCreate: "+", controlplane.PlanActionRead: "<=", controlplane.PlanActionReplace: "-/+",
 			controlplane.PlanActionDelete: "-", controlplane.PlanActionNoop: " ", controlplane.PlanActionUnknown: "?",
+			controlplane.PlanActionReset: "~>",
 		}[change.Action]
 		fmt.Printf("  %s %s", symbol, change.Address)
 		if change.Reason != "" {

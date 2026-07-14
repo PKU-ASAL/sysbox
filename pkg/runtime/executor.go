@@ -86,10 +86,10 @@ func (e *Executor) setCurrentResourceStep(step int) func() {
 	}
 }
 
-func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.Address, action controlplane.PlanActionType) {
+func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.Address, action controlplane.PlanActionType) error {
 	r := e.state.FindResource(id)
 	if r == nil {
-		return
+		return nil
 	}
 	externalID := r.Str("id")
 	if p, ok := GetResourceHandler(r.Address.Type); ok {
@@ -116,11 +116,12 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 	e.recorder.StepStatePatch(step, StatePatchUpsert, &log)
 	if e.patchSink != nil {
 		if err := e.patchSink.ApplyStatePatch(ctx, patch); err != nil {
-			e.logf("[state] warning: persist patch for %s: %v\n", id, err)
+			return fmt.Errorf("persist state patch for %s: %w", id, err)
 		} else {
 			e.recorder.StepStateRecorded(step)
 		}
 	}
+	return nil
 }
 
 func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action controlplane.PlanActionType) {

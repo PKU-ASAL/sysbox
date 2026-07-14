@@ -9,6 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -101,6 +102,20 @@ func (b *ExecutionBridge) Preflight(ctx context.Context, topology string, log io
 	}
 	writePreflightLogsTo(log, res)
 	return res.err()
+}
+
+func (b *ExecutionBridge) BuildResetPlan(g *graph.Graph, st *state.State, target string) (*runtime.Plan, error) {
+	return runtime.BuildResetPlan(g, st, target)
+}
+
+func (b *ExecutionBridge) BeforeReset(*runtime.Plan) error { return nil }
+
+func (b *ExecutionBridge) ResumeResetPlan(ctx context.Context, parent *controlplane.Run, current *runtime.Plan) (*runtime.Plan, error) {
+	cp, err := b.server.apiStore.LoadCheckpoint(ctx, parent.Topology, parent.ID)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.ResumeResetPlan(cp, current)
 }
 
 func (b *ExecutionBridge) OpenConsole(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -29,6 +30,40 @@ func TestRunServiceStartApplyDispatchesAssignedRun(t *testing.T) {
 	require.Equal(t, "apply", run.Op)
 	require.Equal(t, "host-a", run.AgentID)
 	require.Equal(t, controlplane.RunAssigned, run.Status)
+}
+
+func TestRunServiceStartResetPersistsExactTargetAndDispatches(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	writeRunServiceTopology(t, s, "lab", `resource "sysbox_network" "lab" {
+  cidr = "10.77.0.0/24"
+}`)
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
+		ID: "host-a", Status: controlplane.AgentStatusOnline, Capabilities: []string{"network"},
+	}))
+
+	run, err := s.runs().StartReset(context.Background(), "lab", RunStartRequest{Target: "sysbox_node.web"})
+	require.NoError(t, err)
+	require.Equal(t, "reset", run.Op)
+	require.Equal(t, "sysbox_node.web", run.Target)
+	require.Equal(t, controlplane.RunAssigned, run.Status)
+}
+
+func TestRunServiceResumeAllowsFailedReset(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	writeRunServiceTopology(t, s, "lab", `resource "sysbox_network" "lab" {
+  cidr = "10.77.0.0/24"
+}`)
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
+		ID: "host-a", Status: controlplane.AgentStatusOnline, Capabilities: []string{"network"},
+	}))
+	parent := s.jobs.startWithOptions("lab", "reset", runStartOptions{Target: "sysbox_node.web", UnsafeState: true})
+	s.jobs.finish(parent, errors.New("interrupted"))
+
+	run, _, err := s.runs().Resume(context.Background(), parent.ID)
+	require.NoError(t, err)
+	require.Equal(t, "reset", run.Op)
+	require.Equal(t, "sysbox_node.web", run.Target)
+	require.True(t, run.UnsafeState)
 }
 
 func TestRunServiceResumeRejectsRunningParent(t *testing.T) {

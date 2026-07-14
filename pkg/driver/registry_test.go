@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -79,6 +80,12 @@ func (fakeReset) ObserveReset(context.Context, substrate.ResetHandle) (substrate
 }
 
 func (fakeReset) CleanupReset(context.Context, substrate.ResetHandle) error { return nil }
+func (fakeReset) MarshalResetHandle(substrate.ResetHandle) (json.RawMessage, error) {
+	return json.RawMessage(`{}`), nil
+}
+func (fakeReset) UnmarshalResetHandle(json.RawMessage) (substrate.ResetHandle, error) {
+	return substrate.ResetHandle{}, nil
+}
 
 func TestRegistryRequiresResetCapability(t *testing.T) {
 	registry := NewRegistry()

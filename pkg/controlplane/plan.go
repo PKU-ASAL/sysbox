@@ -17,6 +17,7 @@ const (
 	PlanActionReplace PlanActionType = "replace"
 	PlanActionDelete  PlanActionType = "delete"
 	PlanActionRead    PlanActionType = "read"
+	PlanActionReset   PlanActionType = "reset"
 	PlanActionUnknown PlanActionType = "unknown"
 )
 

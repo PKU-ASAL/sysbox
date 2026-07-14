@@ -12,6 +12,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -78,6 +79,32 @@ func TestLocalBridgeFilterApplyPlanByTarget(t *testing.T) {
 	}
 	require.Len(t, creates, 1)
 	require.Equal(t, "sysbox_node.web", creates[0].Address.String())
+}
+
+func TestLocalBridgeBuildResetPlanUsesExactTarget(t *testing.T) {
+	g := graph.New()
+	image := address.Resource("sysbox_image", "base")
+	first := address.Resource("sysbox_node", "first")
+	second := address.Resource("sysbox_node", "second")
+	require.NoError(t, g.AddNode(image, nil))
+	require.NoError(t, g.AddNode(first, []address.Address{image}))
+	require.NoError(t, g.AddNode(second, []address.Address{image, first}))
+	require.NoError(t, g.SetData(image, &config.ImageConfig{Substrate: "fake", Kind: "rootfs", Source: "/base", Architecture: "amd64", GuestFamily: "linux"}))
+	require.NoError(t, g.SetData(first, &config.NodeConfig{Substrate: "fake", Image: "sysbox_image.base.id"}))
+	require.NoError(t, g.SetData(second, &config.NodeConfig{Substrate: "fake", Image: "sysbox_image.base.id"}))
+	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{
+		{Address: image, Attributes: state.MustAttributes(map[string]any{
+			"image_id": "base-id", "kind": "rootfs", "source": "/base",
+			"sha256":       "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"architecture": "amd64", "guest_family": "linux",
+		})}, {Address: first}, {Address: second},
+	}}
+	bridge := NewLocalBridge(LocalOptions{Target: "sysbox_node.second"})
+
+	plan, err := bridge.BuildResetPlan(g, st, "")
+	require.NoError(t, err)
+	require.Len(t, plan.Actions, 1)
+	require.Equal(t, second, plan.Actions[0].Address)
 }
 
 func TestExecuteNodeOperationRejectsMissingNode(t *testing.T) {

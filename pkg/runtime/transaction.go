@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -69,6 +70,7 @@ type OperationCheckpoint struct {
 	StateSerialBefore int64                        `json:"state_serial_before,omitempty"`
 	StateSerialAfter  int64                        `json:"state_serial_after,omitempty"`
 	Plan              []controlplane.PlannedChange `json:"plan,omitempty"`
+	PlanSHA256        string                       `json:"plan_sha256,omitempty"`
 	Steps             []OperationStep              `json:"steps"`
 	StatePatches      []StatePatch                 `json:"state_patches,omitempty"`
 }
@@ -151,8 +153,21 @@ func (r *FileRecorder) Begin(operation string, plan *Plan) error {
 	r.checkpoint.StartedAt = time.Now().UTC()
 	if plan != nil {
 		r.checkpoint.Plan = append([]controlplane.PlannedChange(nil), plan.Actions...)
+		fingerprint, err := planActionsSHA256(r.checkpoint.Plan)
+		if err != nil {
+			return err
+		}
+		r.checkpoint.PlanSHA256 = fingerprint
 	}
 	return r.flushLocked()
+}
+
+func planActionsSHA256(actions []controlplane.PlannedChange) (string, error) {
+	encoded, err := json.Marshal(actions)
+	if err != nil {
+		return "", fmt.Errorf("fingerprint operation plan: %w", err)
+	}
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(encoded)), nil
 }
 
 func (r *FileRecorder) StepStart(resource string, action controlplane.PlanActionType) int {

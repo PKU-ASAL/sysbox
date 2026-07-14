@@ -233,7 +233,9 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest(req))
+	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest{
+		PlanID: req.PlanID, Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState,
+	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
 		return
@@ -253,12 +255,57 @@ func (s *Server) handleRepair(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, err := s.runs().StartRepair(r.Context(), topology, RunStartRequest(req))
+	run, err := s.runs().StartRepair(r.Context(), topology, RunStartRequest{
+		PlanID: req.PlanID, Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState,
+	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "agent_id": run.AgentID, "operation": "repair"})
+}
+
+// POST /v1/topologies/{topology}/reset
+func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	req, err := decodeResetRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	run, err := s.runs().StartReset(r.Context(), topology, RunStartRequest{
+		Revision: req.Revision, AgentID: req.AgentID, Target: req.Target, AllowUnsafeState: req.AllowUnsafeState,
+	})
+	if err != nil {
+		writeError(w, runServiceStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "agent_id": run.AgentID, "operation": "reset"})
+}
+
+type resetRequest struct {
+	Target           string `json:"target,omitempty"`
+	Revision         string `json:"revision,omitempty"`
+	AgentID          string `json:"agent_id,omitempty"`
+	AllowUnsafeState bool   `json:"allow_unsafe_state,omitempty"`
+}
+
+func decodeResetRequest(r *http.Request) (resetRequest, error) {
+	if r.Body == nil || r.ContentLength == 0 {
+		return resetRequest{}, nil
+	}
+	defer r.Body.Close()
+	var req resetRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		return resetRequest{}, fmt.Errorf("decode reset request: %w", err)
+	}
+	return req, nil
 }
 
 type applyRequest struct {

@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -29,6 +30,7 @@ type LocalOptions struct {
 	Target           string
 	BeforeApply      func(*runtime.Plan) error
 	BeforeDestroy    func(*runtime.Plan) error
+	BeforeReset      func(*runtime.Plan) error
 	AfterRun         func(*controlplane.Run)
 	CheckpointStore  runtime.CheckpointStore
 }
@@ -206,6 +208,24 @@ func (b *LocalBridge) BeforeDestroy(plan *runtime.Plan) error {
 		return nil
 	}
 	return b.opts.BeforeDestroy(plan)
+}
+
+func (b *LocalBridge) BuildResetPlan(g *graph.Graph, st *state.State, target string) (*runtime.Plan, error) {
+	if target == "" {
+		target = b.opts.Target
+	}
+	return runtime.BuildResetPlan(g, st, target)
+}
+
+func (b *LocalBridge) BeforeReset(plan *runtime.Plan) error {
+	if b.opts.BeforeReset == nil {
+		return nil
+	}
+	return b.opts.BeforeReset(plan)
+}
+
+func (b *LocalBridge) ResumeResetPlan(context.Context, *controlplane.Run, *runtime.Plan) (*runtime.Plan, error) {
+	return nil, fmt.Errorf("local reset runs do not support parent-run resume")
 }
 
 type localCheckpointStore struct{}

@@ -39,6 +39,9 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 		case controlplane.PlanActionUnknown:
 			applyErr = fmt.Errorf("cannot apply unknown action for %s", change.Address)
 			return applyErr
+		case controlplane.PlanActionReset:
+			applyErr = fmt.Errorf("reset action for %s must be executed by the reset operation", change.Address)
+			return applyErr
 		case controlplane.PlanActionDelete:
 			if current := e.state.FindResource(change.Address); current != nil {
 				step := e.recorder.StepStart(change.Address.String(), change.Action)
@@ -86,7 +89,7 @@ func (e *Executor) applyCreate(ctx context.Context, change controlplane.PlannedC
 		return wrapped
 	}
 	restoreStep()
-	if err := e.recordSubstep(step, "capture_state_resource", map[string]any{"resource": change.Address.String()}, func() error { e.recordStepExternal(ctx, step, change.Address, change.Action); return nil }); err != nil {
+	if err := e.recordSubstep(step, "capture_state_resource", map[string]any{"resource": change.Address.String()}, func() error { return e.recordStepExternal(ctx, step, change.Address, change.Action) }); err != nil {
 		e.recorder.StepFailed(step, err)
 		return err
 	}

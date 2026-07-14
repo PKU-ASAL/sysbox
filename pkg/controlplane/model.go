@@ -78,6 +78,7 @@ type Run struct {
 	ParentID    string    `json:"parent_id,omitempty"`
 	Revision    string    `json:"revision,omitempty"`
 	PlanID      string    `json:"plan_id,omitempty"`
+	Target      string    `json:"target,omitempty"`
 	AgentID     string    `json:"agent_id,omitempty"`
 	Recoverable bool      `json:"recoverable,omitempty"`
 	UnsafeState bool      `json:"unsafe_state,omitempty"`

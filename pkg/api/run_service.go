@@ -23,6 +23,7 @@ type RunStartRequest struct {
 	PlanID           string
 	Revision         string
 	AgentID          string
+	Target           string
 	AllowUnsafeState bool
 }
 
@@ -124,6 +125,16 @@ func (s *RunService) StartRepair(ctx context.Context, topology string, req RunSt
 	return run, nil
 }
 
+func (s *RunService) StartReset(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+	run := s.jobs.startWithOptions(topology, "reset", runStartOptions{
+		Revision: req.Revision, AgentID: req.AgentID, Target: req.Target, UnsafeState: req.AllowUnsafeState,
+	})
+	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
 func (s *RunService) StartDestroy(ctx context.Context, topology string) (*controlplane.Run, error) {
 	return s.StartDestroyWithOptions(ctx, topology, false)
 }
@@ -144,7 +155,7 @@ func (s *RunService) Resume(ctx context.Context, runID string) (*controlplane.Ru
 	if parent.Status == controlplane.RunRunning {
 		return nil, parent, runError(runServiceConflict, fmt.Errorf("run %s is still running", runID))
 	}
-	if parent.Op != "apply" && parent.Op != "destroy" {
+	if parent.Op != "apply" && parent.Op != "destroy" && parent.Op != "reset" {
 		return nil, parent, runError(runServiceBadRequest, fmt.Errorf("run op %q cannot be resumed", parent.Op))
 	}
 	run := s.jobs.startChild(parent)

@@ -269,6 +269,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/preflight", s.handlePreflight)
 	m.HandleFunc("POST /v1/topologies/{topology}/apply", s.handleApply)
 	m.HandleFunc("POST /v1/topologies/{topology}/repair", s.handleRepair)
+	m.HandleFunc("POST /v1/topologies/{topology}/reset", s.handleReset)
 	m.HandleFunc("POST /v1/topologies/{topology}/destroy", s.handleDestroy)
 	m.HandleFunc("DELETE /v1/topologies/{topology}", s.handleDeleteTopology)
 

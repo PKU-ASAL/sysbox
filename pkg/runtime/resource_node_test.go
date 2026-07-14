@@ -77,6 +77,11 @@ type portTestSubstrate struct {
 	guestObservation   substrate.GuestNetworkInitObservation
 	lifecycle          []string
 	coldPlug           bool
+	resetLifecycle     []string
+	resetObservation   substrate.ResetObservation
+	resetApplyErr      error
+	nodeObservation    substrate.NodeObservation
+	nodeObserveCalls   int
 }
 
 func (s *portTestSubstrate) Name() string { return s.name }
@@ -142,8 +147,49 @@ func (s *portTestSubstrate) DeleteRuleset(context.Context, driver.PolicyTarget, 
 	return nil
 }
 
+func (s *portTestSubstrate) PrepareReset(_ context.Context, request substrate.ResetRequest) (substrate.ResetHandle, error) {
+	s.resetLifecycle = append(s.resetLifecycle, "prepare:"+request.Current.ID)
+	return substrate.ResetHandle{Provider: map[string]string{"old_id": request.Current.ID}}, nil
+}
+func (s *portTestSubstrate) ApplyReset(context.Context, substrate.ResetHandle) (substrate.NodeHandle, error) {
+	s.resetLifecycle = append(s.resetLifecycle, "apply")
+	if s.resetApplyErr != nil {
+		return substrate.NodeHandle{}, s.resetApplyErr
+	}
+	return substrate.NodeHandle{ID: "node-reset"}, nil
+}
+func (s *portTestSubstrate) ObserveReset(context.Context, substrate.ResetHandle) (substrate.ResetObservation, error) {
+	s.resetLifecycle = append(s.resetLifecycle, "observe")
+	if s.resetObservation.Phase != "" || s.resetObservation.Reason != "" || len(s.resetObservation.Residue) > 0 {
+		return s.resetObservation, nil
+	}
+	return substrate.ResetObservation{Phase: substrate.ResetPhaseComplete, Converged: true, NewExternalID: "node-reset"}, nil
+}
+func (s *portTestSubstrate) CleanupReset(context.Context, substrate.ResetHandle) error {
+	s.resetLifecycle = append(s.resetLifecycle, "cleanup")
+	return nil
+}
+func (s *portTestSubstrate) MarshalResetHandle(handle substrate.ResetHandle) (json.RawMessage, error) {
+	return json.Marshal(handle.Provider)
+}
+func (s *portTestSubstrate) UnmarshalResetHandle(raw json.RawMessage) (substrate.ResetHandle, error) {
+	var provider map[string]string
+	if err := json.Unmarshal(raw, &provider); err != nil {
+		return substrate.ResetHandle{}, err
+	}
+	return substrate.ResetHandle{Provider: provider}, nil
+}
+
 func (s *portTestSubstrate) NodeStatus(context.Context, substrate.NodeHandle) (bool, error) {
 	return true, nil
+}
+
+func (s *portTestSubstrate) ObserveNode(context.Context, substrate.NodeHandle) (substrate.NodeObservation, error) {
+	s.nodeObserveCalls++
+	if s.nodeObservation.Status != "" {
+		return s.nodeObservation, nil
+	}
+	return substrate.NodeObservation{Exists: true, Running: true, Healthy: true, Status: substrate.NodeStatusRunning}, nil
 }
 
 func TestDestroyNodeDeletesTypedAttachments(t *testing.T) {
@@ -165,7 +211,7 @@ func registerPortTestDriver(t *testing.T, sub *portTestSubstrate) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = previous })
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{
-		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub, Policy: sub, GuestNetworkInit: sub,
+		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub, Policy: sub, GuestNetworkInit: sub, Reset: sub,
 	}))
 }
 

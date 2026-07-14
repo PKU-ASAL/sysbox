@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,6 +11,17 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
+
+func TestSQLiteAPIStoreRoundTripsResetTargetAndUnsafeState(t *testing.T) {
+	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	run := controlplane.Run{ID: "reset-1", Topology: "mixed", Operation: "reset", Op: "reset", Status: controlplane.RunQueued, Target: "sysbox_node.web", UnsafeState: true}
+	require.NoError(t, store.SaveRun(context.Background(), run))
+
+	got, err := store.GetRun(context.Background(), run.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.Target, got.Target)
+	require.True(t, got.UnsafeState)
+}
 
 func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}

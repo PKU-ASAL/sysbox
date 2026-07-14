@@ -105,6 +105,8 @@ type Reset interface {
 	ApplyReset(context.Context, substrate.ResetHandle) (substrate.NodeHandle, error)
 	ObserveReset(context.Context, substrate.ResetHandle) (substrate.ResetObservation, error)
 	CleanupReset(context.Context, substrate.ResetHandle) error
+	MarshalResetHandle(substrate.ResetHandle) (json.RawMessage, error)
+	UnmarshalResetHandle(json.RawMessage) (substrate.ResetHandle, error)
 }
 
 type Artifact interface {

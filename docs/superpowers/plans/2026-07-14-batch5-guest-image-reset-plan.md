@@ -226,27 +226,27 @@ Remove `ImageSpec`, old `ImageRef` fields that duplicate identity, and URL-hash-
 - Consumes: `driver.Reset`, immutable baselines, state v6, graph ordering, recorder.
 - Produces: `BuildResetPlan(graph, state, target)`, `Executor.Reset(ctx, plan)`, CLI `reset`.
 
-- [ ] **Step 1: Write failing plan and recovery tests**
+- [x] **Step 1: Write failing plan and recovery tests**
 
 Test whole-topology selection, exact node target, invalid target kinds, reverse prepare/order and forward apply/order, checkpoint before/after mutation, retry observation, attachment restoration, refresh, residue failure, and `prevent_destroy` independence.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `go test ./pkg/runtime ./cmd/sysbox/commands -run 'Reset' -count=1`
 
-- [ ] **Step 3: Add reset-only action and planning**
+- [x] **Step 3: Add reset-only action and planning**
 
 Add `PlanActionReset`; reject it from normal apply. Build a dedicated reset plan containing only nodes, pinned baselines, and stable target validation.
 
-- [ ] **Step 4: Implement checkpointed reset orchestration**
+- [x] **Step 4: Implement checkpointed reset orchestration**
 
 Preflight every selected node before mutation. Prepare in reverse dependency order, apply fresh stopped handles in dependency order, restore NICs, start, observe, refresh, and patch external IDs atomically.
 
-- [ ] **Step 5: Add CLI and recovery entry points**
+- [x] **Step 5: Add CLI and recovery entry points**
 
 Implement `sysbox reset [--target sysbox_node.name] [--auto-approve]`; print exact plan, require approval, record run/checkpoint, and resume incomplete reset using provider observation.
 
-- [ ] **Step 6: Run focused/full/race and commit**
+- [x] **Step 6: Run focused/full/race and commit**
 
 Commit `feat(runtime): add checkpointed topology reset`.
 

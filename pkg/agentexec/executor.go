@@ -45,6 +45,12 @@ type DestroyHook interface {
 	BeforeDestroy(plan *runtime.Plan) error
 }
 
+type ResetHook interface {
+	BuildResetPlan(g *graph.Graph, st *state.State, target string) (*runtime.Plan, error)
+	ResumeResetPlan(ctx context.Context, parent *controlplane.Run, current *runtime.Plan) (*runtime.Plan, error)
+	BeforeReset(plan *runtime.Plan) error
+}
+
 type Executor struct {
 	bridge Bridge
 }
@@ -80,10 +86,116 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 			}
 		}
 		e.executeDestroy(ctx, run, log)
+	case "reset":
+		var parent *controlplane.Run
+		if run.ParentID != "" {
+			var err error
+			parent, err = e.bridge.ParentRun(ctx, run.ParentID)
+			if err != nil {
+				e.bridge.Finish(run, err)
+				break
+			}
+			if err := e.bridge.ReconcileParentJournal(parent, run); err != nil {
+				e.bridge.Finish(run, err)
+				break
+			}
+		}
+		e.executeReset(ctx, run, parent, log)
 	default:
 		e.bridge.Finish(run, fmt.Errorf("unsupported run op %q", run.Op))
 	}
 	e.reportCompletion(ctx, run)
+}
+
+func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.Run, log io.Writer) {
+	unlock := e.bridge.LockTopology(run.Topology)
+	defer unlock()
+
+	if err := ctx.Err(); err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	if err := e.bridge.Preflight(ctx, run.Topology, log); err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	mgr, err := e.bridge.StateManager(run.Topology)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	mgr.AllowUnsafeMutation(run.UnsafeState)
+	if err := mgr.CheckMutationSafety(); err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(e.bridge.HCLFile(run.Topology), mgr)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	hook, ok := e.bridge.(ResetHook)
+	if !ok {
+		e.bridge.Finish(run, fmt.Errorf("reset is not supported by this execution bridge"))
+		return
+	}
+	plan, err := hook.BuildResetPlan(g, st, run.Target)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	if parent != nil {
+		plan, err = hook.ResumeResetPlan(ctx, parent, plan)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+	}
+	if !plan.HasChanges() {
+		_, _ = log.Write([]byte("Reset already complete.\n"))
+		e.bridge.Finish(run, nil)
+		return
+	}
+	if err := hook.BeforeReset(plan); err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+
+	exec := runtime.NewExecutor(g, st)
+	exec.SetRunContext(run.Topology, run.ID)
+	exec.SetOperation(run.Op)
+	exec.SetLogger(log)
+	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
+	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
+	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath).WithContext(ctx)
+	recorder.SetLeaseOwner(run.LeaseOwner)
+	recorder.SetStateSerialBefore(st.Meta.Serial)
+	exec.SetRecorder(recorder)
+	exec.SetStatePatchSink(&runtime.StatePatchManagerSink{Manager: mgr, State: st, Owner: run.LeaseOwner})
+	if snap, err := mgr.Snapshot(ctx, "before reset "+run.ID); err == nil && snap != nil {
+		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
+	}
+	if err := exec.Reset(ctx, plan); err != nil {
+		if saveErr := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
+			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
+		} else {
+			recorder.SetStateSerialAfter(st.Meta.Serial)
+		}
+		e.bridge.Finish(run, err)
+		return
+	}
+	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionNoop)
+	if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
+		recorder.StepFailed(saveStep, err)
+		recorder.Finish(err)
+		e.bridge.Finish(run, fmt.Errorf("save state: %w", err))
+		return
+	}
+	recorder.SetStateSerialAfter(st.Meta.Serial)
+	recorder.StepDone(saveStep)
+	recorder.MarkResourceStateRecorded()
+	_, _ = log.Write([]byte("Reset complete.\n"))
+	e.bridge.Finish(run, nil)
 }
 
 func (e *Executor) reportCompletion(ctx context.Context, run *controlplane.Run) {
