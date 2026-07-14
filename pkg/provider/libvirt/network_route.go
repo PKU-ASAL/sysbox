@@ -13,7 +13,11 @@ func (s *Substrate) EnsureRoute(ctx context.Context, handle substrate.NodeHandle
 	if err != nil {
 		return err
 	}
-	return connection.ExecInline(ctx, []string{fmt.Sprintf("ip route replace %s via %s", destination, via)})
+	result, err := connection.Exec(ctx, substrate.ExecRequest{Program: "ip", Args: []string{"route", "replace", destination, "via", via}, Shell: substrate.ShellNone}, io.Discard, io.Discard)
+	if err == nil && result.ExitCode != 0 {
+		return fmt.Errorf("ip route replace exited %d", result.ExitCode)
+	}
+	return err
 }
 
 func (s *Substrate) HasRoute(ctx context.Context, handle substrate.NodeHandle, destination, via string) (bool, error) {
@@ -21,6 +25,6 @@ func (s *Substrate) HasRoute(ctx context.Context, handle substrate.NodeHandle, d
 	if err != nil {
 		return false, err
 	}
-	err = connection.ExecStream(ctx, []string{fmt.Sprintf("ip route show %s | grep -F %q", destination, "via "+via)}, io.Discard, io.Discard)
-	return err == nil, err
+	result, err := connection.Exec(ctx, substrate.ExecRequest{Program: fmt.Sprintf("ip route show %s | grep -F %q", destination, "via "+via), Shell: substrate.ShellLinux}, io.Discard, io.Discard)
+	return err == nil && result.ExitCode == 0, err
 }

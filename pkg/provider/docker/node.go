@@ -248,6 +248,15 @@ func (s *Substrate) ExecImageEntry(ctx context.Context, handle substrate.NodeHan
 	}
 
 	// Run as background process so it doesn't block the executor.
-	_, err = c.ExecBackground(ctx, cmd, nil)
+	_, err = c.ExecBackground(ctx, commandRequest(cmd))
 	return err
+}
+
+func commandRequest(command []string) substrate.ExecRequest {
+	request := substrate.ExecRequest{Shell: substrate.ShellNone}
+	if len(command) > 0 {
+		request.Program = command[0]
+		request.Args = append([]string{}, command[1:]...)
+	}
+	return request
 }

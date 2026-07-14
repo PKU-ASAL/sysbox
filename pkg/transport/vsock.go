@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oslab/sysbox/pkg/util"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
 
@@ -135,25 +135,23 @@ func (c *VsockConnection) ping(ctx context.Context) error {
 	return nil
 }
 
-// FrameHandler is called for each frame received from an OpExec stream.
+// frameHandler is called for each frame received from an OpExec stream.
 // Return io.EOF to stop reading (the connection is closed either way).
-type FrameHandler func(vsockrpc.Frame) error
+type frameHandler func(vsockrpc.Frame) error
 
-// ExecStream dials a fresh vsock connection, sends one OpExec request, and
+// execFrameStream dials a fresh vsock connection, sends one OpExec request, and
 // calls handler for each Frame the agent returns. Stdout/stderr payloads are
 // delivered verbatim; the caller decides what to do with them. The final
 // frame (Done=true) is also delivered. Returns nil when the command exits
 // cleanly, or the first error from handler / transport.
-// ExecFrameStream runs a single command and delivers raw vsock frames to handler.
-// Used by firecracker exec internals for streaming command output.
-func (c *VsockConnection) ExecFrameStream(ctx context.Context, cmd []string, env map[string]string, handler FrameHandler) error {
+func (c *VsockConnection) execFrameStream(ctx context.Context, cmd []string, env map[string]string, workDir string, handler frameHandler) error {
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	req := vsockrpc.Request{Op: vsockrpc.OpExec, Cmd: cmd, Env: env}
+	req := vsockrpc.Request{Op: vsockrpc.OpExec, Cmd: cmd, Env: env, WorkDir: workDir}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
@@ -185,85 +183,50 @@ func (c *VsockConnection) ExecFrameStream(ctx context.Context, cmd []string, env
 	}
 }
 
-func (c *VsockConnection) ExecInline(ctx context.Context, cmds []string) error {
-	return c.ExecStream(ctx, cmds, os.Stdout, os.Stderr)
-}
-
-func (c *VsockConnection) ExecStream(ctx context.Context, cmds []string, stdout, stderr io.Writer) error {
-	for _, line := range cmds {
-		if err := c.execStreamOne(ctx, []string{"sh", "-c", line}, nil, stdout, stderr); err != nil {
-			return fmt.Errorf("vsock exec %q: %w", line, err)
-		}
+func (c *VsockConnection) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (substrate.ExecResult, error) {
+	if stdout == nil {
+		stdout = io.Discard
 	}
-	return nil
-}
-
-func (c *VsockConnection) execStreamOne(ctx context.Context, cmd []string, env map[string]string, stdout, stderr io.Writer) error {
-	return c.ExecFrameStream(ctx, cmd, env, func(f vsockrpc.Frame) error {
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	cmd, err := CommandArgv(req)
+	if err != nil {
+		return substrate.ExecResult{}, err
+	}
+	result := substrate.ExecResult{}
+	err = c.execFrameStream(ctx, cmd, req.Environment, req.WorkingDir, func(f vsockrpc.Frame) error {
 		if len(f.Stdout) > 0 {
+			result.Stdout += string(f.Stdout)
 			if _, err := stdout.Write(f.Stdout); err != nil {
 				return fmt.Errorf("write stdout: %w", err)
 			}
 		}
 		if len(f.Stderr) > 0 {
+			result.Stderr += string(f.Stderr)
 			if _, err := stderr.Write(f.Stderr); err != nil {
 				return fmt.Errorf("write stderr: %w", err)
 			}
 		}
+		if f.Done {
+			result.ExitCode = f.ExitCode
+		}
 		return nil
 	})
+	if err != nil && result.ExitCode == 0 {
+		return result, err
+	}
+	return result, nil
 }
 
-func (c *VsockConnection) execOne(ctx context.Context, cmd []string, env map[string]string) error {
-	conn, err := c.dial(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	req := vsockrpc.Request{Op: vsockrpc.OpExec, Cmd: cmd, Env: env}
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return fmt.Errorf("send request: %w", err)
-	}
-
-	dec := json.NewDecoder(conn)
-	for {
-		var f vsockrpc.Frame
-		if err := dec.Decode(&f); err != nil {
-			if err == io.EOF {
-				return fmt.Errorf("vsock connection closed before exit frame")
-			}
-			return fmt.Errorf("read frame: %w", err)
-		}
-		if len(f.Stdout) > 0 {
-			_, _ = os.Stdout.Write(f.Stdout)
-		}
-		if len(f.Stderr) > 0 {
-			_, _ = os.Stderr.Write(f.Stderr)
-		}
-		if f.Done {
-			if f.Error != "" {
-				return fmt.Errorf("%s", f.Error)
-			}
-			if f.ExitCode != 0 {
-				return fmt.Errorf("exit code %d", f.ExitCode)
-			}
-			return nil
-		}
-	}
-}
-
-func (c *VsockConnection) ExecBackground(ctx context.Context, cmd []string, env map[string]string) (int, error) {
+func (c *VsockConnection) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
 	// Wrap the command so it daemonises and prints its pid. nohup + & is the
 	// classic POSIX recipe; we capture $! before exiting.
-	if len(cmd) == 0 {
-		return 0, fmt.Errorf("empty cmd")
+	command, err := RemoteCommand(req)
+	if err != nil {
+		return 0, err
 	}
-	envPrefix := ""
-	for k, v := range env {
-		envPrefix += fmt.Sprintf("export %s=%s; ", k, util.ShellQuote(v))
-	}
-	shell := envPrefix + "nohup " + util.ShellQuoteJoin(cmd) + " >/dev/null 2>&1 & echo $!"
+	shell := "nohup " + command + " >/dev/null 2>&1 & echo $!"
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return 0, err

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -164,7 +165,7 @@ func (e *Executor) createInternalActor(ctx context.Context, n *graph.Node, cfg *
 	if err != nil {
 		return state.Resource{}, err
 	}
-	pid, err := conn.ExecBackground(ctx, resolvedCommand, resolvedEnv)
+	pid, err := conn.ExecBackground(ctx, commandRequest(resolvedCommand, resolvedEnv))
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("start actor %s: %w", n.Address.Name, err)
 	}
@@ -293,7 +294,7 @@ func (e *Executor) createExternalActor(ctx context.Context, n *graph.Node, cfg *
 	if err != nil {
 		return state.Resource{}, err
 	}
-	pid, err := conn.ExecBackground(ctx, resolvedCommand, resolvedEnv)
+	pid, err := conn.ExecBackground(ctx, commandRequest(resolvedCommand, resolvedEnv))
 	if err != nil {
 		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy actor on exec failure")
 		return state.Resource{}, fmt.Errorf("start actor command %s: %w", n.Address.Name, err)
@@ -366,7 +367,13 @@ func (e *Executor) destroyActorResource(ctx context.Context, r state.Resource) e
 		// terminated (e.g. opencode-serve spawns sub-processes).
 		killCmd := fmt.Sprintf("kill -- -%d 2>/dev/null; kill %d 2>/dev/null || true", pid, pid)
 		if conn, err := nodeDriver.Connection(handle, nil); err == nil && conn != nil {
-			util.BestEffortIgnore(func() error { return conn.ExecInline(ctx, []string{killCmd}) }, "kill actor process")
+			util.BestEffortIgnore(func() error {
+				result, execErr := conn.Exec(ctx, substrate.ExecRequest{Program: killCmd, Shell: substrate.ShellLinux}, io.Discard, io.Discard)
+				if execErr == nil && result.ExitCode != 0 {
+					return fmt.Errorf("exit code %d", result.ExitCode)
+				}
+				return execErr
+			}, "kill actor process")
 		}
 	}
 
@@ -397,4 +404,13 @@ func (e *Executor) destroyActorResource(ctx context.Context, r state.Resource) e
 
 	e.state.RemoveResource(r.Address)
 	return nil
+}
+
+func commandRequest(command []string, environment map[string]string) substrate.ExecRequest {
+	request := substrate.ExecRequest{Environment: environment, Shell: substrate.ShellNone}
+	if len(command) > 0 {
+		request.Program = command[0]
+		request.Args = append([]string{}, command[1:]...)
+	}
+	return request
 }

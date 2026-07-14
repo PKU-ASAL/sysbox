@@ -144,7 +144,8 @@ resource "sysbox_node" "node_attack" {
 
   # ubuntu-24.04 rootfs has apt; use bash for `|| true` etc.
   provisioner "exec" {
-    inline = ["uname -a", "ip -4 addr show eth0 | head -3"]
+    program = "uname -a && ip -4 addr show eth0 | head -3"
+    shell   = "linux"
   }
 }
 
@@ -167,7 +168,8 @@ resource "sysbox_node" "node_web" {
   }
 
   provisioner "exec" {
-    inline = ["uname -a", "hostname"]
+    program = "uname -a && hostname"
+    shell   = "linux"
   }
 }
 
@@ -190,7 +192,8 @@ resource "sysbox_node" "node_db" {
   }
 
   provisioner "exec" {
-    inline = ["uname -a", "cat /etc/os-release | head -3"]
+    program = "uname -a && cat /etc/os-release | head -3"
+    shell   = "linux"
   }
 }
 

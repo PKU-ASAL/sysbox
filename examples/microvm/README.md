@@ -122,7 +122,8 @@ resource "sysbox_node" "node_db" {
   }
 
   provisioner "exec" {
-    inline = ["uname -a", "ip addr"]
+    program = "uname -a && ip addr"
+    shell   = "linux"
   }
 }
 ```

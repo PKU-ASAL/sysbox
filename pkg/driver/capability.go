@@ -80,8 +80,8 @@ type Console interface {
 }
 
 type GuestExec interface {
-	ExecInNode(context.Context, substrate.NodeHandle, substrate.ExecSpec) (substrate.ExecResult, error)
-	ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecSpec) (int, error)
+	ExecInNode(context.Context, substrate.NodeHandle, substrate.ExecRequest) (substrate.ExecResult, error)
+	ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error)
 }
 
 type Network interface {

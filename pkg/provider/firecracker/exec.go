@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	osexec "os/exec"
-	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -38,7 +36,7 @@ func vsockConnFromHandle(h substrate.NodeHandle) *transport.VsockConnection {
 
 // ExecInNode runs a command inside the VM. It uses vsock RPC when the handle
 // contains vsock metadata, otherwise it uses SSH.
-func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (substrate.ExecResult, error) {
+func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecRequest) (substrate.ExecResult, error) {
 	if vc := vsockConnFromHandle(h); vc != nil {
 		return s.execInNodeVsock(ctx, vc, spec)
 	}
@@ -70,82 +68,33 @@ func (s *Substrate) OpenConsole(ctx context.Context, h substrate.NodeHandle, req
 
 var _ substrate.ConsoleProvider = (*Substrate)(nil)
 
-func (s *Substrate) execInNodeVsock(ctx context.Context, vc *transport.VsockConnection, spec substrate.ExecSpec) (substrate.ExecResult, error) {
-	var stdout, stderr strings.Builder
-	var exitCode int
-	err := vc.ExecFrameStream(ctx, spec.Cmd, spec.Env, func(f vsockrpc.Frame) error {
-		if len(f.Stdout) > 0 {
-			stdout.Write(f.Stdout)
-		}
-		if len(f.Stderr) > 0 {
-			stderr.Write(f.Stderr)
-		}
-		if f.Done {
-			exitCode = f.ExitCode
-			return io.EOF // signal clean stop; ExecFrameStream returns nil
-		}
-		return nil
-	})
-
-	result := substrate.ExecResult{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: exitCode,
-	}
-	if err != nil {
-		// Check for exit-code errors from ExecStream (non-frame-stream callers).
-		if strings.HasPrefix(err.Error(), "exit code ") {
-			fmt.Sscanf(err.Error(), "exit code %d", &result.ExitCode)
-			return result, nil
-		}
-		// io.EOF means we signalled stop via Done frame — not an error.
-		if err == io.EOF {
-			return result, nil
-		}
-		result.ExitCode = 1
-		return result, nil
-	}
-	return result, nil
+func (s *Substrate) execInNodeVsock(ctx context.Context, vc *transport.VsockConnection, req substrate.ExecRequest) (substrate.ExecResult, error) {
+	return vc.Exec(ctx, req, io.Discard, io.Discard)
 }
 
-func (s *Substrate) execInNodeSSH(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (substrate.ExecResult, error) {
+func (s *Substrate) execInNodeSSH(ctx context.Context, h substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
 	conn := sshConnFromHandle(h)
 	if conn == nil {
 		return substrate.ExecResult{}, fmt.Errorf("no SSH connection info in handle")
 	}
-	cmd := strings.Join(spec.Cmd, " ")
-	out, err := conn.ExecCapture(ctx, cmd)
-	if err != nil {
-		exitCode := 1
-		if exitErr, ok := err.(*osexec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
-		return substrate.ExecResult{
-			Stdout:   string(out),
-			ExitCode: exitCode,
-		}, nil
-	}
-	return substrate.ExecResult{
-		Stdout:   string(out),
-		ExitCode: 0,
-	}, nil
+	return conn.Exec(ctx, req, io.Discard, io.Discard)
 }
 
 // ExecBackground starts a detached command inside the VM. Prefers vsock
 // and falls back to SSH.
-func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (int, error) {
+func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecRequest) (int, error) {
 	if vc := vsockConnFromHandle(h); vc != nil {
-		return vc.ExecBackground(ctx, spec.Cmd, spec.Env)
+		return vc.ExecBackground(ctx, spec)
 	}
 	return s.execBackgroundSSH(ctx, h, spec)
 }
 
-func (s *Substrate) execBackgroundSSH(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (int, error) {
+func (s *Substrate) execBackgroundSSH(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecRequest) (int, error) {
 	conn := sshConnFromHandle(h)
 	if conn == nil {
 		return 0, fmt.Errorf("no SSH connection info in handle")
 	}
-	pid, err := conn.ExecBackground(ctx, spec.Cmd, spec.Env)
+	pid, err := conn.ExecBackground(ctx, spec)
 	if err != nil {
 		return 0, fmt.Errorf("ssh background: %w", err)
 	}

@@ -43,7 +43,7 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	result, err := provider.ExecInNode(ctx, handle, substrate.ExecSpec{Cmd: []string{"ping", "-c", "3", "-W", "2", *target}})
+	result, err := provider.ExecInNode(ctx, handle, substrate.ExecRequest{Program: "ping", Args: []string{"-c", "3", "-W", "2", *target}, Shell: substrate.ShellNone})
 	if err != nil {
 		fatal(err)
 	}

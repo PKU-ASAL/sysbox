@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
@@ -607,24 +607,36 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 	for _, p := range provs {
 		switch p.Type {
 		case "exec":
-			if len(p.Inline) == 0 {
-				continue
-			}
-			resolvedInline, err := resolveSecretStrings(ctx, p.Inline)
+			program, err := secret.ResolveString(ctx, executionSecretResolver, p.Program)
 			if err != nil {
 				return err
 			}
+			args, err := resolveSecretStrings(ctx, p.Args)
+			if err != nil {
+				return err
+			}
+			environment, err := resolveSecretMap(ctx, p.Environment)
+			if err != nil {
+				return err
+			}
+			request := substrate.ExecRequest{Program: program, Args: args, Environment: environment, WorkingDir: p.WorkingDir, Shell: substrate.ShellKind(p.Shell)}
+			if err := request.Validate(); err != nil {
+				return fmt.Errorf("provisioner exec: %w", err)
+			}
 			if p.Background {
-				cmd := []string{"sh", "-c", strings.Join(resolvedInline, " && ")}
-				pid, err := conn.ExecBackground(ctx, cmd, nil)
+				pid, err := conn.ExecBackground(ctx, request)
 				if err != nil {
 					return fmt.Errorf("provisioner exec (background): %w", err)
 				}
 				e.logf("[provisioner] background exec started (pid %d)\n", pid)
 			} else {
-				e.logf("[provisioner] exec: %d command(s)\n", len(resolvedInline))
-				if err := conn.ExecInline(ctx, resolvedInline); err != nil {
+				e.logf("[provisioner] exec: %s\n", p.Program)
+				result, err := conn.Exec(ctx, request, os.Stdout, os.Stderr)
+				if err != nil {
 					return err
+				}
+				if result.ExitCode != 0 {
+					return fmt.Errorf("provisioner exec %s: exit code %d", p.Program, result.ExitCode)
 				}
 			}
 		case "file":

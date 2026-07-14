@@ -193,6 +193,7 @@ func handleExec(w io.Writer, req vsockrpc.Request) {
 	}
 
 	cmd := exec.Command(req.Cmd[0], req.Cmd[1:]...)
+	cmd.Dir = req.WorkDir
 	// Merge host-supplied env into the current environment so that
 	// PATH, HOME, etc. are preserved. Without this, any env overrides
 	// from the host would erase the entire environment, breaking

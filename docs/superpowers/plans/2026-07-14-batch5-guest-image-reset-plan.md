@@ -148,27 +148,27 @@ Update every HCL example to `kind/source/architecture/guest_family`, run `make c
 - Consumes: `ExecRequest`, `ShellKind`, and resolved node family.
 - Produces: structured `GuestExec.ExecInNode/ExecBackground`; strict `ProvisionerConfig` without `Inline`.
 
-- [ ] **Step 1: Write failing execution tests**
+- [x] **Step 1: Write failing execution tests**
 
 Prove direct argv and environment preservation, explicit Linux shell translation, fake Windows PowerShell/cmd execution without core changes, family/shell mismatch rejection, stdin forwarding, and old `inline` rejection.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `go test ./pkg/runtime ./pkg/provider/docker ./pkg/provider/firecracker ./pkg/provider/libvirt -run 'Structured|Shell|Provisioner' -count=1`
 
-- [ ] **Step 3: Replace provisioner schema**
+- [x] **Step 3: Replace provisioner schema**
 
 Use `Program`, `Args`, `Environment`, `WorkingDir`, `Shell`, and `Background`; require program and shell for exec blocks. Keep file provisioners separate.
 
-- [ ] **Step 4: Migrate runtime and connection drivers**
+- [x] **Step 4: Migrate runtime and connection drivers**
 
 Pass structured requests end-to-end. Translate shell intent only inside the connection/provider implementation. Preserve argument boundaries and environment without runtime string joining.
 
-- [ ] **Step 5: Delete legacy execution APIs**
+- [x] **Step 5: Delete legacy execution APIs**
 
 Remove `ExecSpec`, `Connection.ExecInline`, inline-resolution helpers, and production implicit `sh -c` paths. Migrate route/readiness code to structured requests owned by the relevant guest-network driver.
 
-- [ ] **Step 6: Run full/race/removal tests and commit**
+- [x] **Step 6: Run full/race/removal tests and commit**
 
 Run `go test ./...`, `go vet ./...`, focused race on runtime/providers, and require no production `ExecSpec` or `inline` matches. Commit `refactor(exec): require structured guest requests`.
 

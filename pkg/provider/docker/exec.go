@@ -17,16 +17,22 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/oslab/sysbox/pkg/util"
 )
 
-func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (substrate.ExecResult, error) {
-	envs := util.EnvToSlice(spec.Env)
+func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
+	cmd, err := transport.CommandArgv(req)
+	if err != nil {
+		return substrate.ExecResult{}, err
+	}
+	envs := util.EnvToSlice(req.Environment)
 
 	ex, err := s.cli.ContainerExecCreate(ctx, h.ID, container.ExecOptions{
-		Cmd:          spec.Cmd,
+		Cmd:          cmd,
 		Env:          envs,
-		WorkingDir:   spec.WorkDir,
+		WorkingDir:   req.WorkingDir,
+		AttachStdin:  req.Stdin != nil,
 		AttachStdout: true,
 		AttachStderr: true,
 	})
@@ -39,11 +45,20 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec
 		return substrate.ExecResult{}, fmt.Errorf("exec attach: %w", err)
 	}
 	defer att.Close()
+	stdinDone := make(chan struct{})
+	go func() {
+		if req.Stdin != nil {
+			_, _ = io.Copy(att.Conn, req.Stdin)
+			_ = att.CloseWrite()
+		}
+		close(stdinDone)
+	}()
 
 	var stdout, stderr bytes.Buffer
 	if _, err := stdcopy.StdCopy(&stdout, &stderr, att.Reader); err != nil {
 		return substrate.ExecResult{}, fmt.Errorf("exec read: %w", err)
 	}
+	<-stdinDone
 
 	inspect, err := s.cli.ContainerExecInspect(ctx, ex.ID)
 	if err != nil {
@@ -184,13 +199,17 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcP
 // ExecBackground starts a detached command inside the container and returns
 // the PID of the process as seen inside the container namespace.
 // The process is not attached to any terminal and survives exec-client disconnect.
-func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecSpec) (int, error) {
-	envs := util.EnvToSlice(spec.Env)
+func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, req substrate.ExecRequest) (int, error) {
+	cmd, err := transport.CommandArgv(req)
+	if err != nil {
+		return 0, err
+	}
+	envs := util.EnvToSlice(req.Environment)
 
 	ex, err := s.cli.ContainerExecCreate(ctx, h.ID, container.ExecOptions{
-		Cmd:          spec.Cmd,
+		Cmd:          cmd,
 		Env:          envs,
-		WorkingDir:   spec.WorkDir,
+		WorkingDir:   req.WorkingDir,
 		Detach:       true,
 		AttachStdout: false,
 		AttachStderr: false,

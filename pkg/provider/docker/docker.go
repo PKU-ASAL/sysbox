@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -89,38 +88,24 @@ type dockerConn struct {
 	handle substrate.NodeHandle
 }
 
-func (c *dockerConn) ExecInline(ctx context.Context, cmds []string) error {
-	return c.ExecStream(ctx, cmds, os.Stdout, os.Stderr)
-}
-
-func (c *dockerConn) ExecStream(ctx context.Context, cmds []string, stdout, stderr io.Writer) error {
-	for _, cmd := range cmds {
-		result, err := c.sub.ExecInNode(ctx, c.handle, substrate.ExecSpec{
-			Cmd: []string{"sh", "-c", cmd},
-		})
-		if err != nil {
-			return fmt.Errorf("exec %q: %w", cmd, err)
-		}
-		if result.Stdout != "" {
-			fmt.Fprint(stdout, result.Stdout)
-		}
-		if result.Stderr != "" {
-			fmt.Fprint(stderr, result.Stderr)
-		}
-		if result.ExitCode != 0 {
-			return fmt.Errorf("exec %q: exit code %d", cmd, result.ExitCode)
-		}
-	}
-	return nil
-}
-
-func (c *dockerConn) ExecBackground(ctx context.Context, cmd []string, env map[string]string) (int, error) {
-	pid, err := c.sub.ExecBackground(ctx, c.handle, substrate.ExecSpec{
-		Cmd: cmd,
-		Env: env,
-	})
+func (c *dockerConn) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (substrate.ExecResult, error) {
+	result, err := c.sub.ExecInNode(ctx, c.handle, req)
 	if err != nil {
-		return 0, fmt.Errorf("exec background %v: %w", cmd, err)
+		return result, err
+	}
+	if stdout != nil {
+		_, _ = io.WriteString(stdout, result.Stdout)
+	}
+	if stderr != nil {
+		_, _ = io.WriteString(stderr, result.Stderr)
+	}
+	return result, nil
+}
+
+func (c *dockerConn) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
+	pid, err := c.sub.ExecBackground(ctx, c.handle, req)
+	if err != nil {
+		return 0, fmt.Errorf("exec background %s: %w", req.Program, err)
 	}
 	return pid, nil
 }

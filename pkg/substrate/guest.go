@@ -3,7 +3,10 @@ package substrate
 import (
 	"fmt"
 	"io"
+	"regexp"
 )
+
+var environmentKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type GuestFamily string
 
@@ -52,6 +55,11 @@ type ExecRequest struct {
 func (r ExecRequest) Validate() error {
 	if r.Program == "" {
 		return fmt.Errorf("exec program is required")
+	}
+	for key := range r.Environment {
+		if !environmentKeyPattern.MatchString(key) {
+			return fmt.Errorf("invalid environment key %q", key)
+		}
 	}
 	return ValidateShellKind(r.Shell)
 }

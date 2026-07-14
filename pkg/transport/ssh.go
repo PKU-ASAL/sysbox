@@ -69,91 +69,38 @@ func (c *SSHConnection) OpenConsole(ctx context.Context, req ConsoleRequest) (su
 	return NewSSHConsoleSession(ctx, c.sshArgs(), req)
 }
 
-func (c *SSHConnection) ExecInline(ctx context.Context, cmds []string) error {
-	for _, cmd := range cmds {
-		if err := c.execOne(ctx, cmd, nil); err != nil {
-			return fmt.Errorf("ssh exec %q: %w", cmd, err)
-		}
+func (c *SSHConnection) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (substrate.ExecResult, error) {
+	command, err := RemoteCommand(req)
+	if err != nil {
+		return substrate.ExecResult{}, err
 	}
-	return nil
+	var stdoutBuffer, stderrBuffer bytes.Buffer
+	sshArgs := append(c.sshArgs(), command)
+	execCmd := c.command(ctx, sshArgs)
+	execCmd.Stdin = req.Stdin
+	execCmd.Stdout = &stdoutBuffer
+	execCmd.Stderr = &stderrBuffer
+	runErr := execCmd.Run()
+	result := substrate.ExecResult{Stdout: stdoutBuffer.String(), Stderr: stderrBuffer.String()}
+	if exitErr, ok := runErr.(*exec.ExitError); ok {
+		result.ExitCode = exitErr.ExitCode()
+	} else if runErr != nil {
+		return result, fmt.Errorf("ssh exec: %w", runErr)
+	}
+	if stdout != nil {
+		_, _ = io.WriteString(stdout, result.Stdout)
+	}
+	if stderr != nil {
+		_, _ = io.WriteString(stderr, result.Stderr)
+	}
+	return result, nil
 }
 
-// ExecCapture runs a command over SSH and returns its stdout.
-func (c *SSHConnection) ExecStream(ctx context.Context, cmds []string, stdout, stderr io.Writer) error {
-	for _, cmd := range cmds {
-		var buf bytes.Buffer
-		if err := c.execOne(ctx, cmd, &buf); err != nil {
-			return fmt.Errorf("ssh exec %q: %w", cmd, err)
-		}
-		if _, err := stdout.Write(buf.Bytes()); err != nil {
-			return fmt.Errorf("write stdout: %w", err)
-		}
+func (c *SSHConnection) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
+	shellCmd, err := RemoteCommand(req)
+	if err != nil {
+		return 0, err
 	}
-	return nil
-}
-
-func (c *SSHConnection) ExecCapture(ctx context.Context, cmd string) ([]byte, error) {
-	var stdout bytes.Buffer
-	if err := c.execOne(ctx, cmd, &stdout); err != nil {
-		return nil, err
-	}
-	return stdout.Bytes(), nil
-}
-
-func (c *SSHConnection) execOne(ctx context.Context, cmd string, stdoutWriter *bytes.Buffer) error {
-	sshArgs := c.sshArgs()
-	sshArgs = append(sshArgs, cmd)
-
-	var sshBin string
-	for _, p := range []string{"/usr/bin/ssh", "/usr/local/bin/ssh", "ssh"} {
-		if _, err := os.Stat(p); err == nil {
-			sshBin = p
-			break
-		}
-	}
-	if sshBin == "" {
-		sshBin = "ssh"
-	}
-
-	// Use sshpass for password auth if available.
-	// Use -e (SSHPASS env var) instead of -p to avoid exposing the password
-	// in /proc/<pid>/cmdline where any local user can read it.
-	var execCmd *exec.Cmd
-	if c.password != "" {
-		if sp, err := exec.LookPath("sshpass"); err == nil {
-			spArgs := []string{"-e", sshBin}
-			spArgs = append(spArgs, sshArgs...)
-			execCmd = exec.CommandContext(ctx, sp, spArgs...)
-			execCmd.Env = append(os.Environ(), "SSHPASS="+c.password)
-		}
-	}
-	if execCmd == nil {
-		execCmd = exec.CommandContext(ctx, sshBin, sshArgs...)
-	}
-
-	var stderr bytes.Buffer
-	execCmd.Stderr = &stderr
-	if stdoutWriter != nil {
-		execCmd.Stdout = stdoutWriter
-	} else {
-		execCmd.Stdout = os.Stdout
-	}
-
-	if err := execCmd.Run(); err != nil {
-		return fmt.Errorf("%s\n%s", err, stderr.String())
-	}
-	return nil
-}
-
-func (c *SSHConnection) ExecBackground(ctx context.Context, cmd []string, env map[string]string) (int, error) {
-	// Build env prefix. Use single-quote wrapping to prevent the remote
-	// shell from interpreting $, `, !, etc. in env values.
-	envPrefix := ""
-	for k, v := range env {
-		envPrefix += fmt.Sprintf("export %s=%s; ", k, util.ShellQuote(v))
-	}
-	shellCmd := envPrefix + strings.Join(cmd, " ")
-
 	sshArgs := c.sshArgs()
 	// Quote the entire shellCmd as a single argument to `sh -c` so that
 	// multi-word commands are not split by the remote login shell.
@@ -168,6 +115,18 @@ func (c *SSHConnection) ExecBackground(ctx context.Context, cmd []string, env ma
 	var pid int
 	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &pid)
 	return pid, nil
+}
+
+func (c *SSHConnection) command(ctx context.Context, sshArgs []string) *exec.Cmd {
+	sshBin := resolveSSHBin()
+	if c.password != "" {
+		if sp, err := exec.LookPath("sshpass"); err == nil {
+			cmd := exec.CommandContext(ctx, sp, append([]string{"-e", sshBin}, sshArgs...)...)
+			cmd.Env = append(os.Environ(), "SSHPASS="+c.password)
+			return cmd
+		}
+	}
+	return exec.CommandContext(ctx, sshBin, sshArgs...)
 }
 
 func (c *SSHConnection) CopyFile(ctx context.Context, srcPath, dstPath string) error {
@@ -197,7 +156,8 @@ func (c *SSHConnection) WaitForSSH(ctx context.Context, timeout time.Duration) e
 			return ctx.Err()
 		default:
 		}
-		if err := c.execOne(ctx, "true", nil); err == nil {
+		result, err := c.Exec(ctx, substrate.ExecRequest{Program: "true", Shell: substrate.ShellNone}, io.Discard, io.Discard)
+		if err == nil && result.ExitCode == 0 {
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)

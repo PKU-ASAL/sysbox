@@ -53,6 +53,17 @@ func validateGuestFamilies(g *graph.Graph) error {
 		if err != nil {
 			return fmt.Errorf("node %s: %w", node.Address, err)
 		}
+		for _, provisioner := range cfg.Provisioners {
+			if provisioner.Type != "exec" {
+				continue
+			}
+			if provisioner.Program == "" || provisioner.Shell == "" {
+				return fmt.Errorf("node %s: exec provisioner requires program and shell", node.Address)
+			}
+			if err := validateShellForFamily(family, substrate.ShellKind(provisioner.Shell)); err != nil {
+				return fmt.Errorf("node %s: %w", node.Address, err)
+			}
+		}
 		if family != substrate.GuestFamilyUnknown {
 			continue
 		}
@@ -66,6 +77,25 @@ func validateGuestFamilies(g *graph.Graph) error {
 		if descriptor, exists := driver.DefaultRegistry.Get(substrateName); exists && descriptor.GuestNetworkInit != nil && len(cfg.Links) > 0 {
 			return fmt.Errorf("node %s: unknown guest family requires an explicit override before guest network initialization", node.Address)
 		}
+	}
+	return nil
+}
+
+func validateShellForFamily(family substrate.GuestFamily, shell substrate.ShellKind) error {
+	if err := substrate.ValidateShellKind(shell); err != nil {
+		return err
+	}
+	switch family {
+	case substrate.GuestFamilyLinux:
+		if shell == substrate.ShellPowerShell || shell == substrate.ShellCmd {
+			return fmt.Errorf("shell %q is incompatible with guest family %q", shell, family)
+		}
+	case substrate.GuestFamilyWindows:
+		if shell == substrate.ShellLinux {
+			return fmt.Errorf("shell %q is incompatible with guest family %q", shell, family)
+		}
+	case substrate.GuestFamilyUnknown:
+		return fmt.Errorf("unknown guest family requires an explicit override before execution")
 	}
 	return nil
 }

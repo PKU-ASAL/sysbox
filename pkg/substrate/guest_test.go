@@ -40,4 +40,5 @@ func TestExecRequestValidateAndClone(t *testing.T) {
 	require.Same(t, req.Stdin, clone.Stdin)
 
 	require.ErrorContains(t, (ExecRequest{Shell: ShellNone}).Validate(), "program")
+	require.ErrorContains(t, (ExecRequest{Program: "true", Shell: ShellNone, Environment: map[string]string{"A; touch /tmp/pwn": "x"}}).Validate(), "environment key")
 }

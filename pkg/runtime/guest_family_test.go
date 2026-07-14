@@ -61,7 +61,7 @@ func TestComputePlanRejectsUnknownFamilyProvisioning(t *testing.T) {
 	require.NoError(t, g.AddNode(nodeAddr, []address.Address{imageAddr}))
 	require.NoError(t, g.SetData(nodeAddr, &config.NodeConfig{
 		Substrate: "missing", Image: "sysbox_image.unknown.id",
-		Provisioners: []config.ProvisionerConfig{{Type: "exec", Inline: []string{"true"}}},
+		Provisioners: []config.ProvisionerConfig{{Type: "exec", Program: "true", Shell: "none"}},
 	}))
 
 	_, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})

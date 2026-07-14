@@ -156,8 +156,9 @@ type ConnectionConfig struct {
 // ProvisionerConfig represents a single provisioner block inside a node.
 //
 //	provisioner "exec" {
-//	  inline     = ["mkdir -p /root/.ssh"]
-//	  background = false
+//	  program = "/usr/bin/install"
+//	  args    = ["-d", "/opt/lab"]
+//	  shell   = "none"
 //	}
 //
 //	provisioner "file" {
@@ -165,11 +166,15 @@ type ConnectionConfig struct {
 //	  destination = "/etc/foo.json"
 //	}
 type ProvisionerConfig struct {
-	Type        string   `hcl:"type,label"`
-	Inline      []string `hcl:"inline,optional"`
-	Source      string   `hcl:"source,optional"`
-	Destination string   `hcl:"destination,optional"`
-	Background  bool     `hcl:"background,optional"`
+	Type        string            `hcl:"type,label"`
+	Program     string            `hcl:"program,optional"`
+	Args        []string          `hcl:"args,optional"`
+	Environment map[string]string `hcl:"environment,optional"`
+	WorkingDir  string            `hcl:"working_dir,optional"`
+	Shell       string            `hcl:"shell,optional"`
+	Source      string            `hcl:"source,optional"`
+	Destination string            `hcl:"destination,optional"`
+	Background  bool              `hcl:"background,optional"`
 }
 
 // Typed representations after second-pass decoding.

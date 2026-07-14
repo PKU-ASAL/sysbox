@@ -144,13 +144,8 @@ resource "sysbox_node" "node_attack" {
   }
 
   provisioner "exec" {
-    inline = [
-      # SSH key for agent pivot.
-      "mkdir -p /root/.ssh",
-      "cat /tmp/host_pubkey >> /root/.ssh/authorized_keys",
-      "chmod 600 /root/.ssh/authorized_keys",
-      "rm /tmp/host_pubkey",
-    ]
+    program = "mkdir -p /root/.ssh && cat /tmp/host_pubkey >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm /tmp/host_pubkey"
+    shell   = "linux"
   }
 }
 

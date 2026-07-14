@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -137,7 +138,7 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 
 // setupSSHAccess installs openssh-server, writes authorized_keys and sshd
 // config, and starts sshd — all via the substrate.Connection interface so it
-// works on any substrate that supports ExecInline / CopyFile.
+// works on any Linux guest connection that supports structured exec and copy.
 //
 // hookBinaryPath is the host-side path to sysbox-sshd-hook; pass "" to skip.
 func setupSSHAccess(ctx context.Context, conn substrate.Connection, nodeID string, authorizedKeys []string, port int, hookBinaryPath string) error {
@@ -145,12 +146,12 @@ func setupSSHAccess(ctx context.Context, conn substrate.Connection, nodeID strin
 	installCmds := []string{
 		"apk add --no-cache openssh-server 2>/dev/null || (apt-get update -qq && apt-get install -y -q openssh-server)",
 	}
-	if err := conn.ExecInline(ctx, installCmds); err != nil {
+	if err := execLinuxCommands(ctx, conn, installCmds); err != nil {
 		return fmt.Errorf("install openssh: %w", err)
 	}
 
 	// 2. Generate host keys.
-	if err := conn.ExecInline(ctx, []string{"ssh-keygen -A"}); err != nil {
+	if err := execLinuxCommands(ctx, conn, []string{"ssh-keygen -A"}); err != nil {
 		return fmt.Errorf("ssh-keygen -A: %w", err)
 	}
 
@@ -159,7 +160,7 @@ func setupSSHAccess(ctx context.Context, conn substrate.Connection, nodeID strin
 		if err := conn.CopyFile(ctx, hookBinaryPath, "/usr/local/bin/sysbox-sshd-hook"); err != nil {
 			return fmt.Errorf("copy sysbox-sshd-hook: %w", err)
 		}
-		if err := conn.ExecInline(ctx, []string{"chmod +x /usr/local/bin/sysbox-sshd-hook"}); err != nil {
+		if err := execLinuxCommands(ctx, conn, []string{"chmod +x /usr/local/bin/sysbox-sshd-hook"}); err != nil {
 			return fmt.Errorf("chmod hook: %w", err)
 		}
 	}
@@ -174,7 +175,7 @@ func setupSSHAccess(ctx context.Context, conn substrate.Connection, nodeID strin
 		fmt.Sprintf("echo %s | base64 -d > /etc/sysbox/authorized_keys",
 			base64.StdEncoding.EncodeToString([]byte(keysContent))),
 	}
-	if err := conn.ExecInline(ctx, setupKeysCmds); err != nil {
+	if err := execLinuxCommands(ctx, conn, setupKeysCmds); err != nil {
 		return fmt.Errorf("write authorized_keys: %w", err)
 	}
 
@@ -184,17 +185,30 @@ func setupSSHAccess(ctx context.Context, conn substrate.Connection, nodeID strin
 		"mkdir -p /etc/ssh/sshd_config.d && echo %s | base64 -d > /etc/ssh/sshd_config.d/sysbox.conf",
 		base64.StdEncoding.EncodeToString([]byte(sshdConf)),
 	)
-	if err := conn.ExecInline(ctx, []string{writeConf}); err != nil {
+	if err := execLinuxCommands(ctx, conn, []string{writeConf}); err != nil {
 		return fmt.Errorf("write sshd config: %w", err)
 	}
 
 	// 6. Start sshd.
 	startCmd := fmt.Sprintf("/usr/sbin/sshd -p %d -f /etc/ssh/sshd_config -D &", port)
-	if err := conn.ExecInline(ctx, []string{startCmd}); err != nil {
+	if err := execLinuxCommands(ctx, conn, []string{startCmd}); err != nil {
 		return fmt.Errorf("start sshd: %w", err)
 	}
 
 	_ = nodeID // available for future structured logging
+	return nil
+}
+
+func execLinuxCommands(ctx context.Context, conn substrate.Connection, commands []string) error {
+	for _, command := range commands {
+		result, err := conn.Exec(ctx, substrate.ExecRequest{Program: command, Shell: substrate.ShellLinux}, io.Discard, io.Discard)
+		if err != nil {
+			return err
+		}
+		if result.ExitCode != 0 {
+			return fmt.Errorf("exec %q: exit code %d", command, result.ExitCode)
+		}
+	}
 	return nil
 }
 

@@ -54,7 +54,8 @@ resource "sysbox_node" "vm_attack" {
   }
 
   provisioner "exec" {
-    inline = ["uname -a"]
+    program = "uname -a"
+    shell   = "linux"
   }
 }
 

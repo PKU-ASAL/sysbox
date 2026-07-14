@@ -59,6 +59,65 @@ resource "sysbox_image" "alpine" {
 	require.ErrorContains(t, err, "docker_ref")
 }
 
+func TestExecProvisionerRequiresStructuredRequestAndRejectsInline(t *testing.T) {
+	registerPortTestDriver(t, &portTestSubstrate{name: "docker"})
+	structured := writeHCL(t, `
+substrate "docker" { alias = "local" }
+resource "sysbox_image" "alpine" {
+  substrate = substrate.docker.local
+  kind = "oci"
+  source = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
+}
+resource "sysbox_node" "server" {
+  substrate = substrate.docker.local
+  image = sysbox_image.alpine.id
+  provisioner "exec" {
+    program = "/usr/bin/install"
+    args = ["-d", "/opt/lab"]
+    environment = { MODE = "test" }
+    working_dir = "/"
+    shell = "none"
+  }
+}
+`)
+	root, err := config.ParseFile(structured)
+	require.NoError(t, err)
+	ctx, err := config.BuildEvalContext(root)
+	require.NoError(t, err)
+	g, err := BuildGraph(root, ctx)
+	require.NoError(t, err)
+	cfg := g.Get(address.Resource("sysbox_node", "server")).Data.(*config.NodeConfig)
+	require.Equal(t, "/usr/bin/install", cfg.Provisioners[0].Program)
+	require.Equal(t, []string{"-d", "/opt/lab"}, cfg.Provisioners[0].Args)
+	require.Equal(t, map[string]string{"MODE": "test"}, cfg.Provisioners[0].Environment)
+	require.Equal(t, "/", cfg.Provisioners[0].WorkingDir)
+	require.Equal(t, "none", cfg.Provisioners[0].Shell)
+
+	legacy := writeHCL(t, `
+substrate "docker" { alias = "local" }
+resource "sysbox_image" "alpine" {
+  substrate = substrate.docker.local
+  kind = "oci"
+  source = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
+}
+resource "sysbox_node" "server" {
+  substrate = substrate.docker.local
+  image = sysbox_image.alpine.id
+  provisioner "exec" { inline = ["true"] }
+}
+`)
+	root, err = config.ParseFile(legacy)
+	require.NoError(t, err)
+	ctx, err = config.BuildEvalContext(root)
+	require.NoError(t, err)
+	_, err = BuildGraph(root, ctx)
+	require.ErrorContains(t, err, "inline")
+}
+
 func TestBuildGraphCount(t *testing.T) {
 	f := writeHCL(t, `
 resource "sysbox_network" "lab" {

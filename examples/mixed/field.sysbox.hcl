@@ -179,7 +179,8 @@ resource "sysbox_node" "node_db" {
   ]
 
   provisioner "exec" {
-    inline = ["apt-get update -qq && apt-get install -y -qq postgresql 2>/dev/null || true"]
+    program = "apt-get update -qq && apt-get install -y -qq postgresql 2>/dev/null || true"
+    shell   = "linux"
   }
 }
 

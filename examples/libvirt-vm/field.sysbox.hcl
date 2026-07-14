@@ -100,10 +100,8 @@ resource "sysbox_node" "server" {
   }
 
   provisioner "exec" {
-    inline = [
-      "ip addr add 10.0.20.10/24 dev eth0 || true",
-      "ip link set eth0 up",
-    ]
+    program = "ip addr add 10.0.20.10/24 dev eth0 || true; ip link set eth0 up"
+    shell   = "linux"
   }
 }
 
@@ -130,10 +128,8 @@ resource "sysbox_node" "client" {
   }
 
   provisioner "exec" {
-    inline = [
-      "ip addr add 10.0.20.20/24 dev eth0 || true",
-      "ip link set eth0 up",
-    ]
+    program = "ip addr add 10.0.20.20/24 dev eth0 || true; ip link set eth0 up"
+    shell   = "linux"
   }
 }
 

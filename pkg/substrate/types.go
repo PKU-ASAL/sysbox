@@ -214,18 +214,8 @@ type ConnectionHint struct {
 // Moved here from pkg/transport so substrates can implement it without
 // import cycles.
 type Connection interface {
-	// ExecInline runs each line as a shell command (sh -c) sequentially.
-	// stdout and stderr are written to os.Stdout / os.Stderr.
-	// Returns on first non-zero exit.
-	ExecInline(ctx context.Context, cmds []string) error
-
-	// ExecStream runs cmds sequentially, writing stdout and stderr to the
-	// provided writers. Useful for streaming output over HTTP or to a log.
-	ExecStream(ctx context.Context, cmds []string, stdout, stderr io.Writer) error
-
-	// ExecBackground starts a command detached from the calling session.
-	// Returns the PID of the spawned process.
-	ExecBackground(ctx context.Context, cmd []string, env map[string]string) (int, error)
+	Exec(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (ExecResult, error)
+	ExecBackground(ctx context.Context, req ExecRequest) (int, error)
 
 	// CopyFile copies a local file into the node at dstPath.
 	CopyFile(ctx context.Context, srcPath, dstPath string) error
@@ -281,12 +271,6 @@ func HandlePublicAttributes(h NodeHandle) map[string]any {
 		"container_id": h.ID,
 		"primary_ip":   h.Net.PrimaryIP,
 	}
-}
-
-type ExecSpec struct {
-	Cmd     []string
-	Env     map[string]string
-	WorkDir string
 }
 
 type ExecResult struct {

@@ -18,7 +18,7 @@ func (s *Substrate) resolveAttachmentDevice(ctx context.Context, handle substrat
 	}
 	ip := strings.SplitN(req.IPPrefixes[0], "/", 2)[0]
 	command := fmt.Sprintf(`ip -o addr show | awk '$4 ~ /^%s\// {print $2; exit}'`, ip)
-	resolved, err := s.ExecInNode(ctx, handle, substrate.ExecSpec{Cmd: []string{"sh", "-c", command}})
+	resolved, err := s.ExecInNode(ctx, handle, substrate.ExecRequest{Program: command, Shell: substrate.ShellLinux})
 	if err != nil {
 		return "", fmt.Errorf("resolve attachment %q: %w", req.Name, err)
 	}

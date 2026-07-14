@@ -154,7 +154,11 @@ func runConsoleFallback(ctx context.Context, conn substrate.Connection, req subs
 	pr, pw := io.Pipe()
 	errCh := make(chan error, 1)
 	go func() {
-		err := conn.ExecStream(ctx, []string{consoleShell(req)}, pw, pw)
+		result, execErr := conn.Exec(ctx, substrate.ExecRequest{Program: consoleShell(req), Shell: substrate.ShellLinux}, pw, pw)
+		err := execErr
+		if err == nil && result.ExitCode != 0 {
+			err = fmt.Errorf("console command exited %d", result.ExitCode)
+		}
 		_ = pw.Close()
 		errCh <- err
 	}()
