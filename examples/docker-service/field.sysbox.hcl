@@ -9,7 +9,10 @@ resource "sysbox_network" "app" {
 
 resource "sysbox_image" "nginx" {
   substrate  = substrate.docker.local
-  docker_ref = "nginx:alpine"
+  kind         = "oci"
+  source       = "nginx:alpine"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_node" "web" {

@@ -18,8 +18,11 @@ func TestPreflightDetectsMissingLocalRootfs(t *testing.T) {
 substrate "firecracker" { alias = "fc" }
 
 resource "sysbox_image" "vm" {
-  substrate = substrate.firecracker.fc
-  rootfs    = "/no/such/rootfs.ext4"
+  substrate    = substrate.firecracker.fc
+  kind         = "rootfs"
+  source       = "/no/such/rootfs.ext4"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 `), 0o644))
 
@@ -50,8 +53,11 @@ func TestPreflightAllowsURLArtifactWithWarningWithoutSHA(t *testing.T) {
 substrate "firecracker" { alias = "fc" }
 
 resource "sysbox_image" "vm" {
-  substrate = substrate.firecracker.fc
-  rootfs    = "https://example.invalid/rootfs.ext4"
+  substrate    = substrate.firecracker.fc
+  kind         = "rootfs"
+  source       = "https://example.invalid/rootfs.ext4"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 `), 0o644))
 

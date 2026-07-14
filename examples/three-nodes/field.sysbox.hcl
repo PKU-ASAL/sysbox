@@ -51,24 +51,36 @@ resource "sysbox_network" "net_uplink" {
 
 resource "sysbox_image" "alpine" {
   substrate  = substrate.docker.light
-  docker_ref = "alpine:latest"
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_image" "nginx" {
   substrate  = substrate.docker.light
-  docker_ref = "nginx:alpine"
+  kind         = "oci"
+  source       = "nginx:alpine"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 # Pre-built attacker image with opencode + attack tools.
 # Build with: docker build -t sysbox-attacker:latest -f Dockerfile.attacker-opencode .
 resource "sysbox_image" "attacker" {
   substrate  = substrate.docker.light
-  docker_ref = "sysbox-attacker:latest"
+  kind         = "oci"
+  source       = "sysbox-attacker:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_image" "postgres" {
   substrate  = substrate.docker.light
-  docker_ref = "postgres:16-alpine"
+  kind         = "oci"
+  source       = "postgres:16-alpine"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 # ── Router (DMZ ↔ internal) ───────────────────────────────────────────────────

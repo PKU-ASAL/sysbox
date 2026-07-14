@@ -17,17 +17,26 @@ resource "sysbox_kernel" "linux" {
 
 resource "sysbox_image" "docker" {
   substrate  = substrate.docker.local
-  docker_ref = "alpine:latest"
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_image" "firecracker" {
   substrate = substrate.firecracker.local
-  rootfs    = env("SYSBOX_ROOTFS")
+  kind         = "rootfs"
+  source       = env("SYSBOX_ROOTFS")
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_image" "libvirt" {
   substrate = substrate.libvirt.local
-  qcow2     = env("SYSBOX_QCOW2")
+  kind         = "qcow2"
+  source       = env("SYSBOX_QCOW2")
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_network" "matrix" {

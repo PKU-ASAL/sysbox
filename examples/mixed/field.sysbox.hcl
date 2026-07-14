@@ -41,22 +41,34 @@ resource "sysbox_kernel" "fc_510" {
 
 resource "sysbox_image" "alpine_docker" {
   substrate  = substrate.docker.dk
-  docker_ref = "alpine:latest"
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_image" "nginx" {
   substrate  = substrate.docker.dk
-  docker_ref = "nginx:alpine"
+  kind         = "oci"
+  source       = "nginx:alpine"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_image" "alpine_vm" {
   substrate = substrate.firecracker.fc
-  rootfs    = local.rootfs_path
+  kind         = "rootfs"
+  source       = local.rootfs_path
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_image" "attacker_docker" {
   substrate  = substrate.docker.dk
-  docker_ref = "sysbox-attacker:latest"
+  kind         = "oci"
+  source       = "sysbox-attacker:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 # ── Networks ────────────────────────────────────────────────────────────────

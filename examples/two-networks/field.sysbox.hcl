@@ -25,7 +25,10 @@ resource "sysbox_network" "net_b" {
 
 resource "sysbox_image" "alpine" {
   substrate  = substrate.docker.light
-  docker_ref = "alpine:latest"
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_router" "edge" {

@@ -25,8 +25,11 @@ resource "sysbox_network" "shared" {
 }
 
 resource "sysbox_image" "rootfs" {
-  substrate = "firecracker"
-  rootfs = "/tmp/rootfs.ext4"
+  substrate    = "firecracker"
+  kind         = "rootfs"
+  source       = "/tmp/rootfs.ext4"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_node" "microvm" {

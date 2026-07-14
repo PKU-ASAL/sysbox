@@ -40,6 +40,9 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 	if err := g.Validate(); err != nil {
 		return nil, fmt.Errorf("validate graph: %w", err)
 	}
+	if err := validateGuestFamilies(g); err != nil {
+		return nil, err
+	}
 	order, err := g.TopoSort()
 	if err != nil {
 		return nil, err

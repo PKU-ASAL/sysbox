@@ -54,10 +54,11 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		}
 	case *config.ImageConfig:
 		payload["substrate"] = cfg.Substrate
-		payload["docker_ref"] = cfg.DockerRef
-		payload["rootfs"] = cfg.Rootfs
-		payload["qcow2"] = cfg.QCow2
+		payload["kind"] = cfg.Kind
+		payload["source"] = cfg.Source
 		payload["sha256"] = cfg.SHA256
+		payload["architecture"] = cfg.Architecture
+		payload["guest_family"] = cfg.GuestFamily
 		payload["size"] = cfg.Size
 	case *config.KernelConfig:
 		payload["substrate"] = cfg.Substrate
@@ -68,6 +69,7 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 	case *config.NodeConfig:
 		payload["image"] = cfg.Image
 		payload["substrate"] = cfg.Substrate
+		payload["guest_family"] = cfg.GuestFamily
 		payload["vcpus"] = cfg.Vcpus
 		payload["memory"] = cfg.Memory
 		payload["env"] = cfg.Env

@@ -8,7 +8,10 @@ substrate "docker" {
 
 resource "sysbox_image" "router" {
   substrate  = substrate.docker.local
-  docker_ref = "alpine:latest"
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_network" "internal" {

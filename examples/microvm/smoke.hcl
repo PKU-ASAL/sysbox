@@ -25,7 +25,10 @@ resource "sysbox_kernel" "fc_510" {
 
 resource "sysbox_image" "alpine_vm" {
   substrate = substrate.firecracker.fc
-  rootfs    = "/tmp/fc-rootfs-user.ext4"
+  kind         = "rootfs"
+  source       = "/tmp/fc-rootfs-user.ext4"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_network" "net_uplink" {

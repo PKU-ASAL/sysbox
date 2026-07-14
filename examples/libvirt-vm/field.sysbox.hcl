@@ -34,12 +34,18 @@ locals {
 
 resource "sysbox_image" "ubuntu_kvm" {
   substrate = substrate.libvirt.kvm
-  qcow2     = local.qcow2_path
+  kind         = "qcow2"
+  source       = local.qcow2_path
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_image" "alpine_docker" {
   substrate  = substrate.docker.dk
-  docker_ref = "alpine:latest"
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 # ── Networks ─────────────────────────────────────────────────────────────────

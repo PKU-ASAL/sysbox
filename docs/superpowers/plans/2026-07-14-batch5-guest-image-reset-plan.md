@@ -99,17 +99,17 @@ Commit: `feat(batch5): add guest artifact reset contracts and state v6`
 - Consumes: Task 1 enums and artifact identity.
 - Produces: strict `ImageConfig{Substrate, Kind, Source, SHA256, Architecture, GuestFamily, Size}` and `NodeConfig.GuestFamily`; `resolveGuestFamily(image, override)`.
 
-- [ ] **Step 1: Write failing strict-schema tests**
+- [x] **Step 1: Write failing strict-schema tests**
 
 Test valid known/unknown families, inherited family, matching override, unknown-image override, known conflict, unresolved unknown with guest operations, and rejection of `docker_ref`, `rootfs`, and `qcow2`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `go test ./pkg/runtime -run 'Image.*(Schema|Family)|Node.*Family|LegacyImage' -count=1`
 
 Expected: failures because the strict fields and resolver do not exist.
 
-- [ ] **Step 3: Replace image and node HCL shapes**
+- [x] **Step 3: Replace image and node HCL shapes**
 
 Use exact tags:
 
@@ -119,11 +119,11 @@ type ImageConfig struct { Substrate string `hcl:"substrate"`; Kind string `hcl:"
 
 Add `GuestFamily string hcl:"guest_family,optional"` to `NodeConfig`. Remove old image fields, desired payload keys, schema declarations, and decoder allowances.
 
-- [ ] **Step 4: Resolve and persist family**
+- [x] **Step 4: Resolve and persist family**
 
 Resolve family during planning from the referenced image plus optional node override. Persist `guest_family` on image and node public attributes. Fail known conflicts and unresolved unknown before capability calls.
 
-- [ ] **Step 5: Migrate all image fixtures and commit**
+- [x] **Step 5: Migrate all image fixtures and commit**
 
 Update every HCL example to `kind/source/architecture/guest_family`, run `make ci`, and commit `feat(config): require explicit artifact and guest identity`.
 

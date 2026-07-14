@@ -231,19 +231,23 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}
 
-	if cfg.DockerRef == "" {
-		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: docker_ref is required", n.Address.Name)
+	if substrate.ArtifactKind(cfg.Kind) != substrate.ArtifactOCI {
+		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: kind must be %q", n.Address.Name, substrate.ArtifactOCI)
 	}
 
-	ref, err := artifactDriver.PrepareImage(ctx, substrate.ImageSpec{DockerRef: cfg.DockerRef})
+	ref, err := artifactDriver.PrepareImage(ctx, substrate.ImageSpec{DockerRef: cfg.Source})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}
 
 	inst := map[string]any{
-		"image_id":  ref.ID,
-		"repo":      ref.Repository,
-		"data_read": true,
+		"image_id":     ref.ID,
+		"repo":         ref.Repository,
+		"data_read":    true,
+		"kind":         cfg.Kind,
+		"source":       cfg.Source,
+		"architecture": cfg.Architecture,
+		"guest_family": cfg.GuestFamily,
 	}
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err

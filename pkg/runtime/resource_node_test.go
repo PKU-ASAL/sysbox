@@ -178,7 +178,7 @@ func TestNodeResourceHandlerRunsGuestNetworkInitLifecycle(t *testing.T) {
 	}
 	registerPortTestDriver(t, sub)
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
-	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_image", "base"), Driver: sub.name, Attributes: map[string]any{"image_id": "image-id", "repository": "base"}})
+	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_image", "base"), Driver: sub.name, Attributes: map[string]any{"image_id": "image-id", "repository": "base", "guest_family": "linux"}})
 	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_network", "matrix"), Driver: "network", Attributes: map[string]any{"cidr": "10.44.0.0/24"}})
 	n := &graph.Node{Address: address.Resource("sysbox_node", "node"), Data: &config.NodeConfig{
 		Image: "sysbox_image.base.id", Substrate: sub.name,
@@ -191,6 +191,7 @@ func TestNodeResourceHandlerRunsGuestNetworkInitLifecycle(t *testing.T) {
 	require.Equal(t, []string{"attach", "prepare_guest_network", "start", "observe_guest_network"}, sub.lifecycle)
 	require.Equal(t, string(substrate.GuestNetworkInitCloudInit), resource.Str("guest_network_init_mode"))
 	require.True(t, resource.Bool("guest_network_init_converged"))
+	require.Equal(t, string(substrate.GuestFamilyLinux), resource.Str("guest_family"))
 }
 
 func TestNodeResourceHandlerRejectsNonConvergedGuestNetwork(t *testing.T) {
@@ -202,7 +203,7 @@ func TestNodeResourceHandlerRejectsNonConvergedGuestNetwork(t *testing.T) {
 	}
 	registerPortTestDriver(t, sub)
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
-	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_image", "base"), Driver: sub.name, Attributes: map[string]any{"image_id": "image-id", "repository": "base"}})
+	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_image", "base"), Driver: sub.name, Attributes: map[string]any{"image_id": "image-id", "repository": "base", "guest_family": "linux"}})
 	n := &graph.Node{Address: address.Resource("sysbox_node", "node"), Data: &config.NodeConfig{Image: "sysbox_image.base.id", Substrate: sub.name}}
 
 	_, err := NodeResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
@@ -221,8 +222,9 @@ func TestNodeResourceHandlerPortsArePassedAndResolved(t *testing.T) {
 		Address: address.Resource("sysbox_image", "nginx"),
 		Driver:  "port-test",
 		Attributes: map[string]any{
-			"image_id":   "image-id",
-			"repository": "nginx:alpine",
+			"image_id":     "image-id",
+			"repository":   "nginx:alpine",
+			"guest_family": "linux",
 		},
 	})
 	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_network", "public"), Driver: "docker", Attributes: map[string]any{"nat": true, "docker_network_id": "net-1"}})
@@ -259,7 +261,7 @@ func TestNodeResourceHandlerPreservesTypedProviderConfig(t *testing.T) {
 	exec.state.AddResource(state.Resource{
 		Address:    address.Resource("sysbox_image", "base"),
 		Driver:     sub.name,
-		Attributes: map[string]any{"image_id": "image-id", "repository": "base"},
+		Attributes: map[string]any{"image_id": "image-id", "repository": "base", "guest_family": "linux"},
 	})
 	type providerConfig struct{ Value string }
 	provider := &providerConfig{Value: "preserved"}
@@ -289,8 +291,9 @@ func TestNodeResourceHandlerRejectsUnsupportedPortExposure(t *testing.T) {
 		Address: address.Resource("sysbox_image", "nginx"),
 		Driver:  "port-direct-only",
 		Attributes: map[string]any{
-			"image_id":   "image-id",
-			"repository": "nginx:alpine",
+			"image_id":     "image-id",
+			"repository":   "nginx:alpine",
+			"guest_family": "linux",
 		},
 	})
 	n := &graph.Node{

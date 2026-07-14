@@ -8,7 +8,10 @@ resource "sysbox_network" "dmz" {
 
 resource "sysbox_image" "alpine" {
   substrate  = substrate.docker.light
-  docker_ref = "alpine:3.19"
+  kind         = "oci"
+  source       = "alpine:3.19"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 resource "sysbox_node" "web" {

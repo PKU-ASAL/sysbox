@@ -57,7 +57,10 @@ resource "sysbox_image" "alpine_vm" {
   # Built by scripts/prepare-fc-rootfs.sh from the firecracker-ci official
   # ubuntu-24.04.squashfs. See docs/firecracker-artifacts.md.
   # Override with SYSBOX_ROOTFS env var when running sysbox apply.
-  rootfs = local.rootfs_path
+  kind         = "rootfs"
+  source       = local.rootfs_path
+  architecture = "amd64"
+  guest_family = "linux"
 
   # Alternatively, point at any other ext4 image; sysbox-init makes no
   # assumptions about the distro inside.
@@ -67,7 +70,10 @@ resource "sysbox_image" "alpine_vm" {
 
 resource "sysbox_image" "alpine_docker" {
   substrate  = substrate.docker.dk
-  docker_ref = "alpine:latest"
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 
 # ── Networks ────────────────────────────────────────────────────────────────

@@ -42,14 +42,14 @@ func registerImageArtifactDriver(t *testing.T, artifactDriver driver.Artifact) {
 	}))
 }
 
-func TestImageResourceHandlerCreateDockerRef(t *testing.T) {
+func TestImageResourceHandlerCreateOCIArtifact(t *testing.T) {
 	sub := &imageArtifactDriver{}
 	registerImageArtifactDriver(t, sub)
 	n := &graph.Node{
 		Address: address.Resource("sysbox_image", "alpine"),
 		Data: &config.ImageConfig{
-			Substrate: "image-test",
-			DockerRef: "alpine:latest",
+			Substrate: "image-test", Kind: "oci", Source: "alpine:latest",
+			Architecture: "amd64", GuestFamily: "linux",
 		},
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
@@ -63,6 +63,7 @@ func TestImageResourceHandlerCreateDockerRef(t *testing.T) {
 	require.Equal(t, "image-id", res.ImageID())
 	require.Equal(t, "alpine:latest", res.Repository())
 	require.Equal(t, "alpine:latest", sub.lastSpec.DockerRef)
+	require.Equal(t, "linux", res.Str("guest_family"))
 	require.NotEmpty(t, res.Str(desiredHashKey))
 }
 
@@ -74,8 +75,8 @@ func TestImageResourceHandlerCreateRootfsArtifact(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_image", "rootfs"),
 		Data: &config.ImageConfig{
-			Substrate: "image-test",
-			Rootfs:    rootfs,
+			Substrate: "image-test", Kind: "rootfs", Source: rootfs,
+			Architecture: "amd64", GuestFamily: "linux",
 		},
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
@@ -87,6 +88,7 @@ func TestImageResourceHandlerCreateRootfsArtifact(t *testing.T) {
 	require.Equal(t, rootfs, res.Repository())
 	require.Equal(t, rootfs, res.Str("source"))
 	require.NotEmpty(t, res.Str("sha256"))
+	require.Equal(t, "linux", res.Str("guest_family"))
 }
 
 func TestImageResourceHandlerResolvesRootfsSecretReferenceAtExecution(t *testing.T) {
@@ -102,7 +104,7 @@ func TestImageResourceHandlerResolvesRootfsSecretReferenceAtExecution(t *testing
 	reference := secret.Environment("SYSBOX_ROOTFS").String()
 	n := &graph.Node{
 		Address: address.Resource("sysbox_image", "rootfs"),
-		Data:    &config.ImageConfig{Substrate: "image-test", Rootfs: reference},
+		Data:    &config.ImageConfig{Substrate: "image-test", Kind: "rootfs", Source: reference, Architecture: "amd64", GuestFamily: "linux"},
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
 
@@ -125,7 +127,7 @@ func TestImageResourceHandlerDelete(t *testing.T) {
 func TestImageResourceHandlerPlanDiff(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("sysbox_image", "alpine"),
-		Data:    &config.ImageConfig{Substrate: "docker", DockerRef: "alpine:3.20"},
+		Data:    &config.ImageConfig{Substrate: "docker", Kind: "oci", Source: "alpine:3.20", Architecture: "amd64", GuestFamily: "linux"},
 	}
 	inst := map[string]any{}
 	require.NoError(t, setDesiredHash(n, inst))
@@ -136,10 +138,10 @@ func TestImageResourceHandlerPlanDiff(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionNoop, action.Action)
 
-	n.Data = &config.ImageConfig{Substrate: "docker", DockerRef: "alpine:3.21"}
+	n.Data = &config.ImageConfig{Substrate: "docker", Kind: "oci", Source: "alpine:3.21", Architecture: "amd64", GuestFamily: "linux"}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	_, ok := fieldChangeAt(action.Changes, "docker_ref")
+	_, ok := fieldChangeAt(action.Changes, "source")
 	require.True(t, ok)
 }

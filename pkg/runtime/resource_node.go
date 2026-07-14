@@ -227,6 +227,10 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		ID:         imgState.ImageID(),
 		Repository: imgState.Repository(),
 	}
+	guestFamily, err := resolveGuestFamily(substrate.GuestFamily(imgState.Str("guest_family")), substrate.GuestFamily(cfg.GuestFamily))
+	if err != nil {
+		return state.Resource{}, fmt.Errorf("node %s: %w", n.Address.Name, err)
+	}
 
 	parentStep := e.currentResourceStep
 
@@ -349,6 +353,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		"container_id": handle.ID,
 		"primary_ip":   handle.Net.PrimaryIP,
 		"ports":        resolvedPorts,
+		"guest_family": string(guestFamily),
 	}
 	// Persist lifecycle flags so ComputePlan can honour them on future runs
 	// even if the resource is removed from HCL.

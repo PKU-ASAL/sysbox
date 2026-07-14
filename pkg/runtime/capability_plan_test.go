@@ -15,8 +15,11 @@ func TestComputePlanRejectsMissingCapabilityBeforeMutation(t *testing.T) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = previous })
 	g := graph.New()
+	image := address.Resource("sysbox_image", "base")
+	require.NoError(t, g.AddNode(image, nil))
+	g.Get(image).Data = &config.ImageConfig{Substrate: "missing", Kind: "oci", Source: "example.invalid/base:latest", Architecture: "amd64", GuestFamily: "linux"}
 	addr := address.Resource("sysbox_node", "target")
-	require.NoError(t, g.AddNode(addr, nil))
+	require.NoError(t, g.AddNode(addr, []address.Address{image}))
 	g.Get(addr).Data = &config.NodeConfig{Substrate: "missing", Image: "sysbox_image.base"}
 	_, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
 	require.ErrorContains(t, err, "driver is not registered")

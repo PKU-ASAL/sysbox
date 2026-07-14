@@ -92,8 +92,11 @@ type DataNetworkConfig struct {
 // DataImageConfig is the decoded form of data "sysbox_image" blocks.
 // Allows querying an existing image's metadata (e.g. docker image inspect).
 type DataImageConfig struct {
-	Substrate string `hcl:"substrate"`
-	DockerRef string `hcl:"docker_ref,optional"` // e.g. "alpine:latest"
+	Substrate    string `hcl:"substrate"`
+	Kind         string `hcl:"kind"`
+	Source       string `hcl:"source"`
+	Architecture string `hcl:"architecture"`
+	GuestFamily  string `hcl:"guest_family"`
 }
 
 // ForEachHeader is decoded first from a ResourceBlock.Remain to extract the
@@ -198,6 +201,7 @@ type LifecycleConfig struct {
 type NodeConfig struct {
 	Image        string              `hcl:"image"`
 	Substrate    string              `hcl:"substrate"` // "docker" | "firecracker" | ...
+	GuestFamily  string              `hcl:"guest_family,optional"`
 	Vcpus        int                 `hcl:"vcpus,optional"`
 	Memory       string              `hcl:"memory,optional"` // e.g. "512" (MB)
 	Env          map[string]string   `hcl:"env,optional"`
@@ -319,17 +323,13 @@ type ActorConfig struct {
 }
 
 type ImageConfig struct {
-	Substrate string `hcl:"substrate"`
-	DockerRef string `hcl:"docker_ref,optional"`
-	// Rootfs is an ext4 rootfs file (local path or URL). Used by the
-	// Firecracker substrate. URLs are fetched via pkg/artifact at apply time.
-	Rootfs string `hcl:"rootfs,optional"`
-	// QCow2 is a qcow2 disk image (local path or URL). Used by the libvirt
-	// substrate. Resolved through the same artifact cache as Rootfs.
-	QCow2 string `hcl:"qcow2,optional"`
-	// SHA256, if set, is verified against the resolved artifact (URL or local).
-	SHA256 string `hcl:"sha256,optional"`
-	Size   string `hcl:"size,optional"`
+	Substrate    string `hcl:"substrate"`
+	Kind         string `hcl:"kind"`
+	Source       string `hcl:"source"`
+	SHA256       string `hcl:"sha256,optional"`
+	Architecture string `hcl:"architecture"`
+	GuestFamily  string `hcl:"guest_family"`
+	Size         string `hcl:"size,optional"`
 }
 
 // KernelConfig is the schema for `resource "sysbox_kernel" "<name>" { ... }`.

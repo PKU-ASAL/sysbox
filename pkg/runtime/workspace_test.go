@@ -19,6 +19,46 @@ func writeHCL(t *testing.T, content string) string {
 	return f
 }
 
+func TestImageSchemaRequiresStrictArtifactFieldsAndRejectsLegacySources(t *testing.T) {
+	strict := writeHCL(t, `
+substrate "docker" { alias = "local" }
+resource "sysbox_image" "alpine" {
+  substrate    = substrate.docker.local
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
+}
+`)
+	root, err := config.ParseFile(strict)
+	require.NoError(t, err)
+	ctx, err := config.BuildEvalContext(root)
+	require.NoError(t, err)
+	g, err := BuildGraph(root, ctx)
+	require.NoError(t, err)
+	image := g.Get(address.Resource("sysbox_image", "alpine"))
+	require.NotNil(t, image)
+	cfg := image.Data.(*config.ImageConfig)
+	require.Equal(t, "oci", cfg.Kind)
+	require.Equal(t, "alpine:latest", cfg.Source)
+	require.Equal(t, "amd64", cfg.Architecture)
+	require.Equal(t, "linux", cfg.GuestFamily)
+
+	legacy := writeHCL(t, `
+substrate "docker" { alias = "local" }
+resource "sysbox_image" "alpine" {
+  substrate  = substrate.docker.local
+  docker_ref = "alpine:latest"
+}
+`)
+	root, err = config.ParseFile(legacy)
+	require.NoError(t, err)
+	ctx, err = config.BuildEvalContext(root)
+	require.NoError(t, err)
+	_, err = BuildGraph(root, ctx)
+	require.ErrorContains(t, err, "docker_ref")
+}
+
 func TestBuildGraphCount(t *testing.T) {
 	f := writeHCL(t, `
 resource "sysbox_network" "lab" {
@@ -290,8 +330,11 @@ func TestBuildGraphModuleKeepsInternalDependencyAddresses(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(modDir, "main.sysbox.hcl"), []byte(`
 resource "sysbox_network" "dmz" { cidr = "10.0.1.0/24" }
 resource "sysbox_image" "router" {
-  substrate = "docker"
-  docker_ref = "alpine:latest"
+  substrate    = "docker"
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
 }
 resource "sysbox_router" "gateway" {
   substrate = "docker"

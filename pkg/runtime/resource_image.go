@@ -53,54 +53,47 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 		return state.Resource{}, err
 	}
 
-	res := artifact.New()
-
-	// Resolve disk image sources through the artifact cache (URL or local path).
-	rootfs, qcow2 := cfg.Rootfs, cfg.QCow2
-	var resolvedSHA string
-	for _, entry := range []struct {
-		src   string
-		label string
-		dst   *string
-	}{
-		{cfg.Rootfs, "rootfs", &rootfs},
-		{cfg.QCow2, "qcow2", &qcow2},
-	} {
-		if entry.src == "" {
-			continue
-		}
-		resolvedSource, err := secret.ResolveString(ctx, executionSecretResolver, entry.src)
+	kind := substrate.ArtifactKind(cfg.Kind)
+	if err := substrate.ValidateArtifactKind(kind); err != nil {
+		return state.Resource{}, fmt.Errorf("image %s: %w", n.Address.Name, err)
+	}
+	family := substrate.GuestFamily(cfg.GuestFamily)
+	if err := substrate.ValidateGuestFamily(family); err != nil {
+		return state.Resource{}, fmt.Errorf("image %s: %w", n.Address.Name, err)
+	}
+	resolvedSource, err := secret.ResolveString(ctx, executionSecretResolver, cfg.Source)
+	if err != nil {
+		return state.Resource{}, fmt.Errorf("image %s source: %w", n.Address.Name, err)
+	}
+	providerSource := resolvedSource
+	resolvedSHA := cfg.SHA256
+	if kind != substrate.ArtifactOCI {
+		r, err := artifact.New().Resolve(artifact.Spec{Source: resolvedSource, SHA256: cfg.SHA256})
 		if err != nil {
-			return state.Resource{}, fmt.Errorf("image %s %s: %w", n.Address.Name, entry.label, err)
-		}
-		r, err := res.Resolve(artifact.Spec{Source: resolvedSource, SHA256: cfg.SHA256})
-		if err != nil {
-			return state.Resource{}, fmt.Errorf("image %s %s: %w", n.Address.Name, entry.label, err)
+			return state.Resource{}, fmt.Errorf("image %s source: %w", n.Address.Name, err)
 		}
 		if r.FromCache {
-			pc.Logf("[apply] image %s: %s cache hit (%s)\n", n.Address.Name, entry.label, r.Path)
-		} else if artifact.IsURL(entry.src) {
-			pc.Logf("[apply] image %s: %s fetched to %s\n", n.Address.Name, entry.label, r.Path)
+			pc.Logf("[apply] image %s: cache hit (%s)\n", n.Address.Name, r.Path)
+		} else if artifact.IsURL(cfg.Source) {
+			pc.Logf("[apply] image %s: fetched to %s\n", n.Address.Name, r.Path)
 		}
-		*entry.dst = r.Path
+		providerSource = r.Path
 		resolvedSHA = r.SHA256
 	}
 
-	ref, err := artifactDriver.PrepareImage(ctx, substrate.ImageSpec{
-		DockerRef: cfg.DockerRef,
-		Rootfs:    rootfs,
-		QCow2:     qcow2,
-		Size:      cfg.Size,
-	})
+	ref, err := artifactDriver.PrepareImage(ctx, providerImageSpec(kind, providerSource, cfg.Size))
 	if err != nil {
 		return state.Resource{}, err
 	}
 
 	inst := map[string]any{
-		"image_id":   ref.ID,
-		"repository": ref.Repository,
-		"source":     cfg.Rootfs + cfg.QCow2,
-		"sha256":     resolvedSHA,
+		"image_id":     ref.ID,
+		"repository":   ref.Repository,
+		"kind":         cfg.Kind,
+		"source":       cfg.Source,
+		"sha256":       resolvedSHA,
+		"architecture": cfg.Architecture,
+		"guest_family": cfg.GuestFamily,
 	}
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
@@ -110,6 +103,19 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 		Driver:     subName,
 		Attributes: state.MustAttributes(inst),
 	}, nil
+}
+
+func providerImageSpec(kind substrate.ArtifactKind, source, size string) substrate.ImageSpec {
+	spec := substrate.ImageSpec{Size: size}
+	switch kind {
+	case substrate.ArtifactOCI:
+		spec.DockerRef = source
+	case substrate.ArtifactRootFS:
+		spec.Rootfs = source
+	case substrate.ArtifactQCow2:
+		spec.QCow2 = source
+	}
+	return spec
 }
 
 func (ImageResourceHandler) Delete(_ context.Context, pc *ProviderContext, current state.Resource) error {
@@ -149,14 +155,8 @@ func (ImageResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.E
 		return []substrate.PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
 	}
 	var checks []substrate.PreflightCheck
-	for _, item := range []struct {
-		name string
-		src  string
-	}{
-		{"image:" + r.Name + ":rootfs", cfg.Rootfs},
-		{"image:" + r.Name + ":qcow2", cfg.QCow2},
-	} {
-		if check := ArtifactPreflightCheck(item.name, item.src, cfg.SHA256); check != nil {
+	if substrate.ArtifactKind(cfg.Kind) != substrate.ArtifactOCI {
+		if check := ArtifactPreflightCheck("image:"+r.Name+":"+cfg.Kind, cfg.Source, cfg.SHA256); check != nil {
 			checks = append(checks, *check)
 		}
 	}

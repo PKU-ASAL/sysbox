@@ -95,7 +95,10 @@ resource "sysbox_kernel" "fc_510" {
 
 resource "sysbox_image" "alpine_vm" {
   substrate = substrate.firecracker.fc
-  rootfs    = "/tmp/fc-rootfs.ext4"  # local path
+  kind         = "rootfs"
+  source       = "/tmp/fc-rootfs.ext4"  # local path
+  architecture = "amd64"
+  guest_family = "linux"
   # rootfs  = "https://example.com/alpine-fc-rootfs.ext4"  # or URL
   # sha256  = "..."
 }
@@ -202,7 +205,10 @@ Reference it from HCL:
 ```hcl
 resource "sysbox_image" "ubuntu_vm" {
   substrate = substrate.firecracker.fc
-  rootfs    = "/root/.cache/sysbox/rootfs/ubuntu-24.04.ext4"  # or your $HOME
+  kind         = "rootfs"
+  source       = "/root/.cache/sysbox/rootfs/ubuntu-24.04.ext4"  # or your $HOME
+  architecture = "amd64"
+  guest_family = "linux"
 }
 ```
 

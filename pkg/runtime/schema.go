@@ -153,7 +153,7 @@ func ResourceSchemaFor(typ string) ResourceSchema {
 		add("network_type", value.StringType, false, false)
 		add("nat", value.BoolType, false, false)
 	case "sysbox_image":
-		for _, name := range []string{"substrate", "docker_ref", "rootfs", "qcow2", "sha256"} {
+		for _, name := range []string{"substrate", "kind", "source", "sha256", "architecture", "guest_family"} {
 			add(name, value.StringType, false, false)
 		}
 		add("size", value.NumberType, false, false)
@@ -163,7 +163,7 @@ func ResourceSchemaFor(typ string) ResourceSchema {
 		}
 		add("depends_on", value.ListType, false, false)
 	case "sysbox_node":
-		for _, name := range []string{"image", "substrate"} {
+		for _, name := range []string{"image", "substrate", "guest_family"} {
 			add(name, value.StringType, false, false)
 		}
 		for _, name := range []string{"vcpus", "memory"} {

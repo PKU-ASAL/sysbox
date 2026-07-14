@@ -26,7 +26,7 @@ func TestDataResourceHandlersRegistered(t *testing.T) {
 func TestDataResourceHandlerPlanDiffReads(t *testing.T) {
 	n := &graph.Node{
 		Address: address.Resource("data_sysbox_image", "alpine"),
-		Data:    &config.DataImageConfig{Substrate: "docker", DockerRef: "alpine:latest"},
+		Data:    &config.DataImageConfig{Substrate: "docker", Kind: "oci", Source: "alpine:latest", Architecture: "amd64", GuestFamily: "linux"},
 	}
 	p := DataImageResourceHandler{}
 
@@ -42,11 +42,11 @@ func TestDataResourceHandlerPlanDiffReads(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionNoop, action.Action)
 
-	n.Data = &config.DataImageConfig{Substrate: "docker", DockerRef: "busybox:latest"}
+	n.Data = &config.DataImageConfig{Substrate: "docker", Kind: "oci", Source: "busybox:latest", Architecture: "amd64", GuestFamily: "linux"}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.PlanActionRead, action.Action)
-	_, ok := fieldChangeAt(action.Changes, "data.DockerRef")
+	_, ok := fieldChangeAt(action.Changes, "data.Source")
 	require.True(t, ok)
 }
 
@@ -55,7 +55,7 @@ func TestComputePlanSchedulesDataSourcesAsRead(t *testing.T) {
 	addr := address.Resource("data_sysbox_image", "alpine")
 	require.NoError(t, g.AddNode(addr, nil))
 	n := g.Get(addr)
-	n.Data = &config.DataImageConfig{Substrate: "docker", DockerRef: "alpine:latest"}
+	n.Data = &config.DataImageConfig{Substrate: "docker", Kind: "oci", Source: "alpine:latest", Architecture: "amd64", GuestFamily: "linux"}
 
 	plan, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
 	require.NoError(t, err)
