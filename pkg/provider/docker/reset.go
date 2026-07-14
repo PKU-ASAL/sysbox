@@ -44,21 +44,29 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 		state.ImageCmd = append([]string(nil), imageInfo.Config.Cmd...)
 		state.ImageEntrypoint = append([]string(nil), imageInfo.Config.Entrypoint...)
 	}
-	if request.Current.ID != "" {
-		inspected, err := s.cli.ContainerInspect(ctx, request.Current.ID)
+	return substrate.ResetHandle{Provider: state, Request: request}, nil
+}
+
+func (s *Substrate) DestroyReset(ctx context.Context, handle substrate.ResetHandle) error {
+	state, _, err := dockerResetState(handle)
+	if err != nil {
+		return err
+	}
+	if state.OldContainerID != "" {
+		inspected, err := s.cli.ContainerInspect(ctx, state.OldContainerID)
 		if err != nil && !errdefs.IsNotFound(err) {
-			return substrate.ResetHandle{}, fmt.Errorf("docker reset inspect old container: %w", err)
+			return fmt.Errorf("docker reset inspect old container: %w", err)
 		}
 		if err == nil {
 			if err := requireResetOwnership(inspected.Config.Labels, state.Ownership); err != nil {
-				return substrate.ResetHandle{}, err
+				return err
 			}
-			if err := s.cli.ContainerRemove(ctx, request.Current.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
-				return substrate.ResetHandle{}, fmt.Errorf("docker reset remove old container: %w", err)
+			if err := s.cli.ContainerRemove(ctx, state.OldContainerID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+				return fmt.Errorf("docker reset remove old container: %w", err)
 			}
 		}
 	}
-	return substrate.ResetHandle{Provider: state, Request: request}, nil
+	return nil
 }
 
 func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle) (substrate.NodeHandle, error) {

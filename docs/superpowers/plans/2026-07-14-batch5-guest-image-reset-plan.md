@@ -267,7 +267,7 @@ Assert digest-pinned recreate, changed external ID, stable declared identity, ex
 
 Persist old/new container ownership anchors in the opaque reset handle. Recreate from immutable OCI ID and resolved NodeSpec; return a stopped handle for runtime NIC restoration.
 
-- [x] **Step 3: Run unit/privileged tests and commit**
+- [ ] **Step 3: Run unit/privileged tests and commit**
 
 Commit `feat(docker): reset nodes from immutable images`.
 
@@ -280,11 +280,11 @@ Commit `feat(docker): reset nodes from immutable images`.
 - Modify: libvirt node disk creation to require per-run overlay
 - Test: libvirt reset unit and real acceptance tests
 
-- [ ] **Step 1: Write failing overlay ownership tests**
+- [x] **Step 1: Write failing overlay ownership tests**
 
 Assert immutable base never changes, overlay path is topology-owned, old domain/overlay/seed removal, fresh overlay/domain identity, retry recovery, and exact residue reporting.
 
-- [ ] **Step 2: Implement stopped fresh-handle reset**
+- [x] **Step 2: Implement stopped fresh-handle reset**
 
 Destroy the old owned domain, discard only its overlay and seed, create a new overlay from the verified base, rebuild domain state, and return before start so runtime restores NICs.
 

@@ -61,7 +61,7 @@ func TestExecutorResetUsesProviderLifecycleAndUpdatesState(t *testing.T) {
 
 	err = NewExecutor(g, st).Reset(context.Background(), plan)
 	require.NoError(t, err)
-	require.Equal(t, []string{"prepare:old-second", "prepare:old-first", "apply", "observe", "cleanup", "apply", "observe", "cleanup"}, sub.resetLifecycle)
+	require.Equal(t, []string{"prepare:old-second", "destroy", "prepare:old-first", "destroy", "apply", "observe", "cleanup", "apply", "observe", "cleanup"}, sub.resetLifecycle)
 	require.Equal(t, "node-reset", st.FindResource(address.Resource("sysbox_node", "first")).ContainerID())
 	require.Equal(t, "node-reset", st.FindResource(address.Resource("sysbox_node", "second")).ContainerID())
 	require.Equal(t, 2, sub.nodeObserveCalls)
@@ -211,7 +211,7 @@ func TestExecutorResetResumesPersistedProviderHandleWithoutPreparingAgain(t *tes
 	require.NoError(t, err)
 
 	require.NoError(t, NewExecutor(g, st).Reset(context.Background(), plan))
-	require.Equal(t, []string{"observe", "apply", "observe", "cleanup"}, sub.resetLifecycle)
+	require.Equal(t, []string{"observe", "destroy", "apply", "observe", "cleanup"}, sub.resetLifecycle)
 }
 
 func TestExecutorResetRejectsOwnedResidue(t *testing.T) {

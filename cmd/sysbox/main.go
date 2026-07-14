@@ -62,6 +62,7 @@ func main() {
 		Power:            libvirtSub,
 		GuestNetwork:     libvirtSub,
 		GuestNetworkInit: libvirtSub,
+		Reset:            libvirtSub,
 	})
 
 	if err := commands.ExecuteContext(ctx); err != nil {

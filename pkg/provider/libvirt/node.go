@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -17,6 +20,7 @@ import (
 // HandleState is the libvirt substrate's typed NodeHandle.Provider payload.
 type HandleState struct {
 	DomainName       string                         `json:"domain_name"`
+	DomainUUID       string                         `json:"domain_uuid,omitempty"`
 	VMDir            string                         `json:"vm_dir"`
 	DiskPath         string                         `json:"disk_path"`
 	VCPUs            int                            `json:"vcpus"`
@@ -109,6 +113,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	}
 	hs := &HandleState{
 		DomainName:       spec.Name,
+		DomainUUID:       uuid.NewString(),
 		VMDir:            vmDir,
 		DiskPath:         diskPath,
 		VCPUs:            pc.VCPUs,
@@ -121,7 +126,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		NetworkInit:      pc.NetworkInit,
 	}
 	return substrate.NodeHandle{
-		ID:       spec.Name,
+		ID:       hs.DomainUUID,
 		Provider: hs,
 		Conn:     substrate.ConnInfo{Kind: substrate.ConnKindSSH},
 	}, nil
@@ -132,9 +137,30 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	if hs.NetworkInit == substrate.GuestNetworkInitCloudInit && hs.SeedISO == "" {
 		return fmt.Errorf("libvirt: cloud_init seed was not prepared")
 	}
+	if hs.DomainUUID != "" {
+		if uuidOut, uuidErr := exec.CommandContext(ctx, "virsh", "domuuid", hs.DomainName).CombinedOutput(); uuidErr == nil {
+			if strings.TrimSpace(string(uuidOut)) != hs.DomainUUID {
+				return fmt.Errorf("libvirt: domain %q UUID ownership mismatch", hs.DomainName)
+			}
+			stateOut, stateErr := exec.CommandContext(ctx, "virsh", "domstate", hs.DomainName).CombinedOutput()
+			if stateErr != nil {
+				return fmt.Errorf("libvirt: read existing reset domain state: %w\n%s", stateErr, stateOut)
+			}
+			state := strings.TrimSpace(string(stateOut))
+			if state == "running" || state == "paused" || state == "in shutdown" {
+				return nil
+			}
+			if out, err := exec.CommandContext(ctx, "virsh", "start", hs.DomainName).CombinedOutput(); err != nil {
+				return fmt.Errorf("libvirt: restart defined reset domain: %w\n%s", err, out)
+			}
+			setSysboxManaged(ctx, hs.DomainName)
+			return nil
+		}
+	}
 
 	xmlStr, err := GenerateDomainXML(DomainSpec{
 		Name:        hs.DomainName,
+		UUID:        hs.DomainUUID,
 		VCPUs:       hs.VCPUs,
 		MemoryMiB:   hs.MemoryMiB,
 		MachineType: hs.MachineType,
@@ -153,12 +179,16 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 
 	// Cleanup vmDir on any failure so disk images don't leak.
 	if out, err := exec.CommandContext(ctx, "virsh", "define", xmlPath).CombinedOutput(); err != nil {
-		_ = os.RemoveAll(hs.VMDir)
+		if hs.DomainUUID == "" {
+			_ = os.RemoveAll(hs.VMDir)
+		}
 		return fmt.Errorf("libvirt: virsh define: %w\n%s", err, out)
 	}
 	if out, err := exec.CommandContext(ctx, "virsh", "start", hs.DomainName).CombinedOutput(); err != nil {
-		_, _ = exec.Command("virsh", "undefine", hs.DomainName).CombinedOutput()
-		_ = os.RemoveAll(hs.VMDir)
+		if hs.DomainUUID == "" {
+			_, _ = exec.Command("virsh", "undefine", hs.DomainName).CombinedOutput()
+			_ = os.RemoveAll(hs.VMDir)
+		}
 		return fmt.Errorf("libvirt: virsh start: %w\n%s", err, out)
 	}
 	// Mark the domain as sysbox-managed so future CreateNode calls can
@@ -240,6 +270,37 @@ func (s *Substrate) NodeStatus(ctx context.Context, h substrate.NodeHandle) (boo
 	// Both "running" and "paused" are healthy states; "paused" means the VM
 	// exists and was explicitly suspended (sysbox pause), not crashed.
 	return state == "running" || state == "paused" || state == "in shutdown", nil
+}
+
+func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (substrate.NodeObservation, error) {
+	hs := hsFrom(h)
+	out, err := exec.CommandContext(ctx, "virsh", "domstate", hs.DomainName).CombinedOutput()
+	if err != nil {
+		reason := strings.TrimSpace(string(out))
+		if strings.Contains(strings.ToLower(reason), "domain not found") || strings.Contains(strings.ToLower(reason), "failed to get domain") {
+			return substrate.NodeObservation{Exists: false, Status: substrate.NodeStatusMissing, ExternalID: h.ID, Reason: reason, LastSeen: time.Now().UTC()}, nil
+		}
+		return substrate.NodeObservation{Status: substrate.NodeStatusUnknown, ExternalID: h.ID, Reason: reason, LastSeen: time.Now().UTC()}, fmt.Errorf("libvirt: observe domain state: %w", err)
+	}
+	domainState := strings.TrimSpace(string(out))
+	status := substrate.NodeStatusExited
+	running := domainState == "running" || domainState == "in shutdown"
+	if running {
+		status = substrate.NodeStatusRunning
+	} else if domainState == "paused" {
+		status = substrate.NodeStatusPaused
+		running = true
+	}
+	externalID := h.ID
+	if uuidOut, uuidErr := exec.CommandContext(ctx, "virsh", "domuuid", hs.DomainName).CombinedOutput(); uuidErr == nil && strings.TrimSpace(string(uuidOut)) != "" {
+		externalID = strings.TrimSpace(string(uuidOut))
+	} else if uuidErr != nil {
+		return substrate.NodeObservation{Exists: true, Status: substrate.NodeStatusUnknown, ExternalID: h.ID, Reason: string(uuidOut), LastSeen: time.Now().UTC()}, fmt.Errorf("libvirt: observe domain UUID: %w", uuidErr)
+	}
+	if h.ID != "" && externalID != h.ID {
+		return substrate.NodeObservation{Exists: true, Status: substrate.NodeStatusUnknown, ExternalID: externalID, Reason: "domain UUID mismatch", LastSeen: time.Now().UTC()}, fmt.Errorf("libvirt: domain UUID mismatch: have %s, want %s", externalID, h.ID)
+	}
+	return substrate.NodeObservation{Exists: true, Running: running, Healthy: running, Status: status, ExternalID: externalID, Reason: domainState, LastSeen: time.Now().UTC()}, nil
 }
 
 func (s *Substrate) PrepareHandle(_ context.Context, h *substrate.NodeHandle, providerConfig any, _ substrate.StateReader) error {

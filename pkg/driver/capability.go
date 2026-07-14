@@ -102,6 +102,7 @@ type GuestNetworkInit interface {
 
 type Reset interface {
 	PrepareReset(context.Context, substrate.ResetRequest) (substrate.ResetHandle, error)
+	DestroyReset(context.Context, substrate.ResetHandle) error
 	ApplyReset(context.Context, substrate.ResetHandle) (substrate.NodeHandle, error)
 	ObserveReset(context.Context, substrate.ResetHandle) (substrate.ResetObservation, error)
 	CleanupReset(context.Context, substrate.ResetHandle) error

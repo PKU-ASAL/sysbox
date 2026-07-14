@@ -162,6 +162,11 @@ func (e *Executor) Reset(ctx context.Context, plan *Plan) error {
 			resetErr = err
 			return err
 		}
+		if err := e.destroyResetNode(ctx, item); err != nil {
+			e.recorder.StepFailed(item.step, err)
+			resetErr = err
+			return fmt.Errorf("destroy reset %s: %w", item.action.Address, err)
+		}
 	}
 	for _, item := range contexts {
 		beforeApply := cloneResetStateResource(*item.current)
@@ -181,6 +186,28 @@ func (e *Executor) Reset(ctx context.Context, plan *Plan) error {
 		e.recorder.StepDone(item.step)
 	}
 	return nil
+}
+
+func (e *Executor) destroyResetNode(ctx context.Context, item *resetNodeContext) error {
+	for _, attachment := range item.current.Attachments {
+		request, err := attachmentRequestFromState(e.state, attachment)
+		if err != nil {
+			return err
+		}
+		err = e.recordSubstep(item.step, "delete_attachment", map[string]any{"name": attachment.Name}, func() error {
+			deleteErr := item.nicDriver.Delete(ctx, item.request.Current, request, attachment.DriverState)
+			if driver.IsCategory(deleteErr, driver.ErrorNotFound) {
+				return nil
+			}
+			return deleteErr
+		})
+		if err != nil {
+			return fmt.Errorf("delete reset attachment %s: %w", attachment.Name, err)
+		}
+	}
+	return e.recordSubstep(item.step, "destroy_reset", nil, func() error {
+		return item.resetDriver.DestroyReset(ctx, item.handle)
+	})
 }
 
 func (e *Executor) buildResetNodeContext(ctx context.Context, action controlplane.PlannedChange) (*resetNodeContext, error) {
@@ -294,22 +321,6 @@ func (e *Executor) prepareResetNode(ctx context.Context, item *resetNodeContext)
 			return fmt.Errorf("observe reset for %s: %w", item.action.Address, err)
 		}
 		return nil
-	}
-	for _, attachment := range item.current.Attachments {
-		request, err := attachmentRequestFromState(e.state, attachment)
-		if err != nil {
-			return err
-		}
-		err = e.recordSubstep(item.step, "delete_attachment", map[string]any{"name": attachment.Name}, func() error {
-			deleteErr := item.nicDriver.Delete(ctx, item.request.Current, request, attachment.DriverState)
-			if driver.IsCategory(deleteErr, driver.ErrorNotFound) {
-				return nil
-			}
-			return deleteErr
-		})
-		if err != nil {
-			return fmt.Errorf("delete reset attachment %s: %w", attachment.Name, err)
-		}
 	}
 	var handle substrate.ResetHandle
 	err := e.recordSubstep(item.step, "prepare_reset", nil, func() error {

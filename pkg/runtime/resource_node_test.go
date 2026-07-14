@@ -151,6 +151,10 @@ func (s *portTestSubstrate) PrepareReset(_ context.Context, request substrate.Re
 	s.resetLifecycle = append(s.resetLifecycle, "prepare:"+request.Current.ID)
 	return substrate.ResetHandle{Provider: map[string]string{"old_id": request.Current.ID}}, nil
 }
+func (s *portTestSubstrate) DestroyReset(context.Context, substrate.ResetHandle) error {
+	s.resetLifecycle = append(s.resetLifecycle, "destroy")
+	return nil
+}
 func (s *portTestSubstrate) ApplyReset(context.Context, substrate.ResetHandle) (substrate.NodeHandle, error) {
 	s.resetLifecycle = append(s.resetLifecycle, "apply")
 	if s.resetApplyErr != nil {

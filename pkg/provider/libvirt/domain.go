@@ -11,6 +11,7 @@ type domainXML struct {
 	XMLName  xml.Name    `xml:"domain"`
 	Type     string      `xml:"type,attr"`
 	Name     string      `xml:"name"`
+	UUID     string      `xml:"uuid,omitempty"`
 	Memory   domMemory   `xml:"memory"`
 	VCPU     int         `xml:"vcpu"`
 	OS       domOS       `xml:"os"`
@@ -129,6 +130,7 @@ type domChannelTgt struct {
 // DomainSpec holds everything needed to generate a domain XML.
 type DomainSpec struct {
 	Name        string
+	UUID        string
 	VCPUs       int
 	MemoryMiB   int
 	MachineType string
@@ -170,6 +172,7 @@ func GenerateDomainXML(spec DomainSpec) (string, error) {
 	d := domainXML{
 		Type: "kvm",
 		Name: spec.Name,
+		UUID: spec.UUID,
 		Memory: domMemory{
 			Unit:  "MiB",
 			Value: spec.MemoryMiB,

@@ -223,13 +223,16 @@ type ResetRequest struct {
 
 type Reset interface {
     PrepareReset(context.Context, substrate.ResetRequest) (substrate.ResetHandle, error)
+    DestroyReset(context.Context, substrate.ResetHandle) error
     ApplyReset(context.Context, substrate.ResetHandle) (substrate.NodeHandle, error)
     ObserveReset(context.Context, substrate.ResetHandle) (substrate.ResetObservation, error)
     CleanupReset(context.Context, substrate.ResetHandle) error
 }
 ```
 
-The exact reset handle is opaque, versioned provider state. Observation reports
+`PrepareReset` is non-destructive: runtime persists its exact handle before
+calling `DestroyReset` in reverse dependency order. The exact reset handle is
+opaque, versioned provider state. Observation reports
 phase, convergence, old and new external IDs, baseline digest, and a bounded
 residue inventory without exposing secret values.
 

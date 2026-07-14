@@ -70,6 +70,7 @@ type fakeReset struct{}
 func (fakeReset) PrepareReset(context.Context, substrate.ResetRequest) (substrate.ResetHandle, error) {
 	return substrate.ResetHandle{}, nil
 }
+func (fakeReset) DestroyReset(context.Context, substrate.ResetHandle) error { return nil }
 
 func (fakeReset) ApplyReset(context.Context, substrate.ResetHandle) (substrate.NodeHandle, error) {
 	return substrate.NodeHandle{}, nil

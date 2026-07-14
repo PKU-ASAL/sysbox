@@ -33,6 +33,7 @@ func TestDockerResetRecreatesPinnedOwnedContainerAndHidesSecrets(t *testing.T) {
 	handle, err := sub.PrepareReset(context.Background(), request)
 	require.NoError(t, err)
 	handle.Request = request
+	require.NoError(t, sub.DestroyReset(context.Background(), handle))
 	created, err := sub.ApplyReset(context.Background(), handle)
 	require.NoError(t, err)
 	require.Equal(t, "new-id", created.ID)
