@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -19,9 +20,11 @@ func main() {
 	nodeName := flag.String("node", "firecracker", "sysbox_node name")
 	target := flag.String("target", "", "IPv4 address to ping")
 	query := flag.String("query", "", "state query: netns, libvirt_bridge, root_veth, or libvirt_vm_dir")
+	touchPath := flag.String("touch", "", "create a marker in the selected node")
+	checkAbsent := flag.String("check-absent", "", "require a path to be absent in the selected node")
 	flag.Parse()
-	if *statePath == "" || (*target == "" && *query == "") {
-		fmt.Fprintln(os.Stderr, "-state and either -target or -query are required")
+	if *statePath == "" || (*target == "" && *query == "" && *touchPath == "" && *checkAbsent == "") {
+		fmt.Fprintln(os.Stderr, "-state and an operation are required")
 		os.Exit(2)
 	}
 	st, err := state.NewManager(*statePath).Load()
@@ -43,7 +46,14 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	result, err := provider.ExecInNode(ctx, handle, substrate.ExecRequest{Program: "ping", Args: []string{"-c", "3", "-W", "2", *target}, Shell: substrate.ShellNone})
+	request := substrate.ExecRequest{Program: "ping", Args: []string{"-c", "3", "-W", "2", *target}, Shell: substrate.ShellNone}
+	if *touchPath != "" {
+		request = substrate.ExecRequest{Program: "touch", Args: []string{*touchPath}, Shell: substrate.ShellNone}
+	}
+	if *checkAbsent != "" {
+		request = substrate.ExecRequest{Program: "test", Args: []string{"!", "-e", *checkAbsent}, Shell: substrate.ShellNone}
+	}
+	result, err := provider.ExecInNode(ctx, handle, request)
 	if err != nil {
 		fatal(err)
 	}
@@ -59,6 +69,34 @@ func main() {
 }
 
 func printQuery(st *state.State, query string) {
+	if strings.HasPrefix(query, "node_id:") {
+		name := strings.TrimPrefix(query, "node_id:")
+		resource := st.FindResource(address.Resource("sysbox_node", name))
+		if resource == nil {
+			fatal(fmt.Errorf("node %s not found", name))
+		}
+		fmt.Println(resource.ContainerID())
+		return
+	}
+	if strings.HasPrefix(query, "node_link:") {
+		name := strings.TrimPrefix(query, "node_link:")
+		resource := st.FindResource(address.Resource("sysbox_node", name))
+		if resource == nil || len(resource.Attachments) == 0 {
+			fatal(fmt.Errorf("node %s attachment not found", name))
+		}
+		a := resource.Attachments[0]
+		fmt.Printf("%s|%s\n", a.MAC, strings.Join(a.IPPrefixes, ","))
+		return
+	}
+	if strings.HasPrefix(query, "image_digest:") {
+		name := strings.TrimPrefix(query, "image_digest:")
+		resource := st.FindResource(address.Resource("sysbox_image", name))
+		if resource == nil {
+			fatal(fmt.Errorf("image %s not found", name))
+		}
+		fmt.Println(resource.Str("sha256"))
+		return
+	}
 	switch query {
 	case "netns", "libvirt_bridge", "root_veth":
 		resource := st.FindResource(address.Resource("sysbox_network", "matrix"))

@@ -28,6 +28,7 @@ cp --reflink=auto "${image_host}" "${image_runtime}"
 chmod 0644 "${image_runtime}"
 ssh-keygen -q -t ed25519 -N '' -C sysbox-matrix -f "${key_dir}/id_ed25519"
 public_key="$(cat "${key_dir}/id_ed25519.pub")"
+inner_script="${SYSBOX_MATRIX_INNER:-tests/e2e/heterogeneous_matrix_inner.sh}"
 
 case "${kernel_host}" in "${cache_root}"/*) ;; *) echo "SYSBOX_KERNEL must be under ${cache_root}" >&2; exit 1 ;; esac
 case "${rootfs_host}" in "${cache_root}"/*) ;; *) echo "SYSBOX_ROOTFS must be under ${cache_root}" >&2; exit 1 ;; esac
@@ -65,4 +66,4 @@ docker run --rm --privileged --pid=host --network=host \
   -e SYSBOX_QCOW2="${image_runtime}" \
   -e SYSBOX_MATRIX_SSH_PRIVATE_KEY=/keys/matrix \
   -e SYSBOX_MATRIX_SSH_PUBLIC_KEY="${public_key}" \
-  golang:1.26-alpine sh tests/e2e/heterogeneous_matrix_inner.sh
+  golang:1.26-alpine sh "${inner_script}"

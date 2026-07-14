@@ -64,6 +64,13 @@ func TestExecutorResetUsesProviderLifecycleAndUpdatesState(t *testing.T) {
 	require.Equal(t, []string{"prepare:old-second", "destroy", "prepare:old-first", "destroy", "apply", "observe", "cleanup", "apply", "observe", "cleanup"}, sub.resetLifecycle)
 	require.Equal(t, "node-reset", st.FindResource(address.Resource("sysbox_node", "first")).ContainerID())
 	require.Equal(t, "node-reset", st.FindResource(address.Resource("sysbox_node", "second")).ContainerID())
+	for _, name := range []string{"first", "second"} {
+		node := st.FindResource(address.Resource("sysbox_node", name))
+		runtimeState, runtimeErr := node.RuntimeState()
+		require.NoError(t, runtimeErr)
+		require.NotContains(t, runtimeState, "container_id")
+		require.Equal(t, "node-reset", node.ExternalID)
+	}
 	require.Equal(t, 2, sub.nodeObserveCalls)
 }
 

@@ -180,7 +180,12 @@ func (r *Resource) SetAttribute(key string, item any) error {
 // Convenience accessors for well-known instance keys. These centralise
 // key names and eliminate scattered raw type assertions.
 
-func (r *Resource) ContainerID() string           { return r.Str("container_id") }
+func (r *Resource) ContainerID() string {
+	if r.ExternalID != "" {
+		return r.ExternalID
+	}
+	return r.Str("container_id")
+}
 func (r *Resource) PrimaryIP() string             { return r.Str("primary_ip") }
 func (r *Resource) IsNAT() bool                   { return r.Bool("nat") }
 func (r *Resource) DockerNetID() string           { return r.Str("docker_network_id") }

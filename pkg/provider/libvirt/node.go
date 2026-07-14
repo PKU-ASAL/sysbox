@@ -92,6 +92,11 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		_ = os.RemoveAll(vmDir)
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: make vm dir accessible: %w", err)
 	}
+	domainUUID := uuid.NewString()
+	if err := ensureVMDirOwnership(vmDir, spec.Name, domainUUID); err != nil {
+		_ = os.RemoveAll(vmDir)
+		return substrate.NodeHandle{}, fmt.Errorf("libvirt: record vm dir ownership: %w", err)
+	}
 
 	diskPath := filepath.Join(vmDir, "disk.qcow2")
 	qiArgs := []string{"create", "-f", "qcow2", "-b", baseImage, "-F", "qcow2", diskPath}
@@ -113,7 +118,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	}
 	hs := &HandleState{
 		DomainName:       spec.Name,
-		DomainUUID:       uuid.NewString(),
+		DomainUUID:       domainUUID,
 		VMDir:            vmDir,
 		DiskPath:         diskPath,
 		VCPUs:            pc.VCPUs,

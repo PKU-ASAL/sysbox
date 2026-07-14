@@ -79,6 +79,7 @@ type StateResourceLog struct {
 	Type        string               `json:"type"`
 	Name        string               `json:"name"`
 	Provider    string               `json:"provider"`
+	ExternalID  string               `json:"external_id,omitempty"`
 	Instance    map[string]any       `json:"instance"`
 	Attachments []state.Attachment   `json:"attachments,omitempty"`
 	Private     json.RawMessage      `json:"private,omitempty"`
@@ -281,6 +282,7 @@ func (r *FileRecorder) StepStateResource(index int, resource StateResourceLog) {
 		Type:        resource.Type,
 		Name:        resource.Name,
 		Provider:    resource.Provider,
+		ExternalID:  resource.ExternalID,
 		Instance:    cloneAnyMap(resource.Instance),
 		Attachments: cloneAttachments(resource.Attachments),
 		Private:     append(json.RawMessage(nil), resource.Private...),
@@ -309,6 +311,7 @@ func (r *FileRecorder) StepStatePatch(index int, op StatePatchOp, resource *Stat
 			Type:        resource.Type,
 			Name:        resource.Name,
 			Provider:    resource.Provider,
+			ExternalID:  resource.ExternalID,
 			Instance:    cloneAnyMap(resource.Instance),
 			Attachments: cloneAttachments(resource.Attachments),
 			Private:     append(json.RawMessage(nil), resource.Private...),

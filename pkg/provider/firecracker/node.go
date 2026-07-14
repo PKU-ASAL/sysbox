@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -104,7 +105,7 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 
 	// Kill any leftover Firecracker process from a previous failed run.
 	// A stale FC process holds the TAP fd open, preventing TAP reuse.
-	killStaleFirecracker(filepath.Join(runDir, "firecracker.sock"))
+	killStaleFirecracker(ownedUnixSocketPath(runDir, vmID, "firecracker.sock", "fc"))
 
 	pc, _ := spec.ProviderConfig.(*Config)
 	if pc == nil {
@@ -162,7 +163,7 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 		fmt.Sscanf(spec.Memory, "%d", &memMB)
 	}
 
-	socketPath := filepath.Join(runDir, "firecracker.sock")
+	socketPath := ownedUnixSocketPath(runDir, vmID, "firecracker.sock", "fc")
 	cfgPath := filepath.Join(runDir, "vm_config.json")
 	pidPath := filepath.Join(runDir, "firecracker.pid")
 	metaPath := filepath.Join(runDir, "sysbox.json")
@@ -198,7 +199,7 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 	vsockUDS := ""
 	var vsockCID uint32
 	if sysboxInitEnabled {
-		vsockUDS = filepath.Join(runDir, "vsock.sock")
+		vsockUDS = ownedUnixSocketPath(runDir, vmID, "vsock.sock", "vs")
 		_ = os.Remove(vsockUDS) // stale socket from a previous run
 		vsockCID = s.allocCID()
 		cfg.Vsock = &fcVsock{GuestCID: vsockCID, UDSPath: vsockUDS}
@@ -374,17 +375,36 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 	// Resolve vm_dir from typed handle if given, else fall back to the
 	// substrate's conventional layout so cold destroys still clean up.
 	dir := ""
+	socket := ""
+	vsock := ""
 	if hs, _ := h.Provider.(*HandleState); hs != nil {
 		dir = hs.VMDir
+		socket = hs.Socket
+		vsock = hs.VsockUDS
 	}
 	if dir == "" && h.ID != "" {
 		dir = filepath.Join(s.rootfsDir, h.ID)
 	}
 	if dir != "" {
-		killStaleFirecracker(filepath.Join(dir, "firecracker.sock"))
+		if socket == "" {
+			socket = ownedUnixSocketPath(dir, h.ID, "firecracker.sock", "fc")
+		}
+		killStaleFirecracker(socket)
 		_ = os.RemoveAll(dir)
 	}
+	if vsock != "" {
+		_ = os.Remove(vsock)
+	}
 	return nil
+}
+
+func ownedUnixSocketPath(runDir, vmID, filename, prefix string) string {
+	candidate := filepath.Join(runDir, filename)
+	if len(candidate) < 108 {
+		return candidate
+	}
+	digest := sha256.Sum256([]byte(runDir + "\x00" + vmID + "\x00" + filename))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("sysbox-%s-%x.sock", prefix, digest[:8]))
 }
 
 // NodeStatus checks if the VM process is still alive.

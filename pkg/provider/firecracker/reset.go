@@ -50,10 +50,11 @@ func (s *Substrate) PrepareReset(_ context.Context, request substrate.ResetReque
 		}
 		oldPID, oldPIDStart, oldSocket = anchor.PID, anchor.StartTime, anchor.Socket
 	}
+	generation := uuid.NewString()
 	state := &resetHandleState{
 		Version: firecrackerResetHandleVersion, OldID: request.Current.ID, OldVMDir: current.VMDir,
 		OldPID: oldPID, OldPIDStart: oldPIDStart, OldSocket: oldSocket,
-		NewID: request.Node.Name + "-reset-" + uuid.NewString(), BaselinePath: request.Node.Image.ID,
+		NewID: "fc-r" + generation[:8], BaselinePath: request.Node.Image.ID,
 		BaselineDigest: request.Baseline.Digest,
 	}
 	return substrate.ResetHandle{Provider: state, Request: request}, nil
@@ -66,6 +67,14 @@ func (s *Substrate) DestroyReset(ctx context.Context, handle substrate.ResetHand
 	}
 	if err := s.validateOwnedVMDir(state.OldID, state.OldVMDir); err != nil {
 		return err
+	}
+	if _, statErr := os.Stat(state.OldVMDir); os.IsNotExist(statErr) {
+		if state.OldPID > 0 && processMatches(state.OldPID, state.OldPIDStart) {
+			return fmt.Errorf("firecracker reset old process is still running after VM directory removal")
+		}
+		return nil
+	} else if statErr != nil {
+		return statErr
 	}
 	anchor := readProcessAnchor(filepath.Join(state.OldVMDir, "firecracker.pid"))
 	if state.OldPID > 0 {

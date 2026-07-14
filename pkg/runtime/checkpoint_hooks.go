@@ -113,6 +113,7 @@ func StateResourceFromLog(rec StateResourceLog) state.Resource {
 	resource := state.Resource{
 		Address:     address.Resource(rec.Type, rec.Name),
 		Driver:      rec.Provider,
+		ExternalID:  rec.ExternalID,
 		Attributes:  state.MustAttributes(attributes),
 		Attachments: cloneAttachments(rec.Attachments),
 		Private:     append(json.RawMessage(nil), rec.Private...),

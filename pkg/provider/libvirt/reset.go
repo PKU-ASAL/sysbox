@@ -3,6 +3,7 @@ package libvirt
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,12 @@ import (
 )
 
 const libvirtResetHandleVersion = 1
+const vmDirOwnershipFile = ".sysbox-owner.json"
+
+type vmDirOwnership struct {
+	DomainName string `json:"domain_name"`
+	DomainUUID string `json:"domain_uuid"`
+}
 
 type resetHandleState struct {
 	Version        int    `json:"version"`
@@ -36,7 +43,7 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 	if current.DomainName == "" || current.DomainName != request.Node.Name {
 		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset domain identity mismatch")
 	}
-	if err := validateOwnedVMDir(current.DomainName, current.VMDir, current.DiskPath); err != nil {
+	if err := validateOwnedVMDir(current.DomainName, request.Current.ID, current.VMDir, current.DiskPath); err != nil {
 		return substrate.ResetHandle{}, err
 	}
 	newDomainUUID := uuid.NewString()
@@ -55,13 +62,23 @@ func (s *Substrate) DestroyReset(ctx context.Context, handle substrate.ResetHand
 	if err != nil {
 		return err
 	}
-	if out, infoErr := exec.CommandContext(ctx, "virsh", "dominfo", state.DomainName).CombinedOutput(); infoErr == nil {
-		if !strings.Contains(string(out), "sysbox-managed") {
-			return fmt.Errorf("libvirt reset refuses unmanaged domain %q", state.DomainName)
+	if state.OldVMDir != "" {
+		if _, statErr := os.Stat(state.OldVMDir); statErr == nil {
+			if err := validateOwnedVMDir(state.DomainName, state.OldDomainUUID, state.OldVMDir, filepath.Join(state.OldVMDir, "disk.qcow2")); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(statErr) {
+			return statErr
 		}
+	}
+	if _, infoErr := exec.CommandContext(ctx, "virsh", "dominfo", state.DomainName).CombinedOutput(); infoErr == nil {
 		uuidOut, uuidErr := exec.CommandContext(ctx, "virsh", "domuuid", state.DomainName).CombinedOutput()
 		if uuidErr != nil || strings.TrimSpace(string(uuidOut)) != state.OldDomainUUID {
 			return fmt.Errorf("libvirt reset domain UUID ownership mismatch for %q", state.DomainName)
+		}
+		owned, ownershipErr := domainOwnsDisk(ctx, state.DomainName, filepath.Join(state.OldVMDir, "disk.qcow2"))
+		if ownershipErr != nil || !owned {
+			return fmt.Errorf("libvirt reset domain disk ownership mismatch for %q", state.DomainName)
 		}
 		_, _ = exec.CommandContext(ctx, "virsh", "destroy", state.DomainName).CombinedOutput()
 		if undefineOut, undefineErr := exec.CommandContext(ctx, "virsh", "undefine", state.DomainName).CombinedOutput(); undefineErr != nil {
@@ -72,6 +89,23 @@ func (s *Substrate) DestroyReset(ctx context.Context, handle substrate.ResetHand
 		return os.RemoveAll(state.OldVMDir)
 	}
 	return nil
+}
+
+func domainOwnsDisk(ctx context.Context, domainName, expectedDisk string) (bool, error) {
+	out, err := exec.CommandContext(ctx, "virsh", "dumpxml", domainName).CombinedOutput()
+	if err != nil {
+		return false, err
+	}
+	var domain domainXML
+	if err := xml.Unmarshal(out, &domain); err != nil {
+		return false, err
+	}
+	for _, disk := range domain.Devices.Disks {
+		if disk.Device == "disk" && filepath.Clean(disk.Source.File) == filepath.Clean(expectedDisk) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle) (substrate.NodeHandle, error) {
@@ -85,6 +119,9 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 	}
 	diskPath := filepath.Join(state.NewVMDir, "disk.qcow2")
 	if err := os.MkdirAll(state.NewVMDir, 0o755); err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	if err := ensureVMDirOwnership(state.NewVMDir, state.DomainName, state.NewDomainUUID); err != nil {
 		return substrate.NodeHandle{}, err
 	}
 	if _, err := os.Stat(diskPath); os.IsNotExist(err) {
@@ -112,7 +149,7 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 }
 
 func validateResetOverlay(ctx context.Context, diskPath, baselinePath string) error {
-	out, err := exec.CommandContext(ctx, "qemu-img", "info", "--output=json", diskPath).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "qemu-img", "info", "--force-share", "--output=json", diskPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("libvirt reset inspect overlay: %w\n%s", err, out)
 	}
@@ -140,7 +177,7 @@ func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHand
 		}
 	}
 	diskPath := filepath.Join(state.NewVMDir, "disk.qcow2")
-	out, err := exec.CommandContext(ctx, "qemu-img", "info", "--output=json", diskPath).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "qemu-img", "info", "--force-share", "--output=json", diskPath).CombinedOutput()
 	if err != nil {
 		observation.Reason = "replacement overlay is unavailable"
 		return observation, nil
@@ -175,7 +212,12 @@ func (s *Substrate) CleanupReset(_ context.Context, handle substrate.ResetHandle
 	if state.OldVMDir == "" {
 		return nil
 	}
-	if err := validateOwnedVMDir(state.DomainName, state.OldVMDir, filepath.Join(state.OldVMDir, "disk.qcow2")); err != nil {
+	if _, err := os.Stat(state.OldVMDir); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := validateOwnedVMDir(state.DomainName, state.OldDomainUUID, state.OldVMDir, filepath.Join(state.OldVMDir, "disk.qcow2")); err != nil {
 		return err
 	}
 	return os.RemoveAll(state.OldVMDir)
@@ -232,7 +274,32 @@ func resetLibvirtHandleState(request substrate.ResetRequest, state *resetHandleS
 	}, nil
 }
 
-func validateOwnedVMDir(domainName, vmDir, diskPath string) error {
+func ensureVMDirOwnership(vmDir, domainName, domainUUID string) error {
+	path := filepath.Join(vmDir, vmDirOwnershipFile)
+	if raw, err := os.ReadFile(path); err == nil {
+		var ownership vmDirOwnership
+		if json.Unmarshal(raw, &ownership) == nil && ownership.DomainName == domainName && ownership.DomainUUID == domainUUID {
+			return nil
+		}
+		return fmt.Errorf("libvirt reset VM directory ownership mismatch")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	entries, err := os.ReadDir(vmDir)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("libvirt reset refuses VM directory without ownership manifest")
+	}
+	raw, err := json.Marshal(vmDirOwnership{DomainName: domainName, DomainUUID: domainUUID})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o600)
+}
+
+func validateOwnedVMDir(domainName, domainUUID, vmDir, diskPath string) error {
 	if vmDir == "" {
 		return nil
 	}
@@ -243,6 +310,14 @@ func validateOwnedVMDir(domainName, vmDir, diskPath string) error {
 	}
 	if diskPath != "" && filepath.Dir(filepath.Clean(diskPath)) != cleanDir {
 		return fmt.Errorf("libvirt reset disk %q is outside owned VM directory", diskPath)
+	}
+	raw, err := os.ReadFile(filepath.Join(cleanDir, vmDirOwnershipFile))
+	if err != nil {
+		return fmt.Errorf("libvirt reset VM directory ownership manifest: %w", err)
+	}
+	var ownership vmDirOwnership
+	if err := json.Unmarshal(raw, &ownership); err != nil || ownership.DomainName != domainName || ownership.DomainUUID != domainUUID {
+		return fmt.Errorf("libvirt reset VM directory ownership mismatch")
 	}
 	return nil
 }

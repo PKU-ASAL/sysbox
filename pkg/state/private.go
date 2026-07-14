@@ -89,6 +89,15 @@ func (r *Resource) SetRuntimeValue(key string, value any) error {
 	return r.setPrivateData(current)
 }
 
+func (r *Resource) DeleteRuntimeValue(key string) error {
+	current, err := r.privateData()
+	if err != nil {
+		return err
+	}
+	delete(current.Runtime, key)
+	return r.setPrivateData(current)
+}
+
 func EncodePrivate(version int, payload any) (json.RawMessage, error) {
 	if version <= 0 {
 		return nil, fmt.Errorf("private state version must be positive")

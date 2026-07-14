@@ -57,8 +57,26 @@ exit 1
 }
 
 func TestLibvirtResetRejectsUnownedVMDirectory(t *testing.T) {
-	err := validateOwnedVMDir("web", "/srv/production", "/srv/production/disk.qcow2")
+	err := validateOwnedVMDir("web", "uuid", "/srv/production", "/srv/production/disk.qcow2")
 	require.ErrorContains(t, err, "refuses unowned")
+}
+
+func TestLibvirtResetRejectsMatchingDirectoryWithoutOwnershipManifest(t *testing.T) {
+	vmDir, err := os.MkdirTemp("", "sysbox-lv-web-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(vmDir) })
+
+	err = validateOwnedVMDir("web", "uuid", vmDir, filepath.Join(vmDir, "disk.qcow2"))
+	require.ErrorContains(t, err, "ownership")
+}
+
+func TestLibvirtCleanupResetIsIdempotentAfterOwnedDirectoryIsGone(t *testing.T) {
+	handle := substrate.ResetHandle{
+		Provider: &resetHandleState{Version: libvirtResetHandleVersion, DomainName: "web", OldDomainUUID: "old-uuid", OldVMDir: filepath.Join(os.TempDir(), "sysbox-lv-web-gone")},
+		Request:  substrate.ResetRequest{Node: substrate.NodeSpec{Name: "web"}},
+	}
+
+	require.NoError(t, New().CleanupReset(context.Background(), handle))
 }
 
 func TestLibvirtPrepareResetIsPureAndDestroyRequiresExactUUID(t *testing.T) {
@@ -69,6 +87,7 @@ printf '%s\n' "$*" >> "$SYSBOX_TEST_VIRSH_LOG"
 case "$1" in
   dominfo) printf 'Title: sysbox-managed\n' ;;
   domuuid) printf 'old-domain-uuid\n' ;;
+  dumpxml) printf '<domain type="kvm"><name>web</name><devices><disk type="file" device="disk"><source file="%s"/></disk></devices></domain>\n' "$SYSBOX_TEST_OLD_DISK" ;;
 esac
 exit 0
 `)
@@ -76,7 +95,9 @@ exit 0
 	t.Setenv("SYSBOX_TEST_VIRSH_LOG", logPath)
 	oldVMDir, err := os.MkdirTemp("", "sysbox-lv-web-*")
 	require.NoError(t, err)
+	require.NoError(t, ensureVMDirOwnership(oldVMDir, "web", "old-domain-uuid"))
 	require.NoError(t, os.WriteFile(filepath.Join(oldVMDir, "disk.qcow2"), []byte("overlay"), 0o644))
+	t.Setenv("SYSBOX_TEST_OLD_DISK", filepath.Join(oldVMDir, "disk.qcow2"))
 	baselinePath := filepath.Join(t.TempDir(), "base.qcow2")
 	baselineBytes := []byte("baseline")
 	require.NoError(t, os.WriteFile(baselinePath, baselineBytes, 0o644))

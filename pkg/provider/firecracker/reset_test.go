@@ -35,6 +35,8 @@ func TestFirecrackerResetCreatesOwnedWritableRootfsAndRetriesIdempotently(t *tes
 
 	handle, err := sub.PrepareReset(context.Background(), request)
 	require.NoError(t, err)
+	preparedState := handle.Provider.(*resetHandleState)
+	require.Less(t, len(ownedUnixSocketPath(filepath.Join(rootfsDir, preparedState.NewID), preparedState.NewID, "firecracker.sock", "fc")), 108)
 	_, err = os.Stat(oldDir)
 	require.NoError(t, err)
 	require.NoError(t, sub.DestroyReset(context.Background(), handle))
@@ -82,6 +84,22 @@ func TestFirecrackerResetRejectsLegacyIncompleteProcessAnchor(t *testing.T) {
 
 	_, err := New("/tmp/vmlinux", rootfsDir).PrepareReset(context.Background(), request)
 	require.ErrorContains(t, err, "incomplete or mismatched")
+}
+
+func TestFirecrackerDestroyResetRetriesAfterOldGenerationIsGone(t *testing.T) {
+	rootfsDir := t.TempDir()
+	oldID := "sysbox-old"
+	oldDir := filepath.Join(rootfsDir, oldID)
+	require.NoError(t, os.MkdirAll(oldDir, 0o755))
+	pidFile := filepath.Join(oldDir, "firecracker.pid")
+	anchor := processAnchor{PID: 999999, StartTime: "123", Socket: filepath.Join(oldDir, "firecracker.sock"), VMID: oldID}
+	require.NoError(t, writeProcessAnchor(pidFile, anchor))
+	request := substrate.ResetRequest{Current: substrate.NodeHandle{ID: oldID, Provider: &HandleState{VMDir: oldDir, PIDFile: pidFile, PID: anchor.PID, PIDStart: anchor.StartTime, Socket: anchor.Socket}}, Node: substrate.NodeSpec{Name: "web"}}
+	handle := substrate.ResetHandle{Provider: &resetHandleState{Version: firecrackerResetHandleVersion, OldID: oldID, OldVMDir: oldDir, OldPID: anchor.PID, OldPIDStart: anchor.StartTime, OldSocket: anchor.Socket}, Request: request}
+	sub := New("/tmp/vmlinux", rootfsDir)
+
+	require.NoError(t, sub.DestroyReset(context.Background(), handle))
+	require.NoError(t, sub.DestroyReset(context.Background(), handle))
 }
 
 func TestFirecrackerResetRejectsMutatedBaseline(t *testing.T) {

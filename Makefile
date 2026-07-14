@@ -38,7 +38,7 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-all web-build test test-e2e test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix lint ci clean \
+.PHONY: help build build-all web-build test test-e2e test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
 	api-help api-build-api api-build-ui api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
@@ -92,6 +92,9 @@ prepare-libvirt-cloud-image: ## Cache and verify the pinned Ubuntu libvirt image
 
 test-heterogeneous-matrix: ## Run the full heterogeneous IPv4 acceptance matrix
 	bash tests/e2e/heterogeneous_matrix.sh
+
+test-heterogeneous-reset: ## Run three full and targeted heterogeneous reset cycles
+	bash tests/e2e/heterogeneous_reset.sh
 
 web-build: ## Build the Web UI
 	npm --prefix web install

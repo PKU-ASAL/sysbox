@@ -267,7 +267,7 @@ Assert digest-pinned recreate, changed external ID, stable declared identity, ex
 
 Persist old/new container ownership anchors in the opaque reset handle. Recreate from immutable OCI ID and resolved NodeSpec; return a stopped handle for runtime NIC restoration.
 
-- [ ] **Step 3: Run unit/privileged tests and commit**
+- [x] **Step 3: Run unit/privileged tests and commit**
 
 Commit `feat(docker): reset nodes from immutable images`.
 
@@ -288,7 +288,7 @@ Assert immutable base never changes, overlay path is topology-owned, old domain/
 
 Destroy the old owned domain, discard only its overlay and seed, create a new overlay from the verified base, rebuild domain state, and return before start so runtime restores NICs.
 
-- [ ] **Step 3: Run real libvirt reset twice and commit**
+- [x] **Step 3: Run real libvirt reset twice and commit**
 
 Commit `feat(libvirt): reset guests with qcow2 overlays`.
 
@@ -309,7 +309,7 @@ Assert baseline digest stability, old VMM/socket/rootfs/VM-dir deletion, fresh o
 
 Stop the old VMM, discard only owned mutable artifacts, recreate the writable rootfs and VM directory from immutable baseline, and return a stopped handle.
 
-- [ ] **Step 3: Run privileged tests and commit**
+- [x] **Step 3: Run privileged tests and commit**
 
 Commit `feat(firecracker): reset guests from immutable rootfs`.
 
@@ -322,22 +322,22 @@ Commit `feat(firecracker): reset guests from immutable rootfs`.
 - Create: `tests/e2e/heterogeneous_reset_inner.sh`
 - Modify: heterogeneous fixture, Makefile, verification docs, examples
 
-- [ ] **Step 1: Extend the real matrix with state mutation markers**
+- [x] **Step 1: Extend the real matrix with state mutation markers**
 
 Write a unique marker into each guest, capture external IDs and logical MAC/IP, reset the topology, and prove markers and prior external artifacts are absent while logical network identity and digest remain stable.
 
-- [ ] **Step 2: Execute three reset-and-run cycles**
+- [x] **Step 2: Execute three reset-and-run cycles**
 
 For each cycle prove six directed communication edges, structured exec, equivalent topology health, pure repeated plan, and zero superseded container/domain/overlay/rootfs/process residue.
 
-- [ ] **Step 3: Test targeted reset**
+- [x] **Step 3: Test targeted reset**
 
 Reset each provider node individually and prove non-target external IDs remain unchanged while target mutable state is replaced.
 
-- [ ] **Step 4: Run final gates and removal audit**
+- [x] **Step 4: Run final gates and removal audit**
 
 Run full, vet, focused race, CI, privileged network tests, heterogeneous matrix, heterogeneous reset, secret canary, `git diff --check`, and searches forbidding legacy schema/execution/image paths.
 
-- [ ] **Step 5: Document evidence and commit**
+- [x] **Step 5: Document evidence and commit**
 
 Record commands, digest identities, three cycle results, target results, recovery evidence, and zero residue. Commit `test(batch5): verify guest image and reset abstractions`.

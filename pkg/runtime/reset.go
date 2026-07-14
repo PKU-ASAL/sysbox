@@ -458,7 +458,7 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 	updated.Attributes = state.MustAttributes(attributes)
 	updated.Attachments = wired.Attachments
 	updated.Status = state.ResourcePresent
-	if err := updated.SetRuntimeValue("container_id", handle.ID); err != nil {
+	if err := updated.DeleteRuntimeValue("container_id"); err != nil {
 		return err
 	}
 	updated.ExternalID = handle.ID
