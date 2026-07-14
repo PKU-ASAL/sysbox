@@ -31,13 +31,13 @@ func TestCurrentStateRoundTripPreservesTypedResource(t *testing.T) {
 	require.Equal(t, "abc", payload["container_id"])
 }
 
-func TestStateV5RejectsV4WithoutMutation(t *testing.T) {
-	raw := []byte(`{"version":4,"resources":[]}`)
+func TestStateV6RejectsV5WithoutMutation(t *testing.T) {
+	raw := []byte(`{"version":5,"resources":[]}`)
 	before := append([]byte(nil), raw...)
 	_, err := Unmarshal(raw)
-	require.ErrorContains(t, err, "state schema v4")
-	require.ErrorContains(t, err, "expects v5")
-	require.ErrorContains(t, err, "remove")
+	require.ErrorContains(t, err, "state schema v5")
+	require.ErrorContains(t, err, "expects v6")
+	require.ErrorContains(t, err, "destroy/recreate or delete")
 	require.Equal(t, before, raw)
 }
 

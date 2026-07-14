@@ -27,6 +27,7 @@ const (
 	CapabilityLinuxNetwork     Capability = "linux-network"
 	CapabilityGuestNetwork     Capability = "guest-network"
 	CapabilityGuestNetworkInit Capability = "guest-network-init"
+	CapabilityReset            Capability = "reset"
 	CapabilityPolicy           Capability = "policy"
 )
 
@@ -99,6 +100,13 @@ type GuestNetworkInit interface {
 	ObserveGuestNetwork(context.Context, substrate.NodeHandle) (substrate.GuestNetworkInitObservation, error)
 }
 
+type Reset interface {
+	PrepareReset(context.Context, substrate.ResetRequest) (substrate.ResetHandle, error)
+	ApplyReset(context.Context, substrate.ResetHandle) (substrate.NodeHandle, error)
+	ObserveReset(context.Context, substrate.ResetHandle) (substrate.ResetObservation, error)
+	CleanupReset(context.Context, substrate.ResetHandle) error
+}
+
 type Artifact interface {
 	PrepareImage(context.Context, substrate.ImageSpec) (substrate.ImageRef, error)
 }
@@ -151,6 +159,7 @@ type Descriptor struct {
 	LinuxNetwork     LinuxNetwork
 	GuestNetwork     GuestNetwork
 	GuestNetworkInit GuestNetworkInit
+	Reset            Reset
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -183,6 +192,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.GuestNetwork
 	case CapabilityGuestNetworkInit:
 		return d.GuestNetworkInit
+	case CapabilityReset:
+		return d.Reset
 	case CapabilityPolicy:
 		return d.Policy
 	default:

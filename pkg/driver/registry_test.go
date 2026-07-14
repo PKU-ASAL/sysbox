@@ -64,6 +64,35 @@ func (fakeGuestNetworkInit) PrepareGuestNetwork(context.Context, substrate.NodeH
 	return nil
 }
 
+type fakeReset struct{}
+
+func (fakeReset) PrepareReset(context.Context, substrate.ResetRequest) (substrate.ResetHandle, error) {
+	return substrate.ResetHandle{}, nil
+}
+
+func (fakeReset) ApplyReset(context.Context, substrate.ResetHandle) (substrate.NodeHandle, error) {
+	return substrate.NodeHandle{}, nil
+}
+
+func (fakeReset) ObserveReset(context.Context, substrate.ResetHandle) (substrate.ResetObservation, error) {
+	return substrate.ResetObservation{Phase: substrate.ResetPhaseComplete, Converged: true}, nil
+}
+
+func (fakeReset) CleanupReset(context.Context, substrate.ResetHandle) error { return nil }
+
+func TestRegistryRequiresResetCapability(t *testing.T) {
+	registry := NewRegistry()
+	reset := fakeReset{}
+	require.NoError(t, registry.Register(Descriptor{Name: "docker", Version: "1", Reset: reset}))
+
+	descriptor, err := registry.Require("docker", CapabilityReset)
+	require.NoError(t, err)
+	require.Equal(t, reset, descriptor.Reset)
+	typed, err := registry.RequireReset("docker")
+	require.NoError(t, err)
+	require.Equal(t, reset, typed)
+}
+
 func (fakeGuestNetworkInit) ObserveGuestNetwork(context.Context, substrate.NodeHandle) (substrate.GuestNetworkInitObservation, error) {
 	return substrate.GuestNetworkInitObservation{Mode: substrate.GuestNetworkInitCloudInit, Converged: true}, nil
 }

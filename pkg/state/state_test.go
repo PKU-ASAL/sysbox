@@ -48,6 +48,17 @@ func TestUnmarshalRejectsV1(t *testing.T) {
 	require.Equal(t, SchemaVersion, ve.Expected)
 }
 
+func TestUnmarshalRejectsV5WithRecreateGuidance(t *testing.T) {
+	v5 := []byte(`{"version":5,"lineage":"old","resources":[]}`)
+	_, err := Unmarshal(v5)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "destroy/recreate or delete the old state")
+	var incompatible *IncompatibleVersionError
+	require.ErrorAs(t, err, &incompatible)
+	require.Equal(t, 5, incompatible.Found)
+	require.Equal(t, 6, incompatible.Expected)
+}
+
 func TestStateFindResource(t *testing.T) {
 	s := &State{
 		Resources: []Resource{
@@ -116,7 +127,7 @@ func TestManagerLoadMissingReturnsEmpty(t *testing.T) {
 func TestManagerVersionedBackendUsesCAS(t *testing.T) {
 	backend := &recordingVersionedBackend{
 		loaded: &LoadedState{
-			Data:      []byte(`{"version":5,"lineage":"r1","resources":[]}`),
+			Data:      []byte(`{"version":6,"lineage":"r1","resources":[]}`),
 			Metadata:  Metadata{Backend: "test", Serial: 7},
 			Exists:    true,
 			Serial:    7,

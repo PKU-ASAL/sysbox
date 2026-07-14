@@ -38,7 +38,7 @@
 - Produces: `GuestFamily`, `ShellKind`, `ExecRequest`, `ArtifactKind`, `ArtifactIdentity`, `ResetRequest`, `ResetHandle`, `ResetObservation`, `driver.Reset`, and `CapabilityReset`.
 - State contract: `state.SchemaVersion == 6`; non-v6 JSON fails before resource decoding.
 
-- [ ] **Step 1: Write failing public-contract and v5 rejection tests**
+- [x] **Step 1: Write failing public-contract and v5 rejection tests**
 
 Assert exact enum strings, validation of unknown values, copy-safe metadata, reset capability lookup, schema version 6, and a v5 load error containing `destroy/recreate or delete the old state`.
 
@@ -50,13 +50,13 @@ require.Equal(t, 6, state.SchemaVersion)
 require.ErrorContains(t, loadVersion(t, 5), "destroy/recreate or delete the old state")
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `go test ./pkg/substrate ./pkg/driver ./pkg/state -run 'Guest|Artifact|Reset|Incompatible' -count=1`
 
 Expected: compile failures for missing public contracts and schema version mismatch.
 
-- [ ] **Step 3: Implement immutable public values and capability**
+- [x] **Step 3: Implement immutable public values and capability**
 
 Define validated string enums and these exact contracts:
 
@@ -70,11 +70,11 @@ type ResetObservation struct { Phase string; Converged bool; OldExternalID, NewE
 
 Add `driver.Reset` with the four methods from the approved design, add `CapabilityReset`, descriptor storage, registry lookup, and typed `RequireReset`.
 
-- [ ] **Step 4: Bump state to v6 with strict error guidance**
+- [x] **Step 4: Bump state to v6 with strict error guidance**
 
 Set `SchemaVersion = 6`, document v3-v6 history, and make `IncompatibleVersionError.Error()` include the required destructive recreation guidance. Do not decode resources when the top-level version differs.
 
-- [ ] **Step 5: Run focused and full tests, then commit**
+- [x] **Step 5: Run focused and full tests, then commit**
 
 Run: `go test ./pkg/substrate ./pkg/driver ./pkg/state && go test ./...`
 

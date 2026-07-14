@@ -3,9 +3,8 @@
 // Each sysbox apply writes resource entries to a JSON state file.
 // The state is the single source of truth for what's currently deployed.
 //
-// SchemaVersion is bumped on every breaking format change. v1.0 introduces
-// schema v2: typed NodeHandle, ProviderExtra json blob, no v1→v2 migration.
-// Loading a v1 file fails with a clear error pointing users to clear .sysbox/runs/.
+// SchemaVersion is bumped on every breaking format change. Loading an older
+// state always fails; Sysbox does not carry persistent migration paths.
 package state
 
 import (
@@ -21,9 +20,9 @@ import (
 
 // SchemaVersion is the current persistent format version.
 //
-//	v1 – sysbox v0.x (pre-multi-substrate cleanup)
-//	v2 – sysbox v1.0 (typed NodeHandle, ProviderExtra blob)
-const SchemaVersion = 5
+//	v1-v5 – retired incompatible formats
+//	v6    – guest family, immutable artifact identity, and reset state
+const SchemaVersion = 6
 
 type ResourceStatus string
 
@@ -240,7 +239,7 @@ type IncompatibleVersionError struct {
 func (e *IncompatibleVersionError) Error() string {
 	return fmt.Sprintf(
 		"state schema v%d is incompatible with sysbox binary (expects v%d). "+
-			"remove the old state or rebuild the topology before continuing",
+			"destroy/recreate or delete the old state before continuing",
 		e.Found, e.Expected,
 	)
 }
