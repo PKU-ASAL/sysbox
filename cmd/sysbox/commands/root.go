@@ -32,7 +32,7 @@ func init() {
 		false, "allow mutation with a backend that lacks locking or CAS")
 
 	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd, validateCmd, serveCmd,
-		pauseCmd, resumeCmd, resetCmd, importCmd)
+		pauseCmd, resumeCmd, resetCmd, importCmd, versionCmd)
 }
 
 // Execute is called by main(). Returns an error so main() can set exit code.
