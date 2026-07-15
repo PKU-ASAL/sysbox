@@ -506,3 +506,7 @@ scripts/                    artifact 准备及验证辅助脚本
 tests/e2e/                  黑盒 API e2e 脚本（curl）
 .sysbox/                    忽略的本地运行时数据
 ```
+
+## License
+
+Sysbox 使用 [木兰宽松许可证第 2 版](LICENSE)，SPDX 标识为 `MulanPSL-2.0`。
