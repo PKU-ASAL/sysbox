@@ -16,6 +16,17 @@ for invalid in v1 1.2.3 v1.2.3-rc.1 v01.2.3 v1.02.3 v1.2.03; do
   fi
 done
 
+expected_tags=$'registry.example/oslab/sysbox:v0.3.4\nregistry.example/oslab/sysbox:0.3.4\nregistry.example/oslab/sysbox:0.3\nregistry.example/oslab/sysbox:0\nregistry.example/oslab/sysbox:latest'
+[[ "$(oci_tags v0.3.4 registry.example/oslab/sysbox)" == "${expected_tags}" ]] || fail "OCI tag set is incorrect"
+for arg in VERSION REVISION CREATED SOURCE_URL; do
+  grep -Eq "^ARG ${arg}(=|$)" "${repo_root}/Dockerfile" || fail "Dockerfile is missing ARG ${arg}"
+done
+for label in org.opencontainers.image.version org.opencontainers.image.revision org.opencontainers.image.created org.opencontainers.image.licenses; do
+  grep -F "${label}" "${repo_root}/Dockerfile" >/dev/null || fail "Dockerfile is missing ${label}"
+done
+grep -F '${SYSBOX_IMAGE:-sysbox:latest}' "${repo_root}/deploy/docker/compose.yml" >/dev/null || fail "API Compose image is not pinnable"
+grep -F '${SYSBOX_IMAGE:-sysbox:latest}' "${repo_root}/deploy/docker/compose.agent.yml" >/dev/null || fail "Agent Compose image is not pinnable"
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 

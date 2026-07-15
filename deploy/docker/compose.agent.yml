@@ -1,6 +1,6 @@
 services:
   sysbox-agent:
-    image: sysbox:latest
+    image: ${SYSBOX_IMAGE:-sysbox:latest}
     container_name: sysbox-agent
     restart: unless-stopped
     depends_on:

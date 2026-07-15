@@ -19,7 +19,7 @@ services:
 
   sysbox-api:
     build: .
-    image: sysbox:latest
+    image: ${SYSBOX_IMAGE:-sysbox:latest}
     container_name: sysbox-api
     restart: unless-stopped
     depends_on:

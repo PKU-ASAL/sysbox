@@ -1,5 +1,14 @@
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=unknown
+ARG SOURCE_URL=https://git.pku.edu.cn/oslab/sysbox
+
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
 FROM golang:1.26-alpine AS builder
+
+ARG VERSION
+ARG REVISION
+ARG CREATED
 
 RUN apk add --no-cache git
 
@@ -11,11 +20,29 @@ RUN go mod download
 COPY . .
 
 # Build sysbox and sysbox-init.
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/sysbox ./cmd/sysbox
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/sysbox-init ./cmd/sysbox-init
+RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+    -ldflags="-s -w -X github.com/oslab/sysbox/pkg/buildinfo.Version=${VERSION} -X github.com/oslab/sysbox/pkg/buildinfo.Commit=${REVISION} -X github.com/oslab/sysbox/pkg/buildinfo.BuildTime=${CREATED}" \
+    -o /out/sysbox ./cmd/sysbox
+RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+    -ldflags="-s -w -X github.com/oslab/sysbox/pkg/buildinfo.Version=${VERSION} -X github.com/oslab/sysbox/pkg/buildinfo.Commit=${REVISION} -X github.com/oslab/sysbox/pkg/buildinfo.BuildTime=${CREATED}" \
+    -o /out/sysbox-init ./cmd/sysbox-init
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
+
+ARG VERSION
+ARG REVISION
+ARG CREATED
+ARG SOURCE_URL
+
+LABEL org.opencontainers.image.title="Sysbox" \
+      org.opencontainers.image.description="Declarative control plane for heterogeneous Linux experiment topologies" \
+      org.opencontainers.image.source="${SOURCE_URL}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${CREATED}" \
+      org.opencontainers.image.licenses="MulanPSL-2.0" \
+      org.opencontainers.image.documentation="${SOURCE_URL}/src/branch/main/docs/README.md"
 
 # Install ca-certificates first (needed for HTTPS apt sources),
 # then switch to tuna mirror and install runtime deps.
