@@ -117,7 +117,7 @@ v0.3.4
 latest
 ```
 
-`v0.3.4` and `0.3.4` are immutable release tags. The release workflow refuses to overwrite an existing immutable tag. Floating tags are updated only by a successful stable release. Prerelease tags are outside the first implementation and never affect floating tags.
+`v0.3.4` and `0.3.4` are protected release tags: the workflow refuses them when they already exist, serializes release jobs, validates the first version tag before promotion, and verifies that every promoted tag resolves to the same manifest. OCI registries do not expose a portable atomic create-if-absent operation, so the manifest digest recorded in release metadata is the actual immutable identity. Registry write credentials are exclusive to the protected release workflow. Floating tags are updated only after the first version tag validates. Prerelease tags are outside the first implementation and never affect floating tags.
 
 The OCI image carries standard labels for title, description, source, revision, version, creation time, licenses (`MulanPSL-2.0`), and documentation URL. The image continues to support `sysbox serve` as its default entrypoint and can run Agent commands by overriding the container command.
 
@@ -147,7 +147,7 @@ Failure rules are deterministic:
 - Local artifact or checksum failure fails before registry/API access.
 - OCI push or validation failure prevents Forgejo Release creation.
 - Release creation or asset upload failure leaves an auditable partial release and fails loudly.
-- Existing immutable OCI tags or an existing Forgejo Release cause refusal, not overwrite.
+- Existing protected OCI tags or an existing Forgejo Release cause preflight refusal. The exclusive registry credential and serialized workflow are operational requirements because registry tags are intrinsically mutable.
 - Floating tags update only after immutable OCI publication succeeds.
 
 The release documentation includes manual inspection and cleanup procedures for the remaining partial-release case.

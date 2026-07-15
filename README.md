@@ -92,6 +92,26 @@ make test-heterogeneous-reset
 
 第一条命令验证 Docker、Firecracker、libvirt 的六向 IPv4 通信和清理；第二条执行 3 次整拓扑 reset、3 次 targeted reset，并审计被替换资源和最终残留。环境与 artifact 准备要求见 [heterogeneous-matrix README](examples/heterogeneous-matrix/README.md)。
 
+## 安装与版本
+
+正式版本提供 Linux amd64/arm64 tarball、`SHA256SUMS`、构建元数据和多架构 OCI 镜像：
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf sysbox_v0.1.0_linux_amd64.tar.gz
+./sysbox version --json
+```
+
+API 和 Agent 可以固定到同一 OCI 版本：
+
+```bash
+SYSBOX_IMAGE=git.pku.edu.cn/oslab/sysbox:v0.1.0 docker compose \
+  -f deploy/docker/compose.yml \
+  -f deploy/docker/compose.agent.yml up -d
+```
+
+维护者发布流程、runner 和 Forgejo secret 要求见 [Releasing Sysbox](docs/releasing.md)。
+
 ## 生命周期
 
 ```bash

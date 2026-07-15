@@ -13,6 +13,7 @@
 - [Deployment](deployment.md)：Compose profiles、`.env`、API/Agent/Web 部署、state backend 和 artifact 挂载。
 - [API](api.md)：Project、Topology、Revision、Plan、Run、Agent、State、Event 和 action API。
 - [Firecracker Artifacts](firecracker-artifacts.md)：准备和缓存 Firecracker kernel/rootfs artifact。
+- [Releasing Sysbox](releasing.md)：Forgejo CI、可信 runner、版本 tag、binary/OCI 发布与失败恢复。
 
 ## 架构契约
 
