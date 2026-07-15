@@ -25,12 +25,17 @@ version="$(version_without_v "${tag}")"
 immutable=("${image}:${tag}" "${image}:${version}")
 
 preflight() {
+  local output
   docker info >/dev/null
   for ref in "${immutable[@]}"; do
-    if docker buildx imagetools inspect "${ref}" >/dev/null 2>&1; then
+    if output="$(docker buildx imagetools inspect "${ref}" 2>&1)"; then
       echo "release: immutable OCI tag already exists: ${ref}" >&2
       return 1
     fi
+    case "${output,,}" in
+      *"manifest unknown"*|*"name unknown"*|*"not found"*) ;;
+      *) echo "release: cannot prove immutable OCI tag is absent: ${ref}: ${output}" >&2; return 1 ;;
+    esac
   done
 }
 

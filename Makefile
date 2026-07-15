@@ -38,7 +38,7 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-all web-build test test-e2e test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset release-test release-build release-verify lint ci clean \
+.PHONY: help build build-all web-build test test-e2e test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
 	api-help api-build-api api-build-ui api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
@@ -98,6 +98,9 @@ test-heterogeneous-reset: ## Run three full and targeted heterogeneous reset cyc
 
 release-test: ## Test deterministic release artifact generation
 	bash scripts/release/test.sh
+
+release-workflow-test: ## Validate Forgejo workflow trigger and secret contracts
+	bash scripts/release/workflow_test.sh
 
 release-build: ## Build release artifacts for VERSION=vMAJOR.MINOR.PATCH
 	bash scripts/release/build.sh --tag "$(VERSION)" --output dist

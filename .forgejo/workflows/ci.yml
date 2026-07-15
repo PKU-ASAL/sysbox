@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Formatting
+        run: |
+          files="$(gofmt -l cmd pkg tests scripts/release/workflowcheck)"
+          test -z "${files}" || { printf '%s\n' "${files}"; exit 1; }
+          git diff --check
+      - name: Vet
+        run: go vet ./...
+      - name: Unit tests
+        run: go test ./...
+      - name: Focused race tests
+        run: CGO_ENABLED=1 go test -race ./pkg/buildinfo ./cmd/sysbox/commands ./pkg/runtime ./pkg/state ./pkg/provider/docker ./pkg/provider/libvirt ./pkg/provider/firecracker
+      - name: Build and example plans
+        run: make ci
+      - name: Release artifact contracts
+        run: make release-test
+      - name: Workflow contracts
+        run: make release-workflow-test
+      - name: Shell syntax
+        run: bash -n scripts/release/*.sh tests/e2e/*.sh

@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Validate release tag and source
+        run: |
+          source scripts/release/lib.sh
+          require_release_repo "${GITHUB_REF_NAME}"
+      - name: Full CI gate
+        run: |
+          go vet ./...
+          go test ./...
+          CGO_ENABLED=1 go test -race ./pkg/buildinfo ./cmd/sysbox/commands ./pkg/runtime ./pkg/state ./pkg/provider/docker ./pkg/provider/libvirt ./pkg/provider/firecracker
+          make ci
+          make release-test
+          make release-workflow-test
+
+  publish:
+    needs: verify
+    runs-on: [self-hosted, linux, release]
+    env:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      FORGEJO_API_URL: https://git.pku.edu.cn/api/v1
+      FORGEJO_REPOSITORY: ${{ github.repository }}
+      OCI_IMAGE: git.pku.edu.cn/${{ github.repository }}
+      SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Registry and release preflight
+        run: |
+          test -n "${RELEASE_TOKEN}"
+          printf '%s' "${RELEASE_TOKEN}" | docker login git.pku.edu.cn -u "${GITHUB_ACTOR}" --password-stdin
+          scripts/release/forgejo.sh preflight --tag "${GITHUB_REF_NAME}"
+          scripts/release/oci.sh preflight --tag "${GITHUB_REF_NAME}" --image "${OCI_IMAGE}"
+      - name: Build and verify release artifacts
+        run: |
+          scripts/release/build.sh --tag "${GITHUB_REF_NAME}" --output dist
+          scripts/release/verify.sh dist
+      - name: Publish and verify OCI image
+        run: scripts/release/oci.sh build --tag "${GITHUB_REF_NAME}" --image "${OCI_IMAGE}"
+      - name: Publish and audit Forgejo release
+        run: scripts/release/forgejo.sh publish --tag "${GITHUB_REF_NAME}" --dist dist
