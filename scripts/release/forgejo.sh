@@ -34,7 +34,41 @@ api_status() {
 }
 
 preflight() {
-  local response status
+  local response status full_name can_write object_type object_sha object_url depth
+  require_release_repo "${tag}"
+  response="$(mktemp)"
+  curl -fsS --config "${auth}" "${api}/repos/${FORGEJO_REPOSITORY}" >"${response}"
+  full_name="$(jq -er '.full_name' "${response}")"
+  can_write="$(jq -r '(.permissions.admin == true) or (.permissions.push == true)' "${response}")"
+  rm -f "${response}"
+  [[ "${full_name}" == "${FORGEJO_REPOSITORY}" && "${can_write}" == true ]] || {
+    echo "release: token cannot publish to ${FORGEJO_REPOSITORY}" >&2
+    return 1
+  }
+
+  response="$(mktemp)"
+  curl -fsS --config "${auth}" "${api}/repos/${FORGEJO_REPOSITORY}/git/refs/tags/${tag}" >"${response}"
+  object_type="$(jq -er '.object.type' "${response}")"
+  object_sha="$(jq -er '.object.sha' "${response}")"
+  object_url="$(jq -er '.object.url // empty' "${response}" 2>/dev/null || true)"
+  rm -f "${response}"
+  depth=0
+  while [[ "${object_type}" == tag ]]; do
+    ((depth += 1))
+    ((depth <= 4)) || { echo "release: remote tag indirection is too deep" >&2; return 1; }
+    [[ -n "${object_url}" ]] || { echo "release: remote annotated tag has no object URL" >&2; return 1; }
+    response="$(mktemp)"
+    curl -fsS --config "${auth}" "${object_url}" >"${response}"
+    object_type="$(jq -er '.object.type' "${response}")"
+    object_sha="$(jq -er '.object.sha' "${response}")"
+    object_url="$(jq -er '.object.url // empty' "${response}" 2>/dev/null || true)"
+    rm -f "${response}"
+  done
+  [[ "${object_type}" == commit && "${object_sha}" == "$(release_commit)" ]] || {
+    echo "release: remote tag ${tag} does not resolve to local HEAD" >&2
+    return 1
+  }
+
   response="$(mktemp)"
   status="$(api_status "${response}" "${api}/repos/${FORGEJO_REPOSITORY}/releases/tags/${tag}")"
   rm -f "${response}"

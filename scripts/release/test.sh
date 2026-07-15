@@ -24,6 +24,7 @@ done
 for label in org.opencontainers.image.version org.opencontainers.image.revision org.opencontainers.image.created org.opencontainers.image.licenses; do
   grep -F "${label}" "${repo_root}/Dockerfile" >/dev/null || fail "Dockerfile is missing ${label}"
 done
+grep -F -- '--provenance=false' "${repo_root}/scripts/release/oci.sh" >/dev/null || fail "OCI build must disable provenance attestations"
 grep -F '${SYSBOX_IMAGE:-sysbox:latest}' "${repo_root}/deploy/docker/compose.yml" >/dev/null || fail "API Compose image is not pinnable"
 grep -F '${SYSBOX_IMAGE:-sysbox:latest}' "${repo_root}/deploy/docker/compose.agent.yml" >/dev/null || fail "Agent Compose image is not pinnable"
 

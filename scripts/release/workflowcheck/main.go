@@ -38,6 +38,9 @@ func validateWorkflow(kind string, raw []byte) error {
 	if on == nil || jobs == nil || jobs.Kind != yaml.MappingNode {
 		return fmt.Errorf("workflow requires on and jobs mappings")
 	}
+	if err := validatePinnedActions(root); err != nil {
+		return err
+	}
 
 	switch kind {
 	case "ci":
@@ -67,6 +70,9 @@ func validateWorkflow(kind string, raw []byte) error {
 		if publish == nil || !nodeContains(publish, "RELEASE_TOKEN") {
 			return fmt.Errorf("publish job must receive RELEASE_TOKEN")
 		}
+		if nodeContains(mappingValue(publish, "env"), "RELEASE_TOKEN") {
+			return fmt.Errorf("RELEASE_TOKEN must not be job-wide")
+		}
 		for i := 0; i < len(jobs.Content); i += 2 {
 			name, job := jobs.Content[i].Value, jobs.Content[i+1]
 			if name != "publish" && nodeContains(job, "RELEASE_TOKEN") {
@@ -82,6 +88,28 @@ func validateWorkflow(kind string, raw []byte) error {
 		}
 	default:
 		return fmt.Errorf("unknown workflow kind %q", kind)
+	}
+	return nil
+}
+
+func validatePinnedActions(node *yaml.Node) error {
+	if node == nil {
+		return nil
+	}
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i < len(node.Content); i += 2 {
+			if node.Content[i].Value == "uses" {
+				parts := strings.Split(node.Content[i+1].Value, "@")
+				if len(parts) != 2 || len(parts[1]) != 40 || strings.Trim(parts[1], "0123456789abcdef") != "" {
+					return fmt.Errorf("third-party action %q must be pinned by full commit SHA", node.Content[i+1].Value)
+				}
+			}
+		}
+	}
+	for _, child := range node.Content {
+		if err := validatePinnedActions(child); err != nil {
+			return err
+		}
 	}
 	return nil
 }

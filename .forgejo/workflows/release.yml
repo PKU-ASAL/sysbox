@@ -1,5 +1,9 @@
 name: Release
 
+concurrency:
+  group: sysbox-stable-release
+  cancel-in-progress: false
+
 on:
   push:
     tags: ['v*.*.*']
@@ -8,10 +12,10 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
         with:
           go-version-file: go.mod
           cache: true
@@ -32,20 +36,21 @@ jobs:
     needs: verify
     runs-on: [self-hosted, linux, release]
     env:
-      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
       FORGEJO_API_URL: https://git.pku.edu.cn/api/v1
       FORGEJO_REPOSITORY: ${{ github.repository }}
       OCI_IMAGE: git.pku.edu.cn/${{ github.repository }}
       SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
         with:
           go-version-file: go.mod
           cache: true
       - name: Registry and release preflight
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           test -n "${RELEASE_TOKEN}"
           printf '%s' "${RELEASE_TOKEN}" | docker login git.pku.edu.cn -u "${GITHUB_ACTOR}" --password-stdin
@@ -56,6 +61,13 @@ jobs:
           scripts/release/build.sh --tag "${GITHUB_REF_NAME}" --output dist
           scripts/release/verify.sh dist
       - name: Publish and verify OCI image
+        env:
+          BUILD_METADATA: dist/build-metadata.json
         run: scripts/release/oci.sh build --tag "${GITHUB_REF_NAME}" --image "${OCI_IMAGE}"
       - name: Publish and audit Forgejo release
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: scripts/release/forgejo.sh publish --tag "${GITHUB_REF_NAME}" --dist dist
+      - name: Logout from registry
+        if: always()
+        run: docker logout git.pku.edu.cn || true
