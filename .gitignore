@@ -1,5 +1,6 @@
 # binaries
 /bin/
+/dist/
 /sysbox
 /sysbox-init
 *.test
