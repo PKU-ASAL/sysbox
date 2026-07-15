@@ -109,7 +109,7 @@ bin/sysbox --state .sysbox/runs/two-networks/state.json state list
 sudo -E bin/sysbox -f examples/two-networks/field.sysbox.hcl destroy --auto-approve
 ```
 
-`reset` 保留声明的拓扑、网络身份和不可变 artifact 身份，但替换节点的可变 guest 状态和 provider external ID。旧版 state 不会自动迁移：state schema 不匹配时必须 destroy/recreate，或明确删除旧 state 后重建。
+`reset` 保留声明的拓扑、网络身份和不可变 artifact 身份，但替换节点的可变 guest 状态和 provider external ID。旧版 state 不会自动迁移：必须先用创建该 state 的旧版 Sysbox 执行 destroy，再用当前版本 recreate。若直接删除旧 state，当前版本可以重建拓扑，但用户必须自行清理旧 state 对应的外部资源。
 
 ## 当前边界
 

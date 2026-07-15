@@ -30,7 +30,7 @@
 - Consumes: checked-in CLI commands, Make targets, HCL resource names, and verification results.
 - Produces: the primary user entry point and links consumed by `docs/README.md`.
 
-- [ ] **Step 1: Record the README facts that must remain true**
+- [x] **Step 1: Record the README facts that must remain true**
 
 Run:
 
@@ -43,7 +43,7 @@ bin/sysbox -f examples/heterogeneous-matrix/field.sysbox.hcl validate
 
 Expected: reset help includes `--target`; Make help includes heterogeneous matrix/reset targets; both HCL files validate when their referenced environment artifacts are supplied by their existing acceptance path. If direct heterogeneous validation needs artifact environment variables, use the acceptance target rather than inventing placeholder paths.
 
-- [ ] **Step 2: Rewrite the README opening and product journey**
+- [x] **Step 2: Rewrite the README opening and product journey**
 
 Replace the current contract-first opening with these sections in this order:
 
@@ -70,7 +70,7 @@ Replace the current contract-first opening with these sections in this order:
 
 Keep the existing detailed API, deployment, architecture, backend, configuration, resource, and repository sections below the new user journey. Correct stale artifact wording so images are described through explicit `kind`, `source`, `architecture`, `guest_family`, and optional digest rather than node-level `rootfs` or `qcow2` fields.
 
-- [ ] **Step 3: Validate README commands and links**
+- [x] **Step 3: Validate README commands and links**
 
 Run:
 
@@ -82,7 +82,7 @@ git diff --check -- README.md
 
 Expected: the user journey appears before deep reference sections; reset and Overview links are present; no whitespace errors.
 
-- [ ] **Step 4: Commit the README entry point**
+- [x] **Step 4: Commit the README entry point**
 
 ```bash
 git add README.md
@@ -103,7 +103,7 @@ git commit -m "docs: present sysbox heterogeneous topology workflow"
 - Consumes: terminology established by the README and the architecture/verification contracts.
 - Produces: the authoritative narrative overview linked from README and the docs index.
 
-- [ ] **Step 1: Write the Overview around stable public concepts**
+- [x] **Step 1: Write the Overview around stable public concepts**
 
 Create `docs/overview.md` with these sections:
 
@@ -127,7 +127,7 @@ Create `docs/overview.md` with these sections:
 
 Explain logical versus external identity, provider-owned mechanics behind common contracts, state schema v6 strict rejection, whole and targeted reset, checkpoint recovery, and acceptance evidence. Link technical claims to the relevant architecture or verification document.
 
-- [ ] **Step 2: Check the Overview for unsupported claims and stale schema**
+- [x] **Step 2: Check the Overview for unsupported claims and stale schema**
 
 Run:
 
@@ -139,7 +139,7 @@ git diff --check -- docs/overview.md
 
 Expected: IPv6 and Terraform appear only as explicit boundaries; rootfs/qcow2 appear as artifact kinds, not legacy node fields; state/reset/acceptance claims are present; legacy-field search returns no matches.
 
-- [ ] **Step 3: Commit the product overview**
+- [x] **Step 3: Commit the product overview**
 
 ```bash
 git add docs/overview.md
@@ -159,7 +159,7 @@ git commit -m "docs: add sysbox product overview"
 - Consumes: final README and Overview paths.
 - Produces: a maintained documentation map and a verified documentation set.
 
-- [ ] **Step 1: Replace the minimal docs index with grouped navigation**
+- [x] **Step 1: Replace the minimal docs index with grouped navigation**
 
 Organize `docs/README.md` as:
 
@@ -174,7 +174,7 @@ Organize `docs/README.md` as:
 
 Link `../README.md`, `overview.md`, `deployment.md`, `api.md`, `firecracker-artifacts.md`, every current file under `docs/architecture/`, and both current files under `docs/verification/`. State that `docs/superpowers/` contains implementation records rather than product documentation.
 
-- [ ] **Step 2: Verify every changed Markdown link resolves**
+- [x] **Step 2: Verify every changed Markdown link resolves**
 
 Run a shell loop that extracts relative Markdown destinations from the three changed files, strips anchors, resolves them relative to the source file, and fails for missing files:
 
@@ -190,7 +190,7 @@ done
 
 Expected: exit 0 with no missing-link output.
 
-- [ ] **Step 3: Run content consistency and repository gates**
+- [x] **Step 3: Run content consistency and repository gates**
 
 Run:
 
@@ -203,11 +203,11 @@ go test ./...
 
 Expected: both documents describe the supported providers, IPv4 scope, targeted reset, and state contract consistently; forbidden overclaims are absent; tests and whitespace checks pass.
 
-- [ ] **Step 4: Request documentation-focused code review**
+- [x] **Step 4: Request documentation-focused code review**
 
 Ask the reviewer to check factual accuracy, navigation completeness, unsupported capability claims, command validity, and consistency with the Batch 4/5 verification reports. Resolve all Critical and Important findings before commit.
 
-- [ ] **Step 5: Commit the documentation index and final corrections**
+- [x] **Step 5: Commit the documentation index and final corrections**
 
 ```bash
 git add README.md docs/README.md docs/overview.md docs/superpowers/plans/2026-07-15-readme-overview-refresh-plan.md

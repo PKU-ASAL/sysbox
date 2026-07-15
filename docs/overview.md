@@ -45,7 +45,7 @@ Sysbox 当前正式支持三类节点 provider：
 - **Firecracker**：使用显式 kernel 和 rootfs artifact，提供 microVM 隔离。
 - **libvirt**：使用 qcow2 baseline 和每代 overlay，适合完整 Linux VM。
 
-Linux network provider 负责 netns、bridge、veth、TAP、地址和链路等宿主机网络原语。runtime 只依赖公共 driver/substrate 契约，不根据 provider 名称理解 Docker、NoCloud、netplan、qcow2 或 Firecracker socket。provider 在正确的生命周期阶段执行自己的机制。
+Linux network provider 负责 netns、bridge、veth、TAP、地址和链路等宿主机网络原语。在 guest network initialization 和 reset orchestration 中，runtime 只依赖公共能力契约，不理解 NoCloud、netplan、qcow2 overlay 或 Firecracker socket 等具体机制；provider 在正确的生命周期阶段执行这些机制。其他资源处理和历史 checkpoint recovery 路径仍包含按 driver 能力或类型区分的逻辑，不能据此宣称整个 runtime 完全 provider-neutral。
 
 接口边界和状态所有权见 [Handler and Driver Contracts](architecture/handler-driver-contracts.md)。完整的三 provider HCL 见 [heterogeneous-matrix](../examples/heterogeneous-matrix/field.sysbox.hcl)。
 
