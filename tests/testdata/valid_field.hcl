@@ -34,12 +34,3 @@ resource "sysbox_node" "client" {
   }
 }
 
-resource "sysbox_actor" "red" {
-  position = "internal"
-  node     = sysbox_node.client.id
-  command  = ["opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
-  port     = 4096
-
-  depends_on = ["sysbox_node.client"]
-}
-

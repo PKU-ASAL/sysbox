@@ -330,6 +330,35 @@ func TestNodeResourceHandlerPreservesTypedProviderConfig(t *testing.T) {
 	require.Equal(t, provider, sub.lastSpec.ProviderConfig)
 }
 
+func TestNodeProviderLaunchChangeRequiresReplacement(t *testing.T) {
+	type optionalArgv struct {
+		Set   bool     `json:"set"`
+		Value []string `json:"value"`
+	}
+	type providerConfig struct {
+		Command optionalArgv `json:"command"`
+	}
+	node := &graph.Node{
+		Address: address.Resource("sysbox_node", "service"),
+		Data: &config.NodeConfig{
+			Image:          "sysbox_image.service.id",
+			Substrate:      "docker",
+			ProviderConfig: &providerConfig{Command: optionalArgv{Set: true, Value: []string{"serve"}}},
+		},
+	}
+	attributes := map[string]any{}
+	require.NoError(t, setDesiredHash(node, attributes))
+	current := &state.Resource{Address: node.Address, Driver: "docker", Attributes: attributes}
+
+	node.Data.(*config.NodeConfig).ProviderConfig = &providerConfig{Command: optionalArgv{Set: true, Value: []string{"serve", "--debug"}}}
+	change, err := NodeResourceHandler{}.PlanDiff(node, current)
+
+	require.NoError(t, err)
+	require.Equal(t, controlplane.PlanActionReplace, change.Action)
+	_, found := fieldChangeAt(change.Changes, "provider_config.command.value[1]")
+	require.True(t, found)
+}
+
 func TestNodeResourceHandlerRejectsUnsupportedPortExposure(t *testing.T) {
 	sub := &portTestSubstrate{
 		name:      "port-direct-only",

@@ -6,6 +6,6 @@ operations. Missing values fail execution. Non-sensitive optional path lookup
 uses `env_optional("NAME")`.
 
 Plans, state, checkpoints, API payloads, and logs store only references or
-redacted placeholders. Node and actor environment, commands, connection
+redacted placeholders. Node environment, connection
 credentials, provisioner commands, authorized keys, and provider config pass
 through the execution-scoped resolver.

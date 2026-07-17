@@ -52,11 +52,6 @@ func requiredCapabilitiesForTopology(path string) ([]string, error) {
 			set["network"] = true
 		case *config.SSHAccessConfig:
 			set["network"] = true
-		case *config.ActorConfig:
-			set["docker"] = true
-			if cfg.Position != "external" {
-				set["network"] = true
-			}
 		}
 	}
 	return capabilitiesFromSet(set), nil
@@ -131,12 +126,6 @@ func decodeCapabilityResource(r config.ResourceBlock, evalCtx *hcl.EvalContext) 
 		return cfg, nil
 	case "sysbox_ssh_access":
 		cfg := &config.SSHAccessConfig{}
-		if err := config.DecodeResource(&r, cfg, evalCtx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	case "sysbox_actor":
-		cfg := &config.ActorConfig{}
 		if err := config.DecodeResource(&r, cfg, evalCtx); err != nil {
 			return nil, err
 		}

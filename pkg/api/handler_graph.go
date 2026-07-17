@@ -93,12 +93,6 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 					addLink(n.Address, address.Address{Type: "sysbox_network", Name: ref}, iface.IP, iface.Name)
 				}
 			}
-		case *config.ActorConfig:
-			for _, link := range cfg.Links {
-				if ref := config.ResolveName(link.Network); ref != "" {
-					addLink(n.Address, address.Address{Type: "sysbox_network", Name: ref}, link.IP, "")
-				}
-			}
 		}
 	}
 
@@ -124,8 +118,6 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		case *config.NetworkConfig:
 			gn.CIDR = cfg.CIDR
 			gn.NAT = cfg.NAT
-		case *config.ActorConfig:
-			gn.Extra = map[string]any{"position": cfg.Position, "port": cfg.Port}
 		case *config.FirewallConfig:
 			gn.Extra = map[string]any{"rules": len(cfg.Rules)}
 		case *config.SSHAccessConfig:

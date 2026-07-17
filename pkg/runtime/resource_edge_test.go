@@ -114,12 +114,14 @@ func TestCreateFirewallDelegatesMissingDeviceResolutionToPolicyDriver(t *testing
 }
 
 func TestEdgeResourceHandlersRegistered(t *testing.T) {
-	for _, typ := range []string{"sysbox_firewall", "sysbox_ssh_access", "sysbox_actor"} {
+	for _, typ := range []string{"sysbox_firewall", "sysbox_ssh_access"} {
 		p, ok := GetResourceHandler(typ)
 		require.True(t, ok, typ)
 		require.Equal(t, typ, p.Type())
 		require.Equal(t, typ, p.Schema().Type)
 	}
+	_, actorRegistered := GetResourceHandler("sysbox_actor")
+	require.False(t, actorRegistered)
 }
 
 func TestFirewallResourceHandlerPlanDiff(t *testing.T) {
@@ -187,39 +189,6 @@ func TestSSHAccessResourceHandlerPlanDiff(t *testing.T) {
 	require.True(t, change.Sensitive)
 }
 
-func TestActorResourceHandlerPlanDiff(t *testing.T) {
-	n := &graph.Node{
-		Address: address.Resource("sysbox_actor", "agent"),
-		Data: &config.ActorConfig{
-			Position: "internal",
-			Node:     "sysbox_node.web.id",
-			Command:  []string{"sleep", "60"},
-			Env:      map[string]string{"TOKEN": "old"},
-		},
-	}
-	inst := map[string]any{}
-	require.NoError(t, setDesiredHash(n, inst))
-	current := &state.Resource{Address: address.Resource("sysbox_actor", "agent"), Driver: "docker", Attributes: inst}
-	p := ActorResourceHandler{}
-
-	action, err := p.PlanDiff(n, current)
-	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionNoop, action.Action)
-
-	n.Data = &config.ActorConfig{
-		Position: "internal",
-		Node:     "sysbox_node.web.id",
-		Command:  []string{"sleep", "60"},
-		Env:      map[string]string{"TOKEN": "new"},
-	}
-	action, err = p.PlanDiff(n, current)
-	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, action.Action)
-	change, ok := fieldChangeAt(action.Changes, "env.TOKEN")
-	require.True(t, ok)
-	require.True(t, change.Sensitive)
-}
-
 func TestEdgeProviderDeleteRemovesState(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -230,11 +199,6 @@ func TestEdgeProviderDeleteRemovesState(t *testing.T) {
 			name: "ssh_access",
 			p:    SSHAccessResourceHandler{},
 			res:  state.Resource{Address: address.Resource("sysbox_ssh_access", "admin")},
-		},
-		{
-			name: "actor_missing_substrate",
-			p:    ActorResourceHandler{},
-			res:  state.Resource{Address: address.Resource("sysbox_actor", "agent"), Driver: "missing"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

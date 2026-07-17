@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/hashicorp/hcl/v2"
@@ -217,8 +216,7 @@ func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalCon
 func addResourceToGraph(r config.ResourceBlock, addr address.Address, ctx *hcl.EvalContext, g *graph.Graph) error {
 	provider, ok := GetResourceHandler(r.Type)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "warning: unsupported resource type %q (skipped)\n", r.Type)
-		return nil
+		return fmt.Errorf("unsupported resource type %q", r.Type)
 	}
 	decoder, ok := provider.(ResourceGraphDecoder)
 	if !ok {

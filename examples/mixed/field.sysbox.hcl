@@ -185,24 +185,7 @@ resource "sysbox_node" "node_db" {
   }
 }
 
-# ── Actor (on Docker node — uses docker exec) ───────────────────────────────
-
-resource "sysbox_actor" "red" {
-  position = "internal"
-  node     = sysbox_node.node_attack.id
-  command  = ["opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
-  port     = 4096
-  acp_ip   = "172.30.1.10"
-  env      = { DEEPSEEK_API_KEY = env("DEEPSEEK_API_KEY") }
-}
-
-
 # ── Outputs ─────────────────────────────────────────────────────────────────
-
-output "attacker_acp" {
-  value       = "http://172.30.1.10:4096"
-  description = "ACP URL for the attacker agent"
-}
 
 output "vm_db_ip" {
   value       = "10.0.2.20"

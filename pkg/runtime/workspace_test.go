@@ -19,6 +19,22 @@ func writeHCL(t *testing.T, content string) string {
 	return f
 }
 
+func TestBuildGraphRejectsRemovedActorResource(t *testing.T) {
+	path := writeHCL(t, `
+resource "sysbox_actor" "red" {
+  position = "internal"
+  node = "sysbox_node.attack"
+  command = ["opencode", "serve"]
+}
+`)
+	root, err := config.ParseFile(path)
+	require.NoError(t, err)
+	ctx, err := config.BuildEvalContext(root)
+	require.NoError(t, err)
+	_, err = BuildGraph(root, ctx)
+	require.ErrorContains(t, err, `unsupported resource type "sysbox_actor"`)
+}
+
 func TestImageSchemaRequiresStrictArtifactFieldsAndRejectsLegacySources(t *testing.T) {
 	strict := writeHCL(t, `
 substrate "docker" { alias = "local" }

@@ -48,10 +48,6 @@ func (c *ProviderContext) createRouterResource(ctx context.Context, n *graph.Nod
 	return c.exec.createRouterResource(ctx, n)
 }
 
-func (c *ProviderContext) createActorResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
-	return c.exec.createActorResource(ctx, n)
-}
-
 func (c *ProviderContext) createSSHAccessResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	return c.exec.createSSHAccessResource(ctx, n)
 }
@@ -74,8 +70,4 @@ func (c *ProviderContext) readDataImageResource(ctx context.Context, n *graph.No
 
 func (c *ProviderContext) destroyNodeResource(ctx context.Context, r state.Resource) error {
 	return c.exec.destroyNodeResource(ctx, r)
-}
-
-func (c *ProviderContext) destroyActorResource(ctx context.Context, r state.Resource) error {
-	return c.exec.destroyActorResource(ctx, r)
 }

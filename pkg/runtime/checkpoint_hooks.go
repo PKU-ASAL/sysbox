@@ -128,7 +128,7 @@ func AdoptStateResource(st *state.State, rec StateResourceLog, externalID string
 		switch rec.Type {
 		case "sysbox_network":
 			_ = res.SetAttribute("docker_network_id", externalID)
-		case "sysbox_node", "sysbox_router", "sysbox_actor":
+		case "sysbox_node", "sysbox_router":
 			_ = res.SetAttribute("container_id", externalID)
 		}
 	}
@@ -234,31 +234,11 @@ func (RouterResourceHandler) RecoverCheckpointResource(ctx context.Context, st *
 	return recoverNodeLikeCheckpoint(ctx, st, step)
 }
 
-func (ActorResourceHandler) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
-	if step.StateResource != nil {
-		res := StateResourceFromLog(*step.StateResource)
-		if res.Str("position") == "internal" {
-			return recoverStateResourceFromCheckpoint(st, step), nil
-		}
-	}
-	return recoverNodeLikeCheckpoint(ctx, st, step)
-}
-
 func (NodeResourceHandler) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
 	return cleanupNodeLikeCheckpoint(ctx, step)
 }
 
 func (RouterResourceHandler) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
-	return cleanupNodeLikeCheckpoint(ctx, step)
-}
-
-func (ActorResourceHandler) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
-	if step.StateResource != nil {
-		res := StateResourceFromLog(*step.StateResource)
-		if res.Str("position") == "internal" {
-			return CheckpointCleanupResult{Resource: step.Resource, ExternalID: step.ExternalID, Status: "no_owned_external_resource", Class: CheckpointCleanupContainer}, nil
-		}
-	}
 	return cleanupNodeLikeCheckpoint(ctx, step)
 }
 

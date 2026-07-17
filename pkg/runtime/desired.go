@@ -105,17 +105,6 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		payload["authorized_keys"] = cfg.AuthorizedKeys
 		payload["bind_ip"] = cfg.BindIP
 		payload["port"] = cfg.Port
-	case *config.ActorConfig:
-		payload["position"] = cfg.Position
-		payload["node"] = cfg.Node
-		payload["image"] = cfg.Image
-		payload["links"] = normalizeLinks(cfg.Links)
-		payload["command"] = cfg.Command
-		payload["port"] = cfg.Port
-		payload["acp_ip"] = cfg.ACPIP
-		payload["env"] = cfg.Env
-		payload["entry_points"] = cfg.EntryPoints
-		payload["depends_on"] = normalizeStrings(cfg.DependsOn)
 	default:
 		payload["data"] = cfg
 	}

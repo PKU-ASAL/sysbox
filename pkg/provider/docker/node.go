@@ -79,11 +79,15 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 	// Inspect the image to capture its original CMD/Entrypoint so we can
 	// exec them after provisioners finish (our container overrides them
 	// with "sleep infinity" to keep the container alive for provisioning).
-	var imageCmd []string
-	var imageEntrypoint []string
-	if imgInfo, _, err := s.cli.ImageInspectWithRaw(ctx, spec.Image.ID); err == nil {
-		imageCmd = imgInfo.Config.Cmd
-		imageEntrypoint = imgInfo.Config.Entrypoint
+	imgInfo, _, err := s.cli.ImageInspectWithRaw(ctx, spec.Image.ID)
+	if err != nil {
+		return substrate.NodeHandle{}, fmt.Errorf("docker inspect image launch metadata: %w", err)
+	}
+	var imageCmd, imageEntrypoint []string
+	if imgInfo.Config != nil {
+		imageEntrypoint, imageCmd = effectiveLaunch(imgInfo.Config.Entrypoint, imgInfo.Config.Cmd, pc)
+	} else {
+		imageEntrypoint, imageCmd = effectiveLaunch(nil, nil, pc)
 	}
 
 	resp, err := s.cli.ContainerCreate(ctx,

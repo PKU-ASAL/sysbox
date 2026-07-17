@@ -24,7 +24,7 @@ func TestDockerResetRecreatesPinnedOwnedContainerAndHidesSecrets(t *testing.T) {
 	baseline := substrate.ArtifactIdentity{Kind: substrate.ArtifactOCI, Source: "alpine:latest", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Architecture: "amd64", GuestFamily: substrate.GuestFamilyLinux}
 	request := substrate.ResetRequest{
 		Current: substrate.NodeHandle{ID: "old-id", Provider: &HandleState{ContainerName: "lab-node"}},
-		Node: substrate.NodeSpec{Name: "lab-node", Image: substrate.ArtifactHandle{ID: baseline.Digest, Identity: baseline}, ManagedNetwork: true, Env: map[string]string{"TOKEN": "super-secret"}, Labels: map[string]string{
+		Node: substrate.NodeSpec{Name: "lab-node", Image: substrate.ArtifactHandle{ID: baseline.Digest, Identity: baseline}, ManagedNetwork: true, Env: map[string]string{"TOKEN": "super-secret"}, ProviderConfig: &Config{Command: OptionalArgv{Set: true, Value: []string{"mongod", "--bind_ip", "0.0.0.0"}}}, Labels: map[string]string{
 			"sysbox.managed": "true", "sysbox.topology": "lab", "sysbox.resource": "sysbox_node.web", "sysbox.run_id": "reset-run",
 		}},
 		Baseline: baseline,
@@ -49,7 +49,7 @@ func TestDockerResetRecreatesPinnedOwnedContainerAndHidesSecrets(t *testing.T) {
 	require.NoError(t, err)
 	providerState := adopted.Provider.(*HandleState)
 	require.True(t, providerState.RemoveDefaultBridge)
-	require.Equal(t, []string{"echo", "ready"}, providerState.ImageCmd)
+	require.Equal(t, []string{"mongod", "--bind_ip", "0.0.0.0"}, providerState.ImageCmd)
 	require.Equal(t, []string{"/entry"}, providerState.ImageEntrypoint)
 	require.False(t, api.containers["new-id"].running)
 	observation, err := sub.ObserveReset(context.Background(), handle)

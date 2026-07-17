@@ -1,7 +1,7 @@
 // Package config defines sysbox's HCL schema and parser.
 //
 // Resource types: sysbox_image, sysbox_node, sysbox_network, sysbox_kernel,
-// sysbox_router, sysbox_firewall, sysbox_ssh_access, sysbox_actor.
+// sysbox_router, sysbox_firewall, sysbox_ssh_access.
 package config
 
 import "github.com/hashicorp/hcl/v2"
@@ -277,54 +277,6 @@ type NetworkConfig struct {
 	Type      string           `hcl:"type,optional"`
 	NAT       bool             `hcl:"nat,optional"`
 	Lifecycle *LifecycleConfig `hcl:"lifecycle,block"`
-}
-
-// ActorConfig declares an ACP-driven actor (attacker, noise user, etc.).
-//
-// position = "internal"  — exec the command inside an existing sysbox_node.
-//
-//	The actor shares the node's network and filesystem.
-//	Equivalent to an internal actor.
-//
-// position = "external"  — create a standalone container outside the topology.
-//
-//	                         The actor only reaches the topology through declared
-//	                         network links (entry_points is informational metadata).
-//
-//		resource "sysbox_actor" "red" {
-//		  position = "internal"
-//		  node     = sysbox_node.node_attack.id
-//		  command  = ["opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
-//		  port     = 4096
-//		  env      = { DEEPSEEK_API_KEY = env("DEEPSEEK_API_KEY") }
-//		}
-//
-//		resource "sysbox_actor" "scanner" {
-//		  position = "external"
-//		  image    = sysbox_image.attacker.id
-//		  link {
-//		    network = sysbox_network.net_uplink.id
-//		    ip      = "172.20.0.30/24"
-//		    gw      = "172.20.0.1"
-//		  }
-//		  command = ["opencode", "serve", "--port", "4097", "--hostname", "0.0.0.0"]
-//		  port    = 4097
-//		  entry_points = { web = "http://172.20.0.10", ssh = "ssh://172.20.0.10:22" }
-//		}
-type ActorConfig struct {
-	Position string       `hcl:"position,optional"` // "internal" (default) | "external"
-	Node     string       `hcl:"node,optional"`     // internal: target sysbox_node ref
-	Image    string       `hcl:"image,optional"`    // external: sysbox_image ref
-	Links    []LinkConfig `hcl:"link,block"`        // external: network attachments
-	Command  []string     `hcl:"command"`
-	Port     int          `hcl:"port,optional"`
-	// ACPIP overrides the IP used for the ACP URL (http://<acp_ip>:<port>).
-	// If empty, the node's primary_ip (first link) is used. Set this to the
-	// uplink / NAT IP when the episode runner connects from outside the lab.
-	ACPIP       string            `hcl:"acp_ip,optional"`
-	Env         map[string]string `hcl:"env,optional"`
-	EntryPoints map[string]string `hcl:"entry_points,optional"` // informational: accessible endpoints
-	DependsOn   []string          `hcl:"depends_on,optional"`
 }
 
 type ImageConfig struct {

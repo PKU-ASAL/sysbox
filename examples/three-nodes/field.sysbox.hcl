@@ -177,24 +177,6 @@ resource "sysbox_node" "node_db" {
   }
 }
 
-# ── Agent ─────────────────────────────────────────────────────────────────────
-
-# Red-team actor: opencode inside node_attack (position=internal).
-# The ACP URL is resolved at apply time from the node's Docker network IP.
-resource "sysbox_actor" "red" {
-  position = "internal"
-  node     = sysbox_node.node_attack.id
-  command  = ["opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
-  port     = 4096
-  acp_ip   = "172.30.0.10"  # uplink IP — reachable from host / episode runner
-
-  env = {
-    DEEPSEEK_API_KEY = env("DEEPSEEK_API_KEY")
-  }
-
-  depends_on = ["sysbox_node.node_attack"]
-}
-
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 output "attacker_lab_ip" {
@@ -205,11 +187,6 @@ output "attacker_lab_ip" {
 output "attacker_uplink_ip" {
   value       = "172.30.0.10"
   description = "node_attack uplink IP (reachable from host)"
-}
-
-output "agent_acp_url" {
-  value       = "http://172.30.0.10:4096"
-  description = "opencode ACP endpoint for the episode runner"
 }
 
 output "web_ip" {

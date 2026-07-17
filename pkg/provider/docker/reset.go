@@ -41,8 +41,8 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 	if imageInfo, _, inspectErr := s.cli.ImageInspectWithRaw(ctx, request.Node.Image.ID); inspectErr != nil {
 		return substrate.ResetHandle{}, fmt.Errorf("docker reset inspect baseline image: %w", inspectErr)
 	} else if imageInfo.Config != nil {
-		state.ImageCmd = append([]string(nil), imageInfo.Config.Cmd...)
-		state.ImageEntrypoint = append([]string(nil), imageInfo.Config.Entrypoint...)
+		cfg, _ := request.Node.ProviderConfig.(*Config)
+		state.ImageEntrypoint, state.ImageCmd = effectiveLaunch(imageInfo.Config.Entrypoint, imageInfo.Config.Cmd, cfg)
 	}
 	return substrate.ResetHandle{Provider: state, Request: request}, nil
 }

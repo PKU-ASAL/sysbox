@@ -164,15 +164,6 @@ cmd_status() {
     echo "==> State"
     sysbox state list 2>/dev/null || echo "  (no state)"
     echo ""
-    echo "==> Actor 'red'"
-    sysbox state show sysbox_actor.red 2>/dev/null \
-        | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-i = d.get('instance', {})
-print(f'  pid={i.get(\"pid\",\"?\")}  port={i.get(\"port\",\"?\")}  acp={i.get(\"acp_url\",\"?\")}')
-" 2>/dev/null || echo "  not in state"
-    echo ""
     if [ -f "${API_PID_FILE}" ] && kill -0 "$(cat "${API_PID_FILE}")" 2>/dev/null; then
         echo "==> API  http://localhost${API_ADDR}/v1/health  (PID $(cat "${API_PID_FILE}"))"
     else

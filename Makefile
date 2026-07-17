@@ -38,7 +38,7 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-all web-build test test-e2e test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset release-test release-workflow-test release-build release-verify lint ci clean \
+.PHONY: help build build-all web-build test test-e2e test-docker-launch test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
 	api-help api-build-api api-build-ui api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
@@ -56,6 +56,7 @@ help: ## Show command groups
 	@echo "  make test           Run unit tests"
 	@echo "  make lint           Run go vet"
 	@echo "  make test-e2e       Run API e2e smoke test against make api deploy-full"
+	@echo "  make test-docker-launch  Run Docker ENTRYPOINT/CMD override acceptance"
 	@echo "  make test-privileged-compile  Compile privileged recovery tests without running them"
 	@echo "  make test-privileged          Run privileged recovery tests (requires root/CAP_NET_ADMIN)"
 	@echo "  make test-privileged-container  Run privileged acceptance tests through Docker"
@@ -77,6 +78,9 @@ test: ## Run unit tests
 
 test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
+
+test-docker-launch: ## Run Docker launch override lifecycle acceptance
+	bash tests/e2e/docker_launch_override.sh
 
 test-privileged-compile: ## Compile privileged recovery tests without running them
 	$(GOENV) $(GO) test -tags e2e -run '^$$' ./pkg/api ./pkg/provider/network ./pkg/provider/docker

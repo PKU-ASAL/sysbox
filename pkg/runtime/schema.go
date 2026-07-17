@@ -190,15 +190,6 @@ func ResourceSchemaFor(typ string) ResourceSchema {
 		add("authorized_keys", value.ListType, false, true)
 		add("bind_ip", value.StringType, false, false)
 		add("port", value.NumberType, false, false)
-	case "sysbox_actor":
-		for _, name := range []string{"position", "node", "image", "command", "acp_ip"} {
-			add(name, value.StringType, false, name == "command")
-		}
-		add("port", value.NumberType, false, false)
-		for _, name := range []string{"links", "entry_points", "depends_on"} {
-			add(name, value.ListType, false, false)
-		}
-		add("env", value.ObjectType, false, true)
 	default:
 		add("data", value.ObjectType, false, true)
 	}
