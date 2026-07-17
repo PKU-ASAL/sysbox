@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const validRelease = "name: Release\npermissions:\n  contents: read\non:\n  push:\n    tags: ['v*.*.*']\njobs:\n  verify:\n    runs-on: ubuntu-latest\n    steps:\n      - run: make ci\n  publish:\n    needs: verify\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      packages: write\n    steps:\n      - uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392\n      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435\n      - run: scripts/release/build.sh\n      - env:\n          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        run: docker login ghcr.io\n      - run: scripts/release/oci.sh build --image ghcr.io/pku-asal/sysbox --metadata-field oci_digest\n      - run: scripts/release/oci.sh build --image ghcr.io/pku-asal/sysbox-cli --dockerfile Dockerfile.cli --metadata-field cli_oci_digest\n      - run: scripts/release/oci.sh build --image ghcr.io/pku-asal/sysbox-metadata --dockerfile Dockerfile.metadata --metadata-field metadata_oci_digest\n"
+const validRelease = "name: Release\npermissions:\n  contents: read\non:\n  push:\n    tags: ['v*.*.*']\njobs:\n  verify:\n    runs-on: ubuntu-latest\n    steps:\n      - run: make ci\n  publish:\n    needs: verify\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n    steps:\n      - uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392\n      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435\n      - run: scripts/release/build.sh\n      - env:\n          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        run: docker login ghcr.io\n      - run: scripts/release/oci.sh reconcile --image ghcr.io/pku-asal/sysbox\n      - env:\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        run: scripts/release/github.sh reconcile --tag v0.1.0 --dist dist\n"
 
 func TestValidateCIRequiresHostedRunnerAndNoSecrets(t *testing.T) {
 	raw := []byte("name: CI\non:\n  push:\n    branches: [main]\n  pull_request:\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n")
@@ -36,9 +36,9 @@ func TestValidateReleaseRequiresQEMUAndBuildx(t *testing.T) {
 	require.ErrorContains(t, validateWorkflow("release", raw), "QEMU")
 }
 
-func TestValidateReleaseRequiresCLIAndMetadataDockerfiles(t *testing.T) {
-	withoutCLI := []byte(strings.Replace(validRelease, "--dockerfile Dockerfile.cli ", "", 1))
-	require.ErrorContains(t, validateWorkflow("release", withoutCLI), "Dockerfile.cli")
+func TestValidateReleaseRequiresGitHubReleaseAfterOCI(t *testing.T) {
+	withoutRelease := []byte(strings.Replace(validRelease, "      - env:\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        run: scripts/release/github.sh reconcile --tag v0.1.0 --dist dist\n", "", 1))
+	require.ErrorContains(t, validateWorkflow("release", withoutRelease), "GitHub Release")
 }
 
 func TestValidateWorkflowRejectsMutableActionTags(t *testing.T) {

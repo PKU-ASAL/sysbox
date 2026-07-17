@@ -94,13 +94,13 @@ make test-heterogeneous-reset
 
 ## 安装与版本
 
-正式版本构建并验证 Linux amd64/arm64 tarball、`SHA256SUMS` 与构建元数据，
-并发布 runtime、最小 CLI、最终构建元数据三个多架构 OCI 镜像。宿主机工具
-通过元数据中记录的不可变 digest 从 CLI 镜像提取，而不是在特权容器中执行拓扑：
+正式版本在 GitHub Release 发布 Linux amd64/arm64 tarball、`SHA256SUMS` 与
+构建元数据；GHCR 只发布 API/Agent runtime 镜像。`sysbox-topology` 根据锁文件
+下载并校验对应架构的 Release archive，然后在宿主机执行 CLI：
 
 ```bash
-docker pull ghcr.io/pku-asal/sysbox-cli@sha256:<manifest-digest>
-# sysbox-topology 的 make bootstrap 会提取、校验并在宿主机激活 CLI。
+curl -fLO https://github.com/PKU-ASAL/sysbox/releases/download/v0.1.0/build-metadata.json
+# sysbox-topology: make init-lock METADATA=... && make bootstrap
 ```
 
 API 和 Agent 可以固定到同一 OCI 版本：

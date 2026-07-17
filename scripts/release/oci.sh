@@ -8,23 +8,16 @@ operation="${1:-}"
 [[ -n "${operation}" ]] && shift || true
 tag=""
 image="${OCI_IMAGE:-}"
-dockerfile="${repo_root}/Dockerfile"
-metadata_field="oci_digest"
 while (($#)); do
   case "$1" in
     --tag) tag="${2:-}"; shift 2 ;;
     --image) image="${2:-}"; shift 2 ;;
-    --dockerfile) dockerfile="${2:-}"; shift 2 ;;
-    --metadata-field) metadata_field="${2:-}"; shift 2 ;;
-    *) echo "usage: $0 <preflight|build|verify> --tag vMAJOR.MINOR.PATCH --image REGISTRY/OWNER/IMAGE [--dockerfile FILE] [--metadata-field FIELD]" >&2; exit 2 ;;
+    *) echo "usage: $0 <preflight|build|verify|reconcile> --tag vMAJOR.MINOR.PATCH --image REGISTRY/OWNER/IMAGE" >&2; exit 2 ;;
   esac
 done
 
 validate_version "${tag}" || { echo "release: invalid OCI tag ${tag}" >&2; exit 1; }
 [[ -n "${image}" && "${image}" == */* ]] || { echo "release: OCI image must include registry and repository" >&2; exit 1; }
-[[ "${metadata_field}" == oci_digest || "${metadata_field}" == cli_oci_digest || "${metadata_field}" == metadata_oci_digest ]] || { echo "release: unsupported metadata field ${metadata_field}" >&2; exit 1; }
-[[ "${dockerfile}" == /* ]] || dockerfile="${repo_root}/${dockerfile}"
-[[ -f "${dockerfile}" ]] || { echo "release: Dockerfile does not exist: ${dockerfile}" >&2; exit 1; }
 require_command docker
 docker buildx version >/dev/null
 
@@ -52,20 +45,29 @@ preflight() {
 }
 
 verify() {
-  local ref="${image}:${tag}" raw labels
+  local ref="${image}:${tag}" raw labels metadata="${BUILD_METADATA:-}" expected_fingerprint digest
+  local child_digests=()
+  [[ -f "${metadata}" ]] || { echo "release: BUILD_METADATA is required for OCI identity verification" >&2; return 1; }
+  validate_release_fingerprint "${metadata}"
+  expected_fingerprint="$(jq -er '.release_fingerprint | select(type == "string" and test("^[0-9a-f]{64}$"))' "${metadata}")"
   raw="$(docker buildx imagetools inspect --raw "${ref}")"
   jq -e '[.manifests[].platform | "\(.os)/\(.architecture)"] | sort == ["linux/amd64","linux/arm64"]' <<<"${raw}" >/dev/null
-  labels="$(docker buildx imagetools inspect "${ref}" --format '{{json .Image.Config.Labels}}')"
-  jq -e --arg version "${tag}" --arg revision "$(release_commit)" \
-    '."org.opencontainers.image.version" == $version and ."org.opencontainers.image.revision" == $revision and ."org.opencontainers.image.licenses" == "MulanPSL-2.0"' \
-    <<<"${labels}" >/dev/null
+  mapfile -t child_digests < <(jq -er '.manifests[].digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' <<<"${raw}")
+  [[ "${#child_digests[@]}" == 2 ]] || { echo "release: OCI image must contain two valid child manifest digests" >&2; return 1; }
+  for digest in "${child_digests[@]}"; do
+    labels="$(docker buildx imagetools inspect --format '{{json .Image.Config.Labels}}' "${image}@${digest}")"
+    [[ -n "${labels}" ]] || { echo "release: OCI child manifest has no inspectable labels: ${digest}" >&2; return 1; }
+    jq -e --arg version "${tag}" --arg revision "$(release_commit)" --arg fingerprint "${expected_fingerprint}" \
+      '."org.opencontainers.image.version" == $version and ."org.opencontainers.image.revision" == $revision and ."org.opencontainers.image.licenses" == "MulanPSL-2.0" and ."io.github.pku-asal.sysbox.release-fingerprint" == $fingerprint' \
+      <<<"${labels}" >/dev/null
+  done
   verified_digest="sha256:$(printf '%s' "${raw}" | sha256sum | awk '{print $1}')"
   echo "release: verified OCI image ${ref}"
 }
 
 manifest_sha() {
   local raw
-  raw="$(docker buildx imagetools inspect --raw "$1")"
+  raw="$(docker buildx imagetools inspect --raw "$1")" || return 1
   printf '%s' "${raw}" | sha256sum | awk '{print $1}'
 }
 
@@ -87,13 +89,32 @@ promote() {
   done
 }
 
+reconcile_promotions() {
+  local source_ref="${image}:${tag}" source_sha existing ref index
+  source_sha="$(manifest_sha "${source_ref}")"
+  mapfile -t refs < <(oci_tags "${tag}" "${image}")
+  for index in "${!refs[@]}"; do
+    ((index > 0)) || continue
+    ref="${refs[${index}]}"
+    if ((index == 1)); then
+      if existing="$(manifest_sha "${ref}" 2>/dev/null)"; then
+        [[ "${existing}" == "${source_sha}" ]] || { echo "release: immutable OCI tag differs: ${ref}" >&2; return 1; }
+        continue
+      fi
+      assert_absent "${ref}"
+    fi
+    docker buildx imagetools create --tag "${ref}" "${source_ref}" >/dev/null
+    [[ "$(manifest_sha "${ref}")" == "${source_sha}" ]] || { echo "release: reconciled OCI tag differs: ${ref}" >&2; return 1; }
+  done
+}
+
 record_digest() {
   local digest="$1" metadata="${BUILD_METADATA:-}"
   [[ -n "${metadata}" ]] || return 0
   [[ -f "${metadata}" ]] || { echo "release: BUILD_METADATA does not exist: ${metadata}" >&2; return 1; }
   local tmp
   tmp="$(mktemp)"
-  jq --arg field "${metadata_field}" --arg digest "${digest}" '.[$field] = $digest' "${metadata}" >"${tmp}"
+  jq --arg digest "${digest}" '.oci_digest = $digest' "${metadata}" >"${tmp}"
   mv "${tmp}" "${metadata}"
 }
 
@@ -103,22 +124,55 @@ case "${operation}" in
     ;;
   build)
     preflight
+    validate_release_fingerprint "${BUILD_METADATA:?release: BUILD_METADATA is required}"
     commit="$(release_commit)"
     created="$(release_time)"
+    release_fingerprint="$(jq -er '.release_fingerprint' "${BUILD_METADATA:?release: BUILD_METADATA is required}")"
     docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
-      --file "${dockerfile}" \
+      --file "${repo_root}/Dockerfile" \
       --build-arg "VERSION=${tag}" --build-arg "REVISION=${commit}" \
       --build-arg "CREATED=${created}" --build-arg "SOURCE_URL=${SOURCE_URL:-https://github.com/PKU-ASAL/sysbox}" \
+      --build-arg "RELEASE_FINGERPRINT=${release_fingerprint}" \
       --tag "${image}:${tag}" "${repo_root}"
     verify
     promote "${verified_digest}"
     record_digest "${verified_digest}"
     ;;
+  reconcile)
+    source_ref="${image}:${tag}"
+    if docker buildx imagetools inspect "${source_ref}" >/dev/null 2>&1; then
+      verify
+      reconcile_promotions
+      record_digest "${verified_digest}"
+      echo "release: reused verified OCI image ${source_ref}"
+    else
+      build_output="$(docker buildx imagetools inspect "${source_ref}" 2>&1 || true)"
+      case "${build_output,,}" in
+        *"manifest unknown"*|*"name unknown"*|*"not found"*)
+          preflight
+          validate_release_fingerprint "${BUILD_METADATA:?release: BUILD_METADATA is required}"
+          commit="$(release_commit)"
+          created="$(release_time)"
+          release_fingerprint="$(jq -er '.release_fingerprint' "${BUILD_METADATA:?release: BUILD_METADATA is required}")"
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
+            --file "${repo_root}/Dockerfile" \
+            --build-arg "VERSION=${tag}" --build-arg "REVISION=${commit}" \
+            --build-arg "CREATED=${created}" --build-arg "SOURCE_URL=${SOURCE_URL:-https://github.com/PKU-ASAL/sysbox}" \
+            --build-arg "RELEASE_FINGERPRINT=${release_fingerprint}" \
+            --tag "${image}:${tag}" "${repo_root}"
+          verify
+          reconcile_promotions
+          record_digest "${verified_digest}"
+          ;;
+        *) echo "release: cannot inspect OCI source ${source_ref}: ${build_output}" >&2; exit 1 ;;
+      esac
+    fi
+    ;;
   verify)
     verify
     ;;
   *)
-    echo "usage: $0 <preflight|build|verify> --tag vMAJOR.MINOR.PATCH --image REGISTRY/OWNER/IMAGE [--dockerfile FILE] [--metadata-field FIELD]" >&2
+    echo "usage: $0 <preflight|build|verify|reconcile> --tag vMAJOR.MINOR.PATCH --image REGISTRY/OWNER/IMAGE" >&2
     exit 2
     ;;
 esac

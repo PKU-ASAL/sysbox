@@ -2,6 +2,7 @@ ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED=unknown
 ARG SOURCE_URL=https://github.com/PKU-ASAL/sysbox
+ARG RELEASE_FINGERPRINT=unknown
 
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
 FROM golang:1.26-alpine AS builder
@@ -34,6 +35,7 @@ ARG VERSION
 ARG REVISION
 ARG CREATED
 ARG SOURCE_URL
+ARG RELEASE_FINGERPRINT
 
 LABEL org.opencontainers.image.title="Sysbox" \
       org.opencontainers.image.description="Declarative control plane for heterogeneous Linux experiment topologies" \
@@ -42,6 +44,7 @@ LABEL org.opencontainers.image.title="Sysbox" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${CREATED}" \
       org.opencontainers.image.licenses="MulanPSL-2.0" \
+      io.github.pku-asal.sysbox.release-fingerprint="${RELEASE_FINGERPRINT}" \
       org.opencontainers.image.documentation="${SOURCE_URL}/blob/main/docs/README.md"
 
 # Install ca-certificates first (needed for HTTPS apt sources),

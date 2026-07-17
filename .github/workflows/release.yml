@@ -39,12 +39,11 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     env:
       OCI_IMAGE: ghcr.io/pku-asal/sysbox
-      CLI_OCI_IMAGE: ghcr.io/pku-asal/sysbox-cli
-      METADATA_OCI_IMAGE: ghcr.io/pku-asal/sysbox-metadata
+      RELEASE_REPOSITORY: PKU-ASAL/sysbox
       SOURCE_URL: https://github.com/PKU-ASAL/sysbox
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -56,31 +55,24 @@ jobs:
           cache: true
       - uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
-      - name: Registry login and OCI preflight
+      - name: Registry login
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           test -n "${GHCR_TOKEN}"
           printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          scripts/release/oci.sh preflight --tag "${GITHUB_REF_NAME}" --image "${OCI_IMAGE}" --metadata-field oci_digest
-          scripts/release/oci.sh preflight --tag "${GITHUB_REF_NAME}" --image "${CLI_OCI_IMAGE}" --dockerfile Dockerfile.cli --metadata-field cli_oci_digest
-          scripts/release/oci.sh preflight --tag "${GITHUB_REF_NAME}" --image "${METADATA_OCI_IMAGE}" --dockerfile Dockerfile.metadata --metadata-field metadata_oci_digest
       - name: Build and verify release artifacts
         run: |
           scripts/release/build.sh --tag "${GITHUB_REF_NAME}" --output dist
           scripts/release/verify.sh dist
-      - name: Publish and verify runtime OCI image
+      - name: Publish or reconcile runtime OCI image
         env:
           BUILD_METADATA: dist/build-metadata.json
-        run: scripts/release/oci.sh build --tag "${GITHUB_REF_NAME}" --image "${OCI_IMAGE}" --metadata-field oci_digest
-      - name: Publish and verify CLI OCI image
+        run: scripts/release/oci.sh reconcile --tag "${GITHUB_REF_NAME}" --image "${OCI_IMAGE}"
+      - name: Publish or audit GitHub Release
         env:
-          BUILD_METADATA: dist/build-metadata.json
-        run: scripts/release/oci.sh build --tag "${GITHUB_REF_NAME}" --image "${CLI_OCI_IMAGE}" --dockerfile Dockerfile.cli --metadata-field cli_oci_digest
-      - name: Publish durable release metadata OCI image
-        env:
-          BUILD_METADATA: dist/build-metadata.json
-        run: scripts/release/oci.sh build --tag "${GITHUB_REF_NAME}" --image "${METADATA_OCI_IMAGE}" --dockerfile Dockerfile.metadata --metadata-field metadata_oci_digest
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/release/github.sh reconcile --tag "${GITHUB_REF_NAME}" --dist dist --repository "${RELEASE_REPOSITORY}"
       - name: Logout from registry
         if: always()
         run: docker logout ghcr.io || true

@@ -1,34 +1,39 @@
 # Releasing Sysbox
 
-Sysbox uses GitHub Actions and explicit stable SemVer tags. Ordinary pushes and
-pull requests run hosted CI. Only a maintainer-pushed `vMAJOR.MINOR.PATCH` tag
-can publish versioned OCI products.
+Sysbox uses GitHub Actions and stable `vMAJOR.MINOR.PATCH` tags. Ordinary pushes
+and pull requests run hosted CI. A release tag publishes one runtime image and
+one GitHub Release containing host binaries.
 
-## Published Products
+## Distribution Model
 
-Every release builds and verifies deterministic Linux amd64/arm64 tarballs,
-`SHA256SUMS`, and `build-metadata.json`, then publishes three multi-architecture
-images:
+GHCR contains only the API/agent runtime:
 
-- `ghcr.io/pku-asal/sysbox` is the API/agent runtime.
-- `ghcr.io/pku-asal/sysbox-cli` contains the exact verified host binaries.
-- `ghcr.io/pku-asal/sysbox-metadata` contains the final runtime and CLI digests,
-  binary/archive checksums, build identity, and license.
+```text
+ghcr.io/pku-asal/sysbox
+```
 
-For `v0.3.4`, all three repositories receive `v0.3.4`, `0.3.4`, `0.3`, `0`,
-and `latest` tags. Tags are convenient selectors; consumers must pin the
-manifest digest recorded in metadata.
+Each GitHub Release contains exactly:
 
-## CI and Acceptance
+```text
+sysbox_vMAJOR.MINOR.PATCH_linux_amd64.tar.gz
+sysbox_vMAJOR.MINOR.PATCH_linux_arm64.tar.gz
+SHA256SUMS
+build-metadata.json
+```
+
+Each archive contains `sysbox`, `sysbox-init`, `README.md`, `LICENSE`, and
+platform build metadata. Top-level metadata records archive hashes, binary
+hashes, source commit, build time, release repository, runtime image, and final
+runtime manifest digest.
+
+## CI and Local Acceptance
 
 `.github/workflows/ci.yml` runs formatting, vet, full tests, focused race tests,
-static builds, example plans, artifact tests, workflow contracts, and shell
-syntax on GitHub-hosted Ubuntu runners. It has read-only repository permission
-and no package or release secret.
+build/example plans, deterministic artifact tests, workflow contracts, and
+shell syntax on GitHub-hosted Ubuntu runners.
 
-Real heterogeneous acceptance remains local because GitHub-hosted runners do
-not provide the required trusted KVM, Firecracker, libvirt, and host-network
-contract. Before tagging the exact release commit, run on the acceptance host:
+GitHub-hosted runners cannot provide the trusted KVM, Firecracker, libvirt, and
+host-network contract. Before tagging the exact release commit, run locally:
 
 ```bash
 make test-privileged-container
@@ -36,42 +41,39 @@ make test-heterogeneous-matrix
 make test-heterogeneous-reset
 ```
 
-Record the commit and results in the release review. Do not expose this host to
-pull-request workflows.
+Record the commit and results. Do not expose this host to pull-request jobs.
 
 ## GitHub Permissions
 
-`.github/workflows/release.yml` defaults to `contents: read`; only its publish
-job receives `packages: write`. It logs into GHCR with the built-in
-`GITHUB_TOKEN`, so no personal registry token is required.
+The workflow defaults to `contents: read`. Only the publish job receives:
 
-In GitHub repository settings, Actions workflow permissions must allow the
-workflow to write packages. Published packages should be made public when
-anonymous topology bootstrap is required.
+```yaml
+permissions:
+  contents: write
+  packages: write
+```
+
+It uses the built-in `GITHUB_TOKEN` for GHCR and GitHub Releases. No personal
+token is required. Make the runtime package public for anonymous pulls.
 
 ## Local Dry Run
 
-Build and compare both architectures without registry credentials:
-
 ```bash
 make release-test
-```
 
-Inspect one untagged development build:
-
-```bash
-scripts/release/build.sh --tag v0.1.0 --output /tmp/sysbox-dist --allow-untagged
+scripts/release/build.sh --tag v0.1.0 \
+  --output /tmp/sysbox-dist --allow-untagged
 scripts/release/verify.sh /tmp/sysbox-dist
 ```
 
-`--allow-untagged` is local-only. The tag workflow never uses it.
+`--allow-untagged` is local-only.
 
-## Promotion Procedure
+## Promotion
 
-1. Confirm GitHub CI is green and both Git remotes contain the release commit.
-2. Run all three local heterogeneous acceptance commands.
-3. Confirm the worktree is clean and choose the next stable SemVer.
-4. Create one annotated tag and push the same tag to Forgejo and GitHub.
+1. Confirm hosted CI is green and both Git remotes contain the release commit.
+2. Complete all three local acceptance commands.
+3. Confirm the worktree is clean.
+4. Create one annotated tag and push it to Forgejo and GitHub.
 
 ```bash
 git switch main
@@ -82,59 +84,51 @@ git push origin v0.1.0
 git push github v0.1.0
 ```
 
-The GitHub tag push triggers release. The workflow refuses malformed tags, tags
-not pointing at the checked-out commit, dirty builds, and pre-existing immutable
-version tags in any of the three GHCR repositories.
+The GitHub tag push triggers publication.
 
 ## Publication Order
 
-The release workflow:
+The release job:
 
 1. Repeats full CI verification.
-2. Configures QEMU and Docker Buildx.
-3. Builds deterministic binaries and verifies all hashes.
-4. Preflights all three GHCR version tags.
-5. Publishes and verifies runtime OCI.
-6. Publishes and verifies CLI OCI.
-7. Publishes metadata OCI last, after both consumer digests are final.
+2. Preflights the runtime OCI version tags and GitHub Release absence.
+3. Builds and verifies deterministic archives and hashes.
+4. Publishes and verifies `ghcr.io/pku-asal/sysbox`.
+5. Writes the runtime manifest digest into `build-metadata.json`.
+6. Creates the GitHub Release with the exact four assets.
+7. Downloads every asset and compares it byte-for-byte with local output.
 
-Absence of the metadata image means the release is incomplete.
+The GitHub Release is the visible completion marker. If runtime OCI exists but
+the Release does not, publication is incomplete and must be inspected before
+retrying. Tooling never overwrites or automatically deletes external artifacts.
 
 ## Topology Bootstrap
 
-Extract `/build-metadata.json` from the versioned metadata image, generate the
-topology lock, then let `sysbox-topology` extract and verify the host CLI:
+Download the final metadata asset and generate the committed topology lock:
 
 ```bash
-docker pull ghcr.io/pku-asal/sysbox-metadata:v0.1.0
-docker create --name sysbox-metadata-v0.1.0 \
-  ghcr.io/pku-asal/sysbox-metadata:v0.1.0
-docker cp sysbox-metadata-v0.1.0:/build-metadata.json \
-  /tmp/sysbox-v0.1.0-build-metadata.json
-docker rm sysbox-metadata-v0.1.0
+curl -fLO https://github.com/PKU-ASAL/sysbox/releases/download/v0.1.0/build-metadata.json
 
 cd ../sysbox-topology
-make init-lock METADATA=/tmp/sysbox-v0.1.0-build-metadata.json
+make init-lock METADATA=/path/to/build-metadata.json
 make bootstrap
 make sysbox-version
 ```
 
-The extracted CLI executes on the host. OCI is the immutable distribution
-carrier; it does not replace host Docker, `/dev/kvm`, Firecracker, libvirt,
-network privileges, kernels, rootfs files, or qcow2 images.
+Bootstrap selects the host architecture, downloads the matching archive, and
+verifies the archive hash, both binary hashes, version, and source commit before
+atomically activating `.tools/bin/sysbox`.
+
+The CLI then executes on the host. Distribution does not provide Docker,
+`/dev/kvm`, Firecracker, libvirt, network privileges, kernels, rootfs files, or
+qcow2 images; complex heterogeneous ranges require those host capabilities and
+topology artifacts.
 
 ## Failure Inspection
 
-Three OCI repositories cannot be updated transactionally. A later failure can
-leave an earlier product published. The workflow never overwrites or deletes
-external artifacts automatically.
-
-Inspect all products before an administrator-approved cleanup or retry:
-
 ```bash
 docker buildx imagetools inspect ghcr.io/pku-asal/sysbox:v0.1.0
-docker buildx imagetools inspect ghcr.io/pku-asal/sysbox-cli:v0.1.0
-docker buildx imagetools inspect ghcr.io/pku-asal/sysbox-metadata:v0.1.0
+gh release view v0.1.0 --repo PKU-ASAL/sysbox
 ```
 
 Retry only from the unchanged tagged commit. Never delete a version consumers
@@ -142,6 +136,4 @@ may already use.
 
 ## License
 
-Source and published products use the
-[Mulan Permissive Software License, Version 2](../LICENSE), SPDX
-`MulanPSL-2.0`.
+Source and distributions use [MulanPSL-2.0](../LICENSE).

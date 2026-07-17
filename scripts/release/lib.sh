@@ -31,6 +31,19 @@ release_commit() { git rev-parse HEAD; }
 release_epoch() { git show -s --format=%ct HEAD; }
 release_time() { date -u -d "@$(release_epoch)" +%Y-%m-%dT%H:%M:%SZ; }
 
+release_fingerprint_for_metadata() {
+  local metadata="$1" payload
+  payload="$(jq -Sc '{tag:.tag,commit:.commit,targets:.targets}' "${metadata}")" || return 1
+  printf '%s' "${payload}" | sha256sum | awk '{print $1}'
+}
+
+validate_release_fingerprint() {
+  local metadata="$1" actual expected
+  actual="$(jq -er '.release_fingerprint | select(type == "string" and test("^[0-9a-f]{64}$"))' "${metadata}")" || return 1
+  expected="$(release_fingerprint_for_metadata "${metadata}")" || return 1
+  [[ "${actual}" == "${expected}" ]] || { echo "release: release fingerprint does not match artifact identity" >&2; return 1; }
+}
+
 release_ldflags() {
   local tag="$1" commit="$2" build_time="$3"
   printf '%s' "-s -w -X github.com/oslab/sysbox/pkg/buildinfo.Version=${tag} -X github.com/oslab/sysbox/pkg/buildinfo.Commit=${commit} -X github.com/oslab/sysbox/pkg/buildinfo.BuildTime=${build_time}"

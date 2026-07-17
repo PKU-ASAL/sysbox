@@ -37,8 +37,6 @@ for arch in amd64 arm64; do
   expected_init_sha="$(jq -er --arg arch "${arch}" '.targets[] | select(.architecture == $arch) | .sysbox_init_sha256' "${dist}/build-metadata.json")"
   [[ "$(sha256sum "${tmp}/sysbox" | awk '{print $1}')" == "${expected_sysbox_sha}" ]] || { echo "release: sysbox binary checksum mismatch for ${arch}" >&2; rm -rf "${tmp}"; exit 1; }
   [[ "$(sha256sum "${tmp}/sysbox-init" | awk '{print $1}')" == "${expected_init_sha}" ]] || { echo "release: sysbox-init binary checksum mismatch for ${arch}" >&2; rm -rf "${tmp}"; exit 1; }
-  cmp "${tmp}/sysbox" "${dist}/oci/linux/${arch}/sysbox" || { echo "release: CLI OCI sysbox input differs for ${arch}" >&2; rm -rf "${tmp}"; exit 1; }
-  cmp "${tmp}/sysbox-init" "${dist}/oci/linux/${arch}/sysbox-init" || { echo "release: CLI OCI sysbox-init input differs for ${arch}" >&2; rm -rf "${tmp}"; exit 1; }
   jq -e --arg tag "${tag}" --arg commit "${commit}" --arg build_time "${build_time}" --arg arch "${arch}" \
     '.version == $tag and .commit == $commit and .build_time == $build_time and .architecture == $arch and .license == "MulanPSL-2.0"' \
     "${tmp}/build-metadata.json" >/dev/null

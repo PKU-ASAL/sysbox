@@ -27,8 +27,7 @@ build_time="$(release_time)"
 go_version="$(go env GOVERSION)"
 source_url="${SOURCE_URL:-https://github.com/PKU-ASAL/sysbox}"
 oci_image="${OCI_IMAGE:-ghcr.io/pku-asal/sysbox}"
-cli_oci_image="${CLI_OCI_IMAGE:-${oci_image}-cli}"
-metadata_oci_image="${METADATA_OCI_IMAGE:-${oci_image}-metadata}"
+release_repository="${RELEASE_REPOSITORY:-PKU-ASAL/sysbox}"
 ldflags="$(release_ldflags "${tag}" "${commit}" "${build_time}")"
 
 rm -rf "${output}"
@@ -50,9 +49,6 @@ for arch in amd64 arm64; do
     '{version:$version,tag:$tag,commit:$commit,build_time:$build_time,go_version:$go_version,os:$os,architecture:$arch,license:$license,source:$source,oci_image:$oci_image}' \
     >"${stage}/build-metadata.json"
   chmod 0644 "${stage}/build-metadata.json"
-  mkdir -p "${output}/oci/linux/${arch}"
-  install -m 0755 "${stage}/sysbox" "${output}/oci/linux/${arch}/sysbox"
-  install -m 0755 "${stage}/sysbox-init" "${output}/oci/linux/${arch}/sysbox-init"
   tar --sort=name --format=ustar --owner=0 --group=0 --numeric-owner --mtime="@${epoch}" \
     --mode='u+rwX,go+rX,go-w' -C "${stage}" -cf - LICENSE README.md build-metadata.json sysbox sysbox-init \
     | gzip -n -9 >"${output}/${archive}"
@@ -68,9 +64,12 @@ for arch in amd64 arm64; do
     --arg sysbox_sha256 "${sysbox_hashes[${arch}]}" --arg sysbox_init_sha256 "${init_hashes[${arch}]}" \
     '. + [{os:$os,architecture:$arch,archive:$archive,sha256:$sha256,sysbox_sha256:$sysbox_sha256,sysbox_init_sha256:$sysbox_init_sha256}]' <<<"${targets}")"
 done
+fingerprint_payload="$(jq -Scn --arg tag "${tag}" --arg commit "${commit}" --argjson targets "${targets}" '{tag:$tag,commit:$commit,targets:$targets}')"
+release_fingerprint="$(printf '%s' "${fingerprint_payload}" | sha256sum | awk '{print $1}')"
 jq -S -n --arg version "${tag}" --arg tag "${tag}" --arg commit "${commit}" \
   --arg commit_time "${build_time}" --arg build_time "${build_time}" --arg go_version "${go_version}" \
-  --arg license MulanPSL-2.0 --arg source "${source_url}" --arg oci_image "${oci_image}" --arg cli_oci_image "${cli_oci_image}" --arg metadata_oci_image "${metadata_oci_image}" --argjson targets "${targets}" \
-  '{version:$version,tag:$tag,commit:$commit,commit_time:$commit_time,build_time:$build_time,go_version:$go_version,license:$license,source:$source,oci_image:$oci_image,cli_oci_image:$cli_oci_image,metadata_oci_image:$metadata_oci_image,targets:$targets}' \
+  --arg license MulanPSL-2.0 --arg source "${source_url}" --arg oci_image "${oci_image}" --arg release_repository "${release_repository}" --arg release_fingerprint "${release_fingerprint}" --argjson targets "${targets}" \
+  '{version:$version,tag:$tag,commit:$commit,commit_time:$commit_time,build_time:$build_time,go_version:$go_version,license:$license,source:$source,oci_image:$oci_image,release_repository:$release_repository,release_fingerprint:$release_fingerprint,targets:$targets}' \
   >"${output}/build-metadata.json"
+validate_release_fingerprint "${output}/build-metadata.json"
 echo "release: built ${tag} artifacts in ${output}"

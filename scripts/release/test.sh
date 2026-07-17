@@ -24,16 +24,16 @@ done
 for label in org.opencontainers.image.version org.opencontainers.image.revision org.opencontainers.image.created org.opencontainers.image.licenses; do
   grep -F "${label}" "${repo_root}/Dockerfile" >/dev/null || fail "Dockerfile is missing ${label}"
 done
-[[ -f "${repo_root}/Dockerfile.cli" ]] || fail "Dockerfile.cli is missing"
-[[ -f "${repo_root}/Dockerfile.metadata" ]] || fail "Dockerfile.metadata is missing"
-grep -Eq '^FROM scratch$' "${repo_root}/Dockerfile.cli" || fail "CLI image runtime must be scratch"
-grep -F 'COPY dist/oci/linux/${TARGETARCH}/sysbox /usr/local/bin/sysbox' "${repo_root}/Dockerfile.cli" >/dev/null || fail "CLI image must use the verified release sysbox binary"
-grep -F 'COPY dist/oci/linux/${TARGETARCH}/sysbox-init /usr/local/bin/sysbox-init' "${repo_root}/Dockerfile.cli" >/dev/null || fail "CLI image must use the verified release sysbox-init binary"
-grep -Eq '^FROM scratch$' "${repo_root}/Dockerfile.metadata" || fail "metadata image runtime must be scratch"
-grep -F 'COPY dist/build-metadata.json /build-metadata.json' "${repo_root}/Dockerfile.metadata" >/dev/null || fail "metadata image is missing final build metadata"
+grep -F 'io.github.pku-asal.sysbox.release-fingerprint' "${repo_root}/Dockerfile" >/dev/null || fail "Dockerfile is missing release fingerprint label"
+[[ ! -e "${repo_root}/Dockerfile.cli" ]] || fail "obsolete Dockerfile.cli still exists"
+[[ ! -e "${repo_root}/Dockerfile.metadata" ]] || fail "obsolete Dockerfile.metadata still exists"
+[[ -x "${repo_root}/scripts/release/github.sh" ]] || fail "GitHub Release publisher is missing"
+grep -F 'gh release create' "${repo_root}/scripts/release/github.sh" >/dev/null || fail "GitHub Release publisher does not create releases"
+grep -F 'gh release download' "${repo_root}/scripts/release/github.sh" >/dev/null || fail "GitHub Release publisher does not audit downloaded assets"
 grep -F -- '--provenance=false' "${repo_root}/scripts/release/oci.sh" >/dev/null || fail "OCI build must disable provenance attestations"
-grep -F -- '--dockerfile' "${repo_root}/scripts/release/oci.sh" >/dev/null || fail "OCI publisher must accept an explicit Dockerfile"
-grep -F -- '--metadata-field' "${repo_root}/scripts/release/oci.sh" >/dev/null || fail "OCI publisher must record a distinct metadata field"
+if grep -Eq -- '--dockerfile|--metadata-field|cli_oci_digest|metadata_oci_digest' "${repo_root}/scripts/release/oci.sh"; then
+  fail "OCI publisher retains obsolete multi-product options"
+fi
 grep -F '${SYSBOX_IMAGE:-sysbox:latest}' "${repo_root}/deploy/docker/compose.yml" >/dev/null || fail "API Compose image is not pinnable"
 grep -F '${SYSBOX_IMAGE:-sysbox:latest}' "${repo_root}/deploy/docker/compose.agent.yml" >/dev/null || fail "Agent Compose image is not pinnable"
 grep -F 'SYSBOX_IMAGE=ghcr.io/pku-asal/sysbox:v0.1.0' "${repo_root}/.env.example" >/dev/null || fail ".env.example does not use canonical GHCR image"
@@ -82,13 +82,18 @@ for arch in amd64 arm64; do
   extracted="${tmp}/extracted-${arch}"
   mkdir -p "${extracted}"
   tar -xzf "${tmp}/first/${archive}" -C "${extracted}" sysbox sysbox-init
-  cmp "${extracted}/sysbox" "${tmp}/first/oci/linux/${arch}/sysbox"
-  cmp "${extracted}/sysbox-init" "${tmp}/first/oci/linux/${arch}/sysbox-init"
   sysbox_sha="$(sha256sum "${extracted}/sysbox" | awk '{print $1}')"
   init_sha="$(sha256sum "${extracted}/sysbox-init" | awk '{print $1}')"
   jq -e --arg arch "${arch}" --arg sysbox_sha "${sysbox_sha}" --arg init_sha "${init_sha}" \
     '.targets[] | select(.architecture == $arch) | .sysbox_sha256 == $sysbox_sha and .sysbox_init_sha256 == $init_sha' \
     "${tmp}/first/build-metadata.json" >/dev/null || fail "binary hashes missing from ${arch} metadata"
 done
+jq -e '.release_fingerprint | type == "string" and test("^[0-9a-f]{64}$")' "${tmp}/first/build-metadata.json" >/dev/null || fail "release fingerprint missing from metadata"
+validate_release_fingerprint "${tmp}/first/build-metadata.json" || fail "rejected valid release fingerprint"
+jq '.targets[0].sysbox_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+  "${tmp}/first/build-metadata.json" >"${tmp}/tampered-metadata.json"
+if validate_release_fingerprint "${tmp}/tampered-metadata.json" >/dev/null 2>&1; then
+  fail "accepted release fingerprint after target identity changed"
+fi
 
 echo "Release artifact tests passed."

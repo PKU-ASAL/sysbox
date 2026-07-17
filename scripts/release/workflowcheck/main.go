@@ -73,6 +73,9 @@ func validateWorkflow(kind string, raw []byte) error {
 		if permissions == nil || mappingValue(permissions, "packages") == nil || mappingValue(permissions, "packages").Value != "write" {
 			return fmt.Errorf("publish job requires packages: write")
 		}
+		if mappingValue(permissions, "contents") == nil || mappingValue(permissions, "contents").Value != "write" {
+			return fmt.Errorf("publish job requires contents: write for GitHub Releases")
+		}
 		if !nodeContains(publish, "secrets.GITHUB_TOKEN") || nodeContains(publish, "RELEASE_TOKEN") {
 			return fmt.Errorf("publish job must use only the built-in GITHUB_TOKEN")
 		}
@@ -87,19 +90,10 @@ func validateWorkflow(kind string, raw []byte) error {
 		}
 		serialized, _ := yaml.Marshal(publish)
 		buildIndex := bytes.Index(serialized, []byte("scripts/release/build.sh"))
-		runtimeOCIIndex := bytes.LastIndex(serialized, []byte("--metadata-field oci_digest"))
-		cliOCIIndex := bytes.LastIndex(serialized, []byte("--metadata-field cli_oci_digest"))
-		metadataOCIIndex := bytes.LastIndex(serialized, []byte("--metadata-field metadata_oci_digest"))
-		if buildIndex < 0 || runtimeOCIIndex <= buildIndex || cliOCIIndex <= runtimeOCIIndex || metadataOCIIndex <= cliOCIIndex {
-			return fmt.Errorf("publish steps must order build, runtime OCI, CLI OCI, then metadata OCI")
-		}
-		cliBuildIndex := bytes.LastIndex(serialized[:cliOCIIndex], []byte("scripts/release/oci.sh build"))
-		if cliBuildIndex < 0 || !bytes.Contains(serialized[cliBuildIndex:cliOCIIndex], []byte("Dockerfile.cli")) {
-			return fmt.Errorf("CLI OCI publication must use Dockerfile.cli")
-		}
-		metadataBuildIndex := bytes.LastIndex(serialized[:metadataOCIIndex], []byte("scripts/release/oci.sh build"))
-		if metadataBuildIndex < 0 || !bytes.Contains(serialized[metadataBuildIndex:metadataOCIIndex], []byte("Dockerfile.metadata")) {
-			return fmt.Errorf("metadata OCI publication must use Dockerfile.metadata")
+		runtimeOCIIndex := bytes.LastIndex(serialized, []byte("scripts/release/oci.sh reconcile"))
+		githubReleaseIndex := bytes.LastIndex(serialized, []byte("scripts/release/github.sh reconcile"))
+		if buildIndex < 0 || runtimeOCIIndex <= buildIndex || githubReleaseIndex <= runtimeOCIIndex {
+			return fmt.Errorf("publish steps must order build, runtime OCI, then GitHub Release")
 		}
 	default:
 		return fmt.Errorf("unknown workflow kind %q", kind)

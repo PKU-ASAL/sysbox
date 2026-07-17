@@ -96,8 +96,10 @@ test-heterogeneous-matrix: ## Run the full heterogeneous IPv4 acceptance matrix
 test-heterogeneous-reset: ## Run three full and targeted heterogeneous reset cycles
 	bash tests/e2e/heterogeneous_reset.sh
 
-release-test: ## Test deterministic release artifact generation
+release-test: ## Test deterministic release artifacts and GitHub Release audit
 	bash scripts/release/test.sh
+	bash scripts/release/github_test.sh
+	bash scripts/release/oci_test.sh
 
 release-workflow-test: ## Validate GitHub workflow trigger and permission contracts
 	bash scripts/release/workflow_test.sh
