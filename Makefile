@@ -99,7 +99,7 @@ test-heterogeneous-reset: ## Run three full and targeted heterogeneous reset cyc
 release-test: ## Test deterministic release artifact generation
 	bash scripts/release/test.sh
 
-release-workflow-test: ## Validate Forgejo workflow trigger and secret contracts
+release-workflow-test: ## Validate GitHub workflow trigger and permission contracts
 	bash scripts/release/workflow_test.sh
 
 release-build: ## Build release artifacts for VERSION=vMAJOR.MINOR.PATCH

@@ -1,7 +1,7 @@
 ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED=unknown
-ARG SOURCE_URL=https://git.pku.edu.cn/oslab/sysbox
+ARG SOURCE_URL=https://github.com/PKU-ASAL/sysbox
 
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
 FROM golang:1.26-alpine AS builder
@@ -42,7 +42,7 @@ LABEL org.opencontainers.image.title="Sysbox" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${CREATED}" \
       org.opencontainers.image.licenses="MulanPSL-2.0" \
-      org.opencontainers.image.documentation="${SOURCE_URL}/src/branch/main/docs/README.md"
+      org.opencontainers.image.documentation="${SOURCE_URL}/blob/main/docs/README.md"
 
 # Install ca-certificates first (needed for HTTPS apt sources),
 # then switch to tuna mirror and install runtime deps.

@@ -99,19 +99,19 @@ make test-heterogeneous-reset
 通过元数据中记录的不可变 digest 从 CLI 镜像提取，而不是在特权容器中执行拓扑：
 
 ```bash
-docker pull git.pku.edu.cn/oslab/sysbox-cli@sha256:<manifest-digest>
+docker pull ghcr.io/pku-asal/sysbox-cli@sha256:<manifest-digest>
 # sysbox-topology 的 make bootstrap 会提取、校验并在宿主机激活 CLI。
 ```
 
 API 和 Agent 可以固定到同一 OCI 版本：
 
 ```bash
-SYSBOX_IMAGE=git.pku.edu.cn/oslab/sysbox:v0.1.0 docker compose \
+SYSBOX_IMAGE=ghcr.io/pku-asal/sysbox:v0.1.0 docker compose \
   -f deploy/docker/compose.yml \
   -f deploy/docker/compose.agent.yml up -d
 ```
 
-维护者发布流程、runner 和 Forgejo secret 要求见 [Releasing Sysbox](docs/releasing.md)。
+维护者发布流程、GitHub Actions 权限和本地异构验收要求见 [Releasing Sysbox](docs/releasing.md)。
 
 ## 生命周期
 

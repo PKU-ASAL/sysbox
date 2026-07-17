@@ -36,6 +36,8 @@ grep -F -- '--dockerfile' "${repo_root}/scripts/release/oci.sh" >/dev/null || fa
 grep -F -- '--metadata-field' "${repo_root}/scripts/release/oci.sh" >/dev/null || fail "OCI publisher must record a distinct metadata field"
 grep -F '${SYSBOX_IMAGE:-sysbox:latest}' "${repo_root}/deploy/docker/compose.yml" >/dev/null || fail "API Compose image is not pinnable"
 grep -F '${SYSBOX_IMAGE:-sysbox:latest}' "${repo_root}/deploy/docker/compose.agent.yml" >/dev/null || fail "Agent Compose image is not pinnable"
+grep -F 'SYSBOX_IMAGE=ghcr.io/pku-asal/sysbox:v0.1.0' "${repo_root}/.env.example" >/dev/null || fail ".env.example does not use canonical GHCR image"
+grep -F '${SOURCE_URL}/blob/main/docs/README.md' "${repo_root}/Dockerfile" >/dev/null || fail "runtime image documentation label is not a GitHub URL"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT

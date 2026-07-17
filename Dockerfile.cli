@@ -4,7 +4,7 @@ ARG TARGETARCH
 ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED=unknown
-ARG SOURCE_URL=https://git.pku.edu.cn/oslab/sysbox
+ARG SOURCE_URL=https://github.com/PKU-ASAL/sysbox
 
 LABEL org.opencontainers.image.title="Sysbox CLI" \
       org.opencontainers.image.description="Static Sysbox host CLI distribution" \

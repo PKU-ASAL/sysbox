@@ -108,7 +108,7 @@ case "${operation}" in
     docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
       --file "${dockerfile}" \
       --build-arg "VERSION=${tag}" --build-arg "REVISION=${commit}" \
-      --build-arg "CREATED=${created}" --build-arg "SOURCE_URL=${SOURCE_URL:-https://git.pku.edu.cn/oslab/sysbox}" \
+      --build-arg "CREATED=${created}" --build-arg "SOURCE_URL=${SOURCE_URL:-https://github.com/PKU-ASAL/sysbox}" \
       --tag "${image}:${tag}" "${repo_root}"
     verify
     promote "${verified_digest}"

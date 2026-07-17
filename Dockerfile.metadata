@@ -3,7 +3,7 @@ FROM scratch
 ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED=unknown
-ARG SOURCE_URL=https://git.pku.edu.cn/oslab/sysbox
+ARG SOURCE_URL=https://github.com/PKU-ASAL/sysbox
 
 LABEL org.opencontainers.image.title="Sysbox Release Metadata" \
       org.opencontainers.image.description="Immutable Sysbox release checksums and OCI identities" \

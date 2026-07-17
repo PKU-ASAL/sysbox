@@ -1,165 +1,147 @@
 # Releasing Sysbox
 
-Sysbox uses Forgejo Actions and explicit stable SemVer tags. CI validates ordinary changes; only a maintainer-pushed `vMAJOR.MINOR.PATCH` tag can publish release artifacts.
+Sysbox uses GitHub Actions and explicit stable SemVer tags. Ordinary pushes and
+pull requests run hosted CI. Only a maintainer-pushed `vMAJOR.MINOR.PATCH` tag
+can publish versioned OCI products.
 
-## Published Artifacts
+## Published Products
 
-Each release builds and verifies Linux amd64 and arm64 tarballs,
+Every release builds and verifies deterministic Linux amd64/arm64 tarballs,
 `SHA256SUMS`, and `build-metadata.json`, then publishes three multi-architecture
-OCI products: `sysbox` for API/agent runtime, `sysbox-cli` containing the exact
-verified host binaries, and `sysbox-metadata` containing the final runtime and
-CLI digests, checksums, and license. Tarballs remain deterministic build outputs
-even when Forgejo Release creation is not permitted.
+images:
 
-For `v0.3.4`, OCI tags are:
+- `ghcr.io/pku-asal/sysbox` is the API/agent runtime.
+- `ghcr.io/pku-asal/sysbox-cli` contains the exact verified host binaries.
+- `ghcr.io/pku-asal/sysbox-metadata` contains the final runtime and CLI digests,
+  binary/archive checksums, build identity, and license.
 
-```text
-git.pku.edu.cn/oslab/sysbox:v0.3.4
-git.pku.edu.cn/oslab/sysbox:0.3.4
-git.pku.edu.cn/oslab/sysbox:0.3
-git.pku.edu.cn/oslab/sysbox:0
-git.pku.edu.cn/oslab/sysbox:latest
+For `v0.3.4`, all three repositories receive `v0.3.4`, `0.3.4`, `0.3`, `0`,
+and `latest` tags. Tags are convenient selectors; consumers must pin the
+manifest digest recorded in metadata.
+
+## CI and Acceptance
+
+`.github/workflows/ci.yml` runs formatting, vet, full tests, focused race tests,
+static builds, example plans, artifact tests, workflow contracts, and shell
+syntax on GitHub-hosted Ubuntu runners. It has read-only repository permission
+and no package or release secret.
+
+Real heterogeneous acceptance remains local because GitHub-hosted runners do
+not provide the required trusted KVM, Firecracker, libvirt, and host-network
+contract. Before tagging the exact release commit, run on the acceptance host:
+
+```bash
+make test-privileged-container
+make test-heterogeneous-matrix
+make test-heterogeneous-reset
 ```
 
-The same tag set is applied independently to `sysbox-cli` and
-`sysbox-metadata`.
+Record the commit and results in the release review. Do not expose this host to
+pull-request workflows.
 
-The workflow refuses pre-existing immutable version tags for either product and
-serializes publication. Tags remain registry-mutable; `oci_digest` and
-`cli_oci_digest` in runner-side metadata are the immutable identities. Consumers
-must pin `image@sha256:...`.
+## GitHub Permissions
 
-## CI Tiers
+`.github/workflows/release.yml` defaults to `contents: read`; only its publish
+job receives `packages: write`. It logs into GHCR with the built-in
+`GITHUB_TOKEN`, so no personal registry token is required.
 
-`.forgejo/workflows/ci.yml` runs for pull requests and `main` without release secrets or privileged host access. It performs formatting, vet, full tests, focused race tests, static builds, example plans, release artifact tests, workflow contract tests, and shell syntax checks.
-
-`.forgejo/workflows/acceptance.yml` is manually dispatched on a trusted runner. Its `tier` input selects `privileged`, `heterogeneous-matrix`, or `heterogeneous-reset`. Run all three against the exact commit intended for release and record the successful action URLs during review.
-
-`.forgejo/workflows/release.yml` runs only for a pushed stable tag. It reruns CI
-gates, creates and verifies local artifacts, then publishes and validates all
-three OCI products. Metadata is published last, after the runtime and CLI
-digests are final. It does not require Forgejo Release API access.
-
-## Trusted Runner
-
-Protected acceptance and publication require a self-hosted runner with labels `self-hosted`, `linux`, and `release`. It needs:
-
-- Go matching `go.mod`.
-- Git, Bash, GNU tar, gzip, jq, curl, sha256sum, and binutils `strings`.
-- Docker Engine with Buildx and registry network access.
-- KVM, Firecracker, libvirt, and host network privileges for heterogeneous acceptance.
-- Enough disk for multi-architecture Docker layers and VM artifacts.
-
-Do not attach the `release` label to runners that execute untrusted pull-request jobs.
-
-## Forgejo Credentials
-
-Create a dedicated repository Actions secret named `RELEASE_TOKEN`. Grant it
-permission to authenticate and push packages to the `sysbox`, `sysbox-cli`, and
-`sysbox-metadata` container namespaces. Forgejo Release creation permission is
-not required.
-
-The token is available only to the trusted `publish` job and is passed to
-`docker login` over standard input. Never put it in command arguments, `.env`,
-HCL, metadata, logs, or OCI labels.
-
-Checked-in defaults are:
-
-```text
-OCI_IMAGE=git.pku.edu.cn/oslab/sysbox
-CLI_OCI_IMAGE=git.pku.edu.cn/oslab/sysbox-cli
-METADATA_OCI_IMAGE=git.pku.edu.cn/oslab/sysbox-metadata
-```
-
-Forks and alternate Forgejo installations must update the workflow environment before tagging.
+In GitHub repository settings, Actions workflow permissions must allow the
+workflow to write packages. Published packages should be made public when
+anonymous topology bootstrap is required.
 
 ## Local Dry Run
 
-Build and compare both architectures without registry or Forgejo credentials:
+Build and compare both architectures without registry credentials:
 
 ```bash
 make release-test
 ```
 
-To inspect one untagged development build:
+Inspect one untagged development build:
 
 ```bash
 scripts/release/build.sh --tag v0.1.0 --output /tmp/sysbox-dist --allow-untagged
 scripts/release/verify.sh /tmp/sysbox-dist
 ```
 
-`--allow-untagged` is local-only. The Make release target and Forgejo workflow never use it.
+`--allow-untagged` is local-only. The tag workflow never uses it.
 
 ## Promotion Procedure
 
-1. Confirm `main` CI is green and the worktree is clean.
-2. Run all protected acceptance tiers for the exact `main` commit.
-3. Review user-visible changes and choose the next stable SemVer.
-4. Create an annotated tag and push only that tag.
+1. Confirm GitHub CI is green and both Git remotes contain the release commit.
+2. Run all three local heterogeneous acceptance commands.
+3. Confirm the worktree is clean and choose the next stable SemVer.
+4. Create one annotated tag and push the same tag to Forgejo and GitHub.
 
 ```bash
 git switch main
-git pull --ff-only
+git pull --ff-only origin main
 git status --short
 git tag -a v0.1.0 -m "Sysbox v0.1.0"
 git push origin v0.1.0
+git push github v0.1.0
 ```
 
-The workflow refuses malformed tags, dirty release builds, tags not pointing at
-the checked-out commit, and pre-existing immutable version tags in either OCI
-repository.
+The GitHub tag push triggers release. The workflow refuses malformed tags, tags
+not pointing at the checked-out commit, dirty builds, and pre-existing immutable
+version tags in any of the three GHCR repositories.
 
-## Installing the Host CLI
+## Publication Order
 
-Topology repositories extract final `/build-metadata.json` from the versioned
-metadata image, then extract the exact CLI binaries using its recorded digest
-and hashes. `sysbox-topology` automates the host installation:
+The release workflow:
+
+1. Repeats full CI verification.
+2. Configures QEMU and Docker Buildx.
+3. Builds deterministic binaries and verifies all hashes.
+4. Preflights all three GHCR version tags.
+5. Publishes and verifies runtime OCI.
+6. Publishes and verifies CLI OCI.
+7. Publishes metadata OCI last, after both consumer digests are final.
+
+Absence of the metadata image means the release is incomplete.
+
+## Topology Bootstrap
+
+Extract `/build-metadata.json` from the versioned metadata image, generate the
+topology lock, then let `sysbox-topology` extract and verify the host CLI:
 
 ```bash
-docker login git.pku.edu.cn
-docker pull git.pku.edu.cn/oslab/sysbox-metadata:v0.1.0
-docker pull git.pku.edu.cn/oslab/sysbox-cli@sha256:<manifest-digest>
+docker pull ghcr.io/pku-asal/sysbox-metadata:v0.1.0
+docker create --name sysbox-metadata-v0.1.0 \
+  ghcr.io/pku-asal/sysbox-metadata:v0.1.0
+docker cp sysbox-metadata-v0.1.0:/build-metadata.json \
+  /tmp/sysbox-v0.1.0-build-metadata.json
+docker rm sysbox-metadata-v0.1.0
+
+cd ../sysbox-topology
+make init-lock METADATA=/tmp/sysbox-v0.1.0-build-metadata.json
 make bootstrap
+make sysbox-version
 ```
 
-The CLI runs on the host after extraction. OCI is the distribution carrier, not
-a privileged topology executor.
-
-## Using the OCI Image
-
-```bash
-docker pull git.pku.edu.cn/oslab/sysbox:v0.1.0
-docker run --rm --entrypoint sysbox git.pku.edu.cn/oslab/sysbox:v0.1.0 version --json
-
-SYSBOX_IMAGE=git.pku.edu.cn/oslab/sysbox:v0.1.0 docker compose \
-  -f deploy/docker/compose.yml \
-  -f deploy/docker/compose.agent.yml up -d
-```
-
-The image does not provide host capabilities automatically. Firecracker/libvirt/network execution still requires documented mounts, devices, privileges, and artifacts.
+The extracted CLI executes on the host. OCI is the immutable distribution
+carrier; it does not replace host Docker, `/dev/kvm`, Firecracker, libvirt,
+network privileges, kernels, rootfs files, or qcow2 images.
 
 ## Failure Inspection
 
-The three OCI repositories cannot be published in one registry transaction.
+Three OCI repositories cannot be updated transactionally. A later failure can
+leave an earlier product published. The workflow never overwrites or deletes
+external artifacts automatically.
 
-- Local build or verification failure publishes nothing.
-- A failure after an earlier OCI product succeeds leaves a partial version that
-  must be inspected before retrying. Absence of the metadata image means the
-  release is incomplete.
-- Tooling never overwrites or automatically deletes external artifacts.
-
-Inspect before retrying:
+Inspect all products before an administrator-approved cleanup or retry:
 
 ```bash
-docker buildx imagetools inspect git.pku.edu.cn/oslab/sysbox:v0.1.0
-docker buildx imagetools inspect git.pku.edu.cn/oslab/sysbox-cli:v0.1.0
-docker buildx imagetools inspect git.pku.edu.cn/oslab/sysbox-metadata:v0.1.0
+docker buildx imagetools inspect ghcr.io/pku-asal/sysbox:v0.1.0
+docker buildx imagetools inspect ghcr.io/pku-asal/sysbox-cli:v0.1.0
+docker buildx imagetools inspect ghcr.io/pku-asal/sysbox-metadata:v0.1.0
 ```
 
-Use an administrator-approved registry operation to remove only confirmed
-incomplete records. Never delete a version consumers may already use. Retry
-only from the unchanged tagged commit.
+Retry only from the unchanged tagged commit. Never delete a version consumers
+may already use.
 
 ## License
 
-Source and binary distributions use the [Mulan Permissive Software License, Version 2](../LICENSE), SPDX `MulanPSL-2.0`. Every archive contains the complete license text and every OCI image carries the matching label.
+Source and published products use the
+[Mulan Permissive Software License, Version 2](../LICENSE), SPDX
+`MulanPSL-2.0`.

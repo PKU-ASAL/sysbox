@@ -11,7 +11,7 @@ import (
 
 func main() {
 	if len(os.Args) != 3 {
-		fmt.Fprintln(os.Stderr, "usage: workflowcheck <ci|acceptance|release> FILE")
+		fmt.Fprintln(os.Stderr, "usage: workflowcheck <ci|release> FILE")
 		os.Exit(2)
 	}
 	raw, err := os.ReadFile(os.Args[2])
@@ -41,6 +41,13 @@ func validateWorkflow(kind string, raw []byte) error {
 	if err := validatePinnedActions(root); err != nil {
 		return err
 	}
+	for i := 0; i < len(jobs.Content); i += 2 {
+		job := jobs.Content[i+1]
+		runner := mappingValue(job, "runs-on")
+		if runner == nil || runner.Kind != yaml.ScalarNode || runner.Value != "ubuntu-latest" {
+			return fmt.Errorf("workflow jobs must use the GitHub-hosted ubuntu-latest runner")
+		}
+	}
 
 	switch kind {
 	case "ci":
@@ -49,14 +56,6 @@ func validateWorkflow(kind string, raw []byte) error {
 		}
 		if bytes.Contains(raw, []byte("secrets.")) {
 			return fmt.Errorf("CI must not reference a secret")
-		}
-	case "acceptance":
-		if !mappingHasOnly(on, "workflow_dispatch") || mappingValue(on, "workflow_dispatch") == nil {
-			return fmt.Errorf("acceptance must trigger only by workflow_dispatch")
-		}
-		job := mappingValue(jobs, "acceptance")
-		if job == nil || !nodeContains(job, "release") || !nodeContains(job, "self-hosted") {
-			return fmt.Errorf("acceptance requires the trusted release runner")
 		}
 	case "release":
 		if !mappingHasOnly(on, "push") {
@@ -67,20 +66,24 @@ func validateWorkflow(kind string, raw []byte) error {
 			return fmt.Errorf("release tag trigger must be v*.*.*")
 		}
 		publish := mappingValue(jobs, "publish")
-		if publish != nil && nodeContains(publish, "scripts/release/forgejo.sh publish") {
-			return fmt.Errorf("Forgejo Release publication must not block required OCI publication")
+		if publish == nil {
+			return fmt.Errorf("release requires a publish job")
 		}
-		if publish == nil || !nodeContains(publish, "RELEASE_TOKEN") {
-			return fmt.Errorf("publish job must receive RELEASE_TOKEN")
+		permissions := mappingValue(publish, "permissions")
+		if permissions == nil || mappingValue(permissions, "packages") == nil || mappingValue(permissions, "packages").Value != "write" {
+			return fmt.Errorf("publish job requires packages: write")
 		}
-		if nodeContains(mappingValue(publish, "env"), "RELEASE_TOKEN") {
-			return fmt.Errorf("RELEASE_TOKEN must not be job-wide")
+		if !nodeContains(publish, "secrets.GITHUB_TOKEN") || nodeContains(publish, "RELEASE_TOKEN") {
+			return fmt.Errorf("publish job must use only the built-in GITHUB_TOKEN")
 		}
-		for i := 0; i < len(jobs.Content); i += 2 {
-			name, job := jobs.Content[i].Value, jobs.Content[i+1]
-			if name != "publish" && nodeContains(job, "RELEASE_TOKEN") {
-				return fmt.Errorf("RELEASE_TOKEN is scoped outside publish job")
-			}
+		if !nodeContains(publish, "docker/setup-qemu-action") {
+			return fmt.Errorf("publish job requires QEMU setup for multi-architecture images")
+		}
+		if !nodeContains(publish, "docker/setup-buildx-action") {
+			return fmt.Errorf("publish job requires Docker Buildx setup")
+		}
+		if !nodeContains(publish, "ghcr.io/pku-asal/sysbox") {
+			return fmt.Errorf("publish job must target canonical GHCR repositories")
 		}
 		serialized, _ := yaml.Marshal(publish)
 		buildIndex := bytes.Index(serialized, []byte("scripts/release/build.sh"))

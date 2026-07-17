@@ -8,6 +8,9 @@ on:
   push:
     tags: ['v*.*.*']
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -34,12 +37,15 @@ jobs:
 
   publish:
     needs: verify
-    runs-on: [self-hosted, linux, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     env:
-      OCI_IMAGE: git.pku.edu.cn/${{ github.repository }}
-      CLI_OCI_IMAGE: git.pku.edu.cn/${{ github.repository }}-cli
-      METADATA_OCI_IMAGE: git.pku.edu.cn/${{ github.repository }}-metadata
-      SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+      OCI_IMAGE: ghcr.io/pku-asal/sysbox
+      CLI_OCI_IMAGE: ghcr.io/pku-asal/sysbox-cli
+      METADATA_OCI_IMAGE: ghcr.io/pku-asal/sysbox-metadata
+      SOURCE_URL: https://github.com/PKU-ASAL/sysbox
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -48,12 +54,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
       - name: Registry login and OCI preflight
         env:
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          test -n "${RELEASE_TOKEN}"
-          printf '%s' "${RELEASE_TOKEN}" | docker login git.pku.edu.cn -u "${GITHUB_ACTOR}" --password-stdin
+          test -n "${GHCR_TOKEN}"
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           scripts/release/oci.sh preflight --tag "${GITHUB_REF_NAME}" --image "${OCI_IMAGE}" --metadata-field oci_digest
           scripts/release/oci.sh preflight --tag "${GITHUB_REF_NAME}" --image "${CLI_OCI_IMAGE}" --dockerfile Dockerfile.cli --metadata-field cli_oci_digest
           scripts/release/oci.sh preflight --tag "${GITHUB_REF_NAME}" --image "${METADATA_OCI_IMAGE}" --dockerfile Dockerfile.metadata --metadata-field metadata_oci_digest
@@ -75,4 +83,4 @@ jobs:
         run: scripts/release/oci.sh build --tag "${GITHUB_REF_NAME}" --image "${METADATA_OCI_IMAGE}" --dockerfile Dockerfile.metadata --metadata-field metadata_oci_digest
       - name: Logout from registry
         if: always()
-        run: docker logout git.pku.edu.cn || true
+        run: docker logout ghcr.io || true
