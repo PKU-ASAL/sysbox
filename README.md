@@ -531,7 +531,6 @@ pkg/transport/              连接实现（SSH、vsock、console）
 pkg/provider/               Docker、Firecracker、network、libvirt provider
 pkg/agent/                  Agent 身份与注册
 pkg/agentexec/              Agent 命令循环、local/remote Bridge 及 run 级执行器
-runner/                     可选 Python episode runner（Agent 示例用）
 scripts/                    artifact 准备及验证辅助脚本
 tests/e2e/                  黑盒 API e2e 脚本（curl）
 .sysbox/                    忽略的本地运行时数据

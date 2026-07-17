@@ -1,10 +1,10 @@
 # Three-node attack lab — sysbox reference topology.
 #
-# Attack scenario: AI agent (opencode) inside node_attack → DMZ router →
-#                  node_web (nginx) → node_db (postgres:16-alpine)
+# Attack topology: node_attack → DMZ router → node_web (nginx) →
+#                  node_db (postgres:16-alpine)
 #
-#   [host / episode runner]
-#        │  ACP HTTP  172.30.0.10:4096
+#   [host / scenario runner]
+#        │
 #        ▼
 #   node_attack  (10.0.1.10 / 172.30.0.10)
 #        │  10.0.1.254 router  │  internet (LLM API)
@@ -26,7 +26,6 @@ locals {
   uplink_cidr   = "172.30.0.0/24"
   uplink_gw     = "172.30.0.1"
   router_dmz_ip = "10.0.1.254"
-  opencode_port = "4096"
 }
 
 # ── Networks ──────────────────────────────────────────────────────────────────
@@ -65,8 +64,8 @@ resource "sysbox_image" "nginx" {
   guest_family = "linux"
 }
 
-# Pre-built attacker image with opencode + attack tools.
-# Build with: docker build -t sysbox-attacker:latest -f Dockerfile.attacker-opencode .
+# Pre-built attacker image with network and HTTP tools.
+# Build with: docker build -t sysbox-attacker:latest -f Dockerfile.attacker .
 resource "sysbox_image" "attacker" {
   substrate  = substrate.docker.light
   kind         = "oci"
@@ -137,7 +136,7 @@ resource "sysbox_node" "node_attack" {
     via = "172.30.0.1"
   }
 
-  # Copy host SSH pubkey into node so the agent can pivot to victim nodes.
+  # Copy host SSH pubkey into node so scenario tools can pivot to victim nodes.
   provisioner "file" {
     source      = env("LAB_SSH_PUBKEY")
     destination = "/tmp/host_pubkey"

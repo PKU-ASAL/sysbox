@@ -37,6 +37,11 @@ func (p Plan) Validate() error {
 }
 
 func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
+	for _, resource := range s.Resources {
+		if _, ok := GetResourceHandler(resource.Address.Type); !ok {
+			return nil, fmt.Errorf("unsupported state resource type %q", resource.Address.Type)
+		}
+	}
 	if err := g.Validate(); err != nil {
 		return nil, fmt.Errorf("validate graph: %w", err)
 	}

@@ -8,8 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func writeHCL(t *testing.T, content string) string {
@@ -33,6 +34,17 @@ resource "sysbox_actor" "red" {
 	require.NoError(t, err)
 	_, err = BuildGraph(root, ctx)
 	require.ErrorContains(t, err, `unsupported resource type "sysbox_actor"`)
+}
+
+func TestComputePlanRejectsRemovedActorState(t *testing.T) {
+	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{{
+		Address: address.Resource("sysbox_actor", "red"),
+		Driver:  "docker",
+	}}}
+
+	_, err := ComputePlan(graph.New(), st)
+
+	require.ErrorContains(t, err, `unsupported state resource type "sysbox_actor"`)
 }
 
 func TestImageSchemaRequiresStrictArtifactFieldsAndRejectsLegacySources(t *testing.T) {

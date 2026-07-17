@@ -231,16 +231,33 @@ func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, 
 		if err != nil {
 			return 0, fmt.Errorf("exec inspect (background): %w", err)
 		}
-		if inspect.Pid != 0 || !inspect.Running {
-			return inspect.Pid, nil
+		pid, complete, err := backgroundExecStatus(inspect)
+		if err != nil {
+			return 0, err
+		}
+		if complete {
+			return pid, nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	return 0, fmt.Errorf("exec background: timed out waiting for PID")
 }
 
+func backgroundExecStatus(inspect container.ExecInspect) (int, bool, error) {
+	if !inspect.Running {
+		if inspect.ExitCode != 0 {
+			return 0, true, fmt.Errorf("exec background exited with code %d", inspect.ExitCode)
+		}
+		return inspect.Pid, true, nil
+	}
+	if inspect.Pid != 0 {
+		return inspect.Pid, true, nil
+	}
+	return 0, false, nil
+}
+
 // GetContainerIP returns the container's IP address on its first Docker-managed
-// network. Used to construct ACP URLs for actor resources after apply.
+// network.
 func (s *Substrate) GetContainerIP(ctx context.Context, containerID string) (string, error) {
 	ins, err := s.cli.ContainerInspect(ctx, containerID)
 	if err != nil {

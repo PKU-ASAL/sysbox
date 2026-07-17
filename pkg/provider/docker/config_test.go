@@ -46,18 +46,29 @@ func TestDecodeProviderConfigRejectsShellFormLaunchValues(t *testing.T) {
 func TestEffectiveLaunchInheritsOverridesAndClearsImageValues(t *testing.T) {
 	imageEntrypoint := []string{"/entry"}
 	imageCommand := []string{"serve", "--port", "80"}
+	tests := []struct {
+		name           string
+		config         *Config
+		wantEntrypoint []string
+		wantCommand    []string
+	}{
+		{name: "inherit", config: &Config{}, wantEntrypoint: imageEntrypoint, wantCommand: imageCommand},
+		{name: "entrypoint only", config: &Config{Entrypoint: OptionalArgv{Set: true, Value: []string{"/override"}}}, wantEntrypoint: []string{"/override"}, wantCommand: imageCommand},
+		{name: "command only", config: &Config{Command: OptionalArgv{Set: true, Value: []string{"mongod"}}}, wantEntrypoint: imageEntrypoint, wantCommand: []string{"mongod"}},
+		{name: "both", config: &Config{Entrypoint: OptionalArgv{Set: true, Value: []string{"/override"}}, Command: OptionalArgv{Set: true, Value: []string{"serve"}}}, wantEntrypoint: []string{"/override"}, wantCommand: []string{"serve"}},
+		{name: "clear entrypoint", config: &Config{Entrypoint: OptionalArgv{Set: true, Value: []string{}}}, wantEntrypoint: []string{}, wantCommand: imageCommand},
+		{name: "clear command", config: &Config{Command: OptionalArgv{Set: true, Value: []string{}}}, wantEntrypoint: imageEntrypoint, wantCommand: []string{}},
+		{name: "empty effective argv", config: &Config{Entrypoint: OptionalArgv{Set: true, Value: []string{}}, Command: OptionalArgv{Set: true, Value: []string{}}}, wantEntrypoint: []string{}, wantCommand: []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entrypoint, command := effectiveLaunch(imageEntrypoint, imageCommand, tt.config)
+			require.Equal(t, tt.wantEntrypoint, entrypoint)
+			require.Equal(t, tt.wantCommand, command)
+		})
+	}
 
-	entrypoint, command := effectiveLaunch(imageEntrypoint, imageCommand, &Config{})
-	require.Equal(t, imageEntrypoint, entrypoint)
-	require.Equal(t, imageCommand, command)
+	entrypoint, _ := effectiveLaunch(imageEntrypoint, imageCommand, &Config{})
 	entrypoint[0] = "changed"
 	require.Equal(t, "/entry", imageEntrypoint[0])
-
-	entrypoint, command = effectiveLaunch(imageEntrypoint, imageCommand, &Config{
-		Entrypoint: OptionalArgv{Set: true, Value: []string{}},
-		Command:    OptionalArgv{Set: true, Value: []string{"mongod", "--bind_ip", "0.0.0.0"}},
-	})
-	require.Empty(t, entrypoint)
-	require.Equal(t, []string{"mongod", "--bind_ip", "0.0.0.0"}, command)
-
 }

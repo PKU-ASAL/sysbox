@@ -50,7 +50,7 @@ build_image() {
     echo "==> Building attacker image..."
     docker build --network=host \
         -t sysbox-attacker:latest \
-        -f "${REPO_ROOT}/examples/three-nodes/Dockerfile.attacker-opencode" \
+        -f "${REPO_ROOT}/examples/three-nodes/Dockerfile.attacker" \
         "${REPO_ROOT}/examples/three-nodes"
     echo "    sysbox-attacker:latest ready"
 }
@@ -105,7 +105,6 @@ cmd_up() {
     echo "  node_web     10.0.2.10                nginx    (docker)"
     echo "  node_db      10.0.2.20                db       (firecracker)"
     echo ""
-    echo "  ACP endpoint:  http://172.30.1.10:4096"
     echo "  API endpoint:  http://localhost${API_ADDR}/v1/health"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 

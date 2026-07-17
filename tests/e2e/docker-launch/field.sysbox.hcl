@@ -28,3 +28,43 @@ resource "sysbox_node" "service" {
     command = ["echo override > /tmp/launch-mode; exec sleep infinity"]
   }
 }
+
+resource "sysbox_node" "inherited" {
+  substrate = substrate.docker.local
+  image     = sysbox_image.service.id
+
+  link "app" {
+    network = sysbox_network.app.id
+    ip      = "172.31.91.11/24"
+  }
+}
+
+resource "sysbox_node" "both" {
+  substrate = substrate.docker.local
+  image     = sysbox_image.service.id
+
+  link "app" {
+    network = sysbox_network.app.id
+    ip      = "172.31.91.12/24"
+  }
+
+  provider "docker" {
+    entrypoint = ["/bin/sh", "-c"]
+    command    = ["echo both > /tmp/launch-mode; exec sleep infinity"]
+  }
+}
+
+resource "sysbox_node" "idle" {
+  substrate = substrate.docker.local
+  image     = sysbox_image.service.id
+
+  link "app" {
+    network = sysbox_network.app.id
+    ip      = "172.31.91.13/24"
+  }
+
+  provider "docker" {
+    entrypoint = []
+    command    = []
+  }
+}

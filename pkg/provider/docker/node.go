@@ -17,8 +17,8 @@ import (
 // Persisted via MarshalProviderState; reconstructed on cold-destroy.
 type HandleState struct {
 	ContainerName       string   `json:"container_name,omitempty"`
-	ImageCmd            []string `json:"image_cmd,omitempty"`        // original image CMD (e.g. ["nginx", "-g", "daemon off;"])
-	ImageEntrypoint     []string `json:"image_entrypoint,omitempty"` // original image ENTRYPOINT
+	ImageCmd            []string `json:"image_cmd,omitempty"`        // effective image CMD
+	ImageEntrypoint     []string `json:"image_entrypoint,omitempty"` // effective image ENTRYPOINT
 	RemoveDefaultBridge bool     `json:"remove_default_bridge,omitempty"`
 }
 

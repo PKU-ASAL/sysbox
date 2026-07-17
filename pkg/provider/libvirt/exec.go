@@ -8,8 +8,8 @@ import (
 	"github.com/oslab/sysbox/pkg/transport"
 )
 
-// Connection returns an SSH connection to the VM. The SSHIP is either set
-// explicitly in the HCL (via acp_ip or similar) or discovered post-boot.
+// Connection returns an SSH connection to the VM. The SSHIP is resolved from
+// the declared attachment or discovered post-boot.
 // If SSHIP is empty, provisioners cannot run via SSH.
 func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.ConnectionHint) (substrate.Connection, error) {
 	hs := hsFrom(handle)

@@ -9,7 +9,6 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - DEEPSEEK_API_KEY (or other LLM key) in .env or environment
 #   - sudo -E for up/down
 
 set -euo pipefail
@@ -86,7 +85,7 @@ build_image() {
     echo "==> Building attacker image..."
     docker build --network=host \
         -t sysbox-attacker:latest \
-        -f "${SCRIPT_DIR}/Dockerfile.attacker-opencode" \
+        -f "${SCRIPT_DIR}/Dockerfile.attacker" \
         "${SCRIPT_DIR}"
     echo "    sysbox-attacker:latest ready"
 }
@@ -138,11 +137,10 @@ cmd_up() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo " Lab UP"
     echo ""
-    echo "  node_attack   10.0.1.10 / 172.30.0.10   attacker + opencode"
+    echo "  node_attack   10.0.1.10 / 172.30.0.10   attacker"
     echo "  node_web      10.0.2.10                  nginx"
     echo "  node_db       10.0.2.20                  postgres:16-alpine :5432"
     echo ""
-    echo "  ACP endpoint:   http://172.30.0.10:4096"
     echo "  API endpoint:   http://localhost${API_ADDR}/v1/health"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 

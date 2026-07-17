@@ -1,13 +1,42 @@
 package docker
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 )
+
+func TestBackgroundExecStatusRejectsImmediateFailure(t *testing.T) {
+	_, complete, err := backgroundExecStatus(container.ExecInspect{Running: false, ExitCode: 127})
+	require.True(t, complete)
+	require.ErrorContains(t, err, "code 127")
+
+	pid, complete, err := backgroundExecStatus(container.ExecInspect{Running: true, Pid: 42})
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, 42, pid)
+}
+
+func TestDockerProviderStateRoundTripsEffectiveLaunch(t *testing.T) {
+	sub := &Substrate{}
+	want := &HandleState{
+		ContainerName:   "service",
+		ImageEntrypoint: []string{"/entry"},
+		ImageCmd:        []string{"serve", "--debug"},
+	}
+	raw, err := sub.MarshalProviderState(substrate.NodeHandle{ID: "container-id", Provider: want})
+	require.NoError(t, err)
+	require.True(t, json.Valid(raw))
+
+	restored, err := sub.UnmarshalProviderState(raw)
+	require.NoError(t, err)
+	require.Equal(t, want, restored)
+}
 
 func TestDockerPortConfigHostExposure(t *testing.T) {
 	exposed, bindings, err := dockerPortConfig([]substrate.PortSpec{
