@@ -94,12 +94,13 @@ make test-heterogeneous-reset
 
 ## 安装与版本
 
-正式版本提供 Linux amd64/arm64 tarball、`SHA256SUMS`、构建元数据和多架构 OCI 镜像：
+正式版本构建并验证 Linux amd64/arm64 tarball、`SHA256SUMS` 与构建元数据，
+并发布 runtime、最小 CLI、最终构建元数据三个多架构 OCI 镜像。宿主机工具
+通过元数据中记录的不可变 digest 从 CLI 镜像提取，而不是在特权容器中执行拓扑：
 
 ```bash
-sha256sum -c SHA256SUMS --ignore-missing
-tar -xzf sysbox_v0.1.0_linux_amd64.tar.gz
-./sysbox version --json
+docker pull git.pku.edu.cn/oslab/sysbox-cli@sha256:<manifest-digest>
+# sysbox-topology 的 make bootstrap 会提取、校验并在宿主机激活 CLI。
 ```
 
 API 和 Agent 可以固定到同一 OCI 版本：

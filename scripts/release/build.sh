@@ -27,16 +27,21 @@ build_time="$(release_time)"
 go_version="$(go env GOVERSION)"
 source_url="${SOURCE_URL:-https://git.pku.edu.cn/oslab/sysbox}"
 oci_image="${OCI_IMAGE:-git.pku.edu.cn/oslab/sysbox}"
+cli_oci_image="${CLI_OCI_IMAGE:-${oci_image}-cli}"
+metadata_oci_image="${METADATA_OCI_IMAGE:-${oci_image}-metadata}"
 ldflags="$(release_ldflags "${tag}" "${commit}" "${build_time}")"
 
 rm -rf "${output}"
 mkdir -p "${output}"
+declare -A sysbox_hashes init_hashes
 for arch in amd64 arm64; do
   stage="${output}/.stage-${arch}"
   archive="sysbox_${tag}_linux_${arch}.tar.gz"
   mkdir -p "${stage}"
   CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" go build -trimpath -buildvcs=false -ldflags "${ldflags}" -o "${stage}/sysbox" ./cmd/sysbox
   CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" go build -trimpath -buildvcs=false -ldflags "${ldflags}" -o "${stage}/sysbox-init" ./cmd/sysbox-init
+  sysbox_hashes["${arch}"]="$(sha256sum "${stage}/sysbox" | awk '{print $1}')"
+  init_hashes["${arch}"]="$(sha256sum "${stage}/sysbox-init" | awk '{print $1}')"
   install -m 0644 README.md "${stage}/README.md"
   install -m 0644 LICENSE "${stage}/LICENSE"
   jq -S -n --arg version "${tag}" --arg tag "${tag}" --arg commit "${commit}" \
@@ -45,6 +50,9 @@ for arch in amd64 arm64; do
     '{version:$version,tag:$tag,commit:$commit,build_time:$build_time,go_version:$go_version,os:$os,architecture:$arch,license:$license,source:$source,oci_image:$oci_image}' \
     >"${stage}/build-metadata.json"
   chmod 0644 "${stage}/build-metadata.json"
+  mkdir -p "${output}/oci/linux/${arch}"
+  install -m 0755 "${stage}/sysbox" "${output}/oci/linux/${arch}/sysbox"
+  install -m 0755 "${stage}/sysbox-init" "${output}/oci/linux/${arch}/sysbox-init"
   tar --sort=name --format=ustar --owner=0 --group=0 --numeric-owner --mtime="@${epoch}" \
     --mode='u+rwX,go+rX,go-w' -C "${stage}" -cf - LICENSE README.md build-metadata.json sysbox sysbox-init \
     | gzip -n -9 >"${output}/${archive}"
@@ -56,11 +64,13 @@ targets='[]'
 for arch in amd64 arm64; do
   archive="sysbox_${tag}_linux_${arch}.tar.gz"
   checksum="$(awk -v file="${archive}" '$2 == file {print $1}' "${output}/SHA256SUMS")"
-  targets="$(jq -c --arg os linux --arg arch "${arch}" --arg archive "${archive}" --arg sha256 "${checksum}" '. + [{os:$os,architecture:$arch,archive:$archive,sha256:$sha256}]' <<<"${targets}")"
+  targets="$(jq -c --arg os linux --arg arch "${arch}" --arg archive "${archive}" --arg sha256 "${checksum}" \
+    --arg sysbox_sha256 "${sysbox_hashes[${arch}]}" --arg sysbox_init_sha256 "${init_hashes[${arch}]}" \
+    '. + [{os:$os,architecture:$arch,archive:$archive,sha256:$sha256,sysbox_sha256:$sysbox_sha256,sysbox_init_sha256:$sysbox_init_sha256}]' <<<"${targets}")"
 done
 jq -S -n --arg version "${tag}" --arg tag "${tag}" --arg commit "${commit}" \
   --arg commit_time "${build_time}" --arg build_time "${build_time}" --arg go_version "${go_version}" \
-  --arg license MulanPSL-2.0 --arg source "${source_url}" --arg oci_image "${oci_image}" --argjson targets "${targets}" \
-  '{version:$version,tag:$tag,commit:$commit,commit_time:$commit_time,build_time:$build_time,go_version:$go_version,license:$license,source:$source,oci_image:$oci_image,targets:$targets}' \
+  --arg license MulanPSL-2.0 --arg source "${source_url}" --arg oci_image "${oci_image}" --arg cli_oci_image "${cli_oci_image}" --arg metadata_oci_image "${metadata_oci_image}" --argjson targets "${targets}" \
+  '{version:$version,tag:$tag,commit:$commit,commit_time:$commit_time,build_time:$build_time,go_version:$go_version,license:$license,source:$source,oci_image:$oci_image,cli_oci_image:$cli_oci_image,metadata_oci_image:$metadata_oci_image,targets:$targets}' \
   >"${output}/build-metadata.json"
 echo "release: built ${tag} artifacts in ${output}"

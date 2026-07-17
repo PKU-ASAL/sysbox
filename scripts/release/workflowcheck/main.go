@@ -67,6 +67,9 @@ func validateWorkflow(kind string, raw []byte) error {
 			return fmt.Errorf("release tag trigger must be v*.*.*")
 		}
 		publish := mappingValue(jobs, "publish")
+		if publish != nil && nodeContains(publish, "scripts/release/forgejo.sh publish") {
+			return fmt.Errorf("Forgejo Release publication must not block required OCI publication")
+		}
 		if publish == nil || !nodeContains(publish, "RELEASE_TOKEN") {
 			return fmt.Errorf("publish job must receive RELEASE_TOKEN")
 		}
@@ -81,10 +84,19 @@ func validateWorkflow(kind string, raw []byte) error {
 		}
 		serialized, _ := yaml.Marshal(publish)
 		buildIndex := bytes.Index(serialized, []byte("scripts/release/build.sh"))
-		ociIndex := bytes.Index(serialized, []byte("scripts/release/oci.sh build"))
-		forgejoIndex := bytes.Index(serialized, []byte("scripts/release/forgejo.sh publish"))
-		if buildIndex < 0 || ociIndex <= buildIndex || forgejoIndex <= ociIndex {
-			return fmt.Errorf("publish steps must order build, OCI, then Forgejo release")
+		runtimeOCIIndex := bytes.LastIndex(serialized, []byte("--metadata-field oci_digest"))
+		cliOCIIndex := bytes.LastIndex(serialized, []byte("--metadata-field cli_oci_digest"))
+		metadataOCIIndex := bytes.LastIndex(serialized, []byte("--metadata-field metadata_oci_digest"))
+		if buildIndex < 0 || runtimeOCIIndex <= buildIndex || cliOCIIndex <= runtimeOCIIndex || metadataOCIIndex <= cliOCIIndex {
+			return fmt.Errorf("publish steps must order build, runtime OCI, CLI OCI, then metadata OCI")
+		}
+		cliBuildIndex := bytes.LastIndex(serialized[:cliOCIIndex], []byte("scripts/release/oci.sh build"))
+		if cliBuildIndex < 0 || !bytes.Contains(serialized[cliBuildIndex:cliOCIIndex], []byte("Dockerfile.cli")) {
+			return fmt.Errorf("CLI OCI publication must use Dockerfile.cli")
+		}
+		metadataBuildIndex := bytes.LastIndex(serialized[:metadataOCIIndex], []byte("scripts/release/oci.sh build"))
+		if metadataBuildIndex < 0 || !bytes.Contains(serialized[metadataBuildIndex:metadataOCIIndex], []byte("Dockerfile.metadata")) {
+			return fmt.Errorf("metadata OCI publication must use Dockerfile.metadata")
 		}
 	default:
 		return fmt.Errorf("unknown workflow kind %q", kind)

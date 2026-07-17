@@ -8,16 +8,23 @@ operation="${1:-}"
 [[ -n "${operation}" ]] && shift || true
 tag=""
 image="${OCI_IMAGE:-}"
+dockerfile="${repo_root}/Dockerfile"
+metadata_field="oci_digest"
 while (($#)); do
   case "$1" in
     --tag) tag="${2:-}"; shift 2 ;;
     --image) image="${2:-}"; shift 2 ;;
-    *) echo "usage: $0 <preflight|build|verify> --tag vMAJOR.MINOR.PATCH --image REGISTRY/OWNER/IMAGE" >&2; exit 2 ;;
+    --dockerfile) dockerfile="${2:-}"; shift 2 ;;
+    --metadata-field) metadata_field="${2:-}"; shift 2 ;;
+    *) echo "usage: $0 <preflight|build|verify> --tag vMAJOR.MINOR.PATCH --image REGISTRY/OWNER/IMAGE [--dockerfile FILE] [--metadata-field FIELD]" >&2; exit 2 ;;
   esac
 done
 
 validate_version "${tag}" || { echo "release: invalid OCI tag ${tag}" >&2; exit 1; }
 [[ -n "${image}" && "${image}" == */* ]] || { echo "release: OCI image must include registry and repository" >&2; exit 1; }
+[[ "${metadata_field}" == oci_digest || "${metadata_field}" == cli_oci_digest || "${metadata_field}" == metadata_oci_digest ]] || { echo "release: unsupported metadata field ${metadata_field}" >&2; exit 1; }
+[[ "${dockerfile}" == /* ]] || dockerfile="${repo_root}/${dockerfile}"
+[[ -f "${dockerfile}" ]] || { echo "release: Dockerfile does not exist: ${dockerfile}" >&2; exit 1; }
 require_command docker
 docker buildx version >/dev/null
 
@@ -86,7 +93,7 @@ record_digest() {
   [[ -f "${metadata}" ]] || { echo "release: BUILD_METADATA does not exist: ${metadata}" >&2; return 1; }
   local tmp
   tmp="$(mktemp)"
-  jq --arg digest "${digest}" '.oci_digest = $digest' "${metadata}" >"${tmp}"
+  jq --arg field "${metadata_field}" --arg digest "${digest}" '.[$field] = $digest' "${metadata}" >"${tmp}"
   mv "${tmp}" "${metadata}"
 }
 
@@ -99,6 +106,7 @@ case "${operation}" in
     commit="$(release_commit)"
     created="$(release_time)"
     docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
+      --file "${dockerfile}" \
       --build-arg "VERSION=${tag}" --build-arg "REVISION=${commit}" \
       --build-arg "CREATED=${created}" --build-arg "SOURCE_URL=${SOURCE_URL:-https://git.pku.edu.cn/oslab/sysbox}" \
       --tag "${image}:${tag}" "${repo_root}"
@@ -110,7 +118,7 @@ case "${operation}" in
     verify
     ;;
   *)
-    echo "usage: $0 <preflight|build|verify> --tag vMAJOR.MINOR.PATCH --image REGISTRY/OWNER/IMAGE" >&2
+    echo "usage: $0 <preflight|build|verify> --tag vMAJOR.MINOR.PATCH --image REGISTRY/OWNER/IMAGE [--dockerfile FILE] [--metadata-field FIELD]" >&2
     exit 2
     ;;
 esac
