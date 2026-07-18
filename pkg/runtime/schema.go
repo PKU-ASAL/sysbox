@@ -163,6 +163,7 @@ func ResourceSchemaFor(typ string) ResourceSchema {
 		}
 		add("depends_on", value.ListType, false, false)
 	case "sysbox_node":
+		schema.Version = 2
 		for _, name := range []string{"image", "substrate", "guest_family"} {
 			add(name, value.StringType, false, false)
 		}

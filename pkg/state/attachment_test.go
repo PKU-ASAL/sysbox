@@ -20,6 +20,7 @@ func TestAttachmentRoundTripsDeterministically(t *testing.T) {
 			MAC:        "02:00:00:00:00:01",
 			IPPrefixes: []string{"10.0.0.10/24"},
 			Gateway:    "10.0.0.1",
+			Aliases:    []string{"web", "frontend"},
 			Driver:     "docker",
 			Observation: AttachmentObservation{
 				GuestDevice: "eth7",
@@ -44,6 +45,7 @@ func TestAttachmentRoundTripsDeterministically(t *testing.T) {
 	require.Equal(t, in.Resources[0].Attachments[0].MAC, got.MAC)
 	require.Equal(t, in.Resources[0].Attachments[0].IPPrefixes, got.IPPrefixes)
 	require.Equal(t, in.Resources[0].Attachments[0].Gateway, got.Gateway)
+	require.Equal(t, in.Resources[0].Attachments[0].Aliases, got.Aliases)
 	require.Equal(t, in.Resources[0].Attachments[0].Driver, got.Driver)
 	require.Equal(t, in.Resources[0].Attachments[0].Observation, got.Observation)
 	require.JSONEq(t, string(in.Resources[0].Attachments[0].DriverState), string(got.DriverState))

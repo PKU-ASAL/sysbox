@@ -60,6 +60,7 @@ type AttachmentRequest struct {
 	MAC          string
 	IPPrefixes   []string
 	Gateway      string
+	Aliases      []string
 	NetworkState json.RawMessage
 }
 

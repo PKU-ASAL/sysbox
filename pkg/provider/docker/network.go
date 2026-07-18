@@ -87,23 +87,32 @@ func (s *Substrate) ReadManagedNetwork(ctx context.Context, spec substrate.Manag
 
 // ConnectContainerToNetwork attaches a running container to a Docker network
 // with a static IP address. Used for nat=true networks.
-func (s *Substrate) ConnectContainerToNetwork(ctx context.Context, containerID, networkID, ip, mac string) error {
+func (s *Substrate) ConnectContainerToNetwork(ctx context.Context, containerID, networkID, ip, mac string, aliases []string) error {
+	settings, err := dockerEndpointSettings(ip, mac, aliases)
+	if err != nil {
+		return err
+	}
+	return s.cli.NetworkConnect(ctx, networkID, containerID, settings)
+}
+
+func dockerEndpointSettings(ip, mac string, aliases []string) (*network.EndpointSettings, error) {
 	// Strip prefix length for Docker API (it wants bare IP, not CIDR).
 	host, _, err := net.ParseCIDR(ip)
 	if err != nil {
 		// ip may already be a bare address.
 		host = net.ParseIP(ip)
 		if host == nil {
-			return fmt.Errorf("invalid IP address %q", ip)
+			return nil, fmt.Errorf("invalid IP address %q", ip)
 		}
 	}
 
-	return s.cli.NetworkConnect(ctx, networkID, containerID, &network.EndpointSettings{
+	return &network.EndpointSettings{
+		Aliases:    append([]string(nil), aliases...),
 		MacAddress: mac,
 		IPAMConfig: &network.EndpointIPAMConfig{
 			IPv4Address: host.String(),
 		},
-	})
+	}, nil
 }
 
 // firstHost returns the first usable host IP in a subnet as a string.

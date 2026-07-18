@@ -282,7 +282,7 @@ func (e *Executor) buildResetNodeContext(ctx context.Context, action controlplan
 	}
 	inputs := make([]AttachmentInput, 0, len(cfg.Links))
 	for _, link := range cfg.Links {
-		inputs = append(inputs, AttachmentInput{Name: link.Name, Network: link.Network, MAC: link.MAC, IPPrefixes: []string{link.IP}, Gateway: link.Gateway})
+		inputs = append(inputs, AttachmentInput{Name: link.Name, Network: link.Network, MAC: link.MAC, IPPrefixes: []string{link.IP}, Gateway: link.Gateway, Aliases: append([]string(nil), link.Aliases...)})
 	}
 	intents, err := NormalizeAttachmentIntents(e.topology, node.Address, inputs)
 	if err != nil {

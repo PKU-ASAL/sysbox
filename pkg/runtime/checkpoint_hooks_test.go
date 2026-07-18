@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/oslab/sysbox/pkg/address"
 	"os"
 	"path/filepath"
@@ -14,6 +15,22 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
+
+type checkpointAliasNIC struct {
+	requests []driver.AttachmentRequest
+	err      error
+}
+
+func (n *checkpointAliasNIC) Attach(context.Context, substrate.NodeHandle, driver.AttachmentRequest) (driver.AttachmentResult, error) {
+	return driver.AttachmentResult{}, nil
+}
+func (n *checkpointAliasNIC) Observe(_ context.Context, _ substrate.NodeHandle, request driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
+	n.requests = append(n.requests, request)
+	return driver.AttachmentResult{Driver: "docker", State: raw}, n.err
+}
+func (n *checkpointAliasNIC) Delete(context.Context, substrate.NodeHandle, driver.AttachmentRequest, json.RawMessage) error {
+	return nil
+}
 
 func TestObserveRecoveredGuestNetworkReportsDrift(t *testing.T) {
 	previous := driver.DefaultRegistry
@@ -88,6 +105,39 @@ func TestAdoptStateResourceRewritesExternalIDs(t *testing.T) {
 	require.NotNil(t, net)
 	require.Equal(t, "new-net", net.DockerNetID())
 	require.True(t, net.IsNAT())
+}
+
+func TestRecoverDockerNodeLikeObservesPersistedAliases(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		observeErr error
+		status     string
+		state      state.ResourceStatus
+	}{
+		{name: "matching", status: "recovered", state: state.ResourcePresent},
+		{name: "missing", observeErr: driver.Wrap(driver.ErrorNotFound, "docker", "attachment network aliases drifted", nil), status: "recovered_drifted", state: state.ResourceDrifted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := driver.DefaultRegistry
+			driver.DefaultRegistry = driver.NewRegistry()
+			t.Cleanup(func() { driver.DefaultRegistry = previous })
+			nic := &checkpointAliasNIC{err: tc.observeErr}
+			require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", NIC: nic}))
+			rec := StateResourceLog{Type: "sysbox_node", Name: "mongo", Provider: "docker", Instance: map[string]any{}, Attachments: []state.Attachment{{
+				Name: "app", Node: address.Resource("sysbox_node", "mongo"), Network: address.Resource("sysbox_network", "app"), Aliases: []string{"mongo", "database"}, DriverState: json.RawMessage(`{"network_id":"net-1"}`),
+			}}}
+			st := &state.State{Version: state.SchemaVersion}
+			action := CheckpointRecoverResult{Resource: address.Resource("sysbox_node", "mongo").String()}
+			require.Equal(t, []string{"mongo", "database"}, StateResourceFromLog(rec).Attachments[0].Aliases)
+
+			result, err := recoverObservedDockerNodeLike(context.Background(), st, &rec, "container-id", action)
+
+			require.NoError(t, err)
+			require.Equal(t, tc.status, result.Status)
+			require.Equal(t, []string{"mongo", "database"}, nic.requests[0].Aliases)
+			require.Equal(t, tc.state, st.FindResource(address.Resource("sysbox_node", "mongo")).Status)
+		})
+	}
 }
 
 func TestFirecrackerRecoverableArtifactsChecksProviderExtraAnchors(t *testing.T) {

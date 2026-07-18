@@ -15,6 +15,7 @@ type Attachment struct {
 	MAC         string                `json:"mac"`
 	IPPrefixes  []string              `json:"ip_prefixes,omitempty"`
 	Gateway     string                `json:"gateway,omitempty"`
+	Aliases     []string              `json:"aliases,omitempty"`
 	Driver      string                `json:"driver"`
 	Observation AttachmentObservation `json:"observation,omitempty"`
 	DriverState json.RawMessage       `json:"driver_state,omitempty"`

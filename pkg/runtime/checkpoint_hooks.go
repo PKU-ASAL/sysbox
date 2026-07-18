@@ -530,8 +530,28 @@ func recoverDockerNodeLike(ctx context.Context, st *state.State, step OperationS
 			return action, nil
 		}
 	}
+	return recoverObservedDockerNodeLike(ctx, st, rec, id, action)
+}
+
+func recoverObservedDockerNodeLike(ctx context.Context, st *state.State, rec *StateResourceLog, id string, action CheckpointRecoverResult) (CheckpointRecoverResult, error) {
+	res := StateResourceFromLog(*rec)
+	attachmentStatus, attachmentReason, attachmentErr := observeAttachments(ctx, substrate.NodeHandle{ID: id, Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker}}, &res)
+	if attachmentErr != nil {
+		action.Status = "error"
+		action.Error = attachmentReason
+		return action, nil
+	}
+	rec.Attachments = cloneAttachments(res.Attachments)
+	if attachmentStatus == state.ResourceDrifted {
+		rec.Status = state.ResourceDrifted
+	}
 	AdoptStateResource(st, *rec, id)
-	action.Status = "recovered"
+	if attachmentStatus == state.ResourceDrifted {
+		action.Status = "recovered_drifted"
+		action.Error = attachmentReason
+	} else {
+		action.Status = "recovered"
+	}
 	return action, nil
 }
 
@@ -606,7 +626,7 @@ func cleanupDockerNodeLikeByLabels(ctx context.Context, step OperationStep) (Che
 		if nic, nicErr := driver.DefaultRegistry.RequireNIC(res.Driver); nicErr == nil {
 			handle := substrate.NodeHandle{ID: id}
 			for _, attachment := range res.Attachments {
-				request := driver.AttachmentRequest{Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC, IPPrefixes: attachment.IPPrefixes, Gateway: attachment.Gateway}
+				request := driver.AttachmentRequest{Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC, IPPrefixes: attachment.IPPrefixes, Gateway: attachment.Gateway, Aliases: append([]string(nil), attachment.Aliases...)}
 				if err := nic.Delete(ctx, handle, request, attachment.DriverState); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
 					action.Status = "error"
 					action.Error = err.Error()
@@ -703,7 +723,7 @@ func cleanupAttachments(ctx context.Context, res state.Resource, handle substrat
 	}
 	var errs []string
 	for _, attachment := range res.Attachments {
-		request := driver.AttachmentRequest{Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC, IPPrefixes: attachment.IPPrefixes, Gateway: attachment.Gateway}
+		request := driver.AttachmentRequest{Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC, IPPrefixes: attachment.IPPrefixes, Gateway: attachment.Gateway, Aliases: append([]string(nil), attachment.Aliases...)}
 		if err := nic.Delete(ctx, handle, request, attachment.DriverState); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
 			errs = append(errs, err.Error())
 		}

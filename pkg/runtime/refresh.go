@@ -187,7 +187,7 @@ func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *sta
 	}
 	for i := range r.Attachments {
 		a := &r.Attachments[i]
-		request := driver.AttachmentRequest{Name: a.Name, Network: a.Network, MAC: a.MAC, IPPrefixes: append([]string(nil), a.IPPrefixes...), Gateway: a.Gateway}
+		request := driver.AttachmentRequest{Name: a.Name, Network: a.Network, MAC: a.MAC, IPPrefixes: append([]string(nil), a.IPPrefixes...), Gateway: a.Gateway, Aliases: append([]string(nil), a.Aliases...)}
 		observed, err := nic.Observe(ctx, handle, request, a.DriverState)
 		if err != nil {
 			if driver.IsCategory(err, driver.ErrorNotFound) {

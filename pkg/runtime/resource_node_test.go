@@ -21,6 +21,7 @@ func TestNodeResourceHandlerRegistered(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "sysbox_node", p.Type())
 	require.Equal(t, "sysbox_node", p.Schema().Type)
+	require.Equal(t, 2, p.Schema().Version)
 }
 
 func TestNodeResourceHandlerPlanDiff(t *testing.T) {
@@ -357,6 +358,30 @@ func TestNodeProviderLaunchChangeRequiresReplacement(t *testing.T) {
 	require.Equal(t, controlplane.PlanActionReplace, change.Action)
 	_, found := fieldChangeAt(change.Changes, "provider_config.command.value[1]")
 	require.True(t, found)
+}
+
+func TestNodeAliasChangeRequiresReplacement(t *testing.T) {
+	node := &graph.Node{
+		Address: address.Resource("sysbox_node", "service"),
+		Data: &config.NodeConfig{
+			Image: "sysbox_image.service.id", Substrate: "docker",
+			Links: []config.LinkConfig{{Name: "app", Network: "sysbox_network.app.id", IP: "10.0.0.10/24"}},
+		},
+	}
+	attributes := map[string]any{}
+	require.NoError(t, setDesiredHash(node, attributes))
+	desired := attributes[desiredPayloadKey].(map[string]any)
+	require.Equal(t, []string{"service"}, desired["links"].([]config.LinkConfig)[0].Aliases)
+	current := &state.Resource{Address: node.Address, Driver: "docker", Attributes: attributes}
+
+	node.Data.(*config.NodeConfig).Links[0].Aliases = []string{"database"}
+	change, err := NodeResourceHandler{}.PlanDiff(node, current)
+
+	require.NoError(t, err)
+	require.Equal(t, controlplane.PlanActionReplace, change.Action)
+	aliasChange, found := fieldChangeAt(change.Changes, "links[0].Aliases[1]")
+	require.True(t, found)
+	require.Equal(t, "database", aliasChange.After)
 }
 
 func TestNodeResourceHandlerRejectsUnsupportedPortExposure(t *testing.T) {

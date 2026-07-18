@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
+	"unicode"
 
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/oslab/sysbox/pkg/address"
@@ -20,15 +22,18 @@ type AttachmentInput struct {
 	MAC        string
 	IPPrefixes []string
 	Gateway    string
+	Aliases    []string
 }
 
 // AttachmentIntent is normalized provider-independent attachment semantics.
 type AttachmentIntent struct {
-	Name       string
-	Network    address.Address
-	MAC        string
-	IPPrefixes []string
-	Gateway    string
+	Name            string
+	Network         address.Address
+	MAC             string
+	IPPrefixes      []string
+	Gateway         string
+	Aliases         []string
+	AliasesExplicit bool
 }
 
 func DeterministicMAC(topology string, owner address.Address, logicalName string) net.HardwareAddr {
@@ -75,9 +80,13 @@ func NormalizeAttachmentIntents(topology string, owner address.Address, inputs [
 		if err != nil {
 			return nil, fmt.Errorf("%s attachment %q: %w", owner, input.Name, err)
 		}
+		aliases, err := normalizeAttachmentAliases(owner, input.Aliases)
+		if err != nil {
+			return nil, fmt.Errorf("%s attachment %q: %w", owner, input.Name, err)
+		}
 		intents = append(intents, AttachmentIntent{
 			Name: input.Name, Network: networkAddress, MAC: mac,
-			IPPrefixes: prefixes, Gateway: gateway,
+			IPPrefixes: prefixes, Gateway: gateway, Aliases: aliases, AliasesExplicit: len(input.Aliases) > 0,
 		})
 	}
 	return intents, nil
@@ -92,10 +101,30 @@ func nicSpecsFromAttachmentIntents(intents []AttachmentIntent) []NICSpec {
 		}
 		specs = append(specs, NICSpec{
 			Name: intent.Name, Network: intent.Network.String(), IP: ip,
-			Gateway: intent.Gateway, MAC: intent.MAC,
+			Gateway: intent.Gateway, MAC: intent.MAC, Aliases: append([]string(nil), intent.Aliases...), AliasesExplicit: intent.AliasesExplicit,
 		})
 	}
 	return specs
+}
+
+func normalizeAttachmentAliases(owner address.Address, declared []string) ([]string, error) {
+	aliases := make([]string, 0, len(declared)+1)
+	seen := make(map[string]struct{}, len(declared)+1)
+	if owner.Type == "sysbox_node" {
+		aliases = append(aliases, owner.Name)
+		seen[owner.Name] = struct{}{}
+	}
+	for _, alias := range declared {
+		if alias == "" || strings.TrimSpace(alias) != alias || strings.IndexFunc(alias, unicode.IsSpace) >= 0 {
+			return nil, fmt.Errorf("invalid network alias %q", alias)
+		}
+		if _, exists := seen[alias]; exists {
+			continue
+		}
+		seen[alias] = struct{}{}
+		aliases = append(aliases, alias)
+	}
+	return aliases, nil
 }
 
 func normalizedAttachmentMAC(explicit, topology string, owner address.Address, name string) (string, error) {

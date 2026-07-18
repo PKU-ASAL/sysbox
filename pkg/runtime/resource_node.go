@@ -64,6 +64,11 @@ func (NodeResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityR
 	if !ok {
 		return nil, fmt.Errorf("node %s: wrong data type", node.Address)
 	}
+	for _, link := range cfg.Links {
+		if _, err := normalizeAttachmentAliases(node.Address, link.Aliases); err != nil {
+			return nil, fmt.Errorf("node %s link %q: %w", node.Address, link.Name, err)
+		}
+	}
 	name, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
 		return nil, err
@@ -247,7 +252,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	for _, link := range cfg.Links {
 		inputs = append(inputs, AttachmentInput{
 			Name: link.Name, Network: link.Network, MAC: link.MAC,
-			IPPrefixes: []string{link.IP}, Gateway: link.Gateway,
+			IPPrefixes: []string{link.IP}, Gateway: link.Gateway, Aliases: append([]string(nil), link.Aliases...),
 		})
 	}
 	intents, err := NormalizeAttachmentIntents(e.topology, n.Address, inputs)

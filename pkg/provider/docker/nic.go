@@ -37,13 +37,19 @@ type networkState struct {
 	NetworkID string `json:"docker_network_id"`
 	NAT       bool   `json:"nat"`
 }
-type linkRequest struct{ Name, NetNS, Bridge, IP, Gateway, MAC, GuestDevice, KindHint, DockerNetID string }
+type linkRequest struct {
+	Name, NetNS, Bridge, IP, Gateway, MAC, GuestDevice, KindHint, DockerNetID string
+	Aliases                                                                   []string
+}
 type attachedNIC struct{ Kind, HostEnd, GuestEnd, IP, NetNS string }
 
 func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
 	var target networkState
 	if err := json.Unmarshal(req.NetworkState, &target); err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "docker", "decode network state", err)
+	}
+	if !target.NAT && len(req.Aliases) > 0 {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnsupported, "docker", "network aliases require a Docker-managed network", nil)
 	}
 	ip := firstPrefix(req.IPPrefixes)
 	guest := dockerGuestName(req.Name)
@@ -54,7 +60,7 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 	if target.NAT {
 		kind = substrate.NICKindDockerNAT
 	}
-	attached, err := s.attachNIC(ctx, h, linkRequest{Name: req.Name, NetNS: target.NetNS, Bridge: target.Bridge, IP: ip, Gateway: req.Gateway, MAC: req.MAC, GuestDevice: guest, KindHint: kind, DockerNetID: target.NetworkID})
+	attached, err := s.attachNIC(ctx, h, linkRequest{Name: req.Name, NetNS: target.NetNS, Bridge: target.Bridge, IP: ip, Gateway: req.Gateway, MAC: req.MAC, GuestDevice: guest, KindHint: kind, DockerNetID: target.NetworkID, Aliases: append([]string(nil), req.Aliases...)})
 	if err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "docker", "attach network", err)
 	}
@@ -89,6 +95,9 @@ func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req dri
 		found := false
 		for _, endpoint := range ins.NetworkSettings.Networks {
 			if endpoint.NetworkID == st.NetworkID {
+				if !containsAliases(endpoint.Aliases, req.Aliases) {
+					return driver.AttachmentResult{}, driver.Wrap(driver.ErrorNotFound, "docker", "attachment network aliases drifted", nil)
+				}
 				found = true
 				break
 			}
@@ -126,7 +135,7 @@ func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, _ driver
 func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req linkRequest) (attachedNIC, error) {
 	// Docker NAT bridge: delegate to docker network connect.
 	if req.DockerNetID != "" || req.KindHint == substrate.NICKindDockerNAT {
-		if err := s.ConnectContainerToNetwork(ctx, h.ID, req.DockerNetID, req.IP, req.MAC); err != nil {
+		if err := s.ConnectContainerToNetwork(ctx, h.ID, req.DockerNetID, req.IP, req.MAC, req.Aliases); err != nil {
 			return attachedNIC{}, fmt.Errorf("docker network connect: %w", err)
 		}
 		return attachedNIC{
@@ -180,6 +189,19 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 		IP:       req.IP,
 		NetNS:    req.NetNS,
 	}, nil
+}
+
+func containsAliases(observed, desired []string) bool {
+	available := make(map[string]struct{}, len(observed))
+	for _, alias := range observed {
+		available[alias] = struct{}{}
+	}
+	for _, alias := range desired {
+		if _, exists := available[alias]; !exists {
+			return false
+		}
+	}
+	return true
 }
 
 func firstPrefix(values []string) string {

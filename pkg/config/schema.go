@@ -233,11 +233,12 @@ type ProviderBlock struct {
 }
 
 type LinkConfig struct {
-	Name    string `hcl:"name,label"`
-	Network string `hcl:"network"`
-	IP      string `hcl:"ip"`
-	Gateway string `hcl:"gw,optional"`
-	MAC     string `hcl:"mac,optional"`
+	Name    string   `hcl:"name,label"`
+	Network string   `hcl:"network"`
+	IP      string   `hcl:"ip"`
+	Gateway string   `hcl:"gw,optional"`
+	MAC     string   `hcl:"mac,optional"`
+	Aliases []string `hcl:"aliases,optional"`
 }
 
 // PortConfig declares a node-local port and how sysbox should expose it.

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -75,7 +76,7 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		payload["memory"] = cfg.Memory
 		payload["env"] = cfg.Env
 		payload["depends_on"] = normalizeStrings(cfg.DependsOn)
-		payload["links"] = normalizeLinks(cfg.Links)
+		payload["links"] = normalizeLinks(n.Address, cfg.Links)
 		payload["ports"] = normalizePortConfigs(cfg.Ports)
 		payload["routes"] = cfg.Routes
 		payload["connections"] = cfg.Connections
@@ -111,9 +112,10 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 	return payload, ignore
 }
 
-func normalizeLinks(in []config.LinkConfig) []config.LinkConfig {
+func normalizeLinks(owner address.Address, in []config.LinkConfig) []config.LinkConfig {
 	out := make([]config.LinkConfig, 0, len(in))
 	for _, link := range in {
+		link.Aliases, _ = normalizeAttachmentAliases(owner, link.Aliases)
 		out = append(out, link)
 	}
 	return out

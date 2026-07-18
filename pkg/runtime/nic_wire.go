@@ -16,11 +16,13 @@ import (
 // request. Both NodeConfig.Links and RouterConfig.Interfaces are mapped onto
 // this before wiring, so the shared wiring loop doesn't depend on config types.
 type NICSpec struct {
-	Name    string
-	Network string // resolved resource name
-	IP      string
-	Gateway string // empty for router interfaces
-	MAC     string
+	Name            string
+	Network         string // resolved resource name
+	IP              string
+	Gateway         string // empty for router interfaces
+	MAC             string
+	Aliases         []string
+	AliasesExplicit bool
 }
 
 // NICWireResult holds the outputs of wireNICs that both node and router
@@ -35,6 +37,11 @@ type NICWireResult struct {
 
 type NICWireHook func(phase string, details map[string]any, fn func() error) error
 
+type preparedNIC struct {
+	spec    NICSpec
+	request driver.AttachmentRequest
+}
+
 // wireNICs applies normalized logical attachments through the owning driver.
 func wireNICs(ctx context.Context, nicDriver driver.NIC, st *state.State,
 	handle substrate.NodeHandle, specs []NICSpec, owner address.Address,
@@ -46,6 +53,7 @@ func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State
 	handle substrate.NodeHandle, specs []NICSpec, owner address.Address, hook NICWireHook,
 ) (*NICWireResult, error) {
 	result := &NICWireResult{Requests: map[string]driver.AttachmentRequest{}, Results: map[string]driver.AttachmentResult{}}
+	prepared := make([]preparedNIC, 0, len(specs))
 
 	for _, spec := range specs {
 		netAddr, err := config.ResolveResourceAddress(spec.Network, "sysbox_network")
@@ -61,7 +69,19 @@ func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State
 		if err != nil {
 			return nil, err
 		}
-		request := driver.AttachmentRequest{Name: spec.Name, Network: netAddr, MAC: spec.MAC, IPPrefixes: []string{spec.IP}, Gateway: spec.Gateway, NetworkState: networkState}
+		var aliases []string
+		if netState.IsNAT() && handle.Conn.Kind == substrate.ConnKindDocker {
+			aliases = append([]string(nil), spec.Aliases...)
+		} else if spec.AliasesExplicit {
+			return nil, fmt.Errorf("node %s attachment %q: network aliases require a Docker-managed network", owner, spec.Name)
+		}
+		request := driver.AttachmentRequest{Name: spec.Name, Network: netAddr, MAC: spec.MAC, IPPrefixes: []string{spec.IP}, Gateway: spec.Gateway, Aliases: aliases, NetworkState: networkState}
+		prepared = append(prepared, preparedNIC{spec: spec, request: request})
+	}
+
+	for _, item := range prepared {
+		spec := item.spec
+		request := item.request
 		var attached driver.AttachmentResult
 		if err := runNICWireHook(hook, "attach", map[string]any{
 			"node":    owner.String(),
@@ -77,7 +97,7 @@ func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State
 		}
 		result.Requests[spec.Name] = request
 		result.Results[spec.Name] = attached
-		result.Attachments = append(result.Attachments, state.Attachment{Name: spec.Name, Node: owner, Network: netAddr, MAC: spec.MAC, IPPrefixes: []string{spec.IP}, Gateway: spec.Gateway, Driver: attached.Driver, Observation: state.AttachmentObservation{GuestDevice: attached.GuestDevice}, DriverState: attached.State})
+		result.Attachments = append(result.Attachments, state.Attachment{Name: spec.Name, Node: owner, Network: request.Network, MAC: spec.MAC, IPPrefixes: []string{spec.IP}, Gateway: spec.Gateway, Aliases: append([]string(nil), request.Aliases...), Driver: attached.Driver, Observation: state.AttachmentObservation{GuestDevice: attached.GuestDevice}, DriverState: attached.State})
 
 		if result.PrimaryIP == "" && spec.IP != "" {
 			result.PrimaryIP = stripCIDR(spec.IP)
@@ -104,7 +124,7 @@ func attachmentRequestFromState(st *state.State, attachment state.Attachment) (d
 		return driver.AttachmentRequest{}, err
 	}
 	return driver.AttachmentRequest{Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC,
-		IPPrefixes: append([]string(nil), attachment.IPPrefixes...), Gateway: attachment.Gateway, NetworkState: raw}, nil
+		IPPrefixes: append([]string(nil), attachment.IPPrefixes...), Gateway: attachment.Gateway, Aliases: append([]string(nil), attachment.Aliases...), NetworkState: raw}, nil
 }
 
 func networkAttachmentState(network state.Resource) (json.RawMessage, error) {

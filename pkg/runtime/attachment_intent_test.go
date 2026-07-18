@@ -36,7 +36,32 @@ func TestNormalizeAttachmentIntentsUsesExplicitMACAndCanonicalPrefix(t *testing.
 		MAC:        "02:00:00:00:00:0a",
 		IPPrefixes: []string{"10.0.0.10/24"},
 		Gateway:    "10.0.0.1",
+		Aliases:    []string{"web"},
 	}}, intents)
+}
+
+func TestNormalizeAttachmentIntentsAddsNodeAliasAndDeduplicatesExtras(t *testing.T) {
+	intents, err := NormalizeAttachmentIntents("lab", address.Resource("sysbox_node", "mongo"), []AttachmentInput{{
+		Name: "lab", Network: "sysbox_network.lab", Aliases: []string{"mongodb", "mongo", "database", "mongodb"},
+	}})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"mongo", "mongodb", "database"}, intents[0].Aliases)
+
+	router, err := NormalizeAttachmentIntents("lab", address.Resource("sysbox_router", "edge"), []AttachmentInput{{
+		Name: "lab", Network: "sysbox_network.lab",
+	}})
+	require.NoError(t, err)
+	require.Empty(t, router[0].Aliases)
+}
+
+func TestNormalizeAttachmentIntentsRejectsInvalidAliases(t *testing.T) {
+	for _, alias := range []string{"", " ", "bad alias", "line\nbreak"} {
+		_, err := NormalizeAttachmentIntents("lab", address.Resource("sysbox_node", "mongo"), []AttachmentInput{{
+			Name: "lab", Network: "sysbox_network.lab", Aliases: []string{alias},
+		}})
+		require.ErrorContains(t, err, "invalid network alias")
+	}
 }
 
 func TestNormalizeAttachmentIntentsRejectsInvalidInput(t *testing.T) {
