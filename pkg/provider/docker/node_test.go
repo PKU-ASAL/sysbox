@@ -2,6 +2,7 @@ package docker
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
@@ -61,6 +62,19 @@ func TestDockerPortConfigRequiresPublishedForHostExposure(t *testing.T) {
 	})
 
 	require.ErrorContains(t, err, "published must be positive")
+}
+
+func TestNormalizeBindsResolvesRelativeHostSources(t *testing.T) {
+	binds, err := normalizeBinds([]string{"fixtures/keycloak/import:/opt/keycloak/data/import:ro", "/var/lib/data:/data:ro"})
+	if err != nil {
+		t.Fatalf("normalize binds: %v", err)
+	}
+	if !strings.HasPrefix(binds[0], "/") || !strings.HasSuffix(binds[0], ":/opt/keycloak/data/import:ro") {
+		t.Fatalf("relative bind was not resolved: %q", binds[0])
+	}
+	if binds[1] != "/var/lib/data:/data:ro" {
+		t.Fatalf("absolute bind changed: %q", binds[1])
+	}
 }
 
 func TestValidateHostPortExposureIsValidatedByRuntimeAttachments(t *testing.T) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -48,11 +50,15 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 		pc = &Config{}
 	}
 
+	binds, err := normalizeBinds(pc.Binds)
+	if err != nil {
+		return substrate.NodeHandle{}, err
+	}
 	hostCfg := &container.HostConfig{
 		CapAdd:     []string{"NET_ADMIN"},
 		Sysctls:    spec.Sysctls,
 		Privileged: pc.Privileged,
-		Binds:      pc.Binds,
+		Binds:      binds,
 	}
 	if pc.PidMode != "" {
 		hostCfg.PidMode = container.PidMode(pc.PidMode)
@@ -123,6 +129,26 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 			Endpoint: resp.ID,
 		},
 	}, nil
+}
+
+func normalizeBinds(in []string) ([]string, error) {
+	out := make([]string, 0, len(in))
+	for _, bind := range in {
+		parts := strings.SplitN(bind, ":", 2)
+		if len(parts) != 2 || parts[0] == "" {
+			return nil, fmt.Errorf("docker: invalid bind %q", bind)
+		}
+		source := parts[0]
+		if !filepath.IsAbs(source) {
+			abs, err := filepath.Abs(source)
+			if err != nil {
+				return nil, fmt.Errorf("docker: resolve bind %q: %w", bind, err)
+			}
+			source = abs
+		}
+		out = append(out, source+":"+parts[1])
+	}
+	return out, nil
 }
 
 func dockerPortConfig(ports []substrate.PortSpec) (nat.PortSet, nat.PortMap, error) {
