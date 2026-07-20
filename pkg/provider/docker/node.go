@@ -21,6 +21,7 @@ type HandleState struct {
 	ContainerName       string   `json:"container_name,omitempty"`
 	ImageCmd            []string `json:"image_cmd,omitempty"`        // effective image CMD
 	ImageEntrypoint     []string `json:"image_entrypoint,omitempty"` // effective image ENTRYPOINT
+	DirectLaunch        bool     `json:"direct_launch,omitempty"`
 	RemoveDefaultBridge bool     `json:"remove_default_bridge,omitempty"`
 }
 
@@ -96,6 +97,7 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 		imageEntrypoint, imageCmd = effectiveLaunch(nil, nil, pc)
 	}
 
+	launch, direct := launchConfig(imageEntrypoint, imageCmd, pc)
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
 			Image:        spec.Image.ID,
@@ -104,8 +106,8 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 			ExposedPorts: exposedPorts,
 			// Explicitly override ENTRYPOINT so images with their own default
 			// (e.g. aquasec/tracee) stay alive for provisioner exec calls.
-			Entrypoint: []string{"/bin/sh", "-c"},
-			Cmd:        []string{"sleep infinity"},
+			Entrypoint: launch.Entrypoint,
+			Cmd:        launch.Cmd,
 		},
 		hostCfg,
 		netCfg,
@@ -123,12 +125,23 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 			ImageCmd:            imageCmd,
 			ImageEntrypoint:     imageEntrypoint,
 			RemoveDefaultBridge: removeDefaultBridge,
+			DirectLaunch:        direct,
 		},
 		Conn: substrate.ConnInfo{
 			Kind:     substrate.ConnKindDocker,
 			Endpoint: resp.ID,
 		},
 	}, nil
+}
+
+// launchConfig keeps the historical shell hold-open mode for images without
+// an entrypoint, while allowing images such as Juice Shop that do not contain
+// /bin/sh to start with their native image command.
+func launchConfig(entrypoint, command []string, cfg *Config) (container.Config, bool) {
+	if len(entrypoint) > 0 {
+		return container.Config{Entrypoint: append([]string(nil), entrypoint...), Cmd: append([]string(nil), command...)}, true
+	}
+	return container.Config{Entrypoint: []string{"/bin/sh", "-c"}, Cmd: []string{"sleep infinity"}}, false
 }
 
 func normalizeBinds(in []string) ([]string, error) {
@@ -268,6 +281,9 @@ func (s *Substrate) ReadNode(ctx context.Context, id string) (substrate.NodeHand
 func (s *Substrate) ExecImageEntry(ctx context.Context, handle substrate.NodeHandle) error {
 	hs, ok := handle.Provider.(*HandleState)
 	if !ok || hs == nil {
+		return nil
+	}
+	if hs.DirectLaunch {
 		return nil
 	}
 	if len(hs.ImageEntrypoint) == 0 && len(hs.ImageCmd) == 0 {

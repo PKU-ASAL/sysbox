@@ -21,6 +21,7 @@ type resetHandleState struct {
 	Ownership           map[string]string `json:"ownership"`
 	ImageCmd            []string          `json:"image_cmd,omitempty"`
 	ImageEntrypoint     []string          `json:"image_entrypoint,omitempty"`
+	DirectLaunch        bool              `json:"direct_launch,omitempty"`
 	RemoveDefaultBridge bool              `json:"remove_default_bridge,omitempty"`
 }
 
@@ -43,6 +44,7 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 	} else if imageInfo.Config != nil {
 		cfg, _ := request.Node.ProviderConfig.(*Config)
 		state.ImageEntrypoint, state.ImageCmd = effectiveLaunch(imageInfo.Config.Entrypoint, imageInfo.Config.Cmd, cfg)
+		_, state.DirectLaunch = launchConfig(state.ImageEntrypoint, state.ImageCmd, cfg)
 	}
 	return substrate.ResetHandle{Provider: state, Request: request}, nil
 }
@@ -220,5 +222,6 @@ func dockerHandleFromResetState(id string, state *resetHandleState) substrate.No
 	return substrate.NodeHandle{ID: id, Provider: &HandleState{
 		ContainerName: state.ContainerName, ImageCmd: append([]string(nil), state.ImageCmd...),
 		ImageEntrypoint: append([]string(nil), state.ImageEntrypoint...), RemoveDefaultBridge: state.RemoveDefaultBridge,
+		DirectLaunch: state.DirectLaunch,
 	}, Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker, Endpoint: id}}
 }

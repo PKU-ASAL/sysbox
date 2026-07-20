@@ -86,3 +86,17 @@ func TestValidateHostPortExposureIsValidatedByRuntimeAttachments(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func TestLaunchConfigUsesImageEntryForNonShellEntrypoint(t *testing.T) {
+	cfg, direct := launchConfig([]string{"/nodejs/bin/node"}, []string{"/juice-shop/build/app.js"}, &Config{})
+	require.True(t, direct)
+	require.EqualValues(t, []string{"/nodejs/bin/node"}, cfg.Entrypoint)
+	require.EqualValues(t, []string{"/juice-shop/build/app.js"}, cfg.Cmd)
+}
+
+func TestLaunchConfigKeepsShellForProvisioningWithoutEntrypoint(t *testing.T) {
+	cfg, direct := launchConfig(nil, []string{"sleep", "10"}, &Config{})
+	require.False(t, direct)
+	require.EqualValues(t, []string{"/bin/sh", "-c"}, cfg.Entrypoint)
+	require.EqualValues(t, []string{"sleep infinity"}, cfg.Cmd)
+}
