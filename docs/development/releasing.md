@@ -1,21 +1,4 @@
-# Maintenance And Releases
-
-## State And Workspace Maintenance
-
-- Back up state, checkpoint and API workspace storage before upgrading.
-- Wait for active runs and Agent command leases to finish.
-- Verify the target release's state schema before starting a new binary.
-- Never hand-edit provider-private state or remove checkpoints to force an apply.
-- For Postgres, back up the database and verify advisory lock/CAS behavior after restore.
-- For disposable local Compose environments, `make api clean` removes the database volume and API workspaces; it is destructive.
-
-Sysbox rejects unsupported old state instead of guessing ownership or guest identity. Destroy old topologies with the old binary when a release documents a hard schema break.
-
-## Agent Upgrade
-
-Quarantine or drain the Agent, confirm no claimed run remains, preserve its workspace, deploy the matching API/Agent protocol version, then verify heartbeat, capabilities and inventory before re-enabling scheduling.
-
-## Releasing Sysbox
+# Releasing Sysbox
 
 Sysbox uses GitHub Actions and stable `vMAJOR.MINOR.PATCH` tags. Ordinary pushes
 and pull requests run hosted CI. A release tag publishes one runtime image and

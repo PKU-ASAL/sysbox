@@ -43,7 +43,7 @@ locals {
 # provisioner channel). Cached at ~/.cache/sysbox/artifacts/<key>/ on
 # first apply; reused on subsequent runs.
 #
-# See docs/operations/deployment.md for kernel/rootfs preparation
+# See docs/operations/artifacts.md for kernel/rootfs preparation
 # that this URL came from.
 resource "sysbox_kernel" "fc_510" {
   substrate = substrate.firecracker.fc
@@ -56,7 +56,7 @@ resource "sysbox_image" "alpine_vm" {
   substrate = substrate.firecracker.fc
 
   # Built by scripts/prepare-fc-rootfs.sh from the firecracker-ci official
-  # ubuntu-24.04.squashfs. See docs/operations/deployment.md.
+  # ubuntu-24.04.squashfs. See docs/operations/artifacts.md.
   # Override with SYSBOX_ROOTFS env var when running sysbox apply.
   kind         = "rootfs"
   source       = local.rootfs_path

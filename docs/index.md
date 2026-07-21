@@ -1,33 +1,41 @@
 # Sysbox Documentation
 
-Sysbox 是面向 Linux 实验环境的声明式拓扑控制面。它使用同一套 HCL、计划、状态和生命周期模型管理 Docker、Firecracker、libvirt 与 Linux 网络资源。
+文档按“先完成任务，再理解原理，最后查精确契约”的顺序组织。每类事实只有一个维护位置；其他文档只链接，不复制。
 
-## Start Here
+## 第一次使用
 
-- [Quickstart](quickstart.md)：安装 CLI，运行第一个 Docker 拓扑。
-- [设计原则](design-principles.zh-CN.md)：理解 Sysbox 为什么这样设计以及明确不做什么。
-- [Architecture](architecture.md)：资源图、runtime、provider、state、reset 和恢复模型。
+1. [Quickstart](quickstart.md)：在 Docker 上完成第一次 validate、plan、apply 和 destroy。
+2. [Authoring Topologies](guides/authoring-topologies.md)：把实验需求表达为 image、network、node 和依赖。
+3. [Lifecycle And Reset](guides/lifecycle-and-reset.md)：理解 no-op plan、replacement、reset 和安全销毁。
 
-## Guides
+## 构建实验拓扑
 
-- [Policy](guides/policy.md)：网络策略、流量方向、NAT 和安全边界。
-- [Agent Management](guides/agent-management.md)：注册、运行和维护 Agent。
-- [Investigation](guides/investigation.md)：使用 plan、state、run、event 和 checkpoint 定位问题。
+- [Heterogeneous Nodes](guides/heterogeneous-nodes.md)：选择 Docker、Firecracker 或 libvirt。
+- [Networking And Policy](guides/networking-and-policy.md)：地址、路由、NAT、alias 和 firewall。
+- [Troubleshooting](guides/troubleshooting.md)：从 diagnostics、plan、state 和 checkpoint 定位失败。
 
-## Operations
+## 部署控制面
 
-- [Deployment](operations/deployment.md)：部署 API、Agent、Web，以及准备 VM artifact。
-- [Maintenance](operations/maintenance.md)：升级、备份、发布与故障维护。
+- [Control Plane Deployment](operations/control-plane-deployment.md)：部署 API、Postgres、Agent 和 Web。
+- [Agent Operations](operations/agent-operations.md)：Agent 身份、能力、heartbeat、lease 和升级。
+- [Artifacts](operations/artifacts.md)：准备、固定和缓存 kernel、rootfs、qcow2 与 OCI image。
+- [Upgrades And Recovery](operations/upgrades-and-recovery.md)：备份、升级、恢复和 residue audit。
 
-## Reference
+## 理解系统
 
-- [Configuration](reference/configuration.md)：HCL、substrate、resource 和 provider 配置。
-- [API](reference/api.md)：HTTP API 对象与 endpoint。
-- [CLI](reference/cli.md)：命令、全局参数和退出行为。
+- [设计原则](design-principles.zh-CN.md)：为什么采用声明式图、严格身份和显式 provider 边界。
+- [Architecture](architecture.md)：组件、数据流、state、stored plan、driver 与 recovery 的规范性说明。
 
-## Development
+## 精确参考
 
-- [Development](development/development.md)：本地开发、代码边界和贡献流程。
-- [Testing](development/testing.md)：单元、集成、特权与异构验收。
+- [HCL Reference](reference/hcl.md)
+- [CLI Reference](reference/cli.md)
+- [API Reference](reference/api.md)
 
-仓库根目录的 [README](../README.md) 只保留项目介绍和最短入口；本目录是正式文档的唯一导航。
+## 参与开发
+
+- [Contributing](development/contributing.md)
+- [Testing](development/testing.md)
+- [Releasing](development/releasing.md)
+
+根目录 [README](../README.md) 是项目入口，不承担完整手册职责。

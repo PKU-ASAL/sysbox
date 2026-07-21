@@ -38,7 +38,7 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-all web-build test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset release-test release-workflow-test release-build release-verify lint ci clean \
+.PHONY: help build build-all web-build test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
 	api-help api-build-api api-build-ui api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
@@ -76,6 +76,9 @@ $(INITDIR)/sysbox-init.linux-%.bin: cmd/sysbox-init/main.go cmd/sysbox-init/netw
 
 test: ## Run unit tests
 	$(GOENV) $(GO) test ./...
+
+docs-test: ## Validate canonical documentation structure and links
+	$(GOENV) $(GO) run ./scripts/docscheck
 
 test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
@@ -125,7 +128,7 @@ web-build: ## Build the Web UI
 lint: ## Run go vet
 	$(GOENV) $(GO) vet ./...
 
-ci: build lint test ## Run the local CI gate
+ci: build lint test docs-test ## Run the local CI gate
 	@status=0; for topo in two-networks three-nodes microvm mixed libvirt-vm controlled-egress; do \
 		output="$$( $(BINARY) -f examples/$$topo/field.sysbox.hcl --state /tmp/sysbox-ci-$$topo.json plan 2>&1 )"; rc=$$?; \
 		printf "  %-14s%s\n" "$$topo:" "$$(printf '%s\n' "$$output" | head -1)"; \

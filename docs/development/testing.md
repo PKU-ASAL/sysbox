@@ -3,6 +3,7 @@
 ## Standard Gates
 
 ```bash
+make docs-test
 go test ./...
 go vet ./...
 make release-test
@@ -14,6 +15,8 @@ make release-workflow-test
 ## Example And Contract Tests
 
 构建示例必须通过 validate/plan。Shell 脚本运行 `bash -n`，Go 源码运行 `gofmt`。Release tests 验证归档、checksum、metadata、OCI identity 和 GitHub workflow contract。
+
+`make docs-test` 固定正式文档集合，限制 README 重新膨胀，并检查相对链接和已退役路径。新增正式主题时必须有明确单一事实归属，同时更新该门禁。
 
 ## Privileged Tests
 

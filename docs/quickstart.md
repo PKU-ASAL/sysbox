@@ -1,6 +1,6 @@
 # Quickstart
 
-本指南在本机 Docker Engine 上运行一个最小拓扑。Firecracker 和 libvirt 的宿主机要求见 [Deployment](operations/deployment.md)。
+本指南在本机 Docker Engine 上运行一个最小拓扑。Firecracker 和 libvirt 的宿主机要求见 [Heterogeneous Nodes](guides/heterogeneous-nodes.md) 和 [Artifacts](operations/artifacts.md)。
 
 ## Requirements
 
@@ -67,4 +67,4 @@ resource "sysbox_node" "node" {
 
 默认 state 与 checkpoint 写入当前工作目录的 `.sysbox/`。不要跨拓扑复用同一 state 文件。
 
-下一步阅读 [Configuration](reference/configuration.md) 和 [CLI](reference/cli.md)。
+下一步阅读 [Authoring Topologies](guides/authoring-topologies.md)、[HCL Reference](reference/hcl.md) 和 [CLI Reference](reference/cli.md)。

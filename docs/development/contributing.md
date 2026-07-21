@@ -1,4 +1,4 @@
-# Development
+# Contributing
 
 ## Setup
 
@@ -30,6 +30,7 @@ go test ./...
 - 删除路径必须验证 ownership。
 - Secret 不得进入 durable data 或日志。
 - Provider 变更至少覆盖 create/observe/reset/destroy 与失败恢复。
-- 用户可见行为同步更新本目录正式文档，不新增临时设计文档。
+- 用户可见行为更新其唯一 canonical 文档；README 只保留入口，不复制 reference。
+- 设计讨论保留在 issue/PR/Git 历史，不在正式 docs 树新增临时计划。
 
 提交前运行 [Testing](testing.md) 中与改动风险匹配的门禁。
