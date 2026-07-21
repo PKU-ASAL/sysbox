@@ -37,7 +37,7 @@ fi
 grep -F '${SYSBOX_IMAGE:-sysbox:latest}' "${repo_root}/deploy/docker/compose.yml" >/dev/null || fail "API Compose image is not pinnable"
 grep -F '${SYSBOX_IMAGE:-sysbox:latest}' "${repo_root}/deploy/docker/compose.agent.yml" >/dev/null || fail "Agent Compose image is not pinnable"
 grep -F 'SYSBOX_IMAGE=ghcr.io/pku-asal/sysbox:v0.1.0' "${repo_root}/.env.example" >/dev/null || fail ".env.example does not use canonical GHCR image"
-grep -F '${SOURCE_URL}/blob/main/docs/README.md' "${repo_root}/Dockerfile" >/dev/null || fail "runtime image documentation label is not a GitHub URL"
+grep -F '${SOURCE_URL}/blob/main/docs/index.md' "${repo_root}/Dockerfile" >/dev/null || fail "runtime image documentation label is not a GitHub URL"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT

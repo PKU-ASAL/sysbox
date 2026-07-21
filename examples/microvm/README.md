@@ -189,7 +189,7 @@ It does **not** need:
 
 Firecracker upstream maintains a tested Ubuntu 24.04 squashfs alongside
 each `vmlinux` release. We provide a helper that mirrors the procedure
-documented in [`docs/firecracker-artifacts.md`](../../docs/firecracker-artifacts.md):
+documented in [`docs/operations/deployment.md`](../../docs/operations/deployment.md):
 
 ```bash
 ./scripts/prepare-fc-rootfs.sh

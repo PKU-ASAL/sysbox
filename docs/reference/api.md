@@ -3,7 +3,7 @@
 Plan action 使用 canonical `address`。Stored plan 带完整输入指纹；配置、
 state、schema、driver、artifact 或变量变化时，会在执行前拒绝。配置验证
 错误返回 HTTP 422 和结构化 `diagnostics` 数组。参见
-[`architecture/resource-addresses.md`](architecture/resource-addresses.md)。
+[`architecture.md`](../architecture.md)。
 
 State v4 的 observation status 为 `present/absent/drifted/degraded/unknown`。
 API 不返回 driver-private payload 或已解析秘密值。

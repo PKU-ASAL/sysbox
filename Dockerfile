@@ -45,7 +45,7 @@ LABEL org.opencontainers.image.title="Sysbox" \
       org.opencontainers.image.created="${CREATED}" \
       org.opencontainers.image.licenses="MulanPSL-2.0" \
       io.github.pku-asal.sysbox.release-fingerprint="${RELEASE_FINGERPRINT}" \
-      org.opencontainers.image.documentation="${SOURCE_URL}/blob/main/docs/README.md"
+      org.opencontainers.image.documentation="${SOURCE_URL}/blob/main/docs/index.md"
 
 # Install ca-certificates first (needed for HTTPS apt sources),
 # then switch to tuna mirror and install runtime deps.

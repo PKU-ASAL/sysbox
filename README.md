@@ -4,7 +4,7 @@ Sysbox 是一个面向 Linux 实验环境的声明式拓扑控制面。它将 HC
 
 Sysbox 适合安全研究、系统实验、网络验证和需要可重复异构环境的平台工程。它不是通用云资源生态，也不尝试兼容任意 Terraform provider；它专注于让单机或受控宿主机上的实验拓扑可解释、可复现、可恢复。
 
-完整技术介绍见 [Sysbox Overview](docs/overview.md)，架构契约与验收证据从 [文档导航](docs/README.md) 进入。
+完整技术介绍见 [Architecture](docs/architecture.md)，所有正式文档从 [Documentation Index](docs/index.md) 进入。
 
 ## 可以构建什么
 
@@ -111,7 +111,7 @@ SYSBOX_IMAGE=ghcr.io/pku-asal/sysbox:v0.1.0 docker compose \
   -f deploy/docker/compose.agent.yml up -d
 ```
 
-维护者发布流程、GitHub Actions 权限和本地异构验收要求见 [Releasing Sysbox](docs/releasing.md)。
+维护者发布流程、GitHub Actions 权限和本地异构验收要求见 [Maintenance](docs/operations/maintenance.md)。
 
 ## 生命周期
 
@@ -158,7 +158,7 @@ HCL 拓扑声明
 - Firecracker 示例额外需要 `firecracker`、`/dev/kvm`、`mkfs.ext4` 和 `losetup`。
 - libvirt 示例额外需要 libvirt/qemu 工具链及 qcow2 镜像。
 
-大型构件不打包进 sysbox 镜像。内核、rootfs 镜像和 qcow2 镜像应在 HCL 中声明为 `sysbox_kernel` / `sysbox_image` 资源，显式挂载或通过 artifact cache 拉取。Firecracker rootfs 准备见 `scripts/prepare-fc-rootfs.sh` 和 [docs/firecracker-artifacts.md](docs/firecracker-artifacts.md)。
+大型构件不打包进 sysbox 镜像。内核、rootfs 镜像和 qcow2 镜像应在 HCL 中声明为 `sysbox_kernel` / `sysbox_image` 资源，显式挂载或通过 artifact cache 拉取。Firecracker rootfs 准备见 `scripts/prepare-fc-rootfs.sh` 和 [Deployment](docs/operations/deployment.md)。
 
 ## 示例拓扑
 
@@ -233,7 +233,7 @@ bin/sysbox --state .sysbox/runs/two-networks/state.json state get sysbox_node.no
 
 API 服务是 sysbox 的服务化控制面。Compose 默认使用 Postgres 存储状态、运行记录、checkpoint/action log 及健康快照，因此 API 状态不必与本地 CLI 状态文件共存。本地运行时数据统一置于 `.sysbox/` 下：`.sysbox/api` 存放 API 数据，`.sysbox/runs` 存放 CLI/示例状态。
 
-完整部署模型见 [docs/deployment.md](docs/deployment.md)。
+完整部署模型见 [Deployment](docs/operations/deployment.md)。
 
 ```bash
 cp .env.example .env
@@ -280,7 +280,7 @@ curl http://127.0.0.1:9876/v1/runs
 
 `make api seed` 仅在 workspace 不存在时将 `examples/*/field.sysbox.hcl` 复制到 `.sysbox/api/workspaces`。部署不再自动 seed 示例，因此全新 API 启动时没有任何 HCL workspace，需要手动创建或 seed。
 
-重要 API endpoint 见 [docs/api.md](docs/api.md)。
+重要 API endpoint 见 [API Reference](docs/reference/api.md)。
 
 产品级 apply 流程：
 

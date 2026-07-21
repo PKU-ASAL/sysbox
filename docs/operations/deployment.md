@@ -95,3 +95,28 @@ make test-e2e
 
 `examples/docker-service` is intentionally Docker-only so it can run through the
 containerized agent with just the Docker socket mounted.
+
+## Firecracker Artifacts
+
+Sysbox does not embed kernels or rootfs images. Declare them as
+`sysbox_kernel` and `sysbox_image` resources, then mount them explicitly or let
+the artifact cache fetch the declared source.
+
+Use an uncompressed `vmlinux` with virtio and vsock support. The repository
+script prepares an ext4 rootfs from the pinned Ubuntu squashfs input:
+
+```bash
+scripts/prepare-fc-rootfs.sh
+```
+
+The script is idempotent and stores generated output below the Sysbox cache.
+The guest needs a standard init or shell as `chain_init`; `sysbox-init` injects
+hostname, SSH keys, environment and the vsock agent at boot through the config
+drive.
+
+For libvirt, use an immutable qcow2 baseline. Sysbox creates a generation-owned
+overlay and validates its ownership before cleanup. Never point two writable
+nodes directly at the same baseline file.
+
+Verify artifacts with the `examples/microvm` and
+`examples/heterogeneous-matrix` workflows before production use.
