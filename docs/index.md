@@ -25,6 +25,7 @@
 
 - [设计原则](design-principles.zh-CN.md)：为什么采用声明式图、严格身份和显式 provider 边界。
 - [Architecture](architecture.md)：组件、数据流、state、stored plan、driver 与 recovery 的规范性说明。
+- [项目建议书](project-proposal.zh-CN.md)：面向立项和汇报的建设目标、技术路线、创新点与验收框架。
 
 ## 精确参考
 

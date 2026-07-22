@@ -13,6 +13,7 @@ import (
 var expectedDocs = []string{
 	"docs/architecture.md",
 	"docs/design-principles.zh-CN.md",
+	"docs/project-proposal.zh-CN.md",
 	"docs/development/contributing.md",
 	"docs/development/releasing.md",
 	"docs/development/testing.md",
