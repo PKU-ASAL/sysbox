@@ -39,6 +39,9 @@ __pycache__/
 /web/tailwind.config.js
 /web/vite.config.js
 
+# Business proposal materials (maintained outside the engineering docs tree)
+/docs/business/
+
 # macOS
 .DS_Store
 
