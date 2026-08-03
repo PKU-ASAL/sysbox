@@ -6,7 +6,7 @@ Sysbox brings Terraform-like topology orchestration to labs running on bare-meta
 
 ## Why Sysbox Exists
 
-Real systems and security experiments rarely fit on one machine or one virtualization technology. An attacker may belong in a container, a target service may need its own kernel, and a database may depend on a full virtual machine. Fixed addresses, routes, NAT, and access policy must connect them into one environment.
+Real-world cybersecurity experiments rarely involve a single node or a single virtualization technology. An attacker may belong in a container, a target service may need its own kernel, and a database may depend on a full virtual machine. Fixed addresses, routes, NAT, and access policy must connect them into one environment.
 
 Calling Docker, Firecracker, libvirt, and networking scripts can start that environment, but scripts usually cannot answer the questions that matter over its full lifetime. Does reality still match the intended setup? What will a change affect? Which resources exist after an interrupted run? Can an experiment reset without changing its network identity? How can cleanup prove that a resource belongs to this experiment?
 
