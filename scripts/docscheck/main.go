@@ -13,7 +13,6 @@ import (
 var expectedDocs = []string{
 	"docs/architecture.md",
 	"docs/design-principles.zh-CN.md",
-	"docs/project-proposal.zh-CN.md",
 	"docs/development/contributing.md",
 	"docs/development/releasing.md",
 	"docs/development/testing.md",
@@ -36,22 +35,37 @@ var expectedDocs = []string{
 var markdownLink = regexp.MustCompile(`\[[^]]*\]\(([^)]+)\)`)
 
 func main() {
-	actual, err := filepath.Glob("docs/**/*.md")
+	var allDocs []string
+	err := filepath.WalkDir("docs", func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && filepath.Ext(path) == ".md" {
+			allDocs = append(allDocs, path)
+		}
+		return nil
+	})
 	check(err)
-	top, err := filepath.Glob("docs/*.md")
-	check(err)
-	actual = append(actual, top...)
+	actual := make([]string, 0, len(allDocs))
+	for _, file := range allDocs {
+		if !strings.HasPrefix(file, "docs/business/") {
+			actual = append(actual, file)
+		}
+	}
 	sort.Strings(actual)
 	sort.Strings(expectedDocs)
 	if strings.Join(actual, "\n") != strings.Join(expectedDocs, "\n") {
 		fail("docs tree differs from the maintained documentation set")
 	}
 
-	if lines("README.md") > 160 {
-		fail("README.md exceeds 160 lines; move detail into docs")
+	readmes := []string{"README.md", "README.en.md"}
+	for _, readme := range readmes {
+		if lines(readme) > 160 {
+			fail(fmt.Sprintf("%s exceeds 160 lines; move detail into docs", readme))
+		}
 	}
 
-	files := append([]string{"README.md"}, actual...)
+	files := append(readmes, actual...)
 	examples, err := filepath.Glob("examples/*/*.md")
 	check(err)
 	files = append(files, examples...)
