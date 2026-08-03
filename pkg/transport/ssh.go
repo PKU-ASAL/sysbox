@@ -22,6 +22,7 @@ type SSHConnection struct {
 	privateKey   string
 	password     string
 	insecureHost bool // skip host key verification (for lab environments)
+	knownHosts   string
 }
 
 func NewSSHConnection(host, user, privateKey, password string) *SSHConnection {
@@ -35,6 +36,10 @@ func NewSSHConnectionWithPort(host, port, user, privateKey, password string) *SS
 // NewSSHConnectionSecure creates an SSH connection that validates host keys.
 func NewSSHConnectionSecure(host, port, user, privateKey, password string) *SSHConnection {
 	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, insecureHost: false}
+}
+
+func NewSSHConnectionWithTrust(host, port, user, privateKey, password, knownHosts string, insecure bool) *SSHConnection {
+	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, knownHosts: knownHosts, insecureHost: insecure}
 }
 
 // Host returns the SSH target host.
@@ -54,14 +59,23 @@ func (c *SSHConnection) sshArgs() []string {
 	// Host key verification: disabled for lab environments (default),
 	// or strict for production use. Disabling host key verification
 	// allows MITM attacks and should only be used in isolated networks.
-	if c.insecureHost {
-		args = append(args, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
-	}
+	args = append(args, c.hostKeyArgs()...)
 	args = append(args, "-o", "LogLevel=ERROR")
 	if c.password != "" {
 		args = append(args, "-o", "PasswordAuthentication=yes")
 	}
 	args = append(args, fmt.Sprintf("%s@%s", c.user, c.host))
+	return args
+}
+
+func (c *SSHConnection) hostKeyArgs() []string {
+	if c.insecureHost {
+		return []string{"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"}
+	}
+	args := []string{"-o", "StrictHostKeyChecking=yes"}
+	if c.knownHosts != "" {
+		args = append(args, "-o", "UserKnownHostsFile="+c.knownHosts)
+	}
 	return args
 }
 
@@ -138,7 +152,8 @@ func (c *SSHConnection) CopyFile(ctx context.Context, srcPath, dstPath string) e
 	if c.privateKey != "" {
 		scpArgs = append(scpArgs, "-i", c.privateKey)
 	}
-	scpArgs = append(scpArgs, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR")
+	scpArgs = append(scpArgs, c.hostKeyArgs()...)
+	scpArgs = append(scpArgs, "-o", "LogLevel=ERROR")
 	scpArgs = append(scpArgs, srcPath, fmt.Sprintf("%s@%s:%s", c.user, c.host, dstPath))
 
 	ec := exec.CommandContext(ctx, scpBin, scpArgs...)

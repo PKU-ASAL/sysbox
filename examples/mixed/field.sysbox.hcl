@@ -167,6 +167,7 @@ resource "sysbox_node" "node_db" {
     kernel   = sysbox_kernel.fc_510.id
     ssh_user = "root"
     ssh_pass = "root"
+    allow_direct = true
   }
 
   link "internal" {

@@ -61,7 +61,8 @@ resource "sysbox_node" "firecracker" {
   memory    = "256"
 
   provider "firecracker" {
-    kernel = sysbox_kernel.linux.id
+    kernel       = sysbox_kernel.linux.id
+    allow_direct = true
   }
 
   link "matrix" {

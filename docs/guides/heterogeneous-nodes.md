@@ -18,6 +18,8 @@ OCI image 是 artifact。Provider 支持 privileged、PID/cgroup namespace、bin
 
 ## Firecracker
 
+Firecracker currently runs as a direct child process because jailer integration is not yet available. Each Firecracker provider block must explicitly set `allow_direct = true`; use this mode only for trusted local experiments. Preflight reports this limitation as a security warning. Sysbox validates PID start time, VM identity, socket path, and the persisted process ownership anchor before cleaning up a stale process.
+
 需要 uncompressed `vmlinux` 和 ext4 rootfs。Provider 配置 chain init、SSH/vsock 和 machine 参数。Guest network configuration 通过声明的 network-init capability 完成，不由 runtime 猜测发行版配置文件。
 
 ## libvirt

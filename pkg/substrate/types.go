@@ -184,11 +184,13 @@ type ConnInfo struct {
 // The substrate may ignore these if its auto-selection (from NodeHandle.Conn)
 // already picks the right channel.
 type ConnectionHint struct {
-	Type       string // explicit type from HCL: "docker" | "ssh" | "vsock" | "auto"
-	Host       string // SSH host override
-	User       string // SSH user
-	Password   string // SSH password
-	PrivateKey string // SSH private key path
+	Type                     string // explicit type from HCL: "docker" | "ssh" | "vsock" | "auto"
+	Host                     string // SSH host override
+	User                     string // SSH user
+	Password                 string // SSH password
+	PrivateKey               string // SSH private key path
+	KnownHosts               string // SSH known_hosts file
+	InsecureSkipHostKeyCheck bool   // explicit lab-only opt-out
 }
 
 // Connection is the substrate-agnostic interface for reaching a running node

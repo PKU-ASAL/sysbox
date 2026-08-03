@@ -146,11 +146,13 @@ type OutputBlock struct {
 //	  private_key = "..."
 //	}
 type ConnectionConfig struct {
-	Type       string `hcl:"type,optional"`
-	Host       string `hcl:"host,optional"`
-	User       string `hcl:"user,optional"`
-	Password   string `hcl:"password,optional"`
-	PrivateKey string `hcl:"private_key,optional"`
+	Type                     string `hcl:"type,optional"`
+	Host                     string `hcl:"host,optional"`
+	User                     string `hcl:"user,optional"`
+	Password                 string `hcl:"password,optional"`
+	PrivateKey               string `hcl:"private_key,optional"`
+	KnownHosts               string `hcl:"known_hosts,optional"`
+	InsecureSkipHostKeyCheck bool   `hcl:"insecure_skip_host_key_check,optional"`
 }
 
 // ProvisionerConfig represents a single provisioner block inside a node.

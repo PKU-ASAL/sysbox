@@ -581,6 +581,14 @@ func connectionForNode(
 	handle substrate.NodeHandle,
 	conns []config.ConnectionConfig,
 ) (substrate.Connection, error) {
+	hints, err := resolveConnectionHints(ctx, conns)
+	if err != nil {
+		return nil, err
+	}
+	return nodeDriver.Connection(handle, hints)
+}
+
+func resolveConnectionHints(ctx context.Context, conns []config.ConnectionConfig) ([]substrate.ConnectionHint, error) {
 	hints := make([]substrate.ConnectionHint, len(conns))
 	for i, c := range conns {
 		password, err := secret.ResolveString(ctx, executionSecretResolver, c.Password)
@@ -596,9 +604,10 @@ func connectionForNode(
 			Host:     c.Host,
 			User:     c.User,
 			Password: password, PrivateKey: privateKey,
+			KnownHosts: c.KnownHosts, InsecureSkipHostKeyCheck: c.InsecureSkipHostKeyCheck,
 		}
 	}
-	return nodeDriver.Connection(handle, hints)
+	return hints, nil
 }
 
 // runProvisioners executes provisioner blocks in order.

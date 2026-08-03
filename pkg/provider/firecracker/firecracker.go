@@ -93,6 +93,10 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 
 // Validate ensures the spec carries what the firecracker substrate needs.
 func (s *Substrate) Validate(spec substrate.NodeSpec) error {
+	cfg, _ := spec.ProviderConfig.(*Config)
+	if cfg == nil || !cfg.AllowDirect {
+		return substrate.NewValidationError("firecracker: direct process mode is unsafe; set allow_direct = true only for trusted local experiments until jailer support is enabled")
+	}
 	// FC requires rootfs-based images (not docker_ref) and a kernel.
 	if spec.ProviderConfig != nil {
 		cfg, ok := spec.ProviderConfig.(*Config)
@@ -156,8 +160,10 @@ func (s *Substrate) sshConn(handle substrate.NodeHandle, hints []substrate.Conne
 	host := handle.Net.PrimaryIP
 	port := "22"
 	user := "root"
-	pass := "root"
+	pass := ""
 	key := ""
+	knownHosts := ""
+	insecureHost := false
 	if hs != nil {
 		if hs.SSHIP != "" {
 			host = hs.SSHIP
@@ -165,6 +171,10 @@ func (s *Substrate) sshConn(handle substrate.NodeHandle, hints []substrate.Conne
 		if hs.SSHPort != "" {
 			port = hs.SSHPort
 		}
+		if hs.SSHUser != "" {
+			user = hs.SSHUser
+		}
+		pass = hs.SSHPass
 	}
 	if len(hints) > 0 {
 		h := hints[0]
@@ -180,6 +190,8 @@ func (s *Substrate) sshConn(handle substrate.NodeHandle, hints []substrate.Conne
 		if h.PrivateKey != "" {
 			key = h.PrivateKey
 		}
+		knownHosts = h.KnownHosts
+		insecureHost = h.InsecureSkipHostKeyCheck
 	}
-	return transport.NewSSHConnectionWithPort(host, port, user, key, pass)
+	return transport.NewSSHConnectionWithTrust(host, port, user, key, pass, knownHosts, insecureHost)
 }

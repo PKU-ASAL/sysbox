@@ -3,6 +3,8 @@ package firecracker
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
@@ -32,6 +34,39 @@ type Config struct {
 	SSHUser string `hcl:"ssh_user,optional"`
 	SSHPass string `hcl:"ssh_pass,optional"`
 	SSHPort int    `hcl:"ssh_port,optional"`
+	// AllowDirect explicitly opts into running Firecracker without jailer.
+	// It is unsafe and should only be used for trusted local experiments.
+	AllowDirect bool `hcl:"allow_direct,optional"`
+}
+
+func parseMemoryMiB(value string) (int, error) {
+	s := strings.TrimSpace(strings.ToUpper(value))
+	if s == "" {
+		return 0, fmt.Errorf("memory is empty")
+	}
+	for _, suffix := range []string{"GIB", "GB", "G"} {
+		if strings.HasSuffix(s, suffix) {
+			n, err := strconv.Atoi(strings.TrimSuffix(s, suffix))
+			if err != nil || n <= 0 {
+				return 0, fmt.Errorf("invalid memory %q", value)
+			}
+			return n * 1024, nil
+		}
+	}
+	for _, suffix := range []string{"MIB", "MB", "M"} {
+		if strings.HasSuffix(s, suffix) {
+			n, err := strconv.Atoi(strings.TrimSuffix(s, suffix))
+			if err != nil || n <= 0 {
+				return 0, fmt.Errorf("invalid memory %q", value)
+			}
+			return n, nil
+		}
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid memory %q", value)
+	}
+	return n, nil
 }
 
 // DecodeProviderConfig decodes the provider block into *firecracker.Config.
@@ -91,6 +126,14 @@ func (s *Substrate) PrepareHandle(_ context.Context, handle *substrate.NodeHandl
 		port = cfg.SSHPort
 	}
 	hs.SSHPort = fmt.Sprintf("%d", port)
+	hs.SSHUser = "root"
+	hs.SSHPass = ""
+	if cfg != nil {
+		if cfg.SSHUser != "" {
+			hs.SSHUser = cfg.SSHUser
+		}
+		hs.SSHPass = cfg.SSHPass
+	}
 	handle.Conn.Kind = substrate.ConnKindSSH
 	handle.Conn.Endpoint = fmt.Sprintf("%s:%s", hs.SSHIP, hs.SSHPort)
 	return nil

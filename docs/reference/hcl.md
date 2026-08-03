@@ -127,6 +127,16 @@ Use ignore sparingly; it does not transfer ownership to another system.
 ### `connection TYPE`
 
 Supports connection-specific `host`, `user`, `password` and `private_key`. Credentials should use secret references.
+SSH connections verify host keys by default. Set `known_hosts` to an explicit trust store. `insecure_skip_host_key_check = true` is restricted to isolated, trusted labs and disables host identity verification.
+Passwords and private keys should be declared in the connection block as secret references so they are resolved again for every execution, including after an Agent restart:
+
+```hcl
+connection "ssh" {
+  user        = "ubuntu"
+  password    = env("FC_SSH_PASSWORD")
+  known_hosts = "/etc/sysbox/known_hosts"
+}
+```
 
 ### `provisioner TYPE`
 
@@ -157,6 +167,7 @@ Relative bind source resolves against the Sysbox process working directory. Omit
 | `ssh_user` | no | Guest SSH user |
 | `ssh_pass` | no | Secret reference recommended |
 | `ssh_port` | no | Guest SSH port |
+| `allow_direct` | no | Explicitly allow direct Firecracker child mode; unsafe and intended only for trusted local experiments until jailer support is available |
 
 Machine sizing and network initialization must match the selected provider capability and guest image.
 

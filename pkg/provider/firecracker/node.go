@@ -66,6 +66,8 @@ type HandleState struct {
 	// these to build the SSH connection.
 	SSHIP   string `json:"ssh_ip,omitempty"`
 	SSHPort string `json:"ssh_port,omitempty"`
+	SSHUser string `json:"ssh_user,omitempty"`
+	SSHPass string `json:"-"`
 }
 
 var (
@@ -105,7 +107,9 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 
 	// Kill any leftover Firecracker process from a previous failed run.
 	// A stale FC process holds the TAP fd open, preventing TAP reuse.
-	killStaleFirecracker(ownedUnixSocketPath(runDir, vmID, "firecracker.sock", "fc"))
+	if err := killOwnedStaleFirecracker(runDir, vmID, ownedUnixSocketPath(runDir, vmID, "firecracker.sock", "fc")); err != nil {
+		return substrate.NodeHandle{}, err
+	}
 
 	pc, _ := spec.ProviderConfig.(*Config)
 	if pc == nil {
@@ -160,7 +164,11 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 	}
 	memMB := 512
 	if spec.Memory != "" {
-		fmt.Sscanf(spec.Memory, "%d", &memMB)
+		parsed, err := parseMemoryMiB(spec.Memory)
+		if err != nil {
+			return substrate.NodeHandle{}, err
+		}
+		memMB = parsed
 	}
 
 	socketPath := ownedUnixSocketPath(runDir, vmID, "firecracker.sock", "fc")
@@ -389,7 +397,9 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 		if socket == "" {
 			socket = ownedUnixSocketPath(dir, h.ID, "firecracker.sock", "fc")
 		}
-		killStaleFirecracker(socket)
+		if err := killOwnedStaleFirecracker(dir, h.ID, socket); err != nil {
+			return err
+		}
 		_ = os.RemoveAll(dir)
 	}
 	if vsock != "" {
@@ -849,19 +859,34 @@ func dockerExportToExt4(ctx context.Context, dockerRef, outPath string) error {
 
 // killStaleFirecracker kills any Firecracker process that has the given
 // API socket open. This frees the TAP fd held by a previous failed apply.
-func killStaleFirecracker(socketPath string) {
+func killOwnedStaleFirecracker(vmDir, vmID, socketPath string) error {
 	// Use fuser to find PIDs with the socket open, or fall back to pkill.
 	if _, err := os.Stat(socketPath); err != nil {
-		return // no socket — no stale process
+		return nil // no socket — no stale process
 	}
-	// pkill on the socket path matches firecracker processes using it.
-	if err := exec.Command("pkill", "-9", "-f", socketPath).Run(); err != nil {
-		slog.Debug("pkill stale firecracker", "socket", socketPath, "error", err)
+	anchor := readProcessAnchor(filepath.Join(vmDir, "firecracker.pid"))
+	if anchor.PID <= 0 || anchor.StartTime == "" || anchor.VMID != vmID || anchor.Socket != socketPath {
+		return fmt.Errorf("firecracker refuses stale process cleanup without matching ownership anchor for %q", vmID)
+	}
+	if !processMatches(anchor.PID, anchor.StartTime) {
+		return os.Remove(socketPath)
+	}
+	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", anchor.PID))
+	if err != nil || !strings.Contains(strings.ReplaceAll(string(cmdline), "\x00", " "), socketPath) {
+		return fmt.Errorf("firecracker stale process command line ownership mismatch for %q", vmID)
+	}
+	proc, err := os.FindProcess(anchor.PID)
+	if err != nil {
+		return err
+	}
+	if err := proc.Signal(syscall.SIGKILL); err != nil {
+		return fmt.Errorf("kill owned stale firecracker %d: %w", anchor.PID, err)
 	}
 	// Give the kernel a moment to release TAP fds.
 	time.Sleep(300 * time.Millisecond)
 	// Remove the stale socket file.
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		slog.Debug("remove stale socket", "path", socketPath, "error", err)
+		return fmt.Errorf("remove stale socket: %w", err)
 	}
+	return nil
 }

@@ -47,6 +47,7 @@ resource "sysbox_node" "vm_attack" {
     kernel   = sysbox_kernel.fc_510.id
     ssh_user = "root"
     ssh_pass = "root"
+    allow_direct = true
   }
 
   link "uplink" {

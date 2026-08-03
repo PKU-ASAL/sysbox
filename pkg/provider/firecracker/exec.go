@@ -129,5 +129,9 @@ func sshConnFromHandle(h substrate.NodeHandle) *transport.SSHConnection {
 	if hs.SSHPort != "" {
 		port = hs.SSHPort
 	}
-	return transport.NewSSHConnectionWithPort(hs.SSHIP, port, "root", "", "")
+	user := hs.SSHUser
+	if user == "" {
+		user = "root"
+	}
+	return transport.NewSSHConnectionSecure(hs.SSHIP, port, user, "", hs.SSHPass)
 }

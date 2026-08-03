@@ -27,7 +27,9 @@ func DockerPreflightChecks(_ bool) []PreflightCheck {
 }
 
 func FirecrackerPreflightChecks(required bool) []PreflightCheck {
-	return append(KVMPreflightCheck(required), ToolPreflightCheck("firecracker", required)...)
+	checks := append(KVMPreflightCheck(required), ToolPreflightCheck("firecracker", required)...)
+	checks = append(checks, PreflightCheck{Name: "firecracker_isolation", OK: false, Severity: "warning", Message: "jailer isolation is not implemented", Hint: "direct mode requires allow_direct = true and is limited to trusted local experiments"})
+	return checks
 }
 
 func LibvirtPreflightChecks(required bool) []PreflightCheck {

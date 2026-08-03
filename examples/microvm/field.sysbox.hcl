@@ -124,6 +124,7 @@ resource "sysbox_node" "node_attack" {
     kernel   = sysbox_kernel.fc_510.id
     ssh_user = "root"
     ssh_pass = "root"
+    allow_direct = true
   }
 
   link "dmz" {
@@ -160,6 +161,7 @@ resource "sysbox_node" "node_web" {
     kernel   = sysbox_kernel.fc_510.id
     ssh_user = "root"
     ssh_pass = "root"
+    allow_direct = true
   }
 
   link "internal" {
@@ -184,6 +186,7 @@ resource "sysbox_node" "node_db" {
     kernel   = sysbox_kernel.fc_510.id
     ssh_user = "root"
     ssh_pass = "root"
+    allow_direct = true
   }
 
   link "internal" {
