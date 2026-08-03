@@ -16,7 +16,6 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
 )
 
 // safeSegment matches allowed path values for topology / node / id URL segments.
@@ -143,7 +142,12 @@ func (s *Server) handleGetOutputs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	_, _, _, root, evalCtx, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), state.NewManager(s.workspaceService().StateFile(topology)))
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	_, _, _, root, evalCtx, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
