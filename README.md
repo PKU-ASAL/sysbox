@@ -2,15 +2,15 @@
 
 [English](README.en.md) | 简体中文
 
-用一份拓扑描述，构建、验证和反复重置由容器、microVM、虚拟机与 Linux 网络组成的实验环境。
+Sysbox 是面向裸机 Linux 宿主机的 Terraform-like 实验拓扑编排工具：用一份声明构建、验证和重置由容器、microVM、虚拟机与 Linux 网络组成的实验环境。
 
 ## 为什么需要 Sysbox
 
-真实的系统与安全实验很少只有一台机器。攻击端可能适合放在容器里，目标服务需要独立内核，数据库又依赖完整虚拟机；它们之间还需要固定地址、路由、NAT 和访问策略。
+真实的系统与安全实验很少只有一台机器，也很少只用一种虚拟化技术。攻击端可能适合放在容器里，目标服务需要独立内核，数据库又依赖完整虚拟机；它们之间还需要固定地址、路由、NAT 和访问策略。
 
 分别调用 Docker、Firecracker、libvirt 和网络脚本可以把环境启动起来，但脚本通常无法回答几个关键问题：当前环境与预期是否一致？一次变更会影响什么？执行中断后哪些资源已经创建？重置实验会不会改变网络身份？清理时如何证明资源确实属于这次实验？
 
-Sysbox 把这些资源视为一个有依赖、有状态的整体。你声明希望得到的拓扑，Sysbox 负责规划变更、按依赖执行、观察实际状态，并在中断后恢复或安全清理。
+Sysbox 从实验本身出发，把这些资源视为一个有依赖、有状态的整体。你只需要声明希望得到的拓扑，后续的变更规划、依赖执行、状态观察和中断恢复由同一套生命周期管理。
 
 ## 它如何工作
 
@@ -19,11 +19,11 @@ Sysbox 把这些资源视为一个有依赖、有状态的整体。你声明希�
 3. **执行生命周期**：`apply` 按依赖创建资源，`reset` 从不可变基线恢复 guest，`destroy` 按逆序清理。
 4. **观察与恢复**：按需 refresh 和控制面 observation 用于发现 drift；checkpoint 记录关键步骤，支持中断恢复。
 
-由此，同一拓扑可以组合 Docker 容器、Firecracker microVM、libvirt VM、隔离网络、路由、NAT 与 nftables 策略。它适合安全研究、系统实验、网络验证，以及需要环境可解释、可重复、可恢复的平台工程。
+这套流程让环境不再是一组“启动成功就算完成”的脚本，而是一个可以解释、重复和恢复的实验对象。同一拓扑可以组合 Docker 容器、Firecracker microVM、libvirt VM、隔离网络、路由、NAT 与 nftables 策略。
 
 ## Quick Start
 
-要求 Linux、Go 1.26 和当前用户可访问的 Docker Engine。
+先从只有 Docker 依赖的最小环境开始。你需要 Linux、Go 1.26，以及当前用户可访问的 Docker Engine。
 
 ```bash
 git clone https://github.com/PKU-ASAL/sysbox.git
@@ -39,6 +39,8 @@ bin/sysbox -f examples/docker-service/field.sysbox.hcl destroy --auto-approve
 完整的首次运行说明见 [Quickstart](docs/quickstart.md)。
 
 ## 最小拓扑
+
+上面的命令运行的是一份普通 HCL。最小模型只需要描述运行环境、网络、镜像和节点之间的关系：
 
 ```hcl
 substrate "docker" { alias = "local" }
@@ -67,17 +69,19 @@ resource "sysbox_node" "node" {
 }
 ```
 
-相同的资源地址、依赖图、计划和状态模型也适用于 Firecracker 与 libvirt。完整的混合示例见 [`examples/mixed`](examples/mixed/)。
+当实验需要更强的隔离或完整虚拟机时，不必换一套编排方式。相同的资源地址、依赖图、计划和状态模型也适用于 Firecracker 与 libvirt；完整的混合示例见 [`examples/mixed`](examples/mixed/)。
 
 ## 架构与扩展边界
 
-Sysbox core 定义资源的共同语义：拓扑图、计划、状态、观察、恢复和所有权。具体外部操作由 provider 实现，并以 node lifecycle、NIC、artifact、guest execution、reset、policy 等能力接入。新增运行环境不需要在 core 中加入针对具体虚拟化技术的分支，但必须满足其使用场景所需的完整生命周期契约。
+这种一致性来自一条简单的边界：Sysbox core 关心资源“意味着什么”，provider 负责资源“如何实现”。Core 管理拓扑图、计划、状态、观察、恢复和所有权；provider 则以 node lifecycle、NIC、artifact、guest execution、reset、policy 等能力接入。新增运行环境不需要在 core 中加入针对具体虚拟化技术的分支，但需要补齐使用场景所需的生命周期契约。
 
-在 API/Agent 模式下，宿主机 Agent 注册其配置的 capability，执行前由 preflight 验证实际环境；调度器据此把**整个 topology run** 分配给一台满足全部要求的 Agent。因此当前支持“一个拓扑内组合异构节点”，但不把同一拓扑中的不同节点分别调度到多台 Agent，也不提供通用的跨主机 overlay network。
+到了 API/Agent 模式，这条边界仍然不变。宿主机 Agent 注册其配置的 capability，执行前由 preflight 验证实际环境；调度器据此把**整个 topology run** 分配给一台满足全部要求的 Agent。因此当前支持“一个拓扑内组合异构节点”，但不把同一拓扑中的不同节点分别调度到多台 Agent，也不提供通用的跨主机 overlay network。
 
 本地 CLI 与 API/Agent/Web 控制面共享同一套 decoder、planner、executor、state manager 和 provider，不存在第二套拓扑语义。详细契约见 [Architecture](docs/architecture.md)。
 
 ## 支持范围
+
+Sysbox 有意把能力范围收敛在可验证的 Linux 实验环境内。当前已经打通的边界如下：
 
 | 领域 | 当前支持 |
 |---|---|
@@ -89,9 +93,11 @@ Sysbox core 定义资源的共同语义：拓扑图、计划、状态、观察�
 | 操作面 | CLI、HTTP API、宿主机 Agent、Web console |
 | 分发 | Linux amd64/arm64 CLI archive 与 GHCR API/Agent runtime |
 
-Sysbox 不是通用云编排器，也不兼容任意 Terraform provider。IPv6 policy、任意 guest OS、跨 Agent 节点放置和通用云资源不在当前保证范围内。受控的资源与 provider 范围，是它能够验证身份、观察状态、恢复执行和安全删除的前提。
+这里的 Terraform-like 指声明式计划与生命周期体验，并不表示兼容 Terraform provider。Sysbox 也不是通用云编排器；IPv6 policy、任意 guest OS、跨 Agent 节点放置和通用云资源不在当前保证范围内。正是这段受控边界，让它能够验证身份、观察状态、恢复执行并安全删除资源。
 
 ## 文档
+
+README 只提供项目入口。根据你接下来要完成的任务，可以从这些文档继续：
 
 - [Documentation Index](docs/index.md)：按目标选择阅读路径。
 - [Design Principles](docs/design-principles.zh-CN.md)：Sysbox 的核心取舍。
@@ -101,6 +107,8 @@ Sysbox 不是通用云编排器，也不兼容任意 Terraform provider。IPv6 p
 - [Development](docs/development/contributing.md)：参与开发。
 
 ## 验证与贡献
+
+普通单元测试可以直接运行；涉及异构运行环境的验证需要对应的宿主机能力：
 
 ```bash
 go test ./...

@@ -2,15 +2,15 @@
 
 English | [简体中文](README.md)
 
-Describe a topology once, then build, validate, and repeatedly reset an experimental environment made of containers, microVMs, virtual machines, and Linux networks.
+Sysbox brings Terraform-like topology orchestration to labs running on bare-metal Linux hosts: declare, build, validate, and reset experiments that combine containers, microVMs, virtual machines, and Linux networks.
 
 ## Why Sysbox Exists
 
-Real systems and security experiments rarely fit on one machine. An attacker may belong in a container, a target service may need its own kernel, and a database may depend on a full virtual machine. Fixed addresses, routes, NAT, and access policy must connect them into one environment.
+Real systems and security experiments rarely fit on one machine or one virtualization technology. An attacker may belong in a container, a target service may need its own kernel, and a database may depend on a full virtual machine. Fixed addresses, routes, NAT, and access policy must connect them into one environment.
 
 Calling Docker, Firecracker, libvirt, and networking scripts can start that environment, but scripts usually cannot answer the questions that matter over its full lifetime. Does reality still match the intended setup? What will a change affect? Which resources exist after an interrupted run? Can an experiment reset without changing its network identity? How can cleanup prove that a resource belongs to this experiment?
 
-Sysbox treats those resources as one stateful dependency graph. You declare the topology you want; Sysbox plans the change, executes it in dependency order, observes external state, and recovers or cleans up safely after interruption.
+Sysbox starts with the experiment itself and treats those resources as one stateful dependency graph. You declare the topology you want; one lifecycle then plans changes, follows dependencies, observes state, and handles interruption recovery.
 
 ## How It Works
 
@@ -19,11 +19,11 @@ Sysbox treats those resources as one stateful dependency graph. You declare the 
 3. **Run the lifecycle:** `apply` creates in dependency order, `reset` restores guests from immutable baselines, and `destroy` cleans up in reverse order.
 4. **Observe and recover:** on-demand refresh and control-plane observation expose drift, while checkpoints record critical steps for interruption recovery.
 
-One topology can therefore combine Docker containers, Firecracker microVMs, libvirt VMs, isolated networks, routing, NAT, and nftables policy. Sysbox is intended for security research, systems experiments, network validation, and platform engineering that requires environments to be explainable, repeatable, and recoverable.
+The result is more than a collection of scripts that happened to start successfully: the environment becomes an experiment you can explain, repeat, and recover. One topology can combine Docker containers, Firecracker microVMs, libvirt VMs, isolated networks, routing, NAT, and nftables policy.
 
 ## Quick Start
 
-You need Linux, Go 1.26, and a Docker Engine accessible to the current user.
+Start with the smallest setup, which depends only on Docker. You need Linux, Go 1.26, and a Docker Engine accessible to the current user.
 
 ```bash
 git clone https://github.com/PKU-ASAL/sysbox.git
@@ -39,6 +39,8 @@ bin/sysbox -f examples/docker-service/field.sysbox.hcl destroy --auto-approve
 See the [Quickstart](docs/quickstart.md) for a complete first run.
 
 ## Minimal Topology
+
+The commands above run an ordinary HCL file. The minimal model describes only the execution environment, network, image, and how the node connects to them:
 
 ```hcl
 substrate "docker" { alias = "local" }
@@ -67,17 +69,19 @@ resource "sysbox_node" "node" {
 }
 ```
 
-The same resource addresses, dependency graph, planning, and state model apply to Firecracker and libvirt. See [`examples/mixed`](examples/mixed/) for a complete heterogeneous example.
+When an experiment needs stronger isolation or a full virtual machine, the orchestration model does not change. The same resource addresses, dependency graph, planning, and state model apply to Firecracker and libvirt; see [`examples/mixed`](examples/mixed/) for a complete heterogeneous example.
 
 ## Architecture And Extension Boundary
 
-The Sysbox core defines shared resource semantics: the topology graph, plans, state, observation, recovery, and ownership. Providers perform external operations and plug in through capabilities such as node lifecycle, NIC, artifact, guest execution, reset, and policy. Adding an execution environment does not require provider-specific branches in the core, but the provider must implement the complete lifecycle contract required by its use cases.
+That consistency comes from a simple boundary: the Sysbox core defines what a resource means, while a provider defines how it is implemented. The core manages the topology graph, plans, state, observation, recovery, and ownership. Providers plug in through capabilities such as node lifecycle, NIC, artifact, guest execution, reset, and policy. A new execution environment does not require provider-specific branches in the core, but it does need the lifecycle contract required by its use cases.
 
-In API/Agent mode, host Agents register their configured capabilities and preflight verifies the actual environment before execution. The scheduler uses those declarations to assign an **entire topology run** to one Agent that satisfies its combined requirements. Sysbox therefore supports heterogeneous nodes within one topology, but it does not currently place individual nodes from that topology on different Agents or provide a general multi-host overlay network.
+The same boundary carries into API/Agent mode. Host Agents register their configured capabilities and preflight verifies the actual environment before execution. The scheduler uses those declarations to assign an **entire topology run** to one Agent that satisfies its combined requirements. Sysbox therefore supports heterogeneous nodes within one topology, but it does not currently place individual nodes from that topology on different Agents or provide a general multi-host overlay network.
 
 The local CLI and API/Agent/Web control plane share the same decoder, planner, executor, state manager, and providers. There is no second topology model. See [Architecture](docs/architecture.md) for the detailed contracts.
 
 ## Supported Scope
+
+Sysbox deliberately stays within Linux experiment environments whose lifecycle it can verify. The currently supported boundary is:
 
 | Area | Current support |
 |---|---|
@@ -89,9 +93,11 @@ The local CLI and API/Agent/Web control plane share the same decoder, planner, e
 | Interfaces | CLI, HTTP API, host Agent, Web console |
 | Distribution | Linux amd64/arm64 CLI archives and GHCR API/Agent runtime |
 
-Sysbox is not a general cloud orchestrator and does not support arbitrary Terraform providers. IPv6 policy, arbitrary guest operating systems, cross-Agent node placement, and general cloud resources are outside the current guarantees. A controlled resource and provider scope is what makes identity validation, observation, recovery, and safe deletion possible.
+Terraform-like refers to the declarative planning and lifecycle experience; it does not mean Terraform provider compatibility. Sysbox is also not a general cloud orchestrator. IPv6 policy, arbitrary guest operating systems, cross-Agent node placement, and general cloud resources are outside the current guarantees. That controlled boundary is what makes identity validation, observation, recovery, and safe deletion possible.
 
 ## Documentation
+
+The README is only the project entrance. Continue with the document that matches the task ahead:
 
 - [Documentation Index](docs/index.md): choose a path by task.
 - [Design Principles](docs/design-principles.zh-CN.md): the trade-offs behind Sysbox.
@@ -101,6 +107,8 @@ Sysbox is not a general cloud orchestrator and does not support arbitrary Terraf
 - [Development](docs/development/contributing.md): contribute to the project.
 
 ## Verification And Contributing
+
+The regular unit tests run directly. Heterogeneous environment checks need the corresponding host capabilities:
 
 ```bash
 go test ./...
