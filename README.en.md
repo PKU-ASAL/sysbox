@@ -8,7 +8,7 @@ Sysbox brings Terraform-like topology orchestration to labs running on bare-meta
 
 Real-world cybersecurity experiments rarely involve a single node or a single virtualization technology. An attacker may belong in a container, a target service may need its own kernel, and a database may depend on a full virtual machine. Fixed addresses, routes, NAT, and access policy must connect them into one environment.
 
-Assembling process isolation, hardware virtualization, virtual devices, and host networking can make the environment run. But being able to start it is not the same as being able to manage it. Does reality still match the intended setup? What will a change affect? Which resources exist after an interrupted run? Can an experiment reset without changing its network identity? How can cleanup prove that a resource belongs to this experiment?
+Managing containers, virtual machines, and network resources separately can make the environment run. But being able to start it is not the same as being able to manage it. Does reality still match the intended setup? What will a change affect? Which resources exist after an interrupted run? Can an experiment reset without changing its network identity? How can cleanup prove that a resource belongs to this experiment?
 
 Sysbox starts with the experiment itself and treats those resources as one stateful dependency graph. You declare the topology you want; one lifecycle then plans changes, follows dependencies, observes state, and handles interruption recovery.
 
