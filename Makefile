@@ -38,7 +38,7 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-all web-build test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset release-test release-workflow-test release-build release-verify lint ci clean \
+.PHONY: help build build-all web-build test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset test-windows-tools prepare-windows10-media build-windows10-image test-windows10-libvirt release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
 	api-help api-build-api api-build-ui api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
@@ -63,6 +63,10 @@ help: ## Show command groups
 	@echo "  make test-privileged-container  Run privileged acceptance tests through Docker"
 	@echo "  make prepare-libvirt-cloud-image  Cache the pinned Ubuntu libvirt image"
 	@echo "  make test-heterogeneous-matrix  Run the full Docker/Firecracker/libvirt matrix"
+	@echo "  make test-windows-tools  Test Windows image preparation tooling"
+	@echo "  make prepare-windows10-media  Cache verified Windows and VirtIO installer media"
+	@echo "  make build-windows10-image  Build a Windows 10 qcow2 with native libvirt"
+	@echo "  make test-windows10-libvirt  Run the opt-in Windows domain-start lifecycle probe"
 
 build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
@@ -106,6 +110,18 @@ test-heterogeneous-matrix: ## Run the full heterogeneous IPv4 acceptance matrix
 
 test-heterogeneous-reset: ## Run three full and targeted heterogeneous reset cycles
 	bash tests/e2e/heterogeneous_reset.sh
+
+test-windows-tools: ## Test Windows unattended image tooling without libvirt side effects
+	bash tests/scripts/windows_tools_test.sh
+
+prepare-windows10-media: ## Cache checksum-verified official Windows and VirtIO media
+	bash scripts/windows/prepare-media.sh
+
+build-windows10-image: ## Build the Windows 10 baseline via native libvirt and Autounattend.xml
+	bash scripts/windows/build-windows10.sh
+
+test-windows10-libvirt: ## Run the opt-in experimental Windows domain-start lifecycle probe
+	bash tests/e2e/windows10_libvirt.sh
 
 release-test: ## Test deterministic release artifacts and GitHub Release audit
 	bash scripts/release/test.sh

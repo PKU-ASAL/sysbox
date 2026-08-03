@@ -24,6 +24,9 @@ state.json.tmp
 
 # Environment / secrets
 .env
+*.iso
+*.qcow2
+Autounattend.xml
 
 # Python
 __pycache__/

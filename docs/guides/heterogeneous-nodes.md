@@ -26,6 +26,12 @@ Firecracker currently runs as a direct child process because jailer integration 
 
 使用 immutable qcow2 baseline 和 generation overlay。Provider 配置 machine、disk、SSH 与 network init。Domain UUID 和 owned overlay path 是 reset/destroy 的关键 identity。
 
+### Windows 10（实验性 domain-start lifecycle）
+
+Sysbox 可以用原生 libvirt 启动预先安装好的 Windows 10 qcow2，并沿用现有的 image、overlay、domain ownership、observe、reset 和 destroy 生命周期；镜像构建工具使用微软安装介质、Fedora VirtIO 驱动和 `Autounattend.xml`，不依赖 Packer。构建机需要 `virsh`、`qemu-img`、`genisoimage`、`setfacl` 和 `libguestfs-tools`（提供 `virt-ls`）。运行 `make prepare-windows10-media` 前需要显式提供微软官方 HTTPS 下载地址与 SHA-256，凭据、ISO 和 qcow2 默认只保存在仓库外的用户缓存中。安装介质会复制到 `/tmp` 的临时构建目录，并只向 system libvirt 的 QEMU 用户开放必要的读取权限。构建完成后，脚本会离线检查 Windows 系统目录与完成标记，清除 unattended setup 文件、相关日志和自动登录注册表值，再发布 baseline；验证失败的磁盘默认销毁，仅在显式设置 `WINDOWS_KEEP_FAILED_IMAGE=1` 时才会经过相同清理并以 `0600` 权限保留。Ubuntu 将内核镜像设为 `0600` 时，需通过 `sudo setfacl -m u:$USER:r /boot/vmlinuz-$(uname -r)` 允许 libguestfs 读取当前运行内核；脚本会自动选择该内核及对应 modules。
+
+这里的 `domain-start lifecycle` 是有意保留的边界：当前 libvirt provider 的 guest execution 仍是 SSH，guest network init 仍面向 Linux cloud-init。Windows 拓扑因此必须使用 `guest_family = "windows"` 和 `network_init = "preconfigured"`，且暂不声明 link、route 或 provisioner。`make test-windows10-libvirt` 只验证 libvirt domain 启动、重复 plan、reset、destroy 和 owned residue 清理，并不验证 Windows guest readiness；在 WinRM 与 Windows 网络初始化接入现有 capability contract 之前，不能把它描述为完整的 Windows 节点支持。
+
 ## Mixed Topologies
 
 在混合拓扑中显式声明 architecture 和 guest family。所有 provider 必须实现该拓扑需要的 NIC、guest execution、state 或 reset capability，否则 planning 阶段失败。
