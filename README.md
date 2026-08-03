@@ -21,6 +21,28 @@ Sysbox 从实验本身出发，把这些资源视为一个有依赖、有状态�
 
 这套流程让环境不再是一组“启动成功就算完成”的脚本，而是一个可以解释、重复和恢复的实验对象。同一拓扑可以组合 Docker 容器、Firecracker microVM、libvirt VM、隔离网络、路由、NAT 与 nftables 策略。
 
+## 容器与虚拟机体系
+
+Sysbox 当前可以在同一实验拓扑中组合 Docker 容器、轻量 KVM microVM，以及由 libvirt/QEMU 管理的完整 KVM 虚拟机。KVM 是这些虚拟机共享的底层能力，但不是可以直接互换的 provider 接口；不同 VMM 仍然需要各自的生命周期、网络、状态和恢复实现。
+
+| 隔离形态 | Sysbox 接入对象 | 底层机制 | 状态 | 含义 |
+|---|---|---|---|---|
+| 应用容器 | Docker Engine | Linux namespace、cgroup；内部可使用 containerd | 支持 | 已有 provider，覆盖当前完整生命周期 |
+| 应用容器 | containerd | OCI runtime、Linux namespace、cgroup | 架构可扩展 | 可新增 runtime provider；当前没有直接接入 |
+| Kubernetes workload | CRI runtime + CNI | 容器或 VM sandbox | 架构可扩展 | 横跨 pod sandbox、镜像与网络，需要独立集成设计 |
+| 应用容器 / pod | Podman / libpod | OCI runtime、Linux namespace、cgroup | 架构可扩展 | 可新增 provider；当前没有直接接入 |
+| 系统容器 | LXC / LXD | Linux namespace、cgroup | 架构可扩展 | 需要适配不同的生命周期与网络模型 |
+| microVM | Firecracker | KVM | 支持 | 已有 provider，直接管理 VMM 进程与资源 |
+| microVM | Cloud Hypervisor | KVM | 架构可扩展 | 底层模型兼容；当前缺少 provider |
+| 沙箱容器 | Kata Containers | KVM + 多种 VMM | 架构可扩展 | 横跨容器控制面与 VM runtime，需要独立集成设计 |
+| 完整 VM | libvirt → QEMU | KVM | 支持 | 已有 provider，通过 libvirt 管理 QEMU/KVM |
+| 完整 VM | QEMU/KVM direct | KVM | 架构可扩展 | 当前通过 libvirt 间接使用 QEMU，没有 direct provider |
+| 完整 VM | Xen | Xen hypervisor | 当前范围外 | 需要扩展现有 Linux/KVM 执行假设 |
+| 完整 VM | VMware vSphere / ESXi | ESXi | 当前范围外 | 需要不同的控制面、身份与网络集成 |
+| 完整 VM | Hyper-V | Windows hypervisor | 当前范围外 | 不属于当前 Linux host provider 范围 |
+
+这里的“架构可扩展”表示现有 capability driver 边界允许新增实现，并不代表已经兼容。只有 provider 补齐节点生命周期、网络、状态、观察、恢复和安全删除契约后，才进入 Sysbox 的正式支持范围。
+
 ## Quick Start
 
 先从只有 Docker 依赖的最小环境开始。你需要 Linux、Go 1.26，以及当前用户可访问的 Docker Engine。

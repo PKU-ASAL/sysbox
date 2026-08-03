@@ -21,6 +21,28 @@ Sysbox starts with the experiment itself and treats those resources as one state
 
 The result is more than a collection of scripts that happened to start successfully: the environment becomes an experiment you can explain, repeat, and recover. One topology can combine Docker containers, Firecracker microVMs, libvirt VMs, isolated networks, routing, NAT, and nftables policy.
 
+## Container And Virtual Machine Ecosystem
+
+Sysbox can currently combine Docker containers, lightweight KVM microVMs, and full KVM virtual machines managed through libvirt/QEMU in one experimental topology. KVM is the shared virtualization foundation for those VMs, not an interchangeable provider interface; each VMM still needs its own lifecycle, networking, state, and recovery implementation.
+
+| Isolation model | Sysbox integration target | Foundation | Status | Meaning |
+|---|---|---|---|---|
+| Application container | Docker Engine | Linux namespaces and cgroups; may use containerd internally | Supported | A provider covers the current complete lifecycle |
+| Application container | containerd | OCI runtime, Linux namespaces, and cgroups | Architecturally extensible | A runtime provider can be added; there is no direct integration today |
+| Kubernetes workload | CRI runtime + CNI | Container or VM sandbox | Architecturally extensible | It spans pod sandbox, image, and networking contracts, requiring a separate integration design |
+| Application container / pod | Podman / libpod | OCI runtime, Linux namespaces, and cgroups | Architecturally extensible | A provider can be added; there is no direct integration today |
+| System container | LXC / LXD | Linux namespaces and cgroups | Architecturally extensible | Its different lifecycle and networking model needs an adapter |
+| microVM | Firecracker | KVM | Supported | A provider directly manages the VMM process and resources |
+| microVM | Cloud Hypervisor | KVM | Architecturally extensible | The foundation fits; a provider has not been implemented |
+| Sandboxed container | Kata Containers | KVM + multiple VMM options | Architecturally extensible | It spans a container control plane and VM runtime, requiring a separate integration design |
+| Full VM | libvirt → QEMU | KVM | Supported | A provider manages QEMU/KVM through libvirt |
+| Full VM | QEMU/KVM direct | KVM | Architecturally extensible | QEMU is currently used through libvirt; there is no direct provider |
+| Full VM | Xen | Xen hypervisor | Outside current scope | Supporting it would extend the current Linux/KVM execution assumptions |
+| Full VM | VMware vSphere / ESXi | ESXi | Outside current scope | It requires different control-plane, identity, and networking integrations |
+| Full VM | Hyper-V | Windows hypervisor | Outside current scope | It is outside the current Linux host provider boundary |
+
+“Architecturally extensible” means that the capability driver boundary permits a new implementation, not that the technology is already compatible. A provider enters the supported set only after it implements node lifecycle, networking, state, observation, recovery, and safe-deletion contracts.
+
 ## Quick Start
 
 Start with the smallest setup, which depends only on Docker. You need Linux, Go 1.26, and a Docker Engine accessible to the current user.
