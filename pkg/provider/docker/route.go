@@ -8,7 +8,10 @@ import (
 )
 
 func (s *Substrate) EnsureRoute(ctx context.Context, handle substrate.NodeHandle, dst, via string) error {
-	_, err := s.ExecInNode(ctx, handle, substrate.ExecRequest{Program: "ip", Args: []string{"route", "replace", dst, "via", via}, Shell: substrate.ShellNone})
+	result, err := s.ExecInNode(ctx, handle, substrate.ExecRequest{Program: "ip", Args: []string{"route", "replace", dst, "via", via}, Shell: substrate.ShellNone})
+	if err == nil && result.ExitCode != 0 {
+		return fmt.Errorf("ip route replace exited %d: %s", result.ExitCode, result.Stderr)
+	}
 	return err
 }
 
