@@ -221,6 +221,45 @@ local substrate call before posting the final operation status back to the API.
 Operation records persist requester, roles, status, and audit events so API/UI
 users can explain who requested a host-local action and how it completed.
 
+## Guest Operations
+
+Guest operations address only a topology and logical node. Provider handles,
+container IDs, VM UUIDs, host paths, credentials and Agent identity are never
+part of the public response.
+
+```text
+POST /v1/topologies/{topology}/nodes/{node}/executions
+GET  /v1/executions/{execution_id}
+POST /v1/executions/{execution_id}/cancel
+PUT  /v1/topologies/{topology}/nodes/{node}/files?path=/absolute/path&mode=0400
+```
+
+Execution creation accepts `argv`, optional `environment`,
+`working_directory`, and `timeout_seconds`, then returns `202 Accepted` with a
+durable `queued` resource. The owning Agent reports `running`, followed by
+`completed`, `failed`, or `cancelled`. A non-zero guest exit is `completed`
+with `result_class: exit`; stdout and stderr are base64 encoded and bounded.
+The private request and output payload expire 15 minutes after completion,
+while the sanitized lifecycle metadata remains available.
+
+Cancellation is idempotent at the execution lifecycle boundary. A queued
+command is made non-leasable before delivery; a running operation receives a
+real Agent cancellation. A late completion cannot replace the cancelled state.
+
+File upload uses the request body as raw binary bytes, `X-Content-SHA256` for
+integrity, and query parameters for the absolute guest `path` and octal `mode`.
+The limit is 16 MiB. Paths containing NUL, traversal, or a non-absolute path
+are rejected. The API response contains only the operation ID and `queued`
+status. Payloads are staged with restricted permissions, bound to the owning
+Agent, expire after 15 minutes, and are consumed once. Providers install
+content and mode atomically where supported.
+
+These endpoints require the dedicated guest-operation authorization check;
+the owning Agent uses signed internal start, completion, and payload-fetch
+endpoints. Local Agent policy must explicitly allow `guest_execution` and/or
+`guest_file_put`. Docker and Firecracker expose execution and file capability;
+libvirt remains capability-gated.
+
 ## Artifacts And Policies
 
 ```bash
