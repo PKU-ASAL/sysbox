@@ -56,13 +56,22 @@ func TestGuestExecutionLifecyclePreservesNonZeroExit(t *testing.T) {
 
 func TestGuestExecutionCancelIsExplicitTerminalTransition(t *testing.T) {
 	ctx := context.Background()
-	svc := newGuestExecutionService(&localAPIStore{runsDir: t.TempDir()}, nil, nil)
+	var cancelTarget string
+	svc := newGuestExecutionService(&localAPIStore{runsDir: t.TempDir()}, func(_ context.Context, _ string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
+		if cmd.Type == "cancel_command" {
+			cancelTarget = cmd.Operation.ExternalID
+		}
+		return cmd, nil
+	}, nil)
 	exec, err := svc.Create(ctx, "lab", "web", "host-a", controlplane.GuestExecutionRequest{Argv: []string{"sleep", "10"}})
 	require.NoError(t, err)
 	exec, err = svc.Cancel(ctx, exec.ID)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionCancelled, exec.Status)
+	require.Equal(t, exec.ID, cancelTarget)
 	require.WithinDuration(t, time.Now().UTC(), exec.EndedAt, time.Second)
+	_, err = svc.Complete(ctx, exec.ID, controlplane.GuestExecutionResult{ExitCode: 0}, controlplane.GuestExecutionResultClassExit, "")
+	require.ErrorIs(t, err, errGuestExecutionConflict)
 }
 
 func TestGuestExecutionStoreRetainsPrivateDispatchData(t *testing.T) {

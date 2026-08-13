@@ -80,6 +80,14 @@ func (r *Registry) RequireGuestExec(name string) (GuestExec, error) {
 	return d.GuestExec, nil
 }
 
+func (r *Registry) RequireGuestFiles(name string) (GuestFiles, error) {
+	d, err := r.Require(name, CapabilityGuestFiles)
+	if err != nil {
+		return nil, err
+	}
+	return d.GuestFiles, nil
+}
+
 func (r *Registry) RequireNetwork(name string) (Network, error) {
 	d, err := r.Require(name, CapabilityNetwork)
 	if err != nil {

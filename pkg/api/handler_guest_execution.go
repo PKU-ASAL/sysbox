@@ -131,3 +131,35 @@ func (s *Server) handleCancelGuestExecution(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, http.StatusAccepted, publicGuestExecution(execution))
 }
+
+func (s *Server) handleCompleteGuestExecution(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	execution, err := s.guestExecutions().Get(r.Context(), r.PathValue("execution"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if execution.AgentID != agentID {
+		writeError(w, http.StatusForbidden, fmt.Errorf("execution ownership mismatch"))
+		return
+	}
+	var completion controlplane.GuestExecutionCompletion
+	if err := json.NewDecoder(r.Body).Decode(&completion); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode completion"))
+		return
+	}
+	execution, err = s.guestExecutions().Complete(r.Context(), execution.ID, completion.Result, completion.ResultClass, completion.Error)
+	if err != nil {
+		if errors.Is(err, errGuestExecutionConflict) {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, publicGuestExecution(execution))
+}

@@ -66,6 +66,8 @@ type AgentPolicyConfig struct {
 	AllowedCommands   []string `yaml:"allowed_commands" json:"allowed_commands,omitempty"`
 	AllowConsole      *bool    `yaml:"allow_console" json:"allow_console,omitempty"`
 	AllowImport       *bool    `yaml:"allow_import" json:"allow_import,omitempty"`
+	AllowGuestExec    *bool    `yaml:"allow_guest_exec" json:"allow_guest_exec,omitempty"`
+	AllowGuestFiles   *bool    `yaml:"allow_guest_files" json:"allow_guest_files,omitempty"`
 }
 
 type AgentLeaseConfig struct {
@@ -166,7 +168,7 @@ func DefaultServiceConfig() ServiceConfig {
 				CommandTTL:   "30s",
 			},
 			Policy: AgentPolicyConfig{
-				AllowedCommands: []string{"run_assigned", "session_open", "node_operation", "cancel_command"},
+				AllowedCommands: []string{"run_assigned", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put"},
 				AllowConsole:    &allow,
 				AllowImport:     &allow,
 			},
@@ -358,11 +360,19 @@ func applyDerivedDefaults(c *ServiceConfig) {
 		c.API.Headers.Roles = "X-Sysbox-Roles"
 	}
 	if len(c.Agent.Policy.AllowedCommands) == 0 {
-		c.Agent.Policy.AllowedCommands = []string{"run_assigned", "session_open", "node_operation", "cancel_command"}
+		c.Agent.Policy.AllowedCommands = []string{"run_assigned", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put"}
 	}
 	if c.Agent.Policy.AllowConsole == nil {
 		v := true
 		c.Agent.Policy.AllowConsole = &v
+	}
+	if c.Agent.Policy.AllowGuestExec == nil {
+		v := false
+		c.Agent.Policy.AllowGuestExec = &v
+	}
+	if c.Agent.Policy.AllowGuestFiles == nil {
+		v := false
+		c.Agent.Policy.AllowGuestFiles = &v
 	}
 	if c.Agent.Policy.AllowImport == nil {
 		v := true
@@ -450,7 +460,7 @@ func (c ServiceConfig) Validate() error {
 	}
 	for _, command := range c.Agent.Policy.AllowedCommands {
 		switch command {
-		case "run_assigned", "session_open", "node_operation", "cancel_command":
+		case "run_assigned", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put":
 		default:
 			return fmt.Errorf("agent.policy.allowed_commands contains unsupported command %q", command)
 		}

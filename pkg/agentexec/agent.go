@@ -23,18 +23,19 @@ import (
 const DefaultAgentID = "local"
 
 type Options struct {
-	APIURL           string
-	Token            string
-	ID               string
-	Name             string
-	Capabilities     []string
-	Labels           map[string]string
-	Version          string
-	Secret           string
-	PollInterval     time.Duration
-	RunRenewInterval time.Duration
-	RunRenewTTL      time.Duration
-	Policy           config.AgentPolicyConfig
+	APIURL                           string
+	Token                            string
+	ID                               string
+	Name                             string
+	Capabilities                     []string
+	Labels                           map[string]string
+	Version                          string
+	Secret                           string
+	PollInterval                     time.Duration
+	RunRenewInterval                 time.Duration
+	RunRenewTTL                      time.Duration
+	Policy                           config.AgentPolicyConfig
+	ReportGuestExecutionCompleteFunc func(context.Context, string, controlplane.GuestExecutionCompletion) error
 }
 
 func Run(ctx context.Context, opts Options, bridge Bridge) error {
@@ -295,6 +296,51 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			return
 		}
 		emit("completed", "node operation completed", nil)
+	case "guest_execution":
+		if cmd.Execution == nil {
+			emit("failed", "missing guest execution", fmt.Errorf("missing guest execution"))
+			return
+		}
+		mgr, err := r.executor.bridge.StateManager(cmd.Execution.Topology)
+		if err != nil {
+			emit("failed", "guest execution state unavailable", err)
+			return
+		}
+		st, err := mgr.Load()
+		if err != nil {
+			emit("failed", "guest execution state unavailable", err)
+			return
+		}
+		completed := executeGuestOperation(runCtx, st, cmd.Execution.Node, cmd.ExecutionRequest)
+		if err := r.opts.ReportGuestExecutionComplete(runCtx, cmd.Execution.ID, controlplane.GuestExecutionCompletion{Result: completed.Result, ResultClass: completed.ResultClass, Error: completed.Err}); err != nil {
+			emit("failed", "guest execution completion report failed", err)
+			return
+		}
+		if completed.Err != "" {
+			emit("failed", "guest execution failed", errors.New(completed.ResultClass))
+			return
+		}
+		emit("completed", "guest execution completed", nil)
+	case "guest_file_put":
+		if cmd.FilePut == nil {
+			emit("failed", "missing guest file", fmt.Errorf("missing guest file"))
+			return
+		}
+		mgr, err := r.executor.bridge.StateManager(cmd.FilePut.Topology)
+		if err != nil {
+			emit("failed", "guest file state unavailable", err)
+			return
+		}
+		st, err := mgr.Load()
+		if err != nil {
+			emit("failed", "guest file state unavailable", err)
+			return
+		}
+		if err := putGuestFile(runCtx, r.opts, st, *cmd.FilePut); err != nil {
+			emit("failed", "guest file put failed", err)
+			return
+		}
+		emit("completed", "guest file put completed", nil)
 	default:
 		err := fmt.Errorf("unknown command type %q", cmd.Type)
 		fmt.Printf("[agent] %v\n", err)
@@ -315,6 +361,9 @@ func (r *commandRunner) track(cmd *controlplane.AgentCommand, cancel context.Can
 	if cmd.Operation.ID != "" {
 		r.running[cmd.Operation.ID] = cancel
 	}
+	if cmd.Execution != nil && cmd.Execution.ID != "" {
+		r.running[cmd.Execution.ID] = cancel
+	}
 }
 
 func (r *commandRunner) untrack(cmd *controlplane.AgentCommand) {
@@ -328,6 +377,9 @@ func (r *commandRunner) untrack(cmd *controlplane.AgentCommand) {
 		delete(r.running, cmd.Run.ID)
 	}
 	delete(r.running, cmd.Operation.ID)
+	if cmd.Execution != nil {
+		delete(r.running, cmd.Execution.ID)
+	}
 }
 
 func (r *commandRunner) cancel(id string) bool {
@@ -378,6 +430,26 @@ func authorizeAgentCommand(policy config.AgentPolicyConfig, cmd *controlplane.Ag
 		}
 		if cmd.Operation.Operation == "import" && policy.AllowImport != nil && !*policy.AllowImport {
 			return fmt.Errorf("import is disabled")
+		}
+	case "guest_execution":
+		if policy.AllowGuestExec != nil && !*policy.AllowGuestExec {
+			return fmt.Errorf("guest execution is disabled")
+		}
+		if cmd.Execution == nil {
+			return fmt.Errorf("missing guest execution")
+		}
+		if err := allowWorkspace(policy, cmd.Execution.Topology, cmd.Execution.Topology); err != nil {
+			return err
+		}
+	case "guest_file_put":
+		if policy.AllowGuestFiles != nil && !*policy.AllowGuestFiles {
+			return fmt.Errorf("guest files are disabled")
+		}
+		if cmd.FilePut == nil {
+			return fmt.Errorf("missing guest file")
+		}
+		if err := allowWorkspace(policy, cmd.FilePut.Topology, cmd.FilePut.Topology); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -506,6 +578,16 @@ func (opts Options) ReportNodeOperationComplete(ctx context.Context, op controlp
 		op.AgentID = opts.ID
 	}
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/node-operations/"+op.ID+"/complete", op, nil)
+}
+
+func (opts Options) ReportGuestExecutionComplete(ctx context.Context, id string, completion controlplane.GuestExecutionCompletion) error {
+	if opts.ReportGuestExecutionCompleteFunc != nil {
+		return opts.ReportGuestExecutionCompleteFunc(ctx, id, completion)
+	}
+	if opts.APIURL == "" || opts.ID == "" || id == "" {
+		return nil
+	}
+	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-executions/"+id+"/complete", completion, nil)
 }
 
 func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {

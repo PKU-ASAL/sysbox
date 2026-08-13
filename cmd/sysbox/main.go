@@ -27,7 +27,7 @@ func main() {
 	} else {
 		mustRegisterDriver(driver.Descriptor{
 			Name: "docker", Version: "1", Node: dockerSub, NIC: dockerSub,
-			Console: dockerSub, GuestExec: dockerSub, Network: dockerSub,
+			Console: dockerSub, GuestExec: dockerSub, GuestFiles: dockerSub, Network: dockerSub,
 			Artifact: dockerSub, Import: dockerSub,
 			NodeState:    dockerSub,
 			ImageEntry:   dockerSub,
@@ -48,7 +48,7 @@ func main() {
 	fcSub := fc.New(kernelPath, rootfsDir)
 	mustRegisterDriver(driver.Descriptor{
 		Name: "firecracker", Version: "1", Node: fcSub, NIC: fcSub,
-		Console: fcSub, GuestExec: fcSub, Artifact: fcSub,
+		Console: fcSub, GuestExec: fcSub, GuestFiles: fcSub, Artifact: fcSub,
 		NodeState:    fcSub,
 		Power:        fcSub,
 		GuestNetwork: fcSub,

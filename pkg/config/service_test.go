@@ -36,8 +36,12 @@ agent:
       - run_assigned
       - node_operation
       - cancel_command
+      - guest_execution
+      - guest_file_put
     allow_console: false
     allow_import: false
+    allow_guest_exec: true
+    allow_guest_files: false
 run:
   lease:
     claim_ttl: 10m
@@ -76,9 +80,11 @@ artifacts:
 	require.Equal(t, []string{"admin", "platform"}, cfg.API.RBAC.AdminRoles)
 	require.Equal(t, []string{"lab"}, cfg.Agent.Policy.AllowedWorkspaces)
 	require.Equal(t, []string{"docker"}, cfg.Agent.Policy.AllowedSubstrates)
-	require.Equal(t, []string{"run_assigned", "node_operation", "cancel_command"}, cfg.Agent.Policy.AllowedCommands)
+	require.Equal(t, []string{"run_assigned", "node_operation", "cancel_command", "guest_execution", "guest_file_put"}, cfg.Agent.Policy.AllowedCommands)
 	require.False(t, *cfg.Agent.Policy.AllowConsole)
 	require.False(t, *cfg.Agent.Policy.AllowImport)
+	require.True(t, *cfg.Agent.Policy.AllowGuestExec)
+	require.False(t, *cfg.Agent.Policy.AllowGuestFiles)
 	require.Equal(t, "45s", cfg.Agent.Lease.OfflineAfter)
 	require.Equal(t, "15s", cfg.Agent.Lease.CommandTTL)
 	require.Equal(t, "10m", cfg.Run.Lease.ClaimTTL)

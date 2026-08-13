@@ -18,6 +18,7 @@ const (
 	CapabilitySnapshot         Capability = "snapshot"
 	CapabilityConsole          Capability = "console"
 	CapabilityGuestExec        Capability = "guest-exec"
+	CapabilityGuestFiles       Capability = "guest-files"
 	CapabilityNetwork          Capability = "network"
 	CapabilityArtifact         Capability = "artifact"
 	CapabilityImport           Capability = "import"
@@ -83,6 +84,10 @@ type Console interface {
 type GuestExec interface {
 	ExecInNode(context.Context, substrate.NodeHandle, substrate.ExecRequest) (substrate.ExecResult, error)
 	ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error)
+}
+
+type GuestFiles interface {
+	CopyToNode(context.Context, substrate.NodeHandle, string, string) error
 }
 
 type Network interface {
@@ -153,6 +158,7 @@ type Descriptor struct {
 	Snapshot         Snapshot
 	Console          Console
 	GuestExec        GuestExec
+	GuestFiles       GuestFiles
 	Network          Network
 	Artifact         Artifact
 	Import           Import
@@ -178,6 +184,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.Console
 	case CapabilityGuestExec:
 		return d.GuestExec
+	case CapabilityGuestFiles:
+		return d.GuestFiles
 	case CapabilityNetwork:
 		return d.Network
 	case CapabilityArtifact:

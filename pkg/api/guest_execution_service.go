@@ -148,5 +148,11 @@ func (s *GuestExecutionService) Cancel(ctx context.Context, id string) (controlp
 	} else if ok {
 		execution.Version++
 	}
+	if err == nil && s.publish != nil {
+		_, err = s.publish(ctx, execution.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: execution.ID}})
+		if err != nil {
+			return execution, fmt.Errorf("publish guest execution cancel: %w", err)
+		}
+	}
 	return execution, err
 }

@@ -224,6 +224,7 @@ type AgentCommand struct {
 	Operation        NodeOperation         `json:"operation,omitempty"`
 	ExecutionRequest GuestExecutionRequest `json:"execution_request,omitempty"`
 	Execution        *GuestExecution       `json:"guest_execution,omitempty"`
+	FilePut          *GuestFilePut         `json:"guest_file_put,omitempty"`
 	CreatedAt        time.Time             `json:"created_at,omitempty"`
 	Delivered        time.Time             `json:"delivered_at,omitempty"`
 	AckedAt          time.Time             `json:"acked_at,omitempty"`
@@ -246,6 +247,23 @@ type GuestExecutionResult struct {
 	Stderr    string `json:"stderr,omitempty"`
 	Encoding  string `json:"encoding,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+}
+
+type GuestExecutionCompletion struct {
+	Result      GuestExecutionResult `json:"result"`
+	ResultClass string               `json:"result_class,omitempty"`
+	Error       string               `json:"error,omitempty"`
+}
+
+type GuestFilePut struct {
+	ID       string `json:"id"`
+	Topology string `json:"topology"`
+	Node     string `json:"node"`
+	Path     string `json:"path"`
+	Mode     uint32 `json:"mode,omitempty"`
+	Size     int64  `json:"size"`
+	SHA256   string `json:"sha256"`
+	FetchRef string `json:"fetch_ref,omitempty"`
 }
 
 type GuestExecution struct {
