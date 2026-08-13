@@ -78,6 +78,12 @@ type inventoryStore interface {
 	GetAgentInventory(ctx context.Context, agentID string) (*controlplane.AgentInventory, error)
 }
 
+type guestExecutionPersistence interface {
+	SaveGuestExecution(ctx context.Context, execution controlplane.GuestExecution) error
+	CompareAndSwapGuestExecution(ctx context.Context, execution controlplane.GuestExecution, expectedVersion int64) (bool, error)
+	GetGuestExecution(ctx context.Context, id string) (*controlplane.GuestExecution, error)
+}
+
 type apiStore interface {
 	schemaStore
 	runStore
@@ -91,4 +97,5 @@ type apiStore interface {
 	agentStore
 	agentCommandStore
 	inventoryStore
+	guestExecutionPersistence
 }

@@ -212,24 +212,68 @@ type ConsoleCommand struct {
 }
 
 type AgentCommand struct {
-	ID         string          `json:"id"`
-	AgentID    string          `json:"agent_id,omitempty"`
-	Type       string          `json:"type"`
-	Status     string          `json:"status,omitempty"`
-	Err        string          `json:"error,omitempty"`
-	Protocol   string          `json:"protocol,omitempty"`
-	Run        *Run            `json:"run,omitempty"`
-	Session    *ConsoleSession `json:"session,omitempty"`
-	Request    ConsoleRequest  `json:"request,omitempty"`
-	Operation  NodeOperation   `json:"operation,omitempty"`
-	CreatedAt  time.Time       `json:"created_at,omitempty"`
-	Delivered  time.Time       `json:"delivered_at,omitempty"`
-	AckedAt    time.Time       `json:"acked_at,omitempty"`
-	EndedAt    time.Time       `json:"ended_at,omitempty"`
-	LeaseOwner string          `json:"lease_owner,omitempty"`
-	LeaseUntil time.Time       `json:"lease_until,omitempty"`
-	Attempt    int             `json:"attempt,omitempty"`
+	ID               string                `json:"id"`
+	AgentID          string                `json:"agent_id,omitempty"`
+	Type             string                `json:"type"`
+	Status           string                `json:"status,omitempty"`
+	Err              string                `json:"error,omitempty"`
+	Protocol         string                `json:"protocol,omitempty"`
+	Run              *Run                  `json:"run,omitempty"`
+	Session          *ConsoleSession       `json:"session,omitempty"`
+	Request          ConsoleRequest        `json:"request,omitempty"`
+	Operation        NodeOperation         `json:"operation,omitempty"`
+	ExecutionRequest GuestExecutionRequest `json:"execution_request,omitempty"`
+	Execution        *GuestExecution       `json:"guest_execution,omitempty"`
+	CreatedAt        time.Time             `json:"created_at,omitempty"`
+	Delivered        time.Time             `json:"delivered_at,omitempty"`
+	AckedAt          time.Time             `json:"acked_at,omitempty"`
+	EndedAt          time.Time             `json:"ended_at,omitempty"`
+	LeaseOwner       string                `json:"lease_owner,omitempty"`
+	LeaseUntil       time.Time             `json:"lease_until,omitempty"`
+	Attempt          int                   `json:"attempt,omitempty"`
 }
+
+type GuestExecutionRequest struct {
+	Argv             []string          `json:"argv"`
+	Environment      map[string]string `json:"environment,omitempty"`
+	WorkingDirectory string            `json:"working_directory,omitempty"`
+	TimeoutSeconds   int               `json:"timeout_seconds,omitempty"`
+}
+
+type GuestExecutionResult struct {
+	ExitCode  int    `json:"exit_code"`
+	Stdout    string `json:"stdout,omitempty"`
+	Stderr    string `json:"stderr,omitempty"`
+	Encoding  string `json:"encoding,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+type GuestExecution struct {
+	ID          string                `json:"id"`
+	Version     int64                 `json:"version"`
+	Topology    string                `json:"topology"`
+	Node        string                `json:"node"`
+	AgentID     string                `json:"-"`
+	Status      string                `json:"status"`
+	ResultClass string                `json:"result_class,omitempty"`
+	Err         string                `json:"error,omitempty"`
+	Request     GuestExecutionRequest `json:"-"`
+	Result      GuestExecutionResult  `json:"result,omitempty"`
+	CreatedAt   time.Time             `json:"created_at"`
+	StartedAt   time.Time             `json:"started_at,omitempty"`
+	EndedAt     time.Time             `json:"ended_at,omitempty"`
+	ExpiresAt   time.Time             `json:"expires_at,omitempty"`
+}
+
+const (
+	GuestExecutionQueued    = "queued"
+	GuestExecutionRunning   = "running"
+	GuestExecutionCompleted = "completed"
+	GuestExecutionFailed    = "failed"
+	GuestExecutionCancelled = "cancelled"
+
+	GuestExecutionResultClassExit = "exit"
+)
 
 type AgentCommandEvent struct {
 	CommandID string    `json:"command_id,omitempty"`

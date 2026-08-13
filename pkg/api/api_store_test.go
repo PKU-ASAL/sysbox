@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
+	_ "modernc.org/sqlite"
 )
 
 func TestSQLiteAPIStoreRoundTripsResetTargetAndUnsafeState(t *testing.T) {
@@ -21,6 +23,32 @@ func TestSQLiteAPIStoreRoundTripsResetTargetAndUnsafeState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, run.Target, got.Target)
 	require.True(t, got.UnsafeState)
+}
+
+func TestSQLiteAPIStoreAddsGuestExecutionPayloadToExistingCommandTable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "api.db")
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE sysbox_agent_commands (id TEXT PRIMARY KEY) STRICT`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	store := &sqliteAPIStore{dbPath: dbPath}
+	_, err = store.open()
+	require.NoError(t, err)
+	db = store.db
+	rows, err := db.Query(`PRAGMA table_info(sysbox_agent_commands)`)
+	require.NoError(t, err)
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var defaultValue any
+		require.NoError(t, rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk))
+		found = found || name == "execution_payload"
+	}
+	require.True(t, found)
 }
 
 func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {

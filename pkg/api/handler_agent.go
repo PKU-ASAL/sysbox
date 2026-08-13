@@ -249,6 +249,13 @@ func (s *Server) handleListAgentCommands(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	for i := range commands {
+		commands[i].ExecutionRequest = controlplane.GuestExecutionRequest{}
+		if commands[i].Execution != nil {
+			sanitized := publicGuestExecution(*commands[i].Execution)
+			commands[i].Execution = &sanitized
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"commands": commands})
 }
 

@@ -30,6 +30,7 @@ type Server struct {
 	workspaces    *WorkspaceService
 	nodeService   *NodeOperationService
 	consoleSvc    *ConsoleService
+	guestExecSvc  *GuestExecutionService
 	consoles      *consoleSessionHub
 	nodeOps       *nodeOperationStore
 	supervisor    *Supervisor
@@ -91,6 +92,7 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		defaultConsoleTimeout,
 		maxConsoleTimeout,
 	)
+	s.guestExecSvc = newGuestExecutionService(s.apiStore, s.agentService().PublishCommand, nil)
 	s.agentStream = newAgentStreamService(s)
 	s.runService = newRunService(s)
 	s.registerRoutes()
@@ -175,6 +177,13 @@ func (s *Server) agentStreams() *AgentStreamService {
 		s.agentStream = newAgentStreamService(s)
 	}
 	return s.agentStream
+}
+
+func (s *Server) guestExecutions() *GuestExecutionService {
+	if s.guestExecSvc == nil {
+		s.guestExecSvc = newGuestExecutionService(s.apiStore, s.agentService().PublishCommand, nil)
+	}
+	return s.guestExecSvc
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -294,6 +303,9 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/nodes", s.handleListNodes)
 	m.HandleFunc("GET /v1/topologies/{topology}/nodes/{node}", s.handleGetNode)
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/sessions", s.handleCreateConsoleSession)
+	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/executions", s.handleCreateGuestExecution)
+	m.HandleFunc("GET /v1/executions/{execution}", s.handleGetGuestExecution)
+	m.HandleFunc("POST /v1/executions/{execution}/cancel", s.handleCancelGuestExecution)
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/pause", s.handleNodePause)
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/resume", s.handleNodeResume)
 	m.HandleFunc("POST /v1/topologies/{topology}/import", s.handleImport)

@@ -101,6 +101,7 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		run_payload      BLOB,
 		session_payload  BLOB,
 		operation_payload BLOB,
+		execution_payload BLOB,
 		request_payload  BLOB,
 		lease_owner TEXT DEFAULT '',
 		lease_until TEXT DEFAULT '',
@@ -167,6 +168,11 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		observed_at  TEXT NOT NULL DEFAULT ''
 	) STRICT;
 
+	CREATE TABLE IF NOT EXISTS sysbox_guest_executions (
+		id   TEXT PRIMARY KEY,
+		data BLOB NOT NULL
+	) STRICT;
+
 	CREATE TABLE IF NOT EXISTS sysbox_checkpoints (
 		topology TEXT NOT NULL DEFAULT '',
 		run_id   TEXT NOT NULL,
@@ -208,7 +214,10 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	return ensureSQLiteRunColumns(db)
+	if err := ensureSQLiteRunColumns(db); err != nil {
+		return err
+	}
+	return ensureSQLiteColumn(db, "sysbox_agent_commands", "execution_payload", "BLOB")
 }
 
 func ensureSQLiteRunColumns(db *sql.DB) error {
@@ -242,6 +251,32 @@ func ensureSQLiteRunColumns(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func ensureSQLiteColumn(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		found = found || name == column
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition)
+	return err
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -940,12 +975,16 @@ func (s *sqliteAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplane.
 	runPayload, _ := json.Marshal(cmd.Run)
 	sessionPayload, _ := json.Marshal(cmd.Session)
 	operationPayload, _ := json.Marshal(cmd.Operation)
+	executionPayload, _ := json.Marshal(struct {
+		Execution *controlplane.GuestExecution       `json:"execution,omitempty"`
+		Request   controlplane.GuestExecutionRequest `json:"request,omitempty"`
+	}{Execution: cmd.Execution, Request: cmd.ExecutionRequest})
 	requestPayload, _ := json.Marshal(cmd.Request)
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_agent_commands (id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO sysbox_agent_commands (id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, execution_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET status=excluded.status, error=excluded.error, lease_owner=excluded.lease_owner, lease_until=excluded.lease_until, attempt=excluded.attempt, acked_at=excluded.acked_at, ended_at=excluded.ended_at`,
-		cmd.ID, cmd.AgentID, cmd.Type, cmd.Status, cmd.Err, cmd.Protocol, runPayload, sessionPayload, operationPayload, requestPayload,
+		cmd.ID, cmd.AgentID, cmd.Type, cmd.Status, cmd.Err, cmd.Protocol, runPayload, sessionPayload, operationPayload, executionPayload, requestPayload,
 		cmd.LeaseOwner, formatSQLiteTime(cmd.LeaseUntil), cmd.Attempt,
 		formatSQLiteTime(cmd.CreatedAt), formatSQLiteTime(cmd.Delivered), formatSQLiteTime(cmd.AckedAt), formatSQLiteTime(cmd.EndedAt))
 	return err
@@ -957,7 +996,7 @@ func (s *sqliteAPIStore) ListAgentCommands(ctx context.Context, agentID string) 
 		return nil, err
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at FROM sysbox_agent_commands WHERE agent_id=? OR agent_id='' ORDER BY created_at DESC`, agentID)
+		`SELECT id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, execution_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at FROM sysbox_agent_commands WHERE agent_id=? OR agent_id='' ORDER BY created_at DESC`, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -965,9 +1004,9 @@ func (s *sqliteAPIStore) ListAgentCommands(ctx context.Context, agentID string) 
 	var out []controlplane.AgentCommand
 	for rows.Next() {
 		var cmd controlplane.AgentCommand
-		var runPayload, sessionPayload, operationPayload, reqPayload []byte
+		var runPayload, sessionPayload, operationPayload, executionPayload, reqPayload []byte
 		var leaseUntil, createdAt, delivered, ackedAt, endedAt string
-		if err := rows.Scan(&cmd.ID, &cmd.AgentID, &cmd.Type, &cmd.Status, &cmd.Err, &cmd.Protocol, &runPayload, &sessionPayload, &operationPayload, &reqPayload, &cmd.LeaseOwner, &leaseUntil, &cmd.Attempt, &createdAt, &delivered, &ackedAt, &endedAt); err != nil {
+		if err := rows.Scan(&cmd.ID, &cmd.AgentID, &cmd.Type, &cmd.Status, &cmd.Err, &cmd.Protocol, &runPayload, &sessionPayload, &operationPayload, &executionPayload, &reqPayload, &cmd.LeaseOwner, &leaseUntil, &cmd.Attempt, &createdAt, &delivered, &ackedAt, &endedAt); err != nil {
 			return nil, err
 		}
 		if runPayload != nil {
@@ -978,6 +1017,16 @@ func (s *sqliteAPIStore) ListAgentCommands(ctx context.Context, agentID string) 
 		}
 		if operationPayload != nil {
 			json.Unmarshal(operationPayload, &cmd.Operation)
+		}
+		if executionPayload != nil {
+			var payload struct {
+				Execution *controlplane.GuestExecution       `json:"execution,omitempty"`
+				Request   controlplane.GuestExecutionRequest `json:"request,omitempty"`
+			}
+			if json.Unmarshal(executionPayload, &payload) == nil {
+				cmd.Execution = payload.Execution
+				cmd.ExecutionRequest = payload.Request
+			}
 		}
 		if reqPayload != nil {
 			json.Unmarshal(reqPayload, &cmd.Request)
@@ -1040,11 +1089,11 @@ func (s *sqliteAPIStore) loadAgentCommand(ctx context.Context, id string) (*cont
 		return nil, err
 	}
 	var cmd controlplane.AgentCommand
-	var runPayload, sessionPayload, operationPayload, reqPayload []byte
+	var runPayload, sessionPayload, operationPayload, executionPayload, reqPayload []byte
 	var leaseUntil, createdAt, delivered, ackedAt, endedAt string
 	err = db.QueryRowContext(ctx,
-		`SELECT id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at FROM sysbox_agent_commands WHERE id=?`, id).
-		Scan(&cmd.ID, &cmd.AgentID, &cmd.Type, &cmd.Status, &cmd.Err, &cmd.Protocol, &runPayload, &sessionPayload, &operationPayload, &reqPayload, &cmd.LeaseOwner, &leaseUntil, &cmd.Attempt, &createdAt, &delivered, &ackedAt, &endedAt)
+		`SELECT id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, execution_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at FROM sysbox_agent_commands WHERE id=?`, id).
+		Scan(&cmd.ID, &cmd.AgentID, &cmd.Type, &cmd.Status, &cmd.Err, &cmd.Protocol, &runPayload, &sessionPayload, &operationPayload, &executionPayload, &reqPayload, &cmd.LeaseOwner, &leaseUntil, &cmd.Attempt, &createdAt, &delivered, &ackedAt, &endedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("command not found after update")
 	}
@@ -1059,6 +1108,16 @@ func (s *sqliteAPIStore) loadAgentCommand(ctx context.Context, id string) (*cont
 	}
 	if operationPayload != nil {
 		json.Unmarshal(operationPayload, &cmd.Operation)
+	}
+	if executionPayload != nil {
+		var payload struct {
+			Execution *controlplane.GuestExecution       `json:"execution,omitempty"`
+			Request   controlplane.GuestExecutionRequest `json:"request,omitempty"`
+		}
+		if json.Unmarshal(executionPayload, &payload) == nil {
+			cmd.Execution = payload.Execution
+			cmd.ExecutionRequest = payload.Request
+		}
 	}
 	if reqPayload != nil {
 		json.Unmarshal(reqPayload, &cmd.Request)
