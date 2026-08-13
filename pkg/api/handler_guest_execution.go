@@ -163,3 +163,26 @@ func (s *Server) handleCompleteGuestExecution(w http.ResponseWriter, r *http.Req
 	}
 	writeJSON(w, http.StatusOK, publicGuestExecution(execution))
 }
+
+func (s *Server) handleStartGuestExecution(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	execution, err := s.guestExecutions().Get(r.Context(), r.PathValue("execution"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if execution.AgentID != agentID {
+		writeError(w, http.StatusForbidden, fmt.Errorf("execution ownership mismatch"))
+		return
+	}
+	execution, err = s.guestExecutions().MarkRunning(r.Context(), execution.ID)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, publicGuestExecution(execution))
+}

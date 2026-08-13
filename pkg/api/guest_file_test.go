@@ -19,6 +19,8 @@ func TestGuestFilePutValidatesPathModeDigestAndStagesPrivately(t *testing.T) {
 	s.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 	require.NotContains(t, rec.Body.String(), s.runsDir)
+	require.NotContains(t, rec.Body.String(), "fetch_ref")
+	require.NotContains(t, rec.Body.String(), "/opt/challenge/flag")
 
 	for _, path := range []string{"relative", "/tmp/../etc/passwd", "/tmp/%00bad"} {
 		req = httptest.NewRequest(http.MethodPut, "/v1/topologies/lab/nodes/web/files?path="+path+"&mode=0400", bytes.NewReader([]byte("secret")))

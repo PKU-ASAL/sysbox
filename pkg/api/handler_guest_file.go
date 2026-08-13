@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -17,7 +19,13 @@ import (
 
 const guestFileMaxSize = 16 << 20
 
+type guestFilePayload struct {
+	AgentID   string    `json:"agent_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
+	s.gcGuestFilePayloads(time.Now().UTC())
 	if err := s.authorizeGuestOperation(s.requestSubject(r)); err != nil {
 		writeError(w, http.StatusForbidden, err)
 		return
@@ -69,12 +77,32 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err)
 		return
 	}
+	meta := guestFilePayload{AgentID: agentID, ExpiresAt: time.Now().UTC().Add(15 * time.Minute)}
+	if err := writeLocalObject(filepath.Join(dir, id+".json"), meta); err != nil {
+		_ = os.Remove(filepath.Join(dir, id))
+		writeError(w, 500, err)
+		return
+	}
 	if _, err = s.agentService().PublishCommand(r.Context(), agentID, controlplane.AgentCommand{Type: "guest_file_put", FilePut: &put}); err != nil {
 		_ = os.Remove(filepath.Join(dir, id))
 		writeError(w, 500, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, put)
+	writeJSON(w, http.StatusAccepted, map[string]any{"id": id, "status": "queued"})
+}
+
+func (s *Server) gcGuestFilePayloads(now time.Time) {
+	dir := filepath.Join(s.runsDir, "_guest-files")
+	entries, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+	for _, entry := range entries {
+		var meta guestFilePayload
+		raw, err := os.ReadFile(entry)
+		if err != nil || json.Unmarshal(raw, &meta) != nil || !now.Before(meta.ExpiresAt) {
+			base := strings.TrimSuffix(entry, ".json")
+			_ = os.Remove(base)
+			_ = os.Remove(entry)
+		}
+	}
 }
 
 func (s *Server) handleFetchGuestFile(w http.ResponseWriter, r *http.Request) {
@@ -83,13 +111,28 @@ func (s *Server) handleFetchGuestFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := filepath.Join(s.runsDir, "_guest-files", filepath.Base(r.PathValue("file")))
-	f, err := os.Open(path)
+	var meta guestFilePayload
+	raw, err := os.ReadFile(path + ".json")
+	if err != nil || json.Unmarshal(raw, &meta) != nil || meta.AgentID != r.PathValue("agent") || time.Now().UTC().After(meta.ExpiresAt) {
+		_ = os.Remove(path)
+		_ = os.Remove(path + ".json")
+		writeError(w, http.StatusNotFound, fmt.Errorf("file payload not found"))
+		return
+	}
+	consuming := path + ".consuming"
+	if err := os.Rename(path, consuming); err != nil {
+		writeError(w, http.StatusNotFound, fmt.Errorf("file payload not found"))
+		return
+	}
+	_ = os.Remove(path + ".json")
+	f, err := os.Open(consuming)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Errorf("file payload not found"))
 		return
 	}
 	defer f.Close()
+	defer os.Remove(consuming)
 	if _, err := io.Copy(w, f); err == nil {
-		_ = os.Remove(path)
+		_ = os.Remove(consuming)
 	}
 }

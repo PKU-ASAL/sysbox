@@ -268,6 +268,7 @@ type GuestFilePut struct {
 
 type GuestExecution struct {
 	ID          string                `json:"id"`
+	CommandID   string                `json:"-"`
 	Version     int64                 `json:"version"`
 	Topology    string                `json:"topology"`
 	Node        string                `json:"node"`

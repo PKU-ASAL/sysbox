@@ -132,18 +132,8 @@ func putGuestFile(ctx context.Context, opts Options, st *state.State, put contro
 	if !strings.EqualFold(hex.EncodeToString(h.Sum(nil)), put.SHA256) {
 		return fmt.Errorf("guest payload digest mismatch")
 	}
-	if err := files.CopyToNode(ctx, handle, name, put.Path); err != nil {
+	if err := files.CopyToNode(ctx, handle, name, put.Path, put.Mode); err != nil {
 		return fmt.Errorf("copy guest payload failed")
-	}
-	if put.Mode != 0 {
-		exec, err := driver.DefaultRegistry.RequireGuestExec(res.Driver)
-		if err != nil {
-			return fmt.Errorf("guest execution capability unavailable for mode")
-		}
-		result, err := exec.ExecInNode(ctx, handle, substrate.ExecRequest{Program: "chmod", Args: []string{fmt.Sprintf("%04o", put.Mode), put.Path}})
-		if err != nil || result.ExitCode != 0 {
-			return fmt.Errorf("apply guest file mode failed")
-		}
 	}
 	return nil
 }

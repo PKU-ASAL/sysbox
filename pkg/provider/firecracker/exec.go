@@ -103,11 +103,35 @@ func (s *Substrate) execBackgroundSSH(ctx context.Context, h substrate.NodeHandl
 
 // CopyToNode copies a file into the VM. Prefers vsock write_file,
 // falls back to SSH cat.
-func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, src, dst string) error {
+
+func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, src, dst string, mode uint32) error {
+	tmp := dst + ".sysbox-tmp"
 	if vc := vsockConnFromHandle(h); vc != nil {
-		return vc.CopyFile(ctx, src, dst)
+		if err := vc.CopyFile(ctx, src, tmp); err != nil {
+			return err
+		}
+		result, err := s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "chmod", Args: []string{fmt.Sprintf("%04o", mode), tmp}})
+		if err != nil || result.ExitCode != 0 {
+			return fmt.Errorf("set guest file mode")
+		}
+		result, err = s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "mv", Args: []string{"-f", tmp, dst}})
+		if err != nil || result.ExitCode != 0 {
+			return fmt.Errorf("atomic guest file rename")
+		}
+		return nil
 	}
-	return s.copyToNodeSSH(ctx, h, src, dst)
+	if err := s.copyToNodeSSH(ctx, h, src, tmp); err != nil {
+		return err
+	}
+	result, err := s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "chmod", Args: []string{fmt.Sprintf("%04o", mode), tmp}})
+	if err != nil || result.ExitCode != 0 {
+		return fmt.Errorf("set guest file mode")
+	}
+	result, err = s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "mv", Args: []string{"-f", tmp, dst}})
+	if err != nil || result.ExitCode != 0 {
+		return fmt.Errorf("atomic guest file rename")
+	}
+	return nil
 }
 
 func (s *Substrate) copyToNodeSSH(ctx context.Context, h substrate.NodeHandle, src, dst string) error {

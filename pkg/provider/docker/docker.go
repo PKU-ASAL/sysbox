@@ -111,5 +111,5 @@ func (c *dockerConn) ExecBackground(ctx context.Context, req substrate.ExecReque
 }
 
 func (c *dockerConn) CopyFile(ctx context.Context, srcPath, dstPath string) error {
-	return c.sub.CopyToNode(ctx, c.handle, srcPath, dstPath)
+	return c.sub.CopyToNode(ctx, c.handle, srcPath, dstPath, 0o600)
 }

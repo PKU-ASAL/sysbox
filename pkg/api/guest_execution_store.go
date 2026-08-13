@@ -17,12 +17,13 @@ var guestExecutionCASMu sync.Mutex
 
 type storedGuestExecution struct {
 	controlplane.GuestExecution
-	AgentID string                             `json:"agent_id"`
-	Request controlplane.GuestExecutionRequest `json:"request"`
+	AgentID   string                             `json:"agent_id"`
+	CommandID string                             `json:"command_id,omitempty"`
+	Request   controlplane.GuestExecutionRequest `json:"request"`
 }
 
 func encodeStoredGuestExecution(execution controlplane.GuestExecution) ([]byte, error) {
-	return json.Marshal(storedGuestExecution{GuestExecution: execution, AgentID: execution.AgentID, Request: execution.Request})
+	return json.Marshal(storedGuestExecution{GuestExecution: execution, AgentID: execution.AgentID, CommandID: execution.CommandID, Request: execution.Request})
 }
 
 func decodeStoredGuestExecution(raw []byte) (*controlplane.GuestExecution, error) {
@@ -32,12 +33,13 @@ func decodeStoredGuestExecution(raw []byte) (*controlplane.GuestExecution, error
 	}
 	stored.GuestExecution.Request = stored.Request
 	stored.GuestExecution.AgentID = stored.AgentID
+	stored.GuestExecution.CommandID = stored.CommandID
 	return &stored.GuestExecution, nil
 }
 
 func (s *localAPIStore) SaveGuestExecution(_ context.Context, execution controlplane.GuestExecution) error {
 	path := filepath.Join(s.runsDir, "_guest-executions", execution.ID+".json")
-	if err := writeLocalObject(path, storedGuestExecution{GuestExecution: execution, AgentID: execution.AgentID, Request: execution.Request}); err != nil {
+	if err := writeLocalObject(path, storedGuestExecution{GuestExecution: execution, AgentID: execution.AgentID, CommandID: execution.CommandID, Request: execution.Request}); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0o600)
@@ -51,6 +53,7 @@ func (s *localAPIStore) GetGuestExecution(_ context.Context, id string) (*contro
 	for _, item := range items {
 		if item.ID == id {
 			item.GuestExecution.AgentID = item.AgentID
+			item.GuestExecution.CommandID = item.CommandID
 			item.GuestExecution.Request = item.Request
 			return &item.GuestExecution, nil
 		}

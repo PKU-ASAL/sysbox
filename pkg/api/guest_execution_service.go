@@ -59,7 +59,8 @@ func (s *GuestExecutionService) Create(ctx context.Context, topology, node, agen
 	if s.publish != nil {
 		public := execution
 		public.Request = controlplane.GuestExecutionRequest{}
-		if _, err := s.publish(ctx, agentID, controlplane.AgentCommand{Type: "guest_execution", Execution: &public, ExecutionRequest: req}); err != nil {
+		command, err := s.publish(ctx, agentID, controlplane.AgentCommand{Type: "guest_execution", Execution: &public, ExecutionRequest: req})
+		if err != nil {
 			execution.Status = controlplane.GuestExecutionFailed
 			execution.ResultClass = "dispatch"
 			execution.Err = "dispatch failed"
@@ -74,6 +75,12 @@ func (s *GuestExecutionService) Create(ctx context.Context, topology, node, agen
 			}
 			return controlplane.GuestExecution{}, fmt.Errorf("publish guest execution: %w", err)
 		}
+		execution.CommandID = command.ID
+		if ok, saveErr := s.store.CompareAndSwapGuestExecution(ctx, execution, execution.Version); saveErr != nil || !ok {
+			return controlplane.GuestExecution{}, fmt.Errorf("record guest execution command")
+		} else {
+			execution.Version++
+		}
 	}
 	return execution, nil
 }
@@ -82,6 +89,14 @@ func (s *GuestExecutionService) Get(ctx context.Context, id string) (controlplan
 	execution, err := s.store.GetGuestExecution(ctx, id)
 	if err != nil {
 		return controlplane.GuestExecution{}, err
+	}
+	if !execution.ExpiresAt.IsZero() && !s.now().Before(execution.ExpiresAt) && (execution.Request.Argv != nil || execution.Result.Stdout != "" || execution.Result.Stderr != "") {
+		execution.Request = controlplane.GuestExecutionRequest{}
+		execution.Result.Stdout = ""
+		execution.Result.Stderr = ""
+		if ok, casErr := s.store.CompareAndSwapGuestExecution(ctx, *execution, execution.Version); casErr == nil && ok {
+			execution.Version++
+		}
 	}
 	return *execution, nil
 }
@@ -149,7 +164,12 @@ func (s *GuestExecutionService) Cancel(ctx context.Context, id string) (controlp
 		execution.Version++
 	}
 	if err == nil && s.publish != nil {
-		_, err = s.publish(ctx, execution.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: execution.ID}})
+		target := execution.CommandID
+		if execution.StartedAt.IsZero() && target != "" {
+			_, err = s.publish(ctx, execution.AgentID, controlplane.AgentCommand{ID: target, Status: controlplane.AgentCommandStatusCancelled})
+		} else {
+			_, err = s.publish(ctx, execution.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: execution.ID}})
+		}
 		if err != nil {
 			return execution, fmt.Errorf("publish guest execution cancel: %w", err)
 		}

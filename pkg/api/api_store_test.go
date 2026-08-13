@@ -51,6 +51,16 @@ func TestSQLiteAPIStoreAddsGuestExecutionPayloadToExistingCommandTable(t *testin
 	require.True(t, found)
 }
 
+func TestSQLiteAgentCommandRoundTripsGuestFilePut(t *testing.T) {
+	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()}
+	want := controlplane.AgentCommand{ID: "cmd-file", AgentID: "host-a", Type: "guest_file_put", FilePut: &controlplane.GuestFilePut{ID: "file-1", Topology: "lab", Node: "web", Path: "/flag", Mode: 0, Size: 3, SHA256: "abc", FetchRef: "/private"}}
+	require.NoError(t, store.SaveAgentCommand(context.Background(), want))
+	got, err := store.ListAgentCommands(context.Background(), "host-a")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, want.FilePut, got[0].FilePut)
+}
+
 func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	ctx := context.Background()

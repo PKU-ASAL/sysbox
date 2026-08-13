@@ -301,6 +301,10 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "missing guest execution", fmt.Errorf("missing guest execution"))
 			return
 		}
+		if err := r.opts.ReportGuestExecutionStart(runCtx, cmd.Execution.ID); err != nil {
+			emit("failed", "guest execution start report failed", err)
+			return
+		}
 		mgr, err := r.executor.bridge.StateManager(cmd.Execution.Topology)
 		if err != nil {
 			emit("failed", "guest execution state unavailable", err)
@@ -588,6 +592,13 @@ func (opts Options) ReportGuestExecutionComplete(ctx context.Context, id string,
 		return nil
 	}
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-executions/"+id+"/complete", completion, nil)
+}
+
+func (opts Options) ReportGuestExecutionStart(ctx context.Context, id string) error {
+	if opts.APIURL == "" || opts.ID == "" || id == "" {
+		return nil
+	}
+	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-executions/"+id+"/start", nil, nil)
 }
 
 func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {

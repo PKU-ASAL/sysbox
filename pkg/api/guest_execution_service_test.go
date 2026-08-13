@@ -89,6 +89,18 @@ func TestGuestExecutionStoreRetainsPrivateDispatchData(t *testing.T) {
 	require.Equal(t, want.Request, got.Request)
 }
 
+func TestExpiredGuestExecutionDropsPrivatePayload(t *testing.T) {
+	now := time.Now().UTC()
+	store := &localAPIStore{runsDir: t.TempDir()}
+	svc := newGuestExecutionService(store, nil, func() time.Time { return now })
+	want := controlplane.GuestExecution{ID: "expired", Version: 1, Status: controlplane.GuestExecutionCompleted, Request: controlplane.GuestExecutionRequest{Argv: []string{"secret"}}, Result: controlplane.GuestExecutionResult{Stdout: "secret"}, ExpiresAt: now.Add(-time.Second)}
+	require.NoError(t, store.SaveGuestExecution(context.Background(), want))
+	got, err := svc.Get(context.Background(), want.ID)
+	require.NoError(t, err)
+	require.Empty(t, got.Request.Argv)
+	require.Empty(t, got.Result.Stdout)
+}
+
 func TestGuestExecutionCreatePublishesPrivateRequestSeparately(t *testing.T) {
 	ctx := context.Background()
 	want := controlplane.GuestExecutionRequest{Argv: []string{"env"}, Environment: map[string]string{"TOKEN": "secret"}}

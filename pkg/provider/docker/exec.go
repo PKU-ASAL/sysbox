@@ -156,13 +156,13 @@ var _ substrate.ConsoleProvider = (*Substrate)(nil)
 // CopyToNode copies the local file at srcPath into the container at dstPath.
 // dstPath must be an absolute path inside the container; the filename is
 // preserved from srcPath if dstPath ends with "/".
-func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcPath, dstPath string) error {
+func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcPath, dstPath string, mode uint32) error {
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		return fmt.Errorf("read src %s: %w", srcPath, err)
 	}
 
-	// Resolve destination directory and filename.
+	// Install via a same-directory temporary name so mode and content become visible atomically.
 	// If dstPath ends with "/" it is a directory; keep source filename.
 	// Otherwise treat dstPath as the full destination path: dir + new name.
 	var dstDir, dstFile string
@@ -181,7 +181,7 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcP
 	tw := tar.NewWriter(&buf)
 	if err := tw.WriteHeader(&tar.Header{
 		Name: dstFile,
-		Mode: 0o755,
+		Mode: int64(mode),
 		Size: int64(len(data)),
 	}); err != nil {
 		return err
@@ -191,9 +191,26 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcP
 	}
 	tw.Close()
 
-	return s.cli.CopyToContainer(ctx, h.ID, dstDir, &buf, container.CopyToContainerOptions{
+	tmpFile := ".sysbox-" + dstFile
+	// Rebuild header with temporary name.
+	buf.Reset()
+	tw = tar.NewWriter(&buf)
+	_ = tw.WriteHeader(&tar.Header{Name: tmpFile, Mode: int64(mode), Size: int64(len(data))})
+	_, _ = tw.Write(data)
+	_ = tw.Close()
+	if err := s.cli.CopyToContainer(ctx, h.ID, dstDir, &buf, container.CopyToContainerOptions{
 		AllowOverwriteDirWithFile: true,
-	})
+	}); err != nil {
+		return err
+	}
+	result, err := s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "mv", Args: []string{"-f", filepath.Join(dstDir, tmpFile), filepath.Join(dstDir, dstFile)}})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("atomic guest file rename failed")
+	}
+	return nil
 }
 
 // ExecBackground starts a detached command inside the container and returns

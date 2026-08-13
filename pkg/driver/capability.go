@@ -87,7 +87,7 @@ type GuestExec interface {
 }
 
 type GuestFiles interface {
-	CopyToNode(context.Context, substrate.NodeHandle, string, string) error
+	CopyToNode(context.Context, substrate.NodeHandle, string, string, uint32) error
 }
 
 type Network interface {

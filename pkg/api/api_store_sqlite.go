@@ -978,7 +978,8 @@ func (s *sqliteAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplane.
 	executionPayload, _ := json.Marshal(struct {
 		Execution *controlplane.GuestExecution       `json:"execution,omitempty"`
 		Request   controlplane.GuestExecutionRequest `json:"request,omitempty"`
-	}{Execution: cmd.Execution, Request: cmd.ExecutionRequest})
+		FilePut   *controlplane.GuestFilePut         `json:"file_put,omitempty"`
+	}{Execution: cmd.Execution, Request: cmd.ExecutionRequest, FilePut: cmd.FilePut})
 	requestPayload, _ := json.Marshal(cmd.Request)
 	_, err = db.ExecContext(ctx,
 		`INSERT INTO sysbox_agent_commands (id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, execution_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at)
@@ -1022,10 +1023,12 @@ func (s *sqliteAPIStore) ListAgentCommands(ctx context.Context, agentID string) 
 			var payload struct {
 				Execution *controlplane.GuestExecution       `json:"execution,omitempty"`
 				Request   controlplane.GuestExecutionRequest `json:"request,omitempty"`
+				FilePut   *controlplane.GuestFilePut         `json:"file_put,omitempty"`
 			}
 			if json.Unmarshal(executionPayload, &payload) == nil {
 				cmd.Execution = payload.Execution
 				cmd.ExecutionRequest = payload.Request
+				cmd.FilePut = payload.FilePut
 			}
 		}
 		if reqPayload != nil {
@@ -1113,10 +1116,12 @@ func (s *sqliteAPIStore) loadAgentCommand(ctx context.Context, id string) (*cont
 		var payload struct {
 			Execution *controlplane.GuestExecution       `json:"execution,omitempty"`
 			Request   controlplane.GuestExecutionRequest `json:"request,omitempty"`
+			FilePut   *controlplane.GuestFilePut         `json:"file_put,omitempty"`
 		}
 		if json.Unmarshal(executionPayload, &payload) == nil {
 			cmd.Execution = payload.Execution
 			cmd.ExecutionRequest = payload.Request
+			cmd.FilePut = payload.FilePut
 		}
 	}
 	if reqPayload != nil {
