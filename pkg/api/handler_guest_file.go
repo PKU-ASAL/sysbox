@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -83,12 +84,145 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err)
 		return
 	}
-	if _, err = s.agentService().PublishCommand(r.Context(), agentID, controlplane.AgentCommand{Type: "guest_file_put", FilePut: &put}); err != nil {
+	cleanup := func() {
 		_ = os.Remove(filepath.Join(dir, id))
+		_ = os.Remove(filepath.Join(dir, id+".json"))
+	}
+	commandID := uuid.NewString()
+	op := controlplane.GuestFileOperation{ID: id, Version: 1, AgentID: agentID, CommandID: commandID, Topology: topology, Node: node, Status: controlplane.GuestExecutionQueued, CreatedAt: time.Now().UTC()}
+	if err := s.apiStore.SaveGuestFileOperation(r.Context(), op); err != nil {
+		cleanup()
 		writeError(w, 500, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"id": id, "status": "queued"})
+	_, err = s.agentService().PublishCommand(r.Context(), agentID, controlplane.AgentCommand{ID: commandID, Type: "guest_file_put", FilePut: &put})
+	if err != nil {
+		op.Status, op.Error, op.EndedAt = controlplane.GuestExecutionFailed, "dispatch failed", time.Now().UTC()
+		if ok, saveErr := s.apiStore.CompareAndSwapGuestFileOperation(r.Context(), op, op.Version); saveErr != nil || !ok {
+			cleanup()
+			writeError(w, 500, fmt.Errorf("record file operation dispatch failure"))
+			return
+		}
+		cleanup()
+		writeError(w, 500, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, publicGuestFileOperation(op))
+}
+
+func publicGuestFileOperation(op controlplane.GuestFileOperation) controlplane.GuestFileOperation {
+	op.AgentID, op.CommandID = "", ""
+	return op
+}
+
+func (s *Server) handleGetGuestFileOperation(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorizeGuestOperation(s.requestSubject(r)); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Errorf("file operation not found"))
+		return
+	}
+	writeJSON(w, http.StatusOK, publicGuestFileOperation(*op))
+}
+
+func (s *Server) handleCancelGuestFileOperation(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorizeGuestOperation(s.requestSubject(r)); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	svc := newGuestFileOperationService(s.apiStore)
+	op, err := svc.RequestCancel(r.Context(), r.PathValue("operation"))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errGuestFileOperationNotFound) {
+			status = http.StatusNotFound
+		}
+		if errors.Is(err, errGuestFileOperationConflict) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err)
+		return
+	}
+	if guestExecutionTerminal(op.Status) {
+		writeJSON(w, http.StatusAccepted, publicGuestFileOperation(op))
+		return
+	}
+	if op.CommandID != "" {
+		var dispatchErr error
+		if op.StartedAt.IsZero() {
+			_, dispatchErr = s.agentService().PublishCommand(r.Context(), op.AgentID, controlplane.AgentCommand{ID: op.CommandID, Status: controlplane.AgentCommandStatusCancelled})
+		} else {
+			_, dispatchErr = s.agentService().PublishCommand(r.Context(), op.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: op.ID}})
+		}
+		if dispatchErr != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("dispatch file operation cancellation"))
+			return
+		}
+	}
+	op, err = svc.Cancel(r.Context(), op.ID)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID))
+	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID+".json"))
+	writeJSON(w, http.StatusAccepted, publicGuestFileOperation(op))
+}
+
+func (s *Server) handleStartGuestFileOperation(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Errorf("file operation not found"))
+		return
+	}
+	if op.AgentID != agentID {
+		writeError(w, http.StatusForbidden, fmt.Errorf("file operation ownership mismatch"))
+		return
+	}
+	updated, err := newGuestFileOperationService(s.apiStore).MarkRunning(r.Context(), op.ID)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, publicGuestFileOperation(updated))
+}
+
+func (s *Server) handleCompleteGuestFileOperation(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Errorf("file operation not found"))
+		return
+	}
+	if op.AgentID != agentID {
+		writeError(w, http.StatusForbidden, fmt.Errorf("file operation ownership mismatch"))
+		return
+	}
+	var completion controlplane.GuestFileOperationCompletion
+	if err := json.NewDecoder(r.Body).Decode(&completion); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode completion"))
+		return
+	}
+	updated, err := newGuestFileOperationService(s.apiStore).Complete(r.Context(), op.ID, completion.Error)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID))
+	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID+".json"))
+	writeJSON(w, http.StatusOK, publicGuestFileOperation(updated))
 }
 
 func (s *Server) gcGuestFilePayloads(now time.Time) {
@@ -119,20 +253,11 @@ func (s *Server) handleFetchGuestFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("file payload not found"))
 		return
 	}
-	consuming := path + ".consuming"
-	if err := os.Rename(path, consuming); err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("file payload not found"))
-		return
-	}
-	_ = os.Remove(path + ".json")
-	f, err := os.Open(consuming)
+	f, err := os.Open(path)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Errorf("file payload not found"))
 		return
 	}
 	defer f.Close()
-	defer os.Remove(consuming)
-	if _, err := io.Copy(w, f); err == nil {
-		_ = os.Remove(consuming)
-	}
+	_, _ = io.Copy(w, f)
 }

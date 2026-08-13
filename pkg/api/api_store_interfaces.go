@@ -84,6 +84,12 @@ type guestExecutionPersistence interface {
 	GetGuestExecution(ctx context.Context, id string) (*controlplane.GuestExecution, error)
 }
 
+type guestFileOperationPersistence interface {
+	SaveGuestFileOperation(context.Context, controlplane.GuestFileOperation) error
+	GetGuestFileOperation(context.Context, string) (*controlplane.GuestFileOperation, error)
+	CompareAndSwapGuestFileOperation(context.Context, controlplane.GuestFileOperation, int64) (bool, error)
+}
+
 type apiStore interface {
 	schemaStore
 	runStore
@@ -98,4 +104,5 @@ type apiStore interface {
 	agentCommandStore
 	inventoryStore
 	guestExecutionPersistence
+	guestFileOperationPersistence
 }

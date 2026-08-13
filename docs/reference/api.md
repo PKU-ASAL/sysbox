@@ -232,6 +232,8 @@ POST /v1/topologies/{topology}/nodes/{node}/executions
 GET  /v1/executions/{execution_id}
 POST /v1/executions/{execution_id}/cancel
 PUT  /v1/topologies/{topology}/nodes/{node}/files?path=/absolute/path&mode=0400
+GET  /v1/file-operations/{operation_id}
+POST /v1/file-operations/{operation_id}/cancel
 ```
 
 Execution creation accepts `argv`, optional `environment`,
@@ -249,10 +251,14 @@ real Agent cancellation. A late completion cannot replace the cancelled state.
 File upload uses the request body as raw binary bytes, `X-Content-SHA256` for
 integrity, and query parameters for the absolute guest `path` and octal `mode`.
 The limit is 16 MiB. Paths containing NUL, traversal, or a non-absolute path
-are rejected. The API response contains only the operation ID and `queued`
-status. Payloads are staged with restricted permissions, bound to the owning
-Agent, expire after 15 minutes, and are consumed once. Providers install
-content and mode atomically where supported.
+are rejected. The API response contains a durable operation with `queued`,
+`running`, `completed`, `failed`, or `cancelled` status. The operation can be
+read and cancelled through `/v1/file-operations/{operation_id}`. Agent and
+provider identifiers, host paths, credentials, and private payload references
+are never returned. Payloads are staged with restricted permissions, bound to
+the owning Agent, and retained for retry until the operation becomes terminal
+or the 15-minute staging lifetime expires. Providers install content and mode
+atomically where supported.
 
 These endpoints require the dedicated guest-operation authorization check;
 the owning Agent uses signed internal start, completion, and payload-fetch

@@ -173,6 +173,11 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		data BLOB NOT NULL
 	) STRICT;
 
+	CREATE TABLE IF NOT EXISTS sysbox_guest_file_operations (
+		id   TEXT PRIMARY KEY,
+		data BLOB NOT NULL
+	) STRICT;
+
 	CREATE TABLE IF NOT EXISTS sysbox_checkpoints (
 		topology TEXT NOT NULL DEFAULT '',
 		run_id   TEXT NOT NULL,

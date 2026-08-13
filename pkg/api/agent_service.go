@@ -240,6 +240,9 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 		cmd.Err = event.Error
 		cmd.EndedAt = now
 		s.updateConsoleSessionFromCommandEvent(cmd, event)
+		if cmd.Type == "guest_file_put" && cmd.FilePut != nil {
+			_ = newGuestFileOperationService(s.store).ReconcileCommandFailure(ctx, cmd.FilePut.ID, event.Status)
+		}
 	}
 	_ = s.store.SaveAgentCommand(ctx, cmd)
 }

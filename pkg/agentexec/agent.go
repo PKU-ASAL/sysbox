@@ -36,6 +36,8 @@ type Options struct {
 	RunRenewTTL                      time.Duration
 	Policy                           config.AgentPolicyConfig
 	ReportGuestExecutionCompleteFunc func(context.Context, string, controlplane.GuestExecutionCompletion) error
+	ReportGuestFileStartFunc         func(context.Context, string) error
+	ReportGuestFileCompleteFunc      func(context.Context, string, controlplane.GuestFileOperationCompletion) error
 }
 
 func Run(ctx context.Context, opts Options, bridge Bridge) error {
@@ -330,18 +332,38 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "missing guest file", fmt.Errorf("missing guest file"))
 			return
 		}
+		if err := r.opts.ReportGuestFileStart(runCtx, cmd.FilePut.ID); err != nil {
+			emit("failed", "guest file start report failed", err)
+			return
+		}
 		mgr, err := r.executor.bridge.StateManager(cmd.FilePut.Topology)
 		if err != nil {
+			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed"}); reportErr != nil {
+				emit("failed", "guest file completion report failed", reportErr)
+				return
+			}
 			emit("failed", "guest file state unavailable", err)
 			return
 		}
 		st, err := mgr.Load()
 		if err != nil {
+			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed"}); reportErr != nil {
+				emit("failed", "guest file completion report failed", reportErr)
+				return
+			}
 			emit("failed", "guest file state unavailable", err)
 			return
 		}
 		if err := putGuestFile(runCtx, r.opts, st, *cmd.FilePut); err != nil {
+			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed"}); reportErr != nil {
+				emit("failed", "guest file completion report failed", reportErr)
+				return
+			}
 			emit("failed", "guest file put failed", err)
+			return
+		}
+		if err := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{}); err != nil {
+			emit("failed", "guest file completion report failed", err)
 			return
 		}
 		emit("completed", "guest file put completed", nil)
@@ -368,6 +390,9 @@ func (r *commandRunner) track(cmd *controlplane.AgentCommand, cancel context.Can
 	if cmd.Execution != nil && cmd.Execution.ID != "" {
 		r.running[cmd.Execution.ID] = cancel
 	}
+	if cmd.FilePut != nil && cmd.FilePut.ID != "" {
+		r.running[cmd.FilePut.ID] = cancel
+	}
 }
 
 func (r *commandRunner) untrack(cmd *controlplane.AgentCommand) {
@@ -383,6 +408,9 @@ func (r *commandRunner) untrack(cmd *controlplane.AgentCommand) {
 	delete(r.running, cmd.Operation.ID)
 	if cmd.Execution != nil {
 		delete(r.running, cmd.Execution.ID)
+	}
+	if cmd.FilePut != nil {
+		delete(r.running, cmd.FilePut.ID)
 	}
 }
 
@@ -599,6 +627,48 @@ func (opts Options) ReportGuestExecutionStart(ctx context.Context, id string) er
 		return nil
 	}
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-executions/"+id+"/start", nil, nil)
+}
+
+func (opts Options) ReportGuestFileStart(ctx context.Context, id string) error {
+	return retryGuestFileReport(ctx, func() error {
+		if opts.ReportGuestFileStartFunc != nil {
+			return opts.ReportGuestFileStartFunc(ctx, id)
+		}
+		if opts.APIURL == "" || opts.ID == "" || id == "" {
+			return nil
+		}
+		return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-file-operations/"+id+"/start", nil, nil)
+	})
+}
+
+func (opts Options) ReportGuestFileComplete(ctx context.Context, id string, completion controlplane.GuestFileOperationCompletion) error {
+	return retryGuestFileReport(ctx, func() error {
+		if opts.ReportGuestFileCompleteFunc != nil {
+			return opts.ReportGuestFileCompleteFunc(ctx, id, completion)
+		}
+		if opts.APIURL == "" || opts.ID == "" || id == "" {
+			return nil
+		}
+		return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-file-operations/"+id+"/complete", completion, nil)
+	})
+}
+
+func retryGuestFileReport(ctx context.Context, report func() error) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err = report(); err == nil {
+			return nil
+		}
+		if attempt == 2 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	return err
 }
 
 func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {

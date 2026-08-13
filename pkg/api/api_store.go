@@ -19,7 +19,7 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 4
+const apiSchemaVersion = 5
 
 type apiMigration struct {
 	Version int
@@ -135,6 +135,15 @@ ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS attempt INTEGER NOT N
 		Version: 4,
 		Name:    "guest_executions",
 		SQL: `CREATE TABLE IF NOT EXISTS sysbox_guest_executions (
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`,
+	},
+	{
+		Version: 5,
+		Name:    "guest_file_operations",
+		SQL: `CREATE TABLE IF NOT EXISTS sysbox_guest_file_operations (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

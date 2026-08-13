@@ -266,6 +266,25 @@ type GuestFilePut struct {
 	FetchRef string `json:"fetch_ref,omitempty"`
 }
 
+type GuestFileOperation struct {
+	ID              string    `json:"id"`
+	Version         int64     `json:"version"`
+	AgentID         string    `json:"-"`
+	CommandID       string    `json:"-"`
+	CancelRequested bool      `json:"-"`
+	Topology        string    `json:"topology"`
+	Node            string    `json:"node"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at,omitempty"`
+	StartedAt       time.Time `json:"started_at,omitempty"`
+	EndedAt         time.Time `json:"ended_at,omitempty"`
+	Error           string    `json:"error,omitempty"`
+}
+
+type GuestFileOperationCompletion struct {
+	Error string `json:"error,omitempty"`
+}
+
 type GuestExecution struct {
 	ID          string                `json:"id"`
 	CommandID   string                `json:"-"`
