@@ -61,6 +61,7 @@ func TestGuestOperationMapsRequestAndReturnsStructuredResult(t *testing.T) {
 	require.Equal(t, []string{"%s", "ok"}, d.req.Args)
 	require.Equal(t, map[string]string{"TOKEN": "secret"}, d.req.Environment)
 	require.Equal(t, "/work", d.req.WorkingDir)
+	require.Equal(t, substrate.ShellNone, d.req.Shell)
 	require.Equal(t, 7, result.Result.ExitCode)
 	require.Equal(t, base64.StdEncoding.EncodeToString([]byte("out")), result.Result.Stdout)
 	require.Equal(t, base64.StdEncoding.EncodeToString([]byte("err")), result.Result.Stderr)

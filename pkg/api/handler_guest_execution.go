@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,13 +21,13 @@ func (s *Server) authorizeGuestOperation(subj requestSubject) error {
 	return fmt.Errorf("guest operation denied")
 }
 
-func (s *Server) guestExecutionOwner(topology string) (string, error) {
+func (s *Server) guestExecutionOwner(ctx context.Context, topology string) (string, error) {
 	var owners []string
-	for _, agent := range s.agentService().List(nil) {
+	for _, agent := range s.agentService().List(ctx) {
 		if !agent.IsSchedulable() {
 			continue
 		}
-		inv, err := s.apiStore.GetAgentInventory(nil, agent.ID)
+		inv, err := s.apiStore.GetAgentInventory(ctx, agent.ID)
 		if err != nil {
 			continue
 		}
@@ -76,7 +77,7 @@ func (s *Server) handleCreateGuestExecution(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode guest execution request"))
 		return
 	}
-	agentID, err := s.guestExecutionOwner(topology)
+	agentID, err := s.guestExecutionOwner(r.Context(), topology)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return

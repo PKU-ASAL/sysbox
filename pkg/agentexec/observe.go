@@ -2,6 +2,7 @@ package agentexec
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -50,6 +51,7 @@ func Inventory(ctx context.Context, opts Options, bridge Bridge) controlplane.Ag
 			Serial:        proj.Serial,
 			ResourceCount: len(proj.Resources),
 			Health:        string(proj.Health.Status),
+			Available:     localWorkspaceAvailable(bridge.HCLFile(proj.Topology)),
 		})
 	}
 	return controlplane.AgentInventory{
@@ -59,6 +61,14 @@ func Inventory(ctx context.Context, opts Options, bridge Bridge) controlplane.Ag
 		Topologies:   items,
 		ObservedAt:   time.Now().UTC(),
 	}
+}
+
+func localWorkspaceAvailable(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func topologiesFromRunsDir(runsDir string) []string {

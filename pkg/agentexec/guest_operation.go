@@ -53,7 +53,7 @@ func executeGuestOperation(ctx context.Context, st *state.State, node string, re
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
 		defer cancel()
 	}
-	result, err := exec.ExecInNode(ctx, handle, substrate.ExecRequest{Program: req.Argv[0], Args: req.Argv[1:], Environment: req.Environment, WorkingDir: req.WorkingDirectory})
+	result, err := exec.ExecInNode(ctx, handle, substrate.ExecRequest{Program: req.Argv[0], Args: req.Argv[1:], Environment: req.Environment, WorkingDir: req.WorkingDirectory, Shell: substrate.ShellNone})
 	if err != nil {
 		class := "provider"
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {

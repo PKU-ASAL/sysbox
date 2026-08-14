@@ -41,7 +41,7 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid file mode"))
 		return
 	}
-	agentID, err := s.guestExecutionOwner(topology)
+	agentID, err := s.guestExecutionOwner(r.Context(), topology)
 	if err != nil || !s.guestExecutionNodeExists(topology, node) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("target not found"))
 		return

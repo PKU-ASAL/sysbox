@@ -203,7 +203,7 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcP
 	}); err != nil {
 		return err
 	}
-	result, err := s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "mv", Args: []string{"-f", filepath.Join(dstDir, tmpFile), filepath.Join(dstDir, dstFile)}})
+	result, err := s.ExecInNode(ctx, h, atomicRenameRequest(filepath.Join(dstDir, tmpFile), filepath.Join(dstDir, dstFile)))
 	if err != nil {
 		return err
 	}
@@ -211,6 +211,10 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcP
 		return fmt.Errorf("atomic guest file rename failed")
 	}
 	return nil
+}
+
+func atomicRenameRequest(src, dst string) substrate.ExecRequest {
+	return substrate.ExecRequest{Program: "mv", Args: []string{"-f", src, dst}, Shell: substrate.ShellNone}
 }
 
 // ExecBackground starts a detached command inside the container and returns
