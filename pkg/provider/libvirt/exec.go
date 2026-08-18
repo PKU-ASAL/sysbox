@@ -3,10 +3,56 @@ package libvirt
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
 )
+
+// ExecInNode runs a command in the VM through its declared SSH connection.
+func (s *Substrate) ExecInNode(ctx context.Context, handle substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
+	conn, err := s.Connection(handle, nil)
+	if err != nil {
+		return substrate.ExecResult{}, err
+	}
+	return conn.Exec(ctx, req, io.Discard, io.Discard)
+}
+
+// ExecBackground starts a detached command in the VM through SSH.
+func (s *Substrate) ExecBackground(ctx context.Context, handle substrate.NodeHandle, req substrate.ExecRequest) (int, error) {
+	conn, err := s.Connection(handle, nil)
+	if err != nil {
+		return 0, err
+	}
+	return conn.ExecBackground(ctx, req)
+}
+
+// CopyToNode copies a file through SSH and atomically installs it at dst.
+func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle, src, dst string, mode uint32) error {
+	conn, err := s.Connection(handle, nil)
+	if err != nil {
+		return err
+	}
+	tmp := dst + ".sysbox-tmp"
+	if err := conn.CopyFile(ctx, src, tmp); err != nil {
+		return err
+	}
+	result, err := conn.Exec(ctx, substrate.ExecRequest{
+		Program: "chmod",
+		Args:    []string{fmt.Sprintf("%04o", mode), tmp},
+	}, io.Discard, io.Discard)
+	if err != nil || result.ExitCode != 0 {
+		return fmt.Errorf("set guest file mode")
+	}
+	result, err = conn.Exec(ctx, substrate.ExecRequest{
+		Program: "mv",
+		Args:    []string{"-f", tmp, dst},
+	}, io.Discard, io.Discard)
+	if err != nil || result.ExitCode != 0 {
+		return fmt.Errorf("atomic guest file rename")
+	}
+	return nil
+}
 
 // Connection returns an SSH connection to the VM. The SSHIP is resolved from
 // the declared attachment or discovered post-boot.
