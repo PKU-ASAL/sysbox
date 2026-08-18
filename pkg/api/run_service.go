@@ -5,10 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 )
+
+var operationKeyPattern = regexp.MustCompile(`^[A-Za-z0-9:_-]{1,128}$`)
+
+func validateOperationKey(key string) error {
+	if !operationKeyPattern.MatchString(key) {
+		return fmt.Errorf("operation key must be 1-128 ASCII letters, digits, colon, underscore, or hyphen")
+	}
+	return nil
+}
 
 type RunService struct {
 	jobs            *Jobs
@@ -140,7 +150,21 @@ func (s *RunService) StartDestroy(ctx context.Context, topology string) (*contro
 }
 
 func (s *RunService) StartDestroyWithOptions(ctx context.Context, topology string, allowUnsafe bool) (*controlplane.Run, error) {
-	run := s.jobs.startWithOptions(topology, "destroy", runStartOptions{UnsafeState: allowUnsafe})
+	return s.startDestroy(ctx, topology, allowUnsafe, "")
+}
+
+func (s *RunService) StartDestroyWithOperationKey(ctx context.Context, topology string, allowUnsafe bool, operationKey string) (*controlplane.Run, error) {
+	if err := validateOperationKey(operationKey); err != nil {
+		return nil, runError(runServiceBadRequest, err)
+	}
+	return s.startDestroy(ctx, topology, allowUnsafe, operationKey)
+}
+
+func (s *RunService) startDestroy(ctx context.Context, topology string, allowUnsafe bool, operationKey string) (*controlplane.Run, error) {
+	run, created := s.jobs.startWithResult(topology, "destroy", runStartOptions{UnsafeState: allowUnsafe, OperationKey: operationKey})
+	if !created {
+		return run, nil
+	}
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
 	}

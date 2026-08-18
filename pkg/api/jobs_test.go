@@ -4,12 +4,60 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/stretchr/testify/require"
 )
+
+func TestJobsOperationKeyIsAtomicAndPersistsAcrossRestart(t *testing.T) {
+	runsDir := t.TempDir()
+	jobs := newJobsWithRecovery(runsDir, nil, false)
+	const workers = 32
+	results := make(chan *controlplane.Run, workers)
+	var group sync.WaitGroup
+	for range workers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			results <- jobs.startWithOptions("mixed", "destroy", runStartOptions{OperationKey: "destroy:cf-mixed-g1"})
+		}()
+	}
+	group.Wait()
+	close(results)
+	var runID string
+	for run := range results {
+		if runID == "" {
+			runID = run.ID
+		}
+		require.Equal(t, runID, run.ID)
+		require.Equal(t, "destroy:cf-mixed-g1", run.OperationKey)
+	}
+	require.Len(t, jobs.list("mixed"), 1)
+
+	reloaded := newJobsWithRecovery(runsDir, nil, false)
+	replayed := reloaded.startWithOptions("mixed", "destroy", runStartOptions{OperationKey: "destroy:cf-mixed-g1"})
+	require.Equal(t, runID, replayed.ID)
+	require.Len(t, reloaded.list("mixed"), 1)
+}
+
+func TestJobsOperationKeyIsScopedByTopologyAndOperation(t *testing.T) {
+	jobs := newJobsWithRecovery(t.TempDir(), nil, false)
+	first := jobs.startWithOptions("one", "destroy", runStartOptions{OperationKey: "same-key"})
+	otherTopology := jobs.startWithOptions("two", "destroy", runStartOptions{OperationKey: "same-key"})
+	otherOperation := jobs.startWithOptions("one", "apply", runStartOptions{OperationKey: "same-key"})
+	require.NotEqual(t, first.ID, otherTopology.ID)
+	require.NotEqual(t, first.ID, otherOperation.ID)
+}
+
+func TestValidateOperationKeyBounds(t *testing.T) {
+	require.NoError(t, validateOperationKey("destroy:cf-mixed-g1"))
+	for _, invalid := range []string{"", "contains space", "contains/slash", string(make([]byte, 129))} {
+		require.Error(t, validateOperationKey(invalid), invalid)
+	}
+}
 
 func TestJobsLoadCheckpointsMarksInterruptedRunRecoverable(t *testing.T) {
 	runsDir := t.TempDir()

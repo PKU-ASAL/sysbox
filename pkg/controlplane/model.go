@@ -67,29 +67,30 @@ type PlanFingerprint struct {
 }
 
 type Run struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id,omitempty"`
-	Workspace   string    `json:"workspace,omitempty"`
-	Topology    string    `json:"topology"`
-	Operation   string    `json:"operation,omitempty"`
-	Op          string    `json:"op,omitempty"`
-	Status      RunStatus `json:"status"`
-	Err         string    `json:"error,omitempty"`
-	ParentID    string    `json:"parent_id,omitempty"`
-	Revision    string    `json:"revision,omitempty"`
-	PlanID      string    `json:"plan_id,omitempty"`
-	Target      string    `json:"target,omitempty"`
-	AgentID     string    `json:"agent_id,omitempty"`
-	Recoverable bool      `json:"recoverable,omitempty"`
-	UnsafeState bool      `json:"unsafe_state,omitempty"`
-	Protocol    string    `json:"protocol,omitempty"`
-	LeaseOwner  string    `json:"lease_owner,omitempty"`
-	LeaseUntil  time.Time `json:"lease_until,omitempty"`
-	Attempt     int       `json:"attempt,omitempty"`
-	QueuedAt    time.Time `json:"queued_at,omitempty"`
-	AssignedAt  time.Time `json:"assigned_at,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
-	EndedAt     time.Time `json:"ended_at,omitempty"`
+	ID           string    `json:"id"`
+	ProjectID    string    `json:"project_id,omitempty"`
+	Workspace    string    `json:"workspace,omitempty"`
+	Topology     string    `json:"topology"`
+	Operation    string    `json:"operation,omitempty"`
+	Op           string    `json:"op,omitempty"`
+	Status       RunStatus `json:"status"`
+	Err          string    `json:"error,omitempty"`
+	ParentID     string    `json:"parent_id,omitempty"`
+	Revision     string    `json:"revision,omitempty"`
+	PlanID       string    `json:"plan_id,omitempty"`
+	Target       string    `json:"target,omitempty"`
+	OperationKey string    `json:"operation_key,omitempty"`
+	AgentID      string    `json:"agent_id,omitempty"`
+	Recoverable  bool      `json:"recoverable,omitempty"`
+	UnsafeState  bool      `json:"unsafe_state,omitempty"`
+	Protocol     string    `json:"protocol,omitempty"`
+	LeaseOwner   string    `json:"lease_owner,omitempty"`
+	LeaseUntil   time.Time `json:"lease_until,omitempty"`
+	Attempt      int       `json:"attempt,omitempty"`
+	QueuedAt     time.Time `json:"queued_at,omitempty"`
+	AssignedAt   time.Time `json:"assigned_at,omitempty"`
+	StartedAt    time.Time `json:"started_at"`
+	EndedAt      time.Time `json:"ended_at,omitempty"`
 }
 
 type RunCompletion struct {

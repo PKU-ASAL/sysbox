@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -33,12 +34,13 @@ type Jobs struct {
 }
 
 type runStartOptions struct {
-	ParentID    string
-	Revision    string
-	PlanID      string
-	Target      string
-	AgentID     string
-	UnsafeState bool
+	ParentID     string
+	Revision     string
+	PlanID       string
+	Target       string
+	AgentID      string
+	UnsafeState  bool
+	OperationKey string
 }
 
 func newJobs(runsDir string, store apiStore) *Jobs {
@@ -181,33 +183,49 @@ func (j *Jobs) start(topology, op string) *controlplane.Run {
 }
 
 func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *controlplane.Run {
+	run, _ := j.startWithResult(topology, op, opts)
+	return run
+}
+
+func (j *Jobs) startWithResult(topology, op string, opts runStartOptions) (*controlplane.Run, bool) {
 	now := time.Now()
+	runID := uuid.New().String()
+	if opts.OperationKey != "" {
+		digest := sha256.Sum256([]byte(topology + "\x00" + op + "\x00" + opts.OperationKey))
+		runID = fmt.Sprintf("op-%x", digest[:])
+	}
 	r := &controlplane.Run{
-		ID:          uuid.New().String(),
-		ProjectID:   "default",
-		Workspace:   topology,
-		Topology:    topology,
-		Op:          op,
-		Status:      controlplane.RunQueued,
-		ParentID:    opts.ParentID,
-		Revision:    opts.Revision,
-		PlanID:      opts.PlanID,
-		Target:      opts.Target,
-		AgentID:     opts.AgentID,
-		UnsafeState: opts.UnsafeState,
-		Protocol:    controlplane.AgentProtocolVersion,
-		LeaseOwner:  "sysbox-api",
-		QueuedAt:    now,
-		StartedAt:   now,
+		ID:           runID,
+		ProjectID:    "default",
+		Workspace:    topology,
+		Topology:     topology,
+		Op:           op,
+		Status:       controlplane.RunQueued,
+		ParentID:     opts.ParentID,
+		Revision:     opts.Revision,
+		PlanID:       opts.PlanID,
+		Target:       opts.Target,
+		OperationKey: opts.OperationKey,
+		AgentID:      opts.AgentID,
+		UnsafeState:  opts.UnsafeState,
+		Protocol:     controlplane.AgentProtocolVersion,
+		LeaseOwner:   "sysbox-api",
+		QueuedAt:     now,
+		StartedAt:    now,
 	}
 	normalizeRunProductFields(r)
 	r.LeaseOwner = fmt.Sprintf("sysbox-api:%s:%s", r.Op, r.ID)
 	j.mu.Lock()
+	if existing, ok := j.runs[r.ID]; ok && opts.OperationKey != "" {
+		snapshot := runRecord(*existing)
+		j.mu.Unlock()
+		return &snapshot, false
+	}
 	j.runs[r.ID] = r
 	j.mu.Unlock()
 	j.logs.Ensure(r.ID, false)
 	j.persist(r)
-	return r
+	return r, true
 }
 
 func (j *Jobs) assign(r *controlplane.Run, agentID string) {

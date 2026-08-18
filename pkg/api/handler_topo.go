@@ -377,7 +377,15 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, err := s.runs().StartDestroyWithOptions(r.Context(), topology, r.URL.Query().Get("allow_unsafe_state") == "true")
+	allowUnsafe := r.URL.Query().Get("allow_unsafe_state") == "true"
+	operationKey := r.Header.Get("Idempotency-Key")
+	var run *controlplane.Run
+	var err error
+	if operationKey == "" {
+		run, err = s.runs().StartDestroyWithOptions(r.Context(), topology, allowUnsafe)
+	} else {
+		run, err = s.runs().StartDestroyWithOperationKey(r.Context(), topology, allowUnsafe, operationKey)
+	}
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
 		return
