@@ -8,10 +8,107 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
+
+func (s *localAPIStore) LatestGuestAcceptance(_ context.Context, agentID string) (time.Time, time.Time, error) {
+	executions, err := readLocalObjects[storedGuestExecution](filepath.Join(s.runsDir, "_guest-executions", "*.json"))
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	files, err := readLocalObjects[storedGuestFileOperation](filepath.Join(s.runsDir, "_guest-file-operations", "*.json"))
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	var execAt, fileAt time.Time
+	for _, item := range executions {
+		if item.AgentID == agentID && item.Status == controlplane.GuestExecutionCompleted && item.ResultClass == controlplane.GuestExecutionResultClassExit && item.Err == "" && item.EndedAt.After(execAt) {
+			execAt = item.EndedAt
+		}
+	}
+	for _, item := range files {
+		if item.AgentID == agentID && item.Status == controlplane.GuestExecutionCompleted && item.Error == "" && item.EndedAt.After(fileAt) {
+			fileAt = item.EndedAt
+		}
+	}
+	return execAt, fileAt, nil
+}
+
+func (s *postgresAPIStore) LatestGuestAcceptance(ctx context.Context, agentID string) (time.Time, time.Time, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	defer conn.Close(ctx)
+	var execAt, fileAt *time.Time
+	err = conn.QueryRow(ctx, `
+SELECT
+  (SELECT max((data->>'ended_at')::timestamptz) FROM sysbox_guest_executions WHERE data->>'agent_id'=$1 AND data->>'status'='completed' AND data->>'result_class'='exit' AND coalesce(data->>'error','')=''),
+  (SELECT max((data->>'ended_at')::timestamptz) FROM sysbox_guest_file_operations WHERE data->>'agent_id'=$1 AND data->>'status'='completed' AND coalesce(data->>'error','')='')`, agentID).Scan(&execAt, &fileAt)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	var execValue, fileValue time.Time
+	if execAt != nil {
+		execValue = execAt.UTC()
+	}
+	if fileAt != nil {
+		fileValue = fileAt.UTC()
+	}
+	return execValue, fileValue, nil
+}
+
+func (s *sqliteAPIStore) LatestGuestAcceptance(ctx context.Context, agentID string) (time.Time, time.Time, error) {
+	db, err := s.open()
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	var execAt, fileAt time.Time
+	rows, err := db.QueryContext(ctx, `SELECT data FROM sysbox_guest_executions`)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			rows.Close()
+			return time.Time{}, time.Time{}, err
+		}
+		item, err := decodeStoredGuestExecution(raw)
+		if err != nil {
+			rows.Close()
+			return time.Time{}, time.Time{}, err
+		}
+		if item.AgentID == agentID && item.Status == controlplane.GuestExecutionCompleted && item.ResultClass == controlplane.GuestExecutionResultClassExit && item.Err == "" && item.EndedAt.After(execAt) {
+			execAt = item.EndedAt
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	rows, err = db.QueryContext(ctx, `SELECT data FROM sysbox_guest_file_operations`)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+		item, err := decodeGuestFileOperation(raw)
+		if err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+		if item.AgentID == agentID && item.Status == controlplane.GuestExecutionCompleted && item.Error == "" && item.EndedAt.After(fileAt) {
+			fileAt = item.EndedAt
+		}
+	}
+	return execAt.UTC(), fileAt.UTC(), rows.Err()
+}
 
 var guestExecutionCASMu sync.Mutex
 

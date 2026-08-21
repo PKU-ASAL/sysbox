@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,7 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 5
+const apiSchemaVersion = 6
 
 type apiMigration struct {
 	Version int
@@ -147,6 +148,16 @@ ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS attempt INTEGER NOT N
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`,
+	},
+	{
+		Version: 6,
+		Name:    "idempotent_run_dispatch",
+		SQL: `CREATE TABLE IF NOT EXISTS sysbox_run_requests (
+  id TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL,
+  run_id TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`,
 	},
 }
@@ -782,11 +793,14 @@ func getPostgresObject[T any](ctx context.Context, s *postgresAPIStore, table, w
 }
 
 func dsnWithoutSysboxQuery(raw string) string {
-	out := raw
-	if idx := strings.Index(out, "?"); idx >= 0 {
-		out = out[:idx]
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
 	}
-	return out
+	query := u.Query()
+	query.Del("topology")
+	u.RawQuery = query.Encode()
+	return u.String()
 }
 
 func markInterruptedRuns(runs []controlplane.Run) []controlplane.Run {

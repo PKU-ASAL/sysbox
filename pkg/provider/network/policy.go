@@ -41,20 +41,22 @@ func compileRuleset(spec driver.RulesetSpec, bindings map[string]string) (compil
 		Rules: make([]compiledRule, 0, len(normalized.Rules)),
 	}
 	for _, rule := range normalized.Rules {
-		compiled := compiledRule{Rule: rule}
-		if rule.InputAttachment != "" {
-			compiled.InputDevice, err = requireBinding(bindings, rule.InputAttachment)
-			if err != nil {
-				return compiledRuleset{}, err
+		for _, alternative := range expandRuleAlternatives(rule) {
+			compiled := compiledRule{Rule: alternative}
+			if rule.InputAttachment != "" {
+				compiled.InputDevice, err = requireBinding(bindings, rule.InputAttachment)
+				if err != nil {
+					return compiledRuleset{}, err
+				}
 			}
-		}
-		if rule.OutputAttachment != "" {
-			compiled.OutputDevice, err = requireBinding(bindings, rule.OutputAttachment)
-			if err != nil {
-				return compiledRuleset{}, err
+			if rule.OutputAttachment != "" {
+				compiled.OutputDevice, err = requireBinding(bindings, rule.OutputAttachment)
+				if err != nil {
+					return compiledRuleset{}, err
+				}
 			}
+			plan.Rules = append(plan.Rules, compiled)
 		}
-		plan.Rules = append(plan.Rules, compiled)
 	}
 	if normalized.NAT != nil {
 		source, err := requireBinding(bindings, normalized.NAT.SourceAttachment)
@@ -72,6 +74,44 @@ func compileRuleset(spec driver.RulesetSpec, bindings map[string]string) (compil
 		return compiledRuleset{}, err
 	}
 	return plan, nil
+}
+
+func expandRuleAlternatives(rule driver.PolicyRule) []driver.PolicyRule {
+	rules := []driver.PolicyRule{rule}
+	rules = expandStringAlternatives(rules, rule.SourceCIDRs, func(rule *driver.PolicyRule, value string) { rule.SourceCIDRs = []string{value} })
+	rules = expandStringAlternatives(rules, rule.DestinationCIDRs, func(rule *driver.PolicyRule, value string) { rule.DestinationCIDRs = []string{value} })
+	rules = expandPortAlternatives(rules, rule.SourcePorts, func(rule *driver.PolicyRule, value driver.PortRange) { rule.SourcePorts = []driver.PortRange{value} })
+	return expandPortAlternatives(rules, rule.DestinationPorts, func(rule *driver.PolicyRule, value driver.PortRange) { rule.DestinationPorts = []driver.PortRange{value} })
+}
+
+func expandStringAlternatives(rules []driver.PolicyRule, values []string, set func(*driver.PolicyRule, string)) []driver.PolicyRule {
+	if len(values) < 2 {
+		return rules
+	}
+	expanded := make([]driver.PolicyRule, 0, len(rules)*len(values))
+	for _, rule := range rules {
+		for _, value := range values {
+			alternative := rule
+			set(&alternative, value)
+			expanded = append(expanded, alternative)
+		}
+	}
+	return expanded
+}
+
+func expandPortAlternatives(rules []driver.PolicyRule, values []driver.PortRange, set func(*driver.PolicyRule, driver.PortRange)) []driver.PolicyRule {
+	if len(values) < 2 {
+		return rules
+	}
+	expanded := make([]driver.PolicyRule, 0, len(rules)*len(values))
+	for _, rule := range rules {
+		for _, value := range values {
+			alternative := rule
+			set(&alternative, value)
+			expanded = append(expanded, alternative)
+		}
+	}
+	return expanded
 }
 
 func requireBinding(bindings map[string]string, logical string) (string, error) {

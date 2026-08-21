@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -83,6 +84,7 @@ type portTestSubstrate struct {
 	resetApplyErr      error
 	nodeObservation    substrate.NodeObservation
 	nodeObserveCalls   int
+	destroyErr         error
 }
 
 func (s *portTestSubstrate) Name() string { return s.name }
@@ -114,7 +116,9 @@ func (s *portTestSubstrate) StartNode(context.Context, substrate.NodeHandle) err
 
 func (s *portTestSubstrate) StopNode(context.Context, substrate.NodeHandle) error { return nil }
 
-func (s *portTestSubstrate) DestroyNode(context.Context, substrate.NodeHandle) error { return nil }
+func (s *portTestSubstrate) DestroyNode(context.Context, substrate.NodeHandle) error {
+	return s.destroyErr
+}
 
 func (s *portTestSubstrate) Attach(context.Context, substrate.NodeHandle, driver.AttachmentRequest) (driver.AttachmentResult, error) {
 	s.lifecycle = append(s.lifecycle, "attach")
@@ -208,6 +212,20 @@ func TestDestroyNodeDeletesTypedAttachments(t *testing.T) {
 	require.NoError(t, exec.destroyNodeResource(context.Background(), resource))
 	require.Len(t, sub.deletedAttachments, 1)
 	require.JSONEq(t, `{"id":"opaque"}`, string(sub.deletedAttachments[0]))
+}
+
+func TestDestroyNodePreservesStateWhenProviderCleanupFails(t *testing.T) {
+	cleanupErr := errors.New("remove firecracker workdir")
+	sub := &portTestSubstrate{name: "delete-failure-test", destroyErr: cleanupErr}
+	registerPortTestDriver(t, sub)
+	resource := state.Resource{Address: address.Resource("sysbox_node", "worker"), Driver: sub.name, Attributes: map[string]any{"container_id": "node-id"}}
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(resource)
+	exec := NewExecutor(graph.New(), st)
+
+	err := exec.destroyNodeResource(context.Background(), resource)
+	require.ErrorIs(t, err, cleanupErr)
+	require.NotNil(t, st.FindResource(resource.Address), "failed cleanup must retain the provider handle for a retry")
 }
 
 func registerPortTestDriver(t *testing.T, sub *portTestSubstrate) {

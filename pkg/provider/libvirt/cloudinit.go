@@ -27,7 +27,8 @@ type noCloudRoute struct {
 }
 
 type noCloudUserData struct {
-	Users []noCloudUser `yaml:"users,omitempty"`
+	Users             []noCloudUser `yaml:"users,omitempty"`
+	SSHAuthorizedKeys []string      `yaml:"ssh_authorized_keys,omitempty"`
 }
 
 type noCloudUser struct {
@@ -56,7 +57,7 @@ func buildNoCloudUserData(user, authorizedKey string) ([]byte, error) {
 	if authorizedKey == "" {
 		return []byte("#cloud-config\n"), nil
 	}
-	data, err := yaml.Marshal(noCloudUserData{Users: []noCloudUser{{
+	data, err := yaml.Marshal(noCloudUserData{SSHAuthorizedKeys: []string{authorizedKey}, Users: []noCloudUser{{
 		Name: user, Shell: "/bin/bash", Sudo: "ALL=(ALL) NOPASSWD:ALL", SSHAuthorizedKeys: []string{authorizedKey},
 	}}})
 	if err != nil {

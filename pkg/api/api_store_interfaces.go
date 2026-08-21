@@ -18,6 +18,14 @@ type runStore interface {
 	SaveRun(ctx context.Context, run controlplane.Run) error
 	ClaimRun(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, bool, error)
 	RenewRunLease(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, bool, error)
+	GetRunDispatch(ctx context.Context, requestID, fingerprint string) (*controlplane.Run, bool, error)
+	CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error)
+}
+
+type RunDispatchRequest struct {
+	Run         controlplane.Run
+	Command     controlplane.AgentCommand
+	Fingerprint string
 }
 
 type checkpointStore interface {
@@ -90,6 +98,10 @@ type guestFileOperationPersistence interface {
 	CompareAndSwapGuestFileOperation(context.Context, controlplane.GuestFileOperation, int64) (bool, error)
 }
 
+type guestAcceptancePersistence interface {
+	LatestGuestAcceptance(context.Context, string) (time.Time, time.Time, error)
+}
+
 type apiStore interface {
 	schemaStore
 	runStore
@@ -105,4 +117,5 @@ type apiStore interface {
 	inventoryStore
 	guestExecutionPersistence
 	guestFileOperationPersistence
+	guestAcceptancePersistence
 }

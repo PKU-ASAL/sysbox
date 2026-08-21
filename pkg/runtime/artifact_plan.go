@@ -2,12 +2,13 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	goruntime "runtime"
 
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -24,22 +25,12 @@ func ResolvePlanArtifactDigests(ctx context.Context, topology *graph.Graph) (map
 			}
 			kind := substrate.ArtifactKind(cfg.Kind)
 			if kind == substrate.ArtifactOCI {
-				driverName, err := resolveSubstrateRef(cfg.Substrate)
-				if err != nil {
-					return nil, err
-				}
-				artifactDriver, err := driver.DefaultRegistry.RequireArtifact(driverName)
-				if err != nil {
-					return nil, fmt.Errorf("%s: %w", node.Address, err)
-				}
-				handle, err := artifactDriver.ResolveImage(ctx, substrate.ArtifactSource{Kind: kind, Source: cfg.Source, ResolvedSource: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamily(cfg.GuestFamily), Size: cfg.Size})
-				if err != nil {
-					return nil, fmt.Errorf("resolve plan artifact %s: %w", node.Address, err)
-				}
-				if err := handle.Validate(); err != nil {
-					return nil, fmt.Errorf("resolve plan artifact %s: %w", node.Address, err)
-				}
-				digests[node.Address.String()] = handle.Identity.Digest
+				// Planning runs in the unprivileged control plane. Fingerprint the
+				// immutable declaration here; the Agent resolves/pulls the OCI image
+				// during apply and records its concrete identity in state.
+				declaration := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s", kind, resolvedSource, cfg.SHA256, cfg.Architecture, cfg.GuestFamily, cfg.Size)
+				sum := sha256.Sum256([]byte(declaration))
+				digests[node.Address.String()] = "sha256:" + hex.EncodeToString(sum[:])
 				continue
 			}
 			resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: kind, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamily(cfg.GuestFamily)})

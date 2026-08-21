@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"strings"
 
 	"github.com/docker/docker/errdefs"
+	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netns"
 
 	"github.com/oslab/sysbox/pkg/driver"
 	networkprovider "github.com/oslab/sysbox/pkg/provider/network"
-	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type dockerPolicyTarget struct {
@@ -38,18 +41,22 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	for logical, prefixes := range state.AttachmentIPs {
-		if state.Bindings[logical] != "" {
-			continue
-		}
-		device, resolveErr := s.resolveAttachmentDevice(ctx, substrate.NodeHandle{ID: state.ContainerID}, driver.AttachmentRequest{Name: logical, IPPrefixes: prefixes}, driver.AttachmentResult{})
-		if resolveErr != nil {
-			return driver.RulesetObservation{}, resolveErr
-		}
-		state.Bindings[logical] = device
-	}
 	var observation driver.RulesetObservation
 	err = s.withContainerNetNS(ctx, state.ContainerID, func(fd int) error {
+		interfaces, listErr := policyInterfacesInNetNSFD(fd)
+		if listErr != nil {
+			return listErr
+		}
+		for logical, prefixes := range state.AttachmentIPs {
+			if state.Bindings[logical] != "" || len(prefixes) == 0 {
+				continue
+			}
+			device, resolveErr := resolvePolicyDevice(prefixes[0], interfaces)
+			if resolveErr != nil {
+				return fmt.Errorf("resolve attachment %q: %w", logical, resolveErr)
+			}
+			state.Bindings[logical] = device
+		}
 		var applyErr error
 		observation, applyErr = networkprovider.ApplyRulesetInNetNSFD(fd, spec, state.Bindings)
 		return applyErr
@@ -58,6 +65,54 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "apply ruleset", err)
 	}
 	return observation, nil
+}
+
+type policyInterface struct {
+	Name      string
+	Addresses []*net.IPNet
+}
+
+func policyInterfacesInNetNSFD(fd int) ([]policyInterface, error) {
+	handle, err := netlink.NewHandleAt(netns.NsHandle(fd))
+	if err != nil {
+		return nil, fmt.Errorf("open policy network namespace: %w", err)
+	}
+	defer handle.Delete()
+	links, err := handle.LinkList()
+	if err != nil {
+		return nil, fmt.Errorf("list policy interfaces: %w", err)
+	}
+	interfaces := make([]policyInterface, 0, len(links))
+	for _, link := range links {
+		addresses, err := handle.AddrList(link, netlink.FAMILY_ALL)
+		if err != nil {
+			return nil, fmt.Errorf("list policy interface %s addresses: %w", link.Attrs().Name, err)
+		}
+		item := policyInterface{Name: link.Attrs().Name, Addresses: make([]*net.IPNet, 0, len(addresses))}
+		for _, address := range addresses {
+			if address.IPNet != nil {
+				item.Addresses = append(item.Addresses, address.IPNet)
+			}
+		}
+		interfaces = append(interfaces, item)
+	}
+	return interfaces, nil
+}
+
+func resolvePolicyDevice(prefix string, interfaces []policyInterface) (string, error) {
+	address := strings.SplitN(prefix, "/", 2)[0]
+	ip := net.ParseIP(address)
+	if ip == nil {
+		return "", fmt.Errorf("invalid attachment IP %q", address)
+	}
+	for _, item := range interfaces {
+		for _, candidate := range item.Addresses {
+			if candidate != nil && candidate.IP.Equal(ip) {
+				return item.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no interface has IP %s", address)
 }
 
 func (s *Substrate) ObserveRuleset(ctx context.Context, target driver.PolicyTarget, owner string) (driver.RulesetObservation, error) {

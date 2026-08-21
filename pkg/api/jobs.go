@@ -188,6 +188,21 @@ func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *cont
 }
 
 func (j *Jobs) startWithResult(topology, op string, opts runStartOptions) (*controlplane.Run, bool) {
+	r := newRun(topology, op, opts)
+	j.mu.Lock()
+	if existing, ok := j.runs[r.ID]; ok && opts.OperationKey != "" {
+		snapshot := runRecord(*existing)
+		j.mu.Unlock()
+		return &snapshot, false
+	}
+	j.runs[r.ID] = r
+	j.mu.Unlock()
+	j.logs.Ensure(r.ID, false)
+	j.persist(r)
+	return r, true
+}
+
+func newRun(topology, op string, opts runStartOptions) *controlplane.Run {
 	now := time.Now()
 	runID := uuid.New().String()
 	if opts.OperationKey != "" {
@@ -215,17 +230,18 @@ func (j *Jobs) startWithResult(topology, op string, opts runStartOptions) (*cont
 	}
 	normalizeRunProductFields(r)
 	r.LeaseOwner = fmt.Sprintf("sysbox-api:%s:%s", r.Op, r.ID)
-	j.mu.Lock()
-	if existing, ok := j.runs[r.ID]; ok && opts.OperationKey != "" {
-		snapshot := runRecord(*existing)
-		j.mu.Unlock()
-		return &snapshot, false
+	return r
+}
+
+func (j *Jobs) remember(r *controlplane.Run) {
+	if r == nil {
+		return
 	}
-	j.runs[r.ID] = r
+	snapshot := runRecord(*r)
+	j.mu.Lock()
+	j.runs[r.ID] = &snapshot
 	j.mu.Unlock()
 	j.logs.Ensure(r.ID, false)
-	j.persist(r)
-	return r, true
 }
 
 func (j *Jobs) assign(r *controlplane.Run, agentID string) {

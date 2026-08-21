@@ -18,6 +18,7 @@ func TestBuildNoCloudUserDataIncludesAuthorizedKey(t *testing.T) {
 	require.Contains(t, string(data), "#cloud-config")
 	require.Contains(t, string(data), "name: sysbox")
 	require.Contains(t, string(data), "ssh-ed25519 AAAATEST matrix")
+	require.Contains(t, string(data), "ssh_authorized_keys:")
 	require.Contains(t, string(data), "NOPASSWD")
 }
 

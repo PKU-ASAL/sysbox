@@ -1,11 +1,15 @@
 package docker
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/require"
 
@@ -37,6 +41,24 @@ func TestDockerProviderStateRoundTripsEffectiveLaunch(t *testing.T) {
 	restored, err := sub.UnmarshalProviderState(raw)
 	require.NoError(t, err)
 	require.Equal(t, want, restored)
+}
+
+func TestDestroyNodeTreatsMissingContainerAsDestroyed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodDelete, r.Method)
+		require.Equal(t, "/v1.47/containers/missing-container", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"message":"No such container: missing-container"}`, http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
+	cli, err := client.NewClientWithOpts(client.WithHost(server.URL), client.WithVersion("1.47"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, cli.Close()) })
+	sub := &Substrate{cli: cli}
+
+	err = sub.DestroyNode(context.Background(), substrate.NodeHandle{ID: "missing-container"})
+	require.NoError(t, err)
 }
 
 func TestDockerPortConfigHostExposure(t *testing.T) {

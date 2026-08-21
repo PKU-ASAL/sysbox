@@ -84,7 +84,10 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		_, _ = exec.CommandContext(ctx, "virsh", "undefine", spec.Name).CombinedOutput()
 	}
 
-	vmDir, err := os.MkdirTemp("", "sysbox-lv-"+spec.Name+"-*")
+	if err := os.MkdirAll(s.vmDirRoot(), 0o755); err != nil {
+		return substrate.NodeHandle{}, fmt.Errorf("libvirt: create workdir: %w", err)
+	}
+	vmDir, err := os.MkdirTemp(s.vmDirRoot(), "sysbox-lv-"+spec.Name+"-*")
 	if err != nil {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: create vm dir: %w", err)
 	}
@@ -99,7 +102,12 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	}
 
 	diskPath := filepath.Join(vmDir, "disk.qcow2")
-	qiArgs := []string{"create", "-f", "qcow2", "-b", baseImage, "-F", "qcow2", diskPath}
+	stagedBase := filepath.Join(vmDir, "base.qcow2")
+	if err := stageBaseImage(ctx, baseImage, stagedBase); err != nil {
+		_ = os.RemoveAll(vmDir)
+		return substrate.NodeHandle{}, err
+	}
+	qiArgs := []string{"create", "-f", "qcow2", "-b", stagedBase, "-F", "qcow2", diskPath}
 	if pc.DiskSize != "" {
 		qiArgs = append(qiArgs, pc.DiskSize)
 	}
@@ -130,11 +138,68 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		SSHAuthorizedKey: pc.SSHAuthorizedKey,
 		NetworkInit:      pc.NetworkInit,
 	}
+	if err := ensureCloudInitSSHAccess(ctx, hs); err != nil {
+		_ = os.RemoveAll(vmDir)
+		return substrate.NodeHandle{}, err
+	}
 	return substrate.NodeHandle{
 		ID:       hs.DomainUUID,
 		Provider: hs,
 		Conn:     substrate.ConnInfo{Kind: substrate.ConnKindSSH},
 	}, nil
+}
+
+func ensureCloudInitSSHAccess(ctx context.Context, hs *HandleState) error {
+	if hs == nil || hs.NetworkInit != substrate.GuestNetworkInitCloudInit || hs.SSHAuthorizedKey != "" {
+		return nil
+	}
+	if hs.SSHKey != "" {
+		out, err := exec.CommandContext(ctx, "ssh-keygen", "-y", "-f", hs.SSHKey).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("libvirt: derive SSH public key: %w\n%s", err, out)
+		}
+		hs.SSHAuthorizedKey = strings.TrimSpace(string(out))
+		return nil
+	}
+	privateKey := filepath.Join(hs.VMDir, "guest-ssh-key")
+	out, err := exec.CommandContext(ctx, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "sysbox@"+hs.DomainName, "-f", privateKey).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("libvirt: generate ephemeral SSH key: %w\n%s", err, out)
+	}
+	if err := os.Chmod(privateKey, 0o600); err != nil {
+		return fmt.Errorf("libvirt: protect ephemeral SSH key: %w", err)
+	}
+	publicKey, err := os.ReadFile(privateKey + ".pub")
+	if err != nil {
+		return fmt.Errorf("libvirt: read ephemeral SSH public key: %w", err)
+	}
+	hs.SSHKey = privateKey
+	hs.SSHAuthorizedKey = strings.TrimSpace(string(publicKey))
+	return nil
+}
+
+func stageBaseImage(ctx context.Context, source, destination string) error {
+	if _, err := os.Stat(destination); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("libvirt: inspect staged base image: %w", err)
+	}
+	temporary := destination + ".tmp"
+	_ = os.Remove(temporary)
+	out, err := exec.CommandContext(ctx, "qemu-img", "convert", "-f", "qcow2", "-O", "qcow2", source, temporary).CombinedOutput()
+	if err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("libvirt: stage base image: %w\n%s", err, out)
+	}
+	if err := os.Chmod(temporary, 0o644); err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("libvirt: make staged base accessible: %w", err)
+	}
+	if err := os.Rename(temporary, destination); err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("libvirt: publish staged base image: %w", err)
+	}
+	return nil
 }
 
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
@@ -311,10 +376,18 @@ func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (su
 func (s *Substrate) PrepareHandle(_ context.Context, h *substrate.NodeHandle, providerConfig any, _ substrate.StateReader) error {
 	hs := hsFrom(*h)
 	if cfg, ok := providerConfig.(*Config); ok && cfg != nil {
-		hs.SSHUser = cfg.SSHUser
-		hs.SSHPass = cfg.SSHPass
-		hs.SSHKey = cfg.SSHKey
-		hs.SSHAuthorizedKey = cfg.SSHAuthorizedKey
+		if cfg.SSHUser != "" {
+			hs.SSHUser = cfg.SSHUser
+		}
+		if cfg.SSHPass != "" {
+			hs.SSHPass = cfg.SSHPass
+		}
+		if cfg.SSHKey != "" {
+			hs.SSHKey = cfg.SSHKey
+		}
+		if cfg.SSHAuthorizedKey != "" {
+			hs.SSHAuthorizedKey = cfg.SSHAuthorizedKey
+		}
 	}
 	if hs.SSHIP == "" {
 		return nil // SSH IP not yet known; provisioners will configure it

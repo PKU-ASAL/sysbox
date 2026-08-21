@@ -217,11 +217,6 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	plan, err = runtime.NewExecutor(g, st).Refresh(r.Context(), plan)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err)
-		return
-	}
 	writeJSON(w, http.StatusOK, planJSON(plan))
 }
 

@@ -43,11 +43,11 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 	if current.DomainName == "" || current.DomainName != request.Node.Name {
 		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset domain identity mismatch")
 	}
-	if err := validateOwnedVMDir(current.DomainName, request.Current.ID, current.VMDir, current.DiskPath); err != nil {
+	if err := validateOwnedVMDirInRoot(s.vmDirRoot(), current.DomainName, request.Current.ID, current.VMDir, current.DiskPath); err != nil {
 		return substrate.ResetHandle{}, err
 	}
 	newDomainUUID := uuid.NewString()
-	newVMDir := filepath.Join(os.TempDir(), "sysbox-lv-"+request.Node.Name+"-reset-"+newDomainUUID)
+	newVMDir := filepath.Join(s.vmDirRoot(), "sysbox-lv-"+request.Node.Name+"-reset-"+newDomainUUID)
 	state := &resetHandleState{
 		Version: libvirtResetHandleVersion, DomainName: request.Node.Name,
 		OldDomainUUID: request.Current.ID, OldVMDir: current.VMDir,
@@ -64,7 +64,7 @@ func (s *Substrate) DestroyReset(ctx context.Context, handle substrate.ResetHand
 	}
 	if state.OldVMDir != "" {
 		if _, statErr := os.Stat(state.OldVMDir); statErr == nil {
-			if err := validateOwnedVMDir(state.DomainName, state.OldDomainUUID, state.OldVMDir, filepath.Join(state.OldVMDir, "disk.qcow2")); err != nil {
+			if err := validateOwnedVMDirInRoot(s.vmDirRoot(), state.DomainName, state.OldDomainUUID, state.OldVMDir, filepath.Join(state.OldVMDir, "disk.qcow2")); err != nil {
 				return err
 			}
 		} else if !os.IsNotExist(statErr) {
@@ -118,14 +118,18 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt reset baseline changed: %w", err)
 	}
 	diskPath := filepath.Join(state.NewVMDir, "disk.qcow2")
+	stagedBase := filepath.Join(state.NewVMDir, "base.qcow2")
 	if err := os.MkdirAll(state.NewVMDir, 0o755); err != nil {
 		return substrate.NodeHandle{}, err
 	}
 	if err := ensureVMDirOwnership(state.NewVMDir, state.DomainName, state.NewDomainUUID); err != nil {
 		return substrate.NodeHandle{}, err
 	}
+	if err := stageBaseImage(ctx, state.BaselinePath, stagedBase); err != nil {
+		return substrate.NodeHandle{}, err
+	}
 	if _, err := os.Stat(diskPath); os.IsNotExist(err) {
-		args := []string{"create", "-f", "qcow2", "-b", state.BaselinePath, "-F", "qcow2", diskPath}
+		args := []string{"create", "-f", "qcow2", "-b", stagedBase, "-F", "qcow2", diskPath}
 		if cfg, ok := request.Node.ProviderConfig.(*Config); ok && cfg != nil && cfg.DiskSize != "" {
 			args = append(args, cfg.DiskSize)
 		}
@@ -138,11 +142,14 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 	} else if err != nil {
 		return substrate.NodeHandle{}, err
 	}
-	if err := validateResetOverlay(ctx, diskPath, state.BaselinePath); err != nil {
+	if err := validateResetOverlay(ctx, diskPath, stagedBase); err != nil {
 		return substrate.NodeHandle{}, err
 	}
 	hs, err := resetLibvirtHandleState(request, state, diskPath)
 	if err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	if err := ensureCloudInitSSHAccess(ctx, hs); err != nil {
 		return substrate.NodeHandle{}, err
 	}
 	return substrate.NodeHandle{ID: state.NewDomainUUID, Provider: hs, Conn: substrate.ConnInfo{Kind: substrate.ConnKindSSH}}, nil
@@ -188,7 +195,7 @@ func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHand
 	if err := json.Unmarshal(out, &info); err != nil {
 		return observation, fmt.Errorf("libvirt reset decode overlay info: %w", err)
 	}
-	if filepath.Clean(info.BackingFilename) != filepath.Clean(state.BaselinePath) {
+	if filepath.Clean(info.BackingFilename) != filepath.Join(filepath.Clean(state.NewVMDir), "base.qcow2") {
 		observation.Reason = "replacement overlay backing file does not match baseline"
 		return observation, nil
 	}
@@ -217,7 +224,7 @@ func (s *Substrate) CleanupReset(_ context.Context, handle substrate.ResetHandle
 	} else if err != nil {
 		return err
 	}
-	if err := validateOwnedVMDir(state.DomainName, state.OldDomainUUID, state.OldVMDir, filepath.Join(state.OldVMDir, "disk.qcow2")); err != nil {
+	if err := validateOwnedVMDirInRoot(s.vmDirRoot(), state.DomainName, state.OldDomainUUID, state.OldVMDir, filepath.Join(state.OldVMDir, "disk.qcow2")); err != nil {
 		return err
 	}
 	return os.RemoveAll(state.OldVMDir)
@@ -300,12 +307,16 @@ func ensureVMDirOwnership(vmDir, domainName, domainUUID string) error {
 }
 
 func validateOwnedVMDir(domainName, domainUUID, vmDir, diskPath string) error {
+	return validateOwnedVMDirInRoot(os.TempDir(), domainName, domainUUID, vmDir, diskPath)
+}
+
+func validateOwnedVMDirInRoot(root, domainName, domainUUID, vmDir, diskPath string) error {
 	if vmDir == "" {
 		return nil
 	}
 	cleanDir := filepath.Clean(vmDir)
 	prefix := "sysbox-lv-" + domainName + "-"
-	if filepath.Dir(cleanDir) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(cleanDir), prefix) {
+	if filepath.Dir(cleanDir) != filepath.Clean(root) || !strings.HasPrefix(filepath.Base(cleanDir), prefix) {
 		return fmt.Errorf("libvirt reset refuses unowned VM directory %q", vmDir)
 	}
 	if diskPath != "" && filepath.Dir(filepath.Clean(diskPath)) != cleanDir {

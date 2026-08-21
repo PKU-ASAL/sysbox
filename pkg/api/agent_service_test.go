@@ -76,6 +76,37 @@ func TestAgentServiceRecordCommandEventUpdatesCommand(t *testing.T) {
 	require.Len(t, registry.ListCommandEvents("host-a"), 1)
 }
 
+func TestAgentServiceReconcilesStalePendingCommandFromGuestOperation(t *testing.T) {
+	svc, store, _, _ := newTestAgentService(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	execution := controlplane.GuestExecution{ID: "exec-1", CommandID: "cmd-1", Version: 1, AgentID: "host-a", Topology: "lab", Node: "web", Status: controlplane.GuestExecutionCompleted, CreatedAt: now, EndedAt: now}
+	require.NoError(t, store.SaveGuestExecution(ctx, execution))
+	command := controlplane.AgentCommand{ID: "cmd-1", AgentID: "host-a", Type: "guest_execution", Status: controlplane.AgentCommandStatusDelivered, Execution: &execution, CreatedAt: now}
+	require.NoError(t, store.SaveAgentCommand(ctx, command))
+
+	reconciled, terminal := svc.ReconcileCommandState(ctx, command)
+	require.True(t, terminal)
+	require.Equal(t, controlplane.AgentCommandStatusCompleted, reconciled.Status)
+	require.False(t, reconciled.EndedAt.IsZero())
+
+	stored, err := svc.FindCommand(ctx, "host-a", "cmd-1")
+	require.NoError(t, err)
+	require.Equal(t, controlplane.AgentCommandStatusCompleted, stored.Status)
+}
+
+func TestAgentServiceLeavesLiveGuestCommandPending(t *testing.T) {
+	svc, store, _, _ := newTestAgentService(t)
+	ctx := context.Background()
+	execution := controlplane.GuestExecution{ID: "exec-live", CommandID: "cmd-live", Version: 1, AgentID: "host-a", Topology: "lab", Node: "web", Status: controlplane.GuestExecutionQueued, CreatedAt: time.Now().UTC()}
+	require.NoError(t, store.SaveGuestExecution(ctx, execution))
+	command := controlplane.AgentCommand{ID: "cmd-live", AgentID: "host-a", Type: "guest_execution", Status: controlplane.AgentCommandStatusDelivered, Execution: &execution}
+
+	reconciled, terminal := svc.ReconcileCommandState(ctx, command)
+	require.False(t, terminal)
+	require.Equal(t, controlplane.AgentCommandStatusDelivered, reconciled.Status)
+}
+
 func TestAgentServiceCompleteRunStoresProjection(t *testing.T) {
 	svc, _, registry, jobs := newTestAgentService(t)
 	run := jobs.start("mixed", "apply")

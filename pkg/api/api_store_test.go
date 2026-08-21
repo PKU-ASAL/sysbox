@@ -61,6 +61,33 @@ func TestSQLiteAgentCommandRoundTripsGuestFilePut(t *testing.T) {
 	require.Equal(t, want.FilePut, got[0].FilePut)
 }
 
+func TestAgentCommandStoresRejectStaleStatusRegression(t *testing.T) {
+	stores := map[string]apiStore{
+		"local":  &localAPIStore{runsDir: t.TempDir()},
+		"sqlite": &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()},
+	}
+	for name, store := range stores {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			terminal := controlplane.AgentCommand{ID: "cmd-terminal", AgentID: "host-a", Type: "run_assigned", Status: controlplane.AgentCommandStatusCompleted, EndedAt: time.Now().UTC()}
+			require.NoError(t, store.SaveAgentCommand(ctx, terminal))
+
+			stale := terminal
+			stale.Status = controlplane.AgentCommandStatusDelivered
+			stale.EndedAt = time.Time{}
+			require.NoError(t, store.SaveAgentCommand(ctx, stale))
+			stale.Status = controlplane.AgentCommandStatusFailed
+			require.NoError(t, store.SaveAgentCommand(ctx, stale))
+
+			commands, err := store.ListAgentCommands(ctx, "host-a")
+			require.NoError(t, err)
+			require.Len(t, commands, 1)
+			require.Equal(t, controlplane.AgentCommandStatusCompleted, commands[0].Status)
+			require.False(t, commands[0].EndedAt.IsZero())
+		})
+	}
+}
+
 func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	ctx := context.Background()
@@ -100,6 +127,32 @@ func TestAPIMigrationsMatchSchemaVersion(t *testing.T) {
 		seen[migration.Version] = true
 	}
 	require.Equal(t, apiSchemaVersion, apiMigrations[len(apiMigrations)-1].Version)
+}
+
+func TestDSNWithoutSysboxQueryPreservesPostgresConnectionOptions(t *testing.T) {
+	got := dsnWithoutSysboxQuery("postgres://user:pass@localhost/sysbox?sslmode=disable&search_path=isolated&topology=lab")
+	require.Contains(t, got, "sslmode=disable")
+	require.Contains(t, got, "search_path=isolated")
+	require.NotContains(t, got, "topology=")
+}
+
+func TestSQLiteRunDispatchRollsBackRunWhenCommandInsertFails(t *testing.T) {
+	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	ctx := context.Background()
+	require.NoError(t, store.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "run-conflict", AgentID: "host-a", Type: "existing", Status: controlplane.AgentCommandStatusQueued}))
+	run := controlplane.Run{ID: "op-rollback", Topology: "lab", Operation: "destroy", Op: "destroy", Status: controlplane.RunAssigned, AgentID: "host-a"}
+	_, _, err := store.CreateRunDispatch(ctx, RunDispatchRequest{
+		Run:         run,
+		Fingerprint: "fingerprint-rollback",
+		Command:     controlplane.AgentCommand{ID: "run-conflict", AgentID: "host-a", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued},
+	})
+	require.Error(t, err)
+	got, found, err := store.GetRunDispatch(ctx, run.ID, "fingerprint-rollback")
+	require.NoError(t, err)
+	require.False(t, found)
+	require.Nil(t, got)
+	_, err = store.GetRun(ctx, run.ID)
+	require.Error(t, err)
 }
 
 func TestLocalAPIStorePersistsAgentAndClaimLease(t *testing.T) {

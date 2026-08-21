@@ -35,6 +35,8 @@ type Options struct {
 	RunRenewInterval                 time.Duration
 	RunRenewTTL                      time.Duration
 	Policy                           config.AgentPolicyConfig
+	CapacityPath                     string
+	ArtifactPaths                    []string
 	ReportGuestExecutionCompleteFunc func(context.Context, string, controlplane.GuestExecutionCompletion) error
 	ReportGuestFileStartFunc         func(context.Context, string) error
 	ReportGuestFileCompleteFunc      func(context.Context, string, controlplane.GuestFileOperationCompletion) error

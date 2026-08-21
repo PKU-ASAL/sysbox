@@ -110,11 +110,11 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, src,
 		if err := vc.CopyFile(ctx, src, tmp); err != nil {
 			return err
 		}
-		result, err := s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "chmod", Args: []string{fmt.Sprintf("%04o", mode), tmp}})
+		result, err := s.ExecInNode(ctx, h, guestFileInstallRequest("chmod", fmt.Sprintf("%04o", mode), tmp))
 		if err != nil || result.ExitCode != 0 {
 			return fmt.Errorf("set guest file mode")
 		}
-		result, err = s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "mv", Args: []string{"-f", tmp, dst}})
+		result, err = s.ExecInNode(ctx, h, guestFileInstallRequest("mv", "-f", tmp, dst))
 		if err != nil || result.ExitCode != 0 {
 			return fmt.Errorf("atomic guest file rename")
 		}
@@ -123,15 +123,19 @@ func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, src,
 	if err := s.copyToNodeSSH(ctx, h, src, tmp); err != nil {
 		return err
 	}
-	result, err := s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "chmod", Args: []string{fmt.Sprintf("%04o", mode), tmp}})
+	result, err := s.ExecInNode(ctx, h, guestFileInstallRequest("chmod", fmt.Sprintf("%04o", mode), tmp))
 	if err != nil || result.ExitCode != 0 {
 		return fmt.Errorf("set guest file mode")
 	}
-	result, err = s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "mv", Args: []string{"-f", tmp, dst}})
+	result, err = s.ExecInNode(ctx, h, guestFileInstallRequest("mv", "-f", tmp, dst))
 	if err != nil || result.ExitCode != 0 {
 		return fmt.Errorf("atomic guest file rename")
 	}
 	return nil
+}
+
+func guestFileInstallRequest(program string, args ...string) substrate.ExecRequest {
+	return substrate.ExecRequest{Program: program, Args: args, Shell: substrate.ShellNone}
 }
 
 func (s *Substrate) copyToNodeSSH(ctx context.Context, h substrate.NodeHandle, src, dst string) error {

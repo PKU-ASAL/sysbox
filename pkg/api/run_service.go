@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
@@ -161,6 +163,9 @@ func (s *RunService) StartDestroyWithOperationKey(ctx context.Context, topology 
 }
 
 func (s *RunService) startDestroy(ctx context.Context, topology string, allowUnsafe bool, operationKey string) (*controlplane.Run, error) {
+	if operationKey != "" {
+		return s.startIdempotentDestroy(ctx, topology, allowUnsafe, operationKey)
+	}
 	run, created := s.jobs.startWithResult(topology, "destroy", runStartOptions{UnsafeState: allowUnsafe, OperationKey: operationKey})
 	if !created {
 		return run, nil
@@ -169,6 +174,50 @@ func (s *RunService) startDestroy(ctx context.Context, topology string, allowUns
 		return nil, err
 	}
 	return run, nil
+}
+
+func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string, allowUnsafe bool, operationKey string) (*controlplane.Run, error) {
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("topology=%s\noperation=destroy\nallow_unsafe_state=%t\n", topology, allowUnsafe))))
+	run := newRun(topology, "destroy", runStartOptions{UnsafeState: allowUnsafe, OperationKey: operationKey})
+	run.RequestFingerprint = fingerprint
+	existing, found, err := s.jobs.store.GetRunDispatch(ctx, run.ID, fingerprint)
+	if err != nil {
+		if errors.Is(err, errIdempotencyConflict) {
+			return nil, runError(runServiceConflict, err)
+		}
+		return nil, runError(runServiceInternal, err)
+	}
+	if found {
+		s.jobs.remember(existing)
+		return existing, nil
+	}
+	required, err := s.requiredForTopo(s.hclFile(topology))
+	if err != nil {
+		return nil, runError(runServiceBadRequest, err)
+	}
+	agent, err := s.scheduler.SelectAgent(ctx, required, "")
+	if err != nil {
+		return nil, runError(runServiceConflict, err)
+	}
+	run.MarkAssigned(agent.ID, time.Now().UTC())
+	command := controlplaneRunAssignedCommand(run)
+	command.ID = "run-" + run.ID
+	command.AgentID = agent.ID
+	command.Status = controlplane.AgentCommandStatusQueued
+	command.Protocol = controlplane.AgentProtocolVersion
+	command.CreatedAt = time.Now().UTC()
+	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint})
+	if err != nil {
+		if errors.Is(err, errIdempotencyConflict) {
+			return nil, runError(runServiceConflict, err)
+		}
+		return nil, runError(runServiceInternal, err)
+	}
+	s.jobs.remember(stored)
+	if created && s.scheduler.agents.registry != nil {
+		_ = s.scheduler.agents.registry.PublishCommand(command.AgentID, command)
+	}
+	return stored, nil
 }
 
 func (s *RunService) Resume(ctx context.Context, runID string) (*controlplane.Run, *controlplane.Run, error) {

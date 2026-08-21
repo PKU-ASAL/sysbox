@@ -16,8 +16,9 @@ import (
 func TestLibvirtResetCreatesIdempotentOverlayWithPinnedBackingAndUUID(t *testing.T) {
 	bin := t.TempDir()
 	writeExecutable(t, filepath.Join(bin, "qemu-img"), `#!/bin/sh
+if [ "$1" = "convert" ]; then touch "$7"; exit 0; fi
 if [ "$1" = "create" ]; then touch "$8"; exit 0; fi
-if [ "$1" = "info" ]; then printf '{"backing-filename":"%s"}\n' "$SYSBOX_TEST_BASELINE"; exit 0; fi
+if [ "$1" = "info" ]; then printf '{"backing-filename":"%s"}\n' "$SYSBOX_TEST_STAGED_BASE"; exit 0; fi
 exit 1
 `)
 	writeExecutable(t, filepath.Join(bin, "virsh"), `#!/bin/sh
@@ -32,6 +33,7 @@ exit 1
 	vmDir, err := os.MkdirTemp("", "sysbox-lv-web-reset-*")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(vmDir) })
+	t.Setenv("SYSBOX_TEST_STAGED_BASE", filepath.Join(vmDir, "base.qcow2"))
 	baselineBytes := []byte("immutable")
 	baseline := substrate.ArtifactIdentity{Kind: substrate.ArtifactQCow2, Source: baselinePath, Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(baselineBytes)), Architecture: "amd64", GuestFamily: substrate.GuestFamilyLinux}
 	request := substrate.ResetRequest{Node: substrate.NodeSpec{Name: "web", Image: substrate.ArtifactHandle{ID: baselinePath, Identity: baseline}, ProviderConfig: &Config{VCPUs: 2, Memory: "1024", MachineType: "q35", SSHUser: "root", SSHPass: "super-secret", NetworkInit: substrate.GuestNetworkInitPreconfigured}}, Baseline: baseline}
@@ -41,6 +43,7 @@ exit 1
 	created, err := sub.ApplyReset(context.Background(), handle)
 	require.NoError(t, err)
 	require.Equal(t, "11111111-2222-4333-8444-555555555555", created.ID)
+	require.FileExists(t, filepath.Join(vmDir, "base.qcow2"))
 	firstInfo, err := os.Stat(filepath.Join(vmDir, "disk.qcow2"))
 	require.NoError(t, err)
 	_, err = sub.ApplyReset(context.Background(), handle)

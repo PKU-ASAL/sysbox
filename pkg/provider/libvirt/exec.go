@@ -37,21 +37,19 @@ func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle,
 	if err := conn.CopyFile(ctx, src, tmp); err != nil {
 		return err
 	}
-	result, err := conn.Exec(ctx, substrate.ExecRequest{
-		Program: "chmod",
-		Args:    []string{fmt.Sprintf("%04o", mode), tmp},
-	}, io.Discard, io.Discard)
+	result, err := conn.Exec(ctx, guestFileInstallRequest("chmod", fmt.Sprintf("%04o", mode), tmp), io.Discard, io.Discard)
 	if err != nil || result.ExitCode != 0 {
 		return fmt.Errorf("set guest file mode")
 	}
-	result, err = conn.Exec(ctx, substrate.ExecRequest{
-		Program: "mv",
-		Args:    []string{"-f", tmp, dst},
-	}, io.Discard, io.Discard)
+	result, err = conn.Exec(ctx, guestFileInstallRequest("mv", "-f", tmp, dst), io.Discard, io.Discard)
 	if err != nil || result.ExitCode != 0 {
 		return fmt.Errorf("atomic guest file rename")
 	}
 	return nil
+}
+
+func guestFileInstallRequest(program string, args ...string) substrate.ExecRequest {
+	return substrate.ExecRequest{Program: program, Args: args, Shell: substrate.ShellNone}
 }
 
 // Connection returns an SSH connection to the VM. The SSHIP is resolved from
@@ -93,6 +91,13 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 		return nil, fmt.Errorf("libvirt: no SSH IP for %s; set ssh_ip in provider block or use a provisioner to configure it", handle.ID)
 	}
 
+	namespace := ""
+	if len(hs.Bridges) > 0 {
+		namespace = hs.Bridges[0].Netns
+	}
+	if namespace != "" {
+		return transport.NewSSHConnectionInNamespace(namespace, host, port, user, key, pass), nil
+	}
 	return transport.NewSSHConnectionWithPort(host, port, user, key, pass), nil
 }
 

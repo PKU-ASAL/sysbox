@@ -17,10 +17,13 @@ var (
 	guestNetworkProbe        = probeGuestIPv4
 )
 
-func (s *Substrate) PrepareGuestNetwork(_ context.Context, handle substrate.NodeHandle) error {
+func (s *Substrate) PrepareGuestNetwork(ctx context.Context, handle substrate.NodeHandle) error {
 	hs := hsFrom(handle)
 	switch hs.NetworkInit {
 	case substrate.GuestNetworkInitCloudInit:
+		if err := ensureCloudInitSSHAccess(ctx, hs); err != nil {
+			return err
+		}
 		seedISO, err := createNoCloudSeed(hs.VMDir, hs.DomainName, hs.Bridges, hs.SSHUser, hs.SSHAuthorizedKey)
 		if err != nil {
 			return err

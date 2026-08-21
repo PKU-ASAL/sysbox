@@ -32,6 +32,13 @@ func (s *localAPIStore) LoadRuns(_ context.Context) ([]controlplane.Run, error) 
 		}
 		fh.Close()
 	}
+	dispatches, err := s.loadRunDispatches()
+	if err != nil {
+		return nil, err
+	}
+	for _, dispatch := range dispatches {
+		out = append(out, dispatch.Run)
+	}
 	return out, nil
 }
 

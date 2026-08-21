@@ -97,3 +97,25 @@ func TestAgentCommandLeaseHelpers(t *testing.T) {
 	require.True(t, cmd.IsTerminal())
 	require.False(t, cmd.Leasable(now.Add(3*time.Minute)))
 }
+
+func TestAgentCommandStatusCannotRegressAfterExecutionStarts(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		next    string
+		allowed bool
+	}{
+		{name: "pending delivery", current: AgentCommandStatusLeased, next: AgentCommandStatusDelivered, allowed: true},
+		{name: "acknowledged starts", current: AgentCommandStatusAcknowledged, next: AgentCommandStatusRunning, allowed: true},
+		{name: "running completes", current: AgentCommandStatusRunning, next: AgentCommandStatusCompleted, allowed: true},
+		{name: "running does not redeliver", current: AgentCommandStatusRunning, next: AgentCommandStatusDelivered, allowed: false},
+		{name: "running does not acknowledge twice", current: AgentCommandStatusRunning, next: AgentCommandStatusAcknowledged, allowed: false},
+		{name: "completed is terminal", current: AgentCommandStatusCompleted, next: AgentCommandStatusDelivered, allowed: false},
+		{name: "failed is terminal", current: AgentCommandStatusFailed, next: AgentCommandStatusRunning, allowed: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.allowed, CanAdvanceAgentCommandStatus(test.current, test.next))
+		})
+	}
+}

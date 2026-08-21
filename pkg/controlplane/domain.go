@@ -13,14 +13,15 @@ const (
 	AgentStatusDisabled    = "disabled"
 	AgentStatusQuarantined = "quarantined"
 
-	AgentCommandStatusQueued    = "queued"
-	AgentCommandStatusLeased    = "leased"
-	AgentCommandStatusDelivered = "delivered"
-	AgentCommandStatusRunning   = "running"
-	AgentCommandStatusCompleted = "completed"
-	AgentCommandStatusFailed    = "failed"
-	AgentCommandStatusDenied    = "denied"
-	AgentCommandStatusCancelled = "cancelled"
+	AgentCommandStatusQueued       = "queued"
+	AgentCommandStatusLeased       = "leased"
+	AgentCommandStatusDelivered    = "delivered"
+	AgentCommandStatusAcknowledged = "acked"
+	AgentCommandStatusRunning      = "running"
+	AgentCommandStatusCompleted    = "completed"
+	AgentCommandStatusFailed       = "failed"
+	AgentCommandStatusDenied       = "denied"
+	AgentCommandStatusCancelled    = "cancelled"
 
 	ConsoleSessionStatusQueued    = "queued"
 	ConsoleSessionStatusRunning   = "running"
@@ -35,6 +36,31 @@ const (
 	NodeOperationStatusDone    = "done"
 	NodeOperationStatusFailed  = "failed"
 )
+
+// CanAdvanceAgentCommandStatus rejects stale command copies after the Agent has
+// acknowledged execution. Pending delivery states may cycle while a lease is
+// retried, but execution and terminal states are monotonic.
+func CanAdvanceAgentCommandStatus(current, next string) bool {
+	if current == next {
+		return true
+	}
+	if (AgentCommand{Status: current}).IsTerminal() {
+		return false
+	}
+	if (AgentCommand{Status: next}).IsTerminal() {
+		return true
+	}
+	switch current {
+	case "", AgentCommandStatusQueued, AgentCommandStatusLeased, AgentCommandStatusDelivered:
+		return true
+	case AgentCommandStatusAcknowledged:
+		return next == AgentCommandStatusRunning
+	case AgentCommandStatusRunning:
+		return false
+	default:
+		return false
+	}
+}
 
 func (s RunStatus) IsActive() bool {
 	switch s {

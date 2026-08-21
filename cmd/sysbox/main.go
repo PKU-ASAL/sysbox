@@ -55,7 +55,7 @@ func main() {
 		Reset:        fcSub,
 	})
 
-	libvirtSub := libvirt.New()
+	libvirtSub := libvirt.New(cfg.Providers.Libvirt.Workdir)
 	mustRegisterDriver(driver.Descriptor{
 		Name: "libvirt", Version: "1", Node: libvirtSub, NIC: libvirtSub,
 		Console: libvirtSub, GuestExec: libvirtSub, GuestFiles: libvirtSub,

@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -75,6 +76,12 @@ var agentStartCmd = &cobra.Command{
 			RunRenewInterval: cfg.RunRenewInterval(),
 			RunRenewTTL:      cfg.RunRenewTTL(),
 			Policy:           cfg.Agent.Policy,
+			CapacityPath:     cfg.Paths.Home,
+			ArtifactPaths: []string{
+				cfg.Providers.Firecracker.Kernel,
+				os.Getenv("SYSBOX_ROOTFS"),
+				os.Getenv("SYSBOX_QCOW2"),
+			},
 		}, api.NewExecutionBridge(cfg))
 	},
 }

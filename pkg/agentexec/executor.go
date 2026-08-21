@@ -294,10 +294,11 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
 	exec.SetStatePatchSink(&runtime.StatePatchManagerSink{Manager: mgr, State: st, Owner: run.LeaseOwner})
-	refresh := run.PlanID == ""
+	var applyHook ApplyHook
 	if hook, ok := e.bridge.(ApplyHook); ok {
-		refresh = hook.RefreshApply()
+		applyHook = hook
 	}
+	refresh := refreshApplyPlan(run.PlanID, applyHook)
 	if refresh {
 		plan, err = exec.Refresh(ctx, plan)
 		if err != nil {
@@ -351,6 +352,13 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	recorder.MarkResourceStateRecorded()
 	_, _ = log.Write([]byte("Apply complete.\n"))
 	e.bridge.Finish(run, nil)
+}
+
+func refreshApplyPlan(_ string, hook ApplyHook) bool {
+	if hook != nil {
+		return hook.RefreshApply()
+	}
+	return true
 }
 
 func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, log io.Writer) {

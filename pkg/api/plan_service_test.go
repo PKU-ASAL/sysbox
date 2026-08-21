@@ -35,6 +35,28 @@ func TestPlanServiceComputeAndValidateStoredPlan(t *testing.T) {
 	require.Equal(t, plan.ID, got.ID)
 }
 
+func TestPlanServiceDoesNotProbeRuntimeResources(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	writeRunServiceTopology(t, s, "lab", `resource "sysbox_network" "lab" {
+  cidr = "10.77.0.0/24"
+}`)
+	mgr, err := s.stateManager("lab")
+	require.NoError(t, err)
+	require.NoError(t, mgr.Save(&state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Address:    address.Resource("sysbox_network", "lab"),
+			Driver:     "network",
+			Attributes: state.MustAttributes(map[string]any{"netns": "definitely-not-present"}),
+		}},
+	}))
+
+	plan, err := s.plans().ComputeStoredPlan(context.Background(), "lab")
+	require.NoError(t, err)
+	require.Len(t, plan.Actions, 1)
+	require.Equal(t, controlplane.PlanActionNoop, plan.Actions[0].Action)
+}
+
 func TestPlanFingerprintInputsPrefersReobservedArtifactDigestOverState(t *testing.T) {
 	addr := address.Resource("sysbox_image", "base")
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{{Address: addr, Attributes: map[string]any{"sha256": "sha256:old"}}}}

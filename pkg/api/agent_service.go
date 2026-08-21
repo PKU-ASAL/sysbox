@@ -199,6 +199,63 @@ func (s *AgentService) FindCommand(ctx context.Context, agentID, commandID strin
 	return controlplane.AgentCommand{}, fmt.Errorf("agent command not found")
 }
 
+// ReconcileCommandState prevents a stale delivery record from replaying work
+// whose durable guest operation is already terminal.
+func (s *AgentService) ReconcileCommandState(ctx context.Context, cmd controlplane.AgentCommand) (controlplane.AgentCommand, bool) {
+	if s == nil || s.store == nil || cmd.IsTerminal() {
+		return cmd, cmd.IsTerminal()
+	}
+	status, endedAt, ok := s.guestCommandTerminalState(ctx, cmd)
+	if !ok {
+		return cmd, false
+	}
+	cmd.Status = status
+	cmd.EndedAt = endedAt
+	if cmd.EndedAt.IsZero() {
+		cmd.EndedAt = time.Now().UTC()
+	}
+	_ = s.store.SaveAgentCommand(ctx, cmd)
+	return cmd, true
+}
+
+func (s *AgentService) guestCommandTerminalState(ctx context.Context, cmd controlplane.AgentCommand) (string, time.Time, bool) {
+	switch cmd.Type {
+	case "guest_execution":
+		if cmd.Execution == nil || cmd.Execution.ID == "" {
+			return "", time.Time{}, false
+		}
+		execution, err := s.store.GetGuestExecution(ctx, cmd.Execution.ID)
+		if err != nil || execution == nil {
+			return "", time.Time{}, false
+		}
+		return commandStatusFromGuestStatus(execution.Status, execution.EndedAt)
+	case "guest_file_put":
+		if cmd.FilePut == nil || cmd.FilePut.ID == "" {
+			return "", time.Time{}, false
+		}
+		op, err := s.store.GetGuestFileOperation(ctx, cmd.FilePut.ID)
+		if err != nil || op == nil {
+			return "", time.Time{}, false
+		}
+		return commandStatusFromGuestStatus(op.Status, op.EndedAt)
+	default:
+		return "", time.Time{}, false
+	}
+}
+
+func commandStatusFromGuestStatus(status string, endedAt time.Time) (string, time.Time, bool) {
+	switch status {
+	case controlplane.GuestExecutionCompleted:
+		return controlplane.AgentCommandStatusCompleted, endedAt, true
+	case controlplane.GuestExecutionFailed:
+		return controlplane.AgentCommandStatusFailed, endedAt, true
+	case controlplane.GuestExecutionCancelled:
+		return controlplane.AgentCommandStatusCancelled, endedAt, true
+	default:
+		return "", time.Time{}, false
+	}
+}
+
 func (s *AgentService) RecordCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) {
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = time.Now().UTC()
@@ -226,7 +283,7 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 	}
 	switch event.Status {
 	case "ack":
-		cmd.Status = "acked"
+		cmd.Status = controlplane.AgentCommandStatusAcknowledged
 		cmd.AckedAt = now
 	case "started":
 		cmd.Status = controlplane.AgentCommandStatusRunning

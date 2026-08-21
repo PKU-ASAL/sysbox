@@ -16,6 +16,7 @@ type AgentStreamService struct {
 	agentService  *AgentService
 	store         apiStore
 	registry      *agentRegistry
+	pollInterval  time.Duration
 	originPattern func() []string
 	verifyAgent   func(*http.Request, string) error
 }
@@ -25,6 +26,7 @@ func newAgentStreamService(server *Server) *AgentStreamService {
 		agentService:  server.agentService(),
 		store:         server.apiStore,
 		registry:      server.agents,
+		pollInterval:  250 * time.Millisecond,
 		originPattern: server.originPatterns,
 		verifyAgent:   server.verifyAgentRequest,
 	}
@@ -57,6 +59,12 @@ func (s *AgentStreamService) runCommandLoop(ctx context.Context, agentID string,
 	ch := stream.Subscribe()
 	defer stream.Unsubscribe(ch)
 	s.pushPendingCommands(ctx, agentID, conn)
+	pollInterval := s.pollInterval
+	if pollInterval <= 0 {
+		pollInterval = 250 * time.Millisecond
+	}
+	poll := time.NewTicker(pollInterval)
+	defer poll.Stop()
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- s.readCommandEvents(ctx, agentID, conn)
@@ -68,6 +76,8 @@ func (s *AgentStreamService) runCommandLoop(ctx context.Context, agentID string,
 				return
 			}
 			s.deliverCommandLine(ctx, agentID, conn, line)
+		case <-poll.C:
+			s.pushPendingCommands(ctx, agentID, conn)
 		case err := <-errCh:
 			if err != nil && ctx.Err() == nil {
 				return
@@ -82,6 +92,9 @@ func (s *AgentStreamService) runCommandLoop(ctx context.Context, agentID string,
 func (s *AgentStreamService) deliverCommandLine(ctx context.Context, agentID string, conn *websocket.Conn, line string) {
 	var cmd controlplane.AgentCommand
 	if err := json.Unmarshal([]byte(line), &cmd); err != nil || cmd.ID == "" {
+		return
+	}
+	if _, terminal := s.agentService.ReconcileCommandState(ctx, cmd); terminal {
 		return
 	}
 	var leased bool
@@ -122,6 +135,9 @@ func (s *AgentStreamService) pushPendingCommands(ctx context.Context, agentID st
 		return
 	}
 	for _, cmd := range commands {
+		if _, terminal := s.agentService.ReconcileCommandState(ctx, cmd); terminal {
+			continue
+		}
 		var ok bool
 		cmd, ok = s.agentService.AcquireCommandLease(ctx, agentID, cmd)
 		if !ok {

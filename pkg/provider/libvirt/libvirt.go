@@ -38,6 +38,9 @@
 package libvirt
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -48,12 +51,24 @@ const subName = "libvirt"
 // behaviour need to be declared explicitly.
 type Substrate struct {
 	substrate.BaseSubstrate
+	workdir string
 }
 
 // New creates a libvirt substrate. Registration happens explicitly in
 // cmd/sysbox/main.go alongside the other substrates.
-func New() *Substrate {
-	return &Substrate{}
+func New(workdir ...string) *Substrate {
+	root := os.TempDir()
+	if len(workdir) > 0 && workdir[0] != "" {
+		root = filepath.Clean(workdir[0])
+	}
+	return &Substrate{workdir: root}
+}
+
+func (s *Substrate) vmDirRoot() string {
+	if s == nil || s.workdir == "" {
+		return os.TempDir()
+	}
+	return s.workdir
 }
 
 func (s *Substrate) Name() string { return subName }

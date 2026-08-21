@@ -225,6 +225,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/health", s.handleHealth)
 	m.HandleFunc("GET /v1/schema", s.handleSchema)
 	m.HandleFunc("GET /v1/capabilities", s.handleCapabilities)
+	m.HandleFunc("POST /v1/evaluations", s.handleCreateEvaluation)
 	m.HandleFunc("GET /v1/projects", s.handleListProjects)
 	m.HandleFunc("GET /v1/projects/{project}", s.handleGetProject)
 	m.HandleFunc("GET /v1/projects/{project}/workspaces", s.handleListProjectWorkspaces)

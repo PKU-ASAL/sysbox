@@ -133,7 +133,7 @@ func putGuestFile(ctx context.Context, opts Options, st *state.State, put contro
 		return fmt.Errorf("guest payload digest mismatch")
 	}
 	if err := files.CopyToNode(ctx, handle, name, put.Path, put.Mode); err != nil {
-		return fmt.Errorf("copy guest payload failed")
+		return fmt.Errorf("copy guest payload failed: %w", err)
 	}
 	return nil
 }

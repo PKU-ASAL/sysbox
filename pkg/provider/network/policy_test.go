@@ -34,6 +34,26 @@ func TestCompileRulesetBuildsOwnedBaseChainsAndBindings(t *testing.T) {
 	require.NotEmpty(t, plan.Digest)
 }
 
+func TestCompileRulesetExpandsMatchListsAsAlternatives(t *testing.T) {
+	spec := driver.RulesetSpec{
+		Owner: "topology.lab/sysbox_firewall.service", Family: driver.FamilyIPv4,
+		Rules: []driver.PolicyRule{{
+			ID: "service", Direction: driver.DirectionInput, Protocol: driver.ProtocolTCP,
+			SourceCIDRs: []string{"10.0.0.2/32", "127.0.0.0/8"},
+			DestinationPorts: []driver.PortRange{{From: 8080, To: 8080}, {From: 8443, To: 8443}},
+			Verdict: driver.VerdictAccept,
+		}},
+	}
+
+	plan, err := compileRuleset(spec, nil)
+	require.NoError(t, err)
+	require.Len(t, plan.Rules, 4)
+	for _, rule := range plan.Rules {
+		require.Len(t, rule.Rule.SourceCIDRs, 1)
+		require.Len(t, rule.Rule.DestinationPorts, 1)
+	}
+}
+
 func TestPolicyExpressionsIncludePortsCounterAndVerdict(t *testing.T) {
 	expressions, err := policyExpressions(compiledRule{Rule: driver.PolicyRule{
 		Direction: driver.DirectionForward, Protocol: driver.ProtocolTCP,

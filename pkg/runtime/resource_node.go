@@ -546,7 +546,8 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 		e.logf("[destroy] warning: reconstruct node %s: %v\n", r.Address, err)
 		handle = substrate.NodeHandle{ID: r.ContainerID()}
 	}
-	// Ignore stop/destroy errors: container may already be gone (drift recovery).
+	// Stop remains best-effort because DestroyNode performs the authoritative,
+	// idempotent cleanup for both running and already-absent nodes.
 	if err := nodeDriver.StopNode(ctx, handle); err != nil {
 		e.logf("[destroy] warning: stop node %s: %v\n", r.Address, err)
 	}
@@ -563,7 +564,7 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 		}
 	}
 	if err := nodeDriver.DestroyNode(ctx, handle); err != nil {
-		e.logf("[destroy] warning: destroy node %s: %v\n", r.Address, err)
+		return fmt.Errorf("destroy node %s: %w", r.Address, err)
 	}
 	e.state.RemoveResource(r.Address)
 	return nil

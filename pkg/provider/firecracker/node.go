@@ -371,9 +371,11 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 	delete(vmStore, h.ID)
 	vmMu.Unlock()
 
-	if ok && vm.cmd != nil && vm.cmd.Process != nil {
+	hotOwned := ok && vm.cmd != nil && vm.cmd.Process != nil
+	if hotOwned {
 		_ = vm.cmd.Process.Signal(syscall.SIGKILL)
-		_ = vm.cmd.Wait()
+		// reapVMProcess is the sole owner of cmd.Wait. Waiting here races with
+		// that goroutine and can corrupt exec.Cmd's internal state.
 	} else if ok && vm.pid > 0 {
 		if proc, err := os.FindProcess(vm.pid); err == nil {
 			_ = proc.Signal(syscall.SIGKILL)
@@ -397,13 +399,35 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 		if socket == "" {
 			socket = ownedUnixSocketPath(dir, h.ID, "firecracker.sock", "fc")
 		}
-		if err := killOwnedStaleFirecracker(dir, h.ID, socket); err != nil {
-			return err
+		if hotOwned {
+			if err := waitAndRemoveHotProcessSocket(vm, socket); err != nil {
+				return err
+			}
+		} else {
+			if err := killOwnedStaleFirecracker(dir, h.ID, socket); err != nil {
+				return err
+			}
 		}
-		_ = os.RemoveAll(dir)
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove firecracker VM directory %q: %w", dir, err)
+		}
 	}
 	if vsock != "" {
 		_ = os.Remove(vsock)
+	}
+	return nil
+}
+
+func waitAndRemoveHotProcessSocket(vm *vmProcess, socketPath string) error {
+	deadline := time.Now().Add(2 * time.Second)
+	for processMatches(vm.pid, vm.startTime) && !processIsZombie(vm.pid) && !processReaped(vm) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if processMatches(vm.pid, vm.startTime) && !processIsZombie(vm.pid) && !processReaped(vm) {
+		return fmt.Errorf("firecracker hot process %d did not exit", vm.pid)
+	}
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove hot firecracker socket: %w", err)
 	}
 	return nil
 }
@@ -872,6 +896,9 @@ func killOwnedStaleFirecracker(vmDir, vmID, socketPath string) error {
 		return os.Remove(socketPath)
 	}
 	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", anchor.PID))
+	if err == nil && len(cmdline) == 0 && processIsZombie(anchor.PID) {
+		return os.Remove(socketPath)
+	}
 	if err != nil || !strings.Contains(strings.ReplaceAll(string(cmdline), "\x00", " "), socketPath) {
 		return fmt.Errorf("firecracker stale process command line ownership mismatch for %q", vmID)
 	}
@@ -889,4 +916,13 @@ func killOwnedStaleFirecracker(vmDir, vmID, socketPath string) error {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}
 	return nil
+}
+
+func processIsZombie(pid int) bool {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	closeParen := strings.LastIndexByte(string(raw), ')')
+	return closeParen >= 0 && len(raw) > closeParen+2 && raw[closeParen+2] == 'Z'
 }

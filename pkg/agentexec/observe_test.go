@@ -37,3 +37,19 @@ func TestInventoryDoesNotClaimSharedStateWithoutLocalWorkspace(t *testing.T) {
 	require.Len(t, inventory.Topologies, 1)
 	require.False(t, inventory.Topologies[0].Available)
 }
+
+func TestInventoryReportsHostCapacityAndConfiguredArtifacts(t *testing.T) {
+	root := t.TempDir()
+	artifact := filepath.Join(root, "kernel")
+	require.NoError(t, os.WriteFile(artifact, []byte("kernel"), 0o600))
+	bridge := NewLocalBridge(LocalOptions{Topology: "lab", ConfigFile: filepath.Join(root, "missing.hcl"), StatePath: filepath.Join(root, "state.json"), RunsDir: root})
+
+	inventory := Inventory(context.Background(), Options{ID: "host-a", CapacityPath: root, ArtifactPaths: []string{artifact, filepath.Join(root, "missing")}}, bridge)
+
+	require.Greater(t, inventory.Resources.CPU, int64(0))
+	require.Greater(t, inventory.Resources.MemoryBytes, int64(0))
+	require.Greater(t, inventory.Resources.DiskBytes, int64(0))
+	require.Len(t, inventory.Artifacts, 2)
+	require.True(t, inventory.Artifacts[0].Available)
+	require.False(t, inventory.Artifacts[1].Available)
+}

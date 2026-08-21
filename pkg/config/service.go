@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,13 +28,18 @@ type ServiceConfig struct {
 }
 
 type APIConfig struct {
-	Listen         string           `yaml:"listen" json:"listen"`
-	Token          string           `yaml:"token" json:"token,omitempty"`
-	AllowedOrigins []string         `yaml:"allowed_origins" json:"allowed_origins,omitempty"`
-	Console        APIConsoleConfig `yaml:"console" json:"console,omitempty"`
-	RBAC           APIRBACConfig    `yaml:"rbac" json:"rbac,omitempty"`
-	Audit          APIAuditConfig   `yaml:"audit" json:"audit,omitempty"`
-	Headers        APIHeadersConfig `yaml:"headers" json:"headers,omitempty"`
+	Listen         string              `yaml:"listen" json:"listen"`
+	Token          string              `yaml:"token" json:"token,omitempty"`
+	AllowedOrigins []string            `yaml:"allowed_origins" json:"allowed_origins,omitempty"`
+	Console        APIConsoleConfig    `yaml:"console" json:"console,omitempty"`
+	RBAC           APIRBACConfig       `yaml:"rbac" json:"rbac,omitempty"`
+	Audit          APIAuditConfig      `yaml:"audit" json:"audit,omitempty"`
+	Headers        APIHeadersConfig    `yaml:"headers" json:"headers,omitempty"`
+	Evaluation     APIEvaluationConfig `yaml:"evaluation" json:"evaluation,omitempty"`
+}
+
+type APIEvaluationConfig struct {
+	CPUOvercommitRatio int64 `yaml:"cpu_overcommit_ratio" json:"cpu_overcommit_ratio"`
 }
 
 type APIConsoleConfig struct {
@@ -105,10 +111,15 @@ type SupervisorConfig struct {
 type ProvidersConfig struct {
 	Docker        ProviderConfig    `yaml:"docker" json:"docker"`
 	Network       ProviderConfig    `yaml:"network" json:"network"`
-	Libvirt       ProviderConfig    `yaml:"libvirt" json:"libvirt"`
+	Libvirt       LibvirtConfig     `yaml:"libvirt" json:"libvirt"`
 	Firecracker   FirecrackerConfig `yaml:"firecracker" json:"firecracker"`
 	DefaultPolicy ProviderPolicy    `yaml:"default_policy" json:"default_policy"`
 	Capabilities  map[string]bool   `yaml:"capabilities" json:"capabilities,omitempty"`
+}
+
+type LibvirtConfig struct {
+	ProviderConfig `yaml:",inline" json:",inline"`
+	Workdir        string `yaml:"workdir" json:"workdir,omitempty"`
 }
 
 type FirecrackerConfig struct {
@@ -148,7 +159,8 @@ func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
 		Version: 1,
 		API: APIConfig{
-			Listen: ":9876",
+			Listen:     ":9876",
+			Evaluation: APIEvaluationConfig{CPUOvercommitRatio: 1},
 			Console: APIConsoleConfig{
 				DefaultTimeout: "1h",
 				MaxTimeout:     "24h",
@@ -193,7 +205,7 @@ func DefaultServiceConfig() ServiceConfig {
 			Docker:        ProviderConfig{Enabled: true},
 			Network:       ProviderConfig{Enabled: true},
 			Firecracker:   FirecrackerConfig{ProviderConfig: ProviderConfig{Enabled: true}},
-			Libvirt:       ProviderConfig{Enabled: true},
+			Libvirt:       LibvirtConfig{ProviderConfig: ProviderConfig{Enabled: true}},
 			DefaultPolicy: ProviderPolicy{Preflight: "warn"},
 			Capabilities:  map[string]bool{},
 		},
@@ -299,6 +311,15 @@ func applyEnvOverrides(c *ServiceConfig) {
 	set(&c.Providers.Firecracker.Binary, "SYSBOX_PROVIDER_FIRECRACKER_BIN")
 	set(&c.Providers.Firecracker.Kernel, "SYSBOX_PROVIDER_FIRECRACKER_KERNEL")
 	set(&c.Providers.Firecracker.Workdir, "SYSBOX_PROVIDER_FIRECRACKER_WORKDIR")
+	set(&c.Providers.Libvirt.Workdir, "SYSBOX_PROVIDER_LIBVIRT_WORKDIR")
+	if raw := os.Getenv("SYSBOX_API_EVALUATION_CPU_OVERCOMMIT_RATIO"); raw != "" {
+		ratio, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			c.API.Evaluation.CPUOvercommitRatio = 0
+		} else {
+			c.API.Evaluation.CPUOvercommitRatio = ratio
+		}
+	}
 }
 
 func applyDerivedDefaults(c *ServiceConfig) {
@@ -316,6 +337,9 @@ func applyDerivedDefaults(c *ServiceConfig) {
 	}
 	if c.Providers.Firecracker.Workdir == "" {
 		c.Providers.Firecracker.Workdir = filepath.Join(c.Paths.Home, "firecracker")
+	}
+	if c.Providers.Libvirt.Workdir == "" {
+		c.Providers.Libvirt.Workdir = filepath.Join(c.Paths.Home, "libvirt")
 	}
 	if c.Supervisor.Policy == "" {
 		c.Supervisor.Policy = "observe_only"
@@ -349,6 +373,9 @@ func applyDerivedDefaults(c *ServiceConfig) {
 	}
 	if c.API.Console.MaxTimeout == "" {
 		c.API.Console.MaxTimeout = "24h"
+	}
+	if c.API.Evaluation.CPUOvercommitRatio == 0 {
+		c.API.Evaluation.CPUOvercommitRatio = 1
 	}
 	if len(c.API.RBAC.AdminRoles) == 0 {
 		c.API.RBAC.AdminRoles = []string{"admin"}
@@ -395,6 +422,9 @@ func (c ServiceConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.API.Listen) == "" {
 		return fmt.Errorf("api.listen is required")
+	}
+	if c.API.Evaluation.CPUOvercommitRatio < 1 || c.API.Evaluation.CPUOvercommitRatio > 16 {
+		return fmt.Errorf("api.evaluation.cpu_overcommit_ratio must be between 1 and 16")
 	}
 	if _, err := time.ParseDuration(c.API.Console.DefaultTimeout); err != nil {
 		return fmt.Errorf("api.console.default_timeout: %w", err)

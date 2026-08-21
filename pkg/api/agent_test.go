@@ -164,6 +164,44 @@ func TestAgentCommandWebSocketReplaysPendingCommand(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestAgentCommandWebSocketPollsDurableCommandCreatedByAnotherServer(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.MustLoadServiceConfig("")
+	cfg.Paths.RunsDir = filepath.Join(dir, "runs")
+	cfg.Paths.WorkspacesDir = filepath.Join(dir, "workspaces")
+	cfg.State.Backend = "sqlite://" + filepath.Join(dir, "api.db")
+	creator := NewServerWithConfig(cfg)
+	streamer := NewServerWithConfig(cfg)
+	writeRunServiceTopology(t, creator, "lab", `resource "sysbox_network" "lab" {
+  cidr = "10.77.0.0/24"
+}`)
+	require.NoError(t, creator.agentService().Save(context.Background(), controlplane.Agent{
+		ID: "host-a", Status: controlplane.AgentStatusOnline, Capabilities: []string{"network"},
+	}))
+
+	server := httptest.NewServer(streamer)
+	defer server.Close()
+	conn, _, err := websocket.Dial(context.Background(), "ws"+server.URL[len("http"):]+"/v1/agents/host-a/commands/stream", nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/destroy", nil)
+	req.Header.Set("Idempotency-Key", "destroy:cross-server-poll")
+	rec := httptest.NewRecorder()
+	creator.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, data, err := conn.Read(ctx)
+	require.NoError(t, err)
+	var command controlplane.AgentCommand
+	require.NoError(t, json.Unmarshal(data, &command))
+	require.Equal(t, "run_assigned", command.Type)
+	require.NotNil(t, command.Run)
+	require.Equal(t, "lab", command.Run.Topology)
+}
+
 func TestAgentCommandCancelPublishesCancelCommand(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	cmd, err := s.agentService().PublishCommand(context.Background(), "host-a", controlplane.AgentCommand{

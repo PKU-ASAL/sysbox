@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -54,13 +56,44 @@ func Inventory(ctx context.Context, opts Options, bridge Bridge) controlplane.Ag
 			Available:     localWorkspaceAvailable(bridge.HCLFile(proj.Topology)),
 		})
 	}
+	resources, artifacts := hostInventory(opts.CapacityPath, opts.ArtifactPaths)
 	return controlplane.AgentInventory{
 		AgentID:      opts.ID,
 		Capabilities: append([]string{}, opts.Capabilities...),
 		Labels:       opts.Labels,
+		Resources:    resources,
 		Topologies:   items,
+		Artifacts:    artifacts,
 		ObservedAt:   time.Now().UTC(),
 	}
+}
+
+func hostInventory(capacityPath string, artifactPaths []string) (controlplane.HostResourceInventory, []controlplane.InventoryItem) {
+	resources := controlplane.HostResourceInventory{CPU: int64(goruntime.NumCPU())}
+	var info syscall.Sysinfo_t
+	if syscall.Sysinfo(&info) == nil {
+		resources.MemoryBytes = int64(info.Totalram) * int64(info.Unit)
+	}
+	if capacityPath == "" {
+		capacityPath = "."
+	}
+	var fs syscall.Statfs_t
+	if syscall.Statfs(capacityPath, &fs) == nil {
+		resources.DiskBytes = int64(fs.Bavail) * int64(fs.Bsize)
+	}
+	artifacts := make([]controlplane.InventoryItem, 0, len(artifactPaths))
+	for _, path := range artifactPaths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		item := controlplane.InventoryItem{Kind: "artifact"}
+		if stat, err := os.Stat(path); err == nil && stat.Mode().IsRegular() {
+			item.Available = true
+			resources.ArtifactBytes += stat.Size()
+		}
+		artifacts = append(artifacts, item)
+	}
+	return resources, artifacts
 }
 
 func localWorkspaceAvailable(path string) bool {

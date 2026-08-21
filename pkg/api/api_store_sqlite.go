@@ -35,7 +35,7 @@ func (s *sqliteAPIStore) open() (*sql.DB, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("sqlite api mkdir: %w", err)
 	}
-	db, err := sql.Open("sqlite", s.dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", s.dbPath+"?_pragma=busy_timeout%3d5000&_pragma=journal_mode%28WAL%29")
 	if err != nil {
 		return nil, fmt.Errorf("sqlite api open: %w", err)
 	}
@@ -63,6 +63,8 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		agent_id    TEXT DEFAULT '',
 		recoverable INTEGER DEFAULT 0,
 		unsafe_state INTEGER DEFAULT 0,
+		operation_key TEXT DEFAULT '',
+		request_fingerprint TEXT DEFAULT '',
 		protocol    TEXT DEFAULT '',
 		lease_owner TEXT DEFAULT '',
 		lease_until TEXT DEFAULT '',
@@ -160,6 +162,7 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		agent_id     TEXT PRIMARY KEY,
 		capabilities TEXT DEFAULT '[]',
 		labels       TEXT DEFAULT '{}',
+		resources    TEXT DEFAULT '{}',
 		topologies   TEXT DEFAULT '[]',
 		artifacts    TEXT DEFAULT '[]',
 		tools        TEXT DEFAULT '[]',
@@ -176,6 +179,12 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	CREATE TABLE IF NOT EXISTS sysbox_guest_file_operations (
 		id   TEXT PRIMARY KEY,
 		data BLOB NOT NULL
+	) STRICT;
+
+	CREATE TABLE IF NOT EXISTS sysbox_run_requests (
+		id          TEXT PRIMARY KEY,
+		fingerprint TEXT NOT NULL,
+		run_id      TEXT NOT NULL UNIQUE
 	) STRICT;
 
 	CREATE TABLE IF NOT EXISTS sysbox_checkpoints (
@@ -222,7 +231,10 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	if err := ensureSQLiteRunColumns(db); err != nil {
 		return err
 	}
-	return ensureSQLiteColumn(db, "sysbox_agent_commands", "execution_payload", "BLOB")
+	if err := ensureSQLiteColumn(db, "sysbox_agent_commands", "execution_payload", "BLOB"); err != nil {
+		return err
+	}
+	return ensureSQLiteColumn(db, "sysbox_agent_inventory", "resources", "TEXT DEFAULT '{}'")
 }
 
 func ensureSQLiteRunColumns(db *sql.DB) error {
@@ -247,6 +259,8 @@ func ensureSQLiteRunColumns(db *sql.DB) error {
 	for _, migration := range []struct{ name, definition string }{
 		{"target", "TEXT DEFAULT ''"},
 		{"unsafe_state", "INTEGER DEFAULT 0"},
+		{"operation_key", "TEXT DEFAULT ''"},
+		{"request_fingerprint", "TEXT DEFAULT ''"},
 	} {
 		if columns[migration.name] {
 			continue
@@ -305,7 +319,7 @@ func formatSQLiteTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format(time.RFC3339)
+	return t.Format(time.RFC3339Nano)
 }
 
 // ── apiStore interface ───────────────────────────────────────────────────────
@@ -319,7 +333,7 @@ func (s *sqliteAPIStore) LoadRuns(ctx context.Context) ([]controlplane.Run, erro
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at FROM sysbox_runs ORDER BY id`)
+	rows, err := db.QueryContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at FROM sysbox_runs ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +343,7 @@ func (s *sqliteAPIStore) LoadRuns(ctx context.Context) ([]controlplane.Run, erro
 		var r controlplane.Run
 		var leaseUntil, queuedAt, assignedAt, startedAt, endedAt string
 		var recoverable, unsafeState int
-		if err := rows.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.PlanID, &r.Target, &r.AgentID, &recoverable, &unsafeState, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.PlanID, &r.Target, &r.AgentID, &recoverable, &unsafeState, &r.OperationKey, &r.RequestFingerprint, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt); err != nil {
 			return nil, err
 		}
 		r.Recoverable = recoverable != 0
@@ -349,11 +363,11 @@ func (s *sqliteAPIStore) GetRun(ctx context.Context, id string) (*controlplane.R
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRowContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at FROM sysbox_runs WHERE id=?`, id)
+	row := db.QueryRowContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1`, id)
 	var r controlplane.Run
 	var leaseUntil, queuedAt, assignedAt, startedAt, endedAt string
 	var recoverable, unsafeState int
-	if err := row.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.PlanID, &r.Target, &r.AgentID, &recoverable, &unsafeState, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.PlanID, &r.Target, &r.AgentID, &recoverable, &unsafeState, &r.OperationKey, &r.RequestFingerprint, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("run not found")
 		}
@@ -385,9 +399,9 @@ func (s *sqliteAPIStore) SaveRun(ctx context.Context, run controlplane.Run) erro
 		unsafeState = 1
 	}
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_runs (id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.Topology, run.Operation, run.Op, run.Status, run.Err, run.ParentID, run.Revision, run.PlanID, run.Target, run.AgentID, recoverable, unsafeState, run.Protocol, run.LeaseOwner, formatSQLiteTime(run.LeaseUntil), run.Attempt, formatSQLiteTime(run.QueuedAt), formatSQLiteTime(run.AssignedAt), formatSQLiteTime(run.StartedAt), formatSQLiteTime(run.EndedAt))
+		`INSERT INTO sysbox_runs (id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.Topology, run.Operation, run.Op, run.Status, run.Err, run.ParentID, run.Revision, run.PlanID, run.Target, run.AgentID, recoverable, unsafeState, run.OperationKey, run.RequestFingerprint, run.Protocol, run.LeaseOwner, formatSQLiteTime(run.LeaseUntil), run.Attempt, formatSQLiteTime(run.QueuedAt), formatSQLiteTime(run.AssignedAt), formatSQLiteTime(run.StartedAt), formatSQLiteTime(run.EndedAt))
 	return err
 }
 
@@ -989,7 +1003,12 @@ func (s *sqliteAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplane.
 	_, err = db.ExecContext(ctx,
 		`INSERT INTO sysbox_agent_commands (id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, execution_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET status=excluded.status, error=excluded.error, lease_owner=excluded.lease_owner, lease_until=excluded.lease_until, attempt=excluded.attempt, acked_at=excluded.acked_at, ended_at=excluded.ended_at`,
+		 ON CONFLICT(id) DO UPDATE SET status=excluded.status, error=excluded.error, lease_owner=excluded.lease_owner, lease_until=excluded.lease_until, attempt=excluded.attempt, acked_at=excluded.acked_at, ended_at=excluded.ended_at
+		 WHERE
+		   sysbox_agent_commands.status IN ('', 'queued', 'leased', 'delivered')
+		   OR (sysbox_agent_commands.status='acked' AND excluded.status IN ('running', 'completed', 'failed', 'denied', 'cancelled'))
+		   OR (sysbox_agent_commands.status='running' AND excluded.status IN ('completed', 'failed', 'denied', 'cancelled'))
+		   OR sysbox_agent_commands.status=excluded.status`,
 		cmd.ID, cmd.AgentID, cmd.Type, cmd.Status, cmd.Err, cmd.Protocol, runPayload, sessionPayload, operationPayload, executionPayload, requestPayload,
 		cmd.LeaseOwner, formatSQLiteTime(cmd.LeaseUntil), cmd.Attempt,
 		formatSQLiteTime(cmd.CreatedAt), formatSQLiteTime(cmd.Delivered), formatSQLiteTime(cmd.AckedAt), formatSQLiteTime(cmd.EndedAt))
@@ -1150,15 +1169,16 @@ func (s *sqliteAPIStore) SaveAgentInventory(ctx context.Context, inv controlplan
 	tools, _ := json.Marshal(inv.Tools)
 	caps, _ := json.Marshal(inv.Capabilities)
 	labels, _ := json.Marshal(inv.Labels)
+	resources, _ := json.Marshal(inv.Resources)
 	stale := 0
 	if inv.Stale {
 		stale = 1
 	}
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_agent_inventory (agent_id, capabilities, labels, topologies, artifacts, tools, status, stale, observed_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(agent_id) DO UPDATE SET capabilities=excluded.capabilities, labels=excluded.labels, topologies=excluded.topologies, artifacts=excluded.artifacts, tools=excluded.tools, status=excluded.status, stale=excluded.stale, observed_at=excluded.observed_at`,
-		inv.AgentID, string(caps), string(labels), string(topologies), string(artifacts), string(tools), inv.Status, stale, formatSQLiteTime(inv.ObservedAt))
+		`INSERT INTO sysbox_agent_inventory (agent_id, capabilities, labels, resources, topologies, artifacts, tools, status, stale, observed_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(agent_id) DO UPDATE SET capabilities=excluded.capabilities, labels=excluded.labels, resources=excluded.resources, topologies=excluded.topologies, artifacts=excluded.artifacts, tools=excluded.tools, status=excluded.status, stale=excluded.stale, observed_at=excluded.observed_at`,
+		inv.AgentID, string(caps), string(labels), string(resources), string(topologies), string(artifacts), string(tools), inv.Status, stale, formatSQLiteTime(inv.ObservedAt))
 	return err
 }
 
@@ -1168,12 +1188,12 @@ func (s *sqliteAPIStore) GetAgentInventory(ctx context.Context, agentID string) 
 		return nil, err
 	}
 	var inv controlplane.AgentInventory
-	var caps, labels, topologies, artifacts, tools []byte
+	var caps, labels, resources, topologies, artifacts, tools []byte
 	var observedAt string
 	var stale int
 	err = db.QueryRowContext(ctx,
-		`SELECT agent_id, capabilities, labels, topologies, artifacts, tools, status, stale, observed_at FROM sysbox_agent_inventory WHERE agent_id=?`, agentID).
-		Scan(&inv.AgentID, &caps, &labels, &topologies, &artifacts, &tools, &inv.Status, &stale, &observedAt)
+		`SELECT agent_id, capabilities, labels, resources, topologies, artifacts, tools, status, stale, observed_at FROM sysbox_agent_inventory WHERE agent_id=?`, agentID).
+		Scan(&inv.AgentID, &caps, &labels, &resources, &topologies, &artifacts, &tools, &inv.Status, &stale, &observedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("agent inventory not found")
 	}
@@ -1182,6 +1202,7 @@ func (s *sqliteAPIStore) GetAgentInventory(ctx context.Context, agentID string) 
 	}
 	json.Unmarshal(caps, &inv.Capabilities)
 	json.Unmarshal(labels, &inv.Labels)
+	json.Unmarshal(resources, &inv.Resources)
 	json.Unmarshal(topologies, &inv.Topologies)
 	json.Unmarshal(artifacts, &inv.Artifacts)
 	json.Unmarshal(tools, &inv.Tools)

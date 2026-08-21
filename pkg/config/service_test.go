@@ -14,6 +14,8 @@ func TestLoadServiceConfigFromYAML(t *testing.T) {
 version: 1
 api:
   listen: ":9999"
+  evaluation:
+    cpu_overcommit_ratio: 4
   console:
     default_timeout: 30m
     max_timeout: 2h
@@ -59,6 +61,8 @@ supervisor:
 providers:
   default_policy:
     preflight: error
+  libvirt:
+    workdir: /srv/sysbox/libvirt
   firecracker:
     binary: /opt/fc/firecracker
     kernel: /opt/fc/vmlinux
@@ -74,6 +78,7 @@ artifacts:
 	cfg, err := LoadServiceConfig(path)
 	require.NoError(t, err)
 	require.Equal(t, ":9999", cfg.API.Listen)
+	require.Equal(t, int64(4), cfg.API.Evaluation.CPUOvercommitRatio)
 	require.Equal(t, "30m", cfg.API.Console.DefaultTimeout)
 	require.Equal(t, "2h", cfg.API.Console.MaxTimeout)
 	require.Equal(t, []string{"console"}, cfg.API.Console.AllowedRoles)
@@ -94,6 +99,7 @@ artifacts:
 	require.Equal(t, "/srv/sysbox/workspaces", cfg.Paths.WorkspacesDir)
 	require.Equal(t, "/srv/sysbox/runs", cfg.Paths.RunsDir)
 	require.Equal(t, "/srv/sysbox/firecracker", cfg.Providers.Firecracker.Workdir)
+	require.Equal(t, "/srv/sysbox/libvirt", cfg.Providers.Libvirt.Workdir)
 	require.Equal(t, "restart_on_crash", cfg.Supervisor.Policy)
 	require.Equal(t, "/opt/fc/firecracker", cfg.Providers.Firecracker.Binary)
 	require.Equal(t, "error", cfg.Providers.DefaultPolicy.Preflight)
@@ -116,6 +122,8 @@ providers:
 `), 0o644))
 	t.Setenv("SYSBOX_STATE_BACKEND", "postgres://override/sysbox?topology={topology}")
 	t.Setenv("SYSBOX_PROVIDER_FIRECRACKER_BIN", "/from/provider/env/firecracker")
+	t.Setenv("SYSBOX_PROVIDER_LIBVIRT_WORKDIR", "/from/provider/env/libvirt")
+	t.Setenv("SYSBOX_API_EVALUATION_CPU_OVERCOMMIT_RATIO", "4")
 
 	cfg, err := LoadServiceConfig(path)
 	require.NoError(t, err)
@@ -123,6 +131,18 @@ providers:
 	require.Equal(t, DefaultHomeDir, cfg.Paths.Home)
 	require.Equal(t, "postgres://override/sysbox?topology={topology}", cfg.State.Backend)
 	require.Equal(t, "/from/provider/env/firecracker", cfg.Providers.Firecracker.Binary)
+	require.Equal(t, "/from/provider/env/libvirt", cfg.Providers.Libvirt.Workdir)
+	require.Equal(t, int64(4), cfg.API.Evaluation.CPUOvercommitRatio)
+}
+
+func TestEvaluationCPUOvercommitDefaultsToOneAndRejectsUnsafeValues(t *testing.T) {
+	cfg := DefaultServiceConfig()
+	require.Equal(t, int64(1), cfg.API.Evaluation.CPUOvercommitRatio)
+
+	for _, ratio := range []int64{0, 17} {
+		cfg.API.Evaluation.CPUOvercommitRatio = ratio
+		require.ErrorContains(t, cfg.Validate(), "cpu_overcommit_ratio")
+	}
 }
 
 func TestLoadServiceConfigProviderEnvOverridesYAML(t *testing.T) {

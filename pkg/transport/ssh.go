@@ -23,6 +23,7 @@ type SSHConnection struct {
 	password     string
 	insecureHost bool // skip host key verification (for lab environments)
 	knownHosts   string
+	netns        string
 }
 
 func NewSSHConnection(host, user, privateKey, password string) *SSHConnection {
@@ -31,6 +32,10 @@ func NewSSHConnection(host, user, privateKey, password string) *SSHConnection {
 
 func NewSSHConnectionWithPort(host, port, user, privateKey, password string) *SSHConnection {
 	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, insecureHost: true}
+}
+
+func NewSSHConnectionInNamespace(namespace, host, port, user, privateKey, password string) *SSHConnection {
+	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, insecureHost: true, netns: namespace}
 }
 
 // NewSSHConnectionSecure creates an SSH connection that validates host keys.
@@ -135,16 +140,27 @@ func (c *SSHConnection) command(ctx context.Context, sshArgs []string) *exec.Cmd
 	sshBin := resolveSSHBin()
 	if c.password != "" {
 		if sp, err := exec.LookPath("sshpass"); err == nil {
-			cmd := exec.CommandContext(ctx, sp, append([]string{"-e", sshBin}, sshArgs...)...)
+			args := append([]string{"-e", sshBin}, sshArgs...)
+			cmd := c.namespacedCommand(ctx, sp, args...)
 			cmd.Env = append(os.Environ(), "SSHPASS="+c.password)
 			return cmd
 		}
 	}
-	return exec.CommandContext(ctx, sshBin, sshArgs...)
+	return c.namespacedCommand(ctx, sshBin, sshArgs...)
+}
+
+func (c *SSHConnection) namespacedCommand(ctx context.Context, binary string, args ...string) *exec.Cmd {
+	if c.netns == "" {
+		return exec.CommandContext(ctx, binary, args...)
+	}
+	return exec.CommandContext(ctx, "ip", append([]string{"netns", "exec", c.netns, binary}, args...)...)
+}
+
+func (c *SSHConnection) scpCommand(ctx context.Context, args []string) *exec.Cmd {
+	return c.namespacedCommand(ctx, resolveSCPBin(), args...)
 }
 
 func (c *SSHConnection) CopyFile(ctx context.Context, srcPath, dstPath string) error {
-	scpBin := resolveSCPBin()
 	scpArgs := []string{}
 	if c.port != "" && c.port != "22" {
 		scpArgs = append(scpArgs, "-P", c.port)
@@ -156,7 +172,7 @@ func (c *SSHConnection) CopyFile(ctx context.Context, srcPath, dstPath string) e
 	scpArgs = append(scpArgs, "-o", "LogLevel=ERROR")
 	scpArgs = append(scpArgs, srcPath, fmt.Sprintf("%s@%s:%s", c.user, c.host, dstPath))
 
-	ec := exec.CommandContext(ctx, scpBin, scpArgs...)
+	ec := c.scpCommand(ctx, scpArgs)
 	ec.Stdout = os.Stdout
 	ec.Stderr = os.Stderr
 	return ec.Run()

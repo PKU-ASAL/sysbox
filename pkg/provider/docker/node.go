@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -236,7 +237,11 @@ func (s *Substrate) StopNode(ctx context.Context, h substrate.NodeHandle) error 
 }
 
 func (s *Substrate) DestroyNode(ctx context.Context, h substrate.NodeHandle) error {
-	return s.cli.ContainerRemove(ctx, h.ID, container.RemoveOptions{Force: true})
+	err := s.cli.ContainerRemove(ctx, h.ID, container.RemoveOptions{Force: true})
+	if errdefs.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func (s *Substrate) Pause(ctx context.Context, h substrate.NodeHandle) error {

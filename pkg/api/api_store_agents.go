@@ -66,14 +66,47 @@ func (s *localAPIStore) SaveAgentCommand(_ context.Context, cmd controlplane.Age
 	if cmd.Protocol == "" {
 		cmd.Protocol = controlplane.AgentProtocolVersion
 	}
-	return writeLocalObject(filepath.Join(s.runsDir, "_agents", agentID, "commands", cmd.ID+".json"), cmd)
+	path := filepath.Join(s.runsDir, "_agents", agentID, "commands", cmd.ID+".json")
+	var current controlplane.AgentCommand
+	if raw, err := os.ReadFile(path); err == nil && json.Unmarshal(raw, &current) == nil && !controlplane.CanAdvanceAgentCommandStatus(current.Status, cmd.Status) {
+		return nil
+	}
+	return writeLocalObject(path, cmd)
 }
 
 func (s *localAPIStore) ListAgentCommands(_ context.Context, agentID string) ([]controlplane.AgentCommand, error) {
+	var commands []controlplane.AgentCommand
+	var err error
 	if agentID == "" {
-		return readLocalObjects[controlplane.AgentCommand](filepath.Join(s.runsDir, "_agents", "*", "commands", "*.json"))
+		commands, err = readLocalObjects[controlplane.AgentCommand](filepath.Join(s.runsDir, "_agents", "*", "commands", "*.json"))
+	} else {
+		commands, err = readLocalObjects[controlplane.AgentCommand](filepath.Join(s.runsDir, "_agents", agentID, "commands", "*.json"))
 	}
-	return readLocalObjects[controlplane.AgentCommand](filepath.Join(s.runsDir, "_agents", agentID, "commands", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]controlplane.AgentCommand, len(commands))
+	for _, cmd := range commands {
+		byID[cmd.ID] = cmd
+	}
+	dispatches, err := s.loadRunDispatches()
+	if err != nil {
+		return nil, err
+	}
+	for _, dispatch := range dispatches {
+		cmd := dispatch.Command
+		if agentID != "" && cmd.AgentID != agentID {
+			continue
+		}
+		if _, updated := byID[cmd.ID]; !updated {
+			byID[cmd.ID] = cmd
+		}
+	}
+	commands = commands[:0]
+	for _, cmd := range byID {
+		commands = append(commands, cmd)
+	}
+	return commands, nil
 }
 
 func (s *localAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error) {
@@ -296,7 +329,12 @@ func (s *postgresAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplan
 	_, err = conn.Exec(ctx, `
 INSERT INTO sysbox_agent_commands (agent_id, id, status, lease_owner, lease_until, attempt, data, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET agent_id=EXCLUDED.agent_id, status=EXCLUDED.status, lease_owner=EXCLUDED.lease_owner, lease_until=EXCLUDED.lease_until, attempt=EXCLUDED.attempt, data=EXCLUDED.data, updated_at=now()`,
+ON CONFLICT (id) DO UPDATE SET agent_id=EXCLUDED.agent_id, status=EXCLUDED.status, lease_owner=EXCLUDED.lease_owner, lease_until=EXCLUDED.lease_until, attempt=EXCLUDED.attempt, data=EXCLUDED.data, updated_at=now()
+WHERE
+  (sysbox_agent_commands.status IN ('', 'queued', 'leased', 'delivered'))
+  OR (sysbox_agent_commands.status='acked' AND EXCLUDED.status IN ('running', 'completed', 'failed', 'denied', 'cancelled'))
+  OR (sysbox_agent_commands.status='running' AND EXCLUDED.status IN ('completed', 'failed', 'denied', 'cancelled'))
+  OR (sysbox_agent_commands.status=EXCLUDED.status)`,
 		cmd.AgentID, cmd.ID, cmd.Status, cmd.LeaseOwner, leaseUntil, cmd.Attempt, string(raw))
 	if err != nil {
 		return fmt.Errorf("postgres save agent command: %w", err)

@@ -47,16 +47,27 @@ LABEL org.opencontainers.image.title="Sysbox" \
       io.github.pku-asal.sysbox.release-fingerprint="${RELEASE_FINGERPRINT}" \
       org.opencontainers.image.documentation="${SOURCE_URL}/blob/main/docs/index.md"
 
-# Install ca-certificates first (needed for HTTPS apt sources),
-# then switch to tuna mirror and install runtime deps.
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
-    sed -i 's|http://|https://|g; s|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
-    sed -i 's|http://|https://|g; s|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list 2>/dev/null || true && \
+# The builder installs git and therefore has a current CA bundle. Reuse it to
+# bootstrap the runtime image's first HTTPS apt transaction.
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+# Use the HTTPS mirror before the first update. The Debian base image carries
+# the bootstrap trust store; ca-certificates is then refreshed with the rest
+# of the runtime dependencies.
+RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+      sed -i 's|http://|https://|g; s|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources; \
+    else \
+      sed -i 's|http://|https://|g; s|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list; \
+    fi && \
     apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
     iproute2 \
     iptables \
     iputils-ping \
     qemu-kvm \
+    qemu-utils \
+    genisoimage \
     libvirt-clients \
     docker.io \
     e2fsprogs \
