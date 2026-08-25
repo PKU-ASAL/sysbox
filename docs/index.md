@@ -25,6 +25,7 @@
 
 - [设计原则](design-principles.zh-CN.md)：为什么采用声明式图、严格身份和显式 provider 边界。
 - [Architecture](architecture.md)：组件、数据流、state、stored plan、driver 与 recovery 的规范性说明。
+- [资源模型与能力](reference/resource-model.md)：资源类型、组合关系、执行引擎与扩展机制。
 
 ## 精确参考
 
