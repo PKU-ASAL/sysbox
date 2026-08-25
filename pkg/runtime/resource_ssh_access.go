@@ -144,7 +144,7 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 func setupSSHAccess(ctx context.Context, conn substrate.Connection, nodeID string, authorizedKeys []string, port int, hookBinaryPath string) error {
 	// 1. Install openssh-server.
 	installCmds := []string{
-		"apk add --no-cache openssh-server 2>/dev/null || (apt-get update -qq && apt-get install -y -q openssh-server)",
+		"apk add --no-cache openssh-server || (DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server)",
 	}
 	if err := execLinuxCommands(ctx, conn, installCmds); err != nil {
 		return fmt.Errorf("install openssh: %w", err)
@@ -206,7 +206,13 @@ func execLinuxCommands(ctx context.Context, conn substrate.Connection, commands 
 			return err
 		}
 		if result.ExitCode != 0 {
-			return fmt.Errorf("exec %q: exit code %d", command, result.ExitCode)
+			return fmt.Errorf(
+				"exec %q: exit code %d; stdout=%q; stderr=%q",
+				command,
+				result.ExitCode,
+				result.Stdout,
+				result.Stderr,
+			)
 		}
 	}
 	return nil
