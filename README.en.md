@@ -122,7 +122,7 @@ Terraform-like refers to the declarative planning and lifecycle experience; it d
 The README is only the project entrance. Continue with the document that matches the task ahead:
 
 - [Documentation Index](docs/index.md): choose a path by task.
-- [Design Principles](docs/design-principles.zh-CN.md): the trade-offs behind Sysbox.
+- [Design Principles](docs/design-principles.md): the trade-offs behind Sysbox.
 - [Architecture](docs/architecture.md): resource, state, provider, and recovery contracts.
 - [Authoring Topologies](docs/guides/authoring-topologies.md): build practical topologies.
 - [HCL Reference](docs/reference/hcl.md): configuration fields and constraints.

@@ -12,7 +12,7 @@ import (
 
 var expectedDocs = []string{
 	"docs/architecture.md",
-	"docs/design-principles.zh-CN.md",
+	"docs/design-principles.md",
 	"docs/development/contributing.md",
 	"docs/development/releasing.md",
 	"docs/development/testing.md",
@@ -30,6 +30,7 @@ var expectedDocs = []string{
 	"docs/reference/api.md",
 	"docs/reference/cli.md",
 	"docs/reference/hcl.md",
+	"docs/reference/resource-model.md",
 }
 
 var markdownLink = regexp.MustCompile(`\[[^]]*\]\(([^)]+)\)`)
@@ -69,7 +70,7 @@ func main() {
 	examples, err := filepath.Glob("examples/*/*.md")
 	check(err)
 	files = append(files, examples...)
-	stale := []string{"docs/README.md", "docs/overview.md", "docs/deployment.md", "docs/releasing.md", "docs/firecracker-artifacts.md", "docs/superpowers/", "docs/verification/"}
+	stale := []string{"docs/README.md", "docs/overview.md", "docs/deployment.md", "docs/releasing.md", "docs/firecracker-artifacts.md", "docs/superpowers/", "docs/verification/", "docs/sysbox-three-core-challenges.md"}
 	for _, file := range files {
 		raw, err := os.ReadFile(file)
 		check(err)

@@ -1,4 +1,4 @@
-# Lifecycle And Reset
+# 生命周期与 Reset
 
 ## Validate
 
@@ -31,10 +31,10 @@ Reset 后逻辑 address、声明 IP/MAC 与 artifact digest 保持稳定；targe
 
 Destroy 按逆依赖顺序删除，并在每个 provider 边界重新验证 ownership。`prevent_destroy` 会让 plan 失败。重复 destroy 应安全收敛。
 
-## Interrupted Runs
+## 中断的运行
 
 中断时保留 state 和 checkpoint。先检查 [Troubleshooting](troubleshooting.md)，再使用当前 CLI 提供的 recovery/cleanup 操作。不要通过删除 state 或 checkpoint 强行“重新开始”，这会丢失安全清理所需的 identity。
 
-## Upgrade Boundary
+## 升级边界
 
 State schema 硬升级时，使用创建旧 state 的 binary destroy，再用新版本 recreate。直接删除旧 state 只会让 Sysbox 忘记资源，不会清理宿主机对象。

@@ -1,8 +1,8 @@
-# Authoring Topologies
+# 编写拓扑
 
 本指南从实验意图组织 HCL。完整字段表见 [HCL Reference](../reference/hcl.md)。
 
-## Start From Resources
+## 从资源出发
 
 先列出需要长期识别和独立生命周期管理的对象：artifact、network、node、router、firewall 和 SSH access。不要从一组 `docker run` 或 shell command 反推拓扑。
 
@@ -36,7 +36,7 @@ resource "sysbox_node" "web" {
 
 引用自动形成依赖。只在行为依赖无法通过引用表达时使用 `depends_on`。
 
-## Keep Provider Details Local
+## 把 Provider 细节留在本地
 
 公共 node block 描述 image、environment、link、port、route、connection 和 provisioner。底层专属参数放在 provider block：
 
@@ -50,21 +50,21 @@ provider "docker" {
 
 相对 bind source 按运行 Sysbox 时的当前目录解析。Entry point 和 command 是直接 argv，不插入 shell。
 
-## Model Artifacts Explicitly
+## 显式建模制品
 
 不要在 node block 中隐藏下载或使用未经固定的 VM 文件。Kernel、rootfs 和 qcow2 应独立声明并在生产/研究复现中设置 SHA-256。
 
-## Use Stable Logical Names
+## 使用稳定的逻辑命名
 
 Resource label 会进入 canonical address 和 state。选择表达角色而不是临时实现的名称，例如 `sysbox_node.database`，而不是 `sysbox_node.ubuntu_1`。重命名会产生 delete/create，除非显式 state move。
 
-## Provision Only Guest State
+## 只供给 Guest 状态
 
 Provisioner 用于 guest 内部初始化，不用于创建宿主机 network、firewall、container 或 VM。宿主机对象必须由 resource/provider 管理，才能 observation、reset 和安全 destroy。
 
 Provisioner 应幂等、有超时并产生明确错误。后台服务优先由 image ENTRYPOINT/CMD 或 guest init 管理。
 
-## Validate In Layers
+## 分层验证
 
 ```bash
 sysbox -f range.hcl validate
@@ -75,7 +75,7 @@ sysbox -f range.hcl plan
 
 首次 apply 后 plan 应 no-op。随后验证业务功能、执行 reset，再验证功能和最终 destroy residue。
 
-## Make A Range Reproducible
+## 让实验范围可复现
 
 一个可重复研究范围应拥有：
 

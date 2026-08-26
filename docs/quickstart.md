@@ -1,14 +1,14 @@
-# Quickstart
+# 快速开始
 
 本指南在本机 Docker Engine 上运行一个最小拓扑。Firecracker 和 libvirt 的宿主机要求见 [Heterogeneous Nodes](guides/heterogeneous-nodes.md) 和 [Artifacts](operations/artifacts.md)。
 
-## Requirements
+## 前置要求
 
 - Linux
 - Go 1.26 或已发布的 Sysbox Linux binary
 - Docker Engine，当前用户可以访问 Docker socket
 
-## Build
+## 构建
 
 ```bash
 git clone https://github.com/PKU-ASAL/sysbox.git
@@ -19,7 +19,7 @@ go build -o bin/sysbox ./cmd/sysbox
 
 也可以从 GitHub Release 下载对应架构的归档，并按 `SHA256SUMS` 校验。
 
-## Create A Topology
+## 创建拓扑
 
 创建 `lab.hcl`：
 
@@ -50,7 +50,7 @@ resource "sysbox_node" "node" {
 }
 ```
 
-## Validate And Apply
+## 校验与执行
 
 ```bash
 ./bin/sysbox -f lab.hcl validate

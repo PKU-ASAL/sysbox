@@ -122,7 +122,7 @@ Sysbox 有意把能力范围收敛在可验证的 Linux 实验环境内。当前
 README 只提供项目入口。根据你接下来要完成的任务，可以从这些文档继续：
 
 - [Documentation Index](docs/index.md)：按目标选择阅读路径。
-- [Design Principles](docs/design-principles.zh-CN.md)：Sysbox 的核心取舍。
+- [Design Principles](docs/design-principles.md)：Sysbox 的核心取舍。
 - [Architecture](docs/architecture.md)：资源、状态、provider 与恢复契约。
 - [Authoring Topologies](docs/guides/authoring-topologies.md)：编写真实拓扑。
 - [HCL Reference](docs/reference/hcl.md)：配置字段与约束。

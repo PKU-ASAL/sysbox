@@ -1,8 +1,8 @@
-# HCL Reference
+# HCL 参考
 
 本页列出 Sysbox 当前配置结构。示例和工作流见 [Authoring Topologies](../guides/authoring-topologies.md)。
 
-## Top-Level Blocks
+## 顶层块
 
 | Block | Purpose |
 |---|---|
@@ -14,7 +14,7 @@
 | `resource TYPE NAME {}` | Declare managed topology intent |
 | `output NAME {}` | Export an evaluated value |
 
-## Expressions And References
+## 表达式与引用
 
 Resource reference uses typed canonical identity:
 
@@ -35,7 +35,7 @@ substrate "docker" {
 
 Required: type label and `alias`. Provider-specific substrate configuration remains in the block body.
 
-## Common Lifecycle
+## 通用生命周期
 
 Resources that support lifecycle accept:
 
@@ -80,7 +80,7 @@ Use ignore sparingly; it does not transfer ownership to another system.
 
 ## `sysbox_node`
 
-### Common Fields
+### 通用字段
 
 | Field/block | Required | Meaning |
 |---|---:|---|
@@ -142,7 +142,7 @@ connection "ssh" {
 
 Fields include `program`, `args`, `environment`, `working_dir`, `shell`, `source`, `destination` and `background`. Valid combinations depend on provisioner type. Provisioner operates inside the guest and does not own host resources.
 
-## Docker Provider Block
+## Docker Provider 块
 
 ```hcl
 provider "docker" {
@@ -157,7 +157,7 @@ provider "docker" {
 
 Relative bind source resolves against the Sysbox process working directory. Omitted ENTRYPOINT/CMD inherits image config; non-empty array replaces it; explicit `[]` clears it. Values are direct argv, not shell strings.
 
-## Firecracker Provider Block
+## Firecracker Provider 块
 
 | Field | Required | Meaning |
 |---|---:|---|
@@ -171,7 +171,7 @@ Relative bind source resolves against the Sysbox process working directory. Omit
 
 Machine sizing and network initialization must match the selected provider capability and guest image.
 
-## Libvirt Provider Block
+## Libvirt Provider 块
 
 | Field | Required | Meaning |
 |---|---:|---|
@@ -204,6 +204,6 @@ Current policy family is IPv4. Unsupported IPv6 input fails validation.
 
 Required `node` and `authorized_keys`; optional `bind_ip` and `port`. Authorized keys are sensitive execution input and must not leak into logs/state plaintext.
 
-## Import Data Shapes
+## 导入数据形状
 
 Import normalization supports provider external IDs such as Docker container name/ID or libvirt domain identity. Imported resources are handler-owned and remain no-op until configuration explicitly changes desired state.
