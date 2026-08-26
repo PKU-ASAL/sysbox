@@ -230,32 +230,37 @@ func (e *Executor) reportCompletion(ctx context.Context, run *controlplane.Run) 
 			proj.Health = "unknown"
 		}
 	}
-	// The completion report is idempotent, so retry it with backoff. A single
-	// transient failure must not strand the run in a zombie state (running in
-	// the API but finished locally), which would otherwise hang until its
-	// lease expires.
-	if err := reportRunCompleteWithRetry(ctx, reporter, run, proj); err != nil {
-		fmt.Printf("[agent] report run complete %s failed: %v\n", run.ID, err)
+	// Report synchronously so the common path completes immediately. On a
+	// transient failure, keep retrying in the background: the endpoint is
+	// idempotent and the run's lease (30m) remains the final fallback if the
+	// agent itself crashes before this succeeds.
+	if err := reporter.ReportRunComplete(ctx, run, proj); err != nil {
+		fmt.Printf("[agent] report run complete %s failed, retrying in background: %v\n", run.ID, err)
+		go func() {
+			retryCtx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+			defer cancel()
+			if err := reportRunCompleteWithRetry(retryCtx, reporter, run, proj); err != nil {
+				fmt.Printf("[agent] report run complete %s failed after background retries: %v\n", run.ID, err)
+			}
+		}()
 	}
 }
 
+var reportRunCompleteRetryInterval = 5 * time.Second
+
 func reportRunCompleteWithRetry(ctx context.Context, reporter Reporter, run *controlplane.Run, proj controlplane.Projection) error {
-	const maxAttempts = 5
-	var err error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if attempt > 0 {
-			backoff := time.Duration(1<<uint(attempt-1)) * time.Second // 1s, 2s, 4s, 8s
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
-			}
-		}
-		if err = reporter.ReportRunComplete(ctx, run, proj); err == nil {
+	ticker := time.NewTicker(reportRunCompleteRetryInterval)
+	defer ticker.Stop()
+	for {
+		if err := reporter.ReportRunComplete(ctx, run, proj); err == nil {
 			return nil
 		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
-	return err
 }
 
 func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log io.Writer) {

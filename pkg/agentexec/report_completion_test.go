@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -23,7 +24,15 @@ func (r *retryReporter) ReportRunComplete(context.Context, *controlplane.Run, co
 	return nil
 }
 
+func withShortRetryInterval(t *testing.T) {
+	t.Helper()
+	previous := reportRunCompleteRetryInterval
+	reportRunCompleteRetryInterval = time.Millisecond
+	t.Cleanup(func() { reportRunCompleteRetryInterval = previous })
+}
+
 func TestReportRunCompleteRetriesUntilSuccess(t *testing.T) {
+	withShortRetryInterval(t)
 	reporter := &retryReporter{failures: 1}
 	err := reportRunCompleteWithRetry(context.Background(), reporter, &controlplane.Run{ID: "run-1"}, controlplane.Projection{})
 	require.NoError(t, err)
@@ -31,6 +40,7 @@ func TestReportRunCompleteRetriesUntilSuccess(t *testing.T) {
 }
 
 func TestReportRunCompleteStopsOnContextCancel(t *testing.T) {
+	withShortRetryInterval(t)
 	reporter := &retryReporter{failures: 100}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
