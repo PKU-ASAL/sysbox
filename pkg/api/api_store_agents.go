@@ -185,7 +185,7 @@ func (s *postgresAPIStore) SaveAgent(ctx context.Context, agent controlplane.Age
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := json.Marshal(agent)
 	if err != nil {
 		return err
@@ -206,7 +206,7 @@ func (s *postgresAPIStore) GetAgent(ctx context.Context, id string) (*controlpla
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var raw []byte
 	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_agents WHERE id=$1`, id).Scan(&raw)
 	if err == pgx.ErrNoRows {
@@ -227,7 +227,7 @@ func (s *postgresAPIStore) ListAgents(ctx context.Context) ([]controlplane.Agent
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	rows, err := conn.Query(ctx, `SELECT data::text FROM sysbox_agents ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("postgres list agents: %w", err)
@@ -259,7 +259,7 @@ func (s *postgresAPIStore) SaveAgentCommandEvent(ctx context.Context, event cont
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -279,7 +279,7 @@ func (s *postgresAPIStore) ListAgentCommandEvents(ctx context.Context, agentID s
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	query := `SELECT data::text FROM sysbox_agent_command_events ORDER BY created_at DESC LIMIT 512`
 	args := []any{}
 	if agentID != "" {
@@ -317,7 +317,7 @@ func (s *postgresAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplan
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := json.Marshal(cmd)
 	if err != nil {
 		return err
@@ -347,7 +347,7 @@ func (s *postgresAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID
 	if err != nil {
 		return nil, false, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return nil, false, err
@@ -416,7 +416,7 @@ func (s *postgresAPIStore) ListAgentCommands(ctx context.Context, agentID string
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	query := `SELECT data::text FROM sysbox_agent_commands ORDER BY updated_at DESC LIMIT 512`
 	args := []any{}
 	if agentID != "" {
@@ -451,7 +451,7 @@ func (s *postgresAPIStore) SaveAgentInventory(ctx context.Context, inv controlpl
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := json.Marshal(inv)
 	if err != nil {
 		return err
@@ -472,7 +472,7 @@ func (s *postgresAPIStore) GetAgentInventory(ctx context.Context, agentID string
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var raw []byte
 	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_agent_inventory WHERE agent_id=$1`, agentID).Scan(&raw)
 	if err == pgx.ErrNoRows {

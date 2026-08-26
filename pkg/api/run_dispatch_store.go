@@ -242,7 +242,7 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 	if err != nil {
 		return nil, false, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return nil, false, err
@@ -319,7 +319,7 @@ func (s *postgresAPIStore) GetRunDispatch(ctx context.Context, requestID, finger
 	if err != nil {
 		return nil, false, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var storedFingerprint string
 	var raw []byte
 	err = conn.QueryRow(ctx, `SELECT request.fingerprint, run.data::text

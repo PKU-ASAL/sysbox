@@ -42,7 +42,7 @@ func (s *postgresAPIStore) LatestGuestAcceptance(ctx context.Context, agentID st
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var execAt, fileAt *time.Time
 	err = conn.QueryRow(ctx, `
 SELECT
@@ -177,7 +177,7 @@ func (s *postgresAPIStore) SaveGuestExecution(ctx context.Context, execution con
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := encodeStoredGuestExecution(execution)
 	if err != nil {
 		return err
@@ -191,7 +191,7 @@ func (s *postgresAPIStore) GetGuestExecution(ctx context.Context, id string) (*c
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var raw []byte
 	if err := conn.QueryRow(ctx, `SELECT data::text FROM sysbox_guest_executions WHERE id=$1`, id).Scan(&raw); err != nil {
 		if err == pgx.ErrNoRows {
@@ -207,7 +207,7 @@ func (s *postgresAPIStore) CompareAndSwapGuestExecution(ctx context.Context, exe
 	if err != nil {
 		return false, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	execution.Version = expected + 1
 	raw, err := encodeStoredGuestExecution(execution)
 	if err != nil {
