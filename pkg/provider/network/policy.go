@@ -81,7 +81,9 @@ func expandRuleAlternatives(rule driver.PolicyRule) []driver.PolicyRule {
 	rules = expandStringAlternatives(rules, rule.SourceCIDRs, func(rule *driver.PolicyRule, value string) { rule.SourceCIDRs = []string{value} })
 	rules = expandStringAlternatives(rules, rule.DestinationCIDRs, func(rule *driver.PolicyRule, value string) { rule.DestinationCIDRs = []string{value} })
 	rules = expandPortAlternatives(rules, rule.SourcePorts, func(rule *driver.PolicyRule, value driver.PortRange) { rule.SourcePorts = []driver.PortRange{value} })
-	return expandPortAlternatives(rules, rule.DestinationPorts, func(rule *driver.PolicyRule, value driver.PortRange) { rule.DestinationPorts = []driver.PortRange{value} })
+	return expandPortAlternatives(rules, rule.DestinationPorts, func(rule *driver.PolicyRule, value driver.PortRange) {
+		rule.DestinationPorts = []driver.PortRange{value}
+	})
 }
 
 func expandStringAlternatives(rules []driver.PolicyRule, values []string, set func(*driver.PolicyRule, string)) []driver.PolicyRule {

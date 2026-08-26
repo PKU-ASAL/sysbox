@@ -39,9 +39,9 @@ func TestCompileRulesetExpandsMatchListsAsAlternatives(t *testing.T) {
 		Owner: "topology.lab/sysbox_firewall.service", Family: driver.FamilyIPv4,
 		Rules: []driver.PolicyRule{{
 			ID: "service", Direction: driver.DirectionInput, Protocol: driver.ProtocolTCP,
-			SourceCIDRs: []string{"10.0.0.2/32", "127.0.0.0/8"},
+			SourceCIDRs:      []string{"10.0.0.2/32", "127.0.0.0/8"},
 			DestinationPorts: []driver.PortRange{{From: 8080, To: 8080}, {From: 8443, To: 8443}},
-			Verdict: driver.VerdictAccept,
+			Verdict:          driver.VerdictAccept,
 		}},
 	}
 
