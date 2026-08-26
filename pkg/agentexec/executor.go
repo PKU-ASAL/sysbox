@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -229,7 +230,32 @@ func (e *Executor) reportCompletion(ctx context.Context, run *controlplane.Run) 
 			proj.Health = "unknown"
 		}
 	}
-	_ = reporter.ReportRunComplete(ctx, run, proj)
+	// The completion report is idempotent, so retry it with backoff. A single
+	// transient failure must not strand the run in a zombie state (running in
+	// the API but finished locally), which would otherwise hang until its
+	// lease expires.
+	if err := reportRunCompleteWithRetry(ctx, reporter, run, proj); err != nil {
+		fmt.Printf("[agent] report run complete %s failed: %v\n", run.ID, err)
+	}
+}
+
+func reportRunCompleteWithRetry(ctx context.Context, reporter Reporter, run *controlplane.Run, proj controlplane.Projection) error {
+	const maxAttempts = 5
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second // 1s, 2s, 4s, 8s
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+		if err = reporter.ReportRunComplete(ctx, run, proj); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log io.Writer) {

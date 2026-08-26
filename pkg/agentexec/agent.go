@@ -40,6 +40,7 @@ type Options struct {
 	ReportGuestExecutionCompleteFunc func(context.Context, string, controlplane.GuestExecutionCompletion) error
 	ReportGuestFileStartFunc         func(context.Context, string) error
 	ReportGuestFileCompleteFunc      func(context.Context, string, controlplane.GuestFileOperationCompletion) error
+	RequestTimeout                   time.Duration
 }
 
 func Run(ctx context.Context, opts Options, bridge Bridge) error {
@@ -60,6 +61,9 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	}
 	if opts.RunRenewTTL <= 0 {
 		opts.RunRenewTTL = 30 * time.Minute
+	}
+	if opts.RequestTimeout <= 0 {
+		opts.RequestTimeout = 30 * time.Second
 	}
 	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
 	if len(opts.Capabilities) == 0 {
@@ -710,13 +714,21 @@ func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.R
 	return cancel
 }
 
+func requestClient(opts Options) *http.Client {
+	timeout := opts.RequestTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	return &http.Client{Timeout: timeout}
+}
+
 func get(ctx context.Context, opts Options, url string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
 	authorize(req, opts)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := requestClient(opts).Do(req)
 	if err != nil {
 		return err
 	}
@@ -740,7 +752,7 @@ func post(ctx context.Context, opts Options, url string, in any, out any) error 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	authorize(req, opts)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := requestClient(opts).Do(req)
 	if err != nil {
 		return err
 	}
