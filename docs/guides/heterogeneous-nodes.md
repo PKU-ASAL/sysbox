@@ -1,4 +1,4 @@
-# Heterogeneous Nodes
+# 异构节点
 
 选择 provider 的依据是实验隔离和 guest 需求，而不是统一语法本身。
 
@@ -8,7 +8,7 @@
 | Firecracker | 需要 microVM 隔离、确定 kernel/rootfs | 需要 KVM、kernel、rootfs 和 guest init |
 | libvirt | 需要完整 VM、qcow2/cloud image 生态 | 启动和存储成本更高 |
 
-## Shared Contract
+## 共享契约
 
 三类节点共享 image reference、logical link、IP/MAC、route、connection、provisioner、port intent、state、observation 和 reset。网络可以在同一 topology 中连接容器、microVM 和 VM。
 
@@ -32,7 +32,22 @@ Sysbox 可以用原生 libvirt 启动预先安装好的 Windows 10 qcow2，并�
 
 这里的 `domain-start lifecycle` 是有意保留的边界：当前 libvirt provider 的 guest execution 仍是 SSH，guest network init 仍面向 Linux cloud-init。Windows 拓扑因此必须使用 `guest_family = "windows"` 和 `network_init = "preconfigured"`，且暂不声明 link、route 或 provisioner。`make test-windows10-libvirt` 只验证 libvirt domain 启动、重复 plan、reset、destroy 和 owned residue 清理，并不验证 Windows guest readiness；在 WinRM 与 Windows 网络初始化接入现有 capability contract 之前，不能把它描述为完整的 Windows 节点支持。
 
-## Mixed Topologies
+## 机制对照
+
+| 通用能力 | Docker driver | Firecracker driver | libvirt driver |
+|---|---|---|---|
+| 节点类型 | Linux 容器 | KVM 微虚机 | QEMU/KVM 完整虚拟机 |
+| 基础镜像 | OCI image | kernel + rootfs | qcow2 |
+| 创建节点 | 调用 Docker 创建容器 | 生成配置并启动 Firecracker 进程 | 创建 libvirt domain |
+| 网络设备 | veth 或 Docker endpoint | TAP | domain 虚拟 NIC/TAP |
+| 网卡接入时机 | 支持运行时接入 | 通常在启动前接入 | 通常写入 domain 配置后启动 |
+| Guest 命令执行 | Docker Exec | vsock RPC 或 SSH | SSH |
+| 状态观察 | Docker Inspect | 进程、socket 和 guest observation | virsh/domain 查询 |
+| Pause/Resume | Docker pause/unpause | 暂停/恢复 Firecracker 进程 | virsh suspend/resume |
+| Reset | 重新创建容器 | 从只读基线创建新 VM generation | 从 qcow2 基线创建新 overlay/domain |
+| 外部身份 | Container ID | VM generation、进程和 socket | Domain UUID |
+
+## 混合拓扑
 
 在混合拓扑中显式声明 architecture 和 guest family。所有 provider 必须实现该拓扑需要的 NIC、guest execution、state 或 reset capability，否则 planning 阶段失败。
 

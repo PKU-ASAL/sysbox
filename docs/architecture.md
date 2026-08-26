@@ -1,8 +1,8 @@
-# Sysbox Architecture
+# Sysbox 架构
 
 本文是 Sysbox 系统边界和持久契约的规范性说明。操作步骤位于 guides/operations，字段和 endpoint 位于 reference。
 
-## System Context
+## 系统上下文
 
 Sysbox 接收 HCL topology intent，解析为 typed resource graph，结合 durable state 与外部 observation 生成 plan，再通过 capability driver 修改宿主机资源。
 
@@ -23,13 +23,13 @@ decoder -> typed graph -> planner -> ordered actions
 
 本地 CLI 与 API/Agent 模式共享 decoder、planner、executor、state manager 和 provider。API 只提供产品对象、调度与远程执行桥接，不定义另一套拓扑语义。
 
-## Configuration And Graph
+## 配置与图
 
 顶层配置由 substrate、variable、locals、module、data、resource 和 output 组成。Resource reference 与显式 `depends_on` 形成有向图；create 按拓扑顺序执行，destroy 按逆序执行。
 
 Resource handler 拥有某一资源类型的 schema、解码、验证、依赖提取、planning、observation、import normalization 和生命周期规则。Graph 和 planner 不通过字符串字段猜测资源行为。
 
-## Canonical Resource Identity
+## 规范资源身份
 
 配置展开、graph、plan、state、checkpoint、CLI、API 和日志使用同一 canonical address：
 
@@ -51,13 +51,13 @@ Canonical address 是逻辑身份；container ID、Firecracker generation ID、l
 sysbox state mv 'sysbox_node.web[0]' 'sysbox_node.web[1]'
 ```
 
-## Artifact Identity
+## 制品身份
 
 OCI image、rootfs、qcow2 和 kernel 作为独立资源进入 graph。Artifact 公共身份包含 kind、source、architecture、guest family、可选 size 与不可变 digest。
 
 Planner 将实际 digest 纳入 stored-plan fingerprint。Apply/reset 在 destructive operation 前重新验证 baseline。大 artifact 不进入 Sysbox runtime image；由 topology、cache 或明确挂载提供。
 
-## Handler And Capability Driver Boundary
+## Handler 与能力 Driver 边界
 
 Handler 定义“资源意味着什么”；driver 定义“如何操作外部系统”。Driver descriptor 只声明实现的 capability，consumer 通过 registry 请求能力。Planning 在 mutation 前验证所需 capability 是否存在。
 
@@ -65,7 +65,7 @@ Handler 定义“资源意味着什么”；driver 定义“如何操作外部�
 
 `pkg/substrate` 只承载中立 wire/execution data types，不负责 registry 或 driver selection。
 
-## Node And Provider State
+## 节点与 Provider 状态
 
 Node state 分为：
 
@@ -74,13 +74,13 @@ Node state 分为：
 
 只有 `NodeState` capability 可以编码和解码 private envelope。Runtime 不解释 container name、VM socket、overlay path、domain XML 或进程 identity。
 
-## Network Attachments
+## 网络挂载
 
 Attachment 公共身份是 `(owner resource address, logical attachment name)`。Core 保存 network address、IP prefixes、MAC、gateway、aliases 和 latest observation；NIC capability 独占物理实现及 opaque state。
 
 Runtime 不分配或解释 guest `ethN`、veth、TAP、namespace、Docker endpoint 或 libvirt device name。Guest network initialization 在 attachment wiring 后由 provider capability 执行。
 
-## Policy
+## 策略
 
 `sysbox_firewall` 和 router NAT 使用 typed Policy capability。Core 保存 IPv4 policy semantics、逻辑 attachment reference 和 desired digest；provider 在执行时解析实际设备并原子替换 topology-owned nftables table。
 
@@ -88,7 +88,7 @@ Apply 只有在 readback 成功后才完成。Refresh 比较 semantic digest；�
 
 Policy 当前仅支持 IPv4。IPv6 input 明确验证失败，不静默忽略。
 
-## Plan Model
+## Plan 模型
 
 Plan 是唯一有序的 action list：
 
@@ -100,7 +100,7 @@ create  read  no-op  replace  delete  unknown
 
 每个 action 使用 canonical address、明确 reason 和 schema-owned diff。Dependency 变化是否替换由 dependent handler 决定，不自动级联。
 
-## Stored Plan Integrity
+## Stored Plan 完整性
 
 Stored plan 绑定：
 
@@ -113,7 +113,7 @@ Stored plan 绑定：
 
 Apply 在调用 provider 前逐项比较。任一 mismatch 返回 field-specific stale-plan error，不进行外部 mutation。Secret 明文和 provider-private payload 不进入 plan。
 
-## State Contract
+## State 契约
 
 Durable state 保存 canonical address、resource/schema identity、external ID、typed public attributes、dependencies、attachments、observation status 和 UTC timestamps。Driver detail 使用 versioned private envelope。
 
@@ -127,7 +127,7 @@ Observation status 包括：
 
 Unknown 阻止 apply，不触发 replacement。旧 state 缺少当前 schema 所需 identity/ownership 时，在任何 mutation 前拒绝；用创建它的旧 binary destroy 后再 recreate。
 
-## Backend Safety And Concurrency
+## Backend 安全与并发
 
 Backend 分别声明 locking、compare-and-swap、snapshot、deletion、lease 和 force-unlock capability。Mutation 默认同时要求 locking 与 CAS。
 
@@ -135,9 +135,32 @@ Local、SQLite 和 Postgres 满足核心 mutation contract；HTTP/S3 兼容 back
 
 State manager 在锁内读取 serial，通过 CAS 保存新版本，并在 destructive operation 前创建 snapshot。API run lease 与 state lock 是两层不同保护：前者防止重复调度，后者保护 durable topology state。
 
-## Checkpointed Execution
+## 检查点执行
 
 宿主机 mutation 无法组成单一数据库事务。Executor 在关键步骤前后持久化 operation checkpoint，包括资源 address、action、provider handle、attachment/private state 和已完成 substep。
+
+一次 reset 的 checkpoint 序列示例：
+
+```mermaid
+sequenceDiagram
+    participant E as Sysbox Executor
+    participant C as Checkpoint Store
+    participant P as Provider
+    participant S as State Backend
+
+    E->>C: 记录 reset 开始及计划指纹
+    E->>P: 从不可变基线创建新 generation
+    P-->>E: 返回新的 external ID
+    E->>C: 记录 external ID
+    E->>P: 连接 NIC、配置网络并启动
+    E->>C: 逐步记录 wired / started
+    E->>P: 观察新节点状态
+    P-->>E: 返回 running / unknown 等状态
+    E->>S: 原子更新正式 state
+    E->>C: 标记状态已写入
+    E->>P: 验证 ownership 后清理旧 generation
+    E->>C: 记录 reset 完成
+```
 
 恢复流程：
 
@@ -149,7 +172,7 @@ State manager 在锁内读取 serial，通过 CAS 保存新版本，并在 destr
 
 Repeated recovery 必须幂等。Unavailable 或 invalid observation 停止恢复；missing attachment 可被记录为 drift，以受控 replacement 收敛。
 
-## Reset Contract
+## Reset 契约
 
 Reset 从 immutable baseline 替换 mutable guest generation：
 
@@ -164,25 +187,25 @@ Reset 从 immutable baseline 替换 mutable guest generation：
 
 声明的 resource address、MAC、IP 和 artifact identity 保持稳定；external ID 必须变化。Targeted reset 不替换不相关节点。
 
-## Ownership And Destruction
+## 所有权与销毁
 
 每个外部对象持有 topology、resource address、resource type 和 run/generation 等 ownership anchor。Provider 在 destructive operation 前将持久 state 与实际对象标记比对。
 
 名称相同、路径相似或对象位于默认目录都不足以证明 ownership。证据不完整时保留对象并报错。Destroy 的完成条件包括 state 收敛和 topology-owned residue audit。
 
-## Secret Boundary
+## 密钥边界
 
 `env("NAME")` 产生 `secret://env/NAME` reference，不在配置求值时读取明文。Execution-scoped resolver 在 provider operation 前解析；缺失值使执行失败。非敏感可选路径使用 `env_optional()`。
 
 Plan、state、checkpoint、API payload、event 和日志只能保存 reference 或 redacted placeholder。Node environment、connection credential、provisioner command、authorized key 和 provider config 都经过相同 resolver 边界。
 
-## Control Plane And Agents
+## 控制面与 Agent
 
 API 持久化 Project、Workspace、Topology、Revision、Plan、Run、Agent、Event、Artifact 和 projection。Run 根据 capability 调度给 Agent；Agent 通过 signed protocol 领取 command、claim/renew lease、执行共享 runtime 并回传 event/projection。
 
 API container 不应持有 Docker socket、KVM 或 libvirt 权限。Host Agent 持有最小必要 capability。Topology state/checkpoint 默认位于执行 Agent，除非配置共享安全 backend。
 
-## Architectural Invariants
+## 架构不变量
 
 - 未通过 plan fingerprint 和 backend safety 检查前，不调用 provider mutation。
 - Unknown observation 不等于 absent。

@@ -61,6 +61,44 @@ sysbox_kernel ─┘         │
 sysbox_image ──> sysbox_router ──(interface)──> sysbox_network
 ```
 
+一个混合拓扑的依赖图示例（箭头表示「后者依赖前者」）：
+
+```mermaid
+flowchart LR
+    dockerImage[Docker Alpine 镜像]
+    attackerImage[攻击者 OCI 镜像]
+    nginxImage[Nginx OCI 镜像]
+    kernel[Firecracker 内核]
+    rootfs[Firecracker RootFS]
+
+    dmz[DMZ 网络]
+    internal[内部网络]
+    uplink[上行网络]
+
+    router[Docker 核心路由器]
+    attacker[Docker 攻击者节点]
+    web[Docker Web 节点]
+    db[Firecracker 数据库节点]
+
+    dockerImage --> router
+    dmz --> router
+    internal --> router
+    uplink --> router
+
+    attackerImage --> attacker
+    dmz --> attacker
+    uplink --> attacker
+
+    nginxImage --> web
+    internal --> web
+    router --> web
+
+    kernel --> db
+    rootfs --> db
+    internal --> db
+    router --> db
+```
+
 **粒度的几个要点**：
 
 1. **制品是叶子**：`sysbox_image` / `sysbox_kernel` / `sysbox_network` 不引用其他资源，是最小声明单元。
@@ -99,6 +137,36 @@ resource "sysbox_node" "web" {
     privileged = true
   }
 }
+```
+
+分层视图——统一 schema 规定 driver 必须接收什么输入、提供什么操作、返回什么状态，各 driver 负责具体实现：
+
+```mermaid
+flowchart TB
+    intent[HCL 拓扑声明<br/>Node / Image / Network / Link]
+
+    subgraph schema[统一 Schema 与能力契约]
+        nodeSpec[NodeSpec<br/>CPU / Memory / Image / Env]
+        artifact[Artifact<br/>Resolve / Identity]
+        lifecycle[Node Lifecycle<br/>Create / Start / Observe / Delete]
+        nic[NIC<br/>Attach / Observe / Detach]
+        guest[Guest Execution<br/>Exec / Copy]
+        reset[Reset<br/>Prepare / Apply / Observe]
+    end
+
+    core[Sysbox Core<br/>Graph / Plan / Execute]
+
+    subgraph drivers[Driver 实现层]
+        docker[Docker driver<br/>OCI / Container / veth / Exec]
+        firecracker[Firecracker driver<br/>Kernel+RootFS / microVM / TAP / vsock]
+        libvirt[libvirt driver<br/>qcow2 / Domain / virtual NIC / SSH]
+    end
+
+    intent --> schema
+    schema --> core
+    core --> docker
+    core --> firecracker
+    core --> libvirt
 ```
 
 ---
