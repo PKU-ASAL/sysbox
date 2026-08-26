@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -363,22 +365,53 @@ func readLocalObjects[T any](pattern string) ([]T, error) {
 
 type postgresAPIStore struct {
 	dsn string
+
+	mu   sync.Mutex
+	pool *pgxpool.Pool
 }
 
-func (s *postgresAPIStore) connect(ctx context.Context) (*pgx.Conn, error) {
-	conn, err := pgx.Connect(ctx, dsnWithoutSysboxQuery(s.dsn))
+// connect acquires a connection from the lazily-initialized pool. The pool and
+// its schema migrations are established exactly once; opening a fresh pgx.Conn
+// and running the full migration pass on every request would exhaust the
+// server's Postgres connection limit and make every call pay DDL contention.
+func (s *postgresAPIStore) connect(ctx context.Context) (*pgxpool.Conn, error) {
+	pool, err := s.poolFor(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("postgres connect: %w", err)
-	}
-	if err := s.ensureSchema(ctx, conn); err != nil {
-		conn.Close(ctx)
 		return nil, err
+	}
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("postgres acquire: %w", err)
 	}
 	return conn, nil
 }
 
-func (s *postgresAPIStore) ensureSchema(ctx context.Context, conn *pgx.Conn) error {
-	_, err := conn.Exec(ctx, `
+func (s *postgresAPIStore) poolFor(ctx context.Context) (*pgxpool.Pool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pool != nil {
+		return s.pool, nil
+	}
+	cfg, err := pgxpool.ParseConfig(dsnWithoutSysboxQuery(s.dsn))
+	if err != nil {
+		return nil, fmt.Errorf("postgres parse config: %w", err)
+	}
+	cfg.MaxConns = 32
+	cfg.MinConns = 2
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("postgres pool: %w", err)
+	}
+	if err := s.ensureSchema(ctx, pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	s.pool = pool
+	return s.pool, nil
+}
+
+func (s *postgresAPIStore) ensureSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS sysbox_api_schema_migrations (
   name TEXT PRIMARY KEY,
   version INTEGER NOT NULL,
@@ -388,15 +421,15 @@ CREATE TABLE IF NOT EXISTS sysbox_api_schema_migrations (
 		return fmt.Errorf("postgres ensure schema migrations table: %w", err)
 	}
 	for _, migration := range apiMigrations {
-		if err := s.applyMigration(ctx, conn, migration); err != nil {
+		if err := s.applyMigration(ctx, pool, migration); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *postgresAPIStore) applyMigration(ctx context.Context, conn *pgx.Conn, migration apiMigration) error {
-	tx, err := conn.Begin(ctx)
+func (s *postgresAPIStore) applyMigration(ctx context.Context, pool *pgxpool.Pool, migration apiMigration) error {
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -429,7 +462,7 @@ func (s *postgresAPIStore) SchemaVersion(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var version int
 	err = conn.QueryRow(ctx, `SELECT version FROM sysbox_api_schema_migrations WHERE name='api'`).Scan(&version)
 	if err != nil {
@@ -443,7 +476,7 @@ func (s *postgresAPIStore) SaveCheckpoint(ctx context.Context, topology, runID s
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := json.Marshal(checkpoint)
 	if err != nil {
 		return err
@@ -464,7 +497,7 @@ func (s *postgresAPIStore) LoadCheckpoint(ctx context.Context, topology, runID s
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var raw []byte
 	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_checkpoints WHERE topology=$1 AND run_id=$2`, topology, runID).Scan(&raw)
 	if err == pgx.ErrNoRows {
@@ -485,7 +518,7 @@ func (s *postgresAPIStore) SaveHealth(ctx context.Context, topology string, snap
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := json.Marshal(snap)
 	if err != nil {
 		return err
@@ -506,7 +539,7 @@ func (s *postgresAPIStore) LoadHealth(ctx context.Context, topology string) (*He
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var raw []byte
 	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_health WHERE topology=$1`, topology).Scan(&raw)
 	if err == pgx.ErrNoRows {
@@ -570,7 +603,7 @@ func (s *postgresAPIStore) SaveConsoleSession(ctx context.Context, sess controlp
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := json.Marshal(sess)
 	if err != nil {
 		return err
@@ -591,7 +624,7 @@ func (s *postgresAPIStore) GetConsoleSession(ctx context.Context, id string) (*c
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var raw []byte
 	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_console_sessions WHERE id=$1`, id).Scan(&raw)
 	if err == pgx.ErrNoRows {
@@ -612,7 +645,7 @@ func (s *postgresAPIStore) ListConsoleSessions(ctx context.Context, workspace st
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	query := `SELECT data::text FROM sysbox_console_sessions ORDER BY updated_at DESC`
 	args := []any{}
 	if workspace != "" {
@@ -648,7 +681,7 @@ func (s *postgresAPIStore) SaveNodeOperation(ctx context.Context, op controlplan
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := json.Marshal(op)
 	if err != nil {
 		return err
@@ -669,7 +702,7 @@ func (s *postgresAPIStore) GetNodeOperation(ctx context.Context, id string) (*co
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var raw []byte
 	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_node_operations WHERE id=$1`, id).Scan(&raw)
 	if err == pgx.ErrNoRows {
@@ -690,7 +723,7 @@ func (s *postgresAPIStore) ListNodeOperations(ctx context.Context, workspace str
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	query := `SELECT data::text FROM sysbox_node_operations ORDER BY updated_at DESC`
 	args := []any{}
 	if workspace != "" {
@@ -729,7 +762,7 @@ func (s *postgresAPIStore) saveObject(ctx context.Context, table, workspace, id 
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -750,7 +783,7 @@ func listPostgresObjects[T any](ctx context.Context, s *postgresAPIStore, table,
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	rows, err := conn.Query(ctx, fmt.Sprintf(`SELECT data::text FROM %s WHERE workspace=$1 ORDER BY created_at DESC`, table), workspace)
 	if err != nil {
 		return nil, fmt.Errorf("postgres list %s: %w", table, err)
@@ -776,7 +809,7 @@ func getPostgresObject[T any](ctx context.Context, s *postgresAPIStore, table, w
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var raw []byte
 	err = conn.QueryRow(ctx, fmt.Sprintf(`SELECT data::text FROM %s WHERE workspace=$1 AND id=$2`, table), workspace, id).Scan(&raw)
 	if err == pgx.ErrNoRows {

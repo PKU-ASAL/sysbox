@@ -78,7 +78,7 @@ func (s *postgresAPIStore) SaveGuestFileOperation(ctx context.Context, op contro
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := encodeGuestFileOperation(op)
 	if err != nil {
 		return err
@@ -92,7 +92,7 @@ func (s *postgresAPIStore) GetGuestFileOperation(ctx context.Context, id string)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var raw []byte
 	if err := conn.QueryRow(ctx, `SELECT data::text FROM sysbox_guest_file_operations WHERE id=$1`, id).Scan(&raw); err != nil {
 		if err == pgx.ErrNoRows {
@@ -108,7 +108,7 @@ func (s *postgresAPIStore) CompareAndSwapGuestFileOperation(ctx context.Context,
 	if err != nil {
 		return false, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	op.Version = expected + 1
 	raw, err := encodeGuestFileOperation(op)
 	if err != nil {

@@ -107,7 +107,7 @@ func (s *postgresAPIStore) LoadRuns(ctx context.Context) ([]controlplane.Run, er
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	rows, err := conn.Query(ctx, `SELECT data::text FROM sysbox_runs ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("postgres load runs: %w", err)
@@ -134,7 +134,7 @@ func (s *postgresAPIStore) GetRun(ctx context.Context, id string) (*controlplane
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	var raw []byte
 	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_runs WHERE id=$1`, id).Scan(&raw)
 	if err == pgx.ErrNoRows {
@@ -157,7 +157,7 @@ func (s *postgresAPIStore) SaveRun(ctx context.Context, run controlplane.Run) er
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	raw, err := json.Marshal(run)
 	if err != nil {
 		return err
@@ -178,7 +178,7 @@ func (s *postgresAPIStore) ClaimRun(ctx context.Context, runID, agentID, owner s
 	if err != nil {
 		return nil, false, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return nil, false, err
@@ -247,7 +247,7 @@ func (s *postgresAPIStore) RenewRunLease(ctx context.Context, runID, agentID, ow
 	if err != nil {
 		return nil, false, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Release()
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return nil, false, err
