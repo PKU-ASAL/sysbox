@@ -65,6 +65,15 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "docker", "attach network", err)
 	}
 	if target.NAT {
+		// Docker names the interface on managed networks; resolve it so NAT
+		// policy can bind rules to the actual guest device.
+		resolved, err := s.resolveAttachmentDevice(ctx, h, req, driver.AttachmentResult{})
+		if err != nil {
+			return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "docker", "resolve NAT attachment device", err)
+		}
+		guest = resolved
+	}
+	if target.NAT {
 		if hs, ok := h.Provider.(*HandleState); ok && hs.RemoveDefaultBridge {
 			if err := s.cli.NetworkDisconnect(ctx, "bridge", h.ID, true); err != nil {
 				_ = s.cli.NetworkDisconnect(ctx, target.NetworkID, h.ID, true)
