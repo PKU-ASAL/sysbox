@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -18,13 +19,20 @@ func (s *Substrate) resolveAttachmentDevice(ctx context.Context, handle substrat
 	}
 	ip := strings.SplitN(req.IPPrefixes[0], "/", 2)[0]
 	command := fmt.Sprintf(`ip -o addr show | awk '$4 ~ /^%s\// {print $2; exit}'`, ip)
-	resolved, err := s.ExecInNode(ctx, handle, substrate.ExecRequest{Program: command, Shell: substrate.ShellLinux})
-	if err != nil {
-		return "", fmt.Errorf("resolve attachment %q: %w", req.Name, err)
+	// Docker assigns the endpoint IP asynchronously after network connect;
+	// poll briefly for the interface to appear before failing.
+	for attempt := 0; attempt < 30; attempt++ {
+		resolved, err := s.ExecInNode(ctx, handle, substrate.ExecRequest{Program: command, Shell: substrate.ShellLinux})
+		if err == nil {
+			if device := strings.TrimSpace(resolved.Stdout); device != "" {
+				return device, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
-	device := strings.TrimSpace(resolved.Stdout)
-	if device == "" {
-		return "", fmt.Errorf("resolve attachment %q: no interface has IP %s", req.Name, ip)
-	}
-	return device, nil
+	return "", fmt.Errorf("resolve attachment %q: no interface has IP %s", req.Name, ip)
 }
