@@ -1015,6 +1015,15 @@ func (s *sqliteAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplane.
 	return err
 }
 
+func (s *sqliteAPIStore) DeleteAgentCommand(ctx context.Context, agentID, commandID string) error {
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `DELETE FROM sysbox_agent_commands WHERE id=? AND agent_id=?`, commandID, agentID)
+	return err
+}
+
 func (s *sqliteAPIStore) ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error) {
 	db, err := s.open()
 	if err != nil {

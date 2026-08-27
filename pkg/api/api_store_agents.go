@@ -74,6 +74,14 @@ func (s *localAPIStore) SaveAgentCommand(_ context.Context, cmd controlplane.Age
 	return writeLocalObject(path, cmd)
 }
 
+func (s *localAPIStore) DeleteAgentCommand(_ context.Context, agentID, commandID string) error {
+	path := filepath.Join(s.runsDir, "_agents", agentID, "commands", commandID+".json")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (s *localAPIStore) ListAgentCommands(_ context.Context, agentID string) ([]controlplane.AgentCommand, error) {
 	var commands []controlplane.AgentCommand
 	var err error
@@ -338,6 +346,18 @@ WHERE
 		cmd.AgentID, cmd.ID, cmd.Status, cmd.LeaseOwner, leaseUntil, cmd.Attempt, string(raw))
 	if err != nil {
 		return fmt.Errorf("postgres save agent command: %w", err)
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) DeleteAgentCommand(ctx context.Context, agentID, commandID string) error {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `DELETE FROM sysbox_agent_commands WHERE id=$1 AND agent_id=$2`, commandID, agentID); err != nil {
+		return fmt.Errorf("postgres delete agent command: %w", err)
 	}
 	return nil
 }

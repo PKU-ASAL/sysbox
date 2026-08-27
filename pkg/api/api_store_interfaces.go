@@ -77,6 +77,7 @@ type agentCommandStore interface {
 	SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error
 	ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error)
 	SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error
+	DeleteAgentCommand(ctx context.Context, agentID, commandID string) error
 	ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error)
 	AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error)
 }

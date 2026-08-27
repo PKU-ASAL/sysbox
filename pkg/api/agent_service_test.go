@@ -52,7 +52,7 @@ func TestAgentServicePublishAndAcquireCommandLease(t *testing.T) {
 }
 
 func TestAgentServiceRecordCommandEventUpdatesCommand(t *testing.T) {
-	svc, store, registry, _ := newTestAgentService(t)
+	svc, _, registry, _ := newTestAgentService(t)
 	ctx := context.Background()
 	cmd, err := svc.PublishCommand(ctx, "host-a", controlplane.AgentCommand{Type: "node_operation"})
 	require.NoError(t, err)
@@ -61,19 +61,25 @@ func TestAgentServiceRecordCommandEventUpdatesCommand(t *testing.T) {
 	svc.RecordCommandEvent(ctx, controlplane.AgentCommandEvent{
 		AgentID:   "host-a",
 		CommandID: cmd.ID,
-		Status:    controlplane.AgentCommandStatusCompleted,
+		Status:    "ack",
 		CreatedAt: now,
 	})
 
 	got, err := svc.FindCommand(ctx, "host-a", cmd.ID)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.AgentCommandStatusCompleted, got.Status)
-	require.Equal(t, now, got.EndedAt)
+	require.Equal(t, controlplane.AgentCommandStatusAcknowledged, got.Status)
 
-	events, err := store.ListAgentCommandEvents(ctx, "host-a")
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	require.Len(t, registry.ListCommandEvents("host-a"), 1)
+	// A terminal event removes the command rather than keeping a completed row.
+	svc.RecordCommandEvent(ctx, controlplane.AgentCommandEvent{
+		AgentID:   "host-a",
+		CommandID: cmd.ID,
+		Status:    controlplane.AgentCommandStatusCompleted,
+		CreatedAt: now,
+	})
+	_, err = svc.FindCommand(ctx, "host-a", cmd.ID)
+	require.Error(t, err)
+
+	require.Len(t, registry.ListCommandEvents("host-a"), 2)
 }
 
 func TestAgentServiceReconcilesStalePendingCommandFromGuestOperation(t *testing.T) {
