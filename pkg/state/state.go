@@ -3,8 +3,9 @@
 // Each sysbox apply writes resource entries to a JSON state file.
 // The state is the single source of truth for what's currently deployed.
 //
-// SchemaVersion is bumped on every breaking format change. Loading an older
-// state always fails; Sysbox does not carry persistent migration paths.
+// SchemaVersion is bumped on every breaking format change. The state JSON
+// payload is never migrated across versions: loading an older payload always
+// fails. Backend DDL is bootstrapped independently by each backend.
 package state
 
 import (

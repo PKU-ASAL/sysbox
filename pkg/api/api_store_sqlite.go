@@ -228,74 +228,7 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureSQLiteRunColumns(db); err != nil {
-		return err
-	}
-	if err := ensureSQLiteColumn(db, "sysbox_agent_commands", "execution_payload", "BLOB"); err != nil {
-		return err
-	}
-	return ensureSQLiteColumn(db, "sysbox_agent_inventory", "resources", "TEXT DEFAULT '{}'")
-}
-
-func ensureSQLiteRunColumns(db *sql.DB) error {
-	rows, err := db.Query(`PRAGMA table_info(sysbox_runs)`)
-	if err != nil {
-		return err
-	}
-	columns := map[string]bool{}
-	for rows.Next() {
-		var cid, notnull, pk int
-		var name, typ string
-		var defaultValue any
-		if err := rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
-			rows.Close()
-			return err
-		}
-		columns[name] = true
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, migration := range []struct{ name, definition string }{
-		{"target", "TEXT DEFAULT ''"},
-		{"unsafe_state", "INTEGER DEFAULT 0"},
-		{"operation_key", "TEXT DEFAULT ''"},
-		{"request_fingerprint", "TEXT DEFAULT ''"},
-	} {
-		if columns[migration.name] {
-			continue
-		}
-		if _, err := db.Exec(`ALTER TABLE sysbox_runs ADD COLUMN ` + migration.name + ` ` + migration.definition); err != nil {
-			return err
-		}
-	}
 	return nil
-}
-
-func ensureSQLiteColumn(db *sql.DB, table, column, definition string) error {
-	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return err
-	}
-	found := false
-	for rows.Next() {
-		var cid, notnull, pk int
-		var name, typ string
-		var defaultValue any
-		if err := rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
-			rows.Close()
-			return err
-		}
-		found = found || name == column
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if found {
-		return nil
-	}
-	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition)
-	return err
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

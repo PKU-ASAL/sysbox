@@ -22,7 +22,7 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 6
+const apiSchemaVersion = 1
 
 type apiMigration struct {
 	Version int
@@ -33,12 +33,17 @@ type apiMigration struct {
 var apiMigrations = []apiMigration{
 	{
 		Version: 1,
-		Name:    "base_control_plane",
+		Name:    "base_schema",
 		SQL: `
 CREATE TABLE IF NOT EXISTS sysbox_runs (
   topology TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT '',
+  agent_id TEXT NOT NULL DEFAULT '',
+  lease_owner TEXT NOT NULL DEFAULT '',
+  lease_until TIMESTAMPTZ,
+  attempt INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS sysbox_checkpoints (
@@ -81,12 +86,7 @@ CREATE TABLE IF NOT EXISTS sysbox_node_operations (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);`,
-	},
-	{
-		Version: 2,
-		Name:    "agent_registry_and_commands",
-		SQL: `
+);
 CREATE TABLE IF NOT EXISTS sysbox_agents (
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL,
@@ -109,6 +109,9 @@ CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL,
   data JSONB NOT NULL,
+  lease_owner TEXT NOT NULL DEFAULT '',
+  lease_until TIMESTAMPTZ,
+  attempt INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
@@ -116,46 +119,17 @@ CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS disabled BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS quarantined BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT '';
-ALTER TABLE sysbox_agents ADD COLUMN IF NOT EXISTS secret_hash TEXT NOT NULL DEFAULT '';`,
-	},
-	{
-		Version: 3,
-		Name:    "run_and_command_leases",
-		SQL: `
-ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT '';
-ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS agent_id TEXT NOT NULL DEFAULT '';
-ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS lease_owner TEXT NOT NULL DEFAULT '';
-ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
-ALTER TABLE sysbox_runs ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS lease_owner TEXT NOT NULL DEFAULT '';
-ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
-ALTER TABLE sysbox_agent_commands ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0;`,
-	},
-	{
-		Version: 4,
-		Name:    "guest_executions",
-		SQL: `CREATE TABLE IF NOT EXISTS sysbox_guest_executions (
+CREATE TABLE IF NOT EXISTS sysbox_guest_executions (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);`,
-	},
-	{
-		Version: 5,
-		Name:    "guest_file_operations",
-		SQL: `CREATE TABLE IF NOT EXISTS sysbox_guest_file_operations (
+);
+CREATE TABLE IF NOT EXISTS sysbox_guest_file_operations (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);`,
-	},
-	{
-		Version: 6,
-		Name:    "idempotent_run_dispatch",
-		SQL: `CREATE TABLE IF NOT EXISTS sysbox_run_requests (
+);
+CREATE TABLE IF NOT EXISTS sysbox_run_requests (
   id TEXT PRIMARY KEY,
   fingerprint TEXT NOT NULL,
   run_id TEXT NOT NULL UNIQUE,
