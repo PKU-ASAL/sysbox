@@ -243,6 +243,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 			}, NAT: &driver.NATPolicy{SourceAttachment: cfg.NatFrom, UplinkAttachment: cfg.NatTo, SourceCIDRs: append([]string(nil), fromReq.IPPrefixes...), Masquerade: true}}
 		observation, err := policy.ApplyRuleset(ctx, driver.PolicyTarget{Resource: n.Address.String(), State: targetRaw}, spec)
 		if err != nil {
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy router on NAT policy failure")
 			return state.Resource{}, fmt.Errorf("router %s NAT policy: %w", n.Address.Name, err)
 		}
 		specRaw, err := json.Marshal(spec)
