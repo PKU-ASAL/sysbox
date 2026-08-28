@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/docker/docker/errdefs"
@@ -59,7 +60,13 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 		}
 		var applyErr error
 		observation, applyErr = networkprovider.ApplyRulesetInNetNSFD(fd, spec, state.Bindings)
-		return applyErr
+		if applyErr != nil {
+			return applyErr
+		}
+		if fwd, err := readSysctlInNetNSFD(fd, "net/ipv4/ip_forward"); err == nil && fwd != "1" {
+			return fmt.Errorf("router ip_forward=%q (expected 1)", fwd)
+		}
+		return nil
 	})
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "apply ruleset", err)
@@ -157,4 +164,26 @@ func (s *Substrate) withContainerNetNS(ctx context.Context, containerID string, 
 	}
 	defer ns.Close()
 	return fn(int(ns.Fd()))
+}
+
+func readSysctlInNetNSFD(fd int, name string) (string, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	orig, err := netns.Get()
+	if err != nil {
+		return "", err
+	}
+	defer orig.Close()
+
+	if err := netns.Set(netns.NsHandle(fd)); err != nil {
+		return "", err
+	}
+	defer func() { _ = netns.Set(orig) }()
+
+	data, err := os.ReadFile("/proc/sys/" + name)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
 }
