@@ -264,7 +264,7 @@ func policyState(current state.Resource) (driver.PolicyTarget, string, error) {
 	raw := current.Str("policy_target_state")
 	owner := current.Str("owner")
 	if raw == "" || owner == "" {
-		return driver.PolicyTarget{}, "", fmt.Errorf("legacy firewall state has no policy identity")
+		return driver.PolicyTarget{}, "", fmt.Errorf("firewall state missing policy identity")
 	}
 	return driver.PolicyTarget{Resource: current.Str("attach_to"), State: json.RawMessage(raw)}, owner, nil
 }

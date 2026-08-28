@@ -79,8 +79,8 @@ host (provisioner)
 | State tracking | no | yes — drift detection works |
 | Future extensibility | dead end | `cmdline_template`, `modules_url`, `dtb`, … |
 
-Inline paths still work for backwards compatibility (`kernel = "/tmp/vmlinux"`)
-but the new resource form is the recommended path.
+The kernel must be declared as a `sysbox_kernel` resource; inline paths
+(`kernel = "/tmp/vmlinux"`) are no longer accepted.
 
 ## HCL fields you'll touch
 

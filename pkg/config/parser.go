@@ -50,7 +50,7 @@ func ParseString(src, srcLabel string) (*Root, error) {
 // target struct (e.g. *NodeConfig, *NetworkConfig). Caller picks the target
 // based on r.Type. Pass an EvalContext (from BuildEvalContext) to enable
 // bare-identifier traversals like substrate.docker.light or
-// sysbox_image.alpine.id; pass nil for legacy quoted-string refs.
+// sysbox_image.alpine.id.
 func DecodeResource(r *ResourceBlock, target any, ctx *hcl.EvalContext) error {
 	if r.Remain == nil {
 		return fmt.Errorf("resource %s.%s: empty body", r.Type, r.Name)
