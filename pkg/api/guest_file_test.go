@@ -200,16 +200,24 @@ func TestCancelIntentBlocksConcurrentStartAndCompletion(t *testing.T) {
 
 func TestGuestFileFailedCommandEventReconcilesDurableOperation(t *testing.T) {
 	s := guestExecutionTestServer(t)
-	op := controlplane.GuestFileOperation{ID: "op", Version: 1, AgentID: "host-a", CommandID: "cmd", Status: controlplane.GuestExecutionRunning}
-	require.NoError(t, s.apiStore.SaveGuestFileOperation(context.Background(), op))
-	_, err := s.agentService().PublishCommand(context.Background(), "host-a", controlplane.AgentCommand{ID: "cmd", Type: "guest_file_put", FilePut: &controlplane.GuestFilePut{ID: "op"}})
+
+	// A completed command leaves the durable operation running.
+	done := controlplane.GuestFileOperation{ID: "op-done", Version: 1, AgentID: "host-a", CommandID: "cmd-done", Status: controlplane.GuestExecutionRunning}
+	require.NoError(t, s.apiStore.SaveGuestFileOperation(context.Background(), done))
+	_, err := s.agentService().PublishCommand(context.Background(), "host-a", controlplane.AgentCommand{ID: "cmd-done", Type: "guest_file_put", FilePut: &controlplane.GuestFilePut{ID: "op-done"}})
 	require.NoError(t, err)
-	s.agentService().RecordCommandEvent(context.Background(), controlplane.AgentCommandEvent{CommandID: "cmd", AgentID: "host-a", Status: controlplane.AgentCommandStatusCompleted})
-	got, err := s.apiStore.GetGuestFileOperation(context.Background(), "op")
+	s.agentService().RecordCommandEvent(context.Background(), controlplane.AgentCommandEvent{CommandID: "cmd-done", AgentID: "host-a", Status: controlplane.AgentCommandStatusCompleted})
+	got, err := s.apiStore.GetGuestFileOperation(context.Background(), "op-done")
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionRunning, got.Status)
-	s.agentService().RecordCommandEvent(context.Background(), controlplane.AgentCommandEvent{CommandID: "cmd", AgentID: "host-a", Status: controlplane.AgentCommandStatusFailed})
-	got, err = s.apiStore.GetGuestFileOperation(context.Background(), "op")
+
+	// A failed command reconciles the durable operation to failed.
+	failed := controlplane.GuestFileOperation{ID: "op-failed", Version: 1, AgentID: "host-a", CommandID: "cmd-failed", Status: controlplane.GuestExecutionRunning}
+	require.NoError(t, s.apiStore.SaveGuestFileOperation(context.Background(), failed))
+	_, err = s.agentService().PublishCommand(context.Background(), "host-a", controlplane.AgentCommand{ID: "cmd-failed", Type: "guest_file_put", FilePut: &controlplane.GuestFilePut{ID: "op-failed"}})
+	require.NoError(t, err)
+	s.agentService().RecordCommandEvent(context.Background(), controlplane.AgentCommandEvent{CommandID: "cmd-failed", AgentID: "host-a", Status: controlplane.AgentCommandStatusFailed})
+	got, err = s.apiStore.GetGuestFileOperation(context.Background(), "op-failed")
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionFailed, got.Status)
 }

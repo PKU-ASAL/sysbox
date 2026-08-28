@@ -207,6 +207,14 @@ func (s *localAPIStore) SaveHealth(_ context.Context, topology string, snap Heal
 	return os.WriteFile(path, raw, 0o644)
 }
 
+func (s *localAPIStore) DeleteHealth(_ context.Context, topology string) error {
+	path := filepath.Join(s.runsDir, topology, "health.json")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (s *localAPIStore) LoadHealth(_ context.Context, topology string) (*HealthSnapshot, error) {
 	raw, err := os.ReadFile(filepath.Join(s.runsDir, topology, "health.json"))
 	if err != nil {
@@ -530,6 +538,18 @@ ON CONFLICT (topology) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`,
 		topology, string(raw))
 	if err != nil {
 		return fmt.Errorf("postgres save health: %w", err)
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) DeleteHealth(ctx context.Context, topology string) error {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `DELETE FROM sysbox_health WHERE topology=$1`, topology); err != nil {
+		return fmt.Errorf("postgres delete health: %w", err)
 	}
 	return nil
 }

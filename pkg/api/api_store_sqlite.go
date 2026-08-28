@@ -527,6 +527,15 @@ func (s *sqliteAPIStore) SaveHealth(ctx context.Context, topology string, snap H
 	return err
 }
 
+func (s *sqliteAPIStore) DeleteHealth(ctx context.Context, topology string) error {
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `DELETE FROM sysbox_health WHERE topology=?`, topology)
+	return err
+}
+
 func (s *sqliteAPIStore) LoadHealth(ctx context.Context, topology string) (*HealthSnapshot, error) {
 	db, err := s.open()
 	if err != nil {
@@ -1012,6 +1021,15 @@ func (s *sqliteAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplane.
 		cmd.ID, cmd.AgentID, cmd.Type, cmd.Status, cmd.Err, cmd.Protocol, runPayload, sessionPayload, operationPayload, executionPayload, requestPayload,
 		cmd.LeaseOwner, formatSQLiteTime(cmd.LeaseUntil), cmd.Attempt,
 		formatSQLiteTime(cmd.CreatedAt), formatSQLiteTime(cmd.Delivered), formatSQLiteTime(cmd.AckedAt), formatSQLiteTime(cmd.EndedAt))
+	return err
+}
+
+func (s *sqliteAPIStore) DeleteAgentCommand(ctx context.Context, agentID, commandID string) error {
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `DELETE FROM sysbox_agent_commands WHERE id=? AND agent_id=?`, commandID, agentID)
 	return err
 }
 

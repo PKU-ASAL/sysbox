@@ -36,6 +36,7 @@ type checkpointStore interface {
 type healthStore interface {
 	SaveHealth(ctx context.Context, topology string, snap HealthSnapshot) error
 	LoadHealth(ctx context.Context, topology string) (*HealthSnapshot, error)
+	DeleteHealth(ctx context.Context, topology string) error
 }
 
 type revisionStore interface {
@@ -77,6 +78,7 @@ type agentCommandStore interface {
 	SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error
 	ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error)
 	SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error
+	DeleteAgentCommand(ctx context.Context, agentID, commandID string) error
 	ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error)
 	AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error)
 }

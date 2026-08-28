@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -264,9 +265,7 @@ func (s *AgentService) RecordCommandEvent(ctx context.Context, event controlplan
 	if s.registry != nil {
 		s.registry.SaveCommandEvent(event)
 	}
-	if s.store != nil {
-		_ = s.store.SaveAgentCommandEvent(ctx, event)
-	}
+	slog.Info("agent command event", "agent_id", event.AgentID, "command_id", event.CommandID, "type", event.Type, "status", event.Status)
 }
 
 func (s *AgentService) updateCommandFromEvent(ctx context.Context, event controlplane.AgentCommandEvent) {
@@ -301,7 +300,11 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 			_ = newGuestFileOperationService(s.store).ReconcileCommandFailure(ctx, cmd.FilePut.ID, event.Status)
 		}
 	}
-	_ = s.store.SaveAgentCommand(ctx, cmd)
+	if cmd.IsTerminal() {
+		_ = s.store.DeleteAgentCommand(ctx, cmd.AgentID, cmd.ID)
+	} else {
+		_ = s.store.SaveAgentCommand(ctx, cmd)
+	}
 }
 
 func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) {
