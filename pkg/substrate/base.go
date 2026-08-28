@@ -98,6 +98,17 @@ func (BaseSubstrate) ReadManagedNetwork(_ context.Context, _ ManagedNetworkSpec)
 	return ManagedNetworkInfo{}, ErrNotSupported
 }
 
+// AllowEgress returns ErrNotSupported by default. Docker overrides this to
+// insert DOCKER-USER ACCEPT rules for NAT subnets.
+func (BaseSubstrate) AllowEgress(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
+// RemoveEgress returns ErrNotSupported by default.
+func (BaseSubstrate) RemoveEgress(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
 // ReadNode returns ErrNotSupported by default.
 func (BaseSubstrate) ReadNode(_ context.Context, _ string) (NodeHandle, error) {
 	return NodeHandle{}, ErrNotSupported
