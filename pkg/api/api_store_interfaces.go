@@ -36,6 +36,7 @@ type checkpointStore interface {
 type healthStore interface {
 	SaveHealth(ctx context.Context, topology string, snap HealthSnapshot) error
 	LoadHealth(ctx context.Context, topology string) (*HealthSnapshot, error)
+	DeleteHealth(ctx context.Context, topology string) error
 }
 
 type revisionStore interface {

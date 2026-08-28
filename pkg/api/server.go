@@ -75,7 +75,7 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		mux:           http.NewServeMux(),
 	}
 	s.agentSvc = newAgentService(s)
-	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager)
+	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
 	s.planService = newPlanService(s)
 	s.scheduler = newSchedulerService(s)
 	s.nodeService = newNodeOperationService(s.workspaceService(), s.scheduling(), s.nodeOps, s.agentService().PublishCommand)
@@ -134,7 +134,7 @@ func (s *Server) scheduling() *SchedulerService {
 
 func (s *Server) workspaceService() *WorkspaceService {
 	if s.workspaces == nil {
-		s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager)
+		s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
 	}
 	return s.workspaces
 }

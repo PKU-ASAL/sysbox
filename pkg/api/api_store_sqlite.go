@@ -527,6 +527,15 @@ func (s *sqliteAPIStore) SaveHealth(ctx context.Context, topology string, snap H
 	return err
 }
 
+func (s *sqliteAPIStore) DeleteHealth(ctx context.Context, topology string) error {
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `DELETE FROM sysbox_health WHERE topology=?`, topology)
+	return err
+}
+
 func (s *sqliteAPIStore) LoadHealth(ctx context.Context, topology string) (*HealthSnapshot, error) {
 	db, err := s.open()
 	if err != nil {

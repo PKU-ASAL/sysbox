@@ -17,6 +17,7 @@ type WorkspaceService struct {
 	workspacesDir string
 	stateBackend  string
 	stateManager  func(topology string) (*state.Manager, error)
+	health        healthStore
 }
 
 type WorkspaceInfo struct {
@@ -30,12 +31,13 @@ type WorkspaceInfo struct {
 	Backend       string `json:"backend,omitempty"`
 }
 
-func newWorkspaceService(runsDir, workspacesDir, stateBackend string, stateManager func(string) (*state.Manager, error)) *WorkspaceService {
+func newWorkspaceService(runsDir, workspacesDir, stateBackend string, stateManager func(string) (*state.Manager, error), health healthStore) *WorkspaceService {
 	return &WorkspaceService{
 		runsDir:       runsDir,
 		workspacesDir: workspacesDir,
 		stateBackend:  stateBackend,
 		stateManager:  stateManager,
+		health:        health,
 	}
 }
 
@@ -197,6 +199,9 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 	}
 	if err := os.RemoveAll(filepath.Dir(s.HCLFile(topology))); err != nil {
 		return fmt.Errorf("remove workspace: %w", err)
+	}
+	if s.health != nil {
+		_ = s.health.DeleteHealth(ctx, topology)
 	}
 	return nil
 }
