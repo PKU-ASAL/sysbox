@@ -30,6 +30,7 @@
 ## 精确参考
 
 - [HCL Reference](reference/hcl.md)
+- [Artifact 与 Topology 可移植性规范](reference/portability.md)：多个独立环境可交叉部署所需遵守的对齐基准。
 - [CLI Reference](reference/cli.md)
 - [API Reference](reference/api.md)
 
