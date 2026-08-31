@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -229,7 +230,37 @@ func (e *Executor) reportCompletion(ctx context.Context, run *controlplane.Run) 
 			proj.Health = "unknown"
 		}
 	}
-	_ = reporter.ReportRunComplete(ctx, run, proj)
+	// Report synchronously so the common path completes immediately. On a
+	// transient failure, keep retrying in the background: the endpoint is
+	// idempotent and the run's lease (30m) remains the final fallback if the
+	// agent itself crashes before this succeeds.
+	if err := reporter.ReportRunComplete(ctx, run, proj); err != nil {
+		fmt.Printf("[agent] report run complete %s failed, retrying in background: %v\n", run.ID, err)
+		go func() {
+			retryCtx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+			defer cancel()
+			if err := reportRunCompleteWithRetry(retryCtx, reporter, run, proj); err != nil {
+				fmt.Printf("[agent] report run complete %s failed after background retries: %v\n", run.ID, err)
+			}
+		}()
+	}
+}
+
+var reportRunCompleteRetryInterval = 5 * time.Second
+
+func reportRunCompleteWithRetry(ctx context.Context, reporter Reporter, run *controlplane.Run, proj controlplane.Projection) error {
+	ticker := time.NewTicker(reportRunCompleteRetryInterval)
+	defer ticker.Stop()
+	for {
+		if err := reporter.ReportRunComplete(ctx, run, proj); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log io.Writer) {
