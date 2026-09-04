@@ -28,8 +28,10 @@ type Root struct {
 //	  default = "10.0.1.0/24"
 //	}
 type VariableBlock struct {
-	Name   string   `hcl:"name,label"`
-	Remain hcl.Body `hcl:",remain"` // may contain default = <expr>
+	Name      string         `hcl:"name,label"`
+	Sensitive bool           `hcl:"sensitive,optional"`
+	Type      hcl.Expression `hcl:"type,optional"`
+	Remain    hcl.Body       `hcl:",remain"` // may contain default = <expr>
 }
 
 // ModuleBlock instantiates a reusable HCL topology fragment.
