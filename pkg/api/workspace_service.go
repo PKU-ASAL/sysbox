@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -21,14 +22,15 @@ type WorkspaceService struct {
 }
 
 type WorkspaceInfo struct {
-	ArtifactID    string `json:"artifact_id"`
-	TopologyID    string `json:"topology_id,omitempty"`
-	Name          string `json:"name"`
-	HasHCL        bool   `json:"has_hcl"`
-	HasState      bool   `json:"has_state"`
-	ResourceCount int    `json:"resource_count,omitempty"`
-	Serial        int64  `json:"serial,omitempty"`
-	Backend       string `json:"backend,omitempty"`
+	ArtifactID    string                       `json:"artifact_id"`
+	TopologyID    string                       `json:"topology_id,omitempty"`
+	Name          string                       `json:"name"`
+	HasHCL        bool                         `json:"has_hcl"`
+	HasState      bool                         `json:"has_state"`
+	ResourceCount int                          `json:"resource_count,omitempty"`
+	Serial        int64                        `json:"serial,omitempty"`
+	Backend       string                       `json:"backend,omitempty"`
+	Status        *controlplane.TopologyStatus `json:"status,omitempty"`
 }
 
 func newWorkspaceService(runsDir, workspacesDir, stateBackend string, stateManager func(string) (*state.Manager, error), health healthStore) *WorkspaceService {

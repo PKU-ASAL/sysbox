@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/diag"
 )
 
@@ -130,7 +132,63 @@ func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	out.Status = s.topologyStatus(topology)
+	if !out.HasState && !out.HasHCL {
+		out.Status.Phase = controlplane.PhaseGone
+	}
+
 	writeJSON(w, http.StatusOK, out)
+}
+
+// topologyStatus projects the readiness conditions of a topology from its
+// latest run and most recent health observation. Assertions are not yet
+// evaluated (S2 pending), so Asserted is Unknown.
+func (s *Server) topologyStatus(topology string) *controlplane.TopologyStatus {
+	latest := s.latestRun(topology)
+	status := controlplane.ComputeTopologyStatus(latest, s.healthFor(topology), nil)
+	if latest != nil && isConvergingRun(latest) {
+		if deadline := convergenceDeadline(latest, s.cfg.ConvergeTimeout()); !deadline.IsZero() {
+			status.DeadlineAt = &deadline
+		}
+	}
+	return &status
+}
+
+// convergenceDeadline is the instant by which a converging run must have
+// finished. It is reported for information; enforcement lives in the
+// supervisor, which fails the run when the deadline passes.
+func convergenceDeadline(run *controlplane.Run, timeout time.Duration) time.Time {
+	if timeout <= 0 || run.StartedAt.IsZero() {
+		return time.Time{}
+	}
+	return run.StartedAt.Add(timeout)
+}
+
+// isConvergingRun reports whether a run is actively converging: in flight and
+// not a destroy.
+func isConvergingRun(run *controlplane.Run) bool {
+	return run.Op != "destroy" && (run.Status == controlplane.RunQueued || run.Status == controlplane.RunAssigned || run.Status == controlplane.RunRunning)
+}
+
+// latestRun returns the most recently started run for a topology, or nil if
+// none exist.
+func (s *Server) latestRun(topology string) *controlplane.Run {
+	var latest *controlplane.Run
+	for _, r := range s.jobs.list(topology) {
+		if latest == nil || r.StartedAt.After(latest.StartedAt) {
+			latest = r
+		}
+	}
+	return latest
+}
+
+// healthFor returns the most recent health observation for a topology, or nil
+// if the supervisor has not observed it yet.
+func (s *Server) healthFor(topology string) *controlplane.TopologyHealth {
+	if snap, err := s.loadHealthSnapshot(topology); err == nil && snap != nil {
+		return &snap.Health
+	}
+	return nil
 }
 
 // DELETE /v1/topologies/{topology} — remove topology metadata/workspace.

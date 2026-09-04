@@ -104,8 +104,9 @@ type StateConfig struct {
 }
 
 type SupervisorConfig struct {
-	Policy   string `yaml:"policy" json:"policy"`
-	Interval string `yaml:"interval" json:"interval"`
+	Policy          string `yaml:"policy" json:"policy"`
+	Interval        string `yaml:"interval" json:"interval"`
+	ConvergeTimeout string `yaml:"converge_timeout" json:"converge_timeout"`
 }
 
 type ProvidersConfig struct {
@@ -198,8 +199,9 @@ func DefaultServiceConfig() ServiceConfig {
 			Cache: DefaultCacheDir,
 		},
 		Supervisor: SupervisorConfig{
-			Policy:   "observe_only",
-			Interval: "30s",
+			Policy:          "observe_only",
+			Interval:        "30s",
+			ConvergeTimeout: "15m",
 		},
 		Providers: ProvidersConfig{
 			Docker:        ProviderConfig{Enabled: true},
@@ -257,6 +259,13 @@ func MustLoadServiceConfig(path string) ServiceConfig {
 
 func (c ServiceConfig) SupervisorInterval() time.Duration {
 	return durationOrDefault(c.Supervisor.Interval, 30*time.Second, true)
+}
+
+// ConvergeTimeout is how long a topology may spend converging before the
+// supervisor declares it failed. It bounds otherwise-unbounded convergence;
+// "0", "off" or "disabled" disables the deadline entirely.
+func (c ServiceConfig) ConvergeTimeout() time.Duration {
+	return durationOrDefault(c.Supervisor.ConvergeTimeout, 15*time.Minute, true)
 }
 
 func (c ServiceConfig) AgentOfflineAfter() time.Duration {
@@ -347,6 +356,9 @@ func applyDerivedDefaults(c *ServiceConfig) {
 	if c.Supervisor.Interval == "" {
 		c.Supervisor.Interval = "30s"
 	}
+	if c.Supervisor.ConvergeTimeout == "" {
+		c.Supervisor.ConvergeTimeout = "15m"
+	}
 	if c.Agent.Lease.OfflineAfter == "" {
 		c.Agent.Lease.OfflineAfter = "2m"
 	}
@@ -434,6 +446,9 @@ func (c ServiceConfig) Validate() error {
 	}
 	if _, err := time.ParseDuration(c.Supervisor.Interval); err != nil && c.Supervisor.Interval != "0" && c.Supervisor.Interval != "off" && c.Supervisor.Interval != "disabled" {
 		return fmt.Errorf("supervisor.interval: %w", err)
+	}
+	if _, err := time.ParseDuration(c.Supervisor.ConvergeTimeout); err != nil && c.Supervisor.ConvergeTimeout != "0" && c.Supervisor.ConvergeTimeout != "off" && c.Supervisor.ConvergeTimeout != "disabled" {
+		return fmt.Errorf("supervisor.converge_timeout: %w", err)
 	}
 	if _, err := time.ParseDuration(c.Agent.Lease.OfflineAfter); err != nil {
 		return fmt.Errorf("agent.lease.offline_after: %w", err)
