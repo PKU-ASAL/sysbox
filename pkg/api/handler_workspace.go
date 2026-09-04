@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/diag"
 )
 
@@ -130,7 +131,41 @@ func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	out.Status = s.topologyStatus(topology)
+	if !out.HasState && !out.HasHCL {
+		out.Status.Phase = controlplane.PhaseGone
+	}
+
 	writeJSON(w, http.StatusOK, out)
+}
+
+// topologyStatus projects the readiness conditions of a topology from its
+// latest run and most recent health observation. Assertions are not yet
+// evaluated (S2 pending), so Asserted is Unknown.
+func (s *Server) topologyStatus(topology string) *controlplane.TopologyStatus {
+	status := controlplane.ComputeTopologyStatus(s.latestRun(topology), s.healthFor(topology), nil)
+	return &status
+}
+
+// latestRun returns the most recently started run for a topology, or nil if
+// none exist.
+func (s *Server) latestRun(topology string) *controlplane.Run {
+	var latest *controlplane.Run
+	for _, r := range s.jobs.list(topology) {
+		if latest == nil || r.StartedAt.After(latest.StartedAt) {
+			latest = r
+		}
+	}
+	return latest
+}
+
+// healthFor returns the most recent health observation for a topology, or nil
+// if the supervisor has not observed it yet.
+func (s *Server) healthFor(topology string) *controlplane.TopologyHealth {
+	if snap, err := s.loadHealthSnapshot(topology); err == nil && snap != nil {
+		return &snap.Health
+	}
+	return nil
 }
 
 // DELETE /v1/topologies/{topology} — remove topology metadata/workspace.
