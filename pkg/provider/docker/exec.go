@@ -21,23 +21,26 @@ import (
 	"github.com/oslab/sysbox/pkg/util"
 )
 
-// maxExecStreamBytes bounds how much output a single exec read retains.
-//
-// The hijacked read drains into in-memory buffers with no natural limit, and a
-// guest command that floods its output would grow them without bound for as
-// long as the timeout allows — the ctx abort bounds the time, not the volume.
-// This ceiling only stops the pathological case; the authoritative truncation
-// signal is the 1 MiB guestOutputLimit the agent applies to the result, so this
-// is deliberately larger and never the thing a caller uses to decide truncation.
+// maxExecStreamBytes is the per-stream cap ExecInNode passes to readExecStreams.
+// It is deliberately larger than the agent's 1 MiB guestOutputLimit: that limit
+// stays the authoritative truncation signal, while this ceiling only stops a
+// pathological flood from growing the buffers without bound.
 const maxExecStreamBytes = 8 << 20
 
-func readExecStreams(ctx context.Context, r io.Reader, conn io.Closer) (bytes.Buffer, bytes.Buffer, error) {
-	return readExecStreamsCapped(ctx, r, conn, maxExecStreamBytes)
-}
-
-// readExecStreamsCapped is readExecStreams with an explicit per-stream cap on
-// retained bytes. maxBytes <= 0 means unbounded.
-func readExecStreamsCapped(ctx context.Context, r io.Reader, conn io.Closer, maxBytes int) (bytes.Buffer, bytes.Buffer, error) {
+// readExecStreams demultiplexes a hijacked exec stream, aborting the read as
+// soon as ctx is done and capping how much output each stream retains.
+//
+// Docker's hijacked connection is detached from the request context: neither a
+// deadline nor a cancel closes it, and stdcopy.StdCopy takes no context. A guest
+// command that never exits would therefore block the read forever, which makes
+// GuestExecutionRequest.TimeoutSeconds unenforceable and leaves the execution
+// stuck in "running" until something else tears the connection down. Closing the
+// connection is the only way to unblock the read, so that is what we do.
+//
+// maxBytes bounds how much output each of stdout and stderr retains; the read
+// keeps draining past the cap so a flood cannot stall it, it just stops holding
+// the excess.
+func readExecStreams(ctx context.Context, r io.Reader, conn io.Closer, maxBytes int) (bytes.Buffer, bytes.Buffer, error) {
 	var stdout, stderr cappedBuffer
 	stdout.max, stderr.max = maxBytes, maxBytes
 	stopped := make(chan struct{})
@@ -76,11 +79,11 @@ type cappedBuffer struct {
 }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
-	if b.max > 0 && b.buf.Len() >= b.max {
+	room := b.max - b.buf.Len()
+	if room <= 0 {
 		return len(p), nil // over cap: drain without retaining
 	}
-	room := b.max - b.buf.Len()
-	if b.max > 0 && len(p) > room {
+	if len(p) > room {
 		_, _ = b.buf.Write(p[:room])
 		return len(p), nil // report full consumption so the copy loop never errors
 	}
@@ -120,7 +123,7 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req 
 		close(stdinDone)
 	}()
 
-	stdout, stderr, err := readExecStreams(ctx, att.Reader, att.Conn)
+	stdout, stderr, err := readExecStreams(ctx, att.Reader, att.Conn, maxExecStreamBytes)
 	if err != nil {
 		// Return the partial body with the error: on a timeout it is the only
 		// trace of how far the command got, and the caller's completion should

@@ -24,7 +24,7 @@ func TestReadExecStreamsCapsRetainedOutput(t *testing.T) {
 	stream := newFramedStream(payload, "")
 	require.NoError(t, stream.Close())
 
-	stdout, stderr, err := readExecStreamsCapped(context.Background(), stream, stream, 16)
+	stdout, stderr, err := readExecStreams(context.Background(), stream, stream, 16)
 
 	require.NoError(t, err, "capping must not surface as a read failure")
 	require.Equal(t, "abcdefghijklmnop", stdout.String(),
@@ -38,7 +38,7 @@ func TestReadExecStreamsCapsEachStream(t *testing.T) {
 	stream := newFramedStream("AAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBB") // 16 bytes each
 	require.NoError(t, stream.Close())
 
-	stdout, stderr, err := readExecStreamsCapped(context.Background(), stream, stream, 8)
+	stdout, stderr, err := readExecStreams(context.Background(), stream, stream, 8)
 
 	require.NoError(t, err)
 	require.Equal(t, "AAAAAAAA", stdout.String())
@@ -51,22 +51,9 @@ func TestReadExecStreamsDoesNotCapUnderLimit(t *testing.T) {
 	stream := newFramedStream("hello", "world")
 	require.NoError(t, stream.Close())
 
-	stdout, stderr, err := readExecStreamsCapped(context.Background(), stream, stream, 1024)
+	stdout, stderr, err := readExecStreams(context.Background(), stream, stream, 1024)
 
 	require.NoError(t, err)
 	require.Equal(t, "hello", stdout.String())
 	require.Equal(t, "world", stderr.String())
-}
-
-// A cap of zero means no limit at all, so the existing behaviour is preserved
-// for callers that do not bound output.
-func TestReadExecStreamsZeroCapIsUnbounded(t *testing.T) {
-	payload := "not truncated"
-	stream := newFramedStream(payload, "")
-	require.NoError(t, stream.Close())
-
-	stdout, _, err := readExecStreamsCapped(context.Background(), stream, stream, 0)
-
-	require.NoError(t, err)
-	require.Equal(t, payload, stdout.String())
 }

@@ -37,13 +37,10 @@ type hijackedStream struct {
 	endErr    error
 }
 
-func newHijackedStream() *hijackedStream {
-	return &hijackedStream{closed: make(chan struct{}), data: bytes.NewReader(nil)}
-}
-
 // newFramedStream builds a stream carrying real stdcopy frames, so that a test
 // can tell correct demultiplexing apart from swapped, dropped or truncated
-// output.
+// output. With both arguments empty it is an empty stream that blocks until
+// closed, which is what the ctx-abort tests need.
 func newFramedStream(stdout, stderr string) *hijackedStream {
 	var framed bytes.Buffer
 	if stdout != "" {
@@ -55,15 +52,8 @@ func newFramedStream(stdout, stderr string) *hijackedStream {
 	return &hijackedStream{closed: make(chan struct{}), data: bytes.NewReader(framed.Bytes())}
 }
 
-// failWith makes the stream report err once its framed bytes are exhausted,
-// modelling a connection torn down mid-stream rather than ending cleanly.
-func (s *hijackedStream) failWith(err error) *hijackedStream {
-	s.endErr = err
-	return s
-}
-
 func (s *hijackedStream) Read(p []byte) (int, error) {
-	if s.data != nil && s.data.Len() > 0 {
+	if s.data.Len() > 0 {
 		return s.data.Read(p)
 	}
 	if s.endErr != nil {
@@ -84,14 +74,14 @@ func (s *hijackedStream) Close() error {
 // GuestExecutionRequest.TimeoutSeconds is unenforceable. This is what let an
 // edge-local check with timeout_seconds=10 run for 134 seconds.
 func TestReadExecStreamsAbortsWhenContextIsDone(t *testing.T) {
-	stream := newHijackedStream()
+	stream := newFramedStream("", "")
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 
 	type outcome struct{ err error }
 	done := make(chan outcome, 1)
 	go func() {
-		_, _, err := readExecStreams(ctx, stream, stream)
+		_, _, err := readExecStreams(ctx, stream, stream, maxExecStreamBytes)
 		done <- outcome{err: err}
 	}()
 
@@ -119,7 +109,7 @@ func TestReadExecStreamsDoesNotReportTruncatedOutputAsSuccess(t *testing.T) {
 	stream := newFramedStream("partial body, cut off mid-", "")
 	require.NoError(t, stream.Close())
 
-	stdout, _, err := readExecStreams(ctx, stream, stream)
+	stdout, _, err := readExecStreams(ctx, stream, stream, maxExecStreamBytes)
 
 	require.Error(t, err, "a nil read error under an expired context must not be success")
 	require.ErrorIs(t, err, context.Canceled)
@@ -132,9 +122,10 @@ func TestReadExecStreamsDoesNotReportTruncatedOutputAsSuccess(t *testing.T) {
 // a genuine daemon or protocol defect.
 func TestReadExecStreamsPropagatesReadError(t *testing.T) {
 	readErr := errors.New("use of closed network connection")
-	stream := newFramedStream("some output", "").failWith(readErr)
+	stream := newFramedStream("some output", "")
+	stream.endErr = readErr
 
-	_, _, err := readExecStreams(context.Background(), stream, stream)
+	_, _, err := readExecStreams(context.Background(), stream, stream, maxExecStreamBytes)
 
 	require.ErrorIs(t, err, readErr)
 }
@@ -147,7 +138,7 @@ func TestReadExecStreamsReturnsPayloadWhenStreamEnds(t *testing.T) {
 	stream := newFramedStream("out-payload", "err-payload")
 	require.NoError(t, stream.Close())
 
-	stdout, stderr, err := readExecStreams(context.Background(), stream, stream)
+	stdout, stderr, err := readExecStreams(context.Background(), stream, stream, maxExecStreamBytes)
 
 	require.NoError(t, err)
 	require.Equal(t, "out-payload", stdout.String())

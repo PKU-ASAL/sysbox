@@ -65,31 +65,35 @@ func executeGuestOperation(ctx context.Context, st *state.State, node string, re
 		// Do not drop what the provider already captured: on a timeout that is
 		// the only trace of how far the command got, and the caller has nothing
 		// else to act on.
-		return guestOperationCompletion{ResultClass: class, Err: class + " guest operation", Result: encodeGuestOutput(result.Stdout, result.Stderr, 0)}
+		return guestOperationCompletion{ResultClass: class, Err: class + " guest operation", Result: encodeGuestOutput(result.Stdout, result.Stderr)}
 	}
-	return guestOperationCompletion{ResultClass: controlplane.GuestExecutionResultClassExit, Result: encodeGuestOutput(result.Stdout, result.Stderr, result.ExitCode)}
+	out := encodeGuestOutput(result.Stdout, result.Stderr)
+	out.ExitCode = result.ExitCode
+	return guestOperationCompletion{ResultClass: controlplane.GuestExecutionResultClassExit, Result: out}
 }
 
 // encodeGuestOutput bounds and base64-encodes captured guest output. The bound
 // applies here, at the boundary, because the provider may hand back more than
 // the agent is willing to carry.
-func encodeGuestOutput(stdout, stderr string, exitCode int) controlplane.GuestExecutionResult {
-	out, outTruncated := bounded([]byte(stdout), guestOutputLimit)
-	errOut, errTruncated := bounded([]byte(stderr), guestOutputLimit)
+func encodeGuestOutput(stdout, stderr string) controlplane.GuestExecutionResult {
+	out, outTruncated := boundedString(stdout)
+	errOut, errTruncated := boundedString(stderr)
 	return controlplane.GuestExecutionResult{
-		ExitCode:  exitCode,
-		Stdout:    base64.StdEncoding.EncodeToString(out),
-		Stderr:    base64.StdEncoding.EncodeToString(errOut),
+		Stdout:    base64.StdEncoding.EncodeToString([]byte(out)),
+		Stderr:    base64.StdEncoding.EncodeToString([]byte(errOut)),
 		Encoding:  "base64",
 		Truncated: outTruncated || errTruncated,
 	}
 }
 
-func bounded(data []byte, limit int) ([]byte, bool) {
-	if len(data) <= limit {
-		return data, false
+// boundedString returns s truncated to guestOutputLimit bytes plus whether it
+// was truncated. It slices the string in place so a large provider output is
+// never fully copied before the bound applies.
+func boundedString(s string) (string, bool) {
+	if len(s) > guestOutputLimit {
+		return s[:guestOutputLimit], true
 	}
-	return data[:limit], true
+	return s, false
 }
 
 func putGuestFile(ctx context.Context, opts Options, st *state.State, put controlplane.GuestFilePut) error {

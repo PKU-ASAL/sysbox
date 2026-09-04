@@ -29,9 +29,9 @@ func TestReadExecStreamsLeavesNoGoroutineBehind(t *testing.T) {
 	before := runtime.NumGoroutine()
 
 	for i := 0; i < 200; i++ {
-		stream := newHijackedStream()
+		stream := newFramedStream("", "")
 		require.NoError(t, stream.Close())
-		_, _, err := readExecStreams(ctx, stream, stream)
+		_, _, err := readExecStreams(ctx, stream, stream, maxExecStreamBytes)
 		require.NoError(t, err)
 	}
 
