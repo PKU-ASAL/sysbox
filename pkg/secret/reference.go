@@ -15,6 +15,7 @@ type Reference struct {
 }
 
 func Environment(name string) Reference { return Reference{Source: "env", Name: name} }
+func Input(name string) Reference       { return Reference{Source: "input", Name: name} }
 func (r Reference) String() string      { return "secret://" + r.Source + "/" + url.PathEscape(r.Name) }
 func Parse(input string) (Reference, error) {
 	parsed, err := url.Parse(input)
@@ -45,6 +46,25 @@ func (r EnvironmentResolver) Resolve(_ context.Context, reference Reference) (st
 	value, ok := lookup(reference.Name)
 	if !ok {
 		return "", fmt.Errorf("environment secret %s is not set", reference.Name)
+	}
+	return value, nil
+}
+
+// InputResolver resolves secret://input/<key> references against the apply-time
+// inputs. A sensitive variable is stored as this reference, never as its
+// plaintext; the value only materialises here, at execution, from the request
+// body.
+type InputResolver struct {
+	Inputs map[string]string
+}
+
+func (r InputResolver) Resolve(_ context.Context, reference Reference) (string, error) {
+	if reference.Source != "input" {
+		return "", fmt.Errorf("unsupported secret source %q", reference.Source)
+	}
+	value, ok := r.Inputs[reference.Name]
+	if !ok {
+		return "", fmt.Errorf("input secret %s is not provided", reference.Name)
 	}
 	return value, nil
 }

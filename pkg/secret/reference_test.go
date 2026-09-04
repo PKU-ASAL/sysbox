@@ -54,3 +54,32 @@ func TestResolveAnyPreservesTypedPointerAndResolvesFields(t *testing.T) {
 	require.Equal(t, []string{"resolved-VALUE"}, got.Values)
 	require.Equal(t, Environment("TOKEN").String(), input.Nested.Token)
 }
+
+func TestInputReferenceRoundTrip(t *testing.T) {
+	reference := Input("flag")
+	require.Equal(t, "secret://input/flag", reference.String())
+	parsed, err := Parse(reference.String())
+	require.NoError(t, err)
+	require.Equal(t, reference, parsed)
+}
+
+func TestInputResolverResolvesProvidedValue(t *testing.T) {
+	resolver := InputResolver{Inputs: map[string]string{"flag": "the-secret-value"}}
+
+	value, err := resolver.Resolve(context.Background(), Input("flag"))
+
+	require.NoError(t, err)
+	require.Equal(t, "the-secret-value", value)
+}
+
+func TestInputResolverRejectsMissingInput(t *testing.T) {
+	_, err := (InputResolver{Inputs: map[string]string{}}).Resolve(context.Background(), Input("flag"))
+
+	require.ErrorContains(t, err, "flag")
+}
+
+func TestInputResolverRejectsNonInputSource(t *testing.T) {
+	_, err := (InputResolver{Inputs: map[string]string{}}).Resolve(context.Background(), Environment("X"))
+
+	require.ErrorContains(t, err, "env")
+}
