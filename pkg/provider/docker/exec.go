@@ -21,6 +21,75 @@ import (
 	"github.com/oslab/sysbox/pkg/util"
 )
 
+// maxExecStreamBytes is the per-stream cap ExecInNode passes to readExecStreams.
+// It is deliberately larger than the agent's 1 MiB guestOutputLimit: that limit
+// stays the authoritative truncation signal, while this ceiling only stops a
+// pathological flood from growing the buffers without bound.
+const maxExecStreamBytes = 8 << 20
+
+// readExecStreams demultiplexes a hijacked exec stream, aborting the read as
+// soon as ctx is done and capping how much output each stream retains.
+//
+// Docker's hijacked connection is detached from the request context: neither a
+// deadline nor a cancel closes it, and stdcopy.StdCopy takes no context. A guest
+// command that never exits would therefore block the read forever, which makes
+// GuestExecutionRequest.TimeoutSeconds unenforceable and leaves the execution
+// stuck in "running" until something else tears the connection down. Closing the
+// connection is the only way to unblock the read, so that is what we do.
+//
+// maxBytes bounds how much output each of stdout and stderr retains; the read
+// keeps draining past the cap so a flood cannot stall it, it just stops holding
+// the excess.
+func readExecStreams(ctx context.Context, r io.Reader, conn io.Closer, maxBytes int) (bytes.Buffer, bytes.Buffer, error) {
+	var stdout, stderr cappedBuffer
+	stdout.max, stderr.max = maxBytes, maxBytes
+	stopped := make(chan struct{})
+	defer close(stopped)
+	go func() {
+		select {
+		case <-ctx.Done():
+			// Unblocks StdCopy; ExecInNode's deferred Close is then a no-op.
+			_ = conn.Close()
+		case <-stopped:
+		}
+	}()
+
+	_, err := stdcopy.StdCopy(&stdout, &stderr, r)
+	// The context must be consulted even when the read reports no error. Closing
+	// the connection mid-stream usually surfaces as use-of-closed-conn, but a
+	// close landing on a frame boundary makes StdCopy report a clean EOF instead,
+	// which would pass truncated output off as success — and a service check
+	// would then draw a conclusion from a partial body. Checking ctx first also
+	// attributes the failure to the deadline rather than to the read it caused.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return stdout.buf, stderr.buf, ctxErr
+	}
+	if err != nil {
+		return stdout.buf, stderr.buf, err
+	}
+	return stdout.buf, stderr.buf, nil
+}
+
+// cappedBuffer is an io.Writer that retains at most max bytes and discards the
+// rest, always reporting a full write so the caller's copy loop neither errors
+// nor stalls on overflow.
+type cappedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	room := b.max - b.buf.Len()
+	if room <= 0 {
+		return len(p), nil // over cap: drain without retaining
+	}
+	if len(p) > room {
+		_, _ = b.buf.Write(p[:room])
+		return len(p), nil // report full consumption so the copy loop never errors
+	}
+	return b.buf.Write(p)
+}
+
 func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
 	cmd, err := transport.CommandArgv(req)
 	if err != nil {
@@ -54,9 +123,12 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req 
 		close(stdinDone)
 	}()
 
-	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, att.Reader); err != nil {
-		return substrate.ExecResult{}, fmt.Errorf("exec read: %w", err)
+	stdout, stderr, err := readExecStreams(ctx, att.Reader, att.Conn, maxExecStreamBytes)
+	if err != nil {
+		// Return the partial body with the error: on a timeout it is the only
+		// trace of how far the command got, and the caller's completion should
+		// carry it rather than an empty result.
+		return substrate.ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("exec read: %w", err)
 	}
 	<-stdinDone
 
@@ -64,11 +136,15 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req 
 	if err != nil {
 		return substrate.ExecResult{}, fmt.Errorf("exec inspect: %w", err)
 	}
+	exitCode, err := foregroundExecStatus(inspect)
+	if err != nil {
+		return substrate.ExecResult{}, fmt.Errorf("exec %s: %w", ex.ID, err)
+	}
 
 	return substrate.ExecResult{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
-		ExitCode: inspect.ExitCode,
+		ExitCode: exitCode,
 	}, nil
 }
 
@@ -262,6 +338,22 @@ func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, 
 		time.Sleep(50 * time.Millisecond)
 	}
 	return 0, fmt.Errorf("exec background: timed out waiting for PID")
+}
+
+// foregroundExecStatus reports the exit code of an exec whose streams have been
+// read to completion.
+//
+// A hijacked stream can end while the process is still alive — the daemon
+// restarts, a proxy resets the connection, or a mid-stream close lands on a
+// frame boundary and StdCopy reports a clean EOF. inspect.ExitCode is then just
+// its zero value, so trusting it would report exit 0 together with a truncated
+// body, and an assertion on exit_code == 0 would pass on a command that never
+// finished. Refuse instead, the way backgroundExecStatus already does.
+func foregroundExecStatus(inspect container.ExecInspect) (int, error) {
+	if inspect.Running {
+		return 0, fmt.Errorf("exec stream ended while the process is still running; output is incomplete")
+	}
+	return inspect.ExitCode, nil
 }
 
 func backgroundExecStatus(inspect container.ExecInspect) (int, bool, error) {
