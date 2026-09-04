@@ -2,11 +2,12 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -33,6 +34,7 @@ type HealthSnapshot struct {
 	AutoHeal  bool                        `json:"auto_heal"`
 	Action    string                      `json:"action,omitempty"`
 	RunID     string                      `json:"run_id,omitempty"`
+	Recovered []string                    `json:"recovered_runs,omitempty"`
 	LastError string                      `json:"last_error,omitempty"`
 }
 
@@ -101,7 +103,40 @@ func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
 		AutoHeal: s.policy != SupervisorPolicyObserveOnly,
 	}
 	s.maybeRepair(topology, &snap)
+	s.reconcileRecoverable(ctx, topology, &snap)
 	return s.server.saveHealthSnapshot(topology, snap)
+}
+
+// reconcileRecoverable closes the recovery loop for a topology: it finds runs
+// that crashed after mutating the outside world but before recording the result
+// in state, and reconciles their checkpoint journal so the orphaned objects are
+// adopted back.
+//
+// Recovery used to happen only when someone called POST /v1/runs/{id}/recover
+// by hand. The supervisor already walks every topology on an interval, so it is
+// the natural place to look; reconcileCheckpointJournal is idempotent and
+// guarded by CheckMutationSafety, so running it here is safe to repeat.
+func (s *Supervisor) reconcileRecoverable(ctx context.Context, topology string, snap *HealthSnapshot) {
+	runs := s.server.jobs.recoverableRuns(topology)
+	if len(runs) == 0 {
+		return
+	}
+	mgr, err := s.server.stateManager(topology)
+	if err != nil {
+		snap.LastError = fmt.Sprintf("reconcile: state manager: %v", err)
+		return
+	}
+	for _, run := range runs {
+		owner := fmt.Sprintf("sysbox-api:supervisor:%s", run.ID)
+		report, err := reconcileCheckpointJournal(ctx, s.server.apiStore, topology, run.ID, mgr, owner)
+		if err != nil {
+			snap.LastError = fmt.Sprintf("reconcile run %s: %v", run.ID, err)
+			continue
+		}
+		if report != nil && len(report.Recovered) > 0 {
+			snap.Recovered = append(snap.Recovered, run.ID)
+		}
+	}
 }
 
 func (s *Supervisor) maybeRepair(topology string, snap *HealthSnapshot) {
