@@ -121,3 +121,40 @@ func TestGetTopologyReportsConvergenceDeadline(t *testing.T) {
 	require.True(t, body.Status.DeadlineAt.After(run.StartedAt))
 	require.Equal(t, controlplane.PhaseConverging, body.Status.Phase)
 }
+
+// A run that evaluated a failing assertion surfaces it as Asserted False with
+// the author's message and the failing check names.
+func TestGetTopologyReportsFailedAssertion(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	createWorkspace(t, s, "lab")
+
+	run := s.jobs.start("lab", "apply")
+	run.Status = controlplane.RunDone
+	run.Assertion = &controlplane.AssertionResult{
+		Message:      "edge 不应能连到 core:5432，但连上了",
+		FailedChecks: []string{"edge_cannot_reach_core"},
+	}
+	s.jobs.replace(run)
+
+	body := getTopology(t, s, "lab")
+
+	require.Equal(t, controlplane.ConditionFalse, condition(t, body.Status, controlplane.ConditionAsserted).Status)
+	require.Equal(t, "edge 不应能连到 core:5432，但连上了", condition(t, body.Status, controlplane.ConditionAsserted).Message)
+	require.Equal(t, controlplane.PhaseFailed, body.Status.Phase)
+}
+
+// A run whose checks all passed surfaces Asserted True (not Unknown): it was
+// evaluated, and it held.
+func TestGetTopologyReportsPassedAssertion(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	createWorkspace(t, s, "lab")
+
+	run := s.jobs.start("lab", "apply")
+	run.Status = controlplane.RunDone
+	run.Assertion = &controlplane.AssertionResult{}
+	s.jobs.replace(run)
+
+	body := getTopology(t, s, "lab")
+
+	require.Equal(t, controlplane.ConditionTrue, condition(t, body.Status, controlplane.ConditionAsserted).Status)
+}

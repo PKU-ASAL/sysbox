@@ -92,6 +92,10 @@ type Run struct {
 	AssignedAt         time.Time `json:"assigned_at,omitempty"`
 	StartedAt          time.Time `json:"started_at"`
 	EndedAt            time.Time `json:"ended_at,omitempty"`
+	// Assertion is the outcome of the check/assert evaluation this run performed
+	// (nil when the run evaluated no checks). It is in-memory state feeding the
+	// topology's Asserted condition; it is recomputed by the next apply.
+	Assertion *AssertionResult `json:"assertion,omitempty"`
 }
 
 type RunCompletion struct {
