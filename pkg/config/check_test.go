@@ -13,7 +13,7 @@ func TestParseCheckBlock(t *testing.T) {
 	src := `
 check "portal_http" {
   data "sysbox_exec" "health" {
-    node = sysbox_node.portal
+    node = sysbox_node.portal.id
     argv = ["/usr/bin/curl", "-fsS", "http://127.0.0.1:8080/health"]
   }
   assert {
@@ -24,8 +24,8 @@ check "portal_http" {
 
 check "edge_cannot_reach_core" {
   data "sysbox_reach" "edge_core" {
-    from = sysbox_node.edge
-    to   = sysbox_node.core
+    from = sysbox_node.edge.id
+    to   = sysbox_node.core.id
     port = 5432
   }
   assert {
@@ -55,7 +55,7 @@ func TestParseCheckBlockWithMultipleAsserts(t *testing.T) {
 	src := `
 check "multi" {
   data "sysbox_exec" "probe" {
-    node = sysbox_node.web
+    node = sysbox_node.web.id
     argv = ["true"]
   }
   assert {
@@ -71,4 +71,75 @@ check "multi" {
 	root, err := ParseString(src, "test.hcl")
 	require.NoError(t, err)
 	require.Len(t, root.Checks[0].Asserts, 2)
+}
+
+func TestValidateChecksAcceptsWellFormed(t *testing.T) {
+	src := `
+check "ok" {
+  data "sysbox_exec" "probe" {
+    node = sysbox_node.web.id
+    argv = ["true"]
+  }
+  assert {
+    condition     = data.sysbox_exec.probe.exit_code == 0
+    error_message = "first"
+  }
+}
+`
+	root, err := ParseString(src, "test.hcl")
+	require.NoError(t, err)
+	require.NoError(t, ValidateChecks(root.Checks))
+}
+
+func TestValidateChecksRejectsTooManyDataBlocks(t *testing.T) {
+	src := `
+check "bad" {
+  data "sysbox_exec" "a" {
+    node = sysbox_node.web.id
+    argv = ["true"]
+  }
+  data "sysbox_exec" "b" {
+    node = sysbox_node.web.id
+    argv = ["true"]
+  }
+  assert {
+    condition     = true
+    error_message = "x"
+  }
+}
+`
+	root, err := ParseString(src, "test.hcl")
+	require.NoError(t, err)
+	require.ErrorContains(t, ValidateChecks(root.Checks), "at most one data block")
+}
+
+func TestValidateChecksRejectsMissingAssert(t *testing.T) {
+	src := `
+check "bad" {
+  data "sysbox_exec" "a" {
+    node = sysbox_node.web.id
+    argv = ["true"]
+  }
+}
+`
+	root, err := ParseString(src, "test.hcl")
+	require.NoError(t, err)
+	require.ErrorContains(t, ValidateChecks(root.Checks), "at least one assert")
+}
+
+func TestValidateChecksRejectsUnknownDataSource(t *testing.T) {
+	src := `
+check "bad" {
+  data "sysbox_unknown" "a" {
+    foo = "bar"
+  }
+  assert {
+    condition     = true
+    error_message = "x"
+  }
+}
+`
+	root, err := ParseString(src, "test.hcl")
+	require.NoError(t, err)
+	require.ErrorContains(t, ValidateChecks(root.Checks), "unsupported data source")
 }
