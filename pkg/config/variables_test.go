@@ -3,7 +3,9 @@ package config
 import (
 	"testing"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/stretchr/testify/require"
+	"github.com/zclconf/go-cty/cty"
 )
 
 func varBlock(t *testing.T, name, body string) VariableBlock {
@@ -65,4 +67,20 @@ func TestVariableBindingsNoValueIsAbsent(t *testing.T) {
 	require.NoError(t, err)
 	_, ok := bindings["image"]
 	require.False(t, ok)
+}
+
+// InjectVariables puts the var.<name> bindings into an existing eval context.
+func TestInjectVariablesAddsVarNamespace(t *testing.T) {
+	ctx := &hcl.EvalContext{Variables: map[string]cty.Value{}}
+	vars := []VariableBlock{varBlock(t, "cidr", ""), varBlock(t, "flag", "sensitive = true")}
+
+	require.NoError(t, InjectVariables(ctx, vars, map[string]string{"cidr": "10.0.0.0/24", "flag": "secret"}))
+
+	var v cty.Value
+	var ok bool
+	if v, ok = ctx.Variables["var"]; !ok {
+		t.Fatal("var namespace not injected")
+	}
+	require.Equal(t, "10.0.0.0/24", v.GetAttr("cidr").AsString())
+	require.Equal(t, "secret://input/flag", v.GetAttr("flag").AsString())
 }

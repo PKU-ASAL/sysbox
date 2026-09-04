@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/oslab/sysbox/pkg/secret"
@@ -39,6 +40,22 @@ func VariableBindings(vars []VariableBlock, inputs map[string]string) (map[strin
 		}
 	}
 	return bindings, nil
+}
+
+// InjectVariables binds var.<name> into an existing eval context from the
+// variable blocks and the apply-time inputs. Sensitive variables bind to their
+// secret://input/<name> reference, so the plaintext never enters the context
+// (and therefore never enters state, outputs, logs, audit or plan diff).
+func InjectVariables(ctx *hcl.EvalContext, vars []VariableBlock, inputs map[string]string) error {
+	bindings, err := VariableBindings(vars, inputs)
+	if err != nil {
+		return err
+	}
+	if len(bindings) == 0 {
+		return nil
+	}
+	ctx.Variables["var"] = cty.ObjectVal(bindings)
+	return nil
 }
 
 // variableDefault evaluates a variable block's default expression, if any.
