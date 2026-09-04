@@ -28,6 +28,43 @@ type guestOperationCompletion struct {
 	Err         string
 }
 
+var (
+	errGuestNodeNotFound    = errors.New("guest node not found")
+	errGuestExecUnsupported = errors.New("guest exec capability unavailable")
+)
+
+// runGuestExec runs argv in a guest node identified by logical name, via the
+// guest-exec capability. It is the single "run a command in a node" primitive,
+// shared by the guest-execution API (executeGuestOperation) and check evaluation
+// (evaluateChecks) — do not add another exec path.
+//
+// ctx carries the caller's timeout/cancellation; the caller applies the budget,
+// so this stays a pure lookup-and-exec. It returns the raw result; the error is
+// wrapped so callers can distinguish resolution failures (node not found,
+// capability unavailable) from a failed exec.
+func runGuestExec(ctx context.Context, st *state.State, node string, argv []string, env map[string]string, workingDir string) (substrate.ExecResult, error) {
+	res := st.FindResource(address.Resource("sysbox_node", node))
+	if res == nil {
+		res = st.FindResource(address.Resource("sysbox_router", node))
+	}
+	if res == nil {
+		return substrate.ExecResult{}, fmt.Errorf("%w: %s", errGuestNodeNotFound, node)
+	}
+	exec, err := driver.DefaultRegistry.RequireGuestExec(res.Driver)
+	if err != nil {
+		return substrate.ExecResult{}, fmt.Errorf("%w", errGuestExecUnsupported)
+	}
+	codec, err := driver.DefaultRegistry.RequireNodeState(res.Driver)
+	if err != nil {
+		return substrate.ExecResult{}, fmt.Errorf("%w", errGuestExecUnsupported)
+	}
+	handle, err := res.ReconstructHandle(codec)
+	if err != nil {
+		return substrate.ExecResult{}, fmt.Errorf("reconstruct provider handle: %w", err)
+	}
+	return exec.ExecInNode(ctx, handle, substrate.ExecRequest{Program: argv[0], Args: argv[1:], Environment: env, WorkingDir: workingDir, Shell: substrate.ShellNone})
+}
+
 // guestOperationContext derives the context a guest operation runs under.
 //
 // The declared timeout is meant to bound the operation an operator asked for,
@@ -47,45 +84,25 @@ func guestOperationContext(ctx context.Context, req controlplane.GuestExecutionR
 }
 
 func executeGuestOperation(ctx context.Context, st *state.State, node string, req controlplane.GuestExecutionRequest) guestOperationCompletion {
-	res := st.FindResource(address.Resource("sysbox_node", node))
-	if res == nil {
-		res = st.FindResource(address.Resource("sysbox_router", node))
-	}
-	if res == nil {
-		return guestOperationCompletion{ResultClass: "not_found", Err: "logical node not found"}
-	}
-	exec, err := driver.DefaultRegistry.RequireGuestExec(res.Driver)
-	if err != nil {
-		return guestOperationCompletion{ResultClass: "unsupported", Err: "guest execution capability unavailable"}
-	}
-	codec, err := driver.DefaultRegistry.RequireNodeState(res.Driver)
-	if err != nil {
-		return guestOperationCompletion{ResultClass: "unsupported", Err: "node state capability unavailable"}
-	}
-	handle, err := res.ReconstructHandle(codec)
-	if err != nil {
-		return guestOperationCompletion{ResultClass: "provider", Err: "reconstruct provider handle failed"}
-	}
-	// The caller normally starts the budget before the work leading up to here
-	// (see guestOperationContext); deriving it again is harmless — WithTimeout
-	// keeps the earlier deadline — and keeps this function correct when called
-	// directly, as the tests do.
 	ctx, cancel := guestOperationContext(ctx, req)
 	defer cancel()
-	result, err := exec.ExecInNode(ctx, handle, substrate.ExecRequest{Program: req.Argv[0], Args: req.Argv[1:], Environment: req.Environment, WorkingDir: req.WorkingDirectory, Shell: substrate.ShellNone})
+
+	result, err := runGuestExec(ctx, st, node, req.Argv, req.Environment, req.WorkingDirectory)
 	if err != nil {
-		class := "provider"
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			class = "timeout"
+		class := classifyGuestExecError(ctx, err)
+		switch class {
+		case "not_found":
+			return guestOperationCompletion{ResultClass: class, Err: "logical node not found"}
+		case "unsupported":
+			return guestOperationCompletion{ResultClass: class, Err: "guest execution capability unavailable"}
+		default:
+			// Do not drop what the provider already captured: on a timeout that is
+			// the only trace of how far the command got, and the caller has nothing
+			// else to act on.
+			return guestOperationCompletion{ResultClass: class, Err: class + " guest operation", Result: encodeGuestOutput(result.Stdout, result.Stderr)}
 		}
-		if errors.Is(ctx.Err(), context.Canceled) {
-			class = "cancelled"
-		}
-		// Do not drop what the provider already captured: on a timeout that is
-		// the only trace of how far the command got, and the caller has nothing
-		// else to act on.
-		return guestOperationCompletion{ResultClass: class, Err: class + " guest operation", Result: encodeGuestOutput(result.Stdout, result.Stderr)}
 	}
+
 	out := encodeGuestOutput(result.Stdout, result.Stderr)
 	out.ExitCode = result.ExitCode
 	return guestOperationCompletion{ResultClass: controlplane.GuestExecutionResultClassExit, Result: out}
@@ -102,6 +119,24 @@ func encodeGuestOutput(stdout, stderr string) controlplane.GuestExecutionResult 
 		Stderr:    base64.StdEncoding.EncodeToString([]byte(errOut)),
 		Encoding:  "base64",
 		Truncated: outTruncated || errTruncated,
+	}
+}
+
+// classifyGuestExecError maps a runGuestExec error to a result class. A timeout
+// is recognised by the context's deadline, not by the returned error, because a
+// provider may surface a mid-stream close as a plain read failure.
+func classifyGuestExecError(ctx context.Context, err error) string {
+	switch {
+	case errors.Is(err, errGuestNodeNotFound):
+		return "not_found"
+	case errors.Is(err, errGuestExecUnsupported):
+		return "unsupported"
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(ctx.Err(), context.Canceled):
+		return "cancelled"
+	default:
+		return "provider"
 	}
 }
 

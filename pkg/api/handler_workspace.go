@@ -145,7 +145,11 @@ func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
 // evaluated (S2 pending), so Asserted is Unknown.
 func (s *Server) topologyStatus(topology string) *controlplane.TopologyStatus {
 	latest := s.latestRun(topology)
-	status := controlplane.ComputeTopologyStatus(latest, s.healthFor(topology), nil)
+	var assertion *controlplane.AssertionResult
+	if latest != nil {
+		assertion = latest.Assertion
+	}
+	status := controlplane.ComputeTopologyStatus(latest, s.healthFor(topology), assertion)
 	if latest != nil && isConvergingRun(latest) {
 		if deadline := convergenceDeadline(latest, s.cfg.ConvergeTimeout()); !deadline.IsZero() {
 			status.DeadlineAt = &deadline

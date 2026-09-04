@@ -4,7 +4,11 @@
 // sysbox_router, sysbox_firewall, sysbox_ssh_access.
 package config
 
-import "github.com/hashicorp/hcl/v2"
+import (
+	"fmt"
+
+	"github.com/hashicorp/hcl/v2"
+)
 
 // Root is the top-level parsed HCL document.
 type Root struct {
@@ -15,6 +19,7 @@ type Root struct {
 	Data       []DataBlock      `hcl:"data,block"`
 	Locals     []LocalsBlock    `hcl:"locals,block"`
 	Outputs    []OutputBlock    `hcl:"output,block"`
+	Checks     []CheckBlock     `hcl:"check,block"`
 }
 
 // VariableBlock declares an input variable for a module file.
@@ -76,6 +81,61 @@ type DataBlock struct {
 	Type   string   `hcl:"type,label"`
 	Name   string   `hcl:"name,label"`
 	Remain hcl.Body `hcl:",remain"`
+}
+
+// CheckBlock declares a topology-level assertion (Terraform-style check): at
+// most one scoped data source plus one or more asserts. It is evaluated after
+// apply, never enters the dependency graph, and its result is projected into
+// the topology's Asserted condition.
+type CheckBlock struct {
+	Name    string        `hcl:"name,label"`
+	Data    []DataBlock   `hcl:"data,block"`
+	Asserts []AssertBlock `hcl:"assert,block"`
+}
+
+// AssertBlock holds one assertion: a boolean condition expression and an
+// author-written error message. Both are expressions, decoded lazily against
+// the check's eval context.
+type AssertBlock struct {
+	Remain hcl.Body `hcl:",remain"`
+}
+
+// DataExecConfig is the decoded form of data "sysbox_exec" blocks: run argv in
+// a node and expose its exit_code / stdout / stderr / truncated.
+type DataExecConfig struct {
+	Node string   `hcl:"node"`
+	Argv []string `hcl:"argv"`
+}
+
+// DataReachConfig is the decoded form of data "sysbox_reach" blocks: probe
+// whether the to node's port is reachable from the from node.
+type DataReachConfig struct {
+	From string `hcl:"from"`
+	To   string `hcl:"to"`
+	Port int    `hcl:"port"`
+}
+
+// checkDataSources are the data source types allowed inside a check block.
+var checkDataSources = map[string]bool{"sysbox_exec": true, "sysbox_reach": true}
+
+// ValidateChecks checks the structural shape of check blocks: at most one
+// scoped data source, at least one assert, and only the known data source
+// types. This is the shape validation; expression evaluation happens later.
+func ValidateChecks(checks []CheckBlock) error {
+	for _, c := range checks {
+		if len(c.Data) > 1 {
+			return fmt.Errorf("check %q: at most one data block allowed, got %d", c.Name, len(c.Data))
+		}
+		if len(c.Asserts) == 0 {
+			return fmt.Errorf("check %q: at least one assert block is required", c.Name)
+		}
+		for _, d := range c.Data {
+			if !checkDataSources[d.Type] {
+				return fmt.Errorf("check %q: unsupported data source %q (want sysbox_exec or sysbox_reach)", c.Name, d.Type)
+			}
+		}
+	}
+	return nil
 }
 
 // DataNodeConfig is the decoded form of data "sysbox_node" blocks.

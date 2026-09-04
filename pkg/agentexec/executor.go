@@ -260,7 +260,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(e.bridge.HCLFile(run.Topology), mgr)
+	g, mgr, st, root, evalCtx, err := runtime.LoadWorkspaceWithManager(e.bridge.HCLFile(run.Topology), mgr)
 	if err != nil {
 		e.bridge.Finish(run, err)
 		return
@@ -356,6 +356,19 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
 	_, _ = log.Write([]byte("Apply complete.\n"))
+
+	// Checks run after apply: their probes (a command inside a node, a
+	// reachability probe) can only run against the built topology. The outcome
+	// is stored on the run for the readiness projection; a check failure does
+	// not fail the apply — it is reported, not enforced.
+	if len(root.Checks) > 0 {
+		assertion := evaluateChecks(ctx, st, root.Checks, evalCtx)
+		run.Assertion = &assertion
+		for _, failed := range assertion.FailedChecks {
+			_, _ = log.Write([]byte(fmt.Sprintf("[check] %s failed: %s\n", failed, assertion.Message)))
+		}
+	}
+
 	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
 }
 
