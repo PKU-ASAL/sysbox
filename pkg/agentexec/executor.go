@@ -195,7 +195,7 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
 	_, _ = log.Write([]byte("Reset complete.\n"))
-	e.bridge.Finish(run, nil)
+	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
 }
 
 func (e *Executor) reportCompletion(ctx context.Context, run *controlplane.Run) {
@@ -351,7 +351,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
 	_, _ = log.Write([]byte("Apply complete.\n"))
-	e.bridge.Finish(run, nil)
+	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
 }
 
 func refreshApplyPlan(_ string, hook ApplyHook) bool {
@@ -440,7 +440,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
 	_, _ = log.Write([]byte("Destroy complete.\n"))
-	e.bridge.Finish(run, nil)
+	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
 }
 
 func (e *Executor) executeResumeApply(ctx context.Context, parent, run *controlplane.Run, log io.Writer) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
@@ -21,6 +22,9 @@ type StoreRecorder struct {
 	topology string
 	runID    string
 	path     string
+
+	mu         sync.Mutex
+	persistErr error
 }
 
 func NewStoreRecorder(inner OperationRecorder, store CheckpointStore, topology, runID, path string) *StoreRecorder {
@@ -35,12 +39,40 @@ func (r *StoreRecorder) WithContext(ctx context.Context) *StoreRecorder {
 	return r
 }
 
+// Err reports the first checkpoint-persistence failure seen by this recorder,
+// or nil if the journal is intact.
+//
+// The journal is what makes a crashed apply recoverable: replaying it is how
+// resources that were created but never recorded in state are found again.
+// A run that completes on a journal that silently stopped being written looks
+// exactly like a healthy one, and the gap surfaces only on the day someone
+// tries to recover. Callers must therefore consult this before reporting
+// success, and fail the run instead.
+func (r *StoreRecorder) Err() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.persistErr
+}
+
+func (r *StoreRecorder) setErr(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.persistErr == nil {
+		r.persistErr = err
+	}
+}
+
 func (r *StoreRecorder) Begin(operation string, plan *Plan) error {
 	if err := r.OperationRecorder.Begin(operation, plan); err != nil {
 		return err
 	}
 	r.persist()
-	return nil
+	// Refuse up front rather than after resources have been touched: Begin is
+	// the only recorder method that can decline.
+	return r.Err()
 }
 
 func (r *StoreRecorder) StepStart(resource string, action controlplane.PlanActionType) int {
@@ -122,10 +154,14 @@ func (r *StoreRecorder) persist() {
 	}
 	cp, err := LoadCheckpointFile(r.path)
 	if err != nil {
+		// Do not swallow this: with no readable checkpoint there is no journal,
+		// and the run must not go on to report success without one.
+		r.setErr(fmt.Errorf("read checkpoint %s: %w", r.path, err))
 		return
 	}
 	if err := r.store.SaveCheckpoint(r.ctx, r.topology, r.runID, *cp); err != nil {
 		fmt.Fprintf(os.Stderr, "[runtime] persist checkpoint: %v\n", err)
+		r.setErr(fmt.Errorf("persist checkpoint for run %s: %w", r.runID, err))
 	}
 }
 
