@@ -305,7 +305,13 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "missing guest execution", fmt.Errorf("missing guest execution"))
 			return
 		}
-		if err := r.opts.ReportGuestExecutionStart(runCtx, cmd.Execution.ID); err != nil {
+		// Start the declared budget before any of the work below: the start
+		// report and the state load are part of the operation the caller timed,
+		// and a wedged state backend here would otherwise burn unbounded time
+		// before the deadline even exists.
+		opCtx, opCancel := guestOperationContext(runCtx, cmd.ExecutionRequest)
+		defer opCancel()
+		if err := r.opts.ReportGuestExecutionStart(opCtx, cmd.Execution.ID); err != nil {
 			emit("failed", "guest execution start report failed", err)
 			return
 		}
@@ -314,12 +320,16 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "guest execution state unavailable", err)
 			return
 		}
-		st, err := mgr.Load()
+		st, err := mgr.LoadWithContext(opCtx)
 		if err != nil {
 			emit("failed", "guest execution state unavailable", err)
 			return
 		}
-		completed := executeGuestOperation(runCtx, st, cmd.Execution.Node, cmd.ExecutionRequest)
+		completed := executeGuestOperation(opCtx, st, cmd.Execution.Node, cmd.ExecutionRequest)
+		// Report completion on runCtx, not opCtx: the operation's own deadline
+		// has very likely expired by now, and the result must still be
+		// delivered — otherwise a timed-out execution is never reported at all
+		// and the caller is left polling something that will never resolve.
 		if err := r.opts.ReportGuestExecutionComplete(runCtx, cmd.Execution.ID, controlplane.GuestExecutionCompletion{Result: completed.Result, ResultClass: completed.ResultClass, Error: completed.Err}); err != nil {
 			emit("failed", "guest execution completion report failed", err)
 			return

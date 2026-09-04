@@ -28,6 +28,24 @@ type guestOperationCompletion struct {
 	Err         string
 }
 
+// guestOperationContext derives the context a guest operation runs under.
+//
+// The declared timeout is meant to bound the operation an operator asked for,
+// not merely the exec call at the end of it. Reporting the execution as
+// started, resolving a state manager and loading state all happen before the
+// exec, and a slow or wedged state backend there burns unbounded time — so the
+// budget has to be started by the caller, before any of that, rather than
+// derived deep inside the exec path.
+//
+// A tighter parent bound always wins: context.WithTimeout keeps the earlier of
+// the two deadlines, so the caller's limit stays an upper limit.
+func guestOperationContext(ctx context.Context, req controlplane.GuestExecutionRequest) (context.Context, context.CancelFunc) {
+	if req.TimeoutSeconds > 0 {
+		return context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
+	}
+	return context.WithCancel(ctx)
+}
+
 func executeGuestOperation(ctx context.Context, st *state.State, node string, req controlplane.GuestExecutionRequest) guestOperationCompletion {
 	res := st.FindResource(address.Resource("sysbox_node", node))
 	if res == nil {
@@ -48,11 +66,12 @@ func executeGuestOperation(ctx context.Context, st *state.State, node string, re
 	if err != nil {
 		return guestOperationCompletion{ResultClass: "provider", Err: "reconstruct provider handle failed"}
 	}
-	if req.TimeoutSeconds > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
-		defer cancel()
-	}
+	// The caller normally starts the budget before the work leading up to here
+	// (see guestOperationContext); deriving it again is harmless — WithTimeout
+	// keeps the earlier deadline — and keeps this function correct when called
+	// directly, as the tests do.
+	ctx, cancel := guestOperationContext(ctx, req)
+	defer cancel()
 	result, err := exec.ExecInNode(ctx, handle, substrate.ExecRequest{Program: req.Argv[0], Args: req.Argv[1:], Environment: req.Environment, WorkingDir: req.WorkingDirectory, Shell: substrate.ShellNone})
 	if err != nil {
 		class := "provider"
