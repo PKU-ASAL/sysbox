@@ -3,6 +3,8 @@ package agentexec
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
@@ -99,10 +101,40 @@ func resolveExecData(ctx context.Context, st *state.State, d config.DataBlock, e
 }
 
 func resolveReachData(ctx context.Context, st *state.State, d config.DataBlock, evalCtx *hcl.EvalContext) (cty.Value, error) {
-	// sysbox_reach is composition: find the target node's address in state, then
-	// probe it from the source node via the guest-exec primitive. Not yet wired;
-	// see the design review for the intended shape.
-	return cty.NilVal, fmt.Errorf("data %s.%s: sysbox_reach is not implemented yet", d.Type, d.Name)
+	cfg := &config.DataReachConfig{}
+	if diag := gohcl.DecodeBody(d.Remain, evalCtx, cfg); diag.HasErrors() {
+		return cty.NilVal, fmt.Errorf("data %s.%s: %s", d.Type, d.Name, diag.Error())
+	}
+	fromAddr, err := config.ResolveResourceAddress(cfg.From, "sysbox_node")
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("data %s.%s: %w", d.Type, d.Name, err)
+	}
+	toAddr, err := config.ResolveResourceAddress(cfg.To, "sysbox_node")
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("data %s.%s: %w", d.Type, d.Name, err)
+	}
+	toRes := st.FindResource(toAddr)
+	if toRes == nil {
+		return cty.NilVal, fmt.Errorf("data %s.%s: node %s not in state", d.Type, d.Name, toAddr.String())
+	}
+	toIP := toRes.Str("primary_ip")
+	if toIP == "" {
+		return cty.NilVal, fmt.Errorf("data %s.%s: node %s has no primary_ip", d.Type, d.Name, toAddr.String())
+	}
+
+	// sysbox_reach is composition, not a new capability: look up the target's
+	// address in state, then probe it from the source via the guest-exec
+	// primitive. A TCP connect from the source is the reachability signal.
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	argv := []string{"nc", "-z", "-w", "2", toIP, strconv.Itoa(cfg.Port)}
+	result, err := runGuestExec(probeCtx, st, fromAddr.Name, argv, nil, "")
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("data %s.%s: probe: %w", d.Type, d.Name, err)
+	}
+	return cty.ObjectVal(map[string]cty.Value{
+		"reachable": cty.BoolVal(result.ExitCode == 0),
+	}), nil
 }
 
 // checkDataContext builds the eval context in which a check's assert conditions
