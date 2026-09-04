@@ -146,7 +146,7 @@ check "edge_cannot_reach_core" {
 | data 块入图 | `expandDataBlock`，`pkg/runtime/workspace.go:256` | 已有 |
 | 真实 `hcl.EvalContext`（locals / module outputs / count） | `pkg/config/eval.go` | 已有 |
 | 节点内执行 | guest-exec 已是一等 API | 已有 |
-| 拓扑图查地址（`sysbox_reach` 需要） | `pkg/graph` | 已有 |
+| 查节点地址（`sysbox_reach` 需要） | `state.Resource.Attributes["primary_ip"]` | 已有（`HandlePublicAttributes` 写入） |
 
 `DataBlock` 已是 `{Type, Name, Remain hcl.Body}` 的通用形状，两个新 data source 无需改动 schema 本身。
 
@@ -156,7 +156,7 @@ check "edge_cannot_reach_core" {
 |---|---|---|
 | `Checks []CheckBlock` 加入 `Root` | `pkg/config/schema.go` | ~20 行 |
 | `sysbox_exec` 的 `DecodeData` 与求值 | 照 `DataImageResourceHandler` | ~90 行 |
-| `sysbox_reach` 的 `DecodeData` 与求值 | 同上 + 查 `pkg/graph` 取地址 | ~110 行 |
+| `sysbox_reach` 的 `DecodeData` 与求值 | 同上 + 查 state 的 `primary_ip` | ~110 行 |
 | apply 末尾求值 `condition`，落 `Asserted` | `pkg/runtime` | ~120 行 |
 | 组合 conditions 并挂到新端点 | `pkg/api/handler_topo.go` | ~60 行 |
 
@@ -286,5 +286,5 @@ cyberfield/api/sysbox.v1.yaml
 本文的 S1–S4 取自 2026-09-01 的跨仓库架构决策文档（现存于 cyberfield 仓库历史：`git show fe18792:docs/architecture/sysbox-boundary-design.md`），并在 2026-09-04 对 Sysbox 现状逐条重新核对。核对结果修正了三处：
 
 1. **`VariableBlock` 已存在**，`sensitive` 是加属性而非加块——比原估计更小。
-2. **不存在 `GET /v1/topologies/{name}`**，原文档说的「挂到已有 `/health` 端点」不成立；单个拓扑今天无法整体读取，需新增端点。
+2. **`GET /v1/topologies/{name}` 已存在**（返回 `WorkspaceInfo` 元数据：`name` / `has_hcl` / `has_state` / `resource_count`）。原文档误以为它不存在、需「挂到已有 `/health` 端点」。S1 是给这个**已有端点加 `status` 块**，而非新增端点。
 3. **`ResourceHealth.Checks` 已存在**，原文档未提及。它与 `check` 块的区分必须写明，否则会被后人合并，丢掉「基础设施有问题」与「拓扑不是作者要的那张」这两种失败的区别。
