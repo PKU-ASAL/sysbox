@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -255,6 +256,45 @@ func resolveModuleOutputs(mod ModuleBlock, callerDir string, parentCtx *hcl.Eval
 
 // buildModuleEvalContext builds an eval context with canonical module resource
 // addresses and var.xxx bindings.
+// supportedVariableAttributes lists the attributes a variable block actually
+// implements. Anything outside this set is rejected rather than ignored.
+var supportedVariableAttributes = map[string]bool{"default": true}
+
+// unsupportedVariableAttributes reports a diagnostic for every attribute a
+// variable block declares but sysbox does not implement.
+//
+// Variable bodies are read with JustAttributes, which accepts anything, and
+// only "default" is ever consumed — so an unrecognised attribute used to be
+// read and then dropped on the floor. That is the worst way to decline a
+// feature: an author who writes `sensitive = true` gets a value that still
+// reaches state, outputs and logs, with nothing anywhere to tell them the
+// guarantee they asked for was never applied. Rejecting says "not implemented";
+// ignoring says "done" and is a lie.
+func unsupportedVariableAttributes(name string, attrs hcl.Attributes) hcl.Diagnostics {
+	names := make([]string, 0, len(attrs))
+	for attrName := range attrs {
+		if !supportedVariableAttributes[attrName] {
+			names = append(names, attrName)
+		}
+	}
+	// Map iteration is unordered; sort so the reported diagnostics are stable.
+	sort.Strings(names)
+
+	var diags hcl.Diagnostics
+	for _, attrName := range names {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Unsupported variable attribute",
+			Detail: fmt.Sprintf(
+				"variable %q sets %q, which sysbox does not implement; only \"default\" is supported. "+
+					"Accepting it silently would promise behaviour that is never applied.",
+				name, attrName),
+			Subject: attrs[attrName].NameRange.Ptr(),
+		})
+	}
+	return diags
+}
+
 func buildModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, parentCtx *hcl.EvalContext) (*hcl.EvalContext, diag.Diagnostics) {
 	var diagnostics diag.Diagnostics
 	// Compute variable defaults from variable blocks.
@@ -266,6 +306,10 @@ func buildModuleEvalContext(mod ModuleBlock, modRoot *Root, modName string, pare
 		attrs, diag := vb.Remain.JustAttributes()
 		if diag.HasErrors() {
 			diagnostics = append(diagnostics, fromHCLDiagnostics(diag)...)
+			continue
+		}
+		if unsupported := unsupportedVariableAttributes(vb.Name, attrs); len(unsupported) > 0 {
+			diagnostics = append(diagnostics, fromHCLDiagnostics(unsupported)...)
 			continue
 		}
 		if defAttr, ok := attrs["default"]; ok {

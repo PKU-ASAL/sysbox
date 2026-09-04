@@ -15,6 +15,33 @@ import (
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
 
+// abortConnOnContext closes conn as soon as ctx is done, and returns a stop
+// function the caller must invoke once its reads are finished.
+//
+// Reads on a bare net.Conn consult neither a context nor a deadline, and
+// json.Decoder / bufio.Reader take no context either. A peer that accepts the
+// connection and then goes silent — a wedged vsock mux, a guest command that
+// never writes and never exits — therefore blocks the read forever, which makes
+// GuestExecutionRequest.TimeoutSeconds unenforceable on this path. Closing the
+// connection is the only way to unblock such a read.
+//
+// This deliberately covers cancellation as well as deadlines;
+// SetReadDeadline alone would leave a plain cancel unenforced.
+func abortConnOnContext(ctx context.Context, conn io.Closer) (stop func()) {
+	if ctx.Done() == nil {
+		return func() {}
+	}
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stopped:
+		}
+	}()
+	return func() { close(stopped) }
+}
+
 // VsockConnection implements Connection by dialling a Firecracker-style
 // vsock UDS socket and speaking the protocol defined in pkg/vsockrpc.
 //
@@ -68,8 +95,15 @@ func (c *VsockConnection) dial(ctx context.Context) (net.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial vsock uds %s: %w", c.udsPath, err)
 	}
+	// DialContext bounds only the connect; the handshake below is a read on a
+	// bare conn, so it needs its own bound or a silent peer hangs us forever.
+	stopAbort := abortConnOnContext(ctx, conn)
+	defer stopAbort()
 	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", c.port); err != nil {
 		_ = conn.Close()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("send CONNECT to %s: %w", c.udsPath, ctxErr)
+		}
 		return nil, fmt.Errorf("send CONNECT: %w", err)
 	}
 	// Read the OK <host-port>\n line.
@@ -77,6 +111,10 @@ func (c *VsockConnection) dial(ctx context.Context) (net.Conn, error) {
 	line, err := br.ReadString('\n')
 	if err != nil {
 		_ = conn.Close()
+		// Attribute to the deadline rather than to the read it caused.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("read CONNECT reply from %s: %w", c.udsPath, ctxErr)
+		}
 		return nil, fmt.Errorf("read CONNECT reply: %w", err)
 	}
 	if !strings.HasPrefix(line, "OK") {
@@ -150,6 +188,9 @@ func (c *VsockConnection) execFrameStream(ctx context.Context, cmd []string, env
 		return err
 	}
 	defer conn.Close()
+	// The frame loop below reads a bare conn with no deadline: an agent that
+	// accepts the work and never reports a frame would block it forever.
+	defer abortConnOnContext(ctx, conn)()
 
 	req := vsockrpc.Request{Op: vsockrpc.OpExec, Cmd: cmd, Env: env, WorkDir: workDir}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
@@ -160,6 +201,11 @@ func (c *VsockConnection) execFrameStream(ctx context.Context, cmd []string, env
 	for {
 		var f vsockrpc.Frame
 		if err := dec.Decode(&f); err != nil {
+			// Attribute to the context when it is what ended the read, so a
+			// timeout is not reported as a peer protocol failure.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fmt.Errorf("read frame: %w", ctxErr)
+			}
 			if err == io.EOF {
 				return fmt.Errorf("vsock connection closed before exit frame")
 			}
