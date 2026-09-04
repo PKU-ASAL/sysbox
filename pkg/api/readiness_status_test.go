@@ -103,3 +103,21 @@ func TestGetTopologyReportsUnknownWhenNeverObserved(t *testing.T) {
 	require.Equal(t, controlplane.PhaseGone, body.Status.Phase,
 		"a topology with no HCL and no state is gone")
 }
+
+// A converging run reports its deadline_at: the instant by which the system
+// will declare the topology failed if it has not converged.
+func TestGetTopologyReportsConvergenceDeadline(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	createWorkspace(t, s, "lab")
+
+	run := s.jobs.start("lab", "apply")
+	run.Status = controlplane.RunRunning
+	s.jobs.replace(run)
+
+	body := getTopology(t, s, "lab")
+
+	require.NotNil(t, body.Status)
+	require.NotNil(t, body.Status.DeadlineAt, "a converging topology must report its deadline")
+	require.True(t, body.Status.DeadlineAt.After(run.StartedAt))
+	require.Equal(t, controlplane.PhaseConverging, body.Status.Phase)
+}

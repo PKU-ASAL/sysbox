@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/diag"
@@ -143,8 +144,30 @@ func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
 // latest run and most recent health observation. Assertions are not yet
 // evaluated (S2 pending), so Asserted is Unknown.
 func (s *Server) topologyStatus(topology string) *controlplane.TopologyStatus {
-	status := controlplane.ComputeTopologyStatus(s.latestRun(topology), s.healthFor(topology), nil)
+	latest := s.latestRun(topology)
+	status := controlplane.ComputeTopologyStatus(latest, s.healthFor(topology), nil)
+	if latest != nil && isConvergingRun(latest) {
+		if deadline := convergenceDeadline(latest, s.cfg.ConvergeTimeout()); !deadline.IsZero() {
+			status.DeadlineAt = &deadline
+		}
+	}
 	return &status
+}
+
+// convergenceDeadline is the instant by which a converging run must have
+// finished. It is reported for information; enforcement lives in the
+// supervisor, which fails the run when the deadline passes.
+func convergenceDeadline(run *controlplane.Run, timeout time.Duration) time.Time {
+	if timeout <= 0 || run.StartedAt.IsZero() {
+		return time.Time{}
+	}
+	return run.StartedAt.Add(timeout)
+}
+
+// isConvergingRun reports whether a run is actively converging: in flight and
+// not a destroy.
+func isConvergingRun(run *controlplane.Run) bool {
+	return run.Op != "destroy" && (run.Status == controlplane.RunQueued || run.Status == controlplane.RunAssigned || run.Status == controlplane.RunRunning)
 }
 
 // latestRun returns the most recently started run for a topology, or nil if

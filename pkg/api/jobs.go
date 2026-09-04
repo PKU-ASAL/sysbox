@@ -336,6 +336,48 @@ func (j *Jobs) markExpiredLeases(now time.Time) {
 	}
 }
 
+// markConvergenceDeadlineExceeded fails runs that have been converging — or
+// waiting to converge — longer than timeout.
+//
+// The convergence bound belongs to sysbox, not to each consumer: without it an
+// apply can hang indefinitely and nothing ever says so. A run that has been
+// active past its deadline is declared failed here, which flows through the
+// normal status projection (Applied → False → phase failed). timeout <= 0
+// disables the bound. Destroy runs are not convergence and are left alone.
+func (j *Jobs) markConvergenceDeadlineExceeded(now time.Time, timeout time.Duration) {
+	if timeout <= 0 {
+		return
+	}
+
+	j.mu.RLock()
+	snapshots := make([]controlplane.Run, 0, len(j.runs))
+	for _, r := range j.runs {
+		snapshots = append(snapshots, *r)
+	}
+	j.mu.RUnlock()
+
+	for i := range snapshots {
+		r := &snapshots[i]
+		if r.Op == "destroy" || !isConvergingStatus(r.Status) {
+			continue
+		}
+		if r.StartedAt.IsZero() || now.Sub(r.StartedAt) <= timeout {
+			continue
+		}
+		r.MarkFinished(fmt.Errorf("convergence deadline exceeded (%s)", timeout), now)
+		j.replace(r)
+	}
+}
+
+func isConvergingStatus(status controlplane.RunStatus) bool {
+	switch status {
+	case controlplane.RunQueued, controlplane.RunAssigned, controlplane.RunRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 func (j *Jobs) runnableForAgent(agentID string) []*controlplane.Run {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
