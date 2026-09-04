@@ -102,11 +102,15 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req 
 	if err != nil {
 		return substrate.ExecResult{}, fmt.Errorf("exec inspect: %w", err)
 	}
+	exitCode, err := foregroundExecStatus(inspect)
+	if err != nil {
+		return substrate.ExecResult{}, fmt.Errorf("exec %s: %w", ex.ID, err)
+	}
 
 	return substrate.ExecResult{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
-		ExitCode: inspect.ExitCode,
+		ExitCode: exitCode,
 	}, nil
 }
 
@@ -300,6 +304,22 @@ func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, 
 		time.Sleep(50 * time.Millisecond)
 	}
 	return 0, fmt.Errorf("exec background: timed out waiting for PID")
+}
+
+// foregroundExecStatus reports the exit code of an exec whose streams have been
+// read to completion.
+//
+// A hijacked stream can end while the process is still alive — the daemon
+// restarts, a proxy resets the connection, or a mid-stream close lands on a
+// frame boundary and StdCopy reports a clean EOF. inspect.ExitCode is then just
+// its zero value, so trusting it would report exit 0 together with a truncated
+// body, and an assertion on exit_code == 0 would pass on a command that never
+// finished. Refuse instead, the way backgroundExecStatus already does.
+func foregroundExecStatus(inspect container.ExecInspect) (int, error) {
+	if inspect.Running {
+		return 0, fmt.Errorf("exec stream ended while the process is still running; output is incomplete")
+	}
+	return inspect.ExitCode, nil
 }
 
 func backgroundExecStatus(inspect container.ExecInspect) (int, bool, error) {
