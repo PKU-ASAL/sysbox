@@ -270,6 +270,8 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
+	restoreResolver := runtime.SetExecutionInputs(run.Inputs)
+	defer restoreResolver()
 	meta, _ := mgr.Metadata(ctx)
 	var plan *runtime.Plan
 	if run.PlanID != "" {

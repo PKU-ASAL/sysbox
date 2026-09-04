@@ -68,6 +68,18 @@ func (r InputResolver) Resolve(_ context.Context, reference Reference) (string, 
 	}
 	return value, nil
 }
+
+// Dispatcher routes a reference to the resolver registered for its source, so a
+// single Resolver can handle every source the engine knows (env, input, …).
+type Dispatcher map[string]Resolver
+
+func (d Dispatcher) Resolve(ctx context.Context, reference Reference) (string, error) {
+	resolver, ok := d[reference.Source]
+	if !ok {
+		return "", fmt.Errorf("unsupported secret source %q", reference.Source)
+	}
+	return resolver.Resolve(ctx, reference)
+}
 func ResolveString(ctx context.Context, resolver Resolver, input string) (string, error) {
 	if !IsReference(input) {
 		return input, nil
