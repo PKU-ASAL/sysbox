@@ -23,6 +23,23 @@ type CheckpointRecoverer interface {
 	RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error)
 }
 
+// RecoveryNotRequired is declared by a handler that deliberately does not
+// implement CheckpointRecoverer.
+//
+// design-principles.md holds that a provider without checkpoint and idempotent
+// recovery is not a complete implementation. Because CheckpointRecoverer is an
+// optional type assertion, "never implemented" and "genuinely unnecessary" used
+// to look identical from the outside — so recovery coverage could fall behind
+// that bar without anything noticing.
+//
+// Declaring this interface makes the second case explicit and records the
+// argument for it in code, where the next person deciding whether a crashed
+// apply left something behind will actually look. The returned string is that
+// argument, not a label.
+type RecoveryNotRequired interface {
+	RecoveryNotRequired() string
+}
+
 type CheckpointCleaner interface {
 	CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error)
 }

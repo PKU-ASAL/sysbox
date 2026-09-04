@@ -72,7 +72,7 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 			return nil
 		},
 	})
-	agentexec.NewExecutorWithBridge(bridge).Execute(run)
+	agentexec.NewExecutorWithBridge(bridge).ExecuteContext(cmd.Context(), run)
 	if aborted {
 		return nil
 	}

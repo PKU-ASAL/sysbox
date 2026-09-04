@@ -61,7 +61,7 @@ func runReset(cmd *cobra.Command, _ []string) error {
 			return nil
 		},
 	})
-	agentexec.NewExecutorWithBridge(bridge).Execute(run)
+	agentexec.NewExecutorWithBridge(bridge).ExecuteContext(cmd.Context(), run)
 	if aborted {
 		return nil
 	}

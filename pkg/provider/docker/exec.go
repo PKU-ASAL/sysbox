@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	dockertypes "github.com/docker/docker/api/types"
@@ -181,6 +182,7 @@ func (s *Substrate) OpenConsole(ctx context.Context, h substrate.NodeHandle, req
 		execID: ex.ID,
 		attach: att,
 		tty:    req.TTY,
+		done:   make(chan struct{}),
 	}, nil
 }
 
@@ -189,6 +191,9 @@ type dockerConsoleSession struct {
 	execID string
 	attach dockertypes.HijackedResponse
 	tty    bool
+
+	closeOnce sync.Once
+	done      chan struct{}
 }
 
 func (s *dockerConsoleSession) Stdin() io.WriteCloser { return s.attach.Conn }
@@ -210,19 +215,40 @@ func (s *dockerConsoleSession) Resize(ctx context.Context, cols, rows int) error
 	}
 	return s.sub.cli.ContainerExecResize(ctx, s.execID, container.ResizeOptions{Width: uint(cols), Height: uint(rows)})
 }
-func (s *dockerConsoleSession) Wait() (int, error) {
+
+// waitForExecExit polls inspect until the exec finishes, the daemon errors, or
+// stop is closed.
+//
+// stop is what makes the wait bounded. The loop used to run forever on
+// context.Background(): when a console's websocket relay returned — a timeout,
+// a disconnect — this goroutine kept inspecting every 100ms for the lifetime of
+// the process, holding the session with it, and nothing could reclaim it
+// because the context it carried could never be cancelled.
+func waitForExecExit(stop <-chan struct{}, poll time.Duration, inspect func() (container.ExecInspect, error)) (int, error) {
 	for {
-		ins, err := s.sub.cli.ContainerExecInspect(context.Background(), s.execID)
+		ins, err := inspect()
 		if err != nil {
 			return -1, err
 		}
 		if !ins.Running {
 			return ins.ExitCode, nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-stop:
+			return -1, fmt.Errorf("console session closed while exec was still running")
+		case <-time.After(poll):
+		}
 	}
 }
+
+func (s *dockerConsoleSession) Wait() (int, error) {
+	return waitForExecExit(s.done, 100*time.Millisecond, func() (container.ExecInspect, error) {
+		return s.sub.cli.ContainerExecInspect(context.Background(), s.execID)
+	})
+}
 func (s *dockerConsoleSession) Close() error {
+	// Unblocks Wait: without this the poll loop outlives the session.
+	s.closeOnce.Do(func() { close(s.done) })
 	s.attach.Close()
 	return nil
 }

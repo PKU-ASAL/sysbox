@@ -59,10 +59,15 @@ func NewExecutorWithBridge(bridge Bridge) *Executor {
 	return &Executor{bridge: bridge}
 }
 
-func (e *Executor) Execute(run *controlplane.Run) {
-	e.ExecuteContext(context.Background(), run)
-}
-
+// ExecuteContext runs the operation. ctx carries the run's cancellation: it is
+// the only path by which a deadline, an operator cancellation or a Ctrl-C
+// reaches the provider doing the work, so callers must pass the context they
+// were given rather than substituting one.
+//
+// There is deliberately no context-less variant. The wrapper that used to exist
+// substituted context.Background(), which silently severed cancellation for
+// every CLI command — the signal context built in main.go was carried all the
+// way by cobra and then discarded one call short of here.
 func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	if e.bridge == nil || run == nil {
 		return

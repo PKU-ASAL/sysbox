@@ -154,3 +154,11 @@ func (DataImageResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalCont
 	}
 	return cfg, deps, nil
 }
+
+// Create resolves a content-addressed artifact identity; Delete removes only
+// the state entry. Re-running Create against the same immutable digest is
+// idempotent, and no external object is owned that could be orphaned, so there
+// is nothing for checkpoint recovery to adopt or clean up.
+func (ImageResourceHandler) RecoveryNotRequired() string {
+	return "artifact identity resolution on an immutable digest is idempotent; owns no external object and Delete is state-only"
+}

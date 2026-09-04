@@ -235,3 +235,12 @@ func buildSSHDConfig(port int, hasHook bool) string {
 
 	return b.String()
 }
+
+// This handler does mutate the outside world — setupSSHAccess installs
+// authorized keys inside the target node — but it needs no recovery of its own:
+// writing the same keys again is idempotent, and the keys live inside a node
+// that is itself checkpoint-recovered, so they cannot outlive their container.
+// Delete removes only the state entry.
+func (SSHAccessResourceHandler) RecoveryNotRequired() string {
+	return "installing the same authorized keys is idempotent, and they live inside a node that is itself checkpoint-recovered"
+}

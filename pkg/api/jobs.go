@@ -471,6 +471,27 @@ func (j *Jobs) list(topology string) []*controlplane.Run {
 	return out
 }
 
+// recoverableRuns returns terminal runs whose checkpoint journal may still hold
+// unrecorded work: they failed or were interrupted after mutating the outside
+// world but before recording the result in state.
+//
+// A running run is never recoverable — its journal is still being written and
+// its state is still owned by the in-flight operation.
+func (j *Jobs) recoverableRuns(topology string) []*controlplane.Run {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	out := make([]*controlplane.Run, 0)
+	for _, r := range j.runs {
+		if r.Status != controlplane.RunFailed || !r.Recoverable {
+			continue
+		}
+		if topology == "" || r.Topology == topology {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func (j *Jobs) logWriter(runID string) *Broadcaster {
 	return j.logs.Writer(runID)
 }

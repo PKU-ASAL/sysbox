@@ -129,3 +129,9 @@ func (KernelResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.
 	}
 	return nil
 }
+
+// Same shape as the image handler: identity resolution against an immutable
+// digest, with a state-only Delete.
+func (KernelResourceHandler) RecoveryNotRequired() string {
+	return "kernel artifact identity resolution is idempotent; owns no external object and Delete is state-only"
+}
