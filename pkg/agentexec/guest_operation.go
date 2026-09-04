@@ -62,13 +62,27 @@ func executeGuestOperation(ctx context.Context, st *state.State, node string, re
 		if errors.Is(ctx.Err(), context.Canceled) {
 			class = "cancelled"
 		}
-		return guestOperationCompletion{ResultClass: class, Err: class + " guest operation"}
+		// Do not drop what the provider already captured: on a timeout that is
+		// the only trace of how far the command got, and the caller has nothing
+		// else to act on.
+		return guestOperationCompletion{ResultClass: class, Err: class + " guest operation", Result: encodeGuestOutput(result.Stdout, result.Stderr, 0)}
 	}
-	stdout, outTruncated := bounded([]byte(result.Stdout), guestOutputLimit)
-	stderr, errTruncated := bounded([]byte(result.Stderr), guestOutputLimit)
-	return guestOperationCompletion{ResultClass: controlplane.GuestExecutionResultClassExit, Result: controlplane.GuestExecutionResult{
-		ExitCode: result.ExitCode, Stdout: base64.StdEncoding.EncodeToString(stdout), Stderr: base64.StdEncoding.EncodeToString(stderr), Encoding: "base64", Truncated: outTruncated || errTruncated,
-	}}
+	return guestOperationCompletion{ResultClass: controlplane.GuestExecutionResultClassExit, Result: encodeGuestOutput(result.Stdout, result.Stderr, result.ExitCode)}
+}
+
+// encodeGuestOutput bounds and base64-encodes captured guest output. The bound
+// applies here, at the boundary, because the provider may hand back more than
+// the agent is willing to carry.
+func encodeGuestOutput(stdout, stderr string, exitCode int) controlplane.GuestExecutionResult {
+	out, outTruncated := bounded([]byte(stdout), guestOutputLimit)
+	errOut, errTruncated := bounded([]byte(stderr), guestOutputLimit)
+	return controlplane.GuestExecutionResult{
+		ExitCode:  exitCode,
+		Stdout:    base64.StdEncoding.EncodeToString(out),
+		Stderr:    base64.StdEncoding.EncodeToString(errOut),
+		Encoding:  "base64",
+		Truncated: outTruncated || errTruncated,
+	}
 }
 
 func bounded(data []byte, limit int) ([]byte, bool) {

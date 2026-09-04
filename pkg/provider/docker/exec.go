@@ -21,17 +21,25 @@ import (
 	"github.com/oslab/sysbox/pkg/util"
 )
 
-// readExecStreams demultiplexes a hijacked exec stream, aborting the read as
-// soon as ctx is done.
+// maxExecStreamBytes bounds how much output a single exec read retains.
 //
-// Docker's hijacked connection is detached from the request context: neither a
-// deadline nor a cancel closes it, and stdcopy.StdCopy takes no context. A guest
-// command that never exits would therefore block the read forever, which makes
-// GuestExecutionRequest.TimeoutSeconds unenforceable and leaves the execution
-// stuck in "running" until something else tears the connection down. Closing the
-// connection is the only way to unblock the read, so that is what we do.
+// The hijacked read drains into in-memory buffers with no natural limit, and a
+// guest command that floods its output would grow them without bound for as
+// long as the timeout allows — the ctx abort bounds the time, not the volume.
+// This ceiling only stops the pathological case; the authoritative truncation
+// signal is the 1 MiB guestOutputLimit the agent applies to the result, so this
+// is deliberately larger and never the thing a caller uses to decide truncation.
+const maxExecStreamBytes = 8 << 20
+
 func readExecStreams(ctx context.Context, r io.Reader, conn io.Closer) (bytes.Buffer, bytes.Buffer, error) {
-	var stdout, stderr bytes.Buffer
+	return readExecStreamsCapped(ctx, r, conn, maxExecStreamBytes)
+}
+
+// readExecStreamsCapped is readExecStreams with an explicit per-stream cap on
+// retained bytes. maxBytes <= 0 means unbounded.
+func readExecStreamsCapped(ctx context.Context, r io.Reader, conn io.Closer, maxBytes int) (bytes.Buffer, bytes.Buffer, error) {
+	var stdout, stderr cappedBuffer
+	stdout.max, stderr.max = maxBytes, maxBytes
 	stopped := make(chan struct{})
 	defer close(stopped)
 	go func() {
@@ -51,12 +59,32 @@ func readExecStreams(ctx context.Context, r io.Reader, conn io.Closer) (bytes.Bu
 	// would then draw a conclusion from a partial body. Checking ctx first also
 	// attributes the failure to the deadline rather than to the read it caused.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return stdout, stderr, ctxErr
+		return stdout.buf, stderr.buf, ctxErr
 	}
 	if err != nil {
-		return stdout, stderr, err
+		return stdout.buf, stderr.buf, err
 	}
-	return stdout, stderr, nil
+	return stdout.buf, stderr.buf, nil
+}
+
+// cappedBuffer is an io.Writer that retains at most max bytes and discards the
+// rest, always reporting a full write so the caller's copy loop neither errors
+// nor stalls on overflow.
+type cappedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if b.max > 0 && b.buf.Len() >= b.max {
+		return len(p), nil // over cap: drain without retaining
+	}
+	room := b.max - b.buf.Len()
+	if b.max > 0 && len(p) > room {
+		_, _ = b.buf.Write(p[:room])
+		return len(p), nil // report full consumption so the copy loop never errors
+	}
+	return b.buf.Write(p)
 }
 
 func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
@@ -94,7 +122,10 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req 
 
 	stdout, stderr, err := readExecStreams(ctx, att.Reader, att.Conn)
 	if err != nil {
-		return substrate.ExecResult{}, fmt.Errorf("exec read: %w", err)
+		// Return the partial body with the error: on a timeout it is the only
+		// trace of how far the command got, and the caller's completion should
+		// carry it rather than an empty result.
+		return substrate.ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("exec read: %w", err)
 	}
 	<-stdinDone
 
