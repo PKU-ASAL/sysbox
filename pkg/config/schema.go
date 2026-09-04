@@ -15,6 +15,7 @@ type Root struct {
 	Data       []DataBlock      `hcl:"data,block"`
 	Locals     []LocalsBlock    `hcl:"locals,block"`
 	Outputs    []OutputBlock    `hcl:"output,block"`
+	Checks     []CheckBlock     `hcl:"check,block"`
 }
 
 // VariableBlock declares an input variable for a module file.
@@ -75,6 +76,23 @@ type ResourceBlock struct {
 type DataBlock struct {
 	Type   string   `hcl:"type,label"`
 	Name   string   `hcl:"name,label"`
+	Remain hcl.Body `hcl:",remain"`
+}
+
+// CheckBlock declares a topology-level assertion (Terraform-style check): at
+// most one scoped data source plus one or more asserts. It is evaluated after
+// apply, never enters the dependency graph, and its result is projected into
+// the topology's Asserted condition.
+type CheckBlock struct {
+	Name    string        `hcl:"name,label"`
+	Data    []DataBlock   `hcl:"data,block"`
+	Asserts []AssertBlock `hcl:"assert,block"`
+}
+
+// AssertBlock holds one assertion: a boolean condition expression and an
+// author-written error message. Both are expressions, decoded lazily against
+// the check's eval context.
+type AssertBlock struct {
 	Remain hcl.Body `hcl:",remain"`
 }
 
