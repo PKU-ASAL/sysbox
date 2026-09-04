@@ -41,6 +41,7 @@ type runStartOptions struct {
 	AgentID      string
 	UnsafeState  bool
 	OperationKey string
+	Inputs       map[string]string
 }
 
 func newJobs(runsDir string, store apiStore) *Jobs {
@@ -224,6 +225,7 @@ func newRun(topology, op string, opts runStartOptions) *controlplane.Run {
 		AgentID:      opts.AgentID,
 		UnsafeState:  opts.UnsafeState,
 		Protocol:     controlplane.AgentProtocolVersion,
+		Inputs:       opts.Inputs,
 		LeaseOwner:   "sysbox-api",
 		QueuedAt:     now,
 		StartedAt:    now,

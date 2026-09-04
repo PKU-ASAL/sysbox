@@ -96,6 +96,10 @@ type Run struct {
 	// (nil when the run evaluated no checks). It is in-memory state feeding the
 	// topology's Asserted condition; it is recomputed by the next apply.
 	Assertion *AssertionResult `json:"assertion,omitempty"`
+	// Inputs are the apply-time variable values. They are transient: carried in
+	// the run dispatch so the agent can bind var.<name>, but not durably
+	// persisted, so a sensitive input's plaintext does not survive the run.
+	Inputs map[string]string `json:"inputs,omitempty"`
 }
 
 type RunCompletion struct {
