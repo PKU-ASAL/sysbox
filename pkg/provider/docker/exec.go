@@ -21,6 +21,44 @@ import (
 	"github.com/oslab/sysbox/pkg/util"
 )
 
+// readExecStreams demultiplexes a hijacked exec stream, aborting the read as
+// soon as ctx is done.
+//
+// Docker's hijacked connection is detached from the request context: neither a
+// deadline nor a cancel closes it, and stdcopy.StdCopy takes no context. A guest
+// command that never exits would therefore block the read forever, which makes
+// GuestExecutionRequest.TimeoutSeconds unenforceable and leaves the execution
+// stuck in "running" until something else tears the connection down. Closing the
+// connection is the only way to unblock the read, so that is what we do.
+func readExecStreams(ctx context.Context, r io.Reader, conn io.Closer) (bytes.Buffer, bytes.Buffer, error) {
+	var stdout, stderr bytes.Buffer
+	stopped := make(chan struct{})
+	defer close(stopped)
+	go func() {
+		select {
+		case <-ctx.Done():
+			// Unblocks StdCopy; ExecInNode's deferred Close is then a no-op.
+			_ = conn.Close()
+		case <-stopped:
+		}
+	}()
+
+	_, err := stdcopy.StdCopy(&stdout, &stderr, r)
+	// The context must be consulted even when the read reports no error. Closing
+	// the connection mid-stream usually surfaces as use-of-closed-conn, but a
+	// close landing on a frame boundary makes StdCopy report a clean EOF instead,
+	// which would pass truncated output off as success — and a service check
+	// would then draw a conclusion from a partial body. Checking ctx first also
+	// attributes the failure to the deadline rather than to the read it caused.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return stdout, stderr, ctxErr
+	}
+	if err != nil {
+		return stdout, stderr, err
+	}
+	return stdout, stderr, nil
+}
+
 func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
 	cmd, err := transport.CommandArgv(req)
 	if err != nil {
@@ -54,8 +92,8 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req 
 		close(stdinDone)
 	}()
 
-	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, att.Reader); err != nil {
+	stdout, stderr, err := readExecStreams(ctx, att.Reader, att.Conn)
+	if err != nil {
 		return substrate.ExecResult{}, fmt.Errorf("exec read: %w", err)
 	}
 	<-stdinDone
