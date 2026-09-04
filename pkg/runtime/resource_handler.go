@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/hashicorp/hcl/v2"
@@ -87,6 +88,17 @@ func (r *handlerRegistry) Get(typ string) (ResourceHandler, bool) {
 	return handler, ok
 }
 
+func (r *handlerRegistry) Types() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	types := make([]string, 0, len(r.handlers))
+	for typ := range r.handlers {
+		types = append(types, typ)
+	}
+	sort.Strings(types)
+	return types
+}
+
 var resourceHandlers = newHandlerRegistry()
 
 func RegisterResourceHandler(p ResourceHandler) {
@@ -97,6 +109,14 @@ func RegisterResourceHandler(p ResourceHandler) {
 
 func GetResourceHandler(typ string) (ResourceHandler, bool) {
 	return resourceHandlers.Get(typ)
+}
+
+// RegisteredResourceTypes lists every registered resource type, sorted.
+//
+// Enumeration exists so invariants can be asserted across the whole registry
+// rather than against a hand-maintained list that drifts as handlers are added.
+func RegisteredResourceTypes() []string {
+	return resourceHandlers.Types()
 }
 
 func mustResourceHandler(typ string) ResourceHandler {

@@ -261,3 +261,17 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 	e.logf("[data] read sysbox_image.%s → %s\n", n.Address.Name, handle.ID)
 	return res, nil
 }
+
+// Data sources resolve an existing object for reference; they create and own
+// nothing, so a crashed apply leaves nothing behind to reconcile.
+func (DataNodeResourceHandler) RecoveryNotRequired() string {
+	return "data source: resolves an existing node for reference and creates no external object"
+}
+
+func (DataNetworkResourceHandler) RecoveryNotRequired() string {
+	return "data source: resolves an existing network for reference and creates no external object"
+}
+
+func (DataImageResourceHandler) RecoveryNotRequired() string {
+	return "data source: resolves an existing image for reference and creates no external object"
+}

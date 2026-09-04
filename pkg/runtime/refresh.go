@@ -44,19 +44,15 @@ func (e *Executor) Refresh(ctx context.Context, plan *Plan) (*Plan, error) {
 			change.Reason = "probe failed: " + err.Error()
 			continue
 		}
-		switch result.Status {
-		case state.ResourceAbsent, state.ResourceDrifted:
-			e.logf("[refresh] %s: drifted - will re-create\n", change.Address)
-			change.Action = controlplane.PlanActionReplace
+		if action, dictates := planActionForObservedStatus(result.Status); dictates {
+			if action == controlplane.PlanActionReplace {
+				e.logf("[refresh] %s: drifted - will re-create\n", change.Address)
+			}
+			change.Action = action
 			change.Reason = result.Reason
-			if change.Reason == "" {
+			if change.Reason == "" && action == controlplane.PlanActionReplace {
 				change.Reason = "runtime drift detected"
 			}
-		case state.ResourceUnknown:
-			change.Action = controlplane.PlanActionUnknown
-			change.Reason = result.Reason
-		case state.ResourceDegraded, state.ResourcePresent:
-			// Degraded resources remain present; health exposes the degradation.
 		}
 	}
 	return refreshed, refreshed.Validate()
@@ -229,4 +225,29 @@ func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver 
 		}
 	}
 	return true
+}
+
+// planActionForObservedStatus maps an observed resource status to the plan
+// action it dictates. dictates is false for statuses that leave the planned
+// action alone.
+//
+// This encodes the architecture invariant "Unknown observation 不等于 absent".
+// absent and drifted authorise a replace; unknown must produce
+// PlanActionUnknown, which apply and destroy both refuse. A provider that is
+// briefly unreachable or lacks permission is not evidence that the object is
+// gone, and collapsing the two here is what causes duplicate creation and
+// wrong deletion.
+//
+// It is a named function rather than an inline switch so the invariant can be
+// asserted directly; see unknown_not_absent_test.go.
+func planActionForObservedStatus(status state.ResourceStatus) (controlplane.PlanActionType, bool) {
+	switch status {
+	case state.ResourceAbsent, state.ResourceDrifted:
+		return controlplane.PlanActionReplace, true
+	case state.ResourceUnknown:
+		return controlplane.PlanActionUnknown, true
+	default:
+		// Degraded resources remain present; health exposes the degradation.
+		return "", false
+	}
 }
