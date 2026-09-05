@@ -24,6 +24,22 @@ func TestSQLiteAPIStoreRoundTripsResetTargetAndUnsafeState(t *testing.T) {
 	require.True(t, got.UnsafeState)
 }
 
+func TestSQLiteAPIStoreRoundTripsDeadlineAt(t *testing.T) {
+	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	deadline := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	run := controlplane.Run{ID: "apply-1", Topology: "mixed", Operation: "apply", Op: "apply", Status: controlplane.RunQueued, DeadlineAt: deadline}
+	require.NoError(t, store.SaveRun(context.Background(), run))
+
+	got, err := store.GetRun(context.Background(), run.ID)
+	require.NoError(t, err)
+	require.True(t, got.DeadlineAt.Equal(deadline))
+
+	runs, err := store.LoadRuns(context.Background())
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	require.True(t, runs[0].DeadlineAt.Equal(deadline))
+}
+
 func TestSQLiteAgentCommandRoundTripsGuestFilePut(t *testing.T) {
 	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()}
 	want := controlplane.AgentCommand{ID: "cmd-file", AgentID: "host-a", Type: "guest_file_put", FilePut: &controlplane.GuestFilePut{ID: "file-1", Topology: "lab", Node: "web", Path: "/flag", Mode: 0, Size: 3, SHA256: "abc", FetchRef: "/private"}}

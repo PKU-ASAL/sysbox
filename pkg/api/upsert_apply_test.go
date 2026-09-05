@@ -115,3 +115,32 @@ func TestApplyUpsertSetsDeadlineAt(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, deadline, run.DeadlineAt)
 }
+
+// A legacy workspace revision id (from the old POST /v1/topologies/{t}/revisions
+// flow) is not a global digest, so it must still dispatch a run as a label
+// without a 404.
+func TestApplyLegacyWorkspaceRevisionStillDispatches(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	writeRunServiceTopology(t, s, "lab", `resource "sysbox_network" "lab" {
+  cidr = "10.77.0.0/24"
+}`)
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
+		ID:           "host-a",
+		Status:       controlplane.AgentStatusOnline,
+		Capabilities: []string{"network"},
+	}))
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/apply", bytes.NewBufferString(`{"revision":"abc123"}`)))
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	var started struct {
+		RunID string `json:"run_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &started))
+	require.NotEmpty(t, started.RunID)
+
+	run, ok := s.jobs.get(started.RunID)
+	require.True(t, ok)
+	require.Equal(t, "abc123", run.Revision)
+}

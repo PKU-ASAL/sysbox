@@ -104,7 +104,7 @@ func runServiceStatus(err error) int {
 }
 
 func (s *RunService) StartApply(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
-	if req.Revision != "" {
+	if req.Revision != "" && globalRevisionPattern.MatchString(req.Revision) {
 		rev, err := s.revisions.GetGlobalRevision(ctx, req.Revision)
 		if err != nil {
 			if errors.Is(err, errGlobalRevisionNotFound) {

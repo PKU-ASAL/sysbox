@@ -72,7 +72,8 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		queued_at   TEXT DEFAULT '',
 		assigned_at TEXT DEFAULT '',
 		started_at  TEXT DEFAULT '',
-		ended_at    TEXT DEFAULT ''
+		ended_at    TEXT DEFAULT '',
+		deadline_at TEXT DEFAULT ''
 	) STRICT;
 
 	CREATE TABLE IF NOT EXISTS sysbox_agents (
@@ -235,7 +236,46 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	if err := s.ensureRunsColumn(db, "deadline_at", "TEXT DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ensureRunsColumn adds a missing column to sysbox_runs for pre-existing
+// databases. sqlite has no versioned migration framework here (only
+// CREATE TABLE IF NOT EXISTS), so the ALTER is guarded by a PRAGMA table_info
+// check to stay idempotent across restarts.
+func (s *sqliteAPIStore) ensureRunsColumn(db *sql.DB, column, def string) error {
+	rows, err := db.Query(`PRAGMA table_info(sysbox_runs)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	found := false
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, typ        string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE sysbox_runs ADD COLUMN %s %s", column, def))
+	return err
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -273,7 +313,7 @@ func (s *sqliteAPIStore) LoadRuns(ctx context.Context) ([]controlplane.Run, erro
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at FROM sysbox_runs ORDER BY id`)
+	rows, err := db.QueryContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at, deadline_at FROM sysbox_runs ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -281,9 +321,9 @@ func (s *sqliteAPIStore) LoadRuns(ctx context.Context) ([]controlplane.Run, erro
 	var out []controlplane.Run
 	for rows.Next() {
 		var r controlplane.Run
-		var leaseUntil, queuedAt, assignedAt, startedAt, endedAt string
+		var leaseUntil, queuedAt, assignedAt, startedAt, endedAt, deadlineAt string
 		var recoverable, unsafeState int
-		if err := rows.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.PlanID, &r.Target, &r.AgentID, &recoverable, &unsafeState, &r.OperationKey, &r.RequestFingerprint, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.PlanID, &r.Target, &r.AgentID, &recoverable, &unsafeState, &r.OperationKey, &r.RequestFingerprint, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt, &deadlineAt); err != nil {
 			return nil, err
 		}
 		r.Recoverable = recoverable != 0
@@ -293,6 +333,7 @@ func (s *sqliteAPIStore) LoadRuns(ctx context.Context) ([]controlplane.Run, erro
 		r.AssignedAt = parseSQLiteTime(assignedAt)
 		r.StartedAt = parseSQLiteTime(startedAt)
 		r.EndedAt = parseSQLiteTime(endedAt)
+		r.DeadlineAt = parseSQLiteTime(deadlineAt)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -303,11 +344,11 @@ func (s *sqliteAPIStore) GetRun(ctx context.Context, id string) (*controlplane.R
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRowContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1`, id)
+	row := db.QueryRowContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at, deadline_at FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1`, id)
 	var r controlplane.Run
-	var leaseUntil, queuedAt, assignedAt, startedAt, endedAt string
+	var leaseUntil, queuedAt, assignedAt, startedAt, endedAt, deadlineAt string
 	var recoverable, unsafeState int
-	if err := row.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.PlanID, &r.Target, &r.AgentID, &recoverable, &unsafeState, &r.OperationKey, &r.RequestFingerprint, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.PlanID, &r.Target, &r.AgentID, &recoverable, &unsafeState, &r.OperationKey, &r.RequestFingerprint, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt, &deadlineAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("run not found")
 		}
@@ -320,6 +361,7 @@ func (s *sqliteAPIStore) GetRun(ctx context.Context, id string) (*controlplane.R
 	r.AssignedAt = parseSQLiteTime(assignedAt)
 	r.StartedAt = parseSQLiteTime(startedAt)
 	r.EndedAt = parseSQLiteTime(endedAt)
+	r.DeadlineAt = parseSQLiteTime(deadlineAt)
 	normalizeRunProductFields(&r)
 	return &r, nil
 }
@@ -339,9 +381,9 @@ func (s *sqliteAPIStore) SaveRun(ctx context.Context, run controlplane.Run) erro
 		unsafeState = 1
 	}
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_runs (id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.Topology, run.Operation, run.Op, run.Status, run.Err, run.ParentID, run.Revision, run.PlanID, run.Target, run.AgentID, recoverable, unsafeState, run.OperationKey, run.RequestFingerprint, run.Protocol, run.LeaseOwner, formatSQLiteTime(run.LeaseUntil), run.Attempt, formatSQLiteTime(run.QueuedAt), formatSQLiteTime(run.AssignedAt), formatSQLiteTime(run.StartedAt), formatSQLiteTime(run.EndedAt))
+		`INSERT INTO sysbox_runs (id, topology, operation, op, status, error, parent_id, revision, plan_id, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at, deadline_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.Topology, run.Operation, run.Op, run.Status, run.Err, run.ParentID, run.Revision, run.PlanID, run.Target, run.AgentID, recoverable, unsafeState, run.OperationKey, run.RequestFingerprint, run.Protocol, run.LeaseOwner, formatSQLiteTime(run.LeaseUntil), run.Attempt, formatSQLiteTime(run.QueuedAt), formatSQLiteTime(run.AssignedAt), formatSQLiteTime(run.StartedAt), formatSQLiteTime(run.EndedAt), formatSQLiteTime(run.DeadlineAt))
 	return err
 }
 
