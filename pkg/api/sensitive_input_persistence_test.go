@@ -58,4 +58,17 @@ func TestSensitiveApplyInputsNotDurablyPersisted(t *testing.T) {
 	claimed, err := s.jobs.claim(runID, "host-a")
 	require.NoError(t, err)
 	require.Equal(t, canary, claimed.Inputs["flag"], "agent claim response must retain the transient input")
+
+	// Terminal runs must drop the in-memory input too: get/list serve j.runs
+	// directly, so a finished run must not keep exposing the canary for the rest
+	// of the process lifetime.
+	s.jobs.finish(claimed, nil)
+	require.Nil(t, s.jobs.runs[runID].Inputs, "terminal in-memory run must not retain sensitive inputs")
+
+	got, ok := s.jobs.get(runID)
+	require.True(t, ok)
+	require.Nil(t, got.Inputs, "terminal run read must not expose sensitive inputs")
+	gotRaw, err := json.Marshal(got)
+	require.NoError(t, err)
+	require.NotContains(t, string(gotRaw), canary, "terminal run serialization must not contain the canary plaintext")
 }

@@ -186,6 +186,19 @@ func normalizeRunProductFields(r *controlplane.Run) {
 	}
 }
 
+// cloneInputs returns a shallow copy so re-attached transient inputs never
+// alias the in-memory run's map.
+func cloneInputs(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 func (j *Jobs) start(topology, op string) *controlplane.Run {
 	return j.startWithOptions(topology, op, runStartOptions{})
 }
@@ -303,7 +316,7 @@ func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
 		// re-attach them to the claim response. This keeps var.<name> binding
 		// working without ever re-reading the plaintext from the store.
 		if existing, exists := j.runs[runID]; exists && existing.Inputs != nil {
-			claimed.Inputs = existing.Inputs
+			claimed.Inputs = cloneInputs(existing.Inputs)
 		}
 		j.runs[runID] = claimed
 		j.mu.Unlock()
@@ -347,7 +360,7 @@ func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*con
 	// record is stripped, and the agent decodes this response over the same run
 	// pointer it is executing, so dropping inputs here would null them mid-run.
 	if existing, exists := j.runs[runID]; exists && existing.Inputs != nil {
-		renewed.Inputs = existing.Inputs
+		renewed.Inputs = cloneInputs(existing.Inputs)
 	}
 	j.runs[runID] = renewed
 	j.mu.Unlock()
@@ -493,6 +506,10 @@ func (j *Jobs) startChild(parent *controlplane.Run) *controlplane.Run {
 func (j *Jobs) finish(r *controlplane.Run, err error) {
 	j.mu.Lock()
 	r.MarkFinished(err, time.Now())
+	// Sensitive inputs are only needed while the run is executing; the executor
+	// has already bound var.<name> by the time a run goes terminal, so drop them
+	// from the in-memory entry to avoid exposing them via get/list.
+	r.Inputs = nil
 	j.mu.Unlock()
 	j.logs.Close(r.ID)
 	j.persist(r)
@@ -503,6 +520,9 @@ func (j *Jobs) replace(r *controlplane.Run) {
 		return
 	}
 	normalizeRunProductFields(r)
+	if r.Status.IsTerminal() {
+		r.Inputs = nil
+	}
 	j.mu.Lock()
 	j.runs[r.ID] = r
 	j.mu.Unlock()
