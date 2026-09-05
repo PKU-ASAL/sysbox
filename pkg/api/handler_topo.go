@@ -247,7 +247,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest{
-		PlanID: req.PlanID, Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
+		Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -269,7 +269,7 @@ func (s *Server) handleRepair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.runs().StartRepair(r.Context(), topology, RunStartRequest{
-		PlanID: req.PlanID, Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState,
+		Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState,
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -322,7 +322,6 @@ func decodeResetRequest(r *http.Request) (resetRequest, error) {
 }
 
 type applyRequest struct {
-	PlanID           string            `json:"plan_id"`
 	Revision         string            `json:"revision,omitempty"`
 	AgentID          string            `json:"agent_id,omitempty"`
 	AllowUnsafeState bool              `json:"allow_unsafe_state,omitempty"`
@@ -340,11 +339,6 @@ func decodeApplyRequest(r *http.Request) (applyRequest, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		return applyRequest{}, fmt.Errorf("decode apply request: %w", err)
-	}
-	if req.PlanID != "" {
-		if err := validatePathSegment(req.PlanID, "plan_id"); err != nil {
-			return applyRequest{}, err
-		}
 	}
 	if req.Revision != "" {
 		if err := validateRevision(req.Revision); err != nil {

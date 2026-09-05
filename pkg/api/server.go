@@ -254,10 +254,8 @@ func (s *Server) registerRoutes() {
 
 	// Topologies
 	m.HandleFunc("GET /v1/topologies", s.handleListTopologies)
-	m.HandleFunc("POST /v1/topologies", s.handleCreateTopology)
 	m.HandleFunc("GET /v1/topologies/{topology}", s.handleGetTopology)
 	m.HandleFunc("GET /v1/topologies/{topology}/hcl", s.handleGetHCL)
-	m.HandleFunc("PUT /v1/topologies/{topology}/hcl", s.handleUpdateHCL)
 	m.HandleFunc("GET /v1/topologies/{topology}/state", s.handleGetState)
 	m.HandleFunc("GET /v1/topologies/{topology}/state/metadata", s.handleGetStateMetadata)
 	m.HandleFunc("GET /v1/topologies/{topology}/state/lock", s.handleGetStateLock)
@@ -267,11 +265,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/stack-state", s.handleGetStackState)
 	m.HandleFunc("GET /v1/topologies/{topology}/lease", s.handleGetWorkspaceLease)
 	m.HandleFunc("GET /v1/topologies/{topology}/snapshots", s.handleListWorkspaceSnapshots)
-	m.HandleFunc("GET /v1/topologies/{topology}/revisions", s.handleListRevisions)
-	m.HandleFunc("POST /v1/topologies/{topology}/revisions", s.handleCreateRevision)
-	m.HandleFunc("GET /v1/topologies/{topology}/revisions/{revision}", s.handleGetRevision)
 	m.HandleFunc("GET /v1/topologies/{topology}/plans", s.handleListPlans)
-	m.HandleFunc("POST /v1/topologies/{topology}/plans", s.handleCreatePlan)
 	m.HandleFunc("GET /v1/topologies/{topology}/plans/{plan}", s.handleGetStoredPlan)
 	m.HandleFunc("GET /v1/topologies/{topology}/outputs", s.handleGetOutputs)
 	m.HandleFunc("GET /v1/topologies/{topology}/health", s.handleGetTopologyHealth)

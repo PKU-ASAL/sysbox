@@ -34,7 +34,6 @@ type RunService struct {
 }
 
 type RunStartRequest struct {
-	PlanID           string
 	Revision         string
 	AgentID          string
 	Target           string
@@ -116,20 +115,8 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 			return nil, runError(runServiceInternal, err)
 		}
 	}
-	if req.PlanID != "" {
-		currentSerial, err := s.currentStateSerial(ctx, topology)
-		if err != nil {
-			return nil, runError(runServiceInternal, err)
-		}
-		plan, err := s.ValidateStoredPlanForApply(ctx, topology, req.PlanID, currentSerial)
-		if err != nil {
-			return nil, runError(runServiceBadRequest, err)
-		}
-		req.Revision = plan.Revision
-	}
 	opts := runStartOptions{
 		Revision:    req.Revision,
-		PlanID:      req.PlanID,
 		AgentID:     req.AgentID,
 		UnsafeState: req.AllowUnsafeState,
 		Inputs:      req.Inputs,
