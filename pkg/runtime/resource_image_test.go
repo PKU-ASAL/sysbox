@@ -85,6 +85,9 @@ func TestImageResourceHandlerCreateRootfsArtifact(t *testing.T) {
 		},
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec.SetSecretResolver(secret.EnvironmentResolver{Lookup: func(name string) (string, bool) {
+		return rootfs, name == "SYSBOX_ROOTFS"
+	}})
 
 	res, err := ImageResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
@@ -101,17 +104,15 @@ func TestImageResourceHandlerResolvesRootfsSecretReferenceAtExecution(t *testing
 	registerImageArtifactDriver(t, sub)
 	rootfs := filepath.Join(t.TempDir(), "rootfs.ext4")
 	require.NoError(t, os.WriteFile(rootfs, []byte("rootfs"), 0o644))
-	previousResolver := executionSecretResolver
-	executionSecretResolver = secret.EnvironmentResolver{Lookup: func(name string) (string, bool) {
-		return rootfs, name == "SYSBOX_ROOTFS"
-	}}
-	t.Cleanup(func() { executionSecretResolver = previousResolver })
 	reference := secret.Environment("SYSBOX_ROOTFS").String()
 	n := &graph.Node{
 		Address: address.Resource("sysbox_image", "rootfs"),
 		Data:    &config.ImageConfig{Substrate: "image-test", Kind: "rootfs", Source: reference, Architecture: "amd64", GuestFamily: "linux"},
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec.SetSecretResolver(secret.EnvironmentResolver{Lookup: func(name string) (string, bool) {
+		return rootfs, name == "SYSBOX_ROOTFS"
+	}})
 
 	res, err := ImageResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 

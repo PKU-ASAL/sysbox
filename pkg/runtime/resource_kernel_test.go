@@ -53,17 +53,15 @@ func TestKernelResourceHandlerCreateAndDelete(t *testing.T) {
 func TestKernelResourceHandlerResolvesSourceSecretReferenceAtExecution(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "vmlinux")
 	require.NoError(t, os.WriteFile(src, []byte("kernel"), 0o644))
-	previousResolver := executionSecretResolver
-	executionSecretResolver = secret.EnvironmentResolver{Lookup: func(name string) (string, bool) {
-		return src, name == "SYSBOX_KERNEL"
-	}}
-	t.Cleanup(func() { executionSecretResolver = previousResolver })
 	reference := secret.Environment("SYSBOX_KERNEL").String()
 	n := &graph.Node{
 		Address: address.Resource("sysbox_kernel", "fc"),
 		Data:    &config.KernelConfig{Substrate: "firecracker", Source: reference, Architecture: "amd64"},
 	}
 	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec.SetSecretResolver(secret.EnvironmentResolver{Lookup: func(name string) (string, bool) {
+		return src, name == "SYSBOX_KERNEL"
+	}})
 
 	res, err := KernelResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 

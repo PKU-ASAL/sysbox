@@ -11,6 +11,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -171,6 +172,10 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 	exec.SetRunContext(run.Topology, run.ID)
 	exec.SetOperation(run.Op)
 	exec.SetLogger(log)
+	exec.SetSecretResolver(secret.Dispatcher{
+		"env":   secret.EnvironmentResolver{},
+		"input": secret.InputResolver{Inputs: run.Inputs},
+	})
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
 	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath).WithContext(ctx)
@@ -270,8 +275,6 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	restoreResolver := runtime.SetExecutionInputs(run.Inputs)
-	defer restoreResolver()
 	meta, _ := mgr.Metadata(ctx)
 	var plan *runtime.Plan
 	if run.PlanID != "" {
@@ -299,6 +302,10 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	exec.SetRunContext(run.Topology, run.ID)
 	exec.SetOperation(run.Op)
 	exec.SetLogger(log)
+	exec.SetSecretResolver(secret.Dispatcher{
+		"env":   secret.EnvironmentResolver{},
+		"input": secret.InputResolver{Inputs: run.Inputs},
+	})
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
 	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath).WithContext(ctx)

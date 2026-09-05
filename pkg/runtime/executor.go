@@ -11,6 +11,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -23,6 +24,7 @@ type Executor struct {
 	logger              io.Writer
 	recorder            OperationRecorder
 	patchSink           StatePatchSink
+	secretResolver      secret.Resolver
 	topology            string
 	runID               string
 	operation           string
@@ -56,6 +58,23 @@ func (e *Executor) SetRunContext(topology, runID string) {
 
 func (e *Executor) SetOperation(operation string) {
 	e.operation = operation
+}
+
+// SetSecretResolver installs the resolver used to materialise secret references
+// (secret://env/…, secret://input/…) during this execution. It defaults to the
+// environment resolver when unset. This is a per-execution dependency, like the
+// logger and recorder, so each run injects its own inputs without any shared
+// mutable global.
+func (e *Executor) SetSecretResolver(r secret.Resolver) {
+	e.secretResolver = r
+}
+
+// resolver returns the active secret resolver, defaulting to the environment.
+func (e *Executor) resolver() secret.Resolver {
+	if e.secretResolver != nil {
+		return e.secretResolver
+	}
+	return secret.EnvironmentResolver{}
 }
 
 func (e *Executor) recordSubstep(parent int, phase string, details map[string]any, fn func() error) error {

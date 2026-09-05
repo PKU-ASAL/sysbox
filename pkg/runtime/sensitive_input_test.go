@@ -14,6 +14,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -129,12 +130,13 @@ func (*recordingConn) CopyFile(context.Context, string, string) error { return n
 // 5. Run log: the provisioner log shows the secret://input/<name> reference,
 // never the resolved plaintext — while execution still receives the real value.
 func TestSensitiveInputDoesNotEnterRunLog(t *testing.T) {
-	restore := SetExecutionInputs(map[string]string{"flag": sensitiveCanary})
-	defer restore()
-
 	var logBuf bytes.Buffer
 	exec := &Executor{}
 	exec.SetLogger(&logBuf)
+	exec.SetSecretResolver(secret.Dispatcher{
+		"env":   secret.EnvironmentResolver{},
+		"input": secret.InputResolver{Inputs: map[string]string{"flag": sensitiveCanary}},
+	})
 	conn := &recordingConn{}
 
 	err := exec.runProvisioners(context.Background(), conn, []config.ProvisionerConfig{{
@@ -149,4 +151,32 @@ func TestSensitiveInputDoesNotEnterRunLog(t *testing.T) {
 	require.Contains(t, logBuf.String(), "secret://input/flag")
 	// Execution resolves the reference to the real value.
 	require.Equal(t, sensitiveCanary, conn.program)
+}
+
+// The resolver is per-executor, not global: two executors with different inputs
+// resolve independently, which is the concurrency property the old global could
+// not provide.
+func TestExecutorSecretResolverIsPerExecutorNotGlobal(t *testing.T) {
+	a := &Executor{}
+	a.SetSecretResolver(secret.Dispatcher{"input": secret.InputResolver{Inputs: map[string]string{"flag": "value-a"}}})
+	b := &Executor{}
+	b.SetSecretResolver(secret.Dispatcher{"input": secret.InputResolver{Inputs: map[string]string{"flag": "value-b"}}})
+
+	av, err := a.resolveSecretMap(context.Background(), map[string]string{"FLAG": "secret://input/flag"})
+	require.NoError(t, err)
+	bv, err := b.resolveSecretMap(context.Background(), map[string]string{"FLAG": "secret://input/flag"})
+	require.NoError(t, err)
+
+	require.Equal(t, "value-a", av["FLAG"])
+	require.Equal(t, "value-b", bv["FLAG"])
+}
+
+// The default resolver is the environment; an executor without SetSecretResolver
+// still resolves secret://env/... references.
+func TestExecutorSecretResolverDefaultsToEnvironment(t *testing.T) {
+	exec := &Executor{}
+
+	resolved, err := exec.resolveSecretMap(context.Background(), map[string]string{"X": "plain"})
+	require.NoError(t, err)
+	require.Equal(t, "plain", resolved["X"])
 }

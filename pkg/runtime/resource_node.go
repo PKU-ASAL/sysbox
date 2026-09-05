@@ -183,11 +183,11 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if !ok {
 		return state.Resource{}, fmt.Errorf("node %s: wrong data type", n.Address)
 	}
-	resolvedEnv, err := resolveSecretMap(ctx, cfg.Env)
+	resolvedEnv, err := e.resolveSecretMap(ctx, cfg.Env)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("node %s environment: %w", n.Address, err)
 	}
-	resolvedProviderConfig, err := secret.ResolveAny(ctx, executionSecretResolver, cfg.ProviderConfig)
+	resolvedProviderConfig, err := secret.ResolveAny(ctx, e.resolver(), cfg.ProviderConfig)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("node %s provider config: %w", n.Address, err)
 	}
@@ -481,7 +481,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 
 	// Run provisioners after node is up and wired.
 	if len(cfg.Provisioners) > 0 {
-		conn, err := connectionForNode(ctx, nodeDriver, handle, cfg.Connections)
+		conn, err := e.connectionForNode(ctx, nodeDriver, handle, cfg.Connections)
 		if err != nil {
 			return state.Resource{}, fmt.Errorf("connection for node %s: %w", n.Address.Name, err)
 		}
@@ -576,27 +576,27 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 // connectionForNode delegates to Substrate.Connection(). The substrate
 // inspects NodeHandle.Conn and the optional HCL hints to pick the right
 // implementation (docker-exec, vsock-rpc, SSH, ...).
-func connectionForNode(
+func (e *Executor) connectionForNode(
 	ctx context.Context,
 	nodeDriver driver.Node,
 	handle substrate.NodeHandle,
 	conns []config.ConnectionConfig,
 ) (substrate.Connection, error) {
-	hints, err := resolveConnectionHints(ctx, conns)
+	hints, err := e.resolveConnectionHints(ctx, conns)
 	if err != nil {
 		return nil, err
 	}
 	return nodeDriver.Connection(handle, hints)
 }
 
-func resolveConnectionHints(ctx context.Context, conns []config.ConnectionConfig) ([]substrate.ConnectionHint, error) {
+func (e *Executor) resolveConnectionHints(ctx context.Context, conns []config.ConnectionConfig) ([]substrate.ConnectionHint, error) {
 	hints := make([]substrate.ConnectionHint, len(conns))
 	for i, c := range conns {
-		password, err := secret.ResolveString(ctx, executionSecretResolver, c.Password)
+		password, err := secret.ResolveString(ctx, e.resolver(), c.Password)
 		if err != nil {
 			return nil, err
 		}
-		privateKey, err := secret.ResolveString(ctx, executionSecretResolver, c.PrivateKey)
+		privateKey, err := secret.ResolveString(ctx, e.resolver(), c.PrivateKey)
 		if err != nil {
 			return nil, err
 		}
@@ -619,15 +619,15 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 	for _, p := range provs {
 		switch p.Type {
 		case "exec":
-			program, err := secret.ResolveString(ctx, executionSecretResolver, p.Program)
+			program, err := secret.ResolveString(ctx, e.resolver(), p.Program)
 			if err != nil {
 				return err
 			}
-			args, err := resolveSecretStrings(ctx, p.Args)
+			args, err := e.resolveSecretStrings(ctx, p.Args)
 			if err != nil {
 				return err
 			}
-			environment, err := resolveSecretMap(ctx, p.Environment)
+			environment, err := e.resolveSecretMap(ctx, p.Environment)
 			if err != nil {
 				return err
 			}

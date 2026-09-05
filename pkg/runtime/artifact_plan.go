@@ -19,7 +19,7 @@ func ResolvePlanArtifactDigests(ctx context.Context, topology *graph.Graph) (map
 	for _, node := range topology.All() {
 		switch cfg := node.Data.(type) {
 		case *config.ImageConfig:
-			resolvedSource, err := secret.ResolveString(ctx, executionSecretResolver, cfg.Source)
+			resolvedSource, err := secret.ResolveString(ctx, secret.EnvironmentResolver{}, cfg.Source)
 			if err != nil {
 				return nil, fmt.Errorf("resolve plan artifact %s: %w", node.Address, err)
 			}
@@ -39,7 +39,7 @@ func ResolvePlanArtifactDigests(ctx context.Context, topology *graph.Graph) (map
 			}
 			digests[node.Address.String()] = resolved.Identity.Digest
 		case *config.KernelConfig:
-			resolvedSource, err := secret.ResolveString(ctx, executionSecretResolver, cfg.Source)
+			resolvedSource, err := secret.ResolveString(ctx, secret.EnvironmentResolver{}, cfg.Source)
 			if err != nil {
 				return nil, fmt.Errorf("resolve plan artifact %s: %w", node.Address, err)
 			}
