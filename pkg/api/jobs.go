@@ -204,6 +204,22 @@ func (j *Jobs) startWithResult(topology, op string, opts runStartOptions) (*cont
 	return r, true
 }
 
+// forceStart overwrites any existing record under r's id and persists it. Unlike
+// startWithResult it never dedups: it is used to replace a terminal run with a
+// fresh attempt that reuses the same deterministic id, so later applies coalesce
+// onto the in-flight run instead of the stale terminal record.
+func (j *Jobs) forceStart(r *controlplane.Run) {
+	if r == nil {
+		return
+	}
+	normalizeRunProductFields(r)
+	j.mu.Lock()
+	j.runs[r.ID] = r
+	j.mu.Unlock()
+	j.logs.Ensure(r.ID, false)
+	j.persist(r)
+}
+
 func newRun(topology, op string, opts runStartOptions) *controlplane.Run {
 	now := time.Now()
 	runID := uuid.New().String()

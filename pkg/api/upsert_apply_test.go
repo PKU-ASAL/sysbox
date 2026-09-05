@@ -112,7 +112,9 @@ func TestApplyUpsertDifferentInputsGiveDifferentRuns(t *testing.T) {
 }
 
 // A terminal (failed/done) run must not be returned by a retry: only in-flight
-// runs coalesce, so a new apply must start a fresh run.
+// runs coalesce, so a new apply must replace the terminal record with a fresh
+// in-flight run under the same deterministic id, and a third apply must coalesce
+// with that fresh run rather than the stale terminal record.
 func TestApplyUpsertRetryAfterTerminalCreatesNewRun(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	registerDockerAgent(t, s)
@@ -126,12 +128,16 @@ func TestApplyUpsertRetryAfterTerminalCreatesNewRun(t *testing.T) {
 	require.Equal(t, controlplane.RunFailed, run.Status)
 
 	second := applyUpsert(t, s, "cf-upsert-a", rev)
-	require.NotEqual(t, first, second, "a terminal run must not be returned; a fresh run is required")
+	require.Equal(t, first, second, "the retry must reuse the deterministic run id")
 
 	secondRun, ok := s.jobs.get(second)
 	require.True(t, ok)
 	require.Equal(t, rev, secondRun.Revision)
-	require.True(t, secondRun.Status.IsActive(), "the fresh retry run must be in-flight")
+	require.True(t, secondRun.Status.IsActive(), "the retry must be a fresh in-flight run, not the terminal record")
+	require.Empty(t, secondRun.Err, "the fresh run must not carry the terminal error")
+
+	third := applyUpsert(t, s, "cf-upsert-a", rev)
+	require.Equal(t, second, third, "a third apply must coalesce with the in-flight retry, not spawn a duplicate")
 }
 
 // Concurrent applies with the same revision+inputs must coalesce into exactly

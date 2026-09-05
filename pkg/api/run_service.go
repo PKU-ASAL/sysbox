@@ -138,10 +138,11 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 		if run.Status.IsActive() {
 			return run, nil // coalesced with an in-flight apply
 		}
-		// The deterministic key maps to a terminal run: retry as a fresh
-		// attempt by dropping the key so a new run id is generated.
-		opts.OperationKey = ""
-		run, created = s.jobs.startWithResult(topology, "apply", opts)
+		// The deterministic id maps to a terminal run: replace it with a fresh
+		// attempt that reuses the same id so subsequent applies coalesce onto
+		// this in-flight run instead of the stale terminal record.
+		run = newRun(topology, "apply", opts)
+		s.jobs.forceStart(run)
 	}
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
