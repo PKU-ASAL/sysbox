@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -120,6 +121,28 @@ func TestGetTopologyReportsConvergenceDeadline(t *testing.T) {
 	require.NotNil(t, body.Status.DeadlineAt, "a converging topology must report its deadline")
 	require.True(t, body.Status.DeadlineAt.After(run.StartedAt))
 	require.Equal(t, controlplane.PhaseConverging, body.Status.Phase)
+}
+
+// A converging run carrying an explicit per-apply deadline_at reports that
+// instant, not the config-default StartedAt + timeout projection, so the
+// reported deadline matches the instant the supervisor will actually fail it.
+func TestGetTopologyReportsPerRunDeadline(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	createWorkspace(t, s, "lab")
+
+	deadline := time.Now().Add(-1 * time.Minute) // already past
+	run := s.jobs.start("lab", "apply")
+	run.Status = controlplane.RunRunning
+	run.StartedAt = time.Now().Add(-10 * time.Minute)
+	run.DeadlineAt = deadline
+	s.jobs.replace(run)
+
+	body := getTopology(t, s, "lab")
+
+	require.NotNil(t, body.Status)
+	require.NotNil(t, body.Status.DeadlineAt)
+	require.True(t, body.Status.DeadlineAt.Equal(deadline),
+		"reported deadline %v, want per-run deadline %v", body.Status.DeadlineAt, deadline)
 }
 
 // A run that evaluated a failing assertion surfaces it as Asserted False with

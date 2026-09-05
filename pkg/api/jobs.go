@@ -375,7 +375,7 @@ func (j *Jobs) markConvergenceDeadlineExceeded(now time.Time, timeout time.Durat
 		if !now.After(deadline) {
 			continue
 		}
-		r.MarkFinished(fmt.Errorf("convergence deadline exceeded (%s)", timeout), now)
+		r.MarkFinished(fmt.Errorf("convergence deadline exceeded (deadline %s)", deadline), now)
 		j.replace(r)
 	}
 }

@@ -214,6 +214,9 @@ func (s *Server) enrichStatus(topology string, status *controlplane.TopologyStat
 // finished. It is reported for information; enforcement lives in the
 // supervisor, which fails the run when the deadline passes.
 func convergenceDeadline(run *controlplane.Run, timeout time.Duration) time.Time {
+	if !run.DeadlineAt.IsZero() {
+		return run.DeadlineAt
+	}
 	if timeout <= 0 || run.StartedAt.IsZero() {
 		return time.Time{}
 	}
