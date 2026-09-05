@@ -112,7 +112,7 @@ func (e *Executor) createSSHAccessResource(ctx context.Context, n *graph.Node) (
 		port = 22
 	}
 
-	keys, err := resolveSecretStrings(ctx, cfg.AuthorizedKeys)
+	keys, err := e.resolveSecretStrings(ctx, cfg.AuthorizedKeys)
 	if err != nil {
 		return state.Resource{}, err
 	}

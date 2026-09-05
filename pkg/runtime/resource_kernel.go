@@ -65,7 +65,7 @@ func (KernelResourceHandler) Create(ctx context.Context, pc *ProviderContext, n 
 		return state.Resource{}, err
 	}
 
-	resolvedSource, err := secret.ResolveString(ctx, executionSecretResolver, cfg.Source)
+	resolvedSource, err := secret.ResolveString(ctx, pc.exec.resolver(), cfg.Source)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}

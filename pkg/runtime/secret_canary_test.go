@@ -18,10 +18,9 @@ import (
 
 func TestSecretCanaryDoesNotEnterDurableArtifacts(t *testing.T) {
 	const canary = "plaintext-canary-must-never-persist"
-	previousResolver := executionSecretResolver
-	executionSecretResolver = secret.EnvironmentResolver{Lookup: func(string) (string, bool) { return canary, true }}
-	t.Cleanup(func() { executionSecretResolver = previousResolver })
-	resolved, err := resolveSecretMap(context.Background(), map[string]string{"TOKEN": "secret://env/CANARY_TOKEN"})
+	exec := &Executor{}
+	exec.SetSecretResolver(secret.EnvironmentResolver{Lookup: func(string) (string, bool) { return canary, true }})
+	resolved, err := exec.resolveSecretMap(context.Background(), map[string]string{"TOKEN": "secret://env/CANARY_TOKEN"})
 	require.NoError(t, err)
 	require.Equal(t, canary, resolved["TOKEN"])
 	addr := address.Resource("sysbox_node", "web")

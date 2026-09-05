@@ -265,11 +265,11 @@ func (e *Executor) buildResetNodeContext(ctx context.Context, action controlplan
 	if pinnedDigest == "" || pinnedDigest != baseline.Identity.Digest {
 		return nil, fmt.Errorf("stale reset plan for %s: baseline digest changed from %q to %q", action.Address, pinnedDigest, baseline.Identity.Digest)
 	}
-	environment, err := resolveSecretMap(ctx, cfg.Env)
+	environment, err := e.resolveSecretMap(ctx, cfg.Env)
 	if err != nil {
 		return nil, err
 	}
-	providerConfig, err := secret.ResolveAny(ctx, executionSecretResolver, cfg.ProviderConfig)
+	providerConfig, err := secret.ResolveAny(ctx, e.resolver(), cfg.ProviderConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +468,7 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 		}
 	}
 	if len(item.config.Provisioners) > 0 {
-		connection, err := connectionForNode(ctx, item.nodeDriver, handle, item.config.Connections)
+		connection, err := e.connectionForNode(ctx, item.nodeDriver, handle, item.config.Connections)
 		if err != nil {
 			return err
 		}
