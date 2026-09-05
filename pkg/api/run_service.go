@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -103,6 +105,11 @@ func runServiceStatus(err error) int {
 }
 
 func (s *RunService) StartApply(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+	// Serialize the whole apply (HCL upsert + run creation) per-topology so
+	// concurrent applies cannot race on the shared HCL file write.
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
+
 	if req.Revision != "" && globalRevisionPattern.MatchString(req.Revision) {
 		rev, err := s.revisions.GetGlobalRevision(ctx, req.Revision)
 		if err != nil {
@@ -115,20 +122,50 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 			return nil, runError(runServiceInternal, err)
 		}
 	}
+	operationKey := applyOperationKey(req.Revision, req.Inputs, req.AllowUnsafeState)
 	opts := runStartOptions{
-		Revision:    req.Revision,
-		AgentID:     req.AgentID,
-		UnsafeState: req.AllowUnsafeState,
-		Inputs:      req.Inputs,
+		Revision:     req.Revision,
+		AgentID:      req.AgentID,
+		UnsafeState:  req.AllowUnsafeState,
+		Inputs:       req.Inputs,
+		OperationKey: operationKey,
 	}
 	if req.DeadlineAt != nil {
 		opts.DeadlineAt = *req.DeadlineAt
 	}
-	run := s.jobs.startWithOptions(topology, "apply", opts)
+	run, created := s.jobs.startWithResult(topology, "apply", opts)
+	if !created {
+		if run.Status.IsActive() {
+			return run, nil // coalesced with an in-flight apply
+		}
+		// The deterministic key maps to a terminal run: retry as a fresh
+		// attempt by dropping the key so a new run id is generated.
+		opts.OperationKey = ""
+		run, created = s.jobs.startWithResult(topology, "apply", opts)
+	}
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
 	}
 	return run, nil
+}
+
+// applyOperationKey derives a deterministic operation key from the apply
+// request. Inputs are canonicalised by sorting keys so equivalent maps hash to
+// the same key; the result is a sha256 hex string, so sensitive input plaintext
+// never enters the run record.
+func applyOperationKey(revision string, inputs map[string]string, allowUnsafe bool) string {
+	keys := make([]string, 0, len(inputs))
+	for k := range inputs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	fmt.Fprintf(&b, "revision=%s\nallow_unsafe_state=%t\n", revision, allowUnsafe)
+	for _, k := range keys {
+		fmt.Fprintf(&b, "input:%s=%s\n", k, inputs[k])
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func (s *RunService) ValidateStoredPlanForApply(ctx context.Context, topology, planID string, currentSerial int64) (*controlplane.Plan, error) {
