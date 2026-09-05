@@ -18,6 +18,9 @@ const maxRevisionBytes = 8 << 20
 // digest. Publishing the same HCL twice yields the same revision, so callers
 // can treat the endpoint as idempotent. The revision is global: it is not
 // bound to any topology.
+//
+// Like a git object store, the registry accepts bytes as-is and defers HCL
+// validation to the apply step (which resolves and evaluates the blob).
 func (s *Server) handlePublishRevision(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRevisionBytes)
 	hcl, err := io.ReadAll(r.Body)

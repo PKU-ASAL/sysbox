@@ -61,6 +61,35 @@ func TestAgentCommandStoresRejectStaleStatusRegression(t *testing.T) {
 	}
 }
 
+func TestGlobalRevisionStoreRoundTrip(t *testing.T) {
+	stores := map[string]apiStore{
+		"local":  &localAPIStore{runsDir: t.TempDir()},
+		"sqlite": &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()},
+	}
+	for name, store := range stores {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			hcl := `resource "sysbox_node" "web" {}`
+			rev := controlplane.GlobalRevision{
+				Revision:  "sha256:deadbeef",
+				HCL:       hcl,
+				Size:      len(hcl),
+				CreatedAt: time.Now().UTC(),
+			}
+			require.NoError(t, store.SaveGlobalRevision(ctx, rev))
+
+			got, err := store.GetGlobalRevision(ctx, rev.Revision)
+			require.NoError(t, err)
+			require.Equal(t, rev.Revision, got.Revision)
+			require.Equal(t, rev.HCL, got.HCL)
+			require.Equal(t, rev.Size, got.Size)
+
+			_, err = store.GetGlobalRevision(ctx, "sha256:unknown")
+			require.ErrorIs(t, err, errGlobalRevisionNotFound)
+		})
+	}
+}
+
 func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	ctx := context.Background()

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -23,6 +24,11 @@ type localAPIStore struct {
 }
 
 const apiSchemaVersion = 2
+
+// errGlobalRevisionNotFound is returned by GetGlobalRevision when no revision
+// exists for the requested digest. Callers use errors.Is to detect it so they
+// never have to string-match backend-specific messages.
+var errGlobalRevisionNotFound = errors.New("global revision not found")
 
 type apiMigration struct {
 	Version int
@@ -244,7 +250,7 @@ func (s *localAPIStore) SaveGlobalRevision(_ context.Context, rev controlplane.G
 func (s *localAPIStore) GetGlobalRevision(_ context.Context, revision string) (*controlplane.GlobalRevision, error) {
 	raw, err := os.ReadFile(filepath.Join(s.runsDir, "global-revisions", revision+".json"))
 	if err != nil {
-		return nil, fmt.Errorf("revision not found")
+		return nil, errGlobalRevisionNotFound
 	}
 	var rev controlplane.GlobalRevision
 	if err := json.Unmarshal(raw, &rev); err != nil {
@@ -593,7 +599,24 @@ func (s *postgresAPIStore) SaveGlobalRevision(ctx context.Context, rev controlpl
 }
 
 func (s *postgresAPIStore) GetGlobalRevision(ctx context.Context, revision string) (*controlplane.GlobalRevision, error) {
-	return getPostgresObject[controlplane.GlobalRevision](ctx, s, "sysbox_global_revisions", "", revision)
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+	var raw []byte
+	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_global_revisions WHERE workspace=$1 AND id=$2`, "", revision).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, errGlobalRevisionNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres get global revision: %w", err)
+	}
+	var rev controlplane.GlobalRevision
+	if err := json.Unmarshal(raw, &rev); err != nil {
+		return nil, fmt.Errorf("decode global revision: %w", err)
+	}
+	return &rev, nil
 }
 
 func (s *postgresAPIStore) SavePlan(ctx context.Context, plan controlplane.Plan) error {

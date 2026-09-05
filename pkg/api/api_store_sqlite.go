@@ -574,7 +574,7 @@ func (s *sqliteAPIStore) GetGlobalRevision(ctx context.Context, revision string)
 		`SELECT revision, hcl, size, created_at FROM sysbox_global_revisions WHERE revision=?`, revision).
 		Scan(&rev.Revision, &rev.HCL, &rev.Size, &createdAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("revision not found")
+		return nil, errGlobalRevisionNotFound
 	}
 	if err != nil {
 		return nil, err
