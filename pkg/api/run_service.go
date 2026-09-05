@@ -107,6 +107,14 @@ func runServiceStatus(err error) int {
 func (s *RunService) StartApply(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
 	// Serialize the whole apply (HCL upsert + run creation) per-topology so
 	// concurrent applies cannot race on the shared HCL file write.
+	//
+	// Coalescing below is in-memory: the per-topology mutex plus
+	// startWithResult's deterministic OperationKey run id collapse concurrent
+	// same-request applies into one run. That is correct for sysbox's
+	// single-API-instance deployment. If multiple API instances ever share one
+	// store, this path must additionally route through the durable
+	// store.GetRunDispatch/CreateRunDispatch + RequestFingerprint mechanism
+	// (as startIdempotentDestroy does) before coalescing.
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()
 
@@ -151,9 +159,12 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 }
 
 // applyOperationKey derives a deterministic operation key from the apply
-// request. Inputs are canonicalised by sorting keys so equivalent maps hash to
-// the same key; the result is a sha256 hex string, so sensitive input plaintext
-// never enters the run record.
+// request. Inputs are canonicalised by sorting keys and every string field is
+// length-prefixed, so equivalent maps hash to the same key regardless of map
+// iteration order and distinct (revision, inputs, allow_unsafe_state) tuples
+// cannot collide. The key itself is a sha256 hex string and contains no input
+// plaintext. (Run.Inputs is still persisted in plaintext; the S3
+// sensitive-input persistence gap is tracked separately.)
 func applyOperationKey(revision string, inputs map[string]string, allowUnsafe bool) string {
 	keys := make([]string, 0, len(inputs))
 	for k := range inputs {
@@ -161,9 +172,11 @@ func applyOperationKey(revision string, inputs map[string]string, allowUnsafe bo
 	}
 	sort.Strings(keys)
 	var b strings.Builder
-	fmt.Fprintf(&b, "revision=%s\nallow_unsafe_state=%t\n", revision, allowUnsafe)
+	fmt.Fprintf(&b, "revision:%d:%s\n", len(revision), revision)
+	fmt.Fprintf(&b, "allow_unsafe_state:%t\n", allowUnsafe)
 	for _, k := range keys {
-		fmt.Fprintf(&b, "input:%s=%s\n", k, inputs[k])
+		v := inputs[k]
+		fmt.Fprintf(&b, "input:%d:%s=%d:%s\n", len(k), k, len(v), v)
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return fmt.Sprintf("%x", sum[:])

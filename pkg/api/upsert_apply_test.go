@@ -52,6 +52,32 @@ func applyUpsertInputs(t *testing.T, s *Server, topology, revision string, input
 	return started.RunID
 }
 
+// applyOperationKey must be deterministic across map iteration order and
+// injective: distinct (revision, inputs, allow_unsafe_state) tuples must not
+// collide, even when an input value embeds field delimiters.
+func TestApplyOperationKeyCanonicalAndInjective(t *testing.T) {
+	rev := "sha256:abc123"
+
+	// Same inputs in a different map insertion order hash identically.
+	require.Equal(t,
+		applyOperationKey(rev, map[string]string{"a": "1", "b": "2"}, false),
+		applyOperationKey(rev, map[string]string{"b": "2", "a": "1"}, false),
+	)
+
+	// A value that embeds a newline + a synthetic next-field must not collide
+	// with the genuinely-two-input map.
+	require.NotEqual(t,
+		applyOperationKey(rev, map[string]string{"a": "1\ninput:b=2"}, false),
+		applyOperationKey(rev, map[string]string{"a": "1", "b": "2"}, false),
+	)
+
+	// allow_unsafe_state participates in the key.
+	require.NotEqual(t,
+		applyOperationKey(rev, map[string]string{"a": "1"}, true),
+		applyOperationKey(rev, map[string]string{"a": "1"}, false),
+	)
+}
+
 // Applying a global revision to a topology that does not yet exist must create
 // the workspace and materialize the revision's HCL, then dispatch the run.
 func TestApplyUpsertCreatesTopologyOnFirstCall(t *testing.T) {
