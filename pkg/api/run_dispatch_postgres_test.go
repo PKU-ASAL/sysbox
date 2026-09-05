@@ -100,11 +100,19 @@ func TestPostgresGlobalRevisionRoundTrip(t *testing.T) {
 	store := newAPIStore("", dsn)
 	ctx := context.Background()
 
-	hcl := `resource "sysbox_node" "web" {}`
+	files := map[string][]byte{
+		"field.sysbox.hcl":     []byte(`resource "sysbox_node" "web" {}`),
+		"modules/web/main.hcl": []byte(`resource "sysbox_node" "web" {}`),
+		"files/f.txt":          []byte("hello"),
+	}
+	size := 0
+	for _, content := range files {
+		size += len(content)
+	}
 	rev := controlplane.GlobalRevision{
 		Revision:  "sha256:deadbeef",
-		HCL:       hcl,
-		Size:      len(hcl),
+		Files:     files,
+		Size:      size,
 		CreatedAt: time.Now().UTC(),
 	}
 	require.NoError(t, store.SaveGlobalRevision(ctx, rev))
@@ -112,7 +120,7 @@ func TestPostgresGlobalRevisionRoundTrip(t *testing.T) {
 	got, err := store.GetGlobalRevision(ctx, rev.Revision)
 	require.NoError(t, err)
 	require.Equal(t, rev.Revision, got.Revision)
-	require.Equal(t, rev.HCL, got.HCL)
+	require.Equal(t, rev.Files, got.Files)
 	require.Equal(t, rev.Size, got.Size)
 
 	_, err = store.GetGlobalRevision(ctx, "sha256:unknown")

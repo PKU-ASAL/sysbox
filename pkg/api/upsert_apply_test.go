@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -286,4 +287,29 @@ func TestApplyLegacyWorkspaceRevisionStillDispatches(t *testing.T) {
 	run, ok := s.jobs.get(started.RunID)
 	require.True(t, ok)
 	require.Equal(t, "abc123", run.Revision)
+}
+
+// Applying a global revision must materialize the whole project directory tree
+// (root HCL + modules/ + files/), not just the single root HCL.
+func TestApplyUpsertMaterializesDirectoryTree(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	registerDockerAgent(t, s)
+
+	files := map[string]string{
+		"field.sysbox.hcl": `resource "sysbox_node" "web" {
+  image     = "alpine"
+  substrate = "docker"
+}`,
+		"modules/web/main.hcl": `resource "sysbox_node" "web" {}`,
+		"files/run.txt":        "hello world",
+	}
+	rev := publishRevisionFiles(t, s, files)
+	applyUpsert(t, s, "cf-tree", rev)
+
+	base := filepath.Dir(s.workspaceService().HCLFile("cf-tree"))
+	for p, want := range files {
+		got, err := os.ReadFile(filepath.Join(base, filepath.FromSlash(p)))
+		require.NoError(t, err)
+		require.Equal(t, want, string(got), "content mismatch at %s", p)
+	}
 }

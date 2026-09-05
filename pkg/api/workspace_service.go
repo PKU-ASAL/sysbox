@@ -94,20 +94,34 @@ func (s *WorkspaceService) UpdateHCL(ctx context.Context, topology string, hcl [
 	return nil
 }
 
-// UpsertHCL writes the topology's HCL, creating the workspace directory if
-// needed. Idempotent: repeated calls with the same content overwrite in place.
-func (s *WorkspaceService) UpsertHCL(ctx context.Context, topology string, hcl string) error {
+// UpsertProject materializes a project directory tree into the workspace,
+// creating the directory and each file. Idempotent: repeated calls overwrite.
+// Every path is re-validated here (defense in depth), so a malformed or
+// malicious path can never escape workspacesDir/<topology>/.
+func (s *WorkspaceService) UpsertProject(ctx context.Context, topology string, files map[string][]byte) error {
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
 	}
-	hclPath := s.HCLFile(topology)
-	if err := os.MkdirAll(filepath.Dir(hclPath), 0o755); err != nil {
-		return fmt.Errorf("create directory: %w", err)
-	}
-	if err := os.WriteFile(hclPath, []byte(hcl), 0o644); err != nil {
-		return fmt.Errorf("write hcl: %w", err)
+	base := filepath.Join(s.workspacesDir, topology)
+	for p, content := range files {
+		if err := validateRelPath(p); err != nil {
+			return err
+		}
+		target := filepath.Join(base, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("create directory: %w", err)
+		}
+		if err := os.WriteFile(target, content, 0o644); err != nil {
+			return fmt.Errorf("write file: %w", err)
+		}
 	}
 	return nil
+}
+
+// UpsertHCL writes the topology's HCL, creating the workspace directory if
+// needed. Idempotent: repeated calls with the same content overwrite in place.
+func (s *WorkspaceService) UpsertHCL(ctx context.Context, topology string, hcl string) error {
+	return s.UpsertProject(ctx, topology, map[string][]byte{"field.sysbox.hcl": []byte(hcl)})
 }
 
 func (s *WorkspaceService) HCL(topology string) ([]byte, error) {

@@ -213,7 +213,7 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 
 	CREATE TABLE IF NOT EXISTS sysbox_global_revisions (
 		revision   TEXT PRIMARY KEY,
-		hcl        TEXT NOT NULL DEFAULT '',
+		files      TEXT NOT NULL DEFAULT '',
 		size       INTEGER DEFAULT 0,
 		created_at TEXT NOT NULL DEFAULT ''
 	) STRICT;
@@ -239,15 +239,31 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	if err := s.ensureRunsColumn(db, "deadline_at", "TEXT DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := s.ensureGlobalRevisionsColumn(db, "files", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
 }
 
 // ensureRunsColumn adds a missing column to sysbox_runs for pre-existing
-// databases. sqlite has no versioned migration framework here (only
-// CREATE TABLE IF NOT EXISTS), so the ALTER is guarded by a PRAGMA table_info
-// check to stay idempotent across restarts.
+// databases (see ensureColumn).
 func (s *sqliteAPIStore) ensureRunsColumn(db *sql.DB, column, def string) error {
-	rows, err := db.Query(`PRAGMA table_info(sysbox_runs)`)
+	return ensureColumn(db, "sysbox_runs", column, def)
+}
+
+// ensureGlobalRevisionsColumn adds a missing column to sysbox_global_revisions
+// for pre-existing databases (see ensureColumn).
+func (s *sqliteAPIStore) ensureGlobalRevisionsColumn(db *sql.DB, column, def string) error {
+	return ensureColumn(db, "sysbox_global_revisions", column, def)
+}
+
+// ensureColumn adds a missing column to a table for pre-existing databases.
+// sqlite has no versioned migration framework here (only CREATE TABLE IF NOT
+// EXISTS), so the ALTER is guarded by a PRAGMA table_info check to stay
+// idempotent across restarts. The table and column names are internal
+// constants, never user input.
+func ensureColumn(db *sql.DB, table, column, def string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
 		return err
 	}
@@ -274,7 +290,7 @@ func (s *sqliteAPIStore) ensureRunsColumn(db *sql.DB, column, def string) error 
 		return nil
 	}
 
-	_, err = db.Exec(fmt.Sprintf("ALTER TABLE sysbox_runs ADD COLUMN %s %s", column, def))
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, def))
 	return err
 }
 
@@ -598,10 +614,14 @@ func (s *sqliteAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplan
 	if err != nil {
 		return err
 	}
+	files, err := json.Marshal(rev.Files)
+	if err != nil {
+		return err
+	}
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_global_revisions (revision, hcl, size, created_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(revision) DO UPDATE SET hcl=excluded.hcl, size=excluded.size, created_at=excluded.created_at`,
-		rev.Revision, rev.HCL, rev.Size, rev.CreatedAt.Format(time.RFC3339))
+		`INSERT INTO sysbox_global_revisions (revision, files, size, created_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(revision) DO UPDATE SET files=excluded.files, size=excluded.size, created_at=excluded.created_at`,
+		rev.Revision, string(files), rev.Size, rev.CreatedAt.Format(time.RFC3339))
 	return err
 }
 
@@ -611,14 +631,18 @@ func (s *sqliteAPIStore) GetGlobalRevision(ctx context.Context, revision string)
 		return nil, err
 	}
 	var rev controlplane.GlobalRevision
+	var files []byte
 	var createdAt string
 	err = db.QueryRowContext(ctx,
-		`SELECT revision, hcl, size, created_at FROM sysbox_global_revisions WHERE revision=?`, revision).
-		Scan(&rev.Revision, &rev.HCL, &rev.Size, &createdAt)
+		`SELECT revision, files, size, created_at FROM sysbox_global_revisions WHERE revision=?`, revision).
+		Scan(&rev.Revision, &files, &rev.Size, &createdAt)
 	if err == sql.ErrNoRows {
 		return nil, errGlobalRevisionNotFound
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(files, &rev.Files); err != nil {
 		return nil, err
 	}
 	rev.CreatedAt = parseSQLiteTime(createdAt)

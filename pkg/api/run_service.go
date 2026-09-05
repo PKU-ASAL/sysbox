@@ -126,7 +126,7 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 			}
 			return nil, runError(runServiceInternal, err)
 		}
-		if err := s.workspaces.UpsertHCL(ctx, topology, rev.HCL); err != nil {
+		if err := s.workspaces.UpsertProject(ctx, topology, rev.Files); err != nil {
 			return nil, runError(runServiceInternal, err)
 		}
 	}

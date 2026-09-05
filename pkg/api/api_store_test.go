@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -85,11 +86,19 @@ func TestGlobalRevisionStoreRoundTrip(t *testing.T) {
 	for name, store := range stores {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			hcl := `resource "sysbox_node" "web" {}`
+			files := map[string][]byte{
+				"field.sysbox.hcl":     []byte(`resource "sysbox_node" "web" {}`),
+				"modules/web/main.hcl": []byte(`resource "sysbox_node" "web" {}`),
+				"files/f.txt":          []byte("hello"),
+			}
+			size := 0
+			for _, content := range files {
+				size += len(content)
+			}
 			rev := controlplane.GlobalRevision{
 				Revision:  "sha256:deadbeef",
-				HCL:       hcl,
-				Size:      len(hcl),
+				Files:     files,
+				Size:      size,
 				CreatedAt: time.Now().UTC(),
 			}
 			require.NoError(t, store.SaveGlobalRevision(ctx, rev))
@@ -97,13 +106,47 @@ func TestGlobalRevisionStoreRoundTrip(t *testing.T) {
 			got, err := store.GetGlobalRevision(ctx, rev.Revision)
 			require.NoError(t, err)
 			require.Equal(t, rev.Revision, got.Revision)
-			require.Equal(t, rev.HCL, got.HCL)
+			require.Equal(t, rev.Files, got.Files)
 			require.Equal(t, rev.Size, got.Size)
 
 			_, err = store.GetGlobalRevision(ctx, "sha256:unknown")
 			require.ErrorIs(t, err, errGlobalRevisionNotFound)
 		})
 	}
+}
+
+// A database created before directory-tree revisions has a sysbox_global_revisions
+// table with a single "hcl" column. Opening it must idempotently add the "files"
+// column so new saves/loads round-trip the whole tree.
+func TestSQLiteGlobalRevisionFilesColumnMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "api.db")
+	legacy, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = legacy.Exec(`CREATE TABLE sysbox_global_revisions (
+		revision   TEXT PRIMARY KEY,
+		hcl        TEXT NOT NULL DEFAULT '',
+		size       INTEGER DEFAULT 0,
+		created_at TEXT NOT NULL DEFAULT ''
+	) STRICT;`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	store := &sqliteAPIStore{dbPath: dbPath, runsDir: t.TempDir()}
+	files := map[string][]byte{
+		"field.sysbox.hcl": []byte(`resource "sysbox_node" "web" {}`),
+		"files/f.txt":      []byte("hello"),
+	}
+	rev := controlplane.GlobalRevision{
+		Revision:  "sha256:deadbeef",
+		Files:     files,
+		Size:      len(files["field.sysbox.hcl"]) + len(files["files/f.txt"]),
+		CreatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, store.SaveGlobalRevision(context.Background(), rev))
+
+	got, err := store.GetGlobalRevision(context.Background(), rev.Revision)
+	require.NoError(t, err)
+	require.Equal(t, files, got.Files)
 }
 
 func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
