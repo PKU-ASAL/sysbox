@@ -163,8 +163,8 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 // length-prefixed, so equivalent maps hash to the same key regardless of map
 // iteration order and distinct (revision, inputs, allow_unsafe_state) tuples
 // cannot collide. The key itself is a sha256 hex string and contains no input
-// plaintext. (Run.Inputs is still persisted in plaintext; the S3
-// sensitive-input persistence gap is tracked separately.)
+// plaintext. (Run.Inputs is transient: Jobs.persist strips it before the run is
+// durably stored, so sensitive inputs never enter the state backend.)
 func applyOperationKey(revision string, inputs map[string]string, allowUnsafe bool) string {
 	keys := make([]string, 0, len(inputs))
 	for k := range inputs {

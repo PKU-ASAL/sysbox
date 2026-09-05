@@ -152,7 +152,13 @@ func (j *Jobs) loadCheckpoints() {
 
 // persist writes a run record through the configured API store.
 func (j *Jobs) persist(r *controlplane.Run) {
-	if err := j.store.SaveRun(context.Background(), runRecord(*r)); err != nil {
+	rec := runRecord(*r)
+	// Sensitive apply inputs are transient: the agent binds var.<name> from the
+	// run it receives in-memory (claim/dispatch), but they must never survive in
+	// the durable run record. Strip them here so a canary/flag plaintext never
+	// enters the store.
+	rec.Inputs = nil
+	if err := j.store.SaveRun(context.Background(), rec); err != nil {
 		fmt.Fprintf(os.Stderr, "[api] persist run: %v\n", err)
 	}
 }
@@ -292,6 +298,13 @@ func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
 		return nil, err
 	} else if ok && claimed != nil {
 		j.mu.Lock()
+		// Inputs are transient and stripped from the durable run record; the
+		// in-memory run still holds them for the duration of the run, so
+		// re-attach them to the claim response. This keeps var.<name> binding
+		// working without ever re-reading the plaintext from the store.
+		if existing, exists := j.runs[runID]; exists && existing.Inputs != nil {
+			claimed.Inputs = existing.Inputs
+		}
 		j.runs[runID] = claimed
 		j.mu.Unlock()
 		j.logs.Ensure(runID, false)
@@ -330,6 +343,12 @@ func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*con
 		return nil, fmt.Errorf("run lease cannot be renewed")
 	}
 	j.mu.Lock()
+	// Preserve the transient inputs the in-memory run still holds: the durable
+	// record is stripped, and the agent decodes this response over the same run
+	// pointer it is executing, so dropping inputs here would null them mid-run.
+	if existing, exists := j.runs[runID]; exists && existing.Inputs != nil {
+		renewed.Inputs = existing.Inputs
+	}
 	j.runs[runID] = renewed
 	j.mu.Unlock()
 	return renewed, nil
