@@ -22,7 +22,7 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 1
+const apiSchemaVersion = 2
 
 type apiMigration struct {
 	Version int
@@ -136,6 +136,17 @@ CREATE TABLE IF NOT EXISTS sysbox_run_requests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`,
 	},
+	{
+		Version: 2,
+		Name:    "global_revisions",
+		SQL: `
+CREATE TABLE IF NOT EXISTS sysbox_global_revisions (
+  workspace TEXT NOT NULL DEFAULT '',
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`,
+	},
 }
 
 func (s *localAPIStore) SchemaVersion(context.Context) (int, error) {
@@ -224,6 +235,22 @@ func (s *localAPIStore) GetRevision(ctx context.Context, workspace, revisionID s
 		}
 	}
 	return nil, fmt.Errorf("revision not found")
+}
+
+func (s *localAPIStore) SaveGlobalRevision(_ context.Context, rev controlplane.GlobalRevision) error {
+	return writeLocalObject(filepath.Join(s.runsDir, "global-revisions", rev.Revision+".json"), rev)
+}
+
+func (s *localAPIStore) GetGlobalRevision(_ context.Context, revision string) (*controlplane.GlobalRevision, error) {
+	raw, err := os.ReadFile(filepath.Join(s.runsDir, "global-revisions", revision+".json"))
+	if err != nil {
+		return nil, fmt.Errorf("revision not found")
+	}
+	var rev controlplane.GlobalRevision
+	if err := json.Unmarshal(raw, &rev); err != nil {
+		return nil, fmt.Errorf("decode global revision: %w", err)
+	}
+	return &rev, nil
 }
 
 func (s *localAPIStore) SavePlan(_ context.Context, plan controlplane.Plan) error {
@@ -559,6 +586,14 @@ func (s *postgresAPIStore) ListRevisions(ctx context.Context, workspace string) 
 
 func (s *postgresAPIStore) GetRevision(ctx context.Context, workspace, revisionID string) (*controlplane.Revision, error) {
 	return getPostgresObject[controlplane.Revision](ctx, s, "sysbox_revisions", workspace, revisionID)
+}
+
+func (s *postgresAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {
+	return s.saveObject(ctx, "sysbox_global_revisions", "", rev.Revision, rev)
+}
+
+func (s *postgresAPIStore) GetGlobalRevision(ctx context.Context, revision string) (*controlplane.GlobalRevision, error) {
+	return getPostgresObject[controlplane.GlobalRevision](ctx, s, "sysbox_global_revisions", "", revision)
 }
 
 func (s *postgresAPIStore) SavePlan(ctx context.Context, plan controlplane.Plan) error {

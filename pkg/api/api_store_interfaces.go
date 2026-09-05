@@ -45,6 +45,11 @@ type revisionStore interface {
 	GetRevision(ctx context.Context, workspace, revisionID string) (*controlplane.Revision, error)
 }
 
+type globalRevisionStore interface {
+	SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error
+	GetGlobalRevision(ctx context.Context, revision string) (*controlplane.GlobalRevision, error)
+}
+
 type planStore interface {
 	SavePlan(ctx context.Context, plan controlplane.Plan) error
 	ListPlans(ctx context.Context, workspace string) ([]controlplane.Plan, error)
@@ -110,6 +115,7 @@ type apiStore interface {
 	checkpointStore
 	healthStore
 	revisionStore
+	globalRevisionStore
 	planStore
 	policyStore
 	consoleStore

@@ -250,6 +250,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/artifacts", s.handleListArtifacts)
 	m.HandleFunc("GET /v1/policies", s.handleListPolicies)
 	m.HandleFunc("POST /v1/policies", s.handleCreatePolicy)
+	m.HandleFunc("POST /v1/revisions", s.handlePublishRevision)
 
 	// Topologies
 	m.HandleFunc("GET /v1/topologies", s.handleListTopologies)

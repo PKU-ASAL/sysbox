@@ -210,6 +210,13 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		PRIMARY KEY (id, workspace)
 	) STRICT;
 
+	CREATE TABLE IF NOT EXISTS sysbox_global_revisions (
+		revision   TEXT PRIMARY KEY,
+		hcl        TEXT NOT NULL DEFAULT '',
+		size       INTEGER DEFAULT 0,
+		created_at TEXT NOT NULL DEFAULT ''
+	) STRICT;
+
 	CREATE TABLE IF NOT EXISTS sysbox_plans (
 		id           TEXT NOT NULL DEFAULT '',
 		workspace    TEXT NOT NULL DEFAULT '',
@@ -534,6 +541,38 @@ func (s *sqliteAPIStore) GetRevision(ctx context.Context, workspace, revisionID 
 	err = db.QueryRowContext(ctx,
 		`SELECT id, workspace, source, sha256, size, created_at, description FROM sysbox_revisions WHERE workspace=? AND id=?`,
 		workspace, revisionID).Scan(&rev.ID, &rev.Workspace, &rev.Source, &rev.SHA256, &rev.Size, &createdAt, &rev.Description)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("revision not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	rev.CreatedAt = parseSQLiteTime(createdAt)
+	return &rev, nil
+}
+
+func (s *sqliteAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO sysbox_global_revisions (revision, hcl, size, created_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(revision) DO UPDATE SET hcl=excluded.hcl, size=excluded.size, created_at=excluded.created_at`,
+		rev.Revision, rev.HCL, rev.Size, rev.CreatedAt.Format(time.RFC3339))
+	return err
+}
+
+func (s *sqliteAPIStore) GetGlobalRevision(ctx context.Context, revision string) (*controlplane.GlobalRevision, error) {
+	db, err := s.open()
+	if err != nil {
+		return nil, err
+	}
+	var rev controlplane.GlobalRevision
+	var createdAt string
+	err = db.QueryRowContext(ctx,
+		`SELECT revision, hcl, size, created_at FROM sysbox_global_revisions WHERE revision=?`, revision).
+		Scan(&rev.Revision, &rev.HCL, &rev.Size, &createdAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("revision not found")
 	}
