@@ -165,6 +165,14 @@ func (s *Server) topologyStatus(topology string) *controlplane.TopologyStatus {
 // enrichStatus fills the read-only projections derived from workspace state and
 // the HCL output blocks. Both are best-effort: a missing state file or an
 // un-evaluable output must not fail the whole status response.
+//
+// Outputs are evaluated against the synthetic eval context built by
+// config.BuildEvalContext (id/name/local/substrate/env only), not against real
+// state attributes. An output that references a real state attribute such as
+// sysbox_node.web.primary_ip (or an unresolved var.* reference) therefore fails
+// to evaluate and is skipped rather than returned. This is consistent with the
+// existing GET /v1/topologies/{topology}/outputs endpoint; enriching the eval
+// context with real state attributes is a separate follow-up.
 func (s *Server) enrichStatus(topology string, status *controlplane.TopologyStatus) {
 	// nodes: one entry per sysbox_node resource in state.
 	if st, err := s.workspaceService().LoadState(topology); err == nil {
@@ -180,7 +188,9 @@ func (s *Server) enrichStatus(topology string, status *controlplane.TopologyStat
 		}
 	}
 
-	// outputs: evaluate the HCL output blocks against the eval context.
+	// outputs: evaluate the HCL output blocks against the eval context,
+	// tolerating individual failures so one unresolvable output does not blank
+	// the rest.
 	hclFile := s.workspaceService().HCLFile(topology)
 	root, err := config.ParseFile(hclFile)
 	if err != nil {
@@ -190,10 +200,7 @@ func (s *Server) enrichStatus(topology string, status *controlplane.TopologyStat
 	if err != nil {
 		return
 	}
-	outputs, err := runtime.EvaluateOutputs(root, evalCtx)
-	if err != nil {
-		return
-	}
+	outputs := runtime.EvaluateOutputsBestEffort(root, evalCtx)
 	if len(outputs) == 0 {
 		return
 	}

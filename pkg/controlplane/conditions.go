@@ -63,7 +63,7 @@ type TopologyStatus struct {
 type TopologyNode struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
-	State   string `json:"state"`
+	State   string `json:"state,omitempty"`
 }
 
 // AssertionResult is the outcome of check/assert evaluation. It carries the
