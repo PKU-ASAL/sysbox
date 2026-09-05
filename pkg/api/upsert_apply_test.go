@@ -138,6 +138,18 @@ func TestApplyUpsertRetryAfterTerminalCreatesNewRun(t *testing.T) {
 
 	third := applyUpsert(t, s, "cf-upsert-a", rev)
 	require.Equal(t, second, third, "a third apply must coalesce with the in-flight retry, not spawn a duplicate")
+
+	// The retried run reuses the deterministic id, so its log broadcaster must
+	// be freshly opened, not the one closed by the terminal attempt.
+	ch := s.jobs.logs.Writer(second).Subscribe()
+	select {
+	case _, open := <-ch:
+		// A fresh, open broadcaster has no buffered lines yet, so an immediate
+		// receive means the broadcaster was already closed (open == false).
+		require.True(t, open, "retried run log broadcaster must be open, not closed")
+	default:
+		// No immediate receive: the broadcaster is still open.
+	}
 }
 
 // Concurrent applies with the same revision+inputs must coalesce into exactly

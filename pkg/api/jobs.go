@@ -216,7 +216,7 @@ func (j *Jobs) forceStart(r *controlplane.Run) {
 	j.mu.Lock()
 	j.runs[r.ID] = r
 	j.mu.Unlock()
-	j.logs.Ensure(r.ID, false)
+	j.logs.Reopen(r.ID)
 	j.persist(r)
 }
 
