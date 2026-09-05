@@ -49,10 +49,21 @@ const (
 
 // TopologyStatus is the readiness projection reported on a topology.
 type TopologyStatus struct {
-	ObservedRevision string        `json:"observed_revision,omitempty"`
-	Phase            TopologyPhase `json:"phase"`
-	DeadlineAt       *time.Time    `json:"deadline_at,omitempty"`
-	Conditions       []Condition   `json:"conditions"`
+	ObservedRevision string         `json:"observed_revision,omitempty"`
+	Phase            TopologyPhase  `json:"phase"`
+	DeadlineAt       *time.Time     `json:"deadline_at,omitempty"`
+	Conditions       []Condition    `json:"conditions"`
+	Nodes            []TopologyNode `json:"nodes,omitempty"`
+	Outputs          map[string]any `json:"outputs,omitempty"`
+}
+
+// TopologyNode is a read-only projection of a sysbox_node resource in state.
+// It answers "what nodes exist, where do they live, and are they running"
+// without exposing the full resource payload.
+type TopologyNode struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+	State   string `json:"state"`
 }
 
 // AssertionResult is the outcome of check/assert evaluation. It carries the

@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/diag"
+	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 // POST /v1/topologies — create a new topology workspace.
@@ -155,7 +158,49 @@ func (s *Server) topologyStatus(topology string) *controlplane.TopologyStatus {
 			status.DeadlineAt = &deadline
 		}
 	}
+	s.enrichStatus(topology, &status)
 	return &status
+}
+
+// enrichStatus fills the read-only projections derived from workspace state and
+// the HCL output blocks. Both are best-effort: a missing state file or an
+// un-evaluable output must not fail the whole status response.
+func (s *Server) enrichStatus(topology string, status *controlplane.TopologyStatus) {
+	// nodes: one entry per sysbox_node resource in state.
+	if st, err := s.workspaceService().LoadState(topology); err == nil {
+		for _, r := range st.Resources {
+			if r.Address.Type != "sysbox_node" {
+				continue
+			}
+			status.Nodes = append(status.Nodes, controlplane.TopologyNode{
+				Name:    r.Address.Name,
+				Address: r.PrimaryIP(),
+				State:   string(r.Status),
+			})
+		}
+	}
+
+	// outputs: evaluate the HCL output blocks against the eval context.
+	hclFile := s.workspaceService().HCLFile(topology)
+	root, err := config.ParseFile(hclFile)
+	if err != nil {
+		return
+	}
+	evalCtx, err := config.BuildEvalContext(root, filepath.Dir(hclFile))
+	if err != nil {
+		return
+	}
+	outputs, err := runtime.EvaluateOutputs(root, evalCtx)
+	if err != nil {
+		return
+	}
+	if len(outputs) == 0 {
+		return
+	}
+	status.Outputs = make(map[string]any, len(outputs))
+	for k, v := range outputs {
+		status.Outputs[k] = v.Value
+	}
 }
 
 // convergenceDeadline is the instant by which a converging run must have
