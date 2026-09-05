@@ -12,9 +12,14 @@ import (
 )
 
 func controlplaneRunAssignedCommand(run *controlplane.Run) controlplane.AgentCommand {
+	rec := runRecord(*run)
+	// Sensitive apply inputs must not enter the durable command store. The agent
+	// binds var.<name> from the claim response (which re-attaches the in-memory
+	// inputs), so the command's Run does not need them.
+	rec.Inputs = nil
 	return controlplane.AgentCommand{
 		Type: "run_assigned",
-		Run:  ptrRun(runRecord(*run)),
+		Run:  ptrRun(rec),
 	}
 }
 

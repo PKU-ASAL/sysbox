@@ -42,6 +42,17 @@ func TestSensitiveApplyInputsNotDurablyPersisted(t *testing.T) {
 	require.Equal(t, controlplane.RunAssigned, durable.Status)
 	require.Equal(t, "apply", durable.Op)
 
+	// Durable: the dispatched run_assigned command must not carry the input
+	// either — the agent binds var.<name> from the claim response, not from the
+	// command's Run.
+	commands, err := s.apiStore.ListAgentCommands(context.Background(), "host-a")
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+	require.Nil(t, commands[0].Run.Inputs, "run_assigned command must not persist sensitive inputs")
+	commandRaw, err := json.Marshal(commands[0])
+	require.NoError(t, err)
+	require.NotContains(t, string(commandRaw), canary, "run_assigned command serialization must not contain the canary plaintext")
+
 	// Transient: the claim response the agent executes must still carry the
 	// input even though the durable record is stripped.
 	claimed, err := s.jobs.claim(runID, "host-a")
