@@ -37,6 +37,7 @@ type RunStartRequest struct {
 	AgentID          string
 	Target           string
 	AllowUnsafeState bool
+	Inputs           map[string]string
 }
 
 type runServiceErrorKind string
@@ -114,6 +115,7 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 		PlanID:      req.PlanID,
 		AgentID:     req.AgentID,
 		UnsafeState: req.AllowUnsafeState,
+		Inputs:      req.Inputs,
 	})
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err

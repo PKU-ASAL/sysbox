@@ -8,6 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// parseVariable parses a single top-level variable block and returns it, so a
+// test can inspect its decoded fields.
+func parseVariable(t *testing.T, body string) *VariableBlock {
+	t.Helper()
+	root, err := ParseString("variable \"x\" {\n"+body+"\n}\n", "test.hcl")
+	require.NoError(t, err)
+	require.Len(t, root.Variables, 1)
+	return &root.Variables[0]
+}
+
 // moduleWithVariable writes a module file and a root that calls it, returning
 // the root and the directory to resolve the module source against.
 func moduleWithVariable(t *testing.T, moduleBody, rootArgs string) (*Root, string) {
@@ -24,47 +34,50 @@ module "lab" {
 	return root, dir
 }
 
-// Variable blocks are decoded with JustAttributes and only "default" is ever
-// consumed, so every other attribute is read and then dropped on the floor.
-//
-// An author who writes `sensitive = true` gets a value that is still written to
-// state, outputs and logs. Silently accepting an attribute that does nothing is
-// worse than rejecting it: the author has no way to discover that the guarantee
-// they asked for was never applied.
-func TestVariableBlockRejectsUnsupportedAttribute(t *testing.T) {
+// sensitive is a first-class attribute: it decodes into the block's Sensitive
+// field, which is what S3 (sensitive variables) reads.
+func TestVariableBlockDecodesSensitive(t *testing.T) {
+	vb := parseVariable(t, "sensitive = true\n  default = \"x\"")
+
+	require.True(t, vb.Sensitive)
+}
+
+// A variable without sensitive is not sensitive.
+func TestVariableBlockSensitiveDefaultsFalse(t *testing.T) {
+	vb := parseVariable(t, "default = \"x\"")
+
+	require.False(t, vb.Sensitive)
+}
+
+// type is declared but not enforced: it is captured as a raw expression, so the
+// author can write the Terraform-style `type = string` without a decode error.
+func TestVariableBlockDecodesType(t *testing.T) {
+	vb := parseVariable(t, "type = string\n  default = \"x\"")
+
+	require.NotNil(t, vb.Type)
+}
+
+// A genuinely unknown attribute is still rejected: the point of the original
+// check was to never silently drop an attribute, and that still holds for
+// attributes sysbox does not implement.
+func TestVariableBlockRejectsUnknownAttribute(t *testing.T) {
 	root, dir := moduleWithVariable(t, `
 variable "flag" {
-  sensitive = true
+  description = "not implemented"
 }
 `, "")
 
 	_, err := BuildEvalContext(root, dir)
 
-	require.Error(t, err,
-		"sensitive is not implemented; accepting it silently promises a guarantee that is never applied")
-	require.ErrorContains(t, err, "sensitive")
-}
-
-// The same for a type constraint: unimplemented must not look like accepted.
-func TestVariableBlockRejectsTypeConstraint(t *testing.T) {
-	root, dir := moduleWithVariable(t, `
-variable "cidr" {
-  type    = string
-  default = "10.0.0.0/24"
-}
-`, "")
-
-	_, err := BuildEvalContext(root, dir)
-
-	require.Error(t, err, "type constraints are not enforced; do not accept them silently")
-	require.ErrorContains(t, err, "type")
+	require.Error(t, err, "an attribute sysbox does not implement must be rejected, not dropped")
+	require.ErrorContains(t, err, "description")
 }
 
 // The rejection must name the offending block, or the author cannot find it.
 func TestVariableBlockRejectionNamesTheVariable(t *testing.T) {
 	root, dir := moduleWithVariable(t, `
 variable "flag" {
-  sensitive = true
+  description = "not implemented"
 }
 `, "")
 
