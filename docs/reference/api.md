@@ -57,31 +57,40 @@ curl -X POST http://127.0.0.1:9876/v1/agents \
 
 ## Topologies And Workspaces
 
+Topologies are created implicitly by applying a published revision: the API
+materializes the revision's HCL into the workspace (upsert) and dispatches a
+run.
+
 ```bash
+POST /v1/revisions
+
 GET    /v1/topologies
-POST   /v1/topologies
 GET    /v1/topologies/{name}
+GET    /v1/topologies/{name}/hcl
 DELETE /v1/topologies/{name}
 
-GET /v1/topologies/{name}/hcl
-PUT /v1/topologies/{name}/hcl
-
 GET  /v1/topologies/{name}/plan
-POST /v1/topologies/{name}/plans
-GET  /v1/topologies/{name}/plans
-GET  /v1/topologies/{name}/plans/{plan_id}
-
-POST /v1/topologies/{name}/revisions
-GET  /v1/topologies/{name}/revisions
-GET  /v1/topologies/{name}/revisions/{revision_id}
 
 POST /v1/topologies/{name}/apply
+POST /v1/topologies/{name}/reset
 POST /v1/topologies/{name}/destroy
 ```
 
-When `POST /apply` receives `{"plan_id":"..."}`, the API executes the stored
-plan actions and rejects stale plans whose recorded state serial no longer
-matches current state.
+`POST /v1/revisions` accepts raw HCL as the request body and returns a
+content-addressed digest: `{"revision":"sha256:<hex>"}`. Publishing the same
+HCL returns the same digest.
+
+`POST /v1/topologies/{name}/apply` upserts the workspace with the revision's
+HCL and dispatches a run. The request body is:
+
+```json
+{"revision":"sha256:<hex>","inputs":{},"deadline_at":"2026-09-06T00:00:00Z"}
+```
+
+`inputs` are materialized per-run and never returned by the API. `deadline_at`
+bounds convergence. `GET /v1/topologies/{name}` returns workspace metadata and
+`status` with `phase`, `conditions` (`Applied`, `Provisioned`, `Asserted`,
+`Ready`), `nodes`, `outputs`, and `deadline_at`.
 
 ## State And Observability
 
