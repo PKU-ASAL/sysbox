@@ -365,7 +365,14 @@ func (j *Jobs) markConvergenceDeadlineExceeded(now time.Time, timeout time.Durat
 		if r.Op == "destroy" || !isConvergingStatus(r.Status) {
 			continue
 		}
-		if r.StartedAt.IsZero() || now.Sub(r.StartedAt) <= timeout {
+		deadline := r.DeadlineAt
+		if deadline.IsZero() {
+			if r.StartedAt.IsZero() {
+				continue
+			}
+			deadline = r.StartedAt.Add(timeout)
+		}
+		if !now.After(deadline) {
 			continue
 		}
 		r.MarkFinished(fmt.Errorf("convergence deadline exceeded (%s)", timeout), now)
