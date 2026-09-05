@@ -42,39 +42,6 @@ func (s *Server) handleListProjectWorkspaces(w http.ResponseWriter, r *http.Requ
 	s.handleListTopologies(w, r)
 }
 
-func (s *Server) handleListPlans(w http.ResponseWriter, r *http.Request) {
-	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	plans, err := s.apiStore.ListPlans(r.Context(), topology)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"plans": plans})
-}
-
-func (s *Server) handleGetStoredPlan(w http.ResponseWriter, r *http.Request) {
-	topology := r.PathValue("topology")
-	planID := r.PathValue("plan")
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := validatePathSegment(planID, "plan"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	plan, err := s.apiStore.GetPlan(r.Context(), topology, planID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, plan)
-}
-
 func (s *Server) handleGetStackState(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
 	if err := validatePathSegment(topology, "topology"); err != nil {

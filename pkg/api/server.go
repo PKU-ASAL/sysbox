@@ -265,8 +265,6 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/stack-state", s.handleGetStackState)
 	m.HandleFunc("GET /v1/topologies/{topology}/lease", s.handleGetWorkspaceLease)
 	m.HandleFunc("GET /v1/topologies/{topology}/snapshots", s.handleListWorkspaceSnapshots)
-	m.HandleFunc("GET /v1/topologies/{topology}/plans", s.handleListPlans)
-	m.HandleFunc("GET /v1/topologies/{topology}/plans/{plan}", s.handleGetStoredPlan)
 	m.HandleFunc("GET /v1/topologies/{topology}/outputs", s.handleGetOutputs)
 	m.HandleFunc("GET /v1/topologies/{topology}/health", s.handleGetTopologyHealth)
 	m.HandleFunc("GET /v1/topologies/{topology}/plan", s.handleGetPlan)

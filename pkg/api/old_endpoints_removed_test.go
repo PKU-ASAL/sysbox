@@ -19,6 +19,8 @@ func TestOldEndpointsRemoved(t *testing.T) {
 		{http.MethodPost, "/v1/topologies"},
 		{http.MethodPut, "/v1/topologies/lab/hcl"},
 		{http.MethodPost, "/v1/topologies/lab/plans"},
+		{http.MethodGet, "/v1/topologies/lab/plans"},
+		{http.MethodGet, "/v1/topologies/lab/plans/abc123"},
 		{http.MethodPost, "/v1/topologies/lab/revisions"},
 		{http.MethodGet, "/v1/topologies/lab/revisions"},
 		{http.MethodGet, "/v1/topologies/lab/revisions/abc123"},
