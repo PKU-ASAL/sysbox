@@ -29,6 +29,8 @@ type RunService struct {
 	hclFile         func(string) string
 	stateManager    func(string) (*state.Manager, error)
 	requiredForTopo func(string) ([]string, error)
+	revisions       globalRevisionStore
+	workspaces      *WorkspaceService
 }
 
 type RunStartRequest struct {
@@ -38,6 +40,7 @@ type RunStartRequest struct {
 	Target           string
 	AllowUnsafeState bool
 	Inputs           map[string]string
+	DeadlineAt       *time.Time
 }
 
 type runServiceErrorKind string
@@ -71,6 +74,8 @@ func newRunService(server *Server) *RunService {
 		hclFile:         server.workspaceService().HCLFile,
 		stateManager:    server.stateManager,
 		requiredForTopo: requiredCapabilitiesForTopology,
+		revisions:       server.apiStore,
+		workspaces:      server.workspaceService(),
 	}
 }
 
@@ -99,6 +104,18 @@ func runServiceStatus(err error) int {
 }
 
 func (s *RunService) StartApply(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+	if req.Revision != "" {
+		rev, err := s.revisions.GetGlobalRevision(ctx, req.Revision)
+		if err != nil {
+			if errors.Is(err, errGlobalRevisionNotFound) {
+				return nil, runError(runServiceNotFound, err)
+			}
+			return nil, runError(runServiceInternal, err)
+		}
+		if err := s.workspaces.UpsertHCL(ctx, topology, rev.HCL); err != nil {
+			return nil, runError(runServiceInternal, err)
+		}
+	}
 	if req.PlanID != "" {
 		currentSerial, err := s.currentStateSerial(ctx, topology)
 		if err != nil {
@@ -110,13 +127,17 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 		}
 		req.Revision = plan.Revision
 	}
-	run := s.jobs.startWithOptions(topology, "apply", runStartOptions{
+	opts := runStartOptions{
 		Revision:    req.Revision,
 		PlanID:      req.PlanID,
 		AgentID:     req.AgentID,
 		UnsafeState: req.AllowUnsafeState,
 		Inputs:      req.Inputs,
-	})
+	}
+	if req.DeadlineAt != nil {
+		opts.DeadlineAt = *req.DeadlineAt
+	}
+	run := s.jobs.startWithOptions(topology, "apply", opts)
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
 	}

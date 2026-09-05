@@ -42,6 +42,7 @@ type runStartOptions struct {
 	UnsafeState  bool
 	OperationKey string
 	Inputs       map[string]string
+	DeadlineAt   time.Time
 }
 
 func newJobs(runsDir string, store apiStore) *Jobs {
@@ -226,6 +227,7 @@ func newRun(topology, op string, opts runStartOptions) *controlplane.Run {
 		UnsafeState:  opts.UnsafeState,
 		Protocol:     controlplane.AgentProtocolVersion,
 		Inputs:       opts.Inputs,
+		DeadlineAt:   opts.DeadlineAt,
 		LeaseOwner:   "sysbox-api",
 		QueuedAt:     now,
 		StartedAt:    now,

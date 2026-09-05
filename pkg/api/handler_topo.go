@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/diag"
 
@@ -22,12 +23,25 @@ import (
 // Rejects "..", special characters, and URL-encoded traversals.
 var safeSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+// globalRevisionPattern matches the content-addressed digests produced by
+// POST /v1/revisions ("sha256:" + 64 lowercase hex chars).
+var globalRevisionPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
 // validatePathSegment returns an error if the segment could enable path traversal.
 func validatePathSegment(seg, label string) error {
 	if !safeSegment.MatchString(seg) {
 		return fmt.Errorf("invalid %s %q: must match [A-Za-z0-9_-]+", label, seg)
 	}
 	return nil
+}
+
+// validateRevision accepts either a workspace revision id (a path-safe segment)
+// or a global content-addressed digest ("sha256:<hex>").
+func validateRevision(rev string) error {
+	if globalRevisionPattern.MatchString(rev) {
+		return nil
+	}
+	return validatePathSegment(rev, "revision")
 }
 
 // GET /v1/health
@@ -233,7 +247,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest{
-		PlanID: req.PlanID, Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs,
+		PlanID: req.PlanID, Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -313,6 +327,7 @@ type applyRequest struct {
 	AgentID          string            `json:"agent_id,omitempty"`
 	AllowUnsafeState bool              `json:"allow_unsafe_state,omitempty"`
 	Inputs           map[string]string `json:"inputs,omitempty"`
+	DeadlineAt       *time.Time        `json:"deadline_at,omitempty"`
 }
 
 func decodeApplyRequest(r *http.Request) (applyRequest, error) {
@@ -332,7 +347,7 @@ func decodeApplyRequest(r *http.Request) (applyRequest, error) {
 		}
 	}
 	if req.Revision != "" {
-		if err := validatePathSegment(req.Revision, "revision"); err != nil {
+		if err := validateRevision(req.Revision); err != nil {
 			return applyRequest{}, err
 		}
 	}

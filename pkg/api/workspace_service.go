@@ -94,6 +94,22 @@ func (s *WorkspaceService) UpdateHCL(ctx context.Context, topology string, hcl [
 	return nil
 }
 
+// UpsertHCL writes the topology's HCL, creating the workspace directory if
+// needed. Idempotent: repeated calls with the same content overwrite in place.
+func (s *WorkspaceService) UpsertHCL(ctx context.Context, topology string, hcl string) error {
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		return err
+	}
+	hclPath := s.HCLFile(topology)
+	if err := os.MkdirAll(filepath.Dir(hclPath), 0o755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+	if err := os.WriteFile(hclPath, []byte(hcl), 0o644); err != nil {
+		return fmt.Errorf("write hcl: %w", err)
+	}
+	return nil
+}
+
 func (s *WorkspaceService) HCL(topology string) ([]byte, error) {
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return nil, err
