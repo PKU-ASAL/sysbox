@@ -62,7 +62,7 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 
 	// Collect locals first so they are available when evaluating count expressions.
 	localCtx := &hcl.EvalContext{
-		Functions: map[string]function.Function{"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc},
+		Functions: map[string]function.Function{"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc, "cidrsubnet": cidrsubnetFunc, "cidrhost": cidrhostFunc},
 	}
 	localVals := map[string]cty.Value{}
 	for _, lb := range root.Locals {
@@ -87,7 +87,7 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 	// Minimal context for evaluating count = <expr> (literals + local.x).
 	preCtx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{},
-		Functions: map[string]function.Function{"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc},
+		Functions: map[string]function.Function{"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc, "cidrsubnet": cidrsubnetFunc, "cidrhost": cidrhostFunc},
 	}
 	if len(localVals) > 0 {
 		preCtx.Variables["local"] = cty.ObjectVal(localVals)
@@ -161,7 +161,7 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 	ctx := &hcl.EvalContext{
 		Variables: vars,
 		Functions: map[string]function.Function{
-			"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc,
+			"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc, "cidrsubnet": cidrsubnetFunc, "cidrhost": cidrhostFunc,
 		},
 	}
 
