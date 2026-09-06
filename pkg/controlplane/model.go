@@ -75,6 +75,9 @@ type Run struct {
 	// Inputs are the apply-time variable values. They are transient: carried in
 	// the run dispatch so the agent can bind var.<name>, but not durably
 	// persisted, so a sensitive input's plaintext does not survive the run.
+	// On restart, markInterruptedRuns fails any in-flight (Assigned/Running)
+	// run, so a run's inputs are never claimable after a restart — secret
+	// plaintext does not survive a restart.
 	Inputs map[string]string `json:"inputs,omitempty"`
 }
 

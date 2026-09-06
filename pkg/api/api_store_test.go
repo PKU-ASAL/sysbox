@@ -265,3 +265,12 @@ func TestLocalAPIStorePersistsAgentAndClaimLease(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 }
+
+func TestMarkInterruptedRunsFailsInFlightRun(t *testing.T) {
+	runs := []controlplane.Run{
+		{ID: "r1", Status: controlplane.RunRunning, Inputs: map[string]string{"flag": "canary"}},
+	}
+	out := markInterruptedRuns(runs)
+	require.Equal(t, controlplane.RunFailed, out[0].Status)
+	require.True(t, out[0].Recoverable)
+}
