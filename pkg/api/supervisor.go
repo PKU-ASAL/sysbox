@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"time"
@@ -87,7 +88,13 @@ func (s *Supervisor) Scan(ctx context.Context) {
 		return
 	}
 	for _, name := range names {
-		_ = s.ScanTopology(ctx, name)
+		if err := s.ScanTopology(ctx, name); err != nil {
+			// A failed scan means no health snapshot is written for this
+			// topology, so Provisioned stays Unknown. Log the reason instead of
+			// swallowing it: an empty health table plus an empty log is the
+			// hardest failure to diagnose.
+			slog.Warn("supervisor scan topology failed", "topology", name, "error", err)
+		}
 	}
 }
 
