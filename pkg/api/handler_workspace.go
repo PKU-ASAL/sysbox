@@ -11,6 +11,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/diag"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 // GET /v1/topologies/{topology}/hcl — return the raw HCL content.
@@ -76,16 +77,18 @@ func (s *Server) topologyStatus(topology string) *controlplane.TopologyStatus {
 // the HCL output blocks. Both are best-effort: a missing state file or an
 // un-evaluable output must not fail the whole status response.
 //
-// Outputs are evaluated against the synthetic eval context built by
-// config.BuildEvalContext (id/name/local/substrate/env only), not against real
-// state attributes. An output that references a real state attribute such as
-// sysbox_node.web.primary_ip (or an unresolved var.* reference) therefore fails
-// to evaluate and is skipped rather than returned. This is consistent with the
-// existing GET /v1/topologies/{topology}/outputs endpoint; enriching the eval
-// context with real state attributes is a separate follow-up.
+// Outputs are evaluated against the eval context built by
+// config.BuildEvalContext, enriched with each non-count resource's real state
+// attributes so that expressions like sysbox_node.web.primary_ip resolve. An
+// output that references an unresolved var.* (or a count/for_each instance,
+// which is not yet enriched) still fails to evaluate and is skipped rather than
+// returned.
 func (s *Server) enrichStatus(topology string, status *controlplane.TopologyStatus) {
-	// nodes: one entry per sysbox_node resource in state.
-	if st, err := s.workspaceService().LoadState(topology); err == nil {
+	// Load state once and reuse it for both the nodes projection and the
+	// outputs eval-context enrichment.
+	var st *state.State
+	if loaded, err := s.workspaceService().LoadState(topology); err == nil {
+		st = loaded
 		for _, r := range st.Resources {
 			if r.Address.Type != "sysbox_node" {
 				continue
@@ -110,6 +113,7 @@ func (s *Server) enrichStatus(topology string, status *controlplane.TopologyStat
 	if err != nil {
 		return
 	}
+	enrichEvalContext(evalCtx, st)
 	outputs := runtime.EvaluateOutputsBestEffort(root, evalCtx)
 	if len(outputs) == 0 {
 		return
