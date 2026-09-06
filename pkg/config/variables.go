@@ -28,7 +28,11 @@ func VariableBindings(vars []VariableBlock, inputs map[string]string) (map[strin
 			continue
 		}
 		if input, ok := inputs[vb.Name]; ok {
-			bindings[vb.Name] = cty.StringVal(input)
+			value, err := coerceInputToType(vb, input)
+			if err != nil {
+				return nil, err
+			}
+			bindings[vb.Name] = value
 			continue
 		}
 		value, ok, err := variableDefault(vb)
@@ -56,6 +60,43 @@ func InjectVariables(ctx *hcl.EvalContext, vars []VariableBlock, inputs map[stri
 	}
 	ctx.Variables["var"] = cty.ObjectVal(bindings)
 	return nil
+}
+
+// variableTypeConstraint evaluates a variable's declared `type = ...` to a cty
+// type. Only the primitive type names are understood today; a complex type
+// (list/map/object) or an unrecognized name yields ok=false, so the input is
+// left as a string (the pre-typing behavior).
+func variableTypeConstraint(vb VariableBlock) (cty.Type, bool) {
+	if vb.Type == nil {
+		return cty.NilType, false
+	}
+	traversal, diags := hcl.AbsTraversalForExpr(vb.Type)
+	if diags.HasErrors() || len(traversal) != 1 {
+		return cty.NilType, false
+	}
+	switch traversal.RootName() {
+	case "number":
+		return cty.Number, true
+	case "string":
+		return cty.String, true
+	default:
+		return cty.NilType, false
+	}
+}
+
+// coerceInputToType converts an apply-time input string to the variable's
+// declared type. `number` is parsed so that count/for_each can consume a
+// numeric input; any other (or no) declared type leaves the value as a string.
+func coerceInputToType(vb VariableBlock, input string) (cty.Value, error) {
+	typ, ok := variableTypeConstraint(vb)
+	if !ok || typ != cty.Number {
+		return cty.StringVal(input), nil
+	}
+	n, err := cty.ParseNumberVal(input)
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("variable %q: %q is not a number: %w", vb.Name, input, err)
+	}
+	return n, nil
 }
 
 // variableDefault evaluates a variable block's default expression, if any.

@@ -84,3 +84,37 @@ func TestInjectVariablesAddsVarNamespace(t *testing.T) {
 	require.Equal(t, "10.0.0.0/24", v.GetAttr("cidr").AsString())
 	require.Equal(t, "secret://input/flag", v.GetAttr("flag").AsString())
 }
+
+// A variable declared `type = number` coerces a numeric apply input from its
+// string wire form, so count/for_each can consume it.
+func TestVariableBindingsCoercesNumberInput(t *testing.T) {
+	vars := []VariableBlock{varBlock(t, "n", "type = number")}
+
+	bindings, err := VariableBindings(vars, map[string]string{"n": "2"})
+
+	require.NoError(t, err)
+	require.Equal(t, cty.Number, bindings["n"].Type())
+	n, _ := bindings["n"].AsBigFloat().Int64()
+	require.Equal(t, int64(2), n)
+}
+
+// A non-numeric input for a `type = number` variable is rejected, not silently
+// coerced to a string.
+func TestVariableBindingsRejectsNonNumericInput(t *testing.T) {
+	vars := []VariableBlock{varBlock(t, "n", "type = number")}
+
+	_, err := VariableBindings(vars, map[string]string{"n": "not-a-number"})
+
+	require.ErrorContains(t, err, "not a number")
+}
+
+// Without a declared type the input stays a string (the pre-typing behavior).
+func TestVariableBindingsUntypedInputStaysString(t *testing.T) {
+	vars := []VariableBlock{varBlock(t, "n", "")}
+
+	bindings, err := VariableBindings(vars, map[string]string{"n": "2"})
+
+	require.NoError(t, err)
+	require.Equal(t, cty.String, bindings["n"].Type())
+	require.Equal(t, "2", bindings["n"].AsString())
+}

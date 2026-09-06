@@ -527,3 +527,37 @@ resource "sysbox_node" "web" {
 	_, _, _, _, _, err = LoadWorkspaceWithManager(hclFile, mgr)
 	require.Error(t, err)
 }
+
+func TestLoadWorkspaceWithInputsCoercesCountNumber(t *testing.T) {
+	registerPortTestDriver(t, &portTestSubstrate{name: "docker"})
+
+	hclFile := writeHCL(t, `
+variable "n" { type = number }
+
+substrate "docker" { alias = "local" }
+
+resource "sysbox_image" "alpine" {
+  substrate    = substrate.docker.local
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
+}
+
+resource "sysbox_node" "web" {
+  count     = var.n
+  substrate = substrate.docker.local
+  image     = sysbox_image.alpine.id
+}
+`)
+
+	mgr := state.NewManager(filepath.Join(t.TempDir(), "state.json"))
+
+	g, _, _, _, _, err := LoadWorkspaceWithInputs(hclFile, mgr, map[string]string{"n": "2"})
+	require.NoError(t, err)
+
+	// count = var.n, with n supplied as the string "2", expands to two nodes.
+	require.NotNil(t, g.Get(address.IntInstance("sysbox_node", "web", 0)))
+	require.NotNil(t, g.Get(address.IntInstance("sysbox_node", "web", 1)))
+	require.Nil(t, g.Get(address.Resource("sysbox_node", "web")))
+}
