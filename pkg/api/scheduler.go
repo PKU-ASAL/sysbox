@@ -25,15 +25,15 @@ func controlplaneRunAssignedCommand(run *controlplane.Run) controlplane.AgentCom
 
 func ptrRun(run controlplane.Run) *controlplane.Run { return &run }
 
-// substrateProbe 只解能力预扫描关心的 substrate 字段；其余字段（含 var.<name>
-// 引用，如 cidr/env）进 Remain 不求值，这样预扫描不会因为不关心的字段引用 var
-// 而失败。
+// substrateProbe decodes only the substrate field the capability prescan cares
+// about; everything else (including var.<name> references like cidr/env) lands
+// in Remain unevaluated, so the prescan never fails on a var it doesn't need.
 type substrateProbe struct {
 	Substrate string   `hcl:"substrate"`
 	Remain    hcl.Body `hcl:",remain"`
 }
 
-// networkProbe 只解能力预扫描关心的 NAT 字段。
+// networkProbe decodes only the NAT field the capability prescan cares about.
 type networkProbe struct {
 	NAT    bool     `hcl:"nat,optional"`
 	Remain hcl.Body `hcl:",remain"`
