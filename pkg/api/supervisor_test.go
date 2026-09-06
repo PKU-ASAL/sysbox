@@ -50,6 +50,51 @@ func TestSupervisorScanWritesHealthSnapshot(t *testing.T) {
 	require.Equal(t, "observe", snap.Action)
 }
 
+func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	workspaces := filepath.Join(dir, "workspaces")
+	require.NoError(t, os.MkdirAll(filepath.Join(workspaces, "web"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspaces, "web", "field.sysbox.hcl"), []byte(""), 0o644))
+
+	// A sysbox_node on the docker substrate: its runtime health probe would need
+	// /var/run/docker.sock, which the API container intentionally does not mount.
+	// The supervisor must use the agent's reported projection instead of probing
+	// docker itself (that probe would fail here and yield Unknown).
+	writeState(t, runs, "web", &state.State{
+		Version: state.SchemaVersion,
+		Resources: []state.Resource{{
+			Address:    address.Resource("sysbox_node", "web"),
+			Driver:     "docker",
+			Attributes: map[string]any{"id": "container-1"},
+		}},
+	})
+
+	s := NewServer(runs, workspaces)
+	s.agents.SaveResourceProjection(controlplane.ResourceProjection{
+		AgentID:    "agent-1",
+		Workspace:  "web",
+		Topology:   "web",
+		ObservedAt: time.Now().UTC(),
+		Resources: []controlplane.ResourceHealth{{
+			Resource: "sysbox_node.web",
+			Type:     "sysbox_node",
+			Name:     "web",
+			Provider: "docker",
+			Status:   controlplane.ResourceHealthHealthy,
+		}},
+	})
+
+	supervisor := newSupervisor(s, time.Minute)
+	require.NoError(t, supervisor.ScanTopology(context.Background(), "web"))
+
+	raw, err := os.ReadFile(filepath.Join(runs, "web", "health.json"))
+	require.NoError(t, err)
+	var snap HealthSnapshot
+	require.NoError(t, json.Unmarshal(raw, &snap))
+	require.Equal(t, controlplane.ResourceHealthHealthy, snap.Health.Status)
+}
+
 func TestGetTopologyHealthCached(t *testing.T) {
 	dir := t.TempDir()
 	runs := filepath.Join(dir, "runs")

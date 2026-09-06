@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 type Supervisor struct {
@@ -106,7 +105,7 @@ func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
 	snap := HealthSnapshot{
 		Topology: topology,
 		Observed: time.Now().UTC(),
-		Health:   runtime.EvaluateTopologyHealth(ctx, st),
+		Health:   s.server.authoritativeTopologyHealth(ctx, topology, st),
 		Policy:   s.policy,
 		AutoHeal: s.policy != SupervisorPolicyObserveOnly,
 	}
