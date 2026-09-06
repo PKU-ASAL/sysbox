@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -197,22 +195,6 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 func defaultProject() controlplane.Project {
 	now := time.Now().UTC()
 	return controlplane.Project{ID: controlplane.DefaultProjectID, Name: "default", Description: "Default sysbox project", CreatedAt: now, UpdatedAt: now}
-}
-
-func revisionFromHCL(workspace string, hcl []byte, source string) controlplane.Revision {
-	sum := sha256.Sum256(hcl)
-	hash := hex.EncodeToString(sum[:])
-	id := hash[:12]
-	now := time.Now().UTC()
-	return controlplane.Revision{
-		ID:        id,
-		ProjectID: controlplane.DefaultProjectID,
-		Workspace: workspace,
-		Source:    source,
-		SHA256:    hash,
-		Size:      len(hcl),
-		CreatedAt: now,
-	}
 }
 
 func (s *Server) listSnapshots(ctx context.Context, topology string) ([]state.Snapshot, error) {

@@ -1,13 +1,10 @@
 package controlplane
 
 import (
-	"fmt"
 	"time"
 )
 
 const (
-	PlanStatusPlanned = "planned"
-
 	AgentStatusOnline      = "online"
 	AgentStatusOffline     = "offline"
 	AgentStatusDisabled    = "disabled"
@@ -159,22 +156,6 @@ func AgentStatusForPolicy(disabled, quarantined bool) string {
 	default:
 		return AgentStatusOnline
 	}
-}
-
-func (p Plan) CanApply(currentRevision string, currentSerial int64) error {
-	if p.Revision != "" && currentRevision != "" && p.Revision != currentRevision {
-		return fmt.Errorf("plan revision %s is stale; current revision is %s", p.Revision, currentRevision)
-	}
-	if p.Status != "" && p.Status != PlanStatusPlanned {
-		return fmt.Errorf("plan %s status is %s", p.ID, p.Status)
-	}
-	if p.StateSerial != currentSerial {
-		return fmt.Errorf("plan state serial %d is stale; current serial is %d", p.StateSerial, currentSerial)
-	}
-	if len(p.Actions) == 0 {
-		return fmt.Errorf("plan %s has no actions", p.ID)
-	}
-	return nil
 }
 
 func (c AgentCommand) IsPending() bool {

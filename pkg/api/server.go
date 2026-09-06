@@ -25,7 +25,6 @@ type Server struct {
 	agentStream   *AgentStreamService
 	jobs          *Jobs
 	runService    *RunService
-	planService   *PlanService
 	scheduler     *SchedulerService
 	workspaces    *WorkspaceService
 	nodeService   *NodeOperationService
@@ -76,7 +75,6 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 	}
 	s.agentSvc = newAgentService(s)
 	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
-	s.planService = newPlanService(s)
 	s.scheduler = newSchedulerService(s)
 	s.nodeService = newNodeOperationService(s.workspaceService(), s.scheduling(), s.nodeOps, s.agentService().PublishCommand)
 	defaultConsoleTimeout, _ := time.ParseDuration(s.cfg.API.Console.DefaultTimeout)
@@ -116,13 +114,6 @@ func (s *Server) runs() *RunService {
 		s.runService = newRunService(s)
 	}
 	return s.runService
-}
-
-func (s *Server) plans() *PlanService {
-	if s.planService == nil {
-		s.planService = newPlanService(s)
-	}
-	return s.planService
 }
 
 func (s *Server) scheduling() *SchedulerService {

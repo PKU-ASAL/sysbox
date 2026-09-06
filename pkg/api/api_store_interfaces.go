@@ -50,12 +50,6 @@ type globalRevisionStore interface {
 	GetGlobalRevision(ctx context.Context, revision string) (*controlplane.GlobalRevision, error)
 }
 
-type planStore interface {
-	SavePlan(ctx context.Context, plan controlplane.Plan) error
-	ListPlans(ctx context.Context, workspace string) ([]controlplane.Plan, error)
-	GetPlan(ctx context.Context, workspace, planID string) (*controlplane.Plan, error)
-}
-
 type policyStore interface {
 	SavePolicy(ctx context.Context, policy controlplane.Policy) error
 	ListPolicies(ctx context.Context, workspace string) ([]controlplane.Policy, error)
@@ -116,7 +110,6 @@ type apiStore interface {
 	healthStore
 	revisionStore
 	globalRevisionStore
-	planStore
 	policyStore
 	consoleStore
 	nodeOperationPersistence

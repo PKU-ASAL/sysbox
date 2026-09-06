@@ -26,7 +26,6 @@ func validateOperationKey(key string) error {
 
 type RunService struct {
 	jobs            *Jobs
-	plans           *PlanService
 	scheduler       *SchedulerService
 	hclFile         func(string) string
 	stateManager    func(string) (*state.Manager, error)
@@ -70,7 +69,6 @@ func (e runServiceError) Unwrap() error { return e.err }
 func newRunService(server *Server) *RunService {
 	return &RunService{
 		jobs:            server.jobs,
-		plans:           server.plans(),
 		scheduler:       server.scheduling(),
 		hclFile:         server.workspaceService().HCLFile,
 		stateManager:    server.stateManager,
@@ -180,10 +178,6 @@ func applyOperationKey(revision string, inputs map[string]string, allowUnsafe bo
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return fmt.Sprintf("%x", sum[:])
-}
-
-func (s *RunService) ValidateStoredPlanForApply(ctx context.Context, topology, planID string, currentSerial int64) (*controlplane.Plan, error) {
-	return s.plans.ValidateStoredPlanForApply(ctx, topology, planID, currentSerial)
 }
 
 func (s *RunService) StartRepair(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {

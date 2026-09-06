@@ -69,12 +69,6 @@ CREATE TABLE IF NOT EXISTS sysbox_revisions (
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_plans (
-  workspace TEXT NOT NULL,
-  id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
 CREATE TABLE IF NOT EXISTS sysbox_policies (
   workspace TEXT NOT NULL,
   id TEXT PRIMARY KEY,
@@ -257,27 +251,6 @@ func (s *localAPIStore) GetGlobalRevision(_ context.Context, revision string) (*
 		return nil, fmt.Errorf("decode global revision: %w", err)
 	}
 	return &rev, nil
-}
-
-func (s *localAPIStore) SavePlan(_ context.Context, plan controlplane.Plan) error {
-	return writeLocalObject(filepath.Join(s.runsDir, plan.Workspace, "plans", plan.ID+".json"), plan)
-}
-
-func (s *localAPIStore) ListPlans(_ context.Context, workspace string) ([]controlplane.Plan, error) {
-	return readLocalObjects[controlplane.Plan](filepath.Join(s.runsDir, workspace, "plans", "*.json"))
-}
-
-func (s *localAPIStore) GetPlan(ctx context.Context, workspace, planID string) (*controlplane.Plan, error) {
-	items, err := s.ListPlans(ctx, workspace)
-	if err != nil {
-		return nil, err
-	}
-	for _, item := range items {
-		if item.ID == planID {
-			return &item, nil
-		}
-	}
-	return nil, fmt.Errorf("plan not found")
 }
 
 func (s *localAPIStore) SavePolicy(_ context.Context, policy controlplane.Policy) error {
@@ -617,18 +590,6 @@ func (s *postgresAPIStore) GetGlobalRevision(ctx context.Context, revision strin
 		return nil, fmt.Errorf("decode global revision: %w", err)
 	}
 	return &rev, nil
-}
-
-func (s *postgresAPIStore) SavePlan(ctx context.Context, plan controlplane.Plan) error {
-	return s.saveObject(ctx, "sysbox_plans", plan.Workspace, plan.ID, plan)
-}
-
-func (s *postgresAPIStore) ListPlans(ctx context.Context, workspace string) ([]controlplane.Plan, error) {
-	return listPostgresObjects[controlplane.Plan](ctx, s, "sysbox_plans", workspace)
-}
-
-func (s *postgresAPIStore) GetPlan(ctx context.Context, workspace, planID string) (*controlplane.Plan, error) {
-	return getPostgresObject[controlplane.Plan](ctx, s, "sysbox_plans", workspace, planID)
 }
 
 func (s *postgresAPIStore) SavePolicy(ctx context.Context, policy controlplane.Policy) error {

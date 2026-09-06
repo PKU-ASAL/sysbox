@@ -43,19 +43,6 @@ type Revision struct {
 	Description string    `json:"description,omitempty"`
 }
 
-type Plan struct {
-	ID          string          `json:"id"`
-	ProjectID   string          `json:"project_id"`
-	Workspace   string          `json:"workspace"`
-	Revision    string          `json:"revision,omitempty"`
-	StateSerial int64           `json:"state_serial,omitempty"`
-	Fingerprint PlanFingerprint `json:"fingerprint"`
-	Status      string          `json:"status"`
-	Summary     string          `json:"summary,omitempty"`
-	Actions     []PlannedChange `json:"actions"`
-	CreatedAt   time.Time       `json:"created_at"`
-}
-
 type PlanFingerprint struct {
 	ConfigSHA256    string            `json:"config_sha256"`
 	StateLineage    string            `json:"state_lineage"`
@@ -77,7 +64,6 @@ type Run struct {
 	Err                string    `json:"error,omitempty"`
 	ParentID           string    `json:"parent_id,omitempty"`
 	Revision           string    `json:"revision,omitempty"`
-	PlanID             string    `json:"plan_id,omitempty"`
 	Target             string    `json:"target,omitempty"`
 	OperationKey       string    `json:"operation_key,omitempty"`
 	RequestFingerprint string    `json:"request_fingerprint,omitempty"`

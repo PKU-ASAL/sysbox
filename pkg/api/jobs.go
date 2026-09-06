@@ -36,7 +36,6 @@ type Jobs struct {
 type runStartOptions struct {
 	ParentID     string
 	Revision     string
-	PlanID       string
 	Target       string
 	AgentID      string
 	UnsafeState  bool
@@ -255,7 +254,6 @@ func newRun(topology, op string, opts runStartOptions) *controlplane.Run {
 		Status:       controlplane.RunQueued,
 		ParentID:     opts.ParentID,
 		Revision:     opts.Revision,
-		PlanID:       opts.PlanID,
 		Target:       opts.Target,
 		OperationKey: opts.OperationKey,
 		AgentID:      opts.AgentID,
@@ -496,7 +494,6 @@ func (j *Jobs) startChild(parent *controlplane.Run) *controlplane.Run {
 	return j.startWithOptions(parent.Topology, parent.Op, runStartOptions{
 		ParentID:    parent.ID,
 		Revision:    parent.Revision,
-		PlanID:      parent.PlanID,
 		Target:      parent.Target,
 		AgentID:     parent.AgentID,
 		UnsafeState: parent.UnsafeState,

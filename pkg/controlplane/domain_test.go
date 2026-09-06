@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/oslab/sysbox/pkg/address"
 )
 
 func TestRunLifecycleHelpers(t *testing.T) {
@@ -53,27 +51,6 @@ func TestAgentSchedulingHelpers(t *testing.T) {
 	offline := Agent{ID: "host-b", Status: AgentStatusOffline}
 	require.False(t, offline.IsSchedulable())
 	require.False(t, offline.IsBlocked())
-}
-
-func TestPlanCanApply(t *testing.T) {
-	plan := Plan{
-		ID:          "plan-1",
-		Revision:    "rev-a",
-		StateSerial: 7,
-		Status:      PlanStatusPlanned,
-		Actions:     []PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: PlanActionCreate}},
-	}
-
-	require.NoError(t, plan.CanApply("rev-a", 7))
-	require.ErrorContains(t, plan.CanApply("rev-b", 7), "stale")
-	require.ErrorContains(t, plan.CanApply("rev-a", 8), "state serial")
-
-	plan.Status = "applied"
-	require.ErrorContains(t, plan.CanApply("rev-a", 7), "status is applied")
-
-	plan.Status = PlanStatusPlanned
-	plan.Actions = nil
-	require.ErrorContains(t, plan.CanApply("rev-a", 7), "has no actions")
 }
 
 func TestAgentCommandLeaseHelpers(t *testing.T) {
