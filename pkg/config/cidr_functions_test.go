@@ -31,6 +31,9 @@ func TestCidrsubnet(t *testing.T) {
 func TestCidrsubnetErrors(t *testing.T) {
 	for _, c := range [][]cty.Value{
 		{cty.StringVal("not-a-cidr"), cty.NumberIntVal(8), cty.NumberIntVal(0)},
+		{cty.StringVal("2001:db8::/32"), cty.NumberIntVal(8), cty.NumberIntVal(0)},
+		{cty.StringVal("10.0.0.0/16"), cty.NumberFloatVal(8.9), cty.NumberIntVal(0)},
+		{cty.StringVal("10.0.0.0/16"), cty.NumberIntVal(-1), cty.NumberIntVal(0)},
 		{cty.StringVal("10.0.0.0/16"), cty.NumberIntVal(17), cty.NumberIntVal(0)},
 		{cty.StringVal("10.0.0.0/16"), cty.NumberIntVal(8), cty.NumberIntVal(256)},
 	} {
@@ -48,6 +51,7 @@ func TestCidrhost(t *testing.T) {
 		{"10.200.0.0/24", 0, "10.200.0.0"},
 		{"10.200.0.0/24", 1, "10.200.0.1"},
 		{"10.200.0.0/24", 10, "10.200.0.10"},
+		{"10.200.0.99/24", 5, "10.200.0.5"},
 	}
 	for _, c := range cases {
 		got, err := cidrhostFunc.Call([]cty.Value{
@@ -61,6 +65,7 @@ func TestCidrhost(t *testing.T) {
 func TestCidrhostErrors(t *testing.T) {
 	for _, c := range [][]cty.Value{
 		{cty.StringVal("bad"), cty.NumberIntVal(0)},
+		{cty.StringVal("10.0.0.0/24"), cty.NumberIntVal(-1)},
 		{cty.StringVal("10.0.0.0/24"), cty.NumberIntVal(256)},
 	} {
 		_, err := cidrhostFunc.Call(c)

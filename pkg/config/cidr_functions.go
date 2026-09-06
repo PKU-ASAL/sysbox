@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/binary"
 	"fmt"
+	"math/big"
 	"net/netip"
 
 	"github.com/zclconf/go-cty/cty"
@@ -23,8 +24,14 @@ var cidrsubnetFunc = function.New(&function.Spec{
 		if err != nil {
 			return cty.NilVal, err
 		}
-		newbits, _ := args[1].AsBigFloat().Int64()
-		netnum, _ := args[2].AsBigFloat().Int64()
+		newbits, acc := args[1].AsBigFloat().Int64()
+		if acc != big.Exact {
+			return cty.NilVal, fmt.Errorf("newbits must be a whole number")
+		}
+		netnum, acc := args[2].AsBigFloat().Int64()
+		if acc != big.Exact {
+			return cty.NilVal, fmt.Errorf("netnum must be a whole number")
+		}
 		if newbits < 0 {
 			return cty.NilVal, fmt.Errorf("newbits must be non-negative")
 		}
@@ -52,7 +59,10 @@ var cidrhostFunc = function.New(&function.Spec{
 		if err != nil {
 			return cty.NilVal, err
 		}
-		hostnum, _ := args[1].AsBigFloat().Int64()
+		hostnum, acc := args[1].AsBigFloat().Int64()
+		if acc != big.Exact {
+			return cty.NilVal, fmt.Errorf("hostnum must be a whole number")
+		}
 		if hostnum < 0 || hostnum >= (int64(1)<<uint(32-prefix.Bits())) {
 			return cty.NilVal, fmt.Errorf("host number out of range")
 		}
@@ -65,7 +75,7 @@ var cidrhostFunc = function.New(&function.Spec{
 func parseIPv4Prefix(raw string) (netip.Prefix, error) {
 	prefix, err := netip.ParsePrefix(raw)
 	if err != nil {
-		return netip.Prefix{}, fmt.Errorf("invalid CIDR prefix")
+		return netip.Prefix{}, fmt.Errorf("invalid CIDR prefix: %w", err)
 	}
 	if !prefix.Addr().Is4() {
 		return netip.Prefix{}, fmt.Errorf("IPv6 not supported")
