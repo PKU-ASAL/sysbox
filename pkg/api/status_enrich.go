@@ -13,8 +13,8 @@ import (
 // goToCty converts a Go value read from state (JSON round-tripped) into a
 // cty.Value so it can be bound into an eval context. Attribute values are
 // typically scalars, maps, or slices, but the converter degrades gracefully to
-// a JSON string for any type it does not recognise rather than failing the
-// whole enrichment.
+// a JSON round-trip (and finally a string) for any type it does not recognise
+// rather than failing the whole enrichment.
 func goToCty(v any) cty.Value {
 	switch t := v.(type) {
 	case nil:
@@ -53,50 +53,51 @@ func goToCty(v any) cty.Value {
 		}
 		return cty.TupleVal(items)
 	default:
-		// Fall back: marshal to JSON and re-parse, or StringVal.
-		if b, err := json.Marshal(t); err == nil {
+		// Best-effort: marshal to JSON and re-parse so composite values reach
+		// the map/slice branches above; a flat string is the final fallback.
+		b, err := json.Marshal(t)
+		if err != nil {
+			return cty.StringVal(fmt.Sprintf("%v", t))
+		}
+		var parsed any
+		if err := json.Unmarshal(b, &parsed); err != nil {
 			return cty.StringVal(string(b))
 		}
-		return cty.StringVal(fmt.Sprintf("%v", t))
+		return goToCty(parsed)
 	}
 }
 
-// enrichEvalContext overrides the synthetic resource type→name bindings in the
-// eval context with the resource's real state attributes, so output
-// expressions such as sysbox_node.web.primary_ip resolve. substrate, local and
-// module namespaces are left intact.
-//
-// Only non-count, non-for_each resources (a single instance per HCL block
-// name) are enriched: those have an unset Address.Key. Count/for_each
-// instances keep their synthetic {id, name} binding and are a separate
-// follow-up.
+// enrichEvalContext merges each non-count root resource's real state attributes
+// into the eval context, so output expressions such as
+// sysbox_node.web.primary_ip resolve. The merge preserves every binding
+// BuildEvalContext already placed in the type namespace — count/for_each tuples
+// and HCL-declared resources absent from state — and skips module resources
+// (Address.ModulePath set) so they cannot clobber root resources of the same
+// type/name. substrate, local and module namespaces are left intact.
 func enrichEvalContext(ctx *hcl.EvalContext, st *state.State) {
 	if ctx == nil || st == nil {
 		return
 	}
 
-	byType := map[string]map[string]cty.Value{}
 	for _, r := range st.Resources {
-		if r.Address.Key.IsSet() {
-			continue // count/for_each: leave as synthetic, follow-up
+		if r.Address.Key.IsSet() || len(r.Address.ModulePath) > 0 {
+			continue // count/for_each and module resources: leave intact
 		}
-		if byType[r.Address.Type] == nil {
-			byType[r.Address.Type] = map[string]cty.Value{}
+		typVal, ok := ctx.Variables[r.Address.Type]
+		if !ok || !typVal.Type().IsObjectType() {
+			continue
 		}
-		attrs := map[string]cty.Value{
-			"id":   cty.StringVal(r.Address.String()),
-			"name": cty.StringVal(r.Address.String()),
-		}
+
+		attrs := map[string]cty.Value{}
 		for k, v := range r.Attributes {
 			attrs[k] = goToCty(v)
 		}
-		// Address-derived id/name always win over any colliding attribute key.
+		// id/name always win over any colliding attribute key.
 		attrs["id"] = cty.StringVal(r.Address.String())
 		attrs["name"] = cty.StringVal(r.Address.String())
-		byType[r.Address.Type][r.Address.Name] = cty.ObjectVal(attrs)
-	}
 
-	for typ, byName := range byType {
-		ctx.Variables[typ] = cty.ObjectVal(byName)
+		merged := typVal.AsValueMap()
+		merged[r.Address.Name] = cty.ObjectVal(attrs)
+		ctx.Variables[r.Address.Type] = cty.ObjectVal(merged)
 	}
 }
