@@ -261,6 +261,10 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 	command.Status = controlplane.AgentCommandStatusQueued
 	command.Protocol = controlplane.AgentProtocolVersion
 	command.CreatedAt = time.Now().UTC()
+	// Destroy has no inputs today, but if an apply path ever routes through
+	// CreateRunDispatch, sensitive inputs must never be persisted here.
+	run.Inputs = nil
+	command.Run.Inputs = nil
 	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint})
 	if err != nil {
 		if errors.Is(err, errIdempotencyConflict) {
