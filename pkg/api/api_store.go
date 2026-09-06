@@ -157,15 +157,19 @@ func (s *localAPIStore) SchemaVersion(context.Context) (int, error) {
 	return apiSchemaVersion, nil
 }
 
-func newAPIStore(runsDir, backendURL string) apiStore {
+func newAPIStore(runsDir, backendURL string) (apiStore, error) {
 	if strings.HasPrefix(backendURL, "postgres://") || strings.HasPrefix(backendURL, "postgresql://") {
-		return &postgresAPIStore{dsn: backendURL}
+		store := &postgresAPIStore{dsn: backendURL}
+		if err := store.ping(); err != nil {
+			return nil, err
+		}
+		return store, nil
 	}
 	if strings.HasPrefix(backendURL, "sqlite://") {
 		path := strings.TrimPrefix(backendURL, "sqlite://")
-		return &sqliteAPIStore{dbPath: path, runsDir: runsDir}
+		return &sqliteAPIStore{dbPath: path, runsDir: runsDir}, nil
 	}
-	return &localAPIStore{runsDir: runsDir}
+	return &localAPIStore{runsDir: runsDir}, nil
 }
 
 func (s *localAPIStore) SaveCheckpoint(_ context.Context, topology, runID string, checkpoint runtime.OperationCheckpoint) error {
@@ -361,11 +365,33 @@ func readLocalObjects[T any](pattern string) ([]T, error) {
 	return out, nil
 }
 
+// postgresReachabilityTimeout bounds the eager startup check that verifies a
+// configured Postgres backend is reachable before the server begins serving.
+const postgresReachabilityTimeout = 5 * time.Second
+
 type postgresAPIStore struct {
 	dsn string
 
 	mu   sync.Mutex
 	pool *pgxpool.Pool
+}
+
+// ping verifies the configured Postgres backend is reachable using a fresh
+// connection, independent of the lazily-initialized pool. A misconfigured or
+// unreachable DSN therefore fails server startup immediately instead of at
+// first use.
+func (s *postgresAPIStore) ping() error {
+	ctx, cancel := context.WithTimeout(context.Background(), postgresReachabilityTimeout)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dsnWithoutSysboxQuery(s.dsn))
+	if err != nil {
+		return fmt.Errorf("postgres state backend unreachable: %w", err)
+	}
+	defer conn.Close(context.Background()) //nolint:errcheck
+	if err := conn.Ping(ctx); err != nil {
+		return fmt.Errorf("postgres state backend ping: %w", err)
+	}
+	return nil
 }
 
 // connect acquires a connection from the lazily-initialized pool. The pool and

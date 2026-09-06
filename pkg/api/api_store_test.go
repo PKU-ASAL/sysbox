@@ -229,6 +229,11 @@ func TestDSNWithoutSysboxQueryPreservesPostgresConnectionOptions(t *testing.T) {
 	require.NotContains(t, got, "topology=")
 }
 
+func TestPostgresAPIStoreRejectsUnreachableDSN(t *testing.T) {
+	_, err := newAPIStore(t.TempDir(), "postgres://127.0.0.1:1/nonexistent")
+	require.Error(t, err)
+}
+
 func TestSQLiteRunDispatchRollsBackRunWhenCommandInsertFails(t *testing.T) {
 	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
 	ctx := context.Background()
