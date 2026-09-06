@@ -84,7 +84,6 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 			Status:   controlplane.ResourceHealthHealthy,
 		}},
 	}
-	s.agents.SaveResourceProjection(proj)
 	require.NoError(t, s.apiStore.SaveResourceProjection(context.Background(), proj))
 
 	supervisor := newSupervisor(s, time.Minute)
