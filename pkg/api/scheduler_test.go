@@ -47,6 +47,29 @@ resource "sysbox_node" "microvm" {
 	require.Equal(t, []string{"firecracker", "kvm", "network"}, caps)
 }
 
+func TestRequiredCapabilitiesForTopologyIgnoresVarFields(t *testing.T) {
+	dir := t.TempDir()
+	hcl := filepath.Join(dir, "field.sysbox.hcl")
+	require.NoError(t, os.WriteFile(hcl, []byte(`
+variable "subnet_prefix" {}
+
+resource "sysbox_network" "lab" {
+  cidr = "${var.subnet_prefix}.0/24"
+}
+
+resource "sysbox_node" "web" {
+  substrate = "docker"
+  image     = "alpine"
+  env       = { FLAG = var.subnet_prefix }
+}
+`), 0o644))
+
+	caps, err := requiredCapabilitiesForTopology(hcl)
+	require.NoError(t, err)
+	require.Contains(t, caps, "network")
+	require.Contains(t, caps, "docker")
+}
+
 func TestSelectAgentByCapabilities(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	ctx := context.Background()
