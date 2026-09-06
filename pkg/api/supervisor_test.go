@@ -71,7 +71,7 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 	})
 
 	s := NewServer(runs, workspaces)
-	s.agents.SaveResourceProjection(controlplane.ResourceProjection{
+	proj := controlplane.ResourceProjection{
 		AgentID:    "agent-1",
 		Workspace:  "web",
 		Topology:   "web",
@@ -83,7 +83,9 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 			Provider: "docker",
 			Status:   controlplane.ResourceHealthHealthy,
 		}},
-	})
+	}
+	s.agents.SaveResourceProjection(proj)
+	require.NoError(t, s.apiStore.SaveResourceProjection(context.Background(), proj))
 
 	supervisor := newSupervisor(s, time.Minute)
 	require.NoError(t, supervisor.ScanTopology(context.Background(), "web"))

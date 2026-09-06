@@ -199,6 +199,11 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		data     BLOB NOT NULL
 	) STRICT;
 
+	CREATE TABLE IF NOT EXISTS sysbox_projection (
+		topology TEXT PRIMARY KEY,
+		data     BLOB NOT NULL
+	) STRICT;
+
 	CREATE TABLE IF NOT EXISTS sysbox_global_revisions (
 		revision   TEXT PRIMARY KEY,
 		files      TEXT NOT NULL DEFAULT '',
@@ -540,6 +545,38 @@ func (s *sqliteAPIStore) LoadHealth(ctx context.Context, topology string) (*Heal
 		return nil, err
 	}
 	return &snap, nil
+}
+
+func (s *sqliteAPIStore) SaveResourceProjection(ctx context.Context, proj controlplane.ResourceProjection) error {
+	data, _ := json.Marshal(proj)
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO sysbox_projection (topology, data) VALUES (?, ?) ON CONFLICT(topology) DO UPDATE SET data=excluded.data`,
+		proj.Topology, data)
+	return err
+}
+
+func (s *sqliteAPIStore) LoadResourceProjection(ctx context.Context, topology string) (*controlplane.ResourceProjection, error) {
+	db, err := s.open()
+	if err != nil {
+		return nil, err
+	}
+	var data []byte
+	err = db.QueryRowContext(ctx, `SELECT data FROM sysbox_projection WHERE topology=?`, topology).Scan(&data)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var proj controlplane.ResourceProjection
+	if err := json.Unmarshal(data, &proj); err != nil {
+		return nil, err
+	}
+	return &proj, nil
 }
 
 func (s *sqliteAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {

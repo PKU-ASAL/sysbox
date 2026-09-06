@@ -23,7 +23,7 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 2
+const apiSchemaVersion = 3
 
 // errGlobalRevisionNotFound is returned by GetGlobalRevision when no revision
 // exists for the requested digest. Callers use errors.Is to detect it so they
@@ -141,6 +141,16 @@ CREATE TABLE IF NOT EXISTS sysbox_global_revisions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`,
 	},
+	{
+		Version: 3,
+		Name:    "resource_projections",
+		SQL: `
+CREATE TABLE IF NOT EXISTS sysbox_projection (
+  topology TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`,
+	},
 }
 
 func (s *localAPIStore) SchemaVersion(context.Context) (int, error) {
@@ -204,6 +214,33 @@ func (s *localAPIStore) LoadHealth(_ context.Context, topology string) (*HealthS
 		return nil, fmt.Errorf("decode health snapshot: %w", err)
 	}
 	return &snap, nil
+}
+
+func (s *localAPIStore) SaveResourceProjection(_ context.Context, proj controlplane.ResourceProjection) error {
+	path := filepath.Join(s.runsDir, proj.Topology, "projection.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(proj, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o644)
+}
+
+func (s *localAPIStore) LoadResourceProjection(_ context.Context, topology string) (*controlplane.ResourceProjection, error) {
+	raw, err := os.ReadFile(filepath.Join(s.runsDir, topology, "projection.json"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var proj controlplane.ResourceProjection
+	if err := json.Unmarshal(raw, &proj); err != nil {
+		return nil, fmt.Errorf("decode resource projection: %w", err)
+	}
+	return &proj, nil
 }
 
 func (s *localAPIStore) checkpointFile(topology, runID string) string {
@@ -526,6 +563,48 @@ func (s *postgresAPIStore) LoadHealth(ctx context.Context, topology string) (*He
 		return nil, fmt.Errorf("decode health snapshot: %w", err)
 	}
 	return &snap, nil
+}
+
+func (s *postgresAPIStore) SaveResourceProjection(ctx context.Context, proj controlplane.ResourceProjection) error {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	raw, err := json.Marshal(proj)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(ctx, `
+INSERT INTO sysbox_projection (topology, data, updated_at)
+VALUES ($1, $2::jsonb, now())
+ON CONFLICT (topology) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`,
+		proj.Topology, string(raw))
+	if err != nil {
+		return fmt.Errorf("postgres save resource projection: %w", err)
+	}
+	return nil
+}
+
+func (s *postgresAPIStore) LoadResourceProjection(ctx context.Context, topology string) (*controlplane.ResourceProjection, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+	var raw []byte
+	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_projection WHERE topology=$1`, topology).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres load resource projection: %w", err)
+	}
+	var proj controlplane.ResourceProjection
+	if err := json.Unmarshal(raw, &proj); err != nil {
+		return nil, fmt.Errorf("decode resource projection: %w", err)
+	}
+	return &proj, nil
 }
 
 func (s *postgresAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {

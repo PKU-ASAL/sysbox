@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -34,7 +33,7 @@ func (s *Server) handleListResources(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authoritativeTopologyHealth(ctx context.Context, topology string, st *state.State) controlplane.TopologyHealth {
-	if proj, ok := latestResourceProjection(s.agents.ListResourceProjections(topology)); ok {
+	if proj, err := s.apiStore.LoadResourceProjection(ctx, topology); err == nil && proj != nil {
 		if len(proj.Resources) > 0 {
 			return topologyHealthFromResources(proj.Resources)
 		}
@@ -46,16 +45,6 @@ func (s *Server) authoritativeTopologyHealth(ctx context.Context, topology strin
 		return controlplane.TopologyHealth{Status: controlplane.ResourceHealthUnknown}
 	}
 	return runtime.EvaluateTopologyHealth(ctx, st)
-}
-
-func latestResourceProjection(projections []controlplane.ResourceProjection) (controlplane.ResourceProjection, bool) {
-	if len(projections) == 0 {
-		return controlplane.ResourceProjection{}, false
-	}
-	sort.SliceStable(projections, func(i, j int) bool {
-		return projections[i].ObservedAt.After(projections[j].ObservedAt)
-	})
-	return projections[0], true
 }
 
 func topologyHealthFromResources(resources []controlplane.ResourceHealth) controlplane.TopologyHealth {

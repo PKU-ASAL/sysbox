@@ -159,6 +159,20 @@ func TestSQLiteGlobalRevisionFilesColumnMigration(t *testing.T) {
 	require.Equal(t, files, got.Files)
 }
 
+func TestResourceProjectionStoreRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s := NewServer(dir, dir)
+	proj := controlplane.ResourceProjection{
+		AgentID: "agent-1", Topology: "web", ObservedAt: time.Now().UTC(),
+		Resources: []controlplane.ResourceHealth{{Resource: "sysbox_node.web", Status: controlplane.ResourceHealthHealthy}},
+	}
+	require.NoError(t, s.apiStore.SaveResourceProjection(context.Background(), proj))
+	got, err := s.apiStore.LoadResourceProjection(context.Background(), "web")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, "agent-1", got.AgentID)
+}
+
 func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	ctx := context.Background()

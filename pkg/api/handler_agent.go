@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -333,6 +334,9 @@ func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *htt
 		req.Resources = req.Health.Resources
 	}
 	s.agents.SaveResourceProjection(req)
+	if err := s.apiStore.SaveResourceProjection(r.Context(), req); err != nil {
+		slog.Warn("persist resource projection failed", "topology", req.Topology, "error", err)
+	}
 	writeJSON(w, http.StatusAccepted, req)
 }
 
