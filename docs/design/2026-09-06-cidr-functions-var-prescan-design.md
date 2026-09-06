@@ -41,23 +41,29 @@ cyberfield 接真实 sysbox 端到端联调，暴露两个问题，都落在「H
 ```
 apply → StartApply → dispatchTopologyRun
   → requiredCapabilitiesForTopology(hclFile)
-      → config.BuildEvalContext(root)     ← 无 inputs，var 命名空间缺失
-      → decodeCapabilityResource 逐个求值 resource
+      → decodeCapabilityResource 完整解码每个 resource（含 cidr/env 等字段）
       → cidr = "${var.subnet_prefix}.0/24" 求值失败 → 返回 error → apply 400
 ```
 
-### 修复（两层，不用 unknown 占位）
+能力预扫描只需要每个 resource 的「关键字段」（substrate / NAT），却完整解码了所有
+字段，把 `var.<name>` 引用（出现在它不关心的 cidr 等字段）也求值了。
 
-1. **apply 路径传 inputs（主修）**：`requiredCapabilitiesForTopology(path string)`
-   改为 `requiredCapabilitiesForTopology(path string, inputs map[string]string)`，
-   内部改用 `config.BuildEvalContextWithInputs(root, filepath.Dir(path), inputs)`。
-   apply 的 `dispatchTopologyRun` 传 `run.Inputs` —— 预扫描直接用真值，消灭「看不到
-   inputs」这个假问题。
+### 修复（最小 probe，不用 unknown 占位，无需传 inputs）
 
-2. **静态路径容错（副修）**：supervisor 的 `maybeRepair`（仅在 `restart_on_crash`
-   策略下调用）无 inputs，改传 `nil`。其 `err` 分支已 `Action = "restart_apply_failed"`
-   并 finish run，本次补一条 `slog.Warn`（对齐「失败要 log，不静默吞」），自动修复
-   是尽力而为、不因预扫描失败而中断 supervisor 本身。
+`requiredCapabilitiesForTopology` 的签名**不变**，内部改为「按 type 用最小 probe 只解
+关键字段，其余字段进 `Remain` 不求值」：
+
+- 定义两个 probe：`substrateProbe{ Substrate string; Remain hcl.Body }` 与
+  `networkProbe{ NAT bool; Remain hcl.Body }`。
+- `sysbox_node`/`sysbox_router`/`sysbox_image`/`sysbox_kernel` → `substrateProbe`，
+  读 `Substrate`。
+- `sysbox_network` → `networkProbe`，读 `NAT`。
+- `sysbox_firewall`/`sysbox_ssh_access` → 不解字段，直接 `set["network"]=true`。
+- `requiredCapabilitiesForNode` 同样改为 `substrateProbe`。
+- 删除 `decodeCapabilityResource`。
+
+这样 apply / destroy / supervisor / node 四条路径统一：能力预扫描只解它关心的关键
+字段，`cidr = var.prefix` 这类引用根本不被求值，天然不受 var 影响。
 
 ### 不采用的方案
 
@@ -112,9 +118,10 @@ cidrhost("10.200.0.0/24", 0)        # "10.200.0.0"  （网络地址；不做「�
 ## 五、测试要点
 
 **交付 1（bug 修复）**
-- 回归：HCL 含 `cidr = "${var.subnet_prefix}.0/24"`，apply 传真 inputs 时预扫描通过、
-  run 正常下发。
-- 静态路径：无 inputs 时 `requiredCapabilitiesForTopology` 失败被 log、不 panic。
+- 回归：HCL 含 `cidr = "${var.subnet_prefix}.0/24"`（`substrate` 为字面量），
+  `requiredCapabilitiesForTopology` 返回正确能力、不报错（只解 substrate，不解 cidr）。
+- 回归：`requiredCapabilitiesForNode` 在含 var 引用的 HCL 上同样不报错。
+- 回归：`sysbox_network` 含 var 引用的 cidr，但 `NAT` 为字面量时，`network` 能力判断正确。
 
 **交付 2（函数）**
 - 单元：`cidrsubnet` 正常划分（`/16→/24`、多个 netnum）；`newbits`/`netnum` 边界与越界；
