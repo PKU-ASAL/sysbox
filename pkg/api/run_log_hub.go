@@ -23,6 +23,21 @@ func (h *RunLogHub) Close(runID string) {
 	h.ensure(runID, false).Close()
 }
 
+// Reopen replaces any existing broadcaster for runID with a fresh, open one.
+// It is used when a run id is reused for a new attempt (e.g. an apply retry
+// after a terminal run) so the new attempt's logs are not dropped into a
+// broadcaster already closed by the prior attempt.
+func (h *RunLogHub) Reopen(runID string) *Broadcaster {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.logs == nil {
+		h.logs = map[string]*Broadcaster{}
+	}
+	b := &Broadcaster{}
+	h.logs[runID] = b
+	return b
+}
+
 func (h *RunLogHub) ensure(runID string, closed bool) *Broadcaster {
 	h.mu.Lock()
 	defer h.mu.Unlock()

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,6 +23,22 @@ func TestSQLiteAPIStoreRoundTripsResetTargetAndUnsafeState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, run.Target, got.Target)
 	require.True(t, got.UnsafeState)
+}
+
+func TestSQLiteAPIStoreRoundTripsDeadlineAt(t *testing.T) {
+	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	deadline := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	run := controlplane.Run{ID: "apply-1", Topology: "mixed", Operation: "apply", Op: "apply", Status: controlplane.RunQueued, DeadlineAt: deadline}
+	require.NoError(t, store.SaveRun(context.Background(), run))
+
+	got, err := store.GetRun(context.Background(), run.ID)
+	require.NoError(t, err)
+	require.True(t, got.DeadlineAt.Equal(deadline))
+
+	runs, err := store.LoadRuns(context.Background())
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	require.True(t, runs[0].DeadlineAt.Equal(deadline))
 }
 
 func TestSQLiteAgentCommandRoundTripsGuestFilePut(t *testing.T) {
@@ -59,6 +76,87 @@ func TestAgentCommandStoresRejectStaleStatusRegression(t *testing.T) {
 			require.False(t, commands[0].EndedAt.IsZero())
 		})
 	}
+}
+
+func TestGlobalRevisionStoreRoundTrip(t *testing.T) {
+	stores := map[string]apiStore{
+		"local":  &localAPIStore{runsDir: t.TempDir()},
+		"sqlite": &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()},
+	}
+	for name, store := range stores {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			files := map[string][]byte{
+				"field.sysbox.hcl":     []byte(`resource "sysbox_node" "web" {}`),
+				"modules/web/main.hcl": []byte(`resource "sysbox_node" "web" {}`),
+				"files/f.txt":          []byte("hello"),
+			}
+			size := 0
+			for _, content := range files {
+				size += len(content)
+			}
+			rev := controlplane.GlobalRevision{
+				Revision:  "sha256:deadbeef",
+				Files:     files,
+				Size:      size,
+				CreatedAt: time.Now().UTC(),
+			}
+			require.NoError(t, store.SaveGlobalRevision(ctx, rev))
+
+			got, err := store.GetGlobalRevision(ctx, rev.Revision)
+			require.NoError(t, err)
+			require.Equal(t, rev.Revision, got.Revision)
+			require.Equal(t, rev.Files, got.Files)
+			require.Equal(t, rev.Size, got.Size)
+
+			_, err = store.GetGlobalRevision(ctx, "sha256:unknown")
+			require.ErrorIs(t, err, errGlobalRevisionNotFound)
+		})
+	}
+}
+
+// A database created before directory-tree revisions has a sysbox_global_revisions
+// table with a single "hcl" column. Opening it must idempotently add the "files"
+// column so new saves/loads round-trip the whole tree.
+func TestSQLiteGlobalRevisionFilesColumnMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "api.db")
+	legacy, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = legacy.Exec(`CREATE TABLE sysbox_global_revisions (
+		revision   TEXT PRIMARY KEY,
+		hcl        TEXT NOT NULL DEFAULT '',
+		size       INTEGER DEFAULT 0,
+		created_at TEXT NOT NULL DEFAULT ''
+	) STRICT;`)
+	require.NoError(t, err)
+	// A pre-migration row written under the old single-HCL model.
+	_, err = legacy.Exec(`INSERT INTO sysbox_global_revisions (revision, hcl, size, created_at)
+		VALUES ('sha256:legacy', 'resource "sysbox_node" "web" {}', 0, '')`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	store := &sqliteAPIStore{dbPath: dbPath, runsDir: t.TempDir()}
+
+	// A legacy row carries no files JSON, so it must read as not-found rather
+	// than a JSON unmarshal error (which would surface as a 500 on apply).
+	_, err = store.GetGlobalRevision(context.Background(), "sha256:legacy")
+	require.ErrorIs(t, err, errGlobalRevisionNotFound)
+
+	files := map[string][]byte{
+		"field.sysbox.hcl": []byte(`resource "sysbox_node" "web" {}`),
+		"files/f.txt":      []byte("hello"),
+	}
+	rev := controlplane.GlobalRevision{
+		Revision:  "sha256:deadbeef",
+		Files:     files,
+		Size:      len(files["field.sysbox.hcl"]) + len(files["files/f.txt"]),
+		CreatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, store.SaveGlobalRevision(context.Background(), rev))
+
+	got, err := store.GetGlobalRevision(context.Background(), rev.Revision)
+	require.NoError(t, err)
+	require.Equal(t, files, got.Files)
 }
 
 func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {

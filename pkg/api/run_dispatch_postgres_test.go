@@ -95,6 +95,38 @@ func TestPostgresAgentCommandRejectsStaleStatusRegression(t *testing.T) {
 	require.False(t, commands[0].EndedAt.IsZero())
 }
 
+func TestPostgresGlobalRevisionRoundTrip(t *testing.T) {
+	dsn := isolatedPostgresTestDSN(t)
+	store := newAPIStore("", dsn)
+	ctx := context.Background()
+
+	files := map[string][]byte{
+		"field.sysbox.hcl":     []byte(`resource "sysbox_node" "web" {}`),
+		"modules/web/main.hcl": []byte(`resource "sysbox_node" "web" {}`),
+		"files/f.txt":          []byte("hello"),
+	}
+	size := 0
+	for _, content := range files {
+		size += len(content)
+	}
+	rev := controlplane.GlobalRevision{
+		Revision:  "sha256:deadbeef",
+		Files:     files,
+		Size:      size,
+		CreatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, store.SaveGlobalRevision(ctx, rev))
+
+	got, err := store.GetGlobalRevision(ctx, rev.Revision)
+	require.NoError(t, err)
+	require.Equal(t, rev.Revision, got.Revision)
+	require.Equal(t, rev.Files, got.Files)
+	require.Equal(t, rev.Size, got.Size)
+
+	_, err = store.GetGlobalRevision(ctx, "sha256:unknown")
+	require.ErrorIs(t, err, errGlobalRevisionNotFound)
+}
+
 func TestDestroyHTTPIdempotencyRejectsFingerprintConflictAcrossPostgresServers(t *testing.T) {
 	dsn := isolatedPostgresTestDSN(t)
 	dir := t.TempDir()

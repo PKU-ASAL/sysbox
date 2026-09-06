@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -24,20 +26,21 @@ func validateOperationKey(key string) error {
 
 type RunService struct {
 	jobs            *Jobs
-	plans           *PlanService
 	scheduler       *SchedulerService
 	hclFile         func(string) string
 	stateManager    func(string) (*state.Manager, error)
 	requiredForTopo func(string) ([]string, error)
+	revisions       globalRevisionStore
+	workspaces      *WorkspaceService
 }
 
 type RunStartRequest struct {
-	PlanID           string
 	Revision         string
 	AgentID          string
 	Target           string
 	AllowUnsafeState bool
 	Inputs           map[string]string
+	DeadlineAt       *time.Time
 }
 
 type runServiceErrorKind string
@@ -66,11 +69,12 @@ func (e runServiceError) Unwrap() error { return e.err }
 func newRunService(server *Server) *RunService {
 	return &RunService{
 		jobs:            server.jobs,
-		plans:           server.plans(),
 		scheduler:       server.scheduling(),
 		hclFile:         server.workspaceService().HCLFile,
 		stateManager:    server.stateManager,
 		requiredForTopo: requiredCapabilitiesForTopology,
+		revisions:       server.apiStore,
+		workspaces:      server.workspaceService(),
 	}
 }
 
@@ -99,32 +103,81 @@ func runServiceStatus(err error) int {
 }
 
 func (s *RunService) StartApply(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
-	if req.PlanID != "" {
-		currentSerial, err := s.currentStateSerial(ctx, topology)
+	// Serialize the whole apply (HCL upsert + run creation) per-topology so
+	// concurrent applies cannot race on the shared HCL file write.
+	//
+	// Coalescing below is in-memory: the per-topology mutex plus
+	// startWithResult's deterministic OperationKey run id collapse concurrent
+	// same-request applies into one run. That is correct for sysbox's
+	// single-API-instance deployment. If multiple API instances ever share one
+	// store, this path must additionally route through the durable
+	// store.GetRunDispatch/CreateRunDispatch + RequestFingerprint mechanism
+	// (as startIdempotentDestroy does) before coalescing.
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
+
+	if req.Revision != "" && globalRevisionPattern.MatchString(req.Revision) {
+		rev, err := s.revisions.GetGlobalRevision(ctx, req.Revision)
 		if err != nil {
+			if errors.Is(err, errGlobalRevisionNotFound) {
+				return nil, runError(runServiceNotFound, err)
+			}
 			return nil, runError(runServiceInternal, err)
 		}
-		plan, err := s.ValidateStoredPlanForApply(ctx, topology, req.PlanID, currentSerial)
-		if err != nil {
-			return nil, runError(runServiceBadRequest, err)
+		if err := s.workspaces.UpsertProject(ctx, topology, rev.Files); err != nil {
+			return nil, runError(runServiceInternal, err)
 		}
-		req.Revision = plan.Revision
 	}
-	run := s.jobs.startWithOptions(topology, "apply", runStartOptions{
-		Revision:    req.Revision,
-		PlanID:      req.PlanID,
-		AgentID:     req.AgentID,
-		UnsafeState: req.AllowUnsafeState,
-		Inputs:      req.Inputs,
-	})
+	operationKey := applyOperationKey(req.Revision, req.Inputs, req.AllowUnsafeState)
+	opts := runStartOptions{
+		Revision:     req.Revision,
+		AgentID:      req.AgentID,
+		UnsafeState:  req.AllowUnsafeState,
+		Inputs:       req.Inputs,
+		OperationKey: operationKey,
+	}
+	if req.DeadlineAt != nil {
+		opts.DeadlineAt = *req.DeadlineAt
+	}
+	run, created := s.jobs.startWithResult(topology, "apply", opts)
+	if !created {
+		if run.Status.IsActive() {
+			return run, nil // coalesced with an in-flight apply
+		}
+		// The deterministic id maps to a terminal run: replace it with a fresh
+		// attempt that reuses the same id so subsequent applies coalesce onto
+		// this in-flight run instead of the stale terminal record.
+		run = newRun(topology, "apply", opts)
+		s.jobs.forceStart(run)
+	}
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
 	}
 	return run, nil
 }
 
-func (s *RunService) ValidateStoredPlanForApply(ctx context.Context, topology, planID string, currentSerial int64) (*controlplane.Plan, error) {
-	return s.plans.ValidateStoredPlanForApply(ctx, topology, planID, currentSerial)
+// applyOperationKey derives a deterministic operation key from the apply
+// request. Inputs are canonicalised by sorting keys and every string field is
+// length-prefixed, so equivalent maps hash to the same key regardless of map
+// iteration order and distinct (revision, inputs, allow_unsafe_state) tuples
+// cannot collide. The key itself is a sha256 hex string and contains no input
+// plaintext. (Run.Inputs is transient: Jobs.persist strips it before the run is
+// durably stored, so sensitive inputs never enter the state backend.)
+func applyOperationKey(revision string, inputs map[string]string, allowUnsafe bool) string {
+	keys := make([]string, 0, len(inputs))
+	for k := range inputs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	fmt.Fprintf(&b, "revision:%d:%s\n", len(revision), revision)
+	fmt.Fprintf(&b, "allow_unsafe_state:%t\n", allowUnsafe)
+	for _, k := range keys {
+		v := inputs[k]
+		fmt.Fprintf(&b, "input:%d:%s=%d:%s\n", len(k), k, len(v), v)
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func (s *RunService) StartRepair(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
@@ -208,6 +261,10 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 	command.Status = controlplane.AgentCommandStatusQueued
 	command.Protocol = controlplane.AgentProtocolVersion
 	command.CreatedAt = time.Now().UTC()
+	// Destroy has no inputs today, but if an apply path ever routes through
+	// CreateRunDispatch, sensitive inputs must never be persisted here.
+	run.Inputs = nil
+	command.Run.Inputs = nil
 	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint})
 	if err != nil {
 		if errors.Is(err, errIdempotencyConflict) {
@@ -254,16 +311,4 @@ func (s *RunService) dispatchTopologyRun(ctx context.Context, run *controlplane.
 		return runError(runServiceConflict, err)
 	}
 	return nil
-}
-
-func (s *RunService) currentStateSerial(ctx context.Context, topology string) (int64, error) {
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		return 0, err
-	}
-	meta, err := mgr.Metadata(ctx)
-	if err != nil {
-		return 0, err
-	}
-	return meta.Serial, nil
 }

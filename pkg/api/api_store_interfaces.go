@@ -39,16 +39,9 @@ type healthStore interface {
 	DeleteHealth(ctx context.Context, topology string) error
 }
 
-type revisionStore interface {
-	SaveRevision(ctx context.Context, rev controlplane.Revision) error
-	ListRevisions(ctx context.Context, workspace string) ([]controlplane.Revision, error)
-	GetRevision(ctx context.Context, workspace, revisionID string) (*controlplane.Revision, error)
-}
-
-type planStore interface {
-	SavePlan(ctx context.Context, plan controlplane.Plan) error
-	ListPlans(ctx context.Context, workspace string) ([]controlplane.Plan, error)
-	GetPlan(ctx context.Context, workspace, planID string) (*controlplane.Plan, error)
+type globalRevisionStore interface {
+	SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error
+	GetGlobalRevision(ctx context.Context, revision string) (*controlplane.GlobalRevision, error)
 }
 
 type policyStore interface {
@@ -109,8 +102,7 @@ type apiStore interface {
 	runStore
 	checkpointStore
 	healthStore
-	revisionStore
-	planStore
+	globalRevisionStore
 	policyStore
 	consoleStore
 	nodeOperationPersistence

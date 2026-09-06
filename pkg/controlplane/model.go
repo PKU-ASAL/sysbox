@@ -32,30 +32,6 @@ type Workspace struct {
 	LatestRevision string    `json:"latest_revision,omitempty"`
 }
 
-type Revision struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id"`
-	Workspace   string    `json:"workspace"`
-	Source      string    `json:"source"`
-	SHA256      string    `json:"sha256"`
-	Size        int       `json:"size"`
-	CreatedAt   time.Time `json:"created_at"`
-	Description string    `json:"description,omitempty"`
-}
-
-type Plan struct {
-	ID          string          `json:"id"`
-	ProjectID   string          `json:"project_id"`
-	Workspace   string          `json:"workspace"`
-	Revision    string          `json:"revision,omitempty"`
-	StateSerial int64           `json:"state_serial,omitempty"`
-	Fingerprint PlanFingerprint `json:"fingerprint"`
-	Status      string          `json:"status"`
-	Summary     string          `json:"summary,omitempty"`
-	Actions     []PlannedChange `json:"actions"`
-	CreatedAt   time.Time       `json:"created_at"`
-}
-
 type PlanFingerprint struct {
 	ConfigSHA256    string            `json:"config_sha256"`
 	StateLineage    string            `json:"state_lineage"`
@@ -77,7 +53,6 @@ type Run struct {
 	Err                string    `json:"error,omitempty"`
 	ParentID           string    `json:"parent_id,omitempty"`
 	Revision           string    `json:"revision,omitempty"`
-	PlanID             string    `json:"plan_id,omitempty"`
 	Target             string    `json:"target,omitempty"`
 	OperationKey       string    `json:"operation_key,omitempty"`
 	RequestFingerprint string    `json:"request_fingerprint,omitempty"`
@@ -92,6 +67,7 @@ type Run struct {
 	AssignedAt         time.Time `json:"assigned_at,omitempty"`
 	StartedAt          time.Time `json:"started_at"`
 	EndedAt            time.Time `json:"ended_at,omitempty"`
+	DeadlineAt         time.Time `json:"deadline_at,omitempty"`
 	// Assertion is the outcome of the check/assert evaluation this run performed
 	// (nil when the run evaluated no checks). It is in-memory state feeding the
 	// topology's Asserted condition; it is recomputed by the next apply.

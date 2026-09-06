@@ -97,7 +97,12 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 }
 
 func (s *Server) handleClaimAgentRun(w http.ResponseWriter, r *http.Request) {
-	s.handleClaimAgentRunByID(w, r.PathValue("agent"), r.PathValue("id"))
+	agentID := r.PathValue("agent")
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	s.handleClaimAgentRunByID(w, agentID, r.PathValue("id"))
 }
 
 func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID string) {

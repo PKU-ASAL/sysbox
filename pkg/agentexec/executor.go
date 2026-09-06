@@ -24,7 +24,6 @@ type Bridge interface {
 	HCLFile(topology string) string
 	CheckpointFile(topology, runID string) string
 	CheckpointStore() runtime.CheckpointStore
-	ValidateStoredPlanForApply(ctx context.Context, topology, planID string, currentSerial int64) (*controlplane.Plan, error)
 	ParentRun(ctx context.Context, id string) (*controlplane.Run, error)
 	ReconcileParentJournal(parent, run *controlplane.Run) error
 	Preflight(ctx context.Context, topology string, log io.Writer) error
@@ -275,21 +274,10 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	meta, _ := mgr.Metadata(ctx)
-	var plan *runtime.Plan
-	if run.PlanID != "" {
-		stored, err := e.bridge.ValidateStoredPlanForApply(ctx, run.Topology, run.PlanID, meta.Serial)
-		if err != nil {
-			e.bridge.Finish(run, err)
-			return
-		}
-		plan = &runtime.Plan{Actions: append([]controlplane.PlannedChange(nil), stored.Actions...)}
-	} else {
-		plan, err = runtime.ComputePlan(g, st)
-		if err != nil {
-			e.bridge.Finish(run, err)
-			return
-		}
+	plan, err := runtime.ComputePlan(g, st)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
 	}
 	if hook, ok := e.bridge.(ApplyHook); ok {
 		plan, err = hook.FilterApplyPlan(plan)
@@ -313,11 +301,10 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
 	exec.SetStatePatchSink(&runtime.StatePatchManagerSink{Manager: mgr, State: st, Owner: run.LeaseOwner})
-	var applyHook ApplyHook
+	refresh := true
 	if hook, ok := e.bridge.(ApplyHook); ok {
-		applyHook = hook
+		refresh = hook.RefreshApply()
 	}
-	refresh := refreshApplyPlan(run.PlanID, applyHook)
 	if refresh {
 		plan, err = exec.Refresh(ctx, plan)
 		if err != nil {
@@ -384,13 +371,6 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	}
 
 	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
-}
-
-func refreshApplyPlan(_ string, hook ApplyHook) bool {
-	if hook != nil {
-		return hook.RefreshApply()
-	}
-	return true
 }
 
 func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, log io.Writer) {

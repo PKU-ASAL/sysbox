@@ -25,7 +25,6 @@ type Server struct {
 	agentStream   *AgentStreamService
 	jobs          *Jobs
 	runService    *RunService
-	planService   *PlanService
 	scheduler     *SchedulerService
 	workspaces    *WorkspaceService
 	nodeService   *NodeOperationService
@@ -76,7 +75,6 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 	}
 	s.agentSvc = newAgentService(s)
 	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
-	s.planService = newPlanService(s)
 	s.scheduler = newSchedulerService(s)
 	s.nodeService = newNodeOperationService(s.workspaceService(), s.scheduling(), s.nodeOps, s.agentService().PublishCommand)
 	defaultConsoleTimeout, _ := time.ParseDuration(s.cfg.API.Console.DefaultTimeout)
@@ -116,13 +114,6 @@ func (s *Server) runs() *RunService {
 		s.runService = newRunService(s)
 	}
 	return s.runService
-}
-
-func (s *Server) plans() *PlanService {
-	if s.planService == nil {
-		s.planService = newPlanService(s)
-	}
-	return s.planService
 }
 
 func (s *Server) scheduling() *SchedulerService {
@@ -250,13 +241,12 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/artifacts", s.handleListArtifacts)
 	m.HandleFunc("GET /v1/policies", s.handleListPolicies)
 	m.HandleFunc("POST /v1/policies", s.handleCreatePolicy)
+	m.HandleFunc("POST /v1/revisions", s.handlePublishRevision)
 
 	// Topologies
 	m.HandleFunc("GET /v1/topologies", s.handleListTopologies)
-	m.HandleFunc("POST /v1/topologies", s.handleCreateTopology)
 	m.HandleFunc("GET /v1/topologies/{topology}", s.handleGetTopology)
 	m.HandleFunc("GET /v1/topologies/{topology}/hcl", s.handleGetHCL)
-	m.HandleFunc("PUT /v1/topologies/{topology}/hcl", s.handleUpdateHCL)
 	m.HandleFunc("GET /v1/topologies/{topology}/state", s.handleGetState)
 	m.HandleFunc("GET /v1/topologies/{topology}/state/metadata", s.handleGetStateMetadata)
 	m.HandleFunc("GET /v1/topologies/{topology}/state/lock", s.handleGetStateLock)
@@ -266,12 +256,6 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/stack-state", s.handleGetStackState)
 	m.HandleFunc("GET /v1/topologies/{topology}/lease", s.handleGetWorkspaceLease)
 	m.HandleFunc("GET /v1/topologies/{topology}/snapshots", s.handleListWorkspaceSnapshots)
-	m.HandleFunc("GET /v1/topologies/{topology}/revisions", s.handleListRevisions)
-	m.HandleFunc("POST /v1/topologies/{topology}/revisions", s.handleCreateRevision)
-	m.HandleFunc("GET /v1/topologies/{topology}/revisions/{revision}", s.handleGetRevision)
-	m.HandleFunc("GET /v1/topologies/{topology}/plans", s.handleListPlans)
-	m.HandleFunc("POST /v1/topologies/{topology}/plans", s.handleCreatePlan)
-	m.HandleFunc("GET /v1/topologies/{topology}/plans/{plan}", s.handleGetStoredPlan)
 	m.HandleFunc("GET /v1/topologies/{topology}/outputs", s.handleGetOutputs)
 	m.HandleFunc("GET /v1/topologies/{topology}/health", s.handleGetTopologyHealth)
 	m.HandleFunc("GET /v1/topologies/{topology}/plan", s.handleGetPlan)

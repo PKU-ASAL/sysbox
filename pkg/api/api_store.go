@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -22,7 +23,12 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 1
+const apiSchemaVersion = 2
+
+// errGlobalRevisionNotFound is returned by GetGlobalRevision when no revision
+// exists for the requested digest. Callers use errors.Is to detect it so they
+// never have to string-match backend-specific messages.
+var errGlobalRevisionNotFound = errors.New("global revision not found")
 
 type apiMigration struct {
 	Version int
@@ -56,18 +62,6 @@ CREATE TABLE IF NOT EXISTS sysbox_health (
   topology TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_revisions (
-  workspace TEXT NOT NULL,
-  id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS sysbox_plans (
-  workspace TEXT NOT NULL,
-  id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS sysbox_policies (
   workspace TEXT NOT NULL,
@@ -133,6 +127,17 @@ CREATE TABLE IF NOT EXISTS sysbox_run_requests (
   id TEXT PRIMARY KEY,
   fingerprint TEXT NOT NULL,
   run_id TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`,
+	},
+	{
+		Version: 2,
+		Name:    "global_revisions",
+		SQL: `
+CREATE TABLE IF NOT EXISTS sysbox_global_revisions (
+  workspace TEXT NOT NULL DEFAULT '',
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`,
 	},
@@ -205,46 +210,20 @@ func (s *localAPIStore) checkpointFile(topology, runID string) string {
 	return filepath.Join(s.runsDir, topology, "runs", runID+".checkpoint.json")
 }
 
-func (s *localAPIStore) SaveRevision(_ context.Context, rev controlplane.Revision) error {
-	return writeLocalObject(filepath.Join(s.runsDir, rev.Workspace, "revisions", rev.ID+".json"), rev)
+func (s *localAPIStore) SaveGlobalRevision(_ context.Context, rev controlplane.GlobalRevision) error {
+	return writeLocalObject(filepath.Join(s.runsDir, "global-revisions", rev.Revision+".json"), rev)
 }
 
-func (s *localAPIStore) ListRevisions(_ context.Context, workspace string) ([]controlplane.Revision, error) {
-	return readLocalObjects[controlplane.Revision](filepath.Join(s.runsDir, workspace, "revisions", "*.json"))
-}
-
-func (s *localAPIStore) GetRevision(ctx context.Context, workspace, revisionID string) (*controlplane.Revision, error) {
-	items, err := s.ListRevisions(ctx, workspace)
+func (s *localAPIStore) GetGlobalRevision(_ context.Context, revision string) (*controlplane.GlobalRevision, error) {
+	raw, err := os.ReadFile(filepath.Join(s.runsDir, "global-revisions", revision+".json"))
 	if err != nil {
-		return nil, err
+		return nil, errGlobalRevisionNotFound
 	}
-	for _, item := range items {
-		if item.ID == revisionID {
-			return &item, nil
-		}
+	var rev controlplane.GlobalRevision
+	if err := json.Unmarshal(raw, &rev); err != nil {
+		return nil, fmt.Errorf("decode global revision: %w", err)
 	}
-	return nil, fmt.Errorf("revision not found")
-}
-
-func (s *localAPIStore) SavePlan(_ context.Context, plan controlplane.Plan) error {
-	return writeLocalObject(filepath.Join(s.runsDir, plan.Workspace, "plans", plan.ID+".json"), plan)
-}
-
-func (s *localAPIStore) ListPlans(_ context.Context, workspace string) ([]controlplane.Plan, error) {
-	return readLocalObjects[controlplane.Plan](filepath.Join(s.runsDir, workspace, "plans", "*.json"))
-}
-
-func (s *localAPIStore) GetPlan(ctx context.Context, workspace, planID string) (*controlplane.Plan, error) {
-	items, err := s.ListPlans(ctx, workspace)
-	if err != nil {
-		return nil, err
-	}
-	for _, item := range items {
-		if item.ID == planID {
-			return &item, nil
-		}
-	}
-	return nil, fmt.Errorf("plan not found")
+	return &rev, nil
 }
 
 func (s *localAPIStore) SavePolicy(_ context.Context, policy controlplane.Policy) error {
@@ -549,28 +528,29 @@ func (s *postgresAPIStore) LoadHealth(ctx context.Context, topology string) (*He
 	return &snap, nil
 }
 
-func (s *postgresAPIStore) SaveRevision(ctx context.Context, rev controlplane.Revision) error {
-	return s.saveObject(ctx, "sysbox_revisions", rev.Workspace, rev.ID, rev)
+func (s *postgresAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {
+	return s.saveObject(ctx, "sysbox_global_revisions", "", rev.Revision, rev)
 }
 
-func (s *postgresAPIStore) ListRevisions(ctx context.Context, workspace string) ([]controlplane.Revision, error) {
-	return listPostgresObjects[controlplane.Revision](ctx, s, "sysbox_revisions", workspace)
-}
-
-func (s *postgresAPIStore) GetRevision(ctx context.Context, workspace, revisionID string) (*controlplane.Revision, error) {
-	return getPostgresObject[controlplane.Revision](ctx, s, "sysbox_revisions", workspace, revisionID)
-}
-
-func (s *postgresAPIStore) SavePlan(ctx context.Context, plan controlplane.Plan) error {
-	return s.saveObject(ctx, "sysbox_plans", plan.Workspace, plan.ID, plan)
-}
-
-func (s *postgresAPIStore) ListPlans(ctx context.Context, workspace string) ([]controlplane.Plan, error) {
-	return listPostgresObjects[controlplane.Plan](ctx, s, "sysbox_plans", workspace)
-}
-
-func (s *postgresAPIStore) GetPlan(ctx context.Context, workspace, planID string) (*controlplane.Plan, error) {
-	return getPostgresObject[controlplane.Plan](ctx, s, "sysbox_plans", workspace, planID)
+func (s *postgresAPIStore) GetGlobalRevision(ctx context.Context, revision string) (*controlplane.GlobalRevision, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+	var raw []byte
+	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_global_revisions WHERE workspace=$1 AND id=$2`, "", revision).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, errGlobalRevisionNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres get global revision: %w", err)
+	}
+	var rev controlplane.GlobalRevision
+	if err := json.Unmarshal(raw, &rev); err != nil {
+		return nil, fmt.Errorf("decode global revision: %w", err)
+	}
+	return &rev, nil
 }
 
 func (s *postgresAPIStore) SavePolicy(ctx context.Context, policy controlplane.Policy) error {
@@ -796,27 +776,6 @@ func listPostgresObjects[T any](ctx context.Context, s *postgresAPIStore, table,
 		out = append(out, item)
 	}
 	return out, rows.Err()
-}
-
-func getPostgresObject[T any](ctx context.Context, s *postgresAPIStore, table, workspace, id string) (*T, error) {
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-	var raw []byte
-	err = conn.QueryRow(ctx, fmt.Sprintf(`SELECT data::text FROM %s WHERE workspace=$1 AND id=$2`, table), workspace, id).Scan(&raw)
-	if err == pgx.ErrNoRows {
-		return nil, fmt.Errorf("object not found")
-	}
-	if err != nil {
-		return nil, err
-	}
-	var item T
-	if err := json.Unmarshal(raw, &item); err != nil {
-		return nil, err
-	}
-	return &item, nil
 }
 
 func dsnWithoutSysboxQuery(raw string) string {

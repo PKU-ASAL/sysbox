@@ -20,18 +20,19 @@ var serveCmd = &cobra.Command{
 	Long: `Start the sysbox HTTP API server.
 
 Topology CRUD:
-  POST   /v1/topologies                           (create: upload HCL)
   GET    /v1/topologies                            (list topologies)
   GET    /v1/topologies/{topology}                 (topology metadata)
   GET    /v1/topologies/{topology}/hcl             (read HCL source)
-  PUT    /v1/topologies/{topology}/hcl             (update HCL source)
   DELETE /v1/topologies/{topology}                 (delete empty topology metadata)
+
+Revisions:
+  POST   /v1/revisions                             (publish HCL, returns sha256 digest)
 
 Topology operations:
   GET  /v1/topologies/{topology}/state
   GET  /v1/topologies/{topology}/plan
   GET  /v1/topologies/{topology}/graph             (visualization nodes+edges)
-  POST /v1/topologies/{topology}/apply
+  POST /v1/topologies/{topology}/apply             (revision + inputs upsert)
   POST /v1/topologies/{topology}/destroy
 
 Async run tracking:

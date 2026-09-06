@@ -78,6 +78,33 @@ api_delete() {
 	expect_status "$(curl_json DELETE "$1")" "${2:-200}"
 }
 
+curl_raw() {
+	local method="$1"
+	local path="$2"
+	local body="${3:-}"
+	local tmp
+	tmp="$(mktemp)"
+	local code
+	if [[ -n "$body" ]]; then
+		code="$(curl -sS -o "$tmp" -w '%{http_code}' -X "$method" \
+			"${auth_args[@]}" \
+			-H 'Content-Type: text/plain' \
+			--data-binary "$body" \
+			"${API_URL}${path}")"
+	else
+		code="$(curl -sS -o "$tmp" -w '%{http_code}' -X "$method" \
+			"${auth_args[@]}" \
+			"${API_URL}${path}")"
+	fi
+	cat "$tmp"
+	rm -f "$tmp"
+	printf '\n%s\n' "$code"
+}
+
+api_post_raw() {
+	expect_status "$(curl_raw POST "$1" "${2:-}")" "${3:-200}"
+}
+
 wait_run() {
 	local run_id="$1"
 	local deadline=$((SECONDS + RUN_TIMEOUT_SECONDS))
@@ -98,6 +125,27 @@ wait_run() {
 		sleep 1
 	done
 	fail "run ${run_id} did not finish within ${RUN_TIMEOUT_SECONDS}s"
+}
+
+wait_topology_applied() {
+	local topology="$1"
+	local deadline=$((SECONDS + RUN_TIMEOUT_SECONDS))
+	local body status
+	while (( SECONDS < deadline )); do
+		body="$(api_get "/v1/topologies/${topology}")"
+		status="$(printf '%s' "$body" | jq -r '.status.conditions[] | select(.type == "Applied") | .status // empty')"
+		case "$status" in
+			True)
+				printf '%s\n' "$body"
+				return 0
+				;;
+			False)
+				fail "topology ${topology} apply failed: $(printf '%s' "$body" | jq -r '.status.conditions[] | select(.type == "Applied") | (.reason // ""), (.message // "")')"
+				;;
+		esac
+		sleep 1
+	done
+	fail "topology ${topology} did not reach Applied within ${RUN_TIMEOUT_SECONDS}s"
 }
 
 cleanup() {
@@ -158,22 +206,18 @@ output "web_ip" {
 HCL
 )"
 
-log "creating topology ${topology}"
-payload="$(jq -n --arg name "$topology" --arg hcl "$hcl" '{name:$name,hcl:$hcl}')"
-api_post /v1/topologies "$payload" 201 | jq -e --arg name "$topology" '.name == $name' >/dev/null
+log "publishing revision for ${topology}"
+revision="$(api_post_raw /v1/revisions "$hcl" 201 | jq -r '.revision')"
+[[ "$revision" == sha256:* ]] || fail "unexpected revision digest: ${revision}"
 
-log "creating revision and plan"
-revision="$(api_post "/v1/topologies/${topology}/revisions" "" 201 | jq -r '.id')"
-plan="$(api_post "/v1/topologies/${topology}/plans" "" 201)"
-plan_id="$(printf '%s' "$plan" | jq -r '.id')"
-printf '%s' "$plan" | jq -e '.actions | length >= 3' >/dev/null
-
-log "applying plan ${plan_id} from revision ${revision}"
-apply_payload="$(jq -n --arg plan_id "$plan_id" '{plan_id:$plan_id}')"
+log "applying revision ${revision}"
+apply_payload="$(jq -n --arg revision "$revision" '{revision:$revision,inputs:{}}')"
 apply_run="$(api_post "/v1/topologies/${topology}/apply" "$apply_payload" 202)"
 apply_run_id="$(printf '%s' "$apply_run" | jq -r '.run_id')"
 printf '%s' "$apply_run" | jq -e --arg id "$AGENT_ID" '.agent_id == $id' >/dev/null
-wait_run "$apply_run_id" | jq -e '.status == "done"' >/dev/null
+
+log "waiting for topology ${topology} to report Applied"
+wait_topology_applied "$topology" | jq -e '.status.conditions | any(.type == "Applied" and .status == "True")' >/dev/null
 
 log "checking outputs, state, resources, and topology list"
 api_get "/v1/topologies/${topology}/outputs" | jq -e '.outputs.web_ip.value == "172.31.20.10"' >/dev/null

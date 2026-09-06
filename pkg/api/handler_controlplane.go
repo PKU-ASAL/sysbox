@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -40,114 +38,6 @@ func (s *Server) handleListProjectWorkspaces(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.handleListTopologies(w, r)
-}
-
-func (s *Server) handleCreateRevision(w http.ResponseWriter, r *http.Request) {
-	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	hcl, err := os.ReadFile(s.workspaceService().HCLFile(topology))
-	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("workspace HCL not found"))
-		return
-	}
-	rev := revisionFromHCL(topology, hcl, "workspace_hcl")
-	if err := s.apiStore.SaveRevision(r.Context(), rev); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, rev)
-}
-
-func (s *Server) handleListRevisions(w http.ResponseWriter, r *http.Request) {
-	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	revs, err := s.apiStore.ListRevisions(r.Context(), topology)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if len(revs) == 0 {
-		if hcl, err := os.ReadFile(s.workspaceService().HCLFile(topology)); err == nil {
-			revs = append(revs, revisionFromHCL(topology, hcl, "workspace_hcl"))
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"revisions": revs})
-}
-
-func (s *Server) handleGetRevision(w http.ResponseWriter, r *http.Request) {
-	topology := r.PathValue("topology")
-	revision := r.PathValue("revision")
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := validatePathSegment(revision, "revision"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	rev, err := s.apiStore.GetRevision(r.Context(), topology, revision)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, rev)
-}
-
-func (s *Server) handleCreatePlan(w http.ResponseWriter, r *http.Request) {
-	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	plan, err := s.plans().ComputeStoredPlan(r.Context(), topology)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.apiStore.SavePlan(r.Context(), plan); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, plan)
-}
-
-func (s *Server) handleListPlans(w http.ResponseWriter, r *http.Request) {
-	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	plans, err := s.apiStore.ListPlans(r.Context(), topology)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"plans": plans})
-}
-
-func (s *Server) handleGetStoredPlan(w http.ResponseWriter, r *http.Request) {
-	topology := r.PathValue("topology")
-	planID := r.PathValue("plan")
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := validatePathSegment(planID, "plan"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	plan, err := s.apiStore.GetPlan(r.Context(), topology, planID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, plan)
 }
 
 func (s *Server) handleGetStackState(w http.ResponseWriter, r *http.Request) {
@@ -305,22 +195,6 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 func defaultProject() controlplane.Project {
 	now := time.Now().UTC()
 	return controlplane.Project{ID: controlplane.DefaultProjectID, Name: "default", Description: "Default sysbox project", CreatedAt: now, UpdatedAt: now}
-}
-
-func revisionFromHCL(workspace string, hcl []byte, source string) controlplane.Revision {
-	sum := sha256.Sum256(hcl)
-	hash := hex.EncodeToString(sum[:])
-	id := hash[:12]
-	now := time.Now().UTC()
-	return controlplane.Revision{
-		ID:        id,
-		ProjectID: controlplane.DefaultProjectID,
-		Workspace: workspace,
-		Source:    source,
-		SHA256:    hash,
-		Size:      len(hcl),
-		CreatedAt: now,
-	}
 }
 
 func (s *Server) listSnapshots(ctx context.Context, topology string) ([]state.Snapshot, error) {

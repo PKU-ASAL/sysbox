@@ -138,10 +138,6 @@ func (b *LocalBridge) CheckpointStore() runtime.CheckpointStore {
 	return b.opts.CheckpointStore
 }
 
-func (b *LocalBridge) ValidateStoredPlanForApply(context.Context, string, string, int64) (*controlplane.Plan, error) {
-	return nil, fmt.Errorf("stored plans require the API control plane")
-}
-
 func (b *LocalBridge) ParentRun(context.Context, string) (*controlplane.Run, error) {
 	return nil, fmt.Errorf("parent runs require the API control plane")
 }

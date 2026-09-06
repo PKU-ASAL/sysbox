@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -51,45 +50,40 @@ func (s *WorkspaceService) StateFile(topology string) string {
 	return filepath.Join(s.runsDir, topology, "state.json")
 }
 
-func (s *WorkspaceService) Create(ctx context.Context, name, hcl string) (WorkspaceInfo, error) {
-	if err := validatePathSegment(name, "name"); err != nil {
-		return WorkspaceInfo{}, err
-	}
-	if hcl == "" {
-		return WorkspaceInfo{}, fmt.Errorf("hcl is required")
-	}
-	if _, err := config.ParseString(hcl, ".hcl"); err != nil {
-		return WorkspaceInfo{}, fmt.Errorf("invalid HCL: %w", err)
-	}
-	hclPath := s.HCLFile(name)
-	if _, err := os.Stat(hclPath); err == nil {
-		return WorkspaceInfo{}, fmt.Errorf("topology %q already exists", name)
-	}
-	if err := os.MkdirAll(filepath.Dir(hclPath), 0o755); err != nil {
-		return WorkspaceInfo{}, fmt.Errorf("create directory: %w", err)
-	}
-	if err := os.WriteFile(hclPath, []byte(hcl), 0o644); err != nil {
-		return WorkspaceInfo{}, fmt.Errorf("write hcl: %w", err)
-	}
-	return WorkspaceInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name, HasHCL: true}, nil
-}
-
-func (s *WorkspaceService) UpdateHCL(ctx context.Context, topology string, hcl []byte) error {
+// UpsertProject materializes a project directory tree into the workspace,
+// creating the directory and each file. Idempotent: repeated calls overwrite.
+// Every path is re-validated here (defense in depth), so a malformed or
+// malicious path can never escape workspacesDir/<topology>/.
+//
+// The workspace dir holds only the materialized HCL tree (state lives under
+// runsDir), so it is removed and rewritten wholesale: this guarantees the
+// on-disk tree is exactly the requested revision, never a union with a prior
+// one (a stale module/file present in revision A but absent in B must not
+// survive).
+func (s *WorkspaceService) UpsertProject(ctx context.Context, topology string, files map[string][]byte) error {
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
 	}
-	if len(hcl) == 0 {
-		return fmt.Errorf("empty HCL")
+	// Validate every path before touching disk so a bad path cannot leave the
+	// workspace half-reconciled.
+	for p := range files {
+		if err := validateRelPath(p); err != nil {
+			return err
+		}
 	}
-	hclPath := s.HCLFile(topology)
-	if _, err := os.Stat(hclPath); err != nil {
-		return fmt.Errorf("topology %q not found", topology)
+
+	base := filepath.Join(s.workspacesDir, topology)
+	if err := os.RemoveAll(base); err != nil {
+		return fmt.Errorf("remove workspace: %w", err)
 	}
-	if _, err := config.ParseString(string(hcl), ".hcl"); err != nil {
-		return fmt.Errorf("invalid HCL: %w", err)
-	}
-	if err := os.WriteFile(hclPath, hcl, 0o644); err != nil {
-		return fmt.Errorf("write hcl: %w", err)
+	for p, content := range files {
+		target := filepath.Join(base, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("create directory: %w", err)
+		}
+		if err := os.WriteFile(target, content, 0o644); err != nil {
+			return fmt.Errorf("write file: %w", err)
+		}
 	}
 	return nil
 }

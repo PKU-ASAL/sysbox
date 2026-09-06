@@ -83,10 +83,6 @@ func (b *ExecutionBridge) CheckpointStore() runtime.CheckpointStore {
 	return b.server.apiStore
 }
 
-func (b *ExecutionBridge) ValidateStoredPlanForApply(ctx context.Context, topology, planID string, currentSerial int64) (*controlplane.Plan, error) {
-	return b.server.runs().ValidateStoredPlanForApply(ctx, topology, planID, currentSerial)
-}
-
 func (b *ExecutionBridge) ParentRun(ctx context.Context, id string) (*controlplane.Run, error) {
 	return b.server.apiStore.GetRun(ctx, id)
 }
