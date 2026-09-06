@@ -32,17 +32,6 @@ type Workspace struct {
 	LatestRevision string    `json:"latest_revision,omitempty"`
 }
 
-type Revision struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id"`
-	Workspace   string    `json:"workspace"`
-	Source      string    `json:"source"`
-	SHA256      string    `json:"sha256"`
-	Size        int       `json:"size"`
-	CreatedAt   time.Time `json:"created_at"`
-	Description string    `json:"description,omitempty"`
-}
-
 type PlanFingerprint struct {
 	ConfigSHA256    string            `json:"config_sha256"`
 	StateLineage    string            `json:"state_lineage"`

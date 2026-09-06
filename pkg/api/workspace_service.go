@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -51,49 +50,6 @@ func (s *WorkspaceService) StateFile(topology string) string {
 	return filepath.Join(s.runsDir, topology, "state.json")
 }
 
-func (s *WorkspaceService) Create(ctx context.Context, name, hcl string) (WorkspaceInfo, error) {
-	if err := validatePathSegment(name, "name"); err != nil {
-		return WorkspaceInfo{}, err
-	}
-	if hcl == "" {
-		return WorkspaceInfo{}, fmt.Errorf("hcl is required")
-	}
-	if _, err := config.ParseString(hcl, ".hcl"); err != nil {
-		return WorkspaceInfo{}, fmt.Errorf("invalid HCL: %w", err)
-	}
-	hclPath := s.HCLFile(name)
-	if _, err := os.Stat(hclPath); err == nil {
-		return WorkspaceInfo{}, fmt.Errorf("topology %q already exists", name)
-	}
-	if err := os.MkdirAll(filepath.Dir(hclPath), 0o755); err != nil {
-		return WorkspaceInfo{}, fmt.Errorf("create directory: %w", err)
-	}
-	if err := os.WriteFile(hclPath, []byte(hcl), 0o644); err != nil {
-		return WorkspaceInfo{}, fmt.Errorf("write hcl: %w", err)
-	}
-	return WorkspaceInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name, HasHCL: true}, nil
-}
-
-func (s *WorkspaceService) UpdateHCL(ctx context.Context, topology string, hcl []byte) error {
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		return err
-	}
-	if len(hcl) == 0 {
-		return fmt.Errorf("empty HCL")
-	}
-	hclPath := s.HCLFile(topology)
-	if _, err := os.Stat(hclPath); err != nil {
-		return fmt.Errorf("topology %q not found", topology)
-	}
-	if _, err := config.ParseString(string(hcl), ".hcl"); err != nil {
-		return fmt.Errorf("invalid HCL: %w", err)
-	}
-	if err := os.WriteFile(hclPath, hcl, 0o644); err != nil {
-		return fmt.Errorf("write hcl: %w", err)
-	}
-	return nil
-}
-
 // UpsertProject materializes a project directory tree into the workspace,
 // creating the directory and each file. Idempotent: repeated calls overwrite.
 // Every path is re-validated here (defense in depth), so a malformed or
@@ -130,12 +86,6 @@ func (s *WorkspaceService) UpsertProject(ctx context.Context, topology string, f
 		}
 	}
 	return nil
-}
-
-// UpsertHCL writes the topology's HCL, creating the workspace directory if
-// needed. Idempotent: repeated calls with the same content overwrite in place.
-func (s *WorkspaceService) UpsertHCL(ctx context.Context, topology string, hcl string) error {
-	return s.UpsertProject(ctx, topology, map[string][]byte{"field.sysbox.hcl": []byte(hcl)})
 }
 
 func (s *WorkspaceService) HCL(topology string) ([]byte, error) {

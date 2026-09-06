@@ -308,15 +308,3 @@ func (s *RunService) dispatchTopologyRun(ctx context.Context, run *controlplane.
 	}
 	return nil
 }
-
-func (s *RunService) currentStateSerial(ctx context.Context, topology string) (int64, error) {
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		return 0, err
-	}
-	meta, err := mgr.Metadata(ctx)
-	if err != nil {
-		return 0, err
-	}
-	return meta.Serial, nil
-}

@@ -199,17 +199,6 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		data     BLOB NOT NULL
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_revisions (
-		id         TEXT NOT NULL DEFAULT '',
-		workspace  TEXT NOT NULL DEFAULT '',
-		source     TEXT DEFAULT '',
-		sha256     TEXT DEFAULT '',
-		size       INTEGER DEFAULT 0,
-		created_at TEXT NOT NULL DEFAULT '',
-		description TEXT DEFAULT '',
-		PRIMARY KEY (id, workspace)
-	) STRICT;
-
 	CREATE TABLE IF NOT EXISTS sysbox_global_revisions (
 		revision   TEXT PRIMARY KEY,
 		files      TEXT NOT NULL DEFAULT '',
@@ -551,61 +540,6 @@ func (s *sqliteAPIStore) LoadHealth(ctx context.Context, topology string) (*Heal
 		return nil, err
 	}
 	return &snap, nil
-}
-
-func (s *sqliteAPIStore) SaveRevision(ctx context.Context, rev controlplane.Revision) error {
-	db, err := s.open()
-	if err != nil {
-		return err
-	}
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_revisions (id, workspace, source, sha256, size, created_at, description) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		rev.ID, rev.Workspace, rev.Source, rev.SHA256, rev.Size, rev.CreatedAt.Format(time.RFC3339), rev.Description)
-	return err
-}
-
-func (s *sqliteAPIStore) ListRevisions(ctx context.Context, workspace string) ([]controlplane.Revision, error) {
-	db, err := s.open()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := db.QueryContext(ctx,
-		`SELECT id, workspace, source, sha256, size, created_at, description FROM sysbox_revisions WHERE workspace=? ORDER BY created_at DESC`, workspace)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []controlplane.Revision
-	for rows.Next() {
-		var rev controlplane.Revision
-		var createdAt string
-		if err := rows.Scan(&rev.ID, &rev.Workspace, &rev.Source, &rev.SHA256, &rev.Size, &createdAt, &rev.Description); err != nil {
-			return nil, err
-		}
-		rev.CreatedAt = parseSQLiteTime(createdAt)
-		out = append(out, rev)
-	}
-	return out, rows.Err()
-}
-
-func (s *sqliteAPIStore) GetRevision(ctx context.Context, workspace, revisionID string) (*controlplane.Revision, error) {
-	db, err := s.open()
-	if err != nil {
-		return nil, err
-	}
-	var rev controlplane.Revision
-	var createdAt string
-	err = db.QueryRowContext(ctx,
-		`SELECT id, workspace, source, sha256, size, created_at, description FROM sysbox_revisions WHERE workspace=? AND id=?`,
-		workspace, revisionID).Scan(&rev.ID, &rev.Workspace, &rev.Source, &rev.SHA256, &rev.Size, &createdAt, &rev.Description)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("revision not found")
-	}
-	if err != nil {
-		return nil, err
-	}
-	rev.CreatedAt = parseSQLiteTime(createdAt)
-	return &rev, nil
 }
 
 func (s *sqliteAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {
