@@ -46,6 +46,33 @@ func LoadWorkspaceWithManager(hclFile string, mgr *state.Manager) (
 	return g, mgr, s, root, ctx, nil
 }
 
+// LoadWorkspaceWithInputs is the apply-path counterpart of
+// LoadWorkspaceWithManager: it parses the HCL, builds the eval context with the
+// apply-time inputs bound as var.<name> BEFORE building the graph, then builds
+// the graph and loads state. This ordering lets count/for_each and resource
+// attribute expressions reference var.<name>.
+func LoadWorkspaceWithInputs(hclFile string, mgr *state.Manager, inputs map[string]string) (
+	*graph.Graph, *state.Manager, *state.State, *config.Root, *hcl.EvalContext, error,
+) {
+	root, err := config.ParseFile(hclFile)
+	if err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("parse config: %w", err)
+	}
+	ctx, err := config.BuildEvalContextWithInputs(root, filepath.Dir(hclFile), inputs)
+	if err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("evaluate config: %w", err)
+	}
+	g, err := BuildGraph(root, ctx, hclFile)
+	if err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("build graph: %w", err)
+	}
+	s, err := mgr.Load()
+	if err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("load state: %w", err)
+	}
+	return g, mgr, s, root, ctx, nil
+}
+
 // BuildGraph builds a dependency graph from a parsed config root.
 // hclFile is the source file path; it is used to resolve module source paths.
 // Pass "" when the caller path is not known (module blocks are skipped).

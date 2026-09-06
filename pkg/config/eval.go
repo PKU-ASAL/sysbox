@@ -25,11 +25,23 @@ func BuildEvalContext(root *Root, callerDir ...string) (*hcl.EvalContext, error)
 	if len(callerDir) > 0 {
 		dir = callerDir[0]
 	}
-	return buildEvalContextInner(root, dir)
+	return buildEvalContextInner(root, dir, nil)
+}
+
+// BuildEvalContextWithInputs is the apply-path counterpart of BuildEvalContext:
+// it binds var.<name> from the variable blocks and apply-time inputs BEFORE
+// count expressions are evaluated, so count/for_each and resource attribute
+// expressions can reference apply-time inputs.
+func BuildEvalContextWithInputs(root *Root, callerDir string, inputs map[string]string) (*hcl.EvalContext, error) {
+	bindings, err := VariableBindings(root.Variables, inputs)
+	if err != nil {
+		return nil, err
+	}
+	return buildEvalContextInner(root, callerDir, bindings)
 }
 
 // buildEvalContextInner is the actual implementation.
-func buildEvalContextInner(root *Root, callerDir string) (*hcl.EvalContext, error) {
+func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]cty.Value) (*hcl.EvalContext, error) {
 	var diagnostics diag.Diagnostics
 	subTypes := map[string]map[string]cty.Value{}
 	for _, sb := range root.Substrates {
@@ -79,6 +91,9 @@ func buildEvalContextInner(root *Root, callerDir string) (*hcl.EvalContext, erro
 	}
 	if len(localVals) > 0 {
 		preCtx.Variables["local"] = cty.ObjectVal(localVals)
+	}
+	if len(varBindings) > 0 {
+		preCtx.Variables["var"] = cty.ObjectVal(varBindings)
 	}
 
 	resTypes := map[string]map[string]cty.Value{}
@@ -138,6 +153,9 @@ func buildEvalContextInner(root *Root, callerDir string) (*hcl.EvalContext, erro
 	}
 	if len(localVals) > 0 {
 		vars["local"] = cty.ObjectVal(localVals)
+	}
+	if len(varBindings) > 0 {
+		vars["var"] = cty.ObjectVal(varBindings)
 	}
 
 	ctx := &hcl.EvalContext{
