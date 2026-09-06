@@ -20,6 +20,7 @@ type Server struct {
 	stateBackend  string
 	cfg           config.ServiceConfig
 	apiStore      apiStore
+	initErr       error
 	agents        *agentRegistry
 	agentSvc      *AgentService
 	agentStream   *AgentStreamService
@@ -60,13 +61,19 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		workspacesDir = config.DefaultWorkspacesDir()
 	}
 	stateBackend := cfg.State.Backend
-	apiStore := newAPIStore(runsDir, stateBackend)
+	apiStore, initErr := newAPIStore(runsDir, stateBackend)
+	if initErr != nil {
+		// Keep construction safe for non-Start consumers; Start reports the
+		// error so the API server refuses to bind.
+		apiStore = &localAPIStore{runsDir: runsDir}
+	}
 	s := &Server{
 		runsDir:       runsDir,
 		workspacesDir: workspacesDir,
 		stateBackend:  stateBackend,
 		cfg:           cfg,
 		apiStore:      apiStore,
+		initErr:       initErr,
 		agents:        newAgentRegistry(),
 		jobs:          newJobsWithPolicy(runsDir, apiStore, true, cfg.RunClaimTTL(), cfg.RunExpiredPolicy()),
 		consoles:      newConsoleSessionHub(apiStore),
@@ -183,6 +190,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Start binds to addr and serves until the process exits.
 func (s *Server) Start(addr string) error {
+	if s.initErr != nil {
+		return s.initErr
+	}
 	if addr == "" {
 		addr = s.cfg.API.Listen
 	}

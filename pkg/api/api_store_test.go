@@ -159,6 +159,28 @@ func TestSQLiteGlobalRevisionFilesColumnMigration(t *testing.T) {
 	require.Equal(t, files, got.Files)
 }
 
+func TestResourceProjectionStoreRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s := NewServer(dir, dir)
+	observed := time.Now().UTC()
+	proj := controlplane.ResourceProjection{
+		AgentID: "agent-1", Topology: "web", ObservedAt: observed,
+		Resources: []controlplane.ResourceHealth{{Resource: "sysbox_node.web", Status: controlplane.ResourceHealthHealthy}},
+	}
+	require.NoError(t, s.apiStore.SaveResourceProjection(context.Background(), proj))
+	got, err := s.apiStore.LoadResourceProjection(context.Background(), "web")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, "agent-1", got.AgentID)
+	require.Equal(t, "sysbox_node.web", got.Resources[0].Resource)
+	require.Equal(t, controlplane.ResourceHealthHealthy, got.Resources[0].Status)
+	require.True(t, got.ObservedAt.Equal(observed))
+
+	missing, err := s.apiStore.LoadResourceProjection(context.Background(), "missing")
+	require.NoError(t, err)
+	require.Nil(t, missing)
+}
+
 func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	ctx := context.Background()
@@ -205,6 +227,11 @@ func TestDSNWithoutSysboxQueryPreservesPostgresConnectionOptions(t *testing.T) {
 	require.Contains(t, got, "sslmode=disable")
 	require.Contains(t, got, "search_path=isolated")
 	require.NotContains(t, got, "topology=")
+}
+
+func TestPostgresAPIStoreRejectsUnreachableDSN(t *testing.T) {
+	_, err := newAPIStore(t.TempDir(), "postgres://127.0.0.1:1/nonexistent")
+	require.Error(t, err)
 }
 
 func TestSQLiteRunDispatchRollsBackRunWhenCommandInsertFails(t *testing.T) {
@@ -264,4 +291,13 @@ func TestLocalAPIStorePersistsAgentAndClaimLease(t *testing.T) {
 	_, ok, err = store.ClaimRun(ctx, "run-1", "host-a", "owner-2", time.Minute)
 	require.NoError(t, err)
 	require.False(t, ok)
+}
+
+func TestMarkInterruptedRunsFailsInFlightRun(t *testing.T) {
+	runs := []controlplane.Run{
+		{ID: "r1", Status: controlplane.RunRunning, Inputs: map[string]string{"flag": "canary"}},
+	}
+	out := markInterruptedRuns(runs)
+	require.Equal(t, controlplane.RunFailed, out[0].Status)
+	require.True(t, out[0].Recoverable)
 }

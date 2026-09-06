@@ -39,6 +39,11 @@ type healthStore interface {
 	DeleteHealth(ctx context.Context, topology string) error
 }
 
+type projectionStore interface {
+	SaveResourceProjection(ctx context.Context, proj controlplane.ResourceProjection) error
+	LoadResourceProjection(ctx context.Context, topology string) (*controlplane.ResourceProjection, error)
+}
+
 type globalRevisionStore interface {
 	SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error
 	GetGlobalRevision(ctx context.Context, revision string) (*controlplane.GlobalRevision, error)
@@ -102,6 +107,7 @@ type apiStore interface {
 	runStore
 	checkpointStore
 	healthStore
+	projectionStore
 	globalRevisionStore
 	policyStore
 	consoleStore

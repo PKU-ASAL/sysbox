@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -323,6 +324,10 @@ func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusBadRequest, fmt.Errorf("projection topology is required"))
 		return
 	}
+	if err := validatePathSegment(req.Topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	if req.Workspace == "" {
 		req.Workspace = req.Topology
 	}
@@ -332,7 +337,14 @@ func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *htt
 	if len(req.Resources) == 0 {
 		req.Resources = req.Health.Resources
 	}
+	if existing, err := s.apiStore.LoadResourceProjection(r.Context(), req.Topology); err == nil && existing != nil && !req.ObservedAt.After(existing.ObservedAt) {
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "stale"})
+		return
+	}
 	s.agents.SaveResourceProjection(req)
+	if err := s.apiStore.SaveResourceProjection(r.Context(), req); err != nil {
+		slog.Warn("persist resource projection failed", "topology", req.Topology, "error", err)
+	}
 	writeJSON(w, http.StatusAccepted, req)
 }
 

@@ -73,6 +73,14 @@ func TestCidrhostErrors(t *testing.T) {
 	}
 }
 
+func TestBaseFunctionsIncludesAllBuiltins(t *testing.T) {
+	fns := baseFunctions()
+	for _, name := range []string{"env", "env_optional", "toset", "cidrsubnet", "cidrhost"} {
+		_, ok := fns[name]
+		require.True(t, ok, "missing builtin %q", name)
+	}
+}
+
 func TestCidrsubnetInHCL(t *testing.T) {
 	root, err := ParseString(`
 resource "sysbox_network" "lab" {

@@ -76,7 +76,8 @@ func TestDestroyHTTPIdempotencyIsAtomicAcrossPostgresServers(t *testing.T) {
 
 func TestPostgresAgentCommandRejectsStaleStatusRegression(t *testing.T) {
 	dsn := isolatedPostgresTestDSN(t)
-	store := newAPIStore("", dsn)
+	store, err := newAPIStore("", dsn)
+	require.NoError(t, err)
 	ctx := context.Background()
 	terminal := controlplane.AgentCommand{ID: "cmd-terminal", AgentID: "host-a", Type: "run_assigned", Status: controlplane.AgentCommandStatusCompleted, EndedAt: time.Now().UTC()}
 	require.NoError(t, store.SaveAgentCommand(ctx, terminal))
@@ -97,7 +98,8 @@ func TestPostgresAgentCommandRejectsStaleStatusRegression(t *testing.T) {
 
 func TestPostgresGlobalRevisionRoundTrip(t *testing.T) {
 	dsn := isolatedPostgresTestDSN(t)
-	store := newAPIStore("", dsn)
+	store, err := newAPIStore("", dsn)
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	files := map[string][]byte{
