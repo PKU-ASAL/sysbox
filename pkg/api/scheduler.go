@@ -25,6 +25,20 @@ func controlplaneRunAssignedCommand(run *controlplane.Run) controlplane.AgentCom
 
 func ptrRun(run controlplane.Run) *controlplane.Run { return &run }
 
+// substrateProbe decodes only the substrate field the capability prescan cares
+// about; everything else (including var.<name> references like cidr/env) lands
+// in Remain unevaluated, so the prescan never fails on a var it doesn't need.
+type substrateProbe struct {
+	Substrate string   `hcl:"substrate"`
+	Remain    hcl.Body `hcl:",remain"`
+}
+
+// networkProbe decodes only the NAT field the capability prescan cares about.
+type networkProbe struct {
+	NAT    bool     `hcl:"nat,optional"`
+	Remain hcl.Body `hcl:",remain"`
+}
+
 func requiredCapabilitiesForTopology(path string) ([]string, error) {
 	root, err := config.ParseFile(path)
 	if err != nil {
@@ -36,26 +50,22 @@ func requiredCapabilitiesForTopology(path string) ([]string, error) {
 	}
 	set := map[string]bool{}
 	for _, r := range root.Resources {
-		cfg, err := decodeCapabilityResource(r, evalCtx)
-		if err != nil {
-			return nil, err
-		}
-		switch cfg := cfg.(type) {
-		case *config.NodeConfig:
-			addSubstrateCapabilities(set, cfg.Substrate)
-		case *config.RouterConfig:
-			addSubstrateCapabilities(set, cfg.Substrate)
-		case *config.ImageConfig:
-			addSubstrateCapabilities(set, cfg.Substrate)
-		case *config.KernelConfig:
-			addSubstrateCapabilities(set, cfg.Substrate)
-		case *config.NetworkConfig:
-			if !cfg.NAT {
+		switch r.Type {
+		case "sysbox_node", "sysbox_router", "sysbox_image", "sysbox_kernel":
+			probe := &substrateProbe{}
+			if err := config.DecodeResource(&r, probe, evalCtx); err != nil {
+				return nil, err
+			}
+			addSubstrateCapabilities(set, probe.Substrate)
+		case "sysbox_network":
+			probe := &networkProbe{}
+			if err := config.DecodeResource(&r, probe, evalCtx); err != nil {
+				return nil, err
+			}
+			if !probe.NAT {
 				set["network"] = true
 			}
-		case *config.FirewallConfig:
-			set["network"] = true
-		case *config.SSHAccessConfig:
+		case "sysbox_firewall", "sysbox_ssh_access":
 			set["network"] = true
 		}
 	}
@@ -76,68 +86,14 @@ func requiredCapabilitiesForNode(path, node string) ([]string, error) {
 		if r.Name != node || (r.Type != "sysbox_node" && r.Type != "sysbox_router") {
 			continue
 		}
-		cfg, err := decodeCapabilityResource(r, evalCtx)
-		if err != nil {
+		probe := &substrateProbe{}
+		if err := config.DecodeResource(&r, probe, evalCtx); err != nil {
 			return nil, err
 		}
-		switch cfg := cfg.(type) {
-		case *config.NodeConfig:
-			addSubstrateCapabilities(set, cfg.Substrate)
-		case *config.RouterConfig:
-			addSubstrateCapabilities(set, cfg.Substrate)
-		}
+		addSubstrateCapabilities(set, probe.Substrate)
 		return capabilitiesFromSet(set), nil
 	}
 	return nil, fmt.Errorf("node %q not found in topology", node)
-}
-
-func decodeCapabilityResource(r config.ResourceBlock, evalCtx *hcl.EvalContext) (any, error) {
-	switch r.Type {
-	case "sysbox_node":
-		cfg := &config.NodeConfig{}
-		if err := config.DecodeResource(&r, cfg, evalCtx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	case "sysbox_router":
-		cfg := &config.RouterConfig{}
-		if err := config.DecodeResource(&r, cfg, evalCtx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	case "sysbox_image":
-		cfg := &config.ImageConfig{}
-		if err := config.DecodeResource(&r, cfg, evalCtx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	case "sysbox_kernel":
-		cfg := &config.KernelConfig{}
-		if err := config.DecodeResource(&r, cfg, evalCtx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	case "sysbox_network":
-		cfg := &config.NetworkConfig{}
-		if err := config.DecodeResource(&r, cfg, evalCtx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	case "sysbox_firewall":
-		cfg := &config.FirewallConfig{}
-		if err := config.DecodeResource(&r, cfg, evalCtx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	case "sysbox_ssh_access":
-		cfg := &config.SSHAccessConfig{}
-		if err := config.DecodeResource(&r, cfg, evalCtx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	default:
-		return nil, nil
-	}
 }
 
 func addSubstrateCapabilities(set map[string]bool, substrateName string) {
