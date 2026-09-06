@@ -129,9 +129,19 @@ func TestSQLiteGlobalRevisionFilesColumnMigration(t *testing.T) {
 		created_at TEXT NOT NULL DEFAULT ''
 	) STRICT;`)
 	require.NoError(t, err)
+	// A pre-migration row written under the old single-HCL model.
+	_, err = legacy.Exec(`INSERT INTO sysbox_global_revisions (revision, hcl, size, created_at)
+		VALUES ('sha256:legacy', 'resource "sysbox_node" "web" {}', 0, '')`)
+	require.NoError(t, err)
 	require.NoError(t, legacy.Close())
 
 	store := &sqliteAPIStore{dbPath: dbPath, runsDir: t.TempDir()}
+
+	// A legacy row carries no files JSON, so it must read as not-found rather
+	// than a JSON unmarshal error (which would surface as a 500 on apply).
+	_, err = store.GetGlobalRevision(context.Background(), "sha256:legacy")
+	require.ErrorIs(t, err, errGlobalRevisionNotFound)
+
 	files := map[string][]byte{
 		"field.sysbox.hcl": []byte(`resource "sysbox_node" "web" {}`),
 		"files/f.txt":      []byte("hello"),

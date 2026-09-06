@@ -642,6 +642,12 @@ func (s *sqliteAPIStore) GetGlobalRevision(ctx context.Context, revision string)
 	if err != nil {
 		return nil, err
 	}
+	// Legacy rows (written before directory-tree revisions) have an empty files
+	// column; they cannot be unmarshaled, so treat them as not-found rather than
+	// surfacing a JSON error as a 500 on apply.
+	if len(files) == 0 {
+		return nil, errGlobalRevisionNotFound
+	}
 	if err := json.Unmarshal(files, &rev.Files); err != nil {
 		return nil, err
 	}

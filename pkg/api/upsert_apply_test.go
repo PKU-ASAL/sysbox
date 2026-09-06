@@ -313,3 +313,34 @@ func TestApplyUpsertMaterializesDirectoryTree(t *testing.T) {
 		require.Equal(t, want, string(got), "content mismatch at %s", p)
 	}
 }
+
+// Re-applying a different revision must reconcile the tree: a file present in
+// the old revision but absent from the new one must be removed, not left as a
+// stale union of the two revisions.
+func TestApplyUpsertReconcilesRemovedFiles(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	registerDockerAgent(t, s)
+
+	revA := publishRevisionFiles(t, s, map[string]string{
+		"field.sysbox.hcl":     upsertApplyHCL,
+		"modules/web/main.hcl": `resource "sysbox_node" "web" {}`,
+		"files/extra.txt":      "extra",
+	})
+	applyUpsert(t, s, "cf-reconcile", revA)
+
+	base := filepath.Dir(s.workspaceService().HCLFile("cf-reconcile"))
+	_, err := os.Stat(filepath.Join(base, "files", "extra.txt"))
+	require.NoError(t, err, "revision A must materialize files/extra.txt")
+
+	revB := publishRevisionFiles(t, s, map[string]string{"field.sysbox.hcl": upsertApplyHCL})
+	applyUpsert(t, s, "cf-reconcile", revB)
+
+	for _, stale := range []string{"files/extra.txt", "modules/web/main.hcl"} {
+		_, err := os.Stat(filepath.Join(base, filepath.FromSlash(stale)))
+		require.True(t, os.IsNotExist(err), "%s removed from the new revision must be gone", stale)
+	}
+
+	got, err := os.ReadFile(filepath.Join(base, "field.sysbox.hcl"))
+	require.NoError(t, err)
+	require.Equal(t, upsertApplyHCL, string(got))
+}

@@ -98,15 +98,29 @@ func (s *WorkspaceService) UpdateHCL(ctx context.Context, topology string, hcl [
 // creating the directory and each file. Idempotent: repeated calls overwrite.
 // Every path is re-validated here (defense in depth), so a malformed or
 // malicious path can never escape workspacesDir/<topology>/.
+//
+// The workspace dir holds only the materialized HCL tree (state lives under
+// runsDir), so it is removed and rewritten wholesale: this guarantees the
+// on-disk tree is exactly the requested revision, never a union with a prior
+// one (a stale module/file present in revision A but absent in B must not
+// survive).
 func (s *WorkspaceService) UpsertProject(ctx context.Context, topology string, files map[string][]byte) error {
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
 	}
-	base := filepath.Join(s.workspacesDir, topology)
-	for p, content := range files {
+	// Validate every path before touching disk so a bad path cannot leave the
+	// workspace half-reconciled.
+	for p := range files {
 		if err := validateRelPath(p); err != nil {
 			return err
 		}
+	}
+
+	base := filepath.Join(s.workspacesDir, topology)
+	if err := os.RemoveAll(base); err != nil {
+		return fmt.Errorf("remove workspace: %w", err)
+	}
+	for p, content := range files {
 		target := filepath.Join(base, filepath.FromSlash(p))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return fmt.Errorf("create directory: %w", err)

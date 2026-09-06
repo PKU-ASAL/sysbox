@@ -12,13 +12,15 @@
 
 ```
 project/
-├── main.hcl               # root：网络 + sensitive variable + module 引用
+├── field.sysbox.hcl      # root：网络 + sensitive variable + module 引用
 ├── modules/
 │   ├── web/main.hcl       # module 子目录
 │   └── db/main.hcl
 └── files/
     └── playbook.tar.gz    # provisioner "file" 引用的装配文件
 ```
+
+> 根文件固定为 `field.sysbox.hcl`（本地 CLI 默认，见 `cmd/sysbox/commands/root.go`）；`main.hcl` 只是 module 子目录里的 fallback 文件名。
 
 单 HCL blob 在三处漏：
 
@@ -46,7 +48,7 @@ type Revision struct {
 }
 ```
 
-`Files` 的 key 是相对 project 根的路径（`main.hcl`、`modules/web/main.hcl`、`files/playbook.tar.gz`），value 是文件字节。
+`Files` 的 key 是相对 project 根的路径（`field.sysbox.hcl`、`modules/web/main.hcl`、`files/playbook.tar.gz`），value 是文件字节。
 
 ### 2.2 digest 算法：路径是 digest 的一部分
 
@@ -115,7 +117,7 @@ revision.Files  →  逐个写到 workspace/<topology>/<相对路径>
 
 ## 六、验收
 
-- [ ] `POST /v1/revisions` 接受一个含 `main.hcl` + `modules/` + `files/` 的目录，返回稳定 digest；
+- [ ] `POST /v1/revisions` 接受一个含 `field.sysbox.hcl` + `modules/` + `files/` 的目录，返回稳定 digest；
 - [ ] 同一目录重复 publish → 同一 digest；改目录名（连带 source）→ 不同 digest；
 - [ ] `modules/web/main.hcl` 与 `modules/www/main.hcl` 字节相同但路径不同 → 不同 digest；
 - [ ] apply 物化后，`provisioner "file" { source = "files/xxx" }` 与 `module { source = "./modules/web" }` 能解析；
