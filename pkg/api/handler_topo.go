@@ -253,7 +253,12 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, runServiceStatus(err), err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "agent_id": run.AgentID})
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"name":     topology,
+		"status":   s.topologyStatus(topology),
+		"run_id":   run.ID,
+		"agent_id": run.AgentID,
+	})
 }
 
 // POST /v1/topologies/{topology}/repair

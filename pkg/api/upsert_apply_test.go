@@ -105,6 +105,34 @@ func TestApplyUpsertCreatesTopologyOnFirstCall(t *testing.T) {
 	require.Equal(t, rev, run.Revision, "the run must record the global revision digest")
 }
 
+// The apply response must carry the topology name and its projected status in
+// addition to the run/agent identifiers, so a consumer can read the convergence
+// status directly without an extra GET.
+func TestApplyUpsertResponseIncludesNameAndStatus(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	registerDockerAgent(t, s)
+
+	const topology = "cf-upsert-a"
+	rev := publishRevision(t, s, upsertApplyHCL)
+
+	body, err := json.Marshal(map[string]any{"revision": rev, "inputs": map[string]string{}})
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/topologies/"+topology+"/apply", bytes.NewBuffer(body)))
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	var applied struct {
+		Name   string                       `json:"name"`
+		Status *controlplane.TopologyStatus `json:"status"`
+		RunID  string                       `json:"run_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &applied))
+	require.Equal(t, topology, applied.Name)
+	require.NotNil(t, applied.Status)
+	require.NotEmpty(t, applied.RunID)
+	require.Equal(t, controlplane.PhaseConverging, applied.Status.Phase)
+}
+
 // Applying the same revision+inputs again must coalesce onto the in-flight run,
 // not dispatch a second one: the workspace HCL is overwritten in place and the
 // same run id is returned.
