@@ -40,6 +40,19 @@ func BuildEvalContextWithInputs(root *Root, callerDir string, inputs map[string]
 	return buildEvalContextInner(root, callerDir, bindings)
 }
 
+// baseFunctions returns the builtin functions shared by every eval context
+// sysbox builds. Keeping a single source of truth avoids drifting between the
+// local, pre-count and main contexts when a new builtin is added.
+func baseFunctions() map[string]function.Function {
+	return map[string]function.Function{
+		"env":          envFunc,
+		"env_optional": envOptionalFunc,
+		"toset":        tosetFunc,
+		"cidrsubnet":   cidrsubnetFunc,
+		"cidrhost":     cidrhostFunc,
+	}
+}
+
 // buildEvalContextInner is the actual implementation.
 func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]cty.Value) (*hcl.EvalContext, error) {
 	var diagnostics diag.Diagnostics
@@ -62,7 +75,7 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 
 	// Collect locals first so they are available when evaluating count expressions.
 	localCtx := &hcl.EvalContext{
-		Functions: map[string]function.Function{"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc, "cidrsubnet": cidrsubnetFunc, "cidrhost": cidrhostFunc},
+		Functions: baseFunctions(),
 	}
 	localVals := map[string]cty.Value{}
 	for _, lb := range root.Locals {
@@ -87,7 +100,7 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 	// Minimal context for evaluating count = <expr> (literals + local.x).
 	preCtx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{},
-		Functions: map[string]function.Function{"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc, "cidrsubnet": cidrsubnetFunc, "cidrhost": cidrhostFunc},
+		Functions: baseFunctions(),
 	}
 	if len(localVals) > 0 {
 		preCtx.Variables["local"] = cty.ObjectVal(localVals)
@@ -160,9 +173,7 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 
 	ctx := &hcl.EvalContext{
 		Variables: vars,
-		Functions: map[string]function.Function{
-			"env": envFunc, "env_optional": envOptionalFunc, "toset": tosetFunc, "cidrsubnet": cidrsubnetFunc, "cidrhost": cidrhostFunc,
-		},
+		Functions: baseFunctions(),
 	}
 
 	// Pre-load module outputs so that module.<name>.<key> can be referenced
