@@ -17,9 +17,6 @@ API_DATA_DIR ?= $(or $(SYSBOX_HOST_HOME_DIR),.sysbox/api)
 API_DATA_ABS := $(abspath $(API_DATA_DIR))
 AGENT_ID ?= local-docker
 AGENT_CAPABILITIES ?= docker,network
-WEB_HOST_ADDR ?= $(or $(SYSBOX_WEB_HOST_ADDR),0.0.0.0)
-WEB_HOST_PORT ?= $(or $(SYSBOX_WEB_HOST_PORT),3001)
-WEB_URL ?= http://127.0.0.1:$(WEB_HOST_PORT)
 
 HCL := examples/$(TOPO)/field.sysbox.hcl
 STATE := .sysbox/runs/$(TOPO)/state.json
@@ -31,25 +28,25 @@ COMPOSE_DIR := deploy/docker
 COMPOSE := docker compose --project-directory .
 COMPOSE_API := -f $(COMPOSE_DIR)/compose.yml
 COMPOSE_FULL := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.agent.yml
-COMPOSE_ALL := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.agent.yml -f $(COMPOSE_DIR)/compose.web.yml
+COMPOSE_ALL := -f $(COMPOSE_DIR)/compose.yml -f $(COMPOSE_DIR)/compose.agent.yml
 
 FIRST_GOAL := $(firstword $(MAKECMDGOALS))
 SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build build-all web-build test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset test-windows-tools prepare-windows10-media build-windows10-image test-windows10-libvirt release-test release-workflow-test release-build release-verify lint ci clean \
+.PHONY: help build build-all test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset test-windows-tools prepare-windows10-media build-windows10-image test-windows10-libvirt release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
-	api-help api-build-api api-build-ui api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
+	api-help api-build-api api-seed api-deploy api-deploy-full api-status api-down api-clean api-logs api-config \
 	validate plan apply destroy output state up \
-	build-api build-ui seed deploy deploy-full status down logs config \
+	build-api seed deploy deploy-full status down logs config \
 	.agent-register
 
 help: ## Show command groups
 	@echo "Usage:"
 	@echo "  make cli <validate|plan|apply|destroy|output|state> [TOPO=two-networks]"
-	@echo "  make api <build-api|build-ui|seed|deploy|deploy-full|status|down|clean|logs|config>"
+	@echo "  make api <build-api|seed|deploy|deploy-full|status|down|clean|logs|config>"
 	@echo ""
 	@echo "Common:"
 	@echo "  make build          Build bin/sysbox"
@@ -137,10 +134,6 @@ release-build: ## Build release artifacts for VERSION=vMAJOR.MINOR.PATCH
 release-verify: ## Verify artifacts in dist/
 	bash scripts/release/verify.sh dist
 
-web-build: ## Build the Web UI
-	npm --prefix web install
-	npm --prefix web run build
-
 lint: ## Run go vet
 	$(GOENV) $(GO) vet ./...
 
@@ -189,16 +182,10 @@ api:
 	@$(MAKE) --no-print-directory api-$(or $(SUBCOMMAND),help)
 
 api-help:
-	@echo "Usage: make api <build-api|build-ui|seed|deploy|deploy-full|status|down|clean|logs|config>"
+	@echo "Usage: make api <build-api|seed|deploy|deploy-full|status|down|clean|logs|config>"
 
 api-build-api:
 	docker build --network=host --no-cache -t sysbox:latest .
-
-api-build-ui: web-build
-	docker build --network=host -t sysbox-web:latest ./web
-	$(COMPOSE) $(COMPOSE_API) -f $(COMPOSE_DIR)/compose.web.yml up -d sysbox-web
-	@echo "Web UI: $(WEB_URL)"
-	@echo "Remote: http://<host-ip>:$(WEB_HOST_PORT)"
 
 api-seed:
 	@mkdir -p "$(API_DATA_DIR)/workspaces"
@@ -227,8 +214,6 @@ api-status:
 	@echo ""
 	@printf "API health: "
 	@curl -sf "$(API_URL)/v1/health" 2>/dev/null || echo "unreachable"
-	@printf "Web health: "
-	@curl -sf "http://127.0.0.1:$(WEB_HOST_PORT)/v1/health" 2>/dev/null || echo "unreachable"
 
 .agent-register:
 	$(COMPOSE) $(COMPOSE_FULL) run --rm --no-deps --entrypoint sysbox sysbox-agent \
@@ -257,7 +242,7 @@ validate plan apply destroy output state:
 
 up: apply
 
-build-api build-ui seed deploy deploy-full status logs config:
+build-api seed deploy deploy-full status logs config:
 	@if [ "$(FIRST_GOAL)" = "api" ]; then :; else $(MAKE) --no-print-directory api-$@; fi
 
 down:

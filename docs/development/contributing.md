@@ -9,7 +9,7 @@ go build ./cmd/sysbox ./cmd/sysbox-init
 go test ./...
 ```
 
-需要 API/Web 时使用根 Makefile 的 `api` 目标；前端位于 `web/manager`。
+需要 API 时使用根 Makefile 的 `api` 目标。
 
 ## Code Boundaries
 
