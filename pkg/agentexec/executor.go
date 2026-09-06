@@ -7,7 +7,6 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -265,12 +264,8 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	g, mgr, st, root, evalCtx, err := runtime.LoadWorkspaceWithManager(e.bridge.HCLFile(run.Topology), mgr)
+	g, mgr, st, root, evalCtx, err := runtime.LoadWorkspaceWithInputs(e.bridge.HCLFile(run.Topology), mgr, run.Inputs)
 	if err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if err := config.InjectVariables(evalCtx, root.Variables, run.Inputs); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}

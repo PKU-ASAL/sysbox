@@ -474,3 +474,56 @@ resource "sysbox_network" "lab" {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "set must contain strings")
 }
+
+func TestLoadWorkspaceWithInputsInjectsVarsBeforeGraph(t *testing.T) {
+	registerPortTestDriver(t, &portTestSubstrate{name: "docker"})
+
+	hclFile := writeHCL(t, `
+variable "n" {
+  default = 2
+}
+variable "mode" {}
+
+substrate "docker" { alias = "local" }
+
+resource "sysbox_image" "alpine" {
+  substrate    = substrate.docker.local
+  kind         = "oci"
+  source       = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
+}
+
+resource "sysbox_node" "web" {
+  count     = var.n
+  substrate = substrate.docker.local
+  image     = sysbox_image.alpine.id
+  env       = { MODE = var.mode }
+}
+`)
+
+	mgr := state.NewManager(filepath.Join(t.TempDir(), "state.json"))
+
+	g, _, st, root, evalCtx, err := LoadWorkspaceWithInputs(hclFile, mgr, map[string]string{"mode": "prod"})
+	require.NoError(t, err)
+	require.NotNil(t, st)
+	require.NotNil(t, root)
+	require.NotNil(t, evalCtx)
+
+	// count = var.n expanded to two indexed nodes and left no bare address behind.
+	require.NotNil(t, g.Get(address.Resource("sysbox_image", "alpine")))
+	require.NotNil(t, g.Get(address.IntInstance("sysbox_node", "web", 0)))
+	require.NotNil(t, g.Get(address.IntInstance("sysbox_node", "web", 1)))
+	require.Nil(t, g.Get(address.Resource("sysbox_node", "web")))
+
+	// The field expression var.mode was decoded against the injected context.
+	node := g.Get(address.IntInstance("sysbox_node", "web", 0))
+	cfg, ok := node.Data.(*config.NodeConfig)
+	require.True(t, ok)
+	require.Equal(t, "prod", cfg.Env["MODE"])
+
+	// Old behaviour: without injection the same HCL fails, because count = var.n
+	// is evaluated before var.<name> is bound.
+	_, _, _, _, _, err = LoadWorkspaceWithManager(hclFile, mgr)
+	require.Error(t, err)
+}
