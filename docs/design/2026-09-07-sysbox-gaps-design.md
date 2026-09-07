@@ -61,11 +61,15 @@ redeploy 后 `docker inspect` 的 `PidMode=host`，且 `withContainerNetNS` 能 
 
 ### #4 —— destroy 同步回收
 
-destroy 变同步：派发 run 后等待其到终态（轮询 run 状态，~250ms 间隔）再返回，网络
-连同所有资源在返回前已回收。
+**plain destroy**（`POST /destroy` 无 `Idempotency-Key`，即 cyberfield rebuild 走的路径）
+变同步：派发 run 后等待其到终态（轮询 run 状态，~250ms 间隔）再返回，网络连同所有资源
+在返回前已回收。
 
-- 落点 `pkg/api/run_service.go`：`startDestroy` / `startIdempotentDestroy` 新建 run 后
-  调 `waitForCompletion`；幂等重放命中 `found` 已存在 run 则立即返回（不等待）。
+- 落点 `pkg/api/run_service.go`：`startDestroy` 在 `dispatchTopologyRun` 后调
+  `waitForCompletion`。
+- **idempotent destroy**（带 `Idempotency-Key`）**保持异步**：其契约是「去重入队 +
+  安全重放」，非「等待」；现有测试锁定该异步语义。若 cyberfield 将来用幂等键做 rebuild
+  destroy，需另行同步（当前未用）。
 - 超时 `destroySyncTimeout`（默认 120s），超时返回错误（让 rebuild **响亮失败**，
   不静默继续触发竞态）。等待期间 SSE 照常流式上报。
 - 尊重 `r.Context()` 取消（HTTP 断开即停止等待）。
