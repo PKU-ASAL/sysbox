@@ -11,8 +11,9 @@ import (
 func TestWaitForCompletionReturnsImmediatelyWhenTerminal(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	run := newRun("lab", "destroy", runStartOptions{})
-	run.MarkFinished(nil, time.Now())
-	s.jobs.remember(run)
+	// finish marks the run terminal AND closes its log broadcaster — the same
+	// signal waitForCompletion waits on.
+	s.jobs.finish(run, nil)
 
 	start := time.Now()
 	err := s.runs().waitForCompletion(context.Background(), run)
