@@ -17,6 +17,11 @@ import (
 
 var operationKeyPattern = regexp.MustCompile(`^[A-Za-z0-9:_-]{1,128}$`)
 
+// destroySyncTimeout bounds how long a destroy call waits for its run to reach a
+// terminal status before returning. It is a var (not a const) so tests can
+// shrink it.
+var destroySyncTimeout = 2 * time.Minute
+
 func validateOperationKey(key string) error {
 	if !operationKeyPattern.MatchString(key) {
 		return fmt.Errorf("operation key must be 1-128 ASCII letters, digits, colon, underscore, or hyphen")
@@ -228,6 +233,15 @@ func (s *RunService) startDestroy(ctx context.Context, topology string, allowUns
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
 	}
+	// The plain (non-idempotent) destroy is synchronous: it returns only after
+	// the run reaches a terminal status, so exclusive address-space resources
+	// (docker networks) are reclaimed before the caller moves on. A rebuild that
+	// destroys then re-applies the same CIDR would otherwise race the still-
+	// running destroy and fail with "Pool overlaps". The idempotent path below
+	// stays asynchronous on purpose (its contract is dedup-enqueue, not wait).
+	if err := s.waitForCompletion(ctx, run); err != nil {
+		return nil, runError(runServiceInternal, err)
+	}
 	return run, nil
 }
 
@@ -277,6 +291,31 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 		_ = s.scheduler.agents.registry.PublishCommand(command.AgentID, command)
 	}
 	return stored, nil
+}
+
+// waitForCompletion blocks until run reaches a terminal status or the timeout
+// elapses. The plain destroy path uses it so that exclusive address-space
+// resources (docker networks) are reclaimed before the destroy call returns —
+// otherwise a rebuild that re-applies the same CIDR races the still-running
+// destroy and fails with "Pool overlaps". The SSE stream continues to report
+// progress while waiting.
+func (s *RunService) waitForCompletion(ctx context.Context, run *controlplane.Run) error {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(destroySyncTimeout)
+	defer timer.Stop()
+	for {
+		if cur, ok := s.jobs.get(run.ID); ok && cur.Status.IsTerminal() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return fmt.Errorf("destroy %s did not complete within %s", run.ID, destroySyncTimeout)
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *RunService) Resume(ctx context.Context, runID string) (*controlplane.Run, *controlplane.Run, error) {
