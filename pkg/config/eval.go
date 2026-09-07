@@ -20,12 +20,22 @@ import (
 // BuildEvalContext returns an *hcl.EvalContext for the given root. callerDir
 // is the directory of the HCL file (needed to resolve module source paths).
 // Pass "" when the caller directory is not known (module outputs won't be pre-loaded).
+//
+// It is used by no-inputs paths (preflight, destroy, refresh, outputs,
+// evaluation). Variables are bound from their defaults, falling back to a
+// type-shaped placeholder, so locals/count expressions that reference var.<name>
+// still evaluate — the concrete value is supplied on the apply path via
+// BuildEvalContextWithInputs.
 func BuildEvalContext(root *Root, callerDir ...string) (*hcl.EvalContext, error) {
 	dir := ""
 	if len(callerDir) > 0 {
 		dir = callerDir[0]
 	}
-	return buildEvalContextInner(root, dir, nil)
+	bindings, err := PreflightVariableBindings(root.Variables)
+	if err != nil {
+		return nil, err
+	}
+	return buildEvalContextInner(root, dir, bindings)
 }
 
 // BuildEvalContextWithInputs is the apply-path counterpart of BuildEvalContext:
@@ -74,8 +84,18 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 	}
 
 	// Collect locals first so they are available when evaluating count expressions.
+	// Locals may reference var.*, previously-declared local.* and substrate.*
+	// (aligned with Terraform's top-down local semantics). Attributes are
+	// evaluated in source order, growing the local object as each value lands.
 	localCtx := &hcl.EvalContext{
+		Variables: map[string]cty.Value{},
 		Functions: baseFunctions(),
+	}
+	if len(varBindings) > 0 {
+		localCtx.Variables["var"] = cty.ObjectVal(varBindings)
+	}
+	if len(substrateVal) > 0 {
+		localCtx.Variables["substrate"] = cty.ObjectVal(substrateVal)
 	}
 	localVals := map[string]cty.Value{}
 	for _, lb := range root.Locals {
@@ -87,8 +107,18 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 			diagnostics = append(diagnostics, fromHCLDiagnostics(diags)...)
 			continue
 		}
-		for name, attr := range attrs {
-			val, diags := attr.Expr.Value(localCtx)
+		names := make([]string, 0, len(attrs))
+		for name := range attrs {
+			names = append(names, name)
+		}
+		sort.Slice(names, func(i, j int) bool {
+			return attrs[names[i]].NameRange.Start.Byte < attrs[names[j]].NameRange.Start.Byte
+		})
+		for _, name := range names {
+			if len(localVals) > 0 {
+				localCtx.Variables["local"] = cty.ObjectVal(localVals)
+			}
+			val, diags := attrs[name].Expr.Value(localCtx)
 			if diags.HasErrors() {
 				diagnostics = append(diagnostics, fromHCLDiagnostics(diags)...)
 				continue
@@ -97,7 +127,8 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 		}
 	}
 
-	// Minimal context for evaluating count = <expr> (literals + local.x).
+	// Minimal context for evaluating count = <expr> (literals + local.x + var.x
+	// + substrate.x).
 	preCtx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{},
 		Functions: baseFunctions(),
@@ -107,6 +138,9 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 	}
 	if len(varBindings) > 0 {
 		preCtx.Variables["var"] = cty.ObjectVal(varBindings)
+	}
+	if len(substrateVal) > 0 {
+		preCtx.Variables["substrate"] = cty.ObjectVal(substrateVal)
 	}
 
 	resTypes := map[string]map[string]cty.Value{}

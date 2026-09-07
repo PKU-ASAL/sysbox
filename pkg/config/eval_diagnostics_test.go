@@ -19,7 +19,7 @@ locals {
 
 	_, err = BuildEvalContext(root)
 	require.ErrorContains(t, err, "locals.hcl:3:12")
-	require.ErrorContains(t, err, "Variables not allowed")
+	require.ErrorContains(t, err, "Unknown variable")
 }
 
 func TestBuildEvalContextReturnsInvalidModuleVariableDefault(t *testing.T) {

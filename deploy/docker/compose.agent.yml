@@ -3,6 +3,10 @@ services:
     image: ${SYSBOX_IMAGE:-sysbox:latest}
     container_name: sysbox-agent
     restart: unless-stopped
+    pid: host
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
     depends_on:
       sysbox-api:
         condition: service_started
