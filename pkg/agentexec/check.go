@@ -86,7 +86,10 @@ func resolveExecData(ctx context.Context, st *state.State, d config.DataBlock, e
 		return cty.NilVal, fmt.Errorf("data %s.%s: %w", d.Type, d.Name, err)
 	}
 
-	result, err := runGuestExec(ctx, st, nodeAddr.Name, cfg.Argv, nil, "")
+	execCtx, cancel := context.WithTimeout(ctx, execDataTimeout(cfg.Timeout))
+	defer cancel()
+
+	result, err := runGuestExec(execCtx, st, nodeAddr.Name, cfg.Argv, nil, "")
 	if err != nil {
 		return cty.NilVal, fmt.Errorf("data %s.%s: %w", d.Type, d.Name, err)
 	}
@@ -98,6 +101,17 @@ func resolveExecData(ctx context.Context, st *state.State, d config.DataBlock, e
 		"stderr":    cty.StringVal(result.Stderr),
 		"truncated": cty.BoolVal(truncated),
 	}), nil
+}
+
+// execDataTimeout returns the deadline for a sysbox_exec check command. Unlike
+// sysbox_reach (which has a fixed 5s probe budget), sysbox_exec runs an author-
+// supplied argv and defaults to 30s; a command that outlives its budget (e.g. a
+// probe blocked by a firewall) must not wedge the whole apply.
+func execDataTimeout(seconds int) time.Duration {
+	if seconds <= 0 {
+		seconds = 30
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func resolveReachData(ctx context.Context, st *state.State, d config.DataBlock, evalCtx *hcl.EvalContext) (cty.Value, error) {

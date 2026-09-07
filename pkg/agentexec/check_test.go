@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/stretchr/testify/require"
@@ -198,4 +199,29 @@ check "isolation" {
 	result := evaluateChecks(context.Background(), reachState(t), root.Checks, evalCtx)
 
 	require.Empty(t, result.FailedChecks)
+}
+
+func TestExecDataTimeout(t *testing.T) {
+	require.Equal(t, 30*time.Second, execDataTimeout(0))
+	require.Equal(t, 30*time.Second, execDataTimeout(-1))
+	require.Equal(t, 5*time.Second, execDataTimeout(5))
+}
+
+// A sysbox_exec data source accepts an optional timeout (seconds); it must
+// decode without tripping ValidateChecks.
+func TestExecDataTimeoutFieldDecodes(t *testing.T) {
+	root, _ := parseChecks(t, checkNodeHCL+`
+check "portal" {
+  data "sysbox_exec" "health" {
+    node    = sysbox_node.web.id
+    argv    = ["curl", "http://127.0.0.1:8080/health"]
+    timeout = 12
+  }
+  assert {
+    condition     = data.sysbox_exec.health.exit_code == 0
+    error_message = "portal not ready"
+  }
+}
+`)
+	require.Len(t, root.Checks, 1)
 }
