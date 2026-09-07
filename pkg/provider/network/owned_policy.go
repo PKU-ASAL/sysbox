@@ -126,6 +126,11 @@ func applyCompiledRulesetConn(conn *nftables.Conn, plan compiledRuleset) error {
 	}
 	marker := ownershipMarker(plan.Owner, plan.Digest)
 	conn.AddRule(&nftables.Rule{Table: table, Chain: chains[driver.DirectionInput], UserData: userdata.AppendString(nil, userdata.TypeComment, expressionMarker(marker, nil))})
+	// Loopback is always accepted so a node's access to its own 127.0.0.1
+	// services survives a default drop policy — otherwise a `curl 127.0.0.1`
+	// health check on a firewalled node is silently dropped.
+	conn.AddRule(&nftables.Rule{Table: table, Chain: chains[driver.DirectionInput], Exprs: loopbackAcceptExpressions(expr.MetaKeyIIFNAME)})
+	conn.AddRule(&nftables.Rule{Table: table, Chain: chains[driver.DirectionOutput], Exprs: loopbackAcceptExpressions(expr.MetaKeyOIFNAME)})
 	for _, rule := range plan.Rules {
 		expressions, err := policyExpressions(rule)
 		if err != nil {
@@ -332,6 +337,19 @@ func cidrExpressions(cidr string, source bool) ([]expr.Any, error) {
 	return []expr.Any{&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: offset, Len: 4}, &expr.Bitwise{SourceRegister: 1, DestRegister: 1, Len: 4, Mask: []byte(network.Mask), Xor: make([]byte, 4)}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte(network.IP.To4())}}, nil
 }
 func ifnameBytes(name string) []byte { return append([]byte(name), 0) }
+
+// loopbackAcceptExpressions matches traffic on the loopback interface (iifname
+// or oifname == "lo") and accepts it. It is emitted for both the input and
+// output chains so a node's own 127.0.0.1 traffic is never dropped by a default
+// drop policy.
+func loopbackAcceptExpressions(metaKey expr.MetaKey) []expr.Any {
+	return []expr.Any{
+		&expr.Meta{Key: metaKey, Register: 1},
+		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifnameBytes("lo")},
+		&expr.Verdict{Kind: expr.VerdictAccept},
+	}
+}
+
 func ctStateMask(state driver.ConnectionState) uint32 {
 	return map[driver.ConnectionState]uint32{driver.StateInvalid: 1, driver.StateEstablished: 2, driver.StateRelated: 4, driver.StateNew: 8}[state]
 }
