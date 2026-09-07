@@ -41,6 +41,11 @@ type Options struct {
 	ReportGuestFileStartFunc         func(context.Context, string) error
 	ReportGuestFileCompleteFunc      func(context.Context, string, controlplane.GuestFileOperationCompletion) error
 	RequestTimeout                   time.Duration
+
+	// httpClient is the shared HTTP client for agent → API requests. Run builds
+	// it once so keep-alive connections are reused across heartbeats, projections
+	// and completion reports instead of re-dialling per request.
+	httpClient *http.Client
 }
 
 func Run(ctx context.Context, opts Options, bridge Bridge) error {
@@ -65,6 +70,7 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	if opts.RequestTimeout <= 0 {
 		opts.RequestTimeout = 30 * time.Second
 	}
+	opts.httpClient = &http.Client{Timeout: opts.RequestTimeout}
 	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
 	if len(opts.Capabilities) == 0 {
 		opts.Capabilities = []string{"docker", "network", "firecracker", "kvm", "libvirt"}
@@ -725,6 +731,10 @@ func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.R
 }
 
 func requestClient(opts Options) *http.Client {
+	if opts.httpClient != nil {
+		return opts.httpClient
+	}
+	// Fallback for callers that build Options directly without Run (tests).
 	timeout := opts.RequestTimeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
