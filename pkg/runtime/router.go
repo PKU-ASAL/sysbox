@@ -43,15 +43,13 @@ func (RouterResourceHandler) Read(ctx context.Context, current state.Resource) (
 	if err != nil {
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
-	observation, err := policy.ObserveRuleset(ctx, driver.PolicyTarget{Resource: current.Address.String(), State: json.RawMessage(current.Str("policy_target_state"))}, current.Str("policy_owner"))
+	// Observe only the target's liveness, not the ruleset (see firewall Read).
+	alive, err := policy.CheckTarget(ctx, driver.PolicyTarget{Resource: current.Address.String(), State: json.RawMessage(current.Str("policy_target_state"))})
 	if err != nil {
-		if driver.IsCategory(err, driver.ErrorNotFound) {
-			return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: "router policy table not found"}, nil
-		}
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
-	if observation.Digest != current.Str("policy_digest") {
-		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: "router policy digest mismatch"}, nil
+	if !alive {
+		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: "router policy target is not running"}, nil
 	}
 	return result, nil
 }

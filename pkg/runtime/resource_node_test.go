@@ -145,8 +145,8 @@ func (s *portTestSubstrate) ApplyRuleset(_ context.Context, _ driver.PolicyTarge
 	s.natNames = []string{spec.NAT.SourceAttachment, spec.NAT.UplinkAttachment}
 	return driver.RulesetObservation{Table: driver.RulesetTableName(spec.Owner), Digest: "digest"}, nil
 }
-func (s *portTestSubstrate) ObserveRuleset(context.Context, driver.PolicyTarget, string) (driver.RulesetObservation, error) {
-	return driver.RulesetObservation{}, nil
+func (s *portTestSubstrate) CheckTarget(context.Context, driver.PolicyTarget) (bool, error) {
+	return true, nil
 }
 func (s *portTestSubstrate) DeleteRuleset(context.Context, driver.PolicyTarget, string) error {
 	return nil

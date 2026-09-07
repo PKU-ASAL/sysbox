@@ -28,22 +28,19 @@ func (FirewallResourceHandler) Read(ctx context.Context, current state.Resource)
 	if err != nil {
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
-	target, owner, err := policyState(current)
+	target, _, err := policyState(current)
 	if err != nil {
 		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: err.Error()}, nil
 	}
-	observation, err := policy.ObserveRuleset(ctx, target, owner)
+	// Observe only the target's liveness, not the ruleset: reading the ruleset
+	// back is a netlink dump that can deadlock against an active container.
+	// The ruleset was written on apply and is trusted from there on.
+	alive, err := policy.CheckTarget(ctx, target)
 	if err != nil {
-		if driver.IsCategory(err, driver.ErrorNotFound) {
-			return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: "owned nftables table not found"}, nil
-		}
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
-	if observation.Digest != current.Str("desired_digest") {
-		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: "nftables ruleset digest mismatch"}, nil
-	}
-	if err := current.SetAttribute("observed_digest", observation.Digest); err != nil {
-		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
+	if !alive {
+		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: "policy target is not running"}, nil
 	}
 	return resourceReadOK(current), nil
 }
@@ -150,7 +147,7 @@ func (FirewallResourceHandler) RecoverCheckpointResource(ctx context.Context, st
 		action.Status = "already_in_state"
 		return action, nil
 	}
-	target, owner, err := policyState(res)
+	target, _, err := policyState(res)
 	if err != nil {
 		action.Status, action.Error = "invalid_state", err.Error()
 		return action, nil
@@ -159,17 +156,13 @@ func (FirewallResourceHandler) RecoverCheckpointResource(ctx context.Context, st
 	if err != nil {
 		return action, err
 	}
-	observation, observeErr := policy.ObserveRuleset(ctx, target, owner)
-	if observeErr == nil && observation.Digest == res.Str("desired_digest") {
-		st.AddResource(res)
-		action.Status = "recovered_adopted"
-		return action, nil
-	}
+	// Always re-apply rather than reading the ruleset back to decide whether it
+	// survived; apply is idempotent (it always rebuilds the table).
 	var spec driver.RulesetSpec
 	if err := json.Unmarshal([]byte(res.Str("policy_spec")), &spec); err != nil {
 		return action, fmt.Errorf("recover firewall policy spec: %w", err)
 	}
-	observation, err = policy.ApplyRuleset(ctx, target, spec)
+	observation, err := policy.ApplyRuleset(ctx, target, spec)
 	if err != nil {
 		return action, err
 	}

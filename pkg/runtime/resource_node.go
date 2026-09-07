@@ -484,6 +484,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if len(cfg.Provisioners) > 0 {
 		conn, err := e.connectionForNode(ctx, nodeDriver, handle, cfg.Connections)
 		if err != nil {
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on connection setup failure")
 			return state.Resource{}, fmt.Errorf("connection for node %s: %w", n.Address.Name, err)
 		}
 		// Block until the chosen connection is reachable (SSH up, vsock
@@ -492,10 +493,17 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		if waiter, ok := conn.(substrate.ConnectionWaiter); ok {
 			e.logf("[provisioner] waiting for connection on %s...\n", n.Address.Name)
 			if err := waiter.WaitReady(ctx, 60*time.Second); err != nil {
+				util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on connection wait failure")
 				return state.Resource{}, fmt.Errorf("connection not ready on node %s: %w", n.Address.Name, err)
 			}
 		}
 		if err := e.runProvisioners(ctx, conn, cfg.Provisioners); err != nil {
+			// The container is already running here; if a provisioner fails we
+			// must remove it, or a leftover container stays attached to the NAT
+			// network and blocks that network's removal on rollback/destroy —
+			// which then leaks an orphan network and fails the next apply's
+			// same-CIDR create with "Pool overlaps".
+			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on provisioner failure")
 			return state.Resource{}, fmt.Errorf("provisioner on node %s: %w", n.Address.Name, err)
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"net"
 
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/errdefs"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -50,8 +51,13 @@ func (s *Substrate) CreateBridgeNetwork(ctx context.Context, name, cidr string, 
 }
 
 // RemoveBridgeNetwork removes a Docker-managed bridge network by ID.
+// Idempotent: an already-absent network is not an error.
 func (s *Substrate) RemoveBridgeNetwork(ctx context.Context, networkID string) error {
-	return s.cli.NetworkRemove(ctx, networkID)
+	err := s.cli.NetworkRemove(ctx, networkID)
+	if errdefs.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 // CreateManagedNetwork implements substrate.Substrate by creating a Docker
