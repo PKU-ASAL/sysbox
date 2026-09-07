@@ -118,3 +118,33 @@ func variableDefault(vb VariableBlock) (cty.Value, bool, error) {
 	}
 	return val, true, nil
 }
+
+// PreflightVariableBindings builds a var.<name> object for no-inputs contexts
+// (preflight, destroy, refresh, outputs, evaluation). A sensitive variable
+// binds to its secret reference, a variable with a default binds to the
+// default, and a variable with neither binds to a type-shaped placeholder so
+// expressions that reference it still evaluate — the concrete value is supplied
+// as an input on the apply path.
+func PreflightVariableBindings(vars []VariableBlock) (map[string]cty.Value, error) {
+	bindings, err := VariableBindings(vars, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, vb := range vars {
+		if _, ok := bindings[vb.Name]; ok {
+			continue
+		}
+		bindings[vb.Name] = variablePlaceholder(vb)
+	}
+	return bindings, nil
+}
+
+// variablePlaceholder returns a type-shaped zero value for a variable that has
+// neither an input nor a default, so no-inputs contexts can still evaluate
+// expressions referencing it.
+func variablePlaceholder(vb VariableBlock) cty.Value {
+	if typ, ok := variableTypeConstraint(vb); ok && typ == cty.Number {
+		return cty.NumberIntVal(0)
+	}
+	return cty.StringVal("")
+}

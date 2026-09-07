@@ -522,10 +522,13 @@ resource "sysbox_node" "web" {
 	require.True(t, ok)
 	require.Equal(t, "prod", cfg.Env["MODE"])
 
-	// Old behaviour: without injection the same HCL fails, because count = var.n
-	// is evaluated before var.<name> is bound.
-	_, _, _, _, _, err = LoadWorkspaceWithManager(hclFile, mgr)
-	require.Error(t, err)
+	// The no-inputs path (preflight/destroy/refresh) now also builds: var.n
+	// falls back to its default (2) and var.mode to a placeholder (""), so
+	// count still expands instead of failing with "no variable named var".
+	g2, _, _, _, _, err := LoadWorkspaceWithManager(hclFile, mgr)
+	require.NoError(t, err)
+	require.NotNil(t, g2.Get(address.IntInstance("sysbox_node", "web", 1)))
+	require.Nil(t, g2.Get(address.Resource("sysbox_node", "web")))
 }
 
 func TestLoadWorkspaceWithInputsCoercesCountNumber(t *testing.T) {

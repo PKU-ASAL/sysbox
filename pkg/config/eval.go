@@ -20,12 +20,22 @@ import (
 // BuildEvalContext returns an *hcl.EvalContext for the given root. callerDir
 // is the directory of the HCL file (needed to resolve module source paths).
 // Pass "" when the caller directory is not known (module outputs won't be pre-loaded).
+//
+// It is used by no-inputs paths (preflight, destroy, refresh, outputs,
+// evaluation). Variables are bound from their defaults, falling back to a
+// type-shaped placeholder, so locals/count expressions that reference var.<name>
+// still evaluate — the concrete value is supplied on the apply path via
+// BuildEvalContextWithInputs.
 func BuildEvalContext(root *Root, callerDir ...string) (*hcl.EvalContext, error) {
 	dir := ""
 	if len(callerDir) > 0 {
 		dir = callerDir[0]
 	}
-	return buildEvalContextInner(root, dir, nil)
+	bindings, err := PreflightVariableBindings(root.Variables)
+	if err != nil {
+		return nil, err
+	}
+	return buildEvalContextInner(root, dir, bindings)
 }
 
 // BuildEvalContextWithInputs is the apply-path counterpart of BuildEvalContext:
