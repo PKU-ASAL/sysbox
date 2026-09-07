@@ -112,10 +112,12 @@ func TestSensitiveInputDoesNotEnterPlanDiff(t *testing.T) {
 	require.Contains(t, string(planJSON), "secret://input/flag")
 }
 
-// recordingConn captures the program it was asked to execute, so a test can
-// verify execution used the resolved value while the log showed the reference.
+// recordingConn captures the program it was asked to execute and the source
+// path it was asked to copy, so a test can verify execution used the resolved
+// value while the log showed the reference.
 type recordingConn struct {
-	program string
+	program   string
+	copiedSrc string
 }
 
 func (c *recordingConn) Exec(_ context.Context, req substrate.ExecRequest, _, _ io.Writer) (substrate.ExecResult, error) {
@@ -125,7 +127,10 @@ func (c *recordingConn) Exec(_ context.Context, req substrate.ExecRequest, _, _ 
 func (*recordingConn) ExecBackground(context.Context, substrate.ExecRequest) (int, error) {
 	return 0, nil
 }
-func (*recordingConn) CopyFile(context.Context, string, string) error { return nil }
+func (c *recordingConn) CopyFile(_ context.Context, srcPath, _ string) error {
+	c.copiedSrc = srcPath
+	return nil
+}
 
 // 5. Run log: the provisioner log shows the secret://input/<name> reference,
 // never the resolved plaintext — while execution still receives the real value.

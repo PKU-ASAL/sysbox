@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
@@ -656,6 +657,9 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 				return fmt.Errorf("provisioner file: source and destination required")
 			}
 			src := expandTilde(p.Source)
+			if !filepath.IsAbs(src) && e.workspaceDir != "" {
+				src = filepath.Join(e.workspaceDir, src)
+			}
 			e.logf("[provisioner] file: %s → %s\n", src, p.Destination)
 			if err := conn.CopyFile(ctx, src, p.Destination); err != nil {
 				return fmt.Errorf("provisioner file %s: %w", src, err)

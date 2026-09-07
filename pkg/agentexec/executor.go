@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/coder/websocket"
 
@@ -168,6 +169,7 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
+	exec.SetWorkspaceDir(filepath.Dir(e.bridge.HCLFile(run.Topology)))
 	exec.SetOperation(run.Op)
 	exec.SetLogger(log)
 	exec.SetSecretResolver(secret.Dispatcher{
@@ -283,6 +285,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	}
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
+	exec.SetWorkspaceDir(filepath.Dir(e.bridge.HCLFile(run.Topology)))
 	exec.SetOperation(run.Op)
 	exec.SetLogger(log)
 	exec.SetSecretResolver(secret.Dispatcher{
@@ -410,6 +413,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	}
 	exec := runtime.NewExecutor(graph.New(), st)
 	exec.SetRunContext(run.Topology, run.ID)
+	exec.SetWorkspaceDir(filepath.Dir(e.bridge.HCLFile(run.Topology)))
 	exec.SetLogger(log)
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)

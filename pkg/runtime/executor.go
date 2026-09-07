@@ -27,6 +27,7 @@ type Executor struct {
 	secretResolver      secret.Resolver
 	topology            string
 	runID               string
+	workspaceDir        string
 	operation           string
 	currentResourceStep int
 }
@@ -55,6 +56,11 @@ func (e *Executor) SetRunContext(topology, runID string) {
 	e.topology = topology
 	e.runID = runID
 }
+
+// SetWorkspaceDir records the directory a topology's HCL tree is materialised
+// into (workspacesDir/<topology>/). Relative provisioner "file" sources resolve
+// against it; absolute and ~-expanded sources are left untouched.
+func (e *Executor) SetWorkspaceDir(dir string) { e.workspaceDir = dir }
 
 func (e *Executor) SetOperation(operation string) {
 	e.operation = operation
