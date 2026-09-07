@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
@@ -61,6 +62,13 @@ func (e *Executor) SetRunContext(topology, runID string) {
 // into (workspacesDir/<topology>/). Relative provisioner "file" sources resolve
 // against it; absolute and ~-expanded sources are left untouched.
 func (e *Executor) SetWorkspaceDir(dir string) { e.workspaceDir = dir }
+
+// SetWorkspaceFromHCLFile derives the workspace directory from the topology's
+// HCL file path (the directory containing field.sysbox.hcl). Centralising the
+// filepath.Dir here keeps every caller from deriving it separately.
+func (e *Executor) SetWorkspaceFromHCLFile(path string) {
+	e.workspaceDir = filepath.Dir(path)
+}
 
 func (e *Executor) SetOperation(operation string) {
 	e.operation = operation

@@ -299,21 +299,29 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 // otherwise a rebuild that re-applies the same CIDR races the still-running
 // destroy and fails with "Pool overlaps". The SSE stream continues to report
 // progress while waiting.
+//
+// Completion is signalled by the run's log broadcaster closing (Jobs.finish /
+// Jobs.replace close it exactly when the run goes terminal), rather than by
+// polling the durable store, so a destroy that runs to completion doesn't
+// hammer the store backend.
 func (s *RunService) waitForCompletion(ctx context.Context, run *controlplane.Run) error {
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
+	b := s.jobs.logWriter(run.ID)
+	ch := b.Subscribe()
+	defer b.Unsubscribe(ch)
+
 	timer := time.NewTimer(destroySyncTimeout)
 	defer timer.Stop()
 	for {
-		if cur, ok := s.jobs.get(run.ID); ok && cur.Status.IsTerminal() {
-			return nil
-		}
 		select {
+		case _, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			// A log line arrived; keep waiting for close.
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-timer.C:
 			return fmt.Errorf("destroy %s did not complete within %s", run.ID, destroySyncTimeout)
-		case <-ticker.C:
 		}
 	}
 }

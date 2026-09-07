@@ -83,6 +83,17 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 		substrateVal[typ] = cty.ObjectVal(byAlias)
 	}
 
+	// Bind the shared var/substrate namespace objects once so the local, pre-count
+	// and main contexts can't drift (the same reason baseFunctions exists). The
+	// local object grows in place, so it is rebuilt each time a local value lands.
+	var varObj, substrateObj cty.Value
+	if len(varBindings) > 0 {
+		varObj = cty.ObjectVal(varBindings)
+	}
+	if len(substrateVal) > 0 {
+		substrateObj = cty.ObjectVal(substrateVal)
+	}
+
 	// Collect locals first so they are available when evaluating count expressions.
 	// Locals may reference var.*, previously-declared local.* and substrate.*
 	// (aligned with Terraform's top-down local semantics). Attributes are
@@ -92,10 +103,10 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 		Functions: baseFunctions(),
 	}
 	if len(varBindings) > 0 {
-		localCtx.Variables["var"] = cty.ObjectVal(varBindings)
+		localCtx.Variables["var"] = varObj
 	}
 	if len(substrateVal) > 0 {
-		localCtx.Variables["substrate"] = cty.ObjectVal(substrateVal)
+		localCtx.Variables["substrate"] = substrateObj
 	}
 	localVals := map[string]cty.Value{}
 	for _, lb := range root.Locals {
@@ -137,10 +148,10 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 		preCtx.Variables["local"] = cty.ObjectVal(localVals)
 	}
 	if len(varBindings) > 0 {
-		preCtx.Variables["var"] = cty.ObjectVal(varBindings)
+		preCtx.Variables["var"] = varObj
 	}
 	if len(substrateVal) > 0 {
-		preCtx.Variables["substrate"] = cty.ObjectVal(substrateVal)
+		preCtx.Variables["substrate"] = substrateObj
 	}
 
 	resTypes := map[string]map[string]cty.Value{}
@@ -193,7 +204,7 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 
 	vars := map[string]cty.Value{}
 	if len(substrateVal) > 0 {
-		vars["substrate"] = cty.ObjectVal(substrateVal)
+		vars["substrate"] = substrateObj
 	}
 	for typ, byName := range resTypes {
 		vars[typ] = cty.ObjectVal(byName)
@@ -202,7 +213,7 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 		vars["local"] = cty.ObjectVal(localVals)
 	}
 	if len(varBindings) > 0 {
-		vars["var"] = cty.ObjectVal(varBindings)
+		vars["var"] = varObj
 	}
 
 	ctx := &hcl.EvalContext{

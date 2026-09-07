@@ -84,12 +84,20 @@ func variableTypeConstraint(vb VariableBlock) (cty.Type, bool) {
 	}
 }
 
+// isNumberVariable reports whether a variable's declared type is `number` —
+// the only non-string type sysbox understands today. Both input coercion and
+// the no-inputs placeholder share it, so the "number is special" rule lives in
+// exactly one place.
+func isNumberVariable(vb VariableBlock) bool {
+	typ, ok := variableTypeConstraint(vb)
+	return ok && typ == cty.Number
+}
+
 // coerceInputToType converts an apply-time input string to the variable's
 // declared type. `number` is parsed so that count/for_each can consume a
 // numeric input; any other (or no) declared type leaves the value as a string.
 func coerceInputToType(vb VariableBlock, input string) (cty.Value, error) {
-	typ, ok := variableTypeConstraint(vb)
-	if !ok || typ != cty.Number {
+	if !isNumberVariable(vb) {
 		return cty.StringVal(input), nil
 	}
 	n, err := cty.ParseNumberVal(input)
@@ -143,7 +151,7 @@ func PreflightVariableBindings(vars []VariableBlock) (map[string]cty.Value, erro
 // neither an input nor a default, so no-inputs contexts can still evaluate
 // expressions referencing it.
 func variablePlaceholder(vb VariableBlock) cty.Value {
-	if typ, ok := variableTypeConstraint(vb); ok && typ == cty.Number {
+	if isNumberVariable(vb) {
 		return cty.NumberIntVal(0)
 	}
 	return cty.StringVal("")
