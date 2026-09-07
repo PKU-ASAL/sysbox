@@ -74,8 +74,18 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 	}
 
 	// Collect locals first so they are available when evaluating count expressions.
+	// Locals may reference var.*, previously-declared local.* and substrate.*
+	// (aligned with Terraform's top-down local semantics). Attributes are
+	// evaluated in source order, growing the local object as each value lands.
 	localCtx := &hcl.EvalContext{
+		Variables: map[string]cty.Value{},
 		Functions: baseFunctions(),
+	}
+	if len(varBindings) > 0 {
+		localCtx.Variables["var"] = cty.ObjectVal(varBindings)
+	}
+	if len(substrateVal) > 0 {
+		localCtx.Variables["substrate"] = cty.ObjectVal(substrateVal)
 	}
 	localVals := map[string]cty.Value{}
 	for _, lb := range root.Locals {
@@ -87,8 +97,18 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 			diagnostics = append(diagnostics, fromHCLDiagnostics(diags)...)
 			continue
 		}
-		for name, attr := range attrs {
-			val, diags := attr.Expr.Value(localCtx)
+		names := make([]string, 0, len(attrs))
+		for name := range attrs {
+			names = append(names, name)
+		}
+		sort.Slice(names, func(i, j int) bool {
+			return attrs[names[i]].NameRange.Start.Byte < attrs[names[j]].NameRange.Start.Byte
+		})
+		for _, name := range names {
+			if len(localVals) > 0 {
+				localCtx.Variables["local"] = cty.ObjectVal(localVals)
+			}
+			val, diags := attrs[name].Expr.Value(localCtx)
 			if diags.HasErrors() {
 				diagnostics = append(diagnostics, fromHCLDiagnostics(diags)...)
 				continue
@@ -97,7 +117,8 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 		}
 	}
 
-	// Minimal context for evaluating count = <expr> (literals + local.x).
+	// Minimal context for evaluating count = <expr> (literals + local.x + var.x
+	// + substrate.x).
 	preCtx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{},
 		Functions: baseFunctions(),
@@ -107,6 +128,9 @@ func buildEvalContextInner(root *Root, callerDir string, varBindings map[string]
 	}
 	if len(varBindings) > 0 {
 		preCtx.Variables["var"] = cty.ObjectVal(varBindings)
+	}
+	if len(substrateVal) > 0 {
+		preCtx.Variables["substrate"] = cty.ObjectVal(substrateVal)
 	}
 
 	resTypes := map[string]map[string]cty.Value{}
