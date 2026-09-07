@@ -106,3 +106,27 @@ func TestOwnershipMarkerRoundTripUsesFullOwner(t *testing.T) {
 	require.Equal(t, owner, gotOwner)
 	require.Equal(t, "abc123", digest)
 }
+
+func TestLoopbackAcceptExpressions(t *testing.T) {
+	for _, tc := range []struct {
+		key expr.MetaKey
+	}{
+		{expr.MetaKeyIIFNAME},
+		{expr.MetaKeyOIFNAME},
+	} {
+		expressions := loopbackAcceptExpressions(tc.key)
+		require.Len(t, expressions, 3)
+
+		meta, ok := expressions[0].(*expr.Meta)
+		require.True(t, ok, "first expression must be a meta lookup")
+		require.Equal(t, tc.key, meta.Key)
+
+		cmp, ok := expressions[1].(*expr.Cmp)
+		require.True(t, ok, "second expression must be an equality comparison")
+		require.Equal(t, ifnameBytes("lo"), cmp.Data)
+
+		verdict, ok := expressions[2].(*expr.Verdict)
+		require.True(t, ok, "third expression must be a verdict")
+		require.Equal(t, expr.VerdictAccept, verdict.Kind)
+	}
+}
