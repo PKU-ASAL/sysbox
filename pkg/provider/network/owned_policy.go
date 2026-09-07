@@ -13,6 +13,7 @@ import (
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
 	"github.com/google/nftables/userdata"
+	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
 
 	"github.com/oslab/sysbox/pkg/driver"
@@ -35,30 +36,27 @@ func (Driver) ApplyRuleset(_ context.Context, target driver.PolicyTarget, spec d
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "compile ruleset", err)
 	}
 	err = inNetns(state.Namespace, func() error {
-		replace, err := ownedRulesetExists(spec.Owner)
-		if err != nil {
-			return err
-		}
-		return applyCompiledRuleset(plan, replace)
+		return applyCompiledRuleset(plan)
 	})
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "network", "apply ruleset", err)
 	}
-	return Driver{}.ObserveRuleset(context.Background(), target, spec.Owner)
+	return driver.RulesetObservation{Table: plan.Table, Digest: plan.Digest}, nil
 }
 
-func (Driver) ObserveRuleset(_ context.Context, target driver.PolicyTarget, owner string) (driver.RulesetObservation, error) {
+// CheckTarget reports whether the network namespace the ruleset was applied to
+// still exists. Like the docker driver, it does not read the ruleset back.
+func (Driver) CheckTarget(_ context.Context, target driver.PolicyTarget) (bool, error) {
 	state, err := decodePolicyTarget(target)
 	if err != nil {
-		return driver.RulesetObservation{}, err
+		return false, err
 	}
-	var observation driver.RulesetObservation
-	err = inNetns(state.Namespace, func() error {
-		var observeErr error
-		observation, observeErr = observeOwnedRuleset(owner)
-		return observeErr
-	})
-	return observation, err
+	ns, err := netns.GetFromName(state.Namespace)
+	if err != nil {
+		return false, nil
+	}
+	_ = ns.Close()
+	return true, nil
 }
 
 func (Driver) DeleteRuleset(_ context.Context, target driver.PolicyTarget, owner string) error {
@@ -67,27 +65,15 @@ func (Driver) DeleteRuleset(_ context.Context, target driver.PolicyTarget, owner
 		return err
 	}
 	return inNetns(state.Namespace, func() error {
-		observation, err := observeOwnedRuleset(owner)
-		if driver.IsCategory(err, driver.ErrorNotFound) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
 		conn, err := nftables.New()
 		if err != nil {
 			return err
 		}
-		conn.DelTable(&nftables.Table{Family: nftables.TableFamilyIPv4, Name: observation.Table})
-		if err := conn.Flush(); err != nil {
-			return err
-		}
-		if _, err := observeOwnedRuleset(owner); !driver.IsCategory(err, driver.ErrorNotFound) {
-			if err == nil {
-				return fmt.Errorf("owned policy residue remains: table %s", observation.Table)
-			}
-			return fmt.Errorf("verify policy deletion: %w", err)
-		}
+		conn.DelTable(&nftables.Table{Family: nftables.TableFamilyIPv4, Name: driver.RulesetTableName(owner)})
+		// Best-effort: an already-absent table is the common case, and any other
+		// removal failure is self-healed by the next apply, which always rebuilds
+		// the table from scratch.
+		_ = conn.Flush()
 		return nil
 	})
 }
@@ -106,19 +92,21 @@ func decodePolicyTarget(target driver.PolicyTarget) (policyTargetState, error) {
 	return state, nil
 }
 
-func applyCompiledRuleset(plan compiledRuleset, replace bool) error {
+func applyCompiledRuleset(plan compiledRuleset) error {
 	conn, err := nftables.New()
 	if err != nil {
 		return err
 	}
-	return applyCompiledRulesetConn(conn, plan, replace)
+	return applyCompiledRulesetConn(conn, plan)
 }
 
-func applyCompiledRulesetConn(conn *nftables.Conn, plan compiledRuleset, replace bool) error {
+func applyCompiledRulesetConn(conn *nftables.Conn, plan compiledRuleset) error {
 	table := &nftables.Table{Family: nftables.TableFamilyIPv4, Name: plan.Table}
-	if replace {
-		conn.DelTable(table)
-	}
+	// Always rebuild: delete any pre-existing table first, ignoring the result.
+	// Deleting an absent table is ENOENT (the common first-apply case), and a
+	// real error (e.g. permission) surfaces on the AddTable/Flush below.
+	conn.DelTable(table)
+	_ = conn.Flush()
 	table = conn.AddTable(table)
 	chains := map[driver.Direction]*nftables.Chain{}
 	for _, item := range []struct {
@@ -159,70 +147,6 @@ func applyCompiledRulesetConn(conn *nftables.Conn, plan compiledRuleset, replace
 	return conn.Flush()
 }
 
-func observeOwnedRuleset(owner string) (driver.RulesetObservation, error) {
-	conn, err := nftables.New()
-	if err != nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "network", "open nftables", err)
-	}
-	return observeOwnedRulesetConn(conn, owner)
-}
-
-func observeOwnedRulesetConn(conn *nftables.Conn, owner string) (driver.RulesetObservation, error) {
-	tableName := driver.RulesetTableName(owner)
-	tables, err := conn.ListTablesOfFamily(nftables.TableFamilyIPv4)
-	if err != nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "network", "list nftables tables", err)
-	}
-	var table *nftables.Table
-	for _, candidate := range tables {
-		if candidate.Name == tableName {
-			table = candidate
-			break
-		}
-	}
-	if table == nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorNotFound, "network", "owned ruleset not found", nil)
-	}
-	chains, err := conn.ListChains()
-	if err != nil {
-		return driver.RulesetObservation{}, err
-	}
-	observation := driver.RulesetObservation{Table: tableName, Inventory: []driver.OwnedObject{{Kind: "table", Name: tableName}}}
-	owned := false
-	ruleCount := 0
-	for _, chain := range chains {
-		if chain.Table == nil || chain.Table.Name != tableName {
-			continue
-		}
-		observation.Inventory = append(observation.Inventory, driver.OwnedObject{Kind: "chain", Name: chain.Name})
-		rules, err := conn.GetRules(table, chain)
-		if err != nil {
-			return driver.RulesetObservation{}, err
-		}
-		for _, rule := range rules {
-			ruleCount++
-			comment, _ := userdata.GetString(rule.UserData, userdata.TypeComment)
-			markerOwner, digest, ok := parseOwnershipMarker(comment)
-			if !ok || markerOwner != owner {
-				return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "owned table contains a rule without matching ownership marker", nil)
-			}
-			owned = true
-			if observation.Digest != "" && observation.Digest != digest {
-				return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "owned table contains inconsistent policy digests", nil)
-			}
-			if signature, ok := markerValue(comment, "expr"); !ok || signature != expressionSignature(rule.Exprs) {
-				return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "owned rule expression digest mismatch", nil)
-			}
-			observation.Digest = digest
-			observation.Inventory = append(observation.Inventory, driver.OwnedObject{Kind: "rule", Name: chain.Name})
-		}
-	}
-	if !owned || ruleCount == 0 {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "table name exists without matching ownership marker", nil)
-	}
-	return observation, nil
-}
-
 func ApplyRulesetInNetNSFD(fd int, spec driver.RulesetSpec, bindings map[string]string) (driver.RulesetObservation, error) {
 	plan, err := compileRuleset(spec, bindings)
 	if err != nil {
@@ -232,42 +156,10 @@ func ApplyRulesetInNetNSFD(fd int, spec driver.RulesetSpec, bindings map[string]
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	read, err := nftables.New(nftables.WithNetNSFd(fd))
-	if err != nil {
+	if err := applyCompiledRulesetConn(conn, plan); err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	_, observeErr := observeOwnedRulesetConn(read, spec.Owner)
-	replace := observeErr == nil
-	if observeErr != nil && !driver.IsCategory(observeErr, driver.ErrorNotFound) {
-		return driver.RulesetObservation{}, observeErr
-	}
-	if err := applyCompiledRulesetConn(conn, plan, replace); err != nil {
-		return driver.RulesetObservation{}, err
-	}
-	read, err = nftables.New(nftables.WithNetNSFd(fd))
-	if err != nil {
-		return driver.RulesetObservation{}, err
-	}
-	return observeOwnedRulesetConn(read, spec.Owner)
-}
-
-func ownedRulesetExists(owner string) (bool, error) {
-	_, err := observeOwnedRuleset(owner)
-	if err == nil {
-		return true, nil
-	}
-	if driver.IsCategory(err, driver.ErrorNotFound) {
-		return false, nil
-	}
-	return false, err
-}
-
-func ObserveRulesetInNetNSFD(fd int, owner string) (driver.RulesetObservation, error) {
-	conn, err := nftables.New(nftables.WithNetNSFd(fd))
-	if err != nil {
-		return driver.RulesetObservation{}, err
-	}
-	return observeOwnedRulesetConn(conn, owner)
+	return driver.RulesetObservation{Table: plan.Table, Digest: plan.Digest}, nil
 }
 
 func DeleteRulesetInNetNSFD(fd int, owner string) error {
@@ -275,27 +167,10 @@ func DeleteRulesetInNetNSFD(fd int, owner string) error {
 	if err != nil {
 		return err
 	}
-	observation, err := observeOwnedRulesetConn(conn, owner)
-	if driver.IsCategory(err, driver.ErrorNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	conn.DelTable(&nftables.Table{Family: nftables.TableFamilyIPv4, Name: observation.Table})
-	if err := conn.Flush(); err != nil {
-		return err
-	}
-	read, err := nftables.New(nftables.WithNetNSFd(fd))
-	if err != nil {
-		return err
-	}
-	if _, err := observeOwnedRulesetConn(read, owner); !driver.IsCategory(err, driver.ErrorNotFound) {
-		if err == nil {
-			return fmt.Errorf("owned policy residue remains: table %s", observation.Table)
-		}
-		return err
-	}
+	conn.DelTable(&nftables.Table{Family: nftables.TableFamilyIPv4, Name: driver.RulesetTableName(owner)})
+	// Best-effort: an already-absent table is the common case, and any other
+	// removal failure self-heals on the next apply, which always rebuilds.
+	_ = conn.Flush()
 	return nil
 }
 

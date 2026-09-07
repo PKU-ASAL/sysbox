@@ -122,18 +122,22 @@ func resolvePolicyDevice(prefix string, interfaces []policyInterface) (string, e
 	return "", fmt.Errorf("no interface has IP %s", address)
 }
 
-func (s *Substrate) ObserveRuleset(ctx context.Context, target driver.PolicyTarget, owner string) (driver.RulesetObservation, error) {
+// CheckTarget reports whether the container the ruleset was applied to is still
+// running. It deliberately does not read the ruleset back — that is a netlink
+// dump that can deadlock against the container's active netfilter locks.
+func (s *Substrate) CheckTarget(ctx context.Context, target driver.PolicyTarget) (bool, error) {
 	state, err := decodeDockerPolicyTarget(target)
 	if err != nil {
-		return driver.RulesetObservation{}, err
+		return false, err
 	}
-	var observation driver.RulesetObservation
-	err = s.withContainerNetNS(ctx, state.ContainerID, func(fd int) error {
-		var observeErr error
-		observation, observeErr = networkprovider.ObserveRulesetInNetNSFD(fd, owner)
-		return observeErr
-	})
-	return observation, err
+	container, err := s.cli.ContainerInspect(ctx, state.ContainerID)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return container.State != nil && container.State.Running, nil
 }
 
 func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, owner string) error {

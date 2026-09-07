@@ -454,7 +454,7 @@ func cleanupNodeLikeCheckpoint(ctx context.Context, step OperationStep) (Checkpo
 	return action, nil
 }
 
-func recoverCheckpointPolicy(ctx context.Context, res state.Resource, ownerKey, digestKey string) error {
+func recoverCheckpointPolicy(ctx context.Context, res state.Resource, ownerKey string) error {
 	owner := res.Str(ownerKey)
 	if owner == "" {
 		return nil
@@ -464,14 +464,12 @@ func recoverCheckpointPolicy(ctx context.Context, res state.Resource, ownerKey, 
 		return err
 	}
 	target := driver.PolicyTarget{Resource: res.Address.String(), State: json.RawMessage(res.Str("policy_target_state"))}
-	observation, observeErr := policy.ObserveRuleset(ctx, target, owner)
-	if observeErr == nil && observation.Digest == res.Str(digestKey) {
-		return nil
-	}
 	var spec driver.RulesetSpec
 	if err := json.Unmarshal([]byte(res.Str("policy_spec")), &spec); err != nil {
 		return fmt.Errorf("recover policy spec: %w", err)
 	}
+	// Always re-apply (idempotent) rather than reading the ruleset back to decide
+	// whether it survived.
 	_, err = policy.ApplyRuleset(ctx, target, spec)
 	return err
 }
@@ -542,7 +540,7 @@ func recoverDockerNodeLike(ctx context.Context, st *state.State, step OperationS
 	}
 	if rec.Type == "sysbox_router" {
 		res := StateResourceFromLog(*rec)
-		if err := recoverCheckpointPolicy(ctx, res, "policy_owner", "policy_digest"); err != nil {
+		if err := recoverCheckpointPolicy(ctx, res, "policy_owner"); err != nil {
 			action.Status, action.Error = "error", err.Error()
 			return action, nil
 		}

@@ -103,7 +103,7 @@ func (failingNetworkDriver) RemoveManagedNetwork(context.Context, string) error 
 func (failingNetworkDriver) ReadManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
 	return substrate.ManagedNetworkInfo{}, nil
 }
-func (failingNetworkDriver) AllowEgress(context.Context, string) error { return nil }
+func (failingNetworkDriver) AllowEgress(context.Context, string) error  { return nil }
 func (failingNetworkDriver) RemoveEgress(context.Context, string) error { return nil }
 
 // A NAT network whose docker removal fails must keep its state entry, so a
