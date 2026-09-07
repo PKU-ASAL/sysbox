@@ -105,8 +105,9 @@ type AssertBlock struct {
 // DataExecConfig is the decoded form of data "sysbox_exec" blocks: run argv in
 // a node and expose its exit_code / stdout / stderr / truncated.
 type DataExecConfig struct {
-	Node string   `hcl:"node"`
-	Argv []string `hcl:"argv"`
+	Node    string   `hcl:"node"`
+	Argv    []string `hcl:"argv"`
+	Timeout int      `hcl:"timeout,optional"`
 }
 
 // DataReachConfig is the decoded form of data "sysbox_reach" blocks: probe
