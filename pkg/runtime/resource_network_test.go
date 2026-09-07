@@ -2,17 +2,18 @@ package runtime
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestNetworkResourceHandlerCreateAndDeleteIsolated(t *testing.T) {
@@ -87,3 +88,50 @@ func (fakeLinuxNetwork) NetworkHealthy(context.Context, driver.IsolatedNetworkSp
 }
 func (fakeLinuxNetwork) LinkHealthy(context.Context, string, string) bool               { return true }
 func (fakeLinuxNetwork) DeleteAttachment(context.Context, string, string, string) error { return nil }
+
+// failingNetworkDriver is a docker Network driver whose RemoveManagedNetwork
+// always fails, so a test can assert the runtime does not silently drop the
+// state entry when network removal errors.
+type failingNetworkDriver struct{}
+
+func (failingNetworkDriver) CreateManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
+	return substrate.ManagedNetworkInfo{}, nil
+}
+func (failingNetworkDriver) RemoveManagedNetwork(context.Context, string) error {
+	return fmt.Errorf("remove failed")
+}
+func (failingNetworkDriver) ReadManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
+	return substrate.ManagedNetworkInfo{}, nil
+}
+func (failingNetworkDriver) AllowEgress(context.Context, string) error { return nil }
+func (failingNetworkDriver) RemoveEgress(context.Context, string) error { return nil }
+
+// A NAT network whose docker removal fails must keep its state entry, so a
+// later destroy retries the removal instead of leaving an orphan network that
+// makes the next apply of the same CIDR fail with "Pool overlaps".
+func TestNetworkResourceHandlerDeleteKeepsStateOnRemoveFailure(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Network: failingNetworkDriver{}}))
+	defer func() { driver.DefaultRegistry = previous }()
+
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	addr := address.Resource("sysbox_network", "lab")
+	res := state.Resource{
+		Address:    addr,
+		Driver:     "docker",
+		Attributes: state.MustAttributes(map[string]any{"nat": true, "docker_network_id": "net-1", "cidr": "10.77.0.0/24"}),
+	}
+	exec.state.AddResource(res)
+	// AddResource normalizes the resource (docker_network_id is a runtime-private
+	// key, moved to Private.Runtime); read it back so Delete sees the same shape
+	// the real apply path produces.
+	stored := exec.state.FindResource(addr)
+	require.NotNil(t, stored)
+
+	p := NetworkResourceHandler{}
+	err := p.Delete(context.Background(), &ProviderContext{exec: exec}, *stored)
+	require.Error(t, err)
+	require.NotNil(t, exec.state.FindResource(addr),
+		"state entry must survive a failed network removal so destroy can retry")
+}

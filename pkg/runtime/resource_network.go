@@ -169,7 +169,12 @@ func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r
 		netID := r.DockerNetID()
 		if netID != "" {
 			if err := networkDriver.RemoveManagedNetwork(ctx, netID); err != nil {
-				pc.Logf("[destroy] warning: remove bridge network %s: %v\n", netID, err)
+				// Do not swallow this: removing the state entry while the docker
+				// network still exists leaves an orphan that can never be cleaned
+				// up, and the next apply of the same CIDR fails with "Pool
+				// overlaps". Returning the error keeps the resource in state so a
+				// later destroy retries the removal.
+				return fmt.Errorf("remove bridge network %s: %w", netID, err)
 			}
 		}
 		// Clean up DOCKER-USER ACCEPT rules for this NAT subnet.
