@@ -16,7 +16,7 @@ AGENT_API_URL ?= http://sysbox-api:9876
 API_DATA_DIR ?= $(or $(SYSBOX_HOST_HOME_DIR),.sysbox/api)
 API_DATA_ABS := $(abspath $(API_DATA_DIR))
 AGENT_ID ?= local-docker
-AGENT_CAPABILITIES ?= docker,network
+AGENT_SUBSTRATES ?=
 
 HCL := examples/$(TOPO)/field.sysbox.hcl
 STATE := .sysbox/runs/$(TOPO)/state.json
@@ -217,7 +217,7 @@ api-status:
 
 .agent-register:
 	$(COMPOSE) $(COMPOSE_FULL) run --rm --no-deps --entrypoint sysbox sysbox-agent \
-		agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) --capabilities $(AGENT_CAPABILITIES) --identity /var/lib/sysbox/agent/identity.json
+		agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) $(if $(AGENT_SUBSTRATES),--substrates $(AGENT_SUBSTRATES),) --identity /var/lib/sysbox/agent/identity.json
 
 api-down:
 	$(COMPOSE) $(COMPOSE_FULL) down

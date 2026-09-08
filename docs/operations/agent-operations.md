@@ -15,9 +15,9 @@ make api deploy-full
 
 ## 能力
 
-Agent 根据已注册 driver 暴露 Docker、Firecracker、libvirt、network/policy 等 capability。Scheduler 只把满足 topology requirement 的 run 分配给 Agent。
+Agent 注册时自动探测本机能力（PreflightChecks）：有 Docker socket 就报 `docker` + `veth`，有 `/dev/kvm` 和 firecracker binary 就报 `firecracker` + `tap`，有 libvirt socket 就报 `libvirt` + `tap`；探测失败的能力不虚报，结果以 `substrate.*` label 记录。也可用 `--substrates docker,libvirt` 显式声明 substrate（探测不否决显式声明，但冲突会以 `substrate.*=claimed-but-*` label 暴露）。Scheduler 只把满足 topology requirement 的 run 分配给 Agent。
 
-不要为了“通用 Agent”授予所有宿主机权限。按工作负载拆分 capability pool，尤其隔离 Docker socket、`/dev/kvm`、libvirt socket 和 host network administration。
+不要为了”通用 Agent”授予所有宿主机权限。按工作负载拆分 capability pool，尤其隔离 Docker socket、`/dev/kvm`、libvirt socket 和 host network administration。
 
 ## 心跳与清单
 
