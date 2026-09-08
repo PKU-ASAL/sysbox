@@ -26,6 +26,13 @@ type Config struct {
 	// Binds is the list of "host:container[:options]" bind mounts.
 	Binds []string `hcl:"binds,optional"`
 
+	// CpusetCpus pins the container to specific physical CPUs (docker run
+	// --cpuset-cpus). It is an escape hatch for images whose runtime reads the
+	// visible CPU count and ignores the CFS quota (e.g. old Java 8u181, which
+	// sizes its thread pools from the affinity, not from --cpus). Leave empty to
+	// rely on vcpus → --cpus (a soft CFS limit) instead.
+	CpusetCpus string `hcl:"cpuset_cpus,optional"`
+
 	Entrypoint OptionalArgv
 	Command    OptionalArgv
 }
@@ -42,6 +49,7 @@ type rawConfig struct {
 	PidMode      string         `hcl:"pid_mode,optional"`
 	CgroupnsMode string         `hcl:"cgroupns_mode,optional"`
 	Binds        []string       `hcl:"binds,optional"`
+	CpusetCpus   string         `hcl:"cpuset_cpus,optional"`
 	Entrypoint   hcl.Expression `hcl:"entrypoint,optional"`
 	Command      hcl.Expression `hcl:"command,optional"`
 }
@@ -65,6 +73,7 @@ func (s *Substrate) DecodeProviderConfig(body hcl.Body, ctx *hcl.EvalContext) (a
 	cfg.PidMode = raw.PidMode
 	cfg.CgroupnsMode = raw.CgroupnsMode
 	cfg.Binds = raw.Binds
+	cfg.CpusetCpus = raw.CpusetCpus
 	var err error
 	if attribute, present := attributes["entrypoint"]; present {
 		if cfg.Entrypoint, err = decodeArgv("entrypoint", attribute.Expr, ctx); err != nil {
