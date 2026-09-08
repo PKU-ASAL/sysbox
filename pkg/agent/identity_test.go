@@ -58,16 +58,17 @@ func TestRegisterPersistsIdentityAndRegistersRemote(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "identity.json")
 	ident, err := Register(t.Context(), RegisterOptions{
-		APIURL:       server.URL,
-		Token:        "test-token",
-		ID:           "host-a",
-		Capabilities: []string{"docker"},
-		Path:         path,
+		APIURL:     server.URL,
+		Token:      "test-token",
+		ID:         "host-a",
+		Substrates: []string{"docker"},
+		Path:       path,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "host-a", ident.ID)
 	require.Equal(t, "host-a", got.ID)
-	require.Equal(t, []string{"docker"}, got.Capabilities)
+	require.Contains(t, got.Capabilities, "docker")
+	require.Contains(t, got.Capabilities, "network")
 
 	loaded, err := LoadIdentity(path)
 	require.NoError(t, err)

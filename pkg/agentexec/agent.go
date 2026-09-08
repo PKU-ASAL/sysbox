@@ -73,7 +73,7 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	opts.httpClient = &http.Client{Timeout: opts.RequestTimeout}
 	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
 	if len(opts.Capabilities) == 0 {
-		opts.Capabilities = agent.DefaultCapabilities()
+		opts.Capabilities, _ = agent.DetectCapabilities()
 	}
 	if err := post(ctx, opts, opts.APIURL+"/v1/agents", controlplane.Agent{
 		ID:           opts.ID,

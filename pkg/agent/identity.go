@@ -11,12 +11,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 const DefaultIdentityPath = "/var/lib/sysbox/agent/identity.json"
@@ -34,13 +37,13 @@ type Identity struct {
 }
 
 type RegisterOptions struct {
-	APIURL       string
-	Token        string
-	ID           string
-	Name         string
-	Capabilities []string
-	Labels       map[string]string
-	Path         string
+	APIURL     string
+	Token      string
+	ID         string
+	Name       string
+	Substrates []string
+	Labels     map[string]string
+	Path       string
 }
 
 func Register(ctx context.Context, opts RegisterOptions) (*Identity, error) {
@@ -59,13 +62,25 @@ func Register(ctx context.Context, opts RegisterOptions) (*Identity, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Resolve capabilities from the declared substrates (explicit) or by
+	// runtime detection. Detection results become visible labels so an operator
+	// can see exactly which substrates were claimed and why.
+	var caps []string
+	var detection map[string]string
+	if len(opts.Substrates) > 0 {
+		caps = DeriveCapabilities(opts.Substrates)
+		detection = detectExplicitReference(opts.Substrates)
+	} else {
+		caps, detection = DetectCapabilities()
+	}
+
 	ident := &Identity{
 		ID:           id,
 		Name:         opts.Name,
 		APIURL:       strings.TrimRight(opts.APIURL, "/"),
 		Token:        opts.Token,
 		Secret:       secret,
-		Capabilities: normalizeCapabilities(opts.Capabilities),
+		Capabilities: caps,
 		Labels:       opts.Labels,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -73,15 +88,15 @@ func Register(ctx context.Context, opts RegisterOptions) (*Identity, error) {
 	if ident.Name == "" {
 		ident.Name = ident.ID
 	}
-	if len(ident.Capabilities) == 0 {
-		ident.Capabilities = DefaultCapabilities()
-	}
 	if ident.Labels == nil {
 		ident.Labels = map[string]string{}
 	}
 	ident.Labels["mode"] = "agent"
 	ident.Labels["os"] = runtime.GOOS
 	ident.Labels["arch"] = runtime.GOARCH
+	for name, status := range detection {
+		ident.Labels["substrate."+name] = status
+	}
 	if err := RegisterRemote(ctx, ident); err != nil {
 		return nil, err
 	}
@@ -188,26 +203,90 @@ func postAgent(ctx context.Context, ident *Identity, url string, in any) error {
 	return nil
 }
 
-func DefaultCapabilities() []string {
-	// veth 是 docker substrate 的 NIC kind（NICKindVeth）。调度器从
-	// substrate.NICKinds 推导能力需求（pkg/api/scheduler.go 的
-	// addSubstrateCapabilities），agent 侧清单必须与之对齐，否则 docker
-	// 场景 apply 会报 "no online agent satisfies capabilities: [docker veth]"。
-	return []string{"docker", "veth", "network", "firecracker", "kvm", "libvirt"}
+// DetectCapabilities probes which substrates this host can actually run, and
+// returns the capability list derived from them plus a per-substrate detection
+// map ("ok" or "no-<check>") that becomes visible labels.
+func DetectCapabilities() (caps []string, detection map[string]string) {
+	return detectCapabilitiesFrom(driver.DefaultRegistry)
 }
 
-func normalizeCapabilities(in []string) []string {
-	out := make([]string, 0, len(in))
-	seen := map[string]bool{}
-	for _, item := range in {
-		item = strings.TrimSpace(item)
-		if item == "" || seen[item] {
+func detectCapabilitiesFrom(reg *driver.Registry) (caps []string, detection map[string]string) {
+	names := reg.SubstrateNames()
+	detection = detectFrom(reg, names)
+	supported := make([]string, 0, len(names))
+	for _, name := range names {
+		if detection[name] == "ok" {
+			supported = append(supported, name)
+		}
+	}
+	return deriveCapabilitiesFrom(reg, supported), detection
+}
+
+// DeriveCapabilities derives the agent capability list from an explicit set of
+// substrate names, plus the built-in "network" capability. NIC kinds (veth,
+// tap) are pulled from each substrate's Capabilities, so callers declare
+// substrates and never write capability names by hand.
+func DeriveCapabilities(substrates []string) []string {
+	return deriveCapabilitiesFrom(driver.DefaultRegistry, substrates)
+}
+
+func deriveCapabilitiesFrom(reg *driver.Registry, substrates []string) []string {
+	set := map[string]bool{"network": true}
+	for _, name := range substrates {
+		node, err := reg.RequireNode(name)
+		if err != nil {
+			set[name] = true // unregistered substrate: claim the name only
 			continue
 		}
-		seen[item] = true
-		out = append(out, item)
+		for _, cap := range substrate.CapabilityNames(name, node.Capabilities()) {
+			set[cap] = true
+		}
 	}
+	out := make([]string, 0, len(set))
+	for cap := range set {
+		out = append(out, cap)
+	}
+	sort.Strings(out)
 	return out
+}
+
+// detect runs PreflightChecks(true) for each named substrate and reports
+// "ok" or "no-<check>" per substrate.
+func detectFrom(reg *driver.Registry, names []string) map[string]string {
+	checks := make(map[string][]substrate.PreflightCheck, len(names))
+	for _, name := range names {
+		if node, err := reg.RequireNode(name); err == nil {
+			checks[name] = node.PreflightChecks(true)
+		}
+	}
+	_, reasons := substrate.SupportedSubstrates(checks)
+	detection := make(map[string]string, len(names))
+	for _, name := range names {
+		if reason, ok := reasons[name]; ok {
+			detection[name] = "no-" + reason
+		} else {
+			detection[name] = "ok"
+		}
+	}
+	return detection
+}
+
+// detectExplicitReference runs detection against explicitly declared substrates
+// for reference only: it never vetoes the declaration, but marks a declared
+// substrate that failed detection as "claimed-but-..." so the discrepancy is
+// visible instead of silent.
+func detectExplicitReference(explicit []string) map[string]string {
+	return detectExplicitReferenceFrom(driver.DefaultRegistry, explicit)
+}
+
+func detectExplicitReferenceFrom(reg *driver.Registry, explicit []string) map[string]string {
+	detection := detectFrom(reg, explicit)
+	for name, status := range detection {
+		if status != "ok" {
+			detection[name] = "claimed-but-" + status
+		}
+	}
+	return detection
 }
 
 func randomSecret() (string, error) {

@@ -2,6 +2,7 @@ package driver
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -28,6 +29,23 @@ func (r *Registry) Get(name string) (Descriptor, bool) {
 	defer r.mu.RUnlock()
 	descriptor, ok := r.drivers[name]
 	return descriptor, ok
+}
+
+// SubstrateNames returns the names of every registered node substrate (drivers
+// exposing the Node capability), sorted for deterministic output. It is the
+// agent's candidate set for capability detection: which substrates the binary
+// was compiled with, before runtime detection filters them down.
+func (r *Registry) SubstrateNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.drivers))
+	for name, d := range r.drivers {
+		if d.Node != nil {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 func (r *Registry) Require(name string, capability Capability) (Descriptor, error) {
 	descriptor, ok := r.Get(name)

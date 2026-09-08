@@ -9,6 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func controlplaneRunAssignedCommand(run *controlplane.Run) controlplane.AgentCommand {
@@ -100,14 +101,9 @@ func addSubstrateCapabilities(set map[string]bool, substrateName string) {
 	// Prefer the registered substrate's self-declared capabilities so adding
 	// a new substrate does not require editing this function.
 	if nodeDriver, err := driver.DefaultRegistry.RequireNode(substrateName); err == nil {
-		caps := nodeDriver.Capabilities()
-		if caps.SharedKernel {
-			set["docker"] = true
+		for _, cap := range substrate.CapabilityNames(substrateName, nodeDriver.Capabilities()) {
+			set[cap] = true
 		}
-		for _, kind := range caps.NICKinds {
-			set[kind] = true
-		}
-		set[substrateName] = true
 		return
 	}
 	// Fallback for unregistered substrate identifiers (HCL aliases, etc.).
