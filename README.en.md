@@ -99,7 +99,7 @@ That consistency comes from a simple boundary: the Sysbox core defines what a re
 
 The same boundary carries into API/Agent mode. Host Agents detect their capabilities on registration (or declare substrates explicitly with `--substrates`) and preflight verifies the actual environment before execution. The scheduler uses those declarations to assign an **entire topology run** to one Agent that satisfies its combined requirements. Sysbox therefore supports heterogeneous nodes within one topology, but it does not currently place individual nodes from that topology on different Agents or provide a general multi-host overlay network.
 
-The local CLI and API/Agent/Web control plane share the same decoder, planner, executor, state manager, and providers. There is no second topology model. See [Architecture](docs/architecture.md) for the detailed contracts.
+The local CLI and API/Agent control plane share the same decoder, planner, executor, state manager, and providers. There is no second topology model. See [Architecture](docs/architecture.md) for the detailed contracts.
 
 ## Supported Scope
 
@@ -109,10 +109,10 @@ Sysbox deliberately stays within Linux experiment environments whose lifecycle i
 |---|---|
 | Guest providers | Docker, Firecracker, libvirt |
 | Networking | Isolated IPv4, static addresses, routes, NAT, Docker aliases |
-| Policy | Topology-owned, atomically replaced nftables policy for IPv4 |
+| Policy | Topology-owned nftables policy for IPv4, rebuilt wholesale |
 | Lifecycle | Validate, plan, apply, targeted/full reset, destroy, recovery |
 | State | Local, SQLite, Postgres; HTTP/S3 mutation requires an explicit unsafe override |
-| Interfaces | CLI, HTTP API, host Agent, Web console |
+| Interfaces | CLI, HTTP API, host Agent, Console session |
 | Distribution | Linux amd64/arm64 CLI archives and GHCR API/Agent runtime |
 
 Terraform-like refers to the declarative planning and lifecycle experience; it does not mean Terraform provider compatibility. Sysbox is also not a general cloud orchestrator. IPv6 policy, arbitrary guest operating systems, cross-Agent node placement, and general cloud resources are outside the current guarantees. That controlled boundary is what makes identity validation, observation, recovery, and safe deletion possible.
