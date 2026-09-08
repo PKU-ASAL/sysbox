@@ -97,7 +97,7 @@ resource "sysbox_node" "node" {
 
 这种一致性来自一条简单的边界：Sysbox core 关心资源“意味着什么”，provider 负责资源“如何实现”。Core 管理拓扑图、计划、状态、观察、恢复和所有权；provider 则以 node lifecycle、NIC、artifact、guest execution、reset、policy 等能力接入。新增运行环境不需要在 core 中加入针对具体虚拟化技术的分支，但需要补齐使用场景所需的生命周期契约。
 
-到了 API/Agent 模式，这条边界仍然不变。宿主机 Agent 注册其配置的 capability，执行前由 preflight 验证实际环境；调度器据此把**整个 topology run** 分配给一台满足全部要求的 Agent。因此当前支持“一个拓扑内组合异构节点”，但不把同一拓扑中的不同节点分别调度到多台 Agent，也不提供通用的跨主机 overlay network。
+到了 API/Agent 模式，这条边界仍然不变。宿主机 Agent 注册时自动探测 capability（也可用 `--substrates` 显式声明），执行前由 preflight 验证实际环境；调度器据此把**整个 topology run** 分配给一台满足全部要求的 Agent。因此当前支持“一个拓扑内组合异构节点”，但不把同一拓扑中的不同节点分别调度到多台 Agent，也不提供通用的跨主机 overlay network。
 
 本地 CLI 与 API/Agent/Web 控制面共享同一套 decoder、planner、executor、state manager 和 provider，不存在第二套拓扑语义。详细契约见 [Architecture](docs/architecture.md)。
 

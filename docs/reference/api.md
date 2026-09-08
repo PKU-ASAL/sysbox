@@ -52,7 +52,7 @@ Example registration:
 ```bash
 curl -X POST http://127.0.0.1:9876/v1/agents \
   -H 'Content-Type: application/json' \
-  -d '{"id":"host-a","capabilities":["docker","network","kvm"],"labels":{"role":"lab"}}'
+  -d '{"id":"host-a","capabilities":["docker","veth","network"],"labels":{"role":"lab"}}'
 ```
 
 ## Topologies And Workspaces
