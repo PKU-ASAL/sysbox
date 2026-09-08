@@ -122,3 +122,99 @@ func TestLaunchConfigKeepsShellForProvisioningWithoutEntrypoint(t *testing.T) {
 	require.EqualValues(t, []string{"/bin/sh", "-c"}, cfg.Entrypoint)
 	require.EqualValues(t, []string{"sleep infinity"}, cfg.Cmd)
 }
+
+func TestCreateNodeAppliesCPUAndMemoryLimits(t *testing.T) {
+	var got container.HostConfig
+	var captured bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/containers/"):
+			http.Error(w, `{"message":"No such container"}`, http.StatusNotFound)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/images/"):
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/containers/create"):
+			var body struct {
+				HostConfig container.HostConfig `json:"HostConfig"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			got = body.HostConfig
+			captured = true
+			_ = json.NewEncoder(w).Encode(container.CreateResponse{ID: "container-id"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	cli, err := client.NewClientWithOpts(client.WithHost(server.URL), client.WithVersion("1.47"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, cli.Close()) })
+	sub := &Substrate{cli: cli}
+
+	_, err = sub.CreateNode(context.Background(), substrate.NodeSpec{
+		Name:           "limited",
+		Image:          substrate.ArtifactHandle{ID: "alpine:3.22"},
+		VCPUs:          1,
+		Memory:         "1024",
+		ProviderConfig: &Config{CpusetCpus: "0"},
+	})
+	require.NoError(t, err)
+	require.True(t, captured)
+	require.Equal(t, int64(1e9), got.NanoCPUs)
+	require.Equal(t, int64(1024*1024*1024), got.Memory)
+	require.Equal(t, "0", got.CpusetCpus)
+}
+
+func TestCreateNodeDefaultsLeaveLimitsUnset(t *testing.T) {
+	var got container.HostConfig
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/containers/"):
+			http.Error(w, `{"message":"No such container"}`, http.StatusNotFound)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/images/"):
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/containers/create"):
+			var body struct {
+				HostConfig container.HostConfig `json:"HostConfig"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			got = body.HostConfig
+			_ = json.NewEncoder(w).Encode(container.CreateResponse{ID: "container-id"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	cli, err := client.NewClientWithOpts(client.WithHost(server.URL), client.WithVersion("1.47"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, cli.Close()) })
+	sub := &Substrate{cli: cli}
+
+	_, err = sub.CreateNode(context.Background(), substrate.NodeSpec{
+		Name:  "defaults",
+		Image: substrate.ArtifactHandle{ID: "alpine:3.22"},
+	})
+	require.NoError(t, err)
+	require.Zero(t, got.NanoCPUs)
+	require.Zero(t, got.Memory)
+	require.Empty(t, got.CpusetCpus)
+}
+
+func TestParseMemoryMiB(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want int64
+	}{
+		{"1024", 1024},
+		{"1024MiB", 1024},
+		{"2GiB", 2048},
+		{"1GB", 1024},
+	} {
+		got, err := parseMemoryMiB(c.in)
+		require.NoError(t, err)
+		require.Equal(t, c.want, got)
+	}
+}

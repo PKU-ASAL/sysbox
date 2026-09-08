@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -67,6 +68,24 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 	}
 	if pc.CgroupnsMode != "" {
 		hostCfg.CgroupnsMode = container.CgroupnsMode(pc.CgroupnsMode)
+	}
+	// vcpus and memory land as Docker resource limits. vcpus maps to --cpus (a
+	// CFS quota — a soft limit that still lets the process "see" every host
+	// core), memory to --memory in bytes. cpuset_cpus is the explicit affinity
+	// escape hatch for images whose runtime reads the visible core count and
+	// ignores CFS quota (e.g. old Java 8u181).
+	if spec.VCPUs > 0 {
+		hostCfg.NanoCPUs = int64(spec.VCPUs) * 1e9
+	}
+	if spec.Memory != "" {
+		mem, err := parseMemoryMiB(spec.Memory)
+		if err != nil {
+			return substrate.NodeHandle{}, fmt.Errorf("docker: invalid memory %q: %w", spec.Memory, err)
+		}
+		hostCfg.Memory = mem * 1024 * 1024
+	}
+	if pc.CpusetCpus != "" {
+		hostCfg.CpusetCpus = pc.CpusetCpus
 	}
 	exposedPorts, portBindings, err := dockerPortConfig(spec.Ports)
 	if err != nil {
@@ -317,4 +336,37 @@ func commandRequest(command []string) substrate.ExecRequest {
 		request.Args = append([]string{}, command[1:]...)
 	}
 	return request
+}
+
+// parseMemoryMiB parses a memory size string ("1024", "1024MiB", "2GiB") into
+// MiB, mirroring libvirt's parseMiB and firecracker's parseMemoryMiB. Callers
+// convert the result to bytes for HostConfig.Memory.
+func parseMemoryMiB(s string) (int64, error) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	if s == "" {
+		return 0, fmt.Errorf("memory is empty")
+	}
+	for _, sfx := range []string{"GIB", "GB", "G"} {
+		if strings.HasSuffix(s, sfx) {
+			n, err := strconv.ParseInt(strings.TrimSuffix(s, sfx), 10, 64)
+			if err != nil || n <= 0 {
+				return 0, fmt.Errorf("invalid memory %q", s)
+			}
+			return n * 1024, nil
+		}
+	}
+	for _, sfx := range []string{"MIB", "MB", "M"} {
+		if strings.HasSuffix(s, sfx) {
+			n, err := strconv.ParseInt(strings.TrimSuffix(s, sfx), 10, 64)
+			if err != nil || n <= 0 {
+				return 0, fmt.Errorf("invalid memory %q", s)
+			}
+			return n, nil
+		}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid memory %q", s)
+	}
+	return n, nil
 }
