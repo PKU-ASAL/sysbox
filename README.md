@@ -99,7 +99,7 @@ resource "sysbox_node" "node" {
 
 到了 API/Agent 模式，这条边界仍然不变。宿主机 Agent 注册时自动探测 capability（也可用 `--substrates` 显式声明），执行前由 preflight 验证实际环境；调度器据此把**整个 topology run** 分配给一台满足全部要求的 Agent。因此当前支持“一个拓扑内组合异构节点”，但不把同一拓扑中的不同节点分别调度到多台 Agent，也不提供通用的跨主机 overlay network。
 
-本地 CLI 与 API/Agent/Web 控制面共享同一套 decoder、planner、executor、state manager 和 provider，不存在第二套拓扑语义。详细契约见 [Architecture](docs/architecture.md)。
+本地 CLI 与 API/Agent 控制面共享同一套 decoder、planner、executor、state manager 和 provider，不存在第二套拓扑语义。详细契约见 [Architecture](docs/architecture.md)。
 
 ## 支持范围
 
@@ -109,10 +109,10 @@ Sysbox 有意把能力范围收敛在可验证的 Linux 实验环境内。当前
 |---|---|
 | Guest provider | Docker、Firecracker、libvirt |
 | 网络 | 隔离 IPv4、静态地址、路由、NAT、Docker alias |
-| 策略 | 拓扑独占、原子更新的 nftables IPv4 策略 |
+| 策略 | 拓扑独占、整体重建的 nftables IPv4 策略 |
 | 生命周期 | Validate、plan、apply、定向/完整 reset、destroy、recovery |
 | State | Local、SQLite、Postgres；HTTP/S3 mutation 需要显式 unsafe override |
-| 操作面 | CLI、HTTP API、宿主机 Agent、Web console |
+| 操作面 | CLI、HTTP API、宿主机 Agent、控制台会话 |
 | 分发 | Linux amd64/arm64 CLI archive 与 GHCR API/Agent runtime |
 
 这里的 Terraform-like 指声明式计划与生命周期体验，并不表示兼容 Terraform provider。Sysbox 也不是通用云编排器；IPv6 policy、任意 guest OS、跨 Agent 节点放置和通用云资源不在当前保证范围内。正是这段受控边界，让它能够验证身份、观察状态、恢复执行并安全删除资源。
