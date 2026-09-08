@@ -189,7 +189,11 @@ func postAgent(ctx context.Context, ident *Identity, url string, in any) error {
 }
 
 func DefaultCapabilities() []string {
-	return []string{"docker", "network", "firecracker", "kvm", "libvirt"}
+	// veth 是 docker substrate 的 NIC kind（NICKindVeth）。调度器从
+	// substrate.NICKinds 推导能力需求（pkg/api/scheduler.go 的
+	// addSubstrateCapabilities），agent 侧清单必须与之对齐，否则 docker
+	// 场景 apply 会报 "no online agent satisfies capabilities: [docker veth]"。
+	return []string{"docker", "veth", "network", "firecracker", "kvm", "libvirt"}
 }
 
 func normalizeCapabilities(in []string) []string {
