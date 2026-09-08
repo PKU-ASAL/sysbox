@@ -20,7 +20,7 @@ var (
 	flagAgentToken        string
 	flagAgentID           string
 	flagAgentName         string
-	flagAgentCapabilities string
+	flagAgentSubstrates string
 	flagAgentIdentity     string
 	flagAgentConfig       string
 	flagAgentPollInterval time.Duration
@@ -40,7 +40,7 @@ var agentRegisterCmd = &cobra.Command{
 			Token:        flagAgentToken,
 			ID:           flagAgentID,
 			Name:         flagAgentName,
-			Capabilities: splitCSV(flagAgentCapabilities),
+			Substrates: splitCSV(flagAgentSubstrates),
 			Path:         flagAgentIdentity,
 		})
 		if err != nil {
@@ -123,7 +123,7 @@ func init() {
 	agentRegisterCmd.Flags().StringVar(&flagAgentToken, "token", "", "registration/API token")
 	agentRegisterCmd.Flags().StringVar(&flagAgentID, "id", "", "agent id")
 	agentRegisterCmd.Flags().StringVar(&flagAgentName, "name", "", "agent display name")
-	agentRegisterCmd.Flags().StringVar(&flagAgentCapabilities, "capabilities", strings.Join(agent.DefaultCapabilities(), ","), "comma-separated agent capabilities")
+	agentRegisterCmd.Flags().StringVar(&flagAgentSubstrates, "substrates", "", "comma-separated substrates to claim (empty = auto-detect)")
 	agentRegisterCmd.Flags().StringVar(&flagAgentIdentity, "identity", agent.DefaultIdentityPath, "local agent identity path")
 
 	agentStartCmd.Flags().StringVar(&flagAgentIdentity, "identity", agent.DefaultIdentityPath, "local agent identity path")
