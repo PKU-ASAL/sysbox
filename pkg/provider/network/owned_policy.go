@@ -2,31 +2,27 @@ package network
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"net"
+	"os/exec"
+	"regexp"
 	"strings"
-
-	"github.com/google/nftables"
-	"github.com/google/nftables/expr"
-	"github.com/google/nftables/userdata"
-	"github.com/vishvananda/netns"
-	"golang.org/x/sys/unix"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/driver"
 )
 
 const ownershipPrefix = "sysbox-owner="
 
+// netnsTimeout bounds each nsenter/nft subprocess so a wedged netfilter
+// operation cannot hang the caller; the subprocess is killed on deadline.
+const netnsTimeout = 15 * time.Second
+
 type policyTargetState struct {
 	Namespace string            `json:"namespace"`
 	Bindings  map[string]string `json:"bindings"`
 }
 
-func (Driver) ApplyRuleset(_ context.Context, target driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
+func (Driver) ApplyRuleset(ctx context.Context, target driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
 	state, err := decodePolicyTarget(target)
 	if err != nil {
 		return driver.RulesetObservation{}, err
@@ -35,47 +31,28 @@ func (Driver) ApplyRuleset(_ context.Context, target driver.PolicyTarget, spec d
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "compile ruleset", err)
 	}
-	err = inNetns(state.Namespace, func() error {
-		return applyCompiledRuleset(plan)
-	})
-	if err != nil {
+	if err := applyCompiledInNetNS(ctx, "/var/run/netns/"+state.Namespace, plan); err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "network", "apply ruleset", err)
 	}
 	return driver.RulesetObservation{Table: plan.Table, Digest: plan.Digest}, nil
 }
 
-// CheckTarget reports whether the network namespace the ruleset was applied to
-// still exists. Like the docker driver, it does not read the ruleset back.
-func (Driver) CheckTarget(_ context.Context, target driver.PolicyTarget) (bool, error) {
+// ObserveRuleset reads the ruleset back inside the target netns via an nsenter
+// subprocess (killable), returning the observed digest.
+func (Driver) ObserveRuleset(ctx context.Context, target driver.PolicyTarget, owner string) (driver.RulesetObservation, error) {
 	state, err := decodePolicyTarget(target)
 	if err != nil {
-		return false, err
+		return driver.RulesetObservation{}, err
 	}
-	ns, err := netns.GetFromName(state.Namespace)
-	if err != nil {
-		return false, nil
-	}
-	_ = ns.Close()
-	return true, nil
+	return ObserveRulesetInNetNS(ctx, "/var/run/netns/"+state.Namespace, owner)
 }
 
-func (Driver) DeleteRuleset(_ context.Context, target driver.PolicyTarget, owner string) error {
+func (Driver) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, owner string) error {
 	state, err := decodePolicyTarget(target)
 	if err != nil {
 		return err
 	}
-	return inNetns(state.Namespace, func() error {
-		conn, err := nftables.New()
-		if err != nil {
-			return err
-		}
-		conn.DelTable(&nftables.Table{Family: nftables.TableFamilyIPv4, Name: driver.RulesetTableName(owner)})
-		// Best-effort: an already-absent table is the common case, and any other
-		// removal failure is self-healed by the next apply, which always rebuilds
-		// the table from scratch.
-		_ = conn.Flush()
-		return nil
-	})
+	return DeleteRulesetInNetNS(ctx, "/var/run/netns/"+state.Namespace, owner)
 }
 
 func decodePolicyTarget(target driver.PolicyTarget) (policyTargetState, error) {
@@ -92,264 +69,88 @@ func decodePolicyTarget(target driver.PolicyTarget) (policyTargetState, error) {
 	return state, nil
 }
 
-func applyCompiledRuleset(plan compiledRuleset) error {
-	conn, err := nftables.New()
-	if err != nil {
-		return err
-	}
-	return applyCompiledRulesetConn(conn, plan)
-}
-
-func applyCompiledRulesetConn(conn *nftables.Conn, plan compiledRuleset) error {
-	table := &nftables.Table{Family: nftables.TableFamilyIPv4, Name: plan.Table}
-	// Always rebuild: delete any pre-existing table first, ignoring the result.
-	// Deleting an absent table is ENOENT (the common first-apply case), and a
-	// real error (e.g. permission) surfaces on the AddTable/Flush below.
-	conn.DelTable(table)
-	_ = conn.Flush()
-	table = conn.AddTable(table)
-	chains := map[driver.Direction]*nftables.Chain{}
-	for _, item := range []struct {
-		name      string
-		direction driver.Direction
-		hook      *nftables.ChainHook
-	}{
-		{"input", driver.DirectionInput, nftables.ChainHookInput},
-		{"output", driver.DirectionOutput, nftables.ChainHookOutput},
-		{"forward", driver.DirectionForward, nftables.ChainHookForward},
-	} {
-		policy, err := chainPolicy(plan.BaseChains[item.name])
-		if err != nil {
-			return err
-		}
-		chains[item.direction] = conn.AddChain(&nftables.Chain{Name: item.name, Table: table, Type: nftables.ChainTypeFilter, Hooknum: item.hook, Priority: nftables.ChainPriorityFilter, Policy: &policy})
-	}
-	marker := ownershipMarker(plan.Owner, plan.Digest)
-	conn.AddRule(&nftables.Rule{Table: table, Chain: chains[driver.DirectionInput], UserData: userdata.AppendString(nil, userdata.TypeComment, expressionMarker(marker, nil))})
-	// Loopback is always accepted so a node's access to its own 127.0.0.1
-	// services survives a default drop policy — otherwise a `curl 127.0.0.1`
-	// health check on a firewalled node is silently dropped.
-	conn.AddRule(&nftables.Rule{Table: table, Chain: chains[driver.DirectionInput], Exprs: loopbackAcceptExpressions(expr.MetaKeyIIFNAME)})
-	conn.AddRule(&nftables.Rule{Table: table, Chain: chains[driver.DirectionOutput], Exprs: loopbackAcceptExpressions(expr.MetaKeyOIFNAME)})
-	for _, rule := range plan.Rules {
-		expressions, err := policyExpressions(rule)
-		if err != nil {
-			return err
-		}
-		comment := expressionMarker(marker, expressions)
-		conn.AddRule(&nftables.Rule{Table: table, Chain: chains[rule.Rule.Direction], Exprs: expressions, UserData: userdata.AppendString(nil, userdata.TypeComment, comment)})
-	}
-	if plan.NAT != nil && plan.NAT.Policy.Masquerade {
-		chain := conn.AddChain(&nftables.Chain{Name: "postrouting", Table: table, Type: nftables.ChainTypeNAT, Hooknum: nftables.ChainHookPostrouting, Priority: nftables.ChainPriorityNATSource})
-		expressions := []expr.Any{&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifnameBytes(plan.NAT.UplinkDevice)}}
-		for _, cidr := range plan.NAT.Policy.SourceCIDRs {
-			match, _ := cidrExpressions(cidr, true)
-			expressions = append(expressions, match...)
-		}
-		expressions = append(expressions, &expr.Masq{})
-		conn.AddRule(&nftables.Rule{Table: table, Chain: chain, Exprs: expressions, UserData: userdata.AppendString(nil, userdata.TypeComment, expressionMarker(marker+";nat=masquerade", expressions))})
-	}
-	return conn.Flush()
-}
-
-func ApplyRulesetInNetNSFD(fd int, spec driver.RulesetSpec, bindings map[string]string) (driver.RulesetObservation, error) {
+// ApplyRulesetInNetNS compiles the spec and applies it inside the target netns
+// path via `nft -f` (an nsenter subprocess, killable on ctx cancellation).
+func ApplyRulesetInNetNS(ctx context.Context, netnsPath string, spec driver.RulesetSpec, bindings map[string]string) (driver.RulesetObservation, error) {
 	plan, err := compileRuleset(spec, bindings)
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	conn, err := nftables.New(nftables.WithNetNSFd(fd))
-	if err != nil {
-		return driver.RulesetObservation{}, err
-	}
-	if err := applyCompiledRulesetConn(conn, plan); err != nil {
+	if err := applyCompiledInNetNS(ctx, netnsPath, plan); err != nil {
 		return driver.RulesetObservation{}, err
 	}
 	return driver.RulesetObservation{Table: plan.Table, Digest: plan.Digest}, nil
 }
 
-func DeleteRulesetInNetNSFD(fd int, owner string) error {
-	conn, err := nftables.New(nftables.WithNetNSFd(fd))
+// ObserveRulesetInNetNS reads the ruleset inside the target netns path via
+// `nft list ruleset` (an nsenter subprocess, killable).
+func ObserveRulesetInNetNS(ctx context.Context, netnsPath string, owner string) (driver.RulesetObservation, error) {
+	out, err := runNFT(ctx, netnsPath, "", "list", "ruleset")
 	if err != nil {
-		return err
+		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "network", "list nftables ruleset", err)
 	}
-	conn.DelTable(&nftables.Table{Family: nftables.TableFamilyIPv4, Name: driver.RulesetTableName(owner)})
-	// Best-effort: an already-absent table is the common case, and any other
-	// removal failure self-heals on the next apply, which always rebuilds.
-	_ = conn.Flush()
+	return observeFromNFTList(out, owner)
+}
+
+// DeleteRulesetInNetNS removes the owned table inside the target netns path.
+// Deletion is best-effort: an already-absent table is the common case, and any
+// other removal failure is self-healed by the next apply, which always rebuilds.
+func DeleteRulesetInNetNS(ctx context.Context, netnsPath string, owner string) error {
+	_, _ = runNFT(ctx, netnsPath, "", "delete", "table", "ip", driver.RulesetTableName(owner))
 	return nil
+}
+
+func applyCompiledInNetNS(ctx context.Context, netnsPath string, plan compiledRuleset) error {
+	// Best-effort delete first so re-apply rebuilds the table from scratch.
+	_, _ = runNFT(ctx, netnsPath, "", "delete", "table", "ip", plan.Table)
+	_, err := runNFT(ctx, netnsPath, nftScript(plan), "-f", "-")
+	return err
+}
+
+// runNFT runs `nft <args...>` inside the target netns path via the sysbox-netns
+// helper (a setcap'd shim over nsenter). The helper runs as a killable
+// subprocess, so a wedged netfilter operation can no longer hang the caller the
+// way an in-process netlink read did. stdin, when non-empty, is piped through
+// to `nft` (used for `-f -`).
+func runNFT(ctx context.Context, netnsPath, stdin string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, netnsTimeout)
+	defer cancel()
+	full := append([]string{netnsPath}, args...)
+	cmd := exec.CommandContext(ctx, "sysbox-netns", full...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	out, err := cmd.Output()
+	return string(out), err
 }
 
 func ownershipMarker(owner, digest string) string {
 	return ownershipPrefix + owner + ";digest=" + digest
 }
 
-func expressionMarker(marker string, expressions []expr.Any) string {
-	return marker + ";expr=" + expressionSignature(expressions)
-}
+var ownerMarkerRE = regexp.MustCompile(`comment "sysbox-owner=([^;"]+);digest=([^;"]+)`)
 
-func expressionSignature(expressions []expr.Any) string {
-	canonical := make([]json.RawMessage, 0, len(expressions))
-	for _, expression := range expressions {
-		var payload []byte
-		if _, ok := expression.(*expr.Counter); ok {
-			payload = []byte(`"counter"`)
-		} else {
-			payload, _ = json.Marshal(struct {
-				Type string `json:"type"`
-				Data any    `json:"data"`
-			}{fmt.Sprintf("%T", expression), expression})
+// observeFromNFTList parses `nft list ruleset` output and extracts the ownership
+// marker digest. Every rule carrying a marker must agree on owner and digest,
+// matching the write-side contract that the owner marker is the source of truth.
+func observeFromNFTList(output, owner string) (driver.RulesetObservation, error) {
+	tableName := driver.RulesetTableName(owner)
+	if !strings.Contains(output, "table ip "+tableName) {
+		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorNotFound, "network", "owned ruleset not found", nil)
+	}
+	matches := ownerMarkerRE.FindAllStringSubmatch(output, -1)
+	if len(matches) == 0 {
+		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "table exists without matching ownership marker", nil)
+	}
+	digest := ""
+	for _, m := range matches {
+		if m[1] != owner {
+			return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "owned table contains a rule without matching ownership marker", nil)
 		}
-		canonical = append(canonical, payload)
-	}
-	payload, _ := json.Marshal(canonical)
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:8])
-}
-
-func markerValue(comment, key string) (string, bool) {
-	prefix := key + "="
-	for _, part := range strings.Split(comment, ";") {
-		if strings.HasPrefix(part, prefix) {
-			return strings.TrimPrefix(part, prefix), true
+		if digest != "" && digest != m[2] {
+			return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "owned table contains inconsistent policy digests", nil)
 		}
+		digest = m[2]
 	}
-	return "", false
-}
-
-func parseOwnershipMarker(comment string) (string, string, bool) {
-	if !strings.HasPrefix(comment, ownershipPrefix) {
-		return "", "", false
-	}
-	parts := strings.Split(comment, ";")
-	owner := strings.TrimPrefix(parts[0], ownershipPrefix)
-	for _, part := range parts[1:] {
-		if strings.HasPrefix(part, "digest=") {
-			return owner, strings.TrimPrefix(part, "digest="), true
-		}
-	}
-	return "", "", false
-}
-
-func chainPolicy(verdict driver.Verdict) (nftables.ChainPolicy, error) {
-	switch verdict {
-	case driver.VerdictAccept:
-		return nftables.ChainPolicyAccept, nil
-	case driver.VerdictDrop, driver.VerdictReject:
-		return nftables.ChainPolicyDrop, nil
-	default:
-		return 0, fmt.Errorf("invalid chain policy %q", verdict)
-	}
-}
-
-func policyExpressions(rule compiledRule) ([]expr.Any, error) {
-	var out []expr.Any
-	if rule.InputDevice != "" {
-		out = append(out, &expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifnameBytes(rule.InputDevice)})
-	}
-	if rule.OutputDevice != "" {
-		out = append(out, &expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifnameBytes(rule.OutputDevice)})
-	}
-	for _, cidr := range rule.Rule.SourceCIDRs {
-		match, err := cidrExpressions(cidr, true)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, match...)
-	}
-	for _, cidr := range rule.Rule.DestinationCIDRs {
-		match, err := cidrExpressions(cidr, false)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, match...)
-	}
-	if rule.Rule.Protocol != driver.ProtocolAll {
-		proto := map[driver.Protocol]byte{driver.ProtocolTCP: unix.IPPROTO_TCP, driver.ProtocolUDP: unix.IPPROTO_UDP, driver.ProtocolICMP: unix.IPPROTO_ICMP}[rule.Rule.Protocol]
-		out = append(out, &expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{proto}})
-	}
-	var err error
-	out, err = appendPortExpressions(out, rule.Rule.SourcePorts, 0)
-	if err != nil {
-		return nil, err
-	}
-	out, err = appendPortExpressions(out, rule.Rule.DestinationPorts, 2)
-	if err != nil {
-		return nil, err
-	}
-	if len(rule.Rule.States) > 0 {
-		var mask uint32
-		for _, state := range rule.Rule.States {
-			mask |= ctStateMask(state)
-		}
-		data := make([]byte, 4)
-		binary.LittleEndian.PutUint32(data, mask)
-		out = append(out, &expr.Ct{Key: expr.CtKeySTATE, Register: 1}, &expr.Bitwise{SourceRegister: 1, DestRegister: 1, Len: 4, Mask: data, Xor: make([]byte, 4)}, &expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: make([]byte, 4)})
-	}
-	if rule.Rule.Counter {
-		out = append(out, &expr.Counter{})
-	}
-	if rule.Rule.Log {
-		prefix := "sysbox"
-		if rule.Rule.ID != "" {
-			prefix += ":" + rule.Rule.ID
-		}
-		out = append(out,
-			&expr.Limit{Type: expr.LimitTypePkts, Rate: 10, Unit: expr.LimitTimeSecond, Burst: 20},
-			&expr.Log{Key: 1 << unix.NFTA_LOG_PREFIX, Data: append([]byte(prefix), 0)},
-		)
-	}
-	switch rule.Rule.Verdict {
-	case driver.VerdictAccept:
-		out = append(out, &expr.Verdict{Kind: expr.VerdictAccept})
-	case driver.VerdictDrop:
-		out = append(out, &expr.Verdict{Kind: expr.VerdictDrop})
-	case driver.VerdictReject:
-		out = append(out, &expr.Reject{Type: unix.NFT_REJECT_ICMP_UNREACH, Code: 3})
-	}
-	return out, nil
-}
-
-func appendPortExpressions(out []expr.Any, ports []driver.PortRange, offset uint32) ([]expr.Any, error) {
-	for _, port := range ports {
-		from := make([]byte, 2)
-		to := make([]byte, 2)
-		binary.BigEndian.PutUint16(from, port.From)
-		binary.BigEndian.PutUint16(to, port.To)
-		out = append(out, &expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: offset, Len: 2})
-		if port.From == port.To {
-			out = append(out, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: from})
-		} else {
-			out = append(out, &expr.Range{Op: expr.CmpOpEq, Register: 1, FromData: from, ToData: to})
-		}
-	}
-	return out, nil
-}
-
-func cidrExpressions(cidr string, source bool) ([]expr.Any, error) {
-	_, network, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return nil, err
-	}
-	offset := uint32(16)
-	if source {
-		offset = 12
-	}
-	return []expr.Any{&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: offset, Len: 4}, &expr.Bitwise{SourceRegister: 1, DestRegister: 1, Len: 4, Mask: []byte(network.Mask), Xor: make([]byte, 4)}, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte(network.IP.To4())}}, nil
-}
-func ifnameBytes(name string) []byte { return append([]byte(name), 0) }
-
-// loopbackAcceptExpressions matches traffic on the loopback interface (iifname
-// or oifname == "lo") and accepts it. It is emitted for both the input and
-// output chains so a node's own 127.0.0.1 traffic is never dropped by a default
-// drop policy.
-func loopbackAcceptExpressions(metaKey expr.MetaKey) []expr.Any {
-	return []expr.Any{
-		&expr.Meta{Key: metaKey, Register: 1},
-		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifnameBytes("lo")},
-		&expr.Verdict{Kind: expr.VerdictAccept},
-	}
-}
-
-func ctStateMask(state driver.ConnectionState) uint32 {
-	return map[driver.ConnectionState]uint32{driver.StateInvalid: 1, driver.StateEstablished: 2, driver.StateRelated: 4, driver.StateNew: 8}[state]
+	return driver.RulesetObservation{Table: tableName, Digest: digest}, nil
 }

@@ -1,9 +1,9 @@
 package network
 
 import (
+	"fmt"
 	"testing"
 
-	"github.com/google/nftables/expr"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/driver"
@@ -54,30 +54,51 @@ func TestCompileRulesetExpandsMatchListsAsAlternatives(t *testing.T) {
 	}
 }
 
-func TestPolicyExpressionsIncludePortsCounterAndVerdict(t *testing.T) {
-	expressions, err := policyExpressions(compiledRule{Rule: driver.PolicyRule{
-		Direction: driver.DirectionForward, Protocol: driver.ProtocolTCP,
-		SourcePorts: []driver.PortRange{{From: 1024, To: 65535}}, DestinationPorts: []driver.PortRange{{From: 443, To: 443}},
-		Verdict: driver.VerdictAccept, Counter: true,
-	}})
-	require.NoError(t, err)
-	var payloads, ranges, counters, verdicts int
-	for _, expression := range expressions {
-		switch expression.(type) {
-		case *expr.Payload:
-			payloads++
-		case *expr.Range:
-			ranges++
-		case *expr.Counter:
-			counters++
-		case *expr.Verdict:
-			verdicts++
-		}
+func TestNFTScriptRendersRuleMatches(t *testing.T) {
+	spec := driver.RulesetSpec{
+		Owner: "topology.lab/sysbox_firewall.edge", Family: driver.FamilyIPv4,
+		Rules: []driver.PolicyRule{{
+			ID: "https", Direction: driver.DirectionForward,
+			SourceCIDRs: []string{"10.0.0.0/24"}, DestinationCIDRs: []string{"192.0.2.0/24"},
+			Protocol:    driver.ProtocolTCP,
+			SourcePorts: []driver.PortRange{{From: 1024, To: 65535}}, DestinationPorts: []driver.PortRange{{From: 443, To: 443}},
+			InputAttachment: "inside", OutputAttachment: "uplink",
+			States: []driver.ConnectionState{driver.StateNew}, Verdict: driver.VerdictAccept, Counter: true,
+		}},
 	}
-	require.GreaterOrEqual(t, payloads, 2)
-	require.Equal(t, 1, ranges)
-	require.Equal(t, 1, counters)
-	require.Equal(t, 1, verdicts)
+	plan, err := compileRuleset(spec, map[string]string{"inside": "eth1", "uplink": "eth0"})
+	require.NoError(t, err)
+	script := nftScript(plan)
+
+	require.Contains(t, script, `iifname "eth1"`)
+	require.Contains(t, script, `oifname "eth0"`)
+	require.Contains(t, script, "ip saddr 10.0.0.0/24")
+	require.Contains(t, script, "ip daddr 192.0.2.0/24")
+	require.Contains(t, script, "meta l4proto tcp")
+	require.Contains(t, script, "tcp sport 1024-65535")
+	require.Contains(t, script, "tcp dport 443")
+	require.Contains(t, script, "ct state new")
+	require.Contains(t, script, "counter")
+	require.Contains(t, script, "accept")
+	require.Contains(t, script, fmt.Sprintf("accept comment %q", ownershipMarker(spec.Owner, plan.Digest)))
+}
+
+func TestNFTScriptRendersLogAndReject(t *testing.T) {
+	spec := driver.RulesetSpec{
+		Owner: "topology.lab/sysbox_firewall.edge", Family: driver.FamilyIPv4,
+		Rules: []driver.PolicyRule{{
+			ID: "block", Direction: driver.DirectionInput, Protocol: driver.ProtocolUDP,
+			DestinationPorts: []driver.PortRange{{From: 53, To: 53}},
+			Verdict:          driver.VerdictReject, Log: true,
+		}},
+	}
+	plan, err := compileRuleset(spec, nil)
+	require.NoError(t, err)
+	script := nftScript(plan)
+	require.Contains(t, script, "udp dport 53")
+	require.Contains(t, script, `limit rate 10/second burst 20 packets log prefix "sysbox:block"`)
+	require.Contains(t, script, "reject")
+	require.Contains(t, script, fmt.Sprintf("reject comment %q", ownershipMarker(spec.Owner, plan.Digest)))
 }
 
 func TestCompileRulesetBuildsMasquerade(t *testing.T) {
@@ -98,35 +119,97 @@ func TestCompileRulesetRejectsUnknownLogicalAttachment(t *testing.T) {
 	require.ErrorContains(t, err, `logical attachment "missing"`)
 }
 
-func TestOwnershipMarkerRoundTripUsesFullOwner(t *testing.T) {
+func TestOwnershipMarkerFormat(t *testing.T) {
 	owner := "topology.research/module.red/sysbox_firewall.edge"
-	comment := ownershipMarker(owner, "abc123") + ";rule=https"
-	gotOwner, digest, ok := parseOwnershipMarker(comment)
-	require.True(t, ok)
-	require.Equal(t, owner, gotOwner)
-	require.Equal(t, "abc123", digest)
+	require.Equal(t, "sysbox-owner=topology.research/module.red/sysbox_firewall.edge;digest=abc123", ownershipMarker(owner, "abc123"))
 }
 
-func TestLoopbackAcceptExpressions(t *testing.T) {
-	for _, tc := range []struct {
-		key expr.MetaKey
-	}{
-		{expr.MetaKeyIIFNAME},
-		{expr.MetaKeyOIFNAME},
-	} {
-		expressions := loopbackAcceptExpressions(tc.key)
-		require.Len(t, expressions, 3)
-
-		meta, ok := expressions[0].(*expr.Meta)
-		require.True(t, ok, "first expression must be a meta lookup")
-		require.Equal(t, tc.key, meta.Key)
-
-		cmp, ok := expressions[1].(*expr.Cmp)
-		require.True(t, ok, "second expression must be an equality comparison")
-		require.Equal(t, ifnameBytes("lo"), cmp.Data)
-
-		verdict, ok := expressions[2].(*expr.Verdict)
-		require.True(t, ok, "third expression must be a verdict")
-		require.Equal(t, expr.VerdictAccept, verdict.Kind)
+func TestNFTScriptRendersOwnedTable(t *testing.T) {
+	spec := driver.RulesetSpec{
+		Owner: "topology.lab/sysbox_firewall.edge", Family: driver.FamilyIPv4,
+		DefaultInput: driver.VerdictDrop, DefaultOutput: driver.VerdictAccept, DefaultForward: driver.VerdictReject,
 	}
+	plan, err := compileRuleset(spec, nil)
+	require.NoError(t, err)
+	script := nftScript(plan)
+
+	require.Contains(t, script, "add table ip "+plan.Table)
+	require.Contains(t, script, "add chain ip "+plan.Table+" input { type filter hook input priority 0; policy drop; }")
+	require.Contains(t, script, "add chain ip "+plan.Table+" output { type filter hook output priority 0; policy accept; }")
+	// reject collapses to drop for the base-chain policy.
+	require.Contains(t, script, "add chain ip "+plan.Table+" forward { type filter hook forward priority 0; policy drop; }")
+	marker := ownershipMarker(spec.Owner, plan.Digest)
+	require.Contains(t, script, fmt.Sprintf(`iifname "lo" accept comment %q`, marker))
+	require.Contains(t, script, fmt.Sprintf(`oifname "lo" accept comment %q`, marker))
+	// `comment` is only valid as a trailing statement, never standalone.
+	require.NotContains(t, script, " input comment ")
+}
+
+func TestNFTScriptRendersMasquerade(t *testing.T) {
+	spec := driver.RulesetSpec{Owner: "topology.lab/sysbox_router.edge", Family: driver.FamilyIPv4,
+		NAT: &driver.NATPolicy{SourceAttachment: "inside", UplinkAttachment: "uplink", SourceCIDRs: []string{"10.0.0.0/24"}, Masquerade: true}}
+	plan, err := compileRuleset(spec, map[string]string{"inside": "eth1", "uplink": "eth0"})
+	require.NoError(t, err)
+	script := nftScript(plan)
+
+	require.Contains(t, script, "add chain ip "+plan.Table+" postrouting { type nat hook postrouting priority 100; }")
+	require.Contains(t, script, `oifname "eth0" ip saddr 10.0.0.0/24 masquerade`)
+	require.Contains(t, script, fmt.Sprintf("masquerade comment %q", ownershipMarker(spec.Owner, plan.Digest)+";nat=masquerade"))
+}
+
+func TestObserveFromNFTListExtractsDigest(t *testing.T) {
+	owner := "topology.lab/sysbox_firewall.edge"
+	tableName := driver.RulesetTableName(owner)
+	output := fmt.Sprintf(`table ip %s {
+	chain input {
+		type filter hook input priority filter; policy drop;
+		iifname "lo" accept comment "sysbox-owner=%s;digest=abc123"
+	}
+	chain output {
+		type filter hook output priority filter; policy accept;
+		oifname "lo" accept comment "sysbox-owner=%s;digest=abc123"
+	}
+}
+`, tableName, owner, owner)
+
+	observation, err := observeFromNFTList(output, owner)
+	require.NoError(t, err)
+	require.Equal(t, tableName, observation.Table)
+	require.Equal(t, "abc123", observation.Digest)
+}
+
+func TestObserveFromNFTListRejectsAbsentTable(t *testing.T) {
+	owner := "topology.lab/sysbox_firewall.edge"
+	_, err := observeFromNFTList("table ip other { }", owner)
+	require.Error(t, err)
+	require.True(t, driver.IsCategory(err, driver.ErrorNotFound))
+}
+
+func TestObserveFromNFTListRejectsForeignOwner(t *testing.T) {
+	owner := "topology.lab/sysbox_firewall.edge"
+	tableName := driver.RulesetTableName(owner)
+	output := fmt.Sprintf(`table ip %s {
+	chain input {
+		comment "sysbox-owner=someone.else;digest=abc123"
+	}
+}
+`, tableName)
+	_, err := observeFromNFTList(output, owner)
+	require.Error(t, err)
+	require.True(t, driver.IsCategory(err, driver.ErrorInvalidState))
+}
+
+func TestObserveFromNFTListRejectsInconsistentDigests(t *testing.T) {
+	owner := "topology.lab/sysbox_firewall.edge"
+	tableName := driver.RulesetTableName(owner)
+	output := fmt.Sprintf(`table ip %s {
+	chain input {
+		comment "sysbox-owner=%s;digest=abc123"
+		comment "sysbox-owner=%s;digest=def456"
+	}
+}
+`, tableName, owner, owner)
+	_, err := observeFromNFTList(output, owner)
+	require.Error(t, err)
+	require.True(t, driver.IsCategory(err, driver.ErrorInvalidState))
 }

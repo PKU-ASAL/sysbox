@@ -87,15 +87,10 @@ type RulesetObservation struct {
 
 type Policy interface {
 	ApplyRuleset(context.Context, PolicyTarget, RulesetSpec) (RulesetObservation, error)
-	// CheckTarget reports whether the policy target is still present — for the
-	// docker driver, whether the container owning the ruleset is running.
-	//
-	// Observe uses CheckTarget instead of reading the ruleset back. Reading a
-	// ruleset is a netlink dump that can deadlock against an active container's
-	// netfilter locks (and nftables' underlying netlink conn has no deadline), so
-	// the ruleset is written on apply and then trusted; the container's liveness
-	// is the only thing observed afterwards. See docs/design for the rationale.
-	CheckTarget(context.Context, PolicyTarget) (bool, error)
+	// ObserveRuleset reads the ruleset back and returns its observed digest.
+	// Implementations read via an nsenter subprocess so a wedged nft dump is
+	// killable and cannot hang the caller.
+	ObserveRuleset(context.Context, PolicyTarget, string) (RulesetObservation, error)
 	DeleteRuleset(context.Context, PolicyTarget, string) error
 }
 

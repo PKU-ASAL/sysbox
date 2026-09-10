@@ -19,7 +19,8 @@ import (
 type firewallPolicyFake struct {
 	applied    driver.RulesetSpec
 	applyCount int
-	alive      bool
+	digest     string
+	observeErr error
 }
 
 func (f *firewallPolicyFake) ApplyRuleset(_ context.Context, _ driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
@@ -27,8 +28,11 @@ func (f *firewallPolicyFake) ApplyRuleset(_ context.Context, _ driver.PolicyTarg
 	f.applyCount++
 	return driver.RulesetObservation{Table: "sysbox_owned", Digest: "verified"}, nil
 }
-func (f *firewallPolicyFake) CheckTarget(context.Context, driver.PolicyTarget) (bool, error) {
-	return f.alive, nil
+func (f *firewallPolicyFake) ObserveRuleset(context.Context, driver.PolicyTarget, string) (driver.RulesetObservation, error) {
+	if f.observeErr != nil {
+		return driver.RulesetObservation{}, f.observeErr
+	}
+	return driver.RulesetObservation{Table: "sysbox_owned", Digest: f.digest}, nil
 }
 
 func TestRecoverFirewallAlwaysReapplies(t *testing.T) {
@@ -203,18 +207,18 @@ func TestEdgeProviderDeleteRemovesState(t *testing.T) {
 	}
 }
 
-// Observe no longer reads the ruleset back; it trusts the apply and only checks
-// whether the target is still alive.
-func TestFirewallReadUsesTargetLiveness(t *testing.T) {
+// Observe reads the ruleset back (via nsenter in production) and compares the
+// observed digest against the desired digest recorded at apply time.
+func TestFirewallReadDetectsDigestDrift(t *testing.T) {
 	previous := driver.DefaultRegistry
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = previous })
 
-	alive := &firewallPolicyFake{alive: true}
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-alive", Version: "1", Policy: alive}))
+	match := &firewallPolicyFake{digest: "verified"}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-match", Version: "1", Policy: match}))
 	res := state.Resource{
 		Address: address.Resource("sysbox_firewall", "edge"),
-		Driver:  "policy-alive",
+		Driver:  "policy-match",
 		Attributes: state.MustAttributes(map[string]any{
 			"owner": "lab/sysbox_firewall.edge", "attach_to": "sysbox_router.edge",
 			"policy_target_state": `{"container_id":"router","bindings":{}}`, "desired_digest": "verified",
@@ -224,9 +228,9 @@ func TestFirewallReadUsesTargetLiveness(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, state.ResourcePresent, result.Status)
 
-	dead := &firewallPolicyFake{alive: false}
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-dead", Version: "1", Policy: dead}))
-	res.Driver = "policy-dead"
+	tampered := &firewallPolicyFake{digest: "tampered"}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-tampered", Version: "1", Policy: tampered}))
+	res.Driver = "policy-tampered"
 	result, err = (FirewallResourceHandler{}).Read(context.Background(), res)
 	require.NoError(t, err)
 	require.Equal(t, state.ResourceDrifted, result.Status)
