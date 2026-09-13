@@ -213,9 +213,28 @@ func injectKernelIPArg(cfgPath, dev, hostname, cidr, gw string) error {
 // upsertCmdlineArg replaces the first token whose key matches `key=` with the
 // fully-formed `kv` token, or appends kv if no such token exists.
 // Preserves order of other tokens.
+//
+// The kernel's ip= directive is repeatable — one entry per NIC, keyed by the
+// trailing <dev> field — so for ip= we replace the entry for the SAME interface
+// (idempotent re-apply) and append otherwise (multi-NIC nodes get one ip= per
+// link). Other keys keep the single-token replace semantics.
 func upsertCmdlineArg(cmdline, key, kv string) string {
 	prefix := key + "="
 	tokens := strings.Fields(cmdline)
+
+	if key == "ip" {
+		dev := ipArgDev(kv)
+		out := make([]string, 0, len(tokens)+1)
+		for _, t := range tokens {
+			if strings.HasPrefix(t, prefix) && ipArgDev(t) == dev {
+				continue // drop the previous entry for this interface
+			}
+			out = append(out, t)
+		}
+		out = append(out, kv)
+		return strings.Join(out, " ")
+	}
+
 	replaced := false
 	for i, t := range tokens {
 		if strings.HasPrefix(t, prefix) {
@@ -228,6 +247,17 @@ func upsertCmdlineArg(cmdline, key, kv string) string {
 		tokens = append(tokens, kv)
 	}
 	return strings.Join(tokens, " ")
+}
+
+// ipArgDev returns the <dev> field of an
+// ip=<client>::<gw>:<mask>:<host>:<dev>:<autoconf> token, or "" if the token
+// cannot be parsed.
+func ipArgDev(ipArg string) string {
+	parts := strings.Split(ipArg, ":")
+	if len(parts) >= 6 {
+		return parts[5]
+	}
+	return ""
 }
 
 // splitCIDR splits "10.0.12.20/24" into ("10.0.12.20", "255.255.255.0").

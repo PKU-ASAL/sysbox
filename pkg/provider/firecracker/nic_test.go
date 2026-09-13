@@ -15,11 +15,30 @@ func TestUpsertCmdlineArg_Appends(t *testing.T) {
 	}
 }
 
-func TestUpsertCmdlineArg_Replaces(t *testing.T) {
-	got := upsertCmdlineArg("console=ttyS0 ip=oldvalue reboot=k", "ip", "ip=newvalue")
-	want := "console=ttyS0 ip=newvalue reboot=k"
+func TestUpsertCmdlineArg_ReplacesSameDev(t *testing.T) {
+	// Re-applying the same interface drops the previous ip= for that dev and
+	// appends the new one (idempotent per interface).
+	got := upsertCmdlineArg(
+		"console=ttyS0 ip=10.0.12.20::10.0.12.254:255.255.255.0:node_db:eth0:off reboot=k",
+		"ip",
+		"ip=10.0.12.21::10.0.12.254:255.255.255.0:node_db:eth0:off",
+	)
+	want := "console=ttyS0 reboot=k ip=10.0.12.21::10.0.12.254:255.255.255.0:node_db:eth0:off"
 	if got != want {
-		t.Fatalf("replace mismatch\ngot:  %q\nwant: %q", got, want)
+		t.Fatalf("same-dev replace mismatch\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestUpsertCmdlineArg_AppendsDifferentDev(t *testing.T) {
+	// A second NIC appends its own ip= so multi-NIC nodes get one per link.
+	got := upsertCmdlineArg(
+		"console=ttyS0 ip=10.0.12.20::10.0.12.254:255.255.255.0:node_db:eth0:off",
+		"ip",
+		"ip=10.0.12.21::10.0.12.254:255.255.255.0:node_db:eth1:off",
+	)
+	want := "console=ttyS0 ip=10.0.12.20::10.0.12.254:255.255.255.0:node_db:eth0:off ip=10.0.12.21::10.0.12.254:255.255.255.0:node_db:eth1:off"
+	if got != want {
+		t.Fatalf("different-dev append mismatch\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
