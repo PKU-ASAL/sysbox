@@ -427,12 +427,13 @@ func attachTapToBridge(ctx context.Context, tapName, bridgeName, netnsName strin
 		}
 	}
 
-	// Bring the TAP up and enslave it to the bridge.
-	if out, err := runIP("link", "set", tapName, "up"); err != nil {
-		return fmt.Errorf("set tap up: %w\n%s", err, out)
-	}
+	// Enslave the TAP to the bridge first, then bring it up: `ip link set master`
+	// resets the device to DOWN, so the up must come after the enslave.
 	if out, err := runIP("link", "set", tapName, "master", bridgeName); err != nil {
 		return fmt.Errorf("enslave tap to bridge: %w\n%s", err, out)
+	}
+	if out, err := runIP("link", "set", tapName, "up"); err != nil {
+		return fmt.Errorf("set tap up: %w\n%s", err, out)
 	}
 	return nil
 }
