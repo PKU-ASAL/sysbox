@@ -29,6 +29,10 @@ type attachmentState struct {
 type networkState struct {
 	NetNS  string `json:"netns"`
 	Bridge string `json:"bridge"`
+	// DockerNetName is set for Docker-managed NAT networks (created via the
+	// docker substrate), whose bridge lives in the root netns and is recorded
+	// under this key rather than "bridge".
+	DockerNetName string `json:"docker_net_name"`
 }
 type linkRequest struct{ Name, NetNS, Bridge, IP, Gateway, MAC string }
 type attachedNIC struct{ Kind, HostEnd, GuestEnd, IP, NetNS string }
@@ -56,7 +60,13 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 	if len(req.IPPrefixes) > 0 {
 		ip = req.IPPrefixes[0]
 	}
-	attached, err := s.attachNIC(ctx, h, linkRequest{Name: req.Name, NetNS: target.NetNS, Bridge: target.Bridge, IP: ip, Gateway: req.Gateway, MAC: req.MAC})
+	// Docker-managed NAT networks record their bridge under docker_net_name
+	// (and live in the root netns), not the isolated-netns "bridge"/"netns" keys.
+	bridge := target.Bridge
+	if bridge == "" {
+		bridge = target.DockerNetName
+	}
+	attached, err := s.attachNIC(ctx, h, linkRequest{Name: req.Name, NetNS: target.NetNS, Bridge: bridge, IP: ip, Gateway: req.Gateway, MAC: req.MAC})
 	if err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "firecracker", "attach network", err)
 	}
