@@ -29,10 +29,12 @@ type attachmentState struct {
 type networkState struct {
 	NetNS  string `json:"netns"`
 	Bridge string `json:"bridge"`
-	// DockerNetName is set for Docker-managed NAT networks (created via the
-	// docker substrate), whose bridge lives in the root netns and is recorded
-	// under this key rather than "bridge".
-	DockerNetName string `json:"docker_net_name"`
+	// DockerNetName / DockerNetworkID are set for Docker-managed NAT networks
+	// (created via the docker substrate): the bridge lives in the root netns
+	// under Docker's conventional "br-<network-id[:12]>" device name, not the
+	// logical network name.
+	DockerNetName   string `json:"docker_net_name"`
+	DockerNetworkID string `json:"docker_network_id"`
 }
 type linkRequest struct{ Name, NetNS, Bridge, IP, Gateway, MAC string }
 type attachedNIC struct{ Kind, HostEnd, GuestEnd, IP, NetNS string }
@@ -60,11 +62,12 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 	if len(req.IPPrefixes) > 0 {
 		ip = req.IPPrefixes[0]
 	}
-	// Docker-managed NAT networks record their bridge under docker_net_name
-	// (and live in the root netns), not the isolated-netns "bridge"/"netns" keys.
+	// Docker-managed NAT networks record their ID under docker_network_id (and
+	// live in the root netns); their bridge device is Docker's conventional
+	// "br-<network-id[:12]>", not the logical docker_net_name.
 	bridge := target.Bridge
-	if bridge == "" {
-		bridge = target.DockerNetName
+	if bridge == "" && len(target.DockerNetworkID) >= 12 {
+		bridge = "br-" + target.DockerNetworkID[:12]
 	}
 	attached, err := s.attachNIC(ctx, h, linkRequest{Name: req.Name, NetNS: target.NetNS, Bridge: bridge, IP: ip, Gateway: req.Gateway, MAC: req.MAC})
 	if err != nil {
