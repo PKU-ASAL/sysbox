@@ -65,7 +65,7 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	if _, err := driver.DefaultRegistry.RequirePower(res.Driver); err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	agent, err := s.scheduler.SelectAgent(ctx, []string{res.Driver}, "")
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{res.Driver}, "")
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
@@ -104,7 +104,7 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	if _, err := driver.DefaultRegistry.RequireImport(req.Substrate); err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	agent, err := s.scheduler.SelectAgent(ctx, []string{req.Substrate}, "")
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{req.Substrate}, "")
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}

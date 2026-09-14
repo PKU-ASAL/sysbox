@@ -120,6 +120,13 @@ func (b *LocalBridge) HCLFile(string) string {
 	return b.opts.ConfigFile
 }
 
+func (b *LocalBridge) HCLFileForRun(run *controlplane.Run) string {
+	if run != nil && run.SnapshotPath != "" {
+		return run.SnapshotPath
+	}
+	return b.opts.ConfigFile
+}
+
 func (b *LocalBridge) Topologies(context.Context) []string {
 	if b.opts.Topology != "" {
 		return []string{b.opts.Topology}

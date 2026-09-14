@@ -105,6 +105,22 @@ func TestApplyUpsertCreatesTopologyOnFirstCall(t *testing.T) {
 	require.Equal(t, rev, run.Revision, "the run must record the global revision digest")
 }
 
+func TestApplyMaterializesImmutableRevisionSnapshot(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	registerDockerAgent(t, s)
+	first := publishRevision(t, s, "resource \"sysbox_node\" \"one\" {\n  image = \"alpine:3.21\"\n  substrate = \"docker\"\n}\n")
+	second := publishRevision(t, s, "resource \"sysbox_node\" \"two\" {\n  image = \"alpine:3.22\"\n  substrate = \"docker\"\n}\n")
+	runID := applyUpsert(t, s, "cf-snapshot", first)
+	applyUpsert(t, s, "cf-snapshot", second)
+	run, ok := s.jobs.get(runID)
+	require.True(t, ok)
+	require.NotEmpty(t, run.SnapshotPath)
+	data, err := os.ReadFile(run.SnapshotPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "alpine:3.21")
+	require.NotContains(t, string(data), "alpine:3.22")
+}
+
 // The apply response must carry the topology name and its projected status in
 // addition to the run/agent identifiers, so a consumer can read the convergence
 // status directly without an extra GET.

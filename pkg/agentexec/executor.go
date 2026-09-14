@@ -56,6 +56,25 @@ type Executor struct {
 	bridge Bridge
 }
 
+// hclFileForRun prefers the immutable revision snapshot attached to a run.
+// Bridges that predate snapshots retain the topology path as a compatibility
+// fallback for queued legacy runs.
+type runWorkspaceBridge interface {
+	HCLFileForRun(*controlplane.Run) string
+}
+
+func (e *Executor) hclFileForRun(run *controlplane.Run) string {
+	if run.SnapshotPath != "" {
+		return run.SnapshotPath
+	}
+	if b, ok := e.bridge.(runWorkspaceBridge); ok {
+		if path := b.HCLFileForRun(run); path != "" {
+			return path
+		}
+	}
+	return e.bridge.HCLFile(run.Topology)
+}
+
 func NewExecutorWithBridge(bridge Bridge) *Executor {
 	return &Executor{bridge: bridge}
 }
@@ -135,7 +154,7 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 		e.bridge.Finish(run, err)
 		return
 	}
-	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(e.bridge.HCLFile(run.Topology), mgr)
+	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(e.hclFileForRun(run), mgr)
 	if err != nil {
 		e.bridge.Finish(run, err)
 		return
@@ -169,7 +188,7 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetWorkspaceFromHCLFile(e.bridge.HCLFile(run.Topology))
+	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
 	exec.SetOperation(run.Op)
 	exec.SetLogger(log)
 	exec.SetSecretResolver(secret.Dispatcher{
@@ -296,7 +315,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	g, mgr, st, root, evalCtx, err := runtime.LoadWorkspaceWithInputs(e.bridge.HCLFile(run.Topology), mgr, run.Inputs)
+	g, mgr, st, root, evalCtx, err := runtime.LoadWorkspaceWithInputs(e.hclFileForRun(run), mgr, run.Inputs)
 	if err != nil {
 		e.bridge.Finish(run, err)
 		return
@@ -315,7 +334,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	}
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetWorkspaceFromHCLFile(e.bridge.HCLFile(run.Topology))
+	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
 	exec.SetOperation(run.Op)
 	exec.SetLogger(log)
 	exec.SetSecretResolver(secret.Dispatcher{
@@ -443,7 +462,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	}
 	exec := runtime.NewExecutor(graph.New(), st)
 	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetWorkspaceFromHCLFile(e.bridge.HCLFile(run.Topology))
+	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
 	exec.SetLogger(log)
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)

@@ -42,6 +42,7 @@ type runStartOptions struct {
 	OperationKey string
 	Inputs       map[string]string
 	DeadlineAt   time.Time
+	SnapshotPath string
 }
 
 func newJobs(runsDir string, store apiStore) *Jobs {
@@ -258,6 +259,7 @@ func newRun(topology, op string, opts runStartOptions) *controlplane.Run {
 		OperationKey: opts.OperationKey,
 		AgentID:      opts.AgentID,
 		UnsafeState:  opts.UnsafeState,
+		SnapshotPath: opts.SnapshotPath,
 		Protocol:     controlplane.AgentProtocolVersion,
 		Inputs:       opts.Inputs,
 		DeadlineAt:   opts.DeadlineAt,
@@ -492,11 +494,12 @@ func (j *Jobs) hasRunning(topology string) bool {
 
 func (j *Jobs) startChild(parent *controlplane.Run) *controlplane.Run {
 	return j.startWithOptions(parent.Topology, parent.Op, runStartOptions{
-		ParentID:    parent.ID,
-		Revision:    parent.Revision,
-		Target:      parent.Target,
-		AgentID:     parent.AgentID,
-		UnsafeState: parent.UnsafeState,
+		ParentID:     parent.ID,
+		SnapshotPath: parent.SnapshotPath,
+		Revision:     parent.Revision,
+		Target:       parent.Target,
+		AgentID:      parent.AgentID,
+		UnsafeState:  parent.UnsafeState,
 	})
 }
 

@@ -103,7 +103,7 @@ resource "sysbox_node" "node" {
 
 ## 支持范围
 
-Sysbox 有意把能力范围收敛在可验证的 Linux 实验环境内。当前已经打通的边界如下：
+Sysbox 有意把能力范围收敛在可验证的 Linux 与 Windows 异构实验环境内。Linux 节点目前覆盖完整的网络、guest execution 与生命周期能力；Windows 节点按 provider capability 分层支持。当前已经打通的边界如下：
 
 | 领域 | 当前支持 |
 |---|---|
@@ -115,7 +115,7 @@ Sysbox 有意把能力范围收敛在可验证的 Linux 实验环境内。当前
 | 操作面 | CLI、HTTP API、宿主机 Agent、控制台会话 |
 | 分发 | Linux amd64/arm64 CLI archive 与 GHCR API/Agent runtime |
 
-这里的 Terraform-like 指声明式计划与生命周期体验，并不表示兼容 Terraform provider。Sysbox 也不是通用云编排器；IPv6 policy、任意 guest OS、跨 Agent 节点放置和通用云资源不在当前保证范围内。正是这段受控边界，让它能够验证身份、观察状态、恢复执行并安全删除资源。
+这里的 Terraform-like 指声明式计划与生命周期体验，并不表示兼容 Terraform provider。Sysbox 也不是通用云编排器；IPv6 policy、未声明 capability 的 guest OS、跨 Agent 节点放置和通用云资源不在当前保证范围内。正是这段受控边界，让它能够验证身份、观察状态、恢复执行并安全删除资源。
 
 ## 文档
 

@@ -18,6 +18,8 @@ make release-workflow-test
 
 `make docs-test` 固定正式文档集合，限制 README 重新膨胀，并检查相对链接和已退役路径。新增正式主题时必须有明确单一事实归属，同时更新该门禁。
 
+架构审查记录位于 `docs/design/`，不属于正式手册集合；它们记录待修复问题、验证证据和当前实施边界。
+
 ## Privileged Tests
 
 ```bash

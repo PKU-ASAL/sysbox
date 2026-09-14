@@ -38,6 +38,10 @@ func NewSSHConnectionInNamespace(namespace, host, port, user, privateKey, passwo
 	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, insecureHost: true, netns: namespace}
 }
 
+func NewSSHConnectionInNamespaceWithTrust(namespace, host, port, user, privateKey, password, knownHosts string, insecure bool) *SSHConnection {
+	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, knownHosts: knownHosts, insecureHost: insecure, netns: namespace}
+}
+
 // NewSSHConnectionSecure creates an SSH connection that validates host keys.
 func NewSSHConnectionSecure(host, port, user, privateKey, password string) *SSHConnection {
 	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, insecureHost: false}
@@ -85,7 +89,10 @@ func (c *SSHConnection) hostKeyArgs() []string {
 }
 
 func (c *SSHConnection) OpenConsole(ctx context.Context, req ConsoleRequest) (substrate.ConsoleSession, error) {
-	return NewSSHConsoleSession(ctx, c.sshArgs(), req)
+	if c.netns == "" {
+		return NewSSHConsoleSession(ctx, c.sshArgs(), req)
+	}
+	return NewSSHConsoleSessionWithRunner(ctx, "ip", append([]string{"netns", "exec", c.netns, resolveSSHBin()}, c.sshArgs()...), req)
 }
 
 func (c *SSHConnection) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (substrate.ExecResult, error) {
@@ -126,7 +133,7 @@ func (c *SSHConnection) ExecBackground(ctx context.Context, req substrate.ExecRe
 	sshArgs = append(sshArgs, fmt.Sprintf("nohup sh -c %s >/dev/null 2>&1 & echo $!", util.ShellQuote(shellCmd)))
 
 	sshBin := resolveSSHBin()
-	ec := exec.CommandContext(ctx, sshBin, sshArgs...)
+	ec := c.namespacedCommand(ctx, sshBin, sshArgs...)
 	out, err := ec.Output()
 	if err != nil {
 		return 0, fmt.Errorf("ssh background: %w", err)

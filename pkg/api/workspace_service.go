@@ -13,11 +13,12 @@ import (
 )
 
 type WorkspaceService struct {
-	runsDir       string
-	workspacesDir string
-	stateBackend  string
-	stateManager  func(topology string) (*state.Manager, error)
-	health        healthStore
+	runsDir        string
+	workspacesDir  string
+	stateBackend   string
+	stateManager   func(topology string) (*state.Manager, error)
+	health         healthStore
+	placementStore durablePlacementStore
 }
 
 type WorkspaceInfo struct {
@@ -180,7 +181,10 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 		return err
 	}
 	st, err := mgr.Load()
-	if err == nil && len(st.Resources) > 0 {
+	if err != nil {
+		return fmt.Errorf("read topology state: %w", err)
+	}
+	if len(st.Resources) > 0 {
 		if !force {
 			return fmt.Errorf("topology %q has %d resource(s); call POST /v1/topologies/%s/destroy first or use force=true to delete metadata only", topology, len(st.Resources), topology)
 		}
@@ -195,6 +199,9 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 	}
 	if err := os.RemoveAll(filepath.Dir(s.HCLFile(topology))); err != nil {
 		return fmt.Errorf("remove workspace: %w", err)
+	}
+	if err := s.deletePlacement(ctx, topology); err != nil {
+		return fmt.Errorf("remove topology placement: %w", err)
 	}
 	if s.health != nil {
 		_ = s.health.DeleteHealth(ctx, topology)

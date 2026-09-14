@@ -57,6 +57,16 @@ func (b *ExecutionBridge) HCLFile(topology string) string {
 	return b.server.workspaceService().HCLFile(topology)
 }
 
+func (b *ExecutionBridge) HCLFileForRun(run *controlplane.Run) string {
+	if run != nil && run.SnapshotPath != "" {
+		return run.SnapshotPath
+	}
+	if run == nil {
+		return ""
+	}
+	return b.HCLFile(run.Topology)
+}
+
 func (b *ExecutionBridge) Topologies(ctx context.Context) []string {
 	mgr, err := b.server.stateManager("__list__")
 	if err != nil {

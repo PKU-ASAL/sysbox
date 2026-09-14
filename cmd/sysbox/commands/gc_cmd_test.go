@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,6 +33,15 @@ func TestCollectActiveIDs(t *testing.T) {
 	require.True(t, active.containers["container-1"])
 	require.True(t, active.networks["network-1"])
 	require.True(t, active.domains["domain-1"])
+}
+
+func TestCollectActiveIDsCheckedFailsClosedOnCorruptState(t *testing.T) {
+	runsDir := t.TempDir()
+	path := filepath.Join(runsDir, "lab", "state.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte("{corrupt"), 0o600))
+	_, err := collectActiveIDsChecked(runsDir)
+	require.Error(t, err)
 }
 
 func TestFindOrphansDocker(t *testing.T) {
