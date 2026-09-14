@@ -125,8 +125,13 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 		}
 	}
 
-	// Attach TAP to the network bridge.
-	if netnsName != "" && bridgeName != "" {
+	// Attach TAP to the network bridge. A Docker-managed bridge lives in the
+	// root netns (netnsName == ""), so the TAP must be enslaved there too;
+	// only a named netns needs the move + `ip netns exec`.
+	if bridgeName != "" {
+		if hs.NetnsName != "" && hs.NetnsName != netnsName {
+			return attachedNIC{}, fmt.Errorf("firecracker VM cannot attach NICs from multiple network namespaces: %q and %q", hs.NetnsName, netnsName)
+		}
 		if err := attachTapToBridge(ctx, tapName, bridgeName, netnsName); err != nil {
 			return attachedNIC{}, fmt.Errorf("attach tap to bridge: %w", err)
 		}
@@ -157,7 +162,7 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 	}
 
 	// Phase A: kernel cmdline IP autoconfig for the first interface.
-	if nicIdx == 0 && req.IP != "" {
+	if req.IP != "" {
 		hostname := strings.TrimPrefix(h.ID, "sysbox-")
 		if err := injectKernelIPArg(cfgPath, ifaceID, hostname, req.IP, req.Gateway); err != nil {
 			return attachedNIC{}, fmt.Errorf("inject kernel ip= arg: %w", err)
@@ -380,35 +385,41 @@ func linkExistsInNetns(name, netnsName string) bool {
 }
 
 // attachTapToBridge moves the TAP into the network's netns and enslaves it
-// to the bridge.
+// to the bridge. When netnsName is empty the bridge lives in the root netns,
+// so the TAP is enslaved in place without any `ip netns exec`.
 func attachTapToBridge(ctx context.Context, tapName, bridgeName, netnsName string) error {
-	// Check if TAP is already in the target netns and enslaved to bridge.
-	// Idempotent: skip if already configured.
-	nsCheck := exec.CommandContext(ctx, ipBin, "netns", "exec", netnsName, ipBin, "link", "show", tapName)
-	if nsCheck.Run() == nil {
-		// TAP already in netns — check if it's mastered by the bridge.
-		brCheck := exec.CommandContext(ctx, ipBin, "netns", "exec", netnsName, ipBin, "link", "show", tapName)
-		out, _ := brCheck.CombinedOutput()
-		if strings.Contains(string(out), "master "+bridgeName) {
-			return nil // already configured
+	// runIP executes `ip` inside the target netns (or the current netns when
+	// netnsName is empty).
+	runIP := func(args ...string) ([]byte, error) {
+		argv := []string{ipBin}
+		if netnsName != "" {
+			argv = []string{ipBin, "netns", "exec", netnsName, ipBin}
 		}
-		// TAP in netns but not on bridge — enslave it.
-		cmd := exec.CommandContext(ctx, ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "master", bridgeName)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("enslave tap to bridge: %w\n%s", err, out)
-		}
+		argv = append(argv, args...)
+		return exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
+	}
+
+	// Idempotent: skip if the TAP is already enslaved to the bridge.
+	if out, _ := runIP("link", "show", tapName); strings.Contains(string(out), "master "+bridgeName) {
 		return nil
 	}
 
-	cmds := [][]string{
-		{ipBin, "link", "set", tapName, "netns", netnsName},
-		{ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "up"},
-		{ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "master", bridgeName},
-	}
-	for _, args := range cmds {
-		if out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput(); err != nil {
-			return fmt.Errorf("%s: %w\n%s", strings.Join(args, " "), err, out)
+	// Move the TAP into the named netns when the bridge lives there. A root-netns
+	// bridge needs no move — the TAP is already in the target netns.
+	if netnsName != "" {
+		if _, err := runIP("link", "show", tapName); err != nil {
+			if out, err := exec.CommandContext(ctx, ipBin, "link", "set", tapName, "netns", netnsName).CombinedOutput(); err != nil {
+				return fmt.Errorf("move tap to netns: %w\n%s", err, out)
+			}
 		}
+	}
+
+	// Bring the TAP up and enslave it to the bridge.
+	if out, err := runIP("link", "set", tapName, "up"); err != nil {
+		return fmt.Errorf("set tap up: %w\n%s", err, out)
+	}
+	if out, err := runIP("link", "set", tapName, "master", bridgeName); err != nil {
+		return fmt.Errorf("enslave tap to bridge: %w\n%s", err, out)
 	}
 	return nil
 }

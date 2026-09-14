@@ -1,11 +1,54 @@
 package firecracker
 
 import (
+	"context"
+	"encoding/json"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestAttachNICInjectsEveryIPAndRejectsSecondNamespace(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "ip")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := ipBin
+	ipBin = bin
+	t.Cleanup(func() { ipBin = old })
+	cfgPath := filepath.Join(t.TempDir(), "vm.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"boot-source":{"boot_args":"console=ttyS0"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := substrate.NodeHandle{ID: "fc-review", Provider: &HandleState{ConfigPath: cfgPath}}
+	vmMu.Lock()
+	vmStore[h.ID] = &vmProcess{}
+	vmMu.Unlock()
+	t.Cleanup(func() { vmMu.Lock(); delete(vmStore, h.ID); vmMu.Unlock() })
+	s := &Substrate{}
+	for _, item := range []driver.AttachmentRequest{
+		{Name: "a", IPPrefixes: []string{"10.1.0.2/24"}, NetworkState: json.RawMessage(`{"netns":"same","bridge":"br"}`)},
+		{Name: "b", IPPrefixes: []string{"10.2.0.2/24"}, NetworkState: json.RawMessage(`{"netns":"same","bridge":"br"}`)},
+	} {
+		if _, err := s.Attach(context.Background(), h, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "10.2.0.2") {
+		t.Fatal("second NIC IP was not injected")
+	}
+	_, err = s.Attach(context.Background(), h, driver.AttachmentRequest{Name: "c", IPPrefixes: []string{"10.3.0.2/24"}, NetworkState: json.RawMessage(`{"netns":"other","bridge":"br2"}`)})
+	if err == nil || !strings.Contains(err.Error(), "namespace") {
+		t.Fatal("expected cross-namespace attachment to be rejected")
+	}
+}
 
 func TestUpsertCmdlineArg_Appends(t *testing.T) {
 	got := upsertCmdlineArg("console=ttyS0 reboot=k", "ip", "ip=10.0.12.20::10.0.12.254:255.255.255.0:node_db:eth0:off")
