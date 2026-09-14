@@ -47,4 +47,6 @@ func TestLooksLikeKernelRef(t *testing.T) {
 
 	// Empty string returns false.
 	require.False(t, LooksLikeKernelRef(""))
+	require.False(t, LooksLikeKernelRef("/var/cache/sysbox/vmlinux"))
+	require.False(t, LooksLikeKernelRef("https://example.invalid/vmlinux"))
 }
