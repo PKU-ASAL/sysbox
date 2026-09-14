@@ -282,15 +282,22 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 
 	// If a network netns is set, run Firecracker inside it so it can access
 	// the TAP device and bridge that live in that netns.
+	//
+	// NOTE: launch with exec.Command, NOT exec.CommandContext. The VM is
+	// long-running and must outlive the `sysbox apply` CLI invocation that
+	// starts it (sysbox is invoked per-operation via subprocess; a later
+	// `sysbox destroy` tears the VM down cold via socket/pidfile). Tying the
+	// process to ctx would SIGKILL it the instant `sysbox apply` returns and
+	// cancels its context, dropping the TAP fd and the guest's network.
 	var cmd *exec.Cmd
 	if netnsName != "" {
-		cmd = exec.CommandContext(ctx, ipBin, "netns", "exec", netnsName,
+		cmd = exec.Command(ipBin, "netns", "exec", netnsName,
 			s.firecrackerBin,
 			"--config-file", vm.cfgPath,
 			"--api-sock", vm.socket,
 		)
 	} else {
-		cmd = exec.CommandContext(ctx, s.firecrackerBin,
+		cmd = exec.Command(s.firecrackerBin,
 			"--config-file", vm.cfgPath,
 			"--api-sock", vm.socket,
 		)
