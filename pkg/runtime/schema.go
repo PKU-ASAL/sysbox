@@ -152,6 +152,8 @@ func ResourceSchemaFor(typ string) ResourceSchema {
 		add("cidr", value.StringType, false, false)
 		add("network_type", value.StringType, false, false)
 		add("nat", value.BoolType, false, false)
+		add("root_address", value.StringType, false, false)
+		add("root_routes", value.ListType, false, false)
 	case "sysbox_image":
 		for _, name := range []string{"substrate", "kind", "source", "sha256", "architecture", "guest_family"} {
 			add(name, value.StringType, false, false)
@@ -181,6 +183,7 @@ func ResourceSchemaFor(typ string) ResourceSchema {
 			add(name, value.StringType, false, false)
 		}
 		add("interfaces", value.ListType, false, false)
+		add("routes", value.ListType, false, false)
 	case "sysbox_firewall":
 		for _, name := range []string{"attach_to", "family", "default_input", "default_output", "default_forward"} {
 			add(name, value.StringType, false, false)

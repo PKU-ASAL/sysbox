@@ -85,3 +85,26 @@ func TestRouterNATUsesLogicalAttachments(t *testing.T) {
 	require.Equal(t, []string{"internal", "uplink"}, sub.natNames)
 	require.Len(t, res.Attachments, 2)
 }
+
+func TestRouterConfiguresStaticRoutes(t *testing.T) {
+	sub := &portTestSubstrate{name: "router-route-test"}
+	registerPortTestDriver(t, sub)
+	st := &state.State{Version: state.SchemaVersion}
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_image", "router"), Attributes: map[string]any{"image_id": "image", "repository": "router:latest"}})
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_network", "lan"), Attributes: map[string]any{"netns": "ns", "bridge": "br"}})
+	exec := NewExecutor(graph.New(), st)
+	n := &graph.Node{Address: address.Resource("sysbox_router", "edge"), Data: &config.RouterConfig{
+		Image:      "sysbox_image.router",
+		Substrate:  sub.name,
+		Interfaces: []config.RouterInterface{{Name: "lan", Network: "sysbox_network.lan", IP: "10.0.1.1/24"}},
+		Routes: []config.RouteConfig{
+			{Destination: "10.0.2.0/24", Via: "10.0.1.254"},
+			{Destination: "10.0.3.0/24", Via: "10.0.1.254"},
+		},
+	}}
+
+	res, err := RouterResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+	require.NoError(t, err)
+	require.Equal(t, []string{"10.0.2.0/24 via 10.0.1.254", "10.0.3.0/24 via 10.0.1.254"}, sub.routes)
+	require.Contains(t, res.Attributes, "routes")
+}

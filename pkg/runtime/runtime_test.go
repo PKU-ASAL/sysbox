@@ -97,6 +97,26 @@ func TestPlanDiffDoesNotUseDesiredHashAsSemanticInput(t *testing.T) {
 	require.Empty(t, plan.Actions[0].Reason)
 }
 
+func TestRouterDesiredPayloadIncludesRoutes(t *testing.T) {
+	n := &graph.Node{
+		Address: address.Resource("sysbox_router", "edge"),
+		Data: &config.RouterConfig{
+			Substrate: "docker",
+			Image:     "sysbox_image.router",
+			Routes: []config.RouteConfig{{
+				Destination: "10.0.2.0/24",
+				Via:         "10.0.1.254",
+			}},
+		},
+	}
+	first, err := desiredHash(n)
+	require.NoError(t, err)
+	n.Data.(*config.RouterConfig).Routes[0].Via = "10.0.1.253"
+	second, err := desiredHash(n)
+	require.NoError(t, err)
+	require.NotEqual(t, first, second)
+}
+
 func TestDesiredHashNormalizesNilAndEmptyDependsOn(t *testing.T) {
 	addr := address.Resource("sysbox_kernel", "linux")
 	nilNode := &graph.Node{Address: addr, Data: &config.KernelConfig{Source: "/tmp/vmlinux"}}

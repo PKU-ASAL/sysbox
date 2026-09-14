@@ -87,7 +87,20 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 	if err != nil {
 		return state.Resource{}, err
 	}
-	if err := linuxNetwork.CreateIsolated(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName, CIDR: gwCIDR, RootBridge: libvirtBridge, RootEnd: rootEnd, NamespaceEnd: namespaceEnd}); err != nil {
+	rootRoutes := make([]driver.HostRouteSpec, 0, len(cfg.RootRoutes))
+	for _, route := range cfg.RootRoutes {
+		rootRoutes = append(rootRoutes, driver.HostRouteSpec{Destination: route.Destination, Via: route.Via})
+	}
+	if err := linuxNetwork.CreateIsolated(ctx, driver.IsolatedNetworkSpec{
+		Name:         nsName,
+		Bridge:       brName,
+		CIDR:         gwCIDR,
+		RootBridge:   libvirtBridge,
+		RootEnd:      rootEnd,
+		NamespaceEnd: namespaceEnd,
+		RootAddress:  cfg.RootAddress,
+		RootRoutes:   rootRoutes,
+	}); err != nil {
 		return state.Resource{}, err
 	}
 
@@ -99,6 +112,14 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 		"libvirt_bridge": libvirtBridge,
 		"root_veth":      rootEnd,
 		"netns_veth":     namespaceEnd,
+		"root_address":   cfg.RootAddress,
+	}
+	if len(rootRoutes) > 0 {
+		routeSpecs := make([]map[string]string, 0, len(rootRoutes))
+		for _, route := range rootRoutes {
+			routeSpecs = append(routeSpecs, map[string]string{"dst": route.Destination, "via": route.Via})
+		}
+		inst["root_routes"] = routeSpecs
 	}
 	if lc := cfg.Lifecycle; lc != nil {
 		inst["lifecycle_prevent_destroy"] = lc.PreventDestroy
@@ -186,12 +207,11 @@ func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r
 	}
 
 	nsName := r.Str("netns")
-	brName := r.Str("bridge")
 	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
 	if err != nil {
 		return err
 	}
-	if err := linuxNetwork.DeleteIsolated(ctx, driver.IsolatedNetworkSpec{Name: nsName, Bridge: brName, RootBridge: r.Str("libvirt_bridge"), RootEnd: r.Str("root_veth"), NamespaceEnd: r.Str("netns_veth")}); err != nil {
+	if err := linuxNetwork.DeleteIsolated(ctx, isolatedNetworkSpec(r)); err != nil {
 		pc.Logf("[destroy] warning: delete netns %s: %v\n", nsName, err)
 	}
 	pc.State().RemoveResource(r.Address)
@@ -209,12 +229,27 @@ func (NetworkResourceHandler) ExternalID(current state.Resource) string {
 }
 
 func isolatedNetworkSpec(resource state.Resource) driver.IsolatedNetworkSpec {
+	rootRoutes := make([]driver.HostRouteSpec, 0)
+	for _, item := range resource.Slice("root_routes") {
+		route, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		destination, _ := route["dst"].(string)
+		via, _ := route["via"].(string)
+		if destination != "" && via != "" {
+			rootRoutes = append(rootRoutes, driver.HostRouteSpec{Destination: destination, Via: via})
+		}
+	}
 	return driver.IsolatedNetworkSpec{
 		Name:         resource.Str("netns"),
 		Bridge:       resource.Str("bridge"),
+		CIDR:         resource.Str("gateway"),
 		RootBridge:   resource.Str("libvirt_bridge"),
 		RootEnd:      resource.Str("root_veth"),
 		NamespaceEnd: resource.Str("netns_veth"),
+		RootAddress:  resource.Str("root_address"),
+		RootRoutes:   rootRoutes,
 	}
 }
 func (NetworkResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
