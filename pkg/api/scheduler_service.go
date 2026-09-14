@@ -8,9 +8,10 @@ import (
 )
 
 type SchedulerService struct {
-	jobs    *Jobs
-	agents  *AgentService
-	publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)
+	jobs      *Jobs
+	agents    *AgentService
+	publish   func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)
+	placement *WorkspaceService
 }
 
 func newSchedulerService(server *Server) *SchedulerService {
@@ -21,11 +22,12 @@ func newSchedulerService(server *Server) *SchedulerService {
 		publish: func(ctx context.Context, agentID string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
 			return agentSvc.PublishCommand(ctx, agentID, cmd)
 		},
+		placement: server.workspaceService(),
 	}
 }
 
 func (s *SchedulerService) DispatchRun(ctx context.Context, run *controlplane.Run, required []string) error {
-	agent, err := s.SelectAgent(ctx, required, run.AgentID)
+	agent, err := s.SelectAgentForTopology(ctx, run.Topology, required, run.AgentID)
 	if err != nil {
 		s.jobs.finish(run, err)
 		return err
@@ -37,10 +39,31 @@ func (s *SchedulerService) DispatchRun(ctx context.Context, run *controlplane.Ru
 	return nil
 }
 
+// SelectAgentForTopology enforces the durable host affinity for host-local
+// resources before selecting an agent.
+func (s *SchedulerService) SelectAgentForTopology(ctx context.Context, topology string, required []string, preferred string) (controlplane.Agent, error) {
+	if p, err := s.placement.loadPlacement(topology); err != nil {
+		return controlplane.Agent{}, err
+	} else if p != nil {
+		if preferred != "" && preferred != p.AgentID {
+			return controlplane.Agent{}, fmt.Errorf("topology %q is placed on agent %q", topology, p.AgentID)
+		}
+		preferred = p.AgentID
+	}
+	agent, err := s.SelectAgent(ctx, required, preferred)
+	if err != nil {
+		return controlplane.Agent{}, err
+	}
+	if err := s.placement.bindPlacement(topology, agent.ID, agent.Protocol); err != nil {
+		return controlplane.Agent{}, err
+	}
+	return agent, nil
+}
+
 func (s *SchedulerService) SelectAgent(ctx context.Context, required []string, preferred string) (controlplane.Agent, error) {
 	agents := s.agents.List(ctx)
 	required = normalizeCapabilities(required)
-	if preferred != "" && preferred != DefaultAgentID {
+	if preferred != "" {
 		for _, agent := range agents {
 			if agent.ID == preferred {
 				if !agent.IsSchedulable() {

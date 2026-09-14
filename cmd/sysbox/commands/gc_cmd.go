@@ -42,7 +42,10 @@ func init() {
 
 func runGc(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
-	active := collectActiveIDs(flagGcRunsDir)
+	active, err := collectActiveIDsChecked(flagGcRunsDir)
+	if err != nil {
+		return fmt.Errorf("refusing GC: active resource inventory is incomplete: %w", err)
+	}
 
 	orphans, err := findOrphans(ctx, active)
 	if err != nil {
@@ -104,6 +107,34 @@ func collectActiveIDs(runsDir string) activeIDs {
 		}
 	}
 	return a
+}
+
+func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
+	active := activeIDs{containers: map[string]bool{}, networks: map[string]bool{}, domains: map[string]bool{}}
+	files, err := filepath.Glob(filepath.Join(runsDir, "*", "state.json"))
+	if err != nil {
+		return active, err
+	}
+	for _, f := range files {
+		st, err := state.NewManager(f).Load()
+		if err != nil {
+			return active, fmt.Errorf("read %s: %w", f, err)
+		}
+		for _, r := range st.Resources {
+			switch r.Address.Type {
+			case "sysbox_network":
+				active.networks[r.ExternalID] = true
+			case "sysbox_node", "sysbox_router":
+				if r.Driver == "docker" {
+					active.containers[r.ExternalID] = true
+				}
+				if r.Driver == "libvirt" {
+					active.domains[r.ExternalID] = true
+				}
+			}
+		}
+	}
+	return active, nil
 }
 
 type orphan struct {

@@ -74,6 +74,13 @@ func (NodeResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityR
 	if err != nil {
 		return nil, err
 	}
+	// Firecracker currently launches the VMM inside one network namespace;
+	// allowing multiple links here can place TAP devices in different
+	// namespaces and only fail after resource creation. Reject the ambiguous
+	// topology during planning until a unified namespace contract exists.
+	if name == "firecracker" && len(cfg.Links) > 1 {
+		return nil, fmt.Errorf("node %s: firecracker supports one network namespace per VM; multiple links require a shared namespace", node.Address)
+	}
 	required := []CapabilityRequirement{{name, driver.CapabilityNode}, {name, driver.CapabilityNIC}, {name, driver.CapabilityNodeState}}
 	if len(cfg.Routes) > 0 {
 		required = append(required, CapabilityRequirement{name, driver.CapabilityGuestNetwork})

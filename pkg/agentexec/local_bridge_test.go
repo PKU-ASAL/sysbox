@@ -17,6 +17,12 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
+func TestRemoteBridgePreservesRunSnapshot(t *testing.T) {
+	b := remoteBridge{Bridge: NewLocalBridge(LocalOptions{ConfigFile: "/mutable/field.sysbox.hcl"})}
+	run := &controlplane.Run{Topology: "lab", SnapshotPath: "/immutable/field.sysbox.hcl"}
+	require.Equal(t, run.SnapshotPath, NewExecutorWithBridge(b).hclFileForRun(run))
+}
+
 func TestExecutorRunsRepairThroughApplyReconcile(t *testing.T) {
 	dir := t.TempDir()
 	topology := "lab"

@@ -3,6 +3,9 @@ package libvirt
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
+	"fmt"
+	"os/exec"
 
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -35,7 +38,7 @@ func (s *Substrate) Attach(_ context.Context, h substrate.NodeHandle, req driver
 	raw, _ := json.Marshal(attachmentState{Bridge: bridge, MAC: req.MAC})
 	return driver.AttachmentResult{Driver: "libvirt", State: raw}, nil
 }
-func (s *Substrate) Observe(_ context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
+func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
 	var st attachmentState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "libvirt", "decode attachment state", err)
@@ -50,7 +53,32 @@ func (s *Substrate) Observe(_ context.Context, h substrate.NodeHandle, _ driver.
 	if !found {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorNotFound, "libvirt", "attachment bridge not found", nil)
 	}
+	// Persisted bridge/MAC state is only an intent. When a domain identity is
+	// available, verify the actual libvirt XML so external NIC changes become
+	// observable drift instead of false Present results.
+	if hs := hsFrom(h); hs.DomainName != "" {
+		out, err := exec.CommandContext(ctx, "virsh", "dumpxml", hs.DomainName).CombinedOutput()
+		if err != nil {
+			return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "libvirt", "observe domain interfaces", fmt.Errorf("%w: %s", err, out))
+		}
+		if !domainXMLHasInterface(out, st.Bridge, st.MAC) {
+			return driver.AttachmentResult{}, driver.Wrap(driver.ErrorNotFound, "libvirt", "attachment interface not found", nil)
+		}
+	}
 	return driver.AttachmentResult{Driver: "libvirt", State: raw}, nil
+}
+
+func domainXMLHasInterface(raw []byte, bridge, mac string) bool {
+	var domain domainXML
+	if err := xml.Unmarshal(raw, &domain); err != nil {
+		return false
+	}
+	for _, iface := range domain.Devices.Interfaces {
+		if iface.Source.Bridge == bridge && (mac == "" || (iface.MAC != nil && iface.MAC.Address == mac)) {
+			return true
+		}
+	}
+	return false
 }
 func (s *Substrate) Delete(_ context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
 	var st attachmentState

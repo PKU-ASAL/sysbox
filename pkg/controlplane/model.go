@@ -43,16 +43,20 @@ type PlanFingerprint struct {
 }
 
 type Run struct {
-	ID                 string    `json:"id"`
-	ProjectID          string    `json:"project_id,omitempty"`
-	Workspace          string    `json:"workspace,omitempty"`
-	Topology           string    `json:"topology"`
-	Operation          string    `json:"operation,omitempty"`
-	Op                 string    `json:"op,omitempty"`
-	Status             RunStatus `json:"status"`
-	Err                string    `json:"error,omitempty"`
-	ParentID           string    `json:"parent_id,omitempty"`
-	Revision           string    `json:"revision,omitempty"`
+	ID        string    `json:"id"`
+	ProjectID string    `json:"project_id,omitempty"`
+	Workspace string    `json:"workspace,omitempty"`
+	Topology  string    `json:"topology"`
+	Operation string    `json:"operation,omitempty"`
+	Op        string    `json:"op,omitempty"`
+	Status    RunStatus `json:"status"`
+	Err       string    `json:"error,omitempty"`
+	ParentID  string    `json:"parent_id,omitempty"`
+	Revision  string    `json:"revision,omitempty"`
+	// SnapshotPath is the immutable HCL file used by this run's executor.
+	// It is an execution detail and must never be replaced by the mutable
+	// topology workspace after the run has been dispatched.
+	SnapshotPath       string    `json:"snapshot_path,omitempty"`
 	Target             string    `json:"target,omitempty"`
 	OperationKey       string    `json:"operation_key,omitempty"`
 	RequestFingerprint string    `json:"request_fingerprint,omitempty"`

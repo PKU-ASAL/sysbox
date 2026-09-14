@@ -50,4 +50,4 @@ Secret reference 与明文、公共 state 与 provider-private state、core poli
 
 ## 有限范围是主动选择
 
-Sysbox 不追求任意 Terraform provider、任意云资源或任意 guest OS。它以受控的 Linux 实验环境换取可验证的生命周期语义。扩展范围必须先证明身份、观察、恢复和安全删除契约，而不是只证明“能启动”。
+Sysbox 不追求任意 Terraform provider、任意云资源或任意 guest OS。它以受控的 Linux 与 Windows 异构实验环境换取可验证的生命周期语义。扩展范围必须先证明身份、观察、恢复和安全删除契约，而不是只证明“能启动”。

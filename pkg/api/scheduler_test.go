@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,50 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
+
+func TestPlacementConcurrentBindHasSingleWinner(t *testing.T) {
+	runs := t.TempDir()
+	a := newWorkspaceService(runs, t.TempDir(), "", nil, nil)
+	b := newWorkspaceService(runs, t.TempDir(), "", nil, nil)
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, item := range []struct {
+		s     *WorkspaceService
+		agent string
+	}{{a, "host-a"}, {b, "host-b"}} {
+		wg.Add(1)
+		go func(item struct {
+			s     *WorkspaceService
+			agent string
+		}) {
+			defer wg.Done()
+			errs <- item.s.bindPlacement("race", item.agent, "agent.v1")
+		}(item)
+	}
+	wg.Wait()
+	close(errs)
+	var success, conflicts int
+	for err := range errs {
+		if err == nil {
+			success++
+		} else {
+			conflicts++
+		}
+	}
+	require.Equal(t, 1, success)
+	require.Equal(t, 1, conflicts)
+}
+
+func TestPlacementBindsTopologyToFirstAgent(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: controlplane.AgentStatusOnline, Capabilities: []string{"docker"}}))
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-b", Status: controlplane.AgentStatusOnline, Capabilities: []string{"docker"}}))
+	run := s.jobs.startWithOptions("placement-test", "apply", runStartOptions{AgentID: "host-b"})
+	require.NoError(t, s.scheduler.DispatchRun(context.Background(), run, []string{"docker"}))
+	next := s.jobs.startWithOptions("placement-test", "apply", runStartOptions{})
+	require.NoError(t, s.scheduler.DispatchRun(context.Background(), next, []string{"docker"}))
+	require.Equal(t, "host-b", next.AgentID)
+}
 
 func TestRequiredCapabilitiesForTopology(t *testing.T) {
 	dir := t.TempDir()

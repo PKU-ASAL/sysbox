@@ -2,7 +2,7 @@
 
 English | [简体中文](README.md)
 
-Sysbox brings Terraform-like topology orchestration to labs running on bare-metal Linux hosts: declare, build, validate, and reset experiments that combine containers, microVMs, virtual machines, and Linux networks.
+Sysbox brings Terraform-like topology orchestration to labs running on bare-metal Linux hosts: declare, build, validate, and reset heterogeneous Linux and Windows experiments that combine containers, microVMs, virtual machines, and isolated networks.
 
 ## Why Sysbox Exists
 

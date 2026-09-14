@@ -66,6 +66,8 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 	user := hs.SSHUser
 	pass := hs.SSHPass
 	key := hs.SSHKey
+	knownHosts := ""
+	insecureHost := false
 	if user == "" {
 		user = "root"
 	}
@@ -85,6 +87,8 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 		if h.PrivateKey != "" {
 			key = h.PrivateKey
 		}
+		knownHosts = h.KnownHosts
+		insecureHost = h.InsecureSkipHostKeyCheck
 	}
 
 	if host == "" {
@@ -96,9 +100,9 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 		namespace = hs.Bridges[0].Netns
 	}
 	if namespace != "" {
-		return transport.NewSSHConnectionInNamespace(namespace, host, port, user, key, pass), nil
+		return transport.NewSSHConnectionInNamespaceWithTrust(namespace, host, port, user, key, pass, knownHosts, insecureHost), nil
 	}
-	return transport.NewSSHConnectionWithPort(host, port, user, key, pass), nil
+	return transport.NewSSHConnectionWithTrust(host, port, user, key, pass, knownHosts, insecureHost), nil
 }
 
 func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {

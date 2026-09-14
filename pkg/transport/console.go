@@ -54,6 +54,12 @@ type SSHConsoleSession struct {
 }
 
 func NewSSHConsoleSession(ctx context.Context, sshArgs []string, req ConsoleRequest) (*SSHConsoleSession, error) {
+	return NewSSHConsoleSessionWithRunner(ctx, resolveSSHBin(), sshArgs, req)
+}
+
+// NewSSHConsoleSessionWithRunner starts a console through an explicit command
+// runner. This preserves network namespace execution for SSH-backed consoles.
+func NewSSHConsoleSessionWithRunner(ctx context.Context, runner string, sshArgs []string, req ConsoleRequest) (*SSHConsoleSession, error) {
 	cmd := req.Cmd
 	if len(cmd) == 0 {
 		shell := req.Shell
@@ -65,7 +71,7 @@ func NewSSHConsoleSession(ctx context.Context, sshArgs []string, req ConsoleRequ
 	args := append([]string{}, sshArgs...)
 	args = append(args, "-tt")
 	args = append(args, shellQuoteJoin(cmd))
-	ec := osexec.CommandContext(ctx, resolveSSHBin(), args...)
+	ec := osexec.CommandContext(ctx, runner, args...)
 	ec.Env = os.Environ()
 	for k, v := range req.Env {
 		ec.Env = append(ec.Env, k+"="+v)

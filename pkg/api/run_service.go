@@ -121,12 +121,17 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()
 
+	var reqSnapshot string
 	if req.Revision != "" && globalRevisionPattern.MatchString(req.Revision) {
 		rev, err := s.revisions.GetGlobalRevision(ctx, req.Revision)
 		if err != nil {
 			if errors.Is(err, errGlobalRevisionNotFound) {
 				return nil, runError(runServiceNotFound, err)
 			}
+			return nil, runError(runServiceInternal, err)
+		}
+		reqSnapshot, err = s.workspaces.MaterializeRevision(topology, req.Revision, rev.Files)
+		if err != nil {
 			return nil, runError(runServiceInternal, err)
 		}
 		if err := s.workspaces.UpsertProject(ctx, topology, rev.Files); err != nil {
@@ -140,6 +145,7 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 		UnsafeState:  req.AllowUnsafeState,
 		Inputs:       req.Inputs,
 		OperationKey: operationKey,
+		SnapshotPath: reqSnapshot,
 	}
 	if req.DeadlineAt != nil {
 		opts.DeadlineAt = *req.DeadlineAt
@@ -186,10 +192,15 @@ func applyOperationKey(revision string, inputs map[string]string, allowUnsafe bo
 }
 
 func (s *RunService) StartRepair(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+	snapshot, err := s.snapshotForRevision(ctx, topology, req.Revision)
+	if err != nil {
+		return nil, err
+	}
 	run := s.jobs.startWithOptions(topology, "repair", runStartOptions{
-		Revision:    req.Revision,
-		AgentID:     req.AgentID,
-		UnsafeState: req.AllowUnsafeState,
+		Revision:     req.Revision,
+		AgentID:      req.AgentID,
+		UnsafeState:  req.AllowUnsafeState,
+		SnapshotPath: snapshot,
 	})
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
@@ -198,13 +209,39 @@ func (s *RunService) StartRepair(ctx context.Context, topology string, req RunSt
 }
 
 func (s *RunService) StartReset(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+	snapshot, err := s.snapshotForRevision(ctx, topology, req.Revision)
+	if err != nil {
+		return nil, err
+	}
 	run := s.jobs.startWithOptions(topology, "reset", runStartOptions{
 		Revision: req.Revision, AgentID: req.AgentID, Target: req.Target, UnsafeState: req.AllowUnsafeState,
+		SnapshotPath: snapshot,
 	})
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
 	}
 	return run, nil
+}
+
+// snapshotForRevision materializes a global content-addressed revision for
+// lifecycle operations that accept a revision. Empty and legacy workspace
+// revisions retain their existing compatibility behavior.
+func (s *RunService) snapshotForRevision(ctx context.Context, topology, revision string) (string, error) {
+	if revision == "" || !globalRevisionPattern.MatchString(revision) {
+		return "", nil
+	}
+	rev, err := s.revisions.GetGlobalRevision(ctx, revision)
+	if err != nil {
+		return "", runError(runServiceNotFound, err)
+	}
+	path, err := s.workspaces.MaterializeRevision(topology, revision, rev.Files)
+	if err != nil {
+		return "", runError(runServiceInternal, err)
+	}
+	if err := s.workspaces.UpsertProject(ctx, topology, rev.Files); err != nil {
+		return "", runError(runServiceInternal, err)
+	}
+	return path, nil
 }
 
 func (s *RunService) StartDestroy(ctx context.Context, topology string) (*controlplane.Run, error) {
@@ -226,9 +263,22 @@ func (s *RunService) startDestroy(ctx context.Context, topology string, allowUns
 	if operationKey != "" {
 		return s.startIdempotentDestroy(ctx, topology, allowUnsafe, operationKey)
 	}
+	// Capture the current workspace before creating the run. Destroy follows
+	// state lineage, but providers may still resolve workspace-relative data.
+	// The snapshot prevents a later apply from changing the destroy input.
+	snapshotID := fmt.Sprintf("destroy-%d", time.Now().UnixNano())
+	snapshot, snapErr := s.workspaces.MaterializeWorkspaceSnapshot(topology, snapshotID)
+	if snapErr == nil {
+		// attached below after run creation
+		_ = snapshot
+	}
 	run, created := s.jobs.startWithResult(topology, "destroy", runStartOptions{UnsafeState: allowUnsafe, OperationKey: operationKey})
 	if !created {
 		return run, nil
+	}
+	if snapErr == nil {
+		run.SnapshotPath = snapshot
+		s.jobs.persist(run)
 	}
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
@@ -260,11 +310,18 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 		s.jobs.remember(existing)
 		return existing, nil
 	}
-	required, err := s.requiredForTopo(s.hclFile(topology))
+	if snapshot, snapErr := s.workspaces.MaterializeWorkspaceSnapshot(topology, run.ID); snapErr == nil {
+		run.SnapshotPath = snapshot
+	}
+	configPath := s.hclFile(topology)
+	if run.SnapshotPath != "" {
+		configPath = run.SnapshotPath
+	}
+	required, err := s.requiredForTopo(configPath)
 	if err != nil {
 		return nil, runError(runServiceBadRequest, err)
 	}
-	agent, err := s.scheduler.SelectAgent(ctx, required, "")
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, required, "")
 	if err != nil {
 		return nil, runError(runServiceConflict, err)
 	}
@@ -349,7 +406,11 @@ func (s *RunService) DispatchRun(ctx context.Context, run *controlplane.Run, req
 }
 
 func (s *RunService) dispatchTopologyRun(ctx context.Context, run *controlplane.Run, topology string) error {
-	required, err := s.requiredForTopo(s.hclFile(topology))
+	configPath := s.hclFile(topology)
+	if run != nil && run.SnapshotPath != "" {
+		configPath = run.SnapshotPath
+	}
+	required, err := s.requiredForTopo(configPath)
 	if err != nil {
 		s.jobs.finish(run, err)
 		return runError(runServiceBadRequest, err)

@@ -24,3 +24,9 @@ func TestComputePlanRejectsMissingCapabilityBeforeMutation(t *testing.T) {
 	_, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
 	require.ErrorContains(t, err, "driver is not registered")
 }
+
+func TestFirecrackerRejectsMultipleLinksDuringPlan(t *testing.T) {
+	n := &graph.Node{Address: address.Resource("sysbox_node", "vm"), Data: &config.NodeConfig{Substrate: "firecracker", Links: []config.LinkConfig{{Name: "a"}, {Name: "b"}}}}
+	_, err := (NodeResourceHandler{}).RequiredCapabilities(n)
+	require.ErrorContains(t, err, "one network namespace")
+}

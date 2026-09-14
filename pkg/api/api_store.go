@@ -23,7 +23,7 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 3
+const apiSchemaVersion = 4
 
 // errGlobalRevisionNotFound is returned by GetGlobalRevision when no revision
 // exists for the requested digest. Callers use errors.Is to detect it so they
@@ -149,6 +149,16 @@ CREATE TABLE IF NOT EXISTS sysbox_projection (
   topology TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);`,
+	},
+	{
+		Version: 4,
+		Name:    "topology_placements",
+		SQL: `CREATE TABLE IF NOT EXISTS sysbox_topology_placements (
+  topology TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  protocol TEXT NOT NULL DEFAULT '',
+  bound_at TIMESTAMPTZ NOT NULL
 );`,
 	},
 }
@@ -635,6 +645,53 @@ func (s *postgresAPIStore) LoadResourceProjection(ctx context.Context, topology 
 
 func (s *postgresAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {
 	return s.saveObject(ctx, "sysbox_global_revisions", "", rev.Revision, rev)
+}
+
+func (s *postgresAPIStore) GetTopologyPlacement(ctx context.Context, topology string) (*topologyPlacement, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+	p := &topologyPlacement{}
+	err = conn.QueryRow(ctx, `SELECT topology, agent_id, protocol, bound_at FROM sysbox_topology_placements WHERE topology=$1`, topology).Scan(&p.Topology, &p.AgentID, &p.Protocol, &p.BoundAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (s *postgresAPIStore) DeleteTopologyPlacement(ctx context.Context, topology string) error {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	_, err = conn.Exec(ctx, `DELETE FROM sysbox_topology_placements WHERE topology=$1`, topology)
+	return err
+}
+
+func (s *postgresAPIStore) SaveTopologyPlacement(ctx context.Context, p topologyPlacement) error {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	_, err = conn.Exec(ctx, `INSERT INTO sysbox_topology_placements(topology,agent_id,protocol,bound_at) VALUES($1,$2,$3,$4) ON CONFLICT(topology) DO NOTHING`, p.Topology, p.AgentID, p.Protocol, p.BoundAt)
+	if err != nil {
+		return err
+	}
+	var owner string
+	if err := conn.QueryRow(ctx, `SELECT agent_id FROM sysbox_topology_placements WHERE topology=$1`, p.Topology).Scan(&owner); err != nil {
+		return err
+	}
+	if owner != p.AgentID {
+		return fmt.Errorf("topology %q is already placed on agent %q", p.Topology, owner)
+	}
+	return nil
 }
 
 func (s *postgresAPIStore) GetGlobalRevision(ctx context.Context, revision string) (*controlplane.GlobalRevision, error) {

@@ -34,6 +34,12 @@ func TestAttachmentUsesLibvirtRootBridge(t *testing.T) {
 	require.JSONEq(t, `{"bridge":"lv-matrix","mac":"02:00:00:00:00:02"}`, string(result.State))
 }
 
+func TestDomainXMLHasInterfaceDetectsExternalNICDrift(t *testing.T) {
+	raw := []byte(`<domain><devices><interface type="bridge"><source bridge="br0"/><mac address="02:00:00:00:00:01"/></interface></devices></domain>`)
+	require.True(t, domainXMLHasInterface(raw, "br0", "02:00:00:00:00:01"))
+	require.False(t, domainXMLHasInterface(raw, "br1", "02:00:00:00:00:01"))
+}
+
 func TestBuildNoCloudNetworkConfigUsesMACAndStaticIPv4(t *testing.T) {
 	data, err := buildNoCloudNetworkConfig([]BridgeAttach{{Name: "internal", MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.20.0.10/24"}, Gateway: "10.20.0.1"}})
 	require.NoError(t, err)

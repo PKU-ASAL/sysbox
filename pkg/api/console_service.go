@@ -59,7 +59,7 @@ func (s *ConsoleService) CreateSession(ctx context.Context, topology, node strin
 	if err != nil {
 		return ConsoleCreateResult{Status: http.StatusBadRequest}, err
 	}
-	agent, err := s.scheduler.SelectAgent(ctx, required, "")
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, required, "")
 	if err != nil {
 		return ConsoleCreateResult{Status: http.StatusConflict}, err
 	}
