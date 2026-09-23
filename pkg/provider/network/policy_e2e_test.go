@@ -278,6 +278,7 @@ func TestRootBridgeProxyLifecycleE2E(t *testing.T) {
 	require.True(t, LinkExists(spec.Name, spec.NamespaceEnd))
 	_, err := netlink.LinkByName(spec.RootBridge)
 	require.NoError(t, err)
+	require.True(t, hostRouteExists(spec.RootBridge, spec.CIDR))
 
 	require.NoError(t, provider.DeleteIsolated(context.Background(), spec))
 	require.False(t, NetnsExists(spec.Name))

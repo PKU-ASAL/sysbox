@@ -339,10 +339,14 @@ type RouteConfig struct {
 }
 
 type NetworkConfig struct {
-	CIDR      string           `hcl:"cidr"`
-	Type      string           `hcl:"type,optional"`
-	NAT       bool             `hcl:"nat,optional"`
-	Lifecycle *LifecycleConfig `hcl:"lifecycle,block"`
+	CIDR string `hcl:"cidr"`
+	Type string `hcl:"type,optional"`
+	NAT  bool   `hcl:"nat,optional"`
+	// RootAddress 是 root bridge 上用于外部路由/NAT 的地址；为空时不暴露
+	// 该孤立网络的宿主机 L3 路由。
+	RootAddress string           `hcl:"root_address,optional"`
+	RootRoutes  []RouteConfig    `hcl:"root_route,block"`
+	Lifecycle   *LifecycleConfig `hcl:"lifecycle,block"`
 }
 
 type ImageConfig struct {
@@ -417,6 +421,7 @@ type RouterConfig struct {
 	Substrate  string            `hcl:"substrate"`
 	Image      string            `hcl:"image"`
 	Interfaces []RouterInterface `hcl:"interface,block"`
+	Routes     []RouteConfig     `hcl:"route,block"`
 	NatFrom    string            `hcl:"nat_from,optional"` // interface name (label)
 	NatTo      string            `hcl:"nat_to,optional"`   // interface name (label)
 	Lifecycle  *LifecycleConfig  `hcl:"lifecycle,block"`

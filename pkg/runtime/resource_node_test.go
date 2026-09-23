@@ -75,6 +75,7 @@ type portTestSubstrate struct {
 	lastSpec           substrate.NodeSpec
 	deletedAttachments []json.RawMessage
 	natNames           []string
+	routes             []string
 	guestInitModes     []substrate.GuestNetworkInitMode
 	guestObservation   substrate.GuestNetworkInitObservation
 	lifecycle          []string
@@ -150,6 +151,15 @@ func (s *portTestSubstrate) CheckTarget(context.Context, driver.PolicyTarget) (b
 }
 func (s *portTestSubstrate) DeleteRuleset(context.Context, driver.PolicyTarget, string) error {
 	return nil
+}
+
+func (s *portTestSubstrate) EnsureRoute(_ context.Context, _ substrate.NodeHandle, destination, via string) error {
+	s.routes = append(s.routes, destination+" via "+via)
+	return nil
+}
+
+func (s *portTestSubstrate) HasRoute(context.Context, substrate.NodeHandle, string, string) (bool, error) {
+	return true, nil
 }
 
 func (s *portTestSubstrate) PrepareReset(_ context.Context, request substrate.ResetRequest) (substrate.ResetHandle, error) {
@@ -234,7 +244,7 @@ func registerPortTestDriver(t *testing.T, sub *portTestSubstrate) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = previous })
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{
-		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub, Policy: sub, GuestNetworkInit: sub, Reset: sub,
+		Name: sub.name, Version: "test", Node: sub, NIC: sub, NodeState: sub, Policy: sub, GuestNetwork: sub, GuestNetworkInit: sub, Reset: sub,
 	}))
 }
 

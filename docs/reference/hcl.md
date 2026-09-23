@@ -76,6 +76,8 @@ Use ignore sparingly; it does not transfer ownership to another system.
 | `cidr` | yes | | IPv4 network prefix |
 | `type` | no | provider default | Network implementation type |
 | `nat` | no | `false` | Managed outbound NAT intent |
+| `root_address` | no | | root bridge 上用于入口路由/NAT 的 IPv4 地址；为空时不暴露宿主机 L3 路由 |
+| `root_route` | no | | 通过 root bridge 代理的宿主机路由；包含 `dst` 和 `via` |
 | `lifecycle` | no | | Lifecycle block |
 
 ## `sysbox_node`
@@ -185,7 +187,7 @@ Machine sizing and network initialization must match the selected provider capab
 
 ## `sysbox_router`
 
-Required `substrate` and `image`; repeated `interface NAME` blocks contain `network` and `ip`. Optional `nat_from` and `nat_to` refer to interface labels. Router supports lifecycle policy.
+Required `substrate` and `image`; repeated `interface NAME` blocks contain `network` and `ip`. Repeated `route` blocks contain `dst` and `via` for static guest routes. Optional `nat_from` and `nat_to` refer to interface labels. Router supports lifecycle policy.
 
 ## `sysbox_firewall`
 

@@ -50,6 +50,8 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		payload["cidr"] = cfg.CIDR
 		payload["network_type"] = cfg.Type
 		payload["nat"] = cfg.NAT
+		payload["root_address"] = cfg.RootAddress
+		payload["root_routes"] = cfg.RootRoutes
 		if cfg.Lifecycle != nil {
 			ignore = cfg.Lifecycle.IgnoreChanges
 		}
@@ -89,6 +91,7 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 		payload["substrate"] = cfg.Substrate
 		payload["image"] = cfg.Image
 		payload["interfaces"] = cfg.Interfaces
+		payload["routes"] = cfg.Routes
 		payload["nat_from"] = cfg.NatFrom
 		payload["nat_to"] = cfg.NatTo
 		if cfg.Lifecycle != nil {

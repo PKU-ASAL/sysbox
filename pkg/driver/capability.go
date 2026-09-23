@@ -143,6 +143,15 @@ type Power interface {
 type IsolatedNetworkSpec struct {
 	Name, Bridge, CIDR                string
 	RootBridge, RootEnd, NamespaceEnd string
+	RootAddress                       string
+	RootRoutes                        []HostRouteSpec
+}
+
+// HostRouteSpec 描述通过 root netns 代理暴露的路由。它只属于 substrate 层，
+// 不携带拓扑或产品语义，仅包含目的网段和下一跳地址。
+type HostRouteSpec struct {
+	Destination string
+	Via         string
 }
 type LinuxNetwork interface {
 	CreateIsolated(context.Context, IsolatedNetworkSpec) error

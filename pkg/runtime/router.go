@@ -92,6 +92,9 @@ func (RouterResourceHandler) RequiredCapabilities(node *graph.Node) ([]Capabilit
 		return nil, err
 	}
 	required := []CapabilityRequirement{{name, driver.CapabilityNode}, {name, driver.CapabilityNIC}, {name, driver.CapabilityNodeState}}
+	if len(cfg.Routes) > 0 {
+		required = append(required, CapabilityRequirement{name, driver.CapabilityGuestNetwork})
+	}
 	if cfg.NatFrom != "" || cfg.NatTo != "" {
 		required = append(required, CapabilityRequirement{name, driver.CapabilityPolicy})
 	}
@@ -210,6 +213,18 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		}
 	}
 
+	if len(cfg.Routes) > 0 {
+		guestNetwork, err := driver.DefaultRegistry.RequireGuestNetwork(subName)
+		if err != nil {
+			return state.Resource{}, err
+		}
+		for _, rt := range cfg.Routes {
+			if err := guestNetwork.EnsureRoute(ctx, handle, rt.Destination, rt.Via); err != nil {
+				return state.Resource{}, fmt.Errorf("router %s route %s via %s: %w", n.Address.Name, rt.Destination, rt.Via, err)
+			}
+		}
+	}
+
 	natApplied := false
 	var policyOwner, policyTable, policyDigest, policyTargetState, policySpec string
 	if cfg.NatFrom != "" && cfg.NatTo != "" {
@@ -261,6 +276,13 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		"policy_digest":       policyDigest,
 		"policy_target_state": policyTargetState,
 		"policy_spec":         policySpec,
+	}
+	if len(cfg.Routes) > 0 {
+		routeSpecs := make([]map[string]string, 0, len(cfg.Routes))
+		for _, rt := range cfg.Routes {
+			routeSpecs = append(routeSpecs, map[string]string{"dst": rt.Destination, "via": rt.Via})
+		}
+		inst["routes"] = routeSpecs
 	}
 	// Persist opaque provider state so cold-destroy works for all substrates.
 	blob, _ := stateDriver.MarshalProviderState(handle)
