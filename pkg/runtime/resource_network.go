@@ -66,6 +66,7 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 	if !ok {
 		return state.Resource{}, fmt.Errorf("network %s: wrong data type", n.Address)
 	}
+	pc.Logf("[network %s] create cidr=%s nat=%t\n", n.Address, cfg.CIDR, cfg.NAT)
 
 	// nat=true: use Docker's bridge driver for internet access.
 	if cfg.NAT {

@@ -49,5 +49,8 @@ func ResolveName(ref string) string {
 // reference. Kernel must always be a sysbox_kernel.<name>.id reference;
 // literal filesystem paths and URLs are no longer accepted.
 func LooksLikeKernelRef(ref string) bool {
-	return ref != ""
+	if ref == "" || strings.ContainsAny(ref, `/\\:`) {
+		return false
+	}
+	return strings.HasPrefix(ref, "sysbox_kernel.") || !strings.Contains(ref, ".")
 }

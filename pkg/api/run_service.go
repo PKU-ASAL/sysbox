@@ -406,6 +406,16 @@ func (s *RunService) DispatchRun(ctx context.Context, run *controlplane.Run, req
 }
 
 func (s *RunService) dispatchTopologyRun(ctx context.Context, run *controlplane.Run, topology string) error {
+	// Destroy is driven by persisted state. If its workspace HCL was already
+	// removed, requiring capability discovery from that file prevents cleanup
+	// of the very stale resources destroy is meant to release. The scheduler can
+	// select the topology's existing placement without HCL-derived capabilities.
+	if run != nil && run.Op == "destroy" {
+		if err := s.DispatchRun(ctx, run, nil); err != nil {
+			return runError(runServiceConflict, err)
+		}
+		return nil
+	}
 	configPath := s.hclFile(topology)
 	if run != nil && run.SnapshotPath != "" {
 		configPath = run.SnapshotPath

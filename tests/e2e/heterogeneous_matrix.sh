@@ -37,25 +37,14 @@ docker run --rm --privileged --pid=host --network=host \
   -v /run/netns:/run/netns:rshared \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /var/run/libvirt:/var/run/libvirt \
+	-v /var/lib/sysbox:/var/lib/sysbox:rshared \
   -v /var/lib/libvirt/images:/var/lib/libvirt/images:ro \
   -v /tmp:/tmp:rshared \
   -v "${cache_root}:${cache_root}:ro" \
   -v "${key_dir}/id_ed25519:/keys/matrix:ro" \
   -v "${root}:/src" \
   -v "${modcache}:/go/pkg/mod:ro" \
-  -v /usr/bin/virsh:/usr/bin/virsh:ro \
-  -v /usr/bin/qemu-img:/usr/bin/qemu-img:ro \
-  -v /usr/bin/genisoimage:/usr/bin/genisoimage:ro \
-  -v /usr/bin/docker:/usr/bin/docker:ro \
-  -v /usr/bin/ssh:/usr/bin/ssh:ro \
-  -v /usr/bin/mount:/usr/bin/mount:ro \
-  -v /usr/bin/umount:/usr/bin/umount:ro \
-  -v /usr/sbin/ip:/usr/sbin/ip:ro \
-  -v /usr/sbin/mkfs.ext4:/usr/sbin/mkfs.ext4:ro \
-  -v /usr/sbin/losetup:/usr/sbin/losetup:ro \
   -v "${firecracker_bin}:/usr/local/bin/firecracker:ro" \
-  -v /lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:ro \
-  -v /lib64:/lib64:ro \
   -w /src \
   -e GOPROXY=off \
   -e GOCACHE=/tmp/go-build \
@@ -66,4 +55,4 @@ docker run --rm --privileged --pid=host --network=host \
   -e SYSBOX_QCOW2="${image_runtime}" \
   -e SYSBOX_MATRIX_SSH_PRIVATE_KEY=/keys/matrix \
   -e SYSBOX_MATRIX_SSH_PUBLIC_KEY="${public_key}" \
-  golang:1.26-alpine sh "${inner_script}"
+  golang:1.26 sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io e2fsprogs genisoimage iproute2 iputils-ping libvirt-clients mount openssh-client qemu-utils >/dev/null && sh "$1"' -- "${inner_script}"

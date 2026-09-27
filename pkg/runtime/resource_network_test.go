@@ -106,6 +106,36 @@ func (failingNetworkDriver) ReadManagedNetwork(context.Context, substrate.Manage
 func (failingNetworkDriver) AllowEgress(context.Context, string) error  { return nil }
 func (failingNetworkDriver) RemoveEgress(context.Context, string) error { return nil }
 
+type recordingNetworkDriver struct{ spec substrate.ManagedNetworkSpec }
+
+func (r *recordingNetworkDriver) CreateManagedNetwork(_ context.Context, spec substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
+	r.spec = spec
+	return substrate.ManagedNetworkInfo{ID: "nat-network", Name: "sysbox-nat-lab"}, nil
+}
+func (recordingNetworkDriver) RemoveManagedNetwork(context.Context, string) error { return nil }
+func (recordingNetworkDriver) ReadManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
+	return substrate.ManagedNetworkInfo{}, nil
+}
+func (recordingNetworkDriver) AllowEgress(context.Context, string) error  { return nil }
+func (recordingNetworkDriver) RemoveEgress(context.Context, string) error { return nil }
+
+func TestNetworkResourceHandlerCreateNATUsesManagedNetwork(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	recorder := &recordingNetworkDriver{}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Network: recorder}))
+	defer func() { driver.DefaultRegistry = previous }()
+
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	n := &graph.Node{Address: address.Resource("sysbox_network", "lab"), Data: &config.NetworkConfig{CIDR: "10.204.0.0/24", NAT: true}}
+	res, err := (NetworkResourceHandler{}).Create(context.Background(), &ProviderContext{exec: exec}, n)
+	require.NoError(t, err)
+	require.Equal(t, "docker", res.Driver)
+	require.True(t, res.IsNAT())
+	require.Equal(t, "10.204.0.0/24", recorder.spec.CIDR)
+	require.True(t, recorder.spec.NAT)
+}
+
 // A NAT network whose docker removal fails must keep its state entry, so a
 // later destroy retries the removal instead of leaving an orphan network that
 // makes the next apply of the same CIDR fail with "Pool overlaps".
