@@ -1,8 +1,14 @@
 package network
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -157,6 +163,16 @@ func TestNFTScriptRendersMasquerade(t *testing.T) {
 	require.Contains(t, script, fmt.Sprintf("masquerade comment %q", ownershipMarker(spec.Owner, plan.Digest)+";nat=masquerade"))
 }
 
+func TestNFTScriptOmitsMasqueradeWhenDisabled(t *testing.T) {
+	spec := driver.RulesetSpec{Owner: "topology.lab/sysbox_router.edge", Family: driver.FamilyIPv4,
+		NAT: &driver.NATPolicy{SourceAttachment: "inside", UplinkAttachment: "uplink", SourceCIDRs: []string{"10.0.0.0/24"}, Masquerade: false}}
+	plan, err := compileRuleset(spec, map[string]string{"inside": "eth1", "uplink": "eth0"})
+	require.NoError(t, err)
+	script := nftScript(plan)
+	require.NotContains(t, script, "postrouting")
+	require.NotContains(t, script, "masquerade")
+}
+
 func TestObserveFromNFTListExtractsDigest(t *testing.T) {
 	owner := "topology.lab/sysbox_firewall.edge"
 	tableName := driver.RulesetTableName(owner)
@@ -212,4 +228,73 @@ func TestObserveFromNFTListRejectsInconsistentDigests(t *testing.T) {
 	_, err := observeFromNFTList(output, owner)
 	require.Error(t, err)
 	require.True(t, driver.IsCategory(err, driver.ErrorInvalidState))
+}
+
+func TestObserveFromNFTListScopesMarkersToTargetTable(t *testing.T) {
+	owner := "topology.lab/sysbox_firewall.edge"
+	otherOwner := "topology.lab/sysbox_firewall.other"
+	targetTable := driver.RulesetTableName(owner)
+	otherTable := driver.RulesetTableName(otherOwner)
+	output := fmt.Sprintf(`table ip %s {
+	chain input {
+		comment "sysbox-owner=%s;digest=target"
+	}
+}
+table ip %s {
+	chain input {
+		comment "sysbox-owner=%s;digest=foreign"
+	}
+}
+`, targetTable, owner, otherTable, otherOwner)
+
+	observation, err := observeFromNFTList(output, owner)
+	require.NoError(t, err)
+	require.Equal(t, "target", observation.Digest)
+}
+
+func TestDeleteRulesetReturnsCommandError(t *testing.T) {
+	err := DeleteRulesetInNetNS(context.Background(), "/path/that/does/not/exist", "topology.lab/sysbox_firewall.edge")
+	require.Error(t, err)
+}
+
+func TestRunNFTHonorsContextTimeout(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "sysbox-netns")
+	require.NoError(t, os.WriteFile(helper, []byte("#!/bin/sh\nsleep 10\n"), 0o755))
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+oldPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := runNFT(ctx, "/proc/1/ns/net", "", "list", "ruleset")
+	require.Error(t, err)
+	require.Less(t, time.Since(started), 2*time.Second)
+}
+
+func TestNFTScriptPassesNftSyntaxCheckWhenAvailable(t *testing.T) {
+	if _, err := exec.LookPath("nft"); err != nil {
+		t.Skip("nft is not installed")
+	}
+	spec := driver.RulesetSpec{
+		Owner: "topology.lab/sysbox_router.edge", Family: driver.FamilyIPv4,
+		DefaultInput: driver.VerdictDrop, DefaultOutput: driver.VerdictAccept, DefaultForward: driver.VerdictDrop,
+		Rules: []driver.PolicyRule{{
+			ID: "https", Direction: driver.DirectionForward, Protocol: driver.ProtocolTCP,
+			SourceCIDRs: []string{"10.0.0.0/24"}, DestinationCIDRs: []string{"192.0.2.0/24"},
+			SourcePorts: []driver.PortRange{{From: 1024, To: 65535}}, DestinationPorts: []driver.PortRange{{From: 443, To: 443}},
+			InputAttachment: "inside", OutputAttachment: "uplink", States: []driver.ConnectionState{driver.StateNew},
+			Verdict: driver.VerdictAccept, Counter: true, Log: true,
+		}},
+		NAT: &driver.NATPolicy{SourceAttachment: "inside", UplinkAttachment: "uplink", SourceCIDRs: []string{"10.0.0.0/24"}, Masquerade: true},
+	}
+	plan, err := compileRuleset(spec, map[string]string{"inside": "eth1", "uplink": "eth0"})
+	require.NoError(t, err)
+	cmd := exec.Command("nft", "-c", "-f", "-")
+	cmd.Stdin = strings.NewReader(nftScript(plan))
+	output, err := cmd.CombinedOutput()
+	if err != nil && strings.Contains(strings.ToLower(string(output)), "operation not permitted") {
+		t.Skipf("nft syntax check requires CAP_NET_ADMIN: %s", output)
+	}
+	require.NoError(t, err, string(output))
 }

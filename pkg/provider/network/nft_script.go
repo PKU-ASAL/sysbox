@@ -43,7 +43,7 @@ func nftScript(plan compiledRuleset) string {
 			table, rule.Rule.Direction, ruleStatements(rule), verdictToken(rule.Rule.Verdict), marker)
 	}
 
-	if plan.NAT != nil {
+	if plan.NAT != nil && plan.NAT.Policy.Masquerade {
 		fmt.Fprintf(&b, "add chain ip %s postrouting { type nat hook postrouting priority 100; }\n", table)
 		var nat strings.Builder
 		fmt.Fprintf(&nat, "oifname %q", plan.NAT.UplinkDevice)

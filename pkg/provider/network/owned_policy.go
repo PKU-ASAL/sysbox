@@ -1,11 +1,15 @@
 package network
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os/exec"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/driver"
@@ -96,13 +100,19 @@ func ObserveRulesetInNetNS(ctx context.Context, netnsPath string, owner string) 
 // Deletion is best-effort: an already-absent table is the common case, and any
 // other removal failure is self-healed by the next apply, which always rebuilds.
 func DeleteRulesetInNetNS(ctx context.Context, netnsPath string, owner string) error {
-	_, _ = runNFT(ctx, netnsPath, "", "delete", "table", "ip", driver.RulesetTableName(owner))
+	_, err := runNFT(ctx, netnsPath, "", "delete", "table", "ip", driver.RulesetTableName(owner))
+	if err != nil && !isNFTNotFound(err) {
+		return driver.Wrap(driver.ErrorUnavailable, "network", "delete nftables ruleset", err)
+	}
 	return nil
 }
 
 func applyCompiledInNetNS(ctx context.Context, netnsPath string, plan compiledRuleset) error {
-	// Best-effort delete first so re-apply rebuilds the table from scratch.
-	_, _ = runNFT(ctx, netnsPath, "", "delete", "table", "ip", plan.Table)
+	// Delete first so re-apply rebuilds the table from scratch. An absent table
+	// is expected; all other failures must stop before the add-table command.
+	if _, err := runNFT(ctx, netnsPath, "", "delete", "table", "ip", plan.Table); err != nil && !isNFTNotFound(err) {
+		return fmt.Errorf("delete existing ruleset: %w", err)
+	}
 	_, err := runNFT(ctx, netnsPath, nftScript(plan), "-f", "-")
 	return err
 }
@@ -117,11 +127,50 @@ func runNFT(ctx context.Context, netnsPath, stdin string, args ...string) (strin
 	defer cancel()
 	full := append([]string{netnsPath}, args...)
 	cmd := exec.CommandContext(ctx, "sysbox-netns", full...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = time.Second
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	return string(out), err
+	if err != nil {
+		return string(out), &nftCommandError{err: err, stderr: strings.TrimSpace(stderr.String())}
+	}
+	return string(out), nil
+}
+
+type nftCommandError struct {
+	err    error
+	stderr string
+}
+
+func (e *nftCommandError) Error() string {
+	if e.stderr == "" {
+		return e.err.Error()
+	}
+	return fmt.Sprintf("%v: %s", e.err, e.stderr)
+}
+
+func (e *nftCommandError) Unwrap() error { return e.err }
+
+func isNFTNotFound(err error) bool {
+	var commandErr *nftCommandError
+	if !errors.As(err, &commandErr) {
+		return false
+	}
+	message := strings.ToLower(commandErr.stderr)
+	if strings.Contains(message, "nsenter:") {
+		return false
+	}
+	return strings.Contains(message, "no such file or directory") || strings.Contains(message, "does not exist")
 }
 
 func ownershipMarker(owner, digest string) string {
@@ -135,10 +184,11 @@ var ownerMarkerRE = regexp.MustCompile(`comment "sysbox-owner=([^;"]+);digest=([
 // matching the write-side contract that the owner marker is the source of truth.
 func observeFromNFTList(output, owner string) (driver.RulesetObservation, error) {
 	tableName := driver.RulesetTableName(owner)
-	if !strings.Contains(output, "table ip "+tableName) {
+	tableBlock, ok := nftTableBlock(output, tableName)
+	if !ok {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorNotFound, "network", "owned ruleset not found", nil)
 	}
-	matches := ownerMarkerRE.FindAllStringSubmatch(output, -1)
+	matches := ownerMarkerRE.FindAllStringSubmatch(tableBlock, -1)
 	if len(matches) == 0 {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "table exists without matching ownership marker", nil)
 	}
@@ -153,4 +203,25 @@ func observeFromNFTList(output, owner string) (driver.RulesetObservation, error)
 		digest = m[2]
 	}
 	return driver.RulesetObservation{Table: tableName, Digest: digest}, nil
+}
+
+func nftTableBlock(output, tableName string) (string, bool) {
+	startRE := regexp.MustCompile(`(?m)^table ip ` + regexp.QuoteMeta(tableName) + ` \{`)
+	loc := startRE.FindStringIndex(output)
+	if loc == nil {
+		return "", false
+	}
+	depth := 0
+	for i := loc[0]; i < len(output); i++ {
+		switch output[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return output[loc[0] : i+1], true
+			}
+		}
+	}
+	return "", false
 }

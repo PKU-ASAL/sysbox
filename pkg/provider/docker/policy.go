@@ -167,8 +167,8 @@ func (s *Substrate) policyTargetPID(ctx context.Context, containerID string) (in
 		}
 		return 0, driver.Wrap(category, "docker", "inspect policy target", err)
 	}
-	if container.State == nil || container.State.Pid == 0 {
-		return 0, fmt.Errorf("policy target container %s is not running", containerID)
+	if container.State == nil || !container.State.Running || container.State.Pid == 0 {
+		return 0, driver.Wrap(driver.ErrorNotFound, "docker", fmt.Sprintf("policy target container %s is not running", containerID), nil)
 	}
 	return container.State.Pid, nil
 }
