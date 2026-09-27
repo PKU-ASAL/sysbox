@@ -48,3 +48,18 @@ resource "sysbox_network" "lab" {
 	require.True(t, errors.As(err, &diagnostics))
 	require.Equal(t, "sysbox_network.lab", diagnostics[0].Address.String())
 }
+
+func TestDecodeNetworkPreservesNATAttribute(t *testing.T) {
+	root, err := ParseString(`
+resource "sysbox_network" "lab" {
+  cidr = "10.204.0.0/24"
+  nat  = true
+}
+`, "nat.hcl")
+	require.NoError(t, err)
+	ctx, err := BuildEvalContext(root)
+	require.NoError(t, err)
+	var network NetworkConfig
+	require.NoError(t, DecodeResource(&root.Resources[0], &network, ctx))
+	require.True(t, network.NAT)
+}
