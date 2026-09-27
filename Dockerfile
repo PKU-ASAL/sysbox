@@ -83,8 +83,8 @@ COPY --from=builder /out/sysbox-init  /usr/local/bin/sysbox-init
 
 # sysbox-netns is the firewall's shim over nsenter+nft. It isolates each nft
 # operation into a killable subprocess (with pdeathsig) so a wedged netfilter
-# dump cannot hang the agent. It carries no file capabilities: capability
-# reduction is a separate concern (see docs/design/2026-09-10-*).
+# dump cannot hang the agent. The runtime container must grant the capabilities
+# required by nsenter/nft; file capability reduction is a separate concern.
 COPY --from=builder /out/sysbox-netns /usr/local/bin/sysbox-netns
 
 # Default service and artifact directories inside the container.

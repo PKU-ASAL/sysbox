@@ -160,7 +160,7 @@ func TestNFTScriptRendersMasquerade(t *testing.T) {
 
 	require.Contains(t, script, "add chain ip "+plan.Table+" postrouting { type nat hook postrouting priority 100; }")
 	require.Contains(t, script, `oifname "eth0" ip saddr 10.0.0.0/24 masquerade`)
-	require.Contains(t, script, fmt.Sprintf("masquerade comment %q", ownershipMarker(spec.Owner, plan.Digest)+";nat=masquerade"))
+	require.Contains(t, script, fmt.Sprintf("masquerade comment %q", ownershipMarker(spec.Owner, plan.Digest)))
 }
 
 func TestNFTScriptOmitsMasqueradeWhenDisabled(t *testing.T) {
@@ -171,6 +171,13 @@ func TestNFTScriptOmitsMasqueradeWhenDisabled(t *testing.T) {
 	script := nftScript(plan)
 	require.NotContains(t, script, "postrouting")
 	require.NotContains(t, script, "masquerade")
+}
+
+func TestOwnershipMarkerStaysWithinNFTCommentLimit(t *testing.T) {
+	owner := "topology." + strings.Repeat("x", 180)
+	marker := ownershipMarker(owner, strings.Repeat("a", 64))
+	require.LessOrEqual(t, len(marker), maxNFTCommentLength)
+	require.Contains(t, marker, digestMarkerPrefix)
 }
 
 func TestObserveFromNFTListExtractsDigest(t *testing.T) {
@@ -255,6 +262,14 @@ table ip %s {
 func TestDeleteRulesetReturnsCommandError(t *testing.T) {
 	err := DeleteRulesetInNetNS(context.Background(), "/path/that/does/not/exist", "topology.lab/sysbox_firewall.edge")
 	require.Error(t, err)
+}
+
+func TestDeleteRulesetIgnoresMissingTable(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "sysbox-netns")
+	require.NoError(t, os.WriteFile(helper, []byte("#!/bin/sh\necho 'No such file or directory' >&2\nexit 1\n"), 0o755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	require.NoError(t, DeleteRulesetInNetNS(context.Background(), "/proc/1/ns/net", "topology.lab/sysbox_firewall.edge"))
 }
 
 func TestRunNFTHonorsContextTimeout(t *testing.T) {

@@ -16,6 +16,8 @@ import (
 )
 
 const ownershipPrefix = "sysbox-owner="
+const digestMarkerPrefix = "sysbox-digest="
+const maxNFTCommentLength = 128
 
 // netnsTimeout bounds each nsenter/nft subprocess so a wedged netfilter
 // operation cannot hang the caller; the subprocess is killed on deadline.
@@ -174,10 +176,15 @@ func isNFTNotFound(err error) bool {
 }
 
 func ownershipMarker(owner, digest string) string {
-	return ownershipPrefix + owner + ";digest=" + digest
+	marker := ownershipPrefix + owner + ";digest=" + digest
+	if len(marker) <= maxNFTCommentLength {
+		return marker
+	}
+	return digestMarkerPrefix + digest
 }
 
 var ownerMarkerRE = regexp.MustCompile(`comment "sysbox-owner=([^;"]+);digest=([^;"]+)`)
+var digestMarkerRE = regexp.MustCompile(`comment "sysbox-digest=([^"]+)`)
 
 // observeFromNFTList parses `nft list ruleset` output and extracts the ownership
 // marker digest. Every rule carrying a marker must agree on owner and digest,
@@ -188,12 +195,13 @@ func observeFromNFTList(output, owner string) (driver.RulesetObservation, error)
 	if !ok {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorNotFound, "network", "owned ruleset not found", nil)
 	}
-	matches := ownerMarkerRE.FindAllStringSubmatch(tableBlock, -1)
-	if len(matches) == 0 {
+	ownerMatches := ownerMarkerRE.FindAllStringSubmatch(tableBlock, -1)
+	digestMatches := digestMarkerRE.FindAllStringSubmatch(tableBlock, -1)
+	if len(ownerMatches) == 0 && len(digestMatches) == 0 {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "table exists without matching ownership marker", nil)
 	}
 	digest := ""
-	for _, m := range matches {
+	for _, m := range ownerMatches {
 		if m[1] != owner {
 			return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "owned table contains a rule without matching ownership marker", nil)
 		}
@@ -201,6 +209,12 @@ func observeFromNFTList(output, owner string) (driver.RulesetObservation, error)
 			return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "owned table contains inconsistent policy digests", nil)
 		}
 		digest = m[2]
+	}
+	for _, m := range digestMatches {
+		if digest != "" && digest != m[1] {
+			return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "owned table contains inconsistent policy digests", nil)
+		}
+		digest = m[1]
 	}
 	return driver.RulesetObservation{Table: tableName, Digest: digest}, nil
 }

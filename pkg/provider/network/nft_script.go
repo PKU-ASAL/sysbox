@@ -51,7 +51,7 @@ func nftScript(plan compiledRuleset) string {
 			fmt.Fprintf(&nat, " ip saddr %s", cidr)
 		}
 		nat.WriteString(" masquerade")
-		fmt.Fprintf(&b, "add rule ip %s postrouting %s comment %q\n", table, nat.String(), marker+";nat=masquerade")
+		fmt.Fprintf(&b, "add rule ip %s postrouting %s comment %q\n", table, nat.String(), marker)
 	}
 
 	return b.String()
