@@ -291,6 +291,9 @@ func TestNFTScriptPassesNftSyntaxCheckWhenAvailable(t *testing.T) {
 	if _, err := exec.LookPath("nft"); err != nil {
 		t.Skip("nft is not installed")
 	}
+	if err := exec.Command("nft", "list", "tables").Run(); err != nil && os.Geteuid() != 0 {
+		t.Skip("nft syntax check requires CAP_NET_ADMIN")
+	}
 	spec := driver.RulesetSpec{
 		Owner: "topology.lab/sysbox_router.edge", Family: driver.FamilyIPv4,
 		DefaultInput: driver.VerdictDrop, DefaultOutput: driver.VerdictAccept, DefaultForward: driver.VerdictDrop,
@@ -308,7 +311,11 @@ func TestNFTScriptPassesNftSyntaxCheckWhenAvailable(t *testing.T) {
 	cmd := exec.Command("nft", "-c", "-f", "-")
 	cmd.Stdin = strings.NewReader(nftScript(plan))
 	output, err := cmd.CombinedOutput()
-	if err != nil && strings.Contains(strings.ToLower(string(output)), "operation not permitted") {
+	if err != nil && (strings.Contains(strings.ToLower(string(output)), "operation not permitted") ||
+		(func() bool {
+			exitErr, ok := err.(*exec.ExitError)
+			return ok && exitErr.ExitCode() == 3
+		})()) {
 		t.Skipf("nft syntax check requires CAP_NET_ADMIN: %s", output)
 	}
 	require.NoError(t, err, string(output))
