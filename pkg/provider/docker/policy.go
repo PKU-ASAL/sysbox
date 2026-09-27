@@ -42,34 +42,42 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	var observation driver.RulesetObservation
-	err = s.withContainerNetNS(ctx, state.ContainerID, func(fd int) error {
-		interfaces, listErr := policyInterfacesInNetNSFD(fd)
-		if listErr != nil {
-			return listErr
+	pid, err := s.policyTargetPID(ctx, state.ContainerID)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	netnsPath := fmt.Sprintf("/proc/%d/ns/net", pid)
+
+	// Resolve attachment IPs to guest devices by listing interfaces inside the
+	// container netns. Interface listing uses vishvananda/netlink (which carries
+	// a socket deadline) rather than the nftables netlink conn that was removed
+	// from the firewall path.
+	ns, err := os.Open(netnsPath)
+	if err != nil {
+		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "open container network namespace", err)
+	}
+	defer ns.Close()
+	interfaces, err := policyInterfacesInNetNSFD(int(ns.Fd()))
+	if err != nil {
+		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "list policy interfaces", err)
+	}
+	for logical, prefixes := range state.AttachmentIPs {
+		if state.Bindings[logical] != "" || len(prefixes) == 0 {
+			continue
 		}
-		for logical, prefixes := range state.AttachmentIPs {
-			if state.Bindings[logical] != "" || len(prefixes) == 0 {
-				continue
-			}
-			device, resolveErr := resolvePolicyDevice(prefixes[0], interfaces)
-			if resolveErr != nil {
-				return fmt.Errorf("resolve attachment %q: %w", logical, resolveErr)
-			}
-			state.Bindings[logical] = device
+		device, resolveErr := resolvePolicyDevice(prefixes[0], interfaces)
+		if resolveErr != nil {
+			return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", fmt.Sprintf("resolve attachment %q", logical), resolveErr)
 		}
-		var applyErr error
-		observation, applyErr = networkprovider.ApplyRulesetInNetNSFD(fd, spec, state.Bindings)
-		if applyErr != nil {
-			return applyErr
-		}
-		if fwd, err := readSysctlInNetNSFD(fd, "net/ipv4/ip_forward"); err == nil && fwd != "1" {
-			return fmt.Errorf("router ip_forward=%q (expected 1)", fwd)
-		}
-		return nil
-	})
+		state.Bindings[logical] = device
+	}
+
+	observation, err := networkprovider.ApplyRulesetInNetNS(ctx, netnsPath, spec, state.Bindings)
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "apply ruleset", err)
+	}
+	if fwd, err := readSysctlInNetNSFD(int(ns.Fd()), "net/ipv4/ip_forward"); err == nil && fwd != "1" {
+		return driver.RulesetObservation{}, fmt.Errorf("router ip_forward=%q (expected 1)", fwd)
 	}
 	return observation, nil
 }
@@ -122,22 +130,18 @@ func resolvePolicyDevice(prefix string, interfaces []policyInterface) (string, e
 	return "", fmt.Errorf("no interface has IP %s", address)
 }
 
-// CheckTarget reports whether the container the ruleset was applied to is still
-// running. It deliberately does not read the ruleset back — that is a netlink
-// dump that can deadlock against the container's active netfilter locks.
-func (s *Substrate) CheckTarget(ctx context.Context, target driver.PolicyTarget) (bool, error) {
+// ObserveRuleset reads the ruleset back inside the container's network
+// namespace via an nsenter subprocess (killable), returning the observed digest.
+func (s *Substrate) ObserveRuleset(ctx context.Context, target driver.PolicyTarget, owner string) (driver.RulesetObservation, error) {
 	state, err := decodeDockerPolicyTarget(target)
 	if err != nil {
-		return false, err
+		return driver.RulesetObservation{}, err
 	}
-	container, err := s.cli.ContainerInspect(ctx, state.ContainerID)
+	pid, err := s.policyTargetPID(ctx, state.ContainerID)
 	if err != nil {
-		if errdefs.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
+		return driver.RulesetObservation{}, err
 	}
-	return container.State != nil && container.State.Running, nil
+	return networkprovider.ObserveRulesetInNetNS(ctx, fmt.Sprintf("/proc/%d/ns/net", pid), owner)
 }
 
 func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, owner string) error {
@@ -145,29 +149,28 @@ func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarge
 	if err != nil {
 		return err
 	}
-	return s.withContainerNetNS(ctx, state.ContainerID, func(fd int) error {
-		return networkprovider.DeleteRulesetInNetNSFD(fd, owner)
-	})
+	pid, err := s.policyTargetPID(ctx, state.ContainerID)
+	if err != nil {
+		return err
+	}
+	return networkprovider.DeleteRulesetInNetNS(ctx, fmt.Sprintf("/proc/%d/ns/net", pid), owner)
 }
 
-func (s *Substrate) withContainerNetNS(ctx context.Context, containerID string, fn func(int) error) error {
+// policyTargetPID returns the host PID of a policy target container, mapping a
+// missing container to ErrorNotFound so callers can treat it as drift.
+func (s *Substrate) policyTargetPID(ctx context.Context, containerID string) (int, error) {
 	container, err := s.cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		category := driver.ErrorUnavailable
 		if errdefs.IsNotFound(err) {
 			category = driver.ErrorNotFound
 		}
-		return driver.Wrap(category, "docker", "inspect policy target", err)
+		return 0, driver.Wrap(category, "docker", "inspect policy target", err)
 	}
-	if container.State == nil || container.State.Pid == 0 {
-		return fmt.Errorf("policy target container %s is not running", containerID)
+	if container.State == nil || !container.State.Running || container.State.Pid == 0 {
+		return 0, driver.Wrap(driver.ErrorNotFound, "docker", fmt.Sprintf("policy target container %s is not running", containerID), nil)
 	}
-	ns, err := os.Open(fmt.Sprintf("/proc/%d/ns/net", container.State.Pid))
-	if err != nil {
-		return fmt.Errorf("open container network namespace: %w", err)
-	}
-	defer ns.Close()
-	return fn(int(ns.Fd()))
+	return container.State.Pid, nil
 }
 
 func readSysctlInNetNSFD(fd int, name string) (string, error) {

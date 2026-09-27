@@ -27,6 +27,7 @@ RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
     -ldflags="-s -w -X github.com/oslab/sysbox/pkg/buildinfo.Version=${VERSION} -X github.com/oslab/sysbox/pkg/buildinfo.Commit=${REVISION} -X github.com/oslab/sysbox/pkg/buildinfo.BuildTime=${CREATED}" \
     -o /out/sysbox-init ./cmd/sysbox-init
+RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -o /out/sysbox-netns ./cmd/sysbox-netns
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -64,6 +65,7 @@ RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
     curl \
     iproute2 \
     iptables \
+    nftables \
     iputils-ping \
     qemu-kvm \
     qemu-utils \
@@ -78,6 +80,12 @@ RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
 
 COPY --from=builder /out/sysbox       /usr/local/bin/sysbox
 COPY --from=builder /out/sysbox-init  /usr/local/bin/sysbox-init
+
+# sysbox-netns is the firewall's shim over nsenter+nft. It isolates each nft
+# operation into a killable subprocess (with pdeathsig) so a wedged netfilter
+# dump cannot hang the agent. The runtime container must grant the capabilities
+# required by nsenter/nft; file capability reduction is a separate concern.
+COPY --from=builder /out/sysbox-netns /usr/local/bin/sysbox-netns
 
 # Default service and artifact directories inside the container.
 RUN mkdir -p /var/lib/sysbox/workspaces /var/lib/sysbox/runs /var/lib/sysbox/firecracker /var/cache/sysbox

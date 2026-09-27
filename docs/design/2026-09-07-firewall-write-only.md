@@ -1,7 +1,12 @@
 # firewall observe 卡死 —— nftables 只写不读
 
 日期：2026-09-07
-状态：已实施
+状态：已被 2026-09-10 nsenter firewall 设计取代
+
+本文记录的是 2026-09-07 为规避 nftables dump 卡死而采用的临时 write-only 方案。
+当前实现已将读、写、删统一移到带超时的 `sysbox-netns` 子进程，并恢复按目标 table
+读取 digest 的 drift 检测。实现和验证要求以
+`docs/design/2026-09-10-nsenter-firewall-design.md` 为准。
 
 ## 一、背景
 

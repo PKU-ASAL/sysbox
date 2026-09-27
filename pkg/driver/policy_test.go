@@ -13,7 +13,9 @@ type testPolicy struct{}
 func (testPolicy) ApplyRuleset(context.Context, PolicyTarget, RulesetSpec) (RulesetObservation, error) {
 	return RulesetObservation{}, nil
 }
-func (testPolicy) CheckTarget(context.Context, PolicyTarget) (bool, error)   { return true, nil }
+func (testPolicy) ObserveRuleset(context.Context, PolicyTarget, string) (RulesetObservation, error) {
+	return RulesetObservation{}, nil
+}
 func (testPolicy) DeleteRuleset(context.Context, PolicyTarget, string) error { return nil }
 
 func TestRegistryRequiresPolicyCapability(t *testing.T) {

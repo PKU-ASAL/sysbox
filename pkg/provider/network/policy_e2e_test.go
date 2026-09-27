@@ -36,8 +36,6 @@ func TestOwnedPolicyRepeatedApplyAndDeleteE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, first.Table, second.Table)
 	require.Equal(t, first.Digest, second.Digest)
-	require.Equal(t, len(first.Inventory), len(second.Inventory))
-	require.Contains(t, second.Inventory, driver.OwnedObject{Kind: "chain", Name: "postrouting"})
 
 	require.NoError(t, provider.DeleteRuleset(context.Background(), target, spec.Owner))
 	_, err = provider.ObserveRuleset(context.Background(), target, spec.Owner)

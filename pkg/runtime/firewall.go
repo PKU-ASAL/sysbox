@@ -28,19 +28,19 @@ func (FirewallResourceHandler) Read(ctx context.Context, current state.Resource)
 	if err != nil {
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
-	target, _, err := policyState(current)
+	target, owner, err := policyState(current)
 	if err != nil {
 		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: err.Error()}, nil
 	}
-	// Observe only the target's liveness, not the ruleset: reading the ruleset
-	// back is a netlink dump that can deadlock against an active container.
-	// The ruleset was written on apply and is trusted from there on.
-	alive, err := policy.CheckTarget(ctx, target)
+	observation, err := policy.ObserveRuleset(ctx, target, owner)
 	if err != nil {
+		if driver.IsCategory(err, driver.ErrorNotFound) || driver.IsCategory(err, driver.ErrorInvalidState) {
+			return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: err.Error()}, nil
+		}
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
-	if !alive {
-		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: "policy target is not running"}, nil
+	if observation.Digest != current.Str("desired_digest") {
+		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: "firewall ruleset digest mismatch"}, nil
 	}
 	return resourceReadOK(current), nil
 }
