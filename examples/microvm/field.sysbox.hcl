@@ -87,11 +87,6 @@ resource "sysbox_network" "net_internal" {
   cidr = "10.0.12.0/24"
 }
 
-resource "sysbox_network" "net_uplink_fc" {
-  cidr = "172.22.0.0/24"
-  nat  = true
-}
-
 # ── Router ──────────────────────────────────────────────────────────────────
 
 resource "sysbox_router" "core" {
@@ -131,11 +126,6 @@ resource "sysbox_node" "node_attack" {
     network = sysbox_network.net_dmz.id
     ip      = "10.0.11.10/24"
     gw      = "10.0.11.254"
-  }
-
-  link "uplink" {
-    network = sysbox_network.net_uplink_fc.id
-    ip      = "172.22.0.10/24"
   }
 
   # Declarative static routes for cross-subnet access via router.
@@ -207,9 +197,4 @@ resource "sysbox_node" "node_db" {
 output "attacker_ip" {
   value       = "10.0.11.10"
   description = "IP of the attacker VM"
-}
-
-output "uplink_ip" {
-  value       = "172.22.0.10"
-  description = "NAT IP of the attacker VM (reachable from host)"
 }
