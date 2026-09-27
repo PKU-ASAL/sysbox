@@ -120,7 +120,7 @@ func applyCompiledInNetNS(ctx context.Context, netnsPath string, plan compiledRu
 }
 
 // runNFT runs `nft <args...>` inside the target netns path via the sysbox-netns
-// helper (a setcap'd shim over nsenter). The helper runs as a killable
+// helper (a shim over nsenter). The helper runs as a killable
 // subprocess, so a wedged netfilter operation can no longer hang the caller the
 // way an in-process netlink read did. stdin, when non-empty, is piped through
 // to `nft` (used for `-f -`).
