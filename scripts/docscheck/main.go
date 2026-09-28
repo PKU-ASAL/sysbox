@@ -26,6 +26,7 @@ var expectedDocs = []string{
 	"docs/design/2026-09-10-nsenter-firewall-design.md",
 	"docs/design/2026-09-13-heterogeneous-review.md",
 	"docs/design/2026-09-13-project-review.md",
+	"docs/design/2026-09-28-observation-driven-runtime-refactor.md",
 	"docs/design/revision-and-upsert-apply-plan.md",
 	"docs/design/revision-and-upsert-apply.md",
 	"docs/design/revision-directory-tree-addressing.md",
@@ -51,6 +52,7 @@ var expectedDocs = []string{
 	"docs/reference/resource-model.md",
 	"docs/superpowers/plans/2026-09-13-lifecycle-closure.md",
 	"docs/superpowers/specs/2026-09-13-lifecycle-closure-design.md",
+	"docs/superpowers/specs/2026-09-28-sysbox-architecture-refactor-design.md",
 }
 
 var markdownLink = regexp.MustCompile(`\[[^]]*\]\(([^)]+)\)`)
