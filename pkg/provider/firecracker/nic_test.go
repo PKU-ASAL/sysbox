@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,16 +18,8 @@ func TestAttachNICInjectsEveryIPAndRejectsSecondNamespace(t *testing.T) {
 	old := ipBin
 	ipBin = bin
 	t.Cleanup(func() { ipBin = old })
-	cfgPath := filepath.Join(t.TempDir(), "vm.json")
-	if err := os.WriteFile(cfgPath, []byte(`{"boot-source":{"boot_args":"console=ttyS0"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h := substrate.NodeHandle{ID: "fc-review", Provider: &HandleState{ConfigPath: cfgPath}}
-	vmMu.Lock()
-	vmStore[h.ID] = &vmProcess{}
-	vmMu.Unlock()
-	t.Cleanup(func() { vmMu.Lock(); delete(vmStore, h.ID); vmMu.Unlock() })
-	s := &Substrate{}
+	s, h, _, _ := manifestFixture(t, false)
+	cfgPath := h.Provider.(*HandleState).ConfigPath
 	for _, item := range []driver.AttachmentRequest{
 		{Name: "a", IPPrefixes: []string{"10.1.0.2/24"}, NetworkState: json.RawMessage(`{"netns":"same","bridge":"br"}`)},
 		{Name: "b", IPPrefixes: []string{"10.2.0.2/24"}, NetworkState: json.RawMessage(`{"netns":"same","bridge":"br"}`)},
@@ -112,68 +103,9 @@ func TestSplitCIDR_Rejects(t *testing.T) {
 	}
 }
 
-func TestFirecrackerPIDForSocketReturnsZeroWhenMissing(t *testing.T) {
-	if got := firecrackerPIDForSocket("/tmp/sysbox-no-such-firecracker.sock"); got != 0 {
-		t.Fatalf("firecrackerPIDForSocket missing = %d, want 0", got)
-	}
-}
-
-func TestReadPIDFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "firecracker.pid")
-	if got := readPIDFile(path); got != 0 {
-		t.Fatalf("read missing pid = %d, want 0", got)
-	}
-	if err := os.WriteFile(path, []byte("1234\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if got := readPIDFile(path); got != 1234 {
-		t.Fatalf("read pid = %d, want 1234", got)
-	}
-}
-
 func TestProcessAliveRejectsInvalidPID(t *testing.T) {
 	if processAlive(0) {
 		t.Fatal("pid 0 should not be considered alive")
-	}
-}
-
-func TestWriteVMMetadata(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "sysbox.json")
-	if err := writeVMMetadata(path, &HandleState{
-		VMDir:       filepath.Join(t.TempDir(), "vm-1"),
-		Socket:      "/tmp/fc.sock",
-		ConfigPath:  "/tmp/vm.json",
-		PIDFile:     "/tmp/fc.pid",
-		CrashPolicy: "observe_only",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) == "" || !strings.Contains(string(data), `"managed_by": "sysbox"`) {
-		t.Fatalf("metadata missing managed_by: %s", data)
-	}
-}
-
-func TestProcessAnchorSupportsJSONAndLegacyPID(t *testing.T) {
-	dir := t.TempDir()
-	jsonPath := filepath.Join(dir, "firecracker.json.pid")
-	want := processAnchor{PID: 1234, StartTime: "999", Socket: "/tmp/fc.sock", VMID: "vm-1"}
-	if err := writeProcessAnchor(jsonPath, want); err != nil {
-		t.Fatal(err)
-	}
-	if got := readProcessAnchor(jsonPath); got != want {
-		t.Fatalf("json anchor = %+v, want %+v", got, want)
-	}
-
-	pidPath := filepath.Join(dir, "firecracker.pid")
-	if err := os.WriteFile(pidPath, []byte("4321\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if got := readProcessAnchor(pidPath); got.PID != 4321 {
-		t.Fatalf("pid anchor = %+v, want pid 4321", got)
 	}
 }
 

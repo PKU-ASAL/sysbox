@@ -4,7 +4,6 @@ package docker
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -81,33 +80,18 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, _ []substrate.Connec
 	return &dockerConn{sub: s, handle: handle}, nil
 }
 
-// dockerConn adapts the docker Substrate's own ExecInNode/CopyToNode/ExecBackground
-// methods to the substrate.Connection interface.
+// dockerConn owns execution against one bound container identity.
 type dockerConn struct {
 	sub    *Substrate
 	handle substrate.NodeHandle
 }
 
-func (c *dockerConn) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (substrate.ExecResult, error) {
-	result, err := c.sub.ExecInNode(ctx, c.handle, req)
-	if err != nil {
-		return result, err
-	}
-	if stdout != nil {
-		_, _ = io.WriteString(stdout, result.Stdout)
-	}
-	if stderr != nil {
-		_, _ = io.WriteString(stderr, result.Stderr)
-	}
-	return result, nil
-}
-
 func (c *dockerConn) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
-	pid, err := c.sub.ExecBackground(ctx, c.handle, req)
+	handle, err := c.Start(ctx, req)
 	if err != nil {
 		return 0, fmt.Errorf("exec background %s: %w", req.Program, err)
 	}
-	return pid, nil
+	return handle.PID, nil
 }
 
 func (c *dockerConn) CopyFile(ctx context.Context, srcPath, dstPath string) error {

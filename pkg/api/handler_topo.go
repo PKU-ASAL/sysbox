@@ -448,7 +448,7 @@ func (s *Server) reconcileParentJournal(parent, run *controlplane.Run) error {
 	if err != nil {
 		return err
 	}
-	report, err := reconcileCheckpointJournal(context.Background(), s.apiStore, parent.Topology, parent.ID, mgr, run.LeaseOwner)
+	report, err := s.reconcileCanonicalActions(context.Background(), parent.Topology, parent.ID, mgr)
 	if err != nil {
 		return err
 	}
@@ -484,7 +484,7 @@ func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
 		return
 	}
-	report, err := cleanupCheckpoint(r.Context(), s.apiStore, run.Topology, run.ID)
+	report, err := s.cleanupCanonicalActions(r.Context(), run.Topology, run.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -512,8 +512,7 @@ func (s *Server) handleRecoverRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	owner := fmt.Sprintf("sysbox-api:recover:%s", run.ID)
-	report, err := reconcileCheckpointJournal(r.Context(), s.apiStore, run.Topology, run.ID, mgr, owner)
+	report, err := s.reconcileCanonicalActions(r.Context(), run.Topology, run.ID, mgr)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

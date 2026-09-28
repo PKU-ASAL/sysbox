@@ -81,6 +81,10 @@ func stubNetworkOps(t *testing.T) func() {
 
 type fakeLinuxNetwork struct{}
 
+func (fakeLinuxNetwork) ObserveIsolated(context.Context, driver.IsolatedNetworkSpec) (driver.IsolatedNetworkObservation, error) {
+	return driver.IsolatedNetworkObservation{Exists: true, Healthy: true}, nil
+}
+
 func (fakeLinuxNetwork) CreateIsolated(context.Context, driver.IsolatedNetworkSpec) error { return nil }
 func (fakeLinuxNetwork) DeleteIsolated(context.Context, driver.IsolatedNetworkSpec) error { return nil }
 func (fakeLinuxNetwork) NetworkHealthy(context.Context, driver.IsolatedNetworkSpec) (bool, string) {

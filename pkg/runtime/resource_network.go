@@ -29,15 +29,31 @@ func (NetworkResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_network")
 }
 
-func (NetworkResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (NetworkResourceHandler) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
 	if current.IsNAT() {
+		networkDriver, err := driver.DefaultRegistry.RequireNetwork(current.Driver)
+		if err != nil {
+			return ResourceReadResult{Status: state.ResourceUnknown}, err
+		}
+		name := current.DockerNetID()
+		if name == "" {
+			return ResourceReadResult{Status: state.ResourceUnknown}, fmt.Errorf("missing managed network identity")
+		}
+		info, err := networkDriver.ReadManagedNetwork(ctx, substrate.ManagedNetworkSpec{Name: name})
+		if driver.IsCategory(err, driver.ErrorNotFound) {
+			result.Status = state.ResourceAbsent
+			return result, nil
+		}
+		if err != nil {
+			result.Status = state.ResourceUnknown
+			return result, err
+		}
+		if info.ID != name {
+			result.Status = state.ResourceUnknown
+			return result, fmt.Errorf("managed network identity conflict")
+		}
 		result.Checks = map[string]controlplane.ResourceCheckHealth{"docker_network": {OK: true}}
-		return result, nil
-	}
-	nsName := current.Str("netns")
-	if nsName == "" {
-		result.Reason = "network has no isolated namespace"
 		return result, nil
 	}
 	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
@@ -45,15 +61,24 @@ func (NetworkResourceHandler) Read(_ context.Context, current state.Resource) (R
 		result.Status = state.ResourceUnknown
 		return result, err
 	}
-	ok, reason := linuxNetwork.NetworkHealthy(context.Background(), isolatedNetworkSpec(current))
-	checks := map[string]controlplane.ResourceCheckHealth{"network": {OK: ok, Reason: reason}}
+	observer, ok := linuxNetwork.(driver.IsolatedNetworkObserver)
 	if !ok {
-		result.Checks = checks
-		result.Status = state.ResourceDrifted
-		result.Reason = reason
-		return result, nil
+		return ResourceReadResult{Status: state.ResourceUnknown}, fmt.Errorf("%w: isolated network driver lacks existence observation", ErrConvergenceUnsupported)
 	}
-	result.Checks = checks
+	if _, ok := substrate.OperationIdentityFromContext(ctx); !ok && current.OwnerUID != "" {
+		ctx = substrate.WithOperationIdentity(ctx, substrate.OperationIdentity{ActionID: "observe", TopologyUID: current.OwnerUID, OwnerUID: current.OwnerUID, ResourceUID: current.ResourceUID, Generation: current.Generation})
+	}
+	observation, err := observer.ObserveIsolated(ctx, isolatedNetworkSpec(current))
+	if err != nil {
+		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current}, err
+	}
+	result.Reason = observation.Reason
+	result.Checks = map[string]controlplane.ResourceCheckHealth{"network": {OK: observation.Healthy, Reason: observation.Reason}}
+	if !observation.Exists {
+		result.Status = state.ResourceAbsent
+	} else if !observation.Healthy {
+		result.Status = state.ResourceDrifted
+	}
 	return result, nil
 }
 
@@ -185,8 +210,7 @@ func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r
 	if r.IsNAT() {
 		networkDriver, err := driver.DefaultRegistry.RequireNetwork("docker")
 		if err != nil {
-			pc.State().RemoveResource(r.Address)
-			return nil
+			return err
 		}
 		netID := r.DockerNetID()
 		if netID != "" {
@@ -213,7 +237,7 @@ func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r
 		return err
 	}
 	if err := linuxNetwork.DeleteIsolated(ctx, isolatedNetworkSpec(r)); err != nil {
-		pc.Logf("[destroy] warning: delete netns %s: %v\n", nsName, err)
+		return fmt.Errorf("delete netns %s: %w", nsName, err)
 	}
 	pc.State().RemoveResource(r.Address)
 	return nil

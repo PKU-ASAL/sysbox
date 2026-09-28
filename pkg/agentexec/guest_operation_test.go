@@ -26,7 +26,7 @@ func (d *guestTestDriver) ExecInNode(ctx context.Context, _ substrate.NodeHandle
 		<-ctx.Done()
 		return substrate.ExecResult{}, ctx.Err()
 	}
-	return substrate.ExecResult{Stdout: "out", Stderr: "err", ExitCode: 7}, nil
+	return substrate.ExecResult{Stdout: "out", Stderr: "err", ExitCode: 7, ExitCodeKnown: true}, nil
 }
 func (*guestTestDriver) ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error) {
 	return 0, nil
@@ -53,7 +53,7 @@ func TestGuestOperationMapsRequestAndReturnsStructuredResult(t *testing.T) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = old })
 	d := &guestTestDriver{}
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", GuestExec: d, NodeState: guestCodec{}}))
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", Node: guestConnectionNode{connection: legacyGuestConnection{exec: d}}, GuestExec: d, NodeState: guestCodec{}}))
 	result := executeGuestOperation(context.Background(), guestState(t, "guest-test"), "web", controlplane.GuestExecutionRequest{
 		Argv: []string{"printf", "%s", "ok"}, Environment: map[string]string{"TOKEN": "secret"}, WorkingDirectory: "/work",
 	})
@@ -73,7 +73,7 @@ func TestGuestOperationTimeoutCancelsProvider(t *testing.T) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = old })
 	d := &guestTestDriver{waitForCancel: true}
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", GuestExec: d, NodeState: guestCodec{}}))
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", Node: guestConnectionNode{connection: legacyGuestConnection{exec: d}}, GuestExec: d, NodeState: guestCodec{}}))
 	started := time.Now()
 	result := executeGuestOperation(context.Background(), guestState(t, "guest-test"), "web", controlplane.GuestExecutionRequest{Argv: []string{"sleep", "10"}, TimeoutSeconds: 1})
 	require.Less(t, time.Since(started), 2*time.Second)

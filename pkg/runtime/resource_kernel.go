@@ -39,6 +39,11 @@ func (KernelResourceHandler) Read(_ context.Context, current state.Resource) (Re
 		return result, nil
 	}
 	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			result.Status = state.ResourceUnknown
+			result.Reason = err.Error()
+			return result, err
+		}
 		result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: false, Reason: err.Error()}}
 		result.Status = state.ResourceDrifted
 		result.Reason = err.Error()

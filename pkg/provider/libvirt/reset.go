@@ -16,7 +16,7 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-const libvirtResetHandleVersion = 1
+const libvirtResetHandleVersion = 2
 const vmDirOwnershipFile = ".sysbox-owner.json"
 
 type vmDirOwnership struct {
@@ -25,14 +25,16 @@ type vmDirOwnership struct {
 }
 
 type resetHandleState struct {
-	Version        int    `json:"version"`
-	DomainName     string `json:"domain_name"`
-	OldDomainUUID  string `json:"old_domain_uuid,omitempty"`
-	OldVMDir       string `json:"old_vm_dir,omitempty"`
-	NewDomainUUID  string `json:"new_domain_uuid"`
-	NewVMDir       string `json:"new_vm_dir"`
-	BaselinePath   string `json:"baseline_path"`
-	BaselineDigest string `json:"baseline_digest"`
+	Identity       substrate.OperationIdentity `json:"identity"`
+	OldIdentity    substrate.OperationIdentity `json:"old_identity"`
+	Version        int                         `json:"version"`
+	DomainName     string                      `json:"domain_name"`
+	OldDomainUUID  string                      `json:"old_domain_uuid,omitempty"`
+	OldVMDir       string                      `json:"old_vm_dir,omitempty"`
+	NewDomainUUID  string                      `json:"new_domain_uuid"`
+	NewVMDir       string                      `json:"new_vm_dir"`
+	BaselinePath   string                      `json:"baseline_path"`
+	BaselineDigest string                      `json:"baseline_digest"`
 }
 
 func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetRequest) (substrate.ResetHandle, error) {
@@ -40,6 +42,15 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset requires a pinned qcow2 baseline")
 	}
 	current := hsFrom(request.Current)
+	identity, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok || identity.Validate() != nil || current.Identity == nil || current.Identity.Validate() != nil || request.Current.Generation != current.Identity.Generation || identity.Generation <= request.Current.Generation {
+		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset requires durable old and target generation identities")
+	}
+	old := identity
+	old.Generation = request.Current.Generation
+	if !sameGeneration(old, *current.Identity) || current.DomainUUID != request.Current.ID {
+		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset old generation ownership mismatch")
+	}
 	if current.DomainName == "" || current.DomainName != request.Node.Name {
 		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset domain identity mismatch")
 	}
@@ -47,12 +58,19 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 		return substrate.ResetHandle{}, err
 	}
 	newDomainUUID := uuid.NewString()
-	newVMDir := filepath.Join(s.vmDirRoot(), "sysbox-lv-"+request.Node.Name+"-reset-"+newDomainUUID)
+	newVMDir, err := s.managedVMDir(identity, request.Node.Name)
+	if err != nil {
+		return substrate.ResetHandle{}, err
+	}
 	state := &resetHandleState{
+		Identity: identity, OldIdentity: *current.Identity,
 		Version: libvirtResetHandleVersion, DomainName: request.Node.Name,
 		OldDomainUUID: request.Current.ID, OldVMDir: current.VMDir,
 		NewDomainUUID: newDomainUUID, NewVMDir: newVMDir,
 		BaselinePath: request.Node.Image.ID, BaselineDigest: request.Baseline.Digest,
+	}
+	if err := s.validateResetRecord(state, true, false); err != nil {
+		return substrate.ResetHandle{}, err
 	}
 	return substrate.ResetHandle{Provider: state, Request: request}, nil
 }
@@ -62,33 +80,24 @@ func (s *Substrate) DestroyReset(ctx context.Context, handle substrate.ResetHand
 	if err != nil {
 		return err
 	}
-	if state.OldVMDir != "" {
-		if _, statErr := os.Stat(state.OldVMDir); statErr == nil {
-			if err := validateOwnedVMDirInRoot(s.vmDirRoot(), state.DomainName, state.OldDomainUUID, state.OldVMDir, filepath.Join(state.OldVMDir, "disk.qcow2")); err != nil {
-				return err
-			}
-		} else if !os.IsNotExist(statErr) {
-			return statErr
-		}
+	if err := validateLibvirtResetIdentity(ctx, state); err != nil {
+		return err
 	}
-	if _, infoErr := exec.CommandContext(ctx, "virsh", "dominfo", state.DomainName).CombinedOutput(); infoErr == nil {
-		uuidOut, uuidErr := exec.CommandContext(ctx, "virsh", "domuuid", state.DomainName).CombinedOutput()
-		if uuidErr != nil || strings.TrimSpace(string(uuidOut)) != state.OldDomainUUID {
-			return fmt.Errorf("libvirt reset domain UUID ownership mismatch for %q", state.DomainName)
-		}
-		owned, ownershipErr := domainOwnsDisk(ctx, state.DomainName, filepath.Join(state.OldVMDir, "disk.qcow2"))
-		if ownershipErr != nil || !owned {
-			return fmt.Errorf("libvirt reset domain disk ownership mismatch for %q", state.DomainName)
-		}
-		_, _ = exec.CommandContext(ctx, "virsh", "destroy", state.DomainName).CombinedOutput()
-		if undefineOut, undefineErr := exec.CommandContext(ctx, "virsh", "undefine", state.DomainName).CombinedOutput(); undefineErr != nil {
-			return fmt.Errorf("libvirt reset undefine old domain: %w\n%s", undefineErr, undefineOut)
-		}
+	if err := s.validateResetPaths(state); err != nil {
+		return err
 	}
-	if state.OldVMDir != "" {
-		return os.RemoveAll(state.OldVMDir)
+	if _, err := os.Lstat(state.OldVMDir); err == nil {
+		if err := s.validateResetRecord(state, true, false); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
-	return nil
+	if _, err := s.verifyResetDomain(ctx, state, true); err != nil {
+		return err
+	}
+	hs := &HandleState{Identity: &state.OldIdentity, DomainName: state.DomainName, DomainUUID: state.OldDomainUUID, VMDir: state.OldVMDir, DiskPath: filepath.Join(state.OldVMDir, "disk.qcow2")}
+	return s.DestroyNode(ctx, managedNodeHandle(hs))
 }
 
 func domainOwnsDisk(ctx context.Context, domainName, expectedDisk string) (bool, error) {
@@ -113,6 +122,29 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 	if err != nil {
 		return substrate.NodeHandle{}, err
 	}
+	if err := validateLibvirtResetIdentity(ctx, state); err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	if err := s.validateResetPaths(state); err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	exists, err := s.verifyResetDomain(ctx, state, false)
+	if err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	if exists {
+		recovered, err := s.DiscoverManagedNode(ctx, state.Identity, state.DomainName)
+		if err != nil {
+			return substrate.NodeHandle{}, err
+		}
+		if recovered.ID != state.NewDomainUUID {
+			return substrate.NodeHandle{}, fmt.Errorf("libvirt reset replacement exact UUID mismatch")
+		}
+		return recovered, nil
+	}
+	if err := domainNameAvailable(ctx, state.DomainName); err != nil {
+		return substrate.NodeHandle{}, err
+	}
 	resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactQCow2, Source: state.BaselinePath, ExpectedDigest: state.BaselineDigest, Architecture: request.Baseline.Architecture, GuestFamily: request.Baseline.GuestFamily})
 	if err != nil || resolved.Identity.Digest != state.BaselineDigest {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt reset baseline changed: %w", err)
@@ -123,6 +155,16 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 		return substrate.NodeHandle{}, err
 	}
 	if err := ensureVMDirOwnership(state.NewVMDir, state.DomainName, state.NewDomainUUID); err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	if err := s.validateResetRecord(state, false, true); err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	hs, err := resetLibvirtHandleState(request, state, diskPath)
+	if err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	if err := persistManagedRecord(hs, false); err != nil {
 		return substrate.NodeHandle{}, err
 	}
 	if err := stageBaseImage(ctx, state.BaselinePath, stagedBase); err != nil {
@@ -145,14 +187,13 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 	if err := validateResetOverlay(ctx, diskPath, stagedBase); err != nil {
 		return substrate.NodeHandle{}, err
 	}
-	hs, err := resetLibvirtHandleState(request, state, diskPath)
-	if err != nil {
-		return substrate.NodeHandle{}, err
-	}
 	if err := ensureCloudInitSSHAccess(ctx, hs); err != nil {
 		return substrate.NodeHandle{}, err
 	}
-	return substrate.NodeHandle{ID: state.NewDomainUUID, Provider: hs, Conn: substrate.ConnInfo{Kind: substrate.ConnKindSSH}}, nil
+	if err := persistManagedRecord(hs, true); err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	return managedNodeHandle(hs), nil
 }
 
 func validateResetOverlay(ctx context.Context, diskPath, baselinePath string) error {
@@ -177,11 +218,35 @@ func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHand
 	if err != nil {
 		return substrate.ResetObservation{}, err
 	}
+	if err := validateLibvirtResetIdentity(ctx, state); err != nil {
+		return substrate.ResetObservation{}, err
+	}
+	if err := s.validateResetPaths(state); err != nil {
+		return substrate.ResetObservation{}, err
+	}
 	observation := substrate.ResetObservation{Phase: substrate.ResetPhaseApplying, OldExternalID: state.OldDomainUUID, NewExternalID: state.NewDomainUUID, BaselineDigest: state.BaselineDigest}
+	oldExists, err := s.verifyResetDomain(ctx, state, true)
+	if err != nil {
+		return observation, err
+	}
+	if oldExists {
+		observation.Residue = append(observation.Residue, state.OldDomainUUID)
+	}
 	if state.OldVMDir != "" {
 		if _, err := os.Stat(state.OldVMDir); err == nil {
 			observation.Residue = append(observation.Residue, state.OldVMDir)
+		} else if !os.IsNotExist(err) {
+			return observation, err
 		}
+	}
+	if _, err := os.Lstat(state.NewVMDir); os.IsNotExist(err) {
+		observation.Reason = "replacement generation not created"
+		return observation, nil
+	} else if err != nil {
+		return observation, err
+	}
+	if err := s.validateResetRecord(state, false, false); err != nil {
+		return observation, err
 	}
 	diskPath := filepath.Join(state.NewVMDir, "disk.qcow2")
 	out, err := exec.CommandContext(ctx, "qemu-img", "info", "--force-share", "--output=json", diskPath).CombinedOutput()
@@ -199,8 +264,11 @@ func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHand
 		observation.Reason = "replacement overlay backing file does not match baseline"
 		return observation, nil
 	}
-	uuidOut, err := exec.CommandContext(ctx, "virsh", "domuuid", state.DomainName).CombinedOutput()
-	if err != nil || strings.TrimSpace(string(uuidOut)) != state.NewDomainUUID {
+	exists, err := s.verifyResetDomain(ctx, state, false)
+	if err != nil {
+		return observation, err
+	}
+	if !exists {
 		observation.Reason = "replacement domain UUID does not match reset handle"
 		return observation, nil
 	}
@@ -211,23 +279,8 @@ func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHand
 	return observation, nil
 }
 
-func (s *Substrate) CleanupReset(_ context.Context, handle substrate.ResetHandle) error {
-	state, _, err := libvirtResetState(handle)
-	if err != nil {
-		return err
-	}
-	if state.OldVMDir == "" {
-		return nil
-	}
-	if _, err := os.Stat(state.OldVMDir); os.IsNotExist(err) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	if err := validateOwnedVMDirInRoot(s.vmDirRoot(), state.DomainName, state.OldDomainUUID, state.OldVMDir, filepath.Join(state.OldVMDir, "disk.qcow2")); err != nil {
-		return err
-	}
-	return os.RemoveAll(state.OldVMDir)
+func (s *Substrate) CleanupReset(ctx context.Context, handle substrate.ResetHandle) error {
+	return s.DestroyReset(ctx, handle)
 }
 
 func (s *Substrate) MarshalResetHandle(handle substrate.ResetHandle) (json.RawMessage, error) {
@@ -254,6 +307,9 @@ func libvirtResetState(handle substrate.ResetHandle) (*resetHandleState, substra
 	if !ok || state == nil || state.Version != libvirtResetHandleVersion {
 		return nil, substrate.ResetRequest{}, fmt.Errorf("invalid libvirt reset handle")
 	}
+	if state.Identity.Validate() != nil || state.OldIdentity.Validate() != nil || state.Identity.Generation <= state.OldIdentity.Generation || state.NewDomainUUID == "" || state.OldDomainUUID == "" {
+		return nil, substrate.ResetRequest{}, fmt.Errorf("libvirt reset handle lacks generation identities")
+	}
 	if handle.Request.Node.Name == "" {
 		return nil, substrate.ResetRequest{}, fmt.Errorf("libvirt reset request was not injected by runtime")
 	}
@@ -274,6 +330,7 @@ func resetLibvirtHandleState(request substrate.ResetRequest, state *resetHandleS
 		machine = "q35"
 	}
 	return &HandleState{
+		Identity:   &state.Identity,
 		DomainName: state.DomainName, DomainUUID: state.NewDomainUUID, VMDir: state.NewVMDir, DiskPath: diskPath,
 		VCPUs: cfg.VCPUs, MemoryMiB: memory, MachineType: machine,
 		SSHUser: cfg.SSHUser, SSHPass: cfg.SSHPass, SSHKey: cfg.SSHKey, SSHAuthorizedKey: cfg.SSHAuthorizedKey,
@@ -282,6 +339,13 @@ func resetLibvirtHandleState(request substrate.ResetRequest, state *resetHandleS
 }
 
 func ensureVMDirOwnership(vmDir, domainName, domainUUID string) error {
+	info, err := os.Lstat(vmDir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("libvirt refuses symlinked or non-directory VM ownership")
+	}
 	path := filepath.Join(vmDir, vmDirOwnershipFile)
 	if raw, err := os.ReadFile(path); err == nil {
 		var ownership vmDirOwnership
@@ -321,6 +385,13 @@ func validateOwnedVMDirInRoot(root, domainName, domainUUID, vmDir, diskPath stri
 	}
 	if diskPath != "" && filepath.Dir(filepath.Clean(diskPath)) != cleanDir {
 		return fmt.Errorf("libvirt reset disk %q is outside owned VM directory", diskPath)
+	}
+	info, err := os.Lstat(vmDir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("libvirt refuses symlinked or non-directory VM ownership")
 	}
 	raw, err := os.ReadFile(filepath.Join(cleanDir, vmDirOwnershipFile))
 	if err != nil {

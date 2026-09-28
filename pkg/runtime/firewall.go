@@ -34,8 +34,8 @@ func (FirewallResourceHandler) Read(ctx context.Context, current state.Resource)
 	}
 	observation, err := policy.ObserveRuleset(ctx, target, owner)
 	if err != nil {
-		if driver.IsCategory(err, driver.ErrorNotFound) || driver.IsCategory(err, driver.ErrorInvalidState) {
-			return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: err.Error()}, nil
+		if driver.IsCategory(err, driver.ErrorNotFound) {
+			return ResourceReadResult{Status: state.ResourceAbsent, Resource: current, Reason: err.Error()}, nil
 		}
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}

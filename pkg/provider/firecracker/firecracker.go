@@ -113,15 +113,18 @@ func (s *Substrate) Validate(spec substrate.NodeSpec) error {
 
 // MarshalProviderState writes the firecracker HandleState as JSON.
 func (s *Substrate) MarshalProviderState(h substrate.NodeHandle) (json.RawMessage, error) {
-	if vm := lookupVM(h.ID); vm != nil {
+	hs, ok := h.Provider.(*HandleState)
+	if !ok || hs == nil {
+		return nil, nil
+	}
+	if vm := lookupVM(hs.VMDir); vm != nil {
 		if err := vm.lockOperation(context.Background()); err != nil {
 			return nil, err
 		}
 		defer vm.unlockOperation()
 	}
-	hs, ok := h.Provider.(*HandleState)
-	if !ok || hs == nil {
-		return nil, nil
+	if hs.Version != manifestVersion {
+		return nil, fmt.Errorf("firecracker provider state version %d unsupported; rebuild required", hs.Version)
 	}
 	return json.Marshal(hs)
 }
@@ -134,6 +137,9 @@ func (s *Substrate) UnmarshalProviderState(data json.RawMessage) (any, error) {
 	var hs HandleState
 	if err := json.Unmarshal(data, &hs); err != nil {
 		return nil, fmt.Errorf("firecracker: unmarshal handle state: %w", err)
+	}
+	if hs.Version != manifestVersion {
+		return nil, fmt.Errorf("firecracker provider state version %d unsupported; rebuild required", hs.Version)
 	}
 	return &hs, nil
 }
@@ -149,14 +155,18 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 			if hs == nil || hs.VsockUDS == "" {
 				return nil, fmt.Errorf("vsock connection requested but VM has no vsock channel")
 			}
-			return transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
+			conn := transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort)
+			conn.BindExecutionIdentity(handle.ID, handle.Generation)
+			return conn, nil
 		case "ssh":
 			return s.sshConn(handle, hints), nil
 		}
 	}
 	// Auto: prefer vsock, fall back to SSH.
 	if hs != nil && hs.VsockUDS != "" {
-		return transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
+		conn := transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort)
+		conn.BindExecutionIdentity(handle.ID, handle.Generation)
+		return conn, nil
 	}
 	return s.sshConn(handle, hints), nil
 }
@@ -200,5 +210,11 @@ func (s *Substrate) sshConn(handle substrate.NodeHandle, hints []substrate.Conne
 		knownHosts = h.KnownHosts
 		insecureHost = h.InsecureSkipHostKeyCheck
 	}
-	return transport.NewSSHConnectionWithTrust(host, port, user, key, pass, knownHosts, insecureHost)
+	namespace := ""
+	if hs != nil {
+		namespace = hs.NetnsName
+	}
+	conn := transport.NewSSHConnectionInNamespaceWithTrust(namespace, host, port, user, key, pass, knownHosts, insecureHost)
+	conn.BindExecutionIdentity(handle.ID, handle.Generation)
+	return conn
 }

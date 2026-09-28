@@ -22,11 +22,7 @@ import (
 	"github.com/oslab/sysbox/pkg/util"
 )
 
-// maxExecStreamBytes is the per-stream cap ExecInNode passes to readExecStreams.
-// It is deliberately larger than the agent's 1 MiB guestOutputLimit: that limit
-// stays the authoritative truncation signal, while this ceiling only stops a
-// pathological flood from growing the buffers without bound.
-const maxExecStreamBytes = 8 << 20
+const maxExecStreamBytes = substrate.DefaultExecOutputLimit
 
 // readExecStreams demultiplexes a hijacked exec stream, aborting the read as
 // soon as ctx is done and capping how much output each stream retains.
@@ -41,9 +37,13 @@ const maxExecStreamBytes = 8 << 20
 // maxBytes bounds how much output each of stdout and stderr retains; the read
 // keeps draining past the cap so a flood cannot stall it, it just stops holding
 // the excess.
-func readExecStreams(ctx context.Context, r io.Reader, conn io.Closer, maxBytes int) (bytes.Buffer, bytes.Buffer, error) {
-	var stdout, stderr cappedBuffer
-	stdout.max, stderr.max = maxBytes, maxBytes
+func readExecStreams(ctx context.Context, r io.Reader, conn io.Closer, maxBytes int) (*substrate.ExecCapture, *substrate.ExecCapture, error) {
+	stdout, stderr := substrate.NewExecCapture(maxBytes, nil), substrate.NewExecCapture(maxBytes, nil)
+	err := copyExecStreams(ctx, r, conn, stdout, stderr)
+	return stdout, stderr, err
+}
+
+func copyExecStreams(ctx context.Context, r io.Reader, conn io.Closer, stdout, stderr io.Writer) error {
 	stopped := make(chan struct{})
 	defer close(stopped)
 	go func() {
@@ -55,7 +55,7 @@ func readExecStreams(ctx context.Context, r io.Reader, conn io.Closer, maxBytes 
 		}
 	}()
 
-	_, err := stdcopy.StdCopy(&stdout, &stderr, r)
+	_, err := stdcopy.StdCopy(stdout, stderr, r)
 	// The context must be consulted even when the read reports no error. Closing
 	// the connection mid-stream usually surfaces as use-of-closed-conn, but a
 	// close landing on a frame boundary makes StdCopy report a clean EOF instead,
@@ -63,42 +63,33 @@ func readExecStreams(ctx context.Context, r io.Reader, conn io.Closer, maxBytes 
 	// would then draw a conclusion from a partial body. Checking ctx first also
 	// attributes the failure to the deadline rather than to the read it caused.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return stdout.buf, stderr.buf, ctxErr
+		return ctxErr
 	}
 	if err != nil {
-		return stdout.buf, stderr.buf, err
+		return err
 	}
-	return stdout.buf, stderr.buf, nil
-}
-
-// cappedBuffer is an io.Writer that retains at most max bytes and discards the
-// rest, always reporting a full write so the caller's copy loop neither errors
-// nor stalls on overflow.
-type cappedBuffer struct {
-	buf bytes.Buffer
-	max int
-}
-
-func (b *cappedBuffer) Write(p []byte) (int, error) {
-	room := b.max - b.buf.Len()
-	if room <= 0 {
-		return len(p), nil // over cap: drain without retaining
-	}
-	if len(p) > room {
-		_, _ = b.buf.Write(p[:room])
-		return len(p), nil // report full consumption so the copy loop never errors
-	}
-	return b.buf.Write(p)
+	return nil
 }
 
 func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
-	cmd, err := transport.CommandArgv(req)
+	conn, err := s.Connection(h, nil)
 	if err != nil {
 		return substrate.ExecResult{}, err
 	}
+	return conn.Exec(ctx, req, nil, nil)
+}
+
+func (c *dockerConn) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (result substrate.ExecResult, err error) {
+	ctx, cancel := req.Context(ctx)
+	defer cancel()
+	defer func() { result, err = substrate.FinishExecution(ctx, result, err) }()
+	cmd, err := transport.CommandArgv(req)
+	if err != nil {
+		return substrate.ExecResult{ErrorClass: substrate.ExecErrorInvalid}, err
+	}
 	envs := util.EnvToSlice(req.Environment)
 
-	ex, err := s.cli.ContainerExecCreate(ctx, h.ID, container.ExecOptions{
+	ex, err := c.sub.cli.ContainerExecCreate(ctx, c.handle.ID, container.ExecOptions{
 		Cmd:          cmd,
 		Env:          envs,
 		WorkingDir:   req.WorkingDir,
@@ -110,43 +101,40 @@ func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, req 
 		return substrate.ExecResult{}, fmt.Errorf("exec create: %w", err)
 	}
 
-	att, err := s.cli.ContainerExecAttach(ctx, ex.ID, container.ExecStartOptions{})
+	att, err := c.sub.cli.ContainerExecAttach(ctx, ex.ID, container.ExecStartOptions{})
 	if err != nil {
 		return substrate.ExecResult{}, fmt.Errorf("exec attach: %w", err)
 	}
 	defer att.Close()
-	stdinDone := make(chan struct{})
-	go func() {
-		if req.Stdin != nil {
+	if req.Stdin != nil {
+		go func() {
 			_, _ = io.Copy(att.Conn, req.Stdin)
 			_ = att.CloseWrite()
-		}
-		close(stdinDone)
-	}()
+		}()
+	}
 
-	stdout, stderr, err := readExecStreams(ctx, att.Reader, att.Conn, maxExecStreamBytes)
+	out, errOut := substrate.NewExecCapture(req.OutputLimitBytes, stdout), substrate.NewExecCapture(req.OutputLimitBytes, stderr)
+	err = copyExecStreams(ctx, att.Reader, att.Conn, out, errOut)
+	result.Stdout, result.Stderr = out.String(), errOut.String()
+	result.StdoutTruncated, result.StderrTruncated = out.Truncated(), errOut.Truncated()
 	if err != nil {
 		// Return the partial body with the error: on a timeout it is the only
 		// trace of how far the command got, and the caller's completion should
 		// carry it rather than an empty result.
-		return substrate.ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("exec read: %w", err)
+		return result, fmt.Errorf("exec read: %w", err)
 	}
-	<-stdinDone
 
-	inspect, err := s.cli.ContainerExecInspect(ctx, ex.ID)
+	inspect, err := c.sub.cli.ContainerExecInspect(ctx, ex.ID)
 	if err != nil {
-		return substrate.ExecResult{}, fmt.Errorf("exec inspect: %w", err)
+		return result, fmt.Errorf("exec inspect: %w", err)
 	}
 	exitCode, err := foregroundExecStatus(inspect)
 	if err != nil {
-		return substrate.ExecResult{}, fmt.Errorf("exec %s: %w", ex.ID, err)
+		return result, fmt.Errorf("exec %s: %w", ex.ID, err)
 	}
 
-	return substrate.ExecResult{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: exitCode,
-	}, nil
+	result.ExitCode, result.ExitCodeKnown = exitCode, true
+	return result, nil
 }
 
 func (s *Substrate) OpenConsole(ctx context.Context, h substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
@@ -323,13 +311,28 @@ func atomicRenameRequest(src, dst string) substrate.ExecRequest {
 // the PID of the process as seen inside the container namespace.
 // The process is not attached to any terminal and survives exec-client disconnect.
 func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, req substrate.ExecRequest) (int, error) {
-	cmd, err := transport.CommandArgv(req)
+	conn, err := s.Connection(h, nil)
 	if err != nil {
 		return 0, err
 	}
+	handle, err := conn.(substrate.ConnectionStarter).Start(ctx, req)
+	return handle.PID, err
+}
+
+func (c *dockerConn) Start(ctx context.Context, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
+	ctx, cancel := req.Context(ctx)
+	defer cancel()
+	handle := substrate.ExecutionHandle{NodeID: c.handle.ID, Generation: c.handle.Generation}
+	cmd, err := transport.CommandArgv(req)
+	if err != nil {
+		return handle, err
+	}
+	if req.Stdin != nil {
+		return handle, fmt.Errorf("background stdin: %w", substrate.ErrNotSupported)
+	}
 	envs := util.EnvToSlice(req.Environment)
 
-	ex, err := s.cli.ContainerExecCreate(ctx, h.ID, container.ExecOptions{
+	ex, err := c.sub.cli.ContainerExecCreate(ctx, c.handle.ID, container.ExecOptions{
 		Cmd:          cmd,
 		Env:          envs,
 		WorkingDir:   req.WorkingDir,
@@ -338,11 +341,12 @@ func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, 
 		AttachStderr: false,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("exec create (background): %w", err)
+		return handle, fmt.Errorf("exec create (background): %w", err)
 	}
+	handle.ID = ex.ID
 
-	if err := s.cli.ContainerExecStart(ctx, ex.ID, container.ExecStartOptions{Detach: true}); err != nil {
-		return 0, fmt.Errorf("exec start (background): %w", err)
+	if err := c.sub.cli.ContainerExecStart(ctx, ex.ID, container.ExecStartOptions{Detach: true}); err != nil {
+		return handle, fmt.Errorf("exec start (background): %w", err)
 	}
 
 	// Docker daemon creates the detached exec process asynchronously;
@@ -350,20 +354,25 @@ func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, 
 	// is either running with a real PID or has already exited.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		inspect, err := s.cli.ContainerExecInspect(ctx, ex.ID)
+		inspect, err := c.sub.cli.ContainerExecInspect(ctx, ex.ID)
 		if err != nil {
-			return 0, fmt.Errorf("exec inspect (background): %w", err)
+			return handle, fmt.Errorf("exec inspect (background): %w", err)
 		}
 		pid, complete, err := backgroundExecStatus(inspect)
 		if err != nil {
-			return 0, err
+			return handle, err
 		}
 		if complete {
-			return pid, nil
+			handle.PID = pid
+			return handle, nil
 		}
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return handle, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	return 0, fmt.Errorf("exec background: timed out waiting for PID")
+	return handle, fmt.Errorf("exec background: timed out waiting for PID")
 }
 
 // foregroundExecStatus reports the exit code of an exec whose streams have been

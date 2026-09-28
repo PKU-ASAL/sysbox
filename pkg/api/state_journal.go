@@ -3,7 +3,11 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
+	"sort"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -13,66 +17,243 @@ type JournalReplayReport struct {
 	Skipped []RecoverAction `json:"skipped,omitempty"`
 }
 
-func replayCheckpointJournal(ctx context.Context, store apiStore, topology, runID string, mgr *state.Manager, owner string) (*JournalReplayReport, error) {
-	cpPtr, err := store.LoadCheckpoint(ctx, topology, runID)
+// Legacy checkpoints are diagnostic projections. They cannot authorize state
+// writes or provider effects in the canonical lifecycle repository.
+func replayCheckpointJournal(context.Context, apiStore, string, string, *state.Manager, string) (*JournalReplayReport, error) {
+	return nil, fmt.Errorf("%w: checkpoint patches are not recovery authority; durable action intents are required", runtime.ErrConvergenceUnsupported)
+}
+func reconcileCheckpointJournal(context.Context, apiStore, string, string, *state.Manager, string) (*RecoverReport, error) {
+	return nil, fmt.Errorf("%w: checkpoint-only recovery is disabled; use canonical action recovery", runtime.ErrConvergenceUnsupported)
+}
+
+type recoveryExecution struct {
+	run        *controlplane.Run
+	executor   *runtime.Executor
+	state      *state.State
+	graph      *graph.Graph
+	repository runtime.ActionRepository
+	actions    []runtime.ActionRecord
+	plan       *runtime.Plan
+}
+
+// loadRecoveryExecution never reads the mutable workspace. The original
+// content-addressed revision and durable action identities define its scope.
+func (s *Server) loadRecoveryExecution(ctx context.Context, topology, runID string, mgr *state.Manager) (*recoveryExecution, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	run, err := s.apiStore.GetRun(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
-	cp := *cpPtr
-	st, err := mgr.LoadWithContext(ctx)
+	if run.Topology != topology {
+		return nil, fmt.Errorf("run topology mismatch")
+	}
+	if run.Status.IsActive() {
+		return nil, fmt.Errorf("run %s is still active", runID)
+	}
+	if run.AgentID != "" {
+		return nil, fmt.Errorf("recovery must execute on owning agent %s; resume the pinned run on that agent", run.AgentID)
+	}
+	if run.Revision == "" {
+		return nil, fmt.Errorf("%w: recovery requires the run's pinned immutable revision", runtime.ErrConvergenceUnsupported)
+	}
+	if err := mgr.CheckMutationSafety(); err != nil {
+		return nil, err
+	}
+	revision, err := s.apiStore.GetGlobalRevision(ctx, run.Revision)
 	if err != nil {
-		return nil, fmt.Errorf("load state: %w", err)
+		return nil, fmt.Errorf("load pinned revision: %w", err)
 	}
-	report := &JournalReplayReport{}
-	changed := false
-	recorded := map[int]bool{}
-	for _, patch := range runtime.UnrecordedStatePatches(cp) {
-		action := RecoverAction{Resource: patch.Resource, Status: "replayed_state_patch"}
-		if patch.State != nil {
-			if id, _ := patch.State.Instance["container_id"].(string); id != "" {
-				action.ExternalID = id
+	if revision.Revision != run.Revision || controlplane.ComputeRevisionDigest(revision.Files) != run.Revision {
+		return nil, fmt.Errorf("pinned revision digest mismatch")
+	}
+	snapshot, err := s.workspaceService().MaterializeRevision(topology, run.Revision, revision.Files)
+	if err != nil {
+		return nil, fmt.Errorf("verify pinned snapshot: %w", err)
+	}
+	g, _, st, _, _, err := runtime.LoadWorkspaceWithInputs(snapshot, mgr, run.Inputs)
+	if err != nil {
+		return nil, fmt.Errorf("load pinned recovery inputs: %w", err)
+	}
+	repository, err := s.actionRepository(topology)
+	if err != nil {
+		return nil, err
+	}
+	all, err := repository.LoadActions(ctx, topology)
+	if err != nil {
+		return nil, err
+	}
+	actions := []runtime.ActionRecord{}
+	chosen := map[string]runtime.ActionRecord{}
+	for _, action := range all {
+		if action.RunID != runID {
+			if action.Status != runtime.ActionSucceeded {
+				return nil, fmt.Errorf("%w: another unfinished run owns this topology", runtime.ErrActionUncertain)
 			}
-			if id, _ := patch.State.Instance["docker_network_id"].(string); id != "" {
-				action.ExternalID = id
-			}
+			continue
 		}
-		if runtime.ApplyStatePatch(st, patch) {
-			report.Applied = append(report.Applied, action)
-			changed = true
-			recorded[patch.Index] = true
+		actions = append(actions, action)
+		key := action.Resource.String()
+		old, ok := chosen[key]
+		if !ok || action.Status != runtime.ActionSucceeded || action.Generation > old.Generation {
+			chosen[key] = action
+		}
+	}
+	if len(actions) == 0 {
+		return nil, fmt.Errorf("%w: run has no durable action intents; checkpoint patches cannot prove completion", runtime.ErrConvergenceUnsupported)
+	}
+	keys := make([]string, 0, len(chosen))
+	for key := range chosen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	plan := &runtime.Plan{}
+	for _, key := range keys {
+		action := chosen[key]
+		change := controlplane.PlannedChange{Address: action.Resource, Action: action.Action, Reason: "recover authorized durable action"}
+		if action.Action == controlplane.PlanActionReset {
+			reset, err := runtime.BuildResetPlan(g, st, action.Resource.String())
+			if err != nil {
+				return nil, err
+			}
+			if len(reset.Actions) != 1 {
+				return nil, fmt.Errorf("reset recovery target is ambiguous")
+			}
+			change = reset.Actions[0]
+		}
+		if action.Action != controlplane.PlanActionDelete && g.Get(action.Resource) == nil {
+			return nil, fmt.Errorf("%w: action target absent from pinned revision", runtime.ErrPlanStale)
+		}
+		plan.Actions = append(plan.Actions, change)
+	}
+	executor := runtime.NewExecutor(g, st)
+	executor.SetRunContext(topology, runID)
+	executor.SetWorkspaceFromHCLFile(snapshot)
+	executor.SetActionRepository(repository)
+	executor.SetLogger(io.Discard)
+	return &recoveryExecution{run: run, executor: executor, state: st, graph: g, repository: repository, actions: actions, plan: plan}, nil
+}
+
+func (s *Server) reconcileCanonicalActions(ctx context.Context, topology, runID string, mgr *state.Manager) (*RecoverReport, error) {
+	if s.jobs.hasRunning(topology) {
+		return nil, fmt.Errorf("topology %s has an active operation", topology)
+	}
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
+	if s.jobs.hasRunning(topology) {
+		return nil, fmt.Errorf("topology %s has an active operation", topology)
+	}
+	execution, err := s.loadRecoveryExecution(ctx, topology, runID, mgr)
+	if err != nil {
+		return nil, err
+	}
+	if err := execution.executor.RecoverActions(ctx, execution.plan); err != nil {
+		return nil, err
+	}
+	after, err := execution.repository.LoadActions(ctx, topology)
+	if err != nil {
+		return nil, err
+	}
+	completed := map[string]bool{}
+	for _, action := range after {
+		completed[action.ID] = action.Status == runtime.ActionSucceeded
+	}
+	report := &RecoverReport{RunID: runID, Topology: topology}
+	for _, action := range execution.actions {
+		entry := RecoverAction{Resource: action.Resource.String(), Status: "already_recorded"}
+		if action.Candidate != nil {
+			entry.ExternalID = action.Candidate.ExternalID
+		}
+		if action.Status != runtime.ActionSucceeded && completed[action.ID] {
+			entry.Status = "recovered"
+			report.Recovered = append(report.Recovered, entry)
 		} else {
-			action.Status = "skipped_state_patch"
-			report.Skipped = append(report.Skipped, action)
-		}
-	}
-	if changed {
-		st.Lineage = cp.RunID
-		if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: owner}); err != nil {
-			return nil, fmt.Errorf("save replayed state patches: %w", err)
-		}
-		runtime.MarkStatePatchesRecorded(&cp, recorded)
-		if err := store.SaveCheckpoint(ctx, topology, runID, cp); err != nil {
-			return nil, fmt.Errorf("mark replayed state patches recorded: %w", err)
+			report.Skipped = append(report.Skipped, entry)
 		}
 	}
 	return report, nil
 }
 
-func reconcileCheckpointJournal(ctx context.Context, store apiStore, topology, runID string, mgr *state.Manager, owner string) (*RecoverReport, error) {
-	if err := mgr.CheckMutationSafety(); err != nil {
-		return nil, err
+func (s *Server) cleanupCanonicalActions(ctx context.Context, topology, runID string) (*CleanupReport, error) {
+	if s.jobs.hasRunning(topology) {
+		return nil, fmt.Errorf("topology %s has an active operation", topology)
 	}
-	journal, err := replayCheckpointJournal(ctx, store, topology, runID, mgr, owner)
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
+	if s.jobs.hasRunning(topology) {
+		return nil, fmt.Errorf("topology %s has an active operation", topology)
+	}
+	mgr, err := s.stateManager(topology)
 	if err != nil {
 		return nil, err
 	}
-	recovered, err := recoverCheckpoint(ctx, store, topology, runID, mgr, owner)
+	execution, err := s.loadRecoveryExecution(ctx, topology, runID, mgr)
 	if err != nil {
 		return nil, err
 	}
-	if journal != nil {
-		recovered.Recovered = append(journal.Applied, recovered.Recovered...)
-		recovered.Skipped = append(journal.Skipped, recovered.Skipped...)
+	// A known complete effect can be restored first. Arbitrary uncertain guest
+	// execution remains blocked by the same runner and is never replayed.
+	if err := execution.executor.RecoverActions(ctx, execution.plan); err != nil {
+		return nil, err
 	}
-	return recovered, nil
+	actions, err := execution.repository.LoadActions(ctx, topology)
+	if err != nil {
+		return nil, err
+	}
+	selected := map[string]runtime.ActionRecord{}
+	for _, action := range actions {
+		if action.RunID != runID || action.Action == controlplane.PlanActionDelete {
+			continue
+		}
+		key := action.Resource.String()
+		old, ok := selected[key]
+		if !ok || action.Generation > old.Generation {
+			selected[key] = action
+		}
+	}
+	keys := make([]string, 0, len(selected))
+	for key := range selected {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	report := &CleanupReport{RunID: runID, Topology: topology}
+	plan := &runtime.Plan{}
+	removing := []CleanupAction{}
+	for _, key := range keys {
+		record := selected[key]
+		entry := CleanupAction{Resource: key, Status: "not_found"}
+		candidate := record.Candidate
+		if candidate != nil {
+			entry.ExternalID = candidate.ExternalID
+			if candidate.Address.Type == "sysbox_network" {
+				entry.Class = string(runtime.CheckpointCleanupNetwork)
+			} else if candidate.Driver == "firecracker" {
+				entry.Class = string(runtime.CheckpointCleanupMicroVM)
+			}
+		}
+		current := execution.state.FindResource(record.Resource)
+		if current == nil {
+			appendCleanupAction(report, entry)
+			continue
+		}
+		if candidate == nil || current.OwnerUID != record.OwnerUID || current.ResourceUID != record.ResourceUID || current.Generation != record.Generation || current.ExternalID != candidate.ExternalID {
+			entry.Status = "identity_conflict"
+			entry.Error = "current resource is not the generation created by this run"
+			appendCleanupAction(report, entry)
+			continue
+		}
+		plan.Actions = append(plan.Actions, controlplane.PlannedChange{Address: record.Resource, Action: controlplane.PlanActionDelete, Reason: "explicit cleanup of this run's verified generation"})
+		entry.Status = "removed"
+		removing = append(removing, entry)
+	}
+	if len(plan.Actions) > 0 {
+		if err := execution.executor.Destroy(ctx, plan); err != nil {
+			return nil, err
+		}
+		for _, entry := range removing {
+			appendCleanupAction(report, entry)
+		}
+	}
+	return report, nil
 }

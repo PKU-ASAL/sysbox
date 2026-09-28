@@ -14,14 +14,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type journalResource struct{ creates, deletes int }
+type journalResource struct {
+	creates, deletes int
+	removed          map[string]bool
+}
 
 func (*journalResource) Type() string { return "journal_fixture" }
 func (*journalResource) Schema() ResourceSchema {
 	return ResourceSchema{Type: "journal_fixture", Version: 1}
 }
-func (*journalResource) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (p *journalResource) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+	if p.removed[current.Address.String()] {
+		return ResourceReadResult{Status: state.ResourceAbsent}, nil
+	}
 	return resourceReadOK(current), nil
+}
+func (*journalResource) Discover(context.Context, *ProviderContext, *graph.Node) (ResourceReadResult, error) {
+	return ResourceReadResult{Status: state.ResourceAbsent}, nil
 }
 func (*journalResource) PlanDiff(n *graph.Node, _ *state.Resource) (controlplane.PlannedChange, error) {
 	return controlplane.PlannedChange{Address: n.Address, Action: controlplane.PlanActionCreate}, nil
@@ -30,8 +39,12 @@ func (p *journalResource) Create(_ context.Context, _ *ProviderContext, n *graph
 	p.creates++
 	return state.Resource{Address: n.Address, ExternalID: "owned-node"}, nil
 }
-func (p *journalResource) Delete(_ context.Context, _ *ProviderContext, _ state.Resource) error {
+func (p *journalResource) Delete(_ context.Context, _ *ProviderContext, r state.Resource) error {
 	p.deletes++
+	if p.removed == nil {
+		p.removed = map[string]bool{}
+	}
+	p.removed[r.Address.String()] = true
 	return nil
 }
 func (*journalResource) ExternalID(r state.Resource) string { return r.ExternalID }
@@ -46,7 +59,7 @@ func journalExecutor(t *testing.T) (*Executor, *journalResource, address.Address
 	g := graph.New()
 	addr := address.Resource(handler.Type(), "node")
 	require.NoError(t, g.AddNode(addr, nil))
-	return NewExecutor(g, &state.State{Version: state.SchemaVersion}), handler, addr
+	return testActionExecutor(t, g, &state.State{Version: state.SchemaVersion}), handler, addr
 }
 
 func TestApplyNeverCreatesWhenIntentPersistenceFails(t *testing.T) {
@@ -128,7 +141,8 @@ func TestDestroyStopsAfterStateCommitFails(t *testing.T) {
 	executor.state.AddResource(state.Resource{Address: first})
 	executor.state.AddResource(state.Resource{Address: second})
 	want := errors.New("state commit failed")
-	executor.SetStatePatchSink(failingStatePatch{err: want})
+	executor = testActionExecutor(t, executor.graph, executor.state)
+	executor.actions.(*memoryActions).patchErr = want
 	err := executor.Destroy(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: first, Action: controlplane.PlanActionDelete}, {Address: second, Action: controlplane.PlanActionDelete}}})
 	require.ErrorIs(t, err, want)
 	require.Equal(t, 1, handler.deletes)

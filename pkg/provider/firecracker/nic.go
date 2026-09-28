@@ -108,18 +108,43 @@ func (s *Substrate) Delete(ctx context.Context, _ substrate.NodeHandle, _ driver
 }
 
 func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req linkRequest) (attachedNIC, error) {
-	vm := lookupOrReserveVM(h.ID)
-	if err := vm.lockOperation(ctx); err != nil {
+	vm, m, release, err := s.lockedManifest(ctx, h)
+	if err != nil {
 		return attachedNIC{}, err
 	}
-	defer vm.unlockOperation()
+	defer release()
+	if err := recoverLaunch(m); err != nil {
+		return attachedNIC{}, err
+	}
+	live, _, err := probeProcess(m.Process)
+	if err != nil {
+		return attachedNIC{}, err
+	}
 	state := vm.snapshot()
-	if state.started || state.destroying || state.destroyed {
+	if live || state.destroying || state.destroyed {
 		return attachedNIC{}, fmt.Errorf("firecracker NIC attachment requires a stopped, prepared VM")
 	}
-	hs, _ := h.Provider.(*HandleState)
-	if hs == nil || hs.ConfigPath == "" {
-		return attachedNIC{}, fmt.Errorf("VM config path not found in handle provider state")
+	hs := &m.Handle
+	if hs.NICCount > 0 && hs.NetnsName != req.NetNS {
+		return attachedNIC{}, fmt.Errorf("firecracker VM cannot attach NICs from multiple network namespaces: %q and %q", hs.NetnsName, req.NetNS)
+	}
+	if req.IP != "" {
+		if _, _, err := splitCIDR(req.IP); err != nil {
+			return attachedNIC{}, err
+		}
+	}
+	// Parse the current configuration before any TAP or namespace mutation.
+	raw, err := readRegularFile(hs.ConfigPath)
+	if err != nil {
+		return attachedNIC{}, err
+	}
+	var prepared fcConfig
+	if err := json.Unmarshal(raw, &prepared); err != nil {
+		return attachedNIC{}, err
+	}
+	m.Phase = "attaching"
+	if err := saveManifest(m); err != nil {
+		return attachedNIC{}, err
 	}
 
 	tapName := attachmentTapName(h.ID, req.Name)
@@ -193,6 +218,16 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 
 	hs.NICCount = nicIdx + 1
 	hs.TapName = tapName
+	m.Phase = "prepared"
+	if err := refreshConfigDigest(m); err != nil {
+		return attachedNIC{}, err
+	}
+	if err := saveManifest(m); err != nil {
+		return attachedNIC{}, err
+	}
+	if original, _ := h.Provider.(*HandleState); original != nil {
+		original.NICCount, original.TapName, original.NetnsName = hs.NICCount, hs.TapName, hs.NetnsName
+	}
 
 	return attachedNIC{
 		Kind:     substrate.NICKindTap,
@@ -235,7 +270,7 @@ func injectKernelIPArg(cfgPath, dev, hostname, cidr, gw string) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	return os.WriteFile(cfgPath, out, 0644)
+	return atomicWriteFile(cfgPath, out, 0600)
 }
 
 // upsertCmdlineArg replaces the first token whose key matches `key=` with the
@@ -331,7 +366,7 @@ func appendNICtoConfig(cfgPath string, iface fcNetworkInterface) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
-	return os.WriteFile(cfgPath, out, 0644)
+	return atomicWriteFile(cfgPath, out, 0600)
 }
 
 // ipBin is the absolute path to the ip binary, resolved once at init.

@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -157,6 +158,45 @@ func (s *WorkspaceService) List(ctx context.Context) ([]WorkspaceInfo, error) {
 		items[name] = &WorkspaceInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name, HasHCL: true}
 	}
 	if s.stateBackend == "" {
+		// Lifecycle aggregates are authoritative; standalone JSON is a retired
+		// format and must not be used to infer that a managed topology is empty.
+		aggregates, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json.lifecycle"))
+		if err != nil {
+			return nil, err
+		}
+		for _, dir := range aggregates {
+			name := filepath.Base(filepath.Dir(dir))
+			if validatePathSegment(name, "topology") != nil {
+				continue
+			}
+			mgr, err := s.stateManager(name)
+			if err != nil {
+				return nil, err
+			}
+			listed, err := mgr.ListTopologies(ctx)
+			if err != nil {
+				return nil, err
+			}
+			var current *state.TopologyMetadata
+			for i := range listed {
+				if listed[i].Name == name {
+					current = &listed[i]
+					break
+				}
+			}
+			if current == nil {
+				continue
+			}
+			info := items[name]
+			if info == nil {
+				info = &WorkspaceInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name}
+				items[name] = info
+			}
+			info.HasState = current.HasState
+			info.Serial = current.Serial
+			info.ResourceCount = current.ResourceCount
+			info.Backend = current.Backend
+		}
 		stateEntries, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json"))
 		if err != nil {
 			return nil, err
@@ -172,11 +212,12 @@ func (s *WorkspaceService) List(ctx context.Context) ([]WorkspaceInfo, error) {
 			info.Backend = "local"
 		}
 	} else {
-		mgr, err := s.stateManager("__list__")
+		repo, err := persistence.OpenCatalog(ctx, s.stateBackend)
 		if err != nil {
 			return nil, err
 		}
-		topologies, err := mgr.ListTopologies(ctx)
+		defer repo.Close()
+		topologies, err := repo.ListTopologies(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -229,12 +270,17 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if s.stateBackend == "" {
-		if err := s.removeWorkspaceMetadata(topology); err != nil {
+	if conditional, ok := mgr.Backend().(state.VersionedDeleteBackend); ok {
+		if err := conditional.DeleteVersioned(ctx, st.Meta.Serial, st.TopologyUID); err != nil {
 			return fmt.Errorf("remove state: %w", err)
 		}
 	} else if err := mgr.Delete(ctx); err != nil {
 		return fmt.Errorf("remove state: %w", err)
+	}
+	if s.stateBackend == "" {
+		if err := s.removeWorkspaceMetadata(topology); err != nil {
+			return fmt.Errorf("remove state: %w", err)
+		}
 	}
 	if err := os.RemoveAll(filepath.Join(s.workspacesDir, topology)); err != nil {
 		return fmt.Errorf("remove workspace: %w", err)
@@ -267,7 +313,9 @@ func (s *WorkspaceService) removeWorkspaceMetadata(topology string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() == "revisions" || entry.Name() == "snapshots" {
+		// The aggregate retains its fresh owner identity and stable flock inode.
+		// Removing it could split concurrent writers across two different locks.
+		if entry.Name() == "revisions" || entry.Name() == "snapshots" || entry.Name() == filepath.Base(s.StateFile(topology))+".lifecycle" {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
@@ -286,7 +334,16 @@ func (s *WorkspaceService) LoadState(topology string) (*state.State, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.stateBackend == "" && len(st.Resources) == 0 {
+	if s.stateBackend == "" && len(st.Resources) == 0 && st.Meta.Serial == 0 {
+		listed, err := mgr.ListTopologies(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range listed {
+			if item.Name == topology && item.HasState {
+				return st, nil
+			}
+		}
 		if _, err := os.Stat(s.StateFile(topology)); err != nil {
 			return nil, fmt.Errorf("topology %q: no state file", topology)
 		}

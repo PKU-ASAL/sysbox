@@ -26,9 +26,14 @@ type Executor struct {
 	logger              io.Writer
 	recorder            OperationRecorder
 	patchSink           StatePatchSink
+	actions             ActionRepository
+	recoveredCreates    map[string]bool
+	recoveredDeletes    map[string]bool
+	activeReset         *ActionRecord
 	secretResolver      secret.Resolver
 	topology            string
 	runID               string
+	resumeRunID         string
 	workspaceDir        string
 	operation           string
 	currentResourceStep int
@@ -58,6 +63,8 @@ func (e *Executor) SetRunContext(topology, runID string) {
 	e.topology = topology
 	e.runID = runID
 }
+
+func (e *Executor) SetResumeRunID(runID string) { e.resumeRunID = runID }
 
 // SetWorkspaceDir records the directory a topology's HCL tree is materialised
 // into (workspacesDir/<topology>/). Relative provisioner "file" sources resolve
@@ -151,6 +158,18 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 	if r == nil {
 		return nil
 	}
+	if e.activeReset != nil && e.activeReset.Resource.Equal(id) {
+		candidate := cloneResetStateResource(*r)
+		e.activeReset.Candidate = &candidate
+		e.activeReset.ExpectedSerial = e.state.Meta.Serial
+		e.activeReset.Status = ActionUncertain
+		if err := e.actions.CommitActionOutcome(ctx, *e.activeReset, nil); err != nil {
+			return fmt.Errorf("persist reset phase identity: %w", err)
+		}
+		e.activeReset.Revision++
+		e.recorder.StepStateResource(step, resourceLog(candidate))
+		return e.journalError()
+	}
 	externalID := r.Str("id")
 	if p, ok := GetResourceHandler(r.Address.Type); ok {
 		externalID = p.ExternalID(*r)
@@ -235,6 +254,10 @@ func (e *Executor) CreateResource(ctx context.Context, id address.Address) error
 	if p, ok := GetResourceHandler(id.Type); ok {
 		res, err := p.Create(ctx, &ProviderContext{exec: e}, node)
 		if err != nil {
+			if !res.Address.IsZero() {
+				e.state.RemoveResource(res.Address)
+				e.state.AddResource(res)
+			}
 			return err
 		}
 		res.ResourceType = id.Type
@@ -244,11 +267,12 @@ func (e *Executor) CreateResource(ctx context.Context, id address.Address) error
 		if res.ExternalID == "" {
 			res.ExternalID = p.ExternalID(res)
 		}
+		e.state.RemoveResource(res.Address)
 		e.state.AddResource(res)
 		return nil
 	}
 
-	return nil
+	return fmt.Errorf("unsupported resource type %q", id.Type)
 }
 
 // DestroyResource tears down a resource listed in state.
@@ -257,9 +281,7 @@ func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error 
 		return p.Delete(ctx, &ProviderContext{exec: e}, r)
 	}
 
-	e.logf("[destroy] skipping unimplemented resource %s\n", r.Address)
-	e.state.RemoveResource(r.Address)
-	return nil
+	return fmt.Errorf("unsupported resource type %q", r.Address.Type)
 }
 
 // -- reference resolution helpers --

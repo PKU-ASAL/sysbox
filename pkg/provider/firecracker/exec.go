@@ -3,163 +3,88 @@ package firecracker
 import (
 	"context"
 	"fmt"
-	"io"
-	"time"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
-	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
 
 const (
-	defaultSSHUser    = "root"
-	defaultSSHPass    = "root"
-	defaultSSHPort    = 22
-	sshConnectTimeout = 30 * time.Second
-	vsockReadyTimeout = 30 * time.Second
+	defaultSSHUser = "root"
+	defaultSSHPass = "root"
 )
 
-// vsockConnFromHandle builds a VsockConnection from the handle's typed
-// HandleState. Returns nil if vsock metadata is missing (rootfs without
-// sysbox-init).
-func vsockConnFromHandle(h substrate.NodeHandle) *transport.VsockConnection {
-	hs, _ := h.Provider.(*HandleState)
-	if hs == nil || hs.VsockUDS == "" {
-		return nil
+// ExecInNode is the transitional GuestExec adapter. Node.Connection owns all
+// transport selection, identity, namespace and trust settings.
+func (s *Substrate) ExecInNode(ctx context.Context, handle substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
+	conn, err := s.Connection(handle, nil)
+	if err != nil {
+		return substrate.ExecResult{}, err
 	}
-	port := vsockrpc.DefaultPort
-	if hs.VsockPort != 0 {
-		port = hs.VsockPort
-	}
-	return transport.NewVsockConnection(hs.VsockUDS, port)
+	return conn.Exec(ctx, req, nil, nil)
 }
 
-// ExecInNode runs a command inside the VM. It uses vsock RPC when the handle
-// contains vsock metadata, otherwise it uses SSH.
-func (s *Substrate) ExecInNode(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecRequest) (substrate.ExecResult, error) {
-	if vc := vsockConnFromHandle(h); vc != nil {
-		return s.execInNodeVsock(ctx, vc, spec)
+func (s *Substrate) ExecBackground(ctx context.Context, handle substrate.NodeHandle, req substrate.ExecRequest) (int, error) {
+	conn, err := s.Connection(handle, nil)
+	if err != nil {
+		return 0, err
 	}
-	return s.execInNodeSSH(ctx, h, spec)
+	starter, ok := conn.(substrate.ConnectionStarter)
+	if !ok {
+		return 0, substrate.ErrNotSupported
+	}
+	execution, err := starter.Start(ctx, req)
+	return execution.PID, err
 }
 
-func (s *Substrate) OpenConsole(ctx context.Context, h substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
-	if vc := vsockConnFromHandle(h); vc != nil {
-		return vc.OpenConsole(ctx, transport.ConsoleRequest{
-			Cmd:   req.Cmd,
-			Shell: req.Shell,
-			Env:   req.Env,
-			Cols:  req.Cols,
-			Rows:  req.Rows,
-		})
+// Console has its own session/TTY contract but uses the same connection identity.
+func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
+	conn, err := s.Connection(handle, nil)
+	if err != nil {
+		return nil, err
 	}
-	ssh := sshConnFromHandle(h)
-	if ssh == nil {
-		return nil, fmt.Errorf("no vsock or SSH console info in handle")
+	console := transport.ConsoleRequest{Cmd: req.Cmd, Shell: req.Shell, Env: req.Env, Cols: req.Cols, Rows: req.Rows}
+	switch conn := conn.(type) {
+	case *transport.SSHConnection:
+		return conn.OpenConsole(ctx, console)
+	case *transport.VsockConnection:
+		return conn.OpenConsole(ctx, console)
+	default:
+		return nil, substrate.ErrNotSupported
 	}
-	return ssh.OpenConsole(ctx, transport.ConsoleRequest{
-		Cmd:   req.Cmd,
-		Shell: req.Shell,
-		Env:   req.Env,
-		Cols:  req.Cols,
-		Rows:  req.Rows,
-	})
 }
 
 var _ substrate.ConsoleProvider = (*Substrate)(nil)
 
-func (s *Substrate) execInNodeVsock(ctx context.Context, vc *transport.VsockConnection, req substrate.ExecRequest) (substrate.ExecResult, error) {
-	return vc.Exec(ctx, req, io.Discard, io.Discard)
-}
-
-func (s *Substrate) execInNodeSSH(ctx context.Context, h substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
-	conn := sshConnFromHandle(h)
-	if conn == nil {
-		return substrate.ExecResult{}, fmt.Errorf("no SSH connection info in handle")
-	}
-	return conn.Exec(ctx, req, io.Discard, io.Discard)
-}
-
-// ExecBackground starts a detached command inside the VM. Prefers vsock
-// and falls back to SSH.
-func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecRequest) (int, error) {
-	if vc := vsockConnFromHandle(h); vc != nil {
-		return vc.ExecBackground(ctx, spec)
-	}
-	return s.execBackgroundSSH(ctx, h, spec)
-}
-
-func (s *Substrate) execBackgroundSSH(ctx context.Context, h substrate.NodeHandle, spec substrate.ExecRequest) (int, error) {
-	conn := sshConnFromHandle(h)
-	if conn == nil {
-		return 0, fmt.Errorf("no SSH connection info in handle")
-	}
-	pid, err := conn.ExecBackground(ctx, spec)
+func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle, src, dst string, mode uint32) error {
+	conn, err := s.Connection(handle, nil)
 	if err != nil {
-		return 0, fmt.Errorf("ssh background: %w", err)
-	}
-	return pid, nil
-}
-
-// CopyToNode copies a file into the VM. Prefers vsock write_file,
-// falls back to SSH cat.
-
-func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, src, dst string, mode uint32) error {
-	tmp := dst + ".sysbox-tmp"
-	if vc := vsockConnFromHandle(h); vc != nil {
-		if err := vc.CopyFile(ctx, src, tmp); err != nil {
-			return err
-		}
-		result, err := s.ExecInNode(ctx, h, guestFileInstallRequest("chmod", fmt.Sprintf("%04o", mode), tmp))
-		if err != nil || result.ExitCode != 0 {
-			return fmt.Errorf("set guest file mode")
-		}
-		result, err = s.ExecInNode(ctx, h, guestFileInstallRequest("mv", "-f", tmp, dst))
-		if err != nil || result.ExitCode != 0 {
-			return fmt.Errorf("atomic guest file rename")
-		}
-		return nil
-	}
-	if err := s.copyToNodeSSH(ctx, h, src, tmp); err != nil {
 		return err
 	}
-	result, err := s.ExecInNode(ctx, h, guestFileInstallRequest("chmod", fmt.Sprintf("%04o", mode), tmp))
-	if err != nil || result.ExitCode != 0 {
-		return fmt.Errorf("set guest file mode")
+	files, ok := conn.(substrate.ConnectionFileCopier)
+	if !ok {
+		return substrate.ErrNotSupported
 	}
-	result, err = s.ExecInNode(ctx, h, guestFileInstallRequest("mv", "-f", tmp, dst))
-	if err != nil || result.ExitCode != 0 {
-		return fmt.Errorf("atomic guest file rename")
+	tmp := dst + ".sysbox-tmp"
+	if err := files.CopyFile(ctx, src, tmp); err != nil {
+		return err
+	}
+	result, err := conn.Exec(ctx, guestFileInstallRequest("chmod", fmt.Sprintf("%04o", mode), tmp), nil, nil)
+	if err != nil {
+		return fmt.Errorf("set guest file mode: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("set guest file mode: exit code %d", result.ExitCode)
+	}
+	result, err = conn.Exec(ctx, guestFileInstallRequest("mv", "-f", tmp, dst), nil, nil)
+	if err != nil {
+		return fmt.Errorf("atomic guest file rename: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("atomic guest file rename: exit code %d", result.ExitCode)
 	}
 	return nil
 }
 
 func guestFileInstallRequest(program string, args ...string) substrate.ExecRequest {
 	return substrate.ExecRequest{Program: program, Args: args, Shell: substrate.ShellNone}
-}
-
-func (s *Substrate) copyToNodeSSH(ctx context.Context, h substrate.NodeHandle, src, dst string) error {
-	conn := sshConnFromHandle(h)
-	if conn == nil {
-		return fmt.Errorf("no SSH connection info in handle")
-	}
-	return conn.CopyFile(ctx, src, dst)
-}
-
-// sshConnFromHandle constructs an SSHConnection from the firecracker handle's
-// SSH metadata. Returns nil if no SSH info is available.
-func sshConnFromHandle(h substrate.NodeHandle) *transport.SSHConnection {
-	hs, _ := h.Provider.(*HandleState)
-	if hs == nil || hs.SSHIP == "" {
-		return nil
-	}
-	port := "22"
-	if hs.SSHPort != "" {
-		port = hs.SSHPort
-	}
-	user := hs.SSHUser
-	if user == "" {
-		user = "root"
-	}
-	return transport.NewSSHConnectionSecure(hs.SSHIP, port, user, "", hs.SSHPass)
 }

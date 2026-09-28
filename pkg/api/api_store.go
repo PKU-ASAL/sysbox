@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -176,7 +177,10 @@ func newAPIStore(runsDir, backendURL string) (apiStore, error) {
 		return store, nil
 	}
 	if strings.HasPrefix(backendURL, "sqlite://") {
-		path := strings.TrimPrefix(backendURL, "sqlite://")
+		path, err := persistence.SQLitePath(backendURL)
+		if err != nil {
+			return nil, err
+		}
 		return &sqliteAPIStore{dbPath: path, runsDir: runsDir}, nil
 	}
 	return &localAPIStore{runsDir: runsDir}, nil

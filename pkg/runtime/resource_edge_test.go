@@ -235,3 +235,15 @@ func TestFirewallReadDetectsDigestDrift(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, state.ResourceDrifted, result.Status)
 }
+
+func TestFirewallIdentityConflictIsUnknown(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	fake := &firewallPolicyFake{observeErr: driver.Wrap(driver.ErrorInvalidState, "policy-conflict", "owner mismatch", nil)}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-conflict", Version: "test", Policy: fake}))
+	res := state.Resource{Address: address.Resource("sysbox_firewall", "edge"), Driver: "policy-conflict", Attributes: state.MustAttributes(map[string]any{"owner": "owner", "attach_to": "sysbox_router.edge", "policy_target_state": `{"container_id":"router"}`, "desired_digest": "expected"})}
+	observed, err := (FirewallResourceHandler{}).Read(context.Background(), res)
+	require.Error(t, err)
+	require.Equal(t, state.ResourceUnknown, observed.Status)
+}

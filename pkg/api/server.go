@@ -1,20 +1,24 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
 // Server holds all API state and registers HTTP routes.
 type Server struct {
+	repositoryMu  sync.Mutex
+	repositories  map[string]*persistence.Repository
 	runsDir       string
 	workspacesDir string
 	stateBackend  string
@@ -108,15 +112,42 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 }
 
 func (s *Server) stateManager(topology string) (*state.Manager, error) {
-	if s.stateBackend == "" {
-		return state.NewManager(filepath.Join(s.runsDir, topology, "state.json")), nil
-	}
-	raw := strings.ReplaceAll(s.stateBackend, "{topology}", topology)
-	b, err := state.ParseBackendURL(raw)
+	repo, err := s.actionRepository(topology)
 	if err != nil {
-		return nil, fmt.Errorf("state backend: %w", err)
+		return nil, err
 	}
-	return state.NewManagerWithBackend(b), nil
+	return state.NewManagerWithBackend(repo.StateBackend(topology)), nil
+}
+
+func (s *Server) actionRepository(topology string) (*persistence.Repository, error) {
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(s.runsDir, topology, "state.json")
+	raw, path, err := persistence.ResolveLocation(s.stateBackend, path, topology)
+	if err != nil {
+		return nil, err
+	}
+	key := raw
+	if key == "" {
+		key = path
+	}
+	s.repositoryMu.Lock()
+	defer s.repositoryMu.Unlock()
+	if repo := s.repositories[key]; repo != nil {
+		return repo, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	repo, err := persistence.OpenConfigured(ctx, raw, path)
+	if err != nil {
+		return nil, err
+	}
+	if s.repositories == nil {
+		s.repositories = map[string]*persistence.Repository{}
+	}
+	s.repositories[key] = repo
+	return repo, nil
 }
 
 func (s *Server) runs() *RunService {

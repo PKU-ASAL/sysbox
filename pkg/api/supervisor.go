@@ -100,29 +100,47 @@ func (s *Supervisor) Scan(ctx context.Context) {
 func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
 	st, err := s.server.workspaceService().LoadState(topology)
 	if err != nil {
-		return err
+		// The first create may have durable intent but no committed resource yet.
+		// That aggregate still needs observation after a crash.
+		repository, repositoryErr := s.server.actionRepository(topology)
+		if repositoryErr != nil {
+			return repositoryErr
+		}
+		actions, actionsErr := repository.LoadActions(ctx, topology)
+		if actionsErr != nil {
+			return actionsErr
+		}
+		if len(actions) == 0 {
+			return err
+		}
+		st, err = repository.LoadState(ctx, topology)
+		if err != nil {
+			return err
+		}
 	}
 	snap := HealthSnapshot{
 		Topology: topology,
 		Observed: time.Now().UTC(),
 		Health:   s.server.authoritativeTopologyHealth(ctx, topology, st),
 		Policy:   s.policy,
-		AutoHeal: s.policy != SupervisorPolicyObserveOnly,
+		AutoHeal: false,
 	}
 	s.maybeRepair(topology, &snap)
 	s.reconcileRecoverable(ctx, topology, &snap)
+	if len(snap.Recovered) > 0 {
+		if repository, err := s.server.actionRepository(topology); err == nil {
+			if refreshed, err := repository.LoadState(ctx, topology); err == nil {
+				snap.Health = s.server.authoritativeTopologyHealth(ctx, topology, refreshed)
+			} else {
+				snap.LastError = err.Error()
+			}
+		}
+	}
 	return s.server.saveHealthSnapshot(topology, snap)
 }
 
-// reconcileRecoverable closes the recovery loop for a topology: it finds runs
-// that crashed after mutating the outside world but before recording the result
-// in state, and reconciles their checkpoint journal so the orphaned objects are
-// adopted back.
-//
-// Recovery used to happen only when someone called POST /v1/runs/{id}/recover
-// by hand. The supervisor already walks every topology on an interval, so it is
-// the natural place to look; reconcileCheckpointJournal is idempotent and
-// guarded by CheckMutationSafety, so running it here is safe to repeat.
+// reconcileRecoverable only observes already authorized durable actions. It
+// never replays checkpoint patches or starts provider/guest operations.
 func (s *Supervisor) reconcileRecoverable(ctx context.Context, topology string, snap *HealthSnapshot) {
 	runs := s.server.jobs.recoverableRuns(topology)
 	if len(runs) == 0 {
@@ -134,8 +152,7 @@ func (s *Supervisor) reconcileRecoverable(ctx context.Context, topology string, 
 		return
 	}
 	for _, run := range runs {
-		owner := fmt.Sprintf("sysbox-api:supervisor:%s", run.ID)
-		report, err := reconcileCheckpointJournal(ctx, s.server.apiStore, topology, run.ID, mgr, owner)
+		report, err := s.server.reconcileCanonicalActions(ctx, topology, run.ID, mgr)
 		if err != nil {
 			snap.LastError = fmt.Sprintf("reconcile run %s: %v", run.ID, err)
 			continue
@@ -159,20 +176,10 @@ func (s *Supervisor) maybeRepair(topology string, snap *HealthSnapshot) {
 		snap.Action = "skipped_running_operation"
 		return
 	}
-	run := s.server.jobs.start(topology, "apply")
-	run.ParentID = "supervisor"
-	s.server.jobs.persist(run)
-	snap.Action = "restart_apply_started"
-	snap.RunID = run.ID
-	required, err := requiredCapabilitiesForTopology(s.server.workspaceService().HCLFile(topology))
-	if err != nil {
-		s.server.jobs.finish(run, err)
-		snap.Action = "restart_apply_failed"
-		return
-	}
-	if err := s.server.scheduling().DispatchRun(context.Background(), run, required); err != nil {
-		snap.Action = "restart_apply_failed"
-	}
+	// A broad historical restart flag is not authorization for replacement,
+	// destruction, or arbitrary guest setup. A bounded action plan is required.
+	snap.Action = "approval_required"
+	snap.LastError = "runtime drift requires an explicitly approved action plan"
 }
 
 func (s *Server) healthSnapshotFile(topology string) string {

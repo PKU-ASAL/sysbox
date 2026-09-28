@@ -24,7 +24,11 @@ func (s *Substrate) ExecBackground(ctx context.Context, handle substrate.NodeHan
 	if err != nil {
 		return 0, err
 	}
-	return conn.ExecBackground(ctx, req)
+	background, ok := conn.(substrate.ConnectionBackground)
+	if !ok {
+		return 0, substrate.ErrNotSupported
+	}
+	return background.ExecBackground(ctx, req)
 }
 
 // CopyToNode copies a file through SSH and atomically installs it at dst.
@@ -34,7 +38,11 @@ func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle,
 		return err
 	}
 	tmp := dst + ".sysbox-tmp"
-	if err := conn.CopyFile(ctx, src, tmp); err != nil {
+	files, ok := conn.(substrate.ConnectionFileCopier)
+	if !ok {
+		return substrate.ErrNotSupported
+	}
+	if err := files.CopyFile(ctx, src, tmp); err != nil {
 		return err
 	}
 	result, err := conn.Exec(ctx, guestFileInstallRequest("chmod", fmt.Sprintf("%04o", mode), tmp), io.Discard, io.Discard)
@@ -99,10 +107,9 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 	if len(hs.Bridges) > 0 {
 		namespace = hs.Bridges[0].Netns
 	}
-	if namespace != "" {
-		return transport.NewSSHConnectionInNamespaceWithTrust(namespace, host, port, user, key, pass, knownHosts, insecureHost), nil
-	}
-	return transport.NewSSHConnectionWithTrust(host, port, user, key, pass, knownHosts, insecureHost), nil
+	conn := transport.NewSSHConnectionInNamespaceWithTrust(namespace, host, port, user, key, pass, knownHosts, insecureHost)
+	conn.BindExecutionIdentity(handle.ID, handle.Generation)
+	return conn, nil
 }
 
 func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {

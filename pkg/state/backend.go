@@ -130,6 +130,12 @@ type DeleteBackend interface {
 	Delete(ctx context.Context) error
 }
 
+// VersionedDeleteBackend prevents a metadata delete from erasing resources or
+// a replacement topology committed after the caller's safety checks.
+type VersionedDeleteBackend interface {
+	DeleteVersioned(ctx context.Context, expectedSerial int64, topologyUID string) error
+}
+
 type LockInfo struct {
 	Locked    bool      `json:"locked"`
 	Owner     string    `json:"owner,omitempty"`

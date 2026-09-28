@@ -14,11 +14,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/artifact"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // HandleState is the libvirt substrate's typed NodeHandle.Provider payload.
 type HandleState struct {
+	Identity         *substrate.OperationIdentity   `json:"identity,omitempty"`
 	DomainName       string                         `json:"domain_name"`
 	DomainUUID       string                         `json:"domain_uuid,omitempty"`
 	VMDir            string                         `json:"vm_dir"`
@@ -67,27 +69,31 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: invalid memory %q: %w", pc.Memory, err)
 	}
 
-	// Only tear down stale domains that were previously created by sysbox.
-	// Destroying an arbitrary domain with the same name is dangerous on
-	// shared libvirt hosts (e.g. production VMs named "db" or "gateway").
-	if active, _ := domainActive(ctx, spec.Name); active {
-		// Verify the domain is sysbox-managed before destroying it.
-		if !isSysboxManaged(ctx, spec.Name) {
-			return substrate.NodeHandle{}, fmt.Errorf("libvirt: domain %q already exists but is not sysbox-managed; refusing to destroy", spec.Name)
+	identity, managed := substrate.OperationIdentityFromContext(ctx)
+	if managed {
+		existing, err := s.DiscoverManagedNode(ctx, identity, spec.Name)
+		if err == nil {
+			return existing, nil
 		}
-		_, _ = exec.CommandContext(ctx, "virsh", "destroy", spec.Name).CombinedOutput()
-	}
-	if _, err := exec.CommandContext(ctx, "virsh", "dominfo", spec.Name).CombinedOutput(); err == nil {
-		if !isSysboxManaged(ctx, spec.Name) {
-			return substrate.NodeHandle{}, fmt.Errorf("libvirt: domain %q already defined but not sysbox-managed; refusing to undefine", spec.Name)
+		if !driver.IsCategory(err, driver.ErrorNotFound) {
+			return substrate.NodeHandle{}, err
 		}
-		_, _ = exec.CommandContext(ctx, "virsh", "undefine", spec.Name).CombinedOutput()
+	} else if err := domainNameAvailable(ctx, spec.Name); err != nil {
+		return substrate.NodeHandle{}, err
 	}
 
 	if err := os.MkdirAll(s.vmDirRoot(), 0o755); err != nil {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: create workdir: %w", err)
 	}
-	vmDir, err := os.MkdirTemp(s.vmDirRoot(), "sysbox-lv-"+spec.Name+"-*")
+	var vmDir string
+	if managed {
+		vmDir, err = s.managedVMDir(identity, spec.Name)
+		if err == nil {
+			err = os.Mkdir(vmDir, 0o755)
+		}
+	} else {
+		vmDir, err = os.MkdirTemp(s.vmDirRoot(), "sysbox-lv-"+spec.Name+"-*")
+	}
 	if err != nil {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: create vm dir: %w", err)
 	}
@@ -102,6 +108,17 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	}
 
 	diskPath := filepath.Join(vmDir, "disk.qcow2")
+	machine := pc.MachineType
+	if machine == "" {
+		machine = "q35"
+	}
+	hs := &HandleState{DomainName: spec.Name, DomainUUID: domainUUID, VMDir: vmDir, DiskPath: diskPath, VCPUs: pc.VCPUs, MemoryMiB: mem, MachineType: machine, SSHUser: pc.SSHUser, SSHPass: pc.SSHPass, SSHKey: pc.SSHKey, SSHAuthorizedKey: pc.SSHAuthorizedKey, NetworkInit: pc.NetworkInit}
+	if managed {
+		hs.Identity = &identity
+		if err := persistManagedRecord(hs, false); err != nil {
+			return substrate.NodeHandle{}, err
+		}
+	}
 	stagedBase := filepath.Join(vmDir, "base.qcow2")
 	if err := stageBaseImage(ctx, baseImage, stagedBase); err != nil {
 		_ = os.RemoveAll(vmDir)
@@ -120,33 +137,14 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: make overlay accessible: %w", err)
 	}
 
-	machine := pc.MachineType
-	if machine == "" {
-		machine = "q35"
-	}
-	hs := &HandleState{
-		DomainName:       spec.Name,
-		DomainUUID:       domainUUID,
-		VMDir:            vmDir,
-		DiskPath:         diskPath,
-		VCPUs:            pc.VCPUs,
-		MemoryMiB:        mem,
-		MachineType:      machine,
-		SSHUser:          pc.SSHUser,
-		SSHPass:          pc.SSHPass,
-		SSHKey:           pc.SSHKey,
-		SSHAuthorizedKey: pc.SSHAuthorizedKey,
-		NetworkInit:      pc.NetworkInit,
-	}
 	if err := ensureCloudInitSSHAccess(ctx, hs); err != nil {
 		_ = os.RemoveAll(vmDir)
 		return substrate.NodeHandle{}, err
 	}
-	return substrate.NodeHandle{
-		ID:       hs.DomainUUID,
-		Provider: hs,
-		Conn:     substrate.ConnInfo{Kind: substrate.ConnKindSSH},
-	}, nil
+	if err := persistManagedRecord(hs, true); err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	return managedNodeHandle(hs), nil
 }
 
 func ensureCloudInitSSHAccess(ctx context.Context, hs *HandleState) error {
@@ -204,11 +202,31 @@ func stageBaseImage(ctx context.Context, source, destination string) error {
 
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
 	hs := hsFrom(h)
+	if hs.Identity != nil {
+		if identity, ok := substrate.OperationIdentityFromContext(ctx); ok && !sameGeneration(identity, *hs.Identity) {
+			return driver.Wrap(driver.ErrorInvalidState, subName, "operation generation does not own domain", nil)
+		}
+		discovered, err := s.DiscoverManagedNode(ctx, *hs.Identity, hs.DomainName)
+		if err != nil {
+			return err
+		}
+		if discovered.ID != hs.DomainUUID {
+			return driver.Wrap(driver.ErrorInvalidState, subName, "domain UUID ownership mismatch", nil)
+		}
+	}
 	if hs.NetworkInit == substrate.GuestNetworkInitCloudInit && hs.SeedISO == "" {
 		return fmt.Errorf("libvirt: cloud_init seed was not prepared")
 	}
-	if hs.DomainUUID != "" {
-		if uuidOut, uuidErr := exec.CommandContext(ctx, "virsh", "domuuid", hs.DomainName).CombinedOutput(); uuidErr == nil {
+	names, err := domainNames(ctx)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if name == hs.DomainName {
+			uuidOut, uuidErr := virshQuery(ctx, "domuuid", hs.DomainName)
+			if uuidErr != nil {
+				return uuidErr
+			}
 			if strings.TrimSpace(string(uuidOut)) != hs.DomainUUID {
 				return fmt.Errorf("libvirt: domain %q UUID ownership mismatch", hs.DomainName)
 			}
@@ -220,7 +238,7 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 			if state == "running" || state == "paused" || state == "in shutdown" {
 				return nil
 			}
-			if out, err := exec.CommandContext(ctx, "virsh", "start", hs.DomainName).CombinedOutput(); err != nil {
+			if out, err := exec.CommandContext(ctx, "virsh", "start", hs.DomainUUID).CombinedOutput(); err != nil {
 				return fmt.Errorf("libvirt: restart defined reset domain: %w\n%s", err, out)
 			}
 			setSysboxManaged(ctx, hs.DomainName)
@@ -229,6 +247,7 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	}
 
 	xmlStr, err := GenerateDomainXML(DomainSpec{
+		Identity: hs.Identity, ManagedState: hs,
 		Name:        hs.DomainName,
 		UUID:        hs.DomainUUID,
 		VCPUs:       hs.VCPUs,
@@ -243,6 +262,9 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	}
 
 	xmlPath := filepath.Join(hs.VMDir, "domain.xml")
+	if err := persistManagedRecord(hs, true); err != nil {
+		return err
+	}
 	if err := os.WriteFile(xmlPath, []byte(xmlStr), 0o644); err != nil {
 		return fmt.Errorf("libvirt: write domain xml: %w", err)
 	}
@@ -254,7 +276,7 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 		}
 		return fmt.Errorf("libvirt: virsh define: %w\n%s", err, out)
 	}
-	if out, err := exec.CommandContext(ctx, "virsh", "start", hs.DomainName).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "virsh", "start", hs.DomainUUID).CombinedOutput(); err != nil {
 		if hs.DomainUUID == "" {
 			_, _ = exec.Command("virsh", "undefine", hs.DomainName).CombinedOutput()
 			_ = os.RemoveAll(hs.VMDir)
@@ -268,38 +290,76 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 }
 
 func (s *Substrate) StopNode(ctx context.Context, h substrate.NodeHandle) error {
-	hs := hsFrom(h)
-	if _, err := exec.CommandContext(ctx, "virsh", "shutdown", hs.DomainName).CombinedOutput(); err != nil {
-		_, _ = exec.CommandContext(ctx, "virsh", "destroy", hs.DomainName).CombinedOutput()
+	target, exists, err := existingDomainUUID(ctx, h)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	if _, err := exec.CommandContext(ctx, "virsh", "shutdown", target).CombinedOutput(); err != nil {
+		if _, err := exec.CommandContext(ctx, "virsh", "destroy", target).CombinedOutput(); err != nil {
+			return driver.Wrap(driver.ErrorUnavailable, subName, "stop domain failed", err)
+		}
 	}
 	return nil
 }
 
 func (s *Substrate) DestroyNode(ctx context.Context, h substrate.NodeHandle) error {
 	hs := hsFrom(h)
-	_, _ = exec.CommandContext(ctx, "virsh", "destroy", hs.DomainName).CombinedOutput()
-	if out, err := exec.CommandContext(ctx, "virsh", "undefine", hs.DomainName).CombinedOutput(); err != nil {
-		if active, _ := domainActive(ctx, hs.DomainName); active {
-			return fmt.Errorf("libvirt: virsh undefine: %w\n%s", err, out)
+	target, exists, err := existingDomainUUID(ctx, h)
+	if err != nil {
+		return err
+	}
+	if exists {
+		state, err := virshQuery(ctx, "domstate", target)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(string(state)) != "shut off" {
+			if _, err := exec.CommandContext(ctx, "virsh", "destroy", target).CombinedOutput(); err != nil {
+				return driver.Wrap(driver.ErrorUnavailable, subName, "destroy domain failed", err)
+			}
+		}
+		if _, err := exec.CommandContext(ctx, "virsh", "undefine", target).CombinedOutput(); err != nil {
+			return driver.Wrap(driver.ErrorUnavailable, subName, "undefine domain failed", err)
 		}
 	}
 	if hs.VMDir != "" {
-		_ = os.RemoveAll(hs.VMDir)
+		if _, err := os.Lstat(hs.VMDir); os.IsNotExist(err) {
+			return nil
+		}
+		if err := validateOwnedVMDirInRoot(s.vmDirRoot(), hs.DomainName, hs.DomainUUID, hs.VMDir, hs.DiskPath); err != nil {
+			return err
+		}
+		return os.RemoveAll(hs.VMDir)
 	}
 	return nil
 }
 
 func (s *Substrate) Pause(ctx context.Context, h substrate.NodeHandle) error {
-	hs := hsFrom(h)
-	if out, err := exec.CommandContext(ctx, "virsh", "suspend", hs.DomainName).CombinedOutput(); err != nil {
+	target, exists, err := existingDomainUUID(ctx, h)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return driver.Wrap(driver.ErrorNotFound, subName, "domain absent", nil)
+	}
+	if out, err := exec.CommandContext(ctx, "virsh", "suspend", target).CombinedOutput(); err != nil {
 		return fmt.Errorf("libvirt: virsh suspend: %w\n%s", err, out)
 	}
 	return nil
 }
 
 func (s *Substrate) Resume(ctx context.Context, h substrate.NodeHandle) error {
-	hs := hsFrom(h)
-	if out, err := exec.CommandContext(ctx, "virsh", "resume", hs.DomainName).CombinedOutput(); err != nil {
+	target, exists, err := existingDomainUUID(ctx, h)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return driver.Wrap(driver.ErrorNotFound, subName, "domain absent", nil)
+	}
+	if out, err := exec.CommandContext(ctx, "virsh", "resume", target).CombinedOutput(); err != nil {
 		return fmt.Errorf("libvirt: virsh resume: %w\n%s", err, out)
 	}
 	return nil

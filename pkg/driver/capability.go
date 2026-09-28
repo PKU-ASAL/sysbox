@@ -49,6 +49,12 @@ type Node interface {
 	AdoptNode(context.Context, substrate.NodeHandle) (substrate.NodeHandle, error)
 }
 
+// ManagedDiscovery locates a resource belonging to an already committed action.
+// ErrorNotFound means proven absence, not failure to query the provider.
+type ManagedDiscovery interface {
+	DiscoverManagedNode(context.Context, substrate.OperationIdentity, string) (substrate.NodeHandle, error)
+}
+
 type NIC interface {
 	Attach(context.Context, substrate.NodeHandle, AttachmentRequest) (AttachmentResult, error)
 	Observe(context.Context, substrate.NodeHandle, AttachmentRequest, json.RawMessage) (AttachmentResult, error)
@@ -159,6 +165,16 @@ type LinuxNetwork interface {
 	NetworkHealthy(context.Context, IsolatedNetworkSpec) (bool, string)
 	LinkHealthy(context.Context, string, string) bool
 	DeleteAttachment(context.Context, string, string, string) error
+}
+
+// IsolatedNetworkObserver makes absence an explicit successful point query.
+// Any query or ownership ambiguity is an error, never Exists=false evidence.
+type IsolatedNetworkObserver interface {
+	ObserveIsolated(context.Context, IsolatedNetworkSpec) (IsolatedNetworkObservation, error)
+}
+type IsolatedNetworkObservation struct {
+	Exists, Healthy bool
+	Reason          string
 }
 
 type Descriptor struct {

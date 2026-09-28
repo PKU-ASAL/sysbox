@@ -33,8 +33,7 @@ func TestGetTopologyHealth(t *testing.T) {
 			Attributes: map[string]any{"path": kernel},
 		}},
 	}
-	mgr := state.NewManager(filepath.Join(runs, "health", "state.json"))
-	require.NoError(t, mgr.Save(st))
+	writeState(t, runs, "health", st)
 
 	s := NewServer(runs, workspaces)
 	req := httptest.NewRequest(http.MethodGet, "/v1/topologies/health/health", nil)

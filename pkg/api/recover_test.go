@@ -41,7 +41,7 @@ func TestRecoverCandidateRequiresSupportedDoneUnrecordedStateResource(t *testing
 	require.False(t, recoverCandidate(step))
 }
 
-func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
+func TestRecoverCheckpointRejectsBlindStatePatchReplay(t *testing.T) {
 	dir := t.TempDir()
 	cp := runtime.OperationCheckpoint{
 		RunID:    "run-1",
@@ -61,19 +61,17 @@ func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 	store := &localAPIStore{runsDir: dir}
 	require.NoError(t, store.SaveCheckpoint(context.Background(), "mixed", "run-1", cp))
 	report, err := reconcileCheckpointJournal(context.Background(), store, "mixed", "run-1", mgr, "test")
-	require.NoError(t, err)
-	require.Len(t, report.Recovered, 1)
-	require.Equal(t, "replayed_state_patch", report.Recovered[0].Status)
+	require.ErrorIs(t, err, runtime.ErrConvergenceUnsupported)
+	require.Nil(t, report)
 
 	st, err := mgr.Load()
 	require.NoError(t, err)
 	res := st.FindResource(address.Resource("sysbox_node", "web"))
-	require.NotNil(t, res)
-	require.Equal(t, "abc", res.ContainerID())
+	require.Nil(t, res)
 
 	cpPtr, err := store.LoadCheckpoint(context.Background(), "mixed", "run-1")
 	require.NoError(t, err)
-	require.True(t, cpPtr.StatePatches[0].Recorded)
+	require.False(t, cpPtr.StatePatches[0].Recorded)
 }
 
 func TestAdoptStateResourceDropsLegacyProviderExtra(t *testing.T) {

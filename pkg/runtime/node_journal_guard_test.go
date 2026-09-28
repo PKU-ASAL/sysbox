@@ -19,10 +19,10 @@ import (
 
 type nodeGuardDriver struct {
 	*portTestSubstrate
-	conn                               *recordingConn
-	creates, starts, destroys, entries int
-	startErr, prepareErr, routeErr     error
-	onDestroy                          func()
+	conn                                     *recordingConn
+	creates, starts, destroys, entries       int
+	startErr, prepareErr, routeErr, entryErr error
+	onDestroy                                func()
 }
 
 func (d *nodeGuardDriver) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
@@ -30,6 +30,9 @@ func (d *nodeGuardDriver) CreateNode(ctx context.Context, spec substrate.NodeSpe
 	handle, err := d.portTestSubstrate.CreateNode(ctx, spec)
 	handle.ID = spec.Name
 	return handle, err
+}
+func (d *nodeGuardDriver) DiscoverManagedNode(context.Context, substrate.OperationIdentity, string) (substrate.NodeHandle, error) {
+	return substrate.NodeHandle{}, driver.Wrap(driver.ErrorNotFound, d.name, "not found", nil)
 }
 func (d *nodeGuardDriver) StartNode(context.Context, substrate.NodeHandle) error {
 	d.starts++
@@ -53,7 +56,7 @@ func (d *nodeGuardDriver) Connection(substrate.NodeHandle, []substrate.Connectio
 }
 func (d *nodeGuardDriver) ExecImageEntry(context.Context, substrate.NodeHandle) error {
 	d.entries++
-	return nil
+	return d.entryErr
 }
 func (d *nodeGuardDriver) EnsureRoute(context.Context, substrate.NodeHandle, string, string) error {
 	return d.routeErr
@@ -86,7 +89,7 @@ func nodeGuardExecutor(t *testing.T, failure *nodePhaseFailure) (*Executor, *nod
 	cfg := &config.NodeConfig{Image: "sysbox_image.base.id", Substrate: d.name}
 	require.NoError(t, g.AddNode(addr, nil))
 	require.NoError(t, g.SetData(addr, cfg))
-	e := NewExecutor(g, &state.State{Version: state.SchemaVersion})
+	e := testActionExecutor(t, g, &state.State{Version: state.SchemaVersion})
 	e.SetLogger(io.Discard)
 	e.state.AddResource(state.Resource{Address: address.Resource("sysbox_image", "base"), Driver: d.name, Attributes: map[string]any{"image_id": "image", "repository": "base", "guest_family": "linux"}})
 	if failure != nil {
@@ -142,12 +145,12 @@ func TestNodeWarningDoesNotContinueAfterJournalFailure(t *testing.T) {
 }
 
 func TestNodeOperationalCleanupAndWarningsRemainUnchanged(t *testing.T) {
-	t.Run("start failure cleans up", func(t *testing.T) {
+	t.Run("start failure retains uncertain resource", func(t *testing.T) {
 		e, d, _, addr := nodeGuardExecutor(t, nil)
 		want := errors.New("provider start failure")
 		d.startErr = want
 		require.ErrorIs(t, e.Apply(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}}), want)
-		require.Equal(t, 1, d.destroys)
+		require.Zero(t, d.destroys)
 	})
 	t.Run("ordinary warnings continue", func(t *testing.T) {
 		e, d, cfg, addr := nodeGuardExecutor(t, nil)
@@ -172,8 +175,20 @@ func TestRollbackStopsWhenEarlierDeletionBreaksJournal(t *testing.T) {
 		{Address: second, Action: controlplane.PlanActionCreate},
 		{Address: address.Resource("sysbox_node", "unknown"), Action: controlplane.PlanActionUnknown},
 	}})
-	require.ErrorIs(t, err, want)
-	require.Equal(t, 2, d.creates)
-	require.Equal(t, 1, d.destroys, "rollback must recheck the journal before each provider deletion")
-	require.NotNil(t, e.state.FindResource(first))
+	require.ErrorIs(t, err, ErrConvergenceUnsupported)
+	require.Zero(t, d.creates, "unknown action invalidates plan before any effect")
+	require.Zero(t, d.destroys)
+	require.Nil(t, e.state.FindResource(first))
+}
+
+func TestCreatedNodeRetainsDesiredPayloadForFuturePlans(t *testing.T) {
+	e, _, cfg, addr := nodeGuardExecutor(t, nil)
+	require.NoError(t, e.Apply(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}}))
+	current := e.state.FindResource(addr)
+	require.NotNil(t, current)
+	require.NotNil(t, current.AttributeMap()[desiredPayloadKey])
+	cfg.Memory = "1024MiB"
+	change, err := (NodeResourceHandler{}).PlanDiff(e.graph.Get(addr), current)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.PlanActionReplace, change.Action)
 }

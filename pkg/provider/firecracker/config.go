@@ -90,7 +90,7 @@ func (s *Substrate) DecodeProviderConfig(body hcl.Body, ctx *hcl.EvalContext) (a
 //     nothing to do.
 //  3. Otherwise (SSH fallback), populate HandleState.SSHIP/SSHPort and set
 //     handle.Conn.Kind = ConnKindSSH.
-func (s *Substrate) PrepareHandle(_ context.Context, handle *substrate.NodeHandle, pc any, st substrate.StateReader) error {
+func (s *Substrate) PrepareHandle(ctx context.Context, handle *substrate.NodeHandle, pc any, st substrate.StateReader) error {
 	cfg, _ := pc.(*Config)
 	hs, _ := handle.Provider.(*HandleState)
 
@@ -115,6 +115,18 @@ func (s *Substrate) PrepareHandle(_ context.Context, handle *substrate.NodeHandl
 	if hs == nil {
 		return nil
 	}
+	var manifest *vmManifest
+	if hs.Version == manifestVersion {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		_, m, release, err := s.lockedManifest(ctx, *handle)
+		if err != nil {
+			return err
+		}
+		defer release()
+		manifest = m
+	}
 	// vsock already set by CreateNode — nothing to do.
 	if hs.VsockUDS != "" {
 		return nil
@@ -136,6 +148,12 @@ func (s *Substrate) PrepareHandle(_ context.Context, handle *substrate.NodeHandl
 	}
 	handle.Conn.Kind = substrate.ConnKindSSH
 	handle.Conn.Endpoint = fmt.Sprintf("%s:%s", hs.SSHIP, hs.SSHPort)
+	if manifest != nil {
+		manifest.Handle.SSHIP, manifest.Handle.SSHPort, manifest.Handle.SSHUser = hs.SSHIP, hs.SSHPort, hs.SSHUser
+		if err := saveManifest(manifest); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

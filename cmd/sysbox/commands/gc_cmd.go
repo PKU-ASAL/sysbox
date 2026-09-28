@@ -2,10 +2,16 @@ package commands
 
 import (
 	"context"
+	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -13,8 +19,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 var (
@@ -24,61 +32,64 @@ var (
 
 var gcCmd = &cobra.Command{
 	Use:   "gc",
-	Short: "Reclaim orphaned sandbox resources (docker containers/networks, libvirt VMs)",
-	Long: `Scan for sysbox-managed objects that are no longer referenced by any active
-topology state, and remove them.
+	Short: "Preview unreferenced resources owned by inventoried local topologies",
+	Long: `Preview Docker and libvirt resources whose durable ownership matches a
+canonical topology inventoried under --runs. Uninventoried owners and resources
+without durable ownership metadata are skipped explicitly. Configured backends
+outside this filesystem inventory are refused.
 
-Orphans arise when a rollout is interrupted (Ctrl+C / SIGKILL) before its
-destroy runs. Only objects carrying the sysbox.managed label (docker) or the
-sysbox-managed title (libvirt) are considered, so other experiments are never
-touched. Run with --dry-run first to review what would be removed.`,
+Use --dry-run. Automatic deletion is disabled until inventory and deletion can
+share lifecycle fencing; a preview is not authorization to delete resources.`,
 	RunE: runGc,
 }
 
 func init() {
 	gcCmd.Flags().StringVar(&flagGcRunsDir, "runs", config.DefaultRunsDir(), "directory of per-topology state files")
-	gcCmd.Flags().BoolVar(&flagGcDryRun, "dry-run", false, "print orphans without removing them")
+	gcCmd.Flags().BoolVar(&flagGcDryRun, "dry-run", false, "preview scoped candidates without removing them (required)")
 }
 
+var errGcDeletionDisabled = errors.New("automatic GC deletion is disabled: inventory and deletion do not share lifecycle fencing; use --dry-run")
+
 func runGc(cmd *cobra.Command, _ []string) error {
+	if !flagGcDryRun {
+		return errGcDeletionDisabled
+	}
+	if flagBackend != "" || strings.Contains(flagStateFile, "://") {
+		return fmt.Errorf("refusing GC: configured backend is not covered by the --runs filesystem inventory")
+	}
 	ctx := cmd.Context()
 	active, err := collectActiveIDsChecked(flagGcRunsDir)
 	if err != nil {
 		return fmt.Errorf("refusing GC: active resource inventory is incomplete: %w", err)
 	}
 
-	orphans, err := findOrphans(ctx, active)
+	output := cmd.OutOrStdout()
+	fmt.Fprintf(output, "Preview scope: canonical filesystem state under %s only; SQL/remote backends and other runs directories are not inventoried.\n", flagGcRunsDir)
+	orphans, err := findOrphansWithReport(ctx, active, output)
 	if err != nil {
 		return err
 	}
 	if len(orphans) == 0 {
-		fmt.Println("No orphaned resources found.")
+		fmt.Fprintln(output, "No unreferenced candidates found within the inventoried owner scope; nothing removed.")
 		return nil
 	}
 	for _, o := range orphans {
-		fmt.Println(o)
+		fmt.Fprintln(output, o)
 	}
-	if flagGcDryRun {
-		fmt.Printf("\n%d orphan(s) found (dry-run; nothing removed).\n", len(orphans))
-		return nil
-	}
-
-	if err := removeOrphans(ctx, orphans); err != nil {
-		return err
-	}
-	fmt.Printf("\nRemoved %d orphan(s).\n", len(orphans))
+	fmt.Fprintf(output, "\n%d unreferenced candidate(s) in the inventoried owner scope (dry-run; nothing removed). Preview is not a deletion authorization.\n", len(orphans))
 	return nil
 }
 
 type activeIDs struct {
+	owners     map[string]bool
 	containers map[string]bool
 	networks   map[string]bool
 	domains    map[string]bool
 }
 
 // collectActiveIDs walks runsDir/*/state.json and collects the external IDs of
-// every live resource, grouped by substrate. An object on the host whose ID is
-// absent from the matching group is an orphan.
+// every live resource, grouped by substrate. Legacy state protects known IDs,
+// but cannot authorize an ownership scope without a canonical action inventory.
 func collectActiveIDs(runsDir string) activeIDs {
 	a := activeIDs{
 		containers: map[string]bool{},
@@ -110,7 +121,70 @@ func collectActiveIDs(runsDir string) activeIDs {
 }
 
 func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
-	active := activeIDs{containers: map[string]bool{}, networks: map[string]bool{}, domains: map[string]bool{}}
+	active := activeIDs{owners: map[string]bool{}, containers: map[string]bool{}, networks: map[string]bool{}, domains: map[string]bool{}}
+	if _, err := os.ReadDir(runsDir); err != nil {
+		if os.IsNotExist(err) {
+			return active, nil
+		}
+		return active, err
+	}
+	aggregates, err := filepath.Glob(filepath.Join(runsDir, "*", "state.json.lifecycle"))
+	if err != nil {
+		return active, err
+	}
+	for _, root := range aggregates {
+		topology := filepath.Base(filepath.Dir(root))
+		if info, err := os.Lstat(filepath.Join(root, topology+".json")); err != nil {
+			return active, fmt.Errorf("canonical inventory %s unavailable: %w", topology, err)
+		} else if !info.Mode().IsRegular() {
+			return active, fmt.Errorf("canonical inventory %s is not a regular aggregate", topology)
+		}
+		repo, err := persistence.OpenFilesystem(root)
+		if err != nil {
+			return active, err
+		}
+		actions, err := repo.LoadActions(context.Background(), topology)
+		if err != nil {
+			repo.Close()
+			return active, err
+		}
+		for _, action := range actions {
+			if action.Status != runtime.ActionSucceeded {
+				repo.Close()
+				return active, fmt.Errorf("topology %s has unresolved action %s", topology, action.ID)
+			}
+		}
+		st, err := repo.LoadState(context.Background(), topology)
+		repo.Close()
+		if err != nil {
+			return active, err
+		}
+		if st.TopologyUID == "" {
+			return active, fmt.Errorf("canonical topology %s lacks durable ownership", topology)
+		}
+		for _, action := range actions {
+			if action.OwnerUID != st.TopologyUID {
+				return active, fmt.Errorf("canonical topology %s has conflicting action ownership", topology)
+			}
+		}
+		active.owners[st.TopologyUID] = true
+		for _, r := range st.Resources {
+			if r.OwnerUID != st.TopologyUID || r.ResourceUID == "" || r.Generation < 1 {
+				return active, fmt.Errorf("canonical topology %s has incomplete resource ownership", topology)
+			}
+			switch r.Address.Type {
+			case "sysbox_network":
+				active.networks[r.ExternalID] = true
+			case "sysbox_node", "sysbox_router":
+				if r.Driver == "docker" {
+					active.containers[r.ExternalID] = true
+				}
+				if r.Driver == "libvirt" {
+					active.domains[r.ExternalID] = true
+				}
+			}
+		}
+	}
 	files, err := filepath.Glob(filepath.Join(runsDir, "*", "state.json"))
 	if err != nil {
 		return active, err
@@ -151,14 +225,36 @@ func (o orphan) String() string {
 }
 
 func findOrphans(ctx context.Context, active activeIDs) ([]orphan, error) {
-	var out []orphan
+	return findOrphansWithReport(ctx, active, io.Discard)
+}
 
-	// Docker: containers and networks are identified by the sysbox.managed
-	// label. This part degrades gracefully when the docker daemon is unreachable.
-	if cli, err := client.NewClientWithOpts(client.FromEnv); err == nil {
-		if containers, listErr := cli.ContainerList(ctx, container.ListOptions{All: true}); listErr == nil {
+func gcOwnerAllowed(active activeIDs, owner, topology, resource string, generation int64) bool {
+	return owner != "" && active.owners[owner] && topology == owner && resource != "" && generation > 0
+}
+
+func findOrphansWithReport(ctx context.Context, active activeIDs, report io.Writer) ([]orphan, error) {
+	if len(active.owners) == 0 {
+		fmt.Fprintln(report, "skipped host scan: no reliable canonical OwnerUID was inventoried")
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	var out []orphan
+	cli, err := client.NewClientWithOpts(client.FromEnv)
+	if err != nil {
+		fmt.Fprintf(report, "skipped Docker: client unavailable: %v\n", err)
+	} else {
+		defer cli.Close()
+		if containers, err := cli.ContainerList(ctx, container.ListOptions{All: true}); err != nil {
+			fmt.Fprintf(report, "skipped Docker containers: inventory unavailable: %v\n", err)
+		} else {
 			for _, c := range containers {
 				if c.Labels[runtime.LabelManaged] != "true" {
+					continue
+				}
+				generation, _ := strconv.ParseInt(c.Labels["sysbox.generation"], 10, 64)
+				if !gcOwnerAllowed(active, c.Labels["sysbox.owner_uid"], c.Labels["sysbox.topology_uid"], c.Labels["sysbox.resource_uid"], generation) {
+					fmt.Fprintf(report, "skipped container %s: durable owner is not inventoried or identity is incomplete\n", c.ID)
 					continue
 				}
 				if !active.containers[c.ID] {
@@ -166,9 +262,16 @@ func findOrphans(ctx context.Context, active activeIDs) ([]orphan, error) {
 				}
 			}
 		}
-		if nets, listErr := cli.NetworkList(ctx, network.ListOptions{}); listErr == nil {
-			for _, n := range nets {
+		if networks, err := cli.NetworkList(ctx, network.ListOptions{}); err != nil {
+			fmt.Fprintf(report, "skipped Docker networks: inventory unavailable: %v\n", err)
+		} else {
+			for _, n := range networks {
 				if n.Labels[runtime.LabelManaged] != "true" {
+					continue
+				}
+				generation, _ := strconv.ParseInt(n.Labels["sysbox.generation"], 10, 64)
+				if !gcOwnerAllowed(active, n.Labels["sysbox.owner_uid"], n.Labels["sysbox.topology_uid"], n.Labels["sysbox.resource_uid"], generation) {
+					fmt.Fprintf(report, "skipped network %s: durable owner is not inventoried or identity is incomplete\n", n.ID)
 					continue
 				}
 				if !active.networks[n.ID] {
@@ -176,82 +279,79 @@ func findOrphans(ctx context.Context, active activeIDs) ([]orphan, error) {
 				}
 			}
 		}
-		_ = cli.Close()
 	}
-
-	// libvirt: domains carry a "sysbox-managed" title. A host without libvirt
-	// simply yields no domains.
-	out = append(out, findOrphanDomains(ctx, active.domains)...)
-
+	domains, err := findOrphanDomains(ctx, active, report)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, domains...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
-func findOrphanDomains(ctx context.Context, active map[string]bool) []orphan {
-	raw, err := exec.CommandContext(ctx, "virsh", "list", "--all", "--name").Output()
+type gcDomain struct {
+	UUID     string `xml:"uuid"`
+	Metadata struct {
+		Managed *struct {
+			OwnerUID    string `xml:"owner_uid,attr"`
+			ResourceUID string `xml:"resource_uid,attr"`
+			TopologyUID string `xml:"topology_uid,attr"`
+			Generation  int64  `xml:"generation,attr"`
+		} `xml:"urn:sysbox:managed managed"`
+	} `xml:"metadata"`
+}
+
+func gcVirshOutput(ctx context.Context, args ...string) ([]byte, error) {
+	stdout, stderr := substrate.NewExecCapture(1<<20, nil), substrate.NewExecCapture(64<<10, nil)
+	command := exec.CommandContext(ctx, "virsh", args...)
+	command.Stdout = stdout
+	command.Stderr = stderr
+	command.WaitDelay = time.Second
+	if err := command.Run(); err != nil {
+		return nil, err
+	}
+	if stdout.Truncated() || stderr.Truncated() {
+		return nil, fmt.Errorf("virsh response exceeded inventory limit")
+	}
+	return []byte(stdout.String()), nil
+}
+
+func findOrphanDomains(ctx context.Context, active activeIDs, report io.Writer) ([]orphan, error) {
+	raw, err := gcVirshOutput(ctx, "list", "--all", "--uuid")
 	if err != nil {
-		return nil
+		fmt.Fprintf(report, "skipped libvirt domains: inventory unavailable: %v\n", err)
+		return nil, nil
+	}
+	ids := strings.Fields(string(raw))
+	if len(ids) > 1024 {
+		return nil, fmt.Errorf("refusing GC preview: libvirt inventory exceeds 1024 domains")
 	}
 	var out []orphan
-	for _, name := range strings.Fields(string(raw)) {
-		if !sysboxManagedDomain(ctx, name) {
+	for _, id := range ids {
+		raw, err := gcVirshOutput(ctx, "dumpxml", id)
+		if err != nil {
+			fmt.Fprintf(report, "skipped domain %s: ownership metadata unavailable: %v\n", id, err)
 			continue
 		}
-		if !active[name] {
-			out = append(out, orphan{Kind: "domain", ID: name})
+		var domain gcDomain
+		if err := xml.Unmarshal(raw, &domain); err != nil {
+			fmt.Fprintf(report, "skipped domain %s: invalid ownership metadata\n", id)
+			continue
+		}
+		owner := domain.Metadata.Managed
+		if domain.UUID != id || owner == nil || !gcOwnerAllowed(active, owner.OwnerUID, owner.TopologyUID, owner.ResourceUID, owner.Generation) {
+			fmt.Fprintf(report, "skipped domain %s: durable owner is not inventoried or identity is incomplete\n", id)
+			continue
+		}
+		if !active.domains[id] {
+			out = append(out, orphan{Kind: "domain", ID: id})
 		}
 	}
-	return out
+	return out, nil
 }
 
-// sysboxManagedDomain reports whether a libvirt domain was created by sysbox,
-// mirroring libvirt.isSysboxManaged (the "sysbox-managed" title metadata).
-func sysboxManagedDomain(ctx context.Context, name string) bool {
-	out, err := exec.CommandContext(ctx, "virsh", "dominfo", name).Output()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(out), "sysbox-managed")
-}
-
-func removeOrphans(ctx context.Context, orphans []orphan) error {
-	cli, err := client.NewClientWithOpts(client.FromEnv)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	// Containers before networks: a bridge network with an attached container
-	// cannot be removed.
-	for _, o := range orphans {
-		if o.Kind != "container" {
-			continue
-		}
-		if err := cli.ContainerRemove(ctx, o.ID, container.RemoveOptions{Force: true}); err != nil {
-			fmt.Printf("warn: remove container %s: %v\n", o.ID, err)
-			continue
-		}
-		fmt.Printf("removed container %s (%s)\n", o.ID, o.Topo)
-	}
-	for _, o := range orphans {
-		if o.Kind != "network" {
-			continue
-		}
-		if err := cli.NetworkRemove(ctx, o.ID); err != nil {
-			fmt.Printf("warn: remove network %s: %v\n", o.ID, err)
-			continue
-		}
-		fmt.Printf("removed network %s (%s)\n", o.ID, o.Topo)
-	}
-	for _, o := range orphans {
-		if o.Kind != "domain" {
-			continue
-		}
-		_ = exec.CommandContext(ctx, "virsh", "destroy", o.ID).Run()
-		if err := exec.CommandContext(ctx, "virsh", "undefine", o.ID).Run(); err != nil {
-			fmt.Printf("warn: undefine domain %s: %v\n", o.ID, err)
-			continue
-		}
-		fmt.Printf("removed domain %s\n", o.ID)
-	}
-	return nil
-}
+// A dry-run snapshot cannot fence a later create/adopt operation. Keep the
+// deletion entry point disabled even if called with a previously reviewed list.
+func removeOrphans(context.Context, []orphan) error { return errGcDeletionDisabled }

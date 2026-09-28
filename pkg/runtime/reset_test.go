@@ -59,7 +59,7 @@ func TestExecutorResetUsesProviderLifecycleAndUpdatesState(t *testing.T) {
 	plan, err := BuildResetPlan(g, st, "")
 	require.NoError(t, err)
 
-	err = NewExecutor(g, st).Reset(context.Background(), plan)
+	err = testActionExecutor(t, g, st).Reset(context.Background(), plan)
 	require.NoError(t, err)
 	require.Equal(t, []string{"prepare:old-second", "destroy", "prepare:old-first", "destroy", "apply", "observe", "cleanup", "apply", "observe", "cleanup"}, sub.resetLifecycle)
 	require.Equal(t, "node-reset", st.FindResource(address.Resource("sysbox_node", "first")).ContainerID())
@@ -71,7 +71,7 @@ func TestExecutorResetUsesProviderLifecycleAndUpdatesState(t *testing.T) {
 		require.NotContains(t, runtimeState, "container_id")
 		require.Equal(t, "node-reset", node.ExternalID)
 	}
-	require.Equal(t, 2, sub.nodeObserveCalls)
+	require.GreaterOrEqual(t, sub.nodeObserveCalls, 8, "reset observes old and new generations")
 }
 
 func TestExecutorResetRejectsUnhealthyFinalObservation(t *testing.T) {
@@ -83,7 +83,7 @@ func TestExecutorResetRejectsUnhealthyFinalObservation(t *testing.T) {
 	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
 	require.NoError(t, err)
 
-	err = NewExecutor(g, st).Reset(context.Background(), plan)
+	err = testActionExecutor(t, g, st).Reset(context.Background(), plan)
 	require.ErrorContains(t, err, "final health")
 	require.Equal(t, "old-first", st.FindResource(address.Resource("sysbox_node", "first")).ContainerID())
 }
@@ -135,7 +135,7 @@ func TestResetPlanPinsBaselineAndRejectsDigestChangeBeforeMutation(t *testing.T)
 	attrs["sha256"] = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	image.Attributes = state.MustAttributes(attrs)
 
-	err = NewExecutor(g, st).Reset(context.Background(), plan)
+	err = testActionExecutor(t, g, st).Reset(context.Background(), plan)
 	require.ErrorContains(t, err, "stale reset plan")
 	require.Empty(t, sub.resetLifecycle)
 }
@@ -217,7 +217,7 @@ func TestExecutorResetResumesPersistedProviderHandleWithoutPreparingAgain(t *tes
 	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
 	require.NoError(t, err)
 
-	require.NoError(t, NewExecutor(g, st).Reset(context.Background(), plan))
+	require.NoError(t, testActionExecutor(t, g, st).Reset(context.Background(), plan))
 	require.Equal(t, []string{"observe", "destroy", "apply", "observe", "cleanup"}, sub.resetLifecycle)
 }
 
@@ -230,11 +230,12 @@ func TestExecutorResetRejectsOwnedResidue(t *testing.T) {
 	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
 	require.NoError(t, err)
 
-	err = NewExecutor(g, st).Reset(context.Background(), plan)
+	exec := testActionExecutor(t, g, st)
+	err = exec.Reset(context.Background(), plan)
 	require.ErrorContains(t, err, "left owned residue")
 	node := st.FindResource(address.Resource("sysbox_node", "first"))
 	require.Equal(t, "old-first", node.ContainerID())
-	resetHandle, _ := node.RuntimeValue("reset_handle").(string)
+	resetHandle, _ := exec.actions.(*memoryActions).actions[0].Candidate.RuntimeValue("reset_handle").(string)
 	require.NotEmpty(t, resetHandle)
 }
 
@@ -247,15 +248,16 @@ func TestExecutorResetPersistsRecoveryHandleBeforeApplyMutation(t *testing.T) {
 	dir := t.TempDir()
 	mgr := state.NewManager(filepath.Join(dir, "state.json"))
 	require.NoError(t, mgr.Save(st))
-	exec := NewExecutor(g, st)
+	exec := testActionExecutor(t, g, st)
 	exec.SetRecorder(NewFileRecorder(filepath.Join(dir, "reset.checkpoint.json"), "run-reset", "lab"))
 	exec.SetStatePatchSink(&StatePatchManagerSink{Manager: mgr, State: st})
 
 	err = exec.Reset(context.Background(), plan)
 	require.ErrorContains(t, err, "injected apply failure")
-	persisted, err := mgr.Load()
+	persisted, err := exec.actions.LoadState(context.Background(), exec.topology)
 	require.NoError(t, err)
-	resetHandle, _ := persisted.FindResource(address.Resource("sysbox_node", "first")).RuntimeValue("reset_handle").(string)
+	require.Equal(t, "old-first", persisted.FindResource(address.Resource("sysbox_node", "first")).ContainerID())
+	resetHandle, _ := exec.actions.(*memoryActions).actions[0].Candidate.RuntimeValue("reset_handle").(string)
 	require.NotEmpty(t, resetHandle)
 	cp, err := LoadCheckpointFile(filepath.Join(dir, "reset.checkpoint.json"))
 	require.NoError(t, err)
@@ -291,15 +293,15 @@ func TestExecutorResetRollsBackCompletedStateWhenFinalPatchFails(t *testing.T) {
 	require.NoError(t, err)
 	mgr := state.NewManager(filepath.Join(t.TempDir(), "state.json"))
 	require.NoError(t, mgr.Save(st))
-	exec := NewExecutor(g, st)
-	exec.SetStatePatchSink(&failFinalResetPatchSink{inner: &StatePatchManagerSink{Manager: mgr, State: st}})
+	exec := testActionExecutor(t, g, st)
+	exec.actions.(*memoryActions).patchErr = errors.New("injected final state patch failure")
 
 	err = exec.Reset(context.Background(), plan)
 	require.ErrorContains(t, err, "injected final state patch failure")
 	node := st.FindResource(address.Resource("sysbox_node", "first"))
 	require.Equal(t, "old-first", node.ContainerID())
-	resetHandle, _ := node.RuntimeValue("reset_handle").(string)
-	require.NotEmpty(t, resetHandle)
+	require.Equal(t, "node-reset", exec.actions.(*memoryActions).actions[0].Candidate.ContainerID())
+	require.NotEqual(t, ActionSucceeded, exec.actions.(*memoryActions).actions[0].Status)
 }
 
 func TestExecutorResetPersistsCompletedStateThroughManagerPatchSink(t *testing.T) {
@@ -310,12 +312,12 @@ func TestExecutorResetPersistsCompletedStateThroughManagerPatchSink(t *testing.T
 	require.NoError(t, err)
 	mgr := state.NewManager(filepath.Join(t.TempDir(), "state.json"))
 	require.NoError(t, mgr.Save(st))
-	exec := NewExecutor(g, st)
+	exec := testActionExecutor(t, g, st)
 	exec.SetStatePatchSink(&StatePatchManagerSink{Manager: mgr, State: st})
 
 	require.NoError(t, exec.Reset(context.Background(), plan))
 	require.Equal(t, "node-reset", st.FindResource(address.Resource("sysbox_node", "first")).ContainerID())
-	persisted, err := mgr.Load()
+	persisted, err := exec.actions.LoadState(context.Background(), exec.topology)
 	require.NoError(t, err)
 	require.Equal(t, "node-reset", persisted.FindResource(address.Resource("sysbox_node", "first")).ContainerID())
 }
@@ -328,9 +330,9 @@ func TestExecutorResetDoesNotCompleteResourceWhenStatePatchFails(t *testing.T) {
 	require.NoError(t, err)
 	dir := t.TempDir()
 	checkpointPath := filepath.Join(dir, "reset.checkpoint.json")
-	exec := NewExecutor(g, st)
+	exec := testActionExecutor(t, g, st)
 	exec.SetRecorder(NewFileRecorder(checkpointPath, "run-reset", "lab"))
-	exec.SetStatePatchSink(failingResetPatchSink{})
+	exec.actions.(*memoryActions).patchErr = errors.New("injected state patch failure")
 
 	err = exec.Reset(context.Background(), plan)
 	require.ErrorContains(t, err, "injected state patch failure")
@@ -365,4 +367,67 @@ func configuredResetTestState(t *testing.T, sub *portTestSubstrate, nodeName str
 	node.Attributes = state.MustAttributes(map[string]any{"guest_family": "linux"})
 	require.NoError(t, node.SetRuntimeValue("container_id", "old-"+nodeName))
 	return g, st
+}
+
+func TestResetRecoveryDoesNotAdvanceGenerationOrReplayEffects(t *testing.T) {
+	sub := &portTestSubstrate{name: "reset-recover-commit", coldPlug: true}
+	registerPortTestDriver(t, sub)
+	g, st := configuredResetTestState(t, sub, "first")
+	e := testActionExecutor(t, g, st)
+	repo := e.actions.(*memoryActions)
+	repo.patchErr = errors.New("commit lost")
+	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
+	require.NoError(t, err)
+	require.Error(t, e.Reset(context.Background(), plan))
+	require.Len(t, repo.actions, 1)
+	require.Equal(t, int64(2), repo.actions[0].Generation)
+	before := append([]string(nil), sub.resetLifecycle...)
+	repo.patchErr = nil
+	restarted := NewExecutor(g, st)
+	restarted.SetRunContext(e.topology, "run-2")
+	restarted.SetActionRepository(repo)
+	require.NoError(t, restarted.Reset(context.Background(), plan))
+	require.Equal(t, before, sub.resetLifecycle)
+	require.Equal(t, int64(2), st.FindResource(address.Resource("sysbox_node", "first")).Generation)
+}
+func TestResetUnknownObservationPreventsIntentAndEffects(t *testing.T) {
+	sub := &portTestSubstrate{name: "reset-unknown", nodeObservation: substrate.NodeObservation{Status: substrate.NodeStatusUnknown}}
+	registerPortTestDriver(t, sub)
+	g, st := configuredResetTestState(t, sub, "first")
+	e := testActionExecutor(t, g, st)
+	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
+	require.NoError(t, err)
+	require.ErrorIs(t, e.Reset(context.Background(), plan), ErrObservationUnknown)
+	require.Empty(t, sub.resetLifecycle)
+	require.Empty(t, e.actions.(*memoryActions).actions)
+}
+func TestResetInterruptedGuestSetupIsNotReplayed(t *testing.T) {
+	sub := &portTestSubstrate{name: "reset-interrupted", resetApplyErr: errors.New("response lost")}
+	registerPortTestDriver(t, sub)
+	g, st := configuredResetTestState(t, sub, "first")
+	e := testActionExecutor(t, g, st)
+	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
+	require.NoError(t, err)
+	require.Error(t, e.Reset(context.Background(), plan))
+	before := append([]string(nil), sub.resetLifecycle...)
+	sub.resetApplyErr = nil
+	require.ErrorIs(t, e.Reset(context.Background(), plan), ErrActionUncertain)
+	require.Equal(t, before, sub.resetLifecycle)
+}
+func TestResetRecoveryRejectsChangedBaseline(t *testing.T) {
+	sub := &portTestSubstrate{name: "reset-baseline-change"}
+	registerPortTestDriver(t, sub)
+	g, st := configuredResetTestState(t, sub, "first")
+	e := testActionExecutor(t, g, st)
+	repo := e.actions.(*memoryActions)
+	repo.patchErr = errors.New("commit lost")
+	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
+	require.NoError(t, err)
+	require.Error(t, e.Reset(context.Background(), plan))
+	repo.patchErr = nil
+	image := st.FindResource(address.Resource("sysbox_image", "base"))
+	require.NoError(t, image.SetAttribute("sha256", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+	changed, err := BuildResetPlan(g, st, "sysbox_node.first")
+	require.NoError(t, err)
+	require.ErrorIs(t, e.Reset(context.Background(), changed), ErrPlanStale)
 }

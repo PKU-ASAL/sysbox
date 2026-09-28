@@ -86,6 +86,7 @@ type portTestSubstrate struct {
 	nodeObservation    substrate.NodeObservation
 	nodeObserveCalls   int
 	destroyErr         error
+	resetDeleted       map[string]bool
 }
 
 func (s *portTestSubstrate) Name() string { return s.name }
@@ -166,8 +167,13 @@ func (s *portTestSubstrate) PrepareReset(_ context.Context, request substrate.Re
 	s.resetLifecycle = append(s.resetLifecycle, "prepare:"+request.Current.ID)
 	return substrate.ResetHandle{Provider: map[string]string{"old_id": request.Current.ID}}, nil
 }
-func (s *portTestSubstrate) DestroyReset(context.Context, substrate.ResetHandle) error {
+func (s *portTestSubstrate) DestroyReset(_ context.Context, h substrate.ResetHandle) error {
 	s.resetLifecycle = append(s.resetLifecycle, "destroy")
+	if s.resetDeleted == nil {
+		s.resetDeleted = map[string]bool{}
+	}
+	old, _ := h.Provider.(map[string]string)
+	s.resetDeleted[old["old_id"]] = true
 	return nil
 }
 func (s *portTestSubstrate) ApplyReset(context.Context, substrate.ResetHandle) (substrate.NodeHandle, error) {
@@ -203,8 +209,11 @@ func (s *portTestSubstrate) NodeStatus(context.Context, substrate.NodeHandle) (b
 	return true, nil
 }
 
-func (s *portTestSubstrate) ObserveNode(context.Context, substrate.NodeHandle) (substrate.NodeObservation, error) {
+func (s *portTestSubstrate) ObserveNode(_ context.Context, h substrate.NodeHandle) (substrate.NodeObservation, error) {
 	s.nodeObserveCalls++
+	if s.resetDeleted[h.ID] {
+		return substrate.NodeObservation{Status: substrate.NodeStatusMissing}, nil
+	}
 	if s.nodeObservation.Status != "" {
 		return s.nodeObservation, nil
 	}

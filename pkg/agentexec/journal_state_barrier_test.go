@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -49,25 +50,29 @@ func (s rejectJournalPhase) SaveCheckpoint(_ context.Context, _, _ string, cp ru
 }
 
 func TestAgentDoesNotSaveStateAfterJournalFailure(t *testing.T) {
-	for _, phase := range []string{"intent", "patch", "state"} {
+	for _, phase := range []string{"intent", "patch"} {
 		t.Run(phase, func(t *testing.T) {
 			dir := t.TempDir()
-			backend := &countingStateBackend{LocalBackend: &state.LocalBackend{Path: filepath.Join(dir, "state.json")}}
-			manager := state.NewManagerWithBackend(backend)
+			statePath := filepath.Join(dir, "state.json")
+			kernelPath := filepath.Join(dir, "kernel")
+			require.NoError(t, os.WriteFile(kernelPath, []byte("kernel"), 0600))
 			st := &state.State{Version: state.SchemaVersion}
-			st.AddResource(state.Resource{Address: address.Resource("sysbox_kernel", "test")})
-			require.NoError(t, manager.Save(st))
-			backend.saves = 0
+			st.AddResource(state.Resource{Address: address.Resource("sysbox_kernel", "test"), Attributes: state.MustAttributes(map[string]any{"path": kernelPath})})
+			saveLocalTestState(t, statePath, "lab", st)
 			want := errors.New("checkpoint rejected " + phase)
-			bridge := &journalBarrierBridge{manager: manager, LocalBridge: NewLocalBridge(LocalOptions{Topology: "lab", RunsDir: dir, Log: io.Discard, CheckpointStore: rejectJournalPhase{phase: phase, err: want}})}
+			bridge := NewLocalBridge(LocalOptions{Topology: "lab", StatePath: statePath, RunsDir: dir, Log: io.Discard, CheckpointStore: rejectJournalPhase{phase: phase, err: want}})
 			run := &controlplane.Run{ID: "run", Topology: "lab", Op: "destroy"}
 			NewExecutorWithBridge(bridge).ExecuteContext(context.Background(), run)
 			require.Equal(t, controlplane.RunFailed, run.Status)
 			require.Contains(t, run.Err, want.Error())
-			if phase == "state" {
-				require.Equal(t, 1, backend.saves, "only the already journaled resource patch may commit")
+			mgr, err := bridge.StateManager("lab")
+			require.NoError(t, err)
+			stored, err := mgr.Load()
+			require.NoError(t, err)
+			if phase == "intent" {
+				require.Len(t, stored.Resources, 1)
 			} else {
-				require.Zero(t, backend.saves, "agent must not bypass a rejected journal with a whole-state save")
+				require.Empty(t, stored.Resources, "atomic action outcome already committed before checkpoint projection failed")
 			}
 		})
 	}

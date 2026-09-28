@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
 )
@@ -32,18 +33,21 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 }
 
 func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, strictName bool) (substrate.NodeHandle, error) {
-	// If a container with this name exists (leftover from a partial previous
-	// apply), force-remove it. Reusing a partially-wired container would
-	// cause interface rename collisions on the next attach attempt.
+	labels, err := expectedLabels(ctx, spec.Labels, true)
+	if err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	identity, managed := substrate.OperationIdentityFromContext(ctx)
 	if existing, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
-		if strictName {
-			return substrate.NodeHandle{}, fmt.Errorf("container name %q appeared during reset; refusing destructive replacement", spec.Name)
+		if strictName || !managed || existing.Config == nil {
+			return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", fmt.Sprintf("container name %q already exists; refusing replacement", spec.Name), nil)
 		}
-		if existing.Config == nil || existing.Config.Labels["sysbox.managed"] != "true" {
-			return substrate.NodeHandle{}, fmt.Errorf("container name %q is already used by an unmanaged container", spec.Name)
+		if err := verifyLabels(existing.Config.Labels, operationLabels(identity)); err != nil {
+			return substrate.NodeHandle{}, err
 		}
-		fmt.Printf("[docker] warning: force-removing stale container %q\n", spec.Name)
-		_ = s.cli.ContainerRemove(ctx, spec.Name, container.RemoveOptions{Force: true})
+		return managedHandle(existing, identity.Generation)
+	} else if !errdefs.IsNotFound(err) {
+		return substrate.NodeHandle{}, driver.Wrap(driver.ErrorUnavailable, "docker", "container name inspection unavailable", err)
 	}
 
 	envs := util.EnvToSlice(spec.Env)
@@ -118,11 +122,19 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 	}
 
 	launch, direct := launchConfig(imageEntrypoint, imageCmd, pc)
+	hs := &HandleState{ContainerName: spec.Name, ImageCmd: imageCmd, ImageEntrypoint: imageEntrypoint, RemoveDefaultBridge: removeDefaultBridge, DirectLaunch: direct}
+	if managed {
+		raw, err := json.Marshal(hs)
+		if err != nil {
+			return substrate.NodeHandle{}, err
+		}
+		labels["sysbox.node_state"] = string(raw)
+	}
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
 			Image:        spec.Image.ID,
 			Env:          envs,
-			Labels:       spec.Labels,
+			Labels:       labels,
 			ExposedPorts: exposedPorts,
 			// Explicitly override ENTRYPOINT so images with their own default
 			// (e.g. aquasec/tracee) stay alive for provisioner exec calls.
@@ -139,14 +151,9 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 	}
 
 	return substrate.NodeHandle{
-		ID: resp.ID,
-		Provider: &HandleState{
-			ContainerName:       spec.Name,
-			ImageCmd:            imageCmd,
-			ImageEntrypoint:     imageEntrypoint,
-			RemoveDefaultBridge: removeDefaultBridge,
-			DirectLaunch:        direct,
-		},
+		ID:         resp.ID,
+		Generation: identity.Generation,
+		Provider:   hs,
 		Conn: substrate.ConnInfo{
 			Kind:     substrate.ConnKindDocker,
 			Endpoint: resp.ID,
@@ -325,7 +332,11 @@ func (s *Substrate) ExecImageEntry(ctx context.Context, handle substrate.NodeHan
 	}
 
 	// Run as background process so it doesn't block the executor.
-	_, err = c.ExecBackground(ctx, commandRequest(cmd))
+	background, ok := c.(substrate.ConnectionBackground)
+	if !ok {
+		return substrate.ErrNotSupported
+	}
+	_, err = background.ExecBackground(ctx, commandRequest(cmd))
 	return err
 }
 

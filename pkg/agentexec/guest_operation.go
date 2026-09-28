@@ -43,6 +43,13 @@ var (
 // wrapped so callers can distinguish resolution failures (node not found,
 // capability unavailable) from a failed exec.
 func runGuestExec(ctx context.Context, st *state.State, node string, argv []string, env map[string]string, workingDir string) (substrate.ExecResult, error) {
+	if len(argv) == 0 {
+		return substrate.ExecResult{}, fmt.Errorf("exec program is required")
+	}
+	request := substrate.ExecRequest{Program: argv[0], Args: argv[1:], Environment: env, WorkingDir: workingDir, Shell: substrate.ShellNone, OutputLimitBytes: guestOutputLimit}
+	if err := request.Validate(); err != nil {
+		return substrate.ExecResult{}, err
+	}
 	res := st.FindResource(address.Resource("sysbox_node", node))
 	if res == nil {
 		res = st.FindResource(address.Resource("sysbox_router", node))
@@ -50,7 +57,11 @@ func runGuestExec(ctx context.Context, st *state.State, node string, argv []stri
 	if res == nil {
 		return substrate.ExecResult{}, fmt.Errorf("%w: %s", errGuestNodeNotFound, node)
 	}
-	exec, err := driver.DefaultRegistry.RequireGuestExec(res.Driver)
+	_, err := driver.DefaultRegistry.RequireGuestExec(res.Driver)
+	if err != nil {
+		return substrate.ExecResult{}, fmt.Errorf("%w", errGuestExecUnsupported)
+	}
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(res.Driver)
 	if err != nil {
 		return substrate.ExecResult{}, fmt.Errorf("%w", errGuestExecUnsupported)
 	}
@@ -62,7 +73,21 @@ func runGuestExec(ctx context.Context, st *state.State, node string, argv []stri
 	if err != nil {
 		return substrate.ExecResult{}, fmt.Errorf("reconstruct provider handle: %w", err)
 	}
-	return exec.ExecInNode(ctx, handle, substrate.ExecRequest{Program: argv[0], Args: argv[1:], Environment: env, WorkingDir: workingDir, Shell: substrate.ShellNone})
+	conn, err := nodeDriver.Connection(handle, nil)
+	if err != nil {
+		if errors.Is(err, substrate.ErrNotSupported) {
+			return substrate.ExecResult{}, fmt.Errorf("%w", errGuestExecUnsupported)
+		}
+		return substrate.ExecResult{}, fmt.Errorf("connect to guest: %w", err)
+	}
+	if conn == nil {
+		return substrate.ExecResult{}, fmt.Errorf("%w", errGuestExecUnsupported)
+	}
+	result, err := conn.Exec(ctx, request, nil, nil)
+	if err == nil && !result.ExitCodeKnown {
+		err = fmt.Errorf("guest execution did not report an exit status")
+	}
+	return result, err
 }
 
 // guestOperationContext derives the context a guest operation runs under.
@@ -99,13 +124,19 @@ func executeGuestOperation(ctx context.Context, st *state.State, node string, re
 			// Do not drop what the provider already captured: on a timeout that is
 			// the only trace of how far the command got, and the caller has nothing
 			// else to act on.
-			return guestOperationCompletion{ResultClass: class, Err: class + " guest operation", Result: encodeGuestOutput(result.Stdout, result.Stderr)}
+			return guestOperationCompletion{ResultClass: class, Err: class + " guest operation", Result: encodeGuestResult(result)}
 		}
 	}
 
-	out := encodeGuestOutput(result.Stdout, result.Stderr)
+	out := encodeGuestResult(result)
 	out.ExitCode = result.ExitCode
 	return guestOperationCompletion{ResultClass: controlplane.GuestExecutionResultClassExit, Result: out}
+}
+
+func encodeGuestResult(result substrate.ExecResult) controlplane.GuestExecutionResult {
+	out := encodeGuestOutput(result.Stdout, result.Stderr)
+	out.Truncated = out.Truncated || result.StdoutTruncated || result.StderrTruncated
+	return out
 }
 
 // encodeGuestOutput bounds and base64-encodes captured guest output. The bound

@@ -1,0 +1,463 @@
+// Package persistence owns atomic lifecycle aggregates. Runtime defines its
+// repository port; adapters do not implement provider effects or HTTP behavior.
+package persistence
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"sort"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
+)
+
+var (
+	ErrConflict           = errors.New("repository conflict")
+	ErrNotFound           = errors.New("repository record not found")
+	ErrCorruptRecord      = errors.New("corrupt repository record")
+	ErrUnsupportedVersion = errors.New("unsupported repository version")
+)
+
+const FormatVersion = 1
+
+var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+type aggregate struct {
+	Format    int                             `json:"format"`
+	Serial    int64                           `json:"serial"`
+	State     *state.State                    `json:"state"`
+	Actions   map[string]runtime.ActionRecord `json:"actions"`
+	UpdatedAt time.Time                       `json:"updated_at"`
+}
+type backend interface {
+	update(context.Context, string, func(*aggregate) error) error
+	keys(context.Context) ([]string, error)
+	close() error
+	name() string
+}
+type Repository struct {
+	backend       backend
+	boundTopology string
+}
+
+func (r *Repository) Close() error { return r.backend.close() }
+
+func (r *Repository) ListTopologies(ctx context.Context) ([]state.TopologyMetadata, error) {
+	keys, err := r.backend.keys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]state.TopologyMetadata, 0, len(keys))
+	for _, key := range keys {
+		if r.boundTopology != "" && key != r.boundTopology {
+			continue
+		}
+		if !topologyName.MatchString(key) {
+			return nil, ErrCorruptRecord
+		}
+		err := r.update(ctx, key, func(a *aggregate) error {
+			if a.Serial > 0 || len(a.Actions) > 0 {
+				out = append(out, state.TopologyMetadata{Name: key, HasState: true, ResourceCount: len(a.State.Resources), Serial: a.Serial, Backend: r.backend.name(), UpdatedAt: a.UpdatedAt})
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+func newAggregate() *aggregate {
+	return &aggregate{Format: FormatVersion, State: &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}, Actions: map[string]runtime.ActionRecord{}}
+}
+func decodeAggregate(raw []byte) (*aggregate, error) {
+	var a aggregate
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
+	}
+	if a.Format != FormatVersion {
+		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, a.Format, FormatVersion)
+	}
+	if err := validateAggregate(&a, ""); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// Validate both loaded records and proposed mutations. JSON syntax alone does
+// not make identity, journal revision, or recovery evidence trustworthy.
+func validateAggregate(a *aggregate, topology string) error {
+	if a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Serial < 0 {
+		return ErrCorruptRecord
+	}
+	if a.State.Version != state.SchemaVersion {
+		return ErrUnsupportedVersion
+	}
+	addresses := map[string]bool{}
+	uids := map[string]bool{}
+	for _, resource := range a.State.Resources {
+		if resource.Address.IsZero() || resource.OwnerUID != a.State.TopologyUID || resource.ResourceUID == "" || resource.Generation < 1 || addresses[resource.Address.String()] || uids[resource.ResourceUID] {
+			return fmt.Errorf("%w: invalid resource identity", ErrCorruptRecord)
+		}
+		addresses[resource.Address.String()], uids[resource.ResourceUID] = true, true
+	}
+	for key, action := range a.Actions {
+		if key != action.ID || validateAction(action) != nil || action.OwnerUID != a.State.TopologyUID || action.Revision < 1 || action.ExpectedSerial > a.Serial {
+			return fmt.Errorf("%w: invalid action identity or revision", ErrCorruptRecord)
+		}
+		if topology == "" {
+			topology = action.Topology
+		}
+		if action.Topology != topology {
+			return fmt.Errorf("%w: action topology mismatch", ErrCorruptRecord)
+		}
+		switch action.Status {
+		case runtime.ActionIntentCommitted, runtime.ActionSucceeded, runtime.ActionUncertain, runtime.ActionBlocked:
+		default:
+			return fmt.Errorf("%w: invalid action status", ErrCorruptRecord)
+		}
+		if action.Status == runtime.ActionSucceeded {
+			if action.ExpectedSerial >= a.Serial || action.Action != controlplane.PlanActionDelete && action.Candidate == nil {
+				return fmt.Errorf("%w: success lacks atomic patch evidence", ErrCorruptRecord)
+			}
+		}
+		if c := action.Candidate; c != nil {
+			want := action.Generation
+			// Reset checkpoints before replacement preserve the old generation
+			// and its provider reset token, never pretend it is already new.
+			if action.Action == controlplane.PlanActionReset && !action.EffectComplete && action.Status != runtime.ActionSucceeded {
+				want--
+			}
+			if !c.Address.Equal(action.Resource) || c.OwnerUID != action.OwnerUID || c.ResourceUID != action.ResourceUID || c.Generation != want || want < 1 {
+				return fmt.Errorf("%w: action candidate identity mismatch", ErrCorruptRecord)
+			}
+		}
+	}
+	return nil
+}
+func (r *Repository) update(ctx context.Context, topology string, fn func(*aggregate) error) error {
+	if r.boundTopology != "" && topology != r.boundTopology {
+		return fmt.Errorf("backend topology %q does not match requested topology %q", r.boundTopology, topology)
+	}
+	if !topologyName.MatchString(topology) {
+		return fmt.Errorf("invalid topology %q", topology)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return r.backend.update(ctx, topology, func(a *aggregate) error {
+		if err := validateAggregate(a, topology); err != nil {
+			return err
+		}
+		if err := fn(a); err != nil {
+			return err
+		}
+		return validateAggregate(a, topology)
+	})
+}
+func cloneState(st *state.State) (*state.State, error) {
+	raw, err := st.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	return state.Unmarshal(raw)
+}
+func (r *Repository) LoadState(ctx context.Context, topology string) (*state.State, error) {
+	var out *state.State
+	err := r.update(ctx, topology, func(a *aggregate) error {
+		var err error
+		out, err = cloneState(a.State)
+		if err == nil {
+			out.Meta = state.StateMeta{Backend: r.backend.name(), Serial: a.Serial, Exists: true, UpdatedAt: a.UpdatedAt}
+		}
+		return err
+	})
+	return out, err
+}
+func (r *Repository) LoadActions(ctx context.Context, topology string) ([]runtime.ActionRecord, error) {
+	var out []runtime.ActionRecord
+	err := r.update(ctx, topology, func(a *aggregate) error {
+		for _, v := range a.Actions {
+			out = append(out, v)
+		}
+		return nil
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, err
+}
+func validateAction(a runtime.ActionRecord) error {
+	if a.ID == "" || a.RunID == "" || !topologyName.MatchString(a.Topology) || a.Resource.IsZero() || a.OwnerUID == "" || a.ResourceUID == "" || a.Generation < 1 || a.StateSerial < 0 || a.ExpectedSerial < a.StateSerial || a.Revision < 0 {
+		return fmt.Errorf("invalid action identity")
+	}
+	switch a.Action {
+	case controlplane.PlanActionCreate, controlplane.PlanActionRead, controlplane.PlanActionDelete, controlplane.PlanActionReset:
+	default:
+		return fmt.Errorf("invalid action %s", a.Action)
+	}
+	if a.Action == controlplane.PlanActionReset && resetPhaseOrder(a.Phase) < 0 {
+		return fmt.Errorf("invalid reset phase %q", a.Phase)
+	}
+	return nil
+}
+func sameIntent(a, b runtime.ActionRecord) bool {
+	return a.ID == b.ID && a.Topology == b.Topology && a.RunID == b.RunID && a.Resource.Equal(b.Resource) && a.Action == b.Action && a.OwnerUID == b.OwnerUID && a.ResourceUID == b.ResourceUID && a.Generation == b.Generation && a.StateSerial == b.StateSerial && a.DesiredDigest == b.DesiredDigest && a.ReplayForbidden == b.ReplayForbidden
+}
+func sameRecord(a, b runtime.ActionRecord) bool {
+	// An acknowledgement can be lost after commit. Identical terminal outcomes
+	// remain idempotent even when the caller still has the pre-commit revision.
+	a.Revision, b.Revision = 0, 0
+	aRaw, _ := json.Marshal(a)
+	bRaw, _ := json.Marshal(b)
+	return string(aRaw) == string(bRaw)
+}
+func (r *Repository) CommitActionIntent(ctx context.Context, action runtime.ActionRecord) error {
+	if err := validateAction(action); err != nil {
+		return err
+	}
+	if action.Status != runtime.ActionIntentCommitted || action.Revision != 0 {
+		return fmt.Errorf("new action must be intent_committed")
+	}
+	return r.update(ctx, action.Topology, func(a *aggregate) error {
+		if old, exists := a.Actions[action.ID]; exists {
+			if sameIntent(old, action) {
+				return nil
+			}
+			return ErrConflict
+		}
+		if a.State.TopologyUID != action.OwnerUID || a.Serial != action.ExpectedSerial || action.ExpectedSerial != action.StateSerial {
+			return ErrConflict
+		}
+		for _, old := range a.Actions {
+			if old.Status != runtime.ActionSucceeded && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
+				return fmt.Errorf("%w: unresolved action %s", ErrConflict, old.ID)
+			}
+		}
+		if err := validateActionTarget(a.State, action); err != nil {
+			return err
+		}
+		action.Revision = 1
+		a.Actions[action.ID] = action
+		a.UpdatedAt = time.Now().UTC()
+		return nil
+	})
+}
+func (r *Repository) CommitActionOutcome(ctx context.Context, action runtime.ActionRecord, patch *runtime.StatePatch) error {
+	if err := validateAction(action); err != nil {
+		return err
+	}
+	return r.update(ctx, action.Topology, func(a *aggregate) error {
+		old, exists := a.Actions[action.ID]
+		if !exists {
+			return ErrNotFound
+		}
+		if !sameIntent(old, action) {
+			return ErrConflict
+		}
+		if old.Status == runtime.ActionSucceeded {
+			if sameRecord(old, action) {
+				return nil
+			}
+			return ErrConflict
+		}
+		if a.Serial != action.ExpectedSerial || old.Revision != action.Revision {
+			return ErrConflict
+		}
+		if err := validateActionTarget(a.State, action); err != nil {
+			return err
+		}
+		if old.EffectComplete && !action.EffectComplete || old.Candidate != nil && action.Candidate == nil {
+			return fmt.Errorf("%w: recovery evidence cannot be discarded", ErrConflict)
+		}
+		if action.Action == controlplane.PlanActionReset && resetPhaseOrder(action.Phase) < resetPhaseOrder(old.Phase) {
+			return fmt.Errorf("%w: reset phase cannot regress", ErrConflict)
+		}
+		switch action.Status {
+		case runtime.ActionSucceeded, runtime.ActionUncertain, runtime.ActionBlocked:
+		default:
+			return fmt.Errorf("invalid outcome %s", action.Status)
+		}
+		if patch != nil {
+			if action.Status != runtime.ActionSucceeded || patch.Resource != action.Resource.String() || patch.Action != action.Action {
+				return ErrConflict
+			}
+			if patch.Op == runtime.StatePatchDelete {
+				if action.Action != controlplane.PlanActionDelete {
+					return ErrConflict
+				}
+				a.State.RemoveResource(action.Resource)
+			} else if patch.Op == runtime.StatePatchUpsert {
+				if action.Candidate == nil || !action.Candidate.Address.Equal(action.Resource) {
+					return ErrConflict
+				}
+				candidate := *action.Candidate
+				candidate.OwnerUID = action.OwnerUID
+				candidate.ResourceUID = action.ResourceUID
+				candidate.Generation = action.Generation
+				a.State.RemoveResource(action.Resource)
+				a.State.AddResource(candidate)
+			} else {
+				return fmt.Errorf("unsupported resource patch %s", patch.Op)
+			}
+			a.Serial++
+		} else if action.Status == runtime.ActionSucceeded {
+			return fmt.Errorf("verified success requires an atomic resource patch")
+		}
+		action.Revision++
+		a.Actions[action.ID] = action
+		a.UpdatedAt = time.Now().UTC()
+		return nil
+	})
+}
+
+func resetPhaseOrder(phase string) int {
+	switch phase {
+	case "":
+		return 0
+	case "preparing":
+		return 1
+	case "prepared":
+		return 2
+	case "destroyed":
+		return 3
+	case "applying":
+		return 4
+	case "verifying":
+		return 5
+	default:
+		return -1
+	}
+}
+
+// Serial is necessary but not sufficient after external restore/import. An
+// action may only update the resource identity and generation it authorized.
+func validateActionTarget(st *state.State, action runtime.ActionRecord) error {
+	current := st.FindResource(action.Resource)
+	if current == nil {
+		if action.Action == controlplane.PlanActionDelete || action.Action == controlplane.PlanActionReset {
+			return ErrConflict
+		}
+		return nil
+	}
+	if action.Action == controlplane.PlanActionCreate {
+		return ErrConflict
+	}
+	want := action.Generation
+	if action.Action == controlplane.PlanActionReset {
+		want--
+	}
+	if current.OwnerUID != action.OwnerUID || current.ResourceUID != action.ResourceUID || current.Generation != want {
+		return ErrConflict
+	}
+	if action.Action == controlplane.PlanActionDelete && (action.Candidate == nil || current.ExternalID != action.Candidate.ExternalID) {
+		return ErrConflict
+	}
+	return nil
+}
+
+// StateBackend exposes the same aggregate to existing state.Manager callers.
+// It does not create a second mutable state file beside the action journal.
+func (r *Repository) StateBackend(topology string) state.Backend {
+	return &stateBackend{repository: r, topology: topology}
+}
+
+type stateBackend struct {
+	repository *Repository
+	topology   string
+}
+
+func (b *stateBackend) Capabilities() state.BackendCapabilities {
+	return state.BackendCapabilities{Locking: true, CAS: true, Delete: true}
+}
+func (b *stateBackend) Metadata(ctx context.Context) (state.Metadata, error) {
+	st, err := b.repository.LoadState(ctx, b.topology)
+	if err != nil {
+		return state.Metadata{}, err
+	}
+	return state.Metadata{Backend: b.repository.backend.name(), Location: b.topology, Version: state.SchemaVersion, Serial: st.Meta.Serial, UpdatedAt: st.Meta.UpdatedAt}, nil
+}
+func (b *stateBackend) ListTopologies(ctx context.Context) ([]state.TopologyMetadata, error) {
+	return b.repository.ListTopologies(ctx)
+}
+func (b *stateBackend) Delete(ctx context.Context) error {
+	return b.repository.update(ctx, b.topology, resetAggregate)
+}
+func (b *stateBackend) DeleteVersioned(ctx context.Context, expectedSerial int64, topologyUID string) error {
+	return b.repository.update(ctx, b.topology, func(a *aggregate) error {
+		if a.Serial != expectedSerial || a.State.TopologyUID != topologyUID {
+			return ErrConflict
+		}
+		return resetAggregate(a)
+	})
+}
+func resetAggregate(a *aggregate) error {
+	for _, action := range a.Actions {
+		if action.Status != runtime.ActionSucceeded {
+			return ErrConflict
+		}
+	}
+	a.State = &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}
+	a.Actions = map[string]runtime.ActionRecord{}
+	a.Serial = 0
+	a.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// Each conditional save below locks and checks within one backend transaction.
+func (b *stateBackend) Lock(ctx context.Context) (state.UnlockFunc, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return func() {}, nil
+}
+func (b *stateBackend) Load(ctx context.Context) ([]byte, error) {
+	st, err := b.repository.LoadState(ctx, b.topology)
+	if err != nil {
+		return nil, err
+	}
+	return st.Marshal()
+}
+func (b *stateBackend) LoadVersioned(ctx context.Context) (*state.LoadedState, error) {
+	st, err := b.repository.LoadState(ctx, b.topology)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := st.Marshal()
+	return &state.LoadedState{Data: raw, Serial: st.Meta.Serial, Exists: true, UpdatedAt: st.Meta.UpdatedAt, Metadata: state.Metadata{Backend: st.Meta.Backend, Serial: st.Meta.Serial, Version: state.SchemaVersion}}, err
+}
+func (b *stateBackend) Save(ctx context.Context, raw []byte) error {
+	return fmt.Errorf("unconditional aggregate save is unsupported; use CAS")
+}
+func (b *stateBackend) SaveVersioned(ctx context.Context, raw []byte, options state.SaveOptions) error {
+	st, err := state.Unmarshal(raw)
+	if err != nil {
+		return err
+	}
+	return b.repository.update(ctx, b.topology, func(a *aggregate) error {
+		if !options.RequireCAS || a.Serial != options.ExpectedSerial {
+			return &state.ConflictError{Expected: options.ExpectedSerial, Actual: a.Serial}
+		}
+		if st.TopologyUID == "" && a.Serial == 0 && len(a.Actions) == 0 {
+			st.TopologyUID = a.State.TopologyUID
+		}
+		if st.TopologyUID != a.State.TopologyUID {
+			return ErrConflict
+		}
+		for _, action := range a.Actions {
+			if action.Status != runtime.ActionSucceeded {
+				return fmt.Errorf("%w: unfinished action prevents standalone state save", ErrConflict)
+			}
+		}
+		a.State = st
+		a.Serial++
+		a.UpdatedAt = time.Now().UTC()
+		return nil
+	})
+}
+
+var _ runtime.ActionRepository = (*Repository)(nil)

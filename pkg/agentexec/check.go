@@ -94,7 +94,7 @@ func resolveExecData(ctx context.Context, st *state.State, d config.DataBlock, e
 		return cty.NilVal, fmt.Errorf("data %s.%s: %w", d.Type, d.Name, err)
 	}
 
-	truncated := len(result.Stdout) > guestOutputLimit || len(result.Stderr) > guestOutputLimit
+	truncated := result.StdoutTruncated || result.StderrTruncated || len(result.Stdout) > guestOutputLimit || len(result.Stderr) > guestOutputLimit
 	return cty.ObjectVal(map[string]cty.Value{
 		"exit_code": cty.NumberIntVal(int64(result.ExitCode)),
 		"stdout":    cty.StringVal(result.Stdout),

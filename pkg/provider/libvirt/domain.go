@@ -1,24 +1,39 @@
 package libvirt
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"strings"
 )
 
 // domainXML is the libvirt domain definition.
 type domainXML struct {
-	XMLName  xml.Name    `xml:"domain"`
-	Type     string      `xml:"type,attr"`
-	Name     string      `xml:"name"`
-	UUID     string      `xml:"uuid,omitempty"`
-	Memory   domMemory   `xml:"memory"`
-	VCPU     int         `xml:"vcpu"`
-	OS       domOS       `xml:"os"`
-	Features domFeatures `xml:"features"`
-	CPU      domCPU      `xml:"cpu"`
-	Devices  domDevices  `xml:"devices"`
-	OnCrash  string      `xml:"on_crash"`
+	XMLName  xml.Name     `xml:"domain"`
+	Type     string       `xml:"type,attr"`
+	Name     string       `xml:"name"`
+	UUID     string       `xml:"uuid,omitempty"`
+	Metadata *domMetadata `xml:"metadata,omitempty"`
+	Memory   domMemory    `xml:"memory"`
+	VCPU     int          `xml:"vcpu"`
+	OS       domOS        `xml:"os"`
+	Features domFeatures  `xml:"features"`
+	CPU      domCPU       `xml:"cpu"`
+	Devices  domDevices   `xml:"devices"`
+	OnCrash  string       `xml:"on_crash"`
+}
+
+type domMetadata struct {
+	Managed *domManaged `xml:"urn:sysbox:managed managed"`
+}
+type domManaged struct {
+	OwnerUID    string `xml:"owner_uid,attr"`
+	ResourceUID string `xml:"resource_uid,attr"`
+	TopologyUID string `xml:"topology_uid,attr"`
+	Generation  int64  `xml:"generation,attr"`
+	ActionID    string `xml:"action_id,attr"`
+	State       string `xml:"state"`
 }
 
 type domMemory struct {
@@ -129,14 +144,16 @@ type domChannelTgt struct {
 
 // DomainSpec holds everything needed to generate a domain XML.
 type DomainSpec struct {
-	Name        string
-	UUID        string
-	VCPUs       int
-	MemoryMiB   int
-	MachineType string
-	DiskPath    string // absolute path to the per-VM qcow2 copy
-	SeedISO     string
-	Bridges     []BridgeAttach
+	Identity     *substrate.OperationIdentity
+	ManagedState *HandleState
+	Name         string
+	UUID         string
+	VCPUs        int
+	MemoryMiB    int
+	MachineType  string
+	DiskPath     string // absolute path to the per-VM qcow2 copy
+	SeedISO      string
+	Bridges      []BridgeAttach
 }
 
 // BridgeAttach describes one network interface attached to a host bridge.
@@ -210,6 +227,20 @@ func GenerateDomainXML(spec DomainSpec) (string, error) {
 	}
 	if spec.SeedISO != "" {
 		d.Devices.Disks = append(d.Devices.Disks, domDisk{Type: "file", Device: "cdrom", Driver: domDiskDrv{Name: "qemu", Type: "raw"}, Source: domDiskSrc{File: spec.SeedISO}, Target: domDiskTgt{Dev: "sda", Bus: "sata"}, ReadOnly: &struct{}{}})
+	}
+	if spec.Identity != nil {
+		if err := spec.Identity.Validate(); err != nil {
+			return "", err
+		}
+		if spec.ManagedState == nil || spec.UUID == "" {
+			return "", fmt.Errorf("managed domain requires durable state and UUID")
+		}
+		state, err := json.Marshal(spec.ManagedState)
+		if err != nil {
+			return "", err
+		}
+		id := spec.Identity
+		d.Metadata = &domMetadata{Managed: &domManaged{OwnerUID: id.OwnerUID, ResourceUID: id.ResourceUID, TopologyUID: id.TopologyUID, Generation: id.Generation, ActionID: id.ActionID, State: string(state)}}
 	}
 
 	out, err := xml.MarshalIndent(d, "", "  ")

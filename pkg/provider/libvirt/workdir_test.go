@@ -16,7 +16,7 @@ import (
 func TestCreateNodeUsesConfiguredHostVisibleWorkdir(t *testing.T) {
 	bin := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "qemu-img.log")
-	writeExecutable(t, filepath.Join(bin, "virsh"), "#!/bin/sh\nexit 1\n")
+	writeExecutable(t, filepath.Join(bin, "virsh"), "#!/bin/sh\nif [ \"$1\" = \"list\" ]; then exit 0; fi\nexit 1\n")
 	writeExecutable(t, filepath.Join(bin, "qemu-img"), `#!/bin/sh
 printf '%s\n' "$*" >> "$SYSBOX_TEST_QEMU_IMG_LOG"
 case "$1" in
@@ -56,7 +56,7 @@ func TestCreateNodeGeneratesEphemeralSSHKeyForCloudInit(t *testing.T) {
 		t.Skip("ssh-keygen is unavailable")
 	}
 	bin := t.TempDir()
-	writeExecutable(t, filepath.Join(bin, "virsh"), "#!/bin/sh\nexit 1\n")
+	writeExecutable(t, filepath.Join(bin, "virsh"), "#!/bin/sh\nif [ \"$1\" = \"list\" ]; then exit 0; fi\nexit 1\n")
 	writeExecutable(t, filepath.Join(bin, "qemu-img"), `#!/bin/sh
 case "$1" in
   convert) touch "$7" ;;

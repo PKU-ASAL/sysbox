@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,22 +19,20 @@ import (
 // No VM, tap, namespace, or listening socket is created by these tests.
 func lifecycleFixture(t *testing.T, readiness bool) (*Substrate, substrate.NodeHandle, *vmProcess) {
 	t.Helper()
-	root := t.TempDir()
-	bin := filepath.Join(root, "fixture")
-	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$$\" >> \"$0.starts\"\nexec sleep 30\n"), 0700))
-	id := filepath.Base(root) + "-" + t.Name()
-	dir := filepath.Join(root, "vm")
-	require.NoError(t, os.Mkdir(dir, 0700))
-	hs := &HandleState{VMDir: dir, Socket: filepath.Join(dir, "firecracker.sock"), ConfigPath: filepath.Join(dir, "config.json"), PIDFile: filepath.Join(dir, "firecracker.pid"), MetaPath: filepath.Join(dir, "sysbox.json")}
+	s, h, m, _ := manifestFixture(t, false)
+	hs := h.Provider.(*HandleState)
 	if readiness {
-		hs.VsockUDS = filepath.Join(dir, "unavailable.sock")
+		hs.VsockUDS = ownedUnixSocketPath(hs.VMDir, h.ID, "vsock.sock", "vs")
+		hs.VsockPort = 8901
 	}
-	vm := &vmProcess{vmID: id, socket: hs.Socket, cfgPath: hs.ConfigPath}
-	vmMu.Lock()
-	vmStore[id] = vm
-	vmMu.Unlock()
-	s := &Substrate{firecrackerBin: bin, rootfsDir: root}
-	h := substrate.NodeHandle{ID: id, Provider: hs}
+	writeFixtureManifest(t, hs.VMDir, m)
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	bin := filepath.Join(s.rootfsDir, "fixture")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\n' \"$$\" >> \"$0.starts\"\nSYSBOX_MANIFEST_PROCESS_HELPER=1 SYSBOX_MANIFEST_SOCKET=%q exec %q -test.run=^TestManifestProcessHelper$ -- \"$@\"\n", hs.Socket, exe)
+	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
+	s.firecrackerBin = bin
+	vm := lookupOrReserveVM(h.Provider.(*HandleState).VMDir)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -41,7 +40,6 @@ func lifecycleFixture(t *testing.T, readiness bool) (*Substrate, substrate.NodeH
 	})
 	return s, h, vm
 }
-
 func TestLifecycleWaitsForStartAndHonorsCancellation(t *testing.T) {
 	s, h, vm := lifecycleFixture(t, true)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -75,7 +73,7 @@ func TestStartCancellationReturnsErrorAndRetainsOwnedChild(t *testing.T) {
 	require.Eventually(t, func() bool { return vm.snapshot().pid > 0 }, time.Second, time.Millisecond)
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
-	require.FileExists(t, h.Provider.(*HandleState).PIDFile)
+	require.FileExists(t, h.Provider.(*HandleState).ManifestPath)
 	require.NoError(t, s.DestroyNode(context.Background(), h))
 	require.Eventually(t, func() bool { return !processAlive(vm.snapshot().pid) }, time.Second, time.Millisecond)
 }
@@ -86,7 +84,7 @@ func TestAdoptPreservesActiveChildAndReaper(t *testing.T) {
 	_, err := s.AdoptNode(context.Background(), h)
 	require.NoError(t, err)
 	vmMu.Lock()
-	tracked := vmStore[h.ID]
+	tracked := vmStore[h.Provider.(*HandleState).VMDir]
 	vmMu.Unlock()
 	require.Same(t, vm, tracked, "adoption must preserve the child and its reaper")
 	require.NoError(t, s.StopNode(context.Background(), h))
@@ -192,13 +190,14 @@ func TestDestroyWaitCancellationPreservesTrackedProcessForRetry(t *testing.T) {
 	vm.done = make(chan struct{})
 	vm.mu.Unlock()
 	var once sync.Once
+	seedOwnedManifest(t, s, h.ID, h.Provider.(*HandleState), cmd)
 	reap := func() { once.Do(func() { go reapVMProcess(vm, cmd) }) }
 	t.Cleanup(reap)
 	// Delay only the fixture's reaper to expose the destroy wait deterministically.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	require.ErrorIs(t, s.DestroyNode(ctx, h), context.DeadlineExceeded)
-	require.Same(t, vm, lookupVM(h.ID))
+	require.Same(t, vm, lookupVM(h.Provider.(*HandleState).VMDir))
 	require.DirExists(t, h.Provider.(*HandleState).VMDir)
 	reap()
 	require.NoError(t, s.DestroyNode(context.Background(), h))
@@ -211,7 +210,7 @@ func TestCreateDoesNotReplaceActiveTrackedProcess(t *testing.T) {
 	require.NoError(t, s.StartNode(context.Background(), h))
 	_, err := s.CreateNode(context.Background(), substrate.NodeSpec{Name: h.ID})
 	require.ErrorContains(t, err, "already running")
-	require.Same(t, vm, lookupVM(h.ID))
+	require.Same(t, vm, lookupVM(h.Provider.(*HandleState).VMDir))
 }
 
 func TestRestoreResetInitializesColdObservationEntry(t *testing.T) {
@@ -220,7 +219,7 @@ func TestRestoreResetInitializesColdObservationEntry(t *testing.T) {
 	vm.cfgPath = ""
 	vm.mu.Unlock()
 	s.restoreResetVMProcess(h.ID, h.Provider.(*HandleState))
-	require.Same(t, vm, lookupVM(h.ID))
+	require.Same(t, vm, lookupVM(h.Provider.(*HandleState).VMDir))
 	require.Equal(t, h.Provider.(*HandleState).ConfigPath, vm.snapshot().cfgPath)
 }
 

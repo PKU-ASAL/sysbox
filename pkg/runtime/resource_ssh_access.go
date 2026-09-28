@@ -34,7 +34,7 @@ func (SSHAccessResourceHandler) Schema() ResourceSchema {
 }
 
 func (SSHAccessResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
-	return resourceReadOK(current), nil
+	return ResourceReadResult{Status: state.ResourceUnknown, Resource: current}, fmt.Errorf("%w: ssh_access lacks read-back verification", ErrConvergenceUnsupported)
 }
 
 func (SSHAccessResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
@@ -157,7 +157,11 @@ func setupSSHAccess(ctx context.Context, conn substrate.Connection, nodeID strin
 
 	// 3. Inject sysbox-sshd-hook binary if provided.
 	if hookBinaryPath != "" {
-		if err := conn.CopyFile(ctx, hookBinaryPath, "/usr/local/bin/sysbox-sshd-hook"); err != nil {
+		files, ok := conn.(substrate.ConnectionFileCopier)
+		if !ok {
+			return fmt.Errorf("copy sysbox-sshd-hook: %w", substrate.ErrNotSupported)
+		}
+		if err := files.CopyFile(ctx, hookBinaryPath, "/usr/local/bin/sysbox-sshd-hook"); err != nil {
 			return fmt.Errorf("copy sysbox-sshd-hook: %w", err)
 		}
 		if err := execLinuxCommands(ctx, conn, []string{"chmod +x /usr/local/bin/sysbox-sshd-hook"}); err != nil {
@@ -204,6 +208,9 @@ func execLinuxCommands(ctx context.Context, conn substrate.Connection, commands 
 		result, err := conn.Exec(ctx, substrate.ExecRequest{Program: command, Shell: substrate.ShellLinux}, io.Discard, io.Discard)
 		if err != nil {
 			return err
+		}
+		if !result.ExitCodeKnown {
+			return fmt.Errorf("%w: guest command exit status unknown", ErrActionUncertain)
 		}
 		if result.ExitCode != 0 {
 			return fmt.Errorf(

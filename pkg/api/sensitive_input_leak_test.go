@@ -39,15 +39,14 @@ func TestSensitiveInputNeverPersisted(t *testing.T) {
 	// Neither seeded object carries the canary, so the absence assertion is
 	// meaningful: it proves the read path returns real bytes, and it would fail
 	// if an apply input ever leaked into state or health.
-	mgr, err := s.stateManager(topology)
-	require.NoError(t, err)
-	require.NoError(t, mgr.Save(&state.State{
+	writeState(t, s.runsDir, topology, &state.State{
+		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
 			Address:    address.Resource("sysbox_node", "web"),
 			Driver:     "docker",
 			Attributes: map[string]any{"image": "alpine"},
 		}},
-	}))
+	})
 	require.NoError(t, s.saveHealthSnapshot(topology, HealthSnapshot{
 		Topology: topology,
 		Observed: time.Now().UTC(),

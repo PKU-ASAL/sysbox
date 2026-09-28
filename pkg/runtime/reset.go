@@ -131,64 +131,7 @@ type resetNodeContext struct {
 }
 
 func (e *Executor) Reset(ctx context.Context, plan *Plan) (resetErr error) {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := plan.Validate(); err != nil {
-		return fmt.Errorf("validate reset plan: %w", err)
-	}
-	contexts := make([]*resetNodeContext, 0, len(plan.Actions))
-	for _, action := range plan.Actions {
-		if action.Action != controlplane.PlanActionReset {
-			return fmt.Errorf("reset plan contains non-reset action %q for %s", action.Action, action.Address)
-		}
-		prepared, err := e.buildResetNodeContext(ctx, action)
-		if err != nil {
-			return err
-		}
-		contexts = append(contexts, prepared)
-	}
-	if err := e.recorder.Begin("reset", plan); err != nil {
-		return err
-	}
-	defer func() { resetErr = e.finishJournal(resetErr) }()
-
-	for i := len(contexts) - 1; i >= 0; i-- {
-		item := contexts[i]
-		item.step = e.recorder.StepStart(item.action.Address.String(), controlplane.PlanActionReset)
-		if err := e.journalError(); err != nil {
-			resetErr = err
-			return err
-		}
-		if err := e.prepareResetNode(ctx, item); err != nil {
-			e.recorder.StepFailed(item.step, err)
-			resetErr = err
-			return err
-		}
-		if err := e.destroyResetNode(ctx, item); err != nil {
-			e.recorder.StepFailed(item.step, err)
-			resetErr = err
-			return fmt.Errorf("destroy reset %s: %w", item.action.Address, err)
-		}
-	}
-	for _, item := range contexts {
-		beforeApply := cloneResetStateResource(*item.current)
-		if err := e.applyResetNode(ctx, item); err != nil {
-			e.recorder.StepFailed(item.step, err)
-			resetErr = err
-			return err
-		}
-		if err := e.recordStepExternal(ctx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
-			restoreResetStateResource(e.state, beforeApply)
-			item.current = e.state.FindResource(item.action.Address)
-			e.recorder.StepFailed(item.step, err)
-			resetErr = err
-			return err
-		}
-		item.current = e.state.FindResource(item.action.Address)
-		e.recorder.StepDone(item.step)
-	}
-	return nil
+	return e.convergeReset(ctx, plan)
 }
 
 func (e *Executor) destroyResetNode(ctx context.Context, item *resetNodeContext) error {
@@ -469,6 +412,9 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 		if err := updated.SetProviderState(providerState); err != nil {
 			return err
 		}
+	}
+	if err := e.configureNodeRoutes(ctx, item.step, item.node.Address, item.current.Driver, handle, item.config.Routes, &updated); err != nil {
+		return err
 	}
 	if len(item.config.Provisioners) > 0 {
 		connection, err := e.connectionForNode(ctx, item.nodeDriver, handle, item.config.Connections)

@@ -53,6 +53,10 @@ func (b *ExecutionBridge) StateManager(topology string) (*state.Manager, error) 
 	return b.server.stateManager(topology)
 }
 
+func (b *ExecutionBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
+	return b.server.actionRepository(topology)
+}
+
 func (b *ExecutionBridge) HCLFile(topology string) string {
 	return b.server.workspaceService().HCLFile(topology)
 }
@@ -68,11 +72,7 @@ func (b *ExecutionBridge) HCLFileForRun(run *controlplane.Run) string {
 }
 
 func (b *ExecutionBridge) Topologies(ctx context.Context) []string {
-	mgr, err := b.server.stateManager("__list__")
-	if err != nil {
-		return nil
-	}
-	items, err := mgr.ListTopologies(ctx)
+	items, err := b.server.workspaceService().List(ctx)
 	if err != nil {
 		return nil
 	}

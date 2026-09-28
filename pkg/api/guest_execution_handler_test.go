@@ -22,12 +22,10 @@ func guestExecutionTestServer(t *testing.T) *Server {
 	cfg.Paths.RunsDir = t.TempDir()
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	s := NewServerWithConfig(cfg)
-	mgr, err := s.stateManager("lab")
-	require.NoError(t, err)
-	require.NoError(t, mgr.Save(&state.State{
+	writeState(t, cfg.Paths.RunsDir, "lab", &state.State{
 		Version:   state.SchemaVersion,
 		Resources: []state.Resource{{Address: address.Resource("sysbox_node", "web"), ResourceType: "sysbox_node"}},
-	}))
+	})
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	require.NoError(t, s.apiStore.SaveAgentInventory(context.Background(), controlplane.AgentInventory{AgentID: "host-a", Topologies: []controlplane.InventoryItem{{Topology: "lab", Available: true}}}))
 	return s

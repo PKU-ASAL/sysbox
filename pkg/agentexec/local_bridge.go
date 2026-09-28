@@ -14,6 +14,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -36,9 +37,10 @@ type LocalOptions struct {
 }
 
 type LocalBridge struct {
-	opts LocalOptions
-	mu   sync.Mutex
-	runs map[string]*controlplane.Run
+	repositories map[string]*persistence.Repository
+	opts         LocalOptions
+	mu           sync.Mutex
+	runs         map[string]*controlplane.Run
 }
 
 func NewLocalBridge(opts LocalOptions) *LocalBridge {
@@ -98,22 +100,36 @@ func (b *LocalBridge) Finish(run *controlplane.Run, err error) {
 }
 
 func (b *LocalBridge) StateManager(topology string) (*state.Manager, error) {
-	if b.opts.BackendURL != "" {
-		backendURL := b.opts.BackendURL
-		if topology != "" {
-			backendURL = strings.ReplaceAll(backendURL, "{topology}", topology)
-		}
-		backend, err := state.ParseBackendURL(backendURL)
-		if err != nil {
-			return nil, fmt.Errorf("state backend: %w", err)
-		}
-		manager := state.NewManagerWithBackend(backend)
-		manager.AllowUnsafeMutation(b.opts.AllowUnsafeState)
-		return manager, nil
+	repo, err := b.repository(topology)
+	if err != nil {
+		return nil, err
 	}
-	manager := state.NewManager(b.opts.StatePath)
-	manager.AllowUnsafeMutation(b.opts.AllowUnsafeState)
-	return manager, nil
+	return state.NewManagerWithBackend(repo.StateBackend(topology)), nil
+}
+func (b *LocalBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
+	return b.repository(topology)
+}
+func (b *LocalBridge) repository(topology string) (*persistence.Repository, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if r := b.repositories[topology]; r != nil {
+		return r, nil
+	}
+	raw, path, err := persistence.ResolveLocation(b.opts.BackendURL, b.opts.StatePath, topology)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r, err := persistence.OpenConfigured(ctx, raw, path)
+	if err != nil {
+		return nil, err
+	}
+	if b.repositories == nil {
+		b.repositories = map[string]*persistence.Repository{}
+	}
+	b.repositories[topology] = r
+	return r, nil
 }
 
 func (b *LocalBridge) HCLFile(string) string {

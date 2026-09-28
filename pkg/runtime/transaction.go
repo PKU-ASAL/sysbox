@@ -76,14 +76,20 @@ type OperationCheckpoint struct {
 }
 
 type StateResourceLog struct {
-	Type        string               `json:"type"`
-	Name        string               `json:"name"`
-	Provider    string               `json:"provider"`
-	ExternalID  string               `json:"external_id,omitempty"`
-	Instance    map[string]any       `json:"instance"`
-	Attachments []state.Attachment   `json:"attachments,omitempty"`
-	Private     json.RawMessage      `json:"private,omitempty"`
-	Status      state.ResourceStatus `json:"status,omitempty"`
+	ResourceType  string               `json:"resource_type,omitempty"`
+	SchemaVersion int                  `json:"schema_version,omitempty"`
+	OwnerUID      string               `json:"owner_uid,omitempty"`
+	ResourceUID   string               `json:"resource_uid,omitempty"`
+	Generation    int64                `json:"generation,omitempty"`
+	Dependencies  []address.Address    `json:"dependencies,omitempty"`
+	Type          string               `json:"type"`
+	Name          string               `json:"name"`
+	Provider      string               `json:"provider"`
+	ExternalID    string               `json:"external_id,omitempty"`
+	Instance      map[string]any       `json:"instance"`
+	Attachments   []state.Attachment   `json:"attachments,omitempty"`
+	Private       json.RawMessage      `json:"private,omitempty"`
+	Status        state.ResourceStatus `json:"status,omitempty"`
 }
 
 type OperationRecorder interface {
@@ -288,6 +294,7 @@ func (r *FileRecorder) StepStateResource(index int, resource StateResourceLog) {
 		return
 	}
 	copied := StateResourceLog{
+		ResourceType: resource.ResourceType, SchemaVersion: resource.SchemaVersion, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation, Dependencies: append([]address.Address(nil), resource.Dependencies...),
 		Type:        resource.Type,
 		Name:        resource.Name,
 		Provider:    resource.Provider,
@@ -317,6 +324,7 @@ func (r *FileRecorder) StepStatePatch(index int, op StatePatchOp, resource *Stat
 	}
 	if resource != nil {
 		copied := StateResourceLog{
+			ResourceType: resource.ResourceType, SchemaVersion: resource.SchemaVersion, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation, Dependencies: append([]address.Address(nil), resource.Dependencies...),
 			Type:        resource.Type,
 			Name:        resource.Name,
 			Provider:    resource.Provider,

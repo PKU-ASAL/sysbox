@@ -122,7 +122,7 @@ func TestGetTopologyHealthCached(t *testing.T) {
 	require.Equal(t, controlplane.ResourceHealthHealthy, body.Health.Status)
 }
 
-func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
+func TestSupervisorRestartOnCrashRequiresApprovedActionPlan(t *testing.T) {
 	dir := t.TempDir()
 	runs := filepath.Join(dir, "runs")
 	workspaces := filepath.Join(dir, "workspaces")
@@ -153,13 +153,10 @@ func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
 	snap, err := s.loadHealthSnapshot("mixed")
 	require.NoError(t, err)
 	require.Equal(t, SupervisorPolicyRestartOnCrash, snap.Policy)
-	require.Equal(t, "restart_apply_started", snap.Action)
-	require.NotEmpty(t, snap.RunID)
-	run, ok := s.jobs.get(snap.RunID)
-	require.True(t, ok)
-	require.Equal(t, "supervisor", run.ParentID)
-	require.Equal(t, "apply", run.Op)
-	require.Equal(t, controlplane.RunAssigned, run.Status)
+	require.Equal(t, "approval_required", snap.Action)
+	require.Empty(t, snap.RunID)
+	require.False(t, snap.AutoHeal)
+	require.Empty(t, s.jobs.list("mixed"))
 }
 
 func TestSupervisorRestartOnCrashSkipsWhenRunActive(t *testing.T) {

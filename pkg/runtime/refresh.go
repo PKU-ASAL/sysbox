@@ -20,7 +20,7 @@ import (
 // Refresh is a best-effort pass: a probe error (e.g. transient timeout)
 // is treated as "unknown" and the resource stays Unchanged.
 func (e *Executor) Refresh(ctx context.Context, plan *Plan) (*Plan, error) {
-	refreshed := &Plan{Actions: append([]controlplane.PlannedChange(nil), plan.Actions...)}
+	refreshed := plan.clone()
 	for i := range refreshed.Actions {
 		change := &refreshed.Actions[i]
 		if change.Action == controlplane.PlanActionReplace {
@@ -103,7 +103,7 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		result.Status = state.ResourceUnknown
 		return result, err
 	}
-	cid := current.Str("container_id")
+	cid := current.ContainerID()
 	if cid == "" {
 		result.Decision = controlplane.RecoveryDecisionMarkDrift
 		result.Reason = "node has no persisted external id"
@@ -128,6 +128,11 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		return result, err
 	}
 	result.Observation = &obs
+	if obs.Status == substrate.NodeStatusMissing {
+		result.Status = state.ResourceAbsent
+		result.Reason = obs.Reason
+		return result, nil
+	}
 	recovery := DecideNodeRecovery(RecoveryInput{
 		Context:      RecoveryContextRefresh,
 		ResourceType: current.Address.Type,
@@ -159,7 +164,16 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		return result, nil
 	}
 	result.Resource = current
-	if !nodeRoutesHealthy(ctx, nodeDriver, stateDriver, &current) {
+	routesHealthy, routeErr := nodeRoutesHealthy(ctx, nodeDriver, stateDriver, &current)
+	if routeErr != nil {
+		checks["routes"] = controlplane.ResourceCheckHealth{OK: false, Reason: "route observation unavailable"}
+		result.Checks = checks
+		result.Decision = controlplane.RecoveryDecisionUnknown
+		result.Reason = "route observation unavailable"
+		result.Status = state.ResourceUnknown
+		return result, fmt.Errorf("observe routes: %w", routeErr)
+	}
+	if !routesHealthy {
 		checks["routes"] = controlplane.ResourceCheckHealth{OK: false, Reason: "route missing"}
 		result.Checks = checks
 		result.Decision = controlplane.RecoveryDecisionMarkDrift
@@ -199,18 +213,18 @@ func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *sta
 	return state.ResourcePresent, "", nil
 }
 
-func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver driver.NodeState, r *state.Resource) bool {
+func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver driver.NodeState, r *state.Resource) (bool, error) {
 	items, ok := r.AttributeMap()["routes"].([]any)
 	if !ok || len(items) == 0 {
-		return true
+		return true, nil
 	}
 	handle, err := r.ReconstructHandle(stateDriver)
 	if err != nil {
-		return false
+		return false, err
 	}
 	guestNetwork, err := driver.DefaultRegistry.RequireGuestNetwork(r.Driver)
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, item := range items {
 		route, _ := item.(map[string]any)
@@ -220,11 +234,14 @@ func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver 
 			continue
 		}
 		ok, err := guestNetwork.HasRoute(ctx, handle, dst, via)
-		if err != nil || !ok {
-			return false
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 // planActionForObservedStatus maps an observed resource status to the plan

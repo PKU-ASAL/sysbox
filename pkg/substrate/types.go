@@ -122,10 +122,11 @@ type ProviderDeps struct {
 //	           any data here (vm_dir, socket path, vsock CID, etc.) and recover it
 //	           on subsequent calls. Persisted in state via Marshal/UnmarshalProviderState.
 type NodeHandle struct {
-	ID       string
-	Net      NetInfo
-	Conn     ConnInfo
-	Provider any
+	ID         string
+	Generation int64
+	Net        NetInfo
+	Conn       ConnInfo
+	Provider   any
 }
 
 type NodeLifecycleStatus string
@@ -193,16 +194,12 @@ type ConnectionHint struct {
 	InsecureSkipHostKeyCheck bool   // explicit lab-only opt-out
 }
 
-// Connection is the substrate-agnostic interface for reaching a running node
-// (exec, copy, background). Each substrate returns its own implementation.
+// Connection is the minimum foreground execution capability for a running node.
+// Background execution, files and readiness are independent optional capabilities.
 // Moved here from pkg/transport so substrates can implement it without
 // import cycles.
 type Connection interface {
 	Exec(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (ExecResult, error)
-	ExecBackground(ctx context.Context, req ExecRequest) (int, error)
-
-	// CopyFile copies a local file into the node at dstPath.
-	CopyFile(ctx context.Context, srcPath, dstPath string) error
 }
 
 // ConnectionWaiter is an optional Connection capability: block until the
@@ -258,9 +255,15 @@ func HandlePublicAttributes(h NodeHandle) map[string]any {
 }
 
 type ExecResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	Stdout            string
+	Stderr            string
+	ExitCode          int
+	ExitCodeKnown     bool
+	Status            ExecStatus
+	ErrorClass        ExecErrorClass
+	StdoutTruncated   bool
+	StderrTruncated   bool
+	RemoteTermination RemoteTermination
 }
 
 // PIDMode declares how guest processes are visible to the host.

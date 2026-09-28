@@ -15,17 +15,9 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-// A run that crashed after creating a resource but before recording it in state
-// leaves an orphan that only checkpoint recovery can find. Today that recovery
-// happens only when someone calls POST /v1/runs/{id}/recover by hand — nothing
-// in the background loop looks, so an orphan stays invisible until someone
-// remembers to look.
-//
-// The supervisor already walks every topology on an interval; it is the natural
-// place to close the loop. A crashed run is recoverable when its checkpoint
-// journal still holds an unrecorded state patch; the supervisor should reconcile
-// it so the orphan is adopted back into state without human intervention.
-func TestSupervisorReconcilesRecoverableRun(t *testing.T) {
+// A checkpoint projection cannot prove that a resource exists or that its
+// generation still belongs to this run. Background scans must not replay it.
+func TestSupervisorRejectsCheckpointOnlyRecovery(t *testing.T) {
 	dir := t.TempDir()
 	runs := filepath.Join(dir, "runs")
 	workspaces := filepath.Join(dir, "workspaces")
@@ -70,13 +62,13 @@ func TestSupervisorReconcilesRecoverableRun(t *testing.T) {
 	st, err := mgr.Load()
 	require.NoError(t, err)
 	res := st.FindResource(address.Resource("sysbox_node", "web"))
-	require.NotNil(t, res, "the supervisor must reconcile a recoverable run's journal automatically")
-	require.Equal(t, "abc", res.ContainerID())
+	require.Nil(t, res, "checkpoint-only records cannot authorize adoption")
 
 	// And it is surfaced in the snapshot, not silently done.
 	snap, err := s.loadHealthSnapshot("mixed")
 	require.NoError(t, err)
-	require.Contains(t, snap.Recovered, run.ID)
+	require.Empty(t, snap.Recovered)
+	require.Contains(t, snap.LastError, "pinned immutable revision")
 }
 
 // A running run must never be reconciled: only terminal, recoverable runs have

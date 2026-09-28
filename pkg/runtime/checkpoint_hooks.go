@@ -128,6 +128,7 @@ func StateResourceFromLog(rec StateResourceLog) state.Resource {
 	attributes := cloneInstance(rec.Instance)
 	delete(attributes, "provider_extra")
 	resource := state.Resource{
+		ResourceType: rec.ResourceType, SchemaVersion: rec.SchemaVersion, OwnerUID: rec.OwnerUID, ResourceUID: rec.ResourceUID, Generation: rec.Generation, Dependencies: append([]address.Address(nil), rec.Dependencies...),
 		Address:     address.Resource(rec.Type, rec.Name),
 		Driver:      rec.Provider,
 		ExternalID:  rec.ExternalID,

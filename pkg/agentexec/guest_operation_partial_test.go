@@ -39,7 +39,7 @@ func registerFailingDriver(t *testing.T, d *failingGuestDriver) {
 	old := driver.DefaultRegistry
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = old })
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", GuestExec: d, NodeState: guestCodec{}}))
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", Node: guestConnectionNode{connection: legacyGuestConnection{exec: d}}, GuestExec: d, NodeState: guestCodec{}}))
 }
 
 // When a guest operation fails after producing output, that output is the only
