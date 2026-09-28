@@ -3,6 +3,8 @@
 > 日期：2026-09-28
 > 状态：目标架构设计；尚未实施。
 > 本文取代[前版方案 B](../superpowers/specs/2026-09-28-sysbox-architecture-refactor-design.md)作为本轮重构依据。原有架构文档仍描述当前实现，本文描述目标。
+>
+> 接口兼容边界见[接口变更清单](2026-09-28-interface-change-inventory.md)。
 
 ## 1. 一页看懂这次重构
 

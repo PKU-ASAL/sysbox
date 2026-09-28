@@ -27,6 +27,7 @@
 - [Architecture](architecture.md)：组件、数据流、state、stored plan、driver 与 recovery 的规范性说明。
 - [资源模型与能力](reference/resource-model.md)：资源类型、组合关系、执行引擎与扩展机制。
 - [观察驱动的整体重构方案](design/2026-09-28-observation-driven-runtime-refactor.md)：目标架构设计，覆盖生命周期、存储、substrate SPI 与分阶段验收；尚未实施。
+- [接口变更清单](design/2026-09-28-interface-change-inventory.md)：逐项说明 HCL、CLI、HTTP、Agent、Driver、state 和 manifest 的兼容边界。
 
 ## 精确参考
 
