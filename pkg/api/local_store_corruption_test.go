@@ -132,7 +132,7 @@ func TestLocalCommandSaveDoesNotOverwriteCorruptRecord(t *testing.T) {
 
 func TestLocalGuestCASDoesNotHideCorruption(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
-	execution := controlplane.GuestExecution{ID: "exec", Version: 1}
+	execution := controlplane.GuestExecution{ID: "exec", Version: 1, Status: controlplane.GuestExecutionQueued}
 	require.NoError(t, store.SaveGuestExecution(context.Background(), execution))
 	path := filepath.Join(store.runsDir, "_guest-executions", "exec.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{broken`), 0600))

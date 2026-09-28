@@ -122,7 +122,7 @@ func (s *Server) handleGetGuestFileOperation(w http.ResponseWriter, r *http.Requ
 	}
 	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("file operation not found"))
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, publicGuestFileOperation(*op))
@@ -164,7 +164,7 @@ func (s *Server) handleCancelGuestFileOperation(w http.ResponseWriter, r *http.R
 	}
 	op, err = svc.Cancel(r.Context(), op.ID)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID))
@@ -180,7 +180,7 @@ func (s *Server) handleStartGuestFileOperation(w http.ResponseWriter, r *http.Re
 	}
 	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("file operation not found"))
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	if op.AgentID != agentID {
@@ -189,7 +189,7 @@ func (s *Server) handleStartGuestFileOperation(w http.ResponseWriter, r *http.Re
 	}
 	updated, err := newGuestFileOperationService(s.apiStore).MarkRunning(r.Context(), op.ID)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, publicGuestFileOperation(updated))
@@ -203,7 +203,7 @@ func (s *Server) handleCompleteGuestFileOperation(w http.ResponseWriter, r *http
 	}
 	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("file operation not found"))
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	if op.AgentID != agentID {
@@ -217,7 +217,7 @@ func (s *Server) handleCompleteGuestFileOperation(w http.ResponseWriter, r *http
 	}
 	updated, err := newGuestFileOperationService(s.apiStore).Complete(r.Context(), op.ID, completion.Error)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID))

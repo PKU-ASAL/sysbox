@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -51,7 +50,7 @@ func (s *GuestFileOperationService) MarkRunning(ctx context.Context, id string) 
 	op.Status, op.StartedAt = controlplane.GuestExecutionRunning, s.now()
 	ok, err := s.store.CompareAndSwapGuestFileOperation(ctx, op, op.Version)
 	if err == nil && !ok {
-		err = fmt.Errorf("guest file operation conflict")
+		err = errGuestFileOperationConflict
 	}
 	if ok {
 		op.Version++
@@ -80,7 +79,7 @@ func (s *GuestFileOperationService) Complete(ctx context.Context, id, errText st
 	op.EndedAt = s.now()
 	ok, err := s.store.CompareAndSwapGuestFileOperation(ctx, op, op.Version)
 	if err == nil && !ok {
-		err = fmt.Errorf("guest file operation conflict")
+		err = errGuestFileOperationConflict
 	}
 	if ok {
 		op.Version++
@@ -139,7 +138,7 @@ func (s *GuestFileOperationService) Cancel(ctx context.Context, id string) (cont
 	op.Status, op.EndedAt = controlplane.GuestExecutionCancelled, s.now()
 	ok, err := s.store.CompareAndSwapGuestFileOperation(ctx, op, op.Version)
 	if err == nil && !ok {
-		err = fmt.Errorf("guest file operation conflict")
+		err = errGuestFileOperationConflict
 	}
 	if ok {
 		op.Version++

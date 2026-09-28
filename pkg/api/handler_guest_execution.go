@@ -10,7 +10,21 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
+
+func guestOperationErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, persistence.ErrNotFound), errors.Is(err, errGuestFileOperationNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, persistence.ErrConflict), errors.Is(err, errGuestExecutionConflict), errors.Is(err, errGuestFileOperationConflict):
+		return http.StatusConflict
+	case errors.Is(err, persistence.ErrInvalidRecord), errors.Is(err, errInvalidGuestExecution):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
 
 func (s *Server) authorizeGuestOperation(subj requestSubject) error {
 	for _, role := range subj.Roles {
@@ -105,13 +119,13 @@ func publicGuestExecution(execution controlplane.GuestExecution) controlplane.Gu
 }
 
 func (s *Server) handleGetGuestExecution(w http.ResponseWriter, r *http.Request) {
-	execution, err := s.guestExecutions().Get(r.Context(), r.PathValue("execution"))
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
 	if err := s.authorizeGuestOperation(s.requestSubject(r)); err != nil {
 		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	execution, err := s.guestExecutions().Get(r.Context(), r.PathValue("execution"))
+	if err != nil {
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, publicGuestExecution(execution))
@@ -123,11 +137,7 @@ func (s *Server) handleCancelGuestExecution(w http.ResponseWriter, r *http.Reque
 	}
 	execution, err := s.guestExecutions().Cancel(r.Context(), r.PathValue("execution"))
 	if err != nil {
-		status := http.StatusNotFound
-		if errors.Is(err, errGuestExecutionConflict) {
-			status = http.StatusConflict
-		}
-		writeError(w, status, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, publicGuestExecution(execution))
@@ -141,7 +151,7 @@ func (s *Server) handleCompleteGuestExecution(w http.ResponseWriter, r *http.Req
 	}
 	execution, err := s.guestExecutions().Get(r.Context(), r.PathValue("execution"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	if execution.AgentID != agentID {
@@ -173,7 +183,7 @@ func (s *Server) handleStartGuestExecution(w http.ResponseWriter, r *http.Reques
 	}
 	execution, err := s.guestExecutions().Get(r.Context(), r.PathValue("execution"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	if execution.AgentID != agentID {
@@ -182,7 +192,7 @@ func (s *Server) handleStartGuestExecution(w http.ResponseWriter, r *http.Reques
 	}
 	execution, err = s.guestExecutions().MarkRunning(r.Context(), execution.ID)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, publicGuestExecution(execution))

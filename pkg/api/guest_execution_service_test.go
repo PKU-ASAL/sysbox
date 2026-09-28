@@ -78,7 +78,7 @@ func TestGuestExecutionStoreRetainsPrivateDispatchData(t *testing.T) {
 	ctx := context.Background()
 	store := &localAPIStore{runsDir: t.TempDir()}
 	want := controlplane.GuestExecution{
-		ID: "exec-1", Topology: "lab", Node: "web", AgentID: "host-a",
+		ID: "exec-1", Version: 1, Topology: "lab", Node: "web", AgentID: "host-a",
 		Status:  controlplane.GuestExecutionQueued,
 		Request: controlplane.GuestExecutionRequest{Argv: []string{"env"}, Environment: map[string]string{"TOKEN": "secret"}},
 	}
