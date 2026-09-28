@@ -232,11 +232,18 @@ func firecrackerNodeHandle(id string, state *HandleState) substrate.NodeHandle {
 }
 
 func (s *Substrate) restoreResetVMProcess(id string, state *HandleState) {
-	vmMu.Lock()
-	defer vmMu.Unlock()
-	if _, exists := vmStore[id]; exists {
+	vm := lookupOrReserveVM(id)
+	if err := vm.lockOperation(context.Background()); err != nil {
+		return
+	}
+	defer vm.unlockOperation()
+	current := vm.snapshot()
+	if current.cfgPath != "" || current.started || current.destroying || current.destroyed {
 		return
 	}
 	started := state.PID > 0 && processMatches(state.PID, state.PIDStart)
-	vmStore[id] = &vmProcess{vmID: id, socket: state.Socket, rootfs: filepath.Join(state.VMDir, "rootfs.ext4"), cfgPath: state.ConfigPath, pid: state.PID, startTime: state.PIDStart, netnsName: state.NetnsName, started: started}
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	vm.socket, vm.cfgPath, vm.rootfs = state.Socket, state.ConfigPath, filepath.Join(state.VMDir, "rootfs.ext4")
+	vm.pid, vm.startTime, vm.netnsName, vm.started = state.PID, state.PIDStart, state.NetnsName, started
 }

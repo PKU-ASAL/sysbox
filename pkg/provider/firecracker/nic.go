@@ -73,7 +73,7 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 	if err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "firecracker", "attach network", err)
 	}
-	guest := fmt.Sprintf("eth%d", hs.NICCount-1)
+	guest := attached.GuestEnd
 	raw, _ := json.Marshal(attachmentState{Tap: attached.HostEnd, NetNS: attached.NetNS, GuestDevice: guest})
 	return driver.AttachmentResult{Driver: "firecracker", GuestDevice: guest, State: raw}, nil
 }
@@ -108,6 +108,15 @@ func (s *Substrate) Delete(ctx context.Context, _ substrate.NodeHandle, _ driver
 }
 
 func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req linkRequest) (attachedNIC, error) {
+	vm := lookupOrReserveVM(h.ID)
+	if err := vm.lockOperation(ctx); err != nil {
+		return attachedNIC{}, err
+	}
+	defer vm.unlockOperation()
+	state := vm.snapshot()
+	if state.started || state.destroying || state.destroyed {
+		return attachedNIC{}, fmt.Errorf("firecracker NIC attachment requires a stopped, prepared VM")
+	}
 	hs, _ := h.Provider.(*HandleState)
 	if hs == nil || hs.ConfigPath == "" {
 		return attachedNIC{}, fmt.Errorf("VM config path not found in handle provider state")
@@ -148,11 +157,11 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 		if err := attachTapToBridge(ctx, tapName, bridgeName, netnsName); err != nil {
 			return attachedNIC{}, fmt.Errorf("attach tap to bridge: %w", err)
 		}
-		vmMu.Lock()
-		if vm, ok := vmStore[h.ID]; ok && vm.netnsName == "" {
+		vm.mu.Lock()
+		if vm.netnsName == "" {
 			vm.netnsName = netnsName
 		}
-		vmMu.Unlock()
+		vm.mu.Unlock()
 		if hs.NetnsName == "" {
 			hs.NetnsName = netnsName
 		}
@@ -186,10 +195,11 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 	hs.TapName = tapName
 
 	return attachedNIC{
-		Kind:    substrate.NICKindTap,
-		HostEnd: tapName,
-		IP:      req.IP,
-		NetNS:   netnsName,
+		Kind:     substrate.NICKindTap,
+		HostEnd:  tapName,
+		GuestEnd: ifaceID,
+		IP:       req.IP,
+		NetNS:    netnsName,
 	}, nil
 }
 

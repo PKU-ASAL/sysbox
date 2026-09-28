@@ -21,7 +21,7 @@ func TestDestroyNodeDoesNotWaitOnProcessAlreadyOwnedByReaper(t *testing.T) {
 	vmMu.Lock()
 	vmStore[vmID] = vm
 	vmMu.Unlock()
-	go reapVMProcess(vmID, cmd)
+	go reapVMProcess(vm, cmd)
 
 	done := make(chan error, 1)
 	go func() {

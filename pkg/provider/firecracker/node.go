@@ -22,38 +22,90 @@ import (
 
 // vmProcess tracks a running Firecracker VM process.
 type vmProcess struct {
-	mu        sync.Mutex
-	cmd       *exec.Cmd
-	pid       int
-	startTime string
-	exitCode  *int
-	exitError string
-	socket    string // API socket path
-	vmID      string
-	rootfs    string // per-VM rootfs copy
-	cfgPath   string // VM config JSON path
-	netnsName string // network netns to run FC inside (empty = root netns)
-	started   bool   // true after StartNode
-	starting  bool   // true while a StartNode transition owns this VM
+	operation  chan struct{} // per-VM transition gate, initialized under mu
+	mu         sync.Mutex
+	cmd        *exec.Cmd
+	pid        int
+	startTime  string
+	exitCode   *int
+	exitError  string
+	socket     string // API socket path
+	vmID       string
+	rootfs     string // per-VM rootfs copy
+	cfgPath    string // VM config JSON path
+	netnsName  string // network netns to run FC inside (empty = root netns)
+	started    bool   // true after StartNode
+	starting   bool   // true while a StartNode transition owns this VM
+	destroying bool   // teardown has begun; starting again is forbidden
+	destroyed  bool
+	done       chan struct{} // closed by the sole child reaper
 }
 
 type vmProcessSnapshot struct {
-	cmd       *exec.Cmd
-	pid       int
-	startTime string
-	socket    string
-	cfgPath   string
-	netnsName string
-	exitCode  *int
-	exitError string
-	started   bool
-	starting  bool
+	cmd        *exec.Cmd
+	pid        int
+	startTime  string
+	socket     string
+	cfgPath    string
+	netnsName  string
+	exitCode   *int
+	exitError  string
+	started    bool
+	starting   bool
+	destroying bool
+	destroyed  bool
+	done       <-chan struct{}
+}
+
+// lockOperation orders lifecycle calls without holding the registry or state
+// mutex during I/O. A caller waiting on another transition can be canceled.
+func (v *vmProcess) lockOperation(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	v.mu.Lock()
+	if v.operation == nil {
+		v.operation = make(chan struct{}, 1)
+	}
+	gate := v.operation
+	v.mu.Unlock()
+	select {
+	case gate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-gate
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (v *vmProcess) unlockOperation() { <-v.operation }
+
+func lookupVM(id string) *vmProcess {
+	vmMu.Lock()
+	defer vmMu.Unlock()
+	return vmStore[id]
+}
+
+// A cold lifecycle call uses the same gate as later adoption/teardown calls.
+// An empty entry is not a prepared VM and cannot be started.
+func lookupOrReserveVM(id string) *vmProcess {
+	vmMu.Lock()
+	defer vmMu.Unlock()
+	if vm := vmStore[id]; vm != nil {
+		return vm
+	}
+	vm := &vmProcess{vmID: id}
+	vmStore[id] = vm
+	return vm
 }
 
 func (v *vmProcess) reserveStart() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.started || v.starting {
+	if v.started || v.starting || v.destroying || v.destroyed {
 		return false
 	}
 	v.starting = true
@@ -79,6 +131,7 @@ func (v *vmProcess) snapshot() vmProcessSnapshot {
 		socket: v.socket, cfgPath: v.cfgPath, netnsName: v.netnsName,
 		exitCode: exitCode, exitError: v.exitError,
 		started: v.started, starting: v.starting,
+		destroying: v.destroying, destroyed: v.destroyed, done: v.done,
 	}
 }
 
@@ -146,6 +199,15 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 }
 
 func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpec, vmID string) (substrate.NodeHandle, error) {
+	vm := lookupOrReserveVM(vmID)
+	if err := vm.lockOperation(ctx); err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	defer vm.unlockOperation()
+	state := vm.snapshot()
+	if state.started || state.destroying || state.destroyed {
+		return substrate.NodeHandle{}, fmt.Errorf("firecracker VM %s already running or being destroyed", vmID)
+	}
 	runDir := filepath.Join(s.rootfsDir, vmID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		return substrate.NodeHandle{}, fmt.Errorf("create VM run dir: %w", err)
@@ -267,17 +329,10 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 		return substrate.NodeHandle{}, fmt.Errorf("write VM config: %w", err)
 	}
 
-	vm := &vmProcess{
-		vmID:    vmID,
-		socket:  socketPath,
-		rootfs:  vmRootfs,
-		cfgPath: cfgPath,
-		started: false,
-	}
-
-	vmMu.Lock()
-	vmStore[vmID] = vm
-	vmMu.Unlock()
+	vm.mu.Lock()
+	vm.socket, vm.rootfs, vm.cfgPath = socketPath, vmRootfs, cfgPath
+	vm.netnsName = ""
+	vm.mu.Unlock()
 
 	hs := &HandleState{
 		VMDir:       runDir,
@@ -306,16 +361,20 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 // StartNode launches the Firecracker process with the completed config.
 // This must be called after all AttachNIC calls are done.
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
-	vmMu.Lock()
-	vm, ok := vmStore[h.ID]
-	// Read netnsName inside the lock to avoid data race with AttachNIC.
-	netnsName := ""
-	if ok {
-		netnsName = vm.snapshot().netnsName
-	}
-	vmMu.Unlock()
-	if !ok {
+	vm := lookupVM(h.ID)
+	if vm == nil {
 		return fmt.Errorf("VM %s not found", h.ID)
+	}
+	if err := vm.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer vm.unlockOperation()
+	vmState := vm.snapshot()
+	if vmState.destroying || vmState.destroyed {
+		return fmt.Errorf("firecracker VM %s is being destroyed", h.ID)
+	}
+	if vmState.cfgPath == "" {
+		return fmt.Errorf("VM %s not prepared", h.ID)
 	}
 	if !vm.reserveStart() {
 		if vm.snapshot().started {
@@ -323,15 +382,9 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 		}
 		return fmt.Errorf("firecracker VM %s start already in progress", h.ID)
 	}
-	started := false
-	defer func() {
-		if !started {
-			vm.releaseStart()
-		}
-	}()
+	defer vm.releaseStart()
 
 	// Remove stale socket if present.
-	vmState := vm.snapshot()
 	if err := os.Remove(vmState.socket); err != nil && !os.IsNotExist(err) {
 		slog.Debug("remove stale socket", "path", vmState.socket, "error", err)
 	}
@@ -346,8 +399,8 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	// process to ctx would SIGKILL it the instant `sysbox apply` returns and
 	// cancels its context, dropping the TAP fd and the guest's network.
 	var cmd *exec.Cmd
-	if netnsName != "" {
-		cmd = exec.Command(ipBin, "netns", "exec", netnsName,
+	if vmState.netnsName != "" {
+		cmd = exec.Command(ipBin, "netns", "exec", vmState.netnsName,
 			s.firecrackerBin,
 			"--config-file", vmState.cfgPath,
 			"--api-sock", vmState.socket,
@@ -375,6 +428,10 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 		Setpgid: true,
 	}
 
+	if err := ctx.Err(); err != nil {
+		_ = logFD.Close()
+		return err
+	}
 	if err := cmd.Start(); err != nil {
 		_ = logFD.Close()
 		return fmt.Errorf("start firecracker: %w", err)
@@ -383,47 +440,81 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	// its own dup. Closing here prevents fd leaks across many VMs.
 	_ = logFD.Close()
 
+	startTime := processStartTime(cmd.Process.Pid)
 	vm.mu.Lock()
 	vm.cmd = cmd
 	vm.pid = cmd.Process.Pid
-	vm.startTime = processStartTime(vm.pid)
+	vm.startTime = startTime
 	vm.started = true
-	vm.starting = false
-	started = true
+	vm.exitCode = nil
+	vm.exitError = ""
+	vm.done = make(chan struct{})
 	vm.mu.Unlock()
+	// Reap immediately, including while readiness is pending or canceled.
+	go reapVMProcess(vm, cmd)
 	if hs, _ := h.Provider.(*HandleState); hs != nil {
 		state := vm.snapshot()
 		hs.PID = state.pid
 		hs.PIDStart = state.startTime
-		hs.Ready = waitFirecrackerBoot(ctx, hs, 5*time.Second) == nil
+		hs.Ready = false
 		if hs.PIDFile != "" {
-			_ = writeProcessAnchor(hs.PIDFile, processAnchor{PID: hs.PID, StartTime: hs.PIDStart, Socket: hs.Socket, VMID: h.ID})
+			if err := writeProcessAnchor(hs.PIDFile, processAnchor{PID: hs.PID, StartTime: hs.PIDStart, Socket: hs.Socket, VMID: h.ID}); err != nil {
+				return fmt.Errorf("write firecracker process anchor: %w", err)
+			}
 		}
+		hs.Ready = waitFirecrackerBoot(ctx, hs, 5*time.Second) == nil && !processReaped(vm)
 		if hs.MetaPath != "" {
-			_ = writeVMMetadata(hs.MetaPath, hs)
+			if err := writeVMMetadata(hs.MetaPath, hs); err != nil {
+				return fmt.Errorf("write firecracker metadata: %w", err)
+			}
 		}
 	}
-	go reapVMProcess(h.ID, cmd)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if state := vm.snapshot(); !state.started {
+		return fmt.Errorf("firecracker VM %s exited during startup: %s", h.ID, vmExitReason(state, nil))
+	}
 	return nil
 }
 
 // StopNode signals the firecracker process to exit.
-func (s *Substrate) StopNode(_ context.Context, h substrate.NodeHandle) error {
-	vmMu.Lock()
-	vm, ok := vmStore[h.ID]
-	vmMu.Unlock()
-	if !ok {
+func (s *Substrate) StopNode(ctx context.Context, h substrate.NodeHandle) error {
+	vm := lookupVM(h.ID)
+	if vm == nil {
 		return nil
 	}
-	if vm.cmd == nil || vm.cmd.Process == nil {
-		if vm.pid > 0 {
-			if proc, err := os.FindProcess(vm.pid); err == nil {
-				return proc.Signal(syscall.SIGTERM)
-			}
+	if err := vm.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer vm.unlockOperation()
+	return signalVMProcess(vm.snapshot(), syscall.SIGTERM)
+}
+
+func signalVMProcess(state vmProcessSnapshot, signal syscall.Signal) error {
+	if state.destroyed || !state.started {
+		return nil
+	}
+	if state.cmd != nil && state.cmd.Process != nil {
+		err := state.cmd.Process.Signal(signal)
+		if err == os.ErrProcessDone {
+			return nil
 		}
-		return nil
+		return err
 	}
-	return vm.cmd.Process.Signal(syscall.SIGTERM)
+	// Adopted processes have no exec.Cmd; never signal a recycled PID.
+	if state.pid > 0 && state.startTime == "" {
+		return fmt.Errorf("firecracker process %d has no ownership start time", state.pid)
+	}
+	if state.pid > 0 && processMatches(state.pid, state.startTime) {
+		proc, err := os.FindProcess(state.pid)
+		if err != nil {
+			return err
+		}
+		defer proc.Release()
+		return proc.Signal(signal)
+	}
+	return nil
 }
 
 // DestroyNode kills the VM process and cleans up files. Tolerates two
@@ -433,21 +524,22 @@ func (s *Substrate) StopNode(_ context.Context, h substrate.NodeHandle) error {
 //     (e.g. `sysbox destroy` after the apply process exited). In that
 //     case we reconstruct the conventional vm_dir from the VM ID and
 //     kill whatever firecracker process is holding firecracker.sock.
-func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error {
-	vmMu.Lock()
-	vm, ok := vmStore[h.ID]
-	delete(vmStore, h.ID)
-	vmMu.Unlock()
-
-	hotOwned := ok && vm.cmd != nil && vm.cmd.Process != nil
-	if hotOwned {
-		_ = vm.cmd.Process.Signal(syscall.SIGKILL)
-		// reapVMProcess is the sole owner of cmd.Wait. Waiting here races with
-		// that goroutine and can corrupt exec.Cmd's internal state.
-	} else if ok && vm.pid > 0 {
-		if proc, err := os.FindProcess(vm.pid); err == nil {
-			_ = proc.Signal(syscall.SIGKILL)
-		}
+func (s *Substrate) DestroyNode(ctx context.Context, h substrate.NodeHandle) error {
+	vm := lookupOrReserveVM(h.ID)
+	if err := vm.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer vm.unlockOperation()
+	state := vm.snapshot()
+	if state.destroyed {
+		return nil
+	}
+	vm.mu.Lock()
+	vm.destroying = true
+	vm.mu.Unlock()
+	hotOwned := state.cmd != nil && state.cmd.Process != nil
+	if err := signalVMProcess(state, syscall.SIGKILL); err != nil {
+		return err
 	}
 
 	// Resolve vm_dir from typed handle if given, else fall back to the
@@ -468,13 +560,20 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 			socket = ownedUnixSocketPath(dir, h.ID, "firecracker.sock", "fc")
 		}
 		if hotOwned {
-			if err := waitAndRemoveHotProcessSocket(vm, socket); err != nil {
+			if err := waitAndRemoveHotProcessSocket(ctx, state, socket); err != nil {
+				return err
+			}
+		} else if state.started && state.pid > 0 {
+			if err := waitAndRemoveHotProcessSocket(ctx, state, socket); err != nil {
 				return err
 			}
 		} else {
 			if err := killOwnedStaleFirecracker(dir, h.ID, socket); err != nil {
 				return err
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if err := os.RemoveAll(dir); err != nil {
 			return fmt.Errorf("remove firecracker VM directory %q: %w", dir, err)
@@ -483,16 +582,44 @@ func (s *Substrate) DestroyNode(_ context.Context, h substrate.NodeHandle) error
 	if vsock != "" {
 		_ = os.Remove(vsock)
 	}
+	vm.mu.Lock()
+	vm.destroyed = true
+	vm.mu.Unlock()
+	vmMu.Lock()
+	if vmStore[h.ID] == vm {
+		delete(vmStore, h.ID)
+	}
+	vmMu.Unlock()
 	return nil
 }
 
-func waitAndRemoveHotProcessSocket(vm *vmProcess, socketPath string) error {
-	deadline := time.Now().Add(2 * time.Second)
-	for processMatches(vm.pid, vm.startTime) && !processIsZombie(vm.pid) && !processReaped(vm) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if processMatches(vm.pid, vm.startTime) && !processIsZombie(vm.pid) && !processReaped(vm) {
-		return fmt.Errorf("firecracker hot process %d did not exit", vm.pid)
+func waitAndRemoveHotProcessSocket(ctx context.Context, state vmProcessSnapshot, socketPath string) error {
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		exited := false
+		if state.done != nil {
+			select {
+			case <-state.done:
+				exited = true
+			default:
+			}
+		} else {
+			exited = !processMatches(state.pid, state.startTime) || processIsZombie(state.pid)
+		}
+		if exited {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("firecracker hot process %d did not exit", state.pid)
+		case <-state.done:
+		case <-ticker.C:
+		}
 	}
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove hot firecracker socket: %w", err)
@@ -513,34 +640,41 @@ func ownedUnixSocketPath(runDir, vmID, filename, prefix string) string {
 // Hot path: in-process vmStore has the cmd handle, check via Signal(0).
 // Cold path: process was started by a previous CLI invocation; reconstruct
 // the socket path from HandleState and probe with pkill/pgrep.
-func (s *Substrate) NodeStatus(_ context.Context, h substrate.NodeHandle) (bool, error) {
-	obs, err := s.ObserveNode(context.Background(), h)
+func (s *Substrate) NodeStatus(ctx context.Context, h substrate.NodeHandle) (bool, error) {
+	obs, err := s.ObserveNode(ctx, h)
 	if err != nil {
 		return false, err
 	}
 	return obs.Running, nil
 }
 
-func (s *Substrate) ObserveNode(_ context.Context, h substrate.NodeHandle) (substrate.NodeObservation, error) {
+func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (substrate.NodeObservation, error) {
+	vm := lookupOrReserveVM(h.ID)
+	if err := vm.lockOperation(ctx); err != nil {
+		return substrate.NodeObservation{}, err
+	}
+	defer vm.unlockOperation()
+	return s.observeNode(h, vm.snapshot())
+}
+
+// Caller holds the VM transition gate; state is a detached process snapshot.
+func (s *Substrate) observeNode(h substrate.NodeHandle, state vmProcessSnapshot) (substrate.NodeObservation, error) {
 	now := time.Now().UTC()
+	if state.destroyed {
+		return substrate.NodeObservation{Status: substrate.NodeStatusMissing, ExternalID: h.ID, Reason: "VM destroyed", LastSeen: now}, nil
+	}
 	// Hot path: process in current process table.
-	vmMu.Lock()
-	vm, ok := vmStore[h.ID]
-	vmMu.Unlock()
-	if ok && vm.cmd != nil && vm.cmd.Process != nil {
-		if err := vm.cmd.Process.Signal(syscall.Signal(0)); err != nil || processReaped(vm) {
-			vm.mu.Lock()
-			exitCode := vm.exitCode
-			vm.mu.Unlock()
+	if state.cmd != nil && state.cmd.Process != nil {
+		if err := state.cmd.Process.Signal(syscall.Signal(0)); err != nil || !state.started {
 			return substrate.NodeObservation{
 				Exists:     true,
 				Running:    false,
 				Healthy:    false,
 				Status:     substrate.NodeStatusExited,
-				PID:        vm.pid,
-				ExitCode:   exitCode,
+				PID:        state.pid,
+				ExitCode:   state.exitCode,
 				ExternalID: h.ID,
-				Reason:     vmExitReason(vm, err),
+				Reason:     vmExitReason(state, err),
 				LastSeen:   now,
 			}, nil
 		}
@@ -550,7 +684,7 @@ func (s *Substrate) ObserveNode(_ context.Context, h substrate.NodeHandle) (subs
 			Running:    true,
 			Healthy:    ready,
 			Status:     substrate.NodeStatusRunning,
-			PID:        vm.pid,
+			PID:        state.pid,
 			ExternalID: h.ID,
 			Reason:     readyReason(ready),
 			LastSeen:   now,
@@ -623,16 +757,30 @@ func (s *Substrate) ObserveNode(_ context.Context, h substrate.NodeHandle) (subs
 // It does not recreate the original exec.Cmd, but it records the PID/socket in
 // vmStore so later status/stop/destroy calls have an explicit ownership anchor.
 func (s *Substrate) AdoptNode(ctx context.Context, h substrate.NodeHandle) (substrate.NodeHandle, error) {
+	vm := lookupOrReserveVM(h.ID)
+	if err := vm.lockOperation(ctx); err != nil {
+		return h, err
+	}
+	defer vm.unlockOperation()
+	state := vm.snapshot()
+	if state.destroying || state.destroyed {
+		return h, fmt.Errorf("firecracker adopt %s: VM is being destroyed", h.ID)
+	}
 	hs, _ := h.Provider.(*HandleState)
 	if hs == nil || hs.Socket == "" {
 		return h, fmt.Errorf("firecracker adopt %s: missing provider socket", h.ID)
 	}
-	running, err := s.NodeStatus(ctx, h)
+	obs, err := s.observeNode(h, state)
 	if err != nil {
 		return h, err
 	}
-	if !running {
+	if !obs.Running {
 		return h, fmt.Errorf("firecracker adopt %s: process not running", h.ID)
+	}
+	if state.cmd != nil {
+		// Keep the active child and its reaper; adoption is idempotent.
+		hs.PID, hs.PIDStart = state.pid, state.startTime
+		return h, nil
 	}
 	pid := firecrackerPIDForSocket(hs.Socket)
 	if pid == 0 && hs.PIDFile != "" {
@@ -645,19 +793,16 @@ func (s *Substrate) AdoptNode(ctx context.Context, h substrate.NodeHandle) (subs
 	if pid == 0 {
 		return h, fmt.Errorf("firecracker adopt %s: process anchor not found", h.ID)
 	}
-	vmMu.Lock()
-	vmStore[h.ID] = &vmProcess{
-		vmID:      h.ID,
-		socket:    hs.Socket,
-		cfgPath:   hs.ConfigPath,
-		netnsName: hs.NetnsName,
-		pid:       pid,
-		startTime: processStartTime(pid),
-		started:   true,
+	startTime := processStartTime(pid)
+	if startTime == "" {
+		return h, fmt.Errorf("firecracker adopt %s: process identity unavailable", h.ID)
 	}
-	vmMu.Unlock()
+	vm.mu.Lock()
+	vm.socket, vm.cfgPath, vm.netnsName = hs.Socket, hs.ConfigPath, hs.NetnsName
+	vm.pid, vm.startTime, vm.started = pid, startTime, true
+	vm.mu.Unlock()
 	hs.PID = pid
-	hs.PIDStart = processStartTime(pid)
+	hs.PIDStart = startTime
 	return h, nil
 }
 
@@ -744,25 +889,22 @@ func processMatches(pid int, startTime string) bool {
 	return processStartTime(pid) == startTime
 }
 
-func reapVMProcess(vmID string, cmd *exec.Cmd) {
+func reapVMProcess(vm *vmProcess, cmd *exec.Cmd) {
 	err := cmd.Wait()
-	vmMu.Lock()
-	vm, ok := vmStore[vmID]
-	if ok && vm.cmd == cmd {
-		vm.mu.Lock()
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	if vm.cmd == cmd {
 		vm.started = false
+		code := cmd.ProcessState.ExitCode()
+		vm.exitCode = &code
+		vm.exitError = ""
 		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-					code := status.ExitStatus()
-					vm.exitCode = &code
-				}
-			}
 			vm.exitError = err.Error()
 		}
-		vm.mu.Unlock()
+		if vm.done != nil {
+			close(vm.done)
+		}
 	}
-	vmMu.Unlock()
 }
 
 func processReaped(vm *vmProcess) bool {
@@ -771,16 +913,14 @@ func processReaped(vm *vmProcess) bool {
 	return !vm.started && vm.pid > 0
 }
 
-func vmExitReason(vm *vmProcess, err error) string {
+func vmExitReason(state vmProcessSnapshot, err error) string {
 	if err != nil {
 		return err.Error()
 	}
-	vm.mu.Lock()
-	defer vm.mu.Unlock()
-	if vm.exitError != "" {
-		return vm.exitError
+	if state.exitError != "" {
+		return state.exitError
 	}
-	if !vm.started {
+	if !state.started {
 		return "firecracker process exited"
 	}
 	return "firecracker process not running"

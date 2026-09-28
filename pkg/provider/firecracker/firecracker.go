@@ -1,6 +1,7 @@
 package firecracker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -112,6 +113,12 @@ func (s *Substrate) Validate(spec substrate.NodeSpec) error {
 
 // MarshalProviderState writes the firecracker HandleState as JSON.
 func (s *Substrate) MarshalProviderState(h substrate.NodeHandle) (json.RawMessage, error) {
+	if vm := lookupVM(h.ID); vm != nil {
+		if err := vm.lockOperation(context.Background()); err != nil {
+			return nil, err
+		}
+		defer vm.unlockOperation()
+	}
 	hs, ok := h.Provider.(*HandleState)
 	if !ok || hs == nil {
 		return nil, nil
