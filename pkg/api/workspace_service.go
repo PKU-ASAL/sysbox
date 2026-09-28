@@ -44,49 +44,69 @@ func newWorkspaceService(runsDir, workspacesDir, stateBackend string, stateManag
 }
 
 func (s *WorkspaceService) HCLFile(topology string) string {
-	return filepath.Join(s.workspacesDir, topology, "field.sysbox.hcl")
+	base := filepath.Join(s.workspacesDir, topology)
+	current := filepath.Join(base, ".current")
+	if _, err := os.Lstat(current); os.IsNotExist(err) {
+		// Manually supplied workspaces retain their existing layout. Published
+		// workspaces always resolve the pointer once, before reading any files.
+		return filepath.Join(base, "field.sysbox.hcl")
+	}
+	pinned, err := filepath.EvalSymlinks(current)
+	if err != nil {
+		// Preserve the failing pointer path so the caller's file read fails.
+		// Never fall back to stale files after a publication pointer exists.
+		return filepath.Join(current, "field.sysbox.hcl")
+	}
+	return filepath.Join(pinned, "field.sysbox.hcl")
 }
 
 func (s *WorkspaceService) StateFile(topology string) string {
 	return filepath.Join(s.runsDir, topology, "state.json")
 }
 
-// UpsertProject materializes a project directory tree into the workspace,
-// creating the directory and each file. Idempotent: repeated calls overwrite.
-// Every path is re-validated here (defense in depth), so a malformed or
-// malicious path can never escape workspacesDir/<topology>/.
-//
-// The workspace dir holds only the materialized HCL tree (state lives under
-// runsDir), so it is removed and rewritten wholesale: this guarantees the
-// on-disk tree is exactly the requested revision, never a union with a prior
-// one (a stale module/file present in revision A but absent in B must not
-// survive).
+// UpsertProject publishes a complete immutable tree, then atomically switches
+// the workspace pointer. Existing readers retain their pinned revision. Old
+// revisions are retained for runs and recovery; publishing does not perform GC.
 func (s *WorkspaceService) UpsertProject(ctx context.Context, topology string, files map[string][]byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
 	}
-	// Validate every path before touching disk so a bad path cannot leave the
-	// workspace half-reconciled.
-	for p := range files {
-		if err := validateRelPath(p); err != nil {
-			return err
-		}
+	unlock, err := s.lockPublication(ctx, topology)
+	if err != nil {
+		return err
 	}
-
+	defer unlock()
+	hcl, err := s.materializeRevision(ctx, topology, controlplane.ComputeRevisionDigest(files), files)
+	if err != nil {
+		return err
+	}
 	base := filepath.Join(s.workspacesDir, topology)
-	if err := os.RemoveAll(base); err != nil {
-		return fmt.Errorf("remove workspace: %w", err)
+	if err := mkdirWorkspaceDirectories(base); err != nil {
+		return fmt.Errorf("create workspace: %w", err)
 	}
-	for p, content := range files {
-		target := filepath.Join(base, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return fmt.Errorf("create directory: %w", err)
-		}
-		if err := os.WriteFile(target, content, 0o644); err != nil {
-			return fmt.Errorf("write file: %w", err)
-		}
+	stage, err := os.MkdirTemp(base, ".publish-")
+	if err != nil {
+		return err
 	}
-	return nil
+	defer os.RemoveAll(stage)
+	target, err := filepath.Abs(filepath.Dir(hcl))
+	if err != nil {
+		return err
+	}
+	link := filepath.Join(stage, "current")
+	if err := os.Symlink(target, link); err != nil {
+		return fmt.Errorf("stage workspace pointer: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.Rename(link, filepath.Join(base, ".current")); err != nil {
+		return fmt.Errorf("publish workspace pointer: %w", err)
+	}
+	return syncWorkspaceParents(base)
 }
 
 func (s *WorkspaceService) HCL(topology string) ([]byte, error) {
@@ -117,12 +137,23 @@ func (s *WorkspaceService) Get(ctx context.Context, topology string) (WorkspaceI
 
 func (s *WorkspaceService) List(ctx context.Context) ([]WorkspaceInfo, error) {
 	items := map[string]*WorkspaceInfo{}
-	hclEntries, err := filepath.Glob(filepath.Join(s.workspacesDir, "*", "field.sysbox.hcl"))
+	hclEntries, err := os.ReadDir(s.workspacesDir)
+	if os.IsNotExist(err) {
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	for _, e := range hclEntries {
-		name := filepath.Base(filepath.Dir(e))
+		name := e.Name()
+		if !e.IsDir() || validatePathSegment(name, "topology") != nil {
+			continue
+		}
+		if _, err := os.Stat(s.HCLFile(name)); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("read workspace %s: %w", name, err)
+		}
 		items[name] = &WorkspaceInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name, HasHCL: true}
 	}
 	if s.stateBackend == "" {
@@ -176,6 +207,11 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
 	}
+	unlock, err := s.lockPublication(ctx, topology)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	mgr, err := s.stateManager(topology)
 	if err != nil {
 		return err
@@ -191,14 +227,21 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 		slog.Warn("force-deleting topology metadata with live resources", "topology", topology, "resources", len(st.Resources))
 	}
 	if s.stateBackend == "" {
-		if err := os.RemoveAll(filepath.Dir(s.StateFile(topology))); err != nil {
+		if err := s.removeWorkspaceMetadata(topology); err != nil {
 			return fmt.Errorf("remove state: %w", err)
 		}
 	} else if err := mgr.Delete(ctx); err != nil {
 		return fmt.Errorf("remove state: %w", err)
 	}
-	if err := os.RemoveAll(filepath.Dir(s.HCLFile(topology))); err != nil {
+	if err := os.RemoveAll(filepath.Join(s.workspacesDir, topology)); err != nil {
 		return fmt.Errorf("remove workspace: %w", err)
+	}
+	if _, err := os.Stat(s.workspacesDir); err == nil {
+		if err := syncWorkspaceParents(s.workspacesDir); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	if err := s.deletePlacement(ctx, topology); err != nil {
 		return fmt.Errorf("remove topology placement: %w", err)
@@ -207,6 +250,28 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 		_ = s.health.DeleteHealth(ctx, topology)
 	}
 	return nil
+}
+
+// Metadata deletion is not immutable-tree garbage collection. A run or reader
+// may still be using a pinned revision or snapshot after the workspace unlinks.
+func (s *WorkspaceService) removeWorkspaceMetadata(topology string) error {
+	dir := filepath.Dir(s.StateFile(topology))
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "revisions" || entry.Name() == "snapshots" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return syncWorkspaceParents(dir)
 }
 
 func (s *WorkspaceService) LoadState(topology string) (*state.State, error) {

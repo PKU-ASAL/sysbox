@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -20,7 +21,12 @@ func (s *WorkspaceService) MaterializeWorkspaceSnapshot(topology, runID string) 
 	if runID == "" {
 		return "", fmt.Errorf("run id is required")
 	}
-	source := filepath.Join(s.workspacesDir, topology)
+	unlock, err := s.lockPublication(context.Background(), topology)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	source := filepath.Dir(s.HCLFile(topology))
 	base := filepath.Join(s.runsDir, topology, "snapshots", runID)
 	if err := copySnapshotTree(source, base); err != nil {
 		return "", err
@@ -63,6 +69,17 @@ func copySnapshotTree(source, destination string) error {
 // Concurrent publishers use distinct staging directories; an existing tree
 // must match the digest rather than being modified in place.
 func (s *WorkspaceService) MaterializeRevision(topology, revision string, files map[string][]byte) (string, error) {
+	unlock, err := s.lockPublication(context.Background(), topology)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	return s.materializeRevision(context.Background(), topology, revision, files)
+}
+
+// materializeRevision requires the publication lock; UpsertProject holds it
+// through switching .current so deletion cannot invalidate the target midway.
+func (s *WorkspaceService) materializeRevision(ctx context.Context, topology, revision string, files map[string][]byte) (string, error) {
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return "", err
 	}
@@ -81,11 +98,17 @@ func (s *WorkspaceService) MaterializeRevision(topology, revision string, files 
 	base := filepath.Join(root, revision)
 	hcl := filepath.Join(base, "field.sysbox.hcl")
 	if _, err := os.Lstat(base); err == nil {
-		return hcl, verifyRevisionTree(base, files)
+		if err := verifyRevisionTree(base, files); err != nil {
+			return "", err
+		}
+		if err := syncRevisionTree(base); err != nil {
+			return "", err
+		}
+		return hcl, syncWorkspaceParents(root)
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := mkdirWorkspaceDirectories(root); err != nil {
 		return "", err
 	}
 	stage, err := os.MkdirTemp(root, ".revision-")
@@ -94,6 +117,9 @@ func (s *WorkspaceService) MaterializeRevision(topology, revision string, files 
 	}
 	defer os.RemoveAll(stage)
 	for name, content := range files {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		target := filepath.Join(stage, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return "", err
@@ -105,6 +131,12 @@ func (s *WorkspaceService) MaterializeRevision(topology, revision string, files 
 	if err := os.Chmod(stage, 0o755); err != nil {
 		return "", err
 	}
+	if err := syncRevisionTree(stage); err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if err := os.Rename(stage, base); err != nil {
 		// Another publisher may have won the rename. Only accept its tree
 		// after checking all files, including unexpected files and symlinks.
@@ -112,7 +144,47 @@ func (s *WorkspaceService) MaterializeRevision(topology, revision string, files 
 			return "", fmt.Errorf("publish revision: %w; verify: %v", err, checkErr)
 		}
 	}
+	if err := syncWorkspaceParents(root); err != nil {
+		return "", err
+	}
 	return hcl, nil
+}
+
+// syncRevisionTree persists files and directory entries before publishing the
+// immutable root. Directory order is reversed to flush children before parents.
+func syncRevisionTree(root string) error {
+	var dirs []string
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			dirs = append(dirs, path)
+			return nil
+		}
+		return syncDirectory(path)
+	})
+	if err != nil {
+		return err
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := syncDirectory(dirs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncDirectory(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("sync %s: %w", path, err)
+	}
+	return f.Close()
 }
 
 func verifyRevisionTree(base string, files map[string][]byte) error {

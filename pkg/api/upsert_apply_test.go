@@ -379,6 +379,11 @@ func TestApplyUpsertReconcilesRemovedFiles(t *testing.T) {
 	revB := publishRevisionFiles(t, s, map[string]string{"field.sysbox.hcl": upsertApplyHCL})
 	applyUpsert(t, s, "cf-reconcile", revB)
 
+	// Readers of A retain A; newly resolved readers see only B's tree.
+	_, err = os.Stat(filepath.Join(base, "files", "extra.txt"))
+	require.NoError(t, err)
+	base = filepath.Dir(s.workspaceService().HCLFile("cf-reconcile"))
+
 	for _, stale := range []string{"files/extra.txt", "modules/web/main.hcl"} {
 		_, err := os.Stat(filepath.Join(base, filepath.FromSlash(stale)))
 		require.True(t, os.IsNotExist(err), "%s removed from the new revision must be gone", stale)
