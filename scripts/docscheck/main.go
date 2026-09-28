@@ -28,6 +28,7 @@ var expectedDocs = []string{
 	"docs/design/2026-09-13-project-review.md",
 	"docs/design/2026-09-28-observation-driven-runtime-refactor.md",
 	"docs/design/2026-09-28-interface-change-inventory.md",
+	"docs/design/2026-09-28-runtime-refactor-implementation-status.md",
 	"docs/design/revision-and-upsert-apply-plan.md",
 	"docs/design/revision-and-upsert-apply.md",
 	"docs/design/revision-directory-tree-addressing.md",

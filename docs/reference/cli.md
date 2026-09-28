@@ -2,6 +2,8 @@
 
 本页对应当前 `sysbox --help`。具体版本以正在运行的 binary help 为准。
 
+> 重构分支的生命周期写入要求原子 repository；`--allow-unsafe-state` 不能绕过这个要求。旧 state 格式需显式重建，GC 自动删除暂禁，仅保留有归属约束的 `gc --dry-run`。完整能力缺口见[实施状态](../design/2026-09-28-runtime-refactor-implementation-status.md)。
+
 ## Global Options
 
 | Flag | Default | Meaning |

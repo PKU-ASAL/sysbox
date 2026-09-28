@@ -24,7 +24,26 @@
 - Verified P0: `go test ./...`, `go test -race ./...`, `go vet ./...`, `make docs-test`. No real hypervisor/network/Postgres integration run is claimed.
 - The Firecracker fix is in-process synchronization. Cross-process VMM ownership, durable manifest and schema replacement remain later work; workspace publication and JSONL synchronization already use process-shared locks.
 - Transitional journal guard implemented and independently reviewed: enforce persistence before existing runtime mutations, suppress destructive cleanup/rollback after journal failure, prevent Agent whole-state saves bypassing the failed patch, and propagate final commit errors. This strengthens the old executor as a bridge toward Task 5; it does not claim a completed observation-driven engine or unified storage transaction.
-- Tasks 4–8 remain open. New API enums/protocol versions from the interface inventory are design candidates, not changes already shipped. A string-to-object error envelope or new enum is not presumed backward compatible.
+- Tasks 4–8 are in progress, not wholly complete. The lifecycle aggregate repository, default convergence engine, Firecracker manifest and common execution primitives are implemented in the refactor worktree; API metadata migration, remaining provider capabilities and production validation are still open. See the [implementation status](../../design/2026-09-28-runtime-refactor-implementation-status.md) for the actual boundary. New API enums/protocol versions from the interface inventory remain design candidates.
+
+### Integration hardening in the current implementation
+
+Implementation commit: `72e227a`. Final verification passed with `go test ./... -count=1`, `go test -race ./... -count=1`, `go vet ./...`, `make docs-test`, and `git diff --check` using `GOCACHE=/tmp/sysbox-gocache`. Socket-enabled tests use temporary local fixtures; no physical substrate or live Postgres deployment was exercised.
+
+- [x] Share lifecycle state/action transactions across filesystem, SQLite and Postgres adapters.
+- [x] Add action revision CAS independently of resource serial; reject regressive recovery evidence.
+- [x] Reject malformed inner aggregate identities and discard unknown SQL transaction sessions.
+- [x] Unify CLI/Agent/API backend selection; persist relative SQLite paths; separate catalog enumeration from topology-bound access.
+- [x] Protect metadata deletion with serial/owner CAS, unfinished-action checks and stable lock inode retention.
+- [x] Persist Firecracker ownership/process manifests; validate reset old/target contexts across cold recovery.
+- [x] Scope GC previews to verifiable owners and disable unfenced automatic deletion.
+- [x] Route canonical API recovery/cleanup and supervisor through the pinned observation runner; reject wrong-host recovery and checkpoint-only authority.
+- [x] Run repository-wide unit tests, race tests, vet, documentation checks and diff checks successfully.
+- [x] Preserve transport truncation flags in checks; classify route probe errors as unknown rather than drift.
+- [x] Share route convergence between create and reset; require composite guest/image-entry completion evidence and propagate image-entry failures.
+- [x] Reject unknown exit codes in generic SSH setup and console fallback; drain console output before reporting completion.
+- [ ] Migrate remaining API metadata codecs/transitions, remote recovery dispatch and unsupported resource observations.
+- [ ] Verify real Postgres and substrate end-to-end deployments before release.
 
 ## Task 1: Establish the P0 test and synchronization baseline
 

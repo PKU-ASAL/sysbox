@@ -1,7 +1,7 @@
 # Sysbox 重构方案：以真实状态驱动生命周期收敛
 
 > 日期：2026-09-28
-> 状态：目标架构设计；尚未实施。
+> 状态：目标架构设计；正在分阶段实施。实际交付边界见[实施状态](2026-09-28-runtime-refactor-implementation-status.md)，不能将本文全部目标视为已完成。
 > 本文取代[前版方案 B](../superpowers/specs/2026-09-28-sysbox-architecture-refactor-design.md)作为本轮重构依据。原有架构文档仍描述当前实现，本文描述目标。
 >
 > 接口兼容边界见[接口变更清单](2026-09-28-interface-change-inventory.md)。

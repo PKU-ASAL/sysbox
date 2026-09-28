@@ -2,6 +2,8 @@
 
 本文是 Sysbox 系统边界和持久契约的规范性说明。操作步骤位于 guides/operations，字段和 endpoint 位于 reference。
 
+> 观察驱动重构分支正在迁移实现。生命周期已改用 action/state 原子 repository；API metadata 等部分仍在迁移中。以[实施状态与验证边界](design/2026-09-28-runtime-refactor-implementation-status.md)区分已落地机制和目标契约。
+
 ## 系统上下文
 
 Sysbox 接收 HCL topology intent，解析为 typed resource graph，结合 durable state 与外部 observation 生成 plan，再通过 capability driver 修改宿主机资源。

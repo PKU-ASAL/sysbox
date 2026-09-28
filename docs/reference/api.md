@@ -1,5 +1,7 @@
 # sysbox API
 
+> 重构分支的 recover/cleanup 以固定 revision 和 canonical action 为准，不再用 checkpoint patch 授权恢复。远端 run 必须在 owning agent 上观测；尚未实现派发的入口明确拒绝本机恢复。HTTP v1 的 `error` 仍是字符串。参见[实施状态](../design/2026-09-28-runtime-refactor-implementation-status.md)。
+
 Plan action 使用 canonical `address`。Stored plan 带完整输入指纹；配置、
 state、schema、driver、artifact 或变量变化时，会在执行前拒绝。配置验证
 错误返回 HTTP 422 和结构化 `diagnostics` 数组。参见
