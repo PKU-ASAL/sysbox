@@ -45,6 +45,24 @@ Implementation commit: `72e227a`. Final verification passed with `go test ./... 
 - [ ] Migrate remaining API metadata codecs/transitions, remote recovery dispatch and unsupported resource observations.
 - [ ] Verify real Postgres and substrate end-to-end deployments before release.
 
+## Completed vertical slice: Guest operation metadata repositories
+
+Implementation commit: `3679f21`. Independent review issues were reproduced and fixed. Full uncached unit/race suites, vet, docs and diff checks pass. Postgres contract tests are opt-in via `SYSBOX_TEST_POSTGRES_DSN`; no server was configured in this run.
+
+**Goal:** Move GuestExecution and GuestFileOperation persistence out of the three API adapters while preserving public HTTP shapes, statuses and private dispatch fields.
+
+**Architecture:** A typed `persistence.GuestRepository` owns record codecs, immutable bindings, version increments, terminal-state rules and acceptance aggregation. Private byte-record adapters perform only filesystem/SQL read, list and conditional replacement. Existing API adapters delegate through small typed methods, reusing their existing database pools; no second storage location or dual writer is introduced.
+
+**Files:** Create `pkg/persistence/guest_repository.go`, `guest_codec.go`, `guest_records_file.go`, `guest_records_sql.go`, `guest_repository_test.go`; replace the duplicated implementations in `pkg/api/guest_execution_store.go` and `guest_file_operation_store.go`; add API contract and cross-process tests.
+
+**Contract:** `SaveGuestExecution` / `SaveGuestFileOperation` create or accept an identical replay, never overwrite a changed record. CAS uses the caller's expected version, increments once, returns `(false,nil)` on a stale version and a typed not-found on a missing ID. A terminal record cannot restart or change its result; expiry redaction may only remove request/stdout/stderr. ID, topology, node and agent binding are immutable. CommandID may bind once. File cancel requests are monotonic. Corrupt/unsupported records and I/O errors propagate without exposing payloads.
+
+- [x] Add failing API contract tests for terminal regression, immutable binding, create overwrite, invalid revision and missing-record classification against local and SQLite stores.
+- [x] Implement typed codecs/transition validation and physical adapters; local CAS uses stable process-shared locks and SQL CAS locks/reads/validates/writes in one transaction.
+- [x] Route both API aggregates and LatestGuestAcceptance through the shared repository, preserving DTO redaction and service behavior.
+- [x] Add cross-process local CAS, reopen, corruption, cancellation, list-error and atomic rejected-write coverage; add the opt-in isolated Postgres contract (not run here).
+- [x] Obtain an independent review, run full unit/race/vet/docs verification, update implementation status and commit without merging or pushing.
+
 ## Task 1: Establish the P0 test and synchronization baseline
 
 **Files:**

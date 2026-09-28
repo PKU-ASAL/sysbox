@@ -3,6 +3,7 @@
 > 日期：2026-09-28
 > 工作分支：`refactor/observation-driven-runtime`
 > 核心实现提交：`72e227a`；未合入 main，未推送远端。
+> Guest metadata 共享仓储提交：`3679f21`。
 > 本文记录实际代码；[目标架构](2026-09-28-observation-driven-runtime-refactor.md)与[接口清单](2026-09-28-interface-change-inventory.md)包含尚未交付的后续设计。
 
 ## 1. 当前落地的主线
@@ -22,6 +23,7 @@ Provider 执行 → 保存恢复证据 → 再观察验证
 | 模块 | 已实现 | 尚不能据此声称完成 |
 |---|---|---|
 | 生命周期 repository | 文件、SQLite、Postgres 共用 aggregate 编解码、身份校验、意图/结果转换与 CAS | 全部 API metadata repository、outbox、跨控制器 fencing 已统一 |
+| Guest metadata repository | GuestExecution 与 GuestFileOperation 共用版本化 codec、CAS、状态约束、私有绑定和 acceptance 汇总；三种后端仅做物理读写 | Run、Agent、命令队列等其余 metadata 已迁移；Postgres 已通过真实服务测试 |
 | Runtime | 默认 Apply/Destroy/Reset 走观察、授权、写前意图、验证、原子提交；恢复只提交可证明结果 | 每种资源都已有完整的 discovery/read-back；所有 interrupted reset 都能自动继续 |
 | Firecracker | 版本化 manifest、身份/代际/进程锚点、文件锁、冷恢复、pidfd 校验后发信号；reset 保留真实目标 ActionID | 已通过真实 KVM、宿主机重启或内核版本矩阵验证 |
 | Docker / libvirt / isolated network | 管理身份、发现、拥有者约束；reset 的旧/新代际校验；隔离网络的观测与 ownership 标记 | 已通过真实 Docker/libvirt/网络设备 E2E |
@@ -42,7 +44,20 @@ Runtime 定义 `ActionRepository` 端口，`pkg/persistence` 实现它。Provide
 - 第一次 create 只有 intent、尚无成功资源时，目录列表仍能看到它。
 - 删除 metadata 使用 owner + serial CAS，拒绝未完成动作；保留 repository 锁文件和新 owner 身份，避免 unlink 锁导致双写。
 
-API 的 Run、Agent、GuestExecution 等历史 metadata 仍在现有 store 中。它们与生命周期 aggregate 不属于一个跨域原子事务；后续必须按 aggregate 逐项迁移，不能把本次改动描述成“三套存储已全部合并”。
+API 的 Run、Agent、命令队列等 metadata 仍在现有 store 中。GuestExecution 和 GuestFileOperation 已迁移到共享 `GuestRepository`；沿用原有物理表和路径，不新增第二套数据副本。它们与生命周期 aggregate 不属于一个跨域原子事务，不能把本次改动描述成“三套存储已全部合并”。
+
+### Guest metadata 的实际规则
+
+- `Save` 只创建新记录，或接受内容完全相同的重试；不能绕过 CAS 覆盖已有版本。
+- CAS 的缺失记录返回 typed NotFound，过期版本返回 `(false, nil)`；成功时只递增一次版本。失败的校验不改写原记录。
+- ID、topology、node、agent 绑定不可变；CommandID 最多绑定一次；终态不能回退或改写执行结果。过期清理只允许移除请求和 stdout/stderr，不能重新填回。
+- Request 比较采用与 JSON codec 相同的规范化规则，避免空 environment 在 round-trip 变成 nil 后产生假冲突。
+- 文件操作的取消请求不能撤销；不能同时记录 CancelRequested 和 Completed。
+- 本地更新采用稳定的跨进程 flock；SQLite 在 `BEGIN IMMEDIATE` 内读、验证、写；Postgres 通过事务内占位插入与行锁保护缺失 key 和已有记录。占位记录不能独立提交。
+- acceptance 汇总走同一套解码和过滤规则。列表、格式和读取错误不被当成空结果；定点 Get 不扫描其他无关记录。
+- 解码错误的公开字符串不包含 payload；内部仍保留 `json.SyntaxError`、`time.ParseError` 等诊断原因。
+
+Guest 记录新增磁盘字段 `record_format: 1`，HTTP DTO 不新增这个字段，private request/agent/command 绑定仍不对外暴露。旧记录没有该格式标记时明确返回 UnsupportedVersion，既不自动补标记，也不覆盖或删除。升级时必须停止旧写入端，审计未完成操作，再按明确计划重建这两类 metadata；不能混跑旧 API writer。
 
 ## 3. 恢复和执行的安全边界
 
@@ -61,6 +76,7 @@ Create 与 Reset 共用声明路由逻辑：先观察，持久化子步骤后配
 | 接口/行为 | 当前边界 |
 |---|---|
 | HCL、资源地址、HTTP v1 | 不引入设计稿中的新必填字段、协议版本或错误对象；HTTP `error` 保持字符串 |
+| Guest HTTP 错误分类 | 不存在为 404，冲突为 409，损坏/不可用为 500；执行 Get 先授权再读存储，不再用 404 隐藏损坏 |
 | Provider 接入 | `driver.Descriptor` + capability 模型保留；缺少管理发现或可靠观测的能力明确拒绝，不能默认为成功 |
 | Go 执行接口 | `Connection` 只要求前台 Exec；调用 Start/Copy 等能力前需断言对应可选接口；旧 GuestExec 包装器委托同一实现 |
 | 旧 state / 数据库行 / Firecracker 磁盘格式 | 不隐式迁移，不把旧状态当空状态，不自动删除真实基础设施；需要显式重建与处置旧资源 |
@@ -76,6 +92,8 @@ Create 与 Reset 共用声明路由逻辑：先观察，持久化子步骤后配
 已运行的针对性测试覆盖：FS/SQLite 共用 repository 合同、并发 intent、丢失提交响应、旧阶段覆盖、畸形 aggregate、SQL 事务清理失败、SQLite 重开、CLI/Agent 地址一致性、SQL 列表、metadata 删除、Firecracker 冷恢复/reset，以及 transport 输出上限和未知退出码。
 
 后续复审补充覆盖：Reset 路由重建与验证、guest/image-entry 完成证据、check 截断标志、console 输出 EOF 与退出结果的竞态，以及 pending topology 在列表和 state API 中的一致可见性。
+
+Guest metadata 迁移通过独立复审和全仓无缓存单测/race/vet/docs 检查。合同测试覆盖 FS/SQLite 的重开、并发 CAS、跨进程锁、create 重试、终态和绑定保护、取消、格式损坏、私有字段及 HTTP 错误分类。Postgres 合同套件已接入，但当前未设置 `SYSBOX_TEST_POSTGRES_DSN`，运行时测试明确 skip；设置该变量后测试只在新建的隔离 schema 中操作，并清理该 schema。不得将未连接 Postgres 的通过结果当成真实数据库验收。
 
 本阶段已通过 `go test ./...`、`go test -race ./...`、`go vet ./...`、`make docs-test` 和 `git diff --check`。未配置真实 Postgres 集成库，未启动真实 VM、容器或网络拓扑。带 `tests/e2e` 的普通 `go test ./...` 输出不代表真实部署测试已运行。
 
