@@ -130,7 +130,7 @@ type resetNodeContext struct {
 	step        int
 }
 
-func (e *Executor) Reset(ctx context.Context, plan *Plan) error {
+func (e *Executor) Reset(ctx context.Context, plan *Plan) (resetErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -151,12 +151,15 @@ func (e *Executor) Reset(ctx context.Context, plan *Plan) error {
 	if err := e.recorder.Begin("reset", plan); err != nil {
 		return err
 	}
-	var resetErr error
-	defer func() { e.recorder.Finish(resetErr) }()
+	defer func() { resetErr = e.finishJournal(resetErr) }()
 
 	for i := len(contexts) - 1; i >= 0; i-- {
 		item := contexts[i]
 		item.step = e.recorder.StepStart(item.action.Address.String(), controlplane.PlanActionReset)
+		if err := e.journalError(); err != nil {
+			resetErr = err
+			return err
+		}
 		if err := e.prepareResetNode(ctx, item); err != nil {
 			e.recorder.StepFailed(item.step, err)
 			resetErr = err

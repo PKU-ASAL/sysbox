@@ -302,6 +302,14 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 
 	var handle substrate.NodeHandle
+	cleanupNode := func(reason string) {
+		// A journal failure leaves the outcome for recovery. It must not turn
+		// into an unrecorded destructive action through operational cleanup.
+		if e.journalError() != nil {
+			return
+		}
+		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, reason)
+	}
 	if err := e.recordSubstep(parentStep, "create_node", map[string]any{
 		"resource":  n.Address.String(),
 		"substrate": subName,
@@ -329,7 +337,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		}, func() error {
 			return nodeDriver.StartNode(ctx, handle)
 		}); err != nil {
-			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on start failure")
+			cleanupNode("destroy node on start failure")
 			return state.Resource{}, fmt.Errorf("start node %s: %w", n.Address.Name, err)
 		}
 	}
@@ -337,7 +345,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// Wire all NICs using the shared helper.
 	wireResult, err := wireNICsWithHook(ctx, nicDriver, e.state, handle, nicSpecs, n.Address, e.substepHook(parentStep))
 	if err != nil {
-		util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on wire failure")
+		cleanupNode("destroy node on wire failure")
 		return state.Resource{}, err
 	}
 
@@ -347,13 +355,13 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if len(caps.GuestNetworkInitModes) > 0 {
 		guestInitDriver, err = driver.DefaultRegistry.RequireGuestNetworkInit(subName)
 		if err != nil {
-			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node without guest network init capability")
+			cleanupNode("destroy node without guest network init capability")
 			return state.Resource{}, err
 		}
 		if err := e.recordSubstep(parentStep, "prepare_guest_network", map[string]any{
 			"resource": n.Address.String(), "substrate": subName, "node_id": handle.ID,
 		}, func() error { return guestInitDriver.PrepareGuestNetwork(ctx, handle) }); err != nil {
-			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on guest network preparation failure")
+			cleanupNode("destroy node on guest network preparation failure")
 			return state.Resource{}, fmt.Errorf("prepare guest network for %s: %w", n.Address.Name, err)
 		}
 	}
@@ -400,7 +408,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		}, func() error {
 			return nodeDriver.StartNode(ctx, handle)
 		}); err != nil {
-			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on cold-start failure")
+			cleanupNode("destroy node on cold-start failure")
 			return state.Resource{}, fmt.Errorf("start node %s: %w", n.Address.Name, err)
 		}
 	}
@@ -408,11 +416,11 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if guestInitDriver != nil {
 		observation, observeErr := guestInitDriver.ObserveGuestNetwork(ctx, handle)
 		if observeErr != nil {
-			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on guest network observation failure")
+			cleanupNode("destroy node on guest network observation failure")
 			return state.Resource{}, fmt.Errorf("observe guest network for %s: %w", n.Address.Name, observeErr)
 		}
 		if !observation.Converged {
-			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on guest network convergence failure")
+			cleanupNode("destroy node on guest network convergence failure")
 			return state.Resource{}, fmt.Errorf("guest network for %s did not converge: %s", n.Address.Name, observation.Reason)
 		}
 		observationState, marshalErr := guestNetworkObservationState(observation)
@@ -445,6 +453,9 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}, func() error {
 		return nodeDriver.PrepareHandle(ctx, &handle, providerConfig, stateAdapter{e.state})
 	}); err != nil {
+		if journalErr := e.journalError(); journalErr != nil {
+			return state.Resource{}, journalErr
+		}
 		e.logf("[apply] warning: PrepareHandle for %s: %v\n", n.Address.Name, err)
 	}
 
@@ -473,6 +484,9 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 			}, func() error {
 				return guestNetwork.EnsureRoute(ctx, handle, rt.Destination, rt.Via)
 			}); err != nil {
+				if journalErr := e.journalError(); journalErr != nil {
+					return state.Resource{}, journalErr
+				}
 				// Non-fatal: route may already exist or ip not available.
 				e.logf("[route] warning: %s: %v\n", n.Address.Name, err)
 			}
@@ -491,7 +505,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if len(cfg.Provisioners) > 0 {
 		conn, err := e.connectionForNode(ctx, nodeDriver, handle, cfg.Connections)
 		if err != nil {
-			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on connection setup failure")
+			cleanupNode("destroy node on connection setup failure")
 			return state.Resource{}, fmt.Errorf("connection for node %s: %w", n.Address.Name, err)
 		}
 		// Block until the chosen connection is reachable (SSH up, vsock
@@ -500,7 +514,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		if waiter, ok := conn.(substrate.ConnectionWaiter); ok {
 			e.logf("[provisioner] waiting for connection on %s...\n", n.Address.Name)
 			if err := waiter.WaitReady(ctx, 60*time.Second); err != nil {
-				util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on connection wait failure")
+				cleanupNode("destroy node on connection wait failure")
 				return state.Resource{}, fmt.Errorf("connection not ready on node %s: %w", n.Address.Name, err)
 			}
 		}
@@ -510,7 +524,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 			// network and blocks that network's removal on rollback/destroy —
 			// which then leaks an orphan network and fails the next apply's
 			// same-CIDR create with "Pool overlaps".
-			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on provisioner failure")
+			cleanupNode("destroy node on provisioner failure")
 			return state.Resource{}, fmt.Errorf("provisioner on node %s: %w", n.Address.Name, err)
 		}
 	}
@@ -518,6 +532,9 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// For Docker nodes, launch the image's original CMD/Entrypoint inside
 	// the container (we overrode it with "sleep infinity" during CreateNode).
 	if err := e.execImageEntry(ctx, handle, subName); err != nil {
+		if journalErr := e.journalError(); journalErr != nil {
+			return state.Resource{}, journalErr
+		}
 		e.logf("[node] warning: image entry start: %v\n", err)
 	}
 
@@ -633,6 +650,9 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 		return fmt.Errorf("no connection available for provisioners")
 	}
 	for _, p := range provs {
+		if err := e.journalError(); err != nil {
+			return err
+		}
 		switch p.Type {
 		case "exec":
 			program, err := secret.ResolveString(ctx, e.resolver(), p.Program)
@@ -690,6 +710,9 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 // that override it at create time (probed via substrate.ImageEntryStarter,
 // currently only docker).
 func (e *Executor) execImageEntry(ctx context.Context, handle substrate.NodeHandle, subName string) error {
+	if err := e.journalError(); err != nil {
+		return err
+	}
 	descriptor, ok := driver.DefaultRegistry.Get(subName)
 	if !ok {
 		return driver.Wrap(driver.ErrorNotFound, subName, "driver is not registered", nil)

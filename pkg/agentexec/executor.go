@@ -206,7 +206,7 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
 	if err := exec.Reset(ctx, plan); err != nil {
-		if saveErr := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
+		if saveErr := saveJournaledState(ctx, recorder, mgr, st, run.LeaseOwner); saveErr != nil {
 			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
 		} else {
 			recorder.SetStateSerialAfter(st.Meta.Serial)
@@ -215,7 +215,7 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 		return
 	}
 	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionNoop)
-	if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
+	if err := saveJournaledState(ctx, recorder, mgr, st, run.LeaseOwner); err != nil {
 		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
 		e.bridge.Finish(run, fmt.Errorf("save state: %w", err))
@@ -224,6 +224,11 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 	recorder.SetStateSerialAfter(st.Meta.Serial)
 	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
+	if err := recorder.Err(); err != nil {
+		recorder.Finish(err)
+		e.bridge.Finish(run, err)
+		return
+	}
 	_, _ = log.Write([]byte("Reset complete.\n"))
 	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
 }
@@ -379,7 +384,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
 	if err := exec.Apply(ctx, plan); err != nil {
-		if saveErr := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
+		if saveErr := saveJournaledState(ctx, recorder, mgr, st, run.LeaseOwner); saveErr != nil {
 			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
 		} else {
 			recorder.SetStateSerialAfter(st.Meta.Serial)
@@ -394,7 +399,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
+	if err := saveJournaledState(ctx, recorder, mgr, st, run.LeaseOwner); err != nil {
 		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
 		e.bridge.Finish(run, fmt.Errorf("save state: %w", err))
@@ -403,6 +408,11 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	recorder.SetStateSerialAfter(st.Meta.Serial)
 	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
+	if err := recorder.Err(); err != nil {
+		recorder.Finish(err)
+		e.bridge.Finish(run, err)
+		return
+	}
 	_, _ = log.Write([]byte("Apply complete.\n"))
 
 	// Checks run after apply: their probes (a command inside a node, a
@@ -475,7 +485,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
 	if err := exec.Destroy(ctx, plan); err != nil {
-		if saveErr := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
+		if saveErr := saveJournaledState(ctx, recorder, mgr, st, run.LeaseOwner); saveErr != nil {
 			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
 		} else {
 			recorder.SetStateSerialAfter(st.Meta.Serial)
@@ -490,7 +500,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 		e.bridge.Finish(run, err)
 		return
 	}
-	if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
+	if err := saveJournaledState(ctx, recorder, mgr, st, run.LeaseOwner); err != nil {
 		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
 		e.bridge.Finish(run, fmt.Errorf("save state: %w", err))
@@ -499,6 +509,11 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	recorder.SetStateSerialAfter(st.Meta.Serial)
 	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
+	if err := recorder.Err(); err != nil {
+		recorder.Finish(err)
+		e.bridge.Finish(run, err)
+		return
+	}
 	_, _ = log.Write([]byte("Destroy complete.\n"))
 	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
 }
@@ -531,4 +546,13 @@ func defaultDestroyPlan(st *state.State) *runtime.Plan {
 		})
 	}
 	return plan
+}
+
+// saveJournaledState prevents the Agent from bypassing a failed runtime patch
+// by saving the entire mutable state after the journal became unavailable.
+func saveJournaledState(ctx context.Context, recorder *runtime.StoreRecorder, manager *state.Manager, st *state.State, owner string) error {
+	if err := recorder.Err(); err != nil {
+		return fmt.Errorf("refuse state save without operation journal: %w", err)
+	}
+	return manager.SaveWithLease(ctx, st, state.LockOptions{Owner: owner})
 }

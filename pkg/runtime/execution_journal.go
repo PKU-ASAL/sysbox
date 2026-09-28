@@ -52,6 +52,11 @@ func (r *StoreRecorder) Err() error {
 	if r == nil {
 		return nil
 	}
+	if source, ok := r.OperationRecorder.(interface{ Err() error }); ok {
+		if err := source.Err(); err != nil {
+			return err
+		}
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.persistErr

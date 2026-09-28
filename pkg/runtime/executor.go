@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -92,14 +93,40 @@ func (e *Executor) resolver() secret.Resolver {
 }
 
 func (e *Executor) recordSubstep(parent int, phase string, details map[string]any, fn func() error) error {
+	if err := e.journalError(); err != nil {
+		return err
+	}
 	step := e.recorder.SubstepStart(parent, phase, details)
+	if err := e.journalError(); err != nil {
+		return err
+	}
 	err := fn()
 	if err != nil {
 		e.recorder.StepFailed(step, err)
 		return err
 	}
 	e.recorder.StepDone(step)
+	return e.journalError()
+}
+
+func (e *Executor) journalError() error {
+	if source, ok := e.recorder.(interface{ Err() error }); ok {
+		if err := source.Err(); err != nil {
+			return fmt.Errorf("operation journal unavailable: %w", err)
+		}
+	}
 	return nil
+}
+
+func (e *Executor) finishJournal(operationErr error) error {
+	if err := e.journalError(); err != nil {
+		operationErr = errors.Join(operationErr, err)
+	}
+	e.recorder.Finish(operationErr)
+	if err := e.journalError(); err != nil {
+		return errors.Join(operationErr, err)
+	}
+	return operationErr
 }
 
 func (e *Executor) substepHook(parent int) NICWireHook {
@@ -148,6 +175,9 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 		State:    &log,
 	}
 	e.recorder.StepStatePatch(step, StatePatchUpsert, &log)
+	if err := e.journalError(); err != nil {
+		return err
+	}
 	if e.patchSink != nil {
 		if err := e.patchSink.ApplyStatePatch(ctx, patch); err != nil {
 			return fmt.Errorf("persist state patch for %s: %w", id, err)
@@ -158,7 +188,7 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 	return nil
 }
 
-func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action controlplane.PlanActionType) {
+func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action controlplane.PlanActionType) error {
 	log := StateResourceLog{
 		Type:        r.Address.Type,
 		Name:        r.Address.Name,
@@ -170,6 +200,9 @@ func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Reso
 		Status:      r.Status,
 	}
 	e.recorder.StepStatePatch(step, StatePatchDelete, &log)
+	if err := e.journalError(); err != nil {
+		return err
+	}
 	if e.patchSink != nil {
 		patch := StatePatch{
 			Index:    step,
@@ -179,11 +212,12 @@ func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Reso
 			State:    &log,
 		}
 		if err := e.patchSink.ApplyStatePatch(ctx, patch); err != nil {
-			e.logf("[state] warning: persist delete patch for %s: %v\n", r.Address, err)
+			return fmt.Errorf("persist delete patch for %s: %w", r.Address, err)
 		} else {
 			e.recorder.StepStateRecorded(step)
 		}
 	}
+	return e.journalError()
 }
 
 func (e *Executor) logf(format string, args ...any) {

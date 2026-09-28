@@ -8,7 +8,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
+func (e *Executor) Apply(ctx context.Context, plan *Plan) (applyErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -22,8 +22,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 	if err := e.recorder.Begin(operation, plan); err != nil {
 		return err
 	}
-	var applyErr error
-	defer func() { e.recorder.Finish(applyErr) }()
+	defer func() { applyErr = e.finishJournal(applyErr) }()
 
 	if err := e.graph.Validate(); err != nil {
 		applyErr = fmt.Errorf("graph validation: %w", err)
@@ -34,6 +33,9 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 	var created []address.Address
 	rollback := func() {
 		for i := len(created) - 1; i >= 0; i-- {
+			if e.journalError() != nil {
+				return
+			}
 			addr := created[i]
 			if current := e.state.FindResource(addr); current != nil {
 				e.logf("[rollback] removing %s\n", addr)
@@ -44,6 +46,10 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 		}
 	}
 	for _, change := range plan.Actions {
+		if err := e.journalError(); err != nil {
+			applyErr = err
+			return err
+		}
 		if err := ctx.Err(); err != nil {
 			rollback()
 			applyErr = err
@@ -63,25 +69,39 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 		case controlplane.PlanActionDelete:
 			if current := e.state.FindResource(change.Address); current != nil {
 				step := e.recorder.StepStart(change.Address.String(), change.Action)
+				if err := e.journalError(); err != nil {
+					applyErr = err
+					return err
+				}
 				if err := e.DestroyResource(ctx, *current); err != nil {
 					e.recorder.StepFailed(step, err)
 					rollback()
 					applyErr = fmt.Errorf("delete %s: %w", change.Address, err)
 					return applyErr
 				}
-				e.recordDeletePatch(ctx, step, *current, change.Action)
+				if err := e.recordDeletePatch(ctx, step, *current, change.Action); err != nil {
+					applyErr = err
+					return err
+				}
 				e.recorder.StepDone(step)
 			}
 		case controlplane.PlanActionReplace:
 			if current := e.state.FindResource(change.Address); current != nil {
 				step := e.recorder.StepStart(change.Address.String(), controlplane.PlanActionDelete)
+				if err := e.journalError(); err != nil {
+					applyErr = err
+					return err
+				}
 				if err := e.DestroyResource(ctx, *current); err != nil {
 					e.recorder.StepFailed(step, err)
 					rollback()
 					applyErr = fmt.Errorf("replace delete %s: %w", change.Address, err)
 					return applyErr
 				}
-				e.recordDeletePatch(ctx, step, *current, controlplane.PlanActionDelete)
+				if err := e.recordDeletePatch(ctx, step, *current, controlplane.PlanActionDelete); err != nil {
+					applyErr = err
+					return err
+				}
 				e.recorder.StepDone(step)
 			}
 			if err := e.applyCreate(ctx, change); err != nil {
@@ -101,12 +121,16 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 			}
 		}
 	}
-	return nil
+	applyErr = e.journalError()
+	return applyErr
 }
 
 func (e *Executor) applyCreate(ctx context.Context, change controlplane.PlannedChange) error {
 	e.logf("[apply] %s %s\n", change.Action, change.Address)
 	step := e.recorder.StepStart(change.Address.String(), change.Action)
+	if err := e.journalError(); err != nil {
+		return err
+	}
 	restoreStep := e.setCurrentResourceStep(step)
 	if err := e.recordSubstep(step, "create_resource", map[string]any{"resource": change.Address.String()}, func() error { return e.CreateResource(ctx, change.Address) }); err != nil {
 		restoreStep()
@@ -120,5 +144,5 @@ func (e *Executor) applyCreate(ctx context.Context, change controlplane.PlannedC
 		return err
 	}
 	e.recorder.StepDone(step)
-	return nil
+	return e.journalError()
 }

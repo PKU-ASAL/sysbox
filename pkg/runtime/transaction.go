@@ -132,6 +132,15 @@ type FileRecorder struct {
 	mu         sync.Mutex
 	path       string
 	checkpoint OperationCheckpoint
+	persistErr error
+}
+
+// Err retains the first failed write; a later write cannot repair a missing
+// intent retroactively and must not authorize another provider operation.
+func (r *FileRecorder) Err() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.persistErr
 }
 
 func NewFileRecorder(path, runID, topology string) *FileRecorder {
@@ -484,5 +493,9 @@ func splitResourceAddr(addr string) (string, string, bool) {
 }
 
 func (r *FileRecorder) flushLocked() error {
-	return WriteCheckpoint(r.path, r.checkpoint)
+	err := WriteCheckpoint(r.path, r.checkpoint)
+	if r.persistErr == nil {
+		r.persistErr = err
+	}
+	return err
 }
