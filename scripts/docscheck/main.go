@@ -52,6 +52,7 @@ var expectedDocs = []string{
 	"docs/reference/portability.md",
 	"docs/reference/resource-model.md",
 	"docs/superpowers/plans/2026-09-13-lifecycle-closure.md",
+	"docs/superpowers/plans/2026-09-28-observation-driven-runtime-implementation-plan.md",
 	"docs/superpowers/specs/2026-09-13-lifecycle-closure-design.md",
 	"docs/superpowers/specs/2026-09-28-sysbox-architecture-refactor-design.md",
 }

@@ -1,6 +1,6 @@
 # Observation-Driven Runtime Refactor Implementation Plan
 
-> **For agentic workers:** Implement this plan task-by-task with a fresh test cycle at every task boundary.
+> **For agentic workers:** Implement this plan task-by-task with a fresh test cycle at every task boundary. Tasks 4–8 are the migration roadmap and require a focused executable plan at their respective boundaries.
 
 **Goal:** Move Sysbox lifecycle execution toward observation-driven convergence while preserving the substrate capability model and making persistence and Firecracker recovery explicit.
 
@@ -17,67 +17,89 @@
 - Each task starts with a failing behavior test, then minimal implementation, then focused and full verification.
 - The implementation must not introduce a permanent second execution path or dual writer for one topology.
 
+## Progress — 2026-09-28
+
+- P0 / Tasks 1–3 implemented: Firecracker entrypoint serialization and reaper ownership; immutable workspace publication and retained pinned revisions; strict local object/JSONL reads, atomic object replacement, locked append/read, and dispatch failure propagation.
+- Actual commits: `dbb0ff3`, `be0b965`, `761322b`. The earlier `004a4a7` helper-only change was insufficient; full behavioral coverage arrived in `dbb0ff3`.
+- Verified P0: `go test ./...`, `go test -race ./...`, `go vet ./...`, `make docs-test`. No real hypervisor/network/Postgres integration run is claimed.
+- The Firecracker fix is in-process synchronization. Cross-process VMM ownership, durable manifest and schema replacement remain later work; workspace publication and JSONL synchronization already use process-shared locks.
+- Transitional journal guard implemented and independently reviewed: enforce persistence before existing runtime mutations, suppress destructive cleanup/rollback after journal failure, prevent Agent whole-state saves bypassing the failed patch, and propagate final commit errors. This strengthens the old executor as a bridge toward Task 5; it does not claim a completed observation-driven engine or unified storage transaction.
+- Tasks 4–8 remain open. New API enums/protocol versions from the interface inventory are design candidates, not changes already shipped. A string-to-object error envelope or new enum is not presumed backward compatible.
+
 ## Task 1: Establish the P0 test and synchronization baseline
 
 **Files:**
 - Modify: `pkg/provider/firecracker/node.go`
 - Modify: `pkg/provider/firecracker/pause.go`
 - Test: `pkg/provider/firecracker/node_concurrency_test.go`
-- Test: `pkg/provider/firecracker/pause_test.go`
+- Test: `pkg/provider/firecracker/destroy_test.go` (pause/resume concurrency is covered in `node_concurrency_test.go`)
 
 **Interfaces:**
 - Consumes: existing `vmMu`, `vmProcess.mu`, `StartNode`, `Pause`, `Resume`, `ObserveNode`.
 - Produces: lock-safe VM snapshots and lifecycle operations that cannot race on `started`, `cmd`, `pid`, or process metadata.
 
-- [ ] Step 1: Add a test that runs two concurrent start attempts against the same VM and asserts only one reaches child process start.
-- [ ] Step 2: Add a test that concurrently observes and reaps a VM and asserts no race-visible inconsistent snapshot.
-- [ ] Step 3: Add a test that pause/resume uses a stable process snapshot after the registry lock is released.
-- [ ] Step 4: Run `go test -race ./pkg/provider/firecracker`; confirm the new tests fail because fields are read outside `vmProcess.mu` and start is not serialized.
-- [ ] Step 5: Add a per-VM lifecycle mutex or equivalent locked transition; use snapshot helpers for reads and writes.
-- [ ] Step 6: Re-run focused race tests, then `go test ./pkg/provider/firecracker`.
-- [ ] Step 7: Commit `fix(firecracker): synchronize lifecycle state transitions`.
+- [x] Step 1: Add a test that runs two concurrent start attempts against the same VM and asserts only one reaches child process start.
+- [x] Step 2: Add a test that concurrently observes and reaps a VM and asserts no race-visible inconsistent snapshot.
+- [x] Step 3: Add a test that pause/resume uses a stable process snapshot after the registry lock is released.
+- [x] Step 4: Run `go test -race ./pkg/provider/firecracker`; confirm the new tests fail because fields are read outside `vmProcess.mu` and start is not serialized.
+- [x] Step 5: Add a per-VM lifecycle mutex or equivalent locked transition; use snapshot helpers for reads and writes.
+- [x] Step 6: Re-run focused race tests, then `go test ./pkg/provider/firecracker`.
+- [x] Step 7: Commit `fix(firecracker): synchronize lifecycle state transitions`.
 
 ## Task 2: Make workspace publication atomic and reads revision-stable
 
 **Files:**
 - Modify: `pkg/api/workspace_service.go`
 - Modify: `pkg/api/revision_snapshot.go`
-- Test: `pkg/api/workspace_service_test.go`
+- Create: `pkg/api/workspace_publication.go`
 - Test: `pkg/api/revision_directory_tree_test.go`
 
 **Interfaces:**
 - Consumes: `WorkspaceService.UpsertProject`, `MaterializeRevision`, `validateRelPath`.
 - Produces: complete-tree publication where readers see one complete revision, and run inputs remain pinned to an immutable digest.
 
-- [ ] Step 1: Add a test that injects a write failure during publication and verifies the previous workspace remains readable.
-- [ ] Step 2: Add a test that publishes two revisions concurrently and verifies readers never see a mixed file tree.
-- [ ] Step 3: Run `go test ./pkg/api`; confirm the tests fail because `UpsertProject` removes the live directory before writing.
-- [ ] Step 4: Stage the complete tree under a unique directory, fsync files and directory where supported, and atomically update a current revision marker.
-- [ ] Step 5: Make readers resolve one marker/digest before reading all files.
-- [ ] Step 6: Add cleanup protection for active run and revision references.
-- [ ] Step 7: Re-run focused tests and `make docs-test`.
-- [ ] Step 8: Commit `fix(api): publish workspace revisions atomically`.
+- [x] Step 1: Add a test that injects a write failure during publication and verifies the previous workspace remains readable.
+- [x] Step 2: Add a test that publishes two revisions concurrently and verifies readers never see a mixed file tree.
+- [x] Step 3: Run `go test ./pkg/api`; confirm the tests fail because `UpsertProject` removes the live directory before writing.
+- [x] Step 4: Stage the complete tree under a unique directory, fsync files and directory where supported, and atomically update a current revision marker.
+- [x] Step 5: Make readers resolve one marker/digest before reading all files.
+- [x] Step 6: Add cleanup protection for active run and revision references.
+- [x] Step 7: Re-run focused tests and `make docs-test`.
+- [x] Step 8: Commit `fix(api): publish workspace revisions atomically`.
 
 ## Task 3: Stop silently hiding local persistence corruption
 
 **Files:**
 - Modify: `pkg/api/api_store.go`
 - Modify: `pkg/api/api_store_runs.go`
-- Modify: `pkg/api/guest_execution_store.go`
-- Modify: `pkg/api/guest_file_operation_store.go`
+- Create: `pkg/api/local_records.go`
+- Modify: `pkg/api/api_store_agents.go`
+- Modify: `pkg/api/run_dispatch_store.go`
 - Test: `pkg/api/local_store_corruption_test.go`
+- Existing guest execution/file CAS paths consume the strict common reader without duplicated edits.
 
 **Interfaces:**
 - Consumes: local object readers and local CAS implementations.
 - Produces: typed `CorruptRecord` and read errors that callers can distinguish from `NotFound`.
 
-- [ ] Step 1: Add tests for malformed JSON, unreadable record, invalid glob, and missing record.
-- [ ] Step 2: Run `go test ./pkg/api`; confirm malformed records currently disappear from list results.
-- [ ] Step 3: Introduce shared local record reading that returns path-aware errors and preserves `errors.Is` for not-found.
-- [ ] Step 4: Update local list/Get/CAS callers to propagate corruption instead of skipping it.
-- [ ] Step 5: Add diagnostics that identify the affected record without exposing sensitive payloads.
-- [ ] Step 6: Run focused tests and full `go test ./...`.
-- [ ] Step 7: Commit `fix(api): surface local persistence corruption`.
+- [x] Step 1: Add tests for malformed JSON, unreadable record, invalid glob, and missing record.
+- [x] Step 2: Run `go test ./pkg/api`; confirm malformed records currently disappear from list results.
+- [x] Step 3: Introduce shared local record reading that returns path-aware errors and preserves `errors.Is` for not-found.
+- [x] Step 4: Update local list/Get/CAS callers to propagate corruption instead of skipping it.
+- [x] Step 5: Add diagnostics that identify the affected record without exposing sensitive payloads.
+- [x] Step 6: Run focused tests and full `go test ./...`.
+- [x] Step 7: Commit `fix(api): surface local persistence corruption`.
+
+## Transitional Runtime Barrier (Before Task 4/5)
+
+- [x] Reproduce full Apply/Destroy calls executing provider effects after intent persistence fails.
+- [x] Retain FileRecorder write errors and expose them through StoreRecorder, including store-less CLI mode.
+- [x] Check journal health before mutations and state patch commits; halt subsequent work and unjournaled rollback after journal failure.
+- [x] Propagate deletion state-patch failures and the final Finish write failure to the Executor caller.
+- [x] Verify runtime/agentexec tests and full repository race suite.
+- [x] Commit after independent review.
+
+This slice retains the current checkpoint schema and does not implement the new action identity/state machine, provider postcondition reconciliation, unified state/journal transaction, or cross-process VMM fencing.
 
 ## Task 4: Introduce shared domain storage semantics
 
