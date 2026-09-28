@@ -34,6 +34,52 @@ type vmProcess struct {
 	cfgPath   string // VM config JSON path
 	netnsName string // network netns to run FC inside (empty = root netns)
 	started   bool   // true after StartNode
+	starting  bool   // true while a StartNode transition owns this VM
+}
+
+type vmProcessSnapshot struct {
+	cmd       *exec.Cmd
+	pid       int
+	startTime string
+	socket    string
+	cfgPath   string
+	netnsName string
+	exitCode  *int
+	exitError string
+	started   bool
+	starting  bool
+}
+
+func (v *vmProcess) reserveStart() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.started || v.starting {
+		return false
+	}
+	v.starting = true
+	return true
+}
+
+func (v *vmProcess) releaseStart() {
+	v.mu.Lock()
+	v.starting = false
+	v.mu.Unlock()
+}
+
+func (v *vmProcess) snapshot() vmProcessSnapshot {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var exitCode *int
+	if v.exitCode != nil {
+		value := *v.exitCode
+		exitCode = &value
+	}
+	return vmProcessSnapshot{
+		cmd: v.cmd, pid: v.pid, startTime: v.startTime,
+		socket: v.socket, cfgPath: v.cfgPath, netnsName: v.netnsName,
+		exitCode: exitCode, exitError: v.exitError,
+		started: v.started, starting: v.starting,
+	}
 }
 
 // HandleState is the firecracker-substrate's typed NodeHandle.Provider payload.
@@ -265,19 +311,29 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	// Read netnsName inside the lock to avoid data race with AttachNIC.
 	netnsName := ""
 	if ok {
-		netnsName = vm.netnsName
+		netnsName = vm.snapshot().netnsName
 	}
 	vmMu.Unlock()
 	if !ok {
 		return fmt.Errorf("VM %s not found", h.ID)
 	}
-	if vm.started {
-		return nil // already running
+	if !vm.reserveStart() {
+		if vm.snapshot().started {
+			return nil // already running
+		}
+		return fmt.Errorf("firecracker VM %s start already in progress", h.ID)
 	}
+	started := false
+	defer func() {
+		if !started {
+			vm.releaseStart()
+		}
+	}()
 
 	// Remove stale socket if present.
-	if err := os.Remove(vm.socket); err != nil && !os.IsNotExist(err) {
-		slog.Debug("remove stale socket", "path", vm.socket, "error", err)
+	vmState := vm.snapshot()
+	if err := os.Remove(vmState.socket); err != nil && !os.IsNotExist(err) {
+		slog.Debug("remove stale socket", "path", vmState.socket, "error", err)
 	}
 
 	// If a network netns is set, run Firecracker inside it so it can access
@@ -293,13 +349,13 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	if netnsName != "" {
 		cmd = exec.Command(ipBin, "netns", "exec", netnsName,
 			s.firecrackerBin,
-			"--config-file", vm.cfgPath,
-			"--api-sock", vm.socket,
+			"--config-file", vmState.cfgPath,
+			"--api-sock", vmState.socket,
 		)
 	} else {
 		cmd = exec.Command(s.firecrackerBin,
-			"--config-file", vm.cfgPath,
-			"--api-sock", vm.socket,
+			"--config-file", vmState.cfgPath,
+			"--api-sock", vmState.socket,
 		)
 	}
 	// Redirect firecracker stdout (logs) and stderr (serial console) to a
@@ -307,7 +363,7 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	// caused the apply pipeline to never see EOF: the firecracker children
 	// kept the write end of the parent's stderr pipe alive long after
 	// 'sysbox apply' returned, so the shell appeared to hang at the end.
-	logPath := filepath.Join(filepath.Dir(vm.socket), "firecracker.log")
+	logPath := filepath.Join(filepath.Dir(vmState.socket), "firecracker.log")
 	logFD, logErr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if logErr != nil {
 		// Fall back to /dev/null rather than the parent's tty.
@@ -327,13 +383,18 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	// its own dup. Closing here prevents fd leaks across many VMs.
 	_ = logFD.Close()
 
+	vm.mu.Lock()
 	vm.cmd = cmd
 	vm.pid = cmd.Process.Pid
 	vm.startTime = processStartTime(vm.pid)
 	vm.started = true
+	vm.starting = false
+	started = true
+	vm.mu.Unlock()
 	if hs, _ := h.Provider.(*HandleState); hs != nil {
-		hs.PID = vm.pid
-		hs.PIDStart = vm.startTime
+		state := vm.snapshot()
+		hs.PID = state.pid
+		hs.PIDStart = state.startTime
 		hs.Ready = waitFirecrackerBoot(ctx, hs, 5*time.Second) == nil
 		if hs.PIDFile != "" {
 			_ = writeProcessAnchor(hs.PIDFile, processAnchor{PID: hs.PID, StartTime: hs.PIDStart, Socket: hs.Socket, VMID: h.ID})
