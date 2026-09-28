@@ -226,6 +226,9 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 		}
 		slog.Warn("force-deleting topology metadata with live resources", "topology", topology, "resources", len(st.Resources))
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if s.stateBackend == "" {
 		if err := s.removeWorkspaceMetadata(topology); err != nil {
 			return fmt.Errorf("remove state: %w", err)
