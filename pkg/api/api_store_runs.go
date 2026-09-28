@@ -1,11 +1,10 @@
 package api
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -14,23 +13,21 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-func (s *localAPIStore) LoadRuns(_ context.Context) ([]controlplane.Run, error) {
+var errLocalRunNotFound = errors.New("run not found")
+
+func (s *localAPIStore) LoadRuns(ctx context.Context) ([]controlplane.Run, error) {
 	var out []controlplane.Run
 	pattern := filepath.Join(s.runsDir, "*", "runs.jsonl")
-	files, _ := filepath.Glob(pattern)
+	files, err := localRecordPaths(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("list local run history: %w", err)
+	}
 	for _, f := range files {
-		fh, err := os.Open(f)
+		runs, err := readLocalHistory[controlplane.Run](ctx, f)
 		if err != nil {
-			continue
+			return nil, err
 		}
-		sc := bufio.NewScanner(fh)
-		for sc.Scan() {
-			var r controlplane.Run
-			if err := json.Unmarshal(sc.Bytes(), &r); err == nil {
-				out = append(out, r)
-			}
-		}
-		fh.Close()
+		out = append(out, runs...)
 	}
 	dispatches, err := s.loadRunDispatches()
 	if err != nil {
@@ -53,22 +50,12 @@ func (s *localAPIStore) GetRun(ctx context.Context, id string) (*controlplane.Ru
 			return &run, nil
 		}
 	}
-	return nil, fmt.Errorf("run not found")
+	return nil, errLocalRunNotFound
 }
 
-func (s *localAPIStore) SaveRun(_ context.Context, run controlplane.Run) error {
+func (s *localAPIStore) SaveRun(ctx context.Context, run controlplane.Run) error {
 	normalizeRunProductFields(&run)
-	dir := filepath.Join(s.runsDir, run.Topology)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	path := filepath.Join(dir, "runs.jsonl")
-	fh, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer fh.Close()
-	return json.NewEncoder(fh).Encode(run)
+	return appendLocalHistory(ctx, filepath.Join(s.runsDir, run.Topology, "runs.jsonl"), run)
 }
 
 func (s *localAPIStore) ClaimRun(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, bool, error) {

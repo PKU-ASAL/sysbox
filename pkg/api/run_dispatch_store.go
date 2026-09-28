@@ -68,7 +68,11 @@ func (s *localAPIStore) CreateRunDispatch(_ context.Context, request RunDispatch
 		return nil, false, err
 	}
 	target := filepath.Join(dir, request.Run.ID+".json")
-	if existing, err := s.GetRun(context.Background(), request.Run.ID); err == nil {
+	existing, lookupErr := s.GetRun(context.Background(), request.Run.ID)
+	if lookupErr != nil && !errors.Is(lookupErr, errLocalRunNotFound) {
+		return nil, false, lookupErr
+	}
+	if lookupErr == nil {
 		if existing.RequestFingerprint != "" && existing.RequestFingerprint != request.Fingerprint {
 			return nil, false, errIdempotencyConflict
 		}
@@ -114,7 +118,7 @@ func readLocalRunDispatch(path string) (*localRunDispatch, error) {
 }
 
 func (s *localAPIStore) loadRunDispatches() ([]localRunDispatch, error) {
-	files, err := filepath.Glob(filepath.Join(s.runsDir, "_run_requests", "*.json"))
+	files, err := localRecordPaths(filepath.Join(s.runsDir, "_run_requests", "*.json"))
 	if err != nil {
 		return nil, err
 	}

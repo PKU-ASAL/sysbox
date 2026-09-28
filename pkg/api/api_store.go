@@ -266,13 +266,12 @@ func (s *localAPIStore) SaveGlobalRevision(_ context.Context, rev controlplane.G
 }
 
 func (s *localAPIStore) GetGlobalRevision(_ context.Context, revision string) (*controlplane.GlobalRevision, error) {
-	raw, err := os.ReadFile(filepath.Join(s.runsDir, "global-revisions", revision+".json"))
-	if err != nil {
+	rev, err := readLocalObject[controlplane.GlobalRevision](filepath.Join(s.runsDir, "global-revisions", revision+".json"))
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, errGlobalRevisionNotFound
 	}
-	var rev controlplane.GlobalRevision
-	if err := json.Unmarshal(raw, &rev); err != nil {
-		return nil, fmt.Errorf("decode global revision: %w", err)
+	if err != nil {
+		return nil, err
 	}
 	return &rev, nil
 }
@@ -346,33 +345,6 @@ func (s *localAPIStore) ListNodeOperations(_ context.Context, workspace string) 
 		return readLocalObjects[controlplane.NodeOperation](filepath.Join(s.runsDir, "*", "node-ops", "*.json"))
 	}
 	return readLocalObjects[controlplane.NodeOperation](filepath.Join(s.runsDir, workspace, "node-ops", "*.json"))
-}
-
-func writeLocalObject(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, raw, 0o644)
-}
-
-func readLocalObjects[T any](pattern string) ([]T, error) {
-	files, _ := filepath.Glob(pattern)
-	out := make([]T, 0, len(files))
-	for _, f := range files {
-		raw, err := os.ReadFile(f)
-		if err != nil {
-			continue
-		}
-		var item T
-		if err := json.Unmarshal(raw, &item); err == nil {
-			out = append(out, item)
-		}
-	}
-	return out, nil
 }
 
 // postgresReachabilityTimeout bounds the eager startup check that verifies a

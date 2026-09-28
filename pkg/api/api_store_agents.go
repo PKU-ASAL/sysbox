@@ -1,9 +1,9 @@
 package api
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +14,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-func (s *localAPIStore) SaveAgentCommandEvent(_ context.Context, event controlplane.AgentCommandEvent) error {
+func (s *localAPIStore) SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error {
 	agentID := event.AgentID
 	if agentID == "" {
 		agentID = "_unknown"
@@ -23,37 +23,25 @@ func (s *localAPIStore) SaveAgentCommandEvent(_ context.Context, event controlpl
 		event.CreatedAt = time.Now().UTC()
 	}
 	path := filepath.Join(s.runsDir, "_agents", agentID, "command-events.jsonl")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	fh, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer fh.Close()
-	return json.NewEncoder(fh).Encode(event)
+	return appendLocalHistory(ctx, path, event)
 }
 
-func (s *localAPIStore) ListAgentCommandEvents(_ context.Context, agentID string) ([]controlplane.AgentCommandEvent, error) {
+func (s *localAPIStore) ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error) {
 	pattern := filepath.Join(s.runsDir, "_agents", "*", "command-events.jsonl")
 	if agentID != "" {
 		pattern = filepath.Join(s.runsDir, "_agents", agentID, "command-events.jsonl")
 	}
-	files, _ := filepath.Glob(pattern)
+	files, err := localRecordPaths(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("list local command history: %w", err)
+	}
 	var out []controlplane.AgentCommandEvent
 	for _, f := range files {
-		fh, err := os.Open(f)
+		events, err := readLocalHistory[controlplane.AgentCommandEvent](ctx, f)
 		if err != nil {
-			continue
+			return nil, err
 		}
-		sc := bufio.NewScanner(fh)
-		for sc.Scan() {
-			var event controlplane.AgentCommandEvent
-			if err := json.Unmarshal(sc.Bytes(), &event); err == nil {
-				out = append(out, event)
-			}
-		}
-		fh.Close()
+		out = append(out, events...)
 	}
 	return out, nil
 }
@@ -67,8 +55,11 @@ func (s *localAPIStore) SaveAgentCommand(_ context.Context, cmd controlplane.Age
 		cmd.Protocol = controlplane.AgentProtocolVersion
 	}
 	path := filepath.Join(s.runsDir, "_agents", agentID, "commands", cmd.ID+".json")
-	var current controlplane.AgentCommand
-	if raw, err := os.ReadFile(path); err == nil && json.Unmarshal(raw, &current) == nil && !controlplane.CanAdvanceAgentCommandStatus(current.Status, cmd.Status) {
+	current, err := readLocalObject[controlplane.AgentCommand](path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil && !controlplane.CanAdvanceAgentCommandStatus(current.Status, cmd.Status) {
 		return nil
 	}
 	return writeLocalObject(path, cmd)
