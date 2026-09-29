@@ -12,6 +12,8 @@ API 不返回 driver-private payload 或已解析秘密值。
 
 The sysbox API exposes product-level control plane objects over `/v1`.
 
+Run completion validates the existing lease_owner and attempt fields against the currently claimed execution. Unclaimed or stale-round completion is rejected; a failed persistence write cannot publish a successful run/projection. Renewal never shortens a live lease and cannot revive an expired one. An API restart alone does not mark independently assigned agents failed.
+
 Guest execution/file metadata now share one persistence contract. Guest endpoints distinguish missing records (404), conflicts (409), and corrupt/unavailable storage (500), with the existing string `error` envelope. Request, agent and command bindings remain private. The new on-disk `record_format` is not an HTTP field; old metadata requires an explicit rebuild as described in the [implementation status](../design/2026-09-28-runtime-refactor-implementation-status.md).
 
 ```bash

@@ -63,6 +63,25 @@ Implementation commit: `3679f21`. Independent review issues were reproduced and 
 - [x] Add cross-process local CAS, reopen, corruption, cancellation, list-error and atomic rejected-write coverage; add the opt-in isolated Postgres contract (not run here).
 - [x] Obtain an independent review, run full unit/race/vet/docs verification, update implementation status and commit without merging or pushing.
 
+## Completed vertical slice: Run writes, leases and execution rounds
+
+Implementation commit: `d581b80`. Independent review and full uncached unit/race/vet/docs checks passed. PostgreSQL runtime contracts remain skipped without an isolated test DSN.
+
+**Goal:** Share ordinary writes, explicit restart, claim, renewal and expiry across all run stores while retaining their run/dispatch transaction boundary. Agent/command metadata and a complete dispatch outbox remain open.
+
+**Architecture:** `persistence.RunRepository` owns typed transitions over the `RunStorage.UpdateRun` atomic port. Adapters lock, read the current full run, validate and write one result. Ordinary Save cannot change lease authority or overwrite terminal outcomes. Restart is explicit. SQLite uses its latest row and validates full JSON against every index column. Supervisor expiry never performs a second Save.
+
+**Files:** Added `pkg/persistence/run_repository.go`, `pkg/api/run_record_adapters.go`, domain/contract/process tests; modified API adapters, Jobs, scheduler, completion handling and dispatch serialization. HTTP DTO shapes and lease fields remain unchanged.
+
+**Contract:** Empty identities, nonpositive TTL, expired deadline and exhausted attempt counters cannot authorize a claim. A lease must still be running, unexpired, and owned by the same agent/owner to renew. Renewal never shortens an existing lease. Expiry tests the current durable lease while locked and never overwrites a concurrent renewal. Transient inputs never enter a durable run through these paths.
+
+- [x] Reproduce invalid TTL, expired renewal, stale SQLite row and dispatch snapshot/deadline defects.
+- [x] Route all Run writes through shared guards; explicit restart isolates reused IDs by QueuedAt.
+- [x] Publish cache/projection only after persistence; require current claim proof in completion reports.
+- [x] Bind sorting, coalescing, Inputs and atomic claim preconditions to the current incarnation.
+- [x] Verify independent-process claims have one winner, stale expiry cannot overwrite renewal, and commit failure grants no lease.
+- [x] Complete independent review and uncached full unit/race/vet/docs checks. PostgreSQL remains an opt-in skipped runtime contract.
+
 ## Task 1: Establish the P0 test and synchronization baseline
 
 **Files:**

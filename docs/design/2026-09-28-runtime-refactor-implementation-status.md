@@ -1,9 +1,11 @@
 # Sysbox 生命周期重构：实施状态与验证边界
 
 > 日期：2026-09-28
+> 更新：2026-09-29
 > 工作分支：`refactor/observation-driven-runtime`
 > 核心实现提交：`72e227a`；未合入 main，未推送远端。
 > Guest metadata 共享仓储提交：`3679f21`。
+> Run 写入、租约与轮次隔离提交：`d581b80`；独立复审及全仓 unit/race/vet/docs 检查通过。
 > 本文记录实际代码；[目标架构](2026-09-28-observation-driven-runtime-refactor.md)与[接口清单](2026-09-28-interface-change-inventory.md)包含尚未交付的后续设计。
 
 ## 1. 当前落地的主线
@@ -24,6 +26,7 @@ Provider 执行 → 保存恢复证据 → 再观察验证
 |---|---|---|
 | 生命周期 repository | 文件、SQLite、Postgres 共用 aggregate 编解码、身份校验、意图/结果转换与 CAS | 全部 API metadata repository、outbox、跨控制器 fencing 已统一 |
 | Guest metadata repository | GuestExecution 与 GuestFileOperation 共用版本化 codec、CAS、状态约束、私有绑定和 acceptance 汇总；三种后端仅做物理读写 | Run、Agent、命令队列等其余 metadata 已迁移；Postgres 已通过真实服务测试 |
+| Run repository | Save/Restart/Claim/Renew/Expire 共用原子状态规则；完整 SQLite 快照；执行轮次和 Inputs 隔离 | 全部读取与 dispatch 适配、Agent/命令仓储、完整 outbox 和资源侧 fencing 已完成 |
 | Runtime | 默认 Apply/Destroy/Reset 走观察、授权、写前意图、验证、原子提交；恢复只提交可证明结果 | 每种资源都已有完整的 discovery/read-back；所有 interrupted reset 都能自动继续 |
 | Firecracker | 版本化 manifest、身份/代际/进程锚点、文件锁、冷恢复、pidfd 校验后发信号；reset 保留真实目标 ActionID | 已通过真实 KVM、宿主机重启或内核版本矩阵验证 |
 | Docker / libvirt / isolated network | 管理身份、发现、拥有者约束；reset 的旧/新代际校验；隔离网络的观测与 ownership 标记 | 已通过真实 Docker/libvirt/网络设备 E2E |
@@ -44,7 +47,19 @@ Runtime 定义 `ActionRepository` 端口，`pkg/persistence` 实现它。Provide
 - 第一次 create 只有 intent、尚无成功资源时，目录列表仍能看到它。
 - 删除 metadata 使用 owner + serial CAS，拒绝未完成动作；保留 repository 锁文件和新 owner 身份，避免 unlink 锁导致双写。
 
-API 的 Run、Agent、命令队列等 metadata 仍在现有 store 中。GuestExecution 和 GuestFileOperation 已迁移到共享 `GuestRepository`；沿用原有物理表和路径，不新增第二套数据副本。它们与生命周期 aggregate 不属于一个跨域原子事务，不能把本次改动描述成“三套存储已全部合并”。
+GuestExecution 和 GuestFileOperation 已迁移到 `GuestRepository`，Run 写入与租约转移已迁移到 `RunRepository`。Agent、命令队列和部分 Run 读取/dispatch 适配仍在既有 store 中。沿用原有表和路径，不增加独立的第二套数据副本；与生命周期 aggregate 之间仍无跨域原子事务，不能声称三套存储已全部合并。
+
+### Run 的实际规则
+
+- 普通 Save 不能修改 owner、attempt、已绑定执行目标或延长 lease；终态只接受相同结果。显式 Restart 才能重新执行同一确定性 run ID。
+- Claim 在获取存储锁后检查时间，拒绝非法 TTL、过期 deadline、错误身份与 attempt 溢出；lease 不超过 deadline。Renew 不能复活过期租约或缩短当前期限。
+- Expire 在锁内重读当前记录，不能用扫描旧值覆盖并发续租。完成回报必须证明当前 owner/attempt，projection 也必须属于对应 agent/topology/workspace；持久化失败不发布成功缓存。
+- QueuedAt 区分同一 run ID 的执行轮次。排序、缓存、coalescing、完成回报和 Inputs 都核对当前轮次，旧 Done 或超前的 EndedAt 不能遮住新执行。
+- SQLite 共用完整插入函数，dispatch 不再丢失 deadline/pinned snapshot；record_json 保留 Project/Workspace/Assertion，并与全部索引列核对。旧行仍按原列读取，非法时间不当作零值。
+- Inputs 不进入持久存储，只在同轮次恢复。claim 返回预检验证过的 Inputs 副本，并在原子领取内再核对身份。已丢失非默认 Inputs 的 hashed apply 请求必须重提交原 revision/inputs。
+- API 重启本身不证明远端 agent 失败：带 AgentID 的 assigned/running 保留 durable 状态，由租约和观测决定后续处置。
+
+Run 迁移通过全仓无缓存 unit/race/vet/docs 检查和独立复审。FS/SQLite 合同包含并发、独立进程、提交失败、轮次错配、缓存刷新、输入丢失与索引损坏；Postgres 合同可通过 SYSBOX_TEST_DATABASE_URL 启用隔离 schema，目前未配置实库，因此跳过。
 
 ### Guest metadata 的实际规则
 
