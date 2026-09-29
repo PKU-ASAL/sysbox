@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 type AgentService struct {
@@ -115,7 +116,40 @@ func (s *AgentService) CompleteRun(agentID, runID string, completion controlplan
 	if completion.Run.AgentID != agentID {
 		return completion, fmt.Errorf("completion agent id mismatch")
 	}
-	s.jobs.replace(&completion.Run)
+	current, err := s.store.GetRun(context.Background(), runID)
+	if err != nil {
+		return completion, err
+	}
+	projection := completion.Projection
+	if projection.AgentID != "" && projection.AgentID != agentID || projection.Topology != "" && projection.Topology != current.Topology || projection.Workspace != "" && projection.Workspace != current.Workspace {
+		return completion, persistence.ErrConflict
+	}
+	incoming := completion.Run
+	if current.AgentID != agentID || !incoming.Status.IsTerminal() {
+		return completion, persistence.ErrConflict
+	}
+	if current.Attempt < 1 || incoming.Attempt != current.Attempt || incoming.LeaseOwner == "" || incoming.LeaseOwner != current.LeaseOwner {
+		return completion, persistence.ErrConflict
+	}
+	if incoming.Topology != "" && incoming.Topology != current.Topology || incoming.Revision != "" && incoming.Revision != current.Revision || incoming.SnapshotPath != "" && incoming.SnapshotPath != current.SnapshotPath || incoming.Target != "" && incoming.Target != current.Target || incoming.Op != "" && incoming.Op != current.Op || incoming.Operation != "" && incoming.Operation != current.Operation || !incoming.QueuedAt.IsZero() && !incoming.QueuedAt.Equal(current.QueuedAt) {
+		return completion, persistence.ErrConflict
+	}
+	merged := *current
+	merged.Status = incoming.Status
+	merged.Err = incoming.Err
+	merged.Recoverable = incoming.Recoverable
+	if !incoming.EndedAt.IsZero() {
+		merged.EndedAt = incoming.EndedAt
+	} else if merged.EndedAt.IsZero() {
+		merged.EndedAt = time.Now().UTC()
+	}
+	if incoming.Assertion != nil {
+		merged.Assertion = incoming.Assertion
+	}
+	completion.Run = merged
+	if err := s.jobs.replace(&completion.Run); err != nil {
+		return completion, err
+	}
 	if completion.Projection.AgentID == "" {
 		completion.Projection.AgentID = agentID
 	}

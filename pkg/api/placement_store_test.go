@@ -65,7 +65,8 @@ func TestSQLiteSnapshotSurvivesClaimAndReload(t *testing.T) {
 func TestRecoveryChildPreservesSnapshot(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	parent := &controlplane.Run{ID: "parent", Topology: "lab", Op: "apply", SnapshotPath: "/immutable/field.sysbox.hcl"}
-	child := s.jobs.startChild(parent)
+	child, err := s.jobs.startChild(parent)
+	require.NoError(t, err)
 	require.Equal(t, parent.SnapshotPath, child.SnapshotPath)
 }
 

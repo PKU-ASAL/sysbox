@@ -202,12 +202,9 @@ func TestSupervisorMarksStaleAgentOfflineAndExpiredRunFailed(t *testing.T) {
 		Capabilities:  []string{"docker"},
 		LastHeartbeat: time.Now().UTC().Add(-10 * time.Minute),
 	}))
-	run := s.jobs.start("mixed", "apply")
-	run.AgentID = "host-a"
-	run.Status = controlplane.RunRunning
-	run.LeaseOwner = "host-a:run"
-	run.LeaseUntil = time.Now().UTC().Add(-time.Minute)
-	s.jobs.replace(run)
+	run := &controlplane.Run{ID: "expired-run", Topology: "mixed", Op: "apply", AgentID: "host-a", Status: controlplane.RunRunning, LeaseOwner: "host-a:run", LeaseUntil: time.Now().UTC().Add(-time.Minute)}
+	require.NoError(t, s.apiStore.SaveRun(ctx, *run))
+	s.jobs.remember(run)
 
 	supervisor := newSupervisor(s, time.Minute)
 	supervisor.server.agentService().MarkStaleOffline(ctx, time.Now().UTC())

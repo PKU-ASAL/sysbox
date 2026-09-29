@@ -260,6 +260,7 @@ func TestAgentRenewRunLeaseEndpointUsesConfiguredDefaultTTL(t *testing.T) {
 	cfg.Paths.RunsDir = t.TempDir()
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	cfg.Run.Lease.RenewTTL = "90s"
+	cfg.Run.Lease.ClaimTTL = "30s"
 	s := NewServerWithConfig(cfg)
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-a",

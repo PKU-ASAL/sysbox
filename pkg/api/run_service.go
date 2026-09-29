@@ -150,7 +150,10 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 	if req.DeadlineAt != nil {
 		opts.DeadlineAt = *req.DeadlineAt
 	}
-	run, created := s.jobs.startWithResult(topology, "apply", opts)
+	run, created, err := s.jobs.startWithResult(topology, "apply", opts)
+	if err != nil {
+		return nil, runError(runServiceInternal, err)
+	}
 	if !created {
 		if run.Status.IsActive() {
 			return run, nil // coalesced with an in-flight apply
@@ -159,7 +162,9 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 		// attempt that reuses the same id so subsequent applies coalesce onto
 		// this in-flight run instead of the stale terminal record.
 		run = newRun(topology, "apply", opts)
-		s.jobs.forceStart(run)
+		if err := s.jobs.forceStart(run); err != nil {
+			return nil, runError(runServiceConflict, err)
+		}
 	}
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
@@ -196,12 +201,15 @@ func (s *RunService) StartRepair(ctx context.Context, topology string, req RunSt
 	if err != nil {
 		return nil, err
 	}
-	run := s.jobs.startWithOptions(topology, "repair", runStartOptions{
+	run, _, err := s.jobs.startWithResult(topology, "repair", runStartOptions{
 		Revision:     req.Revision,
 		AgentID:      req.AgentID,
 		UnsafeState:  req.AllowUnsafeState,
 		SnapshotPath: snapshot,
 	})
+	if err != nil {
+		return nil, runError(runServiceInternal, err)
+	}
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
 	}
@@ -213,10 +221,13 @@ func (s *RunService) StartReset(ctx context.Context, topology string, req RunSta
 	if err != nil {
 		return nil, err
 	}
-	run := s.jobs.startWithOptions(topology, "reset", runStartOptions{
+	run, _, err := s.jobs.startWithResult(topology, "reset", runStartOptions{
 		Revision: req.Revision, AgentID: req.AgentID, Target: req.Target, UnsafeState: req.AllowUnsafeState,
 		SnapshotPath: snapshot,
 	})
+	if err != nil {
+		return nil, runError(runServiceInternal, err)
+	}
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
 	}
@@ -272,13 +283,18 @@ func (s *RunService) startDestroy(ctx context.Context, topology string, allowUns
 		// attached below after run creation
 		_ = snapshot
 	}
-	run, created := s.jobs.startWithResult(topology, "destroy", runStartOptions{UnsafeState: allowUnsafe, OperationKey: operationKey})
+	run, created, err := s.jobs.startWithResult(topology, "destroy", runStartOptions{UnsafeState: allowUnsafe, OperationKey: operationKey})
+	if err != nil {
+		return nil, runError(runServiceInternal, err)
+	}
 	if !created {
 		return run, nil
 	}
 	if snapErr == nil {
 		run.SnapshotPath = snapshot
-		s.jobs.persist(run)
+		if err := s.jobs.persist(run); err != nil {
+			return nil, runError(runServiceInternal, err)
+		}
 	}
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
@@ -394,7 +410,10 @@ func (s *RunService) Resume(ctx context.Context, runID string) (*controlplane.Ru
 	if parent.Op != "apply" && parent.Op != "destroy" && parent.Op != "reset" {
 		return nil, parent, runError(runServiceBadRequest, fmt.Errorf("run op %q cannot be resumed", parent.Op))
 	}
-	run := s.jobs.startChild(parent)
+	run, err := s.jobs.startChild(parent)
+	if err != nil {
+		return nil, parent, runError(runServiceInternal, err)
+	}
 	if err := s.dispatchTopologyRun(ctx, run, run.Topology); err != nil {
 		return nil, parent, err
 	}

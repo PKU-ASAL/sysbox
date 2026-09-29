@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 const (
@@ -97,7 +99,7 @@ func (j *Jobs) load() {
 	for _, r := range runs {
 		run := r
 		normalizeRunProductFields(&run)
-		j.logs.Ensure(run.ID, true)
+		j.logs.Ensure(run.ID, run.Status.IsTerminal())
 		j.runs[run.ID] = &run
 	}
 	j.loadCheckpoints()
@@ -151,7 +153,7 @@ func (j *Jobs) loadCheckpoints() {
 }
 
 // persist writes a run record through the configured API store.
-func (j *Jobs) persist(r *controlplane.Run) {
+func (j *Jobs) persist(r *controlplane.Run) error {
 	rec := runRecord(*r)
 	// Sensitive apply inputs are transient: the agent binds var.<name> from the
 	// run it receives in-memory (claim/dispatch), but they must never survive in
@@ -160,7 +162,18 @@ func (j *Jobs) persist(r *controlplane.Run) {
 	rec.Inputs = nil
 	if err := j.store.SaveRun(context.Background(), rec); err != nil {
 		fmt.Fprintf(os.Stderr, "[api] persist run: %v\n", err)
+		current, readErr := j.store.GetRun(context.Background(), rec.ID)
+		j.mu.Lock()
+		if readErr == nil && current != nil {
+			current.Inputs = inputsForRun(j.runs[rec.ID], current)
+			j.runs[rec.ID] = current
+		} else {
+			delete(j.runs, rec.ID)
+		}
+		j.mu.Unlock()
+		return err
 	}
+	return nil
 }
 
 func runRecord(r controlplane.Run) controlplane.Run {
@@ -172,18 +185,7 @@ func normalizeRunProductFields(r *controlplane.Run) {
 	if r == nil {
 		return
 	}
-	if r.Operation == "" {
-		r.Operation = r.Op
-	}
-	if r.Op == "" {
-		r.Op = r.Operation
-	}
-	if r.ProjectID == "" {
-		r.ProjectID = "default"
-	}
-	if r.Workspace == "" {
-		r.Workspace = r.Topology
-	}
+	persistence.NormalizeRun(r)
 }
 
 // cloneInputs returns a shallow copy so re-attached transient inputs never
@@ -199,44 +201,90 @@ func cloneInputs(in map[string]string) map[string]string {
 	return out
 }
 
+func inputsForRun(cached, current *controlplane.Run) map[string]string {
+	if cached == nil || current == nil || current.Status.IsTerminal() || !persistence.SameRunIncarnation(*cached, *current) {
+		return nil
+	}
+	return cloneInputs(cached.Inputs)
+}
+
 func (j *Jobs) start(topology, op string) *controlplane.Run {
 	return j.startWithOptions(topology, op, runStartOptions{})
 }
 
 func (j *Jobs) startWithOptions(topology, op string, opts runStartOptions) *controlplane.Run {
-	run, _ := j.startWithResult(topology, op, opts)
+	run, _, _ := j.startWithResult(topology, op, opts)
 	return run
 }
 
-func (j *Jobs) startWithResult(topology, op string, opts runStartOptions) (*controlplane.Run, bool) {
+func (j *Jobs) startWithResult(topology, op string, opts runStartOptions) (*controlplane.Run, bool, error) {
 	r := newRun(topology, op, opts)
 	j.mu.Lock()
-	if existing, ok := j.runs[r.ID]; ok && opts.OperationKey != "" {
-		snapshot := runRecord(*existing)
+	if opts.OperationKey != "" {
+		stored, err := j.store.GetRun(context.Background(), r.ID)
+		if err == nil && stored != nil {
+			if stored.Topology != r.Topology || stored.OperationKey != r.OperationKey || stored.Op != r.Op {
+				j.mu.Unlock()
+				return nil, false, persistence.ErrConflict
+			}
+			previous := j.runs[r.ID]
+			stored.Inputs = inputsForRun(previous, stored)
+			if stored.Status.IsActive() && stored.Op == "apply" && len(stored.OperationKey) == sha256.Size*2 && stored.OperationKey == applyOperationKey(stored.Revision, opts.Inputs, stored.UnsafeState) {
+				stored.Inputs = cloneInputs(opts.Inputs)
+			}
+			newRound := previous == nil || !previous.QueuedAt.Equal(stored.QueuedAt)
+			j.runs[r.ID] = stored
+			j.mu.Unlock()
+			if newRound && !stored.Status.IsTerminal() {
+				j.logs.Reopen(r.ID)
+			} else {
+				j.logs.Ensure(r.ID, stored.Status.IsTerminal())
+			}
+			return stored, false, nil
+		}
+		if err != nil && !errors.Is(err, persistence.ErrNotFound) {
+			j.mu.Unlock()
+			return nil, false, err
+		}
+	}
+	if err := j.store.SaveRun(context.Background(), persistence.DurableRun(*r)); err != nil {
+		if opts.OperationKey != "" {
+			if stored, readErr := j.store.GetRun(context.Background(), r.ID); readErr == nil && stored != nil && stored.Topology == r.Topology && stored.OperationKey == r.OperationKey {
+				stored.Inputs = cloneInputs(opts.Inputs)
+				j.runs[r.ID] = stored
+				j.mu.Unlock()
+				return stored, false, nil
+			}
+		}
 		j.mu.Unlock()
-		return &snapshot, false
+		return nil, false, err
 	}
 	j.runs[r.ID] = r
 	j.mu.Unlock()
 	j.logs.Ensure(r.ID, false)
-	j.persist(r)
-	return r, true
+	return r, true, nil
 }
 
 // forceStart overwrites any existing record under r's id and persists it. Unlike
 // startWithResult it never dedups: it is used to replace a terminal run with a
 // fresh attempt that reuses the same deterministic id, so later applies coalesce
 // onto the in-flight run instead of the stale terminal record.
-func (j *Jobs) forceStart(r *controlplane.Run) {
+func (j *Jobs) forceStart(r *controlplane.Run) error {
 	if r == nil {
-		return
+		return persistence.ErrInvalidRecord
 	}
 	normalizeRunProductFields(r)
+	stored, err := j.store.RestartRun(context.Background(), *r)
+	if err != nil {
+		return err
+	}
+	stored.Inputs = cloneInputs(r.Inputs)
+	*r = *stored
 	j.mu.Lock()
 	j.runs[r.ID] = r
 	j.mu.Unlock()
 	j.logs.Reopen(r.ID)
-	j.persist(r)
+	return nil
 }
 
 func newRun(topology, op string, opts runStartOptions) *controlplane.Run {
@@ -283,17 +331,21 @@ func (j *Jobs) remember(r *controlplane.Run) {
 	j.logs.Ensure(r.ID, false)
 }
 
-func (j *Jobs) assign(r *controlplane.Run, agentID string) {
+func (j *Jobs) assign(r *controlplane.Run, agentID string) error {
 	j.mu.Lock()
-	r.MarkAssigned(agentID, time.Now())
+	next := *r
+	next.MarkAssigned(agentID, time.Now())
 	j.mu.Unlock()
-	j.persist(r)
+	if err := j.replace(&next); err != nil {
+		return err
+	}
+	*r = next
+	return nil
 }
 
 func (j *Jobs) markRunning(r *controlplane.Run) {
 	j.mu.Lock()
 	r.Status = controlplane.RunRunning
-	r.Attempt++
 	if r.StartedAt.IsZero() || r.StartedAt.Equal(r.QueuedAt) {
 		r.StartedAt = time.Now()
 	}
@@ -302,12 +354,23 @@ func (j *Jobs) markRunning(r *controlplane.Run) {
 }
 
 func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
+	intent, err := j.store.GetRun(context.Background(), runID)
+	if err != nil {
+		return nil, err
+	}
+	j.mu.RLock()
+	inputs := inputsForRun(j.runs[runID], intent)
+	j.mu.RUnlock()
+	if intent.Op == "apply" && len(intent.OperationKey) == sha256.Size*2 && intent.OperationKey != applyOperationKey(intent.Revision, inputs, intent.UnsafeState) {
+		return nil, fmt.Errorf("apply inputs are unavailable for this run; resubmit the original revision and inputs")
+	}
+	claimCtx := persistence.WithRunClaimIdentity(context.Background(), *intent)
 	owner := fmt.Sprintf("%s:%s:%d", agentID, runID, time.Now().UnixNano())
 	ttl := j.runLeaseTTL
 	if ttl <= 0 {
 		ttl = 30 * time.Minute
 	}
-	if claimed, ok, err := j.store.ClaimRun(context.Background(), runID, agentID, owner, ttl); err != nil {
+	if claimed, ok, err := j.store.ClaimRun(claimCtx, runID, agentID, owner, ttl); err != nil {
 		return nil, err
 	} else if ok && claimed != nil {
 		j.mu.Lock()
@@ -315,9 +378,7 @@ func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
 		// in-memory run still holds them for the duration of the run, so
 		// re-attach them to the claim response. This keeps var.<name> binding
 		// working without ever re-reading the plaintext from the store.
-		if existing, exists := j.runs[runID]; exists && existing.Inputs != nil {
-			claimed.Inputs = cloneInputs(existing.Inputs)
-		}
+		claimed.Inputs = cloneInputs(inputs)
 		j.runs[runID] = claimed
 		j.mu.Unlock()
 		j.logs.Ensure(runID, false)
@@ -325,26 +386,7 @@ func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
 	} else if claimed != nil {
 		return nil, fmt.Errorf("run status %q cannot be claimed", claimed.Status)
 	}
-	j.mu.Lock()
-	run, ok := j.runs[runID]
-	if !ok {
-		j.mu.Unlock()
-		return nil, fmt.Errorf("run not found")
-	}
-	if run.AgentID != agentID {
-		j.mu.Unlock()
-		return nil, fmt.Errorf("run assigned to agent %q", run.AgentID)
-	}
-	now := time.Now()
-	if !run.CanBeClaimedBy(agentID, now) {
-		j.mu.Unlock()
-		return nil, fmt.Errorf("run status %q cannot be claimed", run.Status)
-	}
-	run.MarkRunning(owner, ttl, now)
-	out := runRecord(*run)
-	j.mu.Unlock()
-	j.persist(run)
-	return &out, nil
+	return nil, fmt.Errorf("durable run claim was not granted")
 }
 
 func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, error) {
@@ -359,9 +401,7 @@ func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*con
 	// Preserve the transient inputs the in-memory run still holds: the durable
 	// record is stripped, and the agent decodes this response over the same run
 	// pointer it is executing, so dropping inputs here would null them mid-run.
-	if existing, exists := j.runs[runID]; exists && existing.Inputs != nil {
-		renewed.Inputs = cloneInputs(existing.Inputs)
-	}
+	renewed.Inputs = inputsForRun(j.runs[runID], renewed)
 	j.runs[runID] = renewed
 	j.mu.Unlock()
 	return renewed, nil
@@ -383,8 +423,25 @@ func (j *Jobs) markExpiredLeases(now time.Time) {
 		if run.Status != controlplane.RunRunning || run.LeaseUntil.IsZero() || run.LeaseUntil.After(now) {
 			continue
 		}
-		run.MarkLeaseExpired(now)
-		j.replace(&run)
+		current, _, err := j.store.ExpireRunLease(context.Background(), run.ID, now)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[api] expire run lease: %v\n", err)
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		// The durable transition already committed. Cache its result without a
+		// second SaveRun that could overwrite a newer renewal or completion.
+		j.mu.Lock()
+		if old := j.runs[current.ID]; old != nil && !current.Status.IsTerminal() && old.LeaseOwner == current.LeaseOwner && old.Attempt == current.Attempt {
+			current.Inputs = inputsForRun(old, current)
+		}
+		j.runs[current.ID] = current
+		j.mu.Unlock()
+		if current.Status.IsTerminal() {
+			j.logs.Close(current.ID)
+		}
 	}
 }
 
@@ -453,7 +510,7 @@ func latestRunsByID(runs []controlplane.Run) []controlplane.Run {
 	latest := map[string]controlplane.Run{}
 	for _, run := range runs {
 		prev, ok := latest[run.ID]
-		if !ok || runStatusRank(run.Status) >= runStatusRank(prev.Status) || runRecordTime(run).After(runRecordTime(prev)) {
+		if !ok || run.QueuedAt.After(prev.QueuedAt) || run.QueuedAt.Equal(prev.QueuedAt) && (runStatusRank(run.Status) >= runStatusRank(prev.Status) || runRecordTime(run).After(runRecordTime(prev))) {
 			latest[run.ID] = run
 		}
 	}
@@ -492,8 +549,8 @@ func (j *Jobs) hasRunning(topology string) bool {
 	return false
 }
 
-func (j *Jobs) startChild(parent *controlplane.Run) *controlplane.Run {
-	return j.startWithOptions(parent.Topology, parent.Op, runStartOptions{
+func (j *Jobs) startChild(parent *controlplane.Run) (*controlplane.Run, error) {
+	run, _, err := j.startWithResult(parent.Topology, parent.Op, runStartOptions{
 		ParentID:     parent.ID,
 		SnapshotPath: parent.SnapshotPath,
 		Revision:     parent.Revision,
@@ -501,27 +558,38 @@ func (j *Jobs) startChild(parent *controlplane.Run) *controlplane.Run {
 		AgentID:      parent.AgentID,
 		UnsafeState:  parent.UnsafeState,
 	})
+	return run, err
 }
 
-func (j *Jobs) finish(r *controlplane.Run, err error) {
+func (j *Jobs) finish(r *controlplane.Run, err error) error {
+	if r == nil {
+		return persistence.ErrInvalidRecord
+	}
 	j.mu.Lock()
-	r.MarkFinished(err, time.Now())
+	next := *r
+	next.MarkFinished(err, time.Now())
 	// Sensitive inputs are only needed while the run is executing; the executor
 	// has already bound var.<name> by the time a run goes terminal, so drop them
 	// from the in-memory entry to avoid exposing them via get/list.
-	r.Inputs = nil
+	next.Inputs = nil
 	j.mu.Unlock()
-	j.logs.Close(r.ID)
-	j.persist(r)
+	if err := j.replace(&next); err != nil {
+		return err
+	}
+	*r = next
+	return nil
 }
 
-func (j *Jobs) replace(r *controlplane.Run) {
+func (j *Jobs) replace(r *controlplane.Run) error {
 	if r == nil {
-		return
+		return persistence.ErrInvalidRecord
 	}
 	normalizeRunProductFields(r)
 	if r.Status.IsTerminal() {
 		r.Inputs = nil
+	}
+	if err := j.persist(r); err != nil {
+		return err
 	}
 	j.mu.Lock()
 	j.runs[r.ID] = r
@@ -529,13 +597,14 @@ func (j *Jobs) replace(r *controlplane.Run) {
 	if r.Status.IsTerminal() {
 		j.logs.Close(r.ID)
 	}
-	j.persist(r)
+	return nil
 }
 
 func (j *Jobs) get(id string) (*controlplane.Run, bool) {
 	if run, err := j.store.GetRun(context.Background(), id); err == nil && run != nil {
 		j.mu.Lock()
 		if existing, ok := j.runs[id]; ok {
+			run.Inputs = inputsForRun(existing, run)
 			if preferRun(existing, run) {
 				j.mu.Unlock()
 				return existing, true
@@ -559,6 +628,9 @@ func preferRun(a, b *controlplane.Run) bool {
 	}
 	if b == nil {
 		return true
+	}
+	if !a.QueuedAt.Equal(b.QueuedAt) {
+		return a.QueuedAt.After(b.QueuedAt)
 	}
 	ar, br := runStatusRank(a.Status), runStatusRank(b.Status)
 	if ar != br {

@@ -116,14 +116,18 @@ func TestAgentServiceLeavesLiveGuestCommandPending(t *testing.T) {
 func TestAgentServiceCompleteRunStoresProjection(t *testing.T) {
 	svc, _, registry, jobs := newTestAgentService(t)
 	run := jobs.start("mixed", "apply")
+	require.NoError(t, jobs.assign(run, "host-a"))
+	claimed, err := jobs.claim(run.ID, "host-a")
+	require.NoError(t, err)
 
 	completion, err := svc.CompleteRun("host-a", run.ID, controlplane.RunCompletion{
 		Run: controlplane.Run{
-			ID:        run.ID,
-			AgentID:   "host-a",
-			Topology:  "mixed",
-			Workspace: "mixed",
-			Status:    controlplane.RunDone,
+			ID:         run.ID,
+			AgentID:    "host-a",
+			Topology:   "mixed",
+			Workspace:  "mixed",
+			Status:     controlplane.RunDone,
+			LeaseOwner: claimed.LeaseOwner, Attempt: claimed.Attempt,
 		},
 	})
 	require.NoError(t, err)

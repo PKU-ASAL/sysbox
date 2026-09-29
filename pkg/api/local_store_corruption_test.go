@@ -100,7 +100,7 @@ func TestLocalRunHistoryRejectsCorruption(t *testing.T) {
 
 func TestLocalRunHistoryReadsLargeRecordsWithoutTruncating(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
-	run := controlplane.Run{ID: "run", Topology: "lab", Err: strings.Repeat("x", 128*1024)}
+	run := controlplane.Run{ID: "run", Topology: "lab", Status: controlplane.RunFailed, Err: strings.Repeat("x", 128*1024)}
 	require.NoError(t, store.SaveRun(context.Background(), run))
 	got, err := store.GetRun(context.Background(), run.ID)
 	require.NoError(t, err)
@@ -188,7 +188,7 @@ func TestLocalNullRecordsAreCorrupt(t *testing.T) {
 
 func TestLocalRunReaderWaitsForCommittedAppend(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
-	require.NoError(t, store.SaveRun(context.Background(), controlplane.Run{ID: "first", Topology: "lab"}))
+	require.NoError(t, store.SaveRun(context.Background(), controlplane.Run{ID: "first", Topology: "lab", Status: controlplane.RunQueued}))
 	path := filepath.Join(store.runsDir, "lab", "runs.jsonl")
 	writerLock := flock.New(path + ".lock")
 	require.NoError(t, writerLock.Lock())

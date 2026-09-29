@@ -127,7 +127,7 @@ func TestJobsPersistsQueuedRunAndReloadsAsQueued(t *testing.T) {
 	require.Empty(t, got.Err)
 }
 
-func TestJobsReloadsAssignedRunAsRecoverable(t *testing.T) {
+func TestJobsReloadsAssignedRunWithoutInventingAgentFailure(t *testing.T) {
 	runsDir := t.TempDir()
 	jobs := newJobs(runsDir, nil)
 	run := jobs.start("mixed", "apply")
@@ -136,7 +136,7 @@ func TestJobsReloadsAssignedRunAsRecoverable(t *testing.T) {
 	reloaded := newJobs(runsDir, nil)
 	got, ok := reloaded.get(run.ID)
 	require.True(t, ok)
-	require.Equal(t, controlplane.RunFailed, got.Status)
-	require.True(t, got.Recoverable)
-	require.Equal(t, "server restarted before run completion", got.Err)
+	require.Equal(t, controlplane.RunAssigned, got.Status)
+	require.False(t, got.Recoverable)
+	require.Empty(t, got.Err)
 }

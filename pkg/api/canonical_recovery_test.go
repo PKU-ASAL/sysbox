@@ -81,7 +81,7 @@ func (r rejectRecoveryCommit) CommitActionOutcome(ctx context.Context, a runtime
 
 var recoveryResourceID atomic.Uint64
 
-func canonicalRecoveryFixture(t *testing.T, provisioner bool) (*Server, *controlplane.Run, *recoveryResource, address.Address) {
+func canonicalRecoveryFixture(t *testing.T, provisioner bool, agents ...string) (*Server, *controlplane.Run, *recoveryResource, address.Address) {
 	t.Helper()
 	s := NewServer(t.TempDir(), t.TempDir())
 	h := &recoveryResource{kind: fmt.Sprintf("api_recovery_%d", recoveryResourceID.Add(1)), provisioner: provisioner}
@@ -94,7 +94,11 @@ func canonicalRecoveryFixture(t *testing.T, provisioner bool) (*Server, *control
 	require.NoError(t, s.apiStore.SaveGlobalRevision(context.Background(), controlplane.GlobalRevision{Revision: digest, Files: files}))
 	path, err := s.workspaceService().MaterializeRevision("lab", digest, files)
 	require.NoError(t, err)
-	run := s.jobs.start("lab", "apply")
+	opts := runStartOptions{}
+	if len(agents) > 0 {
+		opts.AgentID = agents[0]
+	}
+	run := s.jobs.startWithOptions("lab", "apply", opts)
 	run.Revision = digest
 	run.SnapshotPath = path
 	run.Status = controlplane.RunFailed
@@ -195,9 +199,7 @@ func TestCanonicalCleanupUsesVerifiedDestroy(t *testing.T) {
 	require.Nil(t, st.FindResource(addr))
 }
 func TestCanonicalRecoverRefusesWrongExecutionHost(t *testing.T) {
-	s, run, h, _ := canonicalRecoveryFixture(t, false)
-	run.AgentID = "remote-host"
-	s.jobs.replace(run)
+	s, run, h, _ := canonicalRecoveryFixture(t, false, "remote-host")
 	before := h.reads
 	rec := recoveryRequest(s, run.ID, "recover")
 	require.GreaterOrEqual(t, rec.Code, 400)

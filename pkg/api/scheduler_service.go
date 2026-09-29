@@ -32,7 +32,9 @@ func (s *SchedulerService) DispatchRun(ctx context.Context, run *controlplane.Ru
 		s.jobs.finish(run, err)
 		return err
 	}
-	s.jobs.assign(run, agent.ID)
+	if err := s.jobs.assign(run, agent.ID); err != nil {
+		return err
+	}
 	if _, err := s.publish(ctx, agent.ID, controlplaneRunAssignedCommand(run)); err != nil {
 		return err
 	}

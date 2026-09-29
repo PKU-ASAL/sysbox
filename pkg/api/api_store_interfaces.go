@@ -16,8 +16,10 @@ type runStore interface {
 	LoadRuns(ctx context.Context) ([]controlplane.Run, error)
 	GetRun(ctx context.Context, id string) (*controlplane.Run, error)
 	SaveRun(ctx context.Context, run controlplane.Run) error
+	RestartRun(ctx context.Context, run controlplane.Run) (*controlplane.Run, error)
 	ClaimRun(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, bool, error)
 	RenewRunLease(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, bool, error)
+	ExpireRunLease(ctx context.Context, runID string, observedAt time.Time) (*controlplane.Run, bool, error)
 	GetRunDispatch(ctx context.Context, requestID, fingerprint string) (*controlplane.Run, bool, error)
 	CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error)
 }

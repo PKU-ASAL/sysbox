@@ -541,9 +541,9 @@ func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	run := s.jobs.start("mixed", "apply")
-	s.jobs.assign(run, "host-a")
-	run.Status = controlplane.RunDone
-	run.AgentID = "host-a"
+	require.NoError(t, s.jobs.assign(run, "host-a"))
+	claimed, err := s.jobs.claim(run.ID, "host-a")
+	require.NoError(t, err)
 
 	body := bytes.NewBufferString(`{
   "run": {
@@ -551,7 +551,9 @@ func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
     "topology": "mixed",
     "op": "apply",
     "status": "done",
-    "agent_id": "host-a"
+    "agent_id": "host-a",
+    "lease_owner": "` + claimed.LeaseOwner + `",
+    "attempt": 1
   },
   "projection": {
     "agent_id": "host-a",

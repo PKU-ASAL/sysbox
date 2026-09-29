@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 var errIdempotencyConflict = errors.New("idempotency key was already used for a different request")
@@ -36,7 +37,13 @@ func (s *localAPIStore) GetRunDispatch(_ context.Context, requestID, fingerprint
 	return &bundle.Run, true, nil
 }
 
-func (s *localAPIStore) CreateRunDispatch(_ context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error) {
+func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error) {
+	unlock, err := s.lockRunRecords(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlock()
+	request = durableRunDispatch(request)
 	dir := filepath.Join(s.runsDir, "_run_requests")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, false, err
@@ -68,7 +75,7 @@ func (s *localAPIStore) CreateRunDispatch(_ context.Context, request RunDispatch
 		return nil, false, err
 	}
 	target := filepath.Join(dir, request.Run.ID+".json")
-	existing, lookupErr := s.GetRun(context.Background(), request.Run.ID)
+	existing, lookupErr := s.GetRun(ctx, request.Run.ID)
 	if lookupErr != nil && !errors.Is(lookupErr, errLocalRunNotFound) {
 		return nil, false, lookupErr
 	}
@@ -134,6 +141,7 @@ func (s *localAPIStore) loadRunDispatches() ([]localRunDispatch, error) {
 }
 
 func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error) {
+	request = durableRunDispatch(request)
 	db, err := s.open()
 	if err != nil {
 		return nil, false, err
@@ -213,7 +221,16 @@ func (s *sqliteAPIStore) GetRunDispatch(ctx context.Context, requestID, fingerpr
 	return run, err == nil, err
 }
 
-func insertSQLiteRun(ctx context.Context, tx *sql.Tx, run controlplane.Run) error {
+type sqliteRunWriter interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func insertSQLiteRun(ctx context.Context, tx sqliteRunWriter, run controlplane.Run) error {
+	run = persistence.DurableRun(run)
+	raw, err := json.Marshal(run)
+	if err != nil {
+		return err
+	}
 	recoverable, unsafeState := 0, 0
 	if run.Recoverable {
 		recoverable = 1
@@ -221,8 +238,8 @@ func insertSQLiteRun(ctx context.Context, tx *sql.Tx, run controlplane.Run) erro
 	if run.UnsafeState {
 		unsafeState = 1
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO sysbox_runs (id, topology, operation, op, status, error, parent_id, revision, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.Topology, run.Operation, run.Op, run.Status, run.Err, run.ParentID, run.Revision, run.Target, run.AgentID, recoverable, unsafeState, run.OperationKey, run.RequestFingerprint, run.Protocol, run.LeaseOwner, formatSQLiteTime(run.LeaseUntil), run.Attempt, formatSQLiteTime(run.QueuedAt), formatSQLiteTime(run.AssignedAt), formatSQLiteTime(run.StartedAt), formatSQLiteTime(run.EndedAt))
+	_, err = tx.ExecContext(ctx, `INSERT INTO sysbox_runs (`+sqliteRunColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.Topology, run.Operation, run.Op, run.Status, run.Err, run.ParentID, run.Revision, run.Target, run.AgentID, recoverable, unsafeState, run.OperationKey, run.RequestFingerprint, run.Protocol, run.LeaseOwner, formatSQLiteTime(run.LeaseUntil), run.Attempt, formatSQLiteTime(run.QueuedAt), formatSQLiteTime(run.AssignedAt), formatSQLiteTime(run.StartedAt), formatSQLiteTime(run.EndedAt), formatSQLiteTime(run.DeadlineAt), run.SnapshotPath, raw)
 	return err
 }
 
@@ -242,6 +259,7 @@ func insertSQLiteAgentCommand(ctx context.Context, tx *sql.Tx, cmd controlplane.
 }
 
 func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error) {
+	request = durableRunDispatch(request)
 	conn, err := s.connect(ctx)
 	if err != nil {
 		return nil, false, err
@@ -316,6 +334,15 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 	}
 	run := request.Run
 	return &run, true, nil
+}
+
+func durableRunDispatch(request RunDispatchRequest) RunDispatchRequest {
+	request.Run = persistence.DurableRun(request.Run)
+	if request.Command.Run != nil {
+		run := persistence.DurableRun(*request.Command.Run)
+		request.Command.Run = &run
+	}
+	return request
 }
 
 func (s *postgresAPIStore) GetRunDispatch(ctx context.Context, requestID, fingerprint string) (*controlplane.Run, bool, error) {
