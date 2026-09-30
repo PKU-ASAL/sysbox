@@ -13,7 +13,7 @@
 - Work only in `/tmp/sysbox-oci-preflight` on `fix/oci-image-preflight`.
 - No registry access, pull/load, release, consumer changes, or unrelated apply fixes.
 - Follow the approved spec in `docs/superpowers/specs/2026-09-30-oci-image-preflight-design.md`.
-- Tests use a fake Docker HTTP transport, never a real daemon.
+- Unit tests use a fake Docker HTTP transport. The user subsequently requested full-suite and real-daemon verification; the opt-in integration test only reads an existing cached image through an audited read-only gateway.
 
 ## Task 1: Regression tests (red)
 
@@ -40,3 +40,11 @@
 ## Follow-up outside this sandbox
 
 Run `go test -mod=readonly ./pkg/driver ./pkg/provider/docker ./pkg/runtime ./pkg/api -count=1` where local listeners are permitted. Real-daemon verification, release and downstream version bumps remain separate actions.
+
+## Task 4: Requested full-suite and real-Docker verification
+
+- [x] Obtain scoped test execution approval and run the full Docker/API package suites with local listeners enabled. Both packages pass.
+- [x] Add `pkg/api/preflight_oci_integration_test.go`: explicitly opt in with `SYSBOX_TEST_DOCKER_IMAGE`, fail if that cached image/daemon is unavailable, and use the real API route and Docker provider.
+- [x] Route provider and Docker CLI requests through a gateway permitting only version/ping/image-inspect. Reject and record all other requests. Never create/load/pull/tag/run/remove images or containers.
+- [x] Verify cached match/mismatch/unpinned and missing local/registry references; verify copies of both real L3 HCL files through `SYSBOX_TEST_OCI_TOPOLOGIES` (OS path-list separator). All 11 missing target images produce warnings and both topologies return `ok: true`.
+- [x] Run complete Docker/API package tests with race detection. Record 6 PostgreSQL and 1 guest-execution conditional skips separately; they require dedicated environments. Repeat real-daemon checks with race three times and record results in `docs/superpowers/verification/2026-09-30-oci-image-preflight.md`.

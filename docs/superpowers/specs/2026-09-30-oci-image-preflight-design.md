@@ -74,3 +74,9 @@ runtime 测试覆盖 OCI 调用正确 driver、检查名称、无检查能力的
 完整 Docker/API 包测试已尝试，但旧测试需要 `httptest.NewServer` 监听本地端口，被沙箱以 `socket: operation not permitted` 拒绝：分别停在 `TestDockerObserveReportsMissingAliasAsDrift` 与 `TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck`。未为此修改旧测试或扩大权限；需在允许本地监听的 CI/开发环境补跑。
 
 全部 Go 命令使用 `GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOCACHE=/tmp/sysbox-oci-go-build` 和 `-mod=readonly`，未下载依赖。尚未做真实 Docker 联调、合并、推送或版本发布。
+
+### 后续实机验收更新（2026-09-30）
+
+用户随后要求完整包回归及真实 Docker 联调。获得受控执行授权后，Docker/API 普通回归和完整包 race 命令均成功；真实 OCI 联调及两份 L3 拓扑通过，确认 11 个目标镜像未缓存但均正确返回 warning，整体 `ok: true`。带 L3 的每轮只读网关记录 30 次 inspect，非允许请求为 0。
+
+上述沙箱阻断已解决，但原有 6 项 PostgreSQL 与 1 项 guest-execution E2E 因缺少专用环境仍条件跳过，不计为通过。可重复测试、执行命令和完整性边界见 `docs/superpowers/verification/2026-09-30-oci-image-preflight.md`。没有修改生产代码、真实 Docker 资源或原有拓扑；仍未合并、推送或发布。
