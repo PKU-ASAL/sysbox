@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/hcl/v2"
 
@@ -139,6 +140,43 @@ func (ImageResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.E
 		if check := ArtifactPreflightCheck("image:"+r.Name+":"+cfg.Kind, cfg.Source, cfg.SHA256); check != nil {
 			checks = append(checks, *check)
 		}
+		return checks
+	}
+
+	check := substrate.PreflightCheck{Name: "image:" + r.Name + ":oci", OK: false, Severity: "error"}
+	subName, err := resolveSubstrateRef(cfg.Substrate)
+	if err != nil {
+		check.Message, check.Hint = err.Error(), "fix the image substrate reference"
+		return []substrate.PreflightCheck{check}
+	}
+	artifactDriver, err := driver.DefaultRegistry.RequireArtifact(subName)
+	if err != nil {
+		check.Message, check.Hint = err.Error(), "configure a substrate with artifact support"
+		return []substrate.PreflightCheck{check}
+	}
+	if secret.IsReference(cfg.Source) {
+		check.OK, check.Severity = true, "warning"
+		check.Message = "image source is resolved at execution time; local cache and digest could not be checked"
+		check.Hint = "ensure the resolved image is cached on the target daemon or is pullable during apply"
+		return []substrate.PreflightCheck{check}
+	}
+	checker, ok := artifactDriver.(driver.ArtifactPreflight)
+	if !ok {
+		check.OK, check.Severity = true, "warning"
+		check.Message = fmt.Sprintf("substrate %q does not support read-only image inspection", subName)
+		check.Hint = "verify the image on the target substrate before apply"
+		return []substrate.PreflightCheck{check}
+	}
+	// The resource preflight hook has no request context. Bound daemon access
+	// locally without changing the public resource hook in this focused fix.
+	inspectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	checks = checker.PreflightImage(inspectCtx, substrate.ArtifactSource{
+		Kind: substrate.ArtifactOCI, Source: cfg.Source, ExpectedDigest: cfg.SHA256,
+		Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamily(cfg.GuestFamily), Size: cfg.Size,
+	})
+	for i := range checks {
+		checks[i].Name = check.Name
 	}
 	return checks
 }

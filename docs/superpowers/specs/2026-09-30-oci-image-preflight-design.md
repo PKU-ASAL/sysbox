@@ -59,4 +59,18 @@ runtime 测试覆盖 OCI 调用正确 driver、检查名称、无检查能力的
 
 ## 进度
 
-独立分支和 worktree 已建立，设计待用户确认；尚未修改生产代码或开始修复测试。
+设计已获用户确认，修复和回归测试已在独立分支完成。现有 HCL、HTTP JSON 与 `Artifact.ResolveImage` 接口保持不变。生产改动仅涉及可选 driver 接口、Docker 只读检查和 runtime 分发；没有修改 apply。
+
+验证经过失败测试再实现：原代码的 Docker 测试缺少检查接口，runtime/API 测试没有镜像检查项；实现后均通过。新增 Docker 测试使用内存 HTTP transport，断言唯一请求为目标镜像的 GET inspect，不连接真实 daemon 或 registry。
+
+已通过：
+
+- provider/runtime/API 的所有 `Preflight` 测试，连续运行 5 次。
+- provider/runtime/API 的 `Preflight` race 检查。
+- driver/runtime 完整测试及完整 race 检查。
+- `go test ./... -run '^$'` 全仓库编译检查（不代表全仓库测试执行）。
+- `gofmt`、`git diff --check` 及按设计逐项人工复核。依侧会话约束，没有调用审查子代理。
+
+完整 Docker/API 包测试已尝试，但旧测试需要 `httptest.NewServer` 监听本地端口，被沙箱以 `socket: operation not permitted` 拒绝：分别停在 `TestDockerObserveReportsMissingAliasAsDrift` 与 `TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck`。未为此修改旧测试或扩大权限；需在允许本地监听的 CI/开发环境补跑。
+
+全部 Go 命令使用 `GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOCACHE=/tmp/sysbox-oci-go-build` 和 `-mod=readonly`，未下载依赖。尚未做真实 Docker 联调、合并、推送或版本发布。
