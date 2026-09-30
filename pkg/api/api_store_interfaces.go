@@ -75,6 +75,7 @@ type agentStore interface {
 }
 
 type agentCommandStore interface {
+	PrepareAgentCommandDelivery(context.Context, controlplane.AgentCommand) (*controlplane.AgentCommand, error)
 	SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error
 	ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error)
 	SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error

@@ -19,6 +19,7 @@ import (
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -303,9 +304,12 @@ func TestAgentCommandLeaseExpiresAndRedelivers(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	leased.LeaseUntil = time.Now().Add(-time.Second)
-	leased.Status = controlplane.AgentCommandStatusQueued
-	require.NoError(t, store.SaveAgentCommand(ctx, *leased))
+	// Seed expiry through the storage fixture: normal Save cannot rewrite a grant.
+	expired := *leased
+	expired.LeaseUntil = time.Now().Add(-time.Second)
+	raw, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: expired})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(store.runsDir, "_agents", "host-a", "commands", "cmd-1.json"), raw, 0600))
 	leased, ok, err = store.AcquireAgentCommandLease(ctx, "host-a", "cmd-1", "owner-2", time.Hour)
 	require.NoError(t, err)
 	require.True(t, ok)

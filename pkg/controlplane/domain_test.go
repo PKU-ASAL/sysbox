@@ -62,8 +62,9 @@ func TestAgentCommandLeaseHelpers(t *testing.T) {
 
 	cmd.MarkLeased("host-a:1", time.Minute, now)
 	require.Equal(t, AgentCommandStatusLeased, cmd.Status)
-	require.False(t, cmd.IsPending())
-	require.False(t, cmd.Leasable(now.Add(2*time.Minute)))
+	require.True(t, cmd.IsPending())
+	require.False(t, cmd.Leasable(now.Add(30*time.Second)))
+	require.True(t, cmd.Leasable(now.Add(2*time.Minute)))
 
 	cmd.MarkDelivered(now.Add(2 * time.Minute))
 	require.Equal(t, AgentCommandStatusDelivered, cmd.Status)

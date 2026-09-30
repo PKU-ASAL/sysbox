@@ -160,7 +160,7 @@ func AgentStatusForPolicy(disabled, quarantined bool) string {
 
 func (c AgentCommand) IsPending() bool {
 	switch c.Status {
-	case "", AgentCommandStatusQueued, AgentCommandStatusDelivered:
+	case "", AgentCommandStatusQueued, AgentCommandStatusLeased, AgentCommandStatusDelivered:
 		return true
 	default:
 		return false

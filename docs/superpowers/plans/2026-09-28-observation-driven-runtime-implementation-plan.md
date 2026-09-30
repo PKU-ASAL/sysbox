@@ -82,6 +82,22 @@ Implementation commit: `d581b80`. Independent review and full uncached unit/race
 - [x] Verify independent-process claims have one winner, stale expiry cannot overwrite renewal, and commit failure grants no lease.
 - [x] Complete independent review and uncached full unit/race/vet/docs checks. PostgreSQL remains an opt-in skipped runtime contract.
 
+## Next milestone: Agent, command and durable dispatch
+
+**Goal:** Unify Agent/command persistence semantics, then atomically commit Run/Guest intents with their queued commands across local, SQLite and Postgres stores.
+
+**Architecture:** Typed AgentRepository and CommandRepository own identity, normalization, state transitions and lease rules. Backend adapters only lock/read/write. Command IDs and payload bindings remain immutable, expired delivery leases can be retried, and retirement leaves evidence that prevents a bundled command from reappearing. Existing run dispatch bundles provide the filesystem atomic boundary; Guest dispatch records gain the same aggregate boundary. SQL commits both records in one transaction. The existing command poller is the durable outbox dispatcher; in-memory notification is only a wake-up hint.
+
+**Files:** Add shared repositories and API physical adapters; modify AgentService, command stream delivery, RunService/SchedulerService, Guest services and their dispatch stores; extend backend contracts and restart tests. HTTP v1 error shape and existing capability registration remain stable.
+
+- [x] Reproduce command payload replacement, invalid lease TTL, stranded leased records, concurrent claims and retired-bundle resurrection.
+- [x] Centralize command state rules and strict adapters; persist delivery authorization and reject authenticated stream identity mismatches.
+- [x] Independently review the command slice and pass full unit/race/vet/docs/diff checks; keep Agent and full outbox outside this checkpoint.
+- [ ] Centralize Agent state rules; prevent stale heartbeat/offline updates from overwriting policy.
+- [ ] Commit operation plus command atomically for Run and Guest paths; use durable dispatch on retries/restarts and propagate storage failures before delivery.
+- [ ] Cover payload privacy, cancellation, command ownership, cross-process races and outbox crash points; run independent review and required checks.
+- [ ] Update actual completion boundaries before moving to resource fencing and owning-agent recovery.
+
 ## Task 1: Establish the P0 test and synchronization baseline
 
 **Files:**

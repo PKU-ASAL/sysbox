@@ -246,6 +246,9 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	if err := s.ensureRunsColumn(db, "record_json", "BLOB NOT NULL DEFAULT X''"); err != nil {
 		return err
 	}
+	if err := ensureColumn(db, "sysbox_agent_commands", "record_json", "BLOB NOT NULL DEFAULT X''"); err != nil {
+		return err
+	}
 	if err := s.ensureGlobalRevisionsColumn(db, "files", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -897,185 +900,16 @@ func (s *sqliteAPIStore) ListAgentCommandEvents(ctx context.Context, agentID str
 }
 
 func (s *sqliteAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error {
-	db, err := s.open()
-	if err != nil {
-		return err
-	}
-	runPayload, _ := json.Marshal(cmd.Run)
-	sessionPayload, _ := json.Marshal(cmd.Session)
-	operationPayload, _ := json.Marshal(cmd.Operation)
-	executionPayload, _ := json.Marshal(struct {
-		Execution *controlplane.GuestExecution       `json:"execution,omitempty"`
-		Request   controlplane.GuestExecutionRequest `json:"request,omitempty"`
-		FilePut   *controlplane.GuestFilePut         `json:"file_put,omitempty"`
-	}{Execution: cmd.Execution, Request: cmd.ExecutionRequest, FilePut: cmd.FilePut})
-	requestPayload, _ := json.Marshal(cmd.Request)
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_agent_commands (id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, execution_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET status=excluded.status, error=excluded.error, lease_owner=excluded.lease_owner, lease_until=excluded.lease_until, attempt=excluded.attempt, acked_at=excluded.acked_at, ended_at=excluded.ended_at
-		 WHERE
-		   sysbox_agent_commands.status IN ('', 'queued', 'leased', 'delivered')
-		   OR (sysbox_agent_commands.status='acked' AND excluded.status IN ('running', 'completed', 'failed', 'denied', 'cancelled'))
-		   OR (sysbox_agent_commands.status='running' AND excluded.status IN ('completed', 'failed', 'denied', 'cancelled'))
-		   OR sysbox_agent_commands.status=excluded.status`,
-		cmd.ID, cmd.AgentID, cmd.Type, cmd.Status, cmd.Err, cmd.Protocol, runPayload, sessionPayload, operationPayload, executionPayload, requestPayload,
-		cmd.LeaseOwner, formatSQLiteTime(cmd.LeaseUntil), cmd.Attempt,
-		formatSQLiteTime(cmd.CreatedAt), formatSQLiteTime(cmd.Delivered), formatSQLiteTime(cmd.AckedAt), formatSQLiteTime(cmd.EndedAt))
-	return err
+	return persistence.NewCommandRepository(sqliteCommandStorage{store: s}).SaveAgentCommand(ctx, cmd)
 }
-
 func (s *sqliteAPIStore) DeleteAgentCommand(ctx context.Context, agentID, commandID string) error {
-	db, err := s.open()
-	if err != nil {
-		return err
-	}
-	_, err = db.ExecContext(ctx, `DELETE FROM sysbox_agent_commands WHERE id=? AND agent_id=?`, commandID, agentID)
-	return err
+	return persistence.NewCommandRepository(sqliteCommandStorage{store: s}).DeleteAgentCommand(ctx, agentID, commandID)
 }
-
 func (s *sqliteAPIStore) ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error) {
-	db, err := s.open()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := db.QueryContext(ctx,
-		`SELECT id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, execution_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at FROM sysbox_agent_commands WHERE agent_id=? OR agent_id='' ORDER BY created_at DESC`, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []controlplane.AgentCommand
-	for rows.Next() {
-		var cmd controlplane.AgentCommand
-		var runPayload, sessionPayload, operationPayload, executionPayload, reqPayload []byte
-		var leaseUntil, createdAt, delivered, ackedAt, endedAt string
-		if err := rows.Scan(&cmd.ID, &cmd.AgentID, &cmd.Type, &cmd.Status, &cmd.Err, &cmd.Protocol, &runPayload, &sessionPayload, &operationPayload, &executionPayload, &reqPayload, &cmd.LeaseOwner, &leaseUntil, &cmd.Attempt, &createdAt, &delivered, &ackedAt, &endedAt); err != nil {
-			return nil, err
-		}
-		if runPayload != nil {
-			json.Unmarshal(runPayload, &cmd.Run)
-		}
-		if sessionPayload != nil {
-			json.Unmarshal(sessionPayload, &cmd.Session)
-		}
-		if operationPayload != nil {
-			json.Unmarshal(operationPayload, &cmd.Operation)
-		}
-		if executionPayload != nil {
-			var payload struct {
-				Execution *controlplane.GuestExecution       `json:"execution,omitempty"`
-				Request   controlplane.GuestExecutionRequest `json:"request,omitempty"`
-				FilePut   *controlplane.GuestFilePut         `json:"file_put,omitempty"`
-			}
-			if json.Unmarshal(executionPayload, &payload) == nil {
-				cmd.Execution = payload.Execution
-				cmd.ExecutionRequest = payload.Request
-				cmd.FilePut = payload.FilePut
-			}
-		}
-		if reqPayload != nil {
-			json.Unmarshal(reqPayload, &cmd.Request)
-		}
-		cmd.LeaseUntil = parseSQLiteTime(leaseUntil)
-		cmd.CreatedAt = parseSQLiteTime(createdAt)
-		cmd.Delivered = parseSQLiteTime(delivered)
-		cmd.AckedAt = parseSQLiteTime(ackedAt)
-		cmd.EndedAt = parseSQLiteTime(endedAt)
-		out = append(out, cmd)
-	}
-	return out, rows.Err()
+	return persistence.NewCommandRepository(sqliteCommandStorage{store: s}).ListAgentCommands(ctx, agentID)
 }
-
 func (s *sqliteAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error) {
-	db, err := s.open()
-	if err != nil {
-		return nil, false, err
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, false, err
-	}
-	defer tx.Rollback()
-	var status, leaseOwner, leaseUntilStr string
-	err = tx.QueryRowContext(ctx,
-		`SELECT status, lease_owner, lease_until FROM sysbox_agent_commands WHERE id=? AND agent_id=?`, commandID, agentID).
-		Scan(&status, &leaseOwner, &leaseUntilStr)
-	if err == sql.ErrNoRows {
-		return nil, false, fmt.Errorf("agent command not found")
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	lu := parseSQLiteTime(leaseUntilStr)
-	now := time.Now().UTC()
-	current := &controlplane.AgentCommand{ID: commandID, AgentID: agentID, Status: status, LeaseOwner: leaseOwner, LeaseUntil: lu}
-	if !current.Leasable(now) {
-		return current, false, nil
-	}
-	newLU := formatSQLiteTime(now.Add(ttl))
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE sysbox_agent_commands SET status='leased', lease_owner=?, lease_until=?, attempt=attempt+1 WHERE id=?`,
-		owner, newLU, commandID); err != nil {
-		return nil, false, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, false, err
-	}
-	cmd, err := s.loadAgentCommand(ctx, commandID)
-	if err != nil {
-		return nil, false, err
-	}
-	return cmd, true, nil
-}
-
-func (s *sqliteAPIStore) loadAgentCommand(ctx context.Context, id string) (*controlplane.AgentCommand, error) {
-	db, err := s.open()
-	if err != nil {
-		return nil, err
-	}
-	var cmd controlplane.AgentCommand
-	var runPayload, sessionPayload, operationPayload, executionPayload, reqPayload []byte
-	var leaseUntil, createdAt, delivered, ackedAt, endedAt string
-	err = db.QueryRowContext(ctx,
-		`SELECT id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, execution_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at FROM sysbox_agent_commands WHERE id=?`, id).
-		Scan(&cmd.ID, &cmd.AgentID, &cmd.Type, &cmd.Status, &cmd.Err, &cmd.Protocol, &runPayload, &sessionPayload, &operationPayload, &executionPayload, &reqPayload, &cmd.LeaseOwner, &leaseUntil, &cmd.Attempt, &createdAt, &delivered, &ackedAt, &endedAt)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("command not found after update")
-	}
-	if err != nil {
-		return nil, err
-	}
-	if runPayload != nil {
-		json.Unmarshal(runPayload, &cmd.Run)
-	}
-	if sessionPayload != nil {
-		json.Unmarshal(sessionPayload, &cmd.Session)
-	}
-	if operationPayload != nil {
-		json.Unmarshal(operationPayload, &cmd.Operation)
-	}
-	if executionPayload != nil {
-		var payload struct {
-			Execution *controlplane.GuestExecution       `json:"execution,omitempty"`
-			Request   controlplane.GuestExecutionRequest `json:"request,omitempty"`
-			FilePut   *controlplane.GuestFilePut         `json:"file_put,omitempty"`
-		}
-		if json.Unmarshal(executionPayload, &payload) == nil {
-			cmd.Execution = payload.Execution
-			cmd.ExecutionRequest = payload.Request
-			cmd.FilePut = payload.FilePut
-		}
-	}
-	if reqPayload != nil {
-		json.Unmarshal(reqPayload, &cmd.Request)
-	}
-	cmd.LeaseUntil = parseSQLiteTime(leaseUntil)
-	cmd.CreatedAt = parseSQLiteTime(createdAt)
-	cmd.Delivered = parseSQLiteTime(delivered)
-	cmd.AckedAt = parseSQLiteTime(ackedAt)
-	cmd.EndedAt = parseSQLiteTime(endedAt)
-	return &cmd, nil
+	return persistence.NewCommandRepository(sqliteCommandStorage{store: s}).AcquireAgentCommandLease(ctx, agentID, commandID, owner, ttl)
 }
 
 func (s *sqliteAPIStore) SaveAgentInventory(ctx context.Context, inv controlplane.AgentInventory) error {

@@ -13,6 +13,7 @@ import (
 	"github.com/gofrs/flock"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
@@ -173,7 +174,7 @@ func TestLocalNullRecordsAreCorrupt(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 			require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
 			err := store.SaveAgentCommand(context.Background(), controlplane.AgentCommand{ID: "cmd", AgentID: "host"})
-			require.ErrorIs(t, err, errCorruptLocalRecord)
+			require.ErrorIs(t, err, persistence.ErrCorruptRecord)
 			got, err := os.ReadFile(path)
 			require.NoError(t, err)
 			require.Equal(t, raw, string(got))

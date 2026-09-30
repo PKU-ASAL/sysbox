@@ -207,8 +207,7 @@ func (s *AgentService) AcquireCommandLease(ctx context.Context, agentID string, 
 		}
 		return *leased, true
 	}
-	cmd.MarkLeased(owner, ttl, now)
-	return cmd, true
+	return cmd, false
 }
 
 func (s *AgentService) agentCommandTTL() time.Duration {

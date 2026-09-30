@@ -18,6 +18,8 @@ import (
 var errIdempotencyConflict = errors.New("idempotency key was already used for a different request")
 
 type localRunDispatch struct {
+	// Existing runs only acquire an idempotency mapping, not another command.
+	RequestOnly bool                      `json:"request_only,omitempty"`
 	Fingerprint string                    `json:"fingerprint"`
 	Run         controlplane.Run          `json:"run"`
 	Command     controlplane.AgentCommand `json:"command"`
@@ -38,78 +40,63 @@ func (s *localAPIStore) GetRunDispatch(_ context.Context, requestID, fingerprint
 }
 
 func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error) {
+	if err := validatePathSegment(request.Run.ID, "run"); err != nil {
+		return nil, false, err
+	}
 	unlock, err := s.lockRunRecords(ctx)
 	if err != nil {
 		return nil, false, err
 	}
 	defer unlock()
 	request = durableRunDispatch(request)
-	dir := filepath.Join(s.runsDir, "_run_requests")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	target := filepath.Join(s.runsDir, "_run_requests", request.Run.ID+".json")
+	// Check the durable request mapping before looking at mutable run history.
+	// Its fingerprint remains authoritative even when old Run fields are empty.
+	previous, err := readLocalRunDispatch(target)
+	if err == nil {
+		if previous.Fingerprint != request.Fingerprint {
+			return nil, false, errIdempotencyConflict
+		}
+		current, err := s.GetRun(ctx, request.Run.ID)
+		return current, false, err
+	}
+	if !errors.Is(err, os.ErrNotExist) {
 		return nil, false, err
 	}
 	bundle := localRunDispatch{Fingerprint: request.Fingerprint, Run: request.Run, Command: request.Command}
-	raw, err := json.Marshal(bundle)
-	if err != nil {
+	existing, err := s.GetRun(ctx, request.Run.ID)
+	created := errors.Is(err, persistence.ErrNotFound)
+	if err != nil && !created {
 		return nil, false, err
 	}
-	tmp, err := os.CreateTemp(dir, ".dispatch-*")
-	if err != nil {
-		return nil, false, err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return nil, false, err
-	}
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
-		return nil, false, err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return nil, false, err
-	}
-	if err := tmp.Close(); err != nil {
-		return nil, false, err
-	}
-	target := filepath.Join(dir, request.Run.ID+".json")
-	existing, lookupErr := s.GetRun(ctx, request.Run.ID)
-	if lookupErr != nil && !errors.Is(lookupErr, errLocalRunNotFound) {
-		return nil, false, lookupErr
-	}
-	if lookupErr == nil {
+	if !created {
 		if existing.RequestFingerprint != "" && existing.RequestFingerprint != request.Fingerprint {
 			return nil, false, errIdempotencyConflict
 		}
 		bundle.Run = *existing
-		raw, err = json.Marshal(bundle)
+		bundle.RequestOnly = true
+		bundle.Command = controlplane.AgentCommand{}
+	} else {
+		if err := validatePathSegment(request.Command.ID, "command"); err != nil {
+			return nil, false, err
+		}
+		current, err := (localCommandStorage{store: s}).read(ctx, request.Command.ID)
 		if err != nil {
 			return nil, false, err
 		}
-		if err := os.WriteFile(tmpName, raw, 0o600); err != nil {
-			return nil, false, err
+		if current != nil {
+			return nil, false, persistence.ErrConflict
 		}
-		if err := os.Link(tmpName, target); err != nil && !errors.Is(err, os.ErrExist) {
-			return nil, false, err
-		}
-		return existing, false, nil
 	}
-	if err := os.Link(tmpName, target); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return nil, false, err
-		}
-		existing, readErr := readLocalRunDispatch(target)
-		if readErr != nil {
-			return nil, false, readErr
-		}
-		if existing.Fingerprint != request.Fingerprint {
-			return nil, false, errIdempotencyConflict
-		}
-		return &existing.Run, false, nil
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
 	}
-	return &bundle.Run, true, nil
+	// All participating writers hold the stable record lock; rename plus file
+	// and directory fsync publishes either the complete bundle or nothing.
+	if err := writeLocalObject(target, bundle); err != nil {
+		return nil, false, err
+	}
+	return &bundle.Run, created, nil
 }
 
 func readLocalRunDispatch(path string) (*localRunDispatch, error) {
@@ -244,18 +231,7 @@ func insertSQLiteRun(ctx context.Context, tx sqliteRunWriter, run controlplane.R
 }
 
 func insertSQLiteAgentCommand(ctx context.Context, tx *sql.Tx, cmd controlplane.AgentCommand) error {
-	runPayload, _ := json.Marshal(cmd.Run)
-	sessionPayload, _ := json.Marshal(cmd.Session)
-	operationPayload, _ := json.Marshal(cmd.Operation)
-	executionPayload, _ := json.Marshal(struct {
-		Execution *controlplane.GuestExecution       `json:"execution,omitempty"`
-		Request   controlplane.GuestExecutionRequest `json:"request,omitempty"`
-		FilePut   *controlplane.GuestFilePut         `json:"file_put,omitempty"`
-	}{Execution: cmd.Execution, Request: cmd.ExecutionRequest, FilePut: cmd.FilePut})
-	requestPayload, _ := json.Marshal(cmd.Request)
-	_, err := tx.ExecContext(ctx, `INSERT INTO sysbox_agent_commands (id, agent_id, type, status, error, protocol, run_payload, session_payload, operation_payload, execution_payload, request_payload, lease_owner, lease_until, attempt, created_at, delivered, acked_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		cmd.ID, cmd.AgentID, cmd.Type, cmd.Status, cmd.Err, cmd.Protocol, runPayload, sessionPayload, operationPayload, executionPayload, requestPayload, cmd.LeaseOwner, formatSQLiteTime(cmd.LeaseUntil), cmd.Attempt, formatSQLiteTime(cmd.CreatedAt), formatSQLiteTime(cmd.Delivered), formatSQLiteTime(cmd.AckedAt), formatSQLiteTime(cmd.EndedAt))
-	return err
+	return writeSQLiteCommand(ctx, tx, persistence.CommandRecord{Command: cmd}, false)
 }
 
 func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error) {
@@ -321,7 +297,7 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 	if err != nil {
 		return nil, false, fmt.Errorf("postgres create dispatched run: %w", err)
 	}
-	commandRaw, err := json.Marshal(request.Command)
+	commandRaw, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: request.Command})
 	if err != nil {
 		return nil, false, err
 	}
@@ -338,10 +314,7 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 
 func durableRunDispatch(request RunDispatchRequest) RunDispatchRequest {
 	request.Run = persistence.DurableRun(request.Run)
-	if request.Command.Run != nil {
-		run := persistence.DurableRun(*request.Command.Run)
-		request.Command.Run = &run
-	}
+	request.Command = persistence.DurableCommand(request.Command)
 	return request
 }
 

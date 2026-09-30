@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *localAPIStore) SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error {
@@ -46,88 +46,17 @@ func (s *localAPIStore) ListAgentCommandEvents(ctx context.Context, agentID stri
 	return out, nil
 }
 
-func (s *localAPIStore) SaveAgentCommand(_ context.Context, cmd controlplane.AgentCommand) error {
-	agentID := cmd.AgentID
-	if agentID == "" {
-		agentID = "_unknown"
-	}
-	if cmd.Protocol == "" {
-		cmd.Protocol = controlplane.AgentProtocolVersion
-	}
-	path := filepath.Join(s.runsDir, "_agents", agentID, "commands", cmd.ID+".json")
-	current, err := readLocalObject[controlplane.AgentCommand](path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err == nil && !controlplane.CanAdvanceAgentCommandStatus(current.Status, cmd.Status) {
-		return nil
-	}
-	return writeLocalObject(path, cmd)
+func (s *localAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error {
+	return persistence.NewCommandRepository(localCommandStorage{store: s}).SaveAgentCommand(ctx, cmd)
 }
-
-func (s *localAPIStore) DeleteAgentCommand(_ context.Context, agentID, commandID string) error {
-	path := filepath.Join(s.runsDir, "_agents", agentID, "commands", commandID+".json")
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+func (s *localAPIStore) DeleteAgentCommand(ctx context.Context, agentID, commandID string) error {
+	return persistence.NewCommandRepository(localCommandStorage{store: s}).DeleteAgentCommand(ctx, agentID, commandID)
 }
-
-func (s *localAPIStore) ListAgentCommands(_ context.Context, agentID string) ([]controlplane.AgentCommand, error) {
-	var commands []controlplane.AgentCommand
-	var err error
-	if agentID == "" {
-		commands, err = readLocalObjects[controlplane.AgentCommand](filepath.Join(s.runsDir, "_agents", "*", "commands", "*.json"))
-	} else {
-		commands, err = readLocalObjects[controlplane.AgentCommand](filepath.Join(s.runsDir, "_agents", agentID, "commands", "*.json"))
-	}
-	if err != nil {
-		return nil, err
-	}
-	byID := make(map[string]controlplane.AgentCommand, len(commands))
-	for _, cmd := range commands {
-		byID[cmd.ID] = cmd
-	}
-	dispatches, err := s.loadRunDispatches()
-	if err != nil {
-		return nil, err
-	}
-	for _, dispatch := range dispatches {
-		cmd := dispatch.Command
-		if agentID != "" && cmd.AgentID != agentID {
-			continue
-		}
-		if _, updated := byID[cmd.ID]; !updated {
-			byID[cmd.ID] = cmd
-		}
-	}
-	commands = commands[:0]
-	for _, cmd := range byID {
-		commands = append(commands, cmd)
-	}
-	return commands, nil
+func (s *localAPIStore) ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error) {
+	return persistence.NewCommandRepository(localCommandStorage{store: s}).ListAgentCommands(ctx, agentID)
 }
-
 func (s *localAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error) {
-	commands, err := s.ListAgentCommands(ctx, agentID)
-	if err != nil {
-		return nil, false, err
-	}
-	now := time.Now().UTC()
-	for _, cmd := range commands {
-		if cmd.ID != commandID || cmd.AgentID != agentID {
-			continue
-		}
-		if !cmd.Leasable(now) {
-			return &cmd, false, nil
-		}
-		cmd.MarkLeased(owner, ttl, now)
-		if err := s.SaveAgentCommand(ctx, cmd); err != nil {
-			return nil, false, err
-		}
-		return &cmd, true, nil
-	}
-	return nil, false, fmt.Errorf("agent command not found")
+	return persistence.NewCommandRepository(localCommandStorage{store: s}).AcquireAgentCommandLease(ctx, agentID, commandID, owner, ttl)
 }
 
 func (s *localAPIStore) SaveAgentInventory(_ context.Context, inv controlplane.AgentInventory) error {
@@ -306,152 +235,16 @@ func (s *postgresAPIStore) ListAgentCommandEvents(ctx context.Context, agentID s
 }
 
 func (s *postgresAPIStore) SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error {
-	if cmd.AgentID == "" {
-		cmd.AgentID = "_unknown"
-	}
-	if cmd.Status == "" {
-		cmd.Status = controlplane.AgentCommandStatusQueued
-	}
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	raw, err := json.Marshal(cmd)
-	if err != nil {
-		return err
-	}
-	var leaseUntil any
-	if !cmd.LeaseUntil.IsZero() {
-		leaseUntil = cmd.LeaseUntil
-	}
-	_, err = conn.Exec(ctx, `
-INSERT INTO sysbox_agent_commands (agent_id, id, status, lease_owner, lease_until, attempt, data, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET agent_id=EXCLUDED.agent_id, status=EXCLUDED.status, lease_owner=EXCLUDED.lease_owner, lease_until=EXCLUDED.lease_until, attempt=EXCLUDED.attempt, data=EXCLUDED.data, updated_at=now()
-WHERE
-  (sysbox_agent_commands.status IN ('', 'queued', 'leased', 'delivered'))
-  OR (sysbox_agent_commands.status='acked' AND EXCLUDED.status IN ('running', 'completed', 'failed', 'denied', 'cancelled'))
-  OR (sysbox_agent_commands.status='running' AND EXCLUDED.status IN ('completed', 'failed', 'denied', 'cancelled'))
-  OR (sysbox_agent_commands.status=EXCLUDED.status)`,
-		cmd.AgentID, cmd.ID, cmd.Status, cmd.LeaseOwner, leaseUntil, cmd.Attempt, string(raw))
-	if err != nil {
-		return fmt.Errorf("postgres save agent command: %w", err)
-	}
-	return nil
+	return persistence.NewCommandRepository(postgresCommandStorage{store: s}).SaveAgentCommand(ctx, cmd)
 }
-
 func (s *postgresAPIStore) DeleteAgentCommand(ctx context.Context, agentID, commandID string) error {
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, `DELETE FROM sysbox_agent_commands WHERE id=$1 AND agent_id=$2`, commandID, agentID); err != nil {
-		return fmt.Errorf("postgres delete agent command: %w", err)
-	}
-	return nil
+	return persistence.NewCommandRepository(postgresCommandStorage{store: s}).DeleteAgentCommand(ctx, agentID, commandID)
 }
-
-func (s *postgresAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error) {
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	defer conn.Release()
-	tx, err := conn.Begin(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	var raw []byte
-	var status string
-	var leaseUntil *time.Time
-	err = tx.QueryRow(ctx, `
-SELECT data::text, status, lease_until
-FROM sysbox_agent_commands
-WHERE agent_id=$1 AND id=$2
-FOR UPDATE`, agentID, commandID).Scan(&raw, &status, &leaseUntil)
-	if err == pgx.ErrNoRows {
-		return nil, false, fmt.Errorf("agent command not found")
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("postgres load agent command lease row: %w", err)
-	}
-	var cmd controlplane.AgentCommand
-	if err := json.Unmarshal(raw, &cmd); err != nil {
-		return nil, false, err
-	}
-	cmd.Status = status
-	if leaseUntil != nil {
-		cmd.LeaseUntil = *leaseUntil
-	}
-	now := time.Now().UTC()
-	if !cmd.Leasable(now) {
-		if err := tx.Commit(ctx); err != nil {
-			return nil, false, err
-		}
-		return &cmd, false, nil
-	}
-	cmd.MarkLeased(owner, ttl, now)
-	nextRaw, err := json.Marshal(cmd)
-	if err != nil {
-		return nil, false, err
-	}
-	tag, err := tx.Exec(ctx, `
-UPDATE sysbox_agent_commands
-SET status=$3, lease_owner=$4, lease_until=$5, attempt=$6, data=$7::jsonb, updated_at=now()
-WHERE agent_id=$1
-  AND id=$2
-  AND status IN ('queued','delivered','')
-  AND (lease_until IS NULL OR lease_until <= $8)`,
-		agentID, commandID, cmd.Status, cmd.LeaseOwner, cmd.LeaseUntil, cmd.Attempt, string(nextRaw), now)
-	if err != nil {
-		return nil, false, fmt.Errorf("postgres acquire agent command lease: %w", err)
-	}
-	if tag.RowsAffected() != 1 {
-		if err := tx.Commit(ctx); err != nil {
-			return nil, false, err
-		}
-		return &cmd, false, nil
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, false, err
-	}
-	return &cmd, true, nil
-}
-
 func (s *postgresAPIStore) ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error) {
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-	query := `SELECT data::text FROM sysbox_agent_commands ORDER BY updated_at DESC LIMIT 512`
-	args := []any{}
-	if agentID != "" {
-		query = `SELECT data::text FROM sysbox_agent_commands WHERE agent_id=$1 ORDER BY updated_at DESC LIMIT 512`
-		args = append(args, agentID)
-	}
-	rows, err := conn.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("postgres list agent commands: %w", err)
-	}
-	defer rows.Close()
-	var out []controlplane.AgentCommand
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		var cmd controlplane.AgentCommand
-		if err := json.Unmarshal(raw, &cmd); err != nil {
-			return nil, err
-		}
-		out = append(out, cmd)
-	}
-	return out, rows.Err()
+	return persistence.NewCommandRepository(postgresCommandStorage{store: s}).ListAgentCommands(ctx, agentID)
+}
+func (s *postgresAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error) {
+	return persistence.NewCommandRepository(postgresCommandStorage{store: s}).AcquireAgentCommandLease(ctx, agentID, commandID, owner, ttl)
 }
 
 func (s *postgresAPIStore) SaveAgentInventory(ctx context.Context, inv controlplane.AgentInventory) error {

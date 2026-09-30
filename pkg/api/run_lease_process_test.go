@@ -26,16 +26,32 @@ func TestRunLeaseClaimChild(t *testing.T) {
 	var token [1]byte
 	_, err := os.Stdin.Read(token[:])
 	require.NoError(t, err)
-	_, won, err := s.ClaimRun(context.Background(), "shared", "agent", os.Getenv("SYSBOX_TEST_RUN_CLAIM_OWNER"), time.Minute)
+	var won bool
+	if os.Getenv("SYSBOX_TEST_CLAIM_KIND") == "command" {
+		_, won, err = s.AcquireAgentCommandLease(context.Background(), "agent", "shared", os.Getenv("SYSBOX_TEST_RUN_CLAIM_OWNER"), time.Minute)
+	} else {
+		_, won, err = s.ClaimRun(context.Background(), "shared", "agent", os.Getenv("SYSBOX_TEST_RUN_CLAIM_OWNER"), time.Minute)
+	}
 	require.NoError(t, err)
 	fmt.Printf("won=%t\n", won)
 }
 func TestRunLeaseHasOneWinnerAcrossProcesses(t *testing.T) {
+	assertLeaseHasOneWinnerAcrossProcesses(t, "run")
+}
+func TestCommandLeaseHasOneWinnerAcrossProcesses(t *testing.T) {
+	assertLeaseHasOneWinnerAcrossProcesses(t, "command")
+}
+func assertLeaseHasOneWinnerAcrossProcesses(t *testing.T, kind string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	root := t.TempDir()
 	store := &localAPIStore{runsDir: root}
-	require.NoError(t, store.SaveRun(ctx, controlplane.Run{ID: "shared", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}))
+	if kind == "command" {
+		require.NoError(t, store.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "shared", AgentID: "agent", Type: "node_operation"}))
+	} else {
+		require.NoError(t, store.SaveRun(ctx, controlplane.Run{ID: "shared", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}))
+	}
 	binary, err := os.Executable()
 	require.NoError(t, err)
 	const count = 3
@@ -46,6 +62,7 @@ func TestRunLeaseHasOneWinnerAcrossProcesses(t *testing.T) {
 	for i := 0; i < count; i++ {
 		cmd := exec.CommandContext(ctx, binary, "-test.run=^TestRunLeaseClaimChild$", "-test.count=1")
 		cmd.Env = append(os.Environ(), "SYSBOX_TEST_RUN_CLAIM_ROOT="+root, fmt.Sprintf("SYSBOX_TEST_RUN_CLAIM_OWNER=worker-%d", i))
+		cmd.Env = append(cmd.Env, "SYSBOX_TEST_CLAIM_KIND="+kind)
 		out, err := cmd.StdoutPipe()
 		require.NoError(t, err)
 		in, err := cmd.StdinPipe()
@@ -97,6 +114,14 @@ func TestRunLeaseHasOneWinnerAcrossProcesses(t *testing.T) {
 	}
 	require.Equal(t, count, responses)
 	require.Equal(t, 1, winners)
+	if kind == "command" {
+		got, err := store.ListAgentCommands(ctx, "agent")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.Equal(t, 1, got[0].Attempt)
+		require.Equal(t, controlplane.AgentCommandStatusLeased, got[0].Status)
+		return
+	}
 	got, err := store.GetRun(ctx, "shared")
 	require.NoError(t, err)
 	require.Equal(t, 1, got.Attempt)

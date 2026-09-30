@@ -1,7 +1,7 @@
 # Sysbox 生命周期重构：实施状态与验证边界
 
 > 日期：2026-09-28
-> 更新：2026-09-29
+> 更新：2026-09-30
 > 工作分支：`refactor/observation-driven-runtime`
 > 核心实现提交：`72e227a`；未合入 main，未推送远端。
 > Guest metadata 共享仓储提交：`3679f21`。
@@ -26,7 +26,8 @@ Provider 执行 → 保存恢复证据 → 再观察验证
 |---|---|---|
 | 生命周期 repository | 文件、SQLite、Postgres 共用 aggregate 编解码、身份校验、意图/结果转换与 CAS | 全部 API metadata repository、outbox、跨控制器 fencing 已统一 |
 | Guest metadata repository | GuestExecution 与 GuestFileOperation 共用版本化 codec、CAS、状态约束、私有绑定和 acceptance 汇总；三种后端仅做物理读写 | Run、Agent、命令队列等其余 metadata 已迁移；Postgres 已通过真实服务测试 |
-| Run repository | Save/Restart/Claim/Renew/Expire 共用原子状态规则；完整 SQLite 快照；执行轮次和 Inputs 隔离 | 全部读取与 dispatch 适配、Agent/命令仓储、完整 outbox 和资源侧 fencing 已完成 |
+| Run repository | Save/Restart/Claim/Renew/Expire 共用原子状态规则；完整 SQLite 快照；执行轮次和 Inputs 隔离 | 全部读取与 dispatch 适配、Agent 仓储、完整 outbox 和资源侧 fencing 已完成 |
+| Command repository | 三种后端共用载荷绑定、租约、终态与退休规则；发送前原子核对授权；文件派发 ID 防冲突 | Agent repository、完整 operation+command outbox、资源侧 fencing 或带租约证明的事件协议已完成 |
 | Runtime | 默认 Apply/Destroy/Reset 走观察、授权、写前意图、验证、原子提交；恢复只提交可证明结果 | 每种资源都已有完整的 discovery/read-back；所有 interrupted reset 都能自动继续 |
 | Firecracker | 版本化 manifest、身份/代际/进程锚点、文件锁、冷恢复、pidfd 校验后发信号；reset 保留真实目标 ActionID | 已通过真实 KVM、宿主机重启或内核版本矩阵验证 |
 | Docker / libvirt / isolated network | 管理身份、发现、拥有者约束；reset 的旧/新代际校验；隔离网络的观测与 ownership 标记 | 已通过真实 Docker/libvirt/网络设备 E2E |
@@ -47,7 +48,21 @@ Runtime 定义 `ActionRepository` 端口，`pkg/persistence` 实现它。Provide
 - 第一次 create 只有 intent、尚无成功资源时，目录列表仍能看到它。
 - 删除 metadata 使用 owner + serial CAS，拒绝未完成动作；保留 repository 锁文件和新 owner 身份，避免 unlink 锁导致双写。
 
-GuestExecution 和 GuestFileOperation 已迁移到 `GuestRepository`，Run 写入与租约转移已迁移到 `RunRepository`。Agent、命令队列和部分 Run 读取/dispatch 适配仍在既有 store 中。沿用原有表和路径，不增加独立的第二套数据副本；与生命周期 aggregate 之间仍无跨域原子事务，不能声称三套存储已全部合并。
+GuestExecution 和 GuestFileOperation 已迁移到 `GuestRepository`，Run 写入与租约转移已迁移到 `RunRepository`，命令状态规则已迁移到 `CommandRepository`。Agent、命令事件和部分 Run 读取/dispatch 适配仍在既有 store 中。沿用原有表和路径；与生命周期 aggregate 之间仍无跨域原子事务，不能声称三套存储已全部合并。
+
+### Command 的实际规则
+
+- 身份、agent、类型与载荷绑定不可变。普通 Save 不能替换 lease owner、attempt 或截止时间；控制面取消保留当前租约，不能借取消清空原载荷。
+- leased 仍是待交付状态，租约过期后可重新领取；TTL 必须为正，授权时间在存储锁内采样，提交失败不返回成功授权。
+- 发送前用 `PrepareAgentCommandDelivery` 原子检查当前 leased 状态、未过期 owner/attempt 与截止时间，再持久化 delivered。不能把 stale Save 的无操作成功当成发送许可。无持久存储不允许从内存授予租约。
+- Delete 保留退休记录，列表不再展示、也不能重新创建同 ID。文件后端的退休记录覆盖初始 dispatch seed，防止命令删除后重新出现；这不是对全部历史载荷的物理擦除。
+- FS 命令写入与 Run dispatch 共用跨进程锁。新的命令 ID 冲突拒绝整个 bundle；接管已有 Run 只写 request mapping，不生成第二条命令。文件发布共用带文件与目录 fsync 的原子写入。
+- SQLite 保存完整快照并核对索引字段、载荷与时间；Postgres 核对身份、状态与租约列，回调决策在行锁事务中提交。列表排序一致，取消 PostgreSQL 独有的 512 条截断。
+- WebSocket 事件中的非空 AgentID 必须等于认证连接身份。现有 v1 事件没有 owner/attempt 证明，因此本阶段不宣称阻止所有迟到事件或资源侧副作用；后续需要显式协议设计和 fencing。
+
+命令合同覆盖并发与独立进程抢租约、过期重新交付、提交失败、取消后发送、身份冒用、终态保护、退休防复活、派发冲突、时区 round-trip 和 SQLite 快照损坏。Postgres 实库仍未配置；共享合同中的 PostgreSQL 分支跳过，不能当作实库验收。完整 Run/Guest outbox 尚未完成。
+
+该命令检查点通过独立复审，以及全仓无缓存 unit/race、vet、docs 和 diff 检查。升级时必须停止旧 API writer：旧 writer 不理解退休记录和完整快照约束，不能与本实现混跑。
 
 ### Run 的实际规则
 
