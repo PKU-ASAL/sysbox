@@ -500,12 +500,19 @@ func probeProcess(anchor processIdentity) (bool, bool, error) {
 	if err != nil {
 		return false, false, err
 	}
-	if processStartTime(anchor.PID) != anchor.StartTime {
-		return false, false, fmt.Errorf("firecracker process start identity conflict")
-	}
 	end := strings.LastIndexByte(string(raw), ')')
 	if end < 0 || len(raw) <= end+2 {
 		return false, false, fmt.Errorf("firecracker invalid process stat")
+	}
+	// Compare identity from the same stat snapshot. A second /proc read can
+	// race the reaper and turn a disappeared owned process into a false PID
+	// reuse conflict. Later executable/argv checks still verify live identity.
+	fields := strings.Fields(string(raw[end+1:]))
+	if len(fields) < 20 {
+		return false, false, fmt.Errorf("firecracker invalid process stat")
+	}
+	if fields[19] != anchor.StartTime {
+		return false, false, fmt.Errorf("firecracker process start identity conflict")
 	}
 	state := raw[end+2]
 	if state == 'Z' || state == 'X' {
