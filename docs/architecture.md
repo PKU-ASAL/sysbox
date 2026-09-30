@@ -23,6 +23,19 @@ decoder -> typed graph -> planner -> ordered actions
 
 本地 CLI 与 API/Agent 模式共享 decoder、planner、executor、state manager 和 provider。API 只提供产品对象、调度与远程执行桥接，不定义另一套拓扑语义。
 
+## 消费者边界
+
+Sysbox 定义并维护通用基础设施契约：拓扑、资源、制品、执行、观测和生命周期。消费者
+负责业务实体、业务策略及其到基础设施的映射；该映射只能存在于消费者自己的适配层。
+
+- 用户自定义业务标识是输入数据，不是 Sysbox 的领域类型。除公开契约规定的校验外，
+  不按镜像或拓扑的业务前缀、仓库来源、消费者身份触发专属行为。
+- Schema、API、state、runtime 和 driver 不依赖消费者的私有模型、文件布局或命名规则。
+- 仓库测试使用自包含的通用夹具；真实后端测试可以显式接收连接和已有资源引用，
+  但不得读取消费者仓库来确定正确性，也不以消费者的部署成功作为本项目验收标准。
+- 文档由本仓库维护基础设施契约；消费者的镜像供给、版本部署和业务端到端验收留在
+  消费者项目中。
+
 ## 配置与图
 
 顶层配置由 substrate、variable、locals、module、data、resource 和 output 组成。Resource reference 与显式 `depends_on` 形成有向图；create 按拓扑顺序执行，destroy 按逆序执行。

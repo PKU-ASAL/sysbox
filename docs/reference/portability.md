@@ -1,7 +1,7 @@
 # Artifact 与 Topology 可移植性规范
 
 本文定义**多个独立环境之间可交叉部署**所需遵守的约定。目标读者是各自拥有
-独立镜像构建与 topology 仓库的环境（例如 `sysfield`、`cyberfield`）：它们
+独立镜像构建与 topology 仓库的部署环境：它们
 彼此不共享代码、registry 或缓存，但只要双方都遵守本规范，一方跑通的环境就能
 原样部署到另一方，无需修改 topology 或重新构建镜像。
 
@@ -19,16 +19,16 @@
 <owner>-<role>:<version>
 ```
 
-- `<owner>`：环境标识（`sysfield`、`cyberfield` 等），小写，短横线分隔。
+- `<owner>`：由镜像所有者选择的环境标识，小写，短横线分隔；sysbox 不解释其业务含义。
 - `<role>`：节点角色，表达用途而非临时实现（`web-target`，不是 `ubuntu_1`）。
 - `<version>`：语义化版本（`0.1.0`）。
 
 示例：
 
 ```
-sysfield-web-target:0.1.0
-sysfield-enterprise-node:0.1.0
-cyberfield-sql-injection:2.3.0
+example-web:0.1.0
+example-worker:0.1.0
+example-database:2.3.0
 ```
 
 - 长期身份（研究复现、生产部署）用 registry digest 而非可变 tag。
@@ -83,19 +83,19 @@ $HOME/libvirt/<domain>/             # libvirt per-VM overlay（workdir）
 可交叉部署的 topology 必须把「环境相关」与「场景本质」分开：
 
 - **场景本质**写死在 HCL：substrate 别名、节点角色、拓扑结构、网络划分、
-  攻击面语义、provisioner。这部分换环境也不变。
+  服务配置、provisioner。这部分换环境也不变。
 - **环境相关**通过 `env_optional()` / `env()` 注入：rootfs/qcow2 路径、
   网络 octet（避免多环境地址冲突）、SSH 授权 key、apt 镜像源。示例：
 
   ```hcl
   locals {
     rootfs_path    = env_optional("SYSBOX_ROOTFS") != "" ? env_optional("SYSBOX_ROOTFS") : "${env_optional("HOME")}/.cache/sysbox/rootfs/ubuntu-24.04.ext4"
-    network_octet  = env_optional("SYSFIELD_NETWORK_OCTET") != "" ? env_optional("SYSFIELD_NETWORK_OCTET") : "78"
-    ssh_authorized = env_optional("SYSFIELD_SSH_AUTHORIZED_KEYS") != "" ? [env_optional("SYSFIELD_SSH_AUTHORIZED_KEYS")] : []
+    network_octet  = env_optional("TOPOLOGY_NETWORK_OCTET") != "" ? env_optional("TOPOLOGY_NETWORK_OCTET") : "78"
+    ssh_authorized = env_optional("TOPOLOGY_SSH_AUTHORIZED_KEYS") != "" ? [env_optional("TOPOLOGY_SSH_AUTHORIZED_KEYS")] : []
   }
   ```
 
-- 资源 label 用稳定角色名（`sysbox_node.attacker`、`sysbox_network.experiment`），
+- 资源 label 用稳定角色名（`sysbox_node.web`、`sysbox_network.internal`），
   不用临时实现名。
 - 引用自动形成依赖；只在引用无法表达时用 `depends_on`。
 - provider 专属参数（`privileged`、`binds`、`allow_direct` 等）留在 provider 块。

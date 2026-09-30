@@ -55,7 +55,7 @@ runtime 测试覆盖 OCI 调用正确 driver、检查名称、无检查能力的
 - OCI tar/URL 导入与归档摘要设计。
 - apply 的“所有 inspect 错误均触发 pull”相邻问题。
 - repository、observation-driven 引擎、Firecracker 重构。
-- 版本发布、推送远端或修改 cyberfield 的 SYSBOX_IMAGE。
+- 版本发布、推送远端或修改消费者的部署配置。
 
 ## 进度
 
@@ -77,6 +77,6 @@ runtime 测试覆盖 OCI 调用正确 driver、检查名称、无检查能力的
 
 ### 后续实机验收更新（2026-09-30）
 
-用户随后要求完整包回归及真实 Docker 联调。获得受控执行授权后，Docker/API 普通回归和完整包 race 命令均成功；真实 OCI 联调及两份 L3 拓扑通过，确认 11 个目标镜像未缓存但均正确返回 warning，整体 `ok: true`。带 L3 的每轮只读网关记录 30 次 inspect，非允许请求为 0。
+用户随后要求完整包回归及真实 Docker 联调。获得受控执行授权后，Docker/API 普通回归和完整包 race 命令均成功。仓库内的验收夹具仅覆盖通用 OCI 状态：缓存命中、摘要不符、未缓存以及多镜像检查汇总；不读取消费者仓库、不识别消费者的镜像命名规则。只读网关记录并禁止所有非允许请求。
 
 上述沙箱阻断已解决，但原有 6 项 PostgreSQL 与 1 项 guest-execution E2E 因缺少专用环境仍条件跳过，不计为通过。可重复测试、执行命令和完整性边界见 `docs/superpowers/verification/2026-09-30-oci-image-preflight.md`。没有修改生产代码、真实 Docker 资源或原有拓扑；仍未合并、推送或发布。

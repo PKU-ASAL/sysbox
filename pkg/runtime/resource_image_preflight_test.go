@@ -49,7 +49,7 @@ func TestImagePreflightOCIUsesConfiguredDriver(t *testing.T) {
 	d := &preflightImageDriver{checks: []substrate.PreflightCheck{{Name: "provider-image", OK: true, Severity: "warning", Message: "not cached", Hint: "docker load or pullable reference"}}}
 	registerImageArtifactDriver(t, d)
 	start := time.Now()
-	checks := imagePreflightHCL(t, "cvelab-runtime-test:latest", "image-test")
+	checks := imagePreflightHCL(t, "local-image-test:latest", "image-test")
 	require.Len(t, checks, 1)
 	require.Equal(t, "image:lab:oci", checks[0].Name)
 	require.Equal(t, "warning", checks[0].Severity)
@@ -57,7 +57,7 @@ func TestImagePreflightOCIUsesConfiguredDriver(t *testing.T) {
 	require.Equal(t, d.checks[0].Hint, checks[0].Hint)
 	require.True(t, d.called)
 	require.Equal(t, substrate.ArtifactOCI, d.source.Kind)
-	require.Equal(t, "cvelab-runtime-test:latest", d.source.Source)
+	require.Equal(t, "local-image-test:latest", d.source.Source)
 	require.Equal(t, "sha256:"+strings.Repeat("a", 64), d.source.ExpectedDigest)
 	require.Equal(t, "amd64", d.source.Architecture)
 	require.Equal(t, substrate.GuestFamily("linux"), d.source.GuestFamily)

@@ -48,7 +48,7 @@ func TestOCIImagePreflight(t *testing.T) {
 			transport := imagePreflightTransport(func(r *http.Request) (*http.Response, error) {
 				calls++
 				require.Equal(t, http.MethodGet, r.Method, "preflight must never pull or load")
-				reference := "cvelab-runtime-test:latest"
+				reference := "local-image-test:latest"
 				if tc.resolved != "" {
 					reference = tc.resolved
 				}
@@ -77,12 +77,12 @@ func TestOCIImagePreflight(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
-			checks := checker.PreflightImage(ctx, substrate.ArtifactSource{Kind: substrate.ArtifactOCI, Source: "cvelab-runtime-test:latest", ResolvedSource: tc.resolved, ExpectedDigest: tc.expected})
+			checks := checker.PreflightImage(ctx, substrate.ArtifactSource{Kind: substrate.ArtifactOCI, Source: "local-image-test:latest", ResolvedSource: tc.resolved, ExpectedDigest: tc.expected})
 			require.Len(t, checks, 1)
 			require.Equal(t, tc.ok, checks[0].OK)
 			require.Equal(t, tc.severity, checks[0].Severity)
 			require.Contains(t, checks[0].Message, tc.message)
-			require.Contains(t, checks[0].Message, "cvelab-runtime-test:latest")
+			require.Contains(t, checks[0].Message, "local-image-test:latest")
 			require.Equal(t, 1, calls)
 			if tc.name == "mismatch" {
 				require.Contains(t, checks[0].Message, digest)

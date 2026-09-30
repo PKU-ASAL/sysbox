@@ -2,23 +2,22 @@
 
 日期：2026-09-05
 前置：`docs/design/topology-readiness-contract.md`（S1–S3 已实现）
-消费者契约：`cyberfield/api/sysbox.v1.yaml`
+接口参考：`docs/reference/api.md`
 
 ## 一、背景与目标
 
-cyberfield（比赛编排）需要一个「一步收敛」的接口：`POST /v1/topologies/{name}/apply`
+sysbox 为消费者提供「一步收敛」的接口：`POST /v1/topologies/{name}/apply`
 以 revision digest + sensitive inputs 收敛一个拓扑，拓扑不存在时创建、存在时收敛。
 今天的多步流程（create → hcl → plans → apply(plan_id) → 轮询 run）要收进
 apply 与 conditions 背后。
 
 关注点分离是本次设计的硬约束：
 
-- cyberfield 管比赛（campaign / scenario / team / assignment）
-- CTFd 管评分（flag / submission / score）
+- 消费者管理业务实体、访问策略与业务生命周期
 - sysbox 管拓扑（topology / revision / inputs / conditions / outputs）
 
-sysbox 侧不出现任何比赛词汇；cyberfield 的概念到 sysbox 概念的映射只发生在
-cyberfield 的 adapter 层。
+sysbox 不解释消费者的业务词汇；业务概念到基础设施概念的映射只发生在
+消费者的 adapter 层。
 
 ## 二、架构定位：一套核心 + 两个前端 + 两种存储
 
@@ -45,13 +44,13 @@ POST /v1/revisions
 ```
 
 - digest = HCL 字节的 SHA256，内容寻址、幂等（同一 HCL 重复 publish 返回同一 digest）。
-- 只存内容，不绑定任何 topology；一份赛题 HCL 被多支队伍共用。
+- 只存内容，不绑定任何 topology；一份 HCL revision 可供多个独立拓扑实例复用。
 
 ### 扩展
 
 ```
 POST /v1/topologies/{name}/apply
-  请求 { "revision": "sha256:<hex>", "inputs": {"flag": "..."}, "deadline_at": "..." }
+  请求 { "revision": "sha256:<hex>", "inputs": {"service_token": "..."}, "deadline_at": "..." }
   响应 202 { "name": "...", "status": {...} }   // 与 GET 同形
 ```
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 cyberfield 用「publish HCL → revision digest → upsert apply」一步收敛拓扑，取代 create→hcl→plans→apply 多步流程。
+**Goal:** 提供「publish HCL → revision digest → upsert apply」的一步拓扑收敛接口，取代 create→hcl→plans→apply 多步流程。
 
 **Architecture:** 内容寻址的全局 revision registry（HCL 内容存储）+ upsert apply（create-if-not-exists + 收敛）。revision registry 是 HCL 的唯一来源，apply 时物化到 workspace 文件供 executor 读。nodes/outputs 补进状态，deadline_at 成为 apply 入参。旧端点（create/hcl/plans + per-topology revisions）删除。
 

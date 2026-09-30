@@ -68,7 +68,7 @@ Sysbox 自身拒绝无限收敛：到点即 `phase=failed`，并写明原因。�
 
 `Ready = Applied ∧ Provisioned ∧ Asserted`，是计算出的组合条件，**不是闸门**。断言失败时 Sysbox 照常交付拓扑。门禁是消费者策略：
 
-- 办比赛的消费者门禁于 `Ready`——断言不过不发凭证
+- 部署控制器门禁于 `Ready`——断言通过后才向业务工作负载开放访问
 - 调试者门禁于 `Applied`——断言失败不影响工作
 - 巡检工具订阅 `Asserted` 的翻转
 
@@ -231,7 +231,7 @@ Ansible 作为**可选的 provisioner 实现**，以独立镜像发布，不进 
 
 | 不做 | 理由 |
 |---|---|
-| 引入任何消费者领域的概念 | Sysbox 的词汇止于 project / workspace / revision / plan / run / topology / node / network / image / provisioner / data / check / assert / agent / capability / lease。比赛、队伍、赛题、评分不属于这里，一旦引入不可逆 |
+| 引入任何消费者领域的概念 | Sysbox 的词汇止于 project / workspace / revision / plan / run / topology / node / network / image / provisioner / data / check / assert / agent / capability / lease。业务实体及业务策略只属于消费者，不进入基础设施契约 |
 | 把 `Ready` 变成闸门 | 产品要服务多种消费者，门禁策略属消费者（见 S1(b)） |
 | 发明断言 DSL | `condition` 用 HCL 布尔表达式即可；更复杂的逻辑写进 `sysbox_exec` 调用的脚本 |
 | 让 check 参与依赖图 | 会引入 check ↔ resource 的环，且偏离 Terraform |
@@ -251,20 +251,16 @@ Ansible 作为**可选的 provisioner 实现**，以独立镜像发布，不进 
 
 ## 五、与消费者的协同
 
-第一个真实消费者已把它对本契约的要求写成可执行的文件：
-
-```
-cyberfield/api/sysbox.v1.yaml
-```
-
-其中标 `x-cyberfield-status: pending` 的项正是 S1–S3。该文件同时声明了两条本文应满足的语义：
+Sysbox 自己维护接口与验收契约（见 `docs/reference/api.md`），消费者通过公开接口
+接入，不以某个消费者仓库中的 schema 或私有扩展作为本项目的规范来源。
+本文要求以下两条通用语义：
 
 - **`apply` 是 upsert**：拓扑不存在时创建，存在时收敛到指定 revision。消费者不做「先查存在、不存在则创建、再 apply」——那会在多个消费者实例之间制造竞态。
 - **plan 与 run 是 Sysbox 的实现细节**：消费者不感知 plan 资源、不轮询 run。apply 同步受理后异步收敛，此后只读 conditions。
 
 这两条是本次改动对现有接口形态的实质要求：今天的多步流程（create → hcl → plans → apply(plan_id) → 轮询 run → health）要收进 apply 与 conditions 背后。
 
-让消费者先写契约、Sysbox 再实现，是刻意的顺序——先写规范再发现不好用，返工更贵。
+消费者反馈用于检验通用契约是否完整，但不将其私有领域模型带入 Sysbox。
 
 ### 推进顺序建议
 
@@ -283,7 +279,8 @@ cyberfield/api/sysbox.v1.yaml
 
 ## 六、来源
 
-本文的 S1–S4 取自 2026-09-01 的跨仓库架构决策文档（现存于 cyberfield 仓库历史：`git show fe18792:docs/architecture/sysbox-boundary-design.md`），并在 2026-09-04 对 Sysbox 现状逐条重新核对。核对结果修正了三处：
+本文的 S1–S4 源于早期接口协同调研，并在 2026-09-04 对 Sysbox 现状逐条重新核对。
+本仓库保留通用基础设施契约，不依赖外部项目的历史文档。核对结果修正了三处：
 
 1. **`VariableBlock` 已存在**，`sensitive` 是加属性而非加块——比原估计更小。
 2. **`GET /v1/topologies/{name}` 已存在**（返回 `WorkspaceInfo` 元数据：`name` / `has_hcl` / `has_state` / `resource_count`）。原文档误以为它不存在、需「挂到已有 `/health` 端点」。S1 是给这个**已有端点加 `status` 块**，而非新增端点。

@@ -25,29 +25,28 @@ Docker/API 普通完整包测试以及启用 race 的完整包测试均返回成
 | 已缓存，未钉 SHA | info | `ok: true` |
 | 未缓存的本地构建风格引用 | warning，含导入/可拉取引用两条提示 | `ok: true` |
 | 未缓存的 registry 形式引用 | warning，不探测 registry | `ok: true` |
-| `test-L3-tree-alpha` | 6 个目标镜像未缓存，均 warning；路由镜像通过 | `ok: true` |
-| `test-L3-five-tier` | 5 个目标镜像未缓存，均 warning；路由镜像通过 | `ok: true` |
+| 多镜像拓扑：1 个已缓存、2 个未缓存 | 已缓存镜像 info；两个未缓存镜像分别 warning，保留各自资源名与处置提示 | `ok: true` |
 
-两份真实 L3 HCL 从 cyberfield 工作区只读读取并复制到临时工作区。11 个目标镜像的检查项逐个与真实 image inspect 结果对照，并校验名称和处置提示；不是仅静态统计 HCL。这证明缺失镜像会被早期报告，不代表其后续 apply 能成功，也未判断远端可拉取性。
+所有 HCL 均由测试自身生成，使用通用镜像引用和随机缺失引用，不读取其他项目的文件，也不按镜像业务前缀筛选资源。这验证缺失镜像会被早期报告，不代表其后续 apply 能成功，也未判断远端可拉取性。
 
-使用缓存镜像完整 ID 跑通一轮；再使用已缓存的 `frrouting/frr:latest` 标签，开启 race 连续运行 3 次，全部通过。带两份 L3 拓扑的每轮记录 30 次 image inspect，禁止的请求为 0。
+实测覆盖通过完整 image ID 或缓存标签选择夹具镜像。测试要求所有 Docker 请求都属于只读允许列表；镜像选择只由 `SYSBOX_TEST_DOCKER_IMAGE` 提供，不依赖任何特定镜像内容或业务用途。通用夹具已随 driver/runtime/Docker/API 完整包 race 回归通过，并独立开启 race 连续运行 3 次通过；每轮记录 9 次 image inspect，非允许请求为 0。
 
 首轮集成测试曾因网关把 `DOCKER_HOST` 设为 `http://` 而失败：Go SDK 可以使用该地址，Docker CLI 报 `invalid bind address format`。已将测试环境地址修正为 SDK 与 CLI 均支持的 `tcp://` 并重跑通过；这是测试夹具问题，没有修改生产探针。
 
 ## 复跑命令
 
-在允许本地监听且可访问 `/var/run/docker.sock` 的开发机或 CI 上，于此修复分支执行。`frrouting/frr:latest` 必须已缓存；也可替换为另一个已有镜像引用或完整 image ID。测试不会自动拉取。当前集成测试只支持本机 Unix-socket daemon。
+在允许本地监听且可访问 `/var/run/docker.sock` 的开发机或 CI 上，于此修复分支执行。先把 `SYSBOX_TEST_DOCKER_IMAGE` 设置为任意已有镜像引用或完整 image ID。测试不读取镜像文件内容、不运行镜像，也不会自动拉取。当前集成测试只支持本机 Unix-socket daemon。
 
 ```bash
 export GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local
 go test -mod=readonly -race ./pkg/provider/docker ./pkg/api -count=1 -timeout=5m
 
-SYSBOX_TEST_DOCKER_IMAGE=frrouting/frr:latest \
-  go test -mod=readonly -race ./pkg/api \
+test -n "${SYSBOX_TEST_DOCKER_IMAGE:-}" || exit 1
+go test -mod=readonly -race ./pkg/api \
   -run '^TestPreflightOCIRealDocker$' -count=3 -v -timeout=3m
 ```
 
-可选设置 `SYSBOX_TEST_OCI_TOPOLOGIES` 为两份 `field.sysbox.hcl` 的绝对路径列表，Linux 使用冒号分隔。所提供 HCL 应自包含：测试仅复制 HCL，不复制相对路径的外部文件/模块；它们应在当前主机上最多产生 warning，缓存但摘要不符会令验收失败。
+多镜像检查由测试内部构造，不需要外部拓扑目录、业务环境或消费者专用配置。
 
 实测使用 `GOCACHE=/tmp/sysbox-oci-go-build`，没有下载 Go 依赖；未推送或发布版本。
 
