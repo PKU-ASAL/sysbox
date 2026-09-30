@@ -4,7 +4,7 @@
 
 补齐 `sysbox_image kind = "oci"` 的资源级 preflight。检查目标是 apply 使用的 Docker daemon，而不是浏览器所在机器。检查不 pull、不 load、不访问 registry；本地未缓存不阻塞首次 apply。
 
-独立分支：`fix/oci-image-preflight`，基于 `main` 的 `2e612e3`。不修改 `/tmp/sysbox-refactor`，不合并主线程重构，不发布镜像或修改消费方版本。
+独立分支：`fix/oci-image-preflight`，PR 基于 GitHub `main` 的 `8628abb`，只包含本次修复提交。不修改其他 worktree，不合并无关重构，不发布镜像或修改消费方版本。
 
 ## 方案选择
 
@@ -79,4 +79,4 @@ runtime 测试覆盖 OCI 调用正确 driver、检查名称、无检查能力的
 
 用户随后要求完整包回归及真实 Docker 联调。获得受控执行授权后，Docker/API 普通回归和完整包 race 命令均成功。仓库内的验收夹具仅覆盖通用 OCI 状态：缓存命中、摘要不符、未缓存以及多镜像检查汇总；不读取消费者仓库、不识别消费者的镜像命名规则。只读网关记录并禁止所有非允许请求。
 
-上述沙箱阻断已解决，但原有 6 项 PostgreSQL 与 1 项 guest-execution E2E 因缺少专用环境仍条件跳过，不计为通过。可重复测试、执行命令和完整性边界见 `docs/superpowers/verification/2026-09-30-oci-image-preflight.md`。没有修改生产代码、真实 Docker 资源或原有拓扑；仍未合并、推送或发布。
+上述沙箱阻断已解决，但原有 6 项 PostgreSQL 与 1 项 guest-execution E2E 因缺少专用环境仍条件跳过，不计为通过。可重复测试、执行命令和完整性边界见 [实机验收记录](../development/oci-image-preflight-verification.md)。该验证阶段没有修改生产代码、真实 Docker 资源或原有拓扑；合入与发布是独立流程。
