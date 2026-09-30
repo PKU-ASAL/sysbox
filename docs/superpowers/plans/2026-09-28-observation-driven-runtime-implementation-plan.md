@@ -93,10 +93,20 @@ Implementation commit: `d581b80`. Independent review and full uncached unit/race
 - [x] Reproduce command payload replacement, invalid lease TTL, stranded leased records, concurrent claims and retired-bundle resurrection.
 - [x] Centralize command state rules and strict adapters; persist delivery authorization and reject authenticated stream identity mismatches.
 - [x] Independently review the command slice and pass full unit/race/vet/docs/diff checks; keep Agent and full outbox outside this checkpoint.
-- [ ] Centralize Agent state rules; prevent stale heartbeat/offline updates from overwriting policy.
+- [x] Centralize Agent state rules; prevent stale heartbeat/offline updates from overwriting policy.
 - [ ] Commit operation plus command atomically for Run and Guest paths; use durable dispatch on retries/restarts and propagate storage failures before delivery.
 - [ ] Cover payload privacy, cancellation, command ownership, cross-process races and outbox crash points; run independent review and required checks.
 - [ ] Update actual completion boundaries before moving to resource fencing and owning-agent recovery.
+
+### Active Agent repository slice — 2026-09-30
+
+Shared `persistence.AgentRepository` owns validated codecs and explicit Register, Save, Heartbeat, UpdatePolicy and ExpireHeartbeat operations. Register preserves existing policy and requires the current credential for protected identities; Save is internal administrative replacement. Atomic callbacks re-read current policy/liveness before mutation; FS uses its stable record lock, SQLite BEGIN IMMEDIATE, Postgres row locks. Existing agent paths/tables stay authoritative.
+
+- [x] Add and run failing backend/service tests for incomplete SQLite updates, cached authorization on storage errors, stale offline scans and heartbeat policy/credential replacement.
+- [x] Implement `pkg/persistence/agent_repository.go`, `pkg/api/agent_records_{file,sqlite,postgres}.go` and thin delegates; validate identifiers, status and persisted records.
+- [x] Route heartbeat, registration and policy handlers through typed atomic operations; return list/read errors to scheduling and HTTP callers instead of registry fallback.
+- [x] Add concurrent policy/heartbeat, corruption, restart, cross-process and failed-commit regressions; review independently and pass full unit/race/vet/docs checks.
+- [x] Document actual guarantees and checkpoint this slice before implementing operation/command outbox.
 
 ## Task 1: Establish the P0 test and synchronization baseline
 

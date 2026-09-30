@@ -27,7 +27,8 @@ Provider 执行 → 保存恢复证据 → 再观察验证
 | 生命周期 repository | 文件、SQLite、Postgres 共用 aggregate 编解码、身份校验、意图/结果转换与 CAS | 全部 API metadata repository、outbox、跨控制器 fencing 已统一 |
 | Guest metadata repository | GuestExecution 与 GuestFileOperation 共用版本化 codec、CAS、状态约束、私有绑定和 acceptance 汇总；三种后端仅做物理读写 | Run、Agent、命令队列等其余 metadata 已迁移；Postgres 已通过真实服务测试 |
 | Run repository | Save/Restart/Claim/Renew/Expire 共用原子状态规则；完整 SQLite 快照；执行轮次和 Inputs 隔离 | 全部读取与 dispatch 适配、Agent 仓储、完整 outbox 和资源侧 fencing 已完成 |
-| Command repository | 三种后端共用载荷绑定、租约、终态与退休规则；发送前原子核对授权；文件派发 ID 防冲突 | Agent repository、完整 operation+command outbox、资源侧 fencing 或带租约证明的事件协议已完成 |
+| Command repository | 三种后端共用载荷绑定、租约、终态与退休规则；发送前原子核对授权；文件派发 ID 防冲突 | 完整 operation+command outbox、资源侧 fencing 或带租约证明的事件协议已完成 |
+| Agent repository | 三种后端共用注册、心跳、策略和离线判定；锁内合并；存储错误不回退缓存授权 | inventory、projection、命令事件已统一，或已经有完整身份轮换协议 |
 | Runtime | 默认 Apply/Destroy/Reset 走观察、授权、写前意图、验证、原子提交；恢复只提交可证明结果 | 每种资源都已有完整的 discovery/read-back；所有 interrupted reset 都能自动继续 |
 | Firecracker | 版本化 manifest、身份/代际/进程锚点、文件锁、冷恢复、pidfd 校验后发信号；reset 保留真实目标 ActionID | 已通过真实 KVM、宿主机重启或内核版本矩阵验证 |
 | Docker / libvirt / isolated network | 管理身份、发现、拥有者约束；reset 的旧/新代际校验；隔离网络的观测与 ownership 标记 | 已通过真实 Docker/libvirt/网络设备 E2E |
@@ -48,7 +49,21 @@ Runtime 定义 `ActionRepository` 端口，`pkg/persistence` 实现它。Provide
 - 第一次 create 只有 intent、尚无成功资源时，目录列表仍能看到它。
 - 删除 metadata 使用 owner + serial CAS，拒绝未完成动作；保留 repository 锁文件和新 owner 身份，避免 unlink 锁导致双写。
 
-GuestExecution 和 GuestFileOperation 已迁移到 `GuestRepository`，Run 写入与租约转移已迁移到 `RunRepository`，命令状态规则已迁移到 `CommandRepository`。Agent、命令事件和部分 Run 读取/dispatch 适配仍在既有 store 中。沿用原有表和路径；与生命周期 aggregate 之间仍无跨域原子事务，不能声称三套存储已全部合并。
+GuestExecution 和 GuestFileOperation 已迁移到 `GuestRepository`，Run 写入与租约转移已迁移到 `RunRepository`，命令状态规则已迁移到 `CommandRepository`，Agent 注册与存活策略已迁移到 `AgentRepository`。inventory、projection、命令事件和部分 Run 读取/dispatch 适配仍在既有 store 中。沿用原有表和路径；与生命周期 aggregate 之间仍无跨域原子事务，不能声称三套存储已全部合并。
+
+### Agent 的实际规则
+
+- 心跳仅刷新名称、能力、标签、版本和服务端接收时间；省略的上报字段保留旧值，不能改写禁用、隔离、原因、凭据或创建时间。
+- 策略更新在原子事务内只修改显式提供的管理字段；离线扫描在锁内重读当前心跳，不用扫描旧值覆盖新心跳。离线节点的无关策略更新不会直接变为在线。
+- 重新注册保留已有策略与创建时间。受保护身份必须提供当前实际 secret；省略 secret 或只提供公开 hash 会返回 409。修改已有凭据也返回 409；凭据轮换流程尚未实现。首次注册与无凭据 legacy 身份仍沿用现有准入方式。
+- 文件后端用稳定跨进程锁与原子写入；SQLite 用 BEGIN IMMEDIATE；Postgres 用行锁和受主键约束的创建事务。并发新建冲突返回 Conflict，不以未经重读的快照覆盖。
+- 存储错误、损坏和不存在保持区分。Get/List 不再回退 registry；空列表不能复活缓存 Agent。调度与 guest 路由传播存储错误，HTTP 保持字符串 error：缺失 404、冲突 409、损坏/不可用 500。
+- SQLite 更新完整元数据，严格解析 JSON、时间和布尔值；Postgres 核对 JSON 与身份/策略/凭据索引列。缺失 status/protocol 的旧或损坏记录不会被自动补成可调度身份。
+- 内部 Save 保留显式管理替换能力，不是任意调用者的 CAS 接口；运行中的注册、心跳、策略和离线更新均使用各自原子操作。registry 只作缓存，不能据其内容授权。
+
+本检查点未改变 HTTP v1 DTO 或 agent.v1 协议，也没有删除现有元数据或真实资源。旧 API writer 必须停用后升级；完整 outbox、资源侧 fencing、inventory/projection 迁移以及真实 Postgres 验收仍未完成。
+
+Agent 检查点通过独立复审及全仓无缓存 unit/race、vet、docs、diff 检查，覆盖跨进程锁、并发策略/心跳、重启、损坏记录、提交失败及注册身份旁路。全仓 race 另暴露 Firecracker 进程回收窗口：两次读取 stat 之间进程消失会被误判为 PID 身份冲突。已改用同一 stat 快照核对 starttime，保留后续完整身份验证；相关 race 回归重复 10 次通过。
 
 ### Command 的实际规则
 

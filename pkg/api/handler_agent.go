@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,30 +11,31 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
-	agents := s.agentService().List(r.Context())
+	agents, err := s.agentService().List(r.Context())
+	if err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
 	scrubAgentSecretValues(agents)
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
 }
 
 func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
-	var req controlplane.Agent
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var report controlplane.Agent
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent: %w", err))
 		return
 	}
-	agent, err := normalizeAgent(req)
+	agent, err := s.agentService().Register(r.Context(), report)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	if err := s.agentService().Save(r.Context(), agent); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	scrubAgentSecret(&agent)
+	scrubAgentSecret(agent)
 	writeJSON(w, http.StatusCreated, agent)
 }
 
@@ -47,36 +49,14 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	agent, err := s.agentService().Get(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	var req struct {
-		Disabled    *bool  `json:"disabled"`
-		Quarantined *bool  `json:"quarantined"`
-		Reason      string `json:"reason"`
-	}
+	var req persistence.AgentPolicy
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent update: %w", err))
 		return
 	}
-	if req.Disabled != nil {
-		agent.Disabled = *req.Disabled
-	}
-	if req.Quarantined != nil {
-		agent.Quarantined = *req.Quarantined
-	}
-	if req.Reason != "" {
-		agent.Reason = req.Reason
-	}
-	agent.Status = controlplane.AgentStatusForPolicy(agent.Disabled, agent.Quarantined)
-	if agent.Status == controlplane.AgentStatusOnline {
-		agent.Reason = ""
-	}
-	agent.UpdatedAt = time.Now().UTC()
-	if err := s.agentService().Save(r.Context(), *agent); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+	agent, err := s.agentService().UpdatePolicy(r.Context(), id, req)
+	if err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
 	scrubAgentSecret(agent)
@@ -90,7 +70,7 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 	}
 	agent, err := s.agentService().Get(context.Background(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err)
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
 	scrubAgentSecret(agent)
@@ -430,87 +410,34 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
-	var req controlplane.Agent
+	var report controlplane.Agent
 	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		if err := json.NewDecoder(r.Body).Decode(&report); err != nil && err != io.EOF {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent heartbeat: %w", err))
 			return
 		}
 	}
-	req.ID = id
-	req.Status = controlplane.AgentStatusOnline
-	agent, err := normalizeAgent(req)
+	report.ID = id
+	agent, err := s.agentService().Heartbeat(r.Context(), report)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	if existing, err := s.agentService().Get(r.Context(), id); err == nil && existing != nil {
-		if existing.Disabled || existing.Quarantined {
-			agent.Disabled = existing.Disabled
-			agent.Quarantined = existing.Quarantined
-			agent.Reason = existing.Reason
-			agent.Status = controlplane.AgentStatusForPolicy(existing.Disabled, existing.Quarantined)
-		}
-		if agent.Name == "" {
-			agent.Name = existing.Name
-		}
-		if len(agent.Capabilities) == 0 {
-			agent.Capabilities = existing.Capabilities
-		}
-		if len(agent.Labels) == 0 {
-			agent.Labels = existing.Labels
-		}
-		if agent.Version == "" {
-			agent.Version = existing.Version
-		}
-		if agent.SecretHash == "" {
-			agent.SecretHash = existing.SecretHash
-		}
-		if agent.AuthSecret == "" {
-			agent.AuthSecret = existing.AuthSecret
-		}
-		agent.CreatedAt = existing.CreatedAt
-	}
-	agent.LastHeartbeat = time.Now().UTC()
-	agent.UpdatedAt = agent.LastHeartbeat
-	if err := s.agentService().Save(r.Context(), agent); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	scrubAgentSecret(&agent)
+	scrubAgentSecret(agent)
 	writeJSON(w, http.StatusOK, agent)
 }
 
-func normalizeAgent(in controlplane.Agent) (controlplane.Agent, error) {
-	if in.ID == "" {
-		in.ID = in.Name
+func agentRepositoryErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, persistence.ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, persistence.ErrInvalidRecord):
+		return http.StatusBadRequest
+	case errors.Is(err, persistence.ErrConflict):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
 	}
-	if err := validatePathSegment(in.ID, "agent"); err != nil {
-		return controlplane.Agent{}, err
-	}
-	now := time.Now().UTC()
-	if in.Name == "" {
-		in.Name = in.ID
-	}
-	if in.Status == "" {
-		in.Status = controlplane.AgentStatusOnline
-	}
-	if in.CreatedAt.IsZero() {
-		in.CreatedAt = now
-	}
-	if in.UpdatedAt.IsZero() {
-		in.UpdatedAt = now
-	}
-	if in.Status == controlplane.AgentStatusOnline && in.LastHeartbeat.IsZero() {
-		in.LastHeartbeat = now
-	}
-	if in.Protocol == "" {
-		in.Protocol = controlplane.AgentProtocolVersion
-	}
-	if in.Protocol != controlplane.AgentProtocolVersion {
-		return controlplane.Agent{}, fmt.Errorf("unsupported agent protocol %q", in.Protocol)
-	}
-	return in, nil
 }
 
 func scrubAgentSecret(agent *controlplane.Agent) {

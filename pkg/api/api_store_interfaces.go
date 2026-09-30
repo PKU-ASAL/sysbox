@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -69,6 +70,10 @@ type nodeOperationPersistence interface {
 }
 
 type agentStore interface {
+	RegisterAgent(context.Context, controlplane.Agent) (*controlplane.Agent, error)
+	HeartbeatAgent(context.Context, controlplane.Agent) (*controlplane.Agent, error)
+	UpdateAgentPolicy(context.Context, string, persistence.AgentPolicy) (*controlplane.Agent, error)
+	ExpireAgentHeartbeat(context.Context, string, time.Time, time.Duration) (*controlplane.Agent, error)
 	SaveAgent(ctx context.Context, agent controlplane.Agent) error
 	GetAgent(ctx context.Context, id string) (*controlplane.Agent, error)
 	ListAgents(ctx context.Context) ([]controlplane.Agent, error)

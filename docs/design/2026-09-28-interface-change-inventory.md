@@ -6,6 +6,19 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### 2026-09-30 已实施：Agent metadata
+
+本检查点保留 HTTP v1 DTO、agent.v1 和字符串 `error`，没有引入下文设计中的 v2。实际行为调整如下：
+
+| 接口 | 当前行为 |
+|---|---|
+| POST /v1/agents | 重新注册原子保留禁用、隔离、原因和创建时间；受保护身份必须提供当前实际 secret，省略或替换凭据返回 409；尚无凭据轮换接口 |
+| POST /v1/agents/{agent}/heartbeat | 心跳不修改策略或凭据；省略名称等字段保留旧值，存活时间由服务端确定 |
+| Agent 策略更新 | 只原子修改显式给出的策略字段，不覆盖并发心跳和其他策略字段 |
+| Agent Get/List、调度、Guest 路由 | 存储失败不再使用缓存授权，也不伪装成空列表或目标缺失；不存在 404、冲突 409、损坏或不可用 500 |
+| 内部 Go 接口 | AgentService.List 增加 error 返回值；新增 Register/Heartbeat/UpdatePolicy/ExpireHeartbeat 操作，后端共享状态规则 |
+| 旧 Agent metadata | 缺失 status/protocol 等必需字段的记录明确拒绝，不自动补成在线节点；升级须停止旧 writer，按需显式重建 |
+
 ## 1. 变更分类
 
 | 标记 | 含义 | 发布要求 |

@@ -42,7 +42,11 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agentID, err := s.guestExecutionOwner(r.Context(), topology)
-	if err != nil || !s.guestExecutionNodeExists(topology, node) {
+	if err != nil {
+		writeError(w, guestOperationErrorStatus(err), err)
+		return
+	}
+	if !s.guestExecutionNodeExists(topology, node) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("target not found"))
 		return
 	}

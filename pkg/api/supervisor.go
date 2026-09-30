@@ -79,7 +79,10 @@ func (s *Supervisor) loop() {
 
 func (s *Supervisor) Scan(ctx context.Context) {
 	now := time.Now().UTC()
-	s.server.agentService().MarkStaleOffline(ctx, now)
+	if err := s.server.agentService().MarkStaleOffline(ctx, now); err != nil {
+		fmt.Printf("[supervisor] update agent liveness: %v\n", err)
+		return
+	}
 	s.server.jobs.markExpiredLeases(now)
 	s.server.jobs.markConvergenceDeadlineExceeded(now, s.server.cfg.ConvergeTimeout())
 	names, err := s.server.workspaceService().Names(ctx)

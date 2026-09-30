@@ -37,7 +37,11 @@ func (s *Server) authorizeGuestOperation(subj requestSubject) error {
 
 func (s *Server) guestExecutionOwner(ctx context.Context, topology string) (string, error) {
 	var owners []string
-	for _, agent := range s.agentService().List(ctx) {
+	agents, err := s.agentService().List(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, agent := range agents {
 		if !agent.IsSchedulable() {
 			continue
 		}
@@ -55,10 +59,10 @@ func (s *Server) guestExecutionOwner(ctx context.Context, topology string) (stri
 		}
 	}
 	if len(owners) == 0 {
-		return "", fmt.Errorf("topology not found")
+		return "", fmt.Errorf("%w: topology not found", persistence.ErrNotFound)
 	}
 	if len(owners) > 1 {
-		return "", fmt.Errorf("topology ownership conflict")
+		return "", fmt.Errorf("%w: topology ownership conflict", persistence.ErrConflict)
 	}
 	return owners[0], nil
 }
@@ -93,7 +97,7 @@ func (s *Server) handleCreateGuestExecution(w http.ResponseWriter, r *http.Reque
 	}
 	agentID, err := s.guestExecutionOwner(r.Context(), topology)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	if !s.guestExecutionNodeExists(topology, node) {

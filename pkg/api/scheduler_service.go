@@ -63,7 +63,10 @@ func (s *SchedulerService) SelectAgentForTopology(ctx context.Context, topology 
 }
 
 func (s *SchedulerService) SelectAgent(ctx context.Context, required []string, preferred string) (controlplane.Agent, error) {
-	agents := s.agents.List(ctx)
+	agents, err := s.agents.List(ctx)
+	if err != nil {
+		return controlplane.Agent{}, err
+	}
 	required = normalizeCapabilities(required)
 	if preferred != "" {
 		for _, agent := range agents {

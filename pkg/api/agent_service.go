@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,66 +33,78 @@ func newAgentService(server *Server) *AgentService {
 }
 
 func (s *AgentService) Save(ctx context.Context, agent controlplane.Agent) error {
-	if agent.Protocol == "" {
-		agent.Protocol = controlplane.AgentProtocolVersion
+	if s.store == nil {
+		return fmt.Errorf("agent store not configured")
 	}
-	if s.store != nil {
-		if err := s.store.SaveAgent(ctx, agent); err != nil {
+	if err := s.store.SaveAgent(ctx, agent); err != nil {
+		return err
+	}
+	// Cache only the normalized, persisted snapshot, never the submitted copy.
+	_, err := s.Get(ctx, agent.ID)
+	return err
+}
+func (s *AgentService) cacheAgent(agent *controlplane.Agent, err error) (*controlplane.Agent, error) {
+	if err != nil {
+		return nil, err
+	}
+	if agent == nil {
+		return nil, persistence.ErrCorruptRecord
+	}
+	if s.registry != nil {
+		s.registry.Save(*agent)
+	}
+	return agent, nil
+}
+func (s *AgentService) Get(ctx context.Context, id string) (*controlplane.Agent, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("agent store not configured")
+	}
+	return s.cacheAgent(s.store.GetAgent(ctx, id))
+}
+func (s *AgentService) List(ctx context.Context) ([]controlplane.Agent, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("agent store not configured")
+	}
+	return s.store.ListAgents(ctx)
+}
+func (s *AgentService) Register(ctx context.Context, report controlplane.Agent) (*controlplane.Agent, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("agent store not configured")
+	}
+	return s.cacheAgent(s.store.RegisterAgent(ctx, report))
+}
+
+func (s *AgentService) Heartbeat(ctx context.Context, report controlplane.Agent) (*controlplane.Agent, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("agent store not configured")
+	}
+	return s.cacheAgent(s.store.HeartbeatAgent(ctx, report))
+}
+func (s *AgentService) UpdatePolicy(ctx context.Context, id string, patch persistence.AgentPolicy) (*controlplane.Agent, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("agent store not configured")
+	}
+	return s.cacheAgent(s.store.UpdateAgentPolicy(ctx, id, patch))
+}
+func (s *AgentService) MarkStaleOffline(ctx context.Context, now time.Time) error {
+	agents, err := s.List(ctx)
+	if err != nil {
+		return err
+	}
+	ttl := s.agentOfflineAfter()
+	if ttl <= 0 {
+		return nil
+	}
+	for _, agent := range agents {
+		current, err := s.store.ExpireAgentHeartbeat(ctx, agent.ID, now, ttl)
+		if err != nil {
+			return err
+		}
+		if _, err := s.cacheAgent(current, nil); err != nil {
 			return err
 		}
 	}
-	if s.registry != nil {
-		s.registry.Save(agent)
-	}
 	return nil
-}
-
-func (s *AgentService) Get(ctx context.Context, id string) (*controlplane.Agent, error) {
-	if s.store != nil {
-		if agent, err := s.store.GetAgent(ctx, id); err == nil {
-			if s.registry != nil {
-				s.registry.Save(*agent)
-			}
-			return agent, nil
-		}
-	}
-	if s.registry != nil {
-		return s.registry.Get(id)
-	}
-	return nil, fmt.Errorf("agent not found")
-}
-
-func (s *AgentService) List(ctx context.Context) []controlplane.Agent {
-	agents := []controlplane.Agent{}
-	if s.store != nil {
-		if stored, err := s.store.ListAgents(ctx); err == nil {
-			agents = append(agents, stored...)
-		}
-	}
-	if len(agents) == 0 && s.registry != nil {
-		agents = append(agents, s.registry.List()...)
-	}
-	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
-	return agents
-}
-
-func (s *AgentService) MarkStaleOffline(ctx context.Context, now time.Time) {
-	if s.store == nil {
-		return
-	}
-	offlineAfter := s.agentOfflineAfter()
-	for _, agent := range s.List(ctx) {
-		if agent.Disabled || agent.Quarantined || agent.LastHeartbeat.IsZero() {
-			continue
-		}
-		if agent.Status == controlplane.AgentStatusOffline || !agent.LastHeartbeat.Before(now.Add(-offlineAfter)) {
-			continue
-		}
-		agent.Status = controlplane.AgentStatusOffline
-		agent.Reason = "heartbeat stale"
-		agent.UpdatedAt = now
-		_ = s.Save(ctx, agent)
-	}
 }
 
 func (s *AgentService) agentOfflineAfter() time.Duration {
