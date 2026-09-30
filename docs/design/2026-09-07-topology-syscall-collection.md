@@ -1,23 +1,23 @@
-# per-topology syscall 采集 —— cyberfield 侧对接说明
+# per-topology syscall 采集 —— 通用观测集成说明
 
 日期：2026-09-07
 
 ## 一、结论
 
 sysbox **已经在每个容器上打了 Docker label**，其中 `sysbox.topology=<topology 名>`
-是「按靶场隔离」的关键标识。因此：
+是「按拓扑隔离」的关键标识。因此：
 
 - **不用**给 sysbox 加 cgroup 能力（Tetragon 也不支持 cgroup path scope，见
   `docs/design/` 里对应的架构复盘讨论）。
 - 用 **一个 Tetragon 实例采集全部 syscall**，消费端按 `container_id` 反查 label、
-  路由到「每靶场一个目录」。
+  路由到「每拓扑一个目录」。
 
 ## 二、sysbox 已打的 label（创建 node/network/router 时自动带上）
 
 | label | 值示例 | 说明 |
 |---|---|---|
 | `sysbox.managed` | `true` | 标记「sysbox 管理的对象」，可用于粗过滤 |
-| `sysbox.topology` | `cf-<campaign>-<team>-<gen>` | **按靶场隔离的关键标识，值就是 topology 名** |
+| `sysbox.topology` | `example-topology` | **按拓扑隔离的关键标识，值就是 topology 名；不解释消费者命名规则** |
 | `sysbox.run_id` | `op-<hash>` | 本次 run |
 | `sysbox.resource` | `sysbox_node.web` | 资源全地址 |
 | `sysbox.resource_type` | `sysbox_node` | 资源类型 |
@@ -29,7 +29,7 @@ sysbox **已经在每个容器上打了 Docker label**，其中 `sysbox.topology
 # 看某个容器的所有 label
 docker inspect <container-id> -f '{{json .Config.Labels}}'
 
-# 按 topology 过滤容器（列出某靶场的所有容器）
+# 按 topology 过滤容器（列出某拓扑的所有容器）
 docker ps --filter "label=sysbox.topology=<topology-name>"
 
 # 只看 topology 字段
@@ -38,7 +38,7 @@ docker inspect <container-id> -f '{{.Config.Labels.sysbox.topology}}'
 
 ## 四、Tetragon 侧：一个实例，采全部
 
-1. 宿主机部署一个 Tetragon daemon（无需每靶场一个）。
+1. 宿主机部署一个 Tetragon daemon（无需每拓扑一个）。
 2. TracingPolicy **不做 cgroup scope**（Tetragon 不支持 path scope），直接采全部
    （如需减量，先用 `matchBinaries` 等粗过滤，但别按 topology 过滤——那一步放消费端）。
 3. 事件经 gRPC 流出，每条进程事件携带容器标识。**字段名要对照所用 Tetragon 版本

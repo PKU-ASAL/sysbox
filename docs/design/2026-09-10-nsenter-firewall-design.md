@@ -65,7 +65,7 @@ NET_ADMIN`（其中 `SYS_ADMIN + NET_ADMIN` 还被 network 驱动的 netns/bridg
 ## 四、影响面
 
 - **HCL / API：零破坏**。`sysbox_firewall`、`provider "docker"`、变量/locals 等全部不变，
-  cyberfield 的 L1/L2/L3 一行不改。
+  现有拓扑声明无需修改。
 - **部署**：agent 镜像加 `util-linux`（nsenter）+ `nftables`（nft）。这是唯一必须动的地方。
 - **observe 语义**：从「存活检查」升级为「读 digest 判漂移」。正常收敛路径不变（apply →
   读 → 匹配 → ready），异常场景（规则被篡改/丢失）会被发现为 drift。
@@ -88,4 +88,4 @@ NET_ADMIN`（其中 `SYS_ADMIN + NET_ADMIN` 还被 network 驱动的 netns/bridg
 3. 单测：helper 超时/取消、删除错误传播。
 4. 可用 `nft` 且具备 `CAP_NET_ADMIN` 时运行 `nft -c -f -` 语法检查。
 5. Docker 集成：apply → observe → delete，并验证容器停止后返回 drift。
-6. 端到端：cyberfield L3（11 个 firewall）重新跑一遍，确认 ready 收敛不变。
+6. 端到端：用多节点、多 firewall 的自包含拓扑验证，确认 ready 收敛不变。

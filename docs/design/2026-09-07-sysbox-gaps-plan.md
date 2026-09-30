@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 修复 cyberfield 反馈的 4 个缺口 + 2 个触类旁通（locals/count 缺 substrate），见 `docs/design/2026-09-07-sysbox-gaps-design.md`。
+**Goal:** 修复多节点拓扑联调发现的 4 个缺口 + 2 个触类旁通（locals/count 缺 substrate），见 `docs/design/2026-09-07-sysbox-gaps-design.md`。
 
 **Architecture:** 六个独立、低风险修复：#1 compose 加 pid:host+caps；#2 统一 eval 上下文；#3 file source 相对 workspace；#4 destroy 同步回收。
 

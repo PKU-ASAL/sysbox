@@ -60,7 +60,7 @@ modules/web/main.hcl == modules/www/main.hcl   # 字节相同
 
 若只 hash 字节，两个「不同 module 布局」算出同一个 digest，被当成同一个 revision——内容寻址的意义（内容不同 → digest 不同）就破了。更关键地，目录名通过 `source` 路径嵌进了 root 的内容：`module "web" { source = "./modules/web" }` 里的 `web` 是语义的一部分，改名必然牵动 root 的字节。所以「改目录名但内容没变」在 module 场景下不存在。
 
-算法（与 cyberfield 侧 `core/scenario.ComputeDigest` 一致）：
+内容摘要算法（消费者应遵循同一字节级契约）：
 
 1. 取 `Files` 的所有路径，字典序排序；
 2. 对每个 `(path, content)`，写入 path 的 8 字节大端长度前缀 + path 字节 + content 的 8 字节大端长度前缀 + content 字节；
@@ -94,8 +94,8 @@ revision.Files  →  逐个写到 workspace/<topology>/<相对路径>
 **保持「root 单文件 + module 目录树」，不改成 Terraform 的「平铺多文件合并」。** 理由：
 
 - 实验拓扑的本质是「组件组合」（web 节点 + db 节点 + 攻击机），module 的「显式边界 + 输入输出 + 复用」匹配组件；Terraform 平铺的「拆 .tf」是编辑便利，不是结构。
-- 赛题规模是「单人写 3–10 个节点」，平铺的多文件价值（编辑/协作便利）几乎为零。
-- 改平铺要重写 parser/eval，收益对赛题场景微乎其微——YAGNI。
+- 本设计以根文件和显式模块为解析边界，平铺多文件不属于当前契约。
+- 改平铺需要调整 parser/eval，应依据通用拓扑的组合需求单独设计，不由单一消费者决定。
 
 `resolveModuleSource` 已经是「module = 目录，找目录里 `*.sysbox.hcl` / `main.hcl`」，revision 覆盖目录树后无需改动 module 机制本身，只需保证 module 子目录被包含在 revision 的 `Files` 里。
 

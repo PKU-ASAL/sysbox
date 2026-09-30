@@ -38,6 +38,7 @@
 
 - [Contributing](development/contributing.md)
 - [Testing](development/testing.md)
+- [OCI Preflight Verification](development/oci-image-preflight-verification.md)：只读镜像预检的测试方法、实机验收和条件化测试边界。
 - [Releasing](development/releasing.md)
 
 根目录 [README](../README.md) 是项目入口，不承担完整手册职责。

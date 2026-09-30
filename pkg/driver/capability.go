@@ -122,6 +122,13 @@ type Artifact interface {
 	ResolveImage(context.Context, substrate.ArtifactSource) (substrate.ArtifactHandle, error)
 }
 
+// ArtifactPreflight is an optional, read-only extension to Artifact. Checks must
+// not fetch, pull, load, or otherwise mutate artifacts. Implementations inspect
+// the same storage/daemon used by ResolveImage and honor context cancellation.
+type ArtifactPreflight interface {
+	PreflightImage(context.Context, substrate.ArtifactSource) []substrate.PreflightCheck
+}
+
 type Import interface {
 	ReadNode(context.Context, string) (substrate.NodeHandle, error)
 }

@@ -5,19 +5,19 @@
 
 ## 一、背景与动机
 
-cyberfield 接真实 sysbox 端到端联调，暴露两个问题，都落在「HCL 求值」这一层：
+sysbox 端到端联调暴露两个问题，都落在「HCL 求值」这一层：
 
 1. **var 预扫描 bug（阻塞）**：`requiredCapabilitiesForTopology` 用无 inputs 的
    `config.BuildEvalContext` 求值含 `var.<name>` 引用的 resource，`var` 命名空间
    缺失，报「There is no variable named var」。apply 在把 run 派发给 agent 之前就
    死在这个「能力预扫描」上。
 
-2. **CIDR 表达力缺失**：赛题作者只能用字符串拼接表示网段划分
+2. **CIDR 表达力缺失**：拓扑作者只能用字符串拼接表示网段划分
    （`cidr = "${var.subnet_prefix}.0/24"`），脆弱、无类型安全、语义丢失。Terraform
    用类型化函数 `cidrsubnet`/`cidrhost` 表达同一意图，sysbox 应借鉴。
 
-关注点分离不变：sysbox 只提供「拓扑编排」能力（含 CIDR 计算原语），比赛词汇
-（team/flag/scenario）不进入 sysbox。
+关注点分离不变：sysbox 只提供「拓扑编排」能力（含 CIDR 计算原语），消费者的业务
+实体、命名约定和业务策略不进入 sysbox。
 
 ## 二、分阶段 roadmap
 
@@ -134,6 +134,6 @@ cidrhost("10.200.0.0/24", 0)        # "10.200.0.0"  （网络地址；不做「�
 
 - 不做 IPv6（阶段 2 再议）。
 - 不把 decode 目标改成 cty.Value（阶段 3）。
-- 不主动改 cyberfield 现有场景的 HCL（`var.subnet_prefix` 拼接在 bug 修后能跑，是否
-  迁到 `cidrsubnet` 由 cyberfield 侧决定）。
+- 不主动修改消费者现有拓扑的 HCL（`var.subnet_prefix` 拼接在 bug 修后能跑，是否
+  迁到 `cidrsubnet` 由拓扑作者决定）。
 - 不加 `cidrnetmask` 等 Terraform 的其它 CIDR 函数（按需再加）。
