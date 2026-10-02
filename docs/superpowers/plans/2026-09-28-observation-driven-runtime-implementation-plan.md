@@ -95,6 +95,7 @@ Implementation commit: `d581b80`. Independent review and full uncached unit/race
 - [x] Independently review the command slice and pass full unit/race/vet/docs/diff checks; keep Agent and full outbox outside this checkpoint.
 - [x] Centralize Agent state rules; prevent stale heartbeat/offline updates from overwriting policy.
 - [ ] Commit operation plus command atomically for Run and Guest paths; use durable dispatch on retries/restarts and propagate storage failures before delivery.
+- [x] Define Guest operation+command dispatch binding and make durable enqueue authoritative over notification; backend transaction adapters remain next.
 - [ ] Cover payload privacy, cancellation, command ownership, cross-process races and outbox crash points; run independent review and required checks.
 - [ ] Update actual completion boundaries before moving to resource fencing and owning-agent recovery.
 

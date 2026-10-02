@@ -109,6 +109,10 @@ func (b *fileGuestRecords) update(ctx context.Context, kind guestKind, id string
 	if next == nil {
 		return nil
 	}
+	next, err = preserveGuestDispatch(raw, next)
+	if err != nil {
+		return err
+	}
 	return writePrivateGuestRecord(ctx, filepath.Join(dir, id+".json"), next)
 }
 func writePrivateGuestRecord(ctx context.Context, path string, raw []byte) error {

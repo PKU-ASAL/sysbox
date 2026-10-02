@@ -63,6 +63,12 @@ GuestExecution 和 GuestFileOperation 已迁移到 `GuestRepository`，Run 写�
 
 本检查点未改变 HTTP v1 DTO 或 agent.v1 协议，也没有删除现有元数据或真实资源。旧 API writer 必须停用后升级；完整 outbox、资源侧 fencing、inventory/projection 迁移以及真实 Postgres 验收仍未完成。
 
+### Durable outbox 迁移进度
+
+已先落地 Guest operation 的共享 dispatch seam：命令 ID 在 durable enqueue 前生成，service 支持由后端一次提交 operation 与 command，提交成功后通知 Agent 失败不会回滚 queued operation。Guest dispatch 编码会核对 operation、agent、command type、请求载荷和初始状态，并在文件记录更新时保留初始 command seed。
+
+当前三种后端尚未全部接通 operation+command 的同事务写入；现有旧路径仍作为兼容路径运行。因此本阶段只证明领域边界和失败语义，尚不能声称进程中断窗口已经消除。下一步是为 filesystem、SQLite、Postgres 实现 `CreateGuestExecutionDispatch` / `CreateGuestFileDispatch`，再将服务构造切换到该端口并增加重启投递测试。
+
 Agent 检查点通过独立复审及全仓无缓存 unit/race、vet、docs、diff 检查，覆盖跨进程锁、并发策略/心跳、重启、损坏记录、提交失败及注册身份旁路。全仓 race 另暴露 Firecracker 进程回收窗口：两次读取 stat 之间进程消失会被误判为 PID 身份冲突。已改用同一 stat 快照核对 starttime，保留后续完整身份验证；相关 race 回归重复 10 次通过。
 
 ### Command 的实际规则

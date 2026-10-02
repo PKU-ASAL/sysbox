@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -119,4 +120,33 @@ func TestGuestExecutionCreatePublishesPrivateRequestSeparately(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "TOKEN")
 	require.NotContains(t, string(raw), "secret")
+}
+
+func TestGuestExecutionOutboxCommitSurvivesNotificationFailure(t *testing.T) {
+	ctx := context.Background()
+	store := &localAPIStore{runsDir: t.TempDir()}
+	var queued controlplane.AgentCommand
+	svc := newGuestExecutionServiceWithOutbox(store, func(_ context.Context, _ string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
+		return cmd, errors.New("agent disconnected")
+	}, func(ctx context.Context, execution controlplane.GuestExecution, cmd controlplane.AgentCommand) (controlplane.GuestExecution, error) {
+		queued = cmd
+		execution.CommandID = cmd.ID
+		if err := store.SaveGuestExecution(ctx, execution); err != nil {
+			return controlplane.GuestExecution{}, err
+		}
+		if err := store.SaveAgentCommand(ctx, cmd); err != nil {
+			return controlplane.GuestExecution{}, err
+		}
+		return execution, nil
+	}, nil)
+	execution, err := svc.Create(ctx, "lab", "web", "host-a", controlplane.GuestExecutionRequest{Argv: []string{"true"}})
+	require.NoError(t, err)
+	require.Equal(t, controlplane.GuestExecutionQueued, execution.Status)
+	require.Equal(t, queued.ID, execution.CommandID)
+	stored, err := store.GetGuestExecution(ctx, execution.ID)
+	require.NoError(t, err)
+	require.Equal(t, queued.ID, stored.CommandID)
+	commands, err := store.ListAgentCommands(ctx, "host-a")
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
 }

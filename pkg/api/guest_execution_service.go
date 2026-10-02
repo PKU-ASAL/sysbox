@@ -23,6 +23,7 @@ var (
 type GuestExecutionService struct {
 	store   guestExecutionPersistence
 	publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)
+	enqueue func(context.Context, controlplane.GuestExecution, controlplane.AgentCommand) (controlplane.GuestExecution, error)
 	now     func() time.Time
 }
 
@@ -31,6 +32,12 @@ func newGuestExecutionService(store guestExecutionPersistence, publish func(cont
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &GuestExecutionService{store: store, publish: publish, now: now}
+}
+
+func newGuestExecutionServiceWithOutbox(store guestExecutionPersistence, publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error), enqueue func(context.Context, controlplane.GuestExecution, controlplane.AgentCommand) (controlplane.GuestExecution, error), now func() time.Time) *GuestExecutionService {
+	service := newGuestExecutionService(store, publish, now)
+	service.enqueue = enqueue
+	return service
 }
 
 func validateGuestExecutionRequest(req controlplane.GuestExecutionRequest) error {
@@ -53,13 +60,31 @@ func (s *GuestExecutionService) Create(ctx context.Context, topology, node, agen
 		return controlplane.GuestExecution{}, err
 	}
 	execution := controlplane.GuestExecution{ID: uuid.NewString(), Version: 1, Topology: topology, Node: node, AgentID: agentID, Status: controlplane.GuestExecutionQueued, Request: req, CreatedAt: s.now()}
+	commandID := ""
+	if s.enqueue != nil {
+		commandID = uuid.NewString()
+	}
+	public := execution
+	public.Request = controlplane.GuestExecutionRequest{}
+	command := controlplane.AgentCommand{ID: commandID, AgentID: agentID, Type: "guest_execution", Execution: &public, ExecutionRequest: req}
+	if s.enqueue != nil {
+		queued, err := s.enqueue(ctx, execution, command)
+		if err != nil {
+			return controlplane.GuestExecution{}, err
+		}
+		execution = queued
+		if s.publish != nil {
+			if _, err := s.publish(ctx, agentID, command); err != nil {
+				// Durable enqueue is authoritative; notification is only a wake-up.
+			}
+		}
+		return execution, nil
+	}
 	if err := s.store.SaveGuestExecution(ctx, execution); err != nil {
 		return controlplane.GuestExecution{}, err
 	}
 	if s.publish != nil {
-		public := execution
-		public.Request = controlplane.GuestExecutionRequest{}
-		command, err := s.publish(ctx, agentID, controlplane.AgentCommand{Type: "guest_execution", Execution: &public, ExecutionRequest: req})
+		command, err := s.publish(ctx, agentID, command)
 		if err != nil {
 			execution.Status = controlplane.GuestExecutionFailed
 			execution.ResultClass = "dispatch"
