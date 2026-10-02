@@ -20,7 +20,7 @@ var (
 	flagAgentToken        string
 	flagAgentID           string
 	flagAgentName         string
-	flagAgentSubstrates string
+	flagAgentSubstrates   string
 	flagAgentIdentity     string
 	flagAgentConfig       string
 	flagAgentPollInterval time.Duration
@@ -36,12 +36,12 @@ var agentRegisterCmd = &cobra.Command{
 	Short: "Register this host agent with a control plane",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ident, err := agent.Register(cmd.Context(), agent.RegisterOptions{
-			APIURL:       flagAgentAPI,
-			Token:        flagAgentToken,
-			ID:           flagAgentID,
-			Name:         flagAgentName,
+			APIURL:     flagAgentAPI,
+			Token:      flagAgentToken,
+			ID:         flagAgentID,
+			Name:       flagAgentName,
 			Substrates: splitCSV(flagAgentSubstrates),
-			Path:         flagAgentIdentity,
+			Path:       flagAgentIdentity,
 		})
 		if err != nil {
 			return err
@@ -76,6 +76,7 @@ var agentStartCmd = &cobra.Command{
 			RunRenewInterval: cfg.RunRenewInterval(),
 			RunRenewTTL:      cfg.RunRenewTTL(),
 			Policy:           cfg.Agent.Policy,
+			SessionFreshness: cfg.Providers.Firecracker.Binary != "",
 			CapacityPath:     cfg.Paths.Home,
 			ArtifactPaths: []string{
 				cfg.Providers.Firecracker.Kernel,

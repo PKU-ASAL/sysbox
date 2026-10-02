@@ -139,9 +139,8 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 		fmt.Printf("[firecracker] sysbox-init disabled for %s: %v\n", vmID, err)
 		sysboxInitEnabled = false
 	} else {
-		nodeName := strings.TrimPrefix(spec.Name, "sysbox-")
 		initCfg := vsockrpc.VMConfig{
-			Hostname:  nodeName,
+			Hostname:  guestHostname(spec.Name),
 			Env:       spec.Env,
 			ChainInit: pc.ChainInit,
 		}

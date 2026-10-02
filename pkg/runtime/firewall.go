@@ -103,7 +103,15 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 		bindings[attachment.Name] = attachment.Observation.GuestDevice
 		attachmentIPs[attachment.Name] = append([]string(nil), attachment.IPPrefixes...)
 	}
-	targetRaw, err := json.Marshal(map[string]any{"container_id": targetResource.ContainerID(), "bindings": bindings, "attachment_ips": attachmentIPs})
+	targetState := map[string]any{"container_id": targetResource.ContainerID(), "bindings": bindings, "attachment_ips": attachmentIPs}
+	if targetResource.Driver == "firecracker" {
+		providerState, err := targetResource.ProviderState()
+		if err != nil {
+			return state.Resource{}, fmt.Errorf("firewall %s: read target provider state: %w", n.Address.Name, err)
+		}
+		targetState["provider_state"] = json.RawMessage(providerState)
+	}
+	targetRaw, err := json.Marshal(targetState)
 	if err != nil {
 		return state.Resource{}, err
 	}

@@ -119,6 +119,10 @@ type Agent struct {
 	UpdatedAt     time.Time         `json:"updated_at,omitempty"`
 }
 
+// AgentSessionLabel identifies one agent process lifetime. It is internal to
+// Sysbox and is replaced on every agent start, even when the agent ID is reused.
+const AgentSessionLabel = "sysbox.io/agent-session"
+
 type Projection struct {
 	AgentID       string    `json:"agent_id,omitempty"`
 	Workspace     string    `json:"workspace,omitempty"`
@@ -184,6 +188,7 @@ type ConsoleSession struct {
 
 type ResourceProjection struct {
 	AgentID    string           `json:"agent_id,omitempty"`
+	SessionID  string           `json:"session_id,omitempty"`
 	Workspace  string           `json:"workspace,omitempty"`
 	Topology   string           `json:"topology,omitempty"`
 	Serial     int64            `json:"serial,omitempty"`

@@ -3,6 +3,7 @@ package agentexec
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,7 @@ type Options struct {
 	ID                               string
 	Name                             string
 	Capabilities                     []string
+	SessionFreshness                 bool
 	Labels                           map[string]string
 	Version                          string
 	Secret                           string
@@ -74,6 +76,19 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
 	if len(opts.Capabilities) == 0 {
 		opts.Capabilities, _ = agent.DetectCapabilities()
+	}
+	if opts.SessionFreshness {
+		// VM health projections must belong to the current agent process.
+		session := make([]byte, 16)
+		if _, err := rand.Read(session); err != nil {
+			return fmt.Errorf("create agent session: %w", err)
+		}
+		labels := make(map[string]string, len(opts.Labels)+1)
+		for key, value := range opts.Labels {
+			labels[key] = value
+		}
+		labels[controlplane.AgentSessionLabel] = fmt.Sprintf("%x", session)
+		opts.Labels = labels
 	}
 	if err := post(ctx, opts, opts.APIURL+"/v1/agents", controlplane.Agent{
 		ID:           opts.ID,
@@ -588,7 +603,28 @@ type remoteBridge struct {
 }
 
 func (b remoteBridge) ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error {
+	if run != nil && b.reporter.APIURL != "" && b.reporter.ID != "" && topologyHasFirecracker(ctx, b.Bridge, run.Topology) {
+		resources, err := observeTopology(ctx, b.reporter.ID, b.Bridge, run.Topology)
+		if err != nil {
+			return err
+		}
+		if err := b.reporter.ReportResourceProjection(ctx, resources); err != nil {
+			return err
+		}
+	}
 	return b.reporter.ReportRunComplete(ctx, run, projection)
+}
+
+func topologyHasFirecracker(ctx context.Context, bridge Bridge, topology string) bool {
+	if bridge == nil || topology == "" {
+		return false
+	}
+	mgr, err := bridge.StateManager(topology)
+	if err != nil {
+		return false
+	}
+	st, err := mgr.LoadWithContext(ctx)
+	return err == nil && stateHasFirecracker(st)
 }
 
 func (opts Options) ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error {
@@ -610,6 +646,14 @@ func (opts Options) ReportResourceProjection(ctx context.Context, projection con
 	}
 	if projection.AgentID == "" {
 		projection.AgentID = opts.ID
+	}
+	// Session freshness is needed for VM observations. Keep legacy Docker
+	// projection payloads unchanged.
+	for _, resource := range append(append([]controlplane.ResourceHealth{}, projection.Resources...), projection.Health.Resources...) {
+		if resource.Provider == "firecracker" {
+			projection.SessionID = opts.Labels[controlplane.AgentSessionLabel]
+			break
+		}
 	}
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/projections/resources", projection, nil)
 }

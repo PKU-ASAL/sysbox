@@ -2,6 +2,7 @@ package agentexec
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func Observe(ctx context.Context, agentID string, bridge Bridge) []controlplane.ResourceProjection {
@@ -28,19 +30,61 @@ func Observe(ctx context.Context, agentID string, bridge Bridge) []controlplane.
 		if err != nil || st == nil {
 			continue
 		}
+		if stateHasFirecracker(st) {
+			projection, err := observeTopology(ctx, agentID, bridge, topology)
+			if err == nil {
+				out = append(out, projection)
+			}
+			continue
+		}
+		// Preserve the original Docker observation path and its state semantics.
 		meta, _ := mgr.Metadata(ctx)
 		health := runtime.EvaluateTopologyHealth(ctx, st)
 		out = append(out, controlplane.ResourceProjection{
-			AgentID:    agentID,
-			Workspace:  topology,
-			Topology:   topology,
-			Serial:     meta.Serial,
-			ObservedAt: time.Now().UTC(),
-			Health:     health,
-			Resources:  health.Resources,
+			AgentID: agentID, Workspace: topology, Topology: topology,
+			Serial: meta.Serial, ObservedAt: time.Now().UTC(),
+			Health: health, Resources: health.Resources,
 		})
 	}
 	return out
+}
+
+func stateHasFirecracker(st *state.State) bool {
+	if st == nil {
+		return false
+	}
+	for _, resource := range st.Resources {
+		if resource.Driver == "firecracker" {
+			return true
+		}
+	}
+	return false
+}
+
+// Timestamp the snapshot before probing: a slow older probe must not outrank
+// the completion snapshot. Serial and resources come from the same state read.
+func observeTopology(ctx context.Context, agentID string, bridge Bridge, topology string) (controlplane.ResourceProjection, error) {
+	observedAt := time.Now().UTC()
+	mgr, err := bridge.StateManager(topology)
+	if err != nil {
+		return controlplane.ResourceProjection{}, err
+	}
+	st, err := mgr.LoadWithContext(ctx)
+	if err != nil {
+		return controlplane.ResourceProjection{}, err
+	}
+	if st == nil {
+		return controlplane.ResourceProjection{}, fmt.Errorf("state unavailable for topology %q", topology)
+	}
+	health := runtime.EvaluateTopologyHealth(ctx, st)
+	if err := ctx.Err(); err != nil {
+		return controlplane.ResourceProjection{}, err
+	}
+	return controlplane.ResourceProjection{
+		AgentID: agentID, Workspace: topology, Topology: topology,
+		Serial: st.Meta.Serial, ObservedAt: observedAt,
+		Health: health, Resources: health.Resources,
+	}, nil
 }
 
 func Inventory(ctx context.Context, opts Options, bridge Bridge) controlplane.AgentInventory {
