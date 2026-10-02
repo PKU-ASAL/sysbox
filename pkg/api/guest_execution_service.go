@@ -40,6 +40,18 @@ func newGuestExecutionServiceWithOutbox(store guestExecutionPersistence, publish
 	return service
 }
 
+func newGuestExecutionServiceFromStore(store guestExecutionPersistence, publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error), now func() time.Time) *GuestExecutionService {
+	service := newGuestExecutionService(store, publish, now)
+	service.enqueue = func(ctx context.Context, execution controlplane.GuestExecution, command controlplane.AgentCommand) (controlplane.GuestExecution, error) {
+		if err := store.CreateGuestExecutionDispatch(ctx, execution, command); err != nil {
+			return controlplane.GuestExecution{}, err
+		}
+		execution.CommandID = command.ID
+		return execution, nil
+	}
+	return service
+}
+
 func validateGuestExecutionRequest(req controlplane.GuestExecutionRequest) error {
 	if len(req.Argv) == 0 || req.Argv[0] == "" {
 		return fmt.Errorf("%w: argv is required", errInvalidGuestExecution)
@@ -63,10 +75,16 @@ func (s *GuestExecutionService) Create(ctx context.Context, topology, node, agen
 	commandID := ""
 	if s.enqueue != nil {
 		commandID = uuid.NewString()
+		execution.CommandID = commandID
 	}
 	public := execution
 	public.Request = controlplane.GuestExecutionRequest{}
 	command := controlplane.AgentCommand{ID: commandID, AgentID: agentID, Type: "guest_execution", Execution: &public, ExecutionRequest: req}
+	if s.enqueue != nil {
+		command.Status = controlplane.AgentCommandStatusQueued
+		command.Protocol = controlplane.AgentProtocolVersion
+		command.CreatedAt = execution.CreatedAt
+	}
 	if s.enqueue != nil {
 		queued, err := s.enqueue(ctx, execution, command)
 		if err != nil {

@@ -150,3 +150,19 @@ func TestGuestExecutionOutboxCommitSurvivesNotificationFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
 }
+
+func TestGuestExecutionUsesStoreOutboxWhenAvailable(t *testing.T) {
+	ctx := context.Background()
+	store := &localAPIStore{runsDir: t.TempDir()}
+	svc := newGuestExecutionServiceWithOutbox(store, func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
+		return controlplane.AgentCommand{}, errors.New("notification unavailable")
+	}, func(ctx context.Context, execution controlplane.GuestExecution, command controlplane.AgentCommand) (controlplane.GuestExecution, error) {
+		return execution, store.CreateGuestExecutionDispatch(ctx, execution, command)
+	}, nil)
+	execution, err := svc.Create(ctx, "lab", "web", "agent", controlplane.GuestExecutionRequest{Argv: []string{"true"}})
+	require.NoError(t, err)
+	require.NotEmpty(t, execution.CommandID)
+	commands, err := store.ListAgentCommands(ctx, "agent")
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+}

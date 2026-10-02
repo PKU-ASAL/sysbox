@@ -48,6 +48,15 @@ func (b localCommandStorage) records(ctx context.Context, agent string) ([]persi
 	if err != nil {
 		return nil, err
 	}
+	guestCommands, err := persistence.NewFilesystemGuestRepository(b.store.runsDir).FilesystemGuestDispatchCommands(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, record := range guestCommands {
+		if agent == "" || record.Command.AgentID == agent {
+			byID[record.Command.ID] = record
+		}
+	}
 	seeds := map[string]bool{}
 	for _, dispatch := range dispatches {
 		if dispatch.RequestOnly {

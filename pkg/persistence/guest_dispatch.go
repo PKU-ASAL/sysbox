@@ -11,18 +11,21 @@ import (
 // same transaction. Mutable command records (including retirement tombstones)
 // supersede the initial filesystem seed.
 func EncodeGuestExecutionDispatch(x controlplane.GuestExecution, cmd controlplane.AgentCommand) ([]byte, error) {
+	cmd = DurableCommand(cmd)
 	if executionCodec.validate(x) != nil || x.Version != 1 || x.Status != controlplane.GuestExecutionQueued || x.CommandID != cmd.ID || x.AgentID != cmd.AgentID || cmd.Type != "guest_execution" || cmd.Execution == nil || cmd.Execution.ID != x.ID || cmd.Execution.Topology != x.Topology || cmd.Execution.Node != x.Node || !sameGuestRequest(x.Request, cmd.ExecutionRequest) {
 		return nil, ErrInvalidRecord
 	}
 	return encodeGuestDispatch(x.CommandID, cmd, func() ([]byte, error) { return executionCodec.encode(x) })
 }
 func EncodeGuestFileDispatch(x controlplane.GuestFileOperation, cmd controlplane.AgentCommand) ([]byte, error) {
+	cmd = DurableCommand(cmd)
 	if fileOperationCodec.validate(x) != nil || x.Version != 1 || x.Status != controlplane.GuestExecutionQueued || x.CommandID != cmd.ID || x.AgentID != cmd.AgentID || cmd.Type != "guest_file_put" || cmd.FilePut == nil || cmd.FilePut.ID != x.ID || cmd.FilePut.Topology != x.Topology || cmd.FilePut.Node != x.Node {
 		return nil, ErrInvalidRecord
 	}
 	return encodeGuestDispatch(x.CommandID, cmd, func() ([]byte, error) { return fileOperationCodec.encode(x) })
 }
 func encodeGuestDispatch(id string, cmd controlplane.AgentCommand, encode func() ([]byte, error)) ([]byte, error) {
+	cmd = DurableCommand(cmd)
 	if id == "" || validateCommand(cmd) != nil || cmd.Status != controlplane.AgentCommandStatusQueued || cmd.Attempt != 0 || cmd.LeaseOwner != "" || !cmd.LeaseUntil.IsZero() {
 		return nil, ErrInvalidRecord
 	}

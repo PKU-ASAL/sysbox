@@ -104,7 +104,7 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		defaultConsoleTimeout,
 		maxConsoleTimeout,
 	)
-	s.guestExecSvc = newGuestExecutionService(s.apiStore, s.agentService().PublishCommand, nil)
+	s.guestExecSvc = newGuestExecutionServiceFromStore(s.apiStore, s.agentService().PublishCommand, nil)
 	s.agentStream = newAgentStreamService(s)
 	s.runService = newRunService(s)
 	s.registerRoutes()
@@ -216,7 +216,7 @@ func (s *Server) agentStreams() *AgentStreamService {
 
 func (s *Server) guestExecutions() *GuestExecutionService {
 	if s.guestExecSvc == nil {
-		s.guestExecSvc = newGuestExecutionService(s.apiStore, s.agentService().PublishCommand, nil)
+		s.guestExecSvc = newGuestExecutionServiceFromStore(s.apiStore, s.agentService().PublishCommand, nil)
 	}
 	return s.guestExecSvc
 }
