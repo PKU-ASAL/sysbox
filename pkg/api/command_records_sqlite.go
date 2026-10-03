@@ -70,7 +70,11 @@ func scanSQLiteCommand(row runScanner) (*persistence.CommandRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	comparable, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: record.Command})
+	// Fencing fields live only in the full snapshot, not legacy index columns.
+	indexedCommand := record.Command
+	indexedCommand.ActionID, indexedCommand.ResourceUID = "", ""
+	indexedCommand.Generation, indexedCommand.LeaseEpoch = 0, 0
+	comparable, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: indexedCommand})
 	if err != nil {
 		return nil, err
 	}

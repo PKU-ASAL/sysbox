@@ -80,6 +80,7 @@ type agentStore interface {
 }
 
 type agentCommandStore interface {
+	ApplyAgentCommandEvent(context.Context, controlplane.AgentCommandEvent) (*controlplane.AgentCommand, error)
 	LoadDispatchRetry(context.Context, string) (DispatchRetryRecord, error)
 	SaveDispatchRetry(context.Context, DispatchRetryRecord) error
 	ClearDispatchRetry(context.Context, string) error

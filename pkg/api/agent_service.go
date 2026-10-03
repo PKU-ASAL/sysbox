@@ -384,76 +384,29 @@ func (s *AgentService) RecordCommandEvent(ctx context.Context, event controlplan
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = time.Now().UTC()
 	}
-	s.updateCommandFromEvent(ctx, event)
+	if err := s.updateCommandFromEvent(ctx, event); err != nil {
+		slog.Warn("command event rejected", "command_id", event.CommandID, "error", err)
+		return
+	}
 	if s.registry != nil {
 		s.registry.SaveCommandEvent(event)
 	}
 	slog.Info("agent command event", "agent_id", event.AgentID, "command_id", event.CommandID, "type", event.Type, "status", event.Status)
 }
 
-func (s *AgentService) updateCommandFromEvent(ctx context.Context, event controlplane.AgentCommandEvent) {
-	if s.store == nil || event.CommandID == "" || event.AgentID == "" {
-		return
+func (s *AgentService) updateCommandFromEvent(ctx context.Context, event controlplane.AgentCommandEvent) error {
+	if s.store == nil {
+		return fmt.Errorf("agent command store not configured")
 	}
-	cmd, err := s.FindCommand(ctx, event.AgentID, event.CommandID)
+	cmd, err := s.store.ApplyAgentCommandEvent(ctx, event)
 	if err != nil {
-		return
+		return err
 	}
-	if !commandEventMatchesFence(cmd, event) {
-		slog.Warn("reject fenced command event", "agent_id", event.AgentID, "command_id", event.CommandID)
-		return
+	s.updateConsoleSessionFromCommandEvent(*cmd, event)
+	if cmd.Type == "guest_file_put" && cmd.FilePut != nil && (cmd.Status == controlplane.AgentCommandStatusFailed || cmd.Status == controlplane.AgentCommandStatusDenied || cmd.Status == controlplane.AgentCommandStatusCancelled) {
+		return newGuestFileOperationService(s.store).ReconcileCommandFailure(ctx, cmd.FilePut.ID, cmd.Status)
 	}
-	now := event.CreatedAt
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	switch event.Status {
-	case "ack":
-		cmd.Status = controlplane.AgentCommandStatusAcknowledged
-		cmd.AckedAt = now
-	case "started":
-		cmd.Status = controlplane.AgentCommandStatusRunning
-		s.updateConsoleSessionFromCommandEvent(cmd, event)
-	case controlplane.AgentCommandStatusCompleted:
-		cmd.Status = controlplane.AgentCommandStatusCompleted
-		cmd.EndedAt = now
-		s.updateConsoleSessionFromCommandEvent(cmd, event)
-	case controlplane.AgentCommandStatusFailed, controlplane.AgentCommandStatusDenied, controlplane.AgentCommandStatusCancelled:
-		cmd.Status = event.Status
-		cmd.Err = event.Error
-		cmd.EndedAt = now
-		s.updateConsoleSessionFromCommandEvent(cmd, event)
-		if cmd.Type == "guest_file_put" && cmd.FilePut != nil {
-			_ = newGuestFileOperationService(s.store).ReconcileCommandFailure(ctx, cmd.FilePut.ID, event.Status)
-		}
-	}
-	if cmd.IsTerminal() {
-		_ = s.store.DeleteAgentCommand(ctx, cmd.AgentID, cmd.ID)
-	} else {
-		_ = s.store.SaveAgentCommand(ctx, cmd)
-	}
-}
-
-func commandEventMatchesFence(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) bool {
-	if event.LeaseOwner != "" && event.LeaseOwner != cmd.LeaseOwner {
-		return false
-	}
-	if event.Attempt != 0 && event.Attempt != cmd.Attempt {
-		return false
-	}
-	if event.ActionID != "" && event.ActionID != cmd.ActionID {
-		return false
-	}
-	if event.ResourceUID != "" && event.ResourceUID != cmd.ResourceUID {
-		return false
-	}
-	if event.Generation != 0 && event.Generation != cmd.Generation {
-		return false
-	}
-	if event.LeaseEpoch != 0 && event.LeaseEpoch != cmd.LeaseEpoch {
-		return false
-	}
-	return true
+	return nil
 }
 
 func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) {

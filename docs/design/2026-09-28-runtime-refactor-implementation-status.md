@@ -32,7 +32,9 @@ Provider 执行 → 保存恢复证据 → 再观察验证
 
 ### Resource fencing 迁移进度
 
-Agent command/event 模型已增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。事件回写会在字段存在时核对当前 command，拒绝旧 owner、旧 attempt、旧 action/resource/generation/epoch 的迟到事件；缺少这些字段的现有 agent.v1 事件保持兼容。该检查点只覆盖 command/event 边界，Run/NodeOperation/Guest 完成接口尚未强制要求 fencing 证明。
+Agent command/event 模型增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。命令已绑定 fencing 身份时，事件必须完整匹配其证明；无 fencing 身份的 legacy 命令仍兼容无证明事件。校验、状态推进与终态退休通过共享 CommandRepository 在同一存储锁/事务内完成；拒绝或提交失败不发布事件缓存或更新 console/Guest 派生状态。Agent ack、执行事件与目标取消事件均回传对应命令的证明，SQLite 保留完整快照中的 fencing 字段。
+
+此处是命令事件层的原子防陈旧写入，不是完整资源侧 fencing：命令派发尚未全面绑定实际资源 generation，Run/NodeOperation/Guest 完成入口与 provider 外部副作用仍需迁移。跨聚合派生状态更新也未成为一个原子事务；真实 Postgres 尚未验收。
 | Runtime | 默认 Apply/Destroy/Reset 走观察、授权、写前意图、验证、原子提交；恢复只提交可证明结果 | 每种资源都已有完整的 discovery/read-back；所有 interrupted reset 都能自动继续 |
 | Firecracker | 版本化 manifest、身份/代际/进程锚点、文件锁、冷恢复、pidfd 校验后发信号；reset 保留真实目标 ActionID | 已通过真实 KVM、宿主机重启或内核版本矩阵验证 |
 | Docker / libvirt / isolated network | 管理身份、发现、拥有者约束；reset 的旧/新代际校验；隔离网络的观测与 ownership 标记 | 已通过真实 Docker/libvirt/网络设备 E2E |
