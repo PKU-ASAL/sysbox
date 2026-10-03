@@ -204,6 +204,29 @@ func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd c
 	return cmd, nil
 }
 
+// RepublishPendingCommands rebuilds the in-memory wake-up hints from durable
+// commands. The store remains authoritative; this only helps already connected
+// streams notice work after a controller restart.
+func (s *AgentService) RepublishPendingCommands(ctx context.Context) error {
+	if s.store == nil || s.registry == nil {
+		return nil
+	}
+	commands, err := s.store.ListAgentCommands(ctx, "")
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, cmd := range commands {
+		if cmd.IsTerminal() || !cmd.Leasable(now) {
+			continue
+		}
+		if err := s.registry.PublishCommand(cmd.AgentID, cmd); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *AgentService) AcquireCommandLease(ctx context.Context, agentID string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, bool) {
 	now := time.Now().UTC()
 	if cmd.AgentID != agentID || !cmd.IsPending() || !cmd.Leasable(now) {
