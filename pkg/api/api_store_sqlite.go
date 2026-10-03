@@ -125,6 +125,13 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		created_at TEXT DEFAULT ''
 	) STRICT;
 
+	CREATE TABLE IF NOT EXISTS sysbox_dispatch_retries (
+		command_id TEXT PRIMARY KEY,
+		failures INTEGER NOT NULL DEFAULT 0,
+		next TEXT NOT NULL DEFAULT '',
+		last_error TEXT DEFAULT ''
+	) STRICT;
+
 	CREATE TABLE IF NOT EXISTS sysbox_console_sessions (
 		id          TEXT PRIMARY KEY,
 		topology    TEXT NOT NULL DEFAULT '',

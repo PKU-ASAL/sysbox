@@ -234,8 +234,16 @@ func (s *AgentService) RepublishPendingCommands(ctx context.Context) error {
 		}
 		s.dispatchMu.Lock()
 		retry := s.dispatchRetry[cmd.ID]
-		blocked := now.Before(retry.next)
 		s.dispatchMu.Unlock()
+		if retry.failures == 0 && s.store != nil {
+			if persisted, err := s.store.LoadDispatchRetry(ctx, cmd.ID); err == nil {
+				retry = dispatchRetryState{failures: persisted.Failures, next: persisted.Next, lastError: persisted.LastError}
+				s.dispatchMu.Lock()
+				s.dispatchRetry[cmd.ID] = retry
+				s.dispatchMu.Unlock()
+			}
+		}
+		blocked := now.Before(retry.next)
 		if blocked {
 			continue
 		}
@@ -253,11 +261,17 @@ func (s *AgentService) RepublishPendingCommands(ctx context.Context) error {
 			retry.lastError = err.Error()
 			s.dispatchRetry[cmd.ID] = retry
 			s.dispatchMu.Unlock()
+			if s.store != nil {
+				_ = s.store.SaveDispatchRetry(ctx, DispatchRetryRecord{CommandID: cmd.ID, Failures: retry.failures, Next: retry.next, LastError: retry.lastError})
+			}
 			continue
 		}
 		s.dispatchMu.Lock()
 		delete(s.dispatchRetry, cmd.ID)
 		s.dispatchMu.Unlock()
+		if s.store != nil {
+			_ = s.store.ClearDispatchRetry(ctx, cmd.ID)
+		}
 	}
 	return nil
 }
