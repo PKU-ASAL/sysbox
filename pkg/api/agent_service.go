@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +20,15 @@ type AgentService struct {
 	consoles        *consoleSessionHub
 	commandTTL      func() time.Duration
 	agentOfflineTTL func() time.Duration
+	dispatchMu      sync.Mutex
+	dispatchRetry   map[string]dispatchRetryState
+	wakeup          func(string, controlplane.AgentCommand) error
+}
+
+type dispatchRetryState struct {
+	failures  int
+	next      time.Time
+	lastError string
 }
 
 func newAgentService(server *Server) *AgentService {
@@ -29,6 +39,8 @@ func newAgentService(server *Server) *AgentService {
 		consoles:        server.consoles,
 		commandTTL:      server.cfg.AgentCommandTTL,
 		agentOfflineTTL: server.cfg.AgentOfflineAfter,
+		dispatchRetry:   map[string]dispatchRetryState{},
+		wakeup:          server.agents.PublishCommand,
 	}
 }
 
@@ -220,11 +232,41 @@ func (s *AgentService) RepublishPendingCommands(ctx context.Context) error {
 		if cmd.IsTerminal() || !cmd.Leasable(now) {
 			continue
 		}
-		if err := s.registry.PublishCommand(cmd.AgentID, cmd); err != nil {
-			return err
+		s.dispatchMu.Lock()
+		retry := s.dispatchRetry[cmd.ID]
+		blocked := now.Before(retry.next)
+		s.dispatchMu.Unlock()
+		if blocked {
+			continue
 		}
+		wake := s.wakeup
+		if wake == nil {
+			wake = s.registry.PublishCommand
+		}
+		if err := wake(cmd.AgentID, cmd); err != nil {
+			s.dispatchMu.Lock()
+			retry.failures++
+			if retry.failures > 6 {
+				retry.failures = 6
+			}
+			retry.next = now.Add(time.Duration(1<<retry.failures) * time.Second)
+			retry.lastError = err.Error()
+			s.dispatchRetry[cmd.ID] = retry
+			s.dispatchMu.Unlock()
+			continue
+		}
+		s.dispatchMu.Lock()
+		delete(s.dispatchRetry, cmd.ID)
+		s.dispatchMu.Unlock()
 	}
 	return nil
+}
+
+func (s *AgentService) DispatchRetryState(commandID string) (failures int, next time.Time, lastError string) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	state := s.dispatchRetry[commandID]
+	return state.failures, state.next, state.lastError
 }
 
 func (s *AgentService) AcquireCommandLease(ctx context.Context, agentID string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, bool) {
