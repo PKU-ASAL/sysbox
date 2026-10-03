@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/jackc/pgx/v5"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"os"
 	"path/filepath"
@@ -72,12 +73,34 @@ func (s *sqliteAPIStore) ClearDispatchRetry(ctx context.Context, id string) erro
 	_, err = db.ExecContext(ctx, "DELETE FROM sysbox_dispatch_retries WHERE command_id=?", id)
 	return err
 }
-func (s *postgresAPIStore) LoadDispatchRetry(context.Context, string) (DispatchRetryRecord, error) {
-	return DispatchRetryRecord{}, persistence.ErrInvalidRecord
+func (s *postgresAPIStore) LoadDispatchRetry(ctx context.Context, id string) (DispatchRetryRecord, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return DispatchRetryRecord{}, err
+	}
+	defer conn.Release()
+	var r DispatchRetryRecord
+	err = conn.QueryRow(ctx, "SELECT command_id,failures,next,last_error FROM sysbox_dispatch_retries WHERE command_id=$1", id).Scan(&r.CommandID, &r.Failures, &r.Next, &r.LastError)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return r, persistence.ErrNotFound
+	}
+	return r, err
 }
-func (s *postgresAPIStore) SaveDispatchRetry(context.Context, DispatchRetryRecord) error {
-	return persistence.ErrInvalidRecord
+func (s *postgresAPIStore) SaveDispatchRetry(ctx context.Context, r DispatchRetryRecord) error {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	_, err = conn.Exec(ctx, "INSERT INTO sysbox_dispatch_retries(command_id,failures,next,last_error) VALUES($1,$2,$3,$4) ON CONFLICT(command_id) DO UPDATE SET failures=EXCLUDED.failures,next=EXCLUDED.next,last_error=EXCLUDED.last_error", r.CommandID, r.Failures, r.Next, r.LastError)
+	return err
 }
-func (s *postgresAPIStore) ClearDispatchRetry(context.Context, string) error {
-	return persistence.ErrInvalidRecord
+func (s *postgresAPIStore) ClearDispatchRetry(ctx context.Context, id string) error {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	_, err = conn.Exec(ctx, "DELETE FROM sysbox_dispatch_retries WHERE command_id=$1", id)
+	return err
 }

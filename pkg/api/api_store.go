@@ -109,6 +109,12 @@ CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
   attempt INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS sysbox_dispatch_retries (
+ command_id TEXT PRIMARY KEY,
+ failures INTEGER NOT NULL DEFAULT 0,
+ next TIMESTAMPTZ NOT NULL,
+ last_error TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
   agent_id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
