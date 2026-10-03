@@ -102,6 +102,7 @@ type guestExecutionPersistence interface {
 }
 
 type guestFileOperationPersistence interface {
+	CreateGuestFileDispatch(context.Context, controlplane.GuestFileOperation, controlplane.AgentCommand) error
 	SaveGuestFileOperation(context.Context, controlplane.GuestFileOperation) error
 	GetGuestFileOperation(context.Context, string) (*controlplane.GuestFileOperation, error)
 	CompareAndSwapGuestFileOperation(context.Context, controlplane.GuestFileOperation, int64) (bool, error)

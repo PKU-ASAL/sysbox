@@ -94,22 +94,16 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 	}
 	commandID := uuid.NewString()
 	op := controlplane.GuestFileOperation{ID: id, Version: 1, AgentID: agentID, CommandID: commandID, Topology: topology, Node: node, Status: controlplane.GuestExecutionQueued, CreatedAt: time.Now().UTC()}
-	if err := s.apiStore.SaveGuestFileOperation(r.Context(), op); err != nil {
+	command := controlplane.AgentCommand{ID: commandID, AgentID: agentID, Type: "guest_file_put", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, FilePut: &put}
+	if err := s.apiStore.CreateGuestFileDispatch(r.Context(), op, command); err != nil {
 		cleanup()
 		writeError(w, 500, err)
 		return
 	}
-	_, err = s.agentService().PublishCommand(r.Context(), agentID, controlplane.AgentCommand{ID: commandID, Type: "guest_file_put", FilePut: &put})
+	_, err = s.agentService().PublishCommand(r.Context(), agentID, command)
 	if err != nil {
-		op.Status, op.Error, op.EndedAt = controlplane.GuestExecutionFailed, "dispatch failed", time.Now().UTC()
-		if ok, saveErr := s.apiStore.CompareAndSwapGuestFileOperation(r.Context(), op, op.Version); saveErr != nil || !ok {
-			cleanup()
-			writeError(w, 500, fmt.Errorf("record file operation dispatch failure"))
-			return
-		}
+		// Durable enqueue is authoritative; notification is a wake-up hint.
 		cleanup()
-		writeError(w, 500, err)
-		return
 	}
 	writeJSON(w, http.StatusAccepted, publicGuestFileOperation(op))
 }

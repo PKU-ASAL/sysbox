@@ -12,3 +12,10 @@ func (s *localAPIStore) CreateGuestExecutionDispatch(ctx context.Context, execut
 	}
 	return repo.CreateFilesystemGuestDispatch(ctx, &execution, nil, command)
 }
+func (s *localAPIStore) CreateGuestFileDispatch(ctx context.Context, operation controlplane.GuestFileOperation, command controlplane.AgentCommand) error {
+	repo, err := s.guestRepository(ctx)
+	if err != nil {
+		return err
+	}
+	return repo.CreateFilesystemGuestDispatch(ctx, nil, &operation, command)
+}

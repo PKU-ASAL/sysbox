@@ -35,6 +35,17 @@ func EncodeGuestFileDispatch(x controlplane.GuestFileOperation, cmd controlplane
 	}
 	return encodeGuestDispatch(x.CommandID, cmd, func() ([]byte, error) { return fileOperationCodec.encode(x) })
 }
+func EncodeGuestFileDispatchRecord(x controlplane.GuestFileOperation, cmd controlplane.AgentCommand) ([]byte, error) {
+	raw, err := EncodeGuestFileDispatch(x, cmd)
+	if err != nil {
+		return nil, err
+	}
+	command, err := EncodeCommandRecord(CommandRecord{Command: cmd})
+	if err != nil {
+		return nil, err
+	}
+	return withGuestDispatch(raw, command)
+}
 func encodeGuestDispatch(id string, cmd controlplane.AgentCommand, encode func() ([]byte, error)) ([]byte, error) {
 	cmd = DurableCommand(cmd)
 	if id == "" || validateCommand(cmd) != nil || cmd.Status != controlplane.AgentCommandStatusQueued || cmd.Attempt != 0 || cmd.LeaseOwner != "" || !cmd.LeaseUntil.IsZero() {

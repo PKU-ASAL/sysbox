@@ -7,6 +7,12 @@ import (
 )
 
 func (s *sqliteAPIStore) CreateGuestExecutionDispatch(ctx context.Context, execution controlplane.GuestExecution, command controlplane.AgentCommand) error {
+	return s.createSQLiteGuestDispatch(ctx, "sysbox_guest_executions", execution.ID, func() ([]byte, error) { return persistence.EncodeGuestExecutionDispatchRecord(execution, command) }, command)
+}
+func (s *sqliteAPIStore) CreateGuestFileDispatch(ctx context.Context, operation controlplane.GuestFileOperation, command controlplane.AgentCommand) error {
+	return s.createSQLiteGuestDispatch(ctx, "sysbox_guest_file_operations", operation.ID, func() ([]byte, error) { return persistence.EncodeGuestFileDispatchRecord(operation, command) }, command)
+}
+func (s *sqliteAPIStore) createSQLiteGuestDispatch(ctx context.Context, table, id string, encode func() ([]byte, error), command controlplane.AgentCommand) error {
 	db, err := s.open()
 	if err != nil {
 		return err
@@ -25,11 +31,11 @@ func (s *sqliteAPIStore) CreateGuestExecutionDispatch(ctx context.Context, execu
 			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
 		}
 	}()
-	raw, err := persistence.EncodeGuestExecutionDispatchRecord(execution, command)
+	raw, err := encode()
 	if err != nil {
 		return err
 	}
-	if _, err = conn.ExecContext(ctx, "INSERT INTO sysbox_guest_executions(id,data) VALUES(?,?)", execution.ID, raw); err != nil {
+	if _, err = conn.ExecContext(ctx, "INSERT INTO "+table+"(id,data) VALUES(?,?)", id, raw); err != nil {
 		return err
 	}
 	if err = writeSQLiteCommand(ctx, conn, persistence.CommandRecord{Command: command}, false); err != nil {
@@ -40,8 +46,4 @@ func (s *sqliteAPIStore) CreateGuestExecutionDispatch(ctx context.Context, execu
 	}
 	committed = true
 	return nil
-}
-
-func (s *postgresAPIStore) CreateGuestExecutionDispatch(context.Context, controlplane.GuestExecution, controlplane.AgentCommand) error {
-	return persistence.ErrInvalidRecord
 }
