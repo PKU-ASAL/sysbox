@@ -399,6 +399,10 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 	if err != nil {
 		return
 	}
+	if !commandEventMatchesFence(cmd, event) {
+		slog.Warn("reject fenced command event", "agent_id", event.AgentID, "command_id", event.CommandID)
+		return
+	}
 	now := event.CreatedAt
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -428,6 +432,28 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 	} else {
 		_ = s.store.SaveAgentCommand(ctx, cmd)
 	}
+}
+
+func commandEventMatchesFence(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) bool {
+	if event.LeaseOwner != "" && event.LeaseOwner != cmd.LeaseOwner {
+		return false
+	}
+	if event.Attempt != 0 && event.Attempt != cmd.Attempt {
+		return false
+	}
+	if event.ActionID != "" && event.ActionID != cmd.ActionID {
+		return false
+	}
+	if event.ResourceUID != "" && event.ResourceUID != cmd.ResourceUID {
+		return false
+	}
+	if event.Generation != 0 && event.Generation != cmd.Generation {
+		return false
+	}
+	if event.LeaseEpoch != 0 && event.LeaseEpoch != cmd.LeaseEpoch {
+		return false
+	}
+	return true
 }
 
 func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) {

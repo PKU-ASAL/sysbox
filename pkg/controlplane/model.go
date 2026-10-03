@@ -233,6 +233,10 @@ type AgentCommand struct {
 	LeaseOwner       string                `json:"lease_owner,omitempty"`
 	LeaseUntil       time.Time             `json:"lease_until,omitempty"`
 	Attempt          int                   `json:"attempt,omitempty"`
+	ActionID         string                `json:"action_id,omitempty"`
+	ResourceUID      string                `json:"resource_uid,omitempty"`
+	Generation       int64                 `json:"generation,omitempty"`
+	LeaseEpoch       int64                 `json:"lease_epoch,omitempty"`
 }
 
 type GuestExecutionRequest struct {
@@ -315,13 +319,19 @@ const (
 )
 
 type AgentCommandEvent struct {
-	CommandID string    `json:"command_id,omitempty"`
-	Type      string    `json:"type"`
-	AgentID   string    `json:"agent_id,omitempty"`
-	Status    string    `json:"status,omitempty"`
-	Message   string    `json:"message,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"created_at,omitempty"`
+	CommandID   string    `json:"command_id,omitempty"`
+	Type        string    `json:"type"`
+	AgentID     string    `json:"agent_id,omitempty"`
+	Status      string    `json:"status,omitempty"`
+	Message     string    `json:"message,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	CreatedAt   time.Time `json:"created_at,omitempty"`
+	ActionID    string    `json:"action_id,omitempty"`
+	ResourceUID string    `json:"resource_uid,omitempty"`
+	Generation  int64     `json:"generation,omitempty"`
+	LeaseEpoch  int64     `json:"lease_epoch,omitempty"`
+	LeaseOwner  string    `json:"lease_owner,omitempty"`
+	Attempt     int       `json:"attempt,omitempty"`
 }
 
 type NodeOperation struct {

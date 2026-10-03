@@ -29,6 +29,10 @@ Provider 执行 → 保存恢复证据 → 再观察验证
 | Run repository | Save/Restart/Claim/Renew/Expire 共用原子状态规则；完整 SQLite 快照；执行轮次和 Inputs 隔离 | 全部读取与 dispatch 适配、Agent 仓储、完整 outbox 和资源侧 fencing 已完成 |
 | Command repository | 三种后端共用载荷绑定、租约、终态与退休规则；发送前原子核对授权；文件派发 ID 防冲突 | 完整 operation+command outbox、资源侧 fencing 或带租约证明的事件协议已完成 |
 | Agent repository | 三种后端共用注册、心跳、策略和离线判定；锁内合并；存储错误不回退缓存授权 | inventory、projection、命令事件已统一，或已经有完整身份轮换协议 |
+
+### Resource fencing 迁移进度
+
+Agent command/event 模型已增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。事件回写会在字段存在时核对当前 command，拒绝旧 owner、旧 attempt、旧 action/resource/generation/epoch 的迟到事件；缺少这些字段的现有 agent.v1 事件保持兼容。该检查点只覆盖 command/event 边界，Run/NodeOperation/Guest 完成接口尚未强制要求 fencing 证明。
 | Runtime | 默认 Apply/Destroy/Reset 走观察、授权、写前意图、验证、原子提交；恢复只提交可证明结果 | 每种资源都已有完整的 discovery/read-back；所有 interrupted reset 都能自动继续 |
 | Firecracker | 版本化 manifest、身份/代际/进程锚点、文件锁、冷恢复、pidfd 校验后发信号；reset 保留真实目标 ActionID | 已通过真实 KVM、宿主机重启或内核版本矩阵验证 |
 | Docker / libvirt / isolated network | 管理身份、发现、拥有者约束；reset 的旧/新代际校验；隔离网络的观测与 ownership 标记 | 已通过真实 Docker/libvirt/网络设备 E2E |

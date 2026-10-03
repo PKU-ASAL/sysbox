@@ -51,6 +51,24 @@ func TestAgentServicePublishAndAcquireCommandLease(t *testing.T) {
 	require.Equal(t, leased.Status, stored[0].Status)
 }
 
+func TestCommandEventFenceRejectsStaleLease(t *testing.T) {
+	svc, _, registry, _ := newTestAgentService(t)
+	ctx := context.Background()
+	cmd, err := svc.PublishCommand(ctx, "host-a", controlplane.AgentCommand{Type: "node_operation", ActionID: "action", ResourceUID: "uid", Generation: 2, LeaseEpoch: 4})
+	require.NoError(t, err)
+	leased, ok := svc.AcquireCommandLease(ctx, "host-a", cmd)
+	require.True(t, ok)
+	svc.RecordCommandEvent(ctx, controlplane.AgentCommandEvent{AgentID: "host-a", CommandID: leased.ID, Status: "ack", LeaseOwner: "stale", Attempt: leased.Attempt, ActionID: "action", ResourceUID: "uid", Generation: 2, LeaseEpoch: 4})
+	got, err := svc.FindCommand(ctx, "host-a", leased.ID)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.AgentCommandStatusLeased, got.Status)
+	svc.RecordCommandEvent(ctx, controlplane.AgentCommandEvent{AgentID: "host-a", CommandID: leased.ID, Status: "ack", LeaseOwner: leased.LeaseOwner, Attempt: leased.Attempt, ActionID: "action", ResourceUID: "uid", Generation: 2, LeaseEpoch: 4})
+	got, err = svc.FindCommand(ctx, "host-a", leased.ID)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.AgentCommandStatusAcknowledged, got.Status)
+	require.NotEmpty(t, registry.ListCommandEvents("host-a"))
+}
+
 func TestAgentServiceRecordCommandEventUpdatesCommand(t *testing.T) {
 	svc, _, registry, _ := newTestAgentService(t)
 	ctx := context.Background()
