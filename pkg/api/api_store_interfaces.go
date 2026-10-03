@@ -14,6 +14,7 @@ type schemaStore interface {
 }
 
 type runStore interface {
+	CompleteRun(context.Context, string, string, controlplane.RunCompletion) (*controlplane.Run, bool, error)
 	LoadRuns(ctx context.Context) ([]controlplane.Run, error)
 	GetRun(ctx context.Context, id string) (*controlplane.Run, error)
 	SaveRun(ctx context.Context, run controlplane.Run) error

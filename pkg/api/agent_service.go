@@ -127,65 +127,36 @@ func (s *AgentService) agentOfflineAfter() time.Duration {
 }
 
 func (s *AgentService) CompleteRun(agentID, runID string, completion controlplane.RunCompletion) (controlplane.RunCompletion, error) {
-	if completion.Run.ID == "" {
-		completion.Run.ID = runID
+	if s.store == nil {
+		return completion, fmt.Errorf("run store not configured")
 	}
-	if completion.Run.ID != runID {
-		return completion, fmt.Errorf("completion run id mismatch")
-	}
-	if completion.Run.AgentID == "" {
-		completion.Run.AgentID = agentID
-	}
-	if completion.Run.AgentID != agentID {
-		return completion, fmt.Errorf("completion agent id mismatch")
-	}
-	current, err := s.store.GetRun(context.Background(), runID)
+	stored, changed, err := s.store.CompleteRun(context.Background(), agentID, runID, completion)
 	if err != nil {
 		return completion, err
 	}
-	projection := completion.Projection
-	if projection.AgentID != "" && projection.AgentID != agentID || projection.Topology != "" && projection.Topology != current.Topology || projection.Workspace != "" && projection.Workspace != current.Workspace {
-		return completion, persistence.ErrConflict
+	completion.Run = *stored
+	if s.jobs != nil {
+		s.jobs.remember(stored)
+		s.jobs.logs.Close(stored.ID)
 	}
-	incoming := completion.Run
-	if current.AgentID != agentID || !incoming.Status.IsTerminal() {
-		return completion, persistence.ErrConflict
-	}
-	if current.Attempt < 1 || incoming.Attempt != current.Attempt || incoming.LeaseOwner == "" || incoming.LeaseOwner != current.LeaseOwner {
-		return completion, persistence.ErrConflict
-	}
-	if incoming.Topology != "" && incoming.Topology != current.Topology || incoming.Revision != "" && incoming.Revision != current.Revision || incoming.SnapshotPath != "" && incoming.SnapshotPath != current.SnapshotPath || incoming.Target != "" && incoming.Target != current.Target || incoming.Op != "" && incoming.Op != current.Op || incoming.Operation != "" && incoming.Operation != current.Operation || !incoming.QueuedAt.IsZero() && !incoming.QueuedAt.Equal(current.QueuedAt) {
-		return completion, persistence.ErrConflict
-	}
-	merged := *current
-	merged.Status = incoming.Status
-	merged.Err = incoming.Err
-	merged.Recoverable = incoming.Recoverable
-	if !incoming.EndedAt.IsZero() {
-		merged.EndedAt = incoming.EndedAt
-	} else if merged.EndedAt.IsZero() {
-		merged.EndedAt = time.Now().UTC()
-	}
-	if incoming.Assertion != nil {
-		merged.Assertion = incoming.Assertion
-	}
-	completion.Run = merged
-	if err := s.jobs.replace(&completion.Run); err != nil {
-		return completion, err
+	if !changed {
+		return completion, nil
 	}
 	if completion.Projection.AgentID == "" {
 		completion.Projection.AgentID = agentID
 	}
 	if completion.Projection.Topology == "" {
-		completion.Projection.Topology = completion.Run.Topology
+		completion.Projection.Topology = stored.Topology
 	}
 	if completion.Projection.Workspace == "" {
-		completion.Projection.Workspace = completion.Run.Workspace
+		completion.Projection.Workspace = stored.Workspace
 	}
 	if completion.Projection.UpdatedAt.IsZero() {
 		completion.Projection.UpdatedAt = time.Now().UTC()
 	}
-	s.registry.SaveProjection(completion.Projection)
+	if s.registry != nil {
+		s.registry.SaveProjection(completion.Projection)
+	}
 	return completion, nil
 }
 
