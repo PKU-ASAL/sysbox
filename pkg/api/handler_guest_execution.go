@@ -167,6 +167,13 @@ func (s *Server) handleCompleteGuestExecution(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode completion"))
 		return
 	}
+	if execution.CommandID != "" {
+		cmd, findErr := s.agentService().FindCommand(r.Context(), agentID, execution.CommandID)
+		if (findErr != nil && fenceProofPresent(completion.ActionID, completion.ResourceUID, completion.Generation, completion.LeaseEpoch, completion.LeaseOwner, completion.Attempt)) || findErr == nil && !commandEventMatchesFence(cmd, controlplane.AgentCommandEvent{AgentID: agentID, CommandID: execution.CommandID, Type: cmd.Type, ActionID: completion.ActionID, ResourceUID: completion.ResourceUID, Generation: completion.Generation, LeaseEpoch: completion.LeaseEpoch, LeaseOwner: completion.LeaseOwner, Attempt: completion.Attempt}) {
+			writeError(w, http.StatusConflict, persistence.ErrConflict)
+			return
+		}
+	}
 	execution, err = s.guestExecutions().Complete(r.Context(), execution.ID, completion.Result, completion.ResultClass, completion.Error)
 	if err != nil {
 		if errors.Is(err, errGuestExecutionConflict) {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 const guestFileMaxSize = 16 << 20
@@ -212,6 +213,13 @@ func (s *Server) handleCompleteGuestFileOperation(w http.ResponseWriter, r *http
 	if err := json.NewDecoder(r.Body).Decode(&completion); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode completion"))
 		return
+	}
+	if op.CommandID != "" {
+		cmd, findErr := s.agentService().FindCommand(r.Context(), agentID, op.CommandID)
+		if (findErr != nil && fenceProofPresent(completion.ActionID, completion.ResourceUID, completion.Generation, completion.LeaseEpoch, completion.LeaseOwner, completion.Attempt)) || findErr == nil && !commandEventMatchesFence(cmd, controlplane.AgentCommandEvent{AgentID: agentID, CommandID: op.CommandID, Type: cmd.Type, ActionID: completion.ActionID, ResourceUID: completion.ResourceUID, Generation: completion.Generation, LeaseEpoch: completion.LeaseEpoch, LeaseOwner: completion.LeaseOwner, Attempt: completion.Attempt}) {
+			writeError(w, http.StatusConflict, persistence.ErrConflict)
+			return
+		}
 	}
 	updated, err := newGuestFileOperationService(s.apiStore).Complete(r.Context(), op.ID, completion.Error)
 	if err != nil {

@@ -351,7 +351,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		// has very likely expired by now, and the result must still be
 		// delivered — otherwise a timed-out execution is never reported at all
 		// and the caller is left polling something that will never resolve.
-		if err := r.opts.ReportGuestExecutionComplete(runCtx, cmd.Execution.ID, controlplane.GuestExecutionCompletion{Result: completed.Result, ResultClass: completed.ResultClass, Error: completed.Err}); err != nil {
+		if err := r.opts.ReportGuestExecutionComplete(runCtx, cmd.Execution.ID, controlplane.GuestExecutionCompletion{Result: completed.Result, ResultClass: completed.ResultClass, Error: completed.Err, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); err != nil {
 			emit("failed", "guest execution completion report failed", err)
 			return
 		}
@@ -371,7 +371,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		}
 		mgr, err := r.executor.bridge.StateManager(cmd.FilePut.Topology)
 		if err != nil {
-			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed"}); reportErr != nil {
+			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed", ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); reportErr != nil {
 				emit("failed", "guest file completion report failed", reportErr)
 				return
 			}
@@ -380,7 +380,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		}
 		st, err := mgr.Load()
 		if err != nil {
-			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed"}); reportErr != nil {
+			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed", ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); reportErr != nil {
 				emit("failed", "guest file completion report failed", reportErr)
 				return
 			}
@@ -388,14 +388,14 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			return
 		}
 		if err := putGuestFile(runCtx, r.opts, st, *cmd.FilePut); err != nil {
-			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed"}); reportErr != nil {
+			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed", ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); reportErr != nil {
 				emit("failed", "guest file completion report failed", reportErr)
 				return
 			}
 			emit("failed", "guest file put failed", err)
 			return
 		}
-		if err := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{}); err != nil {
+		if err := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); err != nil {
 			emit("failed", "guest file completion report failed", err)
 			return
 		}

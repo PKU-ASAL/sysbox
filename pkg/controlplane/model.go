@@ -258,6 +258,12 @@ type GuestExecutionCompletion struct {
 	Result      GuestExecutionResult `json:"result"`
 	ResultClass string               `json:"result_class,omitempty"`
 	Error       string               `json:"error,omitempty"`
+	ActionID    string               `json:"action_id,omitempty"`
+	ResourceUID string               `json:"resource_uid,omitempty"`
+	Generation  int64                `json:"generation,omitempty"`
+	LeaseEpoch  int64                `json:"lease_epoch,omitempty"`
+	LeaseOwner  string               `json:"lease_owner,omitempty"`
+	Attempt     int                  `json:"attempt,omitempty"`
 }
 
 type GuestFilePut struct {
@@ -287,7 +293,13 @@ type GuestFileOperation struct {
 }
 
 type GuestFileOperationCompletion struct {
-	Error string `json:"error,omitempty"`
+	Error       string `json:"error,omitempty"`
+	ActionID    string `json:"action_id,omitempty"`
+	ResourceUID string `json:"resource_uid,omitempty"`
+	Generation  int64  `json:"generation,omitempty"`
+	LeaseEpoch  int64  `json:"lease_epoch,omitempty"`
+	LeaseOwner  string `json:"lease_owner,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
 }
 
 type GuestExecution struct {

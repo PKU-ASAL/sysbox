@@ -37,6 +37,8 @@ Agent command/event 模型增加可选的 `action_id`、`resource_uid`、`genera
 此处是命令事件层的原子防陈旧写入，不是完整资源侧 fencing：命令派发尚未全面绑定实际资源 generation，Run/NodeOperation/Guest 完成入口与 provider 外部副作用仍需迁移。跨聚合派生状态更新也未成为一个原子事务；真实 Postgres 尚未验收。
 
 Run 完成入口进一步迁移到共享 `RunRepository.CompleteRun`：三后端在同一存储锁/事务内检查 owner、attempt、可用执行轮次、绑定、lease/deadline 与 projection 归属，再合并结果。过期 Agent 不能用 failed/cancelled 绕过租约授权；并发续租的截止时间不会被旧完成快照覆盖。首次提交成功后才更新缓存，终态相同重试仅返回已存结果，不再次发布 projection；不同终态或断言结果冲突被拒绝。该步骤使用已有 agent.v1 Run 证明，不引入新的必填 wire 字段；NodeOperation/Guest 完成回报和 provider 资源 generation 的完整 fencing 仍未完成。
+
+Guest 完成回报现在接受同一组可选 fencing 证明；若 operation 绑定的 command 仍存在且已带 fencing，HTTP completion 必须匹配 command 的 action/resource/generation/epoch/owner/attempt。旧 command 或旧 Agent v1 回报缺少证明时保持兼容。Agent executor 会回传执行 command 的证明字段；GuestExecution 和 GuestFileOperation 的完成入口在状态 CAS 前拒绝明显的旧证明。NodeOperation 完成回报和 provider 真实资源 generation 尚待接入。
 | Runtime | 默认 Apply/Destroy/Reset 走观察、授权、写前意图、验证、原子提交；恢复只提交可证明结果 | 每种资源都已有完整的 discovery/read-back；所有 interrupted reset 都能自动继续 |
 | Firecracker | 版本化 manifest、身份/代际/进程锚点、文件锁、冷恢复、pidfd 校验后发信号；reset 保留真实目标 ActionID | 已通过真实 KVM、宿主机重启或内核版本矩阵验证 |
 | Docker / libvirt / isolated network | 管理身份、发现、拥有者约束；reset 的旧/新代际校验；隔离网络的观测与 ownership 标记 | 已通过真实 Docker/libvirt/网络设备 E2E |
