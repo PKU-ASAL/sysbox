@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
@@ -35,8 +36,17 @@ func (s *SchedulerService) DispatchRun(ctx context.Context, run *controlplane.Ru
 	if err := s.jobs.assign(run, agent.ID); err != nil {
 		return err
 	}
-	if _, err := s.publish(ctx, agent.ID, controlplaneRunAssignedCommand(run)); err != nil {
+	command := controlplaneRunAssignedCommand(run)
+	command.ID = "run-" + run.ID
+	command.AgentID = agent.ID
+	command.Status = controlplane.AgentCommandStatusQueued
+	command.Protocol = controlplane.AgentProtocolVersion
+	command.CreatedAt = time.Now().UTC()
+	fingerprint := fmt.Sprintf("run-dispatch:%s:%s:%s", run.ID, run.Op, run.AgentID)
+	if _, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint}); err != nil {
 		return err
+	} else if created && s.agents.registry != nil {
+		_ = s.agents.registry.PublishCommand(agent.ID, command)
 	}
 	return nil
 }

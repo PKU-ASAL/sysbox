@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -74,8 +75,17 @@ func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispat
 			return nil, false, errIdempotencyConflict
 		}
 		bundle.Run = *existing
-		bundle.RequestOnly = true
-		bundle.Command = controlplane.AgentCommand{}
+		if request.Fingerprint == "" || request.Command.ID == "" || !strings.HasPrefix(request.Fingerprint, "run-dispatch:") {
+			bundle.RequestOnly = true
+			bundle.Command = controlplane.AgentCommand{}
+		} else {
+			if current, readErr := (localCommandStorage{store: s}).read(ctx, request.Command.ID); readErr != nil {
+				return nil, false, readErr
+			} else if current != nil {
+				return nil, false, persistence.ErrConflict
+			}
+			bundle.Run.RequestFingerprint = request.Fingerprint
+		}
 	} else {
 		if err := validatePathSegment(request.Command.ID, "command"); err != nil {
 			return nil, false, err

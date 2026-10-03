@@ -17,6 +17,18 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
+func TestSchedulerDispatchPersistsCommandBeforeNotification(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	ctx := context.Background()
+	require.NoError(t, s.agentService().Save(ctx, controlplane.Agent{ID: "agent", Status: controlplane.AgentStatusOnline, Capabilities: []string{"docker"}}))
+	run := s.jobs.startWithOptions("lab", "apply", runStartOptions{})
+	require.NoError(t, s.scheduler.DispatchRun(ctx, run, []string{"docker"}))
+	commands, err := s.apiStore.ListAgentCommands(ctx, "agent")
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+	require.Equal(t, "run-"+run.ID, commands[0].ID)
+}
+
 func TestPlacementConcurrentBindHasSingleWinner(t *testing.T) {
 	runs := t.TempDir()
 	a := newWorkspaceService(runs, t.TempDir(), "", nil, nil)
