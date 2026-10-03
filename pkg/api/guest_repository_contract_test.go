@@ -16,6 +16,24 @@ type guestMetadataStore interface {
 	guestAcceptancePersistence
 }
 
+func TestSQLiteGuestExecutionDispatchIsAtomic(t *testing.T) {
+	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()}
+	db, err := s.open()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	execution := controlplane.GuestExecution{ID: "exec-dispatch", Version: 1, Topology: "lab", Node: "web", AgentID: "agent", CommandID: "cmd-dispatch", Status: controlplane.GuestExecutionQueued, Request: controlplane.GuestExecutionRequest{Argv: []string{"true"}}}
+	cmd := controlplane.AgentCommand{ID: "cmd-dispatch", AgentID: "agent", Type: "guest_execution", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Execution: &controlplane.GuestExecution{ID: execution.ID, Topology: execution.Topology, Node: execution.Node, AgentID: execution.AgentID}, ExecutionRequest: execution.Request}
+	require.NoError(t, s.CreateGuestExecutionDispatch(ctx, execution, cmd))
+	got, err := s.GetGuestExecution(ctx, execution.ID)
+	require.NoError(t, err)
+	require.Equal(t, cmd.ID, got.CommandID)
+	commands, err := s.ListAgentCommands(ctx, "agent")
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+	require.Equal(t, cmd.ID, commands[0].ID)
+}
+
 func eachGuestMetadataStore(t *testing.T, run func(*testing.T, guestMetadataStore)) {
 	t.Helper()
 	for _, kind := range []string{"local", "sqlite"} {

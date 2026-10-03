@@ -17,6 +17,17 @@ func EncodeGuestExecutionDispatch(x controlplane.GuestExecution, cmd controlplan
 	}
 	return encodeGuestDispatch(x.CommandID, cmd, func() ([]byte, error) { return executionCodec.encode(x) })
 }
+func EncodeGuestExecutionDispatchRecord(x controlplane.GuestExecution, cmd controlplane.AgentCommand) ([]byte, error) {
+	raw, err := EncodeGuestExecutionDispatch(x, cmd)
+	if err != nil {
+		return nil, err
+	}
+	command, err := EncodeCommandRecord(CommandRecord{Command: cmd})
+	if err != nil {
+		return nil, err
+	}
+	return withGuestDispatch(raw, command)
+}
 func EncodeGuestFileDispatch(x controlplane.GuestFileOperation, cmd controlplane.AgentCommand) ([]byte, error) {
 	cmd = DurableCommand(cmd)
 	if fileOperationCodec.validate(x) != nil || x.Version != 1 || x.Status != controlplane.GuestExecutionQueued || x.CommandID != cmd.ID || x.AgentID != cmd.AgentID || cmd.Type != "guest_file_put" || cmd.FilePut == nil || cmd.FilePut.ID != x.ID || cmd.FilePut.Topology != x.Topology || cmd.FilePut.Node != x.Node {

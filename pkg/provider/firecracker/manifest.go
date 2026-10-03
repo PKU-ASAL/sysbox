@@ -471,7 +471,7 @@ func captureProcessIdentity(pid int) (processIdentity, error) {
 		return processIdentity{}, err
 	}
 	argv := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
-	if len(raw) == 0 || processStartTime(pid) != start {
+	if len(raw) == 0 {
 		return processIdentity{}, fmt.Errorf("firecracker process identity changed during probe")
 	}
 	return processIdentity{PID: pid, StartTime: start, BootID: boot, Executable: exe, Argv: argv}, nil
