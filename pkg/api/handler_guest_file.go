@@ -100,10 +100,10 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err)
 		return
 	}
-	_, err = s.agentService().PublishCommand(r.Context(), agentID, command)
-	if err != nil {
-		// Durable enqueue is authoritative; notification is a wake-up hint.
-		cleanup()
+	// The committed command is polled durably; notification must not delete
+	// its payload or perform another storage write.
+	if s.agents != nil {
+		_ = s.agents.PublishCommand(agentID, command)
 	}
 	writeJSON(w, http.StatusAccepted, publicGuestFileOperation(op))
 }

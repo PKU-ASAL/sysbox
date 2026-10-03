@@ -65,6 +65,8 @@ GuestExecution 和 GuestFileOperation 已迁移到 `GuestRepository`，Run 写�
 
 ### Durable outbox 迁移进度
 
+恢复路径补强：filesystem command Get/Claim 现在可直接读取 Guest seed，不依赖此前 PublishCommand；已更新命令与退休记录优先于初始 seed；Guest CAS 保留 seed；Guest enqueue 与其他命令写入共用全局锁并检查命令 ID 冲突。文件上传提交后的通知只唤醒 registry，不再二次保存命令或因通知失败删除载荷。新增无通知领取/退休与 CAS 后恢复回归；Run 原子派发尚未完成。
+
 已先落地 Guest operation 的共享 dispatch seam：命令 ID 在 durable enqueue 前生成，service 支持由后端一次提交 operation 与 command，提交成功后通知 Agent 失败不会回滚 queued operation。Guest dispatch 编码会核对 operation、agent、command type、请求载荷和初始状态，并提供文件 seed 的编码、校验和恢复接口。
 
 filesystem、SQLite 与 Postgres 已接通 GuestExecution/GuestFileOperation 的 operation+command 同事务入队；SQLite 使用 `BEGIN IMMEDIATE`，Postgres 使用同一事务，文件后端使用稳定记录锁。命令列表重启后可恢复，通知失败不回滚 durable queued 状态。Supervisor 会周期性从 durable command store 重建连接 Agent 的唤醒提示，控制进程重启不会丢失 queued intent。真实 Postgres 尚未连接验收，Run outbox 和完整投递重试策略仍未完成。

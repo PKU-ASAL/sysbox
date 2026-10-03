@@ -126,6 +126,9 @@ func swapGuestRecord[T any](ctx context.Context, records guestRecords, kind gues
 		}
 		codec.setVersion(&x, expected+1)
 		next, err := codec.encode(x)
+		if err == nil {
+			next, err = preserveGuestDispatch(raw, next)
+		}
 		swapped = err == nil
 		return next, err
 	})

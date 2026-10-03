@@ -52,12 +52,22 @@ func (b localCommandStorage) records(ctx context.Context, agent string) ([]persi
 	if err != nil {
 		return nil, err
 	}
+	seeds := map[string]bool{}
 	for _, record := range guestCommands {
+		if seeds[record.Command.ID] {
+			return nil, persistence.ErrCorruptRecord
+		}
+		seeds[record.Command.ID] = true
 		if agent == "" || record.Command.AgentID == agent {
-			byID[record.Command.ID] = record
+			if current, exists := byID[record.Command.ID]; exists {
+				if current.Command.AgentID != record.Command.AgentID {
+					return nil, persistence.ErrCorruptRecord
+				}
+			} else {
+				byID[record.Command.ID] = record
+			}
 		}
 	}
-	seeds := map[string]bool{}
 	for _, dispatch := range dispatches {
 		if dispatch.RequestOnly {
 			continue
@@ -139,6 +149,20 @@ func (b localCommandStorage) read(ctx context.Context, id string) (*persistence.
 		if err != nil {
 			return nil, err
 		}
+	}
+	guestCommands, err := persistence.NewFilesystemGuestRepository(b.store.runsDir).FilesystemGuestDispatchCommands(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, record := range guestCommands {
+		if record.Command.ID != id {
+			continue
+		}
+		if current != nil {
+			return nil, persistence.ErrCorruptRecord
+		}
+		copy := record
+		current = &copy
 	}
 	return current, nil
 }
