@@ -176,6 +176,22 @@ func TestRunDispatchPreservesDeadlineAndSnapshot(t *testing.T) {
 		require.False(t, ok)
 	})
 }
+
+func TestRunDispatchAttachesCommandToExistingAssignedRun(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+		ctx := context.Background()
+		run := controlplane.Run{ID: "assigned-existing", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
+		require.NoError(t, s.SaveRun(ctx, run))
+		cmd := controlplane.AgentCommand{ID: "run-assigned-existing", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run}
+		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: cmd, Fingerprint: "run-dispatch:assigned-existing"})
+		require.NoError(t, err)
+		require.False(t, created)
+		commands, err := s.ListAgentCommands(ctx, "agent")
+		require.NoError(t, err)
+		require.Len(t, commands, 1)
+		require.Equal(t, cmd.ID, commands[0].ID)
+	})
+}
 func TestLateRunCompletionCannotPublishRejectedState(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	ctx := context.Background()

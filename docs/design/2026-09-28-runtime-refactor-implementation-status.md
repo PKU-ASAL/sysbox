@@ -69,7 +69,7 @@ GuestExecution 和 GuestFileOperation 已迁移到 `GuestRepository`，Run 写�
 
 已先落地 Guest operation 的共享 dispatch seam：命令 ID 在 durable enqueue 前生成，service 支持由后端一次提交 operation 与 command，提交成功后通知 Agent 失败不会回滚 queued operation。Guest dispatch 编码会核对 operation、agent、command type、请求载荷和初始状态，并提供文件 seed 的编码、校验和恢复接口。
 
-filesystem、SQLite 与 Postgres 已接通 GuestExecution/GuestFileOperation 的 operation+command 同事务入队；SQLite 使用 `BEGIN IMMEDIATE`，Postgres 使用同一事务，文件后端使用稳定记录锁。命令列表重启后可恢复，通知失败不回滚 durable queued 状态。Supervisor 会周期性从 durable command store 重建连接 Agent 的唤醒提示，控制进程重启不会丢失 queued intent。普通 Scheduler Run 派发也已改为 `CreateRunDispatch`，assignment 与 `run_assigned` command 先 durable 提交，再发送内存通知；legacy idempotent destroy 继续使用 RequestOnly mapping。真实 Postgres 尚未连接验收，完整投递退避策略仍未完成。
+filesystem、SQLite 与 Postgres 已接通 GuestExecution/GuestFileOperation 的 operation+command 同事务入队；SQLite 使用 `BEGIN IMMEDIATE`，Postgres 使用同一事务，文件后端使用稳定记录锁。命令列表重启后可恢复，通知失败不回滚 durable queued 状态。Supervisor 会周期性从 durable command store 重建连接 Agent 的唤醒提示，控制进程重启不会丢失 queued intent。普通 Scheduler Run 派发也已改为 `CreateRunDispatch`，assignment 与 `run_assigned` command 先 durable 提交，再发送内存通知；已有 assigned Run 的 command 缺失时，local/SQLite/Postgres 会在事务内补挂 command；legacy idempotent destroy 继续使用 RequestOnly mapping。真实 Postgres 尚未连接验收，完整投递退避策略仍未完成。
 
 Agent 检查点通过独立复审及全仓无缓存 unit/race、vet、docs、diff 检查，覆盖跨进程锁、并发策略/心跳、重启、损坏记录、提交失败及注册身份旁路。全仓 race 另暴露 Firecracker 进程回收窗口：两次读取 stat 之间进程消失会被误判为 PID 身份冲突。已改用同一 stat 快照核对 starttime，保留后续完整身份验证；相关 race 回归重复 10 次通过。
 

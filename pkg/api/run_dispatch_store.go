@@ -176,6 +176,11 @@ func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispa
 		if existingFingerprint != "" && existingFingerprint != request.Fingerprint {
 			return nil, false, errIdempotencyConflict
 		}
+		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" {
+			if err := insertSQLiteAgentCommand(ctx, tx, request.Command); err != nil {
+				return nil, false, err
+			}
+		}
 		if err := tx.Commit(); err != nil {
 			return nil, false, err
 		}
@@ -289,6 +294,15 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 		}
 		if existing.RequestFingerprint != "" && existing.RequestFingerprint != request.Fingerprint {
 			return nil, false, errIdempotencyConflict
+		}
+		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" {
+			commandRaw, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: request.Command})
+			if err != nil {
+				return nil, false, err
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO sysbox_agent_commands (agent_id,id,status,lease_owner,lease_until,attempt,data,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,now())`, request.Command.AgentID, request.Command.ID, request.Command.Status, request.Command.LeaseOwner, nullableTime(request.Command.LeaseUntil), request.Command.Attempt, string(commandRaw)); err != nil {
+				return nil, false, err
+			}
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, false, err
