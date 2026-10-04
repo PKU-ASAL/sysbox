@@ -256,6 +256,9 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	if err := ensureColumn(db, "sysbox_agent_commands", "record_json", "BLOB NOT NULL DEFAULT X''"); err != nil {
 		return err
 	}
+	if err := ensureColumn(db, "sysbox_agent_command_events", "record_json", "BLOB NOT NULL DEFAULT X''"); err != nil {
+		return err
+	}
 	if err := s.ensureGlobalRevisionsColumn(db, "files", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -793,9 +796,13 @@ func (s *sqliteAPIStore) SaveAgentCommandEvent(ctx context.Context, event contro
 	if err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_agent_command_events (command_id, type, agent_id, status, message, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		event.CommandID, event.Type, event.AgentID, event.Status, event.Message, event.Error, formatSQLiteTime(event.CreatedAt))
+	raw, err := persistence.EncodeCommandEvent(event)
+	if err != nil {
+		return err
+	}
+	event, err = *mustDecodeEvent(raw), nil
+	_ = err
+	_, err = db.ExecContext(ctx, `INSERT INTO sysbox_agent_command_events (command_id, type, agent_id, status, message, error, created_at, record_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, event.CommandID, event.Type, event.AgentID, event.Status, event.Message, event.Error, formatSQLiteTime(event.CreatedAt), raw)
 	return err
 }
 
@@ -805,7 +812,7 @@ func (s *sqliteAPIStore) ListAgentCommandEvents(ctx context.Context, agentID str
 		return nil, err
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT command_id, type, agent_id, status, message, error, created_at FROM sysbox_agent_command_events WHERE agent_id=? OR agent_id=''`, agentID)
+		`SELECT command_id, type, agent_id, status, message, error, created_at, record_json FROM sysbox_agent_command_events WHERE agent_id=? OR agent_id=''`, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -814,10 +821,19 @@ func (s *sqliteAPIStore) ListAgentCommandEvents(ctx context.Context, agentID str
 	for rows.Next() {
 		var ev controlplane.AgentCommandEvent
 		var createdAt string
-		if err := rows.Scan(&ev.CommandID, &ev.Type, &ev.AgentID, &ev.Status, &ev.Message, &ev.Error, &createdAt); err != nil {
+		var full []byte
+		if err := rows.Scan(&ev.CommandID, &ev.Type, &ev.AgentID, &ev.Status, &ev.Message, &ev.Error, &createdAt, &full); err != nil {
 			return nil, err
 		}
-		ev.CreatedAt = parseSQLiteTime(createdAt)
+		if len(full) > 0 {
+			decoded, err := persistence.DecodeCommandEvent(full)
+			if err != nil {
+				return nil, err
+			}
+			ev = *decoded
+		} else {
+			ev.CreatedAt = parseSQLiteTime(createdAt)
+		}
 		out = append(out, ev)
 	}
 	return out, rows.Err()

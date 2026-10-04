@@ -15,15 +15,21 @@ import (
 )
 
 func (s *localAPIStore) SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error {
+	raw, err := persistence.EncodeCommandEvent(event)
+	if err != nil {
+		return err
+	}
+	decoded, err := persistence.DecodeCommandEvent(raw)
+	if err != nil {
+		return err
+	}
+	event = *decoded
 	agentID := event.AgentID
 	if agentID == "" {
 		agentID = "_unknown"
 	}
-	if event.CreatedAt.IsZero() {
-		event.CreatedAt = time.Now().UTC()
-	}
 	path := filepath.Join(s.runsDir, "_agents", agentID, "command-events.jsonl")
-	return appendLocalHistory(ctx, path, event)
+	return appendLocalHistory(ctx, path, json.RawMessage(raw))
 }
 
 func (s *localAPIStore) ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error) {
@@ -37,11 +43,17 @@ func (s *localAPIStore) ListAgentCommandEvents(ctx context.Context, agentID stri
 	}
 	var out []controlplane.AgentCommandEvent
 	for _, f := range files {
-		events, err := readLocalHistory[controlplane.AgentCommandEvent](ctx, f)
+		raws, err := readLocalHistory[json.RawMessage](ctx, f)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, events...)
+		for _, raw := range raws {
+			event, err := persistence.DecodeCommandEvent(raw)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, *event)
+		}
 	}
 	return out, nil
 }
