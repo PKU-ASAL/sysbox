@@ -72,11 +72,20 @@ func (s *localAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, c
 }
 
 func (s *localAPIStore) SaveAgentInventory(_ context.Context, inv controlplane.AgentInventory) error {
+	raw, err := persistence.EncodeInventory(inv)
+	if err != nil {
+		return err
+	}
+	invPtr, err := persistence.DecodeInventory(raw)
+	if err != nil {
+		return err
+	}
+	inv = *invPtr
 	agentID := inv.AgentID
 	if agentID == "" {
 		agentID = "_unknown"
 	}
-	return writeLocalObject(filepath.Join(s.runsDir, "_agents", agentID, "inventory.json"), inv)
+	return writeLocalObject(filepath.Join(s.runsDir, "_agents", agentID, "inventory.json"), json.RawMessage(raw))
 }
 
 func (s *localAPIStore) GetAgentInventory(_ context.Context, agentID string) (*controlplane.AgentInventory, error) {
@@ -84,11 +93,7 @@ func (s *localAPIStore) GetAgentInventory(_ context.Context, agentID string) (*c
 	if err != nil {
 		return nil, fmt.Errorf("agent inventory not found")
 	}
-	var inv controlplane.AgentInventory
-	if err := json.Unmarshal(raw, &inv); err != nil {
-		return nil, err
-	}
-	return &inv, nil
+	return persistence.DecodeInventory(raw)
 }
 
 func (s *postgresAPIStore) SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error {
@@ -163,6 +168,15 @@ func (s *postgresAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID
 }
 
 func (s *postgresAPIStore) SaveAgentInventory(ctx context.Context, inv controlplane.AgentInventory) error {
+	raw, err := persistence.EncodeInventory(inv)
+	if err != nil {
+		return err
+	}
+	invPtr, err := persistence.DecodeInventory(raw)
+	if err != nil {
+		return err
+	}
+	inv = *invPtr
 	if inv.AgentID == "" {
 		inv.AgentID = "_unknown"
 	}
@@ -171,10 +185,6 @@ func (s *postgresAPIStore) SaveAgentInventory(ctx context.Context, inv controlpl
 		return err
 	}
 	defer conn.Release()
-	raw, err := json.Marshal(inv)
-	if err != nil {
-		return err
-	}
 	_, err = conn.Exec(ctx, `
 INSERT INTO sysbox_agent_inventory (agent_id, data, updated_at)
 VALUES ($1, $2::jsonb, now())
@@ -200,9 +210,5 @@ func (s *postgresAPIStore) GetAgentInventory(ctx context.Context, agentID string
 	if err != nil {
 		return nil, fmt.Errorf("postgres get agent inventory: %w", err)
 	}
-	var inv controlplane.AgentInventory
-	if err := json.Unmarshal(raw, &inv); err != nil {
-		return nil, err
-	}
-	return &inv, nil
+	return persistence.DecodeInventory(raw)
 }

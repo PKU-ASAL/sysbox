@@ -853,6 +853,15 @@ func (s *sqliteAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, 
 }
 
 func (s *sqliteAPIStore) SaveAgentInventory(ctx context.Context, inv controlplane.AgentInventory) error {
+	raw, err := persistence.EncodeInventory(inv)
+	if err != nil {
+		return err
+	}
+	invPtr, err := persistence.DecodeInventory(raw)
+	if err != nil {
+		return err
+	}
+	inv = *invPtr
 	db, err := s.open()
 	if err != nil {
 		return err
@@ -901,5 +910,8 @@ func (s *sqliteAPIStore) GetAgentInventory(ctx context.Context, agentID string) 
 	json.Unmarshal(tools, &inv.Tools)
 	inv.Stale = stale != 0
 	inv.ObservedAt = parseSQLiteTime(observedAt)
+	if inv.AgentID == "" {
+		return nil, persistence.ErrCorruptRecord
+	}
 	return &inv, nil
 }

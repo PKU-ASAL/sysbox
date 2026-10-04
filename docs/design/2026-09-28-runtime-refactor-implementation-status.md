@@ -32,7 +32,7 @@ Provider 执行 → 保存恢复证据 → 再观察验证
 
 Command event repository 已开始统一 codec：事件 ID、AgentID、Type、Status、时间严格校验；filesystem 使用 JSONL codec，SQLite 保留完整 `record_json`（包括 recovery/fencing 字段），Postgres 使用完整 JSONB。旧 SQLite 索引列仍可读取，但缺失完整快照的旧事件只能按兼容字段读取；真实事件重新写入后即拥有完整 proof。
 
-Projection codec 也已开始统一：filesystem、SQLite、Postgres 的 ResourceProjection 读取都经过共享 topology/时间校验和安全解码，避免后端把畸形 projection 当成空结果。AgentInventory 物理表迁移仍待完成。
+Projection codec 也已开始统一：filesystem、SQLite、Postgres 的 ResourceProjection 读取都经过共享 topology/时间校验和安全解码，避免后端把畸形 projection 当成空结果。AgentInventory codec 已接入三后端：AgentID 必须存在，ObservedAt 规范化，损坏 JSON/无身份记录统一拒绝；filesystem/Postgres 保存完整 JSON，SQLite 继续维护索引列并在读取时执行共享身份校验。inventory 仍不是完整 CAS repository，策略/观测并发版本控制尚待下一步。
 
 ### Resource fencing 迁移进度
 
