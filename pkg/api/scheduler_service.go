@@ -33,19 +33,29 @@ func (s *SchedulerService) DispatchRun(ctx context.Context, run *controlplane.Ru
 		s.jobs.finish(run, err)
 		return err
 	}
-	if err := s.jobs.assign(run, agent.ID); err != nil {
-		return err
-	}
-	command := controlplaneRunAssignedCommand(run)
+	assigned := *run
+	transientInputs := cloneInputs(run.Inputs)
+	assigned.MarkAssigned(agent.ID, time.Now().UTC())
+	command := controlplaneRunAssignedCommand(&assigned)
 	command.ID = "run-" + run.ID
 	command.AgentID = agent.ID
 	command.Status = controlplane.AgentCommandStatusQueued
 	command.Protocol = controlplane.AgentProtocolVersion
 	command.CreatedAt = time.Now().UTC()
-	fingerprint := fmt.Sprintf("run-dispatch:%s:%s:%s", run.ID, run.Op, run.AgentID)
-	if _, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint}); err != nil {
+	fingerprint := fmt.Sprintf("run-dispatch:%s:%s:%s", assigned.ID, assigned.Op, assigned.AgentID)
+	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: assigned, Command: command, Fingerprint: fingerprint})
+	if err != nil {
 		return err
-	} else if created && s.agents.registry != nil {
+	}
+	*run = *stored
+	run.Inputs = transientInputs
+	s.jobs.remember(stored)
+	s.jobs.mu.Lock()
+	if cached := s.jobs.runs[stored.ID]; cached != nil {
+		cached.Inputs = transientInputs
+	}
+	s.jobs.mu.Unlock()
+	if created && s.agents.registry != nil {
 		_ = s.agents.registry.PublishCommand(agent.ID, command)
 	}
 	return nil

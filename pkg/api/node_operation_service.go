@@ -54,7 +54,9 @@ func (s *NodeOperationService) CompleteFromAgent(agentID, opID string, op contro
 			return op, fmt.Errorf("node operation fencing mismatch")
 		}
 	}
-	s.operations.Save(op)
+	if err := s.operations.Save(op); err != nil {
+		return op, err
+	}
 	return op, nil
 }
 
@@ -74,7 +76,7 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	op := s.operations.Create(controlplane.NodeOperation{
+	op, err := s.operations.Create(controlplane.NodeOperation{
 		Topology:    topology,
 		Workspace:   topology,
 		Operation:   operation,
@@ -85,6 +87,9 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 		Roles:       subj.Roles,
 		ActionID:    "", ResourceUID: res.ResourceUID, Generation: res.Generation,
 	})
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
 	if op.Generation > 0 {
 		op.ActionID = op.ID
 	}
@@ -98,7 +103,9 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	}
 	op.CommandID, op.ActionID, op.ResourceUID, op.Generation, op.LeaseEpoch = command.ID, command.ActionID, command.ResourceUID, command.Generation, command.LeaseEpoch
 	op.LeaseOwner, op.Attempt = command.LeaseOwner, command.Attempt
-	s.operations.Save(op)
+	if err := s.operations.Save(op); err != nil {
+		return controlplane.NodeOperation{}, err
+	}
 	return op, nil
 }
 
@@ -122,7 +129,7 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	op := s.operations.Create(controlplane.NodeOperation{
+	op, err := s.operations.Create(controlplane.NodeOperation{
 		Topology:    topology,
 		Workspace:   topology,
 		Operation:   "import",
@@ -135,6 +142,9 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 		Roles:       subj.Roles,
 		ActionID:    "", ResourceUID: req.ID, Generation: 1,
 	})
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
 	op.ActionID = op.ID
 	command, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
 		Type:      "node_operation",
@@ -146,6 +156,8 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	}
 	op.CommandID, op.ActionID, op.ResourceUID, op.Generation, op.LeaseEpoch = command.ID, command.ActionID, command.ResourceUID, command.Generation, command.LeaseEpoch
 	op.LeaseOwner, op.Attempt = command.LeaseOwner, command.Attempt
-	s.operations.Save(op)
+	if err := s.operations.Save(op); err != nil {
+		return controlplane.NodeOperation{}, err
+	}
 	return op, nil
 }

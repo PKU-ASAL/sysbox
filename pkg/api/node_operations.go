@@ -18,7 +18,7 @@ func newNodeOperationStore(store apiStore) *nodeOperationStore {
 	return &nodeOperationStore{store: store}
 }
 
-func (s *nodeOperationStore) Create(op controlplane.NodeOperation) controlplane.NodeOperation {
+func (s *nodeOperationStore) Create(op controlplane.NodeOperation) (controlplane.NodeOperation, error) {
 	now := time.Now().UTC()
 	if op.ID == "" {
 		op.ID = uuid.New().String()
@@ -54,14 +54,17 @@ func (s *nodeOperationStore) Create(op controlplane.NodeOperation) controlplane.
 			CreatedAt: now,
 		})
 	}
-	s.Save(op)
-	return op
+	if err := s.Save(op); err != nil {
+		return op, err
+	}
+	return op, nil
 }
 
-func (s *nodeOperationStore) Save(op controlplane.NodeOperation) {
+func (s *nodeOperationStore) Save(op controlplane.NodeOperation) error {
 	if s.store != nil {
-		_ = s.store.SaveNodeOperation(context.Background(), op)
+		return s.store.SaveNodeOperation(context.Background(), op)
 	}
+	return nil
 }
 
 func (s *nodeOperationStore) Get(id string) (*controlplane.NodeOperation, error) {

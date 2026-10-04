@@ -74,8 +74,13 @@ func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispat
 		if existing.RequestFingerprint != "" && existing.RequestFingerprint != request.Fingerprint {
 			return nil, false, errIdempotencyConflict
 		}
-		bundle.Run = *existing
-		if request.Fingerprint == "" || request.Command.ID == "" || !strings.HasPrefix(request.Fingerprint, "run-dispatch:") {
+		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" && existing.Status == controlplane.RunQueued {
+			bundle.Run = request.Run
+			bundle.RequestOnly = false
+		} else {
+			bundle.Run = *existing
+		}
+		if request.Fingerprint == "" || request.Command.ID == "" || !strings.HasPrefix(request.Fingerprint, "run-dispatch:") || bundle.RequestOnly {
 			bundle.RequestOnly = true
 			bundle.Command = controlplane.AgentCommand{}
 		} else {
@@ -175,6 +180,11 @@ func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispa
 	if err == nil {
 		if existingFingerprint != "" && existingFingerprint != request.Fingerprint {
 			return nil, false, errIdempotencyConflict
+		}
+		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" && existingFingerprint == "" {
+			if err := insertSQLiteRun(ctx, tx, request.Run); err != nil {
+				return nil, false, err
+			}
 		}
 		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" {
 			if err := insertSQLiteAgentCommand(ctx, tx, request.Command); err != nil {
