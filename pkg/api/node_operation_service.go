@@ -8,6 +8,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 type NodeOperationService struct {
@@ -50,6 +51,9 @@ func (s *NodeOperationService) CompleteFromAgent(agentID, opID string, op contro
 		op.EndedAt = time.Now().UTC()
 	}
 	if current, err := s.operations.Get(opID); err == nil && current != nil {
+		if err := persistence.ValidateNodeOperationTransition(*current, op); err != nil {
+			return op, err
+		}
 		if current.AgentID != agentID || current.ActionID != "" && (op.ActionID != current.ActionID || op.Generation != current.Generation || op.LeaseEpoch != current.LeaseEpoch || op.LeaseOwner != current.LeaseOwner || op.Attempt != current.Attempt) {
 			return op, fmt.Errorf("node operation fencing mismatch")
 		}
