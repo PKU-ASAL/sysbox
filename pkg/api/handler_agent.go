@@ -162,6 +162,12 @@ func (s *Server) handleCompleteNodeOperation(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode node operation: %w", err))
 		return
 	}
+	if op.ActionID != "" || op.ResourceUID != "" || op.Generation != 0 || op.LeaseEpoch != 0 || op.LeaseOwner != "" || op.Attempt != 0 {
+		if op.ActionID == "" || op.ResourceUID == "" || op.Generation == 0 || op.LeaseEpoch == 0 || op.LeaseOwner == "" || op.Attempt < 1 {
+			writeError(w, http.StatusConflict, persistence.ErrConflict)
+			return
+		}
+	}
 	op, err := s.nodeOperations().CompleteFromAgent(agentID, opID, op)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)

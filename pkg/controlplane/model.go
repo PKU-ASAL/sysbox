@@ -366,6 +366,13 @@ type NodeOperation struct {
 	CreatedAt   time.Time `json:"created_at"`
 	StartedAt   time.Time `json:"started_at,omitempty"`
 	EndedAt     time.Time `json:"ended_at,omitempty"`
+	CommandID   string    `json:"-"`
+	ActionID    string    `json:"action_id,omitempty"`
+	ResourceUID string    `json:"resource_uid,omitempty"`
+	Generation  int64     `json:"generation,omitempty"`
+	LeaseEpoch  int64     `json:"lease_epoch,omitempty"`
+	LeaseOwner  string    `json:"lease_owner,omitempty"`
+	Attempt     int       `json:"attempt,omitempty"`
 }
 
 type NodeOperationCommand struct {

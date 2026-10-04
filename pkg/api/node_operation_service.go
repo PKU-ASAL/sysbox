@@ -49,6 +49,11 @@ func (s *NodeOperationService) CompleteFromAgent(agentID, opID string, op contro
 	if op.EndedAt.IsZero() && (op.Status == controlplane.NodeOperationStatusDone || op.Status == controlplane.NodeOperationStatusFailed) {
 		op.EndedAt = time.Now().UTC()
 	}
+	if current, err := s.operations.Get(opID); err == nil && current != nil {
+		if current.AgentID != agentID || current.ActionID != "" && (op.ActionID != current.ActionID || op.Generation != current.Generation || op.LeaseEpoch != current.LeaseEpoch || op.LeaseOwner != current.LeaseOwner || op.Attempt != current.Attempt) {
+			return op, fmt.Errorf("node operation fencing mismatch")
+		}
+	}
 	s.operations.Save(op)
 	return op, nil
 }
@@ -79,12 +84,16 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 		RequestedBy: subj.User,
 		Roles:       subj.Roles,
 	})
-	if _, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
+	command, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
 		Type:      "node_operation",
 		Operation: op,
-	}); err != nil {
+	})
+	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
+	op.CommandID, op.ActionID, op.ResourceUID, op.Generation, op.LeaseEpoch = command.ID, command.ActionID, command.ResourceUID, command.Generation, command.LeaseEpoch
+	op.LeaseOwner, op.Attempt = command.LeaseOwner, command.Attempt
+	s.operations.Save(op)
 	return op, nil
 }
 
@@ -120,11 +129,15 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 		RequestedBy: subj.User,
 		Roles:       subj.Roles,
 	})
-	if _, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
+	command, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
 		Type:      "node_operation",
 		Operation: op,
-	}); err != nil {
+	})
+	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
+	op.CommandID, op.ActionID, op.ResourceUID, op.Generation, op.LeaseEpoch = command.ID, command.ActionID, command.ResourceUID, command.Generation, command.LeaseEpoch
+	op.LeaseOwner, op.Attempt = command.LeaseOwner, command.Attempt
+	s.operations.Save(op)
 	return op, nil
 }
