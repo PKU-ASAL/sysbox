@@ -82,6 +82,9 @@ func (s *Supervisor) Scan(ctx context.Context) {
 	if err := s.server.agentService().RepublishPendingCommands(ctx); err != nil {
 		fmt.Printf("[supervisor] republish pending commands: %v\n", err)
 	}
+	if err := s.server.agentService().RepublishAssignedRuns(ctx); err != nil {
+		fmt.Printf("[supervisor] repair assigned run commands: %v\n", err)
+	}
 	if err := s.server.agentService().MarkStaleOffline(ctx, now); err != nil {
 		fmt.Printf("[supervisor] update agent liveness: %v\n", err)
 		return

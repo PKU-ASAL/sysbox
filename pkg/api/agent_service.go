@@ -247,6 +247,40 @@ func (s *AgentService) RepublishPendingCommands(ctx context.Context) error {
 	return nil
 }
 
+// RepublishAssignedRuns repairs a durable assignment whose command seed was
+// lost before a controller restart. Running runs are left untouched: absence
+// of a local process is not proof that a remote action stopped.
+func (s *AgentService) RepublishAssignedRuns(ctx context.Context) error {
+	if s.store == nil {
+		return nil
+	}
+	runs, err := s.store.LoadRuns(ctx)
+	if err != nil {
+		return err
+	}
+	commands, err := s.store.ListAgentCommands(ctx, "")
+	if err != nil {
+		return err
+	}
+	present := map[string]bool{}
+	for _, cmd := range commands {
+		if cmd.Run != nil {
+			present[cmd.Run.ID] = true
+		}
+	}
+	for _, run := range runs {
+		if run.Status != controlplane.RunAssigned || run.AgentID == "" || present[run.ID] {
+			continue
+		}
+		cmd := controlplane.AgentCommand{ID: "run-" + run.ID, AgentID: run.AgentID, Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run, CreatedAt: time.Now().UTC()}
+		fingerprint := "run-dispatch:" + run.ID + ":" + run.Op + ":" + run.AgentID
+		if _, _, err := s.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: cmd, Fingerprint: fingerprint}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *AgentService) DispatchRetryState(commandID string) (failures int, next time.Time, lastError string) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
