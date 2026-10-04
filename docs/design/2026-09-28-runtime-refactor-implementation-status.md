@@ -40,7 +40,7 @@ Run 完成入口进一步迁移到共享 `RunRepository.CompleteRun`：三后端
 
 Guest 完成回报现在接受同一组可选 fencing 证明；若 operation 绑定的 command 仍存在且已带 fencing，HTTP completion 必须匹配 command 的 action/resource/generation/epoch/owner/attempt。旧 command 或旧 Agent v1 回报缺少证明时保持兼容。Agent executor 会回传执行 command 的证明字段；GuestExecution 和 GuestFileOperation 的完成入口在状态 CAS 前拒绝明显的旧证明。NodeOperation 完成回报和 provider 真实资源 generation 尚待接入。
 
-NodeOperation 完成回报已保存 command proof，并在绑定 operation 的情况下核对 action/resource/generation/epoch/owner/attempt；生命周期/import 派发后会把 command identity 回写 operation。旧无 proof operation 继续兼容，带不完整或错误 proof 的回报返回冲突。provider 返回的真实资源 generation 与外部资源 fencing 尚未统一接入。
+NodeOperation 完成回报已保存 command proof，并在绑定 operation 的情况下核对 action/resource/generation/epoch/owner/attempt；生命周期/import 派发会绑定 operation action ID、resource UID 和 generation 到 command，再把 command identity 回写 operation。旧无 proof operation 继续兼容，带不完整或错误 proof 的回报返回冲突。provider 返回的真实资源 generation 与外部资源 fencing 尚未统一接入。
 | Runtime | 默认 Apply/Destroy/Reset 走观察、授权、写前意图、验证、原子提交；恢复只提交可证明结果 | 每种资源都已有完整的 discovery/read-back；所有 interrupted reset 都能自动继续 |
 | Firecracker | 版本化 manifest、身份/代际/进程锚点、文件锁、冷恢复、pidfd 校验后发信号；reset 保留真实目标 ActionID | 已通过真实 KVM、宿主机重启或内核版本矩阵验证 |
 | Docker / libvirt / isolated network | 管理身份、发现、拥有者约束；reset 的旧/新代际校验；隔离网络的观测与 ownership 标记 | 已通过真实 Docker/libvirt/网络设备 E2E |

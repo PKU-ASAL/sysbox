@@ -83,10 +83,15 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 		AgentID:     agent.ID,
 		RequestedBy: subj.User,
 		Roles:       subj.Roles,
+		ActionID:    "", ResourceUID: res.ResourceUID, Generation: res.Generation,
 	})
+	if op.Generation > 0 {
+		op.ActionID = op.ID
+	}
 	command, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
 		Type:      "node_operation",
 		Operation: op,
+		ActionID:  op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation,
 	})
 	if err != nil {
 		return controlplane.NodeOperation{}, err
@@ -128,10 +133,13 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 		AgentID:     agent.ID,
 		RequestedBy: subj.User,
 		Roles:       subj.Roles,
+		ActionID:    "", ResourceUID: req.ID, Generation: 1,
 	})
+	op.ActionID = op.ID
 	command, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
 		Type:      "node_operation",
 		Operation: op,
+		ActionID:  op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation,
 	})
 	if err != nil {
 		return controlplane.NodeOperation{}, err
