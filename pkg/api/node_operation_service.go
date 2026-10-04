@@ -58,7 +58,11 @@ func (s *NodeOperationService) CompleteFromAgent(agentID, opID string, op contro
 			return op, fmt.Errorf("node operation fencing mismatch")
 		}
 	}
-	if err := s.operations.Save(op); err != nil {
+	if current, err := s.operations.Get(opID); err == nil && current != nil {
+		if err := s.operations.CompareAndSwap(context.Background(), *current, op); err != nil {
+			return op, err
+		}
+	} else if err := s.operations.Save(op); err != nil {
 		return op, err
 	}
 	return op, nil

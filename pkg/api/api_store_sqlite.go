@@ -736,6 +736,38 @@ func (s *sqliteAPIStore) SaveNodeOperation(ctx context.Context, op controlplane.
 		formatSQLiteTime(op.CreatedAt), formatSQLiteTime(op.StartedAt), formatSQLiteTime(op.EndedAt))
 	return err
 }
+func (s *sqliteAPIStore) CompareAndSwapNodeOperation(ctx context.Context, old, next controlplane.NodeOperation) error {
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var roles, audit, created, started, ended string
+	var current controlplane.NodeOperation
+	err = tx.QueryRowContext(ctx, `SELECT id,topology,operation,node,agent_id,status,error,requested_by,roles,audit,created_at,started_at,ended_at FROM sysbox_node_operations WHERE id=?`, old.ID).Scan(&current.ID, &current.Topology, &current.Operation, &current.Node, &current.AgentID, &current.Status, &current.Err, &current.RequestedBy, &roles, &audit, &created, &started, &ended)
+	if err != nil {
+		return err
+	}
+	json.Unmarshal([]byte(roles), &current.Roles)
+	json.Unmarshal([]byte(audit), &current.Audit)
+	current.CreatedAt = parseSQLiteTime(created)
+	current.StartedAt = parseSQLiteTime(started)
+	current.EndedAt = parseSQLiteTime(ended)
+	if !persistence.SameNodeOperation(current, old) {
+		return persistence.ErrConflict
+	}
+	r, _ := json.Marshal(next.Roles)
+	a, _ := json.Marshal(next.Audit)
+	_, err = tx.ExecContext(ctx, `UPDATE sysbox_node_operations SET status=?,error=?,roles=?,audit=?,started_at=?,ended_at=? WHERE id=?`, next.Status, next.Err, string(r), string(a), formatSQLiteTime(next.StartedAt), formatSQLiteTime(next.EndedAt), next.ID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 func (s *sqliteAPIStore) GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error) {
 	db, err := s.open()

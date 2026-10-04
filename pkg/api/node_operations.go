@@ -66,6 +66,12 @@ func (s *nodeOperationStore) Save(op controlplane.NodeOperation) error {
 	}
 	return nil
 }
+func (s *nodeOperationStore) CompareAndSwap(ctx context.Context, old, next controlplane.NodeOperation) error {
+	if s.store == nil {
+		return fmt.Errorf("node operation store not configured")
+	}
+	return s.store.CompareAndSwapNodeOperation(ctx, old, next)
+}
 
 func (s *nodeOperationStore) Get(id string) (*controlplane.NodeOperation, error) {
 	if s.store == nil {

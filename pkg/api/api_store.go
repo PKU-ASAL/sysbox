@@ -336,6 +336,21 @@ func (s *localAPIStore) SaveNodeOperation(_ context.Context, op controlplane.Nod
 	}
 	return writeLocalObject(filepath.Join(s.runsDir, workspace, "node-ops", op.ID+".json"), op)
 }
+func (s *localAPIStore) CompareAndSwapNodeOperation(ctx context.Context, old, next controlplane.NodeOperation) error {
+	unlock, err := s.lockRunRecords(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := s.GetNodeOperation(ctx, old.ID)
+	if err != nil {
+		return err
+	}
+	if !persistence.SameNodeOperation(*current, old) {
+		return persistence.ErrConflict
+	}
+	return s.SaveNodeOperation(ctx, next)
+}
 
 func (s *localAPIStore) GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error) {
 	items, err := s.ListNodeOperations(ctx, "")
@@ -813,6 +828,36 @@ ON CONFLICT (id) DO UPDATE SET workspace=EXCLUDED.workspace, data=EXCLUDED.data,
 		return fmt.Errorf("postgres save node operation: %w", err)
 	}
 	return nil
+}
+func (s *postgresAPIStore) CompareAndSwapNodeOperation(ctx context.Context, old, next controlplane.NodeOperation) error {
+	pool, err := s.poolFor(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var raw []byte
+	if err = tx.QueryRow(ctx, `SELECT data::text FROM sysbox_node_operations WHERE id=$1 FOR UPDATE`, old.ID).Scan(&raw); err != nil {
+		return err
+	}
+	current, err := persistence.DecodeNodeOperation(raw)
+	if err != nil {
+		return err
+	}
+	if !persistence.SameNodeOperation(*current, old) {
+		return persistence.ErrConflict
+	}
+	nextRaw, err := persistence.EncodeNodeOperation(next)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE sysbox_node_operations SET data=$1::jsonb,updated_at=now() WHERE id=$2`, string(nextRaw), next.ID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *postgresAPIStore) GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error) {
