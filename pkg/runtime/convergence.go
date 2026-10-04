@@ -331,6 +331,7 @@ func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedCha
 		return ActionRecord{}, fmt.Errorf("%w: missing durable topology ownership", ErrObservationUnknown)
 	}
 	record := ActionRecord{ID: hex.EncodeToString(id[:]), Topology: e.topology, RunID: e.runID, Resource: change.Address, Action: change.Action, Status: ActionIntentCommitted, OwnerUID: e.state.TopologyUID, ResourceUID: derivedResourceUID(e.state.TopologyUID, change.Address), Generation: 1, StateSerial: e.state.Meta.Serial}
+	record.RunQueuedAt, record.RunRevision = e.runQueuedAt, e.runRevision
 	record.ExpectedSerial = e.state.Meta.Serial
 	if node := e.graph.Get(change.Address); node != nil {
 		digest, err := desiredActionDigest(node, change)

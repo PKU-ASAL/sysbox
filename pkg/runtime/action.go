@@ -6,6 +6,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"time"
 )
 
 type ActionStatus string
@@ -20,6 +21,8 @@ const (
 // ActionRecord preserves authorized identity and the best available recovery
 // evidence. A provider error is not proof that its effect did not happen.
 type ActionRecord struct {
+	RunQueuedAt    time.Time                   `json:"run_queued_at,omitempty"`
+	RunRevision    string                      `json:"run_revision,omitempty"`
 	Revision       int64                       `json:"revision"`
 	ID             string                      `json:"id"`
 	Topology       string                      `json:"topology"`

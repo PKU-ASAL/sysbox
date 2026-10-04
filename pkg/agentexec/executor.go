@@ -208,6 +208,7 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
+	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
 	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
 	exec.SetOperation(run.Op)
 	exec.SetResumeRunID(run.ParentID)
@@ -350,6 +351,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	}
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
+	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
 	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
 	exec.SetOperation(run.Op)
 	exec.SetLogger(log)
@@ -451,6 +453,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	}
 	exec := runtime.NewExecutor(graph.New(), st)
 	exec.SetRunContext(run.Topology, run.ID)
+	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
 	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
 	exec.SetLogger(log)
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)

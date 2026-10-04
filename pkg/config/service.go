@@ -181,7 +181,7 @@ func DefaultServiceConfig() ServiceConfig {
 				CommandTTL:   "30s",
 			},
 			Policy: AgentPolicyConfig{
-				AllowedCommands: []string{"run_assigned", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put"},
+				AllowedCommands: []string{"run_assigned", "run_recovery", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put"},
 				AllowConsole:    &allow,
 				AllowImport:     &allow,
 			},
@@ -399,7 +399,7 @@ func applyDerivedDefaults(c *ServiceConfig) {
 		c.API.Headers.Roles = "X-Sysbox-Roles"
 	}
 	if len(c.Agent.Policy.AllowedCommands) == 0 {
-		c.Agent.Policy.AllowedCommands = []string{"run_assigned", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put"}
+		c.Agent.Policy.AllowedCommands = []string{"run_assigned", "run_recovery", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put"}
 	}
 	if c.Agent.Policy.AllowConsole == nil {
 		v := true
@@ -505,7 +505,7 @@ func (c ServiceConfig) Validate() error {
 	}
 	for _, command := range c.Agent.Policy.AllowedCommands {
 		switch command {
-		case "run_assigned", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put":
+		case "run_assigned", "run_recovery", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put":
 		default:
 			return fmt.Errorf("agent.policy.allowed_commands contains unsupported command %q", command)
 		}

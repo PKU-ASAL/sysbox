@@ -1,7 +1,7 @@
 # Sysbox 生命周期重构：实施状态与验证边界
 
 > 日期：2026-09-28
-> 更新：2026-09-30
+> 更新：2026-10-04
 > 工作分支：`refactor/observation-driven-runtime`
 > 核心实现提交：`72e227a`；未合入 main，未推送远端。
 > Guest metadata 共享仓储提交：`3679f21`。
@@ -34,7 +34,7 @@ Provider 执行 → 保存恢复证据 → 再观察验证
 
 Agent command/event 模型增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。命令已绑定 fencing 身份时，事件必须完整匹配其证明；无 fencing 身份的 legacy 命令仍兼容无证明事件。校验、状态推进与终态退休通过共享 CommandRepository 在同一存储锁/事务内完成；拒绝或提交失败不发布事件缓存或更新 console/Guest 派生状态。Agent ack、执行事件与目标取消事件均回传对应命令的证明，SQLite 保留完整快照中的 fencing 字段。
 
-此处是命令事件层的原子防陈旧写入，不是完整资源侧 fencing：命令派发尚未全面绑定实际资源 generation，Run/NodeOperation/Guest 完成入口与 provider 外部副作用仍需迁移。跨聚合派生状态更新也未成为一个原子事务；真实 Postgres 尚未验收。
+此处是命令事件层的原子防陈旧写入，不是完整资源侧 fencing：命令派发尚未全面绑定实际资源 generation，Run/NodeOperation/Guest 完成入口与 provider 外部副作用仍需迁移。跨聚合派生状态更新也未成为一个原子事务；真实 Postgres 16 的本仓合同已验收，生产部署未验收。
 
 Run 完成入口进一步迁移到共享 `RunRepository.CompleteRun`：三后端在同一存储锁/事务内检查 owner、attempt、可用执行轮次、绑定、lease/deadline 与 projection 归属，再合并结果。过期 Agent 不能用 failed/cancelled 绕过租约授权；并发续租的截止时间不会被旧完成快照覆盖。首次提交成功后才更新缓存，终态相同重试仅返回已存结果，不再次发布 projection；不同终态或断言结果冲突被拒绝。该步骤使用已有 agent.v1 Run 证明，不引入新的必填 wire 字段；NodeOperation/Guest 完成回报和 provider 资源 generation 的完整 fencing 仍未完成。
 
@@ -81,7 +81,7 @@ GuestExecution 和 GuestFileOperation 已迁移到 `GuestRepository`，Run 写�
 
 已先落地 Guest operation 的共享 dispatch seam：命令 ID 在 durable enqueue 前生成，service 支持由后端一次提交 operation 与 command，提交成功后通知 Agent 失败不会回滚 queued operation。Guest dispatch 编码会核对 operation、agent、command type、请求载荷和初始状态，并提供文件 seed 的编码、校验和恢复接口。
 
-filesystem、SQLite 与 Postgres 已接通 GuestExecution/GuestFileOperation 的 operation+command 同事务入队；SQLite 使用 `BEGIN IMMEDIATE`，Postgres 使用同一事务，文件后端使用稳定记录锁。命令列表重启后可恢复，通知失败不回滚 durable queued 状态。Supervisor 会周期性从 durable command store 重建连接 Agent 的唤醒提示，控制进程重启不会丢失 queued intent；通知失败使用指数退避（1–64 秒），失败次数、下次重试时间和最后错误已持久到 filesystem/SQLite/Postgres retry metadata，跨控制器共享这些后端时退避窗口也能延续。普通 Scheduler Run 派发也已改为 `CreateRunDispatch`，assignment 与 `run_assigned` command 先 durable 提交，再发送内存通知；已有 assigned Run 的 command 缺失时，local/SQLite/Postgres 会在事务内补挂 command；legacy idempotent destroy 继续使用 RequestOnly mapping。真实 Postgres 尚未连接验收，完整跨控制器退避持久化仍未完成。
+filesystem、SQLite 与 Postgres 已接通 GuestExecution/GuestFileOperation 的 operation+command 同事务入队；SQLite 使用 `BEGIN IMMEDIATE`，Postgres 使用同一事务，文件后端使用稳定记录锁。命令列表重启后可恢复，通知失败不回滚 durable queued 状态。Supervisor 会周期性从 durable command store 重建连接 Agent 的唤醒提示，控制进程重启不会丢失 queued intent；通知失败使用指数退避（1–64 秒），失败次数、下次重试时间和最后错误已持久到 filesystem/SQLite/Postgres retry metadata，跨控制器共享这些后端时退避窗口也能延续。普通 Scheduler Run 派发也已改为 `CreateRunDispatch`，assignment 与 `run_assigned` command 先 durable 提交，再发送内存通知；已有 assigned Run 的 command 缺失时，local/SQLite/Postgres 会在事务内补挂 command；legacy idempotent destroy 继续使用 RequestOnly mapping。真实 Postgres 16 合同已验收，完整跨控制器退避持久化仍未完成。
 
 Agent 检查点通过独立复审及全仓无缓存 unit/race、vet、docs、diff 检查，覆盖跨进程锁、并发策略/心跳、重启、损坏记录、提交失败及注册身份旁路。全仓 race 另暴露 Firecracker 进程回收窗口：两次读取 stat 之间进程消失会被误判为 PID 身份冲突。已改用同一 stat 快照核对 starttime，保留后续完整身份验证；相关 race 回归重复 10 次通过。
 
@@ -95,7 +95,7 @@ Agent 检查点通过独立复审及全仓无缓存 unit/race、vet、docs、dif
 - SQLite 保存完整快照并核对索引字段、载荷与时间；Postgres 核对身份、状态与租约列，回调决策在行锁事务中提交。列表排序一致，取消 PostgreSQL 独有的 512 条截断。
 - WebSocket 事件中的非空 AgentID 必须等于认证连接身份。现有 v1 事件没有 owner/attempt 证明，因此本阶段不宣称阻止所有迟到事件或资源侧副作用；后续需要显式协议设计和 fencing。
 
-命令合同覆盖并发与独立进程抢租约、过期重新交付、提交失败、取消后发送、身份冒用、终态保护、退休防复活、派发冲突、时区 round-trip 和 SQLite 快照损坏。Postgres 实库仍未配置；共享合同中的 PostgreSQL 分支跳过，不能当作实库验收。完整 Run/Guest outbox 尚未完成。
+命令合同覆盖并发与独立进程抢租约、过期重新交付、提交失败、取消后发送、身份冒用、终态保护、退休防复活、派发冲突、时区 round-trip 和 SQLite 快照损坏。Postgres 16 实库已执行共享合同，使用临时实例与隔离 schema。完整 Run/Guest outbox 尚未完成。
 
 该命令检查点通过独立复审，以及全仓无缓存 unit/race、vet、docs 和 diff 检查。升级时必须停止旧 API writer：旧 writer 不理解退休记录和完整快照约束，不能与本实现混跑。
 
@@ -109,7 +109,7 @@ Agent 检查点通过独立复审及全仓无缓存 unit/race、vet、docs、dif
 - Inputs 不进入持久存储，只在同轮次恢复。claim 返回预检验证过的 Inputs 副本，并在原子领取内再核对身份。已丢失非默认 Inputs 的 hashed apply 请求必须重提交原 revision/inputs。
 - API 重启本身不证明远端 agent 失败：带 AgentID 的 assigned/running 保留 durable 状态，由租约和观测决定后续处置。
 
-Run 迁移通过全仓无缓存 unit/race/vet/docs 检查和独立复审。FS/SQLite 合同包含并发、独立进程、提交失败、轮次错配、缓存刷新、输入丢失与索引损坏；Postgres 合同可通过 SYSBOX_TEST_DATABASE_URL 启用隔离 schema，目前未配置实库，因此跳过。
+Run 迁移通过全仓无缓存 unit/race/vet/docs 检查和独立复审。FS/SQLite 合同包含并发、独立进程、提交失败、轮次错配、缓存刷新、输入丢失与索引损坏；Postgres 合同可通过 SYSBOX_TEST_DATABASE_URL 启用隔离 schema，已在临时 Postgres 16 上实跑通过。
 
 ### Guest metadata 的实际规则
 
@@ -130,7 +130,7 @@ Guest 记录新增磁盘字段 `record_format: 1`，HTTP DTO 不新增这个字�
 
 Firecracker reset 的外部上下文表示**目标代际**。Provider 内部访问旧 manifest 时切回旧身份；替换 VM 使用原样持久化的目标身份，不能随机生成另一个 action ID。
 
-API 主机没有可信的 owning-agent 身份时，不能把远端 run 当成本机 run 恢复。远端恢复派发/协议尚需完成；当前应明确拒绝本机观测，不能因为本机没有 manifest 就证明远端资源不存在。
+API 主机不执行远端资源探测。显式 remote observe/recover 请求通过 durable command 发送到 Run.AgentID，只有宣告 run-recovery.v1 的 owning Agent 可以执行；本机没有 manifest 不构成远端资源不存在的证据。
 
 执行结果中 `ExitCodeKnown=false` 不能被当成 exit 0。请求超时只证明本地等待结束；未验证远端终止时 `RemoteTermination` 保持 unknown。
 
@@ -152,14 +152,36 @@ Create 与 Reset 共用声明路由逻辑：先观察，持久化子步骤后配
 | SSH/vsock 后台执行 | 句柄不等于跨重启持久任务；观察与可验证取消、vsock stdin、文件 checksum 合同尚有缺口 |
 | 执行 generation | managed 主路径已经传递 generation 标签，但尚不等于连接层 fencing；不宣称已阻止所有 stale-generation 执行 |
 
+
+## 2026-10-04：远端 Observe/Recover 与真实 Postgres 验收
+
+远端入口保留 agent.v1，新增独立 capability `run-recovery.v1` 和 `run_recovery` command；旧 Agent 不会收到不认识的恢复命令。
+
+| 接口 | 行为 |
+|---|---|
+| POST /v1/runs/{id}/remote/observe | 返回 202 + command_id，派发到原 Agent；running Run 可观察，不修改其运行状态 |
+| POST /v1/runs/{id}/remote/recover | live lease 返回 409；过期 running 经原子 ExpireRunLease 后，才允许 failed/recoverable 恢复；必须有固定 revision、完整输入证据且无其他 active Run |
+| POST /v1/agents/{agent}/commands/{command}/recovery-authorize | Agent 执行前验证连接身份、当前 command owner/attempt/期限、Run 轮次及 capability，返回经过摘要验证的固定 revision |
+| GET /v1/runs/{id}/remote-reports/{command} | 返回持久恢复报告；尚无报告 404，失败终态或当前 Run 轮次已变化返回 409 |
+
+发起和查询要求管理员权限。报告包含 action ID、owner UID、resource UID、generation、external ID、观测状态、journal 状态、state serial、Run 轮次和执行租约证明，不包含 provider private state。command/report 同事务退休，API 重启后仍可查询；started/failed 事件不能夹带完成报告。
+
+Observe 只调用 provider Read；候选身份缺失、查询失败或观察期间状态改变保留 unknown/冲突，不把它当成 absent。Recover 复用 runtime RecoverActions，只提交 journal 已授权且可证明的结果，不 Create/Delete、不重放 provisioner/guest 指令，不将整个 Run 自动宣布成功。未知复合动作和缺少完成证据继续拒绝。执行期间依赖 action revision/state serial CAS 和未完成 action 冲突检查，不宣称已有跨控制器全局 Run 排他锁。
+
+action intent 新增 run_queued_at/run_revision，并作为不可变身份核对。旧未完成 journal 缺少轮次证据时拒绝远程恢复；历史成功轮次不会被当成当前轮次报告。没有固定 revision 或已丢失非默认 Inputs 的恢复请求也会拒绝，不能隐式选择当前 workspace/default inputs。
+
+实际验证使用缓存镜像 postgres:16-alpine、回环端口和临时数据目录。开启两个测试 DSN 后，全仓 unit/race 通过；新增覆盖 GuestFile command 冲突事务回滚、retry metadata 重开、恢复报告三后端持久化、HTTP/WebSocket 控制器重启、过期/错轮次授权、Agent runner 证明回传，以及 runtime lost-commit 恢复不重放 effect。实库暴露的 PostgreSQL GetRun NotFound 类型不一致已修复。
+
+边界：尚未进行真实 Firecracker/Docker/libvirt 的远程宿主机 E2E，也未验收 Postgres 主备切换或断电故障；上述结论不是生产 HA 验收。
+
 ## 5. 验证记录
 
 已运行的针对性测试覆盖：FS/SQLite 共用 repository 合同、并发 intent、丢失提交响应、旧阶段覆盖、畸形 aggregate、SQL 事务清理失败、SQLite 重开、CLI/Agent 地址一致性、SQL 列表、metadata 删除、Firecracker 冷恢复/reset，以及 transport 输出上限和未知退出码。
 
 后续复审补充覆盖：Reset 路由重建与验证、guest/image-entry 完成证据、check 截断标志、console 输出 EOF 与退出结果的竞态，以及 pending topology 在列表和 state API 中的一致可见性。
 
-Guest metadata 迁移通过独立复审和全仓无缓存单测/race/vet/docs 检查。合同测试覆盖 FS/SQLite 的重开、并发 CAS、跨进程锁、create 重试、终态和绑定保护、取消、格式损坏、私有字段及 HTTP 错误分类。Postgres 合同套件已接入，但当前未设置 `SYSBOX_TEST_POSTGRES_DSN`，运行时测试明确 skip；设置该变量后测试只在新建的隔离 schema 中操作，并清理该 schema。不得将未连接 Postgres 的通过结果当成真实数据库验收。
+Guest metadata 迁移通过独立复审和全仓无缓存单测/race/vet/docs 检查。合同测试覆盖 FS/SQLite 的重开、并发 CAS、跨进程锁、create 重试、终态和绑定保护、取消、格式损坏、私有字段及 HTTP 错误分类。本轮设置 `SYSBOX_TEST_POSTGRES_DSN` 与 `SYSBOX_TEST_DATABASE_URL`，连接隔离 PostgreSQL 16 实例执行，测试只操作并清理各自 schema。
 
-本阶段已通过 `go test ./...`、`go test -race ./...`、`go vet ./...`、`make docs-test` 和 `git diff --check`。未配置真实 Postgres 集成库，未启动真实 VM、容器或网络拓扑。带 `tests/e2e` 的普通 `go test ./...` 输出不代表真实部署测试已运行。
+本阶段已通过 `go test ./...`、`go test -race ./...`、`go vet ./...`、`make docs-test` 和 `git diff --check`。已运行临时 Postgres 容器上的数据库集成合同；未运行真实 VM/业务容器或网络拓扑。带 `tests/e2e` 的普通 `go test ./...` 输出不代表真实部署测试已运行。
 
-合入/发布前仍需：完整 metadata repository 迁移；剩余资源观测能力与 owning-agent 恢复链路；完整 fencing/outbox；真实 Postgres 与 substrate E2E；逐条核对接口清单中的行为变化。
+合入/发布前仍需：完整 metadata repository 迁移；剩余资源观测能力与 owning-agent 恢复链路；完整 fencing/outbox；真实 substrate E2E 与生产数据库故障矩阵；逐条核对接口清单中的行为变化。

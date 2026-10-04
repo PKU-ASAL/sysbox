@@ -289,6 +289,9 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/policies", s.handleListPolicies)
 	m.HandleFunc("POST /v1/policies", s.handleCreatePolicy)
 	m.HandleFunc("POST /v1/revisions", s.handlePublishRevision)
+	m.HandleFunc("POST /v1/runs/{id}/remote/{mode}", s.handleRequestRunRecovery)
+	m.HandleFunc("GET /v1/runs/{id}/remote-reports/{command}", s.handleGetRunRecovery)
+	m.HandleFunc("POST /v1/agents/{agent}/commands/{command}/recovery-authorize", s.handleAuthorizeRunRecovery)
 
 	// Topologies
 	m.HandleFunc("GET /v1/topologies", s.handleListTopologies)

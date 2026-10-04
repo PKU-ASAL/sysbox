@@ -11,8 +11,9 @@ import (
 )
 
 type CommandRecord struct {
-	Command controlplane.AgentCommand
-	Retired bool
+	Recovery *controlplane.RunRecoveryReport
+	Command  controlplane.AgentCommand
+	Retired  bool
 }
 type CommandStorage interface {
 	ReadCommand(context.Context, string) (*CommandRecord, error)
@@ -54,19 +55,20 @@ func DurableCommand(cmd controlplane.AgentCommand) controlplane.AgentCommand {
 }
 
 type storedCommand struct {
+	Recovery *controlplane.RunRecoveryReport `json:"recovery_report,omitempty"`
 	controlplane.AgentCommand
 	Retired bool `json:"retired,omitempty"`
 }
 
 func EncodeCommandRecord(record CommandRecord) ([]byte, error) {
-	return json.Marshal(storedCommand{AgentCommand: DurableCommand(record.Command), Retired: record.Retired})
+	return json.Marshal(storedCommand{AgentCommand: DurableCommand(record.Command), Retired: record.Retired, Recovery: record.Recovery})
 }
 func DecodeCommandRecord(raw []byte) (*CommandRecord, error) {
 	var stored storedCommand
 	if err := decodeGuestObject(raw, &stored); err != nil {
 		return nil, err
 	}
-	record := &CommandRecord{Command: DurableCommand(stored.AgentCommand), Retired: stored.Retired}
+	record := &CommandRecord{Command: DurableCommand(stored.AgentCommand), Retired: stored.Retired, Recovery: stored.Recovery}
 	if validateCommand(record.Command) != nil {
 		return nil, ErrCorruptRecord
 	}
@@ -96,6 +98,9 @@ func commandPayload(cmd controlplane.AgentCommand) controlplane.AgentCommand {
 	return cmd
 }
 func mergeCommandPatch(old, next controlplane.AgentCommand) controlplane.AgentCommand {
+	if next.RecoveryMode == "" {
+		next.RecoveryMode = old.RecoveryMode
+	}
 	if next.Type == "" {
 		next.Type = old.Type
 	}

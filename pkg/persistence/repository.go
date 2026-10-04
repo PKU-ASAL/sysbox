@@ -206,6 +206,9 @@ func validateAction(a runtime.ActionRecord) error {
 	return nil
 }
 func sameIntent(a, b runtime.ActionRecord) bool {
+	if !a.RunQueuedAt.Equal(b.RunQueuedAt) || a.RunRevision != b.RunRevision {
+		return false
+	}
 	return a.ID == b.ID && a.Topology == b.Topology && a.RunID == b.RunID && a.Resource.Equal(b.Resource) && a.Action == b.Action && a.OwnerUID == b.OwnerUID && a.ResourceUID == b.ResourceUID && a.Generation == b.Generation && a.StateSerial == b.StateSerial && a.DesiredDigest == b.DesiredDigest && a.ReplayForbidden == b.ReplayForbidden
 }
 func sameRecord(a, b runtime.ActionRecord) bool {

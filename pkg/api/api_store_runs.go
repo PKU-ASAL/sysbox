@@ -112,7 +112,7 @@ func (s *postgresAPIStore) GetRun(ctx context.Context, id string) (*controlplane
 	var raw []byte
 	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_runs WHERE id=$1`, id).Scan(&raw)
 	if err == pgx.ErrNoRows {
-		return nil, fmt.Errorf("run not found")
+		return nil, persistence.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("postgres get run: %w", err)

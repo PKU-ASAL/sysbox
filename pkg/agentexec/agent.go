@@ -75,6 +75,11 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	if len(opts.Capabilities) == 0 {
 		opts.Capabilities, _ = agent.DetectCapabilities()
 	}
+	if _, ok := bridge.(RecoveryWorkspaceProvider); ok {
+		if _, ok := bridge.(ActionRepositoryProvider); ok && !slices.Contains(opts.Capabilities, controlplane.RunRecoveryCapability) {
+			opts.Capabilities = append(opts.Capabilities, controlplane.RunRecoveryCapability)
+		}
+	}
 	if err := post(ctx, opts, opts.APIURL+"/v1/agents", controlplane.Agent{
 		ID:           opts.ID,
 		Name:         opts.Name,
@@ -283,6 +288,27 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 	defer r.untrack(cmd)
 	emit("started", "command started", nil)
 	switch cmd.Type {
+	case controlplane.RunRecoveryCommand:
+		if !cmd.LeaseUntil.After(time.Now()) {
+			emit("failed", "recovery delivery lease expired", context.DeadlineExceeded)
+			return
+		}
+		recoveryCtx, stopRecovery := context.WithDeadline(runCtx, cmd.LeaseUntil)
+		defer stopRecovery()
+		var auth controlplane.RunRecoveryAuthorization
+		proof := controlplane.AgentCommandEvent{CommandID: cmd.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}
+		if err := post(recoveryCtx, r.opts, r.opts.APIURL+"/v1/agents/"+r.opts.ID+"/commands/"+cmd.ID+"/recovery-authorize", proof, &auth); err != nil {
+			emit("failed", "recovery authorization rejected", err)
+			return
+		}
+		result, err := r.executor.ObserveRecoverRun(recoveryCtx, r.opts.ID, *cmd, auth)
+		if err != nil {
+			emit("failed", "owning-agent recovery uncertain", err)
+			return
+		}
+		if report != nil {
+			report(controlplane.AgentCommandEvent{AgentID: r.opts.ID, CommandID: cmd.ID, Type: cmd.Type, Status: "completed", LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, Recovery: result})
+		}
 	case "run_assigned":
 		if cmd.Run == nil {
 			emit("failed", "missing run", fmt.Errorf("missing run"))
@@ -412,6 +438,9 @@ func (r *commandRunner) track(cmd *controlplane.AgentCommand, cancel context.Can
 	defer r.mu.Unlock()
 	tracked := trackedCommand{cancel: cancel, command: *cmd}
 	r.running[cmd.ID] = tracked
+	if cmd.Type == controlplane.RunRecoveryCommand {
+		return
+	}
 	if cmd.Session != nil && cmd.Session.ID != "" {
 		r.running[cmd.Session.ID] = tracked
 	}
@@ -433,6 +462,9 @@ func (r *commandRunner) untrack(cmd *controlplane.AgentCommand) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.running, cmd.ID)
+	if cmd.Type == controlplane.RunRecoveryCommand {
+		return
+	}
 	if cmd.Session != nil {
 		delete(r.running, cmd.Session.ID)
 	}
@@ -470,7 +502,7 @@ func authorizeAgentCommand(policy config.AgentPolicyConfig, cmd *controlplane.Ag
 		return fmt.Errorf("command %q is not allowed", cmd.Type)
 	}
 	switch cmd.Type {
-	case "run_assigned":
+	case "run_assigned", controlplane.RunRecoveryCommand:
 		if cmd.Run == nil {
 			return fmt.Errorf("missing run")
 		}

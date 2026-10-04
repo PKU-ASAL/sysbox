@@ -81,6 +81,7 @@ type agentStore interface {
 }
 
 type agentCommandStore interface {
+	GetRunRecoveryReport(context.Context, string, string) (*controlplane.RunRecoveryReport, error)
 	ApplyAgentCommandEvent(context.Context, controlplane.AgentCommandEvent) (*controlplane.AgentCommand, error)
 	LoadDispatchRetry(context.Context, string) (DispatchRetryRecord, error)
 	SaveDispatchRetry(context.Context, DispatchRetryRecord) error

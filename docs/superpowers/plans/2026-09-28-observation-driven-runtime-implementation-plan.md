@@ -99,6 +99,16 @@ Implementation commit: `d581b80`. Independent review and full uncached unit/race
 - [ ] Cover payload privacy, cancellation, command ownership, cross-process races and outbox crash points; run independent review and required checks.
 - [ ] Update actual completion boundaries before moving to resource fencing and owning-agent recovery.
 
+### Owning-agent remote recovery and PostgreSQL acceptance — 2026-10-04
+
+- [x] Add capability-gated durable run_recovery commands, administrator Observe/Recover request routes, signed Agent authorization and durable report retrieval.
+- [x] Keep running Observe read-only; allow Recover only after atomic lease expiry/failed recoverable state, with a pinned content-addressed revision and no other active run at authorization.
+- [x] Echo resource owner/UID/generation, journal action identity and state serial; bind evidence to immutable Run queued_at/revision and execution proof.
+- [x] Reuse observation-only RecoverActions; reject unresolved composite effects, old unfinished incarnation evidence and missing inputs. Do not mark the entire Run successful from journal observations.
+- [x] Test controller restart over HTTP/WebSocket, Agent runner policy/proof handling, lost-commit recovery without replay, and terminal-only report persistence across backends.
+- [x] Start isolated PostgreSQL 16, enable both integration DSNs, reproduce/fix typed Run NotFound mismatch, and run full unit/race contracts plus Guest rollback/retry reopen acceptance.
+- [x] Complete independent review and document remaining limits: no global cross-controller Run lock, no real remote hypervisor E2E and no database failover matrix.
+
 ### Active Agent repository slice — 2026-09-30
 
 Shared `persistence.AgentRepository` owns validated codecs and explicit Register, Save, Heartbeat, UpdatePolicy and ExpireHeartbeat operations. Register preserves existing policy and requires the current credential for protected identities; Save is internal administrative replacement. Atomic callbacks re-read current policy/liveness before mutation; FS uses its stable record lock, SQLite BEGIN IMMEDIATE, Postgres row locks. Existing agent paths/tables stay authoritative.

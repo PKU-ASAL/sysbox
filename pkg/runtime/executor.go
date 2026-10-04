@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
@@ -33,6 +34,8 @@ type Executor struct {
 	secretResolver      secret.Resolver
 	topology            string
 	runID               string
+	runQueuedAt         time.Time
+	runRevision         string
 	resumeRunID         string
 	workspaceDir        string
 	operation           string
@@ -65,6 +68,11 @@ func (e *Executor) SetRunContext(topology, runID string) {
 }
 
 func (e *Executor) SetResumeRunID(runID string) { e.resumeRunID = runID }
+
+func (e *Executor) SetRunIncarnation(queuedAt time.Time, revision string) {
+	e.runQueuedAt = queuedAt
+	e.runRevision = revision
+}
 
 // SetWorkspaceDir records the directory a topology's HCL tree is materialised
 // into (workspacesDir/<topology>/). Relative provisioner "file" sources resolve

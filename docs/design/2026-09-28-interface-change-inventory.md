@@ -6,6 +6,12 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### 2026-10-04 已实施：owning-agent 远端恢复扩展
+
+新增管理员异步接口 `POST /v1/runs/{id}/remote/observe`、`POST /v1/runs/{id}/remote/recover`，返回 command_id；结果经 `GET /v1/runs/{id}/remote-reports/{command}` 查询。Agent 使用签名保护的 `POST /v1/agents/{agent}/commands/{command}/recovery-authorize` 在执行前取得当前授权。
+
+这是一项 capability 协商扩展：仅 `run-recovery.v1` Agent 接收 `run_recovery`，现有 agent.v1 命令不新增必填字段。新恢复报告必须完整携带 Run 轮次、action/resource UID/generation、command lease proof；旧 journal 没有 run_queued_at/run_revision 时不能远程恢复。running Run 可以 Observe，未过期 lease 不允许 Recover。Recover 只恢复有证据的 journal outcome，不自动重放外部 effect，也不等于 Run 已成功。
+
 ### 2026-09-30 已实施：Agent metadata
 
 本检查点保留 HTTP v1 DTO、agent.v1 和字符串 `error`，没有引入下文设计中的 v2。实际行为调整如下：

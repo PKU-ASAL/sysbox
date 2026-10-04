@@ -6,6 +6,16 @@ import (
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
+func (s *localAPIStore) GetRunRecoveryReport(ctx context.Context, agent, id string) (*controlplane.RunRecoveryReport, error) {
+	return persistence.NewCommandRepository(localCommandStorage{store: s}).GetRunRecoveryReport(ctx, agent, id)
+}
+func (s *sqliteAPIStore) GetRunRecoveryReport(ctx context.Context, agent, id string) (*controlplane.RunRecoveryReport, error) {
+	return persistence.NewCommandRepository(sqliteCommandStorage{store: s}).GetRunRecoveryReport(ctx, agent, id)
+}
+func (s *postgresAPIStore) GetRunRecoveryReport(ctx context.Context, agent, id string) (*controlplane.RunRecoveryReport, error) {
+	return persistence.NewCommandRepository(postgresCommandStorage{store: s}).GetRunRecoveryReport(ctx, agent, id)
+}
+
 func (s *localAPIStore) ApplyAgentCommandEvent(ctx context.Context, e controlplane.AgentCommandEvent) (*controlplane.AgentCommand, error) {
 	return persistence.NewCommandRepository(localCommandStorage{store: s}).ApplyAgentCommandEvent(ctx, e)
 }

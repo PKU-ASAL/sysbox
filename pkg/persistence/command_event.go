@@ -19,6 +19,24 @@ func (r *CommandRepository) ApplyAgentCommandEvent(ctx context.Context, event co
 			return nil, ErrNotFound
 		}
 		cmd := current.Command
+		if cmd.Type == controlplane.RunRecoveryCommand {
+			if !cmd.LeaseUntil.After(r.now()) {
+				return nil, ErrConflict
+			}
+			if event.Recovery != nil && event.Status != controlplane.AgentCommandStatusCompleted {
+				return nil, ErrConflict
+			}
+			if event.LeaseOwner == "" || event.LeaseOwner != cmd.LeaseOwner || event.Attempt < 1 || event.Attempt != cmd.Attempt {
+				return nil, ErrConflict
+			}
+			if event.Status == controlplane.AgentCommandStatusCompleted {
+				if err := validateRecoveryReport(cmd, event.Recovery); err != nil {
+					return nil, err
+				}
+			}
+		} else if event.Recovery != nil {
+			return nil, ErrConflict
+		}
 		if cmd.AgentID != event.AgentID || event.Type != "" && event.Type != cmd.Type {
 			return nil, ErrConflict
 		}
@@ -51,7 +69,7 @@ func (r *CommandRepository) ApplyAgentCommandEvent(ctx context.Context, event co
 			cmd.EndedAt = now
 			cmd.Err = event.Error
 		}
-		return &CommandRecord{Command: cmd, Retired: cmd.IsTerminal()}, nil
+		return &CommandRecord{Command: cmd, Retired: cmd.IsTerminal(), Recovery: event.Recovery}, nil
 	})
 	if err != nil {
 		return nil, err
