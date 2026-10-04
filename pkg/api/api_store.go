@@ -241,12 +241,12 @@ func (s *localAPIStore) LoadHealth(_ context.Context, topology string) (*HealthS
 }
 
 func (s *localAPIStore) SaveResourceProjection(_ context.Context, proj controlplane.ResourceProjection) error {
-	path := filepath.Join(s.runsDir, proj.Topology, "projection.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	raw, err := persistence.EncodeProjection(proj)
+	if err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(proj, "", "  ")
-	if err != nil {
+	path := filepath.Join(s.runsDir, proj.Topology, "projection.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, raw, 0o644)
@@ -260,11 +260,11 @@ func (s *localAPIStore) LoadResourceProjection(_ context.Context, topology strin
 	if err != nil {
 		return nil, err
 	}
-	var proj controlplane.ResourceProjection
-	if err := json.Unmarshal(raw, &proj); err != nil {
-		return nil, fmt.Errorf("decode resource projection: %w", err)
+	proj, err := persistence.DecodeProjection(raw)
+	if err != nil {
+		return nil, err
 	}
-	return &proj, nil
+	return proj, nil
 }
 
 func (s *localAPIStore) checkpointFile(topology, runID string) string {
@@ -589,7 +589,7 @@ func (s *postgresAPIStore) SaveResourceProjection(ctx context.Context, proj cont
 		return err
 	}
 	defer conn.Release()
-	raw, err := json.Marshal(proj)
+	raw, err := persistence.EncodeProjection(proj)
 	if err != nil {
 		return err
 	}
@@ -618,11 +618,11 @@ func (s *postgresAPIStore) LoadResourceProjection(ctx context.Context, topology 
 	if err != nil {
 		return nil, fmt.Errorf("postgres load resource projection: %w", err)
 	}
-	var proj controlplane.ResourceProjection
-	if err := json.Unmarshal(raw, &proj); err != nil {
-		return nil, fmt.Errorf("decode resource projection: %w", err)
+	proj, err := persistence.DecodeProjection(raw)
+	if err != nil {
+		return nil, err
 	}
-	return &proj, nil
+	return proj, nil
 }
 
 func (s *postgresAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {

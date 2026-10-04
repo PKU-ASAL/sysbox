@@ -32,6 +32,8 @@ Provider 执行 → 保存恢复证据 → 再观察验证
 
 Command event repository 已开始统一 codec：事件 ID、AgentID、Type、Status、时间严格校验；filesystem 使用 JSONL codec，SQLite 保留完整 `record_json`（包括 recovery/fencing 字段），Postgres 使用完整 JSONB。旧 SQLite 索引列仍可读取，但缺失完整快照的旧事件只能按兼容字段读取；真实事件重新写入后即拥有完整 proof。
 
+Projection codec 也已开始统一：filesystem、SQLite、Postgres 的 ResourceProjection 读取都经过共享 topology/时间校验和安全解码，避免后端把畸形 projection 当成空结果。AgentInventory 物理表迁移仍待完成。
+
 ### Resource fencing 迁移进度
 
 Agent command/event 模型增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。命令已绑定 fencing 身份时，事件必须完整匹配其证明；无 fencing 身份的 legacy 命令仍兼容无证明事件。校验、状态推进与终态退休通过共享 CommandRepository 在同一存储锁/事务内完成；拒绝或提交失败不发布事件缓存或更新 console/Guest 派生状态。Agent ack、执行事件与目标取消事件均回传对应命令的证明，SQLite 保留完整快照中的 fencing 字段。
