@@ -36,6 +36,8 @@ Projection codec 也已开始统一：filesystem、SQLite、Postgres 的 Resourc
 
 NodeOperation 完成保存已接入三后端 CAS：filesystem 在共享记录锁内比较完整快照，SQLite 使用事务内读取/比较/更新，Postgres 使用行锁事务；共享 transition codec 拒绝跨身份、跨资源 generation、非法状态回退和终态结果覆盖。持久化错误会传播到 Agent/API，而不是返回虚假成功。
 
+Provider generation fencing 第一阶段已接入 substrate observation：NodeObservation 返回 owner UID、resource UID、generation；Docker managed Observe 会核对 operation identity 和容器 labels，generation 不匹配返回 unknown/conflict。Firecracker manifest 已有等价 process/manifest generation 校验。真实 Docker daemon/libvirt/Firecracker 远程宿主机 E2E 仍未完成，当前仅有 provider fixture/合同验证。
+
 ### Resource fencing 迁移进度
 
 Agent command/event 模型增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。命令已绑定 fencing 身份时，事件必须完整匹配其证明；无 fencing 身份的 legacy 命令仍兼容无证明事件。校验、状态推进与终态退休通过共享 CommandRepository 在同一存储锁/事务内完成；拒绝或提交失败不发布事件缓存或更新 console/Guest 派生状态。Agent ack、执行事件与目标取消事件均回传对应命令的证明，SQLite 保留完整快照中的 fencing 字段。

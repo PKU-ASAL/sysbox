@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -449,6 +450,18 @@ func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (su
 			LastSeen:   time.Now().UTC(),
 		}, err
 	}
+	labels := map[string]string{}
+	if ins.Config != nil {
+		labels = ins.Config.Labels
+	}
+	if identity, ok := substrate.OperationIdentityFromContext(ctx); ok {
+		if err := verifyLabels(labels, operationLabels(identity)); err != nil {
+			return substrate.NodeObservation{Status: substrate.NodeStatusUnknown, ExternalID: h.ID, Reason: err.Error(), LastSeen: time.Now().UTC()}, err
+		}
+	}
+	if h.Generation > 0 && labels["sysbox.generation"] != "" && labels["sysbox.generation"] != strconv.FormatInt(h.Generation, 10) {
+		return substrate.NodeObservation{Status: substrate.NodeStatusUnknown, ExternalID: h.ID, Reason: "generation mismatch", LastSeen: time.Now().UTC()}, fmt.Errorf("docker generation conflict")
+	}
 	status := substrate.NodeStatusExited
 	if ins.State.Running {
 		status = substrate.NodeStatusRunning
@@ -476,5 +489,8 @@ func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (su
 		ExternalID: ins.ID,
 		Reason:     ins.State.Status,
 		LastSeen:   time.Now().UTC(),
+		OwnerUID:   labels["sysbox.owner_uid"], ResourceUID: labels["sysbox.resource_uid"], Generation: parseGenerationLabel(labels["sysbox.generation"]),
 	}, nil
 }
+
+func parseGenerationLabel(raw string) int64 { value, _ := strconv.ParseInt(raw, 10, 64); return value }
