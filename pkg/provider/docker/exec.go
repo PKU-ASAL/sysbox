@@ -462,6 +462,12 @@ func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (su
 	if h.Generation > 0 && labels["sysbox.generation"] != "" && labels["sysbox.generation"] != strconv.FormatInt(h.Generation, 10) {
 		return substrate.NodeObservation{Status: substrate.NodeStatusUnknown, ExternalID: h.ID, Reason: "generation mismatch", LastSeen: time.Now().UTC()}, fmt.Errorf("docker generation conflict")
 	}
+	if identity, ok := substrate.OperationIdentityFromContext(ctx); ok {
+		obs := substrate.NodeObservation{Exists: true, OwnerUID: labels["sysbox.owner_uid"], ResourceUID: labels["sysbox.resource_uid"], Generation: parseGenerationLabel(labels["sysbox.generation"])}
+		if err := substrate.ValidateNodeObservationIdentity(identity, obs); err != nil {
+			return obs, err
+		}
+	}
 	status := substrate.NodeStatusExited
 	if ins.State.Running {
 		status = substrate.NodeStatusRunning
