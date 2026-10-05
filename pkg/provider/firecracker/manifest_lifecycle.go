@@ -254,7 +254,7 @@ func (s *Substrate) startManifestNode(ctx context.Context, h substrate.NodeHandl
 }
 
 func (s *Substrate) observeManifest(ctx context.Context, h substrate.NodeHandle, m *vmManifest, state vmProcessSnapshot) (substrate.NodeObservation, error) {
-	obs := substrate.NodeObservation{Exists: true, ExternalID: h.ID, LastSeen: time.Now().UTC(), Status: substrate.NodeStatusUnknown}
+	obs := substrate.NodeObservation{Exists: true, ExternalID: h.ID, OwnerUID: m.OwnerUID, ResourceUID: m.ResourceUID, Generation: m.Generation, LastSeen: time.Now().UTC(), Status: substrate.NodeStatusUnknown}
 	if err := recoverLaunch(m); err != nil {
 		obs.Reason = err.Error()
 		return obs, err

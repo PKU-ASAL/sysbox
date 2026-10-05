@@ -35,6 +35,8 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
+.PHONY: test-firecracker-e2e
+
 .PHONY: help build build-all test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset test-windows-tools prepare-windows10-media build-windows10-image test-windows10-libvirt release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
@@ -53,6 +55,7 @@ help: ## Show command groups
 	@echo "  make test           Run unit tests"
 	@echo "  make lint           Run go vet"
 	@echo "  make test-e2e       Run API e2e smoke test against make api deploy-full"
+	@echo "  make test-firecracker-e2e  Run direct Firecracker/KVM lifecycle acceptance"
 	@echo "  make test-docker-launch  Run Docker ENTRYPOINT/CMD override acceptance"
 	@echo "  make test-docker-network-alias  Run Docker managed-network DNS alias acceptance"
 	@echo "  make test-privileged-compile  Compile privileged recovery tests without running them"
@@ -83,6 +86,9 @@ docs-test: ## Validate canonical documentation structure and links
 
 test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
+
+test-firecracker-e2e: ## Run real Firecracker/KVM generation fencing E2E (requires /dev/kvm)
+	$(GOENV) $(GO) test -tags e2e -v ./pkg/provider/firecracker -run '^TestFirecrackerReal.*E2E$$' -count=1 -timeout=10m
 
 test-docker-launch: ## Run Docker launch override lifecycle acceptance
 	bash tests/e2e/docker_launch_override.sh

@@ -36,7 +36,11 @@ Projection codec 也已开始统一：filesystem、SQLite、Postgres 的 Resourc
 
 NodeOperation 完成保存已接入三后端 CAS：filesystem 在共享记录锁内比较完整快照，SQLite 使用事务内读取/比较/更新，Postgres 使用行锁事务；共享 transition codec 拒绝跨身份、跨资源 generation、非法状态回退和终态结果覆盖。持久化错误会传播到 Agent/API，而不是返回虚假成功。
 
-Provider generation fencing 第一阶段已接入 substrate observation：NodeObservation 返回 owner UID、resource UID、generation；Docker managed Observe 会核对 operation identity 和容器 labels，generation 不匹配返回 unknown/conflict。Firecracker manifest 已有等价 process/manifest generation 校验。真实 Docker daemon/libvirt/Firecracker 远程宿主机 E2E 仍未完成，当前仅有 provider fixture/合同验证。
+Provider generation fencing 第一阶段已接入 substrate observation：NodeObservation 返回 owner UID、resource UID、generation；Docker managed Observe 会核对 operation identity 和容器 labels，generation 不匹配返回 unknown/conflict。Firecracker manifest 已有等价 process/manifest generation 校验。
+
+2026-10-05 环境复核：沙箱内看不到 /dev/kvm，不代表宿主机无 KVM。宿主机执行可访问 /dev/kvm、/dev/vhost-vsock，缓存含 Firecracker 1.15.1、vmlinux-5.10.245 和 Ubuntu rootfs。`make test-firecracker-e2e` 已实跑：基础 create/start/observe/destroy、reset generation 1→2、旧 generation 的 destroy/start/stop/pause/resume 拒绝，以及新进程空 vmStore 的 manifest discover/adopt/pause/resume。完整真实 E2E 共 29 秒通过。
+
+此前普通 go test 不运行 e2e build tag；test-privileged 也未包含 Firecracker package。已有 heterogeneous matrix/reset 脚本依赖 PATH 中的 firecracker，缓存二进制需通过 SYSBOX_FIRECRACKER_BIN 显式指定。新直接入口接受 SYSBOX_FIRECRACKER_BIN、SYSBOX_FIRECRACKER_KERNEL、SYSBOX_FIRECRACKER_ROOTFS；默认从用户 sysbox cache 查找。本轮后续宿主机回归两次遭自动审批超时，未执行；最终入口编译通过。Docker/libvirt 实机生命周期未在本轮验收。
 
 ### Resource fencing 迁移进度
 
