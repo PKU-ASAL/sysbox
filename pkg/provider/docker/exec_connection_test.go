@@ -83,7 +83,7 @@ func TestDockerConnectionAndLegacyExecShareBoundedResults(t *testing.T) {
 
 func TestDockerConnectionPreservesOutputWhenInspectSaysStillRunning(t *testing.T) {
 	sub := executionDockerAPI(t, "partial", "", container.ExecInspect{Running: true})
-	conn, err := sub.Connection(substrate.NodeHandle{ID: "node"}, nil)
+	conn, err := sub.Connection(substrate.NodeHandle{ID: "node", Generation: 4}, nil)
 	require.NoError(t, err)
 	result, err := conn.Exec(context.Background(), substrate.ExecRequest{Program: "test", Shell: substrate.ShellNone}, nil, nil)
 	require.Error(t, err)

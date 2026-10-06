@@ -13,34 +13,6 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-func TestRecoverCandidateRequiresSupportedDoneUnrecordedStateResource(t *testing.T) {
-	step := runtime.OperationStep{
-		Kind:          "resource",
-		Provider:      "docker",
-		Status:        runtime.OperationDone,
-		StateResource: &runtime.StateResourceLog{Type: "sysbox_node", Name: "web"},
-	}
-	require.True(t, recoverCandidate(step))
-
-	step.StateRecorded = true
-	require.False(t, recoverCandidate(step))
-
-	step.StateRecorded = false
-	step.StateResource = nil
-	require.False(t, recoverCandidate(step))
-
-	step.StateResource = &runtime.StateResourceLog{Type: "sysbox_node", Name: "vm"}
-	step.Provider = "firecracker"
-	require.True(t, recoverCandidate(step))
-
-	step.Provider = "network"
-	require.True(t, recoverCandidate(step))
-
-	step.Provider = "libvirt"
-	step.StateResource = &runtime.StateResourceLog{Type: "sysbox_unknown", Name: "thing", Provider: "libvirt"}
-	require.False(t, recoverCandidate(step))
-}
-
 func TestRecoverCheckpointRejectsBlindStatePatchReplay(t *testing.T) {
 	dir := t.TempDir()
 	cp := runtime.OperationCheckpoint{

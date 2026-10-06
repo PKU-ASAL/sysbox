@@ -44,15 +44,15 @@ type linkRequest struct {
 type attachedNIC struct{ Kind, HostEnd, GuestEnd, IP, NetNS string }
 
 func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
-	if err := s.validateAttachmentHandle(ctx, &h); err != nil {
-		return driver.AttachmentResult{}, err
-	}
 	var target networkState
 	if err := json.Unmarshal(req.NetworkState, &target); err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "docker", "decode network state", err)
 	}
 	if !target.NAT && len(req.Aliases) > 0 {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnsupported, "docker", "network aliases require a Docker-managed network", nil)
+	}
+	if err := s.validateAttachmentHandle(ctx, &h); err != nil {
+		return driver.AttachmentResult{}, err
 	}
 	ip := firstPrefix(req.IPPrefixes)
 	guest := dockerGuestName(req.Name)

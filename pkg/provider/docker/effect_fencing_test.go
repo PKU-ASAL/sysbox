@@ -36,6 +36,21 @@ func TestManagedInspectUsesExecutionTimeout(t *testing.T) {
 	}
 }
 
+func TestDockerEffectsRejectUnidentifiedHandleBeforeAPI(t *testing.T) {
+	calls := 0
+	s := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(204) })
+	ctx := context.Background()
+	h := substrate.NodeHandle{ID: "unowned"}
+	_, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "unowned"})
+	require.Error(t, err)
+	for _, operation := range []func(context.Context, substrate.NodeHandle) error{s.StartNode, s.StopNode, s.Pause, s.Resume, s.DestroyNode} {
+		require.Error(t, operation(ctx, h))
+	}
+	_, err = s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "true"})
+	require.Error(t, err)
+	require.Zero(t, calls, "missing identity must not inspect or mutate arbitrary containers")
+}
+
 func TestManagedEffectsPinInspectedContainerID(t *testing.T) {
 	var mutated string
 	s := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) {

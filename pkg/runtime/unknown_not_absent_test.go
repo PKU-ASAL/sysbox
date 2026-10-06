@@ -62,25 +62,6 @@ func TestRefreshRecoveryPrefersUnknownOverMissing(t *testing.T) {
 		"a failed probe reports Exists=false as a zero value, not as evidence of absence")
 }
 
-// The same ordering matters during checkpoint recovery, where the alternative
-// verdicts are Adopt and NotFound: adopting an object you cannot observe, or
-// declaring it not found, are both unsafe.
-func TestCheckpointRecoveryTreatsUnknownAsUnknown(t *testing.T) {
-	plan := DecideNodeRecovery(RecoveryInput{
-		Context:              RecoveryContextCheckpoint,
-		HasCheckpoint:        true,
-		RecoverableArtifacts: true,
-		Observation: substrate.NodeObservation{
-			Status: substrate.NodeStatusUnknown,
-			Reason: "libvirt: observe domain state failed",
-		},
-	})
-
-	require.Equal(t, controlplane.RecoveryDecisionUnknown, plan.Decision)
-	require.NotEqual(t, controlplane.RecoveryDecisionNotFound, plan.Decision,
-		"an unobservable object must not be declared absent")
-}
-
 // The mapping from observation status to plan action is the point where the
 // distinction becomes consequential: absent and drifted authorise a replace,
 // unknown must not.

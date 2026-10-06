@@ -150,7 +150,7 @@ test-privileged-compile: ## Compile privileged recovery tests without running th
 	$(GOENV) $(GO) test -tags e2e -run '^$$' ./pkg/api ./pkg/provider/network ./pkg/provider/docker
 
 test-privileged: ## Run privileged recovery tests (requires root/CAP_NET_ADMIN)
-	$(GOENV) $(GO) test -tags e2e -v -run '^Test(Checkpoint|OwnedPolicy|DockerOwnedPolicy).*E2E$$' ./pkg/api ./pkg/provider/network ./pkg/provider/docker
+	$(GOENV) $(GO) test -tags e2e -v -run '^Test(OwnedPolicy|DockerOwnedPolicy).*E2E$$' ./pkg/provider/network ./pkg/provider/docker
 
 test-privileged-container: ## Run privileged acceptance tests through Docker
 	bash tests/e2e/privileged_container.sh

@@ -173,69 +173,6 @@ func (e *Executor) resolveFirewallResource(ctx context.Context, n *graph.Node, d
 	return state.Resource{Address: n.Address, Driver: targetResource.Driver, ExternalID: observation.Table, OwnerUID: policyIdentity.OwnerUID, ResourceUID: policyIdentity.ResourceUID, Generation: policyIdentity.Generation, Attributes: state.MustAttributes(inst)}, nil
 }
 
-func (FirewallResourceHandler) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
-	action := CheckpointRecoverResult{Resource: step.Resource, ExternalID: step.ExternalID}
-	if step.StateResource == nil {
-		action.Status = "missing_state_resource"
-		return action, nil
-	}
-	res := StateResourceFromLog(*step.StateResource)
-	if st.FindResource(res.Address) != nil {
-		action.Status = "already_in_state"
-		return action, nil
-	}
-	target, owner, err := policyState(res)
-	if err != nil {
-		action.Status, action.Error = "invalid_state", err.Error()
-		return action, nil
-	}
-	policy, err := driver.DefaultRegistry.RequirePolicy(res.Driver)
-	if err != nil {
-		return action, err
-	}
-	if res.Str("desired_digest") == "" || res.Str("table") == "" {
-		return action, fmt.Errorf("firewall recovery requires recorded table and digest")
-	}
-	// Recovery confirms an existing effect; repairs belong to a new planned
-	// action. Replaying Apply here can overwrite a newer policy after a crash.
-	observation, err := policy.ObserveRuleset(ctx, target, owner)
-	if err != nil {
-		return action, err
-	}
-	if observation.Table != res.Str("table") || observation.Digest != res.Str("desired_digest") {
-		return action, driver.Wrap(driver.ErrorInvalidState, res.Driver, "firewall recovery observation does not match recorded result", nil)
-	}
-	if err := res.SetAttribute("observed_digest", observation.Digest); err != nil {
-		return action, err
-	}
-	st.AddResource(res)
-	action.Status = "recovered"
-	return action, nil
-}
-
-func (FirewallResourceHandler) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
-	action := CheckpointCleanupResult{Resource: step.Resource, ExternalID: step.ExternalID, Class: CheckpointCleanupNetwork}
-	if step.StateResource == nil {
-		action.Status = "missing_state_resource"
-		return action, nil
-	}
-	res := StateResourceFromLog(*step.StateResource)
-	target, owner, err := policyState(res)
-	if err != nil {
-		action.Status, action.Error = "invalid_state", err.Error()
-		return action, nil
-	}
-	policy, err := driver.DefaultRegistry.RequirePolicy(res.Driver)
-	if err != nil {
-		return action, err
-	}
-	if err := policy.DeleteRuleset(ctx, target, owner); err != nil {
-		return action, err
-	}
-	action.Status = "removed"
-	return action, nil
-}
-
 func firewallRuleset(owner string, cfg *config.FirewallConfig) (driver.RulesetSpec, error) {
 	family := driver.AddressFamily(cfg.Family)
 	if family == "" {

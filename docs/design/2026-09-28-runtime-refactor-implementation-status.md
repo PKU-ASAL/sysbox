@@ -93,6 +93,10 @@ Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe �
 
 ### Resource fencing 迁移进度
 
+2026-10-07 双轨恢复清理：删除仅被旧测试调用的 API checkpoint 恢复/清理函数，以及 runtime CheckpointRecoverer/Cleaner 执行链，包括按 Docker label 搜索接管/删除和按 Firecracker 文件存在猜测恢复。正式 API 继续使用 canonical action journal；日志/报告 DTO 与纯 StateResourceLog 转换保留，转换代码移至 `state_log_conversion.go`。删除只服务旧入口的测试和旧 checkpoint E2E，以 canonical API 回归、handler 禁止旧恢复方法的守卫、managed discovery 覆盖检查和真实 firewall repository 恢复 E2E 验证替代。SSH access 明确未实现 discovery，不再声明幂等即可豁免恢复。
+
+Docker Create 强制完整 operation identity；生命周期/Exec/attachment 的 generation=0 且无 context 身份逃逸入口移除，在访问 Docker API 前拒绝。无身份 import/read 得到的句柄不能再直接执行副作用；显式 ownership adoption 仍未实现，不宣称 import 功能等价。其他 substrate 的无身份路径、网络 attachment 按名字删除及旧 Agent 无证明事件仍需继续清理。
+
 2026-10-07 firewall 默认引擎闭环：新增可选 `PolicyDiscovery.DiscoverRuleset(target,spec)`。Docker 在同一已核验 namespace FD 中解析设备绑定；共享实现比较期望 spec/bindings 的摘要与受管表标记，同时校验 policy generation。Firewall handler 已实现 managed discovery，返回完整 UID/generation/external ID，只有明确的 policy NotFound 才是 absent；损坏/缺失目标身份是 unknown，不能据此创建。
 
 `make test-firewall-recovery-e2e` 已实跑 HCL → 默认 Executor → 真实 Docker/nft → 文件 repository：正常创建删除，然后注入 outcome 持久化失败，重新打开 repository 后仅依据 durable intent 和 discovery 恢复，最后删除。恢复的 Policy.Apply 被替换为调用即报错，以确认没有重放。普通 firewall 在 ip_forward=0 的节点上正常；仅 NAT 在副作用前要求并核验转发开启。单测另覆盖旧 Create 计划拒绝、丢失 candidate 的恢复与未知目标拒绝。

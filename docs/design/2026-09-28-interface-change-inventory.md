@@ -444,6 +444,8 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（2026-10-07 双轨清理）：删除 runtime `CheckpointRecoverer`/`CheckpointCleaner`、`RecoverCheckpointResource`/`CleanupCheckpointResource` 等旧执行接口和 `RecoveryNotRequired` 豁免；正式恢复/清理只走 action journal。checkpoint 仍可作为诊断记录读取，不能授权资源变更。Docker Create 缺 operation identity 返回 InvalidState；generation=0 且无 context identity 的生命周期/执行调用同样拒绝。旧无身份 import 句柄不再可用于副作用；ownership adoption 仍未提供。旧 checkpoint E2E 入口替换为 `test-firewall-recovery-e2e`，不再保留旧接口兼容测试。
+
 实施补充（2026-10-07 firewall discovery）：Policy provider 可实现 `PolicyDiscovery.DiscoverRuleset(context.Context, PolicyTarget, RulesetSpec)`；必须只读核验目标身份、策略代际及解析设备绑定后的期望摘要，不得调用 Apply。默认引擎的 firewall 新建/恢复要求该能力，未实现的 provider 明确返回 unsupported。Firewall 损坏目标记录从 drifted 改为 unknown+error。Docker 普通 firewall 不要求 ip_forward；NAT 在写规则前核验转发，不再先写后报错。
 
 实施补充（整体收口第一步）：policy 共享锁路径由 `/run/sysbox/policy-locks` 改为 `/var/lib/sysbox/policy-locks`，与持久证据同卷；升级必须停止旧 writer 后统一切换。NodeOperation 内部存储接口 `SaveNodeOperation` 删除，使用 create-only 的 `CreateNodeOperation` 或显式 `CompareAndSwapNodeOperation`。三后端保存版本化完整记录；旧文件目录/SQLite列式表/Postgres扁平记录不兼容，需保留备份并重建，不会自动删除或猜测迁移。NodeOperation 公共 CommandID 仍不输出；Agent 不得修改请求人、角色和既有审计前缀。PostgreSQL API schema 提升为 5。

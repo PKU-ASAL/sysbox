@@ -45,8 +45,8 @@ func TestDockerProviderStateRoundTripsEffectiveLaunch(t *testing.T) {
 
 func TestDestroyNodeTreatsMissingContainerAsDestroyed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, http.MethodDelete, r.Method)
-		require.Equal(t, "/v1.47/containers/missing-container", r.URL.Path)
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "/v1.47/containers/missing-container/json", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		http.Error(w, `{"message":"No such container: missing-container"}`, http.StatusNotFound)
 	}))
@@ -57,7 +57,7 @@ func TestDestroyNodeTreatsMissingContainerAsDestroyed(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, cli.Close()) })
 	sub := &Substrate{cli: cli}
 
-	err = sub.DestroyNode(context.Background(), substrate.NodeHandle{ID: "missing-container"})
+	err = sub.DestroyNode(context.Background(), substrate.NodeHandle{ID: "missing-container", Generation: 1})
 	require.NoError(t, err)
 }
 
@@ -152,7 +152,7 @@ func TestCreateNodeAppliesCPUAndMemoryLimits(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, cli.Close()) })
 	sub := &Substrate{cli: cli}
 
-	_, err = sub.CreateNode(context.Background(), substrate.NodeSpec{
+	_, err = sub.CreateNode(substrate.WithOperationIdentity(context.Background(), testOperation()), substrate.NodeSpec{
 		Name:           "limited",
 		Image:          substrate.ArtifactHandle{ID: "alpine:3.22"},
 		VCPUs:          1,
@@ -193,7 +193,7 @@ func TestCreateNodeDefaultsLeaveLimitsUnset(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, cli.Close()) })
 	sub := &Substrate{cli: cli}
 
-	_, err = sub.CreateNode(context.Background(), substrate.NodeSpec{
+	_, err = sub.CreateNode(substrate.WithOperationIdentity(context.Background(), testOperation()), substrate.NodeSpec{
 		Name:  "defaults",
 		Image: substrate.ArtifactHandle{ID: "alpine:3.22"},
 	})

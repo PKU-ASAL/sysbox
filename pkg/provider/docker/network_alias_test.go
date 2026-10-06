@@ -42,7 +42,7 @@ func TestDockerObserveReportsMissingAliasAsDrift(t *testing.T) {
 		require.Equal(t, http.MethodGet, r.Method)
 		require.Contains(t, r.URL.Path, "/containers/node/json")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"NetworkSettings":{"Networks":{"app":{"NetworkID":"net-1","Aliases":["mongo"]}}}}`))
+		_ = json.NewEncoder(w).Encode(map[string]any{"Id": "node", "Config": map[string]any{"Labels": operationLabels(testOperation())}, "NetworkSettings": map[string]any{"Networks": map[string]any{"app": map[string]any{"NetworkID": "net-1", "Aliases": []string{"mongo"}}}}})
 	}))
 	t.Cleanup(server.Close)
 	cli, err := client.NewClientWithOpts(client.WithHost(server.URL), client.WithHTTPClient(server.Client()), client.WithVersion("1.43"))
@@ -50,7 +50,7 @@ func TestDockerObserveReportsMissingAliasAsDrift(t *testing.T) {
 	sub := &Substrate{cli: cli}
 	raw := json.RawMessage(`{"kind":"docker-nat","network_id":"net-1"}`)
 
-	_, err = sub.Observe(context.Background(), substrate.NodeHandle{ID: "node"}, driver.AttachmentRequest{
+	_, err = sub.Observe(context.Background(), substrate.NodeHandle{ID: "node", Generation: 3}, driver.AttachmentRequest{
 		Name: "app", Aliases: []string{"mongo", "database"},
 	}, raw)
 

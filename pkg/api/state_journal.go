@@ -227,9 +227,9 @@ func (s *Server) cleanupCanonicalActions(ctx context.Context, topology, runID st
 		if candidate != nil {
 			entry.ExternalID = candidate.ExternalID
 			if candidate.Address.Type == "sysbox_network" {
-				entry.Class = string(runtime.CheckpointCleanupNetwork)
+				entry.Class = "network"
 			} else if candidate.Driver == "firecracker" {
-				entry.Class = string(runtime.CheckpointCleanupMicroVM)
+				entry.Class = "microvm"
 			}
 		}
 		current := execution.state.FindResource(record.Resource)

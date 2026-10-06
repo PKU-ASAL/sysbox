@@ -33,11 +33,14 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 }
 
 func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, strictName bool) (substrate.NodeHandle, error) {
+	identity, managed := substrate.OperationIdentityFromContext(ctx)
+	if !managed || identity.Validate() != nil {
+		return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", "create requires durable operation identity", nil)
+	}
 	labels, err := expectedLabels(ctx, spec.Labels, true)
 	if err != nil {
 		return substrate.NodeHandle{}, err
 	}
-	identity, managed := substrate.OperationIdentityFromContext(ctx)
 	if existing, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
 		if strictName || !managed || existing.Config == nil {
 			return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", fmt.Sprintf("container name %q already exists; refusing replacement", spec.Name), nil)
@@ -299,7 +302,7 @@ func (s *Substrate) Resume(ctx context.Context, h substrate.NodeHandle) error {
 func (s *Substrate) validateManagedHandle(ctx context.Context, h *substrate.NodeHandle) error {
 	identity, hasIdentity := substrate.OperationIdentityFromContext(ctx)
 	if h.Generation == 0 && !hasIdentity {
-		return nil
+		return driver.Wrap(driver.ErrorInvalidState, "docker", "managed generation or operation identity required", nil)
 	}
 	ins, err := s.cli.ContainerInspect(ctx, h.ID)
 	if err != nil {
