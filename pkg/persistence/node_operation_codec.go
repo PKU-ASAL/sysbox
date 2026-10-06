@@ -7,23 +7,50 @@ import (
 )
 
 func EncodeNodeOperation(x controlplane.NodeOperation) ([]byte, error) {
-	if x.ID == "" || x.AgentID == "" || x.Topology == "" || x.Status == "" {
+	if !topologyName.MatchString(x.ID) || x.AgentID == "" || x.Topology == "" || !validNodeOperationStatus(x.Status) {
 		return nil, ErrInvalidRecord
 	}
-	return json.Marshal(x)
+	return json.Marshal(struct {
+		Version   int                        `json:"version"`
+		Operation controlplane.NodeOperation `json:"operation"`
+		CommandID string                     `json:"command_id"`
+	}{1, x, x.CommandID})
 }
 func DecodeNodeOperation(raw []byte) (*controlplane.NodeOperation, error) {
-	var x controlplane.NodeOperation
-	if err := decodeGuestObject(raw, &x); err != nil {
+	var record struct {
+		Version   int                        `json:"version"`
+		Operation controlplane.NodeOperation `json:"operation"`
+		CommandID string                     `json:"command_id"`
+	}
+	if err := decodeGuestObject(raw, &record); err != nil {
 		return nil, err
 	}
-	if x.ID == "" || x.AgentID == "" || x.Topology == "" || x.Status == "" {
+	x := record.Operation
+	x.CommandID = record.CommandID
+	if record.Version != 1 {
+		return nil, ErrUnsupportedVersion
+	}
+	if !topologyName.MatchString(x.ID) || x.AgentID == "" || x.Topology == "" || !validNodeOperationStatus(x.Status) {
 		return nil, ErrCorruptRecord
 	}
 	return &x, nil
 }
+
+func validNodeOperationStatus(status string) bool {
+	switch status {
+	case controlplane.NodeOperationStatusQueued, controlplane.NodeOperationStatusRunning, controlplane.NodeOperationStatusDone, controlplane.NodeOperationStatusFailed:
+		return true
+	}
+	return false
+}
 func SameNodeOperation(a, b controlplane.NodeOperation) bool {
-	aa, _ := EncodeNodeOperation(a)
-	bb, _ := EncodeNodeOperation(b)
+	aa, err := EncodeNodeOperation(a)
+	if err != nil {
+		return false
+	}
+	bb, err := EncodeNodeOperation(b)
+	if err != nil {
+		return false
+	}
 	return bytes.Equal(aa, bb)
 }

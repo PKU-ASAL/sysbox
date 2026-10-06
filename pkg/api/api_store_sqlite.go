@@ -151,19 +151,8 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	) STRICT;
 
 	CREATE TABLE IF NOT EXISTS sysbox_node_operations (
-		id          TEXT PRIMARY KEY,
-		topology    TEXT NOT NULL DEFAULT '',
-		operation   TEXT NOT NULL DEFAULT '',
-		node        TEXT DEFAULT '',
-		agent_id    TEXT NOT NULL DEFAULT '',
-		status      TEXT NOT NULL DEFAULT '',
-		error       TEXT DEFAULT '',
-		requested_by TEXT DEFAULT '',
-		roles       TEXT DEFAULT '[]',
-		audit       TEXT DEFAULT '[]',
-		created_at  TEXT NOT NULL DEFAULT '',
-		started_at  TEXT DEFAULT '',
-		ended_at    TEXT DEFAULT ''
+		id TEXT PRIMARY KEY,
+		data BLOB NOT NULL
 	) STRICT;
 
 	CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
@@ -246,6 +235,9 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	}
 	if err := s.ensureRunsColumn(db, "deadline_at", "TEXT DEFAULT ''"); err != nil {
 		return err
+	}
+	if _, err := db.Exec("SELECT data FROM sysbox_node_operations LIMIT 0"); err != nil {
+		return fmt.Errorf("node operation schema requires rebuild: %w", err)
 	}
 	if err := s.ensureRunsColumn(db, "snapshot_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
@@ -721,104 +713,35 @@ func (s *sqliteAPIStore) ListConsoleSessions(ctx context.Context, workspace stri
 
 // ── Node operations ──────────────────────────────────────────────────────────
 
-func (s *sqliteAPIStore) SaveNodeOperation(ctx context.Context, op controlplane.NodeOperation) error {
-	db, err := s.open()
+func (s *sqliteAPIStore) CreateNodeOperation(ctx context.Context, op controlplane.NodeOperation) error {
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return err
 	}
-	roles, _ := json.Marshal(op.Roles)
-	audit, _ := json.Marshal(op.Audit)
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_node_operations (id, topology, operation, node, agent_id, status, error, requested_by, roles, audit, created_at, started_at, ended_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET status=excluded.status, error=excluded.error, ended_at=excluded.ended_at`,
-		op.ID, op.Topology, op.Operation, op.Node, op.AgentID, op.Status, op.Err, op.RequestedBy, string(roles), string(audit),
-		formatSQLiteTime(op.CreatedAt), formatSQLiteTime(op.StartedAt), formatSQLiteTime(op.EndedAt))
-	return err
+	return repo.Create(ctx, op)
 }
 func (s *sqliteAPIStore) CompareAndSwapNodeOperation(ctx context.Context, old, next controlplane.NodeOperation) error {
-	db, err := s.open()
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var roles, audit, created, started, ended string
-	var current controlplane.NodeOperation
-	err = tx.QueryRowContext(ctx, `SELECT id,topology,operation,node,agent_id,status,error,requested_by,roles,audit,created_at,started_at,ended_at FROM sysbox_node_operations WHERE id=?`, old.ID).Scan(&current.ID, &current.Topology, &current.Operation, &current.Node, &current.AgentID, &current.Status, &current.Err, &current.RequestedBy, &roles, &audit, &created, &started, &ended)
-	if err != nil {
-		return err
-	}
-	json.Unmarshal([]byte(roles), &current.Roles)
-	json.Unmarshal([]byte(audit), &current.Audit)
-	current.CreatedAt = parseSQLiteTime(created)
-	current.StartedAt = parseSQLiteTime(started)
-	current.EndedAt = parseSQLiteTime(ended)
-	if !persistence.SameNodeOperation(current, old) {
-		return persistence.ErrConflict
-	}
-	r, _ := json.Marshal(next.Roles)
-	a, _ := json.Marshal(next.Audit)
-	_, err = tx.ExecContext(ctx, `UPDATE sysbox_node_operations SET status=?,error=?,roles=?,audit=?,started_at=?,ended_at=? WHERE id=?`, next.Status, next.Err, string(r), string(a), formatSQLiteTime(next.StartedAt), formatSQLiteTime(next.EndedAt), next.ID)
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
+	return repo.CompareAndSwap(ctx, old, next)
 }
 
 func (s *sqliteAPIStore) GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error) {
-	db, err := s.open()
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var op controlplane.NodeOperation
-	var roles, audit, createdAt, startedAt, endedAt string
-	err = db.QueryRowContext(ctx,
-		`SELECT id, topology, operation, node, agent_id, status, error, requested_by, roles, audit, created_at, started_at, ended_at FROM sysbox_node_operations WHERE id=?`, id).
-		Scan(&op.ID, &op.Topology, &op.Operation, &op.Node, &op.AgentID, &op.Status, &op.Err, &op.RequestedBy, &roles, &audit, &createdAt, &startedAt, &endedAt)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("node operation not found")
-	}
-	if err != nil {
-		return nil, err
-	}
-	json.Unmarshal([]byte(roles), &op.Roles)
-	json.Unmarshal([]byte(audit), &op.Audit)
-	op.CreatedAt = parseSQLiteTime(createdAt)
-	op.StartedAt = parseSQLiteTime(startedAt)
-	op.EndedAt = parseSQLiteTime(endedAt)
-	return &op, nil
+	return repo.Get(ctx, id)
 }
 
 func (s *sqliteAPIStore) ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error) {
-	db, err := s.open()
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx,
-		`SELECT id, topology, operation, node, agent_id, status, error, requested_by, roles, audit, created_at, started_at, ended_at FROM sysbox_node_operations ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []controlplane.NodeOperation
-	for rows.Next() {
-		var op controlplane.NodeOperation
-		var roles, audit, createdAt, startedAt, endedAt string
-		if err := rows.Scan(&op.ID, &op.Topology, &op.Operation, &op.Node, &op.AgentID, &op.Status, &op.Err, &op.RequestedBy, &roles, &audit, &createdAt, &startedAt, &endedAt); err != nil {
-			return nil, err
-		}
-		json.Unmarshal([]byte(roles), &op.Roles)
-		json.Unmarshal([]byte(audit), &op.Audit)
-		op.CreatedAt = parseSQLiteTime(createdAt)
-		op.StartedAt = parseSQLiteTime(startedAt)
-		op.EndedAt = parseSQLiteTime(endedAt)
-		out = append(out, op)
-	}
-	return out, rows.Err()
+	return repo.List(ctx, workspace)
 }
 
 // ── Agents / Commands / Inventory ────────────────────────────────────────────

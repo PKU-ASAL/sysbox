@@ -29,6 +29,11 @@ func TestDestroyHTTPIdempotencyIsAtomicAcrossPostgresServers(t *testing.T) {
 	cfg.Paths.WorkspacesDir = filepath.Join(dir, "workspaces")
 	cfg.State.Backend = dsn
 	servers := []*Server{NewServerWithConfig(cfg), NewServerWithConfig(cfg)}
+	for _, server := range servers {
+		pool, err := server.apiStore.(*postgresAPIStore).poolFor(context.Background())
+		require.NoError(t, err)
+		t.Cleanup(pool.Close)
+	}
 	writeRunServiceTopology(t, servers[0], "lab", `resource "sysbox_network" "lab" {
   cidr = "10.77.0.0/24"
 }`)

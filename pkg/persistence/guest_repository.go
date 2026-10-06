@@ -14,6 +14,7 @@ type guestKind string
 const (
 	guestExecutionKind guestKind = "sysbox_guest_executions"
 	guestFileKind      guestKind = "sysbox_guest_file_operations"
+	nodeOperationKind  guestKind = "sysbox_node_operations"
 )
 
 type guestRawRecord struct {

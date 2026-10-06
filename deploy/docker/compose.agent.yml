@@ -22,6 +22,8 @@ services:
       - /etc/sysbox/sysbox.yaml
     volumes:
       - ${SYSBOX_HOST_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      # Includes policy evidence and process-shared policy locks. All agents
+      # managing one host must mount the same directory here.
       - ${SYSBOX_HOST_HOME_DIR:-.sysbox/api}:/var/lib/sysbox
       - ${SYSBOX_HOST_CACHE_DIR:-~/.cache/sysbox}:/var/cache/sysbox
       - ./deploy/docker/sysbox.yaml:/etc/sysbox/sysbox.yaml:ro

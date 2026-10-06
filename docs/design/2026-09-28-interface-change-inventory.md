@@ -444,6 +444,8 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（整体收口第一步）：policy 共享锁路径由 `/run/sysbox/policy-locks` 改为 `/var/lib/sysbox/policy-locks`，与持久证据同卷；升级必须停止旧 writer 后统一切换。NodeOperation 内部存储接口 `SaveNodeOperation` 删除，使用 create-only 的 `CreateNodeOperation` 或显式 `CompareAndSwapNodeOperation`。三后端保存版本化完整记录；旧文件目录/SQLite列式表/Postgres扁平记录不兼容，需保留备份并重建，不会自动删除或猜测迁移。NodeOperation 公共 CommandID 仍不输出；Agent 不得修改请求人、角色和既有审计前缀。PostgreSQL API schema 提升为 5。
+
 实施补充（policy write-ahead evidence）：执行账户除共享 `/run/sysbox/policy-locks` 外，还需持久访问 `/var/lib/sysbox/policy-evidence`。Delete 成功后保留 deleted 记录；同代 Apply 不再允许重新创建，必须使用更高 policy generation。deleting 阶段仅可重试删除，不能直接 Apply。该目录是资源侧执行证据，不能当缓存删除；容器部署时，各执行进程需要共享同一 evidence/lock 存储。本轮未提供跨宿主迁移或 namespace 重建后的证据迁移协议。
 
 实施补充（policy 资源侧代际）：`PolicyTarget` 新增必填 `policy` 身份，与目标 `identity` 同 owner/topology，但独立 resource UID/generation；旧缺失 policy 字段的记录拒绝。Apply 的同 generation 内容不可变，相同 digest 重试不重建规则；更改内容需要新的 policy generation。Docker/namespace Policy SPI 已接入托管入口，旧无 generation 表注释的表拒绝操作。宿主执行账户需要访问共享 `/run/sysbox/policy-locks`；该本机锁不是 LeaseEpoch 授权，也不保留删除 tombstone。

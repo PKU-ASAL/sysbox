@@ -50,19 +50,21 @@ func (s *NodeOperationService) CompleteFromAgent(agentID, opID string, op contro
 	if op.EndedAt.IsZero() && (op.Status == controlplane.NodeOperationStatusDone || op.Status == controlplane.NodeOperationStatusFailed) {
 		op.EndedAt = time.Now().UTC()
 	}
-	if current, err := s.operations.Get(opID); err == nil && current != nil {
-		if err := persistence.ValidateNodeOperationTransition(*current, op); err != nil {
-			return op, err
-		}
-		if current.AgentID != agentID || current.ActionID != "" && (op.ActionID != current.ActionID || op.Generation != current.Generation || op.LeaseEpoch != current.LeaseEpoch || op.LeaseOwner != current.LeaseOwner || op.Attempt != current.Attempt) {
-			return op, fmt.Errorf("node operation fencing mismatch")
-		}
+	current, err := s.operations.Get(opID)
+	if err != nil {
+		return op, err
 	}
-	if current, err := s.operations.Get(opID); err == nil && current != nil {
-		if err := s.operations.CompareAndSwap(context.Background(), *current, op); err != nil {
-			return op, err
-		}
-	} else if err := s.operations.Save(op); err != nil {
+	if current == nil {
+		return op, persistence.ErrNotFound
+	}
+	op.CommandID = current.CommandID
+	if err := persistence.ValidateNodeOperationTransition(*current, op); err != nil {
+		return op, err
+	}
+	if current.AgentID != agentID || current.ActionID != "" && (op.ActionID != current.ActionID || op.Generation != current.Generation || op.LeaseEpoch != current.LeaseEpoch || op.LeaseOwner != current.LeaseOwner || op.Attempt != current.Attempt) {
+		return op, fmt.Errorf("node operation fencing mismatch")
+	}
+	if err := s.operations.CompareAndSwap(context.Background(), *current, op); err != nil {
 		return op, err
 	}
 	return op, nil
@@ -98,6 +100,7 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
+	beforeBinding := op
 	if op.Generation > 0 {
 		op.ActionID = op.ID
 	}
@@ -111,7 +114,7 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	}
 	op.CommandID, op.ActionID, op.ResourceUID, op.Generation, op.LeaseEpoch = command.ID, command.ActionID, command.ResourceUID, command.Generation, command.LeaseEpoch
 	op.LeaseOwner, op.Attempt = command.LeaseOwner, command.Attempt
-	if err := s.operations.Save(op); err != nil {
+	if err := s.operations.CompareAndSwap(ctx, beforeBinding, op); err != nil {
 		return controlplane.NodeOperation{}, err
 	}
 	return op, nil
@@ -153,6 +156,7 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
+	beforeBinding := op
 	op.ActionID = op.ID
 	command, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
 		Type:      "node_operation",
@@ -164,7 +168,7 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	}
 	op.CommandID, op.ActionID, op.ResourceUID, op.Generation, op.LeaseEpoch = command.ID, command.ActionID, command.ResourceUID, command.Generation, command.LeaseEpoch
 	op.LeaseOwner, op.Attempt = command.LeaseOwner, command.Attempt
-	if err := s.operations.Save(op); err != nil {
+	if err := s.operations.CompareAndSwap(ctx, beforeBinding, op); err != nil {
 		return controlplane.NodeOperation{}, err
 	}
 	return op, nil

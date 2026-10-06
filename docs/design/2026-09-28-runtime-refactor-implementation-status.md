@@ -93,6 +93,14 @@ Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe �
 
 ### Resource fencing 迁移进度
 
+2026-10-06 整体收口第一步：policy 锁移至 `/var/lib/sysbox/policy-locks`，与 evidence 一起使用现有 Compose 共享持久卷，避免不同执行容器拥有各自的 `/run` 锁。升级需先停止旧 writer，不能混用新旧锁路径；同宿主所有 writer 必须共享该目录，原生 CLI 与容器也须映射到同一实际目录。
+
+NodeOperation 三后端已切换共享 repository：Create 仅允许初始 queued 记录或完全一致的重试，修改一律 CAS。版本化完整记录保留 CommandID 和 fencing/项目/import 字段；公共 JSON 仍隐藏 CommandID。完成回报仅读取一次，读取失败不新建；CAS 同时校验身份、已绑定 command/lease、请求人/角色、审计前缀以及状态不回退。命令绑定采用 CAS，终态不可改写。旧 SaveNodeOperation 接口移除。
+
+该轮开启真实 PostgreSQL 16 的完整 API/persistence race 回归曾暴露并发 Run 幂等请求命中 `run_id` 第二唯一索引的问题；INSERT 已改为处理所有唯一冲突，再按精确 request ID 和 fingerprint 验证，绝不覆盖。连续 10 轮、每轮 24 请求通过；测试连接池显式关闭，避免重复验收耗尽连接。修复后完整实库 race 回归通过。
+
+文件使用 `_node-operations` 并明确拒绝旧 `node-ops` 数据；SQLite 新表为 id/data，旧列式表要求重建，不做缺字段回退；Postgres schema 5 支持完整记录写入，旧扁平 JSON 拒绝解码。实测包括文件/SQLite/真实 PostgreSQL 16 完整字段往返、Create 防覆盖、并发 CAS 仅一方成功、过期快照与身份篡改拒绝。开启两项 PostgreSQL DSN 的全仓回归已通过。仍未完成 publish-command 与 operation 绑定的单事务 outbox；本轮不宣称整个命令授权闭环完成。
+
 2026-10-06 policy 删除后防复活：增加宿主资源侧 write-ahead evidence，存放于 `/var/lib/sysbox/policy-evidence`，按 namespace dev/inode 和 policy owner 隔离。Apply 先持久化 prepared（UID/generation/不可变 digest），nft 成功后写 active；Delete 先写 deleting，再删除规则，最后写 deleted。相同或旧代际不能绕过删除记录重新创建，新的代际可在删除完成后创建；deleting 阻止任何 Apply，Delete 重试可以收敛物理删除已完成但记录未完成的窗口。
 
 所有读取/写入仍处于同一 namespace flock 内。记录写入使用临时文件、fsync、rename 和目录 fsync；加载要求版本/身份/状态合法，拒绝损坏、符号链接、非普通文件和超限内容，使用非阻塞 open 避免 FIFO 导致持锁永久等待。持久化失败不报告成功；nft 失败后 prepared 意图保留，旧代不能夺回写权限。

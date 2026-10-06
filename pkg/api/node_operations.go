@@ -23,6 +23,9 @@ func (s *nodeOperationStore) Create(op controlplane.NodeOperation) (controlplane
 	if op.ID == "" {
 		op.ID = uuid.New().String()
 	}
+	if op.Generation > 0 {
+		op.ActionID = op.ID
+	}
 	if op.ProjectID == "" {
 		op.ProjectID = "default"
 	}
@@ -54,18 +57,15 @@ func (s *nodeOperationStore) Create(op controlplane.NodeOperation) (controlplane
 			CreatedAt: now,
 		})
 	}
-	if err := s.Save(op); err != nil {
+	if s.store == nil {
+		return op, fmt.Errorf("node operation store not configured")
+	}
+	if err := s.store.CreateNodeOperation(context.Background(), op); err != nil {
 		return op, err
 	}
 	return op, nil
 }
 
-func (s *nodeOperationStore) Save(op controlplane.NodeOperation) error {
-	if s.store != nil {
-		return s.store.SaveNodeOperation(context.Background(), op)
-	}
-	return nil
-}
 func (s *nodeOperationStore) CompareAndSwap(ctx context.Context, old, next controlplane.NodeOperation) error {
 	if s.store == nil {
 		return fmt.Errorf("node operation store not configured")

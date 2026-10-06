@@ -24,7 +24,7 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 4
+const apiSchemaVersion = 5
 
 // errGlobalRevisionNotFound is returned by GetGlobalRevision when no revision
 // exists for the requested digest. Callers use errors.Is to detect it so they
@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS sysbox_projection (
   bound_at TIMESTAMPTZ NOT NULL
 );`,
 	},
+	{Version: 5, Name: "node_operation_records", SQL: `ALTER TABLE sysbox_node_operations ALTER COLUMN workspace SET DEFAULT '';`},
 }
 
 func (s *localAPIStore) SchemaVersion(context.Context) (int, error) {
@@ -329,47 +330,35 @@ func (s *localAPIStore) ListConsoleSessions(_ context.Context, workspace string)
 	return readLocalObjects[controlplane.ConsoleSession](filepath.Join(s.runsDir, workspace, "sessions", "*.json"))
 }
 
-func (s *localAPIStore) SaveNodeOperation(_ context.Context, op controlplane.NodeOperation) error {
-	workspace := op.Workspace
-	if workspace == "" {
-		workspace = op.Topology
+func (s *localAPIStore) CreateNodeOperation(ctx context.Context, op controlplane.NodeOperation) error {
+	repo, err := s.nodeOperationRepository(ctx)
+	if err != nil {
+		return err
 	}
-	return writeLocalObject(filepath.Join(s.runsDir, workspace, "node-ops", op.ID+".json"), op)
+	return repo.Create(ctx, op)
 }
 func (s *localAPIStore) CompareAndSwapNodeOperation(ctx context.Context, old, next controlplane.NodeOperation) error {
-	unlock, err := s.lockRunRecords(ctx)
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return err
 	}
-	defer unlock()
-	current, err := s.GetNodeOperation(ctx, old.ID)
-	if err != nil {
-		return err
-	}
-	if !persistence.SameNodeOperation(*current, old) {
-		return persistence.ErrConflict
-	}
-	return s.SaveNodeOperation(ctx, next)
+	return repo.CompareAndSwap(ctx, old, next)
 }
 
 func (s *localAPIStore) GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error) {
-	items, err := s.ListNodeOperations(ctx, "")
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, item := range items {
-		if item.ID == id {
-			return &item, nil
-		}
-	}
-	return nil, fmt.Errorf("node operation not found")
+	return repo.Get(ctx, id)
 }
 
-func (s *localAPIStore) ListNodeOperations(_ context.Context, workspace string) ([]controlplane.NodeOperation, error) {
-	if workspace == "" {
-		return readLocalObjects[controlplane.NodeOperation](filepath.Join(s.runsDir, "*", "node-ops", "*.json"))
+func (s *localAPIStore) ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error) {
+	repo, err := s.nodeOperationRepository(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return readLocalObjects[controlplane.NodeOperation](filepath.Join(s.runsDir, workspace, "node-ops", "*.json"))
+	return repo.List(ctx, workspace)
 }
 
 // postgresReachabilityTimeout bounds the eager startup check that verifies a
@@ -805,112 +794,35 @@ func (s *postgresAPIStore) ListConsoleSessions(ctx context.Context, workspace st
 	return out, rows.Err()
 }
 
-func (s *postgresAPIStore) SaveNodeOperation(ctx context.Context, op controlplane.NodeOperation) error {
-	workspace := op.Workspace
-	if workspace == "" {
-		workspace = op.Topology
-	}
-	conn, err := s.connect(ctx)
+func (s *postgresAPIStore) CreateNodeOperation(ctx context.Context, op controlplane.NodeOperation) error {
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
-	raw, err := json.Marshal(op)
-	if err != nil {
-		return err
-	}
-	_, err = conn.Exec(ctx, `
-INSERT INTO sysbox_node_operations (workspace, id, data, updated_at)
-VALUES ($1, $2, $3::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET workspace=EXCLUDED.workspace, data=EXCLUDED.data, updated_at=now()`,
-		workspace, op.ID, string(raw))
-	if err != nil {
-		return fmt.Errorf("postgres save node operation: %w", err)
-	}
-	return nil
+	return repo.Create(ctx, op)
 }
 func (s *postgresAPIStore) CompareAndSwapNodeOperation(ctx context.Context, old, next controlplane.NodeOperation) error {
-	pool, err := s.poolFor(ctx)
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	var raw []byte
-	if err = tx.QueryRow(ctx, `SELECT data::text FROM sysbox_node_operations WHERE id=$1 FOR UPDATE`, old.ID).Scan(&raw); err != nil {
-		return err
-	}
-	current, err := persistence.DecodeNodeOperation(raw)
-	if err != nil {
-		return err
-	}
-	if !persistence.SameNodeOperation(*current, old) {
-		return persistence.ErrConflict
-	}
-	nextRaw, err := persistence.EncodeNodeOperation(next)
-	if err != nil {
-		return err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE sysbox_node_operations SET data=$1::jsonb,updated_at=now() WHERE id=$2`, string(nextRaw), next.ID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return repo.CompareAndSwap(ctx, old, next)
 }
 
 func (s *postgresAPIStore) GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error) {
-	conn, err := s.connect(ctx)
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Release()
-	var raw []byte
-	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_node_operations WHERE id=$1`, id).Scan(&raw)
-	if err == pgx.ErrNoRows {
-		return nil, fmt.Errorf("node operation not found")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("postgres get node operation: %w", err)
-	}
-	var op controlplane.NodeOperation
-	if err := json.Unmarshal(raw, &op); err != nil {
-		return nil, err
-	}
-	return &op, nil
+	return repo.Get(ctx, id)
 }
 
 func (s *postgresAPIStore) ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error) {
-	conn, err := s.connect(ctx)
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Release()
-	query := `SELECT data::text FROM sysbox_node_operations ORDER BY updated_at DESC`
-	args := []any{}
-	if workspace != "" {
-		query = `SELECT data::text FROM sysbox_node_operations WHERE workspace=$1 ORDER BY updated_at DESC`
-		args = append(args, workspace)
-	}
-	rows, err := conn.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("postgres list node operations: %w", err)
-	}
-	defer rows.Close()
-	var out []controlplane.NodeOperation
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		var item controlplane.NodeOperation
-		if err := json.Unmarshal(raw, &item); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	return out, rows.Err()
+	return repo.List(ctx, workspace)
 }
 
 func nullableTime(t time.Time) any {

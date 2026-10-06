@@ -25,6 +25,15 @@ func (b *fileGuestRecords) directory(kind guestKind) (string, error) {
 		return filepath.Join(b.root, "_guest-executions"), nil
 	case guestFileKind:
 		return filepath.Join(b.root, "_guest-file-operations"), nil
+	case nodeOperationKind:
+		legacy, err := filepath.Glob(filepath.Join(b.root, "*", "node-ops", "*.json"))
+		if err != nil {
+			return "", err
+		}
+		if len(legacy) > 0 {
+			return "", ErrUnsupportedVersion
+		}
+		return filepath.Join(b.root, "_node-operations"), nil
 	default:
 		return "", ErrInvalidRecord
 	}

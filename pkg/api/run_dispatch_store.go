@@ -271,7 +271,9 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 		return nil, false, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	tag, err := tx.Exec(ctx, `INSERT INTO sysbox_run_requests (id, fingerprint, run_id) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`, request.Run.ID, request.Fingerprint, request.Run.ID)
+	// Concurrent identical inserts can conflict on either unique index (id
+	// or run_id). Resolve both through the exact request/fingerprint read below.
+	tag, err := tx.Exec(ctx, `INSERT INTO sysbox_run_requests (id, fingerprint, run_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, request.Run.ID, request.Fingerprint, request.Run.ID)
 	if err != nil {
 		return nil, false, fmt.Errorf("postgres create run request: %w", err)
 	}

@@ -39,7 +39,7 @@ func validatePolicyTransition(marker, currentDigest string, id substrate.Operati
 // Every managed reader/writer uses the same host-local namespace lock. Keep
 // lock files: unlinking one would let a waiter and a new caller lock separately.
 func lockPolicyNamespace(ctx context.Context, ns *os.File) (func(), error) {
-	return lockPolicyNamespaceIn(ctx, ns, "/run/sysbox/policy-locks")
+	return lockPolicyNamespaceIn(ctx, ns, "/var/lib/sysbox/policy-locks")
 }
 
 func lockPolicyNamespaceIn(ctx context.Context, ns *os.File, root string) (func(), error) {
