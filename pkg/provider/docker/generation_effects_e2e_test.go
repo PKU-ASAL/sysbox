@@ -78,6 +78,20 @@ func TestDockerRealGenerationEffectsE2E(t *testing.T) {
 	require.Equal(t, h.ID, discovered.ID)
 	require.NoError(t, cold.Pause(valid, discovered))
 	require.NoError(t, cold.Resume(valid, discovered))
+	t.Run("policy-target", func(t *testing.T) {
+		pid, err := s.policyTargetPID(ctx, dockerPolicyTarget{ContainerID: h.ID, Identity: identity})
+		require.NoError(t, err)
+		require.Equal(t, before.State.Pid, pid)
+		raw, err := json.Marshal(dockerPolicyTarget{ContainerID: h.ID, Identity: old})
+		require.NoError(t, err)
+		target := driver.PolicyTarget{Resource: "sysbox_node.test", State: raw}
+		_, err = s.ApplyRuleset(ctx, target, driver.RulesetSpec{Owner: "test-policy"})
+		require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+		_, err = s.ObserveRuleset(ctx, target, "test-policy")
+		require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+		err = s.DeleteRuleset(ctx, target, "test-policy")
+		require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+	})
 	t.Run("attachment", func(t *testing.T) {
 		// Docker permits a requested static address only on explicitly
 		// configured IPAM subnets. A collision fails creation without adoption.

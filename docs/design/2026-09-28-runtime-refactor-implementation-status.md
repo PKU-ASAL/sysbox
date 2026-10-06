@@ -75,6 +75,14 @@ Docker managed attachment 的 Attach/Observe/Delete 复用节点身份校验，�
 
 Firewall checkpoint hook 不再重放 ApplyRuleset：只 Observe，持久化 table/digest 与实测一致才恢复 state。规则缺失、查询不可用、ownership 冲突和摘要差异均拒绝恢复，不把当前观察结果改写成期望值。这是清理旧恢复副作用入口，并不解除新 firewall create 在 observation-driven 引擎中的能力限制；完整 policy generation、目标容器/namespace 身份协议仍待实现。
 
+### Docker policy 目标节点身份（2026-10-06）
+
+Firewall 和 router NAT 的 `policy_target_state` 现在持久化目标节点的 owner/resource/topology/generation 身份。Firewall 的目标来自节点 state，router 的目标来自创建节点的 action identity；缺失身份提前拒绝，router 同时检查 handle generation。目标节点身份与 firewall 自身的 action identity 分开，不能用 firewall 的 generation 去匹配节点。
+
+Docker ApplyRuleset/ObserveRuleset/DeleteRuleset 强制要求该身份，并在 namespace 访问前检查 inspect 返回的精确 container ID 和完整 managed labels。不接受旧无身份目标记录，也不按同名容器重新绑定。真实 Docker generation E2E 已通过：旧目标 generation 的三个 policy 接口均拒绝，匹配身份可解析到原容器 PID；这不等于真实 nftables Apply 成功验收。
+
+边界：此项是目标节点的代际检查，不是 policy 自身 generation 仲裁；network namespace 仍通过 PID 路径访问，未实现跨 inspect/子进程调用的 namespace FD 固定。原生 namespace policy、policy tombstone/lease epoch 与完整创建恢复仍待迁移。
+
 ### Resource fencing 迁移进度
 
 Agent command/event 模型增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。命令已绑定 fencing 身份时，事件必须完整匹配其证明；无 fencing 身份的 legacy 命令仍兼容无证明事件。校验、状态推进与终态退休通过共享 CommandRepository 在同一存储锁/事务内完成；拒绝或提交失败不发布事件缓存或更新 console/Guest 派生状态。Agent ack、执行事件与目标取消事件均回传对应命令的证明，SQLite 保留完整快照中的 fencing 字段。

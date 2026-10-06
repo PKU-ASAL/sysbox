@@ -428,6 +428,12 @@ Docker、Firecracker、libvirt 必须通过同一组 execution contract tests。
 - 旧 schema 明确拒绝；
 - action intent 已提交但 provider 结果丢失时可通过 observe 恢复，不重复不可重放操作。
 
+## 2026-10-06 实施补充：policy 目标身份
+
+Docker policy 的 `PolicyTarget.State` JSON 新增必填 `identity`（owner UID、resource UID、topology UID、generation、action ID），与 `container_id` 一起持久化在 firewall/router 的 `policy_target_state`。这是目标节点身份，不是 firewall 自身的操作代际。
+
+Apply/Observe/Delete 在 namespace 访问前核对真实容器 labels 与精确 ID。旧缺失身份的记录返回 InvalidState，不按名字采用新容器；需要在目标节点已有完整持久身份的前提下重建 policy 记录，不能手填当前代际跳过恢复验证。HTTP 路由和 HCL 字段未变。
+
 ## 11. 最终承诺
 
 本次重构对使用者的承诺是：

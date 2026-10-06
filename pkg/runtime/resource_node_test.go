@@ -103,11 +103,13 @@ func (s *portTestSubstrate) ResolveImage(context.Context, substrate.ArtifactSour
 	return substrate.ArtifactHandle{}, nil
 }
 
-func (s *portTestSubstrate) CreateNode(_ context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
+func (s *portTestSubstrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
 	s.lastSpec = spec
+	id, _ := substrate.OperationIdentityFromContext(ctx)
 	return substrate.NodeHandle{
-		ID:   "node-id",
-		Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker, Endpoint: "node-id"},
+		Generation: id.Generation,
+		ID:         "node-id",
+		Conn:       substrate.ConnInfo{Kind: substrate.ConnKindDocker, Endpoint: "node-id"},
 	}, nil
 }
 

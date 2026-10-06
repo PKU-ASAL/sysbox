@@ -12,6 +12,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestRouterResourceHandlerRegistered(t *testing.T) {
@@ -80,10 +81,15 @@ func TestRouterNATUsesLogicalAttachments(t *testing.T) {
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_network", "public"), Attributes: map[string]any{"nat": true, "docker_network_id": "net-1"}})
 	exec := NewExecutor(graph.New(), st)
 	n := &graph.Node{Address: address.Resource("sysbox_router", "edge"), Data: &config.RouterConfig{Image: "sysbox_image.router", Substrate: sub.name, NatFrom: "internal", NatTo: "uplink", Interfaces: []config.RouterInterface{{Name: "internal", Network: "sysbox_network.internal", IP: "10.0.0.1/24"}, {Name: "uplink", Network: "sysbox_network.public", IP: "172.20.0.2/24"}}}}
-	res, err := RouterResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+	ctx := substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "router", Generation: 1})
+	_, invalidErr := RouterResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+	require.ErrorContains(t, invalidErr, "durable target identity")
+	require.Empty(t, sub.lastSpec.Name, "missing identity must fail before creating a router")
+	res, err := RouterResourceHandler{}.Create(ctx, &ProviderContext{exec: exec}, n)
 	require.NoError(t, err)
 	require.Equal(t, []string{"internal", "uplink"}, sub.natNames)
 	require.Len(t, res.Attachments, 2)
+	require.Contains(t, res.Str("policy_target_state"), `"identity"`)
 }
 
 func TestRouterConfiguresStaticRoutes(t *testing.T) {

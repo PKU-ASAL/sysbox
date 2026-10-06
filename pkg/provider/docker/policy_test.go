@@ -1,13 +1,16 @@
 package docker
 
 import (
+	"context"
 	"encoding/json"
 	"net"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestResolvePolicyDeviceMatchesAddressWithoutGuestTooling(t *testing.T) {
@@ -24,11 +27,50 @@ func TestResolvePolicyDeviceMatchesAddressWithoutGuestTooling(t *testing.T) {
 	require.ErrorContains(t, err, "no interface has IP 10.0.5.31")
 }
 
+func TestPolicyRejectsTargetIdentityConflictBeforeNamespaceAccess(t *testing.T) {
+	for _, fault := range []string{"generation", "owner", "resource", "topology", "id", "missing"} {
+		t.Run(fault, func(t *testing.T) {
+			expected := testOperation()
+			actual := expected
+			containerID := "exact-id"
+			switch fault {
+			case "generation":
+				actual.Generation++
+			case "owner":
+				actual.OwnerUID = "foreign"
+			case "resource":
+				actual.ResourceUID = "foreign"
+			case "topology":
+				actual.TopologyUID = "foreign"
+			case "id":
+				containerID = "replacement-id"
+			case "missing":
+				expected = substrate.OperationIdentity{}
+			}
+			s := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "GET", r.Method)
+				_ = json.NewEncoder(w).Encode(map[string]any{"Id": containerID, "Config": map[string]any{"Labels": operationLabels(actual)}, "State": map[string]any{"Running": true, "Pid": 99999999}})
+			})
+			raw, err := json.Marshal(map[string]any{"container_id": "exact-id", "identity": expected})
+			require.NoError(t, err)
+			target := driver.PolicyTarget{Resource: "sysbox_router.node", State: raw}
+			_, err = s.ApplyRuleset(context.Background(), target, driver.RulesetSpec{Owner: "policy"})
+			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+			_, err = s.ObserveRuleset(context.Background(), target, "policy")
+			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+			err = s.DeleteRuleset(context.Background(), target, "policy")
+			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+		})
+	}
+}
+
 func TestDecodeDockerPolicyTargetRequiresContainerAndBindings(t *testing.T) {
 	_, err := decodeDockerPolicyTarget(driver.PolicyTarget{State: json.RawMessage(`{"bindings":{}}`)})
 	require.ErrorContains(t, err, "container_id")
 
-	target, err := decodeDockerPolicyTarget(driver.PolicyTarget{State: json.RawMessage(`{"container_id":"router-1","bindings":{"inside":"eth1","uplink":"eth0"}}`)})
+	raw, err := json.Marshal(dockerPolicyTarget{ContainerID: "router-1", Identity: testOperation(), Bindings: map[string]string{"inside": "eth1", "uplink": "eth0"}})
+	require.NoError(t, err)
+	target, err := decodeDockerPolicyTarget(driver.PolicyTarget{State: raw})
 	require.NoError(t, err)
 	require.Equal(t, "router-1", target.ContainerID)
 	require.Equal(t, "eth1", target.Bindings["inside"])

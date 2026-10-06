@@ -15,6 +15,7 @@ import (
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type FirewallResourceHandler struct{}
@@ -103,7 +104,11 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 		bindings[attachment.Name] = attachment.Observation.GuestDevice
 		attachmentIPs[attachment.Name] = append([]string(nil), attachment.IPPrefixes...)
 	}
-	targetRaw, err := json.Marshal(map[string]any{"container_id": targetResource.ContainerID(), "bindings": bindings, "attachment_ips": attachmentIPs})
+	targetIdentity := substrate.OperationIdentity{ActionID: "policy-target", OwnerUID: targetResource.OwnerUID, TopologyUID: targetResource.OwnerUID, ResourceUID: targetResource.ResourceUID, Generation: targetResource.Generation}
+	if err := targetIdentity.Validate(); err != nil {
+		return state.Resource{}, fmt.Errorf("firewall target lacks durable identity: %w", err)
+	}
+	targetRaw, err := json.Marshal(map[string]any{"container_id": targetResource.ContainerID(), "identity": targetIdentity, "bindings": bindings, "attachment_ips": attachmentIPs})
 	if err != nil {
 		return state.Resource{}, err
 	}

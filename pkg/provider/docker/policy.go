@@ -15,12 +15,14 @@ import (
 
 	"github.com/oslab/sysbox/pkg/driver"
 	networkprovider "github.com/oslab/sysbox/pkg/provider/network"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type dockerPolicyTarget struct {
-	ContainerID   string              `json:"container_id"`
-	Bindings      map[string]string   `json:"bindings"`
-	AttachmentIPs map[string][]string `json:"attachment_ips,omitempty"`
+	Identity      substrate.OperationIdentity `json:"identity"`
+	ContainerID   string                      `json:"container_id"`
+	Bindings      map[string]string           `json:"bindings"`
+	AttachmentIPs map[string][]string         `json:"attachment_ips,omitempty"`
 }
 
 func decodeDockerPolicyTarget(target driver.PolicyTarget) (dockerPolicyTarget, error) {
@@ -30,6 +32,9 @@ func decodeDockerPolicyTarget(target driver.PolicyTarget) (dockerPolicyTarget, e
 	}
 	if state.ContainerID == "" {
 		return state, driver.Wrap(driver.ErrorInvalidState, "docker", "policy target container_id is required", nil)
+	}
+	if err := state.Identity.Validate(); err != nil {
+		return state, driver.Wrap(driver.ErrorInvalidState, "docker", "policy target identity is required", err)
 	}
 	if state.Bindings == nil {
 		state.Bindings = map[string]string{}
@@ -42,7 +47,7 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	pid, err := s.policyTargetPID(ctx, state.ContainerID)
+	pid, err := s.policyTargetPID(ctx, state)
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
@@ -137,7 +142,7 @@ func (s *Substrate) ObserveRuleset(ctx context.Context, target driver.PolicyTarg
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	pid, err := s.policyTargetPID(ctx, state.ContainerID)
+	pid, err := s.policyTargetPID(ctx, state)
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
@@ -149,7 +154,7 @@ func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarge
 	if err != nil {
 		return err
 	}
-	pid, err := s.policyTargetPID(ctx, state.ContainerID)
+	pid, err := s.policyTargetPID(ctx, state)
 	if err != nil {
 		return err
 	}
@@ -158,7 +163,8 @@ func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarge
 
 // policyTargetPID returns the host PID of a policy target container, mapping a
 // missing container to ErrorNotFound so callers can treat it as drift.
-func (s *Substrate) policyTargetPID(ctx context.Context, containerID string) (int, error) {
+func (s *Substrate) policyTargetPID(ctx context.Context, target dockerPolicyTarget) (int, error) {
+	containerID := target.ContainerID
 	container, err := s.cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		category := driver.ErrorUnavailable
@@ -166,6 +172,12 @@ func (s *Substrate) policyTargetPID(ctx context.Context, containerID string) (in
 			category = driver.ErrorNotFound
 		}
 		return 0, driver.Wrap(category, "docker", "inspect policy target", err)
+	}
+	if container.ID != containerID || container.Config == nil {
+		return 0, driver.Wrap(driver.ErrorInvalidState, "docker", "policy target exact ID or metadata mismatch", nil)
+	}
+	if err := verifyLabels(container.Config.Labels, operationLabels(target.Identity)); err != nil {
+		return 0, err
 	}
 	if container.State == nil || !container.State.Running || container.State.Pid == 0 {
 		return 0, driver.Wrap(driver.ErrorNotFound, "docker", fmt.Sprintf("policy target container %s is not running", containerID), nil)

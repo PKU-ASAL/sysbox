@@ -134,6 +134,10 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	if !ok {
 		return state.Resource{}, fmt.Errorf("router %s: wrong data type", n.Address)
 	}
+	targetIdentity, hasIdentity := substrate.OperationIdentityFromContext(ctx)
+	if cfg.NatFrom != "" && cfg.NatTo != "" && (!hasIdentity || targetIdentity.Validate() != nil) {
+		return state.Resource{}, fmt.Errorf("router policy requires durable target identity")
+	}
 	subName, err := resolveSubstrateRef(cfg.Substrate)
 	if err != nil {
 		return state.Resource{}, err
@@ -247,7 +251,10 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 			bindings[name] = result.GuestDevice
 			attachmentIPs[name] = append([]string(nil), wireResult.Requests[name].IPPrefixes...)
 		}
-		targetRaw, err := json.Marshal(map[string]any{"container_id": handle.ID, "bindings": bindings, "attachment_ips": attachmentIPs})
+		if targetIdentity.Generation != handle.Generation {
+			return state.Resource{}, fmt.Errorf("router policy requires durable target identity matching node generation")
+		}
+		targetRaw, err := json.Marshal(map[string]any{"container_id": handle.ID, "identity": targetIdentity, "bindings": bindings, "attachment_ips": attachmentIPs})
 		if err != nil {
 			return state.Resource{}, err
 		}

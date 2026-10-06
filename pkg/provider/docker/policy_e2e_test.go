@@ -16,6 +16,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/driver"
 	networkprovider "github.com/oslab/sysbox/pkg/provider/network"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestDockerStartPreservesNamedNetworkNamespaceE2E(t *testing.T) {
@@ -47,6 +48,7 @@ func TestDockerStartPreservesNamedNetworkNamespaceE2E(t *testing.T) {
 }
 
 func TestDockerOwnedPolicyLifecycleE2E(t *testing.T) {
+	identity := substrate.OperationIdentity{OwnerUID: "policy-e2e", ResourceUID: fmt.Sprintf("node-%d", os.Getpid()), TopologyUID: "policy-e2e", Generation: 1, ActionID: "create"}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	provider, err := New()
@@ -55,7 +57,7 @@ func TestDockerOwnedPolicyLifecycleE2E(t *testing.T) {
 	}
 	defer provider.Close()
 	name := fmt.Sprintf("sysbox-e2e-policy-%d", os.Getpid())
-	created, err := provider.cli.ContainerCreate(ctx, &containertypes.Config{Image: "alpine:latest", Cmd: []string{"sleep", "30"}}, &containertypes.HostConfig{}, nil, nil, name)
+	created, err := provider.cli.ContainerCreate(ctx, &containertypes.Config{Image: "alpine:latest", Cmd: []string{"sleep", "30"}, Labels: operationLabels(identity)}, &containertypes.HostConfig{}, nil, nil, name)
 	if err != nil {
 		t.Skipf("Docker policy E2E requires local alpine:latest: %v", err)
 	}
@@ -63,7 +65,7 @@ func TestDockerOwnedPolicyLifecycleE2E(t *testing.T) {
 		_ = provider.cli.ContainerRemove(context.Background(), created.ID, containertypes.RemoveOptions{Force: true})
 	})
 	require.NoError(t, provider.cli.ContainerStart(ctx, created.ID, containertypes.StartOptions{}))
-	targetRaw, err := json.Marshal(dockerPolicyTarget{ContainerID: created.ID, Bindings: map[string]string{"inside": "lo", "uplink": "lo"}})
+	targetRaw, err := json.Marshal(dockerPolicyTarget{ContainerID: created.ID, Identity: identity, Bindings: map[string]string{"inside": "lo", "uplink": "lo"}})
 	require.NoError(t, err)
 	target := driver.PolicyTarget{Resource: "sysbox_router.e2e", State: targetRaw}
 	spec := driver.RulesetSpec{Owner: "e2e/sysbox_router.docker", Family: driver.FamilyIPv4,
@@ -88,6 +90,7 @@ func TestDockerOwnedPolicyLifecycleE2E(t *testing.T) {
 }
 
 func TestDockerOwnedPolicyStoppedContainerIsDriftE2E(t *testing.T) {
+	identity := substrate.OperationIdentity{OwnerUID: "policy-e2e", ResourceUID: fmt.Sprintf("node-%d", os.Getpid()), TopologyUID: "policy-e2e", Generation: 1, ActionID: "create"}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	provider, err := New()
@@ -96,7 +99,7 @@ func TestDockerOwnedPolicyStoppedContainerIsDriftE2E(t *testing.T) {
 	}
 	defer provider.Close()
 	name := fmt.Sprintf("sysbox-e2e-policy-stopped-%d", os.Getpid())
-	created, err := provider.cli.ContainerCreate(ctx, &containertypes.Config{Image: "alpine:latest", Cmd: []string{"sleep", "30"}}, &containertypes.HostConfig{}, nil, nil, name)
+	created, err := provider.cli.ContainerCreate(ctx, &containertypes.Config{Image: "alpine:latest", Cmd: []string{"sleep", "30"}, Labels: operationLabels(identity)}, &containertypes.HostConfig{}, nil, nil, name)
 	if err != nil {
 		t.Skipf("Docker policy E2E requires local alpine:latest: %v", err)
 	}
@@ -104,7 +107,7 @@ func TestDockerOwnedPolicyStoppedContainerIsDriftE2E(t *testing.T) {
 		_ = provider.cli.ContainerRemove(context.Background(), created.ID, containertypes.RemoveOptions{Force: true})
 	})
 	require.NoError(t, provider.cli.ContainerStart(ctx, created.ID, containertypes.StartOptions{}))
-	targetRaw, err := json.Marshal(dockerPolicyTarget{ContainerID: created.ID, Bindings: map[string]string{"inside": "lo", "uplink": "lo"}})
+	targetRaw, err := json.Marshal(dockerPolicyTarget{ContainerID: created.ID, Identity: identity, Bindings: map[string]string{"inside": "lo", "uplink": "lo"}})
 	require.NoError(t, err)
 	target := driver.PolicyTarget{Resource: "sysbox_router.e2e", State: targetRaw}
 	spec := driver.RulesetSpec{Owner: "e2e/sysbox_router.stopped", Family: driver.FamilyIPv4,
