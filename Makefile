@@ -40,6 +40,23 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 .PHONY: test-libvirt-generation-e2e
 .PHONY: test-network-generation-e2e
 .PHONY: test-policy-namespace-e2e
+.PHONY: test-firewall-recovery-e2e
+
+test-firewall-recovery-e2e: ## Run real Docker/nft firewall engine recovery (Linux x86_64)
+	@set -eu; test "$$(uname -m)" = x86_64; \
+	test_dir=$$(mktemp -d /tmp/sysbox-firewall-e2e.XXXXXX); \
+	trap 'rm -f "$$test_dir/firewall.test" "$$test_dir/sysbox-netns"; rmdir "$$test_dir"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -tags e2e -o "$$test_dir/firewall.test" ./pkg/runtime; \
+	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$test_dir/sysbox-netns" ./cmd/sysbox-netns; \
+	docker run --rm --network none --pid host --cap-add NET_ADMIN --cap-add SYS_ADMIN --cap-add SYS_PTRACE --security-opt apparmor=unconfined \
+	  --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+	  --mount "type=bind,src=$$test_dir/firewall.test,dst=/firewall.test,readonly" \
+	  --mount "type=bind,src=$$test_dir/sysbox-netns,dst=/usr/local/bin/sysbox-netns,readonly" \
+	  --mount "type=bind,src=$$(command -v nft),dst=/usr/local/bin/nft,readonly" \
+	  --mount "type=bind,src=$$(command -v nsenter),dst=/usr/local/bin/nsenter,readonly" \
+	  --mount type=bind,src=/lib/x86_64-linux-gnu,dst=/lib/x86_64-linux-gnu,readonly \
+	  --mount type=bind,src=/lib64,dst=/lib64,readonly -e SYSBOX_FIREWALL_E2E=1 \
+	  --entrypoint /firewall.test ubuntu:24.04 -test.run '^TestFirewallRealRepositoryRecoveryE2E$$' -test.v -test.timeout=2m
 
 test-policy-namespace-e2e: ## Verify real nft namespace FD isolation in a disposable container (Linux x86_64)
 	@set -eu; test "$$(uname -m)" = x86_64; \

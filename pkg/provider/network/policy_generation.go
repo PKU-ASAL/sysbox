@@ -179,6 +179,21 @@ func ObserveManagedRuleset(ctx context.Context, ns *os.File, id substrate.Operat
 	return observed, err
 }
 
+func DiscoverManagedRuleset(ctx context.Context, ns *os.File, id substrate.OperationIdentity, spec driver.RulesetSpec, bindings map[string]string) (driver.RulesetObservation, error) {
+	plan, err := compileRuleset(spec, bindings)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	observed, err := ObserveManagedRuleset(ctx, ns, id, spec.Owner)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	if observed.Table != plan.Table || observed.Digest != plan.Digest {
+		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "discovered policy differs from desired ruleset", nil)
+	}
+	return observed, nil
+}
+
 func DeleteManagedRuleset(ctx context.Context, ns *os.File, id substrate.OperationIdentity, owner string) error {
 	if err := id.Validate(); err != nil {
 		return err

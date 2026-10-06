@@ -62,6 +62,8 @@ func TestPolicyRejectsTargetIdentityConflictBeforeNamespaceAccess(t *testing.T) 
 			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
 			err = s.DeleteRuleset(context.Background(), target, "policy")
 			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+			_, err = s.DiscoverRuleset(context.Background(), target, driver.RulesetSpec{Owner: "policy"})
+			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
 		})
 	}
 }

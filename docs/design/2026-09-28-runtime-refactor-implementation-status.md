@@ -93,6 +93,12 @@ Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe �
 
 ### Resource fencing 迁移进度
 
+2026-10-07 firewall 默认引擎闭环：新增可选 `PolicyDiscovery.DiscoverRuleset(target,spec)`。Docker 在同一已核验 namespace FD 中解析设备绑定；共享实现比较期望 spec/bindings 的摘要与受管表标记，同时校验 policy generation。Firewall handler 已实现 managed discovery，返回完整 UID/generation/external ID，只有明确的 policy NotFound 才是 absent；损坏/缺失目标身份是 unknown，不能据此创建。
+
+`make test-firewall-recovery-e2e` 已实跑 HCL → 默认 Executor → 真实 Docker/nft → 文件 repository：正常创建删除，然后注入 outcome 持久化失败，重新打开 repository 后仅依据 durable intent 和 discovery 恢复，最后删除。恢复的 Policy.Apply 被替换为调用即报错，以确认没有重放。普通 firewall 在 ip_forward=0 的节点上正常；仅 NAT 在副作用前要求并核验转发开启。单测另覆盖旧 Create 计划拒绝、丢失 candidate 的恢复与未知目标拒绝。
+
+边界：该 E2E 预先创建目标节点，只对 firewall 执行计划；并非 HTTP/远端 Agent 全链路验收，也不是进程 SIGKILL 测试。摘要核验基于受管 nft 标记，尚不检测外部 writer 保留标记却篡改实际规则的所有情况；原生 namespace provider 的真实目标 ownership 仍待收口。
+
 2026-10-06 整体收口第一步：policy 锁移至 `/var/lib/sysbox/policy-locks`，与 evidence 一起使用现有 Compose 共享持久卷，避免不同执行容器拥有各自的 `/run` 锁。升级需先停止旧 writer，不能混用新旧锁路径；同宿主所有 writer 必须共享该目录，原生 CLI 与容器也须映射到同一实际目录。
 
 NodeOperation 三后端已切换共享 repository：Create 仅允许初始 queued 记录或完全一致的重试，修改一律 CAS。版本化完整记录保留 CommandID 和 fencing/项目/import 字段；公共 JSON 仍隐藏 CommandID。完成回报仅读取一次，读取失败不新建；CAS 同时校验身份、已绑定 command/lease、请求人/角色、审计前缀以及状态不回退。命令绑定采用 CAS，终态不可改写。旧 SaveNodeOperation 接口移除。
@@ -230,7 +236,7 @@ Create 与 Reset 共用声明路由逻辑：先观察，持久化子步骤后配
 | Provider 接入 | `driver.Descriptor` + capability 模型保留；缺少管理发现或可靠观测的能力明确拒绝，不能默认为成功 |
 | Go 执行接口 | `Connection` 只要求前台 Exec；调用 Start/Copy 等能力前需断言对应可选接口；旧 GuestExec 包装器委托同一实现 |
 | 旧 state / 数据库行 / Firecracker 磁盘格式 | 不隐式迁移，不把旧状态当空状态，不自动删除真实基础设施；需要显式重建与处置旧资源 |
-| `sysbox_ssh_access`、新 firewall create | discovery/read-back 未完整实现，默认引擎明确拒绝；这是当前迁移缺口，不能宣称所有旧场景等价可用 |
+| `sysbox_ssh_access` | discovery/read-back 未完整实现，默认引擎明确拒绝；firewall 已在 2026-10-07 接入，见最新验证记录 |
 | `gc` | 仅可信 OwnerUID 范围内的 `--dry-run` 候选；自动删除暂禁，直到 inventory→delete 有完整 fencing。SQL/remote/其他 runs 目录不在当前 GC 库存范围 |
 | State snapshot / lease 运维 | 新 aggregate 尚未实现旧 snapshot/force-unlock 等完整能力；不能把返回空列表视为能力已经迁移 |
 | 外部资源 import | 未迁移显式 ownership adoption；旧 import 返回的无 owner/generation 记录会被新 repository 拒绝，不能据此声称 import 已恢复功能等价 |

@@ -31,7 +31,7 @@ func (FirewallResourceHandler) Read(ctx context.Context, current state.Resource)
 	}
 	target, owner, err := policyState(current)
 	if err != nil {
-		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: err.Error()}, nil
+		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
 	observation, err := policy.ObserveRuleset(ctx, target, owner)
 	if err != nil {
@@ -86,6 +86,21 @@ func (FirewallResourceHandler) DecodeResource(r config.ResourceBlock, _ string, 
 }
 
 func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
+	return e.resolveFirewallResource(ctx, n, false)
+}
+
+func (FirewallResourceHandler) Discover(ctx context.Context, pc *ProviderContext, n *graph.Node) (ResourceReadResult, error) {
+	r, err := pc.exec.resolveFirewallResource(ctx, n, true)
+	if driver.IsCategory(err, driver.ErrorNotFound) {
+		return ResourceReadResult{Status: state.ResourceAbsent}, nil
+	}
+	if err != nil {
+		return ResourceReadResult{Status: state.ResourceUnknown, Reason: err.Error()}, err
+	}
+	return resourceReadOK(r), nil
+}
+
+func (e *Executor) resolveFirewallResource(ctx context.Context, n *graph.Node, discover bool) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.FirewallConfig)
 	if !ok {
 		return state.Resource{}, fmt.Errorf("firewall %s: wrong data type", n.Address)
@@ -130,7 +145,16 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	if err != nil {
 		return state.Resource{}, err
 	}
-	observation, err := policy.ApplyRuleset(ctx, target, spec)
+	var observation driver.RulesetObservation
+	if discover {
+		observer, ok := policy.(driver.PolicyDiscovery)
+		if !ok {
+			return state.Resource{}, fmt.Errorf("%w: provider %s has no policy discovery", ErrConvergenceUnsupported, targetResource.Driver)
+		}
+		observation, err = observer.DiscoverRuleset(ctx, target, spec)
+	} else {
+		observation, err = policy.ApplyRuleset(ctx, target, spec)
+	}
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("firewall %s: %w", n.Address.Name, err)
 	}
@@ -146,7 +170,7 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
 	}
-	return state.Resource{Address: n.Address, Driver: targetResource.Driver, Attributes: state.MustAttributes(inst)}, nil
+	return state.Resource{Address: n.Address, Driver: targetResource.Driver, ExternalID: observation.Table, OwnerUID: policyIdentity.OwnerUID, ResourceUID: policyIdentity.ResourceUID, Generation: policyIdentity.Generation, Attributes: state.MustAttributes(inst)}, nil
 }
 
 func (FirewallResourceHandler) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {

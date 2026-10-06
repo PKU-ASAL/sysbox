@@ -158,6 +158,13 @@ func TestPolicyGenerationFencingE2E(t *testing.T) {
 	ctx := context.Background()
 	first, err := ApplyManagedRuleset(ctx, ns, id, spec, nil)
 	require.NoError(t, err)
+	found, err := DiscoverManagedRuleset(ctx, ns, id, spec, nil)
+	require.NoError(t, err)
+	require.Equal(t, first, found)
+	drifted := spec
+	drifted.DefaultInput = driver.VerdictAccept
+	_, err = DiscoverManagedRuleset(ctx, ns, id, drifted, nil)
+	require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "discovery must not adopt a different desired digest: %v", err)
 	before, err := runNFT(ctx, ns, "", "list", "table", "ip", first.Table)
 	require.NoError(t, err)
 	old := id

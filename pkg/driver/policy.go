@@ -121,6 +121,13 @@ type Policy interface {
 	DeleteRuleset(context.Context, PolicyTarget, string) error
 }
 
+// PolicyDiscovery observes the exact policy generation and verifies its digest
+// against the requested spec after resolving provider-owned device bindings.
+// It must never apply rules or adopt a different generation.
+type PolicyDiscovery interface {
+	DiscoverRuleset(context.Context, PolicyTarget, RulesetSpec) (RulesetObservation, error)
+}
+
 func NormalizeRuleset(spec RulesetSpec) (RulesetSpec, error) {
 	if spec.Owner == "" {
 		return spec, fmt.Errorf("policy owner is required")

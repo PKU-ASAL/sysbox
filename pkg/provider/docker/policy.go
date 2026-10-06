@@ -58,9 +58,56 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 	// a socket deadline) rather than the nftables netlink conn that was removed
 	// from the firewall path.
 	defer ns.Close()
+	if err := resolvePolicyBindings(ns, &state); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	if err := validatePolicyForwarding(ns, spec); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	observation, err := networkprovider.ApplyManagedRuleset(ctx, ns, target.Policy, spec, state.Bindings)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	return observation, nil
+}
+
+func (s *Substrate) DiscoverRuleset(ctx context.Context, target driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
+	state, err := decodeDockerPolicyTarget(target)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	ns, err := s.policyTargetNamespace(ctx, state)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	defer ns.Close()
+	if err := resolvePolicyBindings(ns, &state); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	if err := validatePolicyForwarding(ns, spec); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	return networkprovider.DiscoverManagedRuleset(ctx, ns, target.Policy, spec, state.Bindings)
+}
+
+func validatePolicyForwarding(ns *os.File, spec driver.RulesetSpec) error {
+	if spec.NAT == nil {
+		return nil
+	}
+	fwd, err := readSysctlInNetNSFD(int(ns.Fd()), "net/ipv4/ip_forward")
+	if err != nil {
+		return driver.Wrap(driver.ErrorUnavailable, "docker", "read NAT forwarding state", err)
+	}
+	if fwd != "1" {
+		return driver.Wrap(driver.ErrorInvalidState, "docker", fmt.Sprintf("NAT requires ip_forward=1, observed %q", fwd), nil)
+	}
+	return nil
+}
+
+func resolvePolicyBindings(ns *os.File, state *dockerPolicyTarget) error {
 	interfaces, err := policyInterfacesInNetNSFD(int(ns.Fd()))
 	if err != nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "list policy interfaces", err)
+		return driver.Wrap(driver.ErrorUnavailable, "docker", "list policy interfaces", err)
 	}
 	for logical, prefixes := range state.AttachmentIPs {
 		if state.Bindings[logical] != "" || len(prefixes) == 0 {
@@ -68,19 +115,12 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 		}
 		device, resolveErr := resolvePolicyDevice(prefixes[0], interfaces)
 		if resolveErr != nil {
-			return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", fmt.Sprintf("resolve attachment %q", logical), resolveErr)
+			return driver.Wrap(driver.ErrorUnavailable, "docker", fmt.Sprintf("resolve attachment %q", logical), resolveErr)
 		}
 		state.Bindings[logical] = device
 	}
 
-	observation, err := networkprovider.ApplyManagedRuleset(ctx, ns, target.Policy, spec, state.Bindings)
-	if err != nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "apply ruleset", err)
-	}
-	if fwd, err := readSysctlInNetNSFD(int(ns.Fd()), "net/ipv4/ip_forward"); err == nil && fwd != "1" {
-		return driver.RulesetObservation{}, fmt.Errorf("router ip_forward=%q (expected 1)", fwd)
-	}
-	return observation, nil
+	return nil
 }
 
 type policyInterface struct {

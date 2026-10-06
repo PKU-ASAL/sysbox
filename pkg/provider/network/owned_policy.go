@@ -70,6 +70,19 @@ func (Driver) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, own
 	return DeleteManagedRuleset(ctx, ns, target.Policy, owner)
 }
 
+func (Driver) DiscoverRuleset(ctx context.Context, target driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
+	state, err := decodePolicyTarget(target)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	ns, err := os.Open("/var/run/netns/" + state.Namespace)
+	if err != nil {
+		return driver.RulesetObservation{}, networkQueryError("open policy namespace", err)
+	}
+	defer ns.Close()
+	return DiscoverManagedRuleset(ctx, ns, target.Policy, spec, state.Bindings)
+}
+
 func decodePolicyTarget(target driver.PolicyTarget) (policyTargetState, error) {
 	var state policyTargetState
 	if err := target.Validate(); err != nil {
