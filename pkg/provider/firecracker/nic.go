@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -22,9 +23,10 @@ import (
 // Firecracker does NOT support NIC hot-plug in config-file mode,
 // so we must declare all interfaces before boot.
 type attachmentState struct {
-	Tap         string `json:"tap"`
-	NetNS       string `json:"netns"`
-	GuestDevice string `json:"guest_device"`
+	Link        *network.AttachmentLink `json:"link"`
+	Tap         string                  `json:"tap"`
+	NetNS       string                  `json:"netns"`
+	GuestDevice string                  `json:"guest_device"`
 }
 type networkState struct {
 	NetNS  string `json:"netns"`
@@ -74,37 +76,60 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "firecracker", "attach network", err)
 	}
 	guest := attached.GuestEnd
-	raw, _ := json.Marshal(attachmentState{Tap: attached.HostEnd, NetNS: attached.NetNS, GuestDevice: guest})
+	id := substrate.OperationIdentity{ActionID: "attachment", OwnerUID: hs.OwnerUID, ResourceUID: hs.ResourceUID, TopologyUID: hs.TopologyUID, Generation: hs.Generation}
+	alias, err := network.AttachmentAlias(id, req.Name)
+	if err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	proof, err := network.CaptureAttachmentLink(ctx, attached.NetNS, attached.HostEnd, alias)
+	if err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	raw, _ := json.Marshal(attachmentState{Tap: attached.HostEnd, NetNS: attached.NetNS, GuestDevice: guest, Link: &proof})
 	return driver.AttachmentResult{Driver: "firecracker", GuestDevice: guest, State: raw}, nil
 }
-func (s *Substrate) Observe(_ context.Context, _ substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
+func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
 	var st attachmentState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "firecracker", "decode attachment state", err)
 	}
-	if !linkExists(st.Tap) && !linkExistsInNetns(st.Tap, st.NetNS) {
-		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorNotFound, "firecracker", "tap not found", nil)
+	if st.Link == nil {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "firecracker", "attachment ownership proof required", nil)
+	}
+	_, m, release, err := s.lockedManifest(ctx, h)
+	if err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	defer release()
+	id := substrate.OperationIdentity{ActionID: "attachment", OwnerUID: m.OwnerUID, ResourceUID: m.ResourceUID, TopologyUID: m.TopologyUID, Generation: m.Generation}
+	alias, err := network.AttachmentAlias(id, req.Name)
+	if err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	if err := network.ObserveOwnedAttachment(ctx, *st.Link, alias); err != nil {
+		return driver.AttachmentResult{}, err
 	}
 	return driver.AttachmentResult{Driver: "firecracker", GuestDevice: st.GuestDevice, State: raw}, nil
 }
-func (s *Substrate) Delete(ctx context.Context, _ substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
+func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest, raw json.RawMessage) error {
 	var st attachmentState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return driver.Wrap(driver.ErrorInvalidState, "firecracker", "decode attachment state", err)
 	}
-	if !linkExists(st.Tap) && !linkExistsInNetns(st.Tap, st.NetNS) {
-		return nil
+	if st.Link == nil {
+		return driver.Wrap(driver.ErrorInvalidState, "firecracker", "attachment ownership proof required", nil)
 	}
-	if st.NetNS != "" {
-		if err := exec.CommandContext(ctx, ipBin, "netns", "exec", st.NetNS, ipBin, "link", "del", st.Tap).Run(); err != nil {
-			return driver.Wrap(driver.ErrorUnavailable, "firecracker", "delete tap", err)
-		}
-		return nil
+	_, m, release, err := s.lockedManifest(ctx, h)
+	if err != nil {
+		return err
 	}
-	if err := deleteTapDevice(st.Tap); err != nil {
-		return driver.Wrap(driver.ErrorUnavailable, "firecracker", "delete tap", err)
+	defer release()
+	id := substrate.OperationIdentity{ActionID: "attachment", OwnerUID: m.OwnerUID, ResourceUID: m.ResourceUID, TopologyUID: m.TopologyUID, Generation: m.Generation}
+	alias, err := network.AttachmentAlias(id, req.Name)
+	if err != nil {
+		return err
 	}
-	return nil
+	return network.DeleteOwnedAttachment(ctx, *st.Link, alias)
 }
 
 func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req linkRequest) (attachedNIC, error) {
@@ -148,6 +173,11 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 	}
 
 	tapName := attachmentTapName(h.ID, req.Name)
+	id := substrate.OperationIdentity{ActionID: "attachment", OwnerUID: m.OwnerUID, ResourceUID: m.ResourceUID, TopologyUID: m.TopologyUID, Generation: m.Generation}
+	alias, err := network.AttachmentAlias(id, req.Name)
+	if err != nil {
+		return attachedNIC{}, err
+	}
 
 	netnsName := req.NetNS
 	bridgeName := req.Bridge
@@ -157,10 +187,17 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 	tapInNetns := netnsName != "" && linkExistsInNetns(tapName, netnsName)
 
 	if !tapInRoot && !tapInNetns {
-		if err := createTapDevice(tapName); err != nil {
+		if err := network.CreateOwnedTap(ctx, tapName, alias); err != nil {
 			return attachedNIC{}, fmt.Errorf("create tap %s: %w", tapName, err)
 		}
 	} else {
+		where := ""
+		if !tapInRoot {
+			where = netnsName
+		}
+		if _, err := network.CaptureAttachmentLink(ctx, where, tapName, alias); err != nil {
+			return attachedNIC{}, err
+		}
 		if tapInRoot {
 			if err := exec.CommandContext(ctx, ipBin, "link", "set", tapName, "up").Run(); err != nil {
 				slog.Warn("set tap up in root netns", "tap", tapName, "error", err)
@@ -388,50 +425,6 @@ func init() {
 	}
 }
 
-// cleanupTap removes a TAP device from the specified netns (or root netns if empty).
-// This handles the common case where a previous failed apply left the TAP
-// inside a network netns — deleting from root netns would fail silently.
-func cleanupTap(name, netnsName string) {
-	if netnsName != "" {
-		// Try deleting from inside the netns first.
-		if err := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "tuntap", "del", "dev", name, "mode", "tap").Run(); err != nil {
-			slog.Debug("cleanup tap tuntap in netns", "tap", name, "error", err)
-		}
-		if err := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "del", name).Run(); err != nil {
-			slog.Debug("cleanup tap link in netns", "tap", name, "error", err)
-		}
-	}
-	// Also try root netns (TAP might not have been moved yet).
-	if err := exec.Command(ipBin, "tuntap", "del", "dev", name, "mode", "tap").Run(); err != nil {
-		slog.Debug("cleanup tap tuntap in root", "tap", name, "error", err)
-	}
-	if err := exec.Command(ipBin, "link", "del", name).Run(); err != nil {
-		slog.Debug("cleanup tap link in root", "tap", name, "error", err)
-	}
-}
-
-// createTapDevice creates a TAP device using ip tuntap.
-// If the device already exists (leftover from a failed run), it is reused.
-func createTapDevice(name string) error {
-	// Check if TAP already exists in root netns — reuse it.
-	if linkExists(name) {
-		if err := exec.Command(ipBin, "link", "set", name, "up").Run(); err != nil {
-			slog.Warn("set existing tap up", "tap", name, "error", err)
-		}
-		return nil
-	}
-
-	cmd := exec.Command(ipBin, "tuntap", "add", "dev", name, "mode", "tap")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ip tuntap add %s: %w\n%s", name, err, out)
-	}
-	cmd = exec.Command(ipBin, "link", "set", name, "up")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ip link set %s up: %w\n%s", name, err, out)
-	}
-	return nil
-}
-
 // linkExists checks if a network link exists in the current netns.
 func linkExists(name string) bool {
 	return exec.Command(ipBin, "link", "show", name).Run() == nil
@@ -480,16 +473,5 @@ func attachTapToBridge(ctx context.Context, tapName, bridgeName, netnsName strin
 	if out, err := runIP("link", "set", tapName, "up"); err != nil {
 		return fmt.Errorf("set tap up: %w\n%s", err, out)
 	}
-	return nil
-}
-
-// deleteTapDevice removes a TAP device.
-func deleteTapDevice(name string) error {
-	return exec.Command(ipBin, "link", "del", name).Run()
-}
-
-// DeleteTapForNIC removes a TAP device (used during destroy).
-func DeleteTapForNIC(tapName, netnsName string) error {
-	cleanupTap(tapName, netnsName)
 	return nil
 }

@@ -42,9 +42,11 @@ func TestDockerStartPreservesNamedNetworkNamespaceE2E(t *testing.T) {
 	})
 	require.NoError(t, provider.cli.ContainerStart(ctx, created.ID, containertypes.StartOptions{}))
 	require.True(t, (networkprovider.Driver{}).LinkHealthy(ctx, namespace, "lo"))
-	pair, err := networkprovider.CreateVethPair(networkprovider.VethSpec{HostEnd: "sbe2evh", GuestEnd: "sbe2evg", NetnsName: namespace, BridgeName: bridge})
+	pair, err := networkprovider.CreateVethPair(networkprovider.VethSpec{OwnerAlias: "test-owned", HostEnd: "sbe2evh", GuestEnd: "sbe2evg", NetnsName: namespace, BridgeName: bridge})
 	require.NoError(t, err)
-	require.NoError(t, networkprovider.DeleteVethPair(pair))
+	proof, err := networkprovider.CaptureAttachmentLink(ctx, pair.NetnsName, pair.HostEnd, "test-owned")
+	require.NoError(t, err)
+	require.NoError(t, networkprovider.DeleteOwnedAttachment(ctx, proof, "test-owned"))
 }
 
 func TestDockerOwnedPolicyLifecycleE2E(t *testing.T) {

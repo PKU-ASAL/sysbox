@@ -24,12 +24,13 @@ import (
 //   - Otherwise: creates a veth pair, wires into isolated netns bridge,
 //     moves guest-end into container netns (the "cold-plug" path).
 type attachmentState struct {
-	Kind        string `json:"kind"`
-	HostEnd     string `json:"host_end"`
-	GuestEnd    string `json:"guest_end"`
-	NetNS       string `json:"netns"`
-	NetworkID   string `json:"network_id"`
-	GuestDevice string `json:"guest_device"`
+	Link        *network.AttachmentLink `json:"link,omitempty"`
+	Kind        string                  `json:"kind"`
+	HostEnd     string                  `json:"host_end"`
+	GuestEnd    string                  `json:"guest_end"`
+	NetNS       string                  `json:"netns"`
+	NetworkID   string                  `json:"network_id"`
+	GuestDevice string                  `json:"guest_device"`
 }
 type networkState struct {
 	NetNS     string `json:"netns"`
@@ -77,6 +78,18 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 		}
 	}
 	state := attachmentState{Kind: attached.Kind, HostEnd: attached.HostEnd, GuestEnd: attached.GuestEnd, NetNS: attached.NetNS, NetworkID: target.NetworkID, GuestDevice: guest}
+	if !target.NAT {
+		id, _ := substrate.OperationIdentityFromContext(ctx)
+		alias, err := network.AttachmentAlias(id, req.Name)
+		if err != nil {
+			return driver.AttachmentResult{}, err
+		}
+		proof, err := network.CaptureAttachmentLink(ctx, state.NetNS, state.HostEnd, alias)
+		if err != nil {
+			return driver.AttachmentResult{}, err
+		}
+		state.Link = &proof
+	}
 	raw, _ := json.Marshal(state)
 	return driver.AttachmentResult{Driver: "docker", GuestDevice: guest, State: raw}, nil
 }
@@ -111,13 +124,23 @@ func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req dri
 		if !found {
 			return driver.AttachmentResult{}, driver.Wrap(driver.ErrorNotFound, "docker", "attachment not found", nil)
 		}
-	} else if !(network.Driver{}).LinkHealthy(ctx, st.NetNS, st.HostEnd) {
-		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorNotFound, "docker", "attachment link not found", nil)
+	} else {
+		if st.Link == nil {
+			return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "docker", "attachment ownership proof required", nil)
+		}
+		id, _ := substrate.OperationIdentityFromContext(ctx)
+		alias, err := network.AttachmentAlias(id, req.Name)
+		if err != nil {
+			return driver.AttachmentResult{}, err
+		}
+		if err := network.ObserveOwnedAttachment(ctx, *st.Link, alias); err != nil {
+			return driver.AttachmentResult{}, err
+		}
 	}
 	return driver.AttachmentResult{Driver: "docker", GuestDevice: st.GuestDevice, State: raw}, nil
 }
 
-func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
+func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest, raw json.RawMessage) error {
 	if err := s.validateAttachmentHandle(ctx, &h); err != nil {
 		return err
 	}
@@ -135,7 +158,15 @@ func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, _ driver
 		}
 		return nil
 	}
-	if err := (network.Driver{}).DeleteAttachment(ctx, st.Kind, st.HostEnd, st.NetNS); err != nil {
+	if st.Link == nil {
+		return driver.Wrap(driver.ErrorInvalidState, "docker", "attachment ownership proof required", nil)
+	}
+	id, _ := substrate.OperationIdentityFromContext(ctx)
+	alias, err := network.AttachmentAlias(id, req.Name)
+	if err != nil {
+		return err
+	}
+	if err := network.DeleteOwnedAttachment(ctx, *st.Link, alias); err != nil {
 		return driver.Wrap(driver.ErrorUnavailable, "docker", "delete attachment link", err)
 	}
 	return nil
@@ -162,6 +193,11 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 	}
 
 	// Isolated network: veth pair + netns injection.
+	id, _ := substrate.OperationIdentityFromContext(ctx)
+	alias, err := network.AttachmentAlias(id, req.Name)
+	if err != nil {
+		return attachedNIC{}, err
+	}
 	ins, err := s.cli.ContainerInspect(ctx, h.ID)
 	if err != nil {
 		return attachedNIC{}, fmt.Errorf("inspect container: %w", err)
@@ -185,6 +221,7 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 	// Create the veth pair inside the network's netns and attach the
 	// host-end to the bridge. Idempotent: reuses existing devices.
 	pair, err := network.CreateVethPair(network.VethSpec{
+		OwnerAlias: alias,
 		HostEnd:    hostEnd,
 		GuestEnd:   guestEnd,
 		NetnsName:  req.NetNS,

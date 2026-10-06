@@ -70,29 +70,23 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 	}
 
 	identity, managed := substrate.OperationIdentityFromContext(ctx)
-	if managed {
-		existing, err := s.DiscoverManagedNode(ctx, identity, spec.Name)
-		if err == nil {
-			return existing, nil
-		}
-		if !driver.IsCategory(err, driver.ErrorNotFound) {
-			return substrate.NodeHandle{}, err
-		}
-	} else if err := domainNameAvailable(ctx, spec.Name); err != nil {
+	if !managed || identity.Validate() != nil {
+		return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, subName, "create requires durable operation identity", nil)
+	}
+	existing, err := s.DiscoverManagedNode(ctx, identity, spec.Name)
+	if err == nil {
+		return existing, nil
+	}
+	if !driver.IsCategory(err, driver.ErrorNotFound) {
 		return substrate.NodeHandle{}, err
 	}
 
 	if err := os.MkdirAll(s.vmDirRoot(), 0o755); err != nil {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: create workdir: %w", err)
 	}
-	var vmDir string
-	if managed {
-		vmDir, err = s.managedVMDir(identity, spec.Name)
-		if err == nil {
-			err = os.Mkdir(vmDir, 0o755)
-		}
-	} else {
-		vmDir, err = os.MkdirTemp(s.vmDirRoot(), "sysbox-lv-"+spec.Name+"-*")
+	vmDir, err := s.managedVMDir(identity, spec.Name)
+	if err == nil {
+		err = os.Mkdir(vmDir, 0o755)
 	}
 	if err != nil {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: create vm dir: %w", err)
@@ -113,11 +107,9 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		machine = "q35"
 	}
 	hs := &HandleState{DomainName: spec.Name, DomainUUID: domainUUID, VMDir: vmDir, DiskPath: diskPath, VCPUs: pc.VCPUs, MemoryMiB: mem, MachineType: machine, SSHUser: pc.SSHUser, SSHPass: pc.SSHPass, SSHKey: pc.SSHKey, SSHAuthorizedKey: pc.SSHAuthorizedKey, NetworkInit: pc.NetworkInit}
-	if managed {
-		hs.Identity = &identity
-		if err := persistManagedRecord(hs, false); err != nil {
-			return substrate.NodeHandle{}, err
-		}
+	hs.Identity = &identity
+	if err := persistManagedRecord(hs, false); err != nil {
+		return substrate.NodeHandle{}, err
 	}
 	stagedBase := filepath.Join(vmDir, "base.qcow2")
 	if err := stageBaseImage(ctx, baseImage, stagedBase); err != nil {

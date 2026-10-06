@@ -5,28 +5,18 @@ import (
 	"encoding/json"
 	"github.com/oslab/sysbox/pkg/driver"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestAttachNICInjectsEveryIPAndRejectsSecondNamespace(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "ip")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+	s, h, m, _ := manifestFixture(t, false)
+	cfgPath := h.Provider.(*HandleState).ConfigPath
+	if err := injectKernelIPArg(cfgPath, "eth0", "node", "10.1.0.2/24", ""); err != nil {
 		t.Fatal(err)
 	}
-	old := ipBin
-	ipBin = bin
-	t.Cleanup(func() { ipBin = old })
-	s, h, _, _ := manifestFixture(t, false)
-	cfgPath := h.Provider.(*HandleState).ConfigPath
-	for _, item := range []driver.AttachmentRequest{
-		{Name: "a", IPPrefixes: []string{"10.1.0.2/24"}, NetworkState: json.RawMessage(`{"netns":"same","bridge":"br"}`)},
-		{Name: "b", IPPrefixes: []string{"10.2.0.2/24"}, NetworkState: json.RawMessage(`{"netns":"same","bridge":"br"}`)},
-	} {
-		if _, err := s.Attach(context.Background(), h, item); err != nil {
-			t.Fatal(err)
-		}
+	if err := injectKernelIPArg(cfgPath, "eth1", "node", "10.2.0.2/24", ""); err != nil {
+		t.Fatal(err)
 	}
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
@@ -35,6 +25,14 @@ func TestAttachNICInjectsEveryIPAndRejectsSecondNamespace(t *testing.T) {
 	if !strings.Contains(string(data), "10.2.0.2") {
 		t.Fatal("second NIC IP was not injected")
 	}
+	hs := h.Provider.(*HandleState)
+	hs.NICCount = 2
+	hs.NetnsName = "same"
+	// The namespace constraint is checked before touching network devices.
+	if err := os.WriteFile(cfgPath, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureManifest(t, hs.VMDir, m)
 	_, err = s.Attach(context.Background(), h, driver.AttachmentRequest{Name: "c", IPPrefixes: []string{"10.3.0.2/24"}, NetworkState: json.RawMessage(`{"netns":"other","bridge":"br2"}`)})
 	if err == nil || !strings.Contains(err.Error(), "namespace") {
 		t.Fatal("expected cross-namespace attachment to be rejected")

@@ -9,6 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 type NodeOperationService struct {
@@ -132,6 +133,13 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	}
 	if req.Substrate == "" {
 		return controlplane.NodeOperation{}, fmt.Errorf("substrate is required")
+	}
+	handler, ok := runtime.GetResourceHandler(req.Type)
+	if !ok {
+		return controlplane.NodeOperation{}, driver.Wrap(driver.ErrorUnsupported, req.Substrate, "ownership adoption is unavailable", nil)
+	}
+	if _, ok := handler.(runtime.ResourceImporter); !ok {
+		return controlplane.NodeOperation{}, driver.Wrap(driver.ErrorUnsupported, req.Substrate, "ownership adoption is not implemented for this resource", nil)
 	}
 	if _, err := driver.DefaultRegistry.RequireImport(req.Substrate); err != nil {
 		return controlplane.NodeOperation{}, err

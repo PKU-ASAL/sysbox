@@ -129,7 +129,7 @@ func TestManifestMissingRecordIsUnknownAndCreateRetainsResidue(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, substrate.NodeStatusUnknown, obs.Status)
 	_, err = s.CreateNode(context.Background(), substrate.NodeSpec{Name: "orphan"})
-	require.ErrorContains(t, err, "manifest")
+	require.ErrorContains(t, err, "identity")
 	raw, err := os.ReadFile(sentinel)
 	require.NoError(t, err)
 	require.Equal(t, "retain", string(raw))
@@ -284,7 +284,7 @@ func seedOwnedManifest(t *testing.T, s *Substrate, id string, hs *HandleState, c
 	hs.Socket = ownedUnixSocketPath(hs.VMDir, id, "firecracker.sock", "fc")
 	hs.ConfigPath = filepath.Join(hs.VMDir, "vm_config.json")
 	require.NoError(t, os.WriteFile(hs.ConfigPath, []byte(`{}`), 0600))
-	m := newManifest(context.Background(), root, id, hs.VMDir, hs, "sha256:fixture")
+	m := newManifest(substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{OwnerUID: "fixture", ResourceUID: id, TopologyUID: hs.TopologyUID, Generation: 1, ActionID: "fixture"}), root, id, hs.VMDir, hs, "sha256:fixture")
 	if cmd != nil {
 		p, e := captureProcessIdentity(cmd.Process.Pid)
 		if e != nil {
@@ -414,7 +414,7 @@ func TestManifestHandlePathConflictCannotSignal(t *testing.T) {
 func TestManifestInvalidCreateHasNoGenerationEffects(t *testing.T) {
 	root := t.TempDir()
 	s := &Substrate{rootfsDir: root}
-	_, err := s.CreateNode(context.Background(), substrate.NodeSpec{Name: "invalid", Memory: "broken"})
+	_, err := s.CreateNode(substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{OwnerUID: "owner", ResourceUID: "invalid", TopologyUID: "topology", Generation: 1, ActionID: "create"}), substrate.NodeSpec{Name: "invalid", Memory: "broken"})
 	require.ErrorContains(t, err, "memory")
 	require.NoDirExists(t, filepath.Join(root, "invalid"))
 }

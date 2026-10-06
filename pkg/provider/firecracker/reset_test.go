@@ -14,6 +14,11 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
+func resetRequestContext(request substrate.ResetRequest) context.Context {
+	hs := request.Current.Provider.(*HandleState)
+	return substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{ActionID: "test-reset", OwnerUID: hs.OwnerUID, ResourceUID: hs.ResourceUID, TopologyUID: hs.TopologyUID, Generation: hs.Generation + 1})
+}
+
 func TestFirecrackerResetCreatesOwnedWritableRootfsAndRetriesIdempotently(t *testing.T) {
 	rootfsDir := t.TempDir()
 	baselinePath := filepath.Join(t.TempDir(), "base.ext4")
@@ -22,19 +27,21 @@ func TestFirecrackerResetCreatesOwnedWritableRootfsAndRetriesIdempotently(t *tes
 	kernelPath := filepath.Join(t.TempDir(), "vmlinux")
 	require.NoError(t, os.WriteFile(kernelPath, []byte("kernel"), 0o644))
 	oldID := "sysbox-old"
-	oldDir := filepath.Join(rootfsDir, oldID)
+	oldDir := filepath.Join(rootfsDir, "topology", oldID, "1")
 	require.NoError(t, os.MkdirAll(oldDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(oldDir, "rootfs.ext4"), []byte("mutated"), 0o644))
 	baseline := substrate.ArtifactIdentity{Kind: substrate.ArtifactRootFS, Source: baselinePath, Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(baselineBytes)), Architecture: "amd64", GuestFamily: substrate.GuestFamilyLinux}
 	request := substrate.ResetRequest{
-		Current:  substrate.NodeHandle{ID: oldID, Provider: &HandleState{VMDir: oldDir, Socket: filepath.Join(oldDir, "firecracker.sock")}},
+		Current:  substrate.NodeHandle{ID: oldID, Provider: &HandleState{TopologyUID: "topology", VMDir: oldDir, Socket: filepath.Join(oldDir, "firecracker.sock")}},
 		Node:     substrate.NodeSpec{Name: "sysbox-web", Image: substrate.ArtifactHandle{ID: baselinePath, Identity: baseline}, ProviderConfig: &Config{Kernel: kernelPath, SSHPass: "super-secret"}},
 		Baseline: baseline,
 	}
 	sub := New(kernelPath, rootfsDir)
 	seedOwnedManifest(t, sub, oldID, request.Current.Provider.(*HandleState), nil)
 
-	handle, err := sub.PrepareReset(context.Background(), request)
+	_, missingIdentityErr := sub.PrepareReset(context.Background(), request)
+	require.ErrorContains(t, missingIdentityErr, "durable target identity")
+	handle, err := sub.PrepareReset(resetRequestContext(request), request)
 	require.NoError(t, err)
 	preparedState := handle.Provider.(*resetHandleState)
 	require.Less(t, len(ownedUnixSocketPath(filepath.Join(rootfsDir, preparedState.NewID), preparedState.NewID, "firecracker.sock", "fc")), 108)
@@ -103,8 +110,8 @@ func TestFirecrackerResetRejectsLegacyIncompleteProcessAnchor(t *testing.T) {
 	baseline := substrate.ArtifactIdentity{Kind: substrate.ArtifactRootFS, Source: baselinePath, Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(baselineBytes)), Architecture: "amd64", GuestFamily: substrate.GuestFamilyLinux}
 	request := substrate.ResetRequest{Current: substrate.NodeHandle{ID: oldID, Provider: &HandleState{VMDir: oldDir}}, Node: substrate.NodeSpec{Name: "web", Image: substrate.ArtifactHandle{ID: baselinePath, Identity: baseline}}, Baseline: baseline}
 
-	_, err := New("/tmp/vmlinux", rootfsDir).PrepareReset(context.Background(), request)
-	require.ErrorContains(t, err, "manifest missing")
+	_, err := New("/tmp/vmlinux", rootfsDir).PrepareReset(resetRequestContext(request), request)
+	require.ErrorContains(t, err, "identity")
 }
 
 func TestFirecrackerDestroyResetRetriesAfterOldGenerationIsGone(t *testing.T) {

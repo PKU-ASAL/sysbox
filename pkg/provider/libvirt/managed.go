@@ -110,9 +110,6 @@ func existingDomainUUID(ctx context.Context, h substrate.NodeHandle) (string, bo
 func validateHandleIdentity(ctx context.Context, h substrate.NodeHandle) error {
 	hs := hsFrom(h)
 	expected, supplied := substrate.OperationIdentityFromContext(ctx)
-	if hs.Identity == nil && h.Generation == 0 && !supplied {
-		return nil
-	}
 	if hs.Identity == nil || hs.Identity.Validate() != nil || h.Generation != hs.Identity.Generation || h.ID != hs.DomainUUID {
 		return driver.Wrap(driver.ErrorInvalidState, subName, "managed handle identity mismatch", nil)
 	}

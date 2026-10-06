@@ -24,7 +24,10 @@ type networkState struct {
 	LibvirtBridge string `json:"libvirt_bridge"`
 }
 
-func (s *Substrate) Attach(_ context.Context, h substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
+func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
+	if err := validateHandleIdentity(ctx, h); err != nil {
+		return driver.AttachmentResult{}, err
+	}
 	var target networkState
 	if err := json.Unmarshal(req.NetworkState, &target); err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "libvirt", "decode network state", err)
@@ -39,6 +42,13 @@ func (s *Substrate) Attach(_ context.Context, h substrate.NodeHandle, req driver
 	return driver.AttachmentResult{Driver: "libvirt", State: raw}, nil
 }
 func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
+	target, exists, err := existingDomainUUID(ctx, h)
+	if err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	if !exists {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorNotFound, subName, "domain absent", nil)
+	}
 	var st attachmentState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "libvirt", "decode attachment state", err)
@@ -57,7 +67,7 @@ func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, _ drive
 	// available, verify the actual libvirt XML so external NIC changes become
 	// observable drift instead of false Present results.
 	if hs := hsFrom(h); hs.DomainName != "" {
-		out, err := exec.CommandContext(ctx, "virsh", "dumpxml", hs.DomainName).CombinedOutput()
+		out, err := exec.CommandContext(ctx, "virsh", "dumpxml", target).CombinedOutput()
 		if err != nil {
 			return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "libvirt", "observe domain interfaces", fmt.Errorf("%w: %s", err, out))
 		}
@@ -80,7 +90,10 @@ func domainXMLHasInterface(raw []byte, bridge, mac string) bool {
 	}
 	return false
 }
-func (s *Substrate) Delete(_ context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
+func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
+	if err := validateHandleIdentity(ctx, h); err != nil {
+		return err
+	}
 	var st attachmentState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return driver.Wrap(driver.ErrorInvalidState, "libvirt", "decode attachment state", err)

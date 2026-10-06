@@ -156,6 +156,20 @@ func TestStartRejectsInconsistentHandleBeforeQuery(t *testing.T) {
 	}
 }
 
+func TestLibvirtRejectsUnidentifiedMutation(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "calls")
+	t.Setenv("SYSBOX_FENCE_LOG", log)
+	virshFixture(t, "#!/bin/sh\necho call >> \"$SYSBOX_FENCE_LOG\"\nexit 0\n")
+	sub := New(t.TempDir())
+	_, err := sub.CreateNode(context.Background(), substrate.NodeSpec{Name: "unowned", Image: substrate.ArtifactHandle{ID: "base"}})
+	require.ErrorContains(t, err, "identity")
+	h := substrate.NodeHandle{ID: "11111111-2222-4333-8444-555555555555"}
+	for _, call := range []func(context.Context, substrate.NodeHandle) error{sub.StartNode, sub.StopNode, sub.DestroyNode, sub.Pause, sub.Resume} {
+		require.Error(t, call(context.Background(), h))
+	}
+	require.NoFileExists(t, log)
+}
+
 func TestExecutionTimeoutIncludesDomainQuery(t *testing.T) {
 	virshFixture(t, "#!/bin/sh\nexec sleep 5\n")
 	id := managedOperation()

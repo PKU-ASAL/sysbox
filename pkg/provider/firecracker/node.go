@@ -199,18 +199,23 @@ func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSou
 // This two-phase approach is needed because Firecracker requires all
 // network interfaces to be declared in the boot config — no hot-plug.
 func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (substrate.NodeHandle, error) {
-	if op, ok := substrate.OperationIdentityFromContext(ctx); ok && op.TopologyUID != "" {
-		root, err := s.canonicalRoot()
-		if err != nil {
-			return substrate.NodeHandle{}, err
-		}
-		digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d", root, op.TopologyUID, op.ResourceUID, op.Generation)))
-		return s.createNodeWithID(ctx, spec, fmt.Sprintf("fc-%x", digest[:12]))
+	op, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok || op.Validate() != nil {
+		return substrate.NodeHandle{}, fmt.Errorf("firecracker create requires durable operation identity")
 	}
-	return s.createNodeWithID(ctx, spec, spec.Name)
+	root, err := s.canonicalRoot()
+	if err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d", root, op.TopologyUID, op.ResourceUID, op.Generation)))
+	return s.createNodeWithID(ctx, spec, fmt.Sprintf("fc-%x", digest[:12]))
 }
 
 func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpec, vmID string) (substrate.NodeHandle, error) {
+	op, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok || op.Validate() != nil {
+		return substrate.NodeHandle{}, fmt.Errorf("firecracker create requires durable operation identity")
+	}
 	memMB := 512
 	if spec.Memory != "" {
 		parsed, err := parseMemoryMiB(spec.Memory)
@@ -227,15 +232,10 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 	if !validIdentityPart(vmID) {
 		return substrate.NodeHandle{}, fmt.Errorf("invalid firecracker VM identity")
 	}
-	runDir := filepath.Join(root, vmID)
-	if op, ok := substrate.OperationIdentityFromContext(ctx); ok {
-		if !validIdentityPart(op.OwnerUID) || !validIdentityPart(op.ResourceUID) || (op.TopologyUID != "" && !validIdentityPart(op.TopologyUID)) || op.Generation <= 0 || op.ActionID == "" {
-			return substrate.NodeHandle{}, fmt.Errorf("invalid firecracker operation identity")
-		}
-		if op.TopologyUID != "" {
-			runDir = filepath.Join(root, op.TopologyUID, op.ResourceUID, fmt.Sprint(op.Generation))
-		}
+	if !validIdentityPart(op.OwnerUID) || !validIdentityPart(op.ResourceUID) || !validIdentityPart(op.TopologyUID) {
+		return substrate.NodeHandle{}, fmt.Errorf("invalid firecracker operation identity")
 	}
+	runDir := filepath.Join(root, op.TopologyUID, op.ResourceUID, fmt.Sprint(op.Generation))
 	vm := lookupOrReserveVM(runDir)
 	if err := vm.lockOperation(ctx); err != nil {
 		return substrate.NodeHandle{}, err

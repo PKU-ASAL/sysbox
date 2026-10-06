@@ -209,7 +209,7 @@ func TestCreateDoesNotReplaceActiveTrackedProcess(t *testing.T) {
 	s, h, vm := lifecycleFixture(t, false)
 	require.NoError(t, s.StartNode(context.Background(), h))
 	_, err := s.CreateNode(context.Background(), substrate.NodeSpec{Name: h.ID})
-	require.ErrorContains(t, err, "already running")
+	require.ErrorContains(t, err, "identity")
 	require.Same(t, vm, lookupVM(h.Provider.(*HandleState).VMDir))
 }
 

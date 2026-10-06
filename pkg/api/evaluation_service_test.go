@@ -91,9 +91,6 @@ func (evaluationTestDriver) NetworkHealthy(context.Context, driver.IsolatedNetwo
 	return true, ""
 }
 func (evaluationTestDriver) LinkHealthy(context.Context, string, string) bool { return true }
-func (evaluationTestDriver) DeleteAttachment(context.Context, string, string, string) error {
-	return nil
-}
 
 func registerEvaluationTestDriver(t *testing.T) {
 	t.Helper()

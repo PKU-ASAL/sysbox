@@ -1,7 +1,7 @@
 # Sysbox 生命周期重构：实施状态与验证边界
 
 > 日期：2026-09-28
-> 更新：2026-10-04
+> 更新：2026-10-07
 > 工作分支：`refactor/observation-driven-runtime`
 > 核心实现提交：`72e227a`；未合入 main，未推送远端。
 > Guest metadata 共享仓储提交：`3679f21`。
@@ -9,6 +9,17 @@
 > 本文记录实际代码；[目标架构](2026-09-28-observation-driven-runtime-refactor.md)与[接口清单](2026-09-28-interface-change-inventory.md)包含尚未交付的后续设计。
 
 ## 1. 当前落地的主线
+
+以下是当前结论；后面的阶段记录保留历史过程，旧阶段的限制以此处及最新验证记录为准。
+
+| 当前收口项 | 当前状态 | 剩余边界 |
+|---|---|---|
+| 生命周期执行与恢复 | 默认引擎使用 action journal；旧 checkpoint 副作用恢复链已删除 | SSH access discovery、跨控制器授权闭环未完成 |
+| NodeOperation | 三后端共用完整记录、create-only 与 CAS；请求人/角色/审计历史受保护 | command publish 与 operation 绑定仍非单事务 outbox |
+| Firewall | 默认创建/发现/恢复/删除已实测；资源侧 generation、原子 nft batch、FD 与删除证据已接入 | HTTP/远端 Agent 全链路、跨宿主租约、外部 writer 完整规则篡改检测未验收 |
+| Provider 身份 | Docker/libvirt/Firecracker Create 均要求持久身份；Firecracker reset 不再合成 target action | 不能据此宣称所有资源类型均已有同代 lease epoch 撤销 |
+| 外部 attachment | Docker veth、Firecracker TAP 使用版本化 namespace/ifindex/alias proof，旧裸名称删除入口移除 | 目标 bridge/network 自身身份及特权 writer 刻意重用同一 ifindex 的并发替换不在保证内 |
+| Import | 无 ownership adoption 时在派发前明确拒绝 | 尚未实现显式 ownership adoption，不能宣称已恢复 import 功能 |
 
 ```text
 CLI / Agent / 本机恢复请求
@@ -92,6 +103,12 @@ Policy 的底层 Apply/Observe/Delete 接收打开的 namespace 文件，由调�
 Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe 返回的 table/digest 与持久结果；缺失、查询失败或差异不恢复。FD 固定防止路径/PID 漂移将后续操作指向其他 namespace，但不阻止同代际并发 policy 写入，也不撤销已在旧 namespace 开始的操作；尚未实现 policy 自身的租约仲裁。
 
 ### Resource fencing 迁移进度
+
+2026-10-07 剩余无身份与 attachment 收口：libvirt Create、生命周期及 NIC 状态修改要求托管身份；NIC Observe 核对实际 domain generation 并按 UUID 查询。Firecracker Create/reset 不再自动生成持久身份。共享 `AttachmentLink` v1 保存 namespace device/inode、link ifindex/name/type/alias；Docker isolated veth 与 Firecracker TAP 的 Observe/Delete 在同一个固定 namespace netlink handle 内核验，删除使用核验后的 ifindex。旧缺失 proof 记录拒绝，不按裸名称清理。
+
+创建也绑定身份：veth 在 LinkAdd 时指定预分配 ifindex，TAP 使用 TUNSETIFINDEX 与排他 TUNSETIFF；后续核验/alias 仅操作预分配索引对应的对象，不能重新按名称认领替代物。TAP 完成 ownership 标记后才设置 persistent，之前失败由关闭 FD 回收。索引碰撞失败，不采用已有对象。移除不用的 raw TAP/Veth 删除函数和 LinuxNetwork.DeleteAttachment 方法。NodeResourceHandler 旧无身份 Import 移除，API 在排发前报告 ownership adoption 尚未实现。
+
+真实验收：`make test-network-generation-e2e` 覆盖 veth 旧代际、同名不同 ifindex、同名不同 namespace inode 拒绝与精确删除幂等；`make test-firecracker-attachment-e2e` 覆盖真实 TAP 冷插、删除和同名替换拒绝，不启动 VM。另在宿主 KVM 完整实跑 Firecracker controller kill、生命周期、reset 与跨进程恢复（43 秒），libvirt 无磁盘 UUID fencing E2E 通过。旧 attachment state 需显式重建，不能伪造 ownership 来清理遗留资源。
 
 2026-10-07 双轨恢复清理：删除仅被旧测试调用的 API checkpoint 恢复/清理函数，以及 runtime CheckpointRecoverer/Cleaner 执行链，包括按 Docker label 搜索接管/删除和按 Firecracker 文件存在猜测恢复。正式 API 继续使用 canonical action journal；日志/报告 DTO 与纯 StateResourceLog 转换保留，转换代码移至 `state_log_conversion.go`。删除只服务旧入口的测试和旧 checkpoint E2E，以 canonical API 回归、handler 禁止旧恢复方法的守卫、managed discovery 覆盖检查和真实 firewall repository 恢复 E2E 验证替代。SSH access 明确未实现 discovery，不再声明幂等即可豁免恢复。
 

@@ -7,6 +7,7 @@ import (
 )
 
 type VethSpec struct {
+	OwnerAlias string
 	HostEnd    string
 	GuestEnd   string
 	NetnsName  string
@@ -32,6 +33,9 @@ func CreateVethPair(spec VethSpec) (VethHandle, error) {
 	err := inNetns(spec.NetnsName, func() error {
 		hostLink, err := netlink.LinkByName(spec.HostEnd)
 		if err == nil {
+			if spec.OwnerAlias != "" && hostLink.Attrs().Alias != spec.OwnerAlias {
+				return fmt.Errorf("veth ownership conflict")
+			}
 			// Host end exists. Verify the guest end is also present in this
 			// netns; otherwise the pair is broken (the peer was previously
 			// moved into a container netns that has since gone away). Reset
@@ -44,6 +48,14 @@ func CreateVethPair(spec VethSpec) (VethHandle, error) {
 		if hostLink == nil {
 			la := netlink.NewLinkAttrs()
 			la.Name = spec.HostEnd
+			la.Alias = spec.OwnerAlias
+			if spec.OwnerAlias != "" {
+				index, err := newAttachmentIndex()
+				if err != nil {
+					return err
+				}
+				la.Index = index
+			}
 
 			veth := &netlink.Veth{
 				LinkAttrs: la,
@@ -52,9 +64,21 @@ func CreateVethPair(spec VethSpec) (VethHandle, error) {
 			if err := netlink.LinkAdd(veth); err != nil {
 				return fmt.Errorf("add veth pair: %w", err)
 			}
-			hostLink, err = netlink.LinkByName(spec.HostEnd)
+			if spec.OwnerAlias != "" {
+				hostLink, err = netlink.LinkByIndex(la.Index)
+			} else {
+				hostLink, err = netlink.LinkByName(spec.HostEnd)
+			}
 			if err != nil {
 				return err
+			}
+			if hostLink.Attrs().Name != spec.HostEnd || hostLink.Type() != "veth" {
+				return fmt.Errorf("created veth identity changed")
+			}
+			if spec.OwnerAlias != "" {
+				if err := netlink.LinkSetAlias(hostLink, spec.OwnerAlias); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -85,19 +109,4 @@ func CreateVethPair(spec VethSpec) (VethHandle, error) {
 		GuestEnd:  spec.GuestEnd,
 		NetnsName: spec.NetnsName,
 	}, nil
-}
-
-// DeleteVethPair removes the pair. Deleting either end deletes both.
-func DeleteVethPair(h VethHandle) error {
-	if h.NetnsName == "" {
-		// host end may already have moved; nothing to delete here.
-		return nil
-	}
-	return inNetns(h.NetnsName, func() error {
-		link, err := netlink.LinkByName(h.HostEnd)
-		if err != nil {
-			return nil
-		}
-		return netlink.LinkDel(link)
-	})
 }

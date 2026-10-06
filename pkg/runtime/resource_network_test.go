@@ -91,7 +91,6 @@ func (fakeLinuxNetwork) NetworkHealthy(context.Context, driver.IsolatedNetworkSp
 	return true, ""
 }
 func (fakeLinuxNetwork) LinkHealthy(context.Context, string, string) bool               { return true }
-func (fakeLinuxNetwork) DeleteAttachment(context.Context, string, string, string) error { return nil }
 
 // failingNetworkDriver is a docker Network driver whose RemoveManagedNetwork
 // always fails, so a test can assert the runtime does not silently drop the

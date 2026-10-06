@@ -40,6 +40,9 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 		return substrate.ResetHandle{}, fmt.Errorf("firecracker reset rootfs override does not match pinned baseline")
 	}
 	target, supplied := substrate.OperationIdentityFromContext(ctx)
+	if !supplied {
+		return substrate.ResetHandle{}, fmt.Errorf("firecracker reset requires durable target identity")
+	}
 	oldCtx := ctx
 	if supplied {
 		current, _ := request.Current.Provider.(*HandleState)
@@ -62,9 +65,6 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 		return substrate.ResetHandle{}, err
 	}
 	generation := uuid.NewString()
-	if !supplied {
-		target = substrate.OperationIdentity{OwnerUID: m.OwnerUID, ResourceUID: m.ResourceUID, TopologyUID: m.TopologyUID, Generation: m.Generation + 1, ActionID: generation}
-	}
 	state := &resetHandleState{Version: firecrackerResetHandleVersion, OldID: request.Current.ID, OldVMDir: m.Handle.VMDir, OldPID: m.Process.PID, OldPIDStart: m.Process.StartTime, OldSocket: m.Handle.Socket, OldProcess: m.Process, NewID: "fc-r" + generation[:8], BaselinePath: request.Node.Image.ID, BaselineDigest: request.Baseline.Digest, NewIdentity: target}
 	return substrate.ResetHandle{Provider: state, Request: request}, nil
 }

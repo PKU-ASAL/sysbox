@@ -444,6 +444,8 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（2026-10-07 attachment）：`LinuxNetwork.DeleteAttachment(kind,name,namespace)` 和 raw TAP/Veth name-only 删除函数已移除。Docker isolated attachment 与 Firecracker TAP 的 driver state 必须含 `AttachmentLink` v1 证明（namespace dev/inode、ifindex、name/type/alias）；旧记录不兼容，Observe/Delete 明确拒绝，不自动认领同名接口。libvirt Create、生命周期及 NIC 修改拒绝缺持久身份；Firecracker Create/reset 必须显式提供 action 身份。旧 NodeResourceHandler.Import 实现已删除，未提供 ownership adoption 的类型在 API 派发前返回 Unsupported；只读 data-source inspection 不因此获得资源管理权。
+
 实施补充（2026-10-07 双轨清理）：删除 runtime `CheckpointRecoverer`/`CheckpointCleaner`、`RecoverCheckpointResource`/`CleanupCheckpointResource` 等旧执行接口和 `RecoveryNotRequired` 豁免；正式恢复/清理只走 action journal。checkpoint 仍可作为诊断记录读取，不能授权资源变更。Docker Create 缺 operation identity 返回 InvalidState；generation=0 且无 context identity 的生命周期/执行调用同样拒绝。旧无身份 import 句柄不再可用于副作用；ownership adoption 仍未提供。旧 checkpoint E2E 入口替换为 `test-firewall-recovery-e2e`，不再保留旧接口兼容测试。
 
 实施补充（2026-10-07 firewall discovery）：Policy provider 可实现 `PolicyDiscovery.DiscoverRuleset(context.Context, PolicyTarget, RulesetSpec)`；必须只读核验目标身份、策略代际及解析设备绑定后的期望摘要，不得调用 Apply。默认引擎的 firewall 新建/恢复要求该能力，未实现的 provider 明确返回 unsupported。Firewall 损坏目标记录从 drifted 改为 unknown+error。Docker 普通 firewall 不要求 ip_forward；NAT 在写规则前核验转发，不再先写后报错。

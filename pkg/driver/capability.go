@@ -164,7 +164,6 @@ type LinuxNetwork interface {
 	DeleteIsolated(context.Context, IsolatedNetworkSpec) error
 	NetworkHealthy(context.Context, IsolatedNetworkSpec) (bool, string)
 	LinkHealthy(context.Context, string, string) bool
-	DeleteAttachment(context.Context, string, string, string) error
 }
 
 // IsolatedNetworkObserver makes absence an explicit successful point query.

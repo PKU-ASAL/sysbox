@@ -28,7 +28,7 @@ esac
 	t.Setenv("SYSBOX_TEST_QEMU_IMG_LOG", logPath)
 
 	workdir := t.TempDir()
-	handle, err := New(workdir).CreateNode(context.Background(), substrate.NodeSpec{
+	handle, err := New(workdir).CreateNode(substrate.WithOperationIdentity(context.Background(), managedOperation()), substrate.NodeSpec{
 		Name:  "host-visible",
 		Image: substrate.ArtifactHandle{ID: "/images/base.qcow2"},
 		ProviderConfig: &Config{
@@ -66,7 +66,7 @@ esac
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	workdir := t.TempDir()
-	handle, err := New(workdir).CreateNode(context.Background(), substrate.NodeSpec{
+	handle, err := New(workdir).CreateNode(substrate.WithOperationIdentity(context.Background(), managedOperation()), substrate.NodeSpec{
 		Name:  "cloud-init-key",
 		Image: substrate.ArtifactHandle{ID: "/images/base.qcow2"},
 		ProviderConfig: &Config{

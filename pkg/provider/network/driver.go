@@ -35,9 +35,3 @@ func (Driver) NetworkHealthy(_ context.Context, spec driver.IsolatedNetworkSpec)
 func (Driver) LinkHealthy(_ context.Context, namespace, name string) bool {
 	return LinkExists(namespace, name)
 }
-func (Driver) DeleteAttachment(_ context.Context, kind, hostEnd, namespace string) error {
-	if kind == "tap" {
-		return DeleteTapDevice(hostEnd, namespace)
-	}
-	return DeleteVethPair(VethHandle{HostEnd: hostEnd, NetnsName: namespace})
-}

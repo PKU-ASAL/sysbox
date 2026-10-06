@@ -15,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"golang.org/x/sys/unix"
 )
@@ -435,10 +434,7 @@ func processOwnsSocket(pid int, path string) (bool, error) {
 }
 
 func newManifest(ctx context.Context, root, id, dir string, hs *HandleState, imageDigest string) *vmManifest {
-	op, ok := substrate.OperationIdentityFromContext(ctx)
-	if !ok {
-		op = substrate.OperationIdentity{OwnerUID: fmt.Sprintf("uid-%d", os.Getuid()), ResourceUID: id, Generation: 1, ActionID: uuid.NewString()}
-	}
+	op, _ := substrate.OperationIdentityFromContext(ctx)
 	hs.Version = manifestVersion
 	hs.ManifestPath = filepath.Join(dir, "manifest.json")
 	hs.OwnerUID = op.OwnerUID

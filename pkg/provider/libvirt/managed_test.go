@@ -130,7 +130,8 @@ case "$1" in
  destroy|undefine) printf "%s\n" "$*" >> "$SYSBOX_MANAGED_MUTATIONS";;
 esac
 `)
-	hs := &HandleState{DomainName: "reused-name", DomainUUID: "11111111-2222-4333-8444-555555555555"}
+	id := managedOperation()
+	hs := &HandleState{DomainName: "reused-name", DomainUUID: "11111111-2222-4333-8444-555555555555", Identity: &id}
 	require.NoError(t, New(t.TempDir()).DestroyNode(context.Background(), managedNodeHandle(hs)))
 	_, err := os.Stat(log)
 	require.ErrorIs(t, err, os.ErrNotExist)
