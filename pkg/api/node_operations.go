@@ -18,7 +18,7 @@ func newNodeOperationStore(store apiStore) *nodeOperationStore {
 	return &nodeOperationStore{store: store}
 }
 
-func (s *nodeOperationStore) Create(op controlplane.NodeOperation) (controlplane.NodeOperation, error) {
+func prepareNodeOperation(op controlplane.NodeOperation) controlplane.NodeOperation {
 	now := time.Now().UTC()
 	if op.ID == "" {
 		op.ID = uuid.New().String()
@@ -57,6 +57,11 @@ func (s *nodeOperationStore) Create(op controlplane.NodeOperation) (controlplane
 			CreatedAt: now,
 		})
 	}
+	return op
+}
+
+func (s *nodeOperationStore) Create(op controlplane.NodeOperation) (controlplane.NodeOperation, error) {
+	op = prepareNodeOperation(op)
 	if s.store == nil {
 		return op, fmt.Errorf("node operation store not configured")
 	}

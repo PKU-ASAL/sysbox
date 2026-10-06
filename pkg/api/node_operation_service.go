@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -13,10 +14,10 @@ import (
 )
 
 type NodeOperationService struct {
-	workspace      *WorkspaceService
-	scheduler      *SchedulerService
-	operations     *nodeOperationStore
-	publishCommand func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)
+	workspace   *WorkspaceService
+	scheduler   *SchedulerService
+	operations  *nodeOperationStore
+	wakeCommand func(string, controlplane.AgentCommand) error
 }
 
 type ImportNodeRequest struct {
@@ -26,12 +27,29 @@ type ImportNodeRequest struct {
 	Substrate string
 }
 
-func newNodeOperationService(workspace *WorkspaceService, scheduler *SchedulerService, operations *nodeOperationStore, publishCommand func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)) *NodeOperationService {
+func (s *NodeOperationService) enqueue(ctx context.Context, op controlplane.NodeOperation) (controlplane.NodeOperation, error) {
+	if s.operations == nil || s.operations.store == nil {
+		return controlplane.NodeOperation{}, fmt.Errorf("node operation store not configured")
+	}
+	op.CommandID = "node-op-" + op.ID
+	cmd := controlplane.AgentCommand{ID: op.CommandID, AgentID: op.AgentID, Type: "node_operation", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, CreatedAt: op.CreatedAt, Operation: op, ActionID: op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation, LeaseEpoch: op.LeaseEpoch}
+	if err := s.operations.store.CreateNodeOperationDispatch(ctx, op, cmd); err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if s.wakeCommand != nil {
+		if err := s.wakeCommand(op.AgentID, cmd); err != nil {
+			slog.Warn("node operation committed; command wakeup deferred", "operation_id", op.ID, "error", err)
+		}
+	}
+	return op, nil
+}
+
+func newNodeOperationService(workspace *WorkspaceService, scheduler *SchedulerService, operations *nodeOperationStore, wakeCommand func(string, controlplane.AgentCommand) error) *NodeOperationService {
 	return &NodeOperationService{
-		workspace:      workspace,
-		scheduler:      scheduler,
-		operations:     operations,
-		publishCommand: publishCommand,
+		workspace:   workspace,
+		scheduler:   scheduler,
+		operations:  operations,
+		wakeCommand: wakeCommand,
 	}
 }
 
@@ -87,7 +105,7 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	op, err := s.operations.Create(controlplane.NodeOperation{
+	return s.enqueue(ctx, prepareNodeOperation(controlplane.NodeOperation{
 		Topology:    topology,
 		Workspace:   topology,
 		Operation:   operation,
@@ -97,28 +115,7 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 		RequestedBy: subj.User,
 		Roles:       subj.Roles,
 		ActionID:    "", ResourceUID: res.ResourceUID, Generation: res.Generation,
-	})
-	if err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	beforeBinding := op
-	if op.Generation > 0 {
-		op.ActionID = op.ID
-	}
-	command, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
-		Type:      "node_operation",
-		Operation: op,
-		ActionID:  op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation,
-	})
-	if err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	op.CommandID, op.ActionID, op.ResourceUID, op.Generation, op.LeaseEpoch = command.ID, command.ActionID, command.ResourceUID, command.Generation, command.LeaseEpoch
-	op.LeaseOwner, op.Attempt = command.LeaseOwner, command.Attempt
-	if err := s.operations.CompareAndSwap(ctx, beforeBinding, op); err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	return op, nil
+	}))
 }
 
 func (s *NodeOperationService) Import(ctx context.Context, topology string, req ImportNodeRequest, subj requestSubject) (controlplane.NodeOperation, error) {
@@ -148,7 +145,7 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	op, err := s.operations.Create(controlplane.NodeOperation{
+	return s.enqueue(ctx, prepareNodeOperation(controlplane.NodeOperation{
 		Topology:    topology,
 		Workspace:   topology,
 		Operation:   "import",
@@ -160,24 +157,5 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 		RequestedBy: subj.User,
 		Roles:       subj.Roles,
 		ActionID:    "", ResourceUID: req.ID, Generation: 1,
-	})
-	if err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	beforeBinding := op
-	op.ActionID = op.ID
-	command, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
-		Type:      "node_operation",
-		Operation: op,
-		ActionID:  op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation,
-	})
-	if err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	op.CommandID, op.ActionID, op.ResourceUID, op.Generation, op.LeaseEpoch = command.ID, command.ActionID, command.ResourceUID, command.Generation, command.LeaseEpoch
-	op.LeaseOwner, op.Attempt = command.LeaseOwner, command.Attempt
-	if err := s.operations.CompareAndSwap(ctx, beforeBinding, op); err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	return op, nil
+	}))
 }

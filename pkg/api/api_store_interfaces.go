@@ -67,6 +67,7 @@ type consoleStore interface {
 type nodeOperationPersistence interface {
 	CompareAndSwapNodeOperation(context.Context, controlplane.NodeOperation, controlplane.NodeOperation) error
 	CreateNodeOperation(ctx context.Context, op controlplane.NodeOperation) error
+	CreateNodeOperationDispatch(context.Context, controlplane.NodeOperation, controlplane.AgentCommand) error
 	GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error)
 	ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error)
 }

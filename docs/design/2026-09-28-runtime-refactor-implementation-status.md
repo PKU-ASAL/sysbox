@@ -15,7 +15,7 @@
 | 当前收口项 | 当前状态 | 剩余边界 |
 |---|---|---|
 | 生命周期执行与恢复 | 默认引擎使用 action journal；旧 checkpoint 副作用恢复链已删除 | SSH access discovery、跨控制器授权闭环未完成 |
-| NodeOperation | 三后端共用完整记录、create-only 与 CAS；请求人/角色/审计历史受保护 | command publish 与 operation 绑定仍非单事务 outbox |
+| NodeOperation | 三后端共用完整记录、create-only 与 CAS；出生记录和初始命令已原子提交，提交后才唤醒 | command lease 与操作执行授权尚未原子绑定 |
 | Firewall | 默认创建/发现/恢复/删除已实测；资源侧 generation、原子 nft batch、FD 与删除证据已接入 | HTTP/远端 Agent 全链路、跨宿主租约、外部 writer 完整规则篡改检测未验收 |
 | Provider 身份 | Docker/libvirt/Firecracker Create 均要求持久身份；Firecracker reset 不再合成 target action | 不能据此宣称所有资源类型均已有同代 lease epoch 撤销 |
 | 外部 attachment | Docker veth、Firecracker TAP 使用版本化 namespace/ifindex/alias proof，旧裸名称删除入口移除 | 目标 bridge/network 自身身份及特权 writer 刻意重用同一 ifindex 的并发替换不在保证内 |
@@ -103,6 +103,12 @@ Policy 的底层 Apply/Observe/Delete 接收打开的 namespace 文件，由调�
 Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe 返回的 table/digest 与持久结果；缺失、查询失败或差异不恢复。FD 固定防止路径/PID 漂移将后续操作指向其他 namespace，但不阻止同代际并发 policy 写入，也不撤销已在旧 namespace 开始的操作；尚未实现 policy 自身的租约仲裁。
 
 ### Resource fencing 迁移进度
+
+2026-10-07 原子派发收口：NodeOperation 生命周期/受支持 import 使用 `CreateNodeOperationDispatch` 一次提交绑定后的 operation 和初始 command，不再 Create→Publish→CAS。文件在同一记录持久化不可变命令 seed，操作 CAS 保留 seed，独立 command 退休记录优先；SQLite/Postgres 同事务提交两条记录。共享编码校验 operation/command 载荷、AgentID、action/resource/generation 和初始未租用状态一致。内存 WakeCommand 只在提交后调用，唤醒失败不撤销 durable outbox，重启派发从存储恢复。
+
+同时修复 Run queued→assigned 派发：共享 AssignRun 核对执行快照，仅允许选择 Agent、赋值时间与 fingerprint；不同 revision/轮次拒绝。Postgres 在 Run 行锁内更新 assigned 并插入 command；其他后端使用相同状态校验。命令插入冲突回滚赋值，不允许一边已有命令、一边 Run 仍 queued。三后端（含真实 Postgres 16）验证完整出生绑定、冲突回滚、并发唯一创建、种子保留/退休、提交前不唤醒与唤醒失败可恢复；完整 API/persistence 实库 race 通过。
+
+边界：这是 outbox 出生原子性，不是执行期间授权闭环。Run 命令 ID 仍未隔离复用 run.ID 的不同 incarnation；NodeOperation completion 尚未与当前 command lease 原子核对，不能据此宣称旧 attempt 无法回报或完整跨控制器 fencing 已完成。
 
 2026-10-07 剩余无身份与 attachment 收口：libvirt Create、生命周期及 NIC 状态修改要求托管身份；NIC Observe 核对实际 domain generation 并按 UUID 查询。Firecracker Create/reset 不再自动生成持久身份。共享 `AttachmentLink` v1 保存 namespace device/inode、link ifindex/name/type/alias；Docker isolated veth 与 Firecracker TAP 的 Observe/Delete 在同一个固定 namespace netlink handle 内核验，删除使用核验后的 ifindex。旧缺失 proof 记录拒绝，不按裸名称清理。
 

@@ -30,7 +30,7 @@ func (r *NodeOperationRepository) Create(ctx context.Context, op controlplane.No
 		return err
 	}
 	return r.records.update(ctx, nodeOperationKind, op.ID, func(current []byte) ([]byte, error) {
-		if len(current) > 0 {
+		if current != nil {
 			old, err := DecodeNodeOperation(current)
 			if err != nil {
 				return nil, err
@@ -75,7 +75,7 @@ func (r *NodeOperationRepository) CompareAndSwap(ctx context.Context, old, next 
 		return err
 	}
 	return r.records.update(ctx, nodeOperationKind, old.ID, func(current []byte) ([]byte, error) {
-		if len(current) == 0 {
+		if current == nil {
 			return nil, ErrNotFound
 		}
 		stored, err := DecodeNodeOperation(current)
@@ -85,7 +85,7 @@ func (r *NodeOperationRepository) CompareAndSwap(ctx context.Context, old, next 
 		if !SameNodeOperation(*stored, old) {
 			return nil, ErrConflict
 		}
-		return raw, nil
+		return preserveGuestDispatch(current, raw)
 	})
 }
 func (r *NodeOperationRepository) List(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error) {

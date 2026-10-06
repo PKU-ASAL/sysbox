@@ -90,7 +90,7 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		s.workspaces.placementStore = p
 	}
 	s.scheduler = newSchedulerService(s)
-	s.nodeService = newNodeOperationService(s.workspaceService(), s.scheduling(), s.nodeOps, s.agentService().PublishCommand)
+	s.nodeService = newNodeOperationService(s.workspaceService(), s.scheduling(), s.nodeOps, s.agentService().WakeCommand)
 	defaultConsoleTimeout, _ := time.ParseDuration(s.cfg.API.Console.DefaultTimeout)
 	maxConsoleTimeout, _ := time.ParseDuration(s.cfg.API.Console.MaxTimeout)
 	s.consoleSvc = newConsoleService(
@@ -176,7 +176,7 @@ func (s *Server) workspaceService() *WorkspaceService {
 
 func (s *Server) nodeOperations() *NodeOperationService {
 	if s.nodeService == nil {
-		s.nodeService = newNodeOperationService(s.workspaceService(), s.scheduling(), s.nodeOps, s.agentService().PublishCommand)
+		s.nodeService = newNodeOperationService(s.workspaceService(), s.scheduling(), s.nodeOps, s.agentService().WakeCommand)
 	}
 	return s.nodeService
 }

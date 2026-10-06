@@ -444,6 +444,8 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（2026-10-07 原子 outbox）：API 存储新增 `CreateNodeOperationDispatch(operation,command)`，生命周期派发必须使用此原子接口；operation 从提交起就绑定 command ID。`AgentService.WakeCommand` 仅唤醒已持久化命令，不写存储。共享 NodeOperation 记录携初始 dispatch seed；独立命令状态/退休记录覆盖 seed，禁止清除退休记录后重新投递。Run 已存在 queued 记录的派发须保持相同执行快照，并在同事务中改为 assigned 与创建命令。公共 HTTP 路由不变。
+
 实施补充（2026-10-07 attachment）：`LinuxNetwork.DeleteAttachment(kind,name,namespace)` 和 raw TAP/Veth name-only 删除函数已移除。Docker isolated attachment 与 Firecracker TAP 的 driver state 必须含 `AttachmentLink` v1 证明（namespace dev/inode、ifindex、name/type/alias）；旧记录不兼容，Observe/Delete 明确拒绝，不自动认领同名接口。libvirt Create、生命周期及 NIC 修改拒绝缺持久身份；Firecracker Create/reset 必须显式提供 action 身份。旧 NodeResourceHandler.Import 实现已删除，未提供 ownership adoption 的类型在 API 派发前返回 Unsupported；只读 data-source inspection 不因此获得资源管理权。
 
 实施补充（2026-10-07 双轨清理）：删除 runtime `CheckpointRecoverer`/`CheckpointCleaner`、`RecoverCheckpointResource`/`CleanupCheckpointResource` 等旧执行接口和 `RecoveryNotRequired` 豁免；正式恢复/清理只走 action journal。checkpoint 仍可作为诊断记录读取，不能授权资源变更。Docker Create 缺 operation identity 返回 InvalidState；generation=0 且无 context identity 的生命周期/执行调用同样拒绝。旧无身份 import 句柄不再可用于副作用；ownership adoption 仍未提供。旧 checkpoint E2E 入口替换为 `test-firewall-recovery-e2e`，不再保留旧接口兼容测试。

@@ -134,7 +134,7 @@ func (r *GuestRepository) FilesystemGuestDispatchCommands(ctx context.Context) (
 		return nil, ErrInvalidRecord
 	}
 	var out []CommandRecord
-	for _, kind := range []guestKind{guestExecutionKind, guestFileKind} {
+	for _, kind := range []guestKind{guestExecutionKind, guestFileKind, nodeOperationKind} {
 		rows, err := r.records.list(ctx, kind)
 		if err != nil {
 			return nil, err
@@ -153,6 +153,19 @@ func (r *GuestRepository) FilesystemGuestDispatchCommands(ctx context.Context) (
 					return nil, err
 				}
 				if x.CommandID != seed.Command.ID || x.AgentID != seed.Command.AgentID || seed.Command.Execution == nil || seed.Command.Execution.ID != x.ID {
+					return nil, ErrCorruptRecord
+				}
+			} else if kind == nodeOperationKind {
+				op, err := DecodeNodeOperation(row.data)
+				if err != nil {
+					return nil, err
+				}
+				if op.ID != row.id || op.CommandID != seed.Command.ID || op.AgentID != seed.Command.AgentID || seed.Command.Operation.ID != op.ID || seed.Command.Type != "node_operation" || seed.Command.ResourceUID != op.ResourceUID || seed.Command.Generation != op.Generation || seed.Command.ActionID != op.ActionID {
+					return nil, ErrCorruptRecord
+				}
+				birth := seed.Command.Operation
+				birth.CommandID = seed.Command.ID
+				if ValidateNodeOperationTransition(birth, *op) != nil {
 					return nil, ErrCorruptRecord
 				}
 			} else {

@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	sqldriver "database/sql/driver"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"time"
 )
 
 func (s *sqliteAPIStore) CreateGuestExecutionDispatch(ctx context.Context, execution controlplane.GuestExecution, command controlplane.AgentCommand) error {
@@ -23,12 +25,17 @@ func (s *sqliteAPIStore) createSQLiteGuestDispatch(ctx context.Context, table, i
 	}
 	defer conn.Close()
 	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		_ = conn.Raw(func(any) error { return sqldriver.ErrBadConn })
 		return err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, err := conn.ExecContext(cleanup, "ROLLBACK"); err != nil {
+				_ = conn.Raw(func(any) error { return sqldriver.ErrBadConn })
+			}
 		}
 	}()
 	raw, err := encode()

@@ -74,6 +74,13 @@ func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispat
 		if existing.RequestFingerprint != "" && existing.RequestFingerprint != request.Fingerprint {
 			return nil, false, errIdempotencyConflict
 		}
+		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" {
+			assigned, err := persistence.AssignRun(*existing, request.Run, request.Fingerprint)
+			if err != nil {
+				return nil, false, err
+			}
+			request.Run = assigned
+		}
 		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" && existing.Status == controlplane.RunQueued {
 			bundle.Run = request.Run
 			bundle.RequestOnly = false
@@ -175,13 +182,18 @@ func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispa
 		run, err := s.GetRun(ctx, runID)
 		return run, false, err
 	}
-	var existingFingerprint string
-	err = tx.QueryRowContext(ctx, `SELECT request_fingerprint FROM sysbox_runs WHERE id=?`, request.Run.ID).Scan(&existingFingerprint)
+	existing, err := scanSQLiteRun(tx.QueryRowContext(ctx, "SELECT "+sqliteRunColumns+" FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1", request.Run.ID))
 	if err == nil {
+		existingFingerprint := existing.RequestFingerprint
 		if existingFingerprint != "" && existingFingerprint != request.Fingerprint {
 			return nil, false, errIdempotencyConflict
 		}
-		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" && existingFingerprint == "" {
+		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" {
+			assigned, err := persistence.AssignRun(*existing, request.Run, request.Fingerprint)
+			if err != nil {
+				return nil, false, err
+			}
+			request.Run = assigned
 			if err := insertSQLiteRun(ctx, tx, request.Run); err != nil {
 				return nil, false, err
 			}
@@ -197,7 +209,7 @@ func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispa
 		run, err := s.GetRun(ctx, request.Run.ID)
 		return run, false, err
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if !errors.Is(err, persistence.ErrNotFound) {
 		return nil, false, err
 	}
 	if err := insertSQLiteRun(ctx, tx, request.Run); err != nil {
@@ -298,7 +310,7 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 		return &run, false, nil
 	}
 	var existingRaw []byte
-	err = tx.QueryRow(ctx, `SELECT data::text FROM sysbox_runs WHERE id=$1`, request.Run.ID).Scan(&existingRaw)
+	err = tx.QueryRow(ctx, `SELECT data::text FROM sysbox_runs WHERE id=$1 FOR UPDATE`, request.Run.ID).Scan(&existingRaw)
 	if err == nil {
 		var existing controlplane.Run
 		if err := json.Unmarshal(existingRaw, &existing); err != nil {
@@ -308,6 +320,18 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 			return nil, false, errIdempotencyConflict
 		}
 		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" {
+			assigned, err := persistence.AssignRun(existing, request.Run, request.Fingerprint)
+			if err != nil {
+				return nil, false, err
+			}
+			assignedRaw, err := json.Marshal(assigned)
+			if err != nil {
+				return nil, false, err
+			}
+			if _, err = tx.Exec(ctx, `UPDATE sysbox_runs SET status=$2,agent_id=$3,data=$4::jsonb,updated_at=now() WHERE id=$1`, assigned.ID, assigned.Status, assigned.AgentID, string(assignedRaw)); err != nil {
+				return nil, false, err
+			}
+			existing = assigned
 			commandRaw, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: request.Command})
 			if err != nil {
 				return nil, false, err

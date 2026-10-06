@@ -187,6 +187,14 @@ func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd c
 	return cmd, nil
 }
 
+// WakeCommand is only a delivery hint for an already committed outbox record.
+func (s *AgentService) WakeCommand(agentID string, cmd controlplane.AgentCommand) error {
+	if s.registry == nil {
+		return nil
+	}
+	return s.registry.PublishCommand(agentID, cmd)
+}
+
 // RepublishPendingCommands rebuilds the in-memory wake-up hints from durable
 // commands. The store remains authoritative; this only helps already connected
 // streams notice work after a controller restart.
