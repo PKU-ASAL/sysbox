@@ -69,3 +69,44 @@ func TestIsolatedMutationRequiresDurableOwner(t *testing.T) {
 	require.Error(t, d.CreateIsolated(context.Background(), spec))
 	require.Error(t, d.DeleteIsolated(context.Background(), spec))
 }
+
+func TestAbsentNetworkStillChecksDurableOwnership(t *testing.T) {
+	for _, operation := range []string{"observe", "create", "delete"} {
+		t.Run(operation, func(t *testing.T) {
+			d, ctx, spec := networkObservationFixture(t)
+			id, _ := substrate.OperationIdentityFromContext(ctx)
+			id.Generation++
+			require.NoError(t, d.writeOwnership(spec.Name, networkOwnership{Version: 1, Identity: id, Spec: spec}))
+			before, err := os.ReadFile(d.ownershipPath(spec.Name))
+			require.NoError(t, err)
+			switch operation {
+			case "observe":
+				_, err = d.ObserveIsolated(ctx, spec)
+			case "create":
+				err = d.CreateIsolated(ctx, spec)
+			case "delete":
+				err = d.DeleteIsolated(ctx, spec)
+			}
+			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+			after, err := os.ReadFile(d.ownershipPath(spec.Name))
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+		})
+	}
+}
+
+func TestDeleteAbsentNetworkRetiresMatchingOwnership(t *testing.T) {
+	d, ctx, spec := networkObservationFixture(t)
+	id, _ := substrate.OperationIdentityFromContext(ctx)
+	require.NoError(t, d.writeOwnership(spec.Name, networkOwnership{Version: 1, Identity: id, Spec: spec}))
+	require.NoError(t, d.DeleteIsolated(ctx, spec))
+	require.NoFileExists(t, d.ownershipPath(spec.Name))
+	require.NoError(t, d.DeleteIsolated(ctx, spec))
+}
+
+func TestAbsentNetworkRejectsCorruptAnchor(t *testing.T) {
+	d, ctx, spec := networkObservationFixture(t)
+	require.NoError(t, os.WriteFile(d.ownershipPath(spec.Name), []byte("{"), 0600))
+	_, err := d.ObserveIsolated(ctx, spec)
+	require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+}

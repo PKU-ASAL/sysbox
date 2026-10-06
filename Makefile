@@ -38,6 +38,15 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 .PHONY: test-firecracker-e2e
 .PHONY: test-docker-generation-e2e
 .PHONY: test-libvirt-generation-e2e
+.PHONY: test-network-generation-e2e
+
+test-network-generation-e2e: ## Run real network generation tests in a disposable isolated container
+	@set -eu; test_binary=$$(mktemp /tmp/sysbox-network-e2e.XXXXXX); \
+	trap 'rm -f "$$test_binary"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -tags e2e -o "$$test_binary" ./pkg/provider/network; \
+	docker run --rm --network none --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+	  --mount "type=bind,src=$$test_binary,dst=/network.test,readonly" -e SYSBOX_NETWORK_E2E=1 \
+	  alpine:3.22 /network.test -test.run '^(TestIsolatedNetworkGenerationRecoveryE2E|TestRootBridgeProxyLifecycleE2E)$$' -test.v -test.timeout=90s
 
 test-libvirt-generation-e2e: ## Run real libvirt managed-generation effect rejection
 	SYSBOX_LIBVIRT_E2E=1 $(GOENV) $(GO) test -tags e2e ./pkg/provider/libvirt -run '^TestLibvirtRealGenerationEffectsE2E$$' -count=1 -v -timeout=2m

@@ -214,10 +214,10 @@ func (d Driver) ObserveIsolated(ctx context.Context, spec driver.IsolatedNetwork
 		objects[i].link = link
 		present = true
 	}
-	if !present {
+	raw, err := os.ReadFile(d.ownershipPath(spec.Name))
+	if !present && os.IsNotExist(err) {
 		return driver.IsolatedNetworkObservation{}, nil
 	}
-	raw, err := os.ReadFile(d.ownershipPath(spec.Name))
 	if err != nil {
 		return driver.IsolatedNetworkObservation{}, networkQueryError("network ownership anchor unavailable", err)
 	}
@@ -227,6 +227,11 @@ func (d Driver) ObserveIsolated(ctx context.Context, spec driver.IsolatedNetwork
 	}
 	if marker.Version != 1 || marker.Identity.OwnerUID != id.OwnerUID || marker.Identity.TopologyUID != id.TopologyUID || marker.Identity.ResourceUID != id.ResourceUID || marker.Identity.Generation != id.Generation || !reflect.DeepEqual(marker.Spec, spec) {
 		return driver.IsolatedNetworkObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "network ownership/config identity conflict", nil)
+	}
+	// Physical absence does not authorize replacing another generation's
+	// durable anchor. Validate it before reporting absence to Create/Delete.
+	if !present {
+		return driver.IsolatedNetworkObservation{}, nil
 	}
 	if exists {
 		current := networkOwnership{}

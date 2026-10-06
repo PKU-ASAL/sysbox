@@ -140,7 +140,7 @@ func (d Driver) deleteOwnedIsolated(ctx context.Context, spec driver.IsolatedNet
 		return err
 	}
 	if !observed.Exists {
-		return nil
+		return d.removeOwnership(spec.Name)
 	}
 	if err := DeleteRootBridgeProxy(spec); err != nil {
 		return err
@@ -167,8 +167,19 @@ func (d Driver) deleteOwnedIsolated(ctx context.Context, spec driver.IsolatedNet
 	if observed.Exists {
 		return fmt.Errorf("isolated network deletion left managed objects")
 	}
-	if err := os.Remove(d.ownershipPath(spec.Name)); err != nil && !os.IsNotExist(err) {
+	return d.removeOwnership(spec.Name)
+}
+
+// Called under the host lock after absence and ownership have been verified.
+func (d Driver) removeOwnership(name string) error {
+	if err := os.Remove(d.ownershipPath(name)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return nil
+	root, _ := d.roots()
+	dir, err := os.Open(root)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }

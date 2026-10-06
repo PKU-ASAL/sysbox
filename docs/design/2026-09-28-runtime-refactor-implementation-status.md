@@ -59,6 +59,14 @@ managed 生命周期入口统一核对 context、handle generation 和 UUID。St
 
 边界：这是副作用前身份检查，libvirt 不提供 metadata 比较与操作的原子事务；不保证检查后外部管理员重建同 UUID 或修改 metadata 的并发隔离。SSH 地址与 guest 身份还没有资源端证明，同代际 lease epoch 仲裁与已启动进程撤销仍未实现。无身份、generation=0 的导入路径仍需显式 adoption 迁移，不能据此宣称所有旧架构入口已清除。
 
+### 隔离网络 generation 与删除恢复实测（2026-10-06）
+
+修复 namespace/links 已不存在时跳过 ownership anchor 的漏洞：Observe/Create/Delete 仍核对持久 owner、resource、topology、generation 和配置；损坏记录拒绝，旧代际不能覆盖新代际的残留记录。同代际 Delete 重试在确认物理资源消失后，删除自己的 anchor 并同步目录，完成中断的删除。
+
+`make test-network-generation-e2e` 编译独立测试二进制，在一次性 Docker 容器的独立网络命名空间中运行真实 Linux netlink 测试；不使用 host network，不挂载宿主机网络或状态目录。已实跑通过 namespace/bridge/veth 创建、代际替换、旧代际 Create/Delete 拒绝、新 Driver 读取 inode/alias，以及物理删除后残留 anchor 的恢复清理。旧 root bridge proxy E2E 也迁移为显式 operation identity 和 root ingress 声明，并实跑通过。
+
+边界：新 Driver 实例不是独立进程重启测试；容器内测试不是宿主机业务拓扑验收。该校验保护现存资源和残留 anchor，不维护删除后的永久代际 tombstone；attachment、firewall policy 仍有未携带完整身份的入口，不能据此声称整个网络 SPI 已完成 fencing。
+
 ### Resource fencing 迁移进度
 
 Agent command/event 模型增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。命令已绑定 fencing 身份时，事件必须完整匹配其证明；无 fencing 身份的 legacy 命令仍兼容无证明事件。校验、状态推进与终态退休通过共享 CommandRepository 在同一存储锁/事务内完成；拒绝或提交失败不发布事件缓存或更新 console/Guest 派生状态。Agent ack、执行事件与目标取消事件均回传对应命令的证明，SQLite 保留完整快照中的 fencing 字段。

@@ -16,6 +16,7 @@ import (
 	"github.com/vishvananda/netns"
 
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestOwnedPolicyRepeatedApplyAndDeleteE2E(t *testing.T) {
@@ -266,11 +267,13 @@ func TestRootBridgeProxyLifecycleE2E(t *testing.T) {
 		RootBridge:   "lvx" + suffix,
 		RootEnd:      "lvr" + suffix,
 		NamespaceEnd: "lvn" + suffix,
+		RootAddress:  "10.253.0.254/24",
 	}
-	provider := Driver{}
-	t.Cleanup(func() { _ = provider.DeleteIsolated(context.Background(), spec) })
+	provider := Driver{ownershipRoot: t.TempDir()}
+	ctx := substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{OwnerUID: spec.Name, TopologyUID: spec.Name, ResourceUID: spec.Name, Generation: 1, ActionID: "e2e"})
+	t.Cleanup(func() { _ = provider.DeleteIsolated(ctx, spec) })
 
-	require.NoError(t, provider.CreateIsolated(context.Background(), spec))
+	require.NoError(t, provider.CreateIsolated(ctx, spec))
 	ok, reason := provider.NetworkHealthy(context.Background(), spec)
 	require.True(t, ok, reason)
 	require.True(t, LinkExists(spec.Name, spec.NamespaceEnd))
@@ -278,7 +281,7 @@ func TestRootBridgeProxyLifecycleE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, hostRouteExists(spec.RootBridge, spec.CIDR))
 
-	require.NoError(t, provider.DeleteIsolated(context.Background(), spec))
+	require.NoError(t, provider.DeleteIsolated(ctx, spec))
 	require.False(t, NetnsExists(spec.Name))
 	_, err = netlink.LinkByName(spec.RootBridge)
 	require.Error(t, err)
