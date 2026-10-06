@@ -36,6 +36,10 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 .DEFAULT_GOAL := help
 
 .PHONY: test-firecracker-e2e
+.PHONY: test-docker-generation-e2e
+
+test-docker-generation-e2e: ## Run real Docker managed-generation effect rejection
+	$(GOENV) $(GO) test -tags e2e ./pkg/provider/docker -run '^TestDockerRealGenerationEffectsE2E$$' -count=1 -v -timeout=3m
 
 .PHONY: help build build-all test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset test-windows-tools prepare-windows10-media build-windows10-image test-windows10-libvirt release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \

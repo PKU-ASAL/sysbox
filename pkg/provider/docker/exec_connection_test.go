@@ -21,6 +21,9 @@ func executionDockerAPI(t *testing.T, stdout, stderr string, inspect container.E
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/containers/node/json"):
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"Id": "node", "Config": map[string]any{"Labels": map[string]string{"sysbox.generation": "4", "sysbox.managed": "true", "sysbox.owner_uid": "owner", "sysbox.resource_uid": "resource", "sysbox.topology_uid": "topology"}}})
 		case strings.HasSuffix(r.URL.Path, "/containers/node/exec"):
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"Id": "exec-opaque"})

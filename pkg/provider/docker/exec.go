@@ -84,13 +84,17 @@ func (c *dockerConn) Exec(ctx context.Context, req substrate.ExecRequest, stdout
 	ctx, cancel := req.Context(ctx)
 	defer cancel()
 	defer func() { result, err = substrate.FinishExecution(ctx, result, err) }()
+	target := c.handle
+	if err := c.sub.validateManagedHandle(ctx, &target); err != nil {
+		return result, err
+	}
 	cmd, err := transport.CommandArgv(req)
 	if err != nil {
 		return substrate.ExecResult{ErrorClass: substrate.ExecErrorInvalid}, err
 	}
 	envs := util.EnvToSlice(req.Environment)
 
-	ex, err := c.sub.cli.ContainerExecCreate(ctx, c.handle.ID, container.ExecOptions{
+	ex, err := c.sub.cli.ContainerExecCreate(ctx, target.ID, container.ExecOptions{
 		Cmd:          cmd,
 		Env:          envs,
 		WorkingDir:   req.WorkingDir,
@@ -139,6 +143,9 @@ func (c *dockerConn) Exec(ctx context.Context, req substrate.ExecRequest, stdout
 }
 
 func (s *Substrate) OpenConsole(ctx context.Context, h substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		return nil, err
+	}
 	cmd := req.Cmd
 	if len(cmd) == 0 {
 		shell := req.Shell
@@ -248,6 +255,9 @@ var _ substrate.ConsoleProvider = (*Substrate)(nil)
 // dstPath must be an absolute path inside the container; the filename is
 // preserved from srcPath if dstPath ends with "/".
 func (s *Substrate) CopyToNode(ctx context.Context, h substrate.NodeHandle, srcPath, dstPath string, mode uint32) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		return err
+	}
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		return fmt.Errorf("read src %s: %w", srcPath, err)
@@ -323,7 +333,11 @@ func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, 
 func (c *dockerConn) Start(ctx context.Context, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
 	ctx, cancel := req.Context(ctx)
 	defer cancel()
-	handle := substrate.ExecutionHandle{NodeID: c.handle.ID, Generation: c.handle.Generation}
+	target := c.handle
+	if err := c.sub.validateManagedHandle(ctx, &target); err != nil {
+		return substrate.ExecutionHandle{}, err
+	}
+	handle := substrate.ExecutionHandle{NodeID: target.ID, Generation: target.Generation}
 	cmd, err := transport.CommandArgv(req)
 	if err != nil {
 		return handle, err
@@ -333,7 +347,7 @@ func (c *dockerConn) Start(ctx context.Context, req substrate.ExecRequest) (subs
 	}
 	envs := util.EnvToSlice(req.Environment)
 
-	ex, err := c.sub.cli.ContainerExecCreate(ctx, c.handle.ID, container.ExecOptions{
+	ex, err := c.sub.cli.ContainerExecCreate(ctx, target.ID, container.ExecOptions{
 		Cmd:          cmd,
 		Env:          envs,
 		WorkingDir:   req.WorkingDir,

@@ -38,9 +38,18 @@ NodeOperation 完成保存已接入三后端 CAS：filesystem 在共享记录锁
 
 Provider generation fencing 第一阶段已接入 substrate observation：NodeObservation 返回 owner UID、resource UID、generation；Docker managed Observe 会核对 operation identity 和容器 labels，generation 不匹配返回 unknown/conflict。Firecracker manifest 已有等价 process/manifest generation 校验。
 
-2026-10-05 环境复核：沙箱内看不到 /dev/kvm，不代表宿主机无 KVM。宿主机执行可访问 /dev/kvm、/dev/vhost-vsock，缓存含 Firecracker 1.15.1、vmlinux-5.10.245 和 Ubuntu rootfs。`make test-firecracker-e2e` 已实跑：基础 create/start/observe/destroy、reset generation 1→2、旧 generation 的 destroy/start/stop/pause/resume 拒绝，以及新进程空 vmStore 的 manifest discover/adopt/pause/resume。完整真实 E2E 共 29 秒通过。另新增真正 kill controller 子进程后 manifest 恢复的测试入口；本轮两次执行请求被自动审批超时拦截，因此该故障场景只完成编译，尚未计入已实跑结果。
+2026-10-05 环境复核：沙箱内看不到 /dev/kvm，不代表宿主机无 KVM。宿主机执行可访问 /dev/kvm、/dev/vhost-vsock，缓存含 Firecracker 1.15.1、vmlinux-5.10.245 和 Ubuntu rootfs。`make test-firecracker-e2e` 已实跑：基础 create/start/observe/destroy、reset generation 1→2、旧 generation 的 destroy/start/stop/pause/resume 拒绝，以及新进程空 vmStore 的 manifest discover/adopt/pause/resume。完整真实 E2E 共 29 秒通过。控制进程 kill 场景随后由用户在宿主机运行通过：TestFirecrackerRealControllerCrashRecoveryE2E，5.90 秒，存活 VM PID 3134309 被独立进程 adopt 并销毁（用户提供的运行记录）。
 
-此前普通 go test 不运行 e2e build tag；test-privileged 也未包含 Firecracker package。已有 heterogeneous matrix/reset 脚本依赖 PATH 中的 firecracker，缓存二进制需通过 SYSBOX_FIRECRACKER_BIN 显式指定。新直接入口接受 SYSBOX_FIRECRACKER_BIN、SYSBOX_FIRECRACKER_KERNEL、SYSBOX_FIRECRACKER_ROOTFS；默认从用户 sysbox cache 查找。本轮后续宿主机回归两次遭自动审批超时，未执行；最终入口编译通过。Docker/libvirt 实机生命周期未在本轮验收。
+此前普通 go test 不运行 e2e build tag；test-privileged 也未包含 Firecracker package。已有 heterogeneous matrix/reset 脚本依赖 PATH 中的 firecracker，缓存二进制需通过 SYSBOX_FIRECRACKER_BIN 显式指定。新直接入口接受 SYSBOX_FIRECRACKER_BIN、SYSBOX_FIRECRACKER_KERNEL、SYSBOX_FIRECRACKER_ROOTFS；默认从用户 sysbox cache 查找。本轮后续宿主机回归两次遭自动审批超时，未执行；最终入口编译通过。Docker 的实机 generation gate 验证见下节；libvirt 实机生命周期尚未验收。
+
+
+### Docker 副作用 generation gate 实测
+
+managed NodeHandle（generation > 0）或带 OperationIdentity 的调用，在 Start/Stop/Pause/Resume/Destroy、Connection.Exec/Start、Console 和 Copy 前读取完整 ownership labels；缺失或不匹配拒绝。检查后使用 inspect 返回的不可变 container ID 调用副作用接口，避免同名容器替换导致目标漂移。
+
+新增 `TestDockerRealGenerationEffectsE2E` 使用缓存 alpine:3.22 和唯一命名临时容器，已真实 Docker 实跑通过：旧 generation 生命周期/前台及后台执行/Copy 拒绝，原 PID 保持运行、禁止的标记文件未产生；匹配身份的 Exec、独立 provider rediscovery、Pause/Resume 正常。测试清理仅针对所创建 container ID。
+
+此项不等于所有 provider 全路径 fencing 完成：无 OperationIdentity 且 generation=0 的旧入口尚未迁移；未增加同代际 lease epoch 仲裁，也未取消已经启动的旧 guest 进程。Docker network/reset 自有校验、其他 substrate 与运行入口仍需统一审核。
 
 ### Resource fencing 迁移进度
 

@@ -254,15 +254,27 @@ func (s *Substrate) UnmarshalProviderState(data json.RawMessage) (any, error) {
 }
 
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		return err
+	}
 	return s.cli.ContainerStart(ctx, h.ID, container.StartOptions{})
 }
 
 func (s *Substrate) StopNode(ctx context.Context, h substrate.NodeHandle) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		return err
+	}
 	timeoutSec := 10
 	return s.cli.ContainerStop(ctx, h.ID, container.StopOptions{Timeout: &timeoutSec})
 }
 
 func (s *Substrate) DestroyNode(ctx context.Context, h substrate.NodeHandle) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
 	err := s.cli.ContainerRemove(ctx, h.ID, container.RemoveOptions{Force: true})
 	if errdefs.IsNotFound(err) {
 		return nil
@@ -271,11 +283,54 @@ func (s *Substrate) DestroyNode(ctx context.Context, h substrate.NodeHandle) err
 }
 
 func (s *Substrate) Pause(ctx context.Context, h substrate.NodeHandle) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		return err
+	}
 	return s.cli.ContainerPause(ctx, h.ID)
 }
 
 func (s *Substrate) Resume(ctx context.Context, h substrate.NodeHandle) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		return err
+	}
 	return s.cli.ContainerUnpause(ctx, h.ID)
+}
+
+func (s *Substrate) validateManagedHandle(ctx context.Context, h *substrate.NodeHandle) error {
+	identity, hasIdentity := substrate.OperationIdentityFromContext(ctx)
+	if h.Generation == 0 && !hasIdentity {
+		return nil
+	}
+	ins, err := s.cli.ContainerInspect(ctx, h.ID)
+	if err != nil {
+		return err
+	}
+	if ins.Config == nil {
+		return fmt.Errorf("docker managed handle lacks ownership metadata")
+	}
+	labels := ins.Config.Labels
+	if labels["sysbox.managed"] != "true" || labels["sysbox.owner_uid"] == "" || labels["sysbox.resource_uid"] == "" || labels["sysbox.topology_uid"] == "" {
+		return fmt.Errorf("docker managed handle lacks complete ownership labels")
+	}
+	if hasIdentity {
+		if err := identity.Validate(); err != nil {
+			return err
+		}
+		if err := verifyLabels(ins.Config.Labels, operationLabels(identity)); err != nil {
+			return err
+		}
+		if h.Generation != 0 && identity.Generation != h.Generation {
+			return fmt.Errorf("docker generation conflict")
+		}
+	}
+	if raw := ins.Config.Labels["sysbox.generation"]; h.Generation != 0 && raw != strconv.FormatInt(h.Generation, 10) {
+		return fmt.Errorf("docker generation conflict")
+	}
+	if ins.ID == "" {
+		return fmt.Errorf("docker inspection missing immutable ID")
+	}
+	h.ID = ins.ID
+	return nil
 }
 
 // ReadNode inspects an existing Docker container by name or ID and returns
