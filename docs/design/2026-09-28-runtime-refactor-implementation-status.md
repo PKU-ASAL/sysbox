@@ -93,6 +93,12 @@ Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe �
 
 ### Resource fencing 迁移进度
 
+2026-10-06 policy 资源侧代际：`PolicyTarget.Policy` 保存策略自己的 operation identity，与目标节点 identity 分开。Firewall 使用自身 action identity；router NAT 使用节点 UID 派生的 `/nat` UID。nft 表持久化 owner/topology/resource 摘要及 generation；同代同 digest 重试只读取，旧代、外来 UID、同代不同 digest 拒绝，新代在单 batch 中替换。Apply/Observe/Delete 共用 `/run/sysbox/policy-locks` 下按 namespace dev/inode 的 flock，锁文件保留，避免 unlink 后等待者和新调用分裂为两把锁。
+
+真实隔离内核 E2E 已验证：旧代 Apply/Delete 拒绝且整表不变、独立进程观察及重试、同代两个不同 digest 并发更新只有一个成功、当前代删除及重复删除。日志前缀带 `{` 的规则纳入回归；文本表解析识别引号和转义，找到表头但结构损坏返回冲突，不能作为 absent 授权覆盖。
+
+边界：控制面仍复用 action journal，不新增 policy 数据库；尚未完整接入 policy 创建/发现/恢复闭环。资源侧是同宿主机、共享锁目录且都遵循协议的调用者之间的串行化，不是跨宿主机租约。运行账户需要可访问锁目录；已有无 generation marker 的表拒绝采用。删除后没有持久 tombstone，旧请求在表完全消失后仍可能重新创建；外部 nft writer、容器隔离锁目录、同代 LeaseEpoch 撤销、namespace 目标真实 ownership 均不在本轮保证内。
+
 2026-10-06 policy 原子更新：删除旧表与写入新表已合并为一次 nft batch。前置 `add table` 保证首次创建和替换使用同一路径；真实 nft E2E 用超长 log prefix 触发拒绝，更新前后旧表全文一致，同时验证创建、正常替换、重复 Apply 和删除。入口 `make test-policy-namespace-e2e` 同时覆盖 namespace FD 替换和事务回滚。
 
 目标契约第一步已类型化：`driver.PolicyTarget.Identity` 独立于私有 `State`，共享 Encode/Decode；runtime 持久完整 target envelope 并在读取时核对地址，旧扁平结构拒绝。剩余的 policy 自身 UID/generation、执行授权与期望 digest CAS 要与持久状态转换一同实现，当前仅有目标身份和原子 batch，不能据此宣称策略生命周期仲裁闭环已完成。

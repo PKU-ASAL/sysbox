@@ -19,12 +19,13 @@ type compiledNAT struct {
 }
 
 type compiledRuleset struct {
-	Owner      string
-	Table      string
-	Digest     string
-	BaseChains map[string]driver.Verdict
-	Rules      []compiledRule
-	NAT        *compiledNAT
+	IdentityMarker string
+	Owner          string
+	Table          string
+	Digest         string
+	BaseChains     map[string]driver.Verdict
+	Rules          []compiledRule
+	NAT            *compiledNAT
 }
 
 func compileRuleset(spec driver.RulesetSpec, bindings map[string]string) (compiledRuleset, error) {

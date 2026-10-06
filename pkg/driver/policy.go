@@ -78,6 +78,7 @@ type RulesetSpec struct {
 }
 
 type PolicyTarget struct {
+	Policy   substrate.OperationIdentity `json:"policy"`
 	Resource string                      `json:"resource"`
 	Identity substrate.OperationIdentity `json:"identity"`
 	State    json.RawMessage             `json:"state"`
@@ -85,7 +86,7 @@ type PolicyTarget struct {
 
 func (t PolicyTarget) Validate() error {
 	state := bytes.TrimSpace(t.State)
-	if t.Resource == "" || t.Identity.Validate() != nil || len(state) == 0 || !json.Valid(state) || state[0] != '{' {
+	if t.Resource == "" || t.Identity.Validate() != nil || t.Policy.Validate() != nil || t.Policy.OwnerUID != t.Identity.OwnerUID || t.Policy.TopologyUID != t.Identity.TopologyUID || len(state) == 0 || !json.Valid(state) || state[0] != '{' {
 		return Wrap(ErrorInvalidState, "policy", "complete target resource, identity and provider state required", nil)
 	}
 	return nil

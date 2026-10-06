@@ -337,6 +337,19 @@ func TestNFTApplyUsesOneAtomicBatch(t *testing.T) {
 	require.Contains(t, string(script), "add table ip "+table+"\ndelete table ip "+table+"\nadd table ip "+table+"\n")
 }
 
+func TestPolicyTableParserDoesNotMistakeQuotedBracesForAbsence(t *testing.T) {
+	owner := "quoted"
+	table := driver.RulesetTableName(owner)
+	for _, prefix := range []string{"sysbox:{", "sysbox:}", "sysbox:\"{"} {
+		out := fmt.Sprintf("table ip %s {\n chain input {\n log prefix %q accept comment %q\n }\n}\n", table, prefix, ownershipMarker(owner, "digest"))
+		observed, err := observeFromNFTList(out, owner)
+		require.NoError(t, err)
+		require.Equal(t, "digest", observed.Digest)
+	}
+	_, err := observeFromNFTList("table ip "+table+" {\n", owner)
+	require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "malformed existing table is not absent: %v", err)
+}
+
 func TestNFTScriptPassesNftSyntaxCheckWhenAvailable(t *testing.T) {
 	if _, err := exec.LookPath("nft"); err != nil {
 		t.Skip("nft is not installed")

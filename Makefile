@@ -54,7 +54,7 @@ test-policy-namespace-e2e: ## Verify real nft namespace FD isolation in a dispos
 	  --mount "type=bind,src=$$(command -v nsenter),dst=/usr/local/bin/nsenter,readonly" \
 	  --mount type=bind,src=/lib/x86_64-linux-gnu,dst=/lib/x86_64-linux-gnu,readonly \
 	  --mount type=bind,src=/lib64,dst=/lib64,readonly -e SYSBOX_NETWORK_E2E=1 \
-	  --entrypoint /network.test ubuntu:24.04 -test.run '^TestPolicy(NamespaceFDReplacement|AtomicReplacementRollback)E2E$$' -test.v -test.timeout=90s
+	  --entrypoint /network.test ubuntu:24.04 -test.run '^TestPolicy(NamespaceFDReplacement|AtomicReplacementRollback|GenerationFencing)E2E$$' -test.v -test.timeout=90s
 
 test-network-generation-e2e: ## Run real network generation tests in a disposable isolated container
 	@set -eu; test_binary=$$(mktemp /tmp/sysbox-network-e2e.XXXXXX); \

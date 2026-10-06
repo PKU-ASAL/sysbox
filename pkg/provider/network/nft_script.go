@@ -17,7 +17,11 @@ func nftScript(plan compiledRuleset) string {
 	table := plan.Table
 	marker := ownershipMarker(plan.Owner, plan.Digest)
 
-	fmt.Fprintf(&b, "add table ip %s\n", table)
+	if plan.IdentityMarker != "" {
+		fmt.Fprintf(&b, "add table ip %s { comment %q; }\n", table, plan.IdentityMarker)
+	} else {
+		fmt.Fprintf(&b, "add table ip %s\n", table)
+	}
 	for _, c := range []struct {
 		name    string
 		hook    string

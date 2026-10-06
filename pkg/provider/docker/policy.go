@@ -73,7 +73,7 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 		state.Bindings[logical] = device
 	}
 
-	observation, err := networkprovider.ApplyRulesetInNetNS(ctx, ns, spec, state.Bindings)
+	observation, err := networkprovider.ApplyManagedRuleset(ctx, ns, target.Policy, spec, state.Bindings)
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "apply ruleset", err)
 	}
@@ -143,7 +143,7 @@ func (s *Substrate) ObserveRuleset(ctx context.Context, target driver.PolicyTarg
 		return driver.RulesetObservation{}, err
 	}
 	defer ns.Close()
-	return networkprovider.ObserveRulesetInNetNS(ctx, ns, owner)
+	return networkprovider.ObserveManagedRuleset(ctx, ns, target.Policy, owner)
 }
 
 func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, owner string) error {
@@ -156,7 +156,7 @@ func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarge
 		return err
 	}
 	defer ns.Close()
-	return networkprovider.DeleteRulesetInNetNS(ctx, ns, owner)
+	return networkprovider.DeleteManagedRuleset(ctx, ns, target.Policy, owner)
 }
 
 // Hold the kernel namespace object, then recheck its binding to the managed

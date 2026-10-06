@@ -121,7 +121,11 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	if err != nil {
 		return state.Resource{}, err
 	}
-	target := driver.PolicyTarget{Resource: targetAddr.String(), Identity: targetIdentity, State: targetRaw}
+	policyIdentity, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok || policyIdentity.Validate() != nil {
+		return state.Resource{}, fmt.Errorf("firewall requires durable policy identity")
+	}
+	target := driver.PolicyTarget{Resource: targetAddr.String(), Identity: targetIdentity, Policy: policyIdentity, State: targetRaw}
 	persistedTarget, err := driver.EncodePolicyTarget(target)
 	if err != nil {
 		return state.Resource{}, err

@@ -5,7 +5,9 @@ package network
 import (
 	"context"
 	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -135,4 +137,91 @@ func TestPolicyAtomicReplacementRollbackE2E(t *testing.T) {
 	require.Equal(t, updated, repeated)
 	require.NoError(t, DeleteRulesetInNetNS(ctx, ns, spec.Owner))
 	t.Log("real nft failed replacement preserved complete prior table; create/update/retry/delete passed")
+}
+
+func generationPolicyIdentity() substrate.OperationIdentity {
+	return substrate.OperationIdentity{ActionID: "apply", OwnerUID: "owner", TopologyUID: "topology", ResourceUID: "policy", Generation: 2}
+}
+
+func TestPolicyGenerationFencingE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_NETWORK_E2E") != "1" {
+		t.Skip("requires isolated namespace and nft privileges")
+	}
+	name := "sbgen-" + uuid.NewString()[:8]
+	require.NoError(t, CreateNetns(name))
+	t.Cleanup(func() { require.NoError(t, DeleteNetns(name)) })
+	ns, err := os.Open("/var/run/netns/" + name)
+	require.NoError(t, err)
+	defer ns.Close()
+	id := generationPolicyIdentity()
+	spec := driver.RulesetSpec{Owner: "generation-e2e", Family: driver.FamilyIPv4, Rules: []driver.PolicyRule{{ID: "quoted-{", Direction: driver.DirectionInput, Protocol: driver.ProtocolTCP, Verdict: driver.VerdictAccept, Log: true}}}
+	ctx := context.Background()
+	first, err := ApplyManagedRuleset(ctx, ns, id, spec, nil)
+	require.NoError(t, err)
+	before, err := runNFT(ctx, ns, "", "list", "table", "ip", first.Table)
+	require.NoError(t, err)
+	old := id
+	old.Generation--
+	_, err = ApplyManagedRuleset(ctx, ns, old, spec, nil)
+	require.Error(t, err)
+	require.Error(t, DeleteManagedRuleset(ctx, ns, old, spec.Owner))
+	changed := spec
+	changed.DefaultInput = driver.VerdictAccept
+	_, err = ApplyManagedRuleset(ctx, ns, id, changed, nil)
+	require.Error(t, err)
+	after, err := runNFT(ctx, ns, "", "list", "table", "ip", first.Table)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	// Recovery in another OS process reads the kernel identity and retries
+	// the same digest without rebuilding the table.
+	cmd := exec.Command(os.Args[0], "-test.run=^TestPolicyGenerationProcessHelper$", "-test.v")
+	cmd.Env = append(os.Environ(), "SYSBOX_POLICY_TEST_NS="+name)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	id.Generation++
+	var results [2]error
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			desired := spec
+			if i == 1 {
+				desired = changed
+			}
+			_, results[i] = ApplyManagedRuleset(ctx, ns, id, desired, nil)
+		}(i)
+	}
+	wg.Wait()
+	winners := 0
+	for _, err := range results {
+		if err == nil {
+			winners++
+		} else {
+			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+		}
+	}
+	require.Equal(t, 1, winners, "one immutable digest must win the generation")
+	_, err = ObserveManagedRuleset(ctx, ns, id, spec.Owner)
+	require.NoError(t, err)
+	require.NoError(t, DeleteManagedRuleset(ctx, ns, id, spec.Owner))
+	require.NoError(t, DeleteManagedRuleset(ctx, ns, id, spec.Owner))
+	t.Log("stale Apply/Delete rejected; independent-process retry and concurrent generation arbitration passed")
+}
+
+func TestPolicyGenerationProcessHelper(t *testing.T) {
+	name := os.Getenv("SYSBOX_POLICY_TEST_NS")
+	if name == "" {
+		t.Skip("subprocess helper")
+	}
+	ns, err := os.Open("/var/run/netns/" + name)
+	require.NoError(t, err)
+	defer ns.Close()
+	id := generationPolicyIdentity()
+	spec := driver.RulesetSpec{Owner: "generation-e2e", Family: driver.FamilyIPv4, Rules: []driver.PolicyRule{{ID: "quoted-{", Direction: driver.DirectionInput, Protocol: driver.ProtocolTCP, Verdict: driver.VerdictAccept, Log: true}}}
+	observed, err := ObserveManagedRuleset(context.Background(), ns, id, spec.Owner)
+	require.NoError(t, err)
+	retried, err := ApplyManagedRuleset(context.Background(), ns, id, spec, nil)
+	require.NoError(t, err)
+	require.Equal(t, observed, retried)
 }

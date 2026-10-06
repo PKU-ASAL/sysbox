@@ -26,9 +26,13 @@ type firewallPolicyFake struct {
 
 func policyTargetFixture(t *testing.T) string {
 	t.Helper()
-	raw, err := driver.EncodePolicyTarget(driver.PolicyTarget{Resource: "sysbox_router.edge", Identity: substrate.OperationIdentity{ActionID: "test", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "router", Generation: 2}, State: json.RawMessage(`{"container_id":"router","bindings":{}}`)})
+	raw, err := driver.EncodePolicyTarget(driver.PolicyTarget{Resource: "sysbox_router.edge", Policy: policyOperationFixture(), Identity: substrate.OperationIdentity{ActionID: "test", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "router", Generation: 2}, State: json.RawMessage(`{"container_id":"router","bindings":{}}`)})
 	require.NoError(t, err)
 	return string(raw)
+}
+
+func policyOperationFixture() substrate.OperationIdentity {
+	return substrate.OperationIdentity{ActionID: "policy", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "firewall", Generation: 1}
 }
 
 func (f *firewallPolicyFake) ApplyRuleset(_ context.Context, _ driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
@@ -150,7 +154,7 @@ func TestCreateFirewallPersistsVerifiedObservation(t *testing.T) {
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), OwnerUID: "owner", ResourceUID: "router", Generation: 2, Driver: "policy-test", Attributes: state.MustAttributes(map[string]any{"container_id": "router"}), Attachments: []state.Attachment{{Name: "inside", Observation: state.AttachmentObservation{GuestDevice: "eth1"}}}})
 	exec := NewExecutor(graph.New(), st)
 	n := &graph.Node{Address: address.Resource("sysbox_firewall", "edge"), Data: &config.FirewallConfig{AttachTo: "sysbox_router.edge", Rules: []config.FirewallRule{{Name: "allow", Direction: "forward", Protocol: "all", InputAttachment: "inside", Verdict: "accept"}}}}
-	res, err := exec.createFirewallResource(context.Background(), n)
+	res, err := exec.createFirewallResource(substrate.WithOperationIdentity(context.Background(), policyOperationFixture()), n)
 	require.NoError(t, err)
 	require.Equal(t, "sysbox_owned", res.Str("table"))
 	require.Equal(t, "verified", res.Str("desired_digest"))
@@ -163,8 +167,11 @@ func TestCreateFirewallPersistsVerifiedObservation(t *testing.T) {
 	require.Equal(t, "owner", identity["owner_uid"])
 	require.Equal(t, "router", identity["resource_uid"])
 	require.EqualValues(t, 2, identity["generation"])
+	policyIdentity := target["policy"].(map[string]any)
+	require.Equal(t, "firewall", policyIdentity["resource_uid"])
+	require.EqualValues(t, 1, policyIdentity["generation"], "policy and node have independent generations")
 	st.FindResource(address.Resource("sysbox_router", "edge")).OwnerUID = ""
-	_, err = exec.createFirewallResource(context.Background(), n)
+	_, err = exec.createFirewallResource(substrate.WithOperationIdentity(context.Background(), policyOperationFixture()), n)
 	require.ErrorContains(t, err, "target lacks durable identity")
 	require.Equal(t, 1, fake.applyCount, "invalid target must not apply policy")
 }
@@ -180,7 +187,7 @@ func TestCreateFirewallDelegatesMissingDeviceResolutionToPolicyDriver(t *testing
 	exec := NewExecutor(graph.New(), st)
 	n := &graph.Node{Address: address.Resource("sysbox_firewall", "edge"), Data: &config.FirewallConfig{AttachTo: "sysbox_router.edge", Rules: []config.FirewallRule{{Name: "allow", Direction: "forward", Protocol: "all", OutputAttachment: "uplink", Verdict: "accept"}}}}
 
-	res, err := exec.createFirewallResource(context.Background(), n)
+	res, err := exec.createFirewallResource(substrate.WithOperationIdentity(context.Background(), policyOperationFixture()), n)
 	require.NoError(t, err)
 	var target struct {
 		Bindings      map[string]string   `json:"bindings"`

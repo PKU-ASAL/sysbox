@@ -34,19 +34,12 @@ func (Driver) ApplyRuleset(ctx context.Context, target driver.PolicyTarget, spec
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	plan, err := compileRuleset(spec, state.Bindings)
-	if err != nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "compile ruleset", err)
-	}
 	ns, err := os.Open("/var/run/netns/" + state.Namespace)
 	if err != nil {
 		return driver.RulesetObservation{}, networkQueryError("open policy namespace", err)
 	}
 	defer ns.Close()
-	if err := applyCompiledInNetNS(ctx, ns, plan); err != nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "network", "apply ruleset", err)
-	}
-	return driver.RulesetObservation{Table: plan.Table, Digest: plan.Digest}, nil
+	return ApplyManagedRuleset(ctx, ns, target.Policy, spec, state.Bindings)
 }
 
 // ObserveRuleset reads the ruleset back inside the target netns via an nsenter
@@ -61,7 +54,7 @@ func (Driver) ObserveRuleset(ctx context.Context, target driver.PolicyTarget, ow
 		return driver.RulesetObservation{}, networkQueryError("open policy namespace", err)
 	}
 	defer ns.Close()
-	return ObserveRulesetInNetNS(ctx, ns, owner)
+	return ObserveManagedRuleset(ctx, ns, target.Policy, owner)
 }
 
 func (Driver) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, owner string) error {
@@ -74,7 +67,7 @@ func (Driver) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, own
 		return networkQueryError("open policy namespace", err)
 	}
 	defer ns.Close()
-	return DeleteRulesetInNetNS(ctx, ns, owner)
+	return DeleteManagedRuleset(ctx, ns, target.Policy, owner)
 }
 
 func decodePolicyTarget(target driver.PolicyTarget) (policyTargetState, error) {
@@ -248,7 +241,26 @@ func nftTableBlock(output, tableName string) (string, bool) {
 		return "", false
 	}
 	depth := 0
+	quoted, escaped := false, false
 	for i := loc[0]; i < len(output); i++ {
+		if quoted {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if output[i] == '\\' {
+				escaped = true
+				continue
+			}
+			if output[i] == '"' {
+				quoted = false
+			}
+			continue
+		}
+		if output[i] == '"' {
+			quoted = true
+			continue
+		}
 		switch output[i] {
 		case '{':
 			depth++
@@ -259,5 +271,7 @@ func nftTableBlock(output, tableName string) (string, bool) {
 			}
 		}
 	}
-	return "", false
+	// A header was found, so malformed/truncated content is a conflict, never
+	// proof of absence authorizing a new generation to overwrite the table.
+	return "", true
 }

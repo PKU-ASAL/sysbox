@@ -84,7 +84,7 @@ func TestDockerRealGenerationEffectsE2E(t *testing.T) {
 		require.Equal(t, before.State.Pid, pid)
 		raw, err := json.Marshal(dockerPolicyTarget{ContainerID: h.ID, Identity: old})
 		require.NoError(t, err)
-		target := driver.PolicyTarget{Resource: "sysbox_node.test", Identity: old, State: raw}
+		target := driver.PolicyTarget{Resource: "sysbox_node.test", Identity: old, Policy: identity, State: raw}
 		_, err = s.ApplyRuleset(ctx, target, driver.RulesetSpec{Owner: "test-policy"})
 		require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
 		_, err = s.ObserveRuleset(ctx, target, "test-policy")

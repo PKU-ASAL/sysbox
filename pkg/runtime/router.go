@@ -271,7 +271,9 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 				{ID: "nat-forward", Direction: driver.DirectionForward, InputAttachment: cfg.NatFrom, OutputAttachment: cfg.NatTo, Protocol: driver.ProtocolAll, Verdict: driver.VerdictAccept, Counter: true},
 				{ID: "nat-return", Direction: driver.DirectionForward, InputAttachment: cfg.NatTo, OutputAttachment: cfg.NatFrom, Protocol: driver.ProtocolAll, States: []driver.ConnectionState{driver.StateEstablished, driver.StateRelated}, Verdict: driver.VerdictAccept, Counter: true},
 			}, NAT: &driver.NATPolicy{SourceAttachment: cfg.NatFrom, UplinkAttachment: cfg.NatTo, SourceCIDRs: append([]string(nil), fromReq.IPPrefixes...), Masquerade: true}}
-		target := driver.PolicyTarget{Resource: n.Address.String(), Identity: targetIdentity, State: targetRaw}
+		policyIdentity := targetIdentity
+		policyIdentity.ResourceUID += "/nat"
+		target := driver.PolicyTarget{Resource: n.Address.String(), Identity: targetIdentity, Policy: policyIdentity, State: targetRaw}
 		persistedTarget, err := driver.EncodePolicyTarget(target)
 		if err != nil {
 			return state.Resource{}, err
