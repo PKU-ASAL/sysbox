@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"net/http"
@@ -49,6 +50,47 @@ func TestManagedEffectsPinInspectedContainerID(t *testing.T) {
 	require.Contains(t, mutated, "/containers/immutable-id/start")
 	require.NotContains(t, mutated, "reusable-name")
 }
+
+func TestManagedAttachmentsPinInspectedContainerID(t *testing.T) {
+	for _, operation := range []string{"attach", "detach"} {
+		t.Run(operation, func(t *testing.T) {
+			var containerID string
+			s := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" {
+					_ = json.NewEncoder(w).Encode(map[string]any{"Id": "immutable-id", "Config": map[string]any{"Labels": operationLabels(testOperation())}})
+					return
+				}
+				var body struct{ Container string }
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				containerID = body.Container
+				w.WriteHeader(200)
+			})
+			ctx := substrate.WithOperationIdentity(context.Background(), testOperation())
+			h := substrate.NodeHandle{ID: "reusable-name", Generation: 3}
+			if operation == "attach" {
+				_, err := s.Attach(ctx, h, driver.AttachmentRequest{IPPrefixes: []string{"10.0.0.2/24"}, NetworkState: json.RawMessage(`{"nat":true,"docker_network_id":"network"}`)})
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, s.Delete(ctx, h, driver.AttachmentRequest{}, json.RawMessage(`{"network_id":"network"}`)))
+			}
+			require.Equal(t, "immutable-id", containerID)
+		})
+	}
+}
+
+func TestManagedAttachmentMissingContainerIsNotFound(t *testing.T) {
+	s := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "GET", r.Method)
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"container missing"}`))
+	})
+	h := substrate.NodeHandle{ID: "missing", Generation: 3}
+	ctx := substrate.WithOperationIdentity(context.Background(), testOperation())
+	_, err := s.Observe(ctx, h, driver.AttachmentRequest{}, json.RawMessage(`{"network_id":"network"}`))
+	require.True(t, driver.IsCategory(err, driver.ErrorNotFound), "%v", err)
+	err = s.Delete(ctx, h, driver.AttachmentRequest{}, json.RawMessage(`{"network_id":"network"}`))
+	require.True(t, driver.IsCategory(err, driver.ErrorNotFound), "%v", err)
+}
 func TestManagedEffectRejectsMissingGenerationLabel(t *testing.T) {
 	mutations := 0
 	s := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +108,7 @@ func TestManagedEffectRejectsMissingGenerationLabel(t *testing.T) {
 }
 
 func TestManagedEffectsRejectStaleGenerationBeforeMutation(t *testing.T) {
-	for _, name := range []string{"start", "stop", "destroy", "pause", "resume", "exec"} {
+	for _, name := range []string{"start", "stop", "destroy", "pause", "resume", "exec", "attach", "detach", "observe-attachment"} {
 		t.Run(name, func(t *testing.T) {
 			mutations := 0
 			s := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -95,8 +137,15 @@ func TestManagedEffectsRejectStaleGenerationBeforeMutation(t *testing.T) {
 				err = s.Resume(ctx, h)
 			case "exec":
 				_, err = s.ExecInNode(ctx, h, substrate.ExecRequest{Program: "true"})
+			case "attach":
+				_, err = s.Attach(ctx, h, driver.AttachmentRequest{Name: "eth1", IPPrefixes: []string{"10.0.0.2/24"}, NetworkState: json.RawMessage(`{"nat":true,"docker_network_id":"network"}`)})
+			case "detach":
+				err = s.Delete(ctx, h, driver.AttachmentRequest{}, json.RawMessage(`{"network_id":"network"}`))
+			case "observe-attachment":
+				_, err = s.Observe(ctx, h, driver.AttachmentRequest{}, json.RawMessage(`{"host_end":"link","netns":"namespace"}`))
 			}
 			require.Error(t, err)
+			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
 			require.Zero(t, mutations)
 		})
 	}

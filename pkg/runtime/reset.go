@@ -135,13 +135,25 @@ func (e *Executor) Reset(ctx context.Context, plan *Plan) (resetErr error) {
 }
 
 func (e *Executor) destroyResetNode(ctx context.Context, item *resetNodeContext) error {
+	attachmentCtx := ctx
+	if len(item.current.Attachments) > 0 {
+		id, ok := substrate.OperationIdentityFromContext(ctx)
+		old := item.current
+		if !ok || id.Validate() != nil || old.Generation < 1 || id.Generation <= old.Generation || id.OwnerUID != old.OwnerUID || id.TopologyUID != old.OwnerUID || id.ResourceUID != old.ResourceUID || item.request.Current.Generation != old.Generation {
+			return fmt.Errorf("reset attachment deletion requires matching old and target generation identities")
+		}
+		// This reset was prepared/observed with the target identity. Its
+		// attachment cleanup addresses the recorded old generation only.
+		id.Generation = old.Generation
+		attachmentCtx = substrate.WithOperationIdentity(ctx, id)
+	}
 	for _, attachment := range item.current.Attachments {
 		request, err := attachmentRequestFromState(e.state, attachment)
 		if err != nil {
 			return err
 		}
 		err = e.recordSubstep(item.step, "delete_attachment", map[string]any{"name": attachment.Name}, func() error {
-			deleteErr := item.nicDriver.Delete(ctx, item.request.Current, request, attachment.DriverState)
+			deleteErr := item.nicDriver.Delete(attachmentCtx, item.request.Current, request, attachment.DriverState)
 			if driver.IsCategory(deleteErr, driver.ErrorNotFound) {
 				return nil
 			}

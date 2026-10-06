@@ -4,10 +4,14 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/docker/docker/api/types/container"
+	dockernet "github.com/docker/docker/api/types/network"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,7 +33,7 @@ func TestDockerRealGenerationEffectsE2E(t *testing.T) {
 	identity := substrate.OperationIdentity{OwnerUID: fmt.Sprintf("e2e-%d", time.Now().UnixNano()), ResourceUID: "node", TopologyUID: "test", Generation: 2, ActionID: "create"}
 	valid := substrate.WithOperationIdentity(ctx, identity)
 	name := "sysbox-fence-" + identity.OwnerUID
-	h, err := s.CreateNode(valid, substrate.NodeSpec{Name: name, Image: substrate.ArtifactHandle{ID: inspected.ID}})
+	h, err := s.CreateNode(valid, substrate.NodeSpec{Name: name, Image: substrate.ArtifactHandle{ID: inspected.ID}, ManagedNetwork: true})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)
@@ -74,5 +78,42 @@ func TestDockerRealGenerationEffectsE2E(t *testing.T) {
 	require.Equal(t, h.ID, discovered.ID)
 	require.NoError(t, cold.Pause(valid, discovered))
 	require.NoError(t, cold.Resume(valid, discovered))
+	t.Run("attachment", func(t *testing.T) {
+		// Docker permits a requested static address only on explicitly
+		// configured IPAM subnets. A collision fails creation without adoption.
+		seed := time.Now().UnixNano()
+		cidr := fmt.Sprintf("10.%d.%d.0/24", 128+(seed>>8)%100, seed%256)
+		created, err := s.cli.NetworkCreate(ctx, name+"-net", dockernet.CreateOptions{Driver: "bridge", Internal: true, IPAM: &dockernet.IPAM{Config: []dockernet.IPAMConfig{{Subnet: cidr}}}})
+		require.NoError(t, err)
+		defer func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			_ = s.cli.NetworkDisconnect(cleanup, created.ID, h.ID, true)
+			require.NoError(t, s.cli.NetworkRemove(cleanup, created.ID))
+		}()
+		info, err := s.cli.NetworkInspect(ctx, created.ID, dockernet.InspectOptions{})
+		require.NoError(t, err)
+		require.NotEmpty(t, info.IPAM.Config)
+		ip, subnet, err := net.ParseCIDR(info.IPAM.Config[0].Subnet)
+		require.NoError(t, err)
+		ip = ip.To4()
+		require.NotNil(t, ip)
+		ip[3] += 2
+		ones, _ := subnet.Mask.Size()
+		raw, err := json.Marshal(networkState{NAT: true, NetworkID: created.ID})
+		require.NoError(t, err)
+		req := driver.AttachmentRequest{Name: "test", NetworkState: raw, IPPrefixes: []string{fmt.Sprintf("%s/%d", ip, ones)}}
+		_, err = s.Attach(stale, h, req)
+		require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+		attachment, err := s.Attach(valid, h, req)
+		require.NoError(t, err)
+		err = s.Delete(stale, h, req, attachment.State)
+		require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+		_, err = s.Observe(valid, h, req, attachment.State)
+		require.NoError(t, err)
+		require.NoError(t, s.Delete(valid, h, req, attachment.State))
+		_, err = s.Observe(valid, h, req, attachment.State)
+		require.True(t, driver.IsCategory(err, driver.ErrorNotFound), "%v", err)
+	})
 	t.Logf("real container %s: stale lifecycle/exec/copy rejected; matching generation exec and rediscovery passed", h.ID)
 }

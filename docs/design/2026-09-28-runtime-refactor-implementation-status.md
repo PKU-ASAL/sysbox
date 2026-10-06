@@ -67,6 +67,14 @@ managed 生命周期入口统一核对 context、handle generation 和 UUID。St
 
 边界：新 Driver 实例不是独立进程重启测试；容器内测试不是宿主机业务拓扑验收。该校验保护现存资源和残留 anchor，不维护删除后的永久代际 tombstone；attachment、firewall policy 仍有未携带完整身份的入口，不能据此声称整个网络 SPI 已完成 fencing。
 
+### Docker attachment 与 firewall 恢复边界（2026-10-06）
+
+Docker managed attachment 的 Attach/Observe/Delete 复用节点身份校验，并固定 inspect 返回的不可变容器 ID，旧代际不能连接或断开新节点。容器已消失返回明确的 NotFound，不继续按名字删除外部 veth。reset 的 attachment 删除核对新旧身份关系后使用旧代际 context，DestroyReset 本身仍使用目标代际授权。
+
+真实 Docker E2E 已覆盖独立 internal bridge 上旧代 Attach 拒绝、合法 Attach、旧代 Delete 拒绝且连接仍在、合法 Observe/Delete；容器和网络均按测试创建的精确 ID 清理。`make test-docker-generation-e2e` 已通过。此项只验证节点一侧，不代表目标网络身份、外部 veth ownership、所有 substrate attachment 或 generation=0 无身份入口已迁移。
+
+Firewall checkpoint hook 不再重放 ApplyRuleset：只 Observe，持久化 table/digest 与实测一致才恢复 state。规则缺失、查询不可用、ownership 冲突和摘要差异均拒绝恢复，不把当前观察结果改写成期望值。这是清理旧恢复副作用入口，并不解除新 firewall create 在 observation-driven 引擎中的能力限制；完整 policy generation、目标容器/namespace 身份协议仍待实现。
+
 ### Resource fencing 迁移进度
 
 Agent command/event 模型增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。命令已绑定 fencing 身份时，事件必须完整匹配其证明；无 fencing 身份的 legacy 命令仍兼容无证明事件。校验、状态推进与终态退休通过共享 CommandRepository 在同一存储锁/事务内完成；拒绝或提交失败不发布事件缓存或更新 console/Guest 派生状态。Agent ack、执行事件与目标取消事件均回传对应命令的证明，SQLite 保留完整快照中的 fencing 字段。

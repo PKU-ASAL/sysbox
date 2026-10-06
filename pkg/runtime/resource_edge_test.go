@@ -35,24 +35,58 @@ func (f *firewallPolicyFake) ObserveRuleset(context.Context, driver.PolicyTarget
 	return driver.RulesetObservation{Table: "sysbox_owned", Digest: f.digest}, nil
 }
 
-func TestRecoverFirewallAlwaysReapplies(t *testing.T) {
+func TestRecoverFirewallObservesWithoutReapplying(t *testing.T) {
 	previous := driver.DefaultRegistry
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = previous })
-	fake := &firewallPolicyFake{}
+	fake := &firewallPolicyFake{digest: "verified"}
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
 	spec := driver.RulesetSpec{Owner: "lab/sysbox_firewall.edge", Family: driver.FamilyIPv4}
 	specRaw, err := json.Marshal(spec)
 	require.NoError(t, err)
 	rec := &StateResourceLog{Type: "sysbox_firewall", Name: "edge", Provider: "policy-test", Instance: map[string]any{
-		"owner": spec.Owner, "attach_to": "sysbox_router.edge", "policy_target_state": `{"container_id":"router","bindings":{}}`, "policy_spec": string(specRaw), "desired_digest": "verified",
+		"owner": spec.Owner, "attach_to": "sysbox_router.edge", "policy_target_state": `{"container_id":"router","bindings":{}}`, "policy_spec": string(specRaw), "desired_digest": "verified", "table": "sysbox_owned",
 	}}
 	step := OperationStep{Resource: "sysbox_firewall.edge", StateResource: rec}
 	st := &state.State{Version: state.SchemaVersion}
 	result, err := (FirewallResourceHandler{}).RecoverCheckpointResource(context.Background(), st, step)
 	require.NoError(t, err)
 	require.Equal(t, "recovered", result.Status)
-	require.Equal(t, 1, fake.applyCount)
+	require.Zero(t, fake.applyCount)
+	require.Equal(t, "verified", st.FindResource(address.Resource("sysbox_firewall", "edge")).Str("observed_digest"))
+}
+
+func TestRecoverFirewallRefusesUnverifiedPolicyWithoutEffects(t *testing.T) {
+	for _, fault := range []string{"absent", "unavailable", "owner", "digest", "missing-digest", "table"} {
+		t.Run(fault, func(t *testing.T) {
+			previous := driver.DefaultRegistry
+			driver.DefaultRegistry = driver.NewRegistry()
+			t.Cleanup(func() { driver.DefaultRegistry = previous })
+			fake := &firewallPolicyFake{digest: "verified"}
+			attrs := map[string]any{"owner": "owner", "attach_to": "sysbox_router.edge", "policy_target_state": `{"container_id":"router"}`, "desired_digest": "verified", "table": "sysbox_owned", "policy_spec": `{"Owner":"owner"}`}
+			switch fault {
+			case "absent":
+				fake.observeErr = driver.Wrap(driver.ErrorNotFound, "test", "missing", nil)
+			case "unavailable":
+				fake.observeErr = driver.Wrap(driver.ErrorUnavailable, "test", "query failed", nil)
+			case "owner":
+				fake.observeErr = driver.Wrap(driver.ErrorInvalidState, "test", "owner changed", nil)
+			case "digest":
+				fake.digest = "changed"
+			case "missing-digest":
+				delete(attrs, "desired_digest")
+			case "table":
+				attrs["table"] = "other-table"
+			}
+			require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
+			st := &state.State{Version: state.SchemaVersion}
+			step := OperationStep{Resource: "sysbox_firewall.edge", StateResource: &StateResourceLog{Type: "sysbox_firewall", Name: "edge", Provider: "policy-test", Instance: attrs}}
+			_, err := (FirewallResourceHandler{}).RecoverCheckpointResource(context.Background(), st, step)
+			require.Error(t, err)
+			require.Zero(t, fake.applyCount)
+			require.Nil(t, st.FindResource(address.Resource("sysbox_firewall", "edge")))
+		})
+	}
 }
 func (*firewallPolicyFake) DeleteRuleset(context.Context, driver.PolicyTarget, string) error {
 	return nil

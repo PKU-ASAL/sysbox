@@ -147,7 +147,7 @@ func (FirewallResourceHandler) RecoverCheckpointResource(ctx context.Context, st
 		action.Status = "already_in_state"
 		return action, nil
 	}
-	target, _, err := policyState(res)
+	target, owner, err := policyState(res)
 	if err != nil {
 		action.Status, action.Error = "invalid_state", err.Error()
 		return action, nil
@@ -156,19 +156,21 @@ func (FirewallResourceHandler) RecoverCheckpointResource(ctx context.Context, st
 	if err != nil {
 		return action, err
 	}
-	// Always re-apply rather than reading the ruleset back to decide whether it
-	// survived; apply is idempotent (it always rebuilds the table).
-	var spec driver.RulesetSpec
-	if err := json.Unmarshal([]byte(res.Str("policy_spec")), &spec); err != nil {
-		return action, fmt.Errorf("recover firewall policy spec: %w", err)
+	if res.Str("desired_digest") == "" || res.Str("table") == "" {
+		return action, fmt.Errorf("firewall recovery requires recorded table and digest")
 	}
-	observation, err := policy.ApplyRuleset(ctx, target, spec)
+	// Recovery confirms an existing effect; repairs belong to a new planned
+	// action. Replaying Apply here can overwrite a newer policy after a crash.
+	observation, err := policy.ObserveRuleset(ctx, target, owner)
 	if err != nil {
 		return action, err
 	}
-	_ = res.SetAttribute("desired_digest", observation.Digest)
-	_ = res.SetAttribute("observed_digest", observation.Digest)
-	_ = res.SetAttribute("table", observation.Table)
+	if observation.Table != res.Str("table") || observation.Digest != res.Str("desired_digest") {
+		return action, driver.Wrap(driver.ErrorInvalidState, res.Driver, "firewall recovery observation does not match recorded result", nil)
+	}
+	if err := res.SetAttribute("observed_digest", observation.Digest); err != nil {
+		return action, err
+	}
 	st.AddResource(res)
 	action.Status = "recovered"
 	return action, nil

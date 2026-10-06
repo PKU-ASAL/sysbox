@@ -44,6 +44,9 @@ type linkRequest struct {
 type attachedNIC struct{ Kind, HostEnd, GuestEnd, IP, NetNS string }
 
 func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
+	if err := s.validateAttachmentHandle(ctx, &h); err != nil {
+		return driver.AttachmentResult{}, err
+	}
 	var target networkState
 	if err := json.Unmarshal(req.NetworkState, &target); err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "docker", "decode network state", err)
@@ -79,6 +82,9 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 }
 
 func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
+	if err := s.validateAttachmentHandle(ctx, &h); err != nil {
+		return driver.AttachmentResult{}, err
+	}
 	var st attachmentState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "docker", "decode attachment state", err)
@@ -112,6 +118,9 @@ func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req dri
 }
 
 func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
+	if err := s.validateAttachmentHandle(ctx, &h); err != nil {
+		return err
+	}
 	var st attachmentState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return driver.Wrap(driver.ErrorInvalidState, "docker", "decode attachment state", err)
@@ -130,6 +139,14 @@ func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, _ driver
 		return driver.Wrap(driver.ErrorUnavailable, "docker", "delete attachment link", err)
 	}
 	return nil
+}
+
+func (s *Substrate) validateAttachmentHandle(ctx context.Context, h *substrate.NodeHandle) error {
+	err := s.validateManagedHandle(ctx, h)
+	if errdefs.IsNotFound(err) {
+		return driver.Wrap(driver.ErrorNotFound, "docker", "attachment container absent", err)
+	}
+	return err
 }
 
 func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req linkRequest) (attachedNIC, error) {
