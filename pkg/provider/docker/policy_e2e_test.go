@@ -67,7 +67,7 @@ func TestDockerOwnedPolicyLifecycleE2E(t *testing.T) {
 	require.NoError(t, provider.cli.ContainerStart(ctx, created.ID, containertypes.StartOptions{}))
 	targetRaw, err := json.Marshal(dockerPolicyTarget{ContainerID: created.ID, Identity: identity, Bindings: map[string]string{"inside": "lo", "uplink": "lo"}})
 	require.NoError(t, err)
-	target := driver.PolicyTarget{Resource: "sysbox_router.e2e", State: targetRaw}
+	target := driver.PolicyTarget{Resource: "sysbox_router.e2e", Identity: identity, State: targetRaw}
 	spec := driver.RulesetSpec{Owner: "e2e/sysbox_router.docker", Family: driver.FamilyIPv4,
 		DefaultInput: driver.VerdictAccept, DefaultOutput: driver.VerdictAccept, DefaultForward: driver.VerdictDrop,
 		NAT: &driver.NATPolicy{SourceAttachment: "inside", UplinkAttachment: "uplink", SourceCIDRs: []string{"127.0.0.0/8"}, Masquerade: true}}
@@ -109,7 +109,7 @@ func TestDockerOwnedPolicyStoppedContainerIsDriftE2E(t *testing.T) {
 	require.NoError(t, provider.cli.ContainerStart(ctx, created.ID, containertypes.StartOptions{}))
 	targetRaw, err := json.Marshal(dockerPolicyTarget{ContainerID: created.ID, Identity: identity, Bindings: map[string]string{"inside": "lo", "uplink": "lo"}})
 	require.NoError(t, err)
-	target := driver.PolicyTarget{Resource: "sysbox_router.e2e", State: targetRaw}
+	target := driver.PolicyTarget{Resource: "sysbox_router.e2e", Identity: identity, State: targetRaw}
 	spec := driver.RulesetSpec{Owner: "e2e/sysbox_router.stopped", Family: driver.FamilyIPv4,
 		DefaultInput: driver.VerdictAccept, DefaultOutput: driver.VerdictAccept, DefaultForward: driver.VerdictDrop}
 	_, err = provider.ApplyRuleset(ctx, target, spec)

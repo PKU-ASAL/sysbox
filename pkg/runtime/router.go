@@ -44,7 +44,11 @@ func (RouterResourceHandler) Read(ctx context.Context, current state.Resource) (
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
 	owner := current.Str("policy_owner")
-	observation, err := policy.ObserveRuleset(ctx, driver.PolicyTarget{Resource: current.Address.String(), State: json.RawMessage(current.Str("policy_target_state"))}, owner)
+	target, err := routerPolicyTarget(current)
+	if err != nil {
+		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
+	}
+	observation, err := policy.ObserveRuleset(ctx, target, owner)
 	if err != nil {
 		if driver.IsCategory(err, driver.ErrorNotFound) {
 			return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: err.Error()}, nil
@@ -71,7 +75,10 @@ func (RouterResourceHandler) Delete(ctx context.Context, pc *ProviderContext, cu
 		if err != nil {
 			return err
 		}
-		target := driver.PolicyTarget{Resource: current.Address.String(), State: json.RawMessage(current.Str("policy_target_state"))}
+		target, err := routerPolicyTarget(current)
+		if err != nil {
+			return err
+		}
 		if err := policy.DeleteRuleset(ctx, target, owner); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
 			return fmt.Errorf("delete router %s policy: %w", current.Address, err)
 		}
@@ -254,7 +261,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		if targetIdentity.Generation != handle.Generation {
 			return state.Resource{}, fmt.Errorf("router policy requires durable target identity matching node generation")
 		}
-		targetRaw, err := json.Marshal(map[string]any{"container_id": handle.ID, "identity": targetIdentity, "bindings": bindings, "attachment_ips": attachmentIPs})
+		targetRaw, err := json.Marshal(map[string]any{"container_id": handle.ID, "bindings": bindings, "attachment_ips": attachmentIPs})
 		if err != nil {
 			return state.Resource{}, err
 		}
@@ -264,7 +271,12 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 				{ID: "nat-forward", Direction: driver.DirectionForward, InputAttachment: cfg.NatFrom, OutputAttachment: cfg.NatTo, Protocol: driver.ProtocolAll, Verdict: driver.VerdictAccept, Counter: true},
 				{ID: "nat-return", Direction: driver.DirectionForward, InputAttachment: cfg.NatTo, OutputAttachment: cfg.NatFrom, Protocol: driver.ProtocolAll, States: []driver.ConnectionState{driver.StateEstablished, driver.StateRelated}, Verdict: driver.VerdictAccept, Counter: true},
 			}, NAT: &driver.NATPolicy{SourceAttachment: cfg.NatFrom, UplinkAttachment: cfg.NatTo, SourceCIDRs: append([]string(nil), fromReq.IPPrefixes...), Masquerade: true}}
-		observation, err := policy.ApplyRuleset(ctx, driver.PolicyTarget{Resource: n.Address.String(), State: targetRaw}, spec)
+		target := driver.PolicyTarget{Resource: n.Address.String(), Identity: targetIdentity, State: targetRaw}
+		persistedTarget, err := driver.EncodePolicyTarget(target)
+		if err != nil {
+			return state.Resource{}, err
+		}
+		observation, err := policy.ApplyRuleset(ctx, target, spec)
 		if err != nil {
 			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy router on NAT policy failure")
 			return state.Resource{}, fmt.Errorf("router %s NAT policy: %w", n.Address.Name, err)
@@ -273,7 +285,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		if err != nil {
 			return state.Resource{}, err
 		}
-		natApplied, policyTable, policyDigest, policyTargetState = true, observation.Table, observation.Digest, string(targetRaw)
+		natApplied, policyTable, policyDigest, policyTargetState = true, observation.Table, observation.Digest, string(persistedTarget)
 		policySpec = string(specRaw)
 	}
 

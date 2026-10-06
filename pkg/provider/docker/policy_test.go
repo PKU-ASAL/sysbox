@@ -55,7 +55,7 @@ func TestPolicyRejectsTargetIdentityConflictBeforeNamespaceAccess(t *testing.T) 
 			})
 			raw, err := json.Marshal(map[string]any{"container_id": "exact-id", "identity": expected})
 			require.NoError(t, err)
-			target := driver.PolicyTarget{Resource: "sysbox_router.node", State: raw}
+			target := driver.PolicyTarget{Resource: "sysbox_router.node", Identity: expected, State: raw}
 			_, err = s.ApplyRuleset(context.Background(), target, driver.RulesetSpec{Owner: "policy"})
 			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
 			_, err = s.ObserveRuleset(context.Background(), target, "policy")
@@ -67,12 +67,12 @@ func TestPolicyRejectsTargetIdentityConflictBeforeNamespaceAccess(t *testing.T) 
 }
 
 func TestDecodeDockerPolicyTargetRequiresContainerAndBindings(t *testing.T) {
-	_, err := decodeDockerPolicyTarget(driver.PolicyTarget{State: json.RawMessage(`{"bindings":{}}`)})
+	_, err := decodeDockerPolicyTarget(driver.PolicyTarget{Resource: "sysbox_router.node", Identity: testOperation(), State: json.RawMessage(`{"bindings":{}}`)})
 	require.ErrorContains(t, err, "container_id")
 
 	raw, err := json.Marshal(dockerPolicyTarget{ContainerID: "router-1", Identity: testOperation(), Bindings: map[string]string{"inside": "eth1", "uplink": "eth0"}})
 	require.NoError(t, err)
-	target, err := decodeDockerPolicyTarget(driver.PolicyTarget{State: raw})
+	target, err := decodeDockerPolicyTarget(driver.PolicyTarget{Resource: "sysbox_router.node", Identity: testOperation(), State: raw})
 	require.NoError(t, err)
 	require.Equal(t, "router-1", target.ContainerID)
 	require.Equal(t, "eth1", target.Bindings["inside"])

@@ -93,6 +93,10 @@ Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe �
 
 ### Resource fencing 迁移进度
 
+2026-10-06 policy 原子更新：删除旧表与写入新表已合并为一次 nft batch。前置 `add table` 保证首次创建和替换使用同一路径；真实 nft E2E 用超长 log prefix 触发拒绝，更新前后旧表全文一致，同时验证创建、正常替换、重复 Apply 和删除。入口 `make test-policy-namespace-e2e` 同时覆盖 namespace FD 替换和事务回滚。
+
+目标契约第一步已类型化：`driver.PolicyTarget.Identity` 独立于私有 `State`，共享 Encode/Decode；runtime 持久完整 target envelope 并在读取时核对地址，旧扁平结构拒绝。剩余的 policy 自身 UID/generation、执行授权与期望 digest CAS 要与持久状态转换一同实现，当前仅有目标身份和原子 batch，不能据此宣称策略生命周期仲裁闭环已完成。
+
 Agent command/event 模型增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。命令已绑定 fencing 身份时，事件必须完整匹配其证明；无 fencing 身份的 legacy 命令仍兼容无证明事件。校验、状态推进与终态退休通过共享 CommandRepository 在同一存储锁/事务内完成；拒绝或提交失败不发布事件缓存或更新 console/Guest 派生状态。Agent ack、执行事件与目标取消事件均回传对应命令的证明，SQLite 保留完整快照中的 fencing 字段。
 
 此处是命令事件层的原子防陈旧写入，不是完整资源侧 fencing：命令派发尚未全面绑定实际资源 generation，Run/NodeOperation/Guest 完成入口与 provider 外部副作用仍需迁移。跨聚合派生状态更新也未成为一个原子事务；真实 Postgres 16 的本仓合同已验收，生产部署未验收。

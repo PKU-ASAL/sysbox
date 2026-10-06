@@ -5,6 +5,7 @@ package network
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -95,4 +96,43 @@ func TestPolicyNamespaceFDReplacementE2E(t *testing.T) {
 	_, err = ObserveRulesetInNetNS(ctx, old, spec.Owner)
 	require.True(t, driver.IsCategory(err, driver.ErrorNotFound), "%v", err)
 	t.Log("real nft Apply/Observe/Delete stayed on held namespace FD after same-name replacement")
+}
+
+func TestPolicyAtomicReplacementRollbackE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_NETWORK_E2E") != "1" {
+		t.Skip("requires isolated namespace privileges and nft/sysbox-netns tools")
+	}
+	name := "sbat-" + uuid.NewString()[:8]
+	require.NoError(t, CreateNetns(name))
+	t.Cleanup(func() { require.NoError(t, DeleteNetns(name)) })
+	ns, err := os.Open("/var/run/netns/" + name)
+	require.NoError(t, err)
+	defer ns.Close()
+	ctx := context.Background()
+	spec := driver.RulesetSpec{Owner: "atomic-e2e", Family: driver.FamilyIPv4, DefaultInput: driver.VerdictDrop}
+	original, err := ApplyRulesetInNetNS(ctx, ns, spec, nil)
+	require.NoError(t, err)
+	before, err := runNFT(ctx, ns, "", "list", "table", "ip", original.Table)
+	require.NoError(t, err)
+	// Syntactically valid but rejected by the kernel: nft log prefixes are
+	// bounded. This exercises rollback after the batch has deleted the table.
+	spec.Rules = []driver.PolicyRule{{ID: strings.Repeat("x", 256), Direction: driver.DirectionInput, Protocol: driver.ProtocolTCP, Verdict: driver.VerdictAccept, Log: true}}
+	_, err = ApplyRulesetInNetNS(ctx, ns, spec, nil)
+	require.Error(t, err, "invalid log prefix must fail the replacement")
+	after, err := runNFT(ctx, ns, "", "list", "table", "ip", original.Table)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "failed replacement must preserve every old chain/rule")
+	observed, err := ObserveRulesetInNetNS(ctx, ns, spec.Owner)
+	require.NoError(t, err)
+	require.Equal(t, original.Digest, observed.Digest)
+	spec.Rules = nil
+	spec.DefaultInput = driver.VerdictAccept
+	updated, err := ApplyRulesetInNetNS(ctx, ns, spec, nil)
+	require.NoError(t, err)
+	require.NotEqual(t, original.Digest, updated.Digest)
+	repeated, err := ApplyRulesetInNetNS(ctx, ns, spec, nil)
+	require.NoError(t, err)
+	require.Equal(t, updated, repeated)
+	require.NoError(t, DeleteRulesetInNetNS(ctx, ns, spec.Owner))
+	t.Log("real nft failed replacement preserved complete prior table; create/update/retry/delete passed")
 }

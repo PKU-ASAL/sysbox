@@ -444,6 +444,10 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（2026-10-06）：`PolicyTarget.Identity` 提升为必填类型字段，与 `Resource` 和 provider 私有 `State` 分开。`policy_target_state` 保存完整 envelope `{resource, identity, state}`，由共享 Encode/Decode 校验；旧仅保存 container_id/bindings/identity 的扁平结构拒绝读取。Docker 的私有 State 不再承担 identity 的协议来源；runtime 的 firewall/router Read/Delete/Recover/Cleanup 均通过新契约。namespace provider 目前只校验身份完整性，真实目标 ownership 核验仍未完成。
+
+Policy Apply 改为一次 nft batch 完成建表/删表/重建。失败 batch 不提交，旧规则保持；成功重建仍会重置计数器，不提供同代并发请求的 CAS 或执行租约。
+
 本次重构对使用者的承诺是：
 
 1. 核心 HCL、CLI 命令和 HTTP 路由尽量保持；

@@ -1,11 +1,13 @@
 package driver
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"net"
 	"regexp"
 	"sort"
@@ -76,8 +78,32 @@ type RulesetSpec struct {
 }
 
 type PolicyTarget struct {
-	Resource string
-	State    json.RawMessage
+	Resource string                      `json:"resource"`
+	Identity substrate.OperationIdentity `json:"identity"`
+	State    json.RawMessage             `json:"state"`
+}
+
+func (t PolicyTarget) Validate() error {
+	state := bytes.TrimSpace(t.State)
+	if t.Resource == "" || t.Identity.Validate() != nil || len(state) == 0 || !json.Valid(state) || state[0] != '{' {
+		return Wrap(ErrorInvalidState, "policy", "complete target resource, identity and provider state required", nil)
+	}
+	return nil
+}
+
+func EncodePolicyTarget(target PolicyTarget) (json.RawMessage, error) {
+	if err := target.Validate(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(target)
+}
+
+func DecodePolicyTarget(raw json.RawMessage) (PolicyTarget, error) {
+	var target PolicyTarget
+	if err := json.Unmarshal(raw, &target); err != nil {
+		return target, Wrap(ErrorInvalidState, "policy", "invalid target record", err)
+	}
+	return target, target.Validate()
 }
 
 type RulesetObservation struct {

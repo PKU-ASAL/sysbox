@@ -415,7 +415,10 @@ func cleanupNodeLikeCheckpoint(ctx context.Context, step OperationStep) (Checkpo
 			if err != nil {
 				return action, err
 			}
-			target := driver.PolicyTarget{Resource: res.Address.String(), State: json.RawMessage(res.Str("policy_target_state"))}
+			target, err := routerPolicyTarget(res)
+			if err != nil {
+				return action, err
+			}
 			if err := policy.DeleteRuleset(ctx, target, res.Str("policy_owner")); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
 				return action, err
 			}
@@ -464,7 +467,10 @@ func recoverCheckpointPolicy(ctx context.Context, res state.Resource, ownerKey s
 	if err != nil {
 		return err
 	}
-	target := driver.PolicyTarget{Resource: res.Address.String(), State: json.RawMessage(res.Str("policy_target_state"))}
+	target, err := routerPolicyTarget(res)
+	if err != nil {
+		return err
+	}
 	if res.Str("policy_table") == "" || res.Str("policy_digest") == "" {
 		return fmt.Errorf("router policy recovery requires recorded table and digest")
 	}

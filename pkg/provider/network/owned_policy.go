@@ -79,6 +79,9 @@ func (Driver) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, own
 
 func decodePolicyTarget(target driver.PolicyTarget) (policyTargetState, error) {
 	var state policyTargetState
+	if err := target.Validate(); err != nil {
+		return state, err
+	}
 	if err := json.Unmarshal(target.State, &state); err != nil {
 		return state, driver.Wrap(driver.ErrorInvalidState, "network", "decode policy target", err)
 	}
@@ -124,12 +127,10 @@ func DeleteRulesetInNetNS(ctx context.Context, ns *os.File, owner string) error 
 }
 
 func applyCompiledInNetNS(ctx context.Context, ns *os.File, plan compiledRuleset) error {
-	// Delete first so re-apply rebuilds the table from scratch. An absent table
-	// is expected; all other failures must stop before the add-table command.
-	if _, err := runNFT(ctx, ns, "", "delete", "table", "ip", plan.Table); err != nil && !isNFTNotFound(err) {
-		return fmt.Errorf("delete existing ruleset: %w", err)
-	}
-	_, err := runNFT(ctx, ns, nftScript(plan), "-f", "-")
+	// nft add is idempotent for tables. Ensure existence, then replace within
+	// one transaction so any failure preserves the entire previous ruleset.
+	script := fmt.Sprintf("add table ip %s\ndelete table ip %s\n", plan.Table, plan.Table) + nftScript(plan)
+	_, err := runNFT(ctx, ns, script, "-f", "-")
 	return err
 }
 

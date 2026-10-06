@@ -301,7 +301,7 @@ func TestNFTApplyPinsNamespaceAcrossDeleteAndAdd(t *testing.T) {
 	t.Setenv("TEST_NAMESPACE_LOG", filepath.Join(dir, "log"))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sysbox-netns"), []byte(`#!/bin/sh
 cat "$1" >> "$TEST_NAMESPACE_LOG"
-if [ "$2" = delete ]; then
+if [ "$2" = -f ]; then
   mv "$TEST_NAMESPACE_PATH" "$TEST_NAMESPACE_PATH.old"
   printf replacement > "$TEST_NAMESPACE_PATH"
 fi
@@ -314,7 +314,27 @@ fi
 	require.NoError(t, err)
 	raw, err := os.ReadFile(filepath.Join(dir, "log"))
 	require.NoError(t, err)
-	require.Equal(t, "originaloriginal", string(raw))
+	require.Equal(t, "original", string(raw))
+}
+
+func TestNFTApplyUsesOneAtomicBatch(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("NFT_CALLS", filepath.Join(dir, "calls"))
+	t.Setenv("NFT_SCRIPT", filepath.Join(dir, "script"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sysbox-netns"), []byte("#!/bin/sh\necho \"$2 $3\" >> \"$NFT_CALLS\"\ncat > \"$NFT_SCRIPT\"\n"), 0755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ns, err := os.Open("/proc/self/ns/net")
+	require.NoError(t, err)
+	defer ns.Close()
+	_, err = ApplyRulesetInNetNS(context.Background(), ns, driver.RulesetSpec{Owner: "atomic"}, nil)
+	require.NoError(t, err)
+	calls, err := os.ReadFile(filepath.Join(dir, "calls"))
+	require.NoError(t, err)
+	require.Equal(t, "-f -\n", string(calls))
+	script, err := os.ReadFile(filepath.Join(dir, "script"))
+	require.NoError(t, err)
+	table := driver.RulesetTableName("atomic")
+	require.Contains(t, string(script), "add table ip "+table+"\ndelete table ip "+table+"\nadd table ip "+table+"\n")
 }
 
 func TestNFTScriptPassesNftSyntaxCheckWhenAvailable(t *testing.T) {

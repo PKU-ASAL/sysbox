@@ -108,7 +108,7 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	if err := targetIdentity.Validate(); err != nil {
 		return state.Resource{}, fmt.Errorf("firewall target lacks durable identity: %w", err)
 	}
-	targetRaw, err := json.Marshal(map[string]any{"container_id": targetResource.ContainerID(), "identity": targetIdentity, "bindings": bindings, "attachment_ips": attachmentIPs})
+	targetRaw, err := json.Marshal(map[string]any{"container_id": targetResource.ContainerID(), "bindings": bindings, "attachment_ips": attachmentIPs})
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -121,7 +121,11 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	if err != nil {
 		return state.Resource{}, err
 	}
-	target := driver.PolicyTarget{Resource: targetAddr.String(), State: targetRaw}
+	target := driver.PolicyTarget{Resource: targetAddr.String(), Identity: targetIdentity, State: targetRaw}
+	persistedTarget, err := driver.EncodePolicyTarget(target)
+	if err != nil {
+		return state.Resource{}, err
+	}
 	observation, err := policy.ApplyRuleset(ctx, target, spec)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("firewall %s: %w", n.Address.Name, err)
@@ -133,7 +137,7 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	inst := map[string]any{
 		"attach_to": targetAddr.String(), "family": string(driver.FamilyIPv4), "owner": owner,
 		"table": observation.Table, "desired_digest": observation.Digest, "observed_digest": observation.Digest,
-		"policy_target_state": string(targetRaw), "policy_spec": string(specRaw), "rules": len(spec.Rules),
+		"policy_target_state": string(persistedTarget), "policy_spec": string(specRaw), "rules": len(spec.Rules),
 	}
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
@@ -266,5 +270,9 @@ func policyState(current state.Resource) (driver.PolicyTarget, string, error) {
 	if raw == "" || owner == "" {
 		return driver.PolicyTarget{}, "", fmt.Errorf("firewall state missing policy identity")
 	}
-	return driver.PolicyTarget{Resource: current.Str("attach_to"), State: json.RawMessage(raw)}, owner, nil
+	target, err := driver.DecodePolicyTarget(json.RawMessage(raw))
+	if err == nil && target.Resource != current.Str("attach_to") {
+		err = fmt.Errorf("firewall target address mismatch")
+	}
+	return target, owner, err
 }

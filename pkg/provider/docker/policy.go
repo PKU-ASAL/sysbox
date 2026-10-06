@@ -19,7 +19,7 @@ import (
 )
 
 type dockerPolicyTarget struct {
-	Identity      substrate.OperationIdentity `json:"identity"`
+	Identity      substrate.OperationIdentity `json:"-"`
 	ContainerID   string                      `json:"container_id"`
 	Bindings      map[string]string           `json:"bindings"`
 	AttachmentIPs map[string][]string         `json:"attachment_ips,omitempty"`
@@ -27,15 +27,16 @@ type dockerPolicyTarget struct {
 
 func decodeDockerPolicyTarget(target driver.PolicyTarget) (dockerPolicyTarget, error) {
 	var state dockerPolicyTarget
+	if err := target.Validate(); err != nil {
+		return state, err
+	}
 	if err := json.Unmarshal(target.State, &state); err != nil {
 		return state, driver.Wrap(driver.ErrorInvalidState, "docker", "decode policy target", err)
 	}
 	if state.ContainerID == "" {
 		return state, driver.Wrap(driver.ErrorInvalidState, "docker", "policy target container_id is required", nil)
 	}
-	if err := state.Identity.Validate(); err != nil {
-		return state, driver.Wrap(driver.ErrorInvalidState, "docker", "policy target identity is required", err)
-	}
+	state.Identity = target.Identity
 	if state.Bindings == nil {
 		state.Bindings = map[string]string{}
 	}
