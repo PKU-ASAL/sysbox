@@ -201,6 +201,9 @@ func stageBaseImage(ctx context.Context, source, destination string) error {
 }
 
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
+	if err := validateHandleIdentity(ctx, h); err != nil {
+		return err
+	}
 	hs := hsFrom(h)
 	if hs.Identity != nil {
 		if identity, ok := substrate.OperationIdentityFromContext(ctx); ok && !sameGeneration(identity, *hs.Identity) {

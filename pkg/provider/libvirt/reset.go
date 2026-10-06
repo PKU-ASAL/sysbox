@@ -97,7 +97,8 @@ func (s *Substrate) DestroyReset(ctx context.Context, handle substrate.ResetHand
 		return err
 	}
 	hs := &HandleState{Identity: &state.OldIdentity, DomainName: state.DomainName, DomainUUID: state.OldDomainUUID, VMDir: state.OldVMDir, DiskPath: filepath.Join(state.OldVMDir, "disk.qcow2")}
-	return s.DestroyNode(ctx, managedNodeHandle(hs))
+	// The validated reset authorizes removal of its recorded old generation.
+	return s.DestroyNode(substrate.WithOperationIdentity(ctx, state.OldIdentity), managedNodeHandle(hs))
 }
 
 func domainOwnsDisk(ctx context.Context, domainName, expectedDisk string) (bool, error) {

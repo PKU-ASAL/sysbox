@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
 )
@@ -109,7 +111,65 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 	}
 	conn := transport.NewSSHConnectionInNamespaceWithTrust(namespace, host, port, user, key, pass, knownHosts, insecureHost)
 	conn.BindExecutionIdentity(handle.ID, handle.Generation)
-	return conn, nil
+	return &domainConnection{ssh: conn, handle: handle}, nil
+}
+
+// Keep the gate on the connection itself: runtime callers use these SPIs
+// directly, without passing through ExecInNode or CopyToNode.
+type domainConnection struct {
+	ssh    *transport.SSHConnection
+	handle substrate.NodeHandle
+}
+
+func (c *domainConnection) validate(ctx context.Context) error {
+	_, exists, err := existingDomainUUID(ctx, c.handle)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return driver.Wrap(driver.ErrorNotFound, subName, "domain absent", nil)
+	}
+	return nil
+}
+
+func (c *domainConnection) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (result substrate.ExecResult, err error) {
+	ctx, cancel := req.Context(ctx)
+	defer cancel()
+	defer func() { result, err = substrate.FinishExecution(ctx, result, err) }()
+	if err := c.validate(ctx); err != nil {
+		return result, err
+	}
+	return c.ssh.Exec(ctx, req, stdout, stderr)
+}
+
+func (c *domainConnection) Start(ctx context.Context, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
+	ctx, cancel := req.Context(ctx)
+	defer cancel()
+	if err := c.validate(ctx); err != nil {
+		return substrate.ExecutionHandle{}, err
+	}
+	return c.ssh.Start(ctx, req)
+}
+
+func (c *domainConnection) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
+	handle, err := c.Start(ctx, req)
+	return handle.PID, err
+}
+
+func (c *domainConnection) CopyFile(ctx context.Context, src, dst string) error {
+	if err := c.validate(ctx); err != nil {
+		return err
+	}
+	return c.ssh.CopyFile(ctx, src, dst)
+}
+
+func (c *domainConnection) WaitReady(ctx context.Context, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := c.validate(ctx); err != nil {
+		return err
+	}
+	return c.ssh.WaitReady(ctx, timeout)
 }
 
 func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
@@ -117,11 +177,14 @@ func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle
 	if err != nil {
 		return nil, err
 	}
-	ssh, ok := conn.(*transport.SSHConnection)
+	guarded, ok := conn.(*domainConnection)
 	if !ok {
 		return nil, substrate.ErrNotSupported
 	}
-	return ssh.OpenConsole(ctx, transport.ConsoleRequest{
+	if err := guarded.validate(ctx); err != nil {
+		return nil, err
+	}
+	return guarded.ssh.OpenConsole(ctx, transport.ConsoleRequest{
 		Cmd:   req.Cmd,
 		Shell: req.Shell,
 		Env:   req.Env,

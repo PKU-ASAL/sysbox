@@ -37,6 +37,10 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .PHONY: test-firecracker-e2e
 .PHONY: test-docker-generation-e2e
+.PHONY: test-libvirt-generation-e2e
+
+test-libvirt-generation-e2e: ## Run real libvirt managed-generation effect rejection
+	SYSBOX_LIBVIRT_E2E=1 $(GOENV) $(GO) test -tags e2e ./pkg/provider/libvirt -run '^TestLibvirtRealGenerationEffectsE2E$$' -count=1 -v -timeout=2m
 
 test-docker-generation-e2e: ## Run real Docker managed-generation effect rejection
 	$(GOENV) $(GO) test -tags e2e ./pkg/provider/docker -run '^TestDockerRealGenerationEffectsE2E$$' -count=1 -v -timeout=3m

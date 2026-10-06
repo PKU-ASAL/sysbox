@@ -89,7 +89,8 @@ func (s *Substrate) verifyResetDomain(ctx context.Context, state *resetHandleSta
 	if old {
 		id, uuid, dir = state.OldIdentity, state.OldDomainUUID, state.OldVMDir
 	}
-	_, exists, err := existingDomainUUID(ctx, substrate.NodeHandle{ID: uuid})
+	h := managedNodeHandle(&HandleState{Identity: &id, DomainUUID: uuid})
+	_, exists, err := existingDomainUUID(substrate.WithOperationIdentity(ctx, id), h)
 	if err != nil || !exists {
 		return exists, err
 	}

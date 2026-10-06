@@ -40,7 +40,7 @@ Provider generation fencing 第一阶段已接入 substrate observation：NodeOb
 
 2026-10-05 环境复核：沙箱内看不到 /dev/kvm，不代表宿主机无 KVM。宿主机执行可访问 /dev/kvm、/dev/vhost-vsock，缓存含 Firecracker 1.15.1、vmlinux-5.10.245 和 Ubuntu rootfs。`make test-firecracker-e2e` 已实跑：基础 create/start/observe/destroy、reset generation 1→2、旧 generation 的 destroy/start/stop/pause/resume 拒绝，以及新进程空 vmStore 的 manifest discover/adopt/pause/resume。完整真实 E2E 共 29 秒通过。控制进程 kill 场景随后由用户在宿主机运行通过：TestFirecrackerRealControllerCrashRecoveryE2E，5.90 秒，存活 VM PID 3134309 被独立进程 adopt 并销毁（用户提供的运行记录）。
 
-此前普通 go test 不运行 e2e build tag；test-privileged 也未包含 Firecracker package。已有 heterogeneous matrix/reset 脚本依赖 PATH 中的 firecracker，缓存二进制需通过 SYSBOX_FIRECRACKER_BIN 显式指定。新直接入口接受 SYSBOX_FIRECRACKER_BIN、SYSBOX_FIRECRACKER_KERNEL、SYSBOX_FIRECRACKER_ROOTFS；默认从用户 sysbox cache 查找。本轮后续宿主机回归两次遭自动审批超时，未执行；最终入口编译通过。Docker 的实机 generation gate 验证见下节；libvirt 实机生命周期尚未验收。
+此前普通 go test 不运行 e2e build tag；test-privileged 也未包含 Firecracker package。已有 heterogeneous matrix/reset 脚本依赖 PATH 中的 firecracker，缓存二进制需通过 SYSBOX_FIRECRACKER_BIN 显式指定。新直接入口接受 SYSBOX_FIRECRACKER_BIN、SYSBOX_FIRECRACKER_KERNEL、SYSBOX_FIRECRACKER_ROOTFS；默认从用户 sysbox cache 查找。本轮后续宿主机回归两次遭自动审批超时，未执行；最终入口编译通过。Docker 和 libvirt 的实机 generation gate 验证见下节。
 
 
 ### Docker 副作用 generation gate 实测
@@ -50,6 +50,14 @@ managed NodeHandle（generation > 0）或带 OperationIdentity 的调用，在 S
 新增 `TestDockerRealGenerationEffectsE2E` 使用缓存 alpine:3.22 和唯一命名临时容器，已真实 Docker 实跑通过：旧 generation 生命周期/前台及后台执行/Copy 拒绝，原 PID 保持运行、禁止的标记文件未产生；匹配身份的 Exec、独立 provider rediscovery、Pause/Resume 正常。测试清理仅针对所创建 container ID。
 
 此项不等于所有 provider 全路径 fencing 完成：无 OperationIdentity 且 generation=0 的旧入口尚未迁移；未增加同代际 lease epoch 仲裁，也未取消已经启动的旧 guest 进程。Docker network/reset 自有校验、其他 substrate 与运行入口仍需统一审核。
+
+### libvirt 副作用 generation gate 实测（2026-10-06）
+
+managed 生命周期入口统一核对 context、handle generation 和 UUID。Stop/Destroy/Pause/Resume 以及 Connection.Exec/Start/ExecBackground/CopyFile、Console、WaitReady，在副作用前按精确 UUID 读取 domain XML，校验实际 owner/resource/topology/generation；查询失败不视为不存在。Start 保留 managed discovery 对已定义 domain 或 prepared generation 的校验，并补齐 handle 一致性检查。domain 已不存在时，旧代际调用仍不能清理目录；reset 验证目标代际授权后，显式用记录中的旧代际身份清理旧资源。
+
+`LIBVIRT_DEFAULT_URI=qemu:///system make test-libvirt-generation-e2e` 使用随机名称与 UUID 的独立无磁盘 VM，已在本机真实 libvirt 通过：拒绝旧 context、拒绝与实际 metadata 不符的旧 handle，VM 保持 running；匹配代际可以 Pause/Resume/Destroy。只清理测试创建的 UUID。该测试不依赖 guest 镜像，不代表 guest SSH 成功执行、libvirt reset 或跨宿主机恢复已完成实测。
+
+边界：这是副作用前身份检查，libvirt 不提供 metadata 比较与操作的原子事务；不保证检查后外部管理员重建同 UUID 或修改 metadata 的并发隔离。SSH 地址与 guest 身份还没有资源端证明，同代际 lease epoch 仲裁与已启动进程撤销仍未实现。无身份、generation=0 的导入路径仍需显式 adoption 迁移，不能据此宣称所有旧架构入口已清除。
 
 ### Resource fencing 迁移进度
 

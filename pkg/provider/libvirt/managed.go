@@ -64,6 +64,9 @@ func domainNames(ctx context.Context) ([]string, error) {
 }
 
 func existingDomainUUID(ctx context.Context, h substrate.NodeHandle) (string, bool, error) {
+	if err := validateHandleIdentity(ctx, h); err != nil {
+		return "", false, err
+	}
 	target := hsFrom(h).DomainUUID
 	if target == "" {
 		target = h.ID
@@ -79,10 +82,44 @@ func existingDomainUUID(ctx context.Context, h substrate.NodeHandle) (string, bo
 	}
 	for _, id := range strings.Fields(string(raw)) {
 		if id == target {
+			if hsFrom(h).Identity != nil {
+				raw, err := virshQuery(ctx, "dumpxml", target)
+				if err != nil {
+					return "", false, err
+				}
+				var domain domainXML
+				if err := xml.Unmarshal(raw, &domain); err != nil {
+					return "", false, driver.Wrap(driver.ErrorUnavailable, subName, "invalid domain XML", err)
+				}
+				if domain.UUID != target || domain.Metadata == nil || domain.Metadata.Managed == nil {
+					return "", false, driver.Wrap(driver.ErrorInvalidState, subName, "domain ownership metadata missing or UUID mismatch", nil)
+				}
+				m := domain.Metadata.Managed
+				actual := substrate.OperationIdentity{OwnerUID: m.OwnerUID, ResourceUID: m.ResourceUID, TopologyUID: m.TopologyUID, Generation: m.Generation}
+				if !sameGeneration(actual, *hsFrom(h).Identity) {
+					return "", false, driver.Wrap(driver.ErrorInvalidState, subName, "domain ownership or generation conflict", nil)
+				}
+			}
 			return target, true, nil
 		}
 	}
 	return target, false, nil
+}
+
+// Validate even when the domain is absent: Destroy may still remove its disk.
+func validateHandleIdentity(ctx context.Context, h substrate.NodeHandle) error {
+	hs := hsFrom(h)
+	expected, supplied := substrate.OperationIdentityFromContext(ctx)
+	if hs.Identity == nil && h.Generation == 0 && !supplied {
+		return nil
+	}
+	if hs.Identity == nil || hs.Identity.Validate() != nil || h.Generation != hs.Identity.Generation || h.ID != hs.DomainUUID {
+		return driver.Wrap(driver.ErrorInvalidState, subName, "managed handle identity mismatch", nil)
+	}
+	if supplied && (expected.Validate() != nil || !sameGeneration(expected, *hs.Identity)) {
+		return driver.Wrap(driver.ErrorInvalidState, subName, "operation generation does not own domain", nil)
+	}
+	return nil
 }
 func domainNameAvailable(ctx context.Context, name string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
