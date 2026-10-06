@@ -444,6 +444,8 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（policy write-ahead evidence）：执行账户除共享 `/run/sysbox/policy-locks` 外，还需持久访问 `/var/lib/sysbox/policy-evidence`。Delete 成功后保留 deleted 记录；同代 Apply 不再允许重新创建，必须使用更高 policy generation。deleting 阶段仅可重试删除，不能直接 Apply。该目录是资源侧执行证据，不能当缓存删除；容器部署时，各执行进程需要共享同一 evidence/lock 存储。本轮未提供跨宿主迁移或 namespace 重建后的证据迁移协议。
+
 实施补充（policy 资源侧代际）：`PolicyTarget` 新增必填 `policy` 身份，与目标 `identity` 同 owner/topology，但独立 resource UID/generation；旧缺失 policy 字段的记录拒绝。Apply 的同 generation 内容不可变，相同 digest 重试不重建规则；更改内容需要新的 policy generation。Docker/namespace Policy SPI 已接入托管入口，旧无 generation 表注释的表拒绝操作。宿主执行账户需要访问共享 `/run/sysbox/policy-locks`；该本机锁不是 LeaseEpoch 授权，也不保留删除 tombstone。
 
 实施补充（2026-10-06）：`PolicyTarget.Identity` 提升为必填类型字段，与 `Resource` 和 provider 私有 `State` 分开。`policy_target_state` 保存完整 envelope `{resource, identity, state}`，由共享 Encode/Decode 校验；旧仅保存 container_id/bindings/identity 的扁平结构拒绝读取。Docker 的私有 State 不再承担 identity 的协议来源；runtime 的 firewall/router Read/Delete/Recover/Cleanup 均通过新契约。namespace provider 目前只校验身份完整性，真实目标 ownership 核验仍未完成。

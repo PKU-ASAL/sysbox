@@ -117,6 +117,14 @@ func ApplyManagedRuleset(ctx context.Context, ns *os.File, id substrate.Operatio
 		return driver.RulesetObservation{}, err
 	}
 	defer unlock()
+	store := policyEvidenceStore{root: "/var/lib/sysbox/policy-evidence"}
+	evidence, err := store.load(ns, spec.Owner)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	if err := evidence.checkApply(id, plan.Digest); err != nil {
+		return driver.RulesetObservation{}, err
+	}
 	current, marker, err := inspectManagedPolicy(ctx, ns, spec.Owner)
 	if err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
 		return driver.RulesetObservation{}, err
@@ -127,11 +135,22 @@ func ApplyManagedRuleset(ctx context.Context, ns *os.File, id substrate.Operatio
 			return driver.RulesetObservation{}, err
 		}
 		if retry {
+			if err := store.save(ns, spec.Owner, policyEvidence{Version: 1, Identity: id, Digest: plan.Digest, Phase: "active"}); err != nil {
+				return driver.RulesetObservation{}, err
+			}
 			return current, nil
 		}
 	}
 	plan.IdentityMarker = policyIdentityMarker(id)
+	intent := policyEvidence{Version: 1, Identity: id, Digest: plan.Digest, Phase: "prepared"}
+	if err := store.save(ns, spec.Owner, intent); err != nil {
+		return driver.RulesetObservation{}, err
+	}
 	if err := applyCompiledInNetNS(ctx, ns, plan); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	intent.Phase = "active"
+	if err := store.save(ns, spec.Owner, intent); err != nil {
 		return driver.RulesetObservation{}, err
 	}
 	return driver.RulesetObservation{Table: plan.Table, Digest: plan.Digest}, nil
@@ -146,6 +165,13 @@ func ObserveManagedRuleset(ctx context.Context, ns *os.File, id substrate.Operat
 		return driver.RulesetObservation{}, err
 	}
 	defer unlock()
+	evidence, err := (policyEvidenceStore{root: "/var/lib/sysbox/policy-evidence"}).load(ns, owner)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	if err := evidence.checkIdentity(id); err != nil {
+		return driver.RulesetObservation{}, err
+	}
 	observed, marker, err := inspectManagedPolicy(ctx, ns, owner)
 	if err == nil && marker != policyIdentityMarker(id) {
 		err = driver.Wrap(driver.ErrorInvalidState, "network", "policy generation conflict", nil)
@@ -162,9 +188,20 @@ func DeleteManagedRuleset(ctx context.Context, ns *os.File, id substrate.Operati
 		return err
 	}
 	defer unlock()
+	store := policyEvidenceStore{root: "/var/lib/sysbox/policy-evidence"}
+	evidence, err := store.load(ns, owner)
+	if err != nil {
+		return err
+	}
+	if err := evidence.checkIdentity(id); err != nil {
+		return err
+	}
+	if evidence != nil && evidence.Identity.Generation != id.Generation {
+		return policyEvidenceConflict("delete requires exact durable policy generation")
+	}
 	_, marker, err := inspectManagedPolicy(ctx, ns, owner)
 	if driver.IsCategory(err, driver.ErrorNotFound) {
-		return nil
+		return store.save(ns, owner, policyEvidence{Version: 1, Identity: id, Phase: "deleted"})
 	}
 	if err != nil {
 		return err
@@ -172,5 +209,13 @@ func DeleteManagedRuleset(ctx context.Context, ns *os.File, id substrate.Operati
 	if marker != policyIdentityMarker(id) {
 		return driver.Wrap(driver.ErrorInvalidState, "network", "policy generation conflict", nil)
 	}
-	return DeleteRulesetInNetNS(ctx, ns, owner)
+	intent := policyEvidence{Version: 1, Identity: id, Phase: "deleting"}
+	if err := store.save(ns, owner, intent); err != nil {
+		return err
+	}
+	if err := DeleteRulesetInNetNS(ctx, ns, owner); err != nil {
+		return err
+	}
+	intent.Phase = "deleted"
+	return store.save(ns, owner, intent)
 }

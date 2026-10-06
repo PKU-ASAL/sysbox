@@ -206,6 +206,25 @@ func TestPolicyGenerationFencingE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, DeleteManagedRuleset(ctx, ns, id, spec.Owner))
 	require.NoError(t, DeleteManagedRuleset(ctx, ns, id, spec.Owner))
+	_, err = ApplyManagedRuleset(ctx, ns, id, spec, nil)
+	require.Error(t, err, "deleted generation must not resurrect")
+	cmd = exec.Command(os.Args[0], "-test.run=^TestPolicyGenerationProcessHelper$", "-test.v")
+	cmd.Env = append(os.Environ(), "SYSBOX_POLICY_TEST_NS="+name, "SYSBOX_POLICY_TEST_RETIRED=1")
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	id.Generation++
+	_, err = ApplyManagedRuleset(ctx, ns, id, spec, nil)
+	require.NoError(t, err)
+	// Model a crash after physical removal and before the final evidence write.
+	store := policyEvidenceStore{root: "/var/lib/sysbox/policy-evidence"}
+	require.NoError(t, store.save(ns, spec.Owner, policyEvidence{Version: 1, Identity: id, Phase: "deleting"}))
+	require.NoError(t, DeleteRulesetInNetNS(ctx, ns, spec.Owner))
+	_, err = ApplyManagedRuleset(ctx, ns, id, spec, nil)
+	require.Error(t, err)
+	require.NoError(t, DeleteManagedRuleset(ctx, ns, id, spec.Owner))
+	retired, err := store.load(ns, spec.Owner)
+	require.NoError(t, err)
+	require.Equal(t, "deleted", retired.Phase)
 	t.Log("stale Apply/Delete rejected; independent-process retry and concurrent generation arbitration passed")
 }
 
@@ -219,6 +238,11 @@ func TestPolicyGenerationProcessHelper(t *testing.T) {
 	defer ns.Close()
 	id := generationPolicyIdentity()
 	spec := driver.RulesetSpec{Owner: "generation-e2e", Family: driver.FamilyIPv4, Rules: []driver.PolicyRule{{ID: "quoted-{", Direction: driver.DirectionInput, Protocol: driver.ProtocolTCP, Verdict: driver.VerdictAccept, Log: true}}}
+	if os.Getenv("SYSBOX_POLICY_TEST_RETIRED") == "1" {
+		_, err := ApplyManagedRuleset(context.Background(), ns, id, spec, nil)
+		require.Error(t, err, "new process must not resurrect old policy")
+		return
+	}
 	observed, err := ObserveManagedRuleset(context.Background(), ns, id, spec.Owner)
 	require.NoError(t, err)
 	retried, err := ApplyManagedRuleset(context.Background(), ns, id, spec, nil)

@@ -93,6 +93,12 @@ Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe �
 
 ### Resource fencing 迁移进度
 
+2026-10-06 policy 删除后防复活：增加宿主资源侧 write-ahead evidence，存放于 `/var/lib/sysbox/policy-evidence`，按 namespace dev/inode 和 policy owner 隔离。Apply 先持久化 prepared（UID/generation/不可变 digest），nft 成功后写 active；Delete 先写 deleting，再删除规则，最后写 deleted。相同或旧代际不能绕过删除记录重新创建，新的代际可在删除完成后创建；deleting 阻止任何 Apply，Delete 重试可以收敛物理删除已完成但记录未完成的窗口。
+
+所有读取/写入仍处于同一 namespace flock 内。记录写入使用临时文件、fsync、rename 和目录 fsync；加载要求版本/身份/状态合法，拒绝损坏、符号链接、非普通文件和超限内容，使用非阻塞 open 避免 FIFO 导致持锁永久等待。持久化失败不报告成功；nft 失败后 prepared 意图保留，旧代不能夺回写权限。
+
+真实内核 E2E 已覆盖删除后同进程及新进程旧请求拒绝、更高代重新创建、模拟 deleting 后规则已删除的恢复重试。保证限定为同一宿主、共享 evidence/lock 目录、同一个 namespace incarnation；主机重启或 namespace 重建后的身份映射、跨宿主租约仍未解决。不得单独清空 evidence 目录作为故障修复；这样会丢失已删除代际的防复活证据。
+
 2026-10-06 policy 资源侧代际：`PolicyTarget.Policy` 保存策略自己的 operation identity，与目标节点 identity 分开。Firewall 使用自身 action identity；router NAT 使用节点 UID 派生的 `/nat` UID。nft 表持久化 owner/topology/resource 摘要及 generation；同代同 digest 重试只读取，旧代、外来 UID、同代不同 digest 拒绝，新代在单 batch 中替换。Apply/Observe/Delete 共用 `/run/sysbox/policy-locks` 下按 namespace dev/inode 的 flock，锁文件保留，避免 unlink 后等待者和新调用分裂为两把锁。
 
 真实隔离内核 E2E 已验证：旧代 Apply/Delete 拒绝且整表不变、独立进程观察及重试、同代两个不同 digest 并发更新只有一个成功、当前代删除及重复删除。日志前缀带 `{` 的规则纳入回归；文本表解析识别引号和转义，找到表头但结构损坏返回冲突，不能作为 absent 授权覆盖。
