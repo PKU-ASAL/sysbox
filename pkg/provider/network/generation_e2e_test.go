@@ -57,3 +57,42 @@ func TestIsolatedNetworkGenerationRecoveryE2E(t *testing.T) {
 	require.NoFileExists(t, d.ownershipPath(spec.Name))
 	t.Log("real namespace/bridge/veth generation replacement, stale rejection, and interrupted-delete recovery passed")
 }
+
+func TestPolicyNamespaceFDReplacementE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_NETWORK_E2E") != "1" {
+		t.Skip("requires isolated namespace privileges and nft/sysbox-netns tools")
+	}
+	name := "sbfd-" + uuid.NewString()[:8]
+	require.NoError(t, CreateNetns(name))
+	t.Cleanup(func() { require.NoError(t, DeleteNetns(name)) })
+	old, err := os.Open("/var/run/netns/" + name)
+	require.NoError(t, err)
+	defer old.Close()
+	ctx := context.Background()
+	spec := driver.RulesetSpec{Owner: "fd-e2e", Family: driver.FamilyIPv4}
+	first, err := ApplyRulesetInNetNS(ctx, old, spec, nil)
+	require.NoError(t, err)
+	require.NoError(t, DeleteNetns(name))
+	require.NoError(t, CreateNetns(name))
+	replacement, err := os.Open("/var/run/netns/" + name)
+	require.NoError(t, err)
+	defer replacement.Close()
+	oldInfo, err := old.Stat()
+	require.NoError(t, err)
+	newInfo, err := replacement.Stat()
+	require.NoError(t, err)
+	require.False(t, os.SameFile(oldInfo, newInfo))
+	spec.DefaultInput = driver.VerdictAccept
+	updated, err := ApplyRulesetInNetNS(ctx, old, spec, nil)
+	require.NoError(t, err)
+	require.NotEqual(t, first.Digest, updated.Digest)
+	observed, err := ObserveRulesetInNetNS(ctx, old, spec.Owner)
+	require.NoError(t, err)
+	require.Equal(t, updated.Digest, observed.Digest)
+	_, err = ObserveRulesetInNetNS(ctx, replacement, spec.Owner)
+	require.True(t, driver.IsCategory(err, driver.ErrorNotFound), "%v", err)
+	require.NoError(t, DeleteRulesetInNetNS(ctx, old, spec.Owner))
+	_, err = ObserveRulesetInNetNS(ctx, old, spec.Owner)
+	require.True(t, driver.IsCategory(err, driver.ErrorNotFound), "%v", err)
+	t.Log("real nft Apply/Observe/Delete stayed on held namespace FD after same-name replacement")
+}

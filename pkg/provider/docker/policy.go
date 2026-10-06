@@ -47,20 +47,15 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	pid, err := s.policyTargetPID(ctx, state)
+	ns, err := s.policyTargetNamespace(ctx, state)
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	netnsPath := fmt.Sprintf("/proc/%d/ns/net", pid)
 
 	// Resolve attachment IPs to guest devices by listing interfaces inside the
 	// container netns. Interface listing uses vishvananda/netlink (which carries
 	// a socket deadline) rather than the nftables netlink conn that was removed
 	// from the firewall path.
-	ns, err := os.Open(netnsPath)
-	if err != nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "open container network namespace", err)
-	}
 	defer ns.Close()
 	interfaces, err := policyInterfacesInNetNSFD(int(ns.Fd()))
 	if err != nil {
@@ -77,7 +72,7 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 		state.Bindings[logical] = device
 	}
 
-	observation, err := networkprovider.ApplyRulesetInNetNS(ctx, netnsPath, spec, state.Bindings)
+	observation, err := networkprovider.ApplyRulesetInNetNS(ctx, ns, spec, state.Bindings)
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "apply ruleset", err)
 	}
@@ -142,11 +137,12 @@ func (s *Substrate) ObserveRuleset(ctx context.Context, target driver.PolicyTarg
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	pid, err := s.policyTargetPID(ctx, state)
+	ns, err := s.policyTargetNamespace(ctx, state)
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	return networkprovider.ObserveRulesetInNetNS(ctx, fmt.Sprintf("/proc/%d/ns/net", pid), owner)
+	defer ns.Close()
+	return networkprovider.ObserveRulesetInNetNS(ctx, ns, owner)
 }
 
 func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, owner string) error {
@@ -154,11 +150,52 @@ func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarge
 	if err != nil {
 		return err
 	}
-	pid, err := s.policyTargetPID(ctx, state)
+	ns, err := s.policyTargetNamespace(ctx, state)
 	if err != nil {
 		return err
 	}
-	return networkprovider.DeleteRulesetInNetNS(ctx, fmt.Sprintf("/proc/%d/ns/net", pid), owner)
+	defer ns.Close()
+	return networkprovider.DeleteRulesetInNetNS(ctx, ns, owner)
+}
+
+// Hold the kernel namespace object, then recheck its binding to the managed
+// container. Subsequent helpers inherit this FD rather than reopening a PID.
+func (s *Substrate) policyTargetNamespace(ctx context.Context, target dockerPolicyTarget) (*os.File, error) {
+	pid, err := s.policyTargetPID(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/proc/%d/ns/net", pid)
+	ns, err := os.Open(path)
+	if err != nil {
+		return nil, driver.Wrap(driver.ErrorUnavailable, "docker", "open policy namespace", err)
+	}
+	verified := false
+	defer func() {
+		if !verified {
+			_ = ns.Close()
+		}
+	}()
+	currentPID, err := s.policyTargetPID(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	if currentPID != pid {
+		return nil, driver.Wrap(driver.ErrorInvalidState, "docker", "policy target restarted during namespace acquisition", nil)
+	}
+	held, err := ns.Stat()
+	if err != nil {
+		return nil, err
+	}
+	current, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(held, current) {
+		return nil, driver.Wrap(driver.ErrorInvalidState, "docker", "policy namespace changed during acquisition", nil)
+	}
+	verified = true
+	return ns, nil
 }
 
 // policyTargetPID returns the host PID of a policy target container, mapping a

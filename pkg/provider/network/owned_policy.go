@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -37,7 +38,12 @@ func (Driver) ApplyRuleset(ctx context.Context, target driver.PolicyTarget, spec
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "compile ruleset", err)
 	}
-	if err := applyCompiledInNetNS(ctx, "/var/run/netns/"+state.Namespace, plan); err != nil {
+	ns, err := os.Open("/var/run/netns/" + state.Namespace)
+	if err != nil {
+		return driver.RulesetObservation{}, networkQueryError("open policy namespace", err)
+	}
+	defer ns.Close()
+	if err := applyCompiledInNetNS(ctx, ns, plan); err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "network", "apply ruleset", err)
 	}
 	return driver.RulesetObservation{Table: plan.Table, Digest: plan.Digest}, nil
@@ -50,7 +56,12 @@ func (Driver) ObserveRuleset(ctx context.Context, target driver.PolicyTarget, ow
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	return ObserveRulesetInNetNS(ctx, "/var/run/netns/"+state.Namespace, owner)
+	ns, err := os.Open("/var/run/netns/" + state.Namespace)
+	if err != nil {
+		return driver.RulesetObservation{}, networkQueryError("open policy namespace", err)
+	}
+	defer ns.Close()
+	return ObserveRulesetInNetNS(ctx, ns, owner)
 }
 
 func (Driver) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, owner string) error {
@@ -58,7 +69,12 @@ func (Driver) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, own
 	if err != nil {
 		return err
 	}
-	return DeleteRulesetInNetNS(ctx, "/var/run/netns/"+state.Namespace, owner)
+	ns, err := os.Open("/var/run/netns/" + state.Namespace)
+	if err != nil {
+		return networkQueryError("open policy namespace", err)
+	}
+	defer ns.Close()
+	return DeleteRulesetInNetNS(ctx, ns, owner)
 }
 
 func decodePolicyTarget(target driver.PolicyTarget) (policyTargetState, error) {
@@ -75,60 +91,65 @@ func decodePolicyTarget(target driver.PolicyTarget) (policyTargetState, error) {
 	return state, nil
 }
 
-// ApplyRulesetInNetNS compiles the spec and applies it inside the target netns
-// path via `nft -f` (an nsenter subprocess, killable on ctx cancellation).
-func ApplyRulesetInNetNS(ctx context.Context, netnsPath string, spec driver.RulesetSpec, bindings map[string]string) (driver.RulesetObservation, error) {
+// ApplyRulesetInNetNS borrows an open namespace file for the complete apply.
+// The caller retains ownership and must keep it open until this call returns.
+func ApplyRulesetInNetNS(ctx context.Context, ns *os.File, spec driver.RulesetSpec, bindings map[string]string) (driver.RulesetObservation, error) {
 	plan, err := compileRuleset(spec, bindings)
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	if err := applyCompiledInNetNS(ctx, netnsPath, plan); err != nil {
+	if err := applyCompiledInNetNS(ctx, ns, plan); err != nil {
 		return driver.RulesetObservation{}, err
 	}
 	return driver.RulesetObservation{Table: plan.Table, Digest: plan.Digest}, nil
 }
 
-// ObserveRulesetInNetNS reads the ruleset inside the target netns path via
-// `nft list ruleset` (an nsenter subprocess, killable).
-func ObserveRulesetInNetNS(ctx context.Context, netnsPath string, owner string) (driver.RulesetObservation, error) {
-	out, err := runNFT(ctx, netnsPath, "", "list", "ruleset")
+// ObserveRulesetInNetNS borrows an open namespace file for the bounded query.
+func ObserveRulesetInNetNS(ctx context.Context, ns *os.File, owner string) (driver.RulesetObservation, error) {
+	out, err := runNFT(ctx, ns, "", "list", "ruleset")
 	if err != nil {
 		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "network", "list nftables ruleset", err)
 	}
 	return observeFromNFTList(out, owner)
 }
 
-// DeleteRulesetInNetNS removes the owned table inside the target netns path.
-// Deletion is best-effort: an already-absent table is the common case, and any
-// other removal failure is self-healed by the next apply, which always rebuilds.
-func DeleteRulesetInNetNS(ctx context.Context, netnsPath string, owner string) error {
-	_, err := runNFT(ctx, netnsPath, "", "delete", "table", "ip", driver.RulesetTableName(owner))
+// DeleteRulesetInNetNS borrows an open namespace file to remove the owned table.
+// Only a missing table is treated as success; other failures are returned.
+func DeleteRulesetInNetNS(ctx context.Context, ns *os.File, owner string) error {
+	_, err := runNFT(ctx, ns, "", "delete", "table", "ip", driver.RulesetTableName(owner))
 	if err != nil && !isNFTNotFound(err) {
 		return driver.Wrap(driver.ErrorUnavailable, "network", "delete nftables ruleset", err)
 	}
 	return nil
 }
 
-func applyCompiledInNetNS(ctx context.Context, netnsPath string, plan compiledRuleset) error {
+func applyCompiledInNetNS(ctx context.Context, ns *os.File, plan compiledRuleset) error {
 	// Delete first so re-apply rebuilds the table from scratch. An absent table
 	// is expected; all other failures must stop before the add-table command.
-	if _, err := runNFT(ctx, netnsPath, "", "delete", "table", "ip", plan.Table); err != nil && !isNFTNotFound(err) {
+	if _, err := runNFT(ctx, ns, "", "delete", "table", "ip", plan.Table); err != nil && !isNFTNotFound(err) {
 		return fmt.Errorf("delete existing ruleset: %w", err)
 	}
-	_, err := runNFT(ctx, netnsPath, nftScript(plan), "-f", "-")
+	_, err := runNFT(ctx, ns, nftScript(plan), "-f", "-")
 	return err
 }
 
-// runNFT runs `nft <args...>` inside the target netns path via the sysbox-netns
+// runNFT runs `nft <args...>` inside the held namespace via the sysbox-netns
 // helper (a shim over nsenter). The helper runs as a killable
 // subprocess, so a wedged netfilter operation can no longer hang the caller the
 // way an in-process netlink read did. stdin, when non-empty, is piped through
 // to `nft` (used for `-f -`).
-func runNFT(ctx context.Context, netnsPath, stdin string, args ...string) (string, error) {
+func runNFT(ctx context.Context, ns *os.File, stdin string, args ...string) (string, error) {
+	if ns == nil {
+		return "", fmt.Errorf("policy namespace file is required")
+	}
+	if _, err := ns.Stat(); err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(ctx, netnsTimeout)
 	defer cancel()
-	full := append([]string{netnsPath}, args...)
+	full := append([]string{"/proc/self/fd/3"}, args...)
 	cmd := exec.CommandContext(ctx, "sysbox-netns", full...)
+	cmd.ExtraFiles = []*os.File{ns}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {

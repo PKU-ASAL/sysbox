@@ -3,8 +3,10 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -74,4 +76,34 @@ func TestDecodeDockerPolicyTargetRequiresContainerAndBindings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "router-1", target.ContainerID)
 	require.Equal(t, "eth1", target.Bindings["inside"])
+}
+
+func TestPolicyNamespaceRechecksContainerBeforeUse(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprint(changed), func(t *testing.T) {
+			calls := 0
+			s := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				pid := os.Getpid()
+				if changed && calls > 1 {
+					pid++
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"Id": "id", "Config": map[string]any{"Labels": operationLabels(testOperation())}, "State": map[string]any{"Running": true, "Pid": pid}})
+			})
+			ns, err := s.policyTargetNamespace(context.Background(), dockerPolicyTarget{ContainerID: "id", Identity: testOperation()})
+			if changed {
+				require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+				require.Nil(t, ns)
+			} else {
+				require.NoError(t, err)
+				defer ns.Close()
+				actual, err := ns.Stat()
+				require.NoError(t, err)
+				expected, err := os.Stat("/proc/self/ns/net")
+				require.NoError(t, err)
+				require.True(t, os.SameFile(actual, expected))
+			}
+			require.Equal(t, 2, calls)
+		})
+	}
 }

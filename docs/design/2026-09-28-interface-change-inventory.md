@@ -434,6 +434,14 @@ Docker policy 的 `PolicyTarget.State` JSON 新增必填 `identity`（owner UID�
 
 Apply/Observe/Delete 在 namespace 访问前核对真实容器 labels 与精确 ID。旧缺失身份的记录返回 InvalidState，不按名字采用新容器；需要在目标节点已有完整持久身份的前提下重建 policy 记录，不能手填当前代际跳过恢复验证。HTTP 路由和 HCL 字段未变。
 
+### Namespace 文件契约
+
+`network.ApplyRulesetInNetNS`、`ObserveRulesetInNetNS`、`DeleteRulesetInNetNS` 的 namespace 参数从路径字符串改为 `*os.File`。调用方负责打开并核验目标，调用期间保持 FD 有效，结束后关闭；底层只借用 FD。旧字符串签名已移除。`sysbox-netns` 命令仍接受路径，并支持继承的 `/proc/self/fd/3`，向 nsenter 转发打开的 FD。
+
+Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table/digest 或观察结果不匹配时拒绝恢复，需要后续显式收敛动作处理。
+
+部署时须同步升级 `sysbox-netns` helper；旧 helper 不转发 namespace FD，不满足新调用契约。
+
 ## 11. 最终承诺
 
 本次重构对使用者的承诺是：

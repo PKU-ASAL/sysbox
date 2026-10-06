@@ -39,6 +39,22 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 .PHONY: test-docker-generation-e2e
 .PHONY: test-libvirt-generation-e2e
 .PHONY: test-network-generation-e2e
+.PHONY: test-policy-namespace-e2e
+
+test-policy-namespace-e2e: ## Verify real nft namespace FD isolation in a disposable container (Linux x86_64)
+	@set -eu; test "$$(uname -m)" = x86_64; \
+	test_dir=$$(mktemp -d /tmp/sysbox-policy-fd.XXXXXX); \
+	trap 'rm -f "$$test_dir/network.test" "$$test_dir/sysbox-netns"; rmdir "$$test_dir"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -tags e2e -o "$$test_dir/network.test" ./pkg/provider/network; \
+	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$test_dir/sysbox-netns" ./cmd/sysbox-netns; \
+	docker run --rm --network none --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+	  --mount "type=bind,src=$$test_dir/network.test,dst=/network.test,readonly" \
+	  --mount "type=bind,src=$$test_dir/sysbox-netns,dst=/usr/local/bin/sysbox-netns,readonly" \
+	  --mount "type=bind,src=$$(command -v nft),dst=/usr/local/bin/nft,readonly" \
+	  --mount "type=bind,src=$$(command -v nsenter),dst=/usr/local/bin/nsenter,readonly" \
+	  --mount type=bind,src=/lib/x86_64-linux-gnu,dst=/lib/x86_64-linux-gnu,readonly \
+	  --mount type=bind,src=/lib64,dst=/lib64,readonly -e SYSBOX_NETWORK_E2E=1 \
+	  --entrypoint /network.test ubuntu:24.04 -test.run '^TestPolicyNamespaceFDReplacementE2E$$' -test.v -test.timeout=90s
 
 test-network-generation-e2e: ## Run real network generation tests in a disposable isolated container
 	@set -eu; test_binary=$$(mktemp /tmp/sysbox-network-e2e.XXXXXX); \

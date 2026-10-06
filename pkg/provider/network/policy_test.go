@@ -260,7 +260,7 @@ table ip %s {
 }
 
 func TestDeleteRulesetReturnsCommandError(t *testing.T) {
-	err := DeleteRulesetInNetNS(context.Background(), "/path/that/does/not/exist", "topology.lab/sysbox_firewall.edge")
+	err := DeleteRulesetInNetNS(context.Background(), nil, "topology.lab/sysbox_firewall.edge")
 	require.Error(t, err)
 }
 
@@ -269,7 +269,10 @@ func TestDeleteRulesetIgnoresMissingTable(t *testing.T) {
 	helper := filepath.Join(dir, "sysbox-netns")
 	require.NoError(t, os.WriteFile(helper, []byte("#!/bin/sh\necho 'No such file or directory' >&2\nexit 1\n"), 0o755))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	require.NoError(t, DeleteRulesetInNetNS(context.Background(), "/proc/1/ns/net", "topology.lab/sysbox_firewall.edge"))
+	ns, err := os.Open("/proc/self/ns/net")
+	require.NoError(t, err)
+	defer ns.Close()
+	require.NoError(t, DeleteRulesetInNetNS(context.Background(), ns, "topology.lab/sysbox_firewall.edge"))
 }
 
 func TestRunNFTHonorsContextTimeout(t *testing.T) {
@@ -282,9 +285,36 @@ func TestRunNFTHonorsContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	_, err := runNFT(ctx, "/proc/1/ns/net", "", "list", "ruleset")
+	ns, err := os.Open("/proc/self/ns/net")
+	require.NoError(t, err)
+	defer ns.Close()
+	_, err = runNFT(ctx, ns, "", "list", "ruleset")
 	require.Error(t, err)
 	require.Less(t, time.Since(started), 2*time.Second)
+}
+
+func TestNFTApplyPinsNamespaceAcrossDeleteAndAdd(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "namespace")
+	require.NoError(t, os.WriteFile(path, []byte("original"), 0600))
+	t.Setenv("TEST_NAMESPACE_PATH", path)
+	t.Setenv("TEST_NAMESPACE_LOG", filepath.Join(dir, "log"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sysbox-netns"), []byte(`#!/bin/sh
+cat "$1" >> "$TEST_NAMESPACE_LOG"
+if [ "$2" = delete ]; then
+  mv "$TEST_NAMESPACE_PATH" "$TEST_NAMESPACE_PATH.old"
+  printf replacement > "$TEST_NAMESPACE_PATH"
+fi
+`), 0755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ns, err := os.Open(path)
+	require.NoError(t, err)
+	defer ns.Close()
+	_, err = ApplyRulesetInNetNS(context.Background(), ns, driver.RulesetSpec{Owner: "test"}, nil)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(filepath.Join(dir, "log"))
+	require.NoError(t, err)
+	require.Equal(t, "originaloriginal", string(raw))
 }
 
 func TestNFTScriptPassesNftSyntaxCheckWhenAvailable(t *testing.T) {

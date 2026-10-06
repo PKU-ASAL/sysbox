@@ -56,6 +56,36 @@ func TestRecoverFirewallObservesWithoutReapplying(t *testing.T) {
 	require.Equal(t, "verified", st.FindResource(address.Resource("sysbox_firewall", "edge")).Str("observed_digest"))
 }
 
+func TestRouterCheckpointPolicyRecoveryDoesNotReplay(t *testing.T) {
+	for _, fault := range []string{"none", "missing", "drift", "table", "no-digest"} {
+		t.Run(fault, func(t *testing.T) {
+			previous := driver.DefaultRegistry
+			driver.DefaultRegistry = driver.NewRegistry()
+			t.Cleanup(func() { driver.DefaultRegistry = previous })
+			fake := &firewallPolicyFake{digest: "verified"}
+			require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
+			attrs := map[string]any{"policy_owner": "owner", "policy_target_state": `{"container_id":"router"}`, "policy_spec": `{"Owner":"owner"}`, "policy_digest": "verified", "policy_table": "sysbox_owned"}
+			switch fault {
+			case "missing":
+				fake.observeErr = driver.Wrap(driver.ErrorNotFound, "test", "absent", nil)
+			case "drift":
+				fake.digest = "changed"
+			case "table":
+				attrs["policy_table"] = "other"
+			case "no-digest":
+				delete(attrs, "policy_digest")
+			}
+			err := recoverCheckpointPolicy(context.Background(), state.Resource{Driver: "policy-test", Attributes: state.MustAttributes(attrs)}, "policy_owner")
+			if fault == "none" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			require.Zero(t, fake.applyCount)
+		})
+	}
+}
+
 func TestRecoverFirewallRefusesUnverifiedPolicyWithoutEffects(t *testing.T) {
 	for _, fault := range []string{"absent", "unavailable", "owner", "digest", "missing-digest", "table"} {
 		t.Run(fault, func(t *testing.T) {

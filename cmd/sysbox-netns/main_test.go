@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -27,4 +29,21 @@ func TestRunUsageError(t *testing.T) {
 	code := run(nil, strings.NewReader(""), io.Discard, &buf)
 	require.Equal(t, 2, code)
 	require.Contains(t, buf.String(), "usage: sysbox-netns")
+}
+
+func TestRunPassesOpenNamespaceToNsenter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "namespace")
+	require.NoError(t, os.WriteFile(path, []byte("original"), 0600))
+	t.Setenv("TEST_NAMESPACE_PATH", path)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "nsenter"), []byte(`#!/bin/sh
+mv "$TEST_NAMESPACE_PATH" "$TEST_NAMESPACE_PATH.old"
+printf replacement > "$TEST_NAMESPACE_PATH"
+cat "${1#--net=}"
+`), 0755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var out, stderr bytes.Buffer
+	code := run([]string{path, "list", "ruleset"}, strings.NewReader(""), &out, &stderr)
+	require.Equal(t, 0, code, stderr.String())
+	require.Equal(t, "original", out.String())
 }

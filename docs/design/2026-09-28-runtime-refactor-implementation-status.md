@@ -81,7 +81,15 @@ Firewall 和 router NAT 的 `policy_target_state` 现在持久化目标节点的
 
 Docker ApplyRuleset/ObserveRuleset/DeleteRuleset 强制要求该身份，并在 namespace 访问前检查 inspect 返回的精确 container ID 和完整 managed labels。不接受旧无身份目标记录，也不按同名容器重新绑定。真实 Docker generation E2E 已通过：旧目标 generation 的三个 policy 接口均拒绝，匹配身份可解析到原容器 PID；这不等于真实 nftables Apply 成功验收。
 
-边界：此项是目标节点的代际检查，不是 policy 自身 generation 仲裁；network namespace 仍通过 PID 路径访问，未实现跨 inspect/子进程调用的 namespace FD 固定。原生 namespace policy、policy tombstone/lease epoch 与完整创建恢复仍待迁移。
+边界：此项是目标节点的代际检查，不是 policy 自身 generation 仲裁。后续 namespace FD 固定见下节；原生 namespace policy 身份、policy tombstone/lease epoch 与完整创建恢复仍待迁移。
+
+### Namespace FD 与 router 无重放恢复（2026-10-06）
+
+Policy 的底层 Apply/Observe/Delete 接收打开的 namespace 文件，由调用方持有并在结束后关闭。整次 Apply 的删除和写入共用同一 FD；`sysbox-netns`、`nsenter` 通过继承 FD 进入同一个内核 namespace 对象，不重新解析原路径。Docker 在打开 FD 后再次 inspect 身份/PID，并比对路径与持有 FD 的 inode；不一致拒绝。
+
+`make test-policy-namespace-e2e` 已在一次性独立容器中实跑真实 nftables：持有旧 FD 后删除并重建同名 namespace，再对旧 FD Apply/Observe/Delete，新 namespace 中没有这些规则。该入口面向 Linux x86_64，使用宿主 nft/nsenter 和只读运行库；不挂载宿主网络或 state。单测另覆盖删除/写入之间替换路径、helper 两层 FD 传递和 Docker 二次 inspect 发现 PID 变化。
+
+Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe 返回的 table/digest 与持久结果；缺失、查询失败或差异不恢复。FD 固定防止路径/PID 漂移将后续操作指向其他 namespace，但不阻止同代际并发 policy 写入，也不撤销已在旧 namespace 开始的操作；尚未实现 policy 自身的租约仲裁。
 
 ### Resource fencing 迁移进度
 

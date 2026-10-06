@@ -465,14 +465,17 @@ func recoverCheckpointPolicy(ctx context.Context, res state.Resource, ownerKey s
 		return err
 	}
 	target := driver.PolicyTarget{Resource: res.Address.String(), State: json.RawMessage(res.Str("policy_target_state"))}
-	var spec driver.RulesetSpec
-	if err := json.Unmarshal([]byte(res.Str("policy_spec")), &spec); err != nil {
-		return fmt.Errorf("recover policy spec: %w", err)
+	if res.Str("policy_table") == "" || res.Str("policy_digest") == "" {
+		return fmt.Errorf("router policy recovery requires recorded table and digest")
 	}
-	// Always re-apply (idempotent) rather than reading the ruleset back to decide
-	// whether it survived.
-	_, err = policy.ApplyRuleset(ctx, target, spec)
-	return err
+	observed, err := policy.ObserveRuleset(ctx, target, owner)
+	if err != nil {
+		return err
+	}
+	if observed.Table != res.Str("policy_table") || observed.Digest != res.Str("policy_digest") {
+		return driver.Wrap(driver.ErrorInvalidState, res.Driver, "router policy recovery observation does not match recorded result", nil)
+	}
+	return nil
 }
 
 func recoverDockerManagedNetwork(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
