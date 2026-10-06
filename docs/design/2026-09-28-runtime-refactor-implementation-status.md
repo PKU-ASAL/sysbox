@@ -15,7 +15,7 @@
 | 当前收口项 | 当前状态 | 剩余边界 |
 |---|---|---|
 | 生命周期执行与恢复 | 默认引擎使用 action journal；旧 checkpoint 副作用恢复链已删除 | SSH access discovery、跨控制器授权闭环未完成 |
-| NodeOperation | 三后端共用完整记录、create-only 与 CAS；出生记录和初始命令已原子提交，提交后才唤醒 | command lease 与操作执行授权尚未原子绑定 |
+| NodeOperation | 三后端共用完整记录与原子 outbox；完成回报在同一锁/事务内核对当前 command lease | 资源端副作用仍不具备同代 lease epoch 撤销保证 |
 | Firewall | 默认创建/发现/恢复/删除已实测；资源侧 generation、原子 nft batch、FD 与删除证据已接入 | HTTP/远端 Agent 全链路、跨宿主租约、外部 writer 完整规则篡改检测未验收 |
 | Provider 身份 | Docker/libvirt/Firecracker Create 均要求持久身份；Firecracker reset 不再合成 target action | 不能据此宣称所有资源类型均已有同代 lease epoch 撤销 |
 | 外部 attachment | Docker veth、Firecracker TAP 使用版本化 namespace/ifindex/alias proof，旧裸名称删除入口移除 | 目标 bridge/network 自身身份及特权 writer 刻意重用同一 ifindex 的并发替换不在保证内 |
@@ -103,6 +103,12 @@ Policy 的底层 Apply/Observe/Delete 接收打开的 namespace 文件，由调�
 Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe 返回的 table/digest 与持久结果；缺失、查询失败或差异不恢复。FD 固定防止路径/PID 漂移将后续操作指向其他 namespace，但不阻止同代际并发 policy 写入，也不撤销已在旧 namespace 开始的操作；尚未实现 policy 自身的租约仲裁。
 
 ### Resource fencing 迁移进度
+
+2026-10-07 派发轮次与完成授权：Run command ID 由 Run ID、UTC queued_at、revision 摘要生成，scheduler、destroy 与重启修复共用。assignment outbox key 同样按轮次隔离；HTTP 幂等请求映射不变。SQL 允许一个 Run ID 多条不同轮次派发，Postgres schema 6 删除 run_id 唯一约束，旧 SQLite 约束要求显式重建。文件重启修复只选择最新轮次，旧命令不阻挡新轮次派发；旧派发请求不能返回新一轮 Run。
+
+Agent claim 现在携带命令中的 queued_at/revision；HTTP 空 body 或缺轮次拒绝，旧轮次冲突，当前快照再通过原子 ClaimRun 比对后授权，避免迟到旧命令抢占新 Run。NodeOperation completion 改为三后端原子接口：command lease 与 operation 终态在同一锁/事务内读取、校验、提交；未租用/过期/被替换 attempt 拒绝，匹配的租约证明随结果保存，退休命令后的相同终态回报幂等。Agent 执行时将实际收到的 command proof 放入回报，HTTP 无 fencing proof 兼容删除。
+
+该阶段三后端（含真实 Postgres 16）测试覆盖两轮同 ID 派发、迟到 claim 拒绝、旧 seed 不阻挡新轮次、过期/替换租约完成拒绝以及终态重试。此项保证控制面派发与结果提交，不等于已撤销旧进程中的资源端副作用，也不等于跨宿主机 lease fencing 完成。
 
 2026-10-07 原子派发收口：NodeOperation 生命周期/受支持 import 使用 `CreateNodeOperationDispatch` 一次提交绑定后的 operation 和初始 command，不再 Create→Publish→CAS。文件在同一记录持久化不可变命令 seed，操作 CAS 保留 seed，独立 command 退休记录优先；SQLite/Postgres 同事务提交两条记录。共享编码校验 operation/command 载荷、AgentID、action/resource/generation 和初始未租用状态一致。内存 WakeCommand 只在提交后调用，唤醒失败不撤销 durable outbox，重启派发从存储恢复。
 

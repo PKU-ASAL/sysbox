@@ -6,7 +6,7 @@ import (
 )
 
 func EncodeNodeOperationDispatch(op controlplane.NodeOperation, cmd controlplane.AgentCommand) ([]byte, error) {
-	if op.Status != controlplane.NodeOperationStatusQueued || op.ActionID == "" || op.ResourceUID == "" || op.Generation < 1 || op.CommandID != cmd.ID || op.AgentID != cmd.AgentID || cmd.Type != "node_operation" || cmd.ActionID != op.ActionID || cmd.ResourceUID != op.ResourceUID || cmd.Generation != op.Generation || cmd.LeaseEpoch != op.LeaseEpoch || cmd.Attempt != op.Attempt || cmd.LeaseOwner != op.LeaseOwner {
+	if op.Status != controlplane.NodeOperationStatusQueued || op.ActionID == "" || op.ResourceUID == "" || op.Generation < 1 || op.LeaseEpoch < 1 || op.CommandID != cmd.ID || op.AgentID != cmd.AgentID || cmd.Type != "node_operation" || cmd.ActionID != op.ActionID || cmd.ResourceUID != op.ResourceUID || cmd.Generation != op.Generation || cmd.LeaseEpoch != op.LeaseEpoch || cmd.Attempt != op.Attempt || cmd.LeaseOwner != op.LeaseOwner {
 		return nil, ErrInvalidRecord
 	}
 	payload := cmd.Operation

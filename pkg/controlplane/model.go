@@ -377,6 +377,11 @@ type NodeOperation struct {
 	Attempt     int       `json:"attempt,omitempty"`
 }
 
+type RunClaim struct {
+	QueuedAt time.Time `json:"queued_at"`
+	Revision string    `json:"revision"`
+}
+
 type NodeOperationCommand struct {
 	Type      string        `json:"type"`
 	Operation NodeOperation `json:"operation"`

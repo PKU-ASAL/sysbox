@@ -314,7 +314,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "missing run", fmt.Errorf("missing run"))
 			return
 		}
-		claimed, err := claim(runCtx, r.opts, cmd.Run.ID)
+		claimed, err := claim(runCtx, r.opts, *cmd.Run)
 		if err != nil {
 			fmt.Printf("[agent] claim %s failed: %v\n", cmd.Run.ID, err)
 			emit("failed", "run claim failed", err)
@@ -336,6 +336,9 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		}
 		emit("completed", "console session completed", nil)
 	case "node_operation":
+		cmd.Operation.CommandID = cmd.ID
+		cmd.Operation.ActionID, cmd.Operation.ResourceUID, cmd.Operation.Generation = cmd.ActionID, cmd.ResourceUID, cmd.Generation
+		cmd.Operation.LeaseOwner, cmd.Operation.LeaseEpoch, cmd.Operation.Attempt = cmd.LeaseOwner, cmd.LeaseEpoch, cmd.Attempt
 		completed := r.executor.ExecuteNodeOperation(runCtx, cmd.Operation)
 		if err := r.opts.ReportNodeOperationComplete(runCtx, completed); err != nil {
 			fmt.Printf("[agent] report node operation %s failed: %v\n", completed.ID, err)
@@ -737,9 +740,9 @@ func retryGuestFileReport(ctx context.Context, report func() error) error {
 	return err
 }
 
-func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {
+func claim(ctx context.Context, opts Options, expected controlplane.Run) (*controlplane.Run, error) {
 	var run controlplane.Run
-	if err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+runID+"/claim", nil, &run); err != nil {
+	if err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+expected.ID+"/claim", controlplane.RunClaim{QueuedAt: expected.QueuedAt, Revision: expected.Revision}, &run); err != nil {
 		return nil, err
 	}
 	return &run, nil

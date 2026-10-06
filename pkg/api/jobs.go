@@ -354,9 +354,16 @@ func (j *Jobs) markRunning(r *controlplane.Run) {
 }
 
 func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
+	return j.claimExpected(runID, agentID, nil)
+}
+
+func (j *Jobs) claimExpected(runID, agentID string, expected *controlplane.RunClaim) (*controlplane.Run, error) {
 	intent, err := j.store.GetRun(context.Background(), runID)
 	if err != nil {
 		return nil, err
+	}
+	if expected != nil && (!expected.QueuedAt.Equal(intent.QueuedAt) || expected.Revision != intent.Revision) {
+		return nil, persistence.ErrConflict
 	}
 	j.mu.RLock()
 	inputs := inputsForRun(j.runs[runID], intent)

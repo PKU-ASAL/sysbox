@@ -444,6 +444,8 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（2026-10-07 轮次协议）：Run command ID 变为 Run ID/queued_at/revision 的稳定摘要，不再是 `run-<ID>`。`POST /v1/agents/{agent}/runs/{id}/claim` 必须提交 `{queued_at, revision}`；旧空 body 返回 400，旧轮次返回 409，API/Agent 必须同步升级。Postgres schema 6 允许同 Run ID 多轮派发；旧 SQLite run_id 唯一约束要求重建。NodeOperation 完成入口强制完整 action/resource/generation/lease_epoch/lease_owner/attempt，缺失或失效证明返回冲突；新增原子存储接口 `CompleteNodeOperation` 取代 service Get+CAS 完成流程。
+
 实施补充（2026-10-07 原子 outbox）：API 存储新增 `CreateNodeOperationDispatch(operation,command)`，生命周期派发必须使用此原子接口；operation 从提交起就绑定 command ID。`AgentService.WakeCommand` 仅唤醒已持久化命令，不写存储。共享 NodeOperation 记录携初始 dispatch seed；独立命令状态/退休记录覆盖 seed，禁止清除退休记录后重新投递。Run 已存在 queued 记录的派发须保持相同执行快照，并在同事务中改为 assigned 与创建命令。公共 HTTP 路由不变。
 
 实施补充（2026-10-07 attachment）：`LinuxNetwork.DeleteAttachment(kind,name,namespace)` 和 raw TAP/Veth name-only 删除函数已移除。Docker isolated attachment 与 Firecracker TAP 的 driver state 必须含 `AttachmentLink` v1 证明（namespace dev/inode、ifindex、name/type/alias）；旧记录不兼容，Observe/Delete 明确拒绝，不自动认领同名接口。libvirt Create、生命周期及 NIC 修改拒绝缺持久身份；Firecracker Create/reset 必须显式提供 action 身份。旧 NodeResourceHandler.Import 实现已删除，未提供 ownership adoption 的类型在 API 派发前返回 Unsupported；只读 data-source inspection 不因此获得资源管理权。

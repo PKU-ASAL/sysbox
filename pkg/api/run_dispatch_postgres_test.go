@@ -76,7 +76,7 @@ func TestDestroyHTTPIdempotencyIsAtomicAcrossPostgresServers(t *testing.T) {
 	commands, err := servers[0].apiStore.ListAgentCommands(context.Background(), "host-a")
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
-	require.Equal(t, "run-"+runID, commands[0].ID)
+	require.Equal(t, runCommandID(*commands[0].Run), commands[0].ID)
 }
 
 func TestPostgresAgentCommandRejectsStaleStatusRegression(t *testing.T) {
@@ -210,7 +210,8 @@ func TestPostgresRunDispatchSurvivesRestartAndIsDeliveredByReconciler(t *testing
 	require.NoError(t, err)
 	var command controlplane.AgentCommand
 	require.NoError(t, json.Unmarshal(data, &command))
-	require.Equal(t, "run-"+response.RunID, command.ID)
+	require.NotNil(t, command.Run)
+	require.Equal(t, runCommandID(*command.Run), command.ID)
 	require.Equal(t, controlplane.AgentCommandStatusDelivered, command.Status)
 	require.NotNil(t, command.Run)
 	require.Equal(t, response.RunID, command.Run.ID)

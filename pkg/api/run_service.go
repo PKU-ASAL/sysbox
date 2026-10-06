@@ -343,7 +343,7 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 	}
 	run.MarkAssigned(agent.ID, time.Now().UTC())
 	command := controlplaneRunAssignedCommand(run)
-	command.ID = "run-" + run.ID
+	command.ID = runCommandID(*run)
 	command.AgentID = agent.ID
 	command.Status = controlplane.AgentCommandStatusQueued
 	command.Protocol = controlplane.AgentProtocolVersion

@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,7 +37,9 @@ func TestClaimAgentRunRequiresSignatureWhenSecretRegistered(t *testing.T) {
 
 	// A correctly signed claim succeeds.
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/runs/"+run.ID+"/claim", nil)
+	body, err := json.Marshal(controlplane.RunClaim{QueuedAt: run.QueuedAt, Revision: run.Revision})
+	require.NoError(t, err)
+	req = httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/runs/"+run.ID+"/claim", bytes.NewReader(body))
 	require.NoError(t, agent.SignRequest(req, "host-a", secret, time.Now()))
 	s.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -55,7 +59,9 @@ func TestClaimAgentRunAllowsSecretlessAgent(t *testing.T) {
 
 	// A secret-less agent has nothing to verify against, so claim still works.
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/agents/host-b/runs/"+run.ID+"/claim", nil)
+	body, err := json.Marshal(controlplane.RunClaim{QueuedAt: run.QueuedAt, Revision: run.Revision})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/v1/agents/host-b/runs/"+run.ID+"/claim", bytes.NewReader(body))
 	s.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"id":"`+run.ID+`"`)

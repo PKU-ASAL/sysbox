@@ -12,7 +12,9 @@ import (
 
 func nodeDispatchFixture() (controlplane.NodeOperation, controlplane.AgentCommand) {
 	op := controlplane.NodeOperation{ID: "op", CommandID: "node-op-op", AgentID: "agent", Topology: "lab", Workspace: "lab", Operation: "pause", Node: "web", Status: controlplane.NodeOperationStatusQueued, ActionID: "op", ResourceUID: "resource", Generation: 2, CreatedAt: time.Now().UTC()}
+	op.LeaseEpoch = 1
 	cmd := controlplane.AgentCommand{ID: op.CommandID, AgentID: op.AgentID, Type: "node_operation", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, CreatedAt: op.CreatedAt, Operation: op, ActionID: op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation}
+	cmd.LeaseEpoch = op.LeaseEpoch
 	return op, cmd
 }
 

@@ -17,5 +17,5 @@ func TestRepublishAssignedRunsRepairsMissingCommand(t *testing.T) {
 	cmds, err := s.ListAgentCommands(ctx, "agent")
 	require.NoError(t, err)
 	require.Len(t, cmds, 1)
-	require.Equal(t, "run-"+run.ID, cmds[0].ID)
+	require.Equal(t, runCommandID(run), cmds[0].ID)
 }

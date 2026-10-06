@@ -26,7 +26,7 @@ func TestSchedulerDispatchPersistsCommandBeforeNotification(t *testing.T) {
 	commands, err := s.apiStore.ListAgentCommands(ctx, "agent")
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
-	require.Equal(t, "run-"+run.ID, commands[0].ID)
+	require.Equal(t, runCommandID(*run), commands[0].ID)
 }
 
 func TestPlacementConcurrentBindHasSingleWinner(t *testing.T) {

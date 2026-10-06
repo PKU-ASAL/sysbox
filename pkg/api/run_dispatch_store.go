@@ -41,6 +41,9 @@ func (s *localAPIStore) GetRunDispatch(_ context.Context, requestID, fingerprint
 }
 
 func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error) {
+	if err := validateRunDispatchPayload(request); err != nil {
+		return nil, false, err
+	}
 	if err := validatePathSegment(request.Run.ID, "run"); err != nil {
 		return nil, false, err
 	}
@@ -50,7 +53,7 @@ func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispat
 	}
 	defer unlock()
 	request = durableRunDispatch(request)
-	target := filepath.Join(s.runsDir, "_run_requests", request.Run.ID+".json")
+	target := filepath.Join(s.runsDir, "_run_requests", runDispatchKey(request)+".json")
 	// Check the durable request mapping before looking at mutable run history.
 	// Its fingerprint remains authoritative even when old Run fields are empty.
 	previous, err := readLocalRunDispatch(target)
@@ -59,6 +62,9 @@ func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispat
 			return nil, false, errIdempotencyConflict
 		}
 		current, err := s.GetRun(ctx, request.Run.ID)
+		if err == nil {
+			err = validateDispatchReplay(*current, request)
+		}
 		return current, false, err
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -150,6 +156,9 @@ func (s *localAPIStore) loadRunDispatches() ([]localRunDispatch, error) {
 }
 
 func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error) {
+	if err := validateRunDispatchPayload(request); err != nil {
+		return nil, false, err
+	}
 	request = durableRunDispatch(request)
 	db, err := s.open()
 	if err != nil {
@@ -160,7 +169,7 @@ func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispa
 		return nil, false, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO sysbox_run_requests (id, fingerprint, run_id) VALUES (?, ?, ?)`, request.Run.ID, request.Fingerprint, request.Run.ID)
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO sysbox_run_requests (id, fingerprint, run_id) VALUES (?, ?, ?)`, runDispatchKey(request), request.Fingerprint, request.Run.ID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -170,7 +179,7 @@ func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispa
 	}
 	if created == 0 {
 		var fingerprint, runID string
-		if err := tx.QueryRowContext(ctx, `SELECT fingerprint, run_id FROM sysbox_run_requests WHERE id=?`, request.Run.ID).Scan(&fingerprint, &runID); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT fingerprint, run_id FROM sysbox_run_requests WHERE id=?`, runDispatchKey(request)).Scan(&fingerprint, &runID); err != nil {
 			return nil, false, err
 		}
 		if fingerprint != request.Fingerprint {
@@ -180,6 +189,9 @@ func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispa
 			return nil, false, err
 		}
 		run, err := s.GetRun(ctx, runID)
+		if err == nil {
+			err = validateDispatchReplay(*run, request)
+		}
 		return run, false, err
 	}
 	existing, err := scanSQLiteRun(tx.QueryRowContext(ctx, "SELECT "+sqliteRunColumns+" FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1", request.Run.ID))
@@ -272,6 +284,9 @@ func insertSQLiteAgentCommand(ctx context.Context, tx *sql.Tx, cmd controlplane.
 }
 
 func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error) {
+	if err := validateRunDispatchPayload(request); err != nil {
+		return nil, false, err
+	}
 	request = durableRunDispatch(request)
 	conn, err := s.connect(ctx)
 	if err != nil {
@@ -285,14 +300,14 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 	defer tx.Rollback(ctx) //nolint:errcheck
 	// Concurrent identical inserts can conflict on either unique index (id
 	// or run_id). Resolve both through the exact request/fingerprint read below.
-	tag, err := tx.Exec(ctx, `INSERT INTO sysbox_run_requests (id, fingerprint, run_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, request.Run.ID, request.Fingerprint, request.Run.ID)
+	tag, err := tx.Exec(ctx, `INSERT INTO sysbox_run_requests (id, fingerprint, run_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, runDispatchKey(request), request.Fingerprint, request.Run.ID)
 	if err != nil {
 		return nil, false, fmt.Errorf("postgres create run request: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		var storedFingerprint string
 		var raw []byte
-		err := tx.QueryRow(ctx, `SELECT request.fingerprint, run.data::text FROM sysbox_run_requests request JOIN sysbox_runs run ON run.id=request.run_id WHERE request.id=$1`, request.Run.ID).Scan(&storedFingerprint, &raw)
+		err := tx.QueryRow(ctx, `SELECT request.fingerprint, run.data::text FROM sysbox_run_requests request JOIN sysbox_runs run ON run.id=request.run_id WHERE request.id=$1`, runDispatchKey(request)).Scan(&storedFingerprint, &raw)
 		if err != nil {
 			return nil, false, fmt.Errorf("postgres load existing run dispatch: %w", err)
 		}
@@ -301,6 +316,9 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 		}
 		var run controlplane.Run
 		if err := json.Unmarshal(raw, &run); err != nil {
+			return nil, false, err
+		}
+		if err := validateDispatchReplay(run, request); err != nil {
 			return nil, false, err
 		}
 		if err := tx.Commit(ctx); err != nil {

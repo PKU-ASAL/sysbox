@@ -37,12 +37,12 @@ func (s *SchedulerService) DispatchRun(ctx context.Context, run *controlplane.Ru
 	transientInputs := cloneInputs(run.Inputs)
 	assigned.MarkAssigned(agent.ID, time.Now().UTC())
 	command := controlplaneRunAssignedCommand(&assigned)
-	command.ID = "run-" + run.ID
+	command.ID = runCommandID(*run)
 	command.AgentID = agent.ID
 	command.Status = controlplane.AgentCommandStatusQueued
 	command.Protocol = controlplane.AgentProtocolVersion
 	command.CreatedAt = time.Now().UTC()
-	fingerprint := fmt.Sprintf("run-dispatch:%s:%s:%s", assigned.ID, assigned.Op, assigned.AgentID)
+	fingerprint := runAssignmentFingerprint(assigned)
 	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: assigned, Command: command, Fingerprint: fingerprint})
 	if err != nil {
 		return err

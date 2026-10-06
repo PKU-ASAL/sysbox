@@ -59,6 +59,9 @@ type failingNodeOperationReads struct {
 func (s *failingNodeOperationReads) GetNodeOperation(context.Context, string) (*controlplane.NodeOperation, error) {
 	return nil, s.failure
 }
+func (s *failingNodeOperationReads) CompleteNodeOperation(context.Context, string, string, controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
+	return nil, s.failure
+}
 func (s *failingNodeOperationReads) CreateNodeOperation(context.Context, controlplane.NodeOperation) error {
 	s.saves++
 	return nil

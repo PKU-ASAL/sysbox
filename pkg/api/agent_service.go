@@ -273,15 +273,15 @@ func (s *AgentService) RepublishAssignedRuns(ctx context.Context) error {
 	present := map[string]bool{}
 	for _, cmd := range commands {
 		if cmd.Run != nil {
-			present[cmd.Run.ID] = true
+			present[runCommandID(*cmd.Run)] = true
 		}
 	}
-	for _, run := range runs {
-		if run.Status != controlplane.RunAssigned || run.AgentID == "" || present[run.ID] {
+	for _, run := range latestRunsByID(runs) {
+		if run.Status != controlplane.RunAssigned || run.AgentID == "" || present[runCommandID(run)] {
 			continue
 		}
-		cmd := controlplane.AgentCommand{ID: "run-" + run.ID, AgentID: run.AgentID, Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run, CreatedAt: time.Now().UTC()}
-		fingerprint := "run-dispatch:" + run.ID + ":" + run.Op + ":" + run.AgentID
+		cmd := controlplane.AgentCommand{ID: runCommandID(run), AgentID: run.AgentID, Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run, CreatedAt: time.Now().UTC()}
+		fingerprint := runAssignmentFingerprint(run)
 		if _, _, err := s.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: cmd, Fingerprint: fingerprint}); err != nil {
 			return err
 		}
@@ -375,6 +375,25 @@ func (s *AgentService) guestCommandTerminalState(ctx context.Context, cmd contro
 			return "", time.Time{}, false
 		}
 		return commandStatusFromGuestStatus(op.Status, op.EndedAt)
+	case "run_assigned":
+		if cmd.Run == nil {
+			return "", time.Time{}, false
+		}
+		run, err := s.store.GetRun(ctx, cmd.Run.ID)
+		if err != nil || run == nil {
+			return "", time.Time{}, false
+		}
+		if !persistence.SameRunIncarnation(*run, *cmd.Run) {
+			return controlplane.AgentCommandStatusCancelled, time.Now().UTC(), true
+		}
+		if run.Status.IsTerminal() {
+			status := controlplane.AgentCommandStatusCompleted
+			if run.Status != controlplane.RunDone {
+				status = controlplane.AgentCommandStatusFailed
+			}
+			return status, run.EndedAt, true
+		}
+		return "", time.Time{}, false
 	default:
 		return "", time.Time{}, false
 	}

@@ -165,6 +165,7 @@ func (r *GuestRepository) FilesystemGuestDispatchCommands(ctx context.Context) (
 				}
 				birth := seed.Command.Operation
 				birth.CommandID = seed.Command.ID
+				birth.LeaseOwner, birth.LeaseEpoch, birth.Attempt = op.LeaseOwner, op.LeaseEpoch, op.Attempt
 				if ValidateNodeOperationTransition(birth, *op) != nil {
 					return nil, ErrCorruptRecord
 				}

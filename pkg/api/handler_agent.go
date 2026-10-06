@@ -83,10 +83,15 @@ func (s *Server) handleClaimAgentRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
-	s.handleClaimAgentRunByID(w, agentID, r.PathValue("id"))
+	var expected controlplane.RunClaim
+	if err := json.NewDecoder(r.Body).Decode(&expected); err != nil || expected.QueuedAt.IsZero() {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("run claim requires queued_at and revision from dispatched run"))
+		return
+	}
+	s.handleClaimAgentRunByID(w, agentID, r.PathValue("id"), expected)
 }
 
-func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID string) {
+func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID string, expected controlplane.RunClaim) {
 	if err := validatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -95,7 +100,7 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, err := s.jobs.claim(runID, agentID)
+	run, err := s.jobs.claimExpected(runID, agentID, &expected)
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
@@ -162,15 +167,21 @@ func (s *Server) handleCompleteNodeOperation(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode node operation: %w", err))
 		return
 	}
-	if op.ActionID != "" || op.ResourceUID != "" || op.Generation != 0 || op.LeaseEpoch != 0 || op.LeaseOwner != "" || op.Attempt != 0 {
-		if op.ActionID == "" || op.ResourceUID == "" || op.Generation == 0 || op.LeaseEpoch == 0 || op.LeaseOwner == "" || op.Attempt < 1 {
-			writeError(w, http.StatusConflict, persistence.ErrConflict)
-			return
-		}
+	if op.ActionID == "" || op.ResourceUID == "" || op.Generation < 1 || op.LeaseEpoch < 1 || op.LeaseOwner == "" || op.Attempt < 1 {
+		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		return
 	}
 	op, err := s.nodeOperations().CompleteFromAgent(agentID, opID, op)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		status := http.StatusInternalServerError
+		if errors.Is(err, persistence.ErrConflict) {
+			status = http.StatusConflict
+		} else if errors.Is(err, persistence.ErrNotFound) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, persistence.ErrInvalidRecord) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, op)

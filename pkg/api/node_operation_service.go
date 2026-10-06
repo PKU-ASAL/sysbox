@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -32,6 +30,7 @@ func (s *NodeOperationService) enqueue(ctx context.Context, op controlplane.Node
 		return controlplane.NodeOperation{}, fmt.Errorf("node operation store not configured")
 	}
 	op.CommandID = "node-op-" + op.ID
+	op.LeaseEpoch = 1
 	cmd := controlplane.AgentCommand{ID: op.CommandID, AgentID: op.AgentID, Type: "node_operation", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, CreatedAt: op.CreatedAt, Operation: op, ActionID: op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation, LeaseEpoch: op.LeaseEpoch}
 	if err := s.operations.store.CreateNodeOperationDispatch(ctx, op, cmd); err != nil {
 		return controlplane.NodeOperation{}, err
@@ -57,36 +56,17 @@ func (s *NodeOperationService) CompleteFromAgent(agentID, opID string, op contro
 	if op.ID == "" {
 		op.ID = opID
 	}
-	if op.ID != opID {
-		return op, fmt.Errorf("operation id mismatch")
-	}
 	if op.AgentID == "" {
 		op.AgentID = agentID
 	}
-	if op.AgentID != agentID {
-		return op, fmt.Errorf("operation agent id mismatch")
+	if s.operations == nil || s.operations.store == nil {
+		return op, fmt.Errorf("node operation store not configured")
 	}
-	if op.EndedAt.IsZero() && (op.Status == controlplane.NodeOperationStatusDone || op.Status == controlplane.NodeOperationStatusFailed) {
-		op.EndedAt = time.Now().UTC()
-	}
-	current, err := s.operations.Get(opID)
+	completed, err := s.operations.store.CompleteNodeOperation(context.Background(), agentID, opID, op)
 	if err != nil {
 		return op, err
 	}
-	if current == nil {
-		return op, persistence.ErrNotFound
-	}
-	op.CommandID = current.CommandID
-	if err := persistence.ValidateNodeOperationTransition(*current, op); err != nil {
-		return op, err
-	}
-	if current.AgentID != agentID || current.ActionID != "" && (op.ActionID != current.ActionID || op.Generation != current.Generation || op.LeaseEpoch != current.LeaseEpoch || op.LeaseOwner != current.LeaseOwner || op.Attempt != current.Attempt) {
-		return op, fmt.Errorf("node operation fencing mismatch")
-	}
-	if err := s.operations.CompareAndSwap(context.Background(), *current, op); err != nil {
-		return op, err
-	}
-	return op, nil
+	return *completed, nil
 }
 
 func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, operation string, subj requestSubject) (controlplane.NodeOperation, error) {

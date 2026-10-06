@@ -636,7 +636,7 @@ func TestAgentInventoryPersists(t *testing.T) {
 func TestNodeOperationCompletionPersists(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
-	op, err := s.nodeOps.Create(controlplane.NodeOperation{
+	op, err := s.nodeOperations().enqueue(context.Background(), prepareNodeOperation(controlplane.NodeOperation{
 		Topology:    "mixed",
 		Workspace:   "mixed",
 		Operation:   "pause",
@@ -644,8 +644,13 @@ func TestNodeOperationCompletionPersists(t *testing.T) {
 		AgentID:     "host-a",
 		RequestedBy: "alice",
 		Roles:       []string{"operator"},
-	})
+		ResourceUID: "resource", Generation: 1,
+	}))
 	require.NoError(t, err)
+	lease, ok, err := s.apiStore.AcquireAgentCommandLease(context.Background(), op.AgentID, op.CommandID, "worker", time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	op.LeaseOwner, op.LeaseEpoch, op.Attempt = lease.LeaseOwner, lease.LeaseEpoch, lease.Attempt
 	op.Status = controlplane.NodeOperationStatusDone
 	op.Audit = append(op.Audit, controlplane.Event{Action: "complete", Status: "done", Actor: "alice"})
 

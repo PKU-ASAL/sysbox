@@ -24,7 +24,7 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 5
+const apiSchemaVersion = 6
 
 // errGlobalRevisionNotFound is returned by GetGlobalRevision when no revision
 // exists for the requested digest. Callers use errors.Is to detect it so they
@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS sysbox_projection (
 );`,
 	},
 	{Version: 5, Name: "node_operation_records", SQL: `ALTER TABLE sysbox_node_operations ALTER COLUMN workspace SET DEFAULT '';`},
+	{Version: 6, Name: "run_incarnation_dispatch", SQL: `ALTER TABLE sysbox_run_requests DROP CONSTRAINT IF EXISTS sysbox_run_requests_run_id_key;`},
 }
 
 func (s *localAPIStore) SchemaVersion(context.Context) (int, error) {

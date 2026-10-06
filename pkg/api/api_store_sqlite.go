@@ -181,7 +181,7 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	CREATE TABLE IF NOT EXISTS sysbox_run_requests (
 		id          TEXT PRIMARY KEY,
 		fingerprint TEXT NOT NULL,
-		run_id      TEXT NOT NULL UNIQUE
+		run_id      TEXT NOT NULL
 	) STRICT;
 
 	CREATE TABLE IF NOT EXISTS sysbox_checkpoints (
@@ -238,6 +238,13 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 	}
 	if _, err := db.Exec("SELECT data FROM sysbox_node_operations LIMIT 0"); err != nil {
 		return fmt.Errorf("node operation schema requires rebuild: %w", err)
+	}
+	var obsoleteUnique int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_index_list('sysbox_run_requests') WHERE "unique"=1 AND origin='u'`).Scan(&obsoleteUnique); err != nil {
+		return err
+	}
+	if obsoleteUnique > 0 {
+		return fmt.Errorf("run dispatch schema requires rebuild: run_id must allow multiple execution incarnations")
 	}
 	if err := s.ensureRunsColumn(db, "snapshot_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
