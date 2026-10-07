@@ -60,11 +60,12 @@ func main() {
 		Name: "libvirt", Version: "1", Node: libvirtSub, NIC: libvirtSub,
 		Console: libvirtSub, GuestExec: libvirtSub, GuestFiles: libvirtSub,
 		Artifact: libvirtSub, Import: libvirtSub,
-		NodeState:        libvirtSub,
-		Power:            libvirtSub,
-		GuestNetwork:     libvirtSub,
-		GuestNetworkInit: libvirtSub,
-		Reset:            libvirtSub,
+		NodeState:         libvirtSub,
+		Power:             libvirtSub,
+		GuestNetwork:      libvirtSub,
+		GuestNetworkInit:  libvirtSub,
+		Reset:             libvirtSub,
+		OwnershipAdoption: libvirtSub,
 	})
 
 	if err := commands.ExecuteContext(ctx); err != nil {
