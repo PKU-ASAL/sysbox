@@ -29,7 +29,11 @@ import (
 const DefaultAgentID = "local"
 
 type Options struct {
-	HostSupervisorSocket             string
+	HostSupervisorSocket string
+	// RequireHostSupervisor is enabled by the production Agent command. Local
+	// unit fixtures may leave it false to exercise the explicit in-process CLI
+	// executor without making that path a remote control-plane fallback.
+	RequireHostSupervisor            bool
 	observationSequence              *atomic.Uint64
 	ExecutionSessionFile             string
 	ExecutionSessionID               string
@@ -341,6 +345,10 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		}
 		stopRenew := startRunLeaseRenewal(runCtx, r.opts, claimed)
 		defer stopRenew()
+		if r.opts.RequireHostSupervisor && r.opts.HostSupervisorSocket == "" {
+			emit("failed", "host supervisor is required for remote Run", fmt.Errorf("host supervisor socket is not configured"))
+			return
+		}
 		if r.opts.HostSupervisorSocket != "" {
 			if err := r.executeAssignedHostRun(runCtx, *claimed, cmd, emit); err != nil {
 				emit("failed", "host supervisor run failed", err)

@@ -71,6 +71,7 @@ var agentStartCmd = &cobra.Command{
 		}
 		return agentexec.Run(cmd.Context(), agentexec.Options{
 			HostSupervisorSocket:        cfg.Agent.HostSupervisorSocket,
+			RequireHostSupervisor:       true,
 			ExecutionSessionFile:        sessionFile,
 			ExecutionGrantPublicKeyFile: cfg.Agent.ExecutionGrantPublicKeyFile,
 			APIURL:                      ident.APIURL,
