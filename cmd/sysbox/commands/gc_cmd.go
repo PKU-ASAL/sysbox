@@ -155,10 +155,29 @@ func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 			}
 		}
 		st, err := repo.LoadState(context.Background(), topology)
-		repo.Close()
 		if err != nil {
+			repo.Close()
 			return active, err
 		}
+		retained, err := repo.SnapshotResources(context.Background(), topology)
+		if err != nil {
+			repo.Close()
+			return active, err
+		}
+		for _, r := range retained {
+			switch r.Address.Type {
+			case "sysbox_network":
+				active.networks[r.ExternalID] = true
+			case "sysbox_node", "sysbox_router":
+				if r.Driver == "docker" {
+					active.containers[r.ExternalID] = true
+				}
+				if r.Driver == "libvirt" {
+					active.domains[r.ExternalID] = true
+				}
+			}
+		}
+		repo.Close()
 		if st.TopologyUID == "" {
 			return active, fmt.Errorf("canonical topology %s lacks durable ownership", topology)
 		}

@@ -43,6 +43,29 @@ func TestGCIncludesCanonicalStateAndRefusesUnresolvedActions(t *testing.T) {
 	require.Error(t, err, "unconfirmed resources must not be reclaimed")
 }
 
+func TestGCProtectsResourcesReferencedOnlyBySnapshot(t *testing.T) {
+	root := t.TempDir()
+	repo, err := persistence.OpenFilesystem(filepath.Join(root, "lab", "state.json.lifecycle"))
+	require.NoError(t, err)
+	defer repo.Close()
+	manager := state.NewManagerWithBackend(repo.StateBackend("lab"))
+	st, err := manager.Load()
+	require.NoError(t, err)
+	st.Resources = []state.Resource{{Address: address.Resource("sysbox_node", "web"), Driver: "docker", ExternalID: "snapshot-container", OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}}
+	require.NoError(t, manager.Save(st))
+	snapshot, err := manager.Snapshot(context.Background(), "retain resource reference")
+	require.NoError(t, err)
+	st.Resources = nil
+	require.NoError(t, manager.Save(st))
+	active, err := collectActiveIDsChecked(root)
+	require.NoError(t, err)
+	require.True(t, active.containers["snapshot-container"], "a retained snapshot is a GC reference even after removal from current state")
+	require.NoError(t, manager.Backend().(state.SnapshotDeleter).DeleteSnapshot(context.Background(), snapshot.ID))
+	active, err = collectActiveIDsChecked(root)
+	require.NoError(t, err)
+	require.False(t, active.containers["snapshot-container"])
+}
+
 func gcInventoryFixture(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()

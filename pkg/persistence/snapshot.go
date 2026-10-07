@@ -57,6 +57,24 @@ func (b *stateBackend) ListSnapshots(ctx context.Context) ([]state.Snapshot, err
 	})
 	return out, err
 }
+
+// SnapshotResources returns durable resource identities retained by every
+// valid snapshot. GC uses this reference set so a resource removed from the
+// current state is not deleted while a recovery snapshot still names it.
+func (r *Repository) SnapshotResources(ctx context.Context, topology string) ([]state.Resource, error) {
+	var out []state.Resource
+	err := r.update(ctx, topology, func(a *aggregate) error {
+		for id, snap := range a.Snapshots {
+			restored, err := decodeSnapshot(id, snap)
+			if err != nil {
+				return err
+			}
+			out = append(out, restored.State.Resources...)
+		}
+		return nil
+	})
+	return out, err
+}
 func decodeSnapshot(id string, snap aggregateSnapshot) (*aggregate, error) {
 	if id == "" || id != snap.Metadata.ID || snap.Metadata.CreatedAt.IsZero() || snap.Metadata.Size != int64(len(snap.Data)) || snap.Digest != fmt.Sprintf("%x", sha256.Sum256(snap.Data)) {
 		return nil, ErrCorruptRecord
