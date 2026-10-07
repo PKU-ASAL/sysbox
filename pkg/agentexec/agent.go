@@ -900,11 +900,11 @@ func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlp
 	if i := strings.LastIndex(node, "."); i >= 0 {
 		node = node[i+1:]
 	}
-	if node == "" {
+	if node == "" && cmd.ResourceUID != "" {
 		return fmt.Errorf("host supervisor run requires a single resource target")
 	}
 	target := hostsupervisor.TargetRef{Topology: run.Topology, Node: node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}}
-	req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: cmd.TopologyUID, Revision: run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: run.Target, ExpectedSerial: 0}
+	req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: cmd.TopologyUID, Revision: run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: run.Target, ExpectedSerial: cmd.ExpectedSerial}
 	digest, err := req.Digest()
 	if err != nil {
 		return err

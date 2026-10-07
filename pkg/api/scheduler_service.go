@@ -37,6 +37,20 @@ func (s *SchedulerService) DispatchRun(ctx context.Context, run *controlplane.Ru
 	transientInputs := cloneInputs(run.Inputs)
 	assigned.MarkAssigned(agent.ID, time.Now().UTC())
 	command := controlplaneRunAssignedCommand(&assigned)
+	manager, err := s.placement.stateManager(run.Topology)
+	if err != nil {
+		return err
+	}
+	canonical, err := manager.LoadWithContext(ctx)
+	if err != nil || canonical == nil || canonical.TopologyUID == "" {
+		if err == nil {
+			err = fmt.Errorf("canonical topology state is unavailable")
+		}
+		return err
+	}
+	command.TopologyUID = canonical.TopologyUID
+	command.ActionID = run.ID
+	command.ExpectedSerial = canonical.Meta.Serial
 	command.ID = runCommandID(*run)
 	command.AgentID = agent.ID
 	command.Status = controlplane.AgentCommandStatusQueued

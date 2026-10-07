@@ -18,7 +18,7 @@ func runFixture(t *testing.T) (*RunCoordinator, RunRequest, controlplane.SignedE
 	t.Helper()
 	pub, key, e := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, e)
-	req := RunRequest{RunID: "run", Topology: "lab", TopologyUID: "uid", Revision: "rev", ActionID: "action", ResourceUID: "resource", Generation: 1, Action: "apply", ExpectedSerial: 1}
+	req := RunRequest{RunID: "run", Topology: "lab", TopologyUID: "uid", Revision: "rev", ActionID: "action", ResourceUID: "resource", Generation: 1, Action: "apply", Target: "sysbox_node.web", ExpectedSerial: 1}
 	d, e := req.Digest()
 	require.NoError(t, e)
 	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "uid", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "run_apply", Digest: d, State: controlplane.GrantActive, TargetBootID: "host", ExpiresAt: time.Now().Add(time.Minute)}

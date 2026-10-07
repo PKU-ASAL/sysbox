@@ -16,10 +16,10 @@ func TestSourceGrantSupportsRunAssignedApplyAndDestroy(t *testing.T) {
 	ctx := context.Background()
 	for _, action := range []string{"apply", "destroy"} {
 		t.Run(action, func(t *testing.T) {
-			run := controlplane.Run{ID: "run-" + action, Topology: "lab", Revision: "sha256:revision", Op: action, Operation: action, Status: controlplane.RunAssigned, AgentID: "agent", LeaseOwner: "lease", LeaseUntil: time.Now().Add(time.Minute), Attempt: 2}
-			cmd := controlplane.AgentCommand{ID: "cmd-" + action, AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusRunning, Run: &run, ActionID: "action-" + action, TopologyUID: "topology", ResourceUID: "resource", Generation: 3, LeaseOwner: "lease", Attempt: 2, LeaseUntil: run.LeaseUntil}
+			run := controlplane.Run{ID: "run-" + action, Topology: "lab", Revision: "sha256:revision", Op: action, Operation: action, Target: "sysbox_node.web", Status: controlplane.RunAssigned, AgentID: "agent", LeaseOwner: "lease", LeaseUntil: time.Now().Add(time.Minute), Attempt: 2}
+			cmd := controlplane.AgentCommand{ID: "cmd-" + action, AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusRunning, Run: &run, ActionID: "action-" + action, TopologyUID: "topology", ResourceUID: "resource", Generation: 3, ExpectedSerial: 1, LeaseOwner: "lease", Attempt: 2, LeaseUntil: run.LeaseUntil}
 			record := &persistence.CommandRecord{Command: cmd}
-			req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: cmd.TopologyUID, Revision: run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, ExpectedSerial: 0}
+			req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: cmd.TopologyUID, Revision: run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: run.Target, ExpectedSerial: cmd.ExpectedSerial}
 			digest, err := req.Digest()
 			require.NoError(t, err)
 			grant, err := s.sourceGrant(ctx, "agent", ExecutionGrantRequest{SessionID: "session", LeaseOwner: "lease", Attempt: 2, BootID: "host"}, record)

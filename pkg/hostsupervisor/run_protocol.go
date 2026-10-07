@@ -27,7 +27,7 @@ type RunRequest struct {
 }
 
 func (r RunRequest) Validate() error {
-	if r.RunID == "" || r.Topology == "" || r.TopologyUID == "" || r.Revision == "" || r.ActionID == "" || r.ResourceUID == "" || r.Generation < 1 || r.ExpectedSerial < 0 {
+	if r.RunID == "" || r.Topology == "" || r.TopologyUID == "" || r.Revision == "" || r.ActionID == "" || r.ExpectedSerial < 1 {
 		return fmt.Errorf("run request requires immutable identity")
 	}
 	if r.Action != "apply" && r.Action != "destroy" {
@@ -35,6 +35,13 @@ func (r RunRequest) Validate() error {
 	}
 	if strings.ContainsAny(r.RunID+r.Topology+r.Revision+r.ActionID+r.ResourceUID, "/\\\x00") {
 		return fmt.Errorf("run request contains unsafe identity")
+	}
+	if r.ResourceUID == "" {
+		if r.Generation != 0 || r.Target != "" {
+			return fmt.Errorf("topology run carries resource target")
+		}
+	} else if r.Generation < 1 || r.Target == "" {
+		return fmt.Errorf("resource run requires target identity")
 	}
 	return nil
 }

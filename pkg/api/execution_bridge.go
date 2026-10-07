@@ -69,6 +69,21 @@ func (b *ExecutionBridge) HCLFileForRun(run *controlplane.Run) string {
 	return ""
 }
 
+// MaterializeRunRevision resolves an immutable global revision through the
+// canonical repository and pins it in the host workspace tree. Host
+// supervisors use this entry point instead of accepting a worker supplied
+// filesystem path.
+func (b *ExecutionBridge) MaterializeRunRevision(ctx context.Context, topology, revision string) (string, error) {
+	if b == nil || b.server == nil || topology == "" || revision == "" {
+		return "", fmt.Errorf("immutable run revision is required")
+	}
+	value, err := b.server.apiStore.GetGlobalRevision(ctx, revision)
+	if err != nil {
+		return "", err
+	}
+	return b.server.workspaceService().MaterializeRevision(topology, revision, value.Files)
+}
+
 func (b *ExecutionBridge) Topologies(ctx context.Context) []string {
 	items, err := b.server.workspaceService().List(ctx)
 	if err != nil {

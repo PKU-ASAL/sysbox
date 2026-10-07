@@ -7,7 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/agentexec"
+	"github.com/oslab/sysbox/pkg/api"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
@@ -18,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var supervisorConfigFile, supervisorIdentityFile string
@@ -89,6 +93,8 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	}
 	authority := hostsupervisor.AuthorityClient{Identity: *ident}
 	resolver := hostsupervisor.CanonicalResolver{RunsDir: cfg.Paths.RunsDir, Backend: cfg.State.Backend, AgentID: ident.ID}
+	runBridge := api.NewExecutionBridge(cfg)
+	runExecutor := agentexec.NewExecutorWithBridge(runBridge)
 	dispatcher := &hostsupervisor.Dispatcher{Root: cfg.HostSupervisor.Root, AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	power := &hostsupervisor.PowerDispatcher{Root: filepath.Join(cfg.HostSupervisor.Root, "power"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.ResolveNode, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	files := &hostsupervisor.FileDispatcher{Dispatcher: &hostsupervisor.Dispatcher{Root: filepath.Join(cfg.HostSupervisor.Root, "files"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}, Fetch: authority.FetchFile}
@@ -96,14 +102,37 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	server := hostsupervisor.Server{Socket: cfg.HostSupervisor.Socket, GroupID: cfg.HostSupervisor.WorkerGroupID, Dispatcher: dispatcher, Power: power, Files: files, OnRecoveryError: func(err error) { fmt.Fprintf(cmd.ErrOrStderr(), "host supervisor reconciliation: %v\n", err) }}
 	server.Runs = runCoordinator
 	server.RunEffect = func(ctx context.Context, req hostsupervisor.RunRequest) (json.RawMessage, error) {
-		if req.Target == "" {
-			return nil, fmt.Errorf("host run requires one resource target")
+		if req.ExpectedSerial < 1 {
+			return nil, fmt.Errorf("host run requires a positive expected state serial")
 		}
-		// The coordinator is wired and durably fences intent. Provider effect
-		// execution is deliberately rejected until an immutable revision-backed
-		// host executor is configured; this prevents a worker relay from
-		// claiming a complete run without a host receipt/state patch.
-		return nil, fmt.Errorf("host run effect executor is not configured for immutable revision %s", req.Revision)
+		path, err := runBridge.MaterializeRunRevision(ctx, req.Topology, req.Revision)
+		if err != nil {
+			return nil, fmt.Errorf("materialize immutable host revision: %w", err)
+		}
+		manager, err := runBridge.StateManager(req.Topology)
+		if err != nil {
+			return nil, err
+		}
+		canonical, err := manager.LoadWithContext(ctx)
+		if err != nil || canonical == nil || canonical.TopologyUID != req.TopologyUID || canonical.Meta.Serial != req.ExpectedSerial {
+			return nil, fmt.Errorf("host run canonical state changed")
+		}
+		if req.ResourceUID != "" {
+			addr, parseErr := address.Parse(req.Target)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			resource := canonical.FindResource(addr)
+			if resource == nil || resource.OwnerUID != req.TopologyUID || resource.ResourceUID != req.ResourceUID || resource.Generation != req.Generation {
+				return nil, fmt.Errorf("host run target identity changed")
+			}
+		}
+		run := &controlplane.Run{ID: req.RunID, Topology: req.Topology, Revision: req.Revision, SnapshotPath: path, Op: req.Action, Operation: req.Action, Target: req.Target, Status: controlplane.RunRunning, AgentID: ident.ID, StartedAt: time.Now().UTC(), QueuedAt: time.Now().UTC(), Attempt: 1, LeaseOwner: "host-supervisor"}
+		runExecutor.ExecuteContext(ctx, run)
+		if run.Status != controlplane.RunDone {
+			return nil, fmt.Errorf("host run failed: %s", run.Err)
+		}
+		return json.Marshal(run)
 	}
 	server.SSH = &hostsupervisor.SSHAccessCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "ssh-access"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, Authorize: authority.Authorize}
 	server.SSHApply = func(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {

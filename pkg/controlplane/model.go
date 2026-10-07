@@ -245,6 +245,7 @@ type AgentCommand struct {
 	ActionID         string                `json:"action_id,omitempty"`
 	ResourceUID      string                `json:"resource_uid,omitempty"`
 	Generation       int64                 `json:"generation,omitempty"`
+	ExpectedSerial   int64                 `json:"expected_serial,omitempty"`
 	LeaseEpoch       int64                 `json:"lease_epoch,omitempty"`
 }
 

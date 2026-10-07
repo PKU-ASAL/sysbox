@@ -440,6 +440,7 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	}
 	operation := cmd.Type
 	digest := ""
+	topologyRun := false
 	switch cmd.Type {
 	case "node_operation":
 		if cmd.Operation.Operation == "adoption_apply" {
@@ -509,17 +510,18 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 		if cmd.Run == nil || (action != "apply" && action != "destroy") || cmd.Run.Topology == "" || cmd.Run.Revision == "" {
 			return controlplane.ExecutionGrant{}, persistence.ErrCorruptRecord
 		}
-		req := hostsupervisor.RunRequest{RunID: cmd.Run.ID, Topology: cmd.Run.Topology, TopologyUID: cmd.TopologyUID, Revision: cmd.Run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: cmd.Run.Target}
+		req := hostsupervisor.RunRequest{RunID: cmd.Run.ID, Topology: cmd.Run.Topology, TopologyUID: cmd.TopologyUID, Revision: cmd.Run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: cmd.Run.Target, ExpectedSerial: cmd.ExpectedSerial}
 		var err error
 		digest, err = req.Digest()
 		if err != nil {
 			return controlplane.ExecutionGrant{}, err
 		}
 		operation = "run_" + action
+		topologyRun = cmd.ResourceUID == ""
 	default:
 		return controlplane.ExecutionGrant{}, persistence.ErrUnsupportedVersion
 	}
-	if cmd.TopologyUID == "" || cmd.ResourceUID == "" || cmd.Generation < 1 || cmd.ActionID == "" {
+	if cmd.TopologyUID == "" || cmd.ActionID == "" || (!topologyRun && (cmd.ResourceUID == "" || cmd.Generation < 1)) || (topologyRun && cmd.Generation != 0) {
 		return controlplane.ExecutionGrant{}, persistence.ErrConflict
 	}
 	return controlplane.ExecutionGrant{TargetBootID: proof.BootID, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}, AgentID: agentID, SessionID: proof.SessionID, ActionID: cmd.ActionID, CommandID: cmd.ID, Attempt: uint64(cmd.Attempt), Operation: operation, Digest: digest, ExpiresAt: cmd.LeaseUntil}, nil

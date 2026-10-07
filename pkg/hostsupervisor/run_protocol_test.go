@@ -11,7 +11,7 @@ import (
 )
 
 func TestRunRequestDigestBindsRevisionActionAndGeneration(t *testing.T) {
-	req := RunRequest{RunID: "run", Topology: "lab", Revision: "sha256:rev", ActionID: "action", ResourceUID: "resource", Generation: 2, Action: "apply", ExpectedSerial: 3}
+	req := RunRequest{RunID: "run", Topology: "lab", TopologyUID: "topology", Revision: "sha256:rev", ActionID: "action", ResourceUID: "resource", Generation: 2, Action: "apply", Target: "sysbox_node.web", ExpectedSerial: 3}
 	req.TopologyUID = "lab-uid"
 	digest, err := req.Digest()
 	require.NoError(t, err)
@@ -30,7 +30,7 @@ func TestRunRequestDigestBindsRevisionActionAndGeneration(t *testing.T) {
 }
 
 func TestRunRequestRejectsUnsupportedActionAndPaths(t *testing.T) {
-	req := RunRequest{RunID: "run", Topology: "lab", Revision: "rev", ActionID: "a", ResourceUID: "r", Generation: 1, Action: "reset"}
+	req := RunRequest{RunID: "run", Topology: "lab", TopologyUID: "topology", Revision: "rev", ActionID: "a", ResourceUID: "r", Generation: 1, Action: "reset", Target: "sysbox_node.web", ExpectedSerial: 1}
 	req.TopologyUID = "uid"
 	require.Error(t, req.Validate())
 	req.Action = "apply"
