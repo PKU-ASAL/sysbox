@@ -142,6 +142,12 @@ including lost stop acknowledgment, cold recovery, checksum/mode and revoked
 request rejection. Staging anchors are retained as recovery evidence; automatic
 GC remains a separate unfinished stage.
 
+Managed `ssh_access` derives the target home from the canonical node's explicit
+connection user. It refuses nodes without an explicit user and writes only
+`<home>/.ssh/authorized_keys.d/sysbox-<access-id>`; it never assumes root or
+changes a shared `authorized_keys` file. The host supervisor performs the same
+operation through a signed request and canonical provider connection.
+
 Verification commands:
 
 ```sh

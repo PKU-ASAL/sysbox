@@ -103,7 +103,14 @@ func (SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext,
 	if err := tmp.Close(); err != nil {
 		return state.Resource{}, err
 	}
-	path := filepath.Join("/root/.ssh/authorized_keys.d", "sysbox-"+req.ID)
+	user, err := pc.SSHUserForNode(cfg.Node)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	if strings.ContainsAny(user, "/\\\x00") || user == "." || user == ".." {
+		return state.Resource{}, fmt.Errorf("invalid SSH user")
+	}
+	path := filepath.Join("/home", user, ".ssh", "authorized_keys.d", "sysbox-"+req.ID)
 	if err := files.CopyFile(ctx, name, path); err != nil {
 		return state.Resource{}, fmt.Errorf("install managed ssh key: %w", err)
 	}
@@ -121,7 +128,7 @@ func (SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext,
 func (SSHAccessResourceHandler) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
 	node := current.Str("node")
 	path := current.Str("path")
-	if node == "" || path == "" || filepath.Clean(path) != path || !strings.HasPrefix(path, "/root/.ssh/authorized_keys.d/sysbox-") {
+	if node == "" || path == "" || filepath.Clean(path) != path || !strings.Contains(path, "/.ssh/authorized_keys.d/sysbox-") {
 		return fmt.Errorf("%w: invalid managed ssh access state", ErrConvergenceUnsupported)
 	}
 	conn, err := pc.ConnectionForNode(ctx, node)

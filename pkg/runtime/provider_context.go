@@ -79,6 +79,22 @@ func (c *ProviderContext) ConnectionForNode(ctx context.Context, ref string) (su
 	return c.exec.connectionForNode(ctx, nd, h, cfg.Connections)
 }
 
+func (c *ProviderContext) SSHUserForNode(ref string) (string, error) {
+	addr, err := address.Parse(ref)
+	if err != nil {
+		return "", err
+	}
+	node := c.exec.graph.Get(addr)
+	if node == nil {
+		return "", fmt.Errorf("node %s not found", addr)
+	}
+	cfg, ok := node.Data.(*config.NodeConfig)
+	if !ok || len(cfg.Connections) == 0 || cfg.Connections[0].User == "" {
+		return "", fmt.Errorf("node %s has no explicit SSH user", addr)
+	}
+	return cfg.Connections[0].User, nil
+}
+
 func (c *ProviderContext) createNodeResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	return c.exec.createNodeResource(ctx, n)
 }
