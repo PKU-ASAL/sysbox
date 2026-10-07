@@ -13,7 +13,9 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"io"
 	"net/http"
 	"os"
@@ -273,25 +275,13 @@ func (s *Server) commitAdoptionState(ctx context.Context, op controlplane.NodeOp
 	if err != nil {
 		return err
 	}
-	mgr, err := s.stateManager(req.Topology)
+	repo, err := s.actionRepository(req.Topology)
 	if err != nil {
 		return err
 	}
-	st, err := mgr.LoadWithContext(ctx)
-	if err != nil {
-		return err
-	}
-	if st.TopologyUID != req.TopologyUID || st.Meta.Serial != req.ExpectedSerial {
-		return persistence.ErrConflict
-	}
-	if existing := st.FindResource(addr); existing != nil {
-		if existing.OwnerUID == req.TopologyUID && existing.ResourceUID == req.ResourceUID && existing.Generation == req.Generation && existing.ExternalID == req.ExternalID {
-			return nil
-		}
-		return persistence.ErrConflict
-	}
-	st.AddResource(state.Resource{Address: addr, ResourceType: addr.Type, Driver: req.Provider, ExternalID: req.ExternalID, OwnerUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation, Private: append(json.RawMessage(nil), evidence...), Status: state.ResourcePresent, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})
-	return mgr.SaveWithContext(ctx, st)
+	defer repo.Close()
+	resource := state.Resource{Address: addr, ResourceType: addr.Type, Driver: req.Provider, ExternalID: req.ExternalID, OwnerUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation, Private: append(json.RawMessage(nil), evidence...), Status: state.ResourcePresent, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	return runtime.CommitAdoptionEvidence(ctx, repo, op.ID, req.Topology, addr, req.Evidence, resource, substrate.OperationIdentity{ActionID: op.ID, OwnerUID: req.TopologyUID, TopologyUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation}, req.ExpectedSerial)
 }
 func (s *Server) authenticatedGrantAgent(r *http.Request) error {
 	id := r.PathValue("agent")

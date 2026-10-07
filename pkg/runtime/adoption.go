@@ -117,3 +117,43 @@ func CommitAdoption(ctx context.Context, actions ActionRepository, runID, topolo
 	patch := &StatePatch{Resource: addr.String(), Action: controlplane.PlanActionAdopt, Op: StatePatchUpsert, State: &logged}
 	return actions.CommitActionOutcome(ctx, action, patch)
 }
+
+// CommitAdoptionEvidence commits a provider result already proven by the
+// resource host. It records intent and outcome without re-running ApplyAdoption;
+// host completion is the effect boundary, while this function is the atomic
+// canonical state/journal patch.
+func CommitAdoptionEvidence(ctx context.Context, actions ActionRepository, runID, topology string, addr address.Address, evidence substrate.AdoptionEvidence, resource state.Resource, identity substrate.OperationIdentity, expectedSerial int64) error {
+	if actions == nil || runID == "" || topology == "" || addr.IsZero() || identity.Validate() != nil || evidence.ExternalID == "" || evidence.Fingerprint == "" {
+		return fmt.Errorf("adoption evidence commit requires complete identity")
+	}
+	if !resource.Address.Equal(addr) || resource.Driver != evidence.Provider || resource.ExternalID != evidence.ExternalID || resource.OwnerUID != identity.OwnerUID || resource.ResourceUID != identity.ResourceUID || resource.Generation != identity.Generation || identity.TopologyUID != identity.OwnerUID {
+		return fmt.Errorf("adoption evidence identity conflict")
+	}
+	st, err := actions.LoadState(ctx, topology)
+	if err != nil {
+		return err
+	}
+	if st.Meta.Serial != expectedSerial || st.TopologyUID != identity.TopologyUID {
+		return ErrPlanStale
+	}
+	if st.FindResource(addr) != nil {
+		return ErrPlanStale
+	}
+	raw, _ := json.Marshal(struct {
+		Run, Topology string
+		Identity      substrate.OperationIdentity
+		Evidence      substrate.AdoptionEvidence
+		Resource      state.Resource
+	}{runID, topology, identity, evidence, resource})
+	sum := sha256.Sum256(raw)
+	digest := fmt.Sprintf("%x", sum)
+	action := ActionRecord{ID: "adopt-" + digest, Topology: topology, RunID: runID, Resource: addr, Action: controlplane.PlanActionAdopt, Status: ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource, EffectComplete: true}
+	if err := actions.CommitActionIntent(ctx, action); err != nil {
+		return err
+	}
+	action.Status = ActionSucceeded
+	action.Revision = 1
+	logged := resourceLog(resource)
+	patch := &StatePatch{Resource: addr.String(), Action: controlplane.PlanActionAdopt, Op: StatePatchUpsert, State: &logged}
+	return actions.CommitActionOutcome(ctx, action, patch)
+}
