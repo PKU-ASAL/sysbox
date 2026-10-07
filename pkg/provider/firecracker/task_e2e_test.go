@@ -44,7 +44,7 @@ func TestFirecrackerDurableGuestTaskE2E(t *testing.T) {
 	require.NoError(t, err)
 	digest, err := task.Digest()
 	require.NoError(t, err)
-	grant := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: id.TopologyUID, ResourceUID: id.ResourceUID, Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "durable", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "guest_task", Digest: digest, ExpiresAt: time.Now().UTC().Add(time.Minute), State: controlplane.GrantActive}
+	grant := controlplane.ExecutionGrant{TargetBootID: boot, Scope: controlplane.ExecutionScope{TopologyUID: id.TopologyUID, ResourceUID: id.ResourceUID, Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "durable", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "guest_task", Digest: digest, ExpiresAt: time.Now().UTC().Add(time.Minute), State: controlplane.GrantActive}
 	signed, err := controlplane.SignExecutionGrant(private, grant, boot, time.Now().UTC())
 	require.NoError(t, err)
 	diagnostic, e := conn.Exec(ctx, substrate.ExecRequest{Program: "date -u +%Y-%m-%dT%H:%M:%S.%N; cat /proc/sys/kernel/random/boot_id; wc -c /etc/sysbox/grant-public-key; stat -fc %T /sys/fs/cgroup", Shell: substrate.ShellLinux}, nil, nil)

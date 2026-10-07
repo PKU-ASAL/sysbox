@@ -16,15 +16,23 @@ import (
 const DefaultConfigPath = "/etc/sysbox/sysbox.yaml"
 
 type ServiceConfig struct {
-	Version    int              `yaml:"version" json:"version"`
-	API        APIConfig        `yaml:"api" json:"api"`
-	Agent      AgentConfig      `yaml:"agent" json:"agent,omitempty"`
-	Run        RunConfig        `yaml:"run" json:"run,omitempty"`
-	Paths      PathsConfig      `yaml:"paths" json:"paths"`
-	State      StateConfig      `yaml:"state" json:"state"`
-	Supervisor SupervisorConfig `yaml:"supervisor" json:"supervisor"`
-	Providers  ProvidersConfig  `yaml:"providers" json:"providers"`
-	Artifacts  ArtifactsConfig  `yaml:"artifacts" json:"artifacts"`
+	HostSupervisor HostSupervisorConfig `yaml:"host_supervisor" json:"host_supervisor,omitempty"`
+	Version        int                  `yaml:"version" json:"version"`
+	API            APIConfig            `yaml:"api" json:"api"`
+	Agent          AgentConfig          `yaml:"agent" json:"agent,omitempty"`
+	Run            RunConfig            `yaml:"run" json:"run,omitempty"`
+	Paths          PathsConfig          `yaml:"paths" json:"paths"`
+	State          StateConfig          `yaml:"state" json:"state"`
+	Supervisor     SupervisorConfig     `yaml:"supervisor" json:"supervisor"`
+	Providers      ProvidersConfig      `yaml:"providers" json:"providers"`
+	Artifacts      ArtifactsConfig      `yaml:"artifacts" json:"artifacts"`
+}
+
+type HostSupervisorConfig struct {
+	Socket         string `yaml:"socket" json:"socket"`
+	Root           string `yaml:"root" json:"root"`
+	SigningKeyFile string `yaml:"signing_key_file" json:"signing_key_file"`
+	WorkerGroupID  int    `yaml:"worker_group_id" json:"worker_group_id"`
 }
 
 type APIConfig struct {
@@ -68,6 +76,7 @@ type APIHeadersConfig struct {
 }
 
 type AgentConfig struct {
+	HostSupervisorSocket        string            `yaml:"host_supervisor_socket" json:"host_supervisor_socket,omitempty"`
 	ExecutionSessionFile        string            `yaml:"execution_session_file" json:"execution_session_file,omitempty"`
 	ExecutionGrantPublicKeyFile string            `yaml:"execution_grant_public_key_file" json:"execution_grant_public_key_file,omitempty"`
 	Policy                      AgentPolicyConfig `yaml:"policy" json:"policy,omitempty"`

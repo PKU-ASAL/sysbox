@@ -1,13 +1,13 @@
 # P0–P9 并行实施：集成跟踪
 
-当前工作基线：`a3ef18e`。本文记录第一批并行集成检查点，不能作为P0–P9全部验收通过声明。
+当前已提交集成基线：`566268e`。本文记录并行集成检查点，不能作为P0–P9全部验收通过声明。
 
 | 阶段 | 已进入代码的内容 | 未完成的验收/接入 |
 |---|---|---|
 | P0 | 强制按Go依赖重建guest helper、amd64/arm64构建、独立cgroup验收目标 | 全能力矩阵、最终产物与总验收 |
 | P1 | authenticated revision、独立Agent物化、artifact来源约束、续租固定快照 | 真正双宿主验收；未把独立目录当双宿主 |
-| P2 | authority ledger/session/epoch、签名grant及stop receipt API、当前command事务绑定 | 常驻host gate持有唯一provider权限、所有effect入口、接管停止证明 |
-| P3 | 持久task、sealed memfd、cgroup+pidfd、monotonic guard、续租、输出、SSH/vsock通用SPI | 真实SSH路径；payload隔离边界；API连续两任务与重启接管闭环 |
+| P2 | authority ledger/session/epoch、签名grant及stop receipt API、当前command事务绑定；guest task接入独立host supervisor、可信停止回执与旧epoch重试墓碑 | 普通Run/lifecycle/file/foreground等effect全部接入、host持有唯一provider权限；真正跨宿主验收 |
+| P3 | 持久task、sealed memfd、cgroup+pidfd、monotonic guard、续租、分页输出、SSH/vsock通用SPI；真实SSH和Docker supervisor任务接续验收 | 完整Agent服务重启接管验收；全执行路径统一隔离 |
 | P4 | session+sequence observation ledger、guest活动枚举、receipt失效 | 全API迁移回归、完整lease撤销/guest取消/hoststop集成 |
 | P5 | adoption SPI、journal动作、Docker不可变ID sidecar | API plan/confirm、libvirt/Firecracker adapters、真实接管与清理 |
 | P6 | aggregate format2快照、元数据restore monotonic serial、身份约束、API CRUD | grant撤销与freeze、force-unlock、恢复较旧资源集合的显式reconcile |
@@ -30,5 +30,27 @@
 - 复审修复了renew与旧超时竞争、Cancel在副作用前完整身份校验、不同resource的epoch互相误拒绝，以及snapshot历史属性不能盲目还原真实effect目标。
 
 schema变更：API8、aggregate2；旧格式明确重建。它们必须在最终capability和配置样例中一起更新后才能交付。
+
+## 独立 host supervisor 集成
+
+API guest execution 不再由 Agent 自行打开 provider connection：缺少 supervisor
+socket 会直接失败。新增 `sysbox host-supervisor`，独立校验 canonical resource
+和在线授权，持久化启动意图，并在确认 guest 停止后签名回执。签名 grant 固定
+guest boot ID；历史 grant 检查、旧 session 撤销和停止回执重放均有明确接口。
+
+配置、身份、密钥、socket、任务日志及文件/SQLite canonical repository 必须满足
+可信目录及权限要求。Postgres 的角色隔离仍需部署者配置。这不是整个 Agent 的
+权限隔离完成声明：普通 Run、生命周期、文件安装和 foreground 路径仍待迁入。
+
+可重复验收入口：`make test-host-supervisor-e2e`。使用真实 Docker task、Unix
+socket 和私有 cgroup，覆盖停止回执丢失、API 与 supervisor 重建后重报、Agent session
+替换导致运行中任务自动取消，以及确认停止后的后继 epoch。这里的服务重建是
+测试内重新创建服务对象，不等同于双宿主或完整 Agent 进程重启验收。
+
+本轮已修复 Agent 单次输出读取超过 guest 64 KiB 协议上限的问题，以及 supervisor
+listener 异常退出时等待 recovery goroutine 导致挂起的问题。集成全仓测试使用
+真实隔离 Postgres 通过。独立审查发现的旧授权结果误取消并发续租任务、慢记录
+阻塞后续回执恢复均已修复并通过 race 回归：取消前重新比对完整 grant，已签回执
+不再依赖在线授权，每条记录拥有独立超时。复审未发现新的阻断问题。
 
 2026-10-07集成检查点：真实Postgres启用的全仓测试通过；API/persistence/Agent/runtime/guesttask/effectgate/transport/四provider相关race通过；vet与docs检查通过。最终重建amd64/arm64 helper后，真实KVM5.10持久任务去重、冷读取、输出、取消确认通过（10.04秒）。这证明当前基础可集成，不代表尚未挂接的host supervisor、P5/P6/P7功能和P8/P9已经完成。

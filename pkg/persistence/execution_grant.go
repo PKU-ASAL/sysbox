@@ -21,12 +21,37 @@ const MaxExecutionGrantTTL = controlplane.ExecutionGrantMaxTTL
 // intentionally a single writer boundary until a sharded authority can preserve
 // topology-versus-resource exclusion and session CAS in one transaction.
 type executionAuthority struct {
+	Stops        map[uint64]stoppedExecutionGrant       `json:"stops,omitempty"`
 	Observations map[string]ExecutionObservation        `json:"observations"`
 	Version      int                                    `json:"version"`
 	Epoch        uint64                                 `json:"epoch"`
 	ObservedAt   time.Time                              `json:"observed_at"`
 	Sessions     map[string]controlplane.AgentSession   `json:"sessions"`
 	Grants       map[string]controlplane.ExecutionGrant `json:"grants"`
+}
+type stoppedExecutionGrant struct {
+	Grant   controlplane.ExecutionGrant `json:"grant"`
+	Receipt string                      `json:"receipt"`
+}
+
+// InspectGrant is discovery only, including expired grants and retired sessions.
+func (r *ExecutionGrantRepository) InspectGrant(ctx context.Context, agent string, scope controlplane.ExecutionScope) (*controlplane.ExecutionGrant, error) {
+	var result controlplane.ExecutionGrant
+	err := r.read(ctx, func(a *executionAuthority) error {
+		g, ok := a.Grants[grantScopeKey(scope)]
+		if !ok || g.AgentID != agent {
+			return ErrNotFound
+		}
+		if g.Scope != scope {
+			return ErrConflict
+		}
+		result = g
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 type ExecutionGrantRepository struct {
@@ -109,6 +134,11 @@ func (r *ExecutionGrantRepository) update(ctx context.Context, fn func(*executio
 		}
 		for key, s := range a.Sessions {
 			if key == "" || key != s.AgentID || s.ID == "" || s.IncarnationID == "" || s.CreatedAt.IsZero() {
+				return nil, ErrCorruptRecord
+			}
+		}
+		for epoch, stop := range a.Stops {
+			if epoch == 0 || epoch > a.Epoch || stop.Grant.Epoch != epoch || !validGrant(stop.Grant) || stop.Grant.State != controlplane.GrantStopped || stop.Receipt == "" || stop.Grant.StopReceipt != stop.Receipt {
 				return nil, ErrCorruptRecord
 			}
 		}
@@ -198,7 +228,7 @@ func scopesOverlap(a, b controlplane.ExecutionScope) bool {
 	return a.TopologyUID == b.TopologyUID && (a.ResourceUID == "" || b.ResourceUID == "" || a.ResourceUID == b.ResourceUID)
 }
 func sameGrant(a, b controlplane.ExecutionGrant) bool {
-	return a.Scope == b.Scope && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.ActionID == b.ActionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt && a.Operation == b.Operation && a.Digest == b.Digest
+	return a.Scope == b.Scope && a.TargetBootID == b.TargetBootID && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.ActionID == b.ActionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt && a.Operation == b.Operation && a.Digest == b.Digest
 }
 func validTTL(ttl time.Duration) bool { return ttl > 0 && ttl <= MaxExecutionGrantTTL }
 
@@ -315,10 +345,25 @@ func (r *ExecutionGrantRepository) Revoke(ctx context.Context, proof controlplan
 // AcknowledgeStop is reserved for authenticated resource-host receipts, not
 // worker completion reports. Expiry/revocation alone never proves quiescence.
 func (r *ExecutionGrantRepository) AcknowledgeStop(ctx context.Context, proof controlplane.ExecutionGrant, receipt string) error {
+	return r.acknowledgeStop(ctx, proof, receipt, false)
+}
+
+// AcceptHostStop atomically retires a grant using authenticated host evidence.
+// Exact replay remains valid after a successor has replaced the scope record.
+func (r *ExecutionGrantRepository) AcceptHostStop(ctx context.Context, proof controlplane.ExecutionGrant, receipt string) error {
+	return r.acknowledgeStop(ctx, proof, receipt, true)
+}
+func (r *ExecutionGrantRepository) acknowledgeStop(ctx context.Context, proof controlplane.ExecutionGrant, receipt string, hostConfirmed bool) error {
 	if receipt == "" {
 		return ErrInvalidRecord
 	}
 	return r.update(ctx, func(a *executionAuthority) error {
+		if prior, ok := a.Stops[proof.Epoch]; ok {
+			if sameGrant(prior.Grant, proof) && prior.Receipt == receipt {
+				return nil
+			}
+			return ErrConflict
+		}
 		g, err := currentGrant(a, proof)
 		if err != nil {
 			return err
@@ -329,12 +374,16 @@ func (r *ExecutionGrantRepository) AcknowledgeStop(ctx context.Context, proof co
 			}
 			return ErrConflict
 		}
-		if g.State != controlplane.GrantRevoked {
+		if g.State != controlplane.GrantRevoked && !hostConfirmed {
 			return ErrConflict
 		}
 		g.State = controlplane.GrantStopped
 		g.StopReceipt = receipt
 		a.Grants[grantScopeKey(g.Scope)] = g
+		if a.Stops == nil {
+			a.Stops = map[uint64]stoppedExecutionGrant{}
+		}
+		a.Stops[g.Epoch] = stoppedExecutionGrant{Grant: g, Receipt: receipt}
 		return nil
 	})
 }

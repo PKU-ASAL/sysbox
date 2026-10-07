@@ -4,6 +4,18 @@
 
 > 重构分支的生命周期写入要求原子 repository；`--allow-unsafe-state` 不能绕过这个要求。旧 state 格式需显式重建，GC 自动删除暂禁，仅保留有归属约束的 `gc --dry-run`。完整能力缺口见[实施状态](../design/2026-09-28-runtime-refactor-implementation-status.md)。
 
+## Host Supervisor
+
+```text
+sysbox host-supervisor --config /etc/sysbox/supervisor.yaml --identity /etc/sysbox/supervisor-identity.json
+```
+
+Serve signed API guest tasks over a local Unix socket. Requires root, an explicit
+non-root worker group, private signing key and trusted canonical repository.
+The Agent must set `agent.host_supervisor_socket`; guest task execution has no
+direct-provider fallback. See [guest tasks](guest-tasks.md) for configuration,
+recovery semantics and the remaining ordinary lifecycle migration boundary.
+
 ## Global Options
 
 | Flag | Default | Meaning |

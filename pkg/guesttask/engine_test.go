@@ -20,7 +20,7 @@ func signedRequest(t *testing.T, key ed25519.PrivateKey, boot, id string) Reques
 	r := Request{UserID: 65534, ID: id, Args: []string{"/bin/sh", "-c", "printf output; printf error >&2; exit 7"}, OutputLimit: 1024}
 	digest, err := r.Digest()
 	require.NoError(t, err)
-	g := SignedGrant{BootID: boot, IssuedAt: time.Now().UTC(), Grant: controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: id, Attempt: 1, Epoch: 1, Operation: "guest_task", Digest: digest, ExpiresAt: time.Now().UTC().Add(time.Minute), State: controlplane.GrantActive}}
+	g := SignedGrant{BootID: boot, IssuedAt: time.Now().UTC(), Grant: controlplane.ExecutionGrant{TargetBootID: boot, Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: id, Attempt: 1, Epoch: 1, Operation: "guest_task", Digest: digest, ExpiresAt: time.Now().UTC().Add(time.Minute), State: controlplane.GrantActive}}
 	r.Grant, err = controlplane.SignExecutionGrant(key, g.Grant, g.BootID, g.IssuedAt)
 	require.NoError(t, err)
 	return r

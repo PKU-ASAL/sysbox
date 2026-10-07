@@ -69,7 +69,77 @@ func (s *Server) registerExecutionGrantRoutes() {
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/authorize", s.handleAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/renew", s.handleAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/revoke", s.handleRevokeExecutionGrant)
+	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/inspect", s.handleInspectExecutionGrant)
+	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/authorize", s.handleHostAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/hosts/{agent}/execution-grants/stopped", s.handleStoppedExecutionGrant)
+}
+
+// Host authorization consumes a signed existing grant. It never renews or
+// mints authority, and derives the dispatch lease from the locked source row.
+func (s *Server) handleHostAuthorizeExecutionGrant(w http.ResponseWriter, r *http.Request) {
+	if err := s.authenticatedGrantAgent(r); err != nil {
+		writeError(w, 401, err)
+		return
+	}
+	if len(s.grantSigner) != ed25519.PrivateKeySize {
+		writeError(w, 503, controlplane.ErrInvalidExecutionGrant)
+		return
+	}
+	var signed controlplane.SignedExecutionGrant
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&signed); err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	base := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	if err := base.ObserveTime(r.Context()); err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
+	if err := controlplane.VerifyExecutionGrant(s.grantSigner.Public().(ed25519.PublicKey), signed, signed.BootID, time.Now()); err != nil {
+		writeError(w, 409, err)
+		return
+	}
+	g := signed.Grant
+	storage := apiExecutionGrantStorage{store: s.apiStore, commandID: g.CommandID, validate: func(record *persistence.CommandRecord) error {
+		if record == nil {
+			return persistence.ErrConflict
+		}
+		proof := ExecutionGrantRequest{SessionID: g.SessionID, LeaseOwner: record.Command.LeaseOwner, Attempt: int(g.Attempt), BootID: signed.BootID}
+		current, err := s.sourceGrant(r.Context(), r.PathValue("agent"), proof, record)
+		if err != nil {
+			return err
+		}
+		if current.Scope != g.Scope || current.AgentID != g.AgentID || current.TargetBootID != g.TargetBootID || current.ActionID != g.ActionID || current.CommandID != g.CommandID || current.Operation != g.Operation || current.Digest != g.Digest {
+			return persistence.ErrConflict
+		}
+		return nil
+	}}
+	if err := persistence.NewExecutionGrantRepository(storage).Authorize(r.Context(), g); err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"authorized": true})
+}
+func (s *Server) handleInspectExecutionGrant(w http.ResponseWriter, r *http.Request) {
+	if err := s.authenticatedGrantAgent(r); err != nil {
+		writeError(w, 401, err)
+		return
+	}
+	var scope controlplane.ExecutionScope
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&scope); err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	g, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).InspectGrant(r.Context(), r.PathValue("agent"), scope)
+	if err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
+	writeJSON(w, 200, g)
 }
 
 func (s *Server) handleRevokeExecutionGrant(w http.ResponseWriter, r *http.Request) {
@@ -107,11 +177,9 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 	}
 	sum := sha256.Sum256(raw)
 	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
-	// Revoke before recording quiescence even if the last worker report was
-	// lost. Both operations are idempotent; a crash between them stays blocked.
-	if err = repo.Revoke(r.Context(), receipt.Grant); err == nil {
-		err = repo.AcknowledgeStop(r.Context(), receipt.Grant, hex.EncodeToString(sum[:]))
-	}
+	// Commit quiescence atomically. Exact receipt replay remains successful
+	// even after another grant has been issued for the same scope.
+	err = repo.AcceptHostStop(r.Context(), receipt.Grant, hex.EncodeToString(sum[:]))
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
@@ -303,7 +371,7 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	if digest == "" {
 		digest = hex.EncodeToString(sum[:])
 	}
-	return controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}, AgentID: agentID, SessionID: proof.SessionID, ActionID: cmd.ActionID, CommandID: cmd.ID, Attempt: uint64(cmd.Attempt), Operation: operation, Digest: digest, ExpiresAt: cmd.LeaseUntil}, nil
+	return controlplane.ExecutionGrant{TargetBootID: proof.BootID, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}, AgentID: agentID, SessionID: proof.SessionID, ActionID: cmd.ActionID, CommandID: cmd.ID, Attempt: uint64(cmd.Attempt), Operation: operation, Digest: digest, ExpiresAt: cmd.LeaseUntil}, nil
 }
 
 func (s *Server) handleExecutionGrant(w http.ResponseWriter, r *http.Request) {

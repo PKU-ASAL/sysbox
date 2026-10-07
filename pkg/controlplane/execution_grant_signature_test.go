@@ -12,9 +12,13 @@ func TestSignedGrantRejectsTamperWrongBootAndExpiry(t *testing.T) {
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	now := time.Now().UTC()
-	grant := ExecutionGrant{Scope: ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1}, AgentID: "agent", SessionID: "session", Epoch: 1, Attempt: 1, ActionID: "action", CommandID: "command", Operation: "guest_task", Digest: "digest", State: GrantActive, ExpiresAt: now.Add(time.Minute)}
+	grant := ExecutionGrant{TargetBootID: "boot", Scope: ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1}, AgentID: "agent", SessionID: "session", Epoch: 1, Attempt: 1, ActionID: "action", CommandID: "command", Operation: "guest_task", Digest: "digest", State: GrantActive, ExpiresAt: now.Add(time.Minute)}
 	signed, err := SignExecutionGrant(key, grant, "boot", now)
 	require.NoError(t, err)
+	missingBoot := grant
+	missingBoot.TargetBootID = ""
+	_, err = SignExecutionGrant(key, missingBoot, "boot", now)
+	require.Error(t, err)
 	require.NoError(t, VerifyExecutionGrant(pub, signed, "boot", now))
 	require.Error(t, VerifyExecutionGrant(pub, signed, "other-boot", now))
 	require.Error(t, VerifyExecutionGrant(pub, signed, "boot", now.Add(time.Minute)))
@@ -27,13 +31,17 @@ func TestStopReceiptRequiresSeparateHostSignature(t *testing.T) {
 	require.NoError(t, err)
 	_, worker, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	g := ExecutionGrant{Scope: ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "guest_task", Digest: "digest", ExpiresAt: time.Now().Add(time.Minute), State: GrantRevoked}
-	r, err := SignExecutionStopReceipt(key, g, "host-boot", "receipt", time.Now())
+	g := ExecutionGrant{TargetBootID: "guest-boot", Scope: ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "guest_task", Digest: "digest", ExpiresAt: time.Now().Add(time.Minute), State: GrantRevoked}
+	r, err := SignExecutionTaskStopReceipt(key, g, "host-boot", "guest-boot", g.ActionID, g.Digest, "receipt", time.Now())
 	require.NoError(t, err)
 	require.NoError(t, VerifyExecutionStopReceipt(pub, r))
+	_, err = SignExecutionTaskStopReceipt(key, g, "host-boot", "wrong-guest-boot", g.ActionID, g.Digest, "receipt", time.Now())
+	require.Error(t, err)
+	_, err = SignExecutionTaskStopReceipt(key, g, "host-boot", "guest-boot", "wrong-task", g.Digest, "receipt", time.Now())
+	require.Error(t, err)
 	r.Grant.Epoch++
 	require.Error(t, VerifyExecutionStopReceipt(pub, r))
-	r, err = SignExecutionStopReceipt(worker, g, "host-boot", "receipt", time.Now())
+	r, err = SignExecutionTaskStopReceipt(worker, g, "host-boot", "guest-boot", g.ActionID, g.Digest, "receipt", time.Now())
 	require.NoError(t, err)
 	require.Error(t, VerifyExecutionStopReceipt(pub, r))
 }
@@ -42,7 +50,7 @@ func TestGrantBudgetAllowsBoundedSkewWithoutExtendingAuthority(t *testing.T) {
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	now := time.Now().UTC()
-	g := ExecutionGrant{Scope: ExecutionScope{TopologyUID: "t"}, AgentID: "a", SessionID: "s", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "exec", Digest: "digest", State: GrantActive, ExpiresAt: now.Add(time.Minute)}
+	g := ExecutionGrant{TargetBootID: "boot", Scope: ExecutionScope{TopologyUID: "t"}, AgentID: "a", SessionID: "s", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "exec", Digest: "digest", State: GrantActive, ExpiresAt: now.Add(time.Minute)}
 	s, err := SignExecutionGrant(key, g, "boot", now)
 	require.NoError(t, err)
 	guestNow := now.Add(-500 * time.Millisecond)

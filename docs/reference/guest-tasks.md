@@ -39,9 +39,62 @@ Cancel records intent and initiates termination. An accepted cancel may return
 supervisor result or guest reboot never invents an exit code. Output reads use
 bounded byte cursors, and truncation is reported explicitly.
 
+Remote API guest executions require a separate `sysbox host-supervisor`
+process. The Agent submits signed requests over a Unix socket; it cannot
+select a provider endpoint through that protocol. The supervisor resolves the
+resource from its configured canonical repository and checks the resource UID,
+generation and actual provider identity before connecting. It checks current
+API authority before starting or renewing a task. Missing configuration fails
+closed; there is no direct-provider fallback for this command type.
+
+The supervisor records the task identity before starting it. Recovery observes
+that identity instead of replaying the command. Loss of API authority triggers
+cancellation; only confirmed guest termination permits a host-signed stop
+receipt. The receipt is saved before transmission and retried after restart.
+API receipt tombstones make an identical late retry safe after a successor
+epoch is issued. Unknown termination continues to block a successor.
+
+Run the supervisor as root with a separate, non-root worker group. Its config,
+identity, issuer public key, host signing key and canonical repository must
+reside under trusted absolute paths without symlinks or writable ancestors.
+Private files and directories must deny access to other users. The socket
+directory is root-owned, group-readable/searchable, and not group-writable;
+the socket itself allows the configured worker group to connect. Example
+supervisor configuration (replace group ID and paths for the deployment):
+
+```yaml
+paths:
+  runs_dir: /var/lib/sysbox/canonical
+agent:
+  execution_grant_public_key_file: /etc/sysbox/issuer.pub
+host_supervisor:
+  socket: /run/sysbox-supervisor/host.sock
+  root: /var/lib/sysbox/host-tasks
+  signing_key_file: /etc/sysbox/host.key
+  worker_group_id: 2000
+```
+
+Start with `sysbox host-supervisor --config /etc/sysbox/supervisor.yaml
+--identity /etc/sysbox/supervisor-identity.json`. Configure the Agent with
+`agent.host_supervisor_socket` pointing at the same socket and its own pinned
+issuer public key. Configure the API's
+`api.execution_grant.host_public_key_files` map from Agent ID to the matching
+host public key file. Keys use raw Ed25519 bytes: 64-byte private keys and
+32-byte public keys. The host signing key is separate from the API issuer key
+and must never be available to the worker.
+
+File and SQLite repositories are checked for private supervisor ownership,
+including SQLite sidecars. PostgreSQL deployments must enforce equivalent
+isolation with separate database roles; the supervisor cannot prove role
+isolation from a DSN. This boundary currently covers API guest tasks. Ordinary
+Run lifecycle, file installation and foreground provider calls have not all
+moved behind it. A privileged ordinary Agent still has those direct provider
+paths, so this is not yet whole-Agent credential isolation.
+
 Verification commands:
 
 ```sh
+make test-host-supervisor-e2e
 CGO_ENABLED=0 go build -buildvcs=false -o /tmp/sysbox-task-helper ./cmd/sysbox-init
 SYSBOX_GUESTTASK_HELPER=/tmp/sysbox-task-helper \
   go test -tags e2e ./pkg/transport -run '^TestSSHDurableGuestTaskE2E$' -count=1 -v
@@ -52,3 +105,9 @@ loopback sshd, and a disposable container with its own cgroup namespace. It
 does not modify the host SSH service or user authorized keys. The Firecracker
 test is `TestFirecrackerDurableGuestTaskE2E`; it requires actual KVM and current
 guest binaries, kernel and rootfs artifacts.
+
+The host supervisor test uses actual Docker tasks and Unix socket requests.
+It checks lost stop acknowledgments, API and supervisor object restart with the
+same storage, cancellation after Agent session replacement, and successor epochs.
+It does not constitute distinct-host acceptance or a complete Agent service
+restart test.

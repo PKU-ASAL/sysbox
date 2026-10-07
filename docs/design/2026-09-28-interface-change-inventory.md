@@ -6,6 +6,25 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### 2026-10-07 已实施：guest task 宿主监督接口
+
+API guest execution 必须配置 `agent.host_supervisor_socket`；缺失时拒绝执行，
+不再回退到 Agent 直接连接 provider。新增 `sysbox host-supervisor --config
+PATH --identity PATH`，独立的 `host_supervisor` 配置包含 socket、私有日志目录、
+host 签名私钥和非 root worker group ID。部署约束见[持久任务](../reference/guest-tasks.md)。
+
+| 接口或证明 | 当前行为 |
+|---|---|
+| grant 的 `target_boot_id` | guest task 必填、不可变；同一 grant 不能改签给另一个 guest boot |
+| `POST /v1/agents/{agent}/execution-grants/inspect` | Agent HMAC 认证；按 scope 读取旧 session/command 的现存 grant，不产生新权限 |
+| `POST /v1/agents/{agent}/execution-grants/authorize` | Agent HMAC 认证；校验签名 grant、当前 session、command attempt 和租约，不续租 |
+| `POST /v1/hosts/{agent}/execution-grants/stopped` | 验证独立 host key 签名；guest task 回执绑定 guest boot、task ID/digest 和停止确认 |
+| 旧 epoch 停止回执重报 | 相同回执幂等成功；不撤销已经发出的后继 epoch |
+| Unix socket v1 | 仅传资源身份与签名任务；不接受 worker 提供 provider endpoint、私有状态或主机路径 |
+
+这是 guest task 链路迁移，不代表普通 Run、文件安装和全部生命周期 effect 已迁入
+宿主监督进程。旧 grant 缺失 boot 绑定不再兼容；停止旧 writer 后按当前格式重建。
+
 ### 2026-10-04 已实施：owning-agent 远端恢复扩展
 
 新增管理员异步接口 `POST /v1/runs/{id}/remote/observe`、`POST /v1/runs/{id}/remote/recover`，返回 command_id；结果经 `GET /v1/runs/{id}/remote-reports/{command}` 查询。Agent 使用签名保护的 `POST /v1/agents/{agent}/commands/{command}/recovery-authorize` 在执行前取得当前授权。

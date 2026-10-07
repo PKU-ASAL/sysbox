@@ -32,6 +32,13 @@ func WithTaskGrant(ctx context.Context, id string, grant controlplane.SignedExec
 	return context.WithValue(ctx, taskAuthorizationKey{}, taskAuthorization{ID: id, Grant: grant})
 }
 
+// TaskGrantFromContext exposes the caller's signed authorization to an isolated
+// host supervisor client without granting it signing or renewal authority.
+func TaskGrantFromContext(ctx context.Context) (string, controlplane.SignedExecutionGrant, bool) {
+	auth, ok := ctx.Value(taskAuthorizationKey{}).(taskAuthorization)
+	return auth.ID, auth.Grant, ok
+}
+
 // BuildTaskRequest is shared by signing callers and transports. Request ID is
 // assigned durably before transmission; retries must reuse ID and bytes.
 func BuildTaskRequest(ctx context.Context, id string, req substrate.ExecRequest) (guesttask.Request, error) {

@@ -10,11 +10,15 @@ import (
 // it has proved that the grant cannot create further effects. Its signing key
 // is distinct from both worker authentication and API issuer credentials.
 type SignedExecutionStopReceipt struct {
-	Grant      ExecutionGrant `json:"grant"`
-	HostBootID string         `json:"host_boot_id"`
-	ReceiptID  string         `json:"receipt_id"`
-	StoppedAt  time.Time      `json:"stopped_at"`
-	Signature  []byte         `json:"signature"`
+	GuestBootID string         `json:"guest_boot_id,omitempty"`
+	TaskID      string         `json:"task_id,omitempty"`
+	TaskDigest  string         `json:"task_digest,omitempty"`
+	Quiescence  string         `json:"quiescence"`
+	Grant       ExecutionGrant `json:"grant"`
+	HostBootID  string         `json:"host_boot_id"`
+	ReceiptID   string         `json:"receipt_id"`
+	StoppedAt   time.Time      `json:"stopped_at"`
+	Signature   []byte         `json:"signature"`
 }
 
 func stopReceiptMessage(r SignedExecutionStopReceipt) ([]byte, error) {
@@ -24,10 +28,32 @@ func stopReceiptMessage(r SignedExecutionStopReceipt) ([]byte, error) {
 }
 func validStopReceipt(r SignedExecutionStopReceipt) bool {
 	g := r.Grant
+	if r.Quiescence != "confirmed" {
+		return false
+	}
+	if (g.Scope.ResourceUID == "" && g.Scope.Generation != 0) || (g.Scope.ResourceUID != "" && g.Scope.Generation < 1) {
+		return false
+	}
+	if g.Operation == "guest_task" && (r.GuestBootID == "" || g.TargetBootID != r.GuestBootID || r.TaskID != g.ActionID || r.TaskDigest != g.Digest) {
+		return false
+	}
+	if g.Operation == "guest_task" && g.Scope.ResourceUID == "" {
+		return false
+	}
 	return r.HostBootID != "" && r.ReceiptID != "" && !r.StoppedAt.IsZero() && g.Scope.TopologyUID != "" && g.AgentID != "" && g.SessionID != "" && g.ActionID != "" && g.CommandID != "" && g.Attempt > 0 && g.Epoch > 0 && g.Operation != "" && g.Digest != ""
 }
 func SignExecutionStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, bootID, receiptID string, now time.Time) (SignedExecutionStopReceipt, error) {
-	r := SignedExecutionStopReceipt{Grant: g, HostBootID: bootID, ReceiptID: receiptID, StoppedAt: now.UTC()}
+	r := SignedExecutionStopReceipt{Grant: g, HostBootID: bootID, ReceiptID: receiptID, StoppedAt: now.UTC(), Quiescence: "confirmed"}
+	return signStopReceipt(key, r)
+}
+
+func SignExecutionTaskStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, hostBootID, guestBootID, taskID, taskDigest, receiptID string, now time.Time) (SignedExecutionStopReceipt, error) {
+	if g.Operation != "guest_task" {
+		return SignedExecutionStopReceipt{}, ErrInvalidExecutionGrant
+	}
+	return signStopReceipt(key, SignedExecutionStopReceipt{Grant: g, HostBootID: hostBootID, GuestBootID: guestBootID, TaskID: taskID, TaskDigest: taskDigest, ReceiptID: receiptID, StoppedAt: now.UTC(), Quiescence: "confirmed"})
+}
+func signStopReceipt(key ed25519.PrivateKey, r SignedExecutionStopReceipt) (SignedExecutionStopReceipt, error) {
 	if len(key) != ed25519.PrivateKeySize || !validStopReceipt(r) {
 		return SignedExecutionStopReceipt{}, ErrInvalidExecutionGrant
 	}

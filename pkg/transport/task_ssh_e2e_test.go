@@ -91,7 +91,7 @@ func TestSSHDurableGuestTaskE2E(t *testing.T) {
 	require.NoError(t, err)
 	digest, err := task.Digest()
 	require.NoError(t, err)
-	grant := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "ssh-task", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "guest_task", Digest: digest, ExpiresAt: time.Now().Add(time.Minute), State: controlplane.GrantActive}
+	grant := controlplane.ExecutionGrant{TargetBootID: boot, Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "ssh-task", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "guest_task", Digest: digest, ExpiresAt: time.Now().Add(time.Minute), State: controlplane.GrantActive}
 	signed, err := controlplane.SignExecutionGrant(key, grant, boot, time.Now())
 	require.NoError(t, err)
 	h, err := conn.Start(WithTaskGrant(ctx, task.ID, signed), req)

@@ -110,7 +110,13 @@ func TestCommandGrantDerivesScopeAndRejectsRetiredCommand(t *testing.T) {
 	require.Equal(t, cmd.ResourceUID, signed.Grant.Scope.ResourceUID)
 	require.Equal(t, cmd.Generation, signed.Grant.Scope.Generation)
 	require.False(t, signed.Grant.ExpiresAt.After(cmd.LeaseUntil))
+	proof.BootID = "rebooted-guest"
+	w = post(path, proof)
+	require.Equal(t, 409, w.Code, w.Body.String())
+	proof.BootID = "guest-boot"
 	w = post(path+"/authorize", ExecutionGrantAuthorization{Grant: signed, LeaseOwner: cmd.LeaseOwner})
+	require.Equal(t, 200, w.Code, w.Body.String())
+	w = post("/v1/agents/host-a/execution-grants/authorize", signed)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	w = post(path+"/renew", ExecutionGrantAuthorization{Grant: signed, LeaseOwner: cmd.LeaseOwner})
 	require.Equal(t, 200, w.Code, w.Body.String())
@@ -124,6 +130,15 @@ func TestCommandGrantDerivesScopeAndRejectsRetiredCommand(t *testing.T) {
 	require.Equal(t, 409, w.Code, w.Body.String())
 	proof.Attempt--
 	require.NoError(t, s.apiStore.DeleteAgentCommand(ctx, "host-a", cmd.ID))
+	w = post("/v1/agents/host-a/execution-grants/inspect", signed.Grant.Scope)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	var inspected controlplane.ExecutionGrant
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &inspected))
+	require.Equal(t, signed.Grant.Epoch, inspected.Epoch)
+	w = post("/v1/agents/host-a/execution-grants/revoke", signed.Grant)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	w = post("/v1/agents/host-a/execution-grants/authorize", signed)
+	require.Equal(t, 409, w.Code, w.Body.String())
 	w = post(path+"/authorize", ExecutionGrantAuthorization{Grant: signed, LeaseOwner: cmd.LeaseOwner})
 	require.Equal(t, 409, w.Code, w.Body.String())
 	w = post(path, proof)
@@ -131,16 +146,23 @@ func TestCommandGrantDerivesScopeAndRejectsRetiredCommand(t *testing.T) {
 	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	s.grantHostKeys = map[string]ed25519.PublicKey{"host-a": hostPub}
-	stop, err := controlplane.SignExecutionStopReceipt(key, signed.Grant, "host-boot", "receipt", time.Now())
+	stop, err := controlplane.SignExecutionTaskStopReceipt(key, signed.Grant, "host-boot", signed.Grant.TargetBootID, signed.Grant.ActionID, signed.Grant.Digest, "receipt", time.Now())
 	require.NoError(t, err)
 	w = post("/v1/hosts/host-a/execution-grants/stopped", stop)
 	require.Equal(t, 401, w.Code, w.Body.String())
-	stop, err = controlplane.SignExecutionStopReceipt(hostKey, signed.Grant, "host-boot", "receipt", time.Now())
+	stop, err = controlplane.SignExecutionTaskStopReceipt(hostKey, signed.Grant, "host-boot", signed.Grant.TargetBootID, signed.Grant.ActionID, signed.Grant.Digest, "receipt", time.Now())
 	require.NoError(t, err)
 	w = post("/v1/hosts/host-a/execution-grants/stopped", stop)
 	require.Equal(t, 200, w.Code, w.Body.String())
+	nextRequest := signed.Grant
+	nextRequest.ActionID = "successor"
+	nextRequest.ExpiresAt = time.Time{}
+	next, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).Issue(ctx, nextRequest, time.Minute)
+	require.NoError(t, err)
+	require.Greater(t, next.Epoch, signed.Grant.Epoch)
 	w = post("/v1/hosts/host-a/execution-grants/stopped", stop)
 	require.Equal(t, 200, w.Code, w.Body.String())
+	require.NoError(t, persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).Authorize(ctx, *next))
 }
 
 func TestExecutionAuthorityBackendsSerializeCommandAndGrant(t *testing.T) {

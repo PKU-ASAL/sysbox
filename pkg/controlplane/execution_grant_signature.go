@@ -49,6 +49,12 @@ func SignExecutionGrant(key ed25519.PrivateKey, g ExecutionGrant, bootID string,
 }
 func validSignedGrant(s SignedExecutionGrant, bootID string, now time.Time) bool {
 	g := s.Grant
+	if g.Operation == "guest_task" && g.TargetBootID == "" {
+		return false
+	}
+	if g.TargetBootID != "" && g.TargetBootID != bootID {
+		return false
+	}
 	_, err := ExecutionGrantBudget(s, now)
 	return err == nil && bootID != "" && s.BootID == bootID && g.State == GrantActive && g.StopReceipt == "" && g.Scope.TopologyUID != "" && (g.Scope.ResourceUID == "" && g.Scope.Generation == 0 || g.Scope.ResourceUID != "" && g.Scope.Generation > 0) && g.AgentID != "" && g.SessionID != "" && g.ActionID != "" && g.CommandID != "" && g.Attempt > 0 && g.Epoch > 0 && g.Operation != "" && g.Digest != ""
 }

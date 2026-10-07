@@ -70,6 +70,7 @@ var agentStartCmd = &cobra.Command{
 			sessionFile = filepath.Join(cfg.Paths.RunsDir, "_agents", ident.ID, "execution-session.json")
 		}
 		return agentexec.Run(cmd.Context(), agentexec.Options{
+			HostSupervisorSocket:        cfg.Agent.HostSupervisorSocket,
 			ExecutionSessionFile:        sessionFile,
 			ExecutionGrantPublicKeyFile: cfg.Agent.ExecutionGrantPublicKeyFile,
 			APIURL:                      ident.APIURL,

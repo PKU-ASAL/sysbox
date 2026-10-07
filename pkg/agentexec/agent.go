@@ -26,6 +26,7 @@ import (
 const DefaultAgentID = "local"
 
 type Options struct {
+	HostSupervisorSocket             string
 	observationSequence              *atomic.Uint64
 	ExecutionSessionFile             string
 	ExecutionSessionID               string
@@ -389,17 +390,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "guest execution start report failed", err)
 			return
 		}
-		mgr, err := r.executor.bridge.StateManager(cmd.Execution.Topology)
-		if err != nil {
-			emit("failed", "guest execution state unavailable", err)
-			return
-		}
-		st, err := mgr.LoadWithContext(opCtx)
-		if err != nil {
-			emit("failed", "guest execution state unavailable", err)
-			return
-		}
-		completed := executeGrantedGuestOperation(opCtx, r.opts, st, *cmd)
+		completed := executeGrantedGuestOperation(opCtx, r.opts, *cmd)
 		// Report completion on runCtx, not opCtx: the operation's own deadline
 		// has very likely expired by now, and the result must still be
 		// delivered — otherwise a timed-out execution is never reported at all

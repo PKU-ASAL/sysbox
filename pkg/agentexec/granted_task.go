@@ -5,14 +5,13 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/guesttask"
-	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -25,8 +24,8 @@ type durableGuestTaskConnection interface {
 	GuestTaskBootID(context.Context) (string, error)
 }
 
-func executeGrantedGuestOperation(ctx context.Context, opts Options, st *state.State, cmd controlplane.AgentCommand) guestOperationCompletion {
-	result, err := runGrantedGuestTask(ctx, opts, st, cmd)
+func executeGrantedGuestOperation(ctx context.Context, opts Options, cmd controlplane.AgentCommand) guestOperationCompletion {
+	result, err := runGrantedGuestTask(ctx, opts, cmd)
 	if err != nil {
 		class := classifyGuestExecError(ctx, err)
 		return guestOperationCompletion{Result: encodeGuestResult(result), ResultClass: class, Err: class + " guest operation"}
@@ -36,7 +35,10 @@ func executeGrantedGuestOperation(ctx context.Context, opts Options, st *state.S
 	return guestOperationCompletion{Result: out, ResultClass: controlplane.GuestExecutionResultClassExit}
 }
 
-func runGrantedGuestTask(ctx context.Context, opts Options, st *state.State, cmd controlplane.AgentCommand) (substrate.ExecResult, error) {
+func runGrantedGuestTask(ctx context.Context, opts Options, cmd controlplane.AgentCommand) (substrate.ExecResult, error) {
+	if opts.HostSupervisorSocket == "" {
+		return substrate.ExecResult{}, errors.New("guest execution requires a separate host supervisor socket")
+	}
 	if opts.ExecutionSessionID == "" || opts.ExecutionGrantPublicKeyFile == "" {
 		return substrate.ExecResult{}, errors.New("guest execution requires an authenticated session and pinned grant issuer key")
 	}
@@ -51,36 +53,10 @@ func runGrantedGuestTask(ctx context.Context, opts Options, st *state.State, cmd
 	if err != nil {
 		return substrate.ExecResult{}, err
 	}
-	res := st.FindResource(address.Resource("sysbox_node", cmd.Execution.Node))
-	if res == nil {
-		res = st.FindResource(address.Resource("sysbox_router", cmd.Execution.Node))
-	}
-	if res == nil {
-		return substrate.ExecResult{}, errGuestNodeNotFound
-	}
-	if res.ResourceUID != cmd.ResourceUID || res.Generation != cmd.Generation {
+	if cmd.TopologyUID == "" || cmd.ResourceUID == "" || cmd.Generation < 1 || cmd.Execution.Topology == "" || cmd.Execution.Node == "" {
 		return substrate.ExecResult{}, guesttask.ErrConflict
 	}
-	d, err := driver.DefaultRegistry.RequireNode(res.Driver)
-	if err != nil {
-		return substrate.ExecResult{}, errGuestExecUnsupported
-	}
-	codec, err := driver.DefaultRegistry.RequireNodeState(res.Driver)
-	if err != nil {
-		return substrate.ExecResult{}, err
-	}
-	handle, err := res.ReconstructHandle(codec)
-	if err != nil {
-		return substrate.ExecResult{}, err
-	}
-	conn, err := d.Connection(handle, nil)
-	if err != nil {
-		return substrate.ExecResult{}, err
-	}
-	client, ok := conn.(durableGuestTaskConnection)
-	if !ok {
-		client = transport.NewTaskClient(conn, handle.ID, res.Generation)
-	}
+	client := hostsupervisor.NewTaskClient(opts.HostSupervisorSocket, hostsupervisor.TargetRef{Topology: cmd.Execution.Topology, Node: cmd.Execution.Node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}})
 	boot, err := client.GuestTaskBootID(ctx)
 	if err != nil {
 		return substrate.ExecResult{}, err
@@ -99,7 +75,7 @@ func runGrantedGuestTask(ctx context.Context, opts Options, st *state.State, cmd
 			return err
 		}
 		x := g.Grant
-		if x.AgentID != opts.ID || x.SessionID != opts.ExecutionSessionID || x.CommandID != cmd.ID || x.ActionID != cmd.ActionID || x.Attempt != uint64(cmd.Attempt) || x.Scope.TopologyUID != st.TopologyUID || x.Scope.ResourceUID != res.ResourceUID || x.Scope.Generation != res.Generation || x.Digest != digest || x.Operation != "guest_task" {
+		if x.AgentID != opts.ID || x.SessionID != opts.ExecutionSessionID || x.CommandID != cmd.ID || x.ActionID != cmd.ActionID || x.Attempt != uint64(cmd.Attempt) || x.Scope.TopologyUID != cmd.TopologyUID || x.Scope.ResourceUID != cmd.ResourceUID || x.Scope.Generation != cmd.Generation || x.Digest != digest || x.Operation != "guest_task" {
 			return guesttask.ErrUnauthorized
 		}
 		return nil
@@ -145,14 +121,16 @@ func awaitGrantedTask(ctx context.Context, opts Options, client durableGuestTask
 		}
 		if result.ExitCodeKnown {
 			for _, stream := range []string{"stdout", "stderr"} {
-				output, err := client.ReadExecutionOutput(ctx, handle, stream, 0, guestOutputLimit)
+				output, truncated, err := readGrantedTaskOutput(ctx, client, handle, stream)
+				if stream == "stdout" {
+					result.Stdout = output
+					result.StdoutTruncated = result.StdoutTruncated || truncated
+				} else {
+					result.Stderr = output
+					result.StderrTruncated = result.StderrTruncated || truncated
+				}
 				if err != nil {
 					return result, err
-				}
-				if stream == "stdout" {
-					result.Stdout = string(output.Data)
-				} else {
-					result.Stderr = string(output.Data)
 				}
 			}
 			return result, nil
@@ -186,6 +164,39 @@ func awaitGrantedTask(ctx context.Context, opts Options, client durableGuestTask
 		case <-ctx.Done():
 			return cancelTask(ctx.Err())
 		case <-ticker.C:
+		}
+	}
+}
+
+// Each guest read is capped at 64 KiB. The collector retains at most the
+// operation's output budget and probes one additional byte to distinguish an
+// exact fit from truncation without copying excess output into API memory.
+func readGrantedTaskOutput(ctx context.Context, client substrate.ConnectionExecutionOutput, handle substrate.ExecutionHandle, stream string) (string, bool, error) {
+	var output strings.Builder
+	var cursor int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return output.String(), false, err
+		}
+		remaining := guestOutputLimit - output.Len()
+		limit := min(64<<10, remaining)
+		if remaining == 0 {
+			limit = 1
+		}
+		page, err := client.ReadExecutionOutput(ctx, handle, stream, cursor, limit)
+		if err != nil {
+			return output.String(), false, err
+		}
+		if len(page.Data) > limit || page.NextCursor != cursor+int64(len(page.Data)) {
+			return output.String(), false, fmt.Errorf("invalid task output cursor or page size")
+		}
+		if remaining == 0 {
+			return output.String(), len(page.Data) > 0, nil
+		}
+		output.Write(page.Data)
+		cursor = page.NextCursor
+		if len(page.Data) < limit {
+			return output.String(), false, nil
 		}
 	}
 }

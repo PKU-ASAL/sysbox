@@ -1,0 +1,105 @@
+package hostsupervisor
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/oslab/sysbox/pkg/guesttask"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
+	"io"
+	"net"
+)
+
+type TaskClient struct {
+	socket string
+	target TargetRef
+}
+
+func NewTaskClient(socket string, target TargetRef) *TaskClient {
+	return &TaskClient{socket: socket, target: target}
+}
+func (c *TaskClient) call(ctx context.Context, request Request) (Response, error) {
+	if c.socket == "" {
+		return Response{}, fmt.Errorf("host supervisor socket required")
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", c.socket)
+	if err != nil {
+		return Response{}, err
+	}
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	request.Version = 1
+	request.Target = c.target
+	if err := json.NewEncoder(conn).Encode(request); err != nil {
+		return Response{}, err
+	}
+	var result Response
+	if err := json.NewDecoder(io.LimitReader(conn, 16<<20)).Decode(&result); err != nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		return result, err
+	}
+	if result.Version != 1 {
+		return result, fmt.Errorf("host supervisor protocol mismatch")
+	}
+	if result.Error != "" {
+		return result, fmt.Errorf("host supervisor: %s", result.Error)
+	}
+	return result, nil
+}
+func (c *TaskClient) GuestTaskBootID(ctx context.Context) (string, error) {
+	out, err := c.call(ctx, Request{Operation: "info"})
+	if err != nil {
+		return "", err
+	}
+	if out.BootID == "" {
+		return "", guesttask.ErrUnknown
+	}
+	return out.BootID, nil
+}
+func (c *TaskClient) Start(ctx context.Context, request substrate.ExecRequest) (substrate.ExecutionHandle, error) {
+	id, grant, ok := transport.TaskGrantFromContext(ctx)
+	if !ok {
+		return substrate.ExecutionHandle{}, guesttask.ErrUnauthorized
+	}
+	task, err := transport.BuildTaskRequest(ctx, id, request)
+	if err != nil {
+		return substrate.ExecutionHandle{}, err
+	}
+	task.Grant = grant
+	// Return a complete identity even when the reply is lost, so the caller
+	// can observe the write-ahead record instead of inventing another task ID.
+	digest, err := task.Digest()
+	if err != nil {
+		return substrate.ExecutionHandle{}, err
+	}
+	handle := substrate.ExecutionHandle{ID: id, Digest: digest, NodeID: c.target.Node, Generation: c.target.Scope.Generation, TopologyUID: c.target.Scope.TopologyUID, ResourceUID: c.target.Scope.ResourceUID, BootID: grant.BootID, Epoch: grant.Grant.Epoch}
+	out, err := c.call(ctx, Request{Operation: "start", Task: &task})
+	if err != nil {
+		return handle, err
+	}
+	return out.Handle, nil
+}
+func (c *TaskClient) ObserveExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.ExecResult, error) {
+	out, err := c.call(ctx, Request{Operation: "observe", Handle: h})
+	return out.Result, err
+}
+func (c *TaskClient) CancelExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.RemoteTermination, error) {
+	out, err := c.call(ctx, Request{Operation: "cancel", Handle: h})
+	return out.Result.RemoteTermination, err
+}
+func (c *TaskClient) ReadExecutionOutput(ctx context.Context, h substrate.ExecutionHandle, stream string, cursor int64, limit int) (substrate.ExecutionOutput, error) {
+	out, err := c.call(ctx, Request{Operation: "output", Handle: h, Stream: stream, Cursor: cursor, Limit: limit})
+	return out.Output, err
+}
+func (c *TaskClient) RenewExecution(ctx context.Context, h substrate.ExecutionHandle) error {
+	id, grant, ok := transport.TaskGrantFromContext(ctx)
+	if !ok || id != h.ID {
+		return guesttask.ErrUnauthorized
+	}
+	_, err := c.call(ctx, Request{Operation: "renew", Handle: h, Grant: &grant})
+	return err
+}
