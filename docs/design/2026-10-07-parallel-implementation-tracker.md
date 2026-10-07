@@ -17,6 +17,13 @@
 
 ## 当前收敛规则
 
+libvirt adoption 恢复状态修复：不再返回只有 UUID 的简化 handle，改从真实 domain
+metadata 解码完整 provider state，并校验身份、UUID、受管 VMDir/DiskPath。
+回归覆盖丢失/篡改恢复坐标拒绝。真实 diskless libvirt VM E2E 已验证接管后
+序列化/冷重建 handle、观察 paused、resume；provider race 与 vet 通过，测试 domain
+已清理。此 adapter 仍是已有 managed metadata 的同 ownership 恢复，不表示无主
+外部 domain import 或跨 owner 转移已经实现。
+
 Docker adoption 冷观察修复：`ObserveNode` 与生命周期操作共用 ownership proof，
 支持已验证的 sidecar，不再要求被接管容器拥有不可变的 Sysbox labels。新增真实
 `make test-docker-adoption-e2e`：创建无 labels 容器、接管、序列化/重建 provider
