@@ -19,6 +19,15 @@
 
 停止继续扩散接口，优先恢复全仓绿色并完成独立审查，再形成检查点。测试fixture迁移必须显式创建session/sequence，不得让生产代码兼容缺失证明。所有失败保留原因；真实环境缺失和skip不算通过。
 
+## 普通 Run 宿主迁移：正在实施
+
+下一切片固定为单资源 apply/destroy：`RunRequest` 只传不可变 revision、action、
+resource UID/generation、expected serial 和 target 身份，不接收 provider 参数或
+主机路径。`RunCoordinator` 先写宿主 intent，effect 返回丢失时只读同一 run/action
+记录，不重新调用 provider。当前只有合同与 journal 基础测试通过，尚未接入
+canonical resolver/runtime executor、API run grant/receipt 和 Agent 远端路由，
+不能计为普通 Run 迁移完成。
+
 ## 远端节点 pause/resume 集成
 
 沿用已批准 P2–P4 设计，将远端节点电源操作接入同一个 host supervisor。
