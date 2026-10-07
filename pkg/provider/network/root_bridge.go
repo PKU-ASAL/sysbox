@@ -18,7 +18,8 @@ func CreateRootBridgeProxy(spec driver.IsolatedNetworkSpec) error {
 	if spec.RootBridge == "" {
 		return nil
 	}
-	rootBridge, err := ensureRootBridge(spec.RootBridge)
+	owner := "sysbox-root-network:" + spec.Name
+	rootBridge, err := ensureRootBridge(spec.RootBridge, owner)
 	if err != nil {
 		return err
 	}
@@ -71,11 +72,14 @@ func CreateRootBridgeProxy(spec driver.IsolatedNetworkSpec) error {
 	})
 }
 
-func ensureRootBridge(name string) (*netlink.Bridge, error) {
+func ensureRootBridge(name, ownerAlias string) (*netlink.Bridge, error) {
 	if existing, err := netlink.LinkByName(name); err == nil {
 		bridge, ok := existing.(*netlink.Bridge)
 		if !ok {
 			return nil, fmt.Errorf("root link %s is not a bridge", name)
+		}
+		if ownerAlias != "" && bridge.Attrs().Alias != ownerAlias {
+			return nil, fmt.Errorf("root bridge ownership conflict")
 		}
 		if err := netlink.LinkSetUp(bridge); err != nil {
 			return nil, err
@@ -84,9 +88,15 @@ func ensureRootBridge(name string) (*netlink.Bridge, error) {
 	}
 	attrs := netlink.NewLinkAttrs()
 	attrs.Name = name
+	attrs.Alias = ownerAlias
 	bridge := &netlink.Bridge{LinkAttrs: attrs}
 	if err := netlink.LinkAdd(bridge); err != nil {
 		return nil, fmt.Errorf("add root bridge %s: %w", name, err)
+	}
+	if ownerAlias != "" {
+		if err := netlink.LinkSetAlias(bridge, ownerAlias); err != nil {
+			return nil, err
+		}
 	}
 	if err := netlink.LinkSetUp(bridge); err != nil {
 		return nil, err

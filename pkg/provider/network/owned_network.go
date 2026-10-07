@@ -97,7 +97,8 @@ func (d Driver) createOwnedIsolated(ctx context.Context, spec driver.IsolatedNet
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := CreateBridge(BridgeConfig{NetnsName: spec.Name, BridgeName: spec.Bridge, CIDR: spec.CIDR}); err != nil {
+	alias := networkAlias(id)
+	if err := CreateBridge(BridgeConfig{NetnsName: spec.Name, BridgeName: spec.Bridge, CIDR: spec.CIDR, OwnerAlias: alias}); err != nil {
 		return err
 	}
 	if err := d.tagLink(spec.Name, spec.Bridge, id); err != nil {
@@ -109,7 +110,7 @@ func (d Driver) createOwnedIsolated(ctx context.Context, spec driver.IsolatedNet
 	if err := CreateRootBridgeProxy(spec); err != nil {
 		return err
 	}
-	for _, name := range []string{spec.RootBridge, spec.RootEnd} {
+	for _, name := range []string{spec.RootEnd} {
 		if err := d.tagLink("", name, id); err != nil {
 			return err
 		}

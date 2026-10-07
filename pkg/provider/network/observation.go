@@ -244,8 +244,12 @@ func (d Driver) ObserveIsolated(ctx context.Context, spec driver.IsolatedNetwork
 		if object.link == nil {
 			continue
 		}
-		if object.link.Type() != object.kind || object.link.Attrs().Alias != networkAlias(id) {
-			return driver.IsolatedNetworkObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "link ownership/type identity conflict", nil)
+		aliasOK := object.link.Attrs().Alias == networkAlias(id)
+		if object.namespace == "" && object.name == spec.RootBridge {
+			aliasOK = object.link.Attrs().Alias == "sysbox-root-network:"+spec.Name
+		}
+		if object.link.Type() != object.kind || !aliasOK {
+			return driver.IsolatedNetworkObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", fmt.Sprintf("link ownership/type identity conflict for %s/%s type=%s alias=%q", object.namespace, object.name, object.link.Type(), object.link.Attrs().Alias), nil)
 		}
 		if object.link.Attrs().Flags&net.FlagUp == 0 {
 			healthy = false

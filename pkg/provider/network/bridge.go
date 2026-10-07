@@ -14,6 +14,7 @@ type BridgeConfig struct {
 	NetnsName  string
 	BridgeName string
 	CIDR       string // gateway IP in CIDR form (e.g. "10.0.1.1/24")
+	OwnerAlias string
 }
 
 // CreateBridge builds a Linux bridge inside the named netns and assigns it
@@ -23,6 +24,9 @@ func CreateBridge(cfg BridgeConfig) error {
 	return inNetns(cfg.NetnsName, func() error {
 		// Check if bridge already exists.
 		if existing, err := netlink.LinkByName(cfg.BridgeName); err == nil {
+			if cfg.OwnerAlias != "" && existing.Attrs().Alias != cfg.OwnerAlias {
+				return fmt.Errorf("bridge ownership conflict")
+			}
 			// Bridge exists — ensure it's up and has the IP.
 			_ = netlink.LinkSetUp(existing)
 			addr, _ := netlink.ParseAddr(cfg.CIDR)
@@ -34,6 +38,7 @@ func CreateBridge(cfg BridgeConfig) error {
 
 		la := netlink.NewLinkAttrs()
 		la.Name = cfg.BridgeName
+		la.Alias = cfg.OwnerAlias
 
 		br := &netlink.Bridge{LinkAttrs: la}
 		if err := netlink.LinkAdd(br); err != nil {
