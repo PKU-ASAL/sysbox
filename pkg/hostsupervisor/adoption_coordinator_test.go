@@ -26,7 +26,11 @@ func adoptionFixture(t *testing.T) (*AdoptionCoordinator, AdoptionRequest, contr
 	require.NoError(t, e)
 	root := t.TempDir()
 	require.NoError(t, os.Chmod(root, 0700))
-	return &AdoptionCoordinator{Root: root, IssuerKey: pub, HostBootID: "host", AgentID: "agent", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }}, req, signed
+	_, host, e := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, e)
+	return &AdoptionCoordinator{Root: root, IssuerKey: pub, HostKey: host, Report: func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error {
+		return nil
+	}, HostBootID: "host", AgentID: "agent", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }}, req, signed
 }
 func TestAdoptionApplyLostReplyObservesWithoutReapplying(t *testing.T) {
 	c, req, g := adoptionFixture(t)
@@ -44,4 +48,54 @@ func TestAdoptionRejectsClientEvidenceMismatch(t *testing.T) {
 	_, err := c.Apply(context.Background(), req, g, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{}`), nil })
 	require.Error(t, err)
 	_ = c
+}
+
+func TestAdoptionCompletionReceiptSurvivesLostAPIReply(t *testing.T) {
+	c, req, g := adoptionFixture(t)
+	_, host, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	c.HostKey = host
+	var receipts []controlplane.SignedExecutionStopReceipt
+	c.Report = func(_ context.Context, _ string, r controlplane.SignedExecutionStopReceipt, raw json.RawMessage) error {
+		require.NoError(t, controlplane.VerifyAdoptionStopReceipt(host.Public().(ed25519.PublicKey), r, raw))
+		receipts = append(receipts, r)
+		return errors.New("API reply lost")
+	}
+	calls := 0
+	_, err = c.Apply(context.Background(), req, g, func(context.Context) (json.RawMessage, error) {
+		calls++
+		return json.RawMessage(`{"container_name":"owned"}`), nil
+	})
+	require.ErrorContains(t, err, "API reply lost")
+	cold := *c
+	cold.HostBootID = "new-boot"
+	cold.Authorize = nil
+	cold.Report = func(_ context.Context, _ string, r controlplane.SignedExecutionStopReceipt, _ json.RawMessage) error {
+		receipts = append(receipts, r)
+		return nil
+	}
+	raw, err := cold.Observe(context.Background(), req, g)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"container_name":"owned"}`, string(raw))
+	require.Len(t, receipts, 2)
+	require.Equal(t, receipts[0], receipts[1])
+	require.Equal(t, 1, calls)
+}
+
+func TestAdoptionRejectsMissingReporterBeforeEffects(t *testing.T) {
+	c, req, g := adoptionFixture(t)
+	c.Report = nil
+	called := false
+	_, err := c.Apply(context.Background(), req, g, func(context.Context) (json.RawMessage, error) { called = true; return json.RawMessage(`{}`), nil })
+	require.ErrorIs(t, err, effectgate.ErrFenced)
+	require.False(t, called)
+}
+
+func TestAdoptionHistoricalObserveRejectsForgedSignature(t *testing.T) {
+	c, req, g := adoptionFixture(t)
+	_, err := c.Apply(context.Background(), req, g, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{"owned":true}`), nil })
+	require.NoError(t, err)
+	g.Signature = make([]byte, ed25519.SignatureSize)
+	_, err = c.Observe(context.Background(), req, g)
+	require.Error(t, err)
 }

@@ -18,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 var supervisorConfigFile, supervisorIdentityFile string
@@ -146,7 +145,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		}
 		return json.RawMessage(`{"deleted":true}`), nil
 	}
-	server.Adoption = &hostsupervisor.AdoptionCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "adoption"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, Authorize: authority.Authorize}
+	server.Adoption = &hostsupervisor.AdoptionCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "adoption"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Report: authority.ReportNodeOperation, Authorize: authority.Authorize}
 	server.AdoptionApply = func(ctx context.Context, req controlplane.AdoptionRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 		p, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider)
 		if err != nil {
@@ -172,14 +171,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		if err != nil {
 			return nil, err
 		}
-		receipt, err := controlplane.SignAdoptionStopReceipt(key, grant.Grant, strings.TrimSpace(string(boot)), "adopt-"+req.ID, evidence, time.Now())
-		if err != nil {
-			return nil, err
-		}
-		if err := authority.ReportNodeOperation(ctx, req.ID, receipt, evidence); err != nil {
-			return nil, err
-		}
-		return json.Marshal(h)
+		return evidence, nil
 	}
 	return server.Serve(cmd.Context())
 }}

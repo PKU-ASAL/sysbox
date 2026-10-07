@@ -3,6 +3,7 @@ package hostsupervisor
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/effectgate"
@@ -16,18 +17,49 @@ type AdoptionCoordinator struct {
 	IssuerKey           ed25519.PublicKey
 	HostBootID, AgentID string
 	Authorize           func(context.Context, controlplane.SignedExecutionGrant) error
+	HostKey             ed25519.PrivateKey
+	Report              func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error
+}
+
+func (c *AdoptionCoordinator) validate(req AdoptionRequest, g controlplane.SignedExecutionGrant, now time.Time) error {
+	digest, err := req.Digest()
+	if err != nil {
+		return err
+	}
+	x := g.Grant
+	if c.AgentID == "" || req.AgentID != c.AgentID || x.AgentID != c.AgentID || x.ActionID != req.ID || x.Operation != "adoption_apply" || x.Digest != digest || x.Scope.TopologyUID != req.TopologyUID || x.Scope.ResourceUID != req.ResourceUID || x.Scope.Generation != req.Generation || x.TargetBootID != g.BootID {
+		return effectgate.ErrFenced
+	}
+	return controlplane.VerifyExecutionGrant(c.IssuerKey, g, g.BootID, now)
+}
+
+func (c *AdoptionCoordinator) finish(ctx context.Context, gate *effectgate.Gate, req AdoptionRequest, g controlplane.ExecutionGrant, raw json.RawMessage) error {
+	_, err := gate.SealStop(ctx, g, req.ExternalID, func(owned controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
+		return controlplane.SignAdoptionStopReceipt(c.HostKey, owned, c.HostBootID, rand.Text(), raw, time.Now())
+	})
+	if err != nil {
+		return err
+	}
+	return gate.ReportStop(ctx, g, req.ExternalID, func(ctx context.Context, r controlplane.SignedExecutionStopReceipt) error {
+		if err := controlplane.VerifyAdoptionStopReceipt(c.HostKey.Public().(ed25519.PublicKey), r, raw); err != nil {
+			return err
+		}
+		return c.Report(ctx, req.ID, r, raw)
+	})
 }
 
 func (c *AdoptionCoordinator) Apply(ctx context.Context, req AdoptionRequest, g controlplane.SignedExecutionGrant, effect func(context.Context) (json.RawMessage, error)) (json.RawMessage, error) {
-	d, err := req.Digest()
-	if err != nil {
-		return nil, err
-	}
-	if g.Grant.Operation != "adoption_apply" || g.Grant.Digest != d || g.Grant.Scope.TopologyUID != req.TopologyUID || g.Grant.Scope.ResourceUID != req.ResourceUID || g.Grant.Scope.Generation != req.Generation || g.Grant.TargetBootID != c.HostBootID {
+	if len(c.HostKey) != ed25519.PrivateKeySize || c.Report == nil {
 		return nil, effectgate.ErrFenced
 	}
-	if err = controlplane.VerifyExecutionGrant(c.IssuerKey, g, c.HostBootID, time.Now()); err != nil {
+	if err := c.validate(req, g, time.Now()); err != nil {
 		return nil, err
+	}
+	if err := EnsureOwnedDirectory(c.Root, 0700); err != nil {
+		return nil, err
+	}
+	if g.BootID != c.HostBootID {
+		return nil, effectgate.ErrFenced
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID, Authorize: func(ctx context.Context, _ controlplane.ExecutionGrant) error {
 		if c.Authorize == nil {
@@ -35,16 +67,26 @@ func (c *AdoptionCoordinator) Apply(ctx context.Context, req AdoptionRequest, g 
 		}
 		return c.Authorize(ctx, g)
 	}}
-	return gate.Execute(ctx, g, req.ExternalID, effect)
-}
-func (c *AdoptionCoordinator) Observe(ctx context.Context, req AdoptionRequest, g controlplane.SignedExecutionGrant) (json.RawMessage, error) {
-	d, err := req.Digest()
+	raw, err := gate.Execute(ctx, g, req.ExternalID, effect)
 	if err != nil {
 		return nil, err
 	}
-	if d != g.Grant.Digest {
+	return raw, c.finish(ctx, gate, req, g.Grant, raw)
+}
+func (c *AdoptionCoordinator) Observe(ctx context.Context, req AdoptionRequest, g controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	if len(c.HostKey) != ed25519.PrivateKeySize || c.Report == nil {
 		return nil, effectgate.ErrFenced
 	}
+	if err := c.validate(req, g, g.IssuedAt); err != nil {
+		return nil, err
+	}
+	if err := EnsureOwnedDirectory(c.Root, 0700); err != nil {
+		return nil, err
+	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
-	return gate.ReadOutcome(ctx, g.Grant, req.ExternalID)
+	raw, err := gate.ReadOutcome(ctx, g.Grant, req.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+	return raw, c.finish(ctx, gate, req, g.Grant, raw)
 }

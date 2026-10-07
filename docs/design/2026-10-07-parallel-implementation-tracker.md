@@ -17,6 +17,13 @@
 
 ## 当前收敛规则
 
+adoption 宿主回报顺序修复：provider callback 仅返回 codec evidence，不再在 effect
+完成落盘之前调用 API。协调器复用 effectgate 持久化 outcome、签名回执和已报标记；
+Observe 在宿主对象重建后重报同一签名回执，不重新执行 provider。缺少 host key
+或 reporter 时在 effect 前拒绝；历史读取校验签名和完整 scope/action/agent。
+已覆盖丢 API 回应与宿主 boot 变化后重报。自动扫描、API 授权释放及独立进程端到端
+仍未完成，不能据此关闭 P5。
+
 adoption 回执补强：新增签名 `evidence_digest` 绑定 provider codec 输出，API 在
 写 journal/state 前校验 evidence、完整派发请求摘要、command/topology UID 和持久
 authority。普通 stop 回执不再可用于 adoption 完成；旧缺少 evidence 绑定的回执
