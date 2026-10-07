@@ -32,16 +32,18 @@ func TestRuntimeCapabilitiesRequireAuthenticatedSupportedBackend(t *testing.T) {
 			authMiddleware(s).ServeHTTP(w, q)
 			require.Equal(t, 200, w.Code)
 			var cap struct {
-				Protocol string `json:"protocol"`
-				Apply    bool   `json:"durable_apply"`
-				Destroy  bool   `json:"keyed_destroy"`
-				Cleanup  bool   `json:"cleanup_inspection"`
-				Single   bool   `json:"single_api_execution"`
+				Protocol    string `json:"protocol"`
+				Apply       bool   `json:"durable_apply"`
+				Destroy     bool   `json:"keyed_destroy"`
+				Cleanup     bool   `json:"cleanup_inspection"`
+				ClaimReplay bool   `json:"claim_replay"`
+				Single      bool   `json:"single_api_execution"`
 			}
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &cap))
 			require.Equal(t, "cyberfield-runtime-v1", cap.Protocol)
 			require.Equal(t, backend == "sqlite", cap.Apply)
 			require.Equal(t, cap.Apply, cap.Destroy)
+			require.Equal(t, cap.Apply, cap.ClaimReplay)
 			require.True(t, cap.Cleanup)
 			require.True(t, cap.Single)
 		})

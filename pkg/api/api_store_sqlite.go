@@ -413,6 +413,10 @@ func (s *sqliteAPIStore) GetRun(ctx context.Context, id string) (*controlplane.R
 		return nil, err
 	}
 	row := db.QueryRowContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at, deadline_at, snapshot_path FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1`, id)
+	return scanSQLiteRun(row)
+}
+
+func scanSQLiteRun(row interface{ Scan(...any) error }) (*controlplane.Run, error) {
 	var r controlplane.Run
 	var leaseUntil, queuedAt, assignedAt, startedAt, endedAt, deadlineAt string
 	var recoverable, unsafeState int
@@ -466,34 +470,28 @@ func (s *sqliteAPIStore) ClaimRun(ctx context.Context, runID, agentID, owner str
 	}
 	defer tx.Rollback()
 
-	var status, leaseOwner, leaseUntilStr, colAgentID string
-	var recoverable int
-	err = tx.QueryRowContext(ctx, `SELECT status, agent_id, lease_owner, lease_until, recoverable FROM sysbox_runs WHERE id=?`, runID).
-		Scan(&status, &colAgentID, &leaseOwner, &leaseUntilStr, &recoverable)
-	if err == sql.ErrNoRows {
-		return nil, false, fmt.Errorf("run not found")
-	}
+	row := tx.QueryRowContext(ctx, `SELECT id, topology, operation, op, status, error, parent_id, revision, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at, deadline_at, snapshot_path FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1`, runID)
+	run, err := scanSQLiteRun(row)
 	if err != nil {
 		return nil, false, err
 	}
-	lu := parseSQLiteTime(leaseUntilStr)
-	if !runLeasable(controlplane.Run{Status: controlplane.RunStatus(status), AgentID: colAgentID, LeaseOwner: leaseOwner, LeaseUntil: lu, Recoverable: recoverable != 0, ID: runID}, agentID, time.Now().UTC()) {
-		return &controlplane.Run{ID: runID, Status: controlplane.RunStatus(status), AgentID: colAgentID, LeaseOwner: leaseOwner, LeaseUntil: lu}, false, nil
+	if run.CanReplayClaim(agentID, owner, time.Now().UTC()) {
+		return run, true, nil
+	}
+	if !runLeasable(*run, agentID, time.Now().UTC()) {
+		return run, false, nil
 	}
 	now := time.Now().UTC()
+	run.MarkRunning(owner, ttl, now)
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE sysbox_runs SET status='running', lease_owner=?, lease_until=?, attempt=attempt+1, started_at=CASE WHEN started_at='' THEN ? ELSE started_at END WHERE id=?`,
-		owner, formatSQLiteTime(now.Add(ttl)), formatSQLiteTime(now), runID); err != nil {
+		`UPDATE sysbox_runs SET status='running', lease_owner=?, lease_until=?, attempt=attempt+1, started_at=? WHERE id=?`,
+		owner, formatSQLiteTime(run.LeaseUntil), formatSQLiteTime(run.StartedAt), runID); err != nil {
 		return nil, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, false, err
 	}
-	r, err := s.GetRun(ctx, runID)
-	if err != nil {
-		return r, false, err
-	}
-	return r, true, nil
+	return run, true, nil
 }
 
 func (s *sqliteAPIStore) RenewRunLease(ctx context.Context, runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, bool, error) {
@@ -507,7 +505,7 @@ func (s *sqliteAPIStore) RenewRunLease(ctx context.Context, runID, agentID, owne
 	}
 	defer tx.Rollback()
 	var status, leaseOwner, colAgentID string
-	err = tx.QueryRowContext(ctx, `SELECT status, agent_id, lease_owner FROM sysbox_runs WHERE id=?`, runID).
+	err = tx.QueryRowContext(ctx, `SELECT status, agent_id, lease_owner FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1`, runID).
 		Scan(&status, &colAgentID, &leaseOwner)
 	if err == sql.ErrNoRows {
 		return nil, false, fmt.Errorf("run not found")

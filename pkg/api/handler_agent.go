@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
@@ -99,15 +100,31 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 }
 
 func (s *Server) handleClaimAgentRun(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
 	agentID := r.PathValue("agent")
 	if err := s.verifyAgentRequest(r, agentID); err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
-	s.handleClaimAgentRunByID(w, agentID, r.PathValue("id"))
+	var request struct {
+		ClaimID string `json:"claim_id"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode claim: %w", err))
+		return
+	}
+	if request.ClaimID != "" {
+		parsed, err := uuid.Parse(request.ClaimID)
+		if err != nil || parsed == uuid.Nil || parsed.String() != request.ClaimID {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("claim_id must be a canonical nonzero UUID"))
+			return
+		}
+	}
+	s.handleClaimAgentRunByID(w, agentID, r.PathValue("id"), request.ClaimID)
 }
 
-func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID string) {
+func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID string, claimID ...string) {
 	if err := validatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -116,7 +133,7 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, err := s.jobs.claim(runID, agentID)
+	run, err := s.jobs.claim(runID, agentID, claimID...)
 	if err != nil {
 		if errors.Is(err, errApplyInputsRequired) || errors.Is(err, errRunStoreUnavailable) {
 			writeError(w, http.StatusServiceUnavailable, err)

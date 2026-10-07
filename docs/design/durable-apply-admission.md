@@ -28,8 +28,8 @@ Only the fingerprint is stored. Plain inputs are absent from run rows, request
 rows and command rows. The run claim response receives inputs from a separate
 in-memory hydration map. After API restart, an active keyed Apply cannot be
 claimed until the caller resubmits the same request/key to that API. The claim
-endpoint returns 503 without acquiring a run lease. The agent retries 503 with
-cancellation support, retaining the original command and run identity.
+endpoint returns 503 without acquiring a run lease. The agent retries 503 with cancellation support, retaining the original command,
+run and per-execution claim identity.
 
 `GET /v1/runs/{id}` returns `inputs_required: true` when this API requires that
 replay. The client must replay at the agent-connected API (or use deployment
@@ -64,3 +64,26 @@ backend failure, cancellable agent retry, and never-created Destroy → inspecti
 → deletion → independent archive receipt. API and agent suites pass under race
 with a disposable PostgreSQL fixture. This change does not alter provider drivers,
 resource semantics, or claim that filesystem/backend rollback undoes effects.
+
+## Durable claim response recovery
+
+Current agents assign a random UUID to each execution instance before its first
+claim request. SQLite and PostgreSQL compare this identity, encoded in the lease
+owner, inside the claim transaction. A repeated claim for the same agent and
+unexpired running lease returns the existing receipt; it does not increment the
+attempt, change the deadline or renew the lease. A new process or execution gets
+a different UUID and cannot take over this lease. Terminal/expired leases reject
+replay. PostgreSQL uses the locked run row; SQLite reads and writes one transaction
+snapshot, mapping write contention to retryable backend failure. No schema change
+or durable sensitive input is required.
+
+The `claim_replay` capability is advertised only by durable API stores. Agent
+transport errors and truncated responses are unknown delivery and retry the same
+identity, alongside 502/503/504. Authentication, conflict and other explicit
+rejections stop retrying. Retries are bounded by five minutes, the caller context
+and the run's fixed deadline. On API restart, same-key Apply rehydration precedes
+receipt recovery. Same-key concurrent store tests, restart/rehydration tests and
+actual HTTP disconnect/truncation tests cover this boundary under the race
+detector with SQLite and disposable PostgreSQL. An agent-process crash after
+execution starts remains a lease-expiry/recovery concern; these semantics are
+receipt recovery, not a claim of exactly-once infrastructure effects.

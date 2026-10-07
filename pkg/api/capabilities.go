@@ -8,6 +8,7 @@ type runtimeCapabilities struct {
 	DurableApply       bool   `json:"durable_apply"`
 	KeyedDestroy       bool   `json:"keyed_destroy"`
 	CleanupInspection  bool   `json:"cleanup_inspection"`
+	ClaimReplay        bool   `json:"claim_replay"`
 	SingleAPIExecution bool   `json:"single_api_execution"`
 }
 
@@ -17,5 +18,5 @@ func (s *Server) runtimeCapabilities(preflight preflightResult) runtimeCapabilit
 	case *sqliteAPIStore, *postgresAPIStore:
 		durable = s.initErr == nil
 	}
-	return runtimeCapabilities{preflight, "cyberfield-runtime-v1", durable, durable, true, true}
+	return runtimeCapabilities{preflight, "cyberfield-runtime-v1", durable, durable, true, durable, true}
 }
