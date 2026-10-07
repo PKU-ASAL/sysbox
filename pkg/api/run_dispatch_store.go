@@ -222,6 +222,10 @@ func (s *sqliteAPIStore) GetRunDispatch(ctx context.Context, requestID, fingerpr
 }
 
 func insertSQLiteRun(ctx context.Context, tx *sql.Tx, run controlplane.Run) error {
+	_, err := insertSQLiteRunChecked(ctx, tx, run, false)
+	return err
+}
+func insertSQLiteRunChecked(ctx context.Context, tx *sql.Tx, run controlplane.Run, live bool) (bool, error) {
 	recoverable, unsafeState := 0, 0
 	if run.Recoverable {
 		recoverable = 1
@@ -229,9 +233,19 @@ func insertSQLiteRun(ctx context.Context, tx *sql.Tx, run controlplane.Run) erro
 	if run.UnsafeState {
 		unsafeState = 1
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO sysbox_runs (id, topology, operation, op, status, error, parent_id, revision, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at, deadline_at, snapshot_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.Topology, run.Operation, run.Op, run.Status, run.Err, run.ParentID, run.Revision, run.Target, run.AgentID, recoverable, unsafeState, run.OperationKey, run.RequestFingerprint, run.Protocol, run.LeaseOwner, formatSQLiteTime(run.LeaseUntil), run.Attempt, formatSQLiteTime(run.QueuedAt), formatSQLiteTime(run.AssignedAt), formatSQLiteTime(run.StartedAt), formatSQLiteTime(run.EndedAt), formatSQLiteTime(run.DeadlineAt), run.SnapshotPath)
-	return err
+	query := `INSERT INTO sysbox_runs (id, topology, operation, op, status, error, parent_id, revision, target, agent_id, recoverable, unsafe_state, operation_key, request_fingerprint, protocol, lease_owner, lease_until, attempt, queued_at, assigned_at, started_at, ended_at, deadline_at, snapshot_path, completion_projection) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?`
+	args := []any{
+		run.ID, run.Topology, run.Operation, run.Op, run.Status, run.Err, run.ParentID, run.Revision, run.Target, run.AgentID, recoverable, unsafeState, run.OperationKey, run.RequestFingerprint, run.Protocol, run.LeaseOwner, formatSQLiteTime(run.LeaseUntil), run.Attempt, formatSQLiteTime(run.QueuedAt), formatSQLiteTime(run.AssignedAt), formatSQLiteTime(run.StartedAt), formatSQLiteTime(run.EndedAt), formatSQLiteTime(run.DeadlineAt), run.SnapshotPath, completionProjectionJSON(run.CompletionProjection)}
+	if live {
+		query += ` WHERE julianday(?)>julianday('now')`
+		args = append(args, formatSQLiteTime(run.LeaseUntil))
+	}
+	result, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
 }
 
 func insertSQLiteAgentCommand(ctx context.Context, tx *sql.Tx, cmd controlplane.AgentCommand) error {

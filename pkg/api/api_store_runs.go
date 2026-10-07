@@ -95,7 +95,7 @@ func (s *localAPIStore) RenewRunLease(ctx context.Context, runID, agentID, owner
 	if err != nil {
 		return nil, false, err
 	}
-	if !run.CanRenewLease(agentID, owner) {
+	if !run.CanRenewLease(agentID, owner, time.Now().UTC()) {
 		return run, false, nil
 	}
 	run.LeaseUntil = time.Now().UTC().Add(ttl)
@@ -276,7 +276,7 @@ FOR UPDATE`, runID).Scan(&raw)
 	if err := json.Unmarshal(raw, &run); err != nil {
 		return nil, false, err
 	}
-	if !run.CanRenewLease(agentID, owner) {
+	if !run.CanRenewLease(agentID, owner, time.Now().UTC()) {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, false, err
 		}
@@ -290,7 +290,7 @@ FOR UPDATE`, runID).Scan(&raw)
 	tag, err := tx.Exec(ctx, `
 UPDATE sysbox_runs
 SET lease_until=$4, data=$5::jsonb, updated_at=now()
-WHERE id=$1 AND agent_id=$2 AND lease_owner=$3 AND status='running'`,
+WHERE id=$1 AND agent_id=$2 AND lease_owner=$3 AND status='running' AND lease_until>clock_timestamp()`,
 		runID, agentID, owner, run.LeaseUntil, string(nextRaw))
 	if err != nil {
 		return nil, false, fmt.Errorf("postgres renew run lease: %w", err)

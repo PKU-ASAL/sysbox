@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+const AgentCommandExecutionLimit = 30 * time.Minute
+
 const (
 	AgentStatusOnline      = "online"
 	AgentStatusOffline     = "offline"
@@ -105,8 +107,8 @@ func (r Run) CanReplayClaim(agentID, owner string, now time.Time) bool {
 	return owner != "" && r.AgentID == agentID && r.Status == RunRunning && r.LeaseOwner == owner && r.LeaseUntil.After(now)
 }
 
-func (r Run) CanRenewLease(agentID, owner string) bool {
-	return r.AgentID == agentID && r.Status == RunRunning && r.LeaseOwner == owner
+func (r Run) CanRenewLease(agentID, owner string, now time.Time) bool {
+	return owner != "" && r.AgentID == agentID && r.Status == RunRunning && r.LeaseOwner == owner && r.LeaseUntil.After(now)
 }
 
 func (r *Run) MarkAssigned(agentID string, now time.Time) {
@@ -166,7 +168,7 @@ func AgentStatusForPolicy(disabled, quarantined bool) string {
 
 func (c AgentCommand) IsPending() bool {
 	switch c.Status {
-	case "", AgentCommandStatusQueued, AgentCommandStatusDelivered:
+	case "", AgentCommandStatusQueued, AgentCommandStatusLeased, AgentCommandStatusDelivered:
 		return true
 	default:
 		return false

@@ -377,7 +377,9 @@ func (j *Jobs) claim(runID, agentID string, claimID ...string) (*controlplane.Ru
 }
 
 func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, error) {
-	renewed, ok, err := j.store.RenewRunLease(context.Background(), runID, agentID, owner, ttl)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	renewed, ok, err := j.store.RenewRunLease(ctx, runID, agentID, owner, ttl)
 	if err != nil {
 		return nil, err
 	}
@@ -412,8 +414,14 @@ func (j *Jobs) markExpiredLeases(now time.Time) {
 		if run.Status != controlplane.RunRunning || run.LeaseUntil.IsZero() || run.LeaseUntil.After(now) {
 			continue
 		}
+		before := run
 		run.MarkLeaseExpired(now)
-		j.replace(&run)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ok, err := j.store.CompareAndSwapRun(ctx, before, run, false)
+		cancel()
+		if err == nil && ok {
+			j.cacheCommittedRun(&run)
+		}
 	}
 }
 
@@ -452,8 +460,14 @@ func (j *Jobs) markConvergenceDeadlineExceeded(now time.Time, timeout time.Durat
 		if !now.After(deadline) {
 			continue
 		}
+		before := *r
 		r.MarkFinished(fmt.Errorf("convergence deadline exceeded (deadline %s)", deadline), now)
-		j.replace(r)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ok, err := j.store.CompareAndSwapRun(ctx, before, *r, false)
+		cancel()
+		if err == nil && ok {
+			j.cacheCommittedRun(r)
+		}
 	}
 }
 
@@ -544,6 +558,16 @@ func (j *Jobs) finish(r *controlplane.Run, err error) {
 	j.mu.Unlock()
 	j.logs.Close(r.ID)
 	j.persist(r)
+}
+
+// cacheCommittedRun updates process-local views only after authoritative CAS.
+func (j *Jobs) cacheCommittedRun(r *controlplane.Run) {
+	j.mu.Lock()
+	j.runs[r.ID] = r
+	j.mu.Unlock()
+	if r.Status.IsTerminal() {
+		j.logs.Close(r.ID)
+	}
 }
 
 func (j *Jobs) replace(r *controlplane.Run) {

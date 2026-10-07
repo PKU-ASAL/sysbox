@@ -13,6 +13,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 type OperationStatus string
@@ -129,6 +130,7 @@ func (NoopRecorder) MarkResourceStateRecorded()                          {}
 func (NoopRecorder) SubstepStart(int, string, map[string]any) int        { return -1 }
 
 type FileRecorder struct {
+	persistErr error
 	mu         sync.Mutex
 	path       string
 	checkpoint OperationCheckpoint
@@ -455,20 +457,41 @@ func MarkStatePatchesRecorded(cp *OperationCheckpoint, indexes map[int]bool) {
 
 func WriteCheckpoint(path string, cp OperationCheckpoint) error {
 	if path == "" {
-		return nil
+		return fmt.Errorf("checkpoint path required")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := util.MkdirAllDurable(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create checkpoint dir: %w", err)
 	}
 	data, err := json.MarshalIndent(&cp, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	file, err := os.CreateTemp(filepath.Dir(path), ".checkpoint-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := file.Name()
+	defer os.Remove(tmp)
+	if _, err = file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp, path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 func splitResourceAddr(addr string) (string, string, bool) {
@@ -484,5 +507,11 @@ func splitResourceAddr(addr string) (string, string, bool) {
 }
 
 func (r *FileRecorder) flushLocked() error {
-	return WriteCheckpoint(r.path, r.checkpoint)
+	err := WriteCheckpoint(r.path, r.checkpoint)
+	if err != nil && r.persistErr == nil {
+		r.persistErr = err
+	}
+	return err
 }
+
+func (r *FileRecorder) Err() error { r.mu.Lock(); defer r.mu.Unlock(); return r.persistErr }

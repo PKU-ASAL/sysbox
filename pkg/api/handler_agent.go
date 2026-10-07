@@ -246,6 +246,10 @@ func (s *Server) handleListAgentProjections(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if err := s.agentService().restoreCompletionProjections(r.Context()); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"projections": s.agents.ListProjections(agentID)})
 }
 
