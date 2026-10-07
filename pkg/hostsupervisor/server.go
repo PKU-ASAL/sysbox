@@ -25,11 +25,13 @@ type Server struct {
 	Dispatcher      *Dispatcher
 	Power           *PowerDispatcher
 	Files           *FileDispatcher
+	Runs            *RunCoordinator
+	RunEffect       func(context.Context, RunRequest) (json.RawMessage, error)
 	OnRecoveryError func(error)
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	if s.Dispatcher == nil || !filepath.IsAbs(s.Socket) {
+	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil || !filepath.IsAbs(s.Socket) {
 		return fmt.Errorf("absolute supervisor socket and dispatcher required")
 	}
 	directory := filepath.Dir(s.Socket)
@@ -95,8 +97,10 @@ func (s *Server) serveListener(parent context.Context, listener net.Listener) er
 	defer stop()
 	var workers sync.WaitGroup
 	defer func() { cancel(); _ = listener.Close(); workers.Wait() }()
-	workers.Add(1)
-	go func() { defer workers.Done(); s.recoveryLoop(ctx) }()
+	if s.Dispatcher != nil {
+		workers.Add(1)
+		go func() { defer workers.Done(); s.recoveryLoop(ctx) }()
+	}
 	if s.Power != nil {
 		workers.Add(1)
 		go func() { defer workers.Done(); s.runRecovery(ctx, s.Power.Recover) }()
@@ -185,6 +189,20 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 			break
 		}
 		response.FileResult, err = s.Files.Cancel(ctx, request.Target, request.FileHandle)
+	case "run-start":
+		if s.Runs == nil || s.RunEffect == nil || request.RunRequest == nil || request.Grant == nil {
+			err = fmt.Errorf("host run coordinator unavailable")
+			break
+		}
+		response.RunEvidence, err = s.Runs.Start(ctx, *request.RunRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
+			return s.RunEffect(effectCtx, *request.RunRequest)
+		})
+	case "run-observe":
+		if s.Runs == nil || request.RunRequest == nil || request.Grant == nil {
+			err = fmt.Errorf("host run coordinator unavailable")
+			break
+		}
+		response.RunEvidence, err = s.Runs.Observe(ctx, *request.RunRequest, *request.Grant)
 	case "host-info":
 		if s.Power == nil {
 			err = fmt.Errorf("host power supervisor unavailable")

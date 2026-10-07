@@ -146,3 +146,12 @@ func (c *TaskClient) CancelGuestFile(ctx context.Context, h substrate.FileInstal
 	r, err := c.call(ctx, Request{Operation: "file-cancel", FileHandle: h})
 	return r.FileResult, err
 }
+
+func (c *TaskClient) StartRun(ctx context.Context, req RunRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "run-start", RunRequest: &req, Grant: &grant})
+	return r.RunEvidence, err
+}
+func (c *TaskClient) ObserveRun(ctx context.Context, req RunRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "run-observe", RunRequest: &req, Grant: &grant})
+	return r.RunEvidence, err
+}

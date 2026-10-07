@@ -3,6 +3,7 @@
 package hostsupervisor
 
 import (
+	"encoding/json"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -23,16 +24,18 @@ type Request struct {
 	Power       *controlplane.NodePowerRequest     `json:"power,omitempty"`
 	FileRequest *substrate.FileInstallRequest      `json:"file_request,omitempty"`
 	FileHandle  substrate.FileInstallHandle        `json:"file_handle,omitempty"`
+	RunRequest  *RunRequest                        `json:"run_request,omitempty"`
 	Stream      string                             `json:"stream,omitempty"`
 	Cursor      int64                              `json:"cursor,omitempty"`
 	Limit       int                                `json:"limit,omitempty"`
 }
 type Response struct {
-	Version    int                         `json:"version"`
-	BootID     string                      `json:"boot_id,omitempty"`
-	Handle     substrate.ExecutionHandle   `json:"handle,omitempty"`
-	Result     substrate.ExecResult        `json:"result,omitempty"`
-	Output     substrate.ExecutionOutput   `json:"output,omitempty"`
-	Error      string                      `json:"error,omitempty"`
-	FileResult substrate.FileInstallResult `json:"file_result,omitempty"`
+	Version     int                         `json:"version"`
+	BootID      string                      `json:"boot_id,omitempty"`
+	Handle      substrate.ExecutionHandle   `json:"handle,omitempty"`
+	Result      substrate.ExecResult        `json:"result,omitempty"`
+	Output      substrate.ExecutionOutput   `json:"output,omitempty"`
+	Error       string                      `json:"error,omitempty"`
+	FileResult  substrate.FileInstallResult `json:"file_result,omitempty"`
+	RunEvidence json.RawMessage             `json:"run_evidence,omitempty"`
 }

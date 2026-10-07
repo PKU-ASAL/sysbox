@@ -26,7 +26,9 @@ resource UID/generation、expected serial 和 target 身份，不接收 provider
 主机路径。`RunCoordinator` 先写宿主 intent，effect 返回丢失时只读同一 run/action
 记录，不重新调用 provider。当前只有合同与 journal 基础测试通过，尚未接入
 canonical resolver/runtime executor、API run grant/receipt 和 Agent 远端路由，
-不能计为普通 Run 迁移完成。
+不能计为普通 Run 迁移完成。Run-only supervisor 的 start/observe 路由和
+effectgate 绑定已通过幂等、签名和未知结果测试；canonical runtime executor、
+API grant/receipt CAS 和 Agent `run_assigned` relay 仍待接入。
 
 ## 远端节点 pause/resume 集成
 
