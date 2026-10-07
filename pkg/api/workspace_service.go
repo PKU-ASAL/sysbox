@@ -168,7 +168,7 @@ func (s *WorkspaceService) Get(ctx context.Context, topology string) (WorkspaceI
 			return WorkspaceInfo{}, err
 		}
 		for _, run := range latestRunsByID(runs) {
-			if run.Topology == topology && run.Status.IsActive() {
+			if run.Topology == topology && (run.Status.IsActive() || run.QueuedAt.IsZero() || (run.Status.IsTerminal() && run.EndedAt.IsZero())) {
 				out.ActiveRunID, out.ActiveRevision = run.ID, run.Revision
 			}
 		}
@@ -520,11 +520,64 @@ func (s *WorkspaceService) LockInfo(ctx context.Context, topology string) (state
 }
 
 func (s *WorkspaceService) ForceUnlock(ctx context.Context, topology string) error {
+	if s.loadRuns == nil || s.loadNodeOperations == nil || s.loadGuestActivity == nil {
+		return fmt.Errorf("%w: activity registry unavailable for force-unlock", persistence.ErrConflict)
+	}
+	if err := s.ensureTopologyQuiescent(ctx, topology); err != nil {
+		return err
+	}
 	mgr, err := s.stateManager(topology)
 	if err != nil {
 		return err
 	}
+	info, err := mgr.LockInfo(ctx)
+	if err != nil {
+		return err
+	}
+	if info.Locked {
+		return fmt.Errorf("%w: state lease is still live; wait for expiry before force-unlock", persistence.ErrConflict)
+	}
 	return mgr.ForceUnlock(ctx)
+}
+
+// ensureTopologyQuiescent is the shared safety gate for destructive state
+// maintenance. A backend lock is only a storage mutex; removing it while an
+// effect holder is alive would create two writers and invalidate fencing.
+func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology string) error {
+	if s.loadRuns != nil {
+		runs, err := s.loadRuns(ctx)
+		if err != nil {
+			return err
+		}
+		for _, run := range latestRunsByID(runs) {
+			if run.Topology == topology && run.Status.IsActive() {
+				return fmt.Errorf("%w: active run prevents state maintenance", persistence.ErrConflict)
+			}
+		}
+	}
+	if s.loadNodeOperations != nil {
+		ops, err := s.loadNodeOperations(ctx, topology)
+		if err != nil {
+			return err
+		}
+		for _, op := range ops {
+			if op.Topology == topology && (op.CreatedAt.IsZero() || op.EndedAt.IsZero() || (op.Status != controlplane.NodeOperationStatusDone && op.Status != controlplane.NodeOperationStatusFailed)) {
+				return fmt.Errorf("%w: active node operation prevents state maintenance", persistence.ErrConflict)
+			}
+		}
+	}
+	if s.loadGuestActivity != nil {
+		activities, err := s.loadGuestActivity(ctx, topology)
+		if err != nil {
+			return err
+		}
+		for _, activity := range activities {
+			if activity.CreatedAt.IsZero() || activity.EndedAt.IsZero() || activity.Active() {
+				return fmt.Errorf("%w: active guest operation prevents state maintenance", persistence.ErrConflict)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *WorkspaceService) StateSnapshots(ctx context.Context, topology string) ([]state.Snapshot, error) {
@@ -544,38 +597,8 @@ func (s *WorkspaceService) RestoreStateSnapshot(ctx context.Context, topology, s
 		unlock := s.lockAdmission(topology)
 		defer unlock()
 	}
-	if s.loadRuns != nil {
-		runs, err := s.loadRuns(ctx)
-		if err != nil {
-			return err
-		}
-		for _, run := range latestRunsByID(runs) {
-			if run.Topology == topology && run.Status.IsActive() {
-				return fmt.Errorf("%w: active run prevents restore", persistence.ErrConflict)
-			}
-		}
-	}
-	if s.loadNodeOperations != nil {
-		ops, err := s.loadNodeOperations(ctx, topology)
-		if err != nil {
-			return err
-		}
-		for _, op := range ops {
-			if op.Topology == topology && op.Status != controlplane.NodeOperationStatusDone && op.Status != controlplane.NodeOperationStatusFailed {
-				return persistence.ErrConflict
-			}
-		}
-	}
-	if s.loadGuestActivity != nil {
-		ops, err := s.loadGuestActivity(ctx, topology)
-		if err != nil {
-			return err
-		}
-		for _, op := range ops {
-			if op.Active() {
-				return persistence.ErrConflict
-			}
-		}
+	if err := s.ensureTopologyQuiescent(ctx, topology); err != nil {
+		return err
 	}
 	mgr, err := s.stateManager(topology)
 	if err != nil {
