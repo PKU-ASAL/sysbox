@@ -140,6 +140,26 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, op)
 }
 
+func (s *Server) handleAdoptionPlan(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var body ImportNodeRequest
+	limitBody(w, r)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	plan, err := s.nodeOperations().AdoptionPlan(r.Context(), topology, body)
+	if err != nil {
+		writeError(w, nodeOperationStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
 func nodeOperationStatus(err error) int {
 	msg := err.Error()
 	switch {

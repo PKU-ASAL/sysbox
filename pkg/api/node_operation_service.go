@@ -8,6 +8,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 type NodeOperationService struct {
@@ -22,6 +23,53 @@ type ImportNodeRequest struct {
 	Name      string
 	ID        string
 	Substrate string
+}
+
+type AdoptionPlan struct {
+	Decision    string `json:"decision"`
+	Topology    string `json:"topology"`
+	TopologyUID string `json:"topology_uid"`
+	Serial      int64  `json:"serial"`
+	Address     string `json:"address"`
+	ExternalID  string `json:"external_id"`
+	Substrate   string `json:"substrate"`
+	AgentID     string `json:"agent_id,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+// AdoptionPlan is read-only. It never probes or mutates a provider; the
+// confirm phase requires an owning-agent evidence record with this exact
+// topology identity and serial.
+func (s *NodeOperationService) AdoptionPlan(ctx context.Context, topology string, req ImportNodeRequest) (AdoptionPlan, error) {
+	plan := AdoptionPlan{Decision: "unsupported", Topology: topology, Address: req.Type + "." + req.Name, ExternalID: req.ID, Substrate: req.Substrate}
+	if req.Type != "sysbox_node" || req.Name == "" || req.ID == "" || req.Substrate == "" {
+		return plan, fmt.Errorf("adoption plan requires type, name, external id and substrate")
+	}
+	st, err := s.workspace.LoadState(topology)
+	if err != nil {
+		return plan, err
+	}
+	plan.TopologyUID, plan.Serial = st.TopologyUID, st.Meta.Serial
+	if st.FindResource(address.Resource(req.Type, req.Name)) != nil {
+		return plan, fmt.Errorf("%w: adoption address already exists", persistence.ErrConflict)
+	}
+	if _, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Substrate); err != nil {
+		plan.Reason = err.Error()
+		return plan, nil
+	}
+	if s.scheduler == nil {
+		plan.Reason = "owning agent scheduler unavailable"
+		return plan, nil
+	}
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{req.Substrate}, "")
+	if err != nil {
+		plan.Reason = err.Error()
+		return plan, nil
+	}
+	plan.Decision = "inspection_required"
+	plan.AgentID = agent.ID
+	plan.Reason = "owning agent inspection evidence required before confirm"
+	return plan, nil
 }
 
 func (s *NodeOperationService) enqueue(ctx context.Context, topologyUID string, op controlplane.NodeOperation) (controlplane.NodeOperation, error) {
