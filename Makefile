@@ -145,6 +145,20 @@ test-docker-generation-e2e: ## Run real Docker managed-generation effect rejecti
 test-remote-docker-fault-e2e: ## Real HTTP/Agent/Docker completion-loss and API restart acceptance
 	SYSBOX_REMOTE_DOCKER_E2E=1 $(GOENV) $(GO) test -tags e2e ./pkg/api -run '^TestRemoteDockerCompletionLossRecoveryE2E$$' -count=1 -v -timeout=3m
 
+.PHONY: test-p9-real
+test-p9-real: ## Run the P9 real-provider failure matrix; missing environments fail explicitly
+	@set -eu; \
+	$(MAKE) test-remote-docker-fault-e2e; \
+	$(MAKE) test-host-supervisor-e2e; \
+	$(MAKE) test-host-power-e2e; \
+	$(MAKE) test-host-file-e2e; \
+	$(MAKE) test-docker-adoption-e2e; \
+	SYSBOX_FIRECRACKER_BIN=$${SYSBOX_FIRECRACKER_BIN:?set Firecracker binary} \
+	SYSBOX_FIRECRACKER_KERNEL=$${SYSBOX_FIRECRACKER_KERNEL:?set Firecracker kernel} \
+	SYSBOX_FIRECRACKER_ROOTFS=$${SYSBOX_FIRECRACKER_ROOTFS:?set Firecracker rootfs} \
+	  $(MAKE) test-firecracker-e2e; \
+	SYSBOX_LIBVIRT_E2E=1 $(MAKE) test-libvirt-generation-e2e
+
 .PHONY: help build build-all test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset test-windows-tools prepare-windows10-media build-windows10-image test-windows10-libvirt release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \

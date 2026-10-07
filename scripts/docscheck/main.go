@@ -48,6 +48,7 @@ var expectedDocs = []string{
 	"docs/operations/artifacts.md",
 	"docs/operations/control-plane-deployment.md",
 	"docs/operations/upgrades-and-recovery.md",
+	"docs/operations/p9-real-acceptance.md",
 	"docs/quickstart.md",
 	"docs/reference/api.md",
 	"docs/reference/guest-tasks.md",
