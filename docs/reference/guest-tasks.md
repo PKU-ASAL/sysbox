@@ -86,10 +86,26 @@ and must never be available to the worker.
 File and SQLite repositories are checked for private supervisor ownership,
 including SQLite sidecars. PostgreSQL deployments must enforce equivalent
 isolation with separate database roles; the supervisor cannot prove role
-isolation from a DSN. This boundary currently covers API guest tasks. Ordinary
-Run lifecycle, file installation and foreground provider calls have not all
+isolation from a DSN. This boundary currently covers API guest tasks and remote
+node pause/resume. Ordinary Run lifecycle, file installation and foreground provider calls have not all
 moved behind it. A privileged ordinary Agent still has those direct provider
 paths, so this is not yet whole-Agent credential isolation.
+
+Remote pause/resume uses a fixed `node_power` request. Its digest binds topology,
+logical node name and operation; its grant binds the resource identity and host
+boot. The supervisor records an intent before the provider call. Completion
+requires both an acknowledged synchronous call and an independently observed
+matching identity and power state. Health remains a separate observation.
+A lost daemon response leaves an unresolved intent even if the node currently
+looks paused: that observation alone cannot prove no request remains in flight.
+Such intents are neither replayed nor certified as stopped. Completed results
+and stop receipts survive supervisor restart; historical reads never reapply
+the old operation. The effect ledger is format 2 and rejects older formats.
+
+`make test-host-power-e2e` tests actual Docker pause/resume for both ordinary
+and unhealthy containers, lost stop acknowledgments, service reconstruction,
+successor epochs and old-proof rejection. Standalone CLI pause/resume still
+uses its explicitly local provider path; the remote Agent has no such fallback.
 
 Verification commands:
 

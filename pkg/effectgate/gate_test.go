@@ -53,7 +53,10 @@ func TestGateUnknownOutcomeCannotBeReplayedOrRetired(t *testing.T) {
 	_, err = gate.Execute(context.Background(), signed, "effect", func(context.Context) (json.RawMessage, error) { calls++; return nil, nil })
 	require.Error(t, err)
 	require.Equal(t, 1, calls)
-	_, err = gate.Stop(context.Background(), grant)
+	_, err = gate.SealStop(context.Background(), grant, "effect", func(controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
+		t.Fatal("unknown effect cannot be signed")
+		return controlplane.SignedExecutionStopReceipt{}, nil
+	})
 	require.Error(t, err, "cannot certify unknown in-flight external effect as stopped")
 }
 

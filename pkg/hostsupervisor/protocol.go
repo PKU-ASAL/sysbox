@@ -20,6 +20,7 @@ type Request struct {
 	Task      *guesttask.Request                 `json:"task,omitempty"`
 	Handle    substrate.ExecutionHandle          `json:"handle,omitempty"`
 	Grant     *controlplane.SignedExecutionGrant `json:"grant,omitempty"`
+	Power     *controlplane.NodePowerRequest     `json:"power,omitempty"`
 	Stream    string                             `json:"stream,omitempty"`
 	Cursor    int64                              `json:"cursor,omitempty"`
 	Limit     int                                `json:"limit,omitempty"`

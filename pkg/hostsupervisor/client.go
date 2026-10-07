@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
@@ -101,5 +102,24 @@ func (c *TaskClient) RenewExecution(ctx context.Context, h substrate.ExecutionHa
 		return guesttask.ErrUnauthorized
 	}
 	_, err := c.call(ctx, Request{Operation: "renew", Handle: h, Grant: &grant})
+	return err
+}
+
+func (c *TaskClient) HostBootID(ctx context.Context) (string, error) {
+	out, err := c.call(ctx, Request{Operation: "host-info"})
+	if err != nil {
+		return "", err
+	}
+	if out.BootID == "" {
+		return "", guesttask.ErrUnknown
+	}
+	return out.BootID, nil
+}
+func (c *TaskClient) ExecutePower(ctx context.Context, req controlplane.NodePowerRequest, g controlplane.SignedExecutionGrant) error {
+	_, err := c.call(ctx, Request{Operation: "power-apply", Power: &req, Grant: &g})
+	return err
+}
+func (c *TaskClient) ObservePower(ctx context.Context, g controlplane.SignedExecutionGrant) error {
+	_, err := c.call(ctx, Request{Operation: "power-observe", Grant: &g})
 	return err
 }

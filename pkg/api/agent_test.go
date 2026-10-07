@@ -636,7 +636,7 @@ func TestAgentInventoryPersists(t *testing.T) {
 func TestNodeOperationCompletionPersists(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
-	op, err := s.nodeOperations().enqueue(context.Background(), prepareNodeOperation(controlplane.NodeOperation{
+	op, err := s.nodeOperations().enqueue(context.Background(), "topology-uid", prepareNodeOperation(controlplane.NodeOperation{
 		Topology:    "mixed",
 		Workspace:   "mixed",
 		Operation:   "pause",

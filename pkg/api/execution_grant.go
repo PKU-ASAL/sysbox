@@ -339,6 +339,16 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	operation := cmd.Type
 	digest := ""
 	switch cmd.Type {
+	case "node_operation":
+		request, err := controlplane.FromNodeOperationCommand(cmd)
+		if err != nil {
+			return controlplane.ExecutionGrant{}, err
+		}
+		digest, err = request.Digest()
+		if err != nil {
+			return controlplane.ExecutionGrant{}, err
+		}
+		operation = "node_power"
 	case "guest_execution":
 		if cmd.Execution == nil {
 			return controlplane.ExecutionGrant{}, persistence.ErrCorruptRecord

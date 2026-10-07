@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,6 +49,29 @@ func TestDestroyNodeTreatsMissingContainerAsDestroyed(t *testing.T) {
 
 	err = sub.DestroyNode(context.Background(), substrate.NodeHandle{ID: "missing-container", Generation: 1})
 	require.NoError(t, err)
+}
+
+func TestObservePowerStateIndependentOfHealth(t *testing.T) {
+	for _, paused := range []bool{false, true} {
+		t.Run(fmt.Sprint(paused), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"Id": "container", "Config": map[string]any{"Labels": map[string]string{"sysbox.owner_uid": "topology", "sysbox.resource_uid": "node", "sysbox.generation": "1"}}, "State": map[string]any{"Running": true, "Paused": paused, "Status": "running", "Health": map[string]string{"Status": "unhealthy"}}})
+			}))
+			defer server.Close()
+			cli, err := client.NewClientWithOpts(client.WithHost(server.URL), client.WithVersion("1.47"))
+			require.NoError(t, err)
+			defer cli.Close()
+			obs, err := (&Substrate{cli: cli}).ObserveNode(context.Background(), substrate.NodeHandle{ID: "container", Generation: 1})
+			require.NoError(t, err)
+			require.False(t, obs.Healthy)
+			want := substrate.NodeStatusRunning
+			if paused {
+				want = substrate.NodeStatusPaused
+			}
+			require.Equal(t, want, obs.Status)
+		})
+	}
 }
 
 func TestDockerPortConfigHostExposure(t *testing.T) {

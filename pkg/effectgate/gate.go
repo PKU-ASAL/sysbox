@@ -18,6 +18,7 @@ import (
 
 var ErrUncertain = errors.New("host effect outcome uncertain; observation required")
 var ErrFenced = errors.New("host effect authorization rejected")
+var ErrNotFound = errors.New("host effect outcome not found")
 
 type Gate struct {
 	Root      string
@@ -26,15 +27,18 @@ type Gate struct {
 	Authorize func(context.Context, controlplane.ExecutionGrant) error
 }
 type outcome struct {
-	Grant  controlplane.ExecutionGrant `json:"grant"`
-	State  string                      `json:"state"`
-	Result json.RawMessage             `json:"result,omitempty"`
+	Grant    controlplane.ExecutionGrant              `json:"grant"`
+	State    string                                   `json:"state"`
+	Result   json.RawMessage                          `json:"result,omitempty"`
+	Receipt  *controlplane.SignedExecutionStopReceipt `json:"receipt,omitempty"`
+	Reported bool                                     `json:"reported"`
 }
 type ledger struct {
-	Version  int                `json:"version"`
-	Epochs   map[string]uint64  `json:"epochs"`
-	Outcomes map[string]outcome `json:"outcomes"`
-	Stopped  map[uint64]bool    `json:"stopped"`
+	TopologyUID string             `json:"topology_uid"`
+	Version     int                `json:"version"`
+	Epochs      map[string]uint64  `json:"epochs"`
+	Outcomes    map[string]outcome `json:"outcomes"`
+	Stopped     map[uint64]bool    `json:"stopped"`
 }
 
 func (g *Gate) locked(ctx context.Context, topology string) (string, *ledger, func(), error) {
@@ -56,16 +60,20 @@ func (g *Gate) locked(ctx context.Context, topology string) (string, *ledger, fu
 	}
 	release := func() { lock.Close() }
 	path := filepath.Join(g.Root, name+".json")
-	value := &ledger{Version: 1, Epochs: map[string]uint64{}, Outcomes: map[string]outcome{}, Stopped: map[uint64]bool{}}
+	value := &ledger{Version: 2, TopologyUID: topology, Epochs: map[string]uint64{}, Outcomes: map[string]outcome{}, Stopped: map[uint64]bool{}}
 	raw, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		release()
 		return "", nil, nil, err
 	}
 	if err == nil {
-		if json.Unmarshal(raw, value) != nil || value.Version != 1 || value.Epochs == nil || value.Outcomes == nil || value.Stopped == nil {
+		if json.Unmarshal(raw, value) != nil || value.Version != 2 || value.TopologyUID != topology || value.Epochs == nil || value.Outcomes == nil || value.Stopped == nil {
 			release()
-			return "", nil, nil, ErrUncertain
+			return "", nil, nil, fmt.Errorf("%w: effect ledger requires explicit rebuild", ErrUncertain)
+		}
+		if err := validateLedger(value); err != nil {
+			release()
+			return "", nil, nil, err
 		}
 	}
 	return path, value, release, nil
@@ -122,7 +130,7 @@ func (g *Gate) Execute(ctx context.Context, signed controlplane.SignedExecutionG
 	}
 	key := fmt.Sprintf("%d/%s", grant.Epoch, effectID)
 	if prior, ok := record.Outcomes[key]; ok {
-		if prior.Grant.ActionID != grant.ActionID || prior.Grant.CommandID != grant.CommandID || prior.Grant.Digest != grant.Digest || prior.Grant.Operation != grant.Operation {
+		if !sameGrant(prior.Grant, grant) {
 			return nil, ErrFenced
 		}
 		if prior.State != "complete" {
@@ -170,31 +178,6 @@ func (g *Gate) Execute(ctx context.Context, signed controlplane.SignedExecutionG
 		return nil, err
 	}
 	return result, nil
-}
-
-// Stop is only exposed to the authenticated revocation supervisor. Waiting for
-// the topology lock waits for callbacks to return; unknown intent cannot yield
-// a stop receipt and prevents takeover until provider observation resolves it.
-func (g *Gate) Stop(ctx context.Context, grant controlplane.ExecutionGrant) (string, error) {
-	path, record, release, err := g.locked(ctx, grant.Scope.TopologyUID)
-	if err != nil {
-		return "", err
-	}
-	defer release()
-	for _, prior := range record.Outcomes {
-		if prior.Grant.Epoch == grant.Epoch && prior.State != "complete" {
-			return "", ErrUncertain
-		}
-	}
-	record.Stopped[grant.Epoch] = true
-	if grant.Epoch > record.Epochs[grant.Scope.ResourceUID] {
-		record.Epochs[grant.Scope.ResourceUID] = grant.Epoch
-	}
-	if err := save(path, record); err != nil {
-		return "", err
-	}
-	raw, _ := json.Marshal(grant)
-	return fmt.Sprintf("%x", sha256.Sum256(append([]byte(g.BootID+"\x00stopped\x00"), raw...))), nil
 }
 
 func (r *ledger) epochFloor(resource string) uint64 {

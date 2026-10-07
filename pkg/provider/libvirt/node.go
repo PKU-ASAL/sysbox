@@ -3,6 +3,7 @@ package libvirt
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -420,13 +421,32 @@ func (s *Substrate) NodeStatus(ctx context.Context, h substrate.NodeHandle) (boo
 }
 
 func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (substrate.NodeObservation, error) {
-	hs := hsFrom(h)
-	out, err := exec.CommandContext(ctx, "virsh", "domstate", hs.DomainName).CombinedOutput()
+	target, exists, err := existingDomainUUID(ctx, h)
+	if err != nil {
+		return substrate.NodeObservation{Status: substrate.NodeStatusUnknown, ExternalID: h.ID, LastSeen: time.Now().UTC()}, err
+	}
+	if !exists {
+		return substrate.NodeObservation{Status: substrate.NodeStatusMissing, ExternalID: target, LastSeen: time.Now().UTC()}, nil
+	}
+	raw, err := virshQuery(ctx, "dumpxml", target)
+	if err != nil {
+		return substrate.NodeObservation{Status: substrate.NodeStatusUnknown, ExternalID: target}, err
+	}
+	var domain domainXML
+	if err := xml.Unmarshal(raw, &domain); err != nil {
+		return substrate.NodeObservation{}, err
+	}
+	if domain.UUID != target || domain.Metadata == nil || domain.Metadata.Managed == nil {
+		return substrate.NodeObservation{}, fmt.Errorf("libvirt: observed domain ownership metadata missing")
+	}
+	m := domain.Metadata.Managed
+	actual := substrate.OperationIdentity{ActionID: m.ActionID, OwnerUID: m.OwnerUID, TopologyUID: m.TopologyUID, ResourceUID: m.ResourceUID, Generation: m.Generation}
+	if actual.Validate() != nil || !sameGeneration(actual, *hsFrom(h).Identity) {
+		return substrate.NodeObservation{}, fmt.Errorf("libvirt: observed domain ownership or generation conflict")
+	}
+	out, err := virshQuery(ctx, "domstate", target)
 	if err != nil {
 		reason := strings.TrimSpace(string(out))
-		if strings.Contains(strings.ToLower(reason), "domain not found") || strings.Contains(strings.ToLower(reason), "failed to get domain") {
-			return substrate.NodeObservation{Exists: false, Status: substrate.NodeStatusMissing, ExternalID: h.ID, Reason: reason, LastSeen: time.Now().UTC()}, nil
-		}
 		return substrate.NodeObservation{Status: substrate.NodeStatusUnknown, ExternalID: h.ID, Reason: reason, LastSeen: time.Now().UTC()}, fmt.Errorf("libvirt: observe domain state: %w", err)
 	}
 	domainState := strings.TrimSpace(string(out))
@@ -438,16 +458,7 @@ func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (su
 		status = substrate.NodeStatusPaused
 		running = true
 	}
-	externalID := h.ID
-	if uuidOut, uuidErr := exec.CommandContext(ctx, "virsh", "domuuid", hs.DomainName).CombinedOutput(); uuidErr == nil && strings.TrimSpace(string(uuidOut)) != "" {
-		externalID = strings.TrimSpace(string(uuidOut))
-	} else if uuidErr != nil {
-		return substrate.NodeObservation{Exists: true, Status: substrate.NodeStatusUnknown, ExternalID: h.ID, Reason: string(uuidOut), LastSeen: time.Now().UTC()}, fmt.Errorf("libvirt: observe domain UUID: %w", uuidErr)
-	}
-	if h.ID != "" && externalID != h.ID {
-		return substrate.NodeObservation{Exists: true, Status: substrate.NodeStatusUnknown, ExternalID: externalID, Reason: "domain UUID mismatch", LastSeen: time.Now().UTC()}, fmt.Errorf("libvirt: domain UUID mismatch: have %s, want %s", externalID, h.ID)
-	}
-	return substrate.NodeObservation{Exists: true, Running: running, Healthy: running, Status: status, ExternalID: externalID, Reason: domainState, LastSeen: time.Now().UTC()}, nil
+	return substrate.NodeObservation{Exists: true, Running: running, Healthy: running, Status: status, ExternalID: target, OwnerUID: actual.OwnerUID, ResourceUID: actual.ResourceUID, Generation: actual.Generation, Reason: domainState, LastSeen: time.Now().UTC()}, nil
 }
 
 func (s *Substrate) PrepareHandle(_ context.Context, h *substrate.NodeHandle, providerConfig any, _ substrate.StateReader) error {

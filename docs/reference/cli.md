@@ -10,9 +10,9 @@
 sysbox host-supervisor --config /etc/sysbox/supervisor.yaml --identity /etc/sysbox/supervisor-identity.json
 ```
 
-Serve signed API guest tasks over a local Unix socket. Requires root, an explicit
+Serve signed API guest tasks and remote node pause/resume over a local Unix socket. Requires root, an explicit
 non-root worker group, private signing key and trusted canonical repository.
-The Agent must set `agent.host_supervisor_socket`; guest task execution has no
+The Agent must set `agent.host_supervisor_socket`; these operations have no
 direct-provider fallback. See [guest tasks](guest-tasks.md) for configuration,
 recovery semantics and the remaining ordinary lifecycle migration boundary.
 

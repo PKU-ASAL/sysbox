@@ -364,7 +364,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		cmd.Operation.CommandID = cmd.ID
 		cmd.Operation.ActionID, cmd.Operation.ResourceUID, cmd.Operation.Generation = cmd.ActionID, cmd.ResourceUID, cmd.Generation
 		cmd.Operation.LeaseOwner, cmd.Operation.LeaseEpoch, cmd.Operation.Attempt = cmd.LeaseOwner, cmd.LeaseEpoch, cmd.Attempt
-		completed := r.executor.ExecuteNodeOperation(runCtx, cmd.Operation)
+		completed := executeGrantedNodeOperation(runCtx, r.opts, *cmd)
 		if err := r.opts.ReportNodeOperationComplete(runCtx, completed); err != nil {
 			fmt.Printf("[agent] report node operation %s failed: %v\n", completed.ID, err)
 			emit("failed", "node operation report failed", err)

@@ -25,6 +25,14 @@ host 签名私钥和非 root worker group ID。部署约束见[持久任务](../
 这是 guest task 链路迁移，不代表普通 Run、文件安装和全部生命周期 effect 已迁入
 宿主监督进程。旧 grant 缺失 boot 绑定不再兼容；停止旧 writer 后按当前格式重建。
 
+后续节点电源迁移：远端 `node_operation` 的 pause/resume 同样强制使用 supervisor。
+派发 command 必须包含 TopologyUID、ResourceUID 和 generation；缺 proof 不补默认值。
+新增 `node_power` grant 绑定宿主 boot 和不可变 Topology/Node/Operation 摘要，Unix
+协议新增 `host-info`、`power-apply`、`power-observe`。历史查询只读 effect ledger，
+不重放 provider 调用。effect ledger 升为 2，旧格式明确重建。未实现的 import
+直接返回 Unsupported，不再保留无法成功的伪派发路径。Docker 的生命周期 status
+不再被健康检查覆盖，不健康通过独立 `healthy=false` 表达。
+
 ### 2026-10-04 已实施：owning-agent 远端恢复扩展
 
 新增管理员异步接口 `POST /v1/runs/{id}/remote/observe`、`POST /v1/runs/{id}/remote/recover`，返回 command_id；结果经 `GET /v1/runs/{id}/remote-reports/{command}` 查询。Agent 使用签名保护的 `POST /v1/agents/{agent}/commands/{command}/recovery-authorize` 在执行前取得当前授权。

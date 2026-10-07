@@ -53,6 +53,11 @@ test-managed-bridge-e2e: ## Verify Docker managed bridge proof and real TAP fenc
 
 .PHONY: test-guesttask-e2e
 .PHONY: test-host-supervisor-e2e
+.PHONY: test-host-power-e2e
+test-host-power-e2e: ## Verify real Docker pause/resume fencing, durable receipts and cold recovery
+	SYSBOX_HOST_POWER_E2E=1 $(GOENV) $(GO) test -race -tags e2e ./pkg/api \
+	  -run '^TestHostSupervisorRealNodePowerE2E$$' -count=1 -v -timeout=2m
+
 test-host-supervisor-e2e: ## Verify signed guest tasks, host recovery and successor grants with real Docker
 	@set -eu; task_helper=$$(mktemp /tmp/sysbox-supervisor-helper.XXXXXX); trap 'rm -f "$$task_helper"' EXIT; \
 	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$task_helper" ./cmd/sysbox-init; \

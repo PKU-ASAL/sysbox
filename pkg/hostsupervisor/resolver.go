@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -18,57 +19,77 @@ import (
 type CanonicalResolver struct{ RunsDir, Backend, AgentID string }
 
 func (r CanonicalResolver) Resolve(ctx context.Context, ref TargetRef) (Target, error) {
-	raw, path, err := persistence.ResolveLocation(r.Backend, filepath.Join(r.RunsDir, ref.Topology, "state.json"), ref.Topology)
+	target, err := r.ResolveNode(ctx, ref)
 	if err != nil {
 		return Target{}, err
 	}
-	if err := validateRepositoryTrust(raw, path, ref.Topology); err != nil {
+	conn, err := target.Node.Connection(target.Handle, nil)
+	if err != nil {
 		return Target{}, err
+	}
+	return Target{Scope: target.Scope, AgentID: target.AgentID, NodeID: target.Handle.ID, Connection: conn}, nil
+}
+
+// NodeTarget stays inside the privileged process. It never crosses the worker
+// socket and does not require a guest connection (a paused guest cannot reply).
+type NodeTarget struct {
+	Scope   controlplane.ExecutionScope
+	AgentID string
+	Handle  substrate.NodeHandle
+	Node    driver.Node
+	Power   driver.Power
+}
+
+func (r CanonicalResolver) ResolveNode(ctx context.Context, ref TargetRef) (NodeTarget, error) {
+	var zero NodeTarget
+	raw, path, err := persistence.ResolveLocation(r.Backend, filepath.Join(r.RunsDir, ref.Topology, "state.json"), ref.Topology)
+	if err != nil {
+		return zero, err
+	}
+	if err := validateRepositoryTrust(raw, path, ref.Topology); err != nil {
+		return zero, err
 	}
 	repo, err := persistence.OpenConfigured(ctx, raw, path)
 	if err != nil {
-		return Target{}, err
+		return zero, err
 	}
 	defer repo.Close()
 	st, err := repo.LoadState(ctx, ref.Topology)
 	if err != nil {
-		return Target{}, err
+		return zero, err
 	}
 	if st.TopologyUID != ref.Scope.TopologyUID {
-		return Target{}, fmt.Errorf("supervisor topology identity changed")
+		return zero, fmt.Errorf("supervisor topology identity changed")
 	}
 	resource := st.FindResource(address.Resource("sysbox_node", ref.Node))
 	if resource == nil {
 		resource = st.FindResource(address.Resource("sysbox_router", ref.Node))
 	}
 	if resource == nil || resource.OwnerUID != st.TopologyUID || resource.ResourceUID != ref.Scope.ResourceUID || resource.Generation != ref.Scope.Generation {
-		return Target{}, fmt.Errorf("supervisor resource identity changed")
+		return zero, fmt.Errorf("supervisor resource identity changed")
 	}
 	node, err := driver.DefaultRegistry.RequireNode(resource.Driver)
 	if err != nil {
-		return Target{}, err
+		return zero, err
 	}
 	codec, err := driver.DefaultRegistry.RequireNodeState(resource.Driver)
 	if err != nil {
-		return Target{}, err
+		return zero, err
 	}
 	handle, err := resource.ReconstructHandle(codec)
 	if err != nil {
-		return Target{}, err
+		return zero, err
 	}
 	identity := substrate.OperationIdentity{ActionID: "supervisor-observe", TopologyUID: st.TopologyUID, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation}
 	observed, err := node.ObserveNode(substrate.WithOperationIdentity(ctx, identity), handle)
 	if err != nil {
-		return Target{}, err
+		return zero, err
 	}
 	if !observed.Exists || substrate.ValidateNodeObservationIdentity(identity, observed) != nil {
-		return Target{}, fmt.Errorf("supervisor cannot verify actual node identity")
+		return zero, fmt.Errorf("supervisor cannot verify actual node identity")
 	}
-	conn, err := node.Connection(handle, nil)
-	if err != nil {
-		return Target{}, err
-	}
-	return Target{Scope: ref.Scope, AgentID: r.AgentID, NodeID: handle.ID, Connection: conn}, nil
+	power, _ := driver.DefaultRegistry.RequirePower(resource.Driver)
+	return NodeTarget{Scope: ref.Scope, AgentID: r.AgentID, Handle: handle, Node: node, Power: power}, nil
 }
 
 func validateRepositoryTrust(backend, path, topology string) error {

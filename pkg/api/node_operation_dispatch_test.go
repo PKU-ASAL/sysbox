@@ -62,6 +62,7 @@ func TestNodeOperationWakeupFollowsAtomicCommit(t *testing.T) {
 	wakes := 0
 	service := &NodeOperationService{operations: newNodeOperationStore(store), wakeCommand: func(agent string, cmd controlplane.AgentCommand) error {
 		wakes++
+		require.Equal(t, "topology-uid", cmd.TopologyUID)
 		reopened := &localAPIStore{runsDir: root}
 		saved, err := reopened.GetNodeOperation(context.Background(), op.ID)
 		require.NoError(t, err)
@@ -71,15 +72,25 @@ func TestNodeOperationWakeupFollowsAtomicCommit(t *testing.T) {
 		require.Len(t, commands, 1)
 		return errors.New("offline wakeup")
 	}}
-	_, err := service.enqueue(context.Background(), op)
+	_, err := service.enqueue(context.Background(), "topology-uid", op)
 	require.NoError(t, err)
 	require.Equal(t, 1, wakes)
 	failure := errors.New("commit rejected")
 	service.operations = newNodeOperationStore(failNodeDispatch{apiStore: store, failure: failure})
 	op.ID = "other"
-	_, err = service.enqueue(context.Background(), op)
+	_, err = service.enqueue(context.Background(), "topology-uid", op)
 	require.ErrorIs(t, err, failure)
 	require.Equal(t, 1, wakes)
+}
+
+func TestNodeOperationEnqueueRejectsMissingTopologyProof(t *testing.T) {
+	s := &NodeOperationService{operations: newNodeOperationStore(&localAPIStore{runsDir: t.TempDir()})}
+	op, _ := nodeDispatchFixture()
+	_, err := s.enqueue(context.Background(), "", op)
+	require.ErrorContains(t, err, "ownership proof")
+	commands, err := s.operations.store.ListAgentCommands(context.Background(), op.AgentID)
+	require.NoError(t, err)
+	require.Empty(t, commands)
 }
 
 func TestNodeOperationDispatchConcurrentCreationHasOneWinner(t *testing.T) {

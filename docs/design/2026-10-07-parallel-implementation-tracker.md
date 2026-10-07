@@ -6,7 +6,7 @@
 |---|---|---|
 | P0 | 强制按Go依赖重建guest helper、amd64/arm64构建、独立cgroup验收目标 | 全能力矩阵、最终产物与总验收 |
 | P1 | authenticated revision、独立Agent物化、artifact来源约束、续租固定快照 | 真正双宿主验收；未把独立目录当双宿主 |
-| P2 | authority ledger/session/epoch、签名grant及stop receipt API、当前command事务绑定；guest task接入独立host supervisor、可信停止回执与旧epoch重试墓碑 | 普通Run/lifecycle/file/foreground等effect全部接入、host持有唯一provider权限；真正跨宿主验收 |
+| P2 | authority ledger/session/epoch、签名grant及stop receipt API、当前command事务绑定；guest task和远端pause/resume接入独立host supervisor、可信停止回执与旧epoch重试墓碑 | 普通Run/lifecycle/file/foreground等其余effect全部接入、host持有唯一provider权限；真正跨宿主验收 |
 | P3 | 持久task、sealed memfd、cgroup+pidfd、monotonic guard、续租、分页输出、SSH/vsock通用SPI；真实SSH和Docker supervisor任务接续验收 | 完整Agent服务重启接管验收；全执行路径统一隔离 |
 | P4 | session+sequence observation ledger、guest活动枚举、receipt失效 | 全API迁移回归、完整lease撤销/guest取消/hoststop集成 |
 | P5 | adoption SPI、journal动作、Docker不可变ID sidecar | API plan/confirm、libvirt/Firecracker adapters、真实接管与清理 |
@@ -18,6 +18,39 @@
 ## 当前收敛规则
 
 停止继续扩散接口，优先恢复全仓绿色并完成独立审查，再形成检查点。测试fixture迁移必须显式创建session/sequence，不得让生产代码兼容缺失证明。所有失败保留原因；真实环境缺失和skip不算通过。
+
+## 远端节点 pause/resume 集成
+
+沿用已批准 P2–P4 设计，将远端节点电源操作接入同一个 host supervisor。
+不把整个 Run 作为一个不可观察的 RPC，也不在 worker 保留电源操作回退。
+单机 CLI 的显式本地执行不在本批迁移范围。
+
+- [x] `controlplane/node_power.go` 定义不可变 Topology/Node/Operation 请求摘要；
+  API 只从持久 command 签发 `node_power` grant，绑定宿主 boot、session、attempt、
+  完整 resource scope。`node_operation_service.go` 补齐派发 TopologyUID。
+- [x] `effectgate` 沿用已有 intent/complete ledger，增加可信停止回执持久化、重报及
+  完成结果只读恢复。旧格式明确重建。仅同步 provider 成功且真实 ObserveNode
+  核对目标身份和 paused/running 状态后写 complete；错误或 crash 留 intent，
+  不以当前状态看似正确推断 daemon 已无在途调用，不重放、不签停止回执。
+- [x] `hostsupervisor` 拆出无 guest connection 依赖的 canonical node resolver；
+  新增 host info/power apply/power observe 固定 RPC，并由常驻恢复循环补报回执。
+  worker 不可指定外部资源 ID、driver、连接参数、回调或路径。
+- [x] `agentexec` 远端 node operation 必须签 grant 并使用 socket。丢响应只查询
+  同一 action 的持久结果，不重新执行 pause/resume；只有 stop 回执确认后报成功。
+- [x] 单测先覆盖缺 proof、摘要篡改、过期/旧 session、intent 不重放和不签 stop，
+  再实现；运行真实 Docker pause→丢回复→冷读取→resume、后继 epoch、旧代拒绝
+  验收，相关 race、全仓测试、独立审查后形成检查点。
+
+真实 Docker 正常/不健康容器完成上述链路，既有 guest task E2E 回归通过。
+真实 libvirt 验证 pause/resume 的真实 domain XML 身份及旧代拒绝。复审发现并修复
+Docker 健康状态覆盖生命周期状态、libvirt 观察结果缺少 ownership 的问题。
+真实 Firecracker/KVM 验证宿主 dispatcher 暂停/恢复、冷读取历史结果不重放、旧代
+拒绝，且整个电源流程不建立 guest connection；测试 VM 已销毁。
+启用真实 Postgres 的全仓和 API/effectgate/hostsupervisor/Agent race 均通过；
+provider 修复另有 Docker/runtime/libvirt race 验证。
+
+不可取消 daemon 调用的未知结果保留为阻塞项；通用外部 daemon 的请求追踪与
+可验证强制 fencing 尚未实现，不能把本批描述为所有生命周期恢复已经完成。
 
 ## 首批新增验收
 

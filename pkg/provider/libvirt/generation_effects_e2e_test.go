@@ -80,8 +80,18 @@ func TestLibvirtRealGenerationEffectsE2E(t *testing.T) {
 	current := substrate.WithOperationIdentity(ctx, id)
 	require.NoError(t, sub.Pause(current, h))
 	require.Equal(t, "paused", run("domstate", h.ID))
+	observed, err := sub.ObserveNode(current, h)
+	require.NoError(t, err)
+	require.Equal(t, substrate.NodeStatusPaused, observed.Status)
+	require.NoError(t, substrate.ValidateNodeObservationIdentity(id, observed))
+	_, err = sub.ObserveNode(stale, managedNodeHandle(&oldState))
+	require.Error(t, err, "actual newer domain metadata must reject self-consistent stale handle")
 	require.NoError(t, sub.Resume(current, h))
 	require.Equal(t, "running", run("domstate", h.ID))
+	observed, err = sub.ObserveNode(current, h)
+	require.NoError(t, err)
+	require.Equal(t, substrate.NodeStatusRunning, observed.Status)
+	require.NoError(t, substrate.ValidateNodeObservationIdentity(id, observed))
 	// Preserve ownership metadata but inject an unproven inactive interface.
 	// Start must reject before the daemon can attempt to use this target.
 	run("destroy", h.ID)

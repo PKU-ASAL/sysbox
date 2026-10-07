@@ -438,7 +438,8 @@ func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (su
 	}
 	healthy := ins.State.Running
 	if ins.State.Health != nil && ins.State.Health.Status == "unhealthy" {
-		status = substrate.NodeStatusUnhealthy
+		// Health and power are independent. A failing healthcheck must not
+		// erase proof that the container is running or paused.
 		healthy = false
 	}
 	var exitCode *int

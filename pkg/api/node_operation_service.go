@@ -8,7 +8,6 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 type NodeOperationService struct {
@@ -25,13 +24,16 @@ type ImportNodeRequest struct {
 	Substrate string
 }
 
-func (s *NodeOperationService) enqueue(ctx context.Context, op controlplane.NodeOperation) (controlplane.NodeOperation, error) {
+func (s *NodeOperationService) enqueue(ctx context.Context, topologyUID string, op controlplane.NodeOperation) (controlplane.NodeOperation, error) {
+	if topologyUID == "" || op.ResourceUID == "" || op.Generation < 1 {
+		return controlplane.NodeOperation{}, fmt.Errorf("node operation requires complete topology and resource ownership proof")
+	}
 	if s.operations == nil || s.operations.store == nil {
 		return controlplane.NodeOperation{}, fmt.Errorf("node operation store not configured")
 	}
 	op.CommandID = "node-op-" + op.ID
 	op.LeaseEpoch = 1
-	cmd := controlplane.AgentCommand{ID: op.CommandID, AgentID: op.AgentID, Type: "node_operation", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, CreatedAt: op.CreatedAt, Operation: op, ActionID: op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation, LeaseEpoch: op.LeaseEpoch}
+	cmd := controlplane.AgentCommand{TopologyUID: topologyUID, ID: op.CommandID, AgentID: op.AgentID, Type: "node_operation", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, CreatedAt: op.CreatedAt, Operation: op, ActionID: op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation, LeaseEpoch: op.LeaseEpoch}
 	if err := s.operations.store.CreateNodeOperationDispatch(ctx, op, cmd); err != nil {
 		return controlplane.NodeOperation{}, err
 	}
@@ -89,7 +91,10 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	return s.enqueue(ctx, prepareNodeOperation(controlplane.NodeOperation{
+	if res.OwnerUID != st.TopologyUID {
+		return controlplane.NodeOperation{}, fmt.Errorf("node ownership differs from topology")
+	}
+	return s.enqueue(ctx, st.TopologyUID, prepareNodeOperation(controlplane.NodeOperation{
 		Topology:    topology,
 		Workspace:   topology,
 		Operation:   operation,
@@ -115,31 +120,5 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	if req.Substrate == "" {
 		return controlplane.NodeOperation{}, fmt.Errorf("substrate is required")
 	}
-	handler, ok := runtime.GetResourceHandler(req.Type)
-	if !ok {
-		return controlplane.NodeOperation{}, driver.Wrap(driver.ErrorUnsupported, req.Substrate, "ownership adoption is unavailable", nil)
-	}
-	if _, ok := handler.(runtime.ResourceImporter); !ok {
-		return controlplane.NodeOperation{}, driver.Wrap(driver.ErrorUnsupported, req.Substrate, "ownership adoption is not implemented for this resource", nil)
-	}
-	if _, err := driver.DefaultRegistry.RequireImport(req.Substrate); err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{req.Substrate}, "")
-	if err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	return s.enqueue(ctx, prepareNodeOperation(controlplane.NodeOperation{
-		Topology:    topology,
-		Workspace:   topology,
-		Operation:   "import",
-		Type:        req.Type,
-		Name:        req.Name,
-		ExternalID:  req.ID,
-		Substrate:   req.Substrate,
-		AgentID:     agent.ID,
-		RequestedBy: subj.User,
-		Roles:       subj.Roles,
-		ActionID:    "", ResourceUID: req.ID, Generation: 1,
-	}))
+	return controlplane.NodeOperation{}, driver.Wrap(driver.ErrorUnsupported, req.Substrate, "ownership adoption plan/confirm is not implemented", nil)
 }

@@ -23,6 +23,7 @@ type Server struct {
 	Socket          string
 	GroupID         int
 	Dispatcher      *Dispatcher
+	Power           *PowerDispatcher
 	OnRecoveryError func(error)
 }
 
@@ -95,6 +96,10 @@ func (s *Server) serveListener(parent context.Context, listener net.Listener) er
 	defer func() { cancel(); _ = listener.Close(); workers.Wait() }()
 	workers.Add(1)
 	go func() { defer workers.Done(); s.recoveryLoop(ctx) }()
+	if s.Power != nil {
+		workers.Add(1)
+		go func() { defer workers.Done(); s.runRecovery(ctx, s.Power.Recover) }()
+	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -108,12 +113,15 @@ func (s *Server) serveListener(parent context.Context, listener net.Listener) er
 	}
 }
 func (s *Server) recoveryLoop(ctx context.Context) {
+	s.runRecovery(ctx, s.Dispatcher.Recover)
+}
+func (s *Server) runRecovery(ctx context.Context, recover func(context.Context) error) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		// Recover bounds each record independently so a slow first record
 		// cannot repeatedly consume the deadline of all later records.
-		err := s.Dispatcher.Recover(ctx)
+		err := recover(ctx)
 		if err != nil && ctx.Err() == nil && s.OnRecoveryError != nil {
 			s.OnRecoveryError(err)
 		}
@@ -148,6 +156,24 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 	var err error
 	var record TaskRecord
 	switch request.Operation {
+	case "host-info":
+		if s.Power == nil {
+			err = fmt.Errorf("host power supervisor unavailable")
+			break
+		}
+		response.BootID, err = s.Power.BootID(ctx, request.Target)
+	case "power-apply":
+		if s.Power == nil || request.Power == nil || request.Grant == nil {
+			err = fmt.Errorf("signed power request required")
+			break
+		}
+		err = s.Power.Execute(ctx, request.Target, *request.Power, *request.Grant)
+	case "power-observe":
+		if s.Power == nil || request.Grant == nil {
+			err = fmt.Errorf("signed power proof required")
+			break
+		}
+		err = s.Power.Observe(ctx, request.Target, *request.Grant)
 	case "info":
 		response.BootID, err = s.Dispatcher.BootID(ctx, request.Target)
 	case "start":
