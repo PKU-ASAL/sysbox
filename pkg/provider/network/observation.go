@@ -21,6 +21,7 @@ import (
 )
 
 type networkOwnership struct {
+	Links                           []AttachmentLink            `json:"links"`
 	Version                         int                         `json:"version"`
 	Identity                        substrate.OperationIdentity `json:"identity"`
 	Spec                            driver.IsolatedNetworkSpec  `json:"spec"`
@@ -49,7 +50,8 @@ func (d Driver) ownershipPath(name string) string {
 	return filepath.Join(root, fmt.Sprintf("%x.json", sum))
 }
 func networkAlias(id substrate.OperationIdentity) string {
-	return fmt.Sprintf("sysbox:%s:%d", id.ResourceUID, id.Generation)
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d", id.OwnerUID, id.TopologyUID, id.ResourceUID, id.Generation)))
+	return fmt.Sprintf("sysbox-network:%x", sum)
 }
 func validateNetworkRequest(ctx context.Context, spec driver.IsolatedNetworkSpec) (substrate.OperationIdentity, error) {
 	if err := ctx.Err(); err != nil {
@@ -77,6 +79,30 @@ func validateNetworkRequest(ctx context.Context, spec driver.IsolatedNetworkSpec
 	}
 	if spec.Name == "" || spec.Bridge == "" {
 		return id, fmt.Errorf("network namespace and bridge required")
+	}
+	if spec.RootBridge != "" && (spec.RootEnd == "" || spec.NamespaceEnd == "" || spec.RootEnd == spec.RootBridge || spec.RootEnd == spec.NamespaceEnd || spec.NamespaceEnd == spec.Bridge) {
+		return id, fmt.Errorf("distinct complete proxy link names required")
+	}
+	if spec.RootBridge == "" && (spec.RootEnd != "" || spec.NamespaceEnd != "" || hasRootIngress(spec)) {
+		return id, fmt.Errorf("proxy links and ingress require root bridge")
+	}
+	if hasRootIngress(spec) && spec.RootAddress == "" {
+		return id, fmt.Errorf("root ingress requires root address")
+	}
+	if _, _, err := net.ParseCIDR(spec.CIDR); err != nil {
+		return id, fmt.Errorf("invalid network CIDR: %w", err)
+	}
+	if spec.RootAddress != "" {
+		ip, _, err := net.ParseCIDR(spec.RootAddress)
+		if err != nil || ip.To4() == nil {
+			return id, fmt.Errorf("root address must be IPv4 CIDR")
+		}
+	}
+	for _, route := range spec.RootRoutes {
+		ip, _, err := net.ParseCIDR(route.Destination)
+		if err != nil || ip.To4() == nil || net.ParseIP(route.Via).To4() == nil {
+			return id, fmt.Errorf("root route requires IPv4 destination and gateway")
+		}
 	}
 	return id, nil
 }
@@ -225,8 +251,24 @@ func (d Driver) ObserveIsolated(ctx context.Context, spec driver.IsolatedNetwork
 	if err := json.Unmarshal(raw, &marker); err != nil {
 		return driver.IsolatedNetworkObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "corrupt ownership anchor", err)
 	}
-	if marker.Version != 1 || marker.Identity.OwnerUID != id.OwnerUID || marker.Identity.TopologyUID != id.TopologyUID || marker.Identity.ResourceUID != id.ResourceUID || marker.Identity.Generation != id.Generation || !reflect.DeepEqual(marker.Spec, spec) {
+	if marker.Version != 2 || marker.Identity.OwnerUID != id.OwnerUID || marker.Identity.TopologyUID != id.TopologyUID || marker.Identity.ResourceUID != id.ResourceUID || marker.Identity.Generation != id.Generation || !reflect.DeepEqual(marker.Spec, spec) {
 		return driver.IsolatedNetworkObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "network ownership/config identity conflict", nil)
+	}
+	if err := validateNetworkLinkProofs(marker); err != nil {
+		return driver.IsolatedNetworkObservation{}, err
+	}
+	for _, proof := range marker.Links {
+		if proof.Namespace != "" {
+			continue
+		}
+		rootInfo, err := os.Stat("/proc/self/ns/net")
+		if err != nil {
+			return driver.IsolatedNetworkObservation{}, networkQueryError("inspect root namespace", err)
+		}
+		rootStat := rootInfo.Sys().(*syscall.Stat_t)
+		if uint64(rootStat.Dev) != proof.Device || rootStat.Ino != proof.Inode {
+			return driver.IsolatedNetworkObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", "root namespace identity conflict", nil)
+		}
 	}
 	// Physical absence does not authorize replacing another generation's
 	// durable anchor. Validate it before reporting absence to Create/Delete.
@@ -245,10 +287,13 @@ func (d Driver) ObserveIsolated(ctx context.Context, spec driver.IsolatedNetwork
 			continue
 		}
 		aliasOK := object.link.Attrs().Alias == networkAlias(id)
-		if object.namespace == "" && object.name == spec.RootBridge {
-			aliasOK = object.link.Attrs().Alias == "sysbox-root-network:"+spec.Name
+		owned := false
+		for _, proof := range marker.Links {
+			if proof.Namespace == object.namespace && proof.Name == object.name && proof.Index > 0 && proof.Index == object.link.Attrs().Index && proof.Kind == object.kind && proof.Alias == networkAlias(id) {
+				owned = true
+			}
 		}
-		if object.link.Type() != object.kind || !aliasOK {
+		if object.link.Type() != object.kind || !aliasOK || !owned {
 			return driver.IsolatedNetworkObservation{}, driver.Wrap(driver.ErrorInvalidState, "network", fmt.Sprintf("link ownership/type identity conflict for %s/%s type=%s alias=%q", object.namespace, object.name, object.link.Type(), object.link.Attrs().Alias), nil)
 		}
 		if object.link.Attrs().Flags&net.FlagUp == 0 {

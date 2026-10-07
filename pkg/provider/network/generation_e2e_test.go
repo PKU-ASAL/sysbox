@@ -4,6 +4,7 @@ package network
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
+	"github.com/vishvananda/netlink"
 )
 
 func TestIsolatedNetworkGenerationRecoveryE2E(t *testing.T) {
@@ -305,4 +307,43 @@ func TestOwnedAttachmentGenerationE2E(t *testing.T) {
 	require.NoError(t, CreateNetns(name))
 	require.Error(t, DeleteOwnedAttachment(ctx, current, alias), "replacement namespace is not the owned incarnation")
 	t.Log("real veth stale generation, replaced ifindex and replaced namespace rejected; exact proof deletion idempotent")
+}
+
+func TestNetworkBridgeReplacementRejectedE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_NETWORK_E2E") != "1" {
+		t.Skip("requires isolated network privileges")
+	}
+	for _, rootBridge := range []bool{false, true} {
+		t.Run(fmt.Sprint(rootBridge), func(t *testing.T) {
+			suffix := uuid.NewString()[:8]
+			spec := driver.IsolatedNetworkSpec{Name: "sbrep-" + suffix, Bridge: "br0", CIDR: "10.251.0.1/24", RootBridge: "sbb" + suffix, RootEnd: "sbr" + suffix, NamespaceEnd: "sbn" + suffix}
+			d := Driver{ownershipRoot: t.TempDir()}
+			id := substrate.OperationIdentity{OwnerUID: "owner", TopologyUID: "topology", ResourceUID: suffix, Generation: 2, ActionID: "create"}
+			ctx := substrate.WithOperationIdentity(context.Background(), id)
+			require.NoError(t, d.CreateIsolated(ctx, spec))
+			t.Cleanup(func() { require.NoError(t, DeleteRootBridgeProxy(spec)); require.NoError(t, DeleteNetns(spec.Name)) })
+			namespace, name := spec.Name, spec.Bridge
+			if rootBridge {
+				namespace, name = "", spec.RootBridge
+			}
+			h, err := d.openNetlink(namespace)
+			require.NoError(t, err)
+			defer h.Close()
+			old, err := h.LinkByName(name)
+			require.NoError(t, err)
+			require.NoError(t, h.LinkDel(old))
+			index, err := newAttachmentIndex()
+			require.NoError(t, err)
+			fake := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: name, Index: index}}
+			require.NoError(t, h.LinkAdd(fake))
+			require.NoError(t, h.LinkSetAlias(fake, networkAlias(id)))
+			_, err = d.ObserveIsolated(ctx, spec)
+			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+			require.Error(t, d.DeleteIsolated(ctx, spec))
+			require.Error(t, d.CreateIsolated(ctx, spec))
+			preserved, err := h.LinkByName(name)
+			require.NoError(t, err)
+			require.Equal(t, index, preserved.Attrs().Index)
+		})
+	}
 }

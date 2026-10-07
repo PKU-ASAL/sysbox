@@ -30,6 +30,8 @@ func TestIsolatedObservationProvesAbsence(t *testing.T) {
 func TestIsolatedObservationQueryFailureIsNotAbsence(t *testing.T) {
 	d, ctx, spec := networkObservationFixture(t)
 	spec.RootBridge = "root-br"
+	spec.RootEnd = "root-end"
+	spec.NamespaceEnd = "ns-end"
 	want := errors.New("netlink permission denied")
 	d.linkLookup = func(string, string) (netlink.Link, error) { return nil, want }
 	_, err := d.ObserveIsolated(ctx, spec)
@@ -48,16 +50,21 @@ func TestIsolatedObservationVerifiesAnchorAndConfiguration(t *testing.T) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	id, _ := substrate.OperationIdentityFromContext(ctx)
-	marker := networkOwnership{Version: 1, Identity: id, Spec: spec}
+	marker := networkOwnership{Version: 2, Identity: id, Spec: spec}
 	marker.setNamespace(info)
+	marker.Links = []AttachmentLink{{Version: 1, Namespace: spec.Name, Name: spec.Bridge, Index: 42, Kind: "bridge", Alias: networkAlias(id), Device: marker.NamespaceDevice, Inode: marker.NamespaceInode}}
 	require.NoError(t, d.writeOwnership(spec.Name, marker))
-	link := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: spec.Bridge, Alias: networkAlias(id), Flags: net.FlagUp}}
+	link := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: spec.Bridge, Alias: networkAlias(id), Flags: net.FlagUp}}
 	d.linkLookup = func(string, string) (netlink.Link, error) { return link, nil }
 	ipnet := &net.IPNet{IP: net.ParseIP("10.0.0.1"), Mask: net.CIDRMask(24, 32)}
 	d.addressLookup = func(string, netlink.Link) ([]netlink.Addr, error) { return []netlink.Addr{{IPNet: ipnet}}, nil }
 	observed, err := d.ObserveIsolated(ctx, spec)
 	require.NoError(t, err)
 	require.True(t, observed.Healthy)
+	link.Index++
+	_, err = d.ObserveIsolated(ctx, spec)
+	require.Error(t, err, "same alias/name with a replaced ifindex is not the owned bridge")
+	link.Index--
 	replacement := filepath.Join(d.namespaceRoot, "replacement")
 	require.NoError(t, os.WriteFile(replacement, []byte("different namespace"), 0600))
 	require.NoError(t, os.Rename(replacement, path))
@@ -76,7 +83,7 @@ func TestAbsentNetworkStillChecksDurableOwnership(t *testing.T) {
 			d, ctx, spec := networkObservationFixture(t)
 			id, _ := substrate.OperationIdentityFromContext(ctx)
 			id.Generation++
-			require.NoError(t, d.writeOwnership(spec.Name, networkOwnership{Version: 1, Identity: id, Spec: spec}))
+			require.NoError(t, d.writeOwnership(spec.Name, networkOwnership{Version: 2, Identity: id, Spec: spec}))
 			before, err := os.ReadFile(d.ownershipPath(spec.Name))
 			require.NoError(t, err)
 			switch operation {
@@ -98,7 +105,7 @@ func TestAbsentNetworkStillChecksDurableOwnership(t *testing.T) {
 func TestDeleteAbsentNetworkRetiresMatchingOwnership(t *testing.T) {
 	d, ctx, spec := networkObservationFixture(t)
 	id, _ := substrate.OperationIdentityFromContext(ctx)
-	require.NoError(t, d.writeOwnership(spec.Name, networkOwnership{Version: 1, Identity: id, Spec: spec}))
+	require.NoError(t, d.writeOwnership(spec.Name, networkOwnership{Version: 2, Identity: id, Spec: spec}))
 	require.NoError(t, d.DeleteIsolated(ctx, spec))
 	require.NoFileExists(t, d.ownershipPath(spec.Name))
 	require.NoError(t, d.DeleteIsolated(ctx, spec))
@@ -109,4 +116,34 @@ func TestAbsentNetworkRejectsCorruptAnchor(t *testing.T) {
 	require.NoError(t, os.WriteFile(d.ownershipPath(spec.Name), []byte("{"), 0600))
 	_, err := d.ObserveIsolated(ctx, spec)
 	require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
+}
+
+func TestNetworkProofRejectsUnknownVersionAndUnrelatedDeletionTargets(t *testing.T) {
+	d, ctx, spec := networkObservationFixture(t)
+	id, _ := substrate.OperationIdentityFromContext(ctx)
+	require.NoError(t, d.writeOwnership(spec.Name, networkOwnership{Version: 1, Identity: id, Spec: spec}))
+	_, err := d.ObserveIsolated(ctx, spec)
+	require.True(t, driver.IsCategory(err, driver.ErrorInvalidState))
+	m := networkOwnership{Version: 2, Identity: id, Spec: spec, NamespaceDevice: 1, NamespaceInode: 2}
+	m.Links = []AttachmentLink{{Version: 1, Namespace: "", Device: 1, Inode: 2, Name: "foreign", Index: 42, Kind: "bridge", Alias: networkAlias(id)}}
+	require.Error(t, validateNetworkLinkProofs(m))
+	m.Links[0].Namespace = spec.Name
+	m.Links[0].Name = spec.Bridge
+	require.NoError(t, validateNetworkLinkProofs(m))
+	m.Links = append(m.Links, m.Links[0])
+	require.Error(t, validateNetworkLinkProofs(m))
+}
+
+func TestAbsentNetworkCannotRetireEvidenceFromAnotherRootNamespace(t *testing.T) {
+	d, ctx, spec := networkObservationFixture(t)
+	spec.RootBridge = "root-br"
+	spec.RootEnd = "root-end"
+	spec.NamespaceEnd = "ns-end"
+	id, _ := substrate.OperationIdentityFromContext(ctx)
+	m := networkOwnership{Version: 2, Identity: id, Spec: spec, Links: []AttachmentLink{{Version: 1, Namespace: "", Device: 999, Inode: 999, Index: 42, Name: spec.RootBridge, Kind: "bridge", Alias: networkAlias(id)}}}
+	require.NoError(t, d.writeOwnership(spec.Name, m))
+	_, err := d.ObserveIsolated(ctx, spec)
+	require.Error(t, err)
+	require.Error(t, d.DeleteIsolated(ctx, spec))
+	require.FileExists(t, d.ownershipPath(spec.Name))
 }

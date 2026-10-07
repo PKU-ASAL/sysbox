@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // A host-wide lock also protects the shortened root-link names against name
@@ -46,21 +46,6 @@ func (d Driver) lockNetworks(ctx context.Context) (func(), error) {
 		}
 	}
 }
-func (d Driver) tagLink(namespace, name string, id substrate.OperationIdentity) error {
-	if name == "" {
-		return nil
-	}
-	h, err := d.openNetlink(namespace)
-	if err != nil {
-		return err
-	}
-	defer h.Close()
-	link, err := h.LinkByName(name)
-	if err != nil {
-		return err
-	}
-	return h.LinkSetAlias(link, networkAlias(id))
-}
 func (d Driver) createOwnedIsolated(ctx context.Context, spec driver.IsolatedNetworkSpec) error {
 	id, err := validateNetworkRequest(ctx, spec)
 	if err != nil {
@@ -78,17 +63,27 @@ func (d Driver) createOwnedIsolated(ctx context.Context, spec driver.IsolatedNet
 	if observed.Exists {
 		return driver.Wrap(driver.ErrorInvalidState, "network", "network already exists; creation was not authorized", nil)
 	}
-	marker := networkOwnership{Version: 1, Identity: id, Spec: spec}
+	marker := networkOwnership{Version: 2, Identity: id, Spec: spec}
 	if err := d.writeOwnership(spec.Name, marker); err != nil {
 		return err
 	}
-	if err := CreateNetns(spec.Name); err != nil {
+	createdNS, err := createExclusiveNetns(spec.Name)
+	if err != nil {
 		return err
 	}
+	defer createdNS.Close()
 	_, root := d.roots()
 	info, err := os.Stat(filepath.Join(root, spec.Name))
 	if err != nil {
 		return err
+	}
+	var createdStat syscall.Stat_t
+	if err := syscall.Fstat(int(createdNS), &createdStat); err != nil {
+		return err
+	}
+	actual := info.Sys().(*syscall.Stat_t)
+	if actual.Dev != createdStat.Dev || actual.Ino != createdStat.Ino {
+		return fmt.Errorf("created namespace was replaced")
 	}
 	marker.setNamespace(info)
 	if err := d.writeOwnership(spec.Name, marker); err != nil {
@@ -97,25 +92,7 @@ func (d Driver) createOwnedIsolated(ctx context.Context, spec driver.IsolatedNet
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	alias := networkAlias(id)
-	if err := CreateBridge(BridgeConfig{NetnsName: spec.Name, BridgeName: spec.Bridge, CIDR: spec.CIDR, OwnerAlias: alias}); err != nil {
-		return err
-	}
-	if err := d.tagLink(spec.Name, spec.Bridge, id); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := CreateRootBridgeProxy(spec); err != nil {
-		return err
-	}
-	for _, name := range []string{spec.RootEnd} {
-		if err := d.tagLink("", name, id); err != nil {
-			return err
-		}
-	}
-	if err := d.tagLink(spec.Name, spec.NamespaceEnd, id); err != nil {
+	if err := d.createOwnedNetworkLinks(ctx, &marker); err != nil {
 		return err
 	}
 	observed, err = d.ObserveIsolated(ctx, spec)
@@ -143,22 +120,15 @@ func (d Driver) deleteOwnedIsolated(ctx context.Context, spec driver.IsolatedNet
 	if !observed.Exists {
 		return d.removeOwnership(spec.Name)
 	}
-	if err := DeleteRootBridgeProxy(spec); err != nil {
+	raw, err := os.ReadFile(d.ownershipPath(spec.Name))
+	if err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
+	var marker networkOwnership
+	if err := json.Unmarshal(raw, &marker); err != nil {
 		return err
 	}
-	_, root := d.roots()
-	_, err = os.Stat(filepath.Join(root, spec.Name))
-	if err == nil {
-		if err := DeleteBridge(BridgeConfig{NetnsName: spec.Name, BridgeName: spec.Bridge}); err != nil {
-			return err
-		}
-		if err := DeleteNetns(spec.Name); err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(err) {
+	if err := d.deleteRecordedLinks(ctx, marker); err != nil {
 		return err
 	}
 	observed, err = d.ObserveIsolated(ctx, spec)

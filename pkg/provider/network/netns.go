@@ -19,26 +19,37 @@ func CreateNetns(name string) error {
 	if NetnsExists(name) {
 		return nil
 	}
+	ns, err := createExclusiveNetns(name)
+	if err != nil {
+		return err
+	}
+	return ns.Close()
+}
 
+func createExclusiveNetns(name string) (ns netns.NsHandle, resultErr error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
 	orig, err := netns.Get()
 	if err != nil {
-		return fmt.Errorf("get current netns: %w", err)
+		return netns.None(), fmt.Errorf("get current netns: %w", err)
 	}
 	defer orig.Close()
+	defer func() {
+		if err := netns.Set(orig); err != nil {
+			if ns.IsOpen() {
+				_ = ns.Close()
+			}
+			ns = netns.None()
+			resultErr = fmt.Errorf("restore netns: %w", err)
+		}
+	}()
 
-	ns, err := netns.NewNamed(name)
+	ns, err = netns.NewNamed(name)
 	if err != nil {
-		return fmt.Errorf("create netns %s: %w", name, err)
+		return netns.None(), fmt.Errorf("create netns %s: %w", name, err)
 	}
-	ns.Close()
-
-	if err := netns.Set(orig); err != nil {
-		return fmt.Errorf("restore netns: %w", err)
-	}
-	return nil
+	return ns, nil
 }
 
 // DeleteNetns removes the named namespace.

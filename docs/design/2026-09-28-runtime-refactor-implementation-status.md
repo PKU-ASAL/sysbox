@@ -105,6 +105,12 @@ Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe �
 
 ### Resource fencing 迁移进度
 
+2026-10-07 网络对象 incarnation 证明：更正上一阶段仅增加 alias 的结论——alias 本身不能阻止同名同 alias 替换。隔离网络 ownership 升为 v2，持久化每个 bridge/proxy link 的 namespace device/inode、ifindex、类型和完整 owner/topology/resource/generation 摘要 alias。创建前保存预分配索引，创建后按索引核验；namespace 排他创建并核对新句柄与挂载路径，proxy peer 校验与 root veth 的关联。实际配置使用固定 namespace 的 netlink handle。
+
+Observe 拒绝同名同 alias 不同 ifindex；即使所有对象查询缺失，也须核对持久 root namespace，防止换了默认 namespace 后误退休旧证据。Delete 重新核对 namespace/link 证明，并以核验后的 ifindex 删除 link；关联地址/路由随 link 删除，不再按名称逐个删除。非法、重复、无关对象的 proof 被拒绝；v1 ownership 不兼容且不自动采用。
+
+真实 `test-network-generation-e2e` 已覆盖 namespace bridge/root bridge 同名同 alias 替换后的 Observe/Create/Delete 拒绝，同时通过完整创建/删除、旧代拒绝和中断删除恢复。边界仍包括：外部特权进程刻意复用同一 ifindex、namespace mount 路径在最终核验与 unmount 间的非合作替换；target attachment 消费端完整网络证明、跨宿主租约撤销尚未完成。创建中断且标记未完成的资源保留为 unknown，不能通过按名认领自动清理。
+
 2026-10-07 Guest completion 收口：GuestExecution/GuestFileOperation 的 HTTP completion 已改用三后端原子 `CompleteGuestExecution`/`CompleteGuestFileOperation`。调用在同一物理锁/事务内读取当前操作、command record 和 dispatch seed，核对 action/resource/generation/lease_epoch/lease_owner/attempt、操作状态、节点绑定和结果 receipt，再递增版本写入。旧无 proof、未租用、过期或被新 attempt 替代的回报返回冲突；已退休 command 的相同 terminal receipt 可幂等重试，内容不同拒绝。取消未开始操作直接退休 command，不再发布无身份的覆盖命令。
 
 Agent runner 回报实际收到的 command proof；guest completion 不再保留“找不到 command 且无 proof 仍可完成”的兼容。文件/SQLite/Postgres 合同、真实 PostgreSQL API/persistence race 和 HTTP proof 测试通过。完整 Agent→API→provider 业务 E2E 仍未覆盖每种 guest transport；已启动 guest 进程的 effect 仍不具备 lease epoch 远程撤销。
