@@ -89,18 +89,26 @@ func dispatchError(err error) error {
 	return runError(runServiceInternal, err)
 }
 func (s *RunService) hydrateApply(run *controlplane.Run, inputs map[string]string) *controlplane.Run {
-	s.jobs.remember(run)
-	if !run.Status.IsTerminal() {
-		s.jobs.mu.Lock()
+	s.jobs.mu.Lock()
+	snapshot := runRecord(*run)
+	if current := s.jobs.runs[run.ID]; current != nil && preferRun(current, &snapshot) {
+		snapshot = runRecord(*current)
+	}
+	s.jobs.runs[run.ID] = &snapshot
+	if snapshot.Status.IsTerminal() {
+		delete(s.jobs.applyInputs, run.ID)
+	} else {
 		copy := cloneInputs(inputs)
 		if copy == nil {
 			copy = map[string]string{}
 		}
 		s.jobs.applyInputs[run.ID] = copy
-		s.jobs.mu.Unlock()
 	}
-	return run
+	s.jobs.mu.Unlock()
+	s.jobs.logs.Ensure(run.ID, snapshot.Status.IsTerminal())
+	return &snapshot
 }
+
 func (s *RunService) rejectActive(ctx context.Context, topology string, except ...string) error {
 	runs, err := s.jobs.store.LoadRuns(ctx)
 	if err != nil {

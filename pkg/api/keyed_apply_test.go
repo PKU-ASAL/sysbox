@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func keyedApply(t *testing.T, s *Server, rev, key, value string) *httptest.ResponseRecorder {
@@ -246,4 +248,75 @@ func TestCleanupInspectionFailsClosedOnOperationStoreError(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, httptest.NewRequest("GET", "/v1/topologies/absent/cleanup-inspection", nil))
 	require.Equal(t, 503, w.Code)
+}
+
+type failingClaimStore struct {
+	apiStore
+	readFailure bool
+}
+
+func (s failingClaimStore) GetRun(ctx context.Context, id string) (*controlplane.Run, error) {
+	if s.readFailure {
+		return nil, errors.New("database down")
+	}
+	return s.apiStore.GetRun(ctx, id)
+}
+func (s failingClaimStore) ClaimRun(context.Context, string, string, string, time.Duration) (*controlplane.Run, bool, error) {
+	return nil, false, errors.New("database down")
+}
+func TestClaimBackendFailureIsRetryable(t *testing.T) {
+	for _, read := range []bool{true, false} {
+		t.Run(fmt.Sprint(read), func(t *testing.T) {
+			s := NewServer(t.TempDir(), t.TempDir())
+			registerDockerAgent(t, s)
+			rev := publishRevision(t, s, upsertApplyHCL)
+			id := applyUpsert(t, s, "legacy", rev)
+			store := s.jobs.store
+			s.jobs.store = failingClaimStore{store, read}
+			w := httptest.NewRecorder()
+			s.handleClaimAgentRunByID(w, "host-a", id)
+			require.Equal(t, 503, w.Code)
+			s.jobs.store = store
+			claimed, err := s.jobs.claim(id, "host-a")
+			require.NoError(t, err)
+			require.Equal(t, id, claimed.ID)
+		})
+	}
+}
+func TestApplyHydrationCannotDowngradeCompletedMemoryRun(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	run := newRun("keyed", "apply", runStartOptions{OperationKey: "stale"})
+	run.RequestFingerprint = "hash"
+	stale := *run
+	s.jobs.remember(run)
+	s.jobs.mu.RLock()
+	current := s.jobs.runs[run.ID]
+	s.jobs.mu.RUnlock()
+	s.jobs.finish(current, nil)
+	s.runs().hydrateApply(&stale, map[string]string{"secret": "should-not-stay"})
+	s.jobs.mu.RLock()
+	defer s.jobs.mu.RUnlock()
+	require.Equal(t, controlplane.RunDone, s.jobs.runs[run.ID].Status)
+	require.NotContains(t, s.jobs.applyInputs, run.ID)
+}
+func TestApplyReplayRacesCompletionWithoutRetainingInputs(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	for i := range 25 {
+		run := newRun("race", "apply", runStartOptions{OperationKey: fmt.Sprint(i)})
+		run.RequestFingerprint = "fingerprint"
+		s.jobs.remember(run)
+		stale := *run
+		s.jobs.mu.RLock()
+		current := s.jobs.runs[run.ID]
+		s.jobs.mu.RUnlock()
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); s.runs().hydrateApply(&stale, map[string]string{"flag": "secret"}) }()
+		go func() { defer wg.Done(); s.jobs.finish(current, nil) }()
+		wg.Wait()
+		s.jobs.mu.RLock()
+		require.Equal(t, controlplane.RunDone, s.jobs.runs[run.ID].Status)
+		require.NotContains(t, s.jobs.applyInputs, run.ID)
+		s.jobs.mu.RUnlock()
+	}
 }

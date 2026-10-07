@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -219,6 +220,9 @@ func (j *Jobs) startWithResult(topology, op string, opts runStartOptions) (*cont
 		return &snapshot, false
 	}
 	j.runs[r.ID] = r
+	if r.Status.IsTerminal() {
+		delete(j.applyInputs, r.ID)
+	}
 	j.mu.Unlock()
 	j.logs.Ensure(r.ID, false)
 	j.persist(r)
@@ -303,10 +307,17 @@ func (j *Jobs) markRunning(r *controlplane.Run) {
 	j.persist(r)
 }
 
+var errRunStoreUnavailable = errors.New("run store unavailable")
+
 func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
-	durable, err := j.store.GetRun(context.Background(), runID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	durable, err := j.store.GetRun(ctx, runID)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, errRunNotFound) {
+			return nil, err
+		}
+		return nil, errRunStoreUnavailable
 	}
 	if j.inputsRequired(durable) {
 		return nil, errApplyInputsRequired
@@ -316,8 +327,11 @@ func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
 	if ttl <= 0 {
 		ttl = 30 * time.Minute
 	}
-	if claimed, ok, err := j.store.ClaimRun(context.Background(), runID, agentID, owner, ttl); err != nil {
-		return nil, err
+	if claimed, ok, err := j.store.ClaimRun(ctx, runID, agentID, owner, ttl); err != nil {
+		if errors.Is(err, errRunNotFound) {
+			return nil, err
+		}
+		return nil, errRunStoreUnavailable
 	} else if ok && claimed != nil {
 		j.mu.Lock()
 		// Inputs are transient and stripped from the durable run record; the
@@ -518,6 +532,7 @@ func (j *Jobs) startChild(parent *controlplane.Run) *controlplane.Run {
 func (j *Jobs) finish(r *controlplane.Run, err error) {
 	j.mu.Lock()
 	r.MarkFinished(err, time.Now())
+	j.runs[r.ID] = r
 	// Sensitive inputs are only needed while the run is executing; the executor
 	// has already bound var.<name> by the time a run goes terminal, so drop them
 	// from the in-memory entry to avoid exposing them via get/list.

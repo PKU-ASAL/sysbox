@@ -118,7 +118,7 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 	}
 	run, err := s.jobs.claim(runID, agentID)
 	if err != nil {
-		if errors.Is(err, errApplyInputsRequired) {
+		if errors.Is(err, errApplyInputsRequired) || errors.Is(err, errRunStoreUnavailable) {
 			writeError(w, http.StatusServiceUnavailable, err)
 		} else {
 			writeError(w, http.StatusConflict, err)
