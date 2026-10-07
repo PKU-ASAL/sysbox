@@ -8,6 +8,7 @@ import (
 	"os/exec"
 
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -19,14 +20,18 @@ type attachmentState struct {
 	MAC    string `json:"mac"`
 }
 type networkState struct {
-	Netns         string `json:"netns"`
-	Bridge        string `json:"bridge"`
-	LibvirtBridge string `json:"libvirt_bridge"`
+	NAT             bool   `json:"nat"`
+	DockerNetworkID string `json:"docker_network_id"`
+	Netns           string `json:"netns"`
+	LibvirtBridge   string `json:"libvirt_bridge"`
 }
 
 func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
 	if err := validateHandleIdentity(ctx, h); err != nil {
 		return driver.AttachmentResult{}, err
+	}
+	if err := req.NetworkIdentity.Validate(); err != nil {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "libvirt", "target network identity required; rebuild old state", err)
 	}
 	var target networkState
 	if err := json.Unmarshal(req.NetworkState, &target); err != nil {
@@ -34,14 +39,17 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 	}
 	hs := hsFrom(h)
 	bridge := target.LibvirtBridge
-	if bridge == "" {
-		bridge = target.Bridge
+	if target.NAT || target.DockerNetworkID != "" {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnsupported, "libvirt", "Docker NAT bridge attachment requires a verifiable bridge contract; use an isolated network", nil)
 	}
-	hs.Bridges = append(hs.Bridges, BridgeAttach{Name: req.Name, Netns: target.Netns, Bridge: bridge, MAC: req.MAC, IPPrefixes: append([]string(nil), req.IPPrefixes...), Gateway: req.Gateway})
+	if bridge == "" || target.Netns == "" {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "libvirt", "owned root bridge target required; rebuild network", nil)
+	}
+	hs.Bridges = append(hs.Bridges, BridgeAttach{Target: network.BridgeTarget{Identity: req.NetworkIdentity, NetworkNamespace: target.Netns, Bridge: bridge, Root: true}, Name: req.Name, Netns: target.Netns, Bridge: bridge, MAC: req.MAC, IPPrefixes: append([]string(nil), req.IPPrefixes...), Gateway: req.Gateway})
 	raw, _ := json.Marshal(attachmentState{Bridge: bridge, MAC: req.MAC})
 	return driver.AttachmentResult{Driver: "libvirt", State: raw}, nil
 }
-func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
+func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
 	target, exists, err := existingDomainUUID(ctx, h)
 	if err != nil {
 		return driver.AttachmentResult{}, err
@@ -55,7 +63,15 @@ func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, _ drive
 	}
 	found := false
 	for _, bridge := range hsFrom(h).Bridges {
-		if bridge.Bridge == st.Bridge && bridge.MAC == st.MAC {
+		if bridge.Name == req.Name && bridge.Bridge == st.Bridge && bridge.MAC == st.MAC {
+			if !sameGeneration(bridge.Target.Identity, req.NetworkIdentity) {
+				return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, subName, "attachment target generation conflict", nil)
+			}
+			target, err := network.OpenOwnedBridge(ctx, bridge.Target)
+			if err != nil {
+				return driver.AttachmentResult{}, err
+			}
+			defer target.Close()
 			found = true
 			break
 		}
@@ -89,6 +105,31 @@ func domainXMLHasInterface(raw []byte, bridge, mac string) bool {
 		}
 	}
 	return false
+}
+
+func validateDomainInterfaces(raw []byte, bridges []BridgeAttach) error {
+	var domain domainXML
+	if err := xml.Unmarshal(raw, &domain); err != nil {
+		return err
+	}
+	if len(domain.Devices.Interfaces) != len(bridges) {
+		return driver.Wrap(driver.ErrorInvalidState, subName, "domain interface count conflicts with proven targets", nil)
+	}
+	matched := make([]bool, len(bridges))
+	for _, iface := range domain.Devices.Interfaces {
+		found := false
+		for i, b := range bridges {
+			if !matched[i] && iface.Type == "bridge" && iface.Source.Bridge == b.Bridge && (b.MAC == "" || (iface.MAC != nil && iface.MAC.Address == b.MAC)) {
+				matched[i] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			return driver.Wrap(driver.ErrorInvalidState, subName, "domain interface conflicts with proven bridge target", nil)
+		}
+	}
+	return nil
 }
 func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
 	if err := validateHandleIdentity(ctx, h); err != nil {

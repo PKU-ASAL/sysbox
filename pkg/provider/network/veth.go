@@ -1,8 +1,8 @@
 package network
 
 import (
+	"context"
 	"fmt"
-
 	"github.com/vishvananda/netlink"
 )
 
@@ -10,103 +10,101 @@ type VethSpec struct {
 	OwnerAlias string
 	HostEnd    string
 	GuestEnd   string
-	NetnsName  string
-	BridgeName string
-	// GuestIP and Gateway are NOT configured here; they are applied later by
-	// substrate.AttachNIC once the guest-end is moved into the container netns.
 }
 
 type VethHandle struct {
-	HostEnd   string
-	GuestEnd  string
-	NetnsName string
+	HostIndex  int
+	GuestIndex int
+	OwnerAlias string
+	HostEnd    string
+	GuestEnd   string
+	NetnsName  string
 }
 
-// CreateVethPair creates a veth pair in the netns, attaches the host end
-// to the bridge, and prepares the guest end (caller moves it into the
-// container netns via substrate.AttachNIC).
-//
-// Idempotent: if the host-end already exists in the target netns
-// (leftover from a previous failed apply), it is reused and bridge
-// enslavement is re-asserted instead of returning "file exists".
-func CreateVethPair(spec VethSpec) (VethHandle, error) {
-	err := inNetns(spec.NetnsName, func() error {
-		hostLink, err := netlink.LinkByName(spec.HostEnd)
-		if err == nil {
-			if spec.OwnerAlias != "" && hostLink.Attrs().Alias != spec.OwnerAlias {
-				return fmt.Errorf("veth ownership conflict")
-			}
-			// Host end exists. Verify the guest end is also present in this
-			// netns; otherwise the pair is broken (the peer was previously
-			// moved into a container netns that has since gone away). Reset
-			// by deleting the orphan and re-creating the pair fresh.
-			if _, perr := netlink.LinkByName(spec.GuestEnd); perr != nil {
-				_ = netlink.LinkDel(hostLink)
-				hostLink = nil
-			}
-		}
-		if hostLink == nil {
-			la := netlink.NewLinkAttrs()
-			la.Name = spec.HostEnd
-			la.Alias = spec.OwnerAlias
-			if spec.OwnerAlias != "" {
-				index, err := newAttachmentIndex()
-				if err != nil {
-					return err
-				}
-				la.Index = index
-			}
-
-			veth := &netlink.Veth{
-				LinkAttrs: la,
-				PeerName:  spec.GuestEnd,
-			}
-			if err := netlink.LinkAdd(veth); err != nil {
-				return fmt.Errorf("add veth pair: %w", err)
-			}
-			if spec.OwnerAlias != "" {
-				hostLink, err = netlink.LinkByIndex(la.Index)
-			} else {
-				hostLink, err = netlink.LinkByName(spec.HostEnd)
-			}
-			if err != nil {
-				return err
-			}
-			if hostLink.Attrs().Name != spec.HostEnd || hostLink.Type() != "veth" {
-				return fmt.Errorf("created veth identity changed")
-			}
-			if spec.OwnerAlias != "" {
-				if err := netlink.LinkSetAlias(hostLink, spec.OwnerAlias); err != nil {
-					return err
-				}
-			}
-		}
-
-		br, err := netlink.LinkByName(spec.BridgeName)
-		if err != nil {
-			return err
-		}
-		bridge, ok := br.(*netlink.Bridge)
-		if !ok {
-			return fmt.Errorf("link %s is not a bridge", spec.BridgeName)
-		}
-		if hostLink.Attrs().MasterIndex != bridge.Attrs().Index {
-			if err := netlink.LinkSetMaster(hostLink, bridge); err != nil {
-				return fmt.Errorf("attach host end to bridge: %w", err)
-			}
-		}
-		if err := netlink.LinkSetUp(hostLink); err != nil {
-			return err
-		}
-		return nil
-	})
+func CreateVethPair(ctx context.Context, target BridgeTarget, spec VethSpec) (VethHandle, error) {
+	bridge, err := OpenOwnedBridge(ctx, target)
 	if err != nil {
 		return VethHandle{}, err
 	}
+	defer bridge.Close()
+	return bridge.CreateVethPair(ctx, spec)
+}
 
-	return VethHandle{
-		HostEnd:   spec.HostEnd,
-		GuestEnd:  spec.GuestEnd,
-		NetnsName: spec.NetnsName,
-	}, nil
+// CreateVethPair uses the pinned target handle for both validation and effects.
+// An unavailable/moved peer is not evidence that a pair may be deleted.
+func (b *OwnedBridge) CreateVethPair(ctx context.Context, spec VethSpec) (VethHandle, error) {
+	if spec.OwnerAlias == "" {
+		return VethHandle{}, fmt.Errorf("veth ownership alias required")
+	}
+	if err := b.Check(ctx); err != nil {
+		return VethHandle{}, err
+	}
+	host, err := b.handle.LinkByName(spec.HostEnd)
+	if err != nil && !missingLink(err) {
+		return VethHandle{}, err
+	}
+	if err == nil {
+		if host.Type() != "veth" || host.Attrs().Alias != spec.OwnerAlias {
+			return VethHandle{}, fmt.Errorf("veth ownership conflict")
+		}
+		peer, err := b.handle.LinkByName(spec.GuestEnd)
+		if err != nil {
+			return VethHandle{}, fmt.Errorf("veth peer unavailable; refusing destructive retry: %w", err)
+		}
+		if peer.Type() != "veth" || peer.Attrs().ParentIndex != host.Attrs().Index {
+			return VethHandle{}, fmt.Errorf("veth peer identity conflict")
+		}
+	} else {
+		index, err := newAttachmentIndex()
+		if err != nil {
+			return VethHandle{}, err
+		}
+		link := &netlink.Veth{LinkAttrs: netlink.LinkAttrs{Name: spec.HostEnd, Index: index}, PeerName: spec.GuestEnd}
+		if err := b.handle.LinkAdd(link); err != nil {
+			return VethHandle{}, fmt.Errorf("add veth pair: %w", err)
+		}
+		host, err = b.handle.LinkByIndex(index)
+		if err != nil {
+			return VethHandle{}, err
+		}
+		if host.Attrs().Name != spec.HostEnd || host.Type() != "veth" {
+			return VethHandle{}, fmt.Errorf("created veth identity changed")
+		}
+		if err := b.handle.LinkSetAlias(host, spec.OwnerAlias); err != nil {
+			return VethHandle{}, err
+		}
+	}
+	if err := b.connect(ctx, host); err != nil {
+		return VethHandle{}, err
+	}
+	peer, err := b.handle.LinkByName(spec.GuestEnd)
+	if err != nil {
+		return VethHandle{}, err
+	}
+	if peer.Type() != "veth" || peer.Attrs().ParentIndex != host.Attrs().Index {
+		return VethHandle{}, fmt.Errorf("veth peer identity conflict")
+	}
+	if err := b.handle.LinkSetAlias(peer, spec.OwnerAlias); err != nil {
+		return VethHandle{}, err
+	}
+	return VethHandle{HostIndex: host.Attrs().Index, GuestIndex: peer.Attrs().Index, OwnerAlias: spec.OwnerAlias, HostEnd: spec.HostEnd, GuestEnd: spec.GuestEnd, NetnsName: b.proof.Namespace}, nil
+}
+
+// MoveVethPeer never reopens the source namespace by its reusable name.
+func (b *OwnedBridge) MoveVethPeer(ctx context.Context, pair VethHandle, destinationFD int) error {
+	if err := b.Check(ctx); err != nil {
+		return err
+	}
+	host, err := b.handle.LinkByIndex(pair.HostIndex)
+	if err != nil {
+		return err
+	}
+	peer, err := b.handle.LinkByIndex(pair.GuestIndex)
+	if err != nil {
+		return err
+	}
+	if pair.OwnerAlias == "" || host.Type() != "veth" || host.Attrs().Name != pair.HostEnd || host.Attrs().Alias != pair.OwnerAlias || peer.Type() != "veth" || peer.Attrs().Name != pair.GuestEnd || peer.Attrs().Alias != pair.OwnerAlias || peer.Attrs().ParentIndex != pair.HostIndex {
+		return fmt.Errorf("veth incarnation changed before move")
+	}
+	return b.handle.LinkSetNsFd(peer, destinationFD)
 }

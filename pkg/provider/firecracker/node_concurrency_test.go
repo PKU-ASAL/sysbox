@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,7 +37,10 @@ func lifecycleFixture(t *testing.T, readiness bool) (*Substrate, substrate.NodeH
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		require.NoError(t, s.DestroyNode(ctx, h))
+		// A process can be between live and zombie /proc snapshots while its
+		// test wrapper exits. Unknown must remain an error in production; retry
+		// cleanup only after a fresh observation rather than weakening identity.
+		require.EventuallyWithT(t, func(c *assert.CollectT) { require.NoError(c, s.DestroyNode(ctx, h)) }, 3*time.Second, time.Millisecond)
 	})
 	return s, h, vm
 }

@@ -19,7 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const manifestVersion = 1
+const manifestVersion = 2
 
 // Only this sentinel means the entire owned generation was proved absent.
 // ENOENT for a config or another required file is incomplete evidence.

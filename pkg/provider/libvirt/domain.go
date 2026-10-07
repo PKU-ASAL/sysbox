@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"strings"
 )
@@ -158,6 +159,7 @@ type DomainSpec struct {
 
 // BridgeAttach describes one network interface attached to a host bridge.
 type BridgeAttach struct {
+	Target     network.BridgeTarget
 	Name       string
 	Netns      string
 	Bridge     string

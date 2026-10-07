@@ -108,8 +108,8 @@ func useOwnedAttachment(ctx context.Context, proof AttachmentLink, alias string,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if proof.Version != 1 || alias == "" || proof.Alias != alias || proof.Index <= 0 || proof.Inode == 0 || proof.Name == "" || (proof.Kind != "veth" && proof.Kind != "tuntap") {
-		return driver.Wrap(driver.ErrorInvalidState, "network", "attachment proof missing or conflicting", nil)
+	if err := validateAttachmentProof(proof, alias); err != nil {
+		return err
 	}
 	ns, h, err := openAttachmentNamespace(proof.Namespace)
 	if os.IsNotExist(err) {
@@ -143,6 +143,13 @@ func useOwnedAttachment(ctx context.Context, proof AttachmentLink, alias string,
 	}
 	if remove {
 		return h.LinkDel(link)
+	}
+	return nil
+}
+
+func validateAttachmentProof(proof AttachmentLink, alias string) error {
+	if proof.Version != 1 || alias == "" || proof.Alias != alias || proof.Index <= 0 || proof.Inode == 0 || proof.Name == "" || (proof.Kind != "veth" && proof.Kind != "tuntap") {
+		return driver.Wrap(driver.ErrorInvalidState, "network", "attachment proof missing or conflicting; rebuild attachment", nil)
 	}
 	return nil
 }

@@ -139,6 +139,8 @@ func (v *vmProcess) snapshot() vmProcessSnapshot {
 // Persisted via MarshalProviderState so cold-destroy and drift refresh can
 // rebuild the VM's working directory without rediscovery.
 type HandleState struct {
+	Attachments []managedAttachment `json:"attachments"`
+
 	Version      int    `json:"version"`
 	ManifestPath string `json:"manifest_path"`
 	OwnerUID     string `json:"owner_uid"`

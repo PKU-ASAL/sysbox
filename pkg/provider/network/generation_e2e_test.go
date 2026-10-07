@@ -264,14 +264,16 @@ func TestOwnedAttachmentGenerationE2E(t *testing.T) {
 		t.Skip("requires isolated namespace privileges")
 	}
 	name := "sblink-" + uuid.NewString()[:8]
-	require.NoError(t, CreateNetns(name))
-	t.Cleanup(func() { require.NoError(t, DeleteNetns(name)) })
-	require.NoError(t, CreateBridge(BridgeConfig{NetnsName: name, BridgeName: "br0", CIDR: "10.253.10.1/24"}))
+	networkID := substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", TopologyUID: "topology", ResourceUID: name, Generation: 1}
+	networkCtx := substrate.WithOperationIdentity(context.Background(), networkID)
+	require.NoError(t, (Driver{}).CreateIsolated(networkCtx, driver.IsolatedNetworkSpec{Name: name, Bridge: "br0", CIDR: "10.253.10.1/24"}))
+	t.Cleanup(func() { require.NoError(t, DeleteNetns(name)); require.NoError(t, (Driver{}).removeOwnership(name)) })
 	id := substrate.OperationIdentity{ActionID: "attach", OwnerUID: "owner", TopologyUID: "topology", ResourceUID: "node", Generation: 2}
 	alias, err := AttachmentAlias(id, "nic")
 	require.NoError(t, err)
-	spec := VethSpec{HostEnd: "owned", GuestEnd: "peer", NetnsName: name, BridgeName: "br0", OwnerAlias: alias}
-	_, err = CreateVethPair(spec)
+	target := BridgeTarget{Identity: networkID, NetworkNamespace: name, Bridge: "br0"}
+	spec := VethSpec{HostEnd: "owned", GuestEnd: "peer", OwnerAlias: alias}
+	_, err = CreateVethPair(networkCtx, target, spec)
 	require.NoError(t, err)
 	ctx := context.Background()
 	proof, err := CaptureAttachmentLink(ctx, name, "owned", alias)
@@ -283,7 +285,7 @@ func TestOwnedAttachmentGenerationE2E(t *testing.T) {
 	require.NoError(t, err)
 	stale := spec
 	stale.OwnerAlias = oldAlias
-	_, err = CreateVethPair(stale)
+	_, err = CreateVethPair(ctx, target, stale)
 	require.Error(t, err)
 	require.Error(t, DeleteOwnedAttachment(ctx, proof, oldAlias))
 	nsHandle, err := (Driver{}).openNetlink(name)
@@ -292,14 +294,14 @@ func TestOwnedAttachmentGenerationE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, nsHandle.LinkDel(link))
 	nsHandle.Close()
-	_, err = CreateVethPair(spec)
+	_, err = CreateVethPair(ctx, target, spec)
 	require.NoError(t, err)
 	require.Error(t, DeleteOwnedAttachment(ctx, proof, alias), "old ifindex cannot delete same-name replacement")
 	current, err := CaptureAttachmentLink(ctx, name, "owned", alias)
 	require.NoError(t, err)
 	require.NoError(t, DeleteOwnedAttachment(ctx, current, alias))
 	require.NoError(t, DeleteOwnedAttachment(ctx, current, alias))
-	_, err = CreateVethPair(spec)
+	_, err = CreateVethPair(ctx, target, spec)
 	require.NoError(t, err)
 	current, err = CaptureAttachmentLink(ctx, name, "owned", alias)
 	require.NoError(t, err)

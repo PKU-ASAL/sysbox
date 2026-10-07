@@ -82,6 +82,17 @@ func TestLibvirtRealGenerationEffectsE2E(t *testing.T) {
 	require.Equal(t, "paused", run("domstate", h.ID))
 	require.NoError(t, sub.Resume(current, h))
 	require.Equal(t, "running", run("domstate", h.ID))
+	// Preserve ownership metadata but inject an unproven inactive interface.
+	// Start must reject before the daemon can attempt to use this target.
+	run("destroy", h.ID)
+	domain.Devices.Interfaces = []domIface{{Type: "bridge", Source: domIfaceSrc{Bridge: "sb-unproven"}, Model: domIfaceMod{Type: "virtio"}}}
+	drifted, err := xml.Marshal(domain)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, drifted, 0600))
+	run("define", path)
+	err = sub.StartNode(current, h)
+	require.ErrorContains(t, err, "interface count conflicts")
+	require.Equal(t, "shut off", run("domstate", h.ID))
 	require.NoError(t, sub.DestroyNode(current, h))
 	out := run("list", "--all", "--uuid")
 	require.NotContains(t, strings.Fields(out), h.ID)

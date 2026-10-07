@@ -444,6 +444,12 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（2026-10-07 attachment target）：`driver.AttachmentRequest` 新增必需的 `NetworkIdentity`，表示目标网络的 owner/topology/resource/generation，与 context 中节点操作身份分离。runtime 在新建与恢复时均从网络 resource 填入。缺失身份不兼容。网络 bridge 消费端只接受 v2 ownership anchor；libvirt `BridgeAttach.Target` 保存目标引用，旧裸 bridge 记录启动时要求重建。
+
+Firecracker manifest/HandleState 升为 v2，新增每条 attachment 的逻辑名、guest device、网络 target、TAP proof；v1 显式拒绝，必须重建，不能手改 version。Firecracker/libvirt 不再根据 Docker network ID 或普通 bridge 名称猜测可接入的 root bridge；Docker NAT 跨 provider 接入返回 Unsupported，provider Validate 提前拒绝。Docker 原生 NAT 继续支持，Attach/Observe/Delete 均核对网络 ID 和独立网络身份标签。HCL 字段和 HTTP 路由未改，但上述 provider/network 组合的能力范围已收紧。
+
+部署需同时更新 CLI/Agent/provider 二进制，并保留共享 `/var/lib/sysbox/networks` ownership/host lock 目录及一致的 host namespace 视图。先用旧版按精确身份清理旧 VM/网络，再重建 state 和 provider 工作目录；新版本不自动清空旧记录或删除外部资源。
+
 实施补充（2026-10-07 网络证明 v2）：隔离网络磁盘 ownership 记录必须含 bridge/proxy link 的 namespace 与 ifindex 证明。旧 v1 alias-only 记录明确拒绝，需由运维确认归属后重建；不自动删除旧资源。root bridge alias 从名称标记改为完整资源身份摘要。删除不再使用裸名称的 root bridge/proxy 创建辅助路径。网络操作必须在记录的同一默认/root network namespace 中运行，换 namespace 后即使查询 absent 也拒绝退休证据。
 
 实施补充（2026-10-07 Guest completion）：Guest execution/file completion HTTP 必须提交 command proof（action_id、resource_uid、generation、lease_epoch、lease_owner、attempt）；旧无 proof 回报不兼容，返回 409。内部存储新增原子完成接口，服务层不再允许 Get→CAS 之间被替换。取消未开始的操作退休原 command。重复相同 terminal receipt 仍幂等，其他结果冲突。Agent/API 必须同步升级。

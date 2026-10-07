@@ -283,6 +283,7 @@ func cloneHandleState(state *HandleState) *HandleState {
 		return nil
 	}
 	cloned := *state
+	cloned.Attachments = append([]managedAttachment(nil), state.Attachments...)
 	return &cloned
 }
 

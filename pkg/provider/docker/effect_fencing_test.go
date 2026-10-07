@@ -8,6 +8,7 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,6 +73,10 @@ func TestManagedAttachmentsPinInspectedContainerID(t *testing.T) {
 			var containerID string
 			s := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == "GET" {
+					if strings.Contains(r.URL.Path, "/networks/") {
+						_ = json.NewEncoder(w).Encode(map[string]any{"Id": "network", "Labels": operationLabels(testOperation())})
+						return
+					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"Id": "immutable-id", "Config": map[string]any{"Labels": operationLabels(testOperation())}})
 					return
 				}
@@ -83,10 +88,10 @@ func TestManagedAttachmentsPinInspectedContainerID(t *testing.T) {
 			ctx := substrate.WithOperationIdentity(context.Background(), testOperation())
 			h := substrate.NodeHandle{ID: "reusable-name", Generation: 3}
 			if operation == "attach" {
-				_, err := s.Attach(ctx, h, driver.AttachmentRequest{IPPrefixes: []string{"10.0.0.2/24"}, NetworkState: json.RawMessage(`{"nat":true,"docker_network_id":"network"}`)})
+				_, err := s.Attach(ctx, h, driver.AttachmentRequest{NetworkIdentity: testOperation(), IPPrefixes: []string{"10.0.0.2/24"}, NetworkState: json.RawMessage(`{"nat":true,"docker_network_id":"network"}`)})
 				require.NoError(t, err)
 			} else {
-				require.NoError(t, s.Delete(ctx, h, driver.AttachmentRequest{}, json.RawMessage(`{"network_id":"network"}`)))
+				require.NoError(t, s.Delete(ctx, h, driver.AttachmentRequest{NetworkIdentity: testOperation(), NetworkState: json.RawMessage(`{"nat":true,"docker_network_id":"network"}`)}, json.RawMessage(`{"network_id":"network"}`)))
 			}
 			require.Equal(t, "immutable-id", containerID)
 		})

@@ -14,9 +14,13 @@
 
 删除 state 不会删除外部 container、VM、network 或 policy，只会丢失安全清理所需 identity。
 
+当前重构分支不提供旧格式兼容：Firecracker manifest 必须为 v2；网络 ownership anchor 必须为 v2；attachment 必须包含目标网络身份，libvirt 的桥接记录也必须包含 target。旧记录报“需要重建”时，不要手改 version 或填入猜测的 identity。先用旧二进制清理已确认归属的资源，再重建对应本地 state、数据库和 provider 工作目录。共享数据库或共享宿主机上的其他项目不属于这个清理范围。
+
+CLI、Agent 与 provider 必须一起升级，并共享同一宿主 namespace 视图和 `/var/lib/sysbox/networks` 所有权记录/锁目录。Firecracker/libvirt 直接接 Docker NAT 网络的配置需改为隔离网络；Docker 节点的原生 NAT 接入保留。
+
 ## 中断的 mutation
 
-保留 checkpoint，并按照 [Troubleshooting](../guides/troubleshooting.md) 收集 observation。Recovery 必须从原 topology、state lineage 和 plan fingerprint 开始。
+保留 action journal、state 与诊断 checkpoint，并按照 [Troubleshooting](../guides/troubleshooting.md) 收集 observation。Recovery 必须从原 topology、state lineage 和 plan fingerprint 开始；checkpoint 不能授权重放副作用。
 
 当 provider 不可达或返回 unknown 时，先修复权限、daemon 或 connectivity。不要将 unknown object 强制标记为 absent。
 
@@ -26,7 +30,7 @@
 
 ## 残留清理
 
-优先使用 checkpoint cleanup 和 handler/provider delete。手工清理只能在完整记录 ownership evidence、external ID 和依赖后进行，并且不能扩大到名称相似的非受管对象。
+优先使用 action journal 恢复与经过身份验证的 provider delete。手工清理只能在完整记录 ownership evidence、external ID 和依赖后进行，并且不能扩大到名称相似的非受管对象。
 
 ## Compose 维护
 

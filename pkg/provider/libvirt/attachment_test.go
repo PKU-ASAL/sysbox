@@ -8,15 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/provider/network"
 )
 
 func TestAttachmentPersistsStableMACInDomainState(t *testing.T) {
 	id := managedOperation()
 	handleState := &HandleState{Identity: &id, DomainUUID: "vm"}
 	s := New()
-	result, err := s.Attach(context.Background(), managedNodeHandle(handleState), driver.AttachmentRequest{Name: "internal", MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.20.0.10/24"}, Gateway: "10.20.0.1", NetworkState: json.RawMessage(`{"netns":"matrix-ns","bridge":"br0"}`)})
+	result, err := s.Attach(context.Background(), managedNodeHandle(handleState), driver.AttachmentRequest{NetworkIdentity: id, Name: "internal", MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.20.0.10/24"}, Gateway: "10.20.0.1", NetworkState: json.RawMessage(`{"netns":"matrix-ns","libvirt_bridge":"br0"}`)})
 	require.NoError(t, err)
-	require.Equal(t, []BridgeAttach{{Name: "internal", Netns: "matrix-ns", Bridge: "br0", MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.20.0.10/24"}, Gateway: "10.20.0.1"}}, handleState.Bridges)
+	require.Equal(t, []BridgeAttach{{Target: network.BridgeTarget{Identity: id, NetworkNamespace: "matrix-ns", Bridge: "br0", Root: true}, Name: "internal", Netns: "matrix-ns", Bridge: "br0", MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.20.0.10/24"}, Gateway: "10.20.0.1"}}, handleState.Bridges)
 	require.Empty(t, result.GuestDevice)
 	require.JSONEq(t, `{"bridge":"br0","mac":"02:00:00:00:00:01"}`, string(result.State))
 }
@@ -26,7 +27,8 @@ func TestAttachmentUsesLibvirtRootBridge(t *testing.T) {
 	handleState := &HandleState{Identity: &id, DomainUUID: "vm"}
 	s := New()
 	result, err := s.Attach(context.Background(), managedNodeHandle(handleState), driver.AttachmentRequest{
-		Name: "matrix", MAC: "02:00:00:00:00:02", IPPrefixes: []string{"10.44.0.30/24"},
+		NetworkIdentity: id,
+		Name:            "matrix", MAC: "02:00:00:00:00:02", IPPrefixes: []string{"10.44.0.30/24"},
 		NetworkState: json.RawMessage(`{"netns":"matrix-ns","bridge":"br-matrix","libvirt_bridge":"lv-matrix"}`),
 	})
 

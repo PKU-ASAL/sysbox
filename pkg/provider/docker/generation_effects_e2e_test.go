@@ -93,11 +93,13 @@ func TestDockerRealGenerationEffectsE2E(t *testing.T) {
 		require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
 	})
 	t.Run("attachment", func(t *testing.T) {
+		targetID := identity
+		targetID.ResourceUID += "-network"
 		// Docker permits a requested static address only on explicitly
 		// configured IPAM subnets. A collision fails creation without adoption.
 		seed := time.Now().UnixNano()
 		cidr := fmt.Sprintf("10.%d.%d.0/24", 128+(seed>>8)%100, seed%256)
-		created, err := s.cli.NetworkCreate(ctx, name+"-net", dockernet.CreateOptions{Driver: "bridge", Internal: true, IPAM: &dockernet.IPAM{Config: []dockernet.IPAMConfig{{Subnet: cidr}}}})
+		created, err := s.cli.NetworkCreate(ctx, name+"-net", dockernet.CreateOptions{Labels: operationLabels(targetID), Driver: "bridge", Internal: true, IPAM: &dockernet.IPAM{Config: []dockernet.IPAMConfig{{Subnet: cidr}}}})
 		require.NoError(t, err)
 		defer func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -116,7 +118,11 @@ func TestDockerRealGenerationEffectsE2E(t *testing.T) {
 		ones, _ := subnet.Mask.Size()
 		raw, err := json.Marshal(networkState{NAT: true, NetworkID: created.ID})
 		require.NoError(t, err)
-		req := driver.AttachmentRequest{Name: "test", NetworkState: raw, IPPrefixes: []string{fmt.Sprintf("%s/%d", ip, ones)}}
+		req := driver.AttachmentRequest{NetworkIdentity: targetID, Name: "test", NetworkState: raw, IPPrefixes: []string{fmt.Sprintf("%s/%d", ip, ones)}}
+		staleTarget := req
+		staleTarget.NetworkIdentity.Generation++
+		_, err = s.Attach(valid, h, staleTarget)
+		require.Error(t, err, "wrong target network generation must not connect")
 		_, err = s.Attach(stale, h, req)
 		require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
 		attachment, err := s.Attach(valid, h, req)

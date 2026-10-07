@@ -40,6 +40,7 @@ Sysbox 可以用原生 libvirt 启动预先安装好的 Windows 10 qcow2，并�
 | 基础镜像 | OCI image | kernel + rootfs | qcow2 |
 | 创建节点 | 调用 Docker 创建容器 | 生成配置并启动 Firecracker 进程 | 创建 libvirt domain |
 | 网络设备 | veth 或 Docker endpoint | TAP | domain 虚拟 NIC/TAP |
+| 目标网络 | 隔离网络或 Docker NAT | 隔离网络 | 隔离网络的受管 root bridge |
 | 网卡接入时机 | 支持运行时接入 | 通常在启动前接入 | 通常写入 domain 配置后启动 |
 | Guest 命令执行 | Docker Exec | vsock RPC 或 SSH | SSH |
 | 状态观察 | Docker Inspect | 进程、socket 和 guest observation | virsh/domain 查询 |

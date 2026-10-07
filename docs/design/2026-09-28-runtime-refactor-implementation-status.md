@@ -19,7 +19,7 @@
 | Guest execution/file | 完成回报三后端同锁/事务核对 command proof 和有效 lease；旧 attempt/过期回报拒绝，终态重试幂等 | 资源端已启动 guest 进程不能被 lease epoch 远程撤销 |
 | Firewall | 默认创建/发现/恢复/删除已实测；资源侧 generation、原子 nft batch、FD 与删除证据已接入 | HTTP/远端 Agent 全链路、跨宿主租约、外部 writer 完整规则篡改检测未验收 |
 | Provider 身份 | Docker/libvirt/Firecracker Create 均要求持久身份；Firecracker reset 不再合成 target action | 不能据此宣称所有资源类型均已有同代 lease epoch 撤销 |
-| 外部 attachment | Docker veth、Firecracker TAP 使用版本化 namespace/ifindex/alias proof，旧裸名称删除入口移除 | 目标 bridge/network 自身身份及特权 writer 刻意重用同一 ifindex 的并发替换不在保证内 |
+| 外部 attachment | runtime 独立传递目标网络身份；隔离 bridge 校验 v2 anchor、namespace、ifindex/type/alias；Docker NAT 校验网络 ID/labels；Firecracker/libvirt 启动前复验目标 | Firecracker/libvirt 不支持猜测 Docker bridge 的 NAT 接入；不保证阻止非合作特权 writer 在校验后的替换或同 ifindex 重用 |
 | Import | 无 ownership adoption 时在派发前明确拒绝 | 尚未实现显式 ownership adoption，不能宣称已恢复 import 功能 |
 
 ```text
@@ -105,11 +105,19 @@ Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe �
 
 ### Resource fencing 迁移进度
 
+2026-10-07 attachment 目标网络收口：`AttachmentRequest.NetworkIdentity` 从目标网络资源生成，创建与恢复使用相同投影，不能以节点身份代替。共享 `OwnedBridge` 在网络 host lock 内读取 v2 ownership anchor，固定 namespace FD，按 namespace device/inode、bridge ifindex/type/alias 核验；libvirt root bridge 同时固定并核对网络自身的命名 namespace。
+
+Docker veth 创建、接桥和源端移动使用固定 netlink handle/namespace FD；peer 缺失或查询失败不再授权删除重建。Docker NAT Attach/Observe/Delete 独立核对目标网络 UID/generation labels 与精确 ID。Firecracker TAP 不再使用 shell 裸名称接桥；manifest v2 保存每条 attachment 的目标网络与 TAP incarnation，Start 核对配置映射、TAP 和 master bridge，重复 Attach 不追加重复 NIC。libvirt 保存目标引用，在 Start 复验；已有 domain 的 inactive XML 必须与已证明接口全集匹配后才能启动。
+
+破坏性边界：Firecracker manifest v1 明确要求重建；缺网络身份、缺 v2 网络 anchor、缺 libvirt target 的旧记录不自动升级或采用。Firecracker/libvirt 的 Docker NAT 跨 provider bridge 接入明确 Unsupported，并在 provider Validate 提前拒绝；Docker 原生 NAT 保留。旧资源需在升级前由旧版本确认归属并销毁，或者由运维按实际身份处理；不能只删除 state/数据库来掩盖残留资源。
+
+验证：真实隔离 namespace/veth/TAP 覆盖错误网络代际、同名同 alias bridge 替换、root bridge 存活但命名 namespace 替换、TAP 重接桥/替换后的启动拒绝；真实 Docker 验证独立网络代际；真实 libvirt 验证篡改 inactive XML 后仍保持 shut off。真实 KVM controller crash、reset 与跨进程恢复在 manifest v2 上通过。完整 HTTP→Agent→provider 故障矩阵、跨宿主 lease epoch 撤销仍未完成。host lock 只约束合作进程；libvirt daemon 和 Firecracker 启动时仍使用设备/namespace 名称，不能声称对任意特权外部替换有原子 fencing。
+
 2026-10-07 网络对象 incarnation 证明：更正上一阶段仅增加 alias 的结论——alias 本身不能阻止同名同 alias 替换。隔离网络 ownership 升为 v2，持久化每个 bridge/proxy link 的 namespace device/inode、ifindex、类型和完整 owner/topology/resource/generation 摘要 alias。创建前保存预分配索引，创建后按索引核验；namespace 排他创建并核对新句柄与挂载路径，proxy peer 校验与 root veth 的关联。实际配置使用固定 namespace 的 netlink handle。
 
 Observe 拒绝同名同 alias 不同 ifindex；即使所有对象查询缺失，也须核对持久 root namespace，防止换了默认 namespace 后误退休旧证据。Delete 重新核对 namespace/link 证明，并以核验后的 ifindex 删除 link；关联地址/路由随 link 删除，不再按名称逐个删除。非法、重复、无关对象的 proof 被拒绝；v1 ownership 不兼容且不自动采用。
 
-真实 `test-network-generation-e2e` 已覆盖 namespace bridge/root bridge 同名同 alias 替换后的 Observe/Create/Delete 拒绝，同时通过完整创建/删除、旧代拒绝和中断删除恢复。边界仍包括：外部特权进程刻意复用同一 ifindex、namespace mount 路径在最终核验与 unmount 间的非合作替换；target attachment 消费端完整网络证明、跨宿主租约撤销尚未完成。创建中断且标记未完成的资源保留为 unknown，不能通过按名认领自动清理。
+真实 `test-network-generation-e2e` 已覆盖 namespace bridge/root bridge 同名同 alias 替换后的 Observe/Create/Delete 拒绝，同时通过完整创建/删除、旧代拒绝和中断删除恢复。边界仍包括：外部特权进程刻意复用同一 ifindex、namespace mount 路径在最终核验与 unmount 间的非合作替换、跨宿主租约撤销。attachment 消费端的目标证明见上方最新记录。创建中断且标记未完成的资源保留为 unknown，不能通过按名认领自动清理。
 
 2026-10-07 Guest completion 收口：GuestExecution/GuestFileOperation 的 HTTP completion 已改用三后端原子 `CompleteGuestExecution`/`CompleteGuestFileOperation`。调用在同一物理锁/事务内读取当前操作、command record 和 dispatch seed，核对 action/resource/generation/lease_epoch/lease_owner/attempt、操作状态、节点绑定和结果 receipt，再递增版本写入。旧无 proof、未租用、过期或被新 attempt 替代的回报返回冲突；已退休 command 的相同 terminal receipt 可幂等重试，内容不同拒绝。取消未开始操作直接退休 command，不再发布无身份的覆盖命令。
 

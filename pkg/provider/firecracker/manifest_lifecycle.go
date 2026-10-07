@@ -124,6 +124,11 @@ func (s *Substrate) startManifestNode(ctx context.Context, h substrate.NodeHandl
 	if m.Phase == "starting" {
 		return fmt.Errorf("firecracker launch result unknown")
 	}
+	unlockTargets, err := lockStartAttachments(ctx, m)
+	if err != nil {
+		return err
+	}
+	defer unlockTargets()
 	// An adopted process has no local reaper. Fresh absence, not cached started,
 	// authorizes a subsequent start of this same retained generation.
 	vm.mu.Lock()

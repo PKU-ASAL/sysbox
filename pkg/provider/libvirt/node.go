@@ -15,6 +15,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -197,6 +198,20 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 		return err
 	}
 	hs := hsFrom(h)
+	if len(hs.Bridges) > 0 {
+		targets := make([]network.BridgeTarget, 0, len(hs.Bridges))
+		for _, bridge := range hs.Bridges {
+			if bridge.Target.Bridge != bridge.Bridge || !bridge.Target.Root {
+				return driver.Wrap(driver.ErrorInvalidState, subName, "network target proof missing or conflicting; rebuild VM", nil)
+			}
+			targets = append(targets, bridge.Target)
+		}
+		_, unlock, err := network.LockBridgeTargets(ctx, targets)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
 	if hs.Identity != nil {
 		if identity, ok := substrate.OperationIdentityFromContext(ctx); ok && !sameGeneration(identity, *hs.Identity) {
 			return driver.Wrap(driver.ErrorInvalidState, subName, "operation generation does not own domain", nil)
@@ -224,6 +239,13 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 			}
 			if strings.TrimSpace(string(uuidOut)) != hs.DomainUUID {
 				return fmt.Errorf("libvirt: domain %q UUID ownership mismatch", hs.DomainName)
+			}
+			xml, err := virshQuery(ctx, "dumpxml", hs.DomainUUID, "--inactive")
+			if err != nil {
+				return err
+			}
+			if err := validateDomainInterfaces(xml, hs.Bridges); err != nil {
+				return err
 			}
 			stateOut, stateErr := exec.CommandContext(ctx, "virsh", "domstate", hs.DomainName).CombinedOutput()
 			if stateErr != nil {

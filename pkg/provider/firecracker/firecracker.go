@@ -94,6 +94,9 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 
 // Validate ensures the spec carries what the firecracker substrate needs.
 func (s *Substrate) Validate(spec substrate.NodeSpec) error {
+	if spec.ManagedNetwork {
+		return substrate.NewValidationError("firecracker: Docker NAT bridge lacks a verifiable attachment contract; use an isolated network")
+	}
 	cfg, _ := spec.ProviderConfig.(*Config)
 	if cfg == nil || !cfg.AllowDirect {
 		return substrate.NewValidationError("firecracker: direct process mode is unsafe; set allow_direct = true only for trusted local experiments until jailer support is enabled")

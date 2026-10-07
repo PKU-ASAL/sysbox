@@ -23,10 +23,14 @@ func TestDockerStartPreservesNamedNetworkNamespaceE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	namespace := fmt.Sprintf("sysbox-e2e-docker-ns-%d", os.Getpid())
-	require.NoError(t, networkprovider.CreateNetns(namespace))
-	t.Cleanup(func() { _ = networkprovider.DeleteNetns(namespace) })
 	bridge := "sbe2ebr"
-	require.NoError(t, networkprovider.CreateBridge(networkprovider.BridgeConfig{NetnsName: namespace, BridgeName: bridge, CIDR: "10.250.0.1/24"}))
+	networkID := substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", TopologyUID: "topology", ResourceUID: namespace, Generation: 1}
+	networkCtx := substrate.WithOperationIdentity(ctx, networkID)
+	networkSpec := driver.IsolatedNetworkSpec{Name: namespace, Bridge: bridge, CIDR: "10.250.0.1/24"}
+	require.NoError(t, (networkprovider.Driver{}).CreateIsolated(networkCtx, networkSpec))
+	t.Cleanup(func() {
+		require.NoError(t, (networkprovider.Driver{}).DeleteIsolated(substrate.WithOperationIdentity(context.Background(), networkID), networkSpec))
+	})
 	provider, err := New()
 	if err != nil {
 		t.Skipf("Docker unavailable: %v", err)
@@ -42,7 +46,7 @@ func TestDockerStartPreservesNamedNetworkNamespaceE2E(t *testing.T) {
 	})
 	require.NoError(t, provider.cli.ContainerStart(ctx, created.ID, containertypes.StartOptions{}))
 	require.True(t, (networkprovider.Driver{}).LinkHealthy(ctx, namespace, "lo"))
-	pair, err := networkprovider.CreateVethPair(networkprovider.VethSpec{OwnerAlias: "test-owned", HostEnd: "sbe2evh", GuestEnd: "sbe2evg", NetnsName: namespace, BridgeName: bridge})
+	pair, err := networkprovider.CreateVethPair(ctx, networkprovider.BridgeTarget{Identity: networkID, NetworkNamespace: namespace, Bridge: bridge}, networkprovider.VethSpec{OwnerAlias: "test-owned", HostEnd: "sbe2evh", GuestEnd: "sbe2evg"})
 	require.NoError(t, err)
 	proof, err := networkprovider.CaptureAttachmentLink(ctx, pair.NetnsName, pair.HostEnd, "test-owned")
 	require.NoError(t, err)

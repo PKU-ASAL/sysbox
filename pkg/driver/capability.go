@@ -62,13 +62,15 @@ type NIC interface {
 }
 
 type AttachmentRequest struct {
-	Name         string
-	Network      address.Address
-	MAC          string
-	IPPrefixes   []string
-	Gateway      string
-	Aliases      []string
-	NetworkState json.RawMessage
+	// NetworkIdentity belongs to the target network, never the attached node.
+	NetworkIdentity substrate.OperationIdentity
+	Name            string
+	Network         address.Address
+	MAC             string
+	IPPrefixes      []string
+	Gateway         string
+	Aliases         []string
+	NetworkState    json.RawMessage
 }
 
 type AttachmentResult struct {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,10 +57,10 @@ func manifestFixture(t *testing.T, live bool) (*Substrate, substrate.NodeHandle,
 	socket := ownedUnixSocketPath(dir, id, "firecracker.sock", "fc")
 	require.NoError(t, ensureOwnedSocketDirectory(socket))
 	hs := &HandleState{VMDir: dir, ConfigPath: cfg, Socket: socket}
-	// JSON keeps this regression test buildable against the pre-manifest implementation.
-	raw, _ := json.Marshal(map[string]any{"version": 1, "manifest_path": filepath.Join(dir, "manifest.json"), "owner_uid": "owner", "resource_uid": "resource", "generation": 1})
+	// Use the current schema except in explicit old-format rejection tests.
+	raw, _ := json.Marshal(map[string]any{"version": manifestVersion, "manifest_path": filepath.Join(dir, "manifest.json"), "owner_uid": "owner", "resource_uid": "resource", "generation": 1})
 	require.NoError(t, json.Unmarshal(raw, hs))
-	manifest := map[string]any{"version": 1, "vm_id": id, "runtime_root": root, "owner_uid": "owner", "resource_uid": "resource", "generation": 1, "action_id": "action", "config_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(`{}`))), "phase": "prepared", "handle": hs}
+	manifest := map[string]any{"version": manifestVersion, "vm_id": id, "runtime_root": root, "owner_uid": "owner", "resource_uid": "resource", "generation": 1, "action_id": "action", "config_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(`{}`))), "phase": "prepared", "handle": hs}
 	var cmd *exec.Cmd
 	if live {
 		executable, err := os.Executable()
@@ -326,8 +327,14 @@ func TestManifestLaunchRecoveryRejectsSocketFromDifferentProcess(t *testing.T) {
 	imposter := exec.Command("sleep", "30")
 	require.NoError(t, imposter.Start())
 	t.Cleanup(func() { _ = imposter.Process.Kill(); _ = imposter.Wait() })
-	p, err := captureProcessIdentity(imposter.Process.Pid)
-	require.NoError(t, err)
+	var p processIdentity
+	// exec completion can precede a readable /proc cmdline snapshot. The
+	// provider must keep treating that interval as unknown, not as ownership.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		var err error
+		p, err = captureProcessIdentity(imposter.Process.Pid)
+		require.NoError(c, err)
+	}, time.Second, time.Millisecond)
 	p.PID = 0
 	p.StartTime = ""
 	m["phase"] = "starting"
