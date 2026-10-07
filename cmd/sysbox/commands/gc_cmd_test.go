@@ -252,7 +252,7 @@ esac
 	var report bytes.Buffer
 	found, err := findOrphanDomains(context.Background(), active, &report)
 	require.NoError(t, err)
-	require.Equal(t, []orphan{{Kind: "domain", ID: candidate}}, found)
+	require.Equal(t, []orphan{{Kind: "domain", ID: candidate, Topo: owner, OwnerUID: owner, ResourceUID: owner + "/resource", Generation: 1, InventoryDigest: active.inventories[owner]}}, found)
 	require.Contains(t, report.String(), "skipped domain "+foreign)
 	require.Contains(t, report.String(), "skipped domain "+legacy)
 }

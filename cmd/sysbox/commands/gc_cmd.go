@@ -2,6 +2,8 @@ package commands
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -81,10 +83,11 @@ func runGc(cmd *cobra.Command, _ []string) error {
 }
 
 type activeIDs struct {
-	owners     map[string]bool
-	containers map[string]bool
-	networks   map[string]bool
-	domains    map[string]bool
+	owners      map[string]bool
+	inventories map[string]string
+	containers  map[string]bool
+	networks    map[string]bool
+	domains     map[string]bool
 }
 
 // collectActiveIDs walks runsDir/*/state.json and collects the external IDs of
@@ -121,7 +124,7 @@ func collectActiveIDs(runsDir string) activeIDs {
 }
 
 func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
-	active := activeIDs{owners: map[string]bool{}, containers: map[string]bool{}, networks: map[string]bool{}, domains: map[string]bool{}}
+	active := activeIDs{owners: map[string]bool{}, inventories: map[string]string{}, containers: map[string]bool{}, networks: map[string]bool{}, domains: map[string]bool{}}
 	if _, err := os.ReadDir(runsDir); err != nil {
 		if os.IsNotExist(err) {
 			return active, nil
@@ -187,6 +190,16 @@ func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 			}
 		}
 		active.owners[st.TopologyUID] = true
+		inventoryRaw, err := json.Marshal(struct {
+			TopologyUID string
+			State       *state.State
+			Actions     []runtime.ActionRecord
+			Snapshots   []state.Resource
+		}{st.TopologyUID, st, actions, retained})
+		if err != nil {
+			return active, err
+		}
+		active.inventories[st.TopologyUID] = fmt.Sprintf("%x", sha256.Sum256(inventoryRaw))
 		for _, r := range st.Resources {
 			if r.OwnerUID != st.TopologyUID || r.ResourceUID == "" || r.Generation < 1 {
 				return active, fmt.Errorf("canonical topology %s has incomplete resource ownership", topology)
@@ -231,14 +244,18 @@ func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 }
 
 type orphan struct {
-	Kind string // container | network | domain
-	ID   string
-	Topo string
+	Kind            string // container | network | domain
+	ID              string
+	Topo            string
+	OwnerUID        string
+	ResourceUID     string
+	Generation      int64
+	InventoryDigest string
 }
 
 func (o orphan) String() string {
 	if o.Topo != "" {
-		return fmt.Sprintf("%-9s %s  (topology=%s)", o.Kind, o.ID, o.Topo)
+		return fmt.Sprintf("%-9s %s  (topology=%s owner=%s resource=%s generation=%d inventory=%s)", o.Kind, o.ID, o.Topo, o.OwnerUID, o.ResourceUID, o.Generation, o.InventoryDigest)
 	}
 	return fmt.Sprintf("%-9s %s", o.Kind, o.ID)
 }
@@ -277,7 +294,7 @@ func findOrphansWithReport(ctx context.Context, active activeIDs, report io.Writ
 					continue
 				}
 				if !active.containers[c.ID] {
-					out = append(out, orphan{Kind: "container", ID: c.ID, Topo: c.Labels[runtime.LabelTopology]})
+					out = append(out, orphan{Kind: "container", ID: c.ID, Topo: c.Labels[runtime.LabelTopology], OwnerUID: c.Labels["sysbox.owner_uid"], ResourceUID: c.Labels["sysbox.resource_uid"], Generation: generation, InventoryDigest: active.inventories[c.Labels["sysbox.owner_uid"]]})
 				}
 			}
 		}
@@ -294,7 +311,7 @@ func findOrphansWithReport(ctx context.Context, active activeIDs, report io.Writ
 					continue
 				}
 				if !active.networks[n.ID] {
-					out = append(out, orphan{Kind: "network", ID: n.ID, Topo: n.Labels[runtime.LabelTopology]})
+					out = append(out, orphan{Kind: "network", ID: n.ID, Topo: n.Labels[runtime.LabelTopology], OwnerUID: n.Labels["sysbox.owner_uid"], ResourceUID: n.Labels["sysbox.resource_uid"], Generation: generation, InventoryDigest: active.inventories[n.Labels["sysbox.owner_uid"]]})
 				}
 			}
 		}
@@ -365,7 +382,7 @@ func findOrphanDomains(ctx context.Context, active activeIDs, report io.Writer) 
 			continue
 		}
 		if !active.domains[id] {
-			out = append(out, orphan{Kind: "domain", ID: id})
+			out = append(out, orphan{Kind: "domain", ID: id, Topo: owner.TopologyUID, OwnerUID: owner.OwnerUID, ResourceUID: owner.ResourceUID, Generation: owner.Generation, InventoryDigest: active.inventories[owner.OwnerUID]})
 		}
 	}
 	return out, nil
