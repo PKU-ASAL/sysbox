@@ -348,6 +348,18 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	digest := ""
 	switch cmd.Type {
 	case "node_operation":
+		if cmd.Operation.Operation == "ssh_access_apply" || cmd.Operation.Operation == "ssh_access_delete" {
+			request, err := controlplane.FromSSHAccessCommand(cmd)
+			if err != nil {
+				return controlplane.ExecutionGrant{}, err
+			}
+			digest, err = request.Digest()
+			if err != nil {
+				return controlplane.ExecutionGrant{}, err
+			}
+			operation = cmd.Operation.Operation
+			break
+		}
 		request, err := controlplane.FromNodeOperationCommand(cmd)
 		if err != nil {
 			return controlplane.ExecutionGrant{}, err
