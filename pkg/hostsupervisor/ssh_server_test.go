@@ -18,7 +18,7 @@ func TestSSHAccessSocketRoutesOnlyThroughTrustedCallbacks(t *testing.T) {
 	socketDir := t.TempDir()
 	require.NoError(t, os.Chmod(socketDir, 0700))
 	calls := 0
-	s := &Server{Socket: filepath.Join(socketDir, "ssh.sock"), GroupID: -1, SSH: c, SSHApply: func(context.Context, controlplane.SSHAccessRequest) (json.RawMessage, error) {
+	s := &Server{Socket: filepath.Join(socketDir, "ssh.sock"), GroupID: -1, SSH: c, SSHApply: func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 		calls++
 		return nil, context.DeadlineExceeded
 	}}

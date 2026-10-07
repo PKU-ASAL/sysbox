@@ -29,8 +29,8 @@ type Server struct {
 	Runs            *RunCoordinator
 	RunEffect       func(context.Context, RunRequest) (json.RawMessage, error)
 	SSH             *SSHAccessCoordinator
-	SSHApply        func(context.Context, controlplane.SSHAccessRequest) (json.RawMessage, error)
-	SSHDelete       func(context.Context, controlplane.SSHAccessRequest) (json.RawMessage, error)
+	SSHApply        func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
+	SSHDelete       func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	OnRecoveryError func(error)
 }
 
@@ -226,7 +226,7 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 			break
 		}
 		response.SSHEvidence, err = s.SSH.Apply(ctx, *request.SSHRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
-			return s.SSHApply(effectCtx, *request.SSHRequest)
+			return s.SSHApply(effectCtx, *request.SSHRequest, *request.Grant)
 		})
 	case "ssh-delete":
 		if s.SSH == nil || s.SSHDelete == nil || request.SSHRequest == nil || request.Grant == nil {
@@ -234,7 +234,7 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 			break
 		}
 		response.SSHEvidence, err = s.SSH.Delete(ctx, *request.SSHRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
-			return s.SSHDelete(effectCtx, *request.SSHRequest)
+			return s.SSHDelete(effectCtx, *request.SSHRequest, *request.Grant)
 		})
 	case "ssh-observe":
 		if s.SSH == nil || request.SSHRequest == nil || request.Grant == nil {
