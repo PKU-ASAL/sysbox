@@ -3,9 +3,13 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type ProviderContext struct {
@@ -38,6 +42,41 @@ func (c *ProviderContext) RecordSubstep(parent int, phase string, details map[st
 
 func (c *ProviderContext) SubstepHook(parent int) NICWireHook {
 	return c.exec.substepHook(parent)
+}
+
+// ConnectionForNode resolves a canonical node resource and its declared
+// connection hints. Resource handlers cannot provide an endpoint or provider
+// handle through this method; both come from the executor's graph/state.
+func (c *ProviderContext) ConnectionForNode(ctx context.Context, ref string) (substrate.Connection, error) {
+	addr, err := address.Parse(ref)
+	if err != nil {
+		return nil, err
+	}
+	node := c.exec.graph.Get(addr)
+	if node == nil {
+		return nil, fmt.Errorf("node %s not found", addr)
+	}
+	cfg, ok := node.Data.(*config.NodeConfig)
+	if !ok {
+		return nil, fmt.Errorf("node %s has invalid config", addr)
+	}
+	resource := c.exec.state.FindResource(addr)
+	if resource == nil {
+		return nil, fmt.Errorf("node %s is not present in state", addr)
+	}
+	nd, err := driver.DefaultRegistry.RequireNode(resource.Driver)
+	if err != nil {
+		return nil, err
+	}
+	codec, err := driver.DefaultRegistry.RequireNodeState(resource.Driver)
+	if err != nil {
+		return nil, err
+	}
+	h, err := resource.ReconstructHandle(codec)
+	if err != nil {
+		return nil, err
+	}
+	return c.exec.connectionForNode(ctx, nd, h, cfg.Connections)
 }
 
 func (c *ProviderContext) createNodeResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
