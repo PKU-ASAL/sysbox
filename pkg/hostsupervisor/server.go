@@ -35,7 +35,7 @@ type Server struct {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil || !filepath.IsAbs(s.Socket) {
+	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.SSH == nil || !filepath.IsAbs(s.Socket) {
 		return fmt.Errorf("absolute supervisor socket and dispatcher required")
 	}
 	directory := filepath.Dir(s.Socket)
