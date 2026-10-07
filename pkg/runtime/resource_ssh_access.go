@@ -33,6 +33,22 @@ func (SSHAccessResourceHandler) Read(_ context.Context, current state.Resource) 
 }
 
 func (SSHAccessResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+	if desired == nil {
+		return controlplane.PlannedChange{}, fmt.Errorf("ssh_access plan requires desired config")
+	}
+	cfg, ok := desired.Data.(*config.SSHAccessConfig)
+	if !ok {
+		return controlplane.PlannedChange{}, fmt.Errorf("ssh_access plan has invalid config")
+	}
+	keys := append([]string(nil), cfg.AuthorizedKeys...)
+	nodeRef, err := config.ResolveResourceAddress(cfg.Node, "sysbox_node")
+	if err != nil {
+		return controlplane.PlannedChange{}, err
+	}
+	req := controlplane.SSHAccessRequest{ID: desired.Address.Name, Topology: "topology", Node: nodeRef.Name, AuthorizedKeys: keys, BindIP: cfg.BindIP, Port: cfg.Port}
+	if err := req.Validate(); err != nil {
+		return controlplane.PlannedChange{}, err
+	}
 	return planDiffByDesiredHash(desired, current)
 }
 
