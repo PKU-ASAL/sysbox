@@ -364,6 +364,17 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		cmd.Operation.ActionID, cmd.Operation.ResourceUID, cmd.Operation.Generation = cmd.ActionID, cmd.ResourceUID, cmd.Generation
 		cmd.Operation.LeaseOwner, cmd.Operation.LeaseEpoch, cmd.Operation.Attempt = cmd.LeaseOwner, cmd.LeaseEpoch, cmd.Attempt
 		completed := executeGrantedNodeOperation(runCtx, r.opts, *cmd)
+		if cmd.Operation.Operation == "adoption_apply" {
+			// Adoption completion is authoritative only when the host signer has
+			// reported its verified Apply+Observe result. A worker completion
+			// event cannot mutate state or retire the adoption command.
+			if completed.Status == controlplane.NodeOperationStatusFailed {
+				emit("failed", "adoption host effect failed", errors.New(completed.Err))
+				return
+			}
+			emit("completed", "adoption host completion pending", nil)
+			return
+		}
 		if err := r.opts.ReportNodeOperationComplete(runCtx, completed); err != nil {
 			fmt.Printf("[agent] report node operation %s failed: %v\n", completed.ID, err)
 			emit("failed", "node operation report failed", err)
