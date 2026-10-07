@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -16,8 +17,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type adoptionCompletionFailure struct{ apiStore }
+
+func (s adoptionCompletionFailure) CompleteNodeOperation(context.Context, string, string, controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
+	return nil, errors.New("injected completion failure")
+}
+
 func TestAdoptionCompletionRejectsTamperedEvidenceBeforeStateWrite(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) { testAdoptionReceiptBinding(t, store) })
+}
+
+func testAdoptionReceiptBinding(t *testing.T, store apiStore) {
 	s := NewServer(t.TempDir(), t.TempDir())
+	s.apiStore = store
+	s.nodeOps = newNodeOperationStore(store)
+	s.nodeService = nil
 	ctx := context.Background()
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -60,10 +74,27 @@ func TestAdoptionCompletionRejectsTamperedEvidenceBeforeStateWrite(t *testing.T)
 	r = post(original)
 	require.Equal(t, 409, r.Code, "even a host-signed receipt cannot invent an issued epoch: %s", r.Body.String())
 	receipt = validReceipt
+	stopBody, err := json.Marshal(receipt)
+	require.NoError(t, err)
+	stopResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(stopResponse, httptest.NewRequest("POST", "/v1/hosts/agent/execution-grants/stopped", bytes.NewReader(stopBody)))
+	require.Equal(t, 409, stopResponse.Code, "adoption cannot retire before canonical completion")
 	after, err := repo.LoadState(ctx, "lab")
 	require.NoError(t, err)
 	require.Empty(t, after.Resources)
 	require.Equal(t, st.Meta.Serial, after.Meta.Serial)
+	// Simulate a failure between canonical evidence commit and operation
+	// completion: the old scope must remain held until the retry succeeds.
+	s.nodeService = &NodeOperationService{operations: newNodeOperationStore(adoptionCompletionFailure{store})}
+	r = post(original)
+	require.Equal(t, 409, r.Code, r.Body.String())
+	require.NoError(t, authority.Authorize(ctx, *g))
+	blocked := *g
+	blocked.CommandID = "blocked"
+	blocked.ActionID = "blocked"
+	_, err = authority.Issue(ctx, blocked, time.Minute)
+	require.ErrorIs(t, err, persistence.ErrConflict)
+	s.nodeService = nil
 	r = post(original)
 	require.Equal(t, 200, r.Code, r.Body.String())
 	r = post(original)
@@ -72,4 +103,14 @@ func TestAdoptionCompletionRejectsTamperedEvidenceBeforeStateWrite(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, after.Resources, 1)
 	require.JSONEq(t, string(original), string(after.Resources[0].Private))
+	require.Error(t, authority.Authorize(ctx, *g), "completed adoption must retire authority")
+	nextRequest := *g
+	nextRequest.CommandID = "successor-command"
+	nextRequest.ActionID = "successor-action"
+	next, err := authority.Issue(ctx, nextRequest, time.Minute)
+	require.NoError(t, err)
+	require.Greater(t, next.Epoch, g.Epoch)
+	r = post(original)
+	require.Equal(t, 200, r.Code, r.Body.String())
+	require.NoError(t, authority.Authorize(ctx, *next), "old receipt replay must not retire successor")
 }

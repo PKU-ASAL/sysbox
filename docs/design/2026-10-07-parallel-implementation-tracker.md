@@ -17,6 +17,12 @@
 
 ## 当前收敛规则
 
+adoption API 授权释放：专用完成接口先验证回执、提交 canonical evidence 与操作
+完成状态，最后 `AcceptHostStop` 释放原 epoch。普通 stopped 接口拒绝 adoption，
+防止绕过证据提交提前释放 scope。文件/SQLite 回归覆盖完成失败仍阻塞后继、重试
+完成后放行新 epoch、旧回执重放不撤销后继授权。本批 Postgres 未配置，未计为通过。
+这仍是可重试的分步持久化，不是多表原子事务，也未解决过期/退休 command 的接管。
+
 adoption 自动回执恢复已接入 supervisor 启动与周期扫描，共用 effectgate 的
 completed/pending-report 枚举。先读取持久结果，再补签或复用原回执；不请求新的
 worker 授权，不执行 provider callback。回归覆盖 outcome 已提交但尚未签回执、

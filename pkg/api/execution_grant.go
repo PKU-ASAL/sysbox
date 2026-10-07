@@ -175,6 +175,12 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 		writeError(w, 401, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
+	if receipt.Grant.Operation == "adoption_apply" {
+		// Adoption must durably commit evidence and operation completion before
+		// releasing this scope. The dedicated completion route owns that order.
+		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
 	raw, err := json.Marshal(receipt)
 	if err != nil {
 		writeError(w, 400, err)
@@ -283,6 +289,12 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 	report.EndedAt = body.Receipt.StoppedAt
 	completed, err := s.nodeOperations().CompleteFromAgent(agentID, op.ID, report)
 	if err != nil {
+		writeError(w, 409, err)
+		return
+	}
+	// A failure here keeps the old scope blocked. An identical host receipt
+	// retries the journal and operation idempotently, then finishes retirement.
+	if err := authority.AcceptHostStop(r.Context(), body.Receipt.Grant, hex.EncodeToString(receiptHash[:])); err != nil {
 		writeError(w, 409, err)
 		return
 	}
