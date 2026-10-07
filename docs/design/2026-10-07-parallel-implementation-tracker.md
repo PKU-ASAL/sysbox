@@ -28,7 +28,9 @@ resource UID/generation、expected serial 和 target 身份，不接收 provider
 canonical resolver/runtime executor、API run grant/receipt 和 Agent 远端路由，
 不能计为普通 Run 迁移完成。Run-only supervisor 的 start/observe 路由和
 effectgate 绑定已通过幂等、签名和未知结果测试；canonical runtime executor、
-API grant/receipt CAS 和 Agent `run_assigned` relay 仍待接入。
+API grant/receipt CAS 和 Agent `run_assigned` relay 仍待接入。当前 Run command
+模型缺少单资源 UID/generation，不能直接套用 guest/node grant；下一步必须先在
+API 派发合同中补齐目标资源证明，再接宿主 executor。
 
 ## 远端节点 pause/resume 集成
 
