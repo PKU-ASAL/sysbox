@@ -74,12 +74,81 @@ func (s *Server) registerExecutionGrantRoutes() {
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/authorize", s.handleAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/renew", s.handleAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grant/derive-guest", s.handleDeriveGuestExecutionGrant)
+	s.mux.HandleFunc("POST /v1/agents/{agent}/gc-grant", s.handleGCGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/revoke", s.handleRevokeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/inspect", s.handleInspectExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/authorize", s.handleHostAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/hosts/{agent}/execution-grants/stopped", s.handleStoppedExecutionGrant)
 	s.mux.HandleFunc("POST /v1/hosts/{agent}/runs/{run}/completed", s.handleHostRunCompletion)
 	s.mux.HandleFunc("POST /v1/hosts/{agent}/node-operations/{operation}/completed", s.handleHostNodeOperationCompletion)
+}
+
+type gcGrantRequest struct {
+	Candidate  hostsupervisor.GCCandidate `json:"candidate"`
+	Topology   string                     `json:"topology"`
+	SessionID  string                     `json:"session_id"`
+	ActionID   string                     `json:"action_id"`
+	CommandID  string                     `json:"command_id"`
+	Attempt    int                        `json:"attempt"`
+	LeaseOwner string                     `json:"lease_owner"`
+	BootID     string                     `json:"boot_id"`
+}
+
+func (s *Server) handleGCGrant(w http.ResponseWriter, r *http.Request) {
+	if err := s.authenticatedGrantAgent(r); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	if len(s.grantSigner) != ed25519.PrivateKeySize {
+		writeError(w, http.StatusServiceUnavailable, controlplane.ErrInvalidExecutionGrant)
+		return
+	}
+	var request gcGrantRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.Topology == "" || request.SessionID == "" || request.ActionID == "" || request.CommandID == "" || request.Attempt < 1 || request.LeaseOwner == "" || request.BootID == "" {
+		writeError(w, http.StatusBadRequest, persistence.ErrInvalidRecord)
+		return
+	}
+	if err := request.Candidate.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	manager, err := s.stateManager(request.Topology)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	canonical, err := manager.LoadWithContext(r.Context())
+	if err != nil || canonical == nil || canonical.TopologyUID != request.Candidate.TopologyUID {
+		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		return
+	}
+	if canonical.Meta.Serial < 0 {
+		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		return
+	}
+	digest, err := request.Candidate.Digest()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if request.Candidate.InventoryDigest == "" {
+		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		return
+	}
+	grant := controlplane.ExecutionGrant{TargetBootID: request.BootID, Scope: controlplane.ExecutionScope{TopologyUID: request.Candidate.TopologyUID, ResourceUID: request.Candidate.ResourceUID, Generation: request.Candidate.Generation}, AgentID: r.PathValue("agent"), SessionID: request.SessionID, ActionID: request.ActionID, CommandID: request.CommandID, Attempt: uint64(request.Attempt), Operation: "gc_delete", Digest: digest, ExpiresAt: time.Now().UTC().Add(2 * time.Minute)}
+	issued, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).Issue(r.Context(), grant, 2*time.Minute)
+	if err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
+	signed, err := controlplane.SignExecutionGrant(s.grantSigner, *issued, request.BootID, time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, signed)
 }
 
 type deriveGuestGrantRequest struct {

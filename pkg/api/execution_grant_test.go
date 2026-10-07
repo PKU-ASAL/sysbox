@@ -9,6 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 	"net/http"
@@ -252,4 +253,31 @@ func TestRunGrantDerivesGuestGrantThroughDurableAuthority(t *testing.T) {
 	stored, err := repo.InspectGrant(ctx, "agent", child.Grant.Scope)
 	require.NoError(t, err)
 	require.Equal(t, child.Grant.Epoch, stored.Epoch)
+}
+
+func TestGCGrantBindsCandidateAndSession(t *testing.T) {
+	s := guestExecutionTestServer(t)
+	_, issuer, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	require.NoError(t, s.ConfigureExecutionGrantSigner(issuer))
+	secret := "gc-secret"
+	require.NoError(t, s.apiStore.SaveAgent(context.Background(), controlplane.Agent{ID: "host-a", AuthSecret: secret, SecretHash: agent.SecretHash(secret)}))
+	ctx := context.Background()
+	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).OpenSession(ctx, "host-a", "guest-process", "")
+	require.NoError(t, err)
+	manager, err := s.stateManager("lab")
+	require.NoError(t, err)
+	canonical, err := manager.LoadWithContext(ctx)
+	require.NoError(t, err)
+	candidate := hostsupervisor.GCCandidate{Kind: "container", ExternalID: "orphan", TopologyUID: canonical.TopologyUID, OwnerUID: canonical.TopologyUID, ResourceUID: "orphan", Generation: 1, InventoryDigest: "inventory"}
+	body, _ := json.Marshal(map[string]any{"candidate": candidate, "topology": "lab", "session_id": session.ID, "action_id": "gc-action", "command_id": "gc-command", "attempt": 1, "lease_owner": "gc-worker", "boot_id": "host"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/gc-grant", bytes.NewReader(body))
+	require.NoError(t, agent.SignRequest(req, "host-a", secret, time.Now()))
+	response := httptest.NewRecorder()
+	s.ServeHTTP(response, req)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var signed controlplane.SignedExecutionGrant
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &signed))
+	require.Equal(t, "gc_delete", signed.Grant.Operation)
+	require.Equal(t, candidate.ResourceUID, signed.Grant.Scope.ResourceUID)
 }
