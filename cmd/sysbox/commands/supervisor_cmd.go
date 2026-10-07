@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var supervisorConfigFile, supervisorIdentityFile string
@@ -158,6 +159,13 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		}
 		h, err := p.ObserveAdoption(ctx, req.Evidence)
 		if err != nil {
+			return nil, err
+		}
+		receipt, err := controlplane.SignExecutionStopReceipt(key, grant.Grant, strings.TrimSpace(string(boot)), "adopt-"+req.ID, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		if err := authority.ReportNodeOperation(ctx, req.ID, receipt); err != nil {
 			return nil, err
 		}
 		return json.Marshal(h)

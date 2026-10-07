@@ -72,6 +72,7 @@ func (s *Server) registerExecutionGrantRoutes() {
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/inspect", s.handleInspectExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/authorize", s.handleHostAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/hosts/{agent}/execution-grants/stopped", s.handleStoppedExecutionGrant)
+	s.mux.HandleFunc("POST /v1/hosts/{agent}/node-operations/{operation}/completed", s.handleHostNodeOperationCompletion)
 }
 
 // Host authorization consumes a signed existing grant. It never renews or
@@ -194,6 +195,62 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"stopped": true})
+}
+
+type HostNodeOperationCompletion struct {
+	Receipt controlplane.SignedExecutionStopReceipt `json:"receipt"`
+}
+
+func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	var body HostNodeOperationCompletion
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768)).Decode(&body); err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	key := s.grantHostKeys[agentID]
+	if body.Receipt.Grant.AgentID != agentID || body.Receipt.Grant.Operation != "adoption_apply" || controlplane.VerifyExecutionStopReceipt(key, body.Receipt) != nil {
+		writeError(w, 409, controlplane.ErrInvalidExecutionGrant)
+		return
+	}
+	op, err := s.apiStore.GetNodeOperation(r.Context(), r.PathValue("operation"))
+	if err != nil || op.ID != body.Receipt.Grant.ActionID {
+		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
+	commands, err := s.apiStore.ListAgentCommands(r.Context(), agentID)
+	if err != nil {
+		writeError(w, 409, err)
+		return
+	}
+	var command *controlplane.AgentCommand
+	for i := range commands {
+		if commands[i].ID == op.CommandID {
+			command = &commands[i]
+			break
+		}
+	}
+	if command == nil || command.ActionID != body.Receipt.Grant.ActionID || command.ResourceUID != body.Receipt.Grant.Scope.ResourceUID || command.Generation != body.Receipt.Grant.Scope.Generation || uint64(command.Attempt) != body.Receipt.Grant.Attempt {
+		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
+	report := *op
+	report.Status = controlplane.NodeOperationStatusDone
+	report.AgentID = agentID
+	report.ActionID = body.Receipt.Grant.ActionID
+	report.ResourceUID = body.Receipt.Grant.Scope.ResourceUID
+	report.Generation = body.Receipt.Grant.Scope.Generation
+	report.LeaseEpoch = int64(body.Receipt.Grant.Epoch)
+	report.LeaseOwner = command.LeaseOwner
+	report.Attempt = command.Attempt
+	report.LeaseEpoch = command.LeaseEpoch
+	report.EndedAt = body.Receipt.StoppedAt
+	completed, err := s.nodeOperations().CompleteFromAgent(agentID, op.ID, report)
+	if err != nil {
+		writeError(w, 409, err)
+		return
+	}
+	writeJSON(w, 200, completed)
 }
 func (s *Server) authenticatedGrantAgent(r *http.Request) error {
 	id := r.PathValue("agent")
@@ -349,7 +406,16 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	switch cmd.Type {
 	case "node_operation":
 		if cmd.Operation.Operation == "adoption_apply" {
-			request, err := controlplane.FromAdoptionCommand(cmd); if err != nil { return controlplane.ExecutionGrant{}, err }; digest, err = request.Digest(); if err != nil { return controlplane.ExecutionGrant{}, err }; operation = "adoption_apply"; break
+			request, err := controlplane.FromAdoptionCommand(cmd)
+			if err != nil {
+				return controlplane.ExecutionGrant{}, err
+			}
+			digest, err = request.Digest()
+			if err != nil {
+				return controlplane.ExecutionGrant{}, err
+			}
+			operation = "adoption_apply"
+			break
 		}
 		if cmd.Operation.Operation == "ssh_access_apply" || cmd.Operation.Operation == "ssh_access_delete" {
 			request, err := controlplane.FromSSHAccessCommand(cmd)
