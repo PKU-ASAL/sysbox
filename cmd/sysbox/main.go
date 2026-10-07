@@ -49,10 +49,11 @@ func main() {
 	mustRegisterDriver(driver.Descriptor{
 		Name: "firecracker", Version: "1", Node: fcSub, NIC: fcSub,
 		Console: fcSub, GuestExec: fcSub, GuestFiles: fcSub, Artifact: fcSub,
-		NodeState:    fcSub,
-		Power:        fcSub,
-		GuestNetwork: fcSub,
-		Reset:        fcSub,
+		NodeState:         fcSub,
+		Power:             fcSub,
+		GuestNetwork:      fcSub,
+		OwnershipAdoption: fcSub,
+		Reset:             fcSub,
 	})
 
 	libvirtSub := libvirt.New(cfg.Providers.Libvirt.Workdir)
