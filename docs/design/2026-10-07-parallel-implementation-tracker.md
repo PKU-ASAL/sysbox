@@ -10,7 +10,7 @@
 | P3 | 持久task、sealed memfd、cgroup+pidfd、monotonic guard、续租、分页输出、SSH/vsock通用SPI；真实SSH和Docker supervisor任务接续验收 | 完整Agent服务重启接管验收；全执行路径统一隔离 |
 | P4 | session+sequence observation ledger、guest活动枚举、receipt失效 | 全API迁移回归、完整lease撤销/guest取消/hoststop集成 |
 | P5 | adoption SPI、journal动作、Docker不可变ID sidecar；新增只读 `/adoption-plan`，校验 canonical state、地址和 provider capability，不写 state/journal、不调用 ApplyAdoption | API inspection evidence/confirm、libvirt/Firecracker adapters、真实接管与清理 |
-| P6 | aggregate format2快照、元数据restore monotonic serial、身份约束、API CRUD；restore/force-unlock 共用活动操作检查，活跃 Run、节点操作、guest task/file 或未上报 host stop 时拒绝维护；force-unlock 还拒绝 live state lease，缺少完整活动证据时 fail-closed | grant撤销与freeze、force-unlock 审计回执、恢复较旧资源集合的显式reconcile、后端统一 CAS restore |
+| P6 | aggregate format2快照、元数据restore monotonic serial、身份约束、API CRUD；restore/force-unlock 共用活动操作检查，活跃 Run、节点操作、guest task/file 或未上报 host stop 时拒绝维护；force-unlock 还拒绝 live state lease，缺少完整活动证据时 fail-closed；Local/SQLite/Postgres restore 统一校验 topology/resource incarnation | grant撤销与freeze、force-unlock 审计回执、恢复较旧资源集合的显式reconcile、后端同一事务内 CAS restore |
 | P7 | managed Docker bridge导出/核验、FC/libvirt NIC消费 | 现有网络依赖自动重接、混合netns单VM支持边界；SSH服务生命周期与runtime。未接入的SSH配置草稿已删除，不计为实现 |
 | P8 | 依赖合同已明确 | 自动GC尚未实施，不算完成 |
 | P9 | 分项真实Docker bridge/TAP、private cgroup、KVM测试 | 双宿主、全故障矩阵、升级/main整合，不算完成 |

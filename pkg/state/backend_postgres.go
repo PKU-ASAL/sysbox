@@ -459,6 +459,13 @@ WHERE topology=$1 AND id=$2`, b.topology(), id).Scan(&data, &checksum)
 			return fmt.Errorf("postgres snapshot checksum mismatch for %q", id)
 		}
 	}
+	current, err := b.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if err := validateSnapshotIncarnation(current, data); err != nil {
+		return err
+	}
 	return b.Save(ctx, data)
 }
 

@@ -292,6 +292,13 @@ func (b *LocalBackend) RestoreSnapshot(_ context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("read snapshot: %w", err)
 	}
+	current, err := b.Load(context.Background())
+	if err != nil {
+		return err
+	}
+	if err := validateSnapshotIncarnation(current, data); err != nil {
+		return err
+	}
 	return b.Save(context.Background(), data)
 }
 

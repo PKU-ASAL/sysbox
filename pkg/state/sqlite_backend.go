@@ -412,6 +412,13 @@ func (b *SQLiteBackend) RestoreSnapshot(ctx context.Context, id string) error {
 			return fmt.Errorf("sqlite snapshot checksum mismatch for %q", id)
 		}
 	}
+	current, err := b.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if err := validateSnapshotIncarnation(current, data); err != nil {
+		return err
+	}
 	return b.Save(ctx, data)
 }
 
