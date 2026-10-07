@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 )
@@ -175,6 +176,17 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 	var err error
 	var record TaskRecord
 	switch request.Operation {
+	case "adoption-apply", "adoption-observe":
+		r := request.AdoptionRequest
+		if r == nil {
+			response.Error = "adoption request required"
+			return response
+		}
+		a, parseErr := address.Parse(r.Address)
+		if parseErr != nil || a.Type != "sysbox_node" || a.Name != request.Target.Node || r.Topology != request.Target.Topology || r.TopologyUID != request.Target.Scope.TopologyUID || r.ResourceUID != request.Target.Scope.ResourceUID || r.Generation != request.Target.Scope.Generation {
+			response.Error = "adoption target mismatch"
+			return response
+		}
 	case "info", "start", "observe", "cancel", "renew", "output":
 		if s.Dispatcher == nil {
 			response.Error = "host task supervisor unavailable"
@@ -188,6 +200,14 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 		}
 	}
 	switch request.Operation {
+	case "adoption-info":
+		// This target does not exist in canonical state until adoption commits.
+		// Return only the configured host boot; this read grants no authority.
+		if s.Adoption == nil || s.Adoption.HostBootID == "" {
+			err = fmt.Errorf("host adoption coordinator unavailable")
+			break
+		}
+		response.BootID = s.Adoption.HostBootID
 	case "file-info":
 		if s.Files == nil {
 			err = fmt.Errorf("host file supervisor unavailable")

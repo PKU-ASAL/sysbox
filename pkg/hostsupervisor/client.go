@@ -115,6 +115,17 @@ func (c *TaskClient) HostBootID(ctx context.Context) (string, error) {
 	}
 	return out.BootID, nil
 }
+
+func (c *TaskClient) AdoptionHostBootID(ctx context.Context) (string, error) {
+	r, err := c.call(ctx, Request{Operation: "adoption-info"})
+	if err != nil {
+		return "", err
+	}
+	if r.BootID == "" {
+		return "", guesttask.ErrUnknown
+	}
+	return r.BootID, nil
+}
 func (c *TaskClient) ExecutePower(ctx context.Context, req controlplane.NodePowerRequest, g controlplane.SignedExecutionGrant) error {
 	_, err := c.call(ctx, Request{Operation: "power-apply", Power: &req, Grant: &g})
 	return err

@@ -55,7 +55,7 @@ func runGrantedAdoption(ctx context.Context, opts Options, cmd controlplane.Agen
 	}
 	target := hostsupervisor.TargetRef{Topology: req.Topology, Node: cmd.Operation.Node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}}
 	client := hostsupervisor.NewTaskClient(opts.HostSupervisorSocket, target)
-	boot, err := client.HostBootID(ctx)
+	boot, err := client.AdoptionHostBootID(ctx)
 	if err != nil {
 		return err
 	}

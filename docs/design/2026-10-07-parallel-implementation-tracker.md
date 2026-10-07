@@ -17,6 +17,13 @@
 
 ## 当前收敛规则
 
+adoption 启动入口修复：Agent 之前复用 power 的 host-info，要求未被接管的节点已
+存在于 canonical state，因而无法开始真正接管。新增只读 `adoption-info` 返回
+配置的宿主 boot，Agent 改用该入口；此查询不产生授权。apply/observe 同时验证
+外层 TargetRef 与签名请求中的 topology UID、节点和 generation 一致。真实 Unix
+socket 的 Agent→adoption-only supervisor 回归通过，provider 使用测试回调，
+不将此测试当作真实资源或跨宿主接管验收。
+
 2026-10-08 已补跑独立 Postgres 16 临时实例：adoption 退休 command 完成、证据篡改
 拒绝、原回执重试、后继 epoch 和 grant recovery 的 Postgres 子测试实际执行并通过
 race，未跳过。共享 NodeOperation transition 新增 Adoption/SSHAccess 请求不可变
