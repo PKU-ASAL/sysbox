@@ -10,6 +10,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/effectgate"
+	"github.com/oslab/sysbox/pkg/transport"
 )
 
 // RunCoordinator shares the durable effect boundary of other host actions.
@@ -51,7 +52,8 @@ func (c *RunCoordinator) Start(ctx context.Context, req RunRequest, g controlpla
 	if err != nil {
 		return nil, err
 	}
-	raw, err := gate.Execute(ctx, g, req.ActionID, effect)
+	effectCtx := transport.WithParentExecutionGrant(ctx, g)
+	raw, err := gate.Execute(effectCtx, g, req.ActionID, effect)
 	if err != nil {
 		return nil, err
 	}

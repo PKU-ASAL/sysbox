@@ -11,6 +11,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -220,4 +221,35 @@ func TestGrantScopeComesFromImmutableDispatchNotNestedStateLoad(t *testing.T) {
 		_, err := r.OpenSession(context.Background(), "agent", "incarnation", "")
 		require.NoError(t, err)
 	})
+}
+
+func TestRunGrantDerivesGuestGrantThroughDurableAuthority(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	issuerPub, issuerKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	require.NoError(t, s.ConfigureExecutionGrantSigner(issuerKey))
+	secret := "derive-secret"
+	require.NoError(t, s.apiStore.SaveAgent(context.Background(), controlplane.Agent{ID: "agent", AuthSecret: secret, SecretHash: agent.SecretHash(secret)}))
+	ctx := context.Background()
+	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	session, err := repo.OpenSession(ctx, "agent", "host-process", "")
+	require.NoError(t, err)
+	parent, err := repo.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology"}, AgentID: "agent", SessionID: session.ID, ActionID: "run", CommandID: "command", Attempt: 1, Operation: "run_apply", Digest: "run-digest", TargetBootID: "host"}, time.Minute)
+	require.NoError(t, err)
+	signed, err := controlplane.SignExecutionGrant(issuerKey, *parent, "host", time.Now())
+	require.NoError(t, err)
+	body, _ := json.Marshal(map[string]any{"parent": signed, "task_id": "task", "task_digest": "task-digest", "resource_uid": "resource", "generation": 1, "guest_boot_id": "guest"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/agents/agent/execution-grant/derive-guest", bytes.NewReader(body))
+	require.NoError(t, agent.SignRequest(req, "agent", secret, time.Now()))
+	response := httptest.NewRecorder()
+	s.ServeHTTP(response, req)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var child controlplane.SignedExecutionGrant
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &child))
+	require.NoError(t, controlplane.VerifyExecutionGrant(issuerPub, child, "guest", time.Now()))
+	require.Equal(t, "guest_task", child.Grant.Operation)
+	require.Equal(t, parent.CommandID, child.Grant.CommandID)
+	stored, err := repo.InspectGrant(ctx, "agent", child.Grant.Scope)
+	require.NoError(t, err)
+	require.Equal(t, child.Grant.Epoch, stored.Epoch)
 }

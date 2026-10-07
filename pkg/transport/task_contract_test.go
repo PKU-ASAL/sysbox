@@ -73,3 +73,38 @@ func TestTaskObservationRejectsDifferentBootAndEpoch(t *testing.T) {
 		})
 	}
 }
+
+type resolverTaskCaller struct{}
+
+func (resolverTaskCaller) taskCall(_ context.Context, call guesttask.Call) (guesttask.Response, error) {
+	if call.Request == nil {
+		return guesttask.Response{}, nil
+	}
+	digest, _ := call.Request.Digest()
+	return guesttask.Response{Record: &guesttask.Record{ID: call.Request.ID, Digest: digest, BootID: "guest", PID: 42}}, nil
+}
+
+func TestTaskStartDerivesGrantForHostRunContext(t *testing.T) {
+	req := substrate.ExecRequest{Program: "true", Shell: substrate.ShellNone}
+	identity := substrate.OperationIdentity{ActionID: "run", OwnerUID: "topology", TopologyUID: "topology", ResourceUID: "resource", Generation: 1}
+	called := false
+	ctx := substrate.WithOperationIdentity(context.Background(), identity)
+	ctx = WithTaskGrantResolver(ctx, func(ctx context.Context, id string, request substrate.ExecRequest, got substrate.OperationIdentity) (controlplane.SignedExecutionGrant, error) {
+		called = true
+		task, err := BuildTaskRequest(ctx, id, request)
+		if err != nil {
+			return controlplane.SignedExecutionGrant{}, err
+		}
+		digest, err := task.Digest()
+		if err != nil {
+			return controlplane.SignedExecutionGrant{}, err
+		}
+		return controlplane.SignedExecutionGrant{BootID: "guest", Grant: controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: got.TopologyUID, ResourceUID: got.ResourceUID, Generation: got.Generation}, Digest: digest, Epoch: 1, Operation: "guest_task", ActionID: id}}, nil
+	})
+	caller := resolverTaskCaller{}
+	handle, err := startTask(ctx, caller, executionIdentity{nodeID: "node", generation: 1}, req)
+	require.NoError(t, err)
+	require.True(t, called)
+	require.Equal(t, "guest", handle.BootID)
+	require.NotEmpty(t, handle.ID)
+}

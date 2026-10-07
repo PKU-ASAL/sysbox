@@ -15,7 +15,9 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/spf13/cobra"
 	"io"
 	"os"
@@ -130,8 +132,51 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 				return nil, fmt.Errorf("host run target identity changed")
 			}
 		}
+		runCtx := transport.WithTaskGrantResolver(ctx, func(taskCtx context.Context, taskID string, taskReq substrate.ExecRequest, identity substrate.OperationIdentity) (controlplane.SignedExecutionGrant, error) {
+			parent, ok := transport.ParentExecutionGrantFromContext(taskCtx)
+			if !ok {
+				return controlplane.SignedExecutionGrant{}, fmt.Errorf("host run parent grant unavailable")
+			}
+			latest, loadErr := manager.LoadWithContext(taskCtx)
+			if loadErr != nil || latest == nil || latest.TopologyUID != identity.TopologyUID {
+				return controlplane.SignedExecutionGrant{}, fmt.Errorf("guest task canonical state unavailable")
+			}
+			var resource *state.Resource
+			for i := range latest.Resources {
+				if latest.Resources[i].ResourceUID == identity.ResourceUID {
+					resource = &latest.Resources[i]
+					break
+				}
+			}
+			if resource == nil || resource.OwnerUID != latest.TopologyUID || resource.Generation != identity.Generation {
+				return controlplane.SignedExecutionGrant{}, fmt.Errorf("guest task resource identity changed")
+			}
+			target, err := resolver.Resolve(taskCtx, hostsupervisor.TargetRef{Topology: req.Topology, Node: resource.Address.Name, Scope: controlplane.ExecutionScope{TopologyUID: identity.TopologyUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation}})
+			if err != nil {
+				return controlplane.SignedExecutionGrant{}, err
+			}
+			bootProvider, ok := target.Connection.(interface {
+				GuestTaskBootID(context.Context) (string, error)
+			})
+			if !ok {
+				return controlplane.SignedExecutionGrant{}, fmt.Errorf("host run target has no guest task boot identity")
+			}
+			bootID, err := bootProvider.GuestTaskBootID(taskCtx)
+			if err != nil {
+				return controlplane.SignedExecutionGrant{}, err
+			}
+			task, err := transport.BuildTaskRequest(taskCtx, taskID, taskReq)
+			if err != nil {
+				return controlplane.SignedExecutionGrant{}, err
+			}
+			digest, err := task.Digest()
+			if err != nil {
+				return controlplane.SignedExecutionGrant{}, err
+			}
+			return authority.DeriveGuestGrant(taskCtx, parent, taskID, digest, identity.ResourceUID, identity.Generation, bootID)
+		})
 		run := &controlplane.Run{ID: req.RunID, Topology: req.Topology, Revision: req.Revision, SnapshotPath: path, Op: req.Action, Operation: req.Action, Target: req.Target, Status: controlplane.RunRunning, AgentID: ident.ID, StartedAt: time.Now().UTC(), QueuedAt: time.Now().UTC(), Attempt: 1, LeaseOwner: "host-supervisor"}
-		runExecutor.ExecuteContext(ctx, run)
+		runExecutor.ExecuteContext(runCtx, run)
 		if run.Status != controlplane.RunDone {
 			return nil, fmt.Errorf("host run failed: %s", run.Err)
 		}

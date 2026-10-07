@@ -21,6 +21,11 @@ type AuthorityClient struct {
 }
 
 func (c AuthorityClient) post(ctx context.Context, path string, value any, signed bool) error {
+	return c.postJSON(ctx, path, value, nil, signed)
+}
+
+func (c AuthorityClient) postJSON(ctx context.Context, path string, value any, out any, signed ...bool) error {
+	authenticated := len(signed) == 0 || signed[0]
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -33,7 +38,7 @@ func (c AuthorityClient) post(ctx context.Context, path string, value any, signe
 	if c.Identity.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Identity.Token)
 	}
-	if signed {
+	if authenticated {
 		if err := agent.SignRequest(req, c.Identity.ID, c.Identity.Secret, time.Now()); err != nil {
 			return err
 		}
@@ -51,6 +56,11 @@ func (c AuthorityClient) post(ctx context.Context, path string, value any, signe
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("host authority request rejected (HTTP %d)", resp.StatusCode)
 	}
+	if out != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 func (c AuthorityClient) Authorize(ctx context.Context, grant controlplane.SignedExecutionGrant) error {
@@ -65,6 +75,12 @@ func (c AuthorityClient) ReportRun(ctx context.Context, runID string, receipt co
 		return fmt.Errorf("invalid run ID")
 	}
 	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/runs/"+runID+"/completed", map[string]any{"receipt": receipt, "evidence": evidence}, false)
+}
+
+func (c AuthorityClient) DeriveGuestGrant(ctx context.Context, parent controlplane.SignedExecutionGrant, taskID, taskDigest, resourceUID string, generation int64, guestBootID string) (controlplane.SignedExecutionGrant, error) {
+	var out controlplane.SignedExecutionGrant
+	err := c.postJSON(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grant/derive-guest", map[string]any{"parent": parent, "task_id": taskID, "task_digest": taskDigest, "resource_uid": resourceUID, "generation": generation, "guest_boot_id": guestBootID}, &out)
+	return out, err
 }
 
 func (c AuthorityClient) ReportNodeOperation(ctx context.Context, operation string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {

@@ -73,12 +73,77 @@ func (s *Server) registerExecutionGrantRoutes() {
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant", s.handleExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/authorize", s.handleAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/renew", s.handleAuthorizeExecutionGrant)
+	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grant/derive-guest", s.handleDeriveGuestExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/revoke", s.handleRevokeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/inspect", s.handleInspectExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/authorize", s.handleHostAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/hosts/{agent}/execution-grants/stopped", s.handleStoppedExecutionGrant)
 	s.mux.HandleFunc("POST /v1/hosts/{agent}/runs/{run}/completed", s.handleHostRunCompletion)
 	s.mux.HandleFunc("POST /v1/hosts/{agent}/node-operations/{operation}/completed", s.handleHostNodeOperationCompletion)
+}
+
+type deriveGuestGrantRequest struct {
+	Parent      controlplane.SignedExecutionGrant `json:"parent"`
+	TaskID      string                            `json:"task_id"`
+	TaskDigest  string                            `json:"task_digest"`
+	ResourceUID string                            `json:"resource_uid"`
+	Generation  int64                             `json:"generation"`
+	GuestBootID string                            `json:"guest_boot_id"`
+}
+
+func (s *Server) handleDeriveGuestExecutionGrant(w http.ResponseWriter, r *http.Request) {
+	if err := s.authenticatedGrantAgent(r); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	if len(s.grantSigner) != ed25519.PrivateKeySize {
+		writeError(w, http.StatusServiceUnavailable, controlplane.ErrInvalidExecutionGrant)
+		return
+	}
+	var request deriveGuestGrantRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.TaskID == "" || request.TaskDigest == "" || request.ResourceUID == "" || request.Generation < 1 || request.GuestBootID == "" {
+		writeError(w, http.StatusBadRequest, persistence.ErrInvalidRecord)
+		return
+	}
+	parent := request.Parent
+	if parent.Grant.AgentID != r.PathValue("agent") || controlplane.VerifyExecutionGrant(s.grantSigner.Public().(ed25519.PublicKey), parent, parent.BootID, time.Now()) != nil {
+		writeError(w, http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
+		return
+	}
+	stored, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).InspectGrant(r.Context(), parent.Grant.AgentID, parent.Grant.Scope)
+	if err != nil || stored == nil || stored.Epoch != parent.Grant.Epoch || stored.State != controlplane.GrantActive || stored.Digest != parent.Grant.Digest {
+		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		return
+	}
+	child := controlplane.ExecutionGrant{TargetBootID: request.GuestBootID, Scope: controlplane.ExecutionScope{TopologyUID: parent.Grant.Scope.TopologyUID, ResourceUID: request.ResourceUID, Generation: request.Generation}, AgentID: parent.Grant.AgentID, SessionID: parent.Grant.SessionID, ActionID: request.TaskID, CommandID: parent.Grant.CommandID, Attempt: parent.Grant.Attempt, Operation: "guest_task", Digest: request.TaskDigest, ExpiresAt: parent.Grant.ExpiresAt}
+	ttl := time.Until(parent.Grant.ExpiresAt)
+	derived, err := mustDeriveGuestGrant(r.Context(), apiExecutionGrantStorage{store: s.apiStore}, parent.Grant, child, ttl)
+	if err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
+	child = *derived
+	signed, err := controlplane.SignExecutionGrant(s.grantSigner, child, request.GuestBootID, time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, signed)
+}
+
+func mustDeriveGuestGrant(ctx context.Context, storage apiExecutionGrantStorage, parent, child controlplane.ExecutionGrant, ttl time.Duration) (*controlplane.ExecutionGrant, error) {
+	var result *controlplane.ExecutionGrant
+	err := storage.UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+		memory := &grantTransaction{raw: raw}
+		derived, err := persistence.NewExecutionGrantRepository(memory).DeriveGuestTask(ctx, parent, child, ttl)
+		if err == nil {
+			result = derived
+		}
+		return memory.raw, err
+	})
+	return result, err
 }
 
 type hostRunCompletion struct {

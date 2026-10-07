@@ -97,6 +97,27 @@ func TestGrantSessionCASAndTopologyConflicts(t *testing.T) {
 	require.ErrorIs(t, err, ErrConflict)
 }
 
+func TestRunGrantDerivesDurableGuestTaskGrant(t *testing.T) {
+	r := NewFilesystemExecutionGrantRepository(t.TempDir())
+	ctx := context.Background()
+	session, err := r.OpenSession(ctx, "agent", "host", "")
+	require.NoError(t, err)
+	parent, err := r.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology"}, AgentID: "agent", SessionID: session.ID, ActionID: "run", CommandID: "command", Attempt: 1, Operation: "run_apply", Digest: "run-digest", TargetBootID: "host"}, time.Minute)
+	require.NoError(t, err)
+	child := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: session.ID, ActionID: "task", CommandID: "command", Attempt: 1, Operation: "guest_task", Digest: "task-digest", TargetBootID: "guest"}
+	derived, err := r.DeriveGuestTask(ctx, *parent, child, time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, "guest_task", derived.Operation)
+	require.Greater(t, derived.Epoch, parent.Epoch)
+	stored, err := r.InspectGrant(ctx, "agent", child.Scope)
+	require.NoError(t, err)
+	require.Equal(t, derived.Epoch, stored.Epoch)
+	bad := child
+	bad.Digest = "different"
+	_, err = r.DeriveGuestTask(ctx, *parent, bad, time.Minute)
+	require.ErrorIs(t, err, ErrConflict)
+}
+
 func TestConcurrentGrantIssueHasOneWinner(t *testing.T) {
 	r := NewFilesystemExecutionGrantRepository(t.TempDir())
 	ctx := context.Background()

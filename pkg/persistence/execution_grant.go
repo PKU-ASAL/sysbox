@@ -173,7 +173,7 @@ func (r *ExecutionGrantRepository) update(ctx context.Context, fn func(*executio
 			}
 			if g.State != controlplane.GrantStopped {
 				for otherKey, other := range a.Grants {
-					if otherKey != key && other.State != controlplane.GrantStopped && scopesOverlap(g.Scope, other.Scope) {
+					if otherKey != key && other.State != controlplane.GrantStopped && scopesOverlap(g.Scope, other.Scope) && !nestedRunGrantPair(g, other) {
 						return nil, ErrCorruptRecord
 					}
 				}
@@ -197,6 +197,16 @@ func (r *ExecutionGrantRepository) update(ctx context.Context, fn func(*executio
 		return err
 	}
 	return transitionErr
+}
+
+func nestedRunGrantPair(a, b controlplane.ExecutionGrant) bool {
+	if a.Scope.ResourceUID == "" && b.Scope.ResourceUID != "" {
+		return (a.Operation == "run_apply" || a.Operation == "run_destroy") && b.Operation == "guest_task" && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt
+	}
+	if b.Scope.ResourceUID == "" && a.Scope.ResourceUID != "" {
+		return (b.Operation == "run_apply" || b.Operation == "run_destroy") && a.Operation == "guest_task" && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt
+	}
+	return false
 }
 
 // OpenSession is authenticated registration CAS. A delayed old registration
@@ -280,6 +290,50 @@ func (r *ExecutionGrantRepository) Issue(ctx context.Context, request controlpla
 		result.State = controlplane.GrantActive
 		result.StopReceipt = ""
 		a.Grants[grantScopeKey(request.Scope)] = result
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeriveGuestTask creates a durable resource-scoped guest grant under an
+// active host-owned Run grant. The parent topology grant remains active while
+// child resource grants occupy their own exclusion keys.
+func (r *ExecutionGrantRepository) DeriveGuestTask(ctx context.Context, parent, child controlplane.ExecutionGrant, ttl time.Duration) (*controlplane.ExecutionGrant, error) {
+	if parent.AgentID == "" || parent.SessionID == "" || parent.Operation != "run_apply" && parent.Operation != "run_destroy" || child.Operation != "guest_task" || child.Scope.TopologyUID != parent.Scope.TopologyUID || child.Scope.ResourceUID == "" || child.Scope.Generation < 1 || child.AgentID != parent.AgentID || child.SessionID != parent.SessionID || child.CommandID != parent.CommandID || child.Attempt != parent.Attempt || child.ActionID == "" || child.Digest == "" || child.TargetBootID == "" || !validTTL(ttl) {
+		return nil, ErrInvalidRecord
+	}
+	var result controlplane.ExecutionGrant
+	err := r.update(ctx, func(a *executionAuthority) error {
+		current, ok := a.Grants[grantScopeKey(parent.Scope)]
+		if !ok || current.State != controlplane.GrantActive || !sameGrant(current, parent) || !a.ObservedAt.Before(current.ExpiresAt) {
+			return ErrConflict
+		}
+		if parent.Scope.ResourceUID != "" && (parent.Scope.ResourceUID != child.Scope.ResourceUID || parent.Scope.Generation != child.Scope.Generation) {
+			return ErrConflict
+		}
+		for key, existing := range a.Grants {
+			if key == grantScopeKey(parent.Scope) || existing.State == controlplane.GrantStopped {
+				continue
+			}
+			if scopesOverlap(existing.Scope, child.Scope) {
+				return ErrConflict
+			}
+		}
+		if a.Epoch == math.MaxUint64 {
+			return ErrConflict
+		}
+		a.Epoch++
+		result = child
+		result.Epoch = a.Epoch
+		result.ExpiresAt = a.ObservedAt.Add(ttl)
+		if current.ExpiresAt.Before(result.ExpiresAt) {
+			result.ExpiresAt = current.ExpiresAt
+		}
+		result.State = controlplane.GrantActive
+		a.Grants[grantScopeKey(result.Scope)] = result
 		return nil
 	})
 	if err != nil {

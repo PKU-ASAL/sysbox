@@ -3,6 +3,8 @@ package transport
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -10,6 +12,7 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 	"io"
+	"strings"
 )
 
 type executionIdentity struct {
@@ -26,6 +29,28 @@ type taskAuthorization struct {
 	Grant controlplane.SignedExecutionGrant
 }
 type taskAuthorizationKey struct{}
+type taskGrantResolverKey struct{}
+type parentExecutionGrantKey struct{}
+
+// TaskGrantResolver is used only inside the trusted host supervisor. It
+// derives a durable, resource-scoped guest_task grant for a run's provider
+// effect; workers never receive this callback.
+type TaskGrantResolver func(context.Context, string, substrate.ExecRequest, substrate.OperationIdentity) (controlplane.SignedExecutionGrant, error)
+
+func WithTaskGrantResolver(ctx context.Context, resolver TaskGrantResolver) context.Context {
+	return context.WithValue(ctx, taskGrantResolverKey{}, resolver)
+}
+func taskGrantResolverFromContext(ctx context.Context) (TaskGrantResolver, bool) {
+	r, ok := ctx.Value(taskGrantResolverKey{}).(TaskGrantResolver)
+	return r, ok
+}
+func WithParentExecutionGrant(ctx context.Context, grant controlplane.SignedExecutionGrant) context.Context {
+	return context.WithValue(ctx, parentExecutionGrantKey{}, grant)
+}
+func ParentExecutionGrantFromContext(ctx context.Context) (controlplane.SignedExecutionGrant, bool) {
+	g, ok := ctx.Value(parentExecutionGrantKey{}).(controlplane.SignedExecutionGrant)
+	return g, ok
+}
 
 // WithTaskGrant supplies control-plane authority; it never signs or renews it.
 func WithTaskGrant(ctx context.Context, id string, grant controlplane.SignedExecutionGrant) context.Context {
@@ -98,6 +123,24 @@ func (c *VsockConnection) RenewExecution(ctx context.Context, h substrate.Execut
 
 func startTask(ctx context.Context, conn taskCaller, identity executionIdentity, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
 	auth, ok := ctx.Value(taskAuthorizationKey{}).(taskAuthorization)
+	if !ok {
+		resolver, canResolve := taskGrantResolverFromContext(ctx)
+		op, hasIdentity := substrate.OperationIdentityFromContext(ctx)
+		if !canResolve || !hasIdentity || op.Validate() != nil {
+			return substrate.ExecutionHandle{}, fmt.Errorf("persistent guest task requires bound node and signed execution grant")
+		}
+		id := derivedTaskID(op, req)
+		_, err := BuildTaskRequest(ctx, id, req)
+		if err != nil {
+			return substrate.ExecutionHandle{}, err
+		}
+		grant, err := resolver(ctx, id, req, op)
+		if err != nil {
+			return substrate.ExecutionHandle{}, err
+		}
+		auth = taskAuthorization{ID: id, Grant: grant}
+		ok = true
+	}
 	if !ok || identity.nodeID == "" || identity.generation < 1 || identity.generation != auth.Grant.Grant.Scope.Generation {
 		return substrate.ExecutionHandle{}, fmt.Errorf("persistent guest task requires bound node and signed execution grant")
 	}
@@ -120,6 +163,13 @@ func startTask(ctx context.Context, conn taskCaller, identity executionIdentity,
 	}
 	handle.PID = response.Record.PID
 	return handle, nil
+}
+
+func derivedTaskID(identity substrate.OperationIdentity, req substrate.ExecRequest) string {
+	argv, _ := CommandArgv(req)
+	raw := identity.ActionID + "\x00" + identity.ResourceUID + "\x00" + strings.Join(argv, "\x00")
+	sum := sha256.Sum256([]byte(raw))
+	return "run-task-" + hex.EncodeToString(sum[:])
 }
 func taskRecord(ctx context.Context, conn taskCaller, identity executionIdentity, h substrate.ExecutionHandle, op string) (*guesttask.Record, error) {
 	if h.ID == "" || h.Digest == "" || h.NodeID != identity.nodeID || h.Generation != identity.generation || h.BootID == "" || h.Epoch == 0 {
