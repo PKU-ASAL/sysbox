@@ -17,6 +17,13 @@
 
 ## 当前收敛规则
 
+2026-10-08 adoption 元数据重试修复：`CommitAdoptionEvidence` 以稳定 action identity
+定位持久 journal，用包含原 expected serial、inspection evidence 和资源内容的摘要
+核对重复请求；本地接收时间不影响摘要。原始请求在 intent 后中断或 outcome 回应丢失
+后可冷重开 repository 重试，沿用首条 candidate，不新增 action 或递增 serial。
+已有同名/同身份资源但没有对应成功 journal 不算完成证据。文件与 SQLite 的故障
+回归通过；API 不再关闭服务器共享的 repository。此项不代表 adoption 完整流程已验收。
+
 停止继续扩散接口，优先恢复全仓绿色并完成独立审查，再形成检查点。测试fixture迁移必须显式创建session/sequence，不得让生产代码兼容缺失证明。所有失败保留原因；真实环境缺失和skip不算通过。
 
 ## 普通 Run 宿主迁移：正在实施

@@ -10,6 +10,7 @@ import (
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"time"
 )
 
 func InspectAdoption(ctx context.Context, provider, name string, spec substrate.NodeSpec) (substrate.AdoptionEvidence, error) {
@@ -133,27 +134,83 @@ func CommitAdoptionEvidence(ctx context.Context, actions ActionRepository, runID
 	if err != nil {
 		return err
 	}
-	if st.Meta.Serial != expectedSerial || st.TopologyUID != identity.TopologyUID {
+	if st.TopologyUID != identity.TopologyUID {
 		return ErrPlanStale
 	}
-	if st.FindResource(addr) != nil {
-		return ErrPlanStale
-	}
-	raw, _ := json.Marshal(struct {
-		Run, Topology string
-		Identity      substrate.OperationIdentity
-		Evidence      substrate.AdoptionEvidence
-		Resource      state.Resource
-	}{runID, topology, identity, evidence, resource})
-	sum := sha256.Sum256(raw)
-	digest := fmt.Sprintf("%x", sum)
-	action := ActionRecord{ID: "adopt-" + digest, Topology: topology, RunID: runID, Resource: addr, Action: controlplane.PlanActionAdopt, Status: ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource, EffectComplete: true}
-	if err := actions.CommitActionIntent(ctx, action); err != nil {
+	// API receipt retries reconstruct these local timestamps. They are not
+	// part of the authorized result; retain the first persisted values.
+	stableResource := resource
+	stableResource.CreatedAt, stableResource.UpdatedAt = time.Time{}, time.Time{}
+	raw, err := json.Marshal(struct {
+		Run, Topology  string
+		Identity       substrate.OperationIdentity
+		Evidence       substrate.AdoptionEvidence
+		Resource       state.Resource
+		ExpectedSerial int64
+	}{runID, topology, identity, evidence, stableResource, expectedSerial})
+	if err != nil {
 		return err
 	}
+	sum := sha256.Sum256(raw)
+	digest := fmt.Sprintf("%x", sum)
+	key, err := json.Marshal([]string{topology, runID, identity.ActionID})
+	if err != nil {
+		return err
+	}
+	action := ActionRecord{ID: fmt.Sprintf("adopt-evidence-%x", sha256.Sum256(key)), Topology: topology, RunID: runID, Resource: addr, Action: controlplane.PlanActionAdopt, Status: ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource, EffectComplete: true}
+	journal, err := actions.LoadActions(ctx, topology)
+	if err != nil {
+		return err
+	}
+	recovering := false
+	for _, old := range journal {
+		if old.ID != action.ID {
+			continue
+		}
+		if old.DesiredDigest != digest || old.StateSerial != expectedSerial || old.Topology != topology || old.RunID != runID || !old.Resource.Equal(addr) || old.Action != controlplane.PlanActionAdopt || old.OwnerUID != identity.OwnerUID || old.ResourceUID != identity.ResourceUID || old.Generation != identity.Generation || !old.EffectComplete || old.Candidate == nil {
+			return ErrPlanStale
+		}
+		if old.Status == ActionSucceeded {
+			return nil
+		}
+		action = old
+		recovering = true
+		break
+	}
+	if st.Meta.Serial != expectedSerial || st.FindResource(addr) != nil {
+		return ErrPlanStale
+	}
+	if !recovering {
+		if err := actions.CommitActionIntent(ctx, action); err != nil {
+			return err
+		}
+		// Another identical completion may have won intent creation. Reuse
+		// its exact candidate instead of overwriting first-commit timestamps.
+		journal, err = actions.LoadActions(ctx, topology)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, saved := range journal {
+			if saved.ID != action.ID {
+				continue
+			}
+			if saved.DesiredDigest != digest || saved.Candidate == nil {
+				return ErrPlanStale
+			}
+			if saved.Status == ActionSucceeded {
+				return nil
+			}
+			action = saved
+			found = true
+			break
+		}
+		if !found {
+			return ErrActionUncertain
+		}
+	}
 	action.Status = ActionSucceeded
-	action.Revision = 1
-	logged := resourceLog(resource)
+	logged := resourceLog(*action.Candidate)
 	patch := &StatePatch{Resource: addr.String(), Action: controlplane.PlanActionAdopt, Op: StatePatchUpsert, State: &logged}
 	return actions.CommitActionOutcome(ctx, action, patch)
 }

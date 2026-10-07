@@ -279,7 +279,8 @@ func (s *Server) commitAdoptionState(ctx context.Context, op controlplane.NodeOp
 	if err != nil {
 		return err
 	}
-	defer repo.Close()
+	// The server owns this cached repository across requests. Closing it here
+	// breaks receipt retries and subsequent lifecycle operations on SQL stores.
 	resource := state.Resource{Address: addr, ResourceType: addr.Type, Driver: req.Provider, ExternalID: req.ExternalID, OwnerUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation, Private: append(json.RawMessage(nil), evidence...), Status: state.ResourcePresent, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 	return runtime.CommitAdoptionEvidence(ctx, repo, op.ID, req.Topology, addr, req.Evidence, resource, substrate.OperationIdentity{ActionID: op.ID, OwnerUID: req.TopologyUID, TopologyUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation}, req.ExpectedSerial)
 }
