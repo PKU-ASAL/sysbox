@@ -12,6 +12,16 @@ import (
 )
 
 func (s *localAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
+	})
+}
+func (s *localAPIStore) CompleteAdoptionFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+		return persistence.CompleteAdoptionFromHost(current, command, agent, id, receipt)
+	})
+}
+func (s *localAPIStore) completeNodeOperation(ctx context.Context, agent, id string, transition func(controlplane.NodeOperation, *persistence.CommandRecord) (controlplane.NodeOperation, error)) (*controlplane.NodeOperation, error) {
 	unlock, err := s.lockRunRecords(ctx)
 	if err != nil {
 		return nil, err
@@ -29,10 +39,22 @@ func (s *localAPIStore) CompleteNodeOperation(ctx context.Context, agent, id str
 	if err != nil {
 		return nil, err
 	}
-	return repo.CompleteUnderCommandLock(ctx, agent, id, report, command)
+	return repo.CompleteWithTransition(ctx, id, func(current controlplane.NodeOperation) (controlplane.NodeOperation, error) {
+		return transition(current, command)
+	})
 }
 
 func (s *sqliteAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
+	})
+}
+func (s *sqliteAPIStore) CompleteAdoptionFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+		return persistence.CompleteAdoptionFromHost(current, command, agent, id, receipt)
+	})
+}
+func (s *sqliteAPIStore) completeNodeOperation(ctx context.Context, agent, id string, transition func(controlplane.NodeOperation, *persistence.CommandRecord) (controlplane.NodeOperation, error)) (*controlplane.NodeOperation, error) {
 	db, err := s.open()
 	if err != nil {
 		return nil, err
@@ -71,7 +93,7 @@ func (s *sqliteAPIStore) CompleteNodeOperation(ctx context.Context, agent, id st
 	if err != nil {
 		return nil, err
 	}
-	completed, err := persistence.CompleteNodeOperation(*current, command, agent, id, report, time.Now().UTC())
+	completed, err := transition(*current, command)
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +116,16 @@ func (s *sqliteAPIStore) CompleteNodeOperation(ctx context.Context, agent, id st
 }
 
 func (s *postgresAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
+	})
+}
+func (s *postgresAPIStore) CompleteAdoptionFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+		return persistence.CompleteAdoptionFromHost(current, command, agent, id, receipt)
+	})
+}
+func (s *postgresAPIStore) completeNodeOperation(ctx context.Context, agent, id string, transition func(controlplane.NodeOperation, *persistence.CommandRecord) (controlplane.NodeOperation, error)) (*controlplane.NodeOperation, error) {
 	pool, err := s.poolFor(ctx)
 	if err != nil {
 		return nil, err
@@ -122,7 +154,7 @@ func (s *postgresAPIStore) CompleteNodeOperation(ctx context.Context, agent, id 
 	if err != nil {
 		return nil, err
 	}
-	completed, err := persistence.CompleteNodeOperation(*current, command, agent, id, report, time.Now().UTC())
+	completed, err := transition(*current, command)
 	if err != nil {
 		return nil, err
 	}

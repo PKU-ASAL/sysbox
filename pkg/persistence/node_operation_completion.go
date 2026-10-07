@@ -9,6 +9,9 @@ import (
 // Called only while the adapter holds both the command and operation write
 // boundary. Lease acquisition and completion must not race across this check.
 func CompleteNodeOperation(current controlplane.NodeOperation, command *CommandRecord, agent, id string, report controlplane.NodeOperation, now time.Time) (controlplane.NodeOperation, error) {
+	if current.Operation == "adoption_apply" {
+		return current, ErrConflict // Only authenticated host evidence can finish adoption.
+	}
 	if report.ID != id || current.ID != id || agent != current.AgentID || report.AgentID != agent || current.CommandID == "" {
 		return current, ErrConflict
 	}
@@ -55,6 +58,14 @@ func PreserveNodeOperationDispatch(old, next []byte) ([]byte, error) {
 // CompleteUnderCommandLock requires its caller to hold the shared command
 // lock; the record adapter supplies the operation lock inside that boundary.
 func (r *NodeOperationRepository) CompleteUnderCommandLock(ctx context.Context, agent, id string, report controlplane.NodeOperation, command *CommandRecord) (*controlplane.NodeOperation, error) {
+	return r.CompleteWithTransition(ctx, id, func(current controlplane.NodeOperation) (controlplane.NodeOperation, error) {
+		return CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
+	})
+}
+
+// CompleteWithTransition supplies the shared physical write boundary to
+// authenticated worker and host completion rules without duplicating storage.
+func (r *NodeOperationRepository) CompleteWithTransition(ctx context.Context, id string, transition func(controlplane.NodeOperation) (controlplane.NodeOperation, error)) (*controlplane.NodeOperation, error) {
 	if !topologyName.MatchString(id) {
 		return nil, ErrInvalidRecord
 	}
@@ -67,7 +78,7 @@ func (r *NodeOperationRepository) CompleteUnderCommandLock(ctx context.Context, 
 		if err != nil {
 			return nil, err
 		}
-		completed, err = CompleteNodeOperation(*current, command, agent, id, report, time.Now().UTC())
+		completed, err = transition(*current)
 		if err != nil {
 			return nil, err
 		}

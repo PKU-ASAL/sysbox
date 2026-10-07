@@ -65,6 +65,7 @@ type consoleStore interface {
 }
 
 type nodeOperationPersistence interface {
+	CompleteAdoptionFromHost(context.Context, string, string, controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error)
 	CompareAndSwapNodeOperation(context.Context, controlplane.NodeOperation, controlplane.NodeOperation) error
 	CreateNodeOperation(ctx context.Context, op controlplane.NodeOperation) error
 	CreateNodeOperationDispatch(context.Context, controlplane.NodeOperation, controlplane.AgentCommand) error

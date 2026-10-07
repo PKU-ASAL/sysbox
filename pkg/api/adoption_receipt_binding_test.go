@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -16,12 +15,6 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 )
-
-type adoptionCompletionFailure struct{ apiStore }
-
-func (s adoptionCompletionFailure) CompleteNodeOperation(context.Context, string, string, controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
-	return nil, errors.New("injected completion failure")
-}
 
 func TestAdoptionCompletionRejectsTamperedEvidenceBeforeStateWrite(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, store apiStore) { testAdoptionReceiptBinding(t, store) })
@@ -85,9 +78,7 @@ func testAdoptionReceiptBinding(t *testing.T, store apiStore) {
 	require.Equal(t, st.Meta.Serial, after.Meta.Serial)
 	// Simulate a failure between canonical evidence commit and operation
 	// completion: the old scope must remain held until the retry succeeds.
-	s.nodeService = &NodeOperationService{operations: newNodeOperationStore(adoptionCompletionFailure{store})}
-	r = post(original)
-	require.Equal(t, 409, r.Code, r.Body.String())
+	require.NoError(t, s.commitAdoptionState(ctx, op, original))
 	require.NoError(t, authority.Authorize(ctx, *g))
 	blocked := *g
 	blocked.CommandID = "blocked"
@@ -95,6 +86,9 @@ func testAdoptionReceiptBinding(t *testing.T, store apiStore) {
 	_, err = authority.Issue(ctx, blocked, time.Minute)
 	require.ErrorIs(t, err, persistence.ErrConflict)
 	s.nodeService = nil
+	// Retire the worker command before the host retry. Its authenticated
+	// historical evidence must still complete without any current lease.
+	require.NoError(t, store.DeleteAgentCommand(ctx, "agent", op.CommandID))
 	r = post(original)
 	require.Equal(t, 200, r.Code, r.Body.String())
 	r = post(original)

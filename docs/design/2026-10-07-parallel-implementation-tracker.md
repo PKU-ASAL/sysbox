@@ -17,6 +17,14 @@
 
 ## 当前收敛规则
 
+adoption 退休 command 恢复：新增共享 `CompleteAdoptionFromHost` transition，三套
+API 存储复用原 command/operation 事务执行。验证 host signature 与持久 authority
+后，按原 command ID、请求 digest、topology/resource UID/generation 核对；不再
+要求旧 worker 的 lease 存活，也不借用后继 worker 的 lease。退休 command 已删除
+payload 时使用保留的 operation 请求与 tombstone 身份交叉验证。普通 worker 的
+adoption completion 被 repository 明确拒绝。文件/SQLite HTTP 回归覆盖退休后
+完成、重试与后继 epoch 保护；Postgres 本批未配置，不计验收通过。
+
 adoption API 授权释放：专用完成接口先验证回执、提交 canonical evidence 与操作
 完成状态，最后 `AcceptHostStop` 释放原 epoch。普通 stopped 接口拒绝 adoption，
 防止绕过证据提交提前释放 scope。文件/SQLite 回归覆盖完成失败仍阻塞后继、重试

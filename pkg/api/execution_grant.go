@@ -229,33 +229,13 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
-	commands, err := s.apiStore.ListAgentCommands(r.Context(), agentID)
-	if err != nil {
-		writeError(w, 409, err)
-		return
-	}
-	var command *controlplane.AgentCommand
-	for i := range commands {
-		if commands[i].ID == op.CommandID {
-			command = &commands[i]
-			break
-		}
-	}
-	if command == nil || command.ActionID != body.Receipt.Grant.ActionID || command.ResourceUID != body.Receipt.Grant.Scope.ResourceUID || command.Generation != body.Receipt.Grant.Scope.Generation || uint64(command.Attempt) != body.Receipt.Grant.Attempt {
-		writeError(w, 409, persistence.ErrConflict)
-		return
-	}
-	bound, err := controlplane.FromAdoptionCommand(*command)
-	if err != nil {
-		writeError(w, 409, persistence.ErrConflict)
-		return
-	}
-	digest, err := bound.Digest()
-	if err != nil || digest != body.Receipt.Grant.Digest || command.ID != body.Receipt.Grant.CommandID || command.TopologyUID != body.Receipt.Grant.Scope.TopologyUID {
-		writeError(w, 409, persistence.ErrConflict)
-		return
-	}
 	if op.Adoption == nil || len(body.Evidence) == 0 {
+		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
+	digest, err := op.Adoption.Digest()
+	g := body.Receipt.Grant
+	if err != nil || digest != g.Digest || op.CommandID != g.CommandID || op.AgentID != agentID || op.Adoption.AgentID != agentID || op.Adoption.TopologyUID != g.Scope.TopologyUID || op.ResourceUID != g.Scope.ResourceUID || op.Generation != g.Scope.Generation {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
@@ -276,18 +256,7 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 		writeError(w, 409, err)
 		return
 	}
-	report := *op
-	report.Status = controlplane.NodeOperationStatusDone
-	report.AgentID = agentID
-	report.ActionID = body.Receipt.Grant.ActionID
-	report.ResourceUID = body.Receipt.Grant.Scope.ResourceUID
-	report.Generation = body.Receipt.Grant.Scope.Generation
-	report.LeaseEpoch = int64(body.Receipt.Grant.Epoch)
-	report.LeaseOwner = command.LeaseOwner
-	report.Attempt = command.Attempt
-	report.LeaseEpoch = command.LeaseEpoch
-	report.EndedAt = body.Receipt.StoppedAt
-	completed, err := s.nodeOperations().CompleteFromAgent(agentID, op.ID, report)
+	completed, err := s.apiStore.CompleteAdoptionFromHost(r.Context(), agentID, op.ID, body.Receipt)
 	if err != nil {
 		writeError(w, 409, err)
 		return
