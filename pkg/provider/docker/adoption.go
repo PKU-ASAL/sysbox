@@ -25,6 +25,31 @@ type adoptionBinding struct {
 	Fingerprint string                      `json:"fingerprint"`
 }
 
+// managedOwnershipLabels resolves proof from immutable Docker labels or a
+// validated adoption sidecar. It does not modify the container's labels.
+func (s *Substrate) managedOwnershipLabels(ctx context.Context, ins container.InspectResponse) (map[string]string, error) {
+	if ins.Config == nil {
+		return nil, fmt.Errorf("docker inspection lacks config")
+	}
+	labels := ins.Config.Labels
+	if labels["sysbox.managed"] == "true" && labels["sysbox.owner_uid"] != "" && labels["sysbox.resource_uid"] != "" && labels["sysbox.topology_uid"] != "" {
+		return labels, nil
+	}
+	id, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok || !validAdoptionID(ins.ID) {
+		return nil, fmt.Errorf("docker managed handle lacks complete ownership labels")
+	}
+	raw, err := os.ReadFile(s.adoptionPath(ins.ID))
+	if err != nil {
+		return nil, err
+	}
+	var binding adoptionBinding
+	if json.Unmarshal(raw, &binding) != nil || validateAdoptionBinding(binding, ins, id) != nil {
+		return nil, fmt.Errorf("docker adoption ownership conflict")
+	}
+	return operationLabels(binding.Identity), nil
+}
+
 func (s *Substrate) adoptionPath(id string) string {
 	root := s.adoptionRoot
 	if root == "" {

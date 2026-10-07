@@ -17,6 +17,13 @@
 
 ## 当前收敛规则
 
+Docker adoption 冷观察修复：`ObserveNode` 与生命周期操作共用 ownership proof，
+支持已验证的 sidecar，不再要求被接管容器拥有不可变的 Sysbox labels。新增真实
+`make test-docker-adoption-e2e`：创建无 labels 容器、接管、序列化/重建 provider
+handle、观察、旧代拒绝、暂停/恢复、销毁均通过；provider 全包 race 通过。
+测试容器已销毁。这里的冷恢复是重新创建 provider 对象，不代表跨宿主或完整 API
+接管流程验收。
+
 adoption 启动入口修复：Agent 之前复用 power 的 host-info，要求未被接管的节点已
 存在于 canonical state，因而无法开始真正接管。新增只读 `adoption-info` 返回
 配置的宿主 boot，Agent 改用该入口；此查询不产生授权。apply/observe 同时验证

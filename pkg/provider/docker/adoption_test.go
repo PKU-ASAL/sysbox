@@ -16,7 +16,7 @@ func TestExplicitAdoptionBindsImmutableContainerIncarnation(t *testing.T) {
 	created := "2026-10-07T00:00:00Z"
 	s := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) {
 		require.Contains(t, r.URL.Path, "/containers/"+fullID+"/json")
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"Id": fullID, "Created": created, "Image": "sha256:image", "Name": "/external", "Config": map[string]any{"Labels": map[string]string{}}, "NetworkSettings": map[string]any{}}))
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"Id": fullID, "Created": created, "Image": "sha256:image", "Name": "/external", "Config": map[string]any{"Labels": map[string]string{}}, "State": map[string]any{"Running": true}, "NetworkSettings": map[string]any{}}))
 	})
 	s.adoptionRoot = t.TempDir()
 	ctx := substrate.WithOperationIdentity(context.Background(), testOperation())
@@ -28,14 +28,23 @@ func TestExplicitAdoptionBindsImmutableContainerIncarnation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fullID, adopted.ID)
 	require.NoError(t, s.validateManagedHandle(ctx, &adopted))
+	cold := &Substrate{cli: s.cli, adoptionRoot: s.adoptionRoot}
+	observed, err := cold.ObserveNode(ctx, adopted)
+	require.NoError(t, err)
+	require.NoError(t, substrate.ValidateNodeObservationIdentity(testOperation(), observed))
+	require.True(t, observed.Running)
 	_, err = s.ApplyAdoption(ctx, evidence)
 	require.NoError(t, err, "exact retry must be idempotent")
 	foreign := testOperation()
 	foreign.OwnerUID = "foreign"
 	_, err = s.ObserveAdoption(substrate.WithOperationIdentity(context.Background(), foreign), evidence)
 	require.Error(t, err)
+	_, err = cold.ObserveNode(substrate.WithOperationIdentity(context.Background(), foreign), adopted)
+	require.Error(t, err)
 	created = "2026-10-08T00:00:00Z"
 	require.Error(t, s.validateManagedHandle(ctx, &adopted), "same ID with altered creation fingerprint is not owned")
+	_, err = cold.ObserveNode(ctx, adopted)
+	require.Error(t, err)
 }
 
 func TestConcurrentAdoptionCannotStealOwnership(t *testing.T) {

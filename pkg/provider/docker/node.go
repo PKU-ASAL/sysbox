@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -309,37 +308,22 @@ func (s *Substrate) validateManagedHandle(ctx context.Context, h *substrate.Node
 	if err != nil {
 		return err
 	}
-	if ins.Config == nil {
-		return fmt.Errorf("docker managed handle lacks ownership metadata")
-	}
-	labels := ins.Config.Labels
-	adoptedBinding := false
-	if labels["sysbox.managed"] != "true" || labels["sysbox.owner_uid"] == "" || labels["sysbox.resource_uid"] == "" || labels["sysbox.topology_uid"] == "" {
-		if identity, ok := substrate.OperationIdentityFromContext(ctx); ok {
-			bindingRaw, readErr := os.ReadFile(s.adoptionPath(ins.ID))
-			var binding adoptionBinding
-			if readErr != nil || json.Unmarshal(bindingRaw, &binding) != nil || validateAdoptionBinding(binding, ins, identity) != nil {
-				return fmt.Errorf("docker managed handle lacks complete ownership labels")
-			}
-			adoptedBinding = true
-		} else {
-			return fmt.Errorf("docker managed handle lacks complete ownership labels")
-		}
+	labels, err := s.managedOwnershipLabels(ctx, ins)
+	if err != nil {
+		return err
 	}
 	if hasIdentity {
 		if err := identity.Validate(); err != nil {
 			return err
 		}
-		if !adoptedBinding {
-			if err := verifyLabels(ins.Config.Labels, operationLabels(identity)); err != nil {
-				return err
-			}
+		if err := verifyLabels(labels, operationLabels(identity)); err != nil {
+			return err
 		}
 		if h.Generation != 0 && identity.Generation != h.Generation {
 			return fmt.Errorf("docker generation conflict")
 		}
 	}
-	if raw := ins.Config.Labels["sysbox.generation"]; !adoptedBinding && h.Generation != 0 && raw != strconv.FormatInt(h.Generation, 10) {
+	if raw := labels["sysbox.generation"]; h.Generation != 0 && raw != strconv.FormatInt(h.Generation, 10) {
 		return fmt.Errorf("docker generation conflict")
 	}
 	if ins.ID == "" {

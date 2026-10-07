@@ -37,6 +37,11 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .PHONY: test-firecracker-e2e
 .PHONY: test-docker-generation-e2e
+.PHONY: test-docker-adoption-e2e
+test-docker-adoption-e2e: ## Verify adoption and cold lifecycle of an isolated Docker container
+	SYSBOX_DOCKER_ADOPTION_E2E=1 $(GOENV) $(GO) test -race -tags e2e ./pkg/provider/docker \
+	  -run '^TestDockerAdoptionColdLifecycleE2E$$' -count=1 -v -timeout=2m
+
 .PHONY: test-managed-bridge-e2e
 
 test-managed-bridge-e2e: ## Verify Docker managed bridge proof and real TAP fencing on the host network

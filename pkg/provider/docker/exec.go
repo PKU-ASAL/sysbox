@@ -416,6 +416,10 @@ func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (su
 		labels = ins.Config.Labels
 	}
 	if identity, ok := substrate.OperationIdentityFromContext(ctx); ok {
+		labels, err = s.managedOwnershipLabels(ctx, ins)
+		if err != nil {
+			return substrate.NodeObservation{Status: substrate.NodeStatusUnknown, ExternalID: h.ID}, err
+		}
 		if err := verifyLabels(labels, operationLabels(identity)); err != nil {
 			return substrate.NodeObservation{Status: substrate.NodeStatusUnknown, ExternalID: h.ID, Reason: err.Error(), LastSeen: time.Now().UTC()}, err
 		}
