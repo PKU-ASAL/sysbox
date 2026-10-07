@@ -146,18 +146,22 @@ test-remote-docker-fault-e2e: ## Real HTTP/Agent/Docker completion-loss and API 
 	SYSBOX_REMOTE_DOCKER_E2E=1 $(GOENV) $(GO) test -tags e2e ./pkg/api -run '^TestRemoteDockerCompletionLossRecoveryE2E$$' -count=1 -v -timeout=3m
 
 .PHONY: test-p9-real
-test-p9-real: ## Run the P9 real-provider failure matrix; missing environments fail explicitly
+test-p9-real: build-all ## Run implemented real-provider gates; reject skips and missing test matches
 	@set -eu; \
-	$(MAKE) test-remote-docker-fault-e2e; \
-	$(MAKE) test-host-supervisor-e2e; \
-	$(MAKE) test-host-power-e2e; \
-	$(MAKE) test-host-file-e2e; \
-	$(MAKE) test-docker-adoption-e2e; \
-	SYSBOX_FIRECRACKER_BIN=$${SYSBOX_FIRECRACKER_BIN:?set Firecracker binary} \
-	SYSBOX_FIRECRACKER_KERNEL=$${SYSBOX_FIRECRACKER_KERNEL:?set Firecracker kernel} \
-	SYSBOX_FIRECRACKER_ROOTFS=$${SYSBOX_FIRECRACKER_ROOTFS:?set Firecracker rootfs} \
-	  $(MAKE) test-firecracker-e2e; \
-	SYSBOX_LIBVIRT_E2E=1 $(MAKE) test-libvirt-generation-e2e
+	test -x "$${SYSBOX_FIRECRACKER_BIN:?set Firecracker binary}"; \
+	test -f "$${SYSBOX_FIRECRACKER_KERNEL:?set Firecracker kernel}"; \
+	test -f "$${SYSBOX_FIRECRACKER_ROOTFS:?set Firecracker rootfs}"; \
+	acceptance_dir=$$(mktemp -d /tmp/sysbox-acceptance.XXXXXX); \
+	trap 'rm -f "$$acceptance_dir/check" "$$acceptance_dir/helper"; rmdir "$$acceptance_dir"' EXIT; \
+	$(GOENV) $(GO) build -buildvcs=false -o "$$acceptance_dir/check" ./scripts/acceptance; \
+	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$acceptance_dir/helper" ./cmd/sysbox-init; \
+	export GOCACHE="$(GOCACHE)" SYSBOX_GUESTTASK_HELPER="$$acceptance_dir/helper"; \
+	SYSBOX_REMOTE_DOCKER_E2E=1 SYSBOX_HOST_POWER_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/api -timeout 6m \
+	  -tests TestRemoteDockerCompletionLossRecoveryE2E,TestHostSupervisorRealTaskStopAndSuccessorE2E,TestHostSupervisorRealNodePowerE2E,TestHostSupervisorRealFileInstallE2E; \
+	SYSBOX_DOCKER_ADOPTION_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/provider/docker -tests TestDockerAdoptionColdLifecycleE2E; \
+	"$$acceptance_dir/check" -go "$(GO)" -package ./pkg/provider/firecracker -timeout 10m \
+	  -tests TestFirecrackerRealGenerationLifecycleE2E,TestFirecrackerRealResetGenerationAndColdAdoptionE2E,TestFirecrackerRealCrossProcessRecoveryE2E,TestFirecrackerRealControllerCrashRecoveryE2E; \
+	SYSBOX_LIBVIRT_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -package ./pkg/provider/libvirt -tests TestLibvirtRealGenerationEffectsE2E
 
 .PHONY: help build build-all test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset test-windows-tools prepare-windows10-media build-windows10-image test-windows10-libvirt release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \
@@ -204,7 +208,7 @@ force-guest-build:
 $(INITDIR)/sysbox-init.linux-%.bin: force-guest-build
 	@set -eu; guest_build=$$(mktemp -d /tmp/sysbox-init-build.XXXXXX); \
 	trap 'rm -f "$$guest_build/sysbox-init"; rmdir "$$guest_build"' EXIT; \
-	$(GOENV) GOOS=linux GOARCH=$* CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o "$$guest_build/sysbox-init" ./cmd/sysbox-init; \
+	$(GOENV) GOOS=linux GOARCH=$* CGO_ENABLED=0 $(GO) build -buildvcs=false -ldflags="-s -w" -o "$$guest_build/sysbox-init" ./cmd/sysbox-init; \
 	mv "$$guest_build/sysbox-init" "$@"
 
 test: ## Run unit tests
