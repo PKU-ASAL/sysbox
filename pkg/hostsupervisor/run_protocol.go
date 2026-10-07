@@ -16,6 +16,7 @@ import (
 type RunRequest struct {
 	RunID          string `json:"run_id"`
 	Topology       string `json:"topology"`
+	TopologyUID    string `json:"topology_uid"`
 	Revision       string `json:"revision"`
 	ActionID       string `json:"action_id"`
 	ResourceUID    string `json:"resource_uid"`
@@ -25,20 +26,8 @@ type RunRequest struct {
 	ExpectedSerial int64  `json:"expected_serial"`
 }
 
-type RunReceipt struct {
-	RunID          string                      `json:"run_id"`
-	ActionID       string                      `json:"action_id"`
-	Revision       string                      `json:"revision"`
-	Scope          controlplane.ExecutionScope `json:"scope"`
-	Epoch          uint64                      `json:"epoch"`
-	HostBootID     string                      `json:"host_boot_id"`
-	Phase          string                      `json:"phase"`
-	Status         string                      `json:"status"`
-	EvidenceDigest string                      `json:"evidence_digest"`
-}
-
 func (r RunRequest) Validate() error {
-	if r.RunID == "" || r.Topology == "" || r.Revision == "" || r.ActionID == "" || r.ResourceUID == "" || r.Generation < 1 || r.ExpectedSerial < 0 {
+	if r.RunID == "" || r.Topology == "" || r.TopologyUID == "" || r.Revision == "" || r.ActionID == "" || r.ResourceUID == "" || r.Generation < 1 || r.ExpectedSerial < 0 {
 		return fmt.Errorf("run request requires immutable identity")
 	}
 	if r.Action != "apply" && r.Action != "destroy" {
@@ -67,7 +56,7 @@ func ValidateRunGrant(g controlplane.SignedExecutionGrant, req RunRequest, boot 
 	if err != nil {
 		return err
 	}
-	if g.Grant.Operation != "run_"+req.Action || g.Grant.Digest != digest || g.Grant.ActionID != req.ActionID || g.Grant.Scope.TopologyUID != req.Topology || g.Grant.Scope.ResourceUID != req.ResourceUID || g.Grant.Scope.Generation != req.Generation || g.Grant.TargetBootID != boot || g.BootID != boot {
+	if g.Grant.Operation != "run_"+req.Action || g.Grant.Digest != digest || g.Grant.ActionID != req.ActionID || g.Grant.Scope.TopologyUID != req.TopologyUID || g.Grant.Scope.ResourceUID != req.ResourceUID || g.Grant.Scope.Generation != req.Generation || g.Grant.TargetBootID != boot || g.BootID != boot {
 		return controlplane.ErrInvalidExecutionGrant
 	}
 	return nil
