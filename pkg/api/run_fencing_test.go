@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/config"
@@ -9,6 +11,8 @@ import (
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -368,4 +372,37 @@ func TestSQLiteCompletionInsertChecksDatabaseClock(t *testing.T) {
 	written, err := insertSQLiteRunChecked(ctx, tx, controlplane.Run{ID: "run", Topology: "topo", Status: controlplane.RunDone, LeaseUntil: time.Now().Add(-time.Second)}, true)
 	require.NoError(t, err)
 	require.False(t, written, "write-time lease test must reject an expired receipt")
+}
+
+func TestAgentExecutionBridgeLeavesCanonicalCompletionToAPI(t *testing.T) {
+	for _, backend := range []string{"sqlite", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			api := fencingServer(t, backend)
+			ctx := context.Background()
+			require.NoError(t, api.agentService().Save(ctx, controlplane.Agent{ID: "agent", Status: controlplane.AgentStatusOnline}))
+			original := controlplane.Run{ID: "agent-run", Topology: "topo", Workspace: "topo", AgentID: "agent", Status: controlplane.RunAssigned}
+			require.NoError(t, api.apiStore.SaveRun(ctx, original))
+			claimed, ok, err := api.apiStore.ClaimRun(ctx, original.ID, "agent", "process:claim", time.Minute)
+			require.NoError(t, err)
+			require.True(t, ok)
+			// This is the exact bridge wired by `sysbox agent start`: it opens the same
+			// state backend as the API, unlike the CLI-only LocalBridge.
+			agentBridge := NewExecutionBridge(api.cfg)
+			agentBridge.AttachRun(claimed)
+			agentBridge.Finish(claimed, nil)
+			canonical, err := api.apiStore.GetRun(ctx, original.ID)
+			require.NoError(t, err)
+			require.Equal(t, controlplane.RunRunning, canonical.Status, "agent must not bypass API owner CAS with SaveRun")
+			require.Nil(t, canonical.CompletionProjection)
+			body, err := json.Marshal(controlplane.RunCompletion{Run: *claimed, Projection: controlplane.Projection{Serial: 1, ResourceCount: 2}})
+			require.NoError(t, err)
+			response := httptest.NewRecorder()
+			api.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/agents/agent/runs/agent-run/complete", bytes.NewReader(body)))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			canonical, err = api.apiStore.GetRun(ctx, original.ID)
+			require.NoError(t, err)
+			require.Equal(t, controlplane.RunDone, canonical.Status)
+			require.NotNil(t, canonical.CompletionProjection)
+		})
+	}
 }
