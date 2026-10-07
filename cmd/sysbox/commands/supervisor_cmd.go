@@ -165,7 +165,11 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		if err != nil {
 			return nil, err
 		}
-		if err := authority.ReportNodeOperation(ctx, req.ID, receipt); err != nil {
+		evidence, err := json.Marshal(h)
+		if err != nil {
+			return nil, err
+		}
+		if err := authority.ReportNodeOperation(ctx, req.ID, receipt, evidence); err != nil {
 			return nil, err
 		}
 		return json.Marshal(h)

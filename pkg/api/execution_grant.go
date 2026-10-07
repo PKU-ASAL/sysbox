@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/state"
 	"io"
 	"net/http"
 	"os"
@@ -198,7 +200,8 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 }
 
 type HostNodeOperationCompletion struct {
-	Receipt controlplane.SignedExecutionStopReceipt `json:"receipt"`
+	Receipt  controlplane.SignedExecutionStopReceipt `json:"receipt"`
+	Evidence json.RawMessage                         `json:"evidence"`
 }
 
 func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *http.Request) {
@@ -234,6 +237,14 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
+	if op.Adoption == nil || len(body.Evidence) == 0 {
+		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
+	if err := s.commitAdoptionState(r.Context(), *op, body.Evidence); err != nil {
+		writeError(w, 409, err)
+		return
+	}
 	report := *op
 	report.Status = controlplane.NodeOperationStatusDone
 	report.AgentID = agentID
@@ -251,6 +262,36 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 		return
 	}
 	writeJSON(w, 200, completed)
+}
+
+func (s *Server) commitAdoptionState(ctx context.Context, op controlplane.NodeOperation, evidence json.RawMessage) error {
+	if op.Adoption == nil {
+		return persistence.ErrConflict
+	}
+	req := op.Adoption
+	addr, err := address.Parse(req.Address)
+	if err != nil {
+		return err
+	}
+	mgr, err := s.stateManager(req.Topology)
+	if err != nil {
+		return err
+	}
+	st, err := mgr.LoadWithContext(ctx)
+	if err != nil {
+		return err
+	}
+	if st.TopologyUID != req.TopologyUID || st.Meta.Serial != req.ExpectedSerial {
+		return persistence.ErrConflict
+	}
+	if existing := st.FindResource(addr); existing != nil {
+		if existing.OwnerUID == req.TopologyUID && existing.ResourceUID == req.ResourceUID && existing.Generation == req.Generation && existing.ExternalID == req.ExternalID {
+			return nil
+		}
+		return persistence.ErrConflict
+	}
+	st.AddResource(state.Resource{Address: addr, ResourceType: addr.Type, Driver: req.Provider, ExternalID: req.ExternalID, OwnerUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation, Private: append(json.RawMessage(nil), evidence...), Status: state.ResourcePresent, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})
+	return mgr.SaveWithContext(ctx, st)
 }
 func (s *Server) authenticatedGrantAgent(r *http.Request) error {
 	id := r.PathValue("agent")
