@@ -24,6 +24,8 @@ SQLite/Postgres API schema 升为7：只在空数据库/schema 中初始化，�
 
 Guest vsock 的执行/文件协议变为 `exec.v2`/`write_file.v2`。重建 sysbox-init 后重建 VM；旧运行中的 guest 不支持新协议，禁止混用或回退。SSH 文件安装依赖 guest 的 `mktemp`、`sha256sum`、`mv -T` 和 `sync -f`；vsock 文件写入仅限已存在的白名单根目录。两种传输都要求校验成功后才返回安装成功。
 
+vsock 的 ping 只证明连接存活，不代表 guest 已初始化。新版 agent 必须等待 `ready.v1`；在 tmpfiles/systemd 或自定义 boot marker 未完成前，exec/file-write 都被拒绝，不会产生副作用。升级时 guest-init 与 host transport 必须一起更新。
+
 API 重启后，带 Idempotency-Key 的活跃 Apply 若缺敏感输入，claim 返回503。调用方向 Agent 当前连接的 API 重放完全相同的请求补交输入；终态 Run 不会重新执行。该机制不承诺多 API 共享内存或完整多控制器执行隔离。
 
 ## 中断的 mutation

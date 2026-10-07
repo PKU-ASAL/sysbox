@@ -128,28 +128,31 @@ func (c *VsockConnection) dial(ctx context.Context) (net.Conn, error) {
 	return &bufferedConn{Conn: conn, br: br}, nil
 }
 
-// WaitReady polls the agent with OpPing until it answers or the deadline elapses.
+// WaitReady requires initialization evidence; an RPC pong is only liveness.
 func (c *VsockConnection) WaitReady(ctx context.Context, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	var last error
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("wait for guest initialization (%v): %w", last, ctx.Err())
 		default:
 		}
-		if err := c.ping(ctx); err == nil {
+		if err := c.guestReady(ctx); err == nil {
 			return nil
+		} else {
+			last = err
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("wait for guest initialization (%v): %w", last, ctx.Err())
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
 }
 
-func (c *VsockConnection) ping(ctx context.Context) error {
+func (c *VsockConnection) guestReady(ctx context.Context) error {
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return err
@@ -157,7 +160,7 @@ func (c *VsockConnection) ping(ctx context.Context) error {
 	defer conn.Close()
 	defer abortConnOnContext(ctx, conn)()
 
-	if err := json.NewEncoder(conn).Encode(vsockrpc.Request{Op: vsockrpc.OpPing}); err != nil {
+	if err := json.NewEncoder(conn).Encode(vsockrpc.Request{Op: vsockrpc.OpReady}); err != nil {
 		return err
 	}
 	dec := json.NewDecoder(conn)
@@ -168,8 +171,8 @@ func (c *VsockConnection) ping(ctx context.Context) error {
 	if f.Error != "" {
 		return fmt.Errorf("%s", f.Error)
 	}
-	if !f.Pong {
-		return fmt.Errorf("unexpected ping reply: %+v", f)
+	if !f.Done || !f.Ready {
+		return fmt.Errorf("guest initialization incomplete: %s", f.ReadinessReason)
 	}
 	return nil
 }
@@ -246,6 +249,9 @@ func (c *VsockConnection) Exec(ctx context.Context, req substrate.ExecRequest, s
 	if err != nil {
 		return substrate.ExecResult{ErrorClass: substrate.ExecErrorInvalid}, err
 	}
+	if err := c.WaitReady(ctx, 30*time.Second); err != nil {
+		return result, err
+	}
 	out := substrate.NewExecCapture(req.OutputLimitBytes, stdout)
 	errOut := substrate.NewExecCapture(req.OutputLimitBytes, stderr)
 	err = c.execFrameStream(ctx, cmd, req.Environment, req.WorkingDir, stdin, func(f vsockrpc.Frame) error {
@@ -302,6 +308,9 @@ func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string)
 		return err
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if err := c.WaitReady(ctx, 30*time.Second); err != nil {
 		return err
 	}
 

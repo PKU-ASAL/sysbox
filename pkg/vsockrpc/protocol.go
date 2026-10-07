@@ -35,6 +35,7 @@ type Op string
 
 const (
 	OpPing      Op = "ping"
+	OpReady     Op = "ready.v1"
 	OpExec      Op = "exec.v2"
 	OpConsole   Op = "console"
 	OpWriteFile Op = "write_file.v2"
@@ -60,11 +61,13 @@ type Request struct {
 // Pong / Header / Done will be non-empty per frame; Done=true marks the
 // last frame and may carry ExitCode / Error.
 type Frame struct {
-	SHA256   string `json:"sha256,omitempty"`
-	Stdout   []byte `json:"stdout,omitempty"`    // base64-encoded by the JSON encoder
-	Stderr   []byte `json:"stderr,omitempty"`    // base64-encoded by the JSON encoder
-	Pong     bool   `json:"pong,omitempty"`      // ping reply
-	Done     bool   `json:"done,omitempty"`      // terminal frame
-	ExitCode int    `json:"exit_code,omitempty"` // exec: command exit code
-	Error    string `json:"error,omitempty"`     // any op: error message
+	Ready           bool   `json:"ready,omitempty"` // ready.v1: guest boot initialization completed
+	ReadinessReason string `json:"readiness_reason,omitempty"`
+	SHA256          string `json:"sha256,omitempty"`
+	Stdout          []byte `json:"stdout,omitempty"`    // base64-encoded by the JSON encoder
+	Stderr          []byte `json:"stderr,omitempty"`    // base64-encoded by the JSON encoder
+	Pong            bool   `json:"pong,omitempty"`      // ping reply
+	Done            bool   `json:"done,omitempty"`      // terminal frame
+	ExitCode        int    `json:"exit_code,omitempty"` // exec: command exit code
+	Error           string `json:"error,omitempty"`     // any op: error message
 }

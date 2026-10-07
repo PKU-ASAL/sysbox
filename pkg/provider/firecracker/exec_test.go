@@ -29,24 +29,32 @@ func TestVsockConnectionStartBindsExecutionToNode(t *testing.T) {
 	require.NoError(t, err)
 	defer listener.Close()
 	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			func() {
+				defer conn.Close()
+				reader := bufio.NewReader(conn)
+				if _, err := reader.ReadString('\n'); err != nil {
+					return
+				}
+				if _, err := io.WriteString(conn, "OK 1024\n"); err != nil {
+					return
+				}
+				var request vsockrpc.Request
+				if json.NewDecoder(reader).Decode(&request) != nil {
+					return
+				}
+				if request.Op == vsockrpc.OpReady {
+					_ = json.NewEncoder(conn).Encode(vsockrpc.Frame{Done: true, Ready: true})
+					return
+				}
+				_ = json.NewEncoder(conn).Encode(vsockrpc.Frame{Stdout: []byte("321\n")})
+				_ = json.NewEncoder(conn).Encode(vsockrpc.Frame{Done: true})
+			}()
 		}
-		defer conn.Close()
-		reader := bufio.NewReader(conn)
-		if _, err := reader.ReadString('\n'); err != nil {
-			return
-		}
-		if _, err := io.WriteString(conn, "OK 1024\n"); err != nil {
-			return
-		}
-		var request vsockrpc.Request
-		if json.NewDecoder(reader).Decode(&request) != nil {
-			return
-		}
-		_ = json.NewEncoder(conn).Encode(vsockrpc.Frame{Stdout: []byte("321\n")})
-		_ = json.NewEncoder(conn).Encode(vsockrpc.Frame{Done: true})
 	}()
 	sub := &Substrate{}
 	conn, err := sub.Connection(substrate.NodeHandle{ID: "vm", Generation: 7, Provider: &HandleState{VsockUDS: path}}, nil)

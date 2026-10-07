@@ -152,17 +152,32 @@ func handleVsockConn(fd int) {
 		return
 	}
 
+	dispatchVsockRequest(conn, mw, reader, req, guestReadiness)
+}
+
+func dispatchVsockRequest(conn net.Conn, w io.Writer, reader *bufio.Reader, req vsockrpc.Request, readiness func() (bool, string)) {
+	if req.Op == vsockrpc.OpReady || req.Op == vsockrpc.OpExec || req.Op == vsockrpc.OpWriteFile {
+		ready, reason := readiness()
+		if req.Op == vsockrpc.OpReady {
+			sendFrame(w, vsockrpc.Frame{Done: true, Ready: ready, ReadinessReason: reason})
+			return
+		}
+		if !ready {
+			sendFrame(w, vsockrpc.Frame{Done: true, Error: "guest not ready: " + reason})
+			return
+		}
+	}
 	switch req.Op {
 	case vsockrpc.OpPing:
-		sendFrame(mw, vsockrpc.Frame{Pong: true, Done: true})
+		sendFrame(w, vsockrpc.Frame{Pong: true, Done: true})
 	case vsockrpc.OpExec:
-		handleExec(mw, reader, req)
+		handleExec(w, reader, req)
 	case vsockrpc.OpConsole:
 		handleConsole(conn, req)
 	case vsockrpc.OpWriteFile:
-		handleWriteFile(mw, reader, req)
+		handleWriteFile(w, reader, req)
 	default:
-		sendFrame(mw, vsockrpc.Frame{Done: true, Error: fmt.Sprintf("unknown op %q", req.Op)})
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: fmt.Sprintf("unknown op %q", req.Op)})
 	}
 }
 

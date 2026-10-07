@@ -454,6 +454,8 @@ Agent pause/resume要求完整ActionID、目标UID/generation，构造handle前�
 
 vsock `exec.v2` 新增 stdin_size + body（最多8MiB），`write_file.v2` 要求 sha256，terminal frame 返回匹配摘要；旧操作名不回退。SSH/vsock文件安装校验内容、临时文件同步、精确目标原子替换。后台 Start 仍不代表 durable task，Observe/Cancel可选SPI未实现，不能宣称跨重启恢复或远端终止。
 
+`ready.v1` 新增 guest 初始化屏障；ping 不再作为副作用授权。systemd readiness 绑定 sysinit 与 tmpfiles 成功，自定义 init 绑定 boot ID marker。旧 guest-init 在升级时要求重建 VM，不提供 readiness 兼容回退。
+
 实施补充（2026-10-07 attachment target）：`driver.AttachmentRequest` 新增必需的 `NetworkIdentity`，表示目标网络的 owner/topology/resource/generation，与 context 中节点操作身份分离。runtime 在新建与恢复时均从网络 resource 填入。缺失身份不兼容。网络 bridge 消费端只接受 v2 ownership anchor；libvirt `BridgeAttach.Target` 保存目标引用，旧裸 bridge 记录启动时要求重建。
 
 Firecracker manifest/HandleState 升为 v2，新增每条 attachment 的逻辑名、guest device、网络 target、TAP proof；v1 显式拒绝，必须重建，不能手改 version。Firecracker/libvirt 不再根据 Docker network ID 或普通 bridge 名称猜测可接入的 root bridge；Docker NAT 跨 provider 接入返回 Unsupported，provider Validate 提前拒绝。Docker 原生 NAT 继续支持，Attach/Observe/Delete 均核对网络 ID 和独立网络身份标签。HCL 字段和 HTTP 路由未改，但上述 provider/network 组合的能力范围已收紧。

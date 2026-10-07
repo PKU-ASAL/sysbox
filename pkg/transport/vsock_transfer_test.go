@@ -23,27 +23,35 @@ func transferPeer(t *testing.T, serve func(net.Conn, *bufio.Reader, vsockrpc.Req
 	require.NoError(t, err)
 	t.Cleanup(func() { listener.Close() })
 	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			func() {
+				defer conn.Close()
+				reader := bufio.NewReader(conn)
+				if _, err := reader.ReadString('\n'); err != nil {
+					return
+				}
+				if _, err := io.WriteString(conn, "OK 1024\n"); err != nil {
+					return
+				}
+				header, err := reader.ReadBytes('\n')
+				if err != nil {
+					return
+				}
+				var req vsockrpc.Request
+				if json.Unmarshal(header, &req) != nil {
+					return
+				}
+				if req.Op == vsockrpc.OpReady {
+					_ = json.NewEncoder(conn).Encode(vsockrpc.Frame{Done: true, Ready: true})
+					return
+				}
+				serve(conn, reader, req)
+			}()
 		}
-		defer conn.Close()
-		reader := bufio.NewReader(conn)
-		if _, err := reader.ReadString('\n'); err != nil {
-			return
-		}
-		if _, err := io.WriteString(conn, "OK 1024\n"); err != nil {
-			return
-		}
-		header, err := reader.ReadBytes('\n')
-		if err != nil {
-			return
-		}
-		var req vsockrpc.Request
-		if json.Unmarshal(header, &req) != nil {
-			return
-		}
-		serve(conn, reader, req)
 	}()
 	return NewVsockConnection(path, 1024)
 }

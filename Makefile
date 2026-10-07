@@ -141,7 +141,7 @@ build-all: ## Build sysbox-init for amd64 and arm64
 	$(GOENV) GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $(INITDIR)/sysbox-init.linux-amd64.bin ./cmd/sysbox-init
 	$(GOENV) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $(INITDIR)/sysbox-init.linux-arm64.bin ./cmd/sysbox-init
 
-$(INITDIR)/sysbox-init.linux-%.bin: cmd/sysbox-init/main.go cmd/sysbox-init/network.go cmd/sysbox-init/server.go pkg/vsockrpc/protocol.go
+$(INITDIR)/sysbox-init.linux-%.bin: $(filter-out %_test.go,$(wildcard cmd/sysbox-init/*.go)) pkg/vsockrpc/protocol.go
 	$(GOENV) GOOS=linux GOARCH=$* CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $@ ./cmd/sysbox-init
 
 test: ## Run unit tests

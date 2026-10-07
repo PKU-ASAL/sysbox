@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -21,34 +20,13 @@ import (
 
 func framePeer(t *testing.T, frames ...vsockrpc.Frame) *VsockConnection {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "s")
-	listener, err := net.Listen("unix", path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		reader := bufio.NewReader(conn)
-		if _, err := reader.ReadString('\n'); err != nil {
-			return
-		}
-		if _, err := io.WriteString(conn, "OK 1024\n"); err != nil {
-			return
-		}
-		var req vsockrpc.Request
-		if json.NewDecoder(reader).Decode(&req) != nil {
-			return
-		}
+	return transferPeer(t, func(conn net.Conn, _ *bufio.Reader, _ vsockrpc.Request) {
 		for _, frame := range frames {
 			if json.NewEncoder(conn).Encode(frame) != nil {
 				return
 			}
 		}
-	}()
-	return NewVsockConnection(path, 1024)
+	})
 }
 
 func TestVsockExecutionBoundsOutputAndPreservesNonzeroExit(t *testing.T) {

@@ -81,6 +81,6 @@ keyed Apply 后 workspace 当前指针可以不存在；活跃操作列表从 du
 
 顺序核查补强：Agent pause/resume在构造provider handle前核对已派发命令的UID/generation，并在state读取至effect完成期间持有topology锁；迟到旧代不能借当前handle操作新节点。Agent旧import直接SaveState执行链已删除。远端缺失snapshot不再回退可变workspace，CLI显式选择的本地配置入口保留。
 
-本轮KVM恢复测试通过；文件安装出现过一次非成功结果。增加退出诊断后单次与连续8轮生命周期复测通过，但原因未定位，仍作为已知偶发问题记录，不宣称已修复。
+本轮KVM恢复测试通过。曾观察到文件安装偶发失败，已定位为 guest RPC 过早可用：sysbox-init 在 systemd/tmpfiles 初始化完成前启动 vsock，tmpfiles 删除上传暂存目录，随后 chmod 报 ENOENT。现在 `ready.v1` 将 liveness 与 initialized 分离：systemd 同时要求 `sysinit.target` 和 `systemd-tmpfiles-setup.service` active/success；自定义 init 必须发布匹配当前 boot ID 的 `/run/sysbox/boot-ready`。Exec/write_file 在 ready 前拒绝；真实延迟 tmpfiles KVM 测试验证 ready 前无副作用、ready 后20次安装成功。
 
 后续独立项目：资源端同代租约撤销、多宿主故障矩阵、durable guest task 协议、显式 ownership adoption、完整 guest SSH access 管理。它们不通过兼容回退或下游业务逻辑代替。
