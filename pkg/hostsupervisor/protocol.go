@@ -27,6 +27,7 @@ type Request struct {
 	RunRequest      *RunRequest                        `json:"run_request,omitempty"`
 	SSHRequest      *controlplane.SSHAccessRequest     `json:"ssh_request,omitempty"`
 	AdoptionRequest *controlplane.AdoptionRequest      `json:"adoption_request,omitempty"`
+	GCCandidate     *GCCandidate                       `json:"gc_candidate,omitempty"`
 	Stream          string                             `json:"stream,omitempty"`
 	Cursor          int64                              `json:"cursor,omitempty"`
 	Limit           int                                `json:"limit,omitempty"`
@@ -42,4 +43,5 @@ type Response struct {
 	RunEvidence      json.RawMessage             `json:"run_evidence,omitempty"`
 	SSHEvidence      json.RawMessage             `json:"ssh_evidence,omitempty"`
 	AdoptionEvidence json.RawMessage             `json:"adoption_evidence,omitempty"`
+	GCResult         json.RawMessage             `json:"gc_result,omitempty"`
 }

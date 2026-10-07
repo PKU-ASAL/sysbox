@@ -167,6 +167,16 @@ func (c *TaskClient) ObserveRun(ctx context.Context, req RunRequest, grant contr
 	return r.RunEvidence, err
 }
 
+func (c *TaskClient) DeleteGC(ctx context.Context, candidate GCCandidate, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "gc-delete", GCCandidate: &candidate, Grant: &grant})
+	return r.GCResult, err
+}
+
+func (c *TaskClient) ObserveGC(ctx context.Context, candidate GCCandidate, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "gc-observe", GCCandidate: &candidate, Grant: &grant})
+	return r.GCResult, err
+}
+
 func (c *TaskClient) ApplySSHAccess(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 	r, err := c.call(ctx, Request{Operation: "ssh-apply", SSHRequest: &req, Grant: &grant})
 	return r.SSHEvidence, err

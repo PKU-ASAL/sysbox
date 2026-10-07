@@ -34,11 +34,13 @@ type Server struct {
 	SSHDelete       func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	Adoption        *AdoptionCoordinator
 	AdoptionApply   func(context.Context, controlplane.AdoptionRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
+	GC              *GCCoordinator
+	GCDelete        func(context.Context, GCCandidate, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	OnRecoveryError func(error)
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.SSH == nil && s.Adoption == nil || !filepath.IsAbs(s.Socket) {
+	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.SSH == nil && s.Adoption == nil && s.GC == nil || !filepath.IsAbs(s.Socket) {
 		return fmt.Errorf("absolute supervisor socket and dispatcher required")
 	}
 	directory := filepath.Dir(s.Socket)
@@ -282,6 +284,20 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 			break
 		}
 		response.AdoptionEvidence, err = s.Adoption.Observe(ctx, *request.AdoptionRequest, *request.Grant)
+	case "gc-delete":
+		if s.GC == nil || s.GCDelete == nil || request.GCCandidate == nil || request.Grant == nil {
+			err = fmt.Errorf("host GC coordinator unavailable")
+			break
+		}
+		response.GCResult, err = s.GC.Delete(ctx, *request.GCCandidate, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
+			return s.GCDelete(effectCtx, *request.GCCandidate, *request.Grant)
+		})
+	case "gc-observe":
+		if s.GC == nil || request.GCCandidate == nil || request.Grant == nil {
+			err = fmt.Errorf("host GC coordinator unavailable")
+			break
+		}
+		response.GCResult, err = s.GC.Observe(ctx, *request.GCCandidate, *request.Grant)
 	case "host-info":
 		if s.Power == nil {
 			err = fmt.Errorf("host power supervisor unavailable")
