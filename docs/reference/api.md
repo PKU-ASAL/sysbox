@@ -312,3 +312,15 @@ workspace after those checks. Clients must still inspect before metadata deletio
 
 See [durable admission design](../design/durable-apply-admission.md) for restart,
 input hydration, single-API execution and multi-instance deduplication limits.
+
+GET `/v1/capabilities` is protected by the same configured API-token middleware
+as other control-plane routes. The new protocol responds:
+
+```json
+{"protocol":"cyberfield-runtime-v1","durable_apply":true,"keyed_destroy":true,"cleanup_inspection":true,"single_api_execution":true}
+```
+
+Durable flags are advertised only for the SQLite and PostgreSQL API stores.
+Local file storage reports those two flags false. This is deployed protocol
+self-description, not transparent multi-API input recovery; clients must also
+verify the actual lifecycle protocol against their selected deployment.
