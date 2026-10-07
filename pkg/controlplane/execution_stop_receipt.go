@@ -11,18 +11,19 @@ import (
 // it has proved that the grant cannot create further effects. Its signing key
 // is distinct from both worker authentication and API issuer credentials.
 type SignedExecutionStopReceipt struct {
-	InstallID     string                       `json:"install_id,omitempty"`
-	InstallDigest string                       `json:"install_digest,omitempty"`
-	FileResult    *substrate.FileInstallResult `json:"file_result,omitempty"`
-	GuestBootID   string                       `json:"guest_boot_id,omitempty"`
-	TaskID        string                       `json:"task_id,omitempty"`
-	TaskDigest    string                       `json:"task_digest,omitempty"`
-	Quiescence    string                       `json:"quiescence"`
-	Grant         ExecutionGrant               `json:"grant"`
-	HostBootID    string                       `json:"host_boot_id"`
-	ReceiptID     string                       `json:"receipt_id"`
-	StoppedAt     time.Time                    `json:"stopped_at"`
-	Signature     []byte                       `json:"signature"`
+	EvidenceDigest string                       `json:"evidence_digest,omitempty"`
+	InstallID      string                       `json:"install_id,omitempty"`
+	InstallDigest  string                       `json:"install_digest,omitempty"`
+	FileResult     *substrate.FileInstallResult `json:"file_result,omitempty"`
+	GuestBootID    string                       `json:"guest_boot_id,omitempty"`
+	TaskID         string                       `json:"task_id,omitempty"`
+	TaskDigest     string                       `json:"task_digest,omitempty"`
+	Quiescence     string                       `json:"quiescence"`
+	Grant          ExecutionGrant               `json:"grant"`
+	HostBootID     string                       `json:"host_boot_id"`
+	ReceiptID      string                       `json:"receipt_id"`
+	StoppedAt      time.Time                    `json:"stopped_at"`
+	Signature      []byte                       `json:"signature"`
 }
 
 func stopReceiptMessage(r SignedExecutionStopReceipt) ([]byte, error) {
@@ -32,6 +33,9 @@ func stopReceiptMessage(r SignedExecutionStopReceipt) ([]byte, error) {
 }
 func validStopReceipt(r SignedExecutionStopReceipt) bool {
 	g := r.Grant
+	if g.Operation == "adoption_apply" && (len(r.EvidenceDigest) != 64 || g.Scope.ResourceUID == "") {
+		return false
+	}
 	if g.Operation == "guest_file_install" {
 		if r.GuestBootID == "" || r.GuestBootID != g.TargetBootID || r.InstallID != g.ActionID || r.InstallDigest != g.Digest || r.FileResult == nil || !r.FileResult.Quiescent || (r.FileResult.Outcome != substrate.FileInstallCommitted && r.FileResult.Outcome != substrate.FileInstallCancelled) {
 			return false

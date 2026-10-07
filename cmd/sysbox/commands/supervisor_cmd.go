@@ -161,11 +161,18 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		if err != nil {
 			return nil, err
 		}
-		receipt, err := controlplane.SignExecutionStopReceipt(key, grant.Grant, strings.TrimSpace(string(boot)), "adopt-"+req.ID, time.Now())
+		codec, err := driver.DefaultRegistry.RequireNodeState(req.Provider)
 		if err != nil {
 			return nil, err
 		}
-		evidence, err := json.Marshal(h)
+		if h.ID != req.ExternalID || h.Generation != req.Generation {
+			return nil, fmt.Errorf("adoption result identity mismatch")
+		}
+		evidence, err := codec.MarshalProviderState(h)
+		if err != nil {
+			return nil, err
+		}
+		receipt, err := controlplane.SignAdoptionStopReceipt(key, grant.Grant, strings.TrimSpace(string(boot)), "adopt-"+req.ID, evidence, time.Now())
 		if err != nil {
 			return nil, err
 		}

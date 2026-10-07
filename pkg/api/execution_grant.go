@@ -214,7 +214,7 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 		return
 	}
 	key := s.grantHostKeys[agentID]
-	if body.Receipt.Grant.AgentID != agentID || body.Receipt.Grant.Operation != "adoption_apply" || controlplane.VerifyExecutionStopReceipt(key, body.Receipt) != nil {
+	if body.Receipt.Grant.AgentID != agentID || controlplane.VerifyAdoptionStopReceipt(key, body.Receipt, body.Evidence) != nil {
 		writeError(w, 409, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
@@ -239,8 +239,31 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
+	bound, err := controlplane.FromAdoptionCommand(*command)
+	if err != nil {
+		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
+	digest, err := bound.Digest()
+	if err != nil || digest != body.Receipt.Grant.Digest || command.ID != body.Receipt.Grant.CommandID || command.TopologyUID != body.Receipt.Grant.Scope.TopologyUID {
+		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
 	if op.Adoption == nil || len(body.Evidence) == 0 {
 		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
+	// A trusted signature is not proof this epoch was issued. Validate the
+	// durable authority before any canonical mutation, without releasing it.
+	rawReceipt, err := json.Marshal(body.Receipt)
+	if err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	receiptHash := sha256.Sum256(rawReceipt)
+	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	if err := authority.ValidateHostStop(r.Context(), body.Receipt.Grant, hex.EncodeToString(receiptHash[:])); err != nil {
+		writeError(w, 409, err)
 		return
 	}
 	if err := s.commitAdoptionState(r.Context(), *op, body.Evidence); err != nil {

@@ -21,7 +21,7 @@ func FromAdoptionCommand(cmd AgentCommand) (AdoptionRequest, error) {
 		return AdoptionRequest{}, fmt.Errorf("adoption command requires complete binding")
 	}
 	r := *cmd.Operation.Adoption
-	if r.ID != cmd.ActionID || r.TopologyUID == "" || r.ResourceUID != cmd.ResourceUID || r.Generation != cmd.Generation || r.AgentID != cmd.AgentID {
+	if r.ID != cmd.ActionID || r.TopologyUID != cmd.TopologyUID || r.Topology != cmd.Operation.Topology || r.ResourceUID != cmd.ResourceUID || r.Generation != cmd.Generation || r.AgentID != cmd.AgentID {
 		return AdoptionRequest{}, fmt.Errorf("adoption target mismatch")
 	}
 	if err := r.Validate(); err != nil {

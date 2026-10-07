@@ -17,6 +17,13 @@
 
 ## 当前收敛规则
 
+adoption 回执补强：新增签名 `evidence_digest` 绑定 provider codec 输出，API 在
+写 journal/state 前校验 evidence、完整派发请求摘要、command/topology UID 和持久
+authority。普通 stop 回执不再可用于 adoption 完成；旧缺少 evidence 绑定的回执
+明确拒绝。宿主使用 `MarshalProviderState` 输出 private state，而非整个 NodeHandle。
+HTTP 回归覆盖篡改 evidence、未签发 epoch 拒绝与原回执幂等提交。此项未解决
+宿主先持久化回执再报送、授权释放和跨服务重启的完整闭环，P5 仍未完成。
+
 2026-10-08 adoption 元数据重试修复：`CommitAdoptionEvidence` 以稳定 action identity
 定位持久 journal，用包含原 expected serial、inspection evidence 和资源内容的摘要
 核对重复请求；本地接收时间不影响摘要。原始请求在 intent 后中断或 outcome 回应丢失
