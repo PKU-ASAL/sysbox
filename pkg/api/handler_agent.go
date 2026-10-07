@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -117,7 +118,11 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 	}
 	run, err := s.jobs.claim(runID, agentID)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		if errors.Is(err, errApplyInputsRequired) {
+			writeError(w, http.StatusServiceUnavailable, err)
+		} else {
+			writeError(w, http.StatusConflict, err)
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, run)

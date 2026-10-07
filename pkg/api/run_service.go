@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -40,6 +41,7 @@ type RunService struct {
 }
 
 type RunStartRequest struct {
+	OperationKey     string
 	Revision         string
 	AgentID          string
 	Target           string
@@ -108,6 +110,9 @@ func runServiceStatus(err error) int {
 }
 
 func (s *RunService) StartApply(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+	if req.OperationKey != "" {
+		return s.startKeyedApply(ctx, topology, req)
+	}
 	// Serialize the whole apply (HCL upsert + run creation) per-topology so
 	// concurrent applies cannot race on the shared HCL file write.
 	//
@@ -120,6 +125,9 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 	// (as startIdempotentDestroy does) before coalescing.
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()
+	if err := s.rejectActiveKeyed(ctx, topology); err != nil {
+		return nil, err
+	}
 
 	var reqSnapshot string
 	if req.Revision != "" && globalRevisionPattern.MatchString(req.Revision) {
@@ -263,6 +271,11 @@ func (s *RunService) startDestroy(ctx context.Context, topology string, allowUns
 	if operationKey != "" {
 		return s.startIdempotentDestroy(ctx, topology, allowUnsafe, operationKey)
 	}
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
+	if err := s.rejectActiveKeyed(ctx, topology); err != nil {
+		return nil, err
+	}
 	// Capture the current workspace before creating the run. Destroy follows
 	// state lineage, but providers may still resolve workspace-relative data.
 	// The snapshot prevents a later apply from changing the destroy input.
@@ -296,6 +309,8 @@ func (s *RunService) startDestroy(ctx context.Context, topology string, allowUns
 }
 
 func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string, allowUnsafe bool, operationKey string) (*controlplane.Run, error) {
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
 	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("topology=%s\noperation=destroy\nallow_unsafe_state=%t\n", topology, allowUnsafe))))
 	run := newRun(topology, "destroy", runStartOptions{UnsafeState: allowUnsafe, OperationKey: operationKey})
 	run.RequestFingerprint = fingerprint
@@ -310,6 +325,28 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 		s.jobs.remember(existing)
 		return existing, nil
 	}
+	if err := s.rejectActive(ctx, topology, run.ID); err != nil {
+		return nil, err
+	}
+	if _, statErr := os.Stat(s.hclFile(topology)); errors.Is(statErr, os.ErrNotExist) {
+		mgr, err := s.stateManager(topology)
+		if err != nil {
+			return nil, runError(runServiceInternal, err)
+		}
+		st, err := mgr.LoadWithContext(ctx)
+		if err != nil {
+			return nil, runError(runServiceInternal, err)
+		}
+		if len(st.Resources) == 0 {
+			run.MarkFinished(nil, time.Now().UTC())
+			stored, _, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: *run, Fingerprint: fingerprint})
+			if err != nil {
+				return nil, dispatchError(err)
+			}
+			s.jobs.remember(stored)
+			return stored, nil
+		}
+	}
 	if snapshot, snapErr := s.workspaces.MaterializeWorkspaceSnapshot(topology, run.ID); snapErr == nil {
 		run.SnapshotPath = snapshot
 	}
@@ -318,6 +355,10 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 		configPath = run.SnapshotPath
 	}
 	required, err := s.requiredForTopo(configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		required = nil
+		err = nil
+	}
 	if err != nil {
 		return nil, runError(runServiceBadRequest, err)
 	}

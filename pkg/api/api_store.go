@@ -953,6 +953,9 @@ func dsnWithoutSysboxQuery(raw string) string {
 
 func markInterruptedRuns(runs []controlplane.Run) []controlplane.Run {
 	for i := range runs {
+		if runs[i].RequestFingerprint != "" {
+			continue
+		}
 		if runs[i].Status == controlplane.RunAssigned || runs[i].Status == controlplane.RunRunning {
 			runs[i].Status = controlplane.RunFailed
 			runs[i].Err = "server restarted before run completion"

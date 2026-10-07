@@ -23,6 +23,7 @@ const (
 // Per-topology mutexes prevent concurrent apply/destroy on the same topology.
 type Jobs struct {
 	mu                 sync.RWMutex
+	applyInputs        map[string]map[string]string
 	runs               map[string]*controlplane.Run
 	runsDir            string // root directory for runs, e.g. "runs"
 	store              apiStore
@@ -65,6 +66,7 @@ func newJobsWithPolicy(runsDir string, store apiStore, recoverInterrupted bool, 
 	}
 	j := &Jobs{
 		runs:               make(map[string]*controlplane.Run),
+		applyInputs:        make(map[string]map[string]string),
 		runsDir:            runsDir,
 		store:              store,
 		recoverInterrupted: recoverInterrupted,
@@ -302,6 +304,13 @@ func (j *Jobs) markRunning(r *controlplane.Run) {
 }
 
 func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
+	durable, err := j.store.GetRun(context.Background(), runID)
+	if err != nil {
+		return nil, err
+	}
+	if j.inputsRequired(durable) {
+		return nil, errApplyInputsRequired
+	}
 	owner := fmt.Sprintf("%s:%s:%d", agentID, runID, time.Now().UnixNano())
 	ttl := j.runLeaseTTL
 	if ttl <= 0 {
@@ -317,6 +326,9 @@ func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
 		// working without ever re-reading the plaintext from the store.
 		if existing, exists := j.runs[runID]; exists && existing.Inputs != nil {
 			claimed.Inputs = cloneInputs(existing.Inputs)
+		}
+		if inputs, ok := j.applyInputs[runID]; ok {
+			claimed.Inputs = cloneInputs(inputs)
 		}
 		j.runs[runID] = claimed
 		j.mu.Unlock()
@@ -510,6 +522,7 @@ func (j *Jobs) finish(r *controlplane.Run, err error) {
 	// has already bound var.<name> by the time a run goes terminal, so drop them
 	// from the in-memory entry to avoid exposing them via get/list.
 	r.Inputs = nil
+	delete(j.applyInputs, r.ID)
 	j.mu.Unlock()
 	j.logs.Close(r.ID)
 	j.persist(r)

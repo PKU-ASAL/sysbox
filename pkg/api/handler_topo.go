@@ -247,7 +247,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest{
-		Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
+		Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt, OperationKey: r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -421,12 +421,19 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, ok := s.jobs.get(id)
-	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
+	run, err := s.apiStore.GetRun(r.Context(), id)
+	if errors.Is(err, errRunNotFound) {
+		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, run)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("run store unavailable"))
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		*controlplane.Run
+		InputsRequired bool `json:"inputs_required"`
+	}{run, s.jobs.inputsRequired(run)})
 }
 
 func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
