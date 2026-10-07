@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"net/http"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -158,6 +159,35 @@ func (s *Server) handleAdoptionPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, plan)
+}
+
+func (s *Server) handleSSHAccess(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var body struct {
+		Operation string `json:"operation"`
+		Node      string `json:"node"`
+		controlplane.SSHAccessRequest
+	}
+	limitBody(w, r)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	body.SSHAccessRequest.Topology = topology
+	body.SSHAccessRequest.Node = body.Node
+	if body.SSHAccessRequest.ID == "" {
+		body.SSHAccessRequest.ID = body.ID
+	}
+	op, err := s.nodeOperations().SSHAccess(r.Context(), topology, body.Node, body.SSHAccessRequest, body.Operation, s.requestSubject(r))
+	if err != nil {
+		writeError(w, nodeOperationStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, op)
 }
 
 func nodeOperationStatus(err error) int {

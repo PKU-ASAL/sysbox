@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"log/slog"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -153,6 +154,38 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 		Roles:       subj.Roles,
 		ActionID:    "", ResourceUID: res.ResourceUID, Generation: res.Generation,
 	}))
+}
+
+func (s *NodeOperationService) SSHAccess(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject) (controlplane.NodeOperation, error) {
+	if operation != "ssh_access_apply" && operation != "ssh_access_delete" {
+		return controlplane.NodeOperation{}, fmt.Errorf("unsupported ssh access operation")
+	}
+	if req.Topology != topology || req.Node != node {
+		return controlplane.NodeOperation{}, fmt.Errorf("ssh access target mismatch")
+	}
+	if err := req.Validate(); err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	st, err := s.workspace.LoadState(topology)
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	res := st.FindResource(address.Resource("sysbox_node", node))
+	if res == nil {
+		return controlplane.NodeOperation{}, fmt.Errorf("node %q not found", node)
+	}
+	if res.OwnerUID != st.TopologyUID {
+		return controlplane.NodeOperation{}, fmt.Errorf("node ownership differs from topology")
+	}
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{res.Driver}, "")
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if req.ID == "" {
+		req.ID = uuid.NewString()
+	}
+	op := prepareNodeOperation(controlplane.NodeOperation{ID: req.ID, Topology: topology, Workspace: topology, Operation: operation, Node: node, Substrate: res.Driver, AgentID: agent.ID, RequestedBy: subj.User, Roles: subj.Roles, ResourceUID: res.ResourceUID, Generation: res.Generation, SSHAccess: &req})
+	return s.enqueue(ctx, st.TopologyUID, op)
 }
 
 func (s *NodeOperationService) Import(ctx context.Context, topology string, req ImportNodeRequest, subj requestSubject) (controlplane.NodeOperation, error) {
