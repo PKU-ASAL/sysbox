@@ -116,6 +116,22 @@ func preserveGuestDispatch(old, next []byte) ([]byte, error) {
 	if old == nil {
 		return next, nil
 	}
+	var previous map[string]json.RawMessage
+	if err := decodeGuestObject(old, &previous); err != nil {
+		return nil, err
+	}
+	if receipt, ok := previous["completion_receipt"]; ok {
+		var updated map[string]json.RawMessage
+		if err := decodeGuestObject(next, &updated); err != nil {
+			return nil, err
+		}
+		updated["completion_receipt"] = receipt
+		var err error
+		next, err = json.Marshal(updated)
+		if err != nil {
+			return nil, err
+		}
+	}
 	record, err := guestDispatchSeed(old)
 	if err != nil {
 		return nil, err

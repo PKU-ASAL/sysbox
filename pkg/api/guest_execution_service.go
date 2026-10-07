@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 const guestExecutionMaxTimeout = 24 * 60 * 60
@@ -80,6 +81,15 @@ func (s *GuestExecutionService) Create(ctx context.Context, topology, node, agen
 	public := execution
 	public.Request = controlplane.GuestExecutionRequest{}
 	command := controlplane.AgentCommand{ID: commandID, AgentID: agentID, Type: "guest_execution", Execution: &public, ExecutionRequest: req}
+	if id, ok := substrate.OperationIdentityFromContext(ctx); ok {
+		if err := id.Validate(); err != nil {
+			return controlplane.GuestExecution{}, err
+		}
+		command.ActionID = execution.ID
+		command.ResourceUID = id.ResourceUID
+		command.Generation = id.Generation
+		command.LeaseEpoch = 1
+	}
 	if s.enqueue != nil {
 		command.Status = controlplane.AgentCommandStatusQueued
 		command.Protocol = controlplane.AgentProtocolVersion
@@ -164,31 +174,6 @@ func (s *GuestExecutionService) MarkRunning(ctx context.Context, id string) (con
 	}
 	return execution, err
 }
-func (s *GuestExecutionService) Complete(ctx context.Context, id string, result controlplane.GuestExecutionResult, resultClass, errText string) (controlplane.GuestExecution, error) {
-	execution, err := s.Get(ctx, id)
-	if err != nil {
-		return execution, err
-	}
-	if guestExecutionTerminal(execution.Status) {
-		return execution, fmt.Errorf("%w: already terminal", errGuestExecutionConflict)
-	}
-	execution.Status = controlplane.GuestExecutionCompleted
-	if errText != "" {
-		execution.Status = controlplane.GuestExecutionFailed
-	}
-	execution.Result = result
-	execution.ResultClass = resultClass
-	execution.Err = errText
-	execution.EndedAt = s.now()
-	execution.ExpiresAt = execution.EndedAt.Add(15 * time.Minute)
-	ok, err := s.store.CompareAndSwapGuestExecution(ctx, execution, execution.Version)
-	if err == nil && !ok {
-		err = fmt.Errorf("%w: version changed", errGuestExecutionConflict)
-	} else if ok {
-		execution.Version++
-	}
-	return execution, err
-}
 func (s *GuestExecutionService) Cancel(ctx context.Context, id string) (controlplane.GuestExecution, error) {
 	execution, err := s.Get(ctx, id)
 	if err != nil {
@@ -209,7 +194,13 @@ func (s *GuestExecutionService) Cancel(ctx context.Context, id string) (controlp
 	if err == nil && s.publish != nil {
 		target := execution.CommandID
 		if execution.StartedAt.IsZero() && target != "" {
-			_, err = s.publish(ctx, execution.AgentID, controlplane.AgentCommand{ID: target, Status: controlplane.AgentCommandStatusCancelled})
+			if commands, ok := s.store.(interface {
+				DeleteAgentCommand(context.Context, string, string) error
+			}); ok {
+				err = commands.DeleteAgentCommand(ctx, execution.AgentID, target)
+			} else {
+				err = fmt.Errorf("command retirement storage required")
+			}
 		} else {
 			_, err = s.publish(ctx, execution.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: execution.ID}})
 		}

@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestGuestExecutionCreateValidatesRequest(t *testing.T) {
@@ -30,9 +32,9 @@ func TestGuestExecutionCreateValidatesRequest(t *testing.T) {
 }
 
 func TestGuestExecutionLifecyclePreservesNonZeroExit(t *testing.T) {
-	ctx := context.Background()
+	ctx := substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{ActionID: "guest", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "node", Generation: 1})
 	store := &localAPIStore{runsDir: t.TempDir()}
-	svc := newGuestExecutionService(store, nil, nil)
+	svc := newGuestExecutionServiceFromStore(store, nil, nil)
 	exec, err := svc.Create(ctx, "lab", "web", "host-a", controlplane.GuestExecutionRequest{Argv: []string{"sh", "-c", "exit 7"}, TimeoutSeconds: 30})
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionQueued, exec.Status)
@@ -41,13 +43,18 @@ func TestGuestExecutionLifecyclePreservesNonZeroExit(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionRunning, exec.Status)
 
-	exec, err = svc.Complete(ctx, exec.ID, controlplane.GuestExecutionResult{ExitCode: 7, Stderr: "YmFk", Encoding: "base64"}, controlplane.GuestExecutionResultClassExit, "")
+	lease, ok, err := store.AcquireAgentCommandLease(ctx, exec.AgentID, exec.CommandID, "worker", time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	report := controlplane.GuestExecutionCompletion{Result: controlplane.GuestExecutionResult{ExitCode: 7, Stderr: "YmFk", Encoding: "base64"}, ResultClass: controlplane.GuestExecutionResultClassExit, ActionID: lease.ActionID, ResourceUID: lease.ResourceUID, Generation: lease.Generation, LeaseEpoch: lease.LeaseEpoch, LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt}
+	exec, err = store.CompleteGuestExecution(ctx, exec.AgentID, exec.ID, report)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionCompleted, exec.Status)
 	require.Equal(t, 7, exec.Result.ExitCode)
 	require.Equal(t, controlplane.GuestExecutionResultClassExit, exec.ResultClass)
-	_, err = svc.Complete(ctx, exec.ID, controlplane.GuestExecutionResult{}, "", "")
-	require.ErrorContains(t, err, "terminal")
+	report.Result.ExitCode = 0
+	_, err = store.CompleteGuestExecution(ctx, exec.AgentID, exec.ID, report)
+	require.ErrorIs(t, err, persistence.ErrConflict)
 
 	raw, err := json.Marshal(exec)
 	require.NoError(t, err)
@@ -58,7 +65,8 @@ func TestGuestExecutionLifecyclePreservesNonZeroExit(t *testing.T) {
 func TestGuestExecutionCancelIsExplicitTerminalTransition(t *testing.T) {
 	ctx := context.Background()
 	var cancelTarget string
-	svc := newGuestExecutionService(&localAPIStore{runsDir: t.TempDir()}, func(_ context.Context, _ string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
+	store := &localAPIStore{runsDir: t.TempDir()}
+	svc := newGuestExecutionService(store, func(_ context.Context, _ string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
 		if cmd.Type == "cancel_command" {
 			cancelTarget = cmd.Operation.ExternalID
 		}
@@ -71,8 +79,8 @@ func TestGuestExecutionCancelIsExplicitTerminalTransition(t *testing.T) {
 	require.Equal(t, controlplane.GuestExecutionCancelled, exec.Status)
 	require.Equal(t, exec.ID, cancelTarget)
 	require.WithinDuration(t, time.Now().UTC(), exec.EndedAt, time.Second)
-	_, err = svc.Complete(ctx, exec.ID, controlplane.GuestExecutionResult{ExitCode: 0}, controlplane.GuestExecutionResultClassExit, "")
-	require.ErrorIs(t, err, errGuestExecutionConflict)
+	_, err = store.CompleteGuestExecution(ctx, exec.AgentID, exec.ID, controlplane.GuestExecutionCompletion{})
+	require.ErrorIs(t, err, persistence.ErrConflict)
 }
 
 func TestGuestExecutionStoreRetainsPrivateDispatchData(t *testing.T) {

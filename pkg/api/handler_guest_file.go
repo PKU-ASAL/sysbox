@@ -16,7 +16,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 const guestFileMaxSize = 16 << 20
@@ -96,6 +95,16 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 	commandID := uuid.NewString()
 	op := controlplane.GuestFileOperation{ID: id, Version: 1, AgentID: agentID, CommandID: commandID, Topology: topology, Node: node, Status: controlplane.GuestExecutionQueued, CreatedAt: time.Now().UTC()}
 	command := controlplane.AgentCommand{ID: commandID, AgentID: agentID, Type: "guest_file_put", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, FilePut: &put}
+	identity, err := s.guestTargetIdentity(topology, node)
+	if err != nil {
+		cleanup()
+		writeError(w, guestOperationErrorStatus(err), err)
+		return
+	}
+	command.ActionID = id
+	command.ResourceUID = identity.ResourceUID
+	command.Generation = identity.Generation
+	command.LeaseEpoch = 1
 	if err := s.apiStore.CreateGuestFileDispatch(r.Context(), op, command); err != nil {
 		cleanup()
 		writeError(w, 500, err)
@@ -152,7 +161,7 @@ func (s *Server) handleCancelGuestFileOperation(w http.ResponseWriter, r *http.R
 	if op.CommandID != "" {
 		var dispatchErr error
 		if op.StartedAt.IsZero() {
-			_, dispatchErr = s.agentService().PublishCommand(r.Context(), op.AgentID, controlplane.AgentCommand{ID: op.CommandID, Status: controlplane.AgentCommandStatusCancelled})
+			dispatchErr = s.apiStore.DeleteAgentCommand(r.Context(), op.AgentID, op.CommandID)
 		} else {
 			_, dispatchErr = s.agentService().PublishCommand(r.Context(), op.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: op.ID}})
 		}
@@ -214,14 +223,7 @@ func (s *Server) handleCompleteGuestFileOperation(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode completion"))
 		return
 	}
-	if op.CommandID != "" {
-		cmd, findErr := s.agentService().FindCommand(r.Context(), agentID, op.CommandID)
-		if (findErr != nil && fenceProofPresent(completion.ActionID, completion.ResourceUID, completion.Generation, completion.LeaseEpoch, completion.LeaseOwner, completion.Attempt)) || findErr == nil && !commandEventMatchesFence(cmd, controlplane.AgentCommandEvent{AgentID: agentID, CommandID: op.CommandID, Type: cmd.Type, ActionID: completion.ActionID, ResourceUID: completion.ResourceUID, Generation: completion.Generation, LeaseEpoch: completion.LeaseEpoch, LeaseOwner: completion.LeaseOwner, Attempt: completion.Attempt}) {
-			writeError(w, http.StatusConflict, persistence.ErrConflict)
-			return
-		}
-	}
-	updated, err := newGuestFileOperationService(s.apiStore).Complete(r.Context(), op.ID, completion.Error)
+	updated, err := s.apiStore.CompleteGuestFileOperation(r.Context(), agentID, op.ID, completion)
 	if err != nil {
 		writeError(w, guestOperationErrorStatus(err), err)
 		return

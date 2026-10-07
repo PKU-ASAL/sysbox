@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func TestGuestFilePutValidatesPathModeDigestAndStagesPrivately(t *testing.T) {
@@ -72,7 +74,10 @@ func TestGuestFileOperationHTTPDurableLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"status":"running"`)
 
-	complete := httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/guest-file-operations/"+created.ID+"/complete", bytes.NewBufferString(`{}`))
+	completion := leaseFileCompletion(t, s, created.ID)
+	body, err := json.Marshal(completion)
+	require.NoError(t, err)
+	complete := httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/guest-file-operations/"+created.ID+"/complete", bytes.NewReader(body))
 	completeRec := httptest.NewRecorder()
 	s.ServeHTTP(completeRec, complete)
 	require.Equal(t, http.StatusOK, completeRec.Code, completeRec.Body.String())
@@ -100,9 +105,10 @@ func TestGuestFileOperationHTTPCancel(t *testing.T) {
 	op, err := s.apiStore.GetGuestFileOperation(context.Background(), created.ID)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionCancelled, op.Status)
-	cmd, err := s.agentService().FindCommand(context.Background(), "host-a", op.CommandID)
-	require.NoError(t, err)
-	_, ok := s.agentService().AcquireCommandLease(context.Background(), "host-a", cmd)
+	_, err = s.agentService().FindCommand(context.Background(), "host-a", op.CommandID)
+	require.Error(t, err, "cancelled queued command must be retired")
+	_, ok, err := s.apiStore.AcquireAgentCommandLease(context.Background(), "host-a", op.CommandID, "worker", time.Minute)
+	require.Error(t, err)
 	require.False(t, ok)
 }
 
@@ -127,8 +133,12 @@ func TestGuestFileOperationSurvivesLocalServerRestart(t *testing.T) {
 
 func TestGuestFileOperationReportsAreIdempotentAndOrdered(t *testing.T) {
 	s := guestExecutionTestServer(t)
-	op := controlplane.GuestFileOperation{ID: "op-1", Version: 1, AgentID: "host-a", CommandID: "cmd-1", Status: controlplane.GuestExecutionQueued}
-	require.NoError(t, s.apiStore.SaveGuestFileOperation(context.Background(), op))
+	op := controlplane.GuestFileOperation{ID: "op-1", Version: 1, AgentID: "host-a", CommandID: "cmd-1", Topology: "lab", Node: "web", Status: controlplane.GuestExecutionQueued}
+	cmd := controlplane.AgentCommand{ID: op.CommandID, AgentID: op.AgentID, Type: "guest_file_put", Status: "queued", Protocol: controlplane.AgentProtocolVersion, ActionID: op.ID, ResourceUID: "node", Generation: 1, LeaseEpoch: 1, FilePut: &controlplane.GuestFilePut{ID: op.ID, Topology: op.Topology, Node: op.Node}}
+	require.NoError(t, s.apiStore.CreateGuestFileDispatch(context.Background(), op, cmd))
+	completion := leaseFileCompletion(t, s, op.ID)
+	raw, err := json.Marshal(completion)
+	require.NoError(t, err)
 	post := func(path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body)))
@@ -136,11 +146,12 @@ func TestGuestFileOperationReportsAreIdempotentAndOrdered(t *testing.T) {
 	}
 	completePath := "/v1/agents/host-a/guest-file-operations/op-1/complete"
 	startPath := "/v1/agents/host-a/guest-file-operations/op-1/start"
+	require.Equal(t, http.StatusConflict, post(completePath, string(raw)).Code)
+	require.Equal(t, http.StatusOK, post(startPath, ``).Code)
+	require.Equal(t, http.StatusOK, post(startPath, ``).Code)
 	require.Equal(t, http.StatusConflict, post(completePath, `{}`).Code)
-	require.Equal(t, http.StatusOK, post(startPath, ``).Code)
-	require.Equal(t, http.StatusOK, post(startPath, ``).Code)
-	require.Equal(t, http.StatusOK, post(completePath, `{}`).Code)
-	require.Equal(t, http.StatusOK, post(completePath, `{}`).Code)
+	require.Equal(t, http.StatusOK, post(completePath, string(raw)).Code)
+	require.Equal(t, http.StatusOK, post(completePath, string(raw)).Code)
 }
 
 func TestCancelledGuestFileOperationRejectsLateCompletion(t *testing.T) {
@@ -149,7 +160,7 @@ func TestCancelledGuestFileOperationRejectsLateCompletion(t *testing.T) {
 	require.NoError(t, store.SaveGuestFileOperation(context.Background(), controlplane.GuestFileOperation{ID: "op", Version: 1, Status: controlplane.GuestExecutionQueued}))
 	_, err := svc.Cancel(context.Background(), "op")
 	require.NoError(t, err)
-	_, err = svc.Complete(context.Background(), "op", "")
+	_, err = store.CompleteGuestFileOperation(context.Background(), "agent", "op", controlplane.GuestFileOperationCompletion{})
 	require.Error(t, err)
 	got, err := svc.Get(context.Background(), "op")
 	require.NoError(t, err)
@@ -191,8 +202,8 @@ func TestCancelIntentBlocksConcurrentStartAndCompletion(t *testing.T) {
 	require.True(t, op.CancelRequested)
 	_, err = svc.MarkRunning(context.Background(), "op")
 	require.ErrorIs(t, err, errGuestFileOperationConflict)
-	_, err = svc.Complete(context.Background(), "op", "")
-	require.ErrorIs(t, err, errGuestFileOperationConflict)
+	_, err = store.CompleteGuestFileOperation(context.Background(), "agent", "op", controlplane.GuestFileOperationCompletion{})
+	require.ErrorIs(t, err, persistence.ErrConflict)
 	op, err = svc.Cancel(context.Background(), "op")
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionCancelled, op.Status)

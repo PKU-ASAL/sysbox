@@ -11,6 +11,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func guestOperationErrorStatus(err error) int {
@@ -75,6 +76,25 @@ func (s *Server) guestExecutionNodeExists(topology, node string) bool {
 	return st.FindResource(address.Resource("sysbox_node", node)) != nil || st.FindResource(address.Resource("sysbox_router", node)) != nil
 }
 
+func (s *Server) guestTargetIdentity(topology, node string) (substrate.OperationIdentity, error) {
+	st, err := s.workspaceService().LoadState(topology)
+	if err != nil {
+		return substrate.OperationIdentity{}, err
+	}
+	r := st.FindResource(address.Resource("sysbox_node", node))
+	if r == nil {
+		r = st.FindResource(address.Resource("sysbox_router", node))
+	}
+	if r == nil {
+		return substrate.OperationIdentity{}, persistence.ErrNotFound
+	}
+	id := substrate.OperationIdentity{ActionID: "guest", OwnerUID: r.OwnerUID, TopologyUID: st.TopologyUID, ResourceUID: r.ResourceUID, Generation: r.Generation}
+	if err := id.Validate(); err != nil {
+		return id, persistence.ErrInvalidRecord
+	}
+	return id, nil
+}
+
 func (s *Server) handleCreateGuestExecution(w http.ResponseWriter, r *http.Request) {
 	topology, node := r.PathValue("topology"), r.PathValue("node")
 	if err := validatePathSegment(topology, "topology"); err != nil {
@@ -104,7 +124,12 @@ func (s *Server) handleCreateGuestExecution(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, fmt.Errorf("node not found"))
 		return
 	}
-	execution, err := s.guestExecutions().Create(r.Context(), topology, node, agentID, req)
+	identity, err := s.guestTargetIdentity(topology, node)
+	if err != nil {
+		writeError(w, guestOperationErrorStatus(err), err)
+		return
+	}
+	execution, err := s.guestExecutions().Create(substrate.WithOperationIdentity(r.Context(), identity), topology, node, agentID, req)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errInvalidGuestExecution) {
@@ -167,16 +192,9 @@ func (s *Server) handleCompleteGuestExecution(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode completion"))
 		return
 	}
-	if execution.CommandID != "" {
-		cmd, findErr := s.agentService().FindCommand(r.Context(), agentID, execution.CommandID)
-		if (findErr != nil && fenceProofPresent(completion.ActionID, completion.ResourceUID, completion.Generation, completion.LeaseEpoch, completion.LeaseOwner, completion.Attempt)) || findErr == nil && !commandEventMatchesFence(cmd, controlplane.AgentCommandEvent{AgentID: agentID, CommandID: execution.CommandID, Type: cmd.Type, ActionID: completion.ActionID, ResourceUID: completion.ResourceUID, Generation: completion.Generation, LeaseEpoch: completion.LeaseEpoch, LeaseOwner: completion.LeaseOwner, Attempt: completion.Attempt}) {
-			writeError(w, http.StatusConflict, persistence.ErrConflict)
-			return
-		}
-	}
-	execution, err = s.guestExecutions().Complete(r.Context(), execution.ID, completion.Result, completion.ResultClass, completion.Error)
+	execution, err = s.apiStore.CompleteGuestExecution(r.Context(), agentID, execution.ID, completion)
 	if err != nil {
-		if errors.Is(err, errGuestExecutionConflict) {
+		if errors.Is(err, errGuestExecutionConflict) || errors.Is(err, persistence.ErrConflict) {
 			writeError(w, http.StatusConflict, err)
 			return
 		}

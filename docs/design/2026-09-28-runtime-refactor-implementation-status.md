@@ -16,6 +16,7 @@
 |---|---|---|
 | 生命周期执行与恢复 | 默认引擎使用 action journal；旧 checkpoint 副作用恢复链已删除 | SSH access discovery、跨控制器授权闭环未完成 |
 | NodeOperation | 三后端共用完整记录与原子 outbox；完成回报在同一锁/事务内核对当前 command lease | 资源端副作用仍不具备同代 lease epoch 撤销保证 |
+| Guest execution/file | 完成回报三后端同锁/事务核对 command proof 和有效 lease；旧 attempt/过期回报拒绝，终态重试幂等 | 资源端已启动 guest 进程不能被 lease epoch 远程撤销 |
 | Firewall | 默认创建/发现/恢复/删除已实测；资源侧 generation、原子 nft batch、FD 与删除证据已接入 | HTTP/远端 Agent 全链路、跨宿主租约、外部 writer 完整规则篡改检测未验收 |
 | Provider 身份 | Docker/libvirt/Firecracker Create 均要求持久身份；Firecracker reset 不再合成 target action | 不能据此宣称所有资源类型均已有同代 lease epoch 撤销 |
 | 外部 attachment | Docker veth、Firecracker TAP 使用版本化 namespace/ifindex/alias proof，旧裸名称删除入口移除 | 目标 bridge/network 自身身份及特权 writer 刻意重用同一 ifindex 的并发替换不在保证内 |
@@ -103,6 +104,10 @@ Policy 的底层 Apply/Observe/Delete 接收打开的 namespace 文件，由调�
 Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe 返回的 table/digest 与持久结果；缺失、查询失败或差异不恢复。FD 固定防止路径/PID 漂移将后续操作指向其他 namespace，但不阻止同代际并发 policy 写入，也不撤销已在旧 namespace 开始的操作；尚未实现 policy 自身的租约仲裁。
 
 ### Resource fencing 迁移进度
+
+2026-10-07 Guest completion 收口：GuestExecution/GuestFileOperation 的 HTTP completion 已改用三后端原子 `CompleteGuestExecution`/`CompleteGuestFileOperation`。调用在同一物理锁/事务内读取当前操作、command record 和 dispatch seed，核对 action/resource/generation/lease_epoch/lease_owner/attempt、操作状态、节点绑定和结果 receipt，再递增版本写入。旧无 proof、未租用、过期或被新 attempt 替代的回报返回冲突；已退休 command 的相同 terminal receipt 可幂等重试，内容不同拒绝。取消未开始操作直接退休 command，不再发布无身份的覆盖命令。
+
+Agent runner 回报实际收到的 command proof；guest completion 不再保留“找不到 command 且无 proof 仍可完成”的兼容。文件/SQLite/Postgres 合同、真实 PostgreSQL API/persistence race 和 HTTP proof 测试通过。完整 Agent→API→provider 业务 E2E 仍未覆盖每种 guest transport；已启动 guest 进程的 effect 仍不具备 lease epoch 远程撤销。
 
 2026-10-07 派发轮次与完成授权：Run command ID 由 Run ID、UTC queued_at、revision 摘要生成，scheduler、destroy 与重启修复共用。assignment outbox key 同样按轮次隔离；HTTP 幂等请求映射不变。SQL 允许一个 Run ID 多条不同轮次派发，Postgres schema 6 删除 run_id 唯一约束，旧 SQLite 约束要求显式重建。文件重启修复只选择最新轮次，旧命令不阻挡新轮次派发；旧派发请求不能返回新一轮 Run。
 

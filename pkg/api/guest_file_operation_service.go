@@ -58,35 +58,6 @@ func (s *GuestFileOperationService) MarkRunning(ctx context.Context, id string) 
 	return op, err
 }
 
-func (s *GuestFileOperationService) Complete(ctx context.Context, id, errText string) (controlplane.GuestFileOperation, error) {
-	op, err := s.Get(ctx, id)
-	if err != nil {
-		return op, err
-	}
-	if op.CancelRequested {
-		return op, errGuestFileOperationConflict
-	}
-	if op.Status == controlplane.GuestExecutionCompleted || op.Status == controlplane.GuestExecutionFailed {
-		return op, nil
-	}
-	if op.Status != controlplane.GuestExecutionRunning {
-		return op, errGuestFileOperationConflict
-	}
-	op.Status = controlplane.GuestExecutionCompleted
-	if errText != "" {
-		op.Status, op.Error = controlplane.GuestExecutionFailed, "file operation failed"
-	}
-	op.EndedAt = s.now()
-	ok, err := s.store.CompareAndSwapGuestFileOperation(ctx, op, op.Version)
-	if err == nil && !ok {
-		err = errGuestFileOperationConflict
-	}
-	if ok {
-		op.Version++
-	}
-	return op, err
-}
-
 func (s *GuestFileOperationService) RequestCancel(ctx context.Context, id string) (controlplane.GuestFileOperation, error) {
 	op, err := s.Get(ctx, id)
 	if err != nil {

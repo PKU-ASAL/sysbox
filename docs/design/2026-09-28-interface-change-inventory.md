@@ -444,6 +444,8 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（2026-10-07 Guest completion）：Guest execution/file completion HTTP 必须提交 command proof（action_id、resource_uid、generation、lease_epoch、lease_owner、attempt）；旧无 proof 回报不兼容，返回 409。内部存储新增原子完成接口，服务层不再允许 Get→CAS 之间被替换。取消未开始的操作退休原 command。重复相同 terminal receipt 仍幂等，其他结果冲突。Agent/API 必须同步升级。
+
 实施补充（2026-10-07 轮次协议）：Run command ID 变为 Run ID/queued_at/revision 的稳定摘要，不再是 `run-<ID>`。`POST /v1/agents/{agent}/runs/{id}/claim` 必须提交 `{queued_at, revision}`；旧空 body 返回 400，旧轮次返回 409，API/Agent 必须同步升级。Postgres schema 6 允许同 Run ID 多轮派发；旧 SQLite run_id 唯一约束要求重建。NodeOperation 完成入口强制完整 action/resource/generation/lease_epoch/lease_owner/attempt，缺失或失效证明返回冲突；新增原子存储接口 `CompleteNodeOperation` 取代 service Get+CAS 完成流程。
 
 实施补充（2026-10-07 原子 outbox）：API 存储新增 `CreateNodeOperationDispatch(operation,command)`，生命周期派发必须使用此原子接口；operation 从提交起就绑定 command ID。`AgentService.WakeCommand` 仅唤醒已持久化命令，不写存储。共享 NodeOperation 记录携初始 dispatch seed；独立命令状态/退休记录覆盖 seed，禁止清除退休记录后重新投递。Run 已存在 queued 记录的派发须保持相同执行快照，并在同事务中改为 assigned 与创建命令。公共 HTTP 路由不变。
