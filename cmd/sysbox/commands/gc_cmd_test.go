@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/spf13/cobra"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -41,6 +42,21 @@ func TestGCIncludesCanonicalStateAndRefusesUnresolvedActions(t *testing.T) {
 	require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "unknown-create", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "other"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: st.TopologyUID + "/other", Generation: 1, StateSerial: latest.Meta.Serial, ExpectedSerial: latest.Meta.Serial}))
 	_, err = collectActiveIDsChecked(root)
 	require.Error(t, err, "unconfirmed resources must not be reclaimed")
+}
+
+func TestGCExecutePersistsUncertainDeleteBeforeReturning(t *testing.T) {
+	root, owner := gcInventoryFixture(t)
+	active, err := collectActiveIDsChecked(root)
+	require.NoError(t, err)
+	candidate := orphan{Kind: "unsupported", ID: "external", Topo: owner, OwnerUID: owner, ResourceUID: owner + "/orphan", Generation: 1, InventoryDigest: active.inventories[owner]}
+	err = executeOrphans(context.Background(), root, []orphan{candidate}, io.Discard)
+	require.ErrorContains(t, err, "unsupported GC provider kind")
+	journal, err := loadGCJournal(filepath.Join(root, "_gc", "deletion-journal.json"))
+	require.NoError(t, err)
+	record, ok := journal.Records["unsupported:external"]
+	require.True(t, ok)
+	require.Equal(t, "uncertain", record.Status)
+	require.NotEmpty(t, record.Digest)
 }
 
 func TestGCProtectsResourcesReferencedOnlyBySnapshot(t *testing.T) {

@@ -15,9 +15,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/config"
@@ -30,6 +33,7 @@ import (
 var (
 	flagGcRunsDir string
 	flagGcDryRun  bool
+	flagGcExecute bool
 )
 
 var gcCmd = &cobra.Command{
@@ -47,13 +51,14 @@ share lifecycle fencing; a preview is not authorization to delete resources.`,
 
 func init() {
 	gcCmd.Flags().StringVar(&flagGcRunsDir, "runs", config.DefaultRunsDir(), "directory of per-topology state files")
-	gcCmd.Flags().BoolVar(&flagGcDryRun, "dry-run", false, "preview scoped candidates without removing them (required)")
+	gcCmd.Flags().BoolVar(&flagGcDryRun, "dry-run", false, "preview scoped candidates without removing them")
+	gcCmd.Flags().BoolVar(&flagGcExecute, "execute", false, "execute fenced provider deletes; requires canonical inventory revalidation")
 }
 
 var errGcDeletionDisabled = errors.New("automatic GC deletion is disabled: inventory and deletion do not share lifecycle fencing; use --dry-run")
 
 func runGc(cmd *cobra.Command, _ []string) error {
-	if !flagGcDryRun {
+	if !flagGcDryRun && !flagGcExecute {
 		return errGcDeletionDisabled
 	}
 	if flagBackend != "" || strings.Contains(flagStateFile, "://") {
@@ -77,6 +82,16 @@ func runGc(cmd *cobra.Command, _ []string) error {
 	}
 	for _, o := range orphans {
 		fmt.Fprintln(output, o)
+	}
+	if flagGcExecute {
+		if flagGcDryRun {
+			return fmt.Errorf("refusing GC: --dry-run and --execute are mutually exclusive")
+		}
+		if err := executeOrphans(ctx, flagGcRunsDir, orphans, output); err != nil {
+			return err
+		}
+		fmt.Fprintf(output, "\n%d candidate(s) deleted with durable fencing and post-delete verification.\n", len(orphans))
+		return nil
 	}
 	fmt.Fprintf(output, "\n%d unreferenced candidate(s) in the inventoried owner scope (dry-run; nothing removed). Preview is not a deletion authorization.\n", len(orphans))
 	return nil
@@ -389,5 +404,191 @@ func findOrphanDomains(ctx context.Context, active activeIDs, report io.Writer) 
 }
 
 // A dry-run snapshot cannot fence a later create/adopt operation. Keep the
-// deletion entry point disabled even if called with a previously reviewed list.
+// legacy helper disabled; execution goes through executeOrphans below.
 func removeOrphans(context.Context, []orphan) error { return errGcDeletionDisabled }
+
+type gcJournalRecord struct {
+	Candidate orphan    `json:"candidate"`
+	Digest    string    `json:"digest"`
+	Status    string    `json:"status"` // intent | complete | uncertain
+	Error     string    `json:"error,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type gcJournal struct {
+	Version int                        `json:"version"`
+	Records map[string]gcJournalRecord `json:"records"`
+}
+
+func executeOrphans(ctx context.Context, runsDir string, candidates []orphan, report io.Writer) error {
+	if len(candidates) == 0 {
+		return nil
+	}
+	journalDir := filepath.Join(runsDir, "_gc")
+	if err := os.MkdirAll(journalDir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(journalDir, "deletion-journal.json")
+	lock := flock.New(path + ".lock")
+	ok, err := lock.TryLockContext(ctx, 10*time.Second)
+	if err != nil || !ok {
+		if err == nil {
+			err = fmt.Errorf("GC deletion journal is locked")
+		}
+		return err
+	}
+	defer lock.Unlock()
+	j, err := loadGCJournal(path)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		key := candidate.Kind + ":" + candidate.ID
+		if prior, ok := j.Records[key]; ok && prior.Status == "complete" {
+			continue
+		}
+		current, err := collectActiveIDsChecked(runsDir)
+		if err != nil {
+			return fmt.Errorf("GC inventory changed or became incomplete: %w", err)
+		}
+		if candidate.OwnerUID == "" || current.inventories[candidate.OwnerUID] == "" || current.inventories[candidate.OwnerUID] != candidate.InventoryDigest {
+			return fmt.Errorf("GC candidate %s inventory digest changed", key)
+		}
+		if candidate.Kind != "container" && candidate.Kind != "network" && candidate.Kind != "domain" {
+			// Preserve the intent and uncertain record for an unsupported provider
+			// kind; an unknown kind can never be silently treated as absent.
+		} else if activeContains(current, candidate) {
+			return fmt.Errorf("GC candidate %s is referenced again", key)
+		}
+		digest := gcCandidateDigest(candidate)
+		j.Records[key] = gcJournalRecord{Candidate: candidate, Digest: digest, Status: "intent", UpdatedAt: time.Now().UTC()}
+		if err := saveGCJournal(path, j); err != nil {
+			return err
+		}
+		if err := deleteProviderCandidate(ctx, candidate); err != nil {
+			j.Records[key] = gcJournalRecord{Candidate: candidate, Digest: digest, Status: "uncertain", Error: err.Error(), UpdatedAt: time.Now().UTC()}
+			_ = saveGCJournal(path, j)
+			return fmt.Errorf("GC delete %s: %w", key, err)
+		}
+		if err := verifyProviderCandidateAbsent(ctx, candidate); err != nil {
+			j.Records[key] = gcJournalRecord{Candidate: candidate, Digest: digest, Status: "uncertain", Error: err.Error(), UpdatedAt: time.Now().UTC()}
+			_ = saveGCJournal(path, j)
+			return fmt.Errorf("GC verify %s: %w", key, err)
+		}
+		j.Records[key] = gcJournalRecord{Candidate: candidate, Digest: digest, Status: "complete", UpdatedAt: time.Now().UTC()}
+		if err := saveGCJournal(path, j); err != nil {
+			return err
+		}
+		fmt.Fprintf(report, "deleted %s\n", candidate)
+	}
+	return nil
+}
+
+func gcCandidateDigest(candidate orphan) string {
+	raw, _ := json.Marshal(candidate)
+	return fmt.Sprintf("%x", sha256.Sum256(raw))
+}
+
+func loadGCJournal(path string) (gcJournal, error) {
+	j := gcJournal{Version: 1, Records: map[string]gcJournalRecord{}}
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return j, nil
+	}
+	if err != nil {
+		return j, err
+	}
+	if err := json.Unmarshal(raw, &j); err != nil || j.Version != 1 || j.Records == nil {
+		return j, fmt.Errorf("GC deletion journal requires explicit rebuild")
+	}
+	return j, nil
+}
+
+func saveGCJournal(path string, journal gcJournal) error {
+	raw, err := json.Marshal(journal)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func activeContains(active activeIDs, candidate orphan) bool {
+	switch candidate.Kind {
+	case "container":
+		return active.containers[candidate.ID]
+	case "network":
+		return active.networks[candidate.ID]
+	case "domain":
+		return active.domains[candidate.ID]
+	default:
+		return true
+	}
+}
+
+func deleteProviderCandidate(ctx context.Context, candidate orphan) error {
+	switch candidate.Kind {
+	case "container", "network":
+		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		if err != nil {
+			return err
+		}
+		defer cli.Close()
+		if candidate.Kind == "container" {
+			err = cli.ContainerRemove(ctx, candidate.ID, container.RemoveOptions{Force: true})
+		} else {
+			err = cli.NetworkRemove(ctx, candidate.ID)
+		}
+		if err != nil && !errdefs.IsNotFound(err) {
+			return err
+		}
+		return nil
+	case "domain":
+		if out, err := exec.CommandContext(ctx, "virsh", "destroy", candidate.ID).CombinedOutput(); err != nil && !strings.Contains(string(out), "not running") {
+			return fmt.Errorf("virsh destroy: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		if out, err := exec.CommandContext(ctx, "virsh", "undefine", candidate.ID, "--remove-all-storage").CombinedOutput(); err != nil && !strings.Contains(string(out), "not found") {
+			return fmt.Errorf("virsh undefine: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported GC provider kind %q", candidate.Kind)
+	}
+}
+
+func verifyProviderCandidateAbsent(ctx context.Context, candidate orphan) error {
+	switch candidate.Kind {
+	case "container", "network":
+		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		if err != nil {
+			return err
+		}
+		defer cli.Close()
+		if candidate.Kind == "container" {
+			_, err = cli.ContainerInspect(ctx, candidate.ID)
+		} else {
+			_, err = cli.NetworkInspect(ctx, candidate.ID, network.InspectOptions{})
+		}
+		if err == nil {
+			return fmt.Errorf("provider still reports %s", candidate.ID)
+		}
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		return err
+	case "domain":
+		ids, err := gcVirshOutput(ctx, "list", "--all", "--uuid")
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(ids), candidate.ID) {
+			return fmt.Errorf("provider still reports %s", candidate.ID)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported GC provider kind %q", candidate.Kind)
+	}
+}
