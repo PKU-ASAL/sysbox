@@ -10,6 +10,7 @@ import (
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/spf13/cobra"
@@ -143,6 +144,23 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 			return nil, fmt.Errorf("ssh access delete failed: %w", err)
 		}
 		return json.RawMessage(`{"deleted":true}`), nil
+	}
+	server.Adoption = &hostsupervisor.AdoptionCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "adoption"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, Authorize: authority.Authorize}
+	server.AdoptionApply = func(ctx context.Context, req controlplane.AdoptionRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+		p, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider)
+		if err != nil {
+			return nil, err
+		}
+		identity := substrate.OperationIdentity{ActionID: req.ID, OwnerUID: req.TopologyUID, TopologyUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation}
+		ctx = substrate.WithOperationIdentity(ctx, identity)
+		if _, err := p.ApplyAdoption(ctx, req.Evidence); err != nil {
+			return nil, err
+		}
+		h, err := p.ObserveAdoption(ctx, req.Evidence)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(h)
 	}
 	return server.Serve(cmd.Context())
 }}

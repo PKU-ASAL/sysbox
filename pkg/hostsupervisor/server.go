@@ -31,11 +31,13 @@ type Server struct {
 	SSH             *SSHAccessCoordinator
 	SSHApply        func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	SSHDelete       func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
+	Adoption        *AdoptionCoordinator
+	AdoptionApply   func(context.Context, controlplane.AdoptionRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	OnRecoveryError func(error)
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.SSH == nil || !filepath.IsAbs(s.Socket) {
+	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.SSH == nil && s.Adoption == nil || !filepath.IsAbs(s.Socket) {
 		return fmt.Errorf("absolute supervisor socket and dispatcher required")
 	}
 	directory := filepath.Dir(s.Socket)
@@ -242,6 +244,20 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 			break
 		}
 		response.SSHEvidence, err = s.SSH.Observe(ctx, *request.SSHRequest, *request.Grant)
+	case "adoption-apply":
+		if s.Adoption == nil || s.AdoptionApply == nil || request.AdoptionRequest == nil || request.Grant == nil {
+			err = fmt.Errorf("host adoption coordinator unavailable")
+			break
+		}
+		response.AdoptionEvidence, err = s.Adoption.Apply(ctx, *request.AdoptionRequest, *request.Grant, func(ec context.Context) (json.RawMessage, error) {
+			return s.AdoptionApply(ec, *request.AdoptionRequest, *request.Grant)
+		})
+	case "adoption-observe":
+		if s.Adoption == nil || request.AdoptionRequest == nil || request.Grant == nil {
+			err = fmt.Errorf("host adoption coordinator unavailable")
+			break
+		}
+		response.AdoptionEvidence, err = s.Adoption.Observe(ctx, *request.AdoptionRequest, *request.Grant)
 	case "host-info":
 		if s.Power == nil {
 			err = fmt.Errorf("host power supervisor unavailable")

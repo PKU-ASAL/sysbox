@@ -3,45 +3,13 @@ package hostsupervisor
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/effectgate"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"time"
 )
 
-type AdoptionRequest struct {
-	Topology       string                     `json:"topology"`
-	TopologyUID    string                     `json:"topology_uid"`
-	Address        string                     `json:"address"`
-	Provider       string                     `json:"provider"`
-	ExternalID     string                     `json:"external_id"`
-	ResourceUID    string                     `json:"resource_uid"`
-	Generation     int64                      `json:"generation"`
-	ExpectedSerial int64                      `json:"expected_serial"`
-	Evidence       substrate.AdoptionEvidence `json:"evidence"`
-}
-
-func (a AdoptionRequest) Validate() error {
-	if a.Topology == "" || a.TopologyUID == "" || a.Address == "" || a.Provider == "" || a.ExternalID == "" || a.ResourceUID == "" || a.Generation < 1 || a.ExpectedSerial < 0 {
-		return fmt.Errorf("incomplete adoption request")
-	}
-	if a.Evidence.Provider != a.Provider || a.Evidence.ExternalID != a.ExternalID || a.Evidence.Fingerprint == "" {
-		return fmt.Errorf("adoption inspection evidence mismatch")
-	}
-	return nil
-}
-func (a AdoptionRequest) Digest() (string, error) {
-	if err := a.Validate(); err != nil {
-		return "", err
-	}
-	raw, _ := json.Marshal(a)
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
-}
+type AdoptionRequest = controlplane.AdoptionRequest
 
 type AdoptionCoordinator struct {
 	Root                string

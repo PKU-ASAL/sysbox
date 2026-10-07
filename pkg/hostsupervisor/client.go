@@ -168,3 +168,11 @@ func (c *TaskClient) ObserveSSHAccess(ctx context.Context, req controlplane.SSHA
 	r, err := c.call(ctx, Request{Operation: "ssh-observe", SSHRequest: &req, Grant: &grant})
 	return r.SSHEvidence, err
 }
+func (c *TaskClient) ApplyAdoption(ctx context.Context, req controlplane.AdoptionRequest, g controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "adoption-apply", AdoptionRequest: &req, Grant: &g})
+	return r.AdoptionEvidence, err
+}
+func (c *TaskClient) ObserveAdoption(ctx context.Context, req controlplane.AdoptionRequest, g controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "adoption-observe", AdoptionRequest: &req, Grant: &g})
+	return r.AdoptionEvidence, err
+}

@@ -18,7 +18,7 @@ import (
 func adoptionFixture(t *testing.T) (*AdoptionCoordinator, AdoptionRequest, controlplane.SignedExecutionGrant) {
 	pub, key, e := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, e)
-	req := AdoptionRequest{Topology: "lab", TopologyUID: "topology", Address: "sysbox_node.web", Provider: "docker", ExternalID: "external", ResourceUID: "resource", Generation: 1, ExpectedSerial: 4, Evidence: substrate.AdoptionEvidence{Provider: "docker", ExternalID: "external", Fingerprint: "sha256:evidence"}}
+	req := AdoptionRequest{ID: "adopt", Topology: "lab", TopologyUID: "topology", Address: "sysbox_node.web", Provider: "docker", AgentID: "agent", ExternalID: "external", ResourceUID: "resource", Generation: 1, ExpectedSerial: 4, Evidence: substrate.AdoptionEvidence{Provider: "docker", ExternalID: "external", Fingerprint: "sha256:evidence"}}
 	d, e := req.Digest()
 	require.NoError(t, e)
 	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation}, AgentID: "agent", SessionID: "session", ActionID: "adopt", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "adoption_apply", Digest: d, TargetBootID: "host", State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}

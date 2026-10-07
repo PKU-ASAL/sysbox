@@ -15,29 +15,31 @@ type TargetRef struct {
 	Scope    controlplane.ExecutionScope `json:"scope"`
 }
 type Request struct {
-	Version     int                                `json:"version"`
-	Operation   string                             `json:"operation"`
-	Target      TargetRef                          `json:"target"`
-	Task        *guesttask.Request                 `json:"task,omitempty"`
-	Handle      substrate.ExecutionHandle          `json:"handle,omitempty"`
-	Grant       *controlplane.SignedExecutionGrant `json:"grant,omitempty"`
-	Power       *controlplane.NodePowerRequest     `json:"power,omitempty"`
-	FileRequest *substrate.FileInstallRequest      `json:"file_request,omitempty"`
-	FileHandle  substrate.FileInstallHandle        `json:"file_handle,omitempty"`
-	RunRequest  *RunRequest                        `json:"run_request,omitempty"`
-	SSHRequest  *controlplane.SSHAccessRequest     `json:"ssh_request,omitempty"`
-	Stream      string                             `json:"stream,omitempty"`
-	Cursor      int64                              `json:"cursor,omitempty"`
-	Limit       int                                `json:"limit,omitempty"`
+	Version         int                                `json:"version"`
+	Operation       string                             `json:"operation"`
+	Target          TargetRef                          `json:"target"`
+	Task            *guesttask.Request                 `json:"task,omitempty"`
+	Handle          substrate.ExecutionHandle          `json:"handle,omitempty"`
+	Grant           *controlplane.SignedExecutionGrant `json:"grant,omitempty"`
+	Power           *controlplane.NodePowerRequest     `json:"power,omitempty"`
+	FileRequest     *substrate.FileInstallRequest      `json:"file_request,omitempty"`
+	FileHandle      substrate.FileInstallHandle        `json:"file_handle,omitempty"`
+	RunRequest      *RunRequest                        `json:"run_request,omitempty"`
+	SSHRequest      *controlplane.SSHAccessRequest     `json:"ssh_request,omitempty"`
+	AdoptionRequest *controlplane.AdoptionRequest      `json:"adoption_request,omitempty"`
+	Stream          string                             `json:"stream,omitempty"`
+	Cursor          int64                              `json:"cursor,omitempty"`
+	Limit           int                                `json:"limit,omitempty"`
 }
 type Response struct {
-	Version     int                         `json:"version"`
-	BootID      string                      `json:"boot_id,omitempty"`
-	Handle      substrate.ExecutionHandle   `json:"handle,omitempty"`
-	Result      substrate.ExecResult        `json:"result,omitempty"`
-	Output      substrate.ExecutionOutput   `json:"output,omitempty"`
-	Error       string                      `json:"error,omitempty"`
-	FileResult  substrate.FileInstallResult `json:"file_result,omitempty"`
-	RunEvidence json.RawMessage             `json:"run_evidence,omitempty"`
-	SSHEvidence json.RawMessage             `json:"ssh_evidence,omitempty"`
+	Version          int                         `json:"version"`
+	BootID           string                      `json:"boot_id,omitempty"`
+	Handle           substrate.ExecutionHandle   `json:"handle,omitempty"`
+	Result           substrate.ExecResult        `json:"result,omitempty"`
+	Output           substrate.ExecutionOutput   `json:"output,omitempty"`
+	Error            string                      `json:"error,omitempty"`
+	FileResult       substrate.FileInstallResult `json:"file_result,omitempty"`
+	RunEvidence      json.RawMessage             `json:"run_evidence,omitempty"`
+	SSHEvidence      json.RawMessage             `json:"ssh_evidence,omitempty"`
+	AdoptionEvidence json.RawMessage             `json:"adoption_evidence,omitempty"`
 }
