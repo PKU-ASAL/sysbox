@@ -165,6 +165,19 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 	var err error
 	var record TaskRecord
 	switch request.Operation {
+	case "info", "start", "observe", "cancel", "renew", "output":
+		if s.Dispatcher == nil {
+			response.Error = "host task supervisor unavailable"
+			return response
+		}
+	case "run-start", "run-observe":
+		r := request.RunRequest
+		if r == nil || r.Topology != request.Target.Topology || r.TopologyUID != request.Target.Scope.TopologyUID || r.ResourceUID != request.Target.Scope.ResourceUID || r.Generation != request.Target.Scope.Generation {
+			response.Error = "host run target mismatch"
+			return response
+		}
+	}
+	switch request.Operation {
 	case "file-info":
 		if s.Files == nil {
 			err = fmt.Errorf("host file supervisor unavailable")

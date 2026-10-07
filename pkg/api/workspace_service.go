@@ -168,7 +168,7 @@ func (s *WorkspaceService) Get(ctx context.Context, topology string) (WorkspaceI
 			return WorkspaceInfo{}, err
 		}
 		for _, run := range latestRunsByID(runs) {
-			if run.Topology == topology && (run.Status.IsActive() || run.QueuedAt.IsZero() || (run.Status.IsTerminal() && run.EndedAt.IsZero())) {
+			if run.Topology == topology && run.Status.IsActive() {
 				out.ActiveRunID, out.ActiveRevision = run.ID, run.Revision
 			}
 		}
@@ -520,6 +520,10 @@ func (s *WorkspaceService) LockInfo(ctx context.Context, topology string) (state
 }
 
 func (s *WorkspaceService) ForceUnlock(ctx context.Context, topology string) error {
+	if s.lockAdmission != nil {
+		unlock := s.lockAdmission(topology)
+		defer unlock()
+	}
 	if s.loadRuns == nil || s.loadNodeOperations == nil || s.loadGuestActivity == nil {
 		return fmt.Errorf("%w: activity registry unavailable for force-unlock", persistence.ErrConflict)
 	}
@@ -550,7 +554,7 @@ func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology
 			return err
 		}
 		for _, run := range latestRunsByID(runs) {
-			if run.Topology == topology && run.Status.IsActive() {
+			if run.Topology == topology && (run.Status.IsActive() || run.QueuedAt.IsZero() || (run.Status.IsTerminal() && run.EndedAt.IsZero())) {
 				return fmt.Errorf("%w: active run prevents state maintenance", persistence.ErrConflict)
 			}
 		}

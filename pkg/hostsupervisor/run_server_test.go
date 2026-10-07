@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestRunSocketStartLostReplyObserveDoesNotReplay(t *testing.T) {
+func TestRunSocketStartAndHistoricalObserve(t *testing.T) {
 	c, req, grant := runFixture(t)
 	require.NoError(t, os.Chmod(c.Root, 0700))
 	socketDir := t.TempDir()
@@ -28,12 +28,24 @@ func TestRunSocketStartLostReplyObserveDoesNotReplay(t *testing.T) {
 		_, err := NewTaskClient(s.Socket, TargetRef{Topology: req.Topology, Node: "node", Scope: grant.Grant.Scope}).StartRun(ctx, req, grant)
 		return err == nil
 	}, time.Second, 10*time.Millisecond)
-	// StartRun is idempotent even if its first response was lost: the effect
-	// callback has run once and the journal is the only completion source.
+	// Historical observation must not invoke the effect callback again.
 	require.Equal(t, 1, calls)
 	raw, err := NewTaskClient(s.Socket, TargetRef{Topology: req.Topology, Node: "node", Scope: grant.Grant.Scope}).ObserveRun(ctx, req, grant)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"ok":true}`, string(raw))
 	cancel()
 	require.NoError(t, <-done)
+}
+
+func TestRunOnlyServerRejectsMissingTaskDispatcher(t *testing.T) {
+	c, req, grant := runFixture(t)
+	s := &Server{Runs: c}
+	target := TargetRef{Topology: req.Topology, Node: "node", Scope: grant.Grant.Scope}
+	for _, op := range []string{"info", "start", "observe", "cancel", "renew", "output"} {
+		r := s.Handle(context.Background(), Request{Version: 1, Operation: op, Target: target})
+		require.Contains(t, r.Error, "unavailable")
+	}
+	target.Scope.Generation++
+	r := s.Handle(context.Background(), Request{Version: 1, Operation: "run-observe", Target: target, RunRequest: &req, Grant: &grant})
+	require.Contains(t, r.Error, "mismatch")
 }
