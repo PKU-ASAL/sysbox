@@ -80,10 +80,10 @@ func TestGuestFileOperationHTTPDurableLifecycle(t *testing.T) {
 	complete := httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/guest-file-operations/"+created.ID+"/complete", bytes.NewReader(body))
 	completeRec := httptest.NewRecorder()
 	s.ServeHTTP(completeRec, complete)
-	require.Equal(t, http.StatusOK, completeRec.Code, completeRec.Body.String())
+	require.Equal(t, http.StatusConflict, completeRec.Code, completeRec.Body.String())
 	rec = get()
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), `"status":"completed"`)
+	require.Contains(t, rec.Body.String(), `"status":"running"`)
 }
 
 func TestGuestFileOperationHTTPCancel(t *testing.T) {
@@ -102,6 +102,7 @@ func TestGuestFileOperationHTTPCancel(t *testing.T) {
 	s.ServeHTTP(rec, cancel)
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"status":"cancelled"`)
+	require.Contains(t, rec.Body.String(), `"cancel_requested":true`)
 	op, err := s.apiStore.GetGuestFileOperation(context.Background(), created.ID)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionCancelled, op.Status)
@@ -150,8 +151,8 @@ func TestGuestFileOperationReportsAreIdempotentAndOrdered(t *testing.T) {
 	require.Equal(t, http.StatusOK, post(startPath, ``).Code)
 	require.Equal(t, http.StatusOK, post(startPath, ``).Code)
 	require.Equal(t, http.StatusConflict, post(completePath, `{}`).Code)
-	require.Equal(t, http.StatusOK, post(completePath, string(raw)).Code)
-	require.Equal(t, http.StatusOK, post(completePath, string(raw)).Code)
+	require.Equal(t, http.StatusConflict, post(completePath, string(raw)).Code)
+	require.Equal(t, http.StatusConflict, post(completePath, string(raw)).Code)
 }
 
 func TestCancelledGuestFileOperationRejectsLateCompletion(t *testing.T) {
@@ -167,7 +168,7 @@ func TestCancelledGuestFileOperationRejectsLateCompletion(t *testing.T) {
 	require.Equal(t, controlplane.GuestExecutionCancelled, got.Status)
 }
 
-func TestRunningGuestFileOperationCancelDispatchesCancelCommand(t *testing.T) {
+func TestRunningGuestFileWithoutGrantCanCancelWithoutEffect(t *testing.T) {
 	s := guestExecutionTestServer(t)
 	s.cfg.API.RBAC.AdminRoles = []string{"admin"}
 	put := httptest.NewRequest(http.MethodPut, "/v1/topologies/lab/nodes/web/files?path=/flag&mode=0400", bytes.NewReader([]byte("secret")))
@@ -190,7 +191,10 @@ func TestRunningGuestFileOperationCancelDispatchesCancelCommand(t *testing.T) {
 	for _, cmd := range commands {
 		found = found || (cmd.Type == "cancel_command" && cmd.Operation.ExternalID == created.ID)
 	}
-	require.True(t, found)
+	require.False(t, found)
+	op, err := s.apiStore.GetGuestFileOperation(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.GuestExecutionCancelled, op.Status)
 }
 
 func TestCancelIntentBlocksConcurrentStartAndCompletion(t *testing.T) {
@@ -222,7 +226,7 @@ func TestGuestFileFailedCommandEventReconcilesDurableOperation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionRunning, got.Status)
 
-	// A failed command reconciles the durable operation to failed.
+	// A failed worker command cannot prove that guest installation stopped.
 	failed := controlplane.GuestFileOperation{ID: "op-failed", Version: 1, AgentID: "host-a", CommandID: "cmd-failed", Status: controlplane.GuestExecutionRunning}
 	require.NoError(t, s.apiStore.SaveGuestFileOperation(context.Background(), failed))
 	_, err = s.agentService().PublishCommand(context.Background(), "host-a", controlplane.AgentCommand{ID: "cmd-failed", Type: "guest_file_put", FilePut: &controlplane.GuestFilePut{ID: "op-failed"}})
@@ -230,5 +234,5 @@ func TestGuestFileFailedCommandEventReconcilesDurableOperation(t *testing.T) {
 	s.agentService().RecordCommandEvent(context.Background(), controlplane.AgentCommandEvent{CommandID: "cmd-failed", AgentID: "host-a", Status: controlplane.AgentCommandStatusFailed})
 	got, err = s.apiStore.GetGuestFileOperation(context.Background(), "op-failed")
 	require.NoError(t, err)
-	require.Equal(t, controlplane.GuestExecutionFailed, got.Status)
+	require.Equal(t, controlplane.GuestExecutionRunning, got.Status)
 }

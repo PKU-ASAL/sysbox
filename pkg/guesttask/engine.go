@@ -3,7 +3,6 @@ package guesttask
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,11 +23,13 @@ import (
 // administrator-owned directories; guest tasks cannot change their contents.
 // Every task gets a detached supervisor, independent of the RPC server.
 type Engine struct {
-	Root         string
-	CgroupRoot   string
-	PublicKey    ed25519.PublicKey
-	WorkerBinary string
-	WorkerArgs   []string
+	AllowedInstallRoots []string
+	installHook         func(string) error
+	Root                string
+	CgroupRoot          string
+	PublicKey           ed25519.PublicKey
+	WorkerBinary        string
+	WorkerArgs          []string
 }
 
 func BootID() (string, error) {
@@ -42,6 +43,18 @@ func (e *Engine) lock(ctx context.Context, id string) (func(), error) {
 	}
 	if err := os.MkdirAll(e.Root, 0700); err != nil {
 		return nil, err
+	}
+	trusted, err := openInstallRoot(e.Root)
+	if err != nil {
+		return nil, err
+	}
+	info, err := trusted.Stat()
+	trusted.Close()
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		return nil, fmt.Errorf("guest control directory must be private")
 	}
 	lock := flock.New(filepath.Join(e.Root, id+".lock"))
 	ok, err := lock.TryLockContext(ctx, 5*time.Millisecond)
@@ -128,26 +141,11 @@ func (e *Engine) Start(ctx context.Context, req Request) (Record, error) {
 	if digest != req.Grant.Grant.Digest {
 		return Record{}, ErrUnauthorized
 	}
-	// The scope lock serializes epoch retirement with all task admissions.
-	scope := fmt.Sprintf("scope-%x", sha256.Sum256([]byte(req.Grant.Grant.Scope.TopologyUID+"\x00"+req.Grant.Grant.Scope.ResourceUID)))
-	scopes := Engine{Root: filepath.Join(e.Root, ".scopes")}
-	unlockScope, err := scopes.lock(ctx, scope)
+	epochPath, epoch, unlockScope, err := e.lockScope(ctx, req.Grant.Grant)
 	if err != nil {
 		return Record{}, err
 	}
 	defer unlockScope()
-	var epoch struct {
-		Epoch   uint64 `json:"epoch"`
-		Session string `json:"session"`
-	}
-	epochPath := filepath.Join(scopes.Root, scope+".json")
-	err = readJSON(epochPath, &epoch)
-	if err != nil && !os.IsNotExist(err) {
-		return Record{}, err
-	}
-	if req.Grant.Grant.Epoch < epoch.Epoch || req.Grant.Grant.Epoch == epoch.Epoch && epoch.Session != "" && epoch.Session != req.Grant.Grant.SessionID {
-		return Record{}, ErrUnauthorized
-	}
 	unlock, err := e.lock(ctx, req.ID)
 	if err != nil {
 		return Record{}, err
@@ -163,16 +161,8 @@ func (e *Engine) Start(ctx context.Context, req Request) (Record, error) {
 	if !os.IsNotExist(err) {
 		return Record{}, err
 	}
-	if req.Grant.Grant.Epoch > epoch.Epoch {
-		records, err := e.listUnlocked()
-		if err != nil {
-			return Record{}, err
-		}
-		for _, r := range records {
-			if r.Grant.Grant.Scope.TopologyUID == req.Grant.Grant.Scope.TopologyUID && r.Grant.Grant.Scope.ResourceUID == req.Grant.Grant.Scope.ResourceUID && !r.TerminationConfirmed {
-				return Record{}, fmt.Errorf("previous task must stop before epoch takeover")
-			}
-		}
+	if err = e.scopeQuiescent(req.Grant.Grant); err != nil {
+		return Record{}, err
 	}
 	if err = e.verifyCgroupRoot(); err != nil {
 		return Record{}, err

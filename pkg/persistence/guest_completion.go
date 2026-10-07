@@ -11,11 +11,15 @@ import (
 )
 
 type GuestCompletion struct {
+	HostFile  *controlplane.SignedExecutionStopReceipt
 	Execution *controlplane.GuestExecutionCompletion
 	File      *controlplane.GuestFileOperationCompletion
 }
 
 func (c GuestCompletion) kind() (guestKind, error) {
+	if c.HostFile != nil && c.File == nil && c.Execution == nil {
+		return guestFileKind, nil
+	}
 	if c.Execution != nil && c.File == nil {
 		return guestExecutionKind, nil
 	}
@@ -50,6 +54,14 @@ func (c GuestCompletion) Binding(raw []byte, id string) (string, string, error) 
 // CompleteGuestRecord executes under the adapter's operation+command lock.
 // The receipt hashes both result and lease proof without retaining extra output.
 func CompleteGuestRecord(raw []byte, cmd *CommandRecord, agent, id string, c GuestCompletion, now time.Time) ([]byte, error) {
+	if c.HostFile != nil {
+		return CompleteFileFromHost(raw, cmd, agent, id, *c.HostFile, now)
+	}
+	// A worker cannot prove guest installation commit or cancellation. File
+	// terminal results are accepted only through the authenticated host path.
+	if c.File != nil {
+		return nil, ErrConflict
+	}
 	owner, commandID, err := c.Binding(raw, id)
 	if err != nil {
 		return nil, err
@@ -107,24 +119,7 @@ func CompleteGuestRecord(raw []byte, cmd *CommandRecord, agent, id string, c Gue
 			return nil, err
 		}
 	} else {
-		x, err := fileOperationCodec.decode(raw)
-		if err != nil {
-			return nil, err
-		}
-		if command.Type != "guest_file_put" || command.FilePut == nil || command.FilePut.ID != id || command.FilePut.Topology != x.Topology || command.FilePut.Node != x.Node || x.CancelRequested || x.Status != controlplane.GuestExecutionRunning || x.Version == math.MaxInt64 {
-			return nil, ErrConflict
-		}
-		x.Status = controlplane.GuestExecutionCompleted
-		if c.File.Error != "" {
-			x.Status = controlplane.GuestExecutionFailed
-			x.Error = "file operation failed"
-		}
-		x.EndedAt = now
-		x.Version++
-		next, err = fileOperationCodec.encode(x)
-		if err != nil {
-			return nil, err
-		}
+		return nil, ErrInvalidRecord
 	}
 	next, err = preserveGuestDispatch(raw, next)
 	if err != nil {

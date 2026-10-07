@@ -86,8 +86,9 @@ and must never be available to the worker.
 File and SQLite repositories are checked for private supervisor ownership,
 including SQLite sidecars. PostgreSQL deployments must enforce equivalent
 isolation with separate database roles; the supervisor cannot prove role
-isolation from a DSN. This boundary currently covers API guest tasks and remote
-node pause/resume. Ordinary Run lifecycle, file installation and foreground provider calls have not all
+isolation from a DSN. This boundary currently covers API guest tasks, API file
+installation and remote node pause/resume. Ordinary Run lifecycle, provisioner
+file copying and foreground provider calls have not all
 moved behind it. A privileged ordinary Agent still has those direct provider
 paths, so this is not yet whole-Agent credential isolation.
 
@@ -106,6 +107,40 @@ the old operation. The effect ledger is format 2 and rejects older formats.
 and unhealthy containers, lost stop acknowledgments, service reconstruction,
 successor epochs and old-proof rejection. Standalone CLI pause/resume still
 uses its explicitly local provider path; the remote Agent has no such fallback.
+
+API file installation uses a fixed signed operation, not a root command. The
+signature covers installation ID, canonical guest path, mode, size and SHA256.
+The host downloads the payload from its configured API and verifies it; worker
+URLs and host source paths never become installation inputs. Payloads up to
+16 MiB use the same helper over Docker, SSH or vsock.
+
+Administrators must create a dedicated guest data directory and configure a
+root-owned `/etc/sysbox/install-roots.json`, for example
+`["/var/tmp/sysbox-install"]`. Create that directory with mode 0700; the helper
+does not create destination parents or silently expand the policy. Broad roots,
+symlinks, writable ancestors and supervisor control paths are rejected. File
+installation does not require cgroup delegation; arbitrary tasks still do.
+
+The guest writes into private staging on the destination filesystem, retains an
+inode anchor, records commit intent, then renames and fsyncs before recording
+completion. After a crash it proves committed or cancelled from those records;
+conflicting evidence remains unknown and blocks successor authorization. It
+never retries a rename merely because a previous response was lost. Cancellation
+and rename share a short commit lock, so cancellation before commit prevents
+installation; cancellation after commit reports committed without rollback.
+
+API cancellation returns `cancel_requested: true`. A running operation remains
+nonterminal until a signed host result confirms committed or cancelled; a
+queued operation without issued authority can be cancelled immediately. Workers
+cannot report file completion. Pending payloads survive expiry until terminal
+state and grant retirement permit cleanup. API schema 9, file metadata format 2
+and guest scope format 2 require explicit rebuilding of old data and updated
+helpers; aggregate state and Firecracker manifest formats are unchanged.
+
+Run `make test-host-file-e2e` for the actual API/host/Docker installation test,
+including lost stop acknowledgment, cold recovery, checksum/mode and revoked
+request rejection. Staging anchors are retained as recovery evidence; automatic
+GC remains a separate unfinished stage.
 
 Verification commands:
 

@@ -13,6 +13,7 @@ func (s *postgresAPIStore) CreateGuestFileDispatch(ctx context.Context, x contro
 	return s.createPostgresGuestDispatch(ctx, "sysbox_guest_file_operations", x.ID, func() ([]byte, error) { return persistence.EncodeGuestFileDispatchRecord(x, c) }, c)
 }
 func (s *postgresAPIStore) createPostgresGuestDispatch(ctx context.Context, table, id string, encode func() ([]byte, error), cmd controlplane.AgentCommand) error {
+	cmd = persistence.DurableCommand(cmd)
 	pool, err := s.poolFor(ctx)
 	if err != nil {
 		return err

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"golang.org/x/sys/unix"
 	"io"
 	"os"
@@ -323,6 +324,36 @@ func (e *Engine) Handle(ctx context.Context, call Call) Response {
 		return response
 	}
 	switch call.Operation {
+	case "file-info":
+		response.BootID, err = BootID()
+	case "file-install":
+		if call.FileRequest == nil || call.Grant == nil || int64(len(call.FileData)) > substrate.MaxFileInstallSize {
+			err = ErrConflict
+		} else {
+			var record FileInstallRecord
+			record, err = e.InstallFile(ctx, *call.FileRequest, *call.Grant, bytes.NewReader(call.FileData))
+			response.FileRecord = &record
+		}
+	case "file-observe":
+		if call.FileHandle == nil {
+			err = ErrConflict
+		} else {
+			var record FileInstallRecord
+			record, err = e.ObserveFileInstall(ctx, *call.FileHandle)
+			response.FileRecord = &record
+		}
+	case "file-cancel":
+		if call.FileHandle == nil {
+			err = ErrConflict
+		} else {
+			var record FileInstallRecord
+			if call.Grant != nil {
+				record, err = e.CancelFileInstall(ctx, *call.FileHandle, *call.Grant)
+			} else {
+				record, err = e.CancelFileInstall(ctx, *call.FileHandle)
+			}
+			response.FileRecord = &record
+		}
 	case "info":
 		response.BootID, err = BootID()
 		if err == nil {
@@ -371,11 +402,11 @@ func (e *Engine) Handle(ctx context.Context, call Call) Response {
 // ReadCall imposes a hard framing limit before JSON decoding.
 func ReadCall(reader io.Reader) (Call, error) {
 	var call Call
-	raw, err := io.ReadAll(io.LimitReader(reader, MaxInput*2+1))
+	raw, err := io.ReadAll(io.LimitReader(reader, MaxCallSize+1))
 	if err != nil {
 		return call, err
 	}
-	if len(raw) > MaxInput*2 {
+	if len(raw) > MaxCallSize {
 		return call, fmt.Errorf("oversized task request")
 	}
 	err = json.Unmarshal(raw, &call)

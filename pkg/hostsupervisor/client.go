@@ -123,3 +123,26 @@ func (c *TaskClient) ObservePower(ctx context.Context, g controlplane.SignedExec
 	_, err := c.call(ctx, Request{Operation: "power-observe", Grant: &g})
 	return err
 }
+
+func (c *TaskClient) GuestFileBootID(ctx context.Context) (string, error) {
+	r, err := c.call(ctx, Request{Operation: "file-info"})
+	if err != nil {
+		return "", err
+	}
+	if r.BootID == "" {
+		return "", guesttask.ErrUnknown
+	}
+	return r.BootID, nil
+}
+func (c *TaskClient) InstallGuestFile(ctx context.Context, req substrate.FileInstallRequest, g controlplane.SignedExecutionGrant) (substrate.FileInstallResult, error) {
+	r, err := c.call(ctx, Request{Operation: "file-install", FileRequest: &req, Grant: &g})
+	return r.FileResult, err
+}
+func (c *TaskClient) ObserveGuestFile(ctx context.Context, h substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	r, err := c.call(ctx, Request{Operation: "file-observe", FileHandle: h})
+	return r.FileResult, err
+}
+func (c *TaskClient) CancelGuestFile(ctx context.Context, h substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	r, err := c.call(ctx, Request{Operation: "file-cancel", FileHandle: h})
+	return r.FileResult, err
+}

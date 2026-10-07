@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/guesttask"
 	"io"
 	"net"
 	"os"
@@ -178,12 +179,15 @@ func dispatchVsockRequest(conn net.Conn, w io.Writer, reader *bufio.Reader, req 
 	case vsockrpc.OpWriteFile:
 		handleWriteFile(w, reader, req)
 	case vsockrpc.OpTask:
-		if req.Size < 1 || req.Size > 16<<20 {
+		if req.Size < 1 || req.Size > guesttask.MaxCallSize {
 			sendFrame(w, vsockrpc.Frame{Done: true, Error: "invalid task request size"})
 			return
 		}
-		body:=make([]byte,req.Size)
-		if _,err:=io.ReadFull(reader,body);err!=nil{sendFrame(w,vsockrpc.Frame{Done:true,Error:"incomplete task body"});return}
+		body := make([]byte, req.Size)
+		if _, err := io.ReadFull(reader, body); err != nil {
+			sendFrame(w, vsockrpc.Frame{Done: true, Error: "incomplete task body"})
+			return
+		}
 		raw, err := json.Marshal(serveTask(bytes.NewReader(body)))
 		if err != nil {
 			sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})

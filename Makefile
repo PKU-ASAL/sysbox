@@ -54,6 +54,13 @@ test-managed-bridge-e2e: ## Verify Docker managed bridge proof and real TAP fenc
 .PHONY: test-guesttask-e2e
 .PHONY: test-host-supervisor-e2e
 .PHONY: test-host-power-e2e
+.PHONY: test-host-file-e2e
+test-host-file-e2e: ## Verify signed durable file installation and host recovery with real Docker
+	@set -eu; file_helper=$$(mktemp /tmp/sysbox-file-helper.XXXXXX); trap 'rm -f "$$file_helper"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$file_helper" ./cmd/sysbox-init; \
+	SYSBOX_GUESTTASK_HELPER="$$file_helper" $(GOENV) $(GO) test -race -tags e2e ./pkg/api \
+	  -run '^TestHostSupervisorRealFileInstallE2E$$' -count=1 -v -timeout=3m
+
 test-host-power-e2e: ## Verify real Docker pause/resume fencing, durable receipts and cold recovery
 	SYSBOX_HOST_POWER_E2E=1 $(GOENV) $(GO) test -race -tags e2e ./pkg/api \
 	  -run '^TestHostSupervisorRealNodePowerE2E$$' -count=1 -v -timeout=2m

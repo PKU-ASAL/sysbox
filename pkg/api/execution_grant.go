@@ -179,6 +179,15 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
 	// Commit quiescence atomically. Exact receipt replay remains successful
 	// even after another grant has been issued for the same scope.
+	if receipt.Grant.Operation == "guest_file_install" {
+		if err = repo.ValidateHostStop(r.Context(), receipt.Grant, hex.EncodeToString(sum[:])); err == nil {
+			_, err = s.apiStore.CompleteFileFromHost(r.Context(), receipt.Grant.AgentID, receipt.InstallID, receipt)
+		}
+		if err != nil {
+			writeError(w, agentRepositoryErrorStatus(err), err)
+			return
+		}
+	}
 	err = repo.AcceptHostStop(r.Context(), receipt.Grant, hex.EncodeToString(sum[:]))
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
@@ -335,7 +344,6 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	if cmd.AgentID != agentID || cmd.Attempt != proof.Attempt || cmd.Attempt < 1 || cmd.LeaseOwner == "" || cmd.LeaseOwner != proof.LeaseOwner || !cmd.LeaseUntil.After(time.Now()) || cmd.IsTerminal() {
 		return controlplane.ExecutionGrant{}, persistence.ErrConflict
 	}
-	var payload any
 	operation := cmd.Type
 	digest := ""
 	switch cmd.Type {
@@ -363,23 +371,20 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 		}
 		operation = "guest_task"
 	case "guest_file_put":
-		if cmd.FilePut == nil {
-			return controlplane.ExecutionGrant{}, persistence.ErrCorruptRecord
+		request, err := controlplane.FromFileInstallCommand(cmd)
+		if err != nil {
+			return controlplane.ExecutionGrant{}, err
 		}
-		payload = cmd.FilePut
+		digest, err = request.Digest()
+		if err != nil {
+			return controlplane.ExecutionGrant{}, err
+		}
+		operation = "guest_file_install"
 	default:
 		return controlplane.ExecutionGrant{}, persistence.ErrUnsupportedVersion
 	}
 	if cmd.TopologyUID == "" || cmd.ResourceUID == "" || cmd.Generation < 1 || cmd.ActionID == "" {
 		return controlplane.ExecutionGrant{}, persistence.ErrConflict
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return controlplane.ExecutionGrant{}, err
-	}
-	sum := sha256.Sum256(raw)
-	if digest == "" {
-		digest = hex.EncodeToString(sum[:])
 	}
 	return controlplane.ExecutionGrant{TargetBootID: proof.BootID, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}, AgentID: agentID, SessionID: proof.SessionID, ActionID: cmd.ActionID, CommandID: cmd.ID, Attempt: uint64(cmd.Attempt), Operation: operation, Digest: digest, ExpiresAt: cmd.LeaseUntil}, nil
 }

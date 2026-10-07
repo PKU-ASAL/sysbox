@@ -85,17 +85,9 @@ func (s *GuestFileOperationService) ReconcileCommandFailure(ctx context.Context,
 	if guestExecutionTerminal(op.Status) {
 		return nil
 	}
-	if status == controlplane.AgentCommandStatusCancelled || op.CancelRequested {
-		op.Status = controlplane.GuestExecutionCancelled
-	} else {
-		op.Status, op.Error = controlplane.GuestExecutionFailed, "file operation failed"
-	}
-	op.EndedAt = s.now()
-	ok, err := s.store.CompareAndSwapGuestFileOperation(ctx, op, op.Version)
-	if err == nil && !ok {
-		err = errGuestFileOperationConflict
-	}
-	return err
+	// Command/worker failure is not proof that the guest writer stopped.
+	// Host recovery must provide the final installation result.
+	return nil
 }
 
 func (s *GuestFileOperationService) Cancel(ctx context.Context, id string) (controlplane.GuestFileOperation, error) {

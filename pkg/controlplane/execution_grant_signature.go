@@ -49,7 +49,7 @@ func SignExecutionGrant(key ed25519.PrivateKey, g ExecutionGrant, bootID string,
 }
 func validSignedGrant(s SignedExecutionGrant, bootID string, now time.Time) bool {
 	g := s.Grant
-	if g.Operation == "guest_task" && g.TargetBootID == "" {
+	if (g.Operation == "guest_task" || g.Operation == "guest_file_install") && g.TargetBootID == "" {
 		return false
 	}
 	if g.TargetBootID != "" && g.TargetBootID != bootID {

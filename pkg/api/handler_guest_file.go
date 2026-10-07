@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 const guestFileMaxSize = 16 << 20
@@ -79,6 +81,11 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	put := controlplane.GuestFilePut{ID: id, Topology: topology, Node: node, Path: dst, Mode: uint32(mode64), Size: n, SHA256: digest, FetchRef: "/v1/agents/" + agentID + "/guest-files/" + id}
+	if err := (substrate.FileInstallRequest{ID: id, Path: dst, Mode: put.Mode, Size: n, SHA256: digest}).Validate(); err != nil {
+		_ = os.Remove(tmp.Name())
+		writeError(w, 400, err)
+		return
+	}
 	if err := os.Rename(tmp.Name(), filepath.Join(dir, id)); err != nil {
 		_ = os.Remove(tmp.Name())
 		writeError(w, 500, err)
@@ -161,25 +168,20 @@ func (s *Server) handleCancelGuestFileOperation(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusAccepted, publicGuestFileOperation(op))
 		return
 	}
-	if op.CommandID != "" {
-		var dispatchErr error
-		if op.StartedAt.IsZero() {
-			dispatchErr = s.apiStore.DeleteAgentCommand(r.Context(), op.AgentID, op.CommandID)
-		} else {
-			_, dispatchErr = s.agentService().PublishCommand(r.Context(), op.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: op.ID}})
-		}
-		if dispatchErr != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Errorf("dispatch file operation cancellation"))
-			return
-		}
-	}
-	op, err = svc.Cancel(r.Context(), op.ID)
+	noEffect, err := s.cancelFileDispatch(r.Context(), op)
 	if err != nil {
 		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
-	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID))
-	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID+".json"))
+	if noEffect {
+		op, err = svc.Cancel(r.Context(), op.ID)
+	} else {
+		_, err = s.agentService().PublishCommand(r.Context(), op.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: op.ID}})
+	}
+	if err != nil {
+		writeError(w, guestOperationErrorStatus(err), err)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, publicGuestFileOperation(op))
 }
 
@@ -242,12 +244,29 @@ func (s *Server) gcGuestFilePayloads(now time.Time) {
 	for _, entry := range entries {
 		var meta guestFilePayload
 		raw, err := os.ReadFile(entry)
-		if err != nil || json.Unmarshal(raw, &meta) != nil || !now.Before(meta.ExpiresAt) {
+		if err == nil && json.Unmarshal(raw, &meta) == nil && !now.Before(meta.ExpiresAt) && s.filePayloadCanExpire(context.Background(), strings.TrimSuffix(filepath.Base(entry), ".json")) {
 			base := strings.TrimSuffix(entry, ".json")
 			_ = os.Remove(base)
 			_ = os.Remove(entry)
 		}
 	}
+}
+
+func (s *Server) filePayloadCanExpire(ctx context.Context, id string) bool {
+	op, err := s.apiStore.GetGuestFileOperation(ctx, id)
+	if err != nil || !guestExecutionTerminal(op.Status) {
+		return false
+	}
+	activities, err := s.apiStore.ListGuestActivity(ctx, op.Topology)
+	if err != nil {
+		return false
+	}
+	for _, a := range activities {
+		if a.ID == id && a.Active() {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleFetchGuestFile(w http.ResponseWriter, r *http.Request) {
@@ -258,9 +277,7 @@ func (s *Server) handleFetchGuestFile(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(s.runsDir, "_guest-files", filepath.Base(r.PathValue("file")))
 	var meta guestFilePayload
 	raw, err := os.ReadFile(path + ".json")
-	if err != nil || json.Unmarshal(raw, &meta) != nil || meta.AgentID != r.PathValue("agent") || time.Now().UTC().After(meta.ExpiresAt) {
-		_ = os.Remove(path)
-		_ = os.Remove(path + ".json")
+	if err != nil || json.Unmarshal(raw, &meta) != nil || meta.AgentID != r.PathValue("agent") || (time.Now().UTC().After(meta.ExpiresAt) && s.filePayloadCanExpire(r.Context(), r.PathValue("file"))) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("file payload not found"))
 		return
 	}

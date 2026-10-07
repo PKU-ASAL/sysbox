@@ -11,6 +11,28 @@ import (
 	"time"
 )
 
+func (s *localAPIStore) CompleteFileFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (controlplane.GuestFileOperation, error) {
+	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{HostFile: &receipt})
+	if err != nil {
+		return controlplane.GuestFileOperation{}, err
+	}
+	return persistence.DecodeCompletedGuestFile(raw)
+}
+func (s *sqliteAPIStore) CompleteFileFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (controlplane.GuestFileOperation, error) {
+	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{HostFile: &receipt})
+	if err != nil {
+		return controlplane.GuestFileOperation{}, err
+	}
+	return persistence.DecodeCompletedGuestFile(raw)
+}
+func (s *postgresAPIStore) CompleteFileFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (controlplane.GuestFileOperation, error) {
+	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{HostFile: &receipt})
+	if err != nil {
+		return controlplane.GuestFileOperation{}, err
+	}
+	return persistence.DecodeCompletedGuestFile(raw)
+}
+
 func (s *localAPIStore) completeGuest(ctx context.Context, agent, id string, report persistence.GuestCompletion) ([]byte, error) {
 	unlock, err := s.lockRunRecords(ctx)
 	if err != nil {

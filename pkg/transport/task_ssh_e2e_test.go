@@ -3,9 +3,11 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"os"
@@ -105,5 +107,30 @@ func TestSSHDurableGuestTaskE2E(t *testing.T) {
 	output, err := conn.ReadExecutionOutput(ctx, h, "stdout", 0, 100)
 	require.NoError(t, err)
 	require.Equal(t, "ssh-task", string(output.Data))
+	run("docker", "exec", container, "sh", "-c", `mkdir -p /var/tmp/sysbox-install /etc/sysbox; chmod 700 /var/tmp/sysbox-install; printf '["/var/tmp/sysbox-install"]' > /etc/sysbox/install-roots.json; chmod 600 /etc/sysbox/install-roots.json`)
+	fileBody := bytes.Repeat([]byte("file-proof"), 1024*1024)
+	fileReq := substrate.FileInstallRequest{ID: "ssh-file", Path: "/var/tmp/sysbox-install/data", Mode: 0640, Size: int64(len(fileBody)), SHA256: fmt.Sprintf("%x", sha256.Sum256(fileBody))}
+	fileDigest, err := fileReq.Digest()
+	require.NoError(t, err)
+	fileGrant := grant
+	fileGrant.Scope.ResourceUID = "file-resource"
+	fileGrant.ActionID = fileReq.ID
+	fileGrant.CommandID = "file-command"
+	fileGrant.Operation = "guest_file_install"
+	fileGrant.Digest = fileDigest
+	fileSigned, err := controlplane.SignExecutionGrant(key, fileGrant, boot, time.Now())
+	require.NoError(t, err)
+	fileHandle, fileResult, err := conn.InstallFile(WithTaskGrant(ctx, fileReq.ID, fileSigned), fileReq, bytes.NewReader(fileBody))
+	require.NoError(t, err)
+	require.True(t, fileResult.Quiescent)
+	require.Equal(t, substrate.FileInstallCommitted, fileResult.Outcome)
+	reopened := NewSSHConnectionWithTrust("127.0.0.1", fmt.Sprint(port), u.Username, clientkey, "", known, false)
+	reopened.BindExecutionIdentity("node", 1)
+	cold, err := reopened.ObserveFileInstall(ctx, fileHandle)
+	require.NoError(t, err)
+	require.Equal(t, fileResult, cold)
+	require.Equal(t, fileReq.SHA256, strings.Fields(run("docker", "exec", container, "sha256sum", fileReq.Path))[0])
+	require.Equal(t, "640", run("docker", "exec", container, "stat", "-c", "%a", fileReq.Path))
 	t.Log("real pinned SSH transport -> isolated Docker guest helper: durable task start/dedup/observe/output verified")
+	t.Log("10MiB file installed through signed fixed helper protocol; cold Observe, actual checksum and mode verified")
 }

@@ -33,6 +33,13 @@ host 签名私钥和非 root worker group ID。部署约束见[持久任务](../
 直接返回 Unsupported，不再保留无法成功的伪派发路径。Docker 的生命周期 status
 不再被健康检查覆盖，不健康通过独立 `healthy=false` 表达。
 
+文件安装迁移：API `guest_file_put` 签发固定 `guest_file_install` grant，摘要不再
+包含 FetchRef。远端 Agent 删除直接 CopyToNode 和终态完成回报；由宿主签名结果
+驱动三后端共同终态规则。取消响应公开 `cancel_requested`，存在 grant 时不直接
+标 cancelled；commit 抢先完成则保留 committed。新增 guest file install/observe/
+cancel SPI 与 host file RPC，guest 须配置可信安装根；缺能力不回退旧复制路径。
+API schema 9、文件 metadata format 2、guest scope format 2 需明确重建。
+
 ### 2026-10-04 已实施：owning-agent 远端恢复扩展
 
 新增管理员异步接口 `POST /v1/runs/{id}/remote/observe`、`POST /v1/runs/{id}/remote/recover`，返回 command_id；结果经 `GET /v1/runs/{id}/remote-reports/{command}` 查询。Agent 使用签名保护的 `POST /v1/agents/{agent}/commands/{command}/recovery-authorize` 在执行前取得当前授权。

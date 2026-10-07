@@ -476,6 +476,9 @@ func captureProcessIdentity(pid int) (processIdentity, error) {
 // A mismatch is uncertainty, not absence. Never delete artifacts or signal a
 // possibly recycled process in response to mismatched identity evidence.
 func probeProcess(anchor processIdentity) (bool, bool, error) {
+	return probeProcessWithStat(anchor, os.ReadFile)
+}
+func probeProcessWithStat(anchor processIdentity, readStat func(string) ([]byte, error)) (bool, bool, error) {
 	if anchor.PID <= 0 {
 		return false, false, nil
 	}
@@ -489,8 +492,11 @@ func probeProcess(anchor processIdentity) (bool, bool, error) {
 	if boot != anchor.BootID {
 		return false, false, fmt.Errorf("firecracker host boot identity conflict")
 	}
-	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", anchor.PID))
-	if os.IsNotExist(err) {
+	raw, err := readStat(fmt.Sprintf("/proc/%d/stat", anchor.PID))
+	// procfs may open successfully and then return ESRCH from read when the
+	// owned process is reaped concurrently. Both errors prove it disappeared;
+	// permission and malformed-identity errors remain uncertainty.
+	if os.IsNotExist(err) || errors.Is(err, syscall.ESRCH) {
 		return false, false, nil
 	}
 	if err != nil {

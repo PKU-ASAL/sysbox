@@ -122,11 +122,14 @@ func sameHandle(a, b substrate.ExecutionHandle) bool {
 	return reflect.DeepEqual(a, b)
 }
 func (d *Dispatcher) save(r TaskRecord) error {
-	raw, err := json.Marshal(r)
+	return saveRecord(d.Root, d.path(r.Handle), r)
+}
+func saveRecord(root, path string, value any) error {
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(d.Root, ".task-")
+	f, err := os.CreateTemp(root, ".record-")
 	if err != nil {
 		return err
 	}
@@ -141,10 +144,10 @@ func (d *Dispatcher) save(r TaskRecord) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	if err = os.Rename(f.Name(), d.path(r.Handle)); err != nil {
+	if err = os.Rename(f.Name(), path); err != nil {
 		return err
 	}
-	dir, err := os.Open(d.Root)
+	dir, err := os.Open(root)
 	if err != nil {
 		return err
 	}

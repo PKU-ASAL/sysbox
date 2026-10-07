@@ -49,6 +49,7 @@ func TestStartRejectsUnavailableIsolationBeforePublishingTask(t *testing.T) {
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	engine := Engine{Root: t.TempDir(), CgroupRoot: t.TempDir(), PublicKey: public}
+	require.NoError(t, os.Chmod(engine.Root, 0700))
 	boot, err := BootID()
 	require.NoError(t, err)
 	_, err = engine.Start(context.Background(), signedRequest(t, private, boot, "task"))
@@ -82,6 +83,7 @@ func TestRealTaskRestartDedupOutputAndCancellation(t *testing.T) {
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	root := t.TempDir()
+	require.NoError(t, os.Chmod(root, 0700))
 	engine := Engine{Root: root, CgroupRoot: cgroup, PublicKey: public, WorkerBinary: os.Args[0], WorkerArgs: []string{"-test.run=^TestTaskWorkerProcess$"}}
 	boot, err := BootID()
 	require.NoError(t, err)

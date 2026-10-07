@@ -24,6 +24,7 @@ type Server struct {
 	GroupID         int
 	Dispatcher      *Dispatcher
 	Power           *PowerDispatcher
+	Files           *FileDispatcher
 	OnRecoveryError func(error)
 }
 
@@ -100,6 +101,10 @@ func (s *Server) serveListener(parent context.Context, listener net.Listener) er
 		workers.Add(1)
 		go func() { defer workers.Done(); s.runRecovery(ctx, s.Power.Recover) }()
 	}
+	if s.Files != nil {
+		workers.Add(1)
+		go func() { defer workers.Done(); s.runRecovery(ctx, s.Files.Recover) }()
+	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -156,6 +161,30 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 	var err error
 	var record TaskRecord
 	switch request.Operation {
+	case "file-info":
+		if s.Files == nil {
+			err = fmt.Errorf("host file supervisor unavailable")
+			break
+		}
+		response.BootID, err = s.Files.BootID(ctx, request.Target)
+	case "file-install":
+		if s.Files == nil || request.FileRequest == nil || request.Grant == nil {
+			err = fmt.Errorf("signed file request required")
+			break
+		}
+		_, response.FileResult, err = s.Files.Install(ctx, request.Target, *request.FileRequest, *request.Grant)
+	case "file-observe":
+		if s.Files == nil {
+			err = fmt.Errorf("host file supervisor unavailable")
+			break
+		}
+		response.FileResult, err = s.Files.Observe(ctx, request.Target, request.FileHandle)
+	case "file-cancel":
+		if s.Files == nil {
+			err = fmt.Errorf("host file supervisor unavailable")
+			break
+		}
+		response.FileResult, err = s.Files.Cancel(ctx, request.Target, request.FileHandle)
 	case "host-info":
 		if s.Power == nil {
 			err = fmt.Errorf("host power supervisor unavailable")

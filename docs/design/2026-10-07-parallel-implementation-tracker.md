@@ -6,7 +6,7 @@
 |---|---|---|
 | P0 | 强制按Go依赖重建guest helper、amd64/arm64构建、独立cgroup验收目标 | 全能力矩阵、最终产物与总验收 |
 | P1 | authenticated revision、独立Agent物化、artifact来源约束、续租固定快照 | 真正双宿主验收；未把独立目录当双宿主 |
-| P2 | authority ledger/session/epoch、签名grant及stop receipt API、当前command事务绑定；guest task和远端pause/resume接入独立host supervisor、可信停止回执与旧epoch重试墓碑 | 普通Run/lifecycle/file/foreground等其余effect全部接入、host持有唯一provider权限；真正跨宿主验收 |
+| P2 | authority ledger/session/epoch、签名grant及stop receipt API、当前command事务绑定；guest task、API文件安装和远端pause/resume接入独立host supervisor、可信停止回执与旧epoch重试墓碑 | 普通Run/lifecycle/provisioner/foreground等其余effect全部接入、host持有唯一provider权限；真正跨宿主验收 |
 | P3 | 持久task、sealed memfd、cgroup+pidfd、monotonic guard、续租、分页输出、SSH/vsock通用SPI；真实SSH和Docker supervisor任务接续验收 | 完整Agent服务重启接管验收；全执行路径统一隔离 |
 | P4 | session+sequence observation ledger、guest活动枚举、receipt失效 | 全API迁移回归、完整lease撤销/guest取消/hoststop集成 |
 | P5 | adoption SPI、journal动作、Docker不可变ID sidecar | API plan/confirm、libvirt/Firecracker adapters、真实接管与清理 |
@@ -52,6 +52,42 @@ provider 修复另有 Docker/runtime/libvirt race 验证。
 不可取消 daemon 调用的未知结果保留为阻塞项；通用外部 daemon 的请求追踪与
 可验证强制 fencing 尚未实现，不能把本批描述为所有生命周期恢复已经完成。
 
+## 受管文件安装集成
+
+固定安装协议取代远端 `CopyToNode` 拼装调用：安装 ID、guest 绝对路径、明确 mode、
+size、SHA256 进入签名摘要；下载地址仅是运输信息，不作为 guest 执行参数。
+supervisor 从自身配置的 API 获取 payload，独立校验后传给受信 helper。
+
+guest 只允许写入管理员配置的安装根，拒绝符号链接路径、目录目标及信任根所在
+路径。安装和任意命令 task 共用资源 scope/epoch 检查。文件安装是固定代码执行
+的特权操作，不允许以 root 运行 worker 提供的命令。取消与 commit 使用同一锁。
+
+同目录 staging inode 保留 root 私有 hardlink anchor，先持久 commit intent，
+再 rename、fsync 目录、持久 committed。rename 后崩溃时，只有父目录身份、
+anchor/目标 inode、size/hash/mode 全部一致才能恢复 committed；源仍存在且尚未
+提交则停止并记 confirmed cancelled；其他情况为 unknown，禁止盲重放和释放 epoch。
+
+API 取消只记录请求并撤销授权，不立即标 cancelled 或删除 payload。宿主签名的
+最终安装结果区分 committed 与 confirmed cancelled；取消晚于 commit 时保留
+committed。仅凭 worker 的空 Error 不再完成文件操作。旧存储格式明确重建，
+新增 guest 安装目录策略由可信部署配置提供，不由 worker 提供。
+
+实施分工：guest 固定安装引擎与共享 scope；SSH/vsock/Docker/helper 传输；
+API/repository 签发、取消与宿主最终结果；host supervisor 下载、持久恢复及 Agent
+路由。验收覆盖 rename 前后 crash、取消竞争、旧 epoch、控制路径保护、真实
+Docker/SSH/vsock，以及三存储后端，不把仅有接口或 mock 通过计为完成。
+
+固定 guest 引擎、共享 scope、SSH/vsock/Docker 传输、宿主下载/回执/恢复、Agent
+路由与 API 三后端终态规则均已接入。取消采用独立持久标记和短 commit 锁，
+复制中的请求能阻止 rename；迟到 Start 被取消墓碑拒绝。真实 SIGKILL 覆盖
+commit intent 前后和 rename 后恢复；历史 committed 不受后继覆盖影响。
+真实 Docker/API 与 SSH 安装超过 8 MiB payload，校验实际内容和 mode、冷恢复、
+丢回执重报及撤销请求拒绝。最终全仓启用真实 Postgres 通过。
+真实 KVM/Linux5.10 上的 vsock 10 MiB 安装、冷读取、实际校验和/权限、旧代拒绝、
+提交后取消与启动前取消墓碑均通过；amd64/arm64 guest-init 已按当前源码重建。
+同时修复 Postgres guest command 标准化、错误 Agent 请求误删 payload、活动安装
+payload 过期清理，以及 Firecracker reaper 导致 procfs read 返回 ESRCH 的退出竞争。
+
 ## 首批新增验收
 
 - 单独API与Agent目录的真实Docker完整Run、回执丢失与Destroy测试已运行；仍在同一宿主。
@@ -62,7 +98,7 @@ provider 修复另有 Docker/runtime/libvirt race 验证。
 - 真实SSH独立sshd/私有cgroup E2E通过；当前guest在KVM Linux5.10上的持久任务E2E通过。任务以签名指定的非root UID执行，默认65534、NoNewPrivs与零有效capability；不允许任意root payload绕过supervisor。
 - 复审修复了renew与旧超时竞争、Cancel在副作用前完整身份校验、不同resource的epoch互相误拒绝，以及snapshot历史属性不能盲目还原真实effect目标。
 
-schema变更：API8、aggregate2；旧格式明确重建。它们必须在最终capability和配置样例中一起更新后才能交付。
+schema变更：API9、aggregate2、文件metadata2、guest scope2、effect ledger2；旧格式明确重建。它们必须在最终capability和配置样例中一起更新后才能交付。
 
 ## 独立 host supervisor 集成
 
@@ -73,7 +109,7 @@ guest boot ID；历史 grant 检查、旧 session 撤销和停止回执重放均
 
 配置、身份、密钥、socket、任务日志及文件/SQLite canonical repository 必须满足
 可信目录及权限要求。Postgres 的角色隔离仍需部署者配置。这不是整个 Agent 的
-权限隔离完成声明：普通 Run、生命周期、文件安装和 foreground 路径仍待迁入。
+权限隔离完成声明：普通 Run、其余生命周期、provisioner 和 foreground 路径仍待迁入。
 
 可重复验收入口：`make test-host-supervisor-e2e`。使用真实 Docker task、Unix
 socket 和私有 cgroup，覆盖停止回执丢失、API 与 supervisor 重建后重报、Agent session

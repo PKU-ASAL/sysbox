@@ -19,6 +19,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestProbeProcessDisappearingDuringStatRead(t *testing.T) {
+	boot, err := currentBootID()
+	require.NoError(t, err)
+	anchor := processIdentity{PID: 123, StartTime: "1", BootID: boot, Executable: "/test", Argv: []string{"/test"}}
+	for _, errno := range []error{syscall.ENOENT, syscall.ESRCH, syscall.EACCES} {
+		live, _, err := probeProcessWithStat(anchor, func(string) ([]byte, error) {
+			return nil, &os.PathError{Op: "read", Path: "/proc/123/stat", Err: errno}
+		})
+		require.False(t, live)
+		if errno == syscall.EACCES {
+			require.ErrorIs(t, err, errno)
+		} else {
+			require.NoError(t, err)
+		}
+	}
+}
+
 // This subprocess holds only a Unix socket. It never opens KVM or network devices.
 func TestManifestProcessHelper(t *testing.T) {
 	if os.Getenv("SYSBOX_MANIFEST_PROCESS_HELPER") != "1" {

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"time"
 )
 
@@ -10,15 +11,18 @@ import (
 // it has proved that the grant cannot create further effects. Its signing key
 // is distinct from both worker authentication and API issuer credentials.
 type SignedExecutionStopReceipt struct {
-	GuestBootID string         `json:"guest_boot_id,omitempty"`
-	TaskID      string         `json:"task_id,omitempty"`
-	TaskDigest  string         `json:"task_digest,omitempty"`
-	Quiescence  string         `json:"quiescence"`
-	Grant       ExecutionGrant `json:"grant"`
-	HostBootID  string         `json:"host_boot_id"`
-	ReceiptID   string         `json:"receipt_id"`
-	StoppedAt   time.Time      `json:"stopped_at"`
-	Signature   []byte         `json:"signature"`
+	InstallID     string                       `json:"install_id,omitempty"`
+	InstallDigest string                       `json:"install_digest,omitempty"`
+	FileResult    *substrate.FileInstallResult `json:"file_result,omitempty"`
+	GuestBootID   string                       `json:"guest_boot_id,omitempty"`
+	TaskID        string                       `json:"task_id,omitempty"`
+	TaskDigest    string                       `json:"task_digest,omitempty"`
+	Quiescence    string                       `json:"quiescence"`
+	Grant         ExecutionGrant               `json:"grant"`
+	HostBootID    string                       `json:"host_boot_id"`
+	ReceiptID     string                       `json:"receipt_id"`
+	StoppedAt     time.Time                    `json:"stopped_at"`
+	Signature     []byte                       `json:"signature"`
 }
 
 func stopReceiptMessage(r SignedExecutionStopReceipt) ([]byte, error) {
@@ -28,6 +32,11 @@ func stopReceiptMessage(r SignedExecutionStopReceipt) ([]byte, error) {
 }
 func validStopReceipt(r SignedExecutionStopReceipt) bool {
 	g := r.Grant
+	if g.Operation == "guest_file_install" {
+		if r.GuestBootID == "" || r.GuestBootID != g.TargetBootID || r.InstallID != g.ActionID || r.InstallDigest != g.Digest || r.FileResult == nil || !r.FileResult.Quiescent || (r.FileResult.Outcome != substrate.FileInstallCommitted && r.FileResult.Outcome != substrate.FileInstallCancelled) {
+			return false
+		}
+	}
 	if r.Quiescence != "confirmed" {
 		return false
 	}
@@ -41,6 +50,13 @@ func validStopReceipt(r SignedExecutionStopReceipt) bool {
 		return false
 	}
 	return r.HostBootID != "" && r.ReceiptID != "" && !r.StoppedAt.IsZero() && g.Scope.TopologyUID != "" && g.AgentID != "" && g.SessionID != "" && g.ActionID != "" && g.CommandID != "" && g.Attempt > 0 && g.Epoch > 0 && g.Operation != "" && g.Digest != ""
+}
+
+func SignExecutionFileStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, hostBootID, guestBootID, id, digest string, result substrate.FileInstallResult, receiptID string, now time.Time) (SignedExecutionStopReceipt, error) {
+	if g.Operation != "guest_file_install" {
+		return SignedExecutionStopReceipt{}, ErrInvalidExecutionGrant
+	}
+	return signStopReceipt(key, SignedExecutionStopReceipt{Grant: g, HostBootID: hostBootID, GuestBootID: guestBootID, InstallID: id, InstallDigest: digest, FileResult: &result, ReceiptID: receiptID, StoppedAt: now.UTC(), Quiescence: "confirmed"})
 }
 func SignExecutionStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, bootID, receiptID string, now time.Time) (SignedExecutionStopReceipt, error) {
 	r := SignedExecutionStopReceipt{Grant: g, HostBootID: bootID, ReceiptID: receiptID, StoppedAt: now.UTC(), Quiescence: "confirmed"}

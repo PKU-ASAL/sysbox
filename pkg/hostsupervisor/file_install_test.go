@@ -1,0 +1,140 @@
+package hostsupervisor
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
+)
+
+type fileConnection struct {
+	*taskConnection
+	installs   int
+	result     substrate.FileInstallResult
+	lost       bool
+	fileHandle substrate.FileInstallHandle
+}
+
+func (c *fileConnection) InstallFile(context.Context, substrate.FileInstallRequest, io.Reader) (substrate.FileInstallHandle, substrate.FileInstallResult, error) {
+	c.installs++
+	if c.lost {
+		return c.fileHandle, substrate.FileInstallResult{}, errors.New("reply lost")
+	}
+	return c.fileHandle, c.result, nil
+}
+func (c *fileConnection) ObserveFileInstall(context.Context, substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	return c.result, nil
+}
+func (c *fileConnection) CancelFileInstall(context.Context, substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	return c.result, nil
+}
+func fileFixture(t *testing.T) (*FileDispatcher, TargetRef, substrate.FileInstallRequest, controlplane.SignedExecutionGrant, *fileConnection) {
+	d, old, conn, key := taskFixtureWithIssuer(t)
+	data := []byte("payload")
+	hash := sha256.Sum256(data)
+	req := substrate.FileInstallRequest{ID: "install", Path: "/tmp/managed-file", Mode: 0600, Size: int64(len(data)), SHA256: hex.EncodeToString(hash[:])}
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	g := old.Grant.Grant
+	g.ActionID = req.ID
+	g.Digest = digest
+	g.Operation = "guest_file_install"
+	signed, err := controlplane.SignExecutionGrant(key, g, old.Grant.BootID, time.Now())
+	require.NoError(t, err)
+	ref := testRef(old)
+	c := &fileConnection{taskConnection: conn, fileHandle: substrate.FileInstallHandle{ID: req.ID, Digest: digest, BootID: signed.BootID, NodeID: "node", TopologyUID: g.Scope.TopologyUID, ResourceUID: g.Scope.ResourceUID, Generation: g.Scope.Generation, Epoch: g.Epoch}, result: substrate.FileInstallResult{Outcome: substrate.FileInstallCommitted, Quiescent: true, SHA256: req.SHA256, Size: req.Size, Mode: req.Mode}}
+	d.Resolve = func(context.Context, TargetRef) (Target, error) {
+		return Target{Scope: ref.Scope, AgentID: d.AgentID, NodeID: "node", Connection: c}, nil
+	}
+	f := &FileDispatcher{Dispatcher: d, Fetch: func(context.Context, string) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }}
+	return f, ref, req, signed, c
+}
+func TestFileInstallLostResponseObservesWithoutReplaying(t *testing.T) {
+	d, ref, req, g, c := fileFixture(t)
+	c.lost = true
+	h, _, err := d.Install(context.Background(), ref, req, g)
+	require.Error(t, err)
+	got, err := d.Observe(context.Background(), ref, h)
+	require.NoError(t, err)
+	require.Equal(t, substrate.FileInstallCommitted, got.Outcome)
+	require.Equal(t, 1, c.installs)
+	_, _, err = d.Install(context.Background(), ref, req, g)
+	require.NoError(t, err)
+	require.Equal(t, 1, c.installs)
+}
+func TestFileInstallRejectsContentMismatchBeforeProvider(t *testing.T) {
+	d, ref, req, g, c := fileFixture(t)
+	d.Fetch = func(context.Context, string) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader([]byte("wrong"))), nil
+	}
+	_, _, err := d.Install(context.Background(), ref, req, g)
+	require.Error(t, err)
+	require.Zero(t, c.installs)
+}
+func TestFileUnknownCannotCreateStopAndLostReceiptRetries(t *testing.T) {
+	d, ref, req, g, c := fileFixture(t)
+	c.result = substrate.FileInstallResult{Outcome: substrate.FileInstallUnknown}
+	reports := 0
+	d.ReportStop = func(context.Context, controlplane.SignedExecutionStopReceipt) error {
+		reports++
+		return errors.New("ack lost")
+	}
+	h, _, err := d.Install(context.Background(), ref, req, g)
+	require.NoError(t, err)
+	require.Zero(t, reports)
+	c.result = substrate.FileInstallResult{Outcome: substrate.FileInstallCancelled, Quiescent: true}
+	_, err = d.Cancel(context.Background(), ref, h)
+	require.Error(t, err)
+	require.Equal(t, 1, reports)
+	d.ReportStop = func(context.Context, controlplane.SignedExecutionStopReceipt) error { reports++; return nil }
+	cold := *d
+	got, err := cold.Observe(context.Background(), ref, h)
+	require.NoError(t, err)
+	require.Equal(t, substrate.FileInstallCancelled, got.Outcome)
+	require.Equal(t, 2, reports)
+}
+
+type blockingInstallConnection struct {
+	*fileConnection
+	started, release chan struct{}
+	once             sync.Once
+}
+
+func (c *blockingInstallConnection) InstallFile(context.Context, substrate.FileInstallRequest, io.Reader) (substrate.FileInstallHandle, substrate.FileInstallResult, error) {
+	close(c.started)
+	<-c.release
+	return c.fileHandle, c.result, nil
+}
+func (c *blockingInstallConnection) CancelFileInstall(context.Context, substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	c.once.Do(func() { close(c.release) })
+	return c.result, nil
+}
+func TestFileCancelReachesGuestWhileInstallInFlight(t *testing.T) {
+	d, ref, req, g, base := fileFixture(t)
+	base.result = substrate.FileInstallResult{Outcome: substrate.FileInstallCancelled, Quiescent: true}
+	c := &blockingInstallConnection{fileConnection: base, started: make(chan struct{}), release: make(chan struct{})}
+	d.Resolve = func(context.Context, TargetRef) (Target, error) {
+		return Target{Scope: ref.Scope, AgentID: d.AgentID, NodeID: "node", Connection: c}, nil
+	}
+	done := make(chan error, 1)
+	go func() { _, _, err := d.Install(context.Background(), ref, req, g); done <- err }()
+	t.Cleanup(func() { c.once.Do(func() { close(c.release) }); require.NoError(t, <-done) })
+	<-c.started
+	h := c.fileHandle
+	h.NodeID = ref.Node
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, err := d.Cancel(ctx, ref, h)
+	require.NoError(t, err)
+	require.True(t, result.Quiescent)
+	require.Equal(t, substrate.FileInstallCancelled, result.Outcome)
+}

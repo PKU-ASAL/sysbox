@@ -13,11 +13,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 const Version = 1
 const MaxInput = 8 << 20
 const MaxOutput = 8 << 20
+const MaxCallSize = 32 << 20
 const MaxGrantTTL = 5 * time.Minute
 
 var ErrConflict = errors.New("guest task identity conflict")
@@ -88,25 +90,29 @@ type Record struct {
 	Error                string      `json:"error,omitempty"`
 }
 type Call struct {
-	BootID    string                       `json:"boot_id,omitempty"`
-	Epoch     uint64                       `json:"epoch,omitempty"`
-	Scope     *controlplane.ExecutionScope `json:"scope,omitempty"`
-	Grant     *SignedGrant                 `json:"grant,omitempty"`
-	Version   int                          `json:"version"`
-	Operation string                       `json:"operation"`
-	Request   *Request                     `json:"request,omitempty"`
-	ID        string                       `json:"id,omitempty"`
-	Digest    string                       `json:"digest,omitempty"`
-	Stream    string                       `json:"stream,omitempty"`
-	Cursor    int64                        `json:"cursor,omitempty"`
-	Limit     int                          `json:"limit,omitempty"`
+	FileRequest *substrate.FileInstallRequest `json:"file_request,omitempty"`
+	FileHandle  *substrate.FileInstallHandle  `json:"file_handle,omitempty"`
+	FileData    []byte                        `json:"file_data,omitempty"`
+	BootID      string                        `json:"boot_id,omitempty"`
+	Epoch       uint64                        `json:"epoch,omitempty"`
+	Scope       *controlplane.ExecutionScope  `json:"scope,omitempty"`
+	Grant       *SignedGrant                  `json:"grant,omitempty"`
+	Version     int                           `json:"version"`
+	Operation   string                        `json:"operation"`
+	Request     *Request                      `json:"request,omitempty"`
+	ID          string                        `json:"id,omitempty"`
+	Digest      string                        `json:"digest,omitempty"`
+	Stream      string                        `json:"stream,omitempty"`
+	Cursor      int64                         `json:"cursor,omitempty"`
+	Limit       int                           `json:"limit,omitempty"`
 }
 type Response struct {
-	Version    int      `json:"version"`
-	BootID     string   `json:"boot_id,omitempty"`
-	Record     *Record  `json:"record,omitempty"`
-	Records    []Record `json:"records,omitempty"`
-	Output     []byte   `json:"output,omitempty"`
-	NextCursor int64    `json:"next_cursor,omitempty"`
-	Error      string   `json:"error,omitempty"`
+	FileRecord *FileInstallRecord `json:"file_record,omitempty"`
+	Version    int                `json:"version"`
+	BootID     string             `json:"boot_id,omitempty"`
+	Record     *Record            `json:"record,omitempty"`
+	Records    []Record           `json:"records,omitempty"`
+	Output     []byte             `json:"output,omitempty"`
+	NextCursor int64              `json:"next_cursor,omitempty"`
+	Error      string             `json:"error,omitempty"`
 }

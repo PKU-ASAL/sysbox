@@ -2,15 +2,9 @@ package agentexec
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -180,65 +174,3 @@ func boundedString(s string) (string, bool) {
 	}
 	return s, false
 }
-
-func putGuestFile(ctx context.Context, opts Options, st *state.State, put controlplane.GuestFilePut) error {
-	res := st.FindResource(address.Resource("sysbox_node", put.Node))
-	if res == nil {
-		res = st.FindResource(address.Resource("sysbox_router", put.Node))
-	}
-	if res == nil {
-		return fmt.Errorf("logical node not found")
-	}
-	files, err := driver.DefaultRegistry.RequireGuestFiles(res.Driver)
-	if err != nil {
-		return fmt.Errorf("guest files capability unavailable")
-	}
-	codec, err := driver.DefaultRegistry.RequireNodeState(res.Driver)
-	if err != nil {
-		return fmt.Errorf("node state capability unavailable")
-	}
-	handle, err := res.ReconstructHandle(codec)
-	if err != nil {
-		return fmt.Errorf("reconstruct provider handle failed")
-	}
-	tmp, err := os.CreateTemp("", "sysbox-guest-file-")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	_ = tmp.Chmod(0600)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, opts.APIURL+put.FetchRef, nil)
-	if err != nil {
-		return err
-	}
-	authorize(req, opts)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fetch guest payload: %s", resp.Status)
-	}
-	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(resp.Body, guestFileMaxAgentSize+1))
-	if closeErr := tmp.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return fmt.Errorf("fetch guest payload")
-	}
-	if n > guestFileMaxAgentSize || n != put.Size {
-		return fmt.Errorf("guest payload size mismatch")
-	}
-	if !strings.EqualFold(hex.EncodeToString(h.Sum(nil)), put.SHA256) {
-		return fmt.Errorf("guest payload digest mismatch")
-	}
-	if err := files.CopyToNode(ctx, handle, name, put.Path, put.Mode); err != nil {
-		return fmt.Errorf("copy guest payload failed: %w", err)
-	}
-	return nil
-}
-
-const guestFileMaxAgentSize = 16 << 20

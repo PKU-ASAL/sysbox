@@ -54,6 +54,19 @@ func (r *ExecutionGrantRepository) InspectGrant(ctx context.Context, agent strin
 	return &result, nil
 }
 
+func (r *ExecutionGrantRepository) ListActiveGrants(ctx context.Context) ([]controlplane.ExecutionGrant, error) {
+	out := []controlplane.ExecutionGrant{}
+	err := r.read(ctx, func(a *executionAuthority) error {
+		for _, g := range a.Grants {
+			if g.State != controlplane.GrantStopped {
+				out = append(out, g)
+			}
+		}
+		return nil
+	})
+	return out, err
+}
+
 type ExecutionGrantRepository struct {
 	records guestRecords
 	storage ExecutionGrantStorage
@@ -352,6 +365,19 @@ func (r *ExecutionGrantRepository) AcknowledgeStop(ctx context.Context, proof co
 // Exact replay remains valid after a successor has replaced the scope record.
 func (r *ExecutionGrantRepository) AcceptHostStop(ctx context.Context, proof controlplane.ExecutionGrant, receipt string) error {
 	return r.acknowledgeStop(ctx, proof, receipt, true)
+}
+
+func (r *ExecutionGrantRepository) ValidateHostStop(ctx context.Context, proof controlplane.ExecutionGrant, receipt string) error {
+	return r.read(ctx, func(a *executionAuthority) error {
+		if prior, ok := a.Stops[proof.Epoch]; ok {
+			if sameGrant(prior.Grant, proof) && prior.Receipt == receipt {
+				return nil
+			}
+			return ErrConflict
+		}
+		_, err := currentGrant(a, proof)
+		return err
+	})
 }
 func (r *ExecutionGrantRepository) acknowledgeStop(ctx context.Context, proof controlplane.ExecutionGrant, receipt string, hostConfirmed bool) error {
 	if receipt == "" {

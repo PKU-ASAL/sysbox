@@ -10,6 +10,7 @@ import (
 )
 
 const GuestRecordFormat = 1
+const GuestFileRecordFormat = 2
 
 var ErrInvalidRecord = errors.New("invalid repository record")
 
@@ -87,7 +88,7 @@ func encodeExecution(x controlplane.GuestExecution) ([]byte, error) {
 	return json.Marshal(storedExecution{GuestExecution: x, Format: GuestRecordFormat, AgentID: x.AgentID, CommandID: x.CommandID, Request: x.Request})
 }
 func encodeFileOperation(x controlplane.GuestFileOperation) ([]byte, error) {
-	return json.Marshal(storedFileOperation{GuestFileOperation: x, Format: GuestRecordFormat, AgentID: x.AgentID, CommandID: x.CommandID, CancelRequested: x.CancelRequested})
+	return json.Marshal(storedFileOperation{GuestFileOperation: x, Format: GuestFileRecordFormat, AgentID: x.AgentID, CommandID: x.CommandID, CancelRequested: x.CancelRequested})
 }
 
 var executionCodec = guestCodec[controlplane.GuestExecution]{
@@ -120,13 +121,16 @@ var fileOperationCodec = guestCodec[controlplane.GuestFileOperation]{
 		}
 		x := stored.GuestFileOperation
 		x.AgentID, x.CommandID, x.CancelRequested = stored.AgentID, stored.CommandID, stored.CancelRequested
-		return x, validateGuestFormat(stored.Format, validateFileOperation(x))
+		if stored.Format != GuestFileRecordFormat {
+			return x, ErrUnsupportedVersion
+		}
+		return x, validateGuestFormat(GuestRecordFormat, validateFileOperation(x))
 	},
 	transition: fileOperationTransition,
 }
 
 func validateFileOperation(x controlplane.GuestFileOperation) error {
-	if x.CancelRequested && x.Status == controlplane.GuestExecutionCompleted {
+	if x.CancelRequested && x.Status == controlplane.GuestExecutionCompleted && x.Result == nil {
 		return ErrInvalidRecord
 	}
 	return validateGuestIdentity(x.ID, x.Version, x.Status)

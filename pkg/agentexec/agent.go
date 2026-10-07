@@ -47,7 +47,6 @@ type Options struct {
 	ArtifactPaths                    []string
 	ReportGuestExecutionCompleteFunc func(context.Context, string, controlplane.GuestExecutionCompletion) error
 	ReportGuestFileStartFunc         func(context.Context, string) error
-	ReportGuestFileCompleteFunc      func(context.Context, string, controlplane.GuestFileOperationCompletion) error
 	RequestTimeout                   time.Duration
 
 	// httpClient is the shared HTTP client for agent → API requests. Run builds
@@ -413,36 +412,12 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "guest file start report failed", err)
 			return
 		}
-		mgr, err := r.executor.bridge.StateManager(cmd.FilePut.Topology)
-		if err != nil {
-			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed", ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); reportErr != nil {
-				emit("failed", "guest file completion report failed", reportErr)
-				return
-			}
-			emit("failed", "guest file state unavailable", err)
+		if _, err := runGrantedFileInstall(runCtx, r.opts, *cmd); err != nil {
+			emit("failed", "guest file installation outcome unconfirmed", err)
 			return
 		}
-		st, err := mgr.Load()
-		if err != nil {
-			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed", ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); reportErr != nil {
-				emit("failed", "guest file completion report failed", reportErr)
-				return
-			}
-			emit("failed", "guest file state unavailable", err)
-			return
-		}
-		if err := putGuestFile(runCtx, r.opts, st, *cmd.FilePut); err != nil {
-			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed", ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); reportErr != nil {
-				emit("failed", "guest file completion report failed", reportErr)
-				return
-			}
-			emit("failed", "guest file put failed", err)
-			return
-		}
-		if err := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); err != nil {
-			emit("failed", "guest file completion report failed", err)
-			return
-		}
+		// Only the credential-owning host receipt can complete file metadata.
+		// A worker acknowledgement is delivery evidence, not installation proof.
 		emit("completed", "guest file put completed", nil)
 	default:
 		err := fmt.Errorf("unknown command type %q", cmd.Type)
@@ -735,18 +710,6 @@ func (opts Options) ReportGuestFileStart(ctx context.Context, id string) error {
 			return nil
 		}
 		return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-file-operations/"+id+"/start", nil, nil)
-	})
-}
-
-func (opts Options) ReportGuestFileComplete(ctx context.Context, id string, completion controlplane.GuestFileOperationCompletion) error {
-	return retryGuestFileReport(ctx, func() error {
-		if opts.ReportGuestFileCompleteFunc != nil {
-			return opts.ReportGuestFileCompleteFunc(ctx, id, completion)
-		}
-		if opts.APIURL == "" || opts.ID == "" || id == "" {
-			return nil
-		}
-		return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-file-operations/"+id+"/complete", completion, nil)
 	})
 }
 

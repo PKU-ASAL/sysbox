@@ -59,3 +59,33 @@ func (c AuthorityClient) Authorize(ctx context.Context, grant controlplane.Signe
 func (c AuthorityClient) ReportStop(ctx context.Context, receipt controlplane.SignedExecutionStopReceipt) error {
 	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/execution-grants/stopped", receipt, false)
 }
+
+func (c AuthorityClient) FetchFile(ctx context.Context, id string) (io.ReadCloser, error) {
+	// IDs are validated by the canonical installation contract before entry.
+	if id == "" || strings.ContainsAny(id, "/\\?#\x00") {
+		return nil, fmt.Errorf("invalid installation ID")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.Identity.APIURL, "/")+"/v1/agents/"+c.Identity.ID+"/guest-files/"+id, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.Identity.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Identity.Token)
+	}
+	if err = agent.SignRequest(req, c.Identity.ID, c.Identity.Secret, time.Now()); err != nil {
+		return nil, err
+	}
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		return nil, fmt.Errorf("file payload fetch rejected (HTTP %d)", response.StatusCode)
+	}
+	return response.Body, nil
+}

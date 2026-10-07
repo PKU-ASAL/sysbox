@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"syscall"
 
 	"github.com/oslab/sysbox/pkg/guesttask"
 )
 
-func taskEngine() (*guesttask.Engine, error) {
+func taskEngine(operation string) (*guesttask.Engine, error) {
 	key, err := os.ReadFile("/etc/sysbox/grant-public-key")
 	if err != nil || len(key) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("install trusted /etc/sysbox/grant-public-key before using guest tasks")
@@ -21,10 +23,51 @@ func taskEngine() (*guesttask.Engine, error) {
 		return nil, err
 	}
 	cgroup := "/sys/fs/cgroup/sysbox-tasks"
-	if err = os.MkdirAll(cgroup, 0700); err != nil {
-		return nil, fmt.Errorf("delegate writable cgroup-v2 task root: %w", err)
+	if !strings.HasPrefix(operation, "file-") {
+		if err = os.MkdirAll(cgroup, 0700); err != nil {
+			return nil, fmt.Errorf("delegate writable cgroup-v2 task root: %w", err)
+		}
 	}
-	return &guesttask.Engine{Root: "/var/lib/sysbox/guest-tasks", CgroupRoot: cgroup, PublicKey: ed25519.PublicKey(key), WorkerBinary: binary}, nil
+	engine := &guesttask.Engine{Root: "/var/lib/sysbox/guest-tasks", CgroupRoot: cgroup, PublicKey: ed25519.PublicKey(key), WorkerBinary: binary}
+	if strings.HasPrefix(operation, "file-") && operation != "file-info" {
+		roots, err := loadInstallRoots("/etc/sysbox/install-roots.json")
+		if err != nil {
+			return nil, err
+		}
+		engine.AllowedInstallRoots = roots
+	}
+	return engine, nil
+}
+
+func loadInstallRoots(path string) ([]string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("trusted install roots required: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
+		return nil, fmt.Errorf("install roots config must be root-owned regular file without group/other write")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, 65537))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > 65536 {
+		return nil, fmt.Errorf("install roots config too large")
+	}
+	var roots []string
+	if err := json.Unmarshal(raw, &roots); err != nil {
+		return nil, err
+	}
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("install roots must explicitly allow a directory")
+	}
+	return roots, nil
 }
 
 func serveTask(reader io.Reader) guesttask.Response {
@@ -32,7 +75,7 @@ func serveTask(reader io.Reader) guesttask.Response {
 	if err != nil {
 		return guesttask.Response{Version: guesttask.Version, Error: err.Error()}
 	}
-	engine, err := taskEngine()
+	engine, err := taskEngine(call.Operation)
 	if err != nil {
 		return guesttask.Response{Version: guesttask.Version, Error: err.Error()}
 	}
