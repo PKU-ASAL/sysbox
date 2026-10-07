@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -27,7 +29,9 @@ func guestExecutionTestServer(t *testing.T) *Server {
 		Resources: []state.Resource{{Address: address.Resource("sysbox_node", "web"), ResourceType: "sysbox_node"}},
 	})
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
-	require.NoError(t, s.apiStore.SaveAgentInventory(context.Background(), controlplane.AgentInventory{AgentID: "host-a", Topologies: []controlplane.InventoryItem{{Topology: "lab", Available: true}}}))
+	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).OpenSession(context.Background(), "host-a", "guest-process", "")
+	require.NoError(t, err)
+	require.NoError(t, s.apiStore.SaveAgentInventory(context.Background(), controlplane.AgentInventory{AgentID: "host-a", SessionID: session.ID, Sequence: 1, ObservedAt: time.Now().UTC(), Topologies: []controlplane.InventoryItem{{Topology: "lab", Available: true}}}))
 	return s
 }
 

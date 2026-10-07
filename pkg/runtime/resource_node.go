@@ -628,7 +628,7 @@ func (e *Executor) runProvisioners(ctx context.Context, conn substrate.Connectio
 				if handle.ID == "" {
 					return fmt.Errorf("%w: background execution returned no handle", ErrActionUncertain)
 				}
-				if err := e.recordSubstep(e.currentResourceStep, "background_execution", map[string]any{"execution_id": handle.ID, "node_id": handle.NodeID, "generation": handle.Generation, "pid": handle.PID}, func() error { return nil }); err != nil {
+				if err := e.recordSubstep(e.currentResourceStep, "background_execution", map[string]any{"execution_id": handle.ID, "node_id": handle.NodeID, "generation": handle.Generation, "pid": handle.PID, "request_digest": handle.Digest, "boot_id": handle.BootID, "grant_epoch": handle.Epoch}, func() error { return nil }); err != nil {
 					return err
 				}
 				e.logf("[provisioner] background exec started (execution %s, pid %d)\n", handle.ID, handle.PID)

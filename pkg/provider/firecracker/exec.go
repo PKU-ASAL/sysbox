@@ -22,19 +22,6 @@ func (s *Substrate) ExecInNode(ctx context.Context, handle substrate.NodeHandle,
 	return conn.Exec(ctx, req, nil, nil)
 }
 
-func (s *Substrate) ExecBackground(ctx context.Context, handle substrate.NodeHandle, req substrate.ExecRequest) (int, error) {
-	conn, err := s.Connection(handle, nil)
-	if err != nil {
-		return 0, err
-	}
-	starter, ok := conn.(substrate.ConnectionStarter)
-	if !ok {
-		return 0, substrate.ErrNotSupported
-	}
-	execution, err := starter.Start(ctx, req)
-	return execution.PID, err
-}
-
 // Console has its own session/TTY contract but uses the same connection identity.
 func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
 	conn, err := s.Connection(handle, nil)

@@ -20,19 +20,6 @@ func (s *Substrate) ExecInNode(ctx context.Context, handle substrate.NodeHandle,
 	return conn.Exec(ctx, req, io.Discard, io.Discard)
 }
 
-// ExecBackground starts a detached command in the VM through SSH.
-func (s *Substrate) ExecBackground(ctx context.Context, handle substrate.NodeHandle, req substrate.ExecRequest) (int, error) {
-	conn, err := s.Connection(handle, nil)
-	if err != nil {
-		return 0, err
-	}
-	background, ok := conn.(substrate.ConnectionBackground)
-	if !ok {
-		return 0, substrate.ErrNotSupported
-	}
-	return background.ExecBackground(ctx, req)
-}
-
 // CopyToNode copies a file through SSH and atomically installs it at dst.
 func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle, src, dst string, mode uint32) error {
 	conn, err := s.Connection(handle, nil)
@@ -131,11 +118,42 @@ func (c *domainConnection) Start(ctx context.Context, req substrate.ExecRequest)
 	return c.ssh.Start(ctx, req)
 }
 
-func (c *domainConnection) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
-	handle, err := c.Start(ctx, req)
-	return handle.PID, err
+func (c *domainConnection) ObserveExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.ExecResult, error) {
+	if err := c.validate(ctx); err != nil {
+		return substrate.ExecResult{}, err
+	}
+	return c.ssh.ObserveExecution(ctx, h)
 }
-
+func (c *domainConnection) CancelExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.RemoteTermination, error) {
+	if err := c.validate(ctx); err != nil {
+		return substrate.RemoteTerminationUnknown, err
+	}
+	return c.ssh.CancelExecution(ctx, h)
+}
+func (c *domainConnection) ReadExecutionOutput(ctx context.Context, h substrate.ExecutionHandle, s string, p int64, n int) (substrate.ExecutionOutput, error) {
+	if err := c.validate(ctx); err != nil {
+		return substrate.ExecutionOutput{}, err
+	}
+	return c.ssh.ReadExecutionOutput(ctx, h, s, p, n)
+}
+func (c *domainConnection) ListExecutions(ctx context.Context) ([]substrate.ExecutionHandle, error) {
+	if err := c.validate(ctx); err != nil {
+		return nil, err
+	}
+	return c.ssh.ListExecutions(ctx)
+}
+func (c *domainConnection) RenewExecution(ctx context.Context, h substrate.ExecutionHandle) error {
+	if err := c.validate(ctx); err != nil {
+		return err
+	}
+	return c.ssh.RenewExecution(ctx, h)
+}
+func (c *domainConnection) GuestTaskBootID(ctx context.Context) (string, error) {
+	if err := c.validate(ctx); err != nil {
+		return "", err
+	}
+	return c.ssh.GuestTaskBootID(ctx)
+}
 func (c *domainConnection) CopyFile(ctx context.Context, src, dst string) error {
 	if err := c.validate(ctx); err != nil {
 		return err

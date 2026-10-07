@@ -20,10 +20,11 @@ type attachmentState struct {
 	MAC    string `json:"mac"`
 }
 type networkState struct {
-	NAT             bool   `json:"nat"`
-	DockerNetworkID string `json:"docker_network_id"`
-	Netns           string `json:"netns"`
-	LibvirtBridge   string `json:"libvirt_bridge"`
+	ManagedBridge   *substrate.ManagedBridgeTarget `json:"managed_bridge"`
+	NAT             bool                           `json:"nat"`
+	DockerNetworkID string                         `json:"docker_network_id"`
+	Netns           string                         `json:"netns"`
+	LibvirtBridge   string                         `json:"libvirt_bridge"`
 }
 
 func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest) (driver.AttachmentResult, error) {
@@ -39,13 +40,23 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 	}
 	hs := hsFrom(h)
 	bridge := target.LibvirtBridge
+	bridgeTarget := network.BridgeTarget{Identity: req.NetworkIdentity, NetworkNamespace: target.Netns, Bridge: bridge, Root: true}
 	if target.NAT || target.DockerNetworkID != "" {
-		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnsupported, "libvirt", "Docker NAT bridge attachment requires a verifiable bridge contract; use an isolated network", nil)
+		if target.ManagedBridge == nil || target.ManagedBridge.NetworkID != target.DockerNetworkID {
+			return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "libvirt", "managed bridge proof required; rebuild network with mixed-substrate consumers", nil)
+		}
+		bridge = target.ManagedBridge.Bridge
+		bridgeTarget = network.BridgeTarget{Identity: req.NetworkIdentity, Bridge: bridge, Root: true, Managed: target.ManagedBridge}
+		verified, err := network.OpenOwnedBridge(ctx, bridgeTarget)
+		if err != nil {
+			return driver.AttachmentResult{}, err
+		}
+		verified.Close()
 	}
-	if bridge == "" || target.Netns == "" {
+	if bridge == "" || (target.Netns == "" && target.ManagedBridge == nil) {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "libvirt", "owned root bridge target required; rebuild network", nil)
 	}
-	hs.Bridges = append(hs.Bridges, BridgeAttach{Target: network.BridgeTarget{Identity: req.NetworkIdentity, NetworkNamespace: target.Netns, Bridge: bridge, Root: true}, Name: req.Name, Netns: target.Netns, Bridge: bridge, MAC: req.MAC, IPPrefixes: append([]string(nil), req.IPPrefixes...), Gateway: req.Gateway})
+	hs.Bridges = append(hs.Bridges, BridgeAttach{Target: bridgeTarget, Name: req.Name, Netns: target.Netns, Bridge: bridge, MAC: req.MAC, IPPrefixes: append([]string(nil), req.IPPrefixes...), Gateway: req.Gateway})
 	raw, _ := json.Marshal(attachmentState{Bridge: bridge, MAC: req.MAC})
 	return driver.AttachmentResult{Driver: "libvirt", State: raw}, nil
 }

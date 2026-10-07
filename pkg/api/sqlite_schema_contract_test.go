@@ -59,11 +59,33 @@ func TestSQLiteSchemaConcurrentFreshOpenAndStrictReopen(t *testing.T) {
 	version, err := s.SchemaVersion(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, apiSchemaVersion, version)
-	_, err = db.Exec(`DROP TABLE sysbox_projection`)
+	_, err = db.Exec(`DROP TABLE sysbox_execution_authority`)
 	require.NoError(t, err)
 	_, err = (&sqliteAPIStore{dbPath: path}).open()
 	require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
 	var count int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='sysbox_projection'`).Scan(&count))
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='sysbox_execution_authority'`).Scan(&count))
 	require.Zero(t, count)
+}
+
+func TestSQLiteStorePublishesOnePoolUnderConcurrentOpen(t *testing.T) {
+	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	start := make(chan struct{})
+	results := make(chan *sql.DB, 8)
+	failures := make(chan error, 8)
+	for range 8 {
+		go func() { <-start; db, err := s.open(); results <- db; failures <- err }()
+	}
+	close(start)
+	var first *sql.DB
+	for range 8 {
+		db := <-results
+		err := <-failures
+		require.NoError(t, err)
+		if first == nil {
+			first = db
+		}
+		require.Same(t, first, db)
+	}
+	require.NoError(t, first.Close())
 }

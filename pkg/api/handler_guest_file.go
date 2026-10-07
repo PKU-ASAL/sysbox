@@ -32,6 +32,8 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	topology, node, dst := r.PathValue("topology"), r.PathValue("node"), r.URL.Query().Get("path")
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
 	if !filepath.IsAbs(dst) || strings.Contains(dst, "\x00") || filepath.Clean(dst) != dst {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid guest path"))
 		return
@@ -103,6 +105,7 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 	}
 	command.ActionID = id
 	command.ResourceUID = identity.ResourceUID
+	command.TopologyUID = identity.TopologyUID
 	command.Generation = identity.Generation
 	command.LeaseEpoch = 1
 	if err := s.apiStore.CreateGuestFileDispatch(r.Context(), op, command); err != nil {

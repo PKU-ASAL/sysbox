@@ -93,11 +93,11 @@ func TestPostgresCurrentSchemaDoesNotRepairMissingTable(t *testing.T) {
 	pool, err := s.poolFor(ctx)
 	require.NoError(t, err)
 	defer pool.Close()
-	_, err = pool.Exec(ctx, `DROP TABLE sysbox_projection`)
+	_, err = pool.Exec(ctx, `DROP TABLE sysbox_execution_authority`)
 	require.NoError(t, err)
 	_, err = (&postgresAPIStore{dsn: dsn}).poolFor(ctx)
 	require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
 	var missing bool
-	require.NoError(t, pool.QueryRow(ctx, `SELECT to_regclass('sysbox_projection') IS NULL`).Scan(&missing))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT to_regclass('sysbox_execution_authority') IS NULL`).Scan(&missing))
 	require.True(t, missing)
 }

@@ -103,10 +103,11 @@ func (b *ExecutionBridge) Preflight(ctx context.Context, run *controlplane.Run, 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if run == nil || run.SnapshotPath == "" {
+	path := agentexec.RunWorkspace(ctx, run)
+	if path == "" {
 		return fmt.Errorf("run preflight requires an immutable snapshot")
 	}
-	res, err := preflightFile(run.SnapshotPath)
+	res, err := preflightFile(path)
 	if err != nil {
 		return err
 	}

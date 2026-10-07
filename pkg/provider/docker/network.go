@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/errdefs"
 
 	"github.com/oslab/sysbox/pkg/driver"
+	ownednetwork "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -21,6 +22,10 @@ import (
 // Idempotent: if a network with the same name already exists (leftover from
 // a failed apply), its ID is returned instead of failing with a name conflict.
 func (s *Substrate) CreateBridgeNetwork(ctx context.Context, name, cidr string, labels map[string]string) (string, error) {
+	return s.createBridgeNetwork(ctx, name, cidr, labels, "")
+}
+
+func (s *Substrate) createBridgeNetwork(ctx context.Context, name, cidr string, labels map[string]string, bridge string) (string, error) {
 	expected, err := expectedLabels(ctx, labels, false)
 	if err != nil {
 		return "", err
@@ -48,6 +53,10 @@ func (s *Substrate) CreateBridgeNetwork(ctx context.Context, name, cidr string, 
 	}
 	gw := firstHost(ipNet)
 
+	options := map[string]string{"com.docker.network.bridge.enable_ip_masquerade": "true", "com.docker.network.bridge.enable_icc": "true"}
+	if bridge != "" {
+		options["com.docker.network.bridge.name"] = bridge
+	}
 	resp, err := s.cli.NetworkCreate(ctx, name, network.CreateOptions{
 		Driver: "bridge",
 		Labels: labels,
@@ -57,10 +66,7 @@ func (s *Substrate) CreateBridgeNetwork(ctx context.Context, name, cidr string, 
 				{Subnet: cidr, Gateway: gw},
 			},
 		},
-		Options: map[string]string{
-			"com.docker.network.bridge.enable_ip_masquerade": "true",
-			"com.docker.network.bridge.enable_icc":           "true",
-		},
+		Options: options,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create docker bridge network %s: %w", name, err)
@@ -81,6 +87,9 @@ func (s *Substrate) RemoveBridgeNetwork(ctx context.Context, networkID string) e
 // CreateManagedNetwork implements substrate.Substrate by creating a Docker
 // bridge network. Currently always NAT (NAT field is informational).
 func (s *Substrate) CreateManagedNetwork(ctx context.Context, spec substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
+	if spec.ExposeBridge {
+		return s.createExposedManagedNetwork(ctx, spec)
+	}
 	netName := fmt.Sprintf("sysbox-nat-%s", spec.Name)
 	id, err := s.CreateBridgeNetwork(ctx, netName, spec.CIDR, spec.Labels)
 	if err != nil {
@@ -91,7 +100,7 @@ func (s *Substrate) CreateManagedNetwork(ctx context.Context, spec substrate.Man
 
 // RemoveManagedNetwork implements substrate.Substrate.
 func (s *Substrate) RemoveManagedNetwork(ctx context.Context, id string) error {
-	return s.RemoveBridgeNetwork(ctx, id)
+	return s.removeManagedNetwork(ctx, id)
 }
 
 // ReadManagedNetwork queries an existing Docker network by name without
@@ -118,7 +127,21 @@ func (s *Substrate) ReadManagedNetwork(ctx context.Context, spec substrate.Manag
 		if err := verifyLabels(existing.Labels, expected); err != nil {
 			return substrate.ManagedNetworkInfo{}, err
 		}
-		return substrate.ManagedNetworkInfo{ID: existing.ID, Name: existing.Name}, nil
+		info := substrate.ManagedNetworkInfo{ID: existing.ID, Name: existing.Name}
+		if spec.ExposeBridge || existing.Labels[managedBridgeLabel] == "v1" {
+			proof, err := ownednetwork.LoadManagedBridge("docker", existing.ID)
+			if err != nil {
+				return substrate.ManagedNetworkInfo{}, err
+			}
+			if err := s.VerifyManagedBridge(ctx, *proof); err != nil {
+				return substrate.ManagedNetworkInfo{}, err
+			}
+			if err := ownednetwork.InspectManagedBridge(ctx, *proof); err != nil {
+				return substrate.ManagedNetworkInfo{}, err
+			}
+			info.BridgeTarget = proof
+		}
+		return info, nil
 	}
 	return substrate.ManagedNetworkInfo{}, driver.Wrap(driver.ErrorNotFound, "docker", "managed network absent", nil)
 }

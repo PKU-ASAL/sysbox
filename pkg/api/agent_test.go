@@ -498,7 +498,7 @@ resource "sysbox_node" "web" {
   ]
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", bindObservationTestBody(t, s, "host-a", body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
@@ -519,7 +519,7 @@ func saveHealthyNodeProjection(t *testing.T, s *Server, agentID, topology, node 
   ]
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/"+agentID+"/projections/resources", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/"+agentID+"/projections/resources", bindObservationTestBody(t, s, agentID, body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 }
 
@@ -601,7 +601,7 @@ func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
   }
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", bindObservationTestBody(t, s, "host-a", body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
@@ -623,7 +623,7 @@ func TestAgentInventoryPersists(t *testing.T) {
   "topologies": [{"workspace":"mixed","topology":"mixed","serial":3,"resource_count":2,"health":"healthy"}]
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/inventory", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/inventory", bindObservationTestBody(t, s, "host-a", body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()

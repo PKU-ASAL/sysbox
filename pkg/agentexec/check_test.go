@@ -139,9 +139,6 @@ func (d *recordingDriver) ExecInNode(_ context.Context, _ substrate.NodeHandle, 
 	d.argv = append([]string{req.Program}, req.Args...)
 	return substrate.ExecResult{ExitCode: d.exitCode, ExitCodeKnown: true}, nil
 }
-func (*recordingDriver) ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error) {
-	return 0, nil
-}
 
 // reachState builds a state with two nodes; core has a primary_ip so that a
 // reach probe can target it.

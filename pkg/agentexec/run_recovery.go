@@ -3,13 +3,16 @@ package agentexec
 import (
 	"context"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/secret"
+	"path/filepath"
 	"time"
 )
 
-type RecoveryWorkspaceProvider interface {
-	PinnedRecoveryWorkspace(context.Context, controlplane.Run, *controlplane.GlobalRevision) (string, error)
+type RevisionWorkspaceProvider interface {
+	PinnedRevisionWorkspace(context.Context, controlplane.Run, *controlplane.GlobalRevision) (string, error)
 }
 
 func (e *Executor) ObserveRecoverRun(ctx context.Context, agentID string, cmd controlplane.AgentCommand, auth controlplane.RunRecoveryAuthorization) (*controlplane.RunRecoveryReport, error) {
@@ -44,20 +47,24 @@ func (e *Executor) ObserveRecoverRun(ctx context.Context, agentID string, cmd co
 		if run.Status != controlplane.RunFailed || !run.Recoverable || run.LeaseUntil.After(time.Now()) {
 			return nil, fmt.Errorf("live execution cannot be recovered")
 		}
-		workspace, ok := e.bridge.(RecoveryWorkspaceProvider)
+		workspace, ok := e.bridge.(RevisionWorkspaceProvider)
 		if !ok {
 			return nil, runtime.ErrConvergenceUnsupported
 		}
-		path, err := workspace.PinnedRecoveryWorkspace(ctx, run, auth.Revision)
+		path, err := workspace.PinnedRevisionWorkspace(ctx, run, auth.Revision)
 		if err != nil {
 			return nil, err
 		}
+		ctx = artifact.WithPortableSources(ctx)
 		mgr, err := e.bridge.StateManager(run.Topology)
 		if err != nil {
 			return nil, err
 		}
 		g, _, st, _, _, err := runtime.LoadWorkspaceWithInputs(path, mgr, nil)
 		if err != nil {
+			return nil, err
+		}
+		if err := runtime.ValidateArtifactSources(ctx, g, filepath.Dir(path), secret.EnvironmentResolver{}); err != nil {
 			return nil, err
 		}
 		exec := runtime.NewExecutor(g, st)
@@ -113,10 +120,10 @@ func (b remoteBridge) ActionRepository(topology string) (runtime.ActionRepositor
 	}
 	return p.ActionRepository(topology)
 }
-func (b remoteBridge) PinnedRecoveryWorkspace(ctx context.Context, run controlplane.Run, revision *controlplane.GlobalRevision) (string, error) {
-	p, ok := b.Bridge.(RecoveryWorkspaceProvider)
+func (b remoteBridge) PinnedRevisionWorkspace(ctx context.Context, run controlplane.Run, revision *controlplane.GlobalRevision) (string, error) {
+	p, ok := b.Bridge.(RevisionWorkspaceProvider)
 	if !ok {
 		return "", runtime.ErrConvergenceUnsupported
 	}
-	return p.PinnedRecoveryWorkspace(ctx, run, revision)
+	return p.PinnedRevisionWorkspace(ctx, run, revision)
 }

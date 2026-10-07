@@ -2,6 +2,8 @@
 
 更新：2026-10-07。工作分支：`refactor/observation-driven-runtime`。未合入 main、未推送。
 
+**正在实施P0–P9：** 下文是此前已提交基线。当前并行改动的完成/未完成项、schema8与aggregate2、任务与跨宿主交付进度，以[并行集成跟踪](2026-10-07-parallel-implementation-tracker.md)为准；不能将部分库和分项测试通过解读为分布式执行闭环已经完成。
+
 本文只描述当前实现。历史阶段记录由 Git 保留；[目标架构](2026-09-28-observation-driven-runtime-refactor.md)和[接口清单](2026-09-28-interface-change-inventory.md)中的未交付设计不视为已支持能力。
 
 ## 职责与执行模型
@@ -83,4 +85,4 @@ keyed Apply 后 workspace 当前指针可以不存在；活跃操作列表从 du
 
 本轮KVM恢复测试通过。曾观察到文件安装偶发失败，已定位为 guest RPC 过早可用：sysbox-init 在 systemd/tmpfiles 初始化完成前启动 vsock，tmpfiles 删除上传暂存目录，随后 chmod 报 ENOENT。现在 `ready.v1` 将 liveness 与 initialized 分离：systemd 同时要求 `sysinit.target` 和 `systemd-tmpfiles-setup.service` active/success；自定义 init 必须发布匹配当前 boot ID 的 `/run/sysbox/boot-ready`。Exec/write_file 在 ready 前拒绝；真实延迟 tmpfiles KVM 测试验证 ready 前无副作用、ready 后20次安装成功。
 
-后续独立项目：资源端同代租约撤销、多宿主故障矩阵、durable guest task 协议、显式 ownership adoption、完整 guest SSH access 管理。它们不通过兼容回退或下游业务逻辑代替。
+后续必达范围：资源端同代租约撤销、多宿主故障矩阵、durable guest task协议、显式ownership adoption、自动GC、aggregate snapshot/lease运维、完整guest SSH access及网络能力迁移。它们属于用户确认的“完整能力迁移与分布式执行闭环”，不再默认排除在目标之外；实施顺序与验收门槛见[完整迁移实施计划](2026-10-07-full-migration-distributed-execution-plan.md)。当前Unsupported仅是尚未完成状态。

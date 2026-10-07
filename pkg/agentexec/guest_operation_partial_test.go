@@ -30,9 +30,6 @@ func (d *failingGuestDriver) ExecInNode(ctx context.Context, _ substrate.NodeHan
 	}
 	return substrate.ExecResult{Stdout: d.stdout}, d.err
 }
-func (*failingGuestDriver) ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error) {
-	return 0, nil
-}
 
 func registerFailingDriver(t *testing.T, d *failingGuestDriver) {
 	t.Helper()

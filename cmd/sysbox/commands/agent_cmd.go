@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,7 +21,7 @@ var (
 	flagAgentToken        string
 	flagAgentID           string
 	flagAgentName         string
-	flagAgentSubstrates string
+	flagAgentSubstrates   string
 	flagAgentIdentity     string
 	flagAgentConfig       string
 	flagAgentPollInterval time.Duration
@@ -36,12 +37,12 @@ var agentRegisterCmd = &cobra.Command{
 	Short: "Register this host agent with a control plane",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ident, err := agent.Register(cmd.Context(), agent.RegisterOptions{
-			APIURL:       flagAgentAPI,
-			Token:        flagAgentToken,
-			ID:           flagAgentID,
-			Name:         flagAgentName,
+			APIURL:     flagAgentAPI,
+			Token:      flagAgentToken,
+			ID:         flagAgentID,
+			Name:       flagAgentName,
 			Substrates: splitCSV(flagAgentSubstrates),
-			Path:         flagAgentIdentity,
+			Path:       flagAgentIdentity,
 		})
 		if err != nil {
 			return err
@@ -64,19 +65,25 @@ var agentStartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		sessionFile := cfg.Agent.ExecutionSessionFile
+		if sessionFile == "" {
+			sessionFile = filepath.Join(cfg.Paths.RunsDir, "_agents", ident.ID, "execution-session.json")
+		}
 		return agentexec.Run(cmd.Context(), agentexec.Options{
-			APIURL:           ident.APIURL,
-			Token:            ident.Token,
-			ID:               ident.ID,
-			Name:             ident.Name,
-			Capabilities:     ident.Capabilities,
-			Labels:           ident.Labels,
-			Secret:           ident.Secret,
-			PollInterval:     flagAgentPollInterval,
-			RunRenewInterval: cfg.RunRenewInterval(),
-			RunRenewTTL:      cfg.RunRenewTTL(),
-			Policy:           cfg.Agent.Policy,
-			CapacityPath:     cfg.Paths.Home,
+			ExecutionSessionFile:        sessionFile,
+			ExecutionGrantPublicKeyFile: cfg.Agent.ExecutionGrantPublicKeyFile,
+			APIURL:                      ident.APIURL,
+			Token:                       ident.Token,
+			ID:                          ident.ID,
+			Name:                        ident.Name,
+			Capabilities:                ident.Capabilities,
+			Labels:                      ident.Labels,
+			Secret:                      ident.Secret,
+			PollInterval:                flagAgentPollInterval,
+			RunRenewInterval:            cfg.RunRenewInterval(),
+			RunRenewTTL:                 cfg.RunRenewTTL(),
+			Policy:                      cfg.Agent.Policy,
+			CapacityPath:                cfg.Paths.Home,
 			ArtifactPaths: []string{
 				cfg.Providers.Firecracker.Kernel,
 				os.Getenv("SYSBOX_ROOTFS"),

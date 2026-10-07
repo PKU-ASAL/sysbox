@@ -75,6 +75,7 @@ func scanSQLiteCommand(row runScanner) (*persistence.CommandRecord, error) {
 	indexedCommand := record.Command
 	indexedCommand.ActionID, indexedCommand.ResourceUID = "", ""
 	indexedCommand.RecoveryMode = ""
+	indexedCommand.TopologyUID = ""
 	indexedCommand.Generation, indexedCommand.LeaseEpoch = 0, 0
 	comparable, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: indexedCommand})
 	if err != nil {

@@ -89,7 +89,7 @@ esac
 }
 
 func TestExecutionSPIFencesBeforeSSH(t *testing.T) {
-	for _, operation := range []string{"exec", "start", "background", "copy", "console"} {
+	for _, operation := range []string{"exec", "start", "observe", "cancel", "copy", "console"} {
 		t.Run(operation, func(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "effects")
 			t.Setenv("SYSBOX_FENCE_LOG", log)
@@ -111,8 +111,10 @@ func TestExecutionSPIFencesBeforeSSH(t *testing.T) {
 				_, err = conn.Exec(ctx, req, io.Discard, io.Discard)
 			case "start":
 				_, err = conn.(substrate.ConnectionStarter).Start(ctx, req)
-			case "background":
-				_, err = conn.(substrate.ConnectionBackground).ExecBackground(ctx, req)
+			case "observe":
+				_, err = conn.(substrate.ConnectionExecutionObserver).ObserveExecution(ctx, substrate.ExecutionHandle{})
+			case "cancel":
+				_, err = conn.(substrate.ConnectionExecutionCanceler).CancelExecution(ctx, substrate.ExecutionHandle{})
 			case "copy":
 				err = conn.(substrate.ConnectionFileCopier).CopyFile(ctx, "source", "target")
 			case "console":

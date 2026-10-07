@@ -2,9 +2,10 @@ package api
 
 import (
 	"context"
-	"os"
+	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
@@ -40,13 +41,38 @@ func TestSQLiteCommandEventRejectsInconsistentIndex(t *testing.T) {
 }
 
 func TestSQLiteInventoryRejectsInvalidObservationMetadata(t *testing.T) {
-	for _, mutation := range []string{"observed_at='broken'", "observed_at=''", "observed_at='2026-10-07 12:34:56'", "stale=2", "stale=-1"} {
+	for _, mutation := range []string{"sequence", "agent_id", "session_id", "data"} {
 		t.Run(mutation, func(t *testing.T) {
 			s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
 			ctx := context.Background()
-			require.NoError(t, s.SaveAgentInventory(ctx, controlplane.AgentInventory{AgentID: "agent"}))
+			require.ErrorIs(t, s.SaveAgentInventory(ctx, controlplane.AgentInventory{AgentID: "agent"}), persistence.ErrInvalidRecord)
+			// The record is deliberately created through the durable observation
+			// path; malformed indexed rows are no longer accepted as seed data.
+			session, sessionErr := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s}).OpenSession(ctx, "agent", "invalid-metadata-process", "")
+			require.NoError(t, sessionErr)
+			require.NoError(t, s.SaveAgentInventory(ctx, controlplane.AgentInventory{AgentID: "agent", SessionID: session.ID, Sequence: 1, ObservedAt: time.Now().UTC()}))
 			t.Cleanup(func() { s.db.Close() })
-			_, err := s.db.Exec("UPDATE sysbox_agent_inventory SET " + mutation)
+			var raw []byte
+			require.NoError(t, s.db.QueryRow("SELECT data FROM sysbox_execution_authority WHERE id='authority'").Scan(&raw))
+			var ledger map[string]any
+			require.NoError(t, json.Unmarshal(raw, &ledger))
+			var record map[string]any
+			for _, value := range ledger["observations"].(map[string]any) {
+				record = value.(map[string]any)
+			}
+			switch mutation {
+			case "sequence":
+				record[mutation] = 0
+			case "agent_id":
+				record[mutation] = "other"
+			case "session_id":
+				record["data"].(map[string]any)[mutation] = "other"
+			case "data":
+				record[mutation] = map[string]any{"agent_id": 23}
+			}
+			raw, err := json.Marshal(ledger)
+			require.NoError(t, err)
+			_, err = s.db.Exec("UPDATE sysbox_execution_authority SET data=? WHERE id='authority'", raw)
 			require.NoError(t, err)
 			inv, err := s.GetAgentInventory(ctx, "agent")
 			require.ErrorIs(t, err, persistence.ErrCorruptRecord)
@@ -70,24 +96,17 @@ func TestSQLiteMissingCommandRecordRequiresRebuild(t *testing.T) {
 func TestLocalProjectionReplacesSnapshotAtomically(t *testing.T) {
 	s := &localAPIStore{runsDir: t.TempDir()}
 	ctx := context.Background()
-	first := controlplane.ResourceProjection{Topology: "lab", AgentID: "first"}
+	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s}).OpenSession(ctx, "first", "projection-process", "")
+	require.NoError(t, err)
+	first := controlplane.ResourceProjection{Topology: "lab", AgentID: "first", SessionID: session.ID, Sequence: 1, ObservedAt: time.Now().UTC()}
 	require.NoError(t, s.SaveResourceProjection(ctx, first))
-	path := filepath.Join(s.runsDir, "lab", "projection.json")
-	old, err := os.Open(path)
-	require.NoError(t, err)
-	defer old.Close()
-	firstRaw, err := os.ReadFile(path)
-	require.NoError(t, err)
 	next := first
-	next.AgentID = "second"
+	next.Sequence++
 	require.NoError(t, s.SaveResourceProjection(ctx, next))
-	oldRaw := make([]byte, len(firstRaw))
-	_, err = old.Read(oldRaw)
-	require.NoError(t, err)
-	require.Equal(t, string(firstRaw), string(oldRaw), "existing readers must retain the complete old snapshot")
 	got, err := s.LoadResourceProjection(ctx, "lab")
 	require.NoError(t, err)
-	require.Equal(t, "second", got.AgentID)
+	require.Equal(t, "first", got.AgentID)
+	require.Equal(t, uint64(2), got.Sequence)
 }
 
 func TestSQLiteMissingRevisionFilesRequiresRebuild(t *testing.T) {
@@ -142,10 +161,12 @@ func TestCommandEventStoresListAllAgents(t *testing.T) {
 
 func TestSQLiteInventoryRejectsCorruptJSON(t *testing.T) {
 	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	session := observationTestSession(t, s, "agent")
+	require.NoError(t, s.SaveAgentInventory(context.Background(), controlplane.AgentInventory{AgentID: "agent", SessionID: session, Sequence: 1}))
 	db, err := s.open()
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
-	_, err = db.Exec(`INSERT INTO sysbox_agent_inventory(agent_id,capabilities) VALUES('agent','broken')`)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.Exec(`UPDATE sysbox_execution_authority SET data=? WHERE id='authority'`, []byte(`{"version":1,"sessions":null}`))
 	require.NoError(t, err)
 	_, err = s.GetAgentInventory(context.Background(), "agent")
 	require.ErrorIs(t, err, persistence.ErrCorruptRecord)

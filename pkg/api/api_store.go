@@ -24,7 +24,7 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 7
+const apiSchemaVersion = 8
 
 // errGlobalRevisionNotFound is returned by GetGlobalRevision when no revision
 // exists for the requested digest. Callers use errors.Is to detect it so they
@@ -34,6 +34,11 @@ var errGlobalRevisionNotFound = errors.New("global revision not found")
 // API schemas are created fresh or validated at the exact current version.
 // There is deliberately no in-place migration path.
 const apiPostgresSchema = `
+CREATE TABLE sysbox_execution_authority (
+ id TEXT PRIMARY KEY,
+ data JSONB NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE sysbox_api_schema_migrations (
  name TEXT PRIMARY KEY,
  version INTEGER NOT NULL,
@@ -112,11 +117,6 @@ CREATE TABLE sysbox_dispatch_retries (
  next TIMESTAMPTZ NOT NULL,
  last_error TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE sysbox_agent_inventory (
-  agent_id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
 CREATE TABLE sysbox_guest_executions (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
@@ -138,11 +138,6 @@ CREATE TABLE sysbox_global_revisions (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE sysbox_projection (
-  topology TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE sysbox_topology_placements (
   topology TEXT PRIMARY KEY,
@@ -219,30 +214,6 @@ func (s *localAPIStore) LoadHealth(_ context.Context, topology string) (*HealthS
 		return nil, fmt.Errorf("decode health snapshot: %w", err)
 	}
 	return &snap, nil
-}
-
-func (s *localAPIStore) SaveResourceProjection(_ context.Context, proj controlplane.ResourceProjection) error {
-	raw, err := persistence.EncodeProjection(proj)
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(s.runsDir, proj.Topology, "projection.json")
-	return writeLocalObject(path, json.RawMessage(raw))
-}
-
-func (s *localAPIStore) LoadResourceProjection(_ context.Context, topology string) (*controlplane.ResourceProjection, error) {
-	raw, err := os.ReadFile(filepath.Join(s.runsDir, topology, "projection.json"))
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	proj, err := persistence.DecodeProjection(raw)
-	if err != nil {
-		return nil, err
-	}
-	return proj, nil
 }
 
 func (s *localAPIStore) checkpointFile(topology, runID string) string {
@@ -475,12 +446,11 @@ var apiPostgresTableShapes = []struct{ table, columns string }{
 	{"sysbox_agent_command_events", "agent_id,command_id,status,data,created_at"},
 	{"sysbox_agent_commands", "agent_id,id,status,data,lease_owner,lease_until,attempt,updated_at"},
 	{"sysbox_dispatch_retries", "command_id,failures,next,last_error"},
-	{"sysbox_agent_inventory", "agent_id,data,updated_at"},
 	{"sysbox_guest_executions", "id,data,updated_at"},
 	{"sysbox_guest_file_operations", "id,data,updated_at"},
+	{"sysbox_execution_authority", "id,data,updated_at"},
 	{"sysbox_run_requests", "id,fingerprint,run_id,created_at"},
 	{"sysbox_global_revisions", "workspace,id,data,created_at"},
-	{"sysbox_projection", "topology,data,updated_at"},
 	{"sysbox_topology_placements", "topology,agent_id,protocol,bound_at"},
 }
 
@@ -592,48 +562,6 @@ func (s *postgresAPIStore) LoadHealth(ctx context.Context, topology string) (*He
 		return nil, fmt.Errorf("decode health snapshot: %w", err)
 	}
 	return &snap, nil
-}
-
-func (s *postgresAPIStore) SaveResourceProjection(ctx context.Context, proj controlplane.ResourceProjection) error {
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	raw, err := persistence.EncodeProjection(proj)
-	if err != nil {
-		return err
-	}
-	_, err = conn.Exec(ctx, `
-INSERT INTO sysbox_projection (topology, data, updated_at)
-VALUES ($1, $2::jsonb, now())
-ON CONFLICT (topology) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`,
-		proj.Topology, string(raw))
-	if err != nil {
-		return fmt.Errorf("postgres save resource projection: %w", err)
-	}
-	return nil
-}
-
-func (s *postgresAPIStore) LoadResourceProjection(ctx context.Context, topology string) (*controlplane.ResourceProjection, error) {
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-	var raw []byte
-	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_projection WHERE topology=$1`, topology).Scan(&raw)
-	if err == pgx.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("postgres load resource projection: %w", err)
-	}
-	proj, err := persistence.DecodeProjection(raw)
-	if err != nil {
-		return nil, err
-	}
-	return proj, nil
 }
 
 func (s *postgresAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {

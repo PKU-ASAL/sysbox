@@ -163,16 +163,18 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 // createNATNetwork creates a managed NAT network via the registered substrate.
 // Currently Docker is the only substrate that supports managed networks.
 func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, cfg *config.NetworkConfig) (state.Resource, error) {
+	cfg.ExposeBridge = cfg.ExposeBridge || requiresManagedBridge(pc.exec.graph, n.Address)
 	networkDriver, err := driver.DefaultRegistry.RequireNetwork("docker")
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("nat network requires docker substrate: %w", err)
 	}
 
 	info, err := networkDriver.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
-		Name:   networkExternalName(pc.Topology(), n.Address.Name),
-		CIDR:   cfg.CIDR,
-		NAT:    true,
-		Labels: ManagedLabels(pc.Topology(), pc.RunID(), n.Address),
+		ExposeBridge: cfg.ExposeBridge,
+		Name:         networkExternalName(pc.Topology(), n.Address.Name),
+		CIDR:         cfg.CIDR,
+		NAT:          true,
+		Labels:       ManagedLabels(pc.Topology(), pc.RunID(), n.Address),
 	})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("create nat network %s: %w", n.Address.Name, err)
@@ -192,6 +194,9 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 		"docker_network_id": info.ID,
 		"docker_net_name":   info.Name,
 		"cidr":              cfg.CIDR,
+	}
+	if info.BridgeTarget != nil {
+		natInst["managed_bridge"] = info.BridgeTarget
 	}
 	if lc := cfg.Lifecycle; lc != nil {
 		natInst["lifecycle_prevent_destroy"] = lc.PreventDestroy

@@ -24,11 +24,12 @@ var (
 	ErrUnsupportedVersion = errors.New("unsupported repository version")
 )
 
-const FormatVersion = 1
+const FormatVersion = 2
 
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
+	Snapshots map[string]aggregateSnapshot    `json:"snapshots"`
 	Format    int                             `json:"format"`
 	Serial    int64                           `json:"serial"`
 	State     *state.State                    `json:"state"`
@@ -74,7 +75,7 @@ func (r *Repository) ListTopologies(ctx context.Context) ([]state.TopologyMetada
 	return out, nil
 }
 func newAggregate() *aggregate {
-	return &aggregate{Format: FormatVersion, State: &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}, Actions: map[string]runtime.ActionRecord{}}
+	return &aggregate{Format: FormatVersion, State: &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}, Actions: map[string]runtime.ActionRecord{}, Snapshots: map[string]aggregateSnapshot{}}
 }
 func decodeAggregate(raw []byte) (*aggregate, error) {
 	var a aggregate
@@ -93,7 +94,7 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 // Validate both loaded records and proposed mutations. JSON syntax alone does
 // not make identity, journal revision, or recovery evidence trustworthy.
 func validateAggregate(a *aggregate, topology string) error {
-	if a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Serial < 0 {
+	if a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Serial < 0 {
 		return ErrCorruptRecord
 	}
 	if a.State.Version != state.SchemaVersion {
@@ -196,7 +197,7 @@ func validateAction(a runtime.ActionRecord) error {
 		return fmt.Errorf("invalid action identity")
 	}
 	switch a.Action {
-	case controlplane.PlanActionCreate, controlplane.PlanActionRead, controlplane.PlanActionDelete, controlplane.PlanActionReset:
+	case controlplane.PlanActionCreate, controlplane.PlanActionAdopt, controlplane.PlanActionRead, controlplane.PlanActionDelete, controlplane.PlanActionReset:
 	default:
 		return fmt.Errorf("invalid action %s", a.Action)
 	}
@@ -347,7 +348,7 @@ func validateActionTarget(st *state.State, action runtime.ActionRecord) error {
 		}
 		return nil
 	}
-	if action.Action == controlplane.PlanActionCreate {
+	if action.Action == controlplane.PlanActionCreate || action.Action == controlplane.PlanActionAdopt {
 		return ErrConflict
 	}
 	want := action.Generation
@@ -375,7 +376,7 @@ type stateBackend struct {
 }
 
 func (b *stateBackend) Capabilities() state.BackendCapabilities {
-	return state.BackendCapabilities{Locking: true, CAS: true, Delete: true}
+	return state.BackendCapabilities{Locking: true, CAS: true, Delete: true, Snapshot: true}
 }
 func (b *stateBackend) Metadata(ctx context.Context) (state.Metadata, error) {
 	st, err := b.repository.LoadState(ctx, b.topology)
@@ -406,6 +407,7 @@ func resetAggregate(a *aggregate) error {
 	}
 	a.State = &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}
 	a.Actions = map[string]runtime.ActionRecord{}
+	a.Snapshots = map[string]aggregateSnapshot{}
 	a.Serial = 0
 	a.UpdatedAt = time.Now().UTC()
 	return nil

@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/gofrs/flock"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -23,18 +25,34 @@ import (
 // the JSONL implementation (ClaimRun, AcquireAgentCommandLease) now use
 // SQLite transactions, matching the Postgres correctness guarantees.
 type sqliteAPIStore struct {
+	openMu  sync.Mutex
 	dbPath  string
 	runsDir string // used for HCL file paths, not storage
 	db      *sql.DB
 }
 
 func (s *sqliteAPIStore) open() (*sql.DB, error) {
+	s.openMu.Lock()
+	defer s.openMu.Unlock()
 	if s.db != nil {
 		return s.db, nil
 	}
 	dir := filepath.Dir(s.dbPath)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("sqlite api mkdir: %w", err)
+	}
+	// Serialize WAL/schema initialization before SQLite opens its first pooled
+	// connection. busy_timeout does not serialize competing journal_mode PRAGMA.
+	initLock := flock.New(s.dbPath + ".init.lock")
+	defer initLock.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	locked, err := initLock.TryLockContext(ctx, 5*time.Millisecond)
+	if err != nil {
+		return nil, err
+	}
+	if !locked {
+		return nil, ctx.Err()
 	}
 	db, err := sql.Open("sqlite", s.dbPath+"?_pragma=busy_timeout%3d5000&_pragma=journal_mode%28WAL%29")
 	if err != nil {
@@ -113,9 +131,10 @@ func (c sqliteSchemaConnection) QueryRow(query string, args ...any) *sql.Row {
 
 var sqliteAPITables = []string{
 	"sysbox_runs", "sysbox_agents", "sysbox_agent_commands", "sysbox_agent_command_events",
-	"sysbox_dispatch_retries", "sysbox_console_sessions", "sysbox_node_operations", "sysbox_agent_inventory",
+	"sysbox_dispatch_retries", "sysbox_console_sessions", "sysbox_node_operations",
 	"sysbox_guest_executions", "sysbox_guest_file_operations", "sysbox_run_requests", "sysbox_checkpoints",
-	"sysbox_health", "sysbox_projection", "sysbox_global_revisions", "sysbox_topology_placements", "sysbox_plans",
+	"sysbox_execution_authority",
+	"sysbox_health", "sysbox_global_revisions", "sysbox_topology_placements", "sysbox_plans",
 }
 
 func (s *sqliteAPIStore) createSchema(db sqliteSchemaConnection) error {
@@ -229,21 +248,13 @@ func (s *sqliteAPIStore) createSchema(db sqliteSchemaConnection) error {
 		data BLOB NOT NULL
 	) STRICT;
 
-	CREATE TABLE sysbox_agent_inventory (
-		agent_id     TEXT PRIMARY KEY,
-		capabilities TEXT DEFAULT '[]',
-		labels       TEXT DEFAULT '{}',
-		resources    TEXT DEFAULT '{}',
-		topologies   TEXT DEFAULT '[]',
-		artifacts    TEXT DEFAULT '[]',
-		tools        TEXT DEFAULT '[]',
-		status       TEXT DEFAULT '',
-		stale        INTEGER DEFAULT 0,
-		observed_at  TEXT NOT NULL DEFAULT ''
-	) STRICT;
 
 	CREATE TABLE sysbox_guest_executions (
 		id   TEXT PRIMARY KEY,
+		data BLOB NOT NULL
+	) STRICT;
+	CREATE TABLE sysbox_execution_authority (
+		id TEXT PRIMARY KEY,
 		data BLOB NOT NULL
 	) STRICT;
 
@@ -270,10 +281,6 @@ func (s *sqliteAPIStore) createSchema(db sqliteSchemaConnection) error {
 		data     BLOB NOT NULL
 	) STRICT;
 
-	CREATE TABLE sysbox_projection (
-		topology TEXT PRIMARY KEY,
-		data     BLOB NOT NULL
-	) STRICT;
 
 	CREATE TABLE sysbox_global_revisions (
 		revision   TEXT PRIMARY KEY,
@@ -528,37 +535,6 @@ func (s *sqliteAPIStore) LoadHealth(ctx context.Context, topology string) (*Heal
 		return nil, err
 	}
 	return &snap, nil
-}
-
-func (s *sqliteAPIStore) SaveResourceProjection(ctx context.Context, proj controlplane.ResourceProjection) error {
-	data, err := persistence.EncodeProjection(proj)
-	if err != nil {
-		return err
-	}
-	db, err := s.open()
-	if err != nil {
-		return err
-	}
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_projection (topology, data) VALUES (?, ?) ON CONFLICT(topology) DO UPDATE SET data=excluded.data`,
-		proj.Topology, data)
-	return err
-}
-
-func (s *sqliteAPIStore) LoadResourceProjection(ctx context.Context, topology string) (*controlplane.ResourceProjection, error) {
-	db, err := s.open()
-	if err != nil {
-		return nil, err
-	}
-	var data []byte
-	err = db.QueryRowContext(ctx, `SELECT data FROM sysbox_projection WHERE topology=?`, topology).Scan(&data)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return persistence.DecodeProjection(data)
 }
 
 func (s *sqliteAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {
@@ -840,79 +816,4 @@ func (s *sqliteAPIStore) ListAgentCommands(ctx context.Context, agentID string) 
 }
 func (s *sqliteAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error) {
 	return persistence.NewCommandRepository(sqliteCommandStorage{store: s}).AcquireAgentCommandLease(ctx, agentID, commandID, owner, ttl)
-}
-
-func (s *sqliteAPIStore) SaveAgentInventory(ctx context.Context, inv controlplane.AgentInventory) error {
-	raw, err := persistence.EncodeInventory(inv)
-	if err != nil {
-		return err
-	}
-	invPtr, err := persistence.DecodeInventory(raw)
-	if err != nil {
-		return err
-	}
-	inv = *invPtr
-	db, err := s.open()
-	if err != nil {
-		return err
-	}
-	topologies, _ := json.Marshal(inv.Topologies)
-	artifacts, _ := json.Marshal(inv.Artifacts)
-	tools, _ := json.Marshal(inv.Tools)
-	caps, _ := json.Marshal(inv.Capabilities)
-	labels, _ := json.Marshal(inv.Labels)
-	resources, _ := json.Marshal(inv.Resources)
-	stale := 0
-	if inv.Stale {
-		stale = 1
-	}
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_agent_inventory (agent_id, capabilities, labels, resources, topologies, artifacts, tools, status, stale, observed_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(agent_id) DO UPDATE SET capabilities=excluded.capabilities, labels=excluded.labels, resources=excluded.resources, topologies=excluded.topologies, artifacts=excluded.artifacts, tools=excluded.tools, status=excluded.status, stale=excluded.stale, observed_at=excluded.observed_at`,
-		inv.AgentID, string(caps), string(labels), string(resources), string(topologies), string(artifacts), string(tools), inv.Status, stale, formatSQLiteTime(inv.ObservedAt))
-	return err
-}
-
-func (s *sqliteAPIStore) GetAgentInventory(ctx context.Context, agentID string) (*controlplane.AgentInventory, error) {
-	db, err := s.open()
-	if err != nil {
-		return nil, err
-	}
-	var inv controlplane.AgentInventory
-	var caps, labels, resources, topologies, artifacts, tools []byte
-	var observedAt string
-	var stale int
-	err = db.QueryRowContext(ctx,
-		`SELECT agent_id, capabilities, labels, resources, topologies, artifacts, tools, status, stale, observed_at FROM sysbox_agent_inventory WHERE agent_id=?`, agentID).
-		Scan(&inv.AgentID, &caps, &labels, &resources, &topologies, &artifacts, &tools, &inv.Status, &stale, &observedAt)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("agent inventory not found")
-	}
-	if err != nil {
-		return nil, err
-	}
-	for _, field := range []struct {
-		raw    []byte
-		target any
-	}{
-		{caps, &inv.Capabilities}, {labels, &inv.Labels}, {resources, &inv.Resources},
-		{topologies, &inv.Topologies}, {artifacts, &inv.Artifacts}, {tools, &inv.Tools},
-	} {
-		if err := json.Unmarshal(field.raw, field.target); err != nil {
-			return nil, fmt.Errorf("%w: agent inventory: %v", persistence.ErrCorruptRecord, err)
-		}
-	}
-	if stale != 0 && stale != 1 {
-		return nil, fmt.Errorf("%w: invalid inventory stale flag", persistence.ErrCorruptRecord)
-	}
-	inv.Stale = stale == 1
-	inv.ObservedAt, err = time.Parse(time.RFC3339Nano, observedAt)
-	if err != nil || inv.ObservedAt.IsZero() {
-		return nil, fmt.Errorf("%w: invalid inventory observation time", persistence.ErrCorruptRecord)
-	}
-	if strings.TrimSpace(inv.AgentID) == "" {
-		return nil, persistence.ErrCorruptRecord
-	}
-	return &inv, nil
 }

@@ -154,6 +154,7 @@ func TestResourceProjectionStoreRoundTrip(t *testing.T) {
 	s := NewServer(dir, dir)
 	observed := time.Now().UTC()
 	proj := controlplane.ResourceProjection{
+		SessionID: observationTestSession(t, s.apiStore, "agent-1"), Sequence: 1,
 		AgentID: "agent-1", Topology: "web", ObservedAt: observed,
 		Resources: []controlplane.ResourceHealth{{Resource: "sysbox_node.web", Status: controlplane.ResourceHealthHealthy}},
 	}

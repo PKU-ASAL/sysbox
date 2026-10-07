@@ -94,9 +94,6 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 
 // Validate rejects specs that cannot run on the libvirt substrate.
 func (s *Substrate) Validate(spec substrate.NodeSpec) error {
-	if spec.ManagedNetwork {
-		return substrate.NewValidationError("libvirt: Docker NAT bridge lacks a verifiable attachment contract; use an isolated network")
-	}
 	// Image validation: libvirt requires a QCow2 image. At plan time we
 	// can't see the artifact source fields; ResolveImage performs kind and file checks.
 	if pc, ok := spec.ProviderConfig.(*Config); ok {

@@ -28,7 +28,7 @@ func ResourcePreflightChecks(r config.ResourceBlock, ctx *hcl.EvalContext) []sub
 	return hook.PreflightResource(r, ctx)
 }
 
-func ArtifactPreflightCheck(name, source, sha string) *substrate.PreflightCheck {
+func ArtifactPreflightCheck(name, source, sha, baseDir string) *substrate.PreflightCheck {
 	if source == "" {
 		return nil
 	}
@@ -44,12 +44,13 @@ func ArtifactPreflightCheck(name, source, sha string) *substrate.PreflightCheck 
 		p = p[7:]
 	}
 	if !filepath.IsAbs(p) {
+		p = filepath.Join(baseDir, p)
 		if abs, err := filepath.Abs(p); err == nil {
 			p = abs
 		}
 	}
 	if st, err := os.Stat(p); err != nil {
-		return &substrate.PreflightCheck{Name: name, OK: false, Severity: "error", Message: err.Error(), Hint: "mount the artifact into the API container or use a URL source"}
+		return &substrate.PreflightCheck{Name: name, OK: false, Severity: "error", Message: err.Error(), Hint: "include the artifact in the revision or use a digest-pinned URL"}
 	} else if st.IsDir() {
 		return &substrate.PreflightCheck{Name: name, OK: false, Severity: "error", Message: p + " is a directory", Hint: "point the HCL field at a file"}
 	}

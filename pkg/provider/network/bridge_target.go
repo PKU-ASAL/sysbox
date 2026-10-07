@@ -15,10 +15,11 @@ import (
 // BridgeTarget references a network's durable ownership anchor. Identity is
 // independent of the node identity used to own an attachment.
 type BridgeTarget struct {
-	Identity         substrate.OperationIdentity `json:"identity"`
-	NetworkNamespace string                      `json:"network_namespace"`
-	Bridge           string                      `json:"bridge"`
-	Root             bool                        `json:"root"`
+	Managed          *substrate.ManagedBridgeTarget `json:"managed,omitempty"`
+	Identity         substrate.OperationIdentity    `json:"identity"`
+	NetworkNamespace string                         `json:"network_namespace"`
+	Bridge           string                         `json:"bridge"`
+	Root             bool                           `json:"root"`
 }
 
 type resolvedBridge struct {
@@ -36,6 +37,19 @@ func (d Driver) bridgeTargetProof(ctx context.Context, target BridgeTarget) (res
 	}
 	if err := target.Identity.Validate(); err != nil {
 		return invalid("target network identity required; rebuild old state", err)
+	}
+	if target.Managed != nil {
+		proof := *target.Managed
+		if networkAlias(proof.Identity) != networkAlias(target.Identity) {
+			return invalid("managed bridge target generation conflict", nil)
+		}
+		if proof.Version != 1 || proof.Bridge == "" || proof.Bridge != target.Bridge || proof.NetworkID == "" || proof.Index <= 0 || proof.Device == 0 || proof.Inode == 0 || proof.Alias != networkAlias(proof.Identity) {
+			return invalid("managed bridge proof invalid; rebuild network", nil)
+		}
+		if err := verifyManagedBridge(ctx, proof); err != nil {
+			return resolvedBridge{}, err
+		}
+		return resolvedBridge{AttachmentLink: AttachmentLink{Version: 1, Name: proof.Bridge, Device: proof.Device, Inode: proof.Inode, Index: proof.Index, Kind: "bridge", Alias: proof.Alias}}, nil
 	}
 	if target.NetworkNamespace == "" || target.NetworkNamespace == "." || target.NetworkNamespace == ".." || strings.ContainsAny(target.NetworkNamespace, "/\\") {
 		return invalid("managed target network namespace required", nil)
@@ -78,6 +92,7 @@ func (d Driver) bridgeTargetProof(ctx context.Context, target BridgeTarget) (res
 // OwnedBridge pins the verified namespace and serializes against cooperative
 // network Create/Delete. It must stay open until all attachment effects finish.
 type OwnedBridge struct {
+	managed   *substrate.ManagedBridgeTarget
 	networkNS *os.File
 	ns        *os.File
 	handle    *netlink.Handle
@@ -113,8 +128,8 @@ func (d Driver) pinBridge(ctx context.Context, target BridgeTarget) (*OwnedBridg
 	if err != nil {
 		return nil, networkQueryError("open target namespace", err)
 	}
-	b := &OwnedBridge{ns: ns, handle: h, proof: proof.AttachmentLink}
-	if target.Root {
+	b := &OwnedBridge{ns: ns, handle: h, proof: proof.AttachmentLink, managed: target.Managed}
+	if target.Root && target.Managed == nil {
 		networkNS, err := os.Open("/var/run/netns/" + proof.NetworkNamespace)
 		if err != nil {
 			b.Close()
@@ -136,6 +151,11 @@ func (d Driver) pinBridge(ctx context.Context, target BridgeTarget) (*OwnedBridg
 func (b *OwnedBridge) Check(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if b.managed != nil {
+		if err := verifyManagedBridge(ctx, *b.managed); err != nil {
+			return err
+		}
 	}
 	if err := checkNamespaceFile(b.ns, b.proof.Device, b.proof.Inode); err != nil {
 		return err

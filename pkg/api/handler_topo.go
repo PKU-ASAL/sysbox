@@ -153,6 +153,12 @@ func (s *Server) handleRestoreStateSnapshot(w http.ResponseWriter, r *http.Reque
 }
 
 func stateOperationErrorStatus(err error) int {
+	if errors.Is(err, persistence.ErrConflict) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, persistence.ErrNotFound) {
+		return http.StatusNotFound
+	}
 	if errors.Is(err, state.ErrUnsupported) {
 		return http.StatusNotImplemented
 	}

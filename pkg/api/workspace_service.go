@@ -22,6 +22,7 @@ type WorkspaceService struct {
 	placementStore     durablePlacementStore
 	loadRuns           func(context.Context) ([]controlplane.Run, error)
 	loadNodeOperations func(context.Context, string) ([]controlplane.NodeOperation, error)
+	loadGuestActivity  func(context.Context, string) ([]persistence.GuestActivity, error)
 	lockAdmission      func(string) func()
 }
 
@@ -353,6 +354,19 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 			}
 		}
 	}
+	var guestActivity []persistence.GuestActivity
+	if s.loadGuestActivity != nil {
+		var err error
+		guestActivity, err = s.loadGuestActivity(ctx, topology)
+		if err != nil {
+			return err
+		}
+		for _, activity := range guestActivity {
+			if activity.Active() {
+				return fmt.Errorf("%w: active guest operation blocks metadata deletion", persistence.ErrConflict)
+			}
+		}
+	}
 	placement, err := s.loadPlacement(topology)
 	if err != nil {
 		return err
@@ -363,6 +377,8 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 		}
 		if receipt, reason := currentCleanupReceipt(topology, placement, runs, nodeOperations); receipt == nil {
 			return fmt.Errorf("%w: owning-agent cleanup is not verified (%s); complete resource teardown on agent %q or use force=true only to explicitly discard metadata (remote resources are not removed)", persistence.ErrConflict, reason, placement.AgentID)
+		} else if err := guestActivityBeforeReceipt(guestActivity, receipt); err != nil {
+			return err
 		}
 	}
 	unlock, err := s.lockPublication(ctx, topology)
@@ -524,6 +540,43 @@ func (s *WorkspaceService) StateSnapshots(ctx context.Context, topology string) 
 }
 
 func (s *WorkspaceService) RestoreStateSnapshot(ctx context.Context, topology, snapshot string) error {
+	if s.lockAdmission != nil {
+		unlock := s.lockAdmission(topology)
+		defer unlock()
+	}
+	if s.loadRuns != nil {
+		runs, err := s.loadRuns(ctx)
+		if err != nil {
+			return err
+		}
+		for _, run := range latestRunsByID(runs) {
+			if run.Topology == topology && run.Status.IsActive() {
+				return fmt.Errorf("%w: active run prevents restore", persistence.ErrConflict)
+			}
+		}
+	}
+	if s.loadNodeOperations != nil {
+		ops, err := s.loadNodeOperations(ctx, topology)
+		if err != nil {
+			return err
+		}
+		for _, op := range ops {
+			if op.Topology == topology && op.Status != controlplane.NodeOperationStatusDone && op.Status != controlplane.NodeOperationStatusFailed {
+				return persistence.ErrConflict
+			}
+		}
+	}
+	if s.loadGuestActivity != nil {
+		ops, err := s.loadGuestActivity(ctx, topology)
+		if err != nil {
+			return err
+		}
+		for _, op := range ops {
+			if op.Active() {
+				return persistence.ErrConflict
+			}
+		}
+	}
 	mgr, err := s.stateManager(topology)
 	if err != nil {
 		return err

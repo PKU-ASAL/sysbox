@@ -133,6 +133,8 @@ type Projection struct {
 }
 
 type AgentInventory struct {
+	SessionID    string                `json:"session_id"`
+	Sequence     uint64                `json:"sequence"`
 	AgentID      string                `json:"agent_id"`
 	Capabilities []string              `json:"capabilities,omitempty"`
 	Labels       map[string]string     `json:"labels,omitempty"`
@@ -185,6 +187,8 @@ type ConsoleSession struct {
 }
 
 type ResourceProjection struct {
+	SessionID  string           `json:"session_id"`
+	Sequence   uint64           `json:"sequence"`
 	AgentID    string           `json:"agent_id,omitempty"`
 	Workspace  string           `json:"workspace,omitempty"`
 	Topology   string           `json:"topology,omitempty"`
@@ -215,6 +219,7 @@ type ConsoleCommand struct {
 }
 
 type AgentCommand struct {
+	TopologyUID      string                `json:"topology_uid,omitempty"`
 	RecoveryMode     string                `json:"recovery_mode,omitempty"`
 	ID               string                `json:"id"`
 	AgentID          string                `json:"agent_id,omitempty"`

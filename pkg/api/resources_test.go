@@ -63,8 +63,11 @@ func TestListResourcesUsesLatestAgentProjectionAsAuthoritative(t *testing.T) {
 
 	s := NewServer(runs, filepath.Join(dir, "workspaces"))
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	session,err:=persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store:s.apiStore}).OpenSession(context.Background(),"host-a","resources-process","");require.NoError(t,err)
 	body := bytes.NewBufferString(`{
   "agent_id": "host-a",
+	  "session_id": "`+session.ID+`",
+	  "sequence": 1,
   "topology": "mixed",
   "workspace": "mixed",
   "observed_at": "2026-05-29T06:52:52Z",

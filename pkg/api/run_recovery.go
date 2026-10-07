@@ -177,7 +177,7 @@ func (s *Server) handleGetRunRecovery(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, report)
 }
-func (b *ExecutionBridge) PinnedRecoveryWorkspace(ctx context.Context, run controlplane.Run, revision *controlplane.GlobalRevision) (string, error) {
+func (b *ExecutionBridge) PinnedRevisionWorkspace(ctx context.Context, run controlplane.Run, revision *controlplane.GlobalRevision) (string, error) {
 	if revision == nil || revision.Revision != run.Revision || controlplane.ComputeRevisionDigest(revision.Files) != run.Revision {
 		return "", persistence.ErrConflict
 	}

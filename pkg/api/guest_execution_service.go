@@ -87,6 +87,7 @@ func (s *GuestExecutionService) Create(ctx context.Context, topology, node, agen
 		}
 		command.ActionID = execution.ID
 		command.ResourceUID = id.ResourceUID
+		command.TopologyUID = id.TopologyUID
 		command.Generation = id.Generation
 		command.LeaseEpoch = 1
 	}

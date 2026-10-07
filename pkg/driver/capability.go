@@ -13,23 +13,24 @@ import (
 type Capability string
 
 const (
-	CapabilityNode             Capability = "node"
-	CapabilityNIC              Capability = "nic"
-	CapabilitySnapshot         Capability = "snapshot"
-	CapabilityConsole          Capability = "console"
-	CapabilityGuestExec        Capability = "guest-exec"
-	CapabilityGuestFiles       Capability = "guest-files"
-	CapabilityNetwork          Capability = "network"
-	CapabilityArtifact         Capability = "artifact"
-	CapabilityImport           Capability = "import"
-	CapabilityNodeState        Capability = "node-state"
-	CapabilityImageEntry       Capability = "image-entry"
-	CapabilityPower            Capability = "power"
-	CapabilityLinuxNetwork     Capability = "linux-network"
-	CapabilityGuestNetwork     Capability = "guest-network"
-	CapabilityGuestNetworkInit Capability = "guest-network-init"
-	CapabilityReset            Capability = "reset"
-	CapabilityPolicy           Capability = "policy"
+	CapabilityNode              Capability = "node"
+	CapabilityNIC               Capability = "nic"
+	CapabilitySnapshot          Capability = "snapshot"
+	CapabilityConsole           Capability = "console"
+	CapabilityGuestExec         Capability = "guest-exec"
+	CapabilityGuestFiles        Capability = "guest-files"
+	CapabilityNetwork           Capability = "network"
+	CapabilityArtifact          Capability = "artifact"
+	CapabilityImport            Capability = "import"
+	CapabilityOwnershipAdoption Capability = "ownership_adoption"
+	CapabilityNodeState         Capability = "node-state"
+	CapabilityImageEntry        Capability = "image-entry"
+	CapabilityPower             Capability = "power"
+	CapabilityLinuxNetwork      Capability = "linux-network"
+	CapabilityGuestNetwork      Capability = "guest-network"
+	CapabilityGuestNetworkInit  Capability = "guest-network-init"
+	CapabilityReset             Capability = "reset"
+	CapabilityPolicy            Capability = "policy"
 )
 
 type Node interface {
@@ -91,7 +92,6 @@ type Console interface {
 
 type GuestExec interface {
 	ExecInNode(context.Context, substrate.NodeHandle, substrate.ExecRequest) (substrate.ExecResult, error)
-	ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error)
 }
 
 type GuestFiles interface {
@@ -104,6 +104,13 @@ type Network interface {
 	ReadManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error)
 	AllowEgress(context.Context, string) error
 	RemoveEgress(context.Context, string) error
+}
+
+// ManagedBridgeVerifier checks provider ownership independently of the kernel
+// proof. Callers then pin and inspect the exported bridge incarnation.
+type ManagedBridgeVerifier interface {
+	VerifyManagedBridge(context.Context, substrate.ManagedBridgeTarget) error
+	PreflightManagedBridge(context.Context) error
 }
 
 type GuestNetwork interface {
@@ -132,6 +139,12 @@ type Artifact interface {
 
 type Import interface {
 	ReadNode(context.Context, string) (substrate.NodeHandle, error)
+}
+
+type OwnershipAdoption interface {
+	InspectAdoption(context.Context, string, substrate.NodeSpec) (substrate.AdoptionEvidence, error)
+	ApplyAdoption(context.Context, substrate.AdoptionEvidence) (substrate.NodeHandle, error)
+	ObserveAdoption(context.Context, substrate.AdoptionEvidence) (substrate.NodeHandle, error)
 }
 
 type NodeState interface {
@@ -179,25 +192,26 @@ type IsolatedNetworkObservation struct {
 }
 
 type Descriptor struct {
-	Name             string
-	Version          string
-	Node             Node
-	NIC              NIC
-	Snapshot         Snapshot
-	Console          Console
-	GuestExec        GuestExec
-	GuestFiles       GuestFiles
-	Network          Network
-	Artifact         Artifact
-	Import           Import
-	NodeState        NodeState
-	ImageEntry       ImageEntry
-	Power            Power
-	Policy           Policy
-	LinuxNetwork     LinuxNetwork
-	GuestNetwork     GuestNetwork
-	GuestNetworkInit GuestNetworkInit
-	Reset            Reset
+	Name              string
+	Version           string
+	Node              Node
+	NIC               NIC
+	Snapshot          Snapshot
+	Console           Console
+	GuestExec         GuestExec
+	GuestFiles        GuestFiles
+	Network           Network
+	Artifact          Artifact
+	Import            Import
+	OwnershipAdoption OwnershipAdoption
+	NodeState         NodeState
+	ImageEntry        ImageEntry
+	Power             Power
+	Policy            Policy
+	LinuxNetwork      LinuxNetwork
+	GuestNetwork      GuestNetwork
+	GuestNetworkInit  GuestNetworkInit
+	Reset             Reset
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -220,6 +234,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.Artifact
 	case CapabilityImport:
 		return d.Import
+	case CapabilityOwnershipAdoption:
+		return d.OwnershipAdoption
 	case CapabilityNodeState:
 		return d.NodeState
 	case CapabilityImageEntry:

@@ -348,11 +348,14 @@ func (d Driver) ObserveIsolated(ctx context.Context, spec driver.IsolatedNetwork
 }
 
 func (d Driver) writeOwnership(name string, marker networkOwnership) error {
-	path := d.ownershipPath(name)
+	return writeNetworkRecord(d.ownershipPath(name), marker)
+}
+
+func writeNetworkRecord(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(marker)
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}

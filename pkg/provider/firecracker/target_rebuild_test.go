@@ -23,10 +23,10 @@ func TestOldManifestRequiresExplicitRebuild(t *testing.T) {
 func TestFirecrackerRejectsGuessedDockerBridge(t *testing.T) {
 	s, h, _, _ := manifestFixture(t, false)
 	_, err := s.Attach(context.Background(), h, driver.AttachmentRequest{Name: "nic", NetworkState: json.RawMessage(`{"nat":true,"docker_network_id":"0123456789abcdef"}`)})
-	require.True(t, driver.IsCategory(err, driver.ErrorUnsupported), "%v", err)
+	require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
 }
 
-func TestValidateRejectsDockerManagedNetwork(t *testing.T) {
+func TestValidateAllowsProvenManagedNetworkAttachments(t *testing.T) {
 	err := (&Substrate{}).Validate(substrate.NodeSpec{ManagedNetwork: true, ProviderConfig: &Config{AllowDirect: true, Kernel: "kernel"}})
-	require.ErrorContains(t, err, "Docker NAT")
+	require.NoError(t, err)
 }

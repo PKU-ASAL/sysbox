@@ -19,7 +19,6 @@ func TestLibvirtImplementsGuestOperationProviders(t *testing.T) {
 	var sub any = &Substrate{}
 	_, execOK := sub.(interface {
 		ExecInNode(context.Context, substrate.NodeHandle, substrate.ExecRequest) (substrate.ExecResult, error)
-		ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error)
 	})
 	_, filesOK := sub.(interface {
 		CopyToNode(context.Context, substrate.NodeHandle, string, string, uint32) error

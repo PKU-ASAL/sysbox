@@ -363,9 +363,12 @@ func (s *RunService) admitDestroy(ctx context.Context, topology string, allowUns
 	}
 	if snapErr == nil {
 		run.SnapshotPath = snapshot
-		if err := s.jobs.persist(run); err != nil {
-			return nil, runError(runServiceInternal, err)
-		}
+	}
+	if err := s.pinDestroyRevision(ctx, run); err != nil {
+		return nil, runError(runServiceInternal, err)
+	}
+	if err := s.jobs.persist(run); err != nil {
+		return nil, runError(runServiceInternal, err)
 	}
 	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
 		return nil, err
@@ -397,6 +400,9 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 		snapshot, _ = s.workspaces.MaterializeWorkspaceSnapshot(topology, run.ID)
 	}
 	run.SnapshotPath = snapshot
+	if err := s.pinDestroyRevision(ctx, run); err != nil {
+		return nil, runError(runServiceInternal, err)
+	}
 	configPath := s.hclFile(topology)
 	if run.SnapshotPath != "" {
 		configPath = run.SnapshotPath

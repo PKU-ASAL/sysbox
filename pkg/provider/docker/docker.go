@@ -3,7 +3,6 @@ package docker
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -15,6 +14,7 @@ import (
 type Substrate struct {
 	substrate.BaseSubstrate // inherits Validate / DecodeProviderConfig defaults
 	cli                     *client.Client
+	adoptionRoot            string
 }
 
 // New connects to the local Docker daemon.
@@ -84,14 +84,6 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, _ []substrate.Connec
 type dockerConn struct {
 	sub    *Substrate
 	handle substrate.NodeHandle
-}
-
-func (c *dockerConn) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
-	handle, err := c.Start(ctx, req)
-	if err != nil {
-		return 0, fmt.Errorf("exec background %s: %w", req.Program, err)
-	}
-	return handle.PID, nil
 }
 
 func (c *dockerConn) CopyFile(ctx context.Context, srcPath, dstPath string) error {

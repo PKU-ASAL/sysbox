@@ -1,0 +1,129 @@
+package persistence
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"github.com/google/uuid"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
+	"reflect"
+	"sort"
+	"time"
+)
+
+type aggregateSnapshot struct {
+	Metadata    state.Snapshot  `json:"metadata"`
+	TopologyUID string          `json:"topology_uid"`
+	Serial      int64           `json:"serial"`
+	Digest      string          `json:"digest"`
+	Data        json.RawMessage `json:"data"`
+}
+
+// Capture excludes the snapshot catalog itself, avoiding recursive snapshots.
+// The resource state and action journal remain one indivisible transaction.
+func (b *stateBackend) Snapshot(ctx context.Context, reason string) (*state.Snapshot, error) {
+	var result state.Snapshot
+	err := b.repository.update(ctx, b.topology, func(a *aggregate) error {
+		content := *a
+		content.Snapshots = map[string]aggregateSnapshot{}
+		raw, err := json.Marshal(content)
+		if err != nil {
+			return err
+		}
+		result = state.Snapshot{ID: uuid.NewString(), CreatedAt: time.Now().UTC(), Reason: reason, Size: int64(len(raw))}
+		a.Snapshots[result.ID] = aggregateSnapshot{Metadata: result, TopologyUID: a.State.TopologyUID, Serial: a.Serial, Digest: fmt.Sprintf("%x", sha256.Sum256(raw)), Data: raw}
+		return nil
+	})
+	return &result, err
+}
+func (b *stateBackend) ListSnapshots(ctx context.Context) ([]state.Snapshot, error) {
+	out := []state.Snapshot{}
+	err := b.repository.update(ctx, b.topology, func(a *aggregate) error {
+		for id, snap := range a.Snapshots {
+			if _, err := decodeSnapshot(id, snap); err != nil {
+				return err
+			}
+			out = append(out, snap.Metadata)
+		}
+		return nil
+	})
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, err
+}
+func decodeSnapshot(id string, snap aggregateSnapshot) (*aggregate, error) {
+	if id == "" || id != snap.Metadata.ID || snap.Metadata.CreatedAt.IsZero() || snap.Metadata.Size != int64(len(snap.Data)) || snap.Digest != fmt.Sprintf("%x", sha256.Sum256(snap.Data)) {
+		return nil, ErrCorruptRecord
+	}
+	restored, err := decodeAggregate(snap.Data)
+	if err != nil {
+		return nil, err
+	}
+	if restored.State.TopologyUID != snap.TopologyUID || restored.Serial != snap.Serial || len(restored.Snapshots) != 0 {
+		return nil, ErrCorruptRecord
+	}
+	return restored, nil
+}
+
+// Metadata restoration never rolls back an external resource's incarnation or
+// replaces current journal authority. A different live inventory needs an
+// observed, explicitly authorized provider restore/adoption plan first.
+func (b *stateBackend) RestoreSnapshot(ctx context.Context, id string) error {
+	return b.repository.update(ctx, b.topology, func(a *aggregate) error {
+		snap, ok := a.Snapshots[id]
+		if !ok {
+			return ErrNotFound
+		}
+		restored, err := decodeSnapshot(id, snap)
+		if err != nil {
+			return err
+		}
+		if restored.State.TopologyUID != a.State.TopologyUID || restored.Serial > a.Serial {
+			return ErrConflict
+		}
+		for _, journal := range []map[string]runtime.ActionRecord{a.Actions, restored.Actions} {
+			for _, action := range journal {
+				if action.Status != runtime.ActionSucceeded {
+					return fmt.Errorf("%w: unresolved journal cannot be restored", ErrConflict)
+				}
+			}
+		}
+		if len(restored.State.Resources) != len(a.State.Resources) {
+			return fmt.Errorf("%w: snapshot inventory needs provider reconciliation", ErrConflict)
+		}
+		for i := range restored.State.Resources {
+			resource := &restored.State.Resources[i]
+			current := a.State.FindResource(resource.Address)
+			if current == nil || current.OwnerUID != resource.OwnerUID || current.ResourceUID != resource.ResourceUID || current.Generation != resource.Generation || current.ExternalID != resource.ExternalID || current.Driver != resource.Driver {
+				return fmt.Errorf("%w: snapshot resource incarnation changed", ErrConflict)
+			}
+			if !reflect.DeepEqual(current.Attributes, resource.Attributes) || !reflect.DeepEqual(current.Dependencies, resource.Dependencies) {
+				return fmt.Errorf("%w: changed resource attributes require an observed restore plan", ErrConflict)
+			}
+			// Never restore historical process handles, attachment proofs or secrets.
+			resource.Private = current.Private
+			resource.Attachments = current.Attachments
+			resource.Status = state.ResourceUnknown
+		}
+		a.State = restored.State
+		a.Serial++
+		a.UpdatedAt = time.Now().UTC()
+		return nil
+	})
+}
+
+func (b *stateBackend) DeleteSnapshot(ctx context.Context, id string) error {
+	return b.repository.update(ctx, b.topology, func(a *aggregate) error {
+		if _, ok := a.Snapshots[id]; !ok {
+			return ErrNotFound
+		}
+		delete(a.Snapshots, id)
+		return nil
+	})
+}

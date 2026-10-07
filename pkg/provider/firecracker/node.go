@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -302,6 +303,16 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 			Hostname:  nodeName,
 			Env:       spec.Env,
 			ChainInit: pc.ChainInit,
+		}
+		if s.grantPublicKeyFile != "" {
+			key, err := os.ReadFile(s.grantPublicKeyFile)
+			if err != nil {
+				return substrate.NodeHandle{}, fmt.Errorf("read guest grant trust key: %w", err)
+			}
+			if len(key) != ed25519.PublicKeySize {
+				return substrate.NodeHandle{}, fmt.Errorf("guest grant trust key must be Ed25519 public key")
+			}
+			initCfg.GuestGrantPublicKey = key
 		}
 		if err := buildConfigDrive(configDrivePath, initCfg); err != nil {
 			fmt.Printf("[firecracker] config drive build failed for %s: %v\n", vmID, err)

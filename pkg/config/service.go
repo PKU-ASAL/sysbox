@@ -28,14 +28,20 @@ type ServiceConfig struct {
 }
 
 type APIConfig struct {
-	Listen         string              `yaml:"listen" json:"listen"`
-	Token          string              `yaml:"token" json:"token,omitempty"`
-	AllowedOrigins []string            `yaml:"allowed_origins" json:"allowed_origins,omitempty"`
-	Console        APIConsoleConfig    `yaml:"console" json:"console,omitempty"`
-	RBAC           APIRBACConfig       `yaml:"rbac" json:"rbac,omitempty"`
-	Audit          APIAuditConfig      `yaml:"audit" json:"audit,omitempty"`
-	Headers        APIHeadersConfig    `yaml:"headers" json:"headers,omitempty"`
-	Evaluation     APIEvaluationConfig `yaml:"evaluation" json:"evaluation,omitempty"`
+	ExecutionGrant APIExecutionGrantConfig `yaml:"execution_grant" json:"execution_grant,omitempty"`
+	Listen         string                  `yaml:"listen" json:"listen"`
+	Token          string                  `yaml:"token" json:"token,omitempty"`
+	AllowedOrigins []string                `yaml:"allowed_origins" json:"allowed_origins,omitempty"`
+	Console        APIConsoleConfig        `yaml:"console" json:"console,omitempty"`
+	RBAC           APIRBACConfig           `yaml:"rbac" json:"rbac,omitempty"`
+	Audit          APIAuditConfig          `yaml:"audit" json:"audit,omitempty"`
+	Headers        APIHeadersConfig        `yaml:"headers" json:"headers,omitempty"`
+	Evaluation     APIEvaluationConfig     `yaml:"evaluation" json:"evaluation,omitempty"`
+}
+
+type APIExecutionGrantConfig struct {
+	SigningKeyFile     string            `yaml:"signing_key_file" json:"signing_key_file,omitempty"`
+	HostPublicKeyFiles map[string]string `yaml:"host_public_key_files" json:"host_public_key_files,omitempty"`
 }
 
 type APIEvaluationConfig struct {
@@ -62,8 +68,10 @@ type APIHeadersConfig struct {
 }
 
 type AgentConfig struct {
-	Policy AgentPolicyConfig `yaml:"policy" json:"policy,omitempty"`
-	Lease  AgentLeaseConfig  `yaml:"lease" json:"lease,omitempty"`
+	ExecutionSessionFile        string            `yaml:"execution_session_file" json:"execution_session_file,omitempty"`
+	ExecutionGrantPublicKeyFile string            `yaml:"execution_grant_public_key_file" json:"execution_grant_public_key_file,omitempty"`
+	Policy                      AgentPolicyConfig `yaml:"policy" json:"policy,omitempty"`
+	Lease                       AgentLeaseConfig  `yaml:"lease" json:"lease,omitempty"`
 }
 
 type AgentPolicyConfig struct {

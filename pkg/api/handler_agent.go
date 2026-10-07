@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -346,14 +345,11 @@ func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *htt
 	if len(req.Resources) == 0 {
 		req.Resources = req.Health.Resources
 	}
-	if existing, err := s.apiStore.LoadResourceProjection(r.Context(), req.Topology); err == nil && existing != nil && !req.ObservedAt.After(existing.ObservedAt) {
-		writeJSON(w, http.StatusAccepted, map[string]string{"status": "stale"})
+	if err := s.apiStore.SaveResourceProjection(r.Context(), req); err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
 	s.agents.SaveResourceProjection(req)
-	if err := s.apiStore.SaveResourceProjection(r.Context(), req); err != nil {
-		slog.Warn("persist resource projection failed", "topology", req.Topology, "error", err)
-	}
 	writeJSON(w, http.StatusAccepted, req)
 }
 

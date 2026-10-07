@@ -41,6 +41,11 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		unavailable()
 		return
 	}
+	guestActivity, err := s.apiStore.ListGuestActivity(r.Context(), topology)
+	if err != nil {
+		unavailable()
+		return
+	}
 	placement, err := s.workspaceService().loadPlacement(topology)
 	if err != nil {
 		unavailable()
@@ -66,6 +71,14 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 	}
 	active := []map[string]any{}
 	agents := map[string]bool{}
+	for _, activity := range guestActivity {
+		if activity.AgentID != "" {
+			agents[activity.AgentID] = true
+		}
+		if activity.Active() {
+			active = append(active, map[string]any{"id": activity.ID, "kind": activity.Kind, "status": activity.Status, "agent_id": activity.AgentID})
+		}
+	}
 	if placement != nil {
 		agents[placement.AgentID] = true
 	}
@@ -108,8 +121,12 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 	if placement != nil {
 		result["agent_id"] = placement.AgentID
 	}
-	result["active_operation_kinds"] = []string{"run", "node_operation"}
+	result["active_operation_kinds"] = []string{"run", "node_operation", "guest_execution", "guest_file"}
 	receipt, reason := currentCleanupReceipt(topology, placement, runs, nodes)
+	if receipt != nil && guestActivityBeforeReceipt(guestActivity, receipt) != nil {
+		receipt = nil
+		reason = "guest_operation_invalidates_receipt"
+	}
 	result["cleanup_receipt_status"] = reason
 	if receipt != nil {
 		result["cleanup_receipt"] = receipt

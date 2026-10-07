@@ -23,7 +23,7 @@ func (NetworkResourceHandler) Discover(ctx context.Context, pc *ProviderContext,
 	if err != nil {
 		return ResourceReadResult{}, err
 	}
-	info, err := networkDriver.ReadManagedNetwork(ctx, substrate.ManagedNetworkSpec{Name: networkExternalName(pc.Topology(), n.Address.Name), CIDR: cfg.CIDR, NAT: true, Labels: ManagedLabels(pc.Topology(), "", n.Address)})
+	info, err := networkDriver.ReadManagedNetwork(ctx, substrate.ManagedNetworkSpec{Name: networkExternalName(pc.Topology(), n.Address.Name), CIDR: cfg.CIDR, NAT: true, ExposeBridge: requiresManagedBridge(pc.exec.graph, n.Address), Labels: ManagedLabels(pc.Topology(), "", n.Address)})
 	if driver.IsCategory(err, driver.ErrorNotFound) {
 		return ResourceReadResult{Status: state.ResourceAbsent}, nil
 	}
@@ -35,6 +35,9 @@ func (NetworkResourceHandler) Discover(ctx context.Context, pc *ProviderContext,
 		return ResourceReadResult{}, fmt.Errorf("missing discovery ownership")
 	}
 	attrs := map[string]any{"nat": true, "docker_network_id": info.ID, "docker_net_name": info.Name, "cidr": cfg.CIDR}
+	if info.BridgeTarget != nil {
+		attrs["managed_bridge"] = info.BridgeTarget
+	}
 	if err := setDesiredHash(n, attrs); err != nil {
 		return ResourceReadResult{}, err
 	}

@@ -12,6 +12,7 @@ const DefaultExecOutputLimit = 1 << 20
 type ExecStatus string
 
 const (
+	ExecStatusRunning ExecStatus = "running"
 	ExecStatusExited  ExecStatus = "exited"
 	ExecStatusUnknown ExecStatus = "unknown"
 )
@@ -35,10 +36,29 @@ const (
 // ExecutionHandle identifies an execution independently of its diagnostic PID.
 // An ID alone does not promise cross-restart observation or cancellation.
 type ExecutionHandle struct {
-	ID         string
-	NodeID     string
-	Generation int64
-	PID        int
+	ID          string
+	NodeID      string
+	Generation  int64
+	PID         int
+	Digest      string
+	BootID      string
+	Epoch       uint64
+	TopologyUID string
+	ResourceUID string
+}
+
+type ExecutionOutput struct {
+	Data       []byte
+	NextCursor int64
+}
+type ConnectionExecutionOutput interface {
+	ReadExecutionOutput(context.Context, ExecutionHandle, string, int64, int) (ExecutionOutput, error)
+}
+type ConnectionExecutionLister interface {
+	ListExecutions(context.Context) ([]ExecutionHandle, error)
+}
+type ConnectionExecutionRenewer interface {
+	RenewExecution(context.Context, ExecutionHandle) error
 }
 
 type ConnectionStarter interface {
@@ -52,11 +72,6 @@ type ConnectionExecutionCanceler interface {
 }
 type ConnectionFileCopier interface {
 	CopyFile(context.Context, string, string) error
-}
-
-// ConnectionBackground is the transitional PID-only adapter. Prefer Start.
-type ConnectionBackground interface {
-	ExecBackground(context.Context, ExecRequest) (int, error)
 }
 
 // ExecCapture caps retained and forwarded output, but consumes every byte so

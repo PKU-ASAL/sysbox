@@ -126,6 +126,10 @@ type SnapshotBackend interface {
 	RestoreSnapshot(ctx context.Context, id string) error
 }
 
+type SnapshotDeleter interface {
+	DeleteSnapshot(context.Context, string) error
+}
+
 type DeleteBackend interface {
 	Delete(ctx context.Context) error
 }

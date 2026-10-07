@@ -129,13 +129,8 @@ func (c *SSHConnection) Exec(ctx context.Context, req substrate.ExecRequest, std
 	return result, nil
 }
 
-func (c *SSHConnection) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
-	handle, err := c.Start(ctx, req)
-	return handle.PID, err
-}
-
 func (c *SSHConnection) Start(ctx context.Context, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
-	return startPOSIX(ctx, c, c.executionIdentity, c.host, req)
+	return startTask(ctx, c, c.executionIdentity, req)
 }
 
 func (c *SSHConnection) command(ctx context.Context, sshArgs []string) *exec.Cmd {

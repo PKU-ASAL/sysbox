@@ -34,10 +34,11 @@ type managedAttachment struct {
 	Link        network.AttachmentLink `json:"link"`
 }
 type networkState struct {
-	NetNS           string `json:"netns"`
-	Bridge          string `json:"bridge"`
-	NAT             bool   `json:"nat"`
-	DockerNetworkID string `json:"docker_network_id"`
+	ManagedBridge   *substrate.ManagedBridgeTarget `json:"managed_bridge"`
+	NetNS           string                         `json:"netns"`
+	Bridge          string                         `json:"bridge"`
+	NAT             bool                           `json:"nat"`
+	DockerNetworkID string                         `json:"docker_network_id"`
 }
 type linkRequest struct {
 	Name, NetNS, IP, Gateway, MAC string
@@ -71,10 +72,11 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 	if len(req.IPPrefixes) > 0 {
 		ip = req.IPPrefixes[0]
 	}
-	if target.NAT || target.DockerNetworkID != "" {
-		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnsupported, "firecracker", "Docker NAT bridge attachment requires a verifiable bridge contract; use an isolated network", nil)
+	bridgeTarget, err := attachmentBridgeTarget(req.NetworkIdentity, target)
+	if err != nil {
+		return driver.AttachmentResult{}, err
 	}
-	attached, err := s.attachNIC(ctx, h, linkRequest{Name: req.Name, NetNS: target.NetNS, Target: network.BridgeTarget{Identity: req.NetworkIdentity, NetworkNamespace: target.NetNS, Bridge: target.Bridge}, IP: ip, Gateway: req.Gateway, MAC: req.MAC})
+	attached, err := s.attachNIC(ctx, h, linkRequest{Name: req.Name, NetNS: bridgeTarget.NetworkNamespace, Target: bridgeTarget, IP: ip, Gateway: req.Gateway, MAC: req.MAC})
 	if err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "firecracker", "attach network", err)
 	}
@@ -104,7 +106,11 @@ func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req dri
 	if err := json.Unmarshal(req.NetworkState, &target); err != nil {
 		return driver.AttachmentResult{}, err
 	}
-	bridge, err := network.OpenOwnedBridge(ctx, network.BridgeTarget{Identity: req.NetworkIdentity, NetworkNamespace: target.NetNS, Bridge: target.Bridge})
+	bridgeTarget, err := attachmentBridgeTarget(req.NetworkIdentity, target)
+	if err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	bridge, err := network.OpenOwnedBridge(ctx, bridgeTarget)
 	if err != nil {
 		return driver.AttachmentResult{}, err
 	}
@@ -113,6 +119,16 @@ func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req dri
 		return driver.AttachmentResult{}, err
 	}
 	return driver.AttachmentResult{Driver: "firecracker", GuestDevice: st.GuestDevice, State: raw}, nil
+}
+
+func attachmentBridgeTarget(identity substrate.OperationIdentity, target networkState) (network.BridgeTarget, error) {
+	if target.NAT || target.DockerNetworkID != "" {
+		if target.ManagedBridge == nil || target.ManagedBridge.NetworkID != target.DockerNetworkID {
+			return network.BridgeTarget{}, driver.Wrap(driver.ErrorInvalidState, "firecracker", "managed bridge proof required; rebuild network with mixed-substrate consumers", nil)
+		}
+		return network.BridgeTarget{Identity: identity, Bridge: target.ManagedBridge.Bridge, Managed: target.ManagedBridge}, nil
+	}
+	return network.BridgeTarget{Identity: identity, NetworkNamespace: target.NetNS, Bridge: target.Bridge}, nil
 }
 func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest, raw json.RawMessage) error {
 	var st attachmentState

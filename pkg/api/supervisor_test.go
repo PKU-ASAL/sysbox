@@ -15,6 +15,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -72,7 +73,7 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 
 	s := NewServer(runs, workspaces)
 	proj := controlplane.ResourceProjection{
-		AgentID:    "agent-1",
+		AgentID: "agent-1", SessionID: "supervisor-session", Sequence: 1,
 		Workspace:  "web",
 		Topology:   "web",
 		ObservedAt: time.Now().UTC(),
@@ -84,6 +85,10 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 			Status:   controlplane.ResourceHealthHealthy,
 		}},
 	}
+	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).OpenSession(context.Background(), "agent-1", "supervisor-process", "")
+	require.NoError(t, err)
+	proj.SessionID = session.ID
+	proj.Sequence = 1
 	require.NoError(t, s.apiStore.SaveResourceProjection(context.Background(), proj))
 
 	supervisor := newSupervisor(s, time.Minute)

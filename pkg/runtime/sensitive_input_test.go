@@ -124,9 +124,6 @@ func (c *recordingConn) Exec(_ context.Context, req substrate.ExecRequest, _, _ 
 	c.program = req.Program
 	return substrate.ExecResult{ExitCode: 0, ExitCodeKnown: true, Status: substrate.ExecStatusExited}, nil
 }
-func (*recordingConn) ExecBackground(context.Context, substrate.ExecRequest) (int, error) {
-	return 0, nil
-}
 func (c *recordingConn) CopyFile(_ context.Context, srcPath, _ string) error {
 	c.copiedSrc = srcPath
 	return nil

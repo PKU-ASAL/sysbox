@@ -30,6 +30,6 @@ func TestStartRejectsUnprovenDomainInterfaces(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsDockerManagedNetwork(t *testing.T) {
-	require.ErrorContains(t, New().Validate(substrate.NodeSpec{ManagedNetwork: true}), "Docker NAT")
+func TestValidateAllowsProvenManagedNetworkAttachments(t *testing.T) {
+	require.NoError(t, New().Validate(substrate.NodeSpec{ManagedNetwork: true}))
 }

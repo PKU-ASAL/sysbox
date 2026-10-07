@@ -20,9 +20,10 @@ import (
 type Substrate struct {
 	substrate.BaseSubstrate // inherits Validate / DecodeProviderConfig defaults
 
-	firecrackerBin string
-	kernelPath     string
-	rootfsDir      string // base directory for per-VM rootfs copies
+	firecrackerBin     string
+	kernelPath         string
+	rootfsDir          string // base directory for per-VM rootfs copies
+	grantPublicKeyFile string
 
 	// nextCID is a monotonic allocator for the per-VM guest_cid field.
 	// vsock CIDs 0/1/2 are reserved (HYPERVISOR, LOCAL, HOST) so we start at 3.
@@ -63,9 +64,10 @@ func New(kernelPath, rootfsDir string) *Substrate {
 	// TODO: jailer-based sandboxing is not implemented; VMs run as direct
 	// firecracker child processes with the daemon's privileges.
 	return &Substrate{
-		firecrackerBin: fcBin,
-		kernelPath:     kernelPath,
-		rootfsDir:      rootfsDir,
+		grantPublicKeyFile: cfg.Agent.ExecutionGrantPublicKeyFile,
+		firecrackerBin:     fcBin,
+		kernelPath:         kernelPath,
+		rootfsDir:          rootfsDir,
 	}
 }
 
@@ -94,9 +96,6 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 
 // Validate ensures the spec carries what the firecracker substrate needs.
 func (s *Substrate) Validate(spec substrate.NodeSpec) error {
-	if spec.ManagedNetwork {
-		return substrate.NewValidationError("firecracker: Docker NAT bridge lacks a verifiable attachment contract; use an isolated network")
-	}
 	cfg, _ := spec.ProviderConfig.(*Config)
 	if cfg == nil || !cfg.AllowDirect {
 		return substrate.NewValidationError("firecracker: direct process mode is unsafe; set allow_direct = true only for trusted local experiments until jailer support is enabled")

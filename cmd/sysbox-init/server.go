@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -156,7 +157,7 @@ func handleVsockConn(fd int) {
 }
 
 func dispatchVsockRequest(conn net.Conn, w io.Writer, reader *bufio.Reader, req vsockrpc.Request, readiness func() (bool, string)) {
-	if req.Op == vsockrpc.OpReady || req.Op == vsockrpc.OpExec || req.Op == vsockrpc.OpWriteFile {
+	if req.Op == vsockrpc.OpReady || req.Op == vsockrpc.OpExec || req.Op == vsockrpc.OpWriteFile || req.Op == vsockrpc.OpTask {
 		ready, reason := readiness()
 		if req.Op == vsockrpc.OpReady {
 			sendFrame(w, vsockrpc.Frame{Done: true, Ready: ready, ReadinessReason: reason})
@@ -176,6 +177,19 @@ func dispatchVsockRequest(conn net.Conn, w io.Writer, reader *bufio.Reader, req 
 		handleConsole(conn, req)
 	case vsockrpc.OpWriteFile:
 		handleWriteFile(w, reader, req)
+	case vsockrpc.OpTask:
+		if req.Size < 1 || req.Size > 16<<20 {
+			sendFrame(w, vsockrpc.Frame{Done: true, Error: "invalid task request size"})
+			return
+		}
+		body:=make([]byte,req.Size)
+		if _,err:=io.ReadFull(reader,body);err!=nil{sendFrame(w,vsockrpc.Frame{Done:true,Error:"incomplete task body"});return}
+		raw, err := json.Marshal(serveTask(bytes.NewReader(body)))
+		if err != nil {
+			sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
+			return
+		}
+		sendFrame(w, vsockrpc.Frame{Done: true, Task: raw})
 	default:
 		sendFrame(w, vsockrpc.Frame{Done: true, Error: fmt.Sprintf("unknown op %q", req.Op)})
 	}

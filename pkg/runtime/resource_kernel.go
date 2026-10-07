@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/hashicorp/hcl/v2"
 
@@ -74,6 +75,10 @@ func (KernelResourceHandler) Create(ctx context.Context, pc *ProviderContext, n 
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}
+	resolvedSource, err = artifact.ResolveSource(ctx, resolvedSource, cfg.SHA256, pc.exec.workspaceDir)
+	if err != nil {
+		return state.Resource{}, err
+	}
 	res, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamilyUnknown})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
@@ -129,7 +134,7 @@ func (KernelResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return []substrate.PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
 	}
-	if check := ArtifactPreflightCheck("kernel:"+r.Name, cfg.Source, cfg.SHA256); check != nil {
+	if check := ArtifactPreflightCheck("kernel:"+r.Name, cfg.Source, cfg.SHA256, filepath.Dir(r.Remain.MissingItemRange().Filename)); check != nil {
 		return []substrate.PreflightCheck{*check}
 	}
 	return nil

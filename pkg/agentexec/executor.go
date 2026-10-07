@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"time"
 
 	"github.com/coder/websocket"
@@ -87,9 +88,12 @@ type runWorkspaceBridge interface {
 	HCLFileForRun(*controlplane.Run) string
 }
 
-func (e *Executor) hclFileForRun(run *controlplane.Run) string {
-	if run.SnapshotPath != "" {
-		return run.SnapshotPath
+func (e *Executor) hclFileForRun(ctx context.Context, run *controlplane.Run) string {
+	if path := RunWorkspace(ctx, run); path != "" {
+		return path
+	}
+	if _, remote := e.bridge.(remoteBridge); remote {
+		return ""
 	}
 	if b, ok := e.bridge.(runWorkspaceBridge); ok {
 		if path := b.HCLFileForRun(run); path != "" {
@@ -121,38 +125,11 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	var cleanup *controlplane.CleanupReceipt
 	switch run.Op {
 	case "apply", "repair":
-		if run.ParentID != "" {
-			parent, err := e.bridge.ParentRun(ctx, run.ParentID)
-			if err != nil {
-				e.bridge.Finish(run, err)
-				break
-			}
-			e.executeResumeApply(ctx, parent, run, log)
-			break
-		}
 		e.executeApply(ctx, run, log)
 	case "destroy":
-		if run.ParentID != "" {
-			parent, err := e.bridge.ParentRun(ctx, run.ParentID)
-			if err != nil {
-				e.bridge.Finish(run, err)
-				break
-			}
-			cleanup = e.executeResumeDestroy(ctx, parent, run, log)
-			break
-		}
 		cleanup = e.executeDestroy(ctx, run, log)
 	case "reset":
-		var parent *controlplane.Run
-		if run.ParentID != "" {
-			var err error
-			parent, err = e.bridge.ParentRun(ctx, run.ParentID)
-			if err != nil {
-				e.bridge.Finish(run, err)
-				break
-			}
-		}
-		e.executeReset(ctx, run, parent, log)
+		e.executeReset(ctx, run, log)
 	default:
 		e.bridge.Finish(run, fmt.Errorf("unsupported run op %q", run.Op))
 	}
@@ -161,7 +138,7 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	e.reportCompletion(ctx, &report)
 }
 
-func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.Run, log io.Writer) {
+func (e *Executor) executeReset(ctx context.Context, run *controlplane.Run, log io.Writer) {
 	unlock := e.bridge.LockTopology(run.Topology)
 	defer unlock()
 
@@ -183,8 +160,12 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 		e.bridge.Finish(run, err)
 		return
 	}
-	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(e.hclFileForRun(run), mgr)
+	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(e.hclFileForRun(ctx, run), mgr)
 	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	if err := runtime.ValidateArtifactSources(ctx, g, filepath.Dir(e.hclFileForRun(ctx, run)), secret.EnvironmentResolver{}); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
@@ -211,7 +192,7 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
 	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
-	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
+	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(ctx, run))
 	exec.SetOperation(run.Op)
 	exec.SetResumeRunID(run.ParentID)
 	exec.SetLogger(log)
@@ -334,8 +315,12 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	g, mgr, st, root, evalCtx, err := runtime.LoadWorkspaceWithInputs(e.hclFileForRun(run), mgr, run.Inputs)
+	g, mgr, st, root, evalCtx, err := runtime.LoadWorkspaceWithInputs(e.hclFileForRun(ctx, run), mgr, run.Inputs)
 	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	if err := runtime.ValidateArtifactSources(ctx, g, filepath.Dir(e.hclFileForRun(ctx, run)), secret.Dispatcher{"env": secret.EnvironmentResolver{}, "input": secret.InputResolver{Inputs: run.Inputs}}); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
@@ -354,7 +339,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
 	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
-	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
+	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(ctx, run))
 	exec.SetOperation(run.Op)
 	exec.SetLogger(log)
 	exec.SetSecretResolver(secret.Dispatcher{
@@ -456,7 +441,7 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	exec := runtime.NewExecutor(graph.New(), st)
 	exec.SetRunContext(run.Topology, run.ID)
 	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
-	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
+	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(ctx, run))
 	exec.SetLogger(log)
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
@@ -498,14 +483,6 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	_, _ = log.Write([]byte("Destroy complete.\n"))
 	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
 	return proof
-}
-
-func (e *Executor) executeResumeApply(ctx context.Context, parent, run *controlplane.Run, log io.Writer) {
-	e.executeApply(ctx, run, log)
-}
-
-func (e *Executor) executeResumeDestroy(ctx context.Context, parent, run *controlplane.Run, log io.Writer) *controlplane.CleanupReceipt {
-	return e.executeDestroy(ctx, run, log)
 }
 
 func (e *Executor) proveCleanup(ctx context.Context, run controlplane.Run) (*controlplane.CleanupReceipt, error) {

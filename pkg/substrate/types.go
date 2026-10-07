@@ -17,16 +17,18 @@ var ErrNotSupported = errors.New("operation not supported by this substrate")
 
 // ManagedNetworkSpec describes a substrate-managed network to create.
 type ManagedNetworkSpec struct {
-	Name   string            // resource name used to derive the network's system identifier
-	CIDR   string            // IP address range, e.g. "172.20.0.0/24"
-	NAT    bool              // true → internet access via masquerade
-	Labels map[string]string // provider metadata for recovery/cleanup
+	ExposeBridge bool              // explicitly export a verified host bridge for mixed substrates
+	Name         string            // resource name used to derive the network's system identifier
+	CIDR         string            // IP address range, e.g. "172.20.0.0/24"
+	NAT          bool              // true → internet access via masquerade
+	Labels       map[string]string // provider metadata for recovery/cleanup
 }
 
 // ManagedNetworkInfo is returned by CreateManagedNetwork.
 type ManagedNetworkInfo struct {
-	ID   string // substrate-specific network identifier (docker network ID, etc.)
-	Name string // the system-level name (bridge name, network name)
+	BridgeTarget *ManagedBridgeTarget
+	ID           string // substrate-specific network identifier (docker network ID, etc.)
+	Name         string // the system-level name (bridge name, network name)
 }
 
 type GuestNetworkInitMode string

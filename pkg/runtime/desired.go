@@ -47,6 +47,9 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 
 	switch cfg := n.Data.(type) {
 	case *config.NetworkConfig:
+		if cfg.ExposeBridge {
+			payload["expose_bridge"] = true
+		}
 		payload["cidr"] = cfg.CIDR
 		payload["network_type"] = cfg.Type
 		payload["nat"] = cfg.NAT

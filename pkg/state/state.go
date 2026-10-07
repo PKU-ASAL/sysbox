@@ -155,7 +155,7 @@ func (r *Resource) lookup(key string) any {
 	return r.RuntimeValue(key)
 }
 
-var runtimePrivateKeys = map[string]bool{"container_id": true, "pid": true, "netns": true, "bridge": true, "docker_network_id": true, "image_id": true, "vm_dir": true, "tap_name": true}
+var runtimePrivateKeys = map[string]bool{"container_id": true, "pid": true, "netns": true, "bridge": true, "managed_bridge": true, "docker_network_id": true, "image_id": true, "vm_dir": true, "tap_name": true}
 
 func MustAttributes(input map[string]any) Attributes {
 	result, err := NewAttributes(input)

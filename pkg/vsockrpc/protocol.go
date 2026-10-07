@@ -13,15 +13,18 @@
 // stays line-delimited and easy to debug.
 package vsockrpc
 
+import "encoding/json"
+
 // VMConfig is the JSON schema written onto the per-VM config drive and
 // read by sysbox-init inside the guest. MUST be the single source of truth;
 // both pkg/provider/firecracker and cmd/sysbox-init reference this type.
 type VMConfig struct {
-	Hostname       string            `json:"hostname,omitempty"`
-	AuthorizedKeys []string          `json:"authorized_keys,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
-	VsockPort      uint32            `json:"vsock_port,omitempty"`
-	ChainInit      string            `json:"chain_init,omitempty"`
+	GuestGrantPublicKey []byte            `json:"guest_grant_public_key,omitempty"`
+	Hostname            string            `json:"hostname,omitempty"`
+	AuthorizedKeys      []string          `json:"authorized_keys,omitempty"`
+	Env                 map[string]string `json:"env,omitempty"`
+	VsockPort           uint32            `json:"vsock_port,omitempty"`
+	ChainInit           string            `json:"chain_init,omitempty"`
 }
 
 // DefaultPort is the vsock port the sysbox-init server listens on.
@@ -39,6 +42,7 @@ const (
 	OpExec      Op = "exec.v2"
 	OpConsole   Op = "console"
 	OpWriteFile Op = "write_file.v2"
+	OpTask      Op = "task.v1"
 )
 
 // Request is the single header sent by the client at the start of a connection.
@@ -61,13 +65,14 @@ type Request struct {
 // Pong / Header / Done will be non-empty per frame; Done=true marks the
 // last frame and may carry ExitCode / Error.
 type Frame struct {
-	Ready           bool   `json:"ready,omitempty"` // ready.v1: guest boot initialization completed
-	ReadinessReason string `json:"readiness_reason,omitempty"`
-	SHA256          string `json:"sha256,omitempty"`
-	Stdout          []byte `json:"stdout,omitempty"`    // base64-encoded by the JSON encoder
-	Stderr          []byte `json:"stderr,omitempty"`    // base64-encoded by the JSON encoder
-	Pong            bool   `json:"pong,omitempty"`      // ping reply
-	Done            bool   `json:"done,omitempty"`      // terminal frame
-	ExitCode        int    `json:"exit_code,omitempty"` // exec: command exit code
-	Error           string `json:"error,omitempty"`     // any op: error message
+	Task            json.RawMessage `json:"task,omitempty"`
+	Ready           bool            `json:"ready,omitempty"` // ready.v1: guest boot initialization completed
+	ReadinessReason string          `json:"readiness_reason,omitempty"`
+	SHA256          string          `json:"sha256,omitempty"`
+	Stdout          []byte          `json:"stdout,omitempty"`    // base64-encoded by the JSON encoder
+	Stderr          []byte          `json:"stderr,omitempty"`    // base64-encoded by the JSON encoder
+	Pong            bool            `json:"pong,omitempty"`      // ping reply
+	Done            bool            `json:"done,omitempty"`      // terminal frame
+	ExitCode        int             `json:"exit_code,omitempty"` // exec: command exit code
+	Error           string          `json:"error,omitempty"`     // any op: error message
 }

@@ -59,6 +59,7 @@ func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 	require.NoError(t, first.initErr)
 	agentCfg := cfg
 	agentCfg.Paths.RunsDir = t.TempDir()
+	agentCfg.Paths.WorkspacesDir = t.TempDir()
 	agentCfg.State.Backend = "sqlite://" + filepath.Join(t.TempDir(), "agent.db")
 	bridge := NewExecutionBridge(agentCfg)
 	topology := "remote-e2e-" + uuid.NewString()[:8]
@@ -127,7 +128,7 @@ func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 	defer host.Close()
 	agentCtx, stopAgent := context.WithCancel(ctx)
 	agentDone := make(chan error, 1)
-	opts := agentexec.Options{APIURL: host.URL, ID: "fault-agent", Secret: "test-agent-secret", Capabilities: []string{"docker", "veth"}, PollInterval: 20 * time.Millisecond, Policy: cfg.Agent.Policy}
+	opts := agentexec.Options{ExecutionSessionFile: filepath.Join(t.TempDir(), "session.json"), APIURL: host.URL, ID: "fault-agent", Secret: "test-agent-secret", Capabilities: []string{"docker", "veth"}, PollInterval: 20 * time.Millisecond, Policy: cfg.Agent.Policy}
 	go func() { agentDone <- agentexec.Run(agentCtx, opts, bridge) }()
 	defer func() {
 		stopAgent()
@@ -190,6 +191,9 @@ resource "sysbox_node" "%s" {
 		t.Fatal("timed out waiting for actual agent completion")
 	}
 	require.Equal(t, controlplane.RunDone, completion.Run.Status, completion.Run.Err)
+	localRevision, err := bridge.PinnedRevisionWorkspace(ctx, completion.Run, &controlplane.GlobalRevision{Revision: revision["revision"], Files: map[string][]byte{"field.sysbox.hcl": []byte(hcl)}})
+	require.NoError(t, err)
+	require.NotEqual(t, completion.Run.SnapshotPath, localRevision, "execution must materialize the revision on the agent")
 	state, err := repository.LoadState(ctx, topology)
 	require.NoError(t, err)
 	var externalID string

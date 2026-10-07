@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 	"github.com/stretchr/testify/require"
@@ -110,10 +112,20 @@ func TestSSHStartReturnsOpaqueIdentityAndUsesConnectionCommand(t *testing.T) {
 	var args []string
 	conn.runCommand = func(cmd *exec.Cmd) error {
 		args = append([]string{}, cmd.Args...)
-		_, err := io.WriteString(cmd.Stdout, "1234\n")
-		return err
+		var call guesttask.Call
+		if err := json.NewDecoder(cmd.Stdin).Decode(&call); err != nil {
+			return err
+		}
+		digest, _ := call.Request.Digest()
+		return json.NewEncoder(cmd.Stdout).Encode(guesttask.Response{Version: 1, Record: &guesttask.Record{ID: call.Request.ID, Digest: digest, PID: 1234}})
 	}
-	handle, err := conn.Start(context.Background(), substrate.ExecRequest{Program: "echo", Args: []string{"$unsafe"}, Environment: map[string]string{"A": "x y"}, WorkingDir: "/work path", Shell: substrate.ShellNone})
+	req := substrate.ExecRequest{Program: "echo", Args: []string{"$unsafe"}, Environment: map[string]string{"A": "x y"}, WorkingDir: "/work path", Shell: substrate.ShellNone}
+	task, err := BuildTaskRequest(context.Background(), "durable-task", req)
+	require.NoError(t, err)
+	digest, err := task.Digest()
+	require.NoError(t, err)
+	ctx := WithTaskGrant(context.Background(), task.ID, controlplane.SignedExecutionGrant{BootID: "boot", Grant: controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{Generation: 4}, Digest: digest, Epoch: 2}})
+	handle, err := conn.Start(ctx, req)
 	require.NoError(t, err)
 	require.NotEmpty(t, handle.ID)
 	require.NotEqual(t, "1234", handle.ID)
@@ -123,11 +135,13 @@ func TestSSHStartReturnsOpaqueIdentityAndUsesConnectionCommand(t *testing.T) {
 	require.Equal(t, []string{"ip", "netns", "exec", "lab"}, args[:4])
 	require.Contains(t, args, "StrictHostKeyChecking=yes")
 	require.Contains(t, args, "UserKnownHostsFile=/known")
-	require.Contains(t, args[len(args)-1], "nohup sh -c")
+	require.Contains(t, args[len(args)-1], "sysbox-guest-task")
+	require.Equal(t, "durable-task", handle.ID)
+	require.Equal(t, digest, handle.Digest)
 }
 
-func TestVsockStartRejectsMissingPID(t *testing.T) {
-	conn := framePeer(t, vsockrpc.Frame{Stdout: []byte("not a pid\n")}, vsockrpc.Frame{Done: true})
+func TestVsockStartRejectsUnsignedRequestBeforeConnection(t *testing.T) {
+	conn := NewVsockConnection("/must-not-connect", 0)
 	_, err := conn.Start(context.Background(), substrate.ExecRequest{Program: "true", Shell: substrate.ShellNone})
 	require.Error(t, err)
 }

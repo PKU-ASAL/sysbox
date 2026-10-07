@@ -131,6 +131,9 @@ type resetNodeContext struct {
 }
 
 func (e *Executor) Reset(ctx context.Context, plan *Plan) (resetErr error) {
+	if err := e.preflightManagedBridges(ctx); err != nil {
+		return err
+	}
 	return e.convergeReset(ctx, plan)
 }
 

@@ -122,6 +122,7 @@ type guestAcceptancePersistence interface {
 }
 
 type apiStore interface {
+	ListGuestActivity(context.Context, string) ([]persistence.GuestActivity, error)
 	CompleteGuestExecution(context.Context, string, string, controlplane.GuestExecutionCompletion) (controlplane.GuestExecution, error)
 	CompleteGuestFileOperation(context.Context, string, string, controlplane.GuestFileOperationCompletion) (controlplane.GuestFileOperation, error)
 	schemaStore

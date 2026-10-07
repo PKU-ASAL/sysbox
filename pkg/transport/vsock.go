@@ -276,13 +276,8 @@ func (c *VsockConnection) Exec(ctx context.Context, req substrate.ExecRequest, s
 	return result, err
 }
 
-func (c *VsockConnection) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
-	handle, err := c.Start(ctx, req)
-	return handle.PID, err
-}
-
 func (c *VsockConnection) Start(ctx context.Context, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
-	return startPOSIX(ctx, c, c.executionIdentity, c.udsPath, req)
+	return startTask(ctx, c, c.executionIdentity, req)
 }
 
 func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string) (err error) {

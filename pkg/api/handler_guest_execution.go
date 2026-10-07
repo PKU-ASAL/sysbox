@@ -110,6 +110,8 @@ func (s *Server) handleCreateGuestExecution(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req controlplane.GuestExecutionRequest
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
 	limitBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode guest execution request"))

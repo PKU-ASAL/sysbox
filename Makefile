@@ -37,9 +37,27 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .PHONY: test-firecracker-e2e
 .PHONY: test-docker-generation-e2e
+.PHONY: test-managed-bridge-e2e
+
+test-managed-bridge-e2e: ## Verify Docker managed bridge proof and real TAP fencing on the host network
+	@set -eu; test_binary=$$(mktemp /tmp/sysbox-managed-bridge-e2e.XXXXXX); trap 'rm -f "$$test_binary"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -tags e2e -o "$$test_binary" ./pkg/provider/docker; \
+	docker run --rm --network host --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt apparmor=unconfined --device /dev/net/tun \
+	  --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+	  --mount "type=bind,src=$$test_binary,dst=/managed-bridge.test,readonly" \
+	  -e SYSBOX_MANAGED_BRIDGE_E2E=1 --entrypoint /managed-bridge.test alpine:3.22 \
+	  -test.run '^TestDockerManagedBridgeTargetE2E$$' -test.v -test.timeout=90s
 .PHONY: test-libvirt-generation-e2e
 .PHONY: test-network-generation-e2e
 .PHONY: test-firecracker-attachment-e2e
+
+.PHONY: test-guesttask-e2e
+test-guesttask-e2e: ## Verify durable tasks and cancellation in a disposable private cgroup
+	@set -eu; task_binary=$$(mktemp /tmp/sysbox-guesttask-e2e.XXXXXX); trap 'rm -f "$$task_binary"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -o "$$task_binary" ./pkg/guesttask; \
+	docker run --rm --privileged --cgroupns=private --network none \
+	  --mount "type=bind,src=$$task_binary,dst=/task.test,readonly" \
+	  alpine:3.22 sh -c 'mkdir /sys/fs/cgroup/sysbox-test; SYSBOX_GUESTTASK_TEST_CGROUP=/sys/fs/cgroup/sysbox-test /task.test -test.run "^TestReal" -test.v -test.timeout=90s'
 
 test-firecracker-attachment-e2e: ## Test real TAP ownership without booting a VM (Linux x86_64)
 	@set -eu; test "$$(uname -m)" = x86_64; \
@@ -138,11 +156,18 @@ build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
 
 build-all: ## Build sysbox-init for amd64 and arm64
-	$(GOENV) GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $(INITDIR)/sysbox-init.linux-amd64.bin ./cmd/sysbox-init
-	$(GOENV) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $(INITDIR)/sysbox-init.linux-arm64.bin ./cmd/sysbox-init
+	$(MAKE) $(INITDIR)/sysbox-init.linux-amd64.bin $(INITDIR)/sysbox-init.linux-arm64.bin
 
-$(INITDIR)/sysbox-init.linux-%.bin: $(filter-out %_test.go,$(wildcard cmd/sysbox-init/*.go)) pkg/vsockrpc/protocol.go
-	$(GOENV) GOOS=linux GOARCH=$* CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $@ ./cmd/sysbox-init
+.PHONY: force-guest-build
+force-guest-build:
+
+# Go's cache tracks all transitive sources. Do not maintain a partial source
+# list here: missing a guesttask dependency would silently embed an old helper.
+$(INITDIR)/sysbox-init.linux-%.bin: force-guest-build
+	@set -eu; guest_build=$$(mktemp -d /tmp/sysbox-init-build.XXXXXX); \
+	trap 'rm -f "$$guest_build/sysbox-init"; rmdir "$$guest_build"' EXIT; \
+	$(GOENV) GOOS=linux GOARCH=$* CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o "$$guest_build/sysbox-init" ./cmd/sysbox-init; \
+	mv "$$guest_build/sysbox-init" "$@"
 
 test: ## Run unit tests
 	$(GOENV) $(GO) test ./...

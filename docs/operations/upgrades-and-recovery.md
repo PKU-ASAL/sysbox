@@ -8,6 +8,10 @@
 4. 保存 artifact digest 与外部 ownership inventory。
 5. 阅读目标 release 的 state/protocol compatibility。
 
+远端 API 与 Agent 使用独立的 workspace、runs 和数据库目录。普通执行与恢复都通过已授权的不可变 revision 传输配置，不共享 API 的 SnapshotPath。API/Agent 必须一起升级；旧 Run 缺少全局 revision 时重新发布并受理操作，不回退读取共享路径。
+
+远端 kernel/rootfs 等二进制产物使用 revision 内相对文件或带 SHA-256 的 HTTP(S) URL。把 API 主机绝对路径改成上述来源；Agent 校验下载内容并使用自己的缓存。CLI 的明确本地路径不受该远端限制影响。大型产物使用带摘要的下载来源，不应塞入有大小限制的 revision JSON。
+
 ## State schema 变更
 
 若目标版本拒绝当前 state，不要手工改 JSON 或 private envelope。用创建旧 state 的 binary destroy，再用新版本 apply。若必须保留现场，继续运行旧版本直到能够计划迁移。

@@ -20,7 +20,7 @@ import (
 func TestRemoteBridgePreservesRunSnapshot(t *testing.T) {
 	b := remoteBridge{Bridge: NewLocalBridge(LocalOptions{ConfigFile: "/mutable/field.sysbox.hcl"})}
 	run := &controlplane.Run{Topology: "lab", SnapshotPath: "/immutable/field.sysbox.hcl"}
-	require.Equal(t, run.SnapshotPath, NewExecutorWithBridge(b).hclFileForRun(run))
+	require.Equal(t, run.SnapshotPath, NewExecutorWithBridge(b).hclFileForRun(context.Background(), run))
 }
 
 func TestExecutorRepairDoesNotEnlargeApprovedNoop(t *testing.T) {

@@ -74,6 +74,14 @@ func (r *Registry) RequireNIC(name string) (NIC, error) {
 	return d.NIC, nil
 }
 
+func (r *Registry) RequireOwnershipAdoption(name string) (OwnershipAdoption, error) {
+	d, err := r.Require(name, CapabilityOwnershipAdoption)
+	if err != nil {
+		return nil, err
+	}
+	return d.OwnershipAdoption, nil
+}
+
 func (r *Registry) RequireSnapshot(name string) (Snapshot, error) {
 	d, err := r.Require(name, CapabilitySnapshot)
 	if err != nil {

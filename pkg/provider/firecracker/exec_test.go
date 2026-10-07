@@ -10,7 +10,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 	"github.com/stretchr/testify/require"
 )
@@ -44,15 +47,21 @@ func TestVsockConnectionStartBindsExecutionToNode(t *testing.T) {
 					return
 				}
 				var request vsockrpc.Request
-				if json.NewDecoder(reader).Decode(&request) != nil {
+				header, err := reader.ReadBytes('\n')
+				if err != nil || json.Unmarshal(header, &request) != nil {
 					return
 				}
 				if request.Op == vsockrpc.OpReady {
 					_ = json.NewEncoder(conn).Encode(vsockrpc.Frame{Done: true, Ready: true})
 					return
 				}
-				_ = json.NewEncoder(conn).Encode(vsockrpc.Frame{Stdout: []byte("321\n")})
-				_ = json.NewEncoder(conn).Encode(vsockrpc.Frame{Done: true})
+				var call guesttask.Call
+				if json.NewDecoder(io.LimitReader(reader, request.Size)).Decode(&call) != nil {
+					return
+				}
+				digest, _ := call.Request.Digest()
+				raw, _ := json.Marshal(guesttask.Response{Version: 1, Record: &guesttask.Record{ID: call.Request.ID, Digest: digest, PID: 321}})
+				_ = json.NewEncoder(conn).Encode(vsockrpc.Frame{Done: true, Task: raw})
 			}()
 		}
 	}()
@@ -61,7 +70,13 @@ func TestVsockConnectionStartBindsExecutionToNode(t *testing.T) {
 	require.NoError(t, err)
 	starter, ok := conn.(substrate.ConnectionStarter)
 	require.True(t, ok)
-	handle, err := starter.Start(context.Background(), substrate.ExecRequest{Program: "sleep", Args: []string{"600"}, Shell: substrate.ShellNone})
+	req := substrate.ExecRequest{Program: "sleep", Args: []string{"600"}, Shell: substrate.ShellNone}
+	task, err := transport.BuildTaskRequest(context.Background(), "durable-task", req)
+	require.NoError(t, err)
+	digest, err := task.Digest()
+	require.NoError(t, err)
+	ctx := transport.WithTaskGrant(context.Background(), task.ID, controlplane.SignedExecutionGrant{BootID: "boot", Grant: controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{Generation: 7}, Digest: digest, Epoch: 1}})
+	handle, err := starter.Start(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, "vm", handle.NodeID)
 	require.EqualValues(t, 7, handle.Generation)

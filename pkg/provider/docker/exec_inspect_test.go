@@ -15,8 +15,7 @@ import (
 // Reporting that zero as the command's exit code is the worst available
 // failure: a `check` asserting exit_code == 0 passes on a command that never
 // finished, and it passes with a truncated body. Nothing downstream can tell
-// this apart from real success. backgroundExecStatus already refuses to trust
-// a still-running inspect; the foreground path must refuse too.
+// this apart from real success. The foreground path must refuse that result.
 func TestForegroundExecStatusRejectsStillRunningInspect(t *testing.T) {
 	_, err := foregroundExecStatus(container.ExecInspect{Running: true, ExitCode: 0})
 

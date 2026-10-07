@@ -28,9 +28,6 @@ func (d *guestTestDriver) ExecInNode(ctx context.Context, _ substrate.NodeHandle
 	}
 	return substrate.ExecResult{Stdout: "out", Stderr: "err", ExitCode: 7, ExitCodeKnown: true}, nil
 }
-func (*guestTestDriver) ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error) {
-	return 0, nil
-}
 
 type guestCodec struct{}
 

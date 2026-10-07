@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -18,11 +20,16 @@ import (
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 const DefaultAgentID = "local"
 
 type Options struct {
+	observationSequence              *atomic.Uint64
+	ExecutionSessionFile             string
+	ExecutionSessionID               string
+	ExecutionGrantPublicKeyFile      string
 	APIURL                           string
 	Token                            string
 	ID                               string
@@ -75,7 +82,7 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	if len(opts.Capabilities) == 0 {
 		opts.Capabilities, _ = agent.DetectCapabilities()
 	}
-	if _, ok := bridge.(RecoveryWorkspaceProvider); ok {
+	if _, ok := bridge.(RevisionWorkspaceProvider); ok {
 		if _, ok := bridge.(ActionRepositoryProvider); ok && !slices.Contains(opts.Capabilities, controlplane.RunRecoveryCapability) {
 			opts.Capabilities = append(opts.Capabilities, controlplane.RunRecoveryCapability)
 		}
@@ -93,6 +100,15 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	}, nil); err != nil {
 		return err
 	}
+	if opts.ExecutionSessionFile == "" {
+		opts.ExecutionSessionFile = filepath.Join(config.DefaultRunsDir(), "_agents", opts.ID, "execution-session.json")
+	}
+	session, err := establishExecutionSession(ctx, opts)
+	if err != nil {
+		return err
+	}
+	opts.ExecutionSessionID = session.ID
+	opts.observationSequence = &atomic.Uint64{}
 
 	executor := NewExecutorWithBridge(remoteBridge{Bridge: bridge, reporter: opts})
 	go heartbeatLoop(ctx, opts)
@@ -322,6 +338,14 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		}
 		stopRenew := startRunLeaseRenewal(runCtx, r.opts, claimed)
 		defer stopRenew()
+		runCtx, err = r.prepareRunWorkspace(runCtx, *claimed)
+		if err != nil {
+			r.executor.bridge.AttachRun(claimed)
+			r.executor.bridge.Finish(claimed, err)
+			r.executor.reportCompletion(runCtx, claimed)
+			emit("failed", "run revision delivery failed", err)
+			return
+		}
 		r.executor.ExecuteContext(runCtx, claimed)
 		emit("completed", "run command completed", nil)
 	case "session_open":
@@ -375,7 +399,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "guest execution state unavailable", err)
 			return
 		}
-		completed := executeGuestOperation(opCtx, st, cmd.Execution.Node, cmd.ExecutionRequest)
+		completed := executeGrantedGuestOperation(opCtx, r.opts, st, *cmd)
 		// Report completion on runCtx, not opCtx: the operation's own deadline
 		// has very likely expired by now, and the result must still be
 		// delivered — otherwise a timed-out execution is never reported at all
@@ -661,6 +685,11 @@ func (opts Options) ReportResourceProjection(ctx context.Context, projection con
 	if projection.AgentID == "" {
 		projection.AgentID = opts.ID
 	}
+	if opts.ExecutionSessionID == "" || opts.observationSequence == nil {
+		return fmt.Errorf("observation requires execution session")
+	}
+	projection.SessionID = opts.ExecutionSessionID
+	projection.Sequence = opts.observationSequence.Add(1)
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/projections/resources", projection, nil)
 }
 
@@ -671,6 +700,11 @@ func (opts Options) ReportInventory(ctx context.Context, inv controlplane.AgentI
 	if inv.AgentID == "" {
 		inv.AgentID = opts.ID
 	}
+	if opts.ExecutionSessionID == "" || opts.observationSequence == nil {
+		return fmt.Errorf("observation requires execution session")
+	}
+	inv.SessionID = opts.ExecutionSessionID
+	inv.Sequence = opts.observationSequence.Add(1)
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/inventory", inv, nil)
 }
 
@@ -773,14 +807,24 @@ func renewRunLease(ctx context.Context, opts Options, run *controlplane.Run) err
 	if run == nil || run.ID == "" || run.LeaseOwner == "" {
 		return nil
 	}
-	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/renew", map[string]any{
+	var renewed controlplane.Run
+	if err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/renew", map[string]any{
 		"lease_owner": run.LeaseOwner,
 		"ttl_seconds": int(opts.RunRenewTTL.Seconds()),
-	}, run)
+	}, &renewed); err != nil {
+		return err
+	}
+	if !persistence.SameRunIncarnation(*run, renewed) || renewed.LeaseOwner != run.LeaseOwner || renewed.Attempt != run.Attempt || renewed.Status != controlplane.RunRunning || !renewed.LeaseUntil.After(time.Now()) {
+		return fmt.Errorf("run renewal identity or lease mismatch")
+	}
+	return nil
 }
 
 func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.Run) func() {
 	renewCtx, cancel := context.WithCancel(ctx)
+	// The executor mutates its own Run as work completes. Renewal owns a fixed
+	// claim copy and never writes the API response into that executing object.
+	claim := *run
 	go func() {
 		ticker := time.NewTicker(opts.RunRenewInterval)
 		defer ticker.Stop()
@@ -789,8 +833,8 @@ func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.R
 			case <-renewCtx.Done():
 				return
 			case <-ticker.C:
-				if err := renewRunLease(renewCtx, opts, run); err != nil && renewCtx.Err() == nil {
-					fmt.Printf("[agent] renew run lease %s failed: %v\n", run.ID, err)
+				if err := renewRunLease(renewCtx, opts, &claim); err != nil && renewCtx.Err() == nil {
+					fmt.Printf("[agent] renew run lease %s failed: %v\n", claim.ID, err)
 				}
 			}
 		}

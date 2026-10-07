@@ -16,17 +16,6 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-func TestBackgroundExecStatusRejectsImmediateFailure(t *testing.T) {
-	_, complete, err := backgroundExecStatus(container.ExecInspect{Running: false, ExitCode: 127})
-	require.True(t, complete)
-	require.ErrorContains(t, err, "code 127")
-
-	pid, complete, err := backgroundExecStatus(container.ExecInspect{Running: true, Pid: 42})
-	require.NoError(t, err)
-	require.True(t, complete)
-	require.Equal(t, 42, pid)
-}
-
 func TestDockerProviderStateRoundTripsEffectiveLaunch(t *testing.T) {
 	sub := &Substrate{}
 	want := &HandleState{

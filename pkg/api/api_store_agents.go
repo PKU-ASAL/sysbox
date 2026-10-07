@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
@@ -69,31 +66,6 @@ func (s *localAPIStore) ListAgentCommands(ctx context.Context, agentID string) (
 }
 func (s *localAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error) {
 	return persistence.NewCommandRepository(localCommandStorage{store: s}).AcquireAgentCommandLease(ctx, agentID, commandID, owner, ttl)
-}
-
-func (s *localAPIStore) SaveAgentInventory(_ context.Context, inv controlplane.AgentInventory) error {
-	raw, err := persistence.EncodeInventory(inv)
-	if err != nil {
-		return err
-	}
-	invPtr, err := persistence.DecodeInventory(raw)
-	if err != nil {
-		return err
-	}
-	inv = *invPtr
-	agentID := inv.AgentID
-	if agentID == "" {
-		agentID = "_unknown"
-	}
-	return writeLocalObject(filepath.Join(s.runsDir, "_agents", agentID, "inventory.json"), json.RawMessage(raw))
-}
-
-func (s *localAPIStore) GetAgentInventory(_ context.Context, agentID string) (*controlplane.AgentInventory, error) {
-	raw, err := os.ReadFile(filepath.Join(s.runsDir, "_agents", agentID, "inventory.json"))
-	if err != nil {
-		return nil, fmt.Errorf("agent inventory not found")
-	}
-	return persistence.DecodeInventory(raw)
 }
 
 func (s *postgresAPIStore) SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error {
@@ -160,50 +132,4 @@ func (s *postgresAPIStore) ListAgentCommands(ctx context.Context, agentID string
 }
 func (s *postgresAPIStore) AcquireAgentCommandLease(ctx context.Context, agentID, commandID, owner string, ttl time.Duration) (*controlplane.AgentCommand, bool, error) {
 	return persistence.NewCommandRepository(postgresCommandStorage{store: s}).AcquireAgentCommandLease(ctx, agentID, commandID, owner, ttl)
-}
-
-func (s *postgresAPIStore) SaveAgentInventory(ctx context.Context, inv controlplane.AgentInventory) error {
-	raw, err := persistence.EncodeInventory(inv)
-	if err != nil {
-		return err
-	}
-	invPtr, err := persistence.DecodeInventory(raw)
-	if err != nil {
-		return err
-	}
-	inv = *invPtr
-	if inv.AgentID == "" {
-		inv.AgentID = "_unknown"
-	}
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	_, err = conn.Exec(ctx, `
-INSERT INTO sysbox_agent_inventory (agent_id, data, updated_at)
-VALUES ($1, $2::jsonb, now())
-ON CONFLICT (agent_id) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`,
-		inv.AgentID, string(raw))
-	if err != nil {
-		return fmt.Errorf("postgres save agent inventory: %w", err)
-	}
-	return nil
-}
-
-func (s *postgresAPIStore) GetAgentInventory(ctx context.Context, agentID string) (*controlplane.AgentInventory, error) {
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-	var raw []byte
-	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_agent_inventory WHERE agent_id=$1`, agentID).Scan(&raw)
-	if err == pgx.ErrNoRows {
-		return nil, fmt.Errorf("agent inventory not found")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("postgres get agent inventory: %w", err)
-	}
-	return persistence.DecodeInventory(raw)
 }

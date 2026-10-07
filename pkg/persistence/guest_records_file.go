@@ -21,6 +21,8 @@ func (b *fileGuestRecords) directory(kind guestKind) (string, error) {
 		return "", ErrInvalidRecord
 	}
 	switch kind {
+	case executionAuthorityKind:
+		return filepath.Join(b.root, "_execution-authority"), nil
 	case guestExecutionKind:
 		return filepath.Join(b.root, "_guest-executions"), nil
 	case guestFileKind:

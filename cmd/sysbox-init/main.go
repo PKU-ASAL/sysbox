@@ -20,6 +20,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -48,6 +49,9 @@ const defaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bi
 func main() {
 	if os.Getenv("PATH") == "" {
 		_ = os.Setenv("PATH", defaultPATH)
+	}
+	if runTaskMode() {
+		return
 	}
 
 	if len(os.Args) >= 2 && os.Args[1] == "--vsock-agent" {
@@ -91,6 +95,20 @@ func main() {
 	}
 
 	applyConfig(cfg)
+	if len(cfg.GuestGrantPublicKey) > 0 {
+		if len(cfg.GuestGrantPublicKey) != ed25519.PublicKeySize {
+			logf("invalid guest grant trust key")
+			os.Exit(1)
+		}
+		if err := os.MkdirAll("/etc/sysbox", 0700); err != nil {
+			logf("guest trust directory: %v", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile("/etc/sysbox/grant-public-key", cfg.GuestGrantPublicKey, 0600); err != nil {
+			logf("guest trust key: %v", err)
+			os.Exit(1)
+		}
+	}
 
 	// Apply any kernel-cmdline `ip=` directives ourselves. Many Linux kernels
 	// (notably Ubuntu's generic kernel) don't compile CONFIG_IP_PNP and

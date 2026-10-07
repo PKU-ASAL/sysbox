@@ -13,7 +13,10 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,14 +96,22 @@ func TestDockerConnectionPreservesOutputWhenInspectSaysStillRunning(t *testing.T
 }
 
 func TestDockerStartUsesExecutionIDAndBoundNodeGeneration(t *testing.T) {
-	sub := executionDockerAPI(t, "", "", container.ExecInspect{Running: true, Pid: 42})
+	req := substrate.ExecRequest{Program: "test", Shell: substrate.ShellNone}
+	task, err := transport.BuildTaskRequest(context.Background(), "durable-task", req)
+	require.NoError(t, err)
+	digest, err := task.Digest()
+	require.NoError(t, err)
+	response, err := json.Marshal(guesttask.Response{Version: 1, Record: &guesttask.Record{ID: task.ID, Digest: digest, PID: 42}})
+	require.NoError(t, err)
+	sub := executionDockerAPI(t, string(response), "", container.ExecInspect{ExitCode: 0})
 	conn, err := sub.Connection(substrate.NodeHandle{ID: "node", Generation: 4}, nil)
 	require.NoError(t, err)
 	starter, ok := conn.(substrate.ConnectionStarter)
 	require.True(t, ok, "Docker must expose optional Start")
-	handle, err := starter.Start(context.Background(), substrate.ExecRequest{Program: "test", Shell: substrate.ShellNone})
+	ctx := transport.WithTaskGrant(context.Background(), task.ID, controlplane.SignedExecutionGrant{BootID: "boot", Grant: controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{Generation: 4}, Digest: digest, Epoch: 1}})
+	handle, err := starter.Start(ctx, req)
 	require.NoError(t, err)
-	require.Equal(t, "exec-opaque", handle.ID)
+	require.Equal(t, task.ID, handle.ID)
 	require.Equal(t, "node", handle.NodeID)
 	require.EqualValues(t, 4, handle.Generation)
 	require.Equal(t, 42, handle.PID)

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/subtle"
 	"fmt"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 
 // Server holds all API state and registers HTTP routes.
 type Server struct {
+	grantSigner   ed25519.PrivateKey
+	grantHostKeys map[string]ed25519.PublicKey
 	repositoryMu  sync.Mutex
 	repositories  map[string]*persistence.Repository
 	runsDir       string
@@ -84,10 +87,14 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		nodeOps:       newNodeOperationStore(apiStore),
 		mux:           http.NewServeMux(),
 	}
+	if err := s.loadExecutionGrantSigner(); err != nil && s.initErr == nil {
+		s.initErr = err
+	}
 	s.agentSvc = newAgentService(s)
 	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
 	s.workspaces.loadRuns = s.apiStore.LoadRuns
 	s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
+	s.workspaces.loadGuestActivity = s.apiStore.ListGuestActivity
 	s.workspaces.lockAdmission = s.jobs.lockTopology
 	if p, ok := s.apiStore.(durablePlacementStore); ok {
 		s.workspaces.placementStore = p
@@ -172,6 +179,7 @@ func (s *Server) workspaceService() *WorkspaceService {
 		s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
 		s.workspaces.loadRuns = s.apiStore.LoadRuns
 		s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
+		s.workspaces.loadGuestActivity = s.apiStore.ListGuestActivity
 		s.workspaces.lockAdmission = s.jobs.lockTopology
 		if p, ok := s.apiStore.(durablePlacementStore); ok {
 			s.workspaces.placementStore = p
@@ -265,6 +273,7 @@ func (s *Server) originPatterns() []string {
 
 func (s *Server) registerRoutes() {
 	m := s.mux
+	s.registerExecutionGrantRoutes()
 
 	m.HandleFunc("GET /v1/health", s.handleHealth)
 	m.HandleFunc("GET /v1/schema", s.handleSchema)
@@ -288,6 +297,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/agents/{agent}/projections/resources", s.handlePostAgentResourceProjection)
 	m.HandleFunc("POST /v1/agents/{agent}/node-operations/{operation}/complete", s.handleCompleteNodeOperation)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/claim", s.handleClaimAgentRun)
+	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/revision", s.handleRunRevision)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/renew", s.handleRenewAgentRun)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/complete", s.handleCompleteAgentRun)
 	m.HandleFunc("GET /v1/agents/{agent}/commands/stream", s.handleAgentCommandStream)
@@ -309,6 +319,8 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/state/lock", s.handleGetStateLock)
 	m.HandleFunc("POST /v1/topologies/{topology}/state/force-unlock", s.handleForceUnlockState)
 	m.HandleFunc("GET /v1/topologies/{topology}/state/snapshots", s.handleListStateSnapshots)
+	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots", s.handleCreateStateSnapshot)
+	m.HandleFunc("DELETE /v1/topologies/{topology}/state/snapshots/{snapshot}", s.handleDeleteStateSnapshot)
 	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots/{snapshot}/restore", s.handleRestoreStateSnapshot)
 	m.HandleFunc("GET /v1/topologies/{topology}/stack-state", s.handleGetStackState)
 	m.HandleFunc("GET /v1/topologies/{topology}/lease", s.handleGetWorkspaceLease)

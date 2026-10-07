@@ -318,18 +318,6 @@ func atomicRenameRequest(src, dst string) substrate.ExecRequest {
 	return substrate.ExecRequest{Program: "mv", Args: []string{"-f", src, dst}, Shell: substrate.ShellNone}
 }
 
-// ExecBackground starts a detached command inside the container and returns
-// the PID of the process as seen inside the container namespace.
-// The process is not attached to any terminal and survives exec-client disconnect.
-func (s *Substrate) ExecBackground(ctx context.Context, h substrate.NodeHandle, req substrate.ExecRequest) (int, error) {
-	conn, err := s.Connection(h, nil)
-	if err != nil {
-		return 0, err
-	}
-	handle, err := conn.(substrate.ConnectionStarter).Start(ctx, req)
-	return handle.PID, err
-}
-
 func (c *dockerConn) Start(ctx context.Context, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
 	ctx, cancel := req.Context(ctx)
 	defer cancel()
@@ -337,57 +325,29 @@ func (c *dockerConn) Start(ctx context.Context, req substrate.ExecRequest) (subs
 	if err := c.sub.validateManagedHandle(ctx, &target); err != nil {
 		return substrate.ExecutionHandle{}, err
 	}
-	handle := substrate.ExecutionHandle{NodeID: target.ID, Generation: target.Generation}
-	cmd, err := transport.CommandArgv(req)
-	if err != nil {
-		return handle, err
-	}
-	if req.Stdin != nil {
-		return handle, fmt.Errorf("background stdin: %w", substrate.ErrNotSupported)
-	}
-	envs := util.EnvToSlice(req.Environment)
+	return transport.NewTaskClient(c, c.handle.ID, target.Generation).Start(ctx, req)
+}
 
-	ex, err := c.sub.cli.ContainerExecCreate(ctx, target.ID, container.ExecOptions{
-		Cmd:          cmd,
-		Env:          envs,
-		WorkingDir:   req.WorkingDir,
-		Detach:       true,
-		AttachStdout: false,
-		AttachStderr: false,
-	})
-	if err != nil {
-		return handle, fmt.Errorf("exec create (background): %w", err)
-	}
-	handle.ID = ex.ID
-
-	if err := c.sub.cli.ContainerExecStart(ctx, ex.ID, container.ExecStartOptions{Detach: true}); err != nil {
-		return handle, fmt.Errorf("exec start (background): %w", err)
-	}
-
-	// Docker daemon creates the detached exec process asynchronously;
-	// an immediate inspect may return Pid=0. Poll until the process
-	// is either running with a real PID or has already exited.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		inspect, err := c.sub.cli.ContainerExecInspect(ctx, ex.ID)
-		if err != nil {
-			return handle, fmt.Errorf("exec inspect (background): %w", err)
-		}
-		pid, complete, err := backgroundExecStatus(inspect)
-		if err != nil {
-			return handle, err
-		}
-		if complete {
-			handle.PID = pid
-			return handle, nil
-		}
-		select {
-		case <-ctx.Done():
-			return handle, ctx.Err()
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	return handle, fmt.Errorf("exec background: timed out waiting for PID")
+func (c *dockerConn) tasks() *transport.TaskClient {
+	return transport.NewTaskClient(c, c.handle.ID, c.handle.Generation)
+}
+func (c *dockerConn) ObserveExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.ExecResult, error) {
+	return c.tasks().ObserveExecution(ctx, h)
+}
+func (c *dockerConn) CancelExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.RemoteTermination, error) {
+	return c.tasks().CancelExecution(ctx, h)
+}
+func (c *dockerConn) ReadExecutionOutput(ctx context.Context, h substrate.ExecutionHandle, s string, p int64, n int) (substrate.ExecutionOutput, error) {
+	return c.tasks().ReadExecutionOutput(ctx, h, s, p, n)
+}
+func (c *dockerConn) ListExecutions(ctx context.Context) ([]substrate.ExecutionHandle, error) {
+	return c.tasks().ListExecutions(ctx)
+}
+func (c *dockerConn) RenewExecution(ctx context.Context, h substrate.ExecutionHandle) error {
+	return c.tasks().RenewExecution(ctx, h)
+}
+func (c *dockerConn) GuestTaskBootID(ctx context.Context) (string, error) {
+	return c.tasks().GuestTaskBootID(ctx)
 }
 
 // foregroundExecStatus reports the exit code of an exec whose streams have been
@@ -398,25 +358,12 @@ func (c *dockerConn) Start(ctx context.Context, req substrate.ExecRequest) (subs
 // frame boundary and StdCopy reports a clean EOF. inspect.ExitCode is then just
 // its zero value, so trusting it would report exit 0 together with a truncated
 // body, and an assertion on exit_code == 0 would pass on a command that never
-// finished. Refuse instead, the way backgroundExecStatus already does.
+// finished. Refuse rather than inventing an exit status.
 func foregroundExecStatus(inspect container.ExecInspect) (int, error) {
 	if inspect.Running {
 		return 0, fmt.Errorf("exec stream ended while the process is still running; output is incomplete")
 	}
 	return inspect.ExitCode, nil
-}
-
-func backgroundExecStatus(inspect container.ExecInspect) (int, bool, error) {
-	if !inspect.Running {
-		if inspect.ExitCode != 0 {
-			return 0, true, fmt.Errorf("exec background exited with code %d", inspect.ExitCode)
-		}
-		return inspect.Pid, true, nil
-	}
-	if inspect.Pid != 0 {
-		return inspect.Pid, true, nil
-	}
-	return 0, false, nil
 }
 
 // GetContainerIP returns the container's IP address on its first Docker-managed
