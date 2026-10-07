@@ -645,8 +645,11 @@ func (opts Options) ReportRunComplete(ctx context.Context, run *controlplane.Run
 	if projection.AgentID == "" {
 		projection.AgentID = opts.ID
 	}
+	reported := *run
+	reported.Cleanup = nil
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/complete", controlplane.RunCompletion{
-		Run:        *run,
+		Cleanup:    run.Cleanup,
+		Run:        reported,
 		Projection: projection,
 	}, nil)
 }

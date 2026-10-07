@@ -39,7 +39,7 @@ func InstallFile(ctx context.Context, conn substrate.Connection, src, dst string
 		return fmt.Errorf("install guest file: %w", err)
 	}
 	if !result.ExitCodeKnown || result.ExitCode != 0 {
-		return fmt.Errorf("guest file installation did not return a known successful result")
+		return fmt.Errorf("guest file installation did not return a known successful result (known=%t exit=%d): %s", result.ExitCodeKnown, result.ExitCode, result.Stderr)
 	}
 	return nil
 }

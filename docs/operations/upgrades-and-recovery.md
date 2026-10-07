@@ -40,7 +40,7 @@ API 重启后，带 Idempotency-Key 的活跃 Apply 若缺敏感输入，claim �
 
 优先使用 action journal 恢复与经过身份验证的 provider delete。手工清理只能在完整记录 ownership evidence、external ID 和依赖后进行，并且不能扩大到名称相似的非受管对象。
 
-远端 topology 有 placement 时，普通 metadata DELETE 返回409；API 不用本地空 state 或单独的 Destroy终态推断远端已空。完成远端清理并自行核对证据后，当前需要显式 `force=true` 删除元数据。force 不删除远端资源，活跃 Run/NodeOperation 或本地未完成 journal 仍会阻止删除。
+远端 topology 的正常流程是：owning Agent 完成 Destroy并提交持久cleanup回执，再执行普通metadata DELETE。回执绑定topology UID、state serial、Run轮次和租约；API重启后仍可使用。新操作或placement重绑会使旧回执失效。旧Destroy终态没有回执时不能补造证明，需要新一轮可验证Destroy；Agent丢失state则拒绝出具回执，须人工核对实际资源。force只删除metadata，活跃操作与本地未完成journal仍阻止删除。
 
 ## Compose 维护
 

@@ -327,8 +327,11 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 		unlock := s.lockAdmission(topology)
 		defer unlock()
 	}
+	var runs []controlplane.Run
+	var nodeOperations []controlplane.NodeOperation
 	if s.loadRuns != nil {
-		runs, err := s.loadRuns(ctx)
+		var err error
+		runs, err = s.loadRuns(ctx)
 		if err != nil {
 			return fmt.Errorf("read active operations: %w", err)
 		}
@@ -339,11 +342,12 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 		}
 	}
 	if s.loadNodeOperations != nil {
-		operations, err := s.loadNodeOperations(ctx, "")
+		var err error
+		nodeOperations, err = s.loadNodeOperations(ctx, "")
 		if err != nil {
 			return fmt.Errorf("read active node operations: %w", err)
 		}
-		for _, op := range operations {
+		for _, op := range nodeOperations {
 			if op.Topology == topology && op.Status != controlplane.NodeOperationStatusDone && op.Status != controlplane.NodeOperationStatusFailed {
 				return fmt.Errorf("%w: topology has an active node operation; metadata cannot be deleted", persistence.ErrConflict)
 			}
@@ -354,7 +358,12 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 		return err
 	}
 	if placement != nil && !force {
-		return fmt.Errorf("%w: owning-agent absence is not verified; complete resource teardown on agent %q, then use force=true only to explicitly discard metadata (remote resources are not removed)", persistence.ErrConflict, placement.AgentID)
+		if s.loadRuns == nil || s.loadNodeOperations == nil {
+			return fmt.Errorf("%w: cleanup evidence store unavailable", persistence.ErrConflict)
+		}
+		if receipt, reason := currentCleanupReceipt(topology, placement, runs, nodeOperations); receipt == nil {
+			return fmt.Errorf("%w: owning-agent cleanup is not verified (%s); complete resource teardown on agent %q or use force=true only to explicitly discard metadata (remote resources are not removed)", persistence.ErrConflict, reason, placement.AgentID)
+		}
 	}
 	unlock, err := s.lockPublication(ctx, topology)
 	if err != nil {

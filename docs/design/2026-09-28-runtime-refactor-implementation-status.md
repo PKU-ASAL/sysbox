@@ -52,7 +52,7 @@ keyed Apply 后 workspace 当前指针可以不存在；活跃操作列表从 du
 | Inventory/projection | 信息性快照，共享校验与原子文件替换；没有生产者 epoch/sequence，不作为所有权或外部不存在证明 |
 | 清理检查完整性 | active_operation_kinds 只含 Run/NodeOperation；guest execution/file 不在该列表；列表和 lifecycle 不是同一跨仓储事务 |
 | 外部不存在判定 | cleanup-inspection 不执行 provider 查询；远端未观察时明确 owning_agent_not_observed。metadata 删除仍必须通过 repository CAS/journal 校验 |
-| 远端 metadata 删除 | 有 placement 时普通删除409，完成 Destroy 的状态本身不替代持久空状态证明。当前须显式 force，仅删除元数据；活跃 Run/NodeOperation 与本地未完成 journal 仍阻止删除 |
+| 远端 metadata 删除 | 最新 Destroy 的持久回执绑定 owning Agent、topology UID、state serial、Run轮次与租约；当前placement匹配且无后续操作时支持普通删除。缺回执仍409；force仅删除元数据，活跃操作与本地未完成journal仍阻止删除 |
 | sysbox_ssh_access | 保留识别/诊断，Create/Read/Delete 明确 Unsupported；已删除不可验证的安装/启动脚本和仅删除 state 的假清理 |
 | Import / 自动 GC | 未实现 ownership adoption；import 派发前拒绝。GC 只允许可信 OwnerUID 范围的 dry-run |
 | State 运维 | aggregate backend 未支持 snapshot/restore、lock inspection、force-unlock；HTTP501，不能返回空成功 |
@@ -76,5 +76,11 @@ keyed Apply 后 workspace 当前指针可以不存在；活跃操作列表从 du
 新增 `make test-remote-docker-fault-e2e` 使用生产 HTTP/WebSocket Agent、真实 Docker 和分离的 API/Agent SQLite repository：完成已持久化后丢弃 HTTP 回执，重建 API/Agent，原请求重放仍为同一 Run/唯一容器；旧 claim/完成409，远端 Observe 返回同一 UID/generation。它使用同一宿主共享 immutable snapshot 文件，API 是对象重建，不是 OS SIGKILL；不称为跨宿主 HA 或所有 provider 故障矩阵验收。
 
 真实 Firecracker 生命周期测试新增 stdin 与文件校验往返；controller crash/reset/跨进程恢复测试独立保留。传输的取消只保证解除本地等待，除明确远端证明外不宣称远端进程终止。
+
+销毁回执由Agent在topology锁内对state+journal原子检查后生成；零serial/丢失state、剩余资源、未完成或较新action均拒绝。API在同一Run完成事务中核对租约并保存回执；SaveRun/Restart/outbox不能伪造，终态重试不能追加或改写。新Run、NodeOperation或placement重绑使旧回执失效。真实Docker销毁→API重建→无force metadata删除已通过。
+
+顺序核查补强：Agent pause/resume在构造provider handle前核对已派发命令的UID/generation，并在state读取至effect完成期间持有topology锁；迟到旧代不能借当前handle操作新节点。Agent旧import直接SaveState执行链已删除。远端缺失snapshot不再回退可变workspace，CLI显式选择的本地配置入口保留。
+
+本轮KVM恢复测试通过；文件安装出现过一次非成功结果。增加退出诊断后单次与连续8轮生命周期复测通过，但原因未定位，仍作为已知偶发问题记录，不宣称已修复。
 
 后续独立项目：资源端同代租约撤销、多宿主故障矩阵、durable guest task 协议、显式 ownership adoption、完整 guest SSH access 管理。它们不通过兼容回退或下游业务逻辑代替。

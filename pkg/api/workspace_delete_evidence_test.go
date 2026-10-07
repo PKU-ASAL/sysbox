@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRemoteMetadataDeleteRequiresExplicitForceEvenAfterDestroy(t *testing.T) {
+func TestRemoteMetadataDeleteRequiresReceiptOrExplicitForce(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	ctx := context.Background()
 	w := s.workspaceService()

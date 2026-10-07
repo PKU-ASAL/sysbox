@@ -63,6 +63,11 @@ type ActionRepository interface {
 	CommitActionOutcome(context.Context, ActionRecord, *StatePatch) error
 }
 
+// CleanupProver reads state and journal atomically after a managed destroy.
+type CleanupProver interface {
+	ProveCleanup(context.Context, controlplane.Run) (*controlplane.CleanupReceipt, error)
+}
+
 // ResourceDiscoverer must make a bounded external query. State absence alone
 // is never evidence that creation is safe. Present results require a complete
 // managed identity; ambiguous/unowned matches return unknown or an error.

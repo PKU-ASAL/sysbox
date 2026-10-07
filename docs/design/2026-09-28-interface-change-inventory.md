@@ -444,6 +444,10 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（2026-10-07 destroy receipt）：`RunCompletion.cleanup`携带owning Agent的原子空状态/journal证明；有效完成事务写入`Run.cleanup`，全量记录后端原样保存。证明绑定topology UID、正state serial、Agent、Run轮次、attempt/lease owner。普通metadata删除接受当前placement对应的最新Destroy回执；新操作/重绑失效，旧无回执终态不升级为证明。`runtime.CleanupProver`是可选原子仓储证明端口；leased Agent Destroy缺该能力时拒绝出具成功清理证明。
+
+Agent pause/resume要求完整ActionID、目标UID/generation，构造handle前拒绝旧代或缺失证明；旧import命令在读取state前Unsupported。远端Run缺SnapshotPath不再读取当前workspace作为替代，须以固定revision重新受理。
+
 实施补充（2026-10-07 通用控制面收口）：Apply 新增持久 `Idempotency-Key` 受理，保持执行轮次 command ID；GET Run 增加 `inputs_required`，claim503可重试但queued_at/revision必填，旧轮次409。keyed Apply 的 immutable snapshot 是执行/预检依据，不改 mutable workspace；任意 revision 标签拒绝。capabilities 使用 `sysbox-runtime-v1`，不绑定下游业务。cleanup-inspection 是 state+journal/操作证据查询，external_presence=unknown，不签发“空 state 即已清理”的回执。
 
 内部 `agentexec.Bridge.Preflight` 接受 `*Run`，只能使用固定 SnapshotPath。SQLite schema 不自动补列，Run/command/event 缺完整记录要求重建。State snapshot/lease 操作不支持时HTTP501；SSHAccess Create/Delete明确拒绝，旧安装脚本与仅删state的假清理移除。

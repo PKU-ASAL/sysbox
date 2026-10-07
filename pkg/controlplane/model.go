@@ -76,6 +76,7 @@ type Run struct {
 	// (nil when the run evaluated no checks). It is in-memory state feeding the
 	// topology's Asserted condition; it is recomputed by the next apply.
 	Assertion *AssertionResult `json:"assertion,omitempty"`
+	Cleanup   *CleanupReceipt  `json:"cleanup,omitempty"`
 	// Inputs are the apply-time variable values. They are transient: carried in
 	// the run dispatch so the agent can bind var.<name>, but not durably
 	// persisted, so a sensitive input's plaintext does not survive the run.
@@ -86,8 +87,9 @@ type Run struct {
 }
 
 type RunCompletion struct {
-	Run        Run        `json:"run"`
-	Projection Projection `json:"projection,omitempty"`
+	Cleanup    *CleanupReceipt `json:"cleanup,omitempty"`
+	Run        Run             `json:"run"`
+	Projection Projection      `json:"projection,omitempty"`
 }
 
 type RunStatus string

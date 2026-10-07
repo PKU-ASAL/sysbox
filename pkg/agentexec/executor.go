@@ -81,9 +81,8 @@ type Executor struct {
 	bridge Bridge
 }
 
-// hclFileForRun prefers the immutable revision snapshot attached to a run.
-// Bridges that predate snapshots retain the topology path as a compatibility
-// fallback for queued legacy runs.
+// Remote runs require their dispatched immutable snapshot. Standalone CLI
+// bridges may provide an explicitly selected local configuration source.
 type runWorkspaceBridge interface {
 	HCLFileForRun(*controlplane.Run) string
 }
@@ -97,7 +96,7 @@ func (e *Executor) hclFileForRun(run *controlplane.Run) string {
 			return path
 		}
 	}
-	return e.bridge.HCLFile(run.Topology)
+	return ""
 }
 
 func NewExecutorWithBridge(bridge Bridge) *Executor {
@@ -119,6 +118,7 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	}
 	e.bridge.AttachRun(run)
 	log := e.bridge.LogWriter(run.ID)
+	var cleanup *controlplane.CleanupReceipt
 	switch run.Op {
 	case "apply", "repair":
 		if run.ParentID != "" {
@@ -138,10 +138,10 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 				e.bridge.Finish(run, err)
 				break
 			}
-			e.executeResumeDestroy(ctx, parent, run, log)
+			cleanup = e.executeResumeDestroy(ctx, parent, run, log)
 			break
 		}
-		e.executeDestroy(ctx, run, log)
+		cleanup = e.executeDestroy(ctx, run, log)
 	case "reset":
 		var parent *controlplane.Run
 		if run.ParentID != "" {
@@ -156,7 +156,9 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	default:
 		e.bridge.Finish(run, fmt.Errorf("unsupported run op %q", run.Op))
 	}
-	e.reportCompletion(ctx, run)
+	report := *run
+	report.Cleanup = cleanup
+	e.reportCompletion(ctx, &report)
 }
 
 func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.Run, log io.Writer) {
@@ -416,39 +418,39 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
 }
 
-func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, log io.Writer) {
+func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, log io.Writer) *controlplane.CleanupReceipt {
 	unlock := e.bridge.LockTopology(run.Topology)
 	defer unlock()
 
 	if err := ctx.Err(); err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	mgr, err := e.bridge.StateManager(run.Topology)
 	if err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	mgr.AllowUnsafeMutation(run.UnsafeState)
 	if err := mgr.CheckMutationSafety(); err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	st, err := mgr.Load()
 	if err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	plan := defaultDestroyPlan(st)
 	if hook, ok := e.bridge.(DestroyHook); ok {
 		plan, err = hook.BuildDestroyPlan(st)
 		if err != nil {
 			e.bridge.Finish(run, err)
-			return
+			return nil
 		}
 		if err := hook.BeforeDestroy(plan); err != nil {
 			e.bridge.Finish(run, err)
-			return
+			return nil
 		}
 	}
 	exec := runtime.NewExecutor(graph.New(), st)
@@ -467,34 +469,59 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	}
 	if err := e.installActionRepository(exec, run.Topology); err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	if err := exec.Destroy(ctx, plan); err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		recorder.Finish(err)
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	recorder.SetStateSerialAfter(st.Meta.Serial)
 	recorder.MarkResourceStateRecorded()
 	if err := recorder.Err(); err != nil {
 		recorder.Finish(err)
 		e.bridge.Finish(run, err)
-		return
+		return nil
+	}
+	var proof *controlplane.CleanupReceipt
+	if run.AgentID != "" && run.Attempt > 0 && run.LeaseOwner != "" {
+		proof, err = e.proveCleanup(ctx, *run)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return nil
+		}
 	}
 	_, _ = log.Write([]byte("Destroy complete.\n"))
 	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
+	return proof
 }
 
 func (e *Executor) executeResumeApply(ctx context.Context, parent, run *controlplane.Run, log io.Writer) {
 	e.executeApply(ctx, run, log)
 }
 
-func (e *Executor) executeResumeDestroy(ctx context.Context, parent, run *controlplane.Run, log io.Writer) {
-	e.executeDestroy(ctx, run, log)
+func (e *Executor) executeResumeDestroy(ctx context.Context, parent, run *controlplane.Run, log io.Writer) *controlplane.CleanupReceipt {
+	return e.executeDestroy(ctx, run, log)
+}
+
+func (e *Executor) proveCleanup(ctx context.Context, run controlplane.Run) (*controlplane.CleanupReceipt, error) {
+	provider, ok := e.bridge.(ActionRepositoryProvider)
+	if !ok {
+		return nil, fmt.Errorf("cleanup proof requires atomic action repository")
+	}
+	repo, err := provider.ActionRepository(run.Topology)
+	if err != nil {
+		return nil, err
+	}
+	prover, ok := repo.(runtime.CleanupProver)
+	if !ok {
+		return nil, fmt.Errorf("cleanup proof is unsupported by action repository")
+	}
+	return prover.ProveCleanup(ctx, run)
 }
 
 func defaultDestroyPlan(st *state.State) *runtime.Plan {

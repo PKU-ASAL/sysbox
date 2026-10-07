@@ -109,5 +109,17 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		result["agent_id"] = placement.AgentID
 	}
 	result["active_operation_kinds"] = []string{"run", "node_operation"}
+	receipt, reason := currentCleanupReceipt(topology, placement, runs, nodes)
+	result["cleanup_receipt_status"] = reason
+	if receipt != nil {
+		result["cleanup_receipt"] = receipt
+		result["cleanup_receipt_source"] = "owning_agent_durable_destroy_completion"
+		if len(actions) > 0 {
+			result["cleanup_receipt_status"] = "blocked_by_local_journal"
+		}
+		if len(resources) > 0 {
+			result["cleanup_receipt_status"] = "blocked_by_local_resources"
+		}
+	}
 	writeJSON(w, http.StatusOK, result)
 }

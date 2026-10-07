@@ -66,10 +66,7 @@ func (b *ExecutionBridge) HCLFileForRun(run *controlplane.Run) string {
 	if run != nil && run.SnapshotPath != "" {
 		return run.SnapshotPath
 	}
-	if run == nil {
-		return ""
-	}
-	return b.HCLFile(run.Topology)
+	return ""
 }
 
 func (b *ExecutionBridge) Topologies(ctx context.Context) []string {

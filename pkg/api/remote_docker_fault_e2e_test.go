@@ -273,5 +273,49 @@ resource "sysbox_node" "%s" {
 		}
 	}
 	require.True(t, observed, "owning-agent live observation must identify the exact Docker container")
+	drop.Store(true)
+	status, raw = request("POST", "/v1/topologies/"+topology+"/destroy", nil, "destroy-one")
+	require.Equal(t, 202, status, string(raw))
+	var destruction map[string]any
+	require.NoError(t, json.Unmarshal(raw, &destruction))
+	destroyID := destruction["run_id"].(string)
+	var destroyed *controlplane.Run
+	require.Eventually(t, func() bool {
+		r, err := current.Load().apiStore.GetRun(ctx, destroyID)
+		if err != nil || !r.Status.IsTerminal() {
+			return false
+		}
+		destroyed = r
+		return true
+	}, 20*time.Second, 50*time.Millisecond)
+	require.Equal(t, controlplane.RunDone, destroyed.Status, destroyed.Err)
+	require.NotNil(t, destroyed.Cleanup, "destroy completion must persist an owning-agent empty-state receipt")
+	select {
+	case report := <-lost:
+		require.Equal(t, destroyID, report.Run.ID)
+		require.NotNil(t, report.Cleanup)
+	case <-ctx.Done():
+		t.Fatal("destroy completion response was not dropped")
+	}
+	require.Equal(t, initial.TopologyUID, destroyed.Cleanup.TopologyUID)
+	require.Greater(t, destroyed.Cleanup.StateSerial, int64(0))
+	instances, err = cli.ContainerList(ctx, container.ListOptions{All: true, Filters: owned})
+	require.NoError(t, err)
+	require.Empty(t, instances)
+	// A cold API must use the persisted receipt, not a memory projection.
+	third := NewServerWithConfig(cfg)
+	require.NoError(t, third.initErr)
+	current.Store(third)
+	select {
+	case <-acknowledged:
+	case <-time.After(10 * time.Second):
+		t.Fatal("destroy receipt retry was not acknowledged after API restart")
+	}
+	status, raw = request("DELETE", "/v1/topologies/"+topology, nil, "")
+	require.Equal(t, 200, status, string(raw))
+	placement, err := third.workspaceService().loadPlacement(topology)
+	require.NoError(t, err)
+	require.Nil(t, placement)
 	t.Logf("real agent created %s; completion acknowledgment lost; restarted API replay retained run %s and one container; stale claim/report rejected", externalID, runID)
+	t.Log("owning-agent destroy committed cleanup receipt; cold API deleted metadata without force")
 }

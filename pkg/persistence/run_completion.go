@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"time"
 )
 
 // CompleteRun merges only result fields under the same lock that checks the
@@ -16,6 +17,9 @@ func (r *RunRepository) CompleteRun(ctx context.Context, agent, id string, repor
 		return nil, false, ErrInvalidRecord
 	}
 	incoming := report.Run
+	if incoming.Cleanup != nil && !sameCleanupReceipt(incoming.Cleanup, report.Cleanup) {
+		return nil, false, ErrConflict
+	}
 	if incoming.ID != "" && incoming.ID != id || incoming.AgentID != "" && incoming.AgentID != agent || !incoming.Status.IsTerminal() {
 		return nil, false, ErrConflict
 	}
@@ -35,6 +39,9 @@ func (r *RunRepository) CompleteRun(ctx context.Context, agent, id string, repor
 			return nil, ErrConflict
 		}
 		if current.Status.IsTerminal() {
+			if !sameCleanupReceipt(current.Cleanup, report.Cleanup) {
+				return nil, ErrConflict
+			}
 			if incoming.Assertion != nil {
 				a, ea := json.Marshal(current.Assertion)
 				b, eb := json.Marshal(incoming.Assertion)
@@ -62,6 +69,13 @@ func (r *RunRepository) CompleteRun(ctx context.Context, agent, id string, repor
 		}
 		if incoming.Assertion != nil {
 			current.Assertion = incoming.Assertion
+		}
+		if report.Cleanup != nil {
+			if ValidateCleanupReceipt(current, report.Cleanup) != nil || report.Cleanup.ObservedAt.After(now.Add(5*time.Second)) {
+				return nil, ErrConflict
+			}
+			proof := *report.Cleanup
+			current.Cleanup = &proof
 		}
 		current = DurableRun(current)
 		return &current, nil

@@ -44,6 +44,10 @@ func NormalizeRun(run *controlplane.Run) {
 func DurableRun(run controlplane.Run) controlplane.Run {
 	NormalizeRun(&run)
 	run.Inputs = nil
+	if run.Cleanup != nil {
+		proof := *run.Cleanup
+		run.Cleanup = &proof
+	}
 	return run
 }
 
@@ -100,12 +104,18 @@ func (r *RunRepository) SaveRun(ctx context.Context, run controlplane.Run) error
 	}
 	_, err := r.storage.UpdateRun(ctx, run.ID, func(current *controlplane.Run) (*controlplane.Run, error) {
 		if current == nil {
+			if run.Cleanup != nil {
+				return nil, ErrConflict
+			}
 			return &run, nil
 		}
 		if err := validateLeaseRun(run.ID, *current); err != nil {
 			return nil, err
 		}
 		old := DurableRun(*current)
+		if !sameCleanupReceipt(old.Cleanup, run.Cleanup) {
+			return nil, ErrConflict
+		}
 		if old.RequestFingerprint != run.RequestFingerprint {
 			return nil, ErrConflict
 		}
@@ -151,6 +161,9 @@ func (r *RunRepository) RestartRun(ctx context.Context, next controlplane.Run) (
 		return nil, err
 	}
 	next = DurableRun(next)
+	if next.Cleanup != nil {
+		return nil, ErrConflict
+	}
 	if validateLeaseRun(next.ID, next) != nil || next.Status != controlplane.RunQueued || next.Operation != "apply" || next.OperationKey == "" || next.QueuedAt.IsZero() || next.Attempt != 0 || !next.LeaseUntil.IsZero() {
 		return nil, ErrInvalidRecord
 	}

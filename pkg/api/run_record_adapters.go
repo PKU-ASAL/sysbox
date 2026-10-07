@@ -150,6 +150,7 @@ func sameSQLiteRunColumns(indexed, full controlplane.Run) bool {
 		run.ProjectID = ""
 		run.Workspace = ""
 		run.Assertion = nil
+		run.Cleanup = nil
 		run.Inputs = nil
 		run.QueuedAt = run.QueuedAt.UTC()
 		run.AssignedAt = run.AssignedAt.UTC()
