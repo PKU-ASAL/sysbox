@@ -77,7 +77,92 @@ func (s *Server) registerExecutionGrantRoutes() {
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/inspect", s.handleInspectExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/authorize", s.handleHostAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/hosts/{agent}/execution-grants/stopped", s.handleStoppedExecutionGrant)
+	s.mux.HandleFunc("POST /v1/hosts/{agent}/runs/{run}/completed", s.handleHostRunCompletion)
 	s.mux.HandleFunc("POST /v1/hosts/{agent}/node-operations/{operation}/completed", s.handleHostNodeOperationCompletion)
+}
+
+type hostRunCompletion struct {
+	Receipt  controlplane.SignedExecutionStopReceipt `json:"receipt"`
+	Evidence json.RawMessage                         `json:"evidence"`
+}
+
+// handleHostRunCompletion is the host-owned completion boundary for remote
+// apply/destroy. The worker cannot manufacture a terminal Run: the signed host
+// receipt, durable command identity and the current run lease must all agree.
+func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request) {
+	agentID, runID := r.PathValue("agent"), r.PathValue("run")
+	if err := validatePathSegment(agentID, "agent"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validatePathSegment(runID, "run"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var body hostRunCompletion
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	key := s.grantHostKeys[agentID]
+	grant := body.Receipt.Grant
+	if grant.AgentID != agentID || grant.ActionID != runID || (grant.Operation != "run_apply" && grant.Operation != "run_destroy") || controlplane.VerifyExecutionStopReceipt(key, body.Receipt) != nil {
+		writeError(w, http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
+		return
+	}
+	run, err := s.apiStore.GetRun(r.Context(), runID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	commands, err := s.apiStore.ListAgentCommands(r.Context(), agentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	var command *controlplane.AgentCommand
+	for i := range commands {
+		if commands[i].ID == grant.CommandID {
+			command = &commands[i]
+			break
+		}
+	}
+	if command == nil || command.Type != "run_assigned" || command.Run == nil || command.Run.ID != runID || command.TopologyUID != grant.Scope.TopologyUID || command.ActionID != grant.ActionID || command.ResourceUID != grant.Scope.ResourceUID || command.Generation != grant.Scope.Generation {
+		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		return
+	}
+	rawReceipt, err := json.Marshal(body.Receipt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	receiptHash := sha256.Sum256(rawReceipt)
+	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	if err := authority.ValidateHostStop(r.Context(), body.Receipt.Grant, hex.EncodeToString(receiptHash[:])); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	var observed controlplane.Run
+	if err := json.Unmarshal(body.Evidence, &observed); err != nil || observed.ID != runID || !observed.Status.IsTerminal() {
+		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		return
+	}
+	completion := controlplane.RunCompletion{Run: *run}
+	completion.Run.Status = observed.Status
+	completion.Run.Err = observed.Err
+	completion.Run.EndedAt = observed.EndedAt
+	completion.Run.Cleanup = observed.Cleanup
+	completion.Cleanup = observed.Cleanup
+	completed, err := s.agentService().CompleteRun(agentID, runID, completion)
+	if err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
+	if err := authority.AcceptHostStop(r.Context(), body.Receipt.Grant, hex.EncodeToString(receiptHash[:])); err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, completed)
 }
 
 // Host authorization consumes a signed existing grant. It never renews or

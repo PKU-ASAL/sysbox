@@ -98,7 +98,10 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	dispatcher := &hostsupervisor.Dispatcher{Root: cfg.HostSupervisor.Root, AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	power := &hostsupervisor.PowerDispatcher{Root: filepath.Join(cfg.HostSupervisor.Root, "power"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.ResolveNode, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	files := &hostsupervisor.FileDispatcher{Dispatcher: &hostsupervisor.Dispatcher{Root: filepath.Join(cfg.HostSupervisor.Root, "files"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}, Fetch: authority.FetchFile}
-	runCoordinator := &hostsupervisor.RunCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "runs"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, Authorize: authority.Authorize}
+	runCoordinator := &hostsupervisor.RunCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "runs"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Authorize: authority.Authorize}
+	runCoordinator.Report = func(ctx context.Context, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {
+		return authority.ReportRun(ctx, receipt.Grant.ActionID, receipt, evidence)
+	}
 	server := hostsupervisor.Server{Socket: cfg.HostSupervisor.Socket, GroupID: cfg.HostSupervisor.WorkerGroupID, Dispatcher: dispatcher, Power: power, Files: files, OnRecoveryError: func(err error) { fmt.Fprintf(cmd.ErrOrStderr(), "host supervisor reconciliation: %v\n", err) }}
 	server.Runs = runCoordinator
 	server.RunEffect = func(ctx context.Context, req hostsupervisor.RunRequest) (json.RawMessage, error) {

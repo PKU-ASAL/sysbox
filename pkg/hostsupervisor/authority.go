@@ -60,6 +60,13 @@ func (c AuthorityClient) ReportStop(ctx context.Context, receipt controlplane.Si
 	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/execution-grants/stopped", receipt, false)
 }
 
+func (c AuthorityClient) ReportRun(ctx context.Context, runID string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {
+	if runID == "" || strings.ContainsAny(runID, "/\\?#\x00") {
+		return fmt.Errorf("invalid run ID")
+	}
+	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/runs/"+runID+"/completed", map[string]any{"receipt": receipt, "evidence": evidence}, false)
+}
+
 func (c AuthorityClient) ReportNodeOperation(ctx context.Context, operation string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {
 	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/node-operations/"+operation+"/completed", map[string]any{"receipt": receipt, "evidence": evidence}, false)
 }

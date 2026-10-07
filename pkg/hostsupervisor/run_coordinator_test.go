@@ -66,3 +66,28 @@ func TestRunCoordinatorHistoricalReadSurvivesHostRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"observed":true}`, string(raw))
 }
+
+func TestRunCoordinatorPersistsAndReportsHostReceipt(t *testing.T) {
+	pub, issuer, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	req := RunRequest{RunID: "run-receipt", Topology: "lab", TopologyUID: "uid", Revision: "rev", ActionID: "action-receipt", ResourceUID: "resource", Generation: 1, Action: "apply", Target: "sysbox_node.web", ExpectedSerial: 1}
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	grant := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "uid", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: req.ActionID, CommandID: "command", Attempt: 1, Epoch: 1, Operation: "run_apply", Digest: digest, State: controlplane.GrantActive, TargetBootID: "host", ExpiresAt: time.Now().Add(time.Minute)}
+	signed, err := controlplane.SignExecutionGrant(issuer, grant, "host", time.Now())
+	require.NoError(t, err)
+	var reported controlplane.SignedExecutionStopReceipt
+	root := t.TempDir()
+	require.NoError(t, os.Chmod(root, 0700))
+	c := &RunCoordinator{Root: root, IssuerKey: pub, HostKey: hostKey, HostBootID: "host", AgentID: "agent", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }, Report: func(_ context.Context, receipt controlplane.SignedExecutionStopReceipt, _ json.RawMessage) error {
+		reported = receipt
+		return nil
+	}}
+	raw, err := c.Start(context.Background(), req, signed, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{"status":"done"}`), nil })
+	require.NoError(t, err)
+	require.NotEmpty(t, reported.Signature)
+	require.NoError(t, controlplane.VerifyExecutionStopReceipt(hostPub, reported))
+	require.Contains(t, string(raw), "receipt")
+}

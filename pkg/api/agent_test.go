@@ -93,7 +93,7 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 			require.Equal(t, "run_assigned", cmd.Type)
 			require.NotEmpty(t, cmd.ID)
 			require.NotNil(t, cmd.Run)
-			event = controlplane.AgentCommandEvent{CommandID: cmd.ID, Type: cmd.Type, Status: "ack"}
+			event = controlplane.AgentCommandEvent{CommandID: cmd.ID, Type: cmd.Type, Status: "ack", ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}
 			raw, _ := json.Marshal(event)
 			_ = conn.Write(context.Background(), websocket.MessageText, raw)
 		}
@@ -102,6 +102,10 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 
 	run := s.jobs.start("mixed", "apply")
 	require.NoError(t, s.scheduling().DispatchRun(context.Background(), run, []string{"docker"}))
+	queued, err := s.apiStore.ListAgentCommands(context.Background(), "host-a")
+	require.NoError(t, err)
+	require.Len(t, queued, 1)
+	require.Equal(t, run.ID, queued[0].ActionID)
 
 	select {
 	case event := <-eventCh:
