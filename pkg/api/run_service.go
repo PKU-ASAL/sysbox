@@ -200,6 +200,11 @@ func applyOperationKey(revision string, inputs map[string]string, allowUnsafe bo
 }
 
 func (s *RunService) StartRepair(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
+	if err := s.rejectActiveKeyed(ctx, topology); err != nil {
+		return nil, err
+	}
 	snapshot, err := s.snapshotForRevision(ctx, topology, req.Revision)
 	if err != nil {
 		return nil, err
@@ -217,6 +222,11 @@ func (s *RunService) StartRepair(ctx context.Context, topology string, req RunSt
 }
 
 func (s *RunService) StartReset(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
+	if err := s.rejectActiveKeyed(ctx, topology); err != nil {
+		return nil, err
+	}
 	snapshot, err := s.snapshotForRevision(ctx, topology, req.Revision)
 	if err != nil {
 		return nil, err
@@ -428,6 +438,16 @@ func (s *RunService) Resume(ctx context.Context, runID string) (*controlplane.Ru
 	parent, ok := s.jobs.get(runID)
 	if !ok {
 		return nil, nil, runError(runServiceNotFound, fmt.Errorf("run not found"))
+	}
+	unlock := s.jobs.lockTopology(parent.Topology)
+	defer unlock()
+	if err := s.rejectActiveKeyed(ctx, parent.Topology); err != nil {
+		return nil, parent, err
+	}
+	// Re-read under topology admission after waiting for any concurrent writer.
+	parent, ok = s.jobs.get(runID)
+	if !ok {
+		return nil, nil, runError(runServiceNotFound, errRunNotFound)
 	}
 	if parent.Status == controlplane.RunRunning {
 		return nil, parent, runError(runServiceConflict, fmt.Errorf("run %s is still running", runID))

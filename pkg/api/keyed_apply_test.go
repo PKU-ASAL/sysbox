@@ -320,3 +320,33 @@ func TestApplyReplayRacesCompletionWithoutRetainingInputs(t *testing.T) {
 		s.jobs.mu.RUnlock()
 	}
 }
+func TestLegacyMutationEntrypointsCannotBypassKeyedApply(t *testing.T) {
+	for _, operation := range []string{"repair", "reset", "resume"} {
+		t.Run(operation, func(t *testing.T) {
+			s := NewServer(t.TempDir(), t.TempDir())
+			registerDockerAgent(t, s)
+			rev := publishRevision(t, s, upsertApplyHCL)
+			w := keyedApply(t, s, rev, "active-key", "canary")
+			require.Equal(t, 202, w.Code)
+			var accepted struct {
+				RunID string `json:"run_id"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &accepted))
+			path := "/v1/topologies/keyed/" + operation
+			var body *bytes.Reader
+			body = bytes.NewReader([]byte(`{}`))
+			if operation == "resume" {
+				path = "/v1/runs/" + accepted.RunID + "/resume"
+			}
+			w = httptest.NewRecorder()
+			s.ServeHTTP(w, httptest.NewRequest("POST", path, body))
+			require.Equal(t, 409, w.Code, w.Body.String())
+			runs, err := s.apiStore.LoadRuns(context.Background())
+			require.NoError(t, err)
+			require.Len(t, latestRunsByID(runs), 1)
+			commands, err := s.apiStore.ListAgentCommands(context.Background(), "host-a")
+			require.NoError(t, err)
+			require.Len(t, commands, 1)
+		})
+	}
+}
