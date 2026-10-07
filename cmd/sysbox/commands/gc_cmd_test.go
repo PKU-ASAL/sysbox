@@ -59,6 +59,37 @@ func TestGCExecutePersistsUncertainDeleteBeforeReturning(t *testing.T) {
 	require.NotEmpty(t, record.Digest)
 }
 
+func TestGCExecuteDockerDeletesAndRecordsCompletion(t *testing.T) {
+	root, owner := gcInventoryFixture(t)
+	active, err := collectActiveIDsChecked(root)
+	require.NoError(t, err)
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/_ping":
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/version":
+			_, _ = w.Write([]byte(`{"ApiVersion":"1.41","Version":"test"}`))
+		case strings.Contains(r.URL.Path, "/containers/orphan") && r.Method == http.MethodDelete:
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		case strings.Contains(r.URL.Path, "/containers/orphan") && r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("DOCKER_HOST", server.URL)
+	candidate := orphan{Kind: "container", ID: "orphan", Topo: owner, OwnerUID: owner, ResourceUID: owner + "/orphan", Generation: 1, InventoryDigest: active.inventories[owner]}
+	require.NoError(t, executeOrphans(context.Background(), root, []orphan{candidate}, io.Discard))
+	require.True(t, deleted)
+	journal, err := loadGCJournal(filepath.Join(root, "_gc", "deletion-journal.json"))
+	require.NoError(t, err)
+	require.Equal(t, "complete", journal.Records["container:orphan"].Status)
+}
+
 func TestGCProtectsResourcesReferencedOnlyBySnapshot(t *testing.T) {
 	root := t.TempDir()
 	repo, err := persistence.OpenFilesystem(filepath.Join(root, "lab", "state.json.lifecycle"))
