@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
+
+var errRunNotFound = errors.New("run not found")
 
 func (s *localAPIStore) LoadRuns(_ context.Context) ([]controlplane.Run, error) {
 	var out []controlplane.Run
@@ -53,7 +56,7 @@ func (s *localAPIStore) GetRun(ctx context.Context, id string) (*controlplane.Ru
 			return &run, nil
 		}
 	}
-	return nil, fmt.Errorf("run not found")
+	return nil, errRunNotFound
 }
 
 func (s *localAPIStore) SaveRun(_ context.Context, run controlplane.Run) error {
@@ -138,7 +141,7 @@ func (s *postgresAPIStore) GetRun(ctx context.Context, id string) (*controlplane
 	var raw []byte
 	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_runs WHERE id=$1`, id).Scan(&raw)
 	if err == pgx.ErrNoRows {
-		return nil, fmt.Errorf("run not found")
+		return nil, errRunNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("postgres get run: %w", err)

@@ -418,7 +418,7 @@ func (s *sqliteAPIStore) GetRun(ctx context.Context, id string) (*controlplane.R
 	var recoverable, unsafeState int
 	if err := row.Scan(&r.ID, &r.Topology, &r.Operation, &r.Op, &r.Status, &r.Err, &r.ParentID, &r.Revision, &r.Target, &r.AgentID, &recoverable, &unsafeState, &r.OperationKey, &r.RequestFingerprint, &r.Protocol, &r.LeaseOwner, &leaseUntil, &r.Attempt, &queuedAt, &assignedAt, &startedAt, &endedAt, &deadlineAt, &r.SnapshotPath); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("run not found")
+			return nil, errRunNotFound
 		}
 		return nil, err
 	}

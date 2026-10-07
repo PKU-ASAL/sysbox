@@ -103,6 +103,9 @@ func (s *localAPIStore) ListAgentCommands(_ context.Context, agentID string) ([]
 	}
 	for _, dispatch := range dispatches {
 		cmd := dispatch.Command
+		if cmd.ID == "" {
+			continue
+		}
 		if agentID != "" && cmd.AgentID != agentID {
 			continue
 		}

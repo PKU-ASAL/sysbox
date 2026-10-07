@@ -282,3 +282,45 @@ GET  /v1/artifacts
 GET  /v1/policies
 POST /v1/policies
 ```
+
+### Durable keyed Apply and cleanup inspection
+
+Apply accepts optional `Idempotency-Key` with the existing JSON fields `revision`,
+`inputs`, `deadline_at` (absolute RFC3339 timestamp), `agent_id` and
+`allow_unsafe_state`. Keyed requests require an immutable global revision. HTTP
+202 returns the original `run_id` on every equivalent replay, even after terminal
+completion or API restart; conflicting parameters return 409. Unkeyed requests
+retain their existing behavior.
+
+GET `/v1/runs/{id}` includes `inputs_required`. An active keyed Apply with that
+field true requires the same request/key to be replayed to the agent-connected
+API to restore ephemeral inputs. No sensitive inputs are durably recorded.
+Database unavailability returns 503, not a synthetic 404.
+
+GET `/v1/topologies/{topology}/cleanup-inspection` returns:
+
+```json
+{"resources": [], "active_operations": [], "state_exists": false, "metadata_exists": false}
+```
+
+Resource entries expose only `resource`, `name`, `type`, `provider`, `external_id`
+and `status`; active operations expose `id`, `op`, `operation_key` and `status`.
+Missing topology metadata is a valid empty inspection only when authoritative
+state and operation reads succeed. Failed reads return 503. A keyed Destroy can
+return a persisted successful no-op receipt for a never-created/already-deleted
+workspace after those checks. Clients must still inspect before metadata deletion.
+
+See [durable admission design](../design/durable-apply-admission.md) for restart,
+input hydration, single-API execution and multi-instance deduplication limits.
+
+GET `/v1/capabilities` is protected by the same configured API-token middleware
+as other control-plane routes. The new protocol responds:
+
+```json
+{"protocol":"cyberfield-runtime-v1","durable_apply":true,"keyed_destroy":true,"cleanup_inspection":true,"single_api_execution":true}
+```
+
+Durable flags are advertised only for the SQLite and PostgreSQL API stores.
+Local file storage reports those two flags false. This is deployed protocol
+self-description, not transparent multi-API input recovery; clients must also
+verify the actual lifecycle protocol against their selected deployment.
