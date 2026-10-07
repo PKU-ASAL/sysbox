@@ -62,6 +62,7 @@ func TestFindDockerObjectByLabelsUsesManagedTopologyResourceLabels(t *testing.T)
 		LabelManaged:  "true",
 		LabelTopology: "mixed",
 		LabelResource: "sysbox_node.web",
+		LabelRunID:    "run-1",
 	}
 
 	var got filters.Args

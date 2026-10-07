@@ -51,3 +51,22 @@ Agent 领取 command 后 ACK、start，并 claim run lease；长操作持续 ren
 API 与 Agent 必须使用兼容 protocol。升级后确认 registration、heartbeat、capability、inventory、command stream 和一个无副作用 validate/plan，再恢复调度。
 
 Agent 的 topology state 默认位于其 workspace；迁移到另一宿主机时必须同时迁移 state/checkpoint/artifact cache 所需 identity，不能只重新注册相同名称。
+
+## Crash recovery and execution ownership
+
+Agent runs and the `_agent_commands/runs/` inbox must remain on persistent
+storage. The agent acknowledges only after local inbox fsync; run commands also
+require a durable API claim. A process restart uses a new execution incarnation,
+so it cannot renew or complete the previous process's claim. Renewal failure
+cancels the executor; lease expiry becomes a recoverable failure rather than
+reexecution. The default lease is 30 minutes plus supervisor scan latency.
+
+An inbox replay, incomplete checkpoint, missing parent, ambiguous label match or
+unknown guest effect blocks automatic resume. Inspect provider state and the
+checkpoint before taking an explicit recovery action. Do not remove the inbox
+to force a guest command to run again. Non-run commands are bounded to 30 minutes
+and expire with an explicit unknown outcome. This does not promise exactly-once
+external effects or automatic resume for arbitrary guest programs.
+
+See [agent crash fencing](../design/2026-10-07-agent-crash-fencing.md) for the
+ownership rules and verification matrix.

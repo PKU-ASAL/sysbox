@@ -75,7 +75,8 @@ type Run struct {
 	// Assertion is the outcome of the check/assert evaluation this run performed
 	// (nil when the run evaluated no checks). It is in-memory state feeding the
 	// topology's Asserted condition; it is recomputed by the next apply.
-	Assertion *AssertionResult `json:"assertion,omitempty"`
+	Assertion            *AssertionResult `json:"assertion,omitempty"`
+	CompletionProjection *Projection      `json:"completion_projection,omitempty"`
 	// Inputs are the apply-time variable values. They are transient: carried in
 	// the run dispatch so the agent can bind var.<name>, but not durably
 	// persisted, so a sensitive input's plaintext does not survive the run.
@@ -315,13 +316,14 @@ const (
 )
 
 type AgentCommandEvent struct {
-	CommandID string    `json:"command_id,omitempty"`
-	Type      string    `json:"type"`
-	AgentID   string    `json:"agent_id,omitempty"`
-	Status    string    `json:"status,omitempty"`
-	Message   string    `json:"message,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"created_at,omitempty"`
+	LeaseOwner string    `json:"lease_owner,omitempty"`
+	CommandID  string    `json:"command_id,omitempty"`
+	Type       string    `json:"type"`
+	AgentID    string    `json:"agent_id,omitempty"`
+	Status     string    `json:"status,omitempty"`
+	Message    string    `json:"message,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	CreatedAt  time.Time `json:"created_at,omitempty"`
 }
 
 type NodeOperation struct {

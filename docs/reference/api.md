@@ -136,9 +136,9 @@ complete, and fail commands on the same WebSocket; command events are persisted
 and available from `/v1/agents/{agent_id}/command-events`. Commands are
 persisted before delivery, leased with an atomic store operation before
 WebSocket delivery, replayed to reconnecting agents after lease expiry, and can
-be cancelled with `cancel_command`. Postgres stores command/run lease owner,
-lease expiry, and attempt count so multiple API replicas do not deliver or
-claim the same work concurrently. The legacy SSE command stream has been
+be cancelled with `cancel_command`. SQLite and Postgres store command/run lease owner,
+lease expiry, and attempt count with atomic ownership transitions. The supported
+deployment still uses a single API endpoint. The legacy SSE command stream has been
 removed. When a run is assigned, the API pushes a `run_assigned` command; the
 agent then claims the run through the same lease/attempt model and executes it
 on the host. While a run is active, the agent renews its run lease through
@@ -345,3 +345,18 @@ with one-second backoff and a five-minute overall bound (or the earlier run or
 caller deadline). Explicit protocol rejection is not retried. This recovers claim
 receipt delivery; it does not promise arbitrary agent-process crash resumption or
 cross-system exactly-once effects. Upgrade API and agent together.
+
+### Execution ownership and completion
+
+Run completion carries the original `lease_owner` and `attempt` returned by the
+claim. The server accepts a terminal result only while that exact lease is live;
+it atomically compares ownership and deadline with the durable record. A stale
+owner, expired lease or conflicting terminal result is rejected. The normalized resource projection is persisted with the same completion CAS. Repeating the
+same committed completion repairs its volatile projection from that durable receipt; it cannot
+replace a newer completion view with the retry body.
+
+Agent command events carry their delivery `lease_owner`. ACK is emitted after a
+durable local inbox write and, for `run_assigned`, a successful durable run claim.
+Delivery lease expiry permits retry only before execution acknowledgement. An
+acknowledged command with uncertain external effects is reported failed/unknown
+and is not automatically replayed.

@@ -23,8 +23,8 @@ func TestRunLifecycleHelpers(t *testing.T) {
 	run.MarkRunning("lease-1", 30*time.Second, now.Add(2*time.Minute))
 	require.Equal(t, RunRunning, run.Status)
 	require.Equal(t, 1, run.Attempt)
-	require.True(t, run.CanRenewLease("host-a", "lease-1"))
-	require.False(t, run.CanRenewLease("host-a", "other"))
+	require.True(t, run.CanRenewLease("host-a", "lease-1", now.Add(2*time.Minute)))
+	require.False(t, run.CanRenewLease("host-a", "other", now.Add(2*time.Minute)))
 
 	run.MarkFinished(nil, now.Add(3*time.Minute))
 	require.Equal(t, RunDone, run.Status)
@@ -62,8 +62,9 @@ func TestAgentCommandLeaseHelpers(t *testing.T) {
 
 	cmd.MarkLeased("host-a:1", time.Minute, now)
 	require.Equal(t, AgentCommandStatusLeased, cmd.Status)
-	require.False(t, cmd.IsPending())
-	require.False(t, cmd.Leasable(now.Add(2*time.Minute)))
+	require.True(t, cmd.IsPending())
+	require.False(t, cmd.Leasable(now.Add(30*time.Second)))
+	require.True(t, cmd.Leasable(now.Add(2*time.Minute)))
 
 	cmd.MarkDelivered(now.Add(2 * time.Minute))
 	require.Equal(t, AgentCommandStatusDelivered, cmd.Status)
@@ -95,4 +96,14 @@ func TestAgentCommandStatusCannotRegressAfterExecutionStarts(t *testing.T) {
 			require.Equal(t, test.allowed, CanAdvanceAgentCommandStatus(test.current, test.next))
 		})
 	}
+}
+
+func TestExpiredRunLeaseCannotRenew(t *testing.T) {
+	r := Run{AgentID: "agent", Status: RunRunning, LeaseOwner: "incarnation:claim", LeaseUntil: time.Now().Add(-time.Second)}
+	require.False(t, r.CanRenewLease("agent", "incarnation:claim", time.Now()))
+}
+
+func TestUndeliveredCommandLeaseCanBeRetriedAfterExpiry(t *testing.T) {
+	cmd := AgentCommand{ID: "cmd", Status: AgentCommandStatusLeased, LeaseOwner: "dead-stream", LeaseUntil: time.Now().Add(-time.Second)}
+	require.True(t, cmd.Leasable(time.Now()))
 }

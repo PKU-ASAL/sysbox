@@ -93,12 +93,22 @@ func (e *Executor) resolver() secret.Resolver {
 
 func (e *Executor) recordSubstep(parent int, phase string, details map[string]any, fn func() error) error {
 	step := e.recorder.SubstepStart(parent, phase, details)
+	if checked, ok := e.recorder.(interface{ Err() error }); ok {
+		if err := checked.Err(); err != nil {
+			return fmt.Errorf("pre-effect checkpoint: %w", err)
+		}
+	}
 	err := fn()
 	if err != nil {
 		e.recorder.StepFailed(step, err)
 		return err
 	}
 	e.recorder.StepDone(step)
+	if checked, ok := e.recorder.(interface{ Err() error }); ok {
+		if err := checked.Err(); err != nil {
+			return fmt.Errorf("effect receipt checkpoint: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -193,6 +203,9 @@ func (e *Executor) logf(format string, args ...any) {
 // CreateResource dispatches a node in the graph to the right provider
 // and records the result in state.
 func (e *Executor) CreateResource(ctx context.Context, id address.Address) error {
+	if err := e.effectAuthority(ctx); err != nil {
+		return err
+	}
 	node := e.graph.Get(id)
 	if node == nil {
 		return fmt.Errorf("node %s not in graph", id)
@@ -219,6 +232,9 @@ func (e *Executor) CreateResource(ctx context.Context, id address.Address) error
 
 // DestroyResource tears down a resource listed in state.
 func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error {
+	if err := e.effectAuthority(ctx); err != nil {
+		return err
+	}
 	if p, ok := GetResourceHandler(r.Address.Type); ok {
 		return p.Delete(ctx, &ProviderContext{exec: e}, r)
 	}
@@ -264,4 +280,16 @@ func expandTilde(path string) string {
 		return path
 	}
 	return home + path[1:]
+}
+
+func (e *Executor) effectAuthority(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if checked, ok := e.recorder.(interface{ Err() error }); ok {
+		if err := checked.Err(); err != nil {
+			return fmt.Errorf("pre-effect checkpoint: %w", err)
+		}
+	}
+	return nil
 }

@@ -81,6 +81,7 @@ func (s *Supervisor) Scan(ctx context.Context) {
 	now := time.Now().UTC()
 	s.server.agentService().MarkStaleOffline(ctx, now)
 	s.server.jobs.markExpiredLeases(now)
+	s.server.agentService().ReconcileLostCommands(ctx, now)
 	s.server.jobs.markConvergenceDeadlineExceeded(now, s.server.cfg.ConvergeTimeout())
 	names, err := s.server.workspaceService().Names(ctx)
 	if err != nil {
@@ -159,9 +160,12 @@ func (s *Supervisor) maybeRepair(topology string, snap *HealthSnapshot) {
 		snap.Action = "skipped_running_operation"
 		return
 	}
+	if latest := s.server.latestRun(topology); latest != nil && latest.Status == controlplane.RunFailed && latest.Recoverable {
+		snap.Action = "blocked_recovery_required"
+		return
+	}
+	// This is a fresh drift-repair decision, not a resume of a fabricated parent.
 	run := s.server.jobs.start(topology, "apply")
-	run.ParentID = "supervisor"
-	s.server.jobs.persist(run)
 	snap.Action = "restart_apply_started"
 	snap.RunID = run.ID
 	required, err := requiredCapabilitiesForTopology(s.server.workspaceService().HCLFile(topology))

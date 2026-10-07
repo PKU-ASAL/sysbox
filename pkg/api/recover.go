@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -17,10 +18,11 @@ type RecoverReport struct {
 }
 
 type RecoverAction struct {
-	Resource   string `json:"resource"`
-	ExternalID string `json:"external_id,omitempty"`
-	Status     string `json:"status"`
-	Error      string `json:"error,omitempty"`
+	Labels     map[string]string `json:"labels,omitempty"`
+	Resource   string            `json:"resource"`
+	ExternalID string            `json:"external_id,omitempty"`
+	Status     string            `json:"status"`
+	Error      string            `json:"error,omitempty"`
 }
 
 func recoverCheckpoint(ctx context.Context, store apiStore, topology, runID string, mgr *state.Manager, owner string) (*RecoverReport, error) {
@@ -37,6 +39,10 @@ func recoverCheckpoint(ctx context.Context, store apiStore, topology, runID stri
 	report := &RecoverReport{RunID: cp.RunID, Topology: cp.Topology}
 	patchRecovered := false
 	for _, step := range cp.Steps {
+		if step.Kind == "resource" && !step.StateRecorded && (step.Status != runtime.OperationDone || (step.StateResource == nil && step.Action != controlplane.PlanActionDelete && step.Action != controlplane.PlanActionRead)) {
+			report.Skipped = append(report.Skipped, RecoverAction{Resource: step.Resource, ExternalID: step.ExternalID, Labels: step.Labels, Status: "blocked_unconfirmed_effect", Error: "effect receipt incomplete; inspect provider identity before explicit recovery"})
+			continue
+		}
 		if !recoverCandidate(step) {
 			continue
 		}

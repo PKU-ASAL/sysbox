@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -416,7 +417,7 @@ UPDATE sysbox_agent_commands
 SET status=$3, lease_owner=$4, lease_until=$5, attempt=$6, data=$7::jsonb, updated_at=now()
 WHERE agent_id=$1
   AND id=$2
-  AND status IN ('queued','delivered','')
+  AND status IN ('queued','leased','delivered','')
   AND (lease_until IS NULL OR lease_until <= $8)`,
 		agentID, commandID, cmd.Status, cmd.LeaseOwner, cmd.LeaseUntil, cmd.Attempt, string(nextRaw), now)
 	if err != nil {
@@ -435,6 +436,12 @@ WHERE agent_id=$1
 }
 
 func (s *postgresAPIStore) ListAgentCommands(ctx context.Context, agentID string) ([]controlplane.AgentCommand, error) {
+	return s.listAgentCommands(ctx, agentID, nil, false)
+}
+func (s *postgresAPIStore) AgentCommandRecoveryPage(ctx context.Context, after string) ([]controlplane.AgentCommand, error) {
+	return s.listAgentCommands(ctx, "", &after, false)
+}
+func (s *postgresAPIStore) listAgentCommands(ctx context.Context, agentID string, after *string, pendingOnly bool) ([]controlplane.AgentCommand, error) {
 	conn, err := s.connect(ctx)
 	if err != nil {
 		return nil, err
@@ -445,6 +452,14 @@ func (s *postgresAPIStore) ListAgentCommands(ctx context.Context, agentID string
 	if agentID != "" {
 		query = `SELECT data::text FROM sysbox_agent_commands WHERE agent_id=$1 ORDER BY updated_at DESC LIMIT 512`
 		args = append(args, agentID)
+	}
+	if after != nil {
+		query = `SELECT data::text FROM sysbox_agent_commands WHERE id>$1 ORDER BY id LIMIT 128`
+		args = []any{*after}
+	}
+	if pendingOnly {
+		query = `SELECT data::text FROM sysbox_agent_commands WHERE agent_id=$1 AND status IN ('','queued','leased','delivered') ORDER BY updated_at,id LIMIT 512`
+		args = []any{agentID}
 	}
 	rows, err := conn.Query(ctx, query, args...)
 	if err != nil {
@@ -509,4 +524,71 @@ func (s *postgresAPIStore) GetAgentInventory(ctx context.Context, agentID string
 		return nil, err
 	}
 	return &inv, nil
+}
+
+func (s *localAPIStore) AgentCommandRecoveryPage(ctx context.Context, after string) ([]controlplane.AgentCommand, error) {
+	commands, err := s.ListAgentCommands(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(commands, func(i, j int) bool { return commands[i].ID < commands[j].ID })
+	page := []controlplane.AgentCommand{}
+	for _, cmd := range commands {
+		if cmd.ID > after {
+			page = append(page, cmd)
+			if len(page) == 128 {
+				break
+			}
+		}
+	}
+	return page, nil
+}
+
+func (s *postgresAPIStore) PendingAgentCommands(ctx context.Context, agent string) ([]controlplane.AgentCommand, error) {
+	return s.listAgentCommands(ctx, agent, nil, true)
+}
+func (s *postgresAPIStore) GetAgentCommand(ctx context.Context, agent, id string) (*controlplane.AgentCommand, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+	var raw []byte
+	if err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_agent_commands WHERE id=$1 AND agent_id=$2`, id, agent).Scan(&raw); err != nil {
+		return nil, err
+	}
+	var cmd controlplane.AgentCommand
+	if err = json.Unmarshal(raw, &cmd); err != nil {
+		return nil, err
+	}
+	return &cmd, nil
+}
+func (s *localAPIStore) GetAgentCommand(ctx context.Context, agent, id string) (*controlplane.AgentCommand, error) {
+	cmds, err := s.ListAgentCommands(ctx, agent)
+	if err != nil {
+		return nil, err
+	}
+	for _, cmd := range cmds {
+		if cmd.ID == id {
+			return &cmd, nil
+		}
+	}
+	return nil, fmt.Errorf("agent command not found")
+}
+func (s *localAPIStore) PendingAgentCommands(ctx context.Context, agent string) ([]controlplane.AgentCommand, error) {
+	cmds, err := s.ListAgentCommands(ctx, agent)
+	if err != nil {
+		return nil, err
+	}
+	pending := []controlplane.AgentCommand{}
+	for _, cmd := range cmds {
+		if cmd.IsPending() {
+			pending = append(pending, cmd)
+		}
+	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].CreatedAt.Before(pending[j].CreatedAt) })
+	if len(pending) > 512 {
+		pending = pending[:512]
+	}
+	return pending, nil
 }

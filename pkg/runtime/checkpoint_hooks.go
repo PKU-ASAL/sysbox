@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	dockernet "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -675,6 +676,8 @@ func findDockerObjectForStep(ctx context.Context, step OperationStep, network bo
 		if id != "" {
 			if _, err := cli.NetworkInspect(ctx, id, dockernet.InspectOptions{}); err == nil {
 				return id, nil
+			} else if !errdefs.IsNotFound(err) {
+				return "", err
 			}
 		}
 		return findDockerObjectByLabels(ctx, step.Labels, func(args filters.Args) ([]string, error) {
@@ -692,6 +695,8 @@ func findDockerObjectForStep(ctx context.Context, step OperationStep, network bo
 	if id != "" {
 		if _, err := cli.ContainerInspect(ctx, id); err == nil {
 			return id, nil
+		} else if !errdefs.IsNotFound(err) {
+			return "", err
 		}
 	}
 	return findDockerObjectByLabels(ctx, step.Labels, func(args filters.Args) ([]string, error) {
@@ -712,14 +717,13 @@ func dockerClient() (*client.Client, error) {
 }
 
 func findDockerObjectByLabels(_ context.Context, labels map[string]string, list func(filters.Args) ([]string, error)) (string, error) {
-	if len(labels) == 0 {
-		return "", nil
-	}
 	args := filters.NewArgs()
-	for _, key := range []string{LabelManaged, LabelTopology, LabelResource} {
-		if value := labels[key]; value != "" {
-			args.Add("label", key+"="+value)
+	for _, key := range []string{LabelManaged, LabelTopology, LabelResource, LabelRunID} {
+		value := labels[key]
+		if value == "" {
+			return "", fmt.Errorf("checkpoint lacks exact resource identity: %s", key)
 		}
+		args.Add("label", key+"="+value)
 	}
 	found, err := list(args)
 	if err != nil {
@@ -727,6 +731,9 @@ func findDockerObjectByLabels(_ context.Context, labels map[string]string, list 
 	}
 	if len(found) == 0 {
 		return "", nil
+	}
+	if len(found) != 1 {
+		return "", fmt.Errorf("ambiguous checkpoint resource: %d matches", len(found))
 	}
 	return found[0], nil
 }
