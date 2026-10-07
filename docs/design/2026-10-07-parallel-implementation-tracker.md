@@ -17,6 +17,12 @@
 
 ## 当前收敛规则
 
+adoption 自动回执恢复已接入 supervisor 启动与周期扫描，共用 effectgate 的
+completed/pending-report 枚举。先读取持久结果，再补签或复用原回执；不请求新的
+worker 授权，不执行 provider callback。回归覆盖 outcome 已提交但尚未签回执、
+回执回应丢失、重报成功后跳过、unknown intent 不签停止证明。API 侧授权释放与
+跨独立进程的完整接管验收仍待完成；这不是 P5 完成声明。
+
 adoption 宿主回报顺序修复：provider callback 仅返回 codec evidence，不再在 effect
 完成落盘之前调用 API。协调器复用 effectgate 持久化 outcome、签名回执和已报标记；
 Observe 在宿主对象重建后重报同一签名回执，不重新执行 provider。缺少 host key

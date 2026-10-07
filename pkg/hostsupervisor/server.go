@@ -115,6 +115,10 @@ func (s *Server) serveListener(parent context.Context, listener net.Listener) er
 		workers.Add(1)
 		go func() { defer workers.Done(); s.runRecovery(ctx, s.Files.Recover) }()
 	}
+	if s.Adoption != nil {
+		workers.Add(1)
+		go func() { defer workers.Done(); s.runRecovery(ctx, s.Adoption.Recover) }()
+	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {

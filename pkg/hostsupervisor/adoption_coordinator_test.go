@@ -99,3 +99,62 @@ func TestAdoptionHistoricalObserveRejectsForgedSignature(t *testing.T) {
 	_, err = c.Observe(context.Background(), req, g)
 	require.Error(t, err)
 }
+
+func TestAdoptionRecoveryReportsWithoutWorkerObserve(t *testing.T) {
+	c, req, g := adoptionFixture(t)
+	var first controlplane.SignedExecutionStopReceipt
+	c.Report = func(_ context.Context, _ string, r controlplane.SignedExecutionStopReceipt, _ json.RawMessage) error {
+		first = r
+		return errors.New("lost acknowledgment")
+	}
+	_, err := c.Apply(context.Background(), req, g, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{"owned":true}`), nil })
+	require.Error(t, err)
+	cold := *c
+	cold.Authorize = nil
+	cold.HostBootID = "restarted"
+	reports := 0
+	cold.Report = func(_ context.Context, id string, r controlplane.SignedExecutionStopReceipt, raw json.RawMessage) error {
+		reports++
+		require.Equal(t, req.ID, id)
+		require.Equal(t, first, r)
+		require.JSONEq(t, `{"owned":true}`, string(raw))
+		return nil
+	}
+	require.NoError(t, cold.Recover(context.Background()))
+	require.NoError(t, cold.Recover(context.Background()))
+	require.Equal(t, 1, reports)
+}
+
+func TestAdoptionRecoverySealsCompletedOutcomeButNotUnknownIntent(t *testing.T) {
+	for _, complete := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unknown", true: "complete"}[complete], func(t *testing.T) {
+			c, req, g := adoptionFixture(t)
+			gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID, Authorize: func(context.Context, controlplane.ExecutionGrant) error { return nil }}
+			_, err := gate.Execute(context.Background(), g, req.ExternalID, func(context.Context) (json.RawMessage, error) {
+				if !complete {
+					return nil, errors.New("provider outcome unknown")
+				}
+				return json.RawMessage(`{"owned":true}`), nil
+			})
+			if complete {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			reports := 0
+			c.HostBootID = "new-boot"
+			c.Authorize = nil
+			c.Report = func(_ context.Context, _ string, r controlplane.SignedExecutionStopReceipt, raw json.RawMessage) error {
+				reports++
+				require.NoError(t, controlplane.VerifyAdoptionStopReceipt(c.HostKey.Public().(ed25519.PublicKey), r, raw))
+				return nil
+			}
+			require.NoError(t, c.Recover(context.Background()))
+			if complete {
+				require.Equal(t, 1, reports)
+			} else {
+				require.Zero(t, reports)
+			}
+		})
+	}
+}

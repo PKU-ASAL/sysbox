@@ -196,6 +196,21 @@ func (g *Gate) ReportStop(ctx context.Context, grant controlplane.ExecutionGrant
 // callback and does not turn an intent into a stop assertion. Each report has
 // an independent budget so one unavailable API response cannot starve others.
 func (g *Gate) RecoverStops(ctx context.Context, sign func(controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error), report func(context.Context, controlplane.SignedExecutionStopReceipt) error) error {
+	return g.RecoverCompleted(ctx, func(ctx context.Context, grant controlplane.ExecutionGrant, id string) error {
+		if _, err := g.SealStop(ctx, grant, id, sign); err != nil {
+			return err
+		}
+		return g.ReportStop(ctx, grant, id, report)
+	})
+}
+
+// RecoverCompleted visits only durable complete outcomes awaiting report.
+// The callback runs outside the ledger lock and must re-read exact evidence
+// before sealing it. Provider intents are never replayed by this scanner.
+func (g *Gate) RecoverCompleted(ctx context.Context, recover func(context.Context, controlplane.ExecutionGrant, string) error) error {
+	if recover == nil {
+		return ErrFenced
+	}
 	entries, err := os.ReadDir(g.Root)
 	if os.IsNotExist(err) {
 		return nil
@@ -253,10 +268,7 @@ func (g *Gate) RecoverStops(ctx context.Context, sign func(controlplane.Executio
 		release()
 		for _, candidate := range candidates {
 			operation, cancel := context.WithTimeout(ctx, 2*time.Second)
-			_, err := g.SealStop(operation, candidate.grant, candidate.id, sign)
-			if err == nil {
-				err = g.ReportStop(operation, candidate.grant, candidate.id, report)
-			}
+			err := recover(operation, candidate.grant, candidate.id)
 			cancel()
 			if err != nil {
 				failures = append(failures, err)

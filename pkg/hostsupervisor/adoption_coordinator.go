@@ -90,3 +90,23 @@ func (c *AdoptionCoordinator) Observe(ctx context.Context, req AdoptionRequest, 
 	}
 	return raw, c.finish(ctx, gate, req, g.Grant, raw)
 }
+
+func (c *AdoptionCoordinator) Recover(ctx context.Context) error {
+	if c.AgentID == "" || c.HostBootID == "" || len(c.HostKey) != ed25519.PrivateKeySize || c.Report == nil {
+		return effectgate.ErrFenced
+	}
+	if err := EnsureOwnedDirectory(c.Root, 0700); err != nil {
+		return err
+	}
+	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
+	return gate.RecoverCompleted(ctx, func(ctx context.Context, g controlplane.ExecutionGrant, effectID string) error {
+		if g.AgentID != c.AgentID || g.Operation != "adoption_apply" {
+			return effectgate.ErrFenced
+		}
+		raw, err := gate.ReadOutcome(ctx, g, effectID)
+		if err != nil {
+			return err
+		}
+		return c.finish(ctx, gate, AdoptionRequest{ID: g.ActionID, ExternalID: effectID}, g, raw)
+	})
+}
