@@ -6,7 +6,7 @@
 |---|---|---|
 | P0 | 强制按Go依赖重建guest helper、amd64/arm64构建、独立cgroup验收目标 | 全能力矩阵、最终产物与总验收 |
 | P1 | authenticated revision、独立Agent物化、artifact来源约束、续租固定快照 | 真正双宿主验收；未把独立目录当双宿主 |
-| P2 | authority ledger/session/epoch、签名grant及stop receipt API、当前command事务绑定；guest task、API文件安装、远端pause/resume，以及普通 Run 的 topology/resource proof、canonical serial、host grant、host supervisor effectgate 和 signed completion route 已接入 | 普通 Run 的所有 guest/background effect 仍需统一 subordinate grant；Agent 默认部署仍需强制 host supervisor；真正跨宿主验收 |
+| P2 | authority ledger/session/epoch、签名grant及stop receipt API、当前command事务绑定；guest task、API文件安装、远端pause/resume，以及普通 Run 的 topology/resource proof、canonical serial、host grant、host supervisor effectgate、持久 child guest_task grant 和 signed completion route 已接入 | Agent 默认部署仍需强制 host supervisor；真正跨宿主验收 |
 | P3 | 持久task、sealed memfd、cgroup+pidfd、monotonic guard、续租、分页输出、SSH/vsock通用SPI；真实SSH和Docker supervisor任务接续验收 | 完整Agent服务重启接管验收；全执行路径统一隔离 |
 | P4 | session+sequence observation ledger、guest活动枚举、receipt失效 | 全API迁移回归、完整lease撤销/guest取消/hoststop集成 |
 | P5 | adoption SPI、journal动作、Docker不可变ID sidecar；只读 `/adoption-plan`，agent-authenticated `/adoption-confirm` 绑定 evidence/fingerprint/serial/generation/agent，生成 `adoption_apply` command；宿主 AdoptionCoordinator 复用 effectgate intent/Observe，并接入 Agent grant/RPC/provider Apply+Observe callback；host key completion endpoint 绑定 command lease，并通过 `CommitAdoptionEvidence` 在 ActionRepository CAS 事务中写入 canonical state；libvirt 与 Firecracker provider 均提供 fingerprinted XML/manifest Inspect/Apply/Observe SPI；真实 Firecracker/KVM（6.84s）和 libvirt domain（2.87s）generation/adoption E2E 已通过并清理测试资源 | 多表/同库 receipt 与 action outcome 的统一数据库事务、真实 provider 冷重启后接管验收 |
