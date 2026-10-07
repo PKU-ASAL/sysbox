@@ -317,10 +317,31 @@ GET `/v1/capabilities` is protected by the same configured API-token middleware
 as other control-plane routes. The new protocol responds:
 
 ```json
-{"protocol":"cyberfield-runtime-v1","durable_apply":true,"keyed_destroy":true,"cleanup_inspection":true,"single_api_execution":true}
+{"protocol":"cyberfield-runtime-v1","durable_apply":true,"keyed_destroy":true,"cleanup_inspection":true,"single_api_execution":true,"claim_replay":true}
 ```
 
 Durable flags are advertised only for the SQLite and PostgreSQL API stores.
-Local file storage reports those two flags false. This is deployed protocol
+Local file storage reports durable Apply, keyed Destroy and claim replay false. This is deployed protocol
 self-description, not transparent multi-API input recovery; clients must also
 verify the actual lifecycle protocol against their selected deployment.
+
+### Recovering a lost run claim receipt
+
+Agents send `POST /v1/agents/{agent}/runs/{run}/claim` with
+`{"claim_id":"<canonical nonzero UUID>"}`. The signed request body binds the
+identity to the authenticated agent. Generate one identity per execution
+instance and reuse it only while retrying that claim. A successful retry returns
+the same live lease owner, expiry and attempt, without extending the lease.
+A different claimant, different agent, expired lease or terminal run returns 409.
+Malformed identities return 400. Requests without an identity remain one-shot
+for older callers; current agents always send one.
+
+SQLite/PostgreSQL persist the identity as part of the lease in the original claim
+transaction. API restart retains the receipt. Keyed Apply still requires same-key
+input rehydration at the agent-connected API before any claim response can expose
+its transient inputs; unavailable inputs/storage return 503. Agents retry unknown
+transport outcomes, truncated responses and 502/503/504 using the same identity,
+with one-second backoff and a five-minute overall bound (or the earlier run or
+caller deadline). Explicit protocol rejection is not retried. This recovers claim
+receipt delivery; it does not promise arbitrary agent-process crash resumption or
+cross-system exactly-once effects. Upgrade API and agent together.

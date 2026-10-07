@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
@@ -277,7 +278,13 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "missing run", fmt.Errorf("missing run"))
 			return
 		}
-		claimed, err := claim(runCtx, r.opts, cmd.Run.ID)
+		claimCtx := runCtx
+		if !cmd.Run.DeadlineAt.IsZero() {
+			var cancelClaim context.CancelFunc
+			claimCtx, cancelClaim = context.WithDeadline(runCtx, cmd.Run.DeadlineAt)
+			defer cancelClaim()
+		}
+		claimed, err := claim(claimCtx, r.opts, cmd.Run.ID)
 		if err != nil {
 			fmt.Printf("[agent] claim %s failed: %v\n", cmd.Run.ID, err)
 			emit("failed", "run claim failed", err)
@@ -700,14 +707,21 @@ type postStatusError struct {
 
 func (e *postStatusError) Error() string { return e.message }
 func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {
+	// A permanently unavailable API must not retain this command indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	// A new execution instance gets a new identity; transport retries reuse it.
+	request := map[string]string{"claim_id": uuid.NewString()}
 	for {
 		var run controlplane.Run
-		err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+runID+"/claim", nil, &run)
+		err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+runID+"/claim", request, &run)
 		if err == nil {
 			return &run, nil
 		}
 		var status *postStatusError
-		if !errors.As(err, &status) || status.code != http.StatusServiceUnavailable {
+		// Any transport/response decoding failure has unknown delivery. Replay the
+		// same claim; explicit protocol rejection must never start another attempt.
+		if errors.As(err, &status) && status.code != http.StatusServiceUnavailable && status.code != http.StatusBadGateway && status.code != http.StatusGatewayTimeout {
 			return nil, err
 		}
 		select {

@@ -208,9 +208,12 @@ FOR UPDATE`, runID).Scan(&raw, &status, &leaseUntil)
 	}
 	run.Status = controlplane.RunStatus(status)
 	if leaseUntil != nil {
-		run.LeaseUntil = *leaseUntil
+		run.LeaseUntil = leaseUntil.UTC()
 	}
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if run.CanReplayClaim(agentID, owner, now) {
+		return &run, true, nil
+	}
 	if !runLeasable(run, agentID, now) {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, false, err

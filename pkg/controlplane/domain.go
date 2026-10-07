@@ -99,6 +99,12 @@ func (r Run) CanBeClaimedBy(agentID string, now time.Time) bool {
 	return r.LeaseUntil.IsZero() || !r.LeaseUntil.After(now)
 }
 
+// CanReplayClaim recovers a lost receipt for this execution instance only.
+// It never renews a lease or starts another attempt.
+func (r Run) CanReplayClaim(agentID, owner string, now time.Time) bool {
+	return owner != "" && r.AgentID == agentID && r.Status == RunRunning && r.LeaseOwner == owner && r.LeaseUntil.After(now)
+}
+
 func (r Run) CanRenewLease(agentID, owner string) bool {
 	return r.AgentID == agentID && r.Status == RunRunning && r.LeaseOwner == owner
 }
