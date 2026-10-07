@@ -155,3 +155,16 @@ func (c *TaskClient) ObserveRun(ctx context.Context, req RunRequest, grant contr
 	r, err := c.call(ctx, Request{Operation: "run-observe", RunRequest: &req, Grant: &grant})
 	return r.RunEvidence, err
 }
+
+func (c *TaskClient) ApplySSHAccess(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "ssh-apply", SSHRequest: &req, Grant: &grant})
+	return r.SSHEvidence, err
+}
+func (c *TaskClient) DeleteSSHAccess(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "ssh-delete", SSHRequest: &req, Grant: &grant})
+	return r.SSHEvidence, err
+}
+func (c *TaskClient) ObserveSSHAccess(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "ssh-observe", SSHRequest: &req, Grant: &grant})
+	return r.SSHEvidence, err
+}

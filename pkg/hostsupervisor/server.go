@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 )
 
@@ -27,6 +28,9 @@ type Server struct {
 	Files           *FileDispatcher
 	Runs            *RunCoordinator
 	RunEffect       func(context.Context, RunRequest) (json.RawMessage, error)
+	SSH             *SSHAccessCoordinator
+	SSHApply        func(context.Context, controlplane.SSHAccessRequest) (json.RawMessage, error)
+	SSHDelete       func(context.Context, controlplane.SSHAccessRequest) (json.RawMessage, error)
 	OnRecoveryError func(error)
 }
 
@@ -216,6 +220,28 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 			break
 		}
 		response.RunEvidence, err = s.Runs.Observe(ctx, *request.RunRequest, *request.Grant)
+	case "ssh-apply":
+		if s.SSH == nil || s.SSHApply == nil || request.SSHRequest == nil || request.Grant == nil {
+			err = fmt.Errorf("host ssh access coordinator unavailable")
+			break
+		}
+		response.SSHEvidence, err = s.SSH.Apply(ctx, *request.SSHRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
+			return s.SSHApply(effectCtx, *request.SSHRequest)
+		})
+	case "ssh-delete":
+		if s.SSH == nil || s.SSHDelete == nil || request.SSHRequest == nil || request.Grant == nil {
+			err = fmt.Errorf("host ssh access coordinator unavailable")
+			break
+		}
+		response.SSHEvidence, err = s.SSH.Delete(ctx, *request.SSHRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
+			return s.SSHDelete(effectCtx, *request.SSHRequest)
+		})
+	case "ssh-observe":
+		if s.SSH == nil || request.SSHRequest == nil || request.Grant == nil {
+			err = fmt.Errorf("host ssh access coordinator unavailable")
+			break
+		}
+		response.SSHEvidence, err = s.SSH.Observe(ctx, *request.SSHRequest, *request.Grant)
 	case "host-info":
 		if s.Power == nil {
 			err = fmt.Errorf("host power supervisor unavailable")

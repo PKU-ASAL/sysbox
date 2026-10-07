@@ -25,6 +25,7 @@ type Request struct {
 	FileRequest *substrate.FileInstallRequest      `json:"file_request,omitempty"`
 	FileHandle  substrate.FileInstallHandle        `json:"file_handle,omitempty"`
 	RunRequest  *RunRequest                        `json:"run_request,omitempty"`
+	SSHRequest  *controlplane.SSHAccessRequest     `json:"ssh_request,omitempty"`
 	Stream      string                             `json:"stream,omitempty"`
 	Cursor      int64                              `json:"cursor,omitempty"`
 	Limit       int                                `json:"limit,omitempty"`
@@ -38,4 +39,5 @@ type Response struct {
 	Error       string                      `json:"error,omitempty"`
 	FileResult  substrate.FileInstallResult `json:"file_result,omitempty"`
 	RunEvidence json.RawMessage             `json:"run_evidence,omitempty"`
+	SSHEvidence json.RawMessage             `json:"ssh_evidence,omitempty"`
 }
