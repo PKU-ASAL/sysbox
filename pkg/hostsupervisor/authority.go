@@ -60,6 +60,10 @@ func (c AuthorityClient) ReportStop(ctx context.Context, receipt controlplane.Si
 	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/execution-grants/stopped", receipt, false)
 }
 
+func (c AuthorityClient) ReportNodeOperation(ctx context.Context, operation string, receipt controlplane.SignedExecutionStopReceipt) error {
+	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/node-operations/"+operation+"/completed", map[string]any{"receipt": receipt}, false)
+}
+
 func (c AuthorityClient) FetchFile(ctx context.Context, id string) (io.ReadCloser, error) {
 	// IDs are validated by the canonical installation contract before entry.
 	if id == "" || strings.ContainsAny(id, "/\\?#\x00") {
