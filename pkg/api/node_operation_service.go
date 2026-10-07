@@ -188,6 +188,41 @@ func (s *NodeOperationService) SSHAccess(ctx context.Context, topology string, n
 	return s.enqueue(ctx, st.TopologyUID, op)
 }
 
+func (s *NodeOperationService) AdoptionConfirm(ctx context.Context, req controlplane.AdoptionRequest, subj requestSubject) (controlplane.NodeOperation, error) {
+	if err := req.Validate(); err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if req.AgentID == "" {
+		req.AgentID = subj.User
+	}
+	st, err := s.workspace.LoadState(req.Topology)
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if st.TopologyUID != req.TopologyUID || st.Meta.Serial != req.ExpectedSerial {
+		return controlplane.NodeOperation{}, fmt.Errorf("%w: adoption plan is stale", persistence.ErrConflict)
+	}
+	addr, err := address.Parse(req.Address)
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if st.FindResource(addr) != nil {
+		return controlplane.NodeOperation{}, fmt.Errorf("%w: adoption address already exists", persistence.ErrConflict)
+	}
+	if _, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider); err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, req.Topology, []string{req.Provider}, req.AgentID)
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if agent.ID != req.AgentID {
+		return controlplane.NodeOperation{}, fmt.Errorf("%w: owning agent changed", persistence.ErrConflict)
+	}
+	op := prepareNodeOperation(controlplane.NodeOperation{ID: req.ID, Topology: req.Topology, Workspace: req.Topology, Operation: "adoption_apply", Node: addr.Name, Type: addr.Type, Name: addr.Name, ExternalID: req.ExternalID, Substrate: req.Provider, AgentID: req.AgentID, RequestedBy: subj.User, Roles: subj.Roles, ResourceUID: req.ResourceUID, Generation: req.Generation, Adoption: &req})
+	return s.enqueue(ctx, st.TopologyUID, op)
+}
+
 func (s *NodeOperationService) Import(ctx context.Context, topology string, req ImportNodeRequest, subj requestSubject) (controlplane.NodeOperation, error) {
 	if req.Type != "sysbox_node" {
 		return controlplane.NodeOperation{}, fmt.Errorf("import only supports sysbox_node, got %q", req.Type)

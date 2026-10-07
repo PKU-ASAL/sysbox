@@ -364,6 +364,7 @@ type NodeOperation struct {
 	Topology    string            `json:"topology"`
 	Operation   string            `json:"operation"`
 	SSHAccess   *SSHAccessRequest `json:"ssh_access,omitempty"`
+	Adoption    *AdoptionRequest  `json:"adoption,omitempty"`
 	Node        string            `json:"node,omitempty"`
 	Type        string            `json:"type,omitempty"`
 	Name        string            `json:"name,omitempty"`

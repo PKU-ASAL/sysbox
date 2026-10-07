@@ -190,6 +190,27 @@ func (s *Server) handleSSHAccess(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, op)
 }
 
+func (s *Server) handleAdoptionConfirm(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	var req controlplane.AdoptionRequest
+	limitBody(w, r)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	req.AgentID = agentID
+	op, err := s.nodeOperations().AdoptionConfirm(r.Context(), req, s.requestSubject(r))
+	if err != nil {
+		writeError(w, nodeOperationStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, op)
+}
+
 func nodeOperationStatus(err error) int {
 	msg := err.Error()
 	switch {

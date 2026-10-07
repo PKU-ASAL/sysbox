@@ -373,6 +373,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/topologies/{topology}/import", s.handleImport)
 	m.HandleFunc("POST /v1/topologies/{topology}/adoption-plan", s.handleAdoptionPlan)
 	m.HandleFunc("POST /v1/topologies/{topology}/ssh-access", s.handleSSHAccess)
+	m.HandleFunc("POST /v1/agents/{agent}/adoption-confirm", s.handleAdoptionConfirm)
 	m.HandleFunc("GET /v1/topologies/{topology}/resources", s.handleListResources)
 	m.HandleFunc("GET /v1/topologies/{topology}/status/stream", s.handleTopologyStatusStream)
 	m.HandleFunc("GET /v1/topologies/{topology}/resources/{resource}/health", s.handleGetResourceHealth)
