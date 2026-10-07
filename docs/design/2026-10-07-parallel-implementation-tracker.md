@@ -12,7 +12,7 @@
 | P5 | adoption SPI、journal动作、Docker不可变ID sidecar；新增只读 `/adoption-plan`，校验 canonical state、地址和 provider capability，不写 state/journal、不调用 ApplyAdoption | API inspection evidence/confirm、libvirt/Firecracker adapters、真实接管与清理 |
 | P6 | aggregate format2快照、元数据restore monotonic serial、身份约束、API CRUD；restore/force-unlock 共用活动操作检查，活跃 Run、节点操作、guest task/file 或未上报 host stop 时拒绝维护；force-unlock 还拒绝 live state lease，缺少完整活动证据时 fail-closed；Local/SQLite/Postgres restore 统一校验 topology/resource incarnation | grant撤销与freeze、force-unlock 审计回执、恢复较旧资源集合的显式reconcile、后端同一事务内 CAS restore |
 | P7 | managed Docker bridge导出/核验、FC/libvirt NIC消费；受管 `ssh_access` 配置合同、规范化摘要校验和 plan-time key/address/port validation | `ssh_access` owning-agent Apply/Observe/Delete、旧 key 只撤销自身配置；现有网络依赖自动重接、混合netns单VM支持边界；SSH服务生命周期与runtime |
-| P8 | 依赖合同已明确；GC dry-run 现在把 canonical aggregate snapshots 作为资源引用，快照仍引用的资源不会进入候选 | 自动GC授权删除/删除journal/重验 epoch 尚未实施，不算完成 |
+| P8 | 依赖合同已明确；GC dry-run 现在把 canonical aggregate snapshots 作为资源引用，快照仍引用的资源不会进入候选；新增 host GC delete coordinator，candidate identity 绑定 inventory digest 并复用 effectgate 的 intent/unknown/Observe | CLI 自动GC授权删除、删除journal、provider Delete 接入及重验 epoch 尚未实施，不算完成 |
 | P9 | 分项真实Docker bridge/TAP、private cgroup、KVM测试 | 双宿主、全故障矩阵、升级/main整合，不算完成 |
 
 ## 当前收敛规则
