@@ -17,6 +17,12 @@
 
 ## 当前收敛规则
 
+2026-10-08 已补跑独立 Postgres 16 临时实例：adoption 退休 command 完成、证据篡改
+拒绝、原回执重试、后继 epoch 和 grant recovery 的 Postgres 子测试实际执行并通过
+race，未跳过。共享 NodeOperation transition 新增 Adoption/SSHAccess 请求不可变
+约束，防止状态 CAS 改写已派发 payload；失败回归修复后相关三后端测试通过。
+临时 tmpfs 数据库已精确清理。本次验证不覆盖双宿主或完整 provider 接管 E2E。
+
 adoption 退休 command 恢复：新增共享 `CompleteAdoptionFromHost` transition，三套
 API 存储复用原 command/operation 事务执行。验证 host signature 与持久 authority
 后，按原 command ID、请求 digest、topology/resource UID/generation 核对；不再

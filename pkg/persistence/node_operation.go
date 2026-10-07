@@ -6,6 +6,11 @@ import (
 )
 
 func ValidateNodeOperationTransition(current, next controlplane.NodeOperation) error {
+	// These payloads define the signed effect. Status/lease CAS must never
+	// rewrite them, including after the command payload has been retired.
+	if !reflect.DeepEqual(current.Adoption, next.Adoption) || !reflect.DeepEqual(current.SSHAccess, next.SSHAccess) {
+		return ErrConflict
+	}
 	if current.RequestedBy != next.RequestedBy || !reflect.DeepEqual(current.Roles, next.Roles) || len(next.Audit) < len(current.Audit) {
 		return ErrConflict
 	}
