@@ -24,25 +24,22 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 6
+const apiSchemaVersion = 7
 
 // errGlobalRevisionNotFound is returned by GetGlobalRevision when no revision
 // exists for the requested digest. Callers use errors.Is to detect it so they
 // never have to string-match backend-specific messages.
 var errGlobalRevisionNotFound = errors.New("global revision not found")
 
-type apiMigration struct {
-	Version int
-	Name    string
-	SQL     string
-}
-
-var apiMigrations = []apiMigration{
-	{
-		Version: 1,
-		Name:    "base_schema",
-		SQL: `
-CREATE TABLE IF NOT EXISTS sysbox_runs (
+// API schemas are created fresh or validated at the exact current version.
+// There is deliberately no in-place migration path.
+const apiPostgresSchema = `
+CREATE TABLE sysbox_api_schema_migrations (
+ name TEXT PRIMARY KEY,
+ version INTEGER NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE sysbox_runs (
   topology TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
@@ -53,36 +50,36 @@ CREATE TABLE IF NOT EXISTS sysbox_runs (
   attempt INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_checkpoints (
+CREATE TABLE sysbox_checkpoints (
   topology TEXT NOT NULL,
   run_id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_health (
+CREATE TABLE sysbox_health (
   topology TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_policies (
+CREATE TABLE sysbox_policies (
   workspace TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_console_sessions (
+CREATE TABLE sysbox_console_sessions (
   workspace TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_node_operations (
-  workspace TEXT NOT NULL,
+CREATE TABLE sysbox_node_operations (
+  workspace TEXT NOT NULL DEFAULT '',
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_agents (
+CREATE TABLE sysbox_agents (
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL,
   disabled BOOLEAN NOT NULL DEFAULT false,
@@ -92,14 +89,14 @@ CREATE TABLE IF NOT EXISTS sysbox_agents (
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_agent_command_events (
+CREATE TABLE sysbox_agent_command_events (
   agent_id TEXT NOT NULL,
   command_id TEXT NOT NULL,
   status TEXT NOT NULL,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
+CREATE TABLE sysbox_agent_commands (
   agent_id TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL,
@@ -109,68 +106,50 @@ CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
   attempt INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_dispatch_retries (
+CREATE TABLE sysbox_dispatch_retries (
  command_id TEXT PRIMARY KEY,
  failures INTEGER NOT NULL DEFAULT 0,
  next TIMESTAMPTZ NOT NULL,
  last_error TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
+CREATE TABLE sysbox_agent_inventory (
   agent_id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_guest_executions (
+CREATE TABLE sysbox_guest_executions (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_guest_file_operations (
+CREATE TABLE sysbox_guest_file_operations (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_run_requests (
+CREATE TABLE sysbox_run_requests (
   id TEXT PRIMARY KEY,
   fingerprint TEXT NOT NULL,
-  run_id TEXT NOT NULL UNIQUE,
+  run_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);`,
-	},
-	{
-		Version: 2,
-		Name:    "global_revisions",
-		SQL: `
-CREATE TABLE IF NOT EXISTS sysbox_global_revisions (
+);
+CREATE TABLE sysbox_global_revisions (
   workspace TEXT NOT NULL DEFAULT '',
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);`,
-	},
-	{
-		Version: 3,
-		Name:    "resource_projections",
-		SQL: `
-CREATE TABLE IF NOT EXISTS sysbox_projection (
+);
+CREATE TABLE sysbox_projection (
   topology TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		);`,
-	},
-	{
-		Version: 4,
-		Name:    "topology_placements",
-		SQL: `CREATE TABLE IF NOT EXISTS sysbox_topology_placements (
+);
+CREATE TABLE sysbox_topology_placements (
   topology TEXT PRIMARY KEY,
   agent_id TEXT NOT NULL,
   protocol TEXT NOT NULL DEFAULT '',
   bound_at TIMESTAMPTZ NOT NULL
-);`,
-	},
-	{Version: 5, Name: "node_operation_records", SQL: `ALTER TABLE sysbox_node_operations ALTER COLUMN workspace SET DEFAULT '';`},
-	{Version: 6, Name: "run_incarnation_dispatch", SQL: `ALTER TABLE sysbox_run_requests DROP CONSTRAINT IF EXISTS sysbox_run_requests_run_id_key;`},
-}
+);`
 
 func (s *localAPIStore) SchemaVersion(context.Context) (int, error) {
 	return apiSchemaVersion, nil
@@ -248,10 +227,7 @@ func (s *localAPIStore) SaveResourceProjection(_ context.Context, proj controlpl
 		return err
 	}
 	path := filepath.Join(s.runsDir, proj.Topology, "projection.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, raw, 0o644)
+	return writeLocalObject(path, json.RawMessage(raw))
 }
 
 func (s *localAPIStore) LoadResourceProjection(_ context.Context, topology string) (*controlplane.ResourceProjection, error) {
@@ -392,8 +368,8 @@ func (s *postgresAPIStore) ping() error {
 }
 
 // connect acquires a connection from the lazily-initialized pool. The pool and
-// its schema migrations are established exactly once; opening a fresh pgx.Conn
-// and running the full migration pass on every request would exhaust the
+// its schema are established exactly once; opening a fresh pgx.Conn
+// and validating the schema on every request would exhaust the
 // server's Postgres connection limit and make every call pay DDL contention.
 func (s *postgresAPIStore) connect(ctx context.Context) (*pgxpool.Conn, error) {
 	pool, err := s.poolFor(ctx)
@@ -432,50 +408,80 @@ func (s *postgresAPIStore) poolFor(ctx context.Context) (*pgxpool.Pool, error) {
 }
 
 func (s *postgresAPIStore) ensureSchema(ctx context.Context, pool *pgxpool.Pool) error {
-	_, err := pool.Exec(ctx, `
-CREATE TABLE IF NOT EXISTS sysbox_api_schema_migrations (
-  name TEXT PRIMARY KEY,
-  version INTEGER NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);`)
-	if err != nil {
-		return fmt.Errorf("postgres ensure schema migrations table: %w", err)
-	}
-	for _, migration := range apiMigrations {
-		if err := s.applyMigration(ctx, pool, migration); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *postgresAPIStore) applyMigration(ctx context.Context, pool *pgxpool.Pool, migration apiMigration) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	if _, err := tx.Exec(ctx, migration.SQL); err != nil {
-		return fmt.Errorf("postgres apply api migration %03d_%s: %w", migration.Version, migration.Name, err)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('sysbox-api-schema'))`); err != nil {
+		return err
 	}
-	_, err = tx.Exec(ctx, `
-INSERT INTO sysbox_api_schema_migrations (name, version, updated_at)
-VALUES ('api', $1, now())
-ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version, updated_at=now()
-WHERE sysbox_api_schema_migrations.version < EXCLUDED.version`, migration.Version)
-	if err != nil {
-		return fmt.Errorf("postgres record api schema version: %w", err)
+	var marker bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname=current_schema() AND tablename='sysbox_api_schema_migrations')`).Scan(&marker); err != nil {
+		return err
 	}
-	stepName := fmt.Sprintf("api/%03d_%s", migration.Version, migration.Name)
-	_, err = tx.Exec(ctx, `
-INSERT INTO sysbox_api_schema_migrations (name, version, updated_at)
-VALUES ($1, $2, now())
-ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version, updated_at=now()`,
-		stepName, migration.Version)
-	if err != nil {
-		return fmt.Errorf("postgres record api migration step: %w", err)
+	if marker {
+		var version, records int
+		if err := tx.QueryRow(ctx, `SELECT count(*), coalesce(max(version) FILTER (WHERE name='api'),0) FROM sysbox_api_schema_migrations`).Scan(&records, &version); err != nil {
+			return fmt.Errorf("%w: API schema marker requires explicit rebuild: %v", persistence.ErrUnsupportedVersion, err)
+		}
+		if records != 1 || version != apiSchemaVersion {
+			return fmt.Errorf("%w: API schema %d requires explicit rebuild (current %d)", persistence.ErrUnsupportedVersion, version, apiSchemaVersion)
+		}
+		for _, shape := range apiPostgresTableShapes {
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname=current_schema() AND tablename=$1)`, shape.table).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return fmt.Errorf("%w: missing API table %s requires explicit rebuild", persistence.ErrUnsupportedVersion, shape.table)
+			}
+			if _, err := tx.Exec(ctx, "SELECT "+shape.columns+" FROM "+shape.table+" LIMIT 0"); err != nil {
+				return fmt.Errorf("%w: API table %s requires explicit rebuild: %v", persistence.ErrUnsupportedVersion, shape.table, err)
+			}
+		}
+		return tx.Commit(ctx)
+	}
+	// Repository state tables may already coexist in this schema. Only API
+	// tables participate in this gate; none may predate the API version marker.
+	tables := make([]string, 0, len(apiPostgresTableShapes))
+	for _, shape := range apiPostgresTableShapes {
+		tables = append(tables, shape.table)
+	}
+	var existing bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname=current_schema() AND tablename=ANY($1))`, tables).Scan(&existing); err != nil {
+		return err
+	}
+	if existing {
+		return fmt.Errorf("%w: unversioned API tables require explicit rebuild", persistence.ErrUnsupportedVersion)
+	}
+	if _, err := tx.Exec(ctx, apiPostgresSchema); err != nil {
+		return fmt.Errorf("postgres create API schema: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO sysbox_api_schema_migrations(name,version) VALUES('api',$1)`, apiSchemaVersion); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
+}
+
+var apiPostgresTableShapes = []struct{ table, columns string }{
+	{"sysbox_runs", "topology,id,data,status,agent_id,lease_owner,lease_until,attempt,updated_at"},
+	{"sysbox_checkpoints", "topology,run_id,data,updated_at"},
+	{"sysbox_health", "topology,data,updated_at"},
+	{"sysbox_policies", "workspace,id,data,created_at"},
+	{"sysbox_console_sessions", "workspace,id,data,updated_at"},
+	{"sysbox_node_operations", "workspace,id,data,updated_at"},
+	{"sysbox_agents", "id,status,disabled,quarantined,protocol,secret_hash,data,updated_at"},
+	{"sysbox_agent_command_events", "agent_id,command_id,status,data,created_at"},
+	{"sysbox_agent_commands", "agent_id,id,status,data,lease_owner,lease_until,attempt,updated_at"},
+	{"sysbox_dispatch_retries", "command_id,failures,next,last_error"},
+	{"sysbox_agent_inventory", "agent_id,data,updated_at"},
+	{"sysbox_guest_executions", "id,data,updated_at"},
+	{"sysbox_guest_file_operations", "id,data,updated_at"},
+	{"sysbox_run_requests", "id,fingerprint,run_id,created_at"},
+	{"sysbox_global_revisions", "workspace,id,data,created_at"},
+	{"sysbox_projection", "topology,data,updated_at"},
+	{"sysbox_topology_placements", "topology,agent_id,protocol,bound_at"},
 }
 
 func (s *postgresAPIStore) SchemaVersion(ctx context.Context) (int, error) {

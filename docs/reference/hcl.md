@@ -206,6 +206,8 @@ Current policy family is IPv4. Unsupported IPv6 input fails validation.
 
 Required `node` and `authorized_keys`; optional `bind_ip` and `port`. Authorized keys are sensitive execution input and must not leak into logs/state plaintext.
 
+The refactored runtime does not support managing this resource until a verifiable guest configuration lifecycle exists. Create/Read/Delete explicitly reject the operation; deletion does not silently drop its state. Configure guest SSH in the image or through the provider's supported boot configuration.
+
 ## 导入数据形状
 
-Import normalization supports provider external IDs such as Docker container name/ID or libvirt domain identity. Imported resources are handler-owned and remain no-op until configuration explicitly changes desired state.
+Managed import is unsupported until explicit ownership adoption is implemented. Read-only provider inspection does not grant management ownership; import requests are rejected before dispatch.

@@ -46,6 +46,7 @@ func TestRunLeaseRejectsInvalidTTLAndExpiredDeadline(t *testing.T) {
 			require.False(t, ok)
 		}
 		run.ID = "deadline"
+		run.Topology = "deadline-lab"
 		run.DeadlineAt = time.Now().Add(-time.Minute)
 		require.NoError(t, s.SaveRun(ctx, run))
 		got, ok, err := s.ClaimRun(ctx, run.ID, run.AgentID, "worker", time.Minute)
@@ -64,6 +65,7 @@ func TestRunLeaseCannotRenewExpiredOrShortenLiveLease(t *testing.T) {
 		require.False(t, ok)
 		live := expired
 		live.ID = "live"
+		live.Topology = "live-lab"
 		live.LeaseUntil = time.Now().UTC().Add(time.Hour)
 		require.NoError(t, s.SaveRun(ctx, live))
 		got, ok, err := s.RenewRunLease(ctx, live.ID, live.AgentID, live.LeaseOwner, time.Second)

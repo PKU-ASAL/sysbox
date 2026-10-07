@@ -2,7 +2,6 @@ package firecracker
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
@@ -60,31 +59,5 @@ func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle,
 	if err != nil {
 		return err
 	}
-	files, ok := conn.(substrate.ConnectionFileCopier)
-	if !ok {
-		return substrate.ErrNotSupported
-	}
-	tmp := dst + ".sysbox-tmp"
-	if err := files.CopyFile(ctx, src, tmp); err != nil {
-		return err
-	}
-	result, err := conn.Exec(ctx, guestFileInstallRequest("chmod", fmt.Sprintf("%04o", mode), tmp), nil, nil)
-	if err != nil {
-		return fmt.Errorf("set guest file mode: %w", err)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("set guest file mode: exit code %d", result.ExitCode)
-	}
-	result, err = conn.Exec(ctx, guestFileInstallRequest("mv", "-f", tmp, dst), nil, nil)
-	if err != nil {
-		return fmt.Errorf("atomic guest file rename: %w", err)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("atomic guest file rename: exit code %d", result.ExitCode)
-	}
-	return nil
-}
-
-func guestFileInstallRequest(program string, args ...string) substrate.ExecRequest {
-	return substrate.ExecRequest{Program: program, Args: args, Shell: substrate.ShellNone}
+	return transport.InstallFile(ctx, conn, src, dst, mode)
 }

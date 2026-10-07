@@ -33,7 +33,12 @@ func TestControlPlaneObjects(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/topologies/lab/lease", nil))
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, http.StatusNotImplemented, rec.Code, rec.Body.String())
+	for _, path := range []string{"/v1/topologies/lab/snapshots", "/v1/topologies/lab/state/snapshots"} {
+		rec = httptest.NewRecorder()
+		s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusNotImplemented, rec.Code, rec.Body.String())
+	}
 }
 
 func TestPolicyObjects(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -368,8 +369,11 @@ func (j *Jobs) claimExpected(runID, agentID string, expected *controlplane.RunCl
 	j.mu.RLock()
 	inputs := inputsForRun(j.runs[runID], intent)
 	j.mu.RUnlock()
-	if intent.Op == "apply" && len(intent.OperationKey) == sha256.Size*2 && intent.OperationKey != applyOperationKey(intent.Revision, inputs, intent.UnsafeState) {
-		return nil, fmt.Errorf("apply inputs are unavailable for this run; resubmit the original revision and inputs")
+	if keyedInputsRequired(intent, inputs) {
+		return nil, errApplyInputsRequired
+	}
+	if intent.Op == "apply" && !strings.HasPrefix(intent.RequestFingerprint, "apply-request:") && len(intent.OperationKey) == sha256.Size*2 && intent.OperationKey != applyOperationKey(intent.Revision, inputs, intent.UnsafeState) {
+		return nil, errApplyInputsRequired
 	}
 	claimCtx := persistence.WithRunClaimIdentity(context.Background(), *intent)
 	owner := fmt.Sprintf("%s:%s:%d", agentID, runID, time.Now().UnixNano())
@@ -391,9 +395,9 @@ func (j *Jobs) claimExpected(runID, agentID string, expected *controlplane.RunCl
 		j.logs.Ensure(runID, false)
 		return claimed, nil
 	} else if claimed != nil {
-		return nil, fmt.Errorf("run status %q cannot be claimed", claimed.Status)
+		return nil, fmt.Errorf("%w: run status %q cannot be claimed", persistence.ErrConflict, claimed.Status)
 	}
-	return nil, fmt.Errorf("durable run claim was not granted")
+	return nil, fmt.Errorf("%w: durable run claim was not granted", persistence.ErrConflict)
 }
 
 func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, error) {

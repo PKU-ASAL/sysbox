@@ -18,7 +18,8 @@ import (
 )
 
 func TestWorkspaceDeleteRetainsPinnedRevisionAndSnapshot(t *testing.T) {
-	w := NewServer(t.TempDir(), t.TempDir()).workspaceService()
+	s := NewServer(t.TempDir(), t.TempDir())
+	w := s.workspaceService()
 	files := map[string][]byte{"field.sysbox.hcl": []byte("root"), "modules/main.hcl": []byte("module")}
 	require.NoError(t, w.UpsertProject(context.Background(), "lab", files))
 	pinned := w.HCLFile("lab")
@@ -26,7 +27,7 @@ func TestWorkspaceDeleteRetainsPinnedRevisionAndSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	snapshot, err := w.MaterializeWorkspaceSnapshot("lab", "run")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(w.runsDir, "lab", "runs.jsonl"), []byte("history"), 0600))
+	require.NoError(t, s.apiStore.SaveRun(context.Background(), controlplane.Run{ID: "history", Topology: "lab", Status: controlplane.RunDone}))
 	require.NoError(t, w.Delete(context.Background(), "lab", false))
 	for _, path := range []string{pinned, snapshot} {
 		body, err := os.ReadFile(path)

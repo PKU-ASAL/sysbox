@@ -86,6 +86,7 @@ func TestCommandRepositoryExistingRunDispatchDoesNotCreateCommand(t *testing.T) 
 		require.NoError(t, err)
 		existing := original
 		existing.ID = "existing"
+		existing.Topology = "other-lab"
 		require.NoError(t, s.SaveRun(ctx, existing))
 		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: existing, Command: first.Command, Fingerprint: "existing"})
 		require.NoError(t, err)

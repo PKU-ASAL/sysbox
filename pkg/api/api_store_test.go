@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	_ "modernc.org/sqlite"
 )
@@ -115,10 +116,7 @@ func TestGlobalRevisionStoreRoundTrip(t *testing.T) {
 	}
 }
 
-// A database created before directory-tree revisions has a sysbox_global_revisions
-// table with a single "hcl" column. Opening it must idempotently add the "files"
-// column so new saves/loads round-trip the whole tree.
-func TestSQLiteGlobalRevisionFilesColumnMigration(t *testing.T) {
+func TestSQLiteGlobalRevisionOldSchemaRequiresRebuild(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "api.db")
 	legacy, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
@@ -137,26 +135,18 @@ func TestSQLiteGlobalRevisionFilesColumnMigration(t *testing.T) {
 
 	store := &sqliteAPIStore{dbPath: dbPath, runsDir: t.TempDir()}
 
-	// A legacy row carries no files JSON, so it must read as not-found rather
-	// than a JSON unmarshal error (which would surface as a 500 on apply).
 	_, err = store.GetGlobalRevision(context.Background(), "sha256:legacy")
-	require.ErrorIs(t, err, errGlobalRevisionNotFound)
-
-	files := map[string][]byte{
-		"field.sysbox.hcl": []byte(`resource "sysbox_node" "web" {}`),
-		"files/f.txt":      []byte("hello"),
-	}
-	rev := controlplane.GlobalRevision{
-		Revision:  "sha256:deadbeef",
-		Files:     files,
-		Size:      len(files["field.sysbox.hcl"]) + len(files["files/f.txt"]),
-		CreatedAt: time.Now().UTC(),
-	}
-	require.NoError(t, store.SaveGlobalRevision(context.Background(), rev))
-
-	got, err := store.GetGlobalRevision(context.Background(), rev.Revision)
+	require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
+	require.ErrorContains(t, err, "rebuild")
+	require.NotErrorIs(t, err, errGlobalRevisionNotFound)
+	legacy, err = sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
-	require.Equal(t, files, got.Files)
+	defer legacy.Close()
+	_, err = legacy.Exec("SELECT files FROM sysbox_global_revisions LIMIT 0")
+	require.Error(t, err, "opening an old database must not add compatibility columns")
+	var tables int
+	require.NoError(t, legacy.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table'").Scan(&tables))
+	require.Equal(t, 1, tables, "unsupported schema must remain completely unchanged")
 }
 
 func TestResourceProjectionStoreRoundTrip(t *testing.T) {
@@ -209,17 +199,12 @@ func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	require.Equal(t, "mixed", gotHealth.Topology)
 }
 
-func TestAPIMigrationsMatchSchemaVersion(t *testing.T) {
-	require.NotEmpty(t, apiMigrations)
-	seen := map[int]bool{}
-	for i, migration := range apiMigrations {
-		require.Equal(t, i+1, migration.Version)
-		require.NotEmpty(t, migration.Name)
-		require.NotEmpty(t, migration.SQL)
-		require.False(t, seen[migration.Version])
-		seen[migration.Version] = true
+func TestAPISchemaHasNoMigrationLadder(t *testing.T) {
+	require.NotContains(t, apiPostgresSchema, "ALTER TABLE")
+	require.NotContains(t, apiPostgresSchema, "IF NOT EXISTS")
+	for _, shape := range apiPostgresTableShapes {
+		require.Contains(t, apiPostgresSchema, "CREATE TABLE "+shape.table+" (")
 	}
-	require.Equal(t, apiSchemaVersion, apiMigrations[len(apiMigrations)-1].Version)
 }
 
 func TestDSNWithoutSysboxQueryPreservesPostgresConnectionOptions(t *testing.T) {

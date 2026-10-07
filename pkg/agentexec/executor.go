@@ -26,7 +26,7 @@ type Bridge interface {
 	CheckpointStore() runtime.CheckpointStore
 	ParentRun(ctx context.Context, id string) (*controlplane.Run, error)
 	ReconcileParentJournal(parent, run *controlplane.Run) error
-	Preflight(ctx context.Context, topology string, log io.Writer) error
+	Preflight(ctx context.Context, run *controlplane.Run, log io.Writer) error
 	OpenConsole(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error
 	Topologies(ctx context.Context) []string
 }
@@ -167,7 +167,7 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 		e.bridge.Finish(run, err)
 		return
 	}
-	if err := e.bridge.Preflight(ctx, run.Topology, log); err != nil {
+	if err := e.bridge.Preflight(ctx, run, log); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
@@ -317,7 +317,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	if err := e.bridge.Preflight(ctx, run.Topology, log); err != nil {
+	if err := e.bridge.Preflight(ctx, run, log); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}

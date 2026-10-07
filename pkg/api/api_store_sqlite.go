@@ -49,8 +49,78 @@ func (s *sqliteAPIStore) open() (*sql.DB, error) {
 }
 
 func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	defer conn.ExecContext(ctx, "ROLLBACK")
+	schema := sqliteSchemaConnection{conn}
+	var marker int
+	if err := schema.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='sysbox_api_schema_migrations'`).Scan(&marker); err != nil {
+		return err
+	}
+	if marker != 0 {
+		var records, version int
+		if err := schema.QueryRow(`SELECT count(*), coalesce(max(CASE WHEN name='api' THEN version END),0) FROM sysbox_api_schema_migrations`).Scan(&records, &version); err != nil {
+			return fmt.Errorf("%w: SQLite API schema marker requires explicit rebuild: %v", persistence.ErrUnsupportedVersion, err)
+		}
+		if records != 1 || version != apiSchemaVersion {
+			return fmt.Errorf("%w: SQLite API schema %d requires explicit rebuild (current %d)", persistence.ErrUnsupportedVersion, version, apiSchemaVersion)
+		}
+		if err := s.validateSchema(schema); err != nil {
+			return err
+		}
+	} else {
+		// Shared lifecycle repository tables are independent; only API tables
+		// make an unversioned database unsupported.
+		for _, table := range sqliteAPITables {
+			var exists int
+			if err := schema.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name=?`, table).Scan(&exists); err != nil {
+				return err
+			}
+			if exists != 0 {
+				return fmt.Errorf("%w: unversioned SQLite API table %s requires explicit rebuild", persistence.ErrUnsupportedVersion, table)
+			}
+		}
+		if err := s.createSchema(schema); err != nil {
+			return err
+		}
+		if _, err := schema.Exec(`CREATE TABLE sysbox_api_schema_migrations(name TEXT PRIMARY KEY,version INTEGER NOT NULL) STRICT`); err != nil {
+			return err
+		}
+		if _, err := schema.Exec(`INSERT INTO sysbox_api_schema_migrations VALUES('api',?)`, apiSchemaVersion); err != nil {
+			return err
+		}
+	}
+	_, err = schema.Exec("COMMIT")
+	return err
+}
+
+// Keep every schema query on the connection that owns BEGIN IMMEDIATE.
+type sqliteSchemaConnection struct{ *sql.Conn }
+
+func (c sqliteSchemaConnection) Exec(query string, args ...any) (sql.Result, error) {
+	return c.ExecContext(context.Background(), query, args...)
+}
+func (c sqliteSchemaConnection) QueryRow(query string, args ...any) *sql.Row {
+	return c.QueryRowContext(context.Background(), query, args...)
+}
+
+var sqliteAPITables = []string{
+	"sysbox_runs", "sysbox_agents", "sysbox_agent_commands", "sysbox_agent_command_events",
+	"sysbox_dispatch_retries", "sysbox_console_sessions", "sysbox_node_operations", "sysbox_agent_inventory",
+	"sysbox_guest_executions", "sysbox_guest_file_operations", "sysbox_run_requests", "sysbox_checkpoints",
+	"sysbox_health", "sysbox_projection", "sysbox_global_revisions", "sysbox_topology_placements", "sysbox_plans",
+}
+
+func (s *sqliteAPIStore) createSchema(db sqliteSchemaConnection) error {
 	_, err := db.Exec(`
-	CREATE TABLE IF NOT EXISTS sysbox_runs (
+	CREATE TABLE sysbox_runs (
 		id          TEXT NOT NULL,
 		topology    TEXT NOT NULL DEFAULT 'default',
 		operation   TEXT DEFAULT '',
@@ -73,10 +143,12 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		assigned_at TEXT DEFAULT '',
 		started_at  TEXT DEFAULT '',
 		ended_at    TEXT DEFAULT '',
-		deadline_at TEXT DEFAULT ''
+		deadline_at TEXT DEFAULT '',
+		snapshot_path TEXT NOT NULL DEFAULT '',
+		record_json BLOB NOT NULL DEFAULT X''
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_agents (
+	CREATE TABLE sysbox_agents (
 		id             TEXT PRIMARY KEY,
 		name           TEXT DEFAULT '',
 		status         TEXT NOT NULL DEFAULT 'online',
@@ -94,7 +166,7 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		updated_at     TEXT DEFAULT ''
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
+	CREATE TABLE sysbox_agent_commands (
 		id         TEXT PRIMARY KEY,
 		agent_id   TEXT NOT NULL DEFAULT '',
 		type       TEXT NOT NULL DEFAULT '',
@@ -112,27 +184,29 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		created_at TEXT DEFAULT '',
 		delivered  TEXT DEFAULT '',
 		acked_at   TEXT DEFAULT '',
-		ended_at   TEXT DEFAULT ''
+		ended_at   TEXT DEFAULT '',
+		record_json BLOB NOT NULL DEFAULT X''
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_agent_command_events (
+	CREATE TABLE sysbox_agent_command_events (
 		command_id TEXT NOT NULL DEFAULT '',
 		type       TEXT NOT NULL DEFAULT '',
 		agent_id   TEXT NOT NULL DEFAULT '',
 		status     TEXT DEFAULT '',
 		message    TEXT DEFAULT '',
 		error      TEXT DEFAULT '',
-		created_at TEXT DEFAULT ''
+		created_at TEXT DEFAULT '',
+		record_json BLOB NOT NULL DEFAULT X''
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_dispatch_retries (
+	CREATE TABLE sysbox_dispatch_retries (
 		command_id TEXT PRIMARY KEY,
 		failures INTEGER NOT NULL DEFAULT 0,
 		next TEXT NOT NULL DEFAULT '',
 		last_error TEXT DEFAULT ''
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_console_sessions (
+	CREATE TABLE sysbox_console_sessions (
 		id          TEXT PRIMARY KEY,
 		topology    TEXT NOT NULL DEFAULT '',
 		node        TEXT NOT NULL DEFAULT '',
@@ -150,12 +224,12 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		ended_at    TEXT DEFAULT ''
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_node_operations (
+	CREATE TABLE sysbox_node_operations (
 		id TEXT PRIMARY KEY,
 		data BLOB NOT NULL
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
+	CREATE TABLE sysbox_agent_inventory (
 		agent_id     TEXT PRIMARY KEY,
 		capabilities TEXT DEFAULT '[]',
 		labels       TEXT DEFAULT '{}',
@@ -168,54 +242,54 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		observed_at  TEXT NOT NULL DEFAULT ''
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_guest_executions (
+	CREATE TABLE sysbox_guest_executions (
 		id   TEXT PRIMARY KEY,
 		data BLOB NOT NULL
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_guest_file_operations (
+	CREATE TABLE sysbox_guest_file_operations (
 		id   TEXT PRIMARY KEY,
 		data BLOB NOT NULL
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_run_requests (
+	CREATE TABLE sysbox_run_requests (
 		id          TEXT PRIMARY KEY,
 		fingerprint TEXT NOT NULL,
 		run_id      TEXT NOT NULL
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_checkpoints (
+	CREATE TABLE sysbox_checkpoints (
 		topology TEXT NOT NULL DEFAULT '',
 		run_id   TEXT NOT NULL,
 		data     BLOB NOT NULL,
 		PRIMARY KEY (topology, run_id)
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_health (
+	CREATE TABLE sysbox_health (
 		topology TEXT PRIMARY KEY,
 		data     BLOB NOT NULL
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_projection (
+	CREATE TABLE sysbox_projection (
 		topology TEXT PRIMARY KEY,
 		data     BLOB NOT NULL
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_global_revisions (
+	CREATE TABLE sysbox_global_revisions (
 		revision   TEXT PRIMARY KEY,
 		files      TEXT NOT NULL DEFAULT '',
 		size       INTEGER DEFAULT 0,
 		created_at TEXT NOT NULL DEFAULT ''
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_topology_placements (
+	CREATE TABLE sysbox_topology_placements (
 		topology TEXT PRIMARY KEY,
 		agent_id TEXT NOT NULL,
 		protocol TEXT NOT NULL DEFAULT '',
 		bound_at TEXT NOT NULL
 	) STRICT;
 
-	CREATE TABLE IF NOT EXISTS sysbox_plans (
+	CREATE TABLE sysbox_plans (
 		id           TEXT NOT NULL DEFAULT '',
 		workspace    TEXT NOT NULL DEFAULT '',
 		revision     TEXT DEFAULT '',
@@ -227,39 +301,38 @@ func (s *sqliteAPIStore) ensureSchema(db *sql.DB) error {
 		PRIMARY KEY (id, workspace)
 	) STRICT;
 
-	PRAGMA journal_mode=WAL;
-	PRAGMA foreign_keys=ON;
 	`)
 	if err != nil {
 		return err
 	}
-	if err := s.ensureRunsColumn(db, "deadline_at", "TEXT DEFAULT ''"); err != nil {
-		return err
+	return s.validateSchema(db)
+}
+
+func (s *sqliteAPIStore) validateSchema(db sqliteSchemaConnection) error {
+	for _, table := range sqliteAPITables {
+		if _, err := db.Exec("SELECT * FROM " + table + " LIMIT 0"); err != nil {
+			return fmt.Errorf("%w: SQLite API table %s requires explicit rebuild: %v", persistence.ErrUnsupportedVersion, table, err)
+		}
 	}
 	if _, err := db.Exec("SELECT data FROM sysbox_node_operations LIMIT 0"); err != nil {
-		return fmt.Errorf("node operation schema requires rebuild: %w", err)
+		return fmt.Errorf("%w: node operation schema requires rebuild: %v", persistence.ErrUnsupportedVersion, err)
 	}
 	var obsoleteUnique int
 	if err := db.QueryRow(`SELECT count(*) FROM pragma_index_list('sysbox_run_requests') WHERE "unique"=1 AND origin='u'`).Scan(&obsoleteUnique); err != nil {
 		return err
 	}
 	if obsoleteUnique > 0 {
-		return fmt.Errorf("run dispatch schema requires rebuild: run_id must allow multiple execution incarnations")
+		return fmt.Errorf("%w: run dispatch schema requires rebuild: run_id must allow multiple execution incarnations", persistence.ErrUnsupportedVersion)
 	}
-	if err := s.ensureRunsColumn(db, "snapshot_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := s.ensureRunsColumn(db, "record_json", "BLOB NOT NULL DEFAULT X''"); err != nil {
-		return err
-	}
-	if err := ensureColumn(db, "sysbox_agent_commands", "record_json", "BLOB NOT NULL DEFAULT X''"); err != nil {
-		return err
-	}
-	if err := ensureColumn(db, "sysbox_agent_command_events", "record_json", "BLOB NOT NULL DEFAULT X''"); err != nil {
-		return err
-	}
-	if err := s.ensureGlobalRevisionsColumn(db, "files", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
+	for _, query := range []string{
+		"SELECT deadline_at, snapshot_path, record_json FROM sysbox_runs LIMIT 0",
+		"SELECT record_json FROM sysbox_agent_commands LIMIT 0",
+		"SELECT record_json FROM sysbox_agent_command_events LIMIT 0",
+		"SELECT files FROM sysbox_global_revisions LIMIT 0",
+	} {
+		if _, err := db.Exec(query); err != nil {
+			return fmt.Errorf("%w: SQLite API schema requires explicit rebuild: %v", persistence.ErrUnsupportedVersion, err)
+		}
 	}
 	return nil
 }
@@ -311,55 +384,6 @@ func (s *sqliteAPIStore) SaveTopologyPlacement(ctx context.Context, p topologyPl
 		return fmt.Errorf("topology %q is already placed on agent %q", p.Topology, owner)
 	}
 	return nil
-}
-
-// ensureRunsColumn adds a missing column to sysbox_runs for pre-existing
-// databases (see ensureColumn).
-func (s *sqliteAPIStore) ensureRunsColumn(db *sql.DB, column, def string) error {
-	return ensureColumn(db, "sysbox_runs", column, def)
-}
-
-// ensureGlobalRevisionsColumn adds a missing column to sysbox_global_revisions
-// for pre-existing databases (see ensureColumn).
-func (s *sqliteAPIStore) ensureGlobalRevisionsColumn(db *sql.DB, column, def string) error {
-	return ensureColumn(db, "sysbox_global_revisions", column, def)
-}
-
-// ensureColumn adds a missing column to a table for pre-existing databases.
-// sqlite has no versioned migration framework here (only CREATE TABLE IF NOT
-// EXISTS), so the ALTER is guarded by a PRAGMA table_info check to stay
-// idempotent across restarts. The table and column names are internal
-// constants, never user input.
-func ensureColumn(db *sql.DB, table, column, def string) error {
-	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	found := false
-	for rows.Next() {
-		var (
-			cid, notnull, pk int
-			name, typ        string
-			dflt             sql.NullString
-		)
-		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
-			return err
-		}
-		if name == column {
-			found = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if found {
-		return nil
-	}
-
-	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, def))
-	return err
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -507,7 +531,10 @@ func (s *sqliteAPIStore) LoadHealth(ctx context.Context, topology string) (*Heal
 }
 
 func (s *sqliteAPIStore) SaveResourceProjection(ctx context.Context, proj controlplane.ResourceProjection) error {
-	data, _ := json.Marshal(proj)
+	data, err := persistence.EncodeProjection(proj)
+	if err != nil {
+		return err
+	}
 	db, err := s.open()
 	if err != nil {
 		return err
@@ -531,11 +558,7 @@ func (s *sqliteAPIStore) LoadResourceProjection(ctx context.Context, topology st
 	if err != nil {
 		return nil, err
 	}
-	var proj controlplane.ResourceProjection
-	if err := json.Unmarshal(data, &proj); err != nil {
-		return nil, err
-	}
-	return &proj, nil
+	return persistence.DecodeProjection(data)
 }
 
 func (s *sqliteAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {
@@ -571,11 +594,8 @@ func (s *sqliteAPIStore) GetGlobalRevision(ctx context.Context, revision string)
 	if err != nil {
 		return nil, err
 	}
-	// Legacy rows (written before directory-tree revisions) have an empty files
-	// column; they cannot be unmarshaled, so treat them as not-found rather than
-	// surfacing a JSON error as a 500 on apply.
 	if len(files) == 0 {
-		return nil, errGlobalRevisionNotFound
+		return nil, fmt.Errorf("%w: global revision %q requires explicit rebuild", persistence.ErrUnsupportedVersion, revision)
 	}
 	if err := json.Unmarshal(files, &rev.Files); err != nil {
 		return nil, err
@@ -762,8 +782,11 @@ func (s *sqliteAPIStore) SaveAgentCommandEvent(ctx context.Context, event contro
 	if err != nil {
 		return err
 	}
-	event, err = *mustDecodeEvent(raw), nil
-	_ = err
+	normalized, err := persistence.DecodeCommandEvent(raw)
+	if err != nil {
+		return err
+	}
+	event = *normalized
 	_, err = db.ExecContext(ctx, `INSERT INTO sysbox_agent_command_events (command_id, type, agent_id, status, message, error, created_at, record_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, event.CommandID, event.Type, event.AgentID, event.Status, event.Message, event.Error, formatSQLiteTime(event.CreatedAt), raw)
 	return err
 }
@@ -774,7 +797,7 @@ func (s *sqliteAPIStore) ListAgentCommandEvents(ctx context.Context, agentID str
 		return nil, err
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT command_id, type, agent_id, status, message, error, created_at, record_json FROM sysbox_agent_command_events WHERE agent_id=? OR agent_id=''`, agentID)
+		`SELECT command_id, type, agent_id, status, message, error, created_at, record_json FROM sysbox_agent_command_events WHERE ?='' OR agent_id=?`, agentID, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -792,9 +815,14 @@ func (s *sqliteAPIStore) ListAgentCommandEvents(ctx context.Context, agentID str
 			if err != nil {
 				return nil, err
 			}
+			if ev.CommandID != decoded.CommandID || ev.Type != decoded.Type || ev.AgentID != decoded.AgentID ||
+				ev.Status != decoded.Status || ev.Message != decoded.Message || ev.Error != decoded.Error ||
+				createdAt != formatSQLiteTime(decoded.CreatedAt) {
+				return nil, fmt.Errorf("%w: inconsistent command event snapshot", persistence.ErrCorruptRecord)
+			}
 			ev = *decoded
 		} else {
-			ev.CreatedAt = parseSQLiteTime(createdAt)
+			return nil, fmt.Errorf("%w: command event %q requires explicit rebuild", persistence.ErrUnsupportedVersion, ev.CommandID)
 		}
 		out = append(out, ev)
 	}
@@ -864,15 +892,26 @@ func (s *sqliteAPIStore) GetAgentInventory(ctx context.Context, agentID string) 
 	if err != nil {
 		return nil, err
 	}
-	json.Unmarshal(caps, &inv.Capabilities)
-	json.Unmarshal(labels, &inv.Labels)
-	json.Unmarshal(resources, &inv.Resources)
-	json.Unmarshal(topologies, &inv.Topologies)
-	json.Unmarshal(artifacts, &inv.Artifacts)
-	json.Unmarshal(tools, &inv.Tools)
-	inv.Stale = stale != 0
-	inv.ObservedAt = parseSQLiteTime(observedAt)
-	if inv.AgentID == "" {
+	for _, field := range []struct {
+		raw    []byte
+		target any
+	}{
+		{caps, &inv.Capabilities}, {labels, &inv.Labels}, {resources, &inv.Resources},
+		{topologies, &inv.Topologies}, {artifacts, &inv.Artifacts}, {tools, &inv.Tools},
+	} {
+		if err := json.Unmarshal(field.raw, field.target); err != nil {
+			return nil, fmt.Errorf("%w: agent inventory: %v", persistence.ErrCorruptRecord, err)
+		}
+	}
+	if stale != 0 && stale != 1 {
+		return nil, fmt.Errorf("%w: invalid inventory stale flag", persistence.ErrCorruptRecord)
+	}
+	inv.Stale = stale == 1
+	inv.ObservedAt, err = time.Parse(time.RFC3339Nano, observedAt)
+	if err != nil || inv.ObservedAt.IsZero() {
+		return nil, fmt.Errorf("%w: invalid inventory observation time", persistence.ErrCorruptRecord)
+	}
+	if strings.TrimSpace(inv.AgentID) == "" {
 		return nil, persistence.ErrCorruptRecord
 	}
 	return &inv, nil

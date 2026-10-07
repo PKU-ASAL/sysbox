@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/coder/websocket"
@@ -101,8 +102,14 @@ func (b *ExecutionBridge) ReconcileParentJournal(parent, run *controlplane.Run) 
 	return b.server.reconcileParentJournal(parent, run)
 }
 
-func (b *ExecutionBridge) Preflight(ctx context.Context, topology string, log io.Writer) error {
-	res, err := b.server.preflightTopology(topology)
+func (b *ExecutionBridge) Preflight(ctx context.Context, run *controlplane.Run, log io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if run == nil || run.SnapshotPath == "" {
+		return fmt.Errorf("run preflight requires an immutable snapshot")
+	}
+	res, err := preflightFile(run.SnapshotPath)
 	if err != nil {
 		return err
 	}

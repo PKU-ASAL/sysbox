@@ -169,7 +169,7 @@ func (b *LocalBridge) ReconcileParentJournal(_, _ *controlplane.Run) error {
 	return fmt.Errorf("run resume requires the API control plane")
 }
 
-func (b *LocalBridge) Preflight(context.Context, string, io.Writer) error {
+func (b *LocalBridge) Preflight(context.Context, *controlplane.Run, io.Writer) error {
 	return nil
 }
 

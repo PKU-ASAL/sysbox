@@ -55,6 +55,7 @@ var expectedDocs = []string{
 	"docs/superpowers/plans/2026-09-13-lifecycle-closure.md",
 	"docs/superpowers/plans/2026-09-28-observation-driven-runtime-implementation-plan.md",
 	"docs/superpowers/plans/2026-10-07-attachment-target-ownership.md",
+	"docs/superpowers/plans/2026-10-07-control-plane-closure.md",
 	"docs/superpowers/specs/2026-09-13-lifecycle-closure-design.md",
 	"docs/superpowers/specs/2026-09-28-sysbox-architecture-refactor-design.md",
 }

@@ -14,24 +14,30 @@ import (
 )
 
 type WorkspaceService struct {
-	runsDir        string
-	workspacesDir  string
-	stateBackend   string
-	stateManager   func(topology string) (*state.Manager, error)
-	health         healthStore
-	placementStore durablePlacementStore
+	runsDir            string
+	workspacesDir      string
+	stateBackend       string
+	stateManager       func(topology string) (*state.Manager, error)
+	health             healthStore
+	placementStore     durablePlacementStore
+	loadRuns           func(context.Context) ([]controlplane.Run, error)
+	loadNodeOperations func(context.Context, string) ([]controlplane.NodeOperation, error)
+	lockAdmission      func(string) func()
 }
 
 type WorkspaceInfo struct {
-	ArtifactID    string                       `json:"artifact_id"`
-	TopologyID    string                       `json:"topology_id,omitempty"`
-	Name          string                       `json:"name"`
-	HasHCL        bool                         `json:"has_hcl"`
-	HasState      bool                         `json:"has_state"`
-	ResourceCount int                          `json:"resource_count,omitempty"`
-	Serial        int64                        `json:"serial,omitempty"`
-	Backend       string                       `json:"backend,omitempty"`
-	Status        *controlplane.TopologyStatus `json:"status,omitempty"`
+	ArtifactID       string                       `json:"artifact_id"`
+	TopologyID       string                       `json:"topology_id,omitempty"`
+	Name             string                       `json:"name"`
+	HasHCL           bool                         `json:"has_hcl"`
+	HasState         bool                         `json:"has_state"`
+	ResourceCount    int                          `json:"resource_count,omitempty"`
+	Serial           int64                        `json:"serial,omitempty"`
+	Backend          string                       `json:"backend,omitempty"`
+	Status           *controlplane.TopologyStatus `json:"status,omitempty"`
+	ActiveRunID      string                       `json:"active_run_id,omitempty"`
+	ActiveRevision   string                       `json:"active_revision,omitempty"`
+	PlacementAgentID string                       `json:"placement_agent_id,omitempty"`
 }
 
 func newWorkspaceService(runsDir, workspacesDir, stateBackend string, stateManager func(string) (*state.Manager, error), health healthStore) *WorkspaceService {
@@ -126,12 +132,45 @@ func (s *WorkspaceService) Get(ctx context.Context, topology string) (WorkspaceI
 		return WorkspaceInfo{}, err
 	}
 	out := WorkspaceInfo{ArtifactID: artifactID(topology), TopologyID: topologyID(topology), Name: topology}
+	placement, err := s.loadPlacement(topology)
+	if err != nil {
+		return WorkspaceInfo{}, err
+	}
+	if placement != nil {
+		out.PlacementAgentID = placement.AgentID
+	}
 	if _, err := os.Stat(s.HCLFile(topology)); err == nil {
 		out.HasHCL = true
 	}
-	if st, err := s.LoadState(topology); err == nil {
-		out.HasState = true
-		out.ResourceCount = len(st.Resources)
+	// Successful loading can initialize an empty aggregate. Catalog membership
+	// distinguishes durable state/journal evidence from that empty anchor.
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		return WorkspaceInfo{}, err
+	}
+	listed, err := mgr.ListTopologies(ctx)
+	if err != nil {
+		return WorkspaceInfo{}, err
+	}
+	for _, metadata := range listed {
+		if metadata.Name == topology {
+			out.HasState = metadata.HasState
+			out.ResourceCount = metadata.ResourceCount
+			out.Serial = metadata.Serial
+			out.Backend = metadata.Backend
+			break
+		}
+	}
+	if s.loadRuns != nil {
+		runs, err := s.loadRuns(ctx)
+		if err != nil {
+			return WorkspaceInfo{}, err
+		}
+		for _, run := range latestRunsByID(runs) {
+			if run.Topology == topology && run.Status.IsActive() {
+				out.ActiveRunID, out.ActiveRevision = run.ID, run.Revision
+			}
+		}
 	}
 	return out, nil
 }
@@ -236,6 +275,42 @@ func (s *WorkspaceService) List(ctx context.Context) ([]WorkspaceInfo, error) {
 			info.Backend = item.Backend
 		}
 	}
+	if s.loadRuns != nil {
+		runs, err := s.loadRuns(ctx)
+		if err != nil {
+			return nil, err
+		}
+		placements := map[string]*topologyPlacement{}
+		for _, run := range latestRunsByID(runs) {
+			if validatePathSegment(run.Topology, "topology") != nil {
+				continue
+			}
+			placement, loaded := placements[run.Topology]
+			if !loaded {
+				var err error
+				placement, err = s.loadPlacement(run.Topology)
+				if err != nil {
+					return nil, err
+				}
+				placements[run.Topology] = placement
+			}
+			placed := placement != nil && placement.AgentID == run.AgentID
+			if !run.Status.IsActive() && !placed {
+				continue
+			}
+			info := items[run.Topology]
+			if info == nil {
+				info = &WorkspaceInfo{ArtifactID: artifactID(run.Topology), TopologyID: topologyID(run.Topology), Name: run.Topology}
+				items[run.Topology] = info
+			}
+			if placed {
+				info.PlacementAgentID = placement.AgentID
+			}
+			if run.Status.IsActive() {
+				info.ActiveRunID, info.ActiveRevision = run.ID, run.Revision
+			}
+		}
+	}
 	out := make([]WorkspaceInfo, 0, len(items))
 	for _, info := range items {
 		out = append(out, *info)
@@ -247,6 +322,39 @@ func (s *WorkspaceService) List(ctx context.Context) ([]WorkspaceInfo, error) {
 func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bool) error {
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
+	}
+	if s.lockAdmission != nil {
+		unlock := s.lockAdmission(topology)
+		defer unlock()
+	}
+	if s.loadRuns != nil {
+		runs, err := s.loadRuns(ctx)
+		if err != nil {
+			return fmt.Errorf("read active operations: %w", err)
+		}
+		for _, run := range latestRunsByID(runs) {
+			if run.Topology == topology && run.Status.IsActive() {
+				return fmt.Errorf("%w: topology has an active run; metadata cannot be deleted", persistence.ErrConflict)
+			}
+		}
+	}
+	if s.loadNodeOperations != nil {
+		operations, err := s.loadNodeOperations(ctx, "")
+		if err != nil {
+			return fmt.Errorf("read active node operations: %w", err)
+		}
+		for _, op := range operations {
+			if op.Topology == topology && op.Status != controlplane.NodeOperationStatusDone && op.Status != controlplane.NodeOperationStatusFailed {
+				return fmt.Errorf("%w: topology has an active node operation; metadata cannot be deleted", persistence.ErrConflict)
+			}
+		}
+	}
+	placement, err := s.loadPlacement(topology)
+	if err != nil {
+		return err
+	}
+	if placement != nil && !force {
+		return fmt.Errorf("%w: owning-agent absence is not verified; complete resource teardown on agent %q, then use force=true only to explicitly discard metadata (remote resources are not removed)", persistence.ErrConflict, placement.AgentID)
 	}
 	unlock, err := s.lockPublication(ctx, topology)
 	if err != nil {
@@ -401,7 +509,7 @@ func (s *WorkspaceService) StateSnapshots(ctx context.Context, topology string) 
 	}
 	snapshots, ok := mgr.Backend().(state.SnapshotBackend)
 	if !ok {
-		return []state.Snapshot{}, nil
+		return nil, state.ErrUnsupported
 	}
 	return snapshots.ListSnapshots(ctx)
 }
@@ -413,7 +521,7 @@ func (s *WorkspaceService) RestoreStateSnapshot(ctx context.Context, topology, s
 	}
 	snapshots, ok := mgr.Backend().(state.SnapshotBackend)
 	if !ok {
-		return fmt.Errorf("state backend does not support snapshots")
+		return state.ErrUnsupported
 	}
 	return snapshots.RestoreSnapshot(ctx, snapshot)
 }

@@ -18,6 +18,14 @@
 
 CLI、Agent 与 provider 必须一起升级，并共享同一宿主 namespace 视图和 `/var/lib/sysbox/networks` 所有权记录/锁目录。Firecracker/libvirt 直接接 Docker NAT 网络的配置需改为隔离网络；Docker 节点的原生 NAT 接入保留。
 
+本轮同时删除 SQLite 自动补列、旧 Run/command/event 完整记录缺失回退与任意 revision 标签兼容。缺 schema/快照的数据库必须重建；重新发布配置取得全局 revision，不能继续用旧任意字符串标签。
+
+SQLite/Postgres API schema 升为7：只在空数据库/schema 中初始化，在当前版本上重开；旧版、未知版或无版本的既有 API 表直接拒绝，不运行迁移阶梯。旧库先停写、保留恢复证据并按项目范围明确重建；不删除共享数据库的其他项目。
+
+Guest vsock 的执行/文件协议变为 `exec.v2`/`write_file.v2`。重建 sysbox-init 后重建 VM；旧运行中的 guest 不支持新协议，禁止混用或回退。SSH 文件安装依赖 guest 的 `mktemp`、`sha256sum`、`mv -T` 和 `sync -f`；vsock 文件写入仅限已存在的白名单根目录。两种传输都要求校验成功后才返回安装成功。
+
+API 重启后，带 Idempotency-Key 的活跃 Apply 若缺敏感输入，claim 返回503。调用方向 Agent 当前连接的 API 重放完全相同的请求补交输入；终态 Run 不会重新执行。该机制不承诺多 API 共享内存或完整多控制器执行隔离。
+
 ## 中断的 mutation
 
 保留 action journal、state 与诊断 checkpoint，并按照 [Troubleshooting](../guides/troubleshooting.md) 收集 observation。Recovery 必须从原 topology、state lineage 和 plan fingerprint 开始；checkpoint 不能授权重放副作用。
@@ -31,6 +39,8 @@ CLI、Agent 与 provider 必须一起升级，并共享同一宿主 namespace �
 ## 残留清理
 
 优先使用 action journal 恢复与经过身份验证的 provider delete。手工清理只能在完整记录 ownership evidence、external ID 和依赖后进行，并且不能扩大到名称相似的非受管对象。
+
+远端 topology 有 placement 时，普通 metadata DELETE 返回409；API 不用本地空 state 或单独的 Destroy终态推断远端已空。完成远端清理并自行核对证据后，当前需要显式 `force=true` 删除元数据。force 不删除远端资源，活跃 Run/NodeOperation 或本地未完成 journal 仍会阻止删除。
 
 ## Compose 维护
 

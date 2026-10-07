@@ -85,6 +85,13 @@ func (b localRunStorage) UpdateRun(ctx context.Context, id string, transform fun
 	if next == nil {
 		return current, nil
 	}
+	runs, err := b.store.LoadRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTopologyAdmission(runs, *next); err != nil {
+		return nil, err
+	}
 	if err := b.store.saveRunUnlocked(ctx, *next); err != nil {
 		return nil, err
 	}
@@ -117,9 +124,6 @@ func scanSQLiteRun(row runScanner) (*controlplane.Run, error) {
 		}
 		parsed, err := time.Parse(time.RFC3339Nano, field.raw)
 		if err != nil {
-			parsed, err = time.Parse("2006-01-02 15:04:05", field.raw)
-		}
-		if err != nil {
 			return nil, fmt.Errorf("%w: invalid run timestamp", persistence.ErrCorruptRecord)
 		}
 		*field.dst = parsed
@@ -136,7 +140,7 @@ func scanSQLiteRun(row runScanner) (*controlplane.Run, error) {
 		persistence.NormalizeRun(snapshot)
 		return snapshot, nil
 	}
-	return &r, nil
+	return nil, fmt.Errorf("%w: run snapshot missing; rebuild the database", persistence.ErrCorruptRecord)
 }
 
 func sameSQLiteRunColumns(indexed, full controlplane.Run) bool {
@@ -192,6 +196,9 @@ func (b sqliteRunStorage) UpdateRun(ctx context.Context, id string, transform fu
 		return nil, err
 	}
 	if next != nil {
+		if err := checkSQLiteRunAdmission(ctx, conn, *next); err != nil {
+			return nil, err
+		}
 		err = insertSQLiteRun(ctx, conn, *next)
 		if err != nil {
 			return nil, err
@@ -219,6 +226,9 @@ func (b postgresRunStorage) UpdateRun(ctx context.Context, id string, transform 
 		_ = tx.Rollback(cleanup)
 	}()
 	var raw []byte
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('sysbox-run-admission'))`); err != nil {
+		return nil, err
+	}
 	err = tx.QueryRow(ctx, `SELECT data::text FROM sysbox_runs WHERE id=$1 FOR UPDATE`, id).Scan(&raw)
 	missing := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !missing {
@@ -236,6 +246,9 @@ func (b postgresRunStorage) UpdateRun(ctx context.Context, id string, transform 
 		return nil, err
 	}
 	if next != nil {
+		if err := checkPostgresRunAdmission(ctx, tx, *next); err != nil {
+			return nil, err
+		}
 		durable := persistence.DurableRun(*next)
 		raw, err = json.Marshal(durable)
 		if err != nil {

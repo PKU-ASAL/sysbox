@@ -2,6 +2,9 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -127,13 +130,13 @@ func handleVsockConn(fd int) {
 	// pump goroutines call sendFrame concurrently.
 	mw := &mutexWriter{Writer: conn}
 
-	// 64KB buffer limits the maximum header line size; ReadBytes returns
+	// 64KB buffer limits the maximum header line size; ReadSlice returns
 	// bufio.ErrBufferFull if the line exceeds this, preventing OOM from
 	// malicious connections that never send '\n'.
 	reader := bufio.NewReaderSize(conn, 64*1024)
 	// Limit header line to 64KB to prevent OOM from malicious connections
 	// that never send '\n'.
-	headerLine, err := reader.ReadBytes('\n')
+	headerLine, err := reader.ReadSlice('\n')
 	if err != nil {
 		if err == bufio.ErrBufferFull {
 			logf("vsock read header: exceeded 64KB limit")
@@ -153,7 +156,7 @@ func handleVsockConn(fd int) {
 	case vsockrpc.OpPing:
 		sendFrame(mw, vsockrpc.Frame{Pong: true, Done: true})
 	case vsockrpc.OpExec:
-		handleExec(mw, req)
+		handleExec(mw, reader, req)
 	case vsockrpc.OpConsole:
 		handleConsole(conn, req)
 	case vsockrpc.OpWriteFile:
@@ -186,13 +189,24 @@ func sendFrame(w io.Writer, f vsockrpc.Frame) {
 	_, _ = w.Write(data)
 }
 
-func handleExec(w io.Writer, req vsockrpc.Request) {
+func handleExec(w io.Writer, reader io.Reader, req vsockrpc.Request) {
+	if req.StdinSize < 0 || req.StdinSize > vsockrpc.MaxStdinBytes {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: "invalid stdin size"})
+		return
+	}
 	if len(req.Cmd) == 0 {
 		sendFrame(w, vsockrpc.Frame{Done: true, Error: "empty cmd"})
 		return
 	}
 
 	cmd := exec.Command(req.Cmd[0], req.Cmd[1:]...)
+	// Complete input is required before authorizing process creation.
+	input := make([]byte, req.StdinSize)
+	if _, err := io.ReadFull(reader, input); err != nil {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
+		return
+	}
+	cmd.Stdin = strings.NewReader(string(input))
 	cmd.Dir = req.WorkDir
 	// Merge host-supplied env into the current environment so that
 	// PATH, HOME, etc. are preserved. Without this, any env overrides
@@ -324,43 +338,85 @@ var allowedWritePaths = []string{
 }
 
 func handleWriteFile(w io.Writer, reader *bufio.Reader, req vsockrpc.Request) {
+	if req.Size < 0 || len(req.SHA256) != sha256.Size*2 {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: "size and SHA-256 proof required"})
+		return
+	}
+	if _, err := hex.DecodeString(req.SHA256); err != nil {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: "invalid SHA-256"})
+		return
+	}
 	if req.Path == "" {
 		sendFrame(w, vsockrpc.Frame{Done: true, Error: "missing path"})
 		return
 	}
 	// Validate the target path is under an allowed prefix.
 	cleanPath := filepath.Clean(req.Path)
-	allowed := false
+	allowedRoot := ""
 	for _, prefix := range allowedWritePaths {
 		if strings.HasPrefix(cleanPath, prefix) {
-			allowed = true
+			allowedRoot = prefix
 			break
 		}
 	}
-	if !allowed {
+	if allowedRoot == "" {
 		sendFrame(w, vsockrpc.Frame{Done: true, Error: fmt.Sprintf("path %q is outside allowed write directories", cleanPath)})
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(req.Path), 0755); err != nil {
+	root, err := os.OpenRoot(allowedRoot)
+	if err != nil {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
+		return
+	}
+	defer root.Close()
+	relative, err := filepath.Rel(allowedRoot, cleanPath)
+	if err != nil {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
+		return
+	}
+	if err := root.MkdirAll(filepath.Dir(relative), 0755); err != nil {
 		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
 		return
 	}
 	mode := os.FileMode(req.Mode)
-	if mode == 0 {
-		mode = 0644
+	parent, err := root.OpenRoot(filepath.Dir(relative))
+	if err != nil {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
+		return
 	}
-	f, err := os.OpenFile(req.Path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	defer parent.Close()
+	temporary := ".sysbox-transfer-" + rand.Text()
+	f, err := parent.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
 		return
 	}
 	defer f.Close()
-
-	if req.Size > 0 {
-		if _, err := io.CopyN(f, reader, req.Size); err != nil {
+	defer parent.Remove(temporary)
+	digest := sha256.New()
+	if _, err := io.CopyN(io.MultiWriter(f, digest), reader, req.Size); err != nil {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
+		return
+	}
+	actual := hex.EncodeToString(digest.Sum(nil))
+	if actual != req.SHA256 {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: "file checksum mismatch"})
+		return
+	}
+	for _, step := range []func() error{func() error { return f.Chmod(mode.Perm()) }, f.Sync, f.Close, func() error { return parent.Rename(temporary, filepath.Base(relative)) }} {
+		if err := step(); err != nil {
 			sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
 			return
 		}
 	}
-	sendFrame(w, vsockrpc.Frame{Done: true})
+	dir, err := parent.Open(".")
+	if err == nil {
+		err = dir.Sync()
+		_ = dir.Close()
+	}
+	if err != nil {
+		sendFrame(w, vsockrpc.Frame{Done: true, Error: err.Error()})
+		return
+	}
+	sendFrame(w, vsockrpc.Frame{Done: true, SHA256: actual})
 }

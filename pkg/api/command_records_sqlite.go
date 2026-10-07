@@ -7,6 +7,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -64,7 +65,7 @@ func scanSQLiteCommand(row runScanner) (*persistence.CommandRecord, error) {
 		return nil, err
 	}
 	if len(full) == 0 {
-		return persistence.DecodeCommandRecord(indexed)
+		return nil, fmt.Errorf("%w: command %q requires explicit rebuild", persistence.ErrUnsupportedVersion, cmd.ID)
 	}
 	record, err := persistence.DecodeCommandRecord(full)
 	if err != nil {

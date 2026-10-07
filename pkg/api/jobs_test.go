@@ -47,6 +47,7 @@ func TestJobsOperationKeyIsScopedByTopologyAndOperation(t *testing.T) {
 	jobs := newJobsWithRecovery(t.TempDir(), nil, false)
 	first := jobs.startWithOptions("one", "destroy", runStartOptions{OperationKey: "same-key"})
 	otherTopology := jobs.startWithOptions("two", "destroy", runStartOptions{OperationKey: "same-key"})
+	require.NoError(t, jobs.finish(first, nil))
 	otherOperation := jobs.startWithOptions("one", "apply", runStartOptions{OperationKey: "same-key"})
 	require.NotEqual(t, first.ID, otherTopology.ID)
 	require.NotEqual(t, first.ID, otherOperation.ID)

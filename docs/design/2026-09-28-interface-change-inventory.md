@@ -444,6 +444,12 @@ Router checkpoint policy 恢复不再执行 ApplyRuleset；缺少已记录 table
 
 ## 11. 最终承诺
 
+实施补充（2026-10-07 通用控制面收口）：Apply 新增持久 `Idempotency-Key` 受理，保持执行轮次 command ID；GET Run 增加 `inputs_required`，claim503可重试但queued_at/revision必填，旧轮次409。keyed Apply 的 immutable snapshot 是执行/预检依据，不改 mutable workspace；任意 revision 标签拒绝。capabilities 使用 `sysbox-runtime-v1`，不绑定下游业务。cleanup-inspection 是 state+journal/操作证据查询，external_presence=unknown，不签发“空 state 即已清理”的回执。
+
+内部 `agentexec.Bridge.Preflight` 接受 `*Run`，只能使用固定 SnapshotPath。SQLite schema 不自动补列，Run/command/event 缺完整记录要求重建。State snapshot/lease 操作不支持时HTTP501；SSHAccess Create/Delete明确拒绝，旧安装脚本与仅删state的假清理移除。
+
+vsock `exec.v2` 新增 stdin_size + body（最多8MiB），`write_file.v2` 要求 sha256，terminal frame 返回匹配摘要；旧操作名不回退。SSH/vsock文件安装校验内容、临时文件同步、精确目标原子替换。后台 Start 仍不代表 durable task，Observe/Cancel可选SPI未实现，不能宣称跨重启恢复或远端终止。
+
 实施补充（2026-10-07 attachment target）：`driver.AttachmentRequest` 新增必需的 `NetworkIdentity`，表示目标网络的 owner/topology/resource/generation，与 context 中节点操作身份分离。runtime 在新建与恢复时均从网络 resource 填入。缺失身份不兼容。网络 bridge 消费端只接受 v2 ownership anchor；libvirt `BridgeAttach.Target` 保存目标引用，旧裸 bridge 记录启动时要求重建。
 
 Firecracker manifest/HandleState 升为 v2，新增每条 attachment 的逻辑名、guest device、网络 target、TAP proof；v1 显式拒绝，必须重建，不能手改 version。Firecracker/libvirt 不再根据 Docker network ID 或普通 bridge 名称猜测可接入的 root bridge；Docker NAT 跨 provider 接入返回 Unsupported，provider Validate 提前拒绝。Docker 原生 NAT 继续支持，Attach/Observe/Delete 均核对网络 ID 和独立网络身份标签。HCL 字段和 HTTP 路由未改，但上述 provider/network 组合的能力范围已收紧。

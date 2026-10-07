@@ -99,6 +99,10 @@ test-libvirt-generation-e2e: ## Run real libvirt managed-generation effect rejec
 test-docker-generation-e2e: ## Run real Docker managed-generation effect rejection
 	$(GOENV) $(GO) test -tags e2e ./pkg/provider/docker -run '^TestDockerRealGenerationEffectsE2E$$' -count=1 -v -timeout=3m
 
+.PHONY: test-remote-docker-fault-e2e
+test-remote-docker-fault-e2e: ## Real HTTP/Agent/Docker completion-loss and API restart acceptance
+	SYSBOX_REMOTE_DOCKER_E2E=1 $(GOENV) $(GO) test -tags e2e ./pkg/api -run '^TestRemoteDockerCompletionLossRecoveryE2E$$' -count=1 -v -timeout=3m
+
 .PHONY: help build build-all test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset test-windows-tools prepare-windows10-media build-windows10-image test-windows10-libvirt release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
@@ -137,7 +141,7 @@ build-all: ## Build sysbox-init for amd64 and arm64
 	$(GOENV) GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $(INITDIR)/sysbox-init.linux-amd64.bin ./cmd/sysbox-init
 	$(GOENV) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $(INITDIR)/sysbox-init.linux-arm64.bin ./cmd/sysbox-init
 
-$(INITDIR)/sysbox-init.linux-%.bin: cmd/sysbox-init/main.go cmd/sysbox-init/network.go cmd/sysbox-init/server.go
+$(INITDIR)/sysbox-init.linux-%.bin: cmd/sysbox-init/main.go cmd/sysbox-init/network.go cmd/sysbox-init/server.go pkg/vsockrpc/protocol.go
 	$(GOENV) GOOS=linux GOARCH=$* CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $@ ./cmd/sysbox-init
 
 test: ## Run unit tests

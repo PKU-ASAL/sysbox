@@ -111,6 +111,9 @@ func TestApplyMaterializesImmutableRevisionSnapshot(t *testing.T) {
 	first := publishRevision(t, s, "resource \"sysbox_node\" \"one\" {\n  image = \"alpine:3.21\"\n  substrate = \"docker\"\n}\n")
 	second := publishRevision(t, s, "resource \"sysbox_node\" \"two\" {\n  image = \"alpine:3.22\"\n  substrate = \"docker\"\n}\n")
 	runID := applyUpsert(t, s, "cf-snapshot", first)
+	firstRun, exists := s.jobs.get(runID)
+	require.True(t, exists)
+	require.NoError(t, s.jobs.finish(firstRun, nil))
 	applyUpsert(t, s, "cf-snapshot", second)
 	run, ok := s.jobs.get(runID)
 	require.True(t, ok)
@@ -177,6 +180,9 @@ func TestApplyUpsertDifferentInputsGiveDifferentRuns(t *testing.T) {
 
 	rev := publishRevision(t, s, upsertApplyHCL)
 	first := applyUpsertInputs(t, s, "cf-upsert-a", rev, map[string]string{"replicas": "1"})
+	firstRun, ok := s.jobs.get(first)
+	require.True(t, ok)
+	require.NoError(t, s.jobs.finish(firstRun, nil))
 	second := applyUpsertInputs(t, s, "cf-upsert-a", rev, map[string]string{"replicas": "2"})
 
 	require.NotEqual(t, first, second, "different inputs must not coalesce")
@@ -304,10 +310,8 @@ func TestApplyUpsertSetsDeadlineAt(t *testing.T) {
 	require.Equal(t, deadline, run.DeadlineAt)
 }
 
-// A legacy workspace revision id (from the old POST /v1/topologies/{t}/revisions
-// flow) is not a global digest, so it must still dispatch a run as a label
-// without a 404.
-func TestApplyLegacyWorkspaceRevisionStillDispatches(t *testing.T) {
+// An unverified label must never masquerade as an immutable revision.
+func TestApplyRejectsLegacyWorkspaceRevision(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	writeRunServiceTopology(t, s, "lab", `resource "sysbox_network" "lab" {
   cidr = "10.77.0.0/24"
@@ -320,17 +324,7 @@ func TestApplyLegacyWorkspaceRevisionStillDispatches(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/apply", bytes.NewBufferString(`{"revision":"abc123"}`)))
-	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
-
-	var started struct {
-		RunID string `json:"run_id"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &started))
-	require.NotEmpty(t, started.RunID)
-
-	run, ok := s.jobs.get(started.RunID)
-	require.True(t, ok)
-	require.Equal(t, "abc123", run.Revision)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
 
 // Applying a global revision must materialize the whole project directory tree
@@ -370,7 +364,10 @@ func TestApplyUpsertReconcilesRemovedFiles(t *testing.T) {
 		"modules/web/main.hcl": `resource "sysbox_node" "web" {}`,
 		"files/extra.txt":      "extra",
 	})
-	applyUpsert(t, s, "cf-reconcile", revA)
+	firstID := applyUpsert(t, s, "cf-reconcile", revA)
+	firstRun, ok := s.jobs.get(firstID)
+	require.True(t, ok)
+	require.NoError(t, s.jobs.finish(firstRun, nil))
 
 	base := filepath.Dir(s.workspaceService().HCLFile("cf-reconcile"))
 	_, err := os.Stat(filepath.Join(base, "files", "extra.txt"))

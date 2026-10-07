@@ -68,6 +68,7 @@ func TestPlacementBindsTopologyToFirstAgent(t *testing.T) {
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-b", Status: controlplane.AgentStatusOnline, Capabilities: []string{"docker"}}))
 	run := s.jobs.startWithOptions("placement-test", "apply", runStartOptions{AgentID: "host-b"})
 	require.NoError(t, s.scheduler.DispatchRun(context.Background(), run, []string{"docker"}))
+	require.NoError(t, s.jobs.finish(run, nil))
 	next := s.jobs.startWithOptions("placement-test", "apply", runStartOptions{})
 	require.NoError(t, s.scheduler.DispatchRun(context.Background(), next, []string{"docker"}))
 	require.Equal(t, "host-b", next.AgentID)

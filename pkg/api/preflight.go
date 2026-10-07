@@ -60,7 +60,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			addPreflightChecks(&res, nodeDriver.PreflightChecks(false))
 		}
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeJSON(w, http.StatusOK, s.runtimeCapabilities(res))
 }
 
 // GET /v1/topologies/{topology}/preflight
@@ -79,7 +79,10 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) preflightTopology(topology string) (*preflightResult, error) {
-	hclPath := s.workspaceService().HCLFile(topology)
+	return preflightFile(s.workspaceService().HCLFile(topology))
+}
+
+func preflightFile(hclPath string) (*preflightResult, error) {
 	root, err := config.ParseFile(hclPath)
 	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)

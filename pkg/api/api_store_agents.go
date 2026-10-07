@@ -97,21 +97,16 @@ func (s *localAPIStore) GetAgentInventory(_ context.Context, agentID string) (*c
 }
 
 func (s *postgresAPIStore) SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error {
-	if event.AgentID == "" {
-		event.AgentID = "_unknown"
-	}
-	if event.CreatedAt.IsZero() {
-		event.CreatedAt = time.Now().UTC()
+	event = persistence.NormalizeCommandEvent(event)
+	raw, err := persistence.EncodeCommandEvent(event)
+	if err != nil {
+		return err
 	}
 	conn, err := s.connect(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Release()
-	raw, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
 	_, err = conn.Exec(ctx, `
 INSERT INTO sysbox_agent_command_events (agent_id, command_id, status, data, created_at)
 VALUES ($1, $2, $3, $4::jsonb, $5)`,
@@ -145,11 +140,11 @@ func (s *postgresAPIStore) ListAgentCommandEvents(ctx context.Context, agentID s
 		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}
-		var event controlplane.AgentCommandEvent
-		if err := json.Unmarshal(raw, &event); err != nil {
+		event, err := persistence.DecodeCommandEvent(raw)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, event)
+		out = append(out, *event)
 	}
 	return out, rows.Err()
 }

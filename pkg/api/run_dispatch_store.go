@@ -26,7 +26,7 @@ type localRunDispatch struct {
 	Command     controlplane.AgentCommand `json:"command"`
 }
 
-func (s *localAPIStore) GetRunDispatch(_ context.Context, requestID, fingerprint string) (*controlplane.Run, bool, error) {
+func (s *localAPIStore) GetRunDispatch(ctx context.Context, requestID, fingerprint string) (*controlplane.Run, bool, error) {
 	bundle, err := readLocalRunDispatch(filepath.Join(s.runsDir, "_run_requests", requestID+".json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
@@ -37,7 +37,8 @@ func (s *localAPIStore) GetRunDispatch(_ context.Context, requestID, fingerprint
 	if fingerprint != "" && bundle.Fingerprint != fingerprint {
 		return nil, false, errIdempotencyConflict
 	}
-	return &bundle.Run, true, nil
+	run, err := s.GetRun(ctx, bundle.Run.ID)
+	return run, err == nil, err
 }
 
 func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispatchRequest) (*controlplane.Run, bool, error) {
@@ -105,6 +106,13 @@ func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispat
 			bundle.Run.RequestFingerprint = request.Fingerprint
 		}
 	} else {
+		runs, err := s.LoadRuns(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		if err := validateTopologyAdmission(runs, request.Run); err != nil {
+			return nil, false, err
+		}
 		if err := validatePathSegment(request.Command.ID, "command"); err != nil {
 			return nil, false, err
 		}
@@ -224,6 +232,9 @@ func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispa
 	if !errors.Is(err, persistence.ErrNotFound) {
 		return nil, false, err
 	}
+	if err := checkSQLiteRunAdmission(ctx, tx, request.Run); err != nil {
+		return nil, false, err
+	}
 	if err := insertSQLiteRun(ctx, tx, request.Run); err != nil {
 		return nil, false, err
 	}
@@ -298,6 +309,9 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 		return nil, false, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('sysbox-run-admission'))`); err != nil {
+		return nil, false, err
+	}
 	// Concurrent identical inserts can conflict on either unique index (id
 	// or run_id). Resolve both through the exact request/fingerprint read below.
 	tag, err := tx.Exec(ctx, `INSERT INTO sysbox_run_requests (id, fingerprint, run_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, runDispatchKey(request), request.Fingerprint, request.Run.ID)
@@ -365,6 +379,9 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 		return &existing, false, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, err
+	}
+	if err := checkPostgresRunAdmission(ctx, tx, request.Run); err != nil {
 		return nil, false, err
 	}
 	runRaw, err := json.Marshal(request.Run)

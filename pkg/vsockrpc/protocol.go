@@ -27,34 +27,40 @@ type VMConfig struct {
 // DefaultPort is the vsock port the sysbox-init server listens on.
 const DefaultPort uint32 = 8901
 
+// Exec v2 buffers bounded stdin before starting the process.
+const MaxStdinBytes = 8 << 20
+
 // Op enumerates supported operations.
 type Op string
 
 const (
 	OpPing      Op = "ping"
-	OpExec      Op = "exec"
+	OpExec      Op = "exec.v2"
 	OpConsole   Op = "console"
-	OpWriteFile Op = "write_file"
+	OpWriteFile Op = "write_file.v2"
 )
 
 // Request is the single header sent by the client at the start of a connection.
 type Request struct {
-	Op      Op                `json:"op"`
-	Cmd     []string          `json:"cmd,omitempty"`      // exec
-	Env     map[string]string `json:"env,omitempty"`      // exec
-	WorkDir string            `json:"work_dir,omitempty"` // exec
-	TTY     bool              `json:"tty,omitempty"`      // console
-	Cols    int               `json:"cols,omitempty"`     // console
-	Rows    int               `json:"rows,omitempty"`     // console
-	Path    string            `json:"path,omitempty"`     // write_file / read_file
-	Mode    uint32            `json:"mode,omitempty"`     // write_file (file mode bits)
-	Size    int64             `json:"size,omitempty"`     // write_file (body bytes following the header)
+	StdinSize int64             `json:"stdin_size,omitempty"`
+	SHA256    string            `json:"sha256,omitempty"`
+	Op        Op                `json:"op"`
+	Cmd       []string          `json:"cmd,omitempty"`      // exec
+	Env       map[string]string `json:"env,omitempty"`      // exec
+	WorkDir   string            `json:"work_dir,omitempty"` // exec
+	TTY       bool              `json:"tty,omitempty"`      // console
+	Cols      int               `json:"cols,omitempty"`     // console
+	Rows      int               `json:"rows,omitempty"`     // console
+	Path      string            `json:"path,omitempty"`     // write_file / read_file
+	Mode      uint32            `json:"mode,omitempty"`     // write_file (file mode bits)
+	Size      int64             `json:"size,omitempty"`     // write_file (body bytes following the header)
 }
 
 // Frame is a server-to-client message. Exactly one of Stdout / Stderr /
 // Pong / Header / Done will be non-empty per frame; Done=true marks the
 // last frame and may carry ExitCode / Error.
 type Frame struct {
+	SHA256   string `json:"sha256,omitempty"`
 	Stdout   []byte `json:"stdout,omitempty"`    // base64-encoded by the JSON encoder
 	Stderr   []byte `json:"stderr,omitempty"`    // base64-encoded by the JSON encoder
 	Pong     bool   `json:"pong,omitempty"`      // ping reply

@@ -10,6 +10,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/diag"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -47,8 +48,19 @@ func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out.Status = s.topologyStatus(topology)
-	if !out.HasState && !out.HasHCL {
-		out.Status.Phase = controlplane.PhaseGone
+	if !out.HasState && !out.HasHCL && out.ActiveRunID == "" {
+		if out.PlacementAgentID == "" {
+			out.Status.Phase = controlplane.PhaseGone
+		} else {
+			// Host affinity is durable metadata, not a live resource observation.
+			out.Status.Phase = controlplane.PhaseUnknown
+			for i := range out.Status.Conditions {
+				condition := &out.Status.Conditions[i]
+				if condition.Type == controlplane.ConditionProvisioned || condition.Type == controlplane.ConditionReady {
+					*condition = controlplane.Condition{Type: condition.Type, Status: controlplane.ConditionUnknown, Reason: "OwningAgentNotObserved"}
+				}
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -189,6 +201,9 @@ func (s *Server) handleDeleteTopology(w http.ResponseWriter, r *http.Request) {
 }
 
 func workspaceStatus(err error) int {
+	if errors.Is(err, persistence.ErrConflict) {
+		return http.StatusConflict
+	}
 	var diagnostics diag.Diagnostics
 	if errors.As(err, &diagnostics) {
 		return http.StatusUnprocessableEntity

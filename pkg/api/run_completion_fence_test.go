@@ -14,7 +14,7 @@ func TestRunCompletionRejectsExpiredFailureAndCancellation(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
 		for _, status := range []controlplane.RunStatus{controlplane.RunFailed, controlplane.RunCancelled} {
 			ctx := context.Background()
-			run := controlplane.Run{ID: string(status), Topology: "lab", Operation: "apply", Status: controlplane.RunRunning, AgentID: "agent", LeaseOwner: "old", Attempt: 1, LeaseUntil: time.Now().Add(-time.Minute)}
+			run := controlplane.Run{ID: string(status), Topology: string(status), Operation: "apply", Status: controlplane.RunRunning, AgentID: "agent", LeaseOwner: "old", Attempt: 1, LeaseUntil: time.Now().Add(-time.Minute)}
 			require.NoError(t, store.SaveRun(ctx, run))
 			registry := newAgentRegistry()
 			svc := AgentService{store: store, registry: registry, jobs: newJobsWithRecovery(t.TempDir(), store, false)}

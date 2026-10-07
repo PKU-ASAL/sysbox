@@ -1,330 +1,80 @@
-# Sysbox 生命周期重构：实施状态与验证边界
+# Sysbox 生命周期重构：当前实施状态
 
-> 日期：2026-09-28
-> 更新：2026-10-07
-> 工作分支：`refactor/observation-driven-runtime`
-> 核心实现提交：`72e227a`；未合入 main，未推送远端。
-> Guest metadata 共享仓储提交：`3679f21`。
-> Run 写入、租约与轮次隔离提交：`d581b80`；独立复审及全仓 unit/race/vet/docs 检查通过。
-> 本文记录实际代码；[目标架构](2026-09-28-observation-driven-runtime-refactor.md)与[接口清单](2026-09-28-interface-change-inventory.md)包含尚未交付的后续设计。
+更新：2026-10-07。工作分支：`refactor/observation-driven-runtime`。未合入 main、未推送。
 
-## 1. 当前落地的主线
+本文只描述当前实现。历史阶段记录由 Git 保留；[目标架构](2026-09-28-observation-driven-runtime-refactor.md)和[接口清单](2026-09-28-interface-change-inventory.md)中的未交付设计不视为已支持能力。
 
-以下是当前结论；后面的阶段记录保留历史过程，旧阶段的限制以此处及最新验证记录为准。
+## 职责与执行模型
 
-| 当前收口项 | 当前状态 | 剩余边界 |
-|---|---|---|
-| 生命周期执行与恢复 | 默认引擎使用 action journal；旧 checkpoint 副作用恢复链已删除 | SSH access discovery、跨控制器授权闭环未完成 |
-| NodeOperation | 三后端共用完整记录与原子 outbox；完成回报在同一锁/事务内核对当前 command lease | 资源端副作用仍不具备同代 lease epoch 撤销保证 |
-| Guest execution/file | 完成回报三后端同锁/事务核对 command proof 和有效 lease；旧 attempt/过期回报拒绝，终态重试幂等 | 资源端已启动 guest 进程不能被 lease epoch 远程撤销 |
-| Firewall | 默认创建/发现/恢复/删除已实测；资源侧 generation、原子 nft batch、FD 与删除证据已接入 | HTTP/远端 Agent 全链路、跨宿主租约、外部 writer 完整规则篡改检测未验收 |
-| Provider 身份 | Docker/libvirt/Firecracker Create 均要求持久身份；Firecracker reset 不再合成 target action | 不能据此宣称所有资源类型均已有同代 lease epoch 撤销 |
-| 外部 attachment | runtime 独立传递目标网络身份；隔离 bridge 校验 v2 anchor、namespace、ifindex/type/alias；Docker NAT 校验网络 ID/labels；Firecracker/libvirt 启动前复验目标 | Firecracker/libvirt 不支持猜测 Docker bridge 的 NAT 接入；不保证阻止非合作特权 writer 在校验后的替换或同 ifindex 重用 |
-| Import | 无 ownership adoption 时在派发前明确拒绝 | 尚未实现显式 ownership adoption，不能宣称已恢复 import 功能 |
+Sysbox 接收基础设施期望，负责受理、执行、观察、恢复和可信结果。场景、业务编排、归档及何时创建/销毁资源由调用方负责。
 
 ```text
-CLI / Agent / 本机恢复请求
+固定 revision / 输入 / 操作身份
         ↓
-固定配置与计划 → 观察并核对身份 → 写入 action intent
+持久准入 + command outbox → owning Agent claim
         ↓
-Provider 执行 → 保存恢复证据 → 再观察验证
+观察身份 → action intent → provider effect → 验证
         ↓
-同一 repository 事务提交 action outcome + resource state
+repository 原子提交 outcome + resource state
+        ↓
+带执行轮次 / lease proof 的完成回报
 ```
 
-`unknown` 不等于不存在；进程退出、连接断开或数据库提交失败不等于外部动作没有发生。未完成动作保留在 journal 中，不能通过新建空 state、盲重放 provisioner 或清理 checkpoint 绕过。
+`unknown` 不等于不存在。空 state 不证明外部资源不存在。checkpoint 仅用于诊断；action journal 是恢复授权来源。恢复只提交已授权且可证明的结果，不重放未知 guest 指令。
 
-| 模块 | 已实现 | 尚不能据此声称完成 |
-|---|---|---|
-| 生命周期 repository | 文件、SQLite、Postgres 共用 aggregate 编解码、身份校验、意图/结果转换与 CAS | 全部 API metadata repository、outbox、跨控制器 fencing 已统一 |
-| Guest metadata repository | GuestExecution 与 GuestFileOperation 共用版本化 codec、CAS、状态约束、私有绑定和 acceptance 汇总；三种后端仅做物理读写 | Run、Agent、命令队列等其余 metadata 已迁移；Postgres 已通过真实服务测试 |
-| Run repository | Save/Restart/Claim/Renew/Expire 共用原子状态规则；完整 SQLite 快照；执行轮次和 Inputs 隔离 | 全部读取与 dispatch 适配、Agent 仓储、完整 outbox 和资源侧 fencing 已完成 |
-| Command repository | 三种后端共用载荷绑定、租约、终态与退休规则；发送前原子核对授权；文件派发 ID 防冲突 | 完整 operation+command outbox、资源侧 fencing 或带租约证明的事件协议已完成 |
-| Agent repository | 三种后端共用注册、心跳、策略和离线判定；锁内合并；存储错误不回退缓存授权 | inventory、projection、命令事件已统一，或已经有完整身份轮换协议 |
+## 已交付的合同
 
-Command event repository 已开始统一 codec：事件 ID、AgentID、Type、Status、时间严格校验；filesystem 使用 JSONL codec，SQLite 保留完整 `record_json`（包括 recovery/fencing 字段），Postgres 使用完整 JSONB。旧 SQLite 索引列仍可读取，但缺失完整快照的旧事件只能按兼容字段读取；真实事件重新写入后即拥有完整 proof。
-
-Projection codec 也已开始统一：filesystem、SQLite、Postgres 的 ResourceProjection 读取都经过共享 topology/时间校验和安全解码，避免后端把畸形 projection 当成空结果。AgentInventory codec 已接入三后端：AgentID 必须存在，ObservedAt 规范化，损坏 JSON/无身份记录统一拒绝；filesystem/Postgres 保存完整 JSON，SQLite 继续维护索引列并在读取时执行共享身份校验。inventory 仍不是完整 CAS repository，策略/观测并发版本控制尚待下一步。
-
-NodeOperation 完成保存已接入三后端 CAS：filesystem 在共享记录锁内比较完整快照，SQLite 使用事务内读取/比较/更新，Postgres 使用行锁事务；共享 transition codec 拒绝跨身份、跨资源 generation、非法状态回退和终态结果覆盖。持久化错误会传播到 Agent/API，而不是返回虚假成功。
-
-Provider generation fencing 第一阶段已接入 substrate observation：NodeObservation 返回 owner UID、resource UID、generation；Docker managed Observe 会核对 operation identity 和容器 labels，generation 不匹配返回 unknown/conflict。Firecracker manifest 已有等价 process/manifest generation 校验。
-
-2026-10-05 环境复核：沙箱内看不到 /dev/kvm，不代表宿主机无 KVM。宿主机执行可访问 /dev/kvm、/dev/vhost-vsock，缓存含 Firecracker 1.15.1、vmlinux-5.10.245 和 Ubuntu rootfs。`make test-firecracker-e2e` 已实跑：基础 create/start/observe/destroy、reset generation 1→2、旧 generation 的 destroy/start/stop/pause/resume 拒绝，以及新进程空 vmStore 的 manifest discover/adopt/pause/resume。完整真实 E2E 共 29 秒通过。控制进程 kill 场景随后由用户在宿主机运行通过：TestFirecrackerRealControllerCrashRecoveryE2E，5.90 秒，存活 VM PID 3134309 被独立进程 adopt 并销毁（用户提供的运行记录）。
-
-此前普通 go test 不运行 e2e build tag；test-privileged 也未包含 Firecracker package。已有 heterogeneous matrix/reset 脚本依赖 PATH 中的 firecracker，缓存二进制需通过 SYSBOX_FIRECRACKER_BIN 显式指定。新直接入口接受 SYSBOX_FIRECRACKER_BIN、SYSBOX_FIRECRACKER_KERNEL、SYSBOX_FIRECRACKER_ROOTFS；默认从用户 sysbox cache 查找。本轮后续宿主机回归两次遭自动审批超时，未执行；最终入口编译通过。Docker 和 libvirt 的实机 generation gate 验证见下节。
-
-
-### Docker 副作用 generation gate 实测
-
-managed NodeHandle（generation > 0）或带 OperationIdentity 的调用，在 Start/Stop/Pause/Resume/Destroy、Connection.Exec/Start、Console 和 Copy 前读取完整 ownership labels；缺失或不匹配拒绝。检查后使用 inspect 返回的不可变 container ID 调用副作用接口，避免同名容器替换导致目标漂移。
-
-新增 `TestDockerRealGenerationEffectsE2E` 使用缓存 alpine:3.22 和唯一命名临时容器，已真实 Docker 实跑通过：旧 generation 生命周期/前台及后台执行/Copy 拒绝，原 PID 保持运行、禁止的标记文件未产生；匹配身份的 Exec、独立 provider rediscovery、Pause/Resume 正常。测试清理仅针对所创建 container ID。
-
-此项不等于所有 provider 全路径 fencing 完成：无 OperationIdentity 且 generation=0 的旧入口尚未迁移；未增加同代际 lease epoch 仲裁，也未取消已经启动的旧 guest 进程。Docker network/reset 自有校验、其他 substrate 与运行入口仍需统一审核。
-
-### libvirt 副作用 generation gate 实测（2026-10-06）
-
-managed 生命周期入口统一核对 context、handle generation 和 UUID。Stop/Destroy/Pause/Resume 以及 Connection.Exec/Start/ExecBackground/CopyFile、Console、WaitReady，在副作用前按精确 UUID 读取 domain XML，校验实际 owner/resource/topology/generation；查询失败不视为不存在。Start 保留 managed discovery 对已定义 domain 或 prepared generation 的校验，并补齐 handle 一致性检查。domain 已不存在时，旧代际调用仍不能清理目录；reset 验证目标代际授权后，显式用记录中的旧代际身份清理旧资源。
-
-`LIBVIRT_DEFAULT_URI=qemu:///system make test-libvirt-generation-e2e` 使用随机名称与 UUID 的独立无磁盘 VM，已在本机真实 libvirt 通过：拒绝旧 context、拒绝与实际 metadata 不符的旧 handle，VM 保持 running；匹配代际可以 Pause/Resume/Destroy。只清理测试创建的 UUID。该测试不依赖 guest 镜像，不代表 guest SSH 成功执行、libvirt reset 或跨宿主机恢复已完成实测。
-
-边界：这是副作用前身份检查，libvirt 不提供 metadata 比较与操作的原子事务；不保证检查后外部管理员重建同 UUID 或修改 metadata 的并发隔离。SSH 地址与 guest 身份还没有资源端证明，同代际 lease epoch 仲裁与已启动进程撤销仍未实现。无身份、generation=0 的导入路径仍需显式 adoption 迁移，不能据此宣称所有旧架构入口已清除。
-
-### 隔离网络 generation 与删除恢复实测（2026-10-06）
-
-修复 namespace/links 已不存在时跳过 ownership anchor 的漏洞：Observe/Create/Delete 仍核对持久 owner、resource、topology、generation 和配置；损坏记录拒绝，旧代际不能覆盖新代际的残留记录。同代际 Delete 重试在确认物理资源消失后，删除自己的 anchor 并同步目录，完成中断的删除。
-
-`make test-network-generation-e2e` 编译独立测试二进制，在一次性 Docker 容器的独立网络命名空间中运行真实 Linux netlink 测试；不使用 host network，不挂载宿主机网络或状态目录。已实跑通过 namespace/bridge/veth 创建、代际替换、旧代际 Create/Delete 拒绝、新 Driver 读取 inode/alias，以及物理删除后残留 anchor 的恢复清理。旧 root bridge proxy E2E 也迁移为显式 operation identity 和 root ingress 声明，并实跑通过。
-
-边界：新 Driver 实例不是独立进程重启测试；容器内测试不是宿主机业务拓扑验收。该校验保护现存资源和残留 anchor，不维护删除后的永久代际 tombstone；attachment、firewall policy 仍有未携带完整身份的入口，不能据此声称整个网络 SPI 已完成 fencing。
-
-### Docker attachment 与 firewall 恢复边界（2026-10-06）
-
-Docker managed attachment 的 Attach/Observe/Delete 复用节点身份校验，并固定 inspect 返回的不可变容器 ID，旧代际不能连接或断开新节点。容器已消失返回明确的 NotFound，不继续按名字删除外部 veth。reset 的 attachment 删除核对新旧身份关系后使用旧代际 context，DestroyReset 本身仍使用目标代际授权。
-
-真实 Docker E2E 已覆盖独立 internal bridge 上旧代 Attach 拒绝、合法 Attach、旧代 Delete 拒绝且连接仍在、合法 Observe/Delete；容器和网络均按测试创建的精确 ID 清理。`make test-docker-generation-e2e` 已通过。此项只验证节点一侧，不代表目标网络身份、外部 veth ownership、所有 substrate attachment 或 generation=0 无身份入口已迁移。
-
-Firewall checkpoint hook 不再重放 ApplyRuleset：只 Observe，持久化 table/digest 与实测一致才恢复 state。规则缺失、查询不可用、ownership 冲突和摘要差异均拒绝恢复，不把当前观察结果改写成期望值。这是清理旧恢复副作用入口，并不解除新 firewall create 在 observation-driven 引擎中的能力限制；完整 policy generation、目标容器/namespace 身份协议仍待实现。
-
-### Docker policy 目标节点身份（2026-10-06）
-
-Firewall 和 router NAT 的 `policy_target_state` 现在持久化目标节点的 owner/resource/topology/generation 身份。Firewall 的目标来自节点 state，router 的目标来自创建节点的 action identity；缺失身份提前拒绝，router 同时检查 handle generation。目标节点身份与 firewall 自身的 action identity 分开，不能用 firewall 的 generation 去匹配节点。
-
-Docker ApplyRuleset/ObserveRuleset/DeleteRuleset 强制要求该身份，并在 namespace 访问前检查 inspect 返回的精确 container ID 和完整 managed labels。不接受旧无身份目标记录，也不按同名容器重新绑定。真实 Docker generation E2E 已通过：旧目标 generation 的三个 policy 接口均拒绝，匹配身份可解析到原容器 PID；这不等于真实 nftables Apply 成功验收。
-
-边界：此项是目标节点的代际检查，不是 policy 自身 generation 仲裁。后续 namespace FD 固定见下节；原生 namespace policy 身份、policy tombstone/lease epoch 与完整创建恢复仍待迁移。
-
-### Namespace FD 与 router 无重放恢复（2026-10-06）
-
-Policy 的底层 Apply/Observe/Delete 接收打开的 namespace 文件，由调用方持有并在结束后关闭。整次 Apply 的删除和写入共用同一 FD；`sysbox-netns`、`nsenter` 通过继承 FD 进入同一个内核 namespace 对象，不重新解析原路径。Docker 在打开 FD 后再次 inspect 身份/PID，并比对路径与持有 FD 的 inode；不一致拒绝。
-
-`make test-policy-namespace-e2e` 已在一次性独立容器中实跑真实 nftables：持有旧 FD 后删除并重建同名 namespace，再对旧 FD Apply/Observe/Delete，新 namespace 中没有这些规则。该入口面向 Linux x86_64，使用宿主 nft/nsenter 和只读运行库；不挂载宿主网络或 state。单测另覆盖删除/写入之间替换路径、helper 两层 FD 传递和 Docker 二次 inspect 发现 PID 变化。
-
-Router checkpoint 的 policy 恢复已移除 Apply 重放，仅比较 Observe 返回的 table/digest 与持久结果；缺失、查询失败或差异不恢复。FD 固定防止路径/PID 漂移将后续操作指向其他 namespace，但不阻止同代际并发 policy 写入，也不撤销已在旧 namespace 开始的操作；尚未实现 policy 自身的租约仲裁。
-
-### Resource fencing 迁移进度
-
-2026-10-07 attachment 目标网络收口：`AttachmentRequest.NetworkIdentity` 从目标网络资源生成，创建与恢复使用相同投影，不能以节点身份代替。共享 `OwnedBridge` 在网络 host lock 内读取 v2 ownership anchor，固定 namespace FD，按 namespace device/inode、bridge ifindex/type/alias 核验；libvirt root bridge 同时固定并核对网络自身的命名 namespace。
-
-Docker veth 创建、接桥和源端移动使用固定 netlink handle/namespace FD；peer 缺失或查询失败不再授权删除重建。Docker NAT Attach/Observe/Delete 独立核对目标网络 UID/generation labels 与精确 ID。Firecracker TAP 不再使用 shell 裸名称接桥；manifest v2 保存每条 attachment 的目标网络与 TAP incarnation，Start 核对配置映射、TAP 和 master bridge，重复 Attach 不追加重复 NIC。libvirt 保存目标引用，在 Start 复验；已有 domain 的 inactive XML 必须与已证明接口全集匹配后才能启动。
-
-破坏性边界：Firecracker manifest v1 明确要求重建；缺网络身份、缺 v2 网络 anchor、缺 libvirt target 的旧记录不自动升级或采用。Firecracker/libvirt 的 Docker NAT 跨 provider bridge 接入明确 Unsupported，并在 provider Validate 提前拒绝；Docker 原生 NAT 保留。旧资源需在升级前由旧版本确认归属并销毁，或者由运维按实际身份处理；不能只删除 state/数据库来掩盖残留资源。
-
-验证：真实隔离 namespace/veth/TAP 覆盖错误网络代际、同名同 alias bridge 替换、root bridge 存活但命名 namespace 替换、TAP 重接桥/替换后的启动拒绝；真实 Docker 验证独立网络代际；真实 libvirt 验证篡改 inactive XML 后仍保持 shut off。真实 KVM controller crash、reset 与跨进程恢复在 manifest v2 上通过。完整 HTTP→Agent→provider 故障矩阵、跨宿主 lease epoch 撤销仍未完成。host lock 只约束合作进程；libvirt daemon 和 Firecracker 启动时仍使用设备/namespace 名称，不能声称对任意特权外部替换有原子 fencing。
-
-2026-10-07 网络对象 incarnation 证明：更正上一阶段仅增加 alias 的结论——alias 本身不能阻止同名同 alias 替换。隔离网络 ownership 升为 v2，持久化每个 bridge/proxy link 的 namespace device/inode、ifindex、类型和完整 owner/topology/resource/generation 摘要 alias。创建前保存预分配索引，创建后按索引核验；namespace 排他创建并核对新句柄与挂载路径，proxy peer 校验与 root veth 的关联。实际配置使用固定 namespace 的 netlink handle。
-
-Observe 拒绝同名同 alias 不同 ifindex；即使所有对象查询缺失，也须核对持久 root namespace，防止换了默认 namespace 后误退休旧证据。Delete 重新核对 namespace/link 证明，并以核验后的 ifindex 删除 link；关联地址/路由随 link 删除，不再按名称逐个删除。非法、重复、无关对象的 proof 被拒绝；v1 ownership 不兼容且不自动采用。
-
-真实 `test-network-generation-e2e` 已覆盖 namespace bridge/root bridge 同名同 alias 替换后的 Observe/Create/Delete 拒绝，同时通过完整创建/删除、旧代拒绝和中断删除恢复。边界仍包括：外部特权进程刻意复用同一 ifindex、namespace mount 路径在最终核验与 unmount 间的非合作替换、跨宿主租约撤销。attachment 消费端的目标证明见上方最新记录。创建中断且标记未完成的资源保留为 unknown，不能通过按名认领自动清理。
-
-2026-10-07 Guest completion 收口：GuestExecution/GuestFileOperation 的 HTTP completion 已改用三后端原子 `CompleteGuestExecution`/`CompleteGuestFileOperation`。调用在同一物理锁/事务内读取当前操作、command record 和 dispatch seed，核对 action/resource/generation/lease_epoch/lease_owner/attempt、操作状态、节点绑定和结果 receipt，再递增版本写入。旧无 proof、未租用、过期或被新 attempt 替代的回报返回冲突；已退休 command 的相同 terminal receipt 可幂等重试，内容不同拒绝。取消未开始操作直接退休 command，不再发布无身份的覆盖命令。
-
-Agent runner 回报实际收到的 command proof；guest completion 不再保留“找不到 command 且无 proof 仍可完成”的兼容。文件/SQLite/Postgres 合同、真实 PostgreSQL API/persistence race 和 HTTP proof 测试通过。完整 Agent→API→provider 业务 E2E 仍未覆盖每种 guest transport；已启动 guest 进程的 effect 仍不具备 lease epoch 远程撤销。
-
-2026-10-07 派发轮次与完成授权：Run command ID 由 Run ID、UTC queued_at、revision 摘要生成，scheduler、destroy 与重启修复共用。assignment outbox key 同样按轮次隔离；HTTP 幂等请求映射不变。SQL 允许一个 Run ID 多条不同轮次派发，Postgres schema 6 删除 run_id 唯一约束，旧 SQLite 约束要求显式重建。文件重启修复只选择最新轮次，旧命令不阻挡新轮次派发；旧派发请求不能返回新一轮 Run。
-
-Agent claim 现在携带命令中的 queued_at/revision；HTTP 空 body 或缺轮次拒绝，旧轮次冲突，当前快照再通过原子 ClaimRun 比对后授权，避免迟到旧命令抢占新 Run。NodeOperation completion 改为三后端原子接口：command lease 与 operation 终态在同一锁/事务内读取、校验、提交；未租用/过期/被替换 attempt 拒绝，匹配的租约证明随结果保存，退休命令后的相同终态回报幂等。Agent 执行时将实际收到的 command proof 放入回报，HTTP 无 fencing proof 兼容删除。
-
-该阶段三后端（含真实 Postgres 16）测试覆盖两轮同 ID 派发、迟到 claim 拒绝、旧 seed 不阻挡新轮次、过期/替换租约完成拒绝以及终态重试。此项保证控制面派发与结果提交，不等于已撤销旧进程中的资源端副作用，也不等于跨宿主机 lease fencing 完成。
-
-2026-10-07 原子派发收口：NodeOperation 生命周期/受支持 import 使用 `CreateNodeOperationDispatch` 一次提交绑定后的 operation 和初始 command，不再 Create→Publish→CAS。文件在同一记录持久化不可变命令 seed，操作 CAS 保留 seed，独立 command 退休记录优先；SQLite/Postgres 同事务提交两条记录。共享编码校验 operation/command 载荷、AgentID、action/resource/generation 和初始未租用状态一致。内存 WakeCommand 只在提交后调用，唤醒失败不撤销 durable outbox，重启派发从存储恢复。
-
-同时修复 Run queued→assigned 派发：共享 AssignRun 核对执行快照，仅允许选择 Agent、赋值时间与 fingerprint；不同 revision/轮次拒绝。Postgres 在 Run 行锁内更新 assigned 并插入 command；其他后端使用相同状态校验。命令插入冲突回滚赋值，不允许一边已有命令、一边 Run 仍 queued。三后端（含真实 Postgres 16）验证完整出生绑定、冲突回滚、并发唯一创建、种子保留/退休、提交前不唤醒与唤醒失败可恢复；完整 API/persistence 实库 race 通过。
-
-边界：这是 outbox 出生原子性，不是执行期间授权闭环。Run 命令 ID 仍未隔离复用 run.ID 的不同 incarnation；NodeOperation completion 尚未与当前 command lease 原子核对，不能据此宣称旧 attempt 无法回报或完整跨控制器 fencing 已完成。
-
-2026-10-07 剩余无身份与 attachment 收口：libvirt Create、生命周期及 NIC 状态修改要求托管身份；NIC Observe 核对实际 domain generation 并按 UUID 查询。Firecracker Create/reset 不再自动生成持久身份。共享 `AttachmentLink` v1 保存 namespace device/inode、link ifindex/name/type/alias；Docker isolated veth 与 Firecracker TAP 的 Observe/Delete 在同一个固定 namespace netlink handle 内核验，删除使用核验后的 ifindex。旧缺失 proof 记录拒绝，不按裸名称清理。
-
-创建也绑定身份：veth 在 LinkAdd 时指定预分配 ifindex，TAP 使用 TUNSETIFINDEX 与排他 TUNSETIFF；后续核验/alias 仅操作预分配索引对应的对象，不能重新按名称认领替代物。TAP 完成 ownership 标记后才设置 persistent，之前失败由关闭 FD 回收。索引碰撞失败，不采用已有对象。移除不用的 raw TAP/Veth 删除函数和 LinuxNetwork.DeleteAttachment 方法。NodeResourceHandler 旧无身份 Import 移除，API 在排发前报告 ownership adoption 尚未实现。
-
-真实验收：`make test-network-generation-e2e` 覆盖 veth 旧代际、同名不同 ifindex、同名不同 namespace inode 拒绝与精确删除幂等；`make test-firecracker-attachment-e2e` 覆盖真实 TAP 冷插、删除和同名替换拒绝，不启动 VM。另在宿主 KVM 完整实跑 Firecracker controller kill、生命周期、reset 与跨进程恢复（43 秒），libvirt 无磁盘 UUID fencing E2E 通过。旧 attachment state 需显式重建，不能伪造 ownership 来清理遗留资源。
-
-2026-10-07 双轨恢复清理：删除仅被旧测试调用的 API checkpoint 恢复/清理函数，以及 runtime CheckpointRecoverer/Cleaner 执行链，包括按 Docker label 搜索接管/删除和按 Firecracker 文件存在猜测恢复。正式 API 继续使用 canonical action journal；日志/报告 DTO 与纯 StateResourceLog 转换保留，转换代码移至 `state_log_conversion.go`。删除只服务旧入口的测试和旧 checkpoint E2E，以 canonical API 回归、handler 禁止旧恢复方法的守卫、managed discovery 覆盖检查和真实 firewall repository 恢复 E2E 验证替代。SSH access 明确未实现 discovery，不再声明幂等即可豁免恢复。
-
-Docker Create 强制完整 operation identity；生命周期/Exec/attachment 的 generation=0 且无 context 身份逃逸入口移除，在访问 Docker API 前拒绝。无身份 import/read 得到的句柄不能再直接执行副作用；显式 ownership adoption 仍未实现，不宣称 import 功能等价。其他 substrate 的无身份路径、网络 attachment 按名字删除及旧 Agent 无证明事件仍需继续清理。
-
-2026-10-07 firewall 默认引擎闭环：新增可选 `PolicyDiscovery.DiscoverRuleset(target,spec)`。Docker 在同一已核验 namespace FD 中解析设备绑定；共享实现比较期望 spec/bindings 的摘要与受管表标记，同时校验 policy generation。Firewall handler 已实现 managed discovery，返回完整 UID/generation/external ID，只有明确的 policy NotFound 才是 absent；损坏/缺失目标身份是 unknown，不能据此创建。
-
-`make test-firewall-recovery-e2e` 已实跑 HCL → 默认 Executor → 真实 Docker/nft → 文件 repository：正常创建删除，然后注入 outcome 持久化失败，重新打开 repository 后仅依据 durable intent 和 discovery 恢复，最后删除。恢复的 Policy.Apply 被替换为调用即报错，以确认没有重放。普通 firewall 在 ip_forward=0 的节点上正常；仅 NAT 在副作用前要求并核验转发开启。单测另覆盖旧 Create 计划拒绝、丢失 candidate 的恢复与未知目标拒绝。
-
-边界：该 E2E 预先创建目标节点，只对 firewall 执行计划；并非 HTTP/远端 Agent 全链路验收，也不是进程 SIGKILL 测试。摘要核验基于受管 nft 标记，尚不检测外部 writer 保留标记却篡改实际规则的所有情况；原生 namespace provider 的真实目标 ownership 仍待收口。
-
-2026-10-06 整体收口第一步：policy 锁移至 `/var/lib/sysbox/policy-locks`，与 evidence 一起使用现有 Compose 共享持久卷，避免不同执行容器拥有各自的 `/run` 锁。升级需先停止旧 writer，不能混用新旧锁路径；同宿主所有 writer 必须共享该目录，原生 CLI 与容器也须映射到同一实际目录。
-
-NodeOperation 三后端已切换共享 repository：Create 仅允许初始 queued 记录或完全一致的重试，修改一律 CAS。版本化完整记录保留 CommandID 和 fencing/项目/import 字段；公共 JSON 仍隐藏 CommandID。完成回报仅读取一次，读取失败不新建；CAS 同时校验身份、已绑定 command/lease、请求人/角色、审计前缀以及状态不回退。命令绑定采用 CAS，终态不可改写。旧 SaveNodeOperation 接口移除。
-
-该轮开启真实 PostgreSQL 16 的完整 API/persistence race 回归曾暴露并发 Run 幂等请求命中 `run_id` 第二唯一索引的问题；INSERT 已改为处理所有唯一冲突，再按精确 request ID 和 fingerprint 验证，绝不覆盖。连续 10 轮、每轮 24 请求通过；测试连接池显式关闭，避免重复验收耗尽连接。修复后完整实库 race 回归通过。
-
-文件使用 `_node-operations` 并明确拒绝旧 `node-ops` 数据；SQLite 新表为 id/data，旧列式表要求重建，不做缺字段回退；Postgres schema 5 支持完整记录写入，旧扁平 JSON 拒绝解码。实测包括文件/SQLite/真实 PostgreSQL 16 完整字段往返、Create 防覆盖、并发 CAS 仅一方成功、过期快照与身份篡改拒绝。开启两项 PostgreSQL DSN 的全仓回归已通过。仍未完成 publish-command 与 operation 绑定的单事务 outbox；本轮不宣称整个命令授权闭环完成。
-
-2026-10-06 policy 删除后防复活：增加宿主资源侧 write-ahead evidence，存放于 `/var/lib/sysbox/policy-evidence`，按 namespace dev/inode 和 policy owner 隔离。Apply 先持久化 prepared（UID/generation/不可变 digest），nft 成功后写 active；Delete 先写 deleting，再删除规则，最后写 deleted。相同或旧代际不能绕过删除记录重新创建，新的代际可在删除完成后创建；deleting 阻止任何 Apply，Delete 重试可以收敛物理删除已完成但记录未完成的窗口。
-
-所有读取/写入仍处于同一 namespace flock 内。记录写入使用临时文件、fsync、rename 和目录 fsync；加载要求版本/身份/状态合法，拒绝损坏、符号链接、非普通文件和超限内容，使用非阻塞 open 避免 FIFO 导致持锁永久等待。持久化失败不报告成功；nft 失败后 prepared 意图保留，旧代不能夺回写权限。
-
-真实内核 E2E 已覆盖删除后同进程及新进程旧请求拒绝、更高代重新创建、模拟 deleting 后规则已删除的恢复重试。保证限定为同一宿主、共享 evidence/lock 目录、同一个 namespace incarnation；主机重启或 namespace 重建后的身份映射、跨宿主租约仍未解决。不得单独清空 evidence 目录作为故障修复；这样会丢失已删除代际的防复活证据。
-
-2026-10-06 policy 资源侧代际：`PolicyTarget.Policy` 保存策略自己的 operation identity，与目标节点 identity 分开。Firewall 使用自身 action identity；router NAT 使用节点 UID 派生的 `/nat` UID。nft 表持久化 owner/topology/resource 摘要及 generation；同代同 digest 重试只读取，旧代、外来 UID、同代不同 digest 拒绝，新代在单 batch 中替换。Apply/Observe/Delete 共用 `/run/sysbox/policy-locks` 下按 namespace dev/inode 的 flock，锁文件保留，避免 unlink 后等待者和新调用分裂为两把锁。
-
-真实隔离内核 E2E 已验证：旧代 Apply/Delete 拒绝且整表不变、独立进程观察及重试、同代两个不同 digest 并发更新只有一个成功、当前代删除及重复删除。日志前缀带 `{` 的规则纳入回归；文本表解析识别引号和转义，找到表头但结构损坏返回冲突，不能作为 absent 授权覆盖。
-
-边界：控制面仍复用 action journal，不新增 policy 数据库；尚未完整接入 policy 创建/发现/恢复闭环。资源侧是同宿主机、共享锁目录且都遵循协议的调用者之间的串行化，不是跨宿主机租约。运行账户需要可访问锁目录；已有无 generation marker 的表拒绝采用。删除后没有持久 tombstone，旧请求在表完全消失后仍可能重新创建；外部 nft writer、容器隔离锁目录、同代 LeaseEpoch 撤销、namespace 目标真实 ownership 均不在本轮保证内。
-
-2026-10-06 policy 原子更新：删除旧表与写入新表已合并为一次 nft batch。前置 `add table` 保证首次创建和替换使用同一路径；真实 nft E2E 用超长 log prefix 触发拒绝，更新前后旧表全文一致，同时验证创建、正常替换、重复 Apply 和删除。入口 `make test-policy-namespace-e2e` 同时覆盖 namespace FD 替换和事务回滚。
-
-目标契约第一步已类型化：`driver.PolicyTarget.Identity` 独立于私有 `State`，共享 Encode/Decode；runtime 持久完整 target envelope 并在读取时核对地址，旧扁平结构拒绝。剩余的 policy 自身 UID/generation、执行授权与期望 digest CAS 要与持久状态转换一同实现，当前仅有目标身份和原子 batch，不能据此宣称策略生命周期仲裁闭环已完成。
-
-Agent command/event 模型增加可选的 `action_id`、`resource_uid`、`generation`、`lease_epoch`、`lease_owner`、`attempt` 证明字段。命令已绑定 fencing 身份时，事件必须完整匹配其证明；无 fencing 身份的 legacy 命令仍兼容无证明事件。校验、状态推进与终态退休通过共享 CommandRepository 在同一存储锁/事务内完成；拒绝或提交失败不发布事件缓存或更新 console/Guest 派生状态。Agent ack、执行事件与目标取消事件均回传对应命令的证明，SQLite 保留完整快照中的 fencing 字段。
-
-此处是命令事件层的原子防陈旧写入，不是完整资源侧 fencing：命令派发尚未全面绑定实际资源 generation，Run/NodeOperation/Guest 完成入口与 provider 外部副作用仍需迁移。跨聚合派生状态更新也未成为一个原子事务；真实 Postgres 16 的本仓合同已验收，生产部署未验收。
-
-Run 完成入口进一步迁移到共享 `RunRepository.CompleteRun`：三后端在同一存储锁/事务内检查 owner、attempt、可用执行轮次、绑定、lease/deadline 与 projection 归属，再合并结果。过期 Agent 不能用 failed/cancelled 绕过租约授权；并发续租的截止时间不会被旧完成快照覆盖。首次提交成功后才更新缓存，终态相同重试仅返回已存结果，不再次发布 projection；不同终态或断言结果冲突被拒绝。该步骤使用已有 agent.v1 Run 证明，不引入新的必填 wire 字段；NodeOperation/Guest 完成回报和 provider 资源 generation 的完整 fencing 仍未完成。
-
-Guest 完成回报现在接受同一组可选 fencing 证明；若 operation 绑定的 command 仍存在且已带 fencing，HTTP completion 必须匹配 command 的 action/resource/generation/epoch/owner/attempt。旧 command 或旧 Agent v1 回报缺少证明时保持兼容。Agent executor 会回传执行 command 的证明字段；GuestExecution 和 GuestFileOperation 的完成入口在状态 CAS 前拒绝明显的旧证明。NodeOperation 完成回报和 provider 真实资源 generation 已接入；provider 真实外部资源的 generation 全链路验收仍待完成。
-
-NodeOperation 完成回报已保存 command proof，并在绑定 operation 的情况下核对 action/resource/generation/epoch/owner/attempt；生命周期/import 派发会绑定 operation action ID、resource UID 和 generation 到 command，再把 command identity 回写 operation。旧无 proof operation 继续兼容，带不完整或错误 proof 的回报返回冲突。Supervisor/AgentService 会按 durable AgentID 修复 assigned Run 的缺失 command，running Run 不会因为控制器没有本地进程锚点而被重派；这提供 owning-agent 恢复的第一步。provider 返回的真实资源 generation 与外部资源 fencing 尚未统一接入。
-| Runtime | 默认 Apply/Destroy/Reset 走观察、授权、写前意图、验证、原子提交；恢复只提交可证明结果 | 每种资源都已有完整的 discovery/read-back；所有 interrupted reset 都能自动继续 |
-| Firecracker | 版本化 manifest、身份/代际/进程锚点、文件锁、冷恢复、pidfd 校验后发信号；reset 保留真实目标 ActionID | 已通过真实 KVM、宿主机重启或内核版本矩阵验证 |
-| Docker / libvirt / isolated network | 管理身份、发现、拥有者约束；reset 的旧/新代际校验；隔离网络的观测与 ownership 标记 | 已通过真实 Docker/libvirt/网络设备 E2E |
-| 执行 SPI | `Node.Connection` 的前台 Exec 为共同入口，Start/Copy/Observe/Cancel 为独立可选接口；限制输出、区分未知退出码 | 每个 transport 都有持久后台任务、可验证的远端取消或文件摘要校验 |
-
-## 2. Repository 的边界
-
-Runtime 定义 `ActionRepository` 端口，`pkg/persistence` 实现它。Provider 不读取数据库；数据库适配器不执行 provider 动作。
-
-- 文件后端：一个 topology 一个聚合文件，稳定 flock 文件、临时文件写入、fsync 和原子 rename。
-- SQLite：`BEGIN IMMEDIATE` 下更新聚合。Postgres：事务和行锁下更新同一聚合。
-- `StateSerial` 记录最初授权的 state 版本；`ExpectedSerial` 用于当前结果提交；`Revision` 单独保护 action 阶段更新。只有 state CAS 不足以防止旧阶段覆盖新恢复证据。
-- terminal outcome 的相同重试可幂等返回；不同结果、旧 revision、阶段回退、丢失 candidate/完成证据都会被拒绝。
-- 解码不仅检查 JSON：还检查 owner、resource UID、generation、action key/ID、status、revision 和 candidate 身份。
-- SQL 的 BEGIN 或 ROLLBACK 结果不确定时丢弃连接，不把未知事务状态放回连接池。
-- CLI、Agent 和 API 共用地址解析。`sqlite://local.db` 是持久文件，不是临时数据库；空路径与 `:memory:` 不接受。
-- 固定 `?topology=lab` 不能把另一个 topology 请求重定向到 lab；目录枚举不再伪造 `__list__`。共享库的 `?topology={topology}` 可枚举，存储路径本身含 topology 模板时需要另外的目录索引，当前明确报错。
-- 第一次 create 只有 intent、尚无成功资源时，目录列表仍能看到它。
-- 删除 metadata 使用 owner + serial CAS，拒绝未完成动作；保留 repository 锁文件和新 owner 身份，避免 unlink 锁导致双写。
-
-GuestExecution 和 GuestFileOperation 已迁移到 `GuestRepository`，Run 写入与租约转移已迁移到 `RunRepository`，命令状态规则已迁移到 `CommandRepository`，Agent 注册与存活策略已迁移到 `AgentRepository`。inventory、projection、命令事件和部分 Run 读取/dispatch 适配仍在既有 store 中。沿用原有表和路径；与生命周期 aggregate 之间仍无跨域原子事务，不能声称三套存储已全部合并。
-
-### Agent 的实际规则
-
-- 心跳仅刷新名称、能力、标签、版本和服务端接收时间；省略的上报字段保留旧值，不能改写禁用、隔离、原因、凭据或创建时间。
-- 策略更新在原子事务内只修改显式提供的管理字段；离线扫描在锁内重读当前心跳，不用扫描旧值覆盖新心跳。离线节点的无关策略更新不会直接变为在线。
-- 重新注册保留已有策略与创建时间。受保护身份必须提供当前实际 secret；省略 secret 或只提供公开 hash 会返回 409。修改已有凭据也返回 409；凭据轮换流程尚未实现。首次注册与无凭据 legacy 身份仍沿用现有准入方式。
-- 文件后端用稳定跨进程锁与原子写入；SQLite 用 BEGIN IMMEDIATE；Postgres 用行锁和受主键约束的创建事务。并发新建冲突返回 Conflict，不以未经重读的快照覆盖。
-- 存储错误、损坏和不存在保持区分。Get/List 不再回退 registry；空列表不能复活缓存 Agent。调度与 guest 路由传播存储错误，HTTP 保持字符串 error：缺失 404、冲突 409、损坏/不可用 500。
-- SQLite 更新完整元数据，严格解析 JSON、时间和布尔值；Postgres 核对 JSON 与身份/策略/凭据索引列。缺失 status/protocol 的旧或损坏记录不会被自动补成可调度身份。
-- 内部 Save 保留显式管理替换能力，不是任意调用者的 CAS 接口；运行中的注册、心跳、策略和离线更新均使用各自原子操作。registry 只作缓存，不能据其内容授权。
-
-本检查点未改变 HTTP v1 DTO 或 agent.v1 协议，也没有删除现有元数据或真实资源。旧 API writer 必须停用后升级；完整 outbox、资源侧 fencing、inventory/projection 迁移以及真实 Postgres 验收仍未完成。
-
-### Durable outbox 迁移进度
-
-恢复路径补强：filesystem command Get/Claim 现在可直接读取 Guest seed，不依赖此前 PublishCommand；已更新命令与退休记录优先于初始 seed；Guest CAS 保留 seed；Guest enqueue 与其他命令写入共用全局锁并检查命令 ID 冲突。文件上传提交后的通知只唤醒 registry，不再二次保存命令或因通知失败删除载荷。新增无通知领取/退休与 CAS 后恢复回归；Run 原子派发尚未完成。
-
-已先落地 Guest operation 的共享 dispatch seam：命令 ID 在 durable enqueue 前生成，service 支持由后端一次提交 operation 与 command，提交成功后通知 Agent 失败不会回滚 queued operation。Guest dispatch 编码会核对 operation、agent、command type、请求载荷和初始状态，并提供文件 seed 的编码、校验和恢复接口。
-
-filesystem、SQLite 与 Postgres 已接通 GuestExecution/GuestFileOperation 的 operation+command 同事务入队；SQLite 使用 `BEGIN IMMEDIATE`，Postgres 使用同一事务，文件后端使用稳定记录锁。命令列表重启后可恢复，通知失败不回滚 durable queued 状态。Supervisor 会周期性从 durable command store 重建连接 Agent 的唤醒提示，控制进程重启不会丢失 queued intent；通知失败使用指数退避（1–64 秒），失败次数、下次重试时间和最后错误已持久到 filesystem/SQLite/Postgres retry metadata，跨控制器共享这些后端时退避窗口也能延续。普通 Scheduler Run 派发也已改为 `CreateRunDispatch`，assignment 与 `run_assigned` command 先 durable 提交，再发送内存通知；已有 assigned Run 的 command 缺失时，local/SQLite/Postgres 会在事务内补挂 command；legacy idempotent destroy 继续使用 RequestOnly mapping。真实 Postgres 16 合同已验收，完整跨控制器退避持久化仍未完成。
-
-Agent 检查点通过独立复审及全仓无缓存 unit/race、vet、docs、diff 检查，覆盖跨进程锁、并发策略/心跳、重启、损坏记录、提交失败及注册身份旁路。全仓 race 另暴露 Firecracker 进程回收窗口：两次读取 stat 之间进程消失会被误判为 PID 身份冲突。已改用同一 stat 快照核对 starttime，保留后续完整身份验证；相关 race 回归重复 10 次通过。
-
-### Command 的实际规则
-
-- 身份、agent、类型与载荷绑定不可变。普通 Save 不能替换 lease owner、attempt 或截止时间；控制面取消保留当前租约，不能借取消清空原载荷。
-- leased 仍是待交付状态，租约过期后可重新领取；TTL 必须为正，授权时间在存储锁内采样，提交失败不返回成功授权。
-- 发送前用 `PrepareAgentCommandDelivery` 原子检查当前 leased 状态、未过期 owner/attempt 与截止时间，再持久化 delivered。不能把 stale Save 的无操作成功当成发送许可。无持久存储不允许从内存授予租约。
-- Delete 保留退休记录，列表不再展示、也不能重新创建同 ID。文件后端的退休记录覆盖初始 dispatch seed，防止命令删除后重新出现；这不是对全部历史载荷的物理擦除。
-- FS 命令写入与 Run dispatch 共用跨进程锁。新的命令 ID 冲突拒绝整个 bundle；接管已有 Run 只写 request mapping，不生成第二条命令。文件发布共用带文件与目录 fsync 的原子写入。
-- SQLite 保存完整快照并核对索引字段、载荷与时间；Postgres 核对身份、状态与租约列，回调决策在行锁事务中提交。列表排序一致，取消 PostgreSQL 独有的 512 条截断。
-- WebSocket 事件中的非空 AgentID 必须等于认证连接身份。现有 v1 事件没有 owner/attempt 证明，因此本阶段不宣称阻止所有迟到事件或资源侧副作用；后续需要显式协议设计和 fencing。
-
-命令合同覆盖并发与独立进程抢租约、过期重新交付、提交失败、取消后发送、身份冒用、终态保护、退休防复活、派发冲突、时区 round-trip 和 SQLite 快照损坏。Postgres 16 实库已执行共享合同，使用临时实例与隔离 schema。完整 Run/Guest outbox 尚未完成。
-
-该命令检查点通过独立复审，以及全仓无缓存 unit/race、vet、docs 和 diff 检查。升级时必须停止旧 API writer：旧 writer 不理解退休记录和完整快照约束，不能与本实现混跑。
-
-### Run 的实际规则
-
-- 普通 Save 不能修改 owner、attempt、已绑定执行目标或延长 lease；终态只接受相同结果。显式 Restart 才能重新执行同一确定性 run ID。
-- Claim 在获取存储锁后检查时间，拒绝非法 TTL、过期 deadline、错误身份与 attempt 溢出；lease 不超过 deadline。Renew 不能复活过期租约或缩短当前期限。
-- Expire 在锁内重读当前记录，不能用扫描旧值覆盖并发续租。完成回报必须证明当前 owner/attempt，projection 也必须属于对应 agent/topology/workspace；持久化失败不发布成功缓存。
-- QueuedAt 区分同一 run ID 的执行轮次。排序、缓存、coalescing、完成回报和 Inputs 都核对当前轮次，旧 Done 或超前的 EndedAt 不能遮住新执行。
-- SQLite 共用完整插入函数，dispatch 不再丢失 deadline/pinned snapshot；record_json 保留 Project/Workspace/Assertion，并与全部索引列核对。旧行仍按原列读取，非法时间不当作零值。
-- Inputs 不进入持久存储，只在同轮次恢复。claim 返回预检验证过的 Inputs 副本，并在原子领取内再核对身份。已丢失非默认 Inputs 的 hashed apply 请求必须重提交原 revision/inputs。
-- API 重启本身不证明远端 agent 失败：带 AgentID 的 assigned/running 保留 durable 状态，由租约和观测决定后续处置。
-
-Run 迁移通过全仓无缓存 unit/race/vet/docs 检查和独立复审。FS/SQLite 合同包含并发、独立进程、提交失败、轮次错配、缓存刷新、输入丢失与索引损坏；Postgres 合同可通过 SYSBOX_TEST_DATABASE_URL 启用隔离 schema，已在临时 Postgres 16 上实跑通过。
-
-### Guest metadata 的实际规则
-
-- `Save` 只创建新记录，或接受内容完全相同的重试；不能绕过 CAS 覆盖已有版本。
-- CAS 的缺失记录返回 typed NotFound，过期版本返回 `(false, nil)`；成功时只递增一次版本。失败的校验不改写原记录。
-- ID、topology、node、agent 绑定不可变；CommandID 最多绑定一次；终态不能回退或改写执行结果。过期清理只允许移除请求和 stdout/stderr，不能重新填回。
-- Request 比较采用与 JSON codec 相同的规范化规则，避免空 environment 在 round-trip 变成 nil 后产生假冲突。
-- 文件操作的取消请求不能撤销；不能同时记录 CancelRequested 和 Completed。
-- 本地更新采用稳定的跨进程 flock；SQLite 在 `BEGIN IMMEDIATE` 内读、验证、写；Postgres 通过事务内占位插入与行锁保护缺失 key 和已有记录。占位记录不能独立提交。
-- acceptance 汇总走同一套解码和过滤规则。列表、格式和读取错误不被当成空结果；定点 Get 不扫描其他无关记录。
-- 解码错误的公开字符串不包含 payload；内部仍保留 `json.SyntaxError`、`time.ParseError` 等诊断原因。
-
-Guest 记录新增磁盘字段 `record_format: 1`，HTTP DTO 不新增这个字段，private request/agent/command 绑定仍不对外暴露。旧记录没有该格式标记时明确返回 UnsupportedVersion，既不自动补标记，也不覆盖或删除。升级时必须停止旧写入端，审计未完成操作，再按明确计划重建这两类 metadata；不能混跑旧 API writer。
-
-## 3. 恢复和执行的安全边界
-
-恢复使用持久化 action 和原始 revision，不信任孤立的 checkpoint patch。正常执行和恢复共享 runtime 观测规则。对可能执行过任意 guest 命令、但没有完成证据的动作，返回不确定结果，不自动重放。
-
-Firecracker reset 的外部上下文表示**目标代际**。Provider 内部访问旧 manifest 时切回旧身份；替换 VM 使用原样持久化的目标身份，不能随机生成另一个 action ID。
-
-API 主机不执行远端资源探测。显式 remote observe/recover 请求通过 durable command 发送到 Run.AgentID，只有宣告 run-recovery.v1 的 owning Agent 可以执行；本机没有 manifest 不构成远端资源不存在的证据。
-
-执行结果中 `ExitCodeKnown=false` 不能被当成 exit 0。请求超时只证明本地等待结束；未验证远端终止时 `RemoteTermination` 保持 unknown。
-
-Create 与 Reset 共用声明路由逻辑：先观察，持久化子步骤后配置，再验证，最后才运行依赖路由的 provisioner。路由查询错误保留为 unknown。内置 node/router 的创建与 reset 要求完整 effect 证据；仅仅观察到 VM 正在运行，不能证明镜像入口或 guest 初始化已执行完成。镜像入口启动失败会向上传播。
-
-## 4. 用户可见变化与剩余工作
-
-| 接口/行为 | 当前边界 |
+| 范围 | 当前实现 |
 |---|---|
-| HCL、资源地址、HTTP v1 | 不引入设计稿中的新必填字段、协议版本或错误对象；HTTP `error` 保持字符串 |
-| Guest HTTP 错误分类 | 不存在为 404，冲突为 409，损坏/不可用为 500；执行 Get 先授权再读存储，不再用 404 隐藏损坏 |
-| Provider 接入 | `driver.Descriptor` + capability 模型保留；缺少管理发现或可靠观测的能力明确拒绝，不能默认为成功 |
-| Go 执行接口 | `Connection` 只要求前台 Exec；调用 Start/Copy 等能力前需断言对应可选接口；旧 GuestExec 包装器委托同一实现 |
-| 旧 state / 数据库行 / Firecracker 磁盘格式 | 不隐式迁移，不把旧状态当空状态，不自动删除真实基础设施；需要显式重建与处置旧资源 |
-| `sysbox_ssh_access` | discovery/read-back 未完整实现，默认引擎明确拒绝；firewall 已在 2026-10-07 接入，见最新验证记录 |
-| `gc` | 仅可信 OwnerUID 范围内的 `--dry-run` 候选；自动删除暂禁，直到 inventory→delete 有完整 fencing。SQL/remote/其他 runs 目录不在当前 GC 库存范围 |
-| State snapshot / lease 运维 | 新 aggregate 尚未实现旧 snapshot/force-unlock 等完整能力；不能把返回空列表视为能力已经迁移 |
-| 外部资源 import | 未迁移显式 ownership adoption；旧 import 返回的无 owner/generation 记录会被新 repository 拒绝，不能据此声称 import 已恢复功能等价 |
-| SSH/vsock 后台执行 | 句柄不等于跨重启持久任务；观察与可验证取消、vsock stdin、文件 checksum 合同尚有缺口 |
-| 执行 generation | managed 主路径已经传递 generation 标签，但尚不等于连接层 fencing；不宣称已阻止所有 stale-generation 执行 |
+| 生命周期 repository | 文件、SQLite、Postgres 共享 aggregate、状态转换、身份校验、CAS；backend 负责物理锁/事务 |
+| API metadata | Run、Agent、command、NodeOperation、Guest operation 使用共享 codec/状态规则；operation + command 原子 outbox；完成回报同事务核对当前租约 |
+| 幂等受理 | Apply 支持 Idempotency-Key；相同请求返回同一 Run，改参409，终态不重执行；三后端禁止同 topology 同时准入不同活跃 Run |
+| Run 轮次 | command ID 包含 Run ID/queued_at/revision；claim 必须携 queued_at/revision；完成检查 owner/attempt/lease，旧轮次拒绝 |
+| 输入补交 | 敏感输入不写入 Run/command/request 记录；API 重启缺输入返回503，原请求重放补交；GET Run 返回 inputs_required；Agent 503重试保留轮次证明 |
+| 配置固定 | keyed Apply 只 materialize immutable snapshot，不改 mutable workspace；预检与执行使用 Run.SnapshotPath；后续生命周期有 placement 约束的已准入 snapshot 解析 |
+| 状态证据 | cleanup-inspection 原子读取 state+journal，另外读取 Run/NodeOperation；暴露来源、时间、范围及 unfinished actions；external_presence=unknown，不签发空清理回执 |
+| 远端恢复 | run-recovery.v1 经 owning Agent 执行 Observe/Recover；报告包含资源 UID/generation、外部 ID、action/Run 轮次与 lease 证明；持久保存报告 |
+| Provider 管理身份 | Docker labels、libvirt metadata/UUID、Firecracker manifest/进程锚点校验 owner/resource/generation；缺身份明确拒绝 |
+| Firecracker | manifest v2、进程文件锁、pidfd 信号、冷 discover/adopt、controller crash 接管、reset generation 迁移；vmStore 只是进程内缓存 |
+| 网络与 attachment | 网络 ownership v2 保存 namespace device/inode、ifindex/type/alias；目标网络身份独立于节点；veth/TAP 通过固定句柄操作；FC/libvirt 启动前复验 |
+| Firewall | 默认引擎创建/发现/恢复/删除；nft 原子 batch、固定 namespace FD、policy generation 与删除证据；旧结果不能授权副作用重放 |
+| Guest 传输 | Connection.Exec 为共同入口；SSH 与 vsock 文件传输校验 SHA256、临时文件同步与精确目标替换；未知退出状态不能视为成功 |
+| vsock v2 | exec.v2 支持至多8MiB stdin；write_file.v2 要求 SHA256 并返回匹配回执；guest 限定根目录、阻止路径逃逸；取消关闭连接 |
 
+keyed Apply 后 workspace 当前指针可以不存在；活跃操作列表从 durable Run 显示 active_run_id/active_revision。有持久 placement 的远端 topology 在 Run 结束后仍保留在目录，并显示 placement_agent_id；无本地资源证据时 phase=unknown，不标成 gone。删除 placement 后终态历史不复活 workspace。非空 revision 必须是已发布全局 revision，旧任意标签拒绝。
 
-## 2026-10-04：远端 Observe/Recover 与真实 Postgres 验收
+## 明确不支持或不保证
 
-远端入口保留 agent.v1，新增独立 capability `run-recovery.v1` 和 `run_recovery` command；旧 Agent 不会收到不认识的恢复命令。
-
-| 接口 | 行为 |
+| 能力 | 边界 |
 |---|---|
-| POST /v1/runs/{id}/remote/observe | 返回 202 + command_id，派发到原 Agent；running Run 可观察，不修改其运行状态 |
-| POST /v1/runs/{id}/remote/recover | live lease 返回 409；过期 running 经原子 ExpireRunLease 后，才允许 failed/recoverable 恢复；必须有固定 revision、完整输入证据且无其他 active Run |
-| POST /v1/agents/{agent}/commands/{command}/recovery-authorize | Agent 执行前验证连接身份、当前 command owner/attempt/期限、Run 轮次及 capability，返回经过摘要验证的固定 revision |
-| GET /v1/runs/{id}/remote-reports/{command} | 返回持久恢复报告；尚无报告 404，失败终态或当前 Run 轮次已变化返回 409 |
+| 多 API 共享文件系统执行 | 当前限定单 API 执行部署。PG 准入锁验证并发受理，不代表分布式资源端 fencing；全局锁目前偏保守 |
+| 同代际 lease epoch 撤销 | 可以拒绝旧回报，不能远程撤销已经开始的 guest/provider effect |
+| Inventory/projection | 信息性快照，共享校验与原子文件替换；没有生产者 epoch/sequence，不作为所有权或外部不存在证明 |
+| 清理检查完整性 | active_operation_kinds 只含 Run/NodeOperation；guest execution/file 不在该列表；列表和 lifecycle 不是同一跨仓储事务 |
+| 外部不存在判定 | cleanup-inspection 不执行 provider 查询；远端未观察时明确 owning_agent_not_observed。metadata 删除仍必须通过 repository CAS/journal 校验 |
+| 远端 metadata 删除 | 有 placement 时普通删除409，完成 Destroy 的状态本身不替代持久空状态证明。当前须显式 force，仅删除元数据；活跃 Run/NodeOperation 与本地未完成 journal 仍阻止删除 |
+| sysbox_ssh_access | 保留识别/诊断，Create/Read/Delete 明确 Unsupported；已删除不可验证的安装/启动脚本和仅删除 state 的假清理 |
+| Import / 自动 GC | 未实现 ownership adoption；import 派发前拒绝。GC 只允许可信 OwnerUID 范围的 dry-run |
+| State 运维 | aggregate backend 未支持 snapshot/restore、lock inspection、force-unlock；HTTP501，不能返回空成功 |
+| 后台 SSH/vsock | Start 仅代表一次启动回执，不承诺重启后 Observe/Cancel；相关可选 SPI 不实现，不能通过 PID 猜测任务身份 |
+| stdin | vsock 有界预读；流式输入必须是取消时 Close 能解除 Read 的 ReadCloser。交互输入使用 console；后台 stdin 不支持 |
+| 文件传输依赖 | SSH guest 需 sh、mktemp、sha256sum、chmod、mv -T、sync -f；vsock 白名单根目录须已存在；缺工具/校验失败返回错误 |
+| Docker NAT 跨 provider | Docker 节点原生 NAT 支持；Firecracker/libvirt 不能猜测 Docker bridge 接入，明确 Unsupported |
+| 外部特权 writer | host lock 约束合作进程；不能声称阻止刻意同 ifindex/UUID 重用，或 daemon 按名称接入前的管理员替换 |
 
-发起和查询要求管理员权限。报告包含 action ID、owner UID、resource UID、generation、external ID、观测状态、journal 状态、state serial、Run 轮次和执行租约证明，不包含 provider private state。command/report 同事务退休，API 重启后仍可查询；started/failed 事件不能夹带完成报告。
+## 破坏性升级
 
-Observe 只调用 provider Read；候选身份缺失、查询失败或观察期间状态改变保留 unknown/冲突，不把它当成 absent。Recover 复用 runtime RecoverActions，只提交 journal 已授权且可证明的结果，不 Create/Delete、不重放 provisioner/guest 指令，不将整个 Run 自动宣布成功。未知复合动作和缺少完成证据继续拒绝。执行期间依赖 action revision/state serial CAS 和未完成 action 冲突检查，不宣称已有跨控制器全局 Run 排他锁。
+- 旧 state/aggregate、NodeOperation/Guest record、缺完整 SQLite Run/command/event 快照明确要求重建。SQLite/Postgres API schema7 只初始化空库或打开当前版本；不自动补列、不执行旧迁移阶梯、不回退旧索引字段。
+- Firecracker manifest 必须 v2，网络 ownership 必须 v2；缺 attachment target/proof 拒绝。
+- CLI/API/Agent 同步升级。vsock exec/file 操作名升级为 v2，旧 guest 不兼容，需重建注入新版 sysbox-init 的 VM。
+- 不手工修改 version，不单独删除 state 隐藏残留。旧版按实际归属清理后重建；不自动删除用户基础设施。详见[升级说明](../operations/upgrades-and-recovery.md)。
 
-action intent 新增 run_queued_at/run_revision，并作为不可变身份核对。旧未完成 journal 缺少轮次证据时拒绝远程恢复；历史成功轮次不会被当成当前轮次报告。没有固定 revision 或已丢失非默认 Inputs 的恢复请求也会拒绝，不能隐式选择当前 workspace/default inputs。
+## 验证与交付界限
 
-实际验证使用缓存镜像 postgres:16-alpine、回环端口和临时数据目录。开启两个测试 DSN 后，全仓 unit/race 通过；新增覆盖 GuestFile command 冲突事务回滚、retry metadata 重开、恢复报告三后端持久化、HTTP/WebSocket 控制器重启、过期/错轮次授权、Agent runner 证明回传，以及 runtime lost-commit 恢复不重放 effect。实库暴露的 PostgreSQL GetRun NotFound 类型不一致已修复。
+本轮三后端合同使用独立临时 PostgreSQL16 验证；全仓 Go 回归、API/Agent/persistence/runtime/transport/state/guest-init 的 race、vet、docs 检查均通过。schema7的新建、并发初始化、重开及旧库不变性测试通过。真实网络/TAP、Docker、libvirt、Firecracker KVM 已有独立测试入口。
 
-边界：尚未进行真实 Firecracker/Docker/libvirt 的远程宿主机 E2E，也未验收 Postgres 主备切换或断电故障；上述结论不是生产 HA 验收。
+新增 `make test-remote-docker-fault-e2e` 使用生产 HTTP/WebSocket Agent、真实 Docker 和分离的 API/Agent SQLite repository：完成已持久化后丢弃 HTTP 回执，重建 API/Agent，原请求重放仍为同一 Run/唯一容器；旧 claim/完成409，远端 Observe 返回同一 UID/generation。它使用同一宿主共享 immutable snapshot 文件，API 是对象重建，不是 OS SIGKILL；不称为跨宿主 HA 或所有 provider 故障矩阵验收。
 
-## 5. 验证记录
+真实 Firecracker 生命周期测试新增 stdin 与文件校验往返；controller crash/reset/跨进程恢复测试独立保留。传输的取消只保证解除本地等待，除明确远端证明外不宣称远端进程终止。
 
-已运行的针对性测试覆盖：FS/SQLite 共用 repository 合同、并发 intent、丢失提交响应、旧阶段覆盖、畸形 aggregate、SQL 事务清理失败、SQLite 重开、CLI/Agent 地址一致性、SQL 列表、metadata 删除、Firecracker 冷恢复/reset，以及 transport 输出上限和未知退出码。
-
-后续复审补充覆盖：Reset 路由重建与验证、guest/image-entry 完成证据、check 截断标志、console 输出 EOF 与退出结果的竞态，以及 pending topology 在列表和 state API 中的一致可见性。
-
-Guest metadata 迁移通过独立复审和全仓无缓存单测/race/vet/docs 检查。合同测试覆盖 FS/SQLite 的重开、并发 CAS、跨进程锁、create 重试、终态和绑定保护、取消、格式损坏、私有字段及 HTTP 错误分类。本轮设置 `SYSBOX_TEST_POSTGRES_DSN` 与 `SYSBOX_TEST_DATABASE_URL`，连接隔离 PostgreSQL 16 实例执行，测试只操作并清理各自 schema。
-
-本阶段已通过 `go test ./...`、`go test -race ./...`、`go vet ./...`、`make docs-test` 和 `git diff --check`。已运行临时 Postgres 容器上的数据库集成合同；未运行真实 VM/业务容器或网络拓扑。带 `tests/e2e` 的普通 `go test ./...` 输出不代表真实部署测试已运行。
-
-合入/发布前仍需：完整 metadata repository 迁移；剩余资源观测能力与 owning-agent 恢复链路；完整 fencing/outbox；真实 substrate E2E 与生产数据库故障矩阵；逐条核对接口清单中的行为变化。
+后续独立项目：资源端同代租约撤销、多宿主故障矩阵、durable guest task 协议、显式 ownership adoption、完整 guest SSH access 管理。它们不通过兼容回退或下游业务逻辑代替。

@@ -16,6 +16,18 @@ Run completion validates the existing lease_owner and attempt fields against the
 
 Run claim requests must include `queued_at` and `revision` from the dispatched Run snapshot. Empty claim bodies return 400; a snapshot from a previous execution returns 409. Command IDs distinguish execution incarnations even when a Run ID is reused. Upgrade API and Agent together.
 
+Apply accepts `Idempotency-Key` (1–128 ASCII letters, digits, colon, underscore or hyphen) with an immutable global `revision`. The key is scoped to topology and operation. Replaying the same request returns the original Run, including terminal results; changing revision, inputs, explicit agent, unsafe flag or deadline returns 409. A new execution needs a new key. Competing active Runs for one topology are rejected in the store transaction on all three backends.
+
+Keyed Apply pins its immutable snapshot without rewriting the mutable workspace. Preflight and execution use that snapshot. Inputs stay in memory: after restart, `GET /v1/runs/{id}` reports `inputs_required: true` until the original request is resubmitted to the Agent-connected API. Claim returns 503 before taking a Run lease; Agent retries 503 with the original queued_at/revision. Terminal replay does not restore secrets. Durable Run query errors return 503, authoritative absence404, stale claim/completion409. Nonempty revision labels that are not published global revisions now return400.
+
+Authenticated `GET /v1/capabilities` includes protocol `sysbox-runtime-v1`, `durable_apply`, `keyed_destroy`, `cleanup_inspection`, `single_api_execution`, `external_absence_inspection` and `resource_lease_revocation`. The last two are false: no implied live absence proof or resource-side lease revocation.
+
+`GET /v1/topologies/{name}/cleanup-inspection` returns redacted `resources`, `unfinished_actions`, `active_operations`, `state_exists`, `metadata_exists`, source/time and scope. State+journal are one snapshot; operation lists are separate snapshots and cover only the reported `active_operation_kinds` (Run and NodeOperation). Remote ownership reports `owning_agent_not_observed`; `external_presence` is `unknown`. Empty lists never authorize cleanup. Storage errors return503. Use owning-agent Observe/Recover for actual provider evidence; metadata deletion still checks repository serial/owner and unfinished actions.
+
+Workspace responses can include `active_run_id`, `active_revision` and `placement_agent_id`. A remotely placed topology remains listed after its Run ends. If the API has neither local resource evidence nor a mutable HCL pointer, phase is `unknown` with `OwningAgentNotObserved`, not `gone`. Deleting placement prevents retained terminal Run history from recreating the catalog entry.
+
+For a placed remote topology, ordinary metadata DELETE returns409 until a durable fenced empty-state receipt contract is available. Even a terminal Destroy Run alone is not that receipt. Explicit `force=true` removes metadata only, never remote resources; active Run/NodeOperation or unfinished local journal blocks deletion in both modes.
+
 Node-operation completion requires `action_id`, `resource_uid`, `generation`, `lease_epoch`, `lease_owner`, and `attempt` from the delivered command. The store checks the current command lease and commits the operation result in one lock/transaction. Expired or replaced leases return 409; identical committed terminal reports remain idempotent.
 
 Guest execution/file metadata now share one persistence contract. Guest endpoints distinguish missing records (404), conflicts (409), and corrupt/unavailable storage (500), with the existing string `error` envelope. Request, agent and command bindings remain private. The new on-disk `record_format` is not an HTTP field; old metadata requires an explicit rebuild as described in the [implementation status](../design/2026-09-28-runtime-refactor-implementation-status.md).
@@ -122,6 +134,8 @@ GET /v1/topologies/{name}/resources
 GET /v1/topologies/{name}/status/stream
 GET /v1/topologies/{name}/resources/{resource}/health
 ```
+
+The lifecycle aggregate currently does not implement snapshots/restore or lease inspection/force-unlock. These management endpoints return501 rather than an empty successful result.
 
 ## Runs
 

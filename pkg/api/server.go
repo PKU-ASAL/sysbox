@@ -86,6 +86,9 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 	}
 	s.agentSvc = newAgentService(s)
 	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
+	s.workspaces.loadRuns = s.apiStore.LoadRuns
+	s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
+	s.workspaces.lockAdmission = s.jobs.lockTopology
 	if p, ok := s.apiStore.(durablePlacementStore); ok {
 		s.workspaces.placementStore = p
 	}
@@ -167,6 +170,9 @@ func (s *Server) scheduling() *SchedulerService {
 func (s *Server) workspaceService() *WorkspaceService {
 	if s.workspaces == nil {
 		s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
+		s.workspaces.loadRuns = s.apiStore.LoadRuns
+		s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
+		s.workspaces.lockAdmission = s.jobs.lockTopology
 		if p, ok := s.apiStore.(durablePlacementStore); ok {
 			s.workspaces.placementStore = p
 		}
@@ -263,6 +269,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/health", s.handleHealth)
 	m.HandleFunc("GET /v1/schema", s.handleSchema)
 	m.HandleFunc("GET /v1/capabilities", s.handleCapabilities)
+	m.HandleFunc("GET /v1/topologies/{topology}/cleanup-inspection", s.handleCleanupInspection)
 	m.HandleFunc("POST /v1/evaluations", s.handleCreateEvaluation)
 	m.HandleFunc("GET /v1/projects", s.handleListProjects)
 	m.HandleFunc("GET /v1/projects/{project}", s.handleGetProject)

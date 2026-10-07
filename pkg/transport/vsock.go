@@ -3,6 +3,7 @@ package transport
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -182,7 +183,7 @@ type frameHandler func(vsockrpc.Frame) error
 // delivered verbatim; the caller decides what to do with them. The final
 // frame (Done=true) is also delivered. Returns nil when the command exits
 // cleanly, or the first error from handler / transport.
-func (c *VsockConnection) execFrameStream(ctx context.Context, cmd []string, env map[string]string, workDir string, handler frameHandler) error {
+func (c *VsockConnection) execFrameStream(ctx context.Context, cmd []string, env map[string]string, workDir string, stdin []byte, handler frameHandler) error {
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return err
@@ -192,9 +193,12 @@ func (c *VsockConnection) execFrameStream(ctx context.Context, cmd []string, env
 	// accepts the work and never reports a frame would block it forever.
 	defer abortConnOnContext(ctx, conn)()
 
-	req := vsockrpc.Request{Op: vsockrpc.OpExec, Cmd: cmd, Env: env, WorkDir: workDir}
+	req := vsockrpc.Request{Op: vsockrpc.OpExec, Cmd: cmd, Env: env, WorkDir: workDir, StdinSize: int64(len(stdin))}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return fmt.Errorf("send request: %w", err)
+	}
+	if _, err := io.Copy(conn, strings.NewReader(string(stdin))); err != nil {
+		return fmt.Errorf("send stdin: %w", err)
 	}
 
 	scanner := bufio.NewScanner(conn)
@@ -238,12 +242,13 @@ func (c *VsockConnection) Exec(ctx context.Context, req substrate.ExecRequest, s
 	if err != nil {
 		return substrate.ExecResult{ErrorClass: substrate.ExecErrorInvalid}, err
 	}
-	if req.Stdin != nil {
-		return result, fmt.Errorf("vsock foreground stdin: %w", substrate.ErrNotSupported)
+	stdin, err := readVsockStdin(ctx, req.Stdin)
+	if err != nil {
+		return substrate.ExecResult{ErrorClass: substrate.ExecErrorInvalid}, err
 	}
 	out := substrate.NewExecCapture(req.OutputLimitBytes, stdout)
 	errOut := substrate.NewExecCapture(req.OutputLimitBytes, stderr)
-	err = c.execFrameStream(ctx, cmd, req.Environment, req.WorkingDir, func(f vsockrpc.Frame) error {
+	err = c.execFrameStream(ctx, cmd, req.Environment, req.WorkingDir, stdin, func(f vsockrpc.Frame) error {
 		if len(f.Stdout) > 0 {
 			if _, err := out.Write(f.Stdout); err != nil {
 				return fmt.Errorf("write stdout: %w", err)
@@ -274,13 +279,29 @@ func (c *VsockConnection) Start(ctx context.Context, req substrate.ExecRequest) 
 	return startPOSIX(ctx, c, c.executionIdentity, c.udsPath, req)
 }
 
-func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string) error {
-	data, err := os.ReadFile(srcPath)
+func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string) (err error) {
+	defer func() {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+	}()
+	file, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", srcPath, err)
 	}
-	info, err := os.Stat(srcPath)
+	defer file.Close()
+	info, err := file.Stat()
 	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("copy source must be a regular file")
+	}
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 
@@ -289,17 +310,19 @@ func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string)
 		return err
 	}
 	defer conn.Close()
+	defer abortConnOnContext(ctx, conn)()
 
 	req := vsockrpc.Request{
-		Op:   vsockrpc.OpWriteFile,
-		Path: dstPath,
-		Mode: uint32(info.Mode().Perm()),
-		Size: int64(len(data)),
+		SHA256: fmt.Sprintf("%x", digest.Sum(nil)),
+		Op:     vsockrpc.OpWriteFile,
+		Path:   dstPath,
+		Mode:   uint32(info.Mode().Perm()),
+		Size:   info.Size(),
 	}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return err
 	}
-	if _, err := conn.Write(data); err != nil {
+	if _, err := io.CopyN(conn, file, info.Size()); err != nil {
 		return fmt.Errorf("write body: %w", err)
 	}
 	dec := json.NewDecoder(conn)
@@ -309,6 +332,9 @@ func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string)
 	}
 	if f.Error != "" {
 		return fmt.Errorf("%s", f.Error)
+	}
+	if !f.Done || f.SHA256 != req.SHA256 {
+		return fmt.Errorf("file transfer lacks matching terminal checksum")
 	}
 	return nil
 }

@@ -39,27 +39,7 @@ func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle,
 	if err != nil {
 		return err
 	}
-	tmp := dst + ".sysbox-tmp"
-	files, ok := conn.(substrate.ConnectionFileCopier)
-	if !ok {
-		return substrate.ErrNotSupported
-	}
-	if err := files.CopyFile(ctx, src, tmp); err != nil {
-		return err
-	}
-	result, err := conn.Exec(ctx, guestFileInstallRequest("chmod", fmt.Sprintf("%04o", mode), tmp), io.Discard, io.Discard)
-	if err != nil || result.ExitCode != 0 {
-		return fmt.Errorf("set guest file mode")
-	}
-	result, err = conn.Exec(ctx, guestFileInstallRequest("mv", "-f", tmp, dst), io.Discard, io.Discard)
-	if err != nil || result.ExitCode != 0 {
-		return fmt.Errorf("atomic guest file rename")
-	}
-	return nil
-}
-
-func guestFileInstallRequest(program string, args ...string) substrate.ExecRequest {
-	return substrate.ExecRequest{Program: program, Args: args, Shell: substrate.ShellNone}
+	return transport.InstallFile(ctx, conn, src, dst, mode)
 }
 
 // Connection returns an SSH connection to the VM. The SSHIP is resolved from

@@ -16,7 +16,9 @@ import (
 	"github.com/oslab/sysbox/pkg/diag"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 // safeSegment matches allowed path values for topology / node / id URL segments.
@@ -99,7 +101,7 @@ func (s *Server) handleGetStateLock(w http.ResponseWriter, r *http.Request) {
 	}
 	info, err := s.workspaceService().LockInfo(r.Context(), topology)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, stateOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, info)
@@ -112,7 +114,7 @@ func (s *Server) handleForceUnlockState(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := s.workspaceService().ForceUnlock(r.Context(), topology); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, stateOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "unlocked"})
@@ -126,7 +128,7 @@ func (s *Server) handleListStateSnapshots(w http.ResponseWriter, r *http.Request
 	}
 	items, err := s.workspaceService().StateSnapshots(r.Context(), topology)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, stateOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"snapshots": items})
@@ -144,10 +146,17 @@ func (s *Server) handleRestoreStateSnapshot(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := s.workspaceService().RestoreStateSnapshot(r.Context(), topology, snapshot); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, stateOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "restored", "snapshot": snapshot})
+}
+
+func stateOperationErrorStatus(err error) int {
+	if errors.Is(err, state.ErrUnsupported) {
+		return http.StatusNotImplemented
+	}
+	return http.StatusInternalServerError
 }
 
 func (s *Server) handleGetOutputs(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +256,8 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest{
-		Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
+		OperationKey: r.Header.Get("Idempotency-Key"),
+		Revision:     req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -421,12 +431,19 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, ok := s.jobs.get(id)
-	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
+	run, err := s.apiStore.GetRun(r.Context(), id)
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, persistence.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, run)
+	writeJSON(w, http.StatusOK, struct {
+		*controlplane.Run
+		InputsRequired bool `json:"inputs_required"`
+	}{Run: run, InputsRequired: s.jobs.inputsRequired(run)})
 }
 
 func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {

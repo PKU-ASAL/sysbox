@@ -70,6 +70,10 @@ func (s *NodeOperationService) CompleteFromAgent(agentID, opID string, op contro
 }
 
 func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, operation string, subj requestSubject) (controlplane.NodeOperation, error) {
+	if s.workspace.lockAdmission != nil {
+		unlock := s.workspace.lockAdmission(topology)
+		defer unlock()
+	}
 	st, err := s.workspace.LoadState(topology)
 	if err != nil {
 		return controlplane.NodeOperation{}, err

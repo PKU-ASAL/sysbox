@@ -82,9 +82,9 @@ func TestVsockExecutionTimeoutDoesNotClaimRemoteTermination(t *testing.T) {
 	require.False(t, result.ExitCodeKnown)
 }
 
-func TestVsockRejectsUnsupportedStdinBeforeDial(t *testing.T) {
-	_, err := NewVsockConnection("/does-not-exist", 1024).Exec(context.Background(), substrate.ExecRequest{Program: "cat", Shell: substrate.ShellNone, Stdin: bytes.NewBufferString("input")}, nil, nil)
-	require.ErrorIs(t, err, substrate.ErrNotSupported)
+func TestVsockRejectsOversizedStdinBeforeDial(t *testing.T) {
+	_, err := NewVsockConnection("/does-not-exist", 1024).Exec(context.Background(), substrate.ExecRequest{Program: "cat", Shell: substrate.ShellNone, Stdin: strings.NewReader(strings.Repeat("x", vsockrpc.MaxStdinBytes+1))}, nil, nil)
+	require.ErrorContains(t, err, "stdin exceeds")
 }
 
 func TestSSHExecutionBoundsOutputAtWriter(t *testing.T) {

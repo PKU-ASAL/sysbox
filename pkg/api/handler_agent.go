@@ -102,7 +102,11 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 	}
 	run, err := s.jobs.claimExpected(runID, agentID, &expected)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, persistence.ErrConflict) || errors.Is(err, persistence.ErrNotFound) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, run)
@@ -209,7 +213,15 @@ func (s *Server) handleCompleteAgentRun(w http.ResponseWriter, r *http.Request) 
 	}
 	req, err := s.agentService().CompleteRun(agentID, runID, req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, persistence.ErrConflict) {
+			status = http.StatusConflict
+		} else if errors.Is(err, persistence.ErrInvalidRecord) {
+			status = http.StatusBadRequest
+		} else if errors.Is(err, persistence.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, req)

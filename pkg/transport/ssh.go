@@ -2,13 +2,16 @@ package transport
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/util"
 )
 
 // SSHConnection implements Connection over standard SSH (cli-based).
@@ -155,26 +158,43 @@ func (c *SSHConnection) namespacedCommand(ctx context.Context, binary string, ar
 	return exec.CommandContext(ctx, "ip", append([]string{"netns", "exec", c.netns, binary}, args...)...)
 }
 
-func (c *SSHConnection) scpCommand(ctx context.Context, args []string) *exec.Cmd {
-	return c.namespacedCommand(ctx, resolveSCPBin(), args...)
-}
-
 func (c *SSHConnection) CopyFile(ctx context.Context, srcPath, dstPath string) error {
-	scpArgs := []string{}
-	if c.port != "" && c.port != "22" {
-		scpArgs = append(scpArgs, "-P", c.port)
+	file, err := os.Open(srcPath)
+	if err != nil {
+		return err
 	}
-	if c.privateKey != "" {
-		scpArgs = append(scpArgs, "-i", c.privateKey)
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
 	}
-	scpArgs = append(scpArgs, c.hostKeyArgs()...)
-	scpArgs = append(scpArgs, "-o", "LogLevel=ERROR")
-	scpArgs = append(scpArgs, srcPath, fmt.Sprintf("%s@%s:%s", c.user, c.host, dstPath))
-
-	ec := c.scpCommand(ctx, scpArgs)
-	ec.Stdout = os.Stdout
-	ec.Stderr = os.Stderr
-	return ec.Run()
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("copy source must be a regular file")
+	}
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return err
+	}
+	expected := fmt.Sprintf("%x", digest.Sum(nil))
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	// Use the same identity/trust/password/namespace path as Exec. The original
+	// destination survives incomplete upload or a failed checksum.
+	script := "set -eu; tmp=$(mktemp -- " + util.ShellQuote(dstPath+".sysbox-transfer.XXXXXX") + "); " +
+		"trap 'rm -f -- \"$tmp\"' EXIT; cat > \"$tmp\"; " +
+		"actual=$(sha256sum < \"$tmp\"); actual=${actual%% *}; " +
+		"[ \"$actual\" = " + util.ShellQuote(expected) + " ]; " +
+		fmt.Sprintf("chmod %04o -- \"$tmp\"; sync -f \"$tmp\"; ", info.Mode().Perm()) +
+		"mv -fT -- \"$tmp\" " + util.ShellQuote(dstPath) + "; sync -f " + util.ShellQuote(filepath.Dir(dstPath)) + "; printf '%s' \"$actual\""
+	result, err := c.Exec(ctx, substrate.ExecRequest{Program: script, Shell: substrate.ShellLinux, Stdin: file, OutputLimitBytes: 128}, nil, nil)
+	if err != nil {
+		return err
+	}
+	if !result.ExitCodeKnown || result.ExitCode != 0 || result.StdoutTruncated || result.Stdout != expected {
+		return fmt.Errorf("SSH file install lacks verified successful checksum receipt")
+	}
+	return nil
 }
 
 // WaitForSSH polls the SSH port until the VM's sshd is ready.
@@ -211,13 +231,4 @@ func resolveSSHBin() string {
 		}
 	}
 	return "ssh"
-}
-
-func resolveSCPBin() string {
-	for _, p := range []string{"/usr/bin/scp", "/usr/local/bin/scp"} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return "scp"
 }

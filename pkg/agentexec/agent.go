@@ -741,12 +741,30 @@ func retryGuestFileReport(ctx context.Context, report func() error) error {
 }
 
 func claim(ctx context.Context, opts Options, expected controlplane.Run) (*controlplane.Run, error) {
-	var run controlplane.Run
-	if err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+expected.ID+"/claim", controlplane.RunClaim{QueuedAt: expected.QueuedAt, Revision: expected.Revision}, &run); err != nil {
-		return nil, err
+	for {
+		var run controlplane.Run
+		err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+expected.ID+"/claim", controlplane.RunClaim{QueuedAt: expected.QueuedAt, Revision: expected.Revision}, &run)
+		if err == nil {
+			return &run, nil
+		}
+		var responseErr *httpStatusError
+		if !errors.As(err, &responseErr) || responseErr.status != http.StatusServiceUnavailable {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
-	return &run, nil
 }
+
+type httpStatusError struct {
+	status  int
+	message string
+}
+
+func (e *httpStatusError) Error() string { return e.message }
 
 func renewRunLease(ctx context.Context, opts Options, run *controlplane.Run) error {
 	if run == nil || run.ID == "" || run.LeaseOwner == "" {
@@ -825,7 +843,7 @@ func post(ctx context.Context, opts Options, url string, in any, out any) error 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("POST %s: %s", url, resp.Status)
+		return &httpStatusError{status: resp.StatusCode, message: fmt.Sprintf("POST %s: %s", url, resp.Status)}
 	}
 	if out == nil {
 		return nil

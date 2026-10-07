@@ -1,0 +1,152 @@
+package api
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
+)
+
+func TestSQLiteMissingCommandEventRecordRequiresRebuild(t *testing.T) {
+	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	db, err := s.open()
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	_, err = db.Exec(`INSERT INTO sysbox_agent_command_events(command_id,type,agent_id,status) VALUES('command','run_assigned','agent','ack')`)
+	require.NoError(t, err)
+	_, err = s.ListAgentCommandEvents(context.Background(), "agent")
+	require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
+	require.ErrorContains(t, err, "rebuild")
+}
+
+func TestSQLiteCommandEventRejectsInconsistentIndex(t *testing.T) {
+	for _, column := range []string{"command_id", "type", "agent_id", "status", "message", "error", "created_at"} {
+		t.Run(column, func(t *testing.T) {
+			s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+			ctx := context.Background()
+			require.NoError(t, s.SaveAgentCommandEvent(ctx, controlplane.AgentCommandEvent{CommandID: "command", AgentID: "agent", Type: "run_assigned", Status: "ack"}))
+			t.Cleanup(func() { s.db.Close() })
+			_, err := s.db.Exec("UPDATE sysbox_agent_command_events SET " + column + "='corrupted'")
+			require.NoError(t, err)
+			events, err := s.ListAgentCommandEvents(ctx, "")
+			require.ErrorIs(t, err, persistence.ErrCorruptRecord)
+			require.Empty(t, events)
+		})
+	}
+}
+
+func TestSQLiteInventoryRejectsInvalidObservationMetadata(t *testing.T) {
+	for _, mutation := range []string{"observed_at='broken'", "observed_at=''", "observed_at='2026-10-07 12:34:56'", "stale=2", "stale=-1"} {
+		t.Run(mutation, func(t *testing.T) {
+			s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+			ctx := context.Background()
+			require.NoError(t, s.SaveAgentInventory(ctx, controlplane.AgentInventory{AgentID: "agent"}))
+			t.Cleanup(func() { s.db.Close() })
+			_, err := s.db.Exec("UPDATE sysbox_agent_inventory SET " + mutation)
+			require.NoError(t, err)
+			inv, err := s.GetAgentInventory(ctx, "agent")
+			require.ErrorIs(t, err, persistence.ErrCorruptRecord)
+			require.Nil(t, inv)
+		})
+	}
+}
+
+func TestSQLiteMissingCommandRecordRequiresRebuild(t *testing.T) {
+	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	ctx := context.Background()
+	require.NoError(t, s.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "run_assigned"}))
+	t.Cleanup(func() { s.db.Close() })
+	_, err := s.db.Exec(`UPDATE sysbox_agent_commands SET record_json=X''`)
+	require.NoError(t, err)
+	_, err = s.ListAgentCommands(ctx, "agent")
+	require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
+	require.ErrorContains(t, err, "rebuild")
+}
+
+func TestLocalProjectionReplacesSnapshotAtomically(t *testing.T) {
+	s := &localAPIStore{runsDir: t.TempDir()}
+	ctx := context.Background()
+	first := controlplane.ResourceProjection{Topology: "lab", AgentID: "first"}
+	require.NoError(t, s.SaveResourceProjection(ctx, first))
+	path := filepath.Join(s.runsDir, "lab", "projection.json")
+	old, err := os.Open(path)
+	require.NoError(t, err)
+	defer old.Close()
+	firstRaw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	next := first
+	next.AgentID = "second"
+	require.NoError(t, s.SaveResourceProjection(ctx, next))
+	oldRaw := make([]byte, len(firstRaw))
+	_, err = old.Read(oldRaw)
+	require.NoError(t, err)
+	require.Equal(t, string(firstRaw), string(oldRaw), "existing readers must retain the complete old snapshot")
+	got, err := s.LoadResourceProjection(ctx, "lab")
+	require.NoError(t, err)
+	require.Equal(t, "second", got.AgentID)
+}
+
+func TestSQLiteMissingRevisionFilesRequiresRebuild(t *testing.T) {
+	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	db, err := s.open()
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	_, err = db.Exec(`INSERT INTO sysbox_global_revisions(revision) VALUES('old')`)
+	require.NoError(t, err)
+	_, err = s.GetGlobalRevision(context.Background(), "old")
+	require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
+	require.NotErrorIs(t, err, errGlobalRevisionNotFound)
+}
+
+func TestMetadataStoresRejectInvalidProjection(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+		require.ErrorIs(t, s.SaveResourceProjection(context.Background(), controlplane.ResourceProjection{}), persistence.ErrInvalidRecord)
+	})
+}
+
+func TestCommandEventStoresRejectInvalidRecord(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+		require.ErrorIs(t, s.SaveAgentCommandEvent(context.Background(), controlplane.AgentCommandEvent{}), persistence.ErrInvalidRecord)
+	})
+}
+
+func TestCommandEventStoresRoundTripLeaseProof(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+		ctx := context.Background()
+		event := controlplane.AgentCommandEvent{CommandID: "command", AgentID: "agent", Type: "run_assigned", Status: "started", LeaseOwner: "lease", Attempt: 3, ResourceUID: "resource", Generation: 4, LeaseEpoch: 5}
+		require.NoError(t, s.SaveAgentCommandEvent(ctx, event))
+		got, err := s.ListAgentCommandEvents(ctx, "agent")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.False(t, got[0].CreatedAt.IsZero())
+		event.CreatedAt = got[0].CreatedAt
+		require.Equal(t, event, got[0])
+	})
+}
+
+func TestCommandEventStoresListAllAgents(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+		ctx := context.Background()
+		for _, id := range []string{"first", "second"} {
+			require.NoError(t, s.SaveAgentCommandEvent(ctx, controlplane.AgentCommandEvent{CommandID: id, AgentID: id, Type: "run_assigned", Status: "ack"}))
+		}
+		got, err := s.ListAgentCommandEvents(ctx, "")
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+	})
+}
+
+func TestSQLiteInventoryRejectsCorruptJSON(t *testing.T) {
+	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	db, err := s.open()
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	_, err = db.Exec(`INSERT INTO sysbox_agent_inventory(agent_id,capabilities) VALUES('agent','broken')`)
+	require.NoError(t, err)
+	_, err = s.GetAgentInventory(context.Background(), "agent")
+	require.ErrorIs(t, err, persistence.ErrCorruptRecord)
+}

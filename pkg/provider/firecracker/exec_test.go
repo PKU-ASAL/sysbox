@@ -72,10 +72,3 @@ func TestSSHConnectionBindsNamespaceAndGeneration(t *testing.T) {
 	require.Equal(t, "vm", value.FieldByName("executionIdentity").FieldByName("nodeID").String())
 	require.EqualValues(t, 3, value.FieldByName("executionIdentity").FieldByName("generation").Int())
 }
-
-func TestGuestFileInstallRequestUsesDirectExecution(t *testing.T) {
-	request := guestFileInstallRequest("chmod", "0600", "/tmp/payload")
-
-	require.Equal(t, substrate.ShellNone, request.Shell)
-	require.NoError(t, request.Validate())
-}

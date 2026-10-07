@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,27 @@ func TestFirecrackerRealGenerationLifecycleE2E(t *testing.T) {
 	require.Equal(t, identity.OwnerUID, obs.OwnerUID)
 	require.Equal(t, identity.ResourceUID, obs.ResourceUID)
 	require.Equal(t, identity.Generation, obs.Generation)
+	conn, err := s.Connection(h, nil)
+	require.NoError(t, err)
+	input := "verified stdin\n"
+	result, err := conn.Exec(ctx, substrate.ExecRequest{Program: "cat", Shell: substrate.ShellNone, Stdin: strings.NewReader(input)}, nil, nil)
+	require.NoError(t, err)
+	require.True(t, result.ExitCodeKnown)
+	require.Equal(t, input, result.Stdout)
+	file := filepath.Join(t.TempDir(), "payload")
+	require.NoError(t, os.WriteFile(file, []byte("verified file\n"), 0600))
+	copier, ok := conn.(substrate.ConnectionFileCopier)
+	require.True(t, ok)
+	require.NoError(t, copier.CopyFile(ctx, file, "/tmp/sysbox-verified-file"))
+	result, err = conn.Exec(ctx, substrate.ExecRequest{Program: "cat", Args: []string{"/tmp/sysbox-verified-file"}, Shell: substrate.ShellNone}, nil, nil)
+	require.NoError(t, err)
+	require.True(t, result.ExitCodeKnown)
+	require.Equal(t, "verified file\n", result.Stdout)
+	require.NoError(t, s.CopyToNode(ctx, h, file, "/tmp/sysbox-mode-file", 0640))
+	result, err = conn.Exec(ctx, substrate.ExecRequest{Program: "stat", Args: []string{"-c", "%a", "/tmp/sysbox-mode-file"}, Shell: substrate.ShellNone}, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "640", strings.TrimSpace(result.Stdout))
+	require.Error(t, s.CopyToNode(ctx, h, file, "/tmp", 0640), "directory must not become a successful file destination")
 	require.NoError(t, s.DestroyNode(ctx, h))
 }
 
