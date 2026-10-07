@@ -3,10 +3,12 @@ package agentexec
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -20,6 +22,7 @@ import (
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -338,6 +341,14 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		}
 		stopRenew := startRunLeaseRenewal(runCtx, r.opts, claimed)
 		defer stopRenew()
+		if r.opts.HostSupervisorSocket != "" {
+			if err := r.executeAssignedHostRun(runCtx, *claimed, cmd, emit); err != nil {
+				emit("failed", "host supervisor run failed", err)
+				return
+			}
+			emit("started", "host supervisor accepted run; awaiting host receipt", nil)
+			return
+		}
 		runCtx, err = r.prepareRunWorkspace(runCtx, *claimed)
 		if err != nil {
 			r.executor.bridge.AttachRun(claimed)
@@ -868,4 +879,57 @@ func authorize(req *http.Request, opts Options) {
 		req.Header.Set("Authorization", "Bearer "+opts.Token)
 	}
 	_ = agent.SignRequest(req, opts.ID, opts.Secret, time.Now())
+}
+
+func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlplane.Run, cmd *controlplane.AgentCommand, emit func(string, string, error)) error {
+	if cmd == nil || cmd.Run == nil || r.opts.ExecutionSessionID == "" || r.opts.ExecutionGrantPublicKeyFile == "" {
+		return fmt.Errorf("host supervisor run requires execution session and grant key")
+	}
+	action := run.Op
+	if action == "" {
+		action = run.Operation
+	}
+	if action != "apply" && action != "destroy" {
+		return fmt.Errorf("host supervisor does not support run operation %q", run.Op)
+	}
+	key, err := os.ReadFile(r.opts.ExecutionGrantPublicKeyFile)
+	if err != nil || len(key) != ed25519.PublicKeySize {
+		return controlplane.ErrInvalidExecutionGrant
+	}
+	node := run.Target
+	if i := strings.LastIndex(node, "."); i >= 0 {
+		node = node[i+1:]
+	}
+	if node == "" {
+		return fmt.Errorf("host supervisor run requires a single resource target")
+	}
+	target := hostsupervisor.TargetRef{Topology: run.Topology, Node: node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}}
+	req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: cmd.TopologyUID, Revision: run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: run.Target, ExpectedSerial: 0}
+	digest, err := req.Digest()
+	if err != nil {
+		return err
+	}
+	client := hostsupervisor.NewTaskClient(r.opts.HostSupervisorSocket, target)
+	boot, err := client.HostBootID(ctx)
+	if err != nil {
+		return err
+	}
+	endpoint := r.opts.APIURL + "/v1/agents/" + r.opts.ID + "/commands/" + cmd.ID + "/execution-grant"
+	var grant controlplane.SignedExecutionGrant
+	if err := post(ctx, r.opts, endpoint, map[string]any{"session_id": r.opts.ExecutionSessionID, "lease_owner": cmd.LeaseOwner, "attempt": cmd.Attempt, "boot_id": boot}, &grant); err != nil {
+		return err
+	}
+	if err := controlplane.VerifyExecutionGrant(ed25519.PublicKey(key), grant, boot, time.Now()); err != nil {
+		return err
+	}
+	if grant.Grant.Operation != "run_"+action || grant.Grant.Digest != digest || grant.Grant.ActionID != cmd.ActionID || grant.Grant.Scope != target.Scope {
+		return controlplane.ErrInvalidExecutionGrant
+	}
+	if _, err := client.StartRun(ctx, req, grant); err != nil {
+		if _, observeErr := client.ObserveRun(ctx, req, grant); observeErr != nil {
+			return fmt.Errorf("host run outcome unknown: %w", err)
+		}
+	}
+	_ = emit
+	return nil
 }

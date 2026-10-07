@@ -310,5 +310,5 @@ func dockerHandleFromResetState(id string, state *resetHandleState) substrate.No
 		ContainerName: state.ContainerName, ImageCmd: append([]string(nil), state.ImageCmd...),
 		ImageEntrypoint: append([]string(nil), state.ImageEntrypoint...), RemoveDefaultBridge: state.RemoveDefaultBridge,
 		DirectLaunch: state.DirectLaunch,
-	}, Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker, Endpoint: id}}
+	}, Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker, Endpoint: id, User: "root"}}
 }

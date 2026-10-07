@@ -27,7 +27,7 @@ func (r CanonicalResolver) Resolve(ctx context.Context, ref TargetRef) (Target, 
 	if err != nil {
 		return Target{}, err
 	}
-	return Target{Scope: target.Scope, AgentID: target.AgentID, NodeID: target.Handle.ID, Connection: conn}, nil
+	return Target{Scope: target.Scope, AgentID: target.AgentID, NodeID: target.Handle.ID, User: target.Handle.Conn.User, Connection: conn}, nil
 }
 
 // NodeTarget stays inside the privileged process. It never crosses the worker

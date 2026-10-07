@@ -48,6 +48,9 @@ type GCCoordinator struct {
 	IssuerKey           ed25519.PublicKey
 	HostBootID, AgentID string
 	Authorize           func(context.Context, controlplane.SignedExecutionGrant) error
+	// ValidateInventory re-reads the canonical host inventory under the same
+	// coordinator boundary. A dry-run digest is never sufficient authorization.
+	ValidateInventory func(context.Context, GCCandidate) error
 }
 
 func (c *GCCoordinator) Delete(ctx context.Context, candidate GCCandidate, g controlplane.SignedExecutionGrant, deleteEffect func(context.Context) (json.RawMessage, error)) (json.RawMessage, error) {
@@ -59,6 +62,12 @@ func (c *GCCoordinator) Delete(ctx context.Context, candidate GCCandidate, g con
 		return nil, effectgate.ErrFenced
 	}
 	if err = controlplane.VerifyExecutionGrant(c.IssuerKey, g, c.HostBootID, time.Now()); err != nil {
+		return nil, err
+	}
+	if c.ValidateInventory == nil {
+		return nil, effectgate.ErrFenced
+	}
+	if err := c.ValidateInventory(ctx, candidate); err != nil {
 		return nil, err
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID, Authorize: func(ctx context.Context, _ controlplane.ExecutionGrant) error {
@@ -76,6 +85,12 @@ func (c *GCCoordinator) Observe(ctx context.Context, candidate GCCandidate, g co
 	}
 	if g.Grant.Digest != digest {
 		return nil, effectgate.ErrFenced
+	}
+	if c.ValidateInventory == nil {
+		return nil, effectgate.ErrFenced
+	}
+	if err := c.ValidateInventory(ctx, candidate); err != nil {
+		return nil, err
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
 	return gate.ReadOutcome(ctx, g.Grant, candidate.ExternalID)

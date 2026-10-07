@@ -92,7 +92,19 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	dispatcher := &hostsupervisor.Dispatcher{Root: cfg.HostSupervisor.Root, AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	power := &hostsupervisor.PowerDispatcher{Root: filepath.Join(cfg.HostSupervisor.Root, "power"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.ResolveNode, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	files := &hostsupervisor.FileDispatcher{Dispatcher: &hostsupervisor.Dispatcher{Root: filepath.Join(cfg.HostSupervisor.Root, "files"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}, Fetch: authority.FetchFile}
+	runCoordinator := &hostsupervisor.RunCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "runs"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, Authorize: authority.Authorize}
 	server := hostsupervisor.Server{Socket: cfg.HostSupervisor.Socket, GroupID: cfg.HostSupervisor.WorkerGroupID, Dispatcher: dispatcher, Power: power, Files: files, OnRecoveryError: func(err error) { fmt.Fprintf(cmd.ErrOrStderr(), "host supervisor reconciliation: %v\n", err) }}
+	server.Runs = runCoordinator
+	server.RunEffect = func(ctx context.Context, req hostsupervisor.RunRequest) (json.RawMessage, error) {
+		if req.Target == "" {
+			return nil, fmt.Errorf("host run requires one resource target")
+		}
+		// The coordinator is wired and durably fences intent. Provider effect
+		// execution is deliberately rejected until an immutable revision-backed
+		// host executor is configured; this prevents a worker relay from
+		// claiming a complete run without a host receipt/state patch.
+		return nil, fmt.Errorf("host run effect executor is not configured for immutable revision %s", req.Revision)
+	}
 	server.SSH = &hostsupervisor.SSHAccessCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "ssh-access"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, Authorize: authority.Authorize}
 	server.SSHApply = func(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 		target, err := resolver.Resolve(ctx, hostsupervisor.TargetRef{Topology: req.Topology, Node: req.Node, Scope: grant.Grant.Scope})
@@ -121,7 +133,10 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		if err := tmp.Close(); err != nil {
 			return nil, err
 		}
-		path := filepath.Join("/root/.ssh/authorized_keys.d", "sysbox-"+req.ID)
+		path, err := hostsupervisor.ManagedSSHPath(target.User, req.ID)
+		if err != nil {
+			return nil, err
+		}
 		if err := copier.CopyFile(ctx, name, path); err != nil {
 			return nil, err
 		}
@@ -138,7 +153,10 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		if !ok {
 			return nil, fmt.Errorf("ssh access target has no command verifier")
 		}
-		path := filepath.Join("/root/.ssh/authorized_keys.d", "sysbox-"+req.ID)
+		path, err := hostsupervisor.ManagedSSHPath(target.User, req.ID)
+		if err != nil {
+			return nil, err
+		}
 		r, err := execer.Exec(ctx, substrate.ExecRequest{Program: "/bin/rm", Args: []string{"-f", path}, Shell: substrate.ShellNone}, nil, nil)
 		if err != nil || !r.ExitCodeKnown || r.ExitCode != 0 {
 			return nil, fmt.Errorf("ssh access delete failed: %w", err)

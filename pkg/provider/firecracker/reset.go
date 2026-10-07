@@ -290,7 +290,7 @@ func cloneHandleState(state *HandleState) *HandleState {
 func firecrackerNodeHandle(id string, state *HandleState) substrate.NodeHandle {
 	conn := substrate.ConnInfo{}
 	if state.VsockUDS != "" {
-		conn = substrate.ConnInfo{Kind: substrate.ConnKindVsock, Endpoint: fmt.Sprintf("%s:%d", state.VsockUDS, state.VsockPort)}
+		conn = substrate.ConnInfo{Kind: substrate.ConnKindVsock, Endpoint: fmt.Sprintf("%s:%d", state.VsockUDS, state.VsockPort), User: state.SSHUser}
 	}
 	return substrate.NodeHandle{ID: id, Generation: state.Generation, Provider: state, Conn: conn}
 }

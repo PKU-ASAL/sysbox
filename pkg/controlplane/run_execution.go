@@ -1,0 +1,64 @@
+package controlplane
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"github.com/oslab/sysbox/pkg/address"
+	"strings"
+)
+
+type RunExecutionRequest struct {
+	RunID          string `json:"run_id"`
+	Topology       string `json:"topology"`
+	TopologyUID    string `json:"topology_uid"`
+	Revision       string `json:"revision"`
+	ActionID       string `json:"action_id"`
+	ResourceUID    string `json:"resource_uid"`
+	Generation     int64  `json:"generation"`
+	Action         string `json:"action"`
+	Target         string `json:"target"`
+	ExpectedSerial int64  `json:"expected_serial"`
+}
+
+func (r RunExecutionRequest) Validate() error {
+	if r.RunID == "" || r.Topology == "" || r.TopologyUID == "" || r.Revision == "" || r.ActionID == "" || r.ResourceUID == "" || r.Generation < 1 || r.ExpectedSerial < 0 {
+		return fmt.Errorf("run execution request incomplete")
+	}
+	if r.Action != "apply" && r.Action != "destroy" {
+		return fmt.Errorf("run action unsupported")
+	}
+	if strings.ContainsAny(r.RunID+r.Topology+r.TopologyUID+r.Revision+r.ActionID+r.ResourceUID, "/\\\x00") {
+		return fmt.Errorf("run execution identity unsafe")
+	}
+	if _, err := address.Parse(r.Target); err != nil {
+		return fmt.Errorf("run target invalid: %w", err)
+	}
+	return nil
+}
+func (r RunExecutionRequest) Digest() (string, error) {
+	if err := r.Validate(); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+func FromRunCommand(cmd AgentCommand, topologyUID string, serial int64) (RunExecutionRequest, error) {
+	if cmd.Type != "run_assigned" || cmd.Run == nil || cmd.Run.ID == "" || cmd.Run.Topology == "" || cmd.Run.Revision == "" || cmd.Run.Target == "" || topologyUID == "" || cmd.TopologyUID == "" || cmd.TopologyUID != topologyUID || cmd.ActionID == "" || cmd.ResourceUID == "" || cmd.Generation < 1 {
+		return RunExecutionRequest{}, fmt.Errorf("run command lacks single-resource host proof")
+	}
+	action := cmd.Run.Op
+	if action != "apply" && action != "destroy" {
+		return RunExecutionRequest{}, fmt.Errorf("run operation requires single-resource apply or destroy")
+	}
+	digestTarget, err := address.Parse(cmd.Run.Target)
+	if err != nil {
+		return RunExecutionRequest{}, err
+	}
+	return RunExecutionRequest{RunID: cmd.Run.ID, Topology: cmd.Run.Topology, TopologyUID: topologyUID, Revision: cmd.Run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: digestTarget.String(), ExpectedSerial: serial}, nil
+}

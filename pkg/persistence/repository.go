@@ -4,6 +4,7 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,9 +13,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 var (
@@ -238,7 +241,7 @@ func (r *Repository) CommitActionIntent(ctx context.Context, action runtime.Acti
 			return ErrConflict
 		}
 		for _, old := range a.Actions {
-			if old.Status != runtime.ActionSucceeded && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
+			if old.ID != action.ID && old.Status != runtime.ActionSucceeded && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
 				return fmt.Errorf("%w: unresolved action %s", ErrConflict, old.ID)
 			}
 		}
@@ -312,6 +315,77 @@ func (r *Repository) CommitActionOutcome(ctx context.Context, action runtime.Act
 		} else if action.Status == runtime.ActionSucceeded {
 			return fmt.Errorf("verified success requires an atomic resource patch")
 		}
+		action.Revision++
+		a.Actions[action.ID] = action
+		a.UpdatedAt = time.Now().UTC()
+		return nil
+	})
+}
+
+// CommitAdoptionEvidenceAtomic records an authenticated host adoption result
+// and its resource patch in one aggregate transaction. This closes the gap
+// between separate intent/outcome calls for API retries and concurrent agents.
+func (r *Repository) CommitAdoptionEvidenceAtomic(ctx context.Context, runID, topology string, addr address.Address, evidence substrate.AdoptionEvidence, resource state.Resource, identity substrate.OperationIdentity, expectedSerial int64) error {
+	if runID == "" || !topologyName.MatchString(topology) || addr.IsZero() || identity.Validate() != nil || evidence.ExternalID == "" || evidence.Fingerprint == "" || !resource.Address.Equal(addr) || resource.Driver != evidence.Provider || resource.ExternalID != evidence.ExternalID || resource.OwnerUID != identity.OwnerUID || resource.ResourceUID != identity.ResourceUID || resource.Generation != identity.Generation || identity.TopologyUID != identity.OwnerUID {
+		return ErrConflict
+	}
+	stable := resource
+	stable.CreatedAt, stable.UpdatedAt = time.Time{}, time.Time{}
+	raw, err := json.Marshal(struct {
+		Run, Topology string
+		Identity      substrate.OperationIdentity
+		Evidence      substrate.AdoptionEvidence
+		Resource      state.Resource
+	}{runID, topology, identity, evidence, stable})
+	if err != nil {
+		return err
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(raw))
+	action := runtime.ActionRecord{ID: "adopt-" + digest, Topology: topology, RunID: runID, Resource: addr, Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource}
+	if err := validateAction(action); err != nil {
+		return err
+	}
+	return r.update(ctx, topology, func(a *aggregate) error {
+		if old, ok := a.Actions[action.ID]; ok {
+			if old.Candidate == nil || old.DesiredDigest != digest || old.ID != action.ID || old.Topology != action.Topology || old.RunID != action.RunID || !old.Resource.Equal(action.Resource) || old.Action != action.Action || old.OwnerUID != action.OwnerUID || old.ResourceUID != action.ResourceUID || old.Generation != action.Generation || old.StateSerial != action.StateSerial || !old.RunQueuedAt.Equal(action.RunQueuedAt) || old.RunRevision != action.RunRevision {
+				return ErrConflict
+			}
+			if old.Status == runtime.ActionSucceeded {
+				oldCandidate, newCandidate := *old.Candidate, *action.Candidate
+				oldCandidate.CreatedAt, oldCandidate.UpdatedAt = time.Time{}, time.Time{}
+				newCandidate.CreatedAt, newCandidate.UpdatedAt = time.Time{}, time.Time{}
+				oldRaw, _ := json.Marshal(oldCandidate)
+				newRaw, _ := json.Marshal(newCandidate)
+				if string(oldRaw) != string(newRaw) {
+					return ErrConflict
+				}
+				return nil
+			}
+			// A durable intent is the authority after an interrupted host
+			// response. Compare its canonical candidate, while retaining the
+			// original digest (timestamps are intentionally non-authoritative).
+			action = old
+		}
+		if a.State.TopologyUID != identity.TopologyUID || a.Serial != expectedSerial {
+			return fmt.Errorf("%w: adoption serial/topology mismatch got serial=%d want=%d", runtime.ErrPlanStale, a.Serial, expectedSerial)
+		}
+		if a.State.FindResource(addr) != nil {
+			return fmt.Errorf("%w: adoption resource already present", runtime.ErrPlanStale)
+		}
+		for _, old := range a.Actions {
+			if old.ID != action.ID && old.Status != runtime.ActionSucceeded && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
+				return ErrConflict
+			}
+		}
+		action.Revision = 1
+		a.Actions[action.ID] = action
+		candidate := *action.Candidate
+		candidate.OwnerUID, candidate.ResourceUID, candidate.Generation = action.OwnerUID, action.ResourceUID, action.Generation
+		a.State.RemoveResource(addr)
+		a.State.AddResource(candidate)
+		a.Serial++
+		action.Status = runtime.ActionSucceeded
+		action.EffectComplete = true
 		action.Revision++
 		a.Actions[action.ID] = action
 		a.UpdatedAt = time.Now().UTC()

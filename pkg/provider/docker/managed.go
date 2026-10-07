@@ -95,7 +95,7 @@ func managedHandle(inspected dockertypes.ContainerJSON, generation int64) (subst
 	if hs.ContainerName != strings.TrimPrefix(inspected.Name, "/") {
 		return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", "managed container name changed", nil)
 	}
-	handle := substrate.NodeHandle{ID: inspected.ID, Generation: generation, Provider: hs, Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker, Endpoint: inspected.ID}}
+	handle := substrate.NodeHandle{ID: inspected.ID, Generation: generation, Provider: hs, Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker, Endpoint: inspected.ID, User: "root"}}
 	if inspected.NetworkSettings != nil {
 		for _, endpoint := range inspected.NetworkSettings.Networks {
 			if endpoint != nil && endpoint.IPAddress != "" {

@@ -26,7 +26,16 @@ func gcFixture(t *testing.T) (*GCCoordinator, GCCandidate, controlplane.SignedEx
 	require.NoError(t, e)
 	root := t.TempDir()
 	require.NoError(t, os.Chmod(root, 0700))
-	return &GCCoordinator{Root: root, IssuerKey: pub, HostBootID: "host", AgentID: "host", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }}, candidate, signed
+	return &GCCoordinator{Root: root, IssuerKey: pub, HostBootID: "host", AgentID: "host", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }, ValidateInventory: func(context.Context, GCCandidate) error { return nil }}, candidate, signed
+}
+
+func TestGCDeleteRequiresFreshInventoryRevalidation(t *testing.T) {
+	c, candidate, g := gcFixture(t)
+	called := 0
+	c.ValidateInventory = func(context.Context, GCCandidate) error { called++; return errors.New("inventory changed") }
+	_, err := c.Delete(context.Background(), candidate, g, func(context.Context) (json.RawMessage, error) { t.Fatal("effect must not run"); return nil, nil })
+	require.ErrorContains(t, err, "inventory changed")
+	require.Equal(t, 1, called)
 }
 func TestGCDeleteLostReplyObservesWithoutReplay(t *testing.T) {
 	c, candidate, g := gcFixture(t)

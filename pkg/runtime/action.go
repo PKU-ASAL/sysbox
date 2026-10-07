@@ -2,12 +2,16 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"time"
 )
+
+var ErrAdoptionAtomicFallback = errors.New("adoption atomic replay requires legacy recovery")
 
 type ActionStatus string
 
@@ -61,6 +65,13 @@ type ActionRepository interface {
 	LoadState(context.Context, string) (*state.State, error)
 	CommitActionIntent(context.Context, ActionRecord) error
 	CommitActionOutcome(context.Context, ActionRecord, *StatePatch) error
+}
+
+// AdoptionEvidenceCommitter atomically records an already authenticated host
+// adoption result in the lifecycle aggregate. It is optional so small test
+// repositories can retain the primitive intent/outcome implementation.
+type AdoptionEvidenceCommitter interface {
+	CommitAdoptionEvidenceAtomic(context.Context, string, string, address.Address, substrate.AdoptionEvidence, state.Resource, substrate.OperationIdentity, int64) error
 }
 
 // CleanupProver reads state and journal atomically after a managed destroy.

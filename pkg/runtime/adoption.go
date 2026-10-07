@@ -45,12 +45,16 @@ func CommitAdoption(ctx context.Context, actions ActionRepository, runID, topolo
 	if st.TopologyUID != identity.OwnerUID {
 		return fmt.Errorf("adoption topology identity conflict")
 	}
+	// Creation timestamps are local persistence metadata, not provider proof;
+	// exclude them so a lost completion can be retried with the same action ID.
+	stableResource := resource
+	stableResource.CreatedAt, stableResource.UpdatedAt = time.Time{}, time.Time{}
 	raw, err := json.Marshal(struct {
 		Run, Topology string
 		Identity      substrate.OperationIdentity
 		Evidence      substrate.AdoptionEvidence
 		Resource      state.Resource
-	}{runID, topology, identity, evidence, resource})
+	}{runID, topology, identity, evidence, stableResource})
 	if err != nil {
 		return err
 	}
@@ -124,6 +128,9 @@ func CommitAdoption(ctx context.Context, actions ActionRepository, runID, topolo
 // host completion is the effect boundary, while this function is the atomic
 // canonical state/journal patch.
 func CommitAdoptionEvidence(ctx context.Context, actions ActionRepository, runID, topology string, addr address.Address, evidence substrate.AdoptionEvidence, resource state.Resource, identity substrate.OperationIdentity, expectedSerial int64) error {
+	if atomic, ok := actions.(AdoptionEvidenceCommitter); ok {
+		return atomic.CommitAdoptionEvidenceAtomic(ctx, runID, topology, addr, evidence, resource, identity, expectedSerial)
+	}
 	if actions == nil || runID == "" || topology == "" || addr.IsZero() || identity.Validate() != nil || evidence.ExternalID == "" || evidence.Fingerprint == "" {
 		return fmt.Errorf("adoption evidence commit requires complete identity")
 	}
@@ -142,22 +149,17 @@ func CommitAdoptionEvidence(ctx context.Context, actions ActionRepository, runID
 	stableResource := resource
 	stableResource.CreatedAt, stableResource.UpdatedAt = time.Time{}, time.Time{}
 	raw, err := json.Marshal(struct {
-		Run, Topology  string
-		Identity       substrate.OperationIdentity
-		Evidence       substrate.AdoptionEvidence
-		Resource       state.Resource
-		ExpectedSerial int64
-	}{runID, topology, identity, evidence, stableResource, expectedSerial})
+		Run, Topology string
+		Identity      substrate.OperationIdentity
+		Evidence      substrate.AdoptionEvidence
+		Resource      state.Resource
+	}{runID, topology, identity, evidence, stableResource})
 	if err != nil {
 		return err
 	}
 	sum := sha256.Sum256(raw)
 	digest := fmt.Sprintf("%x", sum)
-	key, err := json.Marshal([]string{topology, runID, identity.ActionID})
-	if err != nil {
-		return err
-	}
-	action := ActionRecord{ID: fmt.Sprintf("adopt-evidence-%x", sha256.Sum256(key)), Topology: topology, RunID: runID, Resource: addr, Action: controlplane.PlanActionAdopt, Status: ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource, EffectComplete: true}
+	action := ActionRecord{ID: "adopt-" + digest, Topology: topology, RunID: runID, Resource: addr, Action: controlplane.PlanActionAdopt, Status: ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource}
 	journal, err := actions.LoadActions(ctx, topology)
 	if err != nil {
 		return err
@@ -210,6 +212,7 @@ func CommitAdoptionEvidence(ctx context.Context, actions ActionRepository, runID
 		}
 	}
 	action.Status = ActionSucceeded
+	action.EffectComplete = true
 	logged := resourceLog(*action.Candidate)
 	patch := &StatePatch{Resource: addr.String(), Action: controlplane.PlanActionAdopt, Op: StatePatchUpsert, State: &logged}
 	return actions.CommitActionOutcome(ctx, action, patch)

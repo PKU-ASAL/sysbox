@@ -27,7 +27,11 @@ import (
 type Target struct {
 	Scope           controlplane.ExecutionScope
 	AgentID, NodeID string
-	Connection      substrate.Connection
+	// User is the canonical guest account from the provider handle. It is
+	// retained inside the supervisor boundary for operations such as managed
+	// SSH access; workers never supply it.
+	User       string
+	Connection substrate.Connection
 }
 type Dispatcher struct {
 	Root, AgentID, HostBootID string

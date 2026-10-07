@@ -159,7 +159,7 @@ func (s *Substrate) ApplyAdoption(ctx context.Context, e substrate.AdoptionEvide
 	return s.adoptHandle(ctx, ins, identity), nil
 }
 func (s *Substrate) adoptHandle(ctx context.Context, ins container.InspectResponse, id substrate.OperationIdentity) substrate.NodeHandle {
-	return substrate.NodeHandle{ID: ins.ID, Generation: id.Generation, Provider: &HandleState{ContainerName: ins.Name}, Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker}}
+	return substrate.NodeHandle{ID: ins.ID, Generation: id.Generation, Provider: &HandleState{ContainerName: ins.Name}, Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker, User: "root"}}
 }
 func (s *Substrate) ObserveAdoption(ctx context.Context, e substrate.AdoptionEvidence) (substrate.NodeHandle, error) {
 	id, ok := substrate.OperationIdentityFromContext(ctx)

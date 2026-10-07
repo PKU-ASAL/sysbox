@@ -160,6 +160,7 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 		Conn: substrate.ConnInfo{
 			Kind:     substrate.ConnKindDocker,
 			Endpoint: resp.ID,
+			User:     "root",
 		},
 	}, nil
 }

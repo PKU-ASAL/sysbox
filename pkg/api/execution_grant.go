@@ -12,6 +12,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -497,6 +498,24 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 			return controlplane.ExecutionGrant{}, err
 		}
 		operation = "guest_file_install"
+	case "run_assigned":
+		action := ""
+		if cmd.Run != nil {
+			action = cmd.Run.Op
+			if action == "" {
+				action = cmd.Run.Operation
+			}
+		}
+		if cmd.Run == nil || (action != "apply" && action != "destroy") || cmd.Run.Topology == "" || cmd.Run.Revision == "" {
+			return controlplane.ExecutionGrant{}, persistence.ErrCorruptRecord
+		}
+		req := hostsupervisor.RunRequest{RunID: cmd.Run.ID, Topology: cmd.Run.Topology, TopologyUID: cmd.TopologyUID, Revision: cmd.Run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: cmd.Run.Target}
+		var err error
+		digest, err = req.Digest()
+		if err != nil {
+			return controlplane.ExecutionGrant{}, err
+		}
+		operation = "run_" + action
 	default:
 		return controlplane.ExecutionGrant{}, persistence.ErrUnsupportedVersion
 	}
