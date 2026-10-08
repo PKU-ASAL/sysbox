@@ -375,3 +375,38 @@ Its container and canonical records remain retained for evidence-driven
 recovery; no successful Destroy/metadata-delete is claimed for this round.
 This closes only the running child's API-outage stop/reconnect proof. Parent
 unknown-intent recovery and complete fault cleanup remain required.
+
+### Confirmed failure convergence and normal cleanup
+
+The trusted Run callback now has a narrow failure outcome: resource execution
+must already have returned success, child admission must be closed with no
+in-flight or handleless start, and every admitted child must have a validated,
+acknowledged stop receipt bound to its original Run/grant identity. Only then
+may failed child execution produce a failed terminal Run. Unknown exit codes
+remain failure, never success. Arbitrary provider errors cannot construct this
+internal outcome.
+
+After that callback returns, the coordinator stores the failed result against
+the exact historical signed intent, even if authority expired. This transaction
+authorizes no new effect. It retries transient persistence failure while the
+supervisor service remains alive, and logs failed attempts. A crash before the
+proof is persisted still leaves an uncertain intent; old callback exit cannot
+be invented after restart. Existing signed-result reporting and API parent-stop
+preparation enforce authoritative child inventory before releasing exclusion.
+
+Real two-VM round `p9-c466f4bc8320` passed this fault/cleanup chain: test API
+proxy outage, child stop confirmed in1.73s, identical receipt acknowledged after
+reconnect, parent failed with `run child execution failed after confirmed
+termination`, ordinary Destroy done, independent Docker owner absence, then
+metadata DELETE without force. Owner was
+`8bd178f3-1768-49db-9cd0-467344b09a74`. Control evidence:
+`/var/tmp/p9-child-partition-recovery-01.json` and
+`/var/tmp/p9-failed-cleanup-01.json`. Proxy routing was restored.
+
+`recover_failed_cleanup.py` requests normal Destroy only for this explicitly
+confirmed failure, retaining a separate result file. After independently
+checking provider absence, `--finalize` performs non-force metadata deletion.
+It cannot recover a running/unknown intent. The earlier `p9-d271491329c1`
+record and other historical uncertain runs remain retained: their old binaries
+did not persist sufficient callback-exit evidence. This is not a claim that all
+legacy unknown outcomes or daemon crash windows have been solved.

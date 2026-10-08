@@ -38,6 +38,11 @@ exit0与停止回执先于父Run终态，随后Destroy和普通metadata删除成
 读取产生发布窗口误判，以及父Run结束时间未包含子任务等待的问题。早期失败
 round仍留有未知记录/资源；长期服务、故障取消和未知intent恢复没有据此关闭。
 
+后续API失联故障收敛：主资源流程已成功返回且全部子任务停止回执确认时，宿主
+可持久提交原Run的失败结果，释放授权供正常Destroy。双VM新轮次已通过停止
+确认→父Run failed→Destroy→独立无残留核验→普通metadata DELETE。旧历史
+intent缺callback退出证明，仍保持unknown，不自动补造完成；完整恢复目标未关闭。
+
 | 阶段 | 已进入代码的内容 | 未完成的验收/接入 |
 |---|---|---|
 | P0 | 强制按Go依赖重建guest helper、amd64/arm64构建、独立cgroup验收目标 | 全能力矩阵、最终产物与总验收 |

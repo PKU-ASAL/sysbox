@@ -246,3 +246,41 @@ func (g *Gate) CommitRun(ctx context.Context, current controlplane.SignedExecuti
 	record.Outcomes[outcomeKey(current.Grant, effectID)] = prior
 	return save(path, record)
 }
+
+// CommitQuiescentRun records a failed or cancelled outcome after authority has
+// closed. It authorizes no provider effect and therefore verifies historical
+// signatures rather than requiring an unexpired grant or online authorization.
+// This is a trusted host-only primitive: its caller MUST establish actual
+// callback quiescence, close and drain child admission, and verify all owned
+// children stopped. Canonical parent-stop preparation must also check the
+// authoritative child inventory before reporting the outcome. Missing active
+// callbacks, expiry, cancellation and legacy intents are not quiescence proof.
+// Never expose this method as an RPC or use it to infer an old callback exited.
+func (g *Gate) CommitQuiescentRun(ctx context.Context, current controlplane.SignedExecutionGrant, effectID string, result json.RawMessage) error {
+	if effectID == "" || !isRunGrant(current.Grant) {
+		return ErrFenced
+	}
+	if err := controlplane.VerifyExecutionGrant(g.PublicKey, current, current.BootID, current.IssuedAt); err != nil {
+		return err
+	}
+	var run controlplane.Run
+	if err := json.Unmarshal(result, &run); err != nil || run.ID == "" || run.AgentID != current.Grant.AgentID || run.EndedAt.IsZero() ||
+		(run.Status != controlplane.RunFailed && run.Status != controlplane.RunCancelled) || "run_"+run.Op != current.Grant.Operation {
+		return ErrUncertain
+	}
+	path, record, release, err := g.locked(ctx, current.Grant.Scope.TopologyUID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	prior, err := currentRunIntent(record, current, effectID)
+	if err != nil {
+		return err
+	}
+	if _, err := g.runReservation(prior); err != nil {
+		return err
+	}
+	prior.State, prior.Result = string(RunComplete), append(json.RawMessage(nil), result...)
+	record.Outcomes[outcomeKey(current.Grant, effectID)] = prior
+	return save(path, record)
+}

@@ -153,6 +153,7 @@ func TestRunChildrenWaitReportsFailedAndUnknownExit(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, record.StopReceipt)
 			require.True(t, record.Reported)
+			require.NoError(t, children.ProveStopped(context.Background()))
 		})
 	}
 }
@@ -221,6 +222,83 @@ func TestRunChildrenParentCancellationReconcilesIndependently(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, record.StopReceipt)
 	require.True(t, record.Reported)
+}
+
+func TestRunChildrenProveStoppedSeparatesCancellationFromEvidence(t *testing.T) {
+	d, req, base := taskFixture(t)
+	attachRunChild(d, base, true)
+	children := &RunChildren{Dispatcher: d}
+	ctx, cancel := context.WithCancel(context.Background())
+	h, err := children.Start(ctx, testRef(req), req)
+	require.NoError(t, err)
+	cancel()
+	require.ErrorIs(t, children.Wait(ctx), context.Canceled)
+	require.NoError(t, children.ProveStopped(context.Background()))
+	record, err := d.load(h)
+	require.NoError(t, err)
+	record.Reported = false
+	require.NoError(t, d.save(record))
+	require.Error(t, children.ProveStopped(context.Background()))
+	record.Reported = true
+	record.StopReceipt.Signature = []byte("invalid")
+	require.NoError(t, d.save(record))
+	require.Error(t, children.ProveStopped(context.Background()))
+}
+
+func TestRunChildrenProveStoppedRejectsHandlelessAdmission(t *testing.T) {
+	d, req, _ := taskFixture(t)
+	d.Resolve = func(context.Context, TargetRef) (Target, error) {
+		return Target{}, errors.New("resolve failed after authorization")
+	}
+	children := &RunChildren{Dispatcher: d}
+	h, err := children.Start(context.Background(), testRef(req), req)
+	require.Error(t, err)
+	require.Empty(t, h.ID)
+	require.Error(t, children.ProveStopped(context.Background()))
+}
+
+func TestRunChildrenProveStoppedRejectsChangedParentIdentity(t *testing.T) {
+	d, req, base, issuer := taskFixtureWithIssuer(t)
+	conn := attachRunChild(d, base, true)
+	conn.finished.Store(true)
+	children := &RunChildren{Dispatcher: d}
+	h, err := children.Start(context.Background(), testRef(req), req)
+	require.NoError(t, err)
+	require.NoError(t, children.Wait(context.Background()))
+	record, err := d.load(h)
+	require.NoError(t, err)
+	record.Grant.Grant.CommandID = "other-command"
+	record.Grant, err = controlplane.SignExecutionGrant(issuer, record.Grant.Grant, record.Grant.BootID, time.Now())
+	require.NoError(t, err)
+	receipt, err := controlplane.SignExecutionTaskStopReceipt(d.HostKey, record.Grant.Grant, d.HostBootID, h.BootID, h.ID, h.Digest, "changed-parent", time.Now())
+	require.NoError(t, err)
+	record.StopReceipt = &receipt
+	require.NoError(t, d.save(record))
+	require.Error(t, children.ProveStopped(context.Background()))
+}
+
+func TestRunChildrenProveStoppedRejectsPendingAdmission(t *testing.T) {
+	d, req, base := taskFixture(t)
+	conn := attachRunChild(d, base, true)
+	blocked := &blockedRunChildConnection{runChildConnection: conn, startID: req.ID, entered: make(chan struct{}), release: make(chan struct{})}
+	resolve := d.Resolve
+	d.Resolve = func(ctx context.Context, ref TargetRef) (Target, error) {
+		target, err := resolve(ctx, ref)
+		target.Connection = blocked
+		return target, err
+	}
+	children := &RunChildren{Dispatcher: d}
+	started := make(chan error, 1)
+	go func() { _, err := children.Start(context.Background(), testRef(req), req); started <- err }()
+	<-blocked.entered
+	defer func() {
+		close(blocked.release)
+		<-started
+		_ = children.Cancel(context.Background())
+	}()
+	require.Error(t, children.ProveStopped(context.Background()))
+	_, err := children.Start(context.Background(), testRef(req), req)
+	require.ErrorContains(t, err, "closed")
 }
 
 func TestRunChildrenUnknownCleanupPreservesJournal(t *testing.T) {

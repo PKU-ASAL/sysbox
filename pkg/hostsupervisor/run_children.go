@@ -19,20 +19,22 @@ type RunChildren struct {
 	Dispatcher *Dispatcher
 	RenewGrant func(context.Context, controlplane.SignedExecutionGrant, controlplane.SignedExecutionGrant) (controlplane.SignedExecutionGrant, error)
 
-	mu         sync.Mutex
-	wg         sync.WaitGroup
-	children   map[string]struct{}
-	stopCtx    context.Context
-	stop       context.CancelFunc
-	closed     bool
-	failures   []error
-	finishOnce sync.Once
-	finished   chan struct{}
+	mu               sync.Mutex
+	wg               sync.WaitGroup
+	children         map[string]TaskRecord
+	starting         int
+	unknownAdmission bool
+	stopCtx          context.Context
+	stop             context.CancelFunc
+	closed           bool
+	failures         []error
+	finishOnce       sync.Once
+	finished         chan struct{}
 }
 
 func (r *RunChildren) initializeLocked() {
 	if r.children == nil {
-		r.children = make(map[string]struct{})
+		r.children = make(map[string]TaskRecord)
 		r.stopCtx, r.stop = context.WithCancel(context.Background())
 		r.finished = make(chan struct{})
 	}
@@ -54,6 +56,7 @@ func (r *RunChildren) Start(ctx context.Context, ref TargetRef, req guesttask.Re
 	// Reserve before releasing admission. Wait can seal admission at any point,
 	// but can never observe a zero count while an admitted Start is in flight.
 	r.wg.Add(1)
+	r.starting++
 	r.mu.Unlock()
 	startCtx, cancel := context.WithCancel(ctx)
 	unregister := context.AfterFunc(r.stopCtx, cancel)
@@ -64,14 +67,19 @@ func (r *RunChildren) Start(ctx context.Context, ref TargetRef, req guesttask.Re
 	cancel()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.starting--
 	watching := false
 	if record.Handle.ID != "" {
 		key := recordKey(record.Handle)
 		if _, exists := r.children[key]; !exists {
-			r.children[key] = struct{}{}
+			r.children[key] = record
 			watching = true
 			go r.watch(ctx, record)
 		}
+	} else {
+		// A failed admission can follow accepted authority. Without a durable
+		// handle there is no task receipt that can discharge that uncertainty.
+		r.unknownAdmission = true
 	}
 	if !watching {
 		r.wg.Done()
@@ -81,6 +89,49 @@ func (r *RunChildren) Start(ctx context.Context, ref TargetRef, req guesttask.Re
 		r.stop()
 	}
 	return record.Handle, err
+}
+
+// ProveStopped seals admission and checks acknowledged stop evidence in the
+// trusted journal. It does not cancel children and does not erase execution
+// failures returned by Wait. Call Cancel first when owned cleanup is required.
+func (r *RunChildren) ProveStopped(ctx context.Context) error {
+	r.mu.Lock()
+	r.initializeLocked()
+	r.closed = true
+	if r.starting != 0 || r.unknownAdmission {
+		r.mu.Unlock()
+		return fmt.Errorf("run child admission remains unconfirmed")
+	}
+	records := make([]TaskRecord, 0, len(r.children))
+	for _, record := range r.children {
+		records = append(records, record)
+	}
+	r.mu.Unlock()
+	for _, admitted := range records {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		unlock, err := r.Dispatcher.lock(ctx, admitted.Handle)
+		if err != nil {
+			return err
+		}
+		current, err := r.Dispatcher.load(admitted.Handle)
+		unlock()
+		if err != nil {
+			return fmt.Errorf("child %s stop evidence: %w", admitted.Handle.ID, err)
+		}
+		// Renewal may extend expiry, but cannot change the admitted authority
+		// identity (including command, attempt, session, and parent epoch).
+		original := admitted.Grant.Grant
+		original.ExpiresAt = current.Grant.Grant.ExpiresAt
+		if current.RunID != admitted.RunID || current.RunID != r.Dispatcher.RunID || current.Ref != admitted.Ref || current.Grant.Grant != original {
+			return fmt.Errorf("child %s parent identity changed", admitted.Handle.ID)
+		}
+		if current.StopReceipt == nil || !current.Reported {
+			return fmt.Errorf("child %s termination remains unconfirmed", admitted.Handle.ID)
+		}
+	}
+	return ctx.Err()
 }
 
 func (r *RunChildren) fail(err error) {

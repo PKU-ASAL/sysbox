@@ -190,7 +190,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 			_ = children.Cancel(cleanup)
 			return nil, fmt.Errorf("host run failed: %s", run.Err)
 		}
-		if err := children.Finish(ctx, run); err != nil {
+		if err := hostsupervisor.FinishRunChildren(ctx, children, run); err != nil {
 			return nil, fmt.Errorf("host Run child outcome uncertain: %w", err)
 		}
 		return json.Marshal(run)

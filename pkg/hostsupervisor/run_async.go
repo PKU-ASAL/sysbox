@@ -37,6 +37,7 @@ type activeRun struct {
 	deadline       time.Time
 	safetyDeadline atomic.Pointer[time.Time]
 	ctx            context.Context
+	serviceCtx     context.Context
 	cancel         context.CancelFunc
 	changed        chan struct{}
 	done           chan struct{}
@@ -177,7 +178,7 @@ func (c *RunCoordinator) StartAsync(requestCtx, serviceCtx context.Context, req 
 		return c.observeReservation(requestCtx, req, reservation)
 	}
 	effectCtx, cancel := context.WithCancel(serviceCtx)
-	active := &activeRun{grant: g, deadline: deadline, ctx: effectCtx, cancel: cancel, changed: make(chan struct{}, 1), done: make(chan struct{})}
+	active := &activeRun{grant: g, deadline: deadline, ctx: effectCtx, serviceCtx: serviceCtx, cancel: cancel, changed: make(chan struct{}, 1), done: make(chan struct{})}
 	active.safetyDeadline.Store(&deadline)
 	registry.mu.Lock()
 	registry.active[runIdentity(g)] = active
@@ -283,6 +284,44 @@ func (c *RunCoordinator) executeRun(req RunRequest, active *activeRun, effect fu
 		return active.grant, true
 	})
 	raw, err := effect(effectCtx)
+	var stoppedFailure *quiescentRunFailure
+	if errors.As(err, &stoppedFailure) {
+		active.mu.Lock()
+		active.cancel()
+		current := active.grant
+		active.mu.Unlock()
+		var gateErr error
+		for {
+			gate, openErr := c.asyncGate(current)
+			gateErr = openErr
+			if gateErr == nil {
+				cleanup, cancel := context.WithTimeout(active.serviceCtx, 5*time.Second)
+				gateErr = gate.CommitQuiescentRun(cleanup, current, req.ActionID, stoppedFailure.evidence)
+				cancel()
+			}
+			if gateErr == nil || active.serviceCtx.Err() != nil {
+				break
+			}
+			if c.OnExecutionError != nil {
+				c.OnExecutionError(req, gateErr)
+			}
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-active.serviceCtx.Done():
+				timer.Stop()
+			case <-timer.C:
+			}
+		}
+		if gateErr != nil && c.OnExecutionError != nil {
+			c.OnExecutionError(req, gateErr)
+		}
+		if gateErr == nil {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = c.completedEvidence(cleanup, req, current, stoppedFailure.evidence)
+		}
+		return
+	}
 	if err != nil && c.OnExecutionError != nil {
 		c.OnExecutionError(req, err)
 	}
@@ -407,11 +446,13 @@ func (c *RunCoordinator) Renew(ctx context.Context, req RunRequest, g controlpla
 	if err := gate.RenewRun(bounded, active.grant, g, req.ActionID); err != nil {
 		return err
 	}
+	// Preserve the durable envelope even if cancellation wins during fsync;
+	// cancellation still prevents advancing the deadline or reviving execution.
+	active.grant = g
 	if active.ctx.Err() != nil || !time.Now().Before(active.deadline) {
 		active.cancel()
 		return effectgate.ErrFenced
 	}
-	active.grant = g
 	active.deadline = now.Add(budget)
 	deadline := active.deadline
 	active.safetyDeadline.Store(&deadline)
