@@ -77,7 +77,7 @@ func (e *Executor) observeResource(ctx context.Context, id address.Address) (Res
 	}
 
 	if provider, ok := GetResourceHandler(id.Type); ok {
-		result, err := provider.Read(ctx, *r)
+		result, err := readResourceWithAttachments(ctx, provider, *r, e.state)
 		if err != nil {
 			result.Status = state.ResourceUnknown
 			if result.Reason == "" {
@@ -152,17 +152,6 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		return result, nil
 	}
 	checks := map[string]controlplane.ResourceCheckHealth{}
-	if status, reason, err := observeAttachments(ctx, handle, &current); status != state.ResourcePresent {
-		checks["network_attachments"] = controlplane.ResourceCheckHealth{OK: false, Reason: reason}
-		result.Checks = checks
-		result.Decision = controlplane.RecoveryDecisionMarkDrift
-		result.Reason = reason
-		result.Status = status
-		if err != nil {
-			return result, err
-		}
-		return result, nil
-	}
 	result.Resource = current
 	routesHealthy, routeErr := nodeRoutesHealthy(ctx, nodeDriver, stateDriver, &current)
 	if routeErr != nil {
@@ -187,7 +176,53 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 	return result, nil
 }
 
-func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *state.Resource) (state.ResourceStatus, string, error) {
+// readResourceWithAttachments combines resource-local observation with checks
+// that require the canonical topology's network identity and provider state.
+func readResourceWithAttachments(ctx context.Context, handler ResourceHandler, current state.Resource, st *state.State) (ResourceReadResult, error) {
+	if current.OwnerUID != "" {
+		id := substrate.OperationIdentity{ActionID: "observe", TopologyUID: current.OwnerUID, OwnerUID: current.OwnerUID, ResourceUID: current.ResourceUID, Generation: current.Generation}
+		if existing, ok := substrate.OperationIdentityFromContext(ctx); ok {
+			id.ActionID = existing.ActionID
+		}
+		ctx = substrate.WithOperationIdentity(ctx, id)
+	}
+	result, err := handler.Read(ctx, cloneResetStateResource(current))
+	// Drift permits replacement, so attachment uncertainty must still be
+	// checked before reporting it as a safe reconciliation decision.
+	if err != nil || (result.Status != state.ResourcePresent && result.Status != state.ResourceDrifted) || len(current.Attachments) == 0 {
+		return result, err
+	}
+	observed := cloneResetStateResource(current)
+	if !result.Resource.Address.IsZero() {
+		observed = cloneResetStateResource(result.Resource)
+	}
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(current.Driver)
+	var handle substrate.NodeHandle
+	if err == nil {
+		handle, err = observed.ReconstructHandle(stateDriver)
+	}
+	status, reason := state.ResourceUnknown, ""
+	if err == nil {
+		status, reason, err = observeAttachments(ctx, handle, &observed, st)
+	} else {
+		reason = err.Error()
+	}
+	result.Resource = observed
+	if status != state.ResourcePresent {
+		if result.Checks == nil {
+			result.Checks = map[string]controlplane.ResourceCheckHealth{}
+		}
+		result.Checks["network_attachments"] = controlplane.ResourceCheckHealth{OK: false, Reason: reason}
+		result.Status, result.Reason = status, reason
+		result.Decision = controlplane.RecoveryDecisionMarkDrift
+		if status == state.ResourceUnknown {
+			result.Decision = controlplane.RecoveryDecisionUnknown
+		}
+	}
+	return result, err
+}
+
+func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *state.Resource, st *state.State) (state.ResourceStatus, string, error) {
 	if len(r.Attachments) == 0 {
 		return state.ResourcePresent, "", nil
 	}
@@ -197,7 +232,10 @@ func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *sta
 	}
 	for i := range r.Attachments {
 		a := &r.Attachments[i]
-		request := driver.AttachmentRequest{Name: a.Name, Network: a.Network, MAC: a.MAC, IPPrefixes: append([]string(nil), a.IPPrefixes...), Gateway: a.Gateway, Aliases: append([]string(nil), a.Aliases...)}
+		request, err := attachmentRequestFromState(st, *a)
+		if err != nil {
+			return state.ResourceUnknown, err.Error(), err
+		}
 		observed, err := nic.Observe(ctx, handle, request, a.DriverState)
 		if err != nil {
 			if driver.IsCategory(err, driver.ErrorNotFound) {

@@ -191,7 +191,7 @@ func (e *Executor) observeTarget(ctx context.Context, id address.Address) (Resou
 		return ResourceReadResult{}, fmt.Errorf("%w: handler %s", ErrConvergenceUnsupported, id.Type)
 	}
 	if current := e.state.FindResource(id); current != nil {
-		return checkedRead(ctx, handler, *current)
+		return checkedRead(ctx, handler, *current, e.state)
 	}
 	node := e.graph.Get(id)
 	if node == nil {
@@ -227,15 +227,8 @@ func (e *Executor) observeTarget(ctx context.Context, id address.Address) (Resou
 	return validateObservation(observed, err, id)
 }
 
-func checkedRead(ctx context.Context, handler ResourceHandler, current state.Resource) (ResourceReadResult, error) {
-	if current.OwnerUID != "" {
-		id := substrate.OperationIdentity{ActionID: "observe", TopologyUID: current.OwnerUID, OwnerUID: current.OwnerUID, ResourceUID: current.ResourceUID, Generation: current.Generation}
-		if existing, ok := substrate.OperationIdentityFromContext(ctx); ok {
-			id.ActionID = existing.ActionID
-		}
-		ctx = substrate.WithOperationIdentity(ctx, id)
-	}
-	observed, err := handler.Read(ctx, cloneResetStateResource(current))
+func checkedRead(ctx context.Context, handler ResourceHandler, current state.Resource, st *state.State) (ResourceReadResult, error) {
+	observed, err := readResourceWithAttachments(ctx, handler, current, st)
 	observed, err = validateObservation(observed, err, current.Address)
 	if err != nil {
 		return observed, err
@@ -413,7 +406,7 @@ func (e *Executor) runAction(ctx context.Context, change controlplane.PlannedCha
 		if current == nil {
 			return fmt.Errorf("%w: identity disappeared", ErrPlanStale)
 		}
-		before, readErr := checkedRead(ctx, handler, *current)
+		before, readErr := checkedRead(ctx, handler, *current, e.state)
 		if readErr != nil {
 			return e.uncertainAction(ctx, record, step, readErr)
 		}
@@ -449,7 +442,7 @@ func (e *Executor) runAction(ctx context.Context, change controlplane.PlannedCha
 		}
 		return e.commitVerifiedAction(ctx, record, step)
 	}
-	observed, err := checkedRead(ctx, handler, *record.Candidate)
+	observed, err := checkedRead(ctx, handler, *record.Candidate, e.state)
 	if err != nil {
 		return e.uncertainAction(ctx, record, step, err)
 	}

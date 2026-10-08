@@ -475,7 +475,7 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 		if decision.Decision != controlplane.RecoveryDecisionNoop {
 			return fmt.Errorf("final health did not converge: %s", decision.Reason)
 		}
-		status, reason, attachmentErr := observeAttachments(ctx, handle, &updated)
+		status, reason, attachmentErr := observeAttachments(ctx, handle, &updated, e.state)
 		if attachmentErr != nil {
 			return attachmentErr
 		}

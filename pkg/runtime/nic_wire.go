@@ -115,6 +115,9 @@ func runNICWireHook(hook NICWireHook, phase string, details map[string]any, fn f
 }
 
 func attachmentRequestFromState(st *state.State, attachment state.Attachment) (driver.AttachmentRequest, error) {
+	if st == nil {
+		return driver.AttachmentRequest{}, fmt.Errorf("topology state required to observe attachment %s network %s", attachment.Name, attachment.Network)
+	}
 	network := st.FindResource(attachment.Network)
 	if network == nil {
 		return driver.AttachmentRequest{}, fmt.Errorf("network %s not found for attachment %s", attachment.Network, attachment.Name)

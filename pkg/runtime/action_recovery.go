@@ -103,7 +103,7 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 		var observed ResourceReadResult
 		observeCtx := substrate.WithOperationIdentity(ctx, actionIdentity(record))
 		if record.Candidate != nil {
-			observed, err = checkedRead(observeCtx, handler, *record.Candidate)
+			observed, err = checkedRead(observeCtx, handler, *record.Candidate, e.state)
 		} else {
 			observed, err = e.observeTarget(observeCtx, record.Resource)
 		}

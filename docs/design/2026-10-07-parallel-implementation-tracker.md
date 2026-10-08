@@ -217,3 +217,7 @@ provider 删除代码仍存在于迁移期间，不能把它当成跨宿主宿�
 2026-10-08主线切片回归：普通 Run 的 host Start/Observe 终态 relay、真实 RunID completion 路由、Run/SSH/power/GC 冷恢复扫描、Docker/network/libvirt GC provider callback 已接入；全仓 Go 测试和关键包 race 通过。真实 Docker guest task、node power、10MiB file install 的 API/supervisor 重建、丢回执、后继 epoch 测试通过。P9 仍未关闭：Run 的真实 provider E2E、双宿主、完整故障矩阵和升级演练尚未完成。
 
 heterogeneous matrix 真实重跑记录：首次失败暴露 Docker image CMD 在本地 CLI 没有 signed guest grant，示例已改为显式清空 entrypoint/command，使该矩阵只验证生命周期与网络；第二次重跑进入 apply 后因前次失败遗留的 nsfs 测试网络命名空间无法在受限环境卸载，触发 ownership conflict。没有发现对应存活进程，需在具备网络命名空间卸载权限的宿主清理后重跑，不能计为 P9 通过。
+
+后续修复与验收：已依据原 ownership marker 的 owner/resource/generation、ifindex、alias 和无端口证明，精确清理遗留 root bridge，备份并归档旧 marker。根因是测试失败时删除了 canonical repository，而清理入口仍只检测旧 state.json；测试现在检测 `.lifecycle`，失败保留状态、密钥和镜像，重跑不再静默删除证据。真实重跑进一步修复了 runtime NIC Observe 漏传 canonical NetworkState/NetworkIdentity、空 root_routes 在冷读后误判 Replace，以及 matrixprobe 读取旧 state 文件的问题。附件验证覆盖 Apply/Refresh/Health/Reset/恢复；路由漂移不能跳过网络归属验证。
+
+本轮混合矩阵最终通过：Docker、Firecracker、libvirt 三节点 Apply，六个方向互通（均零丢包），再次 Plan 为 `0 to add, 0 to replace, 0 to destroy, 8 unchanged`，Destroy 后验证无测试资源残留。全仓 Go 测试、runtime race、vet、docscheck 与独立复审通过。这是同宿主混合网络/生命周期验收，不代替 host-supervisor Run、真正双宿主或完整 P9 故障矩阵。

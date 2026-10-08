@@ -140,5 +140,5 @@ func discoverNode(ctx context.Context, pc *ProviderContext, n *graph.Node, subst
 			return ResourceReadResult{}, err
 		}
 	}
-	return checkedRead(ctx, NodeResourceHandler{}, r)
+	return checkedRead(ctx, NodeResourceHandler{}, r, pc.exec.state)
 }

@@ -12,7 +12,7 @@ func EvaluateTopologyHealth(ctx context.Context, st *state.State) controlplane.T
 		Resources: make([]controlplane.ResourceHealth, 0, len(st.Resources)),
 	}
 	for _, res := range st.Resources {
-		rh := EvaluateResourceHealth(ctx, &res)
+		rh := evaluateResourceHealth(ctx, &res, st)
 		out.Resources = append(out.Resources, rh)
 		switch rh.Status {
 		case controlplane.ResourceHealthHealthy:
@@ -32,6 +32,10 @@ func EvaluateTopologyHealth(ctx context.Context, st *state.State) controlplane.T
 }
 
 func EvaluateResourceHealth(ctx context.Context, res *state.Resource) controlplane.ResourceHealth {
+	return evaluateResourceHealth(ctx, res, nil)
+}
+
+func evaluateResourceHealth(ctx context.Context, res *state.Resource, st *state.State) controlplane.ResourceHealth {
 	rh := controlplane.ResourceHealth{
 		Resource: res.Address.String(),
 		Type:     res.Address.Type,
@@ -40,7 +44,7 @@ func EvaluateResourceHealth(ctx context.Context, res *state.Resource) controlpla
 		Status:   controlplane.ResourceHealthHealthy,
 	}
 	if provider, ok := GetResourceHandler(res.Address.Type); ok {
-		result, err := provider.Read(ctx, *res)
+		result, err := readResourceWithAttachments(ctx, provider, *res, st)
 		rh.Reason = result.Reason
 		rh.Decision = result.Decision
 		rh.Observation = result.Observation

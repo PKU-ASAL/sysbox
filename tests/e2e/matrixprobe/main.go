@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/persistence"
 	fc "github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/state"
@@ -27,7 +29,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-state and an operation are required")
 		os.Exit(2)
 	}
-	st, err := state.NewManager(*statePath).Load()
+	st, err := loadMatrixState(*statePath)
 	if err != nil {
 		fatal(err)
 	}
@@ -39,7 +41,8 @@ func main() {
 	if resource == nil {
 		fatal(fmt.Errorf("node %s not found", *nodeName))
 	}
-	provider := fc.New("", "")
+	cfg := config.MustLoadServiceConfig("")
+	provider := fc.New(cfg.Providers.Firecracker.Kernel, cfg.Providers.Firecracker.Workdir)
 	handle, err := resource.ReconstructHandle(provider)
 	if err != nil {
 		fatal(err)
@@ -66,6 +69,20 @@ func main() {
 	if result.ExitCode != 0 {
 		fatal(fmt.Errorf("ping %s exited %d", *target, result.ExitCode))
 	}
+}
+
+func loadMatrixState(path string) (*state.State, error) {
+	const topology = "heterogeneous-matrix"
+	backend, resolved, err := persistence.ResolveLocation("", path, topology)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := persistence.OpenConfigured(context.Background(), backend, resolved)
+	if err != nil {
+		return nil, err
+	}
+	defer repo.Close()
+	return repo.LoadState(context.Background(), topology)
 }
 
 func printQuery(st *state.State, query string) {

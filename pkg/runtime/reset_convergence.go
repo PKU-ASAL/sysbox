@@ -67,7 +67,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 				return fmt.Errorf("%w: completed reset missing identity", ErrActionUncertain)
 			}
 			handler, _ := GetResourceHandler(record.Resource.Type)
-			observed, err := checkedRead(ctx, handler, *record.Candidate)
+			observed, err := checkedRead(ctx, handler, *record.Candidate, e.state)
 			if err != nil {
 				return err
 			}
@@ -193,7 +193,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			}
 		}
 		handler, _ := GetResourceHandler(item.action.Address.Type)
-		old, err := checkedRead(actionCtx, handler, *item.current)
+		old, err := checkedRead(actionCtx, handler, *item.current, e.state)
 		if err != nil {
 			return err
 		}
@@ -203,7 +203,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			}
 		}
 		// The old generation must be gone before the replacement is authorized.
-		old, err = checkedRead(actionCtx, handler, *item.current)
+		old, err = checkedRead(actionCtx, handler, *item.current, e.state)
 		if err != nil {
 			return e.uncertainAction(ctx, *record, item.step, err)
 		}
@@ -241,7 +241,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			}
 		}
 		handler, _ := GetResourceHandler(record.Resource.Type)
-		observed, err := checkedRead(actionCtx, handler, *record.Candidate)
+		observed, err := checkedRead(actionCtx, handler, *record.Candidate, e.state)
 		if err != nil {
 			return e.uncertainAction(ctx, *record, item.step, err)
 		}

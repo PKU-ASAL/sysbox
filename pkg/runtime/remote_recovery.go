@@ -38,7 +38,7 @@ func ObserveRunActions(ctx context.Context, repo ActionRepository, topology, run
 		if candidate != nil && candidate.OwnerUID == record.OwnerUID && candidate.ResourceUID == record.ResourceUID && candidate.Generation == record.Generation {
 			item.ExternalID = candidate.ExternalID
 			if handler, ok := GetResourceHandler(record.Resource.Type); ok {
-				observed, err := checkedRead(substrate.WithOperationIdentity(ctx, actionIdentity(record)), handler, *candidate)
+				observed, err := checkedRead(substrate.WithOperationIdentity(ctx, actionIdentity(record)), handler, *candidate, st)
 				if err == nil && (observed.Status == state.ResourcePresent || observed.Status == state.ResourceAbsent) {
 					if observed.Status == state.ResourceAbsent || observed.Resource.OwnerUID == candidate.OwnerUID && observed.Resource.ResourceUID == candidate.ResourceUID && observed.Resource.Generation == candidate.Generation {
 						item.Status = string(observed.Status)
