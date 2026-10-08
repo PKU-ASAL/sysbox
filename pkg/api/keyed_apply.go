@@ -72,12 +72,10 @@ func (s *RunService) startKeyedApply(ctx context.Context, topology string, req R
 		return nil, runError(runServiceConflict, err)
 	}
 	run.MarkAssigned(agent.ID, time.Now().UTC())
-	command := controlplaneRunAssignedCommand(run)
-	command.ID = runCommandID(*run)
-	command.AgentID = agent.ID
-	command.Status = controlplane.AgentCommandStatusQueued
-	command.Protocol = controlplane.AgentProtocolVersion
-	command.CreatedAt = time.Now().UTC()
+	command, err := s.workspaces.runAssignedCommand(ctx, run)
+	if err != nil {
+		return nil, runError(runServiceInternal, err)
+	}
 	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint})
 	if err != nil {
 		return nil, dispatchError(err)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
@@ -25,6 +26,37 @@ func keyedApply(t *testing.T, s *Server, rev, key, value string) *httptest.Respo
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, req)
 	return w
+}
+
+func TestKeyedApplyDispatchCarriesCanonicalIdentity(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing_state_%t", existing), func(t *testing.T) {
+			s := NewServer(t.TempDir(), t.TempDir())
+			registerDockerAgent(t, s)
+			ctx := context.Background()
+			manager, err := s.stateManager("keyed")
+			require.NoError(t, err)
+			canonical, err := manager.LoadWithContext(ctx)
+			require.NoError(t, err)
+			if existing {
+				require.NoError(t, manager.SaveWithContext(ctx, canonical))
+				canonical, err = manager.LoadWithContext(ctx)
+				require.NoError(t, err)
+			}
+			require.NotEmpty(t, canonical.TopologyUID)
+			rev := publishRevision(t, s, upsertApplyHCL)
+			response := keyedApply(t, s, rev, "identity", "private-canary")
+			require.Equal(t, 202, response.Code, response.Body.String())
+			commands, err := s.apiStore.ListAgentCommands(ctx, "host-a")
+			require.NoError(t, err)
+			require.Len(t, commands, 1)
+			command := commands[0]
+			require.Equal(t, canonical.TopologyUID, command.TopologyUID)
+			require.Equal(t, command.Run.ID, command.ActionID)
+			require.Equal(t, canonical.Meta.Serial, command.ExpectedSerial)
+			require.Empty(t, command.Run.Inputs)
+		})
+	}
 }
 
 func TestRunAdmissionAndOldSQLiteSnapshot(t *testing.T) {

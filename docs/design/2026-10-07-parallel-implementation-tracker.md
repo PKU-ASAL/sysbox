@@ -2,6 +2,13 @@
 
 当前已提交集成基线：`566268e`。本文记录并行集成检查点，不能作为P0–P9全部验收通过声明。
 
+最新双 VM 验收进展：控制 VM 的双 API/HAProxy/Postgres 与执行 VM 的非特权
+Agent/root supervisor 已部署，无共享工作目录。真实 Docker Apply→Destroy→
+独立 provider 无残留核验→普通 metadata DELETE 两轮通过，第二轮在主 API 停机、
+备用 API 服务期间执行。细节和证据见[双 VM 验收记录](../operations/p9-real-acceptance.md)。
+这不关闭活跃 Run 中途切换、长操作续租、未知结果恢复及其余 provider/功能故障矩阵。
+首次三轮失败证据保留，其中第三轮的资源/journal仍待未知结果恢复，不能算全部清场。
+
 | 阶段 | 已进入代码的内容 | 未完成的验收/接入 |
 |---|---|---|
 | P0 | 强制按Go依赖重建guest helper、amd64/arm64构建、独立cgroup验收目标 | 全能力矩阵、最终产物与总验收 |

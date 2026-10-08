@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/hashicorp/hcl/v2"
 
@@ -11,6 +13,35 @@ import (
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
+
+// runAssignedCommand binds every dispatch, including outbox repair, to the
+// canonical topology identity. Serial zero is the valid initial state.
+func (s *WorkspaceService) runAssignedCommand(ctx context.Context, run *controlplane.Run) (controlplane.AgentCommand, error) {
+	if s == nil || s.stateManager == nil {
+		return controlplane.AgentCommand{}, fmt.Errorf("canonical topology state is unavailable")
+	}
+	manager, err := s.stateManager(run.Topology)
+	if err != nil {
+		return controlplane.AgentCommand{}, err
+	}
+	canonical, err := manager.LoadWithContext(ctx)
+	if err != nil {
+		return controlplane.AgentCommand{}, err
+	}
+	if canonical == nil || canonical.TopologyUID == "" || canonical.Meta.Serial < 0 {
+		return controlplane.AgentCommand{}, fmt.Errorf("canonical topology state is unavailable")
+	}
+	command := controlplaneRunAssignedCommand(run)
+	command.TopologyUID = canonical.TopologyUID
+	command.ActionID = run.ID
+	command.ExpectedSerial = canonical.Meta.Serial
+	command.ID = runCommandID(*run)
+	command.AgentID = run.AgentID
+	command.Status = controlplane.AgentCommandStatusQueued
+	command.Protocol = controlplane.AgentProtocolVersion
+	command.CreatedAt = time.Now().UTC()
+	return command, nil
+}
 
 func controlplaneRunAssignedCommand(run *controlplane.Run) controlplane.AgentCommand {
 	rec := runRecord(*run)

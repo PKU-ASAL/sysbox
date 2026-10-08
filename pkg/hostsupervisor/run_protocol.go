@@ -27,7 +27,7 @@ type RunRequest struct {
 }
 
 func (r RunRequest) Validate() error {
-	if r.RunID == "" || r.Topology == "" || r.TopologyUID == "" || r.Revision == "" || r.ActionID == "" || r.ExpectedSerial < 1 {
+	if r.RunID == "" || r.Topology == "" || r.TopologyUID == "" || r.Revision == "" || r.ActionID == "" || r.ExpectedSerial < 0 {
 		return fmt.Errorf("run request requires immutable identity")
 	}
 	if r.Action != "apply" && r.Action != "destroy" {

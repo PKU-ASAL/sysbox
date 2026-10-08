@@ -116,6 +116,17 @@ func (c *TaskClient) HostBootID(ctx context.Context) (string, error) {
 	return out.BootID, nil
 }
 
+func (c *TaskClient) RunHostBootID(ctx context.Context) (string, error) {
+	out, err := c.call(ctx, Request{Operation: "run-info"})
+	if err != nil {
+		return "", err
+	}
+	if out.BootID == "" {
+		return "", guesttask.ErrUnknown
+	}
+	return out.BootID, nil
+}
+
 func (c *TaskClient) AdoptionHostBootID(ctx context.Context) (string, error) {
 	r, err := c.call(ctx, Request{Operation: "adoption-info"})
 	if err != nil {

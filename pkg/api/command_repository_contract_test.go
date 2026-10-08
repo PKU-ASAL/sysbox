@@ -25,6 +25,25 @@ func TestCommandRepositoryDispatchRejectsExistingCommandID(t *testing.T) {
 		require.ErrorIs(t, err, persistence.ErrNotFound)
 	})
 }
+
+func TestRunCommandCanonicalIdentitySurvivesStorageAndLease(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+		ctx := context.Background()
+		cmd := controlplane.AgentCommand{ID: "run-command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, TopologyUID: "canonical-topology", ActionID: "run", ExpectedSerial: 7}
+		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
+		commands, err := s.ListAgentCommands(ctx, cmd.AgentID)
+		require.NoError(t, err)
+		require.Len(t, commands, 1)
+		require.Equal(t, cmd.TopologyUID, commands[0].TopologyUID)
+		require.Equal(t, cmd.ActionID, commands[0].ActionID)
+		require.Equal(t, cmd.ExpectedSerial, commands[0].ExpectedSerial)
+		leased, ok, err := s.AcquireAgentCommandLease(ctx, cmd.AgentID, cmd.ID, "worker", time.Minute)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, cmd.ExpectedSerial, leased.ExpectedSerial)
+	})
+}
+
 func TestSQLiteCommandRepositoryRejectsCorruptSnapshot(t *testing.T) {
 	for _, mutation := range []string{"record_json=X'6e756c6c'", "record_json=X'5b5d'", "lease_until='not-a-date'", "attempt=99", "execution_payload=X'7b'"} {
 		t.Run(mutation, func(t *testing.T) {

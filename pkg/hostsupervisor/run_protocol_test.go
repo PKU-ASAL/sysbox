@@ -37,3 +37,10 @@ func TestRunRequestRejectsUnsupportedActionAndPaths(t *testing.T) {
 	req.RunID = "../run"
 	require.Error(t, req.Validate())
 }
+
+func TestNewTopologyRunAcceptsCanonicalSerialZero(t *testing.T) {
+	req := RunRequest{RunID: "run", Topology: "lab", TopologyUID: "uid", Revision: "sha256:revision", ActionID: "action", Action: "apply", ExpectedSerial: 0}
+	require.NoError(t, req.Validate())
+	req.ExpectedSerial = -1
+	require.Error(t, req.Validate())
+}

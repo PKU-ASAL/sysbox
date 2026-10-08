@@ -14,7 +14,9 @@ type pinnedRunWorkspace struct {
 	path string
 }
 
-func withRunWorkspace(ctx context.Context, run controlplane.Run, path string) context.Context {
+// WithRunWorkspace binds a trusted execution-host materialization to the exact
+// canonical Run incarnation, preserving its API snapshot identity.
+func WithRunWorkspace(ctx context.Context, run controlplane.Run, path string) context.Context {
 	return context.WithValue(artifact.WithPortableSources(ctx), runWorkspaceKey{}, pinnedRunWorkspace{run: run, path: path})
 }
 
@@ -52,5 +54,5 @@ func (r *commandRunner) prepareRunWorkspace(ctx context.Context, run controlplan
 	if path == "" {
 		return ctx, fmt.Errorf("empty run revision materialization")
 	}
-	return withRunWorkspace(ctx, run, path), nil
+	return WithRunWorkspace(ctx, run, path), nil
 }

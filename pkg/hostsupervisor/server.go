@@ -183,7 +183,10 @@ func (s *Server) serveConnection(parent context.Context, conn net.Conn) {
 }
 func (s *Server) Handle(ctx context.Context, request Request) Response {
 	response := Response{Version: 1}
-	if request.Version != 1 || request.Target.Topology == "" || request.Target.Node == "" || strings.ContainsAny(request.Target.Topology, "/\\\x00") || request.Target.Scope.TopologyUID == "" || request.Target.Scope.ResourceUID == "" || request.Target.Scope.Generation < 1 {
+	isRun := request.Operation == "run-info" || request.Operation == "run-start" || request.Operation == "run-observe"
+	topologyRun := isRun && request.Target.Node == "" && request.Target.Scope.ResourceUID == "" && request.Target.Scope.Generation == 0
+	resourceTarget := request.Target.Node != "" && request.Target.Scope.ResourceUID != "" && request.Target.Scope.Generation > 0
+	if request.Version != 1 || request.Target.Topology == "" || strings.ContainsAny(request.Target.Topology, "/\\\x00") || request.Target.Scope.TopologyUID == "" || (!topologyRun && !resourceTarget) {
 		response.Error = "invalid supervisor target or protocol"
 		return response
 	}
@@ -214,6 +217,12 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 		}
 	}
 	switch request.Operation {
+	case "run-info":
+		if s.Runs == nil || s.Runs.HostBootID == "" {
+			err = fmt.Errorf("host run coordinator unavailable")
+			break
+		}
+		response.BootID = s.Runs.HostBootID
 	case "adoption-info":
 		// This target does not exist in canonical state until adoption commits.
 		// Return only the configured host boot; this read grants no authority.

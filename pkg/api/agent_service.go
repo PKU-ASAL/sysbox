@@ -17,6 +17,7 @@ type AgentService struct {
 	store           apiStore
 	registry        *agentRegistry
 	jobs            *Jobs
+	workspaces      *WorkspaceService
 	consoles        *consoleSessionHub
 	commandTTL      func() time.Duration
 	agentOfflineTTL func() time.Duration
@@ -36,6 +37,7 @@ func newAgentService(server *Server) *AgentService {
 		store:           server.apiStore,
 		registry:        server.agents,
 		jobs:            server.jobs,
+		workspaces:      server.workspaceService(),
 		consoles:        server.consoles,
 		commandTTL:      server.cfg.AgentCommandTTL,
 		agentOfflineTTL: server.cfg.AgentOfflineAfter,
@@ -280,7 +282,10 @@ func (s *AgentService) RepublishAssignedRuns(ctx context.Context) error {
 		if run.Status != controlplane.RunAssigned || run.AgentID == "" || present[runCommandID(run)] {
 			continue
 		}
-		cmd := controlplane.AgentCommand{ID: runCommandID(run), AgentID: run.AgentID, Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run, CreatedAt: time.Now().UTC()}
+		cmd, err := s.workspaces.runAssignedCommand(ctx, &run)
+		if err != nil {
+			return err
+		}
 		fingerprint := runAssignmentFingerprint(run)
 		if _, _, err := s.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: cmd, Fingerprint: fingerprint}); err != nil {
 			return err

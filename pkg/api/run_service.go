@@ -416,12 +416,10 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 		return nil, runError(runServiceConflict, err)
 	}
 	run.MarkAssigned(agent.ID, time.Now().UTC())
-	command := controlplaneRunAssignedCommand(run)
-	command.ID = runCommandID(*run)
-	command.AgentID = agent.ID
-	command.Status = controlplane.AgentCommandStatusQueued
-	command.Protocol = controlplane.AgentProtocolVersion
-	command.CreatedAt = time.Now().UTC()
+	command, err := s.workspaces.runAssignedCommand(ctx, run)
+	if err != nil {
+		return nil, runError(runServiceInternal, err)
+	}
 	// Destroy has no inputs today, but if an apply path ever routes through
 	// CreateRunDispatch, sensitive inputs must never be persisted here.
 	run.Inputs = nil

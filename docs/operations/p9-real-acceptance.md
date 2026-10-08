@@ -78,13 +78,13 @@ and cloud-init seed data and must remain mode0700. Do not publish that directory
 - [x] Create two independent VMs and validate nested KVM.
 - [x] Install PostgreSQL16 and execution providers; transfer current binary via
   pinned SSH, with no shared guest directories.
-- [ ] Configure two API services, stable proxy address, issuer key and host
+- [x] Configure two API services, stable proxy address, issuer key and host
   public key mapping in control; expose PostgreSQL only on the dedicated LAN.
-- [ ] Configure root supervisor with its own host key and canonical Postgres
+- [x] Configure root supervisor with its own host key and canonical Postgres
   credentials, and nonroot Agent with only the public issuer key/socket access.
   The supervisor materializes revisions from canonical Postgres. Agent inventory
   and recovery still need auditing before granting any database access.
-- [ ] Run real remote lifecycle and capture terminal API/journal/provider proof.
+- [x] Run real remote Docker Apply/Destroy and capture terminal API/journal/provider proof.
 - [ ] Inject API/Agent/supervisor/guest crashes, partition, delayed responses,
   database restart and test-volume exhaustion. Retain uncertain outcomes.
 - [ ] Run capability migration, rebuilding and ownership-verified cleanup gates.
@@ -94,3 +94,69 @@ the isolation check; both guests boot Ubuntu kernel6.8.0-124 with distinct boot
 IDs. PostgreSQL16.15 is active in control, Docker/libvirt active in execution,
 and nested QEMU started successfully. This closes environment provisioning,
 not API/Agent cross-host lifecycle or full P9 acceptance.
+
+### Deploy and exercise the production service path
+
+`deploy_two_vms.py` requires the host Python `cryptography` package for raw
+Ed25519 keys. Run it only against the disposable lab created above. It installs
+two systemd API services behind HAProxy, configures the dedicated PostgreSQL
+database, registers `execution-p9`, and starts the root supervisor and nonroot
+Agent. The worker has neither Docker group membership nor the supervisor's
+database credentials or host private key. Registration and deployment reuse
+persisted keys/identity on reruns. Configs and secrets remain under the private
+lab directory; do not publish them with evidence.
+
+```sh
+CGO_ENABLED=0 GOCACHE=/tmp/sysbox-gocache go build -buildvcs=false -o /tmp/sysbox-p9-lab/sysbox ./cmd/sysbox
+python3 scripts/acceptance/deploy_two_vms.py --root /tmp/sysbox-p9-lab --binary /tmp/sysbox-p9-lab/sysbox
+python3 scripts/acceptance/two_vms.py upload --root /tmp/sysbox-p9-lab --role control \
+  --source scripts/acceptance/cross_host_run.py --destination /home/p9/cross_host_run.py
+python3 scripts/acceptance/two_vms.py exec --root /tmp/sysbox-p9-lab --role control \
+  --command 'sudo python3 /home/p9/cross_host_run.py --evidence /var/tmp/p9-lifecycle.json'
+```
+
+The lifecycle probe publishes a revision, uses an idempotency key to request
+Apply, records actual canonical resource identities, requests Destroy, and waits
+for terminal results. Image `alpine:3.22` must be available to execution Docker.
+If public registry access is unavailable, export it with `docker save`, transfer
+the archive with pinned SSH, compare archive SHA256 and RootFS layer digests,
+then import it in execution. This is explicit artifact provisioning, not a
+shared cache or proof that registry downloads survive partitions.
+
+Before finalizing, independently query execution Docker for the exact owner UID
+recorded in `state_after_apply`; successful Docker queries must show no remaining
+containers. Then run the probe with the same `--evidence` and `--finalize` to
+perform metadata DELETE without force. The helper does not claim to perform
+that independent provider check itself. Use `--stop-primary` with a fresh evidence
+path to stop the test primary API before the lifecycle round; GET and explicitly
+keyed mutations retry transient connection failures with the original body/key.
+Unkeyed mutations are never automatically replayed. Restore `sysbox-api1` after
+the failover round.
+
+2026-10-08 real two-VM results:
+
+- Main API round: `p9-6b16f8158fe0`, Apply/Destroy done, cleanup serial4 and
+  `empty=true`; execution independently confirmed no owner-matching containers;
+  metadata DELETE succeeded without force. Evidence on control:
+  `/var/tmp/p9-lifecycle-04.json`.
+- Backup API round: primary deliberately stopped, HAProxy routed to API2;
+  `p9-9090be4dc645` Apply/Destroy done, matching empty receipt and independent
+  provider absence verified, metadata DELETE succeeded. Evidence:
+  `/var/tmp/p9-lifecycle-api2-retry.json`. Primary shutdown took about16ms.
+- Earlier failed rounds remain recorded (`p9-lifecycle-01/02/03.json`): missing
+  dispatch identity, registry timeout, and host Run completion conflict. The
+  third round's resource/journal is retained for uncertain-outcome recovery;
+  these rounds are not counted as clean successful acceptance.
+
+The failures led to shared canonical dispatch binding, serial0/topology-scope
+Run support, a dedicated host boot query, preservation of the real claimed Run
+incarnation, local-only host execution outcomes until signed completion,
+cleanup receipt propagation, and context-aware API shutdown. Host bridge
+initialization errors now fail instead of silently selecting local storage.
+
+Remaining gates include active-Run API failover, retired-command receipt recovery,
+long-running Run renewal beyond the current request budget, definite pre-effect
+failure versus uncertain provider results, privileged observations through the
+supervisor, guest/File/Reset/Adoption/SSH/GC cross-VM matrix, database/disk faults
+and final rebuilding/upgrade exercises. Two successful Docker rounds do not
+close these gates or the complete P0–P9 objective.

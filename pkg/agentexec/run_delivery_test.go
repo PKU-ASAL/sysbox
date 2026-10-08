@@ -67,7 +67,7 @@ func TestResumeUsesLocalJournalWithoutParentRunMetadata(t *testing.T) {
 
 func TestRunWorkspaceLocalPathDoesNotRewriteCanonicalBinding(t *testing.T) {
 	run := controlplane.Run{ID: "run", Revision: "digest", SnapshotPath: "/api-only/field.sysbox.hcl"}
-	ctx := withRunWorkspace(context.Background(), run, "/agent-only/field.sysbox.hcl")
+	ctx := WithRunWorkspace(context.Background(), run, "/agent-only/field.sysbox.hcl")
 	require.Equal(t, "/agent-only/field.sysbox.hcl", RunWorkspace(ctx, &run))
 	require.Equal(t, "/api-only/field.sysbox.hcl", run.SnapshotPath)
 	other := run

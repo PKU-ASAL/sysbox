@@ -98,7 +98,10 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	}
 	authority := hostsupervisor.AuthorityClient{Identity: *ident}
 	resolver := hostsupervisor.CanonicalResolver{RunsDir: cfg.Paths.RunsDir, Backend: cfg.State.Backend, AgentID: ident.ID}
-	runBridge := api.NewExecutionBridge(cfg)
+	runBridge, err := api.NewHostExecutionBridge(cfg)
+	if err != nil {
+		return err
+	}
 	runExecutor := agentexec.NewExecutorWithBridge(runBridge)
 	dispatcher := &hostsupervisor.Dispatcher{Root: cfg.HostSupervisor.Root, AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	power := &hostsupervisor.PowerDispatcher{Root: filepath.Join(cfg.HostSupervisor.Root, "power"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.ResolveNode, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
@@ -110,8 +113,15 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	server := hostsupervisor.Server{Socket: cfg.HostSupervisor.Socket, GroupID: cfg.HostSupervisor.WorkerGroupID, Dispatcher: dispatcher, Power: power, Files: files, OnRecoveryError: func(err error) { fmt.Fprintf(cmd.ErrOrStderr(), "host supervisor reconciliation: %v\n", err) }}
 	server.Runs = runCoordinator
 	server.RunEffect = func(ctx context.Context, req hostsupervisor.RunRequest) (json.RawMessage, error) {
-		if req.ExpectedSerial < 1 {
-			return nil, fmt.Errorf("host run requires a positive expected state serial")
+		if req.ExpectedSerial < 0 {
+			return nil, fmt.Errorf("host run requires a nonnegative expected state serial")
+		}
+		run, err := runBridge.ParentRun(ctx, req.RunID)
+		if err != nil {
+			return nil, err
+		}
+		if run == nil || run.Topology != req.Topology || run.Revision != req.Revision || run.Op != req.Action || run.Target != req.Target || run.AgentID != ident.ID || run.Status != controlplane.RunRunning || run.LeaseOwner == "" || !run.LeaseUntil.After(time.Now()) {
+			return nil, fmt.Errorf("host run canonical claim changed")
 		}
 		path, err := runBridge.MaterializeRunRevision(ctx, req.Topology, req.Revision)
 		if err != nil {
@@ -178,8 +188,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 			}
 			return authority.DeriveGuestGrant(taskCtx, parent, taskID, digest, identity.ResourceUID, identity.Generation, bootID)
 		})
-		run := &controlplane.Run{ID: req.RunID, Topology: req.Topology, Revision: req.Revision, SnapshotPath: path, Op: req.Action, Operation: req.Action, Target: req.Target, Status: controlplane.RunRunning, AgentID: ident.ID, StartedAt: time.Now().UTC(), QueuedAt: time.Now().UTC(), Attempt: 1, LeaseOwner: "host-supervisor"}
-		runExecutor.ExecuteContext(runCtx, run)
+		runExecutor.ExecuteContext(agentexec.WithRunWorkspace(runCtx, *run, path), run)
 		if run.Status != controlplane.RunDone {
 			return nil, fmt.Errorf("host run failed: %s", run.Err)
 		}

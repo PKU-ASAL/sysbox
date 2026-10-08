@@ -133,8 +133,8 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	default:
 		e.bridge.Finish(run, fmt.Errorf("unsupported run op %q", run.Op))
 	}
+	run.Cleanup = cleanup
 	report := *run
-	report.Cleanup = cleanup
 	e.reportCompletion(ctx, &report)
 }
 

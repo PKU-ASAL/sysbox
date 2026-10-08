@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/subtle"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -241,13 +243,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Start binds to addr and serves until the process exits.
 func (s *Server) Start(addr string) error {
+	return s.StartContext(context.Background(), addr)
+}
+
+// StartContext serves until ctx is canceled, allowing up to five seconds for
+// active requests to finish before closing their connections.
+func (s *Server) StartContext(ctx context.Context, addr string) error {
 	if s.initErr != nil {
 		return s.initErr
+	}
+	if ctx.Err() != nil {
+		return nil
 	}
 	if addr == "" {
 		addr = s.cfg.API.Listen
 	}
-	fmt.Fprintf(os.Stdout, "sysbox API listening on %s\n", addr)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	fmt.Fprintf(os.Stdout, "sysbox API listening on %s\n", listener.Addr())
 	if s.supervisor == nil {
 		s.supervisor = newSupervisor(s, s.cfg.SupervisorInterval())
 	}
@@ -258,9 +274,26 @@ func (s *Server) Start(addr string) error {
 		Handler:           authMiddleware(s),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
 		// WriteTimeout intentionally 0: SSE connections are long-lived.
 	}
-	return srv.ListenAndServe()
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(listener) }()
+	select {
+	case err := <-served:
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		if shutdownErr != nil {
+			_ = srv.Close()
+		}
+		if err := <-served; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return shutdownErr
+	}
 }
 
 func (s *Server) originPatterns() []string {

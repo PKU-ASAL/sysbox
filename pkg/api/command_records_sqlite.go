@@ -76,6 +76,7 @@ func scanSQLiteCommand(row runScanner) (*persistence.CommandRecord, error) {
 	indexedCommand.ActionID, indexedCommand.ResourceUID = "", ""
 	indexedCommand.RecoveryMode = ""
 	indexedCommand.TopologyUID = ""
+	indexedCommand.ExpectedSerial = 0
 	indexedCommand.Generation, indexedCommand.LeaseEpoch = 0, 0
 	// GC candidate identity is persisted in the full snapshot; legacy index
 	// columns do not carry it, so exclude it from the index consistency check.

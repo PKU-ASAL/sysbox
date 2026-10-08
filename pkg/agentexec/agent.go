@@ -925,7 +925,7 @@ func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlp
 		return nil, err
 	}
 	client := hostsupervisor.NewTaskClient(r.opts.HostSupervisorSocket, target)
-	boot, err := client.HostBootID(ctx)
+	boot, err := client.RunHostBootID(ctx)
 	if err != nil {
 		return nil, err
 	}

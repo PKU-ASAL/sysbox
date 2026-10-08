@@ -65,7 +65,7 @@ state backend, mounted paths, supervisor policy, and provider binaries.`,
 			cfg.Paths.WorkspacesDir = flagServeWorkspacesDir
 		}
 		srv := api.NewServerWithConfig(cfg)
-		return srv.Start(cfg.API.Listen)
+		return srv.StartContext(cmd.Context(), cfg.API.Listen)
 	},
 }
 
