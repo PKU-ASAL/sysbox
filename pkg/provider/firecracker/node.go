@@ -306,7 +306,7 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	// caused the apply pipeline to never see EOF: the firecracker children
 	// kept the write end of the parent's stderr pipe alive long after
 	// 'sysbox apply' returned, so the shell appeared to hang at the end.
-	logPath := filepath.Join(filepath.Dir(vm.socket), "firecracker.log")
+	logPath := filepath.Join(filepath.Dir(vm.cfgPath), "firecracker.log")
 	logFD, logErr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if logErr != nil {
 		// Fall back to /dev/null rather than the parent's tty.
