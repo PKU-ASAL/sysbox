@@ -77,6 +77,26 @@ func TestTaskObservationRejectsDifferentBootAndEpoch(t *testing.T) {
 
 type resolverTaskCaller struct{}
 
+func TestRunTaskDelegatesBeforeGuestLaunch(t *testing.T) {
+	identity := substrate.OperationIdentity{ActionID: "run", OwnerUID: "topology", TopologyUID: "topology", ResourceUID: "resource", Generation: 1}
+	request := substrate.ExecRequest{Program: "sleep", Args: []string{"60"}, Shell: substrate.ShellNone}
+	ctx := substrate.WithOperationIdentity(context.Background(), identity)
+	calls := 0
+	ctx = WithTaskStartHandler(ctx, func(_ context.Context, id string, req substrate.ExecRequest, got substrate.OperationIdentity) (substrate.ExecutionHandle, error) {
+		calls++
+		require.Equal(t, identity, got)
+		require.Equal(t, request, req)
+		return substrate.ExecutionHandle{ID: id, NodeID: "canonical-node", Generation: 1}, nil
+	})
+	handle, err := startTask(ctx, nil, executionIdentity{nodeID: "node", generation: 1}, request)
+	require.NoError(t, err)
+	require.Equal(t, derivedTaskID(identity, request), handle.ID)
+	require.Equal(t, 1, calls)
+	_, err = startTask(ctx, nil, executionIdentity{nodeID: "node", generation: 2}, request)
+	require.Error(t, err)
+	require.Equal(t, 1, calls, "wrong-generation connection cannot request a child")
+}
+
 func TestParentExecutionGrantReadsCurrentAuthority(t *testing.T) {
 	old := controlplane.SignedExecutionGrant{Grant: controlplane.ExecutionGrant{Epoch: 7}}
 	current := old

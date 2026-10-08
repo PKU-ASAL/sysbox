@@ -18,7 +18,6 @@ import (
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	firecrackerprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
-	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/spf13/cobra"
@@ -104,6 +103,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	}
 	runExecutor := agentexec.NewExecutorWithBridge(runBridge)
 	dispatcher := &hostsupervisor.Dispatcher{Root: cfg.HostSupervisor.Root, AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
+	dispatcher.ResolveRun = resolver.ResolveRunTask
 	power := &hostsupervisor.PowerDispatcher{Root: filepath.Join(cfg.HostSupervisor.Root, "power"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.ResolveNode, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	files := &hostsupervisor.FileDispatcher{Dispatcher: &hostsupervisor.Dispatcher{Root: filepath.Join(cfg.HostSupervisor.Root, "files"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}, Fetch: authority.FetchFile}
 	runCoordinator := &hostsupervisor.RunCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "runs"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Authorize: authority.Authorize}
@@ -148,52 +148,50 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 				return nil, fmt.Errorf("host run target identity changed")
 			}
 		}
-		runCtx := transport.WithTaskGrantResolver(ctx, func(taskCtx context.Context, taskID string, taskReq substrate.ExecRequest, identity substrate.OperationIdentity) (controlplane.SignedExecutionGrant, error) {
+		childDispatcher := &hostsupervisor.Dispatcher{Root: cfg.HostSupervisor.Root, AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Authorize: authority.Authorize, ReportStop: authority.ReportStop,
+			RunID: req.RunID, ResolveRun: resolver.ResolveRunTask,
+			Resolve: func(taskCtx context.Context, ref hostsupervisor.TargetRef) (hostsupervisor.Target, error) {
+				return resolver.ResolveRunTask(taskCtx, ref, req.RunID)
+			},
+		}
+		children := &hostsupervisor.RunChildren{Dispatcher: childDispatcher, RenewGrant: authority.RenewDerivedGuestGrant}
+		runCtx := transport.WithTaskStartHandler(ctx, func(taskCtx context.Context, taskID string, taskReq substrate.ExecRequest, identity substrate.OperationIdentity) (substrate.ExecutionHandle, error) {
 			parent, ok := transport.ParentExecutionGrantFromContext(taskCtx)
 			if !ok {
-				return controlplane.SignedExecutionGrant{}, fmt.Errorf("host run parent grant unavailable")
+				return substrate.ExecutionHandle{}, fmt.Errorf("host run parent grant unavailable")
 			}
-			latest, loadErr := manager.LoadWithContext(taskCtx)
-			if loadErr != nil || latest == nil || latest.TopologyUID != identity.TopologyUID {
-				return controlplane.SignedExecutionGrant{}, fmt.Errorf("guest task canonical state unavailable")
-			}
-			var resource *state.Resource
-			for i := range latest.Resources {
-				if latest.Resources[i].ResourceUID == identity.ResourceUID {
-					resource = &latest.Resources[i]
-					break
-				}
-			}
-			if resource == nil || resource.OwnerUID != latest.TopologyUID || resource.Generation != identity.Generation {
-				return controlplane.SignedExecutionGrant{}, fmt.Errorf("guest task resource identity changed")
-			}
-			target, err := resolver.Resolve(taskCtx, hostsupervisor.TargetRef{Topology: req.Topology, Node: resource.Address.Name, Scope: controlplane.ExecutionScope{TopologyUID: identity.TopologyUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation}})
+			ref, err := resolver.FindRunTaskRef(taskCtx, req.Topology, req.RunID, controlplane.ExecutionScope{TopologyUID: identity.TopologyUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation})
 			if err != nil {
-				return controlplane.SignedExecutionGrant{}, err
+				return substrate.ExecutionHandle{}, err
 			}
-			bootProvider, ok := target.Connection.(interface {
-				GuestTaskBootID(context.Context) (string, error)
-			})
-			if !ok {
-				return controlplane.SignedExecutionGrant{}, fmt.Errorf("host run target has no guest task boot identity")
-			}
-			bootID, err := bootProvider.GuestTaskBootID(taskCtx)
+			bootID, err := childDispatcher.BootID(taskCtx, ref)
 			if err != nil {
-				return controlplane.SignedExecutionGrant{}, err
+				return substrate.ExecutionHandle{}, err
 			}
 			task, err := transport.BuildTaskRequest(taskCtx, taskID, taskReq)
 			if err != nil {
-				return controlplane.SignedExecutionGrant{}, err
+				return substrate.ExecutionHandle{}, err
 			}
 			digest, err := task.Digest()
 			if err != nil {
-				return controlplane.SignedExecutionGrant{}, err
+				return substrate.ExecutionHandle{}, err
 			}
-			return authority.DeriveGuestGrant(taskCtx, parent, taskID, digest, identity.ResourceUID, identity.Generation, bootID)
+			task.Grant, err = authority.DeriveGuestGrant(taskCtx, parent, taskID, digest, identity.ResourceUID, identity.Generation, bootID)
+			if err != nil {
+				return substrate.ExecutionHandle{}, err
+			}
+			// The child belongs to the Run, not a transient transport request.
+			return children.Start(ctx, ref, task)
 		})
 		runExecutor.ExecuteContext(agentexec.WithRunWorkspace(runCtx, *run, path), run)
 		if run.Status != controlplane.RunDone {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = children.Cancel(cleanup)
 			return nil, fmt.Errorf("host run failed: %s", run.Err)
+		}
+		if err := children.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("host Run child outcome uncertain: %w", err)
 		}
 		return json.Marshal(run)
 	}

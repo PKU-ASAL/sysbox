@@ -7,6 +7,8 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"net/url"
 	"os"
@@ -42,14 +44,7 @@ type NodeTarget struct {
 
 func (r CanonicalResolver) ResolveNode(ctx context.Context, ref TargetRef) (NodeTarget, error) {
 	var zero NodeTarget
-	raw, path, err := persistence.ResolveLocation(r.Backend, filepath.Join(r.RunsDir, ref.Topology, "state.json"), ref.Topology)
-	if err != nil {
-		return zero, err
-	}
-	if err := validateRepositoryTrust(raw, path, ref.Topology); err != nil {
-		return zero, err
-	}
-	repo, err := persistence.OpenConfigured(ctx, raw, path)
+	repo, err := r.openRepository(ctx, ref.Topology)
 	if err != nil {
 		return zero, err
 	}
@@ -58,16 +53,157 @@ func (r CanonicalResolver) ResolveNode(ctx context.Context, ref TargetRef) (Node
 	if err != nil {
 		return zero, err
 	}
-	if st.TopologyUID != ref.Scope.TopologyUID {
-		return zero, fmt.Errorf("supervisor topology identity changed")
+	resource, err := selectRunTaskResource(st, nil, ref, "")
+	if err != nil {
+		return zero, err
 	}
-	resource := st.FindResource(address.Resource("sysbox_node", ref.Node))
-	if resource == nil {
-		resource = st.FindResource(address.Resource("sysbox_router", ref.Node))
+	return r.resolveResource(ctx, ref, resource)
+}
+
+func (r CanonicalResolver) openRepository(ctx context.Context, topology string) (*persistence.Repository, error) {
+	raw, path, err := persistence.ResolveLocation(r.Backend, filepath.Join(r.RunsDir, topology, "state.json"), topology)
+	if err != nil {
+		return nil, err
 	}
-	if resource == nil || resource.OwnerUID != st.TopologyUID || resource.ResourceUID != ref.Scope.ResourceUID || resource.Generation != ref.Scope.Generation {
-		return zero, fmt.Errorf("supervisor resource identity changed")
+	if err := validateRepositoryTrust(raw, path, topology); err != nil {
+		return nil, err
 	}
+	return persistence.OpenConfigured(ctx, raw, path)
+}
+
+// ResolveRunTask permits an authenticated Run's unfinished node checkpoint.
+// runID must come from the supervisor's accepted parent Run, never an RPC field.
+func (r CanonicalResolver) ResolveRunTask(ctx context.Context, ref TargetRef, runID string) (Target, error) {
+	if runID == "" {
+		return Target{}, fmt.Errorf("supervisor run identity is required")
+	}
+	repo, err := r.openRepository(ctx, ref.Topology)
+	if err != nil {
+		return Target{}, err
+	}
+	defer repo.Close()
+	st, err := repo.LoadState(ctx, ref.Topology)
+	if err != nil {
+		return Target{}, err
+	}
+	actions, err := repo.LoadActions(ctx, ref.Topology)
+	if err != nil {
+		return Target{}, err
+	}
+	resource, err := selectRunTaskResource(st, actions, ref, runID)
+	if err != nil {
+		return Target{}, err
+	}
+	node, err := r.resolveResource(ctx, ref, resource)
+	if err != nil {
+		return Target{}, err
+	}
+	conn, err := node.Node.Connection(node.Handle, nil)
+	if err != nil {
+		return Target{}, err
+	}
+	return Target{Scope: node.Scope, AgentID: node.AgentID, NodeID: node.Handle.ID, User: node.Handle.Conn.User, Connection: conn}, nil
+}
+
+// FindRunTaskRef derives the logical node name from trusted repository identity.
+func (r CanonicalResolver) FindRunTaskRef(ctx context.Context, topology, runID string, scope controlplane.ExecutionScope) (TargetRef, error) {
+	var zero TargetRef
+	if runID == "" {
+		return zero, fmt.Errorf("supervisor run identity is required")
+	}
+	repo, err := r.openRepository(ctx, topology)
+	if err != nil {
+		return zero, err
+	}
+	defer repo.Close()
+	st, err := repo.LoadState(ctx, topology)
+	if err != nil {
+		return zero, err
+	}
+	actions, err := repo.LoadActions(ctx, topology)
+	if err != nil {
+		return zero, err
+	}
+	names := map[string]bool{}
+	for _, resource := range st.Resources {
+		if resource.ResourceUID == scope.ResourceUID {
+			names[resource.Address.Name] = true
+		}
+	}
+	for _, action := range actions {
+		if action.RunID == runID && action.ResourceUID == scope.ResourceUID {
+			names[action.Resource.Name] = true
+		}
+	}
+	var found *TargetRef
+	for name := range names {
+		ref := TargetRef{Topology: topology, Node: name, Scope: scope}
+		if _, err := selectRunTaskResource(st, actions, ref, runID); err != nil {
+			continue
+		}
+		if found != nil {
+			return zero, fmt.Errorf("supervisor run node identity is ambiguous")
+		}
+		found = &ref
+	}
+	if found == nil {
+		return zero, fmt.Errorf("supervisor run node identity not found")
+	}
+	return *found, nil
+}
+
+func selectRunTaskResource(st *state.State, actions []runtime.ActionRecord, ref TargetRef, runID string) (*state.Resource, error) {
+	if st.TopologyUID == "" || st.TopologyUID != ref.Scope.TopologyUID {
+		return nil, fmt.Errorf("supervisor topology identity changed")
+	}
+	matchesAddress := func(a address.Address) bool {
+		return a.Equal(address.Resource("sysbox_node", ref.Node)) || a.Equal(address.Resource("sysbox_router", ref.Node))
+	}
+	matchesIdentity := func(r *state.Resource) bool {
+		return r.OwnerUID == st.TopologyUID && r.ResourceUID == ref.Scope.ResourceUID && r.Generation == ref.Scope.Generation && r.Generation > 0
+	}
+	var current *state.Resource
+	for i := range st.Resources {
+		resource := &st.Resources[i]
+		if !matchesAddress(resource.Address) {
+			continue
+		}
+		if current != nil {
+			return nil, fmt.Errorf("supervisor node address is ambiguous")
+		}
+		current = resource
+	}
+	if current != nil && matchesIdentity(current) {
+		return current, nil
+	}
+	var candidate *state.Resource
+	for _, action := range actions {
+		if runID == "" || action.RunID != runID || action.Topology != ref.Topology || !matchesAddress(action.Resource) || (action.Status != runtime.ActionIntentCommitted && action.Status != runtime.ActionUncertain) || action.OwnerUID != st.TopologyUID || action.ResourceUID != ref.Scope.ResourceUID || action.Generation != ref.Scope.Generation {
+			continue
+		}
+		if action.Action != controlplane.PlanActionCreate && action.Action != controlplane.PlanActionReset {
+			continue
+		}
+		c := action.Candidate
+		if c == nil || !c.Address.Equal(action.Resource) || !matchesIdentity(c) {
+			continue
+		}
+		if current != nil && (action.Action != controlplane.PlanActionReset || !action.EffectComplete || !current.Address.Equal(c.Address) || current.OwnerUID != c.OwnerUID || current.ResourceUID != c.ResourceUID || current.Generation+1 != c.Generation) {
+			return nil, fmt.Errorf("supervisor canonical resource conflicts with candidate")
+		}
+		if candidate != nil {
+			return nil, fmt.Errorf("supervisor run node candidate is ambiguous")
+		}
+		candidate = c
+	}
+	if candidate == nil {
+		return nil, fmt.Errorf("supervisor resource identity changed or run candidate unavailable")
+	}
+	return candidate, nil
+}
+
+func (r CanonicalResolver) resolveResource(ctx context.Context, ref TargetRef, resource *state.Resource) (NodeTarget, error) {
+	var zero NodeTarget
 	node, err := driver.DefaultRegistry.RequireNode(resource.Driver)
 	if err != nil {
 		return zero, err
@@ -80,7 +216,7 @@ func (r CanonicalResolver) ResolveNode(ctx context.Context, ref TargetRef) (Node
 	if err != nil {
 		return zero, err
 	}
-	identity := substrate.OperationIdentity{ActionID: "supervisor-observe", TopologyUID: st.TopologyUID, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation}
+	identity := substrate.OperationIdentity{ActionID: "supervisor-observe", TopologyUID: ref.Scope.TopologyUID, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation}
 	observed, err := node.ObserveNode(substrate.WithOperationIdentity(ctx, identity), handle)
 	if err != nil {
 		return zero, err

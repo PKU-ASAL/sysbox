@@ -35,13 +35,17 @@ type Target struct {
 }
 type Dispatcher struct {
 	Root, AgentID, HostBootID string
-	IssuerKey                 ed25519.PublicKey
-	HostKey                   ed25519.PrivateKey
-	Resolve                   func(context.Context, TargetRef) (Target, error)
-	Authorize                 func(context.Context, controlplane.SignedExecutionGrant) error
-	ReportStop                func(context.Context, controlplane.SignedExecutionStopReceipt) error
+	// RunID is set only by the trusted parent Run constructor.
+	RunID      string
+	IssuerKey  ed25519.PublicKey
+	HostKey    ed25519.PrivateKey
+	Resolve    func(context.Context, TargetRef) (Target, error)
+	ResolveRun func(context.Context, TargetRef, string) (Target, error)
+	Authorize  func(context.Context, controlplane.SignedExecutionGrant) error
+	ReportStop func(context.Context, controlplane.SignedExecutionStopReceipt) error
 }
 type TaskRecord struct {
+	RunID           string                                   `json:"run_id,omitempty"`
 	Ref             TargetRef                                `json:"ref"`
 	ProviderNodeID  string                                   `json:"provider_node_id"`
 	Version         int                                      `json:"version"`
@@ -110,6 +114,9 @@ func (d *Dispatcher) load(h substrate.ExecutionHandle) (TaskRecord, error) {
 	if r.Version != 1 || r.ProviderNodeID == "" || r.Ref.Node != h.NodeID || r.Ref.Scope != r.Grant.Grant.Scope || !sameHandle(r.Handle, h) || r.Grant.Grant.AgentID != d.AgentID || r.Grant.Grant.Scope.TopologyUID != h.TopologyUID || r.Grant.Grant.Scope.ResourceUID != h.ResourceUID || r.Grant.Grant.Scope.Generation != h.Generation || r.Grant.Grant.Epoch != h.Epoch || r.Grant.Grant.Digest != h.Digest || r.Grant.BootID != h.BootID {
 		return r, guesttask.ErrConflict
 	}
+	if (r.Grant.Grant.ParentEpoch != 0) != (r.RunID != "") {
+		return r, guesttask.ErrConflict
+	}
 	// Historical signatures remain verifiable after expiry; this is record
 	// integrity validation, not authorization to execute or renew the grant.
 	if controlplane.VerifyExecutionGrant(d.IssuerKey, r.Grant, h.BootID, r.Grant.IssuedAt) != nil {
@@ -174,6 +181,23 @@ func (d *Dispatcher) target(ctx context.Context, ref TargetRef, g controlplane.E
 	}
 	return target, nil
 }
+
+func (d *Dispatcher) targetRecord(ctx context.Context, r TaskRecord) (Target, error) {
+	if (r.Grant.Grant.ParentEpoch != 0) != (r.RunID != "") {
+		return Target{}, guesttask.ErrConflict
+	}
+	if r.RunID == "" {
+		return d.target(ctx, r.Ref, r.Grant.Grant)
+	}
+	if d.ResolveRun == nil {
+		return Target{}, fmt.Errorf("parent Run resource resolver unavailable")
+	}
+	scoped := *d
+	scoped.Resolve = func(ctx context.Context, ref TargetRef) (Target, error) {
+		return d.ResolveRun(ctx, ref, r.RunID)
+	}
+	return scoped.target(ctx, r.Ref, r.Grant.Grant)
+}
 func (d *Dispatcher) BootID(ctx context.Context, ref TargetRef) (string, error) {
 	target, err := d.target(ctx, ref, controlplane.ExecutionGrant{Scope: ref.Scope, AgentID: d.AgentID})
 	if err != nil {
@@ -200,7 +224,7 @@ func (d *Dispatcher) ReadOutput(ctx context.Context, ref TargetRef, h substrate.
 	if r.Ref != ref {
 		return substrate.ExecutionOutput{}, guesttask.ErrConflict
 	}
-	target, err := d.target(ctx, ref, r.Grant.Grant)
+	target, err := d.targetRecord(ctx, r)
 	if err != nil {
 		return substrate.ExecutionOutput{}, err
 	}
@@ -223,6 +247,9 @@ func (d *Dispatcher) Start(ctx context.Context, ref TargetRef, req guesttask.Req
 		return zero, err
 	}
 	g := req.Grant
+	if (g.Grant.ParentEpoch != 0) != (d.RunID != "") {
+		return zero, guesttask.ErrUnauthorized
+	}
 	if err := controlplane.VerifyExecutionGrant(d.IssuerKey, g, g.BootID, time.Now()); err != nil {
 		return zero, err
 	}
@@ -251,12 +278,15 @@ func (d *Dispatcher) Start(ctx context.Context, ref TargetRef, req guesttask.Req
 	defer unlock()
 	old, err := d.load(h)
 	if err == nil {
+		if old.RunID != d.RunID {
+			return zero, guesttask.ErrConflict
+		}
 		return old, nil
 	}
 	if !os.IsNotExist(err) {
 		return zero, err
 	}
-	r := TaskRecord{Version: 1, Ref: ref, ProviderNodeID: target.NodeID, Handle: h, Grant: g, Result: substrate.ExecResult{Status: substrate.ExecStatusUnknown, RemoteTermination: substrate.RemoteTerminationUnknown}}
+	r := TaskRecord{Version: 1, RunID: d.RunID, Ref: ref, ProviderNodeID: target.NodeID, Handle: h, Grant: g, Result: substrate.ExecResult{Status: substrate.ExecStatusUnknown, RemoteTermination: substrate.RemoteTerminationUnknown}}
 	if err = d.save(r); err != nil {
 		return r, err
 	}
@@ -298,7 +328,7 @@ func (d *Dispatcher) observeLocked(ctx context.Context, r TaskRecord) (TaskRecor
 	if r.StopReceipt != nil {
 		return d.report(ctx, r)
 	}
-	target, err := d.target(ctx, r.Ref, r.Grant.Grant)
+	target, err := d.targetRecord(ctx, r)
 	if err != nil {
 		return r, err
 	}
@@ -360,7 +390,7 @@ func (d *Dispatcher) cancelLocked(ctx context.Context, r TaskRecord) (TaskRecord
 	if r.StopReceipt != nil {
 		return d.report(ctx, r)
 	}
-	target, err := d.target(ctx, r.Ref, r.Grant.Grant)
+	target, err := d.targetRecord(ctx, r)
 	if err != nil {
 		return r, err
 	}
@@ -406,7 +436,7 @@ func (d *Dispatcher) Renew(ctx context.Context, ref TargetRef, h substrate.Execu
 	if r.Ref != ref || old != next || r.CancelRequested || r.StopReceipt != nil || g.Grant.ExpiresAt.Before(r.Grant.Grant.ExpiresAt) {
 		return r, guesttask.ErrConflict
 	}
-	target, err := d.target(ctx, ref, g.Grant)
+	target, err := d.targetRecord(ctx, r)
 	if err != nil {
 		return r, err
 	}

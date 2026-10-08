@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -49,6 +50,10 @@ func executionDockerAPI(t *testing.T, stdout, stderr string, inspect container.E
 			_ = rw.Flush()
 			_, _ = io.WriteString(stdcopy.NewStdWriter(conn, stdcopy.Stdout), stdout)
 			_, _ = io.WriteString(stdcopy.NewStdWriter(conn, stdcopy.Stderr), stderr)
+			// The task helper sends JSON on stdin. Closing with unread bytes
+			// resets TCP and can discard the response nondeterministically.
+			_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+			_, _ = io.Copy(io.Discard, rw)
 		case strings.HasSuffix(r.URL.Path, "/exec/exec-opaque/json"):
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(inspect)

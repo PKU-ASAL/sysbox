@@ -279,3 +279,37 @@ These changes are not yet evidence of periodic child renewal through a live
 supervisor or cross-VM child lifecycle acceptance. The guest helper must be
 rebuilt for the new field; old overlapping parent/child authority records without
 parent binding are rejected rather than inferred or silently migrated.
+
+### Host Run child management
+
+Run task launches now enter a trusted `TaskStartHandler` before guest
+transmission. The handler obtains canonical Run/task identity, derives the
+child grant, and calls the same durable task Dispatcher used by API tasks.
+Explicit signed Dispatcher-to-guest calls do not recurse through the handler.
+The child belongs to the parent Run context, not a temporary transport request.
+
+`RunChildren` observes each admitted child and renews it using the current
+parent envelope. A finite child must have a known successful exit and a reported
+confirmed-stop receipt before the parent callback can finish. Nonzero/unknown
+exit fails the parent. On cancellation or sibling failure, starts and watchers
+are canceled and stop reconciliation gets a bounded independent context;
+unresponsive providers remain uncertain and their durable records are retained.
+Long-running services are not silently killed to manufacture a successful Run;
+they continue to hold the parent open. A separate persistent-service ownership
+model is still required where services must outlive Apply.
+
+Creating nodes are not always in final state. The privileged resolver may use
+the same Run's persisted create/reset candidate, recheck full ownership and
+generation, and verify actual provider observation before making a connection.
+Task records persist trusted Run provenance so cold Observe/Cancel/Renew can
+resolve the same candidate. Wrong Run, ambiguous identity, stale generation,
+unsigned/missing provenance and conflicting current resources fail closed.
+
+Race tests cover duplicate starts, slow admission versus sibling cancellation,
+noncooperative observation, parent cancellation, exact current-parent renewal,
+failed exits, lost-start replies, and candidate-backed cold reconciliation.
+The Docker fake transport test was fixed to consume task stdin before closing
+the upgraded connection; previously unread input intermittently reset TCP.
+This slice has not yet been validated with a real cross-VM background child.
+It does not close unknown Run-intent recovery, persistent service transfer,
+Reset child lifecycle, or the remaining P5–P9 capability/fault gates.

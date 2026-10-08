@@ -32,6 +32,15 @@ type taskAuthorizationKey struct{}
 type taskGrantResolverKey struct{}
 type parentExecutionGrantKey struct{}
 type parentExecutionGrantResolverKey struct{}
+type taskStartHandlerKey struct{}
+
+// TaskStartHandler delegates Run children to the credential-owning host task
+// dispatcher before transmission, so launch and renewal have durable records.
+type TaskStartHandler func(context.Context, string, substrate.ExecRequest, substrate.OperationIdentity) (substrate.ExecutionHandle, error)
+
+func WithTaskStartHandler(ctx context.Context, handler TaskStartHandler) context.Context {
+	return context.WithValue(ctx, taskStartHandlerKey{}, handler)
+}
 
 // TaskGrantResolver is used only inside the trusted host supervisor. It
 // derives a durable, resource-scoped guest_task grant for a run's provider
@@ -134,6 +143,13 @@ func (c *VsockConnection) RenewExecution(ctx context.Context, h substrate.Execut
 func startTask(ctx context.Context, conn taskCaller, identity executionIdentity, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
 	auth, ok := ctx.Value(taskAuthorizationKey{}).(taskAuthorization)
 	if !ok {
+		if handler, exists := ctx.Value(taskStartHandlerKey{}).(TaskStartHandler); exists {
+			op, bound := substrate.OperationIdentityFromContext(ctx)
+			if handler == nil || !bound || op.Validate() != nil || identity.nodeID == "" || identity.generation != op.Generation {
+				return substrate.ExecutionHandle{}, guesttask.ErrUnauthorized
+			}
+			return handler(ctx, derivedTaskID(op, req), req, op)
+		}
 		resolver, canResolve := taskGrantResolverFromContext(ctx)
 		op, hasIdentity := substrate.OperationIdentityFromContext(ctx)
 		if !canResolve || !hasIdentity || op.Validate() != nil {
