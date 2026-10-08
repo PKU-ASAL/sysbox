@@ -102,7 +102,7 @@ func (s *AgentStreamService) deliverCommandLine(ctx context.Context, agentID str
 	if !leased {
 		return
 	}
-	_ = s.writeCommand(ctx, conn, deliverAgentCommand(cmd))
+	_ = s.writeCommand(ctx, conn, cmd)
 }
 
 func (s *AgentStreamService) readCommandEvents(ctx context.Context, agentID string, conn *websocket.Conn) error {
@@ -130,7 +130,7 @@ func (s *AgentStreamService) pushPendingCommands(ctx context.Context, agentID st
 	if s.store == nil {
 		return
 	}
-	commands, err := s.store.ListAgentCommands(ctx, agentID)
+	commands, err := s.store.PendingAgentCommands(ctx, agentID)
 	if err != nil {
 		return
 	}
@@ -143,13 +143,21 @@ func (s *AgentStreamService) pushPendingCommands(ctx context.Context, agentID st
 		if !ok {
 			continue
 		}
-		_ = s.writeCommand(ctx, conn, deliverAgentCommand(cmd))
+		_ = s.writeCommand(ctx, conn, cmd)
 	}
 }
 
 func (s *AgentStreamService) writeCommand(ctx context.Context, conn *websocket.Conn, cmd controlplane.AgentCommand) error {
+	expected := cmd
+	cmd = deliverAgentCommand(cmd)
 	if s.store != nil {
-		_ = s.store.SaveAgentCommand(ctx, cmd)
+		ok, err := s.store.CompareAndSwapAgentCommand(ctx, expected, cmd)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("command delivery ownership changed")
+		}
 	}
 	raw, err := json.Marshal(cmd)
 	if err != nil {

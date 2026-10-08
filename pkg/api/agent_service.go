@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,8 @@ import (
 )
 
 type AgentService struct {
+	recoveryMu      sync.Mutex
+	recoveryCursor  string
 	store           apiStore
 	registry        *agentRegistry
 	jobs            *Jobs
@@ -115,19 +118,58 @@ func (s *AgentService) CompleteRun(agentID, runID string, completion controlplan
 	if completion.Run.AgentID != agentID {
 		return completion, fmt.Errorf("completion agent id mismatch")
 	}
-	s.jobs.replace(&completion.Run)
-	if completion.Projection.AgentID == "" {
-		completion.Projection.AgentID = agentID
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	current, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		return completion, err
 	}
-	if completion.Projection.Topology == "" {
-		completion.Projection.Topology = completion.Run.Topology
+	if current.AgentID != agentID || current.LeaseOwner == "" || current.LeaseOwner != completion.Run.LeaseOwner || current.Attempt != completion.Run.Attempt {
+		return completion, fmt.Errorf("completion lease ownership mismatch")
 	}
-	if completion.Projection.Workspace == "" {
-		completion.Projection.Workspace = completion.Run.Workspace
+	if (completion.Projection.AgentID != "" && completion.Projection.AgentID != agentID) || (completion.Projection.Topology != "" && completion.Projection.Topology != current.Topology) || (completion.Projection.Workspace != "" && completion.Projection.Workspace != current.Workspace) {
+		return completion, fmt.Errorf("completion projection ownership mismatch")
 	}
-	if completion.Projection.UpdatedAt.IsZero() {
-		completion.Projection.UpdatedAt = time.Now().UTC()
+	if !completion.Run.Status.IsTerminal() {
+		return completion, fmt.Errorf("completion requires terminal status")
 	}
+	if current.Status.IsTerminal() {
+		if current.Status != completion.Run.Status || current.Err != completion.Run.Err {
+			return completion, fmt.Errorf("conflicting terminal completion")
+		}
+		if current.CompletionProjection == nil {
+			return completion, fmt.Errorf("terminal run has no agent completion receipt")
+		}
+		completion.Run = *current
+		completion.Projection = *current.CompletionProjection
+	} else {
+		if !current.CanRenewLease(agentID, completion.Run.LeaseOwner, time.Now().UTC()) {
+			return completion, fmt.Errorf("completion lease expired or inactive")
+		}
+		next := *current
+		next.Status = completion.Run.Status
+		next.Err = completion.Run.Err
+		next.Recoverable = completion.Run.Recoverable
+		next.Assertion = completion.Run.Assertion
+		next.EndedAt = time.Now().UTC()
+		next.Inputs = nil
+		projection := completion.Projection
+		projection.AgentID = agentID
+		projection.Topology = current.Topology
+		projection.Workspace = current.Workspace
+		projection.UpdatedAt = next.EndedAt
+		next.CompletionProjection = &projection
+		ok, err := s.store.CompareAndSwapRun(ctx, *current, next, true)
+		if err != nil {
+			return completion, err
+		}
+		if !ok {
+			return completion, fmt.Errorf("completion ownership changed")
+		}
+		completion.Run = next
+		completion.Projection = *next.CompletionProjection
+	}
+	s.jobs.cacheCommittedRun(&completion.Run)
 	s.registry.SaveProjection(completion.Projection)
 	return completion, nil
 }
@@ -188,16 +230,11 @@ func (s *AgentService) FindCommand(ctx context.Context, agentID, commandID strin
 	if s.store == nil {
 		return controlplane.AgentCommand{}, fmt.Errorf("agent command store not configured")
 	}
-	commands, err := s.store.ListAgentCommands(ctx, agentID)
+	cmd, err := s.store.GetAgentCommand(ctx, agentID, commandID)
 	if err != nil {
 		return controlplane.AgentCommand{}, err
 	}
-	for _, cmd := range commands {
-		if cmd.ID == commandID {
-			return cmd, nil
-		}
-	}
-	return controlplane.AgentCommand{}, fmt.Errorf("agent command not found")
+	return *cmd, nil
 }
 
 // ReconcileCommandState prevents a stale delivery record from replaying work
@@ -210,17 +247,35 @@ func (s *AgentService) ReconcileCommandState(ctx context.Context, cmd controlpla
 	if !ok {
 		return cmd, false
 	}
+	expected := cmd
 	cmd.Status = status
 	cmd.EndedAt = endedAt
 	if cmd.EndedAt.IsZero() {
 		cmd.EndedAt = time.Now().UTC()
 	}
-	_ = s.store.SaveAgentCommand(ctx, cmd)
-	return cmd, true
+	ok, err := s.store.CompareAndSwapAgentCommand(ctx, expected, cmd)
+	return cmd, err == nil && ok
 }
 
 func (s *AgentService) guestCommandTerminalState(ctx context.Context, cmd controlplane.AgentCommand) (string, time.Time, bool) {
 	switch cmd.Type {
+	case "run_assigned":
+		if cmd.Run == nil {
+			return "", time.Time{}, false
+		}
+		run, err := s.store.GetRun(ctx, cmd.Run.ID)
+		if err != nil {
+			return "", time.Time{}, false
+		}
+		switch run.Status {
+		case controlplane.RunDone:
+			return controlplane.AgentCommandStatusCompleted, run.EndedAt, true
+		case controlplane.RunFailed:
+			return controlplane.AgentCommandStatusFailed, run.EndedAt, true
+		case controlplane.RunCancelled:
+			return controlplane.AgentCommandStatusCancelled, run.EndedAt, true
+		}
+		return "", time.Time{}, false
 	case "guest_execution":
 		if cmd.Execution == nil || cmd.Execution.ID == "" {
 			return "", time.Time{}, false
@@ -276,6 +331,28 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 	if err != nil {
 		return
 	}
+	if cmd.LeaseOwner != "" && event.LeaseOwner != cmd.LeaseOwner {
+		return
+	}
+	if cmd.Type == "run_assigned" && (controlplane.AgentCommand{Status: event.Status}).IsTerminal() {
+		if cmd.Run != nil {
+			run, err := s.store.GetRun(ctx, cmd.Run.ID)
+			if err != nil {
+				return
+			}
+			if run.Status.IsTerminal() {
+				s.ReconcileCommandState(ctx, cmd)
+				return
+			}
+			if run.Status == controlplane.RunRunning {
+				return
+			}
+		}
+	}
+	if cmd.IsTerminal() {
+		return
+	}
+	expected := cmd
 	now := event.CreatedAt
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -286,25 +363,24 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 		cmd.AckedAt = now
 	case "started":
 		cmd.Status = controlplane.AgentCommandStatusRunning
-		s.updateConsoleSessionFromCommandEvent(cmd, event)
 	case controlplane.AgentCommandStatusCompleted:
 		cmd.Status = controlplane.AgentCommandStatusCompleted
 		cmd.EndedAt = now
-		s.updateConsoleSessionFromCommandEvent(cmd, event)
 	case controlplane.AgentCommandStatusFailed, controlplane.AgentCommandStatusDenied, controlplane.AgentCommandStatusCancelled:
 		cmd.Status = event.Status
 		cmd.Err = event.Error
 		cmd.EndedAt = now
-		s.updateConsoleSessionFromCommandEvent(cmd, event)
-		if cmd.Type == "guest_file_put" && cmd.FilePut != nil {
-			_ = newGuestFileOperationService(s.store).ReconcileCommandFailure(ctx, cmd.FilePut.ID, event.Status)
-		}
+
 	}
-	if cmd.IsTerminal() {
-		_ = s.store.DeleteAgentCommand(ctx, cmd.AgentID, cmd.ID)
-	} else {
-		_ = s.store.SaveAgentCommand(ctx, cmd)
+	ok, err := s.store.CompareAndSwapAgentCommand(ctx, expected, cmd)
+	if err != nil || !ok {
+		return
 	}
+	s.updateConsoleSessionFromCommandEvent(cmd, event)
+	if (event.Status == controlplane.AgentCommandStatusFailed || event.Status == controlplane.AgentCommandStatusDenied || event.Status == controlplane.AgentCommandStatusCancelled) && cmd.Type == "guest_file_put" && cmd.FilePut != nil {
+		_ = newGuestFileOperationService(s.store).ReconcileCommandFailure(ctx, cmd.FilePut.ID, event.Status)
+	}
+
 }
 
 func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) {
@@ -352,4 +428,19 @@ func deliverAgentCommand(cmd controlplane.AgentCommand) controlplane.AgentComman
 
 func commandTerminal(status string) bool {
 	return controlplane.AgentCommand{Status: status}.IsTerminal()
+}
+
+// Projections are recoverable views of atomic completion receipts. Rebuilding
+// them never trusts a retry caller's body or overwrites a newer receipt.
+func (s *AgentService) restoreCompletionProjections(ctx context.Context) error {
+	runs, err := s.store.LoadRuns(ctx)
+	if err != nil {
+		return err
+	}
+	for _, run := range latestRunsByID(runs) {
+		if run.Status.IsTerminal() && run.CompletionProjection != nil {
+			s.registry.SaveProjection(*run.CompletionProjection)
+		}
+	}
+	return nil
 }

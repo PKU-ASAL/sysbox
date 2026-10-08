@@ -13,6 +13,7 @@ type schemaStore interface {
 }
 
 type runStore interface {
+	CompareAndSwapRun(context.Context, controlplane.Run, controlplane.Run, bool) (bool, error)
 	LoadRuns(ctx context.Context) ([]controlplane.Run, error)
 	GetRun(ctx context.Context, id string) (*controlplane.Run, error)
 	SaveRun(ctx context.Context, run controlplane.Run) error
@@ -73,6 +74,10 @@ type agentStore interface {
 }
 
 type agentCommandStore interface {
+	GetAgentCommand(context.Context, string, string) (*controlplane.AgentCommand, error)
+	PendingAgentCommands(context.Context, string) ([]controlplane.AgentCommand, error)
+	CompareAndSwapAgentCommand(context.Context, controlplane.AgentCommand, controlplane.AgentCommand) (bool, error)
+	AgentCommandRecoveryPage(context.Context, string) ([]controlplane.AgentCommand, error)
 	SaveAgentCommandEvent(ctx context.Context, event controlplane.AgentCommandEvent) error
 	ListAgentCommandEvents(ctx context.Context, agentID string) ([]controlplane.AgentCommandEvent, error)
 	SaveAgentCommand(ctx context.Context, cmd controlplane.AgentCommand) error

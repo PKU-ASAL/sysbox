@@ -157,7 +157,7 @@ func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
 	require.NotEmpty(t, snap.RunID)
 	run, ok := s.jobs.get(snap.RunID)
 	require.True(t, ok)
-	require.Equal(t, "supervisor", run.ParentID)
+	require.Empty(t, run.ParentID, "fresh drift repair has no execution parent")
 	require.Equal(t, "apply", run.Op)
 	require.Equal(t, controlplane.RunAssigned, run.Status)
 }

@@ -177,6 +177,12 @@ func (s *Server) handleDeleteTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
+	if err := s.runs().rejectActiveKeyed(r.Context(), topology); err != nil {
+		writeError(w, runServiceStatus(err), err)
+		return
+	}
 	if err := s.workspaceService().Delete(r.Context(), topology, r.URL.Query().Get("force") == "true"); err != nil {
 		writeError(w, workspaceStatus(err), err)
 		return

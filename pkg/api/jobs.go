@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ const (
 // Per-topology mutexes prevent concurrent apply/destroy on the same topology.
 type Jobs struct {
 	mu                 sync.RWMutex
+	applyInputs        map[string]map[string]string
 	runs               map[string]*controlplane.Run
 	runsDir            string // root directory for runs, e.g. "runs"
 	store              apiStore
@@ -65,6 +67,7 @@ func newJobsWithPolicy(runsDir string, store apiStore, recoverInterrupted bool, 
 	}
 	j := &Jobs{
 		runs:               make(map[string]*controlplane.Run),
+		applyInputs:        make(map[string]map[string]string),
 		runsDir:            runsDir,
 		store:              store,
 		recoverInterrupted: recoverInterrupted,
@@ -217,6 +220,9 @@ func (j *Jobs) startWithResult(topology, op string, opts runStartOptions) (*cont
 		return &snapshot, false
 	}
 	j.runs[r.ID] = r
+	if r.Status.IsTerminal() {
+		delete(j.applyInputs, r.ID)
+	}
 	j.mu.Unlock()
 	j.logs.Ensure(r.ID, false)
 	j.persist(r)
@@ -301,14 +307,34 @@ func (j *Jobs) markRunning(r *controlplane.Run) {
 	j.persist(r)
 }
 
-func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
-	owner := fmt.Sprintf("%s:%s:%d", agentID, runID, time.Now().UnixNano())
+var errRunStoreUnavailable = errors.New("run store unavailable")
+
+func (j *Jobs) claim(runID, agentID string, claimID ...string) (*controlplane.Run, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	durable, err := j.store.GetRun(ctx, runID)
+	if err != nil {
+		if errors.Is(err, errRunNotFound) {
+			return nil, err
+		}
+		return nil, errRunStoreUnavailable
+	}
+	if j.inputsRequired(durable) {
+		return nil, errApplyInputsRequired
+	}
+	owner := fmt.Sprintf("%s:%s:%s", agentID, runID, uuid.NewString())
+	if len(claimID) > 0 && claimID[0] != "" {
+		owner = fmt.Sprintf("%s:%s:%s", agentID, runID, claimID[0])
+	}
 	ttl := j.runLeaseTTL
 	if ttl <= 0 {
 		ttl = 30 * time.Minute
 	}
-	if claimed, ok, err := j.store.ClaimRun(context.Background(), runID, agentID, owner, ttl); err != nil {
-		return nil, err
+	if claimed, ok, err := j.store.ClaimRun(ctx, runID, agentID, owner, ttl); err != nil {
+		if errors.Is(err, errRunNotFound) {
+			return nil, err
+		}
+		return nil, errRunStoreUnavailable
 	} else if ok && claimed != nil {
 		j.mu.Lock()
 		// Inputs are transient and stripped from the durable run record; the
@@ -317,6 +343,9 @@ func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
 		// working without ever re-reading the plaintext from the store.
 		if existing, exists := j.runs[runID]; exists && existing.Inputs != nil {
 			claimed.Inputs = cloneInputs(existing.Inputs)
+		}
+		if inputs, ok := j.applyInputs[runID]; ok {
+			claimed.Inputs = cloneInputs(inputs)
 		}
 		j.runs[runID] = claimed
 		j.mu.Unlock()
@@ -348,7 +377,9 @@ func (j *Jobs) claim(runID, agentID string) (*controlplane.Run, error) {
 }
 
 func (j *Jobs) renewLease(runID, agentID, owner string, ttl time.Duration) (*controlplane.Run, error) {
-	renewed, ok, err := j.store.RenewRunLease(context.Background(), runID, agentID, owner, ttl)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	renewed, ok, err := j.store.RenewRunLease(ctx, runID, agentID, owner, ttl)
 	if err != nil {
 		return nil, err
 	}
@@ -383,8 +414,14 @@ func (j *Jobs) markExpiredLeases(now time.Time) {
 		if run.Status != controlplane.RunRunning || run.LeaseUntil.IsZero() || run.LeaseUntil.After(now) {
 			continue
 		}
+		before := run
 		run.MarkLeaseExpired(now)
-		j.replace(&run)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ok, err := j.store.CompareAndSwapRun(ctx, before, run, false)
+		cancel()
+		if err == nil && ok {
+			j.cacheCommittedRun(&run)
+		}
 	}
 }
 
@@ -423,8 +460,14 @@ func (j *Jobs) markConvergenceDeadlineExceeded(now time.Time, timeout time.Durat
 		if !now.After(deadline) {
 			continue
 		}
+		before := *r
 		r.MarkFinished(fmt.Errorf("convergence deadline exceeded (deadline %s)", deadline), now)
-		j.replace(r)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ok, err := j.store.CompareAndSwapRun(ctx, before, *r, false)
+		cancel()
+		if err == nil && ok {
+			j.cacheCommittedRun(r)
+		}
 	}
 }
 
@@ -506,13 +549,25 @@ func (j *Jobs) startChild(parent *controlplane.Run) *controlplane.Run {
 func (j *Jobs) finish(r *controlplane.Run, err error) {
 	j.mu.Lock()
 	r.MarkFinished(err, time.Now())
+	j.runs[r.ID] = r
 	// Sensitive inputs are only needed while the run is executing; the executor
 	// has already bound var.<name> by the time a run goes terminal, so drop them
 	// from the in-memory entry to avoid exposing them via get/list.
 	r.Inputs = nil
+	delete(j.applyInputs, r.ID)
 	j.mu.Unlock()
 	j.logs.Close(r.ID)
 	j.persist(r)
+}
+
+// cacheCommittedRun updates process-local views only after authoritative CAS.
+func (j *Jobs) cacheCommittedRun(r *controlplane.Run) {
+	j.mu.Lock()
+	j.runs[r.ID] = r
+	j.mu.Unlock()
+	if r.Status.IsTerminal() {
+		j.logs.Close(r.ID)
+	}
 }
 
 func (j *Jobs) replace(r *controlplane.Run) {

@@ -107,6 +107,7 @@ func (e *Executor) Apply(ctx context.Context, plan *Plan) error {
 func (e *Executor) applyCreate(ctx context.Context, change controlplane.PlannedChange) error {
 	e.logf("[apply] %s %s\n", change.Action, change.Address)
 	step := e.recorder.StepStart(change.Address.String(), change.Action)
+	e.recorder.StepExternal(step, "", "", ManagedLabels(e.topology, e.runID, change.Address))
 	restoreStep := e.setCurrentResourceStep(step)
 	if err := e.recordSubstep(step, "create_resource", map[string]any{"resource": change.Address.String()}, func() error { return e.CreateResource(ctx, change.Address) }); err != nil {
 		restoreStep()

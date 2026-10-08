@@ -97,18 +97,24 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	switch run.Op {
 	case "apply", "repair":
 		if run.ParentID != "" {
-			if parent, err := e.bridge.ParentRun(ctx, run.ParentID); err == nil {
-				e.executeResumeApply(ctx, parent, run, log)
+			parent, err := e.bridge.ParentRun(ctx, run.ParentID)
+			if err != nil {
+				e.bridge.Finish(run, err)
 				break
 			}
+			e.executeResumeApply(ctx, parent, run, log)
+			break
 		}
 		e.executeApply(ctx, run, log)
 	case "destroy":
 		if run.ParentID != "" {
-			if parent, err := e.bridge.ParentRun(ctx, run.ParentID); err == nil {
-				e.executeResumeDestroy(ctx, parent, run, log)
+			parent, err := e.bridge.ParentRun(ctx, run.ParentID)
+			if err != nil {
+				e.bridge.Finish(run, err)
 				break
 			}
+			e.executeResumeDestroy(ctx, parent, run, log)
+			break
 		}
 		e.executeDestroy(ctx, run, log)
 	case "reset":
