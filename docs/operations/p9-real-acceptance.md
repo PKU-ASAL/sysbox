@@ -350,3 +350,28 @@ completion only after verified child termination. Rounds01/02 remain failed
 evidence with retained resources/journals; they are not counted as recovered.
 This successful gate does not close child cancellation under partition, cold
 recovery of unknown intents, persistent services, or the full fault matrix.
+
+### Running-child API outage gate
+
+`scripts/acceptance/child_partition.py --root LAB --topology p9-IDENTITY`
+requires exactly one durably observed running child before injecting a fault.
+It stops only the control VM's test HAProxy, waits for a confirmed host child
+stop, restores HAProxy in a `finally` block, and verifies the identical stop
+receipt is acknowledged. It fails if evidence already exists, the child is not
+running, the stop is unconfirmed, or receipt identity changes. This isolates
+API unavailability; PostgreSQL and SSH stay reachable. It is not a complete
+VM network partition or an API-commit response-loss test.
+
+Real round `p9-d271491329c1`: child stopped in1.54 seconds after proxy outage;
+the exact persisted receipt was acknowledged after reconnect. Independent
+execution-VM inspection found no `sleep 120` process and both task cgroup event
+files reported `populated 0`. Exit status stayed unknown with termination
+confirmed, rather than inventing exit0. Proxy service was restored and active.
+Host evidence is `/tmp/sysbox-p9-two-vms-20261008/p9-d271491329c1-partition.json`.
+
+The lifecycle probe correctly did **not** pass: the parent stayed running at
+its bounded observation timeout, with the host Run intent still uncertain.
+Its container and canonical records remain retained for evidence-driven
+recovery; no successful Destroy/metadata-delete is claimed for this round.
+This closes only the running child's API-outage stop/reconnect proof. Parent
+unknown-intent recovery and complete fault cleanup remain required.

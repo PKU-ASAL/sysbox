@@ -31,6 +31,7 @@ class LabTests(unittest.TestCase):
 
             with mock.patch.object(two_vms, "BASE_SHA256", hashlib.sha256(b"test-image").hexdigest()), \
                  mock.patch.object(two_vms.os, "access", return_value=True), \
+                 mock.patch.object(two_vms.shutil, "disk_usage", return_value=mock.Mock(free=20 * 1024**3)), \
                  mock.patch.object(two_vms, "free_ports", return_value=[30001, 30002, 30003]), \
                  mock.patch.object(two_vms, "run", side_effect=process):
                 with self.assertRaisesRegex(RuntimeError, "second start failed"):
