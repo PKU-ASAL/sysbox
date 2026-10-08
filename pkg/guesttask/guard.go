@@ -187,7 +187,7 @@ func (e *Engine) Renew(ctx context.Context, id, digest string, grant SignedGrant
 	}
 	old := r.Grant.Grant
 	next := grant.Grant
-	if r.Digest != digest || next.Digest != digest || r.BootID != boot || r.TerminationConfirmed || r.CancelRequested || old.Scope != next.Scope || old.Epoch != next.Epoch || old.AgentID != next.AgentID || old.SessionID != next.SessionID || old.ActionID != next.ActionID || old.CommandID != next.CommandID || old.Attempt != next.Attempt || remainingRecord(r) <= 0 || next.ExpiresAt.Before(old.ExpiresAt) {
+	if r.Digest != digest || next.Digest != digest || r.BootID != boot || r.TerminationConfirmed || r.CancelRequested || old.Scope != next.Scope || old.Epoch != next.Epoch || old.ParentEpoch != next.ParentEpoch || old.AgentID != next.AgentID || old.SessionID != next.SessionID || old.ActionID != next.ActionID || old.CommandID != next.CommandID || old.Attempt != next.Attempt || remainingRecord(r) <= 0 || next.ExpiresAt.Before(old.ExpiresAt) {
 		return r, ErrUnauthorized
 	}
 	r.Grant = grant

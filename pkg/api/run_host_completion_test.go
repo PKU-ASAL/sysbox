@@ -51,6 +51,17 @@ func TestHostRunCompletionRecoversRetiredCommandAndExpiredLease(t *testing.T) {
 			s.mux.ServeHTTP(response, httptest.NewRequest("POST", "/v1/hosts/agent/runs/host_run/completed", bytes.NewReader(body)))
 			return response
 		}
+		child, err := authority.DeriveGuestTask(ctx, *grant, controlplane.ExecutionGrant{
+			AgentID: grant.AgentID, SessionID: grant.SessionID, CommandID: grant.CommandID,
+			Attempt: grant.Attempt, ActionID: "child", Operation: "guest_task", Digest: "child-digest",
+			TargetBootID: "guest", Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1},
+		}, time.Minute)
+		require.NoError(t, err)
+		require.Equal(t, 409, post(receipt, evidence).Code, "a live child must block canonical Run completion")
+		beforeStop, err := store.GetRun(ctx, run.ID)
+		require.NoError(t, err)
+		require.Equal(t, controlplane.RunRunning, beforeStop.Status)
+		require.NoError(t, authority.AcceptHostStop(ctx, *child, "verified-child-stop"))
 		altered := observed
 		altered.Err = "forged"
 		raw, _ := json.Marshal(altered)

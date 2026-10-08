@@ -74,6 +74,7 @@ func (s *Server) registerExecutionGrantRoutes() {
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/authorize", s.handleAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/renew", s.handleAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grant/derive-guest", s.handleDeriveGuestExecutionGrant)
+	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grant/renew-guest", s.handleRenewDerivedGuestExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/gc-grant", s.handleGCGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/revoke", s.handleRevokeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/inspect", s.handleInspectExecutionGrant)
@@ -199,18 +200,17 @@ func (s *Server) handleDeriveGuestExecutionGrant(w http.ResponseWriter, r *http.
 		return
 	}
 	parent := request.Parent
+	if err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ObserveTime(r.Context()); err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
 	if parent.Grant.AgentID != r.PathValue("agent") || controlplane.VerifyExecutionGrant(s.grantSigner.Public().(ed25519.PublicKey), parent, parent.BootID, time.Now()) != nil {
 		writeError(w, http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
-	stored, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).InspectGrant(r.Context(), parent.Grant.AgentID, parent.Grant.Scope)
-	if err != nil || stored == nil || stored.Epoch != parent.Grant.Epoch || stored.State != controlplane.GrantActive || stored.Digest != parent.Grant.Digest {
-		writeError(w, http.StatusConflict, persistence.ErrConflict)
-		return
-	}
 	child := controlplane.ExecutionGrant{TargetBootID: request.GuestBootID, Scope: controlplane.ExecutionScope{TopologyUID: parent.Grant.Scope.TopologyUID, ResourceUID: request.ResourceUID, Generation: request.Generation}, AgentID: parent.Grant.AgentID, SessionID: parent.Grant.SessionID, ActionID: request.TaskID, CommandID: parent.Grant.CommandID, Attempt: parent.Grant.Attempt, Operation: "guest_task", Digest: request.TaskDigest, ExpiresAt: parent.Grant.ExpiresAt}
 	ttl := time.Until(parent.Grant.ExpiresAt)
-	derived, err := mustDeriveGuestGrant(r.Context(), apiExecutionGrantStorage{store: s.apiStore}, parent.Grant, child, ttl)
+	derived, err := mustDeriveGuestGrant(r.Context(), s.derivedGuestStorage(r.Context(), parent), parent.Grant, child, ttl)
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
@@ -226,14 +226,15 @@ func (s *Server) handleDeriveGuestExecutionGrant(w http.ResponseWriter, r *http.
 
 func mustDeriveGuestGrant(ctx context.Context, storage apiExecutionGrantStorage, parent, child controlplane.ExecutionGrant, ttl time.Duration) (*controlplane.ExecutionGrant, error) {
 	var result *controlplane.ExecutionGrant
+	var transitionErr error
 	err := storage.UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
 		memory := &grantTransaction{raw: raw}
-		derived, err := persistence.NewExecutionGrantRepository(memory).DeriveGuestTask(ctx, parent, child, ttl)
-		if err == nil {
-			result = derived
-		}
-		return memory.raw, err
+		result, transitionErr = persistence.NewExecutionGrantRepository(memory).DeriveGuestTask(ctx, parent, child, ttl)
+		return memory.raw, nil
 	})
+	if err == nil {
+		err = transitionErr
+	}
 	return result, err
 }
 
@@ -273,7 +274,7 @@ func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request)
 	}
 	receiptHash := sha256.Sum256(rawReceipt)
 	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
-	if err := authority.ValidateHostStop(r.Context(), body.Receipt.Grant, hex.EncodeToString(receiptHash[:])); err != nil {
+	if err := authority.PrepareHostStop(r.Context(), body.Receipt.Grant, hex.EncodeToString(receiptHash[:])); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
@@ -326,6 +327,10 @@ func (s *Server) handleHostAuthorizeExecutionGrant(w http.ResponseWriter, r *htt
 		return
 	}
 	g := signed.Grant
+	if g.ParentEpoch != 0 {
+		s.authorizeDerivedGuestGrant(w, r, g)
+		return
+	}
 	storage := apiExecutionGrantStorage{store: s.apiStore, commandID: g.CommandID, validate: func(record *persistence.CommandRecord) error {
 		if record == nil {
 			return persistence.ErrConflict

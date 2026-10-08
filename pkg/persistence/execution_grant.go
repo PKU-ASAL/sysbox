@@ -201,10 +201,10 @@ func (r *ExecutionGrantRepository) update(ctx context.Context, fn func(*executio
 
 func nestedRunGrantPair(a, b controlplane.ExecutionGrant) bool {
 	if a.Scope.ResourceUID == "" && b.Scope.ResourceUID != "" {
-		return (a.Operation == "run_apply" || a.Operation == "run_destroy") && b.Operation == "guest_task" && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt
+		return (a.Operation == "run_apply" || a.Operation == "run_destroy") && b.Operation == "guest_task" && b.ParentEpoch == a.Epoch && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt
 	}
 	if b.Scope.ResourceUID == "" && a.Scope.ResourceUID != "" {
-		return (b.Operation == "run_apply" || b.Operation == "run_destroy") && a.Operation == "guest_task" && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt
+		return nestedRunGrantPair(b, a)
 	}
 	return false
 }
@@ -251,12 +251,12 @@ func scopesOverlap(a, b controlplane.ExecutionScope) bool {
 	return a.TopologyUID == b.TopologyUID && (a.ResourceUID == "" || b.ResourceUID == "" || a.ResourceUID == b.ResourceUID)
 }
 func sameGrant(a, b controlplane.ExecutionGrant) bool {
-	return a.Scope == b.Scope && a.TargetBootID == b.TargetBootID && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.ActionID == b.ActionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt && a.Operation == b.Operation && a.Digest == b.Digest
+	return a.ParentEpoch == b.ParentEpoch && a.Scope == b.Scope && a.TargetBootID == b.TargetBootID && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.ActionID == b.ActionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt && a.Operation == b.Operation && a.Digest == b.Digest
 }
 func validTTL(ttl time.Duration) bool { return ttl > 0 && ttl <= MaxExecutionGrantTTL }
 
 func (r *ExecutionGrantRepository) Issue(ctx context.Context, request controlplane.ExecutionGrant, ttl time.Duration) (*controlplane.ExecutionGrant, error) {
-	if !validGrant(request) || !validTTL(ttl) {
+	if !validGrant(request) || !validTTL(ttl) || request.ParentEpoch != 0 {
 		return nil, ErrInvalidRecord
 	}
 	var result controlplane.ExecutionGrant
@@ -266,6 +266,12 @@ func (r *ExecutionGrantRepository) Issue(ctx context.Context, request controlpla
 		}
 		if !request.ExpiresAt.IsZero() && !request.ExpiresAt.After(a.ObservedAt) {
 			return ErrConflict
+		}
+		// Match the existing scope before scanning overlapping child scopes;
+		// map iteration order must not change exact parent retry behavior.
+		if g, ok := a.Grants[grantScopeKey(request.Scope)]; ok && sameGrant(g, request) && g.State == controlplane.GrantActive && a.ObservedAt.Before(g.ExpiresAt) {
+			result = g
+			return nil
 		}
 		for _, g := range a.Grants {
 			if !scopesOverlap(g.Scope, request.Scope) || g.State == controlplane.GrantStopped {
@@ -308,17 +314,29 @@ func (r *ExecutionGrantRepository) DeriveGuestTask(ctx context.Context, parent, 
 	var result controlplane.ExecutionGrant
 	err := r.update(ctx, func(a *executionAuthority) error {
 		current, ok := a.Grants[grantScopeKey(parent.Scope)]
-		if !ok || current.State != controlplane.GrantActive || !sameGrant(current, parent) || !a.ObservedAt.Before(current.ExpiresAt) {
+		if !ok || parent.Scope.ResourceUID != "" || current.Epoch != parent.Epoch || a.Sessions[parent.AgentID].ID != parent.SessionID || current.State != controlplane.GrantActive || !sameGrant(current, parent) || !a.ObservedAt.Before(current.ExpiresAt) || !a.ObservedAt.Before(parent.ExpiresAt) {
 			return ErrConflict
 		}
-		if parent.Scope.ResourceUID != "" && (parent.Scope.ResourceUID != child.Scope.ResourceUID || parent.Scope.Generation != child.Scope.Generation) {
+		if child.ParentEpoch != 0 && child.ParentEpoch != current.Epoch || !child.ExpiresAt.IsZero() && !child.ExpiresAt.After(a.ObservedAt) {
 			return ErrConflict
+		}
+		child.ParentEpoch = current.Epoch
+		// A completed task is never reissued, even after another task has
+		// replaced its resource slot. Host-stop tombstones preserve this fact.
+		for _, stopped := range a.Stops {
+			if sameGrant(stopped.Grant, child) {
+				return ErrConflict
+			}
 		}
 		for key, existing := range a.Grants {
 			if key == grantScopeKey(parent.Scope) || existing.State == controlplane.GrantStopped {
 				continue
 			}
 			if scopesOverlap(existing.Scope, child.Scope) {
+				if sameGrant(existing, child) && existing.State == controlplane.GrantActive && a.ObservedAt.Before(existing.ExpiresAt) && !existing.ExpiresAt.After(parent.ExpiresAt) {
+					result = existing
+					return nil
+				}
 				return ErrConflict
 			}
 		}
@@ -329,10 +347,17 @@ func (r *ExecutionGrantRepository) DeriveGuestTask(ctx context.Context, parent, 
 		result = child
 		result.Epoch = a.Epoch
 		result.ExpiresAt = a.ObservedAt.Add(ttl)
+		if !child.ExpiresAt.IsZero() && child.ExpiresAt.Before(result.ExpiresAt) {
+			result.ExpiresAt = child.ExpiresAt
+		}
 		if current.ExpiresAt.Before(result.ExpiresAt) {
 			result.ExpiresAt = current.ExpiresAt
 		}
+		if parent.ExpiresAt.Before(result.ExpiresAt) {
+			result.ExpiresAt = parent.ExpiresAt
+		}
 		result.State = controlplane.GrantActive
+		result.StopReceipt = ""
 		a.Grants[grantScopeKey(result.Scope)] = result
 		return nil
 	})
@@ -353,6 +378,50 @@ func currentGrant(a *executionAuthority, proof controlplane.ExecutionGrant) (con
 	return g, nil
 }
 
+func activeParent(a *executionAuthority, child controlplane.ExecutionGrant) (controlplane.ExecutionGrant, error) {
+	parent, ok := a.Grants[grantScopeKey(controlplane.ExecutionScope{TopologyUID: child.Scope.TopologyUID})]
+	if !ok || child.ParentEpoch == 0 || !nestedRunGrantPair(parent, child) || parent.State != controlplane.GrantActive || a.Sessions[parent.AgentID].ID != parent.SessionID || !a.ObservedAt.Before(parent.ExpiresAt) || child.ExpiresAt.After(parent.ExpiresAt) {
+		return parent, ErrConflict
+	}
+	return parent, nil
+}
+
+// RenewDerivedGuestTask renews only the exact child of a still-live parent.
+// Parent renewal must precede child renewal; neither operation resurrects expiry.
+func (r *ExecutionGrantRepository) RenewDerivedGuestTask(ctx context.Context, parent, child controlplane.ExecutionGrant, ttl time.Duration) (*controlplane.ExecutionGrant, error) {
+	if !validTTL(ttl) {
+		return nil, ErrInvalidRecord
+	}
+	var result controlplane.ExecutionGrant
+	err := r.update(ctx, func(a *executionAuthority) error {
+		g, err := currentGrant(a, child)
+		if err != nil {
+			return err
+		}
+		p, err := activeParent(a, g)
+		if err != nil || !sameGrant(p, parent) || p.Epoch != parent.Epoch || g.State != controlplane.GrantActive || !a.ObservedAt.Before(g.ExpiresAt) || !a.ObservedAt.Before(parent.ExpiresAt) || g.ExpiresAt.After(parent.ExpiresAt) {
+			return ErrConflict
+		}
+		deadline := a.ObservedAt.Add(ttl)
+		if p.ExpiresAt.Before(deadline) {
+			deadline = p.ExpiresAt
+		}
+		if parent.ExpiresAt.Before(deadline) {
+			deadline = parent.ExpiresAt
+		}
+		if deadline.After(g.ExpiresAt) {
+			g.ExpiresAt = deadline
+		}
+		a.Grants[grantScopeKey(g.Scope)] = g
+		result = g
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // Authorize is an online authority check. A host must still journal/deduplicate
 // effects and enforce a monotonic local deadline; this check alone is not a gate.
 func (r *ExecutionGrantRepository) Authorize(ctx context.Context, proof controlplane.ExecutionGrant) error {
@@ -363,6 +432,10 @@ func (r *ExecutionGrantRepository) Authorize(ctx context.Context, proof controlp
 		}
 		if a.Sessions[g.AgentID].ID != g.SessionID || g.State != controlplane.GrantActive || !a.ObservedAt.Before(g.ExpiresAt) {
 			return ErrConflict
+		}
+		if g.ParentEpoch != 0 {
+			_, err = activeParent(a, g)
+			return err
 		}
 		return nil
 	})
@@ -378,7 +451,7 @@ func (r *ExecutionGrantRepository) Renew(ctx context.Context, proof controlplane
 			return err
 		}
 		now := a.ObservedAt
-		if a.Sessions[g.AgentID].ID != g.SessionID || g.State != controlplane.GrantActive || !now.Before(g.ExpiresAt) {
+		if g.ParentEpoch != 0 || a.Sessions[g.AgentID].ID != g.SessionID || g.State != controlplane.GrantActive || !now.Before(g.ExpiresAt) {
 			return ErrConflict
 		}
 		deadline := now.Add(ttl)
@@ -421,6 +494,41 @@ func (r *ExecutionGrantRepository) AcceptHostStop(ctx context.Context, proof con
 	return r.acknowledgeStop(ctx, proof, receipt, true)
 }
 
+// PrepareHostStop freezes a host-confirmed parent before committing its Run
+// outcome. Revocation retains exclusion while preventing new child authority;
+// AcceptHostStop releases the scope only after the canonical commit succeeds.
+func (r *ExecutionGrantRepository) PrepareHostStop(ctx context.Context, proof controlplane.ExecutionGrant, receipt string) error {
+	if receipt == "" {
+		return ErrInvalidRecord
+	}
+	return r.update(ctx, func(a *executionAuthority) error {
+		if prior, ok := a.Stops[proof.Epoch]; ok {
+			if sameGrant(prior.Grant, proof) && prior.Receipt == receipt {
+				return nil
+			}
+			return ErrConflict
+		}
+		g, err := currentGrant(a, proof)
+		if err != nil {
+			return err
+		}
+		if g.State == controlplane.GrantStopped {
+			if g.StopReceipt == receipt {
+				return nil
+			}
+			return ErrConflict
+		}
+		for _, child := range a.Grants {
+			if child.ParentEpoch == g.Epoch && child.State != controlplane.GrantStopped {
+				return ErrConflict
+			}
+		}
+		g.State = controlplane.GrantRevoked
+		a.Grants[grantScopeKey(g.Scope)] = g
+		return nil
+	})
+}
+
 func (r *ExecutionGrantRepository) ValidateHostStop(ctx context.Context, proof controlplane.ExecutionGrant, receipt string) error {
 	return r.read(ctx, func(a *executionAuthority) error {
 		if prior, ok := a.Stops[proof.Epoch]; ok {
@@ -456,6 +564,11 @@ func (r *ExecutionGrantRepository) acknowledgeStop(ctx context.Context, proof co
 		}
 		if g.State != controlplane.GrantRevoked && !hostConfirmed {
 			return ErrConflict
+		}
+		for _, child := range a.Grants {
+			if child.ParentEpoch == g.Epoch && child.State != controlplane.GrantStopped {
+				return ErrConflict
+			}
 		}
 		g.State = controlplane.GrantStopped
 		g.StopReceipt = receipt

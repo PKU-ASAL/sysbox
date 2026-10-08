@@ -247,3 +247,35 @@ during network/disk I/O. Deadline cancellation uses an independent monotonic
 deadline and cannot wait for a renewal's journal mutex. Completed recovery
 requires the exact historical signed envelope; unsigned old outcomes are
 rejected rather than adopted.
+
+### Parent-bound guest authority
+
+Derived guest grants now carry immutable `parent_epoch`. Exact active derivation
+retries return the existing child without extending its deadline. Replaying a
+stopped task cannot allocate a new epoch; a distinct task may reuse the resource
+only after its predecessor's verified stop. Resource-scoped parent derivation
+currently fails closed instead of overwriting the parent's authority slot.
+
+`POST /v1/agents/{agent}/execution-grant/renew-guest` requires signed parent and
+child envelopes. It validates the original command under the authority lock and
+bounds the child by both the stored parent expiry and the expiry of the supplied
+parent envelope. Generic renewal cannot renew a derived child. Parent revocation
+or session replacement prevents subsequent child authorization/renewal, and the
+guest refuses a renewal that changes its parent epoch.
+
+Before accepting a parent Run completion, the API atomically verifies that all
+linked children have stopped and freezes the parent as revoked. It retains the
+execution exclusion while committing the canonical result; new derivations
+cannot enter that gap. Final stop acceptance then releases the parent. Failed
+canonical completion can retry; historical exact receipt replay never modifies
+a successor. Rejected derivation/signature checks preserve the observed clock
+floor to prevent wall-clock rollback reviving authority.
+
+Repository and API regressions cover retries, parent bounds, scope collisions,
+revocation/session replacement, child-before-parent stop ordering, concurrent
+derivation versus completion preparation, and clock rollback. Guest renewal
+regression covers parent changes without touching the running task record.
+These changes are not yet evidence of periodic child renewal through a live
+supervisor or cross-VM child lifecycle acceptance. The guest helper must be
+rebuilt for the new field; old overlapping parent/child authority records without
+parent binding are rejected rather than inferred or silently migrated.

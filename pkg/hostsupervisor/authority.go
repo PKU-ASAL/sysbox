@@ -83,6 +83,12 @@ func (c AuthorityClient) DeriveGuestGrant(ctx context.Context, parent controlpla
 	return out, err
 }
 
+func (c AuthorityClient) RenewDerivedGuestGrant(ctx context.Context, parent, child controlplane.SignedExecutionGrant) (controlplane.SignedExecutionGrant, error) {
+	var out controlplane.SignedExecutionGrant
+	err := c.postJSON(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grant/renew-guest", map[string]any{"parent": parent, "child": child}, &out)
+	return out, err
+}
+
 func (c AuthorityClient) RequestGCGrant(ctx context.Context, candidate GCCandidate, topology, sessionID, actionID, commandID, leaseOwner string, attempt int, bootID string) (controlplane.SignedExecutionGrant, error) {
 	var out controlplane.SignedExecutionGrant
 	err := c.postJSON(ctx, "/v1/agents/"+c.Identity.ID+"/gc-grant", map[string]any{"candidate": candidate, "topology": topology, "session_id": sessionID, "action_id": actionID, "command_id": commandID, "attempt": attempt, "lease_owner": leaseOwner, "boot_id": bootID}, &out)

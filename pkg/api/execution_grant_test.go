@@ -235,7 +235,12 @@ func TestRunGrantDerivesGuestGrantThroughDurableAuthority(t *testing.T) {
 	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
 	session, err := repo.OpenSession(ctx, "agent", "host-process", "")
 	require.NoError(t, err)
-	parent, err := repo.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology"}, AgentID: "agent", SessionID: session.ID, ActionID: "run", CommandID: "command", Attempt: 1, Operation: "run_apply", Digest: "run-digest", TargetBootID: "host"}, time.Minute)
+	run := controlplane.Run{ID: "run", Topology: "lab", Revision: "revision", Op: "apply", Status: controlplane.RunAssigned, AgentID: "agent", Attempt: 1, LeaseOwner: "worker", LeaseUntil: time.Now().Add(2 * time.Minute)}
+	command := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusLeased, Run: &run, TopologyUID: "topology", ActionID: "run", Attempt: 1, LeaseOwner: "worker", LeaseUntil: run.LeaseUntil}
+	require.NoError(t, s.apiStore.SaveAgentCommand(ctx, command))
+	source, err := s.sourceGrant(ctx, "agent", ExecutionGrantRequest{SessionID: session.ID, Attempt: 1, LeaseOwner: "worker", BootID: "host"}, &persistence.CommandRecord{Command: command})
+	require.NoError(t, err)
+	parent, err := repo.Issue(ctx, source, time.Minute)
 	require.NoError(t, err)
 	signed, err := controlplane.SignExecutionGrant(issuerKey, *parent, "host", time.Now())
 	require.NoError(t, err)

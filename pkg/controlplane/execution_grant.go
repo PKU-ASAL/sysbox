@@ -36,6 +36,7 @@ type ExecutionGrant struct {
 	CommandID    string         `json:"command_id"`
 	Attempt      uint64         `json:"attempt"`
 	Epoch        uint64         `json:"epoch"`
+	ParentEpoch  uint64         `json:"parent_epoch,omitempty"`
 	Operation    string         `json:"operation"`
 	Digest       string         `json:"digest"`
 	ExpiresAt    time.Time      `json:"expires_at"`
