@@ -75,7 +75,7 @@ var (
 	vmStore = map[string]*vmProcess{} // vm_id → vmProcess
 )
 
-func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
+func (s *Substrate) ResolveImage(ctx context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
 	if source.Kind != substrate.ArtifactRootFS {
 		return substrate.ArtifactHandle{}, fmt.Errorf("firecracker substrate requires artifact kind %q", substrate.ArtifactRootFS)
 	}
@@ -83,7 +83,7 @@ func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSou
 	if effective == "" {
 		effective = source.Source
 	}
-	resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: source.Kind, Source: effective, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily, Metadata: source.Metadata})
+	resolved, err := artifact.New().ResolveIdentityContext(ctx, artifact.IdentitySpec{Kind: source.Kind, Source: effective, PullSource: source.PullSource, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily, Metadata: source.Metadata})
 	if err != nil {
 		return substrate.ArtifactHandle{}, fmt.Errorf("firecracker: resolve rootfs: %w", err)
 	}

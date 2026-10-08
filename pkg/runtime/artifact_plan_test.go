@@ -3,8 +3,11 @@ package runtime
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -53,4 +56,70 @@ func TestResolvePlanArtifactDigestsDetectsLocalImageMutation(t *testing.T) {
 	second, err := ResolvePlanArtifactDigests(context.Background(), g)
 	require.NoError(t, err)
 	require.NotEqual(t, first, second)
+}
+
+func TestResolvePlanPinnedVMArtifactsDoesNotFetch(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "unexpected plan download", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	const imageSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const kernelSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	g := graph.New()
+	image := address.Resource("sysbox_image", "rootfs")
+	kernel := address.Resource("sysbox_kernel", "boot")
+	require.NoError(t, g.AddNode(image, nil))
+	require.NoError(t, g.SetData(image, &config.ImageConfig{
+		Substrate: "firecracker", Kind: "rootfs", Source: server.URL + "/rootfs.ext4",
+		SHA256: imageSHA, Architecture: "amd64", GuestFamily: "linux",
+	}))
+	require.NoError(t, g.AddNode(kernel, nil))
+	require.NoError(t, g.SetData(kernel, &config.KernelConfig{
+		Substrate: "firecracker", Source: server.URL + "/vmlinux",
+		SHA256: "sha256:" + kernelSHA, Architecture: "amd64",
+	}))
+
+	digests, err := ResolvePlanArtifactDigests(context.Background(), g)
+	require.NoError(t, err)
+	require.Equal(t, "sha256:"+imageSHA, digests[image.String()])
+	require.Equal(t, "sha256:"+kernelSHA, digests[kernel.String()])
+	require.EqualValues(t, 0, requests.Load())
+}
+
+func TestResolvePlanRejectsInvalidPinnedVMArtifact(t *testing.T) {
+	g := graph.New()
+	image := address.Resource("sysbox_image", "rootfs")
+	require.NoError(t, g.AddNode(image, nil))
+	require.NoError(t, g.SetData(image, &config.ImageConfig{
+		Substrate: "firecracker", Kind: "rootfs", Source: "https://example.invalid/rootfs.ext4",
+		SHA256: "bad-pin", Architecture: "amd64", GuestFamily: "linux",
+	}))
+	_, err := ResolvePlanArtifactDigests(context.Background(), g)
+	require.ErrorContains(t, err, "expected SHA-256")
+}
+
+func TestResolvePlanLocalFirstVMArtifactDoesNotFetch(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "unexpected plan download", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	localPath := filepath.Join(t.TempDir(), "rootfs.ext4")
+	pin := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	g := graph.New()
+	image := address.Resource("sysbox_image", "rootfs")
+	require.NoError(t, g.AddNode(image, nil))
+	require.NoError(t, g.SetData(image, &config.ImageConfig{
+		Substrate: "firecracker", Kind: "rootfs", Source: localPath,
+		PullSource: server.URL + "/rootfs.ext4", SHA256: pin,
+		Architecture: "amd64", GuestFamily: "linux",
+	}))
+	digests, err := ResolvePlanArtifactDigests(context.Background(), g)
+	require.NoError(t, err)
+	require.Equal(t, "sha256:"+pin, digests[image.String()])
+	require.EqualValues(t, 0, requests.Load())
 }

@@ -36,7 +36,7 @@ type HandleState struct {
 	SeedISO          string                         `json:"seed_iso,omitempty"`
 }
 
-func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
+func (s *Substrate) ResolveImage(ctx context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
 	if source.Kind != substrate.ArtifactQCow2 {
 		return substrate.ArtifactHandle{}, fmt.Errorf("libvirt substrate requires artifact kind %q", substrate.ArtifactQCow2)
 	}
@@ -44,7 +44,7 @@ func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSou
 	if effective == "" {
 		effective = source.Source
 	}
-	resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: source.Kind, Source: effective, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily, Metadata: source.Metadata})
+	resolved, err := artifact.New().ResolveIdentityContext(ctx, artifact.IdentitySpec{Kind: source.Kind, Source: effective, PullSource: source.PullSource, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily, Metadata: source.Metadata})
 	if err != nil {
 		return substrate.ArtifactHandle{}, fmt.Errorf("libvirt: resolve qcow2: %w", err)
 	}
