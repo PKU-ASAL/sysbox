@@ -13,7 +13,7 @@
 | P6 | aggregate format2快照、元数据restore monotonic serial、身份约束、API CRUD；restore/force-unlock 共用活动操作检查，活跃 Run、节点操作、guest task/file 或未上报 host stop 时拒绝维护；force-unlock 还拒绝 live state lease，缺少完整活动证据时 fail-closed；Local/SQLite/Postgres restore 统一校验 topology/resource incarnation | grant撤销与freeze、force-unlock 审计回执、恢复较旧资源集合的显式reconcile、后端同一事务内 CAS restore |
 | P7 | managed Docker bridge导出/核验、FC/libvirt NIC消费；受管 `ssh_access` 配置合同、宿主 apply/observe/delete、receipt/recovery、local drop-in 及真实独立 sshd E2E；Docker/network/libvirt GC provider callback 均接入 supervisor | `ssh_access` owning-agent 与 API 派发的完整终态 completion、host file-install/grant 的实际授权绑定，旧 key 只撤销自身配置；共享 sshd drop-in 生命周期、网络自动重接、混合netns单VM支持边界 |
 | P8 | GC dry-run、aggregate snapshot 引用、candidate digest、durable journal；API leased `gc_delete` grant；Docker/network/libvirt supervisor delete callback；删除前后 immutable ID/ownership revalidation、receipt 封存与恢复 | Firecracker/TAP orphan callback、真实 provider 执行矩阵和跨宿主 CLI/API 调度；CLI raw delete 尚未迁移为唯一入口，默认 dry-run 仍不执行删除 |
-| P9 | 分项真实Docker bridge/TAP、private cgroup、KVM、SSH、adoption provider测试；Run/SSH/power/GC supervisor 单测和 race | 真实 host-supervisor Run E2E、双宿主、完整故障矩阵、升级/main整合，不算完成 |
+| P9 | 分项真实Docker bridge/TAP、private cgroup、KVM、SSH、adoption provider测试；Run/SSH/power/GC supervisor 单测和 race；真实 Docker guest task、node power、file install 的 API/supervisor 重建与旧 epoch E2E 已通过 | 真实 host-supervisor Run E2E、双宿主、完整故障矩阵、升级/main整合，不算完成 |
 
 ## 当前收敛规则
 
@@ -213,3 +213,5 @@ network/libvirt 仍需同样的 credential-owning callback 和真实环境验收
 provider 删除代码仍存在于迁移期间，不能把它当成跨宿主宿主 gate 已完成。
 
 2026-10-07集成检查点：真实Postgres启用的全仓测试通过；API/persistence/Agent/runtime/guesttask/effectgate/transport/四provider相关race通过；vet与docs检查通过。最终重建amd64/arm64 helper后，真实KVM5.10持久任务去重、冷读取、输出、取消确认通过（10.04秒）。这证明当前基础可集成，不代表尚未挂接的host supervisor、P5/P6/P7功能和P8/P9已经完成。
+
+2026-10-08主线切片回归：普通 Run 的 host Start/Observe 终态 relay、真实 RunID completion 路由、Run/SSH/power/GC 冷恢复扫描、Docker/network/libvirt GC provider callback 已接入；全仓 Go 测试和关键包 race 通过。真实 Docker guest task、node power、10MiB file install 的 API/supervisor 重建、丢回执、后继 epoch 测试通过。P9 仍未关闭：Run 的真实 provider E2E、双宿主、完整故障矩阵和升级演练尚未完成。
