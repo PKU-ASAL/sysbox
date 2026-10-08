@@ -313,3 +313,40 @@ the upgraded connection; previously unread input intermittently reset TCP.
 This slice has not yet been validated with a real cross-VM background child.
 It does not close unknown Run-intent recovery, persistent service transfer,
 Reset child lifecycle, or the remaining P5–P9 capability/fault gates.
+
+### Real cross-VM background child acceptance
+
+Prepare `sysbox-p9-guest:local` on the execution VM using
+`scripts/acceptance/guest.Dockerfile`, the current static `cmd/sysbox-init`
+binary named `sysbox-guest-task`, and the current issuer **public** key named
+`issuer.pub`. Transfer these via pinned SSH, never share the private key. The
+probe option `--background --provision-seconds 45` uses this image with a private
+cgroup namespace and privileges needed for the disposable guest supervisor.
+The VM remains the outer isolation boundary. This is a finite task, not a
+service intended to outlive Apply.
+
+Real execution exposed and fixed two integration bugs:
+
+- Create now persists an incomplete action candidate before guest effects,
+  including ownership, generation, codec state and dependencies. It does not
+  publish the resource or claim composite completion. A failed checkpoint
+  prevents routes/provisioners/image entry from running.
+- Candidate resolution loads state and action journal in one repository
+  transaction. Separate reads could otherwise combine pre-publication state
+  with a succeeded action and spuriously cancel a valid child. Reads retain
+  the aggregate serial and return detached copies.
+
+The fourth round `p9-5ecab24983f4` passed: parent epoch19, child epoch20;
+Apply started09:36:51.323286438Z. Child renewal issued09:37:02.999993858Z with
+expiry09:39:31.069891814Z; child stopped09:37:38.704818791Z with known exit0,
+confirmed termination and acknowledged host receipt. Parent ended afterwards,
+at09:37:38.756211213Z (47.43s). Destroy, independent execution-side owner absence
+and non-force metadata DELETE passed. Control evidence:
+`/var/tmp/p9-child-45s-04.json`.
+
+The previous successful lifecycle round03 revealed an inaccurate parent end
+timestamp taken before waiting for children; `RunChildren.Finish` now timestamps
+completion only after verified child termination. Rounds01/02 remain failed
+evidence with retained resources/journals; they are not counted as recovered.
+This successful gate does not close child cancellation under partition, cold
+recovery of unknown intents, persistent services, or the full fault matrix.

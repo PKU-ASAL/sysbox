@@ -225,3 +225,15 @@ func (r *RunChildren) Cancel(ctx context.Context) error {
 	r.mu.Unlock()
 	return r.Wait(ctx)
 }
+
+// Finish timestamps the entire Run only after every owned child has completed.
+func (r *RunChildren) Finish(ctx context.Context, run *controlplane.Run) error {
+	if run == nil || run.Status != controlplane.RunDone {
+		return fmt.Errorf("successful parent outcome required before waiting for children")
+	}
+	if err := r.Wait(ctx); err != nil {
+		return err
+	}
+	run.EndedAt = time.Now().UTC()
+	return nil
+}

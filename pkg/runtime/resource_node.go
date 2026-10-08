@@ -446,6 +446,14 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		}
 	}
 
+	// Guest execution resolves this identity through the durable action store.
+	// Keep it as an incomplete candidate until every create phase succeeds.
+	if e.activeCreate != nil {
+		if err := e.recordStepExternal(ctx, parentStep, n.Address, controlplane.PlanActionCreate); err != nil {
+			return state.Resource{}, err
+		}
+	}
+
 	if err := e.configureNodeRoutes(ctx, parentStep, n.Address, subName, handle, cfg.Routes, e.state.FindResource(n.Address)); err != nil {
 		return state.Resource{}, err
 	}

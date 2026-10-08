@@ -82,11 +82,7 @@ func (r CanonicalResolver) ResolveRunTask(ctx context.Context, ref TargetRef, ru
 		return Target{}, err
 	}
 	defer repo.Close()
-	st, err := repo.LoadState(ctx, ref.Topology)
-	if err != nil {
-		return Target{}, err
-	}
-	actions, err := repo.LoadActions(ctx, ref.Topology)
+	st, actions, err := repo.LoadStateAndActions(ctx, ref.Topology)
 	if err != nil {
 		return Target{}, err
 	}
@@ -116,11 +112,7 @@ func (r CanonicalResolver) FindRunTaskRef(ctx context.Context, topology, runID s
 		return zero, err
 	}
 	defer repo.Close()
-	st, err := repo.LoadState(ctx, topology)
-	if err != nil {
-		return zero, err
-	}
-	actions, err := repo.LoadActions(ctx, topology)
+	st, actions, err := repo.LoadStateAndActions(ctx, topology)
 	if err != nil {
 		return zero, err
 	}

@@ -176,23 +176,64 @@ func (r *Repository) LoadState(ctx context.Context, topology string) (*state.Sta
 	var out *state.State
 	err := r.update(ctx, topology, func(a *aggregate) error {
 		var err error
-		out, err = cloneState(a.State)
-		if err == nil {
-			out.Meta = state.StateMeta{Backend: r.backend.name(), Serial: a.Serial, Exists: true, UpdatedAt: a.UpdatedAt}
-		}
+		out, err = r.snapshotState(a)
 		return err
 	})
 	return out, err
 }
+
+func (r *Repository) snapshotState(a *aggregate) (*state.State, error) {
+	out, err := cloneState(a.State)
+	if err == nil {
+		out.Meta = state.StateMeta{Backend: r.backend.name(), Serial: a.Serial, Exists: true, UpdatedAt: a.UpdatedAt}
+	}
+	return out, err
+}
+
+func snapshotActions(a *aggregate) ([]runtime.ActionRecord, error) {
+	var out []runtime.ActionRecord
+	for _, action := range a.Actions {
+		out = append(out, action)
+	}
+	// Candidates contain pointers and opaque private state. Detach those from
+	// the aggregate before returning the snapshot to callers.
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	out = nil
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// LoadStateAndActions observes resource publication and its action outcome in
+// one transaction, including the transition from an unfinished create candidate
+// to a committed resource. Reading does not advance the aggregate serial.
+func (r *Repository) LoadStateAndActions(ctx context.Context, topology string) (*state.State, []runtime.ActionRecord, error) {
+	var st *state.State
+	var actions []runtime.ActionRecord
+	err := r.update(ctx, topology, func(a *aggregate) error {
+		var err error
+		st, err = r.snapshotState(a)
+		if err != nil {
+			return err
+		}
+		actions, err = snapshotActions(a)
+		return err
+	})
+	return st, actions, err
+}
+
 func (r *Repository) LoadActions(ctx context.Context, topology string) ([]runtime.ActionRecord, error) {
 	var out []runtime.ActionRecord
 	err := r.update(ctx, topology, func(a *aggregate) error {
-		for _, v := range a.Actions {
-			out = append(out, v)
-		}
-		return nil
+		var err error
+		out, err = snapshotActions(a)
+		return err
 	})
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, err
 }
 func validateAction(a runtime.ActionRecord) error {

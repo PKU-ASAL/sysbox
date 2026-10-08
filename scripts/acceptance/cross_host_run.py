@@ -57,6 +57,7 @@ def main():
     parser.add_argument("--finalize", action="store_true", help="delete metadata after independent provider absence verification")
     parser.add_argument("--stop-primary", action="store_true", help="control VM only: stop the test primary API before acceptance")
     parser.add_argument("--provision-seconds", type=int, default=0, help="run a real foreground provisioner longer than the RPC budget")
+    parser.add_argument("--background", action="store_true", help="use a finite durable guest task with the prepared p9 guest image")
     args = parser.parse_args()
     token = json.loads(Path(args.config).read_text())["api"]["token"]
     evidence_path = Path(args.evidence)
@@ -108,8 +109,16 @@ def main():
     if not 0 <= args.provision_seconds <= 120:
         parser.error("provision-seconds must be between 0 and 120")
     hcl = HCL
+    if args.background:
+        if args.provision_seconds < 1:
+            parser.error("background requires a positive provision-seconds")
+        hcl = hcl.replace('source = "alpine:3.22"', 'source = "sysbox-p9-guest:local"')
+        hcl = hcl.replace('provider "docker" {', 'provider "docker" {\n    privileged = true\n    cgroupns_mode = "private"')
+        evidence["background"] = True
     if args.provision_seconds:
         hcl = hcl.rstrip()[:-1] + '\n  provisioner "exec" {\n    program = "sleep"\n    shell = "none"\n    args = ["' + str(args.provision_seconds) + '"]\n  }\n}\n'
+        if args.background:
+            hcl = hcl.replace('provisioner "exec" {', 'provisioner "exec" {\n    background = true')
         evidence["provision_seconds"] = args.provision_seconds
     revision = request("POST", "/v1/revisions", {"files": {"field.sysbox.hcl": hcl}})["revision"]
     evidence["revision"] = revision

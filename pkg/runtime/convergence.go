@@ -414,6 +414,7 @@ func (e *Executor) runAction(ctx context.Context, change controlplane.PlannedCha
 			effectErr = worker.DestroyResource(ctx, *current)
 		}
 	} else {
+		worker.activeCreate = &record
 		effectErr = worker.recordSubstep(step, "create_resource", map[string]any{"resource": change.Address.String()}, func() error { return worker.CreateResource(ctx, change.Address) })
 		if candidate := worker.state.FindResource(change.Address); candidate != nil {
 			copy := cloneResetStateResource(*candidate)

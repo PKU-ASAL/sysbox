@@ -31,6 +31,7 @@ type Executor struct {
 	recoveredCreates    map[string]bool
 	recoveredDeletes    map[string]bool
 	activeReset         *ActionRecord
+	activeCreate        *ActionRecord
 	secretResolver      secret.Resolver
 	topology            string
 	runID               string
@@ -165,6 +166,30 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 	r := e.state.FindResource(id)
 	if r == nil {
 		return nil
+	}
+	if record := e.activeCreate; record != nil && record.Resource.Equal(id) {
+		candidate := cloneResetStateResource(*r)
+		candidate.OwnerUID = record.OwnerUID
+		candidate.ResourceUID = record.ResourceUID
+		candidate.Generation = record.Generation
+		candidate.ResourceType = id.Type
+		if handler, ok := GetResourceHandler(id.Type); ok {
+			candidate.SchemaVersion = handler.Schema().Version
+			candidate.ExternalID = handler.ExternalID(candidate)
+		}
+		if node := e.graph.Get(id); node != nil {
+			candidate.Dependencies = append([]address.Address(nil), node.Deps...)
+		}
+		record.Candidate = &candidate
+		record.ExpectedSerial = e.state.Meta.Serial
+		record.Status = ActionUncertain
+		record.EffectComplete = false
+		if err := e.actions.CommitActionOutcome(ctx, *record, nil); err != nil {
+			return fmt.Errorf("persist create phase identity: %w", err)
+		}
+		record.Revision++
+		e.recorder.StepStateResource(step, resourceLog(candidate))
+		return e.journalError()
 	}
 	if e.activeReset != nil && e.activeReset.Resource.Equal(id) {
 		candidate := cloneResetStateResource(*r)

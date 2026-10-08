@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
@@ -20,6 +21,8 @@ import (
 type nodeGuardDriver struct {
 	*portTestSubstrate
 	conn                                     *recordingConn
+	guestConn                                substrate.Connection
+	privateState                             json.RawMessage
 	creates, starts, destroys, entries       int
 	startErr, prepareErr, routeErr, entryErr error
 	onDestroy                                func()
@@ -52,11 +55,18 @@ func (d *nodeGuardDriver) PrepareHandle(_ context.Context, h *substrate.NodeHand
 	return nil
 }
 func (d *nodeGuardDriver) Connection(substrate.NodeHandle, []substrate.ConnectionHint) (substrate.Connection, error) {
+	if d.guestConn != nil {
+		return d.guestConn, nil
+	}
 	return d.conn, nil
 }
 func (d *nodeGuardDriver) ExecImageEntry(context.Context, substrate.NodeHandle) error {
 	d.entries++
 	return d.entryErr
+}
+
+func (d *nodeGuardDriver) MarshalProviderState(substrate.NodeHandle) (json.RawMessage, error) {
+	return d.privateState, nil
 }
 func (d *nodeGuardDriver) EnsureRoute(context.Context, substrate.NodeHandle, string, string) error {
 	return d.routeErr
