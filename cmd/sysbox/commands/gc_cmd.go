@@ -17,6 +17,7 @@ import (
 
 	"github.com/gofrs/flock"
 
+	types "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -24,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/effectgate"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -444,8 +446,19 @@ func executeOrphans(ctx context.Context, runsDir string, candidates []orphan, re
 	}
 	for _, candidate := range candidates {
 		key := candidate.Kind + ":" + candidate.ID
-		if prior, ok := j.Records[key]; ok && prior.Status == "complete" {
-			continue
+		digest := gcCandidateDigest(candidate)
+		if prior, ok := j.Records[key]; ok {
+			if prior.Digest != digest || prior.Candidate.OwnerUID != candidate.OwnerUID || prior.Candidate.ResourceUID != candidate.ResourceUID || prior.Candidate.Generation != candidate.Generation {
+				return fmt.Errorf("GC candidate %s identity changed", key)
+			}
+			switch prior.Status {
+			case "complete":
+				continue
+			case "intent", "uncertain":
+				return fmt.Errorf("GC candidate %s: %w", key, effectgate.ErrUncertain)
+			default:
+				return fmt.Errorf("GC candidate %s has invalid journal status", key)
+			}
 		}
 		current, err := collectActiveIDsChecked(runsDir)
 		if err != nil {
@@ -460,7 +473,6 @@ func executeOrphans(ctx context.Context, runsDir string, candidates []orphan, re
 		} else if activeContains(current, candidate) {
 			return fmt.Errorf("GC candidate %s is referenced again", key)
 		}
-		digest := gcCandidateDigest(candidate)
 		j.Records[key] = gcJournalRecord{Candidate: candidate, Digest: digest, Status: "intent", UpdatedAt: time.Now().UTC()}
 		if err := saveGCJournal(path, j); err != nil {
 			return err
@@ -538,25 +550,107 @@ func deleteProviderCandidate(ctx context.Context, candidate orphan) error {
 		}
 		defer cli.Close()
 		if candidate.Kind == "container" {
-			err = cli.ContainerRemove(ctx, candidate.ID, container.RemoveOptions{Force: true})
+			inspected, inspectErr := cli.ContainerInspect(ctx, candidate.ID)
+			if errdefs.IsNotFound(inspectErr) {
+				return nil
+			}
+			if err := validateGCContainer(candidate, inspected, inspectErr); err != nil {
+				return err
+			}
+			err = cli.ContainerRemove(ctx, inspected.ID, container.RemoveOptions{Force: true})
 		} else {
-			err = cli.NetworkRemove(ctx, candidate.ID)
+			inspected, inspectErr := cli.NetworkInspect(ctx, candidate.ID, network.InspectOptions{})
+			if errdefs.IsNotFound(inspectErr) {
+				return nil
+			}
+			if err := validateGCNetwork(candidate, inspected, inspectErr); err != nil {
+				return err
+			}
+			err = cli.NetworkRemove(ctx, inspected.ID)
 		}
 		if err != nil && !errdefs.IsNotFound(err) {
 			return err
 		}
 		return nil
 	case "domain":
-		if out, err := exec.CommandContext(ctx, "virsh", "destroy", candidate.ID).CombinedOutput(); err != nil && !strings.Contains(string(out), "not running") {
+		raw, err := gcVirshOutput(ctx, "dumpxml", candidate.ID)
+		if err != nil {
+			return fmt.Errorf("virsh ownership check: %w", err)
+		}
+		var domain gcDomain
+		if err := xml.Unmarshal(raw, &domain); err != nil {
+			return fmt.Errorf("virsh ownership check: %w", err)
+		}
+		if err := validateGCDomain(candidate, domain); err != nil {
+			return err
+		}
+		if out, err := exec.CommandContext(ctx, "virsh", "destroy", domain.UUID).CombinedOutput(); err != nil && !strings.Contains(string(out), "not running") {
 			return fmt.Errorf("virsh destroy: %w: %s", err, strings.TrimSpace(string(out)))
 		}
-		if out, err := exec.CommandContext(ctx, "virsh", "undefine", candidate.ID, "--remove-all-storage").CombinedOutput(); err != nil && !strings.Contains(string(out), "not found") {
+		// Re-check immutable identity and managed ownership immediately before undefine.
+		raw, err = gcVirshOutput(ctx, "dumpxml", domain.UUID)
+		if err != nil {
+			return fmt.Errorf("virsh ownership check before undefine: %w", err)
+		}
+		var current gcDomain
+		if err := xml.Unmarshal(raw, &current); err != nil {
+			return fmt.Errorf("virsh ownership check before undefine: %w", err)
+		}
+		if err := validateGCDomain(candidate, current); err != nil {
+			return err
+		}
+		if out, err := exec.CommandContext(ctx, "virsh", "undefine", domain.UUID).CombinedOutput(); err != nil && !strings.Contains(string(out), "not found") {
 			return fmt.Errorf("virsh undefine: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	default:
 		return fmt.Errorf("unsupported GC provider kind %q", candidate.Kind)
 	}
+}
+
+func validateGCContainer(candidate orphan, inspected types.ContainerJSON, err error) error {
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("container ownership check: %w", err)
+	}
+	if inspected.Config == nil {
+		return fmt.Errorf("container %s ownership metadata unavailable", candidate.ID)
+	}
+	labels := inspected.Config.Labels
+	if inspected.ID != candidate.ID || !gcLabelsMatch(candidate, labels) {
+		return fmt.Errorf("container %s identity or ownership changed", candidate.ID)
+	}
+	return nil
+}
+
+func validateGCNetwork(candidate orphan, inspected network.Inspect, err error) error {
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("network ownership check: %w", err)
+	}
+	if inspected.ID != candidate.ID || !gcLabelsMatch(candidate, inspected.Labels) {
+		return fmt.Errorf("network %s identity or ownership changed", candidate.ID)
+	}
+	return nil
+}
+
+func gcLabelsMatch(candidate orphan, labels map[string]string) bool {
+	if labels == nil || labels[runtime.LabelManaged] != "true" {
+		return false
+	}
+	return labels["sysbox.owner_uid"] == candidate.OwnerUID && labels["sysbox.topology_uid"] == candidate.OwnerUID && labels["sysbox.resource_uid"] == candidate.ResourceUID && labels["sysbox.generation"] == strconv.FormatInt(candidate.Generation, 10)
+}
+
+func validateGCDomain(candidate orphan, domain gcDomain) error {
+	owner := domain.Metadata.Managed
+	if domain.UUID != candidate.ID || owner == nil || owner.OwnerUID != candidate.OwnerUID || owner.TopologyUID != candidate.OwnerUID || owner.ResourceUID != candidate.ResourceUID || owner.Generation != candidate.Generation || !gcOwnerAllowed(activeIDs{owners: map[string]bool{candidate.OwnerUID: true}}, owner.OwnerUID, owner.TopologyUID, owner.ResourceUID, owner.Generation) {
+		return fmt.Errorf("domain %s identity or ownership changed", candidate.ID)
+	}
+	return nil
 }
 
 func verifyProviderCandidateAbsent(ctx context.Context, candidate orphan) error {

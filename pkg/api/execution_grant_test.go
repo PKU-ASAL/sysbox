@@ -269,7 +269,7 @@ func TestGCGrantBindsCandidateAndSession(t *testing.T) {
 	require.NoError(t, err)
 	canonical, err := manager.LoadWithContext(ctx)
 	require.NoError(t, err)
-	candidate := hostsupervisor.GCCandidate{Kind: "container", ExternalID: "orphan", TopologyUID: canonical.TopologyUID, OwnerUID: canonical.TopologyUID, ResourceUID: "orphan", Generation: 1, InventoryDigest: "inventory"}
+	candidate := hostsupervisor.GCCandidate{Kind: "container", ExternalID: "orphan", TopologyUID: canonical.TopologyUID, OwnerUID: canonical.TopologyUID, ResourceUID: canonical.TopologyUID + "/orphan", Generation: 1, InventoryDigest: "inventory"}
 	body, _ := json.Marshal(map[string]any{"candidate": candidate, "topology": "lab", "session_id": session.ID, "action_id": "gc-action", "command_id": "gc-command", "attempt": 1, "lease_owner": "gc-worker", "boot_id": "host"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/gc-grant", bytes.NewReader(body))
 	require.NoError(t, agent.SignRequest(req, "host-a", secret, time.Now()))
@@ -280,4 +280,9 @@ func TestGCGrantBindsCandidateAndSession(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &signed))
 	require.Equal(t, "gc_delete", signed.Grant.Operation)
 	require.Equal(t, candidate.ResourceUID, signed.Grant.Scope.ResourceUID)
+	authorizeReq := httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/execution-grants/authorize", bytes.NewReader(response.Body.Bytes()))
+	require.NoError(t, agent.SignRequest(authorizeReq, "host-a", secret, time.Now()))
+	authorizeResp := httptest.NewRecorder()
+	s.ServeHTTP(authorizeResp, authorizeReq)
+	require.Equal(t, http.StatusOK, authorizeResp.Code, authorizeResp.Body.String())
 }

@@ -12,7 +12,7 @@
 | P5 | adoption SPI、journal动作、Docker不可变ID sidecar；只读 `/adoption-plan`，agent-authenticated `/adoption-confirm` 绑定 evidence/fingerprint/serial/generation/agent，生成 `adoption_apply` command；宿主 AdoptionCoordinator 复用 effectgate intent/Observe，并接入 Agent grant/RPC/provider Apply+Observe callback；host key completion endpoint 绑定 command lease，并通过 `CommitAdoptionEvidence` 在 ActionRepository CAS 事务中写入 canonical state；libvirt 与 Firecracker provider 均提供 fingerprinted XML/manifest Inspect/Apply/Observe SPI；真实 Firecracker/KVM（6.84s）和 libvirt domain（2.87s）generation/adoption E2E 已通过并清理测试资源 | 多表/同库 receipt 与 action outcome 的统一数据库事务、真实 provider 冷重启后接管验收 |
 | P6 | aggregate format2快照、元数据restore monotonic serial、身份约束、API CRUD；restore/force-unlock 共用活动操作检查，活跃 Run、节点操作、guest task/file 或未上报 host stop 时拒绝维护；force-unlock 还拒绝 live state lease，缺少完整活动证据时 fail-closed；Local/SQLite/Postgres restore 统一校验 topology/resource incarnation | grant撤销与freeze、force-unlock 审计回执、恢复较旧资源集合的显式reconcile、后端同一事务内 CAS restore |
 | P7 | managed Docker bridge导出/核验、FC/libvirt NIC消费；受管 `ssh_access` 配置合同、规范化摘要校验和 plan-time key/address/port validation；宿主 SSHAccessCoordinator 绑定 grant/effectgate，socket 已支持 apply/observe/delete，local runtime 已能写固定 drop-in 并读回；Agent node-operation 已能申请 SSH grant 并转发 host RPC；新增 API `/ssh-access` 受理并绑定 resource UID/generation；SSH-only supervisor 路由 race 已覆盖；真实独立 sshd E2E 验证受管第二把 key 登录 helper、删除 drop-in 后失效 | `ssh_access` owning-agent 与 API 派发的完整终态 completion、host file-install/grant 的实际授权绑定，旧 key 只撤销自身配置；共享 sshd drop-in 生命周期、网络自动重接、混合netns单VM支持边界 |
-| P8 | 依赖合同已明确；GC dry-run 现在把 canonical aggregate snapshots 作为资源引用，快照仍引用的资源不会进入候选；候选携带 owner/resource/generation 和 canonical inventory digest；新增 host GC delete coordinator；CLI 显式 `--execute` 已接入 durable intent/complete/uncertain journal、逐候选 inventory digest 重验、Docker/network/libvirt provider delete 与删除后 Observe；API 已能基于 Agent session、host boot 和 candidate digest 派发 `gc_delete` grant；host supervisor socket 已支持 gc-delete/gc-observe RPC | command supervisor 的 GC provider callback、真实 provider 执行矩阵和跨宿主 CLI/API 调度仍需补齐；默认 dry-run 仍不执行删除 |
+| P8 | 依赖合同已明确；GC dry-run 现在把 canonical aggregate snapshots 作为资源引用，快照仍引用的资源不会进入候选；候选携带 owner/resource/generation 和 canonical inventory digest；CLI `--execute` 有 durable intent/complete/uncertain journal、旧 uncertain 不重放、候选身份变化拒绝；Docker/libvirt 删除前后重新核验不可变 ID 和完整归属，libvirt 不删除共享磁盘；API 以持久 leased `gc_delete` command 签发 grant，host supervisor 支持 GC RPC、历史 Observe、停止回执封存与恢复；生产 supervisor 已接 Docker 删除 callback | network/libvirt 生产 supervisor callback、真实 provider 执行矩阵和跨宿主 CLI/API 调度仍需补齐；CLI raw delete 尚未迁移为唯一入口，默认 dry-run 仍不执行删除 |
 | P9 | 分项真实Docker bridge/TAP、private cgroup、KVM测试；host Run receipt 单元/回归验证 | 真实 host-supervisor Run E2E、双宿主、全故障矩阵、升级/main整合，不算完成 |
 
 ## 当前收敛规则
@@ -202,5 +202,14 @@ listener 异常退出时等待 recovery goroutine 导致挂起的问题。集成
 真实隔离 Postgres 通过。独立审查发现的旧授权结果误取消并发续租任务、慢记录
 阻塞后续回执恢复均已修复并通过 race 回归：取消前重新比对完整 grant，已签回执
 不再依赖在线授权，每条记录拥有独立超时。复审未发现新的阻断问题。
+
+## GC 当前边界
+
+GC 的授权已经进入持久 command/lease/grant 模型；host supervisor 的 Docker 删除
+路径会在 effectgate 内再次核验归属标签、不可变外部 ID 和 generation，并在结果
+确认后封存 host stop receipt。CLI journal 对 intent/uncertain 采取 fail-closed，
+不会把未知结果自动重放成第二次删除。当前 supervisor 仅接入 Docker provider；
+network/libvirt 仍需同样的 credential-owning callback 和真实环境验收。旧 CLI 的
+provider 删除代码仍存在于迁移期间，不能把它当成跨宿主宿主 gate 已完成。
 
 2026-10-07集成检查点：真实Postgres启用的全仓测试通过；API/persistence/Agent/runtime/guesttask/effectgate/transport/四provider相关race通过；vet与docs检查通过。最终重建amd64/arm64 helper后，真实KVM5.10持久任务去重、冷读取、输出、取消确认通过（10.04秒）。这证明当前基础可集成，不代表尚未挂接的host supervisor、P5/P6/P7功能和P8/P9已经完成。

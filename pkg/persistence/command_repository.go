@@ -116,6 +116,15 @@ func mergeCommandPatch(old, next controlplane.AgentCommand) controlplane.AgentCo
 	if next.FilePut == nil {
 		next.FilePut = old.FilePut
 	}
+	if next.GCKind == "" {
+		next.GCKind = old.GCKind
+	}
+	if next.GCExternalID == "" {
+		next.GCExternalID = old.GCExternalID
+	}
+	if next.GCInventoryDigest == "" {
+		next.GCInventoryDigest = old.GCInventoryDigest
+	}
 	if next.Operation.ID == "" && next.Operation.Operation == "" && next.Operation.ExternalID == "" {
 		next.Operation = old.Operation
 	}

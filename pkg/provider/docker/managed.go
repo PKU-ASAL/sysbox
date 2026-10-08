@@ -83,6 +83,33 @@ func (s *Substrate) DiscoverManagedNode(ctx context.Context, id substrate.Operat
 	return managedHandle(inspected, id.Generation)
 }
 
+// DeleteManagedExternal removes an orphan only after re-reading the complete
+// ownership label set. It is the provider-level primitive used by fenced GC;
+// callers must perform their durable inventory/epoch checks before invoking it.
+func (s *Substrate) DeleteManagedExternal(ctx context.Context, externalID, ownerUID, resourceUID string, generation int64) error {
+	if externalID == "" || ownerUID == "" || resourceUID == "" || generation < 1 {
+		return driver.Wrap(driver.ErrorInvalidState, "docker", "incomplete GC ownership identity", nil)
+	}
+	inspected, err := s.cli.ContainerInspect(ctx, externalID)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		return driver.Wrap(driver.ErrorUnavailable, "docker", "GC container inspection unavailable", err)
+	}
+	if inspected.Config == nil {
+		return driver.Wrap(driver.ErrorInvalidState, "docker", "GC container lacks ownership labels", nil)
+	}
+	expected := map[string]string{"sysbox.managed": "true", "sysbox.owner_uid": ownerUID, "sysbox.topology_uid": ownerUID, "sysbox.resource_uid": resourceUID, "sysbox.generation": strconv.FormatInt(generation, 10)}
+	if err := verifyLabels(inspected.Config.Labels, expected); err != nil {
+		return err
+	}
+	if err := s.cli.ContainerRemove(ctx, externalID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
 func managedHandle(inspected dockertypes.ContainerJSON, generation int64) (substrate.NodeHandle, error) {
 	if inspected.ContainerJSONBase == nil || inspected.ID == "" || inspected.Config == nil {
 		return substrate.NodeHandle{}, driver.Wrap(driver.ErrorUnavailable, "docker", "incomplete managed container inspection", nil)

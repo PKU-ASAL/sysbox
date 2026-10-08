@@ -61,3 +61,35 @@ func TestGCCandidateBindsInventoryIdentity(t *testing.T) {
 	require.Error(t, err)
 	_ = c
 }
+
+func TestGCObserveHistoricalOutcomeDoesNotRequireCurrentInventory(t *testing.T) {
+	c, candidate, g := gcFixture(t)
+	_, err := c.Delete(context.Background(), candidate, g, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{"deleted":true}`), nil })
+	require.NoError(t, err)
+	c.ValidateInventory = func(context.Context, GCCandidate) error { return errors.New("inventory changed") }
+	c.HostBootID = "new-boot"
+	raw, err := c.Observe(context.Background(), candidate, g)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"deleted":true}`, string(raw))
+	g.Signature[0] ^= 1
+	_, err = c.Observe(context.Background(), candidate, g)
+	require.Error(t, err)
+}
+
+func TestGCDeleteRejectsOtherAgent(t *testing.T) {
+	c, candidate, g := gcFixture(t)
+	c.AgentID = "other-host"
+	_, err := c.Delete(context.Background(), candidate, g, func(context.Context) (json.RawMessage, error) { t.Fatal("foreign agent effect"); return nil, nil })
+	require.Error(t, err)
+}
+
+func TestGCInventoryValidationFollowsAuthorization(t *testing.T) {
+	c, candidate, g := gcFixture(t)
+	c.Authorize = func(context.Context, controlplane.SignedExecutionGrant) error { return errors.New("revoked") }
+	c.ValidateInventory = func(context.Context, GCCandidate) error {
+		t.Fatal("inventory must be checked within authorized gate")
+		return nil
+	}
+	_, err := c.Delete(context.Background(), candidate, g, func(context.Context) (json.RawMessage, error) { t.Fatal("effect"); return nil, nil })
+	require.ErrorContains(t, err, "revoked")
+}

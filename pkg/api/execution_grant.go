@@ -114,6 +114,10 @@ func (s *Server) handleGCGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if !strings.HasPrefix(request.Candidate.ResourceUID, request.Candidate.TopologyUID+"/") {
+		writeError(w, http.StatusBadRequest, persistence.ErrInvalidRecord)
+		return
+	}
 	manager, err := s.stateManager(request.Topology)
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
@@ -135,6 +139,24 @@ func (s *Server) handleGCGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.Candidate.InventoryDigest == "" {
 		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		return
+	}
+	// GC grants are backed by a durable leased command. This binds the signed
+	// grant to the worker's lease/session and gives host authorization a
+	// persisted candidate from which to re-derive the digest.
+	leaseUntil := time.Now().UTC().Add(2 * time.Minute)
+	gcSession := &controlplane.ConsoleSession{ID: request.SessionID, Topology: request.Topology, AgentID: r.PathValue("agent")}
+	command := controlplane.AgentCommand{
+		ID: request.CommandID, AgentID: r.PathValue("agent"), Type: "gc_delete",
+		Status: controlplane.AgentCommandStatusLeased, Protocol: controlplane.AgentProtocolVersion,
+		TopologyUID: request.Candidate.TopologyUID, ActionID: request.ActionID,
+		ResourceUID: request.Candidate.ResourceUID, Generation: request.Candidate.Generation,
+		Session: gcSession, LeaseOwner: request.LeaseOwner, LeaseUntil: leaseUntil,
+		Attempt: request.Attempt, GCKind: request.Candidate.Kind, GCExternalID: request.Candidate.ExternalID,
+		GCInventoryDigest: request.Candidate.InventoryDigest, CreatedAt: time.Now().UTC(),
+	}
+	if err := s.apiStore.SaveAgentCommand(r.Context(), command); err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
 	grant := controlplane.ExecutionGrant{TargetBootID: request.BootID, Scope: controlplane.ExecutionScope{TopologyUID: request.Candidate.TopologyUID, ResourceUID: request.Candidate.ResourceUID, Generation: request.Candidate.Generation}, AgentID: r.PathValue("agent"), SessionID: request.SessionID, ActionID: request.ActionID, CommandID: request.CommandID, Attempt: uint64(request.Attempt), Operation: "gc_delete", Digest: digest, ExpiresAt: time.Now().UTC().Add(2 * time.Minute)}
@@ -737,6 +759,16 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 		}
 		operation = "run_" + action
 		topologyRun = cmd.ResourceUID == ""
+	case "gc_delete":
+		if cmd.Session == nil || cmd.Session.ID == "" || cmd.Session.ID != proof.SessionID || cmd.GCKind == "" || cmd.GCExternalID == "" || cmd.GCInventoryDigest == "" {
+			return controlplane.ExecutionGrant{}, persistence.ErrCorruptRecord
+		}
+		candidate := hostsupervisor.GCCandidate{Kind: cmd.GCKind, ExternalID: cmd.GCExternalID, TopologyUID: cmd.TopologyUID, OwnerUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, InventoryDigest: cmd.GCInventoryDigest}
+		var err error
+		digest, err = candidate.Digest()
+		if err != nil {
+			return controlplane.ExecutionGrant{}, err
+		}
 	default:
 		return controlplane.ExecutionGrant{}, persistence.ErrUnsupportedVersion
 	}

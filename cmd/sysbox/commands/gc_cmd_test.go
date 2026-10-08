@@ -75,7 +75,13 @@ func TestGCExecuteDockerDeletesAndRecordsCompletion(t *testing.T) {
 			deleted = true
 			w.WriteHeader(http.StatusNoContent)
 		case strings.Contains(r.URL.Path, "/containers/orphan") && r.Method == http.MethodGet:
-			w.WriteHeader(http.StatusNotFound)
+			if deleted {
+				w.WriteHeader(http.StatusNotFound)
+			} else {
+				_ = json.NewEncoder(w).Encode(map[string]any{"Id": "orphan", "Config": map[string]any{"Labels": map[string]string{
+					runtime.LabelManaged: "true", "sysbox.owner_uid": owner, "sysbox.topology_uid": owner, "sysbox.resource_uid": owner + "/orphan", "sysbox.generation": "1",
+				}}})
+			}
 		default:
 			http.NotFound(w, r)
 		}
