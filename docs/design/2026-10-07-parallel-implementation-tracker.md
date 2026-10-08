@@ -215,3 +215,5 @@ provider 删除代码仍存在于迁移期间，不能把它当成跨宿主宿�
 2026-10-07集成检查点：真实Postgres启用的全仓测试通过；API/persistence/Agent/runtime/guesttask/effectgate/transport/四provider相关race通过；vet与docs检查通过。最终重建amd64/arm64 helper后，真实KVM5.10持久任务去重、冷读取、输出、取消确认通过（10.04秒）。这证明当前基础可集成，不代表尚未挂接的host supervisor、P5/P6/P7功能和P8/P9已经完成。
 
 2026-10-08主线切片回归：普通 Run 的 host Start/Observe 终态 relay、真实 RunID completion 路由、Run/SSH/power/GC 冷恢复扫描、Docker/network/libvirt GC provider callback 已接入；全仓 Go 测试和关键包 race 通过。真实 Docker guest task、node power、10MiB file install 的 API/supervisor 重建、丢回执、后继 epoch 测试通过。P9 仍未关闭：Run 的真实 provider E2E、双宿主、完整故障矩阵和升级演练尚未完成。
+
+heterogeneous matrix 真实重跑记录：首次失败暴露 Docker image CMD 在本地 CLI 没有 signed guest grant，示例已改为显式清空 entrypoint/command，使该矩阵只验证生命周期与网络；第二次重跑进入 apply 后因前次失败遗留的 nsfs 测试网络命名空间无法在受限环境卸载，触发 ownership conflict。没有发现对应存活进程，需在具备网络命名空间卸载权限的宿主清理后重跑，不能计为 P9 通过。
