@@ -172,6 +172,7 @@ Relative bind source resolves against the Sysbox process working directory. Omit
 | `ssh_pass` | no | Secret reference recommended |
 | `ssh_port` | no | Guest SSH port |
 | `allow_direct` | no | Explicitly allow direct Firecracker child mode; unsafe and intended only for trusted local experiments until jailer support is available |
+| `sysarmor` | no | Opt in to installing the pinned standalone SysArmor agent in this VM before declared provisioners; repeats after reset. Requires staged VM artifacts and a compatible Linux guest. Default `false`. |
 
 Machine sizing and network initialization must match the selected provider capability and guest image.
 

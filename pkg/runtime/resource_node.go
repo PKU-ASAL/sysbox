@@ -488,7 +488,8 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 
 	// Run provisioners after node is up and wired.
-	if len(cfg.Provisioners) > 0 {
+	provisioners := nodeProvisioners(providerConfig, cfg.Provisioners)
+	if len(provisioners) > 0 {
 		conn, err := e.connectionForNode(ctx, nodeDriver, handle, cfg.Connections)
 		if err != nil {
 			util.BestEffortIgnore(func() error { return nodeDriver.DestroyNode(ctx, handle) }, "destroy node on connection setup failure")
@@ -504,7 +505,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 				return state.Resource{}, fmt.Errorf("connection not ready on node %s: %w", n.Address.Name, err)
 			}
 		}
-		if err := e.runProvisioners(ctx, conn, cfg.Provisioners); err != nil {
+		if err := e.runProvisioners(ctx, conn, provisioners); err != nil {
 			// The container is already running here; if a provisioner fails we
 			// must remove it, or a leftover container stays attached to the NAT
 			// network and blocks that network's removal on rollback/destroy —

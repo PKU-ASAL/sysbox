@@ -467,7 +467,8 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 			return err
 		}
 	}
-	if len(item.config.Provisioners) > 0 {
+	provisioners := nodeProvisioners(item.request.Node.ProviderConfig, item.config.Provisioners)
+	if len(provisioners) > 0 {
 		connection, err := e.connectionForNode(ctx, item.nodeDriver, handle, item.config.Connections)
 		if err != nil {
 			return err
@@ -477,7 +478,7 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 				return err
 			}
 		}
-		if err := e.recordSubstep(item.step, "run_provisioners", nil, func() error { return e.runProvisioners(ctx, connection, item.config.Provisioners) }); err != nil {
+		if err := e.recordSubstep(item.step, "run_provisioners", nil, func() error { return e.runProvisioners(ctx, connection, provisioners) }); err != nil {
 			return err
 		}
 	}

@@ -22,6 +22,8 @@ Firecracker currently runs as a direct child process because jailer integration 
 
 需要 uncompressed `vmlinux` 和 ext4 rootfs。Provider 配置 chain init、SSH/vsock 和 machine 参数。Guest network configuration 通过声明的 network-init capability 完成，不由 runtime 猜测发行版配置文件。
 
+Firecracker 节点可在 `provider "firecracker"` 中设置 `sysarmor = true`，按需在 VM 创建和 reset 后先安装固定版本的 SysArmor，再执行赛题 provisioner。需要先在 VM artifact mount 中准备 agent archive、安装脚本和独立配置；guest 必须支持 systemd 和 BTF。省略该字段时不安装，Docker 节点不受影响。
+
 ## libvirt
 
 使用 immutable qcow2 baseline 和 generation overlay。Provider 配置 machine、disk、SSH 与 network init。Domain UUID 和 owned overlay path 是 reset/destroy 的关键 identity。
