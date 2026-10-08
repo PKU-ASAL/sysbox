@@ -40,7 +40,7 @@ type Response struct {
 	Output           substrate.ExecutionOutput   `json:"output,omitempty"`
 	Error            string                      `json:"error,omitempty"`
 	FileResult       substrate.FileInstallResult `json:"file_result,omitempty"`
-	RunEvidence      json.RawMessage             `json:"run_evidence,omitempty"`
+	RunObservation   *RunObservation             `json:"run_observation,omitempty"`
 	SSHEvidence      json.RawMessage             `json:"ssh_evidence,omitempty"`
 	AdoptionEvidence json.RawMessage             `json:"adoption_evidence,omitempty"`
 	GCResult         json.RawMessage             `json:"gc_result,omitempty"`

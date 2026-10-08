@@ -169,13 +169,35 @@ func (c *TaskClient) CancelGuestFile(ctx context.Context, h substrate.FileInstal
 	return r.FileResult, err
 }
 
-func (c *TaskClient) StartRun(ctx context.Context, req RunRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+func (c *TaskClient) StartRun(ctx context.Context, req RunRequest, grant controlplane.SignedExecutionGrant) (RunObservation, error) {
 	r, err := c.call(ctx, Request{Operation: "run-start", RunRequest: &req, Grant: &grant})
-	return r.RunEvidence, err
+	return runResponse(r, err)
 }
-func (c *TaskClient) ObserveRun(ctx context.Context, req RunRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+func (c *TaskClient) ObserveRun(ctx context.Context, req RunRequest, grant controlplane.SignedExecutionGrant) (RunObservation, error) {
 	r, err := c.call(ctx, Request{Operation: "run-observe", RunRequest: &req, Grant: &grant})
-	return r.RunEvidence, err
+	return runResponse(r, err)
+}
+func runResponse(r Response, err error) (RunObservation, error) {
+	if err != nil {
+		return RunObservation{}, err
+	}
+	if r.RunObservation == nil {
+		return RunObservation{}, fmt.Errorf("missing host Run observation")
+	}
+	switch r.RunObservation.Status {
+	case "running", "completed", "uncertain":
+	default:
+		return RunObservation{}, fmt.Errorf("invalid host Run observation")
+	}
+	return *r.RunObservation, nil
+}
+func (c *TaskClient) RenewRun(ctx context.Context, req RunRequest, grant controlplane.SignedExecutionGrant) error {
+	_, err := c.call(ctx, Request{Operation: "run-renew", RunRequest: &req, Grant: &grant})
+	return err
+}
+func (c *TaskClient) CancelRun(ctx context.Context, req RunRequest, grant controlplane.SignedExecutionGrant) error {
+	_, err := c.call(ctx, Request{Operation: "run-cancel", RunRequest: &req, Grant: &grant})
+	return err
 }
 
 func (c *TaskClient) DeleteGC(ctx context.Context, candidate GCCandidate, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {

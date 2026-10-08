@@ -178,12 +178,16 @@ func (s *Server) serveConnection(parent context.Context, conn net.Conn) {
 		json.NewEncoder(conn).Encode(Response{Version: 1, Error: "invalid host supervisor request"})
 		return
 	}
-	response := s.Handle(ctx, request)
+	response := s.handle(ctx, parent, request)
 	_ = json.NewEncoder(conn).Encode(response)
 }
 func (s *Server) Handle(ctx context.Context, request Request) Response {
+	return s.handle(ctx, ctx, request)
+}
+
+func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Response {
 	response := Response{Version: 1}
-	isRun := request.Operation == "run-info" || request.Operation == "run-start" || request.Operation == "run-observe"
+	isRun := request.Operation == "run-info" || request.Operation == "run-start" || request.Operation == "run-observe" || request.Operation == "run-renew" || request.Operation == "run-cancel"
 	topologyRun := isRun && request.Target.Node == "" && request.Target.Scope.ResourceUID == "" && request.Target.Scope.Generation == 0
 	resourceTarget := request.Target.Node != "" && request.Target.Scope.ResourceUID != "" && request.Target.Scope.Generation > 0
 	if request.Version != 1 || request.Target.Topology == "" || strings.ContainsAny(request.Target.Topology, "/\\\x00") || request.Target.Scope.TopologyUID == "" || (!topologyRun && !resourceTarget) {
@@ -209,7 +213,7 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 			response.Error = "host task supervisor unavailable"
 			return response
 		}
-	case "run-start", "run-observe":
+	case "run-start", "run-observe", "run-renew", "run-cancel":
 		r := request.RunRequest
 		if r == nil || r.Topology != request.Target.Topology || r.TopologyUID != request.Target.Scope.TopologyUID || r.ResourceUID != request.Target.Scope.ResourceUID || r.Generation != request.Target.Scope.Generation {
 			response.Error = "host run target mismatch"
@@ -260,15 +264,29 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 			err = fmt.Errorf("host run coordinator unavailable")
 			break
 		}
-		response.RunEvidence, err = s.Runs.Start(ctx, *request.RunRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
+		var observation RunObservation
+		observation, err = s.Runs.StartAsync(ctx, serviceCtx, *request.RunRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
 			return s.RunEffect(effectCtx, *request.RunRequest)
 		})
+		response.RunObservation = &observation
 	case "run-observe":
 		if s.Runs == nil || request.RunRequest == nil || request.Grant == nil {
 			err = fmt.Errorf("host run coordinator unavailable")
 			break
 		}
-		response.RunEvidence, err = s.Runs.Observe(ctx, *request.RunRequest, *request.Grant)
+		var observation RunObservation
+		observation, err = s.Runs.ObserveAsync(ctx, *request.RunRequest, *request.Grant)
+		response.RunObservation = &observation
+	case "run-renew", "run-cancel":
+		if s.Runs == nil || request.RunRequest == nil || request.Grant == nil {
+			err = fmt.Errorf("signed host Run request required")
+			break
+		}
+		if request.Operation == "run-renew" {
+			err = s.Runs.Renew(ctx, *request.RunRequest, *request.Grant)
+		} else {
+			err = s.Runs.Cancel(ctx, *request.RunRequest, *request.Grant)
+		}
 	case "ssh-apply":
 		if s.SSH == nil || s.SSHApply == nil || request.SSHRequest == nil || request.Grant == nil {
 			err = fmt.Errorf("host ssh access coordinator unavailable")

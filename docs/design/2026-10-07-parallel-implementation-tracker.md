@@ -16,6 +16,12 @@ Run 回执现在签署结果摘要，API 支持原 command 退休/重新投递�
 可信完成；实际 Run attempt/owner 变化仍拒绝旧回执。文件/SQLite/真实 Postgres
 竞态测试和复审通过。详情见上述验收记录；未知 intent 和长任务续租仍未关闭。
 
+后续异步父 Run 已接通：持久受理后立即返回、Agent轮询与签名续租、独立单调
+deadline watchdog、周期在线授权，以及按同一执行身份的取消/冷读取。旧同步
+Run RPC已删除。双VM45秒foreground provisioner实测Apply约47.28秒，同epoch
+续租持久化、Destroy和非force元数据删除通过。后台派生guest任务续租、未知
+intent恢复、运行中故障矩阵及P5–P8剩余能力仍待完成，不代表整个P9关闭。
+
 | 阶段 | 已进入代码的内容 | 未完成的验收/接入 |
 |---|---|---|
 | P0 | 强制按Go依赖重建guest helper、amd64/arm64构建、独立cgroup验收目标 | 全能力矩阵、最终产物与总验收 |

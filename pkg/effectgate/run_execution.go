@@ -66,6 +66,67 @@ func (g *Gate) authorizeRun(ctx context.Context, s controlplane.SignedExecutionG
 	return g.verifyRun(s, effectID)
 }
 
+// ReadRun returns historical evidence for the exact Run identity, including its
+// latest renewed envelope. Both signatures are checked at issuance against their
+// historical boot; expiry, retirement and online authority do not govern reads.
+// The returned reservation never authorizes starting a callback.
+func (g *Gate) ReadRun(ctx context.Context, proof controlplane.SignedExecutionGrant, effectID string) (RunReservation, error) {
+	var zero RunReservation
+	if effectID == "" || !isRunGrant(proof.Grant) {
+		return zero, ErrFenced
+	}
+	if err := controlplane.VerifyExecutionGrant(g.PublicKey, proof, proof.BootID, proof.IssuedAt); err != nil {
+		return zero, err
+	}
+	_, record, release, err := g.locked(ctx, proof.Grant.Scope.TopologyUID)
+	if err != nil {
+		return zero, err
+	}
+	defer release()
+	prior, ok := record.Outcomes[outcomeKey(proof.Grant, effectID)]
+	if !ok {
+		return zero, ErrNotFound
+	}
+	if prior.SignedGrant == nil || !sameRunIdentity(prior.Grant, proof.Grant) || prior.SignedGrant.BootID != proof.BootID {
+		return zero, ErrFenced
+	}
+	return g.runReservation(prior)
+}
+
+// ReadRunEnvelope reads the exact durable grant for trusted recovery callers.
+// The persisted signed envelope supplies the historical issuer proof; an
+// unsigned legacy outcome cannot be upgraded into Run completion evidence.
+func (g *Gate) ReadRunEnvelope(ctx context.Context, grant controlplane.ExecutionGrant, effectID string) (RunReservation, error) {
+	var zero RunReservation
+	if effectID == "" || !isRunGrant(grant) {
+		return zero, ErrFenced
+	}
+	_, record, release, err := g.locked(ctx, grant.Scope.TopologyUID)
+	if err != nil {
+		return zero, err
+	}
+	defer release()
+	prior, ok := record.Outcomes[outcomeKey(grant, effectID)]
+	if !ok {
+		return zero, ErrNotFound
+	}
+	if !sameGrant(prior.Grant, grant) {
+		return zero, ErrFenced
+	}
+	return g.runReservation(prior)
+}
+
+func (g *Gate) runReservation(prior outcome) (RunReservation, error) {
+	if prior.SignedGrant == nil {
+		return RunReservation{}, ErrFenced
+	}
+	current := *prior.SignedGrant
+	if err := controlplane.VerifyExecutionGrant(g.PublicKey, current, current.BootID, current.IssuedAt); err != nil {
+		return RunReservation{}, err
+	}
+	return RunReservation{State: RunState(prior.State), Grant: cloneRunEnvelope(current), Result: append(json.RawMessage(nil), prior.Result...)}, nil
+}
+
 // ReserveRun journals an intent under a short topology lock. It never executes
 // a provider callback. The intent blocks all existing Gate.Execute admissions
 // until CommitRun establishes a complete outcome; expiry does not release it.

@@ -6,135 +6,104 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/effectgate"
-	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/stretchr/testify/require"
 )
 
 func runFixture(t *testing.T) (*RunCoordinator, RunRequest, controlplane.SignedExecutionGrant) {
 	t.Helper()
-	pub, key, e := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, e)
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
 	req := RunRequest{RunID: "run", Topology: "lab", TopologyUID: "uid", Revision: "rev", ActionID: "action", ResourceUID: "resource", Generation: 1, Action: "apply", Target: "sysbox_node.web", ExpectedSerial: 1}
-	d, e := req.Digest()
-	require.NoError(t, e)
-	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "uid", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "run_apply", Digest: d, State: controlplane.GrantActive, TargetBootID: "host", ExpiresAt: time.Now().Add(time.Minute)}
-	s, e := controlplane.SignExecutionGrant(key, g, "host", time.Now())
-	require.NoError(t, e)
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "uid", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "run_apply", Digest: digest, State: controlplane.GrantActive, TargetBootID: "host", ExpiresAt: time.Now().Add(time.Minute)}
+	signed, err := controlplane.SignExecutionGrant(key, g, "host", time.Now())
+	require.NoError(t, err)
 	root := t.TempDir()
 	require.NoError(t, os.Chmod(root, 0700))
-	return &RunCoordinator{Root: root, IssuerKey: pub, HostBootID: "host", AgentID: "agent", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }}, req, s
-}
-func TestRunCoordinatorPersistsIntentAndNeverReplaysLostEffect(t *testing.T) {
-	c, req, g := runFixture(t)
-	calls := 0
-	effect := func(context.Context) (json.RawMessage, error) { calls++; return nil, errors.New("reply lost") }
-	_, err := c.Start(context.Background(), req, g, effect)
-	require.ErrorIs(t, err, effectgate.ErrUncertain)
-	_, err = c.Observe(context.Background(), req, g)
-	require.ErrorIs(t, err, effectgate.ErrUncertain)
-	require.Equal(t, 1, calls)
-	_, err = c.Start(context.Background(), req, g, func(context.Context) (json.RawMessage, error) { calls++; return json.RawMessage(`{"ok":true}`), nil })
-	require.ErrorIs(t, err, effectgate.ErrUncertain)
-	require.Equal(t, 1, calls)
+	return &RunCoordinator{Root: root, IssuerKey: pub, HostBootID: "host", AgentID: "agent", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }}, req, signed
 }
 
 func TestRunCoordinatorRequiresSignatureAndOnlineAuthority(t *testing.T) {
 	c, req, g := runFixture(t)
-	calls := 0
-	effect := func(context.Context) (json.RawMessage, error) { calls++; return json.RawMessage(`{}`), nil }
+	effect := func(context.Context) (json.RawMessage, error) {
+		t.Error("unauthorized callback invoked")
+		return nil, nil
+	}
 	bad := g
 	bad.Signature = make([]byte, ed25519.SignatureSize)
-	_, err := c.Start(context.Background(), req, bad, effect)
+	_, err := c.StartAsync(context.Background(), context.Background(), req, bad, effect)
 	require.Error(t, err)
 	c.Authorize = nil
-	_, err = c.Start(context.Background(), req, g, effect)
+	_, err = c.StartAsync(context.Background(), context.Background(), req, g, effect)
 	require.Error(t, err)
-	require.Zero(t, calls)
 }
 
-func TestRunCoordinatorHistoricalReadSurvivesHostRestart(t *testing.T) {
+func TestRunCoordinatorPersistsIntentAndNeverReplaysLostEffect(t *testing.T) {
 	c, req, g := runFixture(t)
-	_, err := c.Start(context.Background(), req, g, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{"observed":true}`), nil })
+	_, err := c.StartAsync(context.Background(), context.Background(), req, g, func(context.Context) (json.RawMessage, error) { return nil, errors.New("reply lost") })
 	require.NoError(t, err)
-	c.HostBootID = "new-boot"
-	c.Authorize = nil
-	raw, err := c.Observe(context.Background(), req, g)
+	require.Eventually(t, func() bool { return c.findActive(g) == nil }, time.Second, time.Millisecond)
+	out, err := c.ObserveAsync(context.Background(), req, g)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"observed":true}`, string(raw))
+	require.Equal(t, "uncertain", out.Status)
+	out, err = c.StartAsync(context.Background(), context.Background(), req, g, func(context.Context) (json.RawMessage, error) { t.Error("intent replayed"); return nil, nil })
+	require.NoError(t, err)
+	require.Equal(t, "uncertain", out.Status)
 }
 
-func TestRunCoordinatorPersistsAndReportsHostReceipt(t *testing.T) {
-	pub, issuer, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
+func TestRunCoordinatorRecoveryRetriesExactReceiptAndResult(t *testing.T) {
+	c, req, g := runFixture(t)
 	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	req := RunRequest{RunID: "run-receipt", Topology: "lab", TopologyUID: "uid", Revision: "rev", ActionID: "action-receipt", ResourceUID: "resource", Generation: 1, Action: "apply", Target: "sysbox_node.web", ExpectedSerial: 1}
-	digest, err := req.Digest()
-	require.NoError(t, err)
-	grant := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "uid", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: req.ActionID, CommandID: "command", Attempt: 1, Epoch: 1, Operation: "run_apply", Digest: digest, State: controlplane.GrantActive, TargetBootID: "host", ExpiresAt: time.Now().Add(time.Minute)}
-	signed, err := controlplane.SignExecutionGrant(issuer, grant, "host", time.Now())
-	require.NoError(t, err)
-	var reported controlplane.SignedExecutionStopReceipt
-	root := t.TempDir()
-	require.NoError(t, os.Chmod(root, 0700))
-	c := &RunCoordinator{Root: root, IssuerKey: pub, HostKey: hostKey, HostBootID: "host", AgentID: "agent", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }, Report: func(_ context.Context, receipt controlplane.SignedExecutionStopReceipt, _ json.RawMessage) error {
-		reported = receipt
-		return nil
-	}}
-	raw, err := c.Start(context.Background(), req, signed, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{"status":"done"}`), nil })
-	require.NoError(t, err)
-	require.NotEmpty(t, reported.Signature)
-	require.NoError(t, controlplane.VerifyExecutionStopReceipt(hostPub, reported))
-	require.NoError(t, controlplane.VerifyRunStopReceipt(hostPub, reported, json.RawMessage(`{"status":"done"}`)))
-	require.Error(t, controlplane.VerifyRunStopReceipt(hostPub, reported, json.RawMessage(`{"status":"failed"}`)))
-	require.Contains(t, string(raw), "receipt")
-}
-
-func TestRunCoordinatorRecoveryReportsCompletedRunAfterRestart(t *testing.T) {
-	c, req, g := runFixture(t)
-	_, hostKey, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	var first controlplane.SignedExecutionStopReceipt
 	c.HostKey = hostKey
-	c.Report = func(_ context.Context, r controlplane.SignedExecutionStopReceipt, _ json.RawMessage) error {
+	var first controlplane.SignedExecutionStopReceipt
+	c.ReportRunID = func(_ context.Context, id string, r controlplane.SignedExecutionStopReceipt, raw json.RawMessage) error {
 		first = r
 		return errors.New("API unavailable")
 	}
-	_, err = c.Start(context.Background(), req, g, func(context.Context) (json.RawMessage, error) {
-		return json.RawMessage(`{"status":"done"}`), nil
-	})
-	require.Error(t, err)
-	restarted := *c
-	restarted.HostBootID = "replacement-host"
-	restarted.Authorize = nil
-	reported := 0
-	restarted.Report = func(_ context.Context, r controlplane.SignedExecutionStopReceipt, raw json.RawMessage) error {
-		reported++
+	result := json.RawMessage(`{"id":"run","status":"done"}`)
+	release := make(chan struct{})
+	_, err = c.StartAsync(context.Background(), context.Background(), req, g, func(context.Context) (json.RawMessage, error) { <-release; return result, nil })
+	require.NoError(t, err)
+	active := c.findActive(g)
+	close(release)
+	<-active.done
+	require.NotEmpty(t, first.Signature)
+	cold := &RunCoordinator{Root: c.Root, IssuerKey: c.IssuerKey, HostBootID: "replacement-host", AgentID: c.AgentID, HostKey: hostKey}
+	reports := 0
+	cold.ReportRunID = func(_ context.Context, id string, r controlplane.SignedExecutionStopReceipt, raw json.RawMessage) error {
+		reports++
+		require.Equal(t, req.RunID, id)
 		require.Equal(t, first, r)
-		require.JSONEq(t, `{"status":"done"}`, string(raw))
-		require.NoError(t, controlplane.VerifyRunStopReceipt(hostKey.Public().(ed25519.PublicKey), r, raw))
+		require.JSONEq(t, string(result), string(raw))
+		require.NoError(t, controlplane.VerifyRunStopReceipt(hostPub, r, raw))
 		return nil
 	}
-	require.NoError(t, restarted.Recover(context.Background()))
-	require.Equal(t, 1, reported)
-	// A second scan is idempotent and does not report the receipt twice.
-	require.NoError(t, restarted.Recover(context.Background()))
-	require.Equal(t, 1, reported)
+	require.NoError(t, cold.Recover(context.Background()))
+	require.NoError(t, cold.Recover(context.Background()))
+	require.Equal(t, 1, reports)
+	out, err := cold.ObserveAsync(context.Background(), req, g)
+	require.NoError(t, err)
+	require.Equal(t, "completed", out.Status)
+	require.JSONEq(t, string(result), string(out.Evidence))
 }
 
 func TestRunObserveSealsCompletedOutcomeAfterCrashBeforeReceipt(t *testing.T) {
-	c, req, grant := runFixture(t)
+	c, req, g := runFixture(t)
 	pub, host, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	raw := json.RawMessage(`{"id":"run","status":"done"}`)
-	gate, err := c.gate(grant)
+	gate, err := c.gate(g)
 	require.NoError(t, err)
-	_, err = gate.Execute(context.Background(), grant, req.ActionID, func(context.Context) (json.RawMessage, error) { return raw, nil })
+	_, err = gate.ReserveRun(context.Background(), g, req.ActionID)
 	require.NoError(t, err)
+	require.NoError(t, gate.CommitRun(context.Background(), g, req.ActionID, raw))
 	c.HostKey = host
 	c.HostBootID = "new-host-boot"
 	c.Authorize = nil
@@ -145,8 +114,9 @@ func TestRunObserveSealsCompletedOutcomeAfterCrashBeforeReceipt(t *testing.T) {
 		require.NoError(t, controlplane.VerifyRunStopReceipt(pub, receipt, evidence))
 		return nil
 	}
-	result, err := c.Observe(context.Background(), req, grant)
+	out, err := c.ObserveAsync(context.Background(), req, g)
 	require.NoError(t, err)
-	require.JSONEq(t, string(raw), string(result))
+	require.Equal(t, "completed", out.Status)
+	require.JSONEq(t, string(raw), string(out.Evidence))
 	require.True(t, called)
 }

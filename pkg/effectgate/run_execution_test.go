@@ -241,3 +241,134 @@ func TestRunReservationVerifiesColdStoredSignature(t *testing.T) {
 	_, err = cold.ReserveRun(ctx, proof, "effect")
 	require.Error(t, err)
 }
+
+func TestReadRunReturnsLatestRenewedEnvelope(t *testing.T) {
+	gate, proof, key := runGateFixture(t)
+	ctx := context.Background()
+	_, err := gate.ReserveRun(ctx, proof, "effect")
+	require.NoError(t, err)
+	renewed := extendedRunGrant(t, key, proof, time.Minute)
+	require.NoError(t, gate.RenewRun(ctx, proof, renewed, "effect"))
+	for _, state := range []RunState{RunIntent, RunComplete} {
+		if state == RunComplete {
+			require.NoError(t, gate.CommitRun(ctx, renewed, "effect", json.RawMessage(`{"done":true}`)))
+		}
+		cold := *gate
+		cold.Authorize = nil
+		got, err := cold.ReadRun(ctx, proof, "effect")
+		require.NoError(t, err)
+		require.False(t, got.Admitted)
+		require.Equal(t, state, got.State)
+		require.True(t, sameRunEnvelope(renewed, got.Grant))
+		if state == RunComplete {
+			require.JSONEq(t, `{"done":true}`, string(got.Result))
+		}
+	}
+}
+
+func TestReadRunHistoricalEvidenceSurvivesExpiryBootAndRetirement(t *testing.T) {
+	for _, state := range []RunState{RunIntent, RunComplete} {
+		t.Run(string(state), func(t *testing.T) {
+			gate, original, key := runGateFixture(t)
+			ctx := context.Background()
+			issued := time.Now().UTC().Add(-time.Hour)
+			grant := original.Grant
+			grant.ExpiresAt = issued.Add(time.Minute)
+			proof, err := controlplane.SignExecutionGrant(key, grant, original.BootID, issued)
+			require.NoError(t, err)
+			path, record, release, err := gate.locked(ctx, grant.Scope.TopologyUID)
+			require.NoError(t, err)
+			record.Outcomes[outcomeKey(grant, "effect")] = outcome{Grant: grant, SignedGrant: &proof, State: string(state), Result: json.RawMessage(`{"done":true}`)}
+			record.Stopped[grant.Epoch] = true
+			record.Epochs[grant.Scope.ResourceUID] = grant.Epoch + 1
+			require.NoError(t, save(path, record))
+			release()
+			gate.BootID, gate.Authorize = "new-boot", nil
+			got, err := gate.ReadRun(ctx, proof, "effect")
+			require.NoError(t, err)
+			require.False(t, got.Admitted)
+			require.Equal(t, state, got.State)
+			require.True(t, sameRunEnvelope(proof, got.Grant))
+		})
+	}
+}
+
+func TestReadRunRejectsForeignOrForgedProof(t *testing.T) {
+	gate, original, key := runGateFixture(t)
+	ctx := context.Background()
+	_, err := gate.ReserveRun(ctx, original, "effect")
+	require.NoError(t, err)
+	for _, field := range []string{"action", "scope", "digest", "attempt", "epoch", "operation", "boot", "signature", "effect"} {
+		t.Run(field, func(t *testing.T) {
+			grant, boot, effect := original.Grant, original.BootID, "effect"
+			switch field {
+			case "action":
+				grant.ActionID = "foreign"
+			case "scope":
+				grant.Scope.ResourceUID, grant.Scope.Generation = "foreign", 1
+			case "digest":
+				grant.Digest = "foreign"
+			case "attempt":
+				grant.Attempt++
+			case "epoch":
+				grant.Epoch++
+			case "operation":
+				grant.Operation = "run_destroy"
+			case "boot":
+				grant.TargetBootID, boot = "foreign", "foreign"
+			case "effect":
+				effect = "foreign"
+			}
+			proof, err := controlplane.SignExecutionGrant(key, grant, boot, time.Now())
+			require.NoError(t, err)
+			if field == "signature" {
+				proof.Signature[0] ^= 1
+			}
+			_, err = gate.ReadRun(ctx, proof, effect)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestReadRunRejectsUnverifiableStoredEnvelope(t *testing.T) {
+	for _, damage := range []string{"missing", "signature"} {
+		t.Run(damage, func(t *testing.T) {
+			gate, proof, _ := runGateFixture(t)
+			ctx := context.Background()
+			_, err := gate.ReserveRun(ctx, proof, "effect")
+			require.NoError(t, err)
+			path, record, release, err := gate.locked(ctx, proof.Grant.Scope.TopologyUID)
+			require.NoError(t, err)
+			prior := record.Outcomes[outcomeKey(proof.Grant, "effect")]
+			if damage == "missing" {
+				prior.SignedGrant = nil
+			} else {
+				prior.SignedGrant.Signature[0] ^= 1
+			}
+			record.Outcomes[outcomeKey(proof.Grant, "effect")] = prior
+			require.NoError(t, save(path, record))
+			release()
+			_, err = gate.ReadRun(ctx, proof, "effect")
+			require.Error(t, err)
+			_, err = gate.ReadRunEnvelope(ctx, proof.Grant, "effect")
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestReadRunEnvelopeRequiresExactDurableGrant(t *testing.T) {
+	gate, proof, key := runGateFixture(t)
+	ctx := context.Background()
+	_, err := gate.ReserveRun(ctx, proof, "effect")
+	require.NoError(t, err)
+	renewed := extendedRunGrant(t, key, proof, time.Minute)
+	require.NoError(t, gate.RenewRun(ctx, proof, renewed, "effect"))
+	gate.Authorize, gate.BootID = nil, "replacement-boot"
+	_, err = gate.ReadRunEnvelope(ctx, proof.Grant, "effect")
+	require.ErrorIs(t, err, ErrFenced)
+	got, err := gate.ReadRunEnvelope(ctx, renewed.Grant, "effect")
+	require.NoError(t, err)
+	require.False(t, got.Admitted)
+	require.Equal(t, RunIntent, got.State)
+	require.True(t, sameRunEnvelope(renewed, got.Grant))
+}

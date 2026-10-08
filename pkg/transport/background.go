@@ -31,6 +31,7 @@ type taskAuthorization struct {
 type taskAuthorizationKey struct{}
 type taskGrantResolverKey struct{}
 type parentExecutionGrantKey struct{}
+type parentExecutionGrantResolverKey struct{}
 
 // TaskGrantResolver is used only inside the trusted host supervisor. It
 // derives a durable, resource-scoped guest_task grant for a run's provider
@@ -47,7 +48,16 @@ func taskGrantResolverFromContext(ctx context.Context) (TaskGrantResolver, bool)
 func WithParentExecutionGrant(ctx context.Context, grant controlplane.SignedExecutionGrant) context.Context {
 	return context.WithValue(ctx, parentExecutionGrantKey{}, grant)
 }
+
+// WithParentExecutionGrantResolver is installed only by the trusted host Run
+// controller. New child tasks must use current authority after parent renewal.
+func WithParentExecutionGrantResolver(ctx context.Context, resolver func() (controlplane.SignedExecutionGrant, bool)) context.Context {
+	return context.WithValue(ctx, parentExecutionGrantResolverKey{}, resolver)
+}
 func ParentExecutionGrantFromContext(ctx context.Context) (controlplane.SignedExecutionGrant, bool) {
+	if resolver, ok := ctx.Value(parentExecutionGrantResolverKey{}).(func() (controlplane.SignedExecutionGrant, bool)); ok {
+		return resolver()
+	}
 	g, ok := ctx.Value(parentExecutionGrantKey{}).(controlplane.SignedExecutionGrant)
 	return g, ok
 }

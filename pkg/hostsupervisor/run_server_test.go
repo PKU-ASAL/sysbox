@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -24,18 +25,18 @@ func TestTopologyRunDispatchRequiresMatchingSignedScope(t *testing.T) {
 	require.NoError(t, err)
 	grant, err = controlplane.SignExecutionGrant(key, grant.Grant, c.HostBootID, time.Now())
 	require.NoError(t, err)
-	calls := 0
+	var calls atomic.Int32
 	s := &Server{Runs: c, RunEffect: func(context.Context, RunRequest) (json.RawMessage, error) {
-		calls++
+		calls.Add(1)
 		return json.RawMessage(`{"done":true}`), nil
 	}}
 	request := Request{Version: 1, Operation: "run-start", Target: TargetRef{Topology: req.Topology, Scope: grant.Grant.Scope}, RunRequest: &req, Grant: &grant}
 	request.Target.Scope.TopologyUID = "other"
 	require.NotEmpty(t, s.Handle(context.Background(), request).Error)
-	require.Zero(t, calls)
+	require.Zero(t, calls.Load())
 	request.Target.Scope = grant.Grant.Scope
 	require.Empty(t, s.Handle(context.Background(), request).Error)
-	require.Equal(t, 1, calls)
+	require.Eventually(t, func() bool { return calls.Load() == 1 }, time.Second, time.Millisecond)
 }
 
 func TestRunBootDiscoveryDoesNotRequireExistingNode(t *testing.T) {
@@ -55,9 +56,9 @@ func TestRunSocketStartAndHistoricalObserve(t *testing.T) {
 	require.NoError(t, os.Chmod(c.Root, 0700))
 	socketDir := t.TempDir()
 	require.NoError(t, os.Chmod(socketDir, 0700))
-	calls := 0
+	var calls atomic.Int32
 	s := &Server{Socket: filepath.Join(socketDir, "run.sock"), GroupID: -1, Runs: c, RunEffect: func(context.Context, RunRequest) (json.RawMessage, error) {
-		calls++
+		calls.Add(1)
 		return json.RawMessage(`{"ok":true}`), nil
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -69,10 +70,14 @@ func TestRunSocketStartAndHistoricalObserve(t *testing.T) {
 		return err == nil
 	}, time.Second, 10*time.Millisecond)
 	// Historical observation must not invoke the effect callback again.
-	require.Equal(t, 1, calls)
-	raw, err := NewTaskClient(s.Socket, TargetRef{Topology: req.Topology, Node: "node", Scope: grant.Grant.Scope}).ObserveRun(ctx, req, grant)
-	require.NoError(t, err)
-	require.JSONEq(t, `{"ok":true}`, string(raw))
+	var observed RunObservation
+	require.Eventually(t, func() bool {
+		var err error
+		observed, err = NewTaskClient(s.Socket, TargetRef{Topology: req.Topology, Node: "node", Scope: grant.Grant.Scope}).ObserveRun(ctx, req, grant)
+		return err == nil && observed.Status == "completed"
+	}, time.Second, time.Millisecond)
+	require.EqualValues(t, 1, calls.Load())
+	require.JSONEq(t, `{"ok":true}`, string(observed.Evidence))
 	cancel()
 	require.NoError(t, <-done)
 }

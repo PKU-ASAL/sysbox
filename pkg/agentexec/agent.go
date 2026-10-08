@@ -937,34 +937,22 @@ func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlp
 	if err := controlplane.VerifyExecutionGrant(ed25519.PublicKey(key), grant, boot, time.Now()); err != nil {
 		return nil, err
 	}
-	if grant.Grant.Operation != "run_"+action || grant.Grant.Digest != digest || grant.Grant.ActionID != cmd.ActionID || grant.Grant.Scope != target.Scope {
+	if grant.Grant.Operation != "run_"+action || grant.Grant.Digest != digest || grant.Grant.ActionID != cmd.ActionID || grant.Grant.Scope != target.Scope || grant.Grant.AgentID != r.opts.ID || grant.Grant.SessionID != r.opts.ExecutionSessionID || grant.Grant.CommandID != cmd.ID || grant.Grant.Attempt != uint64(cmd.Attempt) || grant.Grant.TargetBootID != boot {
 		return nil, controlplane.ErrInvalidExecutionGrant
 	}
-	raw, err := client.StartRun(ctx, req, grant)
-	if err != nil {
-		raw, err = client.ObserveRun(ctx, req, grant)
-		if err != nil {
-			return nil, fmt.Errorf("host run outcome unknown: %w", err)
-		}
+	renew := func(ctx context.Context, current controlplane.SignedExecutionGrant) (controlplane.SignedExecutionGrant, error) {
+		var next controlplane.SignedExecutionGrant
+		err := post(ctx, r.opts, endpoint+"/renew", map[string]any{"grant": current, "lease_owner": cmd.LeaseOwner}, &next)
+		return next, err
 	}
-	return decodeHostRunEvidence(raw)
+	return awaitHostRun(ctx, client, req, run, grant, ed25519.PublicKey(key), renew)
 }
 
-// decodeHostRunEvidence accepts both the first response envelope (result plus
-// receipt) and the durable Observe payload (the terminal Run itself).
+// The wire protocol carries only the durable terminal Run as evidence.
 func decodeHostRunEvidence(raw json.RawMessage) (*controlplane.Run, error) {
 	var run controlplane.Run
 	if json.Unmarshal(raw, &run) == nil && run.ID != "" && run.Status.IsTerminal() {
 		return &run, nil
 	}
-	var envelope struct {
-		Result json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil || len(envelope.Result) == 0 {
-		return nil, fmt.Errorf("host supervisor returned non-terminal run evidence")
-	}
-	if err := json.Unmarshal(envelope.Result, &run); err != nil || run.ID == "" || !run.Status.IsTerminal() {
-		return nil, fmt.Errorf("host supervisor returned non-terminal run evidence")
-	}
-	return &run, nil
+	return nil, fmt.Errorf("host supervisor returned non-terminal run evidence")
 }

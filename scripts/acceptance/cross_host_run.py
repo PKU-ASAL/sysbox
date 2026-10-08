@@ -56,6 +56,7 @@ def main():
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--finalize", action="store_true", help="delete metadata after independent provider absence verification")
     parser.add_argument("--stop-primary", action="store_true", help="control VM only: stop the test primary API before acceptance")
+    parser.add_argument("--provision-seconds", type=int, default=0, help="run a real foreground provisioner longer than the RPC budget")
     args = parser.parse_args()
     token = json.loads(Path(args.config).read_text())["api"]["token"]
     evidence_path = Path(args.evidence)
@@ -104,7 +105,13 @@ def main():
         save()
     agents = request("GET", "/v1/agents")["agents"]
     print("agents:", json.dumps([{key: agent.get(key) for key in ("id", "status", "capabilities")} for agent in agents]), flush=True)
-    revision = request("POST", "/v1/revisions", {"files": {"field.sysbox.hcl": HCL}})["revision"]
+    if not 0 <= args.provision_seconds <= 120:
+        parser.error("provision-seconds must be between 0 and 120")
+    hcl = HCL
+    if args.provision_seconds:
+        hcl = hcl.rstrip()[:-1] + '\n  provisioner "exec" {\n    program = "sleep"\n    shell = "none"\n    args = ["' + str(args.provision_seconds) + '"]\n  }\n}\n'
+        evidence["provision_seconds"] = args.provision_seconds
+    revision = request("POST", "/v1/revisions", {"files": {"field.sysbox.hcl": hcl}})["revision"]
     evidence["revision"] = revision
     topology = evidence["topology"]
     evidence["phase"] = "apply"
@@ -112,7 +119,7 @@ def main():
     accepted = request("POST", f"/v1/topologies/{topology}/apply", {"revision": revision}, topology + "-apply")
     evidence["runs"].append(accepted["run_id"])
     save()
-    wait(accepted["run_id"])
+    evidence["apply_run"] = wait(accepted["run_id"])
     evidence["state_after_apply"] = request("GET", f"/v1/topologies/{topology}/state")
     evidence["phase"] = "destroy"
     save()

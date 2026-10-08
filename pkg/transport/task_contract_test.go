@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
@@ -75,6 +76,21 @@ func TestTaskObservationRejectsDifferentBootAndEpoch(t *testing.T) {
 }
 
 type resolverTaskCaller struct{}
+
+func TestParentExecutionGrantReadsCurrentAuthority(t *testing.T) {
+	old := controlplane.SignedExecutionGrant{Grant: controlplane.ExecutionGrant{Epoch: 7}}
+	current := old
+	valid := true
+	ctx := WithParentExecutionGrant(context.Background(), old)
+	ctx = WithParentExecutionGrantResolver(ctx, func() (controlplane.SignedExecutionGrant, bool) { return current, valid })
+	current.Grant.ExpiresAt = time.Now().Add(time.Minute)
+	got, ok := ParentExecutionGrantFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, current, got)
+	valid = false
+	_, ok = ParentExecutionGrantFromContext(ctx)
+	require.False(t, ok, "revoked dynamic authority must not fall back to the original grant")
+}
 
 func (resolverTaskCaller) taskCall(_ context.Context, call guesttask.Call) (guesttask.Response, error) {
 	if call.Request == nil {

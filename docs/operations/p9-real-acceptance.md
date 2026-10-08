@@ -196,3 +196,54 @@ commit operations; production Run remains synchronous until the supervisor
 active registry, monotonic watchdog, Agent renewal and child-task renewal are
 integrated. The thirty-second long-operation failure is not closed by these
 foundation APIs.
+
+### Asynchronous parent Run execution
+
+The wire protocol returns `run_observation` with explicit `running`,
+`completed`, or `uncertain` status. Short Unix socket request deadlines do not
+own provider execution lifetime. The supervisor first reserves the signed Run
+in the durable gate, then launches one callback under its service context.
+Observe is historical, never a replay instruction. An intent without a live
+controller after restart remains uncertain.
+
+The Agent renews the existing API command/grant transaction and forwards the
+new signed envelope through `run-renew`. The supervisor persists exact-envelope
+CAS before extending its local monotonic deadline. Duplicate/stale renewal and
+expired/canceled execution are rejected. An independent online check detects
+revocation; losing authority cancels the execution context without claiming
+daemon/guest quiescence. `run-cancel` acknowledges cancellation intent only.
+
+New child requests obtain current parent authority from a dynamic accessor;
+already-running child tasks still require their own renewal and termination
+evidence. Parent renewal alone cannot be counted as child renewal. The old
+synchronous Run RPC path has been removed.
+
+The probe's `--provision-seconds 45` option runs a foreground `sleep` provisioner
+inside the real Docker node, making Apply exceed the prior30-second RPC limit.
+This exercises parent Run renewal; it does not prove renewal or cancellation
+of independently supervised guest tasks. All these distinctions must appear
+in the final evidence, including any intent left behind by a fault.
+
+2026-10-08 real two-VM long-Run evidence: `/var/tmp/p9-async-45s-03.json`
+on control records topology `p9-59a7850534bf`, with a45-second foreground
+provisioner. Apply ran from06:13:59.636111585Z to06:14:46.91627025Z (47.28s).
+Its original30-second command budget was renewed in the same epoch11; the
+durable signed envelope was issued at06:14:39.649680174Z and expired
+at06:17:09.643696197Z. Destroy finished, execution independently verified
+owner `e7a12f17-ecf7-476f-8925-4afde0a2df43` had no remaining containers, and
+metadata DELETE succeeded without force.
+
+The first two long-Run probe rounds omitted the required provisioner `shell`
+field and failed validation before resource execution. Their evidence and
+uncertain intents remain retained; the test now sets `shell = "none"`.
+Host callback failures are logged with Run ID to distinguish validation failure
+from watchdog revocation. No failed round is counted as a successful gate.
+
+Race regressions cover duplicate starts, request cancellation independence,
+deadline expiry, renewal across the initial budget, duplicate/old renewal,
+unresponsive online authority, noncooperative callback cancellation, and cold
+intent rejection. Per-identity admission avoids holding a global registry lock
+during network/disk I/O. Deadline cancellation uses an independent monotonic
+deadline and cannot wait for a renewal's journal mutex. Completed recovery
+requires the exact historical signed envelope; unsigned old outcomes are
+rejected rather than adopted.
