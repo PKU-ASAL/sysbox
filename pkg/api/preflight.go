@@ -60,7 +60,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			addPreflightChecks(&res, nodeDriver.PreflightChecks(false))
 		}
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeJSON(w, http.StatusOK, s.runtimeCapabilities(res))
 }
 
 // GET /v1/topologies/{topology}/preflight

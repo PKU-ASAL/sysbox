@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
@@ -26,6 +27,7 @@ const DefaultAgentID = "local"
 type Options struct {
 	APIURL                           string
 	Token                            string
+	SessionID                        string
 	ID                               string
 	Name                             string
 	Capabilities                     []string
@@ -71,6 +73,9 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	}
 	if opts.RequestTimeout <= 0 {
 		opts.RequestTimeout = 30 * time.Second
+	}
+	if opts.SessionID == "" {
+		opts.SessionID = uuid.NewString()
 	}
 	opts.httpClient = &http.Client{Timeout: opts.RequestTimeout}
 	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
@@ -216,12 +221,6 @@ func commandWebSocketAndExecute(ctx context.Context, runner *commandRunner, opts
 			})
 			continue
 		}
-		reporter.Report(ctx, controlplane.AgentCommandEvent{
-			CommandID: cmd.ID,
-			Type:      cmd.Type,
-			Status:    "ack",
-			Message:   "command received",
-		})
 		go runner.Execute(ctx, &cmd, func(event controlplane.AgentCommandEvent) {
 			reporter.Report(ctx, event)
 		})
@@ -236,6 +235,9 @@ type commandRunner struct {
 }
 
 func newCommandRunner(executor *Executor, opts Options) *commandRunner {
+	if opts.SessionID == "" {
+		opts.SessionID = uuid.NewString()
+	}
 	return &commandRunner{executor: executor, opts: opts, running: map[string]context.CancelFunc{}}
 }
 
@@ -248,10 +250,11 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			return
 		}
 		event := controlplane.AgentCommandEvent{
-			CommandID: cmd.ID,
-			Type:      cmd.Type,
-			Status:    status,
-			Message:   message,
+			LeaseOwner: cmd.LeaseOwner,
+			CommandID:  cmd.ID,
+			Type:       cmd.Type,
+			Status:     status,
+			Message:    message,
 		}
 		if err != nil {
 			event.Error = err.Error()
@@ -283,25 +286,51 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		return
 	}
 	runCtx, cancel := context.WithCancel(ctx)
-	r.track(cmd, cancel)
+	defer cancel()
+	if !r.track(cmd, cancel) {
+		return
+	}
 	defer r.untrack(cmd)
-	emit("started", "command started", nil)
+	path := r.executor.bridge.CheckpointFile("_agent_commands", commandInboxKey(cmd.ID))
+	if err := acceptCommand(path, r.opts.SessionID, cmd); err != nil {
+		emit("failed", "durable command acceptance failed", err)
+		return
+	}
+	if cmd.Type != "run_assigned" {
+		bounded, stop := context.WithTimeout(runCtx, controlplane.AgentCommandExecutionLimit)
+		defer stop()
+		runCtx = bounded
+		emit("ack", "command durably accepted", nil)
+		emit("started", "command started", nil)
+	}
 	switch cmd.Type {
 	case "run_assigned":
 		if cmd.Run == nil {
 			emit("failed", "missing run", fmt.Errorf("missing run"))
 			return
 		}
-		claimed, err := claim(runCtx, r.opts, cmd.Run.ID)
+		claimCtx := runCtx
+		if !cmd.Run.DeadlineAt.IsZero() {
+			var cancelClaim context.CancelFunc
+			claimCtx, cancelClaim = context.WithDeadline(runCtx, cmd.Run.DeadlineAt)
+			defer cancelClaim()
+		}
+		claimed, err := claim(claimCtx, r.opts, cmd.Run.ID)
 		if err != nil {
 			fmt.Printf("[agent] claim %s failed: %v\n", cmd.Run.ID, err)
 			emit("failed", "run claim failed", err)
 			return
 		}
-		stopRenew := startRunLeaseRenewal(runCtx, r.opts, claimed)
+		emit("ack", "run claim durably accepted", nil)
+		emit("started", "run started", nil)
+		stopRenew := startRunLeaseRenewal(runCtx, r.opts, claimed, cancel)
 		defer stopRenew()
 		r.executor.ExecuteContext(runCtx, claimed)
-		emit("completed", "run command completed", nil)
+		if claimed.Status == controlplane.RunDone {
+			emit("completed", "run command completed", nil)
+		} else {
+			emit("failed", "run requires recovery", errors.New(claimed.Err))
+		}
 	case "session_open":
 		if cmd.Session == nil {
 			emit("failed", "missing session", fmt.Errorf("missing session"))
@@ -411,43 +440,48 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 	}
 }
 
-func (r *commandRunner) track(cmd *controlplane.AgentCommand, cancel context.CancelFunc) {
+func commandKeys(cmd *controlplane.AgentCommand) []string {
+	keys := []string{cmd.ID}
+	if cmd.Session != nil {
+		keys = append(keys, cmd.Session.ID)
+	}
+	if cmd.Run != nil {
+		keys = append(keys, cmd.Run.ID)
+	}
+	keys = append(keys, cmd.Operation.ID)
+	if cmd.Execution != nil {
+		keys = append(keys, cmd.Execution.ID)
+	}
+	if cmd.FilePut != nil {
+		keys = append(keys, cmd.FilePut.ID)
+	}
+	return keys
+}
+func (r *commandRunner) track(cmd *controlplane.AgentCommand, cancel context.CancelFunc) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.running[cmd.ID] = cancel
-	if cmd.Session != nil && cmd.Session.ID != "" {
-		r.running[cmd.Session.ID] = cancel
+	keys := commandKeys(cmd)
+	for _, key := range keys {
+		if key != "" {
+			if _, exists := r.running[key]; exists {
+				return false
+			}
+		}
 	}
-	if cmd.Run != nil && cmd.Run.ID != "" {
-		r.running[cmd.Run.ID] = cancel
+	for _, key := range keys {
+		if key != "" {
+			r.running[key] = cancel
+		}
 	}
-	if cmd.Operation.ID != "" {
-		r.running[cmd.Operation.ID] = cancel
-	}
-	if cmd.Execution != nil && cmd.Execution.ID != "" {
-		r.running[cmd.Execution.ID] = cancel
-	}
-	if cmd.FilePut != nil && cmd.FilePut.ID != "" {
-		r.running[cmd.FilePut.ID] = cancel
-	}
+	return true
 }
-
 func (r *commandRunner) untrack(cmd *controlplane.AgentCommand) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.running, cmd.ID)
-	if cmd.Session != nil {
-		delete(r.running, cmd.Session.ID)
-	}
-	if cmd.Run != nil {
-		delete(r.running, cmd.Run.ID)
-	}
-	delete(r.running, cmd.Operation.ID)
-	if cmd.Execution != nil {
-		delete(r.running, cmd.Execution.ID)
-	}
-	if cmd.FilePut != nil {
-		delete(r.running, cmd.FilePut.ID)
+	for _, key := range commandKeys(cmd) {
+		if key != "" {
+			delete(r.running, key)
+		}
 	}
 }
 
@@ -737,38 +771,92 @@ func retryGuestFileReport(ctx context.Context, report func() error) error {
 	return err
 }
 
+type postStatusError struct {
+	code    int
+	message string
+}
+
+func (e *postStatusError) Error() string { return e.message }
 func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {
-	var run controlplane.Run
-	if err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+runID+"/claim", nil, &run); err != nil {
-		return nil, err
+	// A permanently unavailable API must not retain this command indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	// A new execution instance gets a new identity; transport retries reuse it.
+	request := map[string]string{"claim_id": uuid.NewSHA1(uuid.NameSpaceOID, []byte(opts.SessionID+":"+uuid.NewString())).String()}
+	for {
+		var run controlplane.Run
+		err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+runID+"/claim", request, &run)
+		if err == nil {
+			return &run, nil
+		}
+		var status *postStatusError
+		// Any transport/response decoding failure has unknown delivery. Replay the
+		// same claim; explicit protocol rejection must never start another attempt.
+		if errors.As(err, &status) && status.code != http.StatusServiceUnavailable && status.code != http.StatusBadGateway && status.code != http.StatusGatewayTimeout {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+		}
 	}
-	return &run, nil
 }
 
-func renewRunLease(ctx context.Context, opts Options, run *controlplane.Run) error {
-	if run == nil || run.ID == "" || run.LeaseOwner == "" {
-		return nil
+func renewRunLease(ctx context.Context, opts Options, run controlplane.Run) (time.Time, error) {
+	var renewed controlplane.Run
+	err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/renew", map[string]any{"lease_owner": run.LeaseOwner, "ttl_seconds": int(opts.RunRenewTTL.Seconds())}, &renewed)
+	if err != nil {
+		return time.Time{}, err
 	}
-	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/renew", map[string]any{
-		"lease_owner": run.LeaseOwner,
-		"ttl_seconds": int(opts.RunRenewTTL.Seconds()),
-	}, run)
+	if renewed.ID != run.ID || renewed.LeaseOwner != run.LeaseOwner || renewed.Attempt != run.Attempt || !renewed.LeaseUntil.After(time.Now()) {
+		return time.Time{}, fmt.Errorf("renewal ownership mismatch")
+	}
+	return renewed.LeaseUntil, nil
 }
 
-func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.Run) func() {
+// A lost renewal is an uncertain authority result, never permission to keep
+// mutating resources. The request budget also cannot outlive the last lease.
+func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.Run, onLost context.CancelFunc) func() {
 	renewCtx, cancel := context.WithCancel(ctx)
+	snapshot := *run
+	// Respect a shorter API-granted lease in crash tests and deployments; the
+	// agent default must not silently turn a 10s claim into a 30m renewal.
+	remaining := time.Until(snapshot.LeaseUntil)
+	grantTTL := ((remaining + time.Second - 1) / time.Second) * time.Second
+	if grantTTL > 0 && (opts.RunRenewTTL <= 0 || opts.RunRenewTTL > grantTTL) {
+		opts.RunRenewTTL = grantTTL
+	}
 	go func() {
-		ticker := time.NewTicker(opts.RunRenewInterval)
-		defer ticker.Stop()
+		deadline := snapshot.LeaseUntil
+		interval := opts.RunRenewInterval
+		if interval <= 0 {
+			interval = 30 * time.Second
+		}
 		for {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				onLost()
+				return
+			}
+			wait := min(interval, remaining/2)
+			timer := time.NewTimer(wait)
 			select {
 			case <-renewCtx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
-				if err := renewRunLease(renewCtx, opts, run); err != nil && renewCtx.Err() == nil {
-					fmt.Printf("[agent] renew run lease %s failed: %v\n", run.ID, err)
-				}
+			case <-timer.C:
 			}
+			attempt, stop := context.WithDeadline(renewCtx, deadline)
+			next, err := renewRunLease(attempt, opts, snapshot)
+			stop()
+			if err != nil {
+				if renewCtx.Err() == nil {
+					onLost()
+				}
+				return
+			}
+			deadline = next
 		}
 	}()
 	return cancel
@@ -822,7 +910,7 @@ func post(ctx context.Context, opts Options, url string, in any, out any) error 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("POST %s: %s", url, resp.Status)
+		return &postStatusError{code: resp.StatusCode, message: fmt.Sprintf("POST %s: %s", url, resp.Status)}
 	}
 	if out == nil {
 		return nil

@@ -136,9 +136,9 @@ complete, and fail commands on the same WebSocket; command events are persisted
 and available from `/v1/agents/{agent_id}/command-events`. Commands are
 persisted before delivery, leased with an atomic store operation before
 WebSocket delivery, replayed to reconnecting agents after lease expiry, and can
-be cancelled with `cancel_command`. Postgres stores command/run lease owner,
-lease expiry, and attempt count so multiple API replicas do not deliver or
-claim the same work concurrently. The legacy SSE command stream has been
+be cancelled with `cancel_command`. SQLite and Postgres store command/run lease owner,
+lease expiry, and attempt count with atomic ownership transitions. The supported
+deployment still uses a single API endpoint. The legacy SSE command stream has been
 removed. When a run is assigned, the API pushes a `run_assigned` command; the
 agent then claims the run through the same lease/attempt model and executes it
 on the host. While a run is active, the agent renews its run lease through
@@ -282,3 +282,81 @@ GET  /v1/artifacts
 GET  /v1/policies
 POST /v1/policies
 ```
+
+### Durable keyed Apply and cleanup inspection
+
+Apply accepts optional `Idempotency-Key` with the existing JSON fields `revision`,
+`inputs`, `deadline_at` (absolute RFC3339 timestamp), `agent_id` and
+`allow_unsafe_state`. Keyed requests require an immutable global revision. HTTP
+202 returns the original `run_id` on every equivalent replay, even after terminal
+completion or API restart; conflicting parameters return 409. Unkeyed requests
+retain their existing behavior.
+
+GET `/v1/runs/{id}` includes `inputs_required`. An active keyed Apply with that
+field true requires the same request/key to be replayed to the agent-connected
+API to restore ephemeral inputs. No sensitive inputs are durably recorded.
+Database unavailability returns 503, not a synthetic 404.
+
+GET `/v1/topologies/{topology}/cleanup-inspection` returns:
+
+```json
+{"resources": [], "active_operations": [], "state_exists": false, "metadata_exists": false}
+```
+
+Resource entries expose only `resource`, `name`, `type`, `provider`, `external_id`
+and `status`; active operations expose `id`, `op`, `operation_key` and `status`.
+Missing topology metadata is a valid empty inspection only when authoritative
+state and operation reads succeed. Failed reads return 503. A keyed Destroy can
+return a persisted successful no-op receipt for a never-created/already-deleted
+workspace after those checks. Clients must still inspect before metadata deletion.
+
+See [durable admission design](../design/durable-apply-admission.md) for restart,
+input hydration, single-API execution and multi-instance deduplication limits.
+
+GET `/v1/capabilities` is protected by the same configured API-token middleware
+as other control-plane routes. The new protocol responds:
+
+```json
+{"protocol":"cyberfield-runtime-v1","durable_apply":true,"keyed_destroy":true,"cleanup_inspection":true,"single_api_execution":true,"claim_replay":true}
+```
+
+Durable flags are advertised only for the SQLite and PostgreSQL API stores.
+Local file storage reports durable Apply, keyed Destroy and claim replay false. This is deployed protocol
+self-description, not transparent multi-API input recovery; clients must also
+verify the actual lifecycle protocol against their selected deployment.
+
+### Recovering a lost run claim receipt
+
+Agents send `POST /v1/agents/{agent}/runs/{run}/claim` with
+`{"claim_id":"<canonical nonzero UUID>"}`. The signed request body binds the
+identity to the authenticated agent. Generate one identity per execution
+instance and reuse it only while retrying that claim. A successful retry returns
+the same live lease owner, expiry and attempt, without extending the lease.
+A different claimant, different agent, expired lease or terminal run returns 409.
+Malformed identities return 400. Requests without an identity remain one-shot
+for older callers; current agents always send one.
+
+SQLite/PostgreSQL persist the identity as part of the lease in the original claim
+transaction. API restart retains the receipt. Keyed Apply still requires same-key
+input rehydration at the agent-connected API before any claim response can expose
+its transient inputs; unavailable inputs/storage return 503. Agents retry unknown
+transport outcomes, truncated responses and 502/503/504 using the same identity,
+with one-second backoff and a five-minute overall bound (or the earlier run or
+caller deadline). Explicit protocol rejection is not retried. This recovers claim
+receipt delivery; it does not promise arbitrary agent-process crash resumption or
+cross-system exactly-once effects. Upgrade API and agent together.
+
+### Execution ownership and completion
+
+Run completion carries the original `lease_owner` and `attempt` returned by the
+claim. The server accepts a terminal result only while that exact lease is live;
+it atomically compares ownership and deadline with the durable record. A stale
+owner, expired lease or conflicting terminal result is rejected. The normalized resource projection is persisted with the same completion CAS. Repeating the
+same committed completion repairs its volatile projection from that durable receipt; it cannot
+replace a newer completion view with the retry body.
+
+Agent command events carry their delivery `lease_owner`. ACK is emitted after a
+durable local inbox write and, for `run_assigned`, a successful durable run claim.
+Delivery lease expiry permits retry only before execution acknowledgement. An
+acknowledged command with uncertain external effects is reported failed/unknown
+and is not automatically replayed.

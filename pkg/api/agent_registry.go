@@ -101,6 +101,9 @@ func (r *agentRegistry) SaveProjection(proj controlplane.Projection) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := proj.AgentID + "/" + proj.Workspace + "/" + proj.Topology
+	if previous, ok := r.projections[key]; ok && previous.UpdatedAt.After(proj.UpdatedAt) {
+		return
+	}
 	r.projections[key] = proj
 }
 

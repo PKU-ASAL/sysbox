@@ -69,15 +69,16 @@ func TestAgentServiceRecordCommandEventUpdatesCommand(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, controlplane.AgentCommandStatusAcknowledged, got.Status)
 
-	// A terminal event removes the command rather than keeping a completed row.
+	// Terminal ownership remains durable so late ACK cannot recreate the command.
 	svc.RecordCommandEvent(ctx, controlplane.AgentCommandEvent{
 		AgentID:   "host-a",
 		CommandID: cmd.ID,
 		Status:    controlplane.AgentCommandStatusCompleted,
 		CreatedAt: now,
 	})
-	_, err = svc.FindCommand(ctx, "host-a", cmd.ID)
-	require.Error(t, err)
+	got, err = svc.FindCommand(ctx, "host-a", cmd.ID)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.AgentCommandStatusCompleted, got.Status)
 
 	require.Len(t, registry.ListCommandEvents("host-a"), 2)
 }
@@ -116,10 +117,14 @@ func TestAgentServiceLeavesLiveGuestCommandPending(t *testing.T) {
 func TestAgentServiceCompleteRunStoresProjection(t *testing.T) {
 	svc, _, registry, jobs := newTestAgentService(t)
 	run := jobs.start("mixed", "apply")
+	jobs.assign(run, "host-a")
+	claimed, claimErr := jobs.claim(run.ID, "host-a")
+	require.NoError(t, claimErr)
 
 	completion, err := svc.CompleteRun("host-a", run.ID, controlplane.RunCompletion{
 		Run: controlplane.Run{
-			ID:        run.ID,
+			ID:         run.ID,
+			LeaseOwner: claimed.LeaseOwner, Attempt: claimed.Attempt,
 			AgentID:   "host-a",
 			Topology:  "mixed",
 			Workspace: "mixed",

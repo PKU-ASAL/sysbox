@@ -247,7 +247,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest{
-		Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
+		Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt, OperationKey: r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -421,12 +421,19 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, ok := s.jobs.get(id)
-	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
+	run, err := s.apiStore.GetRun(r.Context(), id)
+	if errors.Is(err, errRunNotFound) {
+		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, run)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("run store unavailable"))
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		*controlplane.Run
+		InputsRequired bool `json:"inputs_required"`
+	}{run, s.jobs.inputsRequired(run)})
 }
 
 func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
@@ -444,11 +451,23 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reconcileParentJournal(parent, run *controlplane.Run) error {
+	checkCtx, checkCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer checkCancel()
+	checkpoint, err := s.apiStore.LoadCheckpoint(checkCtx, parent.Topology, parent.ID)
+	if err != nil {
+		return err
+	}
+	if checkpoint == nil {
+		return fmt.Errorf("resume blocked: parent checkpoint missing")
+	}
+	if err := runtime.CheckpointResumeSafety(*checkpoint); err != nil {
+		return err
+	}
 	mgr, err := s.stateManager(parent.Topology)
 	if err != nil {
 		return err
 	}
-	report, err := reconcileCheckpointJournal(context.Background(), s.apiStore, parent.Topology, parent.ID, mgr, run.LeaseOwner)
+	report, err := reconcileCheckpointJournal(checkCtx, s.apiStore, parent.Topology, parent.ID, mgr, run.LeaseOwner)
 	if err != nil {
 		return err
 	}
@@ -465,6 +484,11 @@ func (s *Server) reconcileParentJournal(parent, run *controlplane.Run) error {
 	}
 	for _, action := range report.Skipped {
 		_, _ = logs.Write([]byte(fmt.Sprintf("[resume] skipped %s: %s\n", action.Resource, action.Status)))
+	}
+	for _, action := range report.Skipped {
+		if action.Status != "already_in_state" {
+			return fmt.Errorf("resume blocked: %s %s", action.Resource, action.Status)
+		}
 	}
 	return nil
 }

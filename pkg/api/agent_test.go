@@ -92,7 +92,7 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 			require.Equal(t, "run_assigned", cmd.Type)
 			require.NotEmpty(t, cmd.ID)
 			require.NotNil(t, cmd.Run)
-			event = controlplane.AgentCommandEvent{CommandID: cmd.ID, Type: cmd.Type, Status: "ack"}
+			event = controlplane.AgentCommandEvent{CommandID: cmd.ID, LeaseOwner: cmd.LeaseOwner, Type: cmd.Type, Status: "ack"}
 			raw, _ := json.Marshal(event)
 			_ = conn.Write(context.Background(), websocket.MessageText, raw)
 		}
@@ -542,8 +542,8 @@ func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	run := s.jobs.start("mixed", "apply")
 	s.jobs.assign(run, "host-a")
-	run.Status = controlplane.RunDone
-	run.AgentID = "host-a"
+	claimed, claimErr := s.jobs.claim(run.ID, "host-a")
+	require.NoError(t, claimErr)
 
 	body := bytes.NewBufferString(`{
   "run": {
@@ -551,7 +551,9 @@ func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
     "topology": "mixed",
     "op": "apply",
     "status": "done",
-    "agent_id": "host-a"
+    "agent_id": "host-a",
+    "lease_owner": "` + claimed.LeaseOwner + `",
+    "attempt": 1
   },
   "projection": {
     "agent_id": "host-a",

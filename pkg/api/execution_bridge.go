@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -45,8 +46,21 @@ func (b *ExecutionBridge) LockTopology(topology string) func() {
 	return b.server.jobs.lockTopology(topology)
 }
 
+// Finish prepares the agent's completion receipt. The bridge shares the API
+// database for state/checkpoints, but it must never publish a canonical run
+// outcome there: only the authenticated completion endpoint owns that CAS.
 func (b *ExecutionBridge) Finish(run *controlplane.Run, err error) {
-	b.server.jobs.finish(run, err)
+	if run == nil {
+		return
+	}
+	jobs := b.server.jobs
+	jobs.mu.Lock()
+	run.MarkFinished(err, time.Now().UTC())
+	run.Inputs = nil
+	jobs.runs[run.ID] = run
+	delete(jobs.applyInputs, run.ID)
+	jobs.mu.Unlock()
+	jobs.logs.Close(run.ID)
 }
 
 func (b *ExecutionBridge) StateManager(topology string) (*state.Manager, error) {
