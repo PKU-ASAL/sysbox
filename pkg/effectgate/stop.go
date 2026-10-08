@@ -30,6 +30,9 @@ func receiptMatches(receipt *controlplane.SignedExecutionStopReceipt, grant cont
 }
 func validateLedger(record *ledger) error {
 	for key, prior := range record.Outcomes {
+		if prior.SignedGrant != nil && (!sameGrant(prior.Grant, prior.SignedGrant.Grant) || prior.SignedGrant.BootID == "" || prior.SignedGrant.IssuedAt.IsZero() || len(prior.SignedGrant.Signature) != ed25519.SignatureSize || !isRunGrant(prior.Grant)) {
+			return ErrUncertain
+		}
 		prefix := fmt.Sprintf("%d/", prior.Grant.Epoch)
 		if prior.Grant.Scope.TopologyUID != record.TopologyUID || prior.Grant.Epoch == 0 || !strings.HasPrefix(key, prefix) || len(key) == len(prefix) {
 			return ErrUncertain

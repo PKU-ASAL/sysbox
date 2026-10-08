@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func adoptionEvidenceDigest(raw json.RawMessage) (string, error) {
+func executionEvidenceDigest(raw json.RawMessage) (string, error) {
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, raw); err != nil {
 		return "", ErrInvalidExecutionGrant
@@ -27,7 +27,7 @@ func SignAdoptionStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, boot, id 
 	if g.Operation != "adoption_apply" {
 		return SignedExecutionStopReceipt{}, ErrInvalidExecutionGrant
 	}
-	digest, err := adoptionEvidenceDigest(evidence)
+	digest, err := executionEvidenceDigest(evidence)
 	if err != nil {
 		return SignedExecutionStopReceipt{}, err
 	}
@@ -41,7 +41,7 @@ func VerifyAdoptionStopReceipt(key ed25519.PublicKey, r SignedExecutionStopRecei
 	if err := VerifyExecutionStopReceipt(key, r); err != nil {
 		return err
 	}
-	digest, err := adoptionEvidenceDigest(evidence)
+	digest, err := executionEvidenceDigest(evidence)
 	if err != nil || digest != r.EvidenceDigest {
 		return ErrInvalidExecutionGrant
 	}

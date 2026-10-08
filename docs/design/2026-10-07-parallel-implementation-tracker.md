@@ -9,6 +9,13 @@ Agent/root supervisor 已部署，无共享工作目录。真实 Docker Apply→
 这不关闭活跃 Run 中途切换、长操作续租、未知结果恢复及其余 provider/功能故障矩阵。
 首次三轮失败证据保留，其中第三轮的资源/journal仍待未知结果恢复，不能算全部清场。
 
+已完成 Run 的回执恢复进一步通过真实双 VM 故障验收：仅阻断 host completion
+回报，确认宿主 durable complete 后重启 Agent/supervisor；恢复同一外部容器身份的
+原结果，再完成 Destroy、独立 provider 无残留核验与普通 metadata DELETE。
+Run 回执现在签署结果摘要，API 支持原 command 退休/重新投递、lease 到期后的
+可信完成；实际 Run attempt/owner 变化仍拒绝旧回执。文件/SQLite/真实 Postgres
+竞态测试和复审通过。详情见上述验收记录；未知 intent 和长任务续租仍未关闭。
+
 | 阶段 | 已进入代码的内容 | 未完成的验收/接入 |
 |---|---|---|
 | P0 | 强制按Go依赖重建guest helper、amd64/arm64构建、独立cgroup验收目标 | 全能力矩阵、最终产物与总验收 |

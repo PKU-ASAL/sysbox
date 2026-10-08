@@ -65,7 +65,7 @@ func (c *RunCoordinator) Start(ctx context.Context, req RunRequest, g controlpla
 		return raw, nil
 	}
 	receipt, err := gate.SealStop(ctx, g.Grant, req.ActionID, func(grant controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
-		return controlplane.SignExecutionStopReceipt(c.HostKey, grant, c.HostBootID, rand.Text(), time.Now().UTC())
+		return controlplane.SignRunStopReceipt(c.HostKey, grant, c.HostBootID, rand.Text(), raw, time.Now().UTC())
 	})
 	if err != nil {
 		return nil, err
@@ -104,6 +104,11 @@ func (c *RunCoordinator) Observe(ctx context.Context, req RunRequest, g controlp
 		return nil, err
 	}
 	if len(c.HostKey) == ed25519.PrivateKeySize && (c.ReportRunID != nil || c.Report != nil) {
+		if _, err := gate.SealStop(ctx, g.Grant, req.ActionID, func(owned controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
+			return controlplane.SignRunStopReceipt(c.HostKey, owned, c.HostBootID, rand.Text(), raw, time.Now().UTC())
+		}); err != nil {
+			return nil, err
+		}
 		if err := gate.ReportStop(ctx, g.Grant, req.ActionID, func(reportCtx context.Context, signed controlplane.SignedExecutionStopReceipt) error {
 			if c.ReportRunID != nil {
 				return c.ReportRunID(reportCtx, req.RunID, signed, raw)
@@ -137,7 +142,7 @@ func (c *RunCoordinator) Recover(ctx context.Context) error {
 			return err
 		}
 		if _, err := gate.SealStop(recoverCtx, grant, effectID, func(owned controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
-			return controlplane.SignExecutionStopReceipt(c.HostKey, owned, c.HostBootID, rand.Text(), time.Now().UTC())
+			return controlplane.SignRunStopReceipt(c.HostKey, owned, c.HostBootID, rand.Text(), raw, time.Now().UTC())
 		}); err != nil {
 			return err
 		}

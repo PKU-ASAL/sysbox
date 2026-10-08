@@ -69,6 +69,11 @@ func (s *localAPIStore) lockRunRecords(ctx context.Context) (func(), error) {
 	return func() { _ = lock.Close() }, nil
 }
 func (b localRunStorage) UpdateRun(ctx context.Context, id string, transform func(*controlplane.Run) (*controlplane.Run, error)) (*controlplane.Run, error) {
+	return b.updateRunWithCommand(ctx, id, "", func(run *controlplane.Run, _ *persistence.CommandRecord) (*controlplane.Run, error) {
+		return transform(run)
+	})
+}
+func (b localRunStorage) updateRunWithCommand(ctx context.Context, id, commandID string, transform func(*controlplane.Run, *persistence.CommandRecord) (*controlplane.Run, error)) (*controlplane.Run, error) {
 	unlock, err := b.store.lockRunRecords(ctx)
 	if err != nil {
 		return nil, err
@@ -78,7 +83,14 @@ func (b localRunStorage) UpdateRun(ctx context.Context, id string, transform fun
 	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
 		return nil, err
 	}
-	next, err := transform(current)
+	var command *persistence.CommandRecord
+	if commandID != "" {
+		command, err = (localCommandStorage{store: b.store}).read(ctx, commandID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	next, err := transform(current, command)
 	if err != nil {
 		return nil, err
 	}
@@ -165,6 +177,11 @@ func sameSQLiteRunColumns(indexed, full controlplane.Run) bool {
 	return errA == nil && errB == nil && bytes.Equal(a, b)
 }
 func (b sqliteRunStorage) UpdateRun(ctx context.Context, id string, transform func(*controlplane.Run) (*controlplane.Run, error)) (*controlplane.Run, error) {
+	return b.updateRunWithCommand(ctx, id, "", func(run *controlplane.Run, _ *persistence.CommandRecord) (*controlplane.Run, error) {
+		return transform(run)
+	})
+}
+func (b sqliteRunStorage) updateRunWithCommand(ctx context.Context, id, commandID string, transform func(*controlplane.Run, *persistence.CommandRecord) (*controlplane.Run, error)) (*controlplane.Run, error) {
 	db, err := b.store.open()
 	if err != nil {
 		return nil, err
@@ -192,7 +209,14 @@ func (b sqliteRunStorage) UpdateRun(ctx context.Context, id string, transform fu
 	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
 		return nil, err
 	}
-	next, err := transform(current)
+	var command *persistence.CommandRecord
+	if commandID != "" {
+		command, err = scanSQLiteCommand(conn.QueryRowContext(ctx, "SELECT "+sqliteCommandColumns+" FROM sysbox_agent_commands WHERE id=?", commandID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	next, err := transform(current, command)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +237,11 @@ func (b sqliteRunStorage) UpdateRun(ctx context.Context, id string, transform fu
 	return current, nil
 }
 func (b postgresRunStorage) UpdateRun(ctx context.Context, id string, transform func(*controlplane.Run) (*controlplane.Run, error)) (*controlplane.Run, error) {
+	return b.updateRunWithCommand(ctx, id, "", func(run *controlplane.Run, _ *persistence.CommandRecord) (*controlplane.Run, error) {
+		return transform(run)
+	})
+}
+func (b postgresRunStorage) updateRunWithCommand(ctx context.Context, id, commandID string, transform func(*controlplane.Run, *persistence.CommandRecord) (*controlplane.Run, error)) (*controlplane.Run, error) {
 	pool, err := b.store.poolFor(ctx)
 	if err != nil {
 		return nil, err
@@ -242,7 +271,14 @@ func (b postgresRunStorage) UpdateRun(ctx context.Context, id string, transform 
 		}
 		persistence.NormalizeRun(current)
 	}
-	next, err := transform(current)
+	var command *persistence.CommandRecord
+	if commandID != "" {
+		command, err = scanPostgresCommand(tx.QueryRow(ctx, "SELECT "+postgresCommandColumns+" FROM sysbox_agent_commands WHERE id=$1 FOR UPDATE", commandID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	next, err := transform(current, command)
 	if err != nil {
 		return nil, err
 	}

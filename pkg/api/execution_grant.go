@@ -244,7 +244,7 @@ type hostRunCompletion struct {
 
 // handleHostRunCompletion is the host-owned completion boundary for remote
 // apply/destroy. The worker cannot manufacture a terminal Run: the signed host
-// receipt, durable command identity and the current run lease must all agree.
+// receipt, durable command identity and immutable Run incarnation must agree.
 func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request) {
 	agentID, runID := r.PathValue("agent"), r.PathValue("run")
 	if err := validatePathSegment(agentID, "agent"); err != nil {
@@ -262,29 +262,8 @@ func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request)
 	}
 	key := s.grantHostKeys[agentID]
 	grant := body.Receipt.Grant
-	if grant.AgentID != agentID || grant.ActionID == "" || (grant.Operation != "run_apply" && grant.Operation != "run_destroy") || controlplane.VerifyExecutionStopReceipt(key, body.Receipt) != nil {
+	if grant.AgentID != agentID || grant.ActionID == "" || controlplane.VerifyRunStopReceipt(key, body.Receipt, body.Evidence) != nil {
 		writeError(w, http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
-		return
-	}
-	run, err := s.apiStore.GetRun(r.Context(), runID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	commands, err := s.apiStore.ListAgentCommands(r.Context(), agentID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	var command *controlplane.AgentCommand
-	for i := range commands {
-		if commands[i].ID == grant.CommandID {
-			command = &commands[i]
-			break
-		}
-	}
-	if command == nil || command.Type != "run_assigned" || command.Run == nil || command.Run.ID != runID || command.TopologyUID != grant.Scope.TopologyUID || command.ActionID != grant.ActionID || command.ResourceUID != grant.Scope.ResourceUID || command.Generation != grant.Scope.Generation {
-		writeError(w, http.StatusConflict, persistence.ErrConflict)
 		return
 	}
 	rawReceipt, err := json.Marshal(body.Receipt)
@@ -303,13 +282,7 @@ func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, persistence.ErrConflict)
 		return
 	}
-	completion := controlplane.RunCompletion{Run: *run}
-	completion.Run.Status = observed.Status
-	completion.Run.Err = observed.Err
-	completion.Run.EndedAt = observed.EndedAt
-	completion.Run.Cleanup = observed.Cleanup
-	completion.Cleanup = observed.Cleanup
-	completed, err := s.agentService().CompleteRun(agentID, runID, completion)
+	completed, err := s.apiStore.CompleteRunFromHost(r.Context(), agentID, runID, body.Receipt, observed)
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
@@ -318,7 +291,11 @@ func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request)
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	writeJSON(w, http.StatusOK, completed)
+	if s.jobs != nil {
+		s.jobs.remember(completed)
+		s.jobs.logs.Close(completed.ID)
+	}
+	writeJSON(w, http.StatusOK, controlplane.RunCompletion{Run: *completed, Cleanup: completed.Cleanup})
 }
 
 // Host authorization consumes a signed existing grant. It never renews or
@@ -417,9 +394,9 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 		writeError(w, 401, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
-	if receipt.Grant.Operation == "adoption_apply" {
-		// Adoption must durably commit evidence and operation completion before
-		// releasing this scope. The dedicated completion route owns that order.
+	if receipt.Grant.Operation == "adoption_apply" || receipt.Grant.Operation == "run_apply" || receipt.Grant.Operation == "run_destroy" {
+		// Adoption and Run completion must durably commit their result before
+		// releasing this scope. Dedicated completion routes own that order.
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}

@@ -160,3 +160,39 @@ failure versus uncertain provider results, privileged observations through the
 supervisor, guest/File/Reset/Adoption/SSH/GC cross-VM matrix, database/disk faults
 and final rebuilding/upgrade exercises. Two successful Docker rounds do not
 close these gates or the complete P0–P9 objective.
+
+### Completed-Run receipt recovery after worker retirement
+
+Run completion now signs the exact compacted terminal Run evidence, as well as
+the original grant. Generic stop receipts cannot complete or release a Run.
+The API verifies the issued grant and reads the original command tombstone and
+canonical Run together. A newer command-delivery attempt does not invalidate
+the old host evidence, but a different actual Run attempt/owner/incarnation
+does. Completion is persisted before authority is released; identical receipt
+replay after a successor cannot revoke that successor. Old Run receipts without
+an evidence digest are rejected, not silently re-signed.
+
+Real two-VM fault round `p9-272571cff315`: HAProxy returned503 only for host
+completion callbacks. Execution completed with a durable, unreported receipt
+and evidence digest; the API Run stayed running. Both Agent and supervisor were
+stopped, the proxy restriction removed, and both services restarted. Recovery
+reported the original evidence for container
+`52b0de81b30025004e11028b6ee34ca6f857a1d17ac4f665398bafa6bb539958`;
+the external ID remained unchanged. The round then completed Destroy, independent
+owner absence verification, and non-force metadata DELETE. The control VM
+retains `/var/tmp/p9-receipt-loss-01.json`; normal proxy routing is restored.
+This injects callback rejection and process restart, not loss after API commit
+or arbitrary in-flight provider cancellation.
+
+File/SQLite/real PostgreSQL regressions additionally cover expired worker lease,
+command re-delivery followed by retirement, session replacement, evidence
+tampering, different Run incarnation, generic-stop bypass, exact replay after
+successor, and rejection after actual Run execution attempt changes.
+
+The remaining early failure records with only `intent` still cannot be converted
+to completed receipts from resource existence alone. The renewable Run gate now
+has separate durable reservation, exact signed-envelope renewal CAS, and final
+commit operations; production Run remains synchronous until the supervisor
+active registry, monotonic watchdog, Agent renewal and child-task renewal are
+integrated. The thirty-second long-operation failure is not closed by these
+foundation APIs.

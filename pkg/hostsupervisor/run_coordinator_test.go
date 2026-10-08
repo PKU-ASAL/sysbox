@@ -89,6 +89,8 @@ func TestRunCoordinatorPersistsAndReportsHostReceipt(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, reported.Signature)
 	require.NoError(t, controlplane.VerifyExecutionStopReceipt(hostPub, reported))
+	require.NoError(t, controlplane.VerifyRunStopReceipt(hostPub, reported, json.RawMessage(`{"status":"done"}`)))
+	require.Error(t, controlplane.VerifyRunStopReceipt(hostPub, reported, json.RawMessage(`{"status":"failed"}`)))
 	require.Contains(t, string(raw), "receipt")
 }
 
@@ -114,6 +116,7 @@ func TestRunCoordinatorRecoveryReportsCompletedRunAfterRestart(t *testing.T) {
 		reported++
 		require.Equal(t, first, r)
 		require.JSONEq(t, `{"status":"done"}`, string(raw))
+		require.NoError(t, controlplane.VerifyRunStopReceipt(hostKey.Public().(ed25519.PublicKey), r, raw))
 		return nil
 	}
 	require.NoError(t, restarted.Recover(context.Background()))
@@ -121,4 +124,29 @@ func TestRunCoordinatorRecoveryReportsCompletedRunAfterRestart(t *testing.T) {
 	// A second scan is idempotent and does not report the receipt twice.
 	require.NoError(t, restarted.Recover(context.Background()))
 	require.Equal(t, 1, reported)
+}
+
+func TestRunObserveSealsCompletedOutcomeAfterCrashBeforeReceipt(t *testing.T) {
+	c, req, grant := runFixture(t)
+	pub, host, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	raw := json.RawMessage(`{"id":"run","status":"done"}`)
+	gate, err := c.gate(grant)
+	require.NoError(t, err)
+	_, err = gate.Execute(context.Background(), grant, req.ActionID, func(context.Context) (json.RawMessage, error) { return raw, nil })
+	require.NoError(t, err)
+	c.HostKey = host
+	c.HostBootID = "new-host-boot"
+	c.Authorize = nil
+	called := false
+	c.ReportRunID = func(_ context.Context, id string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {
+		called = true
+		require.Equal(t, req.RunID, id)
+		require.NoError(t, controlplane.VerifyRunStopReceipt(pub, receipt, evidence))
+		return nil
+	}
+	result, err := c.Observe(context.Background(), req, grant)
+	require.NoError(t, err)
+	require.JSONEq(t, string(raw), string(result))
+	require.True(t, called)
 }

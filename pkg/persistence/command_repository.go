@@ -320,7 +320,11 @@ func (r *CommandRepository) DeleteAgentCommand(ctx context.Context, agent, id st
 			next.Command.Status = controlplane.AgentCommandStatusCancelled
 			next.Command.EndedAt = r.now()
 		}
-		next.Command.Run = nil
+		// Host completion can outlive worker dispatch. Preserve its immutable
+		// Run incarnation; DurableCommand has already stripped transient Inputs.
+		if next.Command.Type != "run_assigned" {
+			next.Command.Run = nil
+		}
 		next.Command.Session = nil
 		next.Command.Request = controlplane.ConsoleRequest{}
 		next.Command.Operation = controlplane.NodeOperation{}

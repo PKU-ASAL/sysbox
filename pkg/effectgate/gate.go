@@ -27,11 +27,12 @@ type Gate struct {
 	Authorize func(context.Context, controlplane.ExecutionGrant) error
 }
 type outcome struct {
-	Grant    controlplane.ExecutionGrant              `json:"grant"`
-	State    string                                   `json:"state"`
-	Result   json.RawMessage                          `json:"result,omitempty"`
-	Receipt  *controlplane.SignedExecutionStopReceipt `json:"receipt,omitempty"`
-	Reported bool                                     `json:"reported"`
+	Grant       controlplane.ExecutionGrant              `json:"grant"`
+	SignedGrant *controlplane.SignedExecutionGrant       `json:"signed_grant,omitempty"`
+	State       string                                   `json:"state"`
+	Result      json.RawMessage                          `json:"result,omitempty"`
+	Receipt     *controlplane.SignedExecutionStopReceipt `json:"receipt,omitempty"`
+	Reported    bool                                     `json:"reported"`
 }
 type ledger struct {
 	TopologyUID string             `json:"topology_uid"`
