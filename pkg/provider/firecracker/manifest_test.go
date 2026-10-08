@@ -36,6 +36,21 @@ func TestProbeProcessDisappearingDuringStatRead(t *testing.T) {
 	}
 }
 
+func TestFirecrackerManagedGCRejectsManifestOwnershipDrift(t *testing.T) {
+	s, h, raw, _ := manifestFixture(t, false)
+	raw["owner_uid"] = "other-owner"
+	writeFixtureManifest(t, filepath.Dir(rawManifestPath(h)), raw)
+	// The manifest path is derived from the canonical runtime root and VM ID;
+	// a mismatched owner must fail before DestroyNode can touch the process.
+	err := s.DeleteManagedExternal(context.Background(), h.ID, "owner", "resource", 1)
+	require.Error(t, err)
+}
+
+func rawManifestPath(h substrate.NodeHandle) string {
+	hs, _ := h.Provider.(*HandleState)
+	return hs.ManifestPath
+}
+
 // This subprocess holds only a Unix socket. It never opens KVM or network devices.
 func TestManifestProcessHelper(t *testing.T) {
 	if os.Getenv("SYSBOX_MANIFEST_PROCESS_HELPER") != "1" {
