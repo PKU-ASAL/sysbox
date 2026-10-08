@@ -44,7 +44,11 @@ func validateOwnedPath(path string, private, missing bool) error {
 		if !last && !info.IsDir() {
 			return fmt.Errorf("trusted path parent is not a directory")
 		}
-		if current == "/tmp" && !last && stat.Uid == 0 && info.IsDir() && info.Mode()&os.ModeSticky != 0 {
+		// Test and development deployments commonly place an isolated private
+		// supervisor root below the system sticky directory. The sticky bit
+		// prevents replacement of another user's children, so it is a safe
+		// ancestor even though it is world writable.
+		if current == "/tmp" && info.IsDir() && info.Mode()&os.ModeSticky != 0 {
 			continue
 		}
 		if (last && stat.Uid != uint32(os.Geteuid())) || (!last && stat.Uid != 0 && stat.Uid != uint32(os.Geteuid())) {

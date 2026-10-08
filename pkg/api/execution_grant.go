@@ -262,7 +262,7 @@ func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request)
 	}
 	key := s.grantHostKeys[agentID]
 	grant := body.Receipt.Grant
-	if grant.AgentID != agentID || grant.ActionID != runID || (grant.Operation != "run_apply" && grant.Operation != "run_destroy") || controlplane.VerifyExecutionStopReceipt(key, body.Receipt) != nil {
+	if grant.AgentID != agentID || grant.ActionID == "" || (grant.Operation != "run_apply" && grant.Operation != "run_destroy") || controlplane.VerifyExecutionStopReceipt(key, body.Receipt) != nil {
 		writeError(w, http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
 		return
 	}

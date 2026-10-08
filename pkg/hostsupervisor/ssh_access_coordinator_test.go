@@ -24,7 +24,11 @@ func sshFixture(t *testing.T) (*SSHAccessCoordinator, controlplane.SSHAccessRequ
 	require.NoError(t, e)
 	root := t.TempDir()
 	require.NoError(t, os.Chmod(root, 0700))
-	return &SSHAccessCoordinator{Root: root, IssuerKey: pub, HostBootID: "host", AgentID: "agent", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }}, req, s
+	_, host, e := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, e)
+	return &SSHAccessCoordinator{Root: root, IssuerKey: pub, HostKey: host, HostBootID: "host", AgentID: "agent", Report: func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error {
+		return nil
+	}, Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }}, req, s
 }
 func TestSSHAccessApplyLostReplyObservesWithoutReapplying(t *testing.T) {
 	c, req, g := sshFixture(t)
@@ -42,4 +46,33 @@ func TestSSHAccessApplyRejectsChangedKey(t *testing.T) {
 	_, err := c.Apply(context.Background(), req, g, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{}`), nil })
 	require.Error(t, err)
 	_ = c
+}
+
+func TestSSHAccessCompletionReceiptSurvivesRestartAndOldEpoch(t *testing.T) {
+	c, req, g := sshFixture(t)
+	var first controlplane.SignedExecutionStopReceipt
+	c.Report = func(_ context.Context, _ string, r controlplane.SignedExecutionStopReceipt, _ json.RawMessage) error {
+		if first.ReceiptID == "" {
+			first = r
+		}
+		return errors.New("lost acknowledgment")
+	}
+	calls := 0
+	_, err := c.Apply(context.Background(), req, g, func(context.Context) (json.RawMessage, error) { calls++; return json.RawMessage(`{"ok":true}`), nil })
+	require.Error(t, err)
+	cold := *c
+	cold.HostBootID = "restarted"
+	cold.Authorize = nil
+	cold.Report = func(_ context.Context, _ string, r controlplane.SignedExecutionStopReceipt, _ json.RawMessage) error {
+		require.Equal(t, first, r)
+		return nil
+	}
+	raw, err := cold.Observe(context.Background(), req, g)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"ok":true}`, string(raw))
+	require.Equal(t, 1, calls)
+	// Historical observation remains valid after the original grant is retired;
+	// no provider effect is replayed.
+	_, err = cold.Observe(context.Background(), req, g)
+	require.NoError(t, err)
 }

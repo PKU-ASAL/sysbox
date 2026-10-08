@@ -118,9 +118,17 @@ func (s *Server) serveListener(parent context.Context, listener net.Listener) er
 		workers.Add(1)
 		go func() { defer workers.Done(); s.runRecovery(ctx, s.Files.Recover) }()
 	}
+	if s.Runs != nil {
+		workers.Add(1)
+		go func() { defer workers.Done(); s.runRecovery(ctx, s.Runs.Recover) }()
+	}
 	if s.Adoption != nil {
 		workers.Add(1)
 		go func() { defer workers.Done(); s.runRecovery(ctx, s.Adoption.Recover) }()
+	}
+	if s.SSH != nil {
+		workers.Add(1)
+		go func() { defer workers.Done(); s.runRecovery(ctx, s.SSH.Recover) }()
 	}
 	if s.GC != nil && s.GC.ReportStop != nil {
 		workers.Add(1)

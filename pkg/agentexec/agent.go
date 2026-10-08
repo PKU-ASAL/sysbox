@@ -350,11 +350,18 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			return
 		}
 		if r.opts.HostSupervisorSocket != "" {
-			if err := r.executeAssignedHostRun(runCtx, *claimed, cmd, emit); err != nil {
+			completed, err := r.executeAssignedHostRun(runCtx, *claimed, cmd, emit)
+			if err != nil {
 				emit("failed", "host supervisor run failed", err)
 				return
 			}
-			emit("started", "host supervisor accepted run; awaiting host receipt", nil)
+			if completed == nil {
+				emit("started", "host supervisor accepted run; awaiting host receipt", nil)
+			} else if completed.Status == controlplane.RunDone {
+				emit("completed", "host supervisor run completed", nil)
+			} else {
+				emit("failed", "host supervisor run failed", errors.New(completed.Err))
+			}
 			return
 		}
 		runCtx, err = r.prepareRunWorkspace(runCtx, *claimed)
@@ -889,55 +896,75 @@ func authorize(req *http.Request, opts Options) {
 	_ = agent.SignRequest(req, opts.ID, opts.Secret, time.Now())
 }
 
-func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlplane.Run, cmd *controlplane.AgentCommand, emit func(string, string, error)) error {
+func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlplane.Run, cmd *controlplane.AgentCommand, emit func(string, string, error)) (*controlplane.Run, error) {
 	if cmd == nil || cmd.Run == nil || r.opts.ExecutionSessionID == "" || r.opts.ExecutionGrantPublicKeyFile == "" {
-		return fmt.Errorf("host supervisor run requires execution session and grant key")
+		return nil, fmt.Errorf("host supervisor run requires execution session and grant key")
 	}
 	action := run.Op
 	if action == "" {
 		action = run.Operation
 	}
 	if action != "apply" && action != "destroy" {
-		return fmt.Errorf("host supervisor does not support run operation %q", run.Op)
+		return nil, fmt.Errorf("host supervisor does not support run operation %q", run.Op)
 	}
 	key, err := os.ReadFile(r.opts.ExecutionGrantPublicKeyFile)
 	if err != nil || len(key) != ed25519.PublicKeySize {
-		return controlplane.ErrInvalidExecutionGrant
+		return nil, controlplane.ErrInvalidExecutionGrant
 	}
 	node := run.Target
 	if i := strings.LastIndex(node, "."); i >= 0 {
 		node = node[i+1:]
 	}
 	if node == "" && cmd.ResourceUID != "" {
-		return fmt.Errorf("host supervisor run requires a single resource target")
+		return nil, fmt.Errorf("host supervisor run requires a single resource target")
 	}
 	target := hostsupervisor.TargetRef{Topology: run.Topology, Node: node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}}
 	req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: cmd.TopologyUID, Revision: run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: run.Target, ExpectedSerial: cmd.ExpectedSerial}
 	digest, err := req.Digest()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	client := hostsupervisor.NewTaskClient(r.opts.HostSupervisorSocket, target)
 	boot, err := client.HostBootID(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	endpoint := r.opts.APIURL + "/v1/agents/" + r.opts.ID + "/commands/" + cmd.ID + "/execution-grant"
 	var grant controlplane.SignedExecutionGrant
 	if err := post(ctx, r.opts, endpoint, map[string]any{"session_id": r.opts.ExecutionSessionID, "lease_owner": cmd.LeaseOwner, "attempt": cmd.Attempt, "boot_id": boot}, &grant); err != nil {
-		return err
+		return nil, err
 	}
 	if err := controlplane.VerifyExecutionGrant(ed25519.PublicKey(key), grant, boot, time.Now()); err != nil {
-		return err
+		return nil, err
 	}
 	if grant.Grant.Operation != "run_"+action || grant.Grant.Digest != digest || grant.Grant.ActionID != cmd.ActionID || grant.Grant.Scope != target.Scope {
-		return controlplane.ErrInvalidExecutionGrant
+		return nil, controlplane.ErrInvalidExecutionGrant
 	}
-	if _, err := client.StartRun(ctx, req, grant); err != nil {
-		if _, observeErr := client.ObserveRun(ctx, req, grant); observeErr != nil {
-			return fmt.Errorf("host run outcome unknown: %w", err)
+	raw, err := client.StartRun(ctx, req, grant)
+	if err != nil {
+		raw, err = client.ObserveRun(ctx, req, grant)
+		if err != nil {
+			return nil, fmt.Errorf("host run outcome unknown: %w", err)
 		}
 	}
-	_ = emit
-	return nil
+	return decodeHostRunEvidence(raw)
+}
+
+// decodeHostRunEvidence accepts both the first response envelope (result plus
+// receipt) and the durable Observe payload (the terminal Run itself).
+func decodeHostRunEvidence(raw json.RawMessage) (*controlplane.Run, error) {
+	var run controlplane.Run
+	if json.Unmarshal(raw, &run) == nil && run.ID != "" && run.Status.IsTerminal() {
+		return &run, nil
+	}
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil || len(envelope.Result) == 0 {
+		return nil, fmt.Errorf("host supervisor returned non-terminal run evidence")
+	}
+	if err := json.Unmarshal(envelope.Result, &run); err != nil || run.ID == "" || !run.Status.IsTerminal() {
+		return nil, fmt.Errorf("host supervisor returned non-terminal run evidence")
+	}
+	return &run, nil
 }

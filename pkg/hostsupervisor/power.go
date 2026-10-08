@@ -165,12 +165,20 @@ func (d *PowerDispatcher) Observe(ctx context.Context, ref TargetRef, g controlp
 	return d.finish(ctx, gate, g.Grant)
 }
 func (d *PowerDispatcher) Recover(ctx context.Context) error {
-	gate, err := d.gate(controlplane.SignedExecutionGrant{})
-	if err != nil {
-		return err
-	}
-	if d.ReportStop == nil {
+	if d == nil || d.AgentID == "" || d.HostBootID == "" || len(d.HostKey) != ed25519.PrivateKeySize || len(d.IssuerKey) != ed25519.PublicKeySize || d.ReportStop == nil {
 		return fmt.Errorf("host stop reporting unavailable")
 	}
-	return gate.RecoverStops(ctx, d.sign, d.ReportStop)
+	if err := EnsureOwnedDirectory(d.Root, 0700); err != nil {
+		return err
+	}
+	gate := &effectgate.Gate{Root: d.Root, PublicKey: d.IssuerKey, BootID: d.HostBootID}
+	return gate.RecoverCompleted(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, effectID string) error {
+		if grant.AgentID != d.AgentID || grant.Operation != "node_power" {
+			return effectgate.ErrFenced
+		}
+		if _, err := gate.SealStop(recoverCtx, grant, effectID, d.sign); err != nil {
+			return err
+		}
+		return gate.ReportStop(recoverCtx, grant, effectID, d.ReportStop)
+	})
 }

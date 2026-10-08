@@ -91,3 +91,34 @@ func TestRunCoordinatorPersistsAndReportsHostReceipt(t *testing.T) {
 	require.NoError(t, controlplane.VerifyExecutionStopReceipt(hostPub, reported))
 	require.Contains(t, string(raw), "receipt")
 }
+
+func TestRunCoordinatorRecoveryReportsCompletedRunAfterRestart(t *testing.T) {
+	c, req, g := runFixture(t)
+	_, hostKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	var first controlplane.SignedExecutionStopReceipt
+	c.HostKey = hostKey
+	c.Report = func(_ context.Context, r controlplane.SignedExecutionStopReceipt, _ json.RawMessage) error {
+		first = r
+		return errors.New("API unavailable")
+	}
+	_, err = c.Start(context.Background(), req, g, func(context.Context) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"done"}`), nil
+	})
+	require.Error(t, err)
+	restarted := *c
+	restarted.HostBootID = "replacement-host"
+	restarted.Authorize = nil
+	reported := 0
+	restarted.Report = func(_ context.Context, r controlplane.SignedExecutionStopReceipt, raw json.RawMessage) error {
+		reported++
+		require.Equal(t, first, r)
+		require.JSONEq(t, `{"status":"done"}`, string(raw))
+		return nil
+	}
+	require.NoError(t, restarted.Recover(context.Background()))
+	require.Equal(t, 1, reported)
+	// A second scan is idempotent and does not report the receipt twice.
+	require.NoError(t, restarted.Recover(context.Background()))
+	require.Equal(t, 1, reported)
+}
