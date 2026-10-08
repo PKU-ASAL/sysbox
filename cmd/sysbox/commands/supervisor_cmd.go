@@ -16,6 +16,7 @@ import (
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
+	firecrackerprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -296,6 +297,11 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 				case "domain":
 					lv := libvirtprovider.New(cfg.Providers.Libvirt.Workdir)
 					if err := lv.DeleteManagedExternal(effectCtx, candidate.ExternalID, candidate.OwnerUID, candidate.ResourceUID, candidate.Generation); err != nil {
+						return nil, err
+					}
+				case "firecracker":
+					fc := firecrackerprovider.New(cfg.Providers.Firecracker.Kernel, cfg.Providers.Firecracker.Workdir)
+					if err := fc.DeleteManagedExternal(effectCtx, candidate.ExternalID, candidate.OwnerUID, candidate.ResourceUID, candidate.Generation); err != nil {
 						return nil, err
 					}
 				default:

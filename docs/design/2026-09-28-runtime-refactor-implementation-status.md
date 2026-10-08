@@ -55,10 +55,10 @@ keyed Apply 后 workspace 当前指针可以不存在；活跃操作列表从 du
 | 清理检查完整性 | active_operation_kinds 只含 Run/NodeOperation；guest execution/file 不在该列表；列表和 lifecycle 不是同一跨仓储事务 |
 | 外部不存在判定 | cleanup-inspection 不执行 provider 查询；远端未观察时明确 owning_agent_not_observed。metadata 删除仍必须通过 repository CAS/journal 校验 |
 | 远端 metadata 删除 | 最新 Destroy 的持久回执绑定 owning Agent、topology UID、state serial、Run轮次与租约；当前placement匹配且无后续操作时支持普通删除。缺回执仍409；force仅删除元数据，活跃操作与本地未完成journal仍阻止删除 |
-| sysbox_ssh_access | 保留识别/诊断，Create/Read/Delete 明确 Unsupported；已删除不可验证的安装/启动脚本和仅删除 state 的假清理 |
-| Import / 自动 GC | 未实现 ownership adoption；import 派发前拒绝。GC 只允许可信 OwnerUID 范围的 dry-run |
+| sysbox_ssh_access | 已迁移到版本化 grant + host supervisor apply/observe/delete；真实独立 sshd E2E 已验证受管 key 生效与删除失效。共享 sshd drop-in 生命周期和完整 owning-agent 终态仍待收尾 |
+| Import / 自动 GC | adoption 与 GC 已有持久 plan/grant/effectgate 路径；Docker/network/libvirt/Firecracker 删除 callback 已接入 supervisor。CLI raw execute 迁移、Firecracker orphan 枚举和跨宿主执行矩阵仍待收尾 |
 | State 运维 | aggregate backend 未支持 snapshot/restore、lock inspection、force-unlock；HTTP501，不能返回空成功 |
-| 后台 SSH/vsock | Start 仅代表一次启动回执，不承诺重启后 Observe/Cancel；相关可选 SPI 不实现，不能通过 PID 猜测任务身份 |
+| 后台 SSH/vsock | 已使用统一 durable task manifest、boot/process/cgroup identity 和 recovery Observe/Cancel；完整 Agent/API/helper 独立进程重启故障矩阵仍待验收 |
 | stdin | vsock 有界预读；流式输入必须是取消时 Close 能解除 Read 的 ReadCloser。交互输入使用 console；后台 stdin 不支持 |
 | 文件传输依赖 | SSH guest 需 sh、mktemp、sha256sum、chmod、mv -T、sync -f；vsock 白名单根目录须已存在；缺工具/校验失败返回错误 |
 | Docker NAT 跨 provider | Docker 节点原生 NAT 支持；Firecracker/libvirt 不能猜测 Docker bridge 接入，明确 Unsupported |

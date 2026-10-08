@@ -23,7 +23,7 @@ type GCCandidate struct {
 }
 
 func (c GCCandidate) Validate() error {
-	if c.Kind != "container" && c.Kind != "network" && c.Kind != "domain" {
+	if c.Kind != "container" && c.Kind != "network" && c.Kind != "domain" && c.Kind != "firecracker" {
 		return fmt.Errorf("invalid GC candidate kind")
 	}
 	if c.ExternalID == "" || c.TopologyUID == "" || c.OwnerUID == "" || c.ResourceUID == "" || c.Generation < 1 || c.InventoryDigest == "" {
