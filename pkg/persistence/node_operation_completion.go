@@ -18,6 +18,9 @@ func CompleteNodeOperation(current controlplane.NodeOperation, command *CommandR
 	if report.Status != controlplane.NodeOperationStatusDone && report.Status != controlplane.NodeOperationStatusFailed {
 		return current, ErrInvalidRecord
 	}
+	if report.LeaseOwner == "" || report.Attempt < 1 || report.LeaseEpoch < 1 {
+		return current, ErrConflict
+	}
 	report.CommandID = current.CommandID
 	if report.EndedAt.IsZero() {
 		if current.Status == report.Status {

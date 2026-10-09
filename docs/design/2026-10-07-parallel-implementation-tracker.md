@@ -655,3 +655,7 @@ provider gate：Docker file/power/guest task/Run receipt-loss/adoption、Firecra
 crash/generation/reset/cross-process recovery、libvirt generation effects 全部通过
 并清理资源。P9 尚未关闭：双宿主 API/Agent 故障矩阵、partition/disk-full/upgrade
 演练和 main 整合仍待完成。
+
+补充 lease completion fencing：local worker completion 在 adapter 入口先核对当前
+command lease owner/attempt/epoch/deadline，并允许 retired command 只做完全相同的
+terminal replay；改变结果或旧租约不能重写 operation。

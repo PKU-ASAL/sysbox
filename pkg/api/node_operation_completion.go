@@ -24,6 +24,30 @@ func validateHostOperationReceipt(ctx context.Context, store apiStore, receipt c
 }
 
 func (s *localAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
+	if report.LeaseOwner == "" || report.Attempt < 1 || report.LeaseEpoch < 1 {
+		return nil, persistence.ErrConflict
+	}
+	repo, err := s.nodeOperationRepository(ctx)
+	if err != nil {
+		return nil, err
+	}
+	op, err := repo.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	cmd, err := (localCommandStorage{store: s}).read(ctx, op.CommandID)
+	if err != nil {
+		return nil, err
+	}
+	if cmd.Retired {
+		if persistence.SameNodeOperation(*op, report) {
+			return op, nil
+		}
+		return nil, persistence.ErrConflict
+	}
+	if cmd.Command.LeaseOwner != report.LeaseOwner || cmd.Command.Attempt != report.Attempt || cmd.Command.LeaseEpoch != report.LeaseEpoch || !cmd.Command.LeaseUntil.After(time.Now()) {
+		return nil, persistence.ErrConflict
+	}
 	return s.completeNodeOperation(ctx, agent, id, nil, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
 	})
@@ -83,6 +107,9 @@ func (s *localAPIStore) completeNodeOperation(ctx context.Context, agent, id str
 }
 
 func (s *sqliteAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
+	if report.LeaseOwner == "" || report.Attempt < 1 || report.LeaseEpoch < 1 {
+		return nil, persistence.ErrConflict
+	}
 	return s.completeNodeOperation(ctx, agent, id, nil, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
 	})
@@ -184,6 +211,9 @@ func (s *sqliteAPIStore) completeNodeOperation(ctx context.Context, agent, id st
 }
 
 func (s *postgresAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
+	if report.LeaseOwner == "" || report.Attempt < 1 || report.LeaseEpoch < 1 {
+		return nil, persistence.ErrConflict
+	}
 	return s.completeNodeOperation(ctx, agent, id, nil, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
 	})
