@@ -33,6 +33,9 @@ func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle,
 	if err != nil {
 		return err
 	}
+	if hsFrom(handle).GuestFamily == substrate.GuestFamilyWindows {
+		return conn.CopyFile(ctx, src, dst)
+	}
 	tmp := dst + ".sysbox-tmp"
 	if err := conn.CopyFile(ctx, src, tmp); err != nil {
 		return err
@@ -57,6 +60,9 @@ func guestFileInstallRequest(program string, args ...string) substrate.ExecReque
 // If SSHIP is empty, provisioners cannot run via SSH.
 func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.ConnectionHint) (substrate.Connection, error) {
 	hs := hsFrom(handle)
+	if hs.GuestFamily == substrate.GuestFamilyWindows {
+		return &qgaConnection{domain: hs.DomainName}, nil
+	}
 
 	host := handle.Net.PrimaryIP
 	if hs.SSHIP != "" {
@@ -106,6 +112,9 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 }
 
 func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
+	if hsFrom(handle).GuestFamily == substrate.GuestFamilyWindows {
+		return nil, substrate.ErrNotSupported
+	}
 	conn, err := s.Connection(handle, nil)
 	if err != nil {
 		return nil, err

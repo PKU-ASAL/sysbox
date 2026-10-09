@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +42,11 @@ func (s *Substrate) PrepareGuestNetwork(ctx context.Context, handle substrate.No
 func (s *Substrate) ObserveGuestNetwork(ctx context.Context, handle substrate.NodeHandle) (substrate.GuestNetworkInitObservation, error) {
 	hs := hsFrom(handle)
 	observation := substrate.GuestNetworkInitObservation{Mode: hs.NetworkInit, Converged: len(hs.Bridges) == 0}
+	if hs.GuestFamily == substrate.GuestFamilyWindows && len(hs.Bridges) > 0 {
+		if err := configureWindowsGuestNetwork(ctx, hs); err != nil {
+			return observation, err
+		}
+	}
 	for _, bridge := range hs.Bridges {
 		for _, prefix := range bridge.IPPrefixes {
 			ip, _, err := net.ParseCIDR(prefix)
@@ -81,6 +87,45 @@ func (s *Substrate) ObserveGuestNetwork(ctx context.Context, handle substrate.No
 		case <-time.After(guestNetworkPollInterval):
 		}
 	}
+}
+
+func configureWindowsGuestNetwork(ctx context.Context, hs *HandleState) error {
+	conn := &qgaConnection{domain: hs.DomainName}
+	if err := conn.WaitReady(ctx, 3*time.Minute); err != nil {
+		return err
+	}
+	for _, bridge := range hs.Bridges {
+		if len(bridge.IPPrefixes) != 1 || bridge.MAC == "" {
+			return fmt.Errorf("libvirt windows: each NIC requires one IPv4 prefix and a MAC")
+		}
+		ip, network, err := net.ParseCIDR(bridge.IPPrefixes[0])
+		if err != nil || ip.To4() == nil {
+			return fmt.Errorf("libvirt windows: invalid IPv4 prefix %q", bridge.IPPrefixes[0])
+		}
+		bits, _ := network.Mask.Size()
+		mac, err := net.ParseMAC(bridge.MAC)
+		if err != nil {
+			return fmt.Errorf("libvirt windows: invalid MAC %q: %w", bridge.MAC, err)
+		}
+		macText := strings.ToUpper(strings.ReplaceAll(mac.String(), ":", ""))
+		gatewayCommand := ""
+		if bridge.Gateway != "" {
+			gateway := net.ParseIP(bridge.Gateway)
+			if gateway == nil || gateway.To4() == nil {
+				return fmt.Errorf("libvirt windows: invalid gateway %q", bridge.Gateway)
+			}
+			gatewayCommand = fmt.Sprintf(`; Get-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Where-Object { $_.NextHop -ne '%s' } | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue; if(-not (Get-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Where-Object { $_.NextHop -eq '%s' })){ try { New-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix '0.0.0.0/0' -NextHop '%s' | Out-Null } catch { if ($_.Exception.Message -notmatch 'already exists') { throw } } }`, gateway, gateway, gateway)
+		}
+		script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $mac='%s'; $nic=Get-NetAdapter | Where-Object { $_.MacAddress.Replace('-','').ToUpperInvariant() -eq $mac } | Select-Object -First 1; if(-not $nic){ throw "NIC $mac missing" }; Set-NetIPInterface -InterfaceIndex $nic.ifIndex -Dhcp Disabled; Get-NetIPAddress -AddressFamily IPv4 -IPAddress '%s' -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceIndex -ne $nic.ifIndex } | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue; Get-NetIPAddress -InterfaceIndex $nic.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -ne '%s' } | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue; if(-not (Get-NetIPAddress -InterfaceIndex $nic.ifIndex -IPAddress '%s' -ErrorAction SilentlyContinue)){ try { New-NetIPAddress -InterfaceIndex $nic.ifIndex -IPAddress '%s' -PrefixLength %s | Out-Null } catch { if ($_.Exception.Message -notmatch 'already exists') { throw } } }%s; Set-DnsClientServerAddress -InterfaceIndex $nic.ifIndex -ServerAddresses 127.0.0.1; if(-not (Get-NetFirewallRule -DisplayName 'Sysbox ICMPv4' -ErrorAction SilentlyContinue)){ New-NetFirewallRule -DisplayName 'Sysbox ICMPv4' -Direction Inbound -Protocol ICMPv4 -IcmpType 8 -Action Allow | Out-Null }`, macText, ip, ip, ip, ip, strconv.Itoa(bits), gatewayCommand)
+		result, err := conn.Exec(ctx, substrate.ExecRequest{Program: "powershell.exe", Args: []string{"-NoProfile", "-NonInteractive", "-Command", script}, Shell: substrate.ShellNone}, nil, nil)
+		if err != nil {
+			return fmt.Errorf("libvirt windows: configure NIC %s: %w", bridge.Name, err)
+		}
+		if result.ExitCode != 0 {
+			return fmt.Errorf("libvirt windows: configure NIC %s exited %d: %s", bridge.Name, result.ExitCode, result.Stderr)
+		}
+	}
+	return nil
 }
 
 func probeGuestIPv4(ctx context.Context, namespace, ip string) error {
