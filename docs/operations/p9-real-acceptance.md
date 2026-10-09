@@ -1284,3 +1284,19 @@ so P6 is not complete.
 The final full Go regression also passed with both PostgreSQL test variables
 enabled. The isolated test database was stopped and automatically removed after
 verification; real Docker tests cleaned their own containers and helper files.
+
+### Run dispatch during maintenance (2026-10-09)
+
+Run admission and queued-to-assigned outbox publication now validate the same
+durable maintenance barrier as guest/file/node dispatch. New requests fail before
+writing the run, idempotency mapping or command; a queued run remains queued.
+SQL transactions retain the authority lock through run and command inserts; the
+file adapter retains its records/authority lock through the atomic bundle. Exact
+committed request retries remain historical reads during a freeze and do not
+publish a successor command.
+
+Three-backend race tests cover first authority row creation, different run keys,
+queued and assigned paths, idempotency mapping rollback and exact retry. Real
+PostgreSQL and full repository regression passed. This closes Run dispatch for
+the maintenance barrier; raw run Save/Restart and other metadata writers still
+need the same admission port, so P6 remains open.

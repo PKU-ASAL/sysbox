@@ -60,7 +60,7 @@ func TestAgentCommandStoresRejectStaleStatusRegression(t *testing.T) {
 	for name, store := range stores {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			terminal := controlplane.AgentCommand{ID: "cmd-terminal", AgentID: "host-a", Type: "run_assigned", Status: controlplane.AgentCommandStatusCompleted, EndedAt: time.Now().UTC()}
+			terminal := controlplane.AgentCommand{TopologyUID: "owner", ID: "cmd-terminal", AgentID: "host-a", Type: "run_assigned", Status: controlplane.AgentCommandStatusCompleted, EndedAt: time.Now().UTC()}
 			require.NoError(t, store.SaveAgentCommand(ctx, terminal))
 
 			stale := terminal
@@ -228,7 +228,7 @@ func TestSQLiteRunDispatchRollsBackRunWhenCommandInsertFails(t *testing.T) {
 	_, _, err := store.CreateRunDispatch(ctx, RunDispatchRequest{
 		Run:         run,
 		Fingerprint: "fingerprint-rollback",
-		Command:     controlplane.AgentCommand{ID: "run-conflict", AgentID: "host-a", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued},
+		Command:     controlplane.AgentCommand{TopologyUID: "owner", ID: "run-conflict", AgentID: "host-a", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued},
 	})
 	require.Error(t, err)
 	got, found, err := store.GetRunDispatch(ctx, run.ID, "fingerprint-rollback")

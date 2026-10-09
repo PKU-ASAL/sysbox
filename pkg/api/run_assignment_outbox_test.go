@@ -15,7 +15,7 @@ func TestRunAssignmentAndCommandCommitTogether(t *testing.T) {
 		require.NoError(t, s.SaveRun(ctx, queued))
 		assigned := queued
 		assigned.MarkAssigned("agent", time.Now().UTC())
-		cmd := controlplane.AgentCommand{ID: "run-assignment", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &assigned}
+		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "run-assignment", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &assigned}
 		_, _, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: assigned, Command: cmd, Fingerprint: "run-dispatch:assignment:apply:agent"})
 		require.NoError(t, err)
 		stored, err := s.GetRun(ctx, queued.ID)
@@ -36,7 +36,7 @@ func TestRunAssignmentRejectsChangedExecutionBinding(t *testing.T) {
 		assigned := queued
 		assigned.MarkAssigned("agent", time.Now().UTC())
 		assigned.Revision = "different"
-		cmd := controlplane.AgentCommand{ID: "run-assignment", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &assigned}
+		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "run-assignment", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &assigned}
 		_, _, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: assigned, Command: cmd, Fingerprint: "run-dispatch:assignment:apply:agent"})
 		require.Error(t, err)
 		commands, err := s.ListAgentCommands(ctx, "agent")
@@ -56,7 +56,7 @@ func TestRunAssignmentCommandConflictPreservesQueuedState(t *testing.T) {
 		require.NoError(t, s.SaveRun(ctx, queued))
 		assigned := queued
 		assigned.MarkAssigned("agent", time.Now().UTC())
-		cmd := controlplane.AgentCommand{ID: "run-conflict", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &assigned}
+		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "run-conflict", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &assigned}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
 		_, _, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: assigned, Command: cmd, Fingerprint: "run-dispatch:conflict"})
 		require.Error(t, err)

@@ -54,7 +54,7 @@ func TestRunDispatchSeparatesRestartedIncarnations(t *testing.T) {
 }
 
 func incarnationDispatch(run controlplane.Run) RunDispatchRequest {
-	return RunDispatchRequest{Run: run, Fingerprint: runAssignmentFingerprint(run), Command: controlplane.AgentCommand{ID: runCommandID(run), AgentID: run.AgentID, Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run}}
+	return RunDispatchRequest{Run: run, Fingerprint: runAssignmentFingerprint(run), Command: controlplane.AgentCommand{TopologyUID: "owner", ID: runCommandID(run), AgentID: run.AgentID, Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run}}
 }
 
 func TestClaimEndpointRejectsMissingAndOldIncarnation(t *testing.T) {

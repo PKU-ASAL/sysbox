@@ -129,7 +129,13 @@ func (s *localAPIStore) CreateRunDispatch(ctx context.Context, request RunDispat
 	}
 	// All participating writers hold the stable record lock; rename plus file
 	// and directory fsync publishes either the complete bundle or nothing.
-	if err := writeLocalObject(target, bundle); err != nil {
+	err = persistence.FilesystemExecutionGrantStorage(s.runsDir).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+		if err := persistence.ValidateMaintenanceWrite(raw, request.Command.TopologyUID); err != nil {
+			return nil, err
+		}
+		return nil, writeLocalObject(target, bundle)
+	})
+	if err != nil {
 		return nil, false, err
 	}
 	return &bundle.Run, created, nil
@@ -201,6 +207,9 @@ func (s *sqliteAPIStore) CreateRunDispatch(ctx context.Context, request RunDispa
 			err = validateDispatchReplay(*run, request)
 		}
 		return run, false, err
+	}
+	if err := checkSQLiteMaintenanceAdmission(ctx, tx, request.Command.TopologyUID); err != nil {
+		return nil, false, err
 	}
 	existing, err := scanSQLiteRun(tx.QueryRowContext(ctx, "SELECT "+sqliteRunColumns+" FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1", request.Run.ID))
 	if err == nil {
@@ -340,6 +349,9 @@ func (s *postgresAPIStore) CreateRunDispatch(ctx context.Context, request RunDis
 		}
 		normalizeRunProductFields(&run)
 		return &run, false, nil
+	}
+	if err := checkPostgresMaintenanceAdmission(ctx, tx, request.Command.TopologyUID); err != nil {
+		return nil, false, err
 	}
 	var existingRaw []byte
 	err = tx.QueryRow(ctx, `SELECT data::text FROM sysbox_runs WHERE id=$1 FOR UPDATE`, request.Run.ID).Scan(&existingRaw)

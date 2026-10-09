@@ -391,3 +391,8 @@ node-operation 的 dispatch 已在三后端 authority barrier 事务内受理；
 发布 operation/command，释放后可恢复 execution 受理。首次 authority 记录不存在
 的 execution/freeze 并发竞争已有测试。Run dispatch、其他 metadata writer 和跨
 registry 统一准入仍待迁移，P6/P8 保持未关闭。
+
+2026-10-09 Run admission 检查点：Run 首次受理、queued→assigned outbox 和幂等
+重试已接入 maintenance barrier；冻结拒绝不会写 run/request/command，已提交请求
+仍可只读重试。三后端 race 与真实 Postgres 全仓回归通过。Run Save/Restart、其他
+metadata writer 和统一跨 registry 准入仍未完成，P6/P8 继续未关闭。

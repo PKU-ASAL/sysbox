@@ -715,3 +715,8 @@ UID 与当前 lifecycle 一致；metadata 删除后旧 delivery lease 不再获�
 dispatch 的 HTTP 接口未变，但提交要求 command 携带 topology UID，并受未释放
 maintenance barrier 拒绝。文件/SQLite/Postgres 保持 operation 与 command 原子
 发布；冻结拒绝不会留下半条记录。Run dispatch 和其他 writer 尚未纳入同一 barrier。
+
+实施补充（2026-10-09 Run maintenance dispatch）：Run 受理 HTTP 接口不变，新的
+受理和 assignment outbox 需要当前 topology UID，未释放 maintenance barrier 时
+返回冲突并不产生 run/request/command。精确已提交请求仍可幂等读取；Run Save/Restart
+等其他内部 writer 尚未统一到该 barrier。

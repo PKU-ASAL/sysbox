@@ -166,7 +166,7 @@ func TestRunDispatchPreservesDeadlineAndSnapshot(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
 		ctx := context.Background()
 		run := controlplane.Run{ID: "dispatch-deadline", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned, DeadlineAt: time.Now().UTC().Add(-time.Minute), SnapshotPath: "/pinned/field.sysbox.hcl"}
-		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Fingerprint: "fingerprint", Command: controlplane.AgentCommand{ID: "command", AgentID: run.AgentID, Status: controlplane.AgentCommandStatusQueued, Type: "run_assigned", Run: &run}})
+		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Fingerprint: "fingerprint", Command: controlplane.AgentCommand{TopologyUID: "owner", ID: "command", AgentID: run.AgentID, Status: controlplane.AgentCommandStatusQueued, Type: "run_assigned", Run: &run}})
 		require.NoError(t, err)
 		require.True(t, created)
 		got, err := s.GetRun(ctx, run.ID)
@@ -184,7 +184,7 @@ func TestRunDispatchAttachesCommandToExistingAssignedRun(t *testing.T) {
 		ctx := context.Background()
 		run := controlplane.Run{ID: "assigned-existing", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
 		require.NoError(t, s.SaveRun(ctx, run))
-		cmd := controlplane.AgentCommand{ID: "run-assigned-existing", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run}
+		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "run-assigned-existing", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run}
 		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: cmd, Fingerprint: "run-dispatch:assigned-existing"})
 		require.NoError(t, err)
 		require.False(t, created)

@@ -18,7 +18,7 @@ func TestCommandRepositoryDispatchRejectsExistingCommandID(t *testing.T) {
 		ctx := context.Background()
 		require.NoError(t, s.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "reserved-command", AgentID: "agent", Type: "node_operation"}))
 		run := controlplane.Run{ID: "new-run", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
-		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: controlplane.AgentCommand{ID: "reserved-command", AgentID: "agent", Type: "run_assigned", Run: &run}, Fingerprint: "new"})
+		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: controlplane.AgentCommand{TopologyUID: "owner", ID: "reserved-command", AgentID: "agent", Type: "run_assigned", Run: &run}, Fingerprint: "new"})
 		require.Error(t, err)
 		require.False(t, created)
 		_, err = s.GetRun(ctx, run.ID)
@@ -100,7 +100,7 @@ func TestCommandRepositoryExistingRunDispatchDoesNotCreateCommand(t *testing.T) 
 	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
 		ctx := context.Background()
 		original := controlplane.Run{ID: "original", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
-		first := RunDispatchRequest{Run: original, Command: controlplane.AgentCommand{ID: "shared-command", AgentID: "agent", Type: "run_assigned", Run: &original}, Fingerprint: "original"}
+		first := RunDispatchRequest{Run: original, Command: controlplane.AgentCommand{TopologyUID: "owner", ID: "shared-command", AgentID: "agent", Type: "run_assigned", Run: &original}, Fingerprint: "original"}
 		_, _, err := s.CreateRunDispatch(ctx, first)
 		require.NoError(t, err)
 		existing := original
@@ -120,7 +120,7 @@ func TestCommandRepositoryExistingRunDispatchDoesNotCreateCommand(t *testing.T) 
 func TestCommandRepositoryPreservesImmutablePayload(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
 		ctx := context.Background()
-		cmd := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Run: &controlplane.Run{ID: "run", Topology: "lab", Revision: "pinned", Status: controlplane.RunAssigned}}
+		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Run: &controlplane.Run{ID: "run", Topology: "lab", Revision: "pinned", Status: controlplane.RunAssigned}}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
 		other := cmd
 		changed := *cmd.Run
@@ -141,7 +141,7 @@ func TestCommandRepositoryRetirementPreventsDispatchResurrection(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
 		ctx := context.Background()
 		run := controlplane.Run{ID: "bundled", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
-		cmd := controlplane.AgentCommand{ID: "bundle-command", AgentID: "agent", Type: "run_assigned", Run: &run}
+		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "bundle-command", AgentID: "agent", Type: "run_assigned", Run: &run}
 		request := RunDispatchRequest{Run: run, Command: cmd, Fingerprint: "request"}
 		_, created, err := s.CreateRunDispatch(ctx, request)
 		require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestCommandRepositoryRetirementPreventsDispatchResurrection(t *testing.T) {
 func TestCommandRepositoryConcurrentLeaseHasSingleWinner(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
 		ctx := context.Background()
-		cmd := controlplane.AgentCommand{ID: "contended", AgentID: "agent", Type: "run_assigned"}
+		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "contended", AgentID: "agent", Type: "run_assigned"}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
 		type result struct {
 			ok  bool
@@ -239,7 +239,7 @@ func TestCommandDeliveryStopsBeforeSocketWriteOnPersistenceFailure(t *testing.T)
 func TestCommandRepositoryRetriesExpiredDeliveryLease(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
 		ctx := context.Background()
-		cmd := controlplane.AgentCommand{ID: "expired", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusLeased, LeaseOwner: "old", LeaseUntil: time.Now().UTC().Add(-time.Minute), Attempt: 1}
+		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "expired", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusLeased, LeaseOwner: "old", LeaseUntil: time.Now().UTC().Add(-time.Minute), Attempt: 1}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
 		got, ok, err := s.AcquireAgentCommandLease(ctx, cmd.AgentID, cmd.ID, "new", time.Minute)
 		require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestCommandRepositoryRetriesExpiredDeliveryLease(t *testing.T) {
 func TestCommandRepositoryRejectsInvalidLeaseAndReplacement(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
 		ctx := context.Background()
-		cmd := controlplane.AgentCommand{ID: "lease", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued}
+		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "lease", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
 		_, ok, err := s.AcquireAgentCommandLease(ctx, cmd.AgentID, cmd.ID, "owner", 0)
 		require.Error(t, err)
