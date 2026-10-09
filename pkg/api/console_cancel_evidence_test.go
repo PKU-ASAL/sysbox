@@ -194,3 +194,67 @@ func TestConsoleCancelReportsDispatchFailureAndRetainsIntent(t *testing.T) {
 	require.Equal(t, controlplane.ConsoleSessionStatusCancelling, result.Status)
 	require.Len(t, result.Audit, len(stored.Audit))
 }
+
+func TestConsoleCancellationRetriesReuseDurableCommand(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		ctx := context.Background()
+		hub := newConsoleSessionHub(store)
+		sess, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})
+		require.NoError(t, err)
+		agents := &AgentService{store: store}
+		service := &ConsoleService{consoles: hub, publishCommand: agents.PublishCommand}
+		_, err = service.Cancel(ctx, sess.ID, requestSubject{User: "operator"})
+		require.NoError(t, err)
+		commands, err := store.ListAgentCommands(ctx, "agent")
+		require.NoError(t, err)
+		require.Len(t, commands, 1)
+		leased, ok, err := store.AcquireAgentCommandLease(ctx, "agent", commands[0].ID, "worker", time.Minute)
+		require.NoError(t, err)
+		require.True(t, ok)
+		_, err = service.Cancel(ctx, sess.ID, requestSubject{User: "operator"})
+		require.NoError(t, err)
+		commands, err = store.ListAgentCommands(ctx, "agent")
+		require.NoError(t, err)
+		require.Len(t, commands, 1, "retry must not manufacture another command")
+		require.Equal(t, leased.ID, commands[0].ID)
+		require.Equal(t, leased.Attempt, commands[0].Attempt)
+		require.Equal(t, leased.LeaseOwner, commands[0].LeaseOwner)
+		service.consoles = newConsoleSessionHub(store)
+		_, err = service.Cancel(ctx, sess.ID, requestSubject{User: "operator"})
+		require.NoError(t, err)
+		commands, err = store.ListAgentCommands(ctx, "agent")
+		require.NoError(t, err)
+		require.Len(t, commands, 1)
+		require.Equal(t, leased.ID, commands[0].ID, "cold retry has the same immutable cancellation identity")
+		require.NoError(t, store.DeleteAgentCommand(ctx, "agent", leased.ID))
+		_, err = service.Cancel(ctx, sess.ID, requestSubject{User: "operator"})
+		require.Error(t, err, "retirement cannot resurrect the cancellation delivery")
+		commands, err = store.ListAgentCommands(ctx, "agent")
+		require.NoError(t, err)
+		require.Empty(t, commands)
+	})
+}
+
+func TestConsoleCancellationConcurrentFirstEnqueueIsIdempotent(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		ctx := context.Background()
+		hub := newConsoleSessionHub(store)
+		sess, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})
+		require.NoError(t, err)
+		cmd := consoleCancellationCommand(sess)
+		publisher := &AgentService{store: store}
+		start := make(chan struct{})
+		results := make(chan error, 8)
+		for i := 0; i < 8; i++ {
+			go func() { <-start; _, err := publisher.PublishCommand(ctx, "agent", cmd); results <- err }()
+		}
+		close(start)
+		for i := 0; i < 8; i++ {
+			require.NoError(t, <-results)
+		}
+		commands, err := store.ListAgentCommands(ctx, "agent")
+		require.NoError(t, err)
+		require.Len(t, commands, 1)
+		require.Equal(t, cmd.ID, commands[0].ID)
+	})
+}

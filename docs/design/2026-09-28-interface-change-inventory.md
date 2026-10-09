@@ -745,3 +745,8 @@ error 返回；HTTP 创建路由不变，持久化失败返回脱敏503，不返
 与持久终态及原派发证明一致的重复回报；不恢复命令投递。Supervisor 可用该结果
 修复未完成的 session 记录，直接回报也经过同一身份检查。恢复时间/错误来自原
 command，不采信重试的新时间或文本；这不替代 host 签名停止证明。
+
+实施补充（2026-10-09 console cancel command）：取消命令 ID 改为 session 不可变
+身份摘要，重复请求读取同一 outbox 记录并保留现有投递租约。已退休记录不会被
+重新排队；取消 command 的 Session 载荷包含 topology/node/Agent/创建时间。
+这不改变取消 HTTP 路由，也不代表 session 意图与 command 已原子提交。

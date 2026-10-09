@@ -179,7 +179,13 @@ func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd c
 		cmd.CreatedAt = time.Now().UTC()
 	}
 	if s.store != nil {
-		if err := s.store.SaveAgentCommand(ctx, cmd); err != nil {
+		if cmd.Type == "cancel_command" && cmd.Session != nil {
+			current, err := enqueueConsoleCancellation(ctx, s.store, cmd)
+			if err != nil {
+				return cmd, err
+			}
+			cmd = *current
+		} else if err := s.store.SaveAgentCommand(ctx, cmd); err != nil {
 			return cmd, err
 		}
 	}

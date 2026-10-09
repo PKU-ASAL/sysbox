@@ -1575,3 +1575,34 @@ and automatically retrying a failed registry initialization remain unresolved.
 Verification: full API race passed (36.89 seconds), along with startup-specific
 tests, vet, docscheck and independent review. PostgreSQL and real provider E2E
 were not enabled in this startup error-handling round.
+
+### Console cancellation uses one immutable outbox identity (2026-10-09)
+
+Console cancellation retries previously created random command IDs and duplicate
+deliveries. The command ID now hashes the session's immutable ID, Agent, topology,
+node and creation time; mutable status/audit fields are excluded. Its durable
+payload carries that same target identity. A shared repository Enqueue operation
+inserts a queued command or returns the exact matching live record without
+changing delivery state, lease owner, deadline or attempt. Changed payloads and
+retired records conflict rather than restarting delivery.
+
+The production publisher uses Enqueue for console cancellation and retains the
+existing behavior for other commands. Three-backend tests cover retries after
+lease acquisition, cold hub reconstruction and retirement. A storage commit
+failure cannot return a speculative command. Once committed, the existing outbox
+can enumerate the cancellation; this change does not atomically publish the
+session cancellation intent and command together. A crash before first enqueue,
+automatic repair of that gap, and verified remote stopping remain unfinished.
+
+Verification: API/persistence full race passed with both PostgreSQL test variables
+enabled (57.11/3.73 seconds); file/SQLite/Postgres hot/cold retries all retained
+one command and its lease. Vet and docscheck passed. The temporary PostgreSQL
+container was stopped and automatically removed; no real provider effect ran.
+
+Independent review found PostgreSQL's absent-row first-insert race could return
+a spurious conflict. Enqueue now re-enters a new transaction once on conflict and
+compares the same immutable payload; changed/retired records still reject. After
+that fix, eight-way first enqueue, hot/cold retries and repository failure cases
+passed five repeated race runs across file/SQLite/real Postgres. Re-review found
+no remaining issue in this slice. The second isolated verification database was
+also stopped and automatically removed.

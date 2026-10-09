@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -115,16 +117,20 @@ func (s *ConsoleService) Cancel(ctx context.Context, id string, subj requestSubj
 	if err != nil {
 		return controlplane.ConsoleSession{}, err
 	}
-	_, err = s.publishCommand(ctx, sess.AgentID, controlplane.AgentCommand{
-		Type: "cancel_command",
-		Session: &controlplane.ConsoleSession{
-			ID: sess.ID,
-		},
-	})
+	_, err = s.publishCommand(ctx, sess.AgentID, consoleCancellationCommand(sess))
 	if err != nil {
 		return sess, fmt.Errorf("publish console cancellation: %w", err)
 	}
 	return sess, nil
+}
+
+// Immutable session identity determines a single durable cancellation command.
+// Status/audit fields change on retry and must never become command identity.
+func consoleCancellationCommand(sess controlplane.ConsoleSession) controlplane.AgentCommand {
+	identity := controlplane.ConsoleSession{ID: sess.ID, AgentID: sess.AgentID, Topology: sess.Topology, Node: sess.Node, CreatedAt: sess.CreatedAt}
+	raw, _ := json.Marshal(identity)
+	id := fmt.Sprintf("console-cancel-%x", sha256.Sum256(raw))
+	return controlplane.AgentCommand{ID: id, AgentID: sess.AgentID, Type: "cancel_command", Session: &identity}
 }
 
 func (s *ConsoleService) normalizeRequest(req *controlplane.ConsoleRequest, subj requestSubject) error {
