@@ -47,7 +47,10 @@ func sameScope(a, b controlplane.ExecutionScope) bool {
 	return a.TopologyUID == b.TopologyUID && a.ResourceUID == b.ResourceUID
 }
 func (e *Engine) scopeQuiescent(grant controlplane.ExecutionGrant) error {
-	tasks, err := e.listUnlocked()
+	return e.scopeQuiescentExcept(grant, "")
+}
+func (e *Engine) scopeQuiescentExcept(grant controlplane.ExecutionGrant, absent string) error {
+	tasks, err := e.listUnlockedExcept(absent)
 	if err != nil {
 		return err
 	}

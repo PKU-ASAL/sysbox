@@ -216,7 +216,7 @@ func TestFileInstallRejectsActiveTaskScope(t *testing.T) {
 	task := signedRequest(t, key, grant.BootID, "active")
 	now, err := bootNanos()
 	require.NoError(t, err)
-	require.NoError(t, e.save(Record{Version: Version, ID: task.ID, Digest: task.Grant.Grant.Digest, Grant: task.Grant, BootID: grant.BootID, DeadlineBootNS: now + int64(time.Minute), Status: "running"}))
+	require.NoError(t, e.save(Record{Version: RecordVersion, ID: task.ID, Digest: task.Grant.Grant.Digest, Grant: task.Grant, BootID: grant.BootID, DeadlineBootNS: now + int64(time.Minute), Status: "running"}))
 	_, err = e.InstallFile(context.Background(), req, grant, bytes.NewReader(body))
 	require.ErrorContains(t, err, "guest task is not quiescent")
 	_, err = os.Stat(req.Path)

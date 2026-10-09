@@ -152,6 +152,24 @@ compatibility reader. Host task records now use version 2 and reject version 1;
 rebuild old task data explicitly. Worker execution completion is removed; only
 authenticated host evidence can establish an API execution's terminal result.
 
+The guest helper now also uses task record version 2, independently of host task
+records; guest RPC remains version 1 and scope records remain version 2. Guest
+record version 1 requires explicit rebuilding. Both embedded Linux helpers
+(amd64 and arm64) are rebuilt with this format.
+
+A `SignedExecutionCancellation` is a separate, stop-only signature for a revoked
+task epoch. It cannot authorize start or renewal. The transport carries it only
+on cancellation calls. For a missing guest record, the helper locks scope and
+task, checks the boot and absence of a cgroup, and persists a cancellation
+tombstone. A late Start then returns that terminal record. Orphan cgroups,
+corrupt records, dangling record references and missing records for other tasks
+remain unresolved. Cancellation of an already owned task still works offline
+without requesting new authority.
+
+This is the guest-side mechanism. API discovery/signing of pending stops and
+host recovery for a missing host task record are not yet connected; the public
+API does not yet automatically close that recovery window.
+
 Run `make test-host-file-e2e` for the actual API/host/Docker installation test,
 including lost stop acknowledgment, cold recovery, checksum/mode and revoked
 request rejection. Staging anchors are retained as recovery evidence; automatic

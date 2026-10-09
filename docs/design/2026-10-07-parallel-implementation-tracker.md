@@ -588,3 +588,11 @@ API schema 13 / execution format 4 / host task version 2 明确重建旧格式�
 
 明确保留边界：已发授权但宿主没有任务记录，仍需宿主侧的缺失记录/未启动证明；
 不能把投递失败或grant过期当作该证明。此次失败收尾仅关闭从未发过授权的任务。
+
+2026-10-10 guest缺失记录封闭基础：新增只取消的独立签名域，绑定完整grant身份，
+不能当作Start/Renew凭证。guest持scope→task锁，重查缺失记录及不存在cgroup后
+写持久取消记录，迟到Start不再启动。残留目录可恢复，其他缺失记录/悬空引用/
+遗留cgroup拒绝；scope先提交而record失败可重试。guest record2与RPC1独立，
+旧record1明确重建；amd64/arm64嵌入helper已重建。真实私有cgroup及宿主/API
+E2E通过。API待停止授权发现/凭证签发与host无记录收敛尚未接入，不能据此关闭
+整个missing-host-record窗口或P0–P9。

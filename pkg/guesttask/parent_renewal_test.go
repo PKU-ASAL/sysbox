@@ -27,7 +27,7 @@ func TestRenewCannotReparentExistingGuestTask(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(engine.Root, request.ID), 0700))
 	now, err := bootNanos()
 	require.NoError(t, err)
-	record := Record{Version: Version, ID: request.ID, Digest: request.Grant.Grant.Digest, Grant: request.Grant, BootID: boot, DeadlineBootNS: now + int64(time.Minute), Status: "running"}
+	record := Record{Version: RecordVersion, ID: request.ID, Digest: request.Grant.Grant.Digest, Grant: request.Grant, BootID: boot, DeadlineBootNS: now + int64(time.Minute), Status: "running"}
 	require.NoError(t, engine.save(record))
 	for _, parent := range []uint64{0, 9} {
 		next := request.Grant.Grant

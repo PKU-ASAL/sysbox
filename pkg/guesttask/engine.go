@@ -114,8 +114,14 @@ func readJSON(path string, value any) error {
 func (e *Engine) load(id string) (Record, error) {
 	var record Record
 	err := readJSON(filepath.Join(e.taskPath(id), "record.json"), &record)
-	if err == nil && (record.Version != Version || record.ID != id || record.Digest == "" || record.BootID == "" || record.DeadlineBootNS <= 0) {
+	if err == nil && (record.Version != RecordVersion || record.ID != id || record.Digest == "" || record.BootID == "" || record.DeadlineBootNS <= 0) {
 		err = fmt.Errorf("task record requires explicit rebuild")
+	}
+	if err == nil && record.Cancellation != nil {
+		err = e.validateCancellationTombstone(record)
+	}
+	if err == nil && record.Cancellation == nil && (record.Grant.Grant.State != controlplane.GrantActive || len(record.Grant.Signature) != ed25519.SignatureSize) {
+		err = ErrUnauthorized
 	}
 	return record, err
 }
@@ -138,7 +144,7 @@ func (e *Engine) Start(ctx context.Context, req Request) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	if digest != req.Grant.Grant.Digest {
+	if digest != req.Grant.Grant.Digest || req.ID != req.Grant.Grant.ActionID {
 		return Record{}, ErrUnauthorized
 	}
 	epochPath, epoch, unlockScope, err := e.lockScope(ctx, req.Grant.Grant)
@@ -174,7 +180,7 @@ func (e *Engine) Start(ctx context.Context, req Request) (Record, error) {
 	if err = atomicJSON(epochPath, epoch); err != nil {
 		return Record{}, err
 	}
-	record := Record{Version: Version, ID: req.ID, Digest: digest, Grant: req.Grant, BootID: boot, Status: "prepared"}
+	record := Record{Version: RecordVersion, ID: req.ID, Digest: digest, Grant: req.Grant, BootID: boot, Status: "prepared"}
 	budget, err := controlplane.ExecutionGrantBudget(req.Grant, time.Now())
 	if err != nil {
 		return Record{}, err
@@ -428,6 +434,9 @@ func (e *Engine) Observe(ctx context.Context, id, digest string) (Record, error)
 	if r.Digest != digest {
 		return r, ErrConflict
 	}
+	if r.Cancellation != nil {
+		return r, nil
+	}
 	boot, err := BootID()
 	if err != nil {
 		return r, err
@@ -489,6 +498,9 @@ func (e *Engine) Cancel(ctx context.Context, id, digest string) error {
 	return e.cancel(ctx, id, digest, nil)
 }
 func (e *Engine) CancelWithProof(ctx context.Context, call Call) error {
+	if call.Cancellation != nil {
+		return e.cancelAuthorized(ctx, call)
+	}
 	return e.cancel(ctx, call.ID, call.Digest, &call)
 }
 func (e *Engine) cancel(ctx context.Context, id, digest string, proof *Call) error {
@@ -507,8 +519,12 @@ func (e *Engine) cancel(ctx context.Context, id, digest string, proof *Call) err
 	if proof != nil && (proof.BootID != r.BootID || proof.Epoch != r.Grant.Grant.Epoch || proof.Scope == nil || *proof.Scope != r.Grant.Grant.Scope) {
 		return ErrConflict
 	}
+	return e.cancelLocked(r)
+}
+
+func (e *Engine) cancelLocked(r Record) error {
 	r.CancelRequested = true
-	if err = e.save(r); err != nil {
+	if err := e.save(r); err != nil {
 		return err
 	}
 	boot, err := BootID()
@@ -529,6 +545,11 @@ func (e *Engine) cancel(ctx context.Context, id, digest string, proof *Call) err
 	return killGroup(group)
 }
 func (e *Engine) listUnlocked() ([]Record, error) {
+	return e.listUnlockedExcept("")
+}
+
+// A caller may skip only a task it has locked and independently proved absent.
+func (e *Engine) listUnlockedExcept(absent string) ([]Record, error) {
 	entries, err := os.ReadDir(e.Root)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -538,7 +559,7 @@ func (e *Engine) listUnlocked() ([]Record, error) {
 	}
 	var out []Record
 	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || entry.Name() == absent {
 			continue
 		}
 		r, err := e.load(entry.Name())

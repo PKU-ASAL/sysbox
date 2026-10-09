@@ -869,3 +869,10 @@ result_class=not_started，只在原投递已退休、原始受理身份匹配�
 FailUnissuedGuestExecution，复用GuestExecutionMutation/GuestExecutionTransform；
 文件入口改为UpdateFilesystemGuestExecutionUnderAuthority，旧取消专用名字删除。
 公共路由、持久格式保持不变；任何授权历史仍要求宿主结果，不能据投递失败造终态。
+
+实施补充（2026-10-10 guest取消证明）：新增SignedExecutionCancellation独立
+签名类型及WithTaskCancellation/TaskCancellationFromContext传输入口；guest
+Call的cancellation字段仅用于cancel，不授予start权限。guest task record从1到2，
+旧数据明确重建，RPC仍为1、scope仍为2、host task仍为2、API13/execution4不变。
+Start严格绑定request.ID与grant.ActionID。此时尚无公共API凭证签发路由，宿主
+无记录自动发现/恢复需后续接入；没有旧格式兼容读取或新启动权限回退。

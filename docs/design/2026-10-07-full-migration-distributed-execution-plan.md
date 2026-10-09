@@ -452,3 +452,15 @@ execution record_format 3 / API schema 12 显式拒绝旧格式。这里关闭�
 停止证据。三后端复用GuestExecutionTransform与同一物理事务，原取消路径同步迁入，
 没有新增兼容层。共享收尾逻辑以创建时间为因果下界，避免API切换时钟差造成永久
 未解决的终态。派发前失败路径已接通，持久删除及完整P9矩阵仍须继续实施与验收。
+
+### 2026-10-10：guest侧只停止凭证与禁止迟到启动
+
+授权已发但宿主记录缺失时，单靠查询不存在不够。先提供guest侧基础：独立
+SignedExecutionCancellation只证明停止权限，不可重新解释成执行授权；在共同
+scope/task锁内排除现有cgroup后持久封闭任务ID，保留epoch与session的防重放边界。
+正常已有任务保持本地离线取消；新缺失记录必须有签名停止凭证。guest record升为2，
+旧格式拒绝，RPC与scope版本不变，嵌入helper同步重建。
+
+后续仍需从API枚举待停止grant、签发凭证，宿主按canonical资源身份定位并持久
+恢复无记录任务，再回报原grant的宿主结果。当前底层和真实guest测试不是该自动
+恢复链路已完成的证明。

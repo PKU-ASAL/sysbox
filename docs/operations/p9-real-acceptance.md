@@ -2012,3 +2012,32 @@ claimed for this metadata-only step.
 Issued authority with no host task record still requires a host-side absence
 proof. Persistent deletion and the complete P0–P9 acceptance backlog remain
 open; delivery failure alone is never remote-stop evidence.
+
+### 2026-10-10 — guest-side cancellation of missing task records
+
+A new stop-only signature binds an issued, revoked guest-task epoch. It cannot
+authorize Start/Renew. With that proof, the guest checks boot identity and
+serializes scope/task lookup, refuses any orphan cgroup, and writes a durable
+cancellation tombstone before confirming termination. A target directory left
+without its record can recover; dangling references and missing/corrupt records
+for other tasks are not ignored. Scope publication followed by a failed record
+write is recoverable. Late Start returns the terminal tombstone; old retries do
+not regress successor scope state.
+
+Guest task record version 2 rejects version 1; RPC remains 1 and scope remains
+2. API13/execution4/host task2 are unchanged. Both embedded amd64/arm64 helpers
+were rebuilt. Full Go race passed sequentially (guesttask 4.302s, transport
+1.780s, API 78.480s), along with vet, docscheck and independent review. No new
+PostgreSQL gate was run for this guest/transport-only change.
+
+`make test-guesttask-e2e` passed in a disposable private cgroup: orphan cgroup
+rejection, late worker launch prevention, signed cancellation of a real running
+task, crash recovery, expiry and epoch fencing. The real host/API task E2E also
+passed with the fresh helper (3.52s test / 4.542s package), including API output,
+lost acknowledgment and restart replay. Both tests cleaned their containers.
+
+This is guest-side infrastructure, not a completed missing-host-record workflow.
+API discovery/signing of pending stop proofs and host-side automatic recovery
+still need integration. A mismatched current guest boot is rejected for missing
+records; separate reboot evidence remains necessary. Full two-VM P9 acceptance
+and the wider P0–P9 backlog remain open.

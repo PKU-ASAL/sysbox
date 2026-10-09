@@ -201,12 +201,23 @@ func taskRecord(ctx context.Context, conn taskCaller, identity executionIdentity
 	if h.ID == "" || h.Digest == "" || h.NodeID != identity.nodeID || h.Generation != identity.generation || h.BootID == "" || h.Epoch == 0 {
 		return nil, guesttask.ErrConflict
 	}
-	response, err := conn.taskCall(ctx, guesttask.Call{Version: guesttask.Version, Operation: op, ID: h.ID, Digest: h.Digest, BootID: h.BootID, Epoch: h.Epoch, Scope: &controlplane.ExecutionScope{TopologyUID: h.TopologyUID, ResourceUID: h.ResourceUID, Generation: h.Generation}})
+	scope := controlplane.ExecutionScope{TopologyUID: h.TopologyUID, ResourceUID: h.ResourceUID, Generation: h.Generation}
+	call := guesttask.Call{Version: guesttask.Version, Operation: op, ID: h.ID, Digest: h.Digest, BootID: h.BootID, Epoch: h.Epoch, Scope: &scope}
+	if op == "cancel" {
+		if proof, ok := TaskCancellationFromContext(ctx); ok {
+			g := proof.Grant
+			if g.ActionID != h.ID || g.Digest != h.Digest || g.TargetBootID != h.BootID || g.Epoch != h.Epoch || g.Scope != scope {
+				return nil, guesttask.ErrConflict
+			}
+			call.Cancellation = &proof
+		}
+	}
+	response, err := conn.taskCall(ctx, call)
 	if err != nil {
 		return nil, err
 	}
 	r := response.Record
-	if r == nil || r.ID != h.ID || r.Digest != h.Digest || r.BootID != h.BootID || r.Grant.Grant.Scope.Generation != h.Generation || r.Grant.Grant.Epoch != h.Epoch {
+	if r == nil || r.ID != h.ID || r.Digest != h.Digest || r.BootID != h.BootID || r.Grant.Grant.Scope != scope || r.Grant.Grant.Epoch != h.Epoch {
 		return nil, guesttask.ErrConflict
 	}
 	return r, nil
@@ -224,6 +235,9 @@ func observeTask(ctx context.Context, conn taskCaller, identity executionIdentit
 		result.Status = substrate.ExecStatusExited
 	} else if r.Status == "running" {
 		result.Status = substrate.ExecStatusRunning
+	}
+	if r.Status == "cancelled" && r.TerminationConfirmed && !r.ExitCodeKnown {
+		result.ErrorClass = substrate.ExecErrorCanceled
 	}
 	return result, nil
 }

@@ -17,6 +17,10 @@ import (
 )
 
 const Version = 1
+
+// RecordVersion is independent of the RPC envelope version. Version 1 task
+// data requires explicit rebuild; it cannot represent signed stop tombstones.
+const RecordVersion = 2
 const MaxInput = 8 << 20
 const MaxOutput = 8 << 20
 const MaxCallSize = 32 << 20
@@ -67,44 +71,46 @@ func (r Request) Validate() error {
 }
 
 type Record struct {
-	DeadlineBootNS       int64       `json:"deadline_boot_ns"`
-	SupervisorPID        int         `json:"supervisor_pid"`
-	SupervisorStartTicks uint64      `json:"supervisor_start_ticks"`
-	Version              int         `json:"version"`
-	ID                   string      `json:"id"`
-	Digest               string      `json:"digest"`
-	Grant                SignedGrant `json:"grant"`
-	BootID               string      `json:"boot_id"`
-	PID                  int         `json:"pid"`
-	StartTicks           uint64      `json:"start_ticks"`
-	CgroupInode          uint64      `json:"cgroup_inode"`
-	Status               string      `json:"status"`
-	ExitCode             int         `json:"exit_code"`
-	ExitCodeKnown        bool        `json:"exit_code_known"`
-	TerminationConfirmed bool        `json:"termination_confirmed"`
-	CancelRequested      bool        `json:"cancel_requested"`
-	StdoutBytes          int64       `json:"stdout_bytes"`
-	StderrBytes          int64       `json:"stderr_bytes"`
-	StdoutTruncated      bool        `json:"stdout_truncated"`
-	StderrTruncated      bool        `json:"stderr_truncated"`
-	Error                string      `json:"error,omitempty"`
+	Cancellation         *controlplane.SignedExecutionCancellation `json:"cancellation,omitempty"`
+	DeadlineBootNS       int64                                     `json:"deadline_boot_ns"`
+	SupervisorPID        int                                       `json:"supervisor_pid"`
+	SupervisorStartTicks uint64                                    `json:"supervisor_start_ticks"`
+	Version              int                                       `json:"version"`
+	ID                   string                                    `json:"id"`
+	Digest               string                                    `json:"digest"`
+	Grant                SignedGrant                               `json:"grant"`
+	BootID               string                                    `json:"boot_id"`
+	PID                  int                                       `json:"pid"`
+	StartTicks           uint64                                    `json:"start_ticks"`
+	CgroupInode          uint64                                    `json:"cgroup_inode"`
+	Status               string                                    `json:"status"`
+	ExitCode             int                                       `json:"exit_code"`
+	ExitCodeKnown        bool                                      `json:"exit_code_known"`
+	TerminationConfirmed bool                                      `json:"termination_confirmed"`
+	CancelRequested      bool                                      `json:"cancel_requested"`
+	StdoutBytes          int64                                     `json:"stdout_bytes"`
+	StderrBytes          int64                                     `json:"stderr_bytes"`
+	StdoutTruncated      bool                                      `json:"stdout_truncated"`
+	StderrTruncated      bool                                      `json:"stderr_truncated"`
+	Error                string                                    `json:"error,omitempty"`
 }
 type Call struct {
-	FileRequest *substrate.FileInstallRequest `json:"file_request,omitempty"`
-	FileHandle  *substrate.FileInstallHandle  `json:"file_handle,omitempty"`
-	FileData    []byte                        `json:"file_data,omitempty"`
-	BootID      string                        `json:"boot_id,omitempty"`
-	Epoch       uint64                        `json:"epoch,omitempty"`
-	Scope       *controlplane.ExecutionScope  `json:"scope,omitempty"`
-	Grant       *SignedGrant                  `json:"grant,omitempty"`
-	Version     int                           `json:"version"`
-	Operation   string                        `json:"operation"`
-	Request     *Request                      `json:"request,omitempty"`
-	ID          string                        `json:"id,omitempty"`
-	Digest      string                        `json:"digest,omitempty"`
-	Stream      string                        `json:"stream,omitempty"`
-	Cursor      int64                         `json:"cursor,omitempty"`
-	Limit       int                           `json:"limit,omitempty"`
+	Cancellation *controlplane.SignedExecutionCancellation `json:"cancellation,omitempty"`
+	FileRequest  *substrate.FileInstallRequest             `json:"file_request,omitempty"`
+	FileHandle   *substrate.FileInstallHandle              `json:"file_handle,omitempty"`
+	FileData     []byte                                    `json:"file_data,omitempty"`
+	BootID       string                                    `json:"boot_id,omitempty"`
+	Epoch        uint64                                    `json:"epoch,omitempty"`
+	Scope        *controlplane.ExecutionScope              `json:"scope,omitempty"`
+	Grant        *SignedGrant                              `json:"grant,omitempty"`
+	Version      int                                       `json:"version"`
+	Operation    string                                    `json:"operation"`
+	Request      *Request                                  `json:"request,omitempty"`
+	ID           string                                    `json:"id,omitempty"`
+	Digest       string                                    `json:"digest,omitempty"`
+	Stream       string                                    `json:"stream,omitempty"`
+	Cursor       int64                                     `json:"cursor,omitempty"`
+	Limit        int                                       `json:"limit,omitempty"`
 }
 type Response struct {
 	FileInspection *substrate.InstalledFileInspection `json:"file_inspection,omitempty"`
