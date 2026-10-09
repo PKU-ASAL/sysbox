@@ -1829,3 +1829,31 @@ The final full Go suite passed with both database test variables enabled.
 API vet, docscheck (53 canonical documents), diff checks and independent
 follow-up review passed. Only the dedicated test PostgreSQL instance was used;
 no retained resources or deployment data were rebuilt.
+
+### Raw command admission under maintenance (2026-10-09)
+
+Shared maintenance validation now runs inside raw command publication on all
+three backends. New records, claims/lease extensions and first delivery cannot
+enter a frozen scope. Existing-lease acknowledgements/running reports, terminal
+evidence, retirement, cancellation, inventory and read-only recovery observation
+can drain; mutating recovery is not exempt. Missing UID resolves every named
+payload against a full lifecycle only for exclusion. Unknown ownership with any
+live barrier is rejected rather than assigned a synthetic identity.
+
+Regressions reproduced frozen admission and claim/delivery bypass. Added cases
+verify no speculative records/leases escape rejection, ack/started/complete can
+converge, and a benign first payload cannot conceal a second frozen scope.
+Targeted real-PostgreSQL race passed (1.706 seconds); combined command/recovery
+race passed (5.112 seconds). Initial API race exposed a recovery fixture that
+admitted an uninitialized scope after another scenario retained a barrier; it
+now establishes its real lifecycle first without relaxing production policy.
+Persistence race passed (3.649 seconds).
+
+This is not a substitute for execution-grant validation or cross-host stop
+evidence. Raw guest/node/adoption/GC records and exclusion across postcommit
+workspace cleanup remain open.
+
+Final full Go regression passed with both database variables enabled.
+API/persistence vet, docscheck (53 canonical documents), diff checks and
+independent follow-up review passed. This slice used only a dedicated test
+PostgreSQL instance; retained deployments and resources were not rebuilt.

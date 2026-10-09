@@ -85,7 +85,8 @@ func (b postgresCommandStorage) UpdateCommand(ctx context.Context, id string, tr
 	}()
 	// Match grant issuance and lifecycle deletion: authority precedes command
 	// row locks, including inserts whose command row does not exist yet.
-	if _, err := lockPostgresExecutionAuthority(ctx, tx); err != nil {
+	authority, err := lockPostgresExecutionAuthority(ctx, tx)
+	if err != nil {
 		return nil, err
 	}
 	current, err := scanPostgresCommand(tx.QueryRow(ctx, "SELECT "+postgresCommandColumns+" FROM sysbox_agent_commands WHERE id=$1 FOR UPDATE", id))
@@ -97,6 +98,11 @@ func (b postgresCommandStorage) UpdateCommand(ctx context.Context, id string, tr
 		return nil, err
 	}
 	if next != nil {
+		if err := persistence.ValidateCommandMaintenance(authority, current, *next, func(topology string) error {
+			return checkPostgresTopologyMaintenance(ctx, tx, authority, topology)
+		}); err != nil {
+			return nil, err
+		}
 		raw, err := persistence.EncodeCommandRecord(*next)
 		if err != nil {
 			return nil, err

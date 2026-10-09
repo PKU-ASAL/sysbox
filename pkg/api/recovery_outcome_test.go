@@ -40,6 +40,12 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 				}
 				topology := scenario
 				agentID := "agent-" + topology
+				// Establish this scenario's real lifecycle identity before command
+				// admission; an unrelated earlier scenario may retain a barrier.
+				repo, err := s.actionRepository(topology)
+				require.NoError(t, err)
+				st, err := repo.LoadState(ctx, topology)
+				require.NoError(t, err)
 				run := controlplane.Run{ID: topology, Topology: topology, AgentID: agentID, Op: "apply", Status: controlplane.RunFailed, Recoverable: true, QueuedAt: time.Now().UTC(), Revision: "revision", Attempt: 1, LeaseOwner: "old", LeaseUntil: time.Now().Add(-time.Minute)}
 				require.NoError(t, store.SaveRun(ctx, run))
 				require.NoError(t, store.SaveAgent(ctx, controlplane.Agent{ID: agentID, Capabilities: []string{controlplane.RunRecoveryCapability}}))
@@ -55,10 +61,6 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 				lease, ok, err := store.AcquireAgentCommandLease(ctx, agentID, command.ID, "worker", ttl)
 				require.NoError(t, err)
 				require.True(t, ok)
-				repo, err := s.actionRepository(topology)
-				require.NoError(t, err)
-				st, err := repo.LoadState(ctx, topology)
-				require.NoError(t, err)
 				a := runtime.ActionRecord{ID: "action", Topology: topology, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
 				require.NoError(t, repo.CommitActionIntent(ctx, a))
 				a.Revision, a.Status, a.EffectComplete = 1, runtime.ActionSucceeded, true

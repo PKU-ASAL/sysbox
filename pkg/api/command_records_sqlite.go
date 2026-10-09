@@ -126,6 +126,15 @@ func (b sqliteCommandStorage) UpdateCommand(ctx context.Context, id string, tran
 		return nil, err
 	}
 	if next != nil {
+		authority, err := readSQLiteAuthority(ctx, conn)
+		if err != nil {
+			return nil, err
+		}
+		if err := persistence.ValidateCommandMaintenance(authority, current, *next, func(topology string) error {
+			return checkSQLiteTopologyMaintenance(ctx, conn, topology)
+		}); err != nil {
+			return nil, err
+		}
 		if err := writeSQLiteCommand(ctx, conn, *next, true); err != nil {
 			return nil, err
 		}

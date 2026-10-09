@@ -346,3 +346,16 @@ Postgres 原始命令写入统一先 materialize/lock authority，再锁 command
 拒绝/时钟测试以显式外部重建保留该层验证，不通过放松 API 删除来制造条件。
 本项仅建立命令发布与删除的串行边界；raw command 的维护准入规则、guest/node/
 adoption/GC 的完整写入边界及提交后清理排他仍待完成。
+
+### 2026-10-09：原始命令维护准入
+
+共享 `ValidateCommandMaintenance` 在 command adapter 的现有事务内检查新增命令、
+租约取得/扩展及首次派发。冻结范围内拒绝这些新活动；已有租约的 ack/started
+证据、终态、退休、取消、inventory 和 recovery observe 可继续。recover 不作为
+只读操作豁免。文件适配器现在持 records→authority 至发布完成，SQL 保持原锁序。
+显式 UID 直接匹配维护范围；缺 UID 时核对所有 payload 名称对应的完整 lifecycle，
+无法定位的命令遇任一活动屏障保守拒绝，不为其合成所有权。
+
+合同覆盖拒绝后不写入/不返回租约、控制和回报可收敛、多个 payload 范围不遗漏。
+该项不替代 effect grant 验证，也未关闭 guest/node/adoption/GC 原始操作记录与
+完整删除后清理流程的剩余边界。

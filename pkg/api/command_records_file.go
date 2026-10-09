@@ -217,7 +217,15 @@ func (b localCommandStorage) UpdateCommand(ctx context.Context, id string, trans
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := writeLocalObject(path, json.RawMessage(raw)); err != nil {
+	err = persistence.FilesystemExecutionGrantStorage(b.store.runsDir).UpdateExecutionAuthority(ctx, func(authority []byte) ([]byte, error) {
+		if err := persistence.ValidateCommandMaintenance(authority, current, *next, func(topology string) error {
+			return checkLocalTopologyMaintenance(ctx, b.store.runsDir, authority, topology)
+		}); err != nil {
+			return nil, err
+		}
+		return nil, writeLocalObject(path, json.RawMessage(raw))
+	})
+	if err != nil {
 		return nil, err
 	}
 	return next, nil

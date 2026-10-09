@@ -811,3 +811,9 @@ Run索引/JSON返回 ErrCorruptRecord，lifecycle UID/serial保持原值。强�
 payload topology 仅作保守阻挡；明确其他 UID、退休和终态沿用现有语义。
 Postgres 原始命令写入锁序统一为 authority→command。路由和数据格式未变；
 “发布与删除串行化”不代表 raw command 已完成所有维护准入与执行授权检查。
+
+实施补充（2026-10-09 command 维护准入）：原始 SaveAgentCommand、领取租约和
+PrepareAgentCommandDelivery 现在在同一存储事务内核对维护屏障，受阻返回
+ErrConflict 且不发布命令/租约/派发状态。完成和未扩展租约的执行回报仍可提交；
+取消、退休、inventory、run_recovery observe 保留，recover 不豁免。名称只用于
+定位冻结范围，不补 UID。Wire/schema 不变；签发执行 grant 仍有独立验证。

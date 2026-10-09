@@ -520,3 +520,10 @@ JSON 一致性检查，拒绝预检后记录损坏。Run未知状态/缺失或�
 锁序，与签发/删除一致；首次 authority 事务期间不得发布命令。验收更新为 API
 删除同时要求 effect 停止与未解决命令清除，外部重建后的 stale-grant 拒绝仍单独
 验证。guest/node/adoption/GC、维护 raw 准入和删除后清理阶段仍未关闭。
+
+2026-10-09 command raw 维护准入：新增共享规则，冻结期间拒绝新命令、领取/
+扩展投递租约和首次派发；保留既有执行回报、完成、取消、退休及只读 observe。
+显式 UID 与完整 lifecycle 查询统一 scope 判断，未知范围遇活动屏障拒绝，多个
+payload 都检查。文件持锁延伸至 authority，SQL沿用原事务边界。恢复 fixture先
+建立真实 lifecycle，再受理命令；没有放宽未知身份规则。其他操作 registry 与
+删除后清理的恢复流程仍未完成。
