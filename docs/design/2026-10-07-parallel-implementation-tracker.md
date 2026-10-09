@@ -544,3 +544,12 @@ guard，冻结拒绝新增/活跃更新，文件取消意图只在状态不前�
 伪造目标 cancelled；完成回报获得独立有界 context。执行 token 保证旧清理不会
 移除新执行的取消映射。三项旧行为均有失败回归，Agent race及全仓回归通过。
 API 取消持久事务与远端停止证明仍未完成，不能计为整个取消闭环完成。
+
+2026-10-10 guest execution 取消：持久 cancel_requested 保留 queued/running，
+不再伪造结束时间或结果；取消 outbox ID 绑定执行实例，重启修复缺失投递，重试
+保留租约与退休记录。真实完成允许保留结果。生产 grant issue/authorize/renew
+在 authority 锁内核对最新 execution，拒绝取消、终态、缺失或身份不匹配；拒绝
+仅推进时钟，不延长命令租约。停止回执仍通过原始 authority 接口接受。
+API schema 11 / execution record_format 2 拒绝旧数据；file 2、aggregate 4、
+authority 2 不变。当前仍是可恢复的两步取消，不是原子提交；已签发授权撤销、
+宿主签名 execution 结果及持久回报恢复、删除清理工作流与完整 P9 仍未关闭。

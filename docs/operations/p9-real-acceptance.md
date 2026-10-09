@@ -1919,3 +1919,26 @@ passed (4.681 seconds), including reporting timeout. Full Go regression, vet,
 docscheck and independent review passed. This worker-only change did not rerun
 real PostgreSQL or cross-host cancellation. Tests do not establish signed stop
 proof, durable report retry, or atomic API guest cancellation; those remain open.
+
+### 2026-10-10 — recoverable execution cancellation and grant source fencing
+
+Execution cancellation persists a monotonic intent without inventing a terminal
+result. Restart reconciliation recreates a missing stable cancellation outbox;
+retries preserve delivery leases and retired reservations. Real completion may
+retain its outcome. API schema 11 and execution record format 2 explicitly reject
+the old formats; file format 2, aggregate 4 and authority 2 are unchanged.
+
+Production grant issue/authorize/renew reads the current execution under the
+authority boundary. Cancelled, terminal, missing or rebound sources are denied;
+denial observes time without extending command leases. Raw host-stop acceptance
+remains available. Real PostgreSQL API race (99.026s) and persistence race
+(3.786s) passed, along with local-file/SQLite cases. Vet and documentation checks
+passed. Full Go regression also passed; additional three-backend cancellation,
+clock, identity and commit-serialization race checks passed (9.946s). SQLite's
+busy handler can outlast the statement context; the serialization test keeps
+the lock owner alive past that timeout and verifies no partial cancellation.
+This is repository/API evidence, not a new two-host or VM acceptance run.
+
+Intent/outbox still use recoverable separate writes. Atomic cancellation,
+revocation of already-issued grants, host-signed execution completion, durable
+result reporting and the full P9 fault matrix remain open.

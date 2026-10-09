@@ -837,3 +837,10 @@ DecodeGuestActivity 验证完整记录但不暴露 request/output。SQL借用的
 额外伪造目标命令 cancelled 事件。目标执行路径独立报告结果。Guest 完成回报
 使用 RequestTimeout（默认30秒）的独立预算，不随执行 context 一同取消。
 Wire/schema 不变；该 completed 不能作为远端停止证明，也不保证回报持久重试。
+
+实施补充（2026-10-10 execution cancellation）：GET/cancel 返回新增
+cancel_requested；请求取消后不再立即返回 cancelled，而保留 queued/running。
+实际完成可保留 completed 及结果。取消阻止新的 grant issue/authorize/renew，
+拒绝不会延长命令租约；stop 接口仍可收敛。稳定取消 outbox 可重启修复，但取消
+意图/outbox 尚未原子化，不能据此判断远端已停。API SQL schema 10→11、execution
+record_format 1→2，明确重建，无旧格式兼容；file/aggregate/authority 格式不变。

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"time"
@@ -56,12 +55,7 @@ func (b apiExecutionGrantStorage) checkLifecycle(record *persistence.CommandReco
 	if err == nil {
 		return nil
 	}
-	if b.sourceErr != nil && (errors.Is(err, persistence.ErrConflict) || errors.Is(err, persistence.ErrCorruptRecord) || errors.Is(err, persistence.ErrUnsupportedVersion) || errors.Is(err, persistence.ErrInvalidRecord)) {
-		*b.sourceErr = err
-		*b.commitCommand = false
-		return nil
-	}
-	return err
+	return b.rejectGrantSource(err)
 }
 
 // A worker cannot supply another topology name for a retained command. Resolve

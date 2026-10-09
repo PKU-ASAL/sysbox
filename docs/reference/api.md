@@ -291,9 +291,14 @@ with `result_class: exit`; stdout and stderr are base64 encoded and bounded.
 The private request and output payload expire 15 minutes after completion,
 while the sanitized lifecycle metadata remains available.
 
-Cancellation is idempotent at the execution lifecycle boundary. A queued
-command is made non-leasable before delivery; a running operation receives a
-real Agent cancellation. A late completion cannot replace the cancelled state.
+Execution cancellation persists `cancel_requested: true` and keeps the current
+queued/running status until an actual outcome is reported. Repeated requests
+reuse one cancellation command; restart reconciliation repairs missing delivery
+without resetting a live lease. A real completion may win the cancellation race
+and retain its result. Cancellation blocks subsequent execution-grant issuance,
+authorization and renewal, but does not itself prove remote termination.
+Intent and cancellation delivery currently use recoverable separate writes;
+atomic cancellation and host-signed execution completion remain unfinished.
 
 File upload uses the request body as raw binary bytes, `X-Content-SHA256` for
 integrity, and query parameters for the absolute guest `path` and octal `mode`.

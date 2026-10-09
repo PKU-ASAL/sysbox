@@ -62,7 +62,7 @@ func TestGuestExecutionLifecyclePreservesNonZeroExit(t *testing.T) {
 	require.NotContains(t, string(raw), "environment")
 }
 
-func TestGuestExecutionCancelIsExplicitTerminalTransition(t *testing.T) {
+func TestGuestExecutionCancelPersistsIntentWithoutTerminalTransition(t *testing.T) {
 	ctx := context.Background()
 	var cancelTarget string
 	store := &localAPIStore{runsDir: t.TempDir()}
@@ -76,9 +76,10 @@ func TestGuestExecutionCancelIsExplicitTerminalTransition(t *testing.T) {
 	require.NoError(t, err)
 	exec, err = svc.Cancel(ctx, exec.ID)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.GuestExecutionCancelled, exec.Status)
+	require.Equal(t, controlplane.GuestExecutionQueued, exec.Status)
+	require.True(t, exec.CancelRequested)
 	require.Equal(t, exec.ID, cancelTarget)
-	require.WithinDuration(t, time.Now().UTC(), exec.EndedAt, time.Second)
+	require.True(t, exec.EndedAt.IsZero())
 	_, err = store.CompleteGuestExecution(ctx, exec.AgentID, exec.ID, controlplane.GuestExecutionCompletion{})
 	require.ErrorIs(t, err, persistence.ErrConflict)
 }

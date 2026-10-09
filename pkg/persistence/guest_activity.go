@@ -10,13 +10,14 @@ import (
 // GuestActivity excludes request/output contents: cleanup only needs durable
 // identity and execution times, never secrets or output buffers.
 type GuestActivity struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	Topology  string    `json:"topology"`
-	AgentID   string    `json:"agent_id"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	EndedAt   time.Time `json:"ended_at"`
+	CancelRequested bool      `json:"cancel_requested,omitempty"`
+	ID              string    `json:"id"`
+	Kind            string    `json:"kind"`
+	Topology        string    `json:"topology"`
+	AgentID         string    `json:"agent_id"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	EndedAt         time.Time `json:"ended_at"`
 }
 
 func (a GuestActivity) Active() bool {
@@ -37,7 +38,7 @@ func DecodeGuestActivity(kind, id string, raw []byte) (GuestActivity, error) {
 		if err != nil {
 			return activity, err
 		}
-		activity = GuestActivity{ID: x.ID, Kind: kind, Topology: x.Topology, AgentID: x.AgentID, Status: x.Status, CreatedAt: x.CreatedAt, EndedAt: x.EndedAt}
+		activity = GuestActivity{ID: x.ID, Kind: kind, Topology: x.Topology, AgentID: x.AgentID, Status: x.Status, CreatedAt: x.CreatedAt, EndedAt: x.EndedAt, CancelRequested: x.CancelRequested}
 	case "guest_file":
 		x, err := decodeGuestRecord(id, raw, fileOperationCodec)
 		if err != nil {

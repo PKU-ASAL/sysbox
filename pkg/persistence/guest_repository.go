@@ -39,6 +39,11 @@ func (r *GuestRepository) SaveGuestExecution(ctx context.Context, x controlplane
 func (r *GuestRepository) GetGuestExecution(ctx context.Context, id string) (*controlplane.GuestExecution, error) {
 	return getGuestRecord(ctx, r.records, guestExecutionKind, id, executionCodec)
 }
+
+// DecodeGuestExecution validates a record read inside a caller-owned transaction.
+func DecodeGuestExecution(id string, raw []byte) (controlplane.GuestExecution, error) {
+	return decodeGuestRecord(id, raw, executionCodec)
+}
 func (r *GuestRepository) CompareAndSwapGuestExecution(ctx context.Context, x controlplane.GuestExecution, expected int64) (bool, error) {
 	return swapGuestRecord(ctx, r.records, guestExecutionKind, x, expected, executionCodec)
 }

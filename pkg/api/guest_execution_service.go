@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -162,6 +163,9 @@ func (s *GuestExecutionService) MarkRunning(ctx context.Context, id string) (con
 	if err != nil {
 		return execution, err
 	}
+	if execution.CancelRequested {
+		return execution, fmt.Errorf("%w: cancellation requested", errGuestExecutionConflict)
+	}
 	if execution.Status != controlplane.GuestExecutionQueued {
 		return execution, fmt.Errorf("%w: cannot start from %s", errGuestExecutionConflict, execution.Status)
 	}
@@ -183,28 +187,24 @@ func (s *GuestExecutionService) Cancel(ctx context.Context, id string) (controlp
 	if guestExecutionTerminal(execution.Status) {
 		return execution, fmt.Errorf("%w: already terminal", errGuestExecutionConflict)
 	}
-	execution.Status = controlplane.GuestExecutionCancelled
-	execution.EndedAt = s.now()
-	execution.ExpiresAt = execution.EndedAt.Add(15 * time.Minute)
-	ok, err := s.store.CompareAndSwapGuestExecution(ctx, execution, execution.Version)
-	if err == nil && !ok {
-		err = fmt.Errorf("%w: version changed", errGuestExecutionConflict)
-	} else if ok {
+	command, err := persistence.GuestExecutionCancellationCommand(execution)
+	if err != nil {
+		return execution, err
+	}
+	if !execution.CancelRequested {
+		execution.CancelRequested = true
+		execution.EndedAt, execution.ExpiresAt = time.Time{}, time.Time{}
+		ok, err := s.store.CompareAndSwapGuestExecution(ctx, execution, execution.Version)
+		if err != nil {
+			return controlplane.GuestExecution{}, err
+		}
+		if !ok {
+			return controlplane.GuestExecution{}, fmt.Errorf("%w: version changed", errGuestExecutionConflict)
+		}
 		execution.Version++
 	}
-	if err == nil && s.publish != nil {
-		target := execution.CommandID
-		if execution.StartedAt.IsZero() && target != "" {
-			if commands, ok := s.store.(interface {
-				DeleteAgentCommand(context.Context, string, string) error
-			}); ok {
-				err = commands.DeleteAgentCommand(ctx, execution.AgentID, target)
-			} else {
-				err = fmt.Errorf("command retirement storage required")
-			}
-		} else {
-			_, err = s.publish(ctx, execution.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: execution.ID}})
-		}
+	if s.publish != nil {
+		_, err = s.publish(ctx, execution.AgentID, command)
 		if err != nil {
 			return execution, fmt.Errorf("publish guest execution cancel: %w", err)
 		}

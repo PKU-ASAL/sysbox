@@ -9,7 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-const GuestRecordFormat = 1
+const GuestRecordFormat = 2
 const GuestFileRecordFormat = 2
 
 var ErrInvalidRecord = errors.New("invalid repository record")
@@ -74,8 +74,8 @@ func decodeGuestObject(raw []byte, out any) error {
 	}
 	return nil
 }
-func validateGuestFormat(format int, err error) error {
-	if format != GuestRecordFormat {
+func validateGuestFormat(format, expected int, err error) error {
+	if format != expected {
 		return fmt.Errorf("%w: guest metadata requires explicit rebuild", ErrUnsupportedVersion)
 	}
 	if err != nil {
@@ -104,7 +104,7 @@ var executionCodec = guestCodec[controlplane.GuestExecution]{
 		}
 		x := stored.GuestExecution
 		x.AgentID, x.CommandID, x.Request = stored.AgentID, stored.CommandID, stored.Request
-		return x, validateGuestFormat(stored.Format, validateGuestIdentity(x.ID, x.Version, x.Status))
+		return x, validateGuestFormat(stored.Format, GuestRecordFormat, validateGuestIdentity(x.ID, x.Version, x.Status))
 	},
 	transition: executionTransition,
 }
@@ -121,10 +121,7 @@ var fileOperationCodec = guestCodec[controlplane.GuestFileOperation]{
 		}
 		x := stored.GuestFileOperation
 		x.AgentID, x.CommandID, x.CancelRequested = stored.AgentID, stored.CommandID, stored.CancelRequested
-		if stored.Format != GuestFileRecordFormat {
-			return x, ErrUnsupportedVersion
-		}
-		return x, validateGuestFormat(GuestRecordFormat, validateFileOperation(x))
+		return x, validateGuestFormat(stored.Format, GuestFileRecordFormat, validateFileOperation(x))
 	},
 	transition: fileOperationTransition,
 }
@@ -158,6 +155,12 @@ func statusTransition(from, to string, file bool) error {
 func commandBinding(old, next string) bool { return old == "" || old == next }
 func executionTransition(old, next controlplane.GuestExecution) error {
 	if old.ID != next.ID || old.Topology != next.Topology || old.Node != next.Node || old.AgentID != next.AgentID || !commandBinding(old.CommandID, next.CommandID) || !old.CreatedAt.Equal(next.CreatedAt) {
+		return ErrConflict
+	}
+	if old.CancelRequested && (!next.CancelRequested || next.CommandID != old.CommandID || next.Status != old.Status && !guestTerminal(next.Status)) {
+		return ErrConflict
+	}
+	if !old.CancelRequested && next.CancelRequested && next.Status != old.Status {
 		return ErrConflict
 	}
 	if err := statusTransition(old.Status, next.Status, false); err != nil {

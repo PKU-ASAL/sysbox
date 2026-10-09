@@ -317,21 +317,22 @@ type GuestFileOperationCompletion struct {
 }
 
 type GuestExecution struct {
-	ID          string                `json:"id"`
-	CommandID   string                `json:"-"`
-	Version     int64                 `json:"version"`
-	Topology    string                `json:"topology"`
-	Node        string                `json:"node"`
-	AgentID     string                `json:"-"`
-	Status      string                `json:"status"`
-	ResultClass string                `json:"result_class,omitempty"`
-	Err         string                `json:"error,omitempty"`
-	Request     GuestExecutionRequest `json:"-"`
-	Result      GuestExecutionResult  `json:"result,omitempty"`
-	CreatedAt   time.Time             `json:"created_at"`
-	StartedAt   time.Time             `json:"started_at,omitempty"`
-	EndedAt     time.Time             `json:"ended_at,omitempty"`
-	ExpiresAt   time.Time             `json:"expires_at,omitempty"`
+	CancelRequested bool                  `json:"cancel_requested,omitempty"`
+	ID              string                `json:"id"`
+	CommandID       string                `json:"-"`
+	Version         int64                 `json:"version"`
+	Topology        string                `json:"topology"`
+	Node            string                `json:"node"`
+	AgentID         string                `json:"-"`
+	Status          string                `json:"status"`
+	ResultClass     string                `json:"result_class,omitempty"`
+	Err             string                `json:"error,omitempty"`
+	Request         GuestExecutionRequest `json:"-"`
+	Result          GuestExecutionResult  `json:"result,omitempty"`
+	CreatedAt       time.Time             `json:"created_at"`
+	StartedAt       time.Time             `json:"started_at,omitempty"`
+	EndedAt         time.Time             `json:"ended_at,omitempty"`
+	ExpiresAt       time.Time             `json:"expires_at,omitempty"`
 }
 
 const (

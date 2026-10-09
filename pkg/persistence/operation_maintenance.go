@@ -37,6 +37,13 @@ func validateOperationMaintenance(kind guestKind, authority, old, next []byte, l
 			return err
 		}
 		topology, draining = x.Topology, guestTerminal(x.Status)
+		if old != nil && x.CancelRequested && !draining {
+			prior, err := executionCodec.decode(old)
+			if err != nil {
+				return err
+			}
+			draining = x.Status == prior.Status
+		}
 	case guestFileKind:
 		x, err := fileOperationCodec.decode(next)
 		if err != nil {

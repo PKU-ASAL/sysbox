@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"os"
 	"path/filepath"
@@ -110,6 +111,11 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 			current = record
 		}
 		return persistence.FilesystemExecutionGrantStorage(store.runsDir).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+			if err := b.checkGuestExecutionSource(current, func(id string) (*controlplane.GuestExecution, error) {
+				return store.GetGuestExecution(ctx, id)
+			}); err != nil {
+				return nil, err
+			}
 			if err := b.checkLifecycle(current, func(topology string) error {
 				repo, err := b.lifecycle(topology)
 				if err != nil {
@@ -176,6 +182,19 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		if err := b.checkGuestExecutionSource(current, func(id string) (*controlplane.GuestExecution, error) {
+			var data []byte
+			if err := conn.QueryRowContext(ctx, "SELECT data FROM sysbox_guest_executions WHERE id=?", id).Scan(&data); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil, persistence.ErrNotFound
+				}
+				return nil, err
+			}
+			x, err := persistence.DecodeGuestExecution(id, data)
+			return &x, err
+		}); err != nil {
+			return err
+		}
 		if err := b.checkLifecycle(current, func(topology string) error {
 			var lifecycle []byte
 			if err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_lifecycle_aggregates WHERE topology=?", topology).Scan(&lifecycle); errors.Is(err, sql.ErrNoRows) {
@@ -237,6 +256,19 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 				return err
 			}
 			current = record
+		}
+		if err := b.checkGuestExecutionSource(current, func(id string) (*controlplane.GuestExecution, error) {
+			var data []byte
+			if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_guest_executions WHERE id=$1", id).Scan(&data); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil, persistence.ErrNotFound
+				}
+				return nil, err
+			}
+			x, err := persistence.DecodeGuestExecution(id, data)
+			return &x, err
+		}); err != nil {
+			return err
 		}
 		if err := b.checkLifecycle(current, func(topology string) error {
 			var lifecycle []byte
