@@ -66,6 +66,19 @@ func (s *localAPIStore) completeNodeOperation(ctx context.Context, agent, id str
 	completed, err := repo.CompleteWithTransition(ctx, id, func(current controlplane.NodeOperation) (controlplane.NodeOperation, error) {
 		return transition(current, command)
 	})
+	if err == nil && receipt != nil {
+		rawReceipt, e := json.Marshal(*receipt)
+		if e != nil {
+			return nil, e
+		}
+		sum := sha256.Sum256(rawReceipt)
+		storage := persistence.FilesystemExecutionGrantStorage(s.runsDir)
+		if e = storage.UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+			return persistence.ApplyHostStopAuthority(raw, receipt.Grant, fmt.Sprintf("%x", sum[:]))
+		}); e != nil {
+			return nil, e
+		}
+	}
 	return completed, nil
 }
 

@@ -637,6 +637,11 @@ authority receipt；共享 `ApplyHostStopAuthority` 保持 epoch/successor fenci
 API store 直接调用同样先验证 authority。下一步是把 file adapter 改成同一发布
 mutation，并补 operation receipt 丢响应后的 supervisor 冷恢复。
 
+file adapter 收尾：local NodeOperation completion 在 records lock 内先持久 operation
+outcome，再通过独立 filesystem authority mutation 发布 host-stop receipt，避免
+records→authority 递归 flock；authority 写失败保留可重试 operation，原 receipt
+重放可完成 release。SQLite/Postgres 同事务路径保持不变。
+
 2026-10-10 P8 GC fencing 审计：现有 `GCInventoryDigest` 已作为计划版本锚点，
 而非普通扫描字段。API grant issuance、command lifecycle validation、host
 GCCoordinator effect 前 inventory revalidation 三层共同检查它；canonical state
