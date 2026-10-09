@@ -1020,3 +1020,38 @@ repeats it from durable operation/command records after restart. Tests cover
 never-issued versus issued commands, idempotent scan, and retained stop history
 after a successor replaces the current scope. This does not automatically replay
 SSH work or resolve an operation whose host effects remain unknown.
+
+### Firecracker managed inventory and GC preview (2026-10-09)
+
+`ListManagedNodes` enumerates durable manifests under the configured runtime
+root and reuses the normal ownership, generation, canonical-path and config
+digest verifier. Corrupt records, duplicate identities, symlinks, a non-directory
+root and nonregular manifests fail the entire observation; no partial list is
+returned. Adoption lookup also reports malformed JSON instead of treating it as
+NotFound. Unknown JSON fields are not rejected; this is not strict schema decoding.
+The before/after manifest comparison detects ordinary updates, not an atomic
+tree snapshot or ABA changes. Returned handles are observations, not proof of
+liveness or permission to delete.
+
+CLI GC preview now includes Firecracker and protects IDs referenced by current
+canonical state or retained snapshots. Unknown owners are skipped. Missing
+runtime roots are reported as unavailable; malformed existing inventories fail
+the preview. A batch containing Firecracker is rejected before any delete or
+journal intent because the authorized reference-revalidation pipeline is not
+yet connected. No new raw Firecracker deletion path was added.
+
+Real KVM `TestFirecrackerRealGenerationLifecycleE2E` passed in 9.89 seconds,
+including inventory of the actual VM and the existing lifecycle cleanup. This
+is not a real orphan-GC acceptance. Command/provider regressions cover snapshot
+retention, owner filtering, corrupt-inventory propagation and whole-batch
+execution rejection. Independent review found malformed directory entries could
+be accepted as empty inventory; regression tests reproduced and fixed both cases.
+After those fixes, the full Go suite and command/Firecracker race suites passed;
+vet, documentation checks (53 canonical documents) and independent re-review
+also passed. This round did not enable a real Postgres test database.
+
+P8 remains open: full API reference inventories, TAP orphan discovery, authorized
+plan dispatch and provider GC acceptance remain unfinished. Inspection also found
+the production host GC callback enters the coordinator a second time under the
+same gate, while its inventory validator currently returns success without
+checking references. Those paths require repair before automatic GC acceptance.

@@ -27,6 +27,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/effectgate"
 	"github.com/oslab/sysbox/pkg/persistence"
+	firecrackerprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -41,7 +42,7 @@ var (
 var gcCmd = &cobra.Command{
 	Use:   "gc",
 	Short: "Preview unreferenced resources owned by inventoried local topologies",
-	Long: `Preview Docker and libvirt resources whose durable ownership matches a
+	Long: `Preview Docker, libvirt and Firecracker resources whose durable ownership matches a
 canonical topology inventoried under --runs. Uninventoried owners and resources
 without durable ownership metadata are skipped explicitly. Configured backends
 outside this filesystem inventory are refused.
@@ -105,6 +106,7 @@ type activeIDs struct {
 	containers  map[string]bool
 	networks    map[string]bool
 	domains     map[string]bool
+	firecracker map[string]bool
 }
 
 // collectActiveIDs walks runsDir/*/state.json and collects the external IDs of
@@ -141,7 +143,7 @@ func collectActiveIDs(runsDir string) activeIDs {
 }
 
 func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
-	active := activeIDs{owners: map[string]bool{}, inventories: map[string]string{}, containers: map[string]bool{}, networks: map[string]bool{}, domains: map[string]bool{}}
+	active := activeIDs{owners: map[string]bool{}, inventories: map[string]string{}, containers: map[string]bool{}, networks: map[string]bool{}, domains: map[string]bool{}, firecracker: map[string]bool{}}
 	if _, err := os.ReadDir(runsDir); err != nil {
 		if os.IsNotExist(err) {
 			return active, nil
@@ -185,6 +187,9 @@ func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 			return active, err
 		}
 		for _, r := range retained {
+			if (r.Address.Type == "sysbox_node" || r.Address.Type == "sysbox_router") && r.Driver == "firecracker" {
+				active.firecracker[r.ExternalID] = true
+			}
 			switch r.Address.Type {
 			case "sysbox_network":
 				active.networks[r.ExternalID] = true
@@ -221,6 +226,9 @@ func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 			if r.OwnerUID != st.TopologyUID || r.ResourceUID == "" || r.Generation < 1 {
 				return active, fmt.Errorf("canonical topology %s has incomplete resource ownership", topology)
 			}
+			if (r.Address.Type == "sysbox_node" || r.Address.Type == "sysbox_router") && r.Driver == "firecracker" {
+				active.firecracker[r.ExternalID] = true
+			}
 			switch r.Address.Type {
 			case "sysbox_network":
 				active.networks[r.ExternalID] = true
@@ -244,6 +252,9 @@ func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 			return active, fmt.Errorf("read %s: %w", f, err)
 		}
 		for _, r := range st.Resources {
+			if (r.Address.Type == "sysbox_node" || r.Address.Type == "sysbox_router") && r.Driver == "firecracker" {
+				active.firecracker[r.ExternalID] = true
+			}
 			switch r.Address.Type {
 			case "sysbox_network":
 				active.networks[r.ExternalID] = true
@@ -261,7 +272,7 @@ func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 }
 
 type orphan struct {
-	Kind            string // container | network | domain
+	Kind            string // container | network | domain | firecracker
 	ID              string
 	Topo            string
 	OwnerUID        string
@@ -338,6 +349,24 @@ func findOrphansWithReport(ctx context.Context, active activeIDs, report io.Writ
 		return nil, err
 	}
 	out = append(out, domains...)
+	cfg, err := config.LoadServiceConfig("")
+	if err != nil {
+		return nil, err
+	}
+	// A missing configured runtime root is reported as unavailable, never as
+	// proof that a particular VM is absent. Existing but corrupt inventories
+	// fail the preview rather than returning a partial candidate list.
+	if _, err := os.Lstat(cfg.Providers.Firecracker.Workdir); os.IsNotExist(err) {
+		fmt.Fprintln(report, "skipped Firecracker: configured runtime root does not exist")
+	} else if err != nil {
+		return nil, err
+	} else {
+		vms, err := findOrphanFirecracker(ctx, active, firecrackerprovider.New(cfg.Providers.Firecracker.Kernel, cfg.Providers.Firecracker.Workdir), report)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vms...)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -423,6 +452,13 @@ type gcJournal struct {
 }
 
 func executeOrphans(ctx context.Context, runsDir string, candidates []orphan, report io.Writer) error {
+	// Preflight the entire batch before writing intents or deleting any earlier
+	// candidate. Discovery does not enable a new local provider deletion path.
+	for _, candidate := range candidates {
+		if candidate.Kind == "firecracker" {
+			return fmt.Errorf("Firecracker GC preview only: authorized reference revalidation is not connected")
+		}
+	}
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -536,6 +572,8 @@ func activeContains(active activeIDs, candidate orphan) bool {
 		return active.networks[candidate.ID]
 	case "domain":
 		return active.domains[candidate.ID]
+	case "firecracker":
+		return active.firecracker[candidate.ID]
 	default:
 		return true
 	}

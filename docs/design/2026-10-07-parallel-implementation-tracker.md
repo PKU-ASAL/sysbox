@@ -339,3 +339,11 @@ heterogeneous matrix 真实重跑记录：首次失败暴露 Docker image CMD �
 后续修复与验收：已依据原 ownership marker 的 owner/resource/generation、ifindex、alias 和无端口证明，精确清理遗留 root bridge，备份并归档旧 marker。根因是测试失败时删除了 canonical repository，而清理入口仍只检测旧 state.json；测试现在检测 `.lifecycle`，失败保留状态、密钥和镜像，重跑不再静默删除证据。真实重跑进一步修复了 runtime NIC Observe 漏传 canonical NetworkState/NetworkIdentity、空 root_routes 在冷读后误判 Replace，以及 matrixprobe 读取旧 state 文件的问题。附件验证覆盖 Apply/Refresh/Health/Reset/恢复；路由漂移不能跳过网络归属验证。
 
 本轮混合矩阵最终通过：Docker、Firecracker、libvirt 三节点 Apply，六个方向互通（均零丢包），再次 Plan 为 `0 to add, 0 to replace, 0 to destroy, 8 unchanged`，Destroy 后验证无测试资源残留。全仓 Go 测试、runtime race、vet、docscheck 与独立复审通过。这是同宿主混合网络/生命周期验收，不代替 host-supervisor Run、真正双宿主或完整 P9 故障矩阵。
+
+2026-10-09 P8 盘点检查点：Firecracker manifest inventory 和 CLI GC 只读候选发现
+已接入，当前 state 与保留 snapshot 的 VM 引用均受保护。损坏 JSON、重复身份、
+配置摘要冲突、symlink、非目录 runtime root 和非普通文件 manifest 均拒绝返回部分
+清单；adoption lookup 不再把损坏 JSON 当成 NotFound。真实 KVM generation lifecycle
+包含实际 VM inventory 验证通过（9.89 秒）。这不是自动 GC 完成：含 Firecracker 的
+执行批次在任何 intent/effect 前明确拒绝。待修复生产 GC 重复进入 gate、空 inventory
+校验，补齐所有活动引用与计划授权、TAP inventory 和真实孤儿回收验收。P0–P9 仍未整体关闭。

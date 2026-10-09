@@ -171,6 +171,7 @@ func gcLabels(owner string) map[string]string {
 }
 
 func TestGCSkipsUninventoriedDockerOwnersAndLegacyLabels(t *testing.T) {
+	t.Setenv("SYSBOX_PROVIDER_FIRECRACKER_WORKDIR", t.TempDir())
 	root, owner := gcInventoryFixture(t)
 	gcFakeVirsh(t, "exit 0\n")
 	gcFakeDocker(t, []container.Summary{{ID: "owned-candidate", Labels: gcLabels(owner)}, {ID: "foreign-deployment", Labels: gcLabels("another-owner")}, {ID: "legacy", Labels: map[string]string{runtime.LabelManaged: "true"}}}, []network.Summary{{ID: "foreign-network", Labels: gcLabels("another-owner")}})
@@ -239,6 +240,7 @@ func TestCollectActiveIDsCheckedFailsClosedOnCorruptState(t *testing.T) {
 }
 
 func TestFindOrphansDocker(t *testing.T) {
+	t.Setenv("SYSBOX_PROVIDER_FIRECRACKER_WORKDIR", t.TempDir())
 	gcFakeVirsh(t, "exit 0\n")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

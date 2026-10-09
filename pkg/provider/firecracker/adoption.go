@@ -40,7 +40,10 @@ func (s *Substrate) findAdoptionManifest(ctx context.Context, id string) (vmMani
 			return e
 		}
 		var m vmManifest
-		if json.Unmarshal(raw, &m) == nil && m.VMID == id {
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return fmt.Errorf("invalid discovery manifest %q: %w", path, err)
+		}
+		if m.VMID == id {
 			if rawFound != nil {
 				return fmt.Errorf("ambiguous adoption VM identity")
 			}
