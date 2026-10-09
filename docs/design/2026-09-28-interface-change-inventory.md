@@ -26,6 +26,10 @@ epoch的请求。等待期间重提原草案或返回的绑定请求继续处理
 这接通了现有inventory兼容的metadata restore流程，不表示不同资源集合reconcile、
 所有旧writer隔离、自动后台维护调度、完整升级/跨宿主验收或整个P6已经完成。
 
+后续已提交恢复可由API supervisor自动补做屏障释放：只消费已有receipt，重新匹配
+持久barrier后解除，不重做restore。缺少receipt的等待请求仍需重试原计划或显式取消；
+这不是所有维护操作的后台自动执行。该能力依赖部署启用supervisor扫描。
+
 ### 当前存储格式补充：snapshot字节载荷与事务适配
 
 lifecycle aggregate当前为format4：snapshot的`data`保存base64字节载荷，防止Postgres

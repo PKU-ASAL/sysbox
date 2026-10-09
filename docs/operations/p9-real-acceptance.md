@@ -822,3 +822,24 @@ activity registry continues to fail closed if any activity loader is absent.
 The previous WorkspaceService direct restore method is removed. These checks do
 not establish automatic reconciliation of changed inventory, a background
 maintenance worker, full writer isolation, or a new two-VM restore gate.
+
+### Automatic release recovery for committed restores
+
+The existing API supervisor now scans committed restore receipts before health
+and reconciliation for each topology. It inspects the existing maintenance
+record, compares the exact request digest/topology/epoch, and retries release
+with an independent five-second budget per receipt. It never starts maintenance,
+restores state, or infers completion from a barrier without a receipt. Already
+released receipts do not affect a successor barrier.
+
+Regression tests reconstruct the API after state/receipt commit but before
+release, then use the real supervisor scan to release the original barrier with
+no additional serial increment. A later uncommitted barrier remains frozen.
+Missing authority yields an error and is not recreated. Such an inconsistency
+stops that topology's health/reconciliation pass; the outer scanner logs it and
+continues other topologies, avoiding auto-repair under uncertain maintenance.
+
+This automatic step runs only when the configured API supervisor runs. Pending
+restores without committed receipts still require the original request to be
+retried or explicitly abandoned; automatic pending-operation execution and full
+maintenance scheduling remain open. No new cross-host acceptance is claimed.

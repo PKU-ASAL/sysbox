@@ -107,6 +107,9 @@ func (s *Supervisor) Scan(ctx context.Context) {
 }
 
 func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
+	if err := s.server.finishCommittedRestores(ctx, topology); err != nil {
+		return err
+	}
 	st, err := s.server.workspaceService().LoadState(topology)
 	if err != nil {
 		// The first create may have durable intent but no committed resource yet.

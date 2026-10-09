@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"sort"
 	"time"
 )
 
@@ -24,6 +25,23 @@ type SnapshotRestoreReceipt struct {
 	Request     SnapshotRestoreRequest `json:"request"`
 	Serial      int64                  `json:"serial"`
 	CompletedAt time.Time              `json:"completed_at"`
+}
+
+// ListSnapshotRestoreReceipts lists committed evidence only, never plans or
+// inferred completion. The returned values contain no mutable shared fields.
+func (r *Repository) ListSnapshotRestoreReceipts(ctx context.Context, topology string) ([]SnapshotRestoreReceipt, error) {
+	var receipts []SnapshotRestoreReceipt
+	err := r.update(ctx, topology, func(a *aggregate) error {
+		for _, receipt := range a.Restores {
+			receipts = append(receipts, receipt)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(receipts, func(i, j int) bool { return receipts[i].Request.ID < receipts[j].Request.ID })
+	return receipts, nil
 }
 
 func (r *Repository) ReadSnapshotRestoreReceipt(ctx context.Context, topology, id string) (SnapshotRestoreReceipt, error) {
