@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 	"time"
 
@@ -17,6 +17,8 @@ type consoleSessionHub struct {
 	sessions map[string]*consoleSessionState
 	store    apiStore
 }
+
+var errConsoleSessionNotFound = errors.New("session not found")
 
 type consoleSessionState struct {
 	session controlplane.ConsoleSession
@@ -92,7 +94,7 @@ func (h *consoleSessionHub) Get(id string) (*consoleSessionState, error) {
 	defer h.mu.RUnlock()
 	st := h.sessions[id]
 	if st == nil {
-		return nil, fmt.Errorf("session not found")
+		return nil, errConsoleSessionNotFound
 	}
 	return st, nil
 }
@@ -102,7 +104,7 @@ func (h *consoleSessionHub) Snapshot(id string) (controlplane.ConsoleSession, er
 	defer h.mu.RUnlock()
 	st := h.sessions[id]
 	if st == nil {
-		return controlplane.ConsoleSession{}, fmt.Errorf("session not found")
+		return controlplane.ConsoleSession{}, errConsoleSessionNotFound
 	}
 	sess := st.session
 	sess.Roles = append([]string(nil), sess.Roles...)
@@ -135,7 +137,7 @@ func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
 	defer h.mu.Unlock()
 	st := h.sessions[id]
 	if st == nil {
-		return fmt.Errorf("session not found")
+		return errConsoleSessionNotFound
 	}
 	sess := st.session
 	if sess.Status != controlplane.ConsoleSessionStatusClosed && sess.Status != controlplane.ConsoleSessionStatusFailed && sess.Status != controlplane.ConsoleSessionStatusCancelled && sess.Status != controlplane.ConsoleSessionStatusDenied && sess.Status != controlplane.ConsoleSessionStatusCancelling {

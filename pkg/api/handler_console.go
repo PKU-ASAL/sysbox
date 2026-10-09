@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/coder/websocket"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -77,7 +78,11 @@ func (s *Server) handleCancelConsoleSession(w http.ResponseWriter, r *http.Reque
 	}
 	sess, err := s.consoleService().Cancel(r.Context(), id, s.requestSubject(r))
 	if err != nil {
-		writeError(w, http.StatusNotFound, err)
+		if errors.Is(err, errConsoleSessionNotFound) {
+			writeError(w, http.StatusNotFound, err)
+		} else {
+			writeError(w, http.StatusServiceUnavailable, errors.New("console cancellation could not be dispatched; retry the same session"))
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, sess)

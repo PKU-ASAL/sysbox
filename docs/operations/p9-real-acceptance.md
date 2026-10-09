@@ -1459,3 +1459,21 @@ did vet, docscheck and independent re-review. Regressions cover persistence
 failure, cancellation retries, restart, late started events, terminal reporting,
 transport-loss classification, delayed writes and detached snapshots. PostgreSQL
 and real provider acceptance were not run for this in-process state correction.
+
+### Cancellation dispatch failures stay visible (2026-10-09)
+
+ConsoleService no longer discards cancel-command publication failures. It retains
+the persisted cancelling session and returns the error; a later call for the same
+session retries dispatch without adding a second cancellation audit event. HTTP
+returns 404 only for an actually missing session, and a redacted 503 for storage
+or publication failures, advising retry of the same session. No internal dispatch
+error or connection detail is exposed.
+
+Regression tests reproduce the ignored publication error and incorrect 404
+mapping, then verify retained intent, successful retry and unchanged audit count.
+This does not provide a durable cancellation outbox, exactly-once delivery or a
+remote stop acknowledgment. Those remain part of the full console migration.
+
+Verification: full API race passed (62.68 seconds), along with targeted HTTP
+storage-failure and dispatch-failure cases, vet, docscheck and independent review.
+PostgreSQL and real provider acceptance were not run in this error-routing slice.

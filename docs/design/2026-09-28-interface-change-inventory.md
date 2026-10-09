@@ -732,3 +732,7 @@ console 和当前 topology UID 的非终态 command 出现在 `active_operations
 提前写 `cancelled`/EndedAt；客户端须等待执行结果。websocket 断开和 attach 超时
 产生 `lost`，不代表远端已停止。存储失败不确认取消。恢复、维护和清理会把这两种
 状态作为未解决证据；远端 signed-stop 协议尚未完成。
+
+实施补充（2026-10-09 cancel 派发错误）：`POST /v1/sessions/{id}/cancel` 在存储
+或命令发布失败时返回脱敏503，提示重试同一 session；仅真实不存在返回404。
+已提交的 cancelling 意图不会因派发失败被回滚为已完成或已停止。

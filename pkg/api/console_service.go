@@ -102,13 +102,19 @@ func (s *ConsoleService) Cancel(ctx context.Context, id string, subj requestSubj
 	if err := s.consoles.Cancel(id, "cancelled by api request", subj.User); err != nil {
 		return controlplane.ConsoleSession{}, err
 	}
-	sess, _ := s.consoles.Snapshot(id)
-	_, _ = s.publishCommand(ctx, sess.AgentID, controlplane.AgentCommand{
+	sess, err := s.consoles.Snapshot(id)
+	if err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
+	_, err = s.publishCommand(ctx, sess.AgentID, controlplane.AgentCommand{
 		Type: "cancel_command",
 		Session: &controlplane.ConsoleSession{
 			ID: sess.ID,
 		},
 	})
+	if err != nil {
+		return sess, fmt.Errorf("publish console cancellation: %w", err)
+	}
 	return sess, nil
 }
 

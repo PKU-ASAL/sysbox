@@ -435,3 +435,7 @@ registry 原子删除/准入协议尚未完成。
 失败不确认、不通知本机。连接断开/attach timeout 只记 lost，不能制造任务终态。
 同进程 Update/Cancel 持久化排序和 Snapshot 并发读已修复；多 API CAS、取消可靠派发
 及 host 签名完成仍未迁移，不能计为 console 分布式闭环完成。
+
+2026-10-09 console cancel 错误传播：publish 失败不再被忽略；取消意图保留，重试
+同 session 重新派发且不重复 audit。HTTP 只有不存在返回404，存储/派发失败返回
+脱敏503。可靠 outbox 与远端 stop receipt 仍未完成。
