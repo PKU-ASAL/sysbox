@@ -16,7 +16,7 @@ import (
 // may outlive the command that authorized its parent.
 func (s *Server) derivedGuestStorage(ctx context.Context, parent controlplane.SignedExecutionGrant) apiExecutionGrantStorage {
 	g := parent.Grant
-	return apiExecutionGrantStorage{store: s.apiStore, commandID: g.CommandID, validate: func(record *persistence.CommandRecord) error {
+	return s.commandGrantStorage(g.CommandID, func(record *persistence.CommandRecord) error {
 		if record == nil {
 			return persistence.ErrConflict
 		}
@@ -29,7 +29,7 @@ func (s *Server) derivedGuestStorage(ctx context.Context, parent controlplane.Si
 			return persistence.ErrConflict
 		}
 		return nil
-	}}
+	})
 }
 
 func (s *Server) handleRenewDerivedGuestExecutionGrant(w http.ResponseWriter, r *http.Request) {

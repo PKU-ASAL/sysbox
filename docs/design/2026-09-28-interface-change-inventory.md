@@ -694,3 +694,9 @@ Policy Apply 改为一次 nft batch 完成建表/删表/重建。失败 batch �
 新增 `execution_grant`，含 action ID、Agent、scope、epoch 和授权状态；可出现
 `cleanup_receipt_status=blocked_by_execution_authority`。文件/SQLite/Postgres
 删除统一核验授权与 lifecycle UID/serial；缺字段授权记录按损坏数据拒绝，不做兼容补齐。
+
+实施补充（2026-10-09 grant lifecycle 绑定）：授权 HTTP 路由和载荷不变，签发、
+续租、host authorize、派生 guest grant 和 GC 签发要求持久化 command 中的 topology
+UID 与当前 lifecycle 一致；metadata 删除后旧 delivery lease 不再获得新 epoch。
+校验与 authority 写入使用同一锁边界。停止回执和 session 操作不依赖存活 lifecycle，
+以保留历史证据恢复能力。

@@ -21,6 +21,8 @@ type apiExecutionGrantStorage struct {
 	validate      func(*persistence.CommandRecord) error
 	writeCommand  bool
 	commitCommand *bool
+	lifecycle     func(string) (*persistence.Repository, error)
+	sourceErr     *error
 }
 
 func (b apiExecutionGrantStorage) ReadExecutionAuthority(ctx context.Context) ([]byte, error) {
@@ -58,6 +60,7 @@ func (b apiExecutionGrantStorage) ReadExecutionAuthority(ctx context.Context) ([
 
 func (b apiExecutionGrantStorage) UpdateExecutionAuthority(ctx context.Context, fn func([]byte) ([]byte, error)) error {
 	var sourceErr error
+	b.sourceErr = &sourceErr
 	allowed := true
 	if b.commitCommand == nil {
 		b.commitCommand = &allowed
@@ -107,6 +110,15 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 			current = record
 		}
 		return persistence.FilesystemExecutionGrantStorage(store.runsDir).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+			if err := b.checkLifecycle(current, func(topology, uid string) error {
+				repo, err := b.lifecycle(topology)
+				if err != nil {
+					return err
+				}
+				return repo.ValidateLifecycleOwner(ctx, topology, uid)
+			}); err != nil {
+				return nil, err
+			}
 			next, err := fn(raw)
 			if err != nil {
 				return nil, err
@@ -164,6 +176,17 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		if err := b.checkLifecycle(current, func(topology, uid string) error {
+			var lifecycle []byte
+			if err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_lifecycle_aggregates WHERE topology=?", topology).Scan(&lifecycle); errors.Is(err, sql.ErrNoRows) {
+				return persistence.ErrConflict
+			} else if err != nil {
+				return err
+			}
+			return persistence.ValidateLifecycleOwner(lifecycle, topology, uid)
+		}); err != nil {
+			return err
+		}
 		next, err := fn(raw)
 		if err != nil {
 			return err
@@ -214,6 +237,17 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 				return err
 			}
 			current = record
+		}
+		if err := b.checkLifecycle(current, func(topology, uid string) error {
+			var lifecycle []byte
+			if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1 FOR UPDATE", topology).Scan(&lifecycle); errors.Is(err, pgx.ErrNoRows) {
+				return persistence.ErrConflict
+			} else if err != nil {
+				return err
+			}
+			return persistence.ValidateLifecycleOwner(lifecycle, topology, uid)
+		}); err != nil {
+			return err
 		}
 		next, err := fn(raw)
 		if err != nil {

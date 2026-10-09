@@ -133,11 +133,6 @@ func (s *Server) handleGCGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, persistence.ErrConflict)
 		return
 	}
-	digest, err := request.Candidate.Digest()
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
 	if request.Candidate.InventoryDigest == "" {
 		writeError(w, http.StatusConflict, persistence.ErrConflict)
 		return
@@ -160,8 +155,7 @@ func (s *Server) handleGCGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	grant := controlplane.ExecutionGrant{TargetBootID: request.BootID, Scope: controlplane.ExecutionScope{TopologyUID: request.Candidate.TopologyUID, ResourceUID: request.Candidate.ResourceUID, Generation: request.Candidate.Generation}, AgentID: r.PathValue("agent"), SessionID: request.SessionID, ActionID: request.ActionID, CommandID: request.CommandID, Attempt: uint64(request.Attempt), Operation: "gc_delete", Digest: digest, ExpiresAt: time.Now().UTC().Add(2 * time.Minute)}
-	issued, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).Issue(r.Context(), grant, 2*time.Minute)
+	issued, err := s.issueCommandGrant(r.Context(), r.PathValue("agent"), request.CommandID, ExecutionGrantRequest{SessionID: request.SessionID, LeaseOwner: request.LeaseOwner, Attempt: request.Attempt, BootID: request.BootID})
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
@@ -331,7 +325,7 @@ func (s *Server) handleHostAuthorizeExecutionGrant(w http.ResponseWriter, r *htt
 		s.authorizeDerivedGuestGrant(w, r, g)
 		return
 	}
-	storage := apiExecutionGrantStorage{store: s.apiStore, commandID: g.CommandID, validate: func(record *persistence.CommandRecord) error {
+	storage := s.commandGrantStorage(g.CommandID, func(record *persistence.CommandRecord) error {
 		if record == nil {
 			return persistence.ErrConflict
 		}
@@ -344,7 +338,7 @@ func (s *Server) handleHostAuthorizeExecutionGrant(w http.ResponseWriter, r *htt
 			return persistence.ErrConflict
 		}
 		return nil
-	}}
+	})
 	if err := persistence.NewExecutionGrantRepository(storage).Authorize(r.Context(), g); err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
@@ -594,7 +588,7 @@ func (s *Server) handleAuthorizeExecutionGrant(w http.ResponseWriter, r *http.Re
 	commitCommand := true
 	var leaseDeadline time.Time
 	proof := ExecutionGrantRequest{SessionID: g.SessionID, LeaseOwner: request.LeaseOwner, Attempt: int(g.Attempt), BootID: request.Grant.BootID}
-	storage := apiExecutionGrantStorage{store: s.apiStore, commandID: r.PathValue("command"), writeCommand: renew, commitCommand: &commitCommand, validate: func(record *persistence.CommandRecord) error {
+	storage := s.commandGrantStorage(r.PathValue("command"), func(record *persistence.CommandRecord) error {
 		current, err := s.sourceGrant(r.Context(), r.PathValue("agent"), proof, record)
 		if err != nil {
 			return err
@@ -610,7 +604,8 @@ func (s *Server) handleAuthorizeExecutionGrant(w http.ResponseWriter, r *http.Re
 			leaseDeadline = record.Command.LeaseUntil
 		}
 		return nil
-	}}
+	})
+	storage.writeCommand, storage.commitCommand = renew, &commitCommand
 	if renew {
 		var granted *controlplane.ExecutionGrant
 		var transitionErr error
@@ -780,29 +775,7 @@ func (s *Server) handleExecutionGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, persistence.ErrInvalidRecord)
 		return
 	}
-	var request controlplane.ExecutionGrant
-	storage := apiExecutionGrantStorage{store: s.apiStore, commandID: r.PathValue("command"), validate: func(record *persistence.CommandRecord) error {
-		var err error
-		request, err = s.sourceGrant(r.Context(), r.PathValue("agent"), proof, record)
-		return err
-	}}
-	// The callback below executes only after sourceGrant ran under the command
-	// lock. It uses the exact lease deadline rather than a worker-selected TTL.
-	var granted *controlplane.ExecutionGrant
-	var transitionErr error
-	err := storage.UpdateExecutionAuthority(r.Context(), func(raw []byte) ([]byte, error) {
-		memory := &grantTransaction{raw: raw}
-		repo := persistence.NewExecutionGrantRepository(memory)
-		ttl := time.Until(request.ExpiresAt)
-		if ttl > persistence.MaxExecutionGrantTTL {
-			ttl = persistence.MaxExecutionGrantTTL
-		}
-		granted, transitionErr = repo.Issue(r.Context(), request, ttl)
-		return memory.raw, nil
-	})
-	if err == nil {
-		err = transitionErr
-	}
+	granted, err := s.issueCommandGrant(r.Context(), r.PathValue("agent"), r.PathValue("command"), proof)
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return

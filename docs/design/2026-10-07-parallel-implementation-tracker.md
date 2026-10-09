@@ -362,3 +362,9 @@ UID/serial CAS、全类型 grant 停止证据、maintenance barrier 校验放入
 execution_grant，解释终态 Run 仍不能清理的原因。授权读取、写入、维护与 restore
 共用严格必填字段校验，损坏记录不再被补默认值当成空授权。仍需汇合所有 operation
 registry 的准入与引用，并拒绝 metadata 删除之后基于旧 UID 的迟到授权；P6/P8 尚未关闭。
+
+2026-10-09 迟到授权检查点：普通签发、续租、host authorize、派生 guest grant 和
+GC 签发已在 authority 提交锁内复核 command 所属 lifecycle UID。三后端并发验证
+授权与 metadata 删除不能同时成功，旧命令在删除后不能取得新 epoch。拒绝请求仍
+提交持久化时钟下界，不延长 command lease。此项关闭旧 topology UID 迟到授权缺口，
+不等同于 resource generation、全类型引用与完整 GC plan 准入完成。

@@ -1150,3 +1150,40 @@ and `TestRemoteDockerCompletionLossRecoveryE2E` in 12.64 seconds under race with
 a freshly built guest helper. The latter confirms that host-signed Destroy and
 cold API metadata deletion still succeed without force after verified stops.
 These tests use isolated resources; they do not replace two-host P9 acceptance.
+
+### Command grants bind the current lifecycle UID (2026-10-09)
+
+The late-issuance regression reproduced an old retained command acquiring a new
+epoch after its previous grant stopped and API metadata deletion replaced the
+topology UID. Command-backed issuance, renewal, host authorization and derived
+guest authority now revalidate the durable command's topology against the
+canonical lifecycle aggregate within the authority transaction. GC issuance
+uses the same command-backed path instead of constructing an independent grant.
+
+File storage checks the aggregate while holding the API record and authority
+locks; SQLite reads inside its write transaction; PostgreSQL locks authority,
+command and lifecycle rows through commit. The topology name comes only from
+the persisted command payload. Missing/replaced lifecycle evidence fails closed.
+Session and stop-receipt transitions remain usable without current lifecycle
+metadata so historical execution evidence can still be recovered.
+
+Tests cover ordinary late issuance and simultaneous grant/delete attempts on
+file, SQLite and real PostgreSQL: either the grant commits and deletion conflicts,
+or deletion commits and issuance conflicts. Neither can return a speculative
+grant on failure. Independent review found lifecycle rejection bypassed the
+existing durable clock-floor update; the added failing regression was fixed by
+sharing the source-error path. Rejected proofs commit only their observed clock,
+preserve the original source error and never extend command leases.
+
+This binds topology incarnation, not every resource generation or complete GC
+reference plan. API operation admission and reference enumeration still need
+their full shared protocol. Direct offline repository mutation remains outside
+the API authority transaction; automatic provider GC remains fenced.
+
+Validation: full Go regression passed with both PostgreSQL variables enabled;
+three-backend concurrent issuance/deletion tests passed under race. The final
+clock-floor fix passed the full database regression and independent re-review.
+With a freshly built helper, real Docker host task/stop/successor E2E passed in
+3.01 seconds and Run completion-loss/recovery/Destroy/cold metadata deletion E2E
+passed in 12.86 seconds under race. Vet and documentation checks passed. The
+test-only PostgreSQL container was stopped and automatically removed afterward.

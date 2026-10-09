@@ -18,8 +18,7 @@ import (
 func TestNodePowerGrantBindsPersistedOperationAndLiveSession(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
 		ctx := context.Background()
-		s := NewServer(t.TempDir(), t.TempDir())
-		s.apiStore = store
+		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
@@ -28,7 +27,7 @@ func TestNodePowerGrantBindsPersistedOperationAndLiveSession(t *testing.T) {
 		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
 		session, err := repo.OpenSession(ctx, "agent", "first", "")
 		require.NoError(t, err)
-		command := controlplane.AgentCommand{ID: "power-command", AgentID: "agent", Type: "node_operation", TopologyUID: "owner", ResourceUID: "resource", Generation: 2, ActionID: "action", Operation: controlplane.NodeOperation{Topology: "lab", Node: "vm", Operation: "pause"}}
+		command := controlplane.AgentCommand{ID: "power-command", AgentID: "agent", Type: "node_operation", TopologyUID: grantTestTopologyUID(t, s, "lab"), ResourceUID: "resource", Generation: 2, ActionID: "action", Operation: controlplane.NodeOperation{Topology: "lab", Node: "vm", Operation: "pause"}}
 		require.NoError(t, store.SaveAgentCommand(ctx, command))
 		leased, ok, err := store.AcquireAgentCommandLease(ctx, "agent", command.ID, "worker", time.Minute)
 		require.NoError(t, err)

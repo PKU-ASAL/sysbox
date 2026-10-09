@@ -236,7 +236,7 @@ func TestRunGrantDerivesGuestGrantThroughDurableAuthority(t *testing.T) {
 	session, err := repo.OpenSession(ctx, "agent", "host-process", "")
 	require.NoError(t, err)
 	run := controlplane.Run{ID: "run", Topology: "lab", Revision: "revision", Op: "apply", Status: controlplane.RunAssigned, AgentID: "agent", Attempt: 1, LeaseOwner: "worker", LeaseUntil: time.Now().Add(2 * time.Minute)}
-	command := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusLeased, Run: &run, TopologyUID: "topology", ActionID: "run", Attempt: 1, LeaseOwner: "worker", LeaseUntil: run.LeaseUntil}
+	command := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusLeased, Run: &run, TopologyUID: grantTestTopologyUID(t, s, "lab"), ActionID: "run", Attempt: 1, LeaseOwner: "worker", LeaseUntil: run.LeaseUntil}
 	require.NoError(t, s.apiStore.SaveAgentCommand(ctx, command))
 	source, err := s.sourceGrant(ctx, "agent", ExecutionGrantRequest{SessionID: session.ID, Attempt: 1, LeaseOwner: "worker", BootID: "host"}, &persistence.CommandRecord{Command: command})
 	require.NoError(t, err)
