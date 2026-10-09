@@ -624,3 +624,8 @@ P5–P8和完整双VM矩阵仍未关闭。
 和 supervisor 冷启动扫描可继续 workspace/placement/health 清理，成功后才移除
 intent。intent 只在 cleanup receipt/activity 检查通过后创建，不冒充 provider 停止
 证明。真实双VM delete 故障矩阵仍待补跑。
+
+2026-10-10 P7 host operation completion 边界补强：API store 的 SSH/adoption host
+completion 现在也必须先用 receipt hash 验证原 grant authority；HTTP 路由和直接
+存储调用共享同一验证，不再能仅凭 operation payload 写终态。operation 状态提交与
+authority release 的完全同事务合并仍待下一切片。

@@ -395,3 +395,9 @@ placement and health cleanup. A restart or supervisor scan resumes this intent;
 new workspace publication is rejected while it exists. The marker does not
 prove external resource absence; provider teardown must already have a valid
 owning-agent cleanup receipt.
+
+SSH access and adoption host completion also require the original authority grant
+at the storage boundary; callers cannot bypass this by invoking a backend adapter
+directly. Their operation record and authority release remain a separate
+retryable commit boundary until the operation mutation is migrated to the shared
+atomic completion adapter.
