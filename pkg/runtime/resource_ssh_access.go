@@ -50,7 +50,7 @@ func (SSHAccessResourceHandler) PlanDiff(desired *graph.Node, current *state.Res
 	if err != nil {
 		return controlplane.PlannedChange{}, err
 	}
-	req := controlplane.SSHAccessRequest{ID: desired.Address.Name, Topology: "topology", Node: nodeRef.Name, AuthorizedKeys: keys, BindIP: cfg.BindIP, Port: cfg.Port}
+	req := controlplane.SSHAccessRequest{ID: desired.Address.Name, AccessID: desired.Address.Name, Topology: "topology", Node: nodeRef.Name, AuthorizedKeys: keys, BindIP: cfg.BindIP, Port: cfg.Port}
 	if err := req.Validate(); err != nil {
 		return controlplane.PlannedChange{}, err
 	}
@@ -69,7 +69,7 @@ func (SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext,
 	if err != nil {
 		return state.Resource{}, err
 	}
-	req := controlplane.SSHAccessRequest{ID: n.Address.Name, Topology: pc.Topology(), Node: nodeRef.Name, AuthorizedKeys: append([]string(nil), cfg.AuthorizedKeys...), BindIP: cfg.BindIP, Port: cfg.Port}
+	req := controlplane.SSHAccessRequest{ID: n.Address.Name, AccessID: n.Address.Name, Topology: pc.Topology(), Node: nodeRef.Name, AuthorizedKeys: append([]string(nil), cfg.AuthorizedKeys...), BindIP: cfg.BindIP, Port: cfg.Port}
 	if err := req.Validate(); err != nil {
 		return state.Resource{}, err
 	}
@@ -108,7 +108,7 @@ func (SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext,
 	if err != nil {
 		return state.Resource{}, err
 	}
-	path, err := controlplane.ManagedSSHPath(user, req.ID)
+	path, err := controlplane.ManagedSSHPath(user, req.AccessID)
 	if err != nil {
 		return state.Resource{}, err
 	}

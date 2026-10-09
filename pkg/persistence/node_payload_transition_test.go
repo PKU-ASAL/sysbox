@@ -19,10 +19,14 @@ func TestNodeOperationTransitionPreservesDispatchedPayload(t *testing.T) {
 	next.Adoption = nil
 	require.ErrorIs(t, ValidateNodeOperationTransition(op, next), ErrConflict)
 	op.Adoption = nil
-	op.SSHAccess = &controlplane.SSHAccessRequest{ID: "access", AuthorizedKeys: []string{"original"}}
+	op.SSHAccess = &controlplane.SSHAccessRequest{ID: "access", AccessID: "admin", AuthorizedKeys: []string{"original"}}
 	next = op
 	ssh := *op.SSHAccess
 	ssh.AuthorizedKeys = []string{"replacement"}
+	next.SSHAccess = &ssh
+	require.ErrorIs(t, ValidateNodeOperationTransition(op, next), ErrConflict)
+	ssh = *op.SSHAccess
+	ssh.AccessID = "other-config"
 	next.SSHAccess = &ssh
 	require.ErrorIs(t, ValidateNodeOperationTransition(op, next), ErrConflict)
 	next = op

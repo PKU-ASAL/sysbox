@@ -20,7 +20,7 @@ func sshFixture(t *testing.T) (*SSHAccessCoordinator, controlplane.SSHAccessRequ
 	require.NoError(t, e)
 	public, e := ssh.NewPublicKey(pub)
 	require.NoError(t, e)
-	req := controlplane.SSHAccessRequest{ID: "access", Topology: "lab", Node: "web", AuthorizedKeys: []string{strings.TrimSpace(string(ssh.MarshalAuthorizedKey(public)))}}
+	req := controlplane.SSHAccessRequest{ID: "access", AccessID: "admin", Topology: "lab", Node: "web", AuthorizedKeys: []string{strings.TrimSpace(string(ssh.MarshalAuthorizedKey(public)))}}
 	d, e := req.Digest()
 	require.NoError(t, e)
 	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "owner-uid", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: req.ID, CommandID: "command", Attempt: 1, Epoch: 1, Operation: "ssh_access_apply", Digest: d, TargetBootID: "host", State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}

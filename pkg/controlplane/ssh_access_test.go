@@ -15,9 +15,31 @@ func sshAccessTestKey(t *testing.T) string {
 	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
 }
 
+func TestSSHAccessOperationIdentityIsSeparateFromConfiguration(t *testing.T) {
+	first := SSHAccessRequest{ID: "apply-one", AccessID: "admin", Topology: "lab", Node: "web", AuthorizedKeys: []string{sshAccessTestKey(t)}}
+	second := first
+	second.ID = "rotate-two"
+	one, err := first.Digest()
+	require.NoError(t, err)
+	two, err := second.Digest()
+	require.NoError(t, err)
+	require.NotEqual(t, one, two)
+	path, err := ManagedSSHPath("ubuntu", first.AccessID)
+	require.NoError(t, err)
+	rotatedPath, err := ManagedSSHPath("ubuntu", second.AccessID)
+	require.NoError(t, err)
+	require.Equal(t, path, rotatedPath)
+	second.AccessID = "other"
+	other, err := second.Digest()
+	require.NoError(t, err)
+	require.NotEqual(t, two, other)
+	second.AccessID = ""
+	require.Error(t, second.Validate(), "old ambiguous request must not get an inferred access identity")
+}
+
 func TestSSHAccessDigestCanonicalizesKeyOrder(t *testing.T) {
 	key := sshAccessTestKey(t)
-	a := SSHAccessRequest{ID: "access", Topology: "lab", Node: "web", AuthorizedKeys: []string{key + " two", key + " one"}}
+	a := SSHAccessRequest{ID: "access", AccessID: "admin", Topology: "lab", Node: "web", AuthorizedKeys: []string{key + " two", key + " one"}}
 	d1, err := a.Digest()
 	require.NoError(t, err)
 	a.AuthorizedKeys[0], a.AuthorizedKeys[1] = a.AuthorizedKeys[1], a.AuthorizedKeys[0]
@@ -26,14 +48,14 @@ func TestSSHAccessDigestCanonicalizesKeyOrder(t *testing.T) {
 	require.Equal(t, d1, d2)
 }
 func TestSSHAccessRejectsPrivateKeysAndNewlineInjection(t *testing.T) {
-	bad := SSHAccessRequest{ID: "access", Topology: "lab", Node: "web", AuthorizedKeys: []string{"ssh-private-key secret"}}
+	bad := SSHAccessRequest{ID: "access", AccessID: "admin", Topology: "lab", Node: "web", AuthorizedKeys: []string{"ssh-private-key secret"}}
 	require.Error(t, bad.Validate())
 	bad.AuthorizedKeys = []string{"ssh-ed25519 AAAA\ncommand=rm"}
 	require.Error(t, bad.Validate())
 }
 
 func TestSSHAccessCommandRejectsMismatchedTarget(t *testing.T) {
-	req := SSHAccessRequest{ID: "access", Topology: "lab", Node: "web", AuthorizedKeys: []string{sshAccessTestKey(t)}}
+	req := SSHAccessRequest{ID: "access", AccessID: "admin", Topology: "lab", Node: "web", AuthorizedKeys: []string{sshAccessTestKey(t)}}
 	command := AgentCommand{ID: "command", AgentID: "agent", Type: "node_operation", TopologyUID: "owner-uid", ResourceUID: "resource", Generation: 1, ActionID: req.ID, Operation: NodeOperation{Topology: "lab", Node: "web", SSHAccess: &req}}
 	_, err := FromSSHAccessCommand(command)
 	require.NoError(t, err)
@@ -48,14 +70,14 @@ func TestSSHAccessCommandRejectsMismatchedTarget(t *testing.T) {
 
 func TestSSHAccessRejectsMalformedWireKeysAndOptions(t *testing.T) {
 	for _, key := range []string{"ssh-ed25519 AAAA key", "unknown data", `command="touch /tmp/file" ` + sshAccessTestKey(t), "ssh-rsa " + strings.Fields(sshAccessTestKey(t))[1], sshAccessTestKey(t) + " \xff"} {
-		req := SSHAccessRequest{ID: "access", Topology: "lab", Node: "web", AuthorizedKeys: []string{key}}
+		req := SSHAccessRequest{ID: "access", AccessID: "admin", Topology: "lab", Node: "web", AuthorizedKeys: []string{key}}
 		require.Error(t, req.Validate(), key)
 	}
 }
 
 func TestSSHAccessContentCanonicalizesOrderWithoutMutatingRequest(t *testing.T) {
 	key := sshAccessTestKey(t)
-	req := SSHAccessRequest{ID: "access", Topology: "lab", Node: "web", AuthorizedKeys: []string{key + " z", key + " a"}}
+	req := SSHAccessRequest{ID: "access", AccessID: "admin", Topology: "lab", Node: "web", AuthorizedKeys: []string{key + " z", key + " a"}}
 	before := append([]string(nil), req.AuthorizedKeys...)
 	content, err := req.AuthorizedKeysContent()
 	require.NoError(t, err)

@@ -950,3 +950,18 @@ passed, and the isolated test container was cleaned up. Host unit regressions
 cover changed references/provider IDs, replacement during observation, and
 unchanged journal bytes. This is the file inspection path, not yet the complete
 SSH access resource/sshd lifecycle or an independent two-VM acceptance.
+
+### Stable SSH configuration identity
+
+Managed SSH requests now distinguish per-operation `id` from mandatory stable
+`access_id`. The operation ID still binds command admission, effect identity and
+receipt; the access ID selects the managed key configuration path. Apply/rotate/
+delete may therefore use distinct operation IDs without switching to unrelated
+files. Both identifiers are signed by the request digest and immutable after
+dispatch. Runtime uses the HCL resource name as its access ID; host callbacks use
+the supplied validated access ID rather than the operation ID.
+
+Contract tests verify distinct operation digests for the same configuration path,
+digest changes when access identity changes, missing-access-ID refusal, and
+rejection of dispatched-payload access-ID mutation. This enables lifecycle
+targeting but does not itself prove key rotation or shared sshd management.

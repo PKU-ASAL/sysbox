@@ -146,7 +146,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		if err := tmp.Close(); err != nil {
 			return nil, err
 		}
-		path, err := hostsupervisor.ManagedSSHPath(target.User, req.ID)
+		path, err := hostsupervisor.ManagedSSHPath(target.User, req.AccessID)
 		if err != nil {
 			return nil, err
 		}
@@ -166,7 +166,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		if !ok {
 			return nil, fmt.Errorf("ssh access target has no command verifier")
 		}
-		path, err := hostsupervisor.ManagedSSHPath(target.User, req.ID)
+		path, err := hostsupervisor.ManagedSSHPath(target.User, req.AccessID)
 		if err != nil {
 			return nil, err
 		}

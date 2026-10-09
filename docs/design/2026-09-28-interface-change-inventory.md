@@ -6,6 +6,17 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### SSH配置身份与操作身份分离
+
+`SSHAccessRequest`新增必填`access_id`：同一节点上一份受管配置的稳定身份。
+原`id`继续表示本次操作，绑定command/grant/回执；轮换或删除使用新的操作ID、相同
+access ID。两字段都进入签名摘要，dispatch后均不可变。宿主Apply/Delete文件路径
+从access ID派生，runtime HCL的access ID来自资源名称。
+
+缺失access ID的旧请求拒绝，不从操作ID补默认值；旧持久SSH请求需按新合同重新受理。
+这修复“新操作无法定位旧配置”的建模问题，不表示共享sshd、安装grant、内容CAS删除
+及实际轮换验收已全部完成。
+
 ### 已安装文件的实时观察SPI
 
 新增`ConnectionInstalledFileInspector.InspectInstalledFile(handle)`，通过guest

@@ -17,7 +17,10 @@ import (
 // authorization material only; private keys, shell commands and host paths are
 // deliberately outside this API.
 type SSHAccessRequest struct {
+	// ID identifies this immutable operation; AccessID identifies the managed
+	// configuration across distinct apply/rotate/delete operations.
 	ID             string   `json:"id"`
+	AccessID       string   `json:"access_id"`
 	Topology       string   `json:"topology"`
 	Node           string   `json:"node"`
 	AuthorizedKeys []string `json:"authorized_keys"`
@@ -28,7 +31,7 @@ type SSHAccessRequest struct {
 var sshAccessID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 func (r SSHAccessRequest) Validate() error {
-	if !sshAccessID.MatchString(r.ID) || !sshAccessID.MatchString(r.Topology) || !sshAccessID.MatchString(r.Node) || len(r.AuthorizedKeys) == 0 || len(r.AuthorizedKeys) > 64 {
+	if !sshAccessID.MatchString(r.ID) || !sshAccessID.MatchString(r.AccessID) || !sshAccessID.MatchString(r.Topology) || !sshAccessID.MatchString(r.Node) || len(r.AuthorizedKeys) == 0 || len(r.AuthorizedKeys) > 64 {
 		return fmt.Errorf("invalid managed ssh access request")
 	}
 	if r.BindIP != "" && net.ParseIP(r.BindIP) == nil {

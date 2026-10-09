@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"log/slog"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -180,9 +179,6 @@ func (s *NodeOperationService) SSHAccess(ctx context.Context, topology string, n
 	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{res.Driver}, "")
 	if err != nil {
 		return controlplane.NodeOperation{}, err
-	}
-	if req.ID == "" {
-		req.ID = uuid.NewString()
 	}
 	op := prepareNodeOperation(controlplane.NodeOperation{ID: req.ID, Topology: topology, Workspace: topology, Operation: operation, Node: node, Substrate: res.Driver, AgentID: agent.ID, RequestedBy: subj.User, Roles: subj.Roles, ResourceUID: res.ResourceUID, Generation: res.Generation, SSHAccess: &req})
 	return s.enqueue(ctx, st.TopologyUID, op)
