@@ -58,6 +58,7 @@ def main():
     parser.add_argument("--stop-primary", action="store_true", help="control VM only: stop the test primary API before acceptance")
     parser.add_argument("--provision-seconds", type=int, default=0, help="run a real foreground provisioner longer than the RPC budget")
     parser.add_argument("--background", action="store_true", help="use a finite durable guest task with the prepared p9 guest image")
+    parser.add_argument("--hold-after-apply", type=int, default=0, help="keep the successful Apply and running child observable before Destroy")
     args = parser.parse_args()
     token = json.loads(Path(args.config).read_text())["api"]["token"]
     evidence_path = Path(args.evidence)
@@ -108,6 +109,8 @@ def main():
     print("agents:", json.dumps([{key: agent.get(key) for key in ("id", "status", "capabilities")} for agent in agents]), flush=True)
     if not 0 <= args.provision_seconds <= 600:
         parser.error("provision-seconds must be between 0 and 600")
+    if not 0 <= args.hold_after_apply <= 600:
+        parser.error("hold-after-apply must be between 0 and 600")
     hcl = HCL
     if args.background:
         if args.provision_seconds < 1:
@@ -130,6 +133,11 @@ def main():
     save()
     evidence["apply_run"] = wait(accepted["run_id"])
     evidence["state_after_apply"] = request("GET", f"/v1/topologies/{topology}/state")
+    if args.hold_after_apply:
+        evidence["hold_after_apply_seconds"] = args.hold_after_apply
+        evidence["phase"] = "apply_hold"
+        save()
+        time.sleep(args.hold_after_apply)
     evidence["phase"] = "destroy"
     save()
     accepted = request("POST", f"/v1/topologies/{topology}/destroy", {}, topology + "-destroy")
