@@ -29,7 +29,6 @@ import (
 	"github.com/oslab/sysbox/pkg/persistence"
 	firecrackerprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -109,39 +108,8 @@ type activeIDs struct {
 	firecracker map[string]bool
 }
 
-// collectActiveIDs walks runsDir/*/state.json and collects the external IDs of
-// every live resource, grouped by substrate. Legacy state protects known IDs,
-// but cannot authorize an ownership scope without a canonical action inventory.
-func collectActiveIDs(runsDir string) activeIDs {
-	a := activeIDs{
-		containers: map[string]bool{},
-		networks:   map[string]bool{},
-		domains:    map[string]bool{},
-	}
-	files, _ := filepath.Glob(filepath.Join(runsDir, "*", "state.json"))
-	for _, f := range files {
-		st, err := state.NewManager(f).Load()
-		if err != nil {
-			continue
-		}
-		for i := range st.Resources {
-			r := &st.Resources[i]
-			switch r.Address.Type {
-			case "sysbox_network":
-				a.networks[r.ExternalID] = true
-			case "sysbox_node", "sysbox_router":
-				switch r.Driver {
-				case "docker":
-					a.containers[r.ExternalID] = true
-				case "libvirt":
-					a.domains[r.ExternalID] = true
-				}
-			}
-		}
-	}
-	return a
-}
-
+// collectActiveIDsChecked consumes a coherent lifecycle reference snapshot per
+// topology. API activity references and deletion fencing are separate gates.
 func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 	active := activeIDs{owners: map[string]bool{}, inventories: map[string]string{}, containers: map[string]bool{}, networks: map[string]bool{}, domains: map[string]bool{}, firecracker: map[string]bool{}}
 	if _, err := os.ReadDir(runsDir); err != nil {
@@ -149,6 +117,13 @@ func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 			return active, nil
 		}
 		return active, err
+	}
+	legacy, err := filepath.Glob(filepath.Join(runsDir, "*", "state.json"))
+	if err != nil {
+		return active, err
+	}
+	if len(legacy) != 0 {
+		return active, fmt.Errorf("standalone state.json is unsupported by GC; explicit rebuild required: %s", legacy[0])
 	}
 	aggregates, err := filepath.Glob(filepath.Join(runsDir, "*", "state.json.lifecycle"))
 	if err != nil {
@@ -165,105 +140,28 @@ func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 		if err != nil {
 			return active, err
 		}
-		actions, err := repo.LoadActions(context.Background(), topology)
-		if err != nil {
-			repo.Close()
-			return active, err
-		}
-		for _, action := range actions {
-			if action.Status != runtime.ActionSucceeded {
-				repo.Close()
-				return active, fmt.Errorf("topology %s has unresolved action %s", topology, action.ID)
-			}
-		}
-		st, err := repo.LoadState(context.Background(), topology)
-		if err != nil {
-			repo.Close()
-			return active, err
-		}
-		retained, err := repo.SnapshotResources(context.Background(), topology)
-		if err != nil {
-			repo.Close()
-			return active, err
-		}
-		for _, r := range retained {
-			if (r.Address.Type == "sysbox_node" || r.Address.Type == "sysbox_router") && r.Driver == "firecracker" {
-				active.firecracker[r.ExternalID] = true
-			}
-			switch r.Address.Type {
-			case "sysbox_network":
-				active.networks[r.ExternalID] = true
-			case "sysbox_node", "sysbox_router":
-				if r.Driver == "docker" {
-					active.containers[r.ExternalID] = true
-				}
-				if r.Driver == "libvirt" {
-					active.domains[r.ExternalID] = true
-				}
-			}
-		}
+		inventory, err := repo.LoadGCReferences(context.Background(), topology)
 		repo.Close()
-		if st.TopologyUID == "" {
-			return active, fmt.Errorf("canonical topology %s lacks durable ownership", topology)
-		}
-		for _, action := range actions {
-			if action.OwnerUID != st.TopologyUID {
-				return active, fmt.Errorf("canonical topology %s has conflicting action ownership", topology)
-			}
-		}
-		active.owners[st.TopologyUID] = true
-		inventoryRaw, err := json.Marshal(struct {
-			TopologyUID string
-			State       *state.State
-			Actions     []runtime.ActionRecord
-			Snapshots   []state.Resource
-		}{st.TopologyUID, st, actions, retained})
 		if err != nil {
 			return active, err
 		}
-		active.inventories[st.TopologyUID] = fmt.Sprintf("%x", sha256.Sum256(inventoryRaw))
-		for _, r := range st.Resources {
-			if r.OwnerUID != st.TopologyUID || r.ResourceUID == "" || r.Generation < 1 {
-				return active, fmt.Errorf("canonical topology %s has incomplete resource ownership", topology)
-			}
-			if (r.Address.Type == "sysbox_node" || r.Address.Type == "sysbox_router") && r.Driver == "firecracker" {
-				active.firecracker[r.ExternalID] = true
-			}
-			switch r.Address.Type {
-			case "sysbox_network":
-				active.networks[r.ExternalID] = true
-			case "sysbox_node", "sysbox_router":
-				if r.Driver == "docker" {
-					active.containers[r.ExternalID] = true
-				}
-				if r.Driver == "libvirt" {
-					active.domains[r.ExternalID] = true
-				}
-			}
+		if active.owners[inventory.TopologyUID] {
+			return active, fmt.Errorf("duplicate canonical topology owner %s", inventory.TopologyUID)
 		}
-	}
-	files, err := filepath.Glob(filepath.Join(runsDir, "*", "state.json"))
-	if err != nil {
-		return active, err
-	}
-	for _, f := range files {
-		st, err := state.NewManager(f).Load()
-		if err != nil {
-			return active, fmt.Errorf("read %s: %w", f, err)
-		}
-		for _, r := range st.Resources {
-			if (r.Address.Type == "sysbox_node" || r.Address.Type == "sysbox_router") && r.Driver == "firecracker" {
-				active.firecracker[r.ExternalID] = true
-			}
-			switch r.Address.Type {
+		active.owners[inventory.TopologyUID] = true
+		active.inventories[inventory.TopologyUID] = inventory.Digest
+		for _, ref := range inventory.References {
+			switch ref.ResourceType {
 			case "sysbox_network":
-				active.networks[r.ExternalID] = true
+				active.networks[ref.ExternalID] = true
 			case "sysbox_node", "sysbox_router":
-				if r.Driver == "docker" {
-					active.containers[r.ExternalID] = true
-				}
-				if r.Driver == "libvirt" {
-					active.domains[r.ExternalID] = true
+				switch ref.Driver {
+				case "docker":
+					active.containers[ref.ExternalID] = true
+				case "libvirt":
+					active.domains[ref.ExternalID] = true
+				case "firecracker":
+					active.firecracker[ref.ExternalID] = true
 				}
 			}
 		}

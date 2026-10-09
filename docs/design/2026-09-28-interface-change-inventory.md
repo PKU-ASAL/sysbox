@@ -680,3 +680,10 @@ Policy Apply 改为一次 nft batch 完成建表/删表/重建。失败 batch �
 4. substrate 仍按 capability SPI 接入；
 5. 所有破坏性变化都有版本、启动检查、迁移步骤和回归测试；
 6. 运行时行为从“猜上次做到哪一步”升级为“观察真实状态后继续收敛”。
+
+实施补充（2026-10-09 GC）：内部 `hostsupervisor.Server.GCDelete(ctx,candidate,grant)`
+改为 `GCEffect(ctx,candidate)`，由 RPC 层统一进入 coordinator，provider 回调不得
+再次获取 gate。未配置完整引用校验的宿主新删除明确 fenced；历史查询/停止回执
+恢复保留。repository 新增 `LoadGCReferences(ctx,topology)`，返回单事务 lifecycle
+引用清单与摘要，不能作为独立删除权限。CLI GC 移除 standalone state.json 兼容
+读取，旧记录必须明确重建，旧 GC inventory digest 需要重新生成。

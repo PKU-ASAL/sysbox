@@ -80,7 +80,7 @@ func (c *GCCoordinator) Delete(ctx context.Context, candidate GCCandidate, g con
 		return nil, err
 	}
 	if c.ValidateInventory == nil {
-		return nil, effectgate.ErrFenced
+		return nil, fmt.Errorf("%w: complete GC reference validator unavailable", effectgate.ErrFenced)
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID, Authorize: func(ctx context.Context, _ controlplane.ExecutionGrant) error {
 		if c.Authorize == nil {

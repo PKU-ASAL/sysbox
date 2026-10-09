@@ -23,21 +23,22 @@ import (
 // which worker may submit requests; issuer signatures and canonical resource
 // identity still authorize every effect. Private keys never cross this socket.
 type Server struct {
-	Socket          string
-	GroupID         int
-	Dispatcher      *Dispatcher
-	Power           *PowerDispatcher
-	Files           *FileDispatcher
-	Runs            *RunCoordinator
-	RunEffect       func(context.Context, RunRequest) (json.RawMessage, error)
-	RunRecovery     func(context.Context, RunRecoveryRequest) (*controlplane.RunRecoveryReport, error)
-	SSH             *SSHAccessCoordinator
-	SSHApply        func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
-	SSHDelete       func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
-	Adoption        *AdoptionCoordinator
-	AdoptionApply   func(context.Context, controlplane.AdoptionRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
-	GC              *GCCoordinator
-	GCDelete        func(context.Context, GCCandidate, controlplane.SignedExecutionGrant) (json.RawMessage, error)
+	Socket        string
+	GroupID       int
+	Dispatcher    *Dispatcher
+	Power         *PowerDispatcher
+	Files         *FileDispatcher
+	Runs          *RunCoordinator
+	RunEffect     func(context.Context, RunRequest) (json.RawMessage, error)
+	RunRecovery   func(context.Context, RunRecoveryRequest) (*controlplane.RunRecoveryReport, error)
+	SSH           *SSHAccessCoordinator
+	SSHApply      func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
+	SSHDelete     func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
+	Adoption      *AdoptionCoordinator
+	AdoptionApply func(context.Context, controlplane.AdoptionRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
+	GC            *GCCoordinator
+	// GCEffect runs inside GC.Delete; it must never invoke another coordinator.
+	GCEffect        func(context.Context, GCCandidate) (json.RawMessage, error)
 	OnRecoveryError func(error)
 }
 
@@ -370,12 +371,12 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 		}
 		response.AdoptionEvidence, err = s.Adoption.Observe(ctx, *request.AdoptionRequest, *request.Grant)
 	case "gc-delete":
-		if s.GC == nil || s.GCDelete == nil || request.GCCandidate == nil || request.Grant == nil {
+		if s.GC == nil || s.GCEffect == nil || request.GCCandidate == nil || request.Grant == nil {
 			err = fmt.Errorf("host GC coordinator unavailable")
 			break
 		}
 		response.GCResult, err = s.GC.Delete(ctx, *request.GCCandidate, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
-			return s.GCDelete(effectCtx, *request.GCCandidate, *request.Grant)
+			return s.GCEffect(effectCtx, *request.GCCandidate)
 		})
 	case "gc-observe":
 		if s.GC == nil || request.GCCandidate == nil || request.Grant == nil {

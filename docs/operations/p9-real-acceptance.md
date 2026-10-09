@@ -1055,3 +1055,45 @@ plan dispatch and provider GC acceptance remain unfinished. Inspection also foun
 the production host GC callback enters the coordinator a second time under the
 same gate, while its inventory validator currently returns success without
 checking references. Those paths require repair before automatic GC acceptance.
+
+### GC gate and coherent lifecycle references (2026-10-09)
+
+The nested production GC coordinator call was reproduced as a timeout before
+the provider ran. `Server.GCEffect` now accepts only context and candidate; the
+RPC server owns the sole coordinator invocation. Provider clients initialize
+inside that callback, so Docker setup cannot disable libvirt/Firecracker GC or
+historical GC observation and receipt recovery. A Unix-socket regression invokes
+the real server/client with a simulated Docker endpoint, completes deletion and
+observes its recorded result. This is protocol integration, not real provider GC
+acceptance.
+
+The production no-op inventory validator has been removed. Until the complete
+reference/plan authority is connected, a new host GC delete returns a fenced
+error before authorization, journal intent or provider access. Already recorded
+outcomes and stop receipts remain recoverable. Removing the recursive lock must
+not inadvertently enable deletes based only on a worker-provided digest.
+
+`Repository.LoadGCReferences` now gathers state, successful action candidates,
+retained snapshot state and retained snapshot action candidates in one aggregate
+transaction. Each resource identity includes its source. The digest binds the
+entire aggregate, including action revisions and snapshot catalog, and is stable
+across unchanged reads. Unresolved current/retained journals, corrupt snapshots
+or storage failures return a zero snapshot, never partial references. This shared
+implementation serves file, SQLite and Postgres and replaces the CLI's three
+separate lifecycle reads and duplicated reference loops.
+
+CLI GC no longer reads standalone `state.json` records or keeps the old fallback
+collector. Their presence requires explicit rebuild. Existing lifecycle data is
+not rewritten, but prior GC inventory digests must be regenerated. The lifecycle
+snapshot still excludes API Run/command/guest-task/file/revision/placement and
+authority references. It is a planning input, not a complete deletion proof or
+a lock held through provider execution. P8 remains open for that integration,
+legacy raw CLI deletion removal and real orphan-GC acceptance.
+
+Validation: the full Go suite passed with an isolated Postgres 16 database
+enabled. Host-supervisor and persistence race suites passed with that database;
+the commands race suite passed before the socket integration addition, and the
+final socket/nil-validator cases passed under race after correcting fixture
+directory permissions and target fields. Vet, docscheck (53 canonical documents)
+and independent re-review passed. No real provider resource was deleted in this
+round; the temporary database belongs only to this test run.

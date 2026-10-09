@@ -214,7 +214,7 @@ func TestGCRejectsBackendNotCoveredByFilesystemInventory(t *testing.T) {
 	require.ErrorContains(t, runGc(cmd, nil), "backend")
 }
 
-func TestCollectActiveIDs(t *testing.T) {
+func TestCollectActiveIDsRejectsStandaloneState(t *testing.T) {
 	runsDir := t.TempDir()
 
 	st := &state.State{Resources: []state.Resource{
@@ -224,10 +224,8 @@ func TestCollectActiveIDs(t *testing.T) {
 	}}
 	require.NoError(t, state.NewManager(filepath.Join(runsDir, "lab", "state.json")).Save(st))
 
-	active := collectActiveIDs(runsDir)
-	require.True(t, active.containers["container-1"])
-	require.True(t, active.networks["network-1"])
-	require.True(t, active.domains["domain-1"])
+	_, err := collectActiveIDsChecked(runsDir)
+	require.ErrorContains(t, err, "explicit rebuild required")
 }
 
 func TestCollectActiveIDsCheckedFailsClosedOnCorruptState(t *testing.T) {

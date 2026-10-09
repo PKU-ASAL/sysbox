@@ -347,3 +347,11 @@ heterogeneous matrix 真实重跑记录：首次失败暴露 Docker image CMD �
 包含实际 VM inventory 验证通过（9.89 秒）。这不是自动 GC 完成：含 Firecracker 的
 执行批次在任何 intent/effect 前明确拒绝。待修复生产 GC 重复进入 gate、空 inventory
 校验，补齐所有活动引用与计划授权、TAP inventory 和真实孤儿回收验收。P0–P9 仍未整体关闭。
+
+2026-10-09 P8 gate/reference 检查点：宿主 GC provider 回调已从 coordinator 中拆出，
+RPC 只进入一次 gate；Docker client 延迟初始化，不再决定其他 provider 或历史恢复
+是否可用。空 inventory 校验已删除，完整引用校验未接入前，新删除明确 fenced，
+不会写 intent。repository 新增原子 `LoadGCReferences`，统一 state、成功 journal
+candidate、snapshot state/journal 的引用与摘要；CLI 已消费此共享层，移除独立
+state.json 兼容读取。该模型尚未汇合 API 活动、授权、placement/revision 引用，也
+未覆盖删除期间的并发准入；不得据此标记 P8 完成。

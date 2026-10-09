@@ -14,9 +14,6 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
-	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
-	firecrackerprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
-	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/spf13/cobra"
 	"io"
@@ -204,46 +201,15 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		}
 		return evidence, nil
 	}
-	// GC effects stay in this credential-owning process. The current concrete
-	// provider callback covers Docker; unsupported provider kinds fail closed in
-	// the supervisor rather than falling back to the CLI's raw delete path.
-	if docker, dockerErr := dockerprovider.New(); dockerErr == nil {
-		defer docker.Close()
-		gc := &hostsupervisor.GCCoordinator{
-			Root: filepath.Join(cfg.HostSupervisor.Root, "gc"), AgentID: ident.ID,
-			HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key,
-			Authorize: authority.Authorize, ReportStop: authority.ReportStop,
-			ValidateInventory: func(context.Context, hostsupervisor.GCCandidate) error { return nil },
-		}
-		server.GC = gc
-		server.GCDelete = func(ctx context.Context, candidate hostsupervisor.GCCandidate, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
-			return gc.Delete(ctx, candidate, grant, func(effectCtx context.Context) (json.RawMessage, error) {
-				switch candidate.Kind {
-				case "container":
-					if err := docker.DeleteManagedExternal(effectCtx, candidate.ExternalID, candidate.OwnerUID, candidate.ResourceUID, candidate.Generation); err != nil {
-						return nil, err
-					}
-				case "network":
-					if err := docker.DeleteManagedNetworkExternal(effectCtx, candidate.ExternalID, candidate.OwnerUID, candidate.ResourceUID, candidate.Generation); err != nil {
-						return nil, err
-					}
-				case "domain":
-					lv := libvirtprovider.New(cfg.Providers.Libvirt.Workdir)
-					if err := lv.DeleteManagedExternal(effectCtx, candidate.ExternalID, candidate.OwnerUID, candidate.ResourceUID, candidate.Generation); err != nil {
-						return nil, err
-					}
-				case "firecracker":
-					fc := firecrackerprovider.New(cfg.Providers.Firecracker.Kernel, cfg.Providers.Firecracker.Workdir)
-					if err := fc.DeleteManagedExternal(effectCtx, candidate.ExternalID, candidate.OwnerUID, candidate.ResourceUID, candidate.Generation); err != nil {
-						return nil, err
-					}
-				default:
-					return nil, fmt.Errorf("host supervisor GC provider kind %q is not configured", candidate.Kind)
-				}
-				return json.RawMessage(`{"deleted":true}`), nil
-			})
-		}
+	// Recovery and observation do not depend on a provider client. Production
+	// deletion remains fenced until a complete reference validator is wired in;
+	// a no-op validator would mistake a worker's digest for deletion authority.
+	server.GC = &hostsupervisor.GCCoordinator{
+		Root: filepath.Join(cfg.HostSupervisor.Root, "gc"), AgentID: ident.ID,
+		HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key,
+		Authorize: authority.Authorize, ReportStop: authority.ReportStop,
 	}
+	server.GCEffect = newSupervisorGCEffect(cfg)
 	return server.Serve(cmd.Context())
 }}
 
