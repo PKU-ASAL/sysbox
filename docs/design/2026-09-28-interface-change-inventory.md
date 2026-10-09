@@ -6,6 +6,22 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### 2026-10-09 维护授权屏障基础
+
+执行授权 ledger 升为format2，format1拒绝读写并要求明确重建；没有自动迁移或忽略
+新字段的兼容模式。原因是旧writer若不认识维护屏障，可能在写回时丢弃冻结状态。
+现有部署必须先停止旧writer、核实并保留停止证据，再执行独立的重建流程；禁止仅
+手改version。当前双VM实验室仍保留原format1数据，未用本次变更自动覆盖或删除。
+
+repository新增 `BeginMaintenance(id, topologyUID, requestDigest)` 与
+`EndMaintenance(barrier)`。Begin在同一授权事务内分配epoch、保存不可变请求身份、
+冻结新grant并撤销该拓扑所有父/子grant。重复ID只读回原记录，摘要冲突拒绝。
+End必须匹配原屏障，且该拓扑所有grant都有已确认停止状态；过期不等于停止。
+已释放记录保留为幂等墓碑，旧End不能解开后继屏障；屏障不靠超时自动解除。
+
+这不是新增公开HTTP restore流程：维护请求受理、snapshot提交、重启续作及屏障
+释放仍待编排接入。屏障只限制执行授权，不声称已经冻结全部metadata写入入口。
+
 ### 2026-10-09 已实施：远端 Run Observe/Recover 宿主路由
 
 远端 `run_recovery` command 不再由 Agent 打开 repository 或直接调用 provider。

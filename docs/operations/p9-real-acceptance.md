@@ -665,3 +665,25 @@ neither resources nor serial; API tests cover each missing activity loader.
 These checks are preconditions, not a complete P6 freeze/revoke/restore protocol:
 concurrent admission across independent controllers and authorized reconciliation
 of a different resource inventory still require implementation and acceptance.
+
+### Maintenance authority barrier foundation (format change)
+
+Execution authority format2 adds durable maintenance request ID, topology UID,
+request digest and exclusion epoch. Beginning maintenance atomically revokes all
+active parent/child grants and prevents new grants for that topology. Ending it
+requires the exact barrier identity and confirmed stopped grants, including grants
+whose lease already expired. Released records remain as tombstones; historical
+retries cannot unfreeze a successor. Other topologies retain their authorization.
+
+Tests cover cold repository reconstruction, retry/conflict behavior, parent/child
+revocation and stop ordering, forged release fields, independent topology, and
+concurrent maintenance/grant admission through file and SQLite API storage.
+PostgreSQL is represented by the same adapter contract test but was not configured
+in this round; no new real PostgreSQL or two-VM acceptance is claimed.
+
+Format1 now fails rather than silently losing barriers on an old writer's next
+save. This change has not been deployed into the existing two-VM lab: its retained
+format1 authority and uncertain resources were not altered. Rebuild must stop old
+writers and preserve/resolve resource evidence; editing the version field is not
+a migration. Restore HTTP orchestration, metadata freeze and a full upgrade
+exercise remain required before the barrier can close the P6 user workflow.

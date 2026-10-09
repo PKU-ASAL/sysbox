@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+P6维护屏障基础：授权ledger format2内持久化维护ID/摘要/epoch，Begin原子冻结新grant
+并撤销父子授权，End等待全部已确认停止；重试、冷启动、后继屏障和其他拓扑隔离回归
+通过。format1明确拒绝并需停旧writer后重建，现有双VM旧数据未动。restore受理/提交/
+续作/释放编排、metadata全局冻结与升级演练仍待接入，不能据此关闭P6。
+
 P6恢复前置检查补充：restore与force-unlock统一要求Run/node/guest完整活动注册表；
 snapshot恢复拒绝lineage、ResourceType、SchemaVersion变化，避免当前provider私有数据
 被旧schema重新解释。文件/SQLite与API失败回归已补；独立控制进程的冻结/撤销/恢复

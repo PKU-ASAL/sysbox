@@ -16,11 +16,16 @@ import (
 const executionAuthorityKind guestKind = "sysbox_execution_authority"
 const MaxExecutionGrantTTL = controlplane.ExecutionGrantMaxTTL
 
+// Version 2 includes maintenance barriers. Old writers must reject this ledger
+// rather than ignore and overwrite a freeze. Version 1 requires explicit rebuild.
+const executionAuthorityVersion = 2
+
 // One authority ledger serializes session changes and overlapping scopes in
 // the same storage transaction. Epoch tombstones are never deleted. This is
 // intentionally a single writer boundary until a sharded authority can preserve
 // topology-versus-resource exclusion and session CAS in one transaction.
 type executionAuthority struct {
+	Maintenance  map[string]MaintenanceBarrier          `json:"maintenance,omitempty"`
 	Stops        map[uint64]stoppedExecutionGrant       `json:"stops,omitempty"`
 	Observations map[string]ExecutionObservation        `json:"observations"`
 	Version      int                                    `json:"version"`
@@ -87,7 +92,7 @@ func (b executionGrantRecords) ReadExecutionAuthority(ctx context.Context) ([]by
 func (r *ExecutionGrantRepository) read(ctx context.Context, fn func(*executionAuthority) error) error {
 	raw, err := r.storage.ReadExecutionAuthority(ctx)
 	if errors.Is(err, ErrNotFound) {
-		return fn(&executionAuthority{Version: 1, Sessions: map[string]controlplane.AgentSession{}, Grants: map[string]controlplane.ExecutionGrant{}})
+		return fn(&executionAuthority{Version: executionAuthorityVersion, Sessions: map[string]controlplane.AgentSession{}, Grants: map[string]controlplane.ExecutionGrant{}})
 	}
 	if err != nil {
 		return err
@@ -96,8 +101,11 @@ func (r *ExecutionGrantRepository) read(ctx context.Context, fn func(*executionA
 	if json.Unmarshal(raw, &a) != nil || a.Sessions == nil || a.Grants == nil || a.ObservedAt.IsZero() {
 		return ErrCorruptRecord
 	}
-	if a.Version != 1 {
+	if a.Version != executionAuthorityVersion {
 		return ErrUnsupportedVersion
+	}
+	if err := validateMaintenance(&a); err != nil {
+		return err
 	}
 	return fn(&a)
 }
@@ -130,17 +138,20 @@ func (r *ExecutionGrantRepository) update(ctx context.Context, fn func(*executio
 	}
 	var transitionErr error
 	err := r.storage.UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-		a := executionAuthority{Version: 1, Sessions: map[string]controlplane.AgentSession{}, Grants: map[string]controlplane.ExecutionGrant{}}
+		a := executionAuthority{Version: executionAuthorityVersion, Sessions: map[string]controlplane.AgentSession{}, Grants: map[string]controlplane.ExecutionGrant{}}
 		if raw != nil {
 			if err := json.Unmarshal(raw, &a); err != nil {
 				return nil, ErrCorruptRecord
 			}
-			if a.Version != 1 {
+			if a.Version != executionAuthorityVersion {
 				return nil, ErrUnsupportedVersion
 			}
 		}
 		if a.Sessions == nil || a.Grants == nil {
 			return nil, ErrCorruptRecord
+		}
+		if err := validateMaintenance(&a); err != nil {
+			return nil, err
 		}
 		if raw != nil && a.ObservedAt.IsZero() {
 			return nil, ErrCorruptRecord
@@ -261,6 +272,9 @@ func (r *ExecutionGrantRepository) Issue(ctx context.Context, request controlpla
 	}
 	var result controlplane.ExecutionGrant
 	err := r.update(ctx, func(a *executionAuthority) error {
+		if a.maintenanceBlocks(request.Scope.TopologyUID) {
+			return ErrConflict
+		}
 		if a.Sessions[request.AgentID].ID != request.SessionID {
 			return ErrConflict
 		}
