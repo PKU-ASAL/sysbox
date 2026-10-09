@@ -2183,3 +2183,9 @@ This proves a fresh current-format cross-kernel lifecycle round and explicit
 artifact provisioning. It does not close API failover during an active Run,
 partition, database restart, disk-full, upgrade/rebuild, or the full
 provider/SSH/GC matrix.
+
+The GC plan fence is also covered by current contracts: the inventory digest is
+bound into the leased `gc_delete` command/grant, checked against the canonical
+lifecycle aggregate, and revalidated by the owning host before the provider
+effect. A new state or snapshot reference, UID/generation replacement, or
+provider external-ID mismatch rejects the old plan without extending authority.

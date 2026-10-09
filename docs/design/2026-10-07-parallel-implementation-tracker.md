@@ -630,6 +630,14 @@ completion 现在也必须先用 receipt hash 验证原 grant authority；HTTP �
 存储调用共享同一验证，不再能仅凭 operation payload 写终态。operation 状态提交与
 authority release 的完全同事务合并仍待下一切片。
 
+2026-10-10 P8 GC fencing 审计：现有 `GCInventoryDigest` 已作为计划版本锚点，
+而非普通扫描字段。API grant issuance、command lifecycle validation、host
+GCCoordinator effect 前 inventory revalidation 三层共同检查它；canonical state
+新增 resource、snapshot 引用、resource UID/generation 或 provider external ID
+变化都会拒绝旧 grant/renew/delete。相关 API/persistence/host supervisor GC
+合同测试和真实 provider candidate 测试通过。剩余是实际自动执行矩阵、Firecracker
+orphan inventory/TAP 和跨宿主调度，不再是缺少基本 plan identity fencing。
+
 2026-10-10 `make test-p9-real` 使用真实 Firecracker kernel/rootfs 通过完整分项
 provider gate：Docker file/power/guest task/Run receipt-loss/adoption、Firecracker
 crash/generation/reset/cross-process recovery、libvirt generation effects 全部通过
