@@ -1414,3 +1414,23 @@ The publication/deletion concurrency regression exposed an unnecessary lifecycle
 read for empty command lists; the helper now resolves UID only when a pending
 command exists. Targeted race, vet, docscheck and independent review passed.
 The temporary database was stopped and automatically removed after verification.
+
+### Incomplete command identity remains a blocker (2026-10-09)
+
+Pending commands without topology UID were omitted even when their durable
+payload explicitly named the topology. Maintenance/delete preflight and cleanup
+inspection now share a predicate: explicit UIDs match only that incarnation;
+missing UID plus a matching Run, node operation, guest execution, file or console
+payload name adds a blocker. This never fills an identity field, binds an old
+command to a successor, or permits execution. Terminal commands remain excluded.
+
+Regression tests reproduced all five missing-UID cases and protect unrelated
+topology, explicit old UID and terminal behavior. This is conservative evidence
+handling; incomplete records still require explicit resolution/rebuild. It does
+not implement atomic command admission or recover unknown remote effects.
+
+Validation: full API race passed (62.65 seconds), including file/SQLite; no
+PostgreSQL instance was enabled in this round. HTTP regressions verify activity
+visibility and `blocked_by_agent_command` for missing UID records, with the
+historical receipt retained. Targeted race, vet, docscheck and independent review
+passed. No external resource or database mutation was performed for acceptance.

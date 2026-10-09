@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -60,4 +62,41 @@ func TestCommandActivityMatchesCurrentUIDAndRetirement(t *testing.T) {
 		require.NoError(t, s.workspaceService().checkCommandActivity(ctx, "lab"))
 		require.NoError(t, s.workspaceService().Delete(ctx, "lab", true))
 	})
+}
+
+func TestCommandWithoutUIDCannotHideItsTopologyActivity(t *testing.T) {
+	for _, kind := range []string{"run", "node", "guest", "file", "console"} {
+		t.Run(kind, func(t *testing.T) {
+			s := NewServer(t.TempDir(), t.TempDir())
+			cmd := controlplane.AgentCommand{ID: "pending", AgentID: "unregistered", Status: controlplane.AgentCommandStatusQueued}
+			switch kind {
+			case "run":
+				cmd.Type, cmd.Run = "run_assigned", &controlplane.Run{Topology: "lab"}
+			case "node":
+				cmd.Type, cmd.Operation = "node_operation", controlplane.NodeOperation{Topology: "lab"}
+			case "guest":
+				cmd.Type, cmd.Execution = "guest_execution", &controlplane.GuestExecution{Topology: "lab"}
+			case "file":
+				cmd.Type, cmd.FilePut = "guest_file_put", &controlplane.GuestFilePut{Topology: "lab"}
+			case "console":
+				cmd.Type, cmd.Session = "console_session", &controlplane.ConsoleSession{Topology: "lab"}
+			}
+			require.NoError(t, s.apiStore.SaveAgentCommand(context.Background(), cmd))
+			require.ErrorIs(t, s.workspaceService().checkCommandActivity(context.Background(), "lab"), persistence.ErrConflict)
+			require.NoError(t, s.workspaceService().checkCommandActivity(context.Background(), "other"))
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/topologies/lab/cleanup-inspection", nil))
+			require.Equal(t, 200, rec.Code)
+			var inspection struct {
+				Active []struct{ ID, Kind string } `json:"active_operations"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &inspection))
+			require.Len(t, inspection.Active, 1)
+			require.Equal(t, "agent_command", inspection.Active[0].Kind)
+			require.Equal(t, cmd.ID, inspection.Active[0].ID)
+			require.False(t, commandBlocksTopology(controlplane.AgentCommand{TopologyUID: "old", Run: &controlplane.Run{Topology: "lab"}, Status: controlplane.AgentCommandStatusQueued}, "lab", "new"))
+			cmd.Status = controlplane.AgentCommandStatusCompleted
+			require.False(t, commandBlocksTopology(cmd, "lab", "new"))
+		})
+	}
 }

@@ -100,7 +100,7 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		active = append(active, map[string]any{"kind": "console_session", "id": sess.ID, "status": sess.Status, "agent_id": sess.AgentID})
 	}
 	for _, command := range commands {
-		if command.TopologyUID != snapshot.State.TopologyUID || command.IsTerminal() {
+		if !commandBlocksTopology(command, topology, snapshot.State.TopologyUID) {
 			continue
 		}
 		pendingCommand = true

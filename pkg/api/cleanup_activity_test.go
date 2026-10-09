@@ -81,7 +81,7 @@ func TestCleanupInspectionFailsWhenActivityEnumerationUnavailable(t *testing.T) 
 }
 
 func TestCleanupReceiptReportsNewActivityBlockers(t *testing.T) {
-	for _, kind := range []string{"console", "command"} {
+	for _, kind := range []string{"console", "command", "command_missing_uid"} {
 		t.Run(kind, func(t *testing.T) {
 			s := NewServer(t.TempDir(), t.TempDir())
 			completedCleanupRun(t, s)
@@ -89,7 +89,12 @@ func TestCleanupReceiptReportsNewActivityBlockers(t *testing.T) {
 			if kind == "console" {
 				require.NoError(t, s.apiStore.SaveConsoleSession(context.Background(), controlplane.ConsoleSession{ID: "lost", Topology: "lab", Status: controlplane.ConsoleSessionStatusLost, CreatedAt: time.Now(), EndedAt: time.Now()}))
 			} else {
-				require.NoError(t, s.apiStore.SaveAgentCommand(context.Background(), controlplane.AgentCommand{ID: "pending", AgentID: "agent", TopologyUID: uid, Type: "gc_delete", Status: controlplane.AgentCommandStatusQueued}))
+				cmd := controlplane.AgentCommand{ID: "pending", AgentID: "agent", TopologyUID: uid, Type: "gc_delete", Status: controlplane.AgentCommandStatusQueued}
+				if kind == "command_missing_uid" {
+					cmd.TopologyUID = ""
+					cmd.Session = &controlplane.ConsoleSession{Topology: "lab"}
+				}
+				require.NoError(t, s.apiStore.SaveAgentCommand(context.Background(), cmd))
 			}
 			rec := httptest.NewRecorder()
 			s.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/topologies/lab/cleanup-inspection", nil))
@@ -97,7 +102,7 @@ func TestCleanupReceiptReportsNewActivityBlockers(t *testing.T) {
 			var out map[string]any
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 			want := "blocked_by_console_activity"
-			if kind == "command" {
+			if kind != "console" {
 				want = "blocked_by_agent_command"
 			}
 			require.Equal(t, want, out["cleanup_receipt_status"])

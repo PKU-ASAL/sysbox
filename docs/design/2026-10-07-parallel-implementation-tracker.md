@@ -426,3 +426,7 @@ receipt 显示对应阻挡原因，来源枚举失败明确 503，不输出 payl
 （含 force）在 metadata 变更前也检查当前 UID 的非终态 command，拒绝时 UID 保持。
 退休 command 不阻挡，其他 UID 不误阻塞。共享 helper 仍只是前置快照，完整跨
 registry 原子删除/准入协议尚未完成。
+
+2026-10-09 command 身份不完整修正：缺 UID 但 payload 明确引用 topology 的非终态
+命令仍阻挡该 topology 的维护/删除，并显示于 cleanup-inspection；名称不用于补 UID
+或授予执行权限。明确旧 UID 不绑定新代际，终态不阻挡。完整原子准入仍未完成。
