@@ -373,6 +373,9 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 	if err := s.checkConsoleActivity(ctx, topology); err != nil {
 		return err
 	}
+	if err := s.checkCommandActivity(ctx, topology); err != nil {
+		return err
+	}
 	placement, err := s.loadPlacement(topology)
 	if err != nil {
 		return err
@@ -550,7 +553,7 @@ func (s *WorkspaceService) ForceUnlock(ctx context.Context, topology string) err
 // maintenance. A backend lock is only a storage mutex; removing it while an
 // effect holder is alive would create two writers and invalidate fencing.
 func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology string) error {
-	if s.loadRuns == nil || s.loadNodeOperations == nil || s.loadGuestActivity == nil {
+	if s.loadRuns == nil || s.loadNodeOperations == nil || s.loadGuestActivity == nil || s.loadConsoleSessions == nil || s.loadAgentCommands == nil {
 		return fmt.Errorf("%w: complete activity registry required for state maintenance", persistence.ErrConflict)
 	}
 	if s.loadRuns != nil {
@@ -591,26 +594,7 @@ func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology
 	if err := s.checkConsoleActivity(ctx, topology); err != nil {
 		return err
 	}
-	if s.loadAgentCommands != nil {
-		commands, err := s.loadAgentCommands(ctx)
-		if err != nil {
-			return err
-		}
-		mgr, err := s.stateManager(topology)
-		if err != nil {
-			return err
-		}
-		st, err := mgr.Load()
-		if err != nil {
-			return err
-		}
-		for _, command := range commands {
-			if command.TopologyUID == st.TopologyUID && !command.IsTerminal() {
-				return fmt.Errorf("%w: active agent command prevents state maintenance", persistence.ErrConflict)
-			}
-		}
-	}
-	return nil
+	return s.checkCommandActivity(ctx, topology)
 }
 
 func (s *WorkspaceService) StateSnapshots(ctx context.Context, topology string) ([]state.Snapshot, error) {

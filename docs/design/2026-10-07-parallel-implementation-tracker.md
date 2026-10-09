@@ -421,3 +421,8 @@ Console 终态的 authority 绑定及维护期间的原子受理仍待实现。
 保留 lost console 与未注册 Agent 的持久 command，按当前 topology 身份过滤。
 receipt 显示对应阻挡原因，来源枚举失败明确 503，不输出 payload/环境/内部错误。
 仅补齐可观测证据，跨 registry 原子准入和完整 GC 派发仍未完成。
+
+2026-10-09 command preflight 对齐：缺 command registry 时维护明确拒绝；Delete
+（含 force）在 metadata 变更前也检查当前 UID 的非终态 command，拒绝时 UID 保持。
+退休 command 不阻挡，其他 UID 不误阻塞。共享 helper 仍只是前置快照，完整跨
+registry 原子删除/准入协议尚未完成。

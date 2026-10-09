@@ -1393,3 +1393,24 @@ Verification: the full API race suite passed with real PostgreSQL enabled
 (57.60 seconds), including file/SQLite coverage. Vet, docscheck and independent
 review passed. The temporary test database was stopped and automatically removed;
 this round did not execute provider effects.
+
+### Command preflight shared by maintenance and metadata deletion (2026-10-09)
+
+Missing AgentCommand enumeration is now an incomplete registry error, matching
+the other required maintenance sources. The same command preflight is used for
+restore/force-unlock and before any metadata Delete mutation, including force.
+Previously a pending command could block maintenance yet be omitted by Delete.
+The regression reproduced deletion succeeding and checks that a rejected delete
+preserves the original topology UID. Registry read failures also prevent deletion.
+
+Tests cover unregistered Agents, command retirement, and foreign topology UIDs.
+The helper loads lifecycle identity once with the request context and does not
+infer quiescence from command lease expiry. This remains a preflight snapshot:
+it does not serialize every command writer with lifecycle deletion, and cannot
+substitute for host stop evidence or the pending cross-registry admission work.
+
+Validation: full API race passed with real PostgreSQL enabled (101.36 seconds).
+The publication/deletion concurrency regression exposed an unnecessary lifecycle
+read for empty command lists; the helper now resolves UID only when a pending
+command exists. Targeted race, vet, docscheck and independent review passed.
+The temporary database was stopped and automatically removed after verification.
