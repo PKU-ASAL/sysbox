@@ -33,7 +33,8 @@ type RecoveredResource struct {
 	JournalStatus string `json:"journal_status"`
 }
 type RunRecoveryAuthorization struct {
-	Run      Run             `json:"run"`
-	Mode     string          `json:"mode"`
-	Revision *GlobalRevision `json:"revision,omitempty"`
+	LeaseUntil time.Time       `json:"lease_until"`
+	Run        Run             `json:"run"`
+	Mode       string          `json:"mode"`
+	Revision   *GlobalRevision `json:"revision,omitempty"`
 }

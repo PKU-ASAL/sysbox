@@ -76,9 +76,11 @@ func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 	agentCfg := cfg
 	agentCfg.Paths.RunsDir = t.TempDir()
 	agentCfg.Paths.WorkspacesDir = t.TempDir()
+	// Remote observation must not depend on worker access to canonical state.
+	agentCfg.State.Backend = "sqlite://" + filepath.Join(t.TempDir(), "worker-local.db")
 	bridge := NewExecutionBridge(agentCfg)
 	topology := "remote-e2e-" + uuid.NewString()[:8]
-	repository, err := bridge.ActionRepository(topology)
+	repository, err := first.actionRepository(topology)
 	require.NoError(t, err)
 	initial, err := repository.LoadState(ctx, topology)
 	require.NoError(t, err)
@@ -166,7 +168,7 @@ func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 		runs := &hostsupervisor.RunCoordinator{Root: filepath.Join(root, "runs"), AgentID: tasks.AgentID, HostBootID: tasks.HostBootID, IssuerKey: pub, HostKey: hostKey, Authorize: authority.Authorize, ReportRunID: authority.ReportRun, Tasks: tasks,
 			OnExecutionError: func(req hostsupervisor.RunRequest, err error) { t.Logf("host %s: %v", req.RunID, err) }}
 		executor := &agentexec.HostRunExecutor{Bridge: bridge, Tasks: tasks, Resolver: resolver, Authority: authority}
-		srv := &hostsupervisor.Server{Socket: socket, GroupID: -1, Dispatcher: tasks, Runs: runs, RunEffect: executor.Execute}
+		srv := &hostsupervisor.Server{Socket: socket, GroupID: -1, Dispatcher: tasks, Runs: runs, RunEffect: executor.Execute, RunRecovery: executor.Recover}
 		service, stop := context.WithCancel(ctx)
 		t.Cleanup(stop)
 		done := make(chan error, 1)

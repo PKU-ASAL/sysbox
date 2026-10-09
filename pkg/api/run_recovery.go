@@ -154,6 +154,7 @@ func (s *Server) handleAuthorizeRunRecovery(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	auth.Run = persistence.DurableRun(auth.Run)
+	auth.LeaseUntil = cmd.LeaseUntil
 	writeJSON(w, 200, auth)
 }
 func (s *Server) handleGetRunRecovery(w http.ResponseWriter, r *http.Request) {

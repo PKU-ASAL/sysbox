@@ -2,6 +2,13 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+2026-10-09显式Run观察/恢复路由：Agent不再直接读canonical repository或调用provider；
+仅转发command租约凭据，宿主独立向API授权并复用原观察引擎。缺socket无本地回退。
+真实Docker race在worker独立空SQLite下通过远端UID/generation观察和完整清理；recover
+socket测试证明canonical revision驱动journal/state收敛且不重放副作用。长租约和大revision
+传输限制已修复。全局周期inventory/console隔离、撤销与metadata提交的原子事务、独立
+双VM观察验收仍未据此关闭。
+
 2026-10-09真实provider总门槛：已把旧Docker Run故障夹具迁入生产共用HostRunExecutor、
 Unix supervisor和签名host completion。`make test-p9-real`全项通过：文件安装、节点power、
 guest task、Run丢回执恢复、Docker adoption、Firecracker生命周期/reset/跨进程/crash、

@@ -89,10 +89,8 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	if len(opts.Capabilities) == 0 {
 		opts.Capabilities, _ = agent.DetectCapabilities()
 	}
-	if _, ok := bridge.(RevisionWorkspaceProvider); ok {
-		if _, ok := bridge.(ActionRepositoryProvider); ok && !slices.Contains(opts.Capabilities, controlplane.RunRecoveryCapability) {
-			opts.Capabilities = append(opts.Capabilities, controlplane.RunRecoveryCapability)
-		}
+	if opts.HostSupervisorSocket != "" && !slices.Contains(opts.Capabilities, controlplane.RunRecoveryCapability) {
+		opts.Capabilities = append(opts.Capabilities, controlplane.RunRecoveryCapability)
 	}
 	if err := post(ctx, opts, opts.APIURL+"/v1/agents", controlplane.Agent{
 		ID:           opts.ID,
@@ -318,13 +316,12 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		}
 		recoveryCtx, stopRecovery := context.WithDeadline(runCtx, cmd.LeaseUntil)
 		defer stopRecovery()
-		var auth controlplane.RunRecoveryAuthorization
-		proof := controlplane.AgentCommandEvent{CommandID: cmd.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}
-		if err := post(recoveryCtx, r.opts, r.opts.APIURL+"/v1/agents/"+r.opts.ID+"/commands/"+cmd.ID+"/recovery-authorize", proof, &auth); err != nil {
-			emit("failed", "recovery authorization rejected", err)
+		if r.opts.HostSupervisorSocket == "" {
+			emit("failed", "host supervisor is required for remote recovery", fmt.Errorf("host supervisor socket is not configured"))
 			return
 		}
-		result, err := r.executor.ObserveRecoverRun(recoveryCtx, r.opts.ID, *cmd, auth)
+		proof := hostsupervisor.RunRecoveryRequest{CommandID: cmd.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}
+		result, err := hostsupervisor.NewTaskClient(r.opts.HostSupervisorSocket, hostsupervisor.TargetRef{}).RecoverRun(recoveryCtx, proof)
 		if err != nil {
 			emit("failed", "owning-agent recovery uncertain", err)
 			return

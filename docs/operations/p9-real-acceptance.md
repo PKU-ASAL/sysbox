@@ -581,3 +581,36 @@ Firecracker inputs were `/home/jiandong/.cache/sysbox/tools/firecracker`,
 destroyed by their identity-scoped cleanup. Passing this target does not close
 the remaining P5–P8 capabilities, pre-checkpoint daemon ambiguity, persistent
 services, full partition/disk-full or upgrade/main integration.
+
+### Remote observation no longer reads worker canonical storage
+
+Run recovery commands now relay only command ID, lease owner and attempt over
+the host socket. The host independently fetches canonical authorization and
+revision from the API, enforces the returned command lease, executes the existing
+Observe/Recover engine, and reauthorizes before returning its report. Missing
+supervisor configuration fails without using the Agent executor as a fallback.
+The worker's local revision/repository capability no longer gates advertisement
+of `run-recovery.v1`; configured host routing does.
+
+The real Docker completion-loss race test passed in13.43seconds with the Agent
+using an independent empty SQLite database while API and host share canonical
+storage. After reconstruction, its remote observation returned the exact live
+container UID/generation/external ID; normal Destroy and non-force metadata
+deletion passed. This supersedes the previous fixture's worker database access
+limitation for explicit Run observation. It does not prove all periodic inventory
+or console/provider routes have moved, nor constitute new two-VM acceptance.
+
+A host-backed recover-mode socket test also creates an incomplete journal by
+rejecting the original state patch, then commits the proven outcome using the
+API-authorized immutable revision. It verifies advanced canonical serial,
+succeeded action, one original Create and no repeated Create/Delete. Additional
+tests cover absent supervisor, post-observation authorization rejection, unsafe
+command identity, configured leases longer than30seconds, and a valid recovery
+authorization response above1MiB. The latter two exposed transport truncation
+regressions and now pass with canonical lease limits and a recovery-only16MiB
+response budget. Full Go regression and affected-package race passed.
+
+These checks do not close the existing revoke/metadata-commit transaction gap:
+final reauthorization can reject a report after a previously authorized journal
+write. Atomic authority validation with metadata outcome commits remains required
+alongside daemon-unknown recovery, P5–P8 and the remaining P9 fault matrix.

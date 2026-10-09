@@ -6,6 +6,27 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### 2026-10-09 已实施：远端 Run Observe/Recover 宿主路由
+
+远端 `run_recovery` command 不再由 Agent 打开 repository 或直接调用 provider。
+Agent 必须配置 `host_supervisor_socket`，仅经 Unix socket 的 `run-recovery` 操作
+传递 `command_id`、`lease_owner`、`attempt`；不接受 worker 指定的 Target、Run、
+revision 或 provider 坐标。缺宿主入口直接失败，没有旧本地路径回退。
+
+宿主使用自身 Agent 身份向现有 `recovery-authorize` HTTP 接口重新授权，取得
+canonical Run、mode 和不可变 revision。响应新增必需的 `lease_until`；缺失、过期
+或 owner 不符时宿主拒绝。API 与 supervisor 应协调升级，不为旧响应补默认期限。
+宿主复用观察驱动引擎，结束时再次确认 command/Run 授权，再经 worker 回传原
+`RunRecoveryReport`；报告仍不表示 Run 完成，也不转移执行 ownership。
+
+输入解码保持30秒预算；具体恢复按 API 返回的 command 租约限时，响应写入另限
+30秒。recovery 授权响应最多16MiB，覆盖8MiB revision 上传在 base64 编码后的体积；
+普通宿主授权响应仍限1MiB。自动声明 `run-recovery.v1` 能力以配置宿主 socket 为前提。
+
+Recover 仅提交既有 journal 的可证明结果，不重放 Create/Delete/guest command。
+当前前后授权检查与 journal CAS 不是同一事务；撤销与 metadata outcome 提交的
+原子边界仍需补齐，不能把本次路由迁移称为完整 maintenance freeze/fencing。
+
 ### 2026-10-07 已实施：guest task 宿主监督接口
 
 API guest execution 必须配置 `agent.host_supervisor_socket`；缺失时拒绝执行，

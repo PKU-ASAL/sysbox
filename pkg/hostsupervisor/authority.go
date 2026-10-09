@@ -25,6 +25,10 @@ func (c AuthorityClient) post(ctx context.Context, path string, value any, signe
 }
 
 func (c AuthorityClient) postJSON(ctx context.Context, path string, value any, out any, signed ...bool) error {
+	return c.postJSONLimit(ctx, path, value, out, 1<<20, signed...)
+}
+
+func (c AuthorityClient) postJSONLimit(ctx context.Context, path string, value any, out any, responseLimit int64, signed ...bool) error {
 	authenticated := len(signed) == 0 || signed[0]
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -57,7 +61,7 @@ func (c AuthorityClient) postJSON(ctx context.Context, path string, value any, o
 		return fmt.Errorf("host authority request rejected (HTTP %d)", resp.StatusCode)
 	}
 	if out != nil {
-		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, responseLimit)).Decode(out); err != nil {
 			return err
 		}
 	}

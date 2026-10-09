@@ -29,6 +29,7 @@ type Server struct {
 	Files           *FileDispatcher
 	Runs            *RunCoordinator
 	RunEffect       func(context.Context, RunRequest) (json.RawMessage, error)
+	RunRecovery     func(context.Context, RunRecoveryRequest) (*controlplane.RunRecoveryReport, error)
 	SSH             *SSHAccessCoordinator
 	SSHApply        func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	SSHDelete       func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
@@ -40,7 +41,7 @@ type Server struct {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.SSH == nil && s.Adoption == nil && s.GC == nil || !filepath.IsAbs(s.Socket) {
+	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.RunRecovery == nil && s.SSH == nil && s.Adoption == nil && s.GC == nil || !filepath.IsAbs(s.Socket) {
 		return fmt.Errorf("absolute supervisor socket and dispatcher required")
 	}
 	directory := filepath.Dir(s.Socket)
@@ -178,7 +179,20 @@ func (s *Server) serveConnection(parent context.Context, conn net.Conn) {
 		json.NewEncoder(conn).Encode(Response{Version: 1, Error: "invalid host supervisor request"})
 		return
 	}
+	if request.Operation == "run-recovery" {
+		// Bound unauthenticated input decoding, then let the trusted recovery
+		// callback apply the canonical delivery lease. Configured leases may
+		// exceed the usual short RPC budget.
+		if !stop() || ctx.Err() != nil {
+			return
+		}
+		cancel()
+		ctx = parent
+		stopRecovery := context.AfterFunc(parent, func() { conn.Close() })
+		defer stopRecovery()
+	}
 	response := s.handle(ctx, parent, request)
+	_ = conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	_ = json.NewEncoder(conn).Encode(response)
 }
 func (s *Server) Handle(ctx context.Context, request Request) Response {
@@ -187,6 +201,19 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 
 func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Response {
 	response := Response{Version: 1}
+	if request.Operation == "run-recovery" {
+		// Scope comes from canonical command authorization, not worker input.
+		if request.Version != 1 || request.Target != (TargetRef{}) || s.RunRecovery == nil || request.RecoveryRequest == nil || request.RecoveryRequest.Validate() != nil {
+			response.Error = "valid host recovery command proof required"
+			return response
+		}
+		var err error
+		response.RecoveryReport, err = s.RunRecovery(ctx, *request.RecoveryRequest)
+		if err != nil {
+			response.Error = err.Error()
+		}
+		return response
+	}
 	isRun := request.Operation == "run-info" || request.Operation == "run-start" || request.Operation == "run-observe" || request.Operation == "run-renew" || request.Operation == "run-cancel"
 	topologyRun := isRun && request.Target.Node == "" && request.Target.Scope.ResourceUID == "" && request.Target.Scope.Generation == 0
 	resourceTarget := request.Target.Node != "" && request.Target.Scope.ResourceUID != "" && request.Target.Scope.Generation > 0

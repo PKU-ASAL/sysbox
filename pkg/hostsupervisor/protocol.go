@@ -25,6 +25,7 @@ type Request struct {
 	FileRequest     *substrate.FileInstallRequest      `json:"file_request,omitempty"`
 	FileHandle      substrate.FileInstallHandle        `json:"file_handle,omitempty"`
 	RunRequest      *RunRequest                        `json:"run_request,omitempty"`
+	RecoveryRequest *RunRecoveryRequest                `json:"recovery_request,omitempty"`
 	SSHRequest      *controlplane.SSHAccessRequest     `json:"ssh_request,omitempty"`
 	AdoptionRequest *controlplane.AdoptionRequest      `json:"adoption_request,omitempty"`
 	GCCandidate     *GCCandidate                       `json:"gc_candidate,omitempty"`
@@ -33,15 +34,16 @@ type Request struct {
 	Limit           int                                `json:"limit,omitempty"`
 }
 type Response struct {
-	Version          int                         `json:"version"`
-	BootID           string                      `json:"boot_id,omitempty"`
-	Handle           substrate.ExecutionHandle   `json:"handle,omitempty"`
-	Result           substrate.ExecResult        `json:"result,omitempty"`
-	Output           substrate.ExecutionOutput   `json:"output,omitempty"`
-	Error            string                      `json:"error,omitempty"`
-	FileResult       substrate.FileInstallResult `json:"file_result,omitempty"`
-	RunObservation   *RunObservation             `json:"run_observation,omitempty"`
-	SSHEvidence      json.RawMessage             `json:"ssh_evidence,omitempty"`
-	AdoptionEvidence json.RawMessage             `json:"adoption_evidence,omitempty"`
-	GCResult         json.RawMessage             `json:"gc_result,omitempty"`
+	Version          int                             `json:"version"`
+	BootID           string                          `json:"boot_id,omitempty"`
+	Handle           substrate.ExecutionHandle       `json:"handle,omitempty"`
+	Result           substrate.ExecResult            `json:"result,omitempty"`
+	Output           substrate.ExecutionOutput       `json:"output,omitempty"`
+	Error            string                          `json:"error,omitempty"`
+	FileResult       substrate.FileInstallResult     `json:"file_result,omitempty"`
+	RunObservation   *RunObservation                 `json:"run_observation,omitempty"`
+	RecoveryReport   *controlplane.RunRecoveryReport `json:"recovery_report,omitempty"`
+	SSHEvidence      json.RawMessage                 `json:"ssh_evidence,omitempty"`
+	AdoptionEvidence json.RawMessage                 `json:"adoption_evidence,omitempty"`
+	GCResult         json.RawMessage                 `json:"gc_result,omitempty"`
 }
