@@ -115,7 +115,7 @@ func (c *SSHAccessCoordinator) Observe(ctx context.Context, req controlplane.SSH
 
 func (c *SSHAccessCoordinator) finish(ctx context.Context, gate *effectgate.Gate, effectID string, g controlplane.ExecutionGrant, raw json.RawMessage) error {
 	if _, err := gate.SealStop(ctx, g, effectID, func(grant controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
-		return controlplane.SignExecutionStopReceipt(c.HostKey, grant, c.HostBootID, rand.Text(), time.Now().UTC())
+		return controlplane.SignSSHAccessStopReceipt(c.HostKey, grant, c.HostBootID, rand.Text(), raw, time.Now().UTC())
 	}); err != nil {
 		return err
 	}
@@ -132,12 +132,14 @@ func (c *SSHAccessCoordinator) Recover(ctx context.Context) error {
 		return err
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
-	return gate.RecoverStops(ctx, func(grant controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
-		if grant.Operation != "ssh_access_apply" && grant.Operation != "ssh_access_delete" {
-			return controlplane.SignedExecutionStopReceipt{}, effectgate.ErrFenced
+	return gate.RecoverCompleted(ctx, func(ctx context.Context, grant controlplane.ExecutionGrant, effectID string) error {
+		if grant.AgentID != c.AgentID || effectID != grant.ActionID || (grant.Operation != "ssh_access_apply" && grant.Operation != "ssh_access_delete") {
+			return effectgate.ErrFenced
 		}
-		return controlplane.SignExecutionStopReceipt(c.HostKey, grant, c.HostBootID, rand.Text(), time.Now().UTC())
-	}, func(reportCtx context.Context, receipt controlplane.SignedExecutionStopReceipt) error {
-		return c.Report(reportCtx, receipt.Grant.ActionID, receipt, nil)
+		raw, err := gate.ReadOutcome(ctx, grant, effectID)
+		if err != nil {
+			return err
+		}
+		return c.finish(ctx, gate, effectID, grant, raw)
 	})
 }

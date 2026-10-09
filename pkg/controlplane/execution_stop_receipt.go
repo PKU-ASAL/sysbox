@@ -33,7 +33,7 @@ func stopReceiptMessage(r SignedExecutionStopReceipt) ([]byte, error) {
 }
 func validStopReceipt(r SignedExecutionStopReceipt) bool {
 	g := r.Grant
-	if g.Operation == "adoption_apply" && (len(r.EvidenceDigest) != 64 || g.Scope.ResourceUID == "") {
+	if (g.Operation == "adoption_apply" || g.Operation == "ssh_access_apply" || g.Operation == "ssh_access_delete") && (len(r.EvidenceDigest) != 64 || g.Scope.ResourceUID == "") {
 		return false
 	}
 	if g.Operation == "guest_file_install" {

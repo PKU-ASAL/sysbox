@@ -965,3 +965,27 @@ Contract tests verify distinct operation digests for the same configuration path
 digest changes when access identity changes, missing-access-ID refusal, and
 rejection of dispatched-payload access-ID mutation. This enables lifecycle
 targeting but does not itself prove key rotation or shared sshd management.
+
+### SSH host completion and evidence recovery
+
+The previously adoption-only host node-operation completion route now accepts
+SSH apply/delete through a dedicated validator. SSH stop signatures bind the
+complete result digest; API validation also requires the stable access ID and
+the expected canonical key-content hash for Apply or confirmed deletion marker
+for Delete. The existing three-backend command/operation transaction records
+completion before authority release. The generic stopped route rejects SSH to
+prevent bypassing this ordering. Host recovery reloads original result bytes and
+retries the original signed receipt rather than reporting a nil result.
+
+File, SQLite and real PostgreSQL16 completion contracts passed with retired
+commands and expired worker leases, identical replay, tampered evidence rejection,
+correctly signed but inconsistent result rejection, and generic-stop refusal.
+The database was an isolated tmpfs instance on loopback32954. PostgreSQL-enabled
+full regression, focused SSH race and vet passed. Cold host recovery also verifies
+that both original receipt and original evidence are retained. The temporary
+database is removed after validation.
+
+Old pending SSH receipts without evidence digest/access identity cannot be
+automatically recovered under this contract; explicit rebuild remains required.
+This closes protocol completion, not actual grant-bound key installation, shared
+sshd configuration, safe deletion or complete SSH access E2E acceptance.

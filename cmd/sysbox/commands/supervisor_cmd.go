@@ -153,7 +153,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		if err := copier.CopyFile(ctx, name, path); err != nil {
 			return nil, err
 		}
-		return json.Marshal(map[string]any{"path": path, "sha256": fmt.Sprintf("%x", sha256.Sum256(data))})
+		return json.Marshal(map[string]any{"access_id": req.AccessID, "path": path, "sha256": fmt.Sprintf("%x", sha256.Sum256(data))})
 	}
 	server.SSHDelete = func(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 		target, err := resolver.Resolve(ctx, hostsupervisor.TargetRef{Topology: req.Topology, Node: req.Node, Scope: grant.Grant.Scope})
@@ -174,7 +174,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		if err != nil || !r.ExitCodeKnown || r.ExitCode != 0 {
 			return nil, fmt.Errorf("ssh access delete failed: %w", err)
 		}
-		return json.RawMessage(`{"deleted":true}`), nil
+		return json.Marshal(map[string]any{"access_id": req.AccessID, "deleted": true})
 	}
 	server.Adoption = &hostsupervisor.AdoptionCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "adoption"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Report: authority.ReportNodeOperation, Authorize: authority.Authorize}
 	server.AdoptionApply = func(ctx context.Context, req controlplane.AdoptionRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {

@@ -96,10 +96,12 @@ func TestSSHAccessCompletionReceiptSurvivesRestartAndOldEpoch(t *testing.T) {
 	cold := *c
 	cold.HostBootID = "restarted"
 	cold.Authorize = nil
-	cold.Report = func(_ context.Context, _ string, r controlplane.SignedExecutionStopReceipt, _ json.RawMessage) error {
+	cold.Report = func(_ context.Context, _ string, r controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {
 		require.Equal(t, first, r)
+		require.JSONEq(t, `{"ok":true}`, string(evidence))
 		return nil
 	}
+	require.NoError(t, cold.Recover(context.Background()))
 	raw, err := cold.Observe(context.Background(), req, g)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"ok":true}`, string(raw))

@@ -16,6 +16,12 @@ func (s *localAPIStore) CompleteNodeOperation(ctx context.Context, agent, id str
 		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
 	})
 }
+func (s *localAPIStore) CompleteSSHAccessFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+		return persistence.CompleteSSHAccessFromHost(current, command, agent, id, receipt)
+	})
+}
+
 func (s *localAPIStore) CompleteAdoptionFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
 	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteAdoptionFromHost(current, command, agent, id, receipt)
@@ -49,6 +55,12 @@ func (s *sqliteAPIStore) CompleteNodeOperation(ctx context.Context, agent, id st
 		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
 	})
 }
+func (s *sqliteAPIStore) CompleteSSHAccessFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+		return persistence.CompleteSSHAccessFromHost(current, command, agent, id, receipt)
+	})
+}
+
 func (s *sqliteAPIStore) CompleteAdoptionFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
 	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteAdoptionFromHost(current, command, agent, id, receipt)
@@ -120,6 +132,12 @@ func (s *postgresAPIStore) CompleteNodeOperation(ctx context.Context, agent, id 
 		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
 	})
 }
+func (s *postgresAPIStore) CompleteSSHAccessFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+		return persistence.CompleteSSHAccessFromHost(current, command, agent, id, receipt)
+	})
+}
+
 func (s *postgresAPIStore) CompleteAdoptionFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
 	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteAdoptionFromHost(current, command, agent, id, receipt)

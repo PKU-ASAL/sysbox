@@ -6,6 +6,18 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### SSH宿主完成证据
+
+`POST /v1/hosts/{agent}/node-operations/{operation}/completed`现在区分SSH与adoption。
+SSH apply/delete回执必须签署`evidence_digest`，结果包含稳定`access_id`；apply还需
+与请求规范密钥内容一致的`sha256`，delete需`deleted=true`。验证持久grant后，先在
+command/operation事务中记录完成，再释放授权。generic stopped接口不接受SSH操作。
+过期或退休command不丢弃已验证的历史宿主结果，相同回执可重试。
+
+SSH supervisor冷恢复从原journal读取完整结果并重报同一签名回执。旧无结果摘要的
+SSH回执及无access_id证据拒绝，不自动改签；旧操作需明确处置后重建。此完成链路
+不证明guest安装授权、sshd生效或密钥轮换已完成真实验收。
+
 ### SSH配置身份与操作身份分离
 
 `SSHAccessRequest`新增必填`access_id`：同一节点上一份受管配置的稳定身份。

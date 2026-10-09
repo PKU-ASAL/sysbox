@@ -399,7 +399,7 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 		writeError(w, 401, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
-	if receipt.Grant.Operation == "adoption_apply" || receipt.Grant.Operation == "run_apply" || receipt.Grant.Operation == "run_destroy" {
+	if receipt.Grant.Operation == "adoption_apply" || receipt.Grant.Operation == "run_apply" || receipt.Grant.Operation == "run_destroy" || receipt.Grant.Operation == "ssh_access_apply" || receipt.Grant.Operation == "ssh_access_delete" {
 		// Adoption and Run completion must durably commit their result before
 		// releasing this scope. Dedicated completion routes own that order.
 		writeError(w, 409, persistence.ErrConflict)
@@ -441,6 +441,10 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 	var body HostNodeOperationCompletion
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768)).Decode(&body); err != nil {
 		writeError(w, 400, err)
+		return
+	}
+	if body.Receipt.Grant.Operation == "ssh_access_apply" || body.Receipt.Grant.Operation == "ssh_access_delete" {
+		s.completeHostSSHAccess(w, r, body)
 		return
 	}
 	key := s.grantHostKeys[agentID]
