@@ -8,6 +8,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -136,7 +137,7 @@ func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side 
 	}
 	peer := &wsPeer{conn: conn}
 	if side == "agent" {
-		s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
+		if err := s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
 			if sess.Status == controlplane.ConsoleSessionStatusQueued {
 				sess.Status = controlplane.ConsoleSessionStatusRunning
 			}
@@ -144,7 +145,10 @@ func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side 
 				sess.StartedAt = time.Now().UTC()
 			}
 			sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "attach", "agent attached"))
-		})
+		}); err != nil {
+			_ = conn.Close(websocket.StatusInternalError, "console persistence unavailable")
+			return
+		}
 		select {
 		case st.agent <- peer:
 			<-st.done
@@ -153,11 +157,16 @@ func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side 
 		}
 		return
 	}
+	if err := s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
+		// The channel admission happens only after persistence. This records
+		// the request, including duplicates, not a successful attachment.
+		sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "attach_requested", "browser attachment requested"))
+	}); err != nil {
+		_ = conn.Close(websocket.StatusInternalError, "console persistence unavailable")
+		return
+	}
 	select {
 	case st.browser <- peer:
-		s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
-			sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "attach", "browser attached"))
-		})
 	default:
 		_ = conn.Close(websocket.StatusPolicyViolation, "browser already attached")
 		return
@@ -176,9 +185,11 @@ func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
 		case browser = <-st.browser:
 		case agent = <-st.agent:
 		case <-timer.C:
-			s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
+			if err := s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
 				recordConsoleTransportLoss(sess, "console peer attach timeout")
-			})
+			}); err != nil {
+				slog.Error("persist console transport loss", "session", id, "error", err)
+			}
 			if browser != nil {
 				_ = browser.conn.Close(websocket.StatusPolicyViolation, "agent attach timeout")
 			}
@@ -209,9 +220,11 @@ func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
 	cancel()
 	_ = browser.conn.Close(websocket.StatusNormalClosure, "")
 	_ = agent.conn.Close(websocket.StatusNormalClosure, "")
-	s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
+	if err := s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
 		recordConsoleTransportLoss(sess, "console relay ended without execution completion")
-	})
+	}); err != nil {
+		slog.Error("persist console transport loss", "session", id, "error", err)
+	}
 }
 
 func closeConsoleSessionDone(st *consoleSessionState) {

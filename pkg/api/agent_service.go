@@ -439,7 +439,9 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 	if err != nil {
 		return err
 	}
-	s.updateConsoleSessionFromCommandEvent(*cmd, event)
+	if err := s.updateConsoleSessionFromCommandEvent(*cmd, event); err != nil {
+		return err
+	}
 	if cmd.Type == "node_operation" && failedDelivery(cmd.Status) {
 		return reconcileUnissuedSSHFailure(ctx, s.store, *cmd)
 	}
@@ -449,18 +451,18 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 	return nil
 }
 
-func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) {
+func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) error {
 	if cmd.Type != "session_open" || cmd.Session == nil || cmd.Session.ID == "" {
-		return
+		return nil
 	}
 	now := event.CreatedAt
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 	if s.consoles == nil {
-		return
+		return fmt.Errorf("console session registry unavailable")
 	}
-	s.consoles.Update(cmd.Session.ID, func(sess *controlplane.ConsoleSession) {
+	return s.consoles.Update(cmd.Session.ID, func(sess *controlplane.ConsoleSession) {
 		switch event.Status {
 		case "started":
 			if sess.Status == controlplane.ConsoleSessionStatusQueued {

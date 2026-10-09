@@ -117,7 +117,10 @@ func (h *consoleSessionHub) Snapshot(id string) (controlplane.ConsoleSession, er
 	if st == nil {
 		return controlplane.ConsoleSession{}, errConsoleSessionNotFound
 	}
-	sess := st.session
+	return cloneConsoleSession(st.session), nil
+}
+
+func cloneConsoleSession(sess controlplane.ConsoleSession) controlplane.ConsoleSession {
 	sess.Roles = append([]string(nil), sess.Roles...)
 	sess.Audit = append([]controlplane.Event(nil), sess.Audit...)
 	for i := range sess.Audit {
@@ -127,20 +130,26 @@ func (h *consoleSessionHub) Snapshot(id string) (controlplane.ConsoleSession, er
 		code := *sess.ExitCode
 		sess.ExitCode = &code
 	}
-	return sess, nil
+	return sess
 }
 
-func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSession)) {
-	var sess controlplane.ConsoleSession
+func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSession)) error {
 	h.mu.Lock()
-	if st := h.sessions[id]; st != nil {
-		fn(&st.session)
-		sess = st.session
+	defer h.mu.Unlock()
+	st := h.sessions[id]
+	if st == nil {
+		return errConsoleSessionNotFound
 	}
-	if sess.ID != "" {
-		h.persist(sess)
+	if h.store == nil {
+		return errors.New("console persistence unavailable")
 	}
-	h.mu.Unlock()
+	sess := cloneConsoleSession(st.session)
+	fn(&sess)
+	if err := h.store.SaveConsoleSession(context.Background(), sess); err != nil {
+		return err
+	}
+	st.session = cloneConsoleSession(sess)
+	return nil
 }
 
 func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
@@ -189,11 +198,5 @@ func newConsoleSessionState(sess controlplane.ConsoleSession, req controlplane.C
 		agent:   make(chan *wsPeer, 1),
 		cancel:  make(chan struct{}),
 		done:    make(chan struct{}),
-	}
-}
-
-func (h *consoleSessionHub) persist(sess controlplane.ConsoleSession) {
-	if h.store != nil {
-		_ = h.store.SaveConsoleSession(context.Background(), sess)
 	}
 }

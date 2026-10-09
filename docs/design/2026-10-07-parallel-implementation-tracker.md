@@ -443,3 +443,8 @@ registry 原子删除/准入协议尚未完成。
 2026-10-09 console create 持久化门槛：hub Create 接收 context 并返回 error，落盘
 成功后才发布内存会话；失败返回脱敏503，不再继续 session_open 派发。会话与
 outbox 的跨记录原子提交、多 API CAS 和完整执行授权仍待完成。
+
+2026-10-09 console Update 提交边界：使用独立副本，保存成功后才更新内存；失败
+传播到创建/Agent 回报/attach，relay 清理路径记录错误。审计保存失败不派发新会话，
+完成保存失败不暴露内存终态。command event 与 session 尚非同一事务，多 API CAS
+和自动恢复仍待实现。

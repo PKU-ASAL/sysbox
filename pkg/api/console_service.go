@@ -68,26 +68,32 @@ func (s *ConsoleService) CreateSession(ctx context.Context, topology, node strin
 		return ConsoleCreateResult{Status: http.StatusServiceUnavailable}, fmt.Errorf("persist console session: %w", err)
 	}
 	if err := s.authorize(requestSubject{User: req.RequestedBy, Roles: req.Roles}, sess); err != nil {
-		s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
+		if saveErr := s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
 			sess.Status = controlplane.ConsoleSessionStatusDenied
 			sess.Err = err.Error()
 			sess.EndedAt = time.Now().UTC()
 			sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "deny", err.Error()))
-		})
+		}); saveErr != nil {
+			return ConsoleCreateResult{Status: http.StatusServiceUnavailable}, saveErr
+		}
 		got, _ := s.consoles.Snapshot(sess.ID)
 		return ConsoleCreateResult{Session: got, Status: http.StatusForbidden}, err
 	}
-	s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
+	if err := s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
 		sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "allow", "console session allowed by policy"))
-	})
+	}); err != nil {
+		return ConsoleCreateResult{Status: http.StatusServiceUnavailable}, err
+	}
 	sess, _ = s.consoles.Snapshot(sess.ID)
 	if err := s.ensureNodeRunning(ctx, topology, node); err != nil {
-		s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
+		if saveErr := s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
 			sess.Status = controlplane.ConsoleSessionStatusFailed
 			sess.Err = err.Error()
 			sess.EndedAt = time.Now().UTC()
 			sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "reject", err.Error()))
-		})
+		}); saveErr != nil {
+			return ConsoleCreateResult{Status: http.StatusServiceUnavailable}, saveErr
+		}
 		got, _ := s.consoles.Snapshot(sess.ID)
 		return ConsoleCreateResult{Session: got, Status: http.StatusConflict}, err
 	}

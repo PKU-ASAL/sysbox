@@ -1496,3 +1496,31 @@ Verification: full API race passed (63.96 seconds), together with targeted
 create/cancel tests, vet, docscheck and independent review. File and SQLite were
 exercised; the PostgreSQL test branch was not enabled in this round. No real
 provider effects were performed.
+
+### Console updates publish only committed state (2026-10-09)
+
+Hub Update now applies callbacks to a detached session copy and saves it before
+replacing the in-memory record. It returns missing-session/storage errors instead
+of discarding them. Audit, roles and exit-code pointer copies prevent a failed
+callback update from leaking through shared memory. The creation workflow stops
+before session-open dispatch if its policy/audit or node-rejection update fails.
+Agent command-event handling returns console update errors to its caller's
+logging path (not a durable Agent retry acknowledgment), and websocket
+attach closes on persistence failure; relay cleanup logs failed loss records.
+
+Regressions verify failed saves preserve prior in-memory/audit state, prevent
+dispatch, and do not expose uncommitted completion. Command event and console
+record writes are still separate transactions: reporting an error does not roll
+back an already persisted command event. Restart reconciliation, cross-process
+CAS and full signed console outcomes remain part of the unfinished migration.
+
+In particular, terminal command events retire the command before session update;
+current replay rejects retired commands. A failed session completion save can
+therefore leave unresolved console evidence until an atomic completion/recovery
+protocol is implemented. Browser audit now records an attachment request before
+channel admission, avoiding a false success event for rejected duplicate peers.
+
+Verification: full API race passed (63.18 seconds), plus targeted failed-save,
+no-dispatch and completion-error tests, vet and docscheck. Independent review
+identified the premature browser success audit and it was corrected to request
+evidence. PostgreSQL and real provider acceptance were not run in this slice.
