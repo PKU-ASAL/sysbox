@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+本地canonical recovery提交已复用事务授权repository：仅匹配无Agent的原失败可恢复Run，
+提交时重验incarnation/活动后继/维护冻结。provider观察中途冻结的确定性失败回归通过，
+state/serial未变。文件路径同时锁实际authority文件。此修复针对恢复metadata，local
+cleanup的provider Delete执行隔离仍未关闭，不能仅凭前置冻结检查视为完成。
+
 P6已提交恢复的后台收尾：API supervisor按持久receipt核验原维护屏障并补做释放，API
 重启后无须客户端再次提交；不重复恢复或推进serial。没有receipt的屏障不自动放行，
 缺失authority也不补造。配置未启用supervisor时仍需原请求重试；未提交维护的后台

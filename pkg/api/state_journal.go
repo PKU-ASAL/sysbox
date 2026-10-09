@@ -167,6 +167,7 @@ func (s *Server) reconcileCanonicalActions(ctx context.Context, topology, runID 
 	if err != nil {
 		return nil, err
 	}
+	execution.executor.SetActionRepository(&recoveryActionRepository{ActionRepository: execution.repository, server: s, run: *execution.run, localRecovery: true})
 	if err := execution.executor.RecoverActions(ctx, execution.plan); err != nil {
 		return nil, err
 	}
@@ -213,9 +214,12 @@ func (s *Server) cleanupCanonicalActions(ctx context.Context, topology, runID st
 	}
 	// A known complete effect can be restored first. Arbitrary uncertain guest
 	// execution remains blocked by the same runner and is never replayed.
+	execution.executor.SetActionRepository(&recoveryActionRepository{ActionRepository: execution.repository, server: s, run: *execution.run, localRecovery: true})
 	if err := execution.executor.RecoverActions(ctx, execution.plan); err != nil {
 		return nil, err
 	}
+	// Deletion is a separate effect phase, not observation-only recovery.
+	execution.executor.SetActionRepository(execution.repository)
 	actions, err := execution.repository.LoadActions(ctx, topology)
 	if err != nil {
 		return nil, err

@@ -857,3 +857,20 @@ This is an early refusal of an already-frozen topology. It does not atomically
 exclude a freeze that begins after preflight; those local paths still require
 the same effect/commit fencing as the owning-host path before full writer
 isolation can be claimed. The preflight must not be cited as that completion.
+
+The metadata-commit portion of local canonical recovery is now additionally
+bound to the same transactional repository used for owning-host recovery. An
+explicit internal local mode requires a Run with no Agent owner, exact original
+incarnation/attempt/lease owner, failed/recoverable state, matching action
+incarnation, and no active peer Run. The remote bridge cannot select this mode.
+Authority and source Run are checked under the commit transaction; file storage
+now also holds the actual authority-file lock, preventing direct authority
+repository users from bypassing the API record lock.
+
+A deterministic regression begins maintenance from inside the provider observer,
+after preflight but before commit. The recovery now returns conflict and leaves
+state/serial unchanged. Existing canonical recovery/supervisor and remote
+recovery transaction regressions pass; shared local validation rejects remote,
+changed, active or nonrecoverable Run evidence. This closes that local recovery
+metadata-write window. Local cleanup's provider Delete path still needs effect
+fencing; it remains protected only against a freeze already present at preflight.

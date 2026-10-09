@@ -16,9 +16,10 @@ import (
 
 type recoveryActionRepository struct {
 	runtime.ActionRepository
-	server *Server
-	proof  hostsupervisor.RunRecoveryRequest
-	run    controlplane.Run
+	server        *Server
+	proof         hostsupervisor.RunRecoveryRequest
+	run           controlplane.Run
+	localRecovery bool
 }
 
 func (r *recoveryActionRepository) CommitActionIntent(context.Context, runtime.ActionRecord) error {
@@ -26,11 +27,14 @@ func (r *recoveryActionRepository) CommitActionIntent(context.Context, runtime.A
 }
 
 func (r *recoveryActionRepository) validate(record *persistence.CommandRecord, owner *controlplane.Agent, runs []controlplane.Run, action runtime.ActionRecord) error {
+	if r.localRecovery {
+		return persistence.ValidateLocalRecoveryCommit(r.run, latestRunsByID(runs), action, time.Now().UTC())
+	}
 	return persistence.ValidateRecoveryCommit(controlplane.AgentCommandEvent{CommandID: r.proof.CommandID, LeaseOwner: r.proof.LeaseOwner, Attempt: r.proof.Attempt}, r.run, record, owner, latestRunsByID(runs), action, time.Now().UTC())
 }
 
 func (r *recoveryActionRepository) CommitActionOutcome(ctx context.Context, action runtime.ActionRecord, patch *runtime.StatePatch) error {
-	if err := r.proof.Validate(); err != nil {
+	if err := r.proof.Validate(); err != nil && !r.localRecovery {
 		return err
 	}
 	if action.Topology != r.run.Topology {
@@ -43,23 +47,17 @@ func (r *recoveryActionRepository) CommitActionOutcome(ctx context.Context, acti
 			return err
 		}
 		defer unlock()
-		authority, err := (apiExecutionGrantStorage{store: store}).ReadExecutionAuthority(ctx)
-		if err != nil && !errors.Is(err, persistence.ErrNotFound) {
-			return err
-		}
-		if err == nil && len(authority) == 0 {
-			return persistence.ErrCorruptRecord
-		}
-		if err := persistence.ValidateMaintenanceWrite(authority, action.OwnerUID); err != nil {
-			return err
-		}
-		record, err := (localCommandStorage{store: store}).read(ctx, r.proof.CommandID)
-		if err != nil {
-			return err
-		}
-		owner, err := store.GetAgent(ctx, r.run.AgentID)
-		if err != nil {
-			return err
+		var record *persistence.CommandRecord
+		var owner *controlplane.Agent
+		if !r.localRecovery {
+			record, err = (localCommandStorage{store: store}).read(ctx, r.proof.CommandID)
+			if err != nil {
+				return err
+			}
+			owner, err = store.GetAgent(ctx, r.run.AgentID)
+			if err != nil {
+				return err
+			}
 		}
 		runs, err := store.LoadRuns(ctx)
 		if err != nil {
@@ -69,7 +67,13 @@ func (r *recoveryActionRepository) CommitActionOutcome(ctx context.Context, acti
 		if !ok {
 			return persistence.ErrConflict
 		}
-		return repo.CommitActionOutcomeWithGuard(ctx, action, patch, func() error { return r.validate(record, owner, runs, action) })
+		return persistence.FilesystemExecutionGrantStorage(store.runsDir).UpdateExecutionAuthority(ctx, func(authority []byte) ([]byte, error) {
+			if err := persistence.ValidateMaintenanceWrite(authority, action.OwnerUID); err != nil {
+				return nil, err
+			}
+			err := repo.CommitActionOutcomeWithGuard(ctx, action, patch, func() error { return r.validate(record, owner, runs, action) })
+			return nil, err // Lock authority without rewriting it.
+		})
 	case *sqliteAPIStore:
 		return r.commitSQLite(ctx, store, action, patch)
 	case *postgresAPIStore:
@@ -114,13 +118,17 @@ func (r *recoveryActionRepository) commitSQLite(ctx context.Context, store *sqli
 	if err = persistence.ValidateMaintenanceWrite(authority, action.OwnerUID); err != nil {
 		return err
 	}
-	record, err := scanSQLiteCommand(conn.QueryRowContext(ctx, "SELECT "+sqliteCommandColumns+" FROM sysbox_agent_commands WHERE id=?", r.proof.CommandID))
-	if err != nil {
-		return err
-	}
-	owner, err := scanSQLiteAgent(conn.QueryRowContext(ctx, "SELECT "+sqliteAgentColumns+" FROM sysbox_agents WHERE id=?", r.run.AgentID))
-	if err != nil {
-		return err
+	var record *persistence.CommandRecord
+	var owner *controlplane.Agent
+	if !r.localRecovery {
+		record, err = scanSQLiteCommand(conn.QueryRowContext(ctx, "SELECT "+sqliteCommandColumns+" FROM sysbox_agent_commands WHERE id=?", r.proof.CommandID))
+		if err != nil {
+			return err
+		}
+		owner, err = scanSQLiteAgent(conn.QueryRowContext(ctx, "SELECT "+sqliteAgentColumns+" FROM sysbox_agents WHERE id=?", r.run.AgentID))
+		if err != nil {
+			return err
+		}
 	}
 	rows, err := conn.QueryContext(ctx, "SELECT "+sqliteRunColumns+" FROM sysbox_runs WHERE topology=? ORDER BY id,rowid", r.run.Topology)
 	if err != nil {
@@ -216,13 +224,17 @@ func (r *recoveryActionRepository) commitPostgres(ctx context.Context, store *po
 	if err != nil {
 		return err
 	}
-	record, err := scanPostgresCommand(tx.QueryRow(ctx, "SELECT "+postgresCommandColumns+" FROM sysbox_agent_commands WHERE id=$1 FOR UPDATE", r.proof.CommandID))
-	if err != nil {
-		return err
-	}
-	owner, err := scanPostgresAgent(tx.QueryRow(ctx, "SELECT "+postgresAgentColumns+" FROM sysbox_agents WHERE id=$1 FOR SHARE", r.run.AgentID))
-	if err != nil {
-		return err
+	var record *persistence.CommandRecord
+	var owner *controlplane.Agent
+	if !r.localRecovery {
+		record, err = scanPostgresCommand(tx.QueryRow(ctx, "SELECT "+postgresCommandColumns+" FROM sysbox_agent_commands WHERE id=$1 FOR UPDATE", r.proof.CommandID))
+		if err != nil {
+			return err
+		}
+		owner, err = scanPostgresAgent(tx.QueryRow(ctx, "SELECT "+postgresAgentColumns+" FROM sysbox_agents WHERE id=$1 FOR SHARE", r.run.AgentID))
+		if err != nil {
+			return err
+		}
 	}
 	var raw []byte
 	if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1 FOR UPDATE", action.Topology).Scan(&raw); err != nil {

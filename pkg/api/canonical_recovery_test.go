@@ -26,6 +26,7 @@ type recoveryResource struct {
 	exists, unknown, provisioner bool
 	creates, deletes, reads      int
 	createErr                    error
+	onRead                       func()
 }
 
 func (h *recoveryResource) Type() string { return h.kind }
@@ -33,6 +34,9 @@ func (h *recoveryResource) Schema() runtime.ResourceSchema {
 	return runtime.ResourceSchema{Type: h.kind, Version: 1}
 }
 func (h *recoveryResource) Read(_ context.Context, r state.Resource) (runtime.ResourceReadResult, error) {
+	if h.onRead != nil {
+		h.onRead()
+	}
 	h.reads++
 	status := state.ResourceAbsent
 	if h.exists {
@@ -81,6 +85,36 @@ func (r rejectRecoveryCommit) CommitActionOutcome(ctx context.Context, a runtime
 }
 
 var recoveryResourceID atomic.Uint64
+
+func TestCanonicalRecoveryRejectsFreezeStartedDuringObservation(t *testing.T) {
+	for _, cleanup := range []bool{false, true} {
+		t.Run(fmt.Sprint(cleanup), func(t *testing.T) {
+			s, run, provider, _ := canonicalRecoveryFixture(t, false)
+			ctx := context.Background()
+			repo, err := s.actionRepository("lab")
+			require.NoError(t, err)
+			before, err := repo.LoadState(ctx, "lab")
+			require.NoError(t, err)
+			provider.onRead = func() {
+				provider.onRead = nil
+				_, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).BeginMaintenance(ctx, "freeze-during-read", before.TopologyUID, "restore-digest")
+				require.NoError(t, err)
+			}
+			manager, err := s.stateManager("lab")
+			require.NoError(t, err)
+			if cleanup {
+				_, err = s.cleanupCanonicalActions(ctx, "lab", run.ID)
+			} else {
+				_, err = s.reconcileCanonicalActions(ctx, "lab", run.ID, manager)
+			}
+			require.ErrorIs(t, err, persistence.ErrConflict)
+			after, err := repo.LoadState(ctx, "lab")
+			require.NoError(t, err)
+			require.Equal(t, before.Meta.Serial, after.Meta.Serial)
+			require.Equal(t, before.Resources, after.Resources)
+		})
+	}
+}
 
 func TestCanonicalRecoveryAndCleanupRefuseMaintenanceBeforeProviderAccess(t *testing.T) {
 	for _, cleanup := range []bool{false, true} {
@@ -146,6 +180,7 @@ func canonicalRecoveryFixture(t *testing.T, provisioner bool, agents ...string) 
 	addr := address.Resource(h.kind, "node")
 	executor := runtime.NewExecutor(g, st)
 	executor.SetRunContext("lab", run.ID)
+	executor.SetRunIncarnation(run.QueuedAt, run.Revision)
 	executor.SetActionRepository(rejectRecoveryCommit{repo})
 	require.Error(t, executor.Apply(context.Background(), &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}}))
 	require.Equal(t, 1, h.creates)
