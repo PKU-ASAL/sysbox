@@ -71,11 +71,26 @@ def load(root):
 
 
 def ssh(root, manifest, role, command, timeout=30):
-    return subprocess.run([
+    args = [
         "ssh", "-i", str(root / "client"), "-p", str(manifest["ports"][role]),
-        "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=3",
+        "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=5",
         "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + str(root / "known_hosts"),
-        "p9@127.0.0.1", command], text=True, capture_output=True, timeout=timeout)
+        "p9@127.0.0.1", command]
+    last = None
+    for attempt in range(5):
+        try:
+            result = subprocess.run(args, text=True, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired as err:
+            last = err
+            time.sleep(1)
+            continue
+        if result.returncode == 0:
+            return result
+        transient = "banner exchange" in result.stderr or "Connection timed out" in result.stderr
+        if not transient or attempt == 4:
+            return result
+        time.sleep(1)
+    raise RuntimeError(f"SSH {role} did not become ready: {last}")
 
 
 def up(root, base):
