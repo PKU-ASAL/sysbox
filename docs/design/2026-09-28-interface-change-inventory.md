@@ -720,3 +720,10 @@ maintenance barrier 拒绝。文件/SQLite/Postgres 保持 operation 与 command
 受理和 assignment outbox 需要当前 topology UID，未释放 maintenance barrier 时
 返回冲突并不产生 run/request/command。精确已提交请求仍可幂等读取；Run Save/Restart
 等其他内部 writer 尚未统一到该 barrier。
+
+实施补充（2026-10-09 cleanup 活动诊断）：`cleanup-inspection` 的
+`active_operation_kinds` 新增 `console_session` 和 `agent_command`；未解决的
+console 和当前 topology UID 的非终态 command 出现在 `active_operations`。
+既有 receipt 可标记 `blocked_by_console_activity` 或 `blocked_by_agent_command`。
+不返回 command 参数/环境变量、console 内部错误或审计信息；来源读取失败返回
+503。该响应仍是分开读取的证据快照，不构成删除授权。

@@ -1373,3 +1373,23 @@ alongside file/SQLite. Extended status/time tests passed under race, including
 queued/running with populated times and missing creation time. Vet, docscheck
 and independent review passed. The temporary PostgreSQL container was stopped
 and automatically removed. No provider effects were performed in this round.
+
+### Cleanup inspection includes console and command blockers (2026-10-09)
+
+The diagnostic endpoint now consumes the same unresolved-console predicate used
+by maintenance, and enumerates all commands rather than only registered Agents.
+Lost consoles and pending commands carrying the current lifecycle UID appear in
+`active_operations`; foreign topology UIDs are excluded. Agent IDs are included
+without exposing command arguments, environment values or console error/audit
+content. Failed enumeration returns a redacted 503 rather than an empty list.
+
+Existing cleanup receipts remain visible as historical evidence, but their status
+becomes `blocked_by_console_activity` or `blocked_by_agent_command` when these
+additional blockers exist. This is diagnostic coverage, not a cross-registry
+transaction or deletion authorization. It does not repair missing stop protocols
+or enable GC. P0–P9 remain unfinished.
+
+Verification: the full API race suite passed with real PostgreSQL enabled
+(57.60 seconds), including file/SQLite coverage. Vet, docscheck and independent
+review passed. The temporary test database was stopped and automatically removed;
+this round did not execute provider effects.

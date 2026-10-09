@@ -47,6 +47,16 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		unavailable()
 		return
 	}
+	consoles, err := s.apiStore.ListConsoleSessions(r.Context(), "")
+	if err != nil {
+		unavailable()
+		return
+	}
+	commands, err := s.apiStore.ListAgentCommands(r.Context(), "")
+	if err != nil {
+		unavailable()
+		return
+	}
 	grants, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ListActiveGrants(r.Context())
 	if err != nil {
 		unavailable()
@@ -78,6 +88,27 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 	active := []map[string]any{}
 	agents := map[string]bool{}
 	awaitingStop := false
+	unresolvedConsole, pendingCommand := false, false
+	for _, sess := range consoles {
+		if sess.Topology != topology || !consoleActivityUnresolved(sess) {
+			continue
+		}
+		unresolvedConsole = true
+		if sess.AgentID != "" {
+			agents[sess.AgentID] = true
+		}
+		active = append(active, map[string]any{"kind": "console_session", "id": sess.ID, "status": sess.Status, "agent_id": sess.AgentID})
+	}
+	for _, command := range commands {
+		if command.TopologyUID != snapshot.State.TopologyUID || command.IsTerminal() {
+			continue
+		}
+		pendingCommand = true
+		if command.AgentID != "" {
+			agents[command.AgentID] = true
+		}
+		active = append(active, map[string]any{"kind": "agent_command", "id": command.ID, "status": command.Status, "agent_id": command.AgentID, "resource_uid": command.ResourceUID, "generation": command.Generation})
+	}
 	for _, grant := range grants {
 		if grant.Scope.TopologyUID != snapshot.State.TopologyUID {
 			continue
@@ -136,7 +167,7 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 	if placement != nil {
 		result["agent_id"] = placement.AgentID
 	}
-	result["active_operation_kinds"] = []string{"run", "node_operation", "guest_execution", "guest_file", "execution_grant"}
+	result["active_operation_kinds"] = []string{"run", "node_operation", "guest_execution", "guest_file", "execution_grant", "console_session", "agent_command"}
 	receipt, reason := currentCleanupReceipt(topology, placement, runs, nodes)
 	if receipt != nil && guestActivityBeforeReceipt(guestActivity, receipt) != nil {
 		receipt = nil
@@ -154,6 +185,12 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		}
 		if awaitingStop {
 			result["cleanup_receipt_status"] = "blocked_by_execution_authority"
+		}
+		if unresolvedConsole {
+			result["cleanup_receipt_status"] = "blocked_by_console_activity"
+		}
+		if pendingCommand {
+			result["cleanup_receipt_status"] = "blocked_by_agent_command"
 		}
 	}
 	writeJSON(w, http.StatusOK, result)

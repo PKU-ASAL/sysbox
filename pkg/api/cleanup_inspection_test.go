@@ -31,7 +31,7 @@ func TestCleanupInspectionMissingStateNeverProvesExternalAbsence(t *testing.T) {
 	require.Equal(t, "lifecycle_repository", out["source"])
 	require.NotEmpty(t, out["inspected_at"])
 	require.Empty(t, out["resources"])
-	require.Equal(t, []any{"run", "node_operation", "guest_execution", "guest_file", "execution_grant"}, out["active_operation_kinds"])
+	require.Equal(t, []any{"run", "node_operation", "guest_execution", "guest_file", "execution_grant", "console_session", "agent_command"}, out["active_operation_kinds"])
 }
 
 type failedInspectionOperations struct{ apiStore }

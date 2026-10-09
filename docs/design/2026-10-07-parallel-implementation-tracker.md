@@ -416,3 +416,8 @@ append、Postgres 先锁 authority 再锁 Run/command，移除 `{}` 与虚构 le
 维护和 metadata Delete 共用检查，lost/未知状态、缺失或倒序时间均阻挡；缺少
 console registry 也拒绝。三后端测试实际经过 hub 重建，不用手填 lost 代替恢复。
 Console 终态的 authority 绑定及维护期间的原子受理仍待实现。
+
+2026-10-09 cleanup-inspection 对齐：诊断新增 console_session/agent_command，
+保留 lost console 与未注册 Agent 的持久 command，按当前 topology 身份过滤。
+receipt 显示对应阻挡原因，来源枚举失败明确 503，不输出 payload/环境/内部错误。
+仅补齐可观测证据，跨 registry 原子准入和完整 GC 派发仍未完成。
