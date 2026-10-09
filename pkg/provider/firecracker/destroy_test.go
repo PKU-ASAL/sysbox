@@ -14,7 +14,9 @@ import (
 )
 
 func TestDestroyNodeDoesNotWaitOnProcessAlreadyOwnedByReaper(t *testing.T) {
-	cmd := exec.Command("sh", "-c", "sleep 30")
+	// A shell may exec sleep after manifest seeding, legitimately changing
+	// process identity mid-probe. This fixture tests reaping, not exec races.
+	cmd := exec.Command("sleep", "30")
 	require.NoError(t, cmd.Start())
 	vmID := "destroy-reaper-race"
 	root := t.TempDir()

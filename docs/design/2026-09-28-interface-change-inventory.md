@@ -18,6 +18,10 @@ SSH supervisor冷恢复从原journal读取完整结果并重报同一签名回�
 SSH回执及无access_id证据拒绝，不自动改签；旧操作需明确处置后重建。此完成链路
 不证明guest安装授权、sshd生效或密钥轮换已完成真实验收。
 
+普通Agent node-operation completion接口现在拒绝SSH apply/delete的done和failed
+报告，即使worker租约仍有效。Agent不再发送这类重复终态，只有签名宿主结果可完成
+canonical操作；宿主调用失败只形成command进度/错误，不能把未知资源结果宣称为终态。
+
 ### SSH配置身份与操作身份分离
 
 `SSHAccessRequest`新增必填`access_id`：同一节点上一份受管配置的稳定身份。

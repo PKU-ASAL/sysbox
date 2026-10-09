@@ -989,3 +989,19 @@ Old pending SSH receipts without evidence digest/access identity cannot be
 automatically recovered under this contract; explicit rebuild remains required.
 This closes protocol completion, not actual grant-bound key installation, shared
 sshd configuration, safe deletion or complete SSH access E2E acceptance.
+
+SSH canonical completion is now host-only on both API paths: the shared ordinary
+worker completion transition rejects SSH apply/delete even with a valid live
+command lease, for both done and failed reports. Agent execution emits delivery
+progress but no longer posts a second worker-authored terminal NodeOperation.
+A host transport failure therefore remains unconfirmed instead of allowing a
+worker to overwrite the independently recoverable host result. Regressions
+reproduced all four worker bypass cases and verify zero HTTP completion requests
+from the Agent when the host path is unavailable. Other node-operation types
+retain their existing completion rules.
+
+Worker failure events still retire the delivery command. If SSH fails before
+any host result exists, the canonical operation stays unconfirmed/queued rather
+than receiving an invented failed result. Automated re-admission/reconciliation
+for that pre-host failure remains a liveness gap; host result recovery already
+supports retired command records.
