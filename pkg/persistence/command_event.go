@@ -15,10 +15,22 @@ func (r *CommandRepository) ApplyAgentCommandEvent(ctx context.Context, event co
 		return nil, ErrInvalidRecord
 	}
 	record, err := r.storage.UpdateCommand(ctx, event.CommandID, func(current *CommandRecord) (*CommandRecord, error) {
-		if current == nil || current.Retired {
+		if current == nil {
 			return nil, ErrNotFound
 		}
 		cmd := current.Command
+		if current.Retired {
+			// Only exact console completion evidence can be replayed to repair
+			// a failed session projection. Never reopen delivery or accept a new
+			// result after retirement; other command protocols keep their rules.
+			if cmd.Type != "session_open" || cmd.Session == nil || cmd.Session.ID == "" || !cmd.IsTerminal() || cmd.EndedAt.IsZero() {
+				return nil, ErrNotFound
+			}
+			if event.AgentID != cmd.AgentID || event.Type != "" && event.Type != cmd.Type || event.Status != cmd.Status || event.Error != cmd.Err || event.LeaseOwner != cmd.LeaseOwner || event.Attempt != cmd.Attempt || event.ActionID != cmd.ActionID || event.ResourceUID != cmd.ResourceUID || event.Generation != cmd.Generation || event.LeaseEpoch != cmd.LeaseEpoch || event.Recovery != nil {
+				return nil, ErrConflict
+			}
+			return nil, nil
+		}
 		if cmd.Type == controlplane.RunRecoveryCommand {
 			if !cmd.LeaseUntil.After(r.now()) {
 				return nil, ErrConflict

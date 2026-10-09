@@ -448,3 +448,9 @@ outbox 的跨记录原子提交、多 API CAS 和完整执行授权仍待完成�
 传播到创建/Agent 回报/attach，relay 清理路径记录错误。审计保存失败不派发新会话，
 完成保存失败不暴露内存终态。command event 与 session 尚非同一事务，多 API CAS
 和自动恢复仍待实现。
+
+2026-10-09 console completion 恢复：终态 session_open 的精确回报可从退休 command
+读取原结果；直接回报和 supervisor scanner 共用身份/歧义检查，补齐 command 已
+提交而 session 保存失败的窗口，不重新派发副作用。恢复使用持久时间/错误，拒绝
+只有退休标记、重复绑定或身份冲突。多 API CAS、signed host stop、取消 outbox
+仍未完成，不能计为整个 console/P6/P9 闭环。

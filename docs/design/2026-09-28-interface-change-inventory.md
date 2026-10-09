@@ -740,3 +740,8 @@ console 和当前 topology UID 的非终态 command 出现在 `active_operations
 实施补充（2026-10-09 console create）：内部 hub Create 改为带 context 和显式
 error 返回；HTTP 创建路由不变，持久化失败返回脱敏503，不返回会话 ID，也不
 派发 session_open。会话保存与 outbox 的原子受理尚未完成。
+
+实施补充（2026-10-09 console completion replay）：已退休 session_open 仅接受
+与持久终态及原派发证明一致的重复回报；不恢复命令投递。Supervisor 可用该结果
+修复未完成的 session 记录，直接回报也经过同一身份检查。恢复时间/错误来自原
+command，不采信重试的新时间或文本；这不替代 host 签名停止证明。

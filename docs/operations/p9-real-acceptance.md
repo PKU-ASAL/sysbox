@@ -1524,3 +1524,35 @@ Verification: full API race passed (63.18 seconds), plus targeted failed-save,
 no-dispatch and completion-error tests, vet and docscheck. Independent review
 identified the premature browser success audit and it was corrected to request
 evidence. PostgreSQL and real provider acceptance were not run in this slice.
+
+### Recover console completion after command retirement (2026-10-09)
+
+An accepted terminal `session_open` command is now retained as replayable
+completion evidence. Exact retries validate Agent, command type, status/error,
+lease owner, attempt and resource proof against the stored outcome, without
+unretiring or writing the command. Other command protocols retain their previous
+retirement rules. Retry timestamps/message text cannot replace the accepted
+outcome; the session uses the original command end time and error.
+
+Supervisor scanning and direct terminal-event replay share the same recovery
+path. It reads durable command records including retired outcomes, rejects
+ambiguous multiple commands for one session, and verifies Agent, topology, node
+and creation time against the session. It repairs unresolved session metadata
+without publishing or executing another command. Retirement alone without a
+terminal result remains unresolved. Successful recovery clears the prior lost
+transport diagnostic.
+
+Three-store regressions inject a session-write failure after command retirement,
+rebuild the hub, run reconciliation and verify repaired completion plus stable
+historical timestamps. Altered replay proofs are rejected; duplicate mappings
+and changed session identity are rejected through both scan and direct replay.
+This repairs the retired-command/session-write window noted above; it is not an
+atomic two-record commit or a signed host-stop protocol. Console CAS across API
+processes, reliable cancellation outbox and unknown-result recovery remain open.
+
+Verification: API/persistence full race passed with real PostgreSQL enabled
+(55.93/3.62 seconds); after review fixes, the shared-path recovery regressions
+passed under race on all three stores and full Go regression passed with both
+database test variables enabled. Vet, docscheck and independent re-review passed.
+The temporary Postgres container was stopped and automatically removed. No real
+provider or cross-host console execution was run in this recovery slice.

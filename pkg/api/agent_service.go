@@ -439,6 +439,9 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 	if err != nil {
 		return err
 	}
+	if cmd.Type == "session_open" && cmd.IsTerminal() && cmd.Session != nil {
+		return s.reconcileConsoleCompletion(ctx, cmd.Session.ID)
+	}
 	if err := s.updateConsoleSessionFromCommandEvent(*cmd, event); err != nil {
 		return err
 	}
@@ -455,6 +458,11 @@ func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.Age
 	if cmd.Type != "session_open" || cmd.Session == nil || cmd.Session.ID == "" {
 		return nil
 	}
+	if cmd.IsTerminal() && !cmd.EndedAt.IsZero() {
+		// Replayed completion uses the original accepted command outcome,
+		// not retry timestamps or unpersisted message text.
+		event.Status, event.Error, event.Message, event.CreatedAt = cmd.Status, cmd.Err, "", cmd.EndedAt
+	}
 	now := event.CreatedAt
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -463,6 +471,10 @@ func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.Age
 		return fmt.Errorf("console session registry unavailable")
 	}
 	return s.consoles.Update(cmd.Session.ID, func(sess *controlplane.ConsoleSession) {
+		if cmd.IsTerminal() && !cmd.EndedAt.IsZero() {
+			sess.EndedAt = cmd.EndedAt
+			sess.Err = cmd.Err
+		}
 		switch event.Status {
 		case "started":
 			if sess.Status == controlplane.ConsoleSessionStatusQueued {
