@@ -21,7 +21,7 @@ func deleteActivityConflict(kind string) error {
 
 // Callers retain authority through lifecycle commit. Run and Console writers
 // acquire the same exclusion before publishing new unresolved activity.
-func checkLocalDeleteActivity(ctx context.Context, store *localAPIStore, topology string) error {
+func checkLocalDeleteActivity(ctx context.Context, store *localAPIStore, topology, uid string) error {
 	runs, err := store.LoadRuns(ctx)
 	if err != nil {
 		return err
@@ -38,6 +38,16 @@ func checkLocalDeleteActivity(ctx context.Context, store *localAPIStore, topolog
 	for _, sess := range sessions {
 		if sess.Topology == topology && persistence.ConsoleSessionUnresolved(sess) {
 			return deleteActivityConflict("console session")
+		}
+	}
+	// records() does not reacquire the record lock already held by deletion.
+	commands, err := (localCommandStorage{store: store}).records(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, record := range commands {
+		if !record.Retired && commandBlocksTopology(record.Command, topology, uid) {
+			return deleteActivityConflict("agent command")
 		}
 	}
 	return nil
@@ -77,7 +87,7 @@ func checkDeleteActivityRows(rows deleteActivityRows, kind, topology string) err
 	return rows.Err()
 }
 
-func checkSQLiteDeleteActivity(ctx context.Context, conn *sql.Conn, topology string) error {
+func checkSQLiteDeleteActivity(ctx context.Context, conn *sql.Conn, topology, uid string) error {
 	for _, query := range []struct{ kind, sql string }{
 		{"run", "SELECT " + sqliteRunColumns + " FROM sysbox_runs WHERE rowid IN (SELECT max(rowid) FROM sysbox_runs GROUP BY id)"},
 		{"console", "SELECT id,data FROM sysbox_console_sessions"},
@@ -99,7 +109,16 @@ func checkSQLiteDeleteActivity(ctx context.Context, conn *sql.Conn, topology str
 			return closeErr
 		}
 	}
-	return nil
+	rows, err := conn.QueryContext(ctx, "SELECT "+sqliteCommandColumns+" FROM sysbox_agent_commands")
+	if err != nil {
+		return err
+	}
+	err = checkDeleteCommandRows(rows, scanSQLiteCommand, topology, uid)
+	closeErr := rows.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
 }
 
 func checkSQLiteDeleteRunRows(rows *sql.Rows, topology string) error {
@@ -115,7 +134,7 @@ func checkSQLiteDeleteRunRows(rows *sql.Rows, topology string) error {
 	return rows.Err()
 }
 
-func checkPostgresDeleteActivity(ctx context.Context, tx pgx.Tx, topology string) error {
+func checkPostgresDeleteActivity(ctx context.Context, tx pgx.Tx, topology, uid string) error {
 	for _, query := range []struct{ kind, sql string }{
 		{"run", "SELECT id,data::text FROM sysbox_runs"},
 		{"console", "SELECT id,data::text FROM sysbox_console_sessions"},
@@ -130,5 +149,26 @@ func checkPostgresDeleteActivity(ctx context.Context, tx pgx.Tx, topology string
 			return err
 		}
 	}
-	return nil
+	rows, err := tx.Query(ctx, "SELECT "+postgresCommandColumns+" FROM sysbox_agent_commands")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	return checkDeleteCommandRows(rows, scanPostgresCommand, topology, uid)
+}
+
+func checkDeleteCommandRows(rows deleteActivityRows, scan func(runScanner) (*persistence.CommandRecord, error), topology, uid string) error {
+	for rows.Next() {
+		record, err := scan(rows)
+		if err != nil {
+			return err
+		}
+		if record == nil {
+			return persistence.ErrCorruptRecord
+		}
+		if !record.Retired && commandBlocksTopology(record.Command, topology, uid) {
+			return deleteActivityConflict("agent command")
+		}
+	}
+	return rows.Err()
 }

@@ -61,7 +61,12 @@ func TestGrantIssuanceRejectsCommandForDeletedLifecycle(t *testing.T) {
 		var signed controlplane.SignedExecutionGrant
 		require.NoError(t, json.Unmarshal(first.Body.Bytes(), &signed))
 		require.NoError(t, authority.AcceptHostStop(ctx, signed.Grant, "verified-stop"))
-		require.NoError(t, s.deleteStateWithAuthority(ctx, "lab", before.Meta.Serial, before.TopologyUID))
+		require.ErrorIs(t, s.deleteStateWithAuthority(ctx, "lab", before.Meta.Serial, before.TopologyUID), persistence.ErrConflict, "live delivery still excludes API deletion")
+		// Simulate an out-of-band lifecycle rebuild so this test continues to
+		// exercise grant fencing independently of the stronger API delete gate.
+		raw, err := (apiExecutionGrantStorage{store: store}).ReadExecutionAuthority(ctx)
+		require.NoError(t, err)
+		require.NoError(t, repo.DeleteQuiescentLifecycle(ctx, "lab", before.Meta.Serial, before.TopologyUID, raw))
 		// The delivery lease still exists. A fresh epoch must not resurrect the
 		// old topology incarnation merely because its earlier grant stopped.
 		late := request()
@@ -102,15 +107,12 @@ func TestGrantAndMetadataDeleteCannotBothCommit(t *testing.T) {
 			}()
 			close(start)
 			workers.Wait()
-			if grantErr == nil {
-				require.ErrorIs(t, deleteErr, persistence.ErrConflict, "delete cannot overtake an issued grant")
-				require.NoError(t, authority.AcceptHostStop(ctx, *grant, "verified-stop"))
-				require.NoError(t, s.deleteStateWithAuthority(ctx, "lab", st.Meta.Serial, st.TopologyUID))
-			} else {
-				require.NoError(t, deleteErr)
-				require.ErrorIs(t, grantErr, persistence.ErrConflict, "issuance must observe the replacement UID")
-				require.Nil(t, grant)
-			}
+			require.NoError(t, grantErr)
+			require.ErrorIs(t, deleteErr, persistence.ErrConflict, "delete cannot overtake a live command or its grant")
+			require.NoError(t, authority.AcceptHostStop(ctx, *grant, "verified-stop"))
+			require.ErrorIs(t, s.deleteStateWithAuthority(ctx, "lab", st.Meta.Serial, st.TopologyUID), persistence.ErrConflict)
+			require.NoError(t, store.DeleteAgentCommand(ctx, "agent", id))
+			require.NoError(t, s.deleteStateWithAuthority(ctx, "lab", st.Meta.Serial, st.TopologyUID))
 		}
 	})
 }
@@ -126,7 +128,14 @@ func TestRejectedGrantOnRetiredLifecycleStillAdvancesClock(t *testing.T) {
 		require.NoError(t, err)
 		cmd := controlplane.AgentCommand{ID: "expired", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusLeased, TopologyUID: uid, ActionID: "action", Attempt: 1, LeaseOwner: "worker", LeaseUntil: time.Now().Add(-time.Minute), Run: &controlplane.Run{ID: "run", Topology: "lab", Op: "apply", Revision: "revision"}}
 		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
-		require.NoError(t, s.deleteStateWithAuthority(ctx, "lab", 0, uid))
+		require.ErrorIs(t, s.deleteStateWithAuthority(ctx, "lab", 0, uid), persistence.ErrConflict)
+		repo, err := s.actionRepository("lab")
+		require.NoError(t, err)
+		rawAuthority, err := storage.ReadExecutionAuthority(ctx)
+		require.NoError(t, err)
+		// Keep the expired command for the clock/fencing check after an external
+		// rebuild, which normal API deletion now refuses while it is unresolved.
+		require.NoError(t, repo.DeleteQuiescentLifecycle(ctx, "lab", 0, uid, rawAuthority))
 		before := time.Now().UTC()
 		grant, err := s.issueCommandGrant(ctx, "agent", cmd.ID, ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: "worker", Attempt: 1, BootID: "boot"})
 		require.ErrorIs(t, err, persistence.ErrConflict)

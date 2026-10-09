@@ -1802,3 +1802,30 @@ The final full Go suite passed with both PostgreSQL test variables enabled.
 API vet, docscheck (53 canonical documents), diff checks and independent
 follow-up review passed. The isolated PostgreSQL instance was used only for
 this test slice; no retained project resources or VM lab were deleted.
+
+### Commands inside metadata deletion (2026-10-09)
+
+Deletion now scans complete command records inside the transaction, preserving
+existing column/payload validation and retirement/UID matching. Late commands
+block deletion even without Agent registration; a missing UID with a matching
+payload name adds a blocker, while a different explicit UID does not rebind.
+Postgres raw command updates lock/materialize authority before command rows,
+matching grant and deletion lock order. File record locks and SQLite write
+transactions already provide the corresponding exclusion.
+
+Targeted real-PostgreSQL race passed (8.593 seconds), including an uncommitted
+first-authority transaction blocking command publication with no partial row.
+Initial full API race exposed old fixtures allowing deletion with unresolved
+leased commands. Tests now require API rejection, then explicitly simulate
+external rebuilding to retain stale-UID grant and clock-fencing coverage.
+Concurrent issuance/deletion requires both stopped effects and retired command
+delivery before successful API deletion; production checks were not weakened.
+
+Raw-command maintenance admission, guest/node/adoption/GC writers, and exclusion
+through postcommit workspace cleanup remain open. This is not final cross-host
+deletion or P9 acceptance.
+
+The final full Go suite passed with both database test variables enabled.
+API vet, docscheck (53 canonical documents), diff checks and independent
+follow-up review passed. Only the dedicated test PostgreSQL instance was used;
+no retained resources or deployment data were rebuilt.

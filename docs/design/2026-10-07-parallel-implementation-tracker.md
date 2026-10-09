@@ -514,3 +514,9 @@ repair 也消费原子方法。失败不改审计/状态、不通知本地 relay
 原 UID/serial，已结束最新记录和无关 topology 可继续删除。SQLite复用索引/完整
 JSON 一致性检查，拒绝预检后记录损坏。Run未知状态/缺失或倒序时间均阻挡维护。
 其他 registry 的原始 writer 与完整删除提交检查仍待接入，不代表 P6 全部关闭。
+
+2026-10-09 command 删除提交检查：完整列/JSON扫描纳入现有删除事务，保留退休、
+显式 UID 与缺 UID 名称阻挡语义。Postgres raw command 更新改为 authority→command
+锁序，与签发/删除一致；首次 authority 事务期间不得发布命令。验收更新为 API
+删除同时要求 effect 停止与未解决命令清除，外部重建后的 stale-grant 拒绝仍单独
+验证。guest/node/adoption/GC、维护 raw 准入和删除后清理阶段仍未关闭。

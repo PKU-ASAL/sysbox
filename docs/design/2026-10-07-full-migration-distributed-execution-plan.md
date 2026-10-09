@@ -332,3 +332,17 @@ guest/node/adoption/GC registry 纳入，并使这些 registry 的全部原始 w
 并释放提交锁之后，仍会清理 workspace metadata、目录和 placement。后续实施需
 让整个清理阶段保持持久、可恢复的排他状态，阻止新受理与后清理交错；本次提交内
 检查尚未覆盖这个窗口。
+
+### 2026-10-09：命令 registry 纳入删除提交
+
+删除事务现在读取完整 command 记录，复用已有索引/JSON 校验和 topology/UID
+阻挡规则；未注册 Agent 的命令也必须可见。退休和终态不重复阻挡，缺 UID 时
+payload 名称只能增加阻挡，不能赋予新代际权限。
+Postgres 原始命令写入统一先 materialize/lock authority，再锁 command 行；文件
+后端原有 records 锁与 SQLite 写事务继续提供对应排他。缺失 authority 行的首次
+事务等待、超时无残留和晚到命令阻挡均有三后端测试。
+
+已停止 effect 并不自动退休 delivery；API 删除仍拒绝未解决命令。旧 UID grant
+拒绝/时钟测试以显式外部重建保留该层验证，不通过放松 API 删除来制造条件。
+本项仅建立命令发布与删除的串行边界；raw command 的维护准入规则、guest/node/
+adoption/GC 的完整写入边界及提交后清理排他仍待完成。

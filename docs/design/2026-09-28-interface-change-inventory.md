@@ -805,3 +805,9 @@ Console，不能用过期的预检结果替代。未解决活动返回 ErrConfli
 Run索引/JSON返回 ErrCorruptRecord，lifecycle UID/serial保持原值。强制删除也不
 绕过这项检查。Run未知状态、缺失时间或倒序时间视为未解决，不能作为安全终态。
 路由/schema不变；command/guest/node/adoption/GC 的完整提交边界仍未完成。
+
+实施补充（2026-10-09 command 删除门槛）：metadata 删除提交内检查所有完整命令
+记录，未解决投递也阻挡 force 删除，即使对应 effect 已有停止证明。缺 UID 的
+payload topology 仅作保守阻挡；明确其他 UID、退休和终态沿用现有语义。
+Postgres 原始命令写入锁序统一为 authority→command。路由和数据格式未变；
+“发布与删除串行化”不代表 raw command 已完成所有维护准入与执行授权检查。

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -90,4 +91,70 @@ func TestMetadataDeleteRejectsSQLiteRunIndexMismatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, before.TopologyUID, after.TopologyUID)
 	require.Equal(t, before.Meta.Serial, after.Meta.Serial)
+}
+
+func TestMetadataDeleteRechecksCommandsInsideCommit(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		ctx := context.Background()
+		s := stateDeleteTestServer(t, store)
+		repo, err := s.actionRepository("lab")
+		require.NoError(t, err)
+		before, err := repo.LoadState(ctx, "lab")
+		require.NoError(t, err)
+		require.NoError(t, s.workspaceService().ensureTopologyQuiescent(ctx, "lab"))
+		cmd := controlplane.AgentCommand{ID: "late-command", AgentID: "unregistered", TopologyUID: before.TopologyUID, Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued}
+		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
+		require.ErrorIs(t, s.deleteStateWithAuthority(ctx, "lab", before.Meta.Serial, before.TopologyUID), persistence.ErrConflict)
+		require.NoError(t, store.DeleteAgentCommand(ctx, cmd.AgentID, cmd.ID))
+		cmd.ID, cmd.TopologyUID = "missing-uid", ""
+		cmd.Run = &controlplane.Run{Topology: "lab"}
+		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
+		require.ErrorIs(t, s.deleteStateWithAuthority(ctx, "lab", before.Meta.Serial, before.TopologyUID), persistence.ErrConflict)
+		after, err := repo.LoadState(ctx, "lab")
+		require.NoError(t, err)
+		require.Equal(t, before.TopologyUID, after.TopologyUID)
+		require.Equal(t, before.Meta.Serial, after.Meta.Serial)
+		require.NoError(t, store.DeleteAgentCommand(ctx, cmd.AgentID, cmd.ID))
+		cmd.ID, cmd.TopologyUID = "foreign", "other-incarnation"
+		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
+		require.NoError(t, s.deleteStateWithAuthority(ctx, "lab", before.Meta.Serial, before.TopologyUID))
+	})
+}
+
+func TestCommandPublicationWaitsForAuthorityTransaction(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		ctx := context.Background()
+		entered, release := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		unblock := func() { once.Do(func() { close(release) }) }
+		defer unblock()
+		done := make(chan error, 1)
+		go func() {
+			done <- (apiExecutionGrantStorage{store: store}).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+				memory := &grantTransaction{raw: raw}
+				err := persistence.NewExecutionGrantRepository(memory).ObserveTime(ctx)
+				close(entered)
+				<-release
+				return memory.raw, err
+			})
+		}()
+		select {
+		case <-entered:
+		case err := <-done:
+			t.Fatalf("authority transaction failed before exclusion: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("authority transaction did not acquire exclusion")
+		}
+		deadline, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
+		defer cancel()
+		cmd := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "inventory"}
+		err := store.SaveAgentCommand(deadline, cmd)
+		unblock()
+		require.NoError(t, <-done)
+		require.Error(t, err, "publication cannot pass the authority transaction")
+		commands, err := store.ListAgentCommands(ctx, "")
+		require.NoError(t, err)
+		require.Empty(t, commands)
+		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
+	})
 }
