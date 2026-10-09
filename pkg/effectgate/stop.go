@@ -30,6 +30,9 @@ func receiptMatches(receipt *controlplane.SignedExecutionStopReceipt, grant cont
 }
 func validateLedger(record *ledger) error {
 	for key, prior := range record.Outcomes {
+		if len(prior.Checkpoint) != 0 && (prior.SignedGrant == nil || !json.Valid(prior.Checkpoint)) {
+			return ErrUncertain
+		}
 		if prior.SignedGrant != nil && (!sameGrant(prior.Grant, prior.SignedGrant.Grant) || prior.SignedGrant.BootID == "" || prior.SignedGrant.IssuedAt.IsZero() || len(prior.SignedGrant.Signature) != ed25519.SignatureSize || !isRunGrant(prior.Grant)) {
 			return ErrUncertain
 		}
@@ -211,6 +214,10 @@ func (g *Gate) RecoverStops(ctx context.Context, sign func(controlplane.Executio
 // The callback runs outside the ledger lock and must re-read exact evidence
 // before sealing it. Provider intents are never replayed by this scanner.
 func (g *Gate) RecoverCompleted(ctx context.Context, recover func(context.Context, controlplane.ExecutionGrant, string) error) error {
+	return g.recoverOutcomes(ctx, 2*time.Second, func(prior outcome) bool { return prior.State == "complete" && !prior.Reported }, recover)
+}
+
+func (g *Gate) recoverOutcomes(ctx context.Context, budget time.Duration, selectOutcome func(outcome) bool, recover func(context.Context, controlplane.ExecutionGrant, string) error) error {
 	if recover == nil {
 		return ErrFenced
 	}
@@ -249,7 +256,7 @@ func (g *Gate) RecoverCompleted(ctx context.Context, recover func(context.Contex
 		}
 		keys := make([]string, 0, len(record.Outcomes))
 		for key, prior := range record.Outcomes {
-			if prior.State == "complete" && !prior.Reported {
+			if selectOutcome(prior) {
 				keys = append(keys, key)
 			}
 		}
@@ -270,7 +277,11 @@ func (g *Gate) RecoverCompleted(ctx context.Context, recover func(context.Contex
 		}
 		release()
 		for _, candidate := range candidates {
-			operation, cancel := context.WithTimeout(ctx, 2*time.Second)
+			operation, cancel := context.WithCancel(ctx)
+			if budget > 0 {
+				cancel()
+				operation, cancel = context.WithTimeout(ctx, budget)
+			}
 			err := recover(operation, candidate.grant, candidate.id)
 			cancel()
 			if err != nil {

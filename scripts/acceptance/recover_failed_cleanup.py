@@ -7,6 +7,13 @@ import time
 from cross_host_run import request_json
 
 
+def confirmed_failure(run):
+    return run.get("status") == "failed" and run.get("error") in (
+        "run child execution failed after confirmed termination",
+        "run controller stopped after resource execution; child termination confirmed",
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", required=True)
@@ -21,7 +28,7 @@ def main():
     def request(method, path, payload=None, key=None):
         return request_json("http://10.77.0.10:19870", token, method, path, payload, key)
     run = request("GET", "/v1/runs/" + old["runs"][0])
-    if run.get("status") != "failed" or run.get("error") != "run child execution failed after confirmed termination":
+    if not confirmed_failure(run):
         raise RuntimeError("confirmed failed Run required; unknown intent cannot be bypassed")
     topology = old["topology"]
     if args.finalize:

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,6 +31,7 @@ type RunCoordinator struct {
 	AuthorizationInterval time.Duration
 	AuthorizationTimeout  time.Duration
 	OnExecutionError      func(RunRequest, error)
+	Tasks                 *Dispatcher
 	async                 *runRegistry
 }
 
@@ -49,9 +51,9 @@ func (c *RunCoordinator) gate(g controlplane.SignedExecutionGrant) (*effectgate.
 }
 
 // Recover seals and reports completed Run effects left behind by a controller
-// crash. Intents remain uncertain and are never replayed. The exact durable
-// result is read before reporting, so a replacement supervisor cannot invent
-// completion evidence.
+// crash. An intent with a sealed resource checkpoint may converge to failure
+// after proving executor and child termination. Other intents remain uncertain;
+// no provider callback is replayed. Exact durable results are read for reporting.
 func (c *RunCoordinator) Recover(ctx context.Context) error {
 	if c == nil || c.AgentID == "" || c.HostBootID == "" || len(c.HostKey) != ed25519.PrivateKeySize || (c.Report == nil && c.ReportRunID == nil) {
 		return effectgate.ErrFenced
@@ -60,7 +62,10 @@ func (c *RunCoordinator) Recover(ctx context.Context) error {
 		return err
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
-	return gate.RecoverCompleted(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, effectID string) error {
+	checkpointErr := gate.RecoverRunCheckpoints(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, effectID string) error {
+		return c.recoverCheckpoint(recoverCtx, gate, grant, effectID)
+	})
+	completedErr := gate.RecoverCompleted(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, effectID string) error {
 		if grant.AgentID != c.AgentID || (grant.Operation != "run_apply" && grant.Operation != "run_destroy") {
 			return effectgate.ErrFenced
 		}
@@ -88,4 +93,5 @@ func (c *RunCoordinator) Recover(ctx context.Context) error {
 			return c.Report(reportCtx, receipt, raw)
 		})
 	})
+	return errors.Join(checkpointErr, completedErr)
 }

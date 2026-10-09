@@ -133,6 +133,34 @@ P1、P2 在 P0 契约确定后可并行。P5/P6/P7 在 P4 的共同授权边界�
 
 验收：断网、lease 到期、API failover、Agent crash 后任务按合同停止/隔离；重复完成及取消回报幂等；没有新旧执行者同时获得同一互斥 effect 权限。
 
+#### P4 恢复实施补充：资源已完成、子任务未结束
+
+采用现有 effect ledger 的可选 Run checkpoint，不创建第二套恢复日志。
+可信 callback 在同步资源执行成功后封闭子任务准入，把 RunRequest、去除
+Inputs/Cleanup 的资源结果和完整子任务身份清单持久化；随后仅等待或取消子任务。
+checkpoint 不表示整个 Run 成功，也不赋予执行权限。
+
+每个 Run 身份使用独立的宿主 flock，从准入之前持有至 callback 和结果提交结束。
+冷恢复必须取得同一锁，重新读取当前 journal，确认 checkpoint 身份及历史签名，
+逐个停止/观察清单中的任务并核验同一 Run、parent epoch、签名 grant 和停止回执。
+全部停止后只能提交 failed，清理回执重新生成；API 仍检查权威子任务库存后释放父授权。
+存活但不合作的 callback 持锁时不能接管。没有 checkpoint 的 intent 保持 unknown；
+资源 daemon 请求中断的恢复仍须提供独立 quiescence 证据，不能用资源存在性替代。
+
+实施顺序与文件边界：
+
+1. `pkg/effectgate/run_checkpoint.go`：在 intent 上单次保存不可变 checkpoint，
+   绑定当前 signed envelope；续租保留 checkpoint。测试冷读、内容冲突、旧授权拒绝。
+2. `pkg/hostsupervisor/run_checkpoint.go`：执行锁、context checkpoint hook、
+   已封闭子任务清单以及冷恢复；`run_async.go` 在准入前取锁并将锁所有权转移给 callback。
+   测试存活 callback 不被接管、资源已返回但结果丢失可恢复、未记录 checkpoint 不恢复。
+3. `cmd/sysbox/commands/supervisor_cmd.go`：资源成功后、等待子任务之前记录 checkpoint，
+   recovery 使用已有 Dispatcher/ResolveRun。不能由 worker 提交任意 checkpoint。
+4. 回归验证 `go test -race ./pkg/effectgate ./pkg/hostsupervisor`、commands 测试、
+   独立审查，然后双 VM 运行中杀 supervisor 验证失败收敛及正常 Destroy。
+
+此切片不关闭 daemon 未知结果、长期服务 ownership 转移或完整 P9 故障矩阵。
+
 ### P5：显式 ownership adoption / import
 
 范围：`cmd/sysbox/commands/import_cmd.go`、`pkg/api/node_operation_service.go`、`pkg/runtime` resource handlers、`pkg/driver/capability.go`、Docker/libvirt/Firecracker 的 managed/discovery 代码。

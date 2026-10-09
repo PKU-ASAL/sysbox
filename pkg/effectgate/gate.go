@@ -31,6 +31,7 @@ type outcome struct {
 	SignedGrant *controlplane.SignedExecutionGrant       `json:"signed_grant,omitempty"`
 	State       string                                   `json:"state"`
 	Result      json.RawMessage                          `json:"result,omitempty"`
+	Checkpoint  json.RawMessage                          `json:"run_checkpoint,omitempty"`
 	Receipt     *controlplane.SignedExecutionStopReceipt `json:"receipt,omitempty"`
 	Reported    bool                                     `json:"reported"`
 }

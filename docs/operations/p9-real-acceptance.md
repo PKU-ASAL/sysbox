@@ -427,3 +427,53 @@ and JSON whitespace/HTML escaping. Effectgate and hostsupervisor race tests
 passed, with local socket permission required for the supervisor tests; vet
 passed for both packages. These are local protocol regressions, not a new
 two-VM fault acceptance result or recovery of intent-only outcomes.
+
+### Resource checkpoint recovery after supervisor SIGKILL
+
+The trusted Run callback now seals child admission and records a resource-done
+checkpoint in the existing effect ledger before waiting for finite children.
+The checkpoint includes immutable Run request identity and every admitted child
+handle/grant, without transient Inputs or a reusable cleanup receipt. An OS
+execution lock spans Run admission through callback exit and result persistence.
+Recovery must acquire that same lock, validate the historical checkpoint and
+each child's current journal identity, and obtain acknowledged signed stop
+evidence before committing a failed Run. It never repeats provider effects or
+claims success from unknown child exit status. Children have independent recovery
+budgets; a slow or unavailable receipt cannot prevent cancellation of siblings.
+
+2026-10-09 two-VM round `p9-d092f4373057` passed: a120-second background task
+was observed running after its parent resource checkpoint; the test sent SIGKILL
+to the execution VM's dedicated supervisor. The service restarted from PID85364
+to PID88601. In4.95seconds the new process reported the original Run as failed
+with `run controller stopped after resource execution; child termination confirmed`,
+with every checkpoint child stopped and acknowledged. Ordinary Destroy then
+completed, an independent Docker query found no container for owner
+`3e586051-b489-4ab8-a52e-8955a10fbf0d`, and non-force metadata DELETE succeeded.
+Agent and supervisor services remained active. Earlier unknown test resources
+were not deleted or reclassified.
+
+Evidence: host
+`/tmp/sysbox-p9-two-vms-20261008/p9-d092f4373057-supervisor-crash.json`;
+control VM `/var/tmp/p9-checkpoint-crash-01.json` and
+`/var/tmp/p9-checkpoint-cleanup-01.json`. Execution binary SHA256:
+`a73d3121ac96acc85c41c17d5ef09516accf446b03f7877f9969ecf3e73eb321`
+(built from this checkpoint implementation with `-buildvcs=false`).
+
+Reproduce after starting a new120-second background probe with `cross_host_run.py`:
+
+```sh
+python3 scripts/acceptance/run_checkpoint_crash.py \
+  --root /tmp/sysbox-p9-two-vms-20261008 --topology <new-p9-topology>
+```
+
+The injector refuses absent checkpoints, non-running children and overwritten
+evidence. Use `recover_failed_cleanup.py` for normal Destroy, independently
+verify provider absence, then use its `--finalize` for metadata deletion.
+The general lifecycle probe intentionally exits with an error upon the injected
+failed Apply; the fault injector and cleanup evidence are the acceptance gates.
+
+Full Go regression, effectgate/hostsupervisor race, local subprocess SIGKILL,
+commands regression, vet and independent review passed. This closes the
+resource-complete/child-wait crash window. A daemon call interrupted before the
+resource checkpoint, legacy intent-only records, persistent-service transfer,
+P5–P8 capability gaps and the remaining P9 faults are still open.

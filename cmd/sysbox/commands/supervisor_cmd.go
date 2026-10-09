@@ -110,6 +110,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	runCoordinator.OnExecutionError = func(req hostsupervisor.RunRequest, err error) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "host run %s execution uncertain: %v\n", req.RunID, err)
 	}
+	runCoordinator.Tasks = dispatcher
 	runCoordinator.ReportRunID = func(ctx context.Context, runID string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {
 		return authority.ReportRun(ctx, runID, receipt, evidence)
 	}
@@ -189,6 +190,12 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 			defer cancel()
 			_ = children.Cancel(cleanup)
 			return nil, fmt.Errorf("host run failed: %s", run.Err)
+		}
+		if err := hostsupervisor.CheckpointRunChildren(ctx, children, run); err != nil {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = children.Cancel(cleanup)
+			return nil, fmt.Errorf("host Run resource checkpoint: %w", err)
 		}
 		if err := hostsupervisor.FinishRunChildren(ctx, children, run); err != nil {
 			return nil, fmt.Errorf("host Run child outcome uncertain: %w", err)

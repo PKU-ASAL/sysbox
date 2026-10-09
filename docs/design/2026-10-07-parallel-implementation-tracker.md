@@ -2,6 +2,13 @@
 
 当前已提交集成基线：`566268e`。本文记录并行集成检查点，不能作为P0–P9全部验收通过声明。
 
+2026-10-09最新进展：资源执行成功后封闭子任务准入、持久checkpoint与Run执行flock
+已接入；独立supervisor可在证明旧callback退出、全部子任务停止并上报后收敛失败。
+双VM实测SIGKILL运行中的supervisor，4.95秒内冷恢复失败结果，随后普通Destroy、
+独立无残留核验和非force metadata DELETE通过。慢子任务使用独立恢复预算。
+仅有intent且未到资源checkpoint的旧记录、不可取消daemon恢复、长期服务迁移及
+P5–P9其余缺口仍未关闭；详见[验收记录](../operations/p9-real-acceptance.md)。
+
 最新双 VM 验收进展：控制 VM 的双 API/HAProxy/Postgres 与执行 VM 的非特权
 Agent/root supervisor 已部署，无共享工作目录。真实 Docker Apply→Destroy→
 独立 provider 无残留核验→普通 metadata DELETE 两轮通过，第二轮在主 API 停机、

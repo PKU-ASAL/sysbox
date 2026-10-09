@@ -156,6 +156,19 @@ func (c *RunCoordinator) StartAsync(requestCtx, serviceCtx context.Context, req 
 	if !errors.Is(readErr, effectgate.ErrNotFound) {
 		return RunObservation{}, readErr
 	}
+	unlockExecution, held, err := c.lockRunExecution(g)
+	if err != nil {
+		return RunObservation{}, err
+	}
+	if !held {
+		return RunObservation{Status: "uncertain"}, nil
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			unlockExecution()
+		}
+	}()
 	now := time.Now()
 	if err := ValidateRunGrant(g, req, c.HostBootID); err != nil {
 		return RunObservation{}, err
@@ -193,7 +206,8 @@ func (c *RunCoordinator) StartAsync(requestCtx, serviceCtx context.Context, req 
 	}
 	go c.watchRun(active)
 	go watchRunDeadline(active)
-	go c.executeRun(req, active, effect)
+	transferred = true
+	go c.executeRun(req, active, effect, unlockExecution)
 	return RunObservation{Status: "running"}, nil
 }
 
@@ -261,8 +275,9 @@ func watchRunDeadline(active *activeRun) {
 	}
 }
 
-func (c *RunCoordinator) executeRun(req RunRequest, active *activeRun, effect func(context.Context) (json.RawMessage, error)) {
+func (c *RunCoordinator) executeRun(req RunRequest, active *activeRun, effect func(context.Context) (json.RawMessage, error), releaseExecution func()) {
 	defer close(active.done)
+	defer releaseExecution()
 	defer func() {
 		active.mu.Lock()
 		key := runIdentity(active.grant)
@@ -283,6 +298,7 @@ func (c *RunCoordinator) executeRun(req RunRequest, active *activeRun, effect fu
 		}
 		return active.grant, true
 	})
+	effectCtx = c.checkpointContext(effectCtx, req, active)
 	raw, err := effect(effectCtx)
 	var stoppedFailure *quiescentRunFailure
 	if errors.As(err, &stoppedFailure) {

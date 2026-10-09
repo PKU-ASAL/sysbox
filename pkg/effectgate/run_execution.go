@@ -22,10 +22,11 @@ const (
 // Only Admitted permits starting an effect. An existing intent without an
 // entry in the supervisor's active registry remains uncertain after restart.
 type RunReservation struct {
-	Admitted bool
-	State    RunState
-	Grant    controlplane.SignedExecutionGrant
-	Result   json.RawMessage
+	Admitted   bool
+	State      RunState
+	Grant      controlplane.SignedExecutionGrant
+	Result     json.RawMessage
+	Checkpoint json.RawMessage
 }
 
 func isRunGrant(g controlplane.ExecutionGrant) bool {
@@ -126,7 +127,7 @@ func (g *Gate) runReservation(prior outcome) (RunReservation, error) {
 	if err := controlplane.VerifyExecutionGrant(g.PublicKey, current, current.BootID, current.IssuedAt); err != nil {
 		return RunReservation{}, err
 	}
-	return RunReservation{State: RunState(prior.State), Grant: cloneRunEnvelope(current), Result: append(json.RawMessage(nil), prior.Result...)}, nil
+	return RunReservation{State: RunState(prior.State), Grant: cloneRunEnvelope(current), Result: append(json.RawMessage(nil), prior.Result...), Checkpoint: append(json.RawMessage(nil), prior.Checkpoint...)}, nil
 }
 
 // ReserveRun journals an intent under a short topology lock. It never executes
