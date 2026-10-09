@@ -16,6 +16,7 @@ type consoleSessionHub struct {
 	mu       sync.RWMutex
 	sessions map[string]*consoleSessionState
 	store    apiStore
+	initErr  error
 }
 
 var errConsoleSessionNotFound = errors.New("session not found")
@@ -36,22 +37,33 @@ type wsPeer struct {
 func newConsoleSessionHub(store apiStore) *consoleSessionHub {
 	h := &consoleSessionHub{sessions: map[string]*consoleSessionState{}, store: store}
 	if store != nil {
-		if items, err := store.ListConsoleSessions(context.Background(), ""); err == nil {
-			for _, sess := range items {
-				if sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning || sess.Status == controlplane.ConsoleSessionStatusCancelling {
-					sess.Status = controlplane.ConsoleSessionStatusLost
-					sess.Err = "api restarted before console session completion"
-					sess.EndedAt = time.Now().UTC()
-					_ = store.SaveConsoleSession(context.Background(), sess)
-				}
-				h.sessions[sess.ID] = newConsoleSessionState(sess, controlplane.ConsoleRequest{})
-			}
+		items, err := store.ListConsoleSessions(context.Background(), "")
+		if err != nil {
+			h.initErr = err
+			return h
 		}
+		loaded := map[string]*consoleSessionState{}
+		for _, sess := range items {
+			if sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning || sess.Status == controlplane.ConsoleSessionStatusCancelling {
+				sess.Status = controlplane.ConsoleSessionStatusLost
+				sess.Err = "api restarted before console session completion"
+				sess.EndedAt = time.Now().UTC()
+				if err := store.SaveConsoleSession(context.Background(), sess); err != nil {
+					h.initErr = err
+					return h
+				}
+			}
+			loaded[sess.ID] = newConsoleSessionState(sess, controlplane.ConsoleRequest{})
+		}
+		h.sessions = loaded
 	}
 	return h
 }
 
 func (h *consoleSessionHub) Create(ctx context.Context, topology, node, agentID string, req controlplane.ConsoleRequest) (controlplane.ConsoleSession, error) {
+	if h.initErr != nil {
+		return controlplane.ConsoleSession{}, h.initErr
+	}
 	if err := ctx.Err(); err != nil {
 		return controlplane.ConsoleSession{}, err
 	}
@@ -101,6 +113,9 @@ func (h *consoleSessionHub) Create(ctx context.Context, topology, node, agentID 
 }
 
 func (h *consoleSessionHub) Get(id string) (*consoleSessionState, error) {
+	if h.initErr != nil {
+		return nil, h.initErr
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	st := h.sessions[id]
@@ -111,6 +126,9 @@ func (h *consoleSessionHub) Get(id string) (*consoleSessionState, error) {
 }
 
 func (h *consoleSessionHub) Snapshot(id string) (controlplane.ConsoleSession, error) {
+	if h.initErr != nil {
+		return controlplane.ConsoleSession{}, h.initErr
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	st := h.sessions[id]
@@ -134,6 +152,9 @@ func cloneConsoleSession(sess controlplane.ConsoleSession) controlplane.ConsoleS
 }
 
 func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSession)) error {
+	if h.initErr != nil {
+		return h.initErr
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	st := h.sessions[id]
@@ -153,6 +174,9 @@ func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSessi
 }
 
 func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
+	if h.initErr != nil {
+		return h.initErr
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	st := h.sessions[id]

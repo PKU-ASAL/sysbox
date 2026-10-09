@@ -1556,3 +1556,22 @@ passed under race on all three stores and full Go regression passed with both
 database test variables enabled. Vet, docscheck and independent re-review passed.
 The temporary Postgres container was stopped and automatically removed. No real
 provider or cross-host console execution was run in this recovery slice.
+
+### Console startup requires complete durable evidence (2026-10-09)
+
+Console registry initialization no longer treats a failed session listing as
+an empty registry or exposes an uncommitted lost-state update. It builds its
+in-memory map only after loading and saving startup observations successfully.
+Initialization errors are retained; hub operations reject them and API startup
+returns the failure before listening. Existing evidence is not deleted or
+automatically rebuilt. Earlier successfully written lost observations remain
+durable if a later record fails; a restart can retry initialization.
+
+Tests cover unavailable enumeration, failed startup saves and a corrupt local
+console file preventing API startup without changing its bytes. This does not
+introduce cross-process console CAS: concurrent API startup/liveness ownership
+and automatically retrying a failed registry initialization remain unresolved.
+
+Verification: full API race passed (36.89 seconds), along with startup-specific
+tests, vet, docscheck and independent review. PostgreSQL and real provider E2E
+were not enabled in this startup error-handling round.

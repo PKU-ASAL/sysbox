@@ -93,6 +93,9 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 	if err := s.loadExecutionGrantSigner(); err != nil && s.initErr == nil {
 		s.initErr = err
 	}
+	if s.initErr == nil && s.consoles.initErr != nil {
+		s.initErr = fmt.Errorf("initialize console registry: %w", s.consoles.initErr)
+	}
 	s.agentSvc = newAgentService(s)
 	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
 	s.workspaces.loadRuns = s.apiStore.LoadRuns

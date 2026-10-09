@@ -454,3 +454,7 @@ outbox 的跨记录原子提交、多 API CAS 和完整执行授权仍待完成�
 提交而 session 保存失败的窗口，不重新派发副作用。恢复使用持久时间/错误，拒绝
 只有退休标记、重复绑定或身份冲突。多 API CAS、signed host stop、取消 outbox
 仍未完成，不能计为整个 console/P6/P9 闭环。
+
+2026-10-09 console startup 错误边界：读取 registry 或保存重启观察失败时，不再
+作为空 registry 或成功 lost 观察发布；hub 拒绝操作，API StartContext 返回初始化
+错误。保留原始证据，需修复存储问题后重新启动。多 API CAS/所有权仍待完成。
