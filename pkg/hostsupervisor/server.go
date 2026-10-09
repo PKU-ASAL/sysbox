@@ -16,6 +16,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // Server is a host-local Unix socket boundary. The socket owner/group defines
@@ -286,6 +287,18 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 			break
 		}
 		response.FileResult, err = s.Files.Observe(ctx, request.Target, request.FileHandle)
+	case "file-inspect":
+		if s.Files == nil {
+			err = fmt.Errorf("host file supervisor unavailable")
+			break
+		}
+		var result substrate.InstalledFileInspection
+		result, err = s.Files.Inspect(ctx, request.Target, request.FileHandle)
+		if err == nil {
+			response.FileInspection = &result
+			proof := request.FileHandle
+			response.InspectedFile = &proof
+		}
 	case "file-cancel":
 		if s.Files == nil {
 			err = fmt.Errorf("host file supervisor unavailable")

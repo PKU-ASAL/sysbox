@@ -191,6 +191,21 @@ func TestHostSupervisorRealFileInstallE2E(t *testing.T) {
 			raw, err = exec.CommandContext(ctx, "docker", "exec", container, "stat", "-c", "%a", put.Path).CombinedOutput()
 			require.NoError(t, err, string(raw))
 			require.Equal(t, "640", strings.TrimSpace(string(raw)))
+			inspection, err := client.InspectInstalledFile(ctx, h)
+			require.NoError(t, err)
+			require.Equal(t, "present", inspection.Status)
+			require.Equal(t, put.SHA256, inspection.SHA256)
+			require.NoError(t, exec.CommandContext(ctx, "docker", "exec", container, "chmod", "600", put.Path).Run())
+			inspection, err = client.InspectInstalledFile(ctx, h)
+			require.NoError(t, err)
+			require.Equal(t, "drifted", inspection.Status)
+			require.NoError(t, exec.CommandContext(ctx, "docker", "exec", container, "rm", "--", put.Path).Run())
+			inspection, err = client.InspectInstalledFile(ctx, h)
+			require.NoError(t, err)
+			require.Equal(t, "absent", inspection.Status)
+			historical, err := client.ObserveGuestFile(ctx, h)
+			require.NoError(t, err)
+			require.Equal(t, substrate.FileInstallCommitted, historical.Outcome)
 		} else {
 			// Retire current authority before the delayed installation reaches
 			// the host. No guest file may be written by this signed old request.
@@ -211,5 +226,5 @@ func TestHostSupervisorRealFileInstallE2E(t *testing.T) {
 		}
 		require.Error(t, authority.Authorize(ctx, g))
 	}
-	t.Log("real 10MiB file installation: trusted payload fetch, checksum/mode, lost host receipt, cold API/supervisor recovery, successor epoch and revoked request rejection verified")
+	t.Log("real 10MiB file installation: payload integrity, lost receipt, cold recovery, live presence/mode drift/absence, unchanged committed history, successor epoch and revoked request rejection verified")
 }

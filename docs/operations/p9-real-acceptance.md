@@ -933,3 +933,20 @@ Full regression, focused race and vet passed; amd64/arm64 helpers are rebuilt
 from the new sources. This is not yet wired into SSH access state: retaining its
 installation handle, guest owned-delete transactions and shared sshd management
 remain required. No new KVM or cross-VM live-file acceptance is claimed.
+
+The owning host now exposes the same `file-inspect` operation through its Unix
+socket. It loads an existing signed, committed file record without creating new
+journal entries, checks the original reference and immutable provider identity,
+and resolves canonical identity again after the guest read. A replaced node or
+an inconsistent `present` result is rejected. Inspection does not renew grants,
+mint stop evidence or rewrite the historical installation receipt.
+
+2026-10-09 real Docker file E2E passed under race in4.02seconds with a helper
+built from current sources. After10MiB installation and API/supervisor object
+reconstruction, inspection reported present, then drifted after chmod, then
+absent after removing that test file. Historical Observe still reported committed.
+The existing completion-loss, successor-epoch and revoked-request cases also
+passed, and the isolated test container was cleaned up. Host unit regressions
+cover changed references/provider IDs, replacement during observation, and
+unchanged journal bytes. This is the file inspection path, not yet the complete
+SSH access resource/sshd lifecycle or an independent two-VM acceptance.

@@ -14,6 +14,10 @@
 不用于推断目标文件的当前状态。缺少新操作的旧helper返回错误，不回退到shell读取。
 SSH access保存安装handle并消费此SPI的接线仍未完成。
 
+host-supervisor的Unix `file-inspect`也已接入：请求携带原FileInstallHandle及canonical
+TargetRef，宿主从已有signed安装记录重建provider handle并在读取前后核对资源身份。
+响应回显完整安装handle；客户端拒绝错配。只查询当前文件，不上报/改变历史停止回执。
+
 ### SSH公钥输入合同收紧
 
 `SSHAccessRequest`校验真实SSH公钥编码及类型，拒绝无效base64/wire数据、多行和
