@@ -7,7 +7,7 @@ func FromSSHAccessCommand(cmd AgentCommand) (SSHAccessRequest, error) {
 		return SSHAccessRequest{}, fmt.Errorf("ssh access command requires complete binding")
 	}
 	req := *cmd.Operation.SSHAccess
-	if req.ID != cmd.ActionID {
+	if req.ID != cmd.ActionID || req.Topology != cmd.Operation.Topology || req.Node != cmd.Operation.Node {
 		return SSHAccessRequest{}, fmt.Errorf("ssh access action identity mismatch")
 	}
 	if err := req.Validate(); err != nil {

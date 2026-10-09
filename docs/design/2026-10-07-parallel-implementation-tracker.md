@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+P7目标身份修复：SSH coordinator不再误把topology名称与UID比较；request摘要、signed
+scope和外层socket target分别匹配，command嵌套拓扑/节点也校验。名称不同于UID的
+Apply/回执恢复回归及target篡改拒绝通过。这是SSH协议接入修复，不关闭共享sshd、
+密钥轮换/精确删除、安装授权和真实SSH完整生命周期。
+
 本地canonical recovery提交已复用事务授权repository：仅匹配无Agent的原失败可恢复Run，
 提交时重验incarnation/活动后继/维护冻结。provider观察中途冻结的确定性失败回归通过，
 state/serial未变。文件路径同时锁实际authority文件。此修复针对恢复metadata，local

@@ -874,3 +874,22 @@ recovery transaction regressions pass; shared local validation rejects remote,
 changed, active or nonrecoverable Run evidence. This closes that local recovery
 metadata-write window. Local cleanup's provider Delete path still needs effect
 fencing; it remains protected only against a freeze already present at preflight.
+
+### Managed SSH target identity contract
+
+The host SSH coordinator no longer compares the topology's user-facing name to
+its immutable UID. The signed request digest binds the name/node/configuration;
+the separately signed scope binds topology UID, resource UID and generation.
+Apply/Delete require a resource-scoped grant and matching action ID/host boot.
+The Unix boundary verifies request name/node against the outer target and matches
+the full signed scope before invoking a trusted callback. Command decoding also
+rejects disagreement between the nested SSH request and NodeOperation target.
+
+Regression fixtures now deliberately use a topology UID different from its name;
+this reproduced denial of valid Apply and missing recovery evidence before the
+fix. Callback admission and original receipt recovery pass afterward. Target
+name/node/UID/resource/generation changes are rejected before any effect, and the
+real Unix socket contract passes under race detection. These are protocol tests,
+not a complete SSH key lifecycle acceptance. Shared sshd configuration, key
+rotation/removal semantics, grant-bound installation and real end-to-end managed
+SSH access remain required P7 work.

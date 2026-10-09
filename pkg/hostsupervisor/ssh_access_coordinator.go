@@ -42,7 +42,7 @@ func (c *SSHAccessCoordinator) Apply(ctx context.Context, req controlplane.SSHAc
 	if err != nil {
 		return nil, err
 	}
-	if g.Grant.Operation != "ssh_access_apply" || g.Grant.Digest != digest || g.Grant.Scope.TopologyUID != req.Topology || g.Grant.TargetBootID != c.HostBootID {
+	if g.Grant.Operation != "ssh_access_apply" || g.Grant.Digest != digest || g.Grant.ActionID != req.ID || g.Grant.Scope.ResourceUID == "" || g.Grant.Scope.Generation < 1 || g.Grant.TargetBootID != c.HostBootID {
 		return nil, effectgate.ErrFenced
 	}
 	if err = controlplane.VerifyExecutionGrant(c.IssuerKey, g, c.HostBootID, time.Now()); err != nil {
@@ -69,7 +69,7 @@ func (c *SSHAccessCoordinator) Delete(ctx context.Context, req controlplane.SSHA
 	if err != nil {
 		return nil, err
 	}
-	if g.Grant.Operation != "ssh_access_delete" || g.Grant.Digest != digest {
+	if g.Grant.Operation != "ssh_access_delete" || g.Grant.Digest != digest || g.Grant.ActionID != req.ID || g.Grant.Scope.ResourceUID == "" || g.Grant.Scope.Generation < 1 || g.Grant.TargetBootID != c.HostBootID {
 		return nil, effectgate.ErrFenced
 	}
 	if err = controlplane.VerifyExecutionGrant(c.IssuerKey, g, c.HostBootID, time.Now()); err != nil {

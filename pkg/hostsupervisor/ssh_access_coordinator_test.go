@@ -19,7 +19,7 @@ func sshFixture(t *testing.T) (*SSHAccessCoordinator, controlplane.SSHAccessRequ
 	req := controlplane.SSHAccessRequest{ID: "access", Topology: "lab", Node: "web", AuthorizedKeys: []string{"ssh-ed25519 AAAA key"}}
 	d, e := req.Digest()
 	require.NoError(t, e)
-	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "lab", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: req.ID, CommandID: "command", Attempt: 1, Epoch: 1, Operation: "ssh_access_apply", Digest: d, TargetBootID: "host", State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}
+	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "owner-uid", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: req.ID, CommandID: "command", Attempt: 1, Epoch: 1, Operation: "ssh_access_apply", Digest: d, TargetBootID: "host", State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}
 	s, e := controlplane.SignExecutionGrant(key, g, "host", time.Now())
 	require.NoError(t, e)
 	root := t.TempDir()
@@ -46,6 +46,35 @@ func TestSSHAccessApplyRejectsChangedKey(t *testing.T) {
 	_, err := c.Apply(context.Background(), req, g, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{}`), nil })
 	require.Error(t, err)
 	_ = c
+}
+
+func TestSSHAccessServerRejectsRequestTargetMismatchBeforeEffect(t *testing.T) {
+	for _, field := range []string{"topology", "node", "uid", "resource", "generation"} {
+		t.Run(field, func(t *testing.T) {
+			c, req, grant := sshFixture(t)
+			target := TargetRef{Topology: req.Topology, Node: req.Node, Scope: grant.Grant.Scope}
+			switch field {
+			case "topology":
+				target.Topology = "other"
+			case "node":
+				target.Node = "other"
+			case "uid":
+				target.Scope.TopologyUID = "other"
+			case "resource":
+				target.Scope.ResourceUID = "other"
+			case "generation":
+				target.Scope.Generation++
+			}
+			calls := 0
+			server := &Server{SSH: c, SSHApply: func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+				calls++
+				return json.RawMessage(`{}`), nil
+			}}
+			response := server.Handle(context.Background(), Request{Version: 1, Operation: "ssh-apply", Target: target, SSHRequest: &req, Grant: &grant})
+			require.Contains(t, response.Error, "target mismatch")
+			require.Zero(t, calls)
+		})
+	}
 }
 
 func TestSSHAccessCompletionReceiptSurvivesRestartAndOldEpoch(t *testing.T) {

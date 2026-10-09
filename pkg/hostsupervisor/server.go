@@ -224,6 +224,12 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 	var err error
 	var record TaskRecord
 	switch request.Operation {
+	case "ssh-apply", "ssh-delete", "ssh-observe":
+		r, grant := request.SSHRequest, request.Grant
+		if r == nil || grant == nil || r.Topology != request.Target.Topology || r.Node != request.Target.Node || grant.Grant.Scope != request.Target.Scope || grant.Grant.ActionID != r.ID {
+			response.Error = "ssh access target mismatch"
+			return response
+		}
 	case "adoption-apply", "adoption-observe":
 		r := request.AdoptionRequest
 		if r == nil {
