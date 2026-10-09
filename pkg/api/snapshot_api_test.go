@@ -22,10 +22,16 @@ func TestSnapshotAPIStoresJournalAndRejectsActiveRestore(t *testing.T) {
 	var snap state.Snapshot
 	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &snap))
 	require.NotEmpty(t, snap.ID)
+	planReq := httptest.NewRequest("POST", "/v1/topologies/lab/state/snapshots/"+snap.ID+"/restore-plan", nil)
+	planReq.Header.Set("Idempotency-Key", "restore")
+	planned := httptest.NewRecorder()
+	s.ServeHTTP(planned, planReq)
+	require.Equal(t, 200, planned.Code, planned.Body.String())
 	require.NoError(t, s.apiStore.SaveRun(ctx, controlplane.Run{ID: "busy", Topology: "lab", Op: "apply", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}))
 	restore := httptest.NewRecorder()
-	s.ServeHTTP(restore, httptest.NewRequest("POST", "/v1/topologies/lab/state/snapshots/"+snap.ID+"/restore", nil))
-	require.Equal(t, 409, restore.Code, restore.Body.String())
+	s.ServeHTTP(restore, httptest.NewRequest("POST", "/v1/topologies/lab/state/snapshots/"+snap.ID+"/restore", bytes.NewReader(planned.Body.Bytes())))
+	require.Equal(t, 202, restore.Code, restore.Body.String())
+	require.Contains(t, restore.Body.String(), "waiting_for_stop")
 	deleted := httptest.NewRecorder()
 	s.ServeHTTP(deleted, httptest.NewRequest("DELETE", "/v1/topologies/lab/state/snapshots/"+snap.ID, nil))
 	require.Equal(t, 204, deleted.Code, deleted.Body.String())
@@ -36,10 +42,6 @@ func TestStateMaintenanceRejectsIncompleteActivityRegistry(t *testing.T) {
 		t.Run(missing, func(t *testing.T) {
 			s := NewServer(t.TempDir(), t.TempDir())
 			service := s.workspaceService()
-			manager, err := s.stateManager("lab")
-			require.NoError(t, err)
-			snapshot, err := manager.Snapshot(context.Background(), "before")
-			require.NoError(t, err)
 			switch missing {
 			case "runs":
 				service.loadRuns = nil
@@ -48,7 +50,7 @@ func TestStateMaintenanceRejectsIncompleteActivityRegistry(t *testing.T) {
 			case "guests":
 				service.loadGuestActivity = nil
 			}
-			require.ErrorIs(t, service.RestoreStateSnapshot(context.Background(), "lab", snapshot.ID), persistence.ErrConflict)
+			require.ErrorIs(t, service.ensureTopologyQuiescent(context.Background(), "lab"), persistence.ErrConflict)
 			require.ErrorIs(t, service.ForceUnlock(context.Background(), "lab"), persistence.ErrConflict)
 		})
 	}

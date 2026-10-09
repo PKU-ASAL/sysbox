@@ -595,22 +595,3 @@ func (s *WorkspaceService) StateSnapshots(ctx context.Context, topology string) 
 	}
 	return snapshots.ListSnapshots(ctx)
 }
-
-func (s *WorkspaceService) RestoreStateSnapshot(ctx context.Context, topology, snapshot string) error {
-	if s.lockAdmission != nil {
-		unlock := s.lockAdmission(topology)
-		defer unlock()
-	}
-	if err := s.ensureTopologyQuiescent(ctx, topology); err != nil {
-		return err
-	}
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		return err
-	}
-	snapshots, ok := mgr.Backend().(state.SnapshotBackend)
-	if !ok {
-		return state.ErrUnsupported
-	}
-	return snapshots.RestoreSnapshot(ctx, snapshot)
-}

@@ -22,6 +22,22 @@ type MaintenanceBarrier struct {
 	Released      bool      `json:"released"`
 }
 
+func (r *ExecutionGrantRepository) InspectMaintenance(ctx context.Context, id string) (*MaintenanceBarrier, error) {
+	var result MaintenanceBarrier
+	err := r.read(ctx, func(a *executionAuthority) error {
+		var exists bool
+		result, exists = a.Maintenance[id]
+		if !exists {
+			return ErrNotFound
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // ValidateMaintenanceWrite checks an authority snapshot while its storage lock
 // is held through metadata commit. Nil means no authority has yet been issued.
 // This does not permit provider effects or substitute for command validation.

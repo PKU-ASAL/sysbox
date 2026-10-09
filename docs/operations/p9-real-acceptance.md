@@ -796,3 +796,29 @@ parallelism limited to2. An earlier higher-load run had a slow-child receipt
 fixture exceed its per-child timeout; that failure was retained, and no timeout
 was enlarged in production. Focused restore race, persistence race, vet,
 documentation checks and independent adapter review also passed.
+
+### Public snapshot restore workflow
+
+The API now exposes `POST .../state/snapshots/{snapshot}/restore-plan` with an
+`Idempotency-Key`, returning an immutable request. Persist that JSON and submit
+it to `POST .../{snapshot}/restore`; empty-body direct restoration is removed.
+The workflow validates the canonical plan, starts/reuses its maintenance barrier,
+checks activity/stop evidence, commits using the joint-lock adapter, and releases
+the barrier. It returns200 with the receipt when restored, or202 with the bound
+request while waiting. Clients retry the original or returned request; there is
+no background maintenance scheduler yet.
+
+`restore-cancel` accepts the same request and releases only an uncommitted
+operation whose grants are confirmed stopped. It never starts a missing barrier,
+and it rereads the receipt after release to report a concurrently committed
+restore accurately. An already committed restore cannot be rolled back by this
+endpoint. If commit succeeds but release fails, the restore response retains the
+receipt with `committed_waiting_for_release`; a retry completes the release.
+
+Tests cover API reconstruction and identical receipt replay, revoked-but-not-
+stopped grants retaining exclusion, continuation after host stop, plan-key
+requirements, successful HTTP replay, and explicit abandonment. The shared
+activity registry continues to fail closed if any activity loader is absent.
+The previous WorkspaceService direct restore method is removed. These checks do
+not establish automatic reconciliation of changed inventory, a background
+maintenance worker, full writer isolation, or a new two-VM restore gate.

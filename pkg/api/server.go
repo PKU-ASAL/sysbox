@@ -355,6 +355,8 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots", s.handleCreateStateSnapshot)
 	m.HandleFunc("DELETE /v1/topologies/{topology}/state/snapshots/{snapshot}", s.handleDeleteStateSnapshot)
 	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots/{snapshot}/restore", s.handleRestoreStateSnapshot)
+	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots/{snapshot}/restore-plan", s.handlePlanSnapshotRestore)
+	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots/{snapshot}/restore-cancel", s.handleCancelSnapshotRestore)
 	m.HandleFunc("GET /v1/topologies/{topology}/stack-state", s.handleGetStackState)
 	m.HandleFunc("GET /v1/topologies/{topology}/lease", s.handleGetWorkspaceLease)
 	m.HandleFunc("GET /v1/topologies/{topology}/snapshots", s.handleListWorkspaceSnapshots)

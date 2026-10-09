@@ -145,11 +145,23 @@ func (s *Server) handleRestoreStateSnapshot(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.workspaceService().RestoreStateSnapshot(r.Context(), topology, snapshot); err != nil {
+	var request persistence.SnapshotRestoreRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.SnapshotID != snapshot {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("matching snapshot restore plan required"))
+		return
+	}
+	result, err := s.restoreSnapshotWorkflow(r.Context(), topology, request)
+	if err != nil {
 		writeError(w, stateOperationErrorStatus(err), err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "restored", "snapshot": snapshot})
+	status := http.StatusAccepted
+	if result.Status == "restored" {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, result)
 }
 
 func stateOperationErrorStatus(err error) int {

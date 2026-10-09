@@ -6,6 +6,26 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### 当前HTTP snapshot恢复流程
+
+旧的空body直接恢复接口已移除。先调用
+`POST /v1/topologies/{topology}/state/snapshots/{snapshot}/restore-plan`，携带非空
+`Idempotency-Key`作为请求ID；响应是完整`SnapshotRestoreRequest`。保存此请求，原样
+提交至同路径的`/restore`。该接口返回200 `restored`及持久回执，或202等待状态及绑定
+epoch的请求。等待期间重提原草案或返回的绑定请求继续处理；没有后台自动轮询器。
+
+恢复流程做只读预检、建立持久屏障、等待活动记录/停止证明、授权事务提交、释放屏障。
+已提交请求重试直接确认原回执，不要求后继工作再次静止。提交成功但释放失败返回
+202 `committed_waiting_for_release`且保留receipt，重试只需完成释放。
+
+`POST .../{snapshot}/restore-cancel`接收同一请求。只允许放弃未提交恢复，且旧授权
+必须都已确认停止；不会凭租约到期解除屏障。若取消与提交竞争，返回实际获胜结果。
+已提交恢复不能通过取消回滚；原请求再次提交完成其释放流程。未启动请求的取消不会
+隐式创建屏障。取消后同一ID不能重新发起恢复，需新的计划ID。
+
+这接通了现有inventory兼容的metadata restore流程，不表示不同资源集合reconcile、
+所有旧writer隔离、自动后台维护调度、完整升级/跨宿主验收或整个P6已经完成。
+
 ### 当前存储格式补充：snapshot字节载荷与事务适配
 
 lifecycle aggregate当前为format4：snapshot的`data`保存base64字节载荷，防止Postgres

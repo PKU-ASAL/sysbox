@@ -26,6 +26,19 @@ type SnapshotRestoreReceipt struct {
 	CompletedAt time.Time              `json:"completed_at"`
 }
 
+func (r *Repository) ReadSnapshotRestoreReceipt(ctx context.Context, topology, id string) (SnapshotRestoreReceipt, error) {
+	var receipt SnapshotRestoreReceipt
+	err := r.update(ctx, topology, func(a *aggregate) error {
+		var ok bool
+		receipt, ok = a.Restores[id]
+		if !ok {
+			return ErrNotFound
+		}
+		return nil
+	})
+	return receipt, err
+}
+
 // Digest binds the immutable preflight intent before the authority allocates
 // an epoch. Commit requires that allocated epoch separately; this digest alone
 // never authorizes a restore.

@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+P6公开restore编排已接通：restore-plan固定请求，restore建立屏障/等待停止/事务提交/
+释放，202保留原请求和已提交回执供重试，restore-cancel只放弃未提交且已停止的维护。
+旧空body直写恢复入口已移除。文件API重启续作和HTTP计划/重试/取消回归通过；后台
+自动调度、变化inventory reconcile、完整writer隔离和双VM恢复验收仍未关闭。
+
 P6恢复事务适配已进入文件/SQLite/Postgres：authority与aggregate保持互斥直到state/
 receipt提交，真实Postgres及文件竞争测试证明解除屏障不能穿过在途提交。实测另修复
 JSONB重排导致snapshot摘要损坏，载荷改base64字节，aggregate现为format4且旧格式
