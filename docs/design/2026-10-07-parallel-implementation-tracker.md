@@ -463,3 +463,8 @@ outbox 的跨记录原子提交、多 API CAS 和完整执行授权仍待完成�
 共享 Enqueue 首次写 queued、精确重试读取当前记录，不重置 lease/attempt/status。
 三后端热/冷重试只保留一条命令，退休不复活。取消意图与首次入队仍分步，崩溃窗口
 和自动补派发、host stop 证明仍待完成。
+
+2026-10-09 console cancel intent 恢复：重启保留 cancelling，supervisor 在普通
+outbox 投递前按稳定 ID 补齐首次入队。现存租约/tombstone 保留，冲突明确拒绝，
+lost 不自动生成取消请求。已关闭“持久取消意图存在但首次command未写入”的恢复
+窗口；session/command 仍是可恢复两步写，尚非跨记录原子事务或远端停止证明。

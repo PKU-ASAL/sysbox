@@ -1606,3 +1606,27 @@ that fix, eight-way first enqueue, hot/cold retries and repository failure cases
 passed five repeated race runs across file/SQLite/real Postgres. Re-review found
 no remaining issue in this slice. The second isolated verification database was
 also stopped and automatically removed.
+
+### Repair cancellation intent before first enqueue (2026-10-09)
+
+Restart now preserves durable `cancelling` status rather than replacing it with
+transport-loss status. Supervisor scans cancellation intents before ordinary
+outbox delivery and inserts their missing stable cancel command. Existing records
+are checked for matching Agent/type/session identity and left unchanged, including
+leased commands. Explicitly retired tombstones may have scrubbed Session payload;
+their stable ID remains reserved and is never recreated or interpreted as stop
+evidence. Per-record failures are reported while other intents continue.
+
+Cold-restart regressions exercise intent saved without command publication, then
+repeated scans producing one outbox record. They also preserve retirement,
+reject conflicting bindings without overwriting them, and confirm plain `lost`
+transport does not invent a cancellation request. This closes the missing-first-
+enqueue recovery window for persisted cancelling records. It is a recoverable
+two-step workflow, not a transaction spanning session and command; multi-API
+session CAS and verified remote stopping remain unfinished.
+
+Verification: full API race passed with real PostgreSQL enabled (57.49 seconds),
+and targeted three-store recovery tests additionally verify an existing delivery
+lease remains unchanged. Vet, docscheck and independent review passed. The
+temporary PostgreSQL container was stopped and automatically removed. Tests
+reconstruct API hubs; no cross-host console process execution was performed.

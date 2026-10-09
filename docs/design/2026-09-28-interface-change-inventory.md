@@ -750,3 +750,7 @@ command，不采信重试的新时间或文本；这不替代 host 签名停止�
 身份摘要，重复请求读取同一 outbox 记录并保留现有投递租约。已退休记录不会被
 重新排队；取消 command 的 Session 载荷包含 topology/node/Agent/创建时间。
 这不改变取消 HTTP 路由，也不代表 session 意图与 command 已原子提交。
+
+实施补充（2026-10-09 cancel 恢复）：API 重启保留 cancelling；supervisor 自动
+补齐缺失的取消 outbox command。lost 仍是结果未知，不被自动解释为取消意图。
+退休取消命令不重建，cancelling 仍需会话执行终态/停止证据才能结束。

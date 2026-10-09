@@ -44,7 +44,7 @@ func newConsoleSessionHub(store apiStore) *consoleSessionHub {
 		}
 		loaded := map[string]*consoleSessionState{}
 		for _, sess := range items {
-			if sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning || sess.Status == controlplane.ConsoleSessionStatusCancelling {
+			if sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning {
 				sess.Status = controlplane.ConsoleSessionStatusLost
 				sess.Err = "api restarted before console session completion"
 				sess.EndedAt = time.Now().UTC()

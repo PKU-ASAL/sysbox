@@ -82,6 +82,9 @@ func (s *Supervisor) Scan(ctx context.Context) {
 	if err := s.server.agentService().reconcileConsoleCompletions(ctx); err != nil {
 		slog.Warn("console completion reconciliation failed", "error", err)
 	}
+	if err := s.server.agentService().reconcileConsoleCancellations(ctx); err != nil {
+		slog.Warn("console cancellation reconciliation failed", "error", err)
+	}
 	if err := s.server.agentService().reconcileUnissuedSSHFailures(ctx); err != nil {
 		slog.Warn("unissued SSH failure reconciliation failed", "error", err)
 	}
