@@ -51,7 +51,13 @@ func newConsoleSessionHub(store apiStore) *consoleSessionHub {
 	return h
 }
 
-func (h *consoleSessionHub) Create(topology, node, agentID string, req controlplane.ConsoleRequest) controlplane.ConsoleSession {
+func (h *consoleSessionHub) Create(ctx context.Context, topology, node, agentID string, req controlplane.ConsoleRequest) (controlplane.ConsoleSession, error) {
+	if err := ctx.Err(); err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
+	if h.store == nil {
+		return controlplane.ConsoleSession{}, errors.New("console persistence unavailable")
+	}
 	now := time.Now().UTC()
 	actor := req.RequestedBy
 	if actor == "" {
@@ -83,10 +89,15 @@ func (h *consoleSessionHub) Create(topology, node, agentID string, req controlpl
 		CreatedAt: now,
 	}
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
+	if err := h.store.SaveConsoleSession(ctx, sess); err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
 	h.sessions[sess.ID] = newConsoleSessionState(sess, req)
-	h.mu.Unlock()
-	h.persist(sess)
-	return sess
+	return sess, nil
 }
 
 func (h *consoleSessionHub) Get(id string) (*consoleSessionState, error) {

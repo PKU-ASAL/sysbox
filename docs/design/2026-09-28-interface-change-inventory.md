@@ -736,3 +736,7 @@ console 和当前 topology UID 的非终态 command 出现在 `active_operations
 实施补充（2026-10-09 cancel 派发错误）：`POST /v1/sessions/{id}/cancel` 在存储
 或命令发布失败时返回脱敏503，提示重试同一 session；仅真实不存在返回404。
 已提交的 cancelling 意图不会因派发失败被回滚为已完成或已停止。
+
+实施补充（2026-10-09 console create）：内部 hub Create 改为带 context 和显式
+error 返回；HTTP 创建路由不变，持久化失败返回脱敏503，不返回会话 ID，也不
+派发 session_open。会话保存与 outbox 的原子受理尚未完成。

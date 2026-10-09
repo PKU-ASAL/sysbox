@@ -63,7 +63,10 @@ func (s *ConsoleService) CreateSession(ctx context.Context, topology, node strin
 	if err != nil {
 		return ConsoleCreateResult{Status: http.StatusConflict}, err
 	}
-	sess := s.consoles.Create(topology, node, agent.ID, req)
+	sess, err := s.consoles.Create(ctx, topology, node, agent.ID, req)
+	if err != nil {
+		return ConsoleCreateResult{Status: http.StatusServiceUnavailable}, fmt.Errorf("persist console session: %w", err)
+	}
 	if err := s.authorize(requestSubject{User: req.RequestedBy, Roles: req.Roles}, sess); err != nil {
 		s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
 			sess.Status = controlplane.ConsoleSessionStatusDenied

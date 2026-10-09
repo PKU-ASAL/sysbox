@@ -33,6 +33,10 @@ func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Reque
 	}
 	result, err := s.consoleService().CreateSession(r.Context(), topology, node, req, s.requestSubject(r))
 	if err != nil {
+		if result.Status == http.StatusServiceUnavailable {
+			writeError(w, result.Status, errors.New("console session persistence unavailable"))
+			return
+		}
 		if result.Session.ID != "" {
 			writeJSON(w, result.Status, result.Session)
 			return

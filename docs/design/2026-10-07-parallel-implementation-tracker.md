@@ -439,3 +439,7 @@ registry 原子删除/准入协议尚未完成。
 2026-10-09 console cancel 错误传播：publish 失败不再被忽略；取消意图保留，重试
 同 session 重新派发且不重复 audit。HTTP 只有不存在返回404，存储/派发失败返回
 脱敏503。可靠 outbox 与远端 stop receipt 仍未完成。
+
+2026-10-09 console create 持久化门槛：hub Create 接收 context 并返回 error，落盘
+成功后才发布内存会话；失败返回脱敏503，不再继续 session_open 派发。会话与
+outbox 的跨记录原子提交、多 API CAS 和完整执行授权仍待完成。

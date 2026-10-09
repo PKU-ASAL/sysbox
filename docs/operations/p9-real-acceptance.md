@@ -1477,3 +1477,22 @@ remote stop acknowledgment. Those remain part of the full console migration.
 Verification: full API race passed (62.68 seconds), along with targeted HTTP
 storage-failure and dispatch-failure cases, vet, docscheck and independent review.
 PostgreSQL and real provider acceptance were not run in this error-routing slice.
+
+### Console creation requires persistence (2026-10-09)
+
+The console hub previously published its in-memory session and discarded the
+storage error. Create now accepts the request context, requires configured
+persistence, and saves the session before exposing it in the hub. The service
+stops immediately on a storage failure, so it cannot publish `session_open` for
+that failed creation. HTTP returns a redacted 503 without a session ID.
+
+Tests verify failed saves create no hub entry or command, cancelled contexts and
+missing stores reject, and a successful returned identity can be read from the
+store. This does not make session creation and command outbox one transaction;
+a crash after session save can still leave queued evidence without dispatch.
+Cross-process console CAS and atomic session/outbox admission remain unfinished.
+
+Verification: full API race passed (63.96 seconds), together with targeted
+create/cancel tests, vet, docscheck and independent review. File and SQLite were
+exercised; the PostgreSQL test branch was not enabled in this round. No real
+provider effects were performed.

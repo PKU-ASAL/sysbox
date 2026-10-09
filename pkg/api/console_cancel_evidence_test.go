@@ -15,7 +15,7 @@ import (
 func TestConsoleCancellationRequestDoesNotProveStop(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
-	sess := hub.Create("lab", "node", "agent", controlplane.ConsoleRequest{})
+	sess := createConsoleForTest(t, hub)
 	hub.Update(sess.ID, func(s *controlplane.ConsoleSession) {
 		s.Status = controlplane.ConsoleSessionStatusRunning
 		s.StartedAt = time.Now().UTC()
@@ -38,7 +38,7 @@ func TestConsoleCancellationRequestDoesNotProveStop(t *testing.T) {
 
 func TestConsoleCancelHTTPDistinguishesUnavailableFromMissing(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	sess := s.consoles.Create("lab", "node", "agent", controlplane.ConsoleRequest{})
+	sess := createConsoleForTest(t, s.consoles)
 	s.consoleSvc = &ConsoleService{consoles: s.consoles, publishCommand: func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
 		return controlplane.AgentCommand{}, errors.New("private connection details")
 	}}
@@ -76,7 +76,7 @@ func (s *delayedConsoleSave) SaveConsoleSession(ctx context.Context, x controlpl
 func TestConsoleCancellationCannotBeOverwrittenByEarlierUpdate(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
-	sess := hub.Create("lab", "node", "agent", controlplane.ConsoleRequest{})
+	sess := createConsoleForTest(t, hub)
 	delay := &delayedConsoleSave{apiStore: store, entered: make(chan struct{}), release: make(chan struct{})}
 	hub.store = delay
 	var once sync.Once
@@ -118,7 +118,7 @@ func (s failingConsoleSave) SaveConsoleSession(context.Context, controlplane.Con
 func TestConsoleCancelDoesNotAcknowledgeFailedPersistence(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
-	sess := hub.Create("lab", "node", "agent", controlplane.ConsoleRequest{})
+	sess := createConsoleForTest(t, hub)
 	hub.store = failingConsoleSave{apiStore: store}
 	require.Error(t, hub.Cancel(sess.ID, "requested", "user"))
 	current, err := hub.Snapshot(sess.ID)
@@ -154,7 +154,7 @@ func TestConsoleTransportLossCannotManufactureCompletion(t *testing.T) {
 func TestConsoleCompletionCanFollowCancellationRequest(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
-	sess := hub.Create("lab", "node", "agent", controlplane.ConsoleRequest{})
+	sess := createConsoleForTest(t, hub)
 	require.NoError(t, hub.Cancel(sess.ID, "requested", "user"))
 	svc := &AgentService{consoles: hub}
 	command := controlplane.AgentCommand{Type: "session_open", Session: &sess}
@@ -172,7 +172,7 @@ func TestConsoleCompletionCanFollowCancellationRequest(t *testing.T) {
 func TestConsoleCancelReportsDispatchFailureAndRetainsIntent(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
-	sess := hub.Create("lab", "node", "agent", controlplane.ConsoleRequest{})
+	sess := createConsoleForTest(t, hub)
 	failure := errors.New("dispatch unavailable")
 	service := &ConsoleService{consoles: hub, publishCommand: func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
 		return controlplane.AgentCommand{}, failure
