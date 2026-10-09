@@ -831,3 +831,9 @@ schema/pool。公开路由和持久格式不变，此项不替代宿主执行/�
 旧名称移除。GuestActivity.Unresolved 统一检查状态及完整、顺序正确的时间，
 DecodeGuestActivity 验证完整记录但不暴露 request/output。SQL借用的 schema 需
 包含 execution authority 表。API路由与持久格式未变，不表示取消已获得停止证明。
+
+实施补充（2026-10-09 Agent cancel 事件）：cancel_command 的 completed 仅表示
+已向目标执行 context 传达取消请求，message 为 cancellation requested；不再
+额外伪造目标命令 cancelled 事件。目标执行路径独立报告结果。Guest 完成回报
+使用 RequestTimeout（默认30秒）的独立预算，不随执行 context 一同取消。
+Wire/schema 不变；该 completed 不能作为远端停止证明，也不保证回报持久重试。

@@ -539,3 +539,8 @@ guard，冻结拒绝新增/活跃更新，文件取消意图只在状态不前�
 完整 guest registry，维护/inspection 共用有效终态证据判定，未知时间不伪装结束。
 已验证 authority 等待、无部分写入、跨进程 CAS 与损坏数据拒绝。guest execution
 取消处理仍有先写终态再派发的独立窗口，停止证明和删除后清理恢复继续推进。
+
+2026-10-09 Agent 取消源命令：cancel_command 只确认请求传达，不再凭 context.Cancel
+伪造目标 cancelled；完成回报获得独立有界 context。执行 token 保证旧清理不会
+移除新执行的取消映射。三项旧行为均有失败回归，Agent race及全仓回归通过。
+API 取消持久事务与远端停止证明仍未完成，不能计为整个取消闭环完成。

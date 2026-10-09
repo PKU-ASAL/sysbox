@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestCancellationReportsTargetProof(t *testing.T) {
+func TestCancellationRequestDoesNotReportTargetStopped(t *testing.T) {
 	for _, fenced := range []bool{false, true} {
 		r := newCommandRunner(nil, Options{})
 		target := controlplane.AgentCommand{ID: "target", Type: "node_operation", LeaseOwner: "owner", Attempt: 2}
@@ -21,17 +21,30 @@ func TestCancellationReportsTargetProof(t *testing.T) {
 		defer cancel()
 		r.track(&target, cancel)
 		var events []controlplane.AgentCommandEvent
-		r.Execute(context.Background(), &controlplane.AgentCommand{ID: "cancel", Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: target.ID}}, func(e controlplane.AgentCommandEvent) { events = append(events, e) })
+		request := controlplane.AgentCommand{ID: "cancel", Type: "cancel_command", LeaseOwner: "cancel-owner", Attempt: 3, Operation: controlplane.NodeOperation{ExternalID: target.ID}}
+		r.Execute(context.Background(), &request, func(e controlplane.AgentCommandEvent) { events = append(events, e) })
 		require.ErrorIs(t, ctx.Err(), context.Canceled)
-		require.Len(t, events, 2)
+		require.Len(t, events, 1, "context cancellation is not target completion evidence")
 		e := events[0]
-		require.Equal(t, target.ID, e.CommandID)
-		require.Equal(t, target.Type, e.Type)
-		require.Equal(t, target.ActionID, e.ActionID)
-		require.Equal(t, target.ResourceUID, e.ResourceUID)
-		require.Equal(t, target.Generation, e.Generation)
-		require.Equal(t, target.LeaseEpoch, e.LeaseEpoch)
-		require.Equal(t, target.LeaseOwner, e.LeaseOwner)
-		require.Equal(t, target.Attempt, e.Attempt)
+		require.Equal(t, "cancel", e.CommandID)
+		require.Equal(t, "completed", e.Status)
+		require.Equal(t, "cancellation requested", e.Message)
+		require.Equal(t, request.LeaseOwner, e.LeaseOwner)
+		require.Equal(t, request.Attempt, e.Attempt)
 	}
+}
+
+func TestOldRunnerCleanupKeepsReplacementCancellationTarget(t *testing.T) {
+	r := newCommandRunner(nil, Options{})
+	cmd := controlplane.AgentCommand{ID: "command", Type: "guest_execution", Execution: &controlplane.GuestExecution{ID: "operation"}}
+	oldCtx, oldCancel := context.WithCancel(context.Background())
+	defer oldCancel()
+	newCtx, newCancel := context.WithCancel(context.Background())
+	defer newCancel()
+	old := r.track(&cmd, oldCancel)
+	r.track(&cmd, newCancel)
+	r.untrack(old)
+	r.Execute(context.Background(), &controlplane.AgentCommand{ID: "cancel", Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: "operation"}}, nil)
+	require.ErrorIs(t, newCtx.Err(), context.Canceled)
+	require.NoError(t, oldCtx.Err())
 }

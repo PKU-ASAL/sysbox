@@ -1903,3 +1903,19 @@ docscheck and independent follow-up review passed. No existing deployment or
 resource was rebuilt. This does not close the existing guest execution Cancel
 handler's terminal-before-publication window, remote stop proof, or persistent
 exclusion and recovery through postcommit workspace cleanup.
+
+### Agent cancellation does not invent target completion (2026-10-09)
+
+The Agent now acknowledges only the cancel command after signalling a target
+context. It no longer emits a synthetic cancelled event for the target, which
+could retire the target delivery before its real outcome arrived. Guest
+completion reporting uses an independent RequestTimeout budget (default 30s)
+while preserving context values and command proof. Execution-owned tracking
+tokens prevent old cleanup from removing replacement command/operation aliases.
+
+Regressions reproduced premature target completion, stale tracking cleanup,
+and completion reporting with an already-cancelled context. Agentexec race
+passed (4.681 seconds), including reporting timeout. Full Go regression, vet,
+docscheck and independent review passed. This worker-only change did not rerun
+real PostgreSQL or cross-host cancellation. Tests do not establish signed stop
+proof, durable report retry, or atomic API guest cancellation; those remain open.

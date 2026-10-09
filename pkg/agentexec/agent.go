@@ -245,16 +245,16 @@ type commandRunner struct {
 	mu       sync.Mutex
 	executor *Executor
 	opts     Options
-	running  map[string]trackedCommand
+	running  map[string]*trackedCommand
 }
 
 type trackedCommand struct {
-	cancel  context.CancelFunc
-	command controlplane.AgentCommand
+	cancel context.CancelFunc
+	keys   []string
 }
 
 func newCommandRunner(executor *Executor, opts Options) *commandRunner {
-	return &commandRunner{executor: executor, opts: opts, running: map[string]trackedCommand{}}
+	return &commandRunner{executor: executor, opts: opts, running: map[string]*trackedCommand{}}
 }
 
 func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentCommand, report func(controlplane.AgentCommandEvent)) {
@@ -283,18 +283,10 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		if target == "" && cmd.Session != nil {
 			target = cmd.Session.ID
 		}
-		if targetCommand, ok := r.cancel(target); ok {
-			if report != nil {
-				report(controlplane.AgentCommandEvent{
-					CommandID: targetCommand.ID,
-					Type:      targetCommand.Type,
-					ActionID:  targetCommand.ActionID, ResourceUID: targetCommand.ResourceUID, Generation: targetCommand.Generation, LeaseEpoch: targetCommand.LeaseEpoch,
-					LeaseOwner: targetCommand.LeaseOwner, Attempt: targetCommand.Attempt,
-					Status:  "cancelled",
-					Message: "command cancelled by cancel_command",
-				})
-			}
-			emit("completed", "command cancelled", nil)
+		if r.cancel(target) {
+			// The target still owns its outcome. Cancelling its context does not
+			// prove its effects stopped or authorize retiring its delivery lease.
+			emit("completed", "cancellation requested", nil)
 			return
 		}
 		emit("failed", "command not running", fmt.Errorf("command %q is not running", target))
@@ -305,8 +297,8 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		return
 	}
 	runCtx, cancel := context.WithCancel(ctx)
-	r.track(cmd, cancel)
-	defer r.untrack(cmd)
+	tracked := r.track(cmd, cancel)
+	defer r.untrack(tracked)
 	emit("started", "command started", nil)
 	switch cmd.Type {
 	case controlplane.RunRecoveryCommand:
@@ -423,11 +415,15 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			return
 		}
 		completed := executeGrantedGuestOperation(opCtx, r.opts, *cmd)
-		// Report completion on runCtx, not opCtx: the operation's own deadline
-		// has very likely expired by now, and the result must still be
-		// delivered — otherwise a timed-out execution is never reported at all
-		// and the caller is left polling something that will never resolve.
-		if err := r.opts.ReportGuestExecutionComplete(runCtx, cmd.Execution.ID, controlplane.GuestExecutionCompletion{Result: completed.Result, ResultClass: completed.ResultClass, Error: completed.Err, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); err != nil {
+		// Both the operation deadline and explicit cancellation can expire
+		// runCtx. Preserve values, but give the outcome report its own budget.
+		budget := r.opts.RequestTimeout
+		if budget <= 0 {
+			budget = 30 * time.Second
+		}
+		reportCtx, stopReport := context.WithTimeout(context.WithoutCancel(runCtx), budget)
+		defer stopReport()
+		if err := r.opts.ReportGuestExecutionComplete(reportCtx, cmd.Execution.ID, controlplane.GuestExecutionCompletion{Result: completed.Result, ResultClass: completed.ResultClass, Error: completed.Err, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); err != nil {
 			emit("failed", "guest execution completion report failed", err)
 			return
 		}
@@ -459,65 +455,57 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 	}
 }
 
-func (r *commandRunner) track(cmd *controlplane.AgentCommand, cancel context.CancelFunc) {
+func (r *commandRunner) track(cmd *controlplane.AgentCommand, cancel context.CancelFunc) *trackedCommand {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	tracked := trackedCommand{cancel: cancel, command: *cmd}
-	r.running[cmd.ID] = tracked
-	if cmd.Type == controlplane.RunRecoveryCommand {
-		return
+	tracked := &trackedCommand{cancel: cancel}
+	add := func(id string) {
+		if id != "" {
+			tracked.keys = append(tracked.keys, id)
+			r.running[id] = tracked
+		}
 	}
-	if cmd.Session != nil && cmd.Session.ID != "" {
-		r.running[cmd.Session.ID] = tracked
+	add(cmd.ID)
+	if cmd.Type != controlplane.RunRecoveryCommand {
+		if cmd.Session != nil {
+			add(cmd.Session.ID)
+		}
+		if cmd.Run != nil {
+			add(cmd.Run.ID)
+		}
+		add(cmd.Operation.ID)
+		if cmd.Execution != nil {
+			add(cmd.Execution.ID)
+		}
+		if cmd.FilePut != nil {
+			add(cmd.FilePut.ID)
+		}
 	}
-	if cmd.Run != nil && cmd.Run.ID != "" {
-		r.running[cmd.Run.ID] = tracked
-	}
-	if cmd.Operation.ID != "" {
-		r.running[cmd.Operation.ID] = tracked
-	}
-	if cmd.Execution != nil && cmd.Execution.ID != "" {
-		r.running[cmd.Execution.ID] = tracked
-	}
-	if cmd.FilePut != nil && cmd.FilePut.ID != "" {
-		r.running[cmd.FilePut.ID] = tracked
+	return tracked
+}
+
+func (r *commandRunner) untrack(tracked *trackedCommand) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, id := range tracked.keys {
+		if r.running[id] == tracked {
+			delete(r.running, id)
+		}
 	}
 }
 
-func (r *commandRunner) untrack(cmd *controlplane.AgentCommand) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.running, cmd.ID)
-	if cmd.Type == controlplane.RunRecoveryCommand {
-		return
-	}
-	if cmd.Session != nil {
-		delete(r.running, cmd.Session.ID)
-	}
-	if cmd.Run != nil {
-		delete(r.running, cmd.Run.ID)
-	}
-	delete(r.running, cmd.Operation.ID)
-	if cmd.Execution != nil {
-		delete(r.running, cmd.Execution.ID)
-	}
-	if cmd.FilePut != nil {
-		delete(r.running, cmd.FilePut.ID)
-	}
-}
-
-func (r *commandRunner) cancel(id string) (controlplane.AgentCommand, bool) {
+func (r *commandRunner) cancel(id string) bool {
 	if id == "" {
-		return controlplane.AgentCommand{}, false
+		return false
 	}
 	r.mu.Lock()
 	tracked, ok := r.running[id]
 	r.mu.Unlock()
 	if !ok {
-		return controlplane.AgentCommand{}, false
+		return false
 	}
 	tracked.cancel()
-	return tracked.command, true
+	return true
 }
 
 func authorizeAgentCommand(policy config.AgentPolicyConfig, cmd *controlplane.AgentCommand) error {

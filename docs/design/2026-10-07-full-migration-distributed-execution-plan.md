@@ -388,3 +388,14 @@ SQL测试库补齐 authority 表；损坏记录从底层直接注入，读取保
 记录删除拒绝。该项不等于 guest 远端取消闭环：GuestExecutionService.Cancel
 仍先写 cancelled 再发布/退休 command，其原子受理和停止证据语义需继续迁移；
 删除后清理阶段的持久排他与恢复也仍未完成。
+
+### 2026-10-09：取消链路的 Agent 源命令保护
+
+发现并修复 Agent 收到 cancel_command 后，仅调用 context.Cancel 就替目标命令
+发送 cancelled 的问题。现在只确认取消请求已传达，目标结果仍由目标执行路径
+报告，不因此提前退休其投递租约。Guest 完成回报使用保留 context values 的独立
+超时预算（RequestTimeout，默认30秒），避免直接继承已取消的执行 context。
+执行跟踪使用独立 token 与捕获的 alias，旧执行清理不再删除替代执行的映射。
+
+该项是持久取消迁移的前置修复，不代表停止证明：API 的取消意图/outbox 原子化、
+guest 终态证据与宿主签名停止协议、回报失败后的持久恢复仍需继续实施。
