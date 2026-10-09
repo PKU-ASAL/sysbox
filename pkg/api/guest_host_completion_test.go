@@ -200,3 +200,59 @@ func TestHostRunChildStopDoesNotRequireStandaloneExecution(t *testing.T) {
 		require.NoError(t, authority.Authorize(ctx, *parent))
 	})
 }
+
+func TestHostGuestRebootReceiptClosesOldEpochWithUnknownResult(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		ctx := context.Background()
+		s := stateDeleteTestServer(t, store)
+		pub, key, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
+		x, cmd, digest := admitGuestStopCandidate(t, store, "agent", 0)
+		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		session, err := authority.OpenSession(ctx, "agent", "host", "")
+		require.NoError(t, err)
+		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}, AgentID: "agent", SessionID: session.ID, CommandID: cmd.ID, ActionID: x.ID, Attempt: 1, Operation: "guest_task", Digest: digest, TargetBootID: "old-guest"}, time.Minute)
+		require.NoError(t, err)
+		_, err = store.CancelGuestExecution(ctx, x.ID)
+		require.NoError(t, err)
+		require.NoError(t, authority.Revoke(ctx, *grant))
+		require.NoError(t, store.DeleteAgentCommand(ctx, "agent", cmd.ID))
+		receipt, err := controlplane.SignRebootedTaskStopReceipt(key, *grant, "host", "new-guest", "reboot-receipt", time.Now())
+		require.NoError(t, err)
+		post := func(server *Server, receipt controlplane.SignedExecutionStopReceipt) *httptest.ResponseRecorder {
+			raw, err := json.Marshal(receipt)
+			require.NoError(t, err)
+			w := httptest.NewRecorder()
+			server.ServeHTTP(w, httptest.NewRequest("POST", "/v1/hosts/agent/execution-grants/stopped", bytes.NewReader(raw)))
+			return w
+		}
+		changed := receipt
+		changed.ObservedGuestBootID = "forged-boot"
+		require.Equal(t, 401, post(s, changed).Code)
+		held, err := authority.InspectGrant(ctx, "agent", grant.Scope)
+		require.NoError(t, err)
+		require.Equal(t, controlplane.GrantRevoked, held.State)
+		w := post(s, receipt)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		completed, err := store.GetGuestExecution(ctx, x.ID)
+		require.NoError(t, err)
+		require.Equal(t, "unknown", completed.ResultClass)
+		require.True(t, guestExecutionTerminal(completed.Status))
+		require.Empty(t, completed.Result.Stdout)
+		require.Empty(t, completed.Result.Stderr)
+		stopped, err := authority.InspectGrant(ctx, "agent", grant.Scope)
+		require.NoError(t, err)
+		require.Equal(t, controlplane.GrantStopped, stopped.State)
+		next := *grant
+		next.ActionID = "successor"
+		next.TargetBootID = "new-guest"
+		successor, err := authority.Issue(ctx, next, time.Minute)
+		require.NoError(t, err)
+		cold := stateDeleteTestServer(t, store)
+		cold.grantHostKeys = s.grantHostKeys
+		w = post(cold, receipt)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.NoError(t, authority.Authorize(ctx, *successor))
+	})
+}

@@ -69,6 +69,7 @@ func (s *Server) loadExecutionGrantSigner() error {
 	return s.ConfigureExecutionGrantSigner(ed25519.PrivateKey(raw))
 }
 func (s *Server) registerExecutionGrantRoutes() {
+	s.mux.HandleFunc("POST /v1/agents/{agent}/guest-task-stops", s.handleGuestTaskStops)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-session", s.handleExecutionSession)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant", s.handleExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/authorize", s.handleAuthorizeExecutionGrant)

@@ -74,6 +74,12 @@ func (c AuthorityClient) ReportStop(ctx context.Context, receipt controlplane.Si
 	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/execution-grants/stopped", receipt, false)
 }
 
+func (c AuthorityClient) PendingGuestTaskStops(ctx context.Context, cursor controlplane.GuestTaskStopCursor) (controlplane.GuestTaskStopPage, error) {
+	var page controlplane.GuestTaskStopPage
+	err := c.postJSON(ctx, "/v1/agents/"+c.Identity.ID+"/guest-task-stops", cursor, &page)
+	return page, err
+}
+
 func (c AuthorityClient) ReportRun(ctx context.Context, runID string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {
 	if runID == "" || strings.ContainsAny(runID, "/\\?#\x00") {
 		return fmt.Errorf("invalid run ID")

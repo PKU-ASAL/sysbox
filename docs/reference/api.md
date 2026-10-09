@@ -329,6 +329,23 @@ transaction. Never-authorized tasks become `failed / not_started` without
 setting `cancel_requested`. Previously authorized tasks retain their execution
 state; their remaining grants are revoked and host evidence supplies the result.
 
+`POST /v1/agents/{agent}/guest-task-stops` lets the owning host discover revoked
+standalone guest tasks, using signed Agent authentication. A disabled Agent may
+still drain effects; an identity without stored credentials is rejected. The
+JSON cursor contains optional `after_epoch` and `through_epoch`. Start with `{}`;
+continue with the returned `next_epoch` as `after_epoch` and keep the returned
+`through_epoch` until `next_epoch` is zero. Each page has at most 64 entries
+across `stops` and `issues`. Each stop carries topology/node names and a signed,
+stop-only cancellation proof. Issues identify unavailable source records; they
+do not prevent pagination. This route issues no execution authority.
+
+A reboot stop receipt additionally contains `observed_guest_boot_id`, signed
+alongside the original `guest_boot_id`. The host must first verify canonical
+resource identity. A changed boot proves old-process termination only, so its
+guest result is `unknown` without output or a known exit code. Run children are
+not included in this discovery route. Terminal executions still rely on exact
+host-receipt replay to finish an interrupted authority release.
+
 File upload uses the request body as raw binary bytes, `X-Content-SHA256` for
 integrity, and query parameters for the absolute guest `path` and octal `mode`.
 The limit is 16 MiB. Paths containing NUL, traversal, or a non-absolute path

@@ -36,25 +36,27 @@ type Target struct {
 type Dispatcher struct {
 	Root, AgentID, HostBootID string
 	// RunID is set only by the trusted parent Run constructor.
-	RunID      string
-	IssuerKey  ed25519.PublicKey
-	HostKey    ed25519.PrivateKey
-	Resolve    func(context.Context, TargetRef) (Target, error)
-	ResolveRun func(context.Context, TargetRef, string) (Target, error)
-	Authorize  func(context.Context, controlplane.SignedExecutionGrant) error
-	ReportStop func(context.Context, controlplane.SignedExecutionStopReceipt) error
+	RunID        string
+	IssuerKey    ed25519.PublicKey
+	HostKey      ed25519.PrivateKey
+	Resolve      func(context.Context, TargetRef) (Target, error)
+	ResolveRun   func(context.Context, TargetRef, string) (Target, error)
+	Authorize    func(context.Context, controlplane.SignedExecutionGrant) error
+	ReportStop   func(context.Context, controlplane.SignedExecutionStopReceipt) error
+	PendingStops func(context.Context, controlplane.GuestTaskStopCursor) (controlplane.GuestTaskStopPage, error)
 }
 type TaskRecord struct {
-	RunID           string                                   `json:"run_id,omitempty"`
-	Ref             TargetRef                                `json:"ref"`
-	ProviderNodeID  string                                   `json:"provider_node_id"`
-	Version         int                                      `json:"version"`
-	Handle          substrate.ExecutionHandle                `json:"handle"`
-	Grant           controlplane.SignedExecutionGrant        `json:"grant"`
-	Result          substrate.ExecResult                     `json:"result"`
-	CancelRequested bool                                     `json:"cancel_requested"`
-	StopReceipt     *controlplane.SignedExecutionStopReceipt `json:"stop_receipt,omitempty"`
-	Reported        bool                                     `json:"reported"`
+	Cancellation    *controlplane.SignedExecutionCancellation `json:"cancellation,omitempty"`
+	RunID           string                                    `json:"run_id,omitempty"`
+	Ref             TargetRef                                 `json:"ref"`
+	ProviderNodeID  string                                    `json:"provider_node_id"`
+	Version         int                                       `json:"version"`
+	Handle          substrate.ExecutionHandle                 `json:"handle"`
+	Grant           controlplane.SignedExecutionGrant         `json:"grant"`
+	Result          substrate.ExecResult                      `json:"result"`
+	CancelRequested bool                                      `json:"cancel_requested"`
+	StopReceipt     *controlplane.SignedExecutionStopReceipt  `json:"stop_receipt,omitempty"`
+	Reported        bool                                      `json:"reported"`
 }
 
 // Each finite recovery pass visits every record. Reserve time after authority
@@ -111,7 +113,7 @@ func (d *Dispatcher) load(h substrate.ExecutionHandle) (TaskRecord, error) {
 	if err = json.Unmarshal(raw, &r); err != nil {
 		return r, err
 	}
-	if r.Version != 2 || r.ProviderNodeID == "" || r.Ref.Node != h.NodeID || r.Ref.Scope != r.Grant.Grant.Scope || !sameHandle(r.Handle, h) || r.Grant.Grant.AgentID != d.AgentID || r.Grant.Grant.Scope.TopologyUID != h.TopologyUID || r.Grant.Grant.Scope.ResourceUID != h.ResourceUID || r.Grant.Grant.Scope.Generation != h.Generation || r.Grant.Grant.Epoch != h.Epoch || r.Grant.Grant.Digest != h.Digest || r.Grant.BootID != h.BootID {
+	if r.Version != 3 || r.Ref.Topology == "" || r.Ref.Node != h.NodeID || r.Ref.Scope != r.Grant.Grant.Scope || !sameHandle(r.Handle, h) || r.Grant.Grant.AgentID != d.AgentID || r.Grant.Grant.Scope.TopologyUID != h.TopologyUID || r.Grant.Grant.Scope.ResourceUID != h.ResourceUID || r.Grant.Grant.Scope.Generation != h.Generation || r.Grant.Grant.Epoch != h.Epoch || r.Grant.Grant.ActionID != h.ID || r.Grant.Grant.Digest != h.Digest || r.Grant.BootID != h.BootID {
 		return r, guesttask.ErrConflict
 	}
 	if (r.Grant.Grant.ParentEpoch != 0) != (r.RunID != "") {
@@ -119,7 +121,17 @@ func (d *Dispatcher) load(h substrate.ExecutionHandle) (TaskRecord, error) {
 	}
 	// Historical signatures remain verifiable after expiry; this is record
 	// integrity validation, not authorization to execute or renew the grant.
-	if controlplane.VerifyExecutionGrant(d.IssuerKey, r.Grant, h.BootID, r.Grant.IssuedAt) != nil {
+	if r.Cancellation != nil && (controlplane.VerifyExecutionCancellation(d.IssuerKey, *r.Cancellation) != nil || !sameTaskGrant(r.Grant.Grant, r.Cancellation.Grant) || !r.CancelRequested) {
+		return r, guesttask.ErrConflict
+	}
+	if len(r.Grant.Signature) != 0 {
+		if controlplane.VerifyExecutionGrant(d.IssuerKey, r.Grant, h.BootID, r.Grant.IssuedAt) != nil {
+			return r, guesttask.ErrConflict
+		}
+	} else if r.Cancellation == nil || !r.Grant.IssuedAt.IsZero() || r.Grant.Grant != r.Cancellation.Grant {
+		return r, guesttask.ErrConflict
+	}
+	if r.ProviderNodeID == "" && (r.Cancellation == nil || len(r.Grant.Signature) != 0 || r.StopReceipt != nil) {
 		return r, guesttask.ErrConflict
 	}
 	if r.StopReceipt != nil && (controlplane.VerifyExecutionStopReceipt(d.HostKey.Public().(ed25519.PublicKey), *r.StopReceipt) != nil || r.StopReceipt.GuestBootID != h.BootID || r.StopReceipt.TaskID != h.ID || r.StopReceipt.TaskDigest != h.Digest || r.StopReceipt.Grant != r.Grant.Grant) {
@@ -295,7 +307,7 @@ func (d *Dispatcher) Start(ctx context.Context, ref TargetRef, req guesttask.Req
 	if !os.IsNotExist(err) {
 		return zero, err
 	}
-	r := TaskRecord{Version: 2, RunID: d.RunID, Ref: ref, ProviderNodeID: target.NodeID, Handle: h, Grant: g, Result: substrate.ExecResult{Status: substrate.ExecStatusUnknown, RemoteTermination: substrate.RemoteTerminationUnknown}}
+	r := TaskRecord{Version: 3, RunID: d.RunID, Ref: ref, ProviderNodeID: target.NodeID, Handle: h, Grant: g, Result: substrate.ExecResult{Status: substrate.ExecStatusUnknown, RemoteTermination: substrate.RemoteTerminationUnknown}}
 	if err = d.save(r); err != nil {
 		return r, err
 	}
@@ -426,6 +438,9 @@ func (d *Dispatcher) cancelLocked(ctx context.Context, r TaskRecord) (TaskRecord
 	if err != nil {
 		return r, err
 	}
+	if r.ProviderNodeID == "" && r.Cancellation != nil {
+		r.ProviderNodeID = target.NodeID
+	}
 	if target.NodeID != r.ProviderNodeID {
 		return r, guesttask.ErrConflict
 	}
@@ -437,8 +452,36 @@ func (d *Dispatcher) cancelLocked(ctx context.Context, r TaskRecord) (TaskRecord
 	if err = d.save(r); err != nil {
 		return r, err
 	}
+	if r.Cancellation != nil {
+		if info, ok := target.Connection.(interface {
+			GuestTaskBootID(context.Context) (string, error)
+		}); ok {
+			boot, err := info.GuestTaskBootID(ctx)
+			if err != nil {
+				return r, err
+			}
+			if boot == "" {
+				return r, guesttask.ErrUnknown
+			}
+			if boot != r.Handle.BootID {
+				receipt, err := controlplane.SignRebootedTaskStopReceipt(d.HostKey, r.Grant.Grant, d.HostBootID, boot, rand.Text(), time.Now())
+				if err != nil {
+					return r, err
+				}
+				r.Result = substrate.ExecResult{Status: substrate.ExecStatusUnknown, RemoteTermination: substrate.RemoteTerminationConfirmed}
+				r.StopReceipt = &receipt
+				if err = d.save(r); err != nil {
+					return r, err
+				}
+				return d.report(ctx, r)
+			}
+		}
+	}
 	providerHandle := r.Handle
 	providerHandle.NodeID = target.NodeID
+	if r.Cancellation != nil {
+		ctx = transport.WithTaskCancellation(ctx, *r.Cancellation)
+	}
 	if _, err = canceller.CancelExecution(ctx, providerHandle); err != nil {
 		return r, err
 	}
@@ -493,7 +536,7 @@ func (d *Dispatcher) Renew(ctx context.Context, ref TargetRef, h substrate.Execu
 func (d *Dispatcher) Recover(ctx context.Context) error {
 	entries, err := os.ReadDir(d.Root)
 	if os.IsNotExist(err) {
-		return nil
+		err = nil
 	}
 	if err != nil {
 		return err
@@ -536,6 +579,9 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 		if err != nil {
 			failures = append(failures, err)
 		}
+	}
+	if err := d.recoverPendingStops(ctx); err != nil {
+		failures = append(failures, err)
 	}
 	return errors.Join(failures...)
 }

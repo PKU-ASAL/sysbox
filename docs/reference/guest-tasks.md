@@ -148,7 +148,7 @@ file storage commits intent/outbox together and recovers interrupted authority
 publication from that record. This does not establish host stop evidence.
 Guest file format 2, lifecycle aggregate 4 and authority format 2 are unchanged;
 earlier execution formats and API schemas require explicit rebuilding, with no
-compatibility reader. Host task records now use version 2 and reject version 1;
+compatibility reader. Host task records now use version 3 and reject older versions;
 rebuild old task data explicitly. Worker execution completion is removed; only
 authenticated host evidence can establish an API execution's terminal result.
 
@@ -166,9 +166,26 @@ corrupt records, dangling record references and missing records for other tasks
 remain unresolved. Cancellation of an already owned task still works offline
 without requesting new authority.
 
-This is the guest-side mechanism. API discovery/signing of pending stops and
-host recovery for a missing host task record are not yet connected; the public
-API does not yet automatically close that recovery window.
+The host supervisor discovers revoked standalone tasks through the signed Agent
+route `POST /v1/agents/{agent}/guest-task-stops`. Each pass has a fixed epoch
+ceiling and pages of at most 64 entries. Invalid source records are reported as
+issues without blocking later entries. Disabled Agents can drain their own
+effects; unsigned development identities cannot obtain cancellation proofs.
+
+Recovery persists a stop-only host record before resolving the provider. It
+then checks canonical UID/generation, pins the provider identity, and sends the
+cancellation proof to the guest. It never calls Start. A completed guest task
+retains its actual exit result. Signed receipts persist before reporting and
+are replayed exactly after restart or a lost acknowledgement.
+
+If that verified resource reports a different guest boot ID, a host receipt
+binds both boots and confirms the old process has stopped with an unknown exit
+result. It does not cancel a task in the new boot. An unavailable resource or an
+unreadable boot is still unknown, not evidence of termination.
+
+Discovery currently excludes Run-derived tasks. After the API has committed a
+terminal result, authority-release recovery depends on the original durable
+host receipt; complete loss of that receipt is not automatically repaired.
 
 Run `make test-host-file-e2e` for the actual API/host/Docker installation test,
 including lost stop acknowledgment, cold recovery, checksum/mode and revoked

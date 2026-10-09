@@ -106,6 +106,7 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 	require.NoError(t, os.Chmod(root, 0700))
 	require.NoError(t, os.Chmod(filepath.Dir(socket), 0700))
 	dispatcher := &hostsupervisor.Dispatcher{Root: root, AgentID: "owner", HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: hostKey, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
+	dispatcher.PendingStops = authority.PendingGuestTaskStops
 	startSupervisor := func() (context.CancelFunc, chan error) {
 		runCtx, stop := context.WithCancel(ctx)
 		done := make(chan error, 1)
@@ -131,7 +132,7 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: server.apiStore}).OpenSession(ctx, "owner", "first-process", "")
 	require.NoError(t, err)
 	var previousEpoch uint64
-	for round := 0; round < 3; round++ {
+	for round := 0; round < 4; round++ {
 		operationID := fmt.Sprintf("operation-%d", round)
 		request := controlplane.GuestExecutionRequest{Argv: []string{"/bin/sh", "-c", "printf supervised; exit 7"}}
 		if round == 1 {
@@ -157,8 +158,18 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 		previousEpoch = grant.Grant.Epoch
 		task, err := guesttask.FromExecutionCommand(*claimed)
 		require.NoError(t, err)
-		handle, err := client.Start(transport.WithTaskGrant(ctx, task.ID, grant), substrate.ExecRequest{Program: task.Args[0], Args: task.Args[1:], Shell: substrate.ShellNone, OutputLimitBytes: task.OutputLimit})
-		require.NoError(t, err)
+		execRequest := substrate.ExecRequest{Program: task.Args[0], Args: task.Args[1:], Shell: substrate.ShellNone, OutputLimitBytes: task.OutputLimit}
+		var handle substrate.ExecutionHandle
+		if round == 3 {
+			// The grant escaped the API, but no Start request ever reached the
+			// host. Only API discovery can create the stop-only recovery record.
+			handle = substrate.ExecutionHandle{ID: task.ID, Digest: grant.Grant.Digest, BootID: grant.BootID, Epoch: grant.Grant.Epoch, NodeID: ref.Node, TopologyUID: ref.Scope.TopologyUID, ResourceUID: ref.Scope.ResourceUID, Generation: ref.Scope.Generation}
+			_, err = server.apiStore.CancelGuestExecution(ctx, operationID)
+			require.NoError(t, err)
+		} else {
+			handle, err = client.Start(transport.WithTaskGrant(ctx, task.ID, grant), execRequest)
+			require.NoError(t, err)
+		}
 		if round == 1 {
 			require.Eventually(t, func() bool {
 				data, err := client.ReadExecutionOutput(ctx, handle, "stdout", 0, 100)
@@ -190,27 +201,48 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 			server.grantHostKeys = map[string]ed25519.PublicKey{"owner": hostPublic}
 			apiProcess.Store(server)
 			dispatcher = &hostsupervisor.Dispatcher{Root: root, AgentID: "owner", HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: hostKey, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
+			dispatcher.PendingStops = authority.PendingGuestTaskStops
 			stop, done = startSupervisor()
 		}
 		var lastResult substrate.ExecResult
 		var lastError error
 		stopped := assert.Eventually(t, func() bool {
 			lastResult, lastError = client.ObserveExecution(ctx, handle)
-			return lastError == nil && (round == 1 || lastResult.ExitCodeKnown && lastResult.ExitCode == 7) && lastResult.RemoteTermination == substrate.RemoteTerminationConfirmed
+			return lastError == nil && (round == 1 || round == 3 || lastResult.ExitCodeKnown && lastResult.ExitCode == 7) && lastResult.RemoteTermination == substrate.RemoteTerminationConfirmed
 		}, 5*time.Second, 20*time.Millisecond)
 		require.True(t, stopped, "round=%d result=%+v error=%v", round, lastResult, lastError)
 		data, err := client.ReadExecutionOutput(ctx, handle, "stdout", 0, 100)
 		require.NoError(t, err)
-		require.Equal(t, "supervised", string(data.Data))
+		if round == 3 {
+			require.Empty(t, data.Data)
+		} else {
+			require.Equal(t, "supervised", string(data.Data))
+		}
 		completed, err := server.apiStore.GetGuestExecution(ctx, operationID)
 		require.NoError(t, err)
 		require.True(t, guestExecutionTerminal(completed.Status), "host report must also finish the API execution")
-		require.Equal(t, "c3VwZXJ2aXNlZA==", completed.Result.Stdout)
-		if round != 1 {
+		if round == 3 {
+			require.Equal(t, controlplane.GuestExecutionCancelled, completed.Status)
+			require.Empty(t, completed.Result.Stdout)
+			target, err := resolver.Resolve(ctx, ref)
+			require.NoError(t, err)
+			guest := transport.NewTaskClient(target.Connection, target.NodeID, ref.Scope.Generation)
+			late, err := guest.Start(transport.WithTaskGrant(ctx, task.ID, grant), execRequest)
+			require.NoError(t, err)
+			result, err := guest.ObserveExecution(ctx, late)
+			require.NoError(t, err)
+			require.Equal(t, substrate.RemoteTerminationConfirmed, result.RemoteTermination)
+			require.False(t, result.ExitCodeKnown)
+			output, err := exec.CommandContext(ctx, "docker", "exec", containerID, "test", "!", "-e", "/sys/fs/cgroup/sysbox-tasks/sysbox-task-"+operationID).CombinedOutput()
+			require.NoError(t, err, string(output))
+		} else {
+			require.Equal(t, "c3VwZXJ2aXNlZA==", completed.Result.Stdout)
+		}
+		if round != 1 && round != 3 {
 			require.Equal(t, controlplane.GuestExecutionCompleted, completed.Status)
 			require.Equal(t, 7, completed.Result.ExitCode)
 		}
 		require.Error(t, authority.Authorize(ctx, grant), "completed epoch must already be retired before successor issuance")
 	}
-	t.Log("real Docker task through supervisor socket: persisted host stop, lost API acknowledgment, API and supervisor restart, live task cancellation after Agent session replacement, and successor epoch verified")
+	t.Log("real Docker task: host result replay, restart, session loss, successor fencing, and API-discovered missing host/guest task cancellation with late Start rejection verified")
 }

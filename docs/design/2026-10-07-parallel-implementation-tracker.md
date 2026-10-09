@@ -596,3 +596,11 @@ API schema 13 / execution format 4 / host task version 2 明确重建旧格式�
 旧record1明确重建；amd64/arm64嵌入helper已重建。真实私有cgroup及宿主/API
 E2E通过。API待停止授权发现/凭证签发与host无记录收敛尚未接入，不能据此关闭
 整个missing-host-record窗口或P0–P9。
+
+2026-10-10 独立guest任务撤销发现已接通：API按owner、revoked授权和不可变源
+记录签发stop-only证明，固定epoch上界、64项分页；坏源记录返回issue并继续。
+host先持久stop-only记录，再核验canonical UID/generation及provider身份并取消，
+不调用Start。新guest boot以签名双boot证明旧任务已停，结果保持unknown；已完成
+任务保留真实结果，回报失败后精确重放原回执。host task升级为3并拒绝旧格式，
+guest task2/RPC1/scope2/API13/execution4不变。Run child发现仍未接入，API终态
+提交后若丢失唯一host receipt仍不能自动补authority release；完整P0–P9未关闭。

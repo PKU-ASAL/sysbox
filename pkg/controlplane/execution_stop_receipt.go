@@ -11,20 +11,21 @@ import (
 // it has proved that the grant cannot create further effects. Its signing key
 // is distinct from both worker authentication and API issuer credentials.
 type SignedExecutionStopReceipt struct {
-	EvidenceDigest string                       `json:"evidence_digest,omitempty"`
-	InstallID      string                       `json:"install_id,omitempty"`
-	InstallDigest  string                       `json:"install_digest,omitempty"`
-	FileResult     *substrate.FileInstallResult `json:"file_result,omitempty"`
-	GuestResult    *GuestTaskResult             `json:"guest_result,omitempty"`
-	GuestBootID    string                       `json:"guest_boot_id,omitempty"`
-	TaskID         string                       `json:"task_id,omitempty"`
-	TaskDigest     string                       `json:"task_digest,omitempty"`
-	Quiescence     string                       `json:"quiescence"`
-	Grant          ExecutionGrant               `json:"grant"`
-	HostBootID     string                       `json:"host_boot_id"`
-	ReceiptID      string                       `json:"receipt_id"`
-	StoppedAt      time.Time                    `json:"stopped_at"`
-	Signature      []byte                       `json:"signature"`
+	ObservedGuestBootID string                       `json:"observed_guest_boot_id,omitempty"`
+	EvidenceDigest      string                       `json:"evidence_digest,omitempty"`
+	InstallID           string                       `json:"install_id,omitempty"`
+	InstallDigest       string                       `json:"install_digest,omitempty"`
+	FileResult          *substrate.FileInstallResult `json:"file_result,omitempty"`
+	GuestResult         *GuestTaskResult             `json:"guest_result,omitempty"`
+	GuestBootID         string                       `json:"guest_boot_id,omitempty"`
+	TaskID              string                       `json:"task_id,omitempty"`
+	TaskDigest          string                       `json:"task_digest,omitempty"`
+	Quiescence          string                       `json:"quiescence"`
+	Grant               ExecutionGrant               `json:"grant"`
+	HostBootID          string                       `json:"host_boot_id"`
+	ReceiptID           string                       `json:"receipt_id"`
+	StoppedAt           time.Time                    `json:"stopped_at"`
+	Signature           []byte                       `json:"signature"`
 }
 
 func stopReceiptMessage(r SignedExecutionStopReceipt) ([]byte, error) {
@@ -34,6 +35,9 @@ func stopReceiptMessage(r SignedExecutionStopReceipt) ([]byte, error) {
 }
 func validStopReceipt(r SignedExecutionStopReceipt) bool {
 	g := r.Grant
+	if r.ObservedGuestBootID != "" && (g.Operation != "guest_task" || r.ObservedGuestBootID == r.GuestBootID || r.GuestResult == nil || r.GuestResult.ExitCodeKnown || r.GuestResult.ResultClass != "unknown" || r.GuestResult.Result.Stdout != "" || r.GuestResult.Result.Stderr != "") {
+		return false
+	}
 	if (g.Operation == "adoption_apply" || g.Operation == "ssh_access_apply" || g.Operation == "ssh_access_delete") && (len(r.EvidenceDigest) != 64 || g.Scope.ResourceUID == "") {
 		return false
 	}

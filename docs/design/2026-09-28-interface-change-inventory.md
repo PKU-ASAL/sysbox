@@ -876,3 +876,11 @@ Call的cancellation字段仅用于cancel，不授予start权限。guest task rec
 旧数据明确重建，RPC仍为1、scope仍为2、host task仍为2、API13/execution4不变。
 Start严格绑定request.ID与grant.ActionID。此时尚无公共API凭证签发路由，宿主
 无记录自动发现/恢复需后续接入；没有旧格式兼容读取或新启动权限回退。
+
+实施补充（2026-10-10 host撤销发现接入）：新增
+`POST /v1/agents/{agent}/guest-task-stops`，仅签名owner可读，禁用Agent仍可清理。
+cursor为after_epoch/through_epoch；响应stops/issues/next_epoch/through_epoch，
+每页最多64项，固定上界避免持续新增导致扫描无法结束。只覆盖独立guest任务。
+host task2→3，支持先落盘stop-only authority；无兼容读取，旧数据明确重建。
+SignedExecutionStopReceipt新增observed_guest_boot_id，绑定已核验资源的新boot，
+结果仅unknown；guest task2/RPC1/scope2/API13/execution4不变。

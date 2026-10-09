@@ -2041,3 +2041,38 @@ API discovery/signing of pending stop proofs and host-side automatic recovery
 still need integration. A mismatched current guest boot is rejected for missing
 records; separate reboot evidence remains necessary. Full two-VM P9 acceptance
 and the wider P0–P9 backlog remain open.
+
+### 2026-10-10 — API discovery and missing-host-task cancellation
+
+The owning host now discovers revoked standalone tasks from the API, including
+retired source commands. Discovery uses authenticated owner scope, immutable
+request digests, a fixed epoch ceiling and 64-entry pages. Bad source records
+do not starve later entries. A disabled Agent can drain its old effects.
+
+The host writes a stop-only task record before provider resolution, then checks
+canonical UID/generation and pins provider identity before cancelling. Lost
+reports replay the original signed receipt. Existing completed guest results
+are preserved. A verified guest reboot signs old/new boot IDs and an unknown
+result; replacement providers cannot supply that evidence for the old task.
+
+Full `go test -race ./... -count=1 -timeout=8m` passed with a fresh isolated
+PostgreSQL 16 instance enabled for API and persistence tests (API 106.499s,
+hostsupervisor 17.879s). Focused tests cover paging past a bad source, fixed
+ceilings, owner authentication, provider replacement refusal, old-format and
+tampered-proof rejection, receipt replay and HTTP reboot evidence. Vet,
+docscheck and all-package e2e-tag compilation also passed.
+
+`make test-host-supervisor-e2e` passed with a freshly built helper (5.28s test /
+6.300s package). The added real Docker round issues authority without sending
+Start, cancels through the API, recovers missing host/guest records, and rejects
+a late Start carrying the still-valid original credential. It also checks API
+terminal cancellation without fabricated output. Test containers were cleaned.
+Guest reboot evidence was validated in host and HTTP integration tests, not a
+new physical reboot E2E in this run.
+
+Host task format is now 3 and rejects older records; both embedded helpers were
+rebuilt. Guest task2/RPC1/scope2/API13/execution4 remain unchanged. Run-derived
+task discovery is still open. A terminal API result with complete loss of its
+original host receipt still cannot automatically finish authority release.
+Persistent deletion, remaining P5–P8 capabilities and full two-VM P9 fault
+acceptance remain required; this entry does not close the overall plan.
