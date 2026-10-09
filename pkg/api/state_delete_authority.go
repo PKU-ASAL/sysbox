@@ -29,6 +29,9 @@ func (s *Server) deleteStateWithAuthority(ctx context.Context, topology string, 
 			return err
 		}
 		return persistence.FilesystemExecutionGrantStorage(store.runsDir).UpdateExecutionAuthority(ctx, func(authority []byte) ([]byte, error) {
+			if err := checkLocalDeleteActivity(ctx, store, topology); err != nil {
+				return nil, err
+			}
 			return nil, repo.DeleteQuiescentLifecycle(ctx, topology, serial, uid, authority)
 		})
 	case *sqliteAPIStore:
@@ -74,6 +77,9 @@ func deleteSQLiteStateWithAuthority(ctx context.Context, store *sqliteAPIStore, 
 		return persistence.ErrCorruptRecord
 	}
 	if err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_lifecycle_aggregates WHERE topology=?", topology).Scan(&raw); err != nil {
+		return err
+	}
+	if err := checkSQLiteDeleteActivity(ctx, conn, topology); err != nil {
 		return err
 	}
 	next, err := persistence.ApplyQuiescentLifecycleDelete(raw, authority, topology, serial, uid)
@@ -122,6 +128,9 @@ func deletePostgresStateWithAuthority(ctx context.Context, store *postgresAPISto
 		return err
 	}
 	if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1 FOR UPDATE", topology).Scan(&raw); err != nil {
+		return err
+	}
+	if err := checkPostgresDeleteActivity(ctx, tx, topology); err != nil {
 		return err
 	}
 	next, err := persistence.ApplyQuiescentLifecycleDelete(raw, authority, topology, serial, uid)

@@ -19,7 +19,7 @@ func TestRemoteMetadataDeleteRequiresReceiptOrExplicitForce(t *testing.T) {
 	placement, err := w.loadPlacement("lab")
 	require.NoError(t, err)
 	require.NotNil(t, placement)
-	require.NoError(t, s.apiStore.SaveRun(ctx, controlplane.Run{ID: "destroyed", Topology: "lab", AgentID: "owner", Op: "destroy", Status: controlplane.RunDone, QueuedAt: time.Now().UTC()}))
+	require.NoError(t, s.apiStore.SaveRun(ctx, controlplane.Run{ID: "destroyed", Topology: "lab", AgentID: "owner", Op: "destroy", Status: controlplane.RunDone, QueuedAt: time.Now().UTC(), EndedAt: time.Now().UTC()}))
 	require.ErrorIs(t, w.Delete(ctx, "lab", false), persistence.ErrConflict, "terminal run is not a durable empty resource receipt")
 	require.NoError(t, w.Delete(ctx, "lab", true))
 	placement, err = w.loadPlacement("lab")

@@ -54,7 +54,7 @@ func TestWorkspaceCatalogRetainsPlacedRemoteTopologyUntilMetadataRemoval(t *test
 			s := NewServerWithConfig(cfg)
 			ctx := context.Background()
 			require.NoError(t, s.workspaceService().bindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
-			require.NoError(t, s.apiStore.SaveRun(ctx, controlplane.Run{ID: "applied", Topology: "lab", AgentID: "owner", Op: "apply", Status: controlplane.RunDone, QueuedAt: time.Now().UTC()}))
+			require.NoError(t, s.apiStore.SaveRun(ctx, controlplane.Run{ID: "applied", Topology: "lab", AgentID: "owner", Op: "apply", Status: controlplane.RunDone, QueuedAt: time.Now().UTC(), EndedAt: time.Now().UTC()}))
 			listed, err := s.workspaceService().List(ctx)
 			require.NoError(t, err)
 			require.Len(t, listed, 1)

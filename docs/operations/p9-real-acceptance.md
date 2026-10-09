@@ -1775,3 +1775,30 @@ review passed. This API-only slice did not rerun real PostgreSQL or cross-host
 acceptance and changes no persistence format. Trusted-header authentication
 and continuous authorization of already-open connections remain separate
 boundaries; this test does not establish them.
+
+### Run/Console checks inside metadata deletion (2026-10-09)
+
+Deletion re-reads latest Run and complete Console records while holding the
+existing authority exclusion through lifecycle commit. Regressions first passed
+preflight, then admitted a queued Run or lost Console in a different workspace:
+the old commit path incorrectly deleted metadata. The new path returns conflict
+and retains UID/serial. Known terminal latest records and unrelated topology
+activity do not block deletion. Run completion requires a known terminal status,
+nonzero queue/end times and non-reversed timestamps, shared with preflight.
+
+Review identified that the first SQLite implementation bypassed indexed-column
+validation. A corruption-after-preflight regression reproduced deletion despite
+LoadRuns rejecting the record; commit now reuses scanSQLiteRun and returns
+ErrCorruptRecord without changing lifecycle identity. Initial API race also
+exposed three fixtures containing incomplete terminal times; those fixtures now
+provide valid completion evidence without weakening the production checks.
+
+Targeted deletion race passed with real PostgreSQL (2.779 seconds). This covers
+Run/Console writers already serialized with authority; raw command, guest,
+node/adoption/GC writers and their full deletion checks remain open. It is not
+cross-host cleanup acceptance or a claim that the entire delete protocol closed.
+
+The final full Go suite passed with both PostgreSQL test variables enabled.
+API vet, docscheck (53 canonical documents), diff checks and independent
+follow-up review passed. The isolated PostgreSQL instance was used only for
+this test slice; no retained project resources or VM lab were deleted.

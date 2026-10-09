@@ -508,3 +508,9 @@ repair 也消费原子方法。失败不改审计/状态、不通知本地 relay
 角色策略的绕过；统一服务层读取+授权，禁止先升级连接再验证。取消 audit 使用
 当前操作者角色，拒绝不写入 registry/outbox。权限缺失403、不存在404、内部故障
 脱敏503。API race 和独立审查通过；尚不包含已连接会话的持续授权/host stop。
+
+2026-10-09 删除提交活动检查：在已有 authority/lifecycle 提交事务内重新读取
+最新 Run 和所有 workspace 的 Console，拒绝预检后新受理的未解决活动；失败保留
+原 UID/serial，已结束最新记录和无关 topology 可继续删除。SQLite复用索引/完整
+JSON 一致性检查，拒绝预检后记录损坏。Run未知状态/缺失或倒序时间均阻挡维护。
+其他 registry 的原始 writer 与完整删除提交检查仍待接入，不代表 P6 全部关闭。

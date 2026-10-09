@@ -315,3 +315,20 @@ command 放在同一事务。沿用现有 authority 锁和维护检查，不增�
 registry 故障明确失败，HTTP 不暴露内部错误。取消审计记录本次主体角色。
 该项只关闭配置角色策略的入口绕过；身份 header 信任、已建立连接的持续授权和
 宿主 grant/停止协议仍是独立边界，不能据此关闭 P0/P4 的全部授权要求。
+
+### 2026-10-09：删除提交内重新检查 Run/Console
+
+删除持有 records/authority 或 SQL 事务后，重新读取最新 Run 与完整 Console
+registry，再提交 lifecycle 变更。读取不经过内存缓存或预检 callback；复用已有
+写入方的 authority 排他边界，阻止“预检通过后受理新活动”的遗漏。
+SQLite Run 读取沿用完整列/JSON 一致性解码器，损坏记录不能被当作终态放行。
+预检和提交共享 Run 完成证据规则：已知终态、有效排队/结束时间、时间不倒序。
+
+这关闭 Run/Console 在删除提交前已受理活动的检查缺口。完整事务仍需把 command、
+guest/node/adoption/GC registry 纳入，并使这些 registry 的全部原始 writer 遵循
+同一排他协议；不能只补一个提交前查询就将整个 P6 删除边界标为完成。
+
+另一个已确认的顺序边界在 WorkspaceService.Delete：deleteStateWithAuthority 返回
+并释放提交锁之后，仍会清理 workspace metadata、目录和 placement。后续实施需
+让整个清理阶段保持持久、可恢复的排他状态，阻止新受理与后清理交错；本次提交内
+检查尚未覆盖这个窗口。

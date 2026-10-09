@@ -799,3 +799,9 @@ cancelling，依靠持久 outbox 投递。退休/冲突取消命令不重新入�
 绕过配置的 Console 权限。拒绝返回403，未修改会话/审计/outbox；registry 故障
 统一返回脱敏503，不再伪装404。取消审计保存当前操作者及其角色。Agent attach
 沿用单独的 Agent 身份和会话归属检查。现有身份 header 的信任边界没有改变。
+
+实施补充（2026-10-09 metadata 删除）：内部提交方法在持锁事务内重新检查 Run/
+Console，不能用过期的预检结果替代。未解决活动返回 ErrConflict，损坏 SQLite
+Run索引/JSON返回 ErrCorruptRecord，lifecycle UID/serial保持原值。强制删除也不
+绕过这项检查。Run未知状态、缺失时间或倒序时间视为未解决，不能作为安全终态。
+路由/schema不变；command/guest/node/adoption/GC 的完整提交边界仍未完成。

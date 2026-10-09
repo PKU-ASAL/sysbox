@@ -27,7 +27,7 @@ func TestWorkspaceDeleteRetainsPinnedRevisionAndSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	snapshot, err := w.MaterializeWorkspaceSnapshot("lab", "run")
 	require.NoError(t, err)
-	require.NoError(t, s.apiStore.SaveRun(context.Background(), controlplane.Run{ID: "history", Topology: "lab", Status: controlplane.RunDone}))
+	require.NoError(t, s.apiStore.SaveRun(context.Background(), controlplane.Run{ID: "history", Topology: "lab", Status: controlplane.RunDone, QueuedAt: time.Now().UTC(), EndedAt: time.Now().UTC()}))
 	require.NoError(t, w.Delete(context.Background(), "lab", false))
 	for _, path := range []string{pinned, snapshot} {
 		body, err := os.ReadFile(path)

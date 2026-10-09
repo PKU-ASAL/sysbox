@@ -562,7 +562,7 @@ func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology
 			return err
 		}
 		for _, run := range latestRunsByID(runs) {
-			if run.Topology == topology && (run.Status.IsActive() || run.QueuedAt.IsZero() || (run.Status.IsTerminal() && run.EndedAt.IsZero())) {
+			if run.Topology == topology && runActivityUnresolved(run) {
 				return fmt.Errorf("%w: active run prevents state maintenance", persistence.ErrConflict)
 			}
 		}
