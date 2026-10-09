@@ -16,8 +16,11 @@ func TestConsoleCancelIntentRecoversOutboxAfterRestart(t *testing.T) {
 		hub := newConsoleSessionHub(store)
 		sess, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})
 		require.NoError(t, err)
-		// Crash after durable intent, before ConsoleService publishes a command.
-		require.NoError(t, hub.Cancel(sess.ID, "requested", "operator"))
+		// Inject an incomplete registry record to exercise repair. Normal Cancel
+		// now commits its outbox atomically and cannot produce this window.
+		previous := sess
+		sess.Status = controlplane.ConsoleSessionStatusCancelling
+		require.NoError(t, store.CompareAndSwapConsoleSession(ctx, previous, sess))
 		cold := newConsoleSessionHub(store)
 		current, err := cold.Snapshot(sess.ID)
 		require.NoError(t, err)
@@ -28,7 +31,7 @@ func TestConsoleCancelIntentRecoversOutboxAfterRestart(t *testing.T) {
 		commands, err := store.ListAgentCommands(ctx, "agent")
 		require.NoError(t, err)
 		require.Len(t, commands, 1)
-		require.Equal(t, consoleCancellationCommand(sess).ID, commands[0].ID)
+		require.Equal(t, persistence.ConsoleCancellationCommand(sess).ID, commands[0].ID)
 		require.Equal(t, "cancel_command", commands[0].Type)
 		leased, ok, err := store.AcquireAgentCommandLease(ctx, "agent", commands[0].ID, "worker", time.Minute)
 		require.NoError(t, err)
@@ -59,8 +62,13 @@ func TestConsoleCancelRecoveryIgnoresLossAndRejectsChangedBinding(t *testing.T) 
 	commands, err := store.ListAgentCommands(ctx, "")
 	require.NoError(t, err)
 	require.Empty(t, commands, "restart transport loss must not invent cancel intent")
-	require.NoError(t, svc.consoles.Cancel(sess.ID, "requested", "operator"))
-	cmd := consoleCancellationCommand(sess)
+	lost, err := svc.consoles.Snapshot(sess.ID)
+	require.NoError(t, err)
+	cancelling := lost
+	cancelling.Status = controlplane.ConsoleSessionStatusCancelling
+	cancelling.EndedAt = time.Time{}
+	require.NoError(t, store.CompareAndSwapConsoleSession(ctx, lost, cancelling))
+	cmd := persistence.ConsoleCancellationCommand(sess)
 	cmd.Session.Node = "wrong-node"
 	require.NoError(t, store.SaveAgentCommand(ctx, cmd))
 	require.ErrorIs(t, svc.reconcileConsoleCancellations(ctx), persistence.ErrConflict)

@@ -50,20 +50,31 @@ func (b localConsoleStorage) UpdateConsoleSession(ctx context.Context, id string
 		workspace = next.Topology
 	}
 	target := filepath.Join(b.store.runsDir, workspace, "sessions", id+".json")
-	if dispatch != nil {
-		prior, err := (localCommandStorage{store: b.store}).read(ctx, dispatch.ID)
+	if current != nil {
+		previous, readErr := os.ReadFile(target)
+		if readErr != nil {
+			return readErr
+		}
+		raw, err = persistence.PreserveConsoleDispatch(previous, *next)
 		if err != nil {
 			return err
 		}
-		if prior != nil {
-			return persistence.ErrConflict
+	}
+	if dispatch != nil {
+		prior, readErr := (localCommandStorage{store: b.store}).read(ctx, dispatch.ID)
+		if readErr != nil {
+			return readErr
 		}
-		raw, err = persistence.EncodeConsoleDispatch(*next, *dispatch)
-	} else if current != nil {
-		var previous []byte
-		previous, err = os.ReadFile(target)
-		if err == nil {
-			raw, err = persistence.PreserveConsoleDispatch(previous, *next)
+		prepared, prepareErr := prepareConsoleCommand(prior, *dispatch)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		if prepared != nil {
+			if dispatch.Type == "session_open" {
+				raw, err = persistence.EncodeConsoleDispatch(*next, *dispatch)
+			} else {
+				raw, err = persistence.WithConsoleCancellation(raw, *dispatch)
+			}
 		}
 	}
 	if err != nil {
@@ -132,8 +143,18 @@ func (b sqliteConsoleStorage) UpdateConsoleSession(ctx context.Context, id strin
 			return err
 		}
 		if dispatch != nil {
-			if err = writeSQLiteCommand(ctx, conn, persistence.CommandRecord{Command: *dispatch}, false); err != nil {
+			prior, err := scanSQLiteCommand(conn.QueryRowContext(ctx, "SELECT "+sqliteCommandColumns+" FROM sysbox_agent_commands WHERE id=?", dispatch.ID))
+			if err != nil {
 				return err
+			}
+			prepared, err := prepareConsoleCommand(prior, *dispatch)
+			if err != nil {
+				return err
+			}
+			if prepared != nil {
+				if err = writeSQLiteCommand(ctx, conn, *prepared, false); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -204,7 +225,18 @@ func (b postgresConsoleStorage) UpdateConsoleSession(ctx context.Context, id str
 			return err
 		}
 		if dispatch != nil {
-			command, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: *dispatch})
+			prior, err := scanPostgresCommand(tx.QueryRow(ctx, "SELECT "+postgresCommandColumns+" FROM sysbox_agent_commands WHERE id=$1 FOR UPDATE", dispatch.ID))
+			if err != nil {
+				return err
+			}
+			prepared, err := prepareConsoleCommand(prior, *dispatch)
+			if err != nil {
+				return err
+			}
+			if prepared == nil {
+				return tx.Commit(ctx)
+			}
+			command, err := persistence.EncodeCommandRecord(*prepared)
 			if err != nil {
 				return err
 			}
@@ -218,4 +250,11 @@ func (b postgresConsoleStorage) UpdateConsoleSession(ctx context.Context, id str
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func prepareConsoleCommand(prior *persistence.CommandRecord, cmd controlplane.AgentCommand) (*persistence.CommandRecord, error) {
+	if cmd.Type == "session_open" && prior != nil {
+		return nil, persistence.ErrConflict
+	}
+	return persistence.PrepareCommandEnqueue(prior, cmd)
 }

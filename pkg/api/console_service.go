@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -17,7 +15,6 @@ import (
 type ConsoleService struct {
 	consoles       *consoleSessionHub
 	scheduler      *SchedulerService
-	publishCommand func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)
 	wakeCommand    func(string, controlplane.AgentCommand) error
 	authorize      func(requestSubject, controlplane.ConsoleSession) error
 	hclFile        func(string) string
@@ -35,7 +32,6 @@ type ConsoleCreateResult struct {
 func newConsoleService(
 	consoles *consoleSessionHub,
 	scheduler *SchedulerService,
-	publishCommand func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error),
 	wakeCommand func(string, controlplane.AgentCommand) error,
 	authorize func(requestSubject, controlplane.ConsoleSession) error,
 	hclFile func(string) string,
@@ -47,7 +43,6 @@ func newConsoleService(
 	return &ConsoleService{
 		consoles:       consoles,
 		scheduler:      scheduler,
-		publishCommand: publishCommand,
 		wakeCommand:    wakeCommand,
 		authorize:      authorize,
 		hclFile:        hclFile,
@@ -108,27 +103,19 @@ func (s *ConsoleService) CreateSession(ctx context.Context, topology, node strin
 }
 
 func (s *ConsoleService) Cancel(ctx context.Context, id string, subj requestSubject) (controlplane.ConsoleSession, error) {
-	if err := s.consoles.Cancel(id, "cancelled by api request", subj.User); err != nil {
+	if err := s.consoles.Cancel(ctx, id, "cancelled by api request", subj.User); err != nil {
 		return controlplane.ConsoleSession{}, err
 	}
 	sess, err := s.consoles.Snapshot(id)
 	if err != nil {
 		return controlplane.ConsoleSession{}, err
 	}
-	_, err = s.publishCommand(ctx, sess.AgentID, consoleCancellationCommand(sess))
-	if err != nil {
-		return sess, fmt.Errorf("publish console cancellation: %w", err)
+	if sess.Status == controlplane.ConsoleSessionStatusCancelling && s.wakeCommand != nil {
+		if err := s.wakeCommand(sess.AgentID, persistence.ConsoleCancellationCommand(sess)); err != nil {
+			slog.Warn("console cancellation wake failed; durable dispatch will retry", "session_id", sess.ID, "error", err)
+		}
 	}
 	return sess, nil
-}
-
-// Immutable session identity determines a single durable cancellation command.
-// Status/audit fields change on retry and must never become command identity.
-func consoleCancellationCommand(sess controlplane.ConsoleSession) controlplane.AgentCommand {
-	identity := controlplane.ConsoleSession{ID: sess.ID, AgentID: sess.AgentID, Topology: sess.Topology, Node: sess.Node, CreatedAt: sess.CreatedAt}
-	raw, _ := json.Marshal(identity)
-	id := fmt.Sprintf("console-cancel-%x", sha256.Sum256(raw))
-	return controlplane.AgentCommand{ID: id, AgentID: sess.AgentID, Type: "cancel_command", Session: &identity}
 }
 
 func (s *ConsoleService) normalizeRequest(req *controlplane.ConsoleRequest, subj requestSubject) error {

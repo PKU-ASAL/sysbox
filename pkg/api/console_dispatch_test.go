@@ -37,11 +37,13 @@ func TestConsoleDispatchPublishesCompleteOutboxAndPreservesRetirement(t *testing
 		require.Equal(t, cmd.Request, commands[0].Request)
 		hub := newConsoleSessionHub(store)
 		require.NoError(t, hub.initErr)
-		require.NoError(t, hub.Cancel(sess.ID, "stop", "user"))
+		require.NoError(t, hub.Cancel(context.Background(), sess.ID, "stop", "user"))
 		commands, err = store.ListAgentCommands(ctx, "agent")
 		require.NoError(t, err)
-		require.Len(t, commands, 1, "CAS/restart must preserve the initial outbox record")
+		require.Len(t, commands, 2, "cancel must preserve the initial outbox record and atomically add cancellation")
 		require.NoError(t, store.DeleteAgentCommand(ctx, "agent", cmd.ID))
+		require.NoError(t, store.DeleteAgentCommand(ctx, "agent", persistence.ConsoleCancellationCommand(sess).ID))
+		require.NoError(t, hub.Update(sess.ID, func(s *controlplane.ConsoleSession) { s.Err = "still awaiting verified stop" }))
 		commands, err = store.ListAgentCommands(ctx, "agent")
 		require.NoError(t, err)
 		require.Empty(t, commands, "retired delivery must not resurrect from its seed")
@@ -79,10 +81,6 @@ func TestConsoleDispatchConflictAndFreezePublishNeitherRecord(t *testing.T) {
 
 func TestConsoleAdmissionSurvivesNotificationFailure(t *testing.T) {
 	s := consoleAdmissionTestServer(t)
-	s.consoleService().publishCommand = func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
-		t.Fatal("admission must not use standalone command publication")
-		return controlplane.AgentCommand{}, nil
-	}
 	woke := false
 	s.consoleService().wakeCommand = func(_ string, cmd controlplane.AgentCommand) error {
 		woke = true

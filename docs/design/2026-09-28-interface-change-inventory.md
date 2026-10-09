@@ -784,3 +784,12 @@ HTTP 正常创建的202以完整会话、审计和 outbox 提交为准，唤醒�
 退休 tombstone 覆盖该 seed。SQL 表结构与 API schema10 不变，无旧发布路径回退。
 请求体的 requested_by/roles 不再用于授权或审计身份；它们由服务端请求主体覆盖。
 HTTP idempotency key 受理仍未实现，本变更不承诺提交回包丢失后的 HTTP 重试去重。
+
+实施补充（2026-10-09 console 原子取消）：内部 consoleStore 新增
+`CancelConsoleSession(ctx, old, next)`，同时提交 cancelling/audit 与稳定取消 outbox。
+hub Cancel 增加 context，HTTP/timeout 统一调用。ConsoleService 只接收 WakeCommand
+通知依赖，不再独立发布命令；AgentService 拒绝 Session-bound cancel_command。
+HTTP 取消事务失败仍脱敏503，不存在仍404；提交成功后即使通知失败也返回200和
+cancelling，依靠持久 outbox 投递。退休/冲突取消命令不重新入队。
+文件内部新增 cancel_dispatch_command seed，与 opening seed 一起保留；SQL仍用
+同一 session/command 表事务，schema10 不变。200 不代表远端已确认停止。

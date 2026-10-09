@@ -60,6 +60,7 @@ type policyStore interface {
 }
 
 type consoleStore interface {
+	CancelConsoleSession(context.Context, controlplane.ConsoleSession, controlplane.ConsoleSession) error
 	CreateConsoleDispatch(context.Context, controlplane.ConsoleSession, controlplane.AgentCommand) error
 	CompareAndSwapConsoleSession(context.Context, controlplane.ConsoleSession, controlplane.ConsoleSession) error
 	SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error

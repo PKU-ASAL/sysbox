@@ -205,7 +205,9 @@ func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
 		go func() {
 			select {
 			case <-time.After(time.Duration(st.request.TimeoutSeconds) * time.Second):
-				_ = s.consoles.Cancel(id, "console session timed out", "system")
+				if err := s.consoles.Cancel(ctx, id, "console session timed out", "system"); err != nil {
+					slog.Warn("persist console timeout cancellation", "session_id", id, "error", err)
+				}
 			case <-ctx.Done():
 			}
 		}()

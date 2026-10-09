@@ -41,7 +41,7 @@ func (s *AgentService) reconcileConsoleCancellation(ctx context.Context, sess co
 	if sess.CreatedAt.IsZero() || sess.Node == "" || validatePathSegment(sess.ID, "session") != nil || validatePathSegment(sess.AgentID, "agent") != nil || validatePathSegment(sess.Topology, "topology") != nil {
 		return persistence.ErrInvalidRecord
 	}
-	cmd := consoleCancellationCommand(sess)
+	cmd := persistence.ConsoleCancellationCommand(sess)
 	prior, err := readFailureCommand(ctx, s.store, cmd.ID)
 	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
 		return err
@@ -62,6 +62,5 @@ func (s *AgentService) reconcileConsoleCancellation(ctx context.Context, sess co
 		// lease nor a retired tombstone is reset by reconciliation.
 		return nil
 	}
-	_, err = enqueueConsoleCancellation(ctx, s.store, cmd)
-	return err
+	return s.store.CancelConsoleSession(ctx, sess, sess)
 }

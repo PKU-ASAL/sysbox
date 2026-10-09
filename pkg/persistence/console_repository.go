@@ -9,8 +9,9 @@ import (
 // ConsoleSessionStorage serializes read/transform/write with maintenance
 // authority. A nil replacement is a read-only retry. Storage must check
 // ConsoleSessionNeedsAdmission while holding authority through publication.
-// A non-nil dispatch is the initial command and must commit atomically with
-// the new session; collision must leave both registries unchanged.
+// A non-nil dispatch must commit atomically with the session mutation. Initial
+// admission rejects collisions; cancellation preserves an identical existing
+// command's lease. Conflicts must leave both registries unchanged.
 type ConsoleSessionStorage interface {
 	UpdateConsoleSession(context.Context, string, *controlplane.AgentCommand, func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error
 }

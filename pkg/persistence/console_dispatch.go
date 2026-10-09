@@ -61,15 +61,25 @@ func PreserveConsoleDispatch(previous []byte, next controlplane.ConsoleSession) 
 		return nil, err
 	}
 	seed, err := ConsoleDispatchSeed(previous)
-	if err != nil || seed == nil {
-		return raw, err
-	}
-	if ValidateConsoleSessionCAS(*seed.Command.Session, next) != nil {
-		return nil, ErrConflict
-	}
-	command, err := EncodeCommandRecord(*seed)
 	if err != nil {
 		return nil, err
 	}
-	return withGuestDispatch(raw, command)
+	if seed != nil {
+		if ValidateConsoleSessionCAS(*seed.Command.Session, next) != nil {
+			return nil, ErrConflict
+		}
+		command, err := EncodeCommandRecord(*seed)
+		if err != nil {
+			return nil, err
+		}
+		raw, err = withGuestDispatch(raw, command)
+		if err != nil {
+			return nil, err
+		}
+	}
+	cancellation, err := ConsoleCancellationSeed(previous)
+	if err != nil || cancellation == nil {
+		return raw, err
+	}
+	return WithConsoleCancellation(raw, cancellation.Command)
 }

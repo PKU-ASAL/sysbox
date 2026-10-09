@@ -208,7 +208,7 @@ func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSessi
 	return nil
 }
 
-func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
+func (h *consoleSessionHub) Cancel(ctx context.Context, id, reason, actor string) error {
 	if h.initErr != nil {
 		return h.initErr
 	}
@@ -235,10 +235,17 @@ func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
 			CreatedAt: time.Now().UTC(),
 		})
 	}
-	if h.store != nil {
-		if err := h.store.CompareAndSwapConsoleSession(context.Background(), st.session, sess); err != nil {
-			return h.refreshAfterConflict(st, err)
-		}
+	if h.store == nil {
+		return errors.New("console persistence unavailable")
+	}
+	var err error
+	if sess.Status == controlplane.ConsoleSessionStatusCancelling {
+		err = h.store.CancelConsoleSession(ctx, st.session, sess)
+	} else {
+		err = h.store.CompareAndSwapConsoleSession(ctx, st.session, sess)
+	}
+	if err != nil {
+		return h.refreshAfterConflict(st, err)
 	}
 	st.session = sess
 	select {
@@ -263,13 +270,8 @@ func (h *consoleSessionHub) refreshAfterConflict(st *consoleSessionState, err er
 		return err
 	}
 	st.session = cloneConsoleSession(*current)
-	if current.Status == controlplane.ConsoleSessionStatusCancelling || current.Status == controlplane.ConsoleSessionStatusCancelled {
-		select {
-		case <-st.cancel:
-		default:
-			close(st.cancel)
-		}
-	}
+	// Refresh is not a successful cancellation transaction. Only Cancel may
+	// signal the local relay after the durable session/outbox pair is accepted.
 	return err
 }
 

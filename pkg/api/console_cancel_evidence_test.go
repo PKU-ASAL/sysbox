@@ -21,13 +21,13 @@ func TestConsoleCancellationRequestDoesNotProveStop(t *testing.T) {
 		s.Status = controlplane.ConsoleSessionStatusRunning
 		s.StartedAt = time.Now().UTC()
 	})
-	require.NoError(t, hub.Cancel(sess.ID, "requested", "user"))
+	require.NoError(t, hub.Cancel(context.Background(), sess.ID, "requested", "user"))
 	current, err := store.GetConsoleSession(context.Background(), sess.ID)
 	require.NoError(t, err)
 	require.Equal(t, "cancelling", current.Status)
 	require.True(t, current.EndedAt.IsZero())
 	require.True(t, persistence.ConsoleSessionUnresolved(*current))
-	require.NoError(t, hub.Cancel(sess.ID, "retry", "user"))
+	require.NoError(t, hub.Cancel(context.Background(), sess.ID, "retry", "user"))
 	again, err := store.GetConsoleSession(context.Background(), sess.ID)
 	require.NoError(t, err)
 	require.Equal(t, len(current.Audit), len(again.Audit), "retry must not append another cancellation event")
@@ -40,8 +40,10 @@ func TestConsoleCancellationRequestDoesNotProveStop(t *testing.T) {
 func TestConsoleCancelHTTPDistinguishesUnavailableFromMissing(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	sess := createConsoleForTest(t, s.consoles)
-	s.consoleSvc = &ConsoleService{consoles: s.consoles, publishCommand: func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
-		return controlplane.AgentCommand{}, errors.New("private connection details")
+	s.consoles.store = failingConsoleSave{apiStore: s.apiStore}
+	s.consoleSvc = &ConsoleService{consoles: s.consoles, wakeCommand: func(string, controlplane.AgentCommand) error {
+		t.Fatal("failed persistence must not wake")
+		return nil
 	}}
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/sessions/"+sess.ID+"/cancel", nil))
@@ -51,10 +53,6 @@ func TestConsoleCancelHTTPDistinguishesUnavailableFromMissing(t *testing.T) {
 	s.ServeHTTP(missing, httptest.NewRequest("POST", "/v1/sessions/absent/cancel", nil))
 	require.Equal(t, 404, missing.Code)
 	s.consoles.store = failingConsoleSave{apiStore: s.apiStore}
-	s.consoleSvc.publishCommand = func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
-		t.Fatal("failed persistence must not dispatch")
-		return controlplane.AgentCommand{}, nil
-	}
 	storageFailure := httptest.NewRecorder()
 	s.ServeHTTP(storageFailure, httptest.NewRequest("POST", "/v1/sessions/"+sess.ID+"/cancel", nil))
 	require.Equal(t, 503, storageFailure.Code)
@@ -97,7 +95,7 @@ func TestConsoleCancellationCannotBeOverwrittenByEarlierUpdate(t *testing.T) {
 	}()
 	<-delay.entered
 	cancelled := make(chan error, 1)
-	go func() { cancelled <- hub.Cancel(sess.ID, "requested", "user") }()
+	go func() { cancelled <- hub.Cancel(context.Background(), sess.ID, "requested", "user") }()
 	select {
 	case err := <-cancelled:
 		t.Fatalf("cancellation overtook pending persistence: %v", err)
@@ -131,12 +129,16 @@ func (s failingConsoleSave) CompareAndSwapConsoleSession(context.Context, contro
 	return errors.New("storage unavailable")
 }
 
+func (s failingConsoleSave) CancelConsoleSession(context.Context, controlplane.ConsoleSession, controlplane.ConsoleSession) error {
+	return errors.New("storage unavailable")
+}
+
 func TestConsoleCancelDoesNotAcknowledgeFailedPersistence(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, hub)
 	hub.store = failingConsoleSave{apiStore: store}
-	require.Error(t, hub.Cancel(sess.ID, "requested", "user"))
+	require.Error(t, hub.Cancel(context.Background(), sess.ID, "requested", "user"))
 	current, err := hub.Snapshot(sess.ID)
 	require.NoError(t, err)
 	require.Equal(t, sess.Status, current.Status)
@@ -171,7 +173,7 @@ func TestConsoleCompletionCanFollowCancellationRequest(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, hub)
-	require.NoError(t, hub.Cancel(sess.ID, "requested", "user"))
+	require.NoError(t, hub.Cancel(context.Background(), sess.ID, "requested", "user"))
 	svc := &AgentService{consoles: hub}
 	command := controlplane.AgentCommand{Type: "session_open", Session: &sess}
 	svc.updateConsoleSessionFromCommandEvent(command, controlplane.AgentCommandEvent{Status: "started", CreatedAt: time.Now().UTC()})
@@ -185,25 +187,28 @@ func TestConsoleCompletionCanFollowCancellationRequest(t *testing.T) {
 	require.False(t, current.EndedAt.IsZero())
 }
 
-func TestConsoleCancelReportsDispatchFailureAndRetainsIntent(t *testing.T) {
+func TestConsoleCancelWakeFailureRetainsCommittedOutbox(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, hub)
 	failure := errors.New("dispatch unavailable")
-	service := &ConsoleService{consoles: hub, publishCommand: func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
-		return controlplane.AgentCommand{}, failure
+	service := &ConsoleService{consoles: hub, wakeCommand: func(string, controlplane.AgentCommand) error {
+		return failure
 	}}
 	result, err := service.Cancel(context.Background(), sess.ID, requestSubject{User: "operator"})
-	require.ErrorIs(t, err, failure)
+	require.NoError(t, err)
 	require.Equal(t, controlplane.ConsoleSessionStatusCancelling, result.Status)
 	stored, err := store.GetConsoleSession(context.Background(), sess.ID)
 	require.NoError(t, err)
 	require.Equal(t, result.Status, stored.Status)
-	service.publishCommand = func(_ context.Context, agent string, command controlplane.AgentCommand) (controlplane.AgentCommand, error) {
+	commands, err := store.ListAgentCommands(context.Background(), "agent")
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+	service.wakeCommand = func(agent string, command controlplane.AgentCommand) error {
 		require.Equal(t, sess.AgentID, agent)
 		require.Equal(t, "cancel_command", command.Type)
 		require.Equal(t, sess.ID, command.Session.ID)
-		return command, nil
+		return nil
 	}
 	result, err = service.Cancel(context.Background(), sess.ID, requestSubject{User: "operator"})
 	require.NoError(t, err)
@@ -217,8 +222,7 @@ func TestConsoleCancellationRetriesReuseDurableCommand(t *testing.T) {
 		hub := newConsoleSessionHub(store)
 		sess, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})
 		require.NoError(t, err)
-		agents := &AgentService{store: store}
-		service := &ConsoleService{consoles: hub, publishCommand: agents.PublishCommand}
+		service := &ConsoleService{consoles: hub}
 		_, err = service.Cancel(ctx, sess.ID, requestSubject{User: "operator"})
 		require.NoError(t, err)
 		commands, err := store.ListAgentCommands(ctx, "agent")
@@ -257,12 +261,13 @@ func TestConsoleCancellationConcurrentFirstEnqueueIsIdempotent(t *testing.T) {
 		hub := newConsoleSessionHub(store)
 		sess, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})
 		require.NoError(t, err)
-		cmd := consoleCancellationCommand(sess)
-		publisher := &AgentService{store: store}
+		previous := sess
+		sess.Status = controlplane.ConsoleSessionStatusCancelling
+		require.NoError(t, store.CompareAndSwapConsoleSession(ctx, previous, sess))
 		start := make(chan struct{})
 		results := make(chan error, 8)
 		for i := 0; i < 8; i++ {
-			go func() { <-start; _, err := publisher.PublishCommand(ctx, "agent", cmd); results <- err }()
+			go func() { <-start; results <- store.CancelConsoleSession(ctx, sess, sess) }()
 		}
 		close(start)
 		for i := 0; i < 8; i++ {
@@ -271,6 +276,6 @@ func TestConsoleCancellationConcurrentFirstEnqueueIsIdempotent(t *testing.T) {
 		commands, err := store.ListAgentCommands(ctx, "agent")
 		require.NoError(t, err)
 		require.Len(t, commands, 1)
-		require.Equal(t, cmd.ID, commands[0].ID)
+		require.Equal(t, persistence.ConsoleCancellationCommand(sess).ID, commands[0].ID)
 	})
 }

@@ -115,7 +115,6 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 	s.consoleSvc = newConsoleService(
 		s.consoles,
 		s.scheduling(),
-		s.agentService().PublishCommand,
 		s.agentService().WakeCommand,
 		s.authorizeConsole,
 		s.workspaceService().HCLFile,
@@ -219,7 +218,6 @@ func (s *Server) consoleService() *ConsoleService {
 		s.consoleSvc = newConsoleService(
 			s.consoles,
 			s.scheduling(),
-			s.agentService().PublishCommand,
 			s.agentService().WakeCommand,
 			s.authorizeConsole,
 			s.workspaceService().HCLFile,

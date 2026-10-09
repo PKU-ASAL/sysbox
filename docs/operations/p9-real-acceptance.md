@@ -1731,3 +1731,32 @@ The final full Go suite passed with both PostgreSQL test variables enabled.
 API/persistence vet, docscheck (53 canonical documents), diff checks and
 independent follow-up review passed. No retained deployment was rebuilt or
 upgraded; the dedicated PostgreSQL container was used only for these tests.
+
+### Atomic console cancellation (2026-10-09)
+
+Shared ConsoleRepository.Cancel now commits session CAS, cancellation audit
+and the stable cancel_command in one transaction. File records preserve both
+opening and cancellation seeds; mutable command records and retirement
+tombstones retain precedence. Shared enqueue validation keeps delivery leases
+unchanged and rejects conflicting/retired records. HTTP and timeout use the
+same method; the old standalone cancellation enqueue adapter was removed.
+Repair of incomplete registry evidence also uses the atomic method.
+
+Regressions reproduced cancellation intent surviving an outbox conflict, and
+timeout/hub cancellation lacking an outbox. These now preserve neither change
+on failure and publish both on success. Further coverage verifies cold retry,
+lease retention, both seeds surviving CAS, retirement, canceled request context,
+and notification failure after commit. Review found a failed repair could still
+signal the local relay during cache refresh; the failing regression was added
+and refresh now has no cancellation side effect.
+
+Real PostgreSQL API/persistence race passed (67.397/3.676 seconds). Final Console
+race after the review fix passed (13.798 seconds). HTTP 200 confirms durable
+cancelling only: remote stopping remains unverified without completion/stop
+evidence. HTTP creation idempotency, complete deletion transactions and the
+cross-host console execution/stop protocol remain open.
+
+The final full Go regression passed with both database variables enabled.
+API/persistence vet, docscheck (53 canonical documents), diff checks and
+independent follow-up review passed. Tests used an isolated PostgreSQL database;
+no existing project, historical resource or retained VM was rebuilt.

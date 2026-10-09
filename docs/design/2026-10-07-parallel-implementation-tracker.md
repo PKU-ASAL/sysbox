@@ -495,3 +495,11 @@ authority 与首次写入竞争、写入超时无残留已实测；其他已知 
 旧独立 session_open 发布入口明确拒绝。完整 request 冷读、退休优先和并发唯一
 胜者已覆盖。同时修复请求体 roles/requested_by 覆盖服务端主体的原有授权漏洞。
 取消仍为可恢复两步写，HTTP idempotency key、完整删除事务、host stop 尚待关闭。
+
+2026-10-09 console 取消同提交：共享 ConsoleRepository.Cancel 在原事务内核对
+session CAS 和稳定取消 command，已有租约保留，冲突/退休不覆盖。文件同时保存
+opening/cancellation 两个不可变 seed，后续更新保留，mutable/tombstone 优先。
+HTTP 和 timeout 都经同一路径；删去 standalone cancel enqueue 生产适配器，
+repair 也消费原子方法。失败不改审计/状态、不通知本地 relay；成功后的通知失败
+不撤销已受理结果。先前“两步写”缺口现已关闭，但 HTTP key、删除事务和 host stop
+仍未完成，不能据此宣布 P4/P6/P9 关闭。

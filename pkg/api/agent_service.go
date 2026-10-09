@@ -163,7 +163,7 @@ func (s *AgentService) CompleteRun(agentID, runID string, completion controlplan
 }
 
 func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
-	if cmd.Type == "session_open" {
+	if cmd.Type == "session_open" || (cmd.Type == "cancel_command" && cmd.Session != nil) {
 		return cmd, fmt.Errorf("%w: console admission requires an atomic session dispatch", persistence.ErrInvalidRecord)
 	}
 	if cmd.ID == "" {
@@ -182,13 +182,7 @@ func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd c
 		cmd.CreatedAt = time.Now().UTC()
 	}
 	if s.store != nil {
-		if cmd.Type == "cancel_command" && cmd.Session != nil {
-			current, err := enqueueConsoleCancellation(ctx, s.store, cmd)
-			if err != nil {
-				return cmd, err
-			}
-			cmd = *current
-		} else if err := s.store.SaveAgentCommand(ctx, cmd); err != nil {
+		if err := s.store.SaveAgentCommand(ctx, cmd); err != nil {
 			return cmd, err
 		}
 	}

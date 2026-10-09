@@ -288,5 +288,22 @@ command 放在同一事务。沿用现有 authority 锁和维护检查，不增�
 - [x] 最终全仓回归和验收证据归档。
 
 本项关闭正常初次创建的 session/command 分步写窗口。HTTP idempotency key 受理、
-取消意图与取消 command 的同事务提交、完整删除事务、宿主会话所有权与签名停止
+完整删除事务、宿主会话所有权与签名停止
 证明仍需继续实施；不以本项测试关闭整个 P4/P6/P9。
+
+### Console 取消同提交实施步骤
+
+复用 ConsoleSessionStorage 的可选 dispatch 与既有事务边界；取消使用稳定 command ID，
+共享 Enqueue 判定负责保留已有租约和拒绝冲突/退休。文件记录增加不可变取消 seed，
+与初始 session_open seed 同时保留；SQL 在同一事务核对 session CAS 和取消 command。
+
+- [x] 补充三后端合同，复现 command 冲突后仍持久 cancelling，以及 hub timeout 只有意图无 outbox。
+- [x] 共享 repository 提供取消 CAS；适配器在现有锁域提交意图、audit 和 outbox，
+  精确重试不重置 command，冲突不更新任何记录、不通知本地 relay。
+- [x] HTTP 与 timeout 都走原子取消；HTTP 唤醒失败仍确认 durable cancelling，
+  移除独立 publish 的生产路径；监督恢复只补齐缺失投递，不制造停止证据。
+- [x] 覆盖冷读、完整双 seed 保留、退休、冲突回滚和三后端真实数据库验收，更新文档。
+
+失败 CAS 只刷新缓存，不据 cancelling 状态通知本地 relay；必须完成取消事务才能
+发出本地取消信号。取消调用使用请求 context，已取消请求不发布任何记录。该项
+不把退休取消命令或 transport 断连当作远端停止证据，状态仍由完成/停止协议收敛。
