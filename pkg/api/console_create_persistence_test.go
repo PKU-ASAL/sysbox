@@ -23,6 +23,8 @@ func createConsoleForTest(t *testing.T, hub *consoleSessionHub) controlplane.Con
 	return sess
 }
 
+func allowConsoleForTest(requestSubject, controlplane.ConsoleSession) error { return nil }
+
 func consoleAdmissionTestServer(t *testing.T) *Server {
 	t.Helper()
 	s := NewServer(t.TempDir(), t.TempDir())

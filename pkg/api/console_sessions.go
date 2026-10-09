@@ -208,7 +208,7 @@ func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSessi
 	return nil
 }
 
-func (h *consoleSessionHub) Cancel(ctx context.Context, id, reason, actor string) error {
+func (h *consoleSessionHub) Cancel(ctx context.Context, id, reason string, subj requestSubject) error {
 	if h.initErr != nil {
 		return h.initErr
 	}
@@ -229,9 +229,9 @@ func (h *consoleSessionHub) Cancel(ctx context.Context, id, reason, actor string
 			Resource:  "sysbox_node." + st.session.Node,
 			Action:    "cancel",
 			Status:    controlplane.ConsoleSessionStatusCancelling,
-			Actor:     actor,
-			Roles:     append([]string{}, st.session.Roles...),
-			Message:   reason + " by " + actor,
+			Actor:     subj.User,
+			Roles:     append([]string{}, subj.Roles...),
+			Message:   reason + " by " + subj.User,
 			CreatedAt: time.Now().UTC(),
 		})
 	}

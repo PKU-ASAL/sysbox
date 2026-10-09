@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -27,6 +28,22 @@ type ConsoleService struct {
 type ConsoleCreateResult struct {
 	Session controlplane.ConsoleSession
 	Status  int
+}
+
+var errConsoleAccessDenied = errors.New("console access denied")
+
+func (s *ConsoleService) Get(id string, subj requestSubject) (controlplane.ConsoleSession, error) {
+	sess, err := s.consoles.Snapshot(id)
+	if err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
+	if s.authorize == nil {
+		return controlplane.ConsoleSession{}, errors.New("console authorization unavailable")
+	}
+	if err := s.authorize(subj, sess); err != nil {
+		return controlplane.ConsoleSession{}, fmt.Errorf("%w: %v", errConsoleAccessDenied, err)
+	}
+	return sess, nil
 }
 
 func newConsoleService(
@@ -103,7 +120,10 @@ func (s *ConsoleService) CreateSession(ctx context.Context, topology, node strin
 }
 
 func (s *ConsoleService) Cancel(ctx context.Context, id string, subj requestSubject) (controlplane.ConsoleSession, error) {
-	if err := s.consoles.Cancel(ctx, id, "cancelled by api request", subj.User); err != nil {
+	if _, err := s.Get(id, subj); err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
+	if err := s.consoles.Cancel(ctx, id, "cancelled by api request", subj); err != nil {
 		return controlplane.ConsoleSession{}, err
 	}
 	sess, err := s.consoles.Snapshot(id)

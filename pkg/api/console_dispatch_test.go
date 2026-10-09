@@ -37,7 +37,7 @@ func TestConsoleDispatchPublishesCompleteOutboxAndPreservesRetirement(t *testing
 		require.Equal(t, cmd.Request, commands[0].Request)
 		hub := newConsoleSessionHub(store)
 		require.NoError(t, hub.initErr)
-		require.NoError(t, hub.Cancel(context.Background(), sess.ID, "stop", "user"))
+		require.NoError(t, hub.Cancel(context.Background(), sess.ID, "stop", requestSubject{User: "user"}))
 		commands, err = store.ListAgentCommands(ctx, "agent")
 		require.NoError(t, err)
 		require.Len(t, commands, 2, "cancel must preserve the initial outbox record and atomically add cancellation")

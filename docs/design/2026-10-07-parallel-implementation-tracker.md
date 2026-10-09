@@ -503,3 +503,8 @@ HTTP 和 timeout 都经同一路径；删去 standalone cancel enqueue 生产适
 repair 也消费原子方法。失败不改审计/状态、不通知本地 relay；成功后的通知失败
 不撤销已受理结果。先前“两步写”缺口现已关闭，但 HTTP key、删除事务和 host stop
 仍未完成，不能据此宣布 P4/P6/P9 关闭。
+
+2026-10-09 console 入口授权：修复 GET/取消/browser attach 未检查 Console
+角色策略的绕过；统一服务层读取+授权，禁止先升级连接再验证。取消 audit 使用
+当前操作者角色，拒绝不写入 registry/outbox。权限缺失403、不存在404、内部故障
+脱敏503。API race 和独立审查通过；尚不包含已连接会话的持续授权/host stop。

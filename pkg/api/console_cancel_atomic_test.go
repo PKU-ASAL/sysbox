@@ -17,7 +17,7 @@ func TestConsoleCancelConflictDoesNotPublishIntent(t *testing.T) {
 		command := persistence.ConsoleCancellationCommand(sess)
 		command.Type, command.Session = "inventory", nil
 		require.NoError(t, store.SaveAgentCommand(ctx, command))
-		service := &ConsoleService{consoles: hub}
+		service := &ConsoleService{consoles: hub, authorize: allowConsoleForTest}
 		_, err := service.Cancel(ctx, sess.ID, requestSubject{User: "operator"})
 		require.ErrorIs(t, err, persistence.ErrConflict)
 		stored, err := store.GetConsoleSession(ctx, sess.ID)
@@ -37,7 +37,7 @@ func TestConsoleHubCancelAtomicallyPublishesOutbox(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
 		hub := newConsoleSessionHub(store)
 		sess := createConsoleForTest(t, hub)
-		require.NoError(t, hub.Cancel(context.Background(), sess.ID, "stop", "operator"))
+		require.NoError(t, hub.Cancel(context.Background(), sess.ID, "stop", requestSubject{User: "operator"}))
 		commands, err := store.ListAgentCommands(context.Background(), "agent")
 		require.NoError(t, err)
 		require.Len(t, commands, 1, "every persisted cancel, including timeout, carries an outbox command")
@@ -51,7 +51,7 @@ func TestConsoleCancelledRequestDoesNotCommitCancellation(t *testing.T) {
 		sess := createConsoleForTest(t, hub)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		require.ErrorIs(t, hub.Cancel(ctx, sess.ID, "stop", "operator"), context.Canceled)
+		require.ErrorIs(t, hub.Cancel(ctx, sess.ID, "stop", requestSubject{User: "operator"}), context.Canceled)
 		stored, err := store.GetConsoleSession(context.Background(), sess.ID)
 		require.NoError(t, err)
 		require.True(t, persistence.SameConsoleSession(sess, *stored))
@@ -71,7 +71,7 @@ func TestConsoleFailedCancellationRepairDoesNotSignalRelay(t *testing.T) {
 		cmd := persistence.ConsoleCancellationCommand(sess)
 		cmd.Type, cmd.Session = "inventory", nil
 		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
-		require.ErrorIs(t, hub.Cancel(ctx, sess.ID, "stop", "operator"), persistence.ErrConflict)
+		require.ErrorIs(t, hub.Cancel(ctx, sess.ID, "stop", requestSubject{User: "operator"}), persistence.ErrConflict)
 		st, err := hub.Get(sess.ID)
 		require.NoError(t, err)
 		select {

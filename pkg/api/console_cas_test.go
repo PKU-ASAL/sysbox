@@ -69,7 +69,7 @@ func TestConsoleCASCancelConflictCanRetryWithFreshObservation(t *testing.T) {
 		require.NoError(t, store.SaveConsoleSession(context.Background(), sess))
 		first, second := newConsoleSessionHub(store), newConsoleSessionHub(store)
 		require.NoError(t, first.Update(sess.ID, func(s *controlplane.ConsoleSession) { s.Err = "new observation" }))
-		require.ErrorIs(t, second.Cancel(context.Background(), sess.ID, "stop", "user"), persistence.ErrConflict)
+		require.ErrorIs(t, second.Cancel(context.Background(), sess.ID, "stop", requestSubject{User: "user"}), persistence.ErrConflict)
 		st, err := second.Get(sess.ID)
 		require.NoError(t, err)
 		select {
@@ -77,7 +77,7 @@ func TestConsoleCASCancelConflictCanRetryWithFreshObservation(t *testing.T) {
 			t.Fatal("uncommitted cancel must not signal the relay")
 		default:
 		}
-		require.NoError(t, second.Cancel(context.Background(), sess.ID, "stop", "user"))
+		require.NoError(t, second.Cancel(context.Background(), sess.ID, "stop", requestSubject{User: "user"}))
 		stored, err := store.GetConsoleSession(context.Background(), sess.ID)
 		require.NoError(t, err)
 		require.Equal(t, "cancelling", stored.Status)
@@ -91,7 +91,7 @@ func TestConsoleCASConflictRefreshesIndependentHubWithoutReplayingUpdate(t *test
 		sess := controlplane.ConsoleSession{ID: "session", AgentID: "agent", Topology: "lab", Node: "node", Status: "lost", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveConsoleSession(ctx, sess))
 		first, second := newConsoleSessionHub(store), newConsoleSessionHub(store)
-		require.NoError(t, first.Cancel(context.Background(), sess.ID, "stop", "user"))
+		require.NoError(t, first.Cancel(context.Background(), sess.ID, "stop", requestSubject{User: "user"}))
 		calls := 0
 		err := second.Update(sess.ID, func(s *controlplane.ConsoleSession) {
 			calls++
@@ -102,7 +102,7 @@ func TestConsoleCASConflictRefreshesIndependentHubWithoutReplayingUpdate(t *test
 		observed, err := second.Snapshot(sess.ID)
 		require.NoError(t, err)
 		require.Equal(t, "cancelling", observed.Status)
-		require.NoError(t, second.Cancel(context.Background(), sess.ID, "stop again", "user"))
+		require.NoError(t, second.Cancel(context.Background(), sess.ID, "stop again", requestSubject{User: "user"}))
 		stored, err := store.GetConsoleSession(ctx, sess.ID)
 		require.NoError(t, err)
 		require.Len(t, stored.Audit, 1, "retry must not duplicate cancellation audit")

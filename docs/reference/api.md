@@ -222,13 +222,19 @@ agent-side URL after receiving a `session_open` command on their command
 stream.
 Session metadata is persisted by the API store; interrupted sessions are marked
 `lost` on API restart. `timeout_seconds` on session creation auto-cancels long
-running sessions. Console requests accept `requested_by`; if absent, the API
-uses the configured user header (`X-Sysbox-User` by default) or `api`. Roles
-come from `X-Sysbox-Roles` by default. Console RBAC is configured in
+running sessions. The API uses its request subject for identity: the configured
+user header (`X-Sysbox-User` by default) or `api`, and the configured roles header
+(`X-Sysbox-Roles` by default). Body-supplied `requested_by` and `roles` cannot
+override that identity. Console RBAC is configured in
 `api.console.allowed_roles` plus `api.rbac.admin_roles`; when no console roles
 are configured, local development remains permissive. Session records include
 the policy name and audit events for create, allow/deny, attach, cancel,
-timeout, and close.
+timeout, and close. Creation, metadata reads, cancellation and browser attachment
+all check the current Console role policy; denied existing-session requests
+return 403 before data disclosure, state changes or WebSocket upgrade. Registry
+failure returns a redacted 503; a missing session returns 404. Cancellation audit
+records the acting subject's roles, not the creator's roles. Agent attachment
+uses its separate agent identity and session assignment checks.
 
 Agents also post resource-level observation projections to
 `/v1/agents/{agent_id}/projections/resources`. UI clients can subscribe to

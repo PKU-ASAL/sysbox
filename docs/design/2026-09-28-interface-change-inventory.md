@@ -793,3 +793,9 @@ HTTP 取消事务失败仍脱敏503，不存在仍404；提交成功后即使通
 cancelling，依靠持久 outbox 投递。退休/冲突取消命令不重新入队。
 文件内部新增 cancel_dispatch_command seed，与 opening seed 一起保留；SQL仍用
 同一 session/command 表事务，schema10 不变。200 不代表远端已确认停止。
+
+实施补充（2026-10-09 console 访问授权）：会话 GET、取消和浏览器 attach 现在
+与创建一样检查当前 `api.console.allowed_roles`/管理员角色；仅知道 ID 不再足以
+绕过配置的 Console 权限。拒绝返回403，未修改会话/审计/outbox；registry 故障
+统一返回脱敏503，不再伪装404。取消审计保存当前操作者及其角色。Agent attach
+沿用单独的 Agent 身份和会话归属检查。现有身份 header 的信任边界没有改变。

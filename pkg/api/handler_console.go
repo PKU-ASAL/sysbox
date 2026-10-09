@@ -67,9 +67,9 @@ func (s *Server) handleGetConsoleSession(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	sess, err := s.consoles.Snapshot(id)
+	sess, err := s.consoleService().Get(id, s.requestSubject(r))
 	if err != nil {
-		writeError(w, http.StatusNotFound, err)
+		writeConsoleSessionError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, sess)
@@ -83,14 +83,21 @@ func (s *Server) handleCancelConsoleSession(w http.ResponseWriter, r *http.Reque
 	}
 	sess, err := s.consoleService().Cancel(r.Context(), id, s.requestSubject(r))
 	if err != nil {
-		if errors.Is(err, errConsoleSessionNotFound) {
-			writeError(w, http.StatusNotFound, err)
-		} else {
-			writeError(w, http.StatusServiceUnavailable, errors.New("console cancellation could not be dispatched; retry the same session"))
-		}
+		writeConsoleSessionError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, sess)
+}
+
+func writeConsoleSessionError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errConsoleAccessDenied):
+		writeError(w, http.StatusForbidden, errConsoleAccessDenied)
+	case errors.Is(err, errConsoleSessionNotFound):
+		writeError(w, http.StatusNotFound, errConsoleSessionNotFound)
+	default:
+		writeError(w, http.StatusServiceUnavailable, errors.New("console session unavailable; retry the same session"))
+	}
 }
 
 func (s *Server) handleAttachConsoleSession(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +132,12 @@ func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side 
 	if err := validatePathSegment(id, "session"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
+	}
+	if side == "browser" {
+		if _, err := s.consoleService().Get(id, s.requestSubject(r)); err != nil {
+			writeConsoleSessionError(w, err)
+			return
+		}
 	}
 	st, err := s.consoles.Get(id)
 	if err != nil {
@@ -205,7 +218,7 @@ func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
 		go func() {
 			select {
 			case <-time.After(time.Duration(st.request.TimeoutSeconds) * time.Second):
-				if err := s.consoles.Cancel(ctx, id, "console session timed out", "system"); err != nil {
+				if err := s.consoles.Cancel(ctx, id, "console session timed out", requestSubject{User: "system"}); err != nil {
 					slog.Warn("persist console timeout cancellation", "session_id", id, "error", err)
 				}
 			case <-ctx.Done():

@@ -1760,3 +1760,18 @@ The final full Go regression passed with both database variables enabled.
 API/persistence vet, docscheck (53 canonical documents), diff checks and
 independent follow-up review passed. Tests used an isolated PostgreSQL database;
 no existing project, historical resource or retained VM was rebuilt.
+
+### Console access-policy enforcement (2026-10-09)
+
+Existing-session GET, cancellation and browser attachment now evaluate the
+configured Console role policy before disclosure, mutation or upgrade. Tests
+reproduced viewer access returning 200 and cancellation audit omitting the
+acting subject's role. Denied requests now return 403 without changing session,
+audit or outbox; console/admin roles pass policy. Missing authorization fails
+closed, and registry failures return redacted 503 rather than 404/internal text.
+
+Full API race passed (44.737 seconds); API vet, diff checks and independent
+review passed. This API-only slice did not rerun real PostgreSQL or cross-host
+acceptance and changes no persistence format. Trusted-header authentication
+and continuous authorization of already-open connections remain separate
+boundaries; this test does not establish them.
