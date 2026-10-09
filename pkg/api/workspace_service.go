@@ -560,7 +560,9 @@ func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology
 		}
 	}
 	if s.loadNodeOperations != nil {
-		ops, err := s.loadNodeOperations(ctx, topology)
+		// This store filters by workspace, not topology. A topology can live in
+		// a differently named workspace; enumerate first and match Topology below.
+		ops, err := s.loadNodeOperations(ctx, "")
 		if err != nil {
 			return err
 		}

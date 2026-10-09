@@ -380,3 +380,8 @@ GC plan 与 provider 删除期间的准入排他仍未闭环，P8 继续保持�
 CLI 直接 Docker remove 与 libvirt destroy/undefine 实现及对应旧路径测试。
 `gc --dry-run` 保留，历史磁盘 journal 不改写、不重放；正式 provider/host gate
 实现和测试保留。该清理关闭 CLI 裸删除旁路，不代表自动 GC 已可用。
+
+2026-10-09 P6 活动范围修复：restore/force-unlock 的 quiescence 检查不再把 topology
+名作为 NodeOperation workspace 过滤条件，避免跨命名 workspace 下漏掉活动操作。
+按实际 Topology 判断，相关操作终态后可恢复，同 workspace 的其他 topology 不误阻塞。
+跨 registry 原子准入仍未完成，不能把这一修复计为 P6 整体关闭。

@@ -1237,3 +1237,24 @@ open; removing the bypass does not deliver automatic garbage collection.
 Validation: full Go regression, commands race, vet, documentation checks and
 independent review passed. This source-removal round did not start PostgreSQL
 or run real provider GC effects. No user data was removed.
+
+### Maintenance activity scope (2026-10-09)
+
+The shared restore/force-unlock quiescence check incorrectly passed a topology
+name to the NodeOperation list's workspace filter. A running operation with
+`Topology=lab` and `Workspace=project-workspace` was therefore omitted, allowing
+the preflight to report quiescence. It now enumerates node operations and filters
+their actual topology, as metadata deletion and cleanup inspection already do.
+
+The regression reproduced the omission on file and SQLite stores. A three-store
+workflow test verifies running operations block force-unlock and retain restore
+in `waiting_for_stop`, with no receipt or lifecycle serial change. After the
+relevant operation becomes terminal, restore completes even when an unrelated
+topology in the same workspace remains queued. This fixes activity selection;
+the reads remain separate snapshots, not the completed cross-registry admission
+transaction required by P6/P8.
+
+Validation: the full API package passed under race (51.28 seconds) with the
+isolated PostgreSQL database enabled alongside file and SQLite. Vet, docscheck
+and independent review passed. The temporary PostgreSQL container was stopped
+and automatically removed; this round performed no provider effects.
