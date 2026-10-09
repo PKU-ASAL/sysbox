@@ -2131,3 +2131,13 @@ real Docker host E2E passed after the change. The final full repository race
 will be rerun before this checkpoint is committed. This closes the guest-result
 release window, but persistent deletion, unknown parent Run intent, adoption/GC,
 full SSH lifecycle and the remaining two-VM P9 fault matrix remain open.
+
+### 2026-10-10 — durable metadata deletion intent
+
+Metadata deletion now writes a durable `delete.intent` containing topology UID and
+state serial before the authority-aware state reset. The intent blocks workspace
+publication. If the controller exits after the state commit or during workspace,
+placement, or health cleanup, the next Delete or supervisor scan resumes the
+cleanup and removes the intent only after all local metadata cleanup succeeds.
+The intent is created only after the existing destroy receipt/activity checks, so
+recovery never invents provider quiescence or contacts a provider.

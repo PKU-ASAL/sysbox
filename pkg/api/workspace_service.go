@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
@@ -90,6 +91,11 @@ func (s *WorkspaceService) UpsertProject(ctx context.Context, topology string, f
 		return err
 	}
 	defer unlock()
+	if intent, intentErr := s.readDeletionIntent(topology); intentErr != nil {
+		return intentErr
+	} else if intent != nil {
+		return fmt.Errorf("%w: topology deletion is already in progress; retry after cleanup", persistence.ErrConflict)
+	}
 	hcl, err := s.materializeRevision(ctx, topology, controlplane.ComputeRevisionDigest(files), files)
 	if err != nil {
 		return err
@@ -395,6 +401,11 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 		return err
 	}
 	defer unlock()
+	if intent, intentErr := s.readDeletionIntent(topology); intentErr != nil {
+		return intentErr
+	} else if intent != nil {
+		return s.finishDeletionIntent(ctx, *intent)
+	}
 	mgr, err := s.stateManager(topology)
 	if err != nil {
 		return err
@@ -414,6 +425,9 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 	}
 	if s.deleteState == nil {
 		return fmt.Errorf("%w: authority-aware state deletion unavailable", persistence.ErrConflict)
+	}
+	if err := s.writeDeletionIntent(deletionIntent{Topology: topology, UID: st.TopologyUID, Serial: st.Meta.Serial, Created: time.Now().UTC()}); err != nil {
+		return fmt.Errorf("persist deletion intent: %w", err)
 	}
 	if err := s.deleteState(ctx, topology, st.Meta.Serial, st.TopologyUID); err != nil {
 		return fmt.Errorf("remove state: %w", err)
@@ -438,6 +452,9 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 	}
 	if s.health != nil {
 		_ = s.health.DeleteHealth(ctx, topology)
+	}
+	if err := os.Remove(s.deletionIntentPath(topology)); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

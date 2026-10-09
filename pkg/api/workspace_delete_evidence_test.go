@@ -71,3 +71,21 @@ func TestMetadataDeleteSerializesWithAdmission(t *testing.T) {
 		t.Fatal("metadata deletion did not finish after admission unlock")
 	}
 }
+
+func TestMetadataDeleteIntentResumesCleanupAfterCrash(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	ctx := context.Background()
+	w := s.workspaceService()
+	require.NoError(t, w.bindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
+	called := false
+	w.deleteState = func(context.Context, string, int64, string) error { called = true; return nil }
+	intent := deletionIntent{Topology: "lab", UID: "topology-uid", Serial: 4, Created: time.Now().UTC()}
+	require.NoError(t, w.writeDeletionIntent(intent))
+	require.ErrorIs(t, w.UpsertProject(ctx, "lab", map[string][]byte{"field.sysbox.hcl": []byte("topology \"lab\" {}")}), persistence.ErrConflict)
+	require.NoError(t, w.Delete(ctx, "lab", true))
+	require.True(t, called)
+	require.Nil(t, func() *deletionIntent { got, err := w.readDeletionIntent("lab"); require.NoError(t, err); return got }())
+	placement, err := w.loadPlacement("lab")
+	require.NoError(t, err)
+	require.Nil(t, placement)
+}

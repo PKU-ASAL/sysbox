@@ -388,3 +388,10 @@ SQL backends commit result and authority release together. The file backend
 replays that durable proof after an interrupted publication. Old execution
 format 4 and API schema 13 data require explicit rebuild; there is no compatibility
 reader. A replay never contacts the guest and cannot release a successor epoch.
+
+Metadata deletion uses a durable `delete.intent` containing topology UID and
+state serial. It is written before state reset and removed after workspace,
+placement and health cleanup. A restart or supervisor scan resumes this intent;
+new workspace publication is rejected while it exists. The marker does not
+prove external resource absence; provider teardown must already have a valid
+owning-agent cleanup receipt.

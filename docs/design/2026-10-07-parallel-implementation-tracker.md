@@ -618,3 +618,9 @@ receipt hash随终态结果持久保存；SQL结果与authority stopped同事务
 证据冷恢复中断发布。API先核验原authority，精确重放不联系guest、不影响后继epoch。
 execution record format 5、API schema 14明确重建旧格式。持久删除、未知Run intent、
 P5–P8和完整双VM矩阵仍未关闭。
+
+2026-10-10 持久删除窗口已补齐：删除在 authority-aware state reset 前写入
+`delete.intent`（topology UID/serial），publication 遇到 intent 立即拒绝；Delete
+和 supervisor 冷启动扫描可继续 workspace/placement/health 清理，成功后才移除
+intent。intent 只在 cleanup receipt/activity 检查通过后创建，不冒充 provider 停止
+证明。真实双VM delete 故障矩阵仍待补跑。
