@@ -250,7 +250,25 @@ func (s *localAPIStore) ListPolicies(_ context.Context, workspace string) ([]con
 	return readLocalObjects[controlplane.Policy](filepath.Join(s.runsDir, workspace, "policies", "*.json"))
 }
 
-func (s *localAPIStore) SaveConsoleSession(_ context.Context, sess controlplane.ConsoleSession) error {
+func (s *localAPIStore) SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error {
+	if _, err := persistence.EncodeConsoleSession(sess); err != nil {
+		return err
+	}
+	unlock, err := s.lockRunRecords(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := s.GetConsoleSession(ctx, sess.ID)
+	if err == nil {
+		if persistence.SameConsoleSession(*current, sess) {
+			return nil
+		}
+		return persistence.ErrConflict
+	}
+	if !errors.Is(err, errConsoleSessionNotFound) {
+		return err
+	}
 	workspace := sess.Workspace
 	if workspace == "" {
 		workspace = sess.Topology
@@ -268,7 +286,7 @@ func (s *localAPIStore) GetConsoleSession(ctx context.Context, id string) (*cont
 			return &item, nil
 		}
 	}
-	return nil, fmt.Errorf("session not found")
+	return nil, errConsoleSessionNotFound
 }
 
 func (s *localAPIStore) ListConsoleSessions(_ context.Context, workspace string) ([]controlplane.ConsoleSession, error) {
@@ -661,17 +679,20 @@ func (s *postgresAPIStore) SaveConsoleSession(ctx context.Context, sess controlp
 		return err
 	}
 	defer conn.Release()
-	raw, err := json.Marshal(sess)
+	raw, err := persistence.EncodeConsoleSession(sess)
 	if err != nil {
 		return err
 	}
-	_, err = conn.Exec(ctx, `
+	tag, err := conn.Exec(ctx, `
 INSERT INTO sysbox_console_sessions (workspace, id, data, updated_at)
 VALUES ($1, $2, $3::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET workspace=EXCLUDED.workspace, data=EXCLUDED.data, updated_at=now()`,
+ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data WHERE sysbox_console_sessions.data=EXCLUDED.data`,
 		workspace, sess.ID, string(raw))
 	if err != nil {
 		return fmt.Errorf("postgres save console session: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return persistence.ErrConflict
 	}
 	return nil
 }

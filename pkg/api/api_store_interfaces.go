@@ -60,6 +60,7 @@ type policyStore interface {
 }
 
 type consoleStore interface {
+	CompareAndSwapConsoleSession(context.Context, controlplane.ConsoleSession, controlplane.ConsoleSession) error
 	SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error
 	GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error)
 	ListConsoleSessions(ctx context.Context, workspace string) ([]controlplane.ConsoleSession, error)

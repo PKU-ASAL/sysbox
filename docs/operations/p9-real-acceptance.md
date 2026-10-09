@@ -1653,3 +1653,26 @@ Vet, docscheck and independent review passed. Additional startup validation
 rejects a current-version SQLite schema lacking the full-record column. The
 temporary Postgres database was stopped and automatically removed; no existing
 deployment was rebuilt or upgraded as part of this test.
+
+### Console full-record CAS (2026-10-09)
+
+File, SQLite and PostgreSQL now reject blind session overwrites. Creation is
+exact-idempotent; updates compare the complete expected record and preserve
+session identity, including the serialized creation-time offset used by the
+cancellation-command digest. Missing CAS targets consistently return conflict.
+Independent hubs refresh identity-checked snapshots after conflicts without
+replaying callbacks. Startup recovery rechecks active observations with bounded
+CAS retries and adopts already-progressed lost/cancelling/terminal observations.
+
+Regressions cover one concurrent winner, immutable identity, create retries,
+stale Update and Cancel, retry without duplicate audit, and competing startup
+observations. Initial full API race with real PostgreSQL passed (58.373 seconds);
+after review fixes, Console race passed with real PostgreSQL (4.432 seconds).
+These are persistence/API tests, not cross-host console execution acceptance.
+Atomic admission and verified remote stopping remain open.
+
+The final full Go suite passed with both database test variables enabled against
+the isolated PostgreSQL instance. API/persistence vet, docscheck (53 canonical
+documents), diff checks and independent follow-up review passed. No production
+or retained two-VM data was migrated. Sustained startup contention beyond three
+CAS attempts still fails initialization explicitly and requires a retry.

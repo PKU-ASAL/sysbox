@@ -760,3 +760,10 @@ command，不采信重试的新时间或文本；这不替代 host 签名停止�
 SQLite 列表按 Workspace 过滤（空 Workspace 时才回退 Topology）。SQLite/Postgres
 共享 API schema 版本门槛，schema 9 必须显式重建；没有就地补列或兼容读取。
 本次不修改文件存储记录，不代表 console CAS 已完成。
+
+实施补充（2026-10-09 console CAS）：内部 `consoleStore` 增加
+`CompareAndSwapConsoleSession(ctx, old, next)`；`SaveConsoleSession` 变为首次创建/
+完整相同重试，拒绝不同内容覆盖。三个后端统一用 `ErrConflict` 表示 CAS 旧记录
+不匹配或不存在。身份字段（含创建时间的时区表示）不可变。Hub 冲突后读取并核对
+当前身份、刷新缓存，但不自动重放更新函数；调用者重试必须重新判断当前状态。
+HTTP 路由、记录格式和 API schema 10 不变；没有保留旧的无条件覆盖写入入口。

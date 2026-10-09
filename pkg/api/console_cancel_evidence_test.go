@@ -73,6 +73,13 @@ func (s *delayedConsoleSave) SaveConsoleSession(ctx context.Context, x controlpl
 	return s.apiStore.SaveConsoleSession(ctx, x)
 }
 
+func (s *delayedConsoleSave) CompareAndSwapConsoleSession(ctx context.Context, old, next controlplane.ConsoleSession) error {
+	if next.Status == controlplane.ConsoleSessionStatusRunning {
+		s.once.Do(func() { close(s.entered); <-s.release })
+	}
+	return s.apiStore.CompareAndSwapConsoleSession(ctx, old, next)
+}
+
 func TestConsoleCancellationCannotBeOverwrittenByEarlierUpdate(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
@@ -112,6 +119,10 @@ func TestConsoleCancellationCannotBeOverwrittenByEarlierUpdate(t *testing.T) {
 type failingConsoleSave struct{ apiStore }
 
 func (s failingConsoleSave) SaveConsoleSession(context.Context, controlplane.ConsoleSession) error {
+	return errors.New("storage unavailable")
+}
+
+func (s failingConsoleSave) CompareAndSwapConsoleSession(context.Context, controlplane.ConsoleSession, controlplane.ConsoleSession) error {
 	return errors.New("storage unavailable")
 }
 

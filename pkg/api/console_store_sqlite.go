@@ -15,7 +15,7 @@ func (s *sqliteAPIStore) SaveConsoleSession(ctx context.Context, sess controlpla
 	if err := validatePathSegment(sess.ID, "session"); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(sess)
+	raw, err := persistence.EncodeConsoleSession(sess)
 	if err != nil {
 		return err
 	}
@@ -23,8 +23,18 @@ func (s *sqliteAPIStore) SaveConsoleSession(ctx context.Context, sess controlpla
 	if err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, "INSERT INTO sysbox_console_sessions(id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", sess.ID, raw)
-	return err
+	result, err := db.ExecContext(ctx, "INSERT INTO sysbox_console_sessions(id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE sysbox_console_sessions.data=excluded.data", sess.ID, raw)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return persistence.ErrConflict
+	}
+	return nil
 }
 
 func decodeSQLiteConsole(id string, raw []byte) (*controlplane.ConsoleSession, error) {

@@ -32,6 +32,10 @@ type failConsoleUpdateOnly struct {
 	saves int
 }
 
+func (s *failConsoleUpdateOnly) CompareAndSwapConsoleSession(context.Context, controlplane.ConsoleSession, controlplane.ConsoleSession) error {
+	return errors.New("private update storage failure")
+}
+
 func (s *failConsoleUpdateOnly) SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error {
 	s.saves++
 	if s.saves > 1 {

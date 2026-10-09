@@ -39,17 +39,20 @@ func TestConsoleEvidenceRequiresKnownTerminalStatusAndTimes(t *testing.T) {
 			sess := controlplane.ConsoleSession{ID: "session", Topology: "lab", Status: status, CreatedAt: time.Now().UTC()}
 			require.NoError(t, s.apiStore.SaveConsoleSession(context.Background(), sess))
 			require.ErrorIs(t, s.workspaceService().ensureTopologyQuiescent(context.Background(), "lab"), persistence.ErrConflict)
+			previous := sess
 			sess.EndedAt = time.Now().UTC()
-			require.NoError(t, s.apiStore.SaveConsoleSession(context.Background(), sess))
+			require.NoError(t, s.apiStore.CompareAndSwapConsoleSession(context.Background(), previous, sess))
 			err := s.workspaceService().ensureTopologyQuiescent(context.Background(), "lab")
 			if status == "lost" || status == "unknown" || status == "queued" || status == "running" {
 				require.ErrorIs(t, err, persistence.ErrConflict)
 			} else {
 				require.NoError(t, err)
 			}
+			previous = sess
 			sess.EndedAt = sess.CreatedAt.Add(-time.Second)
-			require.NoError(t, s.apiStore.SaveConsoleSession(context.Background(), sess))
+			require.NoError(t, s.apiStore.CompareAndSwapConsoleSession(context.Background(), previous, sess))
 			require.ErrorIs(t, s.workspaceService().ensureTopologyQuiescent(context.Background(), "lab"), persistence.ErrConflict)
+			s = NewServer(t.TempDir(), t.TempDir())
 			sess.CreatedAt = time.Time{}
 			sess.EndedAt = time.Now().UTC()
 			require.NoError(t, s.apiStore.SaveConsoleSession(context.Background(), sess))

@@ -17,10 +17,11 @@ func TestConsoleStoresPreserveCompleteRecordAndWorkspace(t *testing.T) {
 		ctx := context.Background()
 		sess := controlplane.ConsoleSession{ID: "session", ProjectID: "project", Workspace: "workspace", Topology: "lab", AgentID: "agent", Node: "node", Status: controlplane.ConsoleSessionStatusQueued, CreatedAt: time.Now().UTC(), Roles: []string{"operator"}}
 		require.NoError(t, store.SaveConsoleSession(ctx, sess))
+		previous := sess
 		sess.Status = controlplane.ConsoleSessionStatusRunning
 		sess.StartedAt = time.Now().UTC()
 		sess.Audit = []controlplane.Event{{Action: "allow", Message: "audit survived", CreatedAt: time.Now().UTC()}}
-		require.NoError(t, store.SaveConsoleSession(ctx, sess))
+		require.NoError(t, store.CompareAndSwapConsoleSession(ctx, previous, sess))
 		got, err := store.GetConsoleSession(ctx, sess.ID)
 		require.NoError(t, err)
 		wantJSON, err := json.Marshal(sess)

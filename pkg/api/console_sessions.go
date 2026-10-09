@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 type consoleSessionHub struct {
@@ -44,20 +45,47 @@ func newConsoleSessionHub(store apiStore) *consoleSessionHub {
 		}
 		loaded := map[string]*consoleSessionState{}
 		for _, sess := range items {
-			if sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning {
-				sess.Status = controlplane.ConsoleSessionStatusLost
-				sess.Err = "api restarted before console session completion"
-				sess.EndedAt = time.Now().UTC()
-				if err := store.SaveConsoleSession(context.Background(), sess); err != nil {
-					h.initErr = err
-					return h
-				}
+			sess, err = recoverConsoleObservation(store, sess)
+			if err != nil {
+				h.initErr = err
+				return h
 			}
 			loaded[sess.ID] = newConsoleSessionState(sess, controlplane.ConsoleRequest{})
 		}
 		h.sessions = loaded
 	}
 	return h
+}
+
+func recoverConsoleObservation(store consoleStore, sess controlplane.ConsoleSession) (controlplane.ConsoleSession, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		if sess.Status != controlplane.ConsoleSessionStatusQueued && sess.Status != controlplane.ConsoleSessionStatusRunning {
+			return sess, nil
+		}
+		next := cloneConsoleSession(sess)
+		next.Status = controlplane.ConsoleSessionStatusLost
+		next.Err = "api restarted before console session completion"
+		next.EndedAt = time.Now().UTC()
+		err := store.CompareAndSwapConsoleSession(context.Background(), sess, next)
+		if err == nil {
+			return next, nil
+		}
+		if !errors.Is(err, persistence.ErrConflict) {
+			return controlplane.ConsoleSession{}, err
+		}
+		current, readErr := store.GetConsoleSession(context.Background(), sess.ID)
+		if readErr != nil {
+			return controlplane.ConsoleSession{}, errors.Join(err, readErr)
+		}
+		if current == nil || persistence.ValidateConsoleSessionCAS(sess, *current) != nil {
+			return controlplane.ConsoleSession{}, err
+		}
+		sess = cloneConsoleSession(*current)
+		if sess.Status != controlplane.ConsoleSessionStatusQueued && sess.Status != controlplane.ConsoleSessionStatusRunning {
+			return sess, nil
+		}
+	}
+	return controlplane.ConsoleSession{}, persistence.ErrConflict
 }
 
 func (h *consoleSessionHub) Create(ctx context.Context, topology, node, agentID string, req controlplane.ConsoleRequest) (controlplane.ConsoleSession, error) {
@@ -166,8 +194,8 @@ func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSessi
 	}
 	sess := cloneConsoleSession(st.session)
 	fn(&sess)
-	if err := h.store.SaveConsoleSession(context.Background(), sess); err != nil {
-		return err
+	if err := h.store.CompareAndSwapConsoleSession(context.Background(), st.session, sess); err != nil {
+		return h.refreshAfterConflict(st, err)
 	}
 	st.session = cloneConsoleSession(sess)
 	return nil
@@ -201,8 +229,8 @@ func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
 		})
 	}
 	if h.store != nil {
-		if err := h.store.SaveConsoleSession(context.Background(), sess); err != nil {
-			return err
+		if err := h.store.CompareAndSwapConsoleSession(context.Background(), st.session, sess); err != nil {
+			return h.refreshAfterConflict(st, err)
 		}
 	}
 	st.session = sess
@@ -212,6 +240,30 @@ func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
 		close(st.cancel)
 	}
 	return nil
+}
+
+// Called with h.mu held. Refresh an obsolete observation so a later operation
+// can make progress, but never replay a callback against a different state.
+func (h *consoleSessionHub) refreshAfterConflict(st *consoleSessionState, err error) error {
+	if !errors.Is(err, persistence.ErrConflict) {
+		return err
+	}
+	current, readErr := h.store.GetConsoleSession(context.Background(), st.session.ID)
+	if readErr != nil {
+		return errors.Join(err, readErr)
+	}
+	if current == nil || persistence.ValidateConsoleSessionCAS(st.session, *current) != nil {
+		return err
+	}
+	st.session = cloneConsoleSession(*current)
+	if current.Status == controlplane.ConsoleSessionStatusCancelling || current.Status == controlplane.ConsoleSessionStatusCancelled {
+		select {
+		case <-st.cancel:
+		default:
+			close(st.cancel)
+		}
+	}
+	return err
 }
 
 func newConsoleSessionState(sess controlplane.ConsoleSession, req controlplane.ConsoleRequest) *consoleSessionState {
