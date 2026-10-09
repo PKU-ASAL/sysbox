@@ -6,6 +6,14 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### 已安装文件的实时观察SPI
+
+新增`ConnectionInstalledFileInspector.InspectInstalledFile(handle)`，通过guest
+`file-inspect`返回present/drifted/absent或unknown错误；绑定原安装handle，不能传任意
+文件路径。SSH/vsock/Docker接入同一协议。旧`ObserveFileInstall`仍表示历史安装结果，
+不用于推断目标文件的当前状态。缺少新操作的旧helper返回错误，不回退到shell读取。
+SSH access保存安装handle并消费此SPI的接线仍未完成。
+
 ### SSH公钥输入合同收紧
 
 `SSHAccessRequest`校验真实SSH公钥编码及类型，拒绝无效base64/wire数据、多行和

@@ -107,12 +107,14 @@ type Call struct {
 	Limit       int                           `json:"limit,omitempty"`
 }
 type Response struct {
-	FileRecord *FileInstallRecord `json:"file_record,omitempty"`
-	Version    int                `json:"version"`
-	BootID     string             `json:"boot_id,omitempty"`
-	Record     *Record            `json:"record,omitempty"`
-	Records    []Record           `json:"records,omitempty"`
-	Output     []byte             `json:"output,omitempty"`
-	NextCursor int64              `json:"next_cursor,omitempty"`
-	Error      string             `json:"error,omitempty"`
+	FileInspection *substrate.InstalledFileInspection `json:"file_inspection,omitempty"`
+	FileHandle     *substrate.FileInstallHandle       `json:"file_handle,omitempty"`
+	FileRecord     *FileInstallRecord                 `json:"file_record,omitempty"`
+	Version        int                                `json:"version"`
+	BootID         string                             `json:"boot_id,omitempty"`
+	Record         *Record                            `json:"record,omitempty"`
+	Records        []Record                           `json:"records,omitempty"`
+	Output         []byte                             `json:"output,omitempty"`
+	NextCursor     int64                              `json:"next_cursor,omitempty"`
+	Error          string                             `json:"error,omitempty"`
 }

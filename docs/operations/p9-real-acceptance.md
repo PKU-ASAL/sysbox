@@ -913,3 +913,23 @@ resolving the connection/user. Tests verify rejection without reaching provider
 access. This is target-identity validation, not content-CAS unlink: a file changed
 concurrently still needs a guest-side owned configuration primitive. Live Read,
 shared sshd lifecycle and full key rotation remain open.
+
+### Live inspection of a durable file installation
+
+`ConnectionInstalledFileInspector.InspectInstalledFile` and guest `file-inspect`
+observe a committed installation's current target using its exact persisted
+handle. SSH, vsock and Docker task transports expose the same SPI. The guest
+validates historical grant/handle identity, current boot and parent directory,
+opens without following symlinks, and checks bounded content hash, mode, size and
+stable inode/timestamps. An identical replacement inode is drift, not ownership
+continuity. Missing targets return absent; unsafe or changing observations return
+unknown/error. No current file contents are returned. Historical file-observe
+continues to report the original installation outcome.
+
+Real filesystem tests cover unchanged content, content/mode drift, replacement,
+absence and symlink rejection; transport tests reject a foreign epoch in the
+response. Unknown handles are rejected before creating journal or lock files.
+Full regression, focused race and vet passed; amd64/arm64 helpers are rebuilt
+from the new sources. This is not yet wired into SSH access state: retaining its
+installation handle, guest owned-delete transactions and shared sshd management
+remain required. No new KVM or cross-VM live-file acceptance is claimed.

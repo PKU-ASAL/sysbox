@@ -79,3 +79,16 @@ type ConnectionFileInstaller interface {
 	ObserveFileInstall(context.Context, FileInstallHandle) (FileInstallResult, error)
 	CancelFileInstall(context.Context, FileInstallHandle) (FileInstallResult, error)
 }
+
+// InstalledFileInspection describes the current target, not the historical
+// installation outcome. It contains no file contents or authority to mutate.
+type InstalledFileInspection struct {
+	Status string `json:"status"`
+	SHA256 string `json:"sha256,omitempty"`
+	Size   int64  `json:"size,omitempty"`
+	Mode   uint32 `json:"mode,omitempty"`
+}
+
+type ConnectionInstalledFileInspector interface {
+	InspectInstalledFile(context.Context, FileInstallHandle) (InstalledFileInspection, error)
+}

@@ -342,6 +342,18 @@ func (e *Engine) Handle(ctx context.Context, call Call) Response {
 			record, err = e.ObserveFileInstall(ctx, *call.FileHandle)
 			response.FileRecord = &record
 		}
+	case "file-inspect":
+		if call.FileHandle == nil {
+			err = ErrConflict
+		} else {
+			var inspection substrate.InstalledFileInspection
+			inspection, err = e.InspectInstalledFile(ctx, *call.FileHandle)
+			if err == nil {
+				response.FileInspection = &inspection
+				copy := *call.FileHandle
+				response.FileHandle = &copy
+			}
+		}
 	case "file-cancel":
 		if call.FileHandle == nil {
 			err = ErrConflict
