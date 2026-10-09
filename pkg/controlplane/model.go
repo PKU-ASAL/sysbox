@@ -330,7 +330,8 @@ const (
 	GuestExecutionFailed    = "failed"
 	GuestExecutionCancelled = "cancelled"
 
-	GuestExecutionResultClassExit = "exit"
+	GuestExecutionResultClassExit       = "exit"
+	GuestExecutionResultClassNotStarted = "not_started"
 )
 
 type AgentCommandEvent struct {

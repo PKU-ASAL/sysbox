@@ -12,17 +12,22 @@ func (r *ExecutionGrantRepository) HasCommandExecutionHistory(ctx context.Contex
 	// Use the validated authority transaction, including stop-history integrity
 	// and durable clock floor; absence is used as a no-execution proof.
 	err := r.update(ctx, func(a *executionAuthority) error {
-		for _, grant := range a.Grants {
-			if grant.AgentID == agent && grant.CommandID == command {
-				found = true
-			}
-		}
-		for _, stop := range a.Stops {
-			if stop.Grant.AgentID == agent && stop.Grant.CommandID == command {
-				found = true
-			}
-		}
+		found = a.hasCommandExecutionHistory(agent, command)
 		return nil
 	})
 	return found, err
+}
+
+func (a *executionAuthority) hasCommandExecutionHistory(agent, command string) bool {
+	for _, g := range a.Grants {
+		if g.AgentID == agent && g.CommandID == command {
+			return true
+		}
+	}
+	for _, s := range a.Stops {
+		if s.Grant.AgentID == agent && s.Grant.CommandID == command {
+			return true
+		}
+	}
+	return false
 }

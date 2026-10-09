@@ -433,3 +433,13 @@ execution record_format 3 / API schema 12 显式拒绝旧格式。这里关闭�
 派生 Run task 不生成独立 execution。旧 API schema12、execution3、host task1
 明确拒绝重建。当前为 repository/API/supervisor 层证据，仍需完整 P9 双 VM
 故障验收及未启动任务无副作用终态路径，不代表所有 P_n 已完成。
+
+### 2026-10-10：已取消、从未获权任务的终态证明
+
+取消扫描先退休原命令，再用现有 authority 事务检查原始 admission 和完整授权
+历史。Grants 和 Stops 都没有命令历史，才允许 cancelled/not_started；否则仍
+等待宿主签名结果。源退休、终态提交、取消投递退休之间均能中断重放，状态判断
+与 CAS 语义仍在共享 persistence 层。此证明要求完整保存权威账本；损坏或未知
+版本拒绝处理，缺失或错误 admission seed 不产生 not_started。整个账本被外部
+删除的灾难恢复不在这些测试的证明范围内。
+未取消的派发失败路径、删除工作流和 P9 故障矩阵仍未关闭。

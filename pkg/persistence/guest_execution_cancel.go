@@ -72,6 +72,7 @@ func PrepareGuestExecutionCancellation(id string, raw, authority []byte, lookup 
 			return nil, err
 		}
 	}
+	wasRequested := x.CancelRequested
 	if !x.CancelRequested {
 		if x.Version == math.MaxInt64 {
 			return nil, ErrConflict
@@ -79,29 +80,6 @@ func PrepareGuestExecutionCancellation(id string, raw, authority []byte, lookup 
 		x.CancelRequested = true
 		x.EndedAt, x.ExpiresAt = time.Time{}, time.Time{}
 		x.Version++
-	}
-	next, err := encodeExecution(x)
-	if err != nil {
-		return nil, err
-	}
-	next, err = preserveGuestDispatch(raw, next)
-	if err != nil {
-		return nil, err
-	}
-	// A seed is immutable; mutable command rows and retirement tombstones win.
-	if dispatch != nil {
-		var object map[string]json.RawMessage
-		if err = decodeGuestObject(next, &object); err != nil {
-			return nil, err
-		}
-		object["cancel_dispatch_command"], err = EncodeCommandRecord(*dispatch)
-		if err != nil {
-			return nil, err
-		}
-		next, err = json.Marshal(object)
-		if err != nil {
-			return nil, err
-		}
 	}
 	a, err := decodeExecutionAuthority(authority)
 	if err != nil {
@@ -124,11 +102,62 @@ func PrepareGuestExecutionCancellation(id string, raw, authority []byte, lookup 
 				return nil, ErrConflict
 			}
 		}
+		if source.Retired && !guestTerminal(x.Status) && !a.hasCommandExecutionHistory(x.AgentID, x.CommandID) {
+			// Require the original compound admission, not merely a mutable
+			// status or a missing StartedAt. Retirement excludes future delivery;
+			// the already-committed cancellation excludes future grants.
+			seed, err := guestDispatchSeed(raw)
+			if err != nil {
+				return nil, err
+			}
+			if seed != nil {
+				e := seed.Command.Execution
+				if seed.Command.ID != x.CommandID || seed.Command.AgentID != x.AgentID || seed.Command.Type != "guest_execution" || seed.Command.ActionID != source.Command.ActionID || seed.Command.TopologyUID != source.Command.TopologyUID || seed.Command.ResourceUID != source.Command.ResourceUID || seed.Command.Generation != source.Command.Generation || e == nil || e.ID != x.ID || e.Topology != x.Topology || e.Node != x.Node || !e.CreatedAt.Equal(x.CreatedAt) {
+					return nil, ErrConflict
+				}
+				if wasRequested {
+					if x.Version == math.MaxInt64 {
+						return nil, ErrConflict
+					}
+					x.Version++
+				}
+				x.Status = controlplane.GuestExecutionCancelled
+				x.ResultClass = controlplane.GuestExecutionResultClassNotStarted
+				x.Err = ""
+				x.Result = controlplane.GuestExecutionResult{}
+				x.EndedAt = a.ObservedAt
+				x.ExpiresAt = a.ObservedAt.Add(15 * time.Minute)
+
+			}
+		}
 		for key, grant := range a.Grants {
 			if grant.CommandID == x.CommandID && grant.AgentID == x.AgentID && grant.State != controlplane.GrantStopped {
 				grant.State = controlplane.GrantRevoked
 				a.Grants[key] = grant
 			}
+		}
+	}
+	next, err := encodeExecution(x)
+	if err != nil {
+		return nil, err
+	}
+	next, err = preserveGuestDispatch(raw, next)
+	if err != nil {
+		return nil, err
+	}
+	// A seed is immutable; mutable command rows and retirement tombstones win.
+	if dispatch != nil {
+		var object map[string]json.RawMessage
+		if err = decodeGuestObject(next, &object); err != nil {
+			return nil, err
+		}
+		object["cancel_dispatch_command"], err = EncodeCommandRecord(*dispatch)
+		if err != nil {
+			return nil, err
+		}
+		next, err = json.Marshal(object)
+		if err != nil {
+			return nil, err
 		}
 	}
 	nextAuthority, err := json.Marshal(a)

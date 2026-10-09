@@ -858,3 +858,8 @@ GuestTaskResult（exit_code_known、result_class、base64有界输出），不�
 成功包装器。独立任务提交 execution 后释放 grant，Run child仅停止child grant。
 回执HTTP限4MiB，每流输出限1MiB。API schema12→13、execution3→4、host task1→2，
 无旧格式兼容；完成结果仅由宿主证据写入，worker仍可报告running及投递事件。
+
+实施补充（2026-10-10 never-authorized cancellation）：已取消任务新增
+result_class=not_started，只在原投递已退休、原始受理身份匹配且完整授权账本
+从未签发该命令时生成。没有新增公共路由或兼容读取；格式保持 API13/execution4。
+已有 worker running 报告不妨碍这个证明，任何历史授权则必须等待宿主结果。

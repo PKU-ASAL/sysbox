@@ -314,6 +314,14 @@ and successor epochs. Run-derived tasks release their child grant without
 creating a separate API execution. Receipt requests are limited to 4 MiB;
 stdout/stderr are base64 encoded and bounded to 1 MiB each before signing.
 
+For a cancelled execution that never received execution authority, recovery
+retires the original delivery, verifies the original admission and the complete
+grant/stop history under the authority lock, then records `cancelled` with
+`result_class: not_started`. This also works when an Agent already reported
+`running`: that report alone does not prove remote execution. Any historical
+grant requires host evidence instead. Interrupted cleanup resumes from the
+durable cancellation intent without changing an established terminal result.
+
 File upload uses the request body as raw binary bytes, `X-Content-SHA256` for
 integrity, and query parameters for the absolute guest `path` and octal `mode`.
 The limit is 16 MiB. Paths containing NUL, traversal, or a non-absolute path

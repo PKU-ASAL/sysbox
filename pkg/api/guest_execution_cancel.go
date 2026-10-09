@@ -77,6 +77,28 @@ func (s *AgentService) reconcileGuestExecutionCancellation(ctx context.Context, 
 	}
 	// Replay also repairs file authority revocation after an interrupted
 	// record/authority publication, including a retired cancellation delivery.
-	_, err = s.store.CancelGuestExecution(ctx, x.ID)
-	return err
+	x, err = s.store.CancelGuestExecution(ctx, x.ID)
+	if err != nil {
+		return err
+	}
+	if x.CommandID == "" {
+		return nil
+	}
+	// Retirement and cancellation intent are durable before asking the shared
+	// authority transaction to certify that execution was never authorized.
+	if err = s.store.DeleteAgentCommand(ctx, x.AgentID, x.CommandID); err != nil {
+		return err
+	}
+	x, err = s.store.CancelGuestExecution(ctx, x.ID)
+	if err != nil {
+		return err
+	}
+	if x.Status == controlplane.GuestExecutionCancelled && x.ResultClass == controlplane.GuestExecutionResultClassNotStarted {
+		cmd, err := persistence.GuestExecutionCancellationCommand(*x)
+		if err != nil {
+			return err
+		}
+		return s.store.DeleteAgentCommand(ctx, x.AgentID, cmd.ID)
+	}
+	return nil
 }

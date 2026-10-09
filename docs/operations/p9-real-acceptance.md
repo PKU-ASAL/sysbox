@@ -1968,3 +1968,24 @@ cancellation after Agent session replacement, and successor fencing. The test
 removed its disposable container. This is one-host execution evidence, not the
 two-VM P9 fault matrix. Never-started task resolution, deletion cleanup recovery
 and the broader P0–P9 capability/acceptance backlog remain open.
+
+### 2026-10-10 — cancelled executions that never received authority
+
+Cancellation recovery now retires the source delivery before checking the
+original admission and both current grants and stop history under authority.
+Only an intact admission with no authorization history becomes
+`cancelled / not_started`; an earlier Agent `running` report is not treated as
+remote execution evidence. Cleanup then retires the cancellation delivery.
+
+File, SQLite and real PostgreSQL tests cover source-retirement failure,
+retirement-to-terminal failure, terminal-to-cancel-cleanup failure, cold replay,
+unchanged terminal versions, successor-replaced grant history, and missing or
+mismatched admission evidence. Targeted race passed (API 9.283s, persistence
+1.247s); the frozen final snapshot passed full Go regression (API 156.790s,
+persistence 7.844s). Vet, docscheck and independent review passed. No new
+two-host or provider E2E run is claimed for this metadata-only change.
+
+This closes cancelled, never-authorized execution cleanup. Uncancelled delivery
+failures still need their own automatic outcome path. Persistent deletion and
+the complete P9 matrix remain open. The proof assumes an intact authority
+ledger; external deletion of the whole ledger is not covered by these tests.

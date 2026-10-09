@@ -569,3 +569,11 @@ API schema 12 拒绝旧写者，明确重建。撤销不等于远端停止，宿
 任务只关闭 child grant。宿主先保存签名回执再回报，重启可独立补报。
 API schema 13 / execution format 4 / host task version 2 明确重建旧格式。
 未启动且未发授权任务的终态证明、两 VM 故障验收、删除恢复等主线仍未关闭。
+
+2026-10-10 已取消但未获权的任务收尾：恢复扫描先确认取消意图、退休原投递，再在
+共享取消事务中检查完整 Grants/Stops。仅原始 compound admission 身份完整且
+没有任何执行授权历史时，落 cancelled/not_started；最后退休取消投递。三个
+中断点均保留 durable intent，重启可收敛；已有终态重试不改版本或结果。
+不凭 queued/StartedAt 判定，曾发授权但当前已被 successor 替换也不能伪装未启动。
+格式仍为 API13/execution4/host task2。未取消的派发前失败自动收尾、删除恢复及
+完整 P0–P9 跨宿主故障验收继续推进。
