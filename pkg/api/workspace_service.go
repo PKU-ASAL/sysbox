@@ -24,6 +24,7 @@ type WorkspaceService struct {
 	loadNodeOperations func(context.Context, string) ([]controlplane.NodeOperation, error)
 	loadGuestActivity  func(context.Context, string) ([]persistence.GuestActivity, error)
 	lockAdmission      func(string) func()
+	deleteState        func(context.Context, string, int64, string) error
 }
 
 type WorkspaceInfo struct {
@@ -403,11 +404,10 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if conditional, ok := mgr.Backend().(state.VersionedDeleteBackend); ok {
-		if err := conditional.DeleteVersioned(ctx, st.Meta.Serial, st.TopologyUID); err != nil {
-			return fmt.Errorf("remove state: %w", err)
-		}
-	} else if err := mgr.Delete(ctx); err != nil {
+	if s.deleteState == nil {
+		return fmt.Errorf("%w: authority-aware state deletion unavailable", persistence.ErrConflict)
+	}
+	if err := s.deleteState(ctx, topology, st.Meta.Serial, st.TopologyUID); err != nil {
 		return fmt.Errorf("remove state: %w", err)
 	}
 	if s.stateBackend == "" {

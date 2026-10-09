@@ -97,17 +97,11 @@ func (r *ExecutionGrantRepository) read(ctx context.Context, fn func(*executionA
 	if err != nil {
 		return err
 	}
-	var a executionAuthority
-	if json.Unmarshal(raw, &a) != nil || a.Sessions == nil || a.Grants == nil || a.ObservedAt.IsZero() {
-		return ErrCorruptRecord
-	}
-	if a.Version != executionAuthorityVersion {
-		return ErrUnsupportedVersion
-	}
-	if err := validateMaintenance(&a); err != nil {
+	a, err := decodeExecutionAuthority(raw)
+	if err != nil {
 		return err
 	}
-	return fn(&a)
+	return fn(a)
 }
 
 func NewExecutionGrantRepository(storage ExecutionGrantStorage) *ExecutionGrantRepository {
@@ -138,58 +132,11 @@ func (r *ExecutionGrantRepository) update(ctx context.Context, fn func(*executio
 	}
 	var transitionErr error
 	err := r.storage.UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-		a := executionAuthority{Version: executionAuthorityVersion, Sessions: map[string]controlplane.AgentSession{}, Grants: map[string]controlplane.ExecutionGrant{}}
-		if raw != nil {
-			if err := json.Unmarshal(raw, &a); err != nil {
-				return nil, ErrCorruptRecord
-			}
-			if a.Version != executionAuthorityVersion {
-				return nil, ErrUnsupportedVersion
-			}
-		}
-		if a.Sessions == nil || a.Grants == nil {
-			return nil, ErrCorruptRecord
-		}
-		if err := validateMaintenance(&a); err != nil {
+		decoded, err := decodeExecutionAuthority(raw)
+		if err != nil {
 			return nil, err
 		}
-		if raw != nil && a.ObservedAt.IsZero() {
-			return nil, ErrCorruptRecord
-		}
-		for key, s := range a.Sessions {
-			if key == "" || key != s.AgentID || s.ID == "" || s.IncarnationID == "" || s.CreatedAt.IsZero() {
-				return nil, ErrCorruptRecord
-			}
-		}
-		for epoch, stop := range a.Stops {
-			if epoch == 0 || epoch > a.Epoch || stop.Grant.Epoch != epoch || !validGrant(stop.Grant) || stop.Grant.State != controlplane.GrantStopped || stop.Receipt == "" || stop.Grant.StopReceipt != stop.Receipt {
-				return nil, ErrCorruptRecord
-			}
-		}
-		for key, g := range a.Grants {
-			if key != grantScopeKey(g.Scope) || !validGrant(g) || g.Epoch == 0 || g.Epoch > a.Epoch || g.ExpiresAt.IsZero() {
-				return nil, ErrCorruptRecord
-			}
-			switch g.State {
-			case controlplane.GrantActive, controlplane.GrantRevoked:
-				if g.StopReceipt != "" {
-					return nil, ErrCorruptRecord
-				}
-			case controlplane.GrantStopped:
-				if g.StopReceipt == "" {
-					return nil, ErrCorruptRecord
-				}
-			default:
-				return nil, ErrCorruptRecord
-			}
-			if g.State != controlplane.GrantStopped {
-				for otherKey, other := range a.Grants {
-					if otherKey != key && other.State != controlplane.GrantStopped && scopesOverlap(g.Scope, other.Scope) && !nestedRunGrantPair(g, other) {
-						return nil, ErrCorruptRecord
-					}
-				}
-			}
-		}
+		a := *decoded
 		if now := r.now(); now.After(a.ObservedAt) {
 			a.ObservedAt = now
 		}

@@ -1,0 +1,66 @@
+package persistence
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+)
+
+// ApplyQuiescentLifecycleDelete checks persisted stop evidence, maintenance and
+// lifecycle CAS together. The caller must hold authority and aggregate locks
+// through commit. Nil authority is allowed only when absence was checked under
+// that same lock. The transition does not authorize provider deletion.
+func ApplyQuiescentLifecycleDelete(raw, authorityRaw []byte, topology string, expectedSerial int64, topologyUID string) ([]byte, error) {
+	if !topologyName.MatchString(topology) || expectedSerial < 0 || topologyUID == "" {
+		return nil, ErrInvalidRecord
+	}
+	a, err := decodeAggregate(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err = validateAggregate(a, topology); err != nil {
+		return nil, err
+	}
+	if a.Serial != expectedSerial || a.State.TopologyUID != topologyUID {
+		return nil, ErrConflict
+	}
+	authority, err := decodeExecutionAuthority(authorityRaw)
+	if err != nil {
+		return nil, err
+	}
+	if authority.maintenanceBlocks(topologyUID) {
+		return nil, fmt.Errorf("%w: maintenance prevents metadata deletion", ErrConflict)
+	}
+	for _, grant := range authority.Grants {
+		if grant.Scope.TopologyUID == topologyUID && grant.State != controlplane.GrantStopped {
+			return nil, fmt.Errorf("%w: execution %s awaits host stop", ErrConflict, grant.ActionID)
+		}
+	}
+	if err := resetAggregate(a); err != nil {
+		return nil, err
+	}
+	return json.Marshal(a)
+}
+
+// DeleteQuiescentLifecycle is the file adapter boundary. The caller holds the
+// authority lock while this method locks, validates and writes the aggregate.
+func (r *Repository) DeleteQuiescentLifecycle(ctx context.Context, topology string, expectedSerial int64, topologyUID string, authority []byte) error {
+	return r.update(ctx, topology, func(a *aggregate) error {
+		raw, err := json.Marshal(a)
+		if err != nil {
+			return err
+		}
+		next, err := ApplyQuiescentLifecycleDelete(raw, authority, topology, expectedSerial, topologyUID)
+		if err != nil {
+			return err
+		}
+		reset, err := decodeAggregate(next)
+		if err != nil {
+			return err
+		}
+		*a = *reset
+		return nil
+	})
+}

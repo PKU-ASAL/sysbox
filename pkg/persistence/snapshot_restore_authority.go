@@ -53,17 +53,11 @@ func ApplyAuthorizedSnapshotRestore(raw, authorityRaw []byte, topology string, r
 	if a.State.TopologyUID != request.TopologyUID {
 		return nil, zero, ErrConflict
 	}
-	var authority executionAuthority
-	if len(authorityRaw) == 0 || json.Unmarshal(authorityRaw, &authority) != nil {
+	if len(authorityRaw) == 0 {
 		return nil, zero, ErrCorruptRecord
 	}
-	if authority.Version != executionAuthorityVersion {
-		return nil, zero, ErrUnsupportedVersion
-	}
-	if authority.Sessions == nil || authority.Grants == nil || authority.ObservedAt.IsZero() {
-		return nil, zero, ErrCorruptRecord
-	}
-	if err := validateMaintenance(&authority); err != nil {
+	authority, err := decodeExecutionAuthority(authorityRaw)
+	if err != nil {
 		return nil, zero, err
 	}
 	barrier, ok := authority.Maintenance[request.ID]
@@ -80,10 +74,7 @@ func ApplyAuthorizedSnapshotRestore(raw, authorityRaw []byte, topology string, r
 	if barrier.Released {
 		return nil, zero, ErrConflict
 	}
-	for key, grant := range authority.Grants {
-		if key != grantScopeKey(grant.Scope) || !validGrant(grant) || grant.Epoch == 0 || grant.Epoch > authority.Epoch || grant.ExpiresAt.IsZero() {
-			return nil, zero, ErrCorruptRecord
-		}
+	for _, grant := range authority.Grants {
 		if grant.Scope.TopologyUID == request.TopologyUID && (grant.State != controlplane.GrantStopped || grant.StopReceipt == "") {
 			return nil, zero, ErrConflict
 		}

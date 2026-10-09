@@ -2,7 +2,6 @@ package persistence
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"strings"
 	"time"
@@ -45,20 +44,8 @@ func ValidateMaintenanceWrite(raw []byte, topologyUID string) error {
 	if topologyUID == "" {
 		return ErrInvalidRecord
 	}
-	if raw == nil {
-		return nil
-	}
-	var authority executionAuthority
-	if err := json.Unmarshal(raw, &authority); err != nil {
-		return ErrCorruptRecord
-	}
-	if authority.Version != executionAuthorityVersion {
-		return ErrUnsupportedVersion
-	}
-	if authority.Sessions == nil || authority.Grants == nil || authority.ObservedAt.IsZero() {
-		return ErrCorruptRecord
-	}
-	if err := validateMaintenance(&authority); err != nil {
+	authority, err := decodeExecutionAuthority(raw)
+	if err != nil {
 		return err
 	}
 	if authority.maintenanceBlocks(topologyUID) {

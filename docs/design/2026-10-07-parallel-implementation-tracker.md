@@ -355,3 +355,10 @@ RPC 只进入一次 gate；Docker client 延迟初始化，不再决定其他 pr
 candidate、snapshot state/journal 的引用与摘要；CLI 已消费此共享层，移除独立
 state.json 兼容读取。该模型尚未汇合 API 活动、授权、placement/revision 引用，也
 未覆盖删除期间的并发准入；不得据此标记 P8 完成。
+
+2026-10-09 P6/P8 删除证据检查点：metadata Delete（包括 force）已将 lifecycle
+UID/serial CAS、全类型 grant 停止证据、maintenance barrier 校验放入同一提交边界。
+文件/SQLite/Postgres 使用同一纯状态转换；API cleanup-inspection 公开仍待停止的
+execution_grant，解释终态 Run 仍不能清理的原因。授权读取、写入、维护与 restore
+共用严格必填字段校验，损坏记录不再被补默认值当成空授权。仍需汇合所有 operation
+registry 的准入与引用，并拒绝 metadata 删除之后基于旧 UID 的迟到授权；P6/P8 尚未关闭。

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -46,6 +47,11 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		unavailable()
 		return
 	}
+	grants, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ListActiveGrants(r.Context())
+	if err != nil {
+		unavailable()
+		return
+	}
 	placement, err := s.workspaceService().loadPlacement(topology)
 	if err != nil {
 		unavailable()
@@ -71,6 +77,15 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 	}
 	active := []map[string]any{}
 	agents := map[string]bool{}
+	awaitingStop := false
+	for _, grant := range grants {
+		if grant.Scope.TopologyUID != snapshot.State.TopologyUID {
+			continue
+		}
+		awaitingStop = true
+		agents[grant.AgentID] = true
+		active = append(active, map[string]any{"kind": "execution_grant", "id": grant.ActionID, "status": grant.State, "agent_id": grant.AgentID, "resource_uid": grant.Scope.ResourceUID, "generation": grant.Scope.Generation, "epoch": grant.Epoch})
+	}
 	for _, activity := range guestActivity {
 		if activity.AgentID != "" {
 			agents[activity.AgentID] = true
@@ -121,7 +136,7 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 	if placement != nil {
 		result["agent_id"] = placement.AgentID
 	}
-	result["active_operation_kinds"] = []string{"run", "node_operation", "guest_execution", "guest_file"}
+	result["active_operation_kinds"] = []string{"run", "node_operation", "guest_execution", "guest_file", "execution_grant"}
 	receipt, reason := currentCleanupReceipt(topology, placement, runs, nodes)
 	if receipt != nil && guestActivityBeforeReceipt(guestActivity, receipt) != nil {
 		receipt = nil
@@ -136,6 +151,9 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		}
 		if len(resources) > 0 {
 			result["cleanup_receipt_status"] = "blocked_by_local_resources"
+		}
+		if awaitingStop {
+			result["cleanup_receipt_status"] = "blocked_by_execution_authority"
 		}
 	}
 	writeJSON(w, http.StatusOK, result)

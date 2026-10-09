@@ -97,6 +97,7 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 	s.workspaces.loadRuns = s.apiStore.LoadRuns
 	s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
 	s.workspaces.loadGuestActivity = s.apiStore.ListGuestActivity
+	s.workspaces.deleteState = s.deleteStateWithAuthority
 	s.workspaces.lockAdmission = s.jobs.lockTopology
 	if p, ok := s.apiStore.(durablePlacementStore); ok {
 		s.workspaces.placementStore = p
@@ -182,6 +183,7 @@ func (s *Server) workspaceService() *WorkspaceService {
 		s.workspaces.loadRuns = s.apiStore.LoadRuns
 		s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
 		s.workspaces.loadGuestActivity = s.apiStore.ListGuestActivity
+		s.workspaces.deleteState = s.deleteStateWithAuthority
 		s.workspaces.lockAdmission = s.jobs.lockTopology
 		if p, ok := s.apiStore.(durablePlacementStore); ok {
 			s.workspaces.placementStore = p

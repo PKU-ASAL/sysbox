@@ -687,3 +687,10 @@ Policy Apply 改为一次 nft batch 完成建表/删表/重建。失败 batch �
 恢复保留。repository 新增 `LoadGCReferences(ctx,topology)`，返回单事务 lifecycle
 引用清单与摘要，不能作为独立删除权限。CLI GC 移除 standalone state.json 兼容
 读取，旧记录必须明确重建，旧 GC inventory digest 需要重新生成。
+
+实施补充（2026-10-09 metadata Delete）：HTTP 路由不变，`force=true` 不再绕过
+未确认停止的执行授权或未释放的维护 barrier。失败/取消的操作状态、租约过期均
+不能替代 host stop receipt。清理诊断 `active_operations`/`active_operation_kinds`
+新增 `execution_grant`，含 action ID、Agent、scope、epoch 和授权状态；可出现
+`cleanup_receipt_status=blocked_by_execution_authority`。文件/SQLite/Postgres
+删除统一核验授权与 lifecycle UID/serial；缺字段授权记录按损坏数据拒绝，不做兼容补齐。

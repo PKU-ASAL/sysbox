@@ -1091,9 +1091,62 @@ a lock held through provider execution. P8 remains open for that integration,
 legacy raw CLI deletion removal and real orphan-GC acceptance.
 
 Validation: the full Go suite passed with an isolated Postgres 16 database
-enabled. Host-supervisor and persistence race suites passed with that database;
+enabled for persistence tests via `SYSBOX_TEST_POSTGRES_DSN`. The API integration
+tests require the separate `SYSBOX_TEST_DATABASE_URL` variable, which was not
+set in that round; its Postgres branches were skipped. Host-supervisor and
+persistence race suites passed;
 the commands race suite passed before the socket integration addition, and the
 final socket/nil-validator cases passed under race after correcting fixture
 directory permissions and target fields. Vet, docscheck (53 canonical documents)
 and independent re-review passed. No real provider resource was deleted in this
 round; the temporary database belongs only to this test run.
+
+### Metadata deletion and outstanding authority (2026-10-09)
+
+A regression reproduced metadata deletion succeeding after a Run was marked
+failed while its provider grant still lacked a host stop receipt. Ordinary and
+forced API deletion now commit through a shared quiescence/CAS transition. The
+file adapter holds API record and authority locks through lifecycle commit;
+SQLite uses `BEGIN IMMEDIATE`; PostgreSQL locks admission, materializes/locks
+the authority row and then locks the aggregate. The PostgreSQL insert is needed
+because `SELECT FOR UPDATE` alone cannot exclude first issuance into an absent
+authority row. No provider effect is performed by this metadata transition.
+
+All grants for the exact topology UID must have persisted stop evidence, and no
+unreleased maintenance barrier may exist. Revoked or expired grants still block
+deletion; `force` does not bypass them. Grants for other topology UIDs do not
+block this topology. The serial/UID comparison prevents a stale delete from
+resetting a successor. Cleanup inspection includes `execution_grant` entries
+and marks an otherwise available receipt `blocked_by_execution_authority` when
+there are unresolved effects.
+
+Reads, grant transitions, maintenance writes, restore and metadata deletion use
+the same authority decoder. Missing mandatory JSON fields, malformed scopes,
+invalid states and stopped records without receipts are rejected. Only an
+actually absent ledger initializes an empty authority; an existing `{}` record
+is corruption. Independent review caught default initialization masking missing
+fields, and explicit regression tests reproduced and fixed that behavior.
+
+File/SQLite/Postgres tests cover failed Run versus outstanding authority,
+revocation, exact host-stop acceptance, maintenance and unrelated topology
+grants. File and PostgreSQL concurrency tests block lifecycle commit and verify
+that first authority creation cannot pass the held authority boundary. SQLite
+uses its single write transaction for both records. Both
+`SYSBOX_TEST_DATABASE_URL` (API) and `SYSBOX_TEST_POSTGRES_DSN` (persistence) must
+be set when running the complete database regression.
+
+This closes deletion over already-outstanding authority, not the entire P6/P8
+protocol. All operation registry/admission checks still need a single durable
+exclusion model, and issuance based on a stale lifecycle UID after deletion must
+be fenced at its source. Workspace filesystem cleanup remains outside the
+database transaction. Automatic GC is still disabled pending complete reference
+and plan authorization.
+
+Validation completed with both PostgreSQL test variables set: full Go regression
+passed, including API and persistence Postgres cases. API race (48.90 seconds)
+and persistence race passed; vet, docscheck and independent re-review passed.
+Real Docker `TestHostSupervisorRealTaskStopAndSuccessorE2E` passed in 3.39 seconds
+and `TestRemoteDockerCompletionLossRecoveryE2E` in 12.64 seconds under race with
+a freshly built guest helper. The latter confirms that host-signed Destroy and
+cold API metadata deletion still succeed without force after verified stops.
+These tests use isolated resources; they do not replace two-host P9 acceptance.
