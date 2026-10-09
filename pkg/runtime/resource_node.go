@@ -365,6 +365,9 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		"ports":        resolvedPorts,
 		"guest_family": string(guestFamily),
 	}
+	if source, ok := providerConfig.(interface{ ObservationSource() string }); ok && source.ObservationSource() != "" {
+		nodeInstance["observation_source"] = source.ObservationSource()
+	}
 	// Persist lifecycle flags so ComputePlan can honour them on future runs
 	// even if the resource is removed from HCL.
 	if lc := cfg.Lifecycle; lc != nil {

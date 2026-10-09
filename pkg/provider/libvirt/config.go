@@ -6,6 +6,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -28,6 +29,30 @@ type Config struct {
 	// SSHKey is the path to a private key for SSH access.
 	SSHKey           string `hcl:"ssh_key,optional"`
 	SSHAuthorizedKey string `hcl:"ssh_authorized_key,optional"`
+	// WindowsETW opt-in installs the standalone SysArmor ETW collector before
+	// challenge provisioners. The PowerShell bootstrap requires a Windows guest.
+	WindowsETW bool `hcl:"windows_etw,optional" json:"WindowsETW,omitempty"`
+}
+
+func (c *Config) BootstrapProvisioners() []config.ProvisionerConfig {
+	if c == nil || !c.WindowsETW {
+		return nil
+	}
+	const base = "/var/lib/sysbox/vm-artifacts/windows-etw/"
+	const stage = `C:\ProgramData\SysArmor\Stage\`
+	return []config.ProvisionerConfig{
+		{Type: "exec", Program: `New-Item -ItemType Directory -Force -Path 'C:\ProgramData\SysArmor\Stage' | Out-Null`, Shell: "powershell"},
+		{Type: "file", Source: base + "sysarmor-windows-etw.zip", Destination: stage + "sysarmor-windows-etw.zip"},
+		{Type: "file", Source: base + "install-windows-etw.ps1", Destination: stage + "install-windows-etw.ps1"},
+		{Type: "exec", Program: `& 'C:\ProgramData\SysArmor\Stage\install-windows-etw.ps1' -Archive 'C:\ProgramData\SysArmor\Stage\sysarmor-windows-etw.zip'`, Shell: "powershell"},
+	}
+}
+
+func (c *Config) ObservationSource() string {
+	if c != nil && c.WindowsETW {
+		return "etw"
+	}
+	return ""
 }
 
 func (s *Substrate) DecodeProviderConfig(body hcl.Body, ctx *hcl.EvalContext) (any, error) {
