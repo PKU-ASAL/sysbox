@@ -87,6 +87,9 @@ func (s *WorkspaceService) finishDeletionIntent(ctx context.Context, intent dele
 // never invents a destroy result or contacts a provider.
 func (s *WorkspaceService) RecoverDeletionIntents(ctx context.Context) error {
 	entries, err := os.ReadDir(s.runsDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}

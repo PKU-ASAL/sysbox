@@ -2160,3 +2160,26 @@ cross-process Firecracker recovery (10.40s), and libvirt generation effects
 This is a real-provider component gate, not a complete P9 claim: the two-host
 API/Agent failover matrix, partition, disk-full, upgrade/rebuild rehearsal and
 main integration are still outstanding.
+
+### 2026-10-10 — fresh current-commit two-VM lifecycle round
+
+A new lab `/tmp/sysbox-p9-lab-current` was created from the current commit with
+independent KVM kernels, private qcow2 disks, no shared guest mounts, distinct
+boot IDs, bidirectional private networking and nested KVM. `check` passed and
+recorded control boot `12fc6676-3c2c-46f1-98e3-b3480533407a`, execution boot
+`f23adb2f-0c0d-4b16-b9a5-8c4e18b29854`, and `nested_kvm_qemu_started=true`.
+
+The current binary was deployed to both VMs. Because execution had no registry
+access, the host `alpine:3.22` image was exported, SHA256 verified as
+`4cb95149f3e3848b4fca6333430b739695326c82d00c015770d5b4723cfc4225`, transferred
+through pinned SSH and imported explicitly. The first round correctly retained
+uncertain evidence when the image was unavailable. The second round then passed
+Apply and Destroy through the remote Docker provider, produced cleanup receipt
+serial 4 with `empty=true`, and independently queried execution Docker for zero
+containers matching the recorded topology UID. Non-force metadata DELETE then
+succeeded.
+
+This proves a fresh current-format cross-kernel lifecycle round and explicit
+artifact provisioning. It does not close API failover during an active Run,
+partition, database restart, disk-full, upgrade/rebuild, or the full
+provider/SSH/GC matrix.
