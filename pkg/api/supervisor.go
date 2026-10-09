@@ -79,6 +79,9 @@ func (s *Supervisor) loop() {
 
 func (s *Supervisor) Scan(ctx context.Context) {
 	now := time.Now().UTC()
+	if err := s.server.agentService().reconcileUnissuedSSHFailures(ctx); err != nil {
+		slog.Warn("unissued SSH failure reconciliation failed", "error", err)
+	}
 	if err := s.server.agentService().RepublishPendingCommands(ctx); err != nil {
 		fmt.Printf("[supervisor] republish pending commands: %v\n", err)
 	}

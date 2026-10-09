@@ -440,6 +440,9 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 		return err
 	}
 	s.updateConsoleSessionFromCommandEvent(*cmd, event)
+	if cmd.Type == "node_operation" && failedDelivery(cmd.Status) {
+		return reconcileUnissuedSSHFailure(ctx, s.store, *cmd)
+	}
 	if cmd.Type == "guest_file_put" && cmd.FilePut != nil && (cmd.Status == controlplane.AgentCommandStatusFailed || cmd.Status == controlplane.AgentCommandStatusDenied || cmd.Status == controlplane.AgentCommandStatusCancelled) {
 		return newGuestFileOperationService(s.store).ReconcileCommandFailure(ctx, cmd.FilePut.ID, cmd.Status)
 	}

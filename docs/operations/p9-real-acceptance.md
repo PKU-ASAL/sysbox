@@ -1005,3 +1005,18 @@ any host result exists, the canonical operation stays unconfirmed/queued rather
 than receiving an invented failed result. Automated re-admission/reconciliation
 for that pre-host failure remains a liveness gap; host result recovery already
 supports retired command records.
+
+The no-grant subset of that liveness gap now has explicit reconciliation.
+After reading a durably retired failed/denied/cancelled command, the API checks
+both current grants and retained stop history in a validated authority transaction.
+Since issuance validates the same command transaction, no grant can be issued
+after its retirement. Only a command with no execution history may mark its
+matching SSH operation failed with `SSH access delivery failed before execution
+authorization`. An issued, expired, stopped or superseded grant prevents this
+inference; those operations still require host evidence.
+
+The command-event path runs this check after retirement, and the API supervisor
+repeats it from durable operation/command records after restart. Tests cover
+never-issued versus issued commands, idempotent scan, and retained stop history
+after a successor replaces the current scope. This does not automatically replay
+SSH work or resolve an operation whose host effects remain unknown.
