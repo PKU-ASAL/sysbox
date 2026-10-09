@@ -52,6 +52,11 @@ func (b localCommandStorage) records(ctx context.Context, agent string) ([]persi
 	if err != nil {
 		return nil, err
 	}
+	consoleCommands, err := b.store.consoleDispatchSeeds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	guestCommands = append(guestCommands, consoleCommands...)
 	seeds := map[string]bool{}
 	for _, record := range guestCommands {
 		if seeds[record.Command.ID] {
@@ -154,6 +159,11 @@ func (b localCommandStorage) read(ctx context.Context, id string) (*persistence.
 	if err != nil {
 		return nil, err
 	}
+	consoleCommands, err := b.store.consoleDispatchSeeds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	guestCommands = append(guestCommands, consoleCommands...)
 	for _, record := range guestCommands {
 		if record.Command.ID != id {
 			continue

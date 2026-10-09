@@ -163,6 +163,9 @@ func (s *AgentService) CompleteRun(agentID, runID string, completion controlplan
 }
 
 func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
+	if cmd.Type == "session_open" {
+		return cmd, fmt.Errorf("%w: console admission requires an atomic session dispatch", persistence.ErrInvalidRecord)
+	}
 	if cmd.ID == "" {
 		cmd.ID = uuid.New().String()
 	}

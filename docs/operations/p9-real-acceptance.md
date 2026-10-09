@@ -1702,3 +1702,32 @@ shared ID/topology/workspace validation and the deterministic contention test.
 API/persistence vet, docscheck and independent follow-up review passed. The
 isolated database was used only for this slice; existing project and retained
 two-VM data were not rebuilt.
+
+### Atomic initial console admission (2026-10-09)
+
+Normal HTTP creation prepares policy/health checks and audit before publishing
+a session and its initial session_open command together. File storage commits
+the immutable dispatch seed within the session record; SQL inserts session and
+outbox rows in one transaction. CAS preserves the file seed, and mutable
+command records/tombstones take precedence. Notification is a postcommit wake
+hint: failure still returns 202, with durable outbox delivery available.
+Standalone AgentService publication of session_open is rejected.
+
+Tests cover complete request round-trip, command collision rollback, frozen
+admission, concurrent admissions sharing one command ID, seed preservation on
+hub reconstruction/CAS, and retirement without resurrection. The HTTP wake
+test inspects both durable records before injecting notification failure.
+A pre-existing identity spoof was reproduced (viewer plus console role in the
+body returned 202), then fixed: authorization and persisted audit/request now
+use the server request subject; the same request returns 403 with no outbox.
+
+Initial full API race with real PostgreSQL passed (67.464 seconds); after the
+identity fix and expanded coverage, Console race passed (12.668 seconds).
+These tests exercise stores and API reconstruction, not cross-host console
+execution or a killed API process. HTTP idempotency-key admission, atomic
+cancellation, host ownership and signed remote stop remain open.
+
+The final full Go suite passed with both PostgreSQL test variables enabled.
+API/persistence vet, docscheck (53 canonical documents), diff checks and
+independent follow-up review passed. No retained deployment was rebuilt or
+upgraded; the dedicated PostgreSQL container was used only for these tests.

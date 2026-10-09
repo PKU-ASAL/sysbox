@@ -488,3 +488,10 @@ Cancel 与启动恢复改为完整记录 CAS。共享身份校验固定 ID、Age
 有效完成和精确重试仍可收敛。维护、cleanup 和恢复共用完成证据判断。初始化
 authority 与首次写入竞争、写入超时无残留已实测；其他已知 UID 不受无关屏障影响。
 该项不等于 session/outbox 原子受理，也不授予 console 宿主执行权限。
+
+2026-10-09 console 初次受理：HTTP 正常创建改为 session+授权 audit+session_open
+一次提交。文件使用 session 内不可变 dispatch seed，后续 CAS 保留，SQL 同事务
+插入两个 registry；冲突整次回滚。通知只负责唤醒，失败仍202并由 outbox 恢复。
+旧独立 session_open 发布入口明确拒绝。完整 request 冷读、退休优先和并发唯一
+胜者已覆盖。同时修复请求体 roles/requested_by 覆盖服务端主体的原有授权漏洞。
+取消仍为可恢复两步写，HTTP idempotency key、完整删除事务、host stop 尚待关闭。

@@ -271,3 +271,22 @@ Console 的文件、SQLite、Postgres 存储已统一为创建或完整记录 CA
   提交边界调用同一检查，三个后端共用 repository，未保留覆盖写入分支。
 - [x] 验证失败不写入、冻结成功时此前成功受理已可见；运行三后端合同、race、
   全仓回归，独立审查并记录证据。这不代替 session/outbox 原子受理和远端停止证明。
+
+### 2026-10-09：Console 初次受理与 outbox 同提交
+
+正常创建先准备完整会话、policy 审计和节点检查，再调用共享 ConsoleRepository.Admit。
+文件适配器将不可变初始 command 随 session 一次原子发布；SQL 适配器将 session 与
+command 放在同一事务。沿用现有 authority 锁和维护检查，不增加独立恢复日志。
+已有 session 或 command 冲突时整次受理失败；后续 CAS 保留文件 dispatch seed，
+命令变更记录及退休 tombstone 优先，seed 不复活已退休命令。
+
+- [x] 三后端初次受理、命令冲突回滚、冻结拒绝、共享 command ID 并发唯一胜者。
+- [x] HTTP 不再先落 queued 再单独发布命令；授权审计一起提交，失败不暴露内存会话。
+- [x] 提交后仅 WakeCommand 通知，通知失败仍返回202，由持久 outbox 补投递。
+- [x] 禁止 AgentService.PublishCommand 单独发布 session_open，移除旧创建生产路径。
+- [x] 请求体身份/角色不能替代服务端请求主体；拒绝请求只保存终态审计，无执行命令。
+- [x] 最终全仓回归和验收证据归档。
+
+本项关闭正常初次创建的 session/command 分步写窗口。HTTP idempotency key 受理、
+取消意图与取消 command 的同事务提交、完整删除事务、宿主会话所有权与签名停止
+证明仍需继续实施；不以本项测试关闭整个 P4/P6/P9。

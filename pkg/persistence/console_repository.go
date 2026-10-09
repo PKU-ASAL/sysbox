@@ -9,8 +9,10 @@ import (
 // ConsoleSessionStorage serializes read/transform/write with maintenance
 // authority. A nil replacement is a read-only retry. Storage must check
 // ConsoleSessionNeedsAdmission while holding authority through publication.
+// A non-nil dispatch is the initial command and must commit atomically with
+// the new session; collision must leave both registries unchanged.
 type ConsoleSessionStorage interface {
-	UpdateConsoleSession(context.Context, string, func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error
+	UpdateConsoleSession(context.Context, string, *controlplane.AgentCommand, func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error
 }
 
 type ConsoleRepository struct{ storage ConsoleSessionStorage }
@@ -23,7 +25,7 @@ func (r *ConsoleRepository) Create(ctx context.Context, sess controlplane.Consol
 	if _, err := EncodeConsoleSession(sess); err != nil {
 		return err
 	}
-	return r.storage.UpdateConsoleSession(ctx, sess.ID, func(current *controlplane.ConsoleSession) (*controlplane.ConsoleSession, error) {
+	return r.storage.UpdateConsoleSession(ctx, sess.ID, nil, func(current *controlplane.ConsoleSession) (*controlplane.ConsoleSession, error) {
 		if current == nil {
 			return &sess, nil
 		}
@@ -41,7 +43,7 @@ func (r *ConsoleRepository) CompareAndSwap(ctx context.Context, old, next contro
 	if _, err := EncodeConsoleSession(next); err != nil {
 		return err
 	}
-	return r.storage.UpdateConsoleSession(ctx, old.ID, func(current *controlplane.ConsoleSession) (*controlplane.ConsoleSession, error) {
+	return r.storage.UpdateConsoleSession(ctx, old.ID, nil, func(current *controlplane.ConsoleSession) (*controlplane.ConsoleSession, error) {
 		if current == nil || !SameConsoleSession(*current, old) {
 			return nil, ErrConflict
 		}

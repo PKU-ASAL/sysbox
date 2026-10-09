@@ -5,9 +5,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
 )
+
+// Recovery tests may seed an unadmitted registry record without an outbox.
+func (h *consoleSessionHub) Create(ctx context.Context, topology, node, agentID string, req controlplane.ConsoleRequest) (controlplane.ConsoleSession, error) {
+	return h.persistSession(ctx, newConsoleSession(topology, node, agentID, req), req, nil)
+}
 
 func createConsoleForTest(t *testing.T, hub *consoleSessionHub) controlplane.ConsoleSession {
 	t.Helper()
@@ -16,13 +23,22 @@ func createConsoleForTest(t *testing.T, hub *consoleSessionHub) controlplane.Con
 	return sess
 }
 
-func TestConsoleCreateStorageFailurePreventsDispatch(t *testing.T) {
-	s := guestExecutionTestServer(t)
+func consoleAdmissionTestServer(t *testing.T) *Server {
+	t.Helper()
+	s := NewServer(t.TempDir(), t.TempDir())
 	require.NoError(t, s.workspaceService().UpsertProject(context.Background(), "lab", map[string][]byte{"field.sysbox.hcl": []byte("resource \"sysbox_node\" \"web\" { substrate = \"docker\" }")}))
+	writeState(t, s.cfg.Paths.RunsDir, "lab", &state.State{Version: state.SchemaVersion, Resources: []state.Resource{{Address: address.Resource("sysbox_node", "web"), Driver: "docker", Attributes: map[string]any{"container_id": "container-web"}}}})
+	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	saveHealthyNodeProjection(t, s, "host-a", "lab", "web")
+	return s
+}
+
+func TestConsoleCreateStorageFailurePreventsDispatch(t *testing.T) {
+	s := consoleAdmissionTestServer(t)
 	s.consoles.store = failingConsoleSave{apiStore: s.apiStore}
-	s.consoleService().publishCommand = func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
+	s.consoleService().wakeCommand = func(string, controlplane.AgentCommand) error {
 		t.Fatal("session_open dispatched without durable session")
-		return controlplane.AgentCommand{}, nil
+		return nil
 	}
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/topologies/lab/nodes/web/sessions", nil))

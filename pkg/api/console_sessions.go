@@ -88,16 +88,7 @@ func recoverConsoleObservation(store consoleStore, sess controlplane.ConsoleSess
 	return controlplane.ConsoleSession{}, persistence.ErrConflict
 }
 
-func (h *consoleSessionHub) Create(ctx context.Context, topology, node, agentID string, req controlplane.ConsoleRequest) (controlplane.ConsoleSession, error) {
-	if h.initErr != nil {
-		return controlplane.ConsoleSession{}, h.initErr
-	}
-	if err := ctx.Err(); err != nil {
-		return controlplane.ConsoleSession{}, err
-	}
-	if h.store == nil {
-		return controlplane.ConsoleSession{}, errors.New("console persistence unavailable")
-	}
+func newConsoleSession(topology, node, agentID string, req controlplane.ConsoleRequest) controlplane.ConsoleSession {
 	now := time.Now().UTC()
 	actor := req.RequestedBy
 	if actor == "" {
@@ -128,12 +119,28 @@ func (h *consoleSessionHub) Create(ctx context.Context, topology, node, agentID 
 		}},
 		CreatedAt: now,
 	}
+	return sess
+}
+
+func (h *consoleSessionHub) persistSession(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, dispatch *controlplane.AgentCommand) (controlplane.ConsoleSession, error) {
+	if h.initErr != nil {
+		return controlplane.ConsoleSession{}, h.initErr
+	}
+	if h.store == nil {
+		return controlplane.ConsoleSession{}, errors.New("console persistence unavailable")
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return controlplane.ConsoleSession{}, err
 	}
-	if err := h.store.SaveConsoleSession(ctx, sess); err != nil {
+	var err error
+	if dispatch != nil {
+		err = h.store.CreateConsoleDispatch(ctx, sess, *dispatch)
+	} else {
+		err = h.store.SaveConsoleSession(ctx, sess)
+	}
+	if err != nil {
 		return controlplane.ConsoleSession{}, err
 	}
 	h.sessions[sess.ID] = newConsoleSessionState(sess, req)

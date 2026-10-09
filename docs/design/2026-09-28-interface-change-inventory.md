@@ -773,3 +773,14 @@ HTTP 路由、记录格式和 API schema 10 不变；没有保留旧的无条件
 后的新会话/重新激活写入返回 `ErrConflict`；精确重试和已有任务取消/完成可继续。
 共享编码器校验 ID、Topology、Workspace 的路径安全，三后端统一拒绝非法记录。
 存储 schema 和 HTTP 路由不变，完成证据判断统一供 maintenance/cleanup/recovery 使用。
+
+实施补充（2026-10-09 console 原子初次受理）：内部 consoleStore 增加
+`CreateConsoleDispatch(ctx, session, command)`，共享 `ConsoleRepository.Admit`
+负责新会话/初始命令的绑定检查；已有 ID 冲突不会覆盖或重新排队。
+HTTP 正常创建的202以完整会话、审计和 outbox 提交为准，唤醒通知失败不再返回
+“创建失败”。拒绝/节点不可用只保存终态会话审计。AgentService.PublishCommand
+禁止单独发布 session_open；取消接口仍使用已有可恢复意图协议。
+文件 session 可携内部 dispatch_command 初始记录，CAS 必须保留；命令状态记录/
+退休 tombstone 覆盖该 seed。SQL 表结构与 API schema10 不变，无旧发布路径回退。
+请求体的 requested_by/roles 不再用于授权或审计身份；它们由服务端请求主体覆盖。
+HTTP idempotency key 受理仍未实现，本变更不承诺提交回包丢失后的 HTTP 重试去重。

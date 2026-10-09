@@ -119,6 +119,10 @@ func TestConsoleCancellationCannotBeOverwrittenByEarlierUpdate(t *testing.T) {
 
 type failingConsoleSave struct{ apiStore }
 
+func (s failingConsoleSave) CreateConsoleDispatch(context.Context, controlplane.ConsoleSession, controlplane.AgentCommand) error {
+	return errors.New("storage unavailable")
+}
+
 func (s failingConsoleSave) SaveConsoleSession(context.Context, controlplane.ConsoleSession) error {
 	return errors.New("storage unavailable")
 }

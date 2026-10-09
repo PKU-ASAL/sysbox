@@ -27,30 +27,23 @@ func TestConsoleUpdateDoesNotPublishFailedPersistence(t *testing.T) {
 	require.ErrorIs(t, hub.Update("missing", func(*controlplane.ConsoleSession) { t.Fatal("missing session callback") }), errConsoleSessionNotFound)
 }
 
-type failConsoleUpdateOnly struct {
+type failConsoleAdmission struct {
 	apiStore
-	saves int
+	attempted controlplane.ConsoleSession
 }
 
-func (s *failConsoleUpdateOnly) CompareAndSwapConsoleSession(context.Context, controlplane.ConsoleSession, controlplane.ConsoleSession) error {
+func (s *failConsoleAdmission) CreateConsoleDispatch(_ context.Context, sess controlplane.ConsoleSession, _ controlplane.AgentCommand) error {
+	s.attempted = sess
 	return errors.New("private update storage failure")
 }
 
-func (s *failConsoleUpdateOnly) SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error {
-	s.saves++
-	if s.saves > 1 {
-		return errors.New("private update storage failure")
-	}
-	return s.apiStore.SaveConsoleSession(ctx, sess)
-}
-
-func TestConsoleDispatchRequiresAuditUpdatePersistence(t *testing.T) {
-	s := guestExecutionTestServer(t)
-	require.NoError(t, s.workspaceService().UpsertProject(context.Background(), "lab", map[string][]byte{"field.sysbox.hcl": []byte("resource \"sysbox_node\" \"web\" { substrate = \"docker\" }")}))
-	s.consoles.store = &failConsoleUpdateOnly{apiStore: s.apiStore}
-	s.consoleService().publishCommand = func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
+func TestConsoleDispatchRequiresAuditPersistence(t *testing.T) {
+	s := consoleAdmissionTestServer(t)
+	failure := &failConsoleAdmission{apiStore: s.apiStore}
+	s.consoles.store = failure
+	s.consoleService().wakeCommand = func(string, controlplane.AgentCommand) error {
 		t.Fatal("dispatch after failed update")
-		return controlplane.AgentCommand{}, nil
+		return nil
 	}
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/topologies/lab/nodes/web/sessions", nil))
@@ -58,9 +51,9 @@ func TestConsoleDispatchRequiresAuditUpdatePersistence(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "private update storage failure")
 	items, err := s.apiStore.ListConsoleSessions(context.Background(), "")
 	require.NoError(t, err)
-	require.Len(t, items, 1)
-	require.Equal(t, controlplane.ConsoleSessionStatusQueued, items[0].Status)
-	require.Len(t, items[0].Audit, 1)
+	require.Empty(t, items)
+	require.Len(t, failure.attempted.Audit, 2)
+	require.Equal(t, "allow", failure.attempted.Audit[1].Action)
 }
 
 func TestConsoleCompletionPropagatesPersistenceError(t *testing.T) {

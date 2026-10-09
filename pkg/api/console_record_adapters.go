@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -26,7 +27,7 @@ func decodeConsoleRecord(id string, raw []byte) (*controlplane.ConsoleSession, e
 	return sess, nil
 }
 
-func (b localConsoleStorage) UpdateConsoleSession(ctx context.Context, id string, transform func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error {
+func (b localConsoleStorage) UpdateConsoleSession(ctx context.Context, id string, dispatch *controlplane.AgentCommand, transform func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error {
 	unlock, err := b.store.lockRunRecords(ctx)
 	if err != nil {
 		return err
@@ -48,17 +49,37 @@ func (b localConsoleStorage) UpdateConsoleSession(ctx context.Context, id string
 	if workspace == "" {
 		workspace = next.Topology
 	}
+	target := filepath.Join(b.store.runsDir, workspace, "sessions", id+".json")
+	if dispatch != nil {
+		prior, err := (localCommandStorage{store: b.store}).read(ctx, dispatch.ID)
+		if err != nil {
+			return err
+		}
+		if prior != nil {
+			return persistence.ErrConflict
+		}
+		raw, err = persistence.EncodeConsoleDispatch(*next, *dispatch)
+	} else if current != nil {
+		var previous []byte
+		previous, err = os.ReadFile(target)
+		if err == nil {
+			raw, err = persistence.PreserveConsoleDispatch(previous, *next)
+		}
+	}
+	if err != nil {
+		return err
+	}
 	return persistence.FilesystemExecutionGrantStorage(b.store.runsDir).UpdateExecutionAuthority(ctx, func(authority []byte) ([]byte, error) {
 		if persistence.ConsoleSessionNeedsAdmission(current, *next) {
 			if err := checkLocalTopologyMaintenance(ctx, b.store.runsDir, authority, next.Topology); err != nil {
 				return nil, err
 			}
 		}
-		return nil, writeLocalObject(filepath.Join(b.store.runsDir, workspace, "sessions", id+".json"), json.RawMessage(raw))
+		return nil, writeLocalObject(target, json.RawMessage(raw))
 	})
 }
 
-func (b sqliteConsoleStorage) UpdateConsoleSession(ctx context.Context, id string, transform func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error {
+func (b sqliteConsoleStorage) UpdateConsoleSession(ctx context.Context, id string, dispatch *controlplane.AgentCommand, transform func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error {
 	db, err := b.store.open()
 	if err != nil {
 		return err
@@ -110,6 +131,11 @@ func (b sqliteConsoleStorage) UpdateConsoleSession(ctx context.Context, id strin
 		if _, err = conn.ExecContext(ctx, "INSERT INTO sysbox_console_sessions(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", id, raw); err != nil {
 			return err
 		}
+		if dispatch != nil {
+			if err = writeSQLiteCommand(ctx, conn, persistence.CommandRecord{Command: *dispatch}, false); err != nil {
+				return err
+			}
+		}
 	}
 	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return err
@@ -118,7 +144,7 @@ func (b sqliteConsoleStorage) UpdateConsoleSession(ctx context.Context, id strin
 	return nil
 }
 
-func (b postgresConsoleStorage) UpdateConsoleSession(ctx context.Context, id string, transform func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error {
+func (b postgresConsoleStorage) UpdateConsoleSession(ctx context.Context, id string, dispatch *controlplane.AgentCommand, transform func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error {
 	pool, err := b.store.poolFor(ctx)
 	if err != nil {
 		return err
@@ -176,6 +202,19 @@ func (b postgresConsoleStorage) UpdateConsoleSession(ctx context.Context, id str
 		}
 		if _, err = tx.Exec(ctx, "INSERT INTO sysbox_console_sessions(workspace,id,data,updated_at) VALUES($1,$2,$3::jsonb,now()) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=now()", workspace, id, string(raw)); err != nil {
 			return err
+		}
+		if dispatch != nil {
+			command, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: *dispatch})
+			if err != nil {
+				return err
+			}
+			tag, err := tx.Exec(ctx, "INSERT INTO sysbox_agent_commands(id,agent_id,status,lease_owner,lease_until,attempt,data,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,now()) ON CONFLICT(id) DO NOTHING", dispatch.ID, dispatch.AgentID, dispatch.Status, dispatch.LeaseOwner, nullableTime(dispatch.LeaseUntil), dispatch.Attempt, string(command))
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() != 1 {
+				return persistence.ErrConflict
+			}
 		}
 	}
 	return tx.Commit(ctx)
