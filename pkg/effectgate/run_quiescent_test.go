@@ -1,8 +1,10 @@
 package effectgate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 	"time"
 
@@ -15,6 +17,60 @@ func failedRunResult(t *testing.T, agent string, status controlplane.RunStatus) 
 	raw, err := json.Marshal(controlplane.Run{ID: "run", AgentID: agent, Op: "apply", Status: status, EndedAt: time.Now().UTC()})
 	require.NoError(t, err)
 	return raw
+}
+
+func TestCommitQuiescentRunExactReplayAfterSuccessor(t *testing.T) {
+	gate, signed, key := runGateFixture(t)
+	ctx := context.Background()
+	_, err := gate.ReserveRun(ctx, signed, "effect")
+	require.NoError(t, err)
+	result := failedRunResult(t, signed.Grant.AgentID, controlplane.RunFailed)
+	require.NoError(t, gate.CommitQuiescentRun(ctx, signed, "effect", result))
+	// A lost commit acknowledgement must be safely retried from disk.
+	reopened := *gate
+	require.NoError(t, reopened.CommitQuiescentRun(ctx, signed, "effect", result))
+	receipt, err := reopened.SealStop(ctx, signed.Grant, "effect", func(grant controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
+		return controlplane.SignExecutionStopReceipt(key, grant, gate.BootID, "receipt", time.Now())
+	})
+	require.NoError(t, err)
+	require.NoError(t, reopened.ReportStop(ctx, signed.Grant, "effect", func(_ context.Context, got controlplane.SignedExecutionStopReceipt) error {
+		require.Equal(t, receipt, got)
+		return nil
+	}))
+	next := signed.Grant
+	next.Epoch++
+	successor, err := controlplane.SignExecutionGrant(key, next, signed.BootID, time.Now())
+	require.NoError(t, err)
+	_, err = reopened.ReserveRun(ctx, successor, "next")
+	require.NoError(t, err)
+	path, _, release, err := reopened.locked(ctx, signed.Grant.Scope.TopologyUID)
+	require.NoError(t, err)
+	release()
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var formatted bytes.Buffer
+	require.NoError(t, json.Indent(&formatted, result, "", "  "))
+	require.NoError(t, reopened.CommitQuiescentRun(ctx, signed, "effect", formatted.Bytes()))
+	changed := failedRunResult(t, signed.Grant.AgentID, controlplane.RunCancelled)
+	require.ErrorIs(t, reopened.CommitQuiescentRun(ctx, signed, "effect", changed), ErrFenced)
+	stale := extendedRunGrant(t, key, signed, time.Minute)
+	require.ErrorIs(t, reopened.CommitQuiescentRun(ctx, stale, "effect", result), ErrFenced)
+	observed, err := reopened.ReadRun(ctx, successor, "next")
+	require.NoError(t, err)
+	require.Equal(t, RunIntent, observed.State)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "historical replay must preserve receipt, acknowledgement and successor")
+}
+
+func TestCommitQuiescentRunReplayPreservesJSONEncoding(t *testing.T) {
+	gate, signed, _ := runGateFixture(t)
+	ctx := context.Background()
+	_, err := gate.ReserveRun(ctx, signed, "effect")
+	require.NoError(t, err)
+	result := json.RawMessage(`{"id":"run","agent_id":"agent","op":"apply","status":"failed","ended_at":"2026-10-09T00:00:00Z","error":"script <input> & output"}`)
+	require.NoError(t, gate.CommitQuiescentRun(ctx, signed, "effect", result))
+	require.NoError(t, gate.CommitQuiescentRun(ctx, signed, "effect", result))
 }
 
 func TestCommitQuiescentRunExpiredHistoricalIntent(t *testing.T) {

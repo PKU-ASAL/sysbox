@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -256,6 +258,8 @@ func (g *Gate) CommitRun(ctx context.Context, current controlplane.SignedExecuti
 // authoritative child inventory before reporting the outcome. Missing active
 // callbacks, expiry, cancellation and legacy intents are not quiescence proof.
 // Never expose this method as an RPC or use it to infer an old callback exited.
+// Exact completed replays only confirm existing evidence, including after a
+// successor starts; they never change the result, receipt or execution authority.
 func (g *Gate) CommitQuiescentRun(ctx context.Context, current controlplane.SignedExecutionGrant, effectID string, result json.RawMessage) error {
 	if effectID == "" || !isRunGrant(current.Grant) {
 		return ErrFenced
@@ -273,6 +277,26 @@ func (g *Gate) CommitQuiescentRun(ctx context.Context, current controlplane.Sign
 		return err
 	}
 	defer release()
+	if prior, ok := record.Outcomes[outcomeKey(current.Grant, effectID)]; ok && prior.State == string(RunComplete) {
+		if prior.SignedGrant == nil || !sameRunEnvelope(*prior.SignedGrant, current) {
+			return ErrFenced
+		}
+		// Match save's RawMessage encoding (including HTML escaping), without
+		// decoding into a map that could discard fields or lose number precision.
+		stored, storedErr := json.Marshal(prior.Result)
+		replay, replayErr := json.Marshal(result)
+		if storedErr != nil || replayErr != nil || !bytes.Equal(stored, replay) {
+			return ErrFenced
+		}
+		// A previous save may have renamed the file but failed directory sync.
+		// Finish that durability barrier without rewriting historical evidence.
+		dir, err := os.Open(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		defer dir.Close()
+		return dir.Sync()
+	}
 	prior, err := currentRunIntent(record, current, effectID)
 	if err != nil {
 		return err

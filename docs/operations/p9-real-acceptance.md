@@ -410,3 +410,20 @@ It cannot recover a running/unknown intent. The earlier `p9-d271491329c1`
 record and other historical uncertain runs remain retained: their old binaries
 did not persist sufficient callback-exit evidence. This is not a claim that all
 legacy unknown outcomes or daemon crash windows have been solved.
+
+### Quiescent result persistence retry
+
+`CommitQuiescentRun` now accepts an exact historical replay of an already
+completed result. This covers a lost commit acknowledgement, including a
+successful file rename followed by a directory-sync error: replay retries the
+directory durability barrier without rewriting the journal. It requires the
+exact signed envelope and the same result under the journal's JSON encoding;
+changed evidence or another renewal envelope remains fenced. A stopped epoch
+or a newer admitted epoch does not prevent this read-only confirmation.
+
+Regression tests cover reopening the gate, sealed and acknowledged receipts,
+successor admission, unchanged journal bytes, rejected result/envelope changes,
+and JSON whitespace/HTML escaping. Effectgate and hostsupervisor race tests
+passed, with local socket permission required for the supervisor tests; vet
+passed for both packages. These are local protocol regressions, not a new
+two-VM fault acceptance result or recovery of intent-only outcomes.
