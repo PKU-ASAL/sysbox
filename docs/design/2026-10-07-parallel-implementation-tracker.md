@@ -396,3 +396,7 @@ registry 统一准入仍待迁移，P6/P8 保持未关闭。
 重试已接入 maintenance barrier；冻结拒绝不会写 run/request/command，已提交请求
 仍可只读重试。三后端 race 与真实 Postgres 全仓回归通过。Run Save/Restart、其他
 metadata writer 和统一跨 registry 准入仍未完成，P6/P8 继续未关闭。
+
+2026-10-09 ConsoleSession 活动检查点：restore/force-unlock quiescence 现在枚举所有
+持久 ConsoleSession，按实际 topology 阻止 queued/running/缺结束时间的会话；跨
+workspace 名称不再漏检。跨 registry 原子准入和 raw writer barrier 仍待完成。

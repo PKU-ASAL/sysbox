@@ -1281,6 +1281,17 @@ install/recovery/presence (2.24 seconds) E2E passed. Vet and independent review
 passed. Run dispatch and other raw metadata writers remain outside this slice,
 so P6 is not complete.
 
+### Console sessions in quiescence (2026-10-09)
+
+The activity registry now includes durable ConsoleSession records. A queued or
+running console session, including one whose workspace name differs from the
+topology, blocks restore, force-unlock and other state maintenance. Missing end
+timestamps also fail closed unless the session is explicitly terminal. The new
+regression uses the real API store and verifies the maintenance conflict; the
+existing incomplete-registry tests continue to require every activity source.
+This closes a missing activity category, while cross-registry atomic admission
+and raw metadata writer fencing remain P6 work.
+
 The final full Go regression also passed with both PostgreSQL test variables
 enabled. The isolated test database was stopped and automatically removed after
 verification; real Docker tests cleaned their own containers and helper files.

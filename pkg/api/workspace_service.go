@@ -14,17 +14,18 @@ import (
 )
 
 type WorkspaceService struct {
-	runsDir            string
-	workspacesDir      string
-	stateBackend       string
-	stateManager       func(topology string) (*state.Manager, error)
-	health             healthStore
-	placementStore     durablePlacementStore
-	loadRuns           func(context.Context) ([]controlplane.Run, error)
-	loadNodeOperations func(context.Context, string) ([]controlplane.NodeOperation, error)
-	loadGuestActivity  func(context.Context, string) ([]persistence.GuestActivity, error)
-	lockAdmission      func(string) func()
-	deleteState        func(context.Context, string, int64, string) error
+	runsDir             string
+	workspacesDir       string
+	stateBackend        string
+	stateManager        func(topology string) (*state.Manager, error)
+	health              healthStore
+	placementStore      durablePlacementStore
+	loadRuns            func(context.Context) ([]controlplane.Run, error)
+	loadNodeOperations  func(context.Context, string) ([]controlplane.NodeOperation, error)
+	loadGuestActivity   func(context.Context, string) ([]persistence.GuestActivity, error)
+	loadConsoleSessions func(context.Context, string) ([]controlplane.ConsoleSession, error)
+	lockAdmission       func(string) func()
+	deleteState         func(context.Context, string, int64, string) error
 }
 
 type WorkspaceInfo struct {
@@ -368,6 +369,17 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 			}
 		}
 	}
+	if s.loadConsoleSessions != nil {
+		sessions, err := s.loadConsoleSessions(ctx, "")
+		if err != nil {
+			return err
+		}
+		for _, sess := range sessions {
+			if sess.Topology == topology && (sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning || sess.CreatedAt.IsZero() || sess.EndedAt.IsZero() && sess.Status != controlplane.ConsoleSessionStatusClosed && sess.Status != controlplane.ConsoleSessionStatusFailed && sess.Status != controlplane.ConsoleSessionStatusCancelled) {
+				return fmt.Errorf("%w: active console session prevents state maintenance", persistence.ErrConflict)
+			}
+		}
+	}
 	placement, err := s.loadPlacement(topology)
 	if err != nil {
 		return err
@@ -580,6 +592,17 @@ func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology
 		for _, activity := range activities {
 			if activity.CreatedAt.IsZero() || activity.EndedAt.IsZero() || activity.Active() {
 				return fmt.Errorf("%w: active guest operation prevents state maintenance", persistence.ErrConflict)
+			}
+		}
+	}
+	if s.loadConsoleSessions != nil {
+		sessions, err := s.loadConsoleSessions(ctx, "")
+		if err != nil {
+			return err
+		}
+		for _, sess := range sessions {
+			if sess.Topology == topology && (sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning || sess.CreatedAt.IsZero() || (sess.EndedAt.IsZero() && sess.Status != controlplane.ConsoleSessionStatusClosed && sess.Status != controlplane.ConsoleSessionStatusFailed && sess.Status != controlplane.ConsoleSessionStatusCancelled)) {
+				return fmt.Errorf("%w: active console session prevents state maintenance", persistence.ErrConflict)
 			}
 		}
 	}
