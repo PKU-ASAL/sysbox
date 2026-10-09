@@ -32,16 +32,18 @@ func TestStopReceiptRequiresSeparateHostSignature(t *testing.T) {
 	_, worker, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	g := ExecutionGrant{TargetBootID: "guest-boot", Scope: ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "guest_task", Digest: "digest", ExpiresAt: time.Now().Add(time.Minute), State: GrantRevoked}
-	r, err := SignExecutionTaskStopReceipt(key, g, "host-boot", "guest-boot", g.ActionID, g.Digest, "receipt", time.Now())
+	r, err := SignExecutionTaskStopReceipt(key, g, "host-boot", "guest-boot", g.ActionID, g.Digest, GuestTaskResult{Result: GuestExecutionResult{Encoding: "base64"}, ResultClass: "unknown"}, "receipt", time.Now())
 	require.NoError(t, err)
 	require.NoError(t, VerifyExecutionStopReceipt(pub, r))
-	_, err = SignExecutionTaskStopReceipt(key, g, "host-boot", "wrong-guest-boot", g.ActionID, g.Digest, "receipt", time.Now())
+	r.GuestResult.Result.ExitCode = 9
+	require.Error(t, VerifyExecutionStopReceipt(pub, r), "host result is covered by the signature")
+	_, err = SignExecutionTaskStopReceipt(key, g, "host-boot", "wrong-guest-boot", g.ActionID, g.Digest, GuestTaskResult{Result: GuestExecutionResult{Encoding: "base64"}, ResultClass: "unknown"}, "receipt", time.Now())
 	require.Error(t, err)
-	_, err = SignExecutionTaskStopReceipt(key, g, "host-boot", "guest-boot", "wrong-task", g.Digest, "receipt", time.Now())
+	_, err = SignExecutionTaskStopReceipt(key, g, "host-boot", "guest-boot", "wrong-task", g.Digest, GuestTaskResult{Result: GuestExecutionResult{Encoding: "base64"}, ResultClass: "unknown"}, "receipt", time.Now())
 	require.Error(t, err)
 	r.Grant.Epoch++
 	require.Error(t, VerifyExecutionStopReceipt(pub, r))
-	r, err = SignExecutionTaskStopReceipt(worker, g, "host-boot", "guest-boot", g.ActionID, g.Digest, "receipt", time.Now())
+	r, err = SignExecutionTaskStopReceipt(worker, g, "host-boot", "guest-boot", g.ActionID, g.Digest, GuestTaskResult{Result: GuestExecutionResult{Encoding: "base64"}, ResultClass: "unknown"}, "receipt", time.Now())
 	require.NoError(t, err)
 	require.Error(t, VerifyExecutionStopReceipt(pub, r))
 }

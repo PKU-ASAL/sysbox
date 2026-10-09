@@ -423,3 +423,13 @@ raw Create/CAS 不能绕过取消事务；已提交后的通知只是唤醒提�
 execution record_format 3 / API schema 12 显式拒绝旧格式。这里关闭的是
 取消受理和授权账本撤销，不能把 revoked 当作 host stopped。宿主签名执行结果、
 跨进程停止与持久回报、删除工作流及完整 P9 验收仍在主线范围内。
+
+### 2026-10-10：宿主结果回执与重启补报
+
+移除 worker execution completion，宿主在远端确认终止后读取有界 durable output，
+用独立 GuestTaskResult 签名结果与退出状态知识，保存后再报告。未知退出结果明确
+失败收尾，不冒充 exit 0。API在保留排他后校验 dispatch/代际/digest并提交结果，
+再接受停止；两次提交之间的失败可精确重试，不丢结果或释放未完成任务的授权。
+派生 Run task 不生成独立 execution。旧 API schema12、execution3、host task1
+明确拒绝重建。当前为 repository/API/supervisor 层证据，仍需完整 P9 双 VM
+故障验收及未启动任务无副作用终态路径，不代表所有 P_n 已完成。

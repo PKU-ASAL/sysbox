@@ -46,14 +46,14 @@ func TestGuestExecutionLifecyclePreservesNonZeroExit(t *testing.T) {
 	lease, ok, err := store.AcquireAgentCommandLease(ctx, exec.AgentID, exec.CommandID, "worker", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
-	report := controlplane.GuestExecutionCompletion{Result: controlplane.GuestExecutionResult{ExitCode: 7, Stderr: "YmFk", Encoding: "base64"}, ResultClass: controlplane.GuestExecutionResultClassExit, ActionID: lease.ActionID, ResourceUID: lease.ResourceUID, Generation: lease.Generation, LeaseEpoch: lease.LeaseEpoch, LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt}
-	exec, err = store.CompleteGuestExecution(ctx, exec.AgentID, exec.ID, report)
+	report := guestHostReceiptForTest(t, *lease, controlplane.GuestExecutionResult{ExitCode: 7, Stderr: "YmFk"})
+	exec, err = store.CompleteGuestExecutionFromHost(ctx, exec.AgentID, exec.ID, report)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionCompleted, exec.Status)
 	require.Equal(t, 7, exec.Result.ExitCode)
 	require.Equal(t, controlplane.GuestExecutionResultClassExit, exec.ResultClass)
-	report.Result.ExitCode = 0
-	_, err = store.CompleteGuestExecution(ctx, exec.AgentID, exec.ID, report)
+	report.GuestResult.Result.ExitCode = 0
+	_, err = store.CompleteGuestExecutionFromHost(ctx, exec.AgentID, exec.ID, report)
 	require.ErrorIs(t, err, persistence.ErrConflict)
 
 	raw, err := json.Marshal(exec)
@@ -80,7 +80,7 @@ func TestGuestExecutionCancelPersistsIntentWithoutTerminalTransition(t *testing.
 	require.True(t, exec.CancelRequested)
 	require.Equal(t, exec.ID, cancelTarget)
 	require.True(t, exec.EndedAt.IsZero())
-	_, err = store.CompleteGuestExecution(ctx, exec.AgentID, exec.ID, controlplane.GuestExecutionCompletion{})
+	_, err = store.CompleteGuestExecutionFromHost(ctx, exec.AgentID, exec.ID, controlplane.SignedExecutionStopReceipt{})
 	require.ErrorIs(t, err, persistence.ErrConflict)
 }
 

@@ -285,8 +285,8 @@ POST /v1/file-operations/{operation_id}/cancel
 
 Execution creation accepts `argv`, optional `environment`,
 `working_directory`, and `timeout_seconds`, then returns `202 Accepted` with a
-durable `queued` resource. The owning Agent reports `running`, followed by
-`completed`, `failed`, or `cancelled`. A non-zero guest exit is `completed`
+durable `queued` resource. The owning Agent reports `running`; the host's signed
+receipt establishes `completed`, `failed`, or `cancelled`. A non-zero guest exit is `completed`
 with `result_class: exit`; stdout and stderr are base64 encoded and bounded.
 The private request and output payload expire 15 minutes after completion,
 while the sanitized lifecycle metadata remains available.
@@ -302,7 +302,17 @@ issued grants in that transaction. File storage commits the intent and outbox
 seed in one record, then publishes revocation; restart replay finishes that
 publication even after task completion or delivery retirement. Notification
 failure does not turn durable acceptance into an API failure. Host-signed
-execution completion and confirmed remote stopping remain unfinished.
+execution completion now carries the bounded result with the quiescence proof;
+the API can finish an execution after worker lease expiry or restart. Missing
+exit status is recorded as unknown rather than success.
+
+The worker `/v1/agents/{agent}/guest-executions/{execution}/complete` route has
+been removed. Host receipts use `/v1/hosts/{agent}/execution-grants/stopped`
+and require `guest_result` with an explicit `exit_code_known` flag. Completion
+is committed before releasing authority; exact replay survives output expiry
+and successor epochs. Run-derived tasks release their child grant without
+creating a separate API execution. Receipt requests are limited to 4 MiB;
+stdout/stderr are base64 encoded and bounded to 1 MiB each before signing.
 
 File upload uses the request body as raw binary bytes, `X-Content-SHA256` for
 integrity, and query parameters for the absolute guest `path` and octal `mode`.

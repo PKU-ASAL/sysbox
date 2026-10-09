@@ -851,3 +851,10 @@ CancelGuestExecution；原始 Create/CAS 不再允许首次设置 cancel_request
 恢复中断的 authority 发布。已受理后的通知失败不再返回取消失败。已请求取消
 的终态可重试收敛撤销，不覆写真实结果。API schema 11→12、execution format
 2→3，明确重建；公共路由不变，revoked 仍不能作为远端停止证明。
+
+实施补充（2026-10-10 host execution results）：删除 worker execution complete
+路由和 GuestExecutionCompletion DTO；宿主 stopped 路由对 guest_task 必须携带
+GuestTaskResult（exit_code_known、result_class、base64有界输出），不允许默认
+成功包装器。独立任务提交 execution 后释放 grant，Run child仅停止child grant。
+回执HTTP限4MiB，每流输出限1MiB。API schema12→13、execution3→4、host task1→2，
+无旧格式兼容；完成结果仅由宿主证据写入，worker仍可报告running及投递事件。

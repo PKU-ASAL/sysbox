@@ -9,40 +9,6 @@ import (
 	"time"
 )
 
-func TestGuestCompletionRequiresCurrentLease(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
-		ctx := context.Background()
-		x := controlplane.GuestExecution{ID: "exec", CommandID: "cmd", AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: controlplane.GuestExecutionQueued, Request: controlplane.GuestExecutionRequest{Argv: []string{"true"}}}
-		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Status: "queued", Protocol: controlplane.AgentProtocolVersion, Execution: &x, ExecutionRequest: x.Request, ActionID: x.ID, ResourceUID: "node", Generation: 2, LeaseEpoch: 1}
-		require.NoError(t, s.CreateGuestExecutionDispatch(ctx, x, cmd))
-		report := controlplane.GuestExecutionCompletion{Result: controlplane.GuestExecutionResult{ExitCode: 0}, ResultClass: controlplane.GuestExecutionResultClassExit, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch}
-		_, err := s.CompleteGuestExecution(ctx, x.AgentID, x.ID, report)
-		require.ErrorIs(t, err, persistence.ErrConflict)
-		old, ok, err := s.AcquireAgentCommandLease(ctx, x.AgentID, cmd.ID, "old", time.Nanosecond)
-		require.NoError(t, err)
-		require.True(t, ok)
-		report.LeaseOwner, report.Attempt = old.LeaseOwner, old.Attempt
-		_, err = s.CompleteGuestExecution(ctx, x.AgentID, x.ID, report)
-		require.ErrorIs(t, err, persistence.ErrConflict)
-		fresh, ok, err := s.AcquireAgentCommandLease(ctx, x.AgentID, cmd.ID, "new", time.Minute)
-		require.NoError(t, err)
-		require.True(t, ok)
-		_, err = s.CompleteGuestExecution(ctx, x.AgentID, x.ID, report)
-		require.ErrorIs(t, err, persistence.ErrConflict)
-		report.LeaseOwner, report.Attempt = fresh.LeaseOwner, fresh.Attempt
-		completed, err := s.CompleteGuestExecution(ctx, x.AgentID, x.ID, report)
-		require.NoError(t, err)
-		require.Equal(t, int64(2), completed.Version)
-		require.NoError(t, s.DeleteAgentCommand(ctx, x.AgentID, cmd.ID))
-		repeated, err := s.CompleteGuestExecution(ctx, x.AgentID, x.ID, report)
-		require.NoError(t, err)
-		require.Equal(t, completed, repeated)
-		report.Result.ExitCode = 1
-		_, err = s.CompleteGuestExecution(ctx, x.AgentID, x.ID, report)
-		require.ErrorIs(t, err, persistence.ErrConflict)
-	})
-}
-
 func leaseFileCompletion(t *testing.T, s *Server, id string) controlplane.GuestFileOperationCompletion {
 	t.Helper()
 	op, err := s.apiStore.GetGuestFileOperation(context.Background(), id)

@@ -44,7 +44,7 @@ func (s *localAPIStore) completeGuest(ctx context.Context, agent, id string, rep
 		return nil, err
 	}
 	var commandID string
-	if report.Execution != nil {
+	if report.HostExecution != nil {
 		x, err := repo.GetGuestExecution(ctx, id)
 		if err != nil {
 			return nil, err
@@ -166,8 +166,8 @@ func (s *postgresAPIStore) completeGuest(ctx context.Context, agent, id string, 
 	return next, nil
 }
 
-func (s *localAPIStore) CompleteGuestExecution(ctx context.Context, agent, id string, c controlplane.GuestExecutionCompletion) (controlplane.GuestExecution, error) {
-	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{Execution: &c})
+func (s *localAPIStore) CompleteGuestExecutionFromHost(ctx context.Context, agent, id string, r controlplane.SignedExecutionStopReceipt) (controlplane.GuestExecution, error) {
+	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{HostExecution: &r})
 	if err != nil {
 		return controlplane.GuestExecution{}, err
 	}
@@ -181,8 +181,8 @@ func (s *localAPIStore) CompleteGuestFileOperation(ctx context.Context, agent, i
 	return persistence.DecodeCompletedGuestFile(raw)
 }
 
-func (s *sqliteAPIStore) CompleteGuestExecution(ctx context.Context, agent, id string, c controlplane.GuestExecutionCompletion) (controlplane.GuestExecution, error) {
-	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{Execution: &c})
+func (s *sqliteAPIStore) CompleteGuestExecutionFromHost(ctx context.Context, agent, id string, r controlplane.SignedExecutionStopReceipt) (controlplane.GuestExecution, error) {
+	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{HostExecution: &r})
 	if err != nil {
 		return controlplane.GuestExecution{}, err
 	}
@@ -196,8 +196,8 @@ func (s *sqliteAPIStore) CompleteGuestFileOperation(ctx context.Context, agent, 
 	return persistence.DecodeCompletedGuestFile(raw)
 }
 
-func (s *postgresAPIStore) CompleteGuestExecution(ctx context.Context, agent, id string, c controlplane.GuestExecutionCompletion) (controlplane.GuestExecution, error) {
-	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{Execution: &c})
+func (s *postgresAPIStore) CompleteGuestExecutionFromHost(ctx context.Context, agent, id string, r controlplane.SignedExecutionStopReceipt) (controlplane.GuestExecution, error) {
+	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{HostExecution: &r})
 	if err != nil {
 		return controlplane.GuestExecution{}, err
 	}

@@ -87,6 +87,17 @@ func (c *taskConnection) CancelExecution(context.Context, substrate.ExecutionHan
 	return substrate.RemoteTerminationUnknown, nil
 }
 func (c *taskConnection) RenewExecution(context.Context, substrate.ExecutionHandle) error { return nil }
+func (c *taskConnection) ReadExecutionOutput(_ context.Context, _ substrate.ExecutionHandle, stream string, cursor int64, limit int) (substrate.ExecutionOutput, error) {
+	data := c.result.Stdout
+	if stream == "stderr" {
+		data = c.result.Stderr
+	}
+	if cursor >= int64(len(data)) {
+		return substrate.ExecutionOutput{NextCursor: cursor}, nil
+	}
+	end := min(int(cursor)+limit, len(data))
+	return substrate.ExecutionOutput{Data: []byte(data[cursor:int64(end)]), NextCursor: int64(end)}, nil
+}
 func taskFixture(t *testing.T) (*Dispatcher, guesttask.Request, *taskConnection) {
 	t.Helper()
 	d, req, conn, _ := taskFixtureWithIssuer(t)

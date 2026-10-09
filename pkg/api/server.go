@@ -409,7 +409,6 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/topologies/{topology}/nodes/{node}/executions", s.handleCreateGuestExecution)
 	m.HandleFunc("GET /v1/executions/{execution}", s.handleGetGuestExecution)
 	m.HandleFunc("POST /v1/executions/{execution}/cancel", s.handleCancelGuestExecution)
-	m.HandleFunc("POST /v1/agents/{agent}/guest-executions/{execution}/complete", s.handleCompleteGuestExecution)
 	m.HandleFunc("POST /v1/agents/{agent}/guest-executions/{execution}/start", s.handleStartGuestExecution)
 	m.HandleFunc("POST /v1/agents/{agent}/guest-file-operations/{operation}/start", s.handleStartGuestFileOperation)
 	m.HandleFunc("POST /v1/agents/{agent}/guest-file-operations/{operation}/complete", s.handleCompleteGuestFileOperation)

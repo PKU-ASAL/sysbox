@@ -105,13 +105,13 @@ func (d *Dispatcher) load(h substrate.ExecutionHandle) (TaskRecord, error) {
 	if err != nil {
 		return r, err
 	}
-	if len(raw) > 1<<20 {
+	if len(raw) > 4<<20 {
 		return r, fmt.Errorf("oversized supervisor task record")
 	}
 	if err = json.Unmarshal(raw, &r); err != nil {
 		return r, err
 	}
-	if r.Version != 1 || r.ProviderNodeID == "" || r.Ref.Node != h.NodeID || r.Ref.Scope != r.Grant.Grant.Scope || !sameHandle(r.Handle, h) || r.Grant.Grant.AgentID != d.AgentID || r.Grant.Grant.Scope.TopologyUID != h.TopologyUID || r.Grant.Grant.Scope.ResourceUID != h.ResourceUID || r.Grant.Grant.Scope.Generation != h.Generation || r.Grant.Grant.Epoch != h.Epoch || r.Grant.Grant.Digest != h.Digest || r.Grant.BootID != h.BootID {
+	if r.Version != 2 || r.ProviderNodeID == "" || r.Ref.Node != h.NodeID || r.Ref.Scope != r.Grant.Grant.Scope || !sameHandle(r.Handle, h) || r.Grant.Grant.AgentID != d.AgentID || r.Grant.Grant.Scope.TopologyUID != h.TopologyUID || r.Grant.Grant.Scope.ResourceUID != h.ResourceUID || r.Grant.Grant.Scope.Generation != h.Generation || r.Grant.Grant.Epoch != h.Epoch || r.Grant.Grant.Digest != h.Digest || r.Grant.BootID != h.BootID {
 		return r, guesttask.ErrConflict
 	}
 	if (r.Grant.Grant.ParentEpoch != 0) != (r.RunID != "") {
@@ -124,6 +124,15 @@ func (d *Dispatcher) load(h substrate.ExecutionHandle) (TaskRecord, error) {
 	}
 	if r.StopReceipt != nil && (controlplane.VerifyExecutionStopReceipt(d.HostKey.Public().(ed25519.PublicKey), *r.StopReceipt) != nil || r.StopReceipt.GuestBootID != h.BootID || r.StopReceipt.TaskID != h.ID || r.StopReceipt.TaskDigest != h.Digest || r.StopReceipt.Grant != r.Grant.Grant) {
 		return r, guesttask.ErrConflict
+	}
+	if r.Reported && r.StopReceipt == nil {
+		return r, guesttask.ErrConflict
+	}
+	if r.StopReceipt != nil {
+		observed, err := controlplane.NewGuestTaskResult(r.Result)
+		if err != nil || observed.ExitCodeKnown != r.StopReceipt.GuestResult.ExitCodeKnown || observed.ResultClass != r.StopReceipt.GuestResult.ResultClass || observed.Result.ExitCode != r.StopReceipt.GuestResult.Result.ExitCode {
+			return r, guesttask.ErrConflict
+		}
 	}
 	return r, nil
 }
@@ -286,7 +295,7 @@ func (d *Dispatcher) Start(ctx context.Context, ref TargetRef, req guesttask.Req
 	if !os.IsNotExist(err) {
 		return zero, err
 	}
-	r := TaskRecord{Version: 1, RunID: d.RunID, Ref: ref, ProviderNodeID: target.NodeID, Handle: h, Grant: g, Result: substrate.ExecResult{Status: substrate.ExecStatusUnknown, RemoteTermination: substrate.RemoteTerminationUnknown}}
+	r := TaskRecord{Version: 2, RunID: d.RunID, Ref: ref, ProviderNodeID: target.NodeID, Handle: h, Grant: g, Result: substrate.ExecResult{Status: substrate.ExecStatusUnknown, RemoteTermination: substrate.RemoteTerminationUnknown}}
 	if err = d.save(r); err != nil {
 		return r, err
 	}
@@ -347,11 +356,34 @@ func (d *Dispatcher) observeLocked(ctx context.Context, r TaskRecord) (TaskRecor
 	}
 	r.Result = result
 	if result.RemoteTermination == substrate.RemoteTerminationConfirmed {
-		receipt, err := controlplane.SignExecutionTaskStopReceipt(d.HostKey, r.Grant.Grant, d.HostBootID, r.Handle.BootID, r.Handle.ID, r.Handle.Digest, rand.Text(), time.Now())
+		reader, ok := target.Connection.(substrate.ConnectionExecutionOutput)
+		if !ok {
+			return r, substrate.ErrNotSupported
+		}
+		var truncated bool
+		result.Stdout, truncated, err = readTaskResultOutput(ctx, reader, providerHandle, "stdout")
+		result.StdoutTruncated = result.StdoutTruncated || truncated
+		if err != nil {
+			return r, err
+		}
+		result.Stderr, truncated, err = readTaskResultOutput(ctx, reader, providerHandle, "stderr")
+		result.StderrTruncated = result.StderrTruncated || truncated
+		if err != nil {
+			return r, err
+		}
+		guest, err := controlplane.NewGuestTaskResult(result)
+		if err != nil {
+			return r, err
+		}
+		receipt, err := controlplane.SignExecutionTaskStopReceipt(d.HostKey, r.Grant.Grant, d.HostBootID, r.Handle.BootID, r.Handle.ID, r.Handle.Digest, guest, rand.Text(), time.Now())
 		if err != nil {
 			return r, err
 		}
 		r.StopReceipt = &receipt
+		r.Result.StdoutTruncated, r.Result.StderrTruncated = result.StdoutTruncated, result.StderrTruncated
+		// Output is retained once, in the signed receipt. Workers use the
+		// durable output API; avoid duplicating binary data in the task record.
+		r.Result.Stdout, r.Result.Stderr = "", ""
 	}
 	if err = d.save(r); err != nil {
 		return r, err

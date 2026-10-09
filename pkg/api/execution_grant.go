@@ -384,7 +384,7 @@ func (s *Server) handleRevokeExecutionGrant(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Request) {
 	var receipt controlplane.SignedExecutionStopReceipt
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768)).Decode(&receipt); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&receipt); err != nil {
 		writeError(w, 400, err)
 		return
 	}
@@ -406,6 +406,24 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 	}
 	sum := sha256.Sum256(raw)
 	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	if receipt.Grant.Operation == "guest_task" && receipt.Grant.ParentEpoch == 0 {
+		if err = repo.PrepareHostStop(r.Context(), receipt.Grant, hex.EncodeToString(sum[:])); err == nil {
+			if receipt.TaskID == "" || receipt.TaskID != receipt.Grant.ActionID || receipt.Grant.AgentID != r.PathValue("agent") {
+				err = persistence.ErrConflict
+			} else {
+				_, err = s.apiStore.CompleteGuestExecutionFromHost(r.Context(), receipt.Grant.AgentID, receipt.TaskID, receipt)
+			}
+		}
+		if err == nil {
+			err = repo.AcceptHostStop(r.Context(), receipt.Grant, hex.EncodeToString(sum[:]))
+		}
+		if err != nil {
+			writeError(w, agentRepositoryErrorStatus(err), err)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"stopped": true, "completed": true})
+		return
+	}
 	// Commit quiescence atomically. Exact receipt replay remains successful
 	// even after another grant has been issued for the same scope.
 	if receipt.Grant.Operation == "guest_file_install" {

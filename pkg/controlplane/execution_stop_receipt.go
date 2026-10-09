@@ -15,6 +15,7 @@ type SignedExecutionStopReceipt struct {
 	InstallID      string                       `json:"install_id,omitempty"`
 	InstallDigest  string                       `json:"install_digest,omitempty"`
 	FileResult     *substrate.FileInstallResult `json:"file_result,omitempty"`
+	GuestResult    *GuestTaskResult             `json:"guest_result,omitempty"`
 	GuestBootID    string                       `json:"guest_boot_id,omitempty"`
 	TaskID         string                       `json:"task_id,omitempty"`
 	TaskDigest     string                       `json:"task_digest,omitempty"`
@@ -50,6 +51,9 @@ func validStopReceipt(r SignedExecutionStopReceipt) bool {
 	if g.Operation == "guest_task" && (r.GuestBootID == "" || g.TargetBootID != r.GuestBootID || r.TaskID != g.ActionID || r.TaskDigest != g.Digest) {
 		return false
 	}
+	if g.Operation == "guest_task" && (r.GuestResult == nil || r.GuestResult.Validate() != nil) {
+		return false
+	}
 	if g.Operation == "guest_task" && g.Scope.ResourceUID == "" {
 		return false
 	}
@@ -67,11 +71,11 @@ func SignExecutionStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, bootID, 
 	return signStopReceipt(key, r)
 }
 
-func SignExecutionTaskStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, hostBootID, guestBootID, taskID, taskDigest, receiptID string, now time.Time) (SignedExecutionStopReceipt, error) {
+func SignExecutionTaskStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, hostBootID, guestBootID, taskID, taskDigest string, result GuestTaskResult, receiptID string, now time.Time) (SignedExecutionStopReceipt, error) {
 	if g.Operation != "guest_task" {
 		return SignedExecutionStopReceipt{}, ErrInvalidExecutionGrant
 	}
-	return signStopReceipt(key, SignedExecutionStopReceipt{Grant: g, HostBootID: hostBootID, GuestBootID: guestBootID, TaskID: taskID, TaskDigest: taskDigest, ReceiptID: receiptID, StoppedAt: now.UTC(), Quiescence: "confirmed"})
+	return signStopReceipt(key, SignedExecutionStopReceipt{Grant: g, GuestResult: &result, HostBootID: hostBootID, GuestBootID: guestBootID, TaskID: taskID, TaskDigest: taskDigest, ReceiptID: receiptID, StoppedAt: now.UTC(), Quiescence: "confirmed"})
 }
 func signStopReceipt(key ed25519.PrivateKey, r SignedExecutionStopReceipt) (SignedExecutionStopReceipt, error) {
 	if len(key) != ed25519.PrivateKeySize || !validStopReceipt(r) {

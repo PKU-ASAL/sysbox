@@ -148,11 +148,11 @@ func TestCommandGrantDerivesScopeAndRejectsRetiredCommand(t *testing.T) {
 	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	s.grantHostKeys = map[string]ed25519.PublicKey{"host-a": hostPub}
-	stop, err := controlplane.SignExecutionTaskStopReceipt(key, signed.Grant, "host-boot", signed.Grant.TargetBootID, signed.Grant.ActionID, signed.Grant.Digest, "receipt", time.Now())
+	stop, err := controlplane.SignExecutionTaskStopReceipt(key, signed.Grant, "host-boot", signed.Grant.TargetBootID, signed.Grant.ActionID, signed.Grant.Digest, controlplane.GuestTaskResult{Result: controlplane.GuestExecutionResult{Encoding: "base64"}, ResultClass: "unknown"}, "receipt", time.Now())
 	require.NoError(t, err)
 	w = post("/v1/hosts/host-a/execution-grants/stopped", stop)
 	require.Equal(t, 401, w.Code, w.Body.String())
-	stop, err = controlplane.SignExecutionTaskStopReceipt(hostKey, signed.Grant, "host-boot", signed.Grant.TargetBootID, signed.Grant.ActionID, signed.Grant.Digest, "receipt", time.Now())
+	stop, err = controlplane.SignExecutionTaskStopReceipt(hostKey, signed.Grant, "host-boot", signed.Grant.TargetBootID, signed.Grant.ActionID, signed.Grant.Digest, controlplane.GuestTaskResult{Result: controlplane.GuestExecutionResult{Encoding: "base64"}, ResultClass: "unknown"}, "receipt", time.Now())
 	require.NoError(t, err)
 	w = post("/v1/hosts/host-a/execution-grants/stopped", stop)
 	require.Equal(t, 200, w.Code, w.Body.String())

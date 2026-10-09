@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestGuestCompletionHTTPRejectsMissingProof(t *testing.T) {
+func TestGuestCompletionWorkerRouteRemoved(t *testing.T) {
 	s := guestExecutionTestServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/v1/topologies/lab/nodes/web/executions", bytes.NewBufferString(`{"argv":["true"]}`))
 	req.Header.Set("X-Sysbox-Roles", "admin")
@@ -22,12 +22,12 @@ func TestGuestCompletionHTTPRejectsMissingProof(t *testing.T) {
 	var created controlplane.GuestExecution
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 	rec = httptest.NewRecorder()
-	completion := controlplane.GuestExecutionCompletion{Result: controlplane.GuestExecutionResult{ExitCode: 0}}
+	completion := map[string]any{"result": controlplane.GuestExecutionResult{ExitCode: 0}}
 	raw, _ := json.Marshal(completion)
 	req = httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/guest-executions/"+created.ID+"/complete", bytes.NewReader(raw))
 	s.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-	// A valid proof from a leased command succeeds.
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	// Even a current worker delivery proof cannot write host-owned outcomes.
 	commands, err := s.apiStore.ListAgentCommands(context.Background(), "host-a")
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
@@ -41,10 +41,10 @@ func TestGuestCompletionHTTPRejectsMissingProof(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.True(t, lease.LeaseUntil.After(time.Now()))
-	completion.ActionID, completion.ResourceUID, completion.Generation, completion.LeaseEpoch, completion.LeaseOwner, completion.Attempt = lease.ActionID, lease.ResourceUID, lease.Generation, lease.LeaseEpoch, lease.LeaseOwner, lease.Attempt
+	completion["action_id"], completion["resource_uid"], completion["generation"], completion["lease_epoch"], completion["lease_owner"], completion["attempt"] = lease.ActionID, lease.ResourceUID, lease.Generation, lease.LeaseEpoch, lease.LeaseOwner, lease.Attempt
 	raw, _ = json.Marshal(completion)
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/guest-executions/"+created.ID+"/complete", bytes.NewReader(raw))
 	s.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }

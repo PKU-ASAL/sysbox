@@ -9,7 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-const GuestRecordFormat = 3
+const GuestRecordFormat = 4
 const GuestFileRecordFormat = 2
 
 var ErrInvalidRecord = errors.New("invalid repository record")

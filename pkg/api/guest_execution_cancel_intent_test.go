@@ -105,18 +105,18 @@ func TestGuestExecutionCancellationDoesNotReplaceRealCompletion(t *testing.T) {
 		ctx := context.Background()
 		x := controlplane.GuestExecution{ID: "operation", CommandID: "source", Version: 1, Topology: "lab", Node: "node", AgentID: "agent", Status: "running", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveGuestExecution(ctx, x))
-		cmd := controlplane.AgentCommand{ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Execution: &x, Status: "leased", LeaseOwner: "worker", LeaseUntil: time.Now().Add(time.Minute), Attempt: 1, ActionID: "action", ResourceUID: "resource", Generation: 1, LeaseEpoch: 1}
+		cmd := controlplane.AgentCommand{ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Execution: &x, ExecutionRequest: controlplane.GuestExecutionRequest{Argv: []string{"true"}}, TopologyUID: "topology", Status: "leased", LeaseOwner: "worker", LeaseUntil: time.Now().Add(time.Minute), Attempt: 1, ActionID: x.ID, ResourceUID: "resource", Generation: 1, LeaseEpoch: 1}
 		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
 		svc := newGuestExecutionService(store, (&AgentService{store: store}).PublishCommand, nil)
 		pending, err := svc.Cancel(ctx, x.ID)
 		require.NoError(t, err)
 		require.Equal(t, "running", pending.Status)
 		require.True(t, pending.CancelRequested)
-		completed, err := store.CompleteGuestExecution(ctx, x.AgentID, x.ID, controlplane.GuestExecutionCompletion{ResultClass: "exit", Result: controlplane.GuestExecutionResult{Stdout: "finished"}, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt})
+		completed, err := store.CompleteGuestExecutionFromHost(ctx, x.AgentID, x.ID, guestHostReceiptForTest(t, cmd, controlplane.GuestExecutionResult{Stdout: "ZmluaXNoZWQ="}))
 		require.NoError(t, err)
 		require.Equal(t, "completed", completed.Status, "completion may win the race with cancellation")
 		require.True(t, completed.CancelRequested)
-		require.Equal(t, "finished", completed.Result.Stdout)
+		require.Equal(t, "ZmluaXNoZWQ=", completed.Result.Stdout)
 	})
 }
 
@@ -127,14 +127,14 @@ func TestGuestCancellationSQLSchemaRequiresRebuild(t *testing.T) {
 		case *sqliteAPIStore:
 			db, err := s.open()
 			require.NoError(t, err)
-			_, err = db.ExecContext(ctx, "UPDATE sysbox_api_schema_migrations SET version=11 WHERE name='api'")
+			_, err = db.ExecContext(ctx, "UPDATE sysbox_api_schema_migrations SET version=12 WHERE name='api'")
 			require.NoError(t, err)
 			_, err = (&sqliteAPIStore{dbPath: s.dbPath}).open()
 			require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
 		case *postgresAPIStore:
 			pool, err := s.poolFor(ctx)
 			require.NoError(t, err)
-			_, err = pool.Exec(ctx, "UPDATE sysbox_api_schema_migrations SET version=11 WHERE name='api'")
+			_, err = pool.Exec(ctx, "UPDATE sysbox_api_schema_migrations SET version=12 WHERE name='api'")
 			require.NoError(t, err)
 			_, err = (&postgresAPIStore{dsn: s.dsn}).poolFor(ctx)
 			require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)

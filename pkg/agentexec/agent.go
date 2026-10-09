@@ -33,28 +33,27 @@ type Options struct {
 	// RequireHostSupervisor is enabled by the production Agent command. Local
 	// unit fixtures may leave it false to exercise the explicit in-process CLI
 	// executor without making that path a remote control-plane fallback.
-	RequireHostSupervisor            bool
-	observationSequence              *atomic.Uint64
-	ExecutionSessionFile             string
-	ExecutionSessionID               string
-	ExecutionGrantPublicKeyFile      string
-	APIURL                           string
-	Token                            string
-	ID                               string
-	Name                             string
-	Capabilities                     []string
-	Labels                           map[string]string
-	Version                          string
-	Secret                           string
-	PollInterval                     time.Duration
-	RunRenewInterval                 time.Duration
-	RunRenewTTL                      time.Duration
-	Policy                           config.AgentPolicyConfig
-	CapacityPath                     string
-	ArtifactPaths                    []string
-	ReportGuestExecutionCompleteFunc func(context.Context, string, controlplane.GuestExecutionCompletion) error
-	ReportGuestFileStartFunc         func(context.Context, string) error
-	RequestTimeout                   time.Duration
+	RequireHostSupervisor       bool
+	observationSequence         *atomic.Uint64
+	ExecutionSessionFile        string
+	ExecutionSessionID          string
+	ExecutionGrantPublicKeyFile string
+	APIURL                      string
+	Token                       string
+	ID                          string
+	Name                        string
+	Capabilities                []string
+	Labels                      map[string]string
+	Version                     string
+	Secret                      string
+	PollInterval                time.Duration
+	RunRenewInterval            time.Duration
+	RunRenewTTL                 time.Duration
+	Policy                      config.AgentPolicyConfig
+	CapacityPath                string
+	ArtifactPaths               []string
+	ReportGuestFileStartFunc    func(context.Context, string) error
+	RequestTimeout              time.Duration
 
 	// httpClient is the shared HTTP client for agent → API requests. Run builds
 	// it once so keep-alive connections are reused across heartbeats, projections
@@ -415,18 +414,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			return
 		}
 		completed := executeGrantedGuestOperation(opCtx, r.opts, *cmd)
-		// Both the operation deadline and explicit cancellation can expire
-		// runCtx. Preserve values, but give the outcome report its own budget.
-		budget := r.opts.RequestTimeout
-		if budget <= 0 {
-			budget = 30 * time.Second
-		}
-		reportCtx, stopReport := context.WithTimeout(context.WithoutCancel(runCtx), budget)
-		defer stopReport()
-		if err := r.opts.ReportGuestExecutionComplete(reportCtx, cmd.Execution.ID, controlplane.GuestExecutionCompletion{Result: completed.Result, ResultClass: completed.ResultClass, Error: completed.Err, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}); err != nil {
-			emit("failed", "guest execution completion report failed", err)
-			return
-		}
+		// The host owns durable execution results and retries its signed report.
 		if completed.Err != "" {
 			emit("failed", "guest execution failed", errors.New(completed.ResultClass))
 			return
@@ -703,16 +691,6 @@ func (opts Options) ReportNodeOperationComplete(ctx context.Context, op controlp
 		op.AgentID = opts.ID
 	}
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/node-operations/"+op.ID+"/complete", op, nil)
-}
-
-func (opts Options) ReportGuestExecutionComplete(ctx context.Context, id string, completion controlplane.GuestExecutionCompletion) error {
-	if opts.ReportGuestExecutionCompleteFunc != nil {
-		return opts.ReportGuestExecutionCompleteFunc(ctx, id, completion)
-	}
-	if opts.APIURL == "" || opts.ID == "" || id == "" {
-		return nil
-	}
-	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-executions/"+id+"/complete", completion, nil)
 }
 
 func (opts Options) ReportGuestExecutionStart(ctx context.Context, id string) error {

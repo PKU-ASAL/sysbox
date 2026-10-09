@@ -561,3 +561,11 @@ SQLite/Postgres 将取消意图、outbox、已发授权 revoke 一起提交；�
 禁止首次设置取消标志；通知失败不改变已受理结果。execution record_format 3、
 API schema 12 拒绝旧写者，明确重建。撤销不等于远端停止，宿主签名结果、持久
 回报恢复和 P9 跨宿主故障验收仍待完成。
+
+2026-10-10 宿主 execution 结果：GuestTaskResult 把退出状态是否已知、结果分类、
+有界输出及截断标志纳入宿主签名，必须有远端终止证据；worker completion 路由、
+类型和调用链已删除。API先保留授权排他，按完整 dispatch 身份和 digest 提交结果，
+再释放授权；支持真实退休 tombstone、脱敏后精确重放及 successor 保护。Run派生
+任务只关闭 child grant。宿主先保存签名回执再回报，重启可独立补报。
+API schema 13 / execution format 4 / host task version 2 明确重建旧格式。
+未启动且未发授权任务的终态证明、两 VM 故障验收、删除恢复等主线仍未关闭。

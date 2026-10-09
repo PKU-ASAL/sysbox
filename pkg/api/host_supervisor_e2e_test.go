@@ -202,6 +202,14 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 		data, err := client.ReadExecutionOutput(ctx, handle, "stdout", 0, 100)
 		require.NoError(t, err)
 		require.Equal(t, "supervised", string(data.Data))
+		completed, err := server.apiStore.GetGuestExecution(ctx, operationID)
+		require.NoError(t, err)
+		require.True(t, guestExecutionTerminal(completed.Status), "host report must also finish the API execution")
+		require.Equal(t, "c3VwZXJ2aXNlZA==", completed.Result.Stdout)
+		if round != 1 {
+			require.Equal(t, controlplane.GuestExecutionCompleted, completed.Status)
+			require.Equal(t, 7, completed.Result.ExitCode)
+		}
 		require.Error(t, authority.Authorize(ctx, grant), "completed epoch must already be retired before successor issuance")
 	}
 	t.Log("real Docker task through supervisor socket: persisted host stop, lost API acknowledgment, API and supervisor restart, live task cancellation after Agent session replacement, and successor epoch verified")

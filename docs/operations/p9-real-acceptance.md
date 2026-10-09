@@ -1942,3 +1942,29 @@ This is repository/API evidence, not a new two-host or VM acceptance run.
 Intent/outbox still use recoverable separate writes. Atomic cancellation,
 revocation of already-issued grants, host-signed execution completion, durable
 result reporting and the full P9 fault matrix remain open.
+
+### 2026-10-10 — host-owned guest results and durable replay
+
+Guest task receipts now require a typed, signed result with explicit exit-code
+knowledge. The host reads bounded durable output before sealing the receipt and
+preserves provider truncation flags. Only confirmed remote termination permits
+signing. Worker completion routes, DTOs and report calls were removed. Standalone
+execution results commit before authority release; Run child tasks only retire
+their child grant. Exact replay survives retirement, redaction and successor
+epochs. API schema 13, execution format 4 and host task record 2 reject old data.
+
+Full Go regression passed. Real PostgreSQL race passed for API (213.480s),
+persistence (18.753s), controlplane (1.090s) and Agent (7.760s). The concurrently
+run supervisor suite hit one deadline in its slow child-report scenario; an
+isolated full supervisor race rerun passed (21.245s), without changing the
+production timeout. Additional race tests cover both completion/release write
+failures, Run child routing and output truncation. Vet, docscheck and e2e-tagged
+compilation passed; independent review found no remaining blocker in this slice.
+
+The real Docker `TestHostSupervisorRealTaskStopAndSuccessorE2E` passed with a
+fresh helper (5.53s test / 6.554s package). It verifies API exit code 7 and output,
+lost stop acknowledgment, API/supervisor restart and replay, running task
+cancellation after Agent session replacement, and successor fencing. The test
+removed its disposable container. This is one-host execution evidence, not the
+two-VM P9 fault matrix. Never-started task resolution, deletion cleanup recovery
+and the broader P0–P9 capability/acceptance backlog remain open.

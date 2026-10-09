@@ -51,6 +51,10 @@ The supervisor records the task identity before starting it. Recovery observes
 that identity instead of replaying the command. Loss of API authority triggers
 cancellation; only confirmed guest termination permits a host-signed stop
 receipt. The receipt is saved before transmission and retried after restart.
+It includes the bounded output, exit-status knowledge and result classification;
+neither an exit code alone nor worker cancellation proves remote quiescence.
+Output read failure leaves the task pending for retry. Provider truncation flags
+are preserved even when the retained output file is below the host limit.
 API receipt tombstones make an identical late retry safe after a successor
 epoch is issued. Unknown termination continues to block a successor.
 
@@ -133,18 +137,20 @@ API cancellation returns `cancel_requested: true`. A running operation remains
 nonterminal until a signed host result confirms committed or cancelled; a
 queued operation without issued authority can be cancelled immediately. Workers
 cannot report file completion. Pending payloads survive expiry until terminal
-state and grant retirement permit cleanup. API schema 12, file metadata format 2
+state and grant retirement permit cleanup. API schema 13, file metadata format 2
 and guest scope format 2 require explicit rebuilding of old data and updated
 helpers; aggregate state and Firecracker manifest formats are unchanged.
 
-Guest execution metadata uses `record_format: 3` for cancellation intent and
+Guest execution metadata uses `record_format: 4` for cancellation intent and
 its immutable outbox seed. Cancellation keeps queued/running status, blocks new
 grants and renewals, and revokes issued grants. SQL commits all three together;
 file storage commits intent/outbox together and recovers interrupted authority
 publication from that record. This does not establish host stop evidence.
 Guest file format 2, lifecycle aggregate 4 and authority format 2 are unchanged;
 earlier execution formats and API schemas require explicit rebuilding, with no
-compatibility reader.
+compatibility reader. Host task records now use version 2 and reject version 1;
+rebuild old task data explicitly. Worker execution completion is removed; only
+authenticated host evidence can establish an API execution's terminal result.
 
 Run `make test-host-file-e2e` for the actual API/host/Docker installation test,
 including lost stop acknowledgment, cold recovery, checksum/mode and revoked

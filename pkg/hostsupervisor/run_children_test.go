@@ -270,7 +270,7 @@ func TestRunChildrenProveStoppedRejectsChangedParentIdentity(t *testing.T) {
 	record.Grant.Grant.CommandID = "other-command"
 	record.Grant, err = controlplane.SignExecutionGrant(issuer, record.Grant.Grant, record.Grant.BootID, time.Now())
 	require.NoError(t, err)
-	receipt, err := controlplane.SignExecutionTaskStopReceipt(d.HostKey, record.Grant.Grant, d.HostBootID, h.BootID, h.ID, h.Digest, "changed-parent", time.Now())
+	receipt, err := controlplane.SignExecutionTaskStopReceipt(d.HostKey, record.Grant.Grant, d.HostBootID, h.BootID, h.ID, h.Digest, controlplane.GuestTaskResult{Result: controlplane.GuestExecutionResult{Encoding: "base64"}, ResultClass: "unknown"}, "changed-parent", time.Now())
 	require.NoError(t, err)
 	record.StopReceipt = &receipt
 	require.NoError(t, d.save(record))
