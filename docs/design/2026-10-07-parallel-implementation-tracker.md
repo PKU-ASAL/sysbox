@@ -2,6 +2,12 @@
 
 当前已提交集成基线：`566268e`。本文记录并行集成检查点，不能作为P0–P9全部验收通过声明。
 
+2026-10-09数据库故障验收：在已有resource checkpoint、600秒后台任务运行时停止
+隔离控制VM的PostgreSQL；guest在138.85秒后cancelled、原cgroup清空，数据库重启后
+原子任务epoch34回执获确认，父Run收敛failed，普通Destroy/独立无残留/非force元数据
+删除全部通过。停止可能等待剩余授权耗尽，并非秒级。首轮错误的45秒验收窗口失败
+证据保留且测试资源已正常清理。这只关闭该Docker Run的DB故障场景，完整P9仍开放。
+
 2026-10-09最新进展：资源执行成功后封闭子任务准入、持久checkpoint与Run执行flock
 已接入；独立supervisor可在证明旧callback退出、全部子任务停止并上报后收敛失败。
 双VM实测SIGKILL运行中的supervisor，4.95秒内冷恢复失败结果，随后普通Destroy、

@@ -106,8 +106,8 @@ def main():
         save()
     agents = request("GET", "/v1/agents")["agents"]
     print("agents:", json.dumps([{key: agent.get(key) for key in ("id", "status", "capabilities")} for agent in agents]), flush=True)
-    if not 0 <= args.provision_seconds <= 120:
-        parser.error("provision-seconds must be between 0 and 120")
+    if not 0 <= args.provision_seconds <= 600:
+        parser.error("provision-seconds must be between 0 and 600")
     hcl = HCL
     if args.background:
         if args.provision_seconds < 1:

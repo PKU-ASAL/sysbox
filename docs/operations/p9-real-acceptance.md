@@ -477,3 +477,54 @@ commands regression, vet and independent review passed. This closes the
 resource-complete/child-wait crash window. A daemon call interrupted before the
 resource checkpoint, legacy intent-only records, persistent-service transfer,
 P5–P8 capability gaps and the remaining P9 faults are still open.
+
+### PostgreSQL outage during a running child
+
+`scripts/acceptance/database_outage.py --root LAB --topology p9-IDENTITY`
+requires a running child, matching resource checkpoint, provider ownership,
+and a populated guest cgroup before stopping only the control VM's
+`postgresql@16-main`. It rejects pre-existing cancellation. During the outage
+it independently reads the guest journal and the original cgroup inode, pins
+task/supervisor PID and start ticks, and requires cancelled status, confirmed
+termination and `populated 0`. A natural successful exit cannot pass this gate.
+PostgreSQL is restarted and checked with `pg_isready` in `finally`, including
+when observation fails. The original child must then report its stop receipt.
+
+Use a600-second background fixture, longer than the protocol's five-minute
+maximum signed authorization lifetime. The stop observation budget is315seconds
+(five minutes plus15seconds of observation slack). With the database unavailable,
+the host cannot necessarily resolve canonical resources to request cancellation;
+the guest's independent lease guard remains the stop boundary. This gate proves
+cancellation during the outage, not which of the guest/host mechanisms caused it.
+It does not promise a seconds-level stop bound during database failure.
+
+2026-10-09 round `p9-886e91a3eee3` passed using the execution binary from the
+checkpoint recovery round (`f60f261` implementation). PostgreSQL PID changed
+from68995 to73273. With PostgreSQL still stopped, the guest reached cancelled
+and its original cgroup showed `populated 0` after138.85seconds. Exit status
+remained unknown; no success code was inferred. Child epoch34's stop was then
+acknowledged after database restart. The original parent Run converged to failed
+with `run controller stopped after resource execution; child termination confirmed`.
+Normal Destroy completed, independent Docker inspection found no container for
+owner `9f6c7f46-eb95-4d68-b159-1efa37c1d5f4`, and non-force metadata DELETE passed.
+Both APIs, PostgreSQL, HAProxy, Agent and supervisor remained active afterward.
+
+Evidence: host
+`/tmp/sysbox-p9-two-vms-20261008/p9-886e91a3eee3-database-outage.json`;
+control `/var/tmp/p9-database-outage-02.json` and
+`/var/tmp/p9-database-cleanup-02.json`. The lifecycle polling probe itself exits
+on the injected HTTP503; its original Run is subsequently checked by the cleanup
+probe. No replacement Apply is submitted. The fault and cleanup evidence, taken
+together, are the acceptance result.
+
+The initial round `p9-44d7974cbe21` did not pass the outage stop gate: its
+arbitrary45-second observation deadline was shorter than the valid signed grant.
+PostgreSQL was restored; the parent then failed and ordinary Destroy, independent
+absence and non-force metadata cleanup succeeded. Its failure evidence remains
+at `p9-44d7974cbe21-database-outage.json` and the control round01 files. It is not
+counted as a stop-during-outage pass. Harness regression tests now also reject
+natural completion, pre-existing cancellation and replacement cgroup identity.
+
+This closes one checkpointed Docker Run's database-outage/restart/cleanup gate.
+It does not cover database failure during a provider daemon effect, restore/GC
+transactions, a full network partition, disk-full or the remaining provider matrix.
