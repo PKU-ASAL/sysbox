@@ -80,8 +80,8 @@ func (b *sqliteGuestRecords) update(ctx context.Context, kind guestKind, id stri
 		return err
 	}
 	if next != nil {
-		if kind == nodeOperationKind {
-			if err := checkSQLiteNodeMaintenance(ctx, conn, raw, next); err != nil {
+		if isOperationRecord(kind) {
+			if err := checkSQLiteOperationMaintenance(ctx, conn, kind, raw, next); err != nil {
 				return err
 			}
 		}
@@ -131,8 +131,8 @@ func (b *postgresGuestRecords) update(ctx context.Context, kind guestKind, id st
 		_ = tx.Rollback(cleanup)
 	}()
 	var authority []byte
-	if kind == nodeOperationKind {
-		authority, err = lockNodeAuthority(ctx, tx)
+	if isOperationRecord(kind) {
+		authority, err = lockOperationAuthority(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -155,8 +155,8 @@ func (b *postgresGuestRecords) update(ctx context.Context, kind guestKind, id st
 		return err
 	}
 	if next != nil {
-		if kind == nodeOperationKind {
-			if err := checkPostgresNodeMaintenance(ctx, tx, authority, raw, next); err != nil {
+		if isOperationRecord(kind) {
+			if err := checkPostgresOperationMaintenance(ctx, tx, kind, authority, raw, next); err != nil {
 				return err
 			}
 		}

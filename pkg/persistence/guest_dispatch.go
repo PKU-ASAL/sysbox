@@ -54,8 +54,11 @@ func encodeGuestDispatch(id string, cmd controlplane.AgentCommand, encode func()
 	return encode()
 }
 
-func (r *GuestRepository) CreateFilesystemGuestDispatch(ctx context.Context, execution *controlplane.GuestExecution, file *controlplane.GuestFileOperation, cmd controlplane.AgentCommand) error {
-	if _, ok := r.records.(*fileGuestRecords); !ok {
+// CreateFilesystemGuestDispatchUnderAuthority requires the caller's shared
+// record and authority locks through the aggregate/outbox publication.
+func (r *GuestRepository) CreateFilesystemGuestDispatchUnderAuthority(ctx context.Context, execution *controlplane.GuestExecution, file *controlplane.GuestFileOperation, cmd controlplane.AgentCommand) error {
+	storage, ok := r.records.(*fileGuestRecords)
+	if !ok {
 		return ErrInvalidRecord
 	}
 	var raw []byte
@@ -85,7 +88,7 @@ func (r *GuestRepository) CreateFilesystemGuestDispatch(ctx context.Context, exe
 	if err != nil {
 		return err
 	}
-	return r.records.update(ctx, kind, id, func(current []byte) ([]byte, error) {
+	return storage.updateRecord(ctx, kind, id, func(current []byte) ([]byte, error) {
 		if current != nil {
 			return nil, ErrConflict
 		}

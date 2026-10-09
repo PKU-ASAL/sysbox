@@ -102,7 +102,7 @@ func TestExpiredGuestExecutionDropsPrivatePayload(t *testing.T) {
 	now := time.Now().UTC()
 	store := &localAPIStore{runsDir: t.TempDir()}
 	svc := newGuestExecutionService(store, nil, func() time.Time { return now })
-	want := controlplane.GuestExecution{ID: "expired", Version: 1, Status: controlplane.GuestExecutionCompleted, Request: controlplane.GuestExecutionRequest{Argv: []string{"secret"}}, Result: controlplane.GuestExecutionResult{Stdout: "secret"}, ExpiresAt: now.Add(-time.Second)}
+	want := controlplane.GuestExecution{ID: "expired", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionCompleted, Request: controlplane.GuestExecutionRequest{Argv: []string{"secret"}}, Result: controlplane.GuestExecutionResult{Stdout: "secret"}, ExpiresAt: now.Add(-time.Second)}
 	require.NoError(t, store.SaveGuestExecution(context.Background(), want))
 	got, err := svc.Get(context.Background(), want.ID)
 	require.NoError(t, err)

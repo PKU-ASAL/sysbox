@@ -373,3 +373,18 @@ records），Postgres 在 node 行前锁 authority，SQLite 使用现有写事�
 晚到 node 阻挡删除，以及仅持 authority 时发布等待且超时无残留。
 这是 NodeOperation aggregate 的存储边界，不代表 adoption/SSH 全功能验收；
 guest execution/file 原始记录与删除后清理恢复流程仍待接入。
+
+### 2026-10-09：Guest execution/file 原始记录与删除提交
+
+node 维护逻辑收拢为 operation_maintenance，共享同一 authority→record 排他机制。
+Guest Create/活跃 CAS 在冻结期间拒绝，已有终态可收敛；文件 CancelRequested
+只允许状态不前进的取消意图，不能附带 queued→running 绕过屏障。
+文件 compound dispatch 明确要求调用方持 authority，旧入口不保留。
+删除、维护与 cleanup-inspection 共用完整 guest codec 解码及 Unresolved 判断，
+包含缺失/倒序时间，拒绝后保持原生命周期 UID/serial。
+
+SQL测试库补齐 authority 表；损坏记录从底层直接注入，读取保护测试不再要求生产
+写入口接受坏数据。真实三后端验证发布等待、超时无残留、冻结/取消/完成和晚到
+记录删除拒绝。该项不等于 guest 远端取消闭环：GuestExecutionService.Cancel
+仍先写 cancelled 再发布/退休 command，其原子受理和停止证据语义需继续迁移；
+删除后清理阶段的持久排他与恢复也仍未完成。

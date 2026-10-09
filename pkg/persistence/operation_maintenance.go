@@ -17,32 +17,63 @@ func NodeOperationUnresolved(op controlplane.NodeOperation) bool {
 	return op.CreatedAt.IsZero() || op.EndedAt.IsZero() || op.EndedAt.Before(op.CreatedAt) || (op.Status != controlplane.NodeOperationStatusDone && op.Status != controlplane.NodeOperationStatusFailed)
 }
 
-func validateNodeMaintenance(authority, old, next []byte, lifecycle func(string) ([]byte, error)) error {
-	op, err := DecodeNodeOperation(next)
-	if err != nil {
-		return err
-	}
-	if old != nil && (op.Status == controlplane.NodeOperationStatusDone || op.Status == controlplane.NodeOperationStatusFailed) {
-		return nil
-	}
-	if !topologyName.MatchString(op.Topology) {
-		return ErrInvalidRecord
-	}
-	raw, err := lifecycle(op.Topology)
-	if err != nil {
-		return err
-	}
-	return ValidateRunMaintenance(authority, raw, op.Topology)
+func isOperationRecord(kind guestKind) bool {
+	return kind == nodeOperationKind || kind == guestExecutionKind || kind == guestFileKind
 }
 
-func (b *fileGuestRecords) updateNode(ctx context.Context, id string, fn func([]byte) ([]byte, error)) error {
+func validateOperationMaintenance(kind guestKind, authority, old, next []byte, lifecycle func(string) ([]byte, error)) error {
+	var topology string
+	var draining bool
+	switch kind {
+	case nodeOperationKind:
+		op, err := DecodeNodeOperation(next)
+		if err != nil {
+			return err
+		}
+		topology, draining = op.Topology, op.Status == controlplane.NodeOperationStatusDone || op.Status == controlplane.NodeOperationStatusFailed
+	case guestExecutionKind:
+		x, err := executionCodec.decode(next)
+		if err != nil {
+			return err
+		}
+		topology, draining = x.Topology, guestTerminal(x.Status)
+	case guestFileKind:
+		x, err := fileOperationCodec.decode(next)
+		if err != nil {
+			return err
+		}
+		topology, draining = x.Topology, guestTerminal(x.Status)
+		if old != nil && x.CancelRequested && !draining {
+			prior, err := fileOperationCodec.decode(old)
+			if err != nil {
+				return err
+			}
+			draining = x.Status == prior.Status
+		}
+	default:
+		return ErrInvalidRecord
+	}
+	if old != nil && draining {
+		return nil
+	}
+	if !topologyName.MatchString(topology) {
+		return ErrInvalidRecord
+	}
+	raw, err := lifecycle(topology)
+	if err != nil {
+		return err
+	}
+	return ValidateRunMaintenance(authority, raw, topology)
+}
+
+func (b *fileGuestRecords) updateOperation(ctx context.Context, kind guestKind, id string, fn func([]byte) ([]byte, error)) error {
 	return FilesystemExecutionGrantStorage(b.root).UpdateExecutionAuthority(ctx, func(authority []byte) ([]byte, error) {
-		return nil, b.updateRecord(ctx, nodeOperationKind, id, func(old []byte) ([]byte, error) {
+		return nil, b.updateRecord(ctx, kind, id, func(old []byte) ([]byte, error) {
 			next, err := fn(old)
 			if err != nil || next == nil {
 				return next, err
 			}
-			err = validateNodeMaintenance(authority, old, next, func(topology string) ([]byte, error) {
+			err = validateOperationMaintenance(kind, authority, old, next, func(topology string) ([]byte, error) {
 				raw, err := os.ReadFile(filepath.Join(b.root, topology, "state.json.lifecycle", topology+".json"))
 				if errors.Is(err, os.ErrNotExist) {
 					return nil, nil
@@ -54,7 +85,7 @@ func (b *fileGuestRecords) updateNode(ctx context.Context, id string, fn func([]
 	})
 }
 
-func checkSQLiteNodeMaintenance(ctx context.Context, conn *sql.Conn, old, next []byte) error {
+func checkSQLiteOperationMaintenance(ctx context.Context, conn *sql.Conn, kind guestKind, old, next []byte) error {
 	var authority []byte
 	err := conn.QueryRowContext(ctx, "SELECT data FROM sysbox_execution_authority WHERE id='authority'").Scan(&authority)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -64,7 +95,7 @@ func checkSQLiteNodeMaintenance(ctx context.Context, conn *sql.Conn, old, next [
 	} else if len(authority) == 0 {
 		return ErrCorruptRecord
 	}
-	return validateNodeMaintenance(authority, old, next, func(topology string) ([]byte, error) {
+	return validateOperationMaintenance(kind, authority, old, next, func(topology string) ([]byte, error) {
 		var exists int
 		if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='sysbox_lifecycle_aggregates'").Scan(&exists); err != nil {
 			return nil, err
@@ -84,7 +115,7 @@ func checkSQLiteNodeMaintenance(ctx context.Context, conn *sql.Conn, old, next [
 	})
 }
 
-func lockNodeAuthority(ctx context.Context, tx pgx.Tx) ([]byte, error) {
+func lockOperationAuthority(ctx context.Context, tx pgx.Tx) ([]byte, error) {
 	initial, err := decodeExecutionAuthority(nil)
 	if err != nil {
 		return nil, err
@@ -101,8 +132,8 @@ func lockNodeAuthority(ctx context.Context, tx pgx.Tx) ([]byte, error) {
 	return raw, err
 }
 
-func checkPostgresNodeMaintenance(ctx context.Context, tx pgx.Tx, authority, old, next []byte) error {
-	return validateNodeMaintenance(authority, old, next, func(topology string) ([]byte, error) {
+func checkPostgresOperationMaintenance(ctx context.Context, tx pgx.Tx, kind guestKind, authority, old, next []byte) error {
+	return validateOperationMaintenance(kind, authority, old, next, func(topology string) ([]byte, error) {
 		var exists bool
 		if err := tx.QueryRow(ctx, "SELECT to_regclass('sysbox_lifecycle_aggregates') IS NOT NULL").Scan(&exists); err != nil {
 			return nil, err

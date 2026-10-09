@@ -34,7 +34,7 @@ func TestGuestCASUsesProcessSharedRecordLock(t *testing.T) {
 	defer cancel()
 	root := t.TempDir()
 	s := &localAPIStore{runsDir: root}
-	require.NoError(t, s.SaveGuestExecution(ctx, controlplane.GuestExecution{ID: "shared", Version: 1, Status: controlplane.GuestExecutionQueued}))
+	require.NoError(t, s.SaveGuestExecution(ctx, controlplane.GuestExecution{ID: "shared", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionQueued}))
 	lock := flock.New(filepath.Join(root, "_guest-executions", "shared.lock"))
 	require.NoError(t, lock.Lock())
 	defer lock.Close()

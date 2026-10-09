@@ -121,7 +121,7 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		if activity.AgentID != "" {
 			agents[activity.AgentID] = true
 		}
-		if activity.Active() {
+		if activity.Unresolved() {
 			active = append(active, map[string]any{"id": activity.ID, "kind": activity.Kind, "status": activity.Status, "agent_id": activity.AgentID})
 		}
 	}

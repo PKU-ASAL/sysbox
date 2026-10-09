@@ -33,7 +33,7 @@ func guestRepositoryFactories(t *testing.T, test func(*testing.T, func() *GuestR
 					db, err := sql.Open("sqlite", filepath.Join(root, "guest.db")+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, db.Close()) })
-					_, err = db.Exec(`CREATE TABLE IF NOT EXISTS sysbox_guest_executions(id TEXT PRIMARY KEY,data BLOB NOT NULL);CREATE TABLE IF NOT EXISTS sysbox_guest_file_operations(id TEXT PRIMARY KEY,data BLOB NOT NULL)`)
+					_, err = db.Exec(`CREATE TABLE IF NOT EXISTS sysbox_guest_executions(id TEXT PRIMARY KEY,data BLOB NOT NULL);CREATE TABLE IF NOT EXISTS sysbox_guest_file_operations(id TEXT PRIMARY KEY,data BLOB NOT NULL);CREATE TABLE IF NOT EXISTS sysbox_execution_authority(id TEXT PRIMARY KEY,data BLOB NOT NULL)`)
 					require.NoError(t, err)
 					return NewSQLiteGuestRepository(db)
 				})
@@ -64,7 +64,7 @@ func guestRepositoryFactories(t *testing.T, test func(*testing.T, func() *GuestR
 			pool, err := pgxpool.NewWithConfig(ctx, config)
 			require.NoError(t, err)
 			t.Cleanup(pool.Close)
-			_, err = pool.Exec(ctx, `CREATE TABLE sysbox_guest_executions(id TEXT PRIMARY KEY,data JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE TABLE sysbox_guest_file_operations(id TEXT PRIMARY KEY,data JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
+			_, err = pool.Exec(ctx, `CREATE TABLE sysbox_guest_executions(id TEXT PRIMARY KEY,data JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE TABLE sysbox_guest_file_operations(id TEXT PRIMARY KEY,data JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE TABLE sysbox_execution_authority(id TEXT PRIMARY KEY,data JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
 			require.NoError(t, err)
 			test(t, func() *GuestRepository { return NewPostgresGuestRepository(pool) })
 		})
@@ -177,7 +177,7 @@ func TestGuestRepositoryRejectsCorruptionAndUnknownVersions(t *testing.T) {
 			if _, postgres := r.records.(*postgresGuestRecords); postgres && !json.Valid([]byte(tc.raw)) {
 				continue
 			}
-			require.NoError(t, r.records.update(ctx, guestExecutionKind, original.ID, func([]byte) ([]byte, error) { return []byte(tc.raw), nil }))
+			injectGuestRecordForTest(t, r.records, guestExecutionKind, original.ID, []byte(tc.raw))
 			_, err := r.GetGuestExecution(ctx, original.ID)
 			require.ErrorIs(t, err, tc.want)
 			ok, err := r.CompareAndSwapGuestExecution(ctx, original, 1)
@@ -200,7 +200,7 @@ func TestGuestRepositoryAcceptanceAndTerminalRedaction(t *testing.T) {
 		x.EndedAt = now
 		x.Result = controlplane.GuestExecutionResult{ExitCode: 7, Stdout: "sensitive output"}
 		require.NoError(t, r.SaveGuestExecution(ctx, x))
-		file := controlplane.GuestFileOperation{ID: "file", Version: 1, AgentID: "agent", Status: controlplane.GuestExecutionCompleted, EndedAt: now.Add(time.Minute)}
+		file := controlplane.GuestFileOperation{ID: "file", Version: 1, Topology: "lab", AgentID: "agent", Status: controlplane.GuestExecutionCompleted, EndedAt: now.Add(time.Minute)}
 		require.NoError(t, r.SaveGuestFileOperation(ctx, file))
 		ea, fa, err := r.LatestGuestAcceptance(ctx, "agent")
 		require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestGuestDecodeErrorsDoNotExposePayloads(t *testing.T) {
 		r := open()
 		ctx := context.Background()
 		raw := []byte(`{"record_format":1,"id":"bad","version":1,"status":"queued","created_at":"PRIVATE_TIMESTAMP_SENTINEL"}`)
-		require.NoError(t, r.records.update(ctx, guestExecutionKind, "bad", func([]byte) ([]byte, error) { return raw, nil }))
+		injectGuestRecordForTest(t, r.records, guestExecutionKind, "bad", raw)
 		_, err := r.GetGuestExecution(ctx, "bad")
 		require.ErrorIs(t, err, ErrCorruptRecord)
 		require.NotContains(t, err.Error(), "PRIVATE_TIMESTAMP_SENTINEL")
@@ -263,7 +263,7 @@ func TestGuestFileRejectsCompletionWithCancellationEvidence(t *testing.T) {
 	guestRepositoryFactories(t, func(t *testing.T, open func() *GuestRepository) {
 		r := open()
 		ctx := context.Background()
-		x := controlplane.GuestFileOperation{ID: "file", Version: 1, Status: controlplane.GuestExecutionRunning}
+		x := controlplane.GuestFileOperation{ID: "file", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionRunning}
 		require.NoError(t, r.SaveGuestFileOperation(ctx, x))
 		x.Status = controlplane.GuestExecutionCompleted
 		x.CancelRequested = true

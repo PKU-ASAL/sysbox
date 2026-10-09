@@ -87,8 +87,8 @@ func (b *fileGuestRecords) list(ctx context.Context, kind guestKind) ([]guestRaw
 	return out, nil
 }
 func (b *fileGuestRecords) update(ctx context.Context, kind guestKind, id string, fn func([]byte) ([]byte, error)) error {
-	if kind == nodeOperationKind {
-		return b.updateNode(ctx, id, fn)
+	if isOperationRecord(kind) {
+		return b.updateOperation(ctx, kind, id, fn)
 	}
 	return b.updateRecord(ctx, kind, id, fn)
 }

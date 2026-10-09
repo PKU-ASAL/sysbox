@@ -49,6 +49,15 @@ func checkLocalDeleteActivity(ctx context.Context, store *localAPIStore, topolog
 			return deleteActivityConflict("node operation")
 		}
 	}
+	activities, err := persistence.NewFilesystemGuestRepository(store.runsDir).ListGuestActivity(ctx, topology)
+	if err != nil {
+		return err
+	}
+	for _, activity := range activities {
+		if activity.Unresolved() {
+			return deleteActivityConflict(activity.Kind)
+		}
+	}
 	// records() does not reacquire the record lock already held by deletion.
 	commands, err := (localCommandStorage{store: store}).records(ctx, "")
 	if err != nil {
@@ -94,6 +103,14 @@ func checkDeleteActivityRows(rows deleteActivityRows, kind, topology string) err
 			if op.Topology == topology && persistence.NodeOperationUnresolved(*op) {
 				return deleteActivityConflict("node operation")
 			}
+		} else if kind == "guest_execution" || kind == "guest_file" {
+			activity, err := persistence.DecodeGuestActivity(kind, id, raw)
+			if err != nil {
+				return err
+			}
+			if activity.Topology == topology && activity.Unresolved() {
+				return deleteActivityConflict(kind)
+			}
 		} else {
 			sess, err := decodeConsoleRecord(id, raw)
 			if err != nil {
@@ -112,6 +129,8 @@ func checkSQLiteDeleteActivity(ctx context.Context, conn *sql.Conn, topology, ui
 		{"run", "SELECT " + sqliteRunColumns + " FROM sysbox_runs WHERE rowid IN (SELECT max(rowid) FROM sysbox_runs GROUP BY id)"},
 		{"console", "SELECT id,data FROM sysbox_console_sessions"},
 		{"node", "SELECT id,data FROM sysbox_node_operations"},
+		{"guest_execution", "SELECT id,data FROM sysbox_guest_executions"},
+		{"guest_file", "SELECT id,data FROM sysbox_guest_file_operations"},
 	} {
 		rows, err := conn.QueryContext(ctx, query.sql)
 		if err != nil {
@@ -160,6 +179,8 @@ func checkPostgresDeleteActivity(ctx context.Context, tx pgx.Tx, topology, uid s
 		{"run", "SELECT id,data::text FROM sysbox_runs"},
 		{"console", "SELECT id,data::text FROM sysbox_console_sessions"},
 		{"node", "SELECT id,data::text FROM sysbox_node_operations"},
+		{"guest_execution", "SELECT id,data::text FROM sysbox_guest_executions"},
+		{"guest_file", "SELECT id,data::text FROM sysbox_guest_file_operations"},
 	} {
 		rows, err := tx.Query(ctx, query.sql)
 		if err != nil {

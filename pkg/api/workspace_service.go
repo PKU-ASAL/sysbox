@@ -365,7 +365,7 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 			return err
 		}
 		for _, activity := range guestActivity {
-			if activity.Active() {
+			if activity.Unresolved() {
 				return fmt.Errorf("%w: active guest operation blocks metadata deletion", persistence.ErrConflict)
 			}
 		}
@@ -586,7 +586,7 @@ func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology
 			return err
 		}
 		for _, activity := range activities {
-			if activity.CreatedAt.IsZero() || activity.EndedAt.IsZero() || activity.Active() {
+			if activity.Unresolved() {
 				return fmt.Errorf("%w: active guest operation prevents state maintenance", persistence.ErrConflict)
 			}
 		}

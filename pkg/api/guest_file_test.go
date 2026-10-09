@@ -158,7 +158,7 @@ func TestGuestFileOperationReportsAreIdempotentAndOrdered(t *testing.T) {
 func TestCancelledGuestFileOperationRejectsLateCompletion(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	svc := newGuestFileOperationService(store)
-	require.NoError(t, store.SaveGuestFileOperation(context.Background(), controlplane.GuestFileOperation{ID: "op", Version: 1, Status: controlplane.GuestExecutionQueued}))
+	require.NoError(t, store.SaveGuestFileOperation(context.Background(), controlplane.GuestFileOperation{ID: "op", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionQueued}))
 	_, err := svc.Cancel(context.Background(), "op")
 	require.NoError(t, err)
 	_, err = store.CompleteGuestFileOperation(context.Background(), "agent", "op", controlplane.GuestFileOperationCompletion{})
@@ -200,7 +200,7 @@ func TestRunningGuestFileWithoutGrantCanCancelWithoutEffect(t *testing.T) {
 func TestCancelIntentBlocksConcurrentStartAndCompletion(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	svc := newGuestFileOperationService(store)
-	require.NoError(t, store.SaveGuestFileOperation(context.Background(), controlplane.GuestFileOperation{ID: "op", Version: 1, Status: controlplane.GuestExecutionQueued}))
+	require.NoError(t, store.SaveGuestFileOperation(context.Background(), controlplane.GuestFileOperation{ID: "op", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionQueued}))
 	op, err := svc.RequestCancel(context.Background(), "op")
 	require.NoError(t, err)
 	require.True(t, op.CancelRequested)
@@ -217,7 +217,7 @@ func TestGuestFileFailedCommandEventReconcilesDurableOperation(t *testing.T) {
 	s := guestExecutionTestServer(t)
 
 	// A completed command leaves the durable operation running.
-	done := controlplane.GuestFileOperation{ID: "op-done", Version: 1, AgentID: "host-a", CommandID: "cmd-done", Status: controlplane.GuestExecutionRunning}
+	done := controlplane.GuestFileOperation{ID: "op-done", Version: 1, Topology: "lab", AgentID: "host-a", CommandID: "cmd-done", Status: controlplane.GuestExecutionRunning}
 	require.NoError(t, s.apiStore.SaveGuestFileOperation(context.Background(), done))
 	_, err := s.agentService().PublishCommand(context.Background(), "host-a", controlplane.AgentCommand{ID: "cmd-done", Type: "guest_file_put", FilePut: &controlplane.GuestFilePut{ID: "op-done"}})
 	require.NoError(t, err)
@@ -227,7 +227,7 @@ func TestGuestFileFailedCommandEventReconcilesDurableOperation(t *testing.T) {
 	require.Equal(t, controlplane.GuestExecutionRunning, got.Status)
 
 	// A failed worker command cannot prove that guest installation stopped.
-	failed := controlplane.GuestFileOperation{ID: "op-failed", Version: 1, AgentID: "host-a", CommandID: "cmd-failed", Status: controlplane.GuestExecutionRunning}
+	failed := controlplane.GuestFileOperation{ID: "op-failed", Version: 1, Topology: "lab", AgentID: "host-a", CommandID: "cmd-failed", Status: controlplane.GuestExecutionRunning}
 	require.NoError(t, s.apiStore.SaveGuestFileOperation(context.Background(), failed))
 	_, err = s.agentService().PublishCommand(context.Background(), "host-a", controlplane.AgentCommand{ID: "cmd-failed", Type: "guest_file_put", FilePut: &controlplane.GuestFilePut{ID: "op-failed"}})
 	require.NoError(t, err)

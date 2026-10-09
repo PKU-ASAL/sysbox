@@ -1880,3 +1880,26 @@ docscheck and independent follow-up review passed. This validates NodeOperation
 aggregate storage, not full adoption/SSH migration. Raw guest execution/file
 records and postcommit cleanup exclusion/recovery remain open. No retained
 deployment or project resources were rebuilt.
+
+### Guest execution/file maintenance and deletion boundary (2026-10-09)
+
+Guest raw records now share the node authority→record guard. Frozen scopes
+reject creation and active-state advancement; terminal drain remains possible.
+File CancelRequested is exempt only for an existing record with unchanged
+status, not queued→running. Compound file dispatch uses an explicit
+under-authority method. Deletion, maintenance and inspection share complete
+guest-record decoding and completion evidence including nonzero, ordered times.
+
+Regressions reproduced frozen admission and late-record deletion bypass.
+Real-PostgreSQL targeted race passed (13.139 seconds), covering both guest kinds
+waiting on authority alone, no partial record after timeout and cancellation
+flag misuse. Guest persistence race passed (1.679 seconds); malformed-terminal
+deletion and late-completion regression race passed (1.301 seconds).
+Fixtures now include required authority tables and topology names. Corruption
+is injected below production validation, preserving codec/redaction assertions.
+
+The final full Go suite passed with both database variables enabled. Vet,
+docscheck and independent follow-up review passed. No existing deployment or
+resource was rebuilt. This does not close the existing guest execution Cancel
+handler's terminal-before-publication window, remote stop proof, or persistent
+exclusion and recovery through postcommit workspace cleanup.

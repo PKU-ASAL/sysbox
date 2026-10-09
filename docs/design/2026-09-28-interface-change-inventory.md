@@ -824,3 +824,10 @@ metadata 删除在提交事务内重查 node 记录，有效结束时间才作�
 内部文件方法改名为 CreateFilesystemDispatchUnderAuthority，要求调用方持
 records/authority，旧名称不保留。SQL repository 继续借用完整 API metadata
 schema/pool。公开路由和持久格式不变，此项不替代宿主执行/停止证明。
+
+实施补充（2026-10-09 guest registry）：原始 guest execution/file Save/CAS 接入
+共享维护事务；新增记录和活跃状态更新可能返回 ErrConflict，取消意图及终态可
+按规则收敛。内部文件方法改为 CreateFilesystemGuestDispatchUnderAuthority，
+旧名称移除。GuestActivity.Unresolved 统一检查状态及完整、顺序正确的时间，
+DecodeGuestActivity 验证完整记录但不暴露 request/output。SQL借用的 schema 需
+包含 execution authority 表。API路由与持久格式未变，不表示取消已获得停止证明。

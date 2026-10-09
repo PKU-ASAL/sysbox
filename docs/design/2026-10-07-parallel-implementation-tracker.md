@@ -533,3 +533,9 @@ payload 都检查。文件持锁延伸至 authority，SQL沿用原事务边界�
 入口，SQL借用原写事务。删除提交检查完整 node registry，跨 workspace 不遗漏。
 仅持文件 authority 也能阻挡 raw node 写入，超时无残留。guest execution/file
 与完整删除后清理仍未关闭，不代表 adoption/SSH 能力迁移已完成。
+
+2026-10-09 guest 原始记录边界：execution/file 与 node 复用 operation maintenance
+guard，冻结拒绝新增/活跃更新，文件取消意图只在状态不前进时放行。删除提交纳入
+完整 guest registry，维护/inspection 共用有效终态证据判定，未知时间不伪装结束。
+已验证 authority 等待、无部分写入、跨进程 CAS 与损坏数据拒绝。guest execution
+取消处理仍有先写终态再派发的独立窗口，停止证明和删除后清理恢复继续推进。
