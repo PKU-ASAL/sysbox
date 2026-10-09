@@ -226,21 +226,8 @@ func (s *sqliteAPIStore) createSchema(db sqliteSchemaConnection) error {
 	) STRICT;
 
 	CREATE TABLE sysbox_console_sessions (
-		id          TEXT PRIMARY KEY,
-		topology    TEXT NOT NULL DEFAULT '',
-		node        TEXT NOT NULL DEFAULT '',
-		agent_id    TEXT NOT NULL DEFAULT '',
-		status      TEXT NOT NULL DEFAULT '',
-		error       TEXT DEFAULT '',
-		exit_code   INTEGER,
-		requested_by TEXT DEFAULT '',
-		roles       TEXT DEFAULT '[]',
-		policy      TEXT DEFAULT '',
-		tty         INTEGER DEFAULT 0,
-		audit       TEXT DEFAULT '[]',
-		created_at  TEXT NOT NULL DEFAULT '',
-		started_at  TEXT DEFAULT '',
-		ended_at    TEXT DEFAULT ''
+		id TEXT PRIMARY KEY,
+		data BLOB NOT NULL
 	) STRICT;
 
 	CREATE TABLE sysbox_node_operations (
@@ -332,6 +319,7 @@ func (s *sqliteAPIStore) validateSchema(db sqliteSchemaConnection) error {
 		return fmt.Errorf("%w: run dispatch schema requires rebuild: run_id must allow multiple execution incarnations", persistence.ErrUnsupportedVersion)
 	}
 	for _, query := range []string{
+		"SELECT data FROM sysbox_console_sessions LIMIT 0",
 		"SELECT deadline_at, snapshot_path, record_json FROM sysbox_runs LIMIT 0",
 		"SELECT record_json FROM sysbox_agent_commands LIMIT 0",
 		"SELECT record_json FROM sysbox_agent_command_events LIMIT 0",
@@ -622,97 +610,6 @@ func (s *sqliteAPIStore) ListPolicies(ctx context.Context, workspace string) ([]
 }
 
 // ── Console sessions ─────────────────────────────────────────────────────────
-
-func (s *sqliteAPIStore) SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error {
-	db, err := s.open()
-	if err != nil {
-		return err
-	}
-	tty := 0
-	if sess.TTY {
-		tty = 1
-	}
-	audit, _ := json.Marshal(sess.Audit)
-	roles, _ := json.Marshal(sess.Roles)
-	exitCode := sql.NullInt64{}
-	if sess.ExitCode != nil {
-		exitCode.Int64 = int64(*sess.ExitCode)
-		exitCode.Valid = true
-	}
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO sysbox_console_sessions (id, topology, node, agent_id, status, error, exit_code, requested_by, roles, policy, tty, audit, created_at, started_at, ended_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET status=excluded.status, error=excluded.error, exit_code=excluded.exit_code, ended_at=excluded.ended_at`,
-		sess.ID, sess.Topology, sess.Node, sess.AgentID, sess.Status, sess.Err, exitCode, sess.RequestedBy, string(roles), sess.Policy, tty, string(audit),
-		formatSQLiteTime(sess.CreatedAt), formatSQLiteTime(sess.StartedAt), formatSQLiteTime(sess.EndedAt))
-	return err
-}
-
-func (s *sqliteAPIStore) GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error) {
-	db, err := s.open()
-	if err != nil {
-		return nil, err
-	}
-	var sess controlplane.ConsoleSession
-	var roles, audit, createdAt, startedAt, endedAt string
-	var tty int
-	var exitCode sql.NullInt64
-	err = db.QueryRowContext(ctx,
-		`SELECT id, topology, node, agent_id, status, error, exit_code, requested_by, roles, policy, tty, audit, created_at, started_at, ended_at FROM sysbox_console_sessions WHERE id=?`, id).
-		Scan(&sess.ID, &sess.Topology, &sess.Node, &sess.AgentID, &sess.Status, &sess.Err, &exitCode, &sess.RequestedBy, &roles, &sess.Policy, &tty, &audit, &createdAt, &startedAt, &endedAt)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("console session not found")
-	}
-	if err != nil {
-		return nil, err
-	}
-	sess.TTY = tty != 0
-	if exitCode.Valid {
-		v := int(exitCode.Int64)
-		sess.ExitCode = &v
-	}
-	json.Unmarshal([]byte(roles), &sess.Roles)
-	json.Unmarshal([]byte(audit), &sess.Audit)
-	sess.CreatedAt = parseSQLiteTime(createdAt)
-	sess.StartedAt = parseSQLiteTime(startedAt)
-	sess.EndedAt = parseSQLiteTime(endedAt)
-	return &sess, nil
-}
-
-func (s *sqliteAPIStore) ListConsoleSessions(ctx context.Context, workspace string) ([]controlplane.ConsoleSession, error) {
-	db, err := s.open()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := db.QueryContext(ctx,
-		`SELECT id, topology, node, agent_id, status, error, exit_code, requested_by, roles, policy, tty, audit, created_at, started_at, ended_at FROM sysbox_console_sessions ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []controlplane.ConsoleSession
-	for rows.Next() {
-		var sess controlplane.ConsoleSession
-		var roles, audit, createdAt, startedAt, endedAt string
-		var tty int
-		var exitCode sql.NullInt64
-		if err := rows.Scan(&sess.ID, &sess.Topology, &sess.Node, &sess.AgentID, &sess.Status, &sess.Err, &exitCode, &sess.RequestedBy, &roles, &sess.Policy, &tty, &audit, &createdAt, &startedAt, &endedAt); err != nil {
-			return nil, err
-		}
-		sess.TTY = tty != 0
-		if exitCode.Valid {
-			v := int(exitCode.Int64)
-			sess.ExitCode = &v
-		}
-		json.Unmarshal([]byte(roles), &sess.Roles)
-		json.Unmarshal([]byte(audit), &sess.Audit)
-		sess.CreatedAt = parseSQLiteTime(createdAt)
-		sess.StartedAt = parseSQLiteTime(startedAt)
-		sess.EndedAt = parseSQLiteTime(endedAt)
-		out = append(out, sess)
-	}
-	return out, rows.Err()
-}
 
 // ── Node operations ──────────────────────────────────────────────────────────
 

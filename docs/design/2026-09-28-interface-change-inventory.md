@@ -190,7 +190,7 @@ host 签名私钥和非 root worker group ID。部署约束见[持久任务](../
 驱动三后端共同终态规则。取消响应公开 `cancel_requested`，存在 grant 时不直接
 标 cancelled；commit 抢先完成则保留 committed。新增 guest file install/observe/
 cancel SPI 与 host file RPC，guest 须配置可信安装根；缺能力不回退旧复制路径。
-API schema 9、文件 metadata format 2、guest scope format 2 需明确重建。
+API schema 10、文件 metadata format 2、guest scope format 2 需明确重建。
 
 ### 2026-10-04 已实施：owning-agent 远端恢复扩展
 
@@ -754,3 +754,9 @@ command，不采信重试的新时间或文本；这不替代 host 签名停止�
 实施补充（2026-10-09 cancel 恢复）：API 重启保留 cancelling；supervisor 自动
 补齐缺失的取消 outbox command。lost 仍是结果未知，不被自动解释为取消意图。
 退休取消命令不重建，cancelling 仍需会话执行终态/停止证据才能结束。
+
+实施补充（2026-10-09 console 完整记录）：API SQL schema 10 把 SQLite console
+表替换为 `id/data` 完整 JSON 记录，保留 ProjectID/Workspace/StartedAt/Audit 的更新。
+SQLite 列表按 Workspace 过滤（空 Workspace 时才回退 Topology）。SQLite/Postgres
+共享 API schema 版本门槛，schema 9 必须显式重建；没有就地补列或兼容读取。
+本次不修改文件存储记录，不代表 console CAS 已完成。

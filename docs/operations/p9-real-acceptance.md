@@ -1630,3 +1630,26 @@ and targeted three-store recovery tests additionally verify an existing delivery
 lease remains unchanged. Vet, docscheck and independent review passed. The
 temporary PostgreSQL container was stopped and automatically removed. Tests
 reconstruct API hubs; no cross-host console process execution was performed.
+
+### Complete SQLite console records, API schema 10 (2026-10-09)
+
+The SQLite console adapter dropped ProjectID/Workspace and did not update
+StartedAt/Audit on conflict, unlike file and PostgreSQL. A full-record regression
+reproduced the difference. SQLite now stores `id/data` JSON snapshots, decodes
+all fields together, checks the payload ID against the row key and fails on
+malformed/null records instead of ignoring roles/audit/time decoding errors.
+Listing honors Workspace, falling back to Topology only when Workspace is empty.
+
+The shared API SQL schema version is now 10. Existing SQLite/Postgres schema 9
+databases require explicit rebuild, even though PostgreSQL DDL is unchanged;
+no live business database was migrated. File console serialization is unchanged.
+Tests exercise complete updates and workspace filtering across stores,
+corrupted SQLite payloads and schema-9 rejection. This establishes consistent
+record content, not cross-process CAS or atomic console outbox admission.
+
+Verification: full API race with real PostgreSQL passed (57.43 seconds); the
+final full Go regression passed with both database test variables enabled.
+Vet, docscheck and independent review passed. Additional startup validation
+rejects a current-version SQLite schema lacking the full-record column. The
+temporary Postgres database was stopped and automatically removed; no existing
+deployment was rebuilt or upgraded as part of this test.

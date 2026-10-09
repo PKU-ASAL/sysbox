@@ -468,3 +468,8 @@ outbox 的跨记录原子提交、多 API CAS 和完整执行授权仍待完成�
 outbox 投递前按稳定 ID 补齐首次入队。现存租约/tombstone 保留，冲突明确拒绝，
 lost 不自动生成取消请求。已关闭“持久取消意图存在但首次command未写入”的恢复
 窗口；session/command 仍是可恢复两步写，尚非跨记录原子事务或远端停止证明。
+
+2026-10-09 console SQLite 完整记录：修复 ProjectID/Workspace 丢失与更新 StartedAt/
+Audit 被忽略，移除重复列式读写，按完整记录保存/校验/筛选 workspace。当前 API
+schema 提升10（aggregate仍为4），旧 SQL schema 拒绝并要求显式重建；前述 schema9
+和 aggregate2 为历史检查点。多后端 CAS 和 outbox 原子受理仍未完成。

@@ -133,7 +133,7 @@ API cancellation returns `cancel_requested: true`. A running operation remains
 nonterminal until a signed host result confirms committed or cancelled; a
 queued operation without issued authority can be cancelled immediately. Workers
 cannot report file completion. Pending payloads survive expiry until terminal
-state and grant retirement permit cleanup. API schema 9, file metadata format 2
+state and grant retirement permit cleanup. API schema 10, file metadata format 2
 and guest scope format 2 require explicit rebuilding of old data and updated
 helpers; aggregate state and Firecracker manifest formats are unchanged.
 
