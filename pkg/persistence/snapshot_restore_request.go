@@ -90,29 +90,34 @@ func (r *Repository) CommitSnapshotRestore(ctx context.Context, topology string,
 		return receipt, ErrConflict
 	}
 	err := r.update(ctx, topology, func(a *aggregate) error {
-		if prior, ok := a.Restores[request.ID]; ok {
-			if prior.Request != request {
-				return ErrConflict
-			}
-			receipt = prior
-			return nil
-		}
-		if request.TopologyUID != a.State.TopologyUID || request.ExpectedSerial != a.Serial {
-			return ErrConflict
-		}
-		snapshot, ok := a.Snapshots[request.SnapshotID]
-		if !ok {
-			return ErrNotFound
-		}
-		if snapshot.Digest != request.SnapshotDigest {
-			return ErrConflict
-		}
-		if err := restoreSnapshot(a, request.SnapshotID); err != nil {
-			return err
-		}
-		receipt = SnapshotRestoreReceipt{Request: request, Serial: a.Serial, CompletedAt: a.UpdatedAt}
-		a.Restores[request.ID] = receipt
-		return nil
+		var err error
+		receipt, err = applySnapshotRestore(a, request)
+		return err
 	})
 	return receipt, err
+}
+
+func applySnapshotRestore(a *aggregate, request SnapshotRestoreRequest) (SnapshotRestoreReceipt, error) {
+	if prior, ok := a.Restores[request.ID]; ok {
+		if prior.Request != request {
+			return SnapshotRestoreReceipt{}, ErrConflict
+		}
+		return prior, nil
+	}
+	if request.TopologyUID != a.State.TopologyUID || request.ExpectedSerial != a.Serial {
+		return SnapshotRestoreReceipt{}, ErrConflict
+	}
+	snapshot, ok := a.Snapshots[request.SnapshotID]
+	if !ok {
+		return SnapshotRestoreReceipt{}, ErrNotFound
+	}
+	if snapshot.Digest != request.SnapshotDigest {
+		return SnapshotRestoreReceipt{}, ErrConflict
+	}
+	if err := restoreSnapshot(a, request.SnapshotID); err != nil {
+		return SnapshotRestoreReceipt{}, err
+	}
+	receipt := SnapshotRestoreReceipt{Request: request, Serial: a.Serial, CompletedAt: a.UpdatedAt}
+	a.Restores[request.ID] = receipt
+	return receipt, nil
 }

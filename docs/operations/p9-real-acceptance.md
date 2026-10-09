@@ -751,3 +751,18 @@ while excluding the subsequently allocated maintenance epoch. Zero-epoch commit
 is rejected. Historical draft retries recover the original request/epoch even
 after snapshot deletion and successor advancement. Persistence race and dependent
 API/Agent tests cover this foundation; public restore orchestration remains open.
+
+The next shared restore transition binds that draft to a persisted maintenance
+barrier: ID, topology UID, digest and allocated epoch must match. A new restore
+requires a frozen barrier and confirmed stopped grants with nonempty receipts;
+revocation or expiry alone cannot pass. Released barriers only permit reading an
+exact already-committed restore receipt. Tests cover rejection before host stop,
+successful transition after stop, request tampering, missing stop receipt and
+historical replay after release. The transition copies historical output bytes
+and reuses the same restore state/CAS logic as the repository primitive.
+
+`ApplyAuthorizedSnapshotRestore` is pure logic for a storage transaction that
+holds both authority and aggregate locks until commit. It is not an RPC or an
+authorization token. Its joint-lock adapters and public restore orchestration
+are not wired yet; these tests establish the transition contract, not a complete
+user restore workflow or a new distributed acceptance result.

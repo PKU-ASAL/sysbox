@@ -26,6 +26,12 @@ maintenance epoch在此只绑定请求，不替代授权校验；调用方必须
 编排可先验证草案，再用摘要申请维护屏障，填入epoch后提交。epoch0提交明确拒绝。
 已有回执的草案重试返回原请求，不受snapshot保留删除或后继state变化影响。
 
+新增共享转换`ApplyAuthorizedSnapshotRestore`供后端事务使用：同时校验authority
+与aggregate快照，要求维护屏障ID/topology UID/请求摘要/epoch完全匹配；首次写入还
+要求屏障未释放、所有旧grant已停止且具备回执。已释放屏障只允许确认原先同一恢复
+回执，不能授权新写入。调用适配器必须把两个存储锁保持到提交，独立读取后调用此
+纯函数不构成原子授权。公开restore事务适配与HTTP编排仍待完成。
+
 ### 2026-10-09 维护授权屏障基础
 
 执行授权 ledger 升为format2，format1拒绝读写并要求明确重建；没有自动迁移或忽略
