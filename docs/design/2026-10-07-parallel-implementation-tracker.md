@@ -375,3 +375,8 @@ GC 签发已在 authority 提交锁内复核 command 所属 lifecycle UID。三�
 新增引用后，已签 grant 的后续授权与续租均拒绝，停止回执仍可回报。三后端定向
 race 通过，含真实 Postgres。此项只是 lifecycle 部分，完整 API 活动 registry、
 GC plan 与 provider 删除期间的准入排他仍未闭环，P8 继续保持未完成。
+
+2026-10-09 P8 旧 CLI 路径清理：移除 `gc --execute`、独立删除 journal/replay、
+CLI 直接 Docker remove 与 libvirt destroy/undefine 实现及对应旧路径测试。
+`gc --dry-run` 保留，历史磁盘 journal 不改写、不重放；正式 provider/host gate
+实现和测试保留。该清理关闭 CLI 裸删除旁路，不代表自动 GC 已可用。

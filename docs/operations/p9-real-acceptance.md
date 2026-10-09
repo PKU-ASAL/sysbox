@@ -1214,3 +1214,26 @@ targeted GC/authority/metadata race suites passed on all three backends. Separat
 identity tests cover UID protection across generations, external-ID protection
 under a different UID, and equal external IDs in different providers. Vet,
 docscheck and independent review passed. No real provider GC effect was run.
+
+### Retire the raw CLI GC deletion path (2026-10-09)
+
+The CLI no longer exposes `gc --execute` or carries `executeOrphans`, its private
+deletion journal/replay implementation, direct Docker remove calls, or direct
+libvirt destroy/undefine calls. Those implementations could not share exclusion
+with lifecycle writers and bypassed the API/host authority contract. Their tests
+were removed with the obsolete implementation; the canonical provider and host
+gate tests remain. `gc --dry-run` still inventories scoped candidates, and bare
+`gc` explicitly refuses execution.
+
+A regression verifies `--execute` is no longer a recognized flag. A preview
+integration test uses read-only Docker/virsh fixtures and a historical uncertain
+GC journal, verifies its bytes remain unchanged and confirms no old lock or
+replacement journal is created. No on-disk historical journal or provider
+resource was deleted during this cleanup. Removed source remains recoverable
+from Git history. The old GC design document now describes the canonical model
+and marks the complete authorized deletion workflow as unfinished. P8 remains
+open; removing the bypass does not deliver automatic garbage collection.
+
+Validation: full Go regression, commands race, vet, documentation checks and
+independent review passed. This source-removal round did not start PostgreSQL
+or run real provider GC effects. No user data was removed.

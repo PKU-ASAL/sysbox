@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/spf13/cobra"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -42,58 +41,6 @@ func TestGCIncludesCanonicalStateAndRefusesUnresolvedActions(t *testing.T) {
 	require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "unknown-create", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "other"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: st.TopologyUID + "/other", Generation: 1, StateSerial: latest.Meta.Serial, ExpectedSerial: latest.Meta.Serial}))
 	_, err = collectActiveIDsChecked(root)
 	require.Error(t, err, "unconfirmed resources must not be reclaimed")
-}
-
-func TestGCExecutePersistsUncertainDeleteBeforeReturning(t *testing.T) {
-	root, owner := gcInventoryFixture(t)
-	active, err := collectActiveIDsChecked(root)
-	require.NoError(t, err)
-	candidate := orphan{Kind: "unsupported", ID: "external", Topo: owner, OwnerUID: owner, ResourceUID: owner + "/orphan", Generation: 1, InventoryDigest: active.inventories[owner]}
-	err = executeOrphans(context.Background(), root, []orphan{candidate}, io.Discard)
-	require.ErrorContains(t, err, "unsupported GC provider kind")
-	journal, err := loadGCJournal(filepath.Join(root, "_gc", "deletion-journal.json"))
-	require.NoError(t, err)
-	record, ok := journal.Records["unsupported:external"]
-	require.True(t, ok)
-	require.Equal(t, "uncertain", record.Status)
-	require.NotEmpty(t, record.Digest)
-}
-
-func TestGCExecuteDockerDeletesAndRecordsCompletion(t *testing.T) {
-	root, owner := gcInventoryFixture(t)
-	active, err := collectActiveIDsChecked(root)
-	require.NoError(t, err)
-	deleted := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.URL.Path == "/_ping":
-			w.WriteHeader(http.StatusOK)
-		case r.URL.Path == "/version":
-			_, _ = w.Write([]byte(`{"ApiVersion":"1.41","Version":"test"}`))
-		case strings.Contains(r.URL.Path, "/containers/orphan") && r.Method == http.MethodDelete:
-			deleted = true
-			w.WriteHeader(http.StatusNoContent)
-		case strings.Contains(r.URL.Path, "/containers/orphan") && r.Method == http.MethodGet:
-			if deleted {
-				w.WriteHeader(http.StatusNotFound)
-			} else {
-				_ = json.NewEncoder(w).Encode(map[string]any{"Id": "orphan", "Config": map[string]any{"Labels": map[string]string{
-					runtime.LabelManaged: "true", "sysbox.owner_uid": owner, "sysbox.topology_uid": owner, "sysbox.resource_uid": owner + "/orphan", "sysbox.generation": "1",
-				}}})
-			}
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("DOCKER_HOST", server.URL)
-	candidate := orphan{Kind: "container", ID: "orphan", Topo: owner, OwnerUID: owner, ResourceUID: owner + "/orphan", Generation: 1, InventoryDigest: active.inventories[owner]}
-	require.NoError(t, executeOrphans(context.Background(), root, []orphan{candidate}, io.Discard))
-	require.True(t, deleted)
-	journal, err := loadGCJournal(filepath.Join(root, "_gc", "deletion-journal.json"))
-	require.NoError(t, err)
-	require.Equal(t, "complete", journal.Records["container:orphan"].Status)
 }
 
 func TestGCProtectsResourcesReferencedOnlyBySnapshot(t *testing.T) {
@@ -202,7 +149,6 @@ func TestGCAutomaticDeletionIsDisabledWithoutFencedInventory(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	require.ErrorContains(t, runGc(cmd, nil), "automatic GC deletion is disabled")
-	require.ErrorContains(t, removeOrphans(context.Background(), nil), "automatic GC deletion is disabled")
 }
 
 func TestGCRejectsBackendNotCoveredByFilesystemInventory(t *testing.T) {

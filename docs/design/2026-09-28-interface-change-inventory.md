@@ -705,3 +705,8 @@ UID 与当前 lifecycle 一致；metadata 删除后旧 delivery lease 不再获�
 引用快照，任意非空字符串不再有效。当前/保留 state、journal candidate 或 snapshot
 引用的 resource UID 或同 provider external ID 会导致签发/续租/authorize 冲突。
 载荷格式不变；旧摘要需重新计算。该字段仍不是完整 GC plan 或删除许可。
+
+实施补充（2026-10-09 CLI GC）：删除 `gc --execute`，传入时按未知 flag 拒绝；
+没有旧执行模式兼容层。当前仅支持 `gc --dry-run` 的只读候选预览，省略该选项
+仍明确拒绝。旧 `_gc/deletion-journal.json` 保留为诊断证据，不读取或重放其中的
+删除意图。完整自动 GC 的 API/host 授权派发尚未完成。

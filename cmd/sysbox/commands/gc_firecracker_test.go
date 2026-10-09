@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -72,36 +71,16 @@ func TestGCProtectsFirecrackerStateAndSnapshotReferences(t *testing.T) {
 	require.NoError(t, manager.Save(st))
 	active, err := collectActiveIDsChecked(root)
 	require.NoError(t, err)
-	require.True(t, activeContains(active, orphan{Kind: "firecracker", ID: "vm-id"}))
+	require.True(t, active.firecracker["vm-id"])
 	snapshot, err := manager.Snapshot(context.Background(), "retain VM")
 	require.NoError(t, err)
 	st.Resources = nil
 	require.NoError(t, manager.Save(st))
 	active, err = collectActiveIDsChecked(root)
 	require.NoError(t, err)
-	require.True(t, activeContains(active, orphan{Kind: "firecracker", ID: "vm-id"}), "snapshot-only VM must remain protected")
+	require.True(t, active.firecracker["vm-id"], "snapshot-only VM must remain protected")
 	require.NoError(t, manager.Backend().(state.SnapshotDeleter).DeleteSnapshot(context.Background(), snapshot.ID))
 	active, err = collectActiveIDsChecked(root)
 	require.NoError(t, err)
-	require.False(t, activeContains(active, orphan{Kind: "firecracker", ID: "vm-id"}))
-}
-
-func TestGCRejectsFirecrackerExecutionBeforeCreatingJournal(t *testing.T) {
-	for _, mixed := range []bool{false, true} {
-		t.Run(fmt.Sprint("mixed=", mixed), func(t *testing.T) {
-			root, owner := gcInventoryFixture(t)
-			active, err := collectActiveIDsChecked(root)
-			require.NoError(t, err)
-			candidate := orphan{Kind: "firecracker", ID: "vm", Topo: owner, OwnerUID: owner, ResourceUID: "resource", Generation: 1, InventoryDigest: active.inventories[owner]}
-			candidates := []orphan{candidate}
-			if mixed {
-				container := candidate
-				container.Kind = "container"
-				candidates = append([]orphan{container}, candidates...)
-			}
-			err = executeOrphans(context.Background(), root, candidates, io.Discard)
-			require.ErrorContains(t, err, "Firecracker GC preview only")
-			require.NoFileExists(t, filepath.Join(root, "_gc", "deletion-journal.json"), "unsupported preview must not create an uncertain effect")
-		})
-	}
+	require.False(t, active.firecracker["vm-id"])
 }
