@@ -400,3 +400,7 @@ metadata writer 和统一跨 registry 准入仍未完成，P6/P8 继续未关闭
 2026-10-09 ConsoleSession 活动检查点：restore/force-unlock quiescence 现在枚举所有
 持久 ConsoleSession，按实际 topology 阻止 queued/running/缺结束时间的会话；跨
 workspace 名称不再漏检。跨 registry 原子准入和 raw writer barrier 仍待完成。
+
+2026-10-09 AgentCommand 活动检查点：quiescence 现在枚举带当前 topology UID 的
+非终态 AgentCommand，即使 guest activity 尚未落盘也阻止维护；终态/退休 command
+不阻塞。P6 跨 registry 原子准入和 raw writer barrier 仍未完成。

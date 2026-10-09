@@ -1292,6 +1292,12 @@ existing incomplete-registry tests continue to require every activity source.
 This closes a missing activity category, while cross-registry atomic admission
 and raw metadata writer fencing remain P6 work.
 
+AgentCommand activity is now included as well. A nonterminal command carrying
+the topology UID blocks state maintenance even when no guest activity record
+has been created yet; terminal/retired commands do not. This closes the gap
+between durable dispatch and guest operation publication. The targeted race
+regression passed; raw writer and cross-registry transaction work remains.
+
 The final full Go regression also passed with both PostgreSQL test variables
 enabled. The isolated test database was stopped and automatically removed after
 verification; real Docker tests cleaned their own containers and helper files.

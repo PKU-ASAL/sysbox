@@ -24,6 +24,7 @@ type WorkspaceService struct {
 	loadNodeOperations  func(context.Context, string) ([]controlplane.NodeOperation, error)
 	loadGuestActivity   func(context.Context, string) ([]persistence.GuestActivity, error)
 	loadConsoleSessions func(context.Context, string) ([]controlplane.ConsoleSession, error)
+	loadAgentCommands   func(context.Context) ([]controlplane.AgentCommand, error)
 	lockAdmission       func(string) func()
 	deleteState         func(context.Context, string, int64, string) error
 }
@@ -603,6 +604,25 @@ func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology
 		for _, sess := range sessions {
 			if sess.Topology == topology && (sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning || sess.CreatedAt.IsZero() || (sess.EndedAt.IsZero() && sess.Status != controlplane.ConsoleSessionStatusClosed && sess.Status != controlplane.ConsoleSessionStatusFailed && sess.Status != controlplane.ConsoleSessionStatusCancelled)) {
 				return fmt.Errorf("%w: active console session prevents state maintenance", persistence.ErrConflict)
+			}
+		}
+	}
+	if s.loadAgentCommands != nil {
+		commands, err := s.loadAgentCommands(ctx)
+		if err != nil {
+			return err
+		}
+		mgr, err := s.stateManager(topology)
+		if err != nil {
+			return err
+		}
+		st, err := mgr.Load()
+		if err != nil {
+			return err
+		}
+		for _, command := range commands {
+			if command.TopologyUID == st.TopologyUID && !command.IsTerminal() {
+				return fmt.Errorf("%w: active agent command prevents state maintenance", persistence.ErrConflict)
 			}
 		}
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -193,6 +194,21 @@ func (s *Server) workspaceService() *WorkspaceService {
 	}
 	if s.apiStore != nil {
 		s.workspaces.loadConsoleSessions = s.apiStore.ListConsoleSessions
+		s.workspaces.loadAgentCommands = func(ctx context.Context) ([]controlplane.AgentCommand, error) {
+			agents, err := s.apiStore.ListAgents(ctx)
+			if err != nil {
+				return nil, err
+			}
+			var out []controlplane.AgentCommand
+			for _, agent := range agents {
+				commands, err := s.apiStore.ListAgentCommands(ctx, agent.ID)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, commands...)
+			}
+			return out, nil
+		}
 	}
 	return s.workspaces
 }
