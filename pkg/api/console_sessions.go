@@ -36,7 +36,7 @@ func newConsoleSessionHub(store apiStore) *consoleSessionHub {
 	if store != nil {
 		if items, err := store.ListConsoleSessions(context.Background(), ""); err == nil {
 			for _, sess := range items {
-				if sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning {
+				if sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning || sess.Status == controlplane.ConsoleSessionStatusCancelling {
 					sess.Status = controlplane.ConsoleSessionStatusLost
 					sess.Err = "api restarted before console session completion"
 					sess.EndedAt = time.Now().UTC()
@@ -98,11 +98,23 @@ func (h *consoleSessionHub) Get(id string) (*consoleSessionState, error) {
 }
 
 func (h *consoleSessionHub) Snapshot(id string) (controlplane.ConsoleSession, error) {
-	st, err := h.Get(id)
-	if err != nil {
-		return controlplane.ConsoleSession{}, err
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	st := h.sessions[id]
+	if st == nil {
+		return controlplane.ConsoleSession{}, fmt.Errorf("session not found")
 	}
-	return st.session, nil
+	sess := st.session
+	sess.Roles = append([]string(nil), sess.Roles...)
+	sess.Audit = append([]controlplane.Event(nil), sess.Audit...)
+	for i := range sess.Audit {
+		sess.Audit[i].Roles = append([]string(nil), sess.Audit[i].Roles...)
+	}
+	if sess.ExitCode != nil {
+		code := *sess.ExitCode
+		sess.ExitCode = &code
+	}
+	return sess, nil
 }
 
 func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSession)) {
@@ -112,43 +124,47 @@ func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSessi
 		fn(&st.session)
 		sess = st.session
 	}
-	h.mu.Unlock()
 	if sess.ID != "" {
 		h.persist(sess)
 	}
+	h.mu.Unlock()
 }
 
 func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	st := h.sessions[id]
 	if st == nil {
-		h.mu.Unlock()
 		return fmt.Errorf("session not found")
 	}
-	if st.session.Status != controlplane.ConsoleSessionStatusClosed && st.session.Status != controlplane.ConsoleSessionStatusFailed && st.session.Status != controlplane.ConsoleSessionStatusCancelled {
-		st.session.Status = controlplane.ConsoleSessionStatusCancelled
-		st.session.Err = reason
-		st.session.EndedAt = time.Now().UTC()
-		st.session.Audit = append(st.session.Audit, controlplane.Event{
+	sess := st.session
+	if sess.Status != controlplane.ConsoleSessionStatusClosed && sess.Status != controlplane.ConsoleSessionStatusFailed && sess.Status != controlplane.ConsoleSessionStatusCancelled && sess.Status != controlplane.ConsoleSessionStatusDenied && sess.Status != controlplane.ConsoleSessionStatusCancelling {
+		sess.Status = controlplane.ConsoleSessionStatusCancelling
+		sess.Err = reason
+		sess.EndedAt = time.Time{}
+		sess.Audit = append(append([]controlplane.Event(nil), sess.Audit...), controlplane.Event{
 			ProjectID: st.session.ProjectID,
 			Workspace: st.session.Workspace,
 			Resource:  "sysbox_node." + st.session.Node,
 			Action:    "cancel",
-			Status:    controlplane.ConsoleSessionStatusCancelled,
+			Status:    controlplane.ConsoleSessionStatusCancelling,
 			Actor:     actor,
 			Roles:     append([]string{}, st.session.Roles...),
 			Message:   reason + " by " + actor,
 			CreatedAt: time.Now().UTC(),
 		})
 	}
+	if h.store != nil {
+		if err := h.store.SaveConsoleSession(context.Background(), sess); err != nil {
+			return err
+		}
+	}
+	st.session = sess
 	select {
 	case <-st.cancel:
 	default:
 		close(st.cancel)
 	}
-	sess := st.session
-	h.mu.Unlock()
-	h.persist(sess)
 	return nil
 }
 

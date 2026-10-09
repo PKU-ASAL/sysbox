@@ -727,3 +727,8 @@ console 和当前 topology UID 的非终态 command 出现在 `active_operations
 既有 receipt 可标记 `blocked_by_console_activity` 或 `blocked_by_agent_command`。
 不返回 command 参数/环境变量、console 内部错误或审计信息；来源读取失败返回
 503。该响应仍是分开读取的证据快照，不构成删除授权。
+
+实施补充（2026-10-09 console cancellation）：取消请求返回 `cancelling`，不再
+提前写 `cancelled`/EndedAt；客户端须等待执行结果。websocket 断开和 attach 超时
+产生 `lost`，不代表远端已停止。存储失败不确认取消。恢复、维护和清理会把这两种
+状态作为未解决证据；远端 signed-stop 协议尚未完成。

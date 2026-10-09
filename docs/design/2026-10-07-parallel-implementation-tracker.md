@@ -430,3 +430,8 @@ registry 原子删除/准入协议尚未完成。
 2026-10-09 command 身份不完整修正：缺 UID 但 payload 明确引用 topology 的非终态
 命令仍阻挡该 topology 的维护/删除，并显示于 cleanup-inspection；名称不用于补 UID
 或授予执行权限。明确旧 UID 不绑定新代际，终态不阻挡。完整原子准入仍未完成。
+
+2026-10-09 console 取消语义修正：请求只写 cancelling，不再提前 cancelled；保存
+失败不确认、不通知本机。连接断开/attach timeout 只记 lost，不能制造任务终态。
+同进程 Update/Cancel 持久化排序和 Snapshot 并发读已修复；多 API CAS、取消可靠派发
+及 host 签名完成仍未迁移，不能计为 console 分布式闭环完成。

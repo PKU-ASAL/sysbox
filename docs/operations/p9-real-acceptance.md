@@ -1434,3 +1434,28 @@ PostgreSQL instance was enabled in this round. HTTP regressions verify activity
 visibility and `blocked_by_agent_command` for missing UID records, with the
 historical receipt retained. Targeted race, vet, docscheck and independent review
 passed. No external resource or database mutation was performed for acceptance.
+
+### Console cancellation records intent rather than stop (2026-10-09)
+
+The API cancellation request previously wrote `cancelled` with an end timestamp
+before any remote confirmation. It now persists `cancelling` with no stop time,
+then updates in-memory state and signals the relay. Failed persistence returns
+an error without changing state or signalling; retries do not duplicate the
+cancellation audit. Restart leaves the outcome unresolved (`lost`). Late attach
+or started events do not overwrite cancelling with running.
+
+Websocket relay end/attach timeout now record transport loss instead of inventing
+closed/failed execution. Already reported terminal results are preserved. Update
+and Cancel persistence are serialized within the hub; snapshots are detached
+copies read under lock, and Agent attach reads identity from that snapshot.
+The delayed-write regression ensures an earlier running update cannot overwrite
+a later cancellation. This locking is process-local; multi-API CAS, durable cancel
+delivery and host-signed console completion are still outstanding. Existing
+worker completion events remain the current terminal-report path, not a claim of
+verified remote termination. P0–P9 remain open.
+
+Verification: full Go regression and full API race (63.18 seconds) passed, as
+did vet, docscheck and independent re-review. Regressions cover persistence
+failure, cancellation retries, restart, late started events, terminal reporting,
+transport-loss classification, delayed writes and detached snapshots. PostgreSQL
+and real provider acceptance were not run for this in-process state correction.

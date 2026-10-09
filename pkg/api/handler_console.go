@@ -98,13 +98,13 @@ func (s *Server) handleAgentAttachConsole(w http.ResponseWriter, r *http.Request
 		return
 	}
 	sessID := r.PathValue("session")
-	st, err := s.consoles.Get(sessID)
+	sess, err := s.consoles.Snapshot(sessID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	if st.session.AgentID != agentID {
-		writeError(w, http.StatusConflict, fmt.Errorf("session assigned to agent %q", st.session.AgentID))
+	if sess.AgentID != agentID {
+		writeError(w, http.StatusConflict, fmt.Errorf("session assigned to agent %q", sess.AgentID))
 		return
 	}
 	s.attachConsolePeer(w, r, "agent")
@@ -128,7 +128,9 @@ func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side 
 	peer := &wsPeer{conn: conn}
 	if side == "agent" {
 		s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
-			sess.Status = controlplane.ConsoleSessionStatusRunning
+			if sess.Status == controlplane.ConsoleSessionStatusQueued {
+				sess.Status = controlplane.ConsoleSessionStatusRunning
+			}
 			if sess.StartedAt.IsZero() {
 				sess.StartedAt = time.Now().UTC()
 			}
@@ -166,9 +168,7 @@ func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
 		case agent = <-st.agent:
 		case <-timer.C:
 			s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
-				sess.Status = controlplane.ConsoleSessionStatusFailed
-				sess.Err = "console peer attach timeout"
-				sess.EndedAt = time.Now().UTC()
+				recordConsoleTransportLoss(sess, "console peer attach timeout")
 			})
 			if browser != nil {
 				_ = browser.conn.Close(websocket.StatusPolicyViolation, "agent attach timeout")
@@ -201,10 +201,7 @@ func (s *Server) relayConsoleWhenReady(id string, st *consoleSessionState) {
 	_ = browser.conn.Close(websocket.StatusNormalClosure, "")
 	_ = agent.conn.Close(websocket.StatusNormalClosure, "")
 	s.consoles.Update(id, func(sess *controlplane.ConsoleSession) {
-		if sess.Status != controlplane.ConsoleSessionStatusFailed {
-			sess.Status = controlplane.ConsoleSessionStatusClosed
-		}
-		sess.EndedAt = time.Now().UTC()
+		recordConsoleTransportLoss(sess, "console relay ended without execution completion")
 	})
 }
 
