@@ -38,7 +38,7 @@ func TestSnapshotAPIStoresJournalAndRejectsActiveRestore(t *testing.T) {
 }
 
 func TestStateMaintenanceRejectsIncompleteActivityRegistry(t *testing.T) {
-	for _, missing := range []string{"runs", "nodes", "guests"} {
+	for _, missing := range []string{"runs", "nodes", "guests", "consoles"} {
 		t.Run(missing, func(t *testing.T) {
 			s := NewServer(t.TempDir(), t.TempDir())
 			service := s.workspaceService()
@@ -49,6 +49,8 @@ func TestStateMaintenanceRejectsIncompleteActivityRegistry(t *testing.T) {
 				service.loadNodeOperations = nil
 			case "guests":
 				service.loadGuestActivity = nil
+			case "consoles":
+				service.loadConsoleSessions = nil
 			}
 			require.ErrorIs(t, service.ensureTopologyQuiescent(context.Background(), "lab"), persistence.ErrConflict)
 			require.ErrorIs(t, service.ForceUnlock(context.Background(), "lab"), persistence.ErrConflict)

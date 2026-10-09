@@ -370,16 +370,8 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 			}
 		}
 	}
-	if s.loadConsoleSessions != nil {
-		sessions, err := s.loadConsoleSessions(ctx, "")
-		if err != nil {
-			return err
-		}
-		for _, sess := range sessions {
-			if sess.Topology == topology && (sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning || sess.CreatedAt.IsZero() || sess.EndedAt.IsZero() && sess.Status != controlplane.ConsoleSessionStatusClosed && sess.Status != controlplane.ConsoleSessionStatusFailed && sess.Status != controlplane.ConsoleSessionStatusCancelled) {
-				return fmt.Errorf("%w: active console session prevents state maintenance", persistence.ErrConflict)
-			}
-		}
+	if err := s.checkConsoleActivity(ctx, topology); err != nil {
+		return err
 	}
 	placement, err := s.loadPlacement(topology)
 	if err != nil {
@@ -596,16 +588,8 @@ func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology
 			}
 		}
 	}
-	if s.loadConsoleSessions != nil {
-		sessions, err := s.loadConsoleSessions(ctx, "")
-		if err != nil {
-			return err
-		}
-		for _, sess := range sessions {
-			if sess.Topology == topology && (sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning || sess.CreatedAt.IsZero() || (sess.EndedAt.IsZero() && sess.Status != controlplane.ConsoleSessionStatusClosed && sess.Status != controlplane.ConsoleSessionStatusFailed && sess.Status != controlplane.ConsoleSessionStatusCancelled)) {
-				return fmt.Errorf("%w: active console session prevents state maintenance", persistence.ErrConflict)
-			}
-		}
+	if err := s.checkConsoleActivity(ctx, topology); err != nil {
+		return err
 	}
 	if s.loadAgentCommands != nil {
 		commands, err := s.loadAgentCommands(ctx)

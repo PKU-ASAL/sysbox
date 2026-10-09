@@ -411,3 +411,8 @@ append、Postgres 先锁 authority 再锁 Run/command，移除 `{}` 与虚构 le
 豁免。允许 Run 终态排空，拒绝冻结期间 restart；身份未知且有 barrier 时拒绝受理。
 另修复 activity callback 每请求重写导致的 race，command 枚举不依赖 Agent 注册。
 全 registry 准入与 raw writer 完整审计仍未完成，P6/P8 不关闭。
+
+2026-10-09 console lost 修正：API 重启写入 lost/EndedAt 不能作为任务停止证据。
+维护和 metadata Delete 共用检查，lost/未知状态、缺失或倒序时间均阻挡；缺少
+console registry 也拒绝。三后端测试实际经过 hub 重建，不用手填 lost 代替恢复。
+Console 终态的 authority 绑定及维护期间的原子受理仍待实现。

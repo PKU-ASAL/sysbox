@@ -1285,10 +1285,11 @@ so P6 is not complete.
 
 The activity registry now includes durable ConsoleSession records. A queued or
 running console session, including one whose workspace name differs from the
-topology, blocks restore, force-unlock and other state maintenance. Missing end
-timestamps also fail closed unless the session is explicitly terminal. The new
-regression uses the real API store and verifies the maintenance conflict; the
-existing incomplete-registry tests continue to require every activity source.
+topology, blocks restore, force-unlock and other state maintenance. Follow-up
+verification found the first predicate incorrectly allowed terminal statuses
+without an end timestamp, and `lost` with a restart timestamp. Both are now
+rejected by one shared check used for maintenance and metadata deletion. The
+console registry loader is required rather than silently skipped.
 This closes a missing activity category, while cross-registry atomic admission
 and raw metadata writer fencing remain P6 work.
 
@@ -1352,3 +1353,23 @@ Final full Go regression with API and persistence PostgreSQL integration enabled
 vet, docscheck and independent re-review passed. The test-only Postgres container
 was stopped and automatically removed. No real provider effect was exercised in
 this correction round; the database/race evidence does not replace P9 acceptance.
+
+### Lost console evidence is not completion (2026-10-09)
+
+API restart changes queued/running consoles to `lost` and records an end time
+for the broken connection. That timestamp does not prove a remote stop. A real
+store/hub regression reproduces the transition and requires restore quiescence
+and forced metadata deletion to remain blocked. Known terminal statuses require
+creation/end timestamps in order; unknown and lost statuses always remain
+unresolved. An unrelated topology in the same workspace does not block this one.
+
+This is an activity-selection correction, not a complete console recovery or
+signed-stop protocol. Raw console status writes still need formal authority
+binding, and console admission must join the shared maintenance transaction.
+P6/P8 and the complete P9 acceptance therefore remain open.
+
+Validation: full API race passed with real PostgreSQL enabled (54.26 seconds),
+alongside file/SQLite. Extended status/time tests passed under race, including
+queued/running with populated times and missing creation time. Vet, docscheck
+and independent review passed. The temporary PostgreSQL container was stopped
+and automatically removed. No provider effects were performed in this round.
