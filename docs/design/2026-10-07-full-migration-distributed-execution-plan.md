@@ -493,3 +493,22 @@ Dispatcher。仅扩大ParentEpoch过滤会遗漏Run来源证明；另建完整�
 封闭迟到Start通过，canonical未完成candidate与错误Run拒绝回归通过。另修复父
 Revoke未持久撤销children，以及父checkpoint停止证明误把active→revoked视作
 身份变化的问题。两者均先有失败测试再修复；完整不变身份仍含epoch与parent epoch。
+
+### 已提交guest结果的授权释放：实现步骤
+
+SQL将guest终态和authority stopped合并为一次GuestExecutionMutation；文件后端
+先写包含原grant与回执摘要的host_completion证据，再发布authority。API supervisor
+从未停止的独立guest grant发现中断发布，持共同锁重验已提交证据，只释放原epoch。
+不重新连接guest，不依赖host journal，不重建过期输出。无证据、损坏证据或身份
+不符拒绝；精确重试不能影响successor。共享状态转换继续位于persistence层。
+
+- [x] 先修改SQL双写失败回归，要求结果与授权全部回滚；加入文件中断后冷恢复、
+  脱敏后恢复及后继epoch不变测试，确认旧实现失败。
+- [x] execution format5保存host_completion={grant,receipt}，只由已认证host完成
+  路径写入；CAS保留证据，API schema14拒绝旧写者，无旧格式读取。
+- [x] CompleteGuestExecutionFromHost复用三后端GuestExecutionMutation适配，新增
+  PrepareGuestExecutionHostCompletion/PrepareGuestExecutionStopRecovery共享转换。
+  原HTTP三步完成逻辑删除，保留签名认证；独立API恢复扫描接通。
+- [x] 真实Postgres事务故障、文件实际发布故障、冷启动恢复、race和真实Docker
+  验收通过后更新接口清单与验收记录。文件安装/Run等其他操作另行审计，不把本次
+  guest execution修复扩大成全部operation完成声明。

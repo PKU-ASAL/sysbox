@@ -47,14 +47,11 @@ func TestGuestExecutionLifecyclePreservesNonZeroExit(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	report := guestHostReceiptForTest(t, *lease, controlplane.GuestExecutionResult{ExitCode: 7, Stderr: "YmFk"})
-	exec, err = store.CompleteGuestExecutionFromHost(ctx, exec.AgentID, exec.ID, report)
-	require.NoError(t, err)
-	require.Equal(t, controlplane.GuestExecutionCompleted, exec.Status)
-	require.Equal(t, 7, exec.Result.ExitCode)
-	require.Equal(t, controlplane.GuestExecutionResultClassExit, exec.ResultClass)
-	report.GuestResult.Result.ExitCode = 0
 	_, err = store.CompleteGuestExecutionFromHost(ctx, exec.AgentID, exec.ID, report)
-	require.ErrorIs(t, err, persistence.ErrConflict)
+	require.ErrorIs(t, err, persistence.ErrNotFound, "host result requires a matching durable authority grant")
+	unchanged, err := store.GetGuestExecution(ctx, exec.ID)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.GuestExecutionRunning, unchanged.Status)
 
 	raw, err := json.Marshal(exec)
 	require.NoError(t, err)

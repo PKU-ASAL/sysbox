@@ -112,11 +112,12 @@ func TestGuestExecutionCancellationDoesNotReplaceRealCompletion(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "running", pending.Status)
 		require.True(t, pending.CancelRequested)
-		completed, err := store.CompleteGuestExecutionFromHost(ctx, x.AgentID, x.ID, guestHostReceiptForTest(t, cmd, controlplane.GuestExecutionResult{Stdout: "ZmluaXNoZWQ="}))
+		_, err = store.CompleteGuestExecutionFromHost(ctx, x.AgentID, x.ID, guestHostReceiptForTest(t, cmd, controlplane.GuestExecutionResult{Stdout: "ZmluaXNoZWQ="}))
+		require.ErrorIs(t, err, persistence.ErrNotFound, "host result requires a matching durable authority grant")
+		unchanged, err := store.GetGuestExecution(ctx, x.ID)
 		require.NoError(t, err)
-		require.Equal(t, "completed", completed.Status, "completion may win the race with cancellation")
-		require.True(t, completed.CancelRequested)
-		require.Equal(t, "ZmluaXNoZWQ=", completed.Result.Stdout)
+		require.Equal(t, "running", unchanged.Status)
+		require.True(t, unchanged.CancelRequested)
 	})
 }
 

@@ -612,3 +612,9 @@ RunRequest digest，将RunID/Topology纳入只取消签名；host按canonical st
 比较完整不变身份，允许active→revoked恢复但仍拒绝epoch/parent epoch变化。
 真实Docker子任务缺失记录自动停止、旧Start封闭、仅释放child已通过；这不关闭
 父Run未知intent、持久删除、完整P5–P8和双VM故障矩阵。
+
+2026-10-10 guest completion release recovery已接通：host completion将grant身份与
+receipt hash随终态结果持久保存；SQL结果与authority stopped同事务，文件后端可从
+证据冷恢复中断发布。API先核验原authority，精确重放不联系guest、不影响后继epoch。
+execution record format 5、API schema 14明确重建旧格式。持久删除、未知Run intent、
+P5–P8和完整双VM矩阵仍未关闭。

@@ -43,6 +43,12 @@ func (r *GuestRepository) GetGuestExecution(ctx context.Context, id string) (*co
 	return getGuestRecord(ctx, r.records, guestExecutionKind, id, executionCodec)
 }
 
+// ReadGuestExecutionRecord is used by the API transaction adapters when they
+// must preserve opaque dispatch and completion evidence fields.
+func (r *GuestRepository) ReadGuestExecutionRecord(ctx context.Context, id string) ([]byte, error) {
+	return r.records.get(ctx, guestExecutionKind, id)
+}
+
 // DecodeGuestExecution validates a record read inside a caller-owned transaction.
 func DecodeGuestExecution(id string, raw []byte) (controlplane.GuestExecution, error) {
 	return decodeGuestRecord(id, raw, executionCodec)

@@ -95,7 +95,7 @@ func TestHostGuestHTTPCompletionAfterCancellationRetirementAndRestart(t *testing
 	})
 }
 
-func TestHostGuestCompletionRetriesBothCommitBoundaries(t *testing.T) {
+func TestHostGuestCompletionCommitsResultAndReleaseAtomically(t *testing.T) {
 	for _, stage := range []string{"completion", "release"} {
 		t.Run(stage, func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -155,14 +155,10 @@ func TestHostGuestCompletionRetriesBothCommitBoundaries(t *testing.T) {
 				require.Equal(t, 500, post().Code)
 				held, err := authority.InspectGrant(ctx, "agent", grant.Scope)
 				require.NoError(t, err)
-				require.Equal(t, controlplane.GrantRevoked, held.State, "failure must not release exclusion")
+				require.Equal(t, controlplane.GrantActive, held.State, "failed transaction must preserve original authority")
 				current, err := store.GetGuestExecution(ctx, x.ID)
 				require.NoError(t, err)
-				if stage == "completion" {
-					require.Equal(t, "queued", current.Status)
-				} else {
-					require.Equal(t, "completed", current.Status)
-				}
+				require.Equal(t, "queued", current.Status, "result cannot commit without authority release")
 				remove()
 				response := post()
 				require.Equal(t, 200, response.Code, response.Body.String())

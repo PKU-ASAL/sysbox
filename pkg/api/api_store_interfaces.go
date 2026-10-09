@@ -133,6 +133,7 @@ type apiStore interface {
 	CompleteFileFromHost(context.Context, string, string, controlplane.SignedExecutionStopReceipt) (controlplane.GuestFileOperation, error)
 	ListGuestActivity(context.Context, string) ([]persistence.GuestActivity, error)
 	CompleteGuestExecutionFromHost(context.Context, string, string, controlplane.SignedExecutionStopReceipt) (controlplane.GuestExecution, error)
+	RecoverGuestExecutionHostCompletion(context.Context, string) (controlplane.GuestExecution, error)
 	CompleteGuestFileOperation(context.Context, string, string, controlplane.GuestFileOperationCompletion) (controlplane.GuestFileOperation, error)
 	schemaStore
 	runStore

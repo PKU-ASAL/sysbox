@@ -2112,3 +2112,22 @@ Host task3/guest task2/RPC1/scope2/API13/execution4 remain current. Updated gues
 helpers are mandatory for the Run-bound cancellation fields. Persistent
 deletion, unknown parent Run intent, terminal-result/host-receipt total-loss
 recovery and the remaining P0–P9 capability/fault acceptance work remain open.
+
+### 2026-10-10 — durable guest completion evidence and release recovery
+
+Guest execution records now use format 5 and the API schema is 14. A host
+completion stores an immutable `{grant, receipt_hash}` proof with the terminal
+result. SQL commits that record and the stopped authority in one transaction;
+file recovery republishes the stopped authority from the proof after a partial
+publication or API restart. The transition never reconnects to the guest and
+never regenerates expired output. Exact replay is idempotent and cannot affect a
+successor epoch. The host route validates the original authority before accepting
+the receipt.
+
+Persistence RED/GREEN tests cover missing or altered proof, epoch and command
+identity changes, result redaction, release interruption, and successor fencing.
+API and persistence race tests passed with an isolated PostgreSQL 16 instance;
+real Docker host E2E passed after the change. The final full repository race
+will be rerun before this checkpoint is committed. This closes the guest-result
+release window, but persistent deletion, unknown parent Run intent, adoption/GC,
+full SSH lifecycle and the remaining two-VM P9 fault matrix remain open.

@@ -379,3 +379,12 @@ GET  /v1/artifacts
 GET  /v1/policies
 POST /v1/policies
 ```
+
+### Guest completion evidence format
+
+The current API schema is 14. Host completion of a standalone guest task stores
+its terminal result together with an immutable grant identity and receipt hash;
+SQL backends commit result and authority release together. The file backend
+replays that durable proof after an interrupted publication. Old execution
+format 4 and API schema 13 data require explicit rebuild; there is no compatibility
+reader. A replay never contacts the guest and cannot release a successor epoch.

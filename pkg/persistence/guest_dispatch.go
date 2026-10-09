@@ -138,7 +138,7 @@ func preserveGuestDispatch(old, next []byte) ([]byte, error) {
 			return nil, err
 		}
 	}
-	for _, key := range []string{"completion_receipt", "host_completion_receipt"} {
+	for _, key := range []string{"completion_receipt", "host_completion_receipt", "host_completion"} {
 		if receipt, ok := previous[key]; ok {
 			var updated map[string]json.RawMessage
 			if err := decodeGuestObject(next, &updated); err != nil {

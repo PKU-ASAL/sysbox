@@ -228,3 +228,10 @@ It checks lost stop acknowledgments, API and supervisor object restart with the
 same storage, cancellation after Agent session replacement, and successor epochs.
 It does not constitute distinct-host acceptance or a complete Agent service
 restart test.
+
+The current guest execution record format is 5. A host completion persists an
+immutable grant and receipt hash with the terminal result. API schema 14 and
+execution format 5 require explicit rebuilding of older data. SQL result and
+authority release are one transaction; file storage recovers an interrupted
+release from the completion proof without restoring private output or contacting
+the guest. Exact replay is idempotent and fenced from successor epochs.

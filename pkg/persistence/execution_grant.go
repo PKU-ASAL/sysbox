@@ -211,6 +211,9 @@ func scopesOverlap(a, b controlplane.ExecutionScope) bool {
 func sameGrant(a, b controlplane.ExecutionGrant) bool {
 	return a.ParentEpoch == b.ParentEpoch && a.Scope == b.Scope && a.TargetBootID == b.TargetBootID && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.ActionID == b.ActionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt && a.Operation == b.Operation && a.Digest == b.Digest
 }
+func sameGrantEpoch(a, b controlplane.ExecutionGrant) bool {
+	return a.Epoch == b.Epoch && sameGrant(a, b)
+}
 func validTTL(ttl time.Duration) bool { return ttl > 0 && ttl <= MaxExecutionGrantTTL }
 
 func (r *ExecutionGrantRepository) Issue(ctx context.Context, request controlplane.ExecutionGrant, ttl time.Duration) (*controlplane.ExecutionGrant, error) {

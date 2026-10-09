@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"sort"
 	"time"
@@ -10,14 +11,15 @@ import (
 // GuestActivity excludes request/output contents: cleanup only needs durable
 // identity and execution times, never secrets or output buffers.
 type GuestActivity struct {
-	CancelRequested bool      `json:"cancel_requested,omitempty"`
-	ID              string    `json:"id"`
-	Kind            string    `json:"kind"`
-	Topology        string    `json:"topology"`
-	AgentID         string    `json:"agent_id"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
-	EndedAt         time.Time `json:"ended_at"`
+	CompletionRecorded bool      `json:"completion_recorded,omitempty"`
+	CancelRequested    bool      `json:"cancel_requested,omitempty"`
+	ID                 string    `json:"id"`
+	Kind               string    `json:"kind"`
+	Topology           string    `json:"topology"`
+	AgentID            string    `json:"agent_id"`
+	Status             string    `json:"status"`
+	CreatedAt          time.Time `json:"created_at"`
+	EndedAt            time.Time `json:"ended_at"`
 }
 
 func (a GuestActivity) Active() bool {
@@ -34,11 +36,16 @@ func DecodeGuestActivity(kind, id string, raw []byte) (GuestActivity, error) {
 	var activity GuestActivity
 	switch kind {
 	case "guest_execution":
+		var object map[string]json.RawMessage
+		if err := decodeGuestObject(raw, &object); err != nil {
+			return activity, err
+		}
 		x, err := decodeGuestRecord(id, raw, executionCodec)
 		if err != nil {
 			return activity, err
 		}
-		activity = GuestActivity{ID: x.ID, Kind: kind, Topology: x.Topology, AgentID: x.AgentID, Status: x.Status, CreatedAt: x.CreatedAt, EndedAt: x.EndedAt, CancelRequested: x.CancelRequested}
+		_, completion := object["host_completion"]
+		activity = GuestActivity{ID: x.ID, Kind: kind, Topology: x.Topology, AgentID: x.AgentID, Status: x.Status, CreatedAt: x.CreatedAt, EndedAt: x.EndedAt, CancelRequested: x.CancelRequested, CompletionRecorded: completion}
 	case "guest_file":
 		x, err := decodeGuestRecord(id, raw, fileOperationCodec)
 		if err != nil {

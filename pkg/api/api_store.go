@@ -24,7 +24,7 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 13
+const apiSchemaVersion = 14
 
 // errGlobalRevisionNotFound is returned by GetGlobalRevision when no revision
 // exists for the requested digest. Callers use errors.Is to detect it so they
