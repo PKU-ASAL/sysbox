@@ -171,8 +171,9 @@ func TestGuestRepositoryRejectsCorruptionAndUnknownVersions(t *testing.T) {
 			{`{broken`, ErrCorruptRecord}, {`null`, ErrCorruptRecord}, {`{"id":"corrupt","version":1,"status":"queued"}`, ErrUnsupportedVersion},
 			{`{"record_format":99,"id":"corrupt","version":1,"status":"queued"}`, ErrUnsupportedVersion},
 			{`{"record_format":1,"id":"corrupt","version":1,"status":"queued"}`, ErrUnsupportedVersion},
-			{`{"record_format":2,"id":"other","version":1,"status":"queued"}`, ErrCorruptRecord},
-			{`{"record_format":2,"id":"corrupt","version":0,"status":"queued"}`, ErrCorruptRecord},
+			{`{"record_format":2,"id":"corrupt","version":1,"status":"queued"}`, ErrUnsupportedVersion},
+			{`{"record_format":3,"id":"other","version":1,"status":"queued"}`, ErrCorruptRecord},
+			{`{"record_format":3,"id":"corrupt","version":0,"status":"queued"}`, ErrCorruptRecord},
 		} {
 			// PostgreSQL JSONB rejects invalid syntax before the domain codec can read it.
 			if _, postgres := r.records.(*postgresGuestRecords); postgres && !json.Valid([]byte(tc.raw)) {
@@ -251,7 +252,7 @@ func TestGuestDecodeErrorsDoNotExposePayloads(t *testing.T) {
 	guestRepositoryFactories(t, func(t *testing.T, open func() *GuestRepository) {
 		r := open()
 		ctx := context.Background()
-		raw := []byte(`{"record_format":2,"id":"bad","version":1,"status":"queued","created_at":"PRIVATE_TIMESTAMP_SENTINEL"}`)
+		raw := []byte(`{"record_format":3,"id":"bad","version":1,"status":"queued","created_at":"PRIVATE_TIMESTAMP_SENTINEL"}`)
 		injectGuestRecordForTest(t, r.records, guestExecutionKind, "bad", raw)
 		_, err := r.GetGuestExecution(ctx, "bad")
 		require.ErrorIs(t, err, ErrCorruptRecord)

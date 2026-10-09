@@ -183,7 +183,7 @@ func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd c
 	}
 	if s.store != nil {
 		if cmd.Type == "cancel_command" && cmd.Operation.Operation == persistence.GuestExecutionCancelOperation {
-			current, err := enqueueGuestExecutionCancellation(ctx, s.store, cmd)
+			current, err := committedGuestExecutionCancellation(ctx, s.store, cmd)
 			if err != nil {
 				return cmd, err
 			}

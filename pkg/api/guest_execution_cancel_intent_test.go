@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGuestExecutionCancellationFailureKeepsRetryableIntent(t *testing.T) {
+func TestGuestExecutionCancellationNotificationFailureKeepsCommittedOutbox(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	svc := newGuestExecutionService(store, nil, nil)
 	x, err := svc.Create(context.Background(), "lab", "node", "agent", controlplane.GuestExecutionRequest{Argv: []string{"sleep", "10"}})
@@ -21,7 +21,10 @@ func TestGuestExecutionCancellationFailureKeepsRetryableIntent(t *testing.T) {
 		return controlplane.AgentCommand{}, failure
 	}
 	_, err = svc.Cancel(context.Background(), x.ID)
-	require.ErrorIs(t, err, failure)
+	require.NoError(t, err, "notification is only a hint after atomic acceptance")
+	commands, err := store.ListAgentCommands(context.Background(), "agent")
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
 	stored, err := store.GetGuestExecution(context.Background(), x.ID)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionQueued, stored.Status, "request is not stop evidence")
@@ -124,14 +127,14 @@ func TestGuestCancellationSQLSchemaRequiresRebuild(t *testing.T) {
 		case *sqliteAPIStore:
 			db, err := s.open()
 			require.NoError(t, err)
-			_, err = db.ExecContext(ctx, "UPDATE sysbox_api_schema_migrations SET version=10 WHERE name='api'")
+			_, err = db.ExecContext(ctx, "UPDATE sysbox_api_schema_migrations SET version=11 WHERE name='api'")
 			require.NoError(t, err)
 			_, err = (&sqliteAPIStore{dbPath: s.dbPath}).open()
 			require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
 		case *postgresAPIStore:
 			pool, err := s.poolFor(ctx)
 			require.NoError(t, err)
-			_, err = pool.Exec(ctx, "UPDATE sysbox_api_schema_migrations SET version=10 WHERE name='api'")
+			_, err = pool.Exec(ctx, "UPDATE sysbox_api_schema_migrations SET version=11 WHERE name='api'")
 			require.NoError(t, err)
 			_, err = (&postgresAPIStore{dsn: s.dsn}).poolFor(ctx)
 			require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)

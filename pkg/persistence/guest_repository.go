@@ -34,6 +34,9 @@ type guestRecords interface {
 type GuestRepository struct{ records guestRecords }
 
 func (r *GuestRepository) SaveGuestExecution(ctx context.Context, x controlplane.GuestExecution) error {
+	if x.CancelRequested {
+		return ErrConflict
+	}
 	return createGuestRecord(ctx, r.records, guestExecutionKind, x, executionCodec)
 }
 func (r *GuestRepository) GetGuestExecution(ctx context.Context, id string) (*controlplane.GuestExecution, error) {

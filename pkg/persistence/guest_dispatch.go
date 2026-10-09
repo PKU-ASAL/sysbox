@@ -123,6 +123,21 @@ func preserveGuestDispatch(old, next []byte) ([]byte, error) {
 	if err := decodeGuestObject(old, &previous); err != nil {
 		return nil, err
 	}
+	if cancellation, ok := previous["cancel_dispatch_command"]; ok {
+		if _, err := GuestExecutionCancellationSeed(old); err != nil {
+			return nil, err
+		}
+		var updated map[string]json.RawMessage
+		if err := decodeGuestObject(next, &updated); err != nil {
+			return nil, err
+		}
+		updated["cancel_dispatch_command"] = cancellation
+		var err error
+		next, err = json.Marshal(updated)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if receipt, ok := previous["completion_receipt"]; ok {
 		var updated map[string]json.RawMessage
 		if err := decodeGuestObject(next, &updated); err != nil {
@@ -159,6 +174,18 @@ func (r *GuestRepository) FilesystemGuestDispatchCommands(ctx context.Context) (
 			return nil, err
 		}
 		for _, row := range rows {
+			if kind == guestExecutionKind {
+				cancellation, err := GuestExecutionCancellationSeed(row.data)
+				if err != nil {
+					return nil, err
+				}
+				if cancellation != nil {
+					if _, err := decodeGuestRecord(row.id, row.data, executionCodec); err != nil {
+						return nil, err
+					}
+					out = append(out, *cancellation)
+				}
+			}
 			seed, err := guestDispatchSeed(row.data)
 			if err != nil {
 				return nil, err

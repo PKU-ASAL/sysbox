@@ -844,3 +844,10 @@ cancel_requested；请求取消后不再立即返回 cancelled，而保留 queue
 拒绝不会延长命令租约；stop 接口仍可收敛。稳定取消 outbox 可重启修复，但取消
 意图/outbox 尚未原子化，不能据此判断远端已停。API SQL schema 10→11、execution
 record_format 1→2，明确重建，无旧格式兼容；file/aggregate/authority 格式不变。
+
+实施补充（2026-10-10 compound cancellation）：内部 persistence 新增
+CancelGuestExecution；原始 Create/CAS 不再允许首次设置 cancel_requested。
+取消意图/outbox 一起提交，SQL 同事务撤销已发授权；文件以任务内的取消 seed
+恢复中断的 authority 发布。已受理后的通知失败不再返回取消失败。已请求取消
+的终态可重试收敛撤销，不覆写真实结果。API schema 11→12、execution format
+2→3，明确重建；公共路由不变，revoked 仍不能作为远端停止证明。

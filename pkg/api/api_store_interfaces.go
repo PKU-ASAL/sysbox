@@ -110,6 +110,7 @@ type inventoryStore interface {
 }
 
 type guestExecutionPersistence interface {
+	CancelGuestExecution(context.Context, string) (*controlplane.GuestExecution, error)
 	SaveGuestExecution(ctx context.Context, execution controlplane.GuestExecution) error
 	CreateGuestExecutionDispatch(ctx context.Context, execution controlplane.GuestExecution, command controlplane.AgentCommand) error
 	CompareAndSwapGuestExecution(ctx context.Context, execution controlplane.GuestExecution, expectedVersion int64) (bool, error)

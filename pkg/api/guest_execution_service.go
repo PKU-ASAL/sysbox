@@ -180,34 +180,18 @@ func (s *GuestExecutionService) MarkRunning(ctx context.Context, id string) (con
 	return execution, err
 }
 func (s *GuestExecutionService) Cancel(ctx context.Context, id string) (controlplane.GuestExecution, error) {
-	execution, err := s.Get(ctx, id)
+	execution, err := s.store.CancelGuestExecution(ctx, id)
 	if err != nil {
-		return execution, err
+		return controlplane.GuestExecution{}, err
 	}
-	if guestExecutionTerminal(execution.Status) {
-		return execution, fmt.Errorf("%w: already terminal", errGuestExecutionConflict)
-	}
-	command, err := persistence.GuestExecutionCancellationCommand(execution)
+	command, err := persistence.GuestExecutionCancellationCommand(*execution)
 	if err != nil {
-		return execution, err
-	}
-	if !execution.CancelRequested {
-		execution.CancelRequested = true
-		execution.EndedAt, execution.ExpiresAt = time.Time{}, time.Time{}
-		ok, err := s.store.CompareAndSwapGuestExecution(ctx, execution, execution.Version)
-		if err != nil {
-			return controlplane.GuestExecution{}, err
-		}
-		if !ok {
-			return controlplane.GuestExecution{}, fmt.Errorf("%w: version changed", errGuestExecutionConflict)
-		}
-		execution.Version++
+		return *execution, err
 	}
 	if s.publish != nil {
-		_, err = s.publish(ctx, execution.AgentID, command)
-		if err != nil {
-			return execution, fmt.Errorf("publish guest execution cancel: %w", err)
-		}
+		// The committed outbox is authoritative; notification failure is not a
+		// failed cancellation and cannot roll back its durable intent.
+		_, _ = s.publish(ctx, execution.AgentID, command)
 	}
-	return execution, err
+	return *execution, nil
 }

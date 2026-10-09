@@ -2,7 +2,7 @@
 
 更新：2026-10-07。工作分支：`refactor/observation-driven-runtime`。未合入 main、未推送。
 
-**正在实施P0–P9：** 下文是此前已提交基线。当前改动的完成/未完成项、API schema 11 与 aggregate 4、任务与跨宿主交付进度，以[并行集成跟踪](2026-10-07-parallel-implementation-tracker.md)为准；不能将部分库和分项测试通过解读为分布式执行闭环已经完成。
+**正在实施P0–P9：** 下文是此前已提交基线。当前改动的完成/未完成项、API schema 12 与 aggregate 4、任务与跨宿主交付进度，以[并行集成跟踪](2026-10-07-parallel-implementation-tracker.md)为准；不能将部分库和分项测试通过解读为分布式执行闭环已经完成。
 
 本文只描述当前实现。历史阶段记录由 Git 保留；[目标架构](2026-09-28-observation-driven-runtime-refactor.md)和[接口清单](2026-09-28-interface-change-inventory.md)中的未交付设计不视为已支持能力。
 

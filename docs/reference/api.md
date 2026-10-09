@@ -297,8 +297,12 @@ reuse one cancellation command; restart reconciliation repairs missing delivery
 without resetting a live lease. A real completion may win the cancellation race
 and retain its result. Cancellation blocks subsequent execution-grant issuance,
 authorization and renewal, but does not itself prove remote termination.
-Intent and cancellation delivery currently use recoverable separate writes;
-atomic cancellation and host-signed execution completion remain unfinished.
+Cancellation intent and its outbox commit together. SQLite/Postgres also revoke
+issued grants in that transaction. File storage commits the intent and outbox
+seed in one record, then publishes revocation; restart replay finishes that
+publication even after task completion or delivery retirement. Notification
+failure does not turn durable acceptance into an API failure. Host-signed
+execution completion and confirmed remote stopping remain unfinished.
 
 File upload uses the request body as raw binary bytes, `X-Content-SHA256` for
 integrity, and query parameters for the absolute guest `path` and octal `mode`.

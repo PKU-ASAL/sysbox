@@ -9,7 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-const GuestRecordFormat = 2
+const GuestRecordFormat = 3
 const GuestFileRecordFormat = 2
 
 var ErrInvalidRecord = errors.New("invalid repository record")
@@ -160,7 +160,8 @@ func executionTransition(old, next controlplane.GuestExecution) error {
 	if old.CancelRequested && (!next.CancelRequested || next.CommandID != old.CommandID || next.Status != old.Status && !guestTerminal(next.Status)) {
 		return ErrConflict
 	}
-	if !old.CancelRequested && next.CancelRequested && next.Status != old.Status {
+	// Cancellation intent must be created with its outbox, never by raw CAS.
+	if !old.CancelRequested && next.CancelRequested {
 		return ErrConflict
 	}
 	if err := statusTransition(old.Status, next.Status, false); err != nil {

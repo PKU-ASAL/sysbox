@@ -10,7 +10,9 @@ import (
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
-func enqueueGuestExecutionCancellation(ctx context.Context, store apiStore, cmd controlplane.AgentCommand) (*controlplane.AgentCommand, error) {
+// Notification may reference an already committed cancellation, never create
+// one outside the operation/outbox transaction.
+func committedGuestExecutionCancellation(ctx context.Context, store apiStore, cmd controlplane.AgentCommand) (*controlplane.AgentCommand, error) {
 	cmd = persistence.DurableCommand(cmd)
 	if cmd.CreatedAt.IsZero() {
 		cmd.CreatedAt = time.Now().UTC()
@@ -29,18 +31,17 @@ func enqueueGuestExecutionCancellation(ctx context.Context, store apiStore, cmd 
 	if _, err := persistence.PrepareCommandEnqueue(&persistence.CommandRecord{Command: cmd}, expected); err != nil {
 		return nil, err
 	}
-	var storage persistence.CommandStorage
-	switch s := store.(type) {
-	case *localAPIStore:
-		storage = localCommandStorage{store: s}
-	case *sqliteAPIStore:
-		storage = sqliteCommandStorage{store: s}
-	case *postgresAPIStore:
-		storage = postgresCommandStorage{store: s}
-	default:
-		return nil, persistence.ErrUnsupportedVersion
+	prior, err := readFailureCommand(ctx, store, cmd.ID)
+	if err != nil {
+		return nil, err
 	}
-	return persistence.NewCommandRepository(storage).Enqueue(ctx, cmd)
+	if prior == nil || prior.Retired {
+		return nil, persistence.ErrConflict
+	}
+	if _, err := persistence.PrepareCommandEnqueue(prior, expected); err != nil {
+		return nil, err
+	}
+	return &prior.Command, nil
 }
 
 func (s *AgentService) reconcileGuestExecutionCancellations(ctx context.Context) error {
@@ -53,7 +54,7 @@ func (s *AgentService) reconcileGuestExecutionCancellations(ctx context.Context)
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(failures, err)...)
 		}
-		if activity.Kind != "guest_execution" || !activity.CancelRequested || !activity.Active() {
+		if activity.Kind != "guest_execution" || !activity.CancelRequested {
 			continue
 		}
 		call, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -71,27 +72,11 @@ func (s *AgentService) reconcileGuestExecutionCancellation(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	if !x.CancelRequested || guestExecutionTerminal(x.Status) {
+	if !x.CancelRequested {
 		return nil
 	}
-	cmd, err := persistence.GuestExecutionCancellationCommand(*x)
-	if err != nil {
-		return err
-	}
-	prior, err := readFailureCommand(ctx, s.store, cmd.ID)
-	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
-		return err
-	}
-	if prior != nil {
-		if prior.Command.ID != cmd.ID || prior.Command.AgentID != cmd.AgentID || prior.Command.Type != cmd.Type {
-			return persistence.ErrConflict
-		}
-		if prior.Retired {
-			return nil
-		} // reservation is not proof of remote stop
-		_, err := persistence.PrepareCommandEnqueue(prior, cmd)
-		return err
-	}
-	_, err = enqueueGuestExecutionCancellation(ctx, s.store, cmd)
+	// Replay also repairs file authority revocation after an interrupted
+	// record/authority publication, including a retired cancellation delivery.
+	_, err = s.store.CancelGuestExecution(ctx, x.ID)
 	return err
 }

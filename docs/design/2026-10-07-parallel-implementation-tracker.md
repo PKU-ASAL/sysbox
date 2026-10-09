@@ -553,3 +553,11 @@ API 取消持久事务与远端停止证明仍未完成，不能计为整个取�
 API schema 11 / execution record_format 2 拒绝旧数据；file 2、aggregate 4、
 authority 2 不变。当前仍是可恢复的两步取消，不是原子提交；已签发授权撤销、
 宿主签名 execution 结果及持久回报恢复、删除清理工作流与完整 P9 仍未关闭。
+
+2026-10-10 后续取消提交边界：三后端共用 PrepareGuestExecutionCancellation。
+SQLite/Postgres 将取消意图、outbox、已发授权 revoke 一起提交；文件任务记录
+原子包含意图与取消 seed，随后写 authority，重启扫描补齐中断的 revoke。
+即使任务已终态、源命令和取消投递已退休，也不能跳过撤销恢复。原始 Create/CAS
+禁止首次设置取消标志；通知失败不改变已受理结果。execution record_format 3、
+API schema 12 拒绝旧写者，明确重建。撤销不等于远端停止，宿主签名结果、持久
+回报恢复和 P9 跨宿主故障验收仍待完成。

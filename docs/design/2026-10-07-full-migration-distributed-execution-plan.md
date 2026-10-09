@@ -411,3 +411,15 @@ Execution 取消改为单调的 cancel_requested，保留非终态及真实执�
 API schema 11、execution record_format 2 要求重建旧数据，无兼容读取。该步骤
 尚为可恢复的两步提交；后续必须补原子取消、已发授权撤销、宿主签名停止/结果、
 持久回报恢复和 P9 故障验收，不能视为 P3/P4/P6 完成。
+
+### 2026-10-10：取消 compound commit 与授权撤销
+
+用共享取消状态转换替代 service 中先 CAS 再 enqueue 的路径。SQLite/Postgres
+在 authority→guest→command 的事务边界提交意图、取消命令与已发授权撤销。
+文件后端把意图和 outbox seed 放进同一任务记录，保留原始 dispatch seed；再写
+authority，崩溃后重放任务记录修复撤销。终态和投递退休不妨碍该恢复。
+raw Create/CAS 不能绕过取消事务；已提交后的通知只是唤醒提示。
+
+execution record_format 3 / API schema 12 显式拒绝旧格式。这里关闭的是
+取消受理和授权账本撤销，不能把 revoked 当作 host stopped。宿主签名执行结果、
+跨进程停止与持久回报、删除工作流及完整 P9 验收仍在主线范围内。

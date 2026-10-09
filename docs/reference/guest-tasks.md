@@ -133,16 +133,18 @@ API cancellation returns `cancel_requested: true`. A running operation remains
 nonterminal until a signed host result confirms committed or cancelled; a
 queued operation without issued authority can be cancelled immediately. Workers
 cannot report file completion. Pending payloads survive expiry until terminal
-state and grant retirement permit cleanup. API schema 11, file metadata format 2
+state and grant retirement permit cleanup. API schema 12, file metadata format 2
 and guest scope format 2 require explicit rebuilding of old data and updated
 helpers; aggregate state and Firecracker manifest formats are unchanged.
 
-Guest execution metadata now uses `record_format: 2` for durable cancellation
-intent. Execution cancellation keeps queued/running status, blocks new grants
-and renewals, and repairs missing cancellation delivery after restart. It does
-not establish host stop evidence. Guest file format 2, lifecycle aggregate 4 and
-authority format 2 are unchanged; execution format 1 and API schema 10 require
-explicit rebuilding, with no compatibility reader.
+Guest execution metadata uses `record_format: 3` for cancellation intent and
+its immutable outbox seed. Cancellation keeps queued/running status, blocks new
+grants and renewals, and revokes issued grants. SQL commits all three together;
+file storage commits intent/outbox together and recovers interrupted authority
+publication from that record. This does not establish host stop evidence.
+Guest file format 2, lifecycle aggregate 4 and authority format 2 are unchanged;
+earlier execution formats and API schemas require explicit rebuilding, with no
+compatibility reader.
 
 Run `make test-host-file-e2e` for the actual API/host/Docker installation test,
 including lost stop acknowledgment, cold recovery, checksum/mode and revoked
