@@ -97,6 +97,9 @@ func (b localRunStorage) updateRunWithCommand(ctx context.Context, id, commandID
 	if next == nil {
 		return current, nil
 	}
+	if err := checkLocalRunMaintenance(ctx, b.store.runsDir, *next); err != nil {
+		return nil, err
+	}
 	runs, err := b.store.LoadRuns(ctx)
 	if err != nil {
 		return nil, err
@@ -221,6 +224,9 @@ func (b sqliteRunStorage) updateRunWithCommand(ctx context.Context, id, commandI
 		return nil, err
 	}
 	if next != nil {
+		if err := checkSQLiteRunMaintenance(ctx, conn, *next); err != nil {
+			return nil, err
+		}
 		if err := checkSQLiteRunAdmission(ctx, conn, *next); err != nil {
 			return nil, err
 		}
@@ -283,6 +289,13 @@ func (b postgresRunStorage) updateRunWithCommand(ctx context.Context, id, comman
 		return nil, err
 	}
 	if next != nil {
+		var authority []byte
+		if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if err := checkPostgresRunMaintenance(ctx, tx, authority, *next); err != nil {
+			return nil, err
+		}
 		if err := checkPostgresRunAdmission(ctx, tx, *next); err != nil {
 			return nil, err
 		}

@@ -1317,3 +1317,13 @@ queued and assigned paths, idempotency mapping rollback and exact retry. Real
 PostgreSQL and full repository regression passed. This closes Run dispatch for
 the maintenance barrier; raw run Save/Restart and other metadata writers still
 need the same admission port, so P6 remains open.
+
+Raw Run metadata updates are now covered too. `SaveRun`/`RestartRun` use the
+same authority-before-lifecycle ordering as dispatch: local file writes hold the
+authority lock through the append, SQLite checks inside its write transaction,
+and PostgreSQL holds the advisory/authority/lifecycle locks before updating the
+Run row. Missing legacy lifecycle records remain rebuild/legacy mode; a real
+versioned maintenance barrier rejects the update. A three-backend regression
+verifies SaveRun rejection during a barrier and success after release, while
+existing dispatch/idempotency suites remain green. Global projection/policy/
+placement writers still need the same port.

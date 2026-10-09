@@ -404,3 +404,8 @@ workspace 名称不再漏检。跨 registry 原子准入和 raw writer barrier �
 2026-10-09 AgentCommand 活动检查点：quiescence 现在枚举带当前 topology UID 的
 非终态 AgentCommand，即使 guest activity 尚未落盘也阻止维护；终态/退休 command
 不阻塞。P6 跨 registry 原子准入和 raw writer barrier 仍未完成。
+
+2026-10-09 raw Run writer 检查点：SaveRun/RestartRun 已接入 authority→lifecycle
+顺序的 barrier 检查；三后端 SaveRun 冻结拒绝/释放成功回归通过，旧 dispatch 和
+幂等测试保持通过。全局 projection/policy/placement 等 writer 仍需逐项汇合，P6
+尚未关闭。
