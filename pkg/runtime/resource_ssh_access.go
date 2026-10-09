@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 
@@ -75,7 +73,7 @@ func (SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext,
 	if err := req.Validate(); err != nil {
 		return state.Resource{}, err
 	}
-	conn, err := pc.ConnectionForNode(ctx, cfg.Node)
+	conn, err := pc.ConnectionForNode(ctx, nodeRef.String())
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -106,14 +104,14 @@ func (SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext,
 	if err := tmp.Close(); err != nil {
 		return state.Resource{}, err
 	}
-	user, err := pc.SSHUserForNode(cfg.Node)
+	user, err := pc.SSHUserForNode(nodeRef.String())
 	if err != nil {
 		return state.Resource{}, err
 	}
-	if strings.ContainsAny(user, "/\\\x00") || user == "." || user == ".." {
-		return state.Resource{}, fmt.Errorf("invalid SSH user")
+	path, err := controlplane.ManagedSSHPath(user, req.ID)
+	if err != nil {
+		return state.Resource{}, err
 	}
-	path := filepath.Join("/home", user, ".ssh", "authorized_keys.d", "sysbox-"+req.ID)
 	if err := files.CopyFile(ctx, name, path); err != nil {
 		return state.Resource{}, fmt.Errorf("install managed ssh key: %w", err)
 	}
@@ -129,12 +127,27 @@ func (SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext,
 }
 
 func (SSHAccessResourceHandler) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
+	if pc == nil || pc.exec == nil {
+		return fmt.Errorf("%w: managed SSH context required", ErrConvergenceUnsupported)
+	}
 	node := current.Str("node")
 	path := current.Str("path")
-	if node == "" || path == "" || filepath.Clean(path) != path || !strings.Contains(path, "/.ssh/authorized_keys.d/sysbox-") {
+	if node == "" || path == "" {
 		return fmt.Errorf("%w: invalid managed ssh access state", ErrConvergenceUnsupported)
 	}
-	conn, err := pc.ConnectionForNode(ctx, node)
+	nodeRef, err := config.ResolveResourceAddress(node, "sysbox_node")
+	if err != nil {
+		return err
+	}
+	user, err := pc.SSHUserForNode(nodeRef.String())
+	if err != nil {
+		return err
+	}
+	expected, err := controlplane.ManagedSSHPath(user, current.Address.Name)
+	if err != nil || path != expected || current.Address.Type != "sysbox_ssh_access" || current.OwnerUID == "" || current.OwnerUID != pc.State().TopologyUID {
+		return fmt.Errorf("%w: managed SSH identity mismatch", ErrConvergenceUnsupported)
+	}
+	conn, err := pc.ConnectionForNode(ctx, nodeRef.String())
 	if err != nil {
 		return err
 	}

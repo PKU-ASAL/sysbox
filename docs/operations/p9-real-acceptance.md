@@ -903,3 +903,13 @@ the same key ordering as the signed digest, so reordered requests cannot share
 authority yet write different file bytes. Tests use valid encoded public keys
 and cover malformed data/options/type mismatch and nonmutating content ordering.
 This does not implement sshd reload, key rotation or precise owned deletion.
+
+Runtime SSH deletion now derives its exact target from the canonical node user
+and current access resource name, using the same path contract as the host
+supervisor. It rejects a different user/access path or topology owner before
+opening a connection. Missing ProviderContext now returns an error instead of
+panicking. Both Create and Delete normalize `.id`-style node references before
+resolving the connection/user. Tests verify rejection without reaching provider
+access. This is target-identity validation, not content-CAS unlink: a file changed
+concurrently still needs a guest-side owned configuration primitive. Live Read,
+shared sshd lifecycle and full key rotation remain open.
