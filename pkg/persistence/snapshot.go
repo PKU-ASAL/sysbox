@@ -14,11 +14,12 @@ import (
 )
 
 type aggregateSnapshot struct {
-	Metadata    state.Snapshot  `json:"metadata"`
-	TopologyUID string          `json:"topology_uid"`
-	Serial      int64           `json:"serial"`
-	Digest      string          `json:"digest"`
-	Data        json.RawMessage `json:"data"`
+	Metadata    state.Snapshot `json:"metadata"`
+	TopologyUID string         `json:"topology_uid"`
+	Serial      int64          `json:"serial"`
+	Digest      string         `json:"digest"`
+	// Preserve exact hashed bytes across JSONB normalization in PostgreSQL.
+	Data []byte `json:"data"`
 }
 
 // Capture excludes the snapshot catalog itself, avoiding recursive snapshots.

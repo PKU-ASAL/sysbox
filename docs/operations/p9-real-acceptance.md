@@ -766,3 +766,33 @@ holds both authority and aggregate locks until commit. It is not an RPC or an
 authorization token. Its joint-lock adapters and public restore orchestration
 are not wired yet; these tests establish the transition contract, not a complete
 user restore workflow or a new distributed acceptance result.
+
+### Restore storage transaction adapters
+
+Restore commit now has file, SQLite and PostgreSQL adapters retaining authority
+and aggregate exclusion through commit. File storage takes the API record lock,
+the actual authority-file lock (also used by direct repository writers), and the
+aggregate lock; it leaves the authority bytes unchanged. SQLite uses one immediate
+transaction. PostgreSQL takes the Run admission advisory lock, authority row lock
+and aggregate row lock. Each adapter reuses the shared restore transition and
+returns no successful receipt on a failed commit. None releases the barrier.
+
+Real PostgreSQL testing exposed an older snapshot encoding defect: JSONB rewrites
+embedded JSON, invalidating the raw snapshot byte digest. Snapshot payloads now
+use base64-encoded bytes and lifecycle aggregate format4. Old formats are rejected
+before payload decoding. The existing two-VM data has not been upgraded or erased.
+
+File, SQLite and a dedicated tmpfs PostgreSQL16 instance (loopback32939) passed
+the restore transaction contract under race: wrong epoch refusal, state/receipt
+commit, barrier release, successor state update, source snapshot deletion, and
+exact historical receipt replay without rewinding serial/lineage. File and real
+PostgreSQL tests also blocked aggregate acquisition, proved the restore held
+authority exclusion, and confirmed concurrent barrier release had to wait.
+These tests cover actual storage transactions; public HTTP orchestration and
+complete activity freezing are still open.
+
+Final verification: PostgreSQL-enabled full Go regression passed with package
+parallelism limited to2. An earlier higher-load run had a slow-child receipt
+fixture exceed its per-child timeout; that failure was retained, and no timeout
+was enlarged in production. Focused restore race, persistence race, vet,
+documentation checks and independent adapter review also passed.

@@ -1,9 +1,37 @@
 package persistence
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
+
+// CommitAuthorizedSnapshotRestore is for file-backed callers that hold the
+// authority lock while this method acquires and commits the aggregate lock.
+func (r *Repository) CommitAuthorizedSnapshotRestore(ctx context.Context, topology string, request SnapshotRestoreRequest, authorityRaw []byte) (SnapshotRestoreReceipt, error) {
+	var receipt SnapshotRestoreReceipt
+	err := r.update(ctx, topology, func(a *aggregate) error {
+		raw, err := json.Marshal(a)
+		if err != nil {
+			return err
+		}
+		next, result, err := ApplyAuthorizedSnapshotRestore(raw, authorityRaw, topology, request)
+		if err != nil {
+			return err
+		}
+		restored, err := decodeAggregate(next)
+		if err != nil {
+			return err
+		}
+		*a = *restored
+		receipt = result
+		return nil
+	})
+	if err != nil {
+		return SnapshotRestoreReceipt{}, err
+	}
+	return receipt, nil
+}
 
 // ApplyAuthorizedSnapshotRestore is the shared transition for adapters holding
 // BOTH the authority and aggregate locks until commit. It does no I/O; passing

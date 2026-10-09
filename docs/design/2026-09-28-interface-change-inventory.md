@@ -6,6 +6,17 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### 当前存储格式补充：snapshot字节载荷与事务适配
+
+lifecycle aggregate当前为format4：snapshot的`data`保存base64字节载荷，防止Postgres
+JSONB重排嵌入JSON后破坏原字节摘要。先前format3及更早格式明确拒绝，仍需停旧writer
+并重建，不迁移现有VM数据。后文format3记录是此前恢复回执的实施节点。
+
+恢复提交已接入文件/SQLite/Postgres事务适配：文件依次持有API记录锁、authority文件锁、
+aggregate锁；SQLite同一写事务读取授权与aggregate；Postgres按admission、authority、
+aggregate顺序取锁。三者均复用共享恢复转换并原子保存state/receipt，不在事务中释放
+屏障。公开restore受理、完整活动冻结和提交后的释放编排仍待接入。
+
 ### 2026-10-09 snapshot恢复提交回执基础
 
 lifecycle aggregate升为format3，新增不可变恢复回执；format2明确拒绝，必须在停止

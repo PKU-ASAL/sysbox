@@ -27,7 +27,7 @@ var (
 	ErrUnsupportedVersion = errors.New("unsupported repository version")
 )
 
-const FormatVersion = 3
+const FormatVersion = 4
 
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
@@ -82,6 +82,15 @@ func newAggregate() *aggregate {
 	return &aggregate{Format: FormatVersion, State: &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}, Actions: map[string]runtime.ActionRecord{}, Snapshots: map[string]aggregateSnapshot{}, Restores: map[string]SnapshotRestoreReceipt{}}
 }
 func decodeAggregate(raw []byte) (*aggregate, error) {
+	var header struct {
+		Format int `json:"format"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
+	}
+	if header.Format != FormatVersion {
+		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, header.Format, FormatVersion)
+	}
 	var a aggregate
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)

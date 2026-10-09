@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+P6恢复事务适配已进入文件/SQLite/Postgres：authority与aggregate保持互斥直到state/
+receipt提交，真实Postgres及文件竞争测试证明解除屏障不能穿过在途提交。实测另修复
+JSONB重排导致snapshot摘要损坏，载荷改base64字节，aggregate现为format4且旧格式
+明确重建。现有VM数据未动；公开restore受理/冻结/释放编排尚未完成。
+
 P6恢复提交证据基础：aggregate format3保存绑定snapshot摘要/serial/maintenance epoch
 的恢复回执，与state原子提交。文件/SQLite冷重试保留后继状态，相同并发请求只推进一次
 serial，源snapshot删除后仍可读回原回执。旧format2明确重建，现有VM数据未动；公开
