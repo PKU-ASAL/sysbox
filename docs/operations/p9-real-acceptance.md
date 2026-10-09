@@ -610,7 +610,41 @@ authorization response above1MiB. The latter two exposed transport truncation
 regressions and now pass with canonical lease limits and a recovery-only16MiB
 response budget. Full Go regression and affected-package race passed.
 
-These checks do not close the existing revoke/metadata-commit transaction gap:
-final reauthorization can reject a report after a previously authorized journal
-write. Atomic authority validation with metadata outcome commits remains required
-alongside daemon-unknown recovery, P5–P8 and the remaining P9 fault matrix.
+At the routing checkpoint, final reauthorization could reject a report after a
+previously authorized journal write. The following change closes that specific
+command/Agent/Run authorization race for recovery outcome commits; daemon-unknown
+recovery, P5–P8 and the remaining P9 fault matrix remain separate requirements.
+
+### Atomic authorization of recovery metadata outcomes
+
+Host recover mode now requires a command-bound recovery repository. The ordinary
+repository remains available for observation; no ordinary write fallback is used
+for recover. Each outcome commit validates the current command lease, owner,
+attempt, retirement and recover mode; the Agent's enabled state and capability;
+the original failed/recoverable Run incarnation; and absence of an active peer
+Run in the same topology. Action identity must match that Run. Recovery cannot
+create a new action intent.
+
+The file backend holds the API run-record lock through the aggregate commit and
+evaluates expiry after acquiring the aggregate lock. SQLite uses one
+`BEGIN IMMEDIATE` transaction. PostgreSQL uses the existing Run admission
+advisory lock, then locks Run, command, Agent and aggregate rows until commit.
+All paths reuse one shared action outcome/CAS transition; SQL adapters do not
+reimplement serialization, identity or state-transition policy. Recovery expects
+the host to access the same canonical authority and lifecycle storage.
+
+2026-10-09 tests ran against files, SQLite and a dedicated PostgreSQL16 instance
+on loopback port32937 with tmpfs data (not the two-VM or user database). Under
+race detection, all backends accepted the live command and rejected a retired
+command, wrong owner/attempt, blocked Agent, active successor Run, mismatched Run
+incarnation and expired lease without changing state. File and PostgreSQL tests
+also held the aggregate lock, proved the recovery process had acquired the
+authority lock, and verified concurrent command retirement could not pass it.
+A lease expiring while waiting for the aggregate lock caused commit rejection.
+PostgreSQL coverage executed without skips. Full Go regression with that database
+enabled, persistence/agentexec race, vet and independent review passed.
+
+This proves authorization serialization for one existing recovery outcome. It
+does not freeze an entire topology across all maintenance operations, transfer
+provider execution ownership, prove an interrupted daemon call stopped, or replace
+the remaining restore/adoption/GC/SSH and distributed fault acceptance gates.

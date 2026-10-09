@@ -299,68 +299,88 @@ func (r *Repository) CommitActionOutcome(ctx context.Context, action runtime.Act
 	if err := validateAction(action); err != nil {
 		return err
 	}
+	return r.update(ctx, action.Topology, func(a *aggregate) error { return applyActionOutcome(a, action, patch) })
+}
+
+// CommitActionOutcomeWithGuard runs a caller-owned authorization snapshot check
+// after acquiring the aggregate lock. The caller must hold the source record
+// locks until this method returns; a preflight HTTP check is not such a lock.
+func (r *Repository) CommitActionOutcomeWithGuard(ctx context.Context, action runtime.ActionRecord, patch *runtime.StatePatch, check func() error) error {
+	if err := validateAction(action); err != nil {
+		return err
+	}
+	if check == nil {
+		return ErrConflict
+	}
 	return r.update(ctx, action.Topology, func(a *aggregate) error {
-		old, exists := a.Actions[action.ID]
-		if !exists {
-			return ErrNotFound
-		}
-		if !sameIntent(old, action) {
-			return ErrConflict
-		}
-		if old.Status == runtime.ActionSucceeded {
-			if sameRecord(old, action) {
-				return nil
-			}
-			return ErrConflict
-		}
-		if a.Serial != action.ExpectedSerial || old.Revision != action.Revision {
-			return ErrConflict
-		}
-		if err := validateActionTarget(a.State, action); err != nil {
+		if err := check(); err != nil {
 			return err
 		}
-		if old.EffectComplete && !action.EffectComplete || old.Candidate != nil && action.Candidate == nil {
-			return fmt.Errorf("%w: recovery evidence cannot be discarded", ErrConflict)
+		return applyActionOutcome(a, action, patch)
+	})
+}
+
+func applyActionOutcome(a *aggregate, action runtime.ActionRecord, patch *runtime.StatePatch) error {
+	old, exists := a.Actions[action.ID]
+	if !exists {
+		return ErrNotFound
+	}
+	if !sameIntent(old, action) {
+		return ErrConflict
+	}
+	if old.Status == runtime.ActionSucceeded {
+		if sameRecord(old, action) {
+			return nil
 		}
-		if action.Action == controlplane.PlanActionReset && resetPhaseOrder(action.Phase) < resetPhaseOrder(old.Phase) {
-			return fmt.Errorf("%w: reset phase cannot regress", ErrConflict)
+		return ErrConflict
+	}
+	if a.Serial != action.ExpectedSerial || old.Revision != action.Revision {
+		return ErrConflict
+	}
+	if err := validateActionTarget(a.State, action); err != nil {
+		return err
+	}
+	if old.EffectComplete && !action.EffectComplete || old.Candidate != nil && action.Candidate == nil {
+		return fmt.Errorf("%w: recovery evidence cannot be discarded", ErrConflict)
+	}
+	if action.Action == controlplane.PlanActionReset && resetPhaseOrder(action.Phase) < resetPhaseOrder(old.Phase) {
+		return fmt.Errorf("%w: reset phase cannot regress", ErrConflict)
+	}
+	switch action.Status {
+	case runtime.ActionSucceeded, runtime.ActionUncertain, runtime.ActionBlocked:
+	default:
+		return fmt.Errorf("invalid outcome %s", action.Status)
+	}
+	if patch != nil {
+		if action.Status != runtime.ActionSucceeded || patch.Resource != action.Resource.String() || patch.Action != action.Action {
+			return ErrConflict
 		}
-		switch action.Status {
-		case runtime.ActionSucceeded, runtime.ActionUncertain, runtime.ActionBlocked:
-		default:
-			return fmt.Errorf("invalid outcome %s", action.Status)
-		}
-		if patch != nil {
-			if action.Status != runtime.ActionSucceeded || patch.Resource != action.Resource.String() || patch.Action != action.Action {
+		if patch.Op == runtime.StatePatchDelete {
+			if action.Action != controlplane.PlanActionDelete {
 				return ErrConflict
 			}
-			if patch.Op == runtime.StatePatchDelete {
-				if action.Action != controlplane.PlanActionDelete {
-					return ErrConflict
-				}
-				a.State.RemoveResource(action.Resource)
-			} else if patch.Op == runtime.StatePatchUpsert {
-				if action.Candidate == nil || !action.Candidate.Address.Equal(action.Resource) {
-					return ErrConflict
-				}
-				candidate := *action.Candidate
-				candidate.OwnerUID = action.OwnerUID
-				candidate.ResourceUID = action.ResourceUID
-				candidate.Generation = action.Generation
-				a.State.RemoveResource(action.Resource)
-				a.State.AddResource(candidate)
-			} else {
-				return fmt.Errorf("unsupported resource patch %s", patch.Op)
+			a.State.RemoveResource(action.Resource)
+		} else if patch.Op == runtime.StatePatchUpsert {
+			if action.Candidate == nil || !action.Candidate.Address.Equal(action.Resource) {
+				return ErrConflict
 			}
-			a.Serial++
-		} else if action.Status == runtime.ActionSucceeded {
-			return fmt.Errorf("verified success requires an atomic resource patch")
+			candidate := *action.Candidate
+			candidate.OwnerUID = action.OwnerUID
+			candidate.ResourceUID = action.ResourceUID
+			candidate.Generation = action.Generation
+			a.State.RemoveResource(action.Resource)
+			a.State.AddResource(candidate)
+		} else {
+			return fmt.Errorf("unsupported resource patch %s", patch.Op)
 		}
-		action.Revision++
-		a.Actions[action.ID] = action
-		a.UpdatedAt = time.Now().UTC()
-		return nil
-	})
+		a.Serial++
+	} else if action.Status == runtime.ActionSucceeded {
+		return fmt.Errorf("verified success requires an atomic resource patch")
+	}
+	action.Revision++
+	a.Actions[action.ID] = action
+	a.UpdatedAt = time.Now().UTC()
+	return nil
 }
 
 // CommitAdoptionEvidenceAtomic records an authenticated host adoption result

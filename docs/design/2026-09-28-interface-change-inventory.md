@@ -24,8 +24,11 @@ canonical Run、mode 和不可变 revision。响应新增必需的 `lease_until`
 普通宿主授权响应仍限1MiB。自动声明 `run-recovery.v1` 能力以配置宿主 socket 为前提。
 
 Recover 仅提交既有 journal 的可证明结果，不重放 Create/Delete/guest command。
-当前前后授权检查与 journal CAS 不是同一事务；撤销与 metadata outcome 提交的
-原子边界仍需补齐，不能把本次路由迁移称为完整 maintenance freeze/fencing。
+后续已补单次 journal outcome 的原子授权边界：host bridge 必须提供绑定 command
+租约与Run身份的 RecoveryActionRepository。每次提交在文件共同锁或数据库同一事务
+中检查 command 未退休、owner/attempt/期限、Agent 未禁用且保有能力、原Run仍可恢复、
+同拓扑无活动Run，然后复用共享CAS状态转换。缺少该能力的bridge拒绝recover写入；
+observe不受影响。该边界不等于全局maintenance freeze或daemon quiescence。
 
 ### 2026-10-07 已实施：guest task 宿主监督接口
 

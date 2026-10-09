@@ -6,6 +6,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"time"
 )
 
@@ -26,7 +27,19 @@ func (h *HostRunExecutor) Recover(ctx context.Context, proof hostsupervisor.RunR
 	bounded, cancel := context.WithDeadline(ctx, auth.LeaseUntil)
 	defer cancel()
 	cmd := controlplane.AgentCommand{ID: proof.CommandID, AgentID: h.Tasks.AgentID, Type: controlplane.RunRecoveryCommand, Run: &auth.Run, RecoveryMode: auth.Mode, LeaseOwner: proof.LeaseOwner, Attempt: proof.Attempt, LeaseUntil: auth.LeaseUntil}
-	report, err := NewExecutorWithBridge(h.Bridge).ObserveRecoverRun(bounded, h.Tasks.AgentID, cmd, auth)
+	var bridge Bridge = h.Bridge
+	if auth.Mode == controlplane.RunRecoveryRecover {
+		provider, ok := h.Bridge.(recoveryRepositoryProvider)
+		if !ok {
+			return nil, fmt.Errorf("atomic recovery authorization storage unavailable")
+		}
+		repo, err := provider.RecoveryActionRepository(bounded, proof, auth.Run)
+		if err != nil {
+			return nil, err
+		}
+		bridge = boundRecoveryBridge{HostRunBridge: h.Bridge, repository: repo, topology: auth.Run.Topology}
+	}
+	report, err := NewExecutorWithBridge(bridge).ObserveRecoverRun(bounded, h.Tasks.AgentID, cmd, auth)
 	if err != nil {
 		return nil, err
 	}
@@ -39,4 +52,29 @@ func (h *HostRunExecutor) Recover(ctx context.Context, proof hostsupervisor.RunR
 		return nil, fmt.Errorf("host recovery authorization changed")
 	}
 	return report, nil
+}
+
+type recoveryRepositoryProvider interface {
+	RecoveryActionRepository(context.Context, hostsupervisor.RunRecoveryRequest, controlplane.Run) (runtime.ActionRepository, error)
+}
+
+type boundRecoveryBridge struct {
+	HostRunBridge
+	repository runtime.ActionRepository
+	topology   string
+}
+
+func (b boundRecoveryBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
+	if topology != b.topology || b.repository == nil {
+		return nil, fmt.Errorf("recovery topology mismatch")
+	}
+	return b.repository, nil
+}
+
+func (b boundRecoveryBridge) PinnedRevisionWorkspace(ctx context.Context, run controlplane.Run, revision *controlplane.GlobalRevision) (string, error) {
+	provider, ok := b.HostRunBridge.(RevisionWorkspaceProvider)
+	if !ok {
+		return "", fmt.Errorf("immutable recovery workspace unavailable")
+	}
+	return provider.PinnedRevisionWorkspace(ctx, run, revision)
 }

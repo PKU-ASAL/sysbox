@@ -27,6 +27,10 @@ type pinnedHostRecoveryBridge struct {
 	materialized bool
 }
 
+func (b *pinnedHostRecoveryBridge) RecoveryActionRepository(_ context.Context, _ hostsupervisor.RunRecoveryRequest, run controlplane.Run) (runtime.ActionRepository, error) {
+	return b.ActionRepository(run.Topology)
+}
+
 func (b *pinnedHostRecoveryBridge) MaterializeRunRevision(context.Context, string, string) (string, error) {
 	return b.path, nil
 }

@@ -2,6 +2,12 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+2026-10-09恢复metadata提交原子授权：宿主recover现要求绑定command租约与Run身份的
+repository；文件共同锁、SQLite/Postgres同事务校验command/Agent/Run后，复用共享CAS
+提交journal/state。真实独立Postgres与文件/SQLite的退休、过期、禁用Agent、活动后继等
+拒绝回归通过；文件/Postgres实际锁竞争和等待期间过期也通过。全仓启用Postgres测试通过。
+这关闭显式Run恢复单次outcome的授权竞态，不关闭全局maintenance freeze与daemon恢复。
+
 2026-10-09显式Run观察/恢复路由：Agent不再直接读canonical repository或调用provider；
 仅转发command租约凭据，宿主独立向API授权并复用原观察引擎。缺socket无本地回退。
 真实Docker race在worker独立空SQLite下通过远端UID/generation观察和完整清理；recover
