@@ -466,6 +466,42 @@ func (r *ExecutionGrantRepository) AcceptHostStop(ctx context.Context, proof con
 	return r.acknowledgeStop(ctx, proof, receipt, true)
 }
 
+// ApplyHostStopAuthority is the raw-transaction form used by operation
+// adapters that commit their result and authority release in one backend
+// transaction. It has the same idempotency and successor fencing semantics as
+// AcceptHostStop.
+func ApplyHostStopAuthority(raw []byte, proof controlplane.ExecutionGrant, receipt string) ([]byte, error) {
+	a, err := decodeExecutionAuthority(raw)
+	if err != nil {
+		return nil, err
+	}
+	if receipt == "" {
+		return nil, ErrInvalidRecord
+	}
+	if prior, ok := a.Stops[proof.Epoch]; ok {
+		if sameGrantEpoch(prior.Grant, proof) && prior.Receipt == receipt {
+			return raw, nil
+		}
+		return nil, ErrConflict
+	}
+	current, ok := a.Grants[grantScopeKey(proof.Scope)]
+	if !ok || !sameGrantEpoch(current, proof) || current.State == controlplane.GrantStopped {
+		return nil, ErrConflict
+	}
+	for _, child := range a.Grants {
+		if child.ParentEpoch == current.Epoch && child.State != controlplane.GrantStopped {
+			return nil, ErrConflict
+		}
+	}
+	current.State, current.StopReceipt = controlplane.GrantStopped, receipt
+	a.Grants[grantScopeKey(current.Scope)] = current
+	if a.Stops == nil {
+		a.Stops = map[uint64]stoppedExecutionGrant{}
+	}
+	a.Stops[current.Epoch] = stoppedExecutionGrant{Grant: current, Receipt: receipt}
+	return json.Marshal(a)
+}
+
 // PrepareHostStop freezes a host-confirmed parent before committing its Run
 // outcome. Revocation retains exclusion while preventing new child authority;
 // AcceptHostStop releases the scope only after the canonical commit succeeds.

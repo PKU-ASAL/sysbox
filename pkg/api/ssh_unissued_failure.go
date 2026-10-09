@@ -60,11 +60,11 @@ func reconcileUnissuedSSHFailure(ctx context.Context, store apiStore, command co
 	}
 	switch s := store.(type) {
 	case *localAPIStore:
-		_, err = s.completeNodeOperation(ctx, command.AgentID, op.ID, transition)
+		_, err = s.completeNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
 	case *sqliteAPIStore:
-		_, err = s.completeNodeOperation(ctx, command.AgentID, op.ID, transition)
+		_, err = s.completeNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
 	case *postgresAPIStore:
-		_, err = s.completeNodeOperation(ctx, command.AgentID, op.ID, transition)
+		_, err = s.completeNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
 	default:
 		err = persistence.ErrUnsupportedVersion
 	}

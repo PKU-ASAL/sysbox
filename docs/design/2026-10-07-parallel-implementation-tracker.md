@@ -630,6 +630,13 @@ completion 现在也必须先用 receipt hash 验证原 grant authority；HTTP �
 存储调用共享同一验证，不再能仅凭 operation payload 写终态。operation 状态提交与
 authority release 的完全同事务合并仍待下一切片。
 
+2026-10-10 P7 SSH/adoption completion 事务推进：SQLite/Postgres node-operation
+completion 现在在同一 DB transaction 内写 operation outcome 和 host-stop
+authority receipt；共享 `ApplyHostStopAuthority` 保持 epoch/successor fencing 和
+精确重放。文件 backend 仍沿用 records lock 后的可重试两步边界，避免递归 flock；
+API store 直接调用同样先验证 authority。下一步是把 file adapter 改成同一发布
+mutation，并补 operation receipt 丢响应后的 supervisor 冷恢复。
+
 2026-10-10 P8 GC fencing 审计：现有 `GCInventoryDigest` 已作为计划版本锚点，
 而非普通扫描字段。API grant issuance、command lifecycle validation、host
 GCCoordinator effect 前 inventory revalidation 三层共同检查它；canonical state

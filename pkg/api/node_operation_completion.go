@@ -24,7 +24,7 @@ func validateHostOperationReceipt(ctx context.Context, store apiStore, receipt c
 }
 
 func (s *localAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
-	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, nil, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
 	})
 }
@@ -32,7 +32,7 @@ func (s *localAPIStore) CompleteSSHAccessFromHost(ctx context.Context, agent, id
 	if err := validateHostOperationReceipt(ctx, s, receipt); err != nil {
 		return nil, err
 	}
-	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, &receipt, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteSSHAccessFromHost(current, command, agent, id, receipt)
 	})
 }
@@ -41,11 +41,11 @@ func (s *localAPIStore) CompleteAdoptionFromHost(ctx context.Context, agent, id 
 	if err := validateHostOperationReceipt(ctx, s, receipt); err != nil {
 		return nil, err
 	}
-	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, &receipt, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteAdoptionFromHost(current, command, agent, id, receipt)
 	})
 }
-func (s *localAPIStore) completeNodeOperation(ctx context.Context, agent, id string, transition func(controlplane.NodeOperation, *persistence.CommandRecord) (controlplane.NodeOperation, error)) (*controlplane.NodeOperation, error) {
+func (s *localAPIStore) completeNodeOperation(ctx context.Context, agent, id string, receipt *controlplane.SignedExecutionStopReceipt, transition func(controlplane.NodeOperation, *persistence.CommandRecord) (controlplane.NodeOperation, error)) (*controlplane.NodeOperation, error) {
 	unlock, err := s.lockRunRecords(ctx)
 	if err != nil {
 		return nil, err
@@ -63,13 +63,14 @@ func (s *localAPIStore) completeNodeOperation(ctx context.Context, agent, id str
 	if err != nil {
 		return nil, err
 	}
-	return repo.CompleteWithTransition(ctx, id, func(current controlplane.NodeOperation) (controlplane.NodeOperation, error) {
+	completed, err := repo.CompleteWithTransition(ctx, id, func(current controlplane.NodeOperation) (controlplane.NodeOperation, error) {
 		return transition(current, command)
 	})
+	return completed, nil
 }
 
 func (s *sqliteAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
-	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, nil, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
 	})
 }
@@ -77,7 +78,7 @@ func (s *sqliteAPIStore) CompleteSSHAccessFromHost(ctx context.Context, agent, i
 	if err := validateHostOperationReceipt(ctx, s, receipt); err != nil {
 		return nil, err
 	}
-	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, &receipt, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteSSHAccessFromHost(current, command, agent, id, receipt)
 	})
 }
@@ -86,11 +87,11 @@ func (s *sqliteAPIStore) CompleteAdoptionFromHost(ctx context.Context, agent, id
 	if err := validateHostOperationReceipt(ctx, s, receipt); err != nil {
 		return nil, err
 	}
-	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, &receipt, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteAdoptionFromHost(current, command, agent, id, receipt)
 	})
 }
-func (s *sqliteAPIStore) completeNodeOperation(ctx context.Context, agent, id string, transition func(controlplane.NodeOperation, *persistence.CommandRecord) (controlplane.NodeOperation, error)) (*controlplane.NodeOperation, error) {
+func (s *sqliteAPIStore) completeNodeOperation(ctx context.Context, agent, id string, receipt *controlplane.SignedExecutionStopReceipt, transition func(controlplane.NodeOperation, *persistence.CommandRecord) (controlplane.NodeOperation, error)) (*controlplane.NodeOperation, error) {
 	db, err := s.open()
 	if err != nil {
 		return nil, err
@@ -144,6 +145,24 @@ func (s *sqliteAPIStore) completeNodeOperation(ctx context.Context, agent, id st
 	if _, err = conn.ExecContext(ctx, "UPDATE sysbox_node_operations SET data=? WHERE id=?", next, id); err != nil {
 		return nil, err
 	}
+	if receipt != nil {
+		rawReceipt, e := json.Marshal(*receipt)
+		if e != nil {
+			return nil, e
+		}
+		sum := sha256.Sum256(rawReceipt)
+		authority, e := readSQLiteAuthority(ctx, conn)
+		if e != nil {
+			return nil, e
+		}
+		nextAuthority, e := persistence.ApplyHostStopAuthority(authority, receipt.Grant, fmt.Sprintf("%x", sum[:]))
+		if e != nil {
+			return nil, e
+		}
+		if _, e = conn.ExecContext(ctx, "UPDATE sysbox_execution_authority SET data=? WHERE id='authority'", nextAuthority); e != nil {
+			return nil, e
+		}
+	}
 	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return nil, err
 	}
@@ -152,7 +171,7 @@ func (s *sqliteAPIStore) completeNodeOperation(ctx context.Context, agent, id st
 }
 
 func (s *postgresAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
-	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, nil, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
 	})
 }
@@ -160,7 +179,7 @@ func (s *postgresAPIStore) CompleteSSHAccessFromHost(ctx context.Context, agent,
 	if err := validateHostOperationReceipt(ctx, s, receipt); err != nil {
 		return nil, err
 	}
-	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, &receipt, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteSSHAccessFromHost(current, command, agent, id, receipt)
 	})
 }
@@ -169,11 +188,11 @@ func (s *postgresAPIStore) CompleteAdoptionFromHost(ctx context.Context, agent, 
 	if err := validateHostOperationReceipt(ctx, s, receipt); err != nil {
 		return nil, err
 	}
-	return s.completeNodeOperation(ctx, agent, id, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+	return s.completeNodeOperation(ctx, agent, id, &receipt, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 		return persistence.CompleteAdoptionFromHost(current, command, agent, id, receipt)
 	})
 }
-func (s *postgresAPIStore) completeNodeOperation(ctx context.Context, agent, id string, transition func(controlplane.NodeOperation, *persistence.CommandRecord) (controlplane.NodeOperation, error)) (*controlplane.NodeOperation, error) {
+func (s *postgresAPIStore) completeNodeOperation(ctx context.Context, agent, id string, receipt *controlplane.SignedExecutionStopReceipt, transition func(controlplane.NodeOperation, *persistence.CommandRecord) (controlplane.NodeOperation, error)) (*controlplane.NodeOperation, error) {
 	pool, err := s.poolFor(ctx)
 	if err != nil {
 		return nil, err
@@ -216,6 +235,24 @@ func (s *postgresAPIStore) completeNodeOperation(ctx context.Context, agent, id 
 	}
 	if _, err = tx.Exec(ctx, "UPDATE sysbox_node_operations SET data=$1::jsonb,updated_at=now() WHERE id=$2", string(next), id); err != nil {
 		return nil, err
+	}
+	if receipt != nil {
+		rawReceipt, e := json.Marshal(*receipt)
+		if e != nil {
+			return nil, e
+		}
+		sum := sha256.Sum256(rawReceipt)
+		var authority []byte
+		if e = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); e != nil {
+			return nil, e
+		}
+		nextAuthority, e := persistence.ApplyHostStopAuthority(authority, receipt.Grant, fmt.Sprintf("%x", sum[:]))
+		if e != nil {
+			return nil, e
+		}
+		if _, e = tx.Exec(ctx, "UPDATE sysbox_execution_authority SET data=$1::jsonb,updated_at=now() WHERE id='authority'", string(nextAuthority)); e != nil {
+			return nil, e
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return nil, err
