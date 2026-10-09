@@ -110,12 +110,12 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 			current = record
 		}
 		return persistence.FilesystemExecutionGrantStorage(store.runsDir).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-			if err := b.checkLifecycle(current, func(topology, uid string) error {
+			if err := b.checkLifecycle(current, func(topology string) error {
 				repo, err := b.lifecycle(topology)
 				if err != nil {
 					return err
 				}
-				return repo.ValidateLifecycleOwner(ctx, topology, uid)
+				return repo.ValidateCommandLifecycle(ctx, topology, current.Command)
 			}); err != nil {
 				return nil, err
 			}
@@ -176,14 +176,14 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if err := b.checkLifecycle(current, func(topology, uid string) error {
+		if err := b.checkLifecycle(current, func(topology string) error {
 			var lifecycle []byte
 			if err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_lifecycle_aggregates WHERE topology=?", topology).Scan(&lifecycle); errors.Is(err, sql.ErrNoRows) {
 				return persistence.ErrConflict
 			} else if err != nil {
 				return err
 			}
-			return persistence.ValidateLifecycleOwner(lifecycle, topology, uid)
+			return persistence.ValidateCommandLifecycle(lifecycle, topology, current.Command)
 		}); err != nil {
 			return err
 		}
@@ -238,14 +238,14 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 			}
 			current = record
 		}
-		if err := b.checkLifecycle(current, func(topology, uid string) error {
+		if err := b.checkLifecycle(current, func(topology string) error {
 			var lifecycle []byte
 			if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1 FOR UPDATE", topology).Scan(&lifecycle); errors.Is(err, pgx.ErrNoRows) {
 				return persistence.ErrConflict
 			} else if err != nil {
 				return err
 			}
-			return persistence.ValidateLifecycleOwner(lifecycle, topology, uid)
+			return persistence.ValidateCommandLifecycle(lifecycle, topology, current.Command)
 		}); err != nil {
 			return err
 		}

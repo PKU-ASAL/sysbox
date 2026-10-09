@@ -38,6 +38,19 @@ type GCResourceReference struct {
 func (r *Repository) LoadGCReferences(ctx context.Context, topology string) (GCReferenceSnapshot, error) {
 	var out GCReferenceSnapshot
 	err := r.update(ctx, topology, func(a *aggregate) error {
+		var err error
+		out, err = gcReferences(a)
+		return err
+	})
+	if err != nil {
+		return GCReferenceSnapshot{}, err
+	}
+	return out, nil
+}
+
+func gcReferences(a *aggregate) (GCReferenceSnapshot, error) {
+	var out GCReferenceSnapshot
+	err := func() error {
 		out.TopologyUID, out.Serial = a.State.TopologyUID, a.Serial
 		appendResource := func(source string, resource state.Resource) {
 			out.References = append(out.References, GCResourceReference{Source: source, ResourceType: resource.Address.Type, Driver: resource.Driver, ExternalID: resource.ExternalID, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation})
@@ -80,7 +93,7 @@ func (r *Repository) LoadGCReferences(ctx context.Context, topology string) (GCR
 		}
 		out.Digest = fmt.Sprintf("%x", sha256.Sum256(append([]byte("sysbox.gc-lifecycle.v1\x00"), raw...)))
 		return nil
-	})
+	}()
 	if err != nil {
 		return GCReferenceSnapshot{}, err
 	}

@@ -1187,3 +1187,30 @@ With a freshly built helper, real Docker host task/stop/successor E2E passed in
 3.01 seconds and Run completion-loss/recovery/Destroy/cold metadata deletion E2E
 passed in 12.86 seconds under race. Vet and documentation checks passed. The
 test-only PostgreSQL container was stopped and automatically removed afterward.
+
+### GC grants validate lifecycle references (2026-10-09)
+
+Previously GC issuance accepted any nonempty inventory digest. The regression
+reproduced issuance with an invented digest. The shared command/lifecycle
+validator now derives the reference snapshot under the existing authorization
+transaction, compares its exact digest, and rejects a candidate whose resource
+UID or provider-scoped external ID is retained by state, journal or snapshots.
+Different generations of the same resource UID remain protected. The same
+validator runs for issuance, host authorization and renewal; a reference change
+after issuance rejects further authorization/renewal without extending the old
+grant. Stop receipts remain acceptable after references change.
+
+This reuses the existing reference algorithm, not a second API-specific scan.
+File/SQLite/real PostgreSQL race tests cover invented/stale digests, current and
+snapshot-only references, and new references after issuance. It does not yet
+validate the separate API activity registries, immutable GC plan ownership or
+provider inventory. It also does not hold exclusion through a provider call.
+The production host GC reference validator remains unwired, so this improvement
+does not enable automatic deletion. The legacy local CLI deletion path still
+needs removal as part of P8 completion.
+
+Validation: full Go regression passed with both PostgreSQL test variables set;
+targeted GC/authority/metadata race suites passed on all three backends. Separate
+identity tests cover UID protection across generations, external-ID protection
+under a different UID, and equal external IDs in different providers. Vet,
+docscheck and independent review passed. No real provider GC effect was run.

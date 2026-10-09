@@ -45,13 +45,13 @@ func (s *Server) commandGrantStorage(id string, validate func(*persistence.Comma
 // Preserve source-error precedence and the durable clock floor on rejection.
 // A lifecycle conflict commits only ObserveTime, never a grant or lease write;
 // actual storage errors still abort their transaction.
-func (b apiExecutionGrantStorage) checkLifecycle(record *persistence.CommandRecord, check func(topology, uid string) error) error {
+func (b apiExecutionGrantStorage) checkLifecycle(record *persistence.CommandRecord, check func(topology string) error) error {
 	if b.lifecycle == nil || b.sourceErr != nil && *b.sourceErr != nil {
 		return nil
 	}
 	topology, err := grantCommandTopology(record)
 	if err == nil {
-		err = check(topology, record.Command.TopologyUID)
+		err = check(topology)
 	}
 	if err == nil {
 		return nil

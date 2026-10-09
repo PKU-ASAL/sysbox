@@ -368,3 +368,10 @@ GC 签发已在 authority 提交锁内复核 command 所属 lifecycle UID。三�
 授权与 metadata 删除不能同时成功，旧命令在删除后不能取得新 epoch。拒绝请求仍
 提交持久化时钟下界，不延长 command lease。此项关闭旧 topology UID 迟到授权缺口，
 不等同于 resource generation、全类型引用与完整 GC plan 准入完成。
+
+2026-10-09 GC lifecycle 引用授权检查点：签发不再接受任意非空 inventory digest。
+签发/续租/host authorize 在 authority/lifecycle 事务中重算同一引用快照，拒绝过期
+摘要和被 state/journal/snapshot 引用的 resource UID 或 provider external ID。
+新增引用后，已签 grant 的后续授权与续租均拒绝，停止回执仍可回报。三后端定向
+race 通过，含真实 Postgres。此项只是 lifecycle 部分，完整 API 活动 registry、
+GC plan 与 provider 删除期间的准入排他仍未闭环，P8 继续保持未完成。

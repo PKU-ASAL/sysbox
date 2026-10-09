@@ -700,3 +700,8 @@ Policy Apply 改为一次 nft batch 完成建表/删表/重建。失败 batch �
 UID 与当前 lifecycle 一致；metadata 删除后旧 delivery lease 不再获得新 epoch。
 校验与 authority 写入使用同一锁边界。停止回执和 session 操作不依赖存活 lifecycle，
 以保留历史证据恢复能力。
+
+实施补充（2026-10-09 GC grant）：`inventory_digest` 必须匹配当前 lifecycle
+引用快照，任意非空字符串不再有效。当前/保留 state、journal candidate 或 snapshot
+引用的 resource UID 或同 provider external ID 会导致签发/续租/authorize 冲突。
+载荷格式不变；旧摘要需重新计算。该字段仍不是完整 GC plan 或删除许可。
