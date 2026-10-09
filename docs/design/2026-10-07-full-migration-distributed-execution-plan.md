@@ -359,3 +359,17 @@ adoption/GC 的完整写入边界及提交后清理排他仍待完成。
 合同覆盖拒绝后不写入/不返回租约、控制和回报可收敛、多个 payload 范围不遗漏。
 该项不替代 effect grant 验证，也未关闭 guest/node/adoption/GC 原始操作记录与
 完整删除后清理流程的剩余边界。
+
+### 2026-10-09：NodeOperation 原始写入与删除提交
+
+NodeOperation 的原始 Create/CAS 在 authority 排他内检查维护范围，已有终态
+完成仍可收敛。文件锁序为 authority→operation（API compound 外层仍先持
+records），Postgres 在 node 行前锁 authority，SQLite 使用现有写事务。
+文件 dispatch 改用 CreateFilesystemDispatchUnderAuthority，旧名称移除，避免
+在已经持有 authority 的事务内重复加锁。
+
+删除事务读取完整 node registry，按 Topology 匹配，预检和提交共享有效完成时间
+与终态判断。合同覆盖冻结拒绝、完成收敛、无关已知 UID 放行、未知生命周期拒绝、
+晚到 node 阻挡删除，以及仅持 authority 时发布等待且超时无残留。
+这是 NodeOperation aggregate 的存储边界，不代表 adoption/SSH 全功能验收；
+guest execution/file 原始记录与删除后清理恢复流程仍待接入。

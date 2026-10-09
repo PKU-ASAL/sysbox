@@ -40,6 +40,15 @@ func checkLocalDeleteActivity(ctx context.Context, store *localAPIStore, topolog
 			return deleteActivityConflict("console session")
 		}
 	}
+	ops, err := persistence.NewFilesystemNodeOperationRepository(store.runsDir).List(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, op := range ops {
+		if op.Topology == topology && persistence.NodeOperationUnresolved(op) {
+			return deleteActivityConflict("node operation")
+		}
+	}
 	// records() does not reacquire the record lock already held by deletion.
 	commands, err := (localCommandStorage{store: store}).records(ctx, "")
 	if err != nil {
@@ -74,6 +83,17 @@ func checkDeleteActivityRows(rows deleteActivityRows, kind, topology string) err
 			if run.Topology == topology && runActivityUnresolved(*run) {
 				return deleteActivityConflict(kind)
 			}
+		} else if kind == "node" {
+			op, err := persistence.DecodeNodeOperation(raw)
+			if err != nil {
+				return err
+			}
+			if op.ID != id {
+				return persistence.ErrCorruptRecord
+			}
+			if op.Topology == topology && persistence.NodeOperationUnresolved(*op) {
+				return deleteActivityConflict("node operation")
+			}
 		} else {
 			sess, err := decodeConsoleRecord(id, raw)
 			if err != nil {
@@ -91,6 +111,7 @@ func checkSQLiteDeleteActivity(ctx context.Context, conn *sql.Conn, topology, ui
 	for _, query := range []struct{ kind, sql string }{
 		{"run", "SELECT " + sqliteRunColumns + " FROM sysbox_runs WHERE rowid IN (SELECT max(rowid) FROM sysbox_runs GROUP BY id)"},
 		{"console", "SELECT id,data FROM sysbox_console_sessions"},
+		{"node", "SELECT id,data FROM sysbox_node_operations"},
 	} {
 		rows, err := conn.QueryContext(ctx, query.sql)
 		if err != nil {
@@ -138,6 +159,7 @@ func checkPostgresDeleteActivity(ctx context.Context, tx pgx.Tx, topology, uid s
 	for _, query := range []struct{ kind, sql string }{
 		{"run", "SELECT id,data::text FROM sysbox_runs"},
 		{"console", "SELECT id,data::text FROM sysbox_console_sessions"},
+		{"node", "SELECT id,data::text FROM sysbox_node_operations"},
 	} {
 		rows, err := tx.Query(ctx, query.sql)
 		if err != nil {

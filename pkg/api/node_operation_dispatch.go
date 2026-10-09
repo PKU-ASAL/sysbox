@@ -30,7 +30,7 @@ func (s *localAPIStore) CreateNodeOperationDispatch(ctx context.Context, op cont
 		if err := persistence.ValidateMaintenanceWrite(raw, cmd.TopologyUID); err != nil {
 			return nil, err
 		}
-		return nil, repo.CreateFilesystemDispatch(ctx, op, cmd)
+		return nil, repo.CreateFilesystemDispatchUnderAuthority(ctx, op, cmd)
 	})
 }
 func (s *sqliteAPIStore) CreateNodeOperationDispatch(ctx context.Context, op controlplane.NodeOperation, cmd controlplane.AgentCommand) error {

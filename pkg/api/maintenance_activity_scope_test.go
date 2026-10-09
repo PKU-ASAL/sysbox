@@ -15,6 +15,8 @@ func TestRestoreWaitsForTopologyActivityAcrossWorkspaceNames(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
+		// Give the unrelated topology its own real identity before freezing lab.
+		grantTestTopologyUID(t, s, "other-topology")
 		repo, err := s.actionRepository("lab")
 		require.NoError(t, err)
 		snapshot, err := repo.StateBackend("lab").(state.SnapshotBackend).Snapshot(ctx, "before")

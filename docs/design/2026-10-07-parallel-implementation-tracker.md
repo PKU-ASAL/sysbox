@@ -527,3 +527,9 @@ JSON 一致性检查，拒绝预检后记录损坏。Run未知状态/缺失或�
 payload 都检查。文件持锁延伸至 authority，SQL沿用原事务边界。恢复 fixture先
 建立真实 lifecycle，再受理命令；没有放宽未知身份规则。其他操作 registry 与
 删除后清理的恢复流程仍未完成。
+
+2026-10-09 node 原始记录边界：Create/CAS 持 authority 至记录提交，冻结期间
+拒绝新活跃状态，允许已有终态收敛；文件 compound dispatch 明确使用已持锁
+入口，SQL借用原写事务。删除提交检查完整 node registry，跨 workspace 不遗漏。
+仅持文件 authority 也能阻挡 raw node 写入，超时无残留。guest execution/file
+与完整删除后清理仍未关闭，不代表 adoption/SSH 能力迁移已完成。

@@ -80,6 +80,11 @@ func (b *sqliteGuestRecords) update(ctx context.Context, kind guestKind, id stri
 		return err
 	}
 	if next != nil {
+		if kind == nodeOperationKind {
+			if err := checkSQLiteNodeMaintenance(ctx, conn, raw, next); err != nil {
+				return err
+			}
+		}
 		_, err = conn.ExecContext(ctx, "INSERT INTO "+string(kind)+" (id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", id, next)
 		if err != nil {
 			return err
@@ -125,6 +130,13 @@ func (b *postgresGuestRecords) update(ctx context.Context, kind guestKind, id st
 		defer cancel()
 		_ = tx.Rollback(cleanup)
 	}()
+	var authority []byte
+	if kind == nodeOperationKind {
+		authority, err = lockNodeAuthority(ctx, tx)
+		if err != nil {
+			return err
+		}
+	}
 	// Inserting a private transaction-local placeholder locks even a missing
 	// key. Concurrent creators wait and then validate the winner's full record.
 	tag, err := tx.Exec(ctx, "INSERT INTO "+string(kind)+" (id,data) VALUES ($1,'{}'::jsonb) ON CONFLICT(id) DO NOTHING", id)
@@ -143,6 +155,11 @@ func (b *postgresGuestRecords) update(ctx context.Context, kind guestKind, id st
 		return err
 	}
 	if next != nil {
+		if kind == nodeOperationKind {
+			if err := checkPostgresNodeMaintenance(ctx, tx, authority, raw, next); err != nil {
+				return err
+			}
+		}
 		_, err = tx.Exec(ctx, "UPDATE "+string(kind)+" SET data=$1::jsonb,updated_at=now() WHERE id=$2", string(next), id)
 		if err != nil {
 			return err

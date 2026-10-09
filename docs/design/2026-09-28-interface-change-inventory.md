@@ -817,3 +817,10 @@ PrepareAgentCommandDelivery 现在在同一存储事务内核对维护屏障，�
 ErrConflict 且不发布命令/租约/派发状态。完成和未扩展租约的执行回报仍可提交；
 取消、退休、inventory、run_recovery observe 保留，recover 不豁免。名称只用于
 定位冻结范围，不补 UID。Wire/schema 不变；签发执行 grant 仍有独立验证。
+
+实施补充（2026-10-09 node registry）：原始 NodeOperation Create/CAS 在维护
+屏障内提交，冻结或未知归属冲突返回 ErrConflict，已有终态回报可收敛。
+metadata 删除在提交事务内重查 node 记录，有效结束时间才作为终态证据。
+内部文件方法改名为 CreateFilesystemDispatchUnderAuthority，要求调用方持
+records/authority，旧名称不保留。SQL repository 继续借用完整 API metadata
+schema/pool。公开路由和持久格式不变，此项不替代宿主执行/停止证明。

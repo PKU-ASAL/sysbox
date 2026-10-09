@@ -87,6 +87,13 @@ func (b *fileGuestRecords) list(ctx context.Context, kind guestKind) ([]guestRaw
 	return out, nil
 }
 func (b *fileGuestRecords) update(ctx context.Context, kind guestKind, id string, fn func([]byte) ([]byte, error)) error {
+	if kind == nodeOperationKind {
+		return b.updateNode(ctx, id, fn)
+	}
+	return b.updateRecord(ctx, kind, id, fn)
+}
+
+func (b *fileGuestRecords) updateRecord(ctx context.Context, kind guestKind, id string, fn func([]byte) ([]byte, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

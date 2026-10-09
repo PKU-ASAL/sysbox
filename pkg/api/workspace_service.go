@@ -575,7 +575,7 @@ func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology
 			return err
 		}
 		for _, op := range ops {
-			if op.Topology == topology && (op.CreatedAt.IsZero() || op.EndedAt.IsZero() || (op.Status != controlplane.NodeOperationStatusDone && op.Status != controlplane.NodeOperationStatusFailed)) {
+			if op.Topology == topology && persistence.NodeOperationUnresolved(op) {
 				return fmt.Errorf("%w: active node operation prevents state maintenance", persistence.ErrConflict)
 			}
 		}

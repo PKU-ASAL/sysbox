@@ -25,15 +25,18 @@ func EncodeNodeOperationDispatch(op controlplane.NodeOperation, cmd controlplane
 	return withGuestDispatch(raw, command)
 }
 
-func (r *NodeOperationRepository) CreateFilesystemDispatch(ctx context.Context, op controlplane.NodeOperation, cmd controlplane.AgentCommand) error {
-	if _, ok := r.records.(*fileGuestRecords); !ok {
+// CreateFilesystemDispatchUnderAuthority requires the caller to hold the shared
+// records lock and authority lock through this atomic operation/outbox write.
+func (r *NodeOperationRepository) CreateFilesystemDispatchUnderAuthority(ctx context.Context, op controlplane.NodeOperation, cmd controlplane.AgentCommand) error {
+	storage, ok := r.records.(*fileGuestRecords)
+	if !ok {
 		return ErrInvalidRecord
 	}
 	raw, err := EncodeNodeOperationDispatch(op, cmd)
 	if err != nil {
 		return err
 	}
-	return r.records.update(ctx, nodeOperationKind, op.ID, func(current []byte) ([]byte, error) {
+	return storage.updateRecord(ctx, nodeOperationKind, op.ID, func(current []byte) ([]byte, error) {
 		if current != nil {
 			return nil, ErrConflict
 		}

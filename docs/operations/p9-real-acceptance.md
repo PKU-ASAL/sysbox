@@ -1857,3 +1857,26 @@ Final full Go regression passed with both database variables enabled.
 API/persistence vet, docscheck (53 canonical documents), diff checks and
 independent follow-up review passed. This slice used only a dedicated test
 PostgreSQL instance; retained deployments and resources were not rebuilt.
+
+### NodeOperation maintenance and deletion boundary (2026-10-09)
+
+Raw node Create/CAS hold authority through publication. Active admission into a
+frozen topology is rejected while existing terminal reports may drain. File
+and Postgres lock authority before the operation; SQLite uses its write
+transaction. Compound file dispatch has an explicit under-authority entry point
+to avoid recursive locking. Deletion scans complete node records across
+workspaces and shares its completion-evidence predicate with preflight.
+
+Regressions reproduced raw admission and late-node deletion bypass. Targeted
+race with real PostgreSQL passed (7.314 seconds), including file publication
+blocked by authority alone and no partial record after timeout. Combined
+node/restore race passed (7.612 seconds). Initial API race exposed an unrelated
+topology fixture without lifecycle identity; it now creates a real distinct
+lifecycle before freezing the target, retaining all original restore assertions.
+Persistence race passed (3.652 seconds).
+
+The final full Go suite passed with both database variables enabled. Vet,
+docscheck and independent follow-up review passed. This validates NodeOperation
+aggregate storage, not full adoption/SSH migration. Raw guest execution/file
+records and postcommit cleanup exclusion/recovery remain open. No retained
+deployment or project resources were rebuilt.
