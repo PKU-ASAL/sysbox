@@ -524,9 +524,6 @@ func (s *WorkspaceService) ForceUnlock(ctx context.Context, topology string) err
 		unlock := s.lockAdmission(topology)
 		defer unlock()
 	}
-	if s.loadRuns == nil || s.loadNodeOperations == nil || s.loadGuestActivity == nil {
-		return fmt.Errorf("%w: activity registry unavailable for force-unlock", persistence.ErrConflict)
-	}
 	if err := s.ensureTopologyQuiescent(ctx, topology); err != nil {
 		return err
 	}
@@ -548,6 +545,9 @@ func (s *WorkspaceService) ForceUnlock(ctx context.Context, topology string) err
 // maintenance. A backend lock is only a storage mutex; removing it while an
 // effect holder is alive would create two writers and invalidate fencing.
 func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology string) error {
+	if s.loadRuns == nil || s.loadNodeOperations == nil || s.loadGuestActivity == nil {
+		return fmt.Errorf("%w: complete activity registry required for state maintenance", persistence.ErrConflict)
+	}
 	if s.loadRuns != nil {
 		runs, err := s.loadRuns(ctx)
 		if err != nil {

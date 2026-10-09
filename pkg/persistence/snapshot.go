@@ -102,7 +102,7 @@ func (b *stateBackend) RestoreSnapshot(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		if restored.State.TopologyUID != a.State.TopologyUID || restored.Serial > a.Serial {
+		if restored.State.TopologyUID != a.State.TopologyUID || restored.State.Lineage != a.State.Lineage || restored.Serial > a.Serial {
 			return ErrConflict
 		}
 		for _, journal := range []map[string]runtime.ActionRecord{a.Actions, restored.Actions} {
@@ -120,6 +120,9 @@ func (b *stateBackend) RestoreSnapshot(ctx context.Context, id string) error {
 			current := a.State.FindResource(resource.Address)
 			if current == nil || current.OwnerUID != resource.OwnerUID || current.ResourceUID != resource.ResourceUID || current.Generation != resource.Generation || current.ExternalID != resource.ExternalID || current.Driver != resource.Driver {
 				return fmt.Errorf("%w: snapshot resource incarnation changed", ErrConflict)
+			}
+			if current.ResourceType != resource.ResourceType || current.SchemaVersion != resource.SchemaVersion {
+				return fmt.Errorf("%w: snapshot resource schema changed", ErrConflict)
 			}
 			if !reflect.DeepEqual(current.Attributes, resource.Attributes) || !reflect.DeepEqual(current.Dependencies, resource.Dependencies) {
 				return fmt.Errorf("%w: changed resource attributes require an observed restore plan", ErrConflict)

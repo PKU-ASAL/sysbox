@@ -648,3 +648,20 @@ This proves authorization serialization for one existing recovery outcome. It
 does not freeze an entire topology across all maintenance operations, transfer
 provider execution ownership, prove an interrupted daemon call stopped, or replace
 the remaining restore/adoption/GC/SSH and distributed fault acceptance gates.
+
+### Snapshot restoration preconditions
+
+State maintenance now requires all three activity loaders (Run, node operation
+and guest activity). Previously force-unlock rejected an incomplete registry,
+but restore could silently omit the missing activity class. Both now fail closed.
+The shared snapshot restore transition also rejects a changed state lineage,
+resource type or resource schema version, in addition to resource ownership,
+generation, external identity and attributes. Restoring older metadata must not
+reinterpret current provider-private data under a historical schema.
+
+Regression tests reproduced all of these missing checks before the fix. File
+and SQLite tests verify that rejected lineage/type/schema restoration changes
+neither resources nor serial; API tests cover each missing activity loader.
+These checks are preconditions, not a complete P6 freeze/revoke/restore protocol:
+concurrent admission across independent controllers and authorized reconciliation
+of a different resource inventory still require implementation and acceptance.

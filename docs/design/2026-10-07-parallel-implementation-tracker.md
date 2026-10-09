@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+P6恢复前置检查补充：restore与force-unlock统一要求Run/node/guest完整活动注册表；
+snapshot恢复拒绝lineage、ResourceType、SchemaVersion变化，避免当前provider私有数据
+被旧schema重新解释。文件/SQLite与API失败回归已补；独立控制进程的冻结/撤销/恢复
+协议及不同资源集合的显式reconcile仍未完成。
+
 2026-10-09恢复metadata提交原子授权：宿主recover现要求绑定command租约与Run身份的
 repository；文件共同锁、SQLite/Postgres同事务校验command/Agent/Run后，复用共享CAS
 提交journal/state。真实独立Postgres与文件/SQLite的退休、过期、禁用Agent、活动后继等

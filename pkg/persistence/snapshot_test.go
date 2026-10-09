@@ -83,3 +83,50 @@ func TestSnapshotRejectsCorruptionUnresolvedWorkAndDifferentLineage(t *testing.T
 	require.ErrorIs(t, backend.RestoreSnapshot(ctx, snap.ID), ErrCorruptRecord)
 	require.ErrorIs(t, backend.DeleteSnapshot(ctx, "unknown"), ErrNotFound)
 }
+
+func TestSnapshotRestoreRejectsChangedInterpretation(t *testing.T) {
+	for _, kind := range []string{"file", "sqlite"} {
+		for _, field := range []string{"lineage", "schema", "resource_type"} {
+			t.Run(kind+"/"+field, func(t *testing.T) {
+				ctx := context.Background()
+				var repo *Repository
+				var err error
+				if kind == "file" {
+					repo, err = OpenFilesystem(t.TempDir())
+				} else {
+					repo, err = OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+				}
+				require.NoError(t, err)
+				defer repo.Close()
+				manager := state.NewManagerWithBackend(repo.StateBackend("lab"))
+				current, err := manager.Load()
+				require.NoError(t, err)
+				current.Lineage = "original"
+				current.Resources = []state.Resource{{Address: address.Resource("sysbox_node", "web"), ResourceType: "sysbox_node", SchemaVersion: 1, Driver: "docker", OwnerUID: current.TopologyUID, ResourceUID: "node", Generation: 1, ExternalID: "container"}}
+				require.NoError(t, manager.Save(current))
+				snapshot, err := manager.Snapshot(ctx, "before")
+				require.NoError(t, err)
+				current, err = manager.Load()
+				require.NoError(t, err)
+				switch field {
+				case "lineage":
+					current.Lineage = "different"
+				case "schema":
+					current.Resources[0].SchemaVersion++
+				case "resource_type":
+					current.Resources[0].ResourceType = "other"
+				}
+				require.NoError(t, manager.Save(current))
+				before, err := manager.Load()
+				require.NoError(t, err)
+				err = manager.Backend().(state.SnapshotBackend).RestoreSnapshot(ctx, snapshot.ID)
+				require.ErrorIs(t, err, ErrConflict)
+				after, err := manager.Load()
+				require.NoError(t, err)
+				require.Equal(t, before.Lineage, after.Lineage)
+				require.Equal(t, before.Meta.Serial, after.Meta.Serial)
+				require.Equal(t, before.Resources, after.Resources)
+			})
+		}
+	}
+}
