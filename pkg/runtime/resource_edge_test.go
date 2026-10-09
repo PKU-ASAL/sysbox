@@ -2,8 +2,11 @@ package runtime
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"golang.org/x/crypto/ssh"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -163,11 +166,14 @@ func TestFirewallResourceHandlerPlanDiff(t *testing.T) {
 }
 
 func TestSSHAccessResourceHandlerPlanDiff(t *testing.T) {
+	public, err := ssh.NewPublicKey(ed25519.PublicKey(make([]byte, ed25519.PublicKeySize)))
+	require.NoError(t, err)
+	key := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(public)))
 	n := &graph.Node{
 		Address: address.Resource("sysbox_ssh_access", "admin"),
 		Data: &config.SSHAccessConfig{
 			Node:           "sysbox_node.web.id",
-			AuthorizedKeys: []string{"ssh-ed25519 old"},
+			AuthorizedKeys: []string{key + " old"},
 			Port:           22,
 		},
 	}
@@ -182,7 +188,7 @@ func TestSSHAccessResourceHandlerPlanDiff(t *testing.T) {
 
 	n.Data = &config.SSHAccessConfig{
 		Node:           "sysbox_node.web.id",
-		AuthorizedKeys: []string{"ssh-ed25519 new"},
+		AuthorizedKeys: []string{key + " new"},
 		Port:           22,
 	}
 	action, err = p.PlanDiff(n, current)

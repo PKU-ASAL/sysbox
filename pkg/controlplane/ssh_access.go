@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/crypto/ssh"
 	"net"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // SSHAccessRequest is the managed configuration contract. It contains public
@@ -35,8 +37,7 @@ func (r SSHAccessRequest) Validate() error {
 	if r.Port < 0 || r.Port > 65535 {
 		return fmt.Errorf("invalid ssh port")
 	}
-	keys := append([]string(nil), r.AuthorizedKeys...)
-	for _, k := range keys {
+	for _, k := range r.AuthorizedKeys {
 		if err := validatePublicSSHKey(k); err != nil {
 			return err
 		}
@@ -45,13 +46,28 @@ func (r SSHAccessRequest) Validate() error {
 }
 func validatePublicSSHKey(key string) error {
 	fields := strings.Fields(key)
-	if len(fields) < 2 {
+	if !utf8.ValidString(key) || len(key) > 16384 || len(fields) < 2 {
 		return fmt.Errorf("invalid ssh public key")
 	}
 	if strings.ContainsAny(key, "\x00\r\n") || strings.HasPrefix(fields[0], "ssh-private") {
 		return fmt.Errorf("invalid ssh public key")
 	}
+	parsed, _, options, rest, err := ssh.ParseAuthorizedKey([]byte(key))
+	if err != nil || len(options) != 0 || len(strings.TrimSpace(string(rest))) != 0 || parsed.Type() != fields[0] {
+		return fmt.Errorf("invalid SSH public key or unsupported authorized-key options")
+	}
 	return nil
+}
+
+// AuthorizedKeysContent uses the same ordering as Digest. A reordered request
+// cannot carry identical authority but install different file bytes.
+func (r SSHAccessRequest) AuthorizedKeysContent() ([]byte, error) {
+	if err := r.Validate(); err != nil {
+		return nil, err
+	}
+	keys := append([]string(nil), r.AuthorizedKeys...)
+	sort.Strings(keys)
+	return []byte(strings.Join(keys, "\n") + "\n"), nil
 }
 func (r SSHAccessRequest) Digest() (string, error) {
 	if err := r.Validate(); err != nil {

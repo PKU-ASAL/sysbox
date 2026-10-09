@@ -83,7 +83,10 @@ func (SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext,
 	if !ok {
 		return state.Resource{}, fmt.Errorf("%w: node has no managed file installer", ErrConvergenceUnsupported)
 	}
-	content := []byte(strings.Join(req.AuthorizedKeys, "\n") + "\n")
+	content, err := req.AuthorizedKeysContent()
+	if err != nil {
+		return state.Resource{}, err
+	}
 	sum := sha256.Sum256(content)
 	digest := hex.EncodeToString(sum[:])
 	tmp, err := os.CreateTemp("", "sysbox-ssh-")

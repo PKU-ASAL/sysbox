@@ -125,7 +125,10 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		if !ok {
 			return nil, fmt.Errorf("ssh access target has no file installer")
 		}
-		data := []byte(strings.Join(req.AuthorizedKeys, "\n") + "\n")
+		data, err := req.AuthorizedKeysContent()
+		if err != nil {
+			return nil, err
+		}
 		tmp, err := os.CreateTemp("", "sysbox-ssh-supervisor-")
 		if err != nil {
 			return nil, err

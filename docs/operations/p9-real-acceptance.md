@@ -893,3 +893,13 @@ real Unix socket contract passes under race detection. These are protocol tests,
 not a complete SSH key lifecycle acceptance. Shared sshd configuration, key
 rotation/removal semantics, grant-bound installation and real end-to-end managed
 SSH access remain required P7 work.
+
+Managed SSH requests now parse actual authorized-key wire data instead of merely
+checking for two whitespace-separated fields. Invalid encodings, mismatched key
+types, multiline input and authorized-key options are rejected; each key line
+is limited to16KiB. Options such as `command=` are outside this public-key-only
+contract. Host/runtime key installation uses one canonical content function with
+the same key ordering as the signed digest, so reordered requests cannot share
+authority yet write different file bytes. Tests use valid encoded public keys
+and cover malformed data/options/type mismatch and nonmutating content ordering.
+This does not implement sshd reload, key rotation or precise owned deletion.

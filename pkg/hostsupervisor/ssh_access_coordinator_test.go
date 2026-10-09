@@ -8,7 +8,9 @@ import (
 	"errors"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,7 +18,9 @@ import (
 func sshFixture(t *testing.T) (*SSHAccessCoordinator, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) {
 	pub, key, e := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, e)
-	req := controlplane.SSHAccessRequest{ID: "access", Topology: "lab", Node: "web", AuthorizedKeys: []string{"ssh-ed25519 AAAA key"}}
+	public, e := ssh.NewPublicKey(pub)
+	require.NoError(t, e)
+	req := controlplane.SSHAccessRequest{ID: "access", Topology: "lab", Node: "web", AuthorizedKeys: []string{strings.TrimSpace(string(ssh.MarshalAuthorizedKey(public)))}}
 	d, e := req.Digest()
 	require.NoError(t, e)
 	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "owner-uid", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: req.ID, CommandID: "command", Attempt: 1, Epoch: 1, Operation: "ssh_access_apply", Digest: d, TargetBootID: "host", State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}
@@ -42,7 +46,7 @@ func TestSSHAccessApplyLostReplyObservesWithoutReapplying(t *testing.T) {
 }
 func TestSSHAccessApplyRejectsChangedKey(t *testing.T) {
 	c, req, g := sshFixture(t)
-	req.AuthorizedKeys = []string{"ssh-ed25519 AAAA changed"}
+	req.AuthorizedKeys = []string{req.AuthorizedKeys[0] + " changed"}
 	_, err := c.Apply(context.Background(), req, g, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{}`), nil })
 	require.Error(t, err)
 	_ = c
