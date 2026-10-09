@@ -395,6 +395,33 @@ func TestManifestMissingDirectoryDoesNotHideOwnedProcess(t *testing.T) {
 	require.Error(t, s.DestroyNode(context.Background(), h))
 }
 
+func TestManifestMissingDirectoryWithExitedUnreapedProcess(t *testing.T) {
+	s, h, _, cmd := manifestFixture(t, true)
+	hs := h.Provider.(*HandleState)
+	hs.PID, hs.PIDStart = cmd.Process.Pid, processStartTime(cmd.Process.Pid)
+	require.NoError(t, cmd.Process.Kill())
+	// Do not Wait: a cold controller cannot reap a different process's child.
+	require.Eventually(t, func() bool { return processIsZombie(cmd.Process.Pid) }, 3*time.Second, time.Millisecond)
+	require.True(t, processAlive(cmd.Process.Pid), "signal zero also succeeds for zombies")
+	require.NoError(t, os.RemoveAll(hs.VMDir))
+	require.NoError(t, os.Remove(hs.Socket))
+	_, err := s.loadManifest(context.Background(), h)
+	require.ErrorIs(t, err, errGenerationAbsent)
+}
+
+func TestMissingManifestProcessRequiresMatchingStartTime(t *testing.T) {
+	for _, start := range []string{"", "not-the-process-start"} {
+		s, h, _, cmd := manifestFixture(t, true)
+		hs := h.Provider.(*HandleState)
+		hs.PID, hs.PIDStart = cmd.Process.Pid, start
+		require.NoError(t, cmd.Process.Kill())
+		require.Eventually(t, func() bool { return processIsZombie(cmd.Process.Pid) }, 3*time.Second, time.Millisecond)
+		require.NoError(t, os.RemoveAll(hs.VMDir))
+		_, err := s.loadManifest(context.Background(), h)
+		require.ErrorContains(t, err, "process identity conflict")
+	}
+}
+
 func TestManifestManagedDiscoveryRetainsGenerationIdentity(t *testing.T) {
 	root := t.TempDir()
 	s := &Substrate{rootfsDir: root}

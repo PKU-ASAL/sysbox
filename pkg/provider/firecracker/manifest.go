@@ -266,8 +266,10 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 	raw, err := readRegularFile(path)
 	if os.IsNotExist(err) {
 		if _, e := os.Lstat(dir); os.IsNotExist(e) {
-			if supplied, _ := h.Provider.(*HandleState); supplied != nil && supplied.PID > 0 && processAlive(supplied.PID) {
-				return nil, fmt.Errorf("firecracker manifest directory missing while process anchor remains live")
+			if supplied, _ := h.Provider.(*HandleState); supplied != nil && supplied.PID > 0 {
+				if err := confirmMissingManifestProcessExited(supplied); err != nil {
+					return nil, err
+				}
 			}
 			if residue, probeErr := hasLaunchResidue(filepath.Join(dir, "vm_config.json")); probeErr != nil {
 				return nil, probeErr
@@ -557,4 +559,28 @@ func signalManifestProcess(m *vmManifest, signal syscall.Signal) error {
 		return err
 	}
 	return nil
+}
+
+// A missing manifest supplies only PID/start time. Fail closed for living or
+// mismatched processes, but a matching zombie has already stopped executing.
+func confirmMissingManifestProcessExited(h *HandleState) error {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", h.PID))
+	if os.IsNotExist(err) || errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	end := strings.LastIndexByte(string(raw), ')')
+	if end < 0 {
+		return fmt.Errorf("firecracker invalid process stat")
+	}
+	fields := strings.Fields(string(raw[end+1:]))
+	if len(fields) < 20 || h.PIDStart == "" || fields[19] != h.PIDStart {
+		return fmt.Errorf("firecracker missing manifest process identity conflict")
+	}
+	if fields[0] == "Z" || fields[0] == "X" {
+		return nil
+	}
+	return fmt.Errorf("firecracker manifest directory missing while process anchor remains live")
 }
