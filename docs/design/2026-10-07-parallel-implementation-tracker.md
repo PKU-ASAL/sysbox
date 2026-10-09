@@ -604,3 +604,11 @@ host先持久stop-only记录，再核验canonical UID/generation及provider身�
 任务保留真实结果，回报失败后精确重放原回执。host task升级为3并拒绝旧格式，
 guest task2/RPC1/scope2/API13/execution4不变。Run child发现仍未接入，API终态
 提交后若丢失唯一host receipt仍不能自动补authority release；完整P0–P9未关闭。
+
+2026-10-10 后续Run child发现接通：API以同一ledger父授权和保留的源命令核对
+RunRequest digest，将RunID/Topology纳入只取消签名；host按canonical state或原Run
+未完成candidate定位，持久记录保留并验证来源。父Revoke同事务标记未停止child
+为revoked，修复仅在线拒绝而发现接口看不到的问题。父checkpoint/ProveStopped
+比较完整不变身份，允许active→revoked恢复但仍拒绝epoch/parent epoch变化。
+真实Docker子任务缺失记录自动停止、旧Start封闭、仅释放child已通过；这不关闭
+父Run未知intent、持久删除、完整P5–P8和双VM故障矩阵。

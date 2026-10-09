@@ -110,6 +110,74 @@ type signedStopConnection struct {
 
 type rebootedStopConnection struct{ *taskConnection }
 
+func TestRunTaskStopRecoveryUsesSignedRunSource(t *testing.T) {
+	d, req, conn, issuer := taskFixtureWithIssuer(t)
+	g := req.Grant.Grant
+	g.ParentEpoch = 10
+	g.Epoch = 11
+	g.State = controlplane.GrantRevoked
+	proof, err := controlplane.SignRunExecutionCancellation(issuer, g, "parent-run", "lab")
+	require.NoError(t, err)
+	d.Resolve = func(context.Context, TargetRef) (Target, error) {
+		t.Fatal("child must use Run resolver")
+		return Target{}, nil
+	}
+	d.FindRunTaskRef = func(_ context.Context, topology, runID string, scope controlplane.ExecutionScope) (TargetRef, error) {
+		require.Equal(t, "parent-run", runID)
+		require.Equal(t, "lab", topology)
+		require.Equal(t, g.Scope, scope)
+		return TargetRef{Topology: topology, Node: "web", Scope: scope}, nil
+	}
+	d.ResolveRun = func(_ context.Context, ref TargetRef, runID string) (Target, error) {
+		require.Equal(t, "parent-run", runID)
+		return Target{Scope: ref.Scope, AgentID: g.AgentID, NodeID: "node", Connection: conn}, nil
+	}
+	stop := controlplane.GuestTaskStop{Topology: "lab", Cancellation: proof}
+	r, err := d.StopAuthorized(context.Background(), stop)
+	require.NoError(t, err)
+	require.Equal(t, "parent-run", r.RunID)
+	require.Equal(t, "web", r.Ref.Node)
+	require.True(t, r.CancelRequested)
+	require.Zero(t, conn.starts)
+	cold := *d
+	cold.FindRunTaskRef = nil // local recovery uses the persisted logical target
+	conn.result.RemoteTermination = substrate.RemoteTerminationConfirmed
+	require.NoError(t, cold.Recover(context.Background()))
+	completed, err := cold.load(r.Handle)
+	require.NoError(t, err)
+	require.True(t, completed.Reported)
+	require.Equal(t, g.ParentEpoch, completed.StopReceipt.Grant.ParentEpoch)
+	// Parent checkpoints retain the original active credential, while discovery
+	// rebuilt the child from revoked stop-only authority. Identity is unchanged.
+	active := g
+	active.State = controlplane.GrantActive
+	original, err := controlplane.SignExecutionGrant(issuer, active, active.TargetBootID, req.Grant.IssuedAt)
+	require.NoError(t, err)
+	parent := cold
+	parent.RunID = proof.RunID
+	require.NoError(t, recoverCheckpointChild(context.Background(), &parent, runCheckpointChild{Ref: r.Ref, Handle: r.Handle, Grant: original}))
+	admitted := r
+	admitted.Grant = original
+	children := &RunChildren{Dispatcher: &parent, children: map[string]TaskRecord{recordKey(r.Handle): admitted}}
+	require.NoError(t, children.ProveStopped(context.Background()))
+	for _, field := range []string{"epoch", "parent_epoch"} {
+		mismatched := original
+		if field == "epoch" {
+			mismatched.Grant.Epoch++
+		} else {
+			mismatched.Grant.ParentEpoch++
+		}
+		require.Error(t, recoverCheckpointChild(context.Background(), &parent, runCheckpointChild{Ref: r.Ref, Handle: r.Handle, Grant: mismatched}), field)
+		admitted.Grant = mismatched
+		children.children[recordKey(r.Handle)] = admitted
+		require.Error(t, children.ProveStopped(context.Background()), field)
+	}
+	completed.RunID = "foreign-run"
+	require.NoError(t, cold.save(completed))
+	_, err = cold.load(r.Handle)
+	require.ErrorIs(t, err, guesttask.ErrConflict)
+}
+
 func (c *rebootedStopConnection) GuestTaskBootID(context.Context) (string, error) {
 	return "new-guest-boot", nil
 }

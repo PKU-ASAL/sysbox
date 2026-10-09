@@ -203,9 +203,7 @@ func recoverCheckpointChild(ctx context.Context, dispatcher *Dispatcher, child r
 	if err != nil {
 		return err
 	}
-	expected := child.Grant.Grant
-	expected.ExpiresAt = current.Grant.Grant.ExpiresAt
-	if current.RunID != dispatcher.RunID || current.Ref != child.Ref || current.Grant.Grant != expected {
+	if current.RunID != dispatcher.RunID || current.Ref != child.Ref || !sameTaskGrant(current.Grant.Grant, child.Grant.Grant) {
 		return effectgate.ErrFenced
 	}
 	if _, err := dispatcher.cancelLocked(ctx, current); err != nil {

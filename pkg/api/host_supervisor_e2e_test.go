@@ -107,6 +107,8 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 	require.NoError(t, os.Chmod(filepath.Dir(socket), 0700))
 	dispatcher := &hostsupervisor.Dispatcher{Root: root, AgentID: "owner", HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: hostKey, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	dispatcher.PendingStops = authority.PendingGuestTaskStops
+	dispatcher.ResolveRun = resolver.ResolveRunTask
+	dispatcher.FindRunTaskRef = resolver.FindRunTaskRef
 	startSupervisor := func() (context.CancelFunc, chan error) {
 		runCtx, stop := context.WithCancel(ctx)
 		done := make(chan error, 1)
@@ -202,6 +204,8 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 			apiProcess.Store(server)
 			dispatcher = &hostsupervisor.Dispatcher{Root: root, AgentID: "owner", HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: hostKey, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 			dispatcher.PendingStops = authority.PendingGuestTaskStops
+			dispatcher.ResolveRun = resolver.ResolveRunTask
+			dispatcher.FindRunTaskRef = resolver.FindRunTaskRef
 			stop, done = startSupervisor()
 		}
 		var lastResult substrate.ExecResult
@@ -244,5 +248,46 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 		}
 		require.Error(t, authority.Authorize(ctx, grant), "completed epoch must already be retired before successor issuance")
 	}
-	t.Log("real Docker task: host result replay, restart, session loss, successor fencing, and API-discovered missing host/guest task cancellation with late Start rejection verified")
+	// A Run child has no standalone GuestExecution. Its immutable parent source
+	// and canonical node must be sufficient for the same recovery path.
+	ledger := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: server.apiStore})
+	parentRun := controlplane.Run{ID: "parent-run", Topology: "lab", Revision: "revision", Op: "apply", Operation: "apply", AgentID: "owner", Status: controlplane.RunRunning}
+	parentCommand := controlplane.AgentCommand{ID: "parent-command", Type: "run_assigned", AgentID: "owner", TopologyUID: st.TopologyUID, Run: &parentRun, ActionID: "parent-action", Attempt: 1}
+	require.NoError(t, server.apiStore.SaveAgentCommand(ctx, parentCommand))
+	parentRequest := hostsupervisor.RunRequest{RunID: parentRun.ID, Topology: "lab", TopologyUID: st.TopologyUID, Revision: parentRun.Revision, ActionID: parentCommand.ActionID, Action: "apply"}
+	parentDigest, err := parentRequest.Digest()
+	require.NoError(t, err)
+	parent, err := ledger.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: st.TopologyUID}, AgentID: "owner", SessionID: session.ID, CommandID: parentCommand.ID, ActionID: parentCommand.ActionID, Attempt: 1, Operation: "run_apply", Digest: parentDigest, TargetBootID: strings.TrimSpace(string(boot))}, time.Minute)
+	require.NoError(t, err)
+	childTask := guesttask.Request{ID: "missing-run-child", UserID: 65534, Args: []string{"/bin/sh", "-c", "printf must-not-run"}, OutputLimit: 1024}
+	childDigest, err := childTask.Digest()
+	require.NoError(t, err)
+	child, err := ledger.DeriveGuestTask(ctx, *parent, controlplane.ExecutionGrant{Scope: ref.Scope, AgentID: "owner", SessionID: session.ID, CommandID: parentCommand.ID, ActionID: childTask.ID, Attempt: 1, Operation: "guest_task", Digest: childDigest, TargetBootID: guestBoot}, time.Minute)
+	require.NoError(t, err)
+	childGrant, err := controlplane.SignExecutionGrant(issuer, *child, guestBoot, time.Now())
+	require.NoError(t, err)
+	require.NoError(t, ledger.Revoke(ctx, *parent))
+	require.NoError(t, server.apiStore.DeleteAgentCommand(ctx, "owner", parentCommand.ID))
+	require.Eventually(t, func() bool {
+		observed, err := ledger.InspectGrant(ctx, "owner", child.Scope)
+		return err == nil && observed.State == controlplane.GrantStopped
+	}, 5*time.Second, 20*time.Millisecond)
+	heldParent, err := ledger.InspectGrant(ctx, "owner", parent.Scope)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.GrantRevoked, heldParent.State, "child stop cannot manufacture parent completion")
+	target, err := resolver.Resolve(ctx, ref)
+	require.NoError(t, err)
+	guest := transport.NewTaskClient(target.Connection, target.NodeID, ref.Scope.Generation)
+	late, err := guest.Start(transport.WithTaskGrant(ctx, childTask.ID, childGrant), substrate.ExecRequest{Program: childTask.Args[0], Args: childTask.Args[1:], Shell: substrate.ShellNone, OutputLimitBytes: childTask.OutputLimit})
+	require.NoError(t, err)
+	childResult, err := guest.ObserveExecution(ctx, late)
+	require.NoError(t, err)
+	require.Equal(t, substrate.RemoteTerminationConfirmed, childResult.RemoteTermination)
+	require.False(t, childResult.ExitCodeKnown)
+	childOutput, err := guest.ReadExecutionOutput(ctx, late, "stdout", 0, 100)
+	require.NoError(t, err)
+	require.Empty(t, childOutput.Data)
+	output, err = exec.CommandContext(ctx, "docker", "exec", containerID, "test", "!", "-e", "/sys/fs/cgroup/sysbox-tasks/sysbox-task-"+childTask.ID).CombinedOutput()
+	require.NoError(t, err, string(output))
+	t.Log("real Docker task: restart/replay, successor fencing, and missing standalone/Run-child cancellation with late Start rejection verified")
 }

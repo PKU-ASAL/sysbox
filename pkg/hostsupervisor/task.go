@@ -36,14 +36,15 @@ type Target struct {
 type Dispatcher struct {
 	Root, AgentID, HostBootID string
 	// RunID is set only by the trusted parent Run constructor.
-	RunID        string
-	IssuerKey    ed25519.PublicKey
-	HostKey      ed25519.PrivateKey
-	Resolve      func(context.Context, TargetRef) (Target, error)
-	ResolveRun   func(context.Context, TargetRef, string) (Target, error)
-	Authorize    func(context.Context, controlplane.SignedExecutionGrant) error
-	ReportStop   func(context.Context, controlplane.SignedExecutionStopReceipt) error
-	PendingStops func(context.Context, controlplane.GuestTaskStopCursor) (controlplane.GuestTaskStopPage, error)
+	RunID          string
+	IssuerKey      ed25519.PublicKey
+	HostKey        ed25519.PrivateKey
+	Resolve        func(context.Context, TargetRef) (Target, error)
+	ResolveRun     func(context.Context, TargetRef, string) (Target, error)
+	FindRunTaskRef func(context.Context, string, string, controlplane.ExecutionScope) (TargetRef, error)
+	Authorize      func(context.Context, controlplane.SignedExecutionGrant) error
+	ReportStop     func(context.Context, controlplane.SignedExecutionStopReceipt) error
+	PendingStops   func(context.Context, controlplane.GuestTaskStopCursor) (controlplane.GuestTaskStopPage, error)
 }
 type TaskRecord struct {
 	Cancellation    *controlplane.SignedExecutionCancellation `json:"cancellation,omitempty"`
@@ -122,6 +123,9 @@ func (d *Dispatcher) load(h substrate.ExecutionHandle) (TaskRecord, error) {
 	// Historical signatures remain verifiable after expiry; this is record
 	// integrity validation, not authorization to execute or renew the grant.
 	if r.Cancellation != nil && (controlplane.VerifyExecutionCancellation(d.IssuerKey, *r.Cancellation) != nil || !sameTaskGrant(r.Grant.Grant, r.Cancellation.Grant) || !r.CancelRequested) {
+		return r, guesttask.ErrConflict
+	}
+	if r.Cancellation != nil && (r.Cancellation.RunID != r.RunID || (r.RunID != "" && r.Cancellation.Topology != r.Ref.Topology)) {
 		return r, guesttask.ErrConflict
 	}
 	if len(r.Grant.Signature) != 0 {

@@ -330,7 +330,7 @@ setting `cancel_requested`. Previously authorized tasks retain their execution
 state; their remaining grants are revoked and host evidence supplies the result.
 
 `POST /v1/agents/{agent}/guest-task-stops` lets the owning host discover revoked
-standalone guest tasks, using signed Agent authentication. A disabled Agent may
+standalone and Run-derived guest tasks, using signed Agent authentication. A disabled Agent may
 still drain effects; an identity without stored credentials is rejected. The
 JSON cursor contains optional `after_epoch` and `through_epoch`. Start with `{}`;
 continue with the returned `next_epoch` as `after_epoch` and keep the returned
@@ -342,9 +342,17 @@ do not prevent pagination. This route issues no execution authority.
 A reboot stop receipt additionally contains `observed_guest_boot_id`, signed
 alongside the original `guest_boot_id`. The host must first verify canonical
 resource identity. A changed boot proves old-process termination only, so its
-guest result is `unknown` without output or a known exit code. Run children are
-not included in this discovery route. Terminal executions still rely on exact
-host-receipt replay to finish an interrupted authority release.
+guest result is `unknown` without output or a known exit code. Terminal standalone
+executions still rely on exact host-receipt replay to finish an interrupted
+authority release.
+
+For a Run child, the cancellation proof also signs `run_id` and `topology`.
+The API verifies the parent grant and original Run command digest before
+signing. The response leaves `node` empty: the host derives it from trusted
+canonical state or an unfinished candidate belonging to the signed Run. A bad
+parent source yields an issue, not cancellation authority. Parent revocation
+atomically revokes unfinished children; stopped children remain stopped.
+Acknowledging a child stop releases only that child, never the parent Run.
 
 File upload uses the request body as raw binary bytes, `X-Content-SHA256` for
 integrity, and query parameters for the absolute guest `path` and octal `mode`.

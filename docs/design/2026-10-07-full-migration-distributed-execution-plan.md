@@ -458,9 +458,38 @@ execution record_format 3 / API schema 12 显式拒绝旧格式。这里关闭�
 授权已发但宿主记录缺失时，单靠查询不存在不够。先提供guest侧基础：独立
 SignedExecutionCancellation只证明停止权限，不可重新解释成执行授权；在共同
 scope/task锁内排除现有cgroup后持久封闭任务ID，保留epoch与session的防重放边界。
-正常已有任务保持本地离线取消；新缺失记录必须有签名停止凭证。guest record升为2，
-旧格式拒绝，RPC与scope版本不变，嵌入helper同步重建。
 
-后续仍需从API枚举待停止grant、签发凭证，宿主按canonical资源身份定位并持久
-恢复无记录任务，再回报原grant的宿主结果。当前底层和真实guest测试不是该自动
-恢复链路已完成的证明。
+正常已有任务保持本地离线取消；新缺失记录必须有签名停止凭证。guest record升为2，
+旧格式拒绝，RPC与scope版本不变，嵌入helper同步重建。独立guest任务的API发现、
+host无记录收敛已在后续检查点0f1cc41接通；Run子任务扩展如下。
+
+### Run子任务撤销发现：后续实现设计与步骤
+
+目标是关闭已发child grant但host task缺失的恢复窗口，继续沿用已批准的P2–P4
+停止证据协议。API负责核验父授权及其原始Run命令；host负责canonical资源定位；
+guest负责停止及封闭迟到Start。cyberfield不参与这些内部协议。
+
+选择在现有只取消签名中绑定RunID和Topology，复用guest-task-stops分页与宿主
+Dispatcher。仅扩大ParentEpoch过滤会遗漏Run来源证明；另建完整恢复服务则重复
+现有调度、回执和存储路径。父授权缺失、摘要不符或canonical candidate不可用时
+返回issue/unknown，不猜测节点、不重放Start。
+
+- [x] controlplane：SignRunExecutionCancellation绑定子grant、RunID和Topology；
+  对RunID/Topology篡改验证失败，普通签名不允许无父授权的Run来源。
+  先跑`go test ./pkg/controlplane -run TestRunExecutionCancellation -count=1`确认失败，
+  再实现签名字段校验并转绿。
+- [x] API：读取同一authority快照中的父grant，核对epoch、session、command、attempt、
+  topology；从保留的run_assigned命令重建RunRequest.Digest并匹配父grant。
+  retired命令仍可发现；wrong digest输出issue，不签证明。与独立任务共用固定上界。
+  使用三后端`TestRunTaskStopDiscovery`覆盖退休源与错误父来源。
+- [x] host：增加FindRunTaskRef回调，按签名RunID、Topology、scope定位逻辑节点；
+  stop-only记录持久RunID，load重验签名路由，再用ResolveRun核验真实provider。
+  `TestRunTaskStopRecovery`覆盖缺失任务、冷重启、错误Run候选及迟到Start拒绝。
+- [x] 接通生产回调，重建两架构helper；运行受影响包race、真实Postgres和Docker
+  host验收，复审并更新接口/进度/验收记录。此子任务不关闭父Run未知intent、删除
+  工作流或完整P9矩阵。
+
+验证记录：2026-10-10全仓race在独立Postgres16启用下通过，真实Docker child发现/
+封闭迟到Start通过，canonical未完成candidate与错误Run拒绝回归通过。另修复父
+Revoke未持久撤销children，以及父checkpoint停止证明误把active→revoked视作
+身份变化的问题。两者均先有失败测试再修复；完整不变身份仍含epoch与parent epoch。

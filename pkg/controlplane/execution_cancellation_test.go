@@ -30,3 +30,23 @@ func TestExecutionCancellationCannotAuthorizeStart(t *testing.T) {
 	_, err = SignExecutionCancellation(key, changed.Grant)
 	require.Error(t, err)
 }
+
+func TestRunExecutionCancellationBindsSource(t *testing.T) {
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	g := ExecutionGrant{Scope: ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1}, AgentID: "agent", SessionID: "session", CommandID: "command", ActionID: "task", Attempt: 1, Epoch: 2, ParentEpoch: 1, Operation: "guest_task", Digest: "digest", TargetBootID: "guest", State: GrantRevoked, ExpiresAt: time.Now()}
+	proof, err := SignRunExecutionCancellation(key, g, "run", "lab")
+	require.NoError(t, err)
+	require.NoError(t, VerifyExecutionCancellation(pub, proof))
+	changed := proof
+	changed.RunID = "other"
+	require.Error(t, VerifyExecutionCancellation(pub, changed))
+	changed = proof
+	changed.Topology = "other"
+	require.Error(t, VerifyExecutionCancellation(pub, changed))
+	_, err = SignRunExecutionCancellation(key, g, "../run", "lab")
+	require.Error(t, err)
+	g.ParentEpoch = 0
+	_, err = SignRunExecutionCancellation(key, g, "run", "lab")
+	require.Error(t, err)
+}

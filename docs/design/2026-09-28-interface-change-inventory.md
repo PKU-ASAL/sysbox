@@ -884,3 +884,10 @@ cursor为after_epoch/through_epoch；响应stops/issues/next_epoch/through_epoch
 host task2→3，支持先落盘stop-only authority；无兼容读取，旧数据明确重建。
 SignedExecutionStopReceipt新增observed_guest_boot_id，绑定已核验资源的新boot，
 结果仅unknown；guest task2/RPC1/scope2/API13/execution4不变。
+
+实施补充（2026-10-10 Run child撤销发现）：guest-task-stops现在包含Run派生任务。
+SignedExecutionCancellation新增签名run_id/topology，API先核验parent epoch、
+session/command/attempt及原RunRequest digest。Run child条目node为空，由宿主
+FindRunTaskRef从canonical state/原Run candidate定位，不接收worker provider地址。
+Parent Revoke同事务撤销未停止children；child回报不生成独立execution或父Run终态。
+host task3/guest task2格式不变，guest helper必须更新以验证新增签名字段；无降级回退。

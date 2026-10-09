@@ -2076,3 +2076,39 @@ task discovery is still open. A terminal API result with complete loss of its
 original host receipt still cannot automatically finish authority release.
 Persistent deletion, remaining P5–P8 capabilities and full two-VM P9 fault
 acceptance remain required; this entry does not close the overall plan.
+
+### 2026-10-10 — Run-derived missing-task discovery
+
+Discovery now includes revoked Run children. The API verifies the original
+parent epoch, owner/session/command/attempt and immutable Run request digest,
+including a retired command whose delivery lease has advanced. Its stop-only
+signature binds the Run ID and topology. The host derives the node from
+canonical state or that Run's unfinished candidate, and persists/verifies Run
+provenance with its task record. Wrong-Run candidates do not reach a provider
+connection. Parent revocation now atomically marks unfinished children revoked;
+online rejection alone had left them invisible to the discovery scan.
+
+Parent checkpoint recovery and `ProveStopped` accept the revoked reconstruction
+of an originally active child, while still comparing every immutable identity
+field and requiring an acknowledged, valid host receipt. RED/GREEN regressions
+cover both comparisons; explicit epoch/parent-epoch changes remain rejected.
+Child stop still cannot create a parent Run terminal result.
+
+Real Docker host E2E passed (6.42s test / 7.445s package), including no child
+Start, API discovery from the retired parent command, signed guest tombstone,
+stopped child grant, still-revoked parent and late original Start without output
+or cgroup. An initial test fixture omitted the non-root task UID, causing a
+digest mismatch on replay; the fixture was corrected to match production UID
+65534 and the successful retry verified the intended tombstone behavior.
+
+Full `go test -race ./... -count=1 -timeout=8m` passed with a fresh isolated
+PostgreSQL 16 instance (API 105.152s, hostsupervisor 17.944s). Both embedded
+helpers were rebuilt. Vet, all-package e2e-tag compilation, docscheck and
+independent read-only review passed. Tests covered actual canonical candidate
+selection, original source after re-lease, wrong parent digest, cold recovery
+and altered provenance. No new two-VM fault-matrix pass is claimed here.
+
+Host task3/guest task2/RPC1/scope2/API13/execution4 remain current. Updated guest
+helpers are mandatory for the Run-bound cancellation fields. Persistent
+deletion, unknown parent Run intent, terminal-result/host-receipt total-loss
+recovery and the remaining P0–P9 capability/fault acceptance work remain open.

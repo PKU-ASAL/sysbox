@@ -115,6 +115,29 @@ func TestResolveRunTaskVerifiesPersistedCandidateBeforeConnecting(t *testing.T) 
 	require.NoError(t, cold.save(record))
 	_, err = cold.Observe(ctx, ref, record.Handle)
 	require.Error(t, err, "derived records must retain trusted Run provenance")
+
+	// API discovery must also work with no task record and only an unfinished
+	// canonical node candidate. It may not borrow a different Run's candidate.
+	cold.Root = t.TempDir()
+	require.NoError(t, os.Chmod(cold.Root, 0700))
+	cold.FindRunTaskRef = r.FindRunTaskRef
+	g := req.Grant.Grant
+	g.State = controlplane.GrantRevoked
+	wrong, err := controlplane.SignRunExecutionCancellation(issuer, g, "foreign-run", "lab")
+	require.NoError(t, err)
+	connections := node.connections
+	_, err = cold.StopAuthorized(ctx, controlplane.GuestTaskStop{Topology: "lab", Cancellation: wrong})
+	require.Error(t, err)
+	require.Equal(t, connections, node.connections)
+	proof, err := controlplane.SignRunExecutionCancellation(issuer, g, "run", "lab")
+	require.NoError(t, err)
+	conn.result.RemoteTermination = substrate.RemoteTerminationConfirmed
+	recovered, err := cold.StopAuthorized(ctx, controlplane.GuestTaskStop{Topology: "lab", Cancellation: proof})
+	require.NoError(t, err)
+	require.True(t, recovered.Reported)
+	require.Equal(t, "actual-node", recovered.ProviderNodeID)
+	require.Equal(t, "web", recovered.Ref.Node)
+	require.Equal(t, 1, conn.starts)
 }
 
 func TestRunTaskResourceSelection(t *testing.T) {

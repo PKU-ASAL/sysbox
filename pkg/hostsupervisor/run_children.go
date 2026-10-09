@@ -120,11 +120,9 @@ func (r *RunChildren) ProveStopped(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("child %s stop evidence: %w", admitted.Handle.ID, err)
 		}
-		// Renewal may extend expiry, but cannot change the admitted authority
-		// identity (including command, attempt, session, and parent epoch).
-		original := admitted.Grant.Grant
-		original.ExpiresAt = current.Grant.Grant.ExpiresAt
-		if current.RunID != admitted.RunID || current.RunID != r.Dispatcher.RunID || current.Ref != admitted.Ref || current.Grant.Grant != original {
+		// Renewal and stop-only reconstruction may change expiry/state, but
+		// never command, attempt, session, epoch or parent identity.
+		if current.RunID != admitted.RunID || current.RunID != r.Dispatcher.RunID || current.Ref != admitted.Ref || !sameTaskGrant(current.Grant.Grant, admitted.Grant.Grant) {
 			return fmt.Errorf("child %s parent identity changed", admitted.Handle.ID)
 		}
 		if current.StopReceipt == nil || !current.Reported {

@@ -439,6 +439,14 @@ func (r *ExecutionGrantRepository) Revoke(ctx context.Context, proof controlplan
 		}
 		g.State = controlplane.GrantRevoked
 		a.Grants[grantScopeKey(g.Scope)] = g
+		// Discovery consumes durable revoked state, not merely the online
+		// rejection inherited from a revoked parent. Publish both atomically.
+		for key, child := range a.Grants {
+			if child.ParentEpoch == g.Epoch && child.State != controlplane.GrantStopped {
+				child.State = controlplane.GrantRevoked
+				a.Grants[key] = child
+			}
+		}
 		return nil
 	})
 }

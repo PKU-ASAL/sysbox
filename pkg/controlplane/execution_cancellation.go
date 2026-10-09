@@ -3,6 +3,7 @@ package controlplane
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"strings"
 )
 
 // SignedExecutionCancellation grants only the right to stop one issued epoch.
@@ -10,6 +11,8 @@ import (
 // are immutable, and no start/renew path accepts this signature domain.
 type SignedExecutionCancellation struct {
 	Grant     ExecutionGrant `json:"grant"`
+	RunID     string         `json:"run_id,omitempty"`
+	Topology  string         `json:"topology,omitempty"`
 	Signature []byte         `json:"signature"`
 }
 
@@ -22,10 +25,29 @@ func cancellationMessage(s SignedExecutionCancellation) ([]byte, error) {
 	return append([]byte("sysbox.execution-cancel.v1\x00"), raw...), err
 }
 func SignExecutionCancellation(key ed25519.PrivateKey, g ExecutionGrant) (SignedExecutionCancellation, error) {
-	if len(key) != ed25519.PrivateKeySize || !validExecutionCancellation(g) {
+	return signExecutionCancellation(key, SignedExecutionCancellation{Grant: g})
+}
+
+// SignRunExecutionCancellation binds trusted recovery routing to a child grant.
+// The issuer must first verify the immutable source command and parent grant.
+func SignRunExecutionCancellation(key ed25519.PrivateKey, g ExecutionGrant, runID, topology string) (SignedExecutionCancellation, error) {
+	if runID == "" || topology == "" || g.ParentEpoch == 0 {
 		return SignedExecutionCancellation{}, ErrInvalidExecutionGrant
 	}
-	s := SignedExecutionCancellation{Grant: g}
+	return signExecutionCancellation(key, SignedExecutionCancellation{Grant: g, RunID: runID, Topology: topology})
+}
+
+func validCancellationSource(s SignedExecutionCancellation) bool {
+	if s.RunID == "" && s.Topology == "" {
+		return true
+	}
+	return s.Grant.ParentEpoch != 0 && s.RunID != "" && s.Topology != "" && s.RunID != "." && s.RunID != ".." && s.Topology != "." && s.Topology != ".." && !strings.ContainsAny(s.RunID+s.Topology, "/\\\x00")
+}
+
+func signExecutionCancellation(key ed25519.PrivateKey, s SignedExecutionCancellation) (SignedExecutionCancellation, error) {
+	if len(key) != ed25519.PrivateKeySize || !validExecutionCancellation(s.Grant) || !validCancellationSource(s) {
+		return SignedExecutionCancellation{}, ErrInvalidExecutionGrant
+	}
 	raw, err := cancellationMessage(s)
 	if err != nil {
 		return s, err
@@ -34,7 +56,7 @@ func SignExecutionCancellation(key ed25519.PrivateKey, g ExecutionGrant) (Signed
 	return s, nil
 }
 func VerifyExecutionCancellation(key ed25519.PublicKey, s SignedExecutionCancellation) error {
-	if len(key) != ed25519.PublicKeySize || !validExecutionCancellation(s.Grant) {
+	if len(key) != ed25519.PublicKeySize || !validExecutionCancellation(s.Grant) || !validCancellationSource(s) {
 		return ErrInvalidExecutionGrant
 	}
 	raw, err := cancellationMessage(s)

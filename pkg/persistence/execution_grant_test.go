@@ -27,6 +27,28 @@ func TestGrantClockRollbackCannotReviveExpiredAuthority(t *testing.T) {
 	require.ErrorIs(t, r.Authorize(ctx, *g), ErrConflict)
 }
 
+func TestRevokingRunDurablyRevokesChildren(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	r := NewFilesystemExecutionGrantRepository(root)
+	session, err := r.OpenSession(ctx, "agent", "boot", "")
+	require.NoError(t, err)
+	parent, err := r.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology"}, AgentID: "agent", SessionID: session.ID, CommandID: "command", ActionID: "run", Attempt: 1, Operation: "run_apply", Digest: "parent", TargetBootID: "host"}, time.Minute)
+	require.NoError(t, err)
+	child, err := r.DeriveGuestTask(ctx, *parent, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1}, AgentID: "agent", SessionID: session.ID, CommandID: "command", ActionID: "task", Attempt: 1, Operation: "guest_task", Digest: "child", TargetBootID: "guest"}, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, r.Revoke(ctx, *parent))
+	cold := NewFilesystemExecutionGrantRepository(root)
+	stored, err := cold.InspectGrant(ctx, "agent", child.Scope)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.GrantRevoked, stored.State, "discovery must not depend on a later child authorize call")
+	require.NoError(t, cold.AcceptHostStop(ctx, *child, "child-receipt"))
+	require.NoError(t, cold.Revoke(ctx, *parent))
+	stored, err = cold.InspectGrant(ctx, "agent", child.Scope)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.GrantStopped, stored.State, "retry cannot reopen a stopped child")
+}
+
 func TestSQLiteGrantAuthoritySurvivesRepositoryRestart(t *testing.T) {
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "grants.db"))
 	require.NoError(t, err)

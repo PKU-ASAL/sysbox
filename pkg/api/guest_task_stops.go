@@ -46,8 +46,12 @@ func (s *Server) handleGuestTaskStops(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	candidates := make([]controlplane.ExecutionGrant, 0)
+	parents := make(map[uint64]controlplane.ExecutionGrant)
 	for _, g := range grants {
-		if g.AgentID == id && g.State == controlplane.GrantRevoked && g.Operation == "guest_task" && g.ParentEpoch == 0 && g.Epoch > cursor.AfterEpoch && g.Epoch <= ceiling {
+		if g.AgentID == id && g.ParentEpoch == 0 && (g.Operation == "run_apply" || g.Operation == "run_destroy") {
+			parents[g.Epoch] = g
+		}
+		if g.AgentID == id && g.State == controlplane.GrantRevoked && g.Operation == "guest_task" && g.Epoch > cursor.AfterEpoch && g.Epoch <= ceiling {
 			candidates = append(candidates, g)
 		}
 	}
@@ -61,6 +65,15 @@ func (s *Server) handleGuestTaskStops(w http.ResponseWriter, r *http.Request) {
 		if err := r.Context().Err(); err != nil {
 			writeError(w, 500, err)
 			return
+		}
+		if g.ParentEpoch != 0 {
+			stop, err := s.runTaskStop(r.Context(), g, parents[g.ParentEpoch])
+			if err != nil {
+				page.Issues = append(page.Issues, controlplane.GuestTaskStopIssue{Epoch: g.Epoch, ActionID: g.ActionID})
+			} else {
+				page.Stops = append(page.Stops, stop)
+			}
+			continue
 		}
 		x, err := s.apiStore.GetGuestExecution(r.Context(), g.ActionID)
 		if err != nil || x.AgentID != id || x.CommandID != g.CommandID || validatePathSegment(x.Topology, "topology") != nil || validatePathSegment(x.Node, "node") != nil {

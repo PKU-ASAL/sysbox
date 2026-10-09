@@ -166,7 +166,7 @@ corrupt records, dangling record references and missing records for other tasks
 remain unresolved. Cancellation of an already owned task still works offline
 without requesting new authority.
 
-The host supervisor discovers revoked standalone tasks through the signed Agent
+The host supervisor discovers revoked standalone and Run-derived tasks through the signed Agent
 route `POST /v1/agents/{agent}/guest-task-stops`. Each pass has a fixed epoch
 ceiling and pages of at most 64 entries. Invalid source records are reported as
 issues without blocking later entries. Disabled Agents can drain their own
@@ -183,9 +183,19 @@ binds both boots and confirms the old process has stopped with an unknown exit
 result. It does not cancel a task in the new boot. An unavailable resource or an
 unreadable boot is still unknown, not evidence of termination.
 
-Discovery currently excludes Run-derived tasks. After the API has committed a
-terminal result, authority-release recovery depends on the original durable
-host receipt; complete loss of that receipt is not automatically repaired.
+For Run-derived tasks, the API checks the original parent grant and immutable
+Run command, including retired or re-leased dispatch records. The cancellation
+signature binds `run_id` and `topology`. The host derives the node from that
+Run's canonical state or unfinished resource candidate; it never accepts a
+worker-supplied provider endpoint. A missing or conflicting candidate remains
+unresolved. Revoking a parent persists revocation of its unfinished children
+in the same authority transaction. A child stop does not complete the parent
+Run; parent recovery still requires its own execution evidence.
+
+After the API has committed a standalone terminal result, authority-release
+recovery depends on the original durable host receipt; complete loss of that
+receipt is not automatically repaired. Updated helpers are required for the
+Run-bound cancellation signature; there is no unsigned fallback.
 
 Run `make test-host-file-e2e` for the actual API/host/Docker installation test,
 including lost stop acknowledgment, cold recovery, checksum/mode and revoked
