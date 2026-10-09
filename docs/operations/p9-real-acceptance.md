@@ -2141,3 +2141,22 @@ placement, or health cleanup, the next Delete or supervisor scan resumes the
 cleanup and removes the intent only after all local metadata cleanup succeeds.
 The intent is created only after the existing destroy receipt/activity checks, so
 recovery never invents provider quiescence or contacts a provider.
+
+### 2026-10-10 — full real-provider gate rerun
+
+With the configured Firecracker binary, kernel
+`/home/jiandong/.cache/sysbox/artifacts/local/vmlinux-5.10.245`, and rootfs
+`/home/jiandong/.cache/sysbox/rootfs/ubuntu-24.04.ext4`,
+`SYSBOX_FIRECRACKER_BIN=... make test-p9-real` passed.
+
+The run covered real Docker file install (3.28s), node power pause/resume
+(2.58s), guest task and Run completion-loss recovery (including cleanup receipt
+and metadata DELETE), Docker adoption (1.74s), Firecracker controller crash
+recovery (9.70s), generation lifecycle (10.80s), reset with old-generation
+Start/Stop/Pause/Resume/Destroy fencing and cold adoption (23.70s), independent
+cross-process Firecracker recovery (10.40s), and libvirt generation effects
+(2.72s). Firecracker and libvirt resources were cleaned by their tests.
+
+This is a real-provider component gate, not a complete P9 claim: the two-host
+API/Agent failover matrix, partition, disk-full, upgrade/rebuild rehearsal and
+main integration are still outstanding.

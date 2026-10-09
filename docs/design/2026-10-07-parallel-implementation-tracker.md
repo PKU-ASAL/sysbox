@@ -629,3 +629,9 @@ intent。intent 只在 cleanup receipt/activity 检查通过后创建，不冒�
 completion 现在也必须先用 receipt hash 验证原 grant authority；HTTP 路由和直接
 存储调用共享同一验证，不再能仅凭 operation payload 写终态。operation 状态提交与
 authority release 的完全同事务合并仍待下一切片。
+
+2026-10-10 `make test-p9-real` 使用真实 Firecracker kernel/rootfs 通过完整分项
+provider gate：Docker file/power/guest task/Run receipt-loss/adoption、Firecracker
+crash/generation/reset/cross-process recovery、libvirt generation effects 全部通过
+并清理资源。P9 尚未关闭：双宿主 API/Agent 故障矩阵、partition/disk-full/upgrade
+演练和 main 整合仍待完成。
