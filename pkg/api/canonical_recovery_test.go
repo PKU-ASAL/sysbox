@@ -15,6 +15,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
@@ -80,6 +81,38 @@ func (r rejectRecoveryCommit) CommitActionOutcome(ctx context.Context, a runtime
 }
 
 var recoveryResourceID atomic.Uint64
+
+func TestCanonicalRecoveryAndCleanupRefuseMaintenanceBeforeProviderAccess(t *testing.T) {
+	for _, cleanup := range []bool{false, true} {
+		t.Run(fmt.Sprint(cleanup), func(t *testing.T) {
+			s, run, provider, _ := canonicalRecoveryFixture(t, false)
+			ctx := context.Background()
+			repo, err := s.actionRepository("lab")
+			require.NoError(t, err)
+			before, err := repo.LoadState(ctx, "lab")
+			require.NoError(t, err)
+			journal, err := repo.LoadActions(ctx, "lab")
+			require.NoError(t, err)
+			authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+			_, err = authority.BeginMaintenance(ctx, "maintenance", before.TopologyUID, "restore-digest")
+			require.NoError(t, err)
+			reads, deletes := provider.reads, provider.deletes
+			if cleanup {
+				_, err = s.cleanupCanonicalActions(ctx, "lab", run.ID)
+			} else {
+				manager, managerErr := s.stateManager("lab")
+				require.NoError(t, managerErr)
+				_, err = s.reconcileCanonicalActions(ctx, "lab", run.ID, manager)
+			}
+			require.ErrorIs(t, err, persistence.ErrConflict)
+			require.Equal(t, reads, provider.reads)
+			require.Equal(t, deletes, provider.deletes)
+			after, err := repo.LoadActions(ctx, "lab")
+			require.NoError(t, err)
+			require.Equal(t, journal, after)
+		})
+	}
+}
 
 func canonicalRecoveryFixture(t *testing.T, provisioner bool, agents ...string) (*Server, *controlplane.Run, *recoveryResource, address.Address) {
 	t.Helper()

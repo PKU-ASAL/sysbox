@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -59,6 +61,23 @@ func (s *Server) loadRecoveryExecution(ctx context.Context, topology, runID stri
 		return nil, fmt.Errorf("%w: recovery requires the run's pinned immutable revision", runtime.ErrConvergenceUnsupported)
 	}
 	if err := mgr.CheckMutationSafety(); err != nil {
+		return nil, err
+	}
+	// Refuse an already-frozen topology before materializing revisions or
+	// invoking provider observers/cleanup. This preflight is not a substitute
+	// for transaction-level fencing of a freeze starting after this check.
+	current, err := mgr.LoadWithContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	authority, err := (apiExecutionGrantStorage{store: s.apiStore}).ReadExecutionAuthority(ctx)
+	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
+		return nil, err
+	}
+	if err == nil && len(authority) == 0 {
+		return nil, persistence.ErrCorruptRecord
+	}
+	if err := persistence.ValidateMaintenanceWrite(authority, current.TopologyUID); err != nil {
 		return nil, err
 	}
 	revision, err := s.apiStore.GetGlobalRevision(ctx, run.Revision)

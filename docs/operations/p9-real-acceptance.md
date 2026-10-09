@@ -843,3 +843,17 @@ This automatic step runs only when the configured API supervisor runs. Pending
 restores without committed receipts still require the original request to be
 retried or explicitly abandoned; automatic pending-operation execution and full
 maintenance scheduling remain open. No new cross-host acceptance is claimed.
+
+### Canonical local recovery maintenance preflight
+
+The API's local (no owning Agent) canonical recovery and cleanup entry now checks
+the current topology's maintenance ledger before loading the pinned revision or
+calling provider observers/deletion. A regression reproduced both paths modifying
+the journal or resource under an existing freeze; both now reject with repository
+conflict without additional provider reads/deletes or journal changes. Empty
+existing authority data is rejected as corrupt rather than treated as absence.
+
+This is an early refusal of an already-frozen topology. It does not atomically
+exclude a freeze that begins after preflight; those local paths still require
+the same effect/commit fencing as the owning-host path before full writer
+isolation can be claimed. The preflight must not be cited as that completion.
