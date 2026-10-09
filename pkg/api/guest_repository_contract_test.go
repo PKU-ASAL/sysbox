@@ -23,7 +23,7 @@ func TestSQLiteGuestExecutionDispatchIsAtomic(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	ctx := context.Background()
 	execution := controlplane.GuestExecution{ID: "exec-dispatch", Version: 1, Topology: "lab", Node: "web", AgentID: "agent", CommandID: "cmd-dispatch", Status: controlplane.GuestExecutionQueued, Request: controlplane.GuestExecutionRequest{Argv: []string{"true"}}}
-	cmd := controlplane.AgentCommand{ID: "cmd-dispatch", AgentID: "agent", Type: "guest_execution", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Execution: &controlplane.GuestExecution{ID: execution.ID, Topology: execution.Topology, Node: execution.Node, AgentID: execution.AgentID}, ExecutionRequest: execution.Request}
+	cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "cmd-dispatch", AgentID: "agent", Type: "guest_execution", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Execution: &controlplane.GuestExecution{ID: execution.ID, Topology: execution.Topology, Node: execution.Node, AgentID: execution.AgentID}, ExecutionRequest: execution.Request}
 	require.NoError(t, s.CreateGuestExecutionDispatch(ctx, execution, cmd))
 	got, err := s.GetGuestExecution(ctx, execution.ID)
 	require.NoError(t, err)

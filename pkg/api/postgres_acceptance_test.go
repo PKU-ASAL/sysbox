@@ -30,7 +30,7 @@ func TestPostgresRetryAndGuestDispatchAcceptance(t *testing.T) {
 	_, err = s.LoadDispatchRetry(ctx, retry.CommandID)
 	require.ErrorIs(t, err, persistence.ErrNotFound)
 	x := controlplane.GuestFileOperation{ID: "file", CommandID: "file-command", AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: "queued"}
-	c := controlplane.AgentCommand{ID: x.CommandID, AgentID: "agent", Type: "guest_file_put", Status: "queued", Protocol: controlplane.AgentProtocolVersion, FilePut: &controlplane.GuestFilePut{ID: x.ID, Topology: x.Topology, Node: x.Node}}
+	c := controlplane.AgentCommand{TopologyUID: "owner", ID: x.CommandID, AgentID: "agent", Type: "guest_file_put", Status: "queued", Protocol: controlplane.AgentProtocolVersion, FilePut: &controlplane.GuestFilePut{ID: x.ID, Topology: x.Topology, Node: x.Node}}
 	require.NoError(t, s.CreateGuestFileDispatch(ctx, x, c))
 	lease, ok, err := reopened.AcquireAgentCommandLease(ctx, "agent", c.ID, "worker", time.Minute)
 	require.NoError(t, err)

@@ -710,3 +710,8 @@ UID 与当前 lifecycle 一致；metadata 删除后旧 delivery lease 不再获�
 没有旧执行模式兼容层。当前仅支持 `gc --dry-run` 的只读候选预览，省略该选项
 仍明确拒绝。旧 `_gc/deletion-journal.json` 保留为诊断证据，不读取或重放其中的
 删除意图。完整自动 GC 的 API/host 授权派发尚未完成。
+
+实施补充（2026-10-09 maintenance dispatch）：guest execution/file/node-operation
+dispatch 的 HTTP 接口未变，但提交要求 command 携带 topology UID，并受未释放
+maintenance barrier 拒绝。文件/SQLite/Postgres 保持 operation 与 command 原子
+发布；冻结拒绝不会留下半条记录。Run dispatch 和其他 writer 尚未纳入同一 barrier。

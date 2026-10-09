@@ -1258,3 +1258,29 @@ Validation: the full API package passed under race (51.28 seconds) with the
 isolated PostgreSQL database enabled alongside file and SQLite. Vet, docscheck
 and independent review passed. The temporary PostgreSQL container was stopped
 and automatically removed; this round performed no provider effects.
+
+### Guest/file/node admission during maintenance (2026-10-09)
+
+Restore maintenance previously froze grant issuance but did not freeze new
+guest execution, guest file, or node-operation dispatch. Those writes could pass
+a quiescence read and publish after a barrier began. All three dispatch paths now
+validate the durable authority barrier while retaining the same lock/transaction
+through operation and command publication. File storage holds the record and
+authority locks; SQLite uses one immediate write transaction; PostgreSQL
+materializes and locks the authority row before both inserts. Missing topology
+UIDs fail closed.
+
+Three-backend tests verify frozen rejection leaves neither operation nor command
+for all three dispatch kinds, and release permits execution admission. Repeated
+concurrent execution admission/freeze tests include initial authority absence:
+successful dispatch is visible before maintenance returns, or maintenance wins
+and dispatch conflicts. File/node concurrency uses the same transaction helpers
+but was not separately stress-tested. Full API race passed (51.83 seconds) with
+real PostgreSQL. Real Docker task-stop/successor (3.12 seconds) and 10 MiB file
+install/recovery/presence (2.24 seconds) E2E passed. Vet and independent review
+passed. Run dispatch and other raw metadata writers remain outside this slice,
+so P6 is not complete.
+
+The final full Go regression also passed with both PostgreSQL test variables
+enabled. The isolated test database was stopped and automatically removed after
+verification; real Docker tests cleaned their own containers and helper files.

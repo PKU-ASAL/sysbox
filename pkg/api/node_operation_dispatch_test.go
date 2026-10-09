@@ -15,6 +15,7 @@ func nodeDispatchFixture() (controlplane.NodeOperation, controlplane.AgentComman
 	op.LeaseEpoch = 1
 	cmd := controlplane.AgentCommand{ID: op.CommandID, AgentID: op.AgentID, Type: "node_operation", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, CreatedAt: op.CreatedAt, Operation: op, ActionID: op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation}
 	cmd.LeaseEpoch = op.LeaseEpoch
+	cmd.TopologyUID = "owner"
 	return op, cmd
 }
 

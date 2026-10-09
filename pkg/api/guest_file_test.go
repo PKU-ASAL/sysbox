@@ -135,7 +135,7 @@ func TestGuestFileOperationSurvivesLocalServerRestart(t *testing.T) {
 func TestGuestFileOperationReportsAreIdempotentAndOrdered(t *testing.T) {
 	s := guestExecutionTestServer(t)
 	op := controlplane.GuestFileOperation{ID: "op-1", Version: 1, AgentID: "host-a", CommandID: "cmd-1", Topology: "lab", Node: "web", Status: controlplane.GuestExecutionQueued}
-	cmd := controlplane.AgentCommand{ID: op.CommandID, AgentID: op.AgentID, Type: "guest_file_put", Status: "queued", Protocol: controlplane.AgentProtocolVersion, ActionID: op.ID, ResourceUID: "node", Generation: 1, LeaseEpoch: 1, FilePut: &controlplane.GuestFilePut{ID: op.ID, Topology: op.Topology, Node: op.Node}}
+	cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: op.CommandID, AgentID: op.AgentID, Type: "guest_file_put", Status: "queued", Protocol: controlplane.AgentProtocolVersion, ActionID: op.ID, ResourceUID: "node", Generation: 1, LeaseEpoch: 1, FilePut: &controlplane.GuestFilePut{ID: op.ID, Topology: op.Topology, Node: op.Node}}
 	require.NoError(t, s.apiStore.CreateGuestFileDispatch(context.Background(), op, cmd))
 	completion := leaseFileCompletion(t, s, op.ID)
 	raw, err := json.Marshal(completion)

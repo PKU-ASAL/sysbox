@@ -42,6 +42,9 @@ func (s *sqliteAPIStore) createSQLiteGuestDispatch(ctx context.Context, table, i
 	if err != nil {
 		return err
 	}
+	if err = checkSQLiteMaintenanceAdmission(ctx, conn, command.TopologyUID); err != nil {
+		return err
+	}
 	if _, err = conn.ExecContext(ctx, "INSERT INTO "+table+"(id,data) VALUES(?,?)", id, raw); err != nil {
 		return err
 	}

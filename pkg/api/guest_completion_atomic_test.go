@@ -13,7 +13,7 @@ func TestGuestCompletionRequiresCurrentLease(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
 		ctx := context.Background()
 		x := controlplane.GuestExecution{ID: "exec", CommandID: "cmd", AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: controlplane.GuestExecutionQueued, Request: controlplane.GuestExecutionRequest{Argv: []string{"true"}}}
-		cmd := controlplane.AgentCommand{ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Status: "queued", Protocol: controlplane.AgentProtocolVersion, Execution: &x, ExecutionRequest: x.Request, ActionID: x.ID, ResourceUID: "node", Generation: 2, LeaseEpoch: 1}
+		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Status: "queued", Protocol: controlplane.AgentProtocolVersion, Execution: &x, ExecutionRequest: x.Request, ActionID: x.ID, ResourceUID: "node", Generation: 2, LeaseEpoch: 1}
 		require.NoError(t, s.CreateGuestExecutionDispatch(ctx, x, cmd))
 		report := controlplane.GuestExecutionCompletion{Result: controlplane.GuestExecutionResult{ExitCode: 0}, ResultClass: controlplane.GuestExecutionResultClassExit, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch}
 		_, err := s.CompleteGuestExecution(ctx, x.AgentID, x.ID, report)
@@ -62,7 +62,7 @@ func TestGuestFileCompletionChecksLeaseCancellationAndReceipt(t *testing.T) {
 			}
 			ctx := context.Background()
 			op := controlplane.GuestFileOperation{ID: id, CommandID: "cmd-" + id, AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: controlplane.GuestExecutionQueued}
-			cmd := controlplane.AgentCommand{ID: op.CommandID, AgentID: op.AgentID, Type: "guest_file_put", Status: "queued", Protocol: controlplane.AgentProtocolVersion, ActionID: id, ResourceUID: "node", Generation: 2, LeaseEpoch: 1, FilePut: &controlplane.GuestFilePut{ID: id, Topology: op.Topology, Node: op.Node}}
+			cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: op.CommandID, AgentID: op.AgentID, Type: "guest_file_put", Status: "queued", Protocol: controlplane.AgentProtocolVersion, ActionID: id, ResourceUID: "node", Generation: 2, LeaseEpoch: 1, FilePut: &controlplane.GuestFilePut{ID: id, Topology: op.Topology, Node: op.Node}}
 			require.NoError(t, s.CreateGuestFileDispatch(ctx, op, cmd))
 			lease, ok, err := s.AcquireAgentCommandLease(ctx, op.AgentID, cmd.ID, "worker", time.Minute)
 			require.NoError(t, err)

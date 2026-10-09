@@ -26,7 +26,12 @@ func (s *localAPIStore) CreateGuestExecutionDispatch(ctx context.Context, execut
 	if err != nil {
 		return err
 	}
-	return repo.CreateFilesystemGuestDispatch(ctx, &execution, nil, command)
+	return persistence.FilesystemExecutionGrantStorage(s.runsDir).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+		if err := persistence.ValidateMaintenanceWrite(raw, command.TopologyUID); err != nil {
+			return nil, err
+		}
+		return nil, repo.CreateFilesystemGuestDispatch(ctx, &execution, nil, command)
+	})
 }
 func (s *localAPIStore) CreateGuestFileDispatch(ctx context.Context, operation controlplane.GuestFileOperation, command controlplane.AgentCommand) error {
 	if _, err := persistence.EncodeGuestFileDispatch(operation, command); err != nil {
@@ -48,5 +53,10 @@ func (s *localAPIStore) CreateGuestFileDispatch(ctx context.Context, operation c
 	if err != nil {
 		return err
 	}
-	return repo.CreateFilesystemGuestDispatch(ctx, nil, &operation, command)
+	return persistence.FilesystemExecutionGrantStorage(s.runsDir).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+		if err := persistence.ValidateMaintenanceWrite(raw, command.TopologyUID); err != nil {
+			return nil, err
+		}
+		return nil, repo.CreateFilesystemGuestDispatch(ctx, nil, &operation, command)
+	})
 }

@@ -165,6 +165,7 @@ func TestGuestExecutionUsesStoreOutboxWhenAvailable(t *testing.T) {
 	svc := newGuestExecutionServiceWithOutbox(store, func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
 		return controlplane.AgentCommand{}, errors.New("notification unavailable")
 	}, func(ctx context.Context, execution controlplane.GuestExecution, command controlplane.AgentCommand) (controlplane.GuestExecution, error) {
+		command.TopologyUID = "owner"
 		return execution, store.CreateGuestExecutionDispatch(ctx, execution, command)
 	}, nil)
 	execution, err := svc.Create(ctx, "lab", "web", "agent", controlplane.GuestExecutionRequest{Argv: []string{"true"}})

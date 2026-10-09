@@ -385,3 +385,9 @@ CLI 直接 Docker remove 与 libvirt destroy/undefine 实现及对应旧路径�
 名作为 NodeOperation workspace 过滤条件，避免跨命名 workspace 下漏掉活动操作。
 按实际 Topology 判断，相关操作终态后可恢复，同 workspace 的其他 topology 不误阻塞。
 跨 registry 原子准入仍未完成，不能把这一修复计为 P6 整体关闭。
+
+2026-10-09 maintenance admission 检查点：guest execution、guest file 和
+node-operation 的 dispatch 已在三后端 authority barrier 事务内受理；冻结时不
+发布 operation/command，释放后可恢复 execution 受理。首次 authority 记录不存在
+的 execution/freeze 并发竞争已有测试。Run dispatch、其他 metadata writer 和跨
+registry 统一准入仍待迁移，P6/P8 保持未关闭。

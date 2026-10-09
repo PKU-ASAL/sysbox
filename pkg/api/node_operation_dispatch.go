@@ -26,7 +26,12 @@ func (s *localAPIStore) CreateNodeOperationDispatch(ctx context.Context, op cont
 	if err != nil {
 		return err
 	}
-	return repo.CreateFilesystemDispatch(ctx, op, cmd)
+	return persistence.FilesystemExecutionGrantStorage(s.runsDir).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+		if err := persistence.ValidateMaintenanceWrite(raw, cmd.TopologyUID); err != nil {
+			return nil, err
+		}
+		return nil, repo.CreateFilesystemDispatch(ctx, op, cmd)
+	})
 }
 func (s *sqliteAPIStore) CreateNodeOperationDispatch(ctx context.Context, op controlplane.NodeOperation, cmd controlplane.AgentCommand) error {
 	return s.createSQLiteGuestDispatch(ctx, "sysbox_node_operations", op.ID, func() ([]byte, error) { return persistence.EncodeNodeOperationDispatch(op, cmd) }, cmd)
