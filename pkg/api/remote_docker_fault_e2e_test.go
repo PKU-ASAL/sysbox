@@ -5,9 +5,12 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,19 +29,27 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/stretchr/testify/require"
 )
 
-// Runs the production HTTP/WS agent loop and Docker driver. API and agent have
-// separate durable SQLite repositories on one host; immutable HCL snapshots
-// share the filesystem, so this is not a cross-host transport acceptance test.
+// Production Agent HTTP/WS, host-supervisor Unix RPC and real Docker share
+// canonical SQLite but use separate revision directories. Reconstruction is
+// in-process; independent process/VM faults have separate acceptance gates.
 func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 	if os.Getenv("SYSBOX_REMOTE_DOCKER_E2E") != "1" {
 		t.Skip("requires real Docker daemon; set SYSBOX_REMOTE_DOCKER_E2E=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel()
+	privateDir := func() string { p := t.TempDir(); require.NoError(t, os.Chmod(p, 0700)); return p }
+	pub, issuer, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	keyPath := filepath.Join(privateDir(), "issuer.pub")
+	require.NoError(t, os.WriteFile(keyPath, pub, 0600))
 	docker, err := dockerprovider.New()
 	require.NoError(t, err)
 	defer docker.Close()
@@ -52,15 +63,19 @@ func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 	defer func() { driver.DefaultRegistry = previous }()
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "1", Node: docker, NIC: docker, NodeState: docker, Artifact: docker, ImageEntry: docker, GuestExec: docker, GuestNetwork: docker}))
 	cfg := config.DefaultServiceConfig()
-	cfg.Paths.RunsDir = t.TempDir()
-	cfg.Paths.WorkspacesDir = t.TempDir()
-	cfg.State.Backend = "sqlite://" + filepath.Join(t.TempDir(), "api.db")
-	first := NewServerWithConfig(cfg)
-	require.NoError(t, first.initErr)
+	cfg.Paths.RunsDir, cfg.Paths.WorkspacesDir = privateDir(), privateDir()
+	cfg.State.Backend = "sqlite://" + filepath.Join(privateDir(), "canonical.db")
+	newAPI := func() *Server {
+		s := NewServerWithConfig(cfg)
+		require.NoError(t, s.initErr)
+		require.NoError(t, s.ConfigureExecutionGrantSigner(issuer))
+		s.grantHostKeys = map[string]ed25519.PublicKey{"fault-agent": hostPub}
+		return s
+	}
+	first := newAPI()
 	agentCfg := cfg
 	agentCfg.Paths.RunsDir = t.TempDir()
 	agentCfg.Paths.WorkspacesDir = t.TempDir()
-	agentCfg.State.Backend = "sqlite://" + filepath.Join(t.TempDir(), "agent.db")
 	bridge := NewExecutionBridge(agentCfg)
 	topology := "remote-e2e-" + uuid.NewString()[:8]
 	repository, err := bridge.ActionRepository(topology)
@@ -80,55 +95,115 @@ func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 	}()
 	var current atomic.Pointer[Server]
 	current.Store(first)
-	lost := make(chan controlplane.RunCompletion, 1)
-	acknowledged := make(chan struct{}, 1)
+	type observedCompletion struct {
+		controlplane.RunCompletion
+		Proof hostRunCompletion
+	}
+	lost := make(chan observedCompletion, 1)
+	acknowledged := make(chan hostRunCompletion, 16)
 	var drop atomic.Bool
+	var hold atomic.Bool
 	drop.Store(true)
+	hold.Store(true)
+	var faultOperation atomic.Value
+	faultOperation.Store("run_apply")
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/complete") && strings.Contains(r.URL.Path, "/runs/") && drop.CompareAndSwap(true, false) {
-			raw, readErr := io.ReadAll(r.Body)
-			if readErr != nil {
-				http.Error(w, "read failed", 500)
-				return
-			}
-			var completion controlplane.RunCompletion
-			if json.Unmarshal(raw, &completion) != nil {
-				http.Error(w, "decode failed", 500)
-				return
-			}
-			r.Body = io.NopCloser(bytes.NewReader(raw))
-			record := httptest.NewRecorder()
-			current.Load().ServeHTTP(record, r)
-			if record.Code != 200 {
-				t.Errorf("completion rejected: %d %s", record.Code, record.Body.String())
-			}
-			lost <- completion
-			conn, _, hijackErr := w.(http.Hijacker).Hijack()
-			if hijackErr == nil {
-				_ = conn.Close()
-			}
+		if !strings.HasPrefix(r.URL.Path, "/v1/hosts/") || !strings.HasSuffix(r.URL.Path, "/completed") {
+			current.Load().ServeHTTP(w, r)
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, "/complete") && strings.Contains(r.URL.Path, "/runs/") {
-			record := httptest.NewRecorder()
-			current.Load().ServeHTTP(record, r)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(record.Code)
-			_, _ = w.Write(record.Body.Bytes())
-			if record.Code == 200 {
-				select {
-				case acknowledged <- struct{}{}:
-				default:
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read failed", 500)
+			return
+		}
+		var completion observedCompletion
+		if json.Unmarshal(raw, &completion.Proof) != nil || json.Unmarshal(completion.Proof.Evidence, &completion.Run) != nil {
+			http.Error(w, "decode failed", 500)
+			return
+		}
+		completion.Cleanup = completion.Run.Cleanup
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		record := httptest.NewRecorder()
+		current.Load().ServeHTTP(record, r)
+		if record.Code == 200 {
+			// Bind the fault to this phase; a delayed Apply retry must not
+			// consume Destroy's fault injection.
+			if hold.Load() && completion.Proof.Receipt.Grant.Operation == faultOperation.Load().(string) {
+				if drop.CompareAndSwap(true, false) {
+					lost <- completion
+					conn, _, err := w.(http.Hijacker).Hijack()
+					if err == nil {
+						_ = conn.Close()
+						return
+					}
 				}
+				http.Error(w, "committed; acknowledgement withheld", 503)
+				return
 			}
-			return
+			select {
+			case acknowledged <- completion.Proof:
+			default:
+			}
 		}
-		current.Load().ServeHTTP(w, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(record.Code)
+		_, _ = w.Write(record.Body.Bytes())
 	}))
 	defer host.Close()
+	hostCfg := cfg
+	hostCfg.Paths.RunsDir, hostCfg.Paths.WorkspacesDir = privateDir(), privateDir()
+	authority := hostsupervisor.AuthorityClient{Identity: agent.Identity{ID: "fault-agent", Secret: "test-agent-secret", APIURL: host.URL}}
+	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	require.NoError(t, err)
+	root, socketDir := privateDir(), privateDir()
+	socket := filepath.Join(socketDir, "host.sock")
+	startHost := func() (context.CancelFunc, <-chan error) {
+		bridge, err := NewHostExecutionBridge(hostCfg)
+		require.NoError(t, err)
+		resolver := hostsupervisor.CanonicalResolver{RunsDir: hostCfg.Paths.RunsDir, Backend: cfg.State.Backend, AgentID: "fault-agent"}
+		tasks := &hostsupervisor.Dispatcher{Root: root, AgentID: "fault-agent", HostBootID: strings.TrimSpace(string(boot)), IssuerKey: pub, HostKey: hostKey, Authorize: authority.Authorize, ReportStop: authority.ReportStop, Resolve: resolver.Resolve, ResolveRun: resolver.ResolveRunTask}
+		runs := &hostsupervisor.RunCoordinator{Root: filepath.Join(root, "runs"), AgentID: tasks.AgentID, HostBootID: tasks.HostBootID, IssuerKey: pub, HostKey: hostKey, Authorize: authority.Authorize, ReportRunID: authority.ReportRun, Tasks: tasks,
+			OnExecutionError: func(req hostsupervisor.RunRequest, err error) { t.Logf("host %s: %v", req.RunID, err) }}
+		executor := &agentexec.HostRunExecutor{Bridge: bridge, Tasks: tasks, Resolver: resolver, Authority: authority}
+		srv := &hostsupervisor.Server{Socket: socket, GroupID: -1, Dispatcher: tasks, Runs: runs, RunEffect: executor.Execute}
+		service, stop := context.WithCancel(ctx)
+		t.Cleanup(stop)
+		done := make(chan error, 1)
+		go func() { defer close(done); done <- srv.Serve(service) }()
+		require.Eventually(t, func() bool {
+			conn, err := net.DialTimeout("unix", socket, 10*time.Millisecond)
+			if err != nil {
+				return false
+			}
+			conn.Close()
+			return true
+		}, time.Second, 10*time.Millisecond)
+		return stop, done
+	}
+	stopHost, hostDone := startHost()
+	defer func() { stopHost(); require.NoError(t, <-hostDone) }()
+	awaitReceipt := func(want hostRunCompletion) {
+		timer := time.NewTimer(10 * time.Second)
+		defer timer.Stop()
+		for {
+			select {
+			case got := <-acknowledged:
+				if got.Receipt.Grant.CommandID != want.Receipt.Grant.CommandID {
+					continue
+				}
+				require.Equal(t, want.Receipt, got.Receipt)
+				require.JSONEq(t, string(want.Evidence), string(got.Evidence))
+				return
+			case <-timer.C:
+				t.Fatal("original receipt not acknowledged after reconstruction")
+			}
+		}
+	}
 	agentCtx, stopAgent := context.WithCancel(ctx)
 	agentDone := make(chan error, 1)
 	opts := agentexec.Options{ExecutionSessionFile: filepath.Join(t.TempDir(), "session.json"), APIURL: host.URL, ID: "fault-agent", Secret: "test-agent-secret", Capabilities: []string{"docker", "veth"}, PollInterval: 20 * time.Millisecond, Policy: cfg.Agent.Policy}
+	opts.HostSupervisorSocket, opts.RequireHostSupervisor, opts.ExecutionGrantPublicKeyFile = socket, true, keyPath
 	go func() { agentDone <- agentexec.Run(agentCtx, opts, bridge) }()
 	defer func() {
 		stopAgent()
@@ -170,7 +245,8 @@ resource "sysbox_node" "%s" {
   substrate = "docker"
   image = sysbox_image.base.id
   provider "docker" {
-    command = ["sleep", "infinity"]
+    entrypoint = ["sleep"]
+    command = ["infinity"]
   }
 }
 `, strings.ReplaceAll(topology, "-", "_"))
@@ -184,16 +260,19 @@ resource "sysbox_node" "%s" {
 	var accepted map[string]any
 	require.NoError(t, json.Unmarshal(raw, &accepted))
 	runID := accepted["run_id"].(string)
-	var completion controlplane.RunCompletion
+	var completion observedCompletion
 	select {
 	case completion = <-lost:
 	case <-ctx.Done():
-		t.Fatal("timed out waiting for actual agent completion")
+		t.Fatal("timed out waiting for signed host completion")
 	}
 	require.Equal(t, controlplane.RunDone, completion.Run.Status, completion.Run.Err)
-	localRevision, err := bridge.PinnedRevisionWorkspace(ctx, completion.Run, &controlplane.GlobalRevision{Revision: revision["revision"], Files: map[string][]byte{"field.sysbox.hcl": []byte(hcl)}})
+	require.NoError(t, controlplane.VerifyRunStopReceipt(hostPub, completion.Proof.Receipt, completion.Proof.Evidence))
+	hostBridge, err := NewHostExecutionBridge(hostCfg)
 	require.NoError(t, err)
-	require.NotEqual(t, completion.Run.SnapshotPath, localRevision, "execution must materialize the revision on the agent")
+	localRevision, err := hostBridge.MaterializeRunRevision(ctx, topology, completion.Run.Revision)
+	require.NoError(t, err)
+	require.NotEqual(t, completion.Run.SnapshotPath, localRevision, "execution must materialize the revision in the host workspace")
 	state, err := repository.LoadState(ctx, topology)
 	require.NoError(t, err)
 	var externalID string
@@ -207,24 +286,23 @@ resource "sysbox_node" "%s" {
 	inspected, err := cli.ContainerInspect(ctx, externalID)
 	require.NoError(t, err)
 	require.True(t, inspected.State.Running)
-	restarted := NewServerWithConfig(cfg)
-	require.NoError(t, restarted.initErr)
-	current.Store(restarted)
-	select {
-	case <-acknowledged:
-	case <-time.After(5 * time.Second):
-		t.Fatal("completion retry was not acknowledged by restarted API")
-	}
 	stopAgent()
 	select {
 	case <-agentDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("original agent did not stop")
 	}
+	stopHost()
+	require.NoError(t, <-hostDone)
+	restarted := newAPI()
+	current.Store(restarted)
+	stopHost, hostDone = startHost()
 	agentCtx, stopAgent = context.WithCancel(ctx)
 	agentDone = make(chan error, 1)
 	reopenedBridge := NewExecutionBridge(agentCfg)
 	go func() { agentDone <- agentexec.Run(agentCtx, opts, reopenedBridge) }()
+	hold.Store(false)
+	awaitReceipt(completion.Proof)
 	status, raw = request("POST", "/v1/topologies/"+topology+"/apply", applyBody, "request-one")
 	require.Equal(t, 202, status, string(raw))
 	var replay map[string]any
@@ -241,14 +319,18 @@ resource "sysbox_node" "%s" {
 	require.Equal(t, 200, status, string(raw))
 	var workspace WorkspaceInfo
 	require.NoError(t, json.Unmarshal(raw, &workspace))
-	require.False(t, workspace.HasState, "the API must not invent owning-agent state in its own empty repository")
+	require.True(t, workspace.HasState, "host and API share canonical repository")
 	require.Equal(t, opts.ID, workspace.PlacementAgentID)
-	require.Equal(t, controlplane.PhaseUnknown, workspace.Status.Phase)
 	status, raw = request("POST", "/v1/agents/"+opts.ID+"/runs/"+runID+"/claim", controlplane.RunClaim{QueuedAt: stored.QueuedAt.Add(-time.Second), Revision: stored.Revision}, "")
 	require.Equal(t, 409, status, string(raw))
-	stale := completion
+	stale := completion.RunCompletion
 	stale.Run.LeaseOwner = "superseded-worker"
 	status, raw = request("POST", "/v1/agents/"+opts.ID+"/runs/"+runID+"/complete", stale, "")
+	require.Equal(t, 409, status, string(raw))
+	forged := completion.Proof
+	forged.Evidence, err = json.Marshal(stale.Run)
+	require.NoError(t, err)
+	status, raw = request("POST", "/v1/hosts/"+opts.ID+"/runs/"+runID+"/completed", forged, "")
 	require.Equal(t, 409, status, string(raw))
 	status, raw = request("POST", "/v1/runs/"+runID+"/remote/observe", nil, "")
 	require.Equal(t, 202, status, string(raw))
@@ -277,7 +359,9 @@ resource "sysbox_node" "%s" {
 		}
 	}
 	require.True(t, observed, "owning-agent live observation must identify the exact Docker container")
+	faultOperation.Store("run_destroy")
 	drop.Store(true)
+	hold.Store(true)
 	status, raw = request("POST", "/v1/topologies/"+topology+"/destroy", nil, "destroy-one")
 	require.Equal(t, 202, status, string(raw))
 	var destruction map[string]any
@@ -294,10 +378,12 @@ resource "sysbox_node" "%s" {
 	}, 20*time.Second, 50*time.Millisecond)
 	require.Equal(t, controlplane.RunDone, destroyed.Status, destroyed.Err)
 	require.NotNil(t, destroyed.Cleanup, "destroy completion must persist an owning-agent empty-state receipt")
+	var destroyProof hostRunCompletion
 	select {
 	case report := <-lost:
 		require.Equal(t, destroyID, report.Run.ID)
 		require.NotNil(t, report.Cleanup)
+		destroyProof = report.Proof
 	case <-ctx.Done():
 		t.Fatal("destroy completion response was not dropped")
 	}
@@ -307,19 +393,18 @@ resource "sysbox_node" "%s" {
 	require.NoError(t, err)
 	require.Empty(t, instances)
 	// A cold API must use the persisted receipt, not a memory projection.
-	third := NewServerWithConfig(cfg)
-	require.NoError(t, third.initErr)
+	stopHost()
+	require.NoError(t, <-hostDone)
+	third := newAPI()
 	current.Store(third)
-	select {
-	case <-acknowledged:
-	case <-time.After(10 * time.Second):
-		t.Fatal("destroy receipt retry was not acknowledged after API restart")
-	}
+	stopHost, hostDone = startHost()
+	hold.Store(false)
+	awaitReceipt(destroyProof)
 	status, raw = request("DELETE", "/v1/topologies/"+topology, nil, "")
 	require.Equal(t, 200, status, string(raw))
 	placement, err := third.workspaceService().loadPlacement(topology)
 	require.NoError(t, err)
 	require.Nil(t, placement)
-	t.Logf("real agent created %s; completion acknowledgment lost; restarted API replay retained run %s and one container; stale claim/report rejected", externalID, runID)
-	t.Log("owning-agent destroy committed cleanup receipt; cold API deleted metadata without force")
+	t.Logf("host supervisor created %s; completion acknowledgment lost; reconstructed API/Agent/supervisor retained run %s and one container; stale claim/report rejected", externalID, runID)
+	t.Log("host-signed destroy committed cleanup receipt; cold API deleted metadata without force")
 }

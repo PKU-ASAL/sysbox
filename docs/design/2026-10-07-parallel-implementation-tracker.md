@@ -1,6 +1,12 @@
 # P0–P9 并行实施：集成跟踪
 
-当前已提交集成基线：`566268e`。本文记录并行集成检查点，不能作为P0–P9全部验收通过声明。
+初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
+
+2026-10-09真实provider总门槛：已把旧Docker Run故障夹具迁入生产共用HostRunExecutor、
+Unix supervisor和签名host completion。`make test-p9-real`全项通过：文件安装、节点power、
+guest task、Run丢回执恢复、Docker adoption、Firecracker生命周期/reset/跨进程/crash、
+libvirt代际。这不代替完整P9故障矩阵，也不关闭read-only inventory的worker凭据隔离。
+两架构guest helper已按当前源码重建；详情见[验收记录](../operations/p9-real-acceptance.md)。
 
 2026-10-09数据库故障验收：在已有resource checkpoint、600秒后台任务运行时停止
 隔离控制VM的PostgreSQL；guest在138.85秒后cancelled、原cgroup清空，数据库重启后

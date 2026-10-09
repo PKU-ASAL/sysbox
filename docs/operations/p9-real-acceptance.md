@@ -11,16 +11,21 @@ libvirt are unavailable. A skipped individual test is not a P9 pass. Record the
 commit, kernel/rootfs/firecracker paths, Docker image digests, libvirt URI and
 cleanup results with the release evidence.
 
-This matrix proves the currently migrated guest task, file, node power and
-adoption boundaries. Ordinary multi-resource Run execution, full sshd service
-management, automatic GC deletion, and distinct-host API/Agent acceptance
-remain separate gates until their provider and cross-host contracts are wired.
+This matrix proves its listed Run, guest task, file, node power, adoption and
+provider lifecycle boundaries. It does not cover the full P0–P9 scope: full sshd
+management, automatic GC, snapshot/restore maintenance, remaining distributed
+faults and upgrade acceptance still require their own gates. The two-VM evidence
+below is separate from these same-host tests.
 
 2026-10-08 real run: signed file installation, Docker task supervisor, and
 Docker node power scenarios passed in the available Docker/KVM environment.
-The matrix still fails at `TestRemoteDockerCompletionLossRecoveryE2E`: the
+At that checkpoint the matrix failed at `TestRemoteDockerCompletionLossRecoveryE2E`: the
 legacy in-process Agent fixture reaches Docker image entry without a host-issued
 guest task grant. This is a genuine P2/P9 failure, not a skipped test.
+
+2026-10-09: that obsolete fixture was migrated to host-supervisor admission and
+signed host completion; the complete `make test-p9-real` target passed. See the
+final section for the exact coverage and remaining boundaries.
 
 ## Two-VM acceptance environment
 
@@ -528,3 +533,51 @@ natural completion, pre-existing cancellation and replacement cgroup identity.
 This closes one checkpointed Docker Run's database-outage/restart/cleanup gate.
 It does not cover database failure during a provider daemon effect, restore/GC
 transactions, a full network partition, disk-full or the remaining provider matrix.
+
+### Real provider target after host Run fixture migration
+
+The shared `agentexec.HostRunExecutor` now contains the trusted callback used by
+both the production `host-supervisor` command and the Docker completion-loss
+fixture. Canonical claim/serial/resource checks, immutable revision materialization,
+child grant derivation and renewal, resource checkpoint and final child evidence
+remain in the same order. The command only wires dependencies; the fixture does
+not implement a second execution policy.
+
+The old test was reproduced failing because its direct Agent execution tried
+to start an image entry without a signed guest grant. It now requires the host
+supervisor socket, shares canonical SQLite, uses separate API/host revision
+directories, and explicitly launches the container's `sleep infinity` entrypoint.
+Apply and Destroy completion responses are withheld after the API commits the
+host-signed result. Rebuilding the API/Agent/supervisor verifies replay of the
+exact original receipt and evidence; repeated admission retains one container
+with the same external ID. Stale claims, changed result evidence, resource
+UID/generation observation, Destroy and non-force metadata deletion are checked.
+The fixture's Agent retains canonical database access for its read-only remote
+inventory check; this does not establish least-privilege observation routing.
+
+2026-10-09 `make test-p9-real` passed every named gate without skips:
+
+- API package with race:10MiB file installation, running/unhealthy node power,
+  durable guest task stop/successor, and host Run completion-loss recovery.
+- Docker adoption of an initially unlabelled container, including cold provider
+  reconstruction, pause/resume, stale proof refusal and destruction.
+- Firecracker controller SIGKILL recovery7.85s, generation lifecycle8.08s,
+  reset/cold adoption25.65s (all old-generation effects rejected), and independent
+  process recovery11.27s.
+- Libvirt real generation effects4.10s, including stale context/handle rejection.
+
+The final phase-bound fault injector also passed its focused real Docker race
+run in14.06s. The in-process components are reconstructed, not separate OS
+processes; use the earlier two-VM results for process/network claims. An async
+Run dispatch unit test now waits for its callback owner before TempDir removal;
+the cleanup race regression passed50 repetitions under race detection.
+
+Artifacts were rebuilt from current source for both helper architectures:
+amd64 SHA256 `ced431e5d3432322c3ab14dfa762dd945a719100374d5261bb178a37b90f1da9`;
+arm64 SHA256 `f213a0746de7e5140145b17db69198e5546b95ec3504a67309ada55492294b81`.
+Firecracker inputs were `/home/jiandong/.cache/sysbox/tools/firecracker`,
+`/home/jiandong/.cache/sysbox/artifacts/local/vmlinux-5.10.245` and
+`/home/jiandong/.cache/sysbox/rootfs/ubuntu-24.04.ext4`. Test-owned resources were
+destroyed by their identity-scoped cleanup. Passing this target does not close
+the remaining P5–P8 capabilities, pre-checkpoint daemon ambiguity, persistent
+services, full partition/disk-full or upgrade/main integration.

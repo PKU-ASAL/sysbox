@@ -37,6 +37,9 @@ func TestTopologyRunDispatchRequiresMatchingSignedScope(t *testing.T) {
 	request.Target.Scope = grant.Grant.Scope
 	require.Empty(t, s.Handle(context.Background(), request).Error)
 	require.Eventually(t, func() bool { return calls.Load() == 1 }, time.Second, time.Millisecond)
+	// Admission returns before journal completion. Wait for the callback owner
+	// to finish before TempDir cleanup can remove its journal directory.
+	require.Eventually(t, func() bool { return c.findActive(grant) == nil }, time.Second, time.Millisecond)
 }
 
 func TestRunBootDiscoveryDoesNotRequireExistingNode(t *testing.T) {
