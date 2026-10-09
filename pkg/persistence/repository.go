@@ -27,17 +27,18 @@ var (
 	ErrUnsupportedVersion = errors.New("unsupported repository version")
 )
 
-const FormatVersion = 2
+const FormatVersion = 3
 
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
-	Snapshots map[string]aggregateSnapshot    `json:"snapshots"`
-	Format    int                             `json:"format"`
-	Serial    int64                           `json:"serial"`
-	State     *state.State                    `json:"state"`
-	Actions   map[string]runtime.ActionRecord `json:"actions"`
-	UpdatedAt time.Time                       `json:"updated_at"`
+	Restores  map[string]SnapshotRestoreReceipt `json:"restores"`
+	Snapshots map[string]aggregateSnapshot      `json:"snapshots"`
+	Format    int                               `json:"format"`
+	Serial    int64                             `json:"serial"`
+	State     *state.State                      `json:"state"`
+	Actions   map[string]runtime.ActionRecord   `json:"actions"`
+	UpdatedAt time.Time                         `json:"updated_at"`
 }
 type backend interface {
 	update(context.Context, string, func(*aggregate) error) error
@@ -78,7 +79,7 @@ func (r *Repository) ListTopologies(ctx context.Context) ([]state.TopologyMetada
 	return out, nil
 }
 func newAggregate() *aggregate {
-	return &aggregate{Format: FormatVersion, State: &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}, Actions: map[string]runtime.ActionRecord{}, Snapshots: map[string]aggregateSnapshot{}}
+	return &aggregate{Format: FormatVersion, State: &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}, Actions: map[string]runtime.ActionRecord{}, Snapshots: map[string]aggregateSnapshot{}, Restores: map[string]SnapshotRestoreReceipt{}}
 }
 func decodeAggregate(raw []byte) (*aggregate, error) {
 	var a aggregate
@@ -97,8 +98,13 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 // Validate both loaded records and proposed mutations. JSON syntax alone does
 // not make identity, journal revision, or recovery evidence trustworthy.
 func validateAggregate(a *aggregate, topology string) error {
-	if a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Serial < 0 {
+	if a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Restores == nil || a.Serial < 0 {
 		return ErrCorruptRecord
+	}
+	for id, receipt := range a.Restores {
+		if id != receipt.Request.ID || !validSnapshotRestoreRequest(receipt.Request) || receipt.Request.TopologyUID != a.State.TopologyUID || receipt.Serial != receipt.Request.ExpectedSerial+1 || receipt.Serial > a.Serial || receipt.CompletedAt.IsZero() {
+			return ErrCorruptRecord
+		}
 	}
 	if a.State.Version != state.SchemaVersion {
 		return ErrUnsupportedVersion
@@ -543,6 +549,7 @@ func resetAggregate(a *aggregate) error {
 	a.State = &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}
 	a.Actions = map[string]runtime.ActionRecord{}
 	a.Snapshots = map[string]aggregateSnapshot{}
+	a.Restores = map[string]SnapshotRestoreReceipt{}
 	a.Serial = 0
 	a.UpdatedAt = time.Now().UTC()
 	return nil

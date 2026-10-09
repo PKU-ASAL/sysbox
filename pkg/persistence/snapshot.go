@@ -28,6 +28,7 @@ func (b *stateBackend) Snapshot(ctx context.Context, reason string) (*state.Snap
 	err := b.repository.update(ctx, b.topology, func(a *aggregate) error {
 		content := *a
 		content.Snapshots = map[string]aggregateSnapshot{}
+		content.Restores = map[string]SnapshotRestoreReceipt{}
 		raw, err := json.Marshal(content)
 		if err != nil {
 			return err
@@ -83,7 +84,7 @@ func decodeSnapshot(id string, snap aggregateSnapshot) (*aggregate, error) {
 	if err != nil {
 		return nil, err
 	}
-	if restored.State.TopologyUID != snap.TopologyUID || restored.Serial != snap.Serial || len(restored.Snapshots) != 0 {
+	if restored.State.TopologyUID != snap.TopologyUID || restored.Serial != snap.Serial || len(restored.Snapshots) != 0 || len(restored.Restores) != 0 {
 		return nil, ErrCorruptRecord
 	}
 	return restored, nil
@@ -93,50 +94,52 @@ func decodeSnapshot(id string, snap aggregateSnapshot) (*aggregate, error) {
 // replaces current journal authority. A different live inventory needs an
 // observed, explicitly authorized provider restore/adoption plan first.
 func (b *stateBackend) RestoreSnapshot(ctx context.Context, id string) error {
-	return b.repository.update(ctx, b.topology, func(a *aggregate) error {
-		snap, ok := a.Snapshots[id]
-		if !ok {
-			return ErrNotFound
-		}
-		restored, err := decodeSnapshot(id, snap)
-		if err != nil {
-			return err
-		}
-		if restored.State.TopologyUID != a.State.TopologyUID || restored.State.Lineage != a.State.Lineage || restored.Serial > a.Serial {
-			return ErrConflict
-		}
-		for _, journal := range []map[string]runtime.ActionRecord{a.Actions, restored.Actions} {
-			for _, action := range journal {
-				if action.Status != runtime.ActionSucceeded {
-					return fmt.Errorf("%w: unresolved journal cannot be restored", ErrConflict)
-				}
+	return b.repository.update(ctx, b.topology, func(a *aggregate) error { return restoreSnapshot(a, id) })
+}
+
+func restoreSnapshot(a *aggregate, id string) error {
+	snap, ok := a.Snapshots[id]
+	if !ok {
+		return ErrNotFound
+	}
+	restored, err := decodeSnapshot(id, snap)
+	if err != nil {
+		return err
+	}
+	if restored.State.TopologyUID != a.State.TopologyUID || restored.State.Lineage != a.State.Lineage || restored.Serial > a.Serial {
+		return ErrConflict
+	}
+	for _, journal := range []map[string]runtime.ActionRecord{a.Actions, restored.Actions} {
+		for _, action := range journal {
+			if action.Status != runtime.ActionSucceeded {
+				return fmt.Errorf("%w: unresolved journal cannot be restored", ErrConflict)
 			}
 		}
-		if len(restored.State.Resources) != len(a.State.Resources) {
-			return fmt.Errorf("%w: snapshot inventory needs provider reconciliation", ErrConflict)
+	}
+	if len(restored.State.Resources) != len(a.State.Resources) {
+		return fmt.Errorf("%w: snapshot inventory needs provider reconciliation", ErrConflict)
+	}
+	for i := range restored.State.Resources {
+		resource := &restored.State.Resources[i]
+		current := a.State.FindResource(resource.Address)
+		if current == nil || current.OwnerUID != resource.OwnerUID || current.ResourceUID != resource.ResourceUID || current.Generation != resource.Generation || current.ExternalID != resource.ExternalID || current.Driver != resource.Driver {
+			return fmt.Errorf("%w: snapshot resource incarnation changed", ErrConflict)
 		}
-		for i := range restored.State.Resources {
-			resource := &restored.State.Resources[i]
-			current := a.State.FindResource(resource.Address)
-			if current == nil || current.OwnerUID != resource.OwnerUID || current.ResourceUID != resource.ResourceUID || current.Generation != resource.Generation || current.ExternalID != resource.ExternalID || current.Driver != resource.Driver {
-				return fmt.Errorf("%w: snapshot resource incarnation changed", ErrConflict)
-			}
-			if current.ResourceType != resource.ResourceType || current.SchemaVersion != resource.SchemaVersion {
-				return fmt.Errorf("%w: snapshot resource schema changed", ErrConflict)
-			}
-			if !reflect.DeepEqual(current.Attributes, resource.Attributes) || !reflect.DeepEqual(current.Dependencies, resource.Dependencies) {
-				return fmt.Errorf("%w: changed resource attributes require an observed restore plan", ErrConflict)
-			}
-			// Never restore historical process handles, attachment proofs or secrets.
-			resource.Private = current.Private
-			resource.Attachments = current.Attachments
-			resource.Status = state.ResourceUnknown
+		if current.ResourceType != resource.ResourceType || current.SchemaVersion != resource.SchemaVersion {
+			return fmt.Errorf("%w: snapshot resource schema changed", ErrConflict)
 		}
-		a.State = restored.State
-		a.Serial++
-		a.UpdatedAt = time.Now().UTC()
-		return nil
-	})
+		if !reflect.DeepEqual(current.Attributes, resource.Attributes) || !reflect.DeepEqual(current.Dependencies, resource.Dependencies) {
+			return fmt.Errorf("%w: changed resource attributes require an observed restore plan", ErrConflict)
+		}
+		// Never restore historical process handles, attachment proofs or secrets.
+		resource.Private = current.Private
+		resource.Attachments = current.Attachments
+		resource.Status = state.ResourceUnknown
+	}
+	a.State = restored.State
+	a.Serial++
+	a.UpdatedAt = time.Now().UTC()
+	return nil
 }
 
 func (b *stateBackend) DeleteSnapshot(ctx context.Context, id string) error {

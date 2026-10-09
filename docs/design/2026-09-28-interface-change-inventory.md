@@ -6,6 +6,21 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### 2026-10-09 snapshot恢复提交回执基础
+
+lifecycle aggregate升为format3，新增不可变恢复回执；format2明确拒绝，必须在停止
+旧writer、处置原资源与证据后重建，不支持手改version。现有双VM旧数据未自动迁移。
+
+repository新增 `PlanSnapshotRestore` / `CommitSnapshotRestore`。请求绑定ID、
+topology UID、snapshot ID/摘要、预期serial及maintenance epoch。首次提交将恢复后的
+state与回执在同一aggregate事务内保存；重复请求读取原回执，不重复推进serial。
+snapshot已删除或后继状态已变化时，相同请求仍只返回原提交证据；同ID不同内容拒绝。
+snapshot内容不嵌套保存历史恢复回执，回执保留在当前aggregate，直到拓扑元数据重建。
+
+这些是待接入维护编排的repository primitive，不是已经交付的新HTTP契约。
+maintenance epoch在此只绑定请求，不替代授权校验；调用方必须在提交期间保持匹配
+的维护屏障。公开restore受理、授权事务、崩溃续作及释放流程仍未完成。
+
 ### 2026-10-09 维护授权屏障基础
 
 执行授权 ledger 升为format2，format1拒绝读写并要求明确重建；没有自动迁移或忽略

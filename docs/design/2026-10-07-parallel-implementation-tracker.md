@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+P6恢复提交证据基础：aggregate format3保存绑定snapshot摘要/serial/maintenance epoch
+的恢复回执，与state原子提交。文件/SQLite冷重试保留后继状态，相同并发请求只推进一次
+serial，源snapshot删除后仍可读回原回执。旧format2明确重建，现有VM数据未动；公开
+restore授权/提交/释放编排仍未接入，此primitive本身不授予维护权限。
+
 P6屏障与recovery写入接合：恢复提交在共同锁/事务中核验maintenance ledger，冻结时
 拒绝state/journal变更；Postgres额外锁authority行，缺失行先初始化，空损坏记录拒绝。
 真实独立Postgres、文件、SQLite的冻结拒绝/准入竞争回归与文件/Postgres锁竞争通过。

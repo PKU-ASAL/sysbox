@@ -718,3 +718,27 @@ Lifecycle schema bootstrap now uses a schema-local PostgreSQL advisory lock and
 DDL in one transaction. The existing dual-API keyed Apply regression passed ten
 consecutive isolated-schema runs after the fix; this is an initialization fix,
 not a relaxation of idempotent admission or a retry that hides the SQL error.
+
+### Idempotent snapshot restore commit foundation
+
+The lifecycle aggregate now stores immutable restore receipts (format3).
+`PlanSnapshotRestore` binds an operation ID, topology UID, snapshot ID/digest,
+expected serial and maintenance epoch. `CommitSnapshotRestore` reuses the normal
+restore validation and commits restored metadata plus receipt atomically. A
+duplicate returns the original receipt even after later metadata updates or
+snapshot retention deletion; conflicting request identity is rejected. Snapshot
+payloads omit the receipt catalog to avoid recursive historical capture.
+
+File and SQLite cold-reopen tests verify unchanged successor lineage/serial,
+exact receipt replay after source snapshot deletion, and rejection of changed
+snapshot, digest, serial, maintenance epoch or owner. Concurrent SQLite identical
+requests produce one serial increment and one receipt; a distinct stale request
+fails CAS. These are repository contract tests, not new PostgreSQL or VM restore
+acceptance. The primitive itself does not authorize maintenance: its caller must
+retain the matching barrier through commit. HTTP restore orchestration and its
+authority transaction are still required.
+
+Format2 aggregates are explicitly rejected. No old lab aggregate was rewritten
+or version-edited; the upgrade/rebuild exercise remains open alongside format2
+authority deployment. Full restoration of a different resource inventory and
+provider snapshot semantics are not established by this metadata receipt.
