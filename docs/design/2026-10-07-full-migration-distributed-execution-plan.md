@@ -512,3 +512,12 @@ SQL将guest终态和authority stopped合并为一次GuestExecutionMutation；文
 - [x] 真实Postgres事务故障、文件实际发布故障、冷启动恢复、race和真实Docker
   验收通过后更新接口清单与验收记录。文件安装/Run等其他操作另行审计，不把本次
   guest execution修复扩大成全部operation完成声明。
+
+### 持久删除清理阶段：最新进度
+
+- [x] 在 authority-aware state reset 前写入 durable `delete.intent`（topology UID、
+  serial、时间）；workspace publish 发现 intent 时拒绝新版本。
+- [x] Delete 和 supervisor 冷启动扫描复用同一 cleanup routine，按 intent 继续
+  state/workspace/placement/health 清理，只在全部本地步骤成功后移除 intent。
+- [ ] 将 command/guest/node/adoption/GC registry 的全部原始 writer 纳入同一
+  deletion barrier，并补真实双宿主中途 kill/磁盘满恢复验收。
