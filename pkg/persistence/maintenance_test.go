@@ -111,3 +111,9 @@ func TestMaintenanceAuthorityRejectsOldFormat(t *testing.T) {
 	_, err = repo.ListActiveGrants(ctx)
 	require.ErrorIs(t, err, ErrUnsupportedVersion)
 }
+
+func TestMaintenanceWriteRejectsEmptyPersistedLedger(t *testing.T) {
+	require.NoError(t, ValidateMaintenanceWrite(nil, "topology"))
+	require.ErrorIs(t, ValidateMaintenanceWrite([]byte{}, "topology"), ErrCorruptRecord)
+	require.ErrorIs(t, ValidateMaintenanceWrite([]byte(`{}`), "topology"), ErrUnsupportedVersion)
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
@@ -19,10 +20,10 @@ import (
 
 func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
-		scenarios := []string{"live", "revoked", "wrong_owner", "wrong_attempt", "blocked_agent", "active_successor", "foreign_run", "expired"}
+		scenarios := []string{"live", "revoked", "wrong_owner", "wrong_attempt", "blocked_agent", "active_successor", "foreign_run", "expired", "maintenance"}
 		switch store.(type) {
 		case *localAPIStore, *postgresAPIStore:
-			scenarios = append(scenarios, "serialized_revoke", "expired_after_wait")
+			scenarios = append(scenarios, "serialized_revoke", "expired_after_wait", "serialized_freeze")
 		}
 		for _, scenario := range scenarios {
 			t.Run(scenario, func(t *testing.T) {
@@ -65,6 +66,10 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 				proof := hostsupervisor.RunRecoveryRequest{CommandID: lease.ID, LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt}
 				bound := &recoveryActionRepository{ActionRepository: repo, server: s, proof: proof, run: run}
 				switch scenario {
+				case "maintenance":
+					authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+					_, err := authority.BeginMaintenance(ctx, "restore", st.TopologyUID, "snapshot-digest")
+					require.NoError(t, err)
 				case "revoked":
 					// Retirement happens after observation, before outcome commit.
 					require.NoError(t, store.DeleteAgentCommand(ctx, agentID, lease.ID))
@@ -83,7 +88,7 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 					bound.run.LeaseOwner = "other-incarnation"
 				}
 				patch := &runtime.StatePatch{Op: runtime.StatePatchUpsert, Resource: a.Resource.String(), Action: a.Action}
-				if scenario == "serialized_revoke" || scenario == "expired_after_wait" {
+				if scenario == "serialized_revoke" || scenario == "expired_after_wait" || scenario == "serialized_freeze" {
 					held, release, holderDone := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 					defer func() {
 						select {
@@ -127,7 +132,12 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 							return errors.As(err, &pgerr) && pgerr.Code == "55P03"
 						}, time.Second, time.Millisecond)
 					}
-					if scenario == "serialized_revoke" {
+					if scenario == "serialized_freeze" {
+						limited, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+						_, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store}).BeginMaintenance(limited, "blocked-freeze", st.TopologyUID, "snapshot-digest")
+						cancel()
+						require.Error(t, err, "maintenance cannot pass in-flight recovery commit")
+					} else if scenario == "serialized_revoke" {
 						limited, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
 						err := store.DeleteAgentCommand(limited, agentID, lease.ID)
 						cancel()
@@ -141,7 +151,7 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 				} else {
 					err = bound.CommitActionOutcome(ctx, a, patch)
 				}
-				succeeds := scenario == "live" || scenario == "serialized_revoke"
+				succeeds := scenario == "live" || scenario == "serialized_revoke" || scenario == "serialized_freeze"
 				if !succeeds {
 					require.Error(t, err)
 				} else {

@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"strings"
 	"time"
@@ -19,6 +20,35 @@ type MaintenanceBarrier struct {
 	Epoch         uint64    `json:"epoch"`
 	CreatedAt     time.Time `json:"created_at"`
 	Released      bool      `json:"released"`
+}
+
+// ValidateMaintenanceWrite checks an authority snapshot while its storage lock
+// is held through metadata commit. Nil means no authority has yet been issued.
+// This does not permit provider effects or substitute for command validation.
+func ValidateMaintenanceWrite(raw []byte, topologyUID string) error {
+	if topologyUID == "" {
+		return ErrInvalidRecord
+	}
+	if raw == nil {
+		return nil
+	}
+	var authority executionAuthority
+	if err := json.Unmarshal(raw, &authority); err != nil {
+		return ErrCorruptRecord
+	}
+	if authority.Version != executionAuthorityVersion {
+		return ErrUnsupportedVersion
+	}
+	if authority.Sessions == nil || authority.Grants == nil || authority.ObservedAt.IsZero() {
+		return ErrCorruptRecord
+	}
+	if err := validateMaintenance(&authority); err != nil {
+		return err
+	}
+	if authority.maintenanceBlocks(topologyUID) {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (a *executionAuthority) maintenanceBlocks(topology string) bool {

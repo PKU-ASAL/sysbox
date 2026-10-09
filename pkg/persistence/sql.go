@@ -54,12 +54,29 @@ func OpenPostgres(ctx context.Context, dsn string) (*Repository, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(8)
-	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sysbox_lifecycle_aggregates (topology TEXT PRIMARY KEY, data JSONB NOT NULL)`)
+	err = initializePostgresLifecycle(ctx, db)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
 	return &Repository{backend: &sqlBackend{db: db, postgres: true}}, nil
+}
+
+func initializePostgresLifecycle(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// IF NOT EXISTS alone does not serialize concurrent PostgreSQL catalog/type
+	// creation. Keep schema-local bootstrap under one cross-process transaction.
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('sysbox-lifecycle-schema'))`); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sysbox_lifecycle_aggregates (topology TEXT PRIMARY KEY, data JSONB NOT NULL)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (b *sqlBackend) close() error { return b.db.Close() }
 func (b *sqlBackend) keys(ctx context.Context) ([]string, error) {

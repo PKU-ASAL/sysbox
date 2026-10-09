@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -41,6 +43,16 @@ func (r *recoveryActionRepository) CommitActionOutcome(ctx context.Context, acti
 			return err
 		}
 		defer unlock()
+		authority, err := (apiExecutionGrantStorage{store: store}).ReadExecutionAuthority(ctx)
+		if err != nil && !errors.Is(err, persistence.ErrNotFound) {
+			return err
+		}
+		if err == nil && len(authority) == 0 {
+			return persistence.ErrCorruptRecord
+		}
+		if err := persistence.ValidateMaintenanceWrite(authority, action.OwnerUID); err != nil {
+			return err
+		}
 		record, err := (localCommandStorage{store: store}).read(ctx, r.proof.CommandID)
 		if err != nil {
 			return err
@@ -91,6 +103,17 @@ func (r *recoveryActionRepository) commitSQLite(ctx context.Context, store *sqli
 			}
 		}
 	}()
+	var authority []byte
+	err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_execution_authority WHERE id='authority'").Scan(&authority)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil && len(authority) == 0 {
+		return persistence.ErrCorruptRecord
+	}
+	if err = persistence.ValidateMaintenanceWrite(authority, action.OwnerUID); err != nil {
+		return err
+	}
 	record, err := scanSQLiteCommand(conn.QueryRowContext(ctx, "SELECT "+sqliteCommandColumns+" FROM sysbox_agent_commands WHERE id=?", r.proof.CommandID))
 	if err != nil {
 		return err
@@ -139,6 +162,11 @@ func (r *recoveryActionRepository) commitSQLite(ctx context.Context, store *sqli
 }
 
 func (r *recoveryActionRepository) commitPostgres(ctx context.Context, store *postgresAPIStore, action runtime.ActionRecord, patch *runtime.StatePatch) error {
+	// Ensure the ledger row exists before taking a row lock; an absent-row
+	// SELECT cannot serialize with a concurrently created maintenance barrier.
+	if err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store}).ObserveTime(ctx); err != nil {
+		return err
+	}
 	pool, err := store.poolFor(ctx)
 	if err != nil {
 		return err
@@ -155,6 +183,13 @@ func (r *recoveryActionRepository) commitPostgres(ctx context.Context, store *po
 	// Match Run admission/update lock ordering; prevent a newly admitted Run
 	// from appearing between the inactive-run check and aggregate commit.
 	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext('sysbox-run-admission'))"); err != nil {
+		return err
+	}
+	var authority []byte
+	if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); err != nil {
+		return err
+	}
+	if err = persistence.ValidateMaintenanceWrite(authority, action.OwnerUID); err != nil {
 		return err
 	}
 	rows, err := tx.Query(ctx, "SELECT data::text FROM sysbox_runs WHERE topology=$1 FOR UPDATE", r.run.Topology)

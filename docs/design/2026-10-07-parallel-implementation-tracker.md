@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+P6屏障与recovery写入接合：恢复提交在共同锁/事务中核验maintenance ledger，冻结时
+拒绝state/journal变更；Postgres额外锁authority行，缺失行先初始化，空损坏记录拒绝。
+真实独立Postgres、文件、SQLite的冻结拒绝/准入竞争回归与文件/Postgres锁竞争通过。
+这补上显式recovery metadata路径，完整restore编排和其余writer冻结仍待完成。
+
 P6维护屏障基础：授权ledger format2内持久化维护ID/摘要/epoch，Begin原子冻结新grant
 并撤销父子授权，End等待全部已确认停止；重试、冷启动、后继屏障和其他拓扑隔离回归
 通过。format1明确拒绝并需停旧writer后重建，现有双VM旧数据未动。restore受理/提交/

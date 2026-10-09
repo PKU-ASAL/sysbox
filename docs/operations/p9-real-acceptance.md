@@ -687,3 +687,34 @@ format1 authority and uncertain resources were not altered. Rebuild must stop ol
 writers and preserve/resolve resource evidence; editing the version field is not
 a migration. Restore HTTP orchestration, metadata freeze and a full upgrade
 exercise remain required before the barrier can close the P6 user workflow.
+
+### Recovery writes respect maintenance exclusion
+
+Explicit recovery outcome commits now check the maintenance ledger under the
+same lock/transaction as the journal/state write. File storage holds the shared
+API record lock; SQLite reads authority inside its immediate transaction;
+PostgreSQL locks the authority row before source records and aggregate. PostgreSQL
+initializes a missing ledger before locking it, so a missing-row read cannot race
+the first maintenance request. Existing empty/corrupt ledgers are rejected rather
+than treated as absence.
+
+The new regression first reproduced a state write through an active maintenance
+barrier. File, SQLite and real PostgreSQL16 now reject it without modifying state.
+File/PostgreSQL lock-contention tests also prove a new freeze cannot pass an
+in-flight recovery commit. The maintenance-versus-grant admission race was rerun
+on all three backends, including PostgreSQL without skips, using a dedicated
+tmpfs database on loopback32938. Full Go regression with this database enabled,
+focused API race, persistence race and vet passed. The isolated database is
+removed after verification; the existing two-VM format1 authority is untouched.
+
+This adds explicit recovery metadata exclusion to the barrier foundation; it
+does not yet freeze every metadata writer or wire the complete HTTP restore
+admission/commit/release workflow.
+
+The first full PostgreSQL-enabled regression in this round exposed a catalog
+creation race: two API instances concurrently opening the lifecycle repository
+could collide on `pg_type_typname_nsp_index` despite `CREATE TABLE IF NOT EXISTS`.
+Lifecycle schema bootstrap now uses a schema-local PostgreSQL advisory lock and
+DDL in one transaction. The existing dual-API keyed Apply regression passed ten
+consecutive isolated-schema runs after the fix; this is an initialization fix,
+not a relaxation of idempotent admission or a retry that hides the SQL error.
