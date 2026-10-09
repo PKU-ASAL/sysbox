@@ -10,6 +10,21 @@ import two_vms
 
 
 class LabTests(unittest.TestCase):
+    def test_ssh_timeout_does_not_replay_unknown_remote_command(self):
+        failure = subprocess.TimeoutExpired(["ssh"], 30)
+        with mock.patch.object(two_vms.subprocess, "run", side_effect=failure) as call, \
+             mock.patch.object(two_vms.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "did not become ready"):
+                two_vms.ssh(Path("/tmp/lab"), {"ports": {"control": 1234}}, "control", "perform-mutation")
+            self.assertEqual(call.call_count, 1)
+
+    def test_ssh_remote_error_text_does_not_trigger_retry(self):
+        failure = subprocess.CompletedProcess(["ssh"], 1, stdout="", stderr="Connection timed out")
+        with mock.patch.object(two_vms.subprocess, "run", return_value=failure) as call, \
+             mock.patch.object(two_vms.time, "sleep"):
+            self.assertIs(two_vms.ssh(Path("/tmp/lab"), {"ports": {"control": 1234}}, "control", "perform-mutation"), failure)
+            self.assertEqual(call.call_count, 1)
+
     def test_partial_start_keeps_host_keys_and_canonical_root(self):
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory)

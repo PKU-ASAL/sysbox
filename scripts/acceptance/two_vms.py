@@ -70,14 +70,15 @@ def load(root):
     return root, manifest
 
 
-def ssh(root, manifest, role, command, timeout=30):
+def ssh(root, manifest, role, command, timeout=30, retry_ready=False):
     args = [
         "ssh", "-i", str(root / "client"), "-p", str(manifest["ports"][role]),
         "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=5",
         "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + str(root / "known_hosts"),
         "p9@127.0.0.1", command]
     last = None
-    for attempt in range(5):
+    attempts = 5 if retry_ready else 1
+    for attempt in range(attempts):
         try:
             result = subprocess.run(args, text=True, capture_output=True, timeout=timeout)
         except subprocess.TimeoutExpired as err:
@@ -87,7 +88,7 @@ def ssh(root, manifest, role, command, timeout=30):
         if result.returncode == 0:
             return result
         transient = "banner exchange" in result.stderr or "Connection timed out" in result.stderr
-        if not transient or attempt == 4:
+        if not retry_ready or not transient or attempt + 1 == attempts:
             return result
         time.sleep(1)
     raise RuntimeError(f"SSH {role} did not become ready: {last}")
@@ -234,7 +235,7 @@ def prepare(root):
         print(f"installing {role} packages; guest log /tmp/p9-packages.log", flush=True)
         result = ssh(root, manifest, role, "sudo cloud-init status --wait && sudo apt-get update -qq && "
                      "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq " + names +
-                     " > /tmp/p9-packages.log 2>&1", timeout=1800)
+                     " > /tmp/p9-packages.log 2>&1", timeout=1800, retry_ready=True)
         if result.returncode:
             raise RuntimeError(f"{role} package installation failed: {result.stderr}; inspect guest log")
 
