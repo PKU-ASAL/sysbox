@@ -1676,3 +1676,29 @@ the isolated PostgreSQL instance. API/persistence vet, docscheck (53 canonical
 documents), diff checks and independent follow-up review passed. No production
 or retained two-VM data was migrated. Sustained startup contention beyond three
 CAS attempts still fails initialization explicitly and requires a retry.
+
+### Console admission under maintenance (2026-10-09)
+
+Raw session create/CAS now serialize with maintenance authority in all three
+stores. A shared ConsoleRepository owns create/idempotency/CAS and admission
+classification; adapters hold the existing file locks or SQL transaction until
+publication. New records and transitions that introduce unresolved activity
+cannot enter a frozen topology. Existing lost/cancelling observations, valid
+completion and exact retries can drain. Lifecycle identity comes from the full
+aggregate; missing lifecycle plus any live barrier conservatively rejects new
+activity. Cleanup and recovery use the same completion-evidence predicate.
+
+Console race passed with real PostgreSQL (5.740 seconds), and the full Go suite
+passed with both database test variables enabled. A subsequent deterministic
+three-store test held the first authority transaction before commit: admission
+timed out without publishing, then rejected against the committed barrier
+(race test 6.634 seconds). SQLite returned after its approximately five-second
+busy wait despite a 150ms context deadline; this test proves exclusion and no
+partial publication, not a strict SQLite response-time bound. Session/outbox
+atomic publication and cross-host console stop evidence remain open.
+
+Final full API race passed with real PostgreSQL (65.558 seconds), including
+shared ID/topology/workspace validation and the deterministic contention test.
+API/persistence vet, docscheck and independent follow-up review passed. The
+isolated database was used only for this slice; existing project and retained
+two-VM data were not rebuilt.

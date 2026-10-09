@@ -57,7 +57,7 @@ func (s *AgentService) reconcileConsoleCompletion(ctx context.Context, sessionID
 			err = persistence.ErrConflict
 		}
 		if err == nil {
-			if !consoleActivityUnresolved(sess) {
+			if !persistence.ConsoleSessionUnresolved(sess) {
 				continue
 			}
 			err = s.updateConsoleSessionFromCommandEvent(cmd, controlplane.AgentCommandEvent{Status: cmd.Status, Error: cmd.Err, CreatedAt: cmd.EndedAt})

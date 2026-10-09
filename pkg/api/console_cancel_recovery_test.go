@@ -45,7 +45,7 @@ func TestConsoleCancelIntentRecoversOutboxAfterRestart(t *testing.T) {
 		require.Empty(t, commands, "retired cancellation must not be recreated")
 		current, err = cold.Snapshot(sess.ID)
 		require.NoError(t, err)
-		require.True(t, consoleActivityUnresolved(current), "delivery retirement is not a remote stop receipt")
+		require.True(t, persistence.ConsoleSessionUnresolved(current), "delivery retirement is not a remote stop receipt")
 	})
 }
 

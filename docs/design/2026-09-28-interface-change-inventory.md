@@ -767,3 +767,9 @@ SQLite 列表按 Workspace 过滤（空 Workspace 时才回退 Topology）。SQL
 不匹配或不存在。身份字段（含创建时间的时区表示）不可变。Hub 冲突后读取并核对
 当前身份、刷新缓存，但不自动重放更新函数；调用者重试必须重新判断当前状态。
 HTTP 路由、记录格式和 API schema 10 不变；没有保留旧的无条件覆盖写入入口。
+
+实施补充（2026-10-09 console maintenance）：内部创建与 CAS 统一经
+`persistence.ConsoleRepository` 和持锁 `ConsoleSessionStorage` 执行，冻结 topology
+后的新会话/重新激活写入返回 `ErrConflict`；精确重试和已有任务取消/完成可继续。
+共享编码器校验 ID、Topology、Workspace 的路径安全，三后端统一拒绝非法记录。
+存储 schema 和 HTTP 路由不变，完成证据判断统一供 maintenance/cleanup/recovery 使用。

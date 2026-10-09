@@ -90,7 +90,7 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 	awaitingStop := false
 	unresolvedConsole, pendingCommand := false, false
 	for _, sess := range consoles {
-		if sess.Topology != topology || !consoleActivityUnresolved(sess) {
+		if sess.Topology != topology || !persistence.ConsoleSessionUnresolved(sess) {
 			continue
 		}
 		unresolvedConsole = true

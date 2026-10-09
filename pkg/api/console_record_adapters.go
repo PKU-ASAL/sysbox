@@ -1,0 +1,182 @@
+package api
+
+import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"encoding/json"
+	"errors"
+	"path/filepath"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
+)
+
+type localConsoleStorage struct{ store *localAPIStore }
+type sqliteConsoleStorage struct{ store *sqliteAPIStore }
+type postgresConsoleStorage struct{ store *postgresAPIStore }
+
+func decodeConsoleRecord(id string, raw []byte) (*controlplane.ConsoleSession, error) {
+	var sess *controlplane.ConsoleSession
+	if json.Unmarshal(raw, &sess) != nil || sess == nil || sess.ID != id || validatePathSegment(id, "session") != nil {
+		return nil, persistence.ErrCorruptRecord
+	}
+	return sess, nil
+}
+
+func (b localConsoleStorage) UpdateConsoleSession(ctx context.Context, id string, transform func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error {
+	unlock, err := b.store.lockRunRecords(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := b.store.GetConsoleSession(ctx, id)
+	if err != nil && !errors.Is(err, errConsoleSessionNotFound) {
+		return err
+	}
+	next, err := transform(current)
+	if err != nil || next == nil {
+		return err
+	}
+	raw, err := persistence.EncodeConsoleSession(*next)
+	if err != nil {
+		return err
+	}
+	workspace := next.Workspace
+	if workspace == "" {
+		workspace = next.Topology
+	}
+	return persistence.FilesystemExecutionGrantStorage(b.store.runsDir).UpdateExecutionAuthority(ctx, func(authority []byte) ([]byte, error) {
+		if persistence.ConsoleSessionNeedsAdmission(current, *next) {
+			if err := checkLocalTopologyMaintenance(ctx, b.store.runsDir, authority, next.Topology); err != nil {
+				return nil, err
+			}
+		}
+		return nil, writeLocalObject(filepath.Join(b.store.runsDir, workspace, "sessions", id+".json"), json.RawMessage(raw))
+	})
+}
+
+func (b sqliteConsoleStorage) UpdateConsoleSession(ctx context.Context, id string, transform func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error {
+	db, err := b.store.open()
+	if err != nil {
+		return err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, err := conn.ExecContext(cleanup, "ROLLBACK"); err != nil {
+				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+			}
+		}
+	}()
+	var raw []byte
+	err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_console_sessions WHERE id=?", id).Scan(&raw)
+	var current *controlplane.ConsoleSession
+	if err == nil {
+		current, err = decodeConsoleRecord(id, raw)
+	} else if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
+	if err != nil {
+		return err
+	}
+	next, err := transform(current)
+	if err != nil {
+		return err
+	}
+	if next != nil {
+		if persistence.ConsoleSessionNeedsAdmission(current, *next) {
+			if err := checkSQLiteTopologyMaintenance(ctx, conn, next.Topology); err != nil {
+				return err
+			}
+		}
+		raw, err = persistence.EncodeConsoleSession(*next)
+		if err != nil {
+			return err
+		}
+		if _, err = conn.ExecContext(ctx, "INSERT INTO sysbox_console_sessions(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", id, raw); err != nil {
+			return err
+		}
+	}
+	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func (b postgresConsoleStorage) UpdateConsoleSession(ctx context.Context, id string, transform func(*controlplane.ConsoleSession) (*controlplane.ConsoleSession, error)) error {
+	pool, err := b.store.poolFor(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(cleanup)
+	}()
+	// Materialize and lock authority before reading the session, including for
+	// the first admission. A SELECT FOR UPDATE on an absent row is not a lock.
+	initial := &grantTransaction{}
+	if err := persistence.NewExecutionGrantRepository(initial).ObserveTime(ctx); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, "INSERT INTO sysbox_execution_authority(id,data) VALUES ('authority',$1::jsonb) ON CONFLICT(id) DO NOTHING", string(initial.raw)); err != nil {
+		return err
+	}
+	var authority []byte
+	if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); err != nil {
+		return err
+	}
+	var raw []byte
+	err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_console_sessions WHERE id=$1 FOR UPDATE", id).Scan(&raw)
+	var current *controlplane.ConsoleSession
+	if err == nil {
+		current, err = decodeConsoleRecord(id, raw)
+	} else if errors.Is(err, pgx.ErrNoRows) {
+		err = nil
+	}
+	if err != nil {
+		return err
+	}
+	next, err := transform(current)
+	if err != nil {
+		return err
+	}
+	if next != nil {
+		if persistence.ConsoleSessionNeedsAdmission(current, *next) {
+			if err := checkPostgresTopologyMaintenance(ctx, tx, authority, next.Topology); err != nil {
+				return err
+			}
+		}
+		raw, err = persistence.EncodeConsoleSession(*next)
+		if err != nil {
+			return err
+		}
+		workspace := next.Workspace
+		if workspace == "" {
+			workspace = next.Topology
+		}
+		if _, err = tx.Exec(ctx, "INSERT INTO sysbox_console_sessions(workspace,id,data,updated_at) VALUES($1,$2,$3::jsonb,now()) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=now()", workspace, id, string(raw)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}

@@ -9,7 +9,7 @@ import (
 )
 
 func EncodeConsoleSession(sess controlplane.ConsoleSession) ([]byte, error) {
-	if !topologyName.MatchString(sess.ID) {
+	if !topologyName.MatchString(sess.ID) || !topologyName.MatchString(sess.Topology) || (sess.Workspace != "" && !topologyName.MatchString(sess.Workspace)) {
 		return nil, ErrInvalidRecord
 	}
 	return json.Marshal(sess)

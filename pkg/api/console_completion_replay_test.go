@@ -100,7 +100,7 @@ func TestConsoleRecoveryRefusesAmbiguousOrUnconfirmedOutcome(t *testing.T) {
 			current, err := store.GetConsoleSession(ctx, sess.ID)
 			require.NoError(t, err)
 			require.Equal(t, controlplane.ConsoleSessionStatusLost, current.Status)
-			require.True(t, consoleActivityUnresolved(*current))
+			require.True(t, persistence.ConsoleSessionUnresolved(*current))
 		})
 	}
 }

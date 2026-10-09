@@ -251,29 +251,7 @@ func (s *localAPIStore) ListPolicies(_ context.Context, workspace string) ([]con
 }
 
 func (s *localAPIStore) SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error {
-	if _, err := persistence.EncodeConsoleSession(sess); err != nil {
-		return err
-	}
-	unlock, err := s.lockRunRecords(ctx)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	current, err := s.GetConsoleSession(ctx, sess.ID)
-	if err == nil {
-		if persistence.SameConsoleSession(*current, sess) {
-			return nil
-		}
-		return persistence.ErrConflict
-	}
-	if !errors.Is(err, errConsoleSessionNotFound) {
-		return err
-	}
-	workspace := sess.Workspace
-	if workspace == "" {
-		workspace = sess.Topology
-	}
-	return writeLocalObject(filepath.Join(s.runsDir, workspace, "sessions", sess.ID+".json"), sess)
+	return persistence.NewConsoleRepository(localConsoleStorage{store: s}).Create(ctx, sess)
 }
 
 func (s *localAPIStore) GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error) {
@@ -670,31 +648,7 @@ func (s *postgresAPIStore) ListPolicies(ctx context.Context, workspace string) (
 }
 
 func (s *postgresAPIStore) SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error {
-	workspace := sess.Workspace
-	if workspace == "" {
-		workspace = sess.Topology
-	}
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	raw, err := persistence.EncodeConsoleSession(sess)
-	if err != nil {
-		return err
-	}
-	tag, err := conn.Exec(ctx, `
-INSERT INTO sysbox_console_sessions (workspace, id, data, updated_at)
-VALUES ($1, $2, $3::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data WHERE sysbox_console_sessions.data=EXCLUDED.data`,
-		workspace, sess.ID, string(raw))
-	if err != nil {
-		return fmt.Errorf("postgres save console session: %w", err)
-	}
-	if tag.RowsAffected() != 1 {
-		return persistence.ErrConflict
-	}
-	return nil
+	return persistence.NewConsoleRepository(postgresConsoleStorage{store: s}).Create(ctx, sess)
 }
 
 func (s *postgresAPIStore) GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error) {

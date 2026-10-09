@@ -20,18 +20,22 @@ func checkLocalRunMaintenance(ctx context.Context, runsDir string, authority []b
 	if run.Status.IsTerminal() {
 		return nil
 	}
-	if err := validatePathSegment(run.Topology, "topology"); err != nil {
+	return checkLocalTopologyMaintenance(ctx, runsDir, authority, run.Topology)
+}
+
+func checkLocalTopologyMaintenance(ctx context.Context, runsDir string, authority []byte, topology string) error {
+	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
 	}
 	// The caller holds authority through Run append. No lifecycle is created by
 	// checking admission; atomic rename supplies a complete aggregate observation.
-	raw, err := os.ReadFile(filepath.Join(runsDir, run.Topology, "state.json.lifecycle", run.Topology+".json"))
+	raw, err := os.ReadFile(filepath.Join(runsDir, topology, "state.json.lifecycle", topology+".json"))
 	if errors.Is(err, os.ErrNotExist) {
 		raw = nil
 	} else if err != nil {
 		return err
 	}
-	return persistence.ValidateRunMaintenance(authority, raw, run.Topology)
+	return persistence.ValidateRunMaintenance(authority, raw, topology)
 }
 
 func checkSQLiteRunMaintenance(ctx context.Context, conn interface {
@@ -40,6 +44,12 @@ func checkSQLiteRunMaintenance(ctx context.Context, conn interface {
 	if run.Status.IsTerminal() {
 		return nil
 	}
+	return checkSQLiteTopologyMaintenance(ctx, conn, run.Topology)
+}
+
+func checkSQLiteTopologyMaintenance(ctx context.Context, conn interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, topology string) error {
 	authority, err := readSQLiteAuthority(ctx, conn)
 	if err != nil {
 		return err
@@ -50,7 +60,7 @@ func checkSQLiteRunMaintenance(ctx context.Context, conn interface {
 	}
 	var raw []byte
 	if exists != 0 {
-		err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_lifecycle_aggregates WHERE topology=?", run.Topology).Scan(&raw)
+		err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_lifecycle_aggregates WHERE topology=?", topology).Scan(&raw)
 		if errors.Is(err, sql.ErrNoRows) {
 			raw = nil
 		} else if err != nil {
@@ -59,7 +69,7 @@ func checkSQLiteRunMaintenance(ctx context.Context, conn interface {
 			return persistence.ErrCorruptRecord
 		}
 	}
-	return persistence.ValidateRunMaintenance(authority, raw, run.Topology)
+	return persistence.ValidateRunMaintenance(authority, raw, topology)
 }
 
 func readSQLiteAuthority(ctx context.Context, conn interface {
@@ -80,18 +90,22 @@ func checkPostgresRunMaintenance(ctx context.Context, tx pgx.Tx, authority []byt
 	if run.Status.IsTerminal() {
 		return nil
 	}
+	return checkPostgresTopologyMaintenance(ctx, tx, authority, run.Topology)
+}
+
+func checkPostgresTopologyMaintenance(ctx context.Context, tx pgx.Tx, authority []byte, topology string) error {
 	var exists bool
 	if err := tx.QueryRow(ctx, "SELECT to_regclass('sysbox_lifecycle_aggregates') IS NOT NULL").Scan(&exists); err != nil {
 		return err
 	}
 	var raw []byte
 	if exists {
-		err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1", run.Topology).Scan(&raw)
+		err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1", topology).Scan(&raw)
 		if errors.Is(err, pgx.ErrNoRows) {
 			raw = nil
 		} else if err != nil {
 			return err
 		}
 	}
-	return persistence.ValidateRunMaintenance(authority, raw, run.Topology)
+	return persistence.ValidateRunMaintenance(authority, raw, topology)
 }

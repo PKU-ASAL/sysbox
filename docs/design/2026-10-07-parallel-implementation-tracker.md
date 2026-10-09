@@ -481,3 +481,10 @@ Cancel 与启动恢复改为完整记录 CAS。共享身份校验固定 ID、Age
 启动恢复对并发活跃记录重新读取并有限重试，已推进的 lost/cancelling/终态直接采纳。
 三后端覆盖并发唯一胜者、禁止覆盖、精确重试、独立 hub 冲突与重试、并发启动。
 这关闭会话覆盖写入缺口；尚未提供跨记录原子受理、会话宿主所有权和 signed stop。
+
+2026-10-09 console 维护屏障：创建/CAS 业务规则收拢到共享 ConsoleRepository，
+三后端在 records→authority、SQLite 写事务或 Postgres authority→session 锁内
+检查并提交。冻结后不能新增记录或引入未解决活动；已有会话的取消、lost 观察、
+有效完成和精确重试仍可收敛。维护、cleanup 和恢复共用完成证据判断。初始化
+authority 与首次写入竞争、写入超时无残留已实测；其他已知 UID 不受无关屏障影响。
+该项不等于 session/outbox 原子受理，也不授予 console 宿主执行权限。

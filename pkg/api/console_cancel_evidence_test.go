@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,7 +26,7 @@ func TestConsoleCancellationRequestDoesNotProveStop(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "cancelling", current.Status)
 	require.True(t, current.EndedAt.IsZero())
-	require.True(t, consoleActivityUnresolved(*current))
+	require.True(t, persistence.ConsoleSessionUnresolved(*current))
 	require.NoError(t, hub.Cancel(sess.ID, "retry", "user"))
 	again, err := store.GetConsoleSession(context.Background(), sess.ID)
 	require.NoError(t, err)
@@ -33,7 +34,7 @@ func TestConsoleCancellationRequestDoesNotProveStop(t *testing.T) {
 	_ = newConsoleSessionHub(store)
 	recovered, err := store.GetConsoleSession(context.Background(), sess.ID)
 	require.NoError(t, err)
-	require.True(t, consoleActivityUnresolved(*recovered), "restart cannot turn cancel request into completion")
+	require.True(t, persistence.ConsoleSessionUnresolved(*recovered), "restart cannot turn cancel request into completion")
 }
 
 func TestConsoleCancelHTTPDistinguishesUnavailableFromMissing(t *testing.T) {
@@ -154,7 +155,7 @@ func TestConsoleTransportLossCannotManufactureCompletion(t *testing.T) {
 			switch status {
 			case "queued", "running", "lost":
 				require.Equal(t, "lost", sess.Status)
-				require.True(t, consoleActivityUnresolved(sess))
+				require.True(t, persistence.ConsoleSessionUnresolved(sess))
 			default:
 				require.Equal(t, before, sess)
 			}

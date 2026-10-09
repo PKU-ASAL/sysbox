@@ -253,3 +253,21 @@ Console 的文件、SQLite、Postgres 存储已统一为创建或完整记录 CA
 重试，持久取消/终态不会被启动恢复覆盖。该项只关闭会话记录的并发写入缺口；
 原子受理/删除边界、会话执行所有权及远端停止证明仍是 P4/P6 的待交付内容，
 不能用该项合同测试替代 P9 双宿主故障验收。
+
+### P6 下一步：会话写入与维护屏障串行化
+
+复用 authority 和生命周期记录，不创建新的锁域。文件后端沿用 records → authority
+顺序，并持锁至原子写入结束；SQLite 使用 `BEGIN IMMEDIATE`；Postgres 先创建/
+锁定 authority 行，再处理 session。状态规则留在 persistence 共享层，后端只提供
+锁内读写。Topology 名称只用于定位完整 lifecycle，再从中验证真实 UID。
+
+- [x] 在 `pkg/api/console_maintenance_test.go` 复现冻结后 Save/CAS 仍可新增活跃
+  会话的问题；覆盖三后端、冻结与首次写入竞争、取消/终态收敛、终态重新激活拒绝。
+- [x] 在 `pkg/persistence/console_repository.go` 固化创建、CAS 和需要新准入的写入规则：新记录
+  必须检查；精确重试不产生新活动；已有未解决会话可写取消、lost 和有效完成；
+  其他引入未解决活动的写入都检查屏障。缺生命周期且有活动屏障时保守拒绝。
+- [x] 将 `pkg/api/run_maintenance.go` 的锁内 topology 检查抽为通用函数，保留
+  Run 的终态放行规则；`console_record_adapters.go` 在 Console Save/CAS 的
+  提交边界调用同一检查，三个后端共用 repository，未保留覆盖写入分支。
+- [x] 验证失败不写入、冻结成功时此前成功受理已可见；运行三后端合同、race、
+  全仓回归，独立审查并记录证据。这不代替 session/outbox 原子受理和远端停止证明。

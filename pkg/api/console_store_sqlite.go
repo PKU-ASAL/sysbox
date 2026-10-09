@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"sort"
 
@@ -12,37 +11,7 @@ import (
 )
 
 func (s *sqliteAPIStore) SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error {
-	if err := validatePathSegment(sess.ID, "session"); err != nil {
-		return err
-	}
-	raw, err := persistence.EncodeConsoleSession(sess)
-	if err != nil {
-		return err
-	}
-	db, err := s.open()
-	if err != nil {
-		return err
-	}
-	result, err := db.ExecContext(ctx, "INSERT INTO sysbox_console_sessions(id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE sysbox_console_sessions.data=excluded.data", sess.ID, raw)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return persistence.ErrConflict
-	}
-	return nil
-}
-
-func decodeSQLiteConsole(id string, raw []byte) (*controlplane.ConsoleSession, error) {
-	var sess *controlplane.ConsoleSession
-	if json.Unmarshal(raw, &sess) != nil || sess == nil || sess.ID != id || validatePathSegment(id, "session") != nil {
-		return nil, persistence.ErrCorruptRecord
-	}
-	return sess, nil
+	return persistence.NewConsoleRepository(sqliteConsoleStorage{store: s}).Create(ctx, sess)
 }
 
 func (s *sqliteAPIStore) GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error) {
@@ -58,7 +27,7 @@ func (s *sqliteAPIStore) GetConsoleSession(ctx context.Context, id string) (*con
 	if err != nil {
 		return nil, err
 	}
-	return decodeSQLiteConsole(id, raw)
+	return decodeConsoleRecord(id, raw)
 }
 
 func (s *sqliteAPIStore) ListConsoleSessions(ctx context.Context, workspace string) ([]controlplane.ConsoleSession, error) {
@@ -78,7 +47,7 @@ func (s *sqliteAPIStore) ListConsoleSessions(ctx context.Context, workspace stri
 		if err = rows.Scan(&id, &raw); err != nil {
 			return nil, err
 		}
-		sess, err := decodeSQLiteConsole(id, raw)
+		sess, err := decodeConsoleRecord(id, raw)
 		if err != nil {
 			return nil, err
 		}
