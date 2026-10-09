@@ -443,3 +443,12 @@ execution record_format 3 / API schema 12 显式拒绝旧格式。这里关闭�
 版本拒绝处理，缺失或错误 admission seed 不产生 not_started。整个账本被外部
 删除的灾难恢复不在这些测试的证明范围内。
 未取消的派发失败路径、删除工作流和 P9 故障矩阵仍未关闭。
+
+### 2026-10-10：派发失败后的自动判定
+
+未请求取消的guest任务，若源投递已failed/denied/cancelled，supervisor会退休源命令，
+并在原复合事务内核验原始admission及完整授权历史。无历史时failed/not_started；
+已有历史时仅撤销未停止授权，继续等待宿主签名。它不把worker失败报告当作远端
+停止证据。三后端复用GuestExecutionTransform与同一物理事务，原取消路径同步迁入，
+没有新增兼容层。共享收尾逻辑以创建时间为因果下界，避免API切换时钟差造成永久
+未解决的终态。派发前失败路径已接通，持久删除及完整P9矩阵仍须继续实施与验收。

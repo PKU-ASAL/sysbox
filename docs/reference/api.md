@@ -322,6 +322,13 @@ grant/stop history under the authority lock, then records `cancelled` with
 grant requires host evidence instead. Interrupted cleanup resumes from the
 durable cancellation intent without changing an established terminal result.
 
+Supervisor recovery also handles failed, denied or cancelled deliveries when
+the user did not request cancellation. It retires the delivery and verifies
+the original admission plus complete grant/stop history in the same authority
+transaction. Never-authorized tasks become `failed / not_started` without
+setting `cancel_requested`. Previously authorized tasks retain their execution
+state; their remaining grants are revoked and host evidence supplies the result.
+
 File upload uses the request body as raw binary bytes, `X-Content-SHA256` for
 integrity, and query parameters for the absolute guest `path` and octal `mode`.
 The limit is 16 MiB. Paths containing NUL, traversal, or a non-absolute path

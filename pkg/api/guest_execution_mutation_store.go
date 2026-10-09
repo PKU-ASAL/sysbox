@@ -13,6 +13,12 @@ import (
 )
 
 func (s *localAPIStore) CancelGuestExecution(ctx context.Context, id string) (*controlplane.GuestExecution, error) {
+	return s.updateGuestExecution(ctx, id, persistence.PrepareGuestExecutionCancellation)
+}
+func (s *localAPIStore) FailUnissuedGuestExecution(ctx context.Context, id string) (*controlplane.GuestExecution, error) {
+	return s.updateGuestExecution(ctx, id, persistence.PrepareUnissuedGuestExecutionFailure)
+}
+func (s *localAPIStore) updateGuestExecution(ctx context.Context, id string, prepare persistence.GuestExecutionTransform) (*controlplane.GuestExecution, error) {
 	if validatePathSegment(id, "execution") != nil {
 		return nil, persistence.ErrInvalidRecord
 	}
@@ -25,12 +31,12 @@ func (s *localAPIStore) CancelGuestExecution(ctx context.Context, id string) (*c
 	if err != nil {
 		return nil, err
 	}
-	var result *persistence.GuestExecutionCancellation
+	var result *persistence.GuestExecutionMutation
 	err = persistence.FilesystemExecutionGrantStorage(s.runsDir).UpdateExecutionAuthority(ctx, func(authority []byte) ([]byte, error) {
 		var err error
-		result, err = repo.CancelFilesystemGuestExecutionUnderAuthority(ctx, id, authority, func(id string) (*persistence.CommandRecord, error) {
+		result, err = repo.UpdateFilesystemGuestExecutionUnderAuthority(ctx, id, authority, func(id string) (*persistence.CommandRecord, error) {
 			return (localCommandStorage{store: s}).read(ctx, id)
-		})
+		}, prepare)
 		if err != nil {
 			return nil, err
 		}
@@ -43,6 +49,12 @@ func (s *localAPIStore) CancelGuestExecution(ctx context.Context, id string) (*c
 }
 
 func (s *sqliteAPIStore) CancelGuestExecution(ctx context.Context, id string) (*controlplane.GuestExecution, error) {
+	return s.updateGuestExecution(ctx, id, persistence.PrepareGuestExecutionCancellation)
+}
+func (s *sqliteAPIStore) FailUnissuedGuestExecution(ctx context.Context, id string) (*controlplane.GuestExecution, error) {
+	return s.updateGuestExecution(ctx, id, persistence.PrepareUnissuedGuestExecutionFailure)
+}
+func (s *sqliteAPIStore) updateGuestExecution(ctx context.Context, id string, prepare persistence.GuestExecutionTransform) (*controlplane.GuestExecution, error) {
 	if validatePathSegment(id, "execution") != nil {
 		return nil, persistence.ErrInvalidRecord
 	}
@@ -80,7 +92,7 @@ func (s *sqliteAPIStore) CancelGuestExecution(ctx context.Context, id string) (*
 	if err != nil {
 		return nil, err
 	}
-	prepared, err := persistence.PrepareGuestExecutionCancellation(id, raw, authority, func(commandID string) (*persistence.CommandRecord, error) {
+	prepared, err := prepare(id, raw, authority, func(commandID string) (*persistence.CommandRecord, error) {
 		return scanSQLiteCommand(conn.QueryRowContext(ctx, "SELECT "+sqliteCommandColumns+" FROM sysbox_agent_commands WHERE id=?", commandID))
 	})
 	if err != nil {
@@ -105,6 +117,12 @@ func (s *sqliteAPIStore) CancelGuestExecution(ctx context.Context, id string) (*
 }
 
 func (s *postgresAPIStore) CancelGuestExecution(ctx context.Context, id string) (*controlplane.GuestExecution, error) {
+	return s.updateGuestExecution(ctx, id, persistence.PrepareGuestExecutionCancellation)
+}
+func (s *postgresAPIStore) FailUnissuedGuestExecution(ctx context.Context, id string) (*controlplane.GuestExecution, error) {
+	return s.updateGuestExecution(ctx, id, persistence.PrepareUnissuedGuestExecutionFailure)
+}
+func (s *postgresAPIStore) updateGuestExecution(ctx context.Context, id string, prepare persistence.GuestExecutionTransform) (*controlplane.GuestExecution, error) {
 	if validatePathSegment(id, "execution") != nil {
 		return nil, persistence.ErrInvalidRecord
 	}
@@ -139,7 +157,7 @@ func (s *postgresAPIStore) CancelGuestExecution(ctx context.Context, id string) 
 		}
 		return nil, err
 	}
-	prepared, err := persistence.PrepareGuestExecutionCancellation(id, raw, authority, func(commandID string) (*persistence.CommandRecord, error) {
+	prepared, err := prepare(id, raw, authority, func(commandID string) (*persistence.CommandRecord, error) {
 		return scanPostgresCommand(tx.QueryRow(ctx, "SELECT "+postgresCommandColumns+" FROM sysbox_agent_commands WHERE id=$1 FOR UPDATE", commandID))
 	})
 	if err != nil {

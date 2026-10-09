@@ -1989,3 +1989,26 @@ This closes cancelled, never-authorized execution cleanup. Uncancelled delivery
 failures still need their own automatic outcome path. Persistent deletion and
 the complete P9 matrix remain open. The proof assumes an intact authority
 ledger; external deletion of the whole ledger is not covered by these tests.
+
+### 2026-10-10 — automatic cleanup of unissued delivery failures
+
+Supervisor now retires failed/denied/cancelled guest deliveries and applies a
+shared execution mutation. Original admission and complete grant/stop history
+are checked inside the authority transaction. No history permits
+`failed / not_started` without fabricating a cancellation request. Existing
+authority is revoked, while the operation waits for host evidence; successor
+grants and existing terminal outcomes remain unchanged. The cancellation and
+failure paths share the same three storage adapters and admission validation.
+
+Real file permission faults and SQLite/PostgreSQL write faults verify recovery
+after source retirement, including failed authority revocation. Tests also
+cover Supervisor.Scan wiring, cancellation precedence, old stop history and
+API clock skew. Full Go race passed with real PostgreSQL, run sequentially by
+package: API 188.146s, persistence 10.302s, supervisor 20.626s. Targeted fault
+race passed (2.514s); vet, docscheck, e2e-tag compilation and independent review passed. Persistence
+versions remain API13/execution4/host task2. No provider or two-VM E2E pass is
+claimed for this metadata-only step.
+
+Issued authority with no host task record still requires a host-side absence
+proof. Persistent deletion and the complete P0–P9 acceptance backlog remain
+open; delivery failure alone is never remote-stop evidence.

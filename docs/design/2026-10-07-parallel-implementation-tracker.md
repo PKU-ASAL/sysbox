@@ -577,3 +577,14 @@ API schema 13 / execution format 4 / host task version 2 明确重建旧格式�
 不凭 queued/StartedAt 判定，曾发授权但当前已被 successor 替换也不能伪装未启动。
 格式仍为 API13/execution4/host task2。未取消的派发前失败自动收尾、删除恢复及
 完整 P0–P9 跨宿主故障验收继续推进。
+
+2026-10-10 未取消的派发前失败收尾：supervisor自动扫描失败/拒绝/取消的源投递，
+先退休，再复用 GuestExecutionMutation 事务核验受理seed和Grants/Stops。没有
+执行历史才failed/not_started，CancelRequested保持false；有历史只revoke当前
+匹配授权，等待宿主结果且不影响successor。取消和host终态优先，不覆盖已有结果。
+源退休后的文件/SQLite/Postgres写失败均能冷重试；API时钟落后时终态时间不倒序。
+取消与失败共用存储适配器和admission校验，无兼容别名；持久格式不变。持久删除、
+完整P5–P8能力审计及P9双VM故障矩阵仍未关闭。
+
+明确保留边界：已发授权但宿主没有任务记录，仍需宿主侧的缺失记录/未启动证明；
+不能把投递失败或grant过期当作该证明。此次失败收尾仅关闭从未发过授权的任务。

@@ -863,3 +863,9 @@ GuestTaskResult（exit_code_known、result_class、base64有界输出），不�
 result_class=not_started，只在原投递已退休、原始受理身份匹配且完整授权账本
 从未签发该命令时生成。没有新增公共路由或兼容读取；格式保持 API13/execution4。
 已有 worker running 报告不妨碍这个证明，任何历史授权则必须等待宿主结果。
+
+实施补充（2026-10-10 unissued delivery failure）：未取消但派发失败的任务也可
+由supervisor证明failed/not_started，CancelRequested不变为true。内部新增
+FailUnissuedGuestExecution，复用GuestExecutionMutation/GuestExecutionTransform；
+文件入口改为UpdateFilesystemGuestExecutionUnderAuthority，旧取消专用名字删除。
+公共路由、持久格式保持不变；任何授权历史仍要求宿主结果，不能据投递失败造终态。

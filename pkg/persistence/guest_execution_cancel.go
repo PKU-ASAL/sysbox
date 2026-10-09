@@ -1,7 +1,6 @@
 package persistence
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -27,17 +26,7 @@ func GuestExecutionCancellationCommand(x controlplane.GuestExecution) (controlpl
 	return controlplane.AgentCommand{ID: fmt.Sprintf("guest-cancel-%x", sha256.Sum256(raw)), AgentID: x.AgentID, Type: "cancel_command", Operation: target}, nil
 }
 
-// GuestExecutionCancellation is one storage transaction's prepared mutation.
-// Files persist Record (including the outbox seed) before Authority; a crash
-// between them is repaired by replaying the same cancellation. The durable
-// intent already excludes fresh grants and renewals during that repair window.
-type GuestExecutionCancellation struct {
-	Execution         controlplane.GuestExecution
-	Record, Authority []byte
-	Dispatch          *CommandRecord
-}
-
-func PrepareGuestExecutionCancellation(id string, raw, authority []byte, lookup func(string) (*CommandRecord, error)) (*GuestExecutionCancellation, error) {
+func PrepareGuestExecutionCancellation(id string, raw, authority []byte, lookup func(string) (*CommandRecord, error)) (*GuestExecutionMutation, error) {
 	if !topologyName.MatchString(id) {
 		return nil, ErrInvalidRecord
 	}
@@ -106,27 +95,18 @@ func PrepareGuestExecutionCancellation(id string, raw, authority []byte, lookup 
 			// Require the original compound admission, not merely a mutable
 			// status or a missing StartedAt. Retirement excludes future delivery;
 			// the already-committed cancellation excludes future grants.
-			seed, err := guestDispatchSeed(raw)
+			admitted, err := originalGuestExecutionAdmission(raw, x, source)
 			if err != nil {
 				return nil, err
 			}
-			if seed != nil {
-				e := seed.Command.Execution
-				if seed.Command.ID != x.CommandID || seed.Command.AgentID != x.AgentID || seed.Command.Type != "guest_execution" || seed.Command.ActionID != source.Command.ActionID || seed.Command.TopologyUID != source.Command.TopologyUID || seed.Command.ResourceUID != source.Command.ResourceUID || seed.Command.Generation != source.Command.Generation || e == nil || e.ID != x.ID || e.Topology != x.Topology || e.Node != x.Node || !e.CreatedAt.Equal(x.CreatedAt) {
-					return nil, ErrConflict
-				}
+			if admitted {
 				if wasRequested {
 					if x.Version == math.MaxInt64 {
 						return nil, ErrConflict
 					}
 					x.Version++
 				}
-				x.Status = controlplane.GuestExecutionCancelled
-				x.ResultClass = controlplane.GuestExecutionResultClassNotStarted
-				x.Err = ""
-				x.Result = controlplane.GuestExecutionResult{}
-				x.EndedAt = a.ObservedAt
-				x.ExpiresAt = a.ObservedAt.Add(15 * time.Minute)
+				setUnstartedGuestResult(&x, controlplane.GuestExecutionCancelled, "", a.ObservedAt)
 
 			}
 		}
@@ -164,7 +144,7 @@ func PrepareGuestExecutionCancellation(id string, raw, authority []byte, lookup 
 	if err != nil {
 		return nil, err
 	}
-	return &GuestExecutionCancellation{Execution: x, Record: next, Authority: nextAuthority, Dispatch: dispatch}, nil
+	return &GuestExecutionMutation{Execution: x, Record: next, Authority: nextAuthority, Dispatch: dispatch}, nil
 }
 
 func GuestExecutionCancellationSeed(raw []byte) (*CommandRecord, error) {
@@ -195,25 +175,4 @@ func GuestExecutionCancellationSeed(raw []byte) (*CommandRecord, error) {
 		return nil, ErrCorruptRecord
 	}
 	return seed, nil
-}
-
-// The caller owns the shared command and authority locks through publication.
-func (r *GuestRepository) CancelFilesystemGuestExecutionUnderAuthority(ctx context.Context, id string, authority []byte, lookup func(string) (*CommandRecord, error)) (*GuestExecutionCancellation, error) {
-	b, ok := r.records.(*fileGuestRecords)
-	if !ok || !topologyName.MatchString(id) {
-		return nil, ErrInvalidRecord
-	}
-	var prepared *GuestExecutionCancellation
-	err := b.updateRecord(ctx, guestExecutionKind, id, func(raw []byte) ([]byte, error) {
-		var err error
-		prepared, err = PrepareGuestExecutionCancellation(id, raw, authority, lookup)
-		if err != nil {
-			return nil, err
-		}
-		return prepared.Record, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return prepared, nil
 }
