@@ -6,6 +6,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
 )
@@ -46,6 +49,9 @@ func TestSnapshotRestoreRequestColdReplayDoesNotRewindSuccessor(t *testing.T) {
 			before, err := manager.Load()
 			require.NoError(t, err)
 			require.NoError(t, repo.StateBackend("lab").(state.SnapshotDeleter).DeleteSnapshot(ctx, snapshot.ID))
+			replanned, err := repo.PlanSnapshotRestore(ctx, "lab", snapshot.ID, plan.ID, 0)
+			require.NoError(t, err)
+			require.Equal(t, plan, replanned, "historical draft retry preserves the original allocated epoch")
 			replay, err := repo.CommitSnapshotRestore(ctx, "lab", plan)
 			require.NoError(t, err)
 			require.Equal(t, first, replay)
@@ -70,6 +76,45 @@ func TestSnapshotRestoreRequestColdReplayDoesNotRewindSuccessor(t *testing.T) {
 				_, err := repo.CommitSnapshotRestore(ctx, "lab", changed)
 				require.ErrorIs(t, err, ErrConflict, field)
 			}
+		})
+	}
+}
+
+func TestSnapshotRestorePlanRejectsIncompatibleStateWithoutMutation(t *testing.T) {
+	for _, scenario := range []string{"lineage", "inventory", "pending", "valid"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx := context.Background()
+			repo, err := OpenFilesystem(t.TempDir())
+			require.NoError(t, err)
+			manager := state.NewManagerWithBackend(repo.StateBackend("lab"))
+			snapshot, err := manager.Snapshot(ctx, "before")
+			require.NoError(t, err)
+			current, err := manager.Load()
+			require.NoError(t, err)
+			switch scenario {
+			case "lineage":
+				current.Lineage = "different"
+			case "inventory":
+				current.Resources = []state.Resource{{Address: address.Resource("sysbox_node", "web"), OwnerUID: current.TopologyUID, ResourceUID: "node", Generation: 1}}
+			case "pending":
+				require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "pending", Topology: "lab", RunID: "run", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: current.TopologyUID, ResourceUID: "node", Generation: 1}))
+			}
+			if scenario == "lineage" || scenario == "inventory" {
+				require.NoError(t, manager.Save(current))
+			}
+			before, err := manager.Load()
+			require.NoError(t, err)
+			_, err = repo.PlanSnapshotRestore(ctx, "lab", snapshot.ID, "restore", 1)
+			if scenario == "valid" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, ErrConflict)
+			}
+			after, err := manager.Load()
+			require.NoError(t, err)
+			require.Equal(t, before.Meta.Serial, after.Meta.Serial)
+			require.Equal(t, before.Lineage, after.Lineage)
+			require.Equal(t, before.Resources, after.Resources)
 		})
 	}
 }
@@ -124,4 +169,27 @@ func TestSnapshotRestoreRequestsCASAndConcurrentRetry(t *testing.T) {
 	st, err := repo.LoadState(ctx, "lab")
 	require.NoError(t, err)
 	require.Equal(t, plan.ExpectedSerial+1, st.Meta.Serial)
+}
+
+func TestSnapshotRestoreDraftBindsMaintenanceBeforeEpochAllocation(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenFilesystem(t.TempDir())
+	require.NoError(t, err)
+	snapshot, err := repo.StateBackend("lab").(state.SnapshotBackend).Snapshot(ctx, "before")
+	require.NoError(t, err)
+	draft, err := repo.PlanSnapshotRestore(ctx, "lab", snapshot.ID, "restore", 0)
+	require.NoError(t, err)
+	digest, err := draft.Digest()
+	require.NoError(t, err)
+	_, err = repo.CommitSnapshotRestore(ctx, "lab", draft)
+	require.ErrorIs(t, err, ErrConflict)
+	draft.MaintenanceEpoch = 7
+	after, err := draft.Digest()
+	require.NoError(t, err)
+	require.Equal(t, digest, after, "allocated barrier binds the same preflight intent")
+	changed := draft
+	changed.ExpectedSerial++
+	other, err := changed.Digest()
+	require.NoError(t, err)
+	require.NotEqual(t, digest, other)
 }

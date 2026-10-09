@@ -742,3 +742,12 @@ Format2 aggregates are explicitly rejected. No old lab aggregate was rewritten
 or version-edited; the upgrade/rebuild exercise remains open alongside format2
 authority deployment. Full restoration of a different resource inventory and
 provider snapshot semantics are not established by this metadata receipt.
+
+Restore planning now executes the same feasibility validation as commit before
+maintenance needs to revoke grants: lineage, schema, inventory and unfinished
+journal conflicts fail without changing state or serial. Epoch-zero drafts
+support this ordering; a domain-separated digest binds immutable request fields
+while excluding the subsequently allocated maintenance epoch. Zero-epoch commit
+is rejected. Historical draft retries recover the original request/epoch even
+after snapshot deletion and successor advancement. Persistence race and dependent
+API/Agent tests cover this foundation; public restore orchestration remains open.

@@ -2,7 +2,9 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"math"
 	"time"
 )
@@ -24,17 +26,39 @@ type SnapshotRestoreReceipt struct {
 	CompletedAt time.Time              `json:"completed_at"`
 }
 
+// Digest binds the immutable preflight intent before the authority allocates
+// an epoch. Commit requires that allocated epoch separately; this digest alone
+// never authorizes a restore.
+func (request SnapshotRestoreRequest) Digest() (string, error) {
+	if !validSnapshotRestoreDraft(request) {
+		return "", ErrInvalidRecord
+	}
+	request.MaintenanceEpoch = 0
+	raw, err := json.Marshal(request)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(append([]byte("sysbox.snapshot-restore.v1\x00"), raw...))
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func validSnapshotRestoreDraft(request SnapshotRestoreRequest) bool {
+	request.MaintenanceEpoch = 1
+	return validSnapshotRestoreRequest(request)
+}
+
 func validSnapshotRestoreRequest(request SnapshotRestoreRequest) bool {
 	digest, err := hex.DecodeString(request.SnapshotDigest)
 	return topologyName.MatchString(request.ID) && request.TopologyUID != "" && request.SnapshotID != "" && err == nil && len(digest) == 32 && request.ExpectedSerial >= 0 && request.ExpectedSerial < math.MaxInt64 && request.MaintenanceEpoch > 0
 }
 
-// PlanSnapshotRestore only reads metadata; it does not acquire execution rights.
+// PlanSnapshotRestore validates feasibility without changing state or acquiring
+// execution rights. Epoch zero produces a preflight draft for BeginMaintenance.
 func (r *Repository) PlanSnapshotRestore(ctx context.Context, topology, snapshotID, requestID string, epoch uint64) (SnapshotRestoreRequest, error) {
 	var plan SnapshotRestoreRequest
 	err := r.update(ctx, topology, func(a *aggregate) error {
 		if prior, ok := a.Restores[requestID]; ok {
-			if prior.Request.SnapshotID != snapshotID || prior.Request.MaintenanceEpoch != epoch {
+			if prior.Request.SnapshotID != snapshotID || epoch != 0 && prior.Request.MaintenanceEpoch != epoch {
 				return ErrConflict
 			}
 			plan = prior.Request
@@ -44,11 +68,11 @@ func (r *Repository) PlanSnapshotRestore(ctx context.Context, topology, snapshot
 		if !ok {
 			return ErrNotFound
 		}
-		if _, err := decodeSnapshot(snapshotID, snapshot); err != nil {
+		if _, err := prepareSnapshotRestore(a, snapshotID); err != nil {
 			return err
 		}
 		plan = SnapshotRestoreRequest{ID: requestID, TopologyUID: a.State.TopologyUID, SnapshotID: snapshotID, SnapshotDigest: snapshot.Digest, ExpectedSerial: a.Serial, MaintenanceEpoch: epoch}
-		if !validSnapshotRestoreRequest(plan) {
+		if !validSnapshotRestoreDraft(plan) {
 			return ErrInvalidRecord
 		}
 		return nil

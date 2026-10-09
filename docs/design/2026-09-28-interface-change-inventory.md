@@ -21,6 +21,11 @@ snapshot内容不嵌套保存历史恢复回执，回执保留在当前aggregate
 maintenance epoch在此只绑定请求，不替代授权校验；调用方必须在提交期间保持匹配
 的维护屏障。公开restore受理、授权事务、崩溃续作及释放流程仍未完成。
 
+恢复预检已与提交共用同一身份/schema/资源集合/未完成journal校验。`PlanSnapshotRestore`
+允许epoch0形成只读草案，其`Digest()`绑定全部不可变字段但不含后分配的epoch；
+编排可先验证草案，再用摘要申请维护屏障，填入epoch后提交。epoch0提交明确拒绝。
+已有回执的草案重试返回原请求，不受snapshot保留删除或后继state变化影响。
+
 ### 2026-10-09 维护授权屏障基础
 
 执行授权 ledger 升为format2，format1拒绝读写并要求明确重建；没有自动迁移或忽略
