@@ -99,6 +99,7 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 	s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
 	s.workspaces.loadGuestActivity = s.apiStore.ListGuestActivity
 	s.workspaces.loadConsoleSessions = s.apiStore.ListConsoleSessions
+	s.workspaces.loadAgentCommands = s.loadMaintenanceCommands
 	s.workspaces.deleteState = s.deleteStateWithAuthority
 	s.workspaces.lockAdmission = s.jobs.lockTopology
 	if p, ok := s.apiStore.(durablePlacementStore); ok {
@@ -186,31 +187,18 @@ func (s *Server) workspaceService() *WorkspaceService {
 		s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
 		s.workspaces.loadGuestActivity = s.apiStore.ListGuestActivity
 		s.workspaces.loadConsoleSessions = s.apiStore.ListConsoleSessions
+		s.workspaces.loadAgentCommands = s.loadMaintenanceCommands
 		s.workspaces.deleteState = s.deleteStateWithAuthority
 		s.workspaces.lockAdmission = s.jobs.lockTopology
 		if p, ok := s.apiStore.(durablePlacementStore); ok {
 			s.workspaces.placementStore = p
 		}
 	}
-	if s.apiStore != nil {
-		s.workspaces.loadConsoleSessions = s.apiStore.ListConsoleSessions
-		s.workspaces.loadAgentCommands = func(ctx context.Context) ([]controlplane.AgentCommand, error) {
-			agents, err := s.apiStore.ListAgents(ctx)
-			if err != nil {
-				return nil, err
-			}
-			var out []controlplane.AgentCommand
-			for _, agent := range agents {
-				commands, err := s.apiStore.ListAgentCommands(ctx, agent.ID)
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, commands...)
-			}
-			return out, nil
-		}
-	}
 	return s.workspaces
+}
+
+func (s *Server) loadMaintenanceCommands(ctx context.Context) ([]controlplane.AgentCommand, error) {
+	return s.apiStore.ListAgentCommands(ctx, "")
 }
 
 func (s *Server) nodeOperations() *NodeOperationService {

@@ -1318,12 +1318,37 @@ PostgreSQL and full repository regression passed. This closes Run dispatch for
 the maintenance barrier; raw run Save/Restart and other metadata writers still
 need the same admission port, so P6 remains open.
 
-Raw Run metadata updates are now covered too. `SaveRun`/`RestartRun` use the
-same authority-before-lifecycle ordering as dispatch: local file writes hold the
-authority lock through the append, SQLite checks inside its write transaction,
-and PostgreSQL holds the advisory/authority/lifecycle locks before updating the
-Run row. Missing legacy lifecycle records remain rebuild/legacy mode; a real
-versioned maintenance barrier rejects the update. A three-backend regression
-verifies SaveRun rejection during a barrier and success after release, while
-existing dispatch/idempotency suites remain green. Global projection/policy/
-placement writers still need the same port.
+Correction to the raw Run writer checkpoint: `fa89866` added sequential checks
+but did not hold the file authority lock through append, and PostgreSQL acquired
+authority after the Run row. Its test run did not enable PostgreSQL. Its `{}`
+authority exemption and invented `legacy` UID were unsafe; the earlier claim of
+complete three-backend fencing was not supported by that implementation.
+
+The corrected implementation holds file authority through lifecycle observation
+and Run append; SQLite retains its write transaction; PostgreSQL materializes
+and locks authority before Run/command rows. Active writes validate complete
+authority and lifecycle records through one shared persistence function. An
+uninitialized lifecycle is allowed only when no maintenance barrier is active;
+malformed records never become an empty authority. Existing unrelated topology
+UIDs remain independent. Terminal Run updates bypass admission freeze so work
+can finish, while restarting to queued remains blocked.
+
+Full API race also exposed per-request writes to activity loader callbacks from
+the console/command changes. Those callbacks are now initialized only with the
+service. Commands are enumerated without filtering by registered Agents, so a
+missing Agent registration cannot hide durable work. None of these changes
+establish atomicity for every registry writer or complete P6/P8.
+
+Verification of the correction: API and persistence full race suites passed
+with both PostgreSQL test variables enabled (55.54 and 3.95 seconds). The file
+lock regression blocks the first actual Run append and observes authority held
+until append resumes; 20 repeated runs passed. An earlier lifecycle-lock test
+was replaced because it no longer blocked the implementation's read path.
+Tests also cover terminal reporting while frozen, restart rejection/release,
+corrupt authority, unknown lifecycle during maintenance, and unrelated owners.
+No legacy UID or `{}` exemption remains.
+
+Final full Go regression with API and persistence PostgreSQL integration enabled,
+vet, docscheck and independent re-review passed. The test-only Postgres container
+was stopped and automatically removed. No real provider effect was exercised in
+this correction round; the database/race evidence does not replace P9 acceptance.

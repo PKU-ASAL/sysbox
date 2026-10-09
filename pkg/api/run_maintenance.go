@@ -1,76 +1,65 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
-	"os"
-	"path/filepath"
-	"strings"
 )
 
 func validateRunAuthority(raw []byte, uid string) error {
-	if uid == "" {
-		return persistence.ErrInvalidRecord
-	}
-	if bytes.Equal(bytes.TrimSpace(raw), []byte("{}")) {
-		return nil
-	}
 	return persistence.ValidateMaintenanceWrite(raw, uid)
 }
 
-func checkLocalRunMaintenance(ctx context.Context, runsDir string, run controlplane.Run) error {
-	raw, err := persistence.FilesystemExecutionGrantStorage(runsDir).ReadExecutionAuthority(ctx)
-	if errors.Is(err, persistence.ErrNotFound) {
+func checkLocalRunMaintenance(ctx context.Context, runsDir string, authority []byte, run controlplane.Run) error {
+	if run.Status.IsTerminal() {
+		return nil
+	}
+	if err := validatePathSegment(run.Topology, "topology"); err != nil {
+		return err
+	}
+	// The caller holds authority through Run append. No lifecycle is created by
+	// checking admission; atomic rename supplies a complete aggregate observation.
+	raw, err := os.ReadFile(filepath.Join(runsDir, run.Topology, "state.json.lifecycle", run.Topology+".json"))
+	if errors.Is(err, os.ErrNotExist) {
 		raw = nil
 	} else if err != nil {
 		return err
 	}
-	lifecycle := filepath.Join(runsDir, run.Topology, "state.json.lifecycle")
-	if _, err = os.Stat(lifecycle); errors.Is(err, os.ErrNotExist) {
-		return validateRunAuthority(raw, "legacy")
-	}
-	repo, err := persistence.OpenFilesystem(lifecycle)
-	if err != nil {
-		return err
-	}
-	defer repo.Close()
-	st, err := repo.LoadState(ctx, run.Topology)
-	if err != nil {
-		return err
-	}
-	return validateRunAuthority(raw, st.TopologyUID)
+	return persistence.ValidateRunMaintenance(authority, raw, run.Topology)
 }
 
 func checkSQLiteRunMaintenance(ctx context.Context, conn interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, run controlplane.Run) error {
+	if run.Status.IsTerminal() {
+		return nil
+	}
 	authority, err := readSQLiteAuthority(ctx, conn)
 	if err != nil {
 		return err
 	}
-	var raw []byte
-	err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_lifecycle_aggregates WHERE topology=?", run.Topology).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) || err != nil && strings.Contains(err.Error(), "no such table") {
-		return validateRunAuthority(authority, "legacy")
-	}
-	if err != nil {
+	var exists int
+	if err = conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='sysbox_lifecycle_aggregates'").Scan(&exists); err != nil {
 		return err
 	}
-	var aggregate struct {
-		State struct {
-			TopologyUID string `json:"topology_uid"`
-		} `json:"state"`
+	var raw []byte
+	if exists != 0 {
+		err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_lifecycle_aggregates WHERE topology=?", run.Topology).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			raw = nil
+		} else if err != nil {
+			return err
+		} else if len(raw) == 0 {
+			return persistence.ErrCorruptRecord
+		}
 	}
-	if err = json.Unmarshal(raw, &aggregate); err != nil {
-		return persistence.ErrCorruptRecord
-	}
-	return validateRunAuthority(authority, aggregate.State.TopologyUID)
+	return persistence.ValidateRunMaintenance(authority, raw, run.Topology)
 }
 
 func readSQLiteAuthority(ctx context.Context, conn interface {
@@ -81,25 +70,28 @@ func readSQLiteAuthority(ctx context.Context, conn interface {
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
+	if err == nil && len(raw) == 0 {
+		return nil, persistence.ErrCorruptRecord
+	}
 	return raw, err
 }
 
 func checkPostgresRunMaintenance(ctx context.Context, tx pgx.Tx, authority []byte, run controlplane.Run) error {
-	var raw []byte
-	err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1 FOR UPDATE", run.Topology).Scan(&raw)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return validateRunAuthority(authority, "legacy")
+	if run.Status.IsTerminal() {
+		return nil
 	}
-	if err != nil {
+	var exists bool
+	if err := tx.QueryRow(ctx, "SELECT to_regclass('sysbox_lifecycle_aggregates') IS NOT NULL").Scan(&exists); err != nil {
 		return err
 	}
-	var aggregate struct {
-		State struct {
-			TopologyUID string `json:"topology_uid"`
-		} `json:"state"`
+	var raw []byte
+	if exists {
+		err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1", run.Topology).Scan(&raw)
+		if errors.Is(err, pgx.ErrNoRows) {
+			raw = nil
+		} else if err != nil {
+			return err
+		}
 	}
-	if err = json.Unmarshal(raw, &aggregate); err != nil {
-		return persistence.ErrCorruptRecord
-	}
-	return validateRunAuthority(authority, aggregate.State.TopologyUID)
+	return persistence.ValidateRunMaintenance(authority, raw, run.Topology)
 }

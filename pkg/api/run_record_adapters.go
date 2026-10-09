@@ -97,9 +97,6 @@ func (b localRunStorage) updateRunWithCommand(ctx context.Context, id, commandID
 	if next == nil {
 		return current, nil
 	}
-	if err := checkLocalRunMaintenance(ctx, b.store.runsDir, *next); err != nil {
-		return nil, err
-	}
 	runs, err := b.store.LoadRuns(ctx)
 	if err != nil {
 		return nil, err
@@ -107,7 +104,13 @@ func (b localRunStorage) updateRunWithCommand(ctx context.Context, id, commandID
 	if err := validateTopologyAdmission(runs, *next); err != nil {
 		return nil, err
 	}
-	if err := b.store.saveRunUnlocked(ctx, *next); err != nil {
+	err = persistence.FilesystemExecutionGrantStorage(b.store.runsDir).UpdateExecutionAuthority(ctx, func(authority []byte) ([]byte, error) {
+		if err := checkLocalRunMaintenance(ctx, b.store.runsDir, authority, *next); err != nil {
+			return nil, err
+		}
+		return nil, b.store.saveRunUnlocked(ctx, *next)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return next, nil
@@ -265,6 +268,18 @@ func (b postgresRunStorage) updateRunWithCommand(ctx context.Context, id, comman
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('sysbox-run-admission'))`); err != nil {
 		return nil, err
 	}
+	// Use the same order as recovery/dispatch: authority before Run or command.
+	initial := &grantTransaction{}
+	if err := persistence.NewExecutionGrantRepository(initial).ObserveTime(ctx); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, "INSERT INTO sysbox_execution_authority(id,data) VALUES ('authority',$1::jsonb) ON CONFLICT(id) DO NOTHING", string(initial.raw)); err != nil {
+		return nil, err
+	}
+	var authority []byte
+	if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); err != nil {
+		return nil, err
+	}
 	err = tx.QueryRow(ctx, `SELECT data::text FROM sysbox_runs WHERE id=$1 FOR UPDATE`, id).Scan(&raw)
 	missing := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !missing {
@@ -289,10 +304,6 @@ func (b postgresRunStorage) updateRunWithCommand(ctx context.Context, id, comman
 		return nil, err
 	}
 	if next != nil {
-		var authority []byte
-		if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return nil, err
-		}
 		if err := checkPostgresRunMaintenance(ctx, tx, authority, *next); err != nil {
 			return nil, err
 		}

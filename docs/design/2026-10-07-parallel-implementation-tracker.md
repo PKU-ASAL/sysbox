@@ -405,7 +405,9 @@ workspace 名称不再漏检。跨 registry 原子准入和 raw writer barrier �
 非终态 AgentCommand，即使 guest activity 尚未落盘也阻止维护；终态/退休 command
 不阻塞。P6 跨 registry 原子准入和 raw writer barrier 仍未完成。
 
-2026-10-09 raw Run writer 检查点：SaveRun/RestartRun 已接入 authority→lifecycle
-顺序的 barrier 检查；三后端 SaveRun 冻结拒绝/释放成功回归通过，旧 dispatch 和
-幂等测试保持通过。全局 projection/policy/placement 等 writer 仍需逐项汇合，P6
-尚未关闭。
+2026-10-09 raw Run writer 检查点更正：fa89866 的顺序测试不证明原子持锁，且未
+开启 Postgres；原文“三后端锁顺序完成”撤回。本轮修复文件 authority 锁持有到
+append、Postgres 先锁 authority 再锁 Run/command，移除 `{}` 与虚构 legacy UID
+豁免。允许 Run 终态排空，拒绝冻结期间 restart；身份未知且有 barrier 时拒绝受理。
+另修复 activity callback 每请求重写导致的 race，command 枚举不依赖 Agent 注册。
+全 registry 准入与 raw writer 完整审计仍未完成，P6/P8 不关闭。

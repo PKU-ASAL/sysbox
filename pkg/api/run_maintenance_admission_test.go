@@ -22,6 +22,8 @@ func TestRunDispatchMaintenanceBlocksNewWorkButPreservesReplay(t *testing.T) {
 			return r
 		}
 		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		queued := controlplane.Run{ID: "queued", Topology: "lab", Status: controlplane.RunQueued, Op: "apply", QueuedAt: time.Now().UTC()}
+		require.NoError(t, store.SaveRun(ctx, queued))
 		barrier, err := authority.BeginMaintenance(ctx, "freeze", "owner", "plan")
 		require.NoError(t, err)
 		first := request("first")
@@ -34,8 +36,6 @@ func TestRunDispatchMaintenanceBlocksNewWorkButPreservesReplay(t *testing.T) {
 		_, found, err := store.GetRunDispatch(ctx, runDispatchKey(first), first.Fingerprint)
 		require.NoError(t, err)
 		require.False(t, found, "rejection must roll back idempotency mapping")
-		queued := controlplane.Run{ID: "queued", Topology: "lab", Status: controlplane.RunQueued, Op: "apply", QueuedAt: time.Now().UTC()}
-		require.NoError(t, store.SaveRun(ctx, queued))
 		assigned := queued
 		assigned.MarkAssigned("agent", time.Now().UTC())
 		dispatch := incarnationDispatch(assigned)
