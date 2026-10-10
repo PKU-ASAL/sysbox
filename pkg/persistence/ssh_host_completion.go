@@ -5,6 +5,9 @@ import "github.com/oslab/sysbox/pkg/controlplane"
 // CompleteSSHAccessFromHost consumes authenticated, authority-validated host
 // evidence while the adapter holds operation and command in one transaction.
 func CompleteSSHAccessFromHost(current controlplane.NodeOperation, record *CommandRecord, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (controlplane.NodeOperation, error) {
+	if controlplane.IsGuestSSHAccessOperation(current.Operation) {
+		return completeGuestSSHAccessFromHost(current, record, agent, id, receipt)
+	}
 	g := receipt.Grant
 	if record == nil || current.SSHAccess == nil || current.ID != id || current.AgentID != agent || current.CommandID != record.Command.ID || (current.Operation != "ssh_access_apply" && current.Operation != "ssh_access_delete") || receipt.EvidenceDigest == "" || receipt.StoppedAt.IsZero() || receipt.ReceiptID == "" {
 		return current, ErrConflict

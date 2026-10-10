@@ -6,9 +6,20 @@ import (
 )
 
 func ValidateNodeOperationTransition(current, next controlplane.NodeOperation) error {
+	return validateNodeOperationTransition(current, next, false)
+}
+
+func validateNodeOperationTransition(current, next controlplane.NodeOperation, hostSSHCompletion bool) error {
+	if !hostSSHCompletion && controlplane.IsGuestSSHAccessOperation(current.Operation) && current.Status != next.Status &&
+		(next.Status == controlplane.NodeOperationStatusDone || next.Status == controlplane.NodeOperationStatusFailed) {
+		return ErrConflict
+	}
 	// These payloads define the signed effect. Status/lease CAS must never
 	// rewrite them, including after the command payload has been retired.
-	if !reflect.DeepEqual(current.Adoption, next.Adoption) || !reflect.DeepEqual(current.SSHAccess, next.SSHAccess) {
+	if !reflect.DeepEqual(current.Adoption, next.Adoption) || !reflect.DeepEqual(current.SSHAccess, next.SSHAccess) || !reflect.DeepEqual(current.SSHMutation, next.SSHMutation) {
+		return ErrConflict
+	}
+	if !hostSSHCompletion && !reflect.DeepEqual(current.SSHResult, next.SSHResult) {
 		return ErrConflict
 	}
 	if current.RequestedBy != next.RequestedBy || !reflect.DeepEqual(current.Roles, next.Roles) || len(next.Audit) < len(current.Audit) {

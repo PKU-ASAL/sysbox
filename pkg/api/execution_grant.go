@@ -463,6 +463,10 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 		s.completeHostSSHAccess(w, r, body)
 		return
 	}
+	if controlplane.IsGuestSSHAccessOperation(body.Receipt.Grant.Operation) {
+		s.completeHostGuestSSHAccess(w, r, body)
+		return
+	}
 	key := s.grantHostKeys[agentID]
 	if body.Receipt.Grant.AgentID != agentID || controlplane.VerifyAdoptionStopReceipt(key, body.Receipt, body.Evidence) != nil {
 		writeError(w, 409, controlplane.ErrInvalidExecutionGrant)

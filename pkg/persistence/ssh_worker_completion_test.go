@@ -8,7 +8,7 @@ import (
 )
 
 func TestWorkerCannotCompleteSSHAccessDespiteLiveCommandLease(t *testing.T) {
-	for _, operation := range []string{"ssh_access_apply", "ssh_access_delete"} {
+	for _, operation := range []string{"ssh_access_apply", "ssh_access_delete", "guest_ssh_access_apply", "guest_ssh_access_delete"} {
 		for _, status := range []string{controlplane.NodeOperationStatusDone, controlplane.NodeOperationStatusFailed} {
 			t.Run(operation+"/"+status, func(t *testing.T) {
 				now := time.Now().UTC()

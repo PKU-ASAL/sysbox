@@ -119,5 +119,15 @@ guest boot、scope/generation 和 epoch；合法 host 签名不能替代 canonic
 专用验证还要求调用方提供 canonical 节点名并精确匹配回执 NodeID；缺失或其他节点拒绝。
 
 通用 stopped HTTP 入口拒绝 guest SSH 回执，避免 canonical SSH 完成提交之前释放
-scope。专用完成事务与控制面派发仍待接入，本次只定义并验证前置结果合同。
+scope。NodeOperation 已保存不可变 SSHMutation 和专用完成流程提交的 SSHResult；
+普通 CAS 不得注入/改变结果，worker completion 不能结束此操作。现有 node-operation
+host completion HTTP 路由已核验签名/原请求/节点，再复用三存储适配器和共享 transition
+提交结果后释放 scope。命令退休后复用保留的 operation 请求与 tombstone 命令身份；
+相同回执重试不改变结果，后继 attempt、不同节点或 CAS revision 拒绝。
+
+文件、SQLite 和专用真实 Postgres 的 HTTP 专项回归已执行通过。控制面受理、生产
+签发与宿主修改派发仍待接入，不能据此宣称完整远端 SSH 生命周期已完成。
+共享 codec 同时拒绝 queued/running 预置 SSHResult，raw 创建与原子 dispatch 都执行
+相同检查；普通 CAS 不得推进 guest SSH 终态。完成继续精确匹配 command attempt，
+不同受理轮次不自动套用旧回执；生产重新投递语义仍需在派发接入时完整验证。
 回执不能依据连接中断或当前资源不存在补造；必须由宿主确认原 guest 修改已提交。

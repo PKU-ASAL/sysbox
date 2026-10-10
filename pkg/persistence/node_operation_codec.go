@@ -7,7 +7,7 @@ import (
 )
 
 func EncodeNodeOperation(x controlplane.NodeOperation) ([]byte, error) {
-	if !topologyName.MatchString(x.ID) || x.AgentID == "" || x.Topology == "" || !validNodeOperationStatus(x.Status) {
+	if !topologyName.MatchString(x.ID) || x.AgentID == "" || x.Topology == "" || !validNodeOperationStatus(x.Status) || !validSSHResultState(x) {
 		return nil, ErrInvalidRecord
 	}
 	return json.Marshal(struct {
@@ -30,10 +30,17 @@ func DecodeNodeOperation(raw []byte) (*controlplane.NodeOperation, error) {
 	if record.Version != 1 {
 		return nil, ErrUnsupportedVersion
 	}
-	if !topologyName.MatchString(x.ID) || x.AgentID == "" || x.Topology == "" || !validNodeOperationStatus(x.Status) {
+	if !topologyName.MatchString(x.ID) || x.AgentID == "" || x.Topology == "" || !validNodeOperationStatus(x.Status) || !validSSHResultState(x) {
 		return nil, ErrCorruptRecord
 	}
 	return &x, nil
+}
+
+func validSSHResultState(x controlplane.NodeOperation) bool {
+	if x.SSHResult != nil {
+		return controlplane.IsGuestSSHAccessOperation(x.Operation) && x.SSHMutation != nil && x.Status == controlplane.NodeOperationStatusDone
+	}
+	return !controlplane.IsGuestSSHAccessOperation(x.Operation) || x.Status != controlplane.NodeOperationStatusDone
 }
 
 func validNodeOperationStatus(status string) bool {

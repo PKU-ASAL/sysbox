@@ -41,7 +41,27 @@ func (s *Server) completeHostSSHAccess(w http.ResponseWriter, r *http.Request, b
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
-	raw, err := json.Marshal(body.Receipt)
+	s.commitHostSSHCompletion(w, r, body.Receipt)
+}
+
+func (s *Server) completeHostGuestSSHAccess(w http.ResponseWriter, r *http.Request, body HostNodeOperationCompletion) {
+	agent, id := r.PathValue("agent"), r.PathValue("operation")
+	if body.Receipt.Grant.AgentID != agent || controlplane.VerifyExecutionStopReceipt(s.grantHostKeys[agent], body.Receipt) != nil {
+		writeError(w, 409, controlplane.ErrInvalidExecutionGrant)
+		return
+	}
+	op, err := s.apiStore.GetNodeOperation(r.Context(), id)
+	if err != nil || op.SSHMutation == nil || op.ID != body.Receipt.Grant.ActionID || op.AgentID != agent ||
+		controlplane.VerifyGuestSSHAccessStopReceipt(s.grantHostKeys[agent], body.Receipt, *op.SSHMutation, op.Node) != nil {
+		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
+	s.commitHostSSHCompletion(w, r, body.Receipt)
+}
+
+func (s *Server) commitHostSSHCompletion(w http.ResponseWriter, r *http.Request, receipt controlplane.SignedExecutionStopReceipt) {
+	agent, id := r.PathValue("agent"), r.PathValue("operation")
+	raw, err := json.Marshal(receipt)
 	if err != nil {
 		writeError(w, 400, err)
 		return
@@ -49,16 +69,16 @@ func (s *Server) completeHostSSHAccess(w http.ResponseWriter, r *http.Request, b
 	sum := sha256.Sum256(raw)
 	receiptID := hex.EncodeToString(sum[:])
 	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
-	if err := authority.ValidateHostStop(r.Context(), body.Receipt.Grant, receiptID); err != nil {
+	if err := authority.ValidateHostStop(r.Context(), receipt.Grant, receiptID); err != nil {
 		writeError(w, 409, err)
 		return
 	}
-	completed, err := s.apiStore.CompleteSSHAccessFromHost(r.Context(), agent, id, body.Receipt)
+	completed, err := s.apiStore.CompleteSSHAccessFromHost(r.Context(), agent, id, receipt)
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	if err := authority.AcceptHostStop(r.Context(), body.Receipt.Grant, receiptID); err != nil {
+	if err := authority.AcceptHostStop(r.Context(), receipt.Grant, receiptID); err != nil {
 		writeError(w, 409, err)
 		return
 	}

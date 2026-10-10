@@ -1,5 +1,37 @@
 # P9 real acceptance
 
+## Guest SSH canonical completion across all three stores (2026-10-10)
+
+NodeOperation now persists the immutable guest SSH mutation and the committed
+SSH result. The three existing host-completion adapters share the same guest
+SSH transition: exact command/action/attempt, resource scope, canonical node,
+request digest, user and CAS revision are checked. Retired commands recover
+from the retained operation request plus immutable command tombstone identity.
+Ordinary worker completion cannot finish guest SSH; ordinary operation CAS
+cannot inject a result or change its original mutation.
+
+The existing host node-operation completion HTTP route now authenticates the
+new receipt, checks the canonical mutation, commits through that shared rule,
+then releases authority. `TestGuestSSHStopCannotBypassCanonicalCompletion` and
+the preexisting SSH host-completion regression ran with race on local, SQLite
+and a dedicated real PostgreSQL 16 instance; every backend subtest executed.
+They cover generic-stop rejection, signed wrong-node rejection, command
+retirement, result persistence and exact retry. Shared persistence/controlplane
+full race suites also passed.
+
+Review identified a creation-time injection path: queued operations could be
+seeded with SSHResult before ordinary CAS. The failure reproduced on all three
+stores. Shared encoding/decoding now rejects prepopulated queued/running results,
+raw Create and atomic dispatch reject injection, and ordinary CAS cannot advance
+guest SSH to a terminal state. Those three-store regressions passed with race.
+The API (real PostgreSQL enabled), host and Agent full race suites passed as
+well before the final codec guard; the guard was then checked with all-store
+focused API and shared persistence/controlplane regressions.
+
+This is canonical completion, not a full remote workflow: production admission,
+issuer and host mutation dispatch still need wiring. The tests seed their own
+command/operation/grant records; they do not prove production issuance.
+
 ## Guest SSH completion evidence contract (2026-10-10)
 
 Added a signed SSH result to the common execution-stop receipt. Generic stop

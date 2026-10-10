@@ -52,3 +52,14 @@ func VerifyGuestSSHAccessStopReceipt(key ed25519.PublicKey, receipt SignedExecut
 	}
 	return nil
 }
+
+// ValidateGuestSSHCompletion verifies canonical payload bindings only. The
+// API/adapter must separately authenticate the signature and durable authority.
+func ValidateGuestSSHCompletion(receipt SignedExecutionStopReceipt, req substrate.SSHAccessMutation, canonicalNode string) error {
+	if canonicalNode == "" || receipt.SSHResult == nil || receipt.SSHResult.Handle.NodeID != canonicalNode ||
+		receipt.GuestBootID != receipt.Grant.TargetBootID || receipt.HostBootID == "" || receipt.ReceiptID == "" || receipt.StoppedAt.IsZero() || receipt.Quiescence != "confirmed" ||
+		!guestSSHResultMatchesRequest(receipt.Grant, req, *receipt.SSHResult) {
+		return ErrInvalidExecutionGrant
+	}
+	return nil
+}
