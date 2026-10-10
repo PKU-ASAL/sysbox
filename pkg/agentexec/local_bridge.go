@@ -54,7 +54,7 @@ func NewLocalBridge(opts LocalOptions) *LocalBridge {
 		opts.Log = os.Stdout
 	}
 	if opts.CheckpointStore == nil {
-		opts.CheckpointStore = localCheckpointStore{}
+		opts.CheckpointStore = localCheckpointStore{runsDir: opts.RunsDir}
 	}
 	return &LocalBridge{opts: opts, runs: map[string]*controlplane.Run{}}
 }
@@ -94,6 +94,12 @@ func (b *LocalBridge) Finish(run *controlplane.Run, err error) {
 		run.Status = controlplane.RunDone
 		run.Err = ""
 		run.Recoverable = false
+	}
+	if run.Op == "reset" {
+		if proofErr := b.recordResetReturn(run); proofErr != nil {
+			run.Status, run.Recoverable = controlplane.RunFailed, true
+			run.Err = fmt.Sprintf("%s; record reset return: %v", run.Err, proofErr)
+		}
 	}
 	b.mu.Lock()
 	b.runs[run.ID] = run
@@ -165,8 +171,42 @@ func (b *LocalBridge) CheckpointStore() runtime.CheckpointStore {
 	return b.opts.CheckpointStore
 }
 
-func (b *LocalBridge) ParentRun(context.Context, string) (*controlplane.Run, error) {
-	return nil, fmt.Errorf("parent runs require the API control plane")
+func (b *LocalBridge) ParentRun(ctx context.Context, id string) (*controlplane.Run, error) {
+	if id == "" {
+		return nil, fmt.Errorf("parent reset Run ID is required")
+	}
+	repo, err := b.repository(b.opts.Topology)
+	if err != nil {
+		return nil, err
+	}
+	actions, err := repo.LoadActions(ctx, b.opts.Topology)
+	if err != nil {
+		return nil, err
+	}
+	var queued time.Time
+	var revision, topology string
+	found := false
+	for _, action := range actions {
+		if action.RunID != id {
+			continue
+		}
+		if !found {
+			queued, revision, topology, found = action.RunQueuedAt, action.RunRevision, action.Topology, true
+		} else if !queued.Equal(action.RunQueuedAt) || revision != action.RunRevision {
+			return nil, fmt.Errorf("parent reset Run incarnation is inconsistent")
+		}
+	}
+	if !found || queued.IsZero() {
+		return nil, fmt.Errorf("parent reset Run %q lacks durable incarnation", id)
+	}
+	parent, err := b.loadResetReturn(id)
+	if err != nil {
+		return nil, err
+	}
+	if parent.Topology != topology || !parent.QueuedAt.Equal(queued) || parent.Revision != revision {
+		return nil, fmt.Errorf("parent reset return evidence has different incarnation")
+	}
+	return parent, nil
 }
 
 func (b *LocalBridge) ReconcileParentJournal(_, _ *controlplane.Run) error {
@@ -247,14 +287,20 @@ func (b *LocalBridge) BeforeReset(plan *runtime.Plan) error {
 	return b.opts.BeforeReset(plan)
 }
 
-func (b *LocalBridge) ResumeResetPlan(context.Context, *controlplane.Run, *runtime.Plan) (*runtime.Plan, error) {
-	return nil, fmt.Errorf("local reset runs do not support parent-run resume")
-}
-
-type localCheckpointStore struct{}
+type localCheckpointStore struct{ runsDir string }
 
 func (localCheckpointStore) SaveCheckpoint(context.Context, string, string, runtime.OperationCheckpoint) error {
 	return nil
+}
+
+func (s localCheckpointStore) LoadCheckpoint(ctx context.Context, topology, runID string) (*runtime.OperationCheckpoint, error) {
+	if !localRunID.MatchString(topology) || !localRunID.MatchString(runID) {
+		return nil, fmt.Errorf("invalid local checkpoint identity")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return runtime.LoadCheckpointFile(filepath.Join(s.runsDir, topology, "runs", runID+".checkpoint.json"))
 }
 
 func splitAddr(addr string) (string, string, error) {

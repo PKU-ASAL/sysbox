@@ -15,6 +15,13 @@ type CheckpointStore interface {
 	SaveCheckpoint(ctx context.Context, topology, runID string, checkpoint OperationCheckpoint) error
 }
 
+// CheckpointLoader is an optional durable read capability used by explicit
+// reset continuation. Read-only recovery callers may expose this without the
+// continuation admission capability.
+type CheckpointLoader interface {
+	LoadCheckpoint(ctx context.Context, topology, runID string) (*OperationCheckpoint, error)
+}
+
 type StoreRecorder struct {
 	OperationRecorder
 	store    CheckpointStore

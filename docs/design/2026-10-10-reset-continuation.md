@@ -39,7 +39,24 @@ checkpoint 中的完成 step 不能代替它。原 checkpoint 不覆盖，新执
 尚未受理，证明续作只补缺失 intent、不重复销毁，完成后冷重试不重复创建，并保持
 原 checkpoint 字节不变。provider 为模拟实现；这不是异构 VM E2E 验收。
 
-## 尚未接入：CLI/API 可信执行入口
+## 已实现：CLI/API 入口接线
+
+API `Resume` 对 reset 要求原 Run 为终态且存在完整 checkpoint（Run ID、拓扑、reset
+操作、非空范围和有效计划摘要），然后创建带 `ParentID` 的子 Run。子 Run 必须由
+bridge 提供 `ResetContinuationVerifier` 验证原执行已返回。当前 API bridge 尚无
+签名停止证据 verifier，故执行会安全拒绝，远端续作还不可用。
+
+CLI 提供 `reset --resume <原-run-id>`，禁止同时指定 `--target`。本地 bridge 从持久
+action 获取原 incarnation，并要求原 checkpoint 旁存在 `.returned` 回执。新代码在
+同步 reset 返回后记录实际终态 Run 和 checkpoint 原字节摘要；缺回执、身份不符、
+checkpoint 改写均拒绝。确认界面展示原完整 scope，之后先原子受理再执行。
+
+这些入口仍不能把“拿到锁”当作旧 provider callback 已停止的证明。API 远端 Run 还需
+依赖 host supervisor 的签名停止回执完成可信 quiescence。本地 `.returned` 只证明
+同步执行器返回，未知 provider 阶段仍由 runtime 拒绝。旧 CLI、进程崩溃未返回和
+保留的异构现场没有此证据，不能仅靠 `--resume` 绕过，也不能手工生成回执。
+
+## 尚未接入：远端可信执行与真实 VM 验收
 
 CLI/API 入口必须在读取证据前取得执行锁，验证原 checkpoint 的可信来源、真实
 Run incarnation 和配置/baseline，再确认旧执行者及外部调用已经停止。原 action

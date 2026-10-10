@@ -561,11 +561,15 @@ func (j *Jobs) hasRunning(topology string) bool {
 }
 
 func (j *Jobs) startChild(parent *controlplane.Run) (*controlplane.Run, error) {
+	target := parent.Target
+	if parent.Op == "reset" {
+		target = ""
+	}
 	run, _, err := j.startWithResult(parent.Topology, parent.Op, runStartOptions{
 		ParentID:     parent.ID,
 		SnapshotPath: parent.SnapshotPath,
 		Revision:     parent.Revision,
-		Target:       parent.Target,
+		Target:       target,
 		AgentID:      parent.AgentID,
 		UnsafeState:  parent.UnsafeState,
 	})

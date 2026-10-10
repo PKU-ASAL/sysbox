@@ -8,8 +8,19 @@ file/SQLite/PostgreSQL repository integration tests model two destroyed nodes
 and one missing intent, then retry from a new executor: each node is destroyed
 and recreated only once, original action identity/generation is preserved, and
 the original checkpoint bytes remain unchanged. Providers in this test are
-simulated. Runtime/repository/Agent/CLI race regressions passed; authenticated
-CLI/API origin verification and real retained-VM continuation are still open.
+simulated. Runtime/repository/Agent/CLI race regressions passed. API reset
+resume now requires a validated complete parent checkpoint before creating a
+child Run. Execution additionally requires a `ResetContinuationVerifier`; the
+API bridge does not yet provide signed host-stop verification and thus rejects
+execution. CLI exposes `reset --resume <run-id>` only with a durable synchronous
+return receipt matching the original checkpoint hash and action incarnation.
+It rejects `--target` overrides and confirms the complete original scope.
+Old/crashed executors without that receipt cannot resume through this path.
+Agent/API/CLI full race regressions, targeted missing-receipt/changed-checkpoint/
+target-override rejection tests, vet and independent review passed. This does
+not prove end-to-end CLI continuation of the retained incident.
+Signed remote host-stop/quiescence verification and real retained-VM
+continuation are still open.
 
 The continuation admission primitive now records the complete original request
 and missing intents atomically in aggregate format 5. Normal repository access

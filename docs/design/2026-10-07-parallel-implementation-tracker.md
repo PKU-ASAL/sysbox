@@ -2,6 +2,12 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+Reset入口接线：CLI新增--resume且禁止与--target混用，确认只展示原完整scope。
+本地必须提供同步executor返回后写入的.returned回执（绑定checkpoint字节摘要及
+原Run incarnation）；无回执、篡改或未知effect阶段拒绝。API受理先验证原checkpoint，
+执行还需ResetContinuationVerifier；API signed host-stop verifier尚未接入，执行
+安全拒绝。旧异构现场无新回执，仍不能直接恢复。Agent/API/CLI完整race及专项回归通过。
+
 Reset续作受理：aggregate现为format5，完整scope/action版本与缺失intent在同一事务
 受理，原请求receipt固定成员并支持进度推进后的精确重试。普通新reset不得接管旧Run。
 format4常规读写明确拒绝；一次性import工具默认只预览，显式提交前校验源摘要并

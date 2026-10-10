@@ -74,8 +74,11 @@ type DestroyHook interface {
 
 type ResetHook interface {
 	BuildResetPlan(g *graph.Graph, st *state.State, target string) (*runtime.Plan, error)
-	ResumeResetPlan(ctx context.Context, parent *controlplane.Run, current *runtime.Plan) (*runtime.Plan, error)
 	BeforeReset(plan *runtime.Plan) error
+}
+
+type ResetContinuationVerifier interface {
+	VerifyResetContinuation(context.Context, *controlplane.Run, *controlplane.Run) error
 }
 
 type Executor struct {
@@ -139,6 +142,10 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 }
 
 func (e *Executor) executeReset(ctx context.Context, run *controlplane.Run, log io.Writer) {
+	if run.ParentID != "" && run.Target != "" {
+		e.bridge.Finish(run, fmt.Errorf("reset continuation cannot override the original target scope"))
+		return
+	}
 	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
 	if err != nil {
 		e.bridge.Finish(run, err)
@@ -178,19 +185,22 @@ func (e *Executor) executeReset(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, fmt.Errorf("reset is not supported by this execution bridge"))
 		return
 	}
-	plan, err := hook.BuildResetPlan(g, st, run.Target)
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if !plan.HasChanges() {
-		_, _ = log.Write([]byte("Reset already complete.\n"))
-		e.bridge.Finish(run, nil)
-		return
-	}
-	if err := hook.BeforeReset(plan); err != nil {
-		e.bridge.Finish(run, err)
-		return
+	var plan *runtime.Plan
+	if run.ParentID == "" {
+		plan, err = hook.BuildResetPlan(g, st, run.Target)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		if !plan.HasChanges() {
+			_, _ = log.Write([]byte("Reset already complete.\n"))
+			e.bridge.Finish(run, nil)
+			return
+		}
+		if err := hook.BeforeReset(plan); err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
 	}
 
 	exec := runtime.NewExecutor(g, st)
@@ -212,6 +222,57 @@ func (e *Executor) executeReset(ctx context.Context, run *controlplane.Run, log 
 	exec.SetRecorder(recorder)
 	if err := e.installActionRepository(exec, run.Topology); err != nil {
 		e.bridge.Finish(run, err)
+		return
+	}
+	if run.ParentID != "" {
+		loader, ok := e.bridge.CheckpointStore().(runtime.CheckpointLoader)
+		if !ok {
+			e.bridge.Finish(run, fmt.Errorf("reset continuation requires durable parent checkpoint"))
+			return
+		}
+		parent, err := e.bridge.ParentRun(ctx, run.ParentID)
+		if err != nil || parent == nil || parent.ID != run.ParentID || parent.Topology != run.Topology || parent.Op != "reset" || !parent.Status.IsTerminal() {
+			if err == nil {
+				err = fmt.Errorf("parent reset is missing or still active")
+			}
+			e.bridge.Finish(run, err)
+			return
+		}
+		verifier, ok := e.bridge.(ResetContinuationVerifier)
+		if !ok {
+			e.bridge.Finish(run, fmt.Errorf("reset continuation requires verified prior executor return evidence"))
+			return
+		}
+		if err := verifier.VerifyResetContinuation(ctx, run, parent); err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		checkpoint, err := loader.LoadCheckpoint(ctx, run.Topology, parent.ID)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		request, err := exec.PrepareResetContinuation(ctx, checkpoint, parent.QueuedAt, parent.Revision)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		if err := hook.BeforeReset(&runtime.Plan{Actions: request.Checkpoint.Plan}); err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		if err := exec.ContinueReset(ctx, *request); err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		recorder.SetStateSerialAfter(st.Meta.Serial)
+		recorder.MarkResourceStateRecorded()
+		if err := recorder.Err(); err != nil {
+			recorder.Finish(err)
+			e.bridge.Finish(run, err)
+			return
+		}
+		e.bridge.Finish(run, nil)
 		return
 	}
 	if snap, err := mgr.Snapshot(ctx, "before reset "+run.ID); err == nil && snap != nil {

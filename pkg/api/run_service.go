@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -38,6 +39,7 @@ type RunService struct {
 	requiredForTopo func(string) ([]string, error)
 	revisions       globalRevisionStore
 	workspaces      *WorkspaceService
+	checkpoints     runtime.CheckpointLoader
 }
 
 type RunStartRequest struct {
@@ -82,6 +84,7 @@ func newRunService(server *Server) *RunService {
 		requiredForTopo: requiredCapabilitiesForTopology,
 		revisions:       server.apiStore,
 		workspaces:      server.workspaceService(),
+		checkpoints:     server.apiStore,
 	}
 }
 
@@ -526,6 +529,26 @@ func (s *RunService) Resume(ctx context.Context, runID string) (*controlplane.Ru
 	}
 	if parent.Op != "apply" && parent.Op != "destroy" && parent.Op != "reset" {
 		return nil, parent, runError(runServiceBadRequest, fmt.Errorf("run op %q cannot be resumed", parent.Op))
+	}
+	if parent.Op == "reset" {
+		if !parent.Status.IsTerminal() {
+			return nil, parent, runError(runServiceConflict, fmt.Errorf("parent reset is not terminal"))
+		}
+		checkpoint, err := s.checkpoints.LoadCheckpoint(ctx, parent.Topology, parent.ID)
+		if err != nil || checkpoint == nil || checkpoint.RunID != parent.ID || checkpoint.Operation != "reset" || checkpoint.PlanSHA256 == "" {
+			if err != nil {
+				err = fmt.Errorf("reset continuation requires an authenticated complete parent checkpoint: %w", err)
+			} else {
+				err = fmt.Errorf("reset continuation requires an authenticated complete parent checkpoint")
+			}
+			return nil, parent, runError(runServiceConflict, err)
+		}
+		if checkpoint.Topology != parent.Topology || len(checkpoint.Plan) == 0 {
+			return nil, parent, runError(runServiceConflict, fmt.Errorf("reset checkpoint scope mismatch"))
+		}
+		if _, err := runtime.ResumeResetPlan(checkpoint, &runtime.Plan{Actions: checkpoint.Plan}); err != nil {
+			return nil, parent, runError(runServiceConflict, err)
+		}
 	}
 	run, err := s.jobs.startChild(parent)
 	if err != nil {

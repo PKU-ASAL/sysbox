@@ -12,7 +12,11 @@
 独立 `ResetContinuationCommitter` 能力及持久 receipt；未找到 receipt 使用
 `ErrResetContinuationNotFound`。只读 recovery wrapper 不继承此受理能力。
 Bridge 的 `LockTopology` 现在接收 context 并返回 unlock/error，调用方必须处理
-锁失败。续作的 CLI/API 可信入口尚未接入，内部方法不构成外部执行授权。
+锁失败。API reset `Resume` 要求父 Run 的完整 checkpoint 后才创建子 Run；Agent
+子 Run 还必须通过 `ResetContinuationVerifier`，API bridge 尚未实现该验证，执行
+会拒绝。CLI 增加 `reset --resume <run-id>`，禁止与 `--target` 混用；本地需原同步
+执行器返回后持久写入的 `.returned` 回执，绑定 checkpoint 字节摘要和 Run 身份。
+缺少证据不能续作。远端 signed host-stop/quiescence verifier 仍待接入。
 
 Lifecycle aggregate 当前为 format 5。新 CLI `state import-format4` 默认仅预览；
 显式提交要求 `--apply --offline --source-sha256 ... --archive ...`，保全原字节后

@@ -14,8 +14,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 func TestDestroyHTTPIdempotencyKeyDispatchesOnceAcrossConcurrencyAndRestart(t *testing.T) {
@@ -307,12 +309,18 @@ func TestRunServiceResumeAllowsFailedReset(t *testing.T) {
 		ID: "host-a", Status: controlplane.AgentStatusOnline, Capabilities: []string{"network"},
 	}))
 	parent := s.jobs.startWithOptions("lab", "reset", runStartOptions{Target: "sysbox_node.web", UnsafeState: true})
+	cpPath := filepath.Join(t.TempDir(), "parent.json")
+	recorder := runtime.NewFileRecorder(cpPath, parent.ID, "lab")
+	require.NoError(t, recorder.Begin("reset", &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionReset}}}))
+	cp, err := runtime.LoadCheckpointFile(cpPath)
+	require.NoError(t, err)
+	require.NoError(t, s.apiStore.SaveCheckpoint(context.Background(), "lab", parent.ID, *cp))
 	s.jobs.finish(parent, errors.New("interrupted"))
 
 	run, _, err := s.runs().Resume(context.Background(), parent.ID)
 	require.NoError(t, err)
 	require.Equal(t, "reset", run.Op)
-	require.Equal(t, "sysbox_node.web", run.Target)
+	require.Empty(t, run.Target, "reset continuation retains scope from checkpoint")
 	require.True(t, run.UnsafeState)
 }
 
@@ -326,6 +334,29 @@ func TestRunServiceResumeRejectsRunningParent(t *testing.T) {
 	require.Equal(t, parent.ID, gotParent.ID)
 	require.ErrorContains(t, err, "still running")
 	require.Equal(t, http.StatusConflict, runServiceStatus(err))
+}
+
+func TestRunServiceResumeRejectsResetWithoutAuthenticatedCheckpoint(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	parent := s.jobs.startWithOptions("lab", "reset", runStartOptions{})
+	s.jobs.finish(parent, errors.New("controller stopped"))
+	run, gotParent, err := s.runs().Resume(context.Background(), parent.ID)
+	require.Nil(t, run)
+	require.Equal(t, parent.ID, gotParent.ID)
+	require.ErrorContains(t, err, "authenticated complete parent checkpoint")
+	require.Equal(t, http.StatusConflict, runServiceStatus(err))
+}
+
+func TestRunServiceResumeRejectsTamperedResetCheckpoint(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	parent := s.jobs.startWithOptions("lab", "reset", runStartOptions{})
+	require.NoError(t, s.jobs.finish(parent, errors.New("interrupted")))
+	cp := runtime.OperationCheckpoint{RunID: parent.ID, Topology: "lab", Operation: "reset", PlanSHA256: "tampered", Plan: []controlplane.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionReset}}}
+	require.NoError(t, s.apiStore.SaveCheckpoint(context.Background(), "lab", parent.ID, cp))
+	run, _, err := s.runs().Resume(context.Background(), parent.ID)
+	require.Nil(t, run)
+	require.ErrorContains(t, err, "fingerprint mismatch")
+	require.Len(t, s.jobs.list("lab"), 1, "invalid checkpoint must not create a child")
 }
 
 func writeRunServiceTopology(t *testing.T, s *Server, topology, hcl string) {
