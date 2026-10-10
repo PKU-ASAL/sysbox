@@ -2,6 +2,16 @@
 
 ## Open reset recovery failure (2026-10-10)
 
+Runtime reset no longer implicitly takes over another Run's pending actions.
+Pending actions must belong to the current Run or an explicitly selected
+resume Run; an absent or unrelated resume ID fails before preparation,
+destruction or creation. Regression tests demonstrate the previous implicit
+takeover and verify that rejection preserves both action records and provider
+state. Explicit cold recovery tests still preserve original action identities.
+Selecting a resume ID is not authorization: the bridge must validate the
+original checkpoint, Run incarnation and exclusive execution ownership before
+granting continuation. That complete entry point remains unfinished.
+
 Reset batch retries now validate the complete admitted action ID set inside
 the aggregate transaction. Reordering is allowed; omission, replacement and
 expansion are rejected. File, SQLite and real PostgreSQL 16 race tests verify

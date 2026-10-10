@@ -80,6 +80,9 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 		if record.Action != controlplane.PlanActionReset || !permitted[record.Resource.String()] {
 			return fmt.Errorf("%w: unresolved action %s outside reset scope", ErrPlanStale, record.ID)
 		}
+		if record.RunID != e.runID && (e.resumeRunID == "" || record.RunID != e.resumeRunID) {
+			return fmt.Errorf("%w: reset action %s belongs to Run %s; explicit continuation is required", ErrPlanStale, record.ID, record.RunID)
+		}
 		pending[record.Resource.String()] = record
 	}
 	staged, err := cloneExecutionState(e.state)

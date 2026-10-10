@@ -280,6 +280,7 @@ func TestResetReturnedDestroySurvivesObservationCommitFailure(t *testing.T) {
 	require.NoError(t, err)
 	cold := NewExecutor(g, coldState)
 	cold.SetRunContext(e.topology, "cold")
+	cold.SetResumeRunID(e.runID)
 	cold.SetActionRepository(resetOutcomeContract{m})
 	require.NoError(t, cold.Reset(context.Background(), plan))
 	require.Equal(t, ActionSucceeded, m.actions[0].Status)
@@ -315,6 +316,7 @@ func TestResetDestroyRequiresCommittedClaim(t *testing.T) {
 	m.actions[0].Phase = "destroying"
 	cold := NewExecutor(g, st)
 	cold.SetRunContext(e.topology, "cold")
+	cold.SetResumeRunID(e.runID)
 	cold.SetActionRepository(m)
 	require.ErrorContains(t, cold.Reset(context.Background(), plan), "destruction outcome unknown")
 	require.Equal(t, []string{"prepare:old-first"}, sub.resetLifecycle)
@@ -325,6 +327,31 @@ func (m resetOutcomeContract) CommitActionOutcome(ctx context.Context, r ActionR
 		return errors.New("invalid outcome status")
 	}
 	return m.memoryActions.CommitActionOutcome(ctx, r, p)
+}
+
+func TestResetNewRunCannotTakeOverPendingActions(t *testing.T) {
+	for _, resume := range []string{"", "unrelated-run"} {
+		t.Run("resume="+resume, func(t *testing.T) {
+			sub := &portTestSubstrate{name: "fake", coldPlug: true}
+			registerPortTestDriver(t, sub)
+			g, st := configuredResetTestState(t, sub, "first")
+			e := testActionExecutor(t, g, st)
+			m := e.actions.(*memoryActions)
+			m.outcomeErr = errors.New("crash before prepare")
+			plan, err := BuildResetPlan(g, st, "sysbox_node.first")
+			require.NoError(t, err)
+			require.Error(t, e.Reset(context.Background(), plan))
+			before := append([]ActionRecord(nil), m.actions...)
+			m.outcomeErr = nil
+			cold := NewExecutor(g, st)
+			cold.SetRunContext(e.topology, "new-run")
+			cold.SetResumeRunID(resume)
+			cold.SetActionRepository(m)
+			require.ErrorIs(t, cold.Reset(context.Background(), plan), ErrPlanStale)
+			require.Empty(t, sub.resetLifecycle)
+			require.Equal(t, before, m.actions)
+		})
+	}
 }
 
 func TestResetAcceptedIntentColdRecoveryBeforePrepare(t *testing.T) {
@@ -348,6 +375,7 @@ func TestResetAcceptedIntentColdRecoveryBeforePrepare(t *testing.T) {
 	m.actions[0].Phase = "preparing"
 	uncertain := NewExecutor(g, st)
 	uncertain.SetRunContext(e.topology, "uncertain-reset")
+	uncertain.SetResumeRunID(e.runID)
 	uncertain.SetActionRepository(m)
 	require.ErrorContains(t, uncertain.Reset(context.Background(), plan), "preparation outcome unknown")
 	require.Empty(t, sub.resetLifecycle)
@@ -356,6 +384,7 @@ func TestResetAcceptedIntentColdRecoveryBeforePrepare(t *testing.T) {
 	require.NoError(t, err)
 	cold := NewExecutor(g, coldState)
 	cold.SetRunContext(e.topology, "cold-reset")
+	cold.SetResumeRunID(e.runID)
 	cold.SetActionRepository(resetOutcomeContract{m})
 	require.NoError(t, cold.Reset(context.Background(), plan))
 	require.Len(t, m.actions, 1)
@@ -421,6 +450,7 @@ func TestResetBatchColdRecoveryRetainsBothOriginalActions(t *testing.T) {
 	require.NoError(t, err)
 	cold := NewExecutor(g, coldState)
 	cold.SetRunContext(e.topology, "new-process")
+	cold.SetResumeRunID(e.runID)
 	cold.SetActionRepository(resetOutcomeContract{m})
 	require.NoError(t, cold.Reset(context.Background(), plan))
 	require.Len(t, m.actions, 2)
@@ -596,6 +626,7 @@ func TestResetRecoveryDoesNotAdvanceGenerationOrReplayEffects(t *testing.T) {
 	repo.patchErr = nil
 	restarted := NewExecutor(g, st)
 	restarted.SetRunContext(e.topology, "run-2")
+	restarted.SetResumeRunID(e.runID)
 	restarted.SetActionRepository(repo)
 	require.NoError(t, restarted.Reset(context.Background(), plan))
 	require.Equal(t, before, sub.resetLifecycle)
