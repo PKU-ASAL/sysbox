@@ -2,6 +2,12 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+真实双VM正常reset及后台task：独立新库部署后，普通Apply→Reset→Destroy及带45秒
+后台task的同链路均通过。后台task确认gen1→gen2、exit0、termination confirmed、
+reported；销毁后按两代精确Docker ID及owner UID独立确认缺失，正常metadata DELETE
+通过。执行期间出现supervisor reconciliation deadline超时，尚未定位。故障续作、
+断网/切换及完整P9未关闭；具体Run/任务/容器证据见p9-real-acceptance文档首节。
+
 远端reset停止证据验证已接入：Run终态与宿主签名原始结果原子保存，API bridge重验
 签名、原Run incarnation/attempt/lease/终态、拓扑UID及authority历史Stops hash。
 普通Save/Restart不能写入/删除proof。三后端（含真实Postgres JSONB）回归与相关完整

@@ -1,5 +1,42 @@
 # P9 real acceptance
 
+## Real two-host Reset with background guest tasks (2026-10-10)
+
+On the same isolated deployment/build as the normal reset below, built
+`sysbox-p9-guest:local` (`3f781968a376`) on the execution VM using the current
+static `cmd/sysbox-init` helper and this deployment's issuer public key.
+No private signing key was copied into the guest image.
+
+Ran `cross_host_run.py --reset --background --provision-seconds 45`.
+Evidence: control VM `/var/tmp/p9-reset-background-20261010.json`;
+topology `p9-980664a6d2e7`, topology UID
+`b1ed66fb-f8fe-449b-8f7b-bf763a1f5ad3`.
+
+- Apply `request-6a8a6a76e8a7ef4fdbc0f6dac1124ebe4ea1abe8a76372c1c6c37e3c10c9a51d` completed.
+- Reset `5f3d2539-d2d3-4a17-b95d-c9fc7ac13588` completed.
+- Destroy `op-5b252cc0494eb25c01cf8885ed0aa0f114fdb813da9977197202fc5a14c6d7bc` completed.
+
+Independent host task-journal inspection confirmed both finite tasks exited
+with known exit code 0, `RemoteTermination=confirmed` and `reported=true`.
+Apply task: `run-task-a78a3f53701b72fb759b4e056313c5924bb1a6119f96765b5845c71d9a069b33`, generation 1, epoch 5.
+Reset task: `run-task-c7c8f1d80a952f1287bd4503ddab6f6a7cafe8a4eb14c9ffd3d2941032db9ccf`, generation 2, epoch 7.
+Both retained resource UID
+`f4197f2eed268b19e88cdd18f6e3b1ea155d5660ed8fd086f2655a04d97bbec1`.
+
+Execution-VM Docker independently reported `no such object` for both exact
+container IDs after Destroy:
+`520b646f8feb0121c90aaabed14d91359241b438419c9777bcfc413ad7eab490` and
+`6fbc4b3a1931528cae3ee117a3b6e6e95e2721e6ed0e2a3685ecb9e6e60abcf9`.
+Owner-UID inventory was empty. Normal metadata DELETE succeeded without force;
+evidence phase is `metadata_deleted`.
+
+An unresolved observation remains: supervisor logged repeated
+`reconciliation: context deadline exceeded` during this run. The last-minute
+supervisor/API logs were empty after cleanup, but that does not identify or fix
+the source. Diagnose before claiming healthy fault recovery. This acceptance
+proves normal remote generation-2 task routing and parent/child completion;
+it does not prove interrupted continuation, partition, failover or all P9 gates.
+
 ## Real two-host Apply / Reset / Destroy (2026-10-10)
 
 The retained lab `/tmp/sysbox-p9-lab-current` now runs build `749bc88` with binary
