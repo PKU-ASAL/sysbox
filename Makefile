@@ -158,7 +158,7 @@ test-p9-real: build-all ## Run implemented real-provider gates; reject skips and
 	export GOCACHE="$(GOCACHE)" SYSBOX_GUESTTASK_HELPER="$$acceptance_dir/helper"; \
 	SYSBOX_REMOTE_DOCKER_E2E=1 SYSBOX_HOST_POWER_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/api -timeout 6m \
 	  -tests TestRemoteDockerCompletionLossRecoveryE2E,TestHostSupervisorRealTaskStopAndSuccessorE2E,TestHostSupervisorRealNodePowerE2E,TestHostSupervisorRealFileInstallE2E; \
-	SYSBOX_DOCKER_ADOPTION_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/provider/docker -tests TestDockerAdoptionColdLifecycleE2E; \
+	SYSBOX_DOCKER_ADOPTION_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/provider/docker -tests TestDockerAdoptionColdLifecycleE2E,TestDockerProductionSSHAccessE2E; \
 	"$$acceptance_dir/check" -go "$(GO)" -package ./pkg/provider/firecracker -timeout 10m \
 	  -tests TestFirecrackerRealGenerationLifecycleE2E,TestFirecrackerRealResetGenerationAndColdAdoptionE2E,TestFirecrackerRealCrossProcessRecoveryE2E,TestFirecrackerRealControllerCrashRecoveryE2E; \
 	SYSBOX_LIBVIRT_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -package ./pkg/provider/libvirt -tests TestLibvirtRealGenerationEffectsE2E

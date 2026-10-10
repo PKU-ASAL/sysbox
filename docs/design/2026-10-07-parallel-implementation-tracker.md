@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+P7 Docker 正式连接已暴露完整 SSH access SPI，复用已有 Exec 的 immutable identity/
+generation 校验。真实 Docker provider 连接 E2E（race，0.52秒）验证签名修改、发现、
+冷连接观察、旧代拒绝、tombstone 和正常 Destroy 后精确缺失；加入 test-p9-real 门槛。
+runtime resource、host/API grant/completion 和自动配置发布仍未接通。
+
 P7 共享 sshd 端点规则：新增确定性、有数量上限的 Match LocalAddress/LocalPort
 生成器，交集优先，未知地址/端口继续拒绝受限 key。真实双端口 sshd（5.49秒）验证
 批准端口可登录、另一端口明确认证拒绝，独立 access 与管理员 key 不受损。此项不等于

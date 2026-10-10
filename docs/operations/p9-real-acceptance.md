@@ -1,5 +1,27 @@
 # P9 real acceptance
 
+## Production Docker SSH capability (2026-10-10)
+
+The formal Docker provider connection now implements the complete
+`ConnectionSSHAccess` SPI by forwarding through its existing guarded
+`dockerConn.Exec` helper channel. No separate Docker client or unguarded
+command path is introduced. The daemon-based regression proves discovery,
+mutation, observation and inspection reject stale resource generations before
+any exec creation.
+
+`TestDockerProductionSSHAccessE2E` ran with the current static helper and real
+Docker under race, passing in **0.52 seconds**. It used `Substrate.Connection`,
+not the earlier test-only Docker shell adapter: signed create, discovery,
+observation through a newly obtained connection, stale ownership proof rejection,
+signed deletion and revision tombstone all passed. Normal `DestroyNode` succeeded
+and exact container inspection returned NotFound. The fixture used a cached
+Alpine image and introduced no host SSH configuration.
+
+The test is included in `make test-p9-real`; the full matrix was not rerun for
+this change. Provider race and vet are separate checks. This closes Docker's
+missing connection capability, not runtime resource handling, host/API grant
+issuance/completion, or automatic sshd config publication.
+
 ## Managed SSH discovery through a real helper (2026-10-10)
 
 The disposable two-listener sshd/Docker-helper lifecycle now additionally uses
