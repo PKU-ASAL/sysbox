@@ -1,5 +1,29 @@
 # P9 real acceptance
 
+## Retained two-VM lab restart (2026-10-10)
+
+`scripts/acceptance/two_vms.py start --root /tmp/sysbox-p9-lab-current`
+now restarts existing disks without recreating keys, overlays or cloud-init
+seeds. It checks both old PIDs/monitors before launch, rejects uncertain/live
+processes, serializes starters and retains stale process files and separate
+restart serial logs. A partial launch preserves both disks and reports failure;
+it must not be retried blindly while the first guest is running.
+
+Real restart succeeded. `check` verified independent guest filesystems,
+private-network connectivity and nested KVM. Control boot ID:
+`aaff8020-1de1-4af8-8a7c-0941b5dc0d81`; execution boot ID:
+`5ca09ca7-b83e-41c1-aedd-c1937d95d1c0`. Both run kernel `6.8.0-124-generic`.
+The restarted serial logs use prefix `restart-bbc0c56b2cc6`.
+
+Sysbox API1/API2, Agent and host supervisor remain inactive. PostgreSQL, HAProxy
+and Docker are active; Docker listed no containers. Read-only SQL inspection
+found API schema 14 and two lifecycle format4 aggregates. The original Run
+`request-791bf2ad72aa0f6fbd4c31ab2bfcc5799b4c26d3efea14a7eb22d9bfacc1eab1`
+for topology `p9-86774be76235` still reports running. No terminal result was
+invented and no record was changed. This is lab availability evidence only,
+not lifecycle/upgrade/reset acceptance. Preserve the old database and host
+journals before deploying current code into a separate acceptance scope.
+
 ## Open reset recovery failure (2026-10-10)
 
 Reset now publishes a separate new-generation `replacement` before guest route

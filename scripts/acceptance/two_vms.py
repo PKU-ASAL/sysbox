@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Disposable two-kernel P9 lab. Never mounts host directories in either guest."""
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -199,6 +201,84 @@ def check(root):
     print(json.dumps(evidence, indent=2))
 
 
+def start(root):
+    """Restart an offline lab without recreating disks, keys or evidence."""
+    root, manifest = load(root)
+    with (root / "start.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _start_retained(root, manifest)
+
+
+def _start_retained(root, manifest):
+    if len(str(root)) > 65 or "," in str(root):
+        raise RuntimeError("short paths without commas required by QEMU")
+    if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+        raise RuntimeError("read/write access to /dev/kvm required")
+    ports = manifest["ports"]
+    if (set(ports) != {"control", "execution", "lan"} or
+            any(type(port) is not int or not 1024 <= port <= 65535 for port in ports.values()) or
+            len(set(ports.values())) != 3):
+        raise RuntimeError("invalid retained lab ports")
+    # Validate both guests before starting either. An unreadable/still-existing
+    # PID is uncertainty, not permission to launch another writer of its disk.
+    for role in ROLES:
+        directory = root / role
+        if directory.is_symlink() or not directory.is_dir():
+            raise RuntimeError("invalid retained VM directory")
+        for name in ("disk.qcow2", "seed.iso"):
+            path = directory / name
+            if path.is_symlink() or not path.is_file():
+                raise RuntimeError(f"invalid retained {role} {name}")
+        pidfile = directory / "pid"
+        if pidfile.is_symlink():
+            raise RuntimeError("invalid retained VM PID file")
+        if pidfile.exists():
+            if not pidfile.is_file():
+                raise RuntimeError("invalid retained VM PID file")
+            pid = int(pidfile.read_text().strip())
+            if pid <= 0:
+                raise RuntimeError("invalid retained VM PID")
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise RuntimeError(f"{role} old PID {pid} still exists; inspect before restart")
+        monitor = directory / "qmp"
+        if monitor.is_symlink():
+            raise RuntimeError("invalid retained monitor socket")
+        if monitor.exists():
+            if not stat.S_ISSOCK(monitor.lstat().st_mode):
+                raise RuntimeError("invalid retained monitor socket")
+            try:
+                qmp(monitor, "query-name")
+            except (ConnectionRefusedError, FileNotFoundError):
+                pass
+            else:
+                raise RuntimeError(f"{role} monitor is still live")
+    attempt = "restart-" + uuid.uuid4().hex[:12]
+    for index, (role, (cpus, memory, _)) in enumerate(ROLES.items(), 1):
+        directory = root / role
+        # Preserve old process files even after they have been proven stale.
+        for name in ("pid", "qmp"):
+            path = directory / name
+            if path.exists():
+                path.rename(directory / f"{attempt}.{name}")
+        lan = "listen" if role == "control" else "connect"
+        run("qemu-system-x86_64", "-name", f"{manifest['id']}-{role}",
+            "-machine", "q35,accel=kvm", "-cpu", "host", "-smp", str(cpus), "-m", str(memory),
+            "-display", "none", "-daemonize", "-pidfile", str(directory / "pid"),
+            "-qmp", f"unix:{directory}/qmp,server=on,wait=off",
+            "-serial", f"file:{directory}/{attempt}.serial.log", "-monitor", "none",
+            "-drive", f"file={directory}/disk.qcow2,format=qcow2,if=virtio",
+            "-drive", f"file={directory}/seed.iso,format=raw,media=cdrom,readonly=on",
+            "-netdev", f"user,id=nat,hostfwd=tcp:127.0.0.1:{ports[role]}-:22",
+            "-device", f"virtio-net-pci,netdev=nat,mac=52:54:00:77:{index:02x}:01",
+            "-netdev", f"socket,id=lan,{lan}=127.0.0.1:{ports['lan']}",
+            "-device", f"virtio-net-pci,netdev=lan,mac=52:54:00:77:{index:02x}:02")
+        print(f"started retained {role}; log {attempt}.serial.log", flush=True)
+
+
 def stop(root):
     root, manifest = load(root)
     errors = []
@@ -243,7 +323,7 @@ def prepare(root):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=["up", "prepare", "check", "stop", "exec", "upload"])
+    parser.add_argument("operation", choices=["up", "start", "prepare", "check", "stop", "exec", "upload"])
     parser.add_argument("--root", required=True)
     parser.add_argument("--base")
     parser.add_argument("--role", choices=ROLES, default="control")
@@ -255,6 +335,8 @@ def main():
         if not args.base:
             parser.error("up requires --base")
         up(args.root, args.base)
+    elif args.operation == "start":
+        start(args.root)
     elif args.operation == "check":
         check(args.root)
     elif args.operation == "prepare":

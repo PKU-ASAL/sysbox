@@ -10,6 +10,80 @@ import two_vms
 
 
 class LabTests(unittest.TestCase):
+    def retained_lab(self, root):
+        manifest = self.manifest(root)
+        manifest["ports"] = {"control": 30001, "execution": 30002, "lan": 30003}
+        two_vms.save(root / "lab.json", manifest)
+        for role in two_vms.ROLES:
+            directory = root / role
+            directory.mkdir()
+            (directory / "disk.qcow2").write_bytes(b"retained-disk")
+            (directory / "seed.iso").write_bytes(b"retained-seed")
+        return manifest
+
+    def test_start_reuses_retained_disks_without_recreating_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.retained_lab(root)
+            with mock.patch.object(two_vms.os, "access", return_value=True), \
+                 mock.patch.object(two_vms, "run") as launch:
+                two_vms.start(root)
+            self.assertEqual(launch.call_count, 2)
+            for call in launch.call_args_list:
+                self.assertEqual(call.args[0], "qemu-system-x86_64")
+                self.assertNotIn("qemu-img", call.args)
+            for role in two_vms.ROLES:
+                self.assertEqual((root / role / "disk.qcow2").read_bytes(), b"retained-disk")
+
+    def test_start_checks_both_old_processes_before_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.retained_lab(root)
+            (root / "execution" / "pid").write_text(str(two_vms.os.getpid()))
+            with mock.patch.object(two_vms.os, "access", return_value=True), \
+                 mock.patch.object(two_vms, "run") as launch:
+                with self.assertRaisesRegex(RuntimeError, "still exists"):
+                    two_vms.start(root)
+            launch.assert_not_called()
+
+    def test_start_rejects_concurrent_starter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.retained_lab(root)
+            with (root / "start.lock").open("a") as lock, \
+                 mock.patch.object(two_vms, "run") as launch:
+                two_vms.fcntl.flock(lock, two_vms.fcntl.LOCK_EX | two_vms.fcntl.LOCK_NB)
+                with self.assertRaises(BlockingIOError):
+                    two_vms.start(root)
+            launch.assert_not_called()
+
+    def test_start_rejects_dangling_process_links(self):
+        for name in ("pid", "qmp"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.retained_lab(root)
+                (root / "execution" / name).symlink_to(root / "outside")
+                with mock.patch.object(two_vms.os, "access", return_value=True), \
+                     mock.patch.object(two_vms, "run") as launch:
+                    with self.assertRaisesRegex(RuntimeError, "invalid retained"):
+                        two_vms.start(root)
+                launch.assert_not_called()
+
+    def test_partial_restart_never_recreates_a_disk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.retained_lab(root)
+            def launch(*args):
+                if args[2].endswith("-execution"):
+                    raise RuntimeError("second launch failed")
+                return subprocess.CompletedProcess(args, 0)
+            with mock.patch.object(two_vms.os, "access", return_value=True), \
+                 mock.patch.object(two_vms, "run", side_effect=launch):
+                with self.assertRaisesRegex(RuntimeError, "second launch"):
+                    two_vms.start(root)
+            for role in two_vms.ROLES:
+                self.assertEqual((root / role / "disk.qcow2").read_bytes(), b"retained-disk")
+
     def test_ssh_timeout_does_not_replay_unknown_remote_command(self):
         failure = subprocess.TimeoutExpired(["ssh"], 30)
         with mock.patch.object(two_vms.subprocess, "run", side_effect=failure) as call, \
