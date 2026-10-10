@@ -17,8 +17,8 @@ var helperPath = regexp.MustCompile(`^/[A-Za-z0-9_./-]+$`)
 // RenderSSHD contributes only the managed key lookup. It does not install the
 // config, validate an existing administrator command, reload sshd or add any
 // listeners. The caller must validate the complete effective configuration.
-// Match all does not restore global scope: install only at a validated config
-// boundary and check sshd -T -C for existing command/Match precedence conflicts.
+// Install only at a validated config boundary and check sshd -T -C for
+// existing command/Match precedence conflicts and trailing configuration.
 // sshd uses the first matching command, so intersections precede partial
 // endpoint matches. Unknown endpoint components never authorize restricted keys.
 func RenderSSHD(helper, commandUser string, configs []substrate.SSHAccessConfig) ([]byte, error) {

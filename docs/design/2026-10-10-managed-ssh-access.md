@@ -16,9 +16,15 @@ Sysbox 不改写用户自己的文件，也不停止共享 sshd。OpenSSH 命令
 此生成器已经双端口真实 sshd 验证；自动安装、第三方命令冲突检测、配置校验/reload
 及其恢复仍未接入。helper 不是执行任意命令的入口。
 
-生成文本必须放在经过验证的配置边界：`Match all` 不会恢复全局配置上下文，已有
-AuthorizedKeysCommand 或更早的 Match 规则可能抢先生效。自动安装时须检查完整配置
+生成文本必须放在经过验证的配置边界：已有 AuthorizedKeysCommand 或更早的 Match
+规则可能抢先生效，后续全局指令是否合法由目标 OpenSSH 实际校验。自动安装时须检查完整配置
 的 `sshd -t` 和各端点 `sshd -T -C`，不能把生成文本直接插入任意 Include 位置。
+
+`ValidateSSHD` 已实现暂存完整配置的语法与生效检查，对每个显式连接探测核验
+helper 命令、执行用户，以及必须保留的 AuthorizedKeysFile。真实 OpenSSH 测试覆盖
+端点交集、部分匹配、无匹配和更早规则冲突。探测集合必须由部署 adapter 枚举相关
+user/group/source/endpoint 条件；有限探测不是任意管理员配置的全局等价性证明。
+此方法不写文件、不 reload，也不代表运行中的 daemon 已采用暂存配置。
 
 相比检查文件后执行 rm，这个模型将权限内容、CAS 版本、操作结果放在同一原子记录中，
 避免检查后内容被替换的窗口。相比每项 access 启动独立 sshd，它不要求为每项访问维护

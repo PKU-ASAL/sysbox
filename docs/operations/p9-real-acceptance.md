@@ -1,5 +1,26 @@
 # P9 real acceptance
 
+## Staged SSH config syntax and effective-command conflicts (2026-10-10)
+
+`ValidateSSHD` runs `sshd -t -f` followed by `sshd -T -C` for each supplied
+connection probe. It requires the generated command and command user to be
+effective, and the expected administrator key-file setting to remain unchanged.
+Missing/duplicate/oversized output and subprocess failures reject validation.
+
+`TestRealSSHDEffectiveConfigurationConflictE2E` passed against local OpenSSH
+8.9p1 using temporary config and host keys, without starting or changing the
+system daemon. Four address/port combinations exercised intersection, address,
+port and fallback rules. Earlier Match rules selecting a foreign command,
+different command user or `AuthorizedKeysFile none` were rejected. A global
+Port inside a conditional Match was rejected by syntax checking. The local
+version accepts Port after Match all, so no text-only assumption is used for
+that case.
+
+This proves staged-config validation for the supplied probes. Production
+enumeration of all relevant Match classes, automatic publication/reload and
+post-reload observation remain required; it is not a global config equivalence
+proof or a P7 completion claim.
+
 ## Generated SSH endpoint rules: real two-listener validation (2026-10-10)
 
 `pkg/sshaccess.RenderSSHD` generates deterministic, bounded
