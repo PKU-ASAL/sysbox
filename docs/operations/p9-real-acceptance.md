@@ -1,5 +1,26 @@
 # P9 real acceptance
 
+## Canonical repository through host RPC to real Docker discovery (2026-10-10)
+
+`TestDockerProductionSSHAccessE2E` now persists the real container's identity
+and explicit `ubuntu` connection user in a filesystem lifecycle repository,
+closes the writing repository, and uses `CanonicalResolver.Resolve` in the
+host dispatcher. Every RPC reopens the repository; no fixture resolver supplies
+the user, provider ID or connection.
+
+The real test, using a freshly built helper and race, passed in **0.92 seconds**:
+initial absence, signed configuration creation, discovery through the Unix
+host RPC with canonical node name/user, stop and recreation of the supervisor
+service instance, unchanged discovery, deletion tombstone, normal provider
+Destroy and exact container NotFound. A stale worker generation was also
+rejected through the real host socket. Production provider identity checks
+remain in the path. The two server instances run sequentially in the same test
+process: this is not an independent-process crash or two-host acceptance.
+
+Mutations still use fixture-signed guest grants via the provider SPI. The test
+does not claim API issuance, host mutation completion, runtime resource migration
+or automatic sshd config installation. Those P7 requirements remain open.
+
 ## Canonical guest user after cold handle reconstruction (2026-10-10)
 
 The host resolver now recovers its guest user from the node's persisted desired
