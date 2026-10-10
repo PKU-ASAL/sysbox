@@ -27,7 +27,7 @@ Run 追加成员。清空拓扑时同时清空 receipt。
 精确重试，以及 receipt 损坏和绕过追加成员的拒绝。runtime、Agent、API、CLI
 完整 race 回归、vet 和独立审查通过。这些结果只证明受理事务，不证明 provider 恢复。
 
-## 尚未接入：执行入口与旧现场导入
+## 尚未接入：续作执行入口
 
 CLI/API 入口必须在读取证据前取得执行锁，验证原 checkpoint 的可信来源、真实
 Run incarnation 和配置/baseline，再确认旧执行者及外部调用已经停止。原 action
@@ -37,8 +37,30 @@ Run incarnation 和配置/baseline，再确认旧执行者及外部调用已经�
 成功受理后，runtime 使用 receipt 中的固定集合，经已有阶段 CAS 推进；新执行日志
 不得覆盖原 checkpoint。只读 recovery wrapper 不暴露续作写入能力。
 
-保留的 format 4 异构故障现场仍未恢复。需要独立的一次性 verified import：
-先保全原 aggregate/checkpoint/config 字节和摘要，验证旧执行者停止，再校验和导入
-到 format 5；保留原 UID、serial、action ID、代际及 effect 证据。提交必须比较原始
-内容，禁止直接修改 JSON 版本号。旧快照与维护 receipt 的处理必须逐项验证，不能
-为了通过新格式校验丢弃历史证据。此导入工具和完整执行入口尚未实现。
+## 已实现：一次性 format 4 导入工具
+
+`sysbox state import-format4` 默认只预览，返回原始字节 SHA256、UID、serial 和
+action/snapshot 数量。预览不创建数据库或初始化 SQL 表结构。
+
+停止所有旧写者并保全原 checkpoint/config 后，显式执行：
+
+```bash
+sysbox --state /path/to/lab/state.json state import-format4
+sysbox --state /path/to/lab/state.json state import-format4 \
+  --apply --offline --source-sha256 ORIGINAL_SHA256 \
+  --archive /path/to/evidence/original.format4.json
+```
+
+`--offline` 是操作者声明，不是程序自动取得的进程退出证明。工具取得执行锁和
+aggregate 写锁后重验原始字节摘要，先持久保存完整原文，再原子导入 format 5。
+保留原 UID、serial、action ID、代际、effect 证据和历史维护 receipt。
+快照逐个校验原 hash/size/UID 后转换，保留 snapshot ID，更新新载荷 hash/size；
+旧快照字节仍完整保存在原文档案中，历史恢复 receipt 的原 digest 不被改写。
+新的 snapshot restore 需要重新生成计划，不能沿用转换前尚未提交的请求。
+
+档案不能覆盖不同内容，也不能写成另一个 topology aggregate。档案失败不转换；
+提交失败可能留下安全的原文档案。若提交响应丢失，先检查当前格式和档案，不能
+手动回退版本号或重新覆盖运行中的状态。文件、SQLite、Postgres 均有真实后端回归。
+
+保留的真实异构现场目前只通过了只读容器预览，尚未导入，更没有执行 provider
+恢复。原 checkpoint/config 归档、旧执行者停止取证和完整续作入口仍需完成。

@@ -4,7 +4,8 @@
 
 Reset续作受理：aggregate现为format5，完整scope/action版本与缺失intent在同一事务
 受理，原请求receipt固定成员并支持进度推进后的精确重试。普通新reset不得接管旧Run。
-format4常规读写明确拒绝；保留的异构故障现场未修改，专用verified import、执行入口
+format4常规读写明确拒绝；一次性import工具默认只预览，显式提交前校验源摘要并
+持久保全原文。保留的异构故障现场只读预览通过但未修改，旧写者停止取证、执行入口
 和真实reset恢复仍未完成。后文format4为历史阶段记录，不能据此判断当前可读格式。
 
 P7目标身份修复：SSH coordinator不再误把topology名称与UID比较；request摘要、signed

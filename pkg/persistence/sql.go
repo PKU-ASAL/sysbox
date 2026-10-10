@@ -23,6 +23,10 @@ type sqlBackend struct {
 }
 
 func OpenSQLite(path string) (*Repository, error) {
+	return openSQLite(path, true)
+}
+
+func openSQLite(path string, initialize bool) (*Repository, error) {
 	if path == "" || path == ":memory:" {
 		return nil, fmt.Errorf("durable SQLite repository requires a filesystem path")
 	}
@@ -30,7 +34,11 @@ func OpenSQLite(path string) (*Repository, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if initialize {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return nil, err
+		}
+	} else if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
 	// SQLite and its execution sidecar must use the same canonical file path.
@@ -52,27 +60,41 @@ func OpenSQLite(path string) (*Repository, error) {
 	u := url.URL{Scheme: "file", Path: path}
 	q := u.Query()
 	q.Add("_pragma", "busy_timeout(5000)")
-	q.Add("_pragma", "journal_mode(WAL)")
+	if initialize {
+		q.Add("_pragma", "journal_mode(WAL)")
+	} else {
+		q.Set("mode", "rw") // open an existing database without creating one
+	}
 	u.RawQuery = q.Encode()
 	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS sysbox_lifecycle_aggregates (topology TEXT PRIMARY KEY, data BLOB NOT NULL)`)
-	if err != nil {
-		db.Close()
-		return nil, err
+	if initialize {
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS sysbox_lifecycle_aggregates (topology TEXT PRIMARY KEY, data BLOB NOT NULL)`)
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return &Repository{backend: &sqlBackend{db: db, path: path}}, nil
 }
 func OpenPostgres(ctx context.Context, dsn string) (*Repository, error) {
+	return openPostgres(ctx, dsn, true)
+}
+
+func openPostgres(ctx context.Context, dsn string, initialize bool) (*Repository, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(8)
-	err = initializePostgresLifecycle(ctx, db)
+	if initialize {
+		err = initializePostgresLifecycle(ctx, db)
+	} else {
+		err = db.PingContext(ctx)
+	}
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -120,6 +142,10 @@ func (b *sqlBackend) name() string {
 	return "sqlite-aggregate"
 }
 func (b *sqlBackend) update(ctx context.Context, key string, fn func(*aggregate) error) error {
+	return b.updateDecoded(ctx, key, decodeAggregate, fn)
+}
+
+func (b *sqlBackend) updateDecoded(ctx context.Context, key string, decode func([]byte) (*aggregate, error), fn func(*aggregate) error) error {
 	conn, err := b.db.Conn(ctx)
 	if err != nil {
 		return err
@@ -189,7 +215,7 @@ func (b *sqlBackend) update(ctx context.Context, key string, fn func(*aggregate)
 	if err = conn.QueryRowContext(ctx, query, key).Scan(&raw); err != nil {
 		return err
 	}
-	a, err := decodeAggregate(raw)
+	a, err := decode(raw)
 	if err != nil {
 		return err
 	}

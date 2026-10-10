@@ -5,8 +5,20 @@
 The continuation admission primitive now records the complete original request
 and missing intents atomically in aggregate format 5. Normal repository access
 rejects format 4. The retained heterogeneous incident has not been imported or
-modified: do not run current lifecycle commands against it until the explicit
-verified import and continuation execution entry point are implemented. See
+modified. An explicit format4 import preview, run with a read-only container,
+read-only source mount and disabled network, validated topology UID
+`597da2ee-b1f7-48b9-8d9a-afa9e351aaaf`, serial 8, 10 actions and four snapshots.
+The source SHA256 was
+`9d9b2552617772abc7d0830efad5ade52d41e3bf465f003debf315a9da6dac55`.
+The final preview returned the same digest. The explicit importer passed real
+file/SQLite/PostgreSQL 16 tests for atomic source comparison, durable original
+archives, archive failure rollback and snapshot conversion, plus CLI preview
+and apply tests on disposable fixtures. Full persistence/Agent/API/CLI race
+regressions, vet and independent review passed. Neither preview imported the
+retained incident. Its two pending reset records retain identical queued-at
+`2026-10-09T22:53:55.414519496Z` and no Run revision (local CLI provenance);
+do not invent a revision during continuation.
+The continuation execution entry point remains unfinished. See
 [reset continuation](../design/2026-10-10-reset-continuation.md).
 
 CLI and Agent lifecycle execution now acquires a repository-scoped execution

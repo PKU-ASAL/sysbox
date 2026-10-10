@@ -95,6 +95,17 @@ func SQLitePath(backendURL string) (string, error) {
 // Existing standalone state is rejected; it must never be mistaken for empty
 // state when a new engine selects a different storage format.
 func OpenConfigured(ctx context.Context, backendURL, statePath string) (*Repository, error) {
+	return openConfigured(ctx, backendURL, statePath, true)
+}
+
+// OpenImportSource opens existing storage without schema bootstrap. Planning an
+// explicit import must not create a missing database or initialize its tables.
+// Only ImportFormat4 may perform the subsequent explicitly requested conversion.
+func OpenImportSource(ctx context.Context, backendURL, statePath string) (*Repository, error) {
+	return openConfigured(ctx, backendURL, statePath, false)
+}
+
+func openConfigured(ctx context.Context, backendURL, statePath string, initialize bool) (*Repository, error) {
 	if backendURL == "" {
 		backendURL = statePath
 	}
@@ -125,12 +136,12 @@ func OpenConfigured(ctx context.Context, backendURL, statePath string) (*Reposit
 		if pathErr != nil {
 			return nil, pathErr
 		}
-		repo, err = OpenSQLite(path)
+		repo, err = openSQLite(path, initialize)
 	case "postgres", "postgresql":
 		q := u.Query()
 		q.Del("topology")
 		u.RawQuery = q.Encode()
-		repo, err = OpenPostgres(ctx, u.String())
+		repo, err = openPostgres(ctx, u.String(), initialize)
 	default:
 		return nil, fmt.Errorf("backend %q does not support atomic lifecycle transactions", u.Scheme)
 	}

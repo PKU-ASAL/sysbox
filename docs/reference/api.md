@@ -383,9 +383,11 @@ POST /v1/policies
 ### Guest completion evidence format
 
 Lifecycle aggregates now require format 5 for immutable reset continuation
-receipts. Format 4 is rejected by normal lifecycle access. Explicit import of
-retained recovery evidence is not yet available; preserve existing aggregates
-and checkpoints without editing their version fields.
+receipts. Format 4 is rejected by normal lifecycle access. The explicit
+`sysbox state import-format4` tool previews by default; applying requires stopped
+writers, an exact source digest and a durable original-byte archive. Preserve
+checkpoints/configuration separately. Import converts metadata only and does
+not authorize provider recovery; never edit version fields manually.
 
 The current API schema is 14. Host completion of a standalone guest task stores
 its terminal result together with an immutable grant identity and receipt hash;

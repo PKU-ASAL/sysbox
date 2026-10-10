@@ -40,6 +40,10 @@ func (b *fileBackend) keys(ctx context.Context) ([]string, error) {
 	return keys, nil
 }
 func (b *fileBackend) update(ctx context.Context, key string, fn func(*aggregate) error) error {
+	return b.updateDecoded(ctx, key, decodeAggregate, fn)
+}
+
+func (b *fileBackend) updateDecoded(ctx context.Context, key string, decode func([]byte) (*aggregate, error), fn func(*aggregate) error) error {
 	if err := os.MkdirAll(b.root, 0700); err != nil {
 		return err
 	}
@@ -60,7 +64,7 @@ func (b *fileBackend) update(ctx context.Context, key string, fn func(*aggregate
 	} else if err != nil {
 		return err
 	} else {
-		a, err = decodeAggregate(raw)
+		a, err = decode(raw)
 		if err != nil {
 			return err
 		}
