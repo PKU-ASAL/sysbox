@@ -564,3 +564,32 @@ resource "sysbox_node" "web" {
 	require.NotNil(t, g.Get(address.IntInstance("sysbox_node", "web", 1)))
 	require.Nil(t, g.Get(address.Resource("sysbox_node", "web")))
 }
+
+func TestLoadWorkspaceWithManagerUsesAppliedVariableProjection(t *testing.T) {
+	registerPortTestDriver(t, &portTestSubstrate{name: "docker"})
+	hclFile := writeHCL(t, `
+variable "mode" {}
+substrate "docker" { alias = "local" }
+resource "sysbox_image" "alpine" {
+  substrate = substrate.docker.local
+  kind = "oci"
+  source = "alpine:latest"
+  architecture = "amd64"
+  guest_family = "linux"
+}
+resource "sysbox_node" "web" {
+  substrate = substrate.docker.local
+  image = sysbox_image.alpine.id
+  env = { MODE = var.mode }
+}
+`)
+	mgr := state.NewManager(filepath.Join(t.TempDir(), "state.json"))
+	require.NoError(t, mgr.Save(&state.State{Version: state.SchemaVersion, AppliedVariables: map[string]string{"mode": "prod"}}))
+	g, _, _, _, _, err := LoadWorkspaceWithManager(hclFile, mgr)
+	require.NoError(t, err)
+	node := g.Get(address.Resource("sysbox_node", "web"))
+	require.NotNil(t, node)
+	cfg, ok := node.Data.(*config.NodeConfig)
+	require.True(t, ok)
+	require.Equal(t, "prod", cfg.Env["MODE"])
+}

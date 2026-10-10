@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -326,6 +328,8 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
+	appliedVariables := config.NonSensitiveInputValues(root.Variables, run.Inputs)
+	inputProjectionChanged := !maps.Equal(st.AppliedVariables, appliedVariables)
 	plan, err := runtime.ComputePlan(g, st)
 	if err != nil {
 		e.bridge.Finish(run, err)
@@ -370,6 +374,13 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		return
 	}
 	if !plan.HasChanges() {
+		if inputProjectionChanged {
+			st.AppliedVariables = appliedVariables
+			if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
+				e.bridge.Finish(run, fmt.Errorf("save applied variable projection: %w", err))
+				return
+			}
+		}
 		_, _ = log.Write([]byte("No changes. Apply is a no-op.\n"))
 		e.bridge.Finish(run, nil)
 		return
@@ -400,6 +411,7 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
+	st.AppliedVariables = appliedVariables
 	if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
 		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)

@@ -50,6 +50,23 @@ func BuildEvalContextWithInputs(root *Root, callerDir string, inputs map[string]
 	return buildEvalContextInner(root, callerDir, bindings)
 }
 
+// BuildEvalContextWithPersistedInputs builds the read-only context used after
+// an apply. It keeps the preflight placeholder behavior for variables that are
+// unavailable, while applying the safe non-sensitive values persisted in state.
+func BuildEvalContextWithPersistedInputs(root *Root, callerDir string, inputs map[string]string) (*hcl.EvalContext, error) {
+	bindings, err := VariableBindings(root.Variables, inputs)
+	if err != nil {
+		return nil, err
+	}
+	for _, vb := range root.Variables {
+		if _, ok := bindings[vb.Name]; ok {
+			continue
+		}
+		bindings[vb.Name] = variablePlaceholder(vb)
+	}
+	return buildEvalContextInner(root, callerDir, bindings)
+}
+
 // baseFunctions returns the builtin functions shared by every eval context
 // sysbox builds. Keeping a single source of truth avoids drifting between the
 // local, pre-count and main contexts when a new builtin is added.

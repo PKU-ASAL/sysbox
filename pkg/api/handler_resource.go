@@ -34,8 +34,8 @@ func (s *Server) handleListResources(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) authoritativeTopologyHealth(ctx context.Context, topology string, st *state.State) controlplane.TopologyHealth {
 	projection, projectionErr := s.apiStore.LoadResourceProjection(ctx, topology)
-	usesFirecracker := stateHasFirecracker(st) || (projectionErr == nil && projectionHasFirecracker(projection))
-	if usesFirecracker {
+	usesVM := stateHasVM(st) || (projectionErr == nil && projectionHasVM(projection))
+	if usesVM {
 		// VM agent observations can outlive a guest/agent restart. Trust only a snapshot
 		// that matches the current VM state and agent process; otherwise report pending.
 		if st == nil || len(st.Resources) == 0 {
@@ -69,24 +69,24 @@ func (s *Server) authoritativeTopologyHealth(ctx context.Context, topology strin
 	return runtime.EvaluateTopologyHealth(ctx, st)
 }
 
-func stateHasFirecracker(st *state.State) bool {
+func stateHasVM(st *state.State) bool {
 	if st == nil {
 		return false
 	}
 	for _, resource := range st.Resources {
-		if resource.Driver == "firecracker" {
+		if resource.Driver == "firecracker" || resource.Driver == "libvirt" {
 			return true
 		}
 	}
 	return false
 }
 
-func projectionHasFirecracker(projection *controlplane.ResourceProjection) bool {
+func projectionHasVM(projection *controlplane.ResourceProjection) bool {
 	if projection == nil {
 		return false
 	}
 	for _, resource := range append(append([]controlplane.ResourceHealth{}, projection.Resources...), projection.Health.Resources...) {
-		if resource.Provider == "firecracker" {
+		if resource.Provider == "firecracker" || resource.Provider == "libvirt" {
 			return true
 		}
 	}

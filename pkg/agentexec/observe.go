@@ -30,7 +30,7 @@ func Observe(ctx context.Context, agentID string, bridge Bridge) []controlplane.
 		if err != nil || st == nil {
 			continue
 		}
-		if stateHasFirecracker(st) {
+		if stateHasVM(st) {
 			projection, err := observeTopology(ctx, agentID, bridge, topology)
 			if err == nil {
 				out = append(out, projection)
@@ -49,12 +49,12 @@ func Observe(ctx context.Context, agentID string, bridge Bridge) []controlplane.
 	return out
 }
 
-func stateHasFirecracker(st *state.State) bool {
+func stateHasVM(st *state.State) bool {
 	if st == nil {
 		return false
 	}
 	for _, resource := range st.Resources {
-		if resource.Driver == "firecracker" {
+		if resource.Driver == "firecracker" || resource.Driver == "libvirt" {
 			return true
 		}
 	}

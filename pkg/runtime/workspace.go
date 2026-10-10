@@ -31,17 +31,20 @@ func LoadWorkspaceWithManager(hclFile string, mgr *state.Manager) (
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("parse config: %w", err)
 	}
-	ctx, err := config.BuildEvalContext(root, filepath.Dir(hclFile))
+	s, err := mgr.Load()
+	if err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("load state: %w", err)
+	}
+	// Reuse only the non-sensitive variable projection recorded by the last
+	// apply. This keeps status/outputs aligned with the deployed topology after
+	// a restart without persisting secret input values.
+	ctx, err := config.BuildEvalContextWithPersistedInputs(root, filepath.Dir(hclFile), s.AppliedVariables)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("evaluate config: %w", err)
 	}
 	g, err := BuildGraph(root, ctx, hclFile)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("build graph: %w", err)
-	}
-	s, err := mgr.Load()
-	if err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("load state: %w", err)
 	}
 	return g, mgr, s, root, ctx, nil
 }
