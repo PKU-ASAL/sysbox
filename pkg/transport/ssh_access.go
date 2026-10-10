@@ -29,12 +29,17 @@ func mutateSSHAccess(ctx context.Context, conn taskCaller, identity executionIde
 	expected := substrate.SSHAccessHandle{ID: req.ID, Digest: digest, User: req.Config.User, AccessID: req.Config.AccessID,
 		Revision: req.ExpectedRevision + 1, BootID: auth.Grant.BootID, Epoch: g.Epoch,
 		TopologyUID: g.Scope.TopologyUID, ResourceUID: g.Scope.ResourceUID, Generation: g.Scope.Generation}
+	// The identity is known before dispatch, even if the outcome is not. Keep
+	// it on errors so the caller can observe the original operation after a
+	// lost reply. Present is meaningful only when the returned error is nil.
+	unknown := substrate.SSHAccessResult{Handle: expected}
+	unknown.Handle.NodeID = identity.nodeID
 	response, err := conn.taskCall(ctx, guesttask.Call{Version: guesttask.Version, Operation: "ssh-access", SSHMutation: &req, Grant: &auth.Grant})
 	if err != nil {
-		return empty, err
+		return unknown, err
 	}
 	if response.Version != guesttask.Version || response.Error != "" || response.SSHResult == nil || response.SSHResult.Handle != expected || response.SSHResult.Present == req.Delete {
-		return empty, guesttask.ErrConflict
+		return unknown, guesttask.ErrConflict
 	}
 	result := *response.SSHResult
 	result.Handle.NodeID = identity.nodeID

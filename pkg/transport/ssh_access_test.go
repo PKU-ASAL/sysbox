@@ -64,13 +64,18 @@ func TestSSHAccessTransportBindsMutationAndResponse(t *testing.T) {
 				require.Equal(t, "node", result.Handle.NodeID)
 			} else {
 				require.Error(t, err)
+				trusted := h
+				trusted.NodeID = identity.nodeID
+				require.Equal(t, trusted, result.Handle, "recovery uses expected identity, never an untrusted response")
+				require.False(t, result.Present, "an invalid response must not report success")
 			}
 		})
 	}
 	calls := 0
 	caller := sshAccessCaller(func(guesttask.Call) guesttask.Response { calls++; return guesttask.Response{} })
-	_, err = mutateSSHAccess(context.Background(), caller, identity, m)
+	rejected, err := mutateSSHAccess(context.Background(), caller, identity, m)
 	require.Error(t, err)
+	require.Empty(t, rejected.Handle.ID, "pre-dispatch rejection must not mint an operation handle")
 	identity.generation++
 	_, err = mutateSSHAccess(ctx, caller, identity, m)
 	require.Error(t, err)
