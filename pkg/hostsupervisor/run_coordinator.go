@@ -66,7 +66,7 @@ func (c *RunCoordinator) Recover(ctx context.Context) error {
 		return c.recoverCheckpoint(recoverCtx, gate, grant, effectID)
 	})
 	completedErr := gate.RecoverCompleted(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, effectID string) error {
-		if grant.AgentID != c.AgentID || (grant.Operation != "run_apply" && grant.Operation != "run_destroy") {
+		if grant.AgentID != c.AgentID || !controlplane.IsRunExecutionOperation(grant.Operation) {
 			return effectgate.ErrFenced
 		}
 		reservation, err := gate.ReadRunEnvelope(recoverCtx, grant, effectID)

@@ -48,7 +48,7 @@ func (s *Server) handleGuestTaskStops(w http.ResponseWriter, r *http.Request) {
 	candidates := make([]controlplane.ExecutionGrant, 0)
 	parents := make(map[uint64]controlplane.ExecutionGrant)
 	for _, g := range grants {
-		if g.AgentID == id && g.ParentEpoch == 0 && (g.Operation == "run_apply" || g.Operation == "run_destroy") {
+		if g.AgentID == id && g.ParentEpoch == 0 && controlplane.IsRunExecutionOperation(g.Operation) {
 			parents[g.Epoch] = g
 		}
 		if g.AgentID == id && g.State == controlplane.GrantRevoked && g.Operation == "guest_task" && g.Epoch > cursor.AfterEpoch && g.Epoch <= ceiling {

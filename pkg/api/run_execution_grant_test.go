@@ -11,10 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSourceGrantSupportsRunAssignedApplyAndDestroy(t *testing.T) {
+func TestSourceGrantSupportsLifecycleRuns(t *testing.T) {
 	s := guestExecutionTestServer(t)
 	ctx := context.Background()
-	for _, action := range []string{"apply", "destroy"} {
+	for _, action := range []string{"apply", "destroy", "reset"} {
 		t.Run(action, func(t *testing.T) {
 			run := controlplane.Run{ID: "run-" + action, Topology: "lab", Revision: "sha256:revision", Op: action, Operation: action, Target: "sysbox_node.web", Status: controlplane.RunAssigned, AgentID: "agent", LeaseOwner: "lease", LeaseUntil: time.Now().Add(time.Minute), Attempt: 2}
 			cmd := controlplane.AgentCommand{ID: "cmd-" + action, AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusRunning, Run: &run, ActionID: "action-" + action, TopologyUID: "topology", ResourceUID: "resource", Generation: 3, ExpectedSerial: 1, LeaseOwner: "lease", Attempt: 2, LeaseUntil: run.LeaseUntil}

@@ -11,14 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func childGrantFixture(t *testing.T) (*ExecutionGrantRepository, controlplane.ExecutionGrant, controlplane.ExecutionGrant, *time.Time) {
+func childGrantFixture(t *testing.T, operation ...string) (*ExecutionGrantRepository, controlplane.ExecutionGrant, controlplane.ExecutionGrant, *time.Time) {
 	t.Helper()
 	r := NewFilesystemExecutionGrantRepository(t.TempDir())
 	now := time.Now().UTC()
 	r.now = func() time.Time { return now }
 	s, err := r.OpenSession(context.Background(), "agent", "host", "")
 	require.NoError(t, err)
-	p, err := r.Issue(context.Background(), controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology"}, AgentID: "agent", SessionID: s.ID, ActionID: "run", CommandID: "command", Attempt: 1, Operation: "run_apply", Digest: "run", TargetBootID: "host"}, time.Minute)
+	op := "run_apply"
+	if len(operation) != 0 {
+		op = operation[0]
+	}
+	p, err := r.Issue(context.Background(), controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology"}, AgentID: "agent", SessionID: s.ID, ActionID: "run", CommandID: "command", Attempt: 1, Operation: op, Digest: "run", TargetBootID: "host"}, time.Minute)
 	require.NoError(t, err)
 	c := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1}, AgentID: p.AgentID, SessionID: p.SessionID, ActionID: "task", CommandID: p.CommandID, Attempt: p.Attempt, Operation: "guest_task", Digest: "task", TargetBootID: "guest"}
 	return r, *p, c, &now
@@ -60,16 +64,20 @@ func TestChildDerivationRejectsStaleParentEpochAndSession(t *testing.T) {
 }
 
 func TestChildCannotSurviveParentRevocationOrReleaseParent(t *testing.T) {
-	r, p, c, _ := childGrantFixture(t)
-	g, err := r.DeriveGuestTask(context.Background(), p, c, time.Minute)
-	require.NoError(t, err)
-	require.ErrorIs(t, r.AcceptHostStop(context.Background(), p, "parent-stopped"), ErrConflict)
-	require.NoError(t, r.Revoke(context.Background(), p))
-	require.ErrorIs(t, r.Authorize(context.Background(), *g), ErrConflict)
-	_, err = r.Renew(context.Background(), *g, time.Minute)
-	require.ErrorIs(t, err, ErrConflict)
-	require.NoError(t, r.AcceptHostStop(context.Background(), *g, "child-stopped"))
-	require.NoError(t, r.AcceptHostStop(context.Background(), p, "parent-stopped"))
+	for _, operation := range []string{"run_apply", "run_destroy", "run_reset"} {
+		t.Run(operation, func(t *testing.T) {
+			r, p, c, _ := childGrantFixture(t, operation)
+			g, err := r.DeriveGuestTask(context.Background(), p, c, time.Minute)
+			require.NoError(t, err)
+			require.ErrorIs(t, r.AcceptHostStop(context.Background(), p, "parent-stopped"), ErrConflict)
+			require.NoError(t, r.Revoke(context.Background(), p))
+			require.ErrorIs(t, r.Authorize(context.Background(), *g), ErrConflict)
+			_, err = r.Renew(context.Background(), *g, time.Minute)
+			require.ErrorIs(t, err, ErrConflict)
+			require.NoError(t, r.AcceptHostStop(context.Background(), *g, "child-stopped"))
+			require.NoError(t, r.AcceptHostStop(context.Background(), p, "parent-stopped"))
+		})
+	}
 }
 
 func TestTargetedParentCannotBeOverwrittenByChild(t *testing.T) {

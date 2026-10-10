@@ -30,7 +30,7 @@ func TestRunRequestDigestBindsRevisionActionAndGeneration(t *testing.T) {
 }
 
 func TestRunRequestRejectsUnsupportedActionAndPaths(t *testing.T) {
-	req := RunRequest{RunID: "run", Topology: "lab", TopologyUID: "topology", Revision: "rev", ActionID: "a", ResourceUID: "r", Generation: 1, Action: "reset", Target: "sysbox_node.web", ExpectedSerial: 1}
+	req := RunRequest{RunID: "run", Topology: "lab", TopologyUID: "topology", Revision: "rev", ActionID: "a", ResourceUID: "r", Generation: 1, Action: "unsupported", Target: "sysbox_node.web", ExpectedSerial: 1}
 	req.TopologyUID = "uid"
 	require.Error(t, req.Validate())
 	req.Action = "apply"

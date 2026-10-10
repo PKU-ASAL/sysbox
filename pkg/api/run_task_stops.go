@@ -13,7 +13,7 @@ import (
 // parent epoch and immutable Run request. No worker payload supplies a node.
 func (s *Server) runTaskStop(ctx context.Context, child, parent controlplane.ExecutionGrant) (controlplane.GuestTaskStop, error) {
 	var zero controlplane.GuestTaskStop
-	if child.ParentEpoch == 0 || parent.Epoch != child.ParentEpoch || parent.ParentEpoch != 0 || parent.AgentID != child.AgentID || parent.SessionID != child.SessionID || parent.CommandID != child.CommandID || parent.Attempt != child.Attempt || parent.Scope.TopologyUID != child.Scope.TopologyUID || (parent.Operation != "run_apply" && parent.Operation != "run_destroy") {
+	if child.ParentEpoch == 0 || parent.Epoch != child.ParentEpoch || parent.ParentEpoch != 0 || parent.AgentID != child.AgentID || parent.SessionID != child.SessionID || parent.CommandID != child.CommandID || parent.Attempt != child.Attempt || parent.Scope.TopologyUID != child.Scope.TopologyUID || !controlplane.IsRunExecutionOperation(parent.Operation) {
 		return zero, persistence.ErrConflict
 	}
 	record, err := readFailureCommand(ctx, s.apiStore, parent.CommandID)

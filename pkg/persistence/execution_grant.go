@@ -159,7 +159,7 @@ func (r *ExecutionGrantRepository) update(ctx context.Context, fn func(*executio
 
 func nestedRunGrantPair(a, b controlplane.ExecutionGrant) bool {
 	if a.Scope.ResourceUID == "" && b.Scope.ResourceUID != "" {
-		return (a.Operation == "run_apply" || a.Operation == "run_destroy") && b.Operation == "guest_task" && b.ParentEpoch == a.Epoch && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt
+		return controlplane.IsRunExecutionOperation(a.Operation) && b.Operation == "guest_task" && b.ParentEpoch == a.Epoch && a.AgentID == b.AgentID && a.SessionID == b.SessionID && a.CommandID == b.CommandID && a.Attempt == b.Attempt
 	}
 	if b.Scope.ResourceUID == "" && a.Scope.ResourceUID != "" {
 		return nestedRunGrantPair(b, a)
@@ -272,7 +272,7 @@ func (r *ExecutionGrantRepository) Issue(ctx context.Context, request controlpla
 // active host-owned Run grant. The parent topology grant remains active while
 // child resource grants occupy their own exclusion keys.
 func (r *ExecutionGrantRepository) DeriveGuestTask(ctx context.Context, parent, child controlplane.ExecutionGrant, ttl time.Duration) (*controlplane.ExecutionGrant, error) {
-	if parent.AgentID == "" || parent.SessionID == "" || parent.Operation != "run_apply" && parent.Operation != "run_destroy" || child.Operation != "guest_task" || child.Scope.TopologyUID != parent.Scope.TopologyUID || child.Scope.ResourceUID == "" || child.Scope.Generation < 1 || child.AgentID != parent.AgentID || child.SessionID != parent.SessionID || child.CommandID != parent.CommandID || child.Attempt != parent.Attempt || child.ActionID == "" || child.Digest == "" || child.TargetBootID == "" || !validTTL(ttl) {
+	if parent.AgentID == "" || parent.SessionID == "" || !controlplane.IsRunExecutionOperation(parent.Operation) || child.Operation != "guest_task" || child.Scope.TopologyUID != parent.Scope.TopologyUID || child.Scope.ResourceUID == "" || child.Scope.Generation < 1 || child.AgentID != parent.AgentID || child.SessionID != parent.SessionID || child.CommandID != parent.CommandID || child.Attempt != parent.Attempt || child.ActionID == "" || child.Digest == "" || child.TargetBootID == "" || !validTTL(ttl) {
 		return nil, ErrInvalidRecord
 	}
 	var result controlplane.ExecutionGrant

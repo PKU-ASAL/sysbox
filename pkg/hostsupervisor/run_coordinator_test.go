@@ -14,14 +14,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func runFixture(t *testing.T) (*RunCoordinator, RunRequest, controlplane.SignedExecutionGrant) {
+func runFixture(t *testing.T, action ...string) (*RunCoordinator, RunRequest, controlplane.SignedExecutionGrant) {
 	t.Helper()
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	req := RunRequest{RunID: "run", Topology: "lab", TopologyUID: "uid", Revision: "rev", ActionID: "action", ResourceUID: "resource", Generation: 1, Action: "apply", Target: "sysbox_node.web", ExpectedSerial: 1}
+	if len(action) != 0 {
+		req.Action = action[0]
+	}
 	digest, err := req.Digest()
 	require.NoError(t, err)
 	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "uid", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "run_apply", Digest: digest, State: controlplane.GrantActive, TargetBootID: "host", ExpiresAt: time.Now().Add(time.Minute)}
+	g.Operation = "run_" + req.Action
 	signed, err := controlplane.SignExecutionGrant(key, g, "host", time.Now())
 	require.NoError(t, err)
 	root := t.TempDir()
@@ -45,7 +49,13 @@ func TestRunCoordinatorRequiresSignatureAndOnlineAuthority(t *testing.T) {
 }
 
 func TestRunCoordinatorPersistsIntentAndNeverReplaysLostEffect(t *testing.T) {
-	c, req, g := runFixture(t)
+	for _, action := range []string{"apply", "destroy", "reset"} {
+		t.Run(action, func(t *testing.T) { runCoordinatorPersistsIntent(t, action) })
+	}
+}
+
+func runCoordinatorPersistsIntent(t *testing.T, action string) {
+	c, req, g := runFixture(t, action)
 	_, err := c.StartAsync(context.Background(), context.Background(), req, g, func(context.Context) (json.RawMessage, error) { return nil, errors.New("reply lost") })
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return c.findActive(g) == nil }, time.Second, time.Millisecond)

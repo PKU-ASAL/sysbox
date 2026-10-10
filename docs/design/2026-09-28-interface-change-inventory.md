@@ -23,6 +23,11 @@ Lifecycle aggregate 当前为 format 5。新 CLI `state import-format4` 默认�
 在写锁内比较并转换，不执行 provider。普通读写不兼容 format 4，不能手改版本号。
 这些变化不修改 substrate 的 Node/Reset SPI。
 
+宿主 Run 请求新增 `action: reset` / grant `operation: run_reset`，签名完成回执、
+异步观察和派生子任务停止沿用同一协议；generic stopped 不能代替 Run 完成提交。
+旧宿主只识别 apply/destroy，会拒绝 reset，需一起升级。协议接入不等于远端
+continuation 已可执行，原宿主停止证据 verifier 仍待实现。
+
 ### SSH宿主完成证据
 
 `POST /v1/hosts/{agent}/node-operations/{operation}/completed`现在区分SSH与adoption。

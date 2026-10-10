@@ -2,6 +2,15 @@
 
 ## Open reset recovery failure (2026-10-10)
 
+Host execution now accepts `run_reset` through the same grant, async callback,
+effect journal, derived task and signed completion paths as apply/destroy.
+Tests verify exact signed receipt recovery without callback replay and refusal
+to replay unknown intents. Completion contract tests passed for all three
+operations on file, SQLite and real PostgreSQL 16, including active-child
+rejection, tampered evidence, expired/retired commands and successor-epoch
+protection. The API continuation verifier is still absent; these results do
+not authorize continuation of the retained incident.
+
 Runtime continuation now prepares original-incarnation intents, reuses durable
 receipts after restart and admits them before entering reset phase CAS. Real
 file/SQLite/PostgreSQL repository integration tests model two destroyed nodes

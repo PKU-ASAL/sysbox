@@ -17,6 +17,12 @@ import (
 )
 
 func TestHostRunCompletionRecoversRetiredCommandAndExpiredLease(t *testing.T) {
+	for _, action := range []string{"apply", "destroy", "reset"} {
+		t.Run(action, func(t *testing.T) { hostRunCompletionRecoversRetiredCommand(t, action) })
+	}
+}
+
+func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
 		ctx := context.Background()
 		s := NewServer(t.TempDir(), t.TempDir())
@@ -25,17 +31,17 @@ func TestHostRunCompletionRecoversRetiredCommandAndExpiredLease(t *testing.T) {
 		require.NoError(t, err)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
 		now := time.Now().UTC()
-		run := controlplane.Run{ID: "host_run", Topology: "lab", Op: "apply", Operation: "apply", Revision: "revision", AgentID: "agent", Status: controlplane.RunRunning, Attempt: 1, LeaseOwner: "old-worker", QueuedAt: now.Add(-time.Hour), LeaseUntil: now.Add(-time.Minute)}
+		run := controlplane.Run{ID: "host_run", Topology: "lab", Op: action, Operation: action, Revision: "revision", AgentID: "agent", Status: controlplane.RunRunning, Attempt: 1, LeaseOwner: "old-worker", QueuedAt: now.Add(-time.Hour), LeaseUntil: now.Add(-time.Minute)}
 		require.NoError(t, store.SaveRun(ctx, run))
 		command := controlplane.AgentCommand{ID: "host-command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusDelivered, Run: &run, TopologyUID: "topology", ActionID: "action", Attempt: 1, LeaseOwner: "old-worker", LeaseUntil: run.LeaseUntil}
 		require.NoError(t, store.SaveAgentCommand(ctx, command))
 		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
 		session, err := authority.OpenSession(ctx, "agent", "old-session", "")
 		require.NoError(t, err)
-		req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: command.TopologyUID, Revision: run.Revision, ActionID: command.ActionID, Action: "apply"}
+		req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: command.TopologyUID, Revision: run.Revision, ActionID: command.ActionID, Action: action}
 		digest, err := req.Digest()
 		require.NoError(t, err)
-		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{AgentID: "agent", SessionID: session.ID, CommandID: command.ID, ActionID: command.ActionID, Attempt: 1, Operation: "run_apply", Digest: digest, TargetBootID: "host", Scope: controlplane.ExecutionScope{TopologyUID: "topology"}}, time.Minute)
+		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{AgentID: "agent", SessionID: session.ID, CommandID: command.ID, ActionID: command.ActionID, Attempt: 1, Operation: "run_" + action, Digest: digest, TargetBootID: "host", Scope: controlplane.ExecutionScope{TopologyUID: "topology"}}, time.Minute)
 		require.NoError(t, err)
 		observed := run
 		observed.Status = controlplane.RunDone

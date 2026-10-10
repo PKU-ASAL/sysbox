@@ -30,7 +30,7 @@ func (r RunRequest) Validate() error {
 	if r.RunID == "" || r.Topology == "" || r.TopologyUID == "" || r.Revision == "" || r.ActionID == "" || r.ExpectedSerial < 0 {
 		return fmt.Errorf("run request requires immutable identity")
 	}
-	if r.Action != "apply" && r.Action != "destroy" {
+	if !controlplane.IsRunExecutionOperation("run_" + r.Action) {
 		return fmt.Errorf("unsupported host run action")
 	}
 	if strings.ContainsAny(r.RunID+r.Topology+r.Revision+r.ActionID+r.ResourceUID, "/\\\x00") {

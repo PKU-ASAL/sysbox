@@ -22,11 +22,17 @@ type RunExecutionRequest struct {
 	ExpectedSerial int64  `json:"expected_serial"`
 }
 
+// IsRunExecutionOperation identifies lifecycle operations that require a
+// host-signed Run result, including child-task stop evidence when applicable.
+func IsRunExecutionOperation(operation string) bool {
+	return operation == "run_apply" || operation == "run_destroy" || operation == "run_reset"
+}
+
 func (r RunExecutionRequest) Validate() error {
 	if r.RunID == "" || r.Topology == "" || r.TopologyUID == "" || r.Revision == "" || r.ActionID == "" || r.ExpectedSerial < 1 {
 		return fmt.Errorf("run execution request incomplete")
 	}
-	if r.Action != "apply" && r.Action != "destroy" {
+	if !IsRunExecutionOperation("run_" + r.Action) {
 		return fmt.Errorf("run action unsupported")
 	}
 	if strings.ContainsAny(r.RunID+r.Topology+r.TopologyUID+r.Revision+r.ActionID+r.ResourceUID, "/\\\x00") {
@@ -65,8 +71,8 @@ func FromRunCommand(cmd AgentCommand, topologyUID string, serial int64) (RunExec
 	if action == "" {
 		action = cmd.Run.Operation
 	}
-	if action != "apply" && action != "destroy" {
-		return RunExecutionRequest{}, fmt.Errorf("run operation requires single-resource apply or destroy")
+	if !IsRunExecutionOperation("run_" + action) {
+		return RunExecutionRequest{}, fmt.Errorf("unsupported lifecycle Run operation")
 	}
 	target := cmd.Run.Target
 	if cmd.ResourceUID == "" {

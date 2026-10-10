@@ -866,7 +866,7 @@ func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlp
 	if action == "" {
 		action = run.Operation
 	}
-	if action != "apply" && action != "destroy" {
+	if !controlplane.IsRunExecutionOperation("run_" + action) {
 		return nil, fmt.Errorf("host supervisor does not support run operation %q", run.Op)
 	}
 	key, err := os.ReadFile(r.opts.ExecutionGrantPublicKeyFile)

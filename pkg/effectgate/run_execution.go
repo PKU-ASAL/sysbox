@@ -30,7 +30,7 @@ type RunReservation struct {
 }
 
 func isRunGrant(g controlplane.ExecutionGrant) bool {
-	return g.Operation == "run_apply" || g.Operation == "run_destroy"
+	return controlplane.IsRunExecutionOperation(g.Operation)
 }
 
 func sameRunIdentity(a, b controlplane.ExecutionGrant) bool {

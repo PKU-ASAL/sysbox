@@ -58,6 +58,14 @@ checkpoint 改写均拒绝。确认界面展示原完整 scope，之后先原子
 
 ## 尚未接入：远端可信执行与真实 VM 验收
 
+宿主 Run 协议现已接受 `reset`：与 apply/destroy 共用授权判断、异步执行、子任务
+撤销、签名完成回执和重启后重报。通用 stopped 接口不能释放 reset Run，必须先
+提交其签名结果；仍有活跃子任务时父完成被拒绝。已完成回执重报不重放 callback，
+仅有 intent 的未知结果也不能重新执行。文件、SQLite 和真实 Postgres 完成边界测试
+覆盖原 incarnation、结果篡改、过期/退役命令以及后继授权不能被旧回执释放。
+这是新 reset 的宿主协议接入，不是父 Run continuation 授权：API bridge 的
+`ResetContinuationVerifier` 仍需绑定并验证原宿主停止证据。
+
 CLI/API 入口必须在读取证据前取得执行锁，验证原 checkpoint 的可信来源、真实
 Run incarnation 和配置/baseline，再确认旧执行者及外部调用已经停止。原 action
 缺少 queued-at 时不能通过猜测补造，repository 直接拒绝受理。local CLI 原 Run

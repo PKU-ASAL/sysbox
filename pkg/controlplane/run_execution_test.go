@@ -38,7 +38,7 @@ func TestFromRunCommandRejectsUnfencedRun(t *testing.T) {
 	}{
 		{"missing topology proof", func(cmd *AgentCommand) { cmd.TopologyUID = "" }},
 		{"missing resource proof", func(cmd *AgentCommand) { cmd.ResourceUID = "" }},
-		{"unsupported operation", func(cmd *AgentCommand) { cmd.Run.Op = "reset" }},
+		{"unsupported operation", func(cmd *AgentCommand) { cmd.Run.Op = "unsupported" }},
 		{"multi resource target", func(cmd *AgentCommand) { cmd.Run.Target = "" }},
 	}
 	for _, check := range checks {
