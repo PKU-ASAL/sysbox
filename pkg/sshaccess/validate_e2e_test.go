@@ -39,9 +39,8 @@ func TestRealSSHDEffectiveConfigurationConflictE2E(t *testing.T) {
 			probes = append(probes, SSHDProbe{User: current.Username, RemoteAddress: "192.0.2.1", RemoteHost: "client.example", LocalAddress: ip, LocalPort: port, AuthorizedKeysFile: ".ssh/authorized_keys"})
 		}
 	}
-	runner := func(ctx context.Context, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, sshd, args...).Output()
-	}
+	runner, err := NewSSHDRunner(sshd)
+	require.NoError(t, err)
 	for _, scenario := range []string{"valid", "earlier-command", "earlier-user", "earlier-key-file", "invalid-scope"} {
 		t.Run(scenario, func(t *testing.T) {
 			config := base

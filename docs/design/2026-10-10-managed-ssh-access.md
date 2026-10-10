@@ -26,6 +26,11 @@ helper 命令、执行用户，以及必须保留的 AuthorizedKeysFile。真实
 user/group/source/endpoint 条件；有限探测不是任意管理员配置的全局等价性证明。
 此方法不写文件、不 reload，也不代表运行中的 daemon 已采用暂存配置。
 
+生产 `NewSSHDRunner` 使用可信绝对路径直接执行 sshd，只接受 `-t/-T` 校验参数。
+每次调用独立限制为 5 秒，stdout/stderr 总量限制 1 MiB，超限立即取消；不返回失败时
+的部分 stdout，stderr 不参与有效配置解析。管道继承的额外等待上限为 100ms。
+验证器的整个探测集合仍需调用方提供总 deadline，逐次超时不等于整体预算。
+
 相比检查文件后执行 rm，这个模型将权限内容、CAS 版本、操作结果放在同一原子记录中，
 避免检查后内容被替换的窗口。相比每项 access 启动独立 sshd，它不要求为每项访问维护
 额外进程、端口和主机密钥。若已有第三方 AuthorizedKeysCommand，报告配置冲突，不覆盖。

@@ -6,6 +6,10 @@
 connection probe. It requires the generated command and command user to be
 effective, and the expected administrator key-file setting to remain unchanged.
 Missing/duplicate/oversized output and subprocess failures reject validation.
+The real test now invokes the production `NewSSHDRunner`: absolute executable,
+validation modes only, a five-second call budget, and a combined 1 MiB output
+limit. Subprocess regressions cover stdout/stderr overflow, nonzero exits and
+caller cancellation; failed calls return no partial configuration.
 
 `TestRealSSHDEffectiveConfigurationConflictE2E` passed against local OpenSSH
 8.9p1 using temporary config and host keys, without starting or changing the
