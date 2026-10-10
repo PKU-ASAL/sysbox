@@ -102,6 +102,10 @@ transport 与宿主共用 `SSHAccessDiscovery.Validate`，防止边界校验语�
 
 独立 Unix socket 回归已验证实际请求/响应；测试 resolver 提供受信任 fixture，
 不将它描述成 canonical repository、API 或跨宿主发现的完整验收。
-当前 CanonicalResolver 取 handle.Conn.User；`ReconstructHandle` 未通用恢复这个字段，
-因此真实冷恢复节点可能被上述缺用户检查拒绝。正式接线必须从 canonical 配置/持久
-身份取得用户，不能以 root 默认值代替；本项仍是未关闭的 P7 依赖。
+CanonicalResolver 现从节点 state 或当前 Run candidate 的持久 desired 配置恢复用户：
+优先第一项 connection.User，其次 provider_config.SSHUser；都没有则保持未指定。
+仅在实际节点 identity 核验后构造 guest 连接目标的用户，不读取 worker 的用户名或
+未发布 workspace，不补 root 默认值。真实 journal 序列化回归已验证候选冷读取保留用户。
+没有持久声明用户的节点仍拒绝 SSH access；完整远端授权/自动配置部署尚未关闭。
+用户解析不属于 provider-only 的 NodeTarget：SSH 配置损坏不会阻止电源操作解析；
+需要 guest 连接时才校验，且在建立连接之前拒绝非法用户。

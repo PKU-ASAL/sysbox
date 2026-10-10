@@ -1,5 +1,22 @@
 # P9 real acceptance
 
+## Canonical guest user after cold handle reconstruction (2026-10-10)
+
+The host resolver now recovers its guest user from the node's persisted desired
+connection/provider configuration after verifying real node identity. Explicit
+first connection.User takes priority, then provider_config.SSHUser; absence
+stays unspecified. No root fallback or worker-selected user was introduced.
+Malformed configuration and invalid usernames reject guest connection resolution
+before connecting. Provider-only NodeTarget resolution remains independent, so
+SSH configuration does not block power operations.
+
+The canonical Run-candidate repository test persists the username, reopens the
+record through the normal resolver and verifies `Target.User == ubuntu` while
+retaining wrong-node rejection. Unit tests cover precedence, absent fields,
+malformed values and not selecting a later connection implicitly. Host full
+race and focused persistence regressions passed; this is not two-host SSH
+grant issuance/completion acceptance.
+
 ## Owning-host SSH discovery RPC boundary (2026-10-10)
 
 Added the read-only `ssh-discover` host RPC and client. Only canonical target

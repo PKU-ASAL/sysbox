@@ -44,21 +44,18 @@ func (r CanonicalResolver) Resolve(ctx context.Context, ref TargetRef) (Target, 
 	if err != nil {
 		return Target{}, err
 	}
-	conn, err := target.Node.Connection(target.Handle, nil)
-	if err != nil {
-		return Target{}, err
-	}
-	return Target{Scope: target.Scope, AgentID: target.AgentID, NodeID: target.Handle.ID, User: target.Handle.Conn.User, Connection: conn}, nil
+	return canonicalConnection(target)
 }
 
 // NodeTarget stays inside the privileged process. It never crosses the worker
 // socket and does not require a guest connection (a paused guest cannot reply).
 type NodeTarget struct {
-	Scope   controlplane.ExecutionScope
-	AgentID string
-	Handle  substrate.NodeHandle
-	Node    driver.Node
-	Power   driver.Power
+	canonicalResource *state.Resource
+	Scope             controlplane.ExecutionScope
+	AgentID           string
+	Handle            substrate.NodeHandle
+	Node              driver.Node
+	Power             driver.Power
 }
 
 func (r CanonicalResolver) ResolveNode(ctx context.Context, ref TargetRef) (NodeTarget, error) {
@@ -117,11 +114,7 @@ func (r CanonicalResolver) ResolveRunTask(ctx context.Context, ref TargetRef, ru
 	if err != nil {
 		return Target{}, err
 	}
-	conn, err := node.Node.Connection(node.Handle, nil)
-	if err != nil {
-		return Target{}, err
-	}
-	return Target{Scope: node.Scope, AgentID: node.AgentID, NodeID: node.Handle.ID, User: node.Handle.Conn.User, Connection: conn}, nil
+	return canonicalConnection(node)
 }
 
 // FindRunTaskRef derives the logical node name from trusted repository identity.
@@ -248,7 +241,7 @@ func (r CanonicalResolver) resolveResource(ctx context.Context, ref TargetRef, r
 		return zero, fmt.Errorf("supervisor cannot verify actual node identity")
 	}
 	power, _ := driver.DefaultRegistry.RequirePower(resource.Driver)
-	return NodeTarget{Scope: ref.Scope, AgentID: r.AgentID, Handle: handle, Node: node, Power: power}, nil
+	return NodeTarget{Scope: ref.Scope, AgentID: r.AgentID, Handle: handle, Node: node, Power: power, canonicalResource: resource}, nil
 }
 
 func validateRepositoryTrust(backend, path, topology string) error {

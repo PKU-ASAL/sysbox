@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/persistence"
@@ -57,6 +58,7 @@ func TestResolveRunTaskVerifiesPersistedCandidateBeforeConnecting(t *testing.T) 
 	a.Revision = 1
 	a.Status = runtime.ActionUncertain
 	a.Candidate = &state.Resource{Address: a.Resource, Driver: name, ExternalID: "actual-node", OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: 1}
+	a.Candidate.Attributes = state.MustAttributes(map[string]any{"desired": map[string]any{"connections": []config.ConnectionConfig{{User: "ubuntu"}}}})
 	require.NoError(t, repo.CommitActionOutcome(ctx, a, nil))
 	r := CanonicalResolver{Backend: path, AgentID: "agent"}
 	scope := controlplane.ExecutionScope{TopologyUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
@@ -69,6 +71,7 @@ func TestResolveRunTaskVerifiesPersistedCandidateBeforeConnecting(t *testing.T) 
 	got, err := r.ResolveRunTask(ctx, ref, "run")
 	require.NoError(t, err)
 	require.Equal(t, "actual-node", got.NodeID)
+	require.Equal(t, "ubuntu", got.User, "user must survive canonical journal serialization and handle reconstruction")
 	require.Equal(t, 1, node.connections)
 	node.wrongIdentity = true
 	_, err = r.ResolveRunTask(ctx, ref, "run")
