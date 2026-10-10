@@ -35,3 +35,31 @@ type SSHAccessDiscovery struct {
 	Current *SSHAccessResult `json:"current,omitempty"`
 	Config  *SSHAccessConfig `json:"config,omitempty"`
 }
+
+// Validate checks the response at each trusted transport boundary. The caller
+// supplies its expected query; a response cannot choose a different target.
+func (d SSHAccessDiscovery) Validate(query SSHAccessQuery) error {
+	if query.Validate() != nil || d.Query != query || d.BootID == "" || (d.Status != "present" && d.Status != "absent") {
+		return fmt.Errorf("SSH discovery identity or status mismatch")
+	}
+	if d.Current == nil {
+		if d.Status != "absent" || d.Config != nil {
+			return fmt.Errorf("SSH discovery lacks committed identity")
+		}
+		return nil
+	}
+	if d.Config == nil {
+		return fmt.Errorf("SSH discovery configuration missing")
+	}
+	h := d.Current.Handle
+	if h.NodeID != query.NodeID || h.TopologyUID != query.TopologyUID || h.ResourceUID != query.ResourceUID || h.Generation != query.Generation ||
+		h.User != query.User || h.AccessID != query.AccessID || h.Revision == 0 || h.Epoch == 0 || h.BootID == "" || (d.Status == "present") != d.Current.Present {
+		return fmt.Errorf("SSH discovery committed identity mismatch")
+	}
+	r := SSHAccessMutation{ID: h.ID, ExpectedRevision: h.Revision - 1, Delete: !d.Current.Present, Config: *d.Config}
+	digest, err := r.Digest()
+	if err != nil || digest != h.Digest || r.Config.User != h.User || r.Config.AccessID != h.AccessID {
+		return fmt.Errorf("SSH discovery configuration digest mismatch")
+	}
+	return nil
+}

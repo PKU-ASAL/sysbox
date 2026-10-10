@@ -15,6 +15,7 @@ type TargetRef struct {
 	Scope    controlplane.ExecutionScope `json:"scope"`
 }
 type Request struct {
+	SSHAccessID     string                             `json:"ssh_access_id,omitempty"`
 	Version         int                                `json:"version"`
 	Operation       string                             `json:"operation"`
 	Target          TargetRef                          `json:"target"`
@@ -34,6 +35,7 @@ type Request struct {
 	Limit           int                                `json:"limit,omitempty"`
 }
 type Response struct {
+	SSHDiscovery     *substrate.SSHAccessDiscovery      `json:"ssh_discovery,omitempty"`
 	FileInspection   *substrate.InstalledFileInspection `json:"file_inspection,omitempty"`
 	InspectedFile    *substrate.FileInstallHandle       `json:"inspected_file,omitempty"`
 	Version          int                                `json:"version"`

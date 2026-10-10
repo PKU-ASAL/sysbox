@@ -92,3 +92,16 @@ access 返回 Current tombstone 及最后 revision，防止再次创建时回退
 发现不创建锁文件或记录、不改变授权，也不代表 sshd 配置已加载或监听正常。
 真实 Docker helper 已验证首次缺失、创建后发现、外来 owner 拒绝及删除后版本 3；
 SSH/vsock adapter 仍须各自真实验收，runtime/API 消费此入口尚待接入。
+
+宿主 Unix RPC `ssh-discover` 只接受 TargetRef 与 AccessID；不接受用户名、provider ID
+或配置路径。Dispatcher 使用 canonical resolver 的用户/连接/节点身份，复用当前
+provider fencing 后读取配置。返回给 worker 的 NodeID 映射回 canonical 节点名，
+不让 worker 用 provider 外部 ID 选择连接。缺少 canonical 用户明确拒绝，不推测 root。
+`DiscoverManagedSSHAccess` 客户端再次核对 scope、AccessID 和配置摘要。
+transport 与宿主共用 `SSHAccessDiscovery.Validate`，防止边界校验语义漂移。
+
+独立 Unix socket 回归已验证实际请求/响应；测试 resolver 提供受信任 fixture，
+不将它描述成 canonical repository、API 或跨宿主发现的完整验收。
+当前 CanonicalResolver 取 handle.Conn.User；`ReconstructHandle` 未通用恢复这个字段，
+因此真实冷恢复节点可能被上述缺用户检查拒绝。正式接线必须从 canonical 配置/持久
+身份取得用户，不能以 root 默认值代替；本项仍是未关闭的 P7 依赖。

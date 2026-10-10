@@ -262,6 +262,16 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 			break
 		}
 		response.BootID = s.Runs.HostBootID
+	case "ssh-discover":
+		if s.Dispatcher == nil {
+			err = fmt.Errorf("host SSH discovery resolver unavailable")
+			break
+		}
+		var result substrate.SSHAccessDiscovery
+		result, err = s.Dispatcher.DiscoverSSHAccess(ctx, request.Target, request.SSHAccessID)
+		if err == nil {
+			response.SSHDiscovery = &result
+		}
 	case "adoption-info":
 		// This target does not exist in canonical state until adoption commits.
 		// Return only the configured host boot; this read grants no authority.

@@ -1,5 +1,20 @@
 # P9 real acceptance
 
+## Owning-host SSH discovery RPC boundary (2026-10-10)
+
+Added the read-only `ssh-discover` host RPC and client. Only canonical target
+identity plus AccessID cross from the worker; the resolver supplies the guest
+user, provider ID and connection. Missing user and scope mismatches reject
+before guest discovery. The host validates returned configuration and maps the
+provider ID back to the canonical node name; the client revalidates the result.
+Shared `SSHAccessDiscovery.Validate` is also used by guest transports.
+
+A real Unix socket regression exercised serialization, host routing and client
+validation with a trusted fixture resolver. Negative checks cover missing user,
+wrong scope, foreign response and unsafe AccessID. This is RPC boundary evidence,
+not a real canonical repository/API/Agent or two-host discovery acceptance.
+Guest grant issuance, mutations and automatic sshd deployment are still open.
+
 ## Production Docker SSH capability (2026-10-10)
 
 The formal Docker provider connection now implements the complete

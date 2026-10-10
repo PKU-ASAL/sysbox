@@ -25,29 +25,10 @@ func discoverSSHAccess(ctx context.Context, conn taskCaller, identity executionI
 		return unknown, guesttask.ErrUnknown
 	}
 	found := *response.SSHDiscovery
-	if found.Query != guest || found.BootID == "" || (found.Status != "present" && found.Status != "absent") {
+	if err := found.Validate(guest); err != nil {
 		return unknown, guesttask.ErrConflict
 	}
-	if found.Current == nil {
-		if found.Status != "absent" || found.Config != nil {
-			return unknown, guesttask.ErrConflict
-		}
-	} else {
-		if found.Config == nil {
-			return unknown, guesttask.ErrConflict
-		}
-		h := found.Current.Handle
-		if h.NodeID != "" || h.TopologyUID != query.TopologyUID || h.ResourceUID != query.ResourceUID || h.Generation != query.Generation ||
-			h.User != query.User || h.AccessID != query.AccessID || h.Revision == 0 || h.Epoch == 0 || h.BootID == "" || (found.Status == "present") != found.Current.Present {
-			return unknown, guesttask.ErrConflict
-		}
-		// Rebuild the exact committed request, including tombstones, to verify
-		// the returned public configuration against the immutable handle digest.
-		req := substrate.SSHAccessMutation{ID: h.ID, ExpectedRevision: h.Revision - 1, Delete: !found.Current.Present, Config: *found.Config}
-		digest, err := req.Digest()
-		if err != nil || digest != h.Digest || req.Config.User != h.User || req.Config.AccessID != h.AccessID {
-			return unknown, guesttask.ErrConflict
-		}
+	if found.Current != nil {
 		current := *found.Current
 		current.Handle.NodeID = query.NodeID
 		found.Current = &current
