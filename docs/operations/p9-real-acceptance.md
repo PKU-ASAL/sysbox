@@ -80,6 +80,26 @@ vet passed. This does not establish exclusive ownership of an in-flight
 destroy callback; that execution-boundary issue remains open, along with the
 retained old partial batch and the real reset matrix recovery.
 
+Reset now persists `prepared -> destroying` using the action revision CAS before
+attachment deletion or `DestroyReset`. A failed claim performs no destroy;
+filesystem/SQLite tests reject a second claimant using the same prepared
+revision. `destroying -> destroyed` records completion of the owned callback.
+Cold recovery of `destroying` remains uncertain and never repeats destruction:
+resource absence alone is not proof that the original callback has returned.
+The legal phase order and tests include this new stage. Runtime/persistence
+race and vet passed. This closes duplicate destroy dispatch from the same
+prepared revision, but durable proof of callback exit and recovery of an
+interrupted destroying stage remain required for the full goal.
+
+A subsequent `destroy_returned` checkpoint records successful callback return
+before the absence observation is committed. If the `destroyed` write fails,
+cold recovery from this checkpoint observes the original generation and does
+not repeat destruction. A regression injects that write failure and verifies
+exactly one destroy call across reconstruction. If callback-return evidence
+itself was not durably committed, `destroying` still remains unknown; this
+change does not manufacture exit evidence for a crashed controller. The phase
+contract tests include `destroy_returned`; runtime/persistence race passed.
+
 `make test-p9-real` is the explicit real environment gate for the current
 distributed runtime slice. It runs the API/Agent completion-loss test, guest
 task supervisor recovery, Docker pause/resume fencing, signed file installation,

@@ -493,11 +493,15 @@ func resetPhaseOrder(phase string) int {
 	case "prepared":
 		return 3
 	case "destroyed":
+		return 6
+	case "destroy_returned":
+		return 5
+	case "destroying":
 		return 4
 	case "applying":
-		return 5
+		return 7
 	case "verifying":
-		return 6
+		return 8
 	default:
 		return -1
 	}

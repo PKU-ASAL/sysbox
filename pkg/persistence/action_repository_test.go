@@ -215,14 +215,14 @@ func TestResetAcceptedPhaseCannotRegressAfterPrepare(t *testing.T) {
 			st.Resources = []state.Resource{{Address: addr, OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 1, Driver: "docker", ExternalID: "original"}}
 			require.NoError(t, manager.Save(st))
 			a := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", Resource: addr, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Phase: "accepted", Candidate: &st.Resources[0]}
-			for _, phase := range []string{"", "preparing", "prepared", "destroyed", "applying", "verifying"} {
+			for _, phase := range []string{"", "preparing", "prepared", "destroying", "destroy_returned", "destroyed", "applying", "verifying"} {
 				invalid := a
 				invalid.Phase = phase
 				require.Error(t, r.CommitActionIntent(ctx, invalid), "invalid initial phase %q", phase)
 			}
 			require.NoError(t, r.CommitActionIntent(ctx, a))
 			a.Revision = 1
-			for _, phase := range []string{"prepared", "destroyed", "applying", "verifying"} {
+			for _, phase := range []string{"prepared", "destroying", "destroy_returned", "destroyed", "applying", "verifying"} {
 				invalid := a
 				invalid.Phase, invalid.Status = phase, runtime.ActionUncertain
 				require.Error(t, r.CommitActionOutcome(ctx, invalid, nil), "cannot skip preparing")
@@ -236,7 +236,7 @@ func TestResetAcceptedPhaseCannotRegressAfterPrepare(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "preparing", stored[0].Phase)
 			a = stored[0]
-			for _, phase := range []string{"prepared", "destroyed", "applying", "verifying"} {
+			for _, phase := range []string{"prepared", "destroying", "destroy_returned", "destroyed", "applying", "verifying"} {
 				a.Phase = phase
 				a.EffectComplete = phase == "verifying"
 				if a.EffectComplete {
@@ -249,6 +249,9 @@ func TestResetAcceptedPhaseCannotRegressAfterPrepare(t *testing.T) {
 				invalid.EffectComplete = !a.EffectComplete
 				require.Error(t, r.CommitActionOutcome(ctx, invalid, nil), "phase and evidence must agree")
 				require.NoError(t, r.CommitActionOutcome(ctx, a, nil), phase)
+				if phase == "destroying" {
+					require.ErrorIs(t, r.CommitActionOutcome(ctx, a, nil), ErrConflict, "second executor with the same prepared revision cannot claim destroy")
+				}
 				a.Revision++
 			}
 		})

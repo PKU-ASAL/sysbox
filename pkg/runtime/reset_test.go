@@ -253,6 +253,73 @@ type failSecondResetIntent struct {
 
 type resetOutcomeContract struct{ *memoryActions }
 
+type rejectResetDestroyClaim struct{ *memoryActions }
+
+type rejectDestroyedCommit struct{ *memoryActions }
+
+func (m rejectDestroyedCommit) CommitActionOutcome(ctx context.Context, r ActionRecord, p *StatePatch) error {
+	if r.Phase == "destroyed" {
+		return errors.New("destroyed commit unavailable")
+	}
+	return m.memoryActions.CommitActionOutcome(ctx, r, p)
+}
+
+func TestResetReturnedDestroySurvivesObservationCommitFailure(t *testing.T) {
+	sub := &portTestSubstrate{name: "fake", coldPlug: true}
+	registerPortTestDriver(t, sub)
+	g, st := configuredResetTestState(t, sub, "first")
+	e := testActionExecutor(t, g, st)
+	m := e.actions.(*memoryActions)
+	e.SetActionRepository(rejectDestroyedCommit{m})
+	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
+	require.NoError(t, err)
+	require.ErrorContains(t, e.Reset(context.Background(), plan), "destroyed commit unavailable")
+	require.Equal(t, "destroy_returned", m.actions[0].Phase)
+	require.Equal(t, []string{"prepare:old-first", "destroy"}, sub.resetLifecycle)
+	coldState, err := m.LoadState(context.Background(), e.topology)
+	require.NoError(t, err)
+	cold := NewExecutor(g, coldState)
+	cold.SetRunContext(e.topology, "cold")
+	cold.SetActionRepository(resetOutcomeContract{m})
+	require.NoError(t, cold.Reset(context.Background(), plan))
+	require.Equal(t, ActionSucceeded, m.actions[0].Status)
+	count := 0
+	for _, event := range sub.resetLifecycle {
+		if event == "destroy" {
+			count++
+		}
+	}
+	require.Equal(t, 1, count, "cold recovery may observe but must not destroy again")
+}
+
+func (m rejectResetDestroyClaim) CommitActionOutcome(ctx context.Context, r ActionRecord, p *StatePatch) error {
+	if r.Phase == "destroying" {
+		return errors.New("destroy claim rejected")
+	}
+	return m.memoryActions.CommitActionOutcome(ctx, r, p)
+}
+
+func TestResetDestroyRequiresCommittedClaim(t *testing.T) {
+	sub := &portTestSubstrate{name: "fake", coldPlug: true}
+	registerPortTestDriver(t, sub)
+	g, st := configuredResetTestState(t, sub, "first")
+	e := testActionExecutor(t, g, st)
+	m := e.actions.(*memoryActions)
+	e.SetActionRepository(rejectResetDestroyClaim{m})
+	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
+	require.NoError(t, err)
+	require.ErrorContains(t, e.Reset(context.Background(), plan), "destroy claim rejected")
+	require.Equal(t, []string{"prepare:old-first"}, sub.resetLifecycle)
+	require.Equal(t, "prepared", m.actions[0].Phase)
+	// A committed claim without a returned callback is not permission to replay.
+	m.actions[0].Phase = "destroying"
+	cold := NewExecutor(g, st)
+	cold.SetRunContext(e.topology, "cold")
+	cold.SetActionRepository(m)
+	require.ErrorContains(t, cold.Reset(context.Background(), plan), "destruction outcome unknown")
+	require.Equal(t, []string{"prepare:old-first"}, sub.resetLifecycle)
+}
+
 func (m resetOutcomeContract) CommitActionOutcome(ctx context.Context, r ActionRecord, p *StatePatch) error {
 	if r.Status != ActionSucceeded && r.Status != ActionUncertain && r.Status != ActionBlocked {
 		return errors.New("invalid outcome status")

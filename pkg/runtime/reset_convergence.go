@@ -122,6 +122,9 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			if record.Phase == "" || record.Phase == "preparing" {
 				return fmt.Errorf("%w: reset preparation outcome unknown", ErrActionUncertain)
 			}
+			if record.Phase == "destroying" {
+				return fmt.Errorf("%w: reset destruction outcome unknown", ErrActionUncertain)
+			}
 			restoreResetStateResource(staged, *record.Candidate)
 		} else {
 			observed, err := e.observeTarget(ctx, change.Address)
@@ -223,9 +226,28 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 		if err != nil {
 			return err
 		}
+		if record.Phase == "prepared" {
+			record.Phase = "destroying"
+			record.Status = ActionUncertain
+			if err := e.actions.CommitActionOutcome(actionCtx, *record, nil); err != nil {
+				return err
+			}
+			record.Revision++
+		}
 		if old.Status != state.ResourceAbsent {
+			if record.Phase != "destroying" {
+				return fmt.Errorf("%w: old reset generation reappeared", ErrObservationUnknown)
+			}
 			if err := worker.destroyResetNode(actionCtx, item); err != nil {
 				return e.uncertainAction(ctx, *record, item.step, err)
+			}
+		}
+		if record.Phase == "destroying" {
+			// Persist callback return separately from the subsequent absence
+			// observation. Recovery may observe, but cannot repeat destruction.
+			record.Phase = "destroy_returned"
+			if err := worker.recordStepExternal(actionCtx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
+				return err
 			}
 		}
 		// The old generation must be gone before the replacement is authorized.
