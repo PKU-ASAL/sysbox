@@ -1,5 +1,24 @@
 # P9 real acceptance
 
+## Generated SSH endpoint rules: real two-listener validation (2026-10-10)
+
+`pkg/sshaccess.RenderSSHD` generates deterministic, bounded
+`Match LocalAddress/LocalPort` rules feeding fixed endpoint arguments to the
+guest helper. Intersections precede partial matches and the unrestricted
+fallback. It does not modify listeners or `AuthorizedKeysFile`.
+
+The existing disposable sshd test now uses these generated rules and two
+loopback ports. The production helper is reached through the test-only Docker
+command adapter. After the original rotation/deletion checks, a key restricted
+to `127.0.0.1` and the first port successfully authenticates there and receives
+`Permission denied` on the second port. The independent unrestricted managed
+key and administrator key still authenticate on the second port. The real test
+passed in **5.49 seconds**, using a helper built from the current source.
+
+This extends the earlier unrestricted-key test below. It verifies the generated
+configuration against a real sshd, not automatic config installation or reload,
+third-party command coexistence, runtime/API dispatch, or a two-host workflow.
+
 ## Real managed SSH access rotation and revocation (2026-10-10)
 
 Built the current static `sysbox-init` helper and ran a disposable OpenSSH

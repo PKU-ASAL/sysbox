@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+P7 共享 sshd 端点规则：新增确定性、有数量上限的 Match LocalAddress/LocalPort
+生成器，交集优先，未知地址/端口继续拒绝受限 key。真实双端口 sshd（5.49秒）验证
+批准端口可登录、另一端口明确认证拒绝，独立 access 与管理员 key 不受损。此项不等于
+drop-in 自动安装/reload、第三方命令冲突检测或 host/API/runtime 已接通。
+
 P7 迁移纠正：撤回 `1015801` 中提前禁用 runtime SSH access 的变更，因为 host callback
 仍未替换，禁用不等于完成能力迁移。旧 runtime/host 文件路径仍须在签名 guest 授权、
 canonical completion 与新 SPI 接通后一起删除。另修复未知端口绕过 Port 限制，真实

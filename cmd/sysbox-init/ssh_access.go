@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 )
 
@@ -22,13 +23,18 @@ func writeSSHAuthorizedKeys(ctx context.Context, source sshKeySource, args []str
 	if len(args) > 1 {
 		var err error
 		port, err = strconv.ParseUint(args[len(args)-1], 10, 16)
-		if err != nil || port == 0 {
+		if err != nil || port == 0 && len(args) != 3 {
 			return fmt.Errorf("invalid SSH listener port")
 		}
 	}
 	ip := ""
 	if len(args) == 3 {
 		ip = args[1]
+		if ip == "-" {
+			ip = ""
+		} else if net.ParseIP(ip) == nil {
+			return fmt.Errorf("invalid SSH listener address")
+		}
 	}
 	keys, err := source.SSHAuthorizedKeys(ctx, args[0], ip, int(port))
 	if err != nil {

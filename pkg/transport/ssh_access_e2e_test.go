@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/sshaccess"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 )
@@ -70,7 +71,7 @@ func TestSSHAccessRealRotationAndSharedLoginE2E(t *testing.T) {
 	require.NoError(t, err)
 	keys := make(map[string]string)
 	publics := make(map[string]string)
-	for _, name := range []string{"host", "administrator", "first", "rotated", "rescue"} {
+	for _, name := range []string{"host", "administrator", "first", "rotated", "rescue", "restricted"} {
 		keys[name] = filepath.Join(dir, name)
 		run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keys[name])
 		raw, err := os.ReadFile(keys[name] + ".pub")
@@ -80,10 +81,19 @@ func TestSSHAccessRealRotationAndSharedLoginE2E(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	port := listener.Addr().(*net.TCPAddr).Port
+	alternate, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	otherPort := alternate.Addr().(*net.TCPAddr).Port
+	require.NoError(t, alternate.Close())
 	require.NoError(t, listener.Close())
 	docker, err := exec.LookPath("docker")
 	require.NoError(t, err)
-	config := fmt.Sprintf("ListenAddress 127.0.0.1\nPort %d\nHostKey %s\nPidFile %s\nAuthorizedKeysFile %s\nAuthorizedKeysCommand %s exec %s /usr/local/bin/sysbox-guest-task --ssh-authorized-keys %%u\nAuthorizedKeysCommandUser %s\nStrictModes no\nUsePAM no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers %s\n", port, keys["host"], filepath.Join(dir, "sshd.pid"), keys["administrator"]+".pub", docker, container, currentUser.Username, currentUser.Username)
+	dropIn, err := sshaccess.RenderSSHD("/usr/local/bin/sysbox-guest-task", currentUser.Username, []substrate.SSHAccessConfig{{BindIP: "127.0.0.1", Port: port}})
+	require.NoError(t, err)
+	// The host sshd reaches the isolated guest's helper through this test-only
+	// Docker adapter; Match rules and endpoint arguments are production output.
+	dropInText := strings.ReplaceAll(string(dropIn), "AuthorizedKeysCommand /usr/local/bin/sysbox-guest-task", "AuthorizedKeysCommand "+docker+" exec "+container+" /usr/local/bin/sysbox-guest-task")
+	config := fmt.Sprintf("ListenAddress 127.0.0.1\nPort %d\nPort %d\nHostKey %s\nPidFile %s\nAuthorizedKeysFile %s\nStrictModes no\nUsePAM no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers %s\n", port, otherPort, keys["host"], filepath.Join(dir, "sshd.pid"), keys["administrator"]+".pub", currentUser.Username) + dropInText
 	configPath := filepath.Join(dir, "sshd_config")
 	require.NoError(t, os.WriteFile(configPath, []byte(config), 0600))
 	run("/usr/sbin/sshd", "-t", "-f", configPath)
@@ -103,10 +113,10 @@ func TestSSHAccessRealRotationAndSharedLoginE2E(t *testing.T) {
 		return true
 	}, 3*time.Second, 20*time.Millisecond)
 	knownHosts := filepath.Join(dir, "known_hosts")
-	require.NoError(t, os.WriteFile(knownHosts, []byte(fmt.Sprintf("[127.0.0.1]:%d %s\n", port, publics["host"])), 0600))
-	login := func(name string, allowed bool) {
+	require.NoError(t, os.WriteFile(knownHosts, []byte(fmt.Sprintf("[127.0.0.1]:%d %s\n[127.0.0.1]:%d %s\n", port, publics["host"], otherPort, publics["host"])), 0600))
+	loginAt := func(name string, allowed bool, listenerPort int) {
 		t.Helper()
-		command := exec.CommandContext(ctx, "ssh", "-p", fmt.Sprint(port), "-i", keys[name], "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "PreferredAuthentications=publickey", "-o", "ConnectTimeout=3", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile="+knownHosts, currentUser.Username+"@127.0.0.1", "true")
+		command := exec.CommandContext(ctx, "ssh", "-p", fmt.Sprint(listenerPort), "-i", keys[name], "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "PreferredAuthentications=publickey", "-o", "ConnectTimeout=3", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile="+knownHosts, currentUser.Username+"@127.0.0.1", "true")
 		output, err := command.CombinedOutput()
 		if allowed {
 			if err != nil {
@@ -119,6 +129,7 @@ func TestSSHAccessRealRotationAndSharedLoginE2E(t *testing.T) {
 			require.Contains(t, string(output), "Permission denied", "transport errors are not proof of key rejection")
 		}
 	}
+	login := func(name string, allowed bool) { t.Helper(); loginAt(name, allowed, port) }
 	mutate := func(req substrate.SSHAccessMutation, epoch uint64) (substrate.SSHAccessResult, error) {
 		t.Helper()
 		digest, err := req.Digest()
@@ -167,5 +178,13 @@ func TestSSHAccessRealRotationAndSharedLoginE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "absent", inspection.Status)
 	require.Equal(t, uint64(3), inspection.Revision)
+	restricted := substrate.SSHAccessMutation{ID: "restricted", Config: substrate.SSHAccessConfig{User: currentUser.Username, AccessID: "restricted", AuthorizedKeys: []string{publics["restricted"]}, BindIP: "127.0.0.1", Port: port}}
+	_, err = mutate(restricted, 5)
+	require.NoError(t, err)
+	loginAt("restricted", true, port)
+	loginAt("restricted", false, otherPort)
+	loginAt("rescue", true, otherPort)
+	loginAt("administrator", true, otherPort)
+	t.Log("generated Match rules: endpoint-restricted key accepted on approved port and rejected on second port; unrestricted access preserved")
 	t.Log("real sshd: old key revoked, replacement removed, independent managed and administrator logins preserved; guest helper reopened for every call")
 }
