@@ -366,6 +366,36 @@ func (e *Engine) Handle(ctx context.Context, call Call) Response {
 			}
 			response.FileRecord = &record
 		}
+	case "ssh-access":
+		if call.SSHMutation == nil || call.Grant == nil {
+			err = ErrConflict
+		} else {
+			var result substrate.SSHAccessResult
+			result, err = e.MutateSSHAccess(ctx, *call.SSHMutation, *call.Grant)
+			response.SSHResult = &result
+		}
+	case "ssh-observe":
+		if call.SSHHandle == nil {
+			err = ErrConflict
+		} else {
+			var result substrate.SSHAccessResult
+			result, err = e.ObserveSSHAccess(ctx, *call.SSHHandle)
+			response.SSHResult = &result
+		}
+	case "ssh-inspect":
+		if call.SSHHandle == nil {
+			err = ErrConflict
+		} else {
+			var inspection substrate.SSHAccessInspection
+			inspection, err = e.InspectSSHAccess(ctx, *call.SSHHandle)
+			response.SSHInspection = &inspection
+			if err == nil {
+				copy := *call.SSHHandle
+				response.SSHHandle = &copy
+			}
+		}
+	case "ssh-authorized-keys":
+		response.SSHKeys, err = e.SSHAuthorizedKeys(ctx, call.SSHUser, call.SSHAddress, call.SSHPort)
 	case "info":
 		response.BootID, err = BootID()
 		if err == nil {

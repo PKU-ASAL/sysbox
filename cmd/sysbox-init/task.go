@@ -23,7 +23,7 @@ func taskEngine(operation string) (*guesttask.Engine, error) {
 		return nil, err
 	}
 	cgroup := "/sys/fs/cgroup/sysbox-tasks"
-	if !strings.HasPrefix(operation, "file-") {
+	if !strings.HasPrefix(operation, "file-") && !strings.HasPrefix(operation, "ssh-") {
 		if err = os.MkdirAll(cgroup, 0700); err != nil {
 			return nil, fmt.Errorf("delegate writable cgroup-v2 task root: %w", err)
 		}
@@ -87,6 +87,16 @@ func runTaskMode() bool {
 		return false
 	}
 	switch os.Args[1] {
+	case "--ssh-authorized-keys":
+		engine, err := taskEngine("ssh-authorized-keys")
+		if err == nil {
+			err = writeSSHAuthorizedKeys(context.Background(), engine, os.Args[2:], os.Stdout)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return true
 	case "--guest-task":
 		_ = json.NewEncoder(os.Stdout).Encode(serveTask(os.Stdin))
 		return true

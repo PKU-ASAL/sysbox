@@ -1,5 +1,30 @@
 # P9 real acceptance
 
+## Real managed SSH access rotation and revocation (2026-10-10)
+
+Built the current static `sysbox-init` helper and ran a disposable OpenSSH
+server whose `AuthorizedKeysCommand` invoked that helper inside an isolated
+Docker container. The helper reopened its durable guest store for every lookup;
+the server's administrator-owned `authorized_keys` remained separate.
+
+The test proved an administrator key could log in before, during and after the
+managed lifecycle. A managed key was added, could log in, then was rotated:
+the old key was rejected and the replacement key worked. A second independent
+managed access continued to work. Deleting the first access with its old
+revision was rejected; deleting with the current revision revoked the
+replacement key while preserving the second managed key and administrator key.
+Historical observation of the original handle remained readable and current
+inspection returned `absent` at revision 3. The test passed in **3.36 seconds**.
+
+The command uses only the OpenSSH-supported `%u` token. The helper treats the
+listener endpoint as wildcard when OpenSSH does not provide a local-address
+token; explicit BindIP remains checked by transports that can observe the
+actual endpoint. Invalid or corrupt records fail closed and emit no keys.
+
+This proves the guest helper, SSH/vsock protocol contract, and an independent
+sshd lifecycle. Host/API resource dispatch and shared multi-API completion are
+still separate P7 gates; this does not close P7 or the full P0–P9 matrix.
+
 ## Real private-network partition with a running guest task (2026-10-10)
 
 On the retained two-VM deployment, `p9-0d4114398801` started a 600-second

@@ -99,6 +99,11 @@ type Call struct {
 	FileRequest  *substrate.FileInstallRequest             `json:"file_request,omitempty"`
 	FileHandle   *substrate.FileInstallHandle              `json:"file_handle,omitempty"`
 	FileData     []byte                                    `json:"file_data,omitempty"`
+	SSHMutation  *substrate.SSHAccessMutation              `json:"ssh_mutation,omitempty"`
+	SSHHandle    *substrate.SSHAccessHandle                `json:"ssh_handle,omitempty"`
+	SSHUser      string                                    `json:"ssh_user,omitempty"`
+	SSHAddress   string                                    `json:"ssh_address,omitempty"`
+	SSHPort      int                                       `json:"ssh_port,omitempty"`
 	BootID       string                                    `json:"boot_id,omitempty"`
 	Epoch        uint64                                    `json:"epoch,omitempty"`
 	Scope        *controlplane.ExecutionScope              `json:"scope,omitempty"`
@@ -116,6 +121,10 @@ type Response struct {
 	FileInspection *substrate.InstalledFileInspection `json:"file_inspection,omitempty"`
 	FileHandle     *substrate.FileInstallHandle       `json:"file_handle,omitempty"`
 	FileRecord     *FileInstallRecord                 `json:"file_record,omitempty"`
+	SSHResult      *substrate.SSHAccessResult         `json:"ssh_result,omitempty"`
+	SSHHandle      *substrate.SSHAccessHandle         `json:"ssh_handle,omitempty"`
+	SSHInspection  *substrate.SSHAccessInspection     `json:"ssh_inspection,omitempty"`
+	SSHKeys        []byte                             `json:"ssh_keys,omitempty"`
 	Version        int                                `json:"version"`
 	BootID         string                             `json:"boot_id,omitempty"`
 	Record         *Record                            `json:"record,omitempty"`

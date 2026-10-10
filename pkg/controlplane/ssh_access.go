@@ -5,12 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"net"
 	"regexp"
 	"sort"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // SSHAccessRequest is the managed configuration contract. It contains public
@@ -48,18 +48,7 @@ func (r SSHAccessRequest) Validate() error {
 	return nil
 }
 func validatePublicSSHKey(key string) error {
-	fields := strings.Fields(key)
-	if !utf8.ValidString(key) || len(key) > 16384 || len(fields) < 2 {
-		return fmt.Errorf("invalid ssh public key")
-	}
-	if strings.ContainsAny(key, "\x00\r\n") || strings.HasPrefix(fields[0], "ssh-private") {
-		return fmt.Errorf("invalid ssh public key")
-	}
-	parsed, _, options, rest, err := ssh.ParseAuthorizedKey([]byte(key))
-	if err != nil || len(options) != 0 || len(strings.TrimSpace(string(rest))) != 0 || parsed.Type() != fields[0] {
-		return fmt.Errorf("invalid SSH public key or unsupported authorized-key options")
-	}
-	return nil
+	return substrate.ValidateSSHPublicKey(key)
 }
 
 // AuthorizedKeysContent uses the same ordering as Digest. A reordered request

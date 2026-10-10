@@ -11,6 +11,13 @@
 详见[当前验收记录](../operations/p9-real-acceptance.md)。下方时间线和阶段表含历史状态，
 须结合更新条目阅读，不能把旧“未验收”或局部通过直接当作当前总进度。
 
+2026-10-10 P7 SSH access helper slice：新增版本化 guest 配置记录、同 scope 锁、
+CAS revision、历史回执和删除 tombstone；旧 revision 删除、损坏记录、符号链接/权限、
+外部替换、旧 epoch、并发轮换均 fail-closed。SSH/vsock 共用 guest task 协议，OpenSSH
+AuthorizedKeysCommand 只读入口不泄漏部分 key；真实独立 sshd + Docker helper 验证
+管理员 key、受管 key 轮换、旧 key 失效、当前代删除及另一项访问保留。host/API canonical
+dispatch、共享 sshd drop-in 管理和跨宿主重启仍未完成，不能据此关闭 P7。
+
 真实双VM正常reset及后台task：独立新库部署后，普通Apply→Reset→Destroy及带45秒
 后台task的同链路均通过。后台task确认gen1→gen2、exit0、termination confirmed、
 reported；销毁后按两代精确Docker ID及owner UID独立确认缺失，正常metadata DELETE
