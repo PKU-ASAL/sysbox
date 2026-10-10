@@ -11,11 +11,20 @@ class CheckpointCrash(unittest.TestCase):
         before = {"state": "intent", "run_checkpoint": {"version": 1, "children": [{"handle": {"ID": "task"}}]}}
         after = {"state": "complete", "reported": True, "result": {"status": "failed", "error": "run controller stopped after resource execution; child termination confirmed"}}
         running = {"handle": {"ID": "task"}, "result": {"Status": "running"}}
-        stopped = {"handle": {"ID": "task"}, "stop_receipt": {}, "reported": True}
+        stopped = {"handle": {"ID": "task"}, "stop_receipt": {}, "reported": True, "result": {"RemoteTermination": "confirmed"}}
         stopped["stop_receipt"] = {"quiescence": "confirmed"}
         execute = mock.Mock(side_effect=[json.dumps(before), json.dumps(running), "123", "", json.dumps(after), json.dumps(stopped), "456"])
         evidence = crash.inject("p9-test", execute, lambda _: None)
         self.assertEqual(evidence["new_pid"], 456)
+
+    def test_crash_rejects_same_task_id_with_changed_generation(self):
+        before = {"state": "intent", "run_checkpoint": {"version": 1, "children": [{"handle": {"ID": "task", "Generation": 1}}]}}
+        after = {"state": "complete", "reported": True, "result": {"status": "failed", "error": "run controller stopped after resource execution; child termination confirmed"}}
+        running = {"handle": {"ID": "task", "Generation": 1}, "result": {"Status": "running"}}
+        stopped = {"handle": {"ID": "task", "Generation": 2}, "stop_receipt": {"quiescence": "confirmed"}, "reported": True, "result": {"RemoteTermination": "confirmed"}}
+        execute = mock.Mock(side_effect=[json.dumps(before), json.dumps(running), "123", "", json.dumps(after), json.dumps(stopped)])
+        with self.assertRaisesRegex(RuntimeError, "incarnation changed"):
+            crash.inject("p9-test", execute, lambda _: None)
 
     def test_missing_checkpoint_never_kills_supervisor(self):
         execute = mock.Mock(return_value="")

@@ -1,5 +1,35 @@
 # P9 real acceptance
 
+## Real host-supervisor SIGKILL after resource checkpoint (2026-10-10)
+
+On the current two-VM deployment, started a 600-second guest task on
+`p9-4ff3d9839d6c`. Before SIGKILL, verified exactly one host Run intent with a
+version1 resource checkpoint and its children observed running. Killed only
+the execution VM's supervisor MainPID **64200**. systemd started replacement
+MainPID **91249**. After **4.65 seconds**, the original Run outcome was complete
+and reported as failed: `run controller stopped after resource execution;
+child termination confirmed`.
+
+- Parent Run: `request-5f77e96be5d9712fab69aecb43613e6878c7ae1afa54c0ca4764073a491415f6`.
+- Child: `run-task-a95c0d3bf904bd94227e526813e6f823c4eface36f2035cdabfc533285360536`.
+- Fault evidence: `/tmp/sysbox-p9-lab-current/p9-4ff3d9839d6c-supervisor-crash.json`.
+- Control original evidence: `/var/tmp/p9-supervisor-crash-20261010.json`.
+- Control cleanup/terminal proof: `/var/tmp/p9-supervisor-crash-cleanup-20261010.json`.
+
+Independent comparison confirmed full child handles, Run IDs and provider IDs
+unchanged; child termination was confirmed and its stop receipt reported.
+The API returned the same parent Run with persistent host completion evidence.
+Normal Destroy succeeded. Exact container
+`1d7b23d7eee83727f16d98d79be129d770fa55d79ed5dfe1927650ab2a7bce00`
+was independently absent, with no containers under owner
+`ac2a56f1-af3a-4bf7-85b2-3b82d72cd255`. Normal metadata DELETE completed.
+
+The fault script now checks the complete child incarnation, not just task ID,
+and rejects generation changes. Its four unit tests pass. This proves recovery
+**after a successful resource checkpoint**; cold intents interrupted inside a
+provider callback (including retained Destroy `p9-5213226d26bb`) remain a
+separate unresolved case. It also does not prove a cross-version upgrade.
+
 ## Real isolated ENOSPC before resource creation (2026-10-10)
 
 On the execution VM, mounted a new **1 MiB tmpfs** at

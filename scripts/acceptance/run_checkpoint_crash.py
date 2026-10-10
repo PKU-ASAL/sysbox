@@ -26,6 +26,7 @@ def inject(topology, execute, save):
     task_query = ("sudo find /var/lib/sysbox-supervisor/journal -maxdepth 1 -name '*.json' "
                   "-exec jq -c 'select(.ref.topology==\"" + topology + "\")' {} \\;")
     tasks = [json.loads(row) for row in execute(task_query).splitlines()]
+    original_tasks = {task["handle"]["ID"]: task for task in tasks}
     expected = {child["handle"]["ID"] for child in checkpoint["children"]}
     if {task["handle"]["ID"] for task in tasks} != expected or not tasks or any(
             task.get("stop_receipt") or task["result"]["Status"] != "running" for task in tasks):
@@ -52,6 +53,12 @@ def inject(topology, execute, save):
             if {task["handle"]["ID"] for task in tasks} != expected or any(
                     not task.get("stop_receipt") or not task.get("reported") for task in tasks):
                 raise RuntimeError("missing acknowledged child stop evidence")
+            for task in tasks:
+                original = original_tasks[task["handle"]["ID"]]
+                if any(task.get(field) != original.get(field) for field in ("handle", "run_id", "provider_node_id")):
+                    raise RuntimeError("child incarnation changed after supervisor crash")
+                if task.get("result", {}).get("RemoteTermination") != "confirmed":
+                    raise RuntimeError("child termination not confirmed")
             new_pid = int(execute(pid_query).strip())
             if new_pid < 2 or new_pid == old_pid:
                 raise RuntimeError("replacement supervisor not proven")
