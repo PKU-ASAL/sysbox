@@ -9,8 +9,13 @@ it still verifies the real provider identity and does not permit cold replay.
 File/SQLite/PostgreSQL identity constraints and publication-failure tests pass,
 as do related full race suites. Review found route execution initially preceded
 publication; a failing route-call regression demonstrated and fixed that order.
-Continuation still needs an authorized original-Run to execution-Run mapping
-for guest-task resolution. These tests are not real VM continuation acceptance.
+Guest-task resolution now maps a canonical continuation execution to its
+original action Run only after matching revision, signed parent stop evidence
+and committed continuation receipt. Worker requests cannot supply the mapping.
+Lookup, connection and cold dispatcher cancellation share that resolver. File,
+SQLite and real PostgreSQL Run-store tests, cold cancellation, related full race
+suites and review passed. Multi-level parent chains and real two-host guest-task
+continuation remain unverified. These are not real VM continuation acceptance.
 
 Returned host reset failures now have a restricted signing path: after the
 synchronous executor returns, reacquire execution exclusion, read the original

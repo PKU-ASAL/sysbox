@@ -138,6 +138,38 @@ func TestResolveRunTaskVerifiesPersistedCandidateBeforeConnecting(t *testing.T) 
 	require.Equal(t, "actual-node", recovered.ProviderNodeID)
 	require.Equal(t, "web", recovered.Ref.Node)
 	require.Equal(t, 1, conn.starts)
+	mapped := r
+	mapped.ActionRun = func(_ context.Context, topology, execution string) (string, error) {
+		if topology != "lab" || execution != "continuation" {
+			return "", persistence.ErrConflict
+		}
+		return "run", nil
+	}
+	ref, err = mapped.FindRunTaskRef(ctx, "lab", "continuation", scope)
+	require.NoError(t, err)
+	_, err = mapped.ResolveRunTask(ctx, ref, "continuation")
+	require.NoError(t, err)
+	priorConnections := node.connections
+	_, err = mapped.ResolveRunTask(ctx, ref, "unrelated")
+	require.Error(t, err)
+	require.Equal(t, priorConnections, node.connections)
+	// Persist the execution Run, not the original action owner. A fresh
+	// dispatcher must resolve that same mapping for stop recovery.
+	d.Root = t.TempDir()
+	require.NoError(t, os.Chmod(d.Root, 0700))
+	d.RunID = "continuation"
+	d.Resolve = func(ctx context.Context, ref TargetRef) (Target, error) {
+		return mapped.ResolveRunTask(ctx, ref, "continuation")
+	}
+	d.ResolveRun = mapped.ResolveRunTask
+	started, err := d.Start(ctx, ref, req)
+	require.NoError(t, err)
+	require.Equal(t, "continuation", started.RunID)
+	coldMapped := *d
+	coldMapped.RunID = ""
+	coldMapped.Resolve = mapped.Resolve
+	_, err = coldMapped.Cancel(ctx, ref, started.Handle)
+	require.NoError(t, err)
 }
 
 func TestRunTaskResourceSelection(t *testing.T) {

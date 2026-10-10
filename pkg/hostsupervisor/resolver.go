@@ -18,7 +18,26 @@ import (
 
 // CanonicalResolver uses supervisor-configured repository locations. No worker
 // request can supply a host path, provider private state or network endpoint.
-type CanonicalResolver struct{ RunsDir, Backend, AgentID string }
+type CanonicalResolver struct {
+	RunsDir, Backend, AgentID string
+	// ActionRun resolves a trusted canonical execution to its admitted action
+	// owner. It is configured by the host, never supplied by a task RPC.
+	ActionRun func(context.Context, string, string) (string, error)
+}
+
+func (r CanonicalResolver) actionRun(ctx context.Context, topology, execution string) (string, error) {
+	if r.ActionRun == nil {
+		return execution, nil
+	}
+	owner, err := r.ActionRun(ctx, topology, execution)
+	if err != nil {
+		return "", err
+	}
+	if owner == "" {
+		return "", fmt.Errorf("canonical action Run is missing")
+	}
+	return owner, nil
+}
 
 func (r CanonicalResolver) Resolve(ctx context.Context, ref TargetRef) (Target, error) {
 	target, err := r.ResolveNode(ctx, ref)
@@ -77,6 +96,10 @@ func (r CanonicalResolver) ResolveRunTask(ctx context.Context, ref TargetRef, ru
 	if runID == "" {
 		return Target{}, fmt.Errorf("supervisor run identity is required")
 	}
+	runID, err := r.actionRun(ctx, ref.Topology, runID)
+	if err != nil {
+		return Target{}, err
+	}
 	repo, err := r.openRepository(ctx, ref.Topology)
 	if err != nil {
 		return Target{}, err
@@ -106,6 +129,10 @@ func (r CanonicalResolver) FindRunTaskRef(ctx context.Context, topology, runID s
 	var zero TargetRef
 	if runID == "" {
 		return zero, fmt.Errorf("supervisor run identity is required")
+	}
+	runID, err := r.actionRun(ctx, topology, runID)
+	if err != nil {
+		return zero, err
 	}
 	repo, err := r.openRepository(ctx, topology)
 	if err != nil {

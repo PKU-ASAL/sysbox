@@ -7,12 +7,16 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
 )
 
@@ -135,6 +139,7 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 			stale := *done
 			stale.QueuedAt = stale.QueuedAt.Add(time.Second)
 			require.Error(t, bridge.VerifyResetContinuation(ctx, continuation, &stale))
+			assertResetActionRunMapping(t, s, done)
 		}
 		nextSession, err := authority.OpenSession(ctx, "agent", "replacement", session.ID)
 		require.NoError(t, err)
@@ -181,4 +186,42 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		require.Equal(t, controlplane.RunRunning, newRun.Status)
 		require.NoError(t, authority.Authorize(ctx, *successor))
 	})
+}
+
+func assertResetActionRunMapping(t *testing.T, s *Server, parent *controlplane.Run) {
+	t.Helper()
+	ctx := context.Background()
+	bridge := &ExecutionBridge{server: s}
+	child := controlplane.Run{ID: "mapped-continuation", Topology: parent.Topology, Op: "reset", ParentID: parent.ID, Revision: parent.Revision, AgentID: parent.AgentID, QueuedAt: time.Now().UTC(), Status: controlplane.RunFailed, EndedAt: time.Now().UTC()}
+	require.NoError(t, s.apiStore.SaveRun(ctx, child))
+	_, err := bridge.ActionRun(ctx, parent.Topology, child.ID)
+	require.Error(t, err, "ParentID and signed stop alone cannot replace continuation admission")
+	repo, err := s.actionRepository(parent.Topology)
+	require.NoError(t, err)
+	mgr := state.NewManagerWithBackend(repo.StateBackend(parent.Topology))
+	st, err := mgr.Load()
+	require.NoError(t, err)
+	res := state.Resource{Address: address.Resource("sysbox_node", "web"), OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 1, ExternalID: "old-web"}
+	st.Resources = append(st.Resources, res)
+	require.NoError(t, mgr.Save(st))
+	a := runtime.ActionRecord{ID: "original-reset-action", RunID: parent.ID, Topology: parent.Topology, RunQueuedAt: parent.QueuedAt, RunRevision: parent.Revision, Resource: res.Address, OwnerUID: res.OwnerUID, ResourceUID: res.ResourceUID, Generation: 2, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &res}
+	require.NoError(t, repo.CommitResetIntents(ctx, []runtime.ActionRecord{a}))
+	a.Revision = 1
+	path := filepath.Join(t.TempDir(), "checkpoint.json")
+	recorder := runtime.NewFileRecorder(path, parent.ID, parent.Topology)
+	recorder.SetStateSerialBefore(st.Meta.Serial)
+	require.NoError(t, recorder.Begin("reset", &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: res.Address, Action: controlplane.PlanActionReset}}}))
+	cp, err := runtime.LoadCheckpointFile(path)
+	require.NoError(t, err)
+	_, err = repo.CommitResetContinuation(ctx, runtime.ResetContinuationRequest{ID: child.ID, TopologyUID: st.TopologyUID, RunQueuedAt: parent.QueuedAt, RunRevision: parent.Revision, ExpectedSerial: st.Meta.Serial, Checkpoint: *cp, Existing: []runtime.ActionRecord{a}})
+	require.NoError(t, err)
+	owner, err := bridge.ActionRun(ctx, parent.Topology, child.ID)
+	require.NoError(t, err)
+	require.Equal(t, parent.ID, owner)
+	_, err = bridge.ActionRun(ctx, "foreign-topology", child.ID)
+	require.Error(t, err)
+	child.ID, child.Revision = "wrong-revision", "different"
+	require.NoError(t, s.apiStore.SaveRun(ctx, child))
+	_, err = bridge.ActionRun(ctx, parent.Topology, child.ID)
+	require.Error(t, err)
 }

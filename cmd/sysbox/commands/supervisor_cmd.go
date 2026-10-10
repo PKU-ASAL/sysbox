@@ -95,6 +95,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	if err != nil {
 		return err
 	}
+	resolver.ActionRun = runBridge.ActionRun
 	dispatcher := &hostsupervisor.Dispatcher{Root: cfg.HostSupervisor.Root, AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	dispatcher.ResolveRun = resolver.ResolveRunTask
 	dispatcher.FindRunTaskRef = resolver.FindRunTaskRef

@@ -78,9 +78,13 @@ Run 终态现在与 `host_completion` 原始证据在同一事务保存；证据
 API verifier 读取并重新验签，而非信任字段存在。旧 Run 没有证据时继续拒绝，
 不依据 status 补造回执。新旧二进制混跑不保证证明字段保留，需统一升级。
 三后端回执保存及 verifier 回归通过，完整双宿主 reset continuation E2E 仍未完成。
-续作的 action 保留原 Run ID；guest-task resolver 当前仍按执行 Run ID 筛选未完成
-action。原 Run 到新执行 Run 的受控映射尚待接入，不能宣称带后台任务的远端续作
-已形成完整闭环。
+续作的 action 保留原 Run ID。宿主 resolver 现在通过配置的 canonical ActionRun
+回调解析执行 Run：reset child 必须与父 revision 相同、父签名停止证明有效，且
+有匹配父 incarnation 的 continuation receipt，才映射到原 action owner。
+worker 不能指定 owner。查找、连接和冷启动取消均复用同一映射；资源身份与真实
+provider 观察仍独立校验。任务日志保留新执行 Run ID。文件/SQLite/真实 Postgres
+映射回归和冷 dispatcher 取消测试通过，多级 ParentID 续作链尚未支持，双宿主
+后台任务续作 E2E 尚未验收。
 
 宿主同步 reset 返回失败时，执行器重新取得 execution lock 并读取原 Run 的
 持久 action。只有非空且 incarnation 匹配、全部处于明确可恢复阶段，并且所有
