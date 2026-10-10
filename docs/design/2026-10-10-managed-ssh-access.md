@@ -9,7 +9,9 @@
 （OpenSSH `%u` token）读取已提交的公钥。原来的 `AuthorizedKeysFile` 保持由管理员管理，
 Sysbox 不改写用户自己的文件，也不停止共享 sshd。OpenSSH 命令没有可靠的本地监听地址
 token，因此命令查询按用户和端口通配；能取得实际 endpoint 的 Observe/transport 路径
-仍校验 BindIP。helper 不是执行任意命令的入口。
+仍校验 BindIP；共享 `AuthorizedKeysCommand` 对配置了 BindIP 的 access 会
+fail-closed（没有可验证的本地地址），这类 access 必须走 endpoint-aware 的
+transport adapter。helper 不是执行任意命令的入口。
 
 相比检查文件后执行 rm，这个模型将权限内容、CAS 版本、操作结果放在同一原子记录中，
 避免检查后内容被替换的窗口。相比每项 access 启动独立 sshd，它不要求为每项访问维护

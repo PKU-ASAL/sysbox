@@ -301,6 +301,9 @@ func (e *Engine) SSHAuthorizedKeys(ctx context.Context, user, localIP string, po
 			continue
 		}
 		if cfg.BindIP != "" && localIP == "" {
+			// AuthorizedKeysCommand cannot receive the local listener address
+			// from OpenSSH. Never authorize a bind-specific access on an
+			// endpoint we cannot verify.
 			continue
 		}
 		for _, key := range cfg.AuthorizedKeys {
