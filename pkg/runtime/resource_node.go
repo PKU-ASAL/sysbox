@@ -529,25 +529,41 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 	}
 	handle, err := r.ReconstructHandle(stateDriver)
 	if err != nil {
-		e.logf("[destroy] warning: reconstruct node %s: %v\n", r.Address, err)
-		handle = substrate.NodeHandle{ID: r.ContainerID()}
+		return fmt.Errorf("reconstruct node %s for destruction: %w", r.Address, err)
+	}
+	var nicDriver driver.NIC
+	requests := make([]driver.AttachmentRequest, 0, len(r.Attachments))
+	if len(r.Attachments) > 0 {
+		nicDriver, err = driver.DefaultRegistry.RequireNIC(r.Driver)
+		if err != nil {
+			return err
+		}
+		for _, attachment := range r.Attachments {
+			request, err := attachmentRequestFromState(e.state, attachment)
+			if err != nil {
+				return fmt.Errorf("validate attachment %s before destruction: %w", attachment.Name, err)
+			}
+			requests = append(requests, request)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	// Stop remains best-effort because DestroyNode performs the authoritative,
 	// idempotent cleanup for both running and already-absent nodes.
 	if err := nodeDriver.StopNode(ctx, handle); err != nil {
 		e.logf("[destroy] warning: stop node %s: %v\n", r.Address, err)
 	}
-	if nicDriver, nicErr := driver.DefaultRegistry.RequireNIC(r.Driver); nicErr == nil {
-		for _, attachment := range r.Attachments {
-			request, reqErr := attachmentRequestFromState(e.state, attachment)
-			if reqErr != nil {
-				e.logf("[destroy] warning: attachment %s: %v\n", attachment.Name, reqErr)
-				continue
-			}
-			if err := nicDriver.Delete(ctx, handle, request, attachment.DriverState); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
-				e.logf("[destroy] warning: delete attachment %s: %v\n", attachment.Name, err)
-			}
+	for i, attachment := range r.Attachments {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
+		if err := nicDriver.Delete(ctx, handle, requests[i], attachment.DriverState); err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
+			return fmt.Errorf("delete attachment %s: %w", attachment.Name, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := nodeDriver.DestroyNode(ctx, handle); err != nil {
 		return fmt.Errorf("destroy node %s: %w", r.Address, err)

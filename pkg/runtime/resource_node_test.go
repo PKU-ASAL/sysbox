@@ -70,24 +70,27 @@ func TestNodeResourceHandlerDeleteMissingSubstrateReturnsError(t *testing.T) {
 
 type portTestSubstrate struct {
 	substrate.BaseSubstrate
-	name               string
-	exposures          []string
-	lastSpec           substrate.NodeSpec
-	deletedAttachments []json.RawMessage
-	natNames           []string
-	routes             []string
-	routeChecks        int
-	guestInitModes     []substrate.GuestNetworkInitMode
-	guestObservation   substrate.GuestNetworkInitObservation
-	lifecycle          []string
-	coldPlug           bool
-	resetLifecycle     []string
-	resetObservation   substrate.ResetObservation
-	resetApplyErr      error
-	nodeObservation    substrate.NodeObservation
-	nodeObserveCalls   int
-	destroyErr         error
-	resetDeleted       map[string]bool
+	name                    string
+	exposures               []string
+	lastSpec                substrate.NodeSpec
+	deletedAttachments      []json.RawMessage
+	natNames                []string
+	routes                  []string
+	routeChecks             int
+	guestInitModes          []substrate.GuestNetworkInitMode
+	guestObservation        substrate.GuestNetworkInitObservation
+	lifecycle               []string
+	coldPlug                bool
+	resetLifecycle          []string
+	resetObservation        substrate.ResetObservation
+	resetApplyErr           error
+	nodeObservation         substrate.NodeObservation
+	nodeObserveCalls        int
+	destroyErr              error
+	attachmentDeleteErr     error
+	attachmentDeleteResults []error
+	stopCalls, destroyCalls int
+	resetDeleted            map[string]bool
 }
 
 func (s *portTestSubstrate) Name() string { return s.name }
@@ -119,9 +122,13 @@ func (s *portTestSubstrate) StartNode(context.Context, substrate.NodeHandle) err
 	return nil
 }
 
-func (s *portTestSubstrate) StopNode(context.Context, substrate.NodeHandle) error { return nil }
+func (s *portTestSubstrate) StopNode(context.Context, substrate.NodeHandle) error {
+	s.stopCalls++
+	return nil
+}
 
 func (s *portTestSubstrate) DestroyNode(context.Context, substrate.NodeHandle) error {
+	s.destroyCalls++
 	return s.destroyErr
 }
 
@@ -144,7 +151,66 @@ func (s *portTestSubstrate) Observe(context.Context, substrate.NodeHandle, drive
 }
 func (s *portTestSubstrate) Delete(_ context.Context, _ substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
 	s.deletedAttachments = append(s.deletedAttachments, append(json.RawMessage(nil), raw...))
-	return nil
+	if len(s.attachmentDeleteResults) > 0 {
+		err := s.attachmentDeleteResults[0]
+		s.attachmentDeleteResults = s.attachmentDeleteResults[1:]
+		return err
+	}
+	return s.attachmentDeleteErr
+}
+
+func TestDestroyNodeRetriesPartiallyDeletedAttachments(t *testing.T) {
+	sub := &portTestSubstrate{name: "partial-delete", attachmentDeleteResults: []error{nil, errors.New("second failed"), driver.Wrap(driver.ErrorNotFound, "partial-delete", "already absent", nil), nil}}
+	registerPortTestDriver(t, sub)
+	st := &state.State{Version: state.SchemaVersion}
+	network := address.Resource("sysbox_network", "net")
+	st.AddResource(state.Resource{Address: network, Attributes: state.MustAttributes(map[string]any{})})
+	res := state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: sub.name, ExternalID: "node", Attachments: []state.Attachment{{Name: "first", Network: network}, {Name: "second", Network: network}}}
+	st.AddResource(res)
+	e := NewExecutor(graph.New(), st)
+	require.ErrorContains(t, e.destroyNodeResource(context.Background(), res), "second failed")
+	require.Zero(t, sub.destroyCalls)
+	require.NotNil(t, st.FindResource(res.Address))
+	require.NoError(t, e.destroyNodeResource(context.Background(), res))
+	require.Equal(t, 1, sub.destroyCalls)
+	require.Len(t, sub.deletedAttachments, 4)
+	require.Nil(t, st.FindResource(res.Address))
+}
+
+func TestDestroyNodePreservesEvidenceWhenAttachmentDeleteFails(t *testing.T) {
+	sub := &portTestSubstrate{name: "attachment-delete-failure", attachmentDeleteErr: errors.New("attachment deletion unavailable")}
+	registerPortTestDriver(t, sub)
+	st := &state.State{Version: state.SchemaVersion}
+	network := address.Resource("sysbox_network", "net")
+	st.AddResource(state.Resource{Address: network, Attributes: state.MustAttributes(map[string]any{})})
+	resource := state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: sub.name, ExternalID: "node", Attachments: []state.Attachment{{Name: "nic", Network: network, Driver: sub.name}}}
+	st.AddResource(resource)
+	err := NewExecutor(graph.New(), st).destroyNodeResource(context.Background(), resource)
+	require.ErrorIs(t, err, sub.attachmentDeleteErr)
+	require.Zero(t, sub.destroyCalls)
+	require.NotNil(t, st.FindResource(resource.Address))
+}
+
+func TestDestroyNodeValidatesRecoveryEvidenceBeforeEffects(t *testing.T) {
+	for _, problem := range []string{"corrupt-handle", "missing-network"} {
+		t.Run(problem, func(t *testing.T) {
+			sub := &portTestSubstrate{name: "invalid-delete-evidence"}
+			registerPortTestDriver(t, sub)
+			resource := state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: sub.name, ExternalID: "node"}
+			if problem == "corrupt-handle" {
+				resource.Private = json.RawMessage(`not-json`)
+			} else {
+				resource.Attachments = []state.Attachment{{Name: "nic", Network: address.Resource("sysbox_network", "missing"), Driver: sub.name}}
+			}
+			st := &state.State{Version: state.SchemaVersion}
+			st.AddResource(resource)
+			require.Error(t, NewExecutor(graph.New(), st).destroyNodeResource(context.Background(), resource))
+			require.Zero(t, sub.stopCalls)
+			require.Zero(t, sub.destroyCalls)
+			require.Empty(t, sub.deletedAttachments)
+			require.NotNil(t, st.FindResource(resource.Address))
+		})
+	}
 }
 func (s *portTestSubstrate) ApplyRuleset(_ context.Context, _ driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
 	s.natNames = []string{spec.NAT.SourceAttachment, spec.NAT.UplinkAttachment}

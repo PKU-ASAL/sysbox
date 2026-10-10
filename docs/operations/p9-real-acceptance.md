@@ -1,5 +1,27 @@
 # P9 real acceptance
 
+## Destroy evidence preservation correction (2026-10-10)
+
+Inspection of the interrupted Destroy path found two independent correctness
+bugs: runtime substituted an ID-only handle after codec failure, and ignored
+attachment request/delete failures before removing the node and its state.
+Failing regressions reproduced corrupt-private-state, missing-network and NIC
+delete-error paths returning success. Runtime now validates the handle and all
+attachment requests/capabilities before effects; non-NotFound attachment errors
+stop node deletion and preserve state. Cancellation is checked between effects.
+The existing best-effort Stop remains separate from authoritative Destroy.
+
+Runtime, Agent, Docker/libvirt/Firecracker full race suites, vet and independent
+review passed. A partial-attachment regression verifies that a retry accepts
+the first attachment's NotFound, finishes the second and deletes the node once.
+This fixes evidence loss, not unknown-effect recovery authorization.
+
+Read-only reinspection of retained `p9-5213226d26bb` confirms its exact container
+`7c7bb3e764fd3c36c88adc6554fd07b10bb61e020c8e7da261662acf574c54fc`
+still exists, exited. The corresponding host Destroy outcome remains `intent`
+with no run checkpoint or result. No forced cleanup or journal rewrite occurred;
+explicit safe recovery of this case remains required.
+
 ## Real running-child API failover with bounded health detection (2026-10-10)
 
 Added `scripts/acceptance/live_failover.py`: it verifies a unique running child
