@@ -2,6 +2,15 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+2026-10-10 私网分区验收：真实双VM长任务在execution lan0断开、API/DB两个端口均
+不可达时，136.92秒后原cgroup清空；恢复后原task/Run/provider身份保持，原停止回执
+获确认，父Run failed且保有host completion。正常Destroy、独立精确ID/owner无残留
+及非force metadata DELETE均通过。Postgres进程未重启，NAT管理链路保持。脚本补齐
+恢复等待与错误证据持久化；首轮失败证据保留。这关闭该Docker checkpoint后的网络
+分区场景，不关闭未知intent、运行中ENOSPC、升级、P5–P8及全provider/transport矩阵。
+详见[当前验收记录](../operations/p9-real-acceptance.md)。下方时间线和阶段表含历史状态，
+须结合更新条目阅读，不能把旧“未验收”或局部通过直接当作当前总进度。
+
 真实双VM正常reset及后台task：独立新库部署后，普通Apply→Reset→Destroy及带45秒
 后台task的同链路均通过。后台task确认gen1→gen2、exit0、termination confirmed、
 reported；销毁后按两代精确Docker ID及owner UID独立确认缺失，正常metadata DELETE

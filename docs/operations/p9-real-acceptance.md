@@ -1,5 +1,49 @@
 # P9 real acceptance
 
+## Real private-network partition with a running guest task (2026-10-10)
+
+On the retained two-VM deployment, `p9-0d4114398801` started a 600-second
+guest task. The injector verified its populated cgroup, process incarnation,
+resource identity and parent resource checkpoint, then brought down only the
+execution VM's `lan0`. Management SSH continued over `nat0`. TCP probes to
+control API port 19870 and PostgreSQL port 5432 were reachable before the fault,
+unreachable during it, and reachable again after restoration. PostgreSQL
+MainPID remained **9474** throughout.
+
+The original guest task was cancelled after **136.92 seconds**, with the same
+process/cgroup identity and `populated 0`. After restoration, its original host
+stop receipt was reported and the API parent Run became failed with persistent
+host completion: `run controller stopped after resource execution; child
+termination confirmed`. The acceptance verifier additionally checked unchanged
+provider ID, complete handle, Run ID, and receipt grant scope/epoch/session/
+command/task digest. Receipt signature acceptance is provided by the API;
+the Python verifier independently compares the recorded identities.
+
+- Parent: `request-423e2fc6381c429d9172d306a9ebdf5b5e8004a9683aa9b82b4e6ee9cd71a85f`.
+- Child: `run-task-37292acd8a10708be89c8ab94b4b1655d2c0b5dd186be8f1cecdaf808a150b47`.
+- Host fault evidence: `/tmp/sysbox-p9-lab-current/p9-0d4114398801-private-network-outage.json`.
+- Control original: `/var/tmp/p9-network-partition-retry-20261010.json`.
+- Control terminal proof/cleanup: `/var/tmp/p9-network-partition-retry-cleanup-20261010.json`.
+
+Normal Destroy succeeded. Exact container
+`6dd3bf2930cf827f1bb523455ebf1b06d9b65b78fcabdbac40faf960e995816c`
+and all containers under owner `86f17057-a658-4f15-b14c-16b30e41154e` were
+independently absent. Normal metadata DELETE completed without force.
+
+The first experiment, `p9-f9d367d24376`, retained its original incomplete fault
+evidence: a single immediate ping after link-up failed and prevented the final
+evidence save. Its canonical stopped result was subsequently verified, followed
+by normal Destroy, independent absence checks and metadata DELETE. No original
+evidence was overwritten. The injector now waits for connectivity, separately
+records fault/restoration/final-validation errors, and preserves intermediate
+readiness failures. The successful experiment reproduced two initial failed
+pings before connectivity returned, confirming the need for readiness polling.
+
+This closes the Docker running-child **private-network partition** scenario
+after a successful resource checkpoint. It does not prove unknown provider
+intent recovery, other providers/transports, mid-effect ENOSPC, upgrade or the
+full P0–P9 matrix. Historical statements below describe earlier checkpoints.
+
 ## Real host-supervisor SIGKILL after resource checkpoint (2026-10-10)
 
 On the current two-VM deployment, started a 600-second guest task on
