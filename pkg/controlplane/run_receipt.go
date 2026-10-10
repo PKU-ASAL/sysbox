@@ -6,6 +6,14 @@ import (
 	"time"
 )
 
+// RunHostCompletionProof retains the exact signed result bytes, independently
+// of subsequent normalization of the canonical Run. Evidence must not contain
+// another completion proof or transient input secrets.
+type RunHostCompletionProof struct {
+	Receipt  SignedExecutionStopReceipt `json:"receipt"`
+	Evidence []byte                     `json:"evidence"` // base64 preserves signed bytes through JSONB
+}
+
 // SignRunStopReceipt binds the durable host outcome to the original execution
 // authority. A generic quiescence receipt cannot authenticate a Run result.
 func SignRunStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, boot, id string, evidence json.RawMessage, now time.Time) (SignedExecutionStopReceipt, error) {
@@ -21,6 +29,9 @@ func SignRunStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, boot, id strin
 
 func VerifyRunStopReceipt(key ed25519.PublicKey, r SignedExecutionStopReceipt, evidence json.RawMessage) error {
 	if !IsRunExecutionOperation(r.Grant.Operation) {
+		return ErrInvalidExecutionGrant
+	}
+	if r.FileResult != nil || r.GuestResult != nil || r.ObservedGuestBootID != "" || r.GuestBootID != "" || r.InstallID != "" || r.InstallDigest != "" || r.TaskID != "" || r.TaskDigest != "" {
 		return ErrInvalidExecutionGrant
 	}
 	if err := VerifyExecutionStopReceipt(key, r); err != nil {

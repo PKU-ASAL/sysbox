@@ -27,13 +27,18 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		ctx := context.Background()
 		s := NewServer(t.TempDir(), t.TempDir())
 		s.apiStore = store
+		lifecycle, err := s.actionRepository("lab")
+		require.NoError(t, err)
+		initial, err := lifecycle.LoadState(ctx, "lab")
+		require.NoError(t, err)
+		owner := initial.TopologyUID
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
 		now := time.Now().UTC()
 		run := controlplane.Run{ID: "host_run", Topology: "lab", Op: action, Operation: action, Revision: "revision", AgentID: "agent", Status: controlplane.RunRunning, Attempt: 1, LeaseOwner: "old-worker", QueuedAt: now.Add(-time.Hour), LeaseUntil: now.Add(-time.Minute)}
 		require.NoError(t, store.SaveRun(ctx, run))
-		command := controlplane.AgentCommand{ID: "host-command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusDelivered, Run: &run, TopologyUID: "topology", ActionID: "action", Attempt: 1, LeaseOwner: "old-worker", LeaseUntil: run.LeaseUntil}
+		command := controlplane.AgentCommand{ID: "host-command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusDelivered, Run: &run, TopologyUID: owner, ActionID: "action", Attempt: 1, LeaseOwner: "old-worker", LeaseUntil: run.LeaseUntil}
 		require.NoError(t, store.SaveAgentCommand(ctx, command))
 		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
 		session, err := authority.OpenSession(ctx, "agent", "old-session", "")
@@ -41,10 +46,13 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: command.TopologyUID, Revision: run.Revision, ActionID: command.ActionID, Action: action}
 		digest, err := req.Digest()
 		require.NoError(t, err)
-		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{AgentID: "agent", SessionID: session.ID, CommandID: command.ID, ActionID: command.ActionID, Attempt: 1, Operation: "run_" + action, Digest: digest, TargetBootID: "host", Scope: controlplane.ExecutionScope{TopologyUID: "topology"}}, time.Minute)
+		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{AgentID: "agent", SessionID: session.ID, CommandID: command.ID, ActionID: command.ActionID, Attempt: 1, Operation: "run_" + action, Digest: digest, TargetBootID: "host", Scope: controlplane.ExecutionScope{TopologyUID: owner}}, time.Minute)
 		require.NoError(t, err)
 		observed := run
 		observed.Status = controlplane.RunDone
+		if action == "reset" {
+			observed.Status, observed.Recoverable, observed.Err = controlplane.RunFailed, true, "reset interrupted after safe checkpoint"
+		}
 		observed.EndedAt = now
 		evidence, err := json.Marshal(observed)
 		require.NoError(t, err)
@@ -60,7 +68,7 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		child, err := authority.DeriveGuestTask(ctx, *grant, controlplane.ExecutionGrant{
 			AgentID: grant.AgentID, SessionID: grant.SessionID, CommandID: grant.CommandID,
 			Attempt: grant.Attempt, ActionID: "child", Operation: "guest_task", Digest: "child-digest",
-			TargetBootID: "guest", Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1},
+			TargetBootID: "guest", Scope: controlplane.ExecutionScope{TopologyUID: owner, ResourceUID: "node", Generation: 1},
 		}, time.Minute)
 		require.NoError(t, err)
 		require.Equal(t, 409, post(receipt, evidence).Code, "a live child must block canonical Run completion")
@@ -109,8 +117,25 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		require.Equal(t, 200, response.Code, response.Body.String())
 		done, err := store.GetRun(ctx, run.ID)
 		require.NoError(t, err)
-		require.Equal(t, controlplane.RunDone, done.Status)
+		require.Equal(t, observed.Status, done.Status)
 		require.Equal(t, "old-worker", done.LeaseOwner)
+		require.NotNil(t, done.HostCompletion, "canonical terminal result must retain signed host evidence")
+		require.Equal(t, receipt, done.HostCompletion.Receipt)
+		require.NoError(t, controlplane.VerifyRunStopReceipt(pub, done.HostCompletion.Receipt, done.HostCompletion.Evidence))
+		stripped := *done
+		stripped.HostCompletion = nil
+		require.ErrorIs(t, store.SaveRun(ctx, stripped), persistence.ErrConflict, "ordinary save cannot discard stop evidence")
+		forged := *done
+		forged.ID = "injected-proof"
+		require.ErrorIs(t, store.SaveRun(ctx, forged), persistence.ErrConflict, "ordinary save cannot mint host evidence")
+		if action == "reset" {
+			bridge := &ExecutionBridge{server: s}
+			continuation := &controlplane.Run{ID: "continuation", Topology: "lab", Op: "reset", ParentID: done.ID}
+			require.NoError(t, bridge.VerifyResetContinuation(ctx, continuation, done))
+			stale := *done
+			stale.QueuedAt = stale.QueuedAt.Add(time.Second)
+			require.Error(t, bridge.VerifyResetContinuation(ctx, continuation, &stale))
+		}
 		nextSession, err := authority.OpenSession(ctx, "agent", "replacement", session.ID)
 		require.NoError(t, err)
 		next := *grant
@@ -122,6 +147,10 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		response = post(receipt, evidence)
 		require.Equal(t, 200, response.Code, response.Body.String())
 		require.NoError(t, authority.Authorize(ctx, *successor))
+		if action == "reset" {
+			bridge := &ExecutionBridge{server: s}
+			require.NoError(t, bridge.VerifyResetContinuation(ctx, &controlplane.Run{ID: "continuation", Topology: "lab", Op: "reset", ParentID: done.ID}, done), "historical stop remains verifiable after successor admission")
+		}
 
 		// Simulate a controller admitting a newer actual execution attempt.
 		// A historical command grant must never overwrite its canonical owner.

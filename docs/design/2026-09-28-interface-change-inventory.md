@@ -13,10 +13,13 @@
 `ErrResetContinuationNotFound`。只读 recovery wrapper 不继承此受理能力。
 Bridge 的 `LockTopology` 现在接收 context 并返回 unlock/error，调用方必须处理
 锁失败。API reset `Resume` 要求父 Run 的完整 checkpoint 后才创建子 Run；Agent
-子 Run 还必须通过 `ResetContinuationVerifier`，API bridge 尚未实现该验证，执行
-会拒绝。CLI 增加 `reset --resume <run-id>`，禁止与 `--target` 混用；本地需原同步
+子 Run 还必须通过 `ResetContinuationVerifier`，API bridge 重验持久
+`Run.host_completion` 签名及 authority 历史停止记录，缺失则拒绝。CLI 增加
+`reset --resume <run-id>`，禁止与 `--target` 混用；本地需原同步
 执行器返回后持久写入的 `.returned` 回执，绑定 checkpoint 字节摘要和 Run 身份。
-缺少证据不能续作。远端 signed host-stop/quiescence verifier 仍待接入。
+缺少证据不能续作。`host_completion.evidence` 为保留签名字节的 base64 数据，
+只允许经宿主完成入口原子写入；普通 Save/Restart 不可注入或修改。需统一升级，
+旧程序写丢证明后新 verifier 拒绝，不提供按旧状态推断的兼容恢复。
 
 Lifecycle aggregate 当前为 format 5。新 CLI `state import-format4` 默认仅预览；
 显式提交要求 `--apply --offline --source-sha256 ... --archive ...`，保全原字节后
@@ -26,7 +29,7 @@ Lifecycle aggregate 当前为 format 5。新 CLI `state import-format4` 默认�
 宿主 Run 请求新增 `action: reset` / grant `operation: run_reset`，签名完成回执、
 异步观察和派生子任务停止沿用同一协议；generic stopped 不能代替 Run 完成提交。
 旧宿主只识别 apply/destroy，会拒绝 reset，需一起升级。协议接入不等于远端
-continuation 已可执行，原宿主停止证据 verifier 仍待实现。
+continuation 已完成真实验收；停止证据 verifier 已接入，双宿主 E2E 仍待完成。
 
 ### SSH宿主完成证据
 

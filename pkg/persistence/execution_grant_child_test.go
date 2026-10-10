@@ -67,15 +67,19 @@ func TestChildCannotSurviveParentRevocationOrReleaseParent(t *testing.T) {
 	for _, operation := range []string{"run_apply", "run_destroy", "run_reset"} {
 		t.Run(operation, func(t *testing.T) {
 			r, p, c, _ := childGrantFixture(t, operation)
+			require.ErrorIs(t, r.RequireHostStopped(context.Background(), p, "parent-stopped"), ErrConflict)
 			g, err := r.DeriveGuestTask(context.Background(), p, c, time.Minute)
 			require.NoError(t, err)
 			require.ErrorIs(t, r.AcceptHostStop(context.Background(), p, "parent-stopped"), ErrConflict)
 			require.NoError(t, r.Revoke(context.Background(), p))
+			require.ErrorIs(t, r.RequireHostStopped(context.Background(), p, "parent-stopped"), ErrConflict, "revocation does not prove stop")
 			require.ErrorIs(t, r.Authorize(context.Background(), *g), ErrConflict)
 			_, err = r.Renew(context.Background(), *g, time.Minute)
 			require.ErrorIs(t, err, ErrConflict)
 			require.NoError(t, r.AcceptHostStop(context.Background(), *g, "child-stopped"))
 			require.NoError(t, r.AcceptHostStop(context.Background(), p, "parent-stopped"))
+			require.NoError(t, r.RequireHostStopped(context.Background(), p, "parent-stopped"))
+			require.ErrorIs(t, r.RequireHostStopped(context.Background(), p, "different"), ErrConflict)
 		})
 	}
 }

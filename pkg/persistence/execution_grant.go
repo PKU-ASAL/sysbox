@@ -549,6 +549,22 @@ func (r *ExecutionGrantRepository) ValidateHostStop(ctx context.Context, proof c
 		return err
 	})
 }
+
+// RequireHostStopped reads committed historical stop evidence only. Active or
+// revoked grants cannot establish that their provider effects have stopped.
+func (r *ExecutionGrantRepository) RequireHostStopped(ctx context.Context, proof controlplane.ExecutionGrant, receipt string) error {
+	if receipt == "" {
+		return ErrInvalidRecord
+	}
+	return r.read(ctx, func(a *executionAuthority) error {
+		prior, ok := a.Stops[proof.Epoch]
+		if !ok || !sameGrant(prior.Grant, proof) || prior.Receipt != receipt {
+			return ErrConflict
+		}
+		return nil
+	})
+}
+
 func (r *ExecutionGrantRepository) acknowledgeStop(ctx context.Context, proof controlplane.ExecutionGrant, receipt string, hostConfirmed bool) error {
 	if receipt == "" {
 		return ErrInvalidRecord

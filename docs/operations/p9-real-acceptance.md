@@ -2,14 +2,25 @@
 
 ## Open reset recovery failure (2026-10-10)
 
+The API now stores `Run.host_completion` (signed receipt plus exact original
+result bytes) atomically with the terminal Run. Ordinary Save/Restart cannot
+inject or change the proof. The reset continuation verifier rechecks its host
+signature, original Run incarnation/attempt/lease/result, current topology UID
+and matching historical authority stop tombstone. Active/revoked grants are
+rejected; a successor epoch does not erase historical stop evidence. File,
+SQLite and real PostgreSQL 16 completion/verifier tests passed, including JSONB
+round trips. Related full race suites and independent review passed. This is
+not yet a real two-host reset continuation E2E, nor recovery of the old incident;
+old Runs without signed proof still cannot pass this verifier.
+
 Host execution now accepts `run_reset` through the same grant, async callback,
 effect journal, derived task and signed completion paths as apply/destroy.
 Tests verify exact signed receipt recovery without callback replay and refusal
 to replay unknown intents. Completion contract tests passed for all three
 operations on file, SQLite and real PostgreSQL 16, including active-child
 rejection, tampered evidence, expired/retired commands and successor-epoch
-protection. The API continuation verifier is still absent; these results do
-not authorize continuation of the retained incident.
+protection. These protocol results alone do not authorize continuation of the
+retained incident.
 
 Runtime continuation now prepares original-incarnation intents, reuses durable
 receipts after restart and admits them before entering reset phase CAS. Real
@@ -20,16 +31,15 @@ the original checkpoint bytes remain unchanged. Providers in this test are
 simulated. Runtime/repository/Agent/CLI race regressions passed. API reset
 resume now requires a validated complete parent checkpoint before creating a
 child Run. Execution additionally requires a `ResetContinuationVerifier`; the
-API bridge does not yet provide signed host-stop verification and thus rejects
-execution. CLI exposes `reset --resume <run-id>` only with a durable synchronous
+API bridge requires signed host-stop verification as described above. CLI
+exposes `reset --resume <run-id>` only with a durable synchronous
 return receipt matching the original checkpoint hash and action incarnation.
 It rejects `--target` overrides and confirms the complete original scope.
 Old/crashed executors without that receipt cannot resume through this path.
 Agent/API/CLI full race regressions, targeted missing-receipt/changed-checkpoint/
 target-override rejection tests, vet and independent review passed. This does
 not prove end-to-end CLI continuation of the retained incident.
-Signed remote host-stop/quiescence verification and real retained-VM
-continuation are still open.
+Real two-host continuation acceptance and retained-VM recovery are still open.
 
 The continuation admission primitive now records the complete original request
 and missing intents atomically in aggregate format 5. Normal repository access

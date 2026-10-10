@@ -2,6 +2,12 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+远端reset停止证据验证已接入：Run终态与宿主签名原始结果原子保存，API bridge重验
+签名、原Run incarnation/attempt/lease/终态、拓扑UID及authority历史Stops hash。
+普通Save/Restart不能写入/删除proof。三后端（含真实Postgres JSONB）回归与相关完整
+race通过。历史条目中“verifier尚未接入”已被本项取代；旧无证据现场仍拒绝，真实
+双宿主reset continuation及P0–P9其余缺口未关闭。
+
 Reset入口接线：CLI新增--resume且禁止与--target混用，确认只展示原完整scope。
 本地必须提供同步executor返回后写入的.returned回执（绑定checkpoint字节摘要及
 原Run incarnation）；无回执、篡改或未知effect阶段拒绝。API受理先验证原checkpoint，

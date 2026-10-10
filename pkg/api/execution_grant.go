@@ -278,7 +278,7 @@ func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, persistence.ErrConflict)
 		return
 	}
-	completed, err := s.apiStore.CompleteRunFromHost(r.Context(), agentID, runID, body.Receipt, observed)
+	completed, err := s.apiStore.CompleteRunFromHost(r.Context(), agentID, runID, body.Receipt, body.Evidence)
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -14,7 +15,7 @@ type schemaStore interface {
 }
 
 type runStore interface {
-	CompleteRunFromHost(context.Context, string, string, controlplane.SignedExecutionStopReceipt, controlplane.Run) (*controlplane.Run, error)
+	CompleteRunFromHost(context.Context, string, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) (*controlplane.Run, error)
 	CompleteRun(context.Context, string, string, controlplane.RunCompletion) (*controlplane.Run, bool, error)
 	LoadRuns(ctx context.Context) ([]controlplane.Run, error)
 	GetRun(ctx context.Context, id string) (*controlplane.Run, error)

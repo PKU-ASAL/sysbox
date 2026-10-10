@@ -43,8 +43,10 @@ checkpoint 中的完成 step 不能代替它。原 checkpoint 不覆盖，新执
 
 API `Resume` 对 reset 要求原 Run 为终态且存在完整 checkpoint（Run ID、拓扑、reset
 操作、非空范围和有效计划摘要），然后创建带 `ParentID` 的子 Run。子 Run 必须由
-bridge 提供 `ResetContinuationVerifier` 验证原执行已返回。当前 API bridge 尚无
-签名停止证据 verifier，故执行会安全拒绝，远端续作还不可用。
+bridge 提供 `ResetContinuationVerifier` 验证原执行已返回。API bridge 现在重新验证
+原 Run 持久保存的宿主签名结果、原 incarnation/attempt/lease/终态、当前拓扑 UID，
+并要求 authority 中存在同 grant、同回执 hash 的历史 Stops 记录。active/revoked
+grant、普通失败状态和租约到期均不构成停止证据。
 
 CLI 提供 `reset --resume <原-run-id>`，禁止同时指定 `--target`。本地 bridge 从持久
 action 获取原 incarnation，并要求原 checkpoint 旁存在 `.returned` 回执。新代码在
@@ -63,8 +65,11 @@ checkpoint 改写均拒绝。确认界面展示原完整 scope，之后先原子
 提交其签名结果；仍有活跃子任务时父完成被拒绝。已完成回执重报不重放 callback，
 仅有 intent 的未知结果也不能重新执行。文件、SQLite 和真实 Postgres 完成边界测试
 覆盖原 incarnation、结果篡改、过期/退役命令以及后继授权不能被旧回执释放。
-这是新 reset 的宿主协议接入，不是父 Run continuation 授权：API bridge 的
-`ResetContinuationVerifier` 仍需绑定并验证原宿主停止证据。
+Run 终态现在与 `host_completion` 原始证据在同一事务保存；证据载荷用 base64
+字节保留，避免 JSONB 重排破坏签名。普通 Save/Restart 不得注入或修改证明。
+API verifier 读取并重新验签，而非信任字段存在。旧 Run 没有证据时继续拒绝，
+不依据 status 补造回执。新旧二进制混跑不保证证明字段保留，需统一升级。
+三后端回执保存及 verifier 回归通过，完整双宿主 reset continuation E2E 仍未完成。
 
 CLI/API 入口必须在读取证据前取得执行锁，验证原 checkpoint 的可信来源、真实
 Run incarnation 和配置/baseline，再确认旧执行者及外部调用已经停止。原 action

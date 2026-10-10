@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -13,20 +14,24 @@ type runCommandStorage interface {
 	updateRunWithCommand(context.Context, string, string, func(*controlplane.Run, *persistence.CommandRecord) (*controlplane.Run, error)) (*controlplane.Run, error)
 }
 
-func (s *localAPIStore) CompleteRunFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt, observed controlplane.Run) (*controlplane.Run, error) {
-	return completeRunFromHost(ctx, localRunStorage{store: s}, agent, id, receipt, observed)
+func (s *localAPIStore) CompleteRunFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) (*controlplane.Run, error) {
+	return completeRunFromHost(ctx, localRunStorage{store: s}, agent, id, receipt, evidence)
 }
-func (s *sqliteAPIStore) CompleteRunFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt, observed controlplane.Run) (*controlplane.Run, error) {
-	return completeRunFromHost(ctx, sqliteRunStorage{store: s}, agent, id, receipt, observed)
+func (s *sqliteAPIStore) CompleteRunFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) (*controlplane.Run, error) {
+	return completeRunFromHost(ctx, sqliteRunStorage{store: s}, agent, id, receipt, evidence)
 }
-func (s *postgresAPIStore) CompleteRunFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt, observed controlplane.Run) (*controlplane.Run, error) {
-	return completeRunFromHost(ctx, postgresRunStorage{store: s}, agent, id, receipt, observed)
+func (s *postgresAPIStore) CompleteRunFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) (*controlplane.Run, error) {
+	return completeRunFromHost(ctx, postgresRunStorage{store: s}, agent, id, receipt, evidence)
 }
 
 // Only the authenticated host route invokes this transition. The original
 // command and current Run are read under one lock; no worker lease is renewed
 // or substituted to admit historical evidence.
-func completeRunFromHost(ctx context.Context, storage runCommandStorage, agent, id string, receipt controlplane.SignedExecutionStopReceipt, observed controlplane.Run) (*controlplane.Run, error) {
+func completeRunFromHost(ctx context.Context, storage runCommandStorage, agent, id string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) (*controlplane.Run, error) {
+	var observed controlplane.Run
+	if json.Unmarshal(evidence, &observed) != nil {
+		return nil, persistence.ErrInvalidRecord
+	}
 	g := receipt.Grant
 	return storage.updateRunWithCommand(ctx, id, g.CommandID, func(current *controlplane.Run, record *persistence.CommandRecord) (*controlplane.Run, error) {
 		if current == nil || record == nil {
@@ -47,6 +52,22 @@ func completeRunFromHost(ctx context.Context, storage runCommandStorage, agent, 
 		if err != nil || digest != g.Digest || g.Operation != "run_"+req.Action {
 			return nil, persistence.ErrConflict
 		}
-		return persistence.CompleteRunFromHost(*current, observed, time.Now().UTC())
+		if observed.HostCompletion != nil || len(observed.Inputs) != 0 {
+			return nil, persistence.ErrConflict
+		}
+		next, err := persistence.CompleteRunFromHost(*current, observed, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		completion := &controlplane.RunHostCompletionProof{Receipt: receipt, Evidence: append(json.RawMessage(nil), evidence...)}
+		if current.HostCompletion != nil {
+			old, _ := json.Marshal(current.HostCompletion)
+			newProof, _ := json.Marshal(completion)
+			if string(old) != string(newProof) {
+				return nil, persistence.ErrConflict
+			}
+		}
+		next.HostCompletion = completion
+		return next, nil
 	})
 }
