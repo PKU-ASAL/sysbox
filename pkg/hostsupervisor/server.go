@@ -115,27 +115,27 @@ func (s *Server) serveListener(parent context.Context, listener net.Listener) er
 	}
 	if s.Power != nil {
 		workers.Add(1)
-		go func() { defer workers.Done(); s.runRecovery(ctx, s.Power.Recover) }()
+		go func() { defer workers.Done(); s.runRecovery(ctx, "power", s.Power.Recover) }()
 	}
 	if s.Files != nil {
 		workers.Add(1)
-		go func() { defer workers.Done(); s.runRecovery(ctx, s.Files.Recover) }()
+		go func() { defer workers.Done(); s.runRecovery(ctx, "files", s.Files.Recover) }()
 	}
 	if s.Runs != nil {
 		workers.Add(1)
-		go func() { defer workers.Done(); s.runRecovery(ctx, s.Runs.Recover) }()
+		go func() { defer workers.Done(); s.runRecovery(ctx, "runs", s.Runs.Recover) }()
 	}
 	if s.Adoption != nil {
 		workers.Add(1)
-		go func() { defer workers.Done(); s.runRecovery(ctx, s.Adoption.Recover) }()
+		go func() { defer workers.Done(); s.runRecovery(ctx, "adoption", s.Adoption.Recover) }()
 	}
 	if s.SSH != nil {
 		workers.Add(1)
-		go func() { defer workers.Done(); s.runRecovery(ctx, s.SSH.Recover) }()
+		go func() { defer workers.Done(); s.runRecovery(ctx, "ssh", s.SSH.Recover) }()
 	}
 	if s.GC != nil && s.GC.ReportStop != nil {
 		workers.Add(1)
-		go func() { defer workers.Done(); s.runRecovery(ctx, s.GC.Recover) }()
+		go func() { defer workers.Done(); s.runRecovery(ctx, "gc", s.GC.Recover) }()
 	}
 	for {
 		conn, err := listener.Accept()
@@ -150,9 +150,9 @@ func (s *Server) serveListener(parent context.Context, listener net.Listener) er
 	}
 }
 func (s *Server) recoveryLoop(ctx context.Context) {
-	s.runRecovery(ctx, s.Dispatcher.Recover)
+	s.runRecovery(ctx, "guest-tasks", s.Dispatcher.Recover)
 }
-func (s *Server) runRecovery(ctx context.Context, recover func(context.Context) error) {
+func (s *Server) runRecovery(ctx context.Context, component string, recover func(context.Context) error) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -160,7 +160,7 @@ func (s *Server) runRecovery(ctx context.Context, recover func(context.Context) 
 		// cannot repeatedly consume the deadline of all later records.
 		err := recover(ctx)
 		if err != nil && ctx.Err() == nil && s.OnRecoveryError != nil {
-			s.OnRecoveryError(err)
+			s.OnRecoveryError(fmt.Errorf("%s recovery: %w", component, err))
 		}
 		select {
 		case <-ctx.Done():

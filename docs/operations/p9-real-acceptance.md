@@ -1,5 +1,29 @@
 # P9 real acceptance
 
+## Background recovery timeout localization (2026-10-10)
+
+Added error provenance without changing deadlines/retry behavior: supervisor
+recovery errors identify the component; task errors identify task/generation,
+and initial task-lock failures retain `acquire task lock` plus the original
+wrapped error. Host supervisor full race tests passed.
+
+Deployed that diagnostic build to the execution VM only after the prior test
+was cleaned up. A separate 45-second background Apply/Reset/Destroy sample
+completed: control evidence `/var/tmp/p9-reset-background-diagnostic-20261010.json`,
+topology `p9-821fc6e9095e`. New logs localized repeated timeouts to
+`guest-tasks recovery`, specifically acquiring task
+`run-task-25d92157839874f2260a4d3617480857f479508f54f1c76b07a31df2d6364862`
+at generation 1. This identifies contention but does not yet establish why the
+lock holder excludes recovery long enough to exhaust its budget. Docker exec
+history contains repeated helper calls; no timeout increase or error suppression
+has been applied. Root-cause analysis remains open.
+
+The sample completed Destroy; both exact container IDs
+`a312732d35ddb904db2e28cd60a7779ce5aeb8595c90c8bbfddfe3c3fb3c08f2` and
+`6055d0a06e9f602eefc9563210d3ef5a1d2c6da7059033e3d0b060082301f4c4`
+were independently absent on the execution VM, with no containers under owner
+`a4559e85-0a3b-4564-a646-2b364d9c54ac`. Normal metadata DELETE completed.
+
 ## Real two-host Reset with background guest tasks (2026-10-10)
 
 On the same isolated deployment/build as the normal reset below, built

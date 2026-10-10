@@ -581,11 +581,11 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 		err := d.recoverTask(taskCtx, handle)
 		cancel()
 		if err != nil {
-			failures = append(failures, err)
+			failures = append(failures, fmt.Errorf("task %s generation %d: %w", handle.ID, handle.Generation, err))
 		}
 	}
 	if err := d.recoverPendingStops(ctx); err != nil {
-		failures = append(failures, err)
+		failures = append(failures, fmt.Errorf("pending stops: %w", err))
 	}
 	return errors.Join(failures...)
 }
@@ -593,7 +593,7 @@ func (d *Dispatcher) Recover(ctx context.Context) error {
 func (d *Dispatcher) recoverTask(ctx context.Context, h substrate.ExecutionHandle) error {
 	unlock, err := d.lock(ctx, h)
 	if err != nil {
-		return err
+		return fmt.Errorf("acquire task lock: %w", err)
 	}
 	snapshot, err := d.load(h)
 	if err != nil {
