@@ -109,3 +109,15 @@ CanonicalResolver 现从节点 state 或当前 Run candidate 的持久 desired �
 没有持久声明用户的节点仍拒绝 SSH access；完整远端授权/自动配置部署尚未关闭。
 用户解析不属于 provider-only 的 NodeTarget：SSH 配置损坏不会阻止电源操作解析；
 需要 guest 连接时才校验，且在建立连接之前拒绝非法用户。
+
+## Guest 修改的停止回执
+
+复用 SignedExecutionStopReceipt，新增 `ssh_result`，绑定具体 committed handle 和
+present/deleted 结果。`guest_ssh_access_apply/delete` 的通用停止签名缺少结果时拒绝。
+专用签名/验证同时核对原 mutation 的摘要、用户、AccessID、ExpectedRevision+1、
+guest boot、scope/generation 和 epoch；合法 host 签名不能替代 canonical 请求校验。
+专用验证还要求调用方提供 canonical 节点名并精确匹配回执 NodeID；缺失或其他节点拒绝。
+
+通用 stopped HTTP 入口拒绝 guest SSH 回执，避免 canonical SSH 完成提交之前释放
+scope。专用完成事务与控制面派发仍待接入，本次只定义并验证前置结果合同。
+回执不能依据连接中断或当前资源不存在补造；必须由宿主确认原 guest 修改已提交。

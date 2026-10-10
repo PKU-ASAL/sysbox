@@ -394,9 +394,9 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 		writeError(w, 401, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
-	if receipt.Grant.Operation == "adoption_apply" || controlplane.IsRunExecutionOperation(receipt.Grant.Operation) || receipt.Grant.Operation == "ssh_access_apply" || receipt.Grant.Operation == "ssh_access_delete" {
-		// Adoption and Run completion must durably commit their result before
-		// releasing this scope. Dedicated completion routes own that order.
+	if receipt.Grant.Operation == "adoption_apply" || controlplane.IsRunExecutionOperation(receipt.Grant.Operation) || receipt.Grant.Operation == "ssh_access_apply" || receipt.Grant.Operation == "ssh_access_delete" || controlplane.IsGuestSSHAccessOperation(receipt.Grant.Operation) {
+		// Adoption, Run and SSH completion must durably commit their result
+		// before releasing this scope. Dedicated completion routes own that order.
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
@@ -751,7 +751,7 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 				action = cmd.Run.Operation
 			}
 		}
-		if cmd.Run == nil || !controlplane.IsRunExecutionOperation("run_" + action) || cmd.Run.Topology == "" || cmd.Run.Revision == "" {
+		if cmd.Run == nil || !controlplane.IsRunExecutionOperation("run_"+action) || cmd.Run.Topology == "" || cmd.Run.Revision == "" {
 			return controlplane.ExecutionGrant{}, persistence.ErrCorruptRecord
 		}
 		req := hostsupervisor.RunRequest{RunID: cmd.Run.ID, Topology: cmd.Run.Topology, TopologyUID: cmd.TopologyUID, Revision: cmd.Run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: cmd.Run.Target, ExpectedSerial: cmd.ExpectedSerial}

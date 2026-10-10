@@ -1,5 +1,21 @@
 # P9 real acceptance
 
+## Guest SSH completion evidence contract (2026-10-10)
+
+Added a signed SSH result to the common execution-stop receipt. Generic stop
+signing rejects guest SSH operations without their concrete result. Dedicated
+signing/verification binds request digest, user, AccessID, CAS revision,
+guest boot, resource scope/generation, epoch and apply/delete presence.
+A test additionally signs an inconsistent revision with a valid host key and
+confirms canonical request verification rejects it.
+
+The local and SQLite API regression reproduced the generic stopped endpoint
+prematurely releasing a guest SSH grant (HTTP 200). That route now rejects it
+with HTTP 409 and retains the authorization scope until dedicated canonical
+completion can commit. This is a prerequisite contract/security boundary;
+production issuance and dedicated completion are not yet wired. No new real
+PostgreSQL or distributed SSH completion pass is claimed by these tests.
+
 ## Canonical repository through host RPC to real Docker discovery (2026-10-10)
 
 `TestDockerProductionSSHAccessE2E` now persists the real container's identity
