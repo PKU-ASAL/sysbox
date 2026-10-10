@@ -113,6 +113,17 @@ func (m *memoryActions) LoadActions(context.Context, string) ([]ActionRecord, er
 func (m *memoryActions) LoadState(context.Context, string) (*state.State, error) {
 	return cloneExecutionState(m.state)
 }
+func (m *memoryActions) CommitResetIntents(ctx context.Context, batch []ActionRecord) error {
+	staged := *m
+	staged.actions = append([]ActionRecord(nil), m.actions...)
+	for _, a := range batch {
+		if err := staged.CommitActionIntent(ctx, a); err != nil {
+			return err
+		}
+	}
+	m.actions = staged.actions
+	return nil
+}
 func (m *memoryActions) CommitActionIntent(ctx context.Context, r ActionRecord) error {
 	if err := ctx.Err(); err != nil {
 		return err

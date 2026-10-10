@@ -67,6 +67,12 @@ type ActionRepository interface {
 	CommitActionOutcome(context.Context, ActionRecord, *StatePatch) error
 }
 
+// ResetIntentCommitter atomically admits all new reset actions before effects.
+// Read-only recovery repositories must not expose this mutation capability.
+type ResetIntentCommitter interface {
+	CommitResetIntents(context.Context, []ActionRecord) error
+}
+
 // AdoptionEvidenceCommitter atomically records an already authenticated host
 // adoption result in the lifecycle aggregate. It is optional so small test
 // repositories can retain the primitive intent/outcome implementation.

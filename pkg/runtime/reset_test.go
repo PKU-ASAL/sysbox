@@ -297,12 +297,20 @@ func TestResetAcceptedIntentColdRecoveryBeforePrepare(t *testing.T) {
 	require.Equal(t, []string{"prepare:old-first", "destroy", "apply", "observe", "cleanup"}, sub.resetLifecycle)
 }
 
-func (m *failSecondResetIntent) CommitActionIntent(ctx context.Context, r ActionRecord) error {
-	m.calls++
-	if m.calls == 2 {
-		return errors.New("second reset intent unavailable")
+func (m *failSecondResetIntent) CommitResetIntents(ctx context.Context, batch []ActionRecord) error {
+	staged := *m.memoryActions
+	staged.actions = append([]ActionRecord(nil), staged.actions...)
+	for _, r := range batch {
+		m.calls++
+		if m.calls == 2 {
+			return errors.New("second reset intent unavailable")
+		}
+		if err := staged.CommitActionIntent(ctx, r); err != nil {
+			return err
+		}
 	}
-	return m.memoryActions.CommitActionIntent(ctx, r)
+	m.actions = staged.actions
+	return nil
 }
 
 func TestResetPersistsWholeIntentSetBeforeProviderEffects(t *testing.T) {
@@ -320,7 +328,41 @@ func TestResetPersistsWholeIntentSetBeforeProviderEffects(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorContains(t, e.Reset(context.Background(), plan), "second reset intent unavailable")
 	require.Equal(t, 2, m.calls)
+	require.Empty(t, m.actions, "failed batch must not publish its first intent")
 	require.Empty(t, sub.resetLifecycle, "failed intent publication must precede prepare/destroy/apply")
+}
+
+func TestResetBatchColdRecoveryRetainsBothOriginalActions(t *testing.T) {
+	sub := &portTestSubstrate{name: "fake", coldPlug: true}
+	registerPortTestDriver(t, sub)
+	g, st := configuredResetTestState(t, sub, "first")
+	second := st.FindResource(address.Resource("sysbox_node", "second"))
+	second.Driver = sub.name
+	second.Attributes = state.MustAttributes(map[string]any{"guest_family": "linux"})
+	require.NoError(t, second.SetRuntimeValue("container_id", "old-second"))
+	e := testActionExecutor(t, g, st)
+	m := e.actions.(*memoryActions)
+	m.outcomeErr = errors.New("crash before prepare marker")
+	plan, err := BuildResetPlan(g, st, "")
+	require.NoError(t, err)
+	require.ErrorContains(t, e.Reset(context.Background(), plan), "crash before prepare marker")
+	require.Len(t, m.actions, 2)
+	require.Empty(t, sub.resetLifecycle)
+	before := append([]ActionRecord(nil), m.actions...)
+	m.outcomeErr = nil
+	coldState, err := m.LoadState(context.Background(), e.topology)
+	require.NoError(t, err)
+	cold := NewExecutor(g, coldState)
+	cold.SetRunContext(e.topology, "new-process")
+	cold.SetActionRepository(resetOutcomeContract{m})
+	require.NoError(t, cold.Reset(context.Background(), plan))
+	require.Len(t, m.actions, 2)
+	for i, a := range m.actions {
+		require.Equal(t, before[i].ID, a.ID)
+		require.Equal(t, before[i].RunID, a.RunID)
+		require.Equal(t, before[i].Generation, a.Generation)
+		require.Equal(t, ActionSucceeded, a.Status)
+	}
 }
 
 func TestExecutorResetRejectsOwnedResidue(t *testing.T) {

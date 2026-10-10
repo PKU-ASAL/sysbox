@@ -229,6 +229,45 @@ func TestResetAcceptedPhaseCannotRegressAfterPrepare(t *testing.T) {
 	}
 }
 
+func TestResetBatchAdmissionRollsBackEveryIntent(t *testing.T) {
+	for _, kind := range []string{"filesystem", "sqlite"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			var r *Repository
+			var err error
+			if kind == "sqlite" {
+				r, err = OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+			} else {
+				r, err = OpenFilesystem(t.TempDir())
+			}
+			require.NoError(t, err)
+			defer r.Close()
+			manager := state.NewManagerWithBackend(r.StateBackend("lab"))
+			st, err := manager.Load()
+			require.NoError(t, err)
+			for _, name := range []string{"first", "second"} {
+				st.Resources = append(st.Resources, state.Resource{Address: address.Resource("sysbox_node", name), Driver: "docker", ExternalID: name, OwnerUID: st.TopologyUID, ResourceUID: name, Generation: 1})
+			}
+			require.NoError(t, manager.Save(st))
+			var batch []runtime.ActionRecord
+			for _, res := range st.Resources {
+				batch = append(batch, runtime.ActionRecord{ID: res.ResourceUID, RunID: "run", Topology: "lab", Resource: res.Address, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", OwnerUID: st.TopologyUID, ResourceUID: res.ResourceUID, Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &res})
+			}
+			bad := append([]runtime.ActionRecord(nil), batch...)
+			bad[1].ResourceUID = "foreign"
+			require.Error(t, r.CommitResetIntents(ctx, bad))
+			got, err := r.LoadActions(ctx, "lab")
+			require.NoError(t, err)
+			require.Empty(t, got)
+			require.NoError(t, r.CommitResetIntents(ctx, batch))
+			require.NoError(t, r.CommitResetIntents(ctx, batch), "exact batch retry")
+			got, err = r.LoadActions(ctx, "lab")
+			require.NoError(t, err)
+			require.Len(t, got, 2)
+		})
+	}
+}
+
 func TestConcurrentRepositoryIntentsHaveOneWinner(t *testing.T) {
 	root := t.TempDir()
 	a, _ := OpenFilesystem(root)

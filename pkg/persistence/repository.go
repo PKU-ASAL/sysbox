@@ -287,28 +287,32 @@ func (r *Repository) CommitActionIntent(ctx context.Context, action runtime.Acti
 		return fmt.Errorf("new action must be intent_committed")
 	}
 	return r.update(ctx, action.Topology, func(a *aggregate) error {
-		if old, exists := a.Actions[action.ID]; exists {
-			if sameIntent(old, action) {
-				return nil
-			}
-			return ErrConflict
-		}
-		if a.State.TopologyUID != action.OwnerUID || a.Serial != action.ExpectedSerial || action.ExpectedSerial != action.StateSerial {
-			return ErrConflict
-		}
-		for _, old := range a.Actions {
-			if old.ID != action.ID && old.Status != runtime.ActionSucceeded && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
-				return fmt.Errorf("%w: unresolved action %s", ErrConflict, old.ID)
-			}
-		}
-		if err := validateActionTarget(a.State, action); err != nil {
-			return err
-		}
-		action.Revision = 1
-		a.Actions[action.ID] = action
-		a.UpdatedAt = time.Now().UTC()
-		return nil
+		return commitActionIntent(a, action)
 	})
+}
+
+func commitActionIntent(a *aggregate, action runtime.ActionRecord) error {
+	if old, exists := a.Actions[action.ID]; exists {
+		if sameIntent(old, action) {
+			return nil
+		}
+		return ErrConflict
+	}
+	if a.State.TopologyUID != action.OwnerUID || a.Serial != action.ExpectedSerial || action.ExpectedSerial != action.StateSerial {
+		return ErrConflict
+	}
+	for _, old := range a.Actions {
+		if old.ID != action.ID && old.Status != runtime.ActionSucceeded && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
+			return fmt.Errorf("%w: unresolved action %s", ErrConflict, old.ID)
+		}
+	}
+	if err := validateActionTarget(a.State, action); err != nil {
+		return err
+	}
+	action.Revision = 1
+	a.Actions[action.ID] = action
+	a.UpdatedAt = time.Now().UTC()
+	return nil
 }
 func (r *Repository) CommitActionOutcome(ctx context.Context, action runtime.ActionRecord, patch *runtime.StatePatch) error {
 	if err := validateAction(action); err != nil {

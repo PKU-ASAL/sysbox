@@ -148,16 +148,28 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 	defer func() { resultErr = e.finishJournal(resultErr) }()
 	// Publish every new intent before any provider preparation or destruction.
 	// A later storage failure must not leave an earlier VM already destroyed.
+	var admission []ActionRecord
 	for i := len(entries) - 1; i >= 0; i-- {
 		record := &entries[i].record
 		if _, resuming := pending[record.Resource.String()]; resuming {
 			continue
 		}
 		record.Phase = "accepted"
-		if err := e.actions.CommitActionIntent(substrate.WithOperationIdentity(ctx, actionIdentity(*record)), *record); err != nil {
+		admission = append(admission, *record)
+	}
+	if len(admission) != 0 {
+		batch, ok := e.actions.(ResetIntentCommitter)
+		if !ok {
+			return fmt.Errorf("%w: reset requires atomic intent admission", ErrConvergenceUnsupported)
+		}
+		if err := batch.CommitResetIntents(ctx, admission); err != nil {
 			return err
 		}
-		record.Revision++
+		for _, entry := range entries {
+			if _, resuming := pending[entry.record.Resource.String()]; !resuming {
+				entry.record.Revision++
+			}
+		}
 	}
 	// Prepare/delete in reverse dependency order, then instantiate forward.
 	for i := len(entries) - 1; i >= 0; i-- {

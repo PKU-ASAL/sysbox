@@ -55,6 +55,21 @@ completed steps, rejecting duplicate addresses and non-reset actions. All three
 regressions failed before the change and runtime package race passed afterwards.
 This input validation fix does not close the three recovery issues above.
 
+Reset admission now requires `ResetIntentCommitter.CommitResetIntents`: all new
+actions for one Run share one aggregate transaction. A failed second action
+validation publishes no intents (filesystem and SQLite tested); exact batch
+replay is idempotent. A missing atomic admission capability rejects reset before
+provider work instead of reverting to sequential writes. Read-only recovery
+wrappers do not expose the capability. Runtime two-node cold recovery retains
+both original action IDs, Run IDs and generations after interruption before
+prepare; that orchestration test uses the in-memory repository.
+
+Runtime, persistence and agentexec full package race tests and vet passed, and
+independent read-only review found no new blocker. PostgreSQL batch admission
+was not exercised in this run. This addresses new-batch partial publication;
+the retained old partial batch, competing prepared destroy recovery and strict
+repository phase transition constraints remain open.
+
 `make test-p9-real` is the explicit real environment gate for the current
 distributed runtime slice. It runs the API/Agent completion-loss test, guest
 task supervisor recovery, Docker pause/resume fencing, signed file installation,
