@@ -69,6 +69,9 @@ func gcReferences(a *aggregate) (GCReferenceSnapshot, error) {
 				if action.Candidate != nil {
 					appendResource(prefix+"action/"+id, *action.Candidate)
 				}
+				if action.Replacement != nil {
+					appendResource(prefix+"replacement/"+id, *action.Replacement)
+				}
 			}
 			return nil
 		}

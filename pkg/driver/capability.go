@@ -118,6 +118,9 @@ type GuestNetwork interface {
 	HasRoute(context.Context, substrate.NodeHandle, string, string) (bool, error)
 }
 
+// GuestNetworkInit runs before reset publishes the replacement for canonical
+// guest-task routing. Implementations prepare host-side configuration and probe
+// readiness; they must not start guest tasks requiring that published identity.
 type GuestNetworkInit interface {
 	PrepareGuestNetwork(context.Context, substrate.NodeHandle) error
 	ObserveGuestNetwork(context.Context, substrate.NodeHandle) (substrate.GuestNetworkInitObservation, error)

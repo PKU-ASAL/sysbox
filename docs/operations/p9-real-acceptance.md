@@ -2,6 +2,16 @@
 
 ## Open reset recovery failure (2026-10-10)
 
+Reset now publishes a separate new-generation `replacement` before guest route
+commands, provisioners and image entry. The old candidate remains intact until
+setup finishes. Host task resolution can use the exact applying replacement;
+it still verifies the real provider identity and does not permit cold replay.
+File/SQLite/PostgreSQL identity constraints and publication-failure tests pass,
+as do related full race suites. Review found route execution initially preceded
+publication; a failing route-call regression demonstrated and fixed that order.
+Continuation still needs an authorized original-Run to execution-Run mapping
+for guest-task resolution. These tests are not real VM continuation acceptance.
+
 Returned host reset failures now have a restricted signing path: after the
 synchronous executor returns, reacquire execution exclusion, read the original
 Run's action incarnation/phases and prove all children stopped. Only known safe

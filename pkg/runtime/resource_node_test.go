@@ -76,6 +76,7 @@ type portTestSubstrate struct {
 	deletedAttachments []json.RawMessage
 	natNames           []string
 	routes             []string
+	routeChecks        int
 	guestInitModes     []substrate.GuestNetworkInitMode
 	guestObservation   substrate.GuestNetworkInitObservation
 	lifecycle          []string
@@ -162,6 +163,7 @@ func (s *portTestSubstrate) EnsureRoute(_ context.Context, _ substrate.NodeHandl
 }
 
 func (s *portTestSubstrate) HasRoute(context.Context, substrate.NodeHandle, string, string) (bool, error) {
+	s.routeChecks++
 	return true, nil
 }
 

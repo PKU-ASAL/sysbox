@@ -257,6 +257,34 @@ type rejectResetDestroyClaim struct{ *memoryActions }
 
 type rejectDestroyedCommit struct{ *memoryActions }
 
+type rejectResetReplacement struct{ *memoryActions }
+
+func (m rejectResetReplacement) CommitActionOutcome(ctx context.Context, r ActionRecord, p *StatePatch) error {
+	if r.Replacement != nil {
+		return errors.New("replacement publication unavailable")
+	}
+	return m.memoryActions.CommitActionOutcome(ctx, r, p)
+}
+
+func TestResetPublishesReplacementBeforeGuestInitialization(t *testing.T) {
+	sub := &portTestSubstrate{name: "fake", coldPlug: true}
+	registerPortTestDriver(t, sub)
+	g, st := configuredResetTestState(t, sub, "first")
+	g.Get(address.Resource("sysbox_node", "first")).Data.(*config.NodeConfig).Routes = []config.RouteConfig{{Destination: "10.90.0.0/24", Via: "10.0.0.1"}}
+	e := testActionExecutor(t, g, st)
+	m := e.actions.(*memoryActions)
+	e.SetActionRepository(rejectResetReplacement{m})
+	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
+	require.NoError(t, err)
+	require.ErrorContains(t, e.Reset(context.Background(), plan), "replacement publication unavailable")
+	require.Equal(t, []string{"prepare:old-first", "destroy", "apply"}, sub.resetLifecycle, "guest initialization/final verification cannot follow failed target publication")
+	require.Zero(t, sub.routeChecks, "route guest commands must wait for replacement publication")
+	require.Equal(t, "applying", m.actions[0].Phase)
+	require.False(t, m.actions[0].EffectComplete)
+	require.Nil(t, m.actions[0].Replacement)
+	require.Equal(t, int64(1), m.actions[0].Candidate.Generation)
+}
+
 func (m rejectDestroyedCommit) CommitActionOutcome(ctx context.Context, r ActionRecord, p *StatePatch) error {
 	if r.Phase == "destroyed" {
 		return errors.New("destroyed commit unavailable")

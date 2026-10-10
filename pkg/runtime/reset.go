@@ -438,6 +438,15 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 			return err
 		}
 	}
+	if e.activeReset != nil {
+		replacement := cloneResetStateResource(updated)
+		replacement.OwnerUID, replacement.ResourceUID, replacement.Generation = e.activeReset.OwnerUID, e.activeReset.ResourceUID, e.activeReset.Generation
+		e.activeReset.Replacement = &replacement
+		if err := e.actions.CommitActionOutcome(ctx, *e.activeReset, nil); err != nil {
+			return err
+		}
+		e.activeReset.Revision++
+	}
 	if err := e.configureNodeRoutes(ctx, item.step, item.node.Address, item.current.Driver, handle, item.config.Routes, &updated); err != nil {
 		return err
 	}

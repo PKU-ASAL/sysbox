@@ -41,7 +41,11 @@ type ActionRecord struct {
 	StateSerial    int64                       `json:"state_serial"`
 	ExpectedSerial int64                       `json:"expected_serial"`
 	Candidate      *state.Resource             `json:"candidate,omitempty"`
-	Error          string                      `json:"error,omitempty"`
+	// Replacement identifies the new reset generation before guest setup has
+	// completed. Candidate retains the old handle until EffectComplete; this
+	// field is task routing evidence, never permission to replay setup.
+	Replacement *state.Resource `json:"replacement,omitempty"`
+	Error       string          `json:"error,omitempty"`
 	// ReplayForbidden means resource presence cannot prove that the complete
 	// composite effect (guest initialization, provisioners, image entry) finished.
 	ReplayForbidden bool   `json:"replay_forbidden,omitempty"`

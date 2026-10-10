@@ -158,6 +158,14 @@ func validateAggregate(a *aggregate, topology string) error {
 				return fmt.Errorf("%w: action candidate identity mismatch", ErrCorruptRecord)
 			}
 		}
+		if replacement := action.Replacement; replacement != nil {
+			if action.Action != controlplane.PlanActionReset || (action.Phase != "applying" && action.Phase != "verifying") || !replacement.Address.Equal(action.Resource) || replacement.OwnerUID != action.OwnerUID || replacement.ResourceUID != action.ResourceUID || replacement.Generation != action.Generation || replacement.ExternalID == "" {
+				return fmt.Errorf("%w: invalid reset replacement identity", ErrCorruptRecord)
+			}
+			if action.EffectComplete && (action.Candidate == nil || action.Candidate.ExternalID != replacement.ExternalID || action.Candidate.Driver != replacement.Driver) {
+				return fmt.Errorf("%w: completed reset differs from published replacement", ErrCorruptRecord)
+			}
+		}
 	}
 	for runID, receipt := range a.ResetContinuations {
 		if runID != receipt.Request.Checkpoint.RunID || receipt.AdmittedAt.IsZero() || receipt.Request.TopologyUID != a.State.TopologyUID || receipt.Request.ExpectedSerial > a.Serial {
@@ -390,6 +398,9 @@ func applyActionOutcome(a *aggregate, action runtime.ActionRecord, patch *runtim
 	}
 	if old.EffectComplete && !action.EffectComplete || old.Candidate != nil && action.Candidate == nil {
 		return fmt.Errorf("%w: recovery evidence cannot be discarded", ErrConflict)
+	}
+	if old.Replacement != nil && (action.Replacement == nil || old.Replacement.ExternalID != action.Replacement.ExternalID || old.Replacement.Driver != action.Replacement.Driver) {
+		return fmt.Errorf("%w: reset replacement cannot be discarded or substituted", ErrConflict)
 	}
 	if action.Action == controlplane.PlanActionReset {
 		before, after := resetPhaseOrder(old.Phase), resetPhaseOrder(action.Phase)

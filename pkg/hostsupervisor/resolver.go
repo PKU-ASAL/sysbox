@@ -177,10 +177,14 @@ func selectRunTaskResource(st *state.State, actions []runtime.ActionRecord, ref 
 			continue
 		}
 		c := action.Candidate
+		replacement := action.Action == controlplane.PlanActionReset && action.Phase == "applying" && !action.EffectComplete && action.Replacement != nil
+		if replacement {
+			c = action.Replacement
+		}
 		if c == nil || !c.Address.Equal(action.Resource) || !matchesIdentity(c) {
 			continue
 		}
-		if current != nil && (action.Action != controlplane.PlanActionReset || !action.EffectComplete || !current.Address.Equal(c.Address) || current.OwnerUID != c.OwnerUID || current.ResourceUID != c.ResourceUID || current.Generation+1 != c.Generation) {
+		if current != nil && (action.Action != controlplane.PlanActionReset || (!action.EffectComplete && !replacement) || !current.Address.Equal(c.Address) || current.OwnerUID != c.OwnerUID || current.ResourceUID != c.ResourceUID || current.Generation+1 != c.Generation) {
 			return nil, fmt.Errorf("supervisor canonical resource conflicts with candidate")
 		}
 		if candidate != nil {

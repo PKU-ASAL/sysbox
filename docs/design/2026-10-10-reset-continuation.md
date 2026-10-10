@@ -29,6 +29,14 @@ Run 追加成员。清空拓扑时同时清空 receipt。
 
 ## 已实现：runtime 续作编排
 
+Reset action 新增 `replacement`：在 VM 创建/启动及网络初始化完成后、路由命令、
+provisioner 和 image entry 之前，先持久保存新 UID/代际和 provider handle。
+`candidate` 在初始化完成前继续保留旧资源；`replacement` 只用于宿主解析 guest-task
+目标，不代表 `effect_complete`。宿主还会按真实 provider 观察核对身份。
+Repository 拒绝过早发布、改代际、丢弃或替换外部资源；最终 candidate 必须匹配
+已发布 replacement。中途停在 applying 仍拒绝冷重放。GC 保留其资源引用。
+文件、SQLite、真实 Postgres 约束回归及初始化前发布失败测试通过。
+
 `PrepareResetContinuation` 校验原完整计划、当前配置摘要、原 Run incarnation 和
 持久 action 阶段，只构造可审查请求；缺失节点沿用原 Run 身份，生成 accepted intent。
 已受理的请求从 receipt 读取，重启不另造 action ID。`ContinueReset` 先原子受理，
@@ -70,6 +78,9 @@ Run 终态现在与 `host_completion` 原始证据在同一事务保存；证据
 API verifier 读取并重新验签，而非信任字段存在。旧 Run 没有证据时继续拒绝，
 不依据 status 补造回执。新旧二进制混跑不保证证明字段保留，需统一升级。
 三后端回执保存及 verifier 回归通过，完整双宿主 reset continuation E2E 仍未完成。
+续作的 action 保留原 Run ID；guest-task resolver 当前仍按执行 Run ID 筛选未完成
+action。原 Run 到新执行 Run 的受控映射尚待接入，不能宣称带后台任务的远端续作
+已形成完整闭环。
 
 宿主同步 reset 返回失败时，执行器重新取得 execution lock 并读取原 Run 的
 持久 action。只有非空且 incarnation 匹配、全部处于明确可恢复阶段，并且所有

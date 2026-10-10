@@ -173,6 +173,14 @@ func TestRunTaskResourceSelection(t *testing.T) {
 			(*a)[0].Action = controlplane.PlanActionReset
 			(*a)[0].Candidate = &r
 		}, false},
+		{"reset replacement before initialization completes", func(s *state.State, a *[]runtime.ActionRecord) {
+			old := candidate
+			old.Generation = 1
+			s.Resources = []state.Resource{old}
+			(*a)[0].Action, (*a)[0].Phase = controlplane.PlanActionReset, "applying"
+			(*a)[0].Candidate = &old
+			(*a)[0].Replacement = &candidate
+		}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &state.State{TopologyUID: "topology"}
