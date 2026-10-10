@@ -85,6 +85,7 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 		NICKinds:              []string{"tap"},
 		ConsoleKinds:          []string{"serial"},
 		SupportsPause:         true, // virsh suspend/resume
+		SupportsWindows:       true,
 		PortExposures:         []string{substrate.PortExposureNone, substrate.PortExposureDirect},
 		GuestNetworkInitModes: []substrate.GuestNetworkInitMode{substrate.GuestNetworkInitCloudInit, substrate.GuestNetworkInitPreconfigured},
 	}
@@ -100,7 +101,10 @@ func (s *Substrate) Validate(spec substrate.NodeSpec) error {
 		if !supportedNetworkInitMode(pc.NetworkInit) {
 			return substrate.NewValidationError("libvirt: explicit network_init must be %q or %q", substrate.GuestNetworkInitCloudInit, substrate.GuestNetworkInitPreconfigured)
 		}
-		if pc.SSHUser == "" {
+		if spec.Image.Identity.GuestFamily == substrate.GuestFamilyWindows && pc.NetworkInit != substrate.GuestNetworkInitPreconfigured {
+			return substrate.NewValidationError("libvirt: Windows guests require network_init = preconfigured")
+		}
+		if spec.Image.Identity.GuestFamily != substrate.GuestFamilyWindows && pc.SSHUser == "" {
 			return substrate.NewValidationError("libvirt: ssh_user is required (VMs need SSH for provisioners)")
 		}
 	}

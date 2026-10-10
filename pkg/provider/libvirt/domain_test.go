@@ -3,7 +3,25 @@ package libvirt
 import (
 	"strings"
 	"testing"
+
+	"github.com/oslab/sysbox/pkg/substrate"
 )
+
+func TestGenerateDomainXMLWindows(t *testing.T) {
+	xml, err := GenerateDomainXML(DomainSpec{
+		Name: "ad-dc", VCPUs: 4, MemoryMiB: 6144, DiskPath: "/tmp/windows.qcow2",
+		GuestFamily: substrate.GuestFamilyWindows,
+		Bridges:     []BridgeAttach{{Bridge: "sysbox-ad", MAC: "52:54:00:ad:00:10"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"<genid>", `bus="sata"`, `type="e1000e"`, "org.qemu.guest_agent.0", `type="vnc"`} {
+		if !strings.Contains(xml, want) {
+			t.Errorf("Windows XML missing %q: %s", want, xml)
+		}
+	}
+}
 
 func TestGenerateDomainXML_Basic(t *testing.T) {
 	xml, err := GenerateDomainXML(DomainSpec{

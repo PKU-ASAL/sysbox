@@ -19,6 +19,7 @@ import (
 
 // HandleState is the libvirt substrate's typed NodeHandle.Provider payload.
 type HandleState struct {
+	GuestFamily      substrate.GuestFamily          `json:"guest_family,omitempty"`
 	DomainName       string                         `json:"domain_name"`
 	DomainUUID       string                         `json:"domain_uuid,omitempty"`
 	VMDir            string                         `json:"vm_dir"`
@@ -125,6 +126,7 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		machine = "q35"
 	}
 	hs := &HandleState{
+		GuestFamily:      spec.Image.Identity.GuestFamily,
 		DomainName:       spec.Name,
 		DomainUUID:       domainUUID,
 		VMDir:            vmDir,
@@ -142,10 +144,14 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 		_ = os.RemoveAll(vmDir)
 		return substrate.NodeHandle{}, err
 	}
+	connKind := substrate.ConnKindSSH
+	if hs.GuestFamily == substrate.GuestFamilyWindows {
+		connKind = substrate.ConnKindQGA
+	}
 	return substrate.NodeHandle{
 		ID:       hs.DomainUUID,
 		Provider: hs,
-		Conn:     substrate.ConnInfo{Kind: substrate.ConnKindSSH},
+		Conn:     substrate.ConnInfo{Kind: connKind},
 	}, nil
 }
 
@@ -237,6 +243,7 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 		DiskPath:    hs.DiskPath,
 		SeedISO:     hs.SeedISO,
 		Bridges:     hs.Bridges,
+		GuestFamily: hs.GuestFamily,
 	})
 	if err != nil {
 		return err
@@ -375,6 +382,10 @@ func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (su
 
 func (s *Substrate) PrepareHandle(_ context.Context, h *substrate.NodeHandle, providerConfig any, _ substrate.StateReader) error {
 	hs := hsFrom(*h)
+	if hs.GuestFamily == substrate.GuestFamilyWindows {
+		h.Conn = substrate.ConnInfo{Kind: substrate.ConnKindQGA, Endpoint: hs.DomainName}
+		return nil
+	}
 	if cfg, ok := providerConfig.(*Config); ok && cfg != nil {
 		if cfg.SSHUser != "" {
 			hs.SSHUser = cfg.SSHUser
@@ -454,21 +465,12 @@ func domainActive(ctx context.Context, name string) (bool, error) {
 // isSysboxManaged checks whether a libvirt domain was created by sysbox
 // by looking for the "sysbox-managed" title metadata.
 func isSysboxManaged(ctx context.Context, name string) bool {
-	out, err := exec.CommandContext(ctx, "virsh", "dominfo", name).CombinedOutput()
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		// virsh dominfo shows "Title: sysbox-managed" if set.
-		if strings.Contains(line, "sysbox-managed") {
-			return true
-		}
-	}
-	return false
+	out, err := exec.CommandContext(ctx, "virsh", "desc", name, "--title", "--config").CombinedOutput()
+	return err == nil && strings.TrimSpace(string(out)) == "sysbox-managed"
 }
 
 // setSysboxManaged marks a domain as managed by sysbox via virsh metadata.
 func setSysboxManaged(ctx context.Context, name string) {
 	// Use virsh desc to set a title that identifies sysbox-managed domains.
-	_, _ = exec.CommandContext(ctx, "virsh", "desc", name, "sysbox-managed", "--title").CombinedOutput()
+	_, _ = exec.CommandContext(ctx, "virsh", "desc", name, "--title", "--config", "--new-desc", "sysbox-managed").CombinedOutput()
 }
