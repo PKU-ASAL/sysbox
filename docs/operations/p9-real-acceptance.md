@@ -1,5 +1,24 @@
 # P9 real acceptance
 
+## Guest SSH command-backed grant issuance (2026-10-10)
+
+The production command execution-grant endpoint now derives guest SSH grants
+from the persisted NodeOperation.SSHMutation. The shared command decoder checks
+agent, action, command binding, topology/node, resource/generation, operation
+kind and nonterminal state. It does not accept replacement mutation data from
+the requesting worker.
+
+Authenticated HTTP tests exercised signature verification, exact CAS payload
+digest, guest boot binding, rejection of an extra mutation field, online
+rejection of a newly signed envelope for a different CAS revision, and retired
+command rejection. Local, SQLite and a dedicated real PostgreSQL 16 instance
+all executed with race, alongside the completion and injection regressions.
+Shared controlplane, Agent and host race suites and relevant vet passed.
+
+The test seeds a durable accepted command. Public admission, host mutation
+dispatch, current guest result reporting and automatic sshd deployment still
+need integration; this does not prove an end-user SSH lifecycle.
+
 ## Guest SSH canonical completion across all three stores (2026-10-10)
 
 NodeOperation now persists the immutable guest SSH mutation and the committed

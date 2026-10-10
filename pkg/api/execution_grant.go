@@ -691,6 +691,18 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	topologyRun := false
 	switch cmd.Type {
 	case "node_operation":
+		if controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) {
+			request, err := controlplane.FromGuestSSHAccessCommand(cmd)
+			if err != nil {
+				return controlplane.ExecutionGrant{}, err
+			}
+			digest, err = request.Digest()
+			if err != nil {
+				return controlplane.ExecutionGrant{}, err
+			}
+			operation = cmd.Operation.Operation
+			break
+		}
 		if cmd.Operation.Operation == "adoption_apply" {
 			request, err := controlplane.FromAdoptionCommand(cmd)
 			if err != nil {

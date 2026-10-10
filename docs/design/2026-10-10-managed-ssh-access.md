@@ -125,8 +125,18 @@ host completion HTTP 路由已核验签名/原请求/节点，再复用三存储
 提交结果后释放 scope。命令退休后复用保留的 operation 请求与 tombstone 命令身份；
 相同回执重试不改变结果，后继 attempt、不同节点或 CAS revision 拒绝。
 
-文件、SQLite 和专用真实 Postgres 的 HTTP 专项回归已执行通过。控制面受理、生产
-签发与宿主修改派发仍待接入，不能据此宣称完整远端 SSH 生命周期已完成。
+文件、SQLite 和专用真实 Postgres 的 HTTP 专项回归已执行通过。公开受理与宿主修改
+派发仍待接入，不能据此宣称完整远端 SSH 生命周期已完成。
+
+正式 execution-grant 入口现已识别 guest SSH node-operation，由持久 command 中的
+SSHMutation 构造摘要，核对内外层 agent/action/resource/generation、操作类型和状态。
+签发请求只能携 session、lease owner、attempt 和 guest boot；额外 mutation 字段拒绝。
+在线授权复核同一 source，因此即使签名有效也不能替换原 CAS revision 的摘要。
+命令退休、租约失效、旧 attempt 均不能重新签发。测试预置已受理 command，尚不证明
+公开业务受理接口已能创建该 command。
+当前 source 验证 command 内的 operation 快照；公开派发启用前，还需将独立
+NodeOperation 的终态/撤销/替换检查纳入同一授权读写边界，不能以旧 queued 快照
+长期替代当前操作状态。
 共享 codec 同时拒绝 queued/running 预置 SSHResult，raw 创建与原子 dispatch 都执行
 相同检查；普通 CAS 不得推进 guest SSH 终态。完成继续精确匹配 command attempt，
 不同受理轮次不自动套用旧回执；生产重新投递语义仍需在派发接入时完整验证。
