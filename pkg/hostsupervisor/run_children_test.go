@@ -24,6 +24,41 @@ type runChildConnection struct {
 	unknownExit   bool
 }
 
+type slowPollingConnection struct {
+	*runChildConnection
+	firstReturn time.Time
+	secondStart time.Time
+	calls       int
+}
+
+func (c *slowPollingConnection) ObserveExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.ExecResult, error) {
+	c.calls++
+	if c.calls == 1 {
+		time.Sleep(150 * time.Millisecond) // exceed the old fixed ticker period
+		c.firstReturn = time.Now()
+		return substrate.ExecResult{Status: substrate.ExecStatusRunning}, nil
+	}
+	c.secondStart = time.Now()
+	c.finished.Store(true)
+	return c.runChildConnection.ObserveExecution(ctx, h)
+}
+
+func TestRunChildSlowObservationLeavesAnUnlockedPollingInterval(t *testing.T) {
+	d, req, base := taskFixture(t)
+	wrapper := &slowPollingConnection{runChildConnection: &runChildConnection{taskConnection: base}}
+	resolve := d.Resolve
+	d.Resolve = func(ctx context.Context, ref TargetRef) (Target, error) {
+		target, err := resolve(ctx, ref)
+		target.Connection = wrapper
+		return target, err
+	}
+	record, err := d.Start(context.Background(), testRef(req), req)
+	require.NoError(t, err)
+	children := &RunChildren{Dispatcher: d}
+	require.NoError(t, children.observe(context.Background(), record))
+	require.GreaterOrEqual(t, wrapper.secondStart.Sub(wrapper.firstReturn), 80*time.Millisecond, "slow observations must not immediately reacquire the shared task lock")
+}
+
 func (c *runChildConnection) ObserveExecution(context.Context, substrate.ExecutionHandle) (substrate.ExecResult, error) {
 	if c.finished.Load() || c.confirmCancel && c.cancelCount.Load() > 0 {
 		return substrate.ExecResult{ExitCodeKnown: !c.unknownExit, ExitCode: c.exitCode, RemoteTermination: substrate.RemoteTerminationConfirmed}, nil

@@ -167,7 +167,7 @@ func (r *RunChildren) observe(ctx context.Context, record TaskRecord) error {
 	}
 	renew := time.NewTimer(budget / 3)
 	defer renew.Stop()
-	poll := time.NewTicker(100 * time.Millisecond)
+	poll := time.NewTimer(100 * time.Millisecond)
 	defer poll.Stop()
 	for {
 		call, cancel := context.WithTimeout(ctx, recoveryTaskBudget)
@@ -185,6 +185,10 @@ func (r *RunChildren) observe(ctx context.Context, record TaskRecord) error {
 			}
 			return nil
 		}
+		// Measure the polling interval after releasing the task lock. A fixed
+		// ticker is already readable after a slow Docker/SSH observation and
+		// causes immediate lock reacquisition, starving recovery and renewal.
+		poll.Reset(100 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

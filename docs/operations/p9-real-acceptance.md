@@ -1,5 +1,38 @@
 # P9 real acceptance
 
+## Resolved: slow child observations starved recovery (2026-10-10)
+
+The fixed 100 ms ticker in `RunChildren.observe` was already readable whenever
+Docker observation exceeded that interval. The watcher immediately reacquired
+the task lock, starving the independent recovery loop. A regression with a
+150 ms observation failed before the fix: only 17 ms elapsed before the next
+locked observation. Polling now starts a fresh 100 ms timer after observation
+returns and releases its lock; cancellation and renewal remain selectable.
+Host supervisor full race tests, vet and independent review passed.
+
+A 15-second diagnostic sample excluded slow Start acknowledgement (the new
+slow-Start warning did not trigger) and reproduced task-lock recovery timeouts.
+Its evidence `/var/tmp/p9-task-start-timing-20261010.json` was cleaned normally
+after exact container absence verification.
+
+Real fix validation used supervisor binary SHA256
+`96ff95513d307f98f9585ecc45128ce04aaf8df2feabe91923810c03c1b65986`, deployed
+at `2026-10-10T04:25:32Z`. Control evidence:
+`/var/tmp/p9-reset-poll-fix-20261010.json`, topology `p9-6bf970dd1cca`.
+The complete 45-second background Apply/Reset/Destroy passed:
+
+- Apply `request-41f2bd609ab705dc38132531bdfa9cdacf223cd8319554dfb90aab743ccc5145`.
+- Reset `51842154-12fe-4bd2-9775-3f449a0b28d2`.
+- Destroy `op-f9f9e4cc186c50684ab1665795ca2815bcc41cbbe749aa0bd3810fdd8d6857bd`.
+
+The entire supervisor journal since deployment contained no recovery timeout.
+Exact containers `26daa40f9eb095a9d16e35ffb996c8ae1054510e9cc1ff605901a47015c20633`
+and `3b40dad4abd5ed6518ec361d9cfc2d8c4223d269751487ee803a83cc2eec09d3`
+were independently absent; owner `a4962fd7-cd60-40ce-b001-17de3ef2d727` had no
+containers. Normal metadata DELETE completed. This closes the demonstrated
+normal observation starvation, not all cancellation/fault-recovery behavior;
+the cleanup polling loop still needs its own contention audit.
+
 ## Background recovery timeout localization (2026-10-10)
 
 Added error provenance without changing deadlines/retry behavior: supervisor
