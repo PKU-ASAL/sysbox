@@ -473,16 +473,18 @@ func resetPhaseOrder(phase string) int {
 	switch phase {
 	case "":
 		return 0
-	case "preparing":
+	case "accepted":
 		return 1
-	case "prepared":
+	case "preparing":
 		return 2
-	case "destroyed":
+	case "prepared":
 		return 3
-	case "applying":
+	case "destroyed":
 		return 4
-	case "verifying":
+	case "applying":
 		return 5
+	case "verifying":
+		return 6
 	default:
 		return -1
 	}

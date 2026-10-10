@@ -195,6 +195,40 @@ func TestActionOutcomeRejectsStaleJournalRevision(t *testing.T) {
 		})
 	}
 }
+func TestResetAcceptedPhaseCannotRegressAfterPrepare(t *testing.T) {
+	for _, kind := range []string{"filesystem", "sqlite"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			var r *Repository
+			var err error
+			if kind == "sqlite" {
+				r, err = OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+			} else {
+				r, err = OpenFilesystem(t.TempDir())
+			}
+			require.NoError(t, err)
+			defer r.Close()
+			manager := state.NewManagerWithBackend(r.StateBackend("lab"))
+			st, err := manager.Load()
+			require.NoError(t, err)
+			addr := address.Resource("sysbox_node", "web")
+			st.Resources = []state.Resource{{Address: addr, OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 1, Driver: "docker", ExternalID: "original"}}
+			require.NoError(t, manager.Save(st))
+			a := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", Resource: addr, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Phase: "accepted", Candidate: &st.Resources[0]}
+			require.NoError(t, r.CommitActionIntent(ctx, a))
+			a.Revision = 1
+			a.Phase, a.Status = "preparing", runtime.ActionUncertain
+			require.NoError(t, r.CommitActionOutcome(ctx, a, nil))
+			a.Revision++
+			a.Phase = "accepted"
+			require.ErrorIs(t, r.CommitActionOutcome(ctx, a, nil), ErrConflict)
+			stored, err := r.LoadActions(ctx, "lab")
+			require.NoError(t, err)
+			require.Equal(t, "preparing", stored[0].Phase)
+		})
+	}
+}
+
 func TestConcurrentRepositoryIntentsHaveOneWinner(t *testing.T) {
 	root := t.TempDir()
 	a, _ := OpenFilesystem(root)

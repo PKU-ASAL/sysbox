@@ -146,6 +146,19 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 		return err
 	}
 	defer func() { resultErr = e.finishJournal(resultErr) }()
+	// Publish every new intent before any provider preparation or destruction.
+	// A later storage failure must not leave an earlier VM already destroyed.
+	for i := len(entries) - 1; i >= 0; i-- {
+		record := &entries[i].record
+		if _, resuming := pending[record.Resource.String()]; resuming {
+			continue
+		}
+		record.Phase = "accepted"
+		if err := e.actions.CommitActionIntent(substrate.WithOperationIdentity(ctx, actionIdentity(*record)), *record); err != nil {
+			return err
+		}
+		record.Revision++
+	}
 	// Prepare/delete in reverse dependency order, then instantiate forward.
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
@@ -160,9 +173,10 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 		if entry.complete {
 			continue
 		}
-		if _, resuming := pending[record.Resource.String()]; !resuming {
+		if record.Phase == "accepted" {
 			record.Phase = "preparing"
-			if err := e.actions.CommitActionIntent(actionCtx, *record); err != nil {
+			record.Status = ActionUncertain
+			if err := e.actions.CommitActionOutcome(actionCtx, *record, nil); err != nil {
 				return err
 			}
 			record.Revision++

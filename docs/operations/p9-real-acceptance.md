@@ -1,5 +1,48 @@
 # P9 real acceptance
 
+## Open reset recovery failure (2026-10-10)
+
+The heterogeneous lifecycle matrix passed, but the subsequent reset matrix
+failed with a missing Firecracker manifest and a supposedly live PID. Commit
+`b9f77bf` fixes the demonstrated zombie false-positive; Firecracker package race
+tests pass, including live-process and mismatched-start-time rejection. This is
+not yet proof that the heterogeneous reset failure is resolved.
+
+The original repository remains at
+`/tmp/sysbox-e2e/heterogeneous-matrix/state.json.lifecycle`. Read-only inspection
+found uncertain resets for both Firecracker and libvirt; original Firecracker
+PID 2050769 was absent at inspection. A real recovery attempt using the original
+privileged Docker mounts, retained SSH key and baseline image passed filesystem
+access but failed with `repository conflict: unresolved action
+a09090bbaf825174ddfac1e9b462189c`. Its snapshot is
+`bec96f3d-45c5-4395-85b6-d97e66311b24`.
+
+The original checkpoint `runs/792e8523-6e61-497e-9cb6-26948ac80822.checkpoint.json`
+contains all three node resets, state serial 8 and plan digest
+`sha256:f35e80a3d216905593a1e3b587f46fd64a8867e8113d38b75535151db5508c49`.
+Only libvirt and Firecracker have durable intents, both in phase `destroyed`;
+Docker was not started. This is a partial-intent publication window, not a
+completed Docker action being replayed.
+
+The runtime can consume pending reset actions, but a new CLI reset also tries
+to create the missing Docker action under a different Run ID. Repository
+exclusion correctly rejects this while the original Run remains unfinished.
+Recovery must validate the original complete plan and bind any not-yet-started
+action to an explicitly authorized continuation. The unused LocalBridge
+ResumeResetPlan hook alone does not explain or fix this failure. No journal was edited,
+no unknown resource was forcibly deleted, and no successful cleanup or reset
+matrix pass is claimed. This remains required work for the P0–P9 goal.
+
+The next runtime change publishes all new reset intents before calling any
+provider prepare/destroy. A failed second intent write now leaves every provider
+untouched, verified by a regression that failed with the original ordering.
+An intent starts in `accepted`; before prepare, a durable CAS advances it to
+`preparing`. Cold recovery may execute an `accepted` action using the same ID,
+but still refuses `preparing`, whose effect outcome is unknown. Runtime and
+persistence package race tests passed; PostgreSQL was not enabled in this run.
+This does not yet resolve admission of missing intents under a different Run
+in the retained old matrix, nor the overall reset recovery workflow.
+
 `make test-p9-real` is the explicit real environment gate for the current
 distributed runtime slice. It runs the API/Agent completion-loss test, guest
 task supervisor recovery, Docker pause/resume fencing, signed file installation,

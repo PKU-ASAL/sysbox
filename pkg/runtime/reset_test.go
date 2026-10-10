@@ -221,6 +221,83 @@ func TestExecutorResetResumesPersistedProviderHandleWithoutPreparingAgain(t *tes
 	require.Equal(t, []string{"observe", "destroy", "apply", "observe", "cleanup"}, sub.resetLifecycle)
 }
 
+type failSecondResetIntent struct {
+	*memoryActions
+	calls int
+}
+
+type resetOutcomeContract struct{ *memoryActions }
+
+func (m resetOutcomeContract) CommitActionOutcome(ctx context.Context, r ActionRecord, p *StatePatch) error {
+	if r.Status != ActionSucceeded && r.Status != ActionUncertain && r.Status != ActionBlocked {
+		return errors.New("invalid outcome status")
+	}
+	return m.memoryActions.CommitActionOutcome(ctx, r, p)
+}
+
+func TestResetAcceptedIntentColdRecoveryBeforePrepare(t *testing.T) {
+	sub := &portTestSubstrate{name: "fake", coldPlug: true}
+	registerPortTestDriver(t, sub)
+	g, st := configuredResetTestState(t, sub, "first")
+	e := testActionExecutor(t, g, st)
+	m := e.actions.(*memoryActions)
+	e.SetActionRepository(resetOutcomeContract{m})
+	m.outcomeErr = errors.New("prepare marker write failed")
+	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
+	require.NoError(t, err)
+	require.ErrorContains(t, e.Reset(context.Background(), plan), "prepare marker write failed")
+	require.Empty(t, sub.resetLifecycle)
+	require.Len(t, m.actions, 1)
+	require.Equal(t, "accepted", m.actions[0].Phase)
+	id := m.actions[0].ID
+	m.outcomeErr = nil
+	// Once the prepare marker committed, a crash may have followed an effect.
+	// That phase must never be treated as the safe, not-yet-started phase.
+	m.actions[0].Phase = "preparing"
+	uncertain := NewExecutor(g, st)
+	uncertain.SetRunContext(e.topology, "uncertain-reset")
+	uncertain.SetActionRepository(m)
+	require.ErrorContains(t, uncertain.Reset(context.Background(), plan), "preparation outcome unknown")
+	require.Empty(t, sub.resetLifecycle)
+	m.actions[0].Phase = "accepted"
+	coldState, err := m.LoadState(context.Background(), e.topology)
+	require.NoError(t, err)
+	cold := NewExecutor(g, coldState)
+	cold.SetRunContext(e.topology, "cold-reset")
+	cold.SetActionRepository(resetOutcomeContract{m})
+	require.NoError(t, cold.Reset(context.Background(), plan))
+	require.Len(t, m.actions, 1)
+	require.Equal(t, id, m.actions[0].ID)
+	require.Equal(t, ActionSucceeded, m.actions[0].Status)
+	require.Equal(t, []string{"prepare:old-first", "destroy", "apply", "observe", "cleanup"}, sub.resetLifecycle)
+}
+
+func (m *failSecondResetIntent) CommitActionIntent(ctx context.Context, r ActionRecord) error {
+	m.calls++
+	if m.calls == 2 {
+		return errors.New("second reset intent unavailable")
+	}
+	return m.memoryActions.CommitActionIntent(ctx, r)
+}
+
+func TestResetPersistsWholeIntentSetBeforeProviderEffects(t *testing.T) {
+	sub := &portTestSubstrate{name: "fake", coldPlug: true}
+	registerPortTestDriver(t, sub)
+	g, st := configuredResetTestState(t, sub, "first")
+	node := st.FindResource(address.Resource("sysbox_node", "second"))
+	node.Driver = sub.name
+	node.Attributes = state.MustAttributes(map[string]any{"guest_family": "linux"})
+	require.NoError(t, node.SetRuntimeValue("container_id", "old-second"))
+	e := testActionExecutor(t, g, st)
+	m := &failSecondResetIntent{memoryActions: e.actions.(*memoryActions)}
+	e.SetActionRepository(m)
+	plan, err := BuildResetPlan(g, st, "")
+	require.NoError(t, err)
+	require.ErrorContains(t, e.Reset(context.Background(), plan), "second reset intent unavailable")
+	require.Equal(t, 2, m.calls)
+	require.Empty(t, sub.resetLifecycle, "failed intent publication must precede prepare/destroy/apply")
+}
+
 func TestExecutorResetRejectsOwnedResidue(t *testing.T) {
 	sub := &portTestSubstrate{name: "reset-residue", coldPlug: true, resetObservation: substrate.ResetObservation{
 		Phase: substrate.ResetPhaseComplete, Converged: true, Residue: []string{"old-container"},
