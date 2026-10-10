@@ -1,5 +1,37 @@
 # P9 real acceptance
 
+## Real PostgreSQL outage during a live guest task (2026-10-10)
+
+The cleanup observation loop had the same fixed-ticker starvation as normal
+observation. A 100 ms slow cleanup probe reproduced a 12 ms reacquisition gap;
+it now waits a fresh 50 ms after each incomplete observation. Host full race,
+vet and independent review passed, then the fixed supervisor was deployed.
+
+Started a 600-second background Apply on `p9-235c662ef0ca`. Before stopping
+PostgreSQL, the fault script verified the exact parent checkpoint, live child,
+provider owner/UID/generation, guest process anchors, cgroup inode and
+`populated 1`. The guest stopped during the outage after **123.69 seconds**:
+same process/cgroup incarnation, `status=cancelled`, termination confirmed,
+`populated 0`. PostgreSQL was restored in finally, MainPID changed 2003→9474.
+The original child receipt was acknowledged after restart (`reported=true`).
+
+- Run: `request-b6670158d337d347f4c7d3228e65ae884179d00a374a5cd4421bab14c157aa9a`.
+- Task: `run-task-2318b3fd25b17aef995c3fcb52d1574efd386722f9bfa6c140ff5a01677ebff7`.
+- Fault evidence on host: `/tmp/sysbox-p9-lab-current/p9-235c662ef0ca-database-outage.json`.
+- Original client evidence on control VM: `/var/tmp/p9-db-outage-20261010.json`.
+- Cleanup and canonical terminal proof: `/var/tmp/p9-db-outage-cleanup-20261010.json`.
+
+The observing client exited on expected HTTP503 while the database was down;
+the Apply was not resubmitted. After restoration, the same canonical Run became
+failed with `host_completion` and message `run controller stopped after resource
+execution; child termination confirmed`. Normal Destroy then succeeded.
+Independent Docker inspection confirmed container
+`9757346d9cd9c1afe9571ea49d29720b4072620c57759710a8ffef4962df6623` absent,
+with no resources under owner `70cff66b-9e41-439c-9198-93a9ac6f3b27`.
+Normal metadata DELETE completed without force. This proves this database
+outage scenario; it does not close partition, disk-full, controller replacement,
+upgrade or interrupted reset-continuation acceptance.
+
 ## Resolved: slow child observations starved recovery (2026-10-10)
 
 The fixed 100 ms ticker in `RunChildren.observe` was already readable whenever

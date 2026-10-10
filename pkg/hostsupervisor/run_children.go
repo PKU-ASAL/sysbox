@@ -221,7 +221,7 @@ func (r *RunChildren) cleanup(ctx context.Context, record TaskRecord) error {
 	if err == nil && current.StopReceipt != nil && current.Reported {
 		return nil
 	}
-	poll := time.NewTicker(50 * time.Millisecond)
+	poll := time.NewTimer(50 * time.Millisecond)
 	defer poll.Stop()
 	for {
 		select {
@@ -232,6 +232,7 @@ func (r *RunChildren) cleanup(ctx context.Context, record TaskRecord) error {
 			if err == nil && current.StopReceipt != nil && current.Reported {
 				return nil
 			}
+			poll.Reset(50 * time.Millisecond)
 		}
 	}
 }

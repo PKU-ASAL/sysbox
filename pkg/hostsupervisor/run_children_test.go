@@ -31,6 +31,42 @@ type slowPollingConnection struct {
 	calls       int
 }
 
+type slowCleanupConnection struct {
+	*runChildConnection
+	calls                    int
+	secondReturn, thirdStart time.Time
+}
+
+func (c *slowCleanupConnection) ObserveExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.ExecResult, error) {
+	c.calls++
+	if c.calls == 2 {
+		time.Sleep(100 * time.Millisecond)
+		c.secondReturn = time.Now()
+	}
+	if c.calls == 3 {
+		c.thirdStart = time.Now()
+		c.finished.Store(true)
+	}
+	return c.runChildConnection.ObserveExecution(ctx, h)
+}
+func TestRunChildCleanupLeavesUnlockedIntervalAfterSlowObservation(t *testing.T) {
+	d, req, base := taskFixture(t)
+	conn := &slowCleanupConnection{runChildConnection: &runChildConnection{taskConnection: base}}
+	resolve := d.Resolve
+	d.Resolve = func(ctx context.Context, ref TargetRef) (Target, error) {
+		target, err := resolve(ctx, ref)
+		target.Connection = conn
+		return target, err
+	}
+	record, err := d.Start(context.Background(), testRef(req), req)
+	require.NoError(t, err)
+	children := &RunChildren{Dispatcher: d}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, children.cleanup(ctx, record))
+	require.GreaterOrEqual(t, conn.thirdStart.Sub(conn.secondReturn), 40*time.Millisecond, "cleanup must leave time for independent recovery")
+}
+
 func (c *slowPollingConnection) ObserveExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.ExecResult, error) {
 	c.calls++
 	if c.calls == 1 {
