@@ -374,6 +374,14 @@ func (e *Engine) Handle(ctx context.Context, call Call) Response {
 			result, err = e.MutateSSHAccess(ctx, *call.SSHMutation, *call.Grant)
 			response.SSHResult = &result
 		}
+	case "ssh-discover":
+		if call.SSHQuery == nil {
+			err = ErrConflict
+		} else {
+			var discovered substrate.SSHAccessDiscovery
+			discovered, err = e.DiscoverSSHAccess(ctx, *call.SSHQuery)
+			response.SSHDiscovery = &discovered
+		}
 	case "ssh-observe":
 		if call.SSHHandle == nil {
 			err = ErrConflict

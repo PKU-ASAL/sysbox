@@ -77,3 +77,18 @@ SSH transport 在派发前由请求和签名 grant 计算完整 handle。派发�
 已用真实 guest 原子记录验证创建/删除提交后丢响应、重开 Engine、只读查询原结果，
 且 mutation 调用次数不增加。此测试不代表签名子授权派发、host/API completion 或
 真实跨宿主丢包已完成。
+
+## 无 handle 的只读发现
+
+`ConnectionSSHAccess.DiscoverSSHAccess` 按 canonical node、topology UID、resource
+UID/generation、user 和 AccessID 查找。guest 不接受 worker 节点名作为文件路径，
+transport 先核对自身节点/代际，guest 再验证记录内 owner/代际。
+
+返回 present/absent 或带错误的 unknown。从未记录的 access 没有 Current；已删除
+access 返回 Current tombstone 及最后 revision，防止再次创建时回退到版本 0。持久
+配置可跨 guest 重启存在，因此响应同时区分当前 BootID 与历史 handle 的 BootID。
+配置摘要、完整身份与响应 query 均在 transport 验证；错误不泄漏外来记录。
+
+发现不创建锁文件或记录、不改变授权，也不代表 sshd 配置已加载或监听正常。
+真实 Docker helper 已验证首次缺失、创建后发现、外来 owner 拒绝及删除后版本 3；
+SSH/vsock adapter 仍须各自真实验收，runtime/API 消费此入口尚待接入。

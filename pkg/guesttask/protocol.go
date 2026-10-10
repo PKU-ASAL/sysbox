@@ -95,6 +95,7 @@ type Record struct {
 	Error                string                                    `json:"error,omitempty"`
 }
 type Call struct {
+	SSHQuery     *substrate.SSHAccessQuery                 `json:"ssh_query,omitempty"`
 	Cancellation *controlplane.SignedExecutionCancellation `json:"cancellation,omitempty"`
 	FileRequest  *substrate.FileInstallRequest             `json:"file_request,omitempty"`
 	FileHandle   *substrate.FileInstallHandle              `json:"file_handle,omitempty"`
@@ -118,6 +119,7 @@ type Call struct {
 	Limit        int                                       `json:"limit,omitempty"`
 }
 type Response struct {
+	SSHDiscovery   *substrate.SSHAccessDiscovery      `json:"ssh_discovery,omitempty"`
 	FileInspection *substrate.InstalledFileInspection `json:"file_inspection,omitempty"`
 	FileHandle     *substrate.FileInstallHandle       `json:"file_handle,omitempty"`
 	FileRecord     *FileInstallRecord                 `json:"file_record,omitempty"`

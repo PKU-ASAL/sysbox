@@ -1,5 +1,20 @@
 # P9 real acceptance
 
+## Managed SSH discovery through a real helper (2026-10-10)
+
+The disposable two-listener sshd/Docker-helper lifecycle now additionally uses
+`DiscoverSSHAccess`. The current helper reported initial absence without a
+record, returned the original handle/config after creation, rejected a foreign
+owner as unknown, and returned the committed deletion tombstone at revision 3.
+Rotation, revocation, independent access preservation and endpoint restriction
+checks continued to pass; the full test finished in **5.20 seconds**.
+
+Discovery does not write or mint grants. Unit/race coverage checks cold reads,
+corrupt records, owner/resource/generation conflicts, response query/digest/
+revision tampering, and real Engine round trips without extra mutations.
+This is configuration discovery over the Docker helper adapter, not proof of
+SSH/vsock transport E2E, live service readiness, or runtime/API integration.
+
 ## Staged SSH config syntax and effective-command conflicts (2026-10-10)
 
 `ValidateSSHD` runs `sshd -t -f` followed by `sshd -T -C` for each supplied

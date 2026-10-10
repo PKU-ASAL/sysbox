@@ -144,9 +144,23 @@ func TestSSHAccessRealRotationAndSharedLoginE2E(t *testing.T) {
 	}
 	login("administrator", true)
 	login("first", false)
+	query := substrate.SSHAccessQuery{NodeID: "node", User: currentUser.Username, AccessID: "admin", TopologyUID: "ssh-e2e", ResourceUID: "node", Generation: 1}
+	discovered, err := client.DiscoverSSHAccess(ctx, query)
+	require.NoError(t, err)
+	require.Equal(t, "absent", discovered.Status)
+	require.Nil(t, discovered.Current)
 	req := substrate.SSHAccessMutation{ID: "create", Config: substrate.SSHAccessConfig{User: currentUser.Username, AccessID: "admin", AuthorizedKeys: []string{publics["first"]}}}
 	first, err := mutate(req, 1)
 	require.NoError(t, err)
+	discovered, err = client.DiscoverSSHAccess(ctx, query)
+	require.NoError(t, err)
+	require.Equal(t, first, *discovered.Current)
+	require.Equal(t, "present", discovered.Status)
+	foreign := query
+	foreign.TopologyUID = "other"
+	discovered, err = client.DiscoverSSHAccess(ctx, foreign)
+	require.Error(t, err)
+	require.Equal(t, "unknown", discovered.Status)
 	login("first", true)
 	rescue := req
 	rescue.ID, rescue.Config.AccessID = "rescue", "rescue"
@@ -178,6 +192,11 @@ func TestSSHAccessRealRotationAndSharedLoginE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "absent", inspection.Status)
 	require.Equal(t, uint64(3), inspection.Revision)
+	discovered, err = client.DiscoverSSHAccess(ctx, query)
+	require.NoError(t, err)
+	require.Equal(t, "absent", discovered.Status)
+	require.NotNil(t, discovered.Current, "discovery must retain deletion tombstone")
+	require.Equal(t, uint64(3), discovered.Current.Handle.Revision)
 	restricted := substrate.SSHAccessMutation{ID: "restricted", Config: substrate.SSHAccessConfig{User: currentUser.Username, AccessID: "restricted", AuthorizedKeys: []string{publics["restricted"]}, BindIP: "127.0.0.1", Port: port}}
 	_, err = mutate(restricted, 5)
 	require.NoError(t, err)

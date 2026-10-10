@@ -116,6 +116,7 @@ type SSHAccessInspection struct {
 }
 
 type ConnectionSSHAccess interface {
+	DiscoverSSHAccess(context.Context, SSHAccessQuery) (SSHAccessDiscovery, error)
 	// MutateSSHAccess preserves the expected handle after dispatch errors for
 	// observation. On error, Present is unknown, not evidence of absence.
 	MutateSSHAccess(context.Context, SSHAccessMutation) (SSHAccessResult, error)

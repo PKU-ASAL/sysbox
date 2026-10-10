@@ -74,6 +74,13 @@ func TestSSHAccessLostReplyRecoversOriginalResultWithoutMutation(t *testing.T) {
 			require.Equal(t, !deleting, recovered.Present)
 			require.Equal(t, unknown.Handle, recovered.Handle)
 			require.Equal(t, i+1, caller.mutations, "recovery must not submit another mutation")
+			query := substrate.SSHAccessQuery{NodeID: "node", User: "ubuntu", AccessID: "admin", TopologyUID: "owner", ResourceUID: "node-uid", Generation: 1}
+			found, err := discoverSSHAccess(context.Background(), caller, identity, query)
+			require.NoError(t, err)
+			require.Equal(t, recovered, *found.Current)
+			require.Equal(t, req.Config, *found.Config)
+			require.Equal(t, query, found.Query)
+			require.Equal(t, i+1, caller.mutations)
 		})
 	}
 }
