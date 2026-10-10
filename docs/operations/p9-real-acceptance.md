@@ -1,5 +1,32 @@
 # P9 real acceptance
 
+## Real API proxy outage during a live child (2026-10-10)
+
+On the isolated two-VM deployment, started a 600-second background Apply on
+`p9-c623347655cc`. After confirming its durable child was running, stopped the
+test HAProxy service. Database and SSH connectivity remained available: this
+is an API-path outage, not a full network partition.
+
+The host confirmed child termination after **1.85 seconds**. The proxy was
+restored in finally; the **identical** signed stop receipt was then acknowledged.
+Exit code remained unknown (`ExitCodeKnown=false`), while termination was
+confirmed. The same canonical parent Run became failed with durable
+`host_completion`, message `run child execution failed after confirmed termination`.
+No Apply was resubmitted.
+
+- Parent: `request-ba95686880a149182403f705825d46be46dd63e66e70554852c3a18ee8ef4b61`.
+- Child: `run-task-00740891f91c14e0e052d98280f8d39b340431b05131ec098fbcc0691f134870`.
+- Fault evidence: `/tmp/sysbox-p9-lab-current/p9-c623347655cc-partition.json`.
+- Control VM original evidence: `/var/tmp/p9-api-outage-20261010.json`.
+- Control VM cleanup/terminal proof: `/var/tmp/p9-api-outage-cleanup-20261010.json`.
+
+Normal Destroy completed. Independent Docker inspection confirmed exact
+container `a1253fbbb0185cbc4767541103d33dbac70b623717988db0133e938ee012fc2c`
+absent and no containers under owner `7322fa7a-eafa-4142-9fb3-bdcbfa8e52e1`.
+Normal metadata DELETE succeeded without force. This closes this API-path
+interruption scenario only; full partition, controller failover, disk-full,
+upgrade and interrupted reset-continuation acceptance remain separate gates.
+
 ## Real PostgreSQL outage during a live guest task (2026-10-10)
 
 The cleanup observation loop had the same fixed-ticker starvation as normal

@@ -85,7 +85,8 @@ def main():
             if result.get("status") == "done":
                 return result
             if result.get("status") in ("failed", "cancelled"):
-                raise RuntimeError("run failed: " + json.dumps(result))
+                summary = {key: result.get(key) for key in ("id", "status", "error")}
+                raise RuntimeError("run failed: " + json.dumps(summary) + "; full evidence retained at " + str(evidence_path))
             if result.get("status") != previous_status:
                 print(f"{run_id}: {result.get('status')}", flush=True)
                 previous_status = result.get("status")
