@@ -1,5 +1,46 @@
 # P9 real acceptance
 
+## Real two-host Apply / Reset / Destroy (2026-10-10)
+
+The retained lab `/tmp/sysbox-p9-lab-current` now runs build `749bc88` with binary
+SHA256 `eca6dc774167c1774a8262230301d5cdb47f957036e33163854faa40662f548d`.
+Both API services and PostgreSQL run on the control VM; the Agent, host
+supervisor and Docker run on the execution VM. Deployment uses separate new
+database/role `sysboxp9_reset_20261010` and local deployment evidence directory
+`deployment-reset-20261010`. Both API services, Agent and supervisor started.
+The deployment helper now binds database name to its deployment directory and
+rejects an existing role or database before replacing binaries/configuration;
+it never rotates an old deployment's database password. Interrupted deployment
+must be inspected rather than blindly rerun. This guard was added after the
+successful fresh-database deployment below; no existing database was redeployed.
+
+Before deployment, stopped old service configuration, identities, journals and
+binary were moved/copied into `/var/lib/sysbox-p9-archive-reset-20261010` on
+their respective VMs. The old `sysboxp9` database remains unchanged. Its dump is
+in the control archive with SHA256
+`6a0fb6dae35b72d9a3caf012642fe41f7f967d73b24f10ede677d3697941f3a4`.
+The old running Run was not declared stopped or removed.
+
+Acceptance evidence: control VM `/var/tmp/p9-reset-20261010.json`.
+Topology: `p9-074c49109274`.
+
+- Apply: `request-c9dbde7ae83a515bfc992755740a3de9560af82eb084aed0d0255f0a468f78dd`, done.
+- Reset: `3069f2b3-f8f7-4964-905c-1f14bda1b793`, done.
+- Destroy: `op-47eb9fb6a2f10e02114c25a3a2970b311a1127884d21563f0a60018e7f7c3f86`, done.
+- Stable topology UID: `27fe6313-c983-4553-ade7-33cf16065240`.
+- Stable node UID: `7ba469867a19a3699c27baf22ccb0feb7c6bf4b7444b6942cc15641346303b02`.
+- Generation advanced from 1 to 2; external container identity changed from
+  `750193b5511d6be378efc14c00ad51fef6cf7b348bd2b0551dfd53ca6a0c5b32` to
+  `71dcbfc082d88d40cc6bbe8a0a57bff0f881659e138b3cf661bcf513b58a2691`.
+
+After Destroy, API resources were empty. Independent execution-VM `docker
+inspect` returned `no such object` for both exact IDs; owner-UID inventory was
+also empty. Normal metadata DELETE then succeeded without force. The evidence
+phase is `metadata_deleted`. This validates normal remote Docker reset through
+the host execution protocol, not fault continuation, background child tasks,
+Firecracker/libvirt, or the remaining P9 fault matrix. Both VMs and new services
+remain running for continued acceptance.
+
 ## Retained two-VM lab restart (2026-10-10)
 
 `scripts/acceptance/two_vms.py start --root /tmp/sysbox-p9-lab-current`

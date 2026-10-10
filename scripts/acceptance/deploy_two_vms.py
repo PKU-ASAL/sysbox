@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import shlex
@@ -29,13 +30,33 @@ def unit(command, user, config):
             "\nRestart=on-failure\nRestartSec=2\n[Install]\nWantedBy=multi-user.target\n")
 
 
-def deploy(root, binary):
+def database_config(database, password):
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,39}", database):
+        raise ValueError("database must be a simple lowercase SQL identifier")
+    dsn = f"postgres://{database}:{password}@10.77.0.10:5432/{database}?sslmode=disable&topology={{topology}}"
+    sql = (f"DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname='{database}') OR EXISTS (SELECT FROM pg_database WHERE datname='{database}') THEN RAISE EXCEPTION 'deployment database or role already exists; preserve it and select a new deployment'; END IF; END $$;\n"
+           f"CREATE ROLE {database} LOGIN PASSWORD '{password}';\n"
+           f"CREATE DATABASE {database} OWNER {database};\n"
+           "ALTER SYSTEM SET listen_addresses='127.0.0.1,10.77.0.10';\n")
+    return dsn, sql
+
+
+def deploy(root, binary, database="sysboxp9", deployment="deployment"):
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", deployment):
+        raise ValueError("deployment must be a simple directory name")
+    database_config(database, "validation")
     root, manifest = lab.load(root)
     proof = json.loads((root / "isolation.json").read_text())
     if proof.get("lab_id") != manifest["id"] or not proof.get("nested_kvm_qemu_started"):
         raise RuntimeError("run two_vms.py prepare/check first")
-    secret_dir = root / "deployment"
+    secret_dir = root / deployment
     secret_dir.mkdir(mode=0o700, exist_ok=True)
+    binding = secret_dir / "binding.json"
+    expected = {"lab_id": manifest["id"], "database": database, "deployment": deployment}
+    if binding.exists() and json.loads(binding.read_text()) != expected:
+        raise RuntimeError("deployment is bound to another database or lab")
+    if not binding.exists():
+        lab.save(binding, expected)
     credentials = secret_dir / "credentials.json"
     if not credentials.exists():
         lab.save(credentials, {"api_token": secrets.token_hex(32), "db_password": secrets.token_hex(32)})
@@ -49,7 +70,7 @@ def deploy(root, binary):
             path.write_bytes(seed + public)
             (secret_dir / (name + ".pub")).write_bytes(public)
     password = private["db_password"]
-    dsn = f"postgres://sysboxp9:{password}@10.77.0.10:5432/sysboxp9?sslmode=disable&topology={{topology}}"
+    dsn, sql = database_config(database, password)
     configs = {}
     for index in (1, 2):
         home = f"/var/lib/sysbox-api{index}"
@@ -72,17 +93,16 @@ def deploy(root, binary):
             source.write_text(content)
         lab.upload(root, manifest, role, source, "/home/p9/" + name)
 
+    stage("control", "p9-db.sql", sql)
+    # Fail before replacing any service binary/configuration if the chosen
+    # database is already present. Interrupted deployments require inspection.
+    remote(root, manifest, "control", "sudo -u postgres psql -v ON_ERROR_STOP=1 < /home/p9/p9-db.sql")
     for role in lab.ROLES:
         lab.upload(root, manifest, role, binary, "/home/p9/sysbox")
         remote(root, manifest, role, "sudo install -m 0755 /home/p9/sysbox /usr/local/bin/sysbox")
     remote(root, manifest, "control", "sudo apt-get install -y -qq haproxy >/tmp/p9-proxy-packages.log 2>&1; id sysboxapi >/dev/null 2>&1 || sudo useradd --system --create-home sysboxapi")
-    sql = ("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='sysboxp9') THEN CREATE ROLE sysboxp9 LOGIN; END IF; END $$;\n"
-           f"ALTER ROLE sysboxp9 PASSWORD '{password}';\n"
-           "SELECT 'CREATE DATABASE sysboxp9 OWNER sysboxp9' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='sysboxp9') \\gexec\n"
-           "ALTER SYSTEM SET listen_addresses='127.0.0.1,10.77.0.10';\n")
-    stage("control", "p9-db.sql", sql)
-    remote(root, manifest, "control", "sudo -u postgres psql -v ON_ERROR_STOP=1 < /home/p9/p9-db.sql && "
-           "sudo sh -c 'grep -q \"host sysboxp9 sysboxp9 10.77.0.0/24 scram-sha-256\" /etc/postgresql/16/main/pg_hba.conf || echo \"host sysboxp9 sysboxp9 10.77.0.0/24 scram-sha-256\" >> /etc/postgresql/16/main/pg_hba.conf' && "
+    remote(root, manifest, "control",
+           f"sudo sh -c 'grep -q \"host {database} {database} 10.77.0.0/24 scram-sha-256\" /etc/postgresql/16/main/pg_hba.conf || echo \"host {database} {database} 10.77.0.0/24 scram-sha-256\" >> /etc/postgresql/16/main/pg_hba.conf' && "
            "sudo systemctl restart postgresql && sudo install -d -m 0750 -o sysboxapi -g sysboxapi /etc/sysbox-api")
     for name in ("issuer.key", "host.pub"):
         stage("control", name, None)
@@ -124,9 +144,10 @@ def deploy(root, binary):
     remote(root, manifest, "execution", "sudo systemctl is-active sysbox-agent sysbox-supervisor")
     with binary.open("rb") as artifact:
         binary_digest = hashlib.file_digest(artifact, "sha256").hexdigest()
-    lab.save(root / "services.json", {"lab_id": manifest["id"], "binary_sha256": binary_digest,
+    services = {"lab_id": manifest["id"], "binary_sha256": binary_digest, "database": database,
              "api_url": "http://10.77.0.10:19870", "agent_id": "execution-p9",
-             "lifecycle_acceptance": "required"})
+             "lifecycle_acceptance": "required"}
+    lab.save(secret_dir / "services.json", services)
     print("Services started; lifecycle acceptance remains required.")
 
 
@@ -135,5 +156,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True)
     parser.add_argument("--binary", required=True)
+    parser.add_argument("--database", default="sysboxp9")
+    parser.add_argument("--deployment", default="deployment")
     args = parser.parse_args()
-    deploy(args.root, Path(args.binary).resolve(strict=True))
+    deploy(args.root, Path(args.binary).resolve(strict=True), args.database, args.deployment)

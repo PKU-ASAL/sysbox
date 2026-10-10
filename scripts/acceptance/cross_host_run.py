@@ -58,6 +58,7 @@ def main():
     parser.add_argument("--stop-primary", action="store_true", help="control VM only: stop the test primary API before acceptance")
     parser.add_argument("--provision-seconds", type=int, default=0, help="run a real foreground provisioner longer than the RPC budget")
     parser.add_argument("--background", action="store_true", help="use a finite durable guest task with the prepared p9 guest image")
+    parser.add_argument("--reset", action="store_true", help="reset after Apply and verify stable resource UID and next generation before Destroy")
     parser.add_argument("--hold-after-apply", type=int, default=0, help="keep the successful Apply and running child observable before Destroy")
     args = parser.parse_args()
     token = json.loads(Path(args.config).read_text())["api"]["token"]
@@ -133,6 +134,16 @@ def main():
     save()
     evidence["apply_run"] = wait(accepted["run_id"])
     evidence["state_after_apply"] = request("GET", f"/v1/topologies/{topology}/state")
+    if args.reset:
+        evidence["phase"] = "reset"
+        save()
+        accepted = request("POST", f"/v1/topologies/{topology}/reset", {"revision": revision})
+        evidence["runs"].append(accepted["run_id"])
+        save()
+        evidence["reset_run"] = wait(accepted["run_id"])
+        evidence["state_after_reset"] = request("GET", f"/v1/topologies/{topology}/state")
+        verify_reset_identity(evidence["state_after_apply"], evidence["state_after_reset"])
+        save()
     if args.hold_after_apply:
         evidence["hold_after_apply_seconds"] = args.hold_after_apply
         evidence["phase"] = "apply_hold"
@@ -148,6 +159,27 @@ def main():
     evidence["phase"] = "lifecycle_finished_provider_verification_required"
     save()
     print("API apply/destroy finished; verify provider absence against recorded identity.")
+
+
+def verify_reset_identity(before, after):
+    def nodes(value):
+        resources = [r for r in value.get("resources", []) if r.get("resource_type") == "sysbox_node"]
+        result = {r["address"]: r for r in resources}
+        if len(result) != len(resources):
+            raise RuntimeError("duplicate reset node address")
+        return result
+    if not before.get("topology_uid") or before["topology_uid"] != after.get("topology_uid"):
+        raise RuntimeError("reset topology identity changed")
+    old, new = nodes(before), nodes(after)
+    if not old or old.keys() != new.keys():
+        raise RuntimeError("reset node inventory changed or empty")
+    for name, resource in old.items():
+        replacement = new[name]
+        if (not resource.get("resource_uid") or resource["resource_uid"] != replacement.get("resource_uid") or
+                not resource.get("owner_uid") or resource["owner_uid"] != replacement.get("owner_uid") or
+                replacement.get("generation") != resource.get("generation", 0) + 1 or
+                not replacement.get("external_id") or replacement["external_id"] == resource.get("external_id")):
+            raise RuntimeError("reset did not preserve ownership and advance external incarnation")
 
 
 if __name__ == "__main__":
