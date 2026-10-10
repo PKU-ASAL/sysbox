@@ -72,8 +72,12 @@ func (b *LocalBridge) LogWriter(string) io.Writer {
 	return b.opts.Log
 }
 
-func (b *LocalBridge) LockTopology(string) func() {
-	return func() {}
+func (b *LocalBridge) LockTopology(ctx context.Context, topology string) (func(), error) {
+	repo, err := b.repository(topology)
+	if err != nil {
+		return nil, err
+	}
+	return repo.LockExecution(ctx, topology)
 }
 
 func (b *LocalBridge) Finish(run *controlplane.Run, err error) {

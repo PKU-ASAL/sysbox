@@ -19,7 +19,7 @@ import (
 type Bridge interface {
 	AttachRun(run *controlplane.Run)
 	LogWriter(runID string) io.Writer
-	LockTopology(topology string) func()
+	LockTopology(ctx context.Context, topology string) (func(), error)
 	Finish(run *controlplane.Run, err error)
 	StateManager(topology string) (*state.Manager, error)
 	HCLFile(topology string) string
@@ -139,7 +139,11 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 }
 
 func (e *Executor) executeReset(ctx context.Context, run *controlplane.Run, log io.Writer) {
-	unlock := e.bridge.LockTopology(run.Topology)
+	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
 	defer unlock()
 
 	if err := ctx.Err(); err != nil {
@@ -293,7 +297,11 @@ func reportRunCompleteWithRetry(ctx context.Context, reporter Reporter, run *con
 }
 
 func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log io.Writer) {
-	unlock := e.bridge.LockTopology(run.Topology)
+	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
 	defer unlock()
 
 	if err := ctx.Err(); err != nil {
@@ -404,7 +412,11 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 }
 
 func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, log io.Writer) *controlplane.CleanupReceipt {
-	unlock := e.bridge.LockTopology(run.Topology)
+	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return nil
+	}
 	defer unlock()
 
 	if err := ctx.Err(); err != nil {

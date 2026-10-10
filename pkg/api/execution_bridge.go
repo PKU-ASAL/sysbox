@@ -42,8 +42,21 @@ func (b *ExecutionBridge) LogWriter(runID string) io.Writer {
 	return b.server.jobs.logWriter(runID)
 }
 
-func (b *ExecutionBridge) LockTopology(topology string) func() {
-	return b.server.jobs.lockTopology(topology)
+func (b *ExecutionBridge) LockTopology(ctx context.Context, topology string) (func(), error) {
+	repo, err := b.server.actionRepository(topology)
+	if err != nil {
+		return nil, err
+	}
+	release, err := repo.LockExecution(ctx, topology)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := b.server.jobs.topologyLocks.LockContext(ctx, topology)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return func() { unlock(); release() }, nil
 }
 
 func (b *ExecutionBridge) Finish(run *controlplane.Run, err error) {

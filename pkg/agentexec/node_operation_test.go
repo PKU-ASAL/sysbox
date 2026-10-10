@@ -22,9 +22,9 @@ type nodeOperationProofBridge struct {
 	stateReads      int
 }
 
-func (b *nodeOperationProofBridge) LockTopology(string) func() {
+func (b *nodeOperationProofBridge) LockTopology(context.Context, string) (func(), error) {
 	b.locked = true
-	return func() { b.locked = false }
+	return func() { b.locked = false }, nil
 }
 func (b *nodeOperationProofBridge) StateManager(topology string) (*state.Manager, error) {
 	b.stateReads++

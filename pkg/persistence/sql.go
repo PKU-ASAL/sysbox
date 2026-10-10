@@ -18,6 +18,8 @@ import (
 type sqlBackend struct {
 	db       *sql.DB
 	postgres bool
+	path     string
+	dsn      string
 }
 
 func OpenSQLite(path string) (*Repository, error) {
@@ -29,6 +31,22 @@ func OpenSQLite(path string) (*Repository, error) {
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	// SQLite and its execution sidecar must use the same canonical file path.
+	// Otherwise a symlink alias could acquire an independent execution lock.
+	if _, err := os.Lstat(path); err == nil {
+		path, err = filepath.EvalSymlinks(path)
+		if err != nil {
+			return nil, err
+		}
+	} else if os.IsNotExist(err) {
+		parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return nil, err
+		}
+		path = filepath.Join(parent, filepath.Base(path))
+	} else {
 		return nil, err
 	}
 	u := url.URL{Scheme: "file", Path: path}
@@ -46,7 +64,7 @@ func OpenSQLite(path string) (*Repository, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Repository{backend: &sqlBackend{db: db}}, nil
+	return &Repository{backend: &sqlBackend{db: db, path: path}}, nil
 }
 func OpenPostgres(ctx context.Context, dsn string) (*Repository, error) {
 	db, err := sql.Open("pgx", dsn)
@@ -59,7 +77,7 @@ func OpenPostgres(ctx context.Context, dsn string) (*Repository, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Repository{backend: &sqlBackend{db: db, postgres: true}}, nil
+	return &Repository{backend: &sqlBackend{db: db, postgres: true, dsn: dsn}}, nil
 }
 
 func initializePostgresLifecycle(ctx context.Context, db *sql.DB) error {

@@ -45,7 +45,10 @@ func (e *Executor) executeNodeOperation(ctx context.Context, op *controlplane.No
 }
 
 func (e *Executor) executePauseResume(ctx context.Context, op *controlplane.NodeOperation) error {
-	unlock := e.bridge.LockTopology(op.Topology)
+	unlock, err := e.bridge.LockTopology(ctx, op.Topology)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 	if err := ctx.Err(); err != nil {
 		return err

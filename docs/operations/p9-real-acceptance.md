@@ -2,6 +2,20 @@
 
 ## Open reset recovery failure (2026-10-10)
 
+CLI and Agent lifecycle execution now acquires a repository-scoped execution
+lock before reading workspace/state, independent of aggregate transaction
+locks. File/SQLite use persistent sidecar lock files; PostgreSQL uses a dedicated
+connection and an advisory key derived from the resolved aggregate table OID
+and topology. Lock waits can be canceled. Tests cover independent processes,
+SQLite symlink aliases, PostgreSQL search-path aliases, transaction access while
+holding execution ownership, and cancellation before lifecycle workspace access.
+Full persistence, agentexec, API and CLI race suites passed with a real disposable
+PostgreSQL 16; vet and independent review passed. See
+[execution exclusion](../design/2026-10-10-execution-exclusion.md) for path and
+connection-loss limits. This is cooperating-executor exclusion, not proof of
+provider quiescence; management mutations and old binaries do not all
+participate. Explicit continuation and the retained reset matrix remain open.
+
 Runtime reset no longer implicitly takes over another Run's pending actions.
 Pending actions must belong to the current Run or an explicitly selected
 resume Run; an absent or unrelated resume ID fails before preparation,
