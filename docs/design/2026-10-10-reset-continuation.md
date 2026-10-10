@@ -71,6 +71,13 @@ API verifier 读取并重新验签，而非信任字段存在。旧 Run 没有�
 不依据 status 补造回执。新旧二进制混跑不保证证明字段保留，需统一升级。
 三后端回执保存及 verifier 回归通过，完整双宿主 reset continuation E2E 仍未完成。
 
+宿主同步 reset 返回失败时，执行器重新取得 execution lock 并读取原 Run 的
+持久 action。只有非空且 incarnation 匹配、全部处于明确可恢复阶段，并且所有
+子任务已有停止证据时，才生成可签名的 recoverable failure。preparing、destroying、
+未完成 applying、未知子任务和无 action 证据仍保留未知。这个路径不能用于 cold
+checkpoint 推断旧进程退出。HostRunExecutor→RunCoordinator 的集成回归覆盖安全
+失败签名和 preparing 拒绝；它使用真实文件 repository，但没有真实 VM provider。
+
 CLI/API 入口必须在读取证据前取得执行锁，验证原 checkpoint 的可信来源、真实
 Run incarnation 和配置/baseline，再确认旧执行者及外部调用已经停止。原 action
 缺少 queued-at 时不能通过猜测补造，repository 直接拒绝受理。local CLI 原 Run

@@ -9,9 +9,9 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-// quiescentRunFailure can only be constructed after successful synchronous
-// resource execution and exhaustive child-stop evidence. Arbitrary callback
-// errors, lost daemon responses and cold intents must never use this path.
+// quiescentRunFailure requires returned synchronous execution and exhaustive
+// child-stop evidence: successful resource execution or validated safe reset
+// phases. Arbitrary errors, lost daemon responses and cold intents cannot use it.
 type quiescentRunFailure struct{ evidence json.RawMessage }
 
 func (e *quiescentRunFailure) Error() string { return "run failed after confirmed child termination" }

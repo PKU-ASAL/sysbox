@@ -2,6 +2,16 @@
 
 ## Open reset recovery failure (2026-10-10)
 
+Returned host reset failures now have a restricted signing path: after the
+synchronous executor returns, reacquire execution exclusion, read the original
+Run's action incarnation/phases and prove all children stopped. Only known safe
+reset phases produce recoverable signed failure evidence. Unknown phases,
+missing actions, foreign incarnation and unknown child admission stay uncertain.
+The HostRunExecutor-to-RunCoordinator integration test covers a real file
+repository and confirms safe failure signing versus preparing-phase refusal;
+no VM provider is exercised. Host/Agent/API/runtime full race tests passed.
+Cold process-exit proof and the retained heterogeneous incident remain open.
+
 The API now stores `Run.host_completion` (signed receipt plus exact original
 result bytes) atomically with the terminal Run. Ordinary Save/Restart cannot
 inject or change the proof. The reset continuation verifier rechecks its host

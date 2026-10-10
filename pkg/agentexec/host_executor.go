@@ -105,6 +105,35 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = children.Cancel(cleanup)
+		if run.Op == "reset" {
+			// Reacquire the same execution exclusion after the synchronous
+			// executor returned. Unknown provider phases must stay uncertain.
+			unlock, lockErr := h.Bridge.LockTopology(cleanup, run.Topology)
+			if lockErr != nil {
+				return nil, lockErr
+			}
+			defer unlock()
+			original := run
+			if run.ParentID != "" {
+				original, err = h.Bridge.ParentRun(cleanup, run.ParentID)
+				if err != nil {
+					return nil, err
+				}
+			}
+			provider, ok := h.Bridge.(ActionRepositoryProvider)
+			if !ok {
+				return nil, fmt.Errorf("reset stop requires action repository")
+			}
+			repo, err := provider.ActionRepository(run.Topology)
+			if err != nil {
+				return nil, err
+			}
+			actions, err := repo.LoadActions(cleanup, run.Topology)
+			if err != nil {
+				return nil, err
+			}
+			return nil, hostsupervisor.FinishReturnedResetFailure(cleanup, children, run, original, actions)
+		}
 		return nil, fmt.Errorf("host run failed: %s", run.Err)
 	}
 	if err := hostsupervisor.CheckpointRunChildren(ctx, children, run); err != nil {
