@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+P7 迁移纠正：撤回 `1015801` 中提前禁用 runtime SSH access 的变更，因为 host callback
+仍未替换，禁用不等于完成能力迁移。旧 runtime/host 文件路径仍须在签名 guest 授权、
+canonical completion 与新 SPI 接通后一起删除。另修复未知端口绕过 Port 限制，真实
+sshd 回归要求明确认证拒绝而非任意断线；无端点限制的 key 轮换/删除验收通过（4.09秒）。
+
 2026-10-10 私网分区验收：真实双VM长任务在execution lan0断开、API/DB两个端口均
 不可达时，136.92秒后原cgroup清空；恢复后原task/Run/provider身份保持，原停止回执
 获确认，父Run failed且保有host completion。正常Destroy、独立精确ID/owner无残留
@@ -17,11 +22,6 @@ CAS revision、历史回执和删除 tombstone；旧 revision 删除、损坏记
 AuthorizedKeysCommand 只读入口不泄漏部分 key；真实独立 sshd + Docker helper 验证
 管理员 key、受管 key 轮换、旧 key 失效、当前代删除及另一项访问保留。host/API canonical
 dispatch、共享 sshd drop-in 管理和跨宿主重启仍未完成，不能据此关闭 P7。
-
-2026-10-10 runtime 旧路径清理：`sysbox_ssh_access` runtime handler 不再直接
-CopyFile/rm；本地执行明确返回 `ErrConvergenceUnsupported`，强制使用已有 API→Agent→
-host supervisor 的签名 node-operation 路由。这样不会出现同一资源同时存在本地裸文件链和
-远端受 fencing 链；canonical dispatch 的完整 state completion 仍待接入。
 
 真实双VM正常reset及后台task：独立新库部署后，普通Apply→Reset→Destroy及带45秒
 后台task的同链路均通过。后台task确认gen1→gen2、exit0、termination confirmed、

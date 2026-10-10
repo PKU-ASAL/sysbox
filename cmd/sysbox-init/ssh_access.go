@@ -11,8 +11,9 @@ type sshKeySource interface {
 	SSHAuthorizedKeys(context.Context, string, string, int) ([]byte, error)
 }
 
-// sshd supplies %u %l %p. No paths, commands, or environment overrides are
-// accepted by this read-only entry point, and failed lookups publish no keys.
+// sshd supplies %u. Its AuthorizedKeysCommand supports neither %l nor %p.
+// Optional endpoint arguments must come from administrator-controlled listener
+// configuration; unknown endpoints cannot authorize endpoint-restricted keys.
 func writeSSHAuthorizedKeys(ctx context.Context, source sshKeySource, args []string, output io.Writer) error {
 	if len(args) != 1 && len(args) != 2 && len(args) != 3 {
 		return fmt.Errorf("SSH authorized keys requires user and optional endpoint")

@@ -116,6 +116,7 @@ func TestSSHAccessRealRotationAndSharedLoginE2E(t *testing.T) {
 			require.NoError(t, err, string(output))
 		} else {
 			require.Error(t, err)
+			require.Contains(t, string(output), "Permission denied", "transport errors are not proof of key rejection")
 		}
 	}
 	mutate := func(req substrate.SSHAccessMutation, epoch uint64) (substrate.SSHAccessResult, error) {
@@ -132,7 +133,7 @@ func TestSSHAccessRealRotationAndSharedLoginE2E(t *testing.T) {
 	}
 	login("administrator", true)
 	login("first", false)
-	req := substrate.SSHAccessMutation{ID: "create", Config: substrate.SSHAccessConfig{User: currentUser.Username, AccessID: "admin", AuthorizedKeys: []string{publics["first"]}, Port: port}}
+	req := substrate.SSHAccessMutation{ID: "create", Config: substrate.SSHAccessConfig{User: currentUser.Username, AccessID: "admin", AuthorizedKeys: []string{publics["first"]}}}
 	first, err := mutate(req, 1)
 	require.NoError(t, err)
 	login("first", true)

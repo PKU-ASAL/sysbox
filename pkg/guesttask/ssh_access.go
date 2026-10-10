@@ -297,7 +297,7 @@ func (e *Engine) SSHAuthorizedKeys(ctx context.Context, user, localIP string, po
 		}
 		current := r.current()
 		cfg := current.Request.Config
-		if !current.Result.Present || cfg.User != user || port != 0 && cfg.Port != 0 && cfg.Port != port || cfg.BindIP != "" && localIP != "" && !net.ParseIP(cfg.BindIP).Equal(net.ParseIP(localIP)) {
+		if !current.Result.Present || cfg.User != user || cfg.Port != 0 && cfg.Port != port || cfg.BindIP != "" && localIP != "" && !net.ParseIP(cfg.BindIP).Equal(net.ParseIP(localIP)) {
 			continue
 		}
 		if cfg.BindIP != "" && localIP == "" {

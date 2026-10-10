@@ -14,15 +14,21 @@ managed access continued to work. Deleting the first access with its old
 revision was rejected; deleting with the current revision revoked the
 replacement key while preserving the second managed key and administrator key.
 Historical observation of the original handle remained readable and current
-inspection returned `absent` at revision 3. The test passed in **3.36 seconds**.
+inspection returned `absent` at revision 3. The corrected test passed in
+**4.09 seconds**, requiring `Permission denied` for rejected keys rather than
+accepting arbitrary connection failures.
 
-The command uses only the OpenSSH-supported `%u` token. The helper treats the
-listener endpoint as wildcard when OpenSSH does not provide a local-address
-token; explicit BindIP remains checked by transports that can observe the
-actual endpoint. Invalid or corrupt records fail closed and emit no keys.
+The command uses only the OpenSSH-supported `%u` token. OpenSSH supplies neither
+local address nor local port through this command's tokens. Unknown endpoints
+therefore authorize only configurations without endpoint restrictions. A new
+regression reproduced and fixed port-restricted keys incorrectly being emitted
+for port zero. The real test now explicitly uses unrestricted configurations;
+it does not prove listener-restricted login. Invalid or corrupt records fail
+closed and emit no keys.
 
-This proves the guest helper, SSH/vsock protocol contract, and an independent
-sshd lifecycle. Host/API resource dispatch and shared multi-API completion are
+This proves the guest helper and its Docker-backed transport against an
+independent sshd. SSH/vsock adapter unit tests are separate evidence; this test
+does not exercise those transports. Host/API dispatch and multi-API completion are
 still separate P7 gates; this does not close P7 or the full P0–P9 matrix.
 
 ## Real private-network partition with a running guest task (2026-10-10)

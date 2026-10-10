@@ -129,6 +129,32 @@ func TestSSHAccessConcurrentCASHasOneWinner(t *testing.T) {
 	}
 }
 
+func TestSSHAccessUnknownEndpointDoesNotBypassRestrictions(t *testing.T) {
+	for _, restricted := range []string{"port", "address", "both", "unrestricted"} {
+		t.Run(restricted, func(t *testing.T) {
+			e, key, req := sshAccessFixture(t)
+			if restricted == "port" || restricted == "both" {
+				req.Config.Port = 2222
+			}
+			if restricted == "address" || restricted == "both" {
+				req.Config.BindIP = "127.0.0.1"
+			}
+			_, err := e.MutateSSHAccess(context.Background(), req, sshAccessGrant(t, key, req, 1))
+			require.NoError(t, err)
+			keys, err := e.SSHAuthorizedKeys(context.Background(), req.Config.User, "", 0)
+			require.NoError(t, err)
+			if restricted == "unrestricted" {
+				require.Equal(t, req.Config.AuthorizedKeys[0]+"\n", string(keys))
+			} else {
+				require.Empty(t, keys)
+			}
+			keys, err = e.SSHAuthorizedKeys(context.Background(), req.Config.User, "127.0.0.1", 2222)
+			require.NoError(t, err)
+			require.Equal(t, req.Config.AuthorizedKeys[0]+"\n", string(keys))
+		})
+	}
+}
+
 func TestSSHAccessEndpointAndRequestIdentity(t *testing.T) {
 	e, key, req := sshAccessFixture(t)
 	req.Config.BindIP, req.Config.Port = "127.0.0.1", 2222

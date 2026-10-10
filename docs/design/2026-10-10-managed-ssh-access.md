@@ -7,11 +7,10 @@
 
 采用 guest helper 持久管理访问记录，sshd 通过固定的 `AuthorizedKeysCommand`
 （OpenSSH `%u` token）读取已提交的公钥。原来的 `AuthorizedKeysFile` 保持由管理员管理，
-Sysbox 不改写用户自己的文件，也不停止共享 sshd。OpenSSH 命令没有可靠的本地监听地址
-token，因此命令查询按用户和端口通配；能取得实际 endpoint 的 Observe/transport 路径
-仍校验 BindIP；共享 `AuthorizedKeysCommand` 对配置了 BindIP 的 access 会
-fail-closed（没有可验证的本地地址），这类 access 必须走 endpoint-aware 的
-transport adapter。helper 不是执行任意命令的入口。
+Sysbox 不改写用户自己的文件，也不停止共享 sshd。OpenSSH 命令不提供本地监听地址
+或端口 token。仅传 `%u` 时，helper 只返回没有 BindIP/Port 限制的配置；配置有端点限制
+而实际端点未知时拒绝授权。管理员可给单一监听端点的 sshd 配置固定地址/端口参数，
+多监听端点的生产 adapter 尚待实现并验证，不能宣称已支持。helper 不是执行任意命令的入口。
 
 相比检查文件后执行 rm，这个模型将权限内容、CAS 版本、操作结果放在同一原子记录中，
 避免检查后内容被替换的窗口。相比每项 access 启动独立 sshd，它不要求为每项访问维护
@@ -36,10 +35,9 @@ P2–P4 模型，不另建控制平面状态机。
 2. guest 协议与 SSH/vsock SPI：接入 `pkg/guesttask/protocol.go`、`worker.go`、
    `pkg/transport`；sshd helper 查询接入 `cmd/sysbox-init/task.go`。记录与输出均不含私钥。
    测试未知版本拒绝、身份与摘要绑定、旧 epoch 拒绝、失去回报后只读恢复。
-3. host/API/runtime：API/Agent 使用 canonical node user 和当前 access 版本构造请求，
-   向 guest 派发正确 boot 的授权；存储与返回版本化配置证据。runtime 本地资源 handler
-   明确拒绝直接执行，删除原 CopyFile/rm 路径，避免本地 worker 绕过 host supervisor。
-   观察必须查询当前配置，不能把历史成功回执当作当前存在。
+3. host/API/runtime：canonical node user 和当前 access 版本构造请求，向 guest 派发
+   正确 boot 的授权；存储与返回版本化配置证据。删除原 CopyFile/rm 路径，观察必须
+   查询当前配置，不能把历史成功回执当作当前存在。
 4. 共享 sshd adapter：明确支持已安装 OpenSSH 的 guest；只写 Sysbox 专属 drop-in，
    检查有效配置、`sshd -t` 和监听状态，持久记录 reload 的结果。拒绝已有第三方
    AuthorizedKeysCommand 冲突；不执行发行版软件包猜测链。
