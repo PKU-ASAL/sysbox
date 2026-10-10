@@ -175,6 +175,13 @@ func (b *LocalBridge) ParentRun(ctx context.Context, id string) (*controlplane.R
 	if id == "" {
 		return nil, fmt.Errorf("parent reset Run ID is required")
 	}
+	parent, err := b.loadResetReturn(id)
+	if err != nil {
+		return nil, err
+	}
+	if parent.ParentID != "" {
+		return parent, nil
+	} // ancestry resolver verifies every earlier return
 	repo, err := b.repository(b.opts.Topology)
 	if err != nil {
 		return nil, err
@@ -198,10 +205,6 @@ func (b *LocalBridge) ParentRun(ctx context.Context, id string) (*controlplane.R
 	}
 	if !found || queued.IsZero() {
 		return nil, fmt.Errorf("parent reset Run %q lacks durable incarnation", id)
-	}
-	parent, err := b.loadResetReturn(id)
-	if err != nil {
-		return nil, err
 	}
 	if parent.Topology != topology || !parent.QueuedAt.Equal(queued) || parent.Revision != revision {
 		return nil, fmt.Errorf("parent reset return evidence has different incarnation")

@@ -11,12 +11,13 @@ import (
 
 // FinishReturnedResetFailure is for the trusted synchronous executor only.
 // A cold journal or a timed-out callback cannot call this to infer termination.
-// The caller holds execution exclusion while reading actions and proving stop.
+// The caller holds execution exclusion while reading actions and proving stop,
+// and verifies every predecessor if original is an ancestor continuation Run.
 func FinishReturnedResetFailure(ctx context.Context, children *RunChildren, execution, original *controlplane.Run, actions []runtime.ActionRecord) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if children == nil || execution == nil || original == nil || execution.Op != "reset" || execution.Status != controlplane.RunFailed || execution.EndedAt.IsZero() || original.Op != "reset" || original.QueuedAt.IsZero() || execution.Topology != original.Topology || (execution.ID != original.ID && execution.ParentID != original.ID) {
+	if children == nil || execution == nil || original == nil || execution.Op != "reset" || execution.Status != controlplane.RunFailed || execution.EndedAt.IsZero() || original.Op != "reset" || original.QueuedAt.IsZero() || execution.Topology != original.Topology || execution.Revision != original.Revision || (execution.ID != original.ID && execution.ParentID == "") {
 		return fmt.Errorf("returned reset identity required")
 	}
 	found := false

@@ -230,20 +230,8 @@ func (e *Executor) executeReset(ctx context.Context, run *controlplane.Run, log 
 			e.bridge.Finish(run, fmt.Errorf("reset continuation requires durable parent checkpoint"))
 			return
 		}
-		parent, err := e.bridge.ParentRun(ctx, run.ParentID)
-		if err != nil || parent == nil || parent.ID != run.ParentID || parent.Topology != run.Topology || parent.Op != "reset" || !parent.Status.IsTerminal() {
-			if err == nil {
-				err = fmt.Errorf("parent reset is missing or still active")
-			}
-			e.bridge.Finish(run, err)
-			return
-		}
-		verifier, ok := e.bridge.(ResetContinuationVerifier)
-		if !ok {
-			e.bridge.Finish(run, fmt.Errorf("reset continuation requires verified prior executor return evidence"))
-			return
-		}
-		if err := verifier.VerifyResetContinuation(ctx, run, parent); err != nil {
+		parent, err := ResolveResetOrigin(ctx, e.bridge, run)
+		if err != nil {
 			e.bridge.Finish(run, err)
 			return
 		}

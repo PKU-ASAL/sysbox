@@ -2,6 +2,7 @@ package agentexec
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,6 +48,19 @@ func TestLocalBridgeParentRunRequiresPersistedIdentityAndLoadsCheckpoint(t *test
 	require.NoError(t, err)
 	require.Equal(t, "parent", cp.RunID)
 	require.NoError(t, b.VerifyResetContinuation(context.Background(), &controlplane.Run{ID: "child", Topology: "lab", ParentID: "parent"}, parent))
+	childRecorder := runtime.NewFileRecorder(b.CheckpointFile("lab", "child"), "child", "lab")
+	require.NoError(t, childRecorder.Begin("reset", &runtime.Plan{Actions: cp.Plan}))
+	childRecorder.Finish(nil)
+	child := &controlplane.Run{ID: "child", Topology: "lab", Op: "reset", ParentID: "parent", QueuedAt: queued.Add(time.Second), Revision: "revision"}
+	b.Finish(child, nil)
+	second := &controlplane.Run{ID: "second", Topology: "lab", Op: "reset", ParentID: "child", Revision: "revision"}
+	origin, err := ResolveResetOrigin(context.Background(), b, second)
+	require.NoError(t, err)
+	require.Equal(t, "parent", origin.ID, "intermediate Run has no own action but must retain its return proof")
+	missing := &controlplane.Run{ID: "before-journal", Topology: "lab", Op: "reset", ParentID: "child", Revision: "revision", QueuedAt: queued.Add(2 * time.Second)}
+	b.Finish(missing, fmt.Errorf("failed before recorder Begin"))
+	_, err = ResolveResetOrigin(context.Background(), b, &controlplane.Run{ID: "third", Topology: "lab", Op: "reset", ParentID: missing.ID, Revision: "revision"})
+	require.ErrorContains(t, err, "return evidence unavailable")
 	raw, err := os.ReadFile(checkpointPath)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(checkpointPath, append(raw, '\n'), 0600))

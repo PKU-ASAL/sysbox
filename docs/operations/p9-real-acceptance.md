@@ -14,8 +14,12 @@ original action Run only after matching revision, signed parent stop evidence
 and committed continuation receipt. Worker requests cannot supply the mapping.
 Lookup, connection and cold dispatcher cancellation share that resolver. File,
 SQLite and real PostgreSQL Run-store tests, cold cancellation, related full race
-suites and review passed. Multi-level parent chains and real two-host guest-task
-continuation remain unverified. These are not real VM continuation acceptance.
+suites and review passed. Multi-level parent traversal now verifies every
+predecessor independently before resolving the root action Run; tests reject
+cycles, changed revisions, active parents and missing intermediate return/host
+proofs. Local persisted return-chain tests passed. Full repeated-failure executor
+integration and real two-host guest-task continuation remain unverified.
+These are not real VM continuation acceptance.
 
 Returned host reset failures now have a restricted signing path: after the
 synchronous executor returns, reacquire execution exclusion, read the original

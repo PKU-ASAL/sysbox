@@ -83,8 +83,12 @@ API verifier 读取并重新验签，而非信任字段存在。旧 Run 没有�
 有匹配父 incarnation 的 continuation receipt，才映射到原 action owner。
 worker 不能指定 owner。查找、连接和冷启动取消均复用同一映射；资源身份与真实
 provider 观察仍独立校验。任务日志保留新执行 Run ID。文件/SQLite/真实 Postgres
-映射回归和冷 dispatcher 取消测试通过，多级 ParentID 续作链尚未支持，双宿主
-后台任务续作 E2E 尚未验收。
+映射回归和冷 dispatcher 取消测试通过。多级 ParentID 现在逐级验证停止证据及
+同拓扑/操作/revision，再返回原 action Run；循环、缺失中间证明、活动前驱均拒绝。
+API 任务映射、executor 续作和宿主安全失败收尾共用这一解析器。本地真实回执链
+和 API 缺失中间签名证明的测试通过，但完整多次失败到恢复的 executor 集成及
+双宿主后台任务续作 E2E 尚未验收。中间执行在 recorder.Begin 前失败、未生成
+返回回执时仍拒绝自动续作，不能借根任务回执绕过。
 
 宿主同步 reset 返回失败时，执行器重新取得 execution lock 并读取原 Run 的
 持久 action。只有非空且 incarnation 匹配、全部处于明确可恢复阶段，并且所有

@@ -115,7 +115,7 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 			defer unlock()
 			original := run
 			if run.ParentID != "" {
-				original, err = h.Bridge.ParentRun(cleanup, run.ParentID)
+				original, err = ResolveResetOrigin(cleanup, h.Bridge, run)
 				if err != nil {
 					return nil, err
 				}

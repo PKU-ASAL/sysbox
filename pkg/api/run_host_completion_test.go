@@ -218,6 +218,11 @@ func assertResetActionRunMapping(t *testing.T, s *Server, parent *controlplane.R
 	owner, err := bridge.ActionRun(ctx, parent.Topology, child.ID)
 	require.NoError(t, err)
 	require.Equal(t, parent.ID, owner)
+	second := child
+	second.ID, second.ParentID = "second-continuation", child.ID
+	require.NoError(t, s.apiStore.SaveRun(ctx, second))
+	_, err = bridge.ActionRun(ctx, parent.Topology, second.ID)
+	require.ErrorContains(t, err, "host completion evidence", "root proof must not bypass a missing intermediate stop")
 	_, err = bridge.ActionRun(ctx, "foreign-topology", child.ID)
 	require.Error(t, err)
 	child.ID, child.Revision = "wrong-revision", "different"

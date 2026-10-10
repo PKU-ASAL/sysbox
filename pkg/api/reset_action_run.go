@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -19,14 +20,8 @@ func (b *ExecutionBridge) ActionRun(ctx context.Context, topology, executionID s
 	if run.ParentID == "" || run.Op != "reset" {
 		return executionID, nil
 	}
-	parent, err := b.server.apiStore.GetRun(ctx, run.ParentID)
+	parent, err := agentexec.ResolveResetOrigin(ctx, b, run)
 	if err != nil {
-		return "", err
-	}
-	if parent == nil || run.Revision != parent.Revision {
-		return "", persistence.ErrConflict
-	}
-	if err := b.VerifyResetContinuation(ctx, run, parent); err != nil {
 		return "", err
 	}
 	repo, err := b.server.actionRepository(topology)
