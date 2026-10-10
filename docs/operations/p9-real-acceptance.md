@@ -1,5 +1,33 @@
 # P9 real acceptance
 
+## Open: primary API switch interrupted Destroy (2026-10-10)
+
+The intended live-Apply failover probe did not meet its timing gate: Apply
+`request-b0d6521f0a2c301cd530c3bcfb5784f1f1f23285c24b4f936ba08c8d2cc492f7`
+finished at `04:45:55.817Z`, before API1 was stopped at `04:46:02Z`. It must not
+be counted as successful running-Apply failover. Destroy was already running
+when the primary stopped, exposing a real failure instead.
+
+Topology: `p9-5213226d26bb`; control evidence:
+`/var/tmp/p9-live-failover-20261010.json`. Destroy Run:
+`op-f03427da1f549134953b257295f39c8af37305770354447e78673f7d72dba0b0`.
+At `04:46:04Z` the host callback was canceled and checkpoint publication failed
+with `context canceled`. The original container
+`7c7bb3e764fd3c36c88adc6554fd07b10bb61e020c8e7da261662acf574c54fc`
+was stopped (exit137), but not removed. The canonical Destroy still reported
+running when the observing client timed out. API1 was restored; both APIs and
+HAProxy are active. No force cleanup, Run rewrite or new Destroy was submitted.
+The original state, host intent and stopped container remain available for recovery.
+
+AuthorityClient.Authorize previously canceled on the first transport EOF.
+It now retries only transport-level failures up to three attempts, spaced
+100 ms, inside the original caller context/watchdog budget. All HTTP rejection
+statuses remain final, as do exhausted attempts/deadlines. Issue, renewal and
+completion mutations are not retried by this change. The EOF regression failed
+before the change; explicit HTTP rejection and deadline tests, full host race
+suite and vet passed. Real failover revalidation and retained Destroy recovery
+are still required; bounded retry alone does not close this failure.
+
 ## Real API proxy outage during a live child (2026-10-10)
 
 On the isolated two-VM deployment, started a 600-second background Apply on

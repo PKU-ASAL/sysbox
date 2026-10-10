@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -68,7 +70,23 @@ func (c AuthorityClient) postJSONLimit(ctx context.Context, path string, value a
 	return nil
 }
 func (c AuthorityClient) Authorize(ctx context.Context, grant controlplane.SignedExecutionGrant) error {
-	return c.post(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grants/authorize", grant, true)
+	// Authorization is a read-side check of this exact existing grant. Retry
+	// connection failures only, without extending the caller's watchdog budget
+	// or replaying issue/renew/stop mutations. Any HTTP rejection is final.
+	for attempt := 0; ; attempt++ {
+		err := c.post(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grants/authorize", grant, true)
+		var transport *url.Error
+		if err == nil || attempt == 2 || ctx.Err() != nil || !errors.As(err, &transport) {
+			return err
+		}
+		delay := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			delay.Stop()
+			return ctx.Err()
+		case <-delay.C:
+		}
+	}
 }
 func (c AuthorityClient) ReportStop(ctx context.Context, receipt controlplane.SignedExecutionStopReceipt) error {
 	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/execution-grants/stopped", receipt, false)
