@@ -1,5 +1,30 @@
 # P9 real acceptance
 
+## Real isolated ENOSPC before resource creation (2026-10-10)
+
+On the execution VM, mounted a new **1 MiB tmpfs** at
+`/var/tmp/sysbox-enospc-20261010`; no root filesystem or database disk was filled.
+The filler received actual ENOSPC. CLI Apply failed writing the initial
+lifecycle aggregate: `.aggregate-459101826: no space left on device`.
+Only a zero-length aggregate lock file remained; Docker inventory contained
+no container for that topology. Failure preceded intent admission/provider work.
+
+After truncating only the generated filler, Apply on the same state path
+succeeded. Container
+`1fcd618eff8707976b65de7102c1aa9e5025d5e5566854abde16cd6ee7dc5618`
+had owner `df212276-89c1-4864-8ed4-a63a55d65da4`, generation 1.
+Normal Destroy succeeded; exact-ID inspection returned no such object and
+owner inventory was empty. All tmpfs files and the failure log were archived
+before unmounting the exact test mount.
+
+Execution VM archive: `/var/tmp/sysbox-enospc-20261010-evidence.tgz`, SHA256
+`865520ee9e95c6d5276eabbf7430227b5859730cf48bdab18ebdf50b652991b8`.
+Reusable fixture: `scripts/acceptance/storage_enospc.sh` and
+`storage_enospc.hcl`. The fixture establishes the initial persistence boundary;
+same-state recovery and independent cleanup checks must follow.
+This does not prove ENOSPC during running effects, host receipt publication
+or PostgreSQL WAL writes. Those remain separate required gates.
+
 ## Destroy evidence preservation correction (2026-10-10)
 
 Inspection of the interrupted Destroy path found two independent correctness
