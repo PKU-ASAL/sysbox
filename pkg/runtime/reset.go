@@ -23,6 +23,16 @@ func ResumeResetPlan(checkpoint *OperationCheckpoint, current *Plan) (*Plan, err
 	if checkpoint == nil || current == nil {
 		return nil, fmt.Errorf("reset resume requires checkpoint and current plan")
 	}
+	for _, plan := range []Plan{{Actions: checkpoint.Plan}, *current} {
+		if err := plan.Validate(); err != nil {
+			return nil, err
+		}
+		for _, action := range plan.Actions {
+			if action.Action != controlplane.PlanActionReset {
+				return nil, fmt.Errorf("reset resume plan contains non-reset action %s", action.Action)
+			}
+		}
+	}
 	fingerprint, err := planActionsSHA256(checkpoint.Plan)
 	if err != nil {
 		return nil, err

@@ -208,6 +208,31 @@ func TestResumeResetPlanRejectsCheckpointFingerprintMismatch(t *testing.T) {
 	require.ErrorContains(t, err, "checkpoint plan fingerprint")
 }
 
+func TestResumeResetPlanRejectsInvalidPlanBeforeSkippingCompletedSteps(t *testing.T) {
+	for _, scenario := range []string{"duplicate-current", "completed-create", "duplicate-completed"} {
+		t.Run(scenario, func(t *testing.T) {
+			g, st := resetTestGraph(t)
+			current, err := BuildResetPlan(g, st, "")
+			require.NoError(t, err)
+			cp := &OperationCheckpoint{Plan: append([]controlplane.PlannedChange(nil), current.Actions...)}
+			switch scenario {
+			case "duplicate-current":
+				current.Actions = append(current.Actions, current.Actions[0])
+			case "completed-create":
+				current.Actions[0].Action = controlplane.PlanActionCreate
+				cp.Plan[0].Action = controlplane.PlanActionCreate
+			case "duplicate-completed":
+				cp.Plan = append(cp.Plan, cp.Plan[0])
+			}
+			cp.Steps = []OperationStep{{Kind: "resource", Resource: cp.Plan[0].Address.String(), Action: controlplane.PlanActionReset, Status: OperationDone}}
+			cp.PlanSHA256, err = planActionsSHA256(cp.Plan)
+			require.NoError(t, err)
+			_, err = ResumeResetPlan(cp, current)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestExecutorResetResumesPersistedProviderHandleWithoutPreparingAgain(t *testing.T) {
 	sub := &portTestSubstrate{name: "reset-resume", coldPlug: true}
 	registerPortTestDriver(t, sub)

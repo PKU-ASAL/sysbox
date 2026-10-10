@@ -43,6 +43,18 @@ persistence package race tests passed; PostgreSQL was not enabled in this run.
 This does not yet resolve admission of missing intents under a different Run
 in the retained old matrix, nor the overall reset recovery workflow.
 
+Independent review of `f940907` also identifies required work for current-format
+records: sequential intent publication can leave a partial accepted batch that
+cannot admit missing actions under a new Run; prepared recovery has no competing
+writer CAS before destroy; repository phase validation rejects regressions but
+does not yet enforce all legal initial/transition combinations. These are open
+correctness issues, not merely missing fault-matrix evidence.
+
+Reset resume plan validation now checks both input plans before filtering
+completed steps, rejecting duplicate addresses and non-reset actions. All three
+regressions failed before the change and runtime package race passed afterwards.
+This input validation fix does not close the three recovery issues above.
+
 `make test-p9-real` is the explicit real environment gate for the current
 distributed runtime slice. It runs the API/Agent completion-loss test, guest
 task supervisor recovery, Docker pause/resume fencing, signed file installation,
