@@ -114,7 +114,9 @@ def deploy(root, binary, database="sysboxp9", deployment="deployment"):
                f"sudo install -m 0600 -o sysboxapi -g sysboxapi /home/p9/{name}.json /etc/sysbox-api/{name}.json && "
                f"sudo install -m 0644 /home/p9/{name}.service /etc/systemd/system/sysbox-{name}.service && "
                f"sudo systemctl daemon-reload && sudo systemctl restart sysbox-{name}")
-    proxy = "global\n  maxconn 512\ndefaults\n  mode tcp\n  timeout connect 5s\n  timeout client 1h\n  timeout server 1h\nfrontend p9\n  bind 10.77.0.10:19870\n  default_backend api\nbackend api\n  server api1 10.77.0.10:19871 check\n  server api2 10.77.0.10:19872 check backup\n"
+    # The default multi-second health window exceeds the host's online
+    # authorization budget. Fail over within the bounded transport retries.
+    proxy = "global\n  maxconn 512\ndefaults\n  mode tcp\n  timeout connect 500ms\n  timeout client 1h\n  timeout server 1h\nfrontend p9\n  bind 10.77.0.10:19870\n  default_backend api\nbackend api\n  default-server inter 100ms fastinter 100ms downinter 100ms fall 1 rise 1\n  server api1 10.77.0.10:19871 check\n  server api2 10.77.0.10:19872 check backup\n"
     stage("control", "p9-proxy.cfg", proxy)
     remote(root, manifest, "control", "sudo install -m 0644 /home/p9/p9-proxy.cfg /etc/haproxy/haproxy.cfg && sudo systemctl restart haproxy && sudo systemctl is-active sysbox-api1 sysbox-api2 haproxy")
 

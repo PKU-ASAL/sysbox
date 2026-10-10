@@ -1,5 +1,50 @@
 # P9 real acceptance
 
+## Real running-child API failover with bounded health detection (2026-10-10)
+
+Added `scripts/acceptance/live_failover.py`: it verifies a unique running child
+and actual populated cgroup, immediately stops API1, requires unchanged
+task/container/Run identities and successful completion read directly from API2,
+then restores API1 in finally. Failure evidence is retained; new checks also
+require API1 still stopped at completion and record restoration errors.
+
+An automatic run on `p9-e28b2ffc3e5e` with default HAProxy health settings
+failed: the child was cancelled. Primary was restored, its canonical signed
+failure was retained, normal Destroy and exact Docker absence verification
+completed, then normal metadata DELETE succeeded. Evidence:
+`/tmp/sysbox-p9-lab-current/p9-e28b2ffc3e5e-live-failover.json` and control VM
+`/var/tmp/p9-live-failover-retry-cleanup-20261010.json`.
+
+Default multi-second health detection exceeded the host's bounded online
+authorization window. The acceptance proxy now uses `inter/fastinter/downinter
+100ms`, `fall 1`, `rise 1`, and `timeout connect 500ms`. Original configuration
+was archived before a validated HAProxy reload. Host authority deadlines and
+explicit rejection semantics were not relaxed. This is a deployment constraint,
+not a promise of seamless failover with arbitrary proxy settings.
+
+With those settings and bounded transport retry, topology `p9-5098f4f6620b`
+passed actual running-child failover:
+
+- API1 stopped at `2026-10-10T05:00:55.721911080Z`, after running-task and
+  populated-cgroup checks.
+- Run `request-f2b1073eef58bf403b8fd1c25be1b5140af474ad8273cf0ff9a9dc8b65ebbbdc`
+  completed on API2 at `05:02:19.630365233Z`, attempt 1, with API-returned
+  durable host completion proof.
+- Child `run-task-270a845ac3f550f78a39679c46d21af268565e1ed0e5a1048a0d23ce75426c10`
+  retained its exact handle and container, was never cancellation-marked,
+  exited with known code 0 and reported confirmed termination.
+- Independent systemd journal confirms API1 restarted only at `05:02:21Z`.
+- Destroy `op-fa5e4b10904a035af1190ef741e7ef25a718d3df49c81a4f0d790df2f38cd994`
+  completed. Exact container `20e5fc5f3190cc273f52ff69125278e0bc3fa35175d76426d876b8534df85cbc`
+  was independently absent; owner `c16c6556-99dd-4979-b79f-6d1cb44bdca0` had
+  no containers. Normal metadata DELETE succeeded.
+
+Evidence: host `/tmp/sysbox-p9-lab-current/p9-5098f4f6620b-live-failover.json`,
+control VM `/var/tmp/p9-live-failover-fast-20261010.json`.
+The earlier unknown Destroy on `p9-5213226d26bb` remains retained and unresolved.
+Full network partition, disk-full, upgrade and interrupted reset continuation
+still require their own acceptance.
+
 ## Open: primary API switch interrupted Destroy (2026-10-10)
 
 The intended live-Apply failover probe did not meet its timing gate: Apply
