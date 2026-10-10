@@ -277,12 +277,12 @@ func TestResetBatchAdmissionRollsBackEveryIntent(t *testing.T) {
 			manager := state.NewManagerWithBackend(r.StateBackend("lab"))
 			st, err := manager.Load()
 			require.NoError(t, err)
-			for _, name := range []string{"first", "second"} {
+			for _, name := range []string{"first", "second", "third"} {
 				st.Resources = append(st.Resources, state.Resource{Address: address.Resource("sysbox_node", name), Driver: "docker", ExternalID: name, OwnerUID: st.TopologyUID, ResourceUID: name, Generation: 1})
 			}
 			require.NoError(t, manager.Save(st))
 			var batch []runtime.ActionRecord
-			for _, res := range st.Resources {
+			for _, res := range st.Resources[:2] {
 				batch = append(batch, runtime.ActionRecord{ID: res.ResourceUID, RunID: "run", Topology: "lab", Resource: res.Address, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", OwnerUID: st.TopologyUID, ResourceUID: res.ResourceUID, Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &res})
 			}
 			bad := append([]runtime.ActionRecord(nil), batch...)
@@ -293,9 +293,46 @@ func TestResetBatchAdmissionRollsBackEveryIntent(t *testing.T) {
 			require.Empty(t, got)
 			require.NoError(t, r.CommitResetIntents(ctx, batch))
 			require.NoError(t, r.CommitResetIntents(ctx, batch), "exact batch retry")
+			require.NoError(t, r.CommitResetIntents(ctx, []runtime.ActionRecord{batch[1], batch[0]}), "retry order does not change membership")
+			require.ErrorIs(t, r.CommitResetIntents(ctx, batch[:1]), ErrConflict, "retry cannot omit an admitted action")
+			replaced := append([]runtime.ActionRecord(nil), batch...)
+			replaced[1].ID = "different-action"
+			require.ErrorIs(t, r.CommitResetIntents(ctx, replaced), ErrConflict, "retry cannot replace an admitted action ID")
+			third := batch[0]
+			third.ID, third.ResourceUID = "third", "third"
+			third.Resource, third.Candidate = st.Resources[2].Address, &st.Resources[2]
+			expanded := append(append([]runtime.ActionRecord(nil), batch...), third)
+			require.ErrorIs(t, r.CommitResetIntents(ctx, expanded), ErrConflict, "retry cannot append another valid target")
 			got, err = r.LoadActions(ctx, "lab")
 			require.NoError(t, err)
 			require.Len(t, got, 2)
+			before := append([]runtime.ActionRecord(nil), got...)
+			for _, field := range []string{"incarnation", "digest", "resource_uid"} {
+				changed := append([]runtime.ActionRecord(nil), batch...)
+				switch field {
+				case "incarnation":
+					for i := range changed {
+						changed[i].RunRevision = "changed"
+					}
+				case "digest":
+					changed[0].DesiredDigest = "changed"
+				case "resource_uid":
+					changed[0].ResourceUID = "foreign"
+				}
+				require.ErrorIs(t, r.CommitResetIntents(ctx, changed), ErrConflict, field)
+				got, err = r.LoadActions(ctx, "lab")
+				require.NoError(t, err)
+				require.Equal(t, before, got, "rejected retry must preserve records")
+			}
+			advanced := got[0]
+			advanced.Phase, advanced.Status = "preparing", runtime.ActionUncertain
+			require.NoError(t, r.CommitActionOutcome(ctx, advanced, nil))
+			before, err = r.LoadActions(ctx, "lab")
+			require.NoError(t, err)
+			require.NoError(t, r.CommitResetIntents(ctx, batch), "original batch replay after progress")
+			got, err = r.LoadActions(ctx, "lab")
+			require.NoError(t, err)
+			require.Equal(t, before, got, "replay must preserve phase and revision")
 		})
 	}
 }

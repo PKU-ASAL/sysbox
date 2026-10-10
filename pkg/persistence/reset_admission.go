@@ -25,6 +25,21 @@ func (r *Repository) CommitResetIntents(ctx context.Context, batch []runtime.Act
 		ids[a.ID], resources[a.Resource.String()] = true, true
 	}
 	return r.update(ctx, first.Topology, func(a *aggregate) error {
+		// An admitted Run has a fixed reset scope. Ordinary retries cannot
+		// repair partial historical batches or expand the original operation.
+		existing := 0
+		for _, old := range a.Actions {
+			if old.RunID != first.RunID || old.Action != controlplane.PlanActionReset {
+				continue
+			}
+			if !ids[old.ID] {
+				return ErrConflict
+			}
+			existing++
+		}
+		if existing != 0 && existing != len(batch) {
+			return ErrConflict
+		}
 		for _, action := range batch {
 			if err := commitActionIntent(a, action); err != nil {
 				return err

@@ -2,6 +2,14 @@
 
 ## Open reset recovery failure (2026-10-10)
 
+Reset batch retries now validate the complete admitted action ID set inside
+the aggregate transaction. Reordering is allowed; omission, replacement and
+expansion are rejected. File, SQLite and real PostgreSQL 16 race tests verify
+these boundaries. The runtime and agentexec package race suites also pass.
+This prevents ordinary retry from repairing a historical partial batch;
+explicit continuation admission and execution ownership remain required before
+the retained heterogeneous reset can be recovered safely.
+
 The heterogeneous lifecycle matrix passed, but the subsequent reset matrix
 failed with a missing Firecracker manifest and a supposedly live PID. Commit
 `b9f77bf` fixes the demonstrated zombie false-positive; Firecracker package race
