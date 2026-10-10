@@ -2,8 +2,11 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrResetContinuationNotFound = errors.New("reset continuation not found")
 
 // ResetContinuationRequest is a complete, immutable admission request. The
 // execution bridge must authenticate the original checkpoint and incarnation,
@@ -32,4 +35,23 @@ type ResetContinuationReceipt struct {
 type ResetContinuationCommitter interface {
 	CommitResetContinuation(context.Context, ResetContinuationRequest) (*ResetContinuationReceipt, error)
 	LoadResetContinuation(context.Context, string, string) (*ResetContinuationReceipt, error)
+}
+
+// ResetContinuationSafe identifies phases whose recorded effects can enter the
+// observation-driven reset engine. It is not evidence that an old writer stopped.
+func (action ActionRecord) ResetContinuationSafe() bool {
+	if action.Status == ActionSucceeded {
+		return action.Phase == "verifying" && action.EffectComplete
+	}
+	if action.Status != ActionIntentCommitted && action.Status != ActionUncertain && action.Status != ActionBlocked {
+		return false
+	}
+	switch action.Phase {
+	case "accepted", "prepared", "destroy_returned", "destroyed":
+		return !action.EffectComplete
+	case "verifying":
+		return action.EffectComplete
+	default:
+		return false
+	}
 }

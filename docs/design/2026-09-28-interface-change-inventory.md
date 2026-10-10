@@ -6,6 +6,19 @@
 
 本文回答一个问题：重构后，哪些接口必须保持，哪些接口可以扩展，哪些接口明确换代。
 
+### Reset 续作与显式数据导入（2026-10-10 实际接口）
+
+内部 runtime 新增 `PrepareResetContinuation` 和 `ContinueReset`，repository 新增
+独立 `ResetContinuationCommitter` 能力及持久 receipt；未找到 receipt 使用
+`ErrResetContinuationNotFound`。只读 recovery wrapper 不继承此受理能力。
+Bridge 的 `LockTopology` 现在接收 context 并返回 unlock/error，调用方必须处理
+锁失败。续作的 CLI/API 可信入口尚未接入，内部方法不构成外部执行授权。
+
+Lifecycle aggregate 当前为 format 5。新 CLI `state import-format4` 默认仅预览；
+显式提交要求 `--apply --offline --source-sha256 ... --archive ...`，保全原字节后
+在写锁内比较并转换，不执行 provider。普通读写不兼容 format 4，不能手改版本号。
+这些变化不修改 substrate 的 Node/Reset SPI。
+
 ### SSH宿主完成证据
 
 `POST /v1/hosts/{agent}/node-operations/{operation}/completed`现在区分SSH与adoption。

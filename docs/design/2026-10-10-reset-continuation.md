@@ -27,12 +27,26 @@ Run 追加成员。清空拓扑时同时清空 receipt。
 精确重试，以及 receipt 损坏和绕过追加成员的拒绝。runtime、Agent、API、CLI
 完整 race 回归、vet 和独立审查通过。这些结果只证明受理事务，不证明 provider 恢复。
 
-## 尚未接入：续作执行入口
+## 已实现：runtime 续作编排
+
+`PrepareResetContinuation` 校验原完整计划、当前配置摘要、原 Run incarnation 和
+持久 action 阶段，只构造可审查请求；缺失节点沿用原 Run 身份，生成 accepted intent。
+已受理的请求从 receipt 读取，重启不另造 action ID。`ContinueReset` 先原子受理，
+再交给已有 reset 阶段 CAS 执行完整范围；只有持久 action 成功才能跳过节点，
+checkpoint 中的完成 step 不能代替它。原 checkpoint 不覆盖，新执行使用独立 recorder。
+
+真实文件/SQLite/Postgres repository 的集成测试模拟三节点、两节点已销毁且一节点
+尚未受理，证明续作只补缺失 intent、不重复销毁，完成后冷重试不重复创建，并保持
+原 checkpoint 字节不变。provider 为模拟实现；这不是异构 VM E2E 验收。
+
+## 尚未接入：CLI/API 可信执行入口
 
 CLI/API 入口必须在读取证据前取得执行锁，验证原 checkpoint 的可信来源、真实
 Run incarnation 和配置/baseline，再确认旧执行者及外部调用已经停止。原 action
-缺少 queued-at/revision 时不能通过猜测补造：底层事务只检查字段一致性，不认证来源。
-计划与 action desired digest 对应关系也必须由执行入口验证。
+缺少 queued-at 时不能通过猜测补造，repository 直接拒绝受理。local CLI 原 Run
+可以没有 revision，必须保留该事实并校验当前配置，不能补造 API revision。
+底层事务检查身份一致性，runtime 检查计划与 action desired digest；可信来源及
+旧执行者停止证明仍必须由 CLI/API 入口建立，不能将这些纯编排方法视为授权。
 
 成功受理后，runtime 使用 receipt 中的固定集合，经已有阶段 CAS 推进；新执行日志
 不得覆盖原 checkpoint。只读 recovery wrapper 不暴露续作写入能力。

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -14,7 +15,7 @@ import (
 // of mutable progress. A receipt can remain valid after any action advances.
 func resetContinuationMembers(req runtime.ResetContinuationRequest) (map[string]runtime.ActionRecord, error) {
 	cp := req.Checkpoint
-	if req.ID == "" || req.TopologyUID == "" || req.ExpectedSerial < 0 || cp.StateSerialBefore < 0 || cp.StateSerialBefore > req.ExpectedSerial || cp.RunID == "" || cp.Operation != "reset" || !topologyName.MatchString(cp.Topology) || len(cp.Plan) == 0 || len(req.Existing) == 0 {
+	if req.ID == "" || req.TopologyUID == "" || req.RunQueuedAt.IsZero() || req.ExpectedSerial < 0 || cp.StateSerialBefore < 0 || cp.StateSerialBefore > req.ExpectedSerial || cp.RunID == "" || cp.Operation != "reset" || !topologyName.MatchString(cp.Topology) || len(cp.Plan) == 0 || len(req.Existing) == 0 {
 		return nil, ErrConflict
 	}
 	if _, err := runtime.ResumeResetPlan(&cp, &runtime.Plan{Actions: cp.Plan}); err != nil {
@@ -100,7 +101,7 @@ func (r *Repository) CommitResetContinuation(ctx context.Context, req runtime.Re
 			if !exists || old.Revision != approved.Revision || !sameRecord(old, approved) {
 				return ErrConflict
 			}
-			if !resetContinuationPhaseSafe(old) {
+			if !old.ResetContinuationSafe() {
 				return runtime.ErrActionUncertain
 			}
 			delete(existing, id)
@@ -131,30 +132,13 @@ func (r *Repository) CommitResetContinuation(ctx context.Context, req runtime.Re
 	return &receipt, nil
 }
 
-func resetContinuationPhaseSafe(action runtime.ActionRecord) bool {
-	if action.Status == runtime.ActionSucceeded {
-		return action.Phase == "verifying" && action.EffectComplete
-	}
-	if action.Status != runtime.ActionIntentCommitted && action.Status != runtime.ActionUncertain && action.Status != runtime.ActionBlocked {
-		return false
-	}
-	switch action.Phase {
-	case "accepted", "prepared", "destroy_returned", "destroyed":
-		return !action.EffectComplete
-	case "verifying":
-		return action.EffectComplete
-	default:
-		return false
-	}
-}
-
 func (r *Repository) LoadResetContinuation(ctx context.Context, topology, runID string) (*runtime.ResetContinuationReceipt, error) {
 	var receipt runtime.ResetContinuationReceipt
 	err := r.update(ctx, topology, func(a *aggregate) error {
 		var exists bool
 		receipt, exists = a.ResetContinuations[runID]
 		if !exists {
-			return ErrNotFound
+			return errors.Join(ErrNotFound, runtime.ErrResetContinuationNotFound)
 		}
 		return nil
 	})

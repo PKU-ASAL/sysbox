@@ -247,3 +247,28 @@ func TestResetContinuationSealedMembershipCannotBeBypassed(t *testing.T) {
 		})
 	}
 }
+
+func TestResetContinuationRequiresRecordedRunIncarnation(t *testing.T) {
+	for _, kind := range []string{"filesystem", "sqlite", "postgres"} {
+		t.Run(kind, func(t *testing.T) {
+			r := resetTestRepository(t, kind)
+			req := continuationFixture(t, r)
+			req.RunQueuedAt = time.Time{}
+			for i := range req.Existing {
+				req.Existing[i].RunQueuedAt = time.Time{}
+			}
+			for i := range req.Missing {
+				req.Missing[i].RunQueuedAt = time.Time{}
+			}
+			require.NoError(t, r.update(context.Background(), "lab", func(a *aggregate) error {
+				for id, action := range a.Actions {
+					action.RunQueuedAt = time.Time{}
+					a.Actions[id] = action
+				}
+				return nil
+			}))
+			_, err := r.CommitResetContinuation(context.Background(), req)
+			require.ErrorIs(t, err, ErrConflict, "missing identity must not be inferred from checkpoint times")
+		})
+	}
+}

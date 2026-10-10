@@ -2,6 +2,15 @@
 
 ## Open reset recovery failure (2026-10-10)
 
+Runtime continuation now prepares original-incarnation intents, reuses durable
+receipts after restart and admits them before entering reset phase CAS. Real
+file/SQLite/PostgreSQL repository integration tests model two destroyed nodes
+and one missing intent, then retry from a new executor: each node is destroyed
+and recreated only once, original action identity/generation is preserved, and
+the original checkpoint bytes remain unchanged. Providers in this test are
+simulated. Runtime/repository/Agent/CLI race regressions passed; authenticated
+CLI/API origin verification and real retained-VM continuation are still open.
+
 The continuation admission primitive now records the complete original request
 and missing intents atomically in aggregate format 5. Normal repository access
 rejects format 4. The retained heterogeneous incident has not been imported or
