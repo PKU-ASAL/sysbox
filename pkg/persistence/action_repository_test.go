@@ -196,18 +196,10 @@ func TestActionOutcomeRejectsStaleJournalRevision(t *testing.T) {
 	}
 }
 func TestResetAcceptedPhaseCannotRegressAfterPrepare(t *testing.T) {
-	for _, kind := range []string{"filesystem", "sqlite"} {
+	for _, kind := range []string{"filesystem", "sqlite", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx := context.Background()
-			var r *Repository
-			var err error
-			if kind == "sqlite" {
-				r, err = OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
-			} else {
-				r, err = OpenFilesystem(t.TempDir())
-			}
-			require.NoError(t, err)
-			defer r.Close()
+			r := resetTestRepository(t, kind)
 			manager := state.NewManagerWithBackend(r.StateBackend("lab"))
 			st, err := manager.Load()
 			require.NoError(t, err)
@@ -248,9 +240,28 @@ func TestResetAcceptedPhaseCannotRegressAfterPrepare(t *testing.T) {
 				invalid := a
 				invalid.EffectComplete = !a.EffectComplete
 				require.Error(t, r.CommitActionOutcome(ctx, invalid, nil), "phase and evidence must agree")
-				require.NoError(t, r.CommitActionOutcome(ctx, a, nil), phase)
 				if phase == "destroying" {
+					start := make(chan struct{})
+					results := make(chan error, 2)
+					for range 2 {
+						go func(action runtime.ActionRecord) {
+							<-start
+							results <- r.CommitActionOutcome(ctx, action, nil)
+						}(a)
+					}
+					close(start)
+					wins := 0
+					for range 2 {
+						if err := <-results; err == nil {
+							wins++
+						} else {
+							require.ErrorIs(t, err, ErrConflict)
+						}
+					}
+					require.Equal(t, 1, wins)
 					require.ErrorIs(t, r.CommitActionOutcome(ctx, a, nil), ErrConflict, "second executor with the same prepared revision cannot claim destroy")
+				} else {
+					require.NoError(t, r.CommitActionOutcome(ctx, a, nil), phase)
 				}
 				a.Revision++
 			}
@@ -259,18 +270,10 @@ func TestResetAcceptedPhaseCannotRegressAfterPrepare(t *testing.T) {
 }
 
 func TestResetBatchAdmissionRollsBackEveryIntent(t *testing.T) {
-	for _, kind := range []string{"filesystem", "sqlite"} {
+	for _, kind := range []string{"filesystem", "sqlite", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx := context.Background()
-			var r *Repository
-			var err error
-			if kind == "sqlite" {
-				r, err = OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
-			} else {
-				r, err = OpenFilesystem(t.TempDir())
-			}
-			require.NoError(t, err)
-			defer r.Close()
+			r := resetTestRepository(t, kind)
 			manager := state.NewManagerWithBackend(r.StateBackend("lab"))
 			st, err := manager.Load()
 			require.NoError(t, err)

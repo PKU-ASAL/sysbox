@@ -100,6 +100,16 @@ itself was not durably committed, `destroying` still remains unknown; this
 change does not manufacture exit evidence for a crashed controller. The phase
 contract tests include `destroy_returned`; runtime/persistence race passed.
 
+The reset admission/phase contract now also runs against real PostgreSQL 16 in
+an isolated schema per test. All filesystem, SQLite and PostgreSQL subtests
+passed under race: invalid second-item admission leaves no intents, exact batch
+retry preserves the two intents, and two concurrent transactions using the same
+prepared revision have exactly one successful destroy claim. Invalid initial
+phases, skipped phases, regressions and contradictory completion flags are
+rejected. The dedicated disposable database is separate from the VM labs.
+These are repository transaction tests, not a successful recovery of the
+retained heterogeneous provider matrix.
+
 `make test-p9-real` is the explicit real environment gate for the current
 distributed runtime slice. It runs the API/Agent completion-loss test, guest
 task supervisor recovery, Docker pause/resume fencing, signed file installation,
