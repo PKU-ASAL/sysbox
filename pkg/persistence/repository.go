@@ -286,6 +286,9 @@ func (r *Repository) CommitActionIntent(ctx context.Context, action runtime.Acti
 	if action.Status != runtime.ActionIntentCommitted || action.Revision != 0 {
 		return fmt.Errorf("new action must be intent_committed")
 	}
+	if action.Action == controlplane.PlanActionReset && (action.Phase != "accepted" || action.EffectComplete) {
+		return fmt.Errorf("%w: reset intent must begin accepted without effects", ErrConflict)
+	}
 	return r.update(ctx, action.Topology, func(a *aggregate) error {
 		return commitActionIntent(a, action)
 	})
@@ -362,8 +365,14 @@ func applyActionOutcome(a *aggregate, action runtime.ActionRecord, patch *runtim
 	if old.EffectComplete && !action.EffectComplete || old.Candidate != nil && action.Candidate == nil {
 		return fmt.Errorf("%w: recovery evidence cannot be discarded", ErrConflict)
 	}
-	if action.Action == controlplane.PlanActionReset && resetPhaseOrder(action.Phase) < resetPhaseOrder(old.Phase) {
-		return fmt.Errorf("%w: reset phase cannot regress", ErrConflict)
+	if action.Action == controlplane.PlanActionReset {
+		before, after := resetPhaseOrder(old.Phase), resetPhaseOrder(action.Phase)
+		if before < 1 || after < before || after > before+1 {
+			return fmt.Errorf("%w: reset phase must advance one step or remain unchanged", ErrConflict)
+		}
+		if action.EffectComplete != (action.Phase == "verifying") || action.Status == runtime.ActionSucceeded && !action.EffectComplete {
+			return fmt.Errorf("%w: reset completion requires verifying phase evidence", ErrConflict)
+		}
 	}
 	switch action.Status {
 	case runtime.ActionSucceeded, runtime.ActionUncertain, runtime.ActionBlocked:

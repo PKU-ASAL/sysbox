@@ -70,6 +70,16 @@ was not exercised in this run. This addresses new-batch partial publication;
 the retained old partial batch, competing prepared destroy recovery and strict
 repository phase transition constraints remain open.
 
+The shared repository now rejects new reset intents unless they start in
+`accepted` without effect-complete evidence. Reset outcomes may remain in the
+same phase or advance exactly one phase; `verifying` requires effect-complete
+evidence, and earlier phases cannot claim it. Filesystem/SQLite tests cover all
+invalid initial phases, skipped phases, inconsistent completion flags, phase
+regression and the full legal sequence. Runtime/persistence package race and
+vet passed. This does not establish exclusive ownership of an in-flight
+destroy callback; that execution-boundary issue remains open, along with the
+retained old partial batch and the real reset matrix recovery.
+
 `make test-p9-real` is the explicit real environment gate for the current
 distributed runtime slice. It runs the API/Agent completion-loss test, guest
 task supervisor recovery, Docker pause/resume fencing, signed file installation,
