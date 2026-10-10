@@ -18,6 +18,11 @@ AuthorizedKeysCommand 只读入口不泄漏部分 key；真实独立 sshd + Dock
 管理员 key、受管 key 轮换、旧 key 失效、当前代删除及另一项访问保留。host/API canonical
 dispatch、共享 sshd drop-in 管理和跨宿主重启仍未完成，不能据此关闭 P7。
 
+2026-10-10 runtime 旧路径清理：`sysbox_ssh_access` runtime handler 不再直接
+CopyFile/rm；本地执行明确返回 `ErrConvergenceUnsupported`，强制使用已有 API→Agent→
+host supervisor 的签名 node-operation 路由。这样不会出现同一资源同时存在本地裸文件链和
+远端受 fencing 链；canonical dispatch 的完整 state completion 仍待接入。
+
 真实双VM正常reset及后台task：独立新库部署后，普通Apply→Reset→Destroy及带45秒
 后台task的同链路均通过。后台task确认gen1→gen2、exit0、termination confirmed、
 reported；销毁后按两代精确Docker ID及owner UID独立确认缺失，正常metadata DELETE
