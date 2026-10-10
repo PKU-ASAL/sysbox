@@ -2,6 +2,11 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+Reset续作受理：aggregate现为format5，完整scope/action版本与缺失intent在同一事务
+受理，原请求receipt固定成员并支持进度推进后的精确重试。普通新reset不得接管旧Run。
+format4常规读写明确拒绝；保留的异构故障现场未修改，专用verified import、执行入口
+和真实reset恢复仍未完成。后文format4为历史阶段记录，不能据此判断当前可读格式。
+
 P7目标身份修复：SSH coordinator不再误把topology名称与UID比较；request摘要、signed
 scope和外层socket target分别匹配，command嵌套拓扑/节点也校验。名称不同于UID的
 Apply/回执恢复回归及target篡改拒绝通过。这是SSH协议接入修复，不关闭共享sshd、

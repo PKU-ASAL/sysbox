@@ -27,18 +27,19 @@ var (
 	ErrUnsupportedVersion = errors.New("unsupported repository version")
 )
 
-const FormatVersion = 4
+const FormatVersion = 5
 
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
-	Restores  map[string]SnapshotRestoreReceipt `json:"restores"`
-	Snapshots map[string]aggregateSnapshot      `json:"snapshots"`
-	Format    int                               `json:"format"`
-	Serial    int64                             `json:"serial"`
-	State     *state.State                      `json:"state"`
-	Actions   map[string]runtime.ActionRecord   `json:"actions"`
-	UpdatedAt time.Time                         `json:"updated_at"`
+	ResetContinuations map[string]runtime.ResetContinuationReceipt `json:"reset_continuations"`
+	Restores           map[string]SnapshotRestoreReceipt           `json:"restores"`
+	Snapshots          map[string]aggregateSnapshot                `json:"snapshots"`
+	Format             int                                         `json:"format"`
+	Serial             int64                                       `json:"serial"`
+	State              *state.State                                `json:"state"`
+	Actions            map[string]runtime.ActionRecord             `json:"actions"`
+	UpdatedAt          time.Time                                   `json:"updated_at"`
 }
 type backend interface {
 	update(context.Context, string, func(*aggregate) error) error
@@ -79,7 +80,7 @@ func (r *Repository) ListTopologies(ctx context.Context) ([]state.TopologyMetada
 	return out, nil
 }
 func newAggregate() *aggregate {
-	return &aggregate{Format: FormatVersion, State: &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}, Actions: map[string]runtime.ActionRecord{}, Snapshots: map[string]aggregateSnapshot{}, Restores: map[string]SnapshotRestoreReceipt{}}
+	return &aggregate{Format: FormatVersion, State: &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}, Actions: map[string]runtime.ActionRecord{}, Snapshots: map[string]aggregateSnapshot{}, Restores: map[string]SnapshotRestoreReceipt{}, ResetContinuations: map[string]runtime.ResetContinuationReceipt{}}
 }
 func decodeAggregate(raw []byte) (*aggregate, error) {
 	var header struct {
@@ -107,7 +108,7 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 // Validate both loaded records and proposed mutations. JSON syntax alone does
 // not make identity, journal revision, or recovery evidence trustworthy.
 func validateAggregate(a *aggregate, topology string) error {
-	if a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Restores == nil || a.Serial < 0 {
+	if a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Restores == nil || a.ResetContinuations == nil || a.Serial < 0 {
 		return ErrCorruptRecord
 	}
 	for id, receipt := range a.Restores {
@@ -155,6 +156,28 @@ func validateAggregate(a *aggregate, topology string) error {
 			}
 			if !c.Address.Equal(action.Resource) || c.OwnerUID != action.OwnerUID || c.ResourceUID != action.ResourceUID || c.Generation != want || want < 1 {
 				return fmt.Errorf("%w: action candidate identity mismatch", ErrCorruptRecord)
+			}
+		}
+	}
+	for runID, receipt := range a.ResetContinuations {
+		if runID != receipt.Request.Checkpoint.RunID || receipt.AdmittedAt.IsZero() || receipt.Request.TopologyUID != a.State.TopologyUID || receipt.Request.ExpectedSerial > a.Serial {
+			return ErrCorruptRecord
+		}
+		members, err := resetContinuationMembers(receipt.Request)
+		if err != nil {
+			return ErrCorruptRecord
+		}
+		for id, original := range members {
+			current, exists := a.Actions[id]
+			if !exists || !sameIntent(original, current) {
+				return ErrCorruptRecord
+			}
+		}
+		for id, action := range a.Actions {
+			if action.RunID == runID {
+				if _, exists := members[id]; !exists {
+					return ErrCorruptRecord
+				}
 			}
 		}
 	}
@@ -299,6 +322,9 @@ func commitActionIntent(a *aggregate, action runtime.ActionRecord) error {
 		if sameIntent(old, action) {
 			return nil
 		}
+		return ErrConflict
+	}
+	if _, exists := a.ResetContinuations[action.RunID]; exists {
 		return ErrConflict
 	}
 	if a.State.TopologyUID != action.OwnerUID || a.Serial != action.ExpectedSerial || action.ExpectedSerial != action.StateSerial {
@@ -578,6 +604,7 @@ func resetAggregate(a *aggregate) error {
 	a.Actions = map[string]runtime.ActionRecord{}
 	a.Snapshots = map[string]aggregateSnapshot{}
 	a.Restores = map[string]SnapshotRestoreReceipt{}
+	a.ResetContinuations = map[string]runtime.ResetContinuationReceipt{}
 	a.Serial = 0
 	a.UpdatedAt = time.Now().UTC()
 	return nil

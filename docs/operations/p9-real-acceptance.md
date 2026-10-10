@@ -2,6 +2,13 @@
 
 ## Open reset recovery failure (2026-10-10)
 
+The continuation admission primitive now records the complete original request
+and missing intents atomically in aggregate format 5. Normal repository access
+rejects format 4. The retained heterogeneous incident has not been imported or
+modified: do not run current lifecycle commands against it until the explicit
+verified import and continuation execution entry point are implemented. See
+[reset continuation](../design/2026-10-10-reset-continuation.md).
+
 CLI and Agent lifecycle execution now acquires a repository-scoped execution
 lock before reading workspace/state, independent of aggregate transaction
 locks. File/SQLite use persistent sidecar lock files; PostgreSQL uses a dedicated

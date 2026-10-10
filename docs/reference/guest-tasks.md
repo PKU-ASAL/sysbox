@@ -146,7 +146,9 @@ its immutable outbox seed. Cancellation keeps queued/running status, blocks new
 grants and renewals, and revokes issued grants. SQL commits all three together;
 file storage commits intent/outbox together and recovers interrupted authority
 publication from that record. This does not establish host stop evidence.
-Guest file format 2, lifecycle aggregate 4 and authority format 2 are unchanged;
+Guest file format 2 and authority format 2 are unchanged. Lifecycle aggregates
+now require format 5 for reset continuation receipts; normal access rejects
+format 4, and verified import of retained recovery evidence is still pending.
 earlier execution formats and API schemas require explicit rebuilding, with no
 compatibility reader. Host task records now use version 3 and reject older versions;
 rebuild old task data explicitly. Worker execution completion is removed; only
