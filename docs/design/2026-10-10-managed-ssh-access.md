@@ -134,9 +134,11 @@ SSHMutation 构造摘要，核对内外层 agent/action/resource/generation、�
 在线授权复核同一 source，因此即使签名有效也不能替换原 CAS revision 的摘要。
 命令退休、租约失效、旧 attempt 均不能重新签发。测试预置已受理 command，尚不证明
 公开业务受理接口已能创建该 command。
-当前 source 验证 command 内的 operation 快照；公开派发启用前，还需将独立
-NodeOperation 的终态/撤销/替换检查纳入同一授权读写边界，不能以旧 queued 快照
-长期替代当前操作状态。
+source 现同时读取 command 对应的当前 NodeOperation，检查请求、身份、创建时间及
+queued/running 状态。文件适配器在 authority/command 锁内读取，SQLite 在同一写事务
+读取，Postgres 在同一 authority 事务使用 MVCC 读取 operation，避免新增相反的行锁
+顺序。语义拒绝只推进已有 authority 时间下界，不扩展 command 租约或签发授权。
+公开派发前仍需完成并发完成/续租的锁顺序验收；这不是全部 writer 已隔离的声明。
 共享 codec 同时拒绝 queued/running 预置 SSHResult，raw 创建与原子 dispatch 都执行
 相同检查；普通 CAS 不得推进 guest SSH 终态。完成继续精确匹配 command attempt，
 不同受理轮次不自动套用旧回执；生产重新投递语义仍需在派发接入时完整验证。

@@ -111,6 +111,11 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 			current = record
 		}
 		return persistence.FilesystemExecutionGrantStorage(store.runsDir).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+			if err := b.checkGuestSSHSource(current, func(id string) (*controlplane.NodeOperation, error) {
+				return store.GetNodeOperation(ctx, id)
+			}); err != nil {
+				return nil, err
+			}
 			if err := b.checkGuestExecutionSource(current, func(id string) (*controlplane.GuestExecution, error) {
 				return store.GetGuestExecution(ctx, id)
 			}); err != nil {
@@ -180,6 +185,18 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 		var raw []byte
 		err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_execution_authority WHERE id='authority'").Scan(&raw)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err := b.checkGuestSSHSource(current, func(id string) (*controlplane.NodeOperation, error) {
+			var data []byte
+			if err := conn.QueryRowContext(ctx, "SELECT data FROM sysbox_node_operations WHERE id=?", id).Scan(&data); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil, persistence.ErrNotFound
+				}
+				return nil, err
+			}
+			return persistence.DecodeNodeOperation(data)
+		}); err != nil {
 			return err
 		}
 		if err := b.checkGuestExecutionSource(current, func(id string) (*controlplane.GuestExecution, error) {
@@ -256,6 +273,21 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 				return err
 			}
 			current = record
+		}
+		// No operation row lock here: completion locks operation -> command ->
+		// authority. MVCC reads avoid inverting that order. Completion cannot
+		// commit its result/release until this authority transaction finishes.
+		if err := b.checkGuestSSHSource(current, func(id string) (*controlplane.NodeOperation, error) {
+			var data []byte
+			if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_node_operations WHERE id=$1", id).Scan(&data); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil, persistence.ErrNotFound
+				}
+				return nil, err
+			}
+			return persistence.DecodeNodeOperation(data)
+		}); err != nil {
+			return err
 		}
 		if err := b.checkGuestExecutionSource(current, func(id string) (*controlplane.GuestExecution, error) {
 			var data []byte

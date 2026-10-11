@@ -82,6 +82,9 @@ func TestGuestSSHGrantHTTPBindsAcceptedCASAndRejectsPayloadOverride(t *testing.T
 		}
 		path := "/v1/agents/agent/commands/command/execution-grant"
 		proof := ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: leased.LeaseOwner, Attempt: leased.Attempt, BootID: "guest-boot"}
+		require.Equal(t, 409, post(path, proof).Code, "a command snapshot alone cannot authorize a missing operation")
+		op.CommandID = command.ID
+		require.NoError(t, store.CreateNodeOperation(ctx, op))
 		response := post(path, proof)
 		require.Equal(t, 200, response.Code, response.Body.String())
 		var signed controlplane.SignedExecutionGrant

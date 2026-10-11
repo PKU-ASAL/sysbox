@@ -1,5 +1,21 @@
 # P9 real acceptance
 
+## Current SSH operation revalidation during grants (2026-10-11)
+
+Issuance/authorization/renewal now read the current guest SSH NodeOperation in
+the authority adapter, rather than relying solely on a queued command snapshot.
+Missing operation, terminal status, changed mutation, incarnation, node, command
+or resource generation reject the source. A semantic rejection retains the
+durable authority clock floor and cannot extend the delivery lease.
+
+The authenticated grant regression first reproduced signing for a missing
+operation, then passed after the check was added. All guest SSH HTTP tests ran
+with race on filesystem, SQLite and an isolated real PostgreSQL 16 instance.
+Direct rule tests cover terminal, missing, replaced and prepopulated-result
+operations. This does not close the preexisting PostgreSQL completion/issuance
+lock-order inversion; concurrent completion and renewal need correction before
+production admission/dispatch is enabled.
+
 ## Guest SSH command-backed grant issuance (2026-10-10)
 
 The production command execution-grant endpoint now derives guest SSH grants
