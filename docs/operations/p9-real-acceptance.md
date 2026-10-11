@@ -1,5 +1,27 @@
 # P9 real acceptance
 
+## PostgreSQL host completion/issuance lock ordering (2026-10-11)
+
+Host node-operation completion now acquires the authority row before operation
+and command rows, retaining the same authority snapshot until the result and
+stop transition commit. Previously it held the command row while waiting for
+authority, the reverse of grant issuance and renewal.
+
+The regression holds authority in an independent transaction, starts the real
+completion path, and checks `pg_blocking_pids` to prove it is waiting. The issuer
+then locks command with NOWAIT: before the fix this deterministically failed
+with SQLSTATE 55P03, after the fix it succeeds. On releasing authority, the
+deliberately invalid completion receipt is rejected and the operation remains
+unchanged. This proves the lock relationship and rollback; successful receipt
+commit is covered separately by the three-backend SSH completion regressions.
+
+The focused real PostgreSQL race regression passed, together with local,
+SQLite and real PostgreSQL guest SSH/node completion tests. Worker completion
+does not acquire authority and retains its previous path. This closes this
+specific lock inversion, not the remaining SSH admission/dispatch workflow.
+The full API race suite also passed with the isolated real PostgreSQL enabled
+(97.170 seconds), and API vet passed.
+
 ## Current SSH operation revalidation during grants (2026-10-11)
 
 Issuance/authorization/renewal now read the current guest SSH NodeOperation in

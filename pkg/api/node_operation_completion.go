@@ -231,6 +231,19 @@ func (s *postgresAPIStore) completeNodeOperation(ctx context.Context, agent, id 
 		defer cancel()
 		_ = tx.Rollback(cleanup)
 	}()
+	// Host completion must acquire authority before any operation/command
+	// locks. Grant issuance holds authority before command; the reverse order
+	// allows completion and renewal to deadlock. Keep this same authority
+	// snapshot locked through the result and stop-receipt commit.
+	var authority []byte
+	if receipt != nil {
+		if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, persistence.ErrNotFound
+			}
+			return nil, err
+		}
+	}
 	var raw []byte
 	if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_node_operations WHERE id=$1 FOR UPDATE", id).Scan(&raw); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -267,10 +280,6 @@ func (s *postgresAPIStore) completeNodeOperation(ctx context.Context, agent, id 
 			return nil, e
 		}
 		sum := sha256.Sum256(rawReceipt)
-		var authority []byte
-		if e = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); e != nil {
-			return nil, e
-		}
 		nextAuthority, e := persistence.ApplyHostStopAuthority(authority, receipt.Grant, fmt.Sprintf("%x", sum[:]))
 		if e != nil {
 			return nil, e

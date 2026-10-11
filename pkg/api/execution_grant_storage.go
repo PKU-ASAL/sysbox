@@ -274,8 +274,8 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 			}
 			current = record
 		}
-		// No operation row lock here: completion locks operation -> command ->
-		// authority. MVCC reads avoid inverting that order. Completion cannot
+		// No operation row lock here: host completion locks authority before
+		// operation/command. MVCC reads avoid adding another lock edge. Completion cannot
 		// commit its result/release until this authority transaction finishes.
 		if err := b.checkGuestSSHSource(current, func(id string) (*controlplane.NodeOperation, error) {
 			var data []byte

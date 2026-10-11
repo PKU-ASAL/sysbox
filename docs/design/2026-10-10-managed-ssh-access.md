@@ -138,7 +138,10 @@ source 现同时读取 command 对应的当前 NodeOperation，检查请求、�
 queued/running 状态。文件适配器在 authority/command 锁内读取，SQLite 在同一写事务
 读取，Postgres 在同一 authority 事务使用 MVCC 读取 operation，避免新增相反的行锁
 顺序。语义拒绝只推进已有 authority 时间下界，不扩展 command 租约或签发授权。
-公开派发前仍需完成并发完成/续租的锁顺序验收；这不是全部 writer 已隔离的声明。
+Postgres host completion 已改为 authority→operation→command，与签发/续租一致先取
+authority。确定性交错测试持有 authority 后启动真实完成流程，核验数据库实际等待关系，
+并证明 issuer 仍能取得 command 行；无效回执在解除阻塞后回滚且不改变操作。
+这关闭已发现的反向等待，不是全部 writer 已隔离或 SSH 端到端已完成的声明。
 共享 codec 同时拒绝 queued/running 预置 SSHResult，raw 创建与原子 dispatch 都执行
 相同检查；普通 CAS 不得推进 guest SSH 终态。完成继续精确匹配 command attempt，
 不同受理轮次不自动套用旧回执；生产重新投递语义仍需在派发接入时完整验证。
