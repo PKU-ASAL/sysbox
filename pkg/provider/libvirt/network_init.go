@@ -91,7 +91,7 @@ func (s *Substrate) ObserveGuestNetwork(ctx context.Context, handle substrate.No
 
 func configureWindowsGuestNetwork(ctx context.Context, hs *HandleState) error {
 	conn := &qgaConnection{domain: hs.DomainName}
-	if err := conn.WaitReady(ctx, 3*time.Minute); err != nil {
+	if err := conn.WaitReady(ctx, 10*time.Minute); err != nil {
 		return err
 	}
 	for _, bridge := range hs.Bridges {

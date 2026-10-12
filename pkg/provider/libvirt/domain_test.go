@@ -1,6 +1,7 @@
 package libvirt
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 
@@ -78,5 +79,23 @@ func TestParseMiB(t *testing.T) {
 		if got != c.want {
 			t.Errorf("parseMiB(%q) = %d, want %d", c.in, got, c.want)
 		}
+	}
+}
+
+func TestGuestFamilyFromDomainXML(t *testing.T) {
+	var windows domainXML
+	if err := xml.Unmarshal([]byte(`<domain><genid/><devices><channel type="unix"><target type="virtio" name="org.qemu.guest_agent.0"/></channel></devices></domain>`), &windows); err != nil {
+		t.Fatal(err)
+	}
+	if got := guestFamilyFromDomainXML(windows); got != substrate.GuestFamilyWindows {
+		t.Fatalf("Windows domain detected as %q", got)
+	}
+
+	var linux domainXML
+	if err := xml.Unmarshal([]byte(`<domain><devices><disk device="disk"><target bus="virtio" dev="vda"/></disk></devices></domain>`), &linux); err != nil {
+		t.Fatal(err)
+	}
+	if got := guestFamilyFromDomainXML(linux); got != substrate.GuestFamilyLinux {
+		t.Fatalf("Linux domain detected as %q", got)
 	}
 }

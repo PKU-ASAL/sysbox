@@ -46,6 +46,28 @@ func VariableBindings(vars []VariableBlock, inputs map[string]string) (map[strin
 	return bindings, nil
 }
 
+// NonSensitiveInputValues returns the subset of apply inputs safe to retain
+// in state for read-only projections. Undeclared and sensitive inputs are
+// omitted; callers must never persist the original input map.
+func NonSensitiveInputValues(vars []VariableBlock, inputs map[string]string) map[string]string {
+	if len(inputs) == 0 {
+		return nil
+	}
+	out := make(map[string]string)
+	for _, vb := range vars {
+		if vb.Sensitive {
+			continue
+		}
+		if value, ok := inputs[vb.Name]; ok {
+			out[vb.Name] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // InjectVariables binds var.<name> into an existing eval context from the
 // variable blocks and the apply-time inputs. Sensitive variables bind to their
 // secret://input/<name> reference, so the plaintext never enters the context

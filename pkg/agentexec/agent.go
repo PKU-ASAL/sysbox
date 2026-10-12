@@ -637,7 +637,7 @@ type remoteBridge struct {
 }
 
 func (b remoteBridge) ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error {
-	if run != nil && b.reporter.APIURL != "" && b.reporter.ID != "" && topologyHasFirecracker(ctx, b.Bridge, run.Topology) {
+	if run != nil && b.reporter.APIURL != "" && b.reporter.ID != "" && topologyHasVM(ctx, b.Bridge, run.Topology) {
 		resources, err := observeTopology(ctx, b.reporter.ID, b.Bridge, run.Topology)
 		if err != nil {
 			return err
@@ -649,7 +649,7 @@ func (b remoteBridge) ReportRunComplete(ctx context.Context, run *controlplane.R
 	return b.reporter.ReportRunComplete(ctx, run, projection)
 }
 
-func topologyHasFirecracker(ctx context.Context, bridge Bridge, topology string) bool {
+func topologyHasVM(ctx context.Context, bridge Bridge, topology string) bool {
 	if bridge == nil || topology == "" {
 		return false
 	}
@@ -658,7 +658,7 @@ func topologyHasFirecracker(ctx context.Context, bridge Bridge, topology string)
 		return false
 	}
 	st, err := mgr.LoadWithContext(ctx)
-	return err == nil && stateHasFirecracker(st)
+	return err == nil && stateHasVM(st)
 }
 
 func (opts Options) ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error {
@@ -684,7 +684,7 @@ func (opts Options) ReportResourceProjection(ctx context.Context, projection con
 	// Session freshness is needed for VM observations. Keep legacy Docker
 	// projection payloads unchanged.
 	for _, resource := range append(append([]controlplane.ResourceHealth{}, projection.Resources...), projection.Health.Resources...) {
-		if resource.Provider == "firecracker" {
+		if resource.Provider == "firecracker" || resource.Provider == "libvirt" {
 			projection.SessionID = opts.Labels[controlplane.AgentSessionLabel]
 			break
 		}

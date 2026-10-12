@@ -3,6 +3,7 @@ package libvirt
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -326,14 +327,25 @@ func (s *Substrate) ReadNode(ctx context.Context, id string) (substrate.NodeHand
 			uuid = strings.TrimSpace(strings.TrimPrefix(line, "UUID:"))
 		}
 	}
-	hs := &HandleState{DomainName: id}
+	guestFamily := substrate.GuestFamilyUnknown
+	if xmlOut, xmlErr := exec.CommandContext(ctx, "virsh", "dumpxml", id).CombinedOutput(); xmlErr == nil {
+		var domain domainXML
+		if xml.Unmarshal(xmlOut, &domain) == nil {
+			guestFamily = guestFamilyFromDomainXML(domain)
+		}
+	}
+	hs := &HandleState{DomainName: id, GuestFamily: guestFamily}
 	if uuid == "" {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt: domain %q: could not extract UUID from dominfo", id)
+	}
+	connKind := substrate.ConnKindSSH
+	if guestFamily == substrate.GuestFamilyWindows {
+		connKind = substrate.ConnKindQGA
 	}
 	return substrate.NodeHandle{
 		ID:       uuid,
 		Provider: hs,
-		Conn:     substrate.ConnInfo{Kind: substrate.ConnKindSSH},
+		Conn:     substrate.ConnInfo{Kind: connKind},
 	}, nil
 }
 

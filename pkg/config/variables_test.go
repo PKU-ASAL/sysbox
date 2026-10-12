@@ -118,3 +118,16 @@ func TestVariableBindingsUntypedInputStaysString(t *testing.T) {
 	require.Equal(t, cty.String, bindings["n"].Type())
 	require.Equal(t, "2", bindings["n"].AsString())
 }
+
+func TestNonSensitiveInputValuesFiltersSensitiveAndUndeclared(t *testing.T) {
+	vars := []VariableBlock{
+		varBlock(t, "team_index", ""),
+		varBlock(t, "flag", "sensitive = true"),
+	}
+	got := NonSensitiveInputValues(vars, map[string]string{
+		"team_index": "16",
+		"flag":       "secret-value",
+		"extra":      "ignore-me",
+	})
+	require.Equal(t, map[string]string{"team_index": "16"}, got)
+}

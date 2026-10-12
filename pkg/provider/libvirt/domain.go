@@ -168,6 +168,19 @@ type BridgeAttach struct {
 	Gateway    string
 }
 
+// guestFamilyFromDomainXML recognizes the explicit markers emitted for Windows
+// guests. Linux domains keep the legacy SSH path; an unmarked imported domain
+// is handled conservatively by ReadNode as an unknown/SSH guest.
+func guestFamilyFromDomainXML(domain domainXML) substrate.GuestFamily {
+	if domain.GenID != nil {
+		return substrate.GuestFamilyWindows
+	}
+	if channel := domain.Devices.Channel; channel != nil && channel.Target.Name == "org.qemu.guest_agent.0" {
+		return substrate.GuestFamilyWindows
+	}
+	return substrate.GuestFamilyLinux
+}
+
 // GenerateDomainXML produces the virsh-compatible domain XML for the given spec.
 func GenerateDomainXML(spec DomainSpec) (string, error) {
 	windows := spec.GuestFamily == substrate.GuestFamilyWindows

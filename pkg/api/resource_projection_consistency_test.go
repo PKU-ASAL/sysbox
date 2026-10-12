@@ -93,3 +93,20 @@ func TestAgentRestartInvalidatesFirecrackerResourceHealth(t *testing.T) {
 	require.NoError(t, s.apiStore.SaveResourceProjection(ctx, proj))
 	require.Equal(t, controlplane.ResourceHealthHealthy, s.authoritativeTopologyHealth(ctx, "lab", st).Status)
 }
+
+func TestLibvirtTopologyHealthUsesAgentProjection(t *testing.T) {
+	ctx := context.Background()
+	s := NewServer(t.TempDir(), t.TempDir())
+	st := &state.State{Meta: state.StateMeta{Serial: 4}, Resources: []state.Resource{
+		{Address: address.Resource("sysbox_network", "team"), Driver: "network", ExternalID: "sysbox-net-team"},
+		{Address: address.Resource("sysbox_node", "dc"), Driver: "libvirt", ExternalID: "dc-uuid"},
+	}}
+	projection := controlplane.ResourceProjection{Topology: "lab", Serial: 4, ObservedAt: time.Now(), Resources: []controlplane.ResourceHealth{
+		{Resource: "sysbox_network.team", Type: "sysbox_network", Name: "team", Provider: "network", Status: controlplane.ResourceHealthHealthy},
+		{Resource: "sysbox_node.dc", Type: "sysbox_node", Name: "dc", Provider: "libvirt", Status: controlplane.ResourceHealthHealthy, Observation: &substrate.NodeObservation{ExternalID: "dc-uuid"}},
+	}}
+	require.NoError(t, s.apiStore.SaveResourceProjection(ctx, projection))
+	health := s.authoritativeTopologyHealth(ctx, "lab", st)
+	require.Equal(t, controlplane.ResourceHealthHealthy, health.Status)
+	require.Len(t, health.Resources, 2)
+}
