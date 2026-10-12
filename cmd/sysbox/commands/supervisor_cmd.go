@@ -116,6 +116,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	server.RunEffect = hostRun.Execute
 	server.RunRecovery = hostRun.Recover
 	server.SSH = &hostsupervisor.SSHAccessCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "ssh-access"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Report: authority.ReportNodeOperation, Authorize: authority.Authorize}
+	server.SSHGuest = &hostsupervisor.SSHGuestDispatcher{Dispatcher: dispatcher, Report: authority.ReportNodeOperation}
 	server.SSHApply = func(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 		target, err := resolver.Resolve(ctx, hostsupervisor.TargetRef{Topology: req.Topology, Node: req.Node, Scope: grant.Grant.Scope})
 		if err != nil {

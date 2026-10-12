@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -9,6 +10,8 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type NodeOperationService struct {
@@ -176,12 +179,60 @@ func (s *NodeOperationService) SSHAccess(ctx context.Context, topology string, n
 	if res.OwnerUID != st.TopologyUID {
 		return controlplane.NodeOperation{}, fmt.Errorf("node ownership differs from topology")
 	}
+	if req.User == "" {
+		user, err := canonicalSSHUserFromResource(*res)
+		if err != nil {
+			return controlplane.NodeOperation{}, err
+		}
+		req.User = user
+	}
+	if req.User == "" {
+		return controlplane.NodeOperation{}, fmt.Errorf("canonical SSH user unavailable")
+	}
+	mutation := req.Mutation(req.User, operation == "ssh_access_delete")
+	persistedOperation := "guest_ssh_access_apply"
+	if operation == "ssh_access_delete" {
+		persistedOperation = "guest_ssh_access_delete"
+	}
 	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{res.Driver}, "")
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	op := prepareNodeOperation(controlplane.NodeOperation{ID: req.ID, Topology: topology, Workspace: topology, Operation: operation, Node: node, Substrate: res.Driver, AgentID: agent.ID, RequestedBy: subj.User, Roles: subj.Roles, ResourceUID: res.ResourceUID, Generation: res.Generation, SSHAccess: &req})
+	op := prepareNodeOperation(controlplane.NodeOperation{ID: req.ID, Topology: topology, Workspace: topology, Operation: persistedOperation, Node: node, Substrate: res.Driver, AgentID: agent.ID, RequestedBy: subj.User, Roles: subj.Roles, ResourceUID: res.ResourceUID, Generation: res.Generation, SSHAccess: &req, SSHMutation: &mutation})
 	return s.enqueue(ctx, st.TopologyUID, op)
+}
+
+func canonicalSSHUserFromResource(resource state.Resource) (string, error) {
+	desired, ok := resource.Attributes["desired"]
+	if !ok || desired == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(desired)
+	if err != nil {
+		return "", fmt.Errorf("invalid canonical node configuration")
+	}
+	var cfg struct {
+		Connections []struct {
+			User string `json:"user"`
+		} `json:"connections"`
+		ProviderConfig struct {
+			SSHUser string `json:"ssh_user"`
+		} `json:"provider_config"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", fmt.Errorf("invalid canonical node configuration")
+	}
+	user := ""
+	if len(cfg.Connections) > 0 {
+		user = cfg.Connections[0].User
+	}
+	if user == "" {
+		user = cfg.ProviderConfig.SSHUser
+	}
+	if user != "" && substrate.ValidateSSHAccessUser(user) != nil {
+		return "", fmt.Errorf("invalid canonical SSH user")
+	}
+	return user, nil
 }
 
 func (s *NodeOperationService) AdoptionConfirm(ctx context.Context, req controlplane.AdoptionRequest, subj requestSubject) (controlplane.NodeOperation, error) {
