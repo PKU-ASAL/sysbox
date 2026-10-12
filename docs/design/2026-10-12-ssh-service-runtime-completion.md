@@ -1,7 +1,8 @@
 # Managed SSH service and runtime completion
 
-This continues the approved P7 design. Public mutation dispatch is accepted on
-Docker; runtime and live sshd management are separate, unfinished boundaries.
+This continues the approved P7 design. Public and runtime SSH dispatch, local
+authority, reset dependency recovery and a two-VM real-login lifecycle are now
+accepted on Docker. Automatic trusted-service/image enrollment remains open.
 
 ## Service deployment
 
@@ -41,9 +42,10 @@ an unsigned SPI call nor a CopyFile fallback is an acceptable implementation.
   exercise actual sshd validation/reload and login behavior in isolation.
 - [x] Add derived topology-Run SSH authority, child receipts and recovery; migrate runtime
   Read/Create/Delete and remove the old file path implementation.
-- [ ] Update the two-VM lab and run cross-host public and runtime SSH lifecycle
-  acceptance, including restart and lost completion. Record actual evidence.
-- [ ] Run affected race suites, full repository tests and independent review.
+- [x] Run two-VM public/runtime SSH lifecycle, process restart, key rotation and
+  revocation, targeted reset and real login; retain independent cleanup evidence.
+- [ ] Add explicit lost-completion and VM/helper reboot faults to that combined gate.
+- [x] Run affected race suites, full repository tests and independent review.
 
 No compatibility decoder or fallback will be added for old runtime SSH state.
 
@@ -68,8 +70,10 @@ cross-host API/Agent managed-key lifecycle.
 
 Local CLI authority/bootstrap is now implemented; see
 [local-ssh-authority.md](../operations/local-ssh-authority.md).
-Still open: remote resource-targeted Run child authority;
-automatic enrollment/provisioning of the trusted service profile in managed
-images; and combined two-VM API/Agent SSH lifecycle/login fault acceptance. The
+Resource-targeted Run child authority and reset SSH dependency reconstruction
+are implemented. The two-VM public/runtime lifecycle and process restart passed;
+see [two-vm-managed-ssh.md](../operations/two-vm-managed-ssh.md).
+Still open: automatic enrollment/provisioning of the trusted service profile in
+managed images, and the remaining combined lifecycle fault matrix. The
 service profile is intentionally administrator-controlled and is not inferred or
 overwritten by an unprivileged mutation request.

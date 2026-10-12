@@ -145,6 +145,11 @@ test-docker-generation-e2e: ## Run real Docker managed-generation effect rejecti
 test-remote-docker-fault-e2e: ## Real HTTP/Agent/Docker completion-loss and API restart acceptance
 	SYSBOX_REMOTE_DOCKER_E2E=1 $(GOENV) $(GO) test -tags e2e ./pkg/api -run '^TestRemoteDockerCompletionLossRecoveryE2E$$' -count=1 -v -timeout=3m
 
+.PHONY: test-p9-ssh-two-vm
+test-p9-ssh-two-vm: ## Run isolated two-VM managed SSH login and reset acceptance
+	@test -n "$(SYSBOX_P9_LAB_ROOT)" -a -n "$(SYSBOX_CLI_BINARY)" -a -n "$(SYSBOX_GUESTTASK_HELPER)" || { echo 'Set SYSBOX_P9_LAB_ROOT, SYSBOX_CLI_BINARY and SYSBOX_GUESTTASK_HELPER'; exit 2; }
+	python3 scripts/acceptance/ssh_lifecycle.py --root "$(SYSBOX_P9_LAB_ROOT)" --binary "$(SYSBOX_CLI_BINARY)" --helper "$(SYSBOX_GUESTTASK_HELPER)"
+
 .PHONY: test-p9-real
 test-p9-real: build-all ## Run implemented real-provider gates; reject skips and missing test matches
 	@set -eu; \

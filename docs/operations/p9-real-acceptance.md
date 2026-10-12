@@ -1,5 +1,46 @@
 # P9 real acceptance
 
+## Two-VM managed SSH login and reset accepted (2026-10-13)
+
+The final `ssh_lifecycle.py` gate passed with two independent VM kernels, a
+fresh PostgreSQL database and separate API/Agent/host directories, credentials
+and systemd units. Control VM made real SSH connections over the private network
+to the managed Docker node on execution VM. The image explicitly pre-enrolls
+OpenSSH and its helper; this does not claim automatic service provisioning.
+
+Seventeen positive/negative login checks covered public API permission creation,
+key rotation, API/Agent/host process restart, revocation and administrator access
+preservation. Then runtime SSH Apply and targeted reset passed: resource UID
+remained stable, node generation advanced from 1 to 2, the rebuilt permission
+allowed login, and the revoked key remained rejected. Negative checks require
+an explicit public-key authentication rejection, not a connection failure.
+
+Destroy completed, both exact container IDs were independently absent, and
+owner-scoped container and NAT-network inventories were empty before normal
+metadata DELETE. All three test services stopped. Final evidence:
+`/tmp/sysbox-p9-lab-current/sshgate045811c8b0c8/result.json`.
+The artifact records source-script/binary/helper hashes, boot IDs, completed
+operations and individual login checks. A preceding successful lifecycle is
+retained under `sshgate5a9ef0ee0be9`.
+
+The reusable entry point is `make test-p9-ssh-two-vm`; prerequisites and retained
+fixture policy are in [two-vm-managed-ssh.md](two-vm-managed-ssh.md). All 45 Python
+acceptance tests and the Makefile command expansion passed. Independent review
+found no remaining important issue in this gate. The production binaries were
+built from `f5eed78` with `CGO_ENABLED=0` and `-buildvcs=false`.
+
+Initial attempts exposed fixture errors: Alpine's existing `guest` account,
+missing NAT attachment for Docker host-port exposure, and lowercase Docker
+absence text. The first incomplete Apply's original intent was retained, without
+inventing completion; no container was created for that topology. Earlier
+historical unknown Destroy `p9-5213226d26bb` and its stopped container remain.
+Final deployment only reloads a new role-specific HBA rule; it neither modifies
+database listeners nor restarts the shared PostgreSQL service.
+
+Still open: automatic trusted-service/image enrollment, explicit lost-completion
+and VM/helper reboot faults in this combined SSH gate, other-provider SSH reset,
+and the broader P5–P9 operational/fault matrix.
+
 ## Reset SSH dependencies repaired (2026-10-13)
 
 The combined SSH/reset/Destroy gap below is fixed for new reset admissions.

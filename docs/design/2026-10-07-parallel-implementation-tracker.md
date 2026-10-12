@@ -2,6 +2,13 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+2026-10-13 更新：下方 P7 的“runtime/host/API 未接通”是历史状态，已由后续提交取代。
+公开 SSH、本地 CLI、宿主签名子授权、定向 Run 及 reset 后 SSH 原子重建均已实现。
+双 VM 公开 API 和 runtime 创建、真实登录、轮换/撤销、API/Agent/host 进程重启、
+定向 reset 和无残留 Destroy 已通过。自动受管镜像/服务 enrollment、组合故障及其他
+provider 矩阵仍未关闭。当前证据以 [P9 验收记录](../operations/p9-real-acceptance.md)
+顶部更新为准；P5/P6 运维、P8 GC 和完整 P9 仍有剩余工作。
+
 P7 Docker 正式连接已暴露完整 SSH access SPI，复用已有 Exec 的 immutable identity/
 generation 校验。真实 Docker provider 连接 E2E（race，0.52秒）验证签名修改、发现、
 冷连接观察、旧代拒绝、tombstone 和正常 Destroy 后精确缺失；加入 test-p9-real 门槛。
