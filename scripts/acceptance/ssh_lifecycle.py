@@ -266,6 +266,13 @@ resource "sysbox_node" "web" {{
     wait("/v1/runs/" + run["run_id"])
     login("first", True); login("rotated", False)
     evidence["phase"] = "runtime_ssh_verified"; save()
+    # Reconstruct all three control points after a completed runtime mutation
+    # and observe the original operation before admitting reset.
+    remote("control", f"sudo systemctl restart {api_unit}")
+    remote("execution", f"sudo systemctl restart {host_unit} {agent_unit}")
+    wait("/v1/runs/" + run["run_id"])
+    login("first", True); login("rotated", False); login("administrator", True)
+    evidence["phase"] = "runtime_restart_recovery_verified"; save()
     run = api("POST", f"/v1/topologies/{name}/reset", {"revision": runtime_revision, "target": "sysbox_node.web"})
     evidence["reset_run"] = run; save()
     wait("/v1/runs/" + run["run_id"])

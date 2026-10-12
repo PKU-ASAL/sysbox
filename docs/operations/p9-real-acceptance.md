@@ -1,6 +1,6 @@
 # P9 real acceptance
 
-## Two-VM managed SSH login and reset accepted (2026-10-13)
+## Two-VM managed SSH login, reset and runtime restart recovery accepted (2026-10-13)
 
 The final `ssh_lifecycle.py` gate passed with two independent VM kernels, a
 fresh PostgreSQL database and separate API/Agent/host directories, credentials
@@ -22,6 +22,11 @@ metadata DELETE. All three test services stopped. Final evidence:
 The artifact records source-script/binary/helper hashes, boot IDs, completed
 operations and individual login checks. A preceding successful lifecycle is
 retained under `sshgate5a9ef0ee0be9`.
+
+After runtime Apply completed, API, Agent and host-supervisor were restarted;
+the original Run was observed again and login remained valid before reset. This
+proves process restart recovery after a completed runtime mutation. It does not
+inject a lost HTTP completion or reboot either VM/kernel.
 
 The reusable entry point is `make test-p9-ssh-two-vm`; prerequisites and retained
 fixture policy are in [two-vm-managed-ssh.md](two-vm-managed-ssh.md). All 45 Python
