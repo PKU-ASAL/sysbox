@@ -4,10 +4,19 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestSSHServiceCommandRequiresTrustedEnrollment(t *testing.T) {
+	for _, operation := range []string{"install", "recover"} {
+		require.ErrorContains(t, manageSSHService(context.Background(), operation, []string{filepath.Join(t.TempDir(), "missing.json")}), "trusted SSH service profile required")
+		require.Error(t, manageSSHService(context.Background(), operation, []string{"a", "b"}))
+	}
+	require.Error(t, manageSSHService(context.Background(), "restart", nil))
+}
 
 type testSSHKeySource struct {
 	err   error

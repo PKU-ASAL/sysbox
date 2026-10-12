@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/sshaccess"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"io"
 	"net"
 	"strconv"
@@ -10,6 +12,31 @@ import (
 
 type sshKeySource interface {
 	SSHAuthorizedKeys(context.Context, string, string, int) ([]byte, error)
+}
+
+// Service enrollment is an administrator operation. Its profile is read from
+// a trusted local file; neither worker RPCs nor access mutations choose paths,
+// executables, systemd units or the configuration classes to validate.
+func manageSSHService(ctx context.Context, operation string, args []string) error {
+	if len(args) > 1 || operation != "install" && operation != "recover" {
+		return fmt.Errorf("SSH service requires install/recover and at most one trusted profile path")
+	}
+	path := "/etc/sysbox/sshd-service.json"
+	if len(args) == 1 {
+		path = args[0]
+	}
+	deployment, err := sshaccess.LoadService(path)
+	if err != nil {
+		return err
+	}
+	if operation == "recover" {
+		return deployment.Recover(ctx)
+	}
+	configs := make([]substrate.SSHAccessConfig, len(deployment.Probes))
+	for i, probe := range deployment.Probes {
+		configs[i] = substrate.SSHAccessConfig{BindIP: probe.LocalAddress, Port: probe.LocalPort}
+	}
+	return deployment.Ensure(ctx, configs)
 }
 
 // sshd supplies %u. Its AuthorizedKeysCommand supports neither %l nor %p.

@@ -87,6 +87,13 @@ func runTaskMode() bool {
 		return false
 	}
 	switch os.Args[1] {
+	case "--ssh-service-install", "--ssh-service-recover":
+		operation := strings.TrimPrefix(os.Args[1], "--ssh-service-")
+		if err := manageSSHService(context.Background(), operation, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return true
 	case "--ssh-authorized-keys":
 		engine, err := taskEngine("ssh-authorized-keys")
 		if err == nil {
