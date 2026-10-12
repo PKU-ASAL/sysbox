@@ -27,8 +27,8 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
 	session, err := repo.OpenSession(ctx, "agent", "worker-process", "")
 	require.NoError(t, err)
-	run := controlplane.Run{ID: "run", Topology: "lab", Revision: "revision", Op: "apply"}
-	cmd := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusLeased, Run: &run, TopologyUID: grantTestTopologyUID(t, s, "lab"), ActionID: "run", Attempt: 1, LeaseOwner: "worker", LeaseUntil: time.Now().Add(4 * time.Minute)}
+	run := controlplane.Run{ID: "run", Topology: "lab", Revision: "revision", Op: "reset", Target: "sysbox_node.web"}
+	cmd := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusLeased, Run: &run, TopologyUID: grantTestTopologyUID(t, s, "lab"), ResourceUID: "node", Generation: 1, ActionID: "run", Attempt: 1, LeaseOwner: "worker", LeaseUntil: time.Now().Add(4 * time.Minute)}
 	require.NoError(t, s.apiStore.SaveAgentCommand(ctx, cmd))
 	g, err := s.sourceGrant(ctx, "agent", ExecutionGrantRequest{SessionID: session.ID, Attempt: 1, LeaseOwner: "worker", BootID: "host"}, &persistence.CommandRecord{Command: cmd})
 	require.NoError(t, err)

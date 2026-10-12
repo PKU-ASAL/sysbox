@@ -34,10 +34,10 @@ func TestRunTaskStopDiscoveryChecksRetiredParentSource(t *testing.T) {
 			if !good {
 				topology = "broken"
 			}
-			run := controlplane.Run{ID: topology + "-run", Topology: topology, Revision: "revision", AgentID: "agent", Op: "apply", Operation: "apply", Status: controlplane.RunRunning}
-			cmd := controlplane.AgentCommand{ID: topology + "-command", Type: "run_assigned", AgentID: "agent", TopologyUID: topology + "-uid", ActionID: topology + "-action", Run: &run, Attempt: 1}
+			run := controlplane.Run{ID: topology + "-run", Topology: topology, Revision: "revision", AgentID: "agent", Op: "apply", Operation: "apply", Status: controlplane.RunRunning, Target: "sysbox_node.web"}
+			cmd := controlplane.AgentCommand{ID: topology + "-command", Type: "run_assigned", AgentID: "agent", TopologyUID: topology + "-uid", ActionID: topology + "-action", Run: &run, Attempt: 1, ResourceUID: "node", Generation: 1}
 			require.NoError(t, store.SaveAgentCommand(ctx, cmd))
-			req := hostsupervisor.RunRequest{RunID: run.ID, Topology: topology, TopologyUID: cmd.TopologyUID, Revision: run.Revision, ActionID: cmd.ActionID, Action: "apply"}
+			req := hostsupervisor.RunRequest{RunID: run.ID, Topology: topology, TopologyUID: cmd.TopologyUID, Revision: run.Revision, ActionID: cmd.ActionID, Action: "apply", Target: run.Target, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}
 			digest, err := req.Digest()
 			require.NoError(t, err)
 			if !good {

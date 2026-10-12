@@ -82,6 +82,9 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 		if err != nil {
 			return substrate.ExecutionHandle{}, err
 		}
+		if err := req.ValidateChildTarget(ref); err != nil {
+			return substrate.ExecutionHandle{}, err
+		}
 		bootID, err := childDispatcher.BootID(taskCtx, ref)
 		if err != nil {
 			return substrate.ExecutionHandle{}, err
@@ -134,7 +137,7 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 			if err != nil {
 				return nil, err
 			}
-			return nil, hostsupervisor.FinishReturnedResetFailure(cleanup, children, run, original, actions)
+			return nil, fmt.Errorf("host reset failed (%s): %w", run.Err, hostsupervisor.FinishReturnedResetFailure(cleanup, children, run, original, actions))
 		}
 		return nil, fmt.Errorf("host run failed: %s", run.Err)
 	}
@@ -163,6 +166,9 @@ func (h *HostRunExecutor) withRunSSH(ctx context.Context, run hostsupervisor.Run
 		scope := controlplane.ExecutionScope{TopologyUID: identity.TopologyUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation}
 		ref, err := h.Resolver.FindRunTaskRef(taskCtx, run.Topology, run.RunID, scope)
 		if err != nil {
+			return empty, err
+		}
+		if err := run.ValidateChildTarget(ref); err != nil {
 			return empty, err
 		}
 		target, err := h.Resolver.ResolveRunTask(taskCtx, ref, run.RunID)

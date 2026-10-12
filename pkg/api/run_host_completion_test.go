@@ -41,13 +41,19 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
 		now := time.Now().UTC()
 		run := controlplane.Run{ID: "host_run", Topology: "lab", Op: action, Operation: action, Revision: "revision", AgentID: "agent", Status: controlplane.RunRunning, Attempt: 1, LeaseOwner: "old-worker", QueuedAt: now.Add(-time.Hour), LeaseUntil: now.Add(-time.Minute)}
+		if action == "reset" {
+			run.Target = "sysbox_node.web"
+		}
 		require.NoError(t, store.SaveRun(ctx, run))
 		command := controlplane.AgentCommand{ID: "host-command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusDelivered, Run: &run, TopologyUID: owner, ActionID: "action", Attempt: 1, LeaseOwner: "old-worker", LeaseUntil: run.LeaseUntil}
+		if run.Target != "" {
+			command.ResourceUID, command.Generation = "node", 1
+		}
 		require.NoError(t, store.SaveAgentCommand(ctx, command))
 		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
 		session, err := authority.OpenSession(ctx, "agent", "old-session", "")
 		require.NoError(t, err)
-		req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: command.TopologyUID, Revision: run.Revision, ActionID: command.ActionID, Action: action}
+		req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: command.TopologyUID, Revision: run.Revision, ActionID: command.ActionID, Action: action, Target: run.Target, ResourceUID: command.ResourceUID, Generation: command.Generation}
 		digest, err := req.Digest()
 		require.NoError(t, err)
 		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{AgentID: "agent", SessionID: session.ID, CommandID: command.ID, ActionID: command.ActionID, Attempt: 1, Operation: "run_" + action, Digest: digest, TargetBootID: "host", Scope: controlplane.ExecutionScope{TopologyUID: owner}}, time.Minute)

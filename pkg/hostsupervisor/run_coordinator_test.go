@@ -24,7 +24,7 @@ func runFixture(t *testing.T, action ...string) (*RunCoordinator, RunRequest, co
 	}
 	digest, err := req.Digest()
 	require.NoError(t, err)
-	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "uid", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "run_apply", Digest: digest, State: controlplane.GrantActive, TargetBootID: "host", ExpiresAt: time.Now().Add(time.Minute)}
+	g := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "uid"}, AgentID: "agent", SessionID: "session", ActionID: "action", CommandID: "command", Attempt: 1, Epoch: 1, Operation: "run_apply", Digest: digest, State: controlplane.GrantActive, TargetBootID: "host", ExpiresAt: time.Now().Add(time.Minute)}
 	g.Operation = "run_" + req.Action
 	signed, err := controlplane.SignExecutionGrant(key, g, "host", time.Now())
 	require.NoError(t, err)

@@ -135,11 +135,14 @@ func TestHostRunSSHDispatchUsesCanonicalCandidateAndSignedChild(t *testing.T) {
 	require.NoError(t, os.Chmod(journal, 0700))
 	dispatcher := &hostsupervisor.Dispatcher{Root: journal, AgentID: "agent", HostBootID: "host", IssuerKey: public, HostKey: host, Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }}
 	executor := &HostRunExecutor{Resolver: hostsupervisor.CanonicalResolver{Backend: path, AgentID: "agent"}, Authority: authority, SSH: &hostsupervisor.SSHGuestDispatcher{Dispatcher: dispatcher, ReportDerived: authority.ReportDerivedSSHAccess}}
-	ctx = executor.withRunSSH(transport.WithParentExecutionGrant(ctx, signed), hostsupervisor.RunRequest{RunID: "run", Topology: "lab"})
+	ctx = executor.withRunSSH(transport.WithParentExecutionGrant(ctx, signed), hostsupervisor.RunRequest{RunID: "run", Topology: "lab", TopologyUID: st.TopologyUID})
 	ctx = substrate.WithOperationIdentity(ctx, substrate.OperationIdentity{ActionID: "ssh", OwnerUID: st.TopologyUID, TopologyUID: st.TopologyUID, ResourceUID: "node", Generation: 1})
 	result, err := transport.NewTaskClient(nil, "provider", 1).MutateSSHAccess(ctx, substrate.SSHAccessMutation{ID: "ssh", Delete: true, ExpectedRevision: 1, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}})
 	require.NoError(t, err)
 	require.Equal(t, "provider", result.Handle.NodeID)
 	require.Equal(t, 1, conn.mutations)
 	require.Equal(t, 1, reports)
+	wrongTarget := executor.withRunSSH(ctx, hostsupervisor.RunRequest{RunID: "run", Topology: "lab", TopologyUID: st.TopologyUID, Target: "sysbox_node.other", ResourceUID: "other", Generation: 1})
+	_, err = transport.NewTaskClient(nil, "provider", 1).MutateSSHAccess(wrongTarget, substrate.SSHAccessMutation{ID: "ssh", Delete: true, ExpectedRevision: 1, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}})
+	require.Error(t, err, "a targeted Run must not derive authority for another node")
 }

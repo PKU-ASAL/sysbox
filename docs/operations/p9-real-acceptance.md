@@ -1,5 +1,42 @@
 # P9 real acceptance
 
+## Targeted Run authority and dispatch retirement (2026-10-13)
+
+SSH and guest-task derivation now require enrolled host signatures. The guest
+renewal regression uses a targeted reset parent and verifies unsigned requests,
+payload substitutions, expired/revoked authority and retired source commands.
+Lifecycle parents own topology exclusion; their request digest still binds the
+original target UID/generation. Host callbacks resolve canonical Run candidates
+and reject children outside the selected node. Historical task-stop discovery
+and signed completion use the same separation. Resource-scoped old Run grants
+are rejected, without a compatibility path.
+
+Real testing found that targeted reset dispatch previously omitted the target
+UID/generation. Dispatch now reads these from canonical state and rejects missing
+or unsupported targets. `TestRemoteDockerTargetedResetRunE2E` passed under race
+(13.87 seconds): cold recovery, targeted node replacement with an increased
+generation, signed Destroy, empty owner inventory and cold metadata deletion.
+The gate is included in `make test-p9-real`.
+
+Final `go test ./...`, focused API/Agent/host race regressions and affected-package
+vet passed. Independent review found no important blocker in this authority slice.
+
+Host completion also retires its delivery command after committing evidence and
+releasing authority, preserving the immutable Run seed. This fixes intermittent
+metadata deletion conflicts while waiting for the final Agent event.
+`TestRemoteDockerCompletionLossRecoveryE2E` and
+`TestRemoteDockerSSHAccessRunE2E` passed under race (12.82 and 13.76 seconds).
+
+**Newly reproduced gap:** combining targeted reset with an existing managed SSH
+resource replaces the node but leaves the SSH resource's old incarnation handle.
+The following Destroy correctly refuses it with `SSH node incarnation or account
+changed`. The targeted reset gate above deliberately covers nodes without SSH
+dependents; it does not close this combined workflow. Next implement durable
+reset dependency reconciliation and crash recovery, then repeat the combined
+SSH reset/Destroy scenario. Do not weaken the incarnation check or simply discard
+the old SSH record. Automatic guest service/image enrollment and combined two-VM
+managed-key login/restart acceptance also remain open.
+
 ## Local SSH authority and host-bound derivation (2026-10-12)
 
 `TestLocalCLIManagedSSHApplyRotateDestroyE2E` passed for file and SQLite

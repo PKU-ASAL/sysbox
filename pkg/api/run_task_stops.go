@@ -24,7 +24,7 @@ func (s *Server) runTaskStop(ctx context.Context, child, parent controlplane.Exe
 		return zero, persistence.ErrNotFound
 	}
 	cmd := record.Command
-	if cmd.Type != "run_assigned" || cmd.Run == nil || cmd.ID != parent.CommandID || cmd.AgentID != parent.AgentID || cmd.Attempt < 1 || uint64(cmd.Attempt) < parent.Attempt || cmd.ActionID != parent.ActionID || cmd.TopologyUID != parent.Scope.TopologyUID || cmd.ResourceUID != parent.Scope.ResourceUID || cmd.Generation != parent.Scope.Generation {
+	if cmd.Type != "run_assigned" || cmd.Run == nil || cmd.ID != parent.CommandID || cmd.AgentID != parent.AgentID || cmd.Attempt < 1 || uint64(cmd.Attempt) < parent.Attempt || cmd.ActionID != parent.ActionID || parent.Scope != (controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID}) {
 		return zero, persistence.ErrConflict
 	}
 	action := cmd.Run.Op

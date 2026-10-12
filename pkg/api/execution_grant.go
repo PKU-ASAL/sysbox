@@ -692,7 +692,7 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	}
 	operation := cmd.Type
 	digest := ""
-	topologyRun := false
+	lifecycleRun := false
 	switch cmd.Type {
 	case "node_operation":
 		if controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) {
@@ -781,7 +781,7 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 			return controlplane.ExecutionGrant{}, err
 		}
 		operation = "run_" + action
-		topologyRun = cmd.ResourceUID == ""
+		lifecycleRun = true
 	case "gc_delete":
 		if cmd.Session == nil || cmd.Session.ID == "" || cmd.Session.ID != proof.SessionID || cmd.GCKind == "" || cmd.GCExternalID == "" || cmd.GCInventoryDigest == "" {
 			return controlplane.ExecutionGrant{}, persistence.ErrCorruptRecord
@@ -795,10 +795,16 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	default:
 		return controlplane.ExecutionGrant{}, persistence.ErrUnsupportedVersion
 	}
-	if cmd.TopologyUID == "" || cmd.ActionID == "" || (!topologyRun && (cmd.ResourceUID == "" || cmd.Generation < 1)) || (topologyRun && cmd.Generation != 0) {
+	if cmd.TopologyUID == "" || cmd.ActionID == "" || (!lifecycleRun && (cmd.ResourceUID == "" || cmd.Generation < 1)) {
 		return controlplane.ExecutionGrant{}, persistence.ErrConflict
 	}
-	return controlplane.ExecutionGrant{TargetBootID: proof.BootID, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}, AgentID: agentID, SessionID: proof.SessionID, ActionID: cmd.ActionID, CommandID: cmd.ID, Attempt: uint64(cmd.Attempt), Operation: operation, Digest: digest, ExpiresAt: cmd.LeaseUntil}, nil
+	scope := controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}
+	if lifecycleRun {
+		// Runtime commits the whole topology aggregate. Target identity stays
+		// bound by the request digest; children independently own node scope.
+		scope.ResourceUID, scope.Generation = "", 0
+	}
+	return controlplane.ExecutionGrant{TargetBootID: proof.BootID, Scope: scope, AgentID: agentID, SessionID: proof.SessionID, ActionID: cmd.ActionID, CommandID: cmd.ID, Attempt: uint64(cmd.Attempt), Operation: operation, Digest: digest, ExpiresAt: cmd.LeaseUntil}, nil
 }
 
 func (s *Server) handleExecutionGrant(w http.ResponseWriter, r *http.Request) {

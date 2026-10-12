@@ -26,6 +26,7 @@ func TestSourceGrantSupportsLifecycleRuns(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "run_"+action, grant.Operation)
 			require.Equal(t, digest, grant.Digest)
+			require.Equal(t, controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID}, grant.Scope, "Run exclusion must leave the node scope available for its children")
 		})
 	}
 }

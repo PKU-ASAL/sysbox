@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
@@ -35,6 +36,17 @@ func (s *WorkspaceService) runAssignedCommand(ctx context.Context, run *controlp
 	command.TopologyUID = canonical.TopologyUID
 	command.ActionID = run.ID
 	command.ExpectedSerial = canonical.Meta.Serial
+	if run.Target != "" {
+		target, err := address.Parse(run.Target)
+		if err != nil || target.Type != "sysbox_node" {
+			return controlplane.AgentCommand{}, fmt.Errorf("remote Run target must be a node address")
+		}
+		resource := canonical.FindResource(target)
+		if resource == nil || resource.OwnerUID != canonical.TopologyUID || resource.ResourceUID == "" || resource.Generation < 1 {
+			return controlplane.AgentCommand{}, fmt.Errorf("remote Run target has no canonical node identity: %s", run.Target)
+		}
+		command.ResourceUID, command.Generation = resource.ResourceUID, resource.Generation
+	}
 	command.ID = runCommandID(*run)
 	command.AgentID = run.AgentID
 	command.Status = controlplane.AgentCommandStatusQueued

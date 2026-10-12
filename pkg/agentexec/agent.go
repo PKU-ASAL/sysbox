@@ -882,8 +882,7 @@ func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlp
 	}
 	target := hostsupervisor.TargetRef{Topology: run.Topology, Node: node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}}
 	req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: cmd.TopologyUID, Revision: run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: run.Target, ExpectedSerial: cmd.ExpectedSerial}
-	digest, err := req.Digest()
-	if err != nil {
+	if err := req.Validate(); err != nil {
 		return nil, err
 	}
 	client := hostsupervisor.NewTaskClient(r.opts.HostSupervisorSocket, target)
@@ -899,7 +898,7 @@ func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlp
 	if err := controlplane.VerifyExecutionGrant(ed25519.PublicKey(key), grant, boot, time.Now()); err != nil {
 		return nil, err
 	}
-	if grant.Grant.Operation != "run_"+action || grant.Grant.Digest != digest || grant.Grant.ActionID != cmd.ActionID || grant.Grant.Scope != target.Scope || grant.Grant.AgentID != r.opts.ID || grant.Grant.SessionID != r.opts.ExecutionSessionID || grant.Grant.CommandID != cmd.ID || grant.Grant.Attempt != uint64(cmd.Attempt) || grant.Grant.TargetBootID != boot {
+	if hostsupervisor.ValidateRunGrant(grant, req, boot) != nil || grant.Grant.AgentID != r.opts.ID || grant.Grant.SessionID != r.opts.ExecutionSessionID || grant.Grant.CommandID != cmd.ID || grant.Grant.Attempt != uint64(cmd.Attempt) {
 		return nil, controlplane.ErrInvalidExecutionGrant
 	}
 	renew := func(ctx context.Context, current controlplane.SignedExecutionGrant) (controlplane.SignedExecutionGrant, error) {

@@ -18,6 +18,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func TestDestroyHTTPIdempotencyKeyDispatchesOnceAcrossConcurrencyAndRestart(t *testing.T) {
@@ -286,6 +287,12 @@ func TestRunServiceStartApplyDispatchesAssignedRun(t *testing.T) {
 
 func TestRunServiceStartResetPersistsExactTargetAndDispatches(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
+	manager, err := s.workspaceService().stateManager("lab")
+	require.NoError(t, err)
+	canonical, err := manager.LoadWithContext(context.Background())
+	require.NoError(t, err)
+	canonical.Resources = append(canonical.Resources, state.Resource{Address: address.Resource("sysbox_node", "web"), OwnerUID: canonical.TopologyUID, ResourceUID: "web-uid", Generation: 3, ExternalID: "web-provider"})
+	require.NoError(t, manager.SaveWithContext(context.Background(), canonical))
 	writeRunServiceTopology(t, s, "lab", `resource "sysbox_network" "lab" {
   cidr = "10.77.0.0/24"
 }`)
@@ -298,6 +305,11 @@ func TestRunServiceStartResetPersistsExactTargetAndDispatches(t *testing.T) {
 	require.Equal(t, "reset", run.Op)
 	require.Equal(t, "sysbox_node.web", run.Target)
 	require.Equal(t, controlplane.RunAssigned, run.Status)
+	commands, err := s.apiStore.ListAgentCommands(context.Background(), run.AgentID)
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+	require.Equal(t, "web-uid", commands[0].ResourceUID)
+	require.EqualValues(t, 3, commands[0].Generation)
 }
 
 func TestRunServiceResumeAllowsFailedReset(t *testing.T) {

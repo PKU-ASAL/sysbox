@@ -39,17 +39,21 @@ import (
 // canonical SQLite but use separate revision directories. Reconstruction is
 // in-process; independent process/VM faults have separate acceptance gates.
 func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
-	testRemoteDockerCompletionLossRecovery(t, false)
+	testRemoteDockerCompletionLossRecovery(t, false, false)
 }
 
 func TestRemoteDockerSSHAccessRunE2E(t *testing.T) {
 	if os.Getenv("SYSBOX_GUESTTASK_HELPER") == "" {
 		t.Skip("current guest helper required")
 	}
-	testRemoteDockerCompletionLossRecovery(t, true)
+	testRemoteDockerCompletionLossRecovery(t, true, false)
 }
 
-func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH bool) {
+func TestRemoteDockerTargetedResetRunE2E(t *testing.T) {
+	testRemoteDockerCompletionLossRecovery(t, false, true)
+}
+
+func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedReset bool) {
 	if os.Getenv("SYSBOX_REMOTE_DOCKER_E2E") != "1" {
 		t.Skip("requires real Docker daemon; set SYSBOX_REMOTE_DOCKER_E2E=1")
 	}
@@ -73,7 +77,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH bool) {
 	previous := driver.DefaultRegistry
 	driver.DefaultRegistry = driver.NewRegistry()
 	defer func() { driver.DefaultRegistry = previous }()
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "1", Node: docker, NIC: docker, NodeState: docker, Artifact: docker, ImageEntry: docker, GuestExec: docker, GuestNetwork: docker}))
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "1", Node: docker, NIC: docker, NodeState: docker, Artifact: docker, ImageEntry: docker, GuestExec: docker, GuestNetwork: docker, Reset: docker}))
 	cfg := config.DefaultServiceConfig()
 	cfg.Paths.RunsDir, cfg.Paths.WorkspacesDir = privateDir(), privateDir()
 	cfg.State.Backend = "sqlite://" + filepath.Join(privateDir(), "canonical.db")
@@ -404,6 +408,48 @@ resource "sysbox_node" "%s" {
 		}
 	}
 	require.True(t, observed, "owning-agent live observation must identify the exact Docker container")
+	if targetedReset {
+		target := "sysbox_node." + strings.ReplaceAll(topology, "-", "_")
+		status, raw = request("POST", "/v1/topologies/"+topology+"/reset", map[string]any{"target": target, "revision": revision["revision"]}, "reset-one")
+		require.Equal(t, 202, status, string(raw))
+		var reset map[string]string
+		require.NoError(t, json.Unmarshal(raw, &reset))
+		var resetRun *controlplane.Run
+		defer func() {
+			if t.Failed() {
+				events, err := current.Load().apiStore.ListAgentCommandEvents(context.Background(), opts.ID)
+				t.Logf("reset dispatch events (%v): %+v", err, events)
+			}
+		}()
+		require.Eventually(t, func() bool {
+			r, err := current.Load().apiStore.GetRun(ctx, reset["run_id"])
+			if err != nil || !r.Status.IsTerminal() {
+				return false
+			}
+			resetRun = r
+			return true
+		}, 30*time.Second, 50*time.Millisecond)
+		require.Equal(t, controlplane.RunDone, resetRun.Status, resetRun.Err)
+		require.NotNil(t, resetRun.HostCompletion)
+		require.Equal(t, target, resetRun.Target)
+		require.Equal(t, controlplane.ExecutionScope{TopologyUID: initial.TopologyUID}, resetRun.HostCompletion.Receipt.Grant.Scope)
+		replaced, err := repository.LoadState(ctx, topology)
+		require.NoError(t, err)
+		var replacement string
+		for _, resource := range replaced.Resources {
+			if resource.Address.String() == target {
+				require.Greater(t, resource.Generation, int64(1))
+				require.NotEqual(t, externalID, resource.ExternalID)
+				replacement = resource.ExternalID
+			}
+		}
+		require.NotEmpty(t, replacement)
+		instances, err = cli.ContainerList(ctx, container.ListOptions{All: true, Filters: owned})
+		require.NoError(t, err)
+		require.Len(t, instances, 1)
+		require.Equal(t, replacement, instances[0].ID)
+		t.Log("targeted reset completed with topology parent authority and a replacement node generation")
+	}
 	faultOperation.Store("run_destroy")
 	drop.Store(true)
 	hold.Store(true)

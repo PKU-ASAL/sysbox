@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
@@ -63,8 +64,25 @@ func ValidateRunGrant(g controlplane.SignedExecutionGrant, req RunRequest, boot 
 	if err != nil {
 		return err
 	}
-	if g.Grant.Operation != "run_"+req.Action || g.Grant.Digest != digest || g.Grant.ActionID != req.ActionID || g.Grant.Scope.TopologyUID != req.TopologyUID || g.Grant.Scope.ResourceUID != req.ResourceUID || g.Grant.Scope.Generation != req.Generation || g.Grant.TargetBootID != boot || g.BootID != boot {
+	if g.Grant.Operation != "run_"+req.Action || g.Grant.Digest != digest || g.Grant.ActionID != req.ActionID || g.Grant.Scope != (controlplane.ExecutionScope{TopologyUID: req.TopologyUID}) || g.Grant.TargetBootID != boot || g.BootID != boot {
 		return controlplane.ErrInvalidExecutionGrant
+	}
+	return nil
+}
+
+// ValidateChildTarget is called only after resolving the child through canonical
+// state or this Run's checkpoint. Reset may replace the original incarnation,
+// but cannot expand execution to a different node or topology.
+func (r RunRequest) ValidateChildTarget(ref TargetRef) error {
+	if ref.Topology != r.Topology || ref.Scope.TopologyUID != r.TopologyUID || ref.Node == "" || ref.Scope.ResourceUID == "" || ref.Scope.Generation < 1 {
+		return fmt.Errorf("host Run child topology or identity mismatch")
+	}
+	if r.Target == "" {
+		return nil
+	}
+	target, err := address.Parse(r.Target)
+	if err != nil || target.Type != "sysbox_node" || target.Name != ref.Node {
+		return fmt.Errorf("host Run child outside selected node")
 	}
 	return nil
 }

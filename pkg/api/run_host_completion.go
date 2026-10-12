@@ -41,7 +41,7 @@ func completeRunFromHost(ctx context.Context, storage runCommandStorage, agent, 
 		// Dispatch may have been re-leased since this grant was issued. Its
 		// durable authority epoch authenticates that historical attempt; the
 		// actual Run attempt and owner below must still match the signed result.
-		if cmd.Run == nil || cmd.Type != "run_assigned" || cmd.ID != g.CommandID || cmd.AgentID != agent || g.AgentID != agent || cmd.Attempt < 1 || uint64(cmd.Attempt) < g.Attempt || cmd.ActionID != g.ActionID || cmd.TopologyUID != g.Scope.TopologyUID || cmd.ResourceUID != g.Scope.ResourceUID || cmd.Generation != g.Scope.Generation || receipt.EvidenceDigest == "" {
+		if cmd.Run == nil || cmd.Type != "run_assigned" || cmd.ID != g.CommandID || cmd.AgentID != agent || g.AgentID != agent || cmd.Attempt < 1 || uint64(cmd.Attempt) < g.Attempt || cmd.ActionID != g.ActionID || g.Scope != (controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID}) || receipt.EvidenceDigest == "" {
 			return nil, persistence.ErrConflict
 		}
 		if current.ID != id || current.AgentID != agent || !persistence.SameRunIncarnation(*current, *cmd.Run) || !persistence.SameRunIncarnation(*current, observed) || current.Attempt < 1 || current.Attempt != observed.Attempt || current.LeaseOwner != observed.LeaseOwner || !observed.Status.IsTerminal() || observed.EndedAt.IsZero() {

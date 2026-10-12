@@ -69,14 +69,14 @@ func TestRunSocketStartAndHistoricalObserve(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.Serve(ctx) }()
 	require.Eventually(t, func() bool {
-		_, err := NewTaskClient(s.Socket, TargetRef{Topology: req.Topology, Node: "node", Scope: grant.Grant.Scope}).StartRun(ctx, req, grant)
+		_, err := NewTaskClient(s.Socket, TargetRef{Topology: req.Topology, Node: "web", Scope: controlplane.ExecutionScope{TopologyUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation}}).StartRun(ctx, req, grant)
 		return err == nil
 	}, time.Second, 10*time.Millisecond)
 	// Historical observation must not invoke the effect callback again.
 	var observed RunObservation
 	require.Eventually(t, func() bool {
 		var err error
-		observed, err = NewTaskClient(s.Socket, TargetRef{Topology: req.Topology, Node: "node", Scope: grant.Grant.Scope}).ObserveRun(ctx, req, grant)
+		observed, err = NewTaskClient(s.Socket, TargetRef{Topology: req.Topology, Node: "web", Scope: controlplane.ExecutionScope{TopologyUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation}}).ObserveRun(ctx, req, grant)
 		return err == nil && observed.Status == "completed"
 	}, time.Second, time.Millisecond)
 	require.EqualValues(t, 1, calls.Load())
@@ -88,7 +88,7 @@ func TestRunSocketStartAndHistoricalObserve(t *testing.T) {
 func TestRunOnlyServerRejectsMissingTaskDispatcher(t *testing.T) {
 	c, req, grant := runFixture(t)
 	s := &Server{Runs: c}
-	target := TargetRef{Topology: req.Topology, Node: "node", Scope: grant.Grant.Scope}
+	target := TargetRef{Topology: req.Topology, Node: "web", Scope: controlplane.ExecutionScope{TopologyUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation}}
 	for _, op := range []string{"info", "start", "observe", "cancel", "renew", "output"} {
 		r := s.Handle(context.Background(), Request{Version: 1, Operation: op, Target: target})
 		require.Contains(t, r.Error, "unavailable")
