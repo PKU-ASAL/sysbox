@@ -222,6 +222,14 @@ func (c *TaskClient) ObserveSSHAccess(ctx context.Context, req controlplane.SSHA
 	r, err := c.call(ctx, Request{Operation: "ssh-observe", SSHRequest: &req, Grant: &grant})
 	return r.SSHEvidence, err
 }
+func (c *TaskClient) ApplyGuestSSHAccess(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "ssh-guest-apply", SSHRequest: &req, Grant: &grant})
+	return r.SSHEvidence, err
+}
+func (c *TaskClient) DeleteGuestSSHAccess(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "ssh-guest-delete", SSHRequest: &req, Grant: &grant})
+	return r.SSHEvidence, err
+}
 func (c *TaskClient) ApplyAdoption(ctx context.Context, req controlplane.AdoptionRequest, g controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 	r, err := c.call(ctx, Request{Operation: "adoption-apply", AdoptionRequest: &req, Grant: &g})
 	return r.AdoptionEvidence, err

@@ -32,6 +32,7 @@ type Server struct {
 	RunEffect     func(context.Context, RunRequest) (json.RawMessage, error)
 	RunRecovery   func(context.Context, RunRecoveryRequest) (*controlplane.RunRecoveryReport, error)
 	SSH           *SSHAccessCoordinator
+	SSHGuest      *SSHGuestDispatcher
 	SSHApply      func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	SSHDelete     func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	Adoption      *AdoptionCoordinator
@@ -226,7 +227,7 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 	var err error
 	var record TaskRecord
 	switch request.Operation {
-	case "ssh-apply", "ssh-delete", "ssh-observe":
+	case "ssh-apply", "ssh-delete", "ssh-observe", "ssh-guest-apply", "ssh-guest-delete":
 		r, grant := request.SSHRequest, request.Grant
 		if r == nil || grant == nil || r.Topology != request.Target.Topology || r.Node != request.Target.Node || grant.Grant.Scope != request.Target.Scope || grant.Grant.ActionID != r.ID {
 			response.Error = "ssh access target mismatch"
@@ -352,6 +353,18 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 		response.SSHEvidence, err = s.SSH.Apply(ctx, *request.SSHRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
 			return s.SSHApply(effectCtx, *request.SSHRequest, *request.Grant)
 		})
+	case "ssh-guest-apply", "ssh-guest-delete":
+		if s.SSHGuest == nil || request.SSHRequest == nil || request.Grant == nil {
+			err = fmt.Errorf("host guest SSH coordinator unavailable")
+			break
+		}
+		mutation := request.SSHRequest.Mutation(request.SSHRequest.User, request.Operation == "ssh-guest-delete")
+		result, mutationErr := s.SSHGuest.Mutate(ctx, request.Target, mutation, *request.Grant)
+		if mutationErr != nil {
+			err = mutationErr
+		} else {
+			response.SSHEvidence, err = json.Marshal(result)
+		}
 	case "ssh-delete":
 		if s.SSH == nil || s.SSHDelete == nil || request.SSHRequest == nil || request.Grant == nil {
 			err = fmt.Errorf("host ssh access coordinator unavailable")

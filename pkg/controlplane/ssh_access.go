@@ -23,6 +23,7 @@ type SSHAccessRequest struct {
 	AccessID         string   `json:"access_id"`
 	Topology         string   `json:"topology"`
 	Node             string   `json:"node"`
+	User             string   `json:"user,omitempty"`
 	AuthorizedKeys   []string `json:"authorized_keys"`
 	BindIP           string   `json:"bind_ip,omitempty"`
 	Port             int      `json:"port,omitempty"`
