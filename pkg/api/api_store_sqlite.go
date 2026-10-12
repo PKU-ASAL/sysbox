@@ -54,6 +54,9 @@ func (s *sqliteAPIStore) open() (*sql.DB, error) {
 	if !locked {
 		return nil, ctx.Err()
 	}
+	if err := persistence.PrepareSQLiteFile(s.dbPath); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", s.dbPath+"?_pragma=busy_timeout%3d5000&_pragma=journal_mode%28WAL%29")
 	if err != nil {
 		return nil, fmt.Errorf("sqlite api open: %w", err)

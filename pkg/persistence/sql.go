@@ -26,6 +26,20 @@ func OpenSQLite(path string) (*Repository, error) {
 	return openSQLite(path, true)
 }
 
+// PrepareSQLiteFile gives newly created authority databases private permissions
+// before SQLite opens them (WAL files inherit the main file's mode). Existing
+// files are left unchanged; trusted readers validate their deployment policy.
+func PrepareSQLiteFile(path string) error {
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+	if os.IsExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}
+
 func openSQLite(path string, initialize bool) (*Repository, error) {
 	if path == "" || path == ":memory:" {
 		return nil, fmt.Errorf("durable SQLite repository requires a filesystem path")
@@ -58,6 +72,11 @@ func openSQLite(path string, initialize bool) (*Repository, error) {
 		return nil, err
 	}
 	u := url.URL{Scheme: "file", Path: path}
+	if initialize {
+		if err := PrepareSQLiteFile(path); err != nil {
+			return nil, err
+		}
+	}
 	q := u.Query()
 	q.Add("_pragma", "busy_timeout(5000)")
 	if initialize {
