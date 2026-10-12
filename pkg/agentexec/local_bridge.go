@@ -33,6 +33,9 @@ type LocalOptions struct {
 	BeforeDestroy    func(*runtime.Plan) error
 	BeforeReset      func(*runtime.Plan) error
 	AfterRun         func(*controlplane.Run)
+	// PrepareExecution is a credential-owning local controller hook. It runs
+	// after the topology lock is acquired and before any runtime provider call.
+	PrepareExecution func(context.Context, *controlplane.Run) (context.Context, func(), error)
 	CheckpointStore  runtime.CheckpointStore
 }
 
@@ -66,6 +69,13 @@ func (b *LocalBridge) AttachRun(run *controlplane.Run) {
 	b.mu.Lock()
 	b.runs[run.ID] = run
 	b.mu.Unlock()
+}
+
+func (b *LocalBridge) PrepareExecution(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
+	if b.opts.PrepareExecution == nil {
+		return ctx, func() {}, nil
+	}
+	return b.opts.PrepareExecution(ctx, run)
 }
 
 func (b *LocalBridge) LogWriter(string) io.Writer {

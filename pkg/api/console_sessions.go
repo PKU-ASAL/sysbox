@@ -36,6 +36,10 @@ type wsPeer struct {
 }
 
 func newConsoleSessionHub(store apiStore) *consoleSessionHub {
+	return newConsoleSessionHubWithRecovery(store, true)
+}
+
+func newConsoleSessionHubWithRecovery(store apiStore, recoverInterrupted bool) *consoleSessionHub {
 	h := &consoleSessionHub{sessions: map[string]*consoleSessionState{}, store: store}
 	if store != nil {
 		items, err := store.ListConsoleSessions(context.Background(), "")
@@ -45,10 +49,12 @@ func newConsoleSessionHub(store apiStore) *consoleSessionHub {
 		}
 		loaded := map[string]*consoleSessionState{}
 		for _, sess := range items {
-			sess, err = recoverConsoleObservation(store, sess)
-			if err != nil {
-				h.initErr = err
-				return h
+			if recoverInterrupted {
+				sess, err = recoverConsoleObservation(store, sess)
+				if err != nil {
+					h.initErr = err
+					return h
+				}
 			}
 			loaded[sess.ID] = newConsoleSessionState(sess, controlplane.ConsoleRequest{})
 		}

@@ -23,6 +23,17 @@ type AuthorityClient struct {
 	HTTP     *http.Client
 }
 
+// IssueCommandGrant uses authenticated command admission, including current
+// agent policy and source revalidation. It does not accept a replacement payload.
+func (c AuthorityClient) IssueCommandGrant(ctx context.Context, command controlplane.AgentCommand, sessionID, bootID string) (controlplane.SignedExecutionGrant, error) {
+	var signed controlplane.SignedExecutionGrant
+	if command.AgentID != c.Identity.ID || command.ID == "" {
+		return signed, controlplane.ErrInvalidExecutionGrant
+	}
+	err := c.postJSON(ctx, "/v1/agents/"+url.PathEscape(c.Identity.ID)+"/commands/"+url.PathEscape(command.ID)+"/execution-grant", map[string]any{"session_id": sessionID, "lease_owner": command.LeaseOwner, "attempt": command.Attempt, "boot_id": bootID}, &signed)
+	return signed, err
+}
+
 func (c AuthorityClient) post(ctx context.Context, path string, value any, signed bool) error {
 	return c.postJSON(ctx, path, value, nil, signed)
 }

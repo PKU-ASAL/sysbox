@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -74,11 +75,22 @@ func TestHostResetFailureUsesReturnedExecutorAndDurablePhases(t *testing.T) {
 			c := &hostsupervisor.RunCoordinator{Root: t.TempDir(), IssuerKey: issuer, HostKey: hostPrivate, AgentID: "agent", HostBootID: "host", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }}
 			require.NoError(t, os.Chmod(c.Root, 0700))
 			reported := make(chan controlplane.Run, 1)
+			var reportMu sync.Mutex
+			var receiptID string
 			c.ReportRunID = func(_ context.Context, _ string, r controlplane.SignedExecutionStopReceipt, raw json.RawMessage) error {
 				require.NoError(t, controlplane.VerifyRunStopReceipt(hostKey, r, raw))
 				var result controlplane.Run
 				require.NoError(t, json.Unmarshal(raw, &result))
-				reported <- result
+				// ObserveAsync and the background controller may report the same
+				// sealed receipt concurrently. Model the API's idempotent receiver.
+				reportMu.Lock()
+				defer reportMu.Unlock()
+				if receiptID == "" {
+					receiptID = r.ReceiptID
+					reported <- result
+				} else {
+					require.Equal(t, receiptID, r.ReceiptID)
+				}
 				return nil
 			}
 			h := &HostRunExecutor{Bridge: b, Tasks: &hostsupervisor.Dispatcher{AgentID: "agent"}}

@@ -158,6 +158,12 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 }
 
 func (s *NodeOperationService) SSHAccess(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject) (controlplane.NodeOperation, error) {
+	return s.sshAccess(ctx, topology, node, req, operation, subj, nil)
+}
+
+// selected is supplied only by the credential-owning local CLI controller.
+// Public admission always goes through normal host placement and scheduling.
+func (s *NodeOperationService) sshAccess(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject, selected *controlplane.Agent) (controlplane.NodeOperation, error) {
 	if operation != "ssh_access_apply" && operation != "ssh_access_delete" {
 		return controlplane.NodeOperation{}, fmt.Errorf("unsupported ssh access operation")
 	}
@@ -202,11 +208,19 @@ func (s *NodeOperationService) SSHAccess(ctx context.Context, topology string, n
 	if operation == "ssh_access_delete" {
 		persistedOperation = "guest_ssh_access_delete"
 	}
-	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{res.Driver}, "")
-	if err != nil {
-		return controlplane.NodeOperation{}, err
+	var owner controlplane.Agent
+	if selected == nil {
+		owner, err = s.scheduler.SelectAgentForTopology(ctx, topology, []string{res.Driver}, "")
+		if err != nil {
+			return controlplane.NodeOperation{}, err
+		}
+	} else {
+		if selected.ID == "" || selected.IsBlocked() {
+			return controlplane.NodeOperation{}, fmt.Errorf("local execution owner unavailable")
+		}
+		owner = *selected
 	}
-	op := prepareNodeOperation(controlplane.NodeOperation{ID: req.ID, Topology: topology, Workspace: topology, Operation: persistedOperation, Node: node, Substrate: res.Driver, AgentID: agent.ID, RequestedBy: subj.User, Roles: subj.Roles, ResourceUID: res.ResourceUID, Generation: res.Generation, SSHMutation: &mutation})
+	op := prepareNodeOperation(controlplane.NodeOperation{ID: req.ID, Topology: topology, Workspace: topology, Operation: persistedOperation, Node: node, Substrate: res.Driver, AgentID: owner.ID, RequestedBy: subj.User, Roles: subj.Roles, ResourceUID: res.ResourceUID, Generation: res.Generation, SSHMutation: &mutation})
 	return s.enqueue(ctx, st.TopologyUID, op)
 }
 

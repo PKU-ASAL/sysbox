@@ -141,6 +141,15 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	e.reportCompletion(ctx, &report)
 }
 
+func (e *Executor) prepareExecutionContext(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
+	if prepared, ok := e.bridge.(interface {
+		PrepareExecution(context.Context, *controlplane.Run) (context.Context, func(), error)
+	}); ok {
+		return prepared.PrepareExecution(ctx, run)
+	}
+	return ctx, func() {}, nil
+}
+
 func (e *Executor) executeReset(ctx context.Context, run *controlplane.Run, log io.Writer) {
 	if run.ParentID != "" && run.Target != "" {
 		e.bridge.Finish(run, fmt.Errorf("reset continuation cannot override the original target scope"))
@@ -152,6 +161,12 @@ func (e *Executor) executeReset(ctx context.Context, run *controlplane.Run, log 
 		return
 	}
 	defer unlock()
+	ctx, release, err := e.prepareExecutionContext(ctx, run)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	defer release()
 
 	if err := ctx.Err(); err != nil {
 		e.bridge.Finish(run, err)
@@ -352,6 +367,12 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		return
 	}
 	defer unlock()
+	ctx, release, err := e.prepareExecutionContext(ctx, run)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	defer release()
 
 	if err := ctx.Err(); err != nil {
 		e.bridge.Finish(run, err)
@@ -467,6 +488,12 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 		return nil
 	}
 	defer unlock()
+	ctx, release, err := e.prepareExecutionContext(ctx, run)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return nil
+	}
+	defer release()
 
 	if err := ctx.Err(); err != nil {
 		e.bridge.Finish(run, err)

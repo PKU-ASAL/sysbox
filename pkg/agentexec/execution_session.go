@@ -7,6 +7,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,6 +17,13 @@ type executionSessionRecord struct {
 	Version            int                       `json:"version"`
 	Session            controlplane.AgentSession `json:"session"`
 	PendingIncarnation string                    `json:"pending_incarnation,omitempty"`
+}
+
+// OpenExecutionSession lets an embedded credential-owning controller use the
+// same durable registration/recovery protocol over its own HTTP transport.
+func OpenExecutionSession(ctx context.Context, opts Options, client *http.Client) (controlplane.AgentSession, error) {
+	opts.httpClient = client
+	return establishExecutionSession(ctx, opts)
 }
 
 // Persist the registration nonce before making a request. A lost response is

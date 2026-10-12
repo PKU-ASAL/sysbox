@@ -66,8 +66,9 @@ pending; successful file publication alone is not recorded as ready.
 
 Enroll and install the service before using managed access keys. The helper's
 existing issuer trust file and guest key-record store remain required. Automatic
-image enrollment and local CLI signing/bootstrap are not implemented by these
-commands. Runtime SSH resources now require schema 2 state; old path-based state
+image enrollment is not implemented by these commands. Local CLI signing and
+bootstrap are described in [local-ssh-authority.md](local-ssh-authority.md).
+Runtime SSH resources now require schema 2 state; old path-based state
 must be explicitly rebuilt and is never silently imported.
 
 `scripts/acceptance/ssh_service.py` validates the real systemd/helper deployment

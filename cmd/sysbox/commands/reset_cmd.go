@@ -42,6 +42,7 @@ func runReset(cmd *cobra.Command, _ []string) error {
 	run.UnsafeState = flagAllowUnsafeState
 	aborted := false
 	bridge := agentexec.NewLocalBridge(agentexec.LocalOptions{
+		PrepareExecution: prepareLocalSSH,
 		Topology:         run.Topology,
 		ConfigFile:       flagConfigFile,
 		StatePath:        statePath(),

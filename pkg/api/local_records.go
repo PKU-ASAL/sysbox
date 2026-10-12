@@ -159,6 +159,18 @@ func localRecordPaths(pattern string) ([]string, error) {
 	}
 	var matches []string
 	for _, path := range dirs {
+		if strings.ContainsAny(filepath.Clean(dir), "*?[\\") {
+			info, err := os.Lstat(path)
+			if err != nil {
+				return nil, err
+			}
+			// A wildcard parent selects directories for the next path segment.
+			// Ordinary sibling files are not records; explicit invalid paths and
+			// symlink/permission/I/O failures still propagate below.
+			if info.Mode().IsRegular() {
+				continue
+			}
+		}
 		entries, err := os.ReadDir(path)
 		if err != nil {
 			return nil, err

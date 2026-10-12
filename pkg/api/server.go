@@ -62,6 +62,12 @@ func NewServer(runsDir, workspacesDir string) *Server {
 }
 
 func NewServerWithConfig(cfg config.ServiceConfig) *Server {
+	return newServerWithConfig(cfg, true)
+}
+
+// Embedded execution controllers share services and storage, but they are not
+// API restarts and must not recover another process's live sessions or Runs.
+func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Server {
 	runsDir := cfg.Paths.RunsDir
 	workspacesDir := cfg.Paths.WorkspacesDir
 	if runsDir == "" {
@@ -85,8 +91,8 @@ func NewServerWithConfig(cfg config.ServiceConfig) *Server {
 		apiStore:      apiStore,
 		initErr:       initErr,
 		agents:        newAgentRegistry(),
-		jobs:          newJobsWithPolicy(runsDir, apiStore, true, cfg.RunClaimTTL(), cfg.RunExpiredPolicy()),
-		consoles:      newConsoleSessionHub(apiStore),
+		jobs:          newJobsWithPolicy(runsDir, apiStore, recoverInterrupted, cfg.RunClaimTTL(), cfg.RunExpiredPolicy()),
+		consoles:      newConsoleSessionHubWithRecovery(apiStore, recoverInterrupted),
 		nodeOps:       newNodeOperationStore(apiStore),
 		mux:           http.NewServeMux(),
 	}

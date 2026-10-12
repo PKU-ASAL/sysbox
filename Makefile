@@ -152,12 +152,14 @@ test-p9-real: build-all ## Run implemented real-provider gates; reject skips and
 	test -f "$${SYSBOX_FIRECRACKER_KERNEL:?set Firecracker kernel}"; \
 	test -f "$${SYSBOX_FIRECRACKER_ROOTFS:?set Firecracker rootfs}"; \
 	acceptance_dir=$$(mktemp -d /tmp/sysbox-acceptance.XXXXXX); \
-	trap 'rm -f "$$acceptance_dir/check" "$$acceptance_dir/helper"; rmdir "$$acceptance_dir"' EXIT; \
+	trap 'rm -f "$$acceptance_dir/check" "$$acceptance_dir/helper" "$$acceptance_dir/sysbox"; rmdir "$$acceptance_dir"' EXIT; \
 	$(GOENV) $(GO) build -buildvcs=false -o "$$acceptance_dir/check" ./scripts/acceptance; \
 	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$acceptance_dir/helper" ./cmd/sysbox-init; \
-	export GOCACHE="$(GOCACHE)" SYSBOX_GUESTTASK_HELPER="$$acceptance_dir/helper"; \
+	$(GOENV) $(GO) build -buildvcs=false -o "$$acceptance_dir/sysbox" ./cmd/sysbox; \
+	export GOCACHE="$(GOCACHE)" SYSBOX_GUESTTASK_HELPER="$$acceptance_dir/helper" SYSBOX_CLI_BINARY="$$acceptance_dir/sysbox"; \
 	SYSBOX_REMOTE_DOCKER_E2E=1 SYSBOX_HOST_POWER_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/api -timeout 6m \
-	  -tests TestRemoteDockerCompletionLossRecoveryE2E,TestRemoteDockerSSHAccessRunE2E,TestHostSupervisorRealTaskStopAndSuccessorE2E,TestHostSupervisorRealNodePowerE2E,TestHostSupervisorRealFileInstallE2E,TestPublicSSHAgentDockerE2E; \
+	  -tests TestRemoteDockerCompletionLossRecoveryE2E,TestRemoteDockerSSHAccessRunE2E,TestHostSupervisorRealTaskStopAndSuccessorE2E,TestHostSupervisorRealNodePowerE2E,TestHostSupervisorRealFileInstallE2E,TestPublicSSHAgentDockerE2E,TestLocalSSHColdReceiptRecoveryE2E; \
+	"$$acceptance_dir/check" -go "$(GO)" -race -package ./cmd/sysbox/commands -tests TestLocalCLIManagedSSHApplyRotateDestroyE2E; \
 	"$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/sshaccess -tests TestRealSSHDDeploymentReloadRecoveryE2E,TestRealSSHDEffectiveConfigurationConflictE2E; \
 	SYSBOX_DOCKER_ADOPTION_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/provider/docker -tests TestDockerAdoptionColdLifecycleE2E,TestDockerProductionSSHAccessE2E; \
 	"$$acceptance_dir/check" -go "$(GO)" -package ./pkg/provider/firecracker -timeout 10m \

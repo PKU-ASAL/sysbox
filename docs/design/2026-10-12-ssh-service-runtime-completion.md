@@ -66,7 +66,9 @@ before installation and after install/recovery. Main config is unchanged and the
 temporary service is stopped. This is service-only acceptance, not a combined
 cross-host API/Agent managed-key lifecycle.
 
-Still open: local CLI authority/bootstrap; resource-targeted Run child authority;
+Local CLI authority/bootstrap is now implemented; see
+[local-ssh-authority.md](../operations/local-ssh-authority.md).
+Still open: remote resource-targeted Run child authority;
 automatic enrollment/provisioning of the trusted service profile in managed
 images; and combined two-VM API/Agent SSH lifecycle/login fault acceptance. The
 service profile is intentionally administrator-controlled and is not inferred or
