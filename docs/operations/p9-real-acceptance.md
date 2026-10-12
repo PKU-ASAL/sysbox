@@ -1,5 +1,30 @@
 # P9 real acceptance
 
+## Two-VM runtime SSH lost-completion recovery (2026-10-13)
+
+The final gate passed with a host-only HTTP fault proxy. After the backend
+committed the runtime Apply, the proxy withheld every acknowledgment of that
+Run's completion until the Agent and host were stopped. It durably recorded the
+exact request path and SHA-256 only after backend HTTP 200. API and proxy were
+restarted, the fault released, and the reconstructed host resubmitted precisely
+the same receipt bytes. The gate required this replay, not merely a terminal Run.
+
+The complete runtime SSH resource (including operation identity, generation and
+configuration handle) remained identical across recovery. Twenty real login
+checks, subsequent targeted reset, both generation IDs' absence, owner container
+and network absence, and normal metadata deletion all passed. Final evidence:
+`/tmp/sysbox-p9-lab-current/sshgate4b45f9a926eb/result.json`.
+API, proxy, Agent and host services stopped; historical incident data was not
+rewritten. Early proxy setup failures retained their namespaces with services
+stopped. Agent WebSocket and public API traffic bypass the fault proxy.
+
+All 46 acceptance script tests passed, including actual HTTP chunked response
+forwarding, repeated withheld receipts, proxy reconstruction and rejection of
+altered completion bodies. Independent review found no important blocker.
+This closes the combined Docker SSH runtime completion-acknowledgment-loss gate;
+it does not establish VM/kernel reboot, guest-helper reboot, automatic service
+enrollment or other-provider acceptance.
+
 ## Two-VM managed SSH login, reset and runtime restart recovery accepted (2026-10-13)
 
 The final `ssh_lifecycle.py` gate passed with two independent VM kernels, a

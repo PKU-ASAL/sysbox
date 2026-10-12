@@ -82,7 +82,7 @@ def acceptance(root, binary, helper):
     if len(set(boots.values())) != 2:
         raise RuntimeError("independent kernels required")
     evidence["guest_boots"] = boots
-    api_port, ssh_port = port("control", "10.77.0.10"), port("execution", "10.77.0.20")
+    api_port, proxy_port, ssh_port = port("control", "10.77.0.10"), port("control", "10.77.0.10"), port("execution", "10.77.0.20")
     token, password = secrets.token_hex(32), secrets.token_hex(32)
     configs = service_configs(name, api_port, token, password)
     for role in lab.ROLES:
@@ -109,9 +109,10 @@ def acceptance(root, binary, helper):
         remote(role, f"sudo install -d -m 0700 -o {user} -g {user} {remote_root}/{config_name}")
         stage(role, config_name + ".json", json.dumps(configs[config_name]), remote_root + "/" + config_name + ".json", owner=user)
 
-    def start_unit(role, suffix, user, command):
+    def start_unit(role, suffix, user, command, executable=None):
         unit = name + "-" + suffix + ".service"
-        text = f"[Unit]\nAfter=network-online.target\n[Service]\nType=simple\nUser={user}\nEnvironment=SYSBOX_CONFIG={remote_root}/{suffix}.json\nExecStart={remote_root}/sysbox {command}\nRestart=on-failure\nRestartSec=1\n"
+        executable = executable or (remote_root + "/sysbox")
+        text = f"[Unit]\nAfter=network-online.target\n[Service]\nType=simple\nUser={user}\nEnvironment=SYSBOX_CONFIG={remote_root}/{suffix}.json\nExecStart={executable} {command}\nRestart=on-failure\nRestartSec=1\n"
         stage(role, unit, text, "/etc/systemd/system/" + unit, "0644")
         remote(role, f"sudo systemctl daemon-reload && sudo systemctl start {unit} && sudo systemctl is-active {unit}")
         return unit
@@ -129,6 +130,10 @@ def acceptance(root, binary, helper):
         output = remote("control", "sudo python3 -c " + shlex.quote(code))
         return json.loads(output) if output else None
 
+    proxy_source = Path(__file__).with_name("completion_proxy.py")
+    upload("control", proxy_source, remote_root + "/completion_proxy.py", "0755")
+    drop_marker = remote_root + "/armed"
+    proxy_unit = start_unit("control", "proxy", "root", f"{remote_root}/completion_proxy.py --listen-port {proxy_port} --backend-port {api_port} --root {remote_root}", "/usr/bin/python3")
     deadline = time.monotonic() + 30
     while True:
         try:
@@ -141,9 +146,11 @@ def acceptance(root, binary, helper):
     registration = f"#!/bin/sh\nset -eu\n{remote_root}/sysbox agent register --api {url} --id {name} --name {name} --substrates docker --identity {remote_root}/agent/identity.json --token {shlex.quote(token)}\n"
     stage("execution", "register.sh", registration, remote_root + "/register.sh")
     remote("execution", f"sudo sh {remote_root}/register.sh >/dev/null && sudo install -m 0600 {remote_root}/agent/identity.json {remote_root}/host-identity.json && sudo chown sysboxagent:sysboxagent {remote_root}/agent/identity.json")
+    rewrite = f"import json; p={remote_root + '/host-identity.json'!r}; d=json.load(open(p)); d['api_url']='http://10.77.0.10:{proxy_port}'; open(p,'w').write(json.dumps(d))"
+    remote("execution", "sudo python3 -c " + shlex.quote(rewrite))
     host_unit = start_unit("execution", "host", "root", f"host-supervisor --config {remote_root}/host.json --identity {remote_root}/host-identity.json")
     agent_unit = start_unit("execution", "agent", "sysboxagent", f"agent start --config {remote_root}/agent.json --identity {remote_root}/agent/identity.json")
-    evidence.update({"api_url": url, "api_unit": api_unit, "host_unit": host_unit, "agent_unit": agent_unit, "remote_root": remote_root, "ssh_port": ssh_port})
+    evidence.update({"api_url": url, "api_backend": f"http://10.77.0.10:{api_port}", "api_unit": api_unit, "proxy_unit": proxy_unit, "host_unit": host_unit, "agent_unit": agent_unit, "remote_root": remote_root, "ssh_port": ssh_port})
     save()
     print("Isolated services ready: " + name, flush=True)
     for key in ("administrator", "first", "rotated"):
@@ -261,11 +268,41 @@ resource "sysbox_node" "web" {{
 }}
 '''
     runtime_revision = api("POST", "/v1/revisions", {"files": {"field.sysbox.hcl": runtime_hcl}})["revision"]
+    remote("control", f"sudo touch {drop_marker}")
     run = api("POST", f"/v1/topologies/{name}/apply", {"revision": runtime_revision})
     evidence["runtime_apply_run"] = run; save()
     wait("/v1/runs/" + run["run_id"])
     login("first", True); login("rotated", False)
     evidence["phase"] = "runtime_ssh_verified"; save()
+    before_recovery = api("GET", f"/v1/topologies/{name}/state")
+    before_ssh = next(r for r in before_recovery["resources"] if r["address"] == "sysbox_ssh_access.runtime")
+    # Withhold all acknowledgments of this one committed Run until the host
+    # is stopped, so a normal retry cannot close the fault before cold recovery.
+    proof = json.loads(remote("control", f"sudo cat {remote_root}/dropped.json"))
+    if proof["path"] != f"/v1/hosts/{name}/runs/{run['run_id']}/completed" or proof["backend_status"] != 200:
+        raise RuntimeError("runtime completion loss was not injected")
+    evidence["dropped_completion"] = proof; save()
+    remote("execution", f"sudo systemctl stop {agent_unit} {host_unit}")
+    remote("control", f"sudo systemctl restart {api_unit} {proxy_unit} && sudo rm -- {drop_marker}")
+    remote("execution", f"sudo systemctl start {host_unit} {agent_unit}")
+    deadline = time.monotonic() + 60
+    while True:
+        recovered = lab.ssh(root, manifest, "control", f"sudo cat {remote_root}/recovered.json")
+        if recovered.returncode == 0:
+            if json.loads(recovered.stdout) != proof:
+                raise RuntimeError("recovered completion differs")
+            evidence["recovered_completion"] = proof; save()
+            break
+        if time.monotonic() > deadline:
+            raise RuntimeError("original host receipt did not recover")
+        time.sleep(1)
+    wait("/v1/runs/" + run["run_id"])
+    after_recovery = api("GET", f"/v1/topologies/{name}/state")
+    after_ssh = next(r for r in after_recovery["resources"] if r["address"] == "sysbox_ssh_access.runtime")
+    if before_ssh != after_ssh:
+        raise RuntimeError("SSH resource identity or result changed during receipt recovery")
+    evidence["unchanged_runtime_ssh"] = after_ssh; save()
+    evidence["phase"] = "runtime_lost_completion_recovery_verified"; save()
     # Reconstruct all three control points after a completed runtime mutation
     # and observe the original operation before admitting reset.
     remote("control", f"sudo systemctl restart {api_unit}")
@@ -303,7 +340,7 @@ resource "sysbox_node" "web" {{
     save()
     evidence["metadata_delete"] = api("DELETE", f"/v1/topologies/{name}")
     remote("execution", f"sudo systemctl stop {agent_unit} {host_unit}")
-    remote("control", f"sudo systemctl stop {api_unit}")
+    remote("control", f"sudo systemctl stop {api_unit} {proxy_unit}")
     evidence["phase"] = "passed_services_stopped"; save()
     print(evidence_dir / "result.json", flush=True)
 

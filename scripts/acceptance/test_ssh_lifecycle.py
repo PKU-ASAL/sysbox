@@ -30,9 +30,6 @@ class SSHLifecycleTests(unittest.TestCase):
         self.assertFalse(acceptance.container_absent(1, "[]", "no such object: foreign", "abc"))
         self.assertFalse(acceptance.container_absent(0, "[{}]", "", "abc"))
 
-    def test_evidence_requires_distinct_guest_boots(self):
-        self.assertEqual(len({"control-boot", "execution-boot"}), 2)
-
 
 if __name__ == "__main__":
     unittest.main()

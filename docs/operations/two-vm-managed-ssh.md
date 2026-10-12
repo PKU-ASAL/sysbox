@@ -37,6 +37,12 @@ or sshd service enrollment. It exercises:
 6. Destroy, independent absence checks for both container IDs and owner-scoped
    containers/networks, then normal metadata deletion and test-service stop.
 
+Before reset, a host-only HTTP proxy withholds the committed runtime Run's
+completion acknowledgment. All retries remain withheld until the host stops.
+After API/proxy/host restart, the gate requires the exact original completion
+body digest to be replayed and the full SSH resource to remain unchanged.
+Agent WebSocket and public API requests continue to use the direct API endpoint.
+
 Connection failure and host-key failure do not count as authentication rejection.
 An unavailable Docker daemon does not count as resource absence.
 
@@ -48,5 +54,5 @@ and original operations before resuming cleanup. Successful namespaces retain
 their database, image, private configuration and evidence for inspection, with
 their service units stopped. Keep the lab private.
 
-This gate does not establish helper/VM reboot recovery, a lost-completion fault,
+This gate does not establish helper/VM reboot recovery,
 network partition, other providers, or automatic trusted-service provisioning.
