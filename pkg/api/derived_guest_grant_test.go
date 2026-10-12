@@ -54,6 +54,36 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 	}
 	derive := map[string]any{"parent": parent, "task_id": "task", "task_digest": "digest", "resource_uid": "node", "generation": 1, "guest_boot_id": "guest"}
 	w := post("derive-guest", derive, true)
+	require.Equal(t, http.StatusUnauthorized, w.Code, "Agent credentials alone must not authorize a host-selected task: %s", w.Body.String())
+	hostPublic, hostKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	s.grantHostKeys = map[string]ed25519.PublicKey{"agent": hostPublic}
+	proof, err := controlplane.SignGuestGrantDerivation(hostKey, controlplane.GuestGrantDerivation{Parent: parent, TaskID: "task", TaskDigest: "digest", ResourceUID: "node", Generation: 1, GuestBootID: "guest"})
+	require.NoError(t, err)
+	for _, field := range []string{"task", "digest", "resource", "generation", "boot", "parent", "signature"} {
+		t.Run("host-proof/"+field, func(t *testing.T) {
+			changed := proof
+			switch field {
+			case "task":
+				changed.TaskID = "other"
+			case "digest":
+				changed.TaskDigest = "other"
+			case "resource":
+				changed.ResourceUID = "other"
+			case "generation":
+				changed.Generation++
+			case "boot":
+				changed.GuestBootID = "other"
+			case "parent":
+				changed.Parent.Grant.Epoch++
+			case "signature":
+				changed.HostSignature = nil
+			}
+			w := post("derive-guest", changed, true)
+			require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
+		})
+	}
+	w = post("derive-guest", proof, true)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	var child controlplane.SignedExecutionGrant
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &child))
@@ -68,7 +98,7 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 	}
 	w = authorize()
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	w = post("derive-guest", derive, true)
+	w = post("derive-guest", proof, true)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	var retry controlplane.SignedExecutionGrant
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &retry))
@@ -129,7 +159,7 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 	require.ErrorIs(t, s.derivedGuestStorage(ctx, parent).validate(&persistence.CommandRecord{Command: cmd, Retired: true}), persistence.ErrConflict)
 	w = post("renew-guest", body, true)
 	require.NotEqual(t, 200, w.Code)
-	w = post("derive-guest", derive, true)
+	w = post("derive-guest", proof, true)
 	require.NotEqual(t, 200, w.Code)
 	w = authorize()
 	require.NotEqual(t, 200, w.Code)
@@ -181,7 +211,11 @@ func TestRejectedDerivedEnvelopePersistsClockFloor(t *testing.T) {
 			before := time.Now().UTC()
 			w := httptest.NewRecorder()
 			s.ServeHTTP(w, r)
-			require.Equal(t, http.StatusConflict, w.Code)
+			want := http.StatusConflict
+			if route == "derive-guest" {
+				want = http.StatusUnauthorized
+			}
+			require.Equal(t, want, w.Code)
 			raw, err = (apiExecutionGrantStorage{store: s.apiStore}).ReadExecutionAuthority(ctx)
 			require.NoError(t, err)
 			var ledger struct {

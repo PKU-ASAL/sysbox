@@ -94,7 +94,7 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 		if err != nil {
 			return substrate.ExecutionHandle{}, err
 		}
-		task.Grant, err = h.Authority.DeriveGuestGrant(taskCtx, parent, taskID, digest, identity.ResourceUID, identity.Generation, bootID)
+		task.Grant, err = h.Authority.DeriveGuestGrant(taskCtx, childDispatcher.HostKey, parent, taskID, digest, identity.ResourceUID, identity.Generation, bootID)
 		if err != nil {
 			return substrate.ExecutionHandle{}, err
 		}

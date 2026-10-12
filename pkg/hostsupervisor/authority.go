@@ -118,9 +118,13 @@ func (c AuthorityClient) ReportRun(ctx context.Context, runID string, receipt co
 	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/runs/"+runID+"/completed", map[string]any{"receipt": receipt, "evidence": evidence}, false)
 }
 
-func (c AuthorityClient) DeriveGuestGrant(ctx context.Context, parent controlplane.SignedExecutionGrant, taskID, taskDigest, resourceUID string, generation int64, guestBootID string) (controlplane.SignedExecutionGrant, error) {
+func (c AuthorityClient) DeriveGuestGrant(ctx context.Context, hostKey ed25519.PrivateKey, parent controlplane.SignedExecutionGrant, taskID, taskDigest, resourceUID string, generation int64, guestBootID string) (controlplane.SignedExecutionGrant, error) {
 	var out controlplane.SignedExecutionGrant
-	err := c.postJSON(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grant/derive-guest", map[string]any{"parent": parent, "task_id": taskID, "task_digest": taskDigest, "resource_uid": resourceUID, "generation": generation, "guest_boot_id": guestBootID}, &out)
+	proof, err := controlplane.SignGuestGrantDerivation(hostKey, controlplane.GuestGrantDerivation{Parent: parent, TaskID: taskID, TaskDigest: taskDigest, ResourceUID: resourceUID, Generation: generation, GuestBootID: guestBootID})
+	if err != nil {
+		return out, err
+	}
+	err = c.postJSON(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grant/derive-guest", proof, &out)
 	return out, err
 }
 

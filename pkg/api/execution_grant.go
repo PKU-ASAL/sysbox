@@ -171,15 +171,6 @@ func (s *Server) handleGCGrant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, signed)
 }
 
-type deriveGuestGrantRequest struct {
-	Parent      controlplane.SignedExecutionGrant `json:"parent"`
-	TaskID      string                            `json:"task_id"`
-	TaskDigest  string                            `json:"task_digest"`
-	ResourceUID string                            `json:"resource_uid"`
-	Generation  int64                             `json:"generation"`
-	GuestBootID string                            `json:"guest_boot_id"`
-}
-
 func (s *Server) handleDeriveGuestExecutionGrant(w http.ResponseWriter, r *http.Request) {
 	if err := s.authenticatedGrantAgent(r); err != nil {
 		writeError(w, http.StatusUnauthorized, err)
@@ -189,7 +180,7 @@ func (s *Server) handleDeriveGuestExecutionGrant(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusServiceUnavailable, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
-	var request deriveGuestGrantRequest
+	var request controlplane.GuestGrantDerivation
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil || request.TaskID == "" || request.TaskDigest == "" || request.ResourceUID == "" || request.Generation < 1 || request.GuestBootID == "" {
@@ -199,6 +190,10 @@ func (s *Server) handleDeriveGuestExecutionGrant(w http.ResponseWriter, r *http.
 	parent := request.Parent
 	if err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ObserveTime(r.Context()); err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
+	if controlplane.VerifyGuestGrantDerivation(s.grantHostKeys[r.PathValue("agent")], request) != nil {
+		writeError(w, http.StatusUnauthorized, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
 	if parent.Grant.AgentID != r.PathValue("agent") || controlplane.VerifyExecutionGrant(s.grantSigner.Public().(ed25519.PublicKey), parent, parent.BootID, time.Now()) != nil {
