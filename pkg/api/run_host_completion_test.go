@@ -111,7 +111,9 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		require.NoError(t, err)
 		require.True(t, acquired)
 		require.Greater(t, replacement.Attempt, command.Attempt)
-		require.NoError(t, store.DeleteAgentCommand(ctx, "agent", command.ID))
+		if action != "destroy" {
+			require.NoError(t, store.DeleteAgentCommand(ctx, "agent", command.ID))
+		}
 		_, expired, err := store.ExpireRunLease(ctx, run.ID, now)
 		require.NoError(t, err)
 		require.True(t, expired)
@@ -119,6 +121,9 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		require.NoError(t, err)
 		response := post(receipt, evidence)
 		require.Equal(t, 200, response.Code, response.Body.String())
+		pending, err := store.ListAgentCommands(ctx, "agent")
+		require.NoError(t, err)
+		require.Empty(t, pending, "authenticated host completion must retire dispatch without a worker acknowledgment")
 		done, err := store.GetRun(ctx, run.ID)
 		require.NoError(t, err)
 		require.Equal(t, observed.Status, done.Status)

@@ -284,6 +284,13 @@ func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request)
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
+	// Canonical host evidence, not a final worker event, completes execution.
+	// Retire delivery only after both result commit and authority release; a
+	// lost reply retries these idempotent steps while retaining the command seed.
+	if err := s.apiStore.DeleteAgentCommand(r.Context(), agentID, grant.CommandID); err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
 	if s.jobs != nil {
 		s.jobs.remember(completed)
 		s.jobs.logs.Close(completed.ID)
