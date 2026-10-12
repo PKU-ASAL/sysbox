@@ -361,7 +361,7 @@ func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedCha
 			record.ResourceUID = old.ResourceUID
 		}
 	}
-	if maxGeneration > 0 {
+	if maxGeneration > record.Generation || maxGeneration > 0 && change.Action == controlplane.PlanActionCreate {
 		record.Generation = maxGeneration
 		if change.Action == controlplane.PlanActionCreate || change.Action == controlplane.PlanActionReset {
 			record.Generation++
@@ -369,6 +369,11 @@ func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedCha
 	}
 	if change.Action == controlplane.PlanActionReset && record.Candidate != nil && record.Generation <= record.Candidate.Generation {
 		record.Generation = record.Candidate.Generation + 1
+	}
+	if change.Action == controlplane.PlanActionReset {
+		if err := e.pinResetSSH(&record); err != nil {
+			return record, err
+		}
 	}
 	return record, nil
 }
@@ -526,6 +531,12 @@ func (e *Executor) commitVerifiedAction(ctx context.Context, record ActionRecord
 		return fmt.Errorf("reload committed state: %w", err)
 	}
 	e.state.Meta = committed.Meta
+	for _, dependency := range record.ResetSSH {
+		if dependency.Result != nil {
+			e.state.RemoveResource(dependency.Result.Address)
+			e.state.AddResource(cloneResetStateResource(*dependency.Result))
+		}
+	}
 	e.recorder.StepExternal(step, record.Candidate.Driver, record.Candidate.ExternalID, ManagedLabels(e.topology, e.runID, record.Resource))
 	e.recorder.StepStateResource(step, log)
 	e.recorder.StepStatePatch(step, patch.Op, &log)

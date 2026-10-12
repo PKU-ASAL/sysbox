@@ -1,5 +1,38 @@
 # P9 real acceptance
 
+## Reset SSH dependencies repaired (2026-10-13)
+
+The combined SSH/reset/Destroy gap below is fixed for new reset admissions.
+Reset pins existing SSH dependencies and desired configuration in its durable
+intent, recreates permissions on the replacement generation and atomically
+publishes the node and SSH resource results. Mutation admission precedes the
+effect; cold recovery observes the original child ID without repeating it.
+Unknown admitted results remain uncertain. The previous incarnation validation
+is unchanged. This also fixes deletion using an older generation from history
+after an atomic reset advanced the canonical SSH resource.
+
+`TestRemoteDockerTargetedResetSSHRunE2E` passed under race (15.92 seconds), including
+independent inspection of the new guest's managed SSH state and final signed
+Destroy/empty inventory/cold metadata deletion. It is now in `make test-p9-real`.
+`TestLocalCLIManagedSSHApplyRotateDestroyE2E` now additionally runs targeted reset
+and independently reads the rotated public key from the new guest; file and
+SQLite passed using independent CLI processes (25.14 seconds total), followed
+by Destroy without HCL. The CLI build used `-buildvcs=false` because VCS stamping
+was unavailable in this worktree environment.
+
+Runtime tests cover lost replies, uncertain admissions, foreign results, changed
+configuration and denied writes. Repository tests cover immutable dependency
+snapshots, monotonic results, rejection of incomplete publication and atomic
+node/SSH publication. Cold recovery through the actual runtime/repository path
+leaves node destroy, replacement and guest mutation counters at exactly one.
+Both repository suites passed under race on filesystem, SQLite and an isolated
+real Postgres 16 instance, with no backend skipped (1.26 seconds combined).
+Full tests, focused race, affected-package vet and independent review passed.
+
+This does not repair pre-existing historical incomplete resets by rewriting
+their evidence, and does not establish Firecracker/libvirt SSH reset or two-VM
+managed-key login acceptance. Those broader provider acceptance gaps remain.
+
 ## Targeted Run authority and dispatch retirement (2026-10-13)
 
 SSH and guest-task derivation now require enrolled host signatures. The guest

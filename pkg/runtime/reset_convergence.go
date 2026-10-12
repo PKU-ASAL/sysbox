@@ -300,6 +300,9 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			return e.uncertainAction(ctx, *record, item.step, ErrVerification)
 		}
 		record.ExpectedSerial = e.state.Meta.Serial
+		if err := e.reconcileResetSSH(actionCtx, record); err != nil {
+			return e.uncertainAction(ctx, *record, item.step, err)
+		}
 		if err := e.commitVerifiedAction(actionCtx, *record, item.step); err != nil {
 			return err
 		}

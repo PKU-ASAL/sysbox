@@ -164,6 +164,12 @@ func (s *NodeOperationService) SSHAccess(ctx context.Context, topology string, n
 // selected is supplied only by the credential-owning local CLI controller.
 // Public admission always goes through normal host placement and scheduling.
 func (s *NodeOperationService) sshAccess(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject, selected *controlplane.Agent) (controlplane.NodeOperation, error) {
+	return s.sshAccessTarget(ctx, topology, node, req, operation, subj, selected, nil)
+}
+
+// candidate is used only after the local credential owner validates an exact
+// admitted reset SSH child. Public requests never supply candidate state.
+func (s *NodeOperationService) sshAccessTarget(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject, selected *controlplane.Agent, candidate *state.Resource) (controlplane.NodeOperation, error) {
 	if operation != "ssh_access_apply" && operation != "ssh_access_delete" {
 		return controlplane.NodeOperation{}, fmt.Errorf("unsupported ssh access operation")
 	}
@@ -186,6 +192,12 @@ func (s *NodeOperationService) sshAccess(ctx context.Context, topology string, n
 		return controlplane.NodeOperation{}, err
 	}
 	res := st.FindResource(address.Resource("sysbox_node", node))
+	if candidate != nil {
+		if selected == nil || !candidate.Address.Equal(address.Resource("sysbox_node", node)) {
+			return controlplane.NodeOperation{}, persistence.ErrConflict
+		}
+		res = candidate
+	}
 	if res == nil {
 		return controlplane.NodeOperation{}, fmt.Errorf("node %q not found", node)
 	}

@@ -44,8 +44,9 @@ type ActionRecord struct {
 	// Replacement identifies the new reset generation before guest setup has
 	// completed. Candidate retains the old handle until EffectComplete; this
 	// field is task routing evidence, never permission to replay setup.
-	Replacement *state.Resource `json:"replacement,omitempty"`
-	Error       string          `json:"error,omitempty"`
+	Replacement *state.Resource      `json:"replacement,omitempty"`
+	ResetSSH    []ResetSSHDependency `json:"reset_ssh,omitempty"`
+	Error       string               `json:"error,omitempty"`
 	// ReplayForbidden means resource presence cannot prove that the complete
 	// composite effect (guest initialization, provisioners, image entry) finished.
 	ReplayForbidden bool   `json:"replay_forbidden,omitempty"`

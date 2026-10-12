@@ -297,6 +297,9 @@ func validateAction(a runtime.ActionRecord) error {
 	return nil
 }
 func sameIntent(a, b runtime.ActionRecord) bool {
+	if !runtime.SameResetSSHIntent(a, b) {
+		return false
+	}
 	if !a.RunQueuedAt.Equal(b.RunQueuedAt) || a.RunRevision != b.RunRevision {
 		return false
 	}
@@ -399,6 +402,19 @@ func applyActionOutcome(a *aggregate, action runtime.ActionRecord, patch *runtim
 	if old.EffectComplete && !action.EffectComplete || old.Candidate != nil && action.Candidate == nil {
 		return fmt.Errorf("%w: recovery evidence cannot be discarded", ErrConflict)
 	}
+	for i, before := range old.ResetSSH {
+		after := action.ResetSSH[i]
+		if before.Started && !after.Started {
+			return ErrConflict
+		}
+		if before.Result != nil {
+			x, _ := json.Marshal(before.Result)
+			y, _ := json.Marshal(after.Result)
+			if string(x) != string(y) {
+				return ErrConflict
+			}
+		}
+	}
 	if old.Replacement != nil && (action.Replacement == nil || old.Replacement.ExternalID != action.Replacement.ExternalID || old.Replacement.Driver != action.Replacement.Driver) {
 		return fmt.Errorf("%w: reset replacement cannot be discarded or substituted", ErrConflict)
 	}
@@ -435,6 +451,13 @@ func applyActionOutcome(a *aggregate, action runtime.ActionRecord, patch *runtim
 			candidate.Generation = action.Generation
 			a.State.RemoveResource(action.Resource)
 			a.State.AddResource(candidate)
+			for _, dependency := range action.ResetSSH {
+				if dependency.Result == nil {
+					return ErrConflict
+				}
+				a.State.RemoveResource(dependency.Result.Address)
+				a.State.AddResource(*dependency.Result)
+			}
 		} else {
 			return fmt.Errorf("unsupported resource patch %s", patch.Op)
 		}
@@ -547,6 +570,9 @@ func resetPhaseOrder(phase string) int {
 // Serial is necessary but not sufficient after external restore/import. An
 // action may only update the resource identity and generation it authorized.
 func validateActionTarget(st *state.State, action runtime.ActionRecord) error {
+	if err := action.ValidateResetSSH(st); err != nil {
+		return fmt.Errorf("%w: %v", ErrConflict, err)
+	}
 	current := st.FindResource(action.Resource)
 	if current == nil {
 		if action.Action == controlplane.PlanActionDelete || action.Action == controlplane.PlanActionReset {

@@ -22,6 +22,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+	statepkg "github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
 )
@@ -154,7 +155,7 @@ func NewLocalSSHController(ctx context.Context, cfg config.ServiceConfig, topolo
 		return nil, err
 	}
 	c.resolver = hostsupervisor.CanonicalResolver{RunsDir: c.server.runsDir, Backend: c.server.stateBackend, AgentID: id}
-	c.host = &hostsupervisor.SSHGuestDispatcher{Dispatcher: &hostsupervisor.Dispatcher{Root: filepath.Join(root, "guest-ssh"), AgentID: id, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: host, Resolve: c.resolver.Resolve, Authorize: authority.Authorize}, Report: func(reportCtx context.Context, operation string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {
+	c.host = &hostsupervisor.SSHGuestDispatcher{Dispatcher: &hostsupervisor.Dispatcher{Root: filepath.Join(root, "guest-ssh"), AgentID: id, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: host, Resolve: c.resolveSSH, Authorize: authority.Authorize}, Report: func(reportCtx context.Context, operation string, receipt controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {
 		if err := authority.ReportNodeOperation(reportCtx, operation, receipt, evidence); err != nil {
 			return err
 		}
@@ -196,11 +197,16 @@ func (c *LocalSSHController) mutate(ctx context.Context, req substrate.SSHAccess
 			node = resource.Address.Name
 		}
 	}
+	var candidate *statepkg.Resource
 	if node == "" {
-		return empty, fmt.Errorf("local SSH node identity unavailable")
+		candidate, _, err = c.localResetSSH(ctx, controlplane.ExecutionScope{TopologyUID: c.owner, ResourceUID: id.ResourceUID, Generation: id.Generation}, &req)
+		if err != nil {
+			return empty, err
+		}
+		node = candidate.Address.Name
 	}
 	ref := hostsupervisor.TargetRef{Topology: c.topology, Node: node, Scope: controlplane.ExecutionScope{TopologyUID: c.owner, ResourceUID: id.ResourceUID, Generation: id.Generation}}
-	target, err := c.resolver.Resolve(ctx, ref)
+	target, err := c.resolveSSH(ctx, ref)
 	if err != nil {
 		return empty, err
 	}
@@ -219,7 +225,7 @@ func (c *LocalSSHController) mutate(ctx context.Context, req substrate.SSHAccess
 	// The same canonical validation and atomic operation/outbox admission as HTTP
 	// is used here; only host selection is explicit for this local operator.
 	service := newNodeOperationService(c.server.workspaceService(), c.server.scheduling(), c.server.nodeOps, nil)
-	op, err := service.sshAccess(ctx, c.topology, node, request, operation, requestSubject{User: "local-cli", Roles: []string{"admin"}}, &c.agent)
+	op, err := service.sshAccessTarget(ctx, c.topology, node, request, operation, requestSubject{User: "local-cli", Roles: []string{"admin"}}, &c.agent, candidate)
 	if err != nil {
 		return empty, err
 	}

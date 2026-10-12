@@ -31,6 +31,7 @@ import (
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 )
@@ -51,6 +52,13 @@ func TestRemoteDockerSSHAccessRunE2E(t *testing.T) {
 
 func TestRemoteDockerTargetedResetRunE2E(t *testing.T) {
 	testRemoteDockerCompletionLossRecovery(t, false, true)
+}
+
+func TestRemoteDockerTargetedResetSSHRunE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_GUESTTASK_HELPER") == "" {
+		t.Skip("current guest helper required")
+	}
+	testRemoteDockerCompletionLossRecovery(t, true, true)
 }
 
 func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedReset bool) {
@@ -444,6 +452,30 @@ resource "sysbox_node" "%s" {
 			}
 		}
 		require.NotEmpty(t, replacement)
+		if managedSSH {
+			var handle substrate.SSHAccessHandle
+			for _, resource := range replaced.Resources {
+				if resource.Address.Type != "sysbox_ssh_access" {
+					continue
+				}
+				var saved struct {
+					Handle substrate.SSHAccessHandle `json:"handle"`
+				}
+				raw, err := json.Marshal(resource.Attributes["ssh_access"])
+				require.NoError(t, err)
+				require.NoError(t, json.Unmarshal(raw, &saved))
+				handle = saved.Handle
+				require.EqualValues(t, 2, resource.Generation)
+			}
+			require.Equal(t, replacement, handle.NodeID)
+			require.EqualValues(t, 2, handle.Generation)
+			conn, err := docker.Connection(substrate.NodeHandle{ID: replacement, Generation: handle.Generation}, nil)
+			require.NoError(t, err)
+			inspection, err := conn.(substrate.ConnectionSSHAccess).InspectSSHAccess(ctx, handle)
+			require.NoError(t, err)
+			require.Equal(t, "present", inspection.Status, "replacement guest must contain rebuilt SSH permission")
+			require.Equal(t, handle.Revision, inspection.Revision)
+		}
 		instances, err = cli.ContainerList(ctx, container.ListOptions{All: true, Filters: owned})
 		require.NoError(t, err)
 		require.Len(t, instances, 1)

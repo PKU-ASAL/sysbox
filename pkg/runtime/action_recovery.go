@@ -134,6 +134,11 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 		if err := e.journalError(); err != nil {
 			return err
 		}
+		if record.Action == controlplane.PlanActionReset {
+			if err := e.reconcileResetSSHWithEffects(observeCtx, &record, false); err != nil {
+				return err
+			}
+		}
 		if err := e.commitVerifiedAction(ctx, record, step); err != nil {
 			return err
 		}
