@@ -53,13 +53,13 @@ func TestResolverRestoresGuestUserAfterCanonicalIdentityObservation(t *testing.T
 		Attributes: state.MustAttributes(map[string]any{"desired": map[string]any{"connections": []config.ConnectionConfig{{User: "ubuntu"}}}})}
 	target, err := r.resolveResource(context.Background(), ref, &resource)
 	require.NoError(t, err)
-	connection, err := canonicalConnection(target)
+	connection, err := canonicalConnection(context.Background(), target)
 	require.NoError(t, err)
 	require.Equal(t, "ubuntu", connection.User)
 	resource.Attributes = state.MustAttributes(map[string]any{"desired": map[string]any{"connections": []config.ConnectionConfig{{User: "../invalid"}}}})
 	target, err = r.resolveResource(context.Background(), ref, &resource)
 	require.NoError(t, err, "provider-only operations must not depend on SSH username validity")
-	_, err = canonicalConnection(target)
+	_, err = canonicalConnection(context.Background(), target)
 	require.Error(t, err)
 	require.Equal(t, 1, node.connections, "invalid user must be rejected before connecting")
 	node.wrongIdentity = true

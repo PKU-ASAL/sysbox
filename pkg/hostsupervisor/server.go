@@ -31,10 +31,7 @@ type Server struct {
 	Runs          *RunCoordinator
 	RunEffect     func(context.Context, RunRequest) (json.RawMessage, error)
 	RunRecovery   func(context.Context, RunRecoveryRequest) (*controlplane.RunRecoveryReport, error)
-	SSH           *SSHAccessCoordinator
 	SSHGuest      *SSHGuestDispatcher
-	SSHApply      func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
-	SSHDelete     func(context.Context, controlplane.SSHAccessRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	Adoption      *AdoptionCoordinator
 	AdoptionApply func(context.Context, controlplane.AdoptionRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	GC            *GCCoordinator
@@ -44,7 +41,7 @@ type Server struct {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.RunRecovery == nil && s.SSH == nil && s.Adoption == nil && s.GC == nil || !filepath.IsAbs(s.Socket) {
+	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.RunRecovery == nil && s.SSHGuest == nil && s.Adoption == nil && s.GC == nil || !filepath.IsAbs(s.Socket) {
 		return fmt.Errorf("absolute supervisor socket and dispatcher required")
 	}
 	directory := filepath.Dir(s.Socket)
@@ -130,9 +127,9 @@ func (s *Server) serveListener(parent context.Context, listener net.Listener) er
 		workers.Add(1)
 		go func() { defer workers.Done(); s.runRecovery(ctx, "adoption", s.Adoption.Recover) }()
 	}
-	if s.SSH != nil {
+	if s.SSHGuest != nil {
 		workers.Add(1)
-		go func() { defer workers.Done(); s.runRecovery(ctx, "ssh", s.SSH.Recover) }()
+		go func() { defer workers.Done(); s.runRecovery(ctx, "guest-ssh", s.SSHGuest.Recover) }()
 	}
 	if s.GC != nil && s.GC.ReportStop != nil {
 		workers.Add(1)
@@ -227,10 +224,9 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 	var err error
 	var record TaskRecord
 	switch request.Operation {
-	case "ssh-apply", "ssh-delete", "ssh-observe", "ssh-guest-apply", "ssh-guest-delete":
-		r, grant := request.SSHRequest, request.Grant
-		if r == nil || grant == nil || r.Topology != request.Target.Topology || r.Node != request.Target.Node || grant.Grant.Scope != request.Target.Scope || grant.Grant.ActionID != r.ID {
-			response.Error = "ssh access target mismatch"
+	case "ssh-guest-mutate", "ssh-guest-observe":
+		if request.SSHMutation == nil || request.Grant == nil {
+			response.Error = "guest SSH mutation and grant required"
 			return response
 		}
 	case "adoption-apply", "adoption-observe":
@@ -345,40 +341,23 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 		} else {
 			err = s.Runs.Cancel(ctx, *request.RunRequest, *request.Grant)
 		}
-	case "ssh-apply":
-		if s.SSH == nil || s.SSHApply == nil || request.SSHRequest == nil || request.Grant == nil {
-			err = fmt.Errorf("host ssh access coordinator unavailable")
-			break
-		}
-		response.SSHEvidence, err = s.SSH.Apply(ctx, *request.SSHRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
-			return s.SSHApply(effectCtx, *request.SSHRequest, *request.Grant)
-		})
-	case "ssh-guest-apply", "ssh-guest-delete":
-		if s.SSHGuest == nil || request.SSHRequest == nil || request.Grant == nil {
+	case "ssh-guest-mutate", "ssh-guest-observe":
+		if s.SSHGuest == nil {
 			err = fmt.Errorf("host guest SSH coordinator unavailable")
 			break
 		}
-		mutation := request.SSHRequest.Mutation(request.SSHRequest.User, request.Operation == "ssh-guest-delete")
-		result, mutationErr := s.SSHGuest.Mutate(ctx, request.Target, mutation, *request.Grant)
+		var result substrate.SSHAccessResult
+		var mutationErr error
+		if request.Operation == "ssh-guest-observe" {
+			result, mutationErr = s.SSHGuest.Observe(ctx, request.Target, *request.SSHMutation, *request.Grant)
+		} else {
+			result, mutationErr = s.SSHGuest.Mutate(ctx, request.Target, *request.SSHMutation, *request.Grant)
+		}
 		if mutationErr != nil {
 			err = mutationErr
 		} else {
 			response.SSHEvidence, err = json.Marshal(result)
 		}
-	case "ssh-delete":
-		if s.SSH == nil || s.SSHDelete == nil || request.SSHRequest == nil || request.Grant == nil {
-			err = fmt.Errorf("host ssh access coordinator unavailable")
-			break
-		}
-		response.SSHEvidence, err = s.SSH.Delete(ctx, *request.SSHRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
-			return s.SSHDelete(effectCtx, *request.SSHRequest, *request.Grant)
-		})
-	case "ssh-observe":
-		if s.SSH == nil || request.SSHRequest == nil || request.Grant == nil {
-			err = fmt.Errorf("host ssh access coordinator unavailable")
-			break
-		}
-		response.SSHEvidence, err = s.SSH.Observe(ctx, *request.SSHRequest, *request.Grant)
 	case "adoption-apply":
 		if s.Adoption == nil || s.AdoptionApply == nil || request.AdoptionRequest == nil || request.Grant == nil {
 			err = fmt.Errorf("host adoption coordinator unavailable")

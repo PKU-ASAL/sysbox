@@ -44,7 +44,7 @@ func (r CanonicalResolver) Resolve(ctx context.Context, ref TargetRef) (Target, 
 	if err != nil {
 		return Target{}, err
 	}
-	return canonicalConnection(target)
+	return canonicalConnection(ctx, target)
 }
 
 // NodeTarget stays inside the privileged process. It never crosses the worker
@@ -114,7 +114,7 @@ func (r CanonicalResolver) ResolveRunTask(ctx context.Context, ref TargetRef, ru
 	if err != nil {
 		return Target{}, err
 	}
-	return canonicalConnection(node)
+	return canonicalConnection(ctx, node)
 }
 
 // FindRunTaskRef derives the logical node name from trusted repository identity.

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/agent"
@@ -115,68 +114,10 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	hostRun := &agentexec.HostRunExecutor{Bridge: runBridge, Tasks: dispatcher, Resolver: resolver, Authority: authority}
 	server.RunEffect = hostRun.Execute
 	server.RunRecovery = hostRun.Recover
-	server.SSH = &hostsupervisor.SSHAccessCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "ssh-access"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Report: authority.ReportNodeOperation, Authorize: authority.Authorize}
-	server.SSHGuest = &hostsupervisor.SSHGuestDispatcher{Dispatcher: dispatcher, Report: authority.ReportNodeOperation}
-	server.SSHApply = func(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
-		target, err := resolver.Resolve(ctx, hostsupervisor.TargetRef{Topology: req.Topology, Node: req.Node, Scope: grant.Grant.Scope})
-		if err != nil {
-			return nil, err
-		}
-		copier, ok := target.Connection.(substrate.ConnectionFileCopier)
-		if !ok {
-			return nil, fmt.Errorf("ssh access target has no file installer")
-		}
-		data, err := req.AuthorizedKeysContent()
-		if err != nil {
-			return nil, err
-		}
-		tmp, err := os.CreateTemp("", "sysbox-ssh-supervisor-")
-		if err != nil {
-			return nil, err
-		}
-		name := tmp.Name()
-		defer os.Remove(name)
-		if err := tmp.Chmod(0600); err != nil {
-			tmp.Close()
-			return nil, err
-		}
-		if _, err := tmp.Write(data); err != nil {
-			tmp.Close()
-			return nil, err
-		}
-		if err := tmp.Close(); err != nil {
-			return nil, err
-		}
-		path, err := hostsupervisor.ManagedSSHPath(target.User, req.AccessID)
-		if err != nil {
-			return nil, err
-		}
-		if err := copier.CopyFile(ctx, name, path); err != nil {
-			return nil, err
-		}
-		return json.Marshal(map[string]any{"access_id": req.AccessID, "path": path, "sha256": fmt.Sprintf("%x", sha256.Sum256(data))})
-	}
-	server.SSHDelete = func(ctx context.Context, req controlplane.SSHAccessRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
-		target, err := resolver.Resolve(ctx, hostsupervisor.TargetRef{Topology: req.Topology, Node: req.Node, Scope: grant.Grant.Scope})
-		if err != nil {
-			return nil, err
-		}
-		execer, ok := target.Connection.(interface {
-			Exec(context.Context, substrate.ExecRequest, io.Writer, io.Writer) (substrate.ExecResult, error)
-		})
-		if !ok {
-			return nil, fmt.Errorf("ssh access target has no command verifier")
-		}
-		path, err := hostsupervisor.ManagedSSHPath(target.User, req.AccessID)
-		if err != nil {
-			return nil, err
-		}
-		r, err := execer.Exec(ctx, substrate.ExecRequest{Program: "/bin/rm", Args: []string{"-f", path}, Shell: substrate.ShellNone}, nil, nil)
-		if err != nil || !r.ExitCodeKnown || r.ExitCode != 0 {
-			return nil, fmt.Errorf("ssh access delete failed: %w", err)
-		}
-		return json.Marshal(map[string]any{"access_id": req.AccessID, "deleted": true})
-	}
+	sshDispatcher := *dispatcher
+	sshDispatcher.Root = filepath.Join(cfg.HostSupervisor.Root, "guest-ssh")
+	server.SSHGuest = &hostsupervisor.SSHGuestDispatcher{Dispatcher: &sshDispatcher, Report: authority.ReportNodeOperation, ReportDerived: authority.ReportDerivedSSHAccess}
+	hostRun.SSH = server.SSHGuest
 	server.Adoption = &hostsupervisor.AdoptionCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "adoption"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Report: authority.ReportNodeOperation, Authorize: authority.Authorize}
 	server.AdoptionApply = func(ctx context.Context, req controlplane.AdoptionRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 		p, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider)

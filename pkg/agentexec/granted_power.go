@@ -17,7 +17,7 @@ func executeGrantedNodeOperation(ctx context.Context, opts Options, cmd controlp
 	op.StartedAt = time.Now().UTC()
 	op.Audit = append(op.Audit, nodeOperationEvent(op, "start", op.Status, "node operation started"))
 	var err error
-	if cmd.Operation.Operation == "ssh_access_apply" || cmd.Operation.Operation == "ssh_access_delete" || cmd.Operation.Operation == "adoption_apply" {
+	if controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) || cmd.Operation.Operation == "adoption_apply" {
 		if cmd.Operation.Operation == "adoption_apply" {
 			err = runGrantedAdoption(ctx, opts, cmd)
 		} else {
@@ -89,7 +89,7 @@ func runGrantedSSHAccess(ctx context.Context, opts Options, cmd controlplane.Age
 	if opts.HostSupervisorSocket == "" || opts.ExecutionSessionID == "" || opts.ExecutionGrantPublicKeyFile == "" {
 		return fmt.Errorf("ssh access requires host supervisor and execution session")
 	}
-	req, err := controlplane.FromSSHAccessCommand(cmd)
+	req, err := controlplane.FromGuestSSHAccessCommand(cmd)
 	if err != nil {
 		return err
 	}
@@ -100,19 +100,16 @@ func runGrantedSSHAccess(ctx context.Context, opts Options, cmd controlplane.Age
 	if len(key) != ed25519.PublicKeySize {
 		return controlplane.ErrInvalidExecutionGrant
 	}
-	target := hostsupervisor.TargetRef{Topology: req.Topology, Node: req.Node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}}
+	target := hostsupervisor.TargetRef{Topology: cmd.Operation.Topology, Node: cmd.Operation.Node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}}
 	client := hostsupervisor.NewTaskClient(opts.HostSupervisorSocket, target)
-	boot, err := client.HostBootID(ctx)
+	discovery, err := client.DiscoverManagedSSHAccess(ctx, req.Config.AccessID)
 	if err != nil {
 		return err
 	}
-	guestOperation := controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation)
-	if guestOperation {
-		boot, err = client.GuestTaskBootID(ctx)
-		if err != nil {
-			return err
-		}
+	if discovery.Query.User != req.Config.User {
+		return controlplane.ErrInvalidExecutionGrant
 	}
+	boot := discovery.BootID
 	var grant controlplane.SignedExecutionGrant
 	endpoint := opts.APIURL + "/v1/agents/" + opts.ID + "/commands/" + cmd.ID + "/execution-grant"
 	if err = post(ctx, opts, endpoint, map[string]any{"session_id": opts.ExecutionSessionID, "lease_owner": cmd.LeaseOwner, "attempt": cmd.Attempt, "boot_id": boot}, &grant); err != nil {
@@ -125,33 +122,17 @@ func runGrantedSSHAccess(ctx context.Context, opts Options, cmd controlplane.Age
 	if err != nil {
 		return err
 	}
-	if guestOperation {
-		mutation := req.Mutation(req.User, cmd.Operation.Operation == "guest_ssh_access_delete")
-		digest, err = mutation.Digest()
-		if err != nil {
-			return err
-		}
-	}
-	if grant.Grant.TargetBootID != boot || grant.Grant.Scope != target.Scope || grant.Grant.SessionID != opts.ExecutionSessionID || grant.Grant.CommandID != cmd.ID || grant.Grant.ActionID != cmd.ActionID || grant.Grant.Digest != digest || grant.Grant.Operation != cmd.Operation.Operation {
+	if cmd.Attempt <= 0 || grant.Grant.AgentID != opts.ID || cmd.AgentID != opts.ID || grant.Grant.Attempt != uint64(cmd.Attempt) || grant.Grant.TargetBootID != boot || grant.Grant.Scope != target.Scope || grant.Grant.SessionID != opts.ExecutionSessionID || grant.Grant.CommandID != cmd.ID || grant.Grant.ActionID != cmd.ActionID || grant.Grant.Digest != digest || grant.Grant.Operation != cmd.Operation.Operation {
 		return controlplane.ErrInvalidExecutionGrant
 	}
-	var callErr error
-	if cmd.Operation.Operation == "ssh_access_apply" {
-		_, callErr = client.ApplySSHAccess(ctx, req, grant)
-	} else if cmd.Operation.Operation == "guest_ssh_access_apply" {
-		_, callErr = client.ApplyGuestSSHAccess(ctx, req, grant)
-	} else if cmd.Operation.Operation == "guest_ssh_access_delete" {
-		_, callErr = client.DeleteGuestSSHAccess(ctx, req, grant)
-	} else {
-		_, callErr = client.DeleteSSHAccess(ctx, req, grant)
-	}
+	_, callErr := client.MutateGuestSSHAccess(ctx, req, grant)
 	if callErr == nil {
 		return nil
 	}
 	observeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err = client.ObserveSSHAccess(observeCtx, req, grant); err != nil {
-		return fmt.Errorf("ssh access outcome unconfirmed: %w", callErr)
+	if _, err = client.ObserveGuestSSHAccess(observeCtx, req, grant); err != nil {
+		return fmt.Errorf("ssh access outcome unconfirmed: dispatch: %v; observe: %w", callErr, err)
 	}
 	return nil
 }

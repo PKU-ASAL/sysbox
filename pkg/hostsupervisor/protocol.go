@@ -15,6 +15,7 @@ type TargetRef struct {
 	Scope    controlplane.ExecutionScope `json:"scope"`
 }
 type Request struct {
+	SSHMutation     *substrate.SSHAccessMutation       `json:"ssh_mutation,omitempty"`
 	SSHAccessID     string                             `json:"ssh_access_id,omitempty"`
 	Version         int                                `json:"version"`
 	Operation       string                             `json:"operation"`
@@ -27,7 +28,6 @@ type Request struct {
 	FileHandle      substrate.FileInstallHandle        `json:"file_handle,omitempty"`
 	RunRequest      *RunRequest                        `json:"run_request,omitempty"`
 	RecoveryRequest *RunRecoveryRequest                `json:"recovery_request,omitempty"`
-	SSHRequest      *controlplane.SSHAccessRequest     `json:"ssh_request,omitempty"`
 	AdoptionRequest *controlplane.AdoptionRequest      `json:"adoption_request,omitempty"`
 	GCCandidate     *GCCandidate                       `json:"gc_candidate,omitempty"`
 	Stream          string                             `json:"stream,omitempty"`

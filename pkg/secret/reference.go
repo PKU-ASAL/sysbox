@@ -33,6 +33,20 @@ func IsReference(input string) bool { return strings.HasPrefix(input, "secret://
 type Resolver interface {
 	Resolve(context.Context, Reference) (string, error)
 }
+
+type resolverContextKey struct{}
+
+func WithResolver(ctx context.Context, resolver Resolver) context.Context {
+	return context.WithValue(ctx, resolverContextKey{}, resolver)
+}
+
+func ResolverFromContext(ctx context.Context) Resolver {
+	if resolver, ok := ctx.Value(resolverContextKey{}).(Resolver); ok && resolver != nil {
+		return resolver
+	}
+	return EnvironmentResolver{}
+}
+
 type EnvironmentResolver struct{ Lookup func(string) (string, bool) }
 
 func (r EnvironmentResolver) Resolve(_ context.Context, reference Reference) (string, error) {

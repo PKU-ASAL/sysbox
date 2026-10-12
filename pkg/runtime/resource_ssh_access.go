@@ -2,16 +2,10 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
-	"os"
 
 	"github.com/hashicorp/hcl/v2"
-
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
@@ -19,170 +13,202 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-// -- sysbox_ssh_access --
-
 type SSHAccessResourceHandler struct{}
 
-func init() {
-	RegisterResourceHandler(SSHAccessResourceHandler{})
-}
-
+func init()                                   { RegisterResourceHandler(SSHAccessResourceHandler{}) }
 func (SSHAccessResourceHandler) Type() string { return "sysbox_ssh_access" }
-
 func (SSHAccessResourceHandler) Schema() ResourceSchema {
-	return ResourceSchemaFor("sysbox_ssh_access")
+	s := ResourceSchemaFor("sysbox_ssh_access")
+	s.Version = 2
+	return s
 }
-
 func (SSHAccessResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
-	return ResourceReadResult{Status: state.ResourceUnknown, Resource: current}, fmt.Errorf("%w: ssh_access read requires host connection context", ErrConvergenceUnsupported)
+	return ResourceReadResult{Status: state.ResourceUnknown, Resource: current}, fmt.Errorf("%w: SSH access observation requires canonical node state", ErrConvergenceUnsupported)
 }
 
 func (SSHAccessResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
 	if desired == nil {
-		return controlplane.PlannedChange{}, fmt.Errorf("ssh_access plan requires desired config")
+		return controlplane.PlannedChange{}, fmt.Errorf("SSH access desired config required")
 	}
-	cfg, ok := desired.Data.(*config.SSHAccessConfig)
-	if !ok {
-		return controlplane.PlannedChange{}, fmt.Errorf("ssh_access plan has invalid config")
-	}
-	keys := append([]string(nil), cfg.AuthorizedKeys...)
-	nodeRef, err := config.ResolveResourceAddress(cfg.Node, "sysbox_node")
+	_, _, err := sshDesired(desired, "validation", "validation")
 	if err != nil {
-		return controlplane.PlannedChange{}, err
-	}
-	req := controlplane.SSHAccessRequest{ID: desired.Address.Name, AccessID: desired.Address.Name, Topology: "topology", Node: nodeRef.Name, AuthorizedKeys: keys, BindIP: cfg.BindIP, Port: cfg.Port}
-	if err := req.Validate(); err != nil {
 		return controlplane.PlannedChange{}, err
 	}
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
-	if pc == nil || pc.exec == nil || n == nil {
-		return state.Resource{}, fmt.Errorf("%w: ssh_access requires a managed guest configuration contract", ErrConvergenceUnsupported)
-	}
-	cfg, ok := n.Data.(*config.SSHAccessConfig)
-	if !ok {
-		return state.Resource{}, fmt.Errorf("invalid ssh_access config")
-	}
-	nodeRef, err := config.ResolveResourceAddress(cfg.Node, "sysbox_node")
+func (SSHAccessResourceHandler) ReadWithState(ctx context.Context, current state.Resource, st *state.State) (ResourceReadResult, error) {
+	result := ResourceReadResult{Status: state.ResourceUnknown, Resource: current}
+	saved, err := decodeSSHState(current, st)
 	if err != nil {
-		return state.Resource{}, err
+		return result, err
 	}
-	req := controlplane.SSHAccessRequest{ID: n.Address.Name, AccessID: n.Address.Name, Topology: pc.Topology(), Node: nodeRef.Name, AuthorizedKeys: append([]string(nil), cfg.AuthorizedKeys...), BindIP: cfg.BindIP, Port: cfg.Port}
-	if err := req.Validate(); err != nil {
-		return state.Resource{}, err
-	}
-	conn, err := pc.ConnectionForNode(ctx, nodeRef.String())
+	ctx, connection, query, err := sshNodeConnection(ctx, st, saved.Node, saved.Handle.AccessID)
 	if err != nil {
-		return state.Resource{}, err
+		return result, err
 	}
-	files, ok := conn.(substrate.ConnectionFileCopier)
-	if !ok {
-		return state.Resource{}, fmt.Errorf("%w: node has no managed file installer", ErrConvergenceUnsupported)
+	if err = validateSSHStateTarget(saved, query); err != nil {
+		return result, err
 	}
-	content, err := req.AuthorizedKeysContent()
+	observation, err := connection.InspectSSHAccess(ctx, saved.Handle)
 	if err != nil {
-		return state.Resource{}, err
+		return result, err
 	}
-	sum := sha256.Sum256(content)
-	digest := hex.EncodeToString(sum[:])
-	tmp, err := os.CreateTemp("", "sysbox-ssh-")
-	if err != nil {
-		return state.Resource{}, err
+	if observation.Revision < saved.Handle.Revision {
+		return result, fmt.Errorf("SSH revision regressed")
 	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
-		return state.Resource{}, err
-	}
-	if _, err := tmp.Write(content); err != nil {
-		tmp.Close()
-		return state.Resource{}, err
-	}
-	if err := tmp.Close(); err != nil {
-		return state.Resource{}, err
-	}
-	user, err := pc.SSHUserForNode(nodeRef.String())
-	if err != nil {
-		return state.Resource{}, err
-	}
-	path, err := controlplane.ManagedSSHPath(user, req.AccessID)
-	if err != nil {
-		return state.Resource{}, err
-	}
-	if err := files.CopyFile(ctx, name, path); err != nil {
-		return state.Resource{}, fmt.Errorf("install managed ssh key: %w", err)
-	}
-	if execer, ok := conn.(interface {
-		Exec(context.Context, substrate.ExecRequest, io.Writer, io.Writer) (substrate.ExecResult, error)
-	}); ok {
-		result, err := execer.Exec(ctx, substrate.ExecRequest{Program: "/bin/cat", Args: []string{path}, Shell: substrate.ShellNone}, nil, nil)
-		if err != nil || !result.ExitCodeKnown || result.ExitCode != 0 || result.Stdout != string(content) {
-			return state.Resource{}, fmt.Errorf("ssh access read-back failed")
+	switch observation.Status {
+	case "present":
+		if observation.Revision != saved.Handle.Revision {
+			return result, fmt.Errorf("SSH current revision mismatch")
 		}
+		result.Status = state.ResourcePresent
+	case "absent":
+		result.Status = state.ResourceAbsent
+	case "drifted":
+		result.Status = state.ResourceDrifted
+	default:
+		return result, fmt.Errorf("SSH current configuration unknown")
 	}
-	return state.Resource{Address: n.Address, ResourceType: n.Address.Type, Driver: "managed", OwnerUID: pc.State().TopologyUID, ResourceUID: pc.State().TopologyUID + "/" + n.Address.Name, Generation: 1, Status: state.ResourcePresent, Attributes: state.MustAttributes(map[string]any{"node": cfg.Node, "path": path, "sha256": digest, "authorized_keys": req.AuthorizedKeys})}, nil
+	return result, nil
 }
 
-func (SSHAccessResourceHandler) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
+func (h SSHAccessResourceHandler) Discover(ctx context.Context, pc *ProviderContext, n *graph.Node) (ResourceReadResult, error) {
+	if pc == nil || pc.exec == nil || n == nil {
+		return ResourceReadResult{Status: state.ResourceUnknown}, ErrConvergenceUnsupported
+	}
+	ref, _, err := sshDesired(n, "validation", "validation")
+	if err != nil {
+		return ResourceReadResult{}, err
+	}
+	node, err := address.Parse(ref)
+	if err != nil {
+		return ResourceReadResult{}, err
+	}
+	// Preflight precedes creation of dependency nodes. Action-boundary discovery
+	// resolves again after the node is present.
+	if pc.State().FindResource(node) == nil {
+		return ResourceReadResult{Status: state.ResourceAbsent}, nil
+	}
+	identity, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok {
+		return ResourceReadResult{}, fmt.Errorf("SSH discovery requires action identity")
+	}
+	nodeCtx, connection, query, err := sshNodeConnection(ctx, pc.State(), ref, n.Address.Name)
+	if err != nil {
+		return ResourceReadResult{Status: state.ResourceUnknown}, err
+	}
+	found, err := connection.DiscoverSSHAccess(nodeCtx, query)
+	if err != nil {
+		return ResourceReadResult{Status: state.ResourceUnknown}, err
+	}
+	if err = found.Validate(query); err != nil {
+		return ResourceReadResult{Status: state.ResourceUnknown}, err
+	}
+	if found.Status == "absent" {
+		return ResourceReadResult{Status: state.ResourceAbsent}, nil
+	}
+	_, req, err := sshDesired(n, query.User, found.Current.Handle.ID)
+	if err != nil {
+		return ResourceReadResult{}, err
+	}
+	req.ExpectedRevision = found.Current.Handle.Revision - 1
+	digest, err := req.Digest()
+	if err != nil || digest != found.Current.Handle.Digest || identity.ActionID != found.Current.Handle.ID {
+		return ResourceReadResult{Status: state.ResourceUnknown}, fmt.Errorf("SSH configuration exists without this action's committed identity")
+	}
+	resource, err := sshResource(n, identity, ref, *found.Current, req.Config)
+	return ResourceReadResult{Status: state.ResourcePresent, Resource: resource}, err
+}
+
+func (h SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
+	if pc == nil || pc.exec == nil || n == nil {
+		return state.Resource{}, fmt.Errorf("%w: managed SSH context required", ErrConvergenceUnsupported)
+	}
+	identity, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok || identity.Validate() != nil || identity.TopologyUID != pc.State().TopologyUID {
+		return state.Resource{}, fmt.Errorf("SSH creation requires durable action identity")
+	}
+	ref, _, err := sshDesired(n, "validation", identity.ActionID)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	nodeCtx, connection, query, err := sshNodeConnection(ctx, pc.State(), ref, n.Address.Name)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	found, err := connection.DiscoverSSHAccess(nodeCtx, query)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	if err = found.Validate(query); err != nil {
+		return state.Resource{}, err
+	}
+	if found.Status != "absent" {
+		return state.Resource{}, fmt.Errorf("SSH access already present; reconcile its exact revision before replacement")
+	}
+	_, req, err := sshDesired(n, query.User, identity.ActionID)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	if found.Current != nil {
+		req.ExpectedRevision = found.Current.Handle.Revision
+	}
+	result, err := connection.MutateSSHAccess(nodeCtx, req)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	if err = validateSSHMutationResult(query, req, result); err != nil {
+		return state.Resource{}, err
+	}
+	return sshResource(n, identity, ref, result, req.Config)
+}
+
+func (h SSHAccessResourceHandler) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
 	if pc == nil || pc.exec == nil {
 		return fmt.Errorf("%w: managed SSH context required", ErrConvergenceUnsupported)
 	}
-	node := current.Str("node")
-	path := current.Str("path")
-	if node == "" || path == "" {
-		return fmt.Errorf("%w: invalid managed ssh access state", ErrConvergenceUnsupported)
-	}
-	nodeRef, err := config.ResolveResourceAddress(node, "sysbox_node")
+	saved, err := decodeSSHState(current, pc.State())
 	if err != nil {
 		return err
 	}
-	user, err := pc.SSHUserForNode(nodeRef.String())
+	identity, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok || identity.Validate() != nil || identity.OwnerUID != current.OwnerUID || identity.ResourceUID != current.ResourceUID || identity.Generation != current.Generation {
+		return fmt.Errorf("SSH delete requires exact resource action identity")
+	}
+	nodeCtx, connection, query, err := sshNodeConnection(ctx, pc.State(), saved.Node, saved.Handle.AccessID)
 	if err != nil {
 		return err
 	}
-	expected, err := controlplane.ManagedSSHPath(user, current.Address.Name)
-	if err != nil || path != expected || current.Address.Type != "sysbox_ssh_access" || current.OwnerUID == "" || current.OwnerUID != pc.State().TopologyUID {
-		return fmt.Errorf("%w: managed SSH identity mismatch", ErrConvergenceUnsupported)
+	if err = validateSSHStateTarget(saved, query); err != nil {
+		return err
 	}
-	conn, err := pc.ConnectionForNode(ctx, nodeRef.String())
+	observed, err := connection.InspectSSHAccess(nodeCtx, saved.Handle)
 	if err != nil {
 		return err
 	}
-	execer, ok := conn.(interface {
-		Exec(context.Context, substrate.ExecRequest, io.Writer, io.Writer) (substrate.ExecResult, error)
-	})
-	if !ok {
-		return fmt.Errorf("%w: node has no managed command verifier", ErrConvergenceUnsupported)
+	if observed.Status == "absent" && observed.Revision >= saved.Handle.Revision {
+		return nil
 	}
-	result, err := execer.Exec(ctx, substrate.ExecRequest{Program: "/bin/rm", Args: []string{"-f", path}, Shell: substrate.ShellNone}, nil, nil)
-	if err != nil || !result.ExitCodeKnown || result.ExitCode != 0 {
-		return fmt.Errorf("delete managed ssh key: %w", err)
+	if observed.Status != "present" || observed.Revision != saved.Handle.Revision {
+		return fmt.Errorf("SSH access changed since its persisted revision; refusing stale delete")
 	}
-	return nil
+	req := substrate.SSHAccessMutation{ID: identity.ActionID, ExpectedRevision: saved.Handle.Revision, Delete: true, Config: substrate.SSHAccessConfig{User: query.User, AccessID: query.AccessID}}
+	result, err := connection.MutateSSHAccess(nodeCtx, req)
+	if err != nil {
+		return err
+	}
+	return validateSSHMutationResult(query, req, result)
 }
-
-func (SSHAccessResourceHandler) ExternalID(current state.Resource) string {
-	if id := current.ContainerID(); id != "" {
-		return id
-	}
-	return current.Str("id")
-}
-
+func (SSHAccessResourceHandler) ExternalID(current state.Resource) string { return current.ExternalID }
 func (SSHAccessResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
 	cfg := &config.SSHAccessConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
 	}
-	var deps []address.Address
-	if cfg.Node != "" {
-		ref, err := config.ResolveResourceAddress(cfg.Node, "sysbox_node")
-		if err != nil {
-			return nil, nil, err
-		}
-		deps = append(deps, ref)
+	ref, err := config.ResolveResourceAddress(cfg.Node, "sysbox_node")
+	if err != nil {
+		return nil, nil, err
 	}
-	return cfg, deps, nil
+	return cfg, []address.Address{ref}, nil
 }

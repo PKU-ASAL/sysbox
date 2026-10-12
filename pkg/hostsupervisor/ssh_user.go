@@ -1,7 +1,7 @@
 package hostsupervisor
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/state"
@@ -12,35 +12,10 @@ import (
 // a worker payload or a current, potentially unpublished workspace. Decode only
 // the account fields; connection credentials must not escape into discovery.
 func canonicalGuestUser(resource state.Resource) (string, error) {
-	desired := resource.Attributes["desired"]
-	if desired == nil {
-		return "", nil
-	}
-	raw, err := json.Marshal(desired)
-	if err != nil {
-		return "", fmt.Errorf("invalid canonical guest configuration")
-	}
-	var cfg struct {
-		Connections    []struct{ User string }   `json:"connections"`
-		ProviderConfig *struct{ SSHUser string } `json:"provider_config"`
-	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return "", fmt.Errorf("invalid canonical guest configuration")
-	}
-	user := ""
-	if len(cfg.Connections) > 0 {
-		user = cfg.Connections[0].User
-	}
-	if user == "" && cfg.ProviderConfig != nil {
-		user = cfg.ProviderConfig.SSHUser
-	}
-	if user != "" && substrate.ValidateSSHAccessUser(user) != nil {
-		return "", fmt.Errorf("invalid canonical guest user")
-	}
-	return user, nil
+	return substrate.CanonicalGuestUser(resource.Attributes["desired"])
 }
 
-func canonicalConnection(target NodeTarget) (Target, error) {
+func canonicalConnection(ctx context.Context, target NodeTarget) (Target, error) {
 	if target.canonicalResource == nil {
 		return Target{}, fmt.Errorf("canonical guest configuration unavailable")
 	}
@@ -48,7 +23,11 @@ func canonicalConnection(target NodeTarget) (Target, error) {
 	if err != nil {
 		return Target{}, err
 	}
-	conn, err := target.Node.Connection(target.Handle, nil)
+	hints, err := substrate.CanonicalConnectionHints(ctx, target.canonicalResource.Attributes["desired"])
+	if err != nil {
+		return Target{}, err
+	}
+	conn, err := target.Node.Connection(target.Handle, hints)
 	if err != nil {
 		return Target{}, err
 	}

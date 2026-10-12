@@ -67,6 +67,8 @@ func TestGuestSSHStopCannotBypassCanonicalCompletion(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, controlplane.NodeOperationStatusDone, stored.Status)
 		require.Equal(t, &result, stored.SSHResult)
+		_, err = store.ListAgentCommands(ctx, "agent")
+		require.NoError(t, err, "a host-completed SSH operation must remain readable by the command outbox")
 		require.Error(t, authority.Authorize(ctx, *grant))
 	})
 }

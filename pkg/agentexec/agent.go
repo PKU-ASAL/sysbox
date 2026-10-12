@@ -378,7 +378,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		cmd.Operation.ActionID, cmd.Operation.ResourceUID, cmd.Operation.Generation = cmd.ActionID, cmd.ResourceUID, cmd.Generation
 		cmd.Operation.LeaseOwner, cmd.Operation.LeaseEpoch, cmd.Operation.Attempt = cmd.LeaseOwner, cmd.LeaseEpoch, cmd.Attempt
 		completed := executeGrantedNodeOperation(runCtx, r.opts, *cmd)
-		if cmd.Operation.Operation == "adoption_apply" || cmd.Operation.Operation == "ssh_access_apply" || cmd.Operation.Operation == "ssh_access_delete" {
+		if cmd.Operation.Operation == "adoption_apply" || controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) {
 			// The host signer owns canonical completion. Worker events report
 			// delivery/execution progress only, never a substitute result.
 			if completed.Status == controlplane.NodeOperationStatusFailed {

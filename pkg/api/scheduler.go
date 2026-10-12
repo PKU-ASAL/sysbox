@@ -97,7 +97,7 @@ func requiredCapabilitiesForTopology(path string) ([]string, error) {
 			if !probe.NAT {
 				set["network"] = true
 			}
-		case "sysbox_firewall", "sysbox_ssh_access":
+		case "sysbox_firewall":
 			set["network"] = true
 		}
 	}

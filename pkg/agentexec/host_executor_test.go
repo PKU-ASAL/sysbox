@@ -7,6 +7,8 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,6 +16,15 @@ type hostClaimBridge struct {
 	Bridge
 	run          *controlplane.Run
 	materialized bool
+}
+
+func TestHostRunSSHCallbackRequiresParentBeforeAuthorityOrDispatch(t *testing.T) {
+	executor := &HostRunExecutor{}
+	identity := substrate.OperationIdentity{ActionID: "ssh", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "node", Generation: 1}
+	ctx := executor.withRunSSH(context.Background(), hostsupervisor.RunRequest{RunID: "run", Topology: "lab"})
+	ctx = substrate.WithOperationIdentity(ctx, identity)
+	_, err := transport.NewTaskClient(nil, "provider", 1).MutateSSHAccess(ctx, substrate.SSHAccessMutation{ID: "ssh", Delete: true, ExpectedRevision: 1, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}})
+	require.ErrorContains(t, err, "parent grant unavailable")
 }
 
 func (b *hostClaimBridge) ParentRun(context.Context, string) (*controlplane.Run, error) {

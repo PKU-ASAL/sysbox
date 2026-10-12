@@ -5,10 +5,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"fmt"
+	"errors"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -19,172 +20,292 @@ import (
 )
 
 type sshGuestRecord struct {
-	Version  int                                      `json:"version"`
-	Ref      TargetRef                                `json:"ref"`
-	Request  substrate.SSHAccessMutation              `json:"request"`
-	Handle   substrate.SSHAccessHandle                `json:"handle"`
-	Grant    controlplane.SignedExecutionGrant        `json:"grant"`
-	Result   substrate.SSHAccessResult                `json:"result"`
-	Receipt  *controlplane.SignedExecutionStopReceipt `json:"receipt,omitempty"`
-	Reported bool                                     `json:"reported"`
+	RunID          string                                   `json:"run_id,omitempty"`
+	Version        int                                      `json:"version"`
+	Ref            TargetRef                                `json:"ref"`
+	Request        substrate.SSHAccessMutation              `json:"request"`
+	Handle         substrate.SSHAccessHandle                `json:"handle"`
+	ProviderNodeID string                                   `json:"provider_node_id"`
+	Grant          controlplane.SignedExecutionGrant        `json:"grant"`
+	Result         substrate.SSHAccessResult                `json:"result"`
+	Receipt        *controlplane.SignedExecutionStopReceipt `json:"receipt,omitempty"`
+	Reported       bool                                     `json:"reported"`
 }
 
+// 64 keys of up to 16 KiB can expand sixfold when JSON escapes comments.
+// Reserve room for identity metadata and the signed completion receipt too.
+const maxSSHGuestRecordBytes = 8 << 20
+
+// SSHGuestDispatcher uses a private journal root. Mutation and recovery of an
+// action hold the same process-independent lock until evidence is persisted.
 type SSHGuestDispatcher struct {
 	*Dispatcher
-	Report func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error
+	Report        func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error
+	ReportDerived func(context.Context, substrate.SSHAccessMutation, controlplane.SignedExecutionStopReceipt) error
 }
 
+func sshExecutionHandle(h substrate.SSHAccessHandle) substrate.ExecutionHandle {
+	return substrate.ExecutionHandle{ID: h.ID, Digest: h.Digest, NodeID: h.NodeID, BootID: h.BootID, TopologyUID: h.TopologyUID, ResourceUID: h.ResourceUID, Generation: h.Generation, Epoch: h.Epoch}
+}
 func sshGuestPath(root string, h substrate.SSHAccessHandle) string {
-	return filepath.Join(root, fmt.Sprintf("ssh-%x.json", []byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d", h.TopologyUID, h.ResourceUID, h.ID, h.Epoch))))
+	return filepath.Join(root, recordKey(sshExecutionHandle(h))+".json")
+}
+func (d *SSHGuestDispatcher) configured() error {
+	if d == nil || d.Dispatcher == nil || (d.Report == nil && d.ReportDerived == nil) || len(d.IssuerKey) != ed25519.PublicKeySize || len(d.HostKey) != ed25519.PrivateKeySize {
+		return effectgate.ErrFenced
+	}
+	return nil
+}
+func sshResultHandle(ref TargetRef, req substrate.SSHAccessMutation, g controlplane.SignedExecutionGrant) (substrate.SSHAccessHandle, error) {
+	digest, err := req.Digest()
+	if err != nil {
+		return substrate.SSHAccessHandle{}, err
+	}
+	op := "guest_ssh_access_apply"
+	if req.Delete {
+		op = "guest_ssh_access_delete"
+	}
+	if req.ExpectedRevision == math.MaxUint64 || g.Grant.Operation != op || g.Grant.Digest != digest || g.Grant.ActionID != req.ID || g.Grant.Scope != ref.Scope || ref.Topology == "" || ref.Node == "" || g.BootID == "" || g.Grant.TargetBootID != g.BootID {
+		return substrate.SSHAccessHandle{}, effectgate.ErrFenced
+	}
+	return substrate.SSHAccessHandle{ID: req.ID, Digest: digest, NodeID: ref.Node, User: req.Config.User, AccessID: req.Config.AccessID, Revision: req.ExpectedRevision + 1, BootID: g.BootID, TopologyUID: ref.Scope.TopologyUID, ResourceUID: ref.Scope.ResourceUID, Generation: ref.Scope.Generation, Epoch: g.Grant.Epoch}, nil
 }
 func (d *SSHGuestDispatcher) saveSSH(r sshGuestRecord) error {
 	return saveRecord(d.Root, sshGuestPath(d.Root, r.Handle), r)
 }
 func (d *SSHGuestDispatcher) loadSSH(path string) (sshGuestRecord, error) {
 	var r sshGuestRecord
-	raw, e := os.ReadFile(path)
-	if e != nil {
-		return r, e
+	if err := ValidateOwnedPath(path, true); err != nil {
+		return r, err
 	}
-	if len(raw) > 1<<20 {
+	file, err := os.Open(path)
+	if err != nil {
+		return r, err
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, maxSSHGuestRecordBytes+1))
+	if err != nil {
+		return r, err
+	}
+	if len(raw) > maxSSHGuestRecordBytes {
 		return r, guesttask.ErrConflict
 	}
-	e = json.Unmarshal(raw, &r)
-	return r, e
+	if err = json.Unmarshal(raw, &r); err != nil {
+		return r, err
+	}
+	h, err := sshResultHandle(r.Ref, r.Request, r.Grant)
+	if (r.Grant.Grant.ParentEpoch != 0) != (r.RunID != "") {
+		return r, guesttask.ErrConflict
+	}
+	if err != nil || r.Version != 1 || r.Handle != h || path != sshGuestPath(d.Root, h) || r.ProviderNodeID == "" || r.Grant.Grant.AgentID != d.AgentID || r.Result.Handle != h || r.Reported && r.Receipt == nil {
+		return r, guesttask.ErrConflict
+	}
+	// Historical signatures prove identity, not permission for a new effect.
+	if err = controlplane.VerifyExecutionGrant(d.IssuerKey, r.Grant, h.BootID, r.Grant.IssuedAt); err != nil {
+		return r, err
+	}
+	if r.Receipt != nil && (controlplane.VerifyGuestSSHAccessStopReceipt(d.HostKey.Public().(ed25519.PublicKey), *r.Receipt, r.Request, r.Ref.Node) != nil || r.Receipt.Grant != r.Grant.Grant || r.Receipt.SSHResult == nil || *r.Receipt.SSHResult != r.Result) {
+		return r, guesttask.ErrConflict
+	}
+	return r, nil
 }
-
-func (d *SSHGuestDispatcher) Mutate(ctx context.Context, ref TargetRef, req substrate.SSHAccessMutation, grant controlplane.SignedExecutionGrant) (substrate.SSHAccessResult, error) {
+func sshOperationContext(ctx context.Context, r sshGuestRecord) context.Context {
+	return substrate.WithOperationIdentity(ctx, substrate.OperationIdentity{ActionID: r.Request.ID, OwnerUID: r.Ref.Scope.TopologyUID, TopologyUID: r.Ref.Scope.TopologyUID, ResourceUID: r.Ref.Scope.ResourceUID, Generation: r.Ref.Scope.Generation})
+}
+func (d *SSHGuestDispatcher) Mutate(ctx context.Context, ref TargetRef, req substrate.SSHAccessMutation, g controlplane.SignedExecutionGrant) (substrate.SSHAccessResult, error) {
 	var zero substrate.SSHAccessResult
-	if d == nil || d.Dispatcher == nil || d.Report == nil || len(d.IssuerKey) != ed25519.PublicKeySize || len(d.HostKey) != ed25519.PrivateKeySize {
+	if err := d.configured(); err != nil {
+		return zero, err
+	}
+	h, err := sshResultHandle(ref, req, g)
+	if err != nil {
+		return zero, err
+	}
+	zero.Handle = h
+	if g.Grant.AgentID != d.AgentID || (g.Grant.ParentEpoch != 0) != (d.RunID != "") || (d.RunID != "" && d.ReportDerived == nil) || (d.RunID == "" && d.Report == nil) {
 		return zero, effectgate.ErrFenced
 	}
-	digest, e := req.Digest()
-	if e != nil {
-		return zero, e
+	if err = controlplane.VerifyExecutionGrant(d.IssuerKey, g, g.BootID, time.Now()); err != nil {
+		return zero, err
 	}
-	if !controlplane.IsGuestSSHAccessOperation(grant.Grant.Operation) || grant.Grant.Digest != digest || grant.Grant.ActionID != req.ID || grant.Grant.Scope != ref.Scope || grant.Grant.TargetBootID == "" {
+	budget, err := controlplane.ExecutionGrantBudget(g, time.Now())
+	if err != nil {
+		return zero, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	unlock, err := d.lock(ctx, sshExecutionHandle(h))
+	if err != nil {
+		return zero, err
+	}
+	defer unlock()
+	prior, err := d.loadSSH(sshGuestPath(d.Root, h))
+	if err == nil {
+		if prior.RunID != d.RunID || prior.Ref != ref || prior.Handle != h || !sameTaskGrant(prior.Grant.Grant, g.Grant) {
+			return zero, guesttask.ErrConflict
+		}
+		return d.observeSSH(ctx, &prior)
+	}
+	if !os.IsNotExist(err) {
+		return zero, err
+	}
+	if d.Authorize == nil {
 		return zero, effectgate.ErrFenced
 	}
-	if e = controlplane.VerifyExecutionGrant(d.IssuerKey, grant, grant.BootID, time.Now()); e != nil {
-		return zero, e
+	if err = d.Authorize(ctx, g); err != nil {
+		return zero, err
 	}
-	target, e := d.target(ctx, ref, grant.Grant)
-	if e != nil {
-		return zero, e
+	target, err := d.targetRecord(ctx, TaskRecord{RunID: d.RunID, Ref: ref, Grant: g})
+	if err != nil {
+		return zero, err
+	}
+	if target.User != req.Config.User {
+		return zero, guesttask.ErrConflict
 	}
 	access, ok := target.Connection.(substrate.ConnectionSSHAccess)
 	if !ok {
 		return zero, substrate.ErrNotSupported
 	}
-	resultHandle := substrate.SSHAccessHandle{ID: req.ID, Digest: digest, NodeID: ref.Node, User: req.Config.User, AccessID: req.Config.AccessID, Revision: req.ExpectedRevision + 1, BootID: grant.BootID, TopologyUID: ref.Scope.TopologyUID, ResourceUID: ref.Scope.ResourceUID, Generation: ref.Scope.Generation, Epoch: grant.Grant.Epoch}
-	if prior, loadErr := d.loadSSH(sshGuestPath(d.Root, resultHandle)); loadErr == nil {
-		priorDigest, _ := prior.Request.Digest()
-		if priorDigest != digest || prior.Grant.Grant.Digest != grant.Grant.Digest {
-			return substrate.SSHAccessResult{Handle: resultHandle}, guesttask.ErrConflict
-		}
-		if prior.Receipt != nil {
-			return prior.Result, nil
-		}
-		target, targetErr := d.target(ctx, ref, grant.Grant)
-		if targetErr != nil {
-			return substrate.SSHAccessResult{Handle: resultHandle}, targetErr
-		}
-		access, ok := target.Connection.(substrate.ConnectionSSHAccess)
-		if !ok {
-			return substrate.SSHAccessResult{Handle: resultHandle}, substrate.ErrNotSupported
-		}
-		observed, observeErr := access.ObserveSSHAccess(ctx, resultHandle)
-		if observeErr != nil {
-			return substrate.SSHAccessResult{Handle: resultHandle}, observeErr
-		}
-		prior.Result = observed
-		if finishErr := d.finishSSH(ctx, &prior); finishErr != nil {
-			return observed, finishErr
-		}
-		return observed, nil
+	r := sshGuestRecord{Version: 1, RunID: d.RunID, Ref: ref, Request: req, Handle: h, ProviderNodeID: target.NodeID, Grant: g, Result: zero}
+	// A crash after saving intent is uncertain; recovery only observes evidence.
+	if err = d.saveSSH(r); err != nil {
+		return zero, err
 	}
-	record := sshGuestRecord{Version: 1, Ref: ref, Request: req, Handle: resultHandle, Grant: grant, Result: substrate.SSHAccessResult{Handle: resultHandle}}
-	if e = d.saveSSH(record); e != nil {
-		return substrate.SSHAccessResult{Handle: resultHandle}, e
+	if err = d.Authorize(ctx, g); err != nil {
+		return zero, err
 	}
-	result, e := access.MutateSSHAccess(transport.WithTaskGrant(ctx, req.ID, grant), req)
-	if e != nil {
-		return substrate.SSHAccessResult{Handle: resultHandle}, e
+	if err = ctx.Err(); err != nil {
+		return zero, err
 	}
-	result.Handle.NodeID = ref.Node
-	record.Result = result
-	if e = d.finishSSH(ctx, &record); e != nil {
-		return result, e
+	result, err := access.MutateSSHAccess(transport.WithTaskGrant(sshOperationContext(ctx, r), req.ID, g), req)
+	if err != nil {
+		return zero, err
 	}
-	return result, nil
+	return d.completeSSH(ctx, &r, result)
 }
-func (d *SSHGuestDispatcher) finishSSH(ctx context.Context, r *sshGuestRecord) error {
-	if r.Result.Handle.ID != r.Handle.ID || r.Result.Handle.Digest != r.Handle.Digest || r.Result.Handle.Revision != r.Handle.Revision || r.Result.Present == r.Request.Delete {
-		return guesttask.ErrConflict
+
+// Observe accepts an expired signed identity only if it matches durable intent.
+// It never issues a mutation or interprets absent evidence as successful delete.
+func (d *SSHGuestDispatcher) Observe(ctx context.Context, ref TargetRef, req substrate.SSHAccessMutation, g controlplane.SignedExecutionGrant) (substrate.SSHAccessResult, error) {
+	var zero substrate.SSHAccessResult
+	if err := d.configured(); err != nil {
+		return zero, err
 	}
-	receipt, e := controlplane.SignGuestSSHAccessStopReceipt(d.HostKey, r.Grant.Grant, d.HostBootID, r.Request, r.Result, rand.Text(), time.Now())
-	if e != nil {
-		return e
+	h, err := sshResultHandle(ref, req, g)
+	if err != nil {
+		return zero, err
 	}
+	if err = controlplane.VerifyExecutionGrant(d.IssuerKey, g, g.BootID, g.IssuedAt); err != nil {
+		return zero, err
+	}
+	unlock, err := d.lock(ctx, sshExecutionHandle(h))
+	if err != nil {
+		return zero, err
+	}
+	defer unlock()
+	r, err := d.loadSSH(sshGuestPath(d.Root, h))
+	if err != nil {
+		return zero, err
+	}
+	if r.Ref != ref || r.Handle != h || !sameTaskGrant(r.Grant.Grant, g.Grant) {
+		return zero, guesttask.ErrConflict
+	}
+	return d.observeSSH(ctx, &r)
+}
+func (d *SSHGuestDispatcher) observeSSH(ctx context.Context, r *sshGuestRecord) (substrate.SSHAccessResult, error) {
+	if r.Receipt != nil {
+		return r.Result, d.reportSSH(ctx, r)
+	}
+	target, err := d.targetRecord(ctx, TaskRecord{RunID: r.RunID, Ref: r.Ref, Grant: r.Grant})
+	if err != nil {
+		return r.Result, err
+	}
+	if target.NodeID != r.ProviderNodeID || target.User != r.Request.Config.User {
+		return r.Result, guesttask.ErrConflict
+	}
+	access, ok := target.Connection.(substrate.ConnectionSSHAccess)
+	if !ok {
+		return r.Result, substrate.ErrNotSupported
+	}
+	h := r.Handle
+	h.NodeID = r.ProviderNodeID
+	result, err := access.ObserveSSHAccess(sshOperationContext(ctx, *r), h)
+	if err != nil {
+		return r.Result, err
+	}
+	return d.completeSSH(ctx, r, result)
+}
+func (d *SSHGuestDispatcher) completeSSH(ctx context.Context, r *sshGuestRecord, result substrate.SSHAccessResult) (substrate.SSHAccessResult, error) {
+	expected := r.Handle
+	expected.NodeID = r.ProviderNodeID
+	if result.Handle != expected || result.Present == r.Request.Delete {
+		return r.Result, guesttask.ErrConflict
+	}
+	result.Handle.NodeID = r.Ref.Node
+	receipt, err := controlplane.SignGuestSSHAccessStopReceipt(d.HostKey, r.Grant.Grant, d.HostBootID, r.Request, result, rand.Text(), time.Now())
+	if err != nil {
+		return r.Result, err
+	}
+	r.Result = result
 	r.Receipt = &receipt
-	if e = d.saveSSH(*r); e != nil {
-		return e
+	if err = d.saveSSH(*r); err != nil {
+		return result, err
 	}
-	raw, _ := json.Marshal(receipt)
-	if e = d.Report(ctx, r.Request.ID, receipt, raw); e != nil {
-		return e
+	return result, d.reportSSH(ctx, r)
+}
+func (d *SSHGuestDispatcher) reportSSH(ctx context.Context, r *sshGuestRecord) error {
+	if r.Reported {
+		return nil
+	}
+	raw, err := json.Marshal(r.Receipt)
+	if err != nil {
+		return err
+	}
+	if r.RunID != "" {
+		if d.ReportDerived == nil {
+			return effectgate.ErrFenced
+		}
+		err = d.ReportDerived(ctx, r.Request, *r.Receipt)
+	} else {
+		if d.Report == nil {
+			return effectgate.ErrFenced
+		}
+		err = d.Report(ctx, r.Request.ID, *r.Receipt, raw)
+	}
+	if err != nil {
+		return err
 	}
 	r.Reported = true
 	return d.saveSSH(*r)
 }
 func (d *SSHGuestDispatcher) Recover(ctx context.Context) error {
-	entries, e := os.ReadDir(d.Root)
-	if os.IsNotExist(e) {
-		return nil
+	if err := d.configured(); err != nil {
+		return err
 	}
-	if e != nil {
-		return e
+	if err := EnsureOwnedDirectory(d.Root, 0700); err != nil {
+		return err
 	}
+	entries, err := os.ReadDir(d.Root)
+	if err != nil {
+		return err
+	}
+	var failures []error
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "ssh-") || filepath.Ext(entry.Name()) != ".json" {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		r, e := d.loadSSH(filepath.Join(d.Root, entry.Name()))
-		if e != nil {
-			return e
+		if ctx.Err() != nil {
+			return errors.Join(append(failures, ctx.Err())...)
 		}
-		if r.Receipt == nil {
-			target, err := d.target(ctx, r.Ref, r.Grant.Grant)
-			if err != nil {
-				return err
-			}
-			access, ok := target.Connection.(substrate.ConnectionSSHAccess)
-			if !ok {
-				return substrate.ErrNotSupported
-			}
-			observed, err := access.ObserveSSHAccess(ctx, r.Handle)
-			if err != nil {
-				return err
-			}
-			observed.Handle.NodeID = r.Ref.Node
-			r.Result = observed
+		r, err := d.loadSSH(filepath.Join(d.Root, entry.Name()))
+		if err == nil {
+			operation, cancel := context.WithTimeout(ctx, recoveryTaskBudget)
+			_, err = d.Observe(operation, r.Ref, r.Request, r.Grant)
+			cancel()
 		}
-		if r.Receipt == nil {
-			if err := d.finishSSH(ctx, &r); err != nil {
-				return err
-			}
-			continue
-		}
-		if r.Receipt != nil && !r.Reported {
-			raw, _ := json.Marshal(*r.Receipt)
-			if e = d.Report(ctx, r.Request.ID, *r.Receipt, raw); e != nil {
-				return e
-			}
-			r.Reported = true
-			if e = d.saveSSH(r); e != nil {
-				return e
-			}
+		if err != nil {
+			failures = append(failures, err)
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }

@@ -119,3 +119,45 @@ func TestGuestSSHDispatcherRejectsInvalidSignatureBeforePersistence(t *testing.T
 	_, err = ssh.Mutate(context.Background(), ref, req, g)
 	require.Error(t, err)
 }
+
+func TestDerivedSSHColdRecoveryUsesPersistedRunAndDedicatedReport(t *testing.T) {
+	d, _, _, issuer := taskFixtureWithIssuer(t)
+	d.RunID = "run"
+	req := substrate.SSHAccessMutation{ID: "delete", Delete: true, ExpectedRevision: 2, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}}
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	ref := TargetRef{Topology: "lab", Node: "web", Scope: controlplane.ExecutionScope{TopologyUID: "owner", ResourceUID: "node", Generation: 1}}
+	grant, err := controlplane.SignExecutionGrant(issuer, controlplane.ExecutionGrant{Scope: ref.Scope, TargetBootID: "guest-boot", AgentID: d.AgentID, SessionID: "session", CommandID: "command", ActionID: req.ID, Attempt: 1, Epoch: 7, ParentEpoch: 3, Operation: "guest_ssh_access_delete", Digest: digest, State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}, "guest-boot", time.Now())
+	require.NoError(t, err)
+	conn := &managedSSHTestConn{lost: true}
+	d.Resolve = func(context.Context, TargetRef) (Target, error) {
+		return Target{}, errors.New("standalone resolver forbidden")
+	}
+	d.ResolveRun = func(_ context.Context, got TargetRef, run string) (Target, error) {
+		require.Equal(t, "run", run)
+		require.Equal(t, ref, got)
+		return Target{Scope: ref.Scope, AgentID: d.AgentID, NodeID: "provider", User: "ubuntu", Connection: conn}, nil
+	}
+	d.Authorize = func(context.Context, controlplane.SignedExecutionGrant) error { return nil }
+	reports := 0
+	ssh := &SSHGuestDispatcher{Dispatcher: d, Report: func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error {
+		t.Fatal("standalone report forbidden")
+		return nil
+	}, ReportDerived: func(_ context.Context, got substrate.SSHAccessMutation, r controlplane.SignedExecutionStopReceipt) error {
+		reports++
+		require.Equal(t, req, got)
+		return controlplane.VerifyGuestSSHAccessStopReceipt(d.HostKey.Public().(ed25519.PublicKey), r, req, "web")
+	}}
+	_, err = ssh.Mutate(context.Background(), ref, req, grant)
+	require.Error(t, err)
+	require.Equal(t, 1, conn.mutations)
+	cold := *ssh
+	dispatcher := *d
+	dispatcher.RunID = ""
+	cold.Dispatcher = &dispatcher
+	require.NoError(t, cold.Recover(context.Background()))
+	require.Equal(t, 1, reports)
+	require.Equal(t, 1, conn.mutations)
+	require.NoError(t, cold.Recover(context.Background()))
+	require.Equal(t, 1, reports)
+}

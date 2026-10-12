@@ -75,6 +75,8 @@ func (s *Server) registerExecutionGrantRoutes() {
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/authorize", s.handleAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/commands/{command}/execution-grant/renew", s.handleAuthorizeExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grant/derive-guest", s.handleDeriveGuestExecutionGrant)
+	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grant/derive-ssh", s.handleDeriveSSHExecutionGrant)
+	s.mux.HandleFunc("POST /v1/hosts/{agent}/derived-ssh/{operation}/completed", s.handleDerivedSSHCompletion)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grant/renew-guest", s.handleRenewDerivedGuestExecutionGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/gc-grant", s.handleGCGrant)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-grants/revoke", s.handleRevokeExecutionGrant)

@@ -8,6 +8,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
@@ -71,6 +72,7 @@ func (e *Executor) RefreshAndPersist(ctx context.Context, plan *Plan, manager *s
 
 // probeResource checks whether a resource is still up.
 func (e *Executor) observeResource(ctx context.Context, id address.Address) (ResourceReadResult, error) {
+	ctx = secret.WithResolver(ctx, e.resolver())
 	r := e.state.FindResource(id)
 	if r == nil {
 		return ResourceReadResult{Status: state.ResourceAbsent, Reason: "resource absent from state"}, nil
@@ -186,7 +188,13 @@ func readResourceWithAttachments(ctx context.Context, handler ResourceHandler, c
 		}
 		ctx = substrate.WithOperationIdentity(ctx, id)
 	}
-	result, err := handler.Read(ctx, cloneResetStateResource(current))
+	var result ResourceReadResult
+	var err error
+	if reader, ok := handler.(StateAwareResourceReader); ok {
+		result, err = reader.ReadWithState(ctx, cloneResetStateResource(current), st)
+	} else {
+		result, err = handler.Read(ctx, cloneResetStateResource(current))
+	}
 	// Drift permits replacement, so attachment uncertainty must still be
 	// checked before reporting it as a safe reconciliation decision.
 	if err != nil || (result.Status != state.ResourcePresent && result.Status != state.ResourceDrifted) || len(current.Attachments) == 0 {

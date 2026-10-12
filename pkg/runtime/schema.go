@@ -190,6 +190,7 @@ func ResourceSchemaFor(typ string) ResourceSchema {
 		}
 		add("rules", value.ListType, false, false)
 	case "sysbox_ssh_access":
+		schema.Version = 2
 		add("node", value.StringType, false, false)
 		add("authorized_keys", value.ListType, false, true)
 		add("bind_ip", value.StringType, false, false)

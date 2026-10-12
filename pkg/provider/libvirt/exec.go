@@ -161,6 +161,33 @@ func (c *domainConnection) CopyFile(ctx context.Context, src, dst string) error 
 	return c.ssh.CopyFile(ctx, src, dst)
 }
 
+func (c *domainConnection) DiscoverSSHAccess(ctx context.Context, q substrate.SSHAccessQuery) (substrate.SSHAccessDiscovery, error) {
+	if err := c.validate(ctx); err != nil {
+		return substrate.SSHAccessDiscovery{}, err
+	}
+	return c.ssh.DiscoverSSHAccess(ctx, q)
+}
+func (c *domainConnection) MutateSSHAccess(ctx context.Context, req substrate.SSHAccessMutation) (substrate.SSHAccessResult, error) {
+	if err := c.validate(ctx); err != nil {
+		return substrate.SSHAccessResult{}, err
+	}
+	return c.ssh.MutateSSHAccess(ctx, req)
+}
+func (c *domainConnection) ObserveSSHAccess(ctx context.Context, handle substrate.SSHAccessHandle) (substrate.SSHAccessResult, error) {
+	if err := c.validate(ctx); err != nil {
+		return substrate.SSHAccessResult{}, err
+	}
+	return c.ssh.ObserveSSHAccess(ctx, handle)
+}
+func (c *domainConnection) InspectSSHAccess(ctx context.Context, handle substrate.SSHAccessHandle) (substrate.SSHAccessInspection, error) {
+	if err := c.validate(ctx); err != nil {
+		return substrate.SSHAccessInspection{}, err
+	}
+	return c.ssh.InspectSSHAccess(ctx, handle)
+}
+
+var _ substrate.ConnectionSSHAccess = (*domainConnection)(nil)
+
 func (c *domainConnection) WaitReady(ctx context.Context, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

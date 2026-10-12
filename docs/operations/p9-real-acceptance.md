@@ -1,5 +1,135 @@
 # P9 real acceptance
 
+## Runtime SSH and enrolled service deployment (2026-10-12)
+
+`TestRemoteDockerSSHAccessRunE2E` passed under race (13.92 seconds). It uses the
+production API/Agent/host workflow and canonical SQLite to create a real Docker
+node plus `sysbox_ssh_access` in one topology Run. SSH gets its own node-scoped
+grant under the Run, with signed derived completion and Run-aware host recovery.
+The test loses Run completion acknowledgement, reconstructs API/Agent/host,
+observes original identities, then destroys the resources and commits the signed
+cleanup receipt. This is a topology Run test; it does not cover local CLI signing
+or resource-targeted parent grants.
+
+Runtime SSH now uses schema 2, canonical node connection settings and the managed
+SSH SPI. Read inspects current configuration; exact CAS deletion works without
+the original HCL and refuses newer revisions. Lost create response recovery
+observes the original action without replay. Old CopyFile/rm and graph-only SSH
+connection helpers were removed. Libvirt gained the domain-fenced SSH forwarding
+methods. New SQLite files are created mode 0600 before SQLite opens them, fixing
+the host resolver rejecting databases previously created as 0644.
+
+`TestRealSSHDDeploymentReloadRecoveryE2E` passed with real OpenSSH, validating the
+complete Include structure, atomic owned drop-in publication, reload, recovery
+and administrator login preservation. Installer regressions cover conditional
+Include semantics, untracked `Include=...`, changed service profile, damaged or
+foreign files and edits during validation/reload. Helper administrative commands
+are documented in [managed-ssh-service.md](managed-ssh-service.md).
+
+The final helper build also passed the real systemd adapter on two independent
+VM kernels. Control VM authenticated to an isolated execution-VM sshd before
+installation and after install and independent-process recovery; main config
+remained unchanged, the test unit was removed, and its listener was independently
+confirmed absent. Evidence:
+`/tmp/sysbox-p9-lab-current/sysbox-p9-ssh-34971e40954f/result.json`.
+The lab disks and historical unknown records were preserved.
+
+Full `go test ./...`, relevant race suites and affected-package vet passed.
+New real tests are included in `make test-p9-real`. Remaining: local CLI authority
+and bootstrap, resource-targeted child grants, automatic service enrollment in
+managed images, and combined two-VM API/Agent key-lifecycle/login fault acceptance.
+The two-VM result above is service-only and uses a no-op managed key source to
+verify administrator preservation; it is not evidence of managed-key login.
+
+## Public SSH execution path accepted on Docker (2026-10-12)
+
+`TestPublicSSHAgentDockerE2E` now starts at the public HTTP endpoint and runs
+the actual Agent, durable command leasing, production grant issuer, host Unix
+RPC, online authorization, canonical Docker resolver, current guest helper and
+authenticated host completion. Create, rotation to a different key and CAS
+delete passed under race (1.55 seconds). Each operation is independently read
+back from the guest and compared with the canonical result. The first completion
+response is deliberately lost after API commit; the host retries its persisted
+receipt without re-executing the mutation. This test is in `make test-p9-real`,
+whose acceptance runner rejects skips and missing test matches.
+
+Host journals now use a separate `guest-ssh` directory, bounded hashed names,
+process-independent exclusion and full request/grant/result binding. Invalid
+or corrupt records cannot be overwritten as fresh work. Dispatch checks live
+authority and the canonical account, pins the immutable provider ID, and validates
+the complete returned identity. Startup recovery only observes uncertain intents,
+visits records independently and retries unchanged receipts. Focused race tests
+cover revocation, corruption/tampering, concurrent mutation/recovery, foreign or
+replaced providers, lost replies, lost acknowledgements and startup recovery.
+
+The old host SSH coordinator, mutation/observe RPCs and CopyFile/rm callbacks
+were removed. Agent dispatch consumes only SSHMutation commands and never posts
+canonical SSH completion itself. API and host share canonical account parsing.
+This also fixes native provider `SSHUser` configuration being ignored by the API.
+
+The real continuous workflow exposed one additional filesystem outbox bug:
+reading a legitimately host-completed operation used worker-write validation and
+reported corruption on the next command admission. Snapshot reads now validate
+immutable seed bindings while accepting committed host results; worker writes
+remain prohibited. The public-admission regression covers completion followed by
+command listing, so this failure is covered without Docker as well.
+
+Validation: full `go test ./...` passed; SSH/NodeOperation/GuestDispatch race
+suites passed for hostsupervisor, agentexec, api and persistence. Additional
+Agent tests reject correctly signed grants for another agent, attempt, command,
+session, scope or digest. Vet passed for the affected packages and CLI. Independent
+review found no remaining critical or important issues in this patch.
+
+Boundary: this accepts the SSH execution protocol on one Docker host. It does
+not establish automatic sshd installation/reload, runtime SSH resource migration,
+cross-host SSH lifecycle, actual host process-kill acceptance, PostgreSQL or the
+remaining P9 fault matrix. The correction below describes the earlier state;
+its listed execution-path blockers are addressed by this change.
+
+## SSH public-path acceptance correction (2026-10-12)
+
+**The public SSH workflow is not end-to-end accepted.** Earlier statements that
+the production path was connected were based on compilation and component tests
+and were too strong. The new public HTTP admission regression returned 202 but
+the resulting command failed the actual guest decoder: admission persisted both
+old SSHAccess and new SSHMutation, which the new contract explicitly forbids.
+Admission now persists only SSHMutation. The same public regression verifies
+that the accepted command can be leased, decoded and used by the issuer.
+
+Additional public tests reproduced a valid CAS deletion without keys being
+rejected, and a client `user=root` overriding canonical `ubuntu`. Both are fixed:
+mutation shape is validated by operation kind before state access, the actual
+user is always resolved from canonical state, and explicit user overrides are
+rejected before dispatch. Invalid keys and zero-revision deletes create no
+command. These regressions pass under race.
+
+Current remaining production blockers, confirmed by code inspection and an
+independent read-only review:
+
+- Agent's main operation switch routes guest SSH to power; its SSH relay still
+  consumes the old SSHAccess payload and its completion branch omits guest SSH.
+- Host SSHGuestDispatcher does not call online Authorize or serialize mutation
+  and recovery. A valid but revoked grant is insufficient protection.
+- Loading only decodes JSON and treats errors other than NotExist as new work;
+  corrupt records can be overwritten/replayed instead of preserving unknown.
+- Host Server has no SSHGuest recovery loop. Recovery uses logical NodeID where
+  provider connections require immutable provider ID, without pinning it first.
+- Hex-expanded identity filenames can exceed filesystem limits; sharing the
+  task journal directory makes the task scanner encounter SSH records.
+- Receipt-present retries do not re-report an unacknowledged receipt; recovery
+  stops at the first failure instead of visiting later records.
+
+Tests actually rerun this round: API/Agent/host/controlplane/persistence SSH and
+node-operation race suites passed; real Docker provider/helper E2E passed
+(0.88s); real two-listener sshd key rotation/revocation/endpoint E2E passed
+(5.85s); real sshd syntax/effective-config conflict tests passed (0.18s).
+The Docker test exercises host discovery but signs mutations in the fixture:
+it does not exercise public admission and production Agent modification relay.
+No two-VM SSH lifecycle or new PostgreSQL acceptance is claimed this round.
+The full repository `go test ./...` and `go vet ./pkg/api` also passed after
+the admission fixes. These results do not replace the missing public workflow
+acceptance described above.
+
 ## PostgreSQL host completion/issuance lock ordering (2026-10-11)
 
 Host node-operation completion now acquires the authority row before operation

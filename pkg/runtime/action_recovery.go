@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -47,6 +48,7 @@ func (e *Executor) RecoverActions(ctx context.Context, plan *Plan) (resultErr er
 // recoverActions verifies incomplete actions using the normal observer. It
 // never reissues an external effect or an arbitrary guest command.
 func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
+	ctx = secret.WithResolver(ctx, e.resolver())
 	if e.actions == nil {
 		return nil
 	}

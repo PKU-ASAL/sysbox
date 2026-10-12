@@ -47,6 +47,28 @@ func TestChildDerivationConcurrentRetryDoesNotRenew(t *testing.T) {
 	wg.Wait()
 }
 
+func TestDerivedSSHChildrenFenceParentAndReceiptReplay(t *testing.T) {
+	for _, operation := range []string{"guest_ssh_access_apply", "guest_ssh_access_delete"} {
+		t.Run(operation, func(t *testing.T) {
+			r, p, c, now := childGrantFixture(t)
+			c.Operation = operation
+			child, err := r.DeriveGuestTask(context.Background(), p, c, time.Minute)
+			require.NoError(t, err)
+			require.Equal(t, p.Epoch, child.ParentEpoch)
+			require.NoError(t, r.Authorize(context.Background(), *child))
+			forged := *child
+			forged.ParentEpoch++
+			require.Error(t, r.Authorize(context.Background(), forged))
+			require.Error(t, r.AcceptHostStop(context.Background(), p, "parent-receipt"))
+			*now = now.Add(2 * time.Minute)
+			require.Error(t, r.Authorize(context.Background(), *child))
+			require.NoError(t, r.AcceptHostStop(context.Background(), *child, "receipt"))
+			require.NoError(t, r.AcceptHostStop(context.Background(), *child, "receipt"))
+			require.Error(t, r.AcceptHostStop(context.Background(), *child, "different-receipt"))
+		})
+	}
+}
+
 func TestChildDerivationRejectsStaleParentEpochAndSession(t *testing.T) {
 	for _, kind := range []string{"epoch", "session"} {
 		t.Run(kind, func(t *testing.T) {

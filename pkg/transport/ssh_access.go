@@ -8,6 +8,16 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
+type sshAccessMutationHandlerKey struct{}
+
+// SSHAccessMutationHandler is installed by the trusted Run host to journal and
+// authorize a child mutation before the provider transmits it.
+type SSHAccessMutationHandler func(context.Context, substrate.SSHAccessMutation, substrate.OperationIdentity) (substrate.SSHAccessResult, error)
+
+func WithSSHAccessMutationHandler(ctx context.Context, handler SSHAccessMutationHandler) context.Context {
+	return context.WithValue(ctx, sshAccessMutationHandlerKey{}, handler)
+}
+
 func mutateSSHAccess(ctx context.Context, conn taskCaller, identity executionIdentity, req substrate.SSHAccessMutation) (substrate.SSHAccessResult, error) {
 	var empty substrate.SSHAccessResult
 	digest, err := req.Digest()
@@ -15,6 +25,15 @@ func mutateSSHAccess(ctx context.Context, conn taskCaller, identity executionIde
 		return empty, err
 	}
 	auth, ok := ctx.Value(taskAuthorizationKey{}).(taskAuthorization)
+	if !ok {
+		if handler, exists := ctx.Value(sshAccessMutationHandlerKey{}).(SSHAccessMutationHandler); exists {
+			op, bound := substrate.OperationIdentityFromContext(ctx)
+			if handler == nil || !bound || op.Validate() != nil || op.ActionID != req.ID || identity.nodeID == "" || identity.generation != op.Generation {
+				return empty, guesttask.ErrUnauthorized
+			}
+			return handler(ctx, req, op)
+		}
+	}
 	g := auth.Grant.Grant
 	operation := "guest_ssh_access_apply"
 	if req.Delete {

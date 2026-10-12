@@ -214,7 +214,11 @@ func (r *GuestRepository) FilesystemGuestDispatchCommands(ctx context.Context) (
 				birth := seed.Command.Operation
 				birth.CommandID = seed.Command.ID
 				birth.LeaseOwner, birth.LeaseEpoch, birth.Attempt = op.LeaseOwner, op.LeaseEpoch, op.Attempt
-				if ValidateNodeOperationTransition(birth, *op) != nil {
+				// This checks an already committed snapshot against its immutable
+				// outbox seed, not a worker's proposed completion. Host SSH results
+				// legitimately differ from that queued seed. The write boundary
+				// still requires authenticated host completion for these fields.
+				if validateNodeOperationTransition(birth, *op, true) != nil {
 					return nil, ErrCorruptRecord
 				}
 			} else {

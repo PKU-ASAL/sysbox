@@ -25,6 +25,7 @@ type HostRunBridge interface {
 type HostRunExecutor struct {
 	Bridge    HostRunBridge
 	Tasks     *hostsupervisor.Dispatcher
+	SSH       *hostsupervisor.SSHGuestDispatcher
 	Resolver  hostsupervisor.CanonicalResolver
 	Authority hostsupervisor.AuthorityClient
 }
@@ -100,6 +101,7 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 		// The child belongs to the Run, not a transient transport request.
 		return children.Start(ctx, ref, task)
 	})
+	runCtx = h.withRunSSH(runCtx, req)
 	NewExecutorWithBridge(h.Bridge).ExecuteContext(WithRunWorkspace(runCtx, *run, path), run)
 	if run.Status != controlplane.RunDone {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -146,4 +148,57 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 		return nil, fmt.Errorf("host Run child outcome uncertain: %w", err)
 	}
 	return json.Marshal(run)
+}
+
+func (h *HostRunExecutor) withRunSSH(ctx context.Context, run hostsupervisor.RunRequest) context.Context {
+	return transport.WithSSHAccessMutationHandler(ctx, func(taskCtx context.Context, request substrate.SSHAccessMutation, identity substrate.OperationIdentity) (substrate.SSHAccessResult, error) {
+		var empty substrate.SSHAccessResult
+		parent, ok := transport.ParentExecutionGrantFromContext(taskCtx)
+		if !ok {
+			return empty, fmt.Errorf("host run parent grant unavailable")
+		}
+		if h.SSH == nil || h.SSH.Dispatcher == nil {
+			return empty, fmt.Errorf("host run SSH dispatcher unavailable")
+		}
+		scope := controlplane.ExecutionScope{TopologyUID: identity.TopologyUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation}
+		ref, err := h.Resolver.FindRunTaskRef(taskCtx, run.Topology, run.RunID, scope)
+		if err != nil {
+			return empty, err
+		}
+		target, err := h.Resolver.ResolveRunTask(taskCtx, ref, run.RunID)
+		if err != nil {
+			return empty, err
+		}
+		if target.User != request.Config.User || target.Scope != scope || target.AgentID != h.SSH.AgentID {
+			return empty, fmt.Errorf("host run SSH target identity changed")
+		}
+		access, ok := target.Connection.(substrate.ConnectionSSHAccess)
+		if !ok {
+			return empty, substrate.ErrNotSupported
+		}
+		query := substrate.SSHAccessQuery{NodeID: target.NodeID, User: target.User, AccessID: request.Config.AccessID, TopologyUID: scope.TopologyUID, ResourceUID: scope.ResourceUID, Generation: scope.Generation}
+		discovered, err := access.DiscoverSSHAccess(taskCtx, query)
+		if err != nil {
+			return empty, err
+		}
+		if err = discovered.Validate(query); err != nil {
+			return empty, err
+		}
+		grant, err := h.Authority.DeriveSSHGrant(taskCtx, parent, request, scope.ResourceUID, scope.Generation, discovered.BootID)
+		if err != nil {
+			return empty, err
+		}
+		// Share only the SSH journal root, never the task journal. Recovery reads
+		// the durable Run ID and uses the same canonical candidate resolver.
+		dispatcher := *h.SSH.Dispatcher
+		dispatcher.RunID = run.RunID
+		dispatcher.ResolveRun = h.Resolver.ResolveRunTask
+		child := *h.SSH
+		child.Dispatcher = &dispatcher
+		result, err := child.Mutate(taskCtx, ref, request, grant)
+		if result.Handle.ID != "" {
+			result.Handle.NodeID = target.NodeID
+		}
+		return result, err
+	})
 }

@@ -32,12 +32,24 @@ import (
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 )
 
 // Production Agent HTTP/WS, host-supervisor Unix RPC and real Docker share
 // canonical SQLite but use separate revision directories. Reconstruction is
 // in-process; independent process/VM faults have separate acceptance gates.
 func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
+	testRemoteDockerCompletionLossRecovery(t, false)
+}
+
+func TestRemoteDockerSSHAccessRunE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_GUESTTASK_HELPER") == "" {
+		t.Skip("current guest helper required")
+	}
+	testRemoteDockerCompletionLossRecovery(t, true)
+}
+
+func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH bool) {
 	if os.Getenv("SYSBOX_REMOTE_DOCKER_E2E") != "1" {
 		t.Skip("requires real Docker daemon; set SYSBOX_REMOTE_DOCKER_E2E=1")
 	}
@@ -110,7 +122,7 @@ func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 	var faultOperation atomic.Value
 	faultOperation.Store("run_apply")
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/v1/hosts/") || !strings.HasSuffix(r.URL.Path, "/completed") {
+		if !strings.HasPrefix(r.URL.Path, "/v1/hosts/") || !strings.Contains(r.URL.Path, "/runs/") || !strings.HasSuffix(r.URL.Path, "/completed") {
 			current.Load().ServeHTTP(w, r)
 			return
 		}
@@ -159,6 +171,7 @@ func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	require.NoError(t, err)
 	root, socketDir := privateDir(), privateDir()
+	hostErrors := make(chan error, 1)
 	socket := filepath.Join(socketDir, "host.sock")
 	startHost := func() (context.CancelFunc, <-chan error) {
 		bridge, err := NewHostExecutionBridge(hostCfg)
@@ -166,9 +179,19 @@ func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 		resolver := hostsupervisor.CanonicalResolver{RunsDir: hostCfg.Paths.RunsDir, Backend: cfg.State.Backend, AgentID: "fault-agent"}
 		tasks := &hostsupervisor.Dispatcher{Root: root, AgentID: "fault-agent", HostBootID: strings.TrimSpace(string(boot)), IssuerKey: pub, HostKey: hostKey, Authorize: authority.Authorize, ReportStop: authority.ReportStop, Resolve: resolver.Resolve, ResolveRun: resolver.ResolveRunTask}
 		runs := &hostsupervisor.RunCoordinator{Root: filepath.Join(root, "runs"), AgentID: tasks.AgentID, HostBootID: tasks.HostBootID, IssuerKey: pub, HostKey: hostKey, Authorize: authority.Authorize, ReportRunID: authority.ReportRun, Tasks: tasks,
-			OnExecutionError: func(req hostsupervisor.RunRequest, err error) { t.Logf("host %s: %v", req.RunID, err) }}
+			OnExecutionError: func(req hostsupervisor.RunRequest, err error) {
+				t.Logf("host %s: %v", req.RunID, err)
+				select {
+				case hostErrors <- err:
+				default:
+				}
+			}}
 		executor := &agentexec.HostRunExecutor{Bridge: bridge, Tasks: tasks, Resolver: resolver, Authority: authority}
 		srv := &hostsupervisor.Server{Socket: socket, GroupID: -1, Dispatcher: tasks, Runs: runs, RunEffect: executor.Execute, RunRecovery: executor.Recover}
+		sshBase := *tasks
+		sshBase.Root = filepath.Join(root, "guest-ssh")
+		srv.SSHGuest = &hostsupervisor.SSHGuestDispatcher{Dispatcher: &sshBase, Report: authority.ReportNodeOperation, ReportDerived: authority.ReportDerivedSSHAccess}
+		executor.SSH = srv.SSHGuest
 		service, stop := context.WithCancel(ctx)
 		t.Cleanup(stop)
 		done := make(chan error, 1)
@@ -252,6 +275,13 @@ resource "sysbox_node" "%s" {
   }
 }
 `, strings.ReplaceAll(topology, "-", "_"))
+	if managedSSH {
+		helper := os.Getenv("SYSBOX_GUESTTASK_HELPER")
+		key, err := ssh.NewPublicKey(pub)
+		require.NoError(t, err)
+		hcl = strings.Replace(hcl, "  provider \"docker\" {", fmt.Sprintf("  connection {\n    type = \"ssh\"\n    user = \"root\"\n  }\n  provider \"docker\" {\n    binds = [%q, %q]", helper+":/usr/local/bin/sysbox-guest-task:ro", keyPath+":/etc/sysbox/grant-public-key:ro"), 1)
+		hcl += fmt.Sprintf("resource \"sysbox_ssh_access\" \"admin\" {\n  node = sysbox_node.%s.id\n  authorized_keys = [%q]\n}\n", strings.ReplaceAll(topology, "-", "_"), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))))
+	}
 	status, raw := request("POST", "/v1/revisions", map[string]any{"files": map[string]string{"field.sysbox.hcl": hcl}}, "")
 	require.Equal(t, 201, status, string(raw))
 	var revision map[string]string
@@ -265,6 +295,8 @@ resource "sysbox_node" "%s" {
 	var completion observedCompletion
 	select {
 	case completion = <-lost:
+	case err := <-hostErrors:
+		t.Fatalf("host Run failed before completion: %v", err)
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for signed host completion")
 	}
@@ -285,6 +317,17 @@ resource "sysbox_node" "%s" {
 		}
 	}
 	require.NotEmpty(t, externalID)
+	if managedSSH {
+		var accessFound bool
+		for _, resource := range state.Resources {
+			if resource.Address.Type == "sysbox_ssh_access" {
+				accessFound = true
+				require.Equal(t, 2, resource.SchemaVersion)
+				require.NotNil(t, resource.Attributes["ssh_access"])
+			}
+		}
+		require.True(t, accessFound, "Run must commit the versioned SSH resource")
+	}
 	inspected, err := cli.ContainerInspect(ctx, externalID)
 	require.NoError(t, err)
 	require.True(t, inspected.State.Running)

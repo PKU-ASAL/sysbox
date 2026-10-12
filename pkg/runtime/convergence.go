@@ -13,6 +13,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -183,6 +184,7 @@ func (e *Executor) orderedDestruction(plan *Plan) ([]controlplane.PlannedChange,
 }
 
 func (e *Executor) observeTarget(ctx context.Context, id address.Address) (ResourceReadResult, error) {
+	ctx = secret.WithResolver(ctx, e.resolver())
 	if err := ctx.Err(); err != nil {
 		return ResourceReadResult{}, err
 	}
@@ -372,6 +374,7 @@ func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedCha
 }
 
 func (e *Executor) runAction(ctx context.Context, change controlplane.PlannedChange) error {
+	ctx = secret.WithResolver(ctx, e.resolver())
 	if e.actions == nil {
 		return fmt.Errorf("%w: durable action repository required for %s", ErrConvergenceUnsupported, change.Address)
 	}

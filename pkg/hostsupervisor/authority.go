@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"io"
 	"net/http"
 	"net/url"
@@ -115,6 +116,19 @@ func (c AuthorityClient) RenewDerivedGuestGrant(ctx context.Context, parent, chi
 	var out controlplane.SignedExecutionGrant
 	err := c.postJSON(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grant/renew-guest", map[string]any{"parent": parent, "child": child}, &out)
 	return out, err
+}
+
+func (c AuthorityClient) DeriveSSHGrant(ctx context.Context, parent controlplane.SignedExecutionGrant, request substrate.SSHAccessMutation, resourceUID string, generation int64, bootID string) (controlplane.SignedExecutionGrant, error) {
+	var out controlplane.SignedExecutionGrant
+	err := c.postJSON(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grant/derive-ssh", map[string]any{"parent": parent, "request": request, "resource_uid": resourceUID, "generation": generation, "guest_boot_id": bootID}, &out)
+	return out, err
+}
+
+func (c AuthorityClient) ReportDerivedSSHAccess(ctx context.Context, request substrate.SSHAccessMutation, receipt controlplane.SignedExecutionStopReceipt) error {
+	if request.ID == "" || strings.ContainsAny(request.ID, "/\\?#\x00") {
+		return fmt.Errorf("invalid SSH action ID")
+	}
+	return c.post(ctx, "/v1/hosts/"+c.Identity.ID+"/derived-ssh/"+request.ID+"/completed", map[string]any{"request": request, "receipt": receipt}, false)
 }
 
 func (c AuthorityClient) RequestGCGrant(ctx context.Context, candidate GCCandidate, topology, sessionID, actionID, commandID, leaseOwner string, attempt int, bootID string) (controlplane.SignedExecutionGrant, error) {
