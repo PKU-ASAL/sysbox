@@ -1,5 +1,27 @@
 # P9 real acceptance
 
+## Local SSH authority and host-bound derivation (2026-10-12)
+
+`TestLocalCLIManagedSSHApplyRotateDestroyE2E` passed for file and SQLite
+repositories (23.98 seconds total). Independent CLI processes bootstrap a private
+authority, apply, rotate the managed key and destroy after HCL removal; guest
+readback confirms the rotated key and owner inventory is empty after deletion.
+`TestLocalSSHColdReceiptRecoveryE2E` also passed on both backends: a guest commit
+with a lost completion response is recovered by a reconstructed controller using
+the original receipt, retiring its command and authority. Full `go test ./...`,
+relevant race suites and affected-package vet passed for commit `7ee83ed`.
+
+Derived SSH requests now require the enrolled host's signature over the exact
+parent, mutation, resource generation and guest boot ID. Agent authentication
+alone is rejected; parent authority and its source lease remain independently
+checked. Focused race regressions passed, followed by
+`TestRemoteDockerSSHAccessRunE2E` under race (14.20 seconds).
+
+Remaining SSH work: resource-targeted Run child authorization, automatic guest
+service/image enrollment, and combined two-VM API/Agent key rotation, real login
+and restart acceptance. The older local-bootstrap gap below is now closed; the
+service-only two-VM evidence still does not establish managed-key login.
+
 ## Runtime SSH and enrolled service deployment (2026-10-12)
 
 `TestRemoteDockerSSHAccessRunE2E` passed under race (13.92 seconds). It uses the

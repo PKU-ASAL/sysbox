@@ -23,17 +23,15 @@ func (s *Server) handleDeriveSSHExecutionGrant(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusServiceUnavailable, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
-	var request struct {
-		Parent      controlplane.SignedExecutionGrant `json:"parent"`
-		Request     substrate.SSHAccessMutation       `json:"request"`
-		ResourceUID string                            `json:"resource_uid"`
-		Generation  int64                             `json:"generation"`
-		GuestBootID string                            `json:"guest_boot_id"`
-	}
+	var request controlplane.SSHGrantDerivation
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if controlplane.VerifySSHGrantDerivation(s.grantHostKeys[r.PathValue("agent")], request) != nil {
+		writeError(w, http.StatusUnauthorized, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
 	digest, err := request.Request.Digest()

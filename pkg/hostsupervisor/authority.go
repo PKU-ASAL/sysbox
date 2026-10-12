@@ -3,6 +3,7 @@ package hostsupervisor
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -129,9 +130,13 @@ func (c AuthorityClient) RenewDerivedGuestGrant(ctx context.Context, parent, chi
 	return out, err
 }
 
-func (c AuthorityClient) DeriveSSHGrant(ctx context.Context, parent controlplane.SignedExecutionGrant, request substrate.SSHAccessMutation, resourceUID string, generation int64, bootID string) (controlplane.SignedExecutionGrant, error) {
+func (c AuthorityClient) DeriveSSHGrant(ctx context.Context, hostKey ed25519.PrivateKey, parent controlplane.SignedExecutionGrant, request substrate.SSHAccessMutation, resourceUID string, generation int64, bootID string) (controlplane.SignedExecutionGrant, error) {
 	var out controlplane.SignedExecutionGrant
-	err := c.postJSON(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grant/derive-ssh", map[string]any{"parent": parent, "request": request, "resource_uid": resourceUID, "generation": generation, "guest_boot_id": bootID}, &out)
+	proof, err := controlplane.SignSSHGrantDerivation(hostKey, controlplane.SSHGrantDerivation{Parent: parent, Request: request, ResourceUID: resourceUID, Generation: generation, GuestBootID: bootID})
+	if err != nil {
+		return out, err
+	}
+	err = c.postJSON(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grant/derive-ssh", proof, &out)
 	return out, err
 }
 

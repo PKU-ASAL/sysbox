@@ -184,7 +184,7 @@ func (h *HostRunExecutor) withRunSSH(ctx context.Context, run hostsupervisor.Run
 		if err = discovered.Validate(query); err != nil {
 			return empty, err
 		}
-		grant, err := h.Authority.DeriveSSHGrant(taskCtx, parent, request, scope.ResourceUID, scope.Generation, discovered.BootID)
+		grant, err := h.Authority.DeriveSSHGrant(taskCtx, h.SSH.HostKey, parent, request, scope.ResourceUID, scope.Generation, discovered.BootID)
 		if err != nil {
 			return empty, err
 		}

@@ -52,6 +52,14 @@ func TestDerivedSSHGrantCompletionBindsExactRequestAndParent(t *testing.T) {
 		return w
 	}
 	w := post("/v1/agents/agent/execution-grant/derive-ssh", map[string]any{"parent": signed, "request": mutation, "resource_uid": "node", "generation": 1, "guest_boot_id": "guest"}, true)
+	require.Equal(t, http.StatusUnauthorized, w.Code, "Agent authentication and parent possession alone cannot authorize arbitrary SSH configuration")
+	proof, err := controlplane.SignSSHGrantDerivation(host, controlplane.SSHGrantDerivation{Parent: signed, Request: mutation, ResourceUID: "node", Generation: 1, GuestBootID: "guest"})
+	require.NoError(t, err)
+	changed := proof
+	changed.Request.Config.User = "root"
+	w = post("/v1/agents/agent/execution-grant/derive-ssh", changed, true)
+	require.Equal(t, http.StatusUnauthorized, w.Code, "worker cannot substitute the canonical host-selected account")
+	w = post("/v1/agents/agent/execution-grant/derive-ssh", proof, true)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var child controlplane.SignedExecutionGrant
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &child))
