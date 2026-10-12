@@ -250,6 +250,14 @@ Execution creation accepts `argv`, optional `environment`,
 durable `queued` resource. The owning Agent reports `running`, followed by
 `completed`, `failed`, or `cancelled`. A non-zero guest exit is `completed`
 with `result_class: exit`; stdout and stderr are base64 encoded and bounded.
+The optional `output_limit_bytes` sets each stream's bound up to 4 MiB.
+Omitting it or setting it to zero retains the default 1 MiB bound; checks
+continue to use their existing default bound.
+Windows libvirt callers may explicitly set `capture_via_file: true` to retrieve
+captured output through bounded QGA file reads instead of a large process-status
+reply. This mode requires direct argv, no stdin/working directory, and arguments
+without quotes, percent signs or newlines; ordinary direct capture remains the
+default. Temporary guest capture files are removed after retrieval.
 The private request and output payload expire 15 minutes after completion,
 while the sanitized lifecycle metadata remains available.
 

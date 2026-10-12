@@ -20,6 +20,8 @@ func TestGuestExecutionCreateValidatesRequest(t *testing.T) {
 		{"argv required", controlplane.GuestExecutionRequest{}},
 		{"environment name", controlplane.GuestExecutionRequest{Argv: []string{"true"}, Environment: map[string]string{"BAD-NAME": "secret"}}},
 		{"timeout bounded", controlplane.GuestExecutionRequest{Argv: []string{"true"}, TimeoutSeconds: 86401}},
+		{"output negative", controlplane.GuestExecutionRequest{Argv: []string{"true"}, OutputLimitBytes: -1}},
+		{"output bounded", controlplane.GuestExecutionRequest{Argv: []string{"true"}, OutputLimitBytes: (4 << 20) + 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := svc.Create(context.Background(), "lab", "web", "host-a", tc.req)

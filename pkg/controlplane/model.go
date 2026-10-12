@@ -246,6 +246,8 @@ type GuestExecutionRequest struct {
 	Environment      map[string]string `json:"environment,omitempty"`
 	WorkingDirectory string            `json:"working_directory,omitempty"`
 	TimeoutSeconds   int               `json:"timeout_seconds,omitempty"`
+	OutputLimitBytes int               `json:"output_limit_bytes,omitempty"`
+	CaptureViaFile   bool              `json:"capture_via_file,omitempty"`
 }
 
 type GuestExecutionResult struct {

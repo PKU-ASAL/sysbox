@@ -43,12 +43,19 @@ var (
 // wrapped so callers can distinguish resolution failures (node not found,
 // capability unavailable) from a failed exec.
 func runGuestExec(ctx context.Context, st *state.State, node string, argv []string, env map[string]string, workingDir string) (substrate.ExecResult, error) {
+	return runGuestExecCapture(ctx, st, node, argv, env, workingDir, false)
+}
+
+func runGuestExecCapture(ctx context.Context, st *state.State, node string, argv []string, env map[string]string, workingDir string, captureViaFile bool) (substrate.ExecResult, error) {
 	res := st.FindResource(address.Resource("sysbox_node", node))
 	if res == nil {
 		res = st.FindResource(address.Resource("sysbox_router", node))
 	}
 	if res == nil {
 		return substrate.ExecResult{}, fmt.Errorf("%w: %s", errGuestNodeNotFound, node)
+	}
+	if captureViaFile && res.Driver != "libvirt" {
+		return substrate.ExecResult{}, fmt.Errorf("%w: file capture requires a Windows libvirt node", errGuestExecUnsupported)
 	}
 	exec, err := driver.DefaultRegistry.RequireGuestExec(res.Driver)
 	if err != nil {
@@ -62,7 +69,7 @@ func runGuestExec(ctx context.Context, st *state.State, node string, argv []stri
 	if err != nil {
 		return substrate.ExecResult{}, fmt.Errorf("reconstruct provider handle: %w", err)
 	}
-	return exec.ExecInNode(ctx, handle, substrate.ExecRequest{Program: argv[0], Args: argv[1:], Environment: env, WorkingDir: workingDir, Shell: substrate.ShellNone})
+	return exec.ExecInNode(ctx, handle, substrate.ExecRequest{Program: argv[0], Args: argv[1:], Environment: env, WorkingDir: workingDir, Shell: substrate.ShellNone, CaptureViaFile: captureViaFile})
 }
 
 // guestOperationContext derives the context a guest operation runs under.
@@ -87,7 +94,7 @@ func executeGuestOperation(ctx context.Context, st *state.State, node string, re
 	ctx, cancel := guestOperationContext(ctx, req)
 	defer cancel()
 
-	result, err := runGuestExec(ctx, st, node, req.Argv, req.Environment, req.WorkingDirectory)
+	result, err := runGuestExecCapture(ctx, st, node, req.Argv, req.Environment, req.WorkingDirectory, req.CaptureViaFile)
 	if err != nil {
 		class := classifyGuestExecError(ctx, err)
 		switch class {
@@ -99,11 +106,11 @@ func executeGuestOperation(ctx context.Context, st *state.State, node string, re
 			// Do not drop what the provider already captured: on a timeout that is
 			// the only trace of how far the command got, and the caller has nothing
 			// else to act on.
-			return guestOperationCompletion{ResultClass: class, Err: class + " guest operation", Result: encodeGuestOutput(result.Stdout, result.Stderr)}
+			return guestOperationCompletion{ResultClass: class, Err: class + " guest operation", Result: encodeGuestOutputWithLimit(result.Stdout, result.Stderr, req.OutputLimitBytes)}
 		}
 	}
 
-	out := encodeGuestOutput(result.Stdout, result.Stderr)
+	out := encodeGuestOutputWithLimit(result.Stdout, result.Stderr, req.OutputLimitBytes)
 	out.ExitCode = result.ExitCode
 	return guestOperationCompletion{ResultClass: controlplane.GuestExecutionResultClassExit, Result: out}
 }
@@ -112,8 +119,24 @@ func executeGuestOperation(ctx context.Context, st *state.State, node string, re
 // applies here, at the boundary, because the provider may hand back more than
 // the agent is willing to carry.
 func encodeGuestOutput(stdout, stderr string) controlplane.GuestExecutionResult {
-	out, outTruncated := boundedString(stdout)
-	errOut, errTruncated := boundedString(stderr)
+	return encodeGuestOutputWithLimit(stdout, stderr, 0)
+}
+
+func encodeGuestOutputWithLimit(stdout, stderr string, limit int) controlplane.GuestExecutionResult {
+	if limit <= 0 {
+		limit = guestOutputLimit
+	}
+	if limit > 4<<20 {
+		limit = 4 << 20
+	}
+	bound := func(s string) (string, bool) {
+		if len(s) > limit {
+			return s[:limit], true
+		}
+		return s, false
+	}
+	out, outTruncated := bound(stdout)
+	errOut, errTruncated := bound(stderr)
 	return controlplane.GuestExecutionResult{
 		Stdout:    base64.StdEncoding.EncodeToString([]byte(out)),
 		Stderr:    base64.StdEncoding.EncodeToString([]byte(errOut)),

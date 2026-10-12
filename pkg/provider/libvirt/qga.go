@@ -37,7 +37,13 @@ func (c *qgaConnection) call(ctx context.Context, command string, args any, resu
 	if err != nil {
 		return err
 	}
-	output, err := exec.CommandContext(ctx, "virsh", "qemu-agent-command", c.domain, "--timeout", "10", string(encoded)).CombinedOutput()
+	timeout := "10"
+	// A completed process can return a large captured reply. The operation's
+	// parent context remains the overall bound; control probes keep 10 seconds.
+	if command == "guest-exec-status" {
+		timeout = "30"
+	}
+	output, err := exec.CommandContext(ctx, "virsh", "qemu-agent-command", c.domain, "--timeout", timeout, string(encoded)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("libvirt qga %s: %w: %s", command, err, output)
 	}
@@ -155,7 +161,14 @@ func (c *qgaConnection) ExecBackground(ctx context.Context, req substrate.ExecRe
 }
 
 func (c *qgaConnection) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (substrate.ExecResult, error) {
-	pid, err := c.start(ctx, req, true)
+	if req.CaptureViaFile {
+		return c.execCapturedFile(ctx, req, stdout, stderr)
+	}
+	return c.execWithCapture(ctx, req, stdout, stderr, true)
+}
+
+func (c *qgaConnection) execWithCapture(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer, capture bool) (substrate.ExecResult, error) {
+	pid, err := c.start(ctx, req, capture)
 	if err != nil {
 		return substrate.ExecResult{}, err
 	}

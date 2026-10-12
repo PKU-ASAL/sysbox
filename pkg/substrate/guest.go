@@ -44,12 +44,13 @@ func ValidateShellKind(shell ShellKind) error {
 }
 
 type ExecRequest struct {
-	Program     string
-	Args        []string
-	Environment map[string]string
-	WorkingDir  string
-	Shell       ShellKind
-	Stdin       io.Reader
+	Program        string
+	Args           []string
+	Environment    map[string]string
+	WorkingDir     string
+	Shell          ShellKind
+	Stdin          io.Reader
+	CaptureViaFile bool
 }
 
 func (r ExecRequest) Validate() error {

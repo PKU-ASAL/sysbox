@@ -11,6 +11,9 @@ import (
 
 // ExecInNode runs a command in the VM through its declared SSH connection.
 func (s *Substrate) ExecInNode(ctx context.Context, handle substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
+	if req.CaptureViaFile && hsFrom(handle).GuestFamily != substrate.GuestFamilyWindows {
+		return substrate.ExecResult{}, fmt.Errorf("libvirt: file capture requires Windows")
+	}
 	conn, err := s.Connection(handle, nil)
 	if err != nil {
 		return substrate.ExecResult{}, err
