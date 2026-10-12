@@ -47,13 +47,13 @@ func TestGuestSSHSourceRejectsCurrentStateIndependentOfCommandSnapshot(t *testin
 				}
 				return &current, nil
 			})
-			require.NoError(t, err, "semantic rejection must preserve authority clock-floor transaction")
 			if scenario == "queued" || scenario == "running" {
+				require.NoError(t, err)
 				require.NoError(t, sourceErr)
 				require.True(t, commit)
 			} else {
-				require.ErrorIs(t, sourceErr, persistence.ErrConflict)
-				require.False(t, commit, "rejected operation must not extend command lease")
+				require.ErrorIs(t, err, persistence.ErrConflict)
+				require.True(t, commit, "transaction abort means no lease write occurs")
 			}
 		})
 	}

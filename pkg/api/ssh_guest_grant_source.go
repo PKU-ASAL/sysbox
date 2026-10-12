@@ -27,5 +27,9 @@ func (b apiExecutionGrantStorage) checkGuestSSHSource(record *persistence.Comman
 		!reflect.DeepEqual(current.SSHMutation, cmd.Operation.SSHMutation)) {
 		err = persistence.ErrConflict
 	}
-	return b.rejectGrantSource(err)
+	// SSH mutation authorization must abort the enclosing authority transaction
+	// on source conflict. Returning nil here would let the surrounding callback
+	// continue to fn(raw) after recording sourceErr, which could accidentally
+	// issue a grant before the clock-floor fallback runs.
+	return err
 }
