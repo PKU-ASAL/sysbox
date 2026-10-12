@@ -106,6 +106,13 @@ func runGrantedSSHAccess(ctx context.Context, opts Options, cmd controlplane.Age
 	if err != nil {
 		return err
 	}
+	guestOperation := controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation)
+	if guestOperation {
+		boot, err = client.GuestTaskBootID(ctx)
+		if err != nil {
+			return err
+		}
+	}
 	var grant controlplane.SignedExecutionGrant
 	endpoint := opts.APIURL + "/v1/agents/" + opts.ID + "/commands/" + cmd.ID + "/execution-grant"
 	if err = post(ctx, opts, endpoint, map[string]any{"session_id": opts.ExecutionSessionID, "lease_owner": cmd.LeaseOwner, "attempt": cmd.Attempt, "boot_id": boot}, &grant); err != nil {
@@ -118,12 +125,23 @@ func runGrantedSSHAccess(ctx context.Context, opts Options, cmd controlplane.Age
 	if err != nil {
 		return err
 	}
+	if guestOperation {
+		mutation := req.Mutation(req.User, cmd.Operation.Operation == "guest_ssh_access_delete")
+		digest, err = mutation.Digest()
+		if err != nil {
+			return err
+		}
+	}
 	if grant.Grant.TargetBootID != boot || grant.Grant.Scope != target.Scope || grant.Grant.SessionID != opts.ExecutionSessionID || grant.Grant.CommandID != cmd.ID || grant.Grant.ActionID != cmd.ActionID || grant.Grant.Digest != digest || grant.Grant.Operation != cmd.Operation.Operation {
 		return controlplane.ErrInvalidExecutionGrant
 	}
 	var callErr error
 	if cmd.Operation.Operation == "ssh_access_apply" {
 		_, callErr = client.ApplySSHAccess(ctx, req, grant)
+	} else if cmd.Operation.Operation == "guest_ssh_access_apply" {
+		_, callErr = client.ApplyGuestSSHAccess(ctx, req, grant)
+	} else if cmd.Operation.Operation == "guest_ssh_access_delete" {
+		_, callErr = client.DeleteGuestSSHAccess(ctx, req, grant)
 	} else {
 		_, callErr = client.DeleteSSHAccess(ctx, req, grant)
 	}
