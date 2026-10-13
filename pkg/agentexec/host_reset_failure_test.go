@@ -39,7 +39,7 @@ func (b *returnedResetBridge) LockTopology(ctx context.Context, topology string)
 }
 
 func TestHostResetFailureUsesReturnedExecutorAndDurablePhases(t *testing.T) {
-	for _, phase := range []string{"accepted", "preparing"} {
+	for _, phase := range []string{"accepted", "preparing", "no-action"} {
 		t.Run(phase, func(t *testing.T) {
 			ctx := context.Background()
 			root := t.TempDir()
@@ -58,7 +58,9 @@ func TestHostResetFailureUsesReturnedExecutorAndDurablePhases(t *testing.T) {
 			repo, err := b.ActionRepository("lab")
 			require.NoError(t, err)
 			a := runtime.ActionRecord{ID: "node-action", Topology: "lab", RunID: run.ID, RunQueuedAt: now, RunRevision: run.Revision, Resource: res.Address, OwnerUID: st.TopologyUID, ResourceUID: res.ResourceUID, Generation: 2, Candidate: &res, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted"}
-			require.NoError(t, repo.CommitActionIntent(ctx, a))
+			if phase != "no-action" {
+				require.NoError(t, repo.CommitActionIntent(ctx, a))
+			}
 			if phase == "preparing" {
 				a.Revision, a.Phase, a.Status = 1, phase, runtime.ActionUncertain
 				require.NoError(t, repo.CommitActionOutcome(ctx, a, nil))
@@ -101,11 +103,12 @@ func TestHostResetFailureUsesReturnedExecutorAndDurablePhases(t *testing.T) {
 				return err == nil && obs.Status != "running"
 			}, 5*time.Second, 10*time.Millisecond)
 			require.Equal(t, int32(2), b.locks.Load(), "failed executor must reacquire execution exclusion for evidence")
-			if phase == "accepted" {
+			if phase == "accepted" || phase == "no-action" {
 				select {
 				case result := <-reported:
 					require.Equal(t, controlplane.RunFailed, result.Status)
-					require.True(t, result.Recoverable)
+					require.Equal(t, phase == "accepted", result.Recoverable)
+					require.Nil(t, result.Cleanup)
 				case <-time.After(time.Second):
 					t.Fatal("missing signed returned failure")
 				}

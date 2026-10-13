@@ -110,32 +110,41 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = children.Cancel(cleanup)
+		unlock, lockErr := h.Bridge.LockTopology(cleanup, run.Topology)
+		if lockErr != nil {
+			return nil, lockErr
+		}
+		defer unlock()
+		provider, ok := h.Bridge.(ActionRepositoryProvider)
+		if !ok {
+			return nil, fmt.Errorf("failed Run stop requires action repository")
+		}
+		repo, err := provider.ActionRepository(run.Topology)
+		if err != nil {
+			return nil, err
+		}
+		actions, err := repo.LoadActions(cleanup, run.Topology)
+		if err != nil {
+			return nil, err
+		}
+		noActions := run.ParentID == ""
+		for _, action := range actions {
+			if action.RunID == run.ID {
+				noActions = false
+			}
+		}
+		if noActions {
+			return nil, hostsupervisor.FinishReturnedRunWithoutActions(cleanup, children, run, actions)
+		}
 		if run.Op == "reset" {
 			// Reacquire the same execution exclusion after the synchronous
 			// executor returned. Unknown provider phases must stay uncertain.
-			unlock, lockErr := h.Bridge.LockTopology(cleanup, run.Topology)
-			if lockErr != nil {
-				return nil, lockErr
-			}
-			defer unlock()
 			original := run
 			if run.ParentID != "" {
 				original, err = ResolveResetOrigin(cleanup, h.Bridge, run)
 				if err != nil {
 					return nil, err
 				}
-			}
-			provider, ok := h.Bridge.(ActionRepositoryProvider)
-			if !ok {
-				return nil, fmt.Errorf("reset stop requires action repository")
-			}
-			repo, err := provider.ActionRepository(run.Topology)
-			if err != nil {
-				return nil, err
-			}
-			actions, err := repo.LoadActions(cleanup, run.Topology)
-			if err != nil {
-				return nil, err
 			}
 			return nil, fmt.Errorf("host reset failed (%s): %w", run.Err, hostsupervisor.FinishReturnedResetFailure(cleanup, children, run, original, actions))
 		}

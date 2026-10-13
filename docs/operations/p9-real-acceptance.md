@@ -1,5 +1,26 @@
 # P9 real acceptance
 
+## Returned Run failure before resource admission (2026-10-13)
+
+The trusted host now completes a synchronously returned failed execution when a
+locked full-journal read proves that the Run admitted no resource actions, no
+other unresolved action exists, and all child admission/termination is confirmed.
+The result is signed failed, never cleanup success, and does not permit reset
+continuation. This prevents known preflight failures from remaining unknown
+solely because the successful-resource checkpoint was never reached.
+
+The executor/coordinator regression uses invalid HCL and verifies signed failure
+after reacquiring topology exclusion. Own actions, unrelated unresolved actions,
+continuations and unknown child admissions are rejected. Existing interrupted
+reset phase checks remain intact. Full Go tests, focused race, affected-package
+vet and independent review passed.
+
+This is live synchronous-return evidence only. It does not recover historical
+intent-only cold records, prove an interrupted daemon request stopped, or close
+the unknown-Run workstream. No retained incident was rewritten or deleted. The
+remaining steps are recorded in
+[unknown-run-recovery.md](../design/2026-10-13-unknown-run-recovery.md).
+
 ## Trusted SSH boot deployment and VM/helper restart closure (2026-10-13)
 
 The final reboot gate passed:
