@@ -9,7 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
-func (c *RunCoordinator) recoverReturnedDestroy(ctx context.Context, gate *effectgate.Gate, grant controlplane.ExecutionGrant, id string) error {
+func (c *RunCoordinator) recoverInterruptedRun(ctx context.Context, gate *effectgate.Gate, grant controlplane.ExecutionGrant, id string) error {
 	prior, err := gate.ReadRunEnvelope(ctx, grant, id)
 	if err != nil {
 		return err
@@ -30,13 +30,13 @@ func (c *RunCoordinator) recoverReturnedDestroy(ctx context.Context, gate *effec
 		return effectgate.ErrUncertain
 	}
 	var a runAdmissionEvidence
-	if json.Unmarshal(prior.Admission, &a) != nil || a.Request.ActionID != id || a.Request.Action != "destroy" {
+	if json.Unmarshal(prior.Admission, &a) != nil || a.Request.ActionID != id || (a.Request.Action != "destroy" && a.Request.Action != "reset") {
 		return effectgate.ErrFenced
 	}
 	if err := c.validateAdmission(a, prior.Grant); err != nil {
 		return err
 	}
-	raw, err := c.RecoverReturnedDestroy(ctx, a.Request, a.Run)
+	raw, err := c.RecoverInterruptedRun(ctx, a.Request, a.Run)
 	if err != nil {
 		return err
 	}

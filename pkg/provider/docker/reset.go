@@ -158,6 +158,17 @@ func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHand
 	if replacement.Config == nil {
 		return observation, fmt.Errorf("docker reset replacement metadata missing")
 	}
+	if replacement.ID == state.OldContainerID {
+		if state.NewContainerID != "" {
+			return observation, fmt.Errorf("docker reset old container reappeared after replacement")
+		}
+		if err := requireResetOwnership(replacement.Config.Labels, resetOldLabels(state)); err != nil {
+			return observation, err
+		}
+		observation.Phase = substrate.ResetPhasePrepared
+		observation.Reason = "original container still present; replacement not created"
+		return observation, nil
+	}
 	if err := requireResetOwnership(replacement.Config.Labels, resetReplacementLabels(state)); err != nil {
 		return observation, err
 	}

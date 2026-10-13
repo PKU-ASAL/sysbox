@@ -14,10 +14,13 @@ import (
 )
 
 func TestColdDestroyRecoveryRequiresDurableReturnedEffects(t *testing.T) {
-	for _, scenario := range []string{"returned", "unknown", "live", "apply", "changed-result"} {
+	for _, scenario := range []string{"returned", "reset", "unknown", "live", "apply", "changed-result"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
 			op := "destroy"
+			if scenario == "reset" {
+				op = "reset"
+			}
 			if scenario == "apply" {
 				op = "apply"
 			}
@@ -40,7 +43,7 @@ func TestColdDestroyRecoveryRequiresDurableReturnedEffects(t *testing.T) {
 			}
 			calls, reports := 0, 0
 			cold := &RunCoordinator{Root: c.Root, IssuerKey: c.IssuerKey, HostKey: c.HostKey, AgentID: c.AgentID, HostBootID: "restarted"}
-			cold.RecoverReturnedDestroy = func(_ context.Context, request RunRequest, original controlplane.Run) (json.RawMessage, error) {
+			cold.RecoverInterruptedRun = func(_ context.Context, request RunRequest, original controlplane.Run) (json.RawMessage, error) {
 				calls++
 				if scenario == "unknown" {
 					return nil, effectgate.ErrUncertain
@@ -65,7 +68,7 @@ func TestColdDestroyRecoveryRequiresDurableReturnedEffects(t *testing.T) {
 			}
 			stored, err := gate.ReadRun(ctx, grant, req.ActionID)
 			require.NoError(t, err)
-			if scenario == "returned" {
+			if scenario == "returned" || scenario == "reset" {
 				require.Equal(t, effectgate.RunComplete, stored.State)
 				require.Equal(t, 1, reports)
 			} else {

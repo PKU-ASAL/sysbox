@@ -112,6 +112,34 @@ count remains one. This covers cooperative host-service interruption at a durabl
 boundary, not a SIGKILL in an arbitrary daemon call or an old journal lacking the
 admission seed. Historical stopped-but-not-removed records remain separate.
 
+## Sixth slice: cold reset at a safe durable boundary
+
+Reset and Destroy now share the interrupted-Run recovery entry point and
+execution/child exclusion. Reset reuses the existing phase validator: accepted,
+prepared, destroy_returned, destroyed and verified completion may supply failure
+evidence. Preparing, destroying and incomplete applying remain uncertain. The
+initial Run must have a valid admission seed; automatic cold recovery of an
+interrupted continuation is still refused pending ancestry verification.
+
+Recovery signs failed with no cleanup and requires an explicit public resume.
+The continuation retains the original action ID and reset handle rather than
+preparing a replacement action. Privileged host bootstrap binds its own Agent
+identity/public key to the execution bridge so original host-stop receipts can
+be verified locally; conflicting or changed bindings are rejected.
+
+Real testing exposed an observation bug in Docker: a prepared reset whose old
+container still occupied the intended name was checked as a replacement. The
+observer now recognizes only the exact original ID with its recorded old labels
+as prepared. Foreign ownership/generation and old-ID reappearance after a new
+replacement ID is recorded are still rejected.
+
+The Docker gate interrupts the host after prepared evidence is persisted,
+reconstructs API/host, resumes through the public endpoint and requires exactly
+one preparation, one old-container deletion, one replacement and one original
+reset action. It then completes Destroy and metadata cleanup. This is not a
+claim of recovery from an unknown in-flight preparation/destruction call or of
+historical records without the admission proof.
+
 ## Remaining slices
 
 1. Extend real process-fault coverage of the new admission boundary to the

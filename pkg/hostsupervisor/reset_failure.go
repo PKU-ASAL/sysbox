@@ -17,34 +17,44 @@ func FinishReturnedResetFailure(ctx context.Context, children *RunChildren, exec
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if children == nil || execution == nil || original == nil || execution.Op != "reset" || execution.Status != controlplane.RunFailed || execution.EndedAt.IsZero() || original.Op != "reset" || original.QueuedAt.IsZero() || execution.Topology != original.Topology || execution.Revision != original.Revision || (execution.ID != original.ID && execution.ParentID == "") {
-		return fmt.Errorf("returned reset identity required")
+	if children == nil {
+		return fmt.Errorf("reset child inventory unavailable")
+	}
+	raw, err := ResetFailureEvidence(execution, original, actions)
+	if err != nil {
+		return err
+	}
+	if err := children.ProveStopped(ctx); err != nil {
+		return err
+	}
+	return &quiescentRunFailure{evidence: raw}
+}
+
+// ResetFailureEvidence validates durable phases only. A caller must separately
+// exclude the old executor, confirm child stops and authenticate continuation
+// ancestry before using this evidence as a failed Run completion.
+func ResetFailureEvidence(execution, original *controlplane.Run, actions []runtime.ActionRecord) (json.RawMessage, error) {
+	if execution == nil || original == nil || execution.Op != "reset" || execution.Status != controlplane.RunFailed || execution.EndedAt.IsZero() || original.Op != "reset" || original.QueuedAt.IsZero() || execution.Topology != original.Topology || execution.Revision != original.Revision || (execution.ID != original.ID && execution.ParentID == "") {
+		return nil, fmt.Errorf("returned reset identity required")
 	}
 	found := false
 	for _, action := range actions {
 		if action.RunID != original.ID {
 			if action.Status != runtime.ActionSucceeded {
-				return fmt.Errorf("another Run remains unresolved")
+				return nil, fmt.Errorf("another Run remains unresolved")
 			}
 			continue
 		}
 		if action.Topology != original.Topology || action.Action != controlplane.PlanActionReset || !action.RunQueuedAt.Equal(original.QueuedAt) || action.RunRevision != original.Revision || !action.ResetContinuationSafe() {
-			return fmt.Errorf("reset effect outcome remains uncertain")
+			return nil, fmt.Errorf("reset effect outcome remains uncertain")
 		}
 		found = true
 	}
 	if !found {
-		return fmt.Errorf("reset has no durable action evidence")
-	}
-	if err := children.ProveStopped(ctx); err != nil {
-		return err
+		return nil, fmt.Errorf("reset has no durable action evidence")
 	}
 	copy := *execution
 	copy.Inputs, copy.Cleanup, copy.HostCompletion = nil, nil, nil
 	copy.Recoverable = true
-	raw, err := json.Marshal(copy)
-	if err != nil {
-		return err
-	}
-	return &quiescentRunFailure{evidence: raw}
+	return json.Marshal(copy)
 }

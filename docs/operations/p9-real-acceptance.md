@@ -1,5 +1,30 @@
 # P9 real acceptance
 
+## Cold reset recovery and explicit continuation accepted (2026-10-13)
+
+`TestRemoteDockerColdResetContinuationE2E` passed under race (14.50 seconds).
+The host is interrupted after its original reset handle and prepared phase are
+durable. A reconstructed API/host generates a signed recoverable failure using
+the original admission, executor lock, canonical incarnation, safe action phases
+and child-stop inventory. The public resume endpoint then completes the reset.
+Assertions require one PrepareReset, one DestroyReset, one ApplyReset and exactly
+one original reset action; generation advances once, followed by successful
+Destroy and independent cleanup/metadata deletion. Cold Destroy recovery passed
+in the same run. Both gates are in `make test-p9-real`.
+
+Two production wiring defects were exposed and fixed: the host execution bridge
+did not bind its own public key for continuation-stop validation, and Docker
+ObserveReset treated the exact old container still occupying its name as a
+replacement generation. Bootstrap now binds the verified host identity once,
+rejecting conflicting rebinding. ObserveReset validates the old ID/labels before
+reporting Prepared and rejects old-ID reappearance after replacement publication.
+
+Unknown preparing/destroying/applying phases and interrupted continuation chains
+are not automatically adopted. The historical intent-only stopped container is
+unchanged. This gate uses service cancellation and in-process reconstruction at
+a known durable boundary; arbitrary daemon-call SIGKILL and historical fencing
+remain separate requirements.
+
 ## Cold Destroy recovery after durable provider return (2026-10-13)
 
 `TestRemoteDockerColdReturnedDestroyRecoveryE2E` passed under race (12.96 seconds).

@@ -260,12 +260,12 @@ func (g *Gate) RecoverNeverStarted(ctx context.Context, recover func(context.Con
 	}, recover)
 }
 
-// RecoverEnteredDestroy selects only explicit new-protocol admission evidence.
+// RecoverEnteredLifecycle selects reset/Destroy with explicit admission evidence.
 // Selection is not stop proof; the caller must exclude the executor and verify
 // durable resource/child outcomes before committing any terminal result.
-func (g *Gate) RecoverEnteredDestroy(ctx context.Context, recover func(context.Context, controlplane.ExecutionGrant, string) error) error {
+func (g *Gate) RecoverEnteredLifecycle(ctx context.Context, recover func(context.Context, controlplane.ExecutionGrant, string) error) error {
 	return g.recoverOutcomes(ctx, 0, func(prior outcome) bool {
-		return prior.State == string(RunIntent) && prior.SignedGrant != nil && prior.Grant.Operation == "run_destroy" && len(prior.Admission) != 0 && prior.Started && len(prior.Checkpoint) == 0
+		return prior.State == string(RunIntent) && prior.SignedGrant != nil && (prior.Grant.Operation == "run_destroy" || prior.Grant.Operation == "run_reset") && len(prior.Admission) != 0 && prior.Started && len(prior.Checkpoint) == 0
 	}, recover)
 }
 

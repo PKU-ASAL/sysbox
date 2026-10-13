@@ -35,6 +35,21 @@ func TestDockerResetRecreatesPinnedOwnedContainerAndHidesSecrets(t *testing.T) {
 	handle, err := sub.PrepareReset(ctx, request)
 	require.NoError(t, err)
 	handle.Request = request
+	prepared, err := sub.ObserveReset(ctx, handle)
+	require.NoError(t, err, "the verified old container still occupying its name is a prepared reset, not a foreign replacement")
+	require.Equal(t, substrate.ResetPhasePrepared, prepared.Phase)
+	require.Empty(t, prepared.NewExternalID)
+	require.False(t, prepared.Converged)
+	old := api.containers["old-id"]
+	old.labels["sysbox.generation"] = "999"
+	_, err = sub.ObserveReset(ctx, handle)
+	require.Error(t, err, "old identity branch must still enforce the recorded generation")
+	old.labels["sysbox.generation"] = "1"
+	preparedState := handle.Provider.(*resetHandleState)
+	preparedState.NewContainerID = "new-id"
+	_, err = sub.ObserveReset(ctx, handle)
+	require.Error(t, err, "a recorded replacement forbids the old object reappearing")
+	preparedState.NewContainerID = ""
 	require.NoError(t, sub.DestroyReset(ctx, handle))
 	created, err := sub.ApplyReset(ctx, handle)
 	require.NoError(t, err)

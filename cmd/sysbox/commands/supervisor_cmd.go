@@ -94,6 +94,9 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	if err != nil {
 		return err
 	}
+	if err := runBridge.BindHostIdentity(ident.ID, ed25519.PrivateKey(key).Public().(ed25519.PublicKey)); err != nil {
+		return err
+	}
 	resolver.ActionRun = runBridge.ActionRun
 	dispatcher := &hostsupervisor.Dispatcher{Root: cfg.HostSupervisor.Root, AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Resolve: resolver.Resolve, Authorize: authority.Authorize, ReportStop: authority.ReportStop}
 	dispatcher.ResolveRun = resolver.ResolveRunTask
@@ -114,7 +117,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	hostRun := &agentexec.HostRunExecutor{Bridge: runBridge, Tasks: dispatcher, Resolver: resolver, Authority: authority}
 	server.RunEffect = hostRun.Execute
 	server.Runs.PrepareRun = hostRun.PrepareRun
-	server.Runs.RecoverReturnedDestroy = hostRun.RecoverReturnedDestroy
+	server.Runs.RecoverInterruptedRun = hostRun.RecoverInterruptedRun
 	server.RunRecovery = hostRun.Recover
 	sshDispatcher := *dispatcher
 	sshDispatcher.Root = filepath.Join(cfg.HostSupervisor.Root, "guest-ssh")

@@ -11,11 +11,11 @@ import (
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
-// RecoverReturnedDestroy is invoked only while the host coordinator holds the
+// RecoverInterruptedRun is invoked only while the host coordinator holds the
 // original executor lock. It authorizes no effects and cannot complete cleanup.
-func (h *HostRunExecutor) RecoverReturnedDestroy(ctx context.Context, req hostsupervisor.RunRequest, original controlplane.Run) (json.RawMessage, error) {
-	if h.Bridge == nil || h.Tasks == nil || req.Action != "destroy" || original.ID != req.RunID || original.AgentID != h.Tasks.AgentID {
-		return nil, fmt.Errorf("trusted Destroy recovery unavailable")
+func (h *HostRunExecutor) RecoverInterruptedRun(ctx context.Context, req hostsupervisor.RunRequest, original controlplane.Run) (json.RawMessage, error) {
+	if h.Bridge == nil || h.Tasks == nil || (req.Action != "destroy" && req.Action != "reset") || original.Op != req.Action || original.ParentID != "" || original.ID != req.RunID || original.AgentID != h.Tasks.AgentID {
+		return nil, fmt.Errorf("trusted interrupted lifecycle recovery unavailable")
 	}
 	unlock, err := h.Bridge.LockTopology(ctx, req.Topology)
 	if err != nil {
@@ -27,11 +27,11 @@ func (h *HostRunExecutor) RecoverReturnedDestroy(ctx context.Context, req hostsu
 		return nil, err
 	}
 	if current == nil || !persistence.SameRunIncarnation(original, *current) || current.Attempt != original.Attempt || current.LeaseOwner != original.LeaseOwner || current.HostCompletion != nil || (current.Status != controlplane.RunRunning && !(current.Status == controlplane.RunFailed && current.Recoverable && current.Err == "run lease expired")) {
-		return nil, fmt.Errorf("Destroy incarnation changed")
+		return nil, fmt.Errorf("interrupted Run incarnation changed")
 	}
 	provider, ok := h.Bridge.(ActionRepositoryProvider)
 	if !ok {
-		return nil, fmt.Errorf("Destroy recovery journal unavailable")
+		return nil, fmt.Errorf("interrupted Run journal unavailable")
 	}
 	repo, err := provider.ActionRepository(req.Topology)
 	if err != nil {
@@ -42,7 +42,7 @@ func (h *HostRunExecutor) RecoverReturnedDestroy(ctx context.Context, req hostsu
 		return nil, err
 	}
 	if st.TopologyUID != req.TopologyUID {
-		return nil, fmt.Errorf("Destroy topology owner changed")
+		return nil, fmt.Errorf("interrupted Run topology owner changed")
 	}
 	actions, err := repo.LoadActions(ctx, req.Topology)
 	if err != nil {
@@ -53,6 +53,10 @@ func (h *HostRunExecutor) RecoverReturnedDestroy(ctx context.Context, req hostsu
 	}
 	failed := original
 	failed.Status, failed.EndedAt = controlplane.RunFailed, time.Now().UTC()
+	if original.Op == "reset" {
+		failed.Err = "controller stopped at a durable reset boundary; explicit continuation required"
+		return hostsupervisor.ResetFailureEvidence(&failed, &original, actions)
+	}
 	failed.Err = "controller stopped after durable deletion return; observe resources before continuing cleanup"
 	return hostsupervisor.DestroyFailureEvidence(&failed, actions)
 }

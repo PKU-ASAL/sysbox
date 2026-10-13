@@ -145,8 +145,15 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		require.ErrorIs(t, store.SaveRun(ctx, forged), persistence.ErrConflict, "ordinary save cannot mint host evidence")
 		if action == "reset" {
 			bridge := &ExecutionBridge{server: s}
+			hostBridge := &HostExecutionBridge{ExecutionBridge: bridge}
+			require.NoError(t, hostBridge.BindHostIdentity("agent", pub))
+			require.NoError(t, hostBridge.BindHostIdentity("agent", pub))
+			foreign, _, err := ed25519.GenerateKey(rand.Reader)
+			require.NoError(t, err)
+			require.Error(t, hostBridge.BindHostIdentity("agent", foreign))
+			require.Error(t, hostBridge.BindHostIdentity("other", pub))
 			continuation := &controlplane.Run{ID: "continuation", Topology: "lab", Op: "reset", ParentID: done.ID}
-			require.NoError(t, bridge.VerifyResetContinuation(ctx, continuation, done))
+			require.NoError(t, hostBridge.VerifyResetContinuation(ctx, continuation, done))
 			stale := *done
 			stale.QueuedAt = stale.QueuedAt.Add(time.Second)
 			require.Error(t, bridge.VerifyResetContinuation(ctx, continuation, &stale))

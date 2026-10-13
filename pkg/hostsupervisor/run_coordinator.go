@@ -27,14 +27,14 @@ type RunCoordinator struct {
 	// ReportRunID is the API completion callback for a host-owned Run. RunID is
 	// deliberately supplied separately because grant.ActionID identifies the
 	// command action, while the API route is keyed by the durable Run ID.
-	ReportRunID            func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error
-	AuthorizationInterval  time.Duration
-	AuthorizationTimeout   time.Duration
-	OnExecutionError       func(RunRequest, error)
-	Tasks                  *Dispatcher
-	PrepareRun             func(context.Context, RunRequest) (controlplane.Run, error)
-	RecoverReturnedDestroy func(context.Context, RunRequest, controlplane.Run) (json.RawMessage, error)
-	async                  *runRegistry
+	ReportRunID           func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error
+	AuthorizationInterval time.Duration
+	AuthorizationTimeout  time.Duration
+	OnExecutionError      func(RunRequest, error)
+	Tasks                 *Dispatcher
+	PrepareRun            func(context.Context, RunRequest) (controlplane.Run, error)
+	RecoverInterruptedRun func(context.Context, RunRequest, controlplane.Run) (json.RawMessage, error)
+	async                 *runRegistry
 }
 
 func (c *RunCoordinator) gate(g controlplane.SignedExecutionGrant) (*effectgate.Gate, error) {
@@ -70,10 +70,10 @@ func (c *RunCoordinator) Recover(ctx context.Context) error {
 	checkpointErr := gate.RecoverRunCheckpoints(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, effectID string) error {
 		return c.recoverCheckpoint(recoverCtx, gate, grant, effectID)
 	})
-	var destroyErr error
-	if c.RecoverReturnedDestroy != nil {
-		destroyErr = gate.RecoverEnteredDestroy(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, id string) error {
-			return c.recoverReturnedDestroy(recoverCtx, gate, grant, id)
+	var interruptedErr error
+	if c.RecoverInterruptedRun != nil {
+		interruptedErr = gate.RecoverEnteredLifecycle(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, id string) error {
+			return c.recoverInterruptedRun(recoverCtx, gate, grant, id)
 		})
 	}
 	completedErr := gate.RecoverCompleted(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, effectID string) error {
@@ -104,5 +104,5 @@ func (c *RunCoordinator) Recover(ctx context.Context) error {
 			return c.Report(reportCtx, receipt, raw)
 		})
 	})
-	return errors.Join(neverStartedErr, checkpointErr, destroyErr, completedErr)
+	return errors.Join(neverStartedErr, checkpointErr, interruptedErr, completedErr)
 }
