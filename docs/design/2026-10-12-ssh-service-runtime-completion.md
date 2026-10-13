@@ -2,7 +2,9 @@
 
 This continues the approved P7 design. Public and runtime SSH dispatch, local
 authority, reset dependency recovery and a two-VM real-login lifecycle are now
-accepted on Docker. Automatic trusted-service/image enrollment remains open.
+accepted on Docker. Trusted-profile image boot deployment and VM/helper-service
+restart acceptance are implemented; arbitrary third-party images still require
+administrator enrollment of their service layout and trust material.
 
 ## Service deployment
 
@@ -44,7 +46,10 @@ an unsigned SPI call nor a CopyFile fallback is an acceptable implementation.
   Read/Create/Delete and remove the old file path implementation.
 - [x] Run two-VM public/runtime SSH lifecycle, process restart, key rotation and
   revocation, targeted reset and real login; retain independent cleanup evidence.
-- [ ] Add explicit lost-completion and VM/helper reboot faults to that combined gate.
+- [x] Add explicit lost-completion and VM/helper-service restart faults to that
+  combined gate; verify changed kernel boot IDs for both lab VMs.
+- [x] Automate trusted-profile deployment/recovery at image startup with exact
+  process identity, syntax/effective-config checks and service readiness.
 - [x] Run affected race suites, full repository tests and independent review.
 
 No compatibility decoder or fallback will be added for old runtime SSH state.
@@ -73,7 +78,14 @@ Local CLI authority/bootstrap is now implemented; see
 Resource-targeted Run child authority and reset SSH dependency reconstruction
 are implemented. The two-VM public/runtime lifecycle and process restart passed;
 see [two-vm-managed-ssh.md](../operations/two-vm-managed-ssh.md).
-Still open: automatic enrollment/provisioning of the trusted service profile in
-managed images, and the remaining combined lifecycle fault matrix. The
+Trusted profile provisioning now has an image-build/boot contract and automatic
+drop-in deployment on start; see [managed-ssh-service.md](../operations/managed-ssh-service.md).
+The combined Docker gate includes completion loss, service restart and both VM
+reboots, followed by revocation, reset and cleanup. The
 service profile is intentionally administrator-controlled and is not inferred or
 overwritten by an unprivileged mutation request.
+
+This closes this SSH service/runtime slice for the supported enrolled layout.
+Other-provider acceptance and the broader P0–P9 work remain tracked separately;
+the VM gate explicitly starts its services/container after reboot and does not
+claim general automatic host workload recovery.

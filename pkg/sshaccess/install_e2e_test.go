@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -67,11 +66,14 @@ func TestRealSSHDDeploymentReloadRecoveryE2E(t *testing.T) {
 		return err
 	}
 	require.NoError(t, login(), "administrator login before deployment")
+	processControl, err := processController(ServiceProfile{PIDFile: filepath.Join(dir, "pid"), SSHD: daemon, ConfigPath: main})
+	require.NoError(t, err)
+	require.NoError(t, processControl(ctx, "is-active"))
 	runner, err := NewSSHDRunner(daemon)
 	require.NoError(t, err)
 	d := &Deployment{ServiceIdentity: main, Root: filepath.Join(dir, "journal"), ConfigPath: main, DropInPath: drop, Helper: "/usr/bin/true", CommandUser: current.Username, Run: runner,
 		Probes: []SSHDProbe{{User: current.Username, RemoteHost: "localhost", RemoteAddress: "127.0.0.1", LocalAddress: "127.0.0.1", LocalPort: port, AuthorizedKeysFile: filepath.Join(dir, "administrator.pub")}},
-		Reload: func(context.Context) error { return command.Process.Signal(syscall.SIGHUP) }, Ready: func(ctx context.Context) error { return sshListenerReady(ctx, endpoint) },
+		Reload: func(ctx context.Context) error { return processControl(ctx, "reload") }, Ready: func(ctx context.Context) error { return sshListenerReady(ctx, endpoint) },
 	}
 	require.NoError(t, d.Ensure(ctx, []substrate.SSHAccessConfig{{Port: port}}))
 	require.Eventually(t, func() bool { return login() == nil }, 3*time.Second, 20*time.Millisecond, "administrator login preserved after reload")
@@ -81,6 +83,10 @@ func TestRealSSHDDeploymentReloadRecoveryE2E(t *testing.T) {
 	raw, err := os.ReadFile(main)
 	require.NoError(t, err)
 	require.Equal(t, config, string(raw))
+	// A trusted but substituted PID file must never select an unrelated process.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(os.Getpid())), 0600))
+	require.Error(t, processControl(ctx, "reload"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(command.Process.Pid)), 0600))
 	t.Log("real sshd staged validation, atomic drop-in, reload and cold reconciliation passed; administrator login preserved")
 	// An Include is conditional when it appears inside a Match block. Staging
 	// must preserve that scope instead of inlining its Match all content.

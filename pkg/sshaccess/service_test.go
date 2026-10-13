@@ -10,7 +10,7 @@ import (
 )
 
 func TestServiceProfileRejectsInvalidEnrollment(t *testing.T) {
-	for _, scenario := range []string{"valid", "version", "unit", "port", "executable", "trailing", "permissions"} {
+	for _, scenario := range []string{"valid", "version", "unit", "port", "executable", "trailing", "permissions", "mixed-adapters", "missing-process", "relative-pid"} {
 		t.Run(scenario, func(t *testing.T) {
 			d, _, _ := deploymentFixture(t)
 			p := ServiceProfile{Version: 1, Root: d.Root, ConfigPath: d.ConfigPath, DropInPath: d.DropInPath, Helper: "/usr/bin/true", CommandUser: "root", SSHD: "/usr/bin/true", Systemctl: "/usr/bin/true", ServiceUnit: "ssh.service", Probes: d.Probes, Listeners: []string{"127.0.0.1:22"}}
@@ -23,6 +23,12 @@ func TestServiceProfileRejectsInvalidEnrollment(t *testing.T) {
 				p.Listeners = []string{"127.0.0.1:not-a-port"}
 			case "executable":
 				p.SSHD = "sshd"
+			case "mixed-adapters":
+				p.PIDFile = "/run/sshd.pid"
+			case "missing-process":
+				p.Systemctl, p.ServiceUnit, p.PIDFile = "", "", filepath.Join(filepath.Dir(d.ConfigPath), "missing.pid")
+			case "relative-pid":
+				p.Systemctl, p.ServiceUnit, p.PIDFile = "", "", "sshd.pid"
 			}
 			raw, err := json.Marshal(p)
 			require.NoError(t, err)

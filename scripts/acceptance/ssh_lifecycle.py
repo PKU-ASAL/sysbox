@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Isolated two-VM public API/Agent SSH key lifecycle and real-login gate.
 
-Uses an explicitly pre-enrolled Docker image. Does not claim automatic service
-enrollment or migration of historical authority. Failed runs retain evidence.
+Uses a trusted image profile and automatically installs/recovers its SSH service
+drop-in on each boot. Failed runs retain evidence and historical authority.
 """
 import argparse
 import base64
@@ -45,7 +45,7 @@ def container_absent(code, stdout, stderr, identity):
     return code == 1 and stdout.strip() == "[]" and "no such object: " + identity in stderr.lower()
 
 
-def acceptance(root, binary, helper):
+def acceptance(root, binary, helper, reboot_vms=False):
     os.umask(0o077)
     root, manifest = lab.load(root)
     binary, helper = Path(binary).resolve(strict=True), Path(helper).resolve(strict=True)
@@ -53,7 +53,7 @@ def acceptance(root, binary, helper):
     evidence_dir = root / name
     evidence_dir.mkdir(mode=0o700)
     remote_root = "/var/lib/sysbox-p9/" + name
-    evidence = {"name": name, "lab_id": manifest["id"], "phase": "setup", "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "helper_sha256": hashlib.sha256(helper.read_bytes()).hexdigest(), "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), "scope": "pre-enrolled Docker guest; public API/Agent managed SSH lifecycle and independent real logins"}
+    evidence = {"name": name, "lab_id": manifest["id"], "phase": "setup", "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "helper_sha256": hashlib.sha256(helper.read_bytes()).hexdigest(), "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), "scope": "trusted-profile automatic guest SSH service deployment; public API/Agent lifecycle and real logins", "reboot_vms_requested": reboot_vms}
 
     def save():
         lab.save(evidence_dir / "result.json", evidence)
@@ -76,6 +76,25 @@ def acceptance(root, binary, helper):
 
     def port(role, address):
         return int(remote(role, f"python3 -c 'import socket; s=socket.socket(); s.bind(({json.dumps(address)},0)); print(s.getsockname()[1])'"))
+
+    def reboot(role, units):
+        before = remote(role, "cat /proc/sys/kernel/random/boot_id")
+        evidence["phase"] = role + "_reboot_requested"; save()
+        remote(role, "sudo systemctl reboot --no-block")
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            try:
+                result = lab.ssh(root, manifest, role, "cat /proc/sys/kernel/random/boot_id", timeout=8)
+                boot = result.stdout.strip()
+                if result.returncode == 0 and boot and boot != before:
+                    evidence.setdefault("vm_reboots", {})[role] = {"before": before, "after": boot}
+                    save()
+                    remote(role, "sudo systemctl start " + " ".join(units))
+                    return
+            except (RuntimeError, TimeoutError):
+                pass
+            time.sleep(2)
+        raise RuntimeError(role + " did not return with a new kernel boot ID")
 
     save()
     boots = {role: remote(role, "cat /proc/sys/kernel/random/boot_id") for role in lab.ROLES}
@@ -161,9 +180,12 @@ def acceptance(root, binary, helper):
     upload("execution", helper, build + "/sysbox-guest-task", "0755")
     upload("execution", evidence_dir / "issuer.pub", build + "/issuer.pub")
     stage("execution", "administrator.pub", public["administrator"] + "\n", build + "/administrator.pub")
-    sshd = "Port 22\nListenAddress 0.0.0.0\nHostKey /etc/ssh/ssh_host_ed25519_key\nPidFile /run/sshd.pid\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nAllowUsers sysboxguest\nAuthorizedKeysFile /etc/sysbox/administrator.pub\nAuthorizedKeysCommand /usr/local/bin/sysbox-guest-task --ssh-authorized-keys %u\nAuthorizedKeysCommandUser root\n"
+    sshd = "Port 22\nListenAddress 0.0.0.0\nHostKey /etc/ssh/ssh_host_ed25519_key\nPidFile /run/sshd.pid\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nAllowUsers sysboxguest\nAuthorizedKeysFile /etc/sysbox/administrator.pub\nInclude /etc/ssh/sysbox.conf\n"
     stage("execution", "sshd_config", sshd, build + "/sshd_config")
-    dockerfile = "FROM alpine:3.22\nRUN apk add --no-cache openssh-server && adduser -D sysboxguest && passwd -d sysboxguest && mkdir -p /run/sshd /etc/sysbox\nCOPY sysbox-guest-task /usr/local/bin/sysbox-guest-task\nCOPY issuer.pub /etc/sysbox/grant-public-key\nCOPY administrator.pub /etc/sysbox/administrator.pub\nCOPY sshd_config /etc/ssh/sshd_config\nRUN chmod 0755 /usr/local/bin/sysbox-guest-task && chmod 0600 /etc/sysbox/grant-public-key && chmod 0644 /etc/sysbox/administrator.pub\nENTRYPOINT [\"/bin/sh\",\"-c\",\"ssh-keygen -A && exec /usr/sbin/sshd -D -e\"]\n"
+    profile = {"version": 1, "root": "/var/lib/sysbox/ssh-service", "config_path": "/etc/ssh/sshd_config", "drop_in_path": "/etc/ssh/sysbox.conf", "helper": "/usr/local/bin/sysbox-guest-task", "command_user": "root", "sshd": "/usr/sbin/sshd", "pid_file": "/run/sshd.pid", "listeners": ["127.0.0.1:22"], "probes": [{"User": "sysboxguest", "RemoteHost": "control", "RemoteAddress": "10.77.0.10", "LocalAddress": "127.0.0.1", "LocalPort": 22, "AuthorizedKeysFile": "/etc/sysbox/administrator.pub"}]}
+    stage("execution", "sshd-service.json", json.dumps(profile), build + "/sshd-service.json")
+    upload("execution", Path(__file__).parents[1] / "guest" / "ssh-service-entrypoint.sh", build + "/entrypoint.sh", "0755")
+    dockerfile = "FROM alpine:3.22\nRUN apk add --no-cache openssh-server && adduser -D sysboxguest && passwd -d sysboxguest && mkdir -p /run/sshd /etc/sysbox /var/lib/sysbox\nCOPY sysbox-guest-task /usr/local/bin/sysbox-guest-task\nCOPY issuer.pub /etc/sysbox/grant-public-key\nCOPY administrator.pub /etc/sysbox/administrator.pub\nCOPY sshd_config /etc/ssh/sshd_config\nCOPY sshd-service.json /etc/sysbox/sshd-service.json\nCOPY entrypoint.sh /usr/local/bin/sysbox-ssh-entrypoint\nRUN chmod 0755 /usr/local/bin/sysbox-guest-task /usr/local/bin/sysbox-ssh-entrypoint && chmod 0600 /etc/sysbox/grant-public-key /etc/sysbox/sshd-service.json && chmod 0644 /etc/sysbox/administrator.pub\nENTRYPOINT [\"/usr/local/bin/sysbox-ssh-entrypoint\"]\n"
     stage("execution", "Dockerfile", dockerfile, build + "/Dockerfile")
     remote("execution", f"sudo docker build -t {name}:local {build}", timeout=180)
     subnet = 1 + int(name[-2:], 16) % 250
@@ -224,6 +246,10 @@ resource "sysbox_node" "web" {{
     container = node["external_id"]
     if not re.fullmatch(r"[a-f0-9]{64}", container):
         raise RuntimeError("immutable Docker ID required")
+    deployment = json.loads(remote("execution", f"sudo docker exec {container} cat /var/lib/sysbox/ssh-service/deployment.json"))
+    if deployment["phase"] != "ready":
+        raise RuntimeError("automatic SSH service deployment not ready")
+    evidence["service_deployment"] = deployment; save()
     host_key = remote("execution", f"sudo docker exec {container} cat /etc/ssh/ssh_host_ed25519_key.pub")
     stage("control", "known_hosts", f"[10.77.0.20]:{ssh_port} {host_key}\n", remote_root + "/known_hosts")
 
@@ -259,6 +285,45 @@ resource "sysbox_node" "web" {{
     login("rotated", True); login("administrator", True)
     # Poll the original operation through the reconstructed API before revoking.
     wait("/v1/node-operations/" + name + "-rotate")
+    # Every helper RPC is already an independent short-lived process. Restart
+    # the entire guest service/container too, preserving its writable journal.
+    remote("execution", f"sudo docker restart {container}")
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            login("rotated", True)
+            break
+        except RuntimeError:
+            if time.monotonic() > deadline: raise
+            time.sleep(1)
+    login("first", False); login("administrator", True)
+    evidence["helper_service_restart_verified"] = True; save()
+    if reboot_vms:
+        reboot("control", [api_unit, proxy_unit])
+        reboot("execution", [host_unit, agent_unit])
+        inspected = json.loads(remote("execution", f"sudo docker inspect {container}"))[0]
+        if inspected["Config"]["Labels"].get("sysbox.owner_uid") != node["owner_uid"]:
+            raise RuntimeError("container ownership changed across reboot")
+        remote("execution", f"sudo docker start {container}")
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                login("rotated", True)
+                break
+            except RuntimeError:
+                if time.monotonic() > deadline: raise
+                time.sleep(1)
+        login("first", False); login("administrator", True)
+        current = api("GET", f"/v1/topologies/{name}/state")
+        current_node = next(r for r in current["resources"] if r["address"] == "sysbox_node.web")
+        if (current_node["external_id"], current_node["resource_uid"], current_node["generation"]) != (node["external_id"], node["resource_uid"], node["generation"]):
+            raise RuntimeError("VM reboot changed canonical node identity")
+        evidence["phase"] = "vm_reboot_login_verified"; save()
+    current_deployment = json.loads(remote("execution", f"sudo docker exec {container} cat /var/lib/sysbox/ssh-service/deployment.json"))
+    actual_main = remote("execution", f"sudo docker exec {container} sha256sum /etc/ssh/sshd_config").split()[0]
+    if current_deployment["phase"] != "ready" or current_deployment["profile"] != deployment["profile"] or actual_main != hashlib.sha256(sshd.encode()).hexdigest():
+        raise RuntimeError("trusted service deployment changed across restart")
+    evidence["service_recovered_after_restart"] = current_deployment; save()
     mutation("revoke", None, 2, True)
     login("first", False); login("rotated", False); login("administrator", True)
     evidence["phase"] = "revocation_and_restart_verified"; save()
@@ -350,5 +415,6 @@ if __name__ == "__main__":
     parser.add_argument("--root", required=True)
     parser.add_argument("--binary", required=True)
     parser.add_argument("--helper", required=True)
+    parser.add_argument("--reboot-vms", action="store_true", help="reboot both dedicated lab VMs, retain disks and verify new boot IDs")
     args = parser.parse_args()
-    acceptance(args.root, args.binary, args.helper)
+    acceptance(args.root, args.binary, args.helper, args.reboot_vms)

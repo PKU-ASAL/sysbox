@@ -1,5 +1,47 @@
 # P9 real acceptance
 
+## Trusted SSH boot deployment and VM/helper restart closure (2026-10-13)
+
+The final reboot gate passed:
+`/tmp/sysbox-p9-lab-current/sshgate85dc2c905434/result.json`.
+It records 26 actual SSH login checks and different before/after kernel boot IDs
+for both control and execution VMs. The guest container/service was also
+restarted with its writable journal intact; helper RPCs and key lookup naturally
+start independent processes. Managed keys remained available, the rotated-out
+key was denied, administrator login was preserved, and revocation after VM
+reboot succeeded using fresh authority. The original container UID/generation
+was unchanged by reboot.
+
+The image now contains only a trusted administrator profile and explicit final
+Include. Its boot entrypoint starts sshd and invokes the real durable installer:
+stage/config validation, owned drop-in publication, reload and readiness. A new
+`pid_file` profile adapter verifies executable inode, exact configuration arguments
+and process start time, and reloads using pidfd. It is mutually exclusive with
+the existing systemd adapter. The entrypoint handles stale PID files and never
+signals the child after reaping it. No RPC chooses deployment paths or service
+commands; no runtime package-manager guessing or compatibility fallback exists.
+
+After restarts, the deployment was ready, its profile unchanged and the original
+administrator main-config digest unchanged. The same run then completed the
+lost-host-completion proof, runtime SSH creation, targeted reset and successful
+login on generation 2. Destroy verified both exact container IDs and empty
+owner-scoped container/network inventories before normal metadata deletion.
+The final test services stopped. Historical unknown Destroy/container evidence
+was retained. Earlier passing reboot rounds remain under
+`sshgatea456d81c0369` and `sshgatef14745ef1f36`.
+
+Validation: full `go test ./...`, SSH/helper race suites, real OpenSSH deployment
+E2Es (including PID-file substitution rejection), vet and 46 Python acceptance
+tests passed. Independent review found no important blocker. Reproduce with
+`make test-p9-ssh-reboot`; see [managed-ssh-service.md](managed-ssh-service.md).
+
+Boundary: these VM tests explicitly start the isolated services and original
+owned container after kernel reboot; they do not claim automatic recovery of
+every host workload. The supported trusted-profile SSH service/runtime slice is
+closed. Arbitrary image enrollment, other-provider matrices and remaining
+P5/P6/P8/P9 work are separate. The following older “enrollment/reboot open” notes
+describe earlier checkpoints and are superseded for this supported layout.
+
 ## Two-VM runtime SSH lost-completion recovery (2026-10-13)
 
 The final gate passed with a host-only HTTP fault proxy. After the backend

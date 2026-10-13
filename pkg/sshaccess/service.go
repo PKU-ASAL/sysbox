@@ -28,6 +28,7 @@ type ServiceProfile struct {
 	SSHD        string      `json:"sshd"`
 	Systemctl   string      `json:"systemctl"`
 	ServiceUnit string      `json:"service_unit"`
+	PIDFile     string      `json:"pid_file,omitempty"`
 	Probes      []SSHDProbe `json:"probes"`
 	Listeners   []string    `json:"listeners"`
 }
@@ -48,10 +49,15 @@ func LoadService(path string) (*Deployment, error) {
 	if dec.Decode(new(any)) != io.EOF {
 		return nil, fmt.Errorf("trailing SSH service profile data")
 	}
-	if p.Version != 1 || !serviceUnit.MatchString(p.ServiceUnit) || len(p.Listeners) == 0 || len(p.Listeners) > 128 {
+	process := p.PIDFile != ""
+	if p.Version != 1 || (!process && !serviceUnit.MatchString(p.ServiceUnit)) || (process && (p.Systemctl != "" || p.ServiceUnit != "" || !filepath.IsAbs(p.PIDFile) || filepath.Clean(p.PIDFile) != p.PIDFile)) || len(p.Listeners) == 0 || len(p.Listeners) > 128 {
 		return nil, fmt.Errorf("invalid SSH service profile")
 	}
-	for _, binary := range []string{p.Systemctl, p.SSHD, p.Helper} {
+	binaries := []string{p.SSHD, p.Helper}
+	if !process {
+		binaries = append(binaries, p.Systemctl)
+	}
+	for _, binary := range binaries {
 		if !filepath.IsAbs(binary) || filepath.Clean(binary) != binary {
 			return nil, fmt.Errorf("absolute trusted service executable required")
 		}
@@ -79,6 +85,12 @@ func LoadService(path string) (*Deployment, error) {
 			return fmt.Errorf("SSH service %s: %w", operation, err)
 		}
 		return ctx.Err()
+	}
+	if process {
+		control, err = processController(p)
+		if err != nil {
+			return nil, err
+		}
 	}
 	profileBytes, err := json.Marshal(p)
 	if err != nil {

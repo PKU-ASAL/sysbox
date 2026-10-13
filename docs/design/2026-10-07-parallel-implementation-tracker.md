@@ -2,6 +2,12 @@
 
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
+2026-10-13 SSH 当前切片收尾：新增可信 profile 的容器 sshd 进程适配器及镜像启动
+自动安装/恢复，保留 systemd 适配器；真实验证两台 VM kernel 重启、guest service/
+短进程 helper 重建、原 UID/代际保持、重启后撤销及 receipt-loss/reset/Destroy。
+这关闭已支持布局的 SSH 服务/runtime 主线，不等于自动接管任意宿主工作负载；
+其他 provider 矩阵及 P5/P6/P8/P9 剩余事项仍未关闭。最新证据见 P9 文档顶部。
+
 2026-10-13 更新：下方 P7 的“runtime/host/API 未接通”是历史状态，已由后续提交取代。
 公开 SSH、本地 CLI、宿主签名子授权、定向 Run 及 reset 后 SSH 原子重建均已实现。
 双 VM 公开 API 和 runtime 创建、真实登录、轮换/撤销、API/Agent/host 进程重启、

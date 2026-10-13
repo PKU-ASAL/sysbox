@@ -150,6 +150,11 @@ test-p9-ssh-two-vm: ## Run isolated two-VM managed SSH login and reset acceptanc
 	@test -n "$(SYSBOX_P9_LAB_ROOT)" -a -n "$(SYSBOX_CLI_BINARY)" -a -n "$(SYSBOX_GUESTTASK_HELPER)" || { echo 'Set SYSBOX_P9_LAB_ROOT, SYSBOX_CLI_BINARY and SYSBOX_GUESTTASK_HELPER'; exit 2; }
 	python3 scripts/acceptance/ssh_lifecycle.py --root "$(SYSBOX_P9_LAB_ROOT)" --binary "$(SYSBOX_CLI_BINARY)" --helper "$(SYSBOX_GUESTTASK_HELPER)"
 
+.PHONY: test-p9-ssh-reboot
+test-p9-ssh-reboot: ## Reboot dedicated lab VMs and verify managed SSH recovery
+	@test -n "$(SYSBOX_P9_LAB_ROOT)" -a -n "$(SYSBOX_CLI_BINARY)" -a -n "$(SYSBOX_GUESTTASK_HELPER)" || { echo 'Set SYSBOX_P9_LAB_ROOT, SYSBOX_CLI_BINARY and SYSBOX_GUESTTASK_HELPER'; exit 2; }
+	python3 scripts/acceptance/ssh_lifecycle.py --root "$(SYSBOX_P9_LAB_ROOT)" --binary "$(SYSBOX_CLI_BINARY)" --helper "$(SYSBOX_GUESTTASK_HELPER)" --reboot-vms
+
 .PHONY: test-p9-real
 test-p9-real: build-all ## Run implemented real-provider gates; reject skips and missing test matches
 	@set -eu; \

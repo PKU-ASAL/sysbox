@@ -65,9 +65,34 @@ profiles, administrator edits and damaged journals. A failed reload remains
 pending; successful file publication alone is not recorded as ready.
 
 Enroll and install the service before using managed access keys. The helper's
-existing issuer trust file and guest key-record store remain required. Automatic
-image enrollment is not implemented by these commands. Local CLI signing and
+existing issuer trust file and guest key-record store remain required. Local CLI signing and
 bootstrap are described in [local-ssh-authority.md](local-ssh-authority.md).
+
+## Trusted image boot deployment
+
+For an image without systemd, use `"pid_file": "/run/sshd.pid"` in the profile
+instead of `systemctl` and `service_unit`. The adapters are mutually exclusive.
+The process adapter checks the trusted PID file, executable inode, process start
+time and exact `sshd -D [-e] -f <config_path>` command. It accepts OpenSSH's
+rewritten listener title, but rejects session children and command-line `-o`
+overrides. Reload uses a Linux pidfd; PID replacement cannot redirect the signal.
+
+Package the root-owned helper, issuer public key, profile and administrator main
+configuration in the image. The main configuration must end with its explicit
+owned Include; do not pre-create the managed drop-in. Use the provided
+`scripts/guest/ssh-service-entrypoint.sh` as the image entrypoint. It generates
+missing host keys, starts the selected sshd, waits for its PID file, then invokes
+the durable installer. Every container start repeats this idempotent install /
+recovery step, including syntax and effective configuration validation, reload
+and readiness. Failure terminates the launched service and exits unsuccessfully.
+
+The shipped entrypoint uses `/etc/ssh/sshd_config`, `/run/sshd.pid`,
+`/etc/sysbox/sshd-service.json` and `/usr/local/bin/sysbox-guest-task`. Its image
+must create `/var/lib/sysbox` and `/run/sshd`, install OpenSSH and enroll the
+intended account during image construction. `scripts/acceptance/ssh_lifecycle.py`
+builds and tests this complete image contract. No runtime package-manager guess,
+remote profile selection, blanket configuration overwrite or old-format fallback
+is introduced. Arbitrary third-party images still require explicit enrollment.
 Runtime SSH resources now require schema 2 state; old path-based state
 must be explicitly rebuilt and is never silently imported.
 

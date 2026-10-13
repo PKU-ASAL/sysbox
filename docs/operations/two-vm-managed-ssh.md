@@ -25,8 +25,8 @@ authority journals, databases and resource evidence remain in place. Private
 keys and API credentials are confined to private files; login host keys are
 pinned from the identified guest through the execution VM's trusted channel.
 
-The fixture is an **explicitly pre-enrolled OpenSSH image**, not automatic image
-or sshd service enrollment. It exercises:
+The fixture supplies an administrator-enrolled image profile and automatically
+installs/recovers the managed sshd drop-in at container start. It exercises:
 
 1. API → Agent → host → guest permission creation and actual cross-VM login.
 2. Key rotation: old key authentication rejected, new key accepted.
@@ -54,5 +54,14 @@ and original operations before resuming cleanup. Successful namespaces retain
 their database, image, private configuration and evidence for inspection, with
 their service units stopped. Keep the lab private.
 
-This gate does not establish helper/VM reboot recovery,
-network partition, other providers, or automatic trusted-service provisioning.
+`make test-p9-ssh-reboot` uses the same variables and additionally reboots both
+dedicated VMs. It verifies changed kernel boot IDs, restarts only the test
+services and exact owned container, then proves the node UID/generation, keys,
+administrator configuration and deployment profile survived. Revocation after
+reboot must succeed. Every helper RPC is a fresh process; the gate additionally
+restarts the whole container service to exercise the preserved guest journal.
+
+VM restart is deliberate and requires a dedicated lab without unrelated work.
+The gate explicitly starts the services/container after reboot; it does not
+claim general automatic VM workload recovery. Network partition and other
+providers remain separate acceptance gates.
