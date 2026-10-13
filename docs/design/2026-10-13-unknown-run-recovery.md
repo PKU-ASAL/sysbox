@@ -118,8 +118,12 @@ Reset and Destroy now share the interrupted-Run recovery entry point and
 execution/child exclusion. Reset reuses the existing phase validator: accepted,
 prepared, destroy_returned, destroyed and verified completion may supply failure
 evidence. Preparing, destroying and incomplete applying remain uncertain. The
-initial Run must have a valid admission seed; automatic cold recovery of an
-interrupted continuation is still refused pending ancestry verification.
+Run must have a valid admission seed. Cold recovery of an interrupted reset
+continuation now resolves its ancestry and verifies every predecessor's stopped
+execution proof before consulting the root-owned action journal. Missing stop
+proof, changed identity, cycles and excessive depth remain rejected. The failure
+receipt belongs to the current execution; action IDs and ParentID audit history
+are never rewritten. Destroy continuations remain unsupported by this path.
 
 Recovery signs failed with no cleanup and requires an explicit public resume.
 The continuation retains the original action ID and reset handle rather than
@@ -139,6 +143,11 @@ one preparation, one old-container deletion, one replacement and one original
 reset action. It then completes Destroy and metadata cleanup. This is not a
 claim of recovery from an unknown in-flight preparation/destruction call or of
 historical records without the admission proof.
+
+Repeated-interruption acceptance stops after prepared, resumes, stops again after
+destroyed, then resumes a second time. It requires one preparation, one deletion,
+one replacement and one original action throughout the chain, followed by normal
+Destroy and cleanup. This adds no authorization to replay unknown phases.
 
 ## Remaining slices
 

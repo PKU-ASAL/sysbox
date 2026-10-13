@@ -57,11 +57,17 @@ func TestRemoteDockerColdResetContinuationE2E(t *testing.T) {
 	testRemoteDockerCompletionLossRecovery(t, false, true, false, false, true)
 }
 
+func TestRemoteDockerRepeatedResetContinuationE2E(t *testing.T) {
+	testRemoteDockerCompletionLossRecovery(t, false, true, false, false, true, true)
+}
+
 type failDeletePublication struct {
 	runtime.ActionRepository
-	fail          *atomic.Bool
-	returned      chan struct{}
-	resetPrepared chan struct{}
+	fail           *atomic.Bool
+	returned       chan struct{}
+	resetPrepared  chan struct{}
+	resetDestroyed chan struct{}
+	secondFault    *atomic.Bool
 }
 
 func (r failDeletePublication) ProveCleanup(ctx context.Context, run controlplane.Run) (*controlplane.CleanupReceipt, error) {
@@ -109,6 +115,14 @@ func (d *countedDockerDeletion) DestroyNode(ctx context.Context, h substrate.Nod
 }
 
 func (r failDeletePublication) CommitActionOutcome(ctx context.Context, a runtime.ActionRecord, patch *runtime.StatePatch) error {
+	if r.resetDestroyed != nil && patch == nil && a.Action == controlplane.PlanActionReset && a.Phase == "destroyed" && r.secondFault.CompareAndSwap(true, false) {
+		if err := r.ActionRepository.CommitActionOutcome(ctx, a, nil); err != nil {
+			return err
+		}
+		close(r.resetDestroyed)
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	if r.resetPrepared != nil && patch == nil && a.Action == controlplane.PlanActionReset && a.Phase == "prepared" && r.fail.CompareAndSwap(true, false) {
 		if err := r.ActionRepository.CommitActionOutcome(ctx, a, nil); err != nil {
 			return err
@@ -130,14 +144,16 @@ func (r failDeletePublication) CommitActionOutcome(ctx context.Context, a runtim
 
 type destroyFailureHostBridge struct {
 	*HostExecutionBridge
-	fail          *atomic.Bool
-	returned      chan struct{}
-	resetPrepared chan struct{}
+	fail           *atomic.Bool
+	returned       chan struct{}
+	resetPrepared  chan struct{}
+	resetDestroyed chan struct{}
+	secondFault    *atomic.Bool
 }
 
 func (b destroyFailureHostBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
 	r, err := b.HostExecutionBridge.ActionRepository(topology)
-	return failDeletePublication{ActionRepository: r, fail: b.fail, returned: b.returned, resetPrepared: b.resetPrepared}, err
+	return failDeletePublication{ActionRepository: r, fail: b.fail, returned: b.returned, resetPrepared: b.resetPrepared, resetDestroyed: b.resetDestroyed, secondFault: b.secondFault}, err
 }
 
 func TestRemoteDockerSSHAccessRunE2E(t *testing.T) {
@@ -284,6 +300,12 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	var failPublication atomic.Bool
 	var returned chan struct{}
 	var resetPrepared chan struct{}
+	var resetDestroyed chan struct{}
+	var secondFault atomic.Bool
+	if len(destroyPublicationFault) > 3 && destroyPublicationFault[3] {
+		resetDestroyed = make(chan struct{})
+		secondFault.Store(true)
+	}
 	if len(destroyPublicationFault) > 2 && destroyPublicationFault[2] {
 		resetPrepared = make(chan struct{})
 	}
@@ -308,7 +330,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 			}}
 		executor := &agentexec.HostRunExecutor{Bridge: bridge, Tasks: tasks, Resolver: resolver, Authority: authority}
 		if len(destroyPublicationFault) != 0 && destroyPublicationFault[0] || resetPrepared != nil {
-			executor.Bridge = destroyFailureHostBridge{HostExecutionBridge: bridge, fail: &failPublication, returned: returned, resetPrepared: resetPrepared}
+			executor.Bridge = destroyFailureHostBridge{HostExecutionBridge: bridge, fail: &failPublication, returned: returned, resetPrepared: resetPrepared, resetDestroyed: resetDestroyed, secondFault: &secondFault}
 		}
 		runs.PrepareRun = executor.PrepareRun
 		runs.RecoverInterruptedRun = executor.RecoverInterruptedRun
@@ -538,6 +560,7 @@ resource "sysbox_node" "%s" {
 		require.Equal(t, 202, status, string(raw))
 		var reset map[string]string
 		require.NoError(t, json.Unmarshal(raw, &reset))
+		rootResetID := reset["run_id"]
 		if resetPrepared != nil {
 			select {
 			case <-resetPrepared:
@@ -561,6 +584,26 @@ resource "sysbox_node" "%s" {
 			require.Equal(t, 202, status, string(raw))
 			require.NoError(t, json.Unmarshal(raw, &reset))
 			t.Log("cold reset at prepared boundary signed failure; explicit continuation admitted")
+		}
+		if resetDestroyed != nil {
+			select {
+			case <-resetDestroyed:
+			case <-ctx.Done():
+				t.Fatal("continuation did not reach destroyed boundary")
+			}
+			stopHost()
+			require.NoError(t, <-hostDone)
+			current.Store(newAPI())
+			stopHost, hostDone = startHost()
+			firstID := reset["run_id"]
+			require.Eventually(t, func() bool {
+				r, err := current.Load().apiStore.GetRun(ctx, firstID)
+				return err == nil && r.Status == controlplane.RunFailed && r.HostCompletion != nil
+			}, 20*time.Second, 50*time.Millisecond)
+			status, raw = request("POST", "/v1/runs/"+firstID+"/resume", nil, "")
+			require.Equal(t, 202, status, string(raw))
+			require.NoError(t, json.Unmarshal(raw, &reset))
+			t.Log("second interrupted executor stopped; explicit continuation preserves original action ancestry")
 		}
 		var resetRun *controlplane.Run
 		defer func() {
@@ -591,7 +634,7 @@ resource "sysbox_node" "%s" {
 					continue
 				}
 				resets++
-				require.Equal(t, resetRun.ParentID, action.RunID)
+				require.Equal(t, rootResetID, action.RunID)
 				require.Equal(t, runtime.ActionSucceeded, action.Status)
 			}
 			require.Equal(t, 1, resets, "continuation must not create another reset action")

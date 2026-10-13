@@ -1,5 +1,23 @@
 # P9 real acceptance
 
+## Repeated interrupted reset continuation accepted (2026-10-13)
+
+`TestRemoteDockerRepeatedResetContinuationE2E` passed under race (17.35 seconds):
+prepared-boundary interruption, cold signed failure, public resume, a second
+interruption after destroyed, another cold signed failure and public resume.
+Preparation, deletion and replacement counters are each exactly one. The original
+reset action remains owned by the root Run; the new execution retains its actual
+ParentID chain. Final generation replacement, normal Destroy, independent absence
+and cold metadata deletion passed. The gate is in `make test-p9-real`.
+
+Cold reset recovery now uses the existing ancestry verifier on every predecessor,
+not just the root's stop receipt. Tests with a real repository reject missing
+proof at either predecessor and retain original action identity. Existing
+unknown-phase, cycle, revision and live-execution restrictions remain. Destroy
+with a ParentID is not newly authorized. Full Go tests, independent review and
+focused race/vet passed. This extends recovery at proven safe phases, not arbitrary daemon-call
+interruption or the retained historic intent-only incident.
+
 ## Cold reset recovery and explicit continuation accepted (2026-10-13)
 
 `TestRemoteDockerColdResetContinuationE2E` passed under race (14.50 seconds).
