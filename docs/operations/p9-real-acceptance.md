@@ -1,5 +1,34 @@
 # P9 real acceptance
 
+## Durable Run admission before callback entry (2026-10-13)
+
+Production host admission now atomically stores a versioned canonical Run/request
+seed with the intent, stripping inputs and cleanup claims. A second online
+authority check and durable Started marker precede callback registration/launch.
+Cold recovery takes the original executor lock and rereads the signed envelope;
+only an explicit seed with no Started marker/checkpoint may become signed failed.
+Entered callbacks, old records without the seed, changed identity and a live
+executor remain uncertain. No callback is replayed and no cleanup is fabricated.
+
+`TestRunAdmissionProcessCrash` exits an independent process with code 37 after
+durable admission while still holding its executor lock. A reconstructed host
+acquires the released lock and reports signed failed. Other regressions cover
+live-lock rejection, historical records, substituted Runs, pre-entry revocation,
+marker persistence before callback and exact receipt replay. Canonical API tests
+verify failed Run persistence, command retirement and old-authority rejection on
+filesystem, SQLite and isolated real PostgreSQL, all under race (0.97 seconds).
+
+Full Go tests, complete effectgate/hostsupervisor/agentexec race suites, vet and
+independent review passed. Real Docker completion-loss, SSH Run and targeted
+SSH reset regressions also passed under race (12.89, 14.13 and 16.31 seconds).
+The temporary PostgreSQL instance is disposable and separate from project data.
+
+This closes the **new-protocol admission-before-entry** crash window, not every
+intent-only incident. A callback whose Started marker exists may have issued a
+daemon request; proving its quiescence is the next implementation slice. Old
+historical unknown records were neither reinterpreted nor altered. The subprocess
+gate does not substitute for a distributed pre-entry process-fault matrix.
+
 ## Returned Run failure before resource admission (2026-10-13)
 
 The trusted host now completes a synchronously returned failed execution when a

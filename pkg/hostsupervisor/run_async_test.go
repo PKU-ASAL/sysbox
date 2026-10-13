@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/transport"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -134,7 +135,8 @@ func TestAsyncRunUnresponsiveAuthorizationFailsClosed(t *testing.T) {
 	unblock := make(chan struct{})
 	defer close(unblock)
 	c.Authorize = func(context.Context, controlplane.SignedExecutionGrant) error {
-		if calls.Add(1) > 1 {
+		// Admission and the durable entry boundary both check authority.
+		if calls.Add(1) > 2 {
 			<-unblock
 		}
 		return nil
@@ -236,9 +238,10 @@ func TestAsyncRunSlowAdmissionDoesNotBlockOtherRunRenewalOrCancellation(t *testi
 	c, req, g, key := asyncLeaseFixture(t, time.Second)
 	blocked := make(chan struct{})
 	release := make(chan struct{})
+	var notify sync.Once
 	c.Authorize = func(_ context.Context, proof controlplane.SignedExecutionGrant) error {
 		if proof.Grant.ActionID == "other-action" {
-			close(blocked)
+			notify.Do(func() { close(blocked) })
 			<-release
 		}
 		return nil

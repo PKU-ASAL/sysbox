@@ -34,6 +34,8 @@ type outcome struct {
 	Checkpoint  json.RawMessage                          `json:"run_checkpoint,omitempty"`
 	Receipt     *controlplane.SignedExecutionStopReceipt `json:"receipt,omitempty"`
 	Reported    bool                                     `json:"reported"`
+	Started     bool                                     `json:"started,omitempty"`
+	Admission   json.RawMessage                          `json:"run_admission,omitempty"`
 }
 type ledger struct {
 	TopologyUID string             `json:"topology_uid"`

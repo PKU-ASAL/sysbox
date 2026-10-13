@@ -27,6 +27,9 @@ func (g *Gate) CheckpointRun(ctx context.Context, current controlplane.SignedExe
 	if err != nil {
 		return err
 	}
+	if len(prior.Admission) != 0 && !prior.Started {
+		return ErrFenced
+	}
 	if len(prior.Checkpoint) != 0 {
 		a, _ := json.Marshal(prior.Checkpoint)
 		b, _ := json.Marshal(checkpoint)

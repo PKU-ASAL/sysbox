@@ -372,3 +372,34 @@ func TestReadRunEnvelopeRequiresExactDurableGrant(t *testing.T) {
 	require.Equal(t, RunIntent, got.State)
 	require.True(t, sameRunEnvelope(renewed, got.Grant))
 }
+
+func TestRunStartedBoundaryDistinguishesNeverStartedFromUnknown(t *testing.T) {
+	gate, signed, _ := runGateFixture(t)
+	ctx := context.Background()
+	_, err := gate.ReserveRunWithAdmission(ctx, signed, "effect", json.RawMessage(`{"version":1}`))
+	require.NoError(t, err)
+	cold := *gate
+	reservation, err := cold.ReadRun(ctx, signed, "effect")
+	require.NoError(t, err)
+	require.False(t, reservation.Started)
+	failed := controlplane.Run{ID: "run", AgentID: signed.Grant.AgentID, Op: "apply", Status: controlplane.RunFailed, EndedAt: time.Now().UTC()}
+	raw, err := json.Marshal(failed)
+	require.NoError(t, err)
+	require.NoError(t, cold.CommitNeverStartedRun(ctx, signed, "effect", raw))
+	completed, err := cold.ReadRun(ctx, signed, "effect")
+	require.NoError(t, err)
+	require.Equal(t, RunComplete, completed.State)
+
+	gate2, signed2, _ := runGateFixture(t)
+	_, err = gate2.ReserveRun(ctx, signed2, "effect")
+	require.NoError(t, err)
+	require.NoError(t, gate2.MarkRunStarted(ctx, signed2, "effect"))
+	started, err := gate2.ReadRun(ctx, signed2, "effect")
+	require.NoError(t, err)
+	require.True(t, started.Started)
+	require.ErrorIs(t, gate2.CommitNeverStartedRun(ctx, signed2, "effect", raw), ErrUncertain)
+	historical, old, _ := runGateFixture(t)
+	_, err = historical.ReserveRun(ctx, old, "effect")
+	require.NoError(t, err)
+	require.ErrorIs(t, historical.CommitNeverStartedRun(ctx, old, "effect", raw), ErrUncertain, "missing admission evidence cannot be upgraded")
+}

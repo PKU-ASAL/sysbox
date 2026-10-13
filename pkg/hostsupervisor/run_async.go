@@ -182,13 +182,26 @@ func (c *RunCoordinator) StartAsync(requestCtx, serviceCtx context.Context, req 
 	}
 	deadline := now.Add(budget)
 	admissionCtx, cancelAdmission := context.WithDeadline(requestCtx, deadline)
-	reservation, err := gate.ReserveRun(admissionCtx, g, req.ActionID)
+	var reservation effectgate.RunReservation
+	if c.PrepareRun != nil {
+		seed, seedErr := c.prepareAdmission(admissionCtx, req, g)
+		if seedErr != nil {
+			cancelAdmission()
+			return RunObservation{}, seedErr
+		}
+		reservation, err = gate.ReserveRunWithAdmission(admissionCtx, g, req.ActionID, seed)
+	} else {
+		reservation, err = gate.ReserveRun(admissionCtx, g, req.ActionID)
+	}
 	cancelAdmission()
 	if err != nil {
 		return RunObservation{}, err
 	}
 	if !reservation.Admitted {
 		return c.observeReservation(requestCtx, req, reservation)
+	}
+	if err := gate.MarkRunStarted(requestCtx, g, req.ActionID); err != nil {
+		return RunObservation{}, err
 	}
 	effectCtx, cancel := context.WithCancel(serviceCtx)
 	active := &activeRun{grant: g, deadline: deadline, ctx: effectCtx, serviceCtx: serviceCtx, cancel: cancel, changed: make(chan struct{}, 1), done: make(chan struct{})}

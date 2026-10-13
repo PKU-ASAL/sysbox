@@ -30,6 +30,12 @@ func receiptMatches(receipt *controlplane.SignedExecutionStopReceipt, grant cont
 }
 func validateLedger(record *ledger) error {
 	for key, prior := range record.Outcomes {
+		if len(prior.Admission) != 0 {
+			var object map[string]json.RawMessage
+			if prior.SignedGrant == nil || json.Unmarshal(prior.Admission, &object) != nil || object == nil || len(prior.Checkpoint) != 0 && !prior.Started {
+				return ErrUncertain
+			}
+		}
 		if len(prior.Checkpoint) != 0 && (prior.SignedGrant == nil || !json.Valid(prior.Checkpoint)) {
 			return ErrUncertain
 		}

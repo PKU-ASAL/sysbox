@@ -32,6 +32,7 @@ type RunCoordinator struct {
 	AuthorizationTimeout  time.Duration
 	OnExecutionError      func(RunRequest, error)
 	Tasks                 *Dispatcher
+	PrepareRun            func(context.Context, RunRequest) (controlplane.Run, error)
 	async                 *runRegistry
 }
 
@@ -62,6 +63,9 @@ func (c *RunCoordinator) Recover(ctx context.Context) error {
 		return err
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
+	neverStartedErr := gate.RecoverNeverStarted(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, effectID string) error {
+		return c.recoverNeverStarted(recoverCtx, gate, grant, effectID)
+	})
 	checkpointErr := gate.RecoverRunCheckpoints(ctx, func(recoverCtx context.Context, grant controlplane.ExecutionGrant, effectID string) error {
 		return c.recoverCheckpoint(recoverCtx, gate, grant, effectID)
 	})
@@ -93,5 +97,5 @@ func (c *RunCoordinator) Recover(ctx context.Context) error {
 			return c.Report(reportCtx, receipt, raw)
 		})
 	})
-	return errors.Join(checkpointErr, completedErr)
+	return errors.Join(neverStartedErr, checkpointErr, completedErr)
 }

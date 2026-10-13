@@ -199,6 +199,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 				}
 			}}
 		executor := &agentexec.HostRunExecutor{Bridge: bridge, Tasks: tasks, Resolver: resolver, Authority: authority}
+		runs.PrepareRun = executor.PrepareRun
 		srv := &hostsupervisor.Server{Socket: socket, GroupID: -1, Dispatcher: tasks, Runs: runs, RunEffect: executor.Execute, RunRecovery: executor.Recover}
 		sshBase := *tasks
 		sshBase.Root = filepath.Join(root, "guest-ssh")

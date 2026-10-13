@@ -27,6 +27,8 @@ type RunReservation struct {
 	Grant      controlplane.SignedExecutionGrant
 	Result     json.RawMessage
 	Checkpoint json.RawMessage
+	Started    bool
+	Admission  json.RawMessage
 }
 
 func isRunGrant(g controlplane.ExecutionGrant) bool {
@@ -127,13 +129,27 @@ func (g *Gate) runReservation(prior outcome) (RunReservation, error) {
 	if err := controlplane.VerifyExecutionGrant(g.PublicKey, current, current.BootID, current.IssuedAt); err != nil {
 		return RunReservation{}, err
 	}
-	return RunReservation{State: RunState(prior.State), Grant: cloneRunEnvelope(current), Result: append(json.RawMessage(nil), prior.Result...), Checkpoint: append(json.RawMessage(nil), prior.Checkpoint...)}, nil
+	return RunReservation{State: RunState(prior.State), Grant: cloneRunEnvelope(current), Result: append(json.RawMessage(nil), prior.Result...), Checkpoint: append(json.RawMessage(nil), prior.Checkpoint...), Started: prior.Started, Admission: append(json.RawMessage(nil), prior.Admission...)}, nil
 }
 
 // ReserveRun journals an intent under a short topology lock. It never executes
 // a provider callback. The intent blocks all existing Gate.Execute admissions
 // until CommitRun establishes a complete outcome; expiry does not release it.
 func (g *Gate) ReserveRun(ctx context.Context, signed controlplane.SignedExecutionGrant, effectID string) (RunReservation, error) {
+	return g.reserveRun(ctx, signed, effectID, nil)
+}
+
+// ReserveRunWithAdmission atomically pins trusted canonical Run evidence with
+// admission. Missing evidence in historical intents never implies no execution.
+func (g *Gate) ReserveRunWithAdmission(ctx context.Context, signed controlplane.SignedExecutionGrant, effectID string, admission json.RawMessage) (RunReservation, error) {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(admission, &object) != nil || object == nil {
+		return RunReservation{}, ErrFenced
+	}
+	return g.reserveRun(ctx, signed, effectID, admission)
+}
+
+func (g *Gate) reserveRun(ctx context.Context, signed controlplane.SignedExecutionGrant, effectID string, admission json.RawMessage) (RunReservation, error) {
 	var zero RunReservation
 	if err := g.verifyRun(signed, effectID); err != nil {
 		return zero, err
@@ -155,7 +171,7 @@ func (g *Gate) ReserveRun(ctx context.Context, signed controlplane.SignedExecuti
 		if err := g.authorizeRun(ctx, *prior.SignedGrant, effectID); err != nil {
 			return zero, err
 		}
-		return RunReservation{State: RunState(prior.State), Grant: cloneRunEnvelope(*prior.SignedGrant), Result: append(json.RawMessage(nil), prior.Result...)}, nil
+		return g.runReservation(prior)
 	}
 	for _, prior := range record.Outcomes {
 		if prior.State != "complete" {
@@ -167,11 +183,81 @@ func (g *Gate) ReserveRun(ctx context.Context, signed controlplane.SignedExecuti
 	}
 	copy := cloneRunEnvelope(signed)
 	record.Epochs[grant.Scope.ResourceUID] = grant.Epoch
-	record.Outcomes[key] = outcome{Grant: grant, SignedGrant: &copy, State: string(RunIntent)}
+	record.Outcomes[key] = outcome{Grant: grant, SignedGrant: &copy, State: string(RunIntent), Admission: append(json.RawMessage(nil), admission...)}
 	if err := save(path, record); err != nil {
 		return zero, err
 	}
 	return RunReservation{Admitted: true, State: RunIntent, Grant: cloneRunEnvelope(signed)}, nil
+}
+
+// MarkRunStarted is the last durable boundary before the trusted callback is
+// launched. Only explicit admission evidence paired with a missing marker proves
+// no entry. A present marker remains conservative until the outcome is observed.
+func (g *Gate) MarkRunStarted(ctx context.Context, current controlplane.SignedExecutionGrant, effectID string) error {
+	if err := g.verifyRun(current, effectID); err != nil {
+		return err
+	}
+	path, record, release, err := g.locked(ctx, current.Grant.Scope.TopologyUID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	prior, err := currentRunIntent(record, current, effectID)
+	if err != nil {
+		return err
+	}
+	if prior.Started {
+		return nil
+	}
+	if len(prior.Checkpoint) != 0 {
+		return ErrFenced
+	}
+	if err := g.authorizeRun(ctx, current, effectID); err != nil {
+		return err
+	}
+	prior.Started = true
+	record.Outcomes[outcomeKey(current.Grant, effectID)] = prior
+	return save(path, record)
+}
+
+// CommitNeverStartedRun seals failure only with explicit admission evidence and
+// no entry marker/checkpoint. The trusted host must validate the admission and
+// hold executor exclusion; an old bare intent is never sufficient proof.
+func (g *Gate) CommitNeverStartedRun(ctx context.Context, current controlplane.SignedExecutionGrant, effectID string, result json.RawMessage) error {
+	if effectID == "" || !isRunGrant(current.Grant) {
+		return ErrFenced
+	}
+	if err := controlplane.VerifyExecutionGrant(g.PublicKey, current, current.BootID, current.IssuedAt); err != nil {
+		return err
+	}
+	var run controlplane.Run
+	if json.Unmarshal(result, &run) != nil || run.ID == "" || run.AgentID != current.Grant.AgentID || run.EndedAt.IsZero() || run.Status != controlplane.RunFailed || "run_"+run.Op != current.Grant.Operation {
+		return ErrUncertain
+	}
+	path, record, release, err := g.locked(ctx, current.Grant.Scope.TopologyUID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	prior, err := currentRunIntent(record, current, effectID)
+	if err != nil {
+		return err
+	}
+	if len(prior.Admission) == 0 || prior.Started || len(prior.Checkpoint) != 0 || run.Cleanup != nil || run.HostCompletion != nil || run.Inputs != nil {
+		return ErrUncertain
+	}
+	prior.State, prior.Result = string(RunComplete), append(json.RawMessage(nil), result...)
+	record.Outcomes[outcomeKey(current.Grant, effectID)] = prior
+	return save(path, record)
+}
+
+// RecoverNeverStarted visits only intents whose pre-effect marker was never
+// written. The caller must supply canonical Run evidence from the authority;
+// the ledger never invents a Run from a grant or state snapshot.
+func (g *Gate) RecoverNeverStarted(ctx context.Context, recover func(context.Context, controlplane.ExecutionGrant, string) error) error {
+	return g.recoverOutcomes(ctx, 0, func(prior outcome) bool {
+		return prior.State == string(RunIntent) && prior.SignedGrant != nil && len(prior.Admission) != 0 && !prior.Started && len(prior.Checkpoint) == 0
+	}, recover)
 }
 
 // RenewRun replaces exactly the current signed envelope. A duplicate or stale
