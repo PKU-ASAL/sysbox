@@ -20,6 +20,7 @@ type convergenceHandler struct {
 	afterCreate             state.ResourceStatus
 	afterDelete             state.ResourceStatus
 	onCreate                func()
+	onDelete                func()
 }
 
 func (*convergenceHandler) Type() string { return "test_converge" }
@@ -55,6 +56,9 @@ func (h *convergenceHandler) Create(_ context.Context, _ *ProviderContext, n *gr
 func (h *convergenceHandler) Delete(_ context.Context, pc *ProviderContext, r state.Resource) error {
 	h.deletes++
 	h.status = h.afterDelete
+	if h.onDelete != nil {
+		h.onDelete()
+	}
 	pc.State().RemoveResource(r.Address)
 	return nil
 }
@@ -183,6 +187,26 @@ func TestConvergenceRecoveryVerifiesLostCommitWithoutCreatingAgain(t *testing.T)
 	require.Equal(t, 1, h.creates)
 	require.NotNil(t, restarted.state.FindResource(a))
 	require.Equal(t, ActionSucceeded, repo.actions[0].Status)
+}
+
+func TestReturnedDeletionPersistsEvidenceAfterCancellation(t *testing.T) {
+	e, h, a := convergenceFixture(t, state.ResourcePresent, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.onDelete = cancel
+	err := e.Destroy(ctx, singleConvergencePlan(a, controlplane.PlanActionDelete))
+	require.Error(t, err)
+	repo := e.actions.(*memoryActions)
+	require.Len(t, repo.actions, 1)
+	require.True(t, repo.actions[0].EffectComplete, "returned deletion evidence must survive cancellation")
+	require.Equal(t, 1, h.deletes)
+	require.NotNil(t, repo.state.FindResource(a), "cancelled execution must not publish cleanup")
+	cold := NewExecutor(e.graph, e.state)
+	cold.SetRunContext(e.topology, "recovery")
+	cold.SetActionRepository(repo)
+	require.NoError(t, cold.RecoverActions(context.Background(), singleConvergencePlan(a, controlplane.PlanActionDelete)))
+	require.Equal(t, 1, h.deletes)
+	require.Nil(t, repo.state.FindResource(a))
 }
 func TestConvergenceRecoveryUnknownNeverRepeatsCreate(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)

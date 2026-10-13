@@ -171,7 +171,7 @@ test-p9-real: build-all ## Run implemented real-provider gates; reject skips and
 	  -tests TestRemoteDockerCompletionLossRecoveryE2E,TestRemoteDockerReturnedDestroyRecoveryE2E,TestRemoteDockerSSHAccessRunE2E,TestRemoteDockerTargetedResetRunE2E,TestRemoteDockerTargetedResetSSHRunE2E,TestHostSupervisorRealTaskStopAndSuccessorE2E,TestHostSupervisorRealNodePowerE2E,TestHostSupervisorRealFileInstallE2E,TestPublicSSHAgentDockerE2E,TestLocalSSHColdReceiptRecoveryE2E; \
 	"$$acceptance_dir/check" -go "$(GO)" -race -package ./cmd/sysbox/commands -tests TestLocalCLIManagedSSHApplyRotateDestroyE2E; \
 	"$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/sshaccess -tests TestRealSSHDDeploymentReloadRecoveryE2E,TestRealSSHDEffectiveConfigurationConflictE2E; \
-	SYSBOX_DOCKER_ADOPTION_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/provider/docker -tests TestDockerAdoptionColdLifecycleE2E,TestDockerProductionSSHAccessE2E; \
+	SYSBOX_DOCKER_ADOPTION_E2E=1 SYSBOX_REMOTE_DOCKER_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/provider/docker -tests TestDockerAdoptionColdLifecycleE2E,TestDockerProductionSSHAccessE2E,TestDockerRealLostDeleteResponseE2E; \
 	"$$acceptance_dir/check" -go "$(GO)" -package ./pkg/provider/firecracker -timeout 10m \
 	  -tests TestFirecrackerRealGenerationLifecycleE2E,TestFirecrackerRealResetGenerationAndColdAdoptionE2E,TestFirecrackerRealCrossProcessRecoveryE2E,TestFirecrackerRealControllerCrashRecoveryE2E; \
 	SYSBOX_LIBVIRT_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -package ./pkg/provider/libvirt -tests TestLibvirtRealGenerationEffectsE2E

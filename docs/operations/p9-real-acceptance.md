@@ -1,5 +1,36 @@
 # P9 real acceptance
 
+## Lost Docker delete response and cancellation evidence (2026-10-13)
+
+`TestDockerRealLostDeleteResponseE2E` passed under race (0.13 seconds). Its
+transport discards the actual daemon 204 response for the exact container DELETE
+and cancels the caller. The provider uses a bounded independent read to establish
+that the original full container ID is absent, with exactly one DELETE request.
+Presence, transitional state and unavailable daemon replies never count as
+absence. This gate is included in `make test-p9-real`.
+
+Runtime now preserves a successful deletion callback's EffectComplete evidence
+under a bounded journal-only context even if caller cancellation races the
+response. It does not commit the resource deletion under the cancelled context.
+The cold-recovery test subsequently observes absence and commits state without
+another provider delete. Docker observation also rejects missing State, wrong
+ID and restarting/removing/dead states, avoiding false stable-state evidence and
+a reproduced nil-State panic.
+
+Full Go tests, complete runtime/Docker race suites, affected-package vet and
+independent review passed. The existing real Docker returned-Destroy recovery
+gate also passed (13.95 seconds).
+
+Historical inspection (read-only): old Destroy
+`op-f03427da1f549134953b257295f39c8af37305770354447e78673f7d72dba0b0`
+still has intent only, no checkpoint/admission seed, with original boot
+`5ca09ca7-b83e-41c1-aedd-c1937d95d1c0`; current execution VM boot is
+`431164b2-2191-43d1-bebf-2154f4f96c3e`. Container
+`7c7bb3e764fd3c36c88adc6554fd07b10bb61e020c8e7da261662acf574c54fc`
+still exists, exited with PID 0, retaining its original owner/resource/generation.
+No completion or cleanup was fabricated. Explicit historical fencing and
+continuation remain required; the unknown-result workstream is not yet closed.
+
 ## Returned Destroy failure becomes observation-recoverable (2026-10-13)
 
 The host now signs recoverable failed for synchronously returned Destroy when

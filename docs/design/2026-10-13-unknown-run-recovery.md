@@ -64,6 +64,30 @@ Destroy/metadata cleanup. It counts provider deletion calls and requires exactly
 one before and after recovery. This does not cover a missing provider response,
 process death before EffectComplete, or historic stopped-but-not-removed nodes.
 
+## Fourth slice: lost Docker removal response and cancelled evidence write
+
+Docker removal errors now trigger one bounded read-only inspection of the full
+container ID resolved before deletion. Only definitive NotFound establishes the
+postcondition; existing/transitional containers and daemon errors remain unknown.
+The DELETE request is never retried. A separate read context preserves the chance
+to obtain evidence when the original caller was cancelled.
+
+After a successful deletion callback, runtime persists EffectComplete without
+the cancelled execution context, bounded to five seconds. This is a journal-only
+write with normal CAS/fencing checks. Further effects and state publication still
+use the original context and stop on cancellation. Cold recovery can then observe
+and publish the original deletion outcome without repeating it.
+
+Docker observation rejects incomplete state/identity and restarting/removing/dead
+states instead of classifying them as stable running/exited or panicking. A
+positive container inspection is not proof that the daemon has quiesced.
+
+The real-provider test discards the actual successful DELETE response and cancels
+the caller, checks exactly one DELETE, and independently confirms exact-ID
+absence. Runtime cancellation tests verify evidence survives but state is retained
+until observation-only recovery. This still does not resolve the historical
+stopped-but-not-removed object or requests whose absence cannot be verified.
+
 ## Remaining slices
 
 1. Extend real process-fault coverage of the new admission boundary to the

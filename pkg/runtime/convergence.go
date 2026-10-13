@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
@@ -441,10 +442,23 @@ func (e *Executor) runAction(ctx context.Context, change controlplane.PlannedCha
 	record.EffectComplete = true
 	record.Status = ActionUncertain
 	record.Error = "awaiting postcondition verification"
-	if err := e.actions.CommitActionOutcome(ctx, record, nil); err != nil {
-		return fmt.Errorf("persist verification identity: %w", err)
+	evidenceCtx := ctx
+	releaseEvidence := func() {}
+	if change.Action == controlplane.PlanActionDelete {
+		// A successful deletion return is evidence, not fresh execution
+		// authority. Preserve it even when cancellation raced the response;
+		// state publication and further effects still use the original context.
+		evidenceCtx, releaseEvidence = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	}
+	evidenceErr := e.actions.CommitActionOutcome(evidenceCtx, record, nil)
+	releaseEvidence()
+	if evidenceErr != nil {
+		return fmt.Errorf("persist verification identity: %w", evidenceErr)
 	}
 	record.Revision++
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, referenceOnly := handler.(ReferenceOnlyResource); referenceOnly && change.Action == controlplane.PlanActionDelete {
 		if worker.state.FindResource(change.Address) != nil {
 			return e.uncertainAction(ctx, record, step, ErrVerification)

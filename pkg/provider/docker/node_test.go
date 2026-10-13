@@ -51,6 +51,43 @@ func TestDestroyNodeTreatsMissingContainerAsDestroyed(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestDestroyNodeLostReplyUsesAbsenceObservationWithoutReplay(t *testing.T) {
+	for _, absent := range []bool{true, false} {
+		t.Run(fmt.Sprint(absent), func(t *testing.T) {
+			var deletes, inspections int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodDelete {
+					deletes++
+					conn, _, err := w.(http.Hijacker).Hijack()
+					require.NoError(t, err)
+					conn.Close()
+					return
+				}
+				inspections++
+				if deletes > 0 && absent {
+					http.Error(w, `{"message":"No such container"}`, http.StatusNotFound)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"Id": "container", "Config": map[string]any{"Labels": map[string]string{"sysbox.owner_uid": "owner", "sysbox.resource_uid": "node", "sysbox.topology_uid": "owner", "sysbox.managed": "true", "sysbox.generation": "1"}}, "State": map[string]any{"Status": "exited"}})
+			}))
+			defer server.Close()
+			cli, err := client.NewClientWithOpts(client.WithHost(server.URL), client.WithVersion("1.47"))
+			require.NoError(t, err)
+			defer cli.Close()
+			ctx := substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{ActionID: "delete", TopologyUID: "owner", OwnerUID: "owner", ResourceUID: "node", Generation: 1})
+			err = (&Substrate{cli: cli}).DestroyNode(ctx, substrate.NodeHandle{ID: "container", Generation: 1})
+			if absent {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			require.Equal(t, 1, deletes)
+			require.Equal(t, 2, inspections)
+		})
+	}
+}
+
 func TestObservePowerStateIndependentOfHealth(t *testing.T) {
 	for _, paused := range []bool{false, true} {
 		t.Run(fmt.Sprint(paused), func(t *testing.T) {
@@ -70,6 +107,33 @@ func TestObservePowerStateIndependentOfHealth(t *testing.T) {
 				want = substrate.NodeStatusPaused
 			}
 			require.Equal(t, want, obs.Status)
+		})
+	}
+}
+
+func TestObserveNodeRejectsIncompleteOrTransitionalDaemonState(t *testing.T) {
+	for _, scenario := range []string{"missing-state", "restarting", "removing", "dead", "foreign-id"} {
+		t.Run(scenario, func(t *testing.T) {
+			body := map[string]any{"Id": "container", "Config": map[string]any{"Labels": map[string]string{"sysbox.generation": "1"}}}
+			if scenario != "missing-state" {
+				body["State"] = map[string]any{"Status": scenario, "Running": true, "Restarting": scenario == "restarting", "Dead": scenario == "dead"}
+			}
+			if scenario == "foreign-id" {
+				body["Id"] = "replacement"
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(body)
+			}))
+			defer server.Close()
+			cli, err := client.NewClientWithOpts(client.WithHost(server.URL), client.WithVersion("1.47"))
+			require.NoError(t, err)
+			defer cli.Close()
+			obs, err := (&Substrate{cli: cli}).ObserveNode(context.Background(), substrate.NodeHandle{ID: "container", Generation: 1})
+			require.Error(t, err)
+			require.Equal(t, substrate.NodeStatusUnknown, obs.Status)
+			require.False(t, obs.Healthy)
+			require.Nil(t, obs.ExitCode)
 		})
 	}
 }

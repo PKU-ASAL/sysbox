@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -282,6 +283,16 @@ func (s *Substrate) DestroyNode(ctx context.Context, h substrate.NodeHandle) err
 	err := s.cli.ContainerRemove(ctx, h.ID, container.RemoveOptions{Force: true})
 	if errdefs.IsNotFound(err) {
 		return nil
+	}
+	if err != nil {
+		// A lost response is not permission to replay removal. Inspect the
+		// immutable ID selected before the call under a bounded read-only
+		// context. Presence/unavailability preserves the original uncertainty.
+		observe, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		if _, observedErr := s.cli.ContainerInspect(observe, h.ID); errdefs.IsNotFound(observedErr) {
+			return nil
+		}
 	}
 	return err
 }

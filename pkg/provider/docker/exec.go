@@ -411,6 +411,14 @@ func (s *Substrate) ObserveNode(ctx context.Context, h substrate.NodeHandle) (su
 			LastSeen:   time.Now().UTC(),
 		}, err
 	}
+	if ins.ContainerJSONBase == nil || ins.State == nil || ins.ID == "" || ins.ID != h.ID {
+		err := fmt.Errorf("docker observation lacks exact container identity or state")
+		return substrate.NodeObservation{Status: substrate.NodeStatusUnknown, ExternalID: h.ID, Reason: err.Error(), LastSeen: time.Now().UTC()}, err
+	}
+	if ins.State.Restarting || ins.State.Dead || ins.State.Status == "removing" || ins.State.Status == "restarting" || ins.State.Status == "dead" {
+		err := fmt.Errorf("docker container state %q does not establish a stable lifecycle outcome", ins.State.Status)
+		return substrate.NodeObservation{Exists: true, Status: substrate.NodeStatusUnknown, ExternalID: h.ID, Reason: err.Error(), LastSeen: time.Now().UTC()}, err
+	}
 	labels := map[string]string{}
 	if ins.Config != nil {
 		labels = ins.Config.Labels
