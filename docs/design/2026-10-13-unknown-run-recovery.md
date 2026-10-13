@@ -43,6 +43,27 @@ exclusion, altered identity and entered/old-record rejection, and canonical API
 failure/dispatch retirement/authority release. Started records remain unknown
 unless the separate checkpoint/provider proof path establishes quiescence.
 
+## Third slice: deletion returned, publication failed
+
+After the synchronous Destroy executor returns failed, the host reacquires
+topology exclusion and reads the full journal. Every action of this incarnation
+must be a delete with EffectComplete, exact candidate identity and a succeeded
+or uncertain status. No unrelated action may remain unresolved. Once child stop
+evidence is confirmed, the host signs recoverable failed without a cleanup proof.
+The normal owning-agent recovery path may then observe absence and commit the
+existing deletion outcome without another provider call.
+
+Authenticated host completion closes the canonical Run lease (LeaseUntil zero),
+retaining attempt/owner and the original signed evidence. A future worker lease
+deadline must not block observation of an already-proven stopped execution.
+Ordinary timeout and unverified worker failure do not use this transition.
+
+The real Docker gate injects a publication failure after provider deletion
+returned, reconstructs API/host, observes and commits recovery, and then finishes
+Destroy/metadata cleanup. It counts provider deletion calls and requires exactly
+one before and after recovery. This does not cover a missing provider response,
+process death before EffectComplete, or historic stopped-but-not-removed nodes.
+
 ## Remaining slices
 
 1. Extend real process-fault coverage of the new admission boundary to the

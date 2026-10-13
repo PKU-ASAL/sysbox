@@ -136,6 +136,9 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 		if noActions {
 			return nil, hostsupervisor.FinishReturnedRunWithoutActions(cleanup, children, run, actions)
 		}
+		if run.Op == "destroy" {
+			return nil, fmt.Errorf("host Destroy failed (%s): %w", run.Err, hostsupervisor.FinishReturnedDestroyFailure(cleanup, children, run, actions))
+		}
 		if run.Op == "reset" {
 			// Reacquire the same execution exclusion after the synchronous
 			// executor returned. Unknown provider phases must stay uncertain.

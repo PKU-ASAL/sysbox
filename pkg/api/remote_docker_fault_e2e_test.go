@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,6 +32,7 @@ import (
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
@@ -41,6 +43,46 @@ import (
 // in-process; independent process/VM faults have separate acceptance gates.
 func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
 	testRemoteDockerCompletionLossRecovery(t, false, false)
+}
+
+func TestRemoteDockerReturnedDestroyRecoveryE2E(t *testing.T) {
+	testRemoteDockerCompletionLossRecovery(t, false, false, true)
+}
+
+type failDeletePublication struct {
+	runtime.ActionRepository
+	fail *atomic.Bool
+}
+
+func (r failDeletePublication) ProveCleanup(ctx context.Context, run controlplane.Run) (*controlplane.CleanupReceipt, error) {
+	return r.ActionRepository.(runtime.CleanupProver).ProveCleanup(ctx, run)
+}
+
+type countedDockerDeletion struct {
+	*dockerprovider.Substrate
+	calls atomic.Int32
+}
+
+func (d *countedDockerDeletion) DestroyNode(ctx context.Context, h substrate.NodeHandle) error {
+	d.calls.Add(1)
+	return d.Substrate.DestroyNode(ctx, h)
+}
+
+func (r failDeletePublication) CommitActionOutcome(ctx context.Context, a runtime.ActionRecord, patch *runtime.StatePatch) error {
+	if patch != nil && a.Action == controlplane.PlanActionDelete && r.fail.CompareAndSwap(true, false) {
+		return errors.New("injected deletion publication unavailable after provider return")
+	}
+	return r.ActionRepository.CommitActionOutcome(ctx, a, patch)
+}
+
+type destroyFailureHostBridge struct {
+	*HostExecutionBridge
+	fail *atomic.Bool
+}
+
+func (b destroyFailureHostBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
+	r, err := b.HostExecutionBridge.ActionRepository(topology)
+	return failDeletePublication{ActionRepository: r, fail: b.fail}, err
 }
 
 func TestRemoteDockerSSHAccessRunE2E(t *testing.T) {
@@ -61,11 +103,11 @@ func TestRemoteDockerTargetedResetSSHRunE2E(t *testing.T) {
 	testRemoteDockerCompletionLossRecovery(t, true, true)
 }
 
-func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedReset bool) {
+func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedReset bool, destroyPublicationFault ...bool) {
 	if os.Getenv("SYSBOX_REMOTE_DOCKER_E2E") != "1" {
 		t.Skip("requires real Docker daemon; set SYSBOX_REMOTE_DOCKER_E2E=1")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	privateDir := func() string { p := t.TempDir(); require.NoError(t, os.Chmod(p, 0700)); return p }
 	pub, issuer, err := ed25519.GenerateKey(rand.Reader)
@@ -85,7 +127,8 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	previous := driver.DefaultRegistry
 	driver.DefaultRegistry = driver.NewRegistry()
 	defer func() { driver.DefaultRegistry = previous }()
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "1", Node: docker, NIC: docker, NodeState: docker, Artifact: docker, ImageEntry: docker, GuestExec: docker, GuestNetwork: docker, Reset: docker}))
+	deletions := &countedDockerDeletion{Substrate: docker}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "1", Node: deletions, NIC: docker, NodeState: docker, Artifact: docker, ImageEntry: docker, GuestExec: docker, GuestNetwork: docker, Reset: docker}))
 	cfg := config.DefaultServiceConfig()
 	cfg.Paths.RunsDir, cfg.Paths.WorkspacesDir = privateDir(), privateDir()
 	cfg.State.Backend = "sqlite://" + filepath.Join(privateDir(), "canonical.db")
@@ -183,6 +226,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	require.NoError(t, err)
 	root, socketDir := privateDir(), privateDir()
+	var failPublication atomic.Bool
 	hostErrors := make(chan error, 1)
 	socket := filepath.Join(socketDir, "host.sock")
 	startHost := func() (context.CancelFunc, <-chan error) {
@@ -199,6 +243,9 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 				}
 			}}
 		executor := &agentexec.HostRunExecutor{Bridge: bridge, Tasks: tasks, Resolver: resolver, Authority: authority}
+		if len(destroyPublicationFault) != 0 && destroyPublicationFault[0] {
+			executor.Bridge = destroyFailureHostBridge{HostExecutionBridge: bridge, fail: &failPublication}
+		}
 		runs.PrepareRun = executor.PrepareRun
 		srv := &hostsupervisor.Server{Socket: socket, GroupID: -1, Dispatcher: tasks, Runs: runs, RunEffect: executor.Execute, RunRecovery: executor.Recover}
 		sshBase := *tasks
@@ -482,6 +529,52 @@ resource "sysbox_node" "%s" {
 		require.Len(t, instances, 1)
 		require.Equal(t, replacement, instances[0].ID)
 		t.Log("targeted reset completed with topology parent authority and a replacement node generation")
+	}
+	if len(destroyPublicationFault) != 0 && destroyPublicationFault[0] {
+		failPublication.Store(true)
+		status, raw = request("POST", "/v1/topologies/"+topology+"/destroy", nil, "destroy-interrupted")
+		require.Equal(t, 202, status, string(raw))
+		var accepted map[string]string
+		require.NoError(t, json.Unmarshal(raw, &accepted))
+		failedID := accepted["run_id"]
+		require.Eventually(t, func() bool {
+			r, err := current.Load().apiStore.GetRun(ctx, failedID)
+			return err == nil && r.Status == controlplane.RunFailed && r.HostCompletion != nil
+		}, 20*time.Second, 50*time.Millisecond)
+		failed, err := current.Load().apiStore.GetRun(ctx, failedID)
+		require.NoError(t, err)
+		require.True(t, failed.Recoverable)
+		require.Nil(t, failed.Cleanup)
+		require.Contains(t, failed.Err, "injected deletion publication unavailable")
+		require.False(t, failPublication.Load())
+		require.EqualValues(t, 1, deletions.calls.Load())
+		stopHost()
+		require.NoError(t, <-hostDone)
+		current.Store(newAPI())
+		stopHost, hostDone = startHost()
+		var recovery map[string]string
+		require.Eventually(t, func() bool {
+			code, data := request("POST", "/v1/runs/"+failedID+"/remote/recover", nil, "")
+			if code != 202 {
+				return false
+			}
+			require.NoError(t, json.Unmarshal(data, &recovery))
+			return true
+		}, 90*time.Second, 200*time.Millisecond)
+		require.Eventually(t, func() bool {
+			code, _ := request("GET", "/v1/runs/"+failedID+"/remote-reports/"+recovery["command_id"], nil, "")
+			return code == 200
+		}, 20*time.Second, 50*time.Millisecond)
+		retained, err := repository.LoadState(ctx, topology)
+		require.NoError(t, err)
+		for _, r := range retained.Resources {
+			require.NotEqual(t, externalID, r.ExternalID)
+		}
+		instances, err = cli.ContainerList(ctx, container.ListOptions{All: true, Filters: owned})
+		require.NoError(t, err)
+		require.Empty(t, instances)
+		require.EqualValues(t, 1, deletions.calls.Load(), "recovery must not invoke provider deletion again")
+		t.Log("provider deletion returned; publication failed; signed failed Run recovered by observation without another provider deletion")
 	}
 	faultOperation.Store("run_destroy")
 	drop.Store(true)

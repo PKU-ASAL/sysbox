@@ -1,5 +1,33 @@
 # P9 real acceptance
 
+## Returned Destroy failure becomes observation-recoverable (2026-10-13)
+
+The host now signs recoverable failed for synchronously returned Destroy when
+all admitted deletion actions have durable EffectComplete and exact incarnation /
+target identity, no unrelated unresolved action exists and child stops are
+confirmed. No cleanup proof is emitted. Cold observation must independently
+prove each target absent before deleting its state record.
+
+Fault testing exposed a second blocker: authenticated terminal completion kept
+a future worker lease deadline, delaying recovery for up to 30 minutes. That
+trusted transition now closes LeaseUntil while retaining attempt, owner and the
+original signed result. Unverified worker failures and lease expiry are unchanged.
+
+`TestRemoteDockerReturnedDestroyRecoveryE2E` injects state publication failure
+after the real container removal returns. It requires signed recoverable failed,
+reconstructs API/host, recovers through the public owning-agent endpoint, and
+asserts that the provider deletion count remains exactly one. Subsequent normal
+Destroy produces its own cleanup receipt; exact owner inventory and cold metadata
+deletion are verified. The test is included in `make test-p9-real`.
+
+The final real Docker gate passed under race (14.15 seconds). Full Go tests,
+focused host/Agent/API completion and lease race regressions, affected-package
+vet and independent review passed.
+
+This does not resolve a daemon request with no return evidence or the retained
+historical stopped-but-not-removed container. Those remain unknown and are not
+rewritten by this patch. The full unknown-result workstream remains open.
+
 ## Durable Run admission before callback entry (2026-10-13)
 
 Production host admission now atomically stores a versioned canonical Run/request
