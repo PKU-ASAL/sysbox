@@ -49,9 +49,14 @@ func TestRemoteDockerReturnedDestroyRecoveryE2E(t *testing.T) {
 	testRemoteDockerCompletionLossRecovery(t, false, false, true)
 }
 
+func TestRemoteDockerColdReturnedDestroyRecoveryE2E(t *testing.T) {
+	testRemoteDockerCompletionLossRecovery(t, false, false, true, true)
+}
+
 type failDeletePublication struct {
 	runtime.ActionRepository
-	fail *atomic.Bool
+	fail     *atomic.Bool
+	returned chan struct{}
 }
 
 func (r failDeletePublication) ProveCleanup(ctx context.Context, run controlplane.Run) (*controlplane.CleanupReceipt, error) {
@@ -70,6 +75,11 @@ func (d *countedDockerDeletion) DestroyNode(ctx context.Context, h substrate.Nod
 
 func (r failDeletePublication) CommitActionOutcome(ctx context.Context, a runtime.ActionRecord, patch *runtime.StatePatch) error {
 	if patch != nil && a.Action == controlplane.PlanActionDelete && r.fail.CompareAndSwap(true, false) {
+		if r.returned != nil {
+			close(r.returned)
+			<-ctx.Done()
+			return ctx.Err()
+		}
 		return errors.New("injected deletion publication unavailable after provider return")
 	}
 	return r.ActionRepository.CommitActionOutcome(ctx, a, patch)
@@ -77,12 +87,13 @@ func (r failDeletePublication) CommitActionOutcome(ctx context.Context, a runtim
 
 type destroyFailureHostBridge struct {
 	*HostExecutionBridge
-	fail *atomic.Bool
+	fail     *atomic.Bool
+	returned chan struct{}
 }
 
 func (b destroyFailureHostBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
 	r, err := b.HostExecutionBridge.ActionRepository(topology)
-	return failDeletePublication{ActionRepository: r, fail: b.fail}, err
+	return failDeletePublication{ActionRepository: r, fail: b.fail, returned: b.returned}, err
 }
 
 func TestRemoteDockerSSHAccessRunE2E(t *testing.T) {
@@ -227,6 +238,10 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	require.NoError(t, err)
 	root, socketDir := privateDir(), privateDir()
 	var failPublication atomic.Bool
+	var returned chan struct{}
+	if len(destroyPublicationFault) > 1 && destroyPublicationFault[1] {
+		returned = make(chan struct{})
+	}
 	hostErrors := make(chan error, 1)
 	socket := filepath.Join(socketDir, "host.sock")
 	startHost := func() (context.CancelFunc, <-chan error) {
@@ -244,9 +259,10 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 			}}
 		executor := &agentexec.HostRunExecutor{Bridge: bridge, Tasks: tasks, Resolver: resolver, Authority: authority}
 		if len(destroyPublicationFault) != 0 && destroyPublicationFault[0] {
-			executor.Bridge = destroyFailureHostBridge{HostExecutionBridge: bridge, fail: &failPublication}
+			executor.Bridge = destroyFailureHostBridge{HostExecutionBridge: bridge, fail: &failPublication, returned: returned}
 		}
 		runs.PrepareRun = executor.PrepareRun
+		runs.RecoverReturnedDestroy = executor.RecoverReturnedDestroy
 		srv := &hostsupervisor.Server{Socket: socket, GroupID: -1, Dispatcher: tasks, Runs: runs, RunEffect: executor.Execute, RunRecovery: executor.Recover}
 		sshBase := *tasks
 		sshBase.Root = filepath.Join(root, "guest-ssh")
@@ -537,6 +553,20 @@ resource "sysbox_node" "%s" {
 		var accepted map[string]string
 		require.NoError(t, json.Unmarshal(raw, &accepted))
 		failedID := accepted["run_id"]
+		if returned != nil {
+			select {
+			case <-returned:
+			case <-ctx.Done():
+				t.Fatal("deletion callback did not reach durable returned boundary")
+			}
+			stopHost()
+			require.NoError(t, <-hostDone)
+			before, err := current.Load().apiStore.GetRun(ctx, failedID)
+			require.NoError(t, err)
+			require.Nil(t, before.HostCompletion, "crashed host must not have completed the Run")
+			current.Store(newAPI())
+			stopHost, hostDone = startHost()
+		}
 		require.Eventually(t, func() bool {
 			r, err := current.Load().apiStore.GetRun(ctx, failedID)
 			return err == nil && r.Status == controlplane.RunFailed && r.HostCompletion != nil
@@ -545,7 +575,11 @@ resource "sysbox_node" "%s" {
 		require.NoError(t, err)
 		require.True(t, failed.Recoverable)
 		require.Nil(t, failed.Cleanup)
-		require.Contains(t, failed.Err, "injected deletion publication unavailable")
+		if returned != nil {
+			require.Contains(t, failed.Err, "controller stopped after durable deletion return")
+		} else {
+			require.Contains(t, failed.Err, "injected deletion publication unavailable")
+		}
 		require.False(t, failPublication.Load())
 		require.EqualValues(t, 1, deletions.calls.Load())
 		stopHost()

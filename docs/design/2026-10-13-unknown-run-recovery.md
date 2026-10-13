@@ -88,6 +88,30 @@ absence. Runtime cancellation tests verify evidence survives but state is retain
 until observation-only recovery. This still does not resolve the historical
 stopped-but-not-removed object or requests whose absence cannot be verified.
 
+## Fifth slice: cold host after durable deletion return
+
+The host scans entered Destroy intents with new-protocol admission evidence and
+no resource checkpoint. After taking the original executor lock and rereading
+the signed request, a trusted callback takes topology exclusion and reads the
+canonical Run, state and full journal. Incarnation/attempt/owner must match the
+admission; all deletion actions must have durable EffectComplete. Local task
+inventory must be readable and every matching child must have a verified,
+acknowledged stop. The authority API still independently checks its child grant
+inventory before releasing the parent.
+
+The host writes only recoverable failed, without Cleanup, preserving the original
+Run identity. It does not repeat provider effects. The existing public owning-
+agent recovery subsequently observes absence and commits the original action.
+Live executor locks, changed Run identity, unknown action phases, missing task
+inventory and unfinished child records all reject this recovery path.
+
+Real Docker acceptance pauses publication after a deletion-return record, stops
+the host, checks that no Run completion was published, reconstructs API/host and
+requires cold recovery before normal observation/Destroy. The provider deletion
+count remains one. This covers cooperative host-service interruption at a durable
+boundary, not a SIGKILL in an arbitrary daemon call or an old journal lacking the
+admission seed. Historical stopped-but-not-removed records remain separate.
+
 ## Remaining slices
 
 1. Extend real process-fault coverage of the new admission boundary to the

@@ -1,5 +1,33 @@
 # P9 real acceptance
 
+## Cold Destroy recovery after durable provider return (2026-10-13)
+
+`TestRemoteDockerColdReturnedDestroyRecoveryE2E` passed under race (12.96 seconds).
+The fixture blocks resource publication after real container deletion and its
+EffectComplete journal write, interrupts the host service, confirms that the old
+Run has no HostCompletion, then reconstructs API and host. Cold recovery verifies
+the admission, original executor lock, canonical Run incarnation, complete action
+journal and stopped task inventory before publishing signed recoverable failed.
+
+Public owning-agent recovery then observes resource absence and commits the
+original deletion outcome. Provider deletion count stays exactly one. A normal
+subsequent Destroy produces cleanup evidence and allows cold metadata deletion.
+The new gate is included in `make test-p9-real`.
+
+Rejections cover active executor locks, changed result identity, non-Destroy
+operations, unknown deletion progress, missing/corrupt task inventory, running
+children and unacknowledged stop receipts. Existing API child-grant inventory
+checks remain mandatory before parent release. No cleanup success is inferred
+from action evidence alone. Independent review found no important blocker.
+Full Go tests, complete hostsupervisor/agentexec/effectgate race suites and
+affected-package vet passed.
+
+Boundary: the real test reconstructs services in-process after cancellation at
+the durable return boundary. It does not establish SIGKILL recovery during an
+arbitrary daemon request, or recover old records with no admission seed. The
+retained historical stopped container remains untouched; its explicit fencing
+and cleanup continuation are still outstanding.
+
 ## Lost Docker delete response and cancellation evidence (2026-10-13)
 
 `TestDockerRealLostDeleteResponseE2E` passed under race (0.13 seconds). Its

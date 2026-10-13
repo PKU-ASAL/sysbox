@@ -114,6 +114,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	hostRun := &agentexec.HostRunExecutor{Bridge: runBridge, Tasks: dispatcher, Resolver: resolver, Authority: authority}
 	server.RunEffect = hostRun.Execute
 	server.Runs.PrepareRun = hostRun.PrepareRun
+	server.Runs.RecoverReturnedDestroy = hostRun.RecoverReturnedDestroy
 	server.RunRecovery = hostRun.Recover
 	sshDispatcher := *dispatcher
 	sshDispatcher.Root = filepath.Join(cfg.HostSupervisor.Root, "guest-ssh")

@@ -260,6 +260,15 @@ func (g *Gate) RecoverNeverStarted(ctx context.Context, recover func(context.Con
 	}, recover)
 }
 
+// RecoverEnteredDestroy selects only explicit new-protocol admission evidence.
+// Selection is not stop proof; the caller must exclude the executor and verify
+// durable resource/child outcomes before committing any terminal result.
+func (g *Gate) RecoverEnteredDestroy(ctx context.Context, recover func(context.Context, controlplane.ExecutionGrant, string) error) error {
+	return g.recoverOutcomes(ctx, 0, func(prior outcome) bool {
+		return prior.State == string(RunIntent) && prior.SignedGrant != nil && prior.Grant.Operation == "run_destroy" && len(prior.Admission) != 0 && prior.Started && len(prior.Checkpoint) == 0
+	}, recover)
+}
+
 // RenewRun replaces exactly the current signed envelope. A duplicate or stale
 // renewal is rejected rather than being treated as another deadline extension.
 // The caller must also serialize this operation with its monotonic watchdog:
