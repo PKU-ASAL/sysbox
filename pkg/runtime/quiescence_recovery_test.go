@@ -22,3 +22,8 @@ func TestReturnedProviderActionDoesNotRequireQuiescenceProof(t *testing.T) {
 	record := ActionRecord{ProviderOperationID: "action-1", Quiescence: "returned"}
 	require.NoError(t, requireRecoveryQuiescence(record))
 }
+
+func TestLegacyIntentOnlyActionRemainsUnknown(t *testing.T) {
+	record := ActionRecord{ID: "legacy", Status: ActionUncertain}
+	require.ErrorIs(t, requireRecoveryQuiescence(record), ErrActionUncertain)
+}

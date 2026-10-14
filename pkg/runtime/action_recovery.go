@@ -11,7 +11,10 @@ import (
 )
 
 func requireRecoveryQuiescence(record ActionRecord) error {
-	if record.ProviderOperationID == "" || record.Quiescence == "" || record.Quiescence == "returned" || record.Quiescence == "proven" {
+	if record.ProviderOperationID == "" || record.Quiescence == "" {
+		return fmt.Errorf("%w: action %s has no durable provider operation identity", ErrActionUncertain, record.ID)
+	}
+	if record.Quiescence == "returned" || record.Quiescence == "proven" {
 		return nil
 	}
 	if record.Quiescence == "unknown" {

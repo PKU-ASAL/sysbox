@@ -253,7 +253,7 @@ func TestConvergenceRecoveryDoesNotReplaceCompletedNewGeneration(t *testing.T) {
 	digest, err := desiredHash(e.graph.Get(a))
 	require.NoError(t, err)
 	candidate := cloneResetStateResource(*e.state.FindResource(a))
-	repo.actions = []ActionRecord{{ID: "pending-new", Topology: "test-topology", OwnerUID: "test-uid", ResourceUID: "test-uid/" + a.String(), Generation: 1, Resource: a, Action: controlplane.PlanActionCreate, Status: ActionUncertain, DesiredDigest: digest, Candidate: &candidate, EffectComplete: true}}
+	repo.actions = []ActionRecord{{ID: "pending-new", Topology: "test-topology", OwnerUID: "test-uid", ResourceUID: "test-uid/" + a.String(), Generation: 1, Resource: a, Action: controlplane.PlanActionCreate, Status: ActionUncertain, DesiredDigest: digest, Candidate: &candidate, EffectComplete: true, ProviderOperationID: "pending-new", Quiescence: "returned"}}
 	require.NoError(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionReplace)))
 	require.Zero(t, h.creates)
 	require.Zero(t, h.deletes)
@@ -346,7 +346,7 @@ func TestRecoveryDoesNotOverwriteOrTombstoneNewerGeneration(t *testing.T) {
 			var err error
 			repo.state, err = cloneExecutionState(e.state)
 			require.NoError(t, err)
-			repo.actions = []ActionRecord{{ID: "old", Topology: e.topology, RunID: "old-run", OwnerUID: old.OwnerUID, ResourceUID: old.ResourceUID, Generation: 1, Resource: addr, Action: action, Status: ActionUncertain, Candidate: &old, EffectComplete: true}}
+			repo.actions = []ActionRecord{{ID: "old", Topology: e.topology, RunID: "old-run", OwnerUID: old.OwnerUID, ResourceUID: old.ResourceUID, Generation: 1, Resource: addr, Action: action, Status: ActionUncertain, Candidate: &old, EffectComplete: true, ProviderOperationID: "old", Quiescence: "returned"}}
 			if action == controlplane.PlanActionDelete {
 				h.status = state.ResourceAbsent
 				err = e.Destroy(context.Background(), singleConvergencePlan(addr, controlplane.PlanActionDelete))
