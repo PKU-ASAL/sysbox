@@ -287,6 +287,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			item.current.Generation = record.Generation
 			record.Phase = "verifying"
 			record.EffectComplete = true
+			record.Quiescence = "returned"
 			if err := worker.recordStepExternal(actionCtx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
 				return err
 			}
