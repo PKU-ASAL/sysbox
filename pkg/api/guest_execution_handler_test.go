@@ -77,3 +77,9 @@ func TestGuestExecutionHTTPRejectsInvalidDeniedAndUnknown(t *testing.T) {
 		require.NotContains(t, rec.Body.String(), "host-a")
 	}
 }
+
+func TestLocalExecutionBridgeDiscoversStateTopology(t *testing.T) {
+	s := guestExecutionTestServer(t)
+	bridge := NewExecutionBridge(s.cfg)
+	require.Contains(t, bridge.Topologies(context.Background()), "lab")
+}

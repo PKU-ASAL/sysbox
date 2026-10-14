@@ -69,7 +69,14 @@ func (KernelResourceHandler) Create(ctx context.Context, pc *ProviderContext, n 
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}
-	res, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamilyUnknown})
+	pullSource := ""
+	if cfg.PullSource != "" {
+		pullSource, err = secret.ResolveString(ctx, pc.exec.resolver(), cfg.PullSource)
+		if err != nil {
+			return state.Resource{}, fmt.Errorf("kernel %s pull_source: %w", n.Address.Name, err)
+		}
+	}
+	res, err := artifact.New().ResolveIdentityContext(ctx, artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, PullSource: pullSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamilyUnknown})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}
@@ -124,7 +131,7 @@ func (KernelResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return []substrate.PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
 	}
-	if check := ArtifactPreflightCheck("kernel:"+r.Name, cfg.Source, cfg.SHA256); check != nil {
+	if check := VMArtifactPreflightCheck("kernel:"+r.Name, cfg.Source, cfg.PullSource, cfg.SHA256); check != nil {
 		return []substrate.PreflightCheck{*check}
 	}
 	return nil

@@ -39,3 +39,22 @@ func TestDecodeProviderConfigAcceptsSupportedNetworkInitModes(t *testing.T) {
 	}
 	require.ElementsMatch(t, []substrate.GuestNetworkInitMode{substrate.GuestNetworkInitCloudInit, substrate.GuestNetworkInitPreconfigured}, New().Capabilities().GuestNetworkInitModes)
 }
+
+func TestWindowsETWBootstrapIsOptIn(t *testing.T) {
+	defaultConfig, err := decodeTestConfig(t, `network_init = "preconfigured"`)
+	require.NoError(t, err)
+	require.Empty(t, defaultConfig.BootstrapProvisioners())
+	require.Empty(t, defaultConfig.ObservationSource())
+
+	config, err := decodeTestConfig(t, `network_init = "preconfigured"
+windows_etw = true`)
+	require.NoError(t, err)
+	require.Equal(t, "etw", config.ObservationSource())
+	steps := config.BootstrapProvisioners()
+	require.Len(t, steps, 4)
+	require.Equal(t, "exec", steps[0].Type)
+	require.Equal(t, "powershell", steps[0].Shell)
+	require.Equal(t, "file", steps[1].Type)
+	require.Contains(t, steps[1].Source, "/windows-etw/sysarmor-windows-etw.zip")
+	require.Equal(t, "powershell", steps[3].Shell)
+}

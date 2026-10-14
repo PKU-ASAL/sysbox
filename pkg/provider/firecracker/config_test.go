@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
@@ -37,6 +39,32 @@ func TestValidateRequiresExplicitDirectModeOptIn(t *testing.T) {
 	err := s.Validate(substrate.NodeSpec{ProviderConfig: &Config{}})
 	require.ErrorContains(t, err, "allow_direct")
 	require.NoError(t, s.Validate(substrate.NodeSpec{ProviderConfig: &Config{AllowDirect: true}}))
+}
+
+func TestDecodeSysArmorProviderOption(t *testing.T) {
+	parsed, diags := hclsyntax.ParseConfig([]byte("sysarmor = true\nallow_direct = true\n"), "vm.hcl", hcl.InitialPos)
+	require.False(t, diags.HasErrors(), diags.Error())
+	decoded, err := New("/tmp/kernel", t.TempDir()).DecodeProviderConfig(parsed.Body, nil)
+	require.NoError(t, err)
+	require.True(t, decoded.(*Config).SysArmor)
+}
+
+func TestDisabledSysArmorDoesNotChangeDefaultConfigEncoding(t *testing.T) {
+	disabled, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	require.NotContains(t, string(disabled), "SysArmor")
+	enabled, err := json.Marshal(&Config{SysArmor: true})
+	require.NoError(t, err)
+	require.Contains(t, string(enabled), `"SysArmor":true`)
+}
+
+func TestSysArmorBootstrapProvisioners(t *testing.T) {
+	require.Empty(t, (&Config{}).BootstrapProvisioners())
+	provisioners := (&Config{SysArmor: true}).BootstrapProvisioners()
+	require.Len(t, provisioners, 4)
+	require.Equal(t, "/var/lib/sysbox/vm-artifacts/sysarmor/sysarmor-agent-deploy-76263fca.tar.gz", provisioners[0].Source)
+	require.Equal(t, "/tmp/sysarmor-agent-deploy.tar.gz", provisioners[0].Destination)
+	require.Equal(t, []string{"/tmp/install-sysarmor-vm.sh", "/tmp/sysarmor-agent-deploy.tar.gz", "/tmp/sysarmor-standalone-vm.yaml"}, provisioners[3].Args)
 }
 
 type nilStateReader struct{}

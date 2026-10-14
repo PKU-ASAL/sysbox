@@ -56,6 +56,25 @@ func ArtifactPreflightCheck(name, source, sha string) *substrate.PreflightCheck 
 	return &substrate.PreflightCheck{Name: name, OK: true, Severity: "info", Message: p}
 }
 
+// VMArtifactPreflightCheck reports whether a local VM artifact is present or
+// can be resolved from a pinned HTTP(S) fallback during apply.
+func VMArtifactPreflightCheck(name, source, pullSource, sha string) *substrate.PreflightCheck {
+	if pullSource == "" {
+		return ArtifactPreflightCheck(name, source, sha)
+	}
+	_, deferred, err := planVMArtifactDigest(source, pullSource, sha)
+	if err != nil {
+		return &substrate.PreflightCheck{Name: name, OK: false, Severity: "error", Message: err.Error()}
+	}
+	if deferred {
+		return &substrate.PreflightCheck{
+			Name: name, OK: true, Severity: "warning",
+			Message: "local artifact missing; verified cache or pull_source will be used during apply",
+		}
+	}
+	return ArtifactPreflightCheck(name, source, sha)
+}
+
 func DecodePreflightError(resourceType, name string, err error) substrate.PreflightCheck {
 	return substrate.PreflightCheck{
 		Name:     fmt.Sprintf("resource:%s.%s", resourceType, name),

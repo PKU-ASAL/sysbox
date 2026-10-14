@@ -4,6 +4,8 @@ import (
 	"encoding/xml"
 	"fmt"
 	"strings"
+
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // domainXML is the libvirt domain definition.
@@ -17,6 +19,7 @@ type domainXML struct {
 	OS       domOS       `xml:"os"`
 	Features domFeatures `xml:"features"`
 	CPU      domCPU      `xml:"cpu"`
+	GenID    *struct{}   `xml:"genid,omitempty"`
 	Devices  domDevices  `xml:"devices"`
 	OnCrash  string      `xml:"on_crash"`
 }
@@ -52,12 +55,27 @@ type domFeatures struct {
 }
 
 type domDevices struct {
-	Emulator   string      `xml:"emulator,omitempty"`
-	Disks      []domDisk   `xml:"disk"`
-	Interfaces []domIface  `xml:"interface"`
-	Console    *domConsole `xml:"console,omitempty"`
-	Serial     *domSerial  `xml:"serial,omitempty"`
-	Channel    *domChannel `xml:"channel,omitempty"`
+	Emulator   string       `xml:"emulator,omitempty"`
+	Disks      []domDisk    `xml:"disk"`
+	Interfaces []domIface   `xml:"interface"`
+	Console    *domConsole  `xml:"console,omitempty"`
+	Serial     *domSerial   `xml:"serial,omitempty"`
+	Channel    *domChannel  `xml:"channel,omitempty"`
+	Graphics   *domGraphics `xml:"graphics,omitempty"`
+	Video      *domVideo    `xml:"video,omitempty"`
+}
+
+type domGraphics struct {
+	Type     string `xml:"type,attr"`
+	Autoport string `xml:"autoport,attr"`
+	Listen   string `xml:"listen,attr"`
+}
+
+type domVideo struct {
+	Model domVideoModel `xml:"model"`
+}
+type domVideoModel struct {
+	Type string `xml:"type,attr"`
 }
 
 type domDisk struct {
@@ -137,6 +155,7 @@ type DomainSpec struct {
 	DiskPath    string // absolute path to the per-VM qcow2 copy
 	SeedISO     string
 	Bridges     []BridgeAttach
+	GuestFamily substrate.GuestFamily
 }
 
 // BridgeAttach describes one network interface attached to a host bridge.
@@ -149,14 +168,32 @@ type BridgeAttach struct {
 	Gateway    string
 }
 
+// guestFamilyFromDomainXML recognizes the explicit markers emitted for Windows
+// guests. Linux domains keep the legacy SSH path; an unmarked imported domain
+// is handled conservatively by ReadNode as an unknown/SSH guest.
+func guestFamilyFromDomainXML(domain domainXML) substrate.GuestFamily {
+	if domain.GenID != nil {
+		return substrate.GuestFamilyWindows
+	}
+	if channel := domain.Devices.Channel; channel != nil && channel.Target.Name == "org.qemu.guest_agent.0" {
+		return substrate.GuestFamilyWindows
+	}
+	return substrate.GuestFamilyLinux
+}
+
 // GenerateDomainXML produces the virsh-compatible domain XML for the given spec.
 func GenerateDomainXML(spec DomainSpec) (string, error) {
+	windows := spec.GuestFamily == substrate.GuestFamilyWindows
+	nicModel, diskBus, diskDev := "virtio", "virtio", "vda"
+	if windows {
+		nicModel, diskBus, diskDev = "e1000e", "sata", "sda"
+	}
 	ifaces := make([]domIface, 0, len(spec.Bridges))
 	for _, b := range spec.Bridges {
 		iface := domIface{
 			Type:   "bridge",
 			Source: domIfaceSrc{Bridge: b.Bridge},
-			Model:  domIfaceMod{Type: "virtio"},
+			Model:  domIfaceMod{Type: nicModel},
 		}
 		if b.MAC != "" {
 			iface.MAC = &domIfaceMAC{Address: b.MAC}
@@ -196,7 +233,7 @@ func GenerateDomainXML(spec DomainSpec) (string, error) {
 					Device: "disk",
 					Driver: domDiskDrv{Name: "qemu", Type: "qcow2"},
 					Source: domDiskSrc{File: spec.DiskPath},
-					Target: domDiskTgt{Dev: "vda", Bus: "virtio"},
+					Target: domDiskTgt{Dev: diskDev, Bus: diskBus},
 				},
 			},
 			Interfaces: ifaces,
@@ -207,6 +244,12 @@ func GenerateDomainXML(spec DomainSpec) (string, error) {
 			Serial: &domSerial{Type: "pty"},
 		},
 		OnCrash: "destroy",
+	}
+	if windows {
+		d.GenID = &struct{}{}
+		d.Devices.Channel = &domChannel{Type: "unix", Target: domChannelTgt{Type: "virtio", Name: "org.qemu.guest_agent.0"}}
+		d.Devices.Graphics = &domGraphics{Type: "vnc", Autoport: "yes", Listen: "127.0.0.1"}
+		d.Devices.Video = &domVideo{Model: domVideoModel{Type: "vga"}}
 	}
 	if spec.SeedISO != "" {
 		d.Devices.Disks = append(d.Devices.Disks, domDisk{Type: "file", Device: "cdrom", Driver: domDiskDrv{Name: "qemu", Type: "raw"}, Source: domDiskSrc{File: spec.SeedISO}, Target: domDiskTgt{Dev: "sda", Bus: "sata"}, ReadOnly: &struct{}{}})

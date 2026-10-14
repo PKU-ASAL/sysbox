@@ -53,6 +53,7 @@ Use ignore sparingly; it does not transfer ownership to another system.
 | `substrate` | yes | Substrate reference |
 | `kind` | yes | `oci`, `rootfs`, `qcow2`, or provider-supported kind |
 | `source` | yes | Registry reference, URL or local path |
+| `pull_source` | no | VM only: HTTP(S) fallback when a local `source` is absent; requires `sha256` |
 | `architecture` | yes | Guest architecture such as `amd64` |
 | `guest_family` | yes | Guest OS family, currently Linux contracts |
 | `sha256` | no | Immutable content digest |
@@ -65,6 +66,7 @@ Use ignore sparingly; it does not transfer ownership to another system.
 | `substrate` | yes | Firecracker-capable substrate |
 | `architecture` | yes | Kernel architecture |
 | `source` | yes | Kernel source/path |
+| `pull_source` | no | HTTP(S) fallback when the local kernel file is absent; requires `sha256` |
 | `sha256` | no | Immutable digest |
 | `cmdline_template` | no | Provider kernel command-line template |
 | `depends_on` | no | Additional resource addresses |
@@ -170,6 +172,7 @@ Relative bind source resolves against the Sysbox process working directory. Omit
 | `ssh_pass` | no | Secret reference recommended |
 | `ssh_port` | no | Guest SSH port |
 | `allow_direct` | no | Explicitly allow direct Firecracker child mode; unsafe and intended only for trusted local experiments until jailer support is available |
+| `sysarmor` | no | Opt in to installing the pinned standalone SysArmor agent in this VM before declared provisioners; repeats after reset. Requires staged VM artifacts and a compatible Linux guest. Default `false`. |
 
 Machine sizing and network initialization must match the selected provider capability and guest image.
 

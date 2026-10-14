@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/util"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 )
 
@@ -266,13 +267,10 @@ func (c *VsockConnection) Exec(ctx context.Context, req substrate.ExecRequest, s
 }
 
 func (c *VsockConnection) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
-	// Wrap the command so it daemonises and prints its pid. nohup + & is the
-	// classic POSIX recipe; we capture $! before exiting.
-	command, err := RemoteCommand(req)
+	shell, err := backgroundShellCommand(req)
 	if err != nil {
 		return 0, err
 	}
-	shell := "nohup " + command + " >/dev/null 2>&1 & echo $!"
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return 0, err
@@ -305,6 +303,18 @@ func (c *VsockConnection) ExecBackground(ctx context.Context, req substrate.Exec
 			return pid, nil
 		}
 	}
+}
+
+func backgroundShellCommand(req substrate.ExecRequest) (string, error) {
+	// Wrap the command so it daemonises and prints its pid. nohup + & is the
+	// classic POSIX recipe; we capture $! before exiting. The environment
+	// assignment must be parsed by an inner shell: `nohup KEY=value cmd`
+	// mistakenly treats KEY=value as an executable name.
+	command, err := RemoteCommand(req)
+	if err != nil {
+		return "", err
+	}
+	return "nohup sh -c " + util.ShellQuote(command) + " >/dev/null 2>&1 & echo $!", nil
 }
 
 func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string) error {

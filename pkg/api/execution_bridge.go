@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"io"
+	"path/filepath"
 	"time"
 
 	"github.com/coder/websocket"
@@ -89,6 +90,18 @@ func (b *ExecutionBridge) Topologies(ctx context.Context) []string {
 	items, err := mgr.ListTopologies(ctx)
 	if err != nil {
 		return nil
+	}
+	// The local file backend has no TopologyLister. Discover only state files
+	// under this agent's configured runs directory, as LocalBridge does.
+	if b.server.stateBackend == "" {
+		matches, err := filepath.Glob(filepath.Join(b.server.runsDir, "*", "state.json"))
+		if err == nil {
+			out := make([]string, 0, len(matches))
+			for _, match := range matches {
+				out = append(out, filepath.Base(filepath.Dir(match)))
+			}
+			return out
+		}
 	}
 	out := make([]string, 0, len(items))
 	for _, item := range items {

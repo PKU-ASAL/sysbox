@@ -53,7 +53,8 @@ func validateGuestFamilies(g *graph.Graph) error {
 		if err != nil {
 			return fmt.Errorf("node %s: %w", node.Address, err)
 		}
-		for _, provisioner := range cfg.Provisioners {
+		provisioners := nodeProvisioners(cfg.ProviderConfig, cfg.Provisioners)
+		for _, provisioner := range provisioners {
 			if provisioner.Type != "exec" {
 				continue
 			}
@@ -67,7 +68,7 @@ func validateGuestFamilies(g *graph.Graph) error {
 		if family != substrate.GuestFamilyUnknown {
 			continue
 		}
-		if len(cfg.Provisioners) > 0 {
+		if len(provisioners) > 0 {
 			return fmt.Errorf("node %s: unknown guest family requires an explicit override before provisioning", node.Address)
 		}
 		substrateName, resolveErr := resolveSubstrateRef(cfg.Substrate)

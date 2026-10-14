@@ -7,6 +7,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"strings"
+	"sync"
 
 	"github.com/creack/pty"
 
@@ -22,31 +23,51 @@ type ConsoleRequest struct {
 }
 
 type RawConsoleSession struct {
-	conn net.Conn
+	conn       net.Conn
+	outputDone chan struct{}
+	outputErr  error
+	once       sync.Once
 }
 
 func NewRawConsoleSession(conn net.Conn) *RawConsoleSession {
-	return &RawConsoleSession{conn: conn}
+	return &RawConsoleSession{conn: conn, outputDone: make(chan struct{})}
+}
+
+func (s *RawConsoleSession) finishOutput(err error) {
+	s.once.Do(func() {
+		s.outputErr = err
+		close(s.outputDone)
+	})
+}
+
+type rawConsoleOutput struct{ session *RawConsoleSession }
+
+func (r rawConsoleOutput) Read(p []byte) (int, error) {
+	n, err := r.session.conn.Read(p)
+	if err != nil {
+		r.session.finishOutput(err)
+	}
+	return n, err
 }
 
 func (s *RawConsoleSession) Stdin() io.WriteCloser { return s.conn }
-func (s *RawConsoleSession) Stdout() io.Reader     { return s.conn }
+func (s *RawConsoleSession) Stdout() io.Reader     { return rawConsoleOutput{s} }
 func (s *RawConsoleSession) Stderr() io.Reader     { return nil }
 func (s *RawConsoleSession) Resize(context.Context, int, int) error {
 	return nil
 }
 func (s *RawConsoleSession) Wait() (int, error) {
-	buf := make([]byte, 1)
-	for {
-		if _, err := s.conn.Read(buf); err != nil {
-			if err == io.EOF {
-				return 0, nil
-			}
-			return 1, err
-		}
+	<-s.outputDone
+	if s.outputErr == io.EOF {
+		return 0, nil
 	}
+	return 1, s.outputErr
 }
-func (s *RawConsoleSession) Close() error { return s.conn.Close() }
+func (s *RawConsoleSession) Close() error {
+	err := s.conn.Close()
+	s.finishOutput(net.ErrClosed)
+	return err
+}
 
 type SSHConsoleSession struct {
 	cmd  *osexec.Cmd

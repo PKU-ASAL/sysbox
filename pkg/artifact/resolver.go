@@ -21,6 +21,7 @@
 package artifact
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -94,13 +95,18 @@ func DefaultCacheDir() string {
 // Resolve returns the local path of the artifact described by spec,
 // downloading it into the cache when necessary.
 func (r *Resolver) Resolve(spec Spec) (Result, error) {
+	return r.ResolveContext(context.Background(), spec)
+}
+
+// ResolveContext resolves an artifact while allowing cancellation of downloads.
+func (r *Resolver) ResolveContext(ctx context.Context, spec Spec) (Result, error) {
 	if spec.Source == "" {
 		return Result{}, fmt.Errorf("artifact: empty source")
 	}
 
 	switch scheme(spec.Source) {
 	case "http", "https":
-		return r.resolveHTTP(spec)
+		return r.resolveHTTP(ctx, spec)
 	case "file", "":
 		return r.resolveLocal(spec)
 	default:
@@ -134,7 +140,7 @@ func (r *Resolver) resolveLocal(spec Spec) (Result, error) {
 	return Result{Path: p, Source: spec.Source, SHA256: sum, FromCache: false}, nil
 }
 
-func (r *Resolver) resolveHTTP(spec Spec) (Result, error) {
+func (r *Resolver) resolveHTTP(ctx context.Context, spec Spec) (Result, error) {
 	key := spec.SHA256
 	if key == "" {
 		// URL-derived key: deterministic but not content-addressed. When the
@@ -180,7 +186,11 @@ func (r *Resolver) resolveHTTP(spec Spec) (Result, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Get(spec.Source)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, spec.Source, nil)
+	if err != nil {
+		return Result{}, fmt.Errorf("artifact: GET %s: %w", spec.Source, err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return Result{}, fmt.Errorf("artifact: GET %s: %w", spec.Source, err)
 	}

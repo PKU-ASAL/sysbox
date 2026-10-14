@@ -52,6 +52,7 @@ func main() {
 		NodeState:    fcSub,
 		Power:        fcSub,
 		GuestNetwork: fcSub,
+		Policy:       fcSub,
 		Reset:        fcSub,
 	})
 

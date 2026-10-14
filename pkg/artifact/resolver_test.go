@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -211,4 +212,75 @@ func TestIsURL(t *testing.T) {
 			t.Errorf("IsURL(%q) = %v, want %v", in, got, want)
 		}
 	}
+}
+
+func TestResolveContextCancelsRemoteDownloadWithoutCaching(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		close(started)
+		<-req.Context().Done()
+	}))
+	defer srv.Close()
+	cache := filepath.Join(t.TempDir(), "cache")
+	resolver := &Resolver{CacheDir: cache, HTTPClient: srv.Client()}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := resolver.ResolveContext(ctx, Spec{Source: srv.URL + "/rootfs.ext4", SHA256: hashOf([]byte("expected"))})
+		done <- err
+	}()
+	<-started
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+	entries, err := os.ReadDir(cache)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		files, err := os.ReadDir(filepath.Join(cache, entry.Name()))
+		require.NoError(t, err)
+		require.Empty(t, files)
+	}
+}
+
+func TestNormalizeSHA256(t *testing.T) {
+	pin := strings.Repeat("A", 64)
+	got, err := NormalizeSHA256("SHA256:" + pin)
+	require.NoError(t, err)
+	require.Equal(t, "sha256:"+strings.ToLower(pin), got)
+	_, err = NormalizeSHA256("sha256:not-hex")
+	require.Error(t, err)
+}
+
+func TestResolveIdentityPullSourcePrefersLocalAndRejectsMismatch(t *testing.T) {
+	payload := []byte("local VM image")
+	localPath := filepath.Join(t.TempDir(), "rootfs.ext4")
+	require.NoError(t, os.WriteFile(localPath, payload, 0o644))
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_, _ = w.Write([]byte("remote VM image"))
+	}))
+	defer server.Close()
+	spec := IdentitySpec{
+		Kind: substrate.ArtifactRootFS, Source: localPath, PullSource: server.URL + "/rootfs.ext4",
+		ExpectedDigest: hashOf(payload), Architecture: "amd64", GuestFamily: substrate.GuestFamilyLinux,
+	}
+	resolver := &Resolver{CacheDir: t.TempDir(), HTTPClient: server.Client()}
+	got, err := resolver.ResolveIdentityContext(context.Background(), spec)
+	require.NoError(t, err)
+	require.Equal(t, localPath, got.Path)
+	require.Equal(t, 0, requests)
+
+	spec.ExpectedDigest = hashOf([]byte("other"))
+	_, err = resolver.ResolveIdentityContext(context.Background(), spec)
+	require.ErrorContains(t, err, "sha256 mismatch")
+	require.Equal(t, 0, requests)
+}
+
+func TestResolveIdentityPullSourceRequiresPin(t *testing.T) {
+	_, err := New().ResolveIdentity(IdentitySpec{
+		Kind: substrate.ArtifactRootFS, Source: "/missing/rootfs.ext4",
+		PullSource: "https://example.invalid/rootfs.ext4", Architecture: "amd64",
+		GuestFamily: substrate.GuestFamilyLinux,
+	})
+	require.ErrorContains(t, err, "sha256 is required")
 }

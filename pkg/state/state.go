@@ -46,7 +46,11 @@ type State struct {
 	Version   int          `json:"version"`
 	Lineage   string       `json:"lineage"`
 	Resources []Resource   `json:"resources"`
-	Meta      StateMeta    `json:"-"`
+	// AppliedVariables is a safe projection of the last apply's non-sensitive
+	// variable inputs. Sensitive values are deliberately excluded so read-only
+	// status and outputs can reproduce the applied topology after a restart.
+	AppliedVariables map[string]string `json:"applied_variables,omitempty"`
+	Meta             StateMeta         `json:"-"`
 }
 
 type StateMeta struct {

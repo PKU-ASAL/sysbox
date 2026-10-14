@@ -75,7 +75,7 @@ var (
 	vmStore = map[string]*vmProcess{} // vm_id → vmProcess
 )
 
-func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
+func (s *Substrate) ResolveImage(ctx context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
 	if source.Kind != substrate.ArtifactRootFS {
 		return substrate.ArtifactHandle{}, fmt.Errorf("firecracker substrate requires artifact kind %q", substrate.ArtifactRootFS)
 	}
@@ -83,7 +83,7 @@ func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSou
 	if effective == "" {
 		effective = source.Source
 	}
-	resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: source.Kind, Source: effective, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily, Metadata: source.Metadata})
+	resolved, err := artifact.New().ResolveIdentityContext(ctx, artifact.IdentitySpec{Kind: source.Kind, Source: effective, PullSource: source.PullSource, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily, Metadata: source.Metadata})
 	if err != nil {
 		return substrate.ArtifactHandle{}, fmt.Errorf("firecracker: resolve rootfs: %w", err)
 	}
@@ -139,9 +139,8 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 		fmt.Printf("[firecracker] sysbox-init disabled for %s: %v\n", vmID, err)
 		sysboxInitEnabled = false
 	} else {
-		nodeName := strings.TrimPrefix(spec.Name, "sysbox-")
 		initCfg := vsockrpc.VMConfig{
-			Hostname:  nodeName,
+			Hostname:  guestHostname(spec.Name),
 			Env:       spec.Env,
 			ChainInit: pc.ChainInit,
 		}
@@ -307,7 +306,7 @@ func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error
 	// caused the apply pipeline to never see EOF: the firecracker children
 	// kept the write end of the parent's stderr pipe alive long after
 	// 'sysbox apply' returned, so the shell appeared to hang at the end.
-	logPath := filepath.Join(filepath.Dir(vm.socket), "firecracker.log")
+	logPath := filepath.Join(filepath.Dir(vm.cfgPath), "firecracker.log")
 	logFD, logErr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if logErr != nil {
 		// Fall back to /dev/null rather than the parent's tty.
