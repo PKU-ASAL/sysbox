@@ -37,7 +37,7 @@ repository 原子提交 outcome + resource state
 | 状态证据 | cleanup-inspection 原子读取 state+journal，另外读取 Run/NodeOperation；暴露来源、时间、范围及 unfinished actions；external_presence=unknown，不签发空清理回执 |
 | 远端恢复 | run-recovery.v1 经 owning Agent 执行 Observe/Recover；报告包含资源 UID/generation、外部 ID、action/Run 轮次与 lease 证明；持久保存报告 |
 | Provider 管理身份 | Docker labels、libvirt metadata/UUID、Firecracker manifest/进程锚点校验 owner/resource/generation；缺身份明确拒绝 |
-| Firecracker | manifest v2、进程文件锁、pidfd 信号、冷 discover/adopt、controller crash 接管、reset generation 迁移；vmStore 只是进程内缓存 |
+| Firecracker | manifest v2、进程文件锁、pidfd 信号、冷 discover/adopt、controller crash 接管、reset generation 迁移、基于持久 VM 操作锁的 quiescence proof；vmStore 只是进程内缓存 |
 | 网络与 attachment | 网络 ownership v2 保存 namespace device/inode、ifindex/type/alias；目标网络身份独立于节点；veth/TAP 通过固定句柄操作；FC/libvirt 启动前复验 |
 | Firewall | 默认引擎创建/发现/恢复/删除；nft 原子 batch、固定 namespace FD、policy generation 与删除证据；旧结果不能授权副作用重放 |
 | Guest 传输 | Connection.Exec 为共同入口；SSH 与 vsock 文件传输校验 SHA256、临时文件同步与精确目标替换；未知退出状态不能视为成功 |
@@ -50,7 +50,7 @@ keyed Apply 后 workspace 当前指针可以不存在；活跃操作列表从 du
 | 能力 | 边界 |
 |---|---|
 | 多 API 共享文件系统执行 | 当前限定单 API 执行部署。PG 准入锁验证并发受理，不代表分布式资源端 fencing；全局锁目前偏保守 |
-| 同代际 lease epoch 撤销 | 可以拒绝旧回报，不能远程撤销已经开始的 guest/provider effect |
+| 同代际 lease epoch 撤销 | 可以拒绝旧回报，不能远程撤销已经开始的 guest/provider effect；Firecracker 已能用持久 VM 操作锁证明宿主侧同步 transition 已退出，Docker/libvirt 尚无等价 provider operation anchor，仍 fail-closed |
 | Inventory/projection | 信息性快照，共享校验与原子文件替换；没有生产者 epoch/sequence，不作为所有权或外部不存在证明 |
 | 清理检查完整性 | active_operation_kinds 只含 Run/NodeOperation；guest execution/file 不在该列表；列表和 lifecycle 不是同一跨仓储事务 |
 | 外部不存在判定 | cleanup-inspection 不执行 provider 查询；远端未观察时明确 owning_agent_not_observed。metadata 删除仍必须通过 repository CAS/journal 校验 |
