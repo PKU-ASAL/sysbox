@@ -1,5 +1,16 @@
 # P9 real acceptance
 
+## GC execution boundary (2026-10-14)
+
+GC grant admission now accepts opaque resource UIDs and Docker provider deletion
+requires exact external identity plus an independent post-delete NotFound check.
+The CLI remains dry-run only until an owning-agent host supervisor and durable
+leased command are available. A complete inventory alone never authorizes deletion; current references, epoch,
+grant, provider effect journal and independent absence proof are all required.
+This is intentional groundwork for the next scheduler integration, not a claim
+that automatic GC is complete. `gc --dry-run` remains the only executable CLI
+mode until that owning-agent route exists.
+
 ## GC identity and Docker absence checks (2026-10-14)
 
 GC grant admission no longer requires the obsolete `topologyUID/` resource UID
