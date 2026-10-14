@@ -14,6 +14,10 @@ func TestDeleteManagedNetworkExternalRevalidatesAndRemoves(t *testing.T) {
 	sub := managedDockerClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/networks/") {
+			if removed {
+				http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
+				return
+			}
 			_, _ = w.Write([]byte(`{"Id":"network-1","Labels":{"sysbox.managed":"true","sysbox.owner_uid":"owner","sysbox.topology_uid":"owner","sysbox.resource_uid":"resource","sysbox.generation":"3"}}`))
 			return
 		}

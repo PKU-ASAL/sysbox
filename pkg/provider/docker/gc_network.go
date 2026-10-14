@@ -28,11 +28,21 @@ func (s *Substrate) DeleteManagedNetworkExternal(ctx context.Context, externalID
 		"sysbox.topology_uid": ownerUID, "sysbox.resource_uid": resourceUID,
 		"sysbox.generation": strconv.FormatInt(generation, 10),
 	}
+	if inspected.ID != externalID {
+		return driver.Wrap(driver.ErrorInvalidState, "docker", "GC network exact identity mismatch", nil)
+	}
 	if err := verifyLabels(inspected.Labels, expected); err != nil {
 		return err
 	}
 	if err := s.cli.NetworkRemove(ctx, externalID); err != nil && !errdefs.IsNotFound(err) {
 		return err
 	}
-	return nil
+	_, err = s.cli.NetworkInspect(ctx, externalID, network.InspectOptions{})
+	if errdefs.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return driver.Wrap(driver.ErrorUnavailable, "docker", "GC network absence unconfirmed", err)
+	}
+	return driver.Wrap(driver.ErrorInvalidState, "docker", "GC network remains after deletion", nil)
 }

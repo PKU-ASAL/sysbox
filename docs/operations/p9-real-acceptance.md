@@ -1,5 +1,27 @@
 # P9 real acceptance
 
+## GC identity and Docker absence checks (2026-10-14)
+
+GC grant admission no longer requires the obsolete `topologyUID/` resource UID
+prefix. Resource UIDs are opaque; current runtime-generated hashes must work.
+The authenticated API regression reproduced HTTP 400 for a valid hash UID and
+now verifies HTTP 200 plus subsequent authorization. Canonical topology owner,
+current reference digest and referenced-resource rejection remain mandatory.
+
+Docker container/network GC primitives now require inspect's full ID to equal
+the candidate external ID before mutation. After DELETE they independently
+inspect again and return success only for NotFound. A successful DELETE response
+with a still-present object, or an unavailable daemon, cannot produce a confirmed
+deletion result. Name aliases and replacement objects fail before mutation.
+
+`TestDockerRealGCExactAbsenceE2E` passed under race (0.49 seconds), using isolated
+real container/network objects. It rejected name aliases and stale generations,
+deleted exact current identities, independently verified absence, and accepted
+absent-object retry. The test is included in `make test-p9-real`. This is a
+provider/API prerequisite, **not** complete automatic GC acceptance. CLI deletion
+and the production host remain disabled pending complete inventory and execution
+fencing, reference revalidation across effects, dispatch and recovery integration.
+
 ## Repeated interrupted reset continuation accepted (2026-10-13)
 
 `TestRemoteDockerRepeatedResetContinuationE2E` passed under race (17.35 seconds):

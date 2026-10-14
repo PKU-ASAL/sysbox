@@ -118,10 +118,6 @@ func (s *Server) handleGCGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if !strings.HasPrefix(request.Candidate.ResourceUID, request.Candidate.TopologyUID+"/") {
-		writeError(w, http.StatusBadRequest, persistence.ErrInvalidRecord)
-		return
-	}
 	manager, err := s.stateManager(request.Topology)
 	if err != nil {
 		writeError(w, http.StatusConflict, err)

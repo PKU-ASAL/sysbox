@@ -284,7 +284,7 @@ func TestGCGrantBindsCandidateAndSession(t *testing.T) {
 	require.NoError(t, err)
 	inventory, err := lifecycle.LoadGCReferences(ctx, "lab")
 	require.NoError(t, err)
-	candidate := hostsupervisor.GCCandidate{Kind: "container", ExternalID: "orphan", TopologyUID: canonical.TopologyUID, OwnerUID: canonical.TopologyUID, ResourceUID: canonical.TopologyUID + "/orphan", Generation: 1, InventoryDigest: inventory.Digest}
+	candidate := hostsupervisor.GCCandidate{Kind: "container", ExternalID: "orphan", TopologyUID: canonical.TopologyUID, OwnerUID: canonical.TopologyUID, ResourceUID: "a89db8cb2f24c80976a32d737eb3f3485e39245f14e08a10cd3fdc9135d4c011", Generation: 1, InventoryDigest: inventory.Digest}
 	body, _ := json.Marshal(map[string]any{"candidate": candidate, "topology": "lab", "session_id": session.ID, "action_id": "gc-action", "command_id": "gc-command", "attempt": 1, "lease_owner": "gc-worker", "boot_id": "host"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/gc-grant", bytes.NewReader(body))
 	require.NoError(t, agent.SignRequest(req, "host-a", secret, time.Now()))

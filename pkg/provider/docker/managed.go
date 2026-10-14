@@ -97,7 +97,7 @@ func (s *Substrate) DeleteManagedExternal(ctx context.Context, externalID, owner
 		}
 		return driver.Wrap(driver.ErrorUnavailable, "docker", "GC container inspection unavailable", err)
 	}
-	if inspected.Config == nil {
+	if inspected.ContainerJSONBase == nil || inspected.ID != externalID || inspected.Config == nil {
 		return driver.Wrap(driver.ErrorInvalidState, "docker", "GC container lacks ownership labels", nil)
 	}
 	expected := map[string]string{"sysbox.managed": "true", "sysbox.owner_uid": ownerUID, "sysbox.topology_uid": ownerUID, "sysbox.resource_uid": resourceUID, "sysbox.generation": strconv.FormatInt(generation, 10)}
@@ -107,7 +107,14 @@ func (s *Substrate) DeleteManagedExternal(ctx context.Context, externalID, owner
 	if err := s.cli.ContainerRemove(ctx, externalID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 		return err
 	}
-	return nil
+	_, err = s.cli.ContainerInspect(ctx, externalID)
+	if errdefs.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return driver.Wrap(driver.ErrorUnavailable, "docker", "GC container absence unconfirmed", err)
+	}
+	return driver.Wrap(driver.ErrorInvalidState, "docker", "GC container remains after deletion", nil)
 }
 
 func managedHandle(inspected dockertypes.ContainerJSON, generation int64) (substrate.NodeHandle, error) {
