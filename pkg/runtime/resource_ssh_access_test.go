@@ -85,9 +85,9 @@ func TestSSHAccessRuntimeActionRecoversLostReplyWithoutReplay(t *testing.T) {
 	cold := NewExecutor(e.graph, e.state)
 	cold.SetRunContext(e.topology, "cold-run")
 	cold.SetActionRepository(e.actions)
-	require.NoError(t, cold.Apply(context.Background(), singleConvergencePlan(n.Address, controlplane.PlanActionCreate)))
+	require.ErrorIs(t, cold.Apply(context.Background(), singleConvergencePlan(n.Address, controlplane.PlanActionCreate)), ErrActionUncertain)
 	require.Len(t, conn.calls, 1)
-	require.NotNil(t, cold.state.FindResource(n.Address))
+	require.Nil(t, cold.state.FindResource(n.Address))
 }
 
 func TestSSHAccessUsesStateAwareObservationBoundary(t *testing.T) {

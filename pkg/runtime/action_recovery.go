@@ -4,10 +4,21 @@ import (
 	"context"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
+
+func requireRecoveryQuiescence(record ActionRecord) error {
+	if record.ProviderOperationID == "" || record.Quiescence == "" || record.Quiescence == "returned" || record.Quiescence == "proven" {
+		return nil
+	}
+	if record.Quiescence == "unknown" {
+		return fmt.Errorf("%w: provider operation %s is still in-flight without quiescence proof", ErrActionUncertain, record.ProviderOperationID)
+	}
+	return fmt.Errorf("%w: provider operation %s has invalid quiescence state %q", ErrActionUncertain, record.ProviderOperationID, record.Quiescence)
+}
 
 // RecoverActions observes already authorized incomplete actions and commits
 // proven outcomes. It never calls Create/Delete or replays a guest command.
@@ -66,6 +77,14 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 	for _, record := range actions {
 		if record.Status == ActionSucceeded {
 			continue
+		}
+		if err := requireRecoveryQuiescence(record); err != nil {
+			if record.Quiescence != "unknown" || record.ProviderOperationID == "" {
+				return err
+			}
+			if err := e.proveActionQuiescence(ctx, &record); err != nil {
+				return err
+			}
 		}
 		if record.Action == controlplane.PlanActionReset && !record.EffectComplete {
 			return fmt.Errorf("%w: reset %s must resume through reset phase observation", ErrActionUncertain, record.ID)
@@ -149,5 +168,46 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 			e.recoveredDeletes[record.Resource.String()] = true
 		}
 	}
+	return nil
+}
+
+func (e *Executor) proveActionQuiescence(ctx context.Context, record *ActionRecord) error {
+	if record == nil {
+		return fmt.Errorf("%w: missing action for quiescence proof", ErrActionUncertain)
+	}
+	if record.Candidate == nil {
+		return fmt.Errorf("%w: action %s has no provider handle for quiescence proof", ErrActionUncertain, record.ID)
+	}
+	nodeDriver, err := driver.DefaultRegistry.RequireNode(record.Candidate.Driver)
+	if err != nil {
+		return fmt.Errorf("%w: provider %s unavailable for quiescence proof: %v", ErrActionUncertain, record.Candidate.Driver, err)
+	}
+	quiescer, ok := nodeDriver.(substrate.OperationQuiescer)
+	if !ok {
+		return fmt.Errorf("%w: provider %s has no operation quiescence SPI", ErrActionUncertain, record.Candidate.Driver)
+	}
+	stateDriver, ok := nodeDriver.(driver.NodeState)
+	if !ok {
+		return fmt.Errorf("%w: provider %s cannot recover provider handle", ErrActionUncertain, record.Candidate.Driver)
+	}
+	providerState, err := record.Candidate.ProviderState()
+	if err != nil {
+		return fmt.Errorf("%w: load provider handle: %v", ErrActionUncertain, err)
+	}
+	provider, err := stateDriver.UnmarshalProviderState(providerState)
+	if err != nil {
+		return fmt.Errorf("%w: decode provider handle: %v", ErrActionUncertain, err)
+	}
+	handle := substrate.NodeHandle{ID: record.Candidate.ExternalID, Generation: record.Candidate.Generation, Provider: provider}
+	identity := actionIdentity(*record)
+	proof, err := quiescer.ProveQuiescence(substrate.WithOperationIdentity(ctx, identity), handle, record.ProviderOperationID, identity)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrActionUncertain, err)
+	}
+	if err := proof.Validate(identity, record.ProviderOperationID); err != nil {
+		return fmt.Errorf("%w: %v", ErrActionUncertain, err)
+	}
+	record.Quiescence = "proven"
+	record.QuiescenceProof = &proof
 	return nil
 }

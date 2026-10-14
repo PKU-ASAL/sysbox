@@ -36,11 +36,11 @@ func TestDeleteRecoveryDoesNotRequireGuestSetupCompletion(t *testing.T) {
 	require.NoError(t, err)
 	record.Status = ActionUncertain
 	e.actions.(*memoryActions).actions = []ActionRecord{record}
-	require.NoError(t, e.Destroy(context.Background(), &Plan{Actions: []controlplane.PlannedChange{change}}))
-	require.Nil(t, e.state.FindResource(addr))
+	require.ErrorIs(t, e.Destroy(context.Background(), &Plan{Actions: []controlplane.PlannedChange{change}}), ErrActionUncertain)
+	require.NotNil(t, e.state.FindResource(addr))
 	require.Zero(t, h.deletes)
 	require.Zero(t, h.creates)
-	require.Equal(t, ActionSucceeded, e.actions.(*memoryActions).actions[0].Status)
+	require.NotEqual(t, ActionSucceeded, e.actions.(*memoryActions).actions[0].Status)
 }
 
 func TestImageEntryErrorKeepsCreateCompositeUncertain(t *testing.T) {

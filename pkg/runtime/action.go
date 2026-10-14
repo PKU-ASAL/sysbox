@@ -49,9 +49,16 @@ type ActionRecord struct {
 	Error       string               `json:"error,omitempty"`
 	// ReplayForbidden means resource presence cannot prove that the complete
 	// composite effect (guest initialization, provisioners, image entry) finished.
-	ReplayForbidden bool   `json:"replay_forbidden,omitempty"`
-	EffectComplete  bool   `json:"effect_complete,omitempty"`
-	Phase           string `json:"phase,omitempty"`
+	ReplayForbidden bool `json:"replay_forbidden,omitempty"`
+	EffectComplete  bool `json:"effect_complete,omitempty"`
+	// ProviderOperationID and Quiescence make an in-flight provider request
+	// explicit. "unknown" means the call may still be running; recovery must
+	// obtain a provider quiescence proof before committing any observation.
+	ProviderOperationID     string                     `json:"provider_operation_id,omitempty"`
+	ProviderOperationAnchor string                     `json:"provider_operation_anchor,omitempty"`
+	Quiescence              string                     `json:"quiescence,omitempty"`
+	QuiescenceProof         *substrate.QuiescenceProof `json:"quiescence_proof,omitempty"`
+	Phase                   string                     `json:"phase,omitempty"`
 }
 
 // ReferenceOnlyResource manages a local reference, not the external object

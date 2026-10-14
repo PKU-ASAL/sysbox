@@ -46,6 +46,12 @@ func IsValidationError(err error) bool {
 // flags missing implementations.
 type BaseSubstrate struct{}
 
+// ProveQuiescence fails closed by default. A substrate must override this
+// only when it has a durable daemon/host anchor for the exact operation.
+func (BaseSubstrate) ProveQuiescence(context.Context, NodeHandle, string, OperationIdentity) (QuiescenceProof, error) {
+	return QuiescenceProof{}, ErrQuiescenceUnsupported
+}
+
 func (BaseSubstrate) PreflightChecks(bool) []PreflightCheck { return nil }
 
 // Validate accepts any NodeSpec by default. Override to reject specs the

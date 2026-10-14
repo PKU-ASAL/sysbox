@@ -327,6 +327,9 @@ func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedCha
 		return ActionRecord{}, fmt.Errorf("%w: missing durable topology ownership", ErrObservationUnknown)
 	}
 	record := ActionRecord{ID: hex.EncodeToString(id[:]), Topology: e.topology, RunID: e.runID, Resource: change.Address, Action: change.Action, Status: ActionIntentCommitted, OwnerUID: e.state.TopologyUID, ResourceUID: derivedResourceUID(e.state.TopologyUID, change.Address), Generation: 1, StateSerial: e.state.Meta.Serial}
+	record.ProviderOperationID = record.ID
+	record.ProviderOperationAnchor = "action:" + record.ID
+	record.Quiescence = "unknown"
 	record.RunQueuedAt, record.RunRevision = e.runQueuedAt, e.runRevision
 	record.ExpectedSerial = e.state.Meta.Serial
 	if node := e.graph.Get(change.Address); node != nil {
@@ -440,6 +443,7 @@ func (e *Executor) runAction(ctx context.Context, change controlplane.PlannedCha
 		return e.uncertainAction(ctx, record, step, fmt.Errorf("provider returned no recoverable identity"))
 	}
 	record.EffectComplete = true
+	record.Quiescence = "returned"
 	record.Status = ActionUncertain
 	record.Error = "awaiting postcondition verification"
 	evidenceCtx := ctx

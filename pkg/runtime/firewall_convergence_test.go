@@ -101,9 +101,9 @@ func TestFirewallRecoveryDiscoversLostOutcomeWithoutReplay(t *testing.T) {
 	recovery := NewExecutor(g, reopened)
 	recovery.SetRunContext("lab", "recovery")
 	recovery.SetActionRepository(repo)
-	require.NoError(t, recovery.RecoverActions(context.Background(), plan))
-	require.NotNil(t, reopened.FindResource(a))
-	require.Equal(t, 1, policy.applies, "recovery must only observe")
+	require.ErrorIs(t, recovery.RecoverActions(context.Background(), plan), ErrActionUncertain)
+	require.Nil(t, reopened.FindResource(a))
+	require.Equal(t, 1, policy.applies, "recovery must not replay")
 }
 
 func TestFirewallReadInvalidTargetIsUnknown(t *testing.T) {
