@@ -80,7 +80,9 @@ Tear down resources represented in state in reverse dependency order.
 sysbox import ADDRESS EXTERNAL_ID --substrate NAME
 ```
 
-Import an existing node through the resource handler and provider import capability.
+The legacy local state mutation path has been removed. Managed adoption must use
+the API adoption plan/confirm workflow so an owning agent proves provider
+ownership before the state repository is changed.
 
 ## Runtime Control
 

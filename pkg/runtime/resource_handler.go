@@ -46,10 +46,6 @@ type CapabilityRequirement struct {
 type CapabilityDeclarer interface {
 	RequiredCapabilities(*graph.Node) ([]CapabilityRequirement, error)
 }
-type ResourceImporter interface {
-	Import(context.Context, address.Address, string, string) (state.Resource, error)
-}
-
 type DataGraphDecoder interface {
 	DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (data any, deps []address.Address, err error)
 }
