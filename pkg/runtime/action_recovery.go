@@ -14,7 +14,16 @@ func requireRecoveryQuiescence(record ActionRecord) error {
 	if record.ProviderOperationID == "" || record.Quiescence == "" {
 		return fmt.Errorf("%w: action %s has no durable provider operation identity", ErrActionUncertain, record.ID)
 	}
-	if record.Quiescence == "returned" || record.Quiescence == "proven" {
+	if record.Quiescence == "returned" {
+		return nil
+	}
+	if record.Quiescence == "proven" {
+		if record.QuiescenceProof == nil {
+			return fmt.Errorf("%w: provider operation %s is marked proven without persisted proof", ErrActionUncertain, record.ProviderOperationID)
+		}
+		if err := record.QuiescenceProof.Validate(actionIdentity(record), record.ProviderOperationID); err != nil {
+			return fmt.Errorf("%w: invalid persisted quiescence proof: %v", ErrActionUncertain, err)
+		}
 		return nil
 	}
 	if record.Quiescence == "unknown" {
@@ -81,14 +90,6 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 		if record.Status == ActionSucceeded {
 			continue
 		}
-		if err := requireRecoveryQuiescence(record); err != nil {
-			if record.Quiescence != "unknown" || record.ProviderOperationID == "" {
-				return err
-			}
-			if err := e.proveActionQuiescence(ctx, &record); err != nil {
-				return err
-			}
-		}
 		if record.Action == controlplane.PlanActionReset && !record.EffectComplete {
 			return fmt.Errorf("%w: reset %s must resume through reset phase observation", ErrActionUncertain, record.ID)
 		}
@@ -119,6 +120,16 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 		}
 		if record.Action != controlplane.PlanActionDelete && (record.ReplayForbidden || requiresCompositeCompletion(record.Resource.Type, record.Action)) && !record.EffectComplete {
 			return fmt.Errorf("%w: action %s guest initialization, provisioners, or image entry may be incomplete; manual resolution required", ErrActionUncertain, record.ID)
+		}
+		// Validate scope, ownership and composite completion before querying
+		// a provider: quiescence cannot resolve an unknown guest outcome.
+		if err := requireRecoveryQuiescence(record); err != nil {
+			if record.Quiescence != "unknown" || record.ProviderOperationID == "" {
+				return err
+			}
+			if err := e.proveActionQuiescence(ctx, &record); err != nil {
+				return err
+			}
 		}
 		handler, ok := GetResourceHandler(record.Resource.Type)
 		if !ok {
