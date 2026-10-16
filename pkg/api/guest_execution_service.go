@@ -40,8 +40,8 @@ func validateGuestExecutionRequest(req controlplane.GuestExecutionRequest) error
 	if req.TimeoutSeconds < 0 || req.TimeoutSeconds > guestExecutionMaxTimeout {
 		return fmt.Errorf("%w: timeout_seconds must be between 0 and %d", errInvalidGuestExecution, guestExecutionMaxTimeout)
 	}
-	if req.OutputLimitBytes < 0 || req.OutputLimitBytes > 4<<20 {
-		return fmt.Errorf("%w: output_limit_bytes must be between 0 and 4194304", errInvalidGuestExecution)
+	if req.OutputLimitBytes < 0 || req.OutputLimitBytes > 48<<20 {
+		return fmt.Errorf("%w: output_limit_bytes must be between 0 and 50331648", errInvalidGuestExecution)
 	}
 	for name := range req.Environment {
 		if !guestEnvironmentName.MatchString(name) {

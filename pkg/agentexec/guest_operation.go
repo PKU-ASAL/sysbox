@@ -20,7 +20,10 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-const guestOutputLimit = 1024 * 1024
+const (
+	guestOutputLimit             = 1024 * 1024
+	guestExecutionMaxOutputLimit = 48 << 20
+)
 
 type guestOperationCompletion struct {
 	Result      controlplane.GuestExecutionResult
@@ -106,7 +109,7 @@ func executeGuestOperation(ctx context.Context, st *state.State, node string, re
 			// Do not drop what the provider already captured: on a timeout that is
 			// the only trace of how far the command got, and the caller has nothing
 			// else to act on.
-			return guestOperationCompletion{ResultClass: class, Err: class + " guest operation", Result: encodeGuestOutputWithLimit(result.Stdout, result.Stderr, req.OutputLimitBytes)}
+			return guestOperationCompletion{ResultClass: class, Err: fmt.Sprintf("%s guest operation: %v", class, err), Result: encodeGuestOutputWithLimit(result.Stdout, result.Stderr, req.OutputLimitBytes)}
 		}
 	}
 
@@ -126,8 +129,8 @@ func encodeGuestOutputWithLimit(stdout, stderr string, limit int) controlplane.G
 	if limit <= 0 {
 		limit = guestOutputLimit
 	}
-	if limit > 4<<20 {
-		limit = 4 << 20
+	if limit > guestExecutionMaxOutputLimit {
+		limit = guestExecutionMaxOutputLimit
 	}
 	bound := func(s string) (string, bool) {
 		if len(s) > limit {

@@ -20,6 +20,19 @@ import (
 // It does not require guest networking or an administrator password in HCL.
 type qgaConnection struct{ domain string }
 
+func qgaCommandTimeout(command string) string {
+	if command == "guest-exec-status" {
+		// Status checks may carry captured process output, so give them more time
+		// than control probes.
+		return "30"
+	}
+	if command == "guest-file-read" {
+		// Windows QGA can take longer to service file reads while ETW is busy.
+		return "60"
+	}
+	return "10"
+}
+
 type qgaReply struct {
 	Return json.RawMessage `json:"return"`
 	Error  *struct {
@@ -37,12 +50,9 @@ func (c *qgaConnection) call(ctx context.Context, command string, args any, resu
 	if err != nil {
 		return err
 	}
-	timeout := "10"
-	// A completed process can return a large captured reply. The operation's
-	// parent context remains the overall bound; control probes keep 10 seconds.
-	if command == "guest-exec-status" {
-		timeout = "30"
-	}
+	// The operation's parent context remains the overall bound; control probes
+	// keep 10 seconds while status and file reads get longer budgets.
+	timeout := qgaCommandTimeout(command)
 	output, err := exec.CommandContext(ctx, "virsh", "qemu-agent-command", c.domain, "--timeout", timeout, string(encoded)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("libvirt qga %s: %w: %s", command, err, output)

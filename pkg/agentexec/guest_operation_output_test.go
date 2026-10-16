@@ -7,12 +7,12 @@ import (
 )
 
 func TestGuestOutputBudgetKeepsDefaultAndExplicitBound(t *testing.T) {
-	input := strings.Repeat("x", guestOutputLimit+1)
+	input := strings.Repeat("x", (5<<20)+1)
 	for _, tc := range []struct {
 		limit, want int
 		truncated   bool
 	}{
-		{0, guestOutputLimit, true}, {2 << 20, len(input), false}, {1024, 1024, true},
+		{0, guestOutputLimit, true}, {5 << 20, 5 << 20, true}, {1024, 1024, true},
 	} {
 		result := encodeGuestOutputWithLimit(input, "", tc.limit)
 		raw, err := base64.StdEncoding.DecodeString(result.Stdout)

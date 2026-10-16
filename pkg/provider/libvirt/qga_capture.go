@@ -14,6 +14,9 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
+const capturedGuestOutputLimit = 48 << 20
+const capturedGuestReadChunkSize = 256 << 10
+
 // Explicit file capture avoids large guest-exec-status replies. Each QGA file
 // read remains small; the caller still receives bounded, ordinary exec output.
 func (c *qgaConnection) execCapturedFile(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (substrate.ExecResult, error) {
@@ -61,13 +64,19 @@ func (c *qgaConnection) execCapturedFile(ctx context.Context, req substrate.Exec
 	if err != nil {
 		return result, err
 	}
-	out, err := c.readCapturedFile(ctx, outPath, 4<<20+1)
+	out, err := c.readCapturedFile(ctx, outPath, capturedGuestOutputLimit+1)
 	if err != nil {
 		return result, err
 	}
-	errOut, err := c.readCapturedFile(ctx, errPath, 4<<20+1)
+	if len(out) > capturedGuestOutputLimit {
+		return result, fmt.Errorf("libvirt qga: captured stdout exceeds limit")
+	}
+	errOut, err := c.readCapturedFile(ctx, errPath, capturedGuestOutputLimit+1)
 	if err != nil {
 		return result, err
+	}
+	if len(errOut) > capturedGuestOutputLimit {
+		return result, fmt.Errorf("libvirt qga: captured stderr exceeds limit")
 	}
 	result.Stdout, result.Stderr = string(out), string(errOut)
 	if stdout != nil {
@@ -101,7 +110,7 @@ func (c *qgaConnection) readCapturedFile(ctx context.Context, path string, limit
 	}()
 	var output bytes.Buffer
 	for output.Len() < limit {
-		count := min(1<<20, limit-output.Len())
+		count := min(capturedGuestReadChunkSize, limit-output.Len())
 		var chunk struct {
 			Count int    `json:"count"`
 			Data  string `json:"buf-b64"`

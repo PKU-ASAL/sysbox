@@ -22,7 +22,10 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-const DefaultAgentID = "local"
+const (
+	DefaultAgentID                 = "local"
+	agentCommandWebSocketReadLimit = 4 << 20
+)
 
 type Options struct {
 	APIURL                           string
@@ -204,10 +207,11 @@ func commandWebSocketAndExecute(ctx context.Context, runner *commandRunner, opts
 	if err != nil {
 		return err
 	}
+	conn.SetReadLimit(agentCommandWebSocketReadLimit)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	reporter := &commandEventReporter{conn: conn, opts: opts}
 	for {
-		_, data, err := conn.Read(ctx)
+		data, err := readAgentCommandMessage(ctx, conn)
 		if err != nil {
 			return err
 		}
@@ -225,6 +229,12 @@ func commandWebSocketAndExecute(ctx context.Context, runner *commandRunner, opts
 			reporter.Report(ctx, event)
 		})
 	}
+}
+
+func readAgentCommandMessage(ctx context.Context, conn *websocket.Conn) ([]byte, error) {
+	conn.SetReadLimit(agentCommandWebSocketReadLimit)
+	_, data, err := conn.Read(ctx)
+	return data, err
 }
 
 type commandRunner struct {
