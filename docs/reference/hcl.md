@@ -187,6 +187,7 @@ Machine sizing and network initialization must match the selected provider capab
 | `disk_size` | no | Overlay/guest disk size |
 | `ssh_user`, `ssh_pass`, `ssh_key` | no | Guest access |
 | `ssh_authorized_key` | no | Key injected during guest init |
+| `windows_etw` | no | Install the standalone Windows ETW collector before challenge provisioners and report observation source `etw`. Default `false`; requires `/var/lib/sysbox/vm-artifacts/windows-etw/` artifacts and a Windows guest. |
 
 ## `sysbox_router`
 
