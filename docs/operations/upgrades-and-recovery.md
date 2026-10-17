@@ -24,7 +24,7 @@ CLI、Agent 与 provider 必须一起升级，并共享同一宿主 namespace �
 
 本轮同时删除 SQLite 自动补列、旧 Run/command/event 完整记录缺失回退与任意 revision 标签兼容。缺 schema/快照的数据库必须重建；重新发布配置取得全局 revision，不能继续用旧任意字符串标签。
 
-SQLite/Postgres API schema 升为7：只在空数据库/schema 中初始化，在当前版本上重开；旧版、未知版或无版本的既有 API 表直接拒绝，不运行迁移阶梯。旧库先停写、保留恢复证据并按项目范围明确重建；不删除共享数据库的其他项目。
+SQLite/Postgres API schema 当前为14：只在空数据库/schema 中初始化，在当前版本上重开；旧版、未知版或无版本的既有 API 表直接拒绝，不运行迁移阶梯。旧库先停写、保留恢复证据并按项目范围明确重建；不删除共享数据库的其他项目。
 
 Guest vsock 的执行/文件协议变为 `exec.v2`/`write_file.v2`。重建 sysbox-init 后重建 VM；旧运行中的 guest 不支持新协议，禁止混用或回退。SSH 文件安装依赖 guest 的 `mktemp`、`sha256sum`、`mv -T` 和 `sync -f`；vsock 文件写入仅限已存在的白名单根目录。两种传输都要求校验成功后才返回安装成功。
 
@@ -51,3 +51,16 @@ API 重启后，带 Idempotency-Key 的活跃 Apply 若缺敏感输入，claim �
 ## Compose 维护
 
 `make api clean` 会删除本地 Postgres volume 和 API workspaces，只适合可丢弃开发环境。修改 Postgres password 后，已有 volume 仍保留旧数据库凭据；应执行受控数据库迁移或明确重建。
+
+## Aggregate format 6
+
+GC reservation 使生命周期 aggregate 升为 format 6；format 5 正常读写明确拒绝。
+`state import-format5` 提供显式离线转换：先停止全部旧 CLI/API/Agent/host writer，
+预览源摘要，再带 `--apply --offline --source-sha256 --archive` 保存原文并提交转换。
+转换覆盖保留 snapshot，保留未知 action、reset continuation 和原拓扑/资源身份，
+不清理 provider、不补造停止证明。API schema 仍为14。现有实验数据未自动转换。
+
+Firecracker 删除现在在移除 generation 前，将绑定原 action 的进程停止证据写到
+受管根目录的 `.locks` 下。冷恢复还需核验同一身份、无目录/socket/进程残留。
+普通 unlocked manifest 不再证明 VMM 内未知请求已经结束；跨宿主 reboot/PID 身份
+冲突仍保守拒绝。缺旧证据的历史 intent 不能自动升级为成功。

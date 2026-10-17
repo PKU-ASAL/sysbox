@@ -38,8 +38,8 @@ canonical topology inventoried under --runs. Uninventoried owners and resources
 without durable ownership metadata are skipped explicitly. Configured backends
 outside this filesystem inventory are refused.
 
-Use --dry-run. Automatic deletion is disabled until inventory and deletion can
-share lifecycle fencing; a preview is not authorization to delete resources.`,
+Use --dry-run for local preview, or gc submit to send an explicit candidate to
+the canonical API and owning Agent. A preview is not deletion authorization.`,
 	RunE: runGc,
 }
 

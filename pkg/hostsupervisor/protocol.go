@@ -15,24 +15,25 @@ type TargetRef struct {
 	Scope    controlplane.ExecutionScope `json:"scope"`
 }
 type Request struct {
-	SSHMutation     *substrate.SSHAccessMutation       `json:"ssh_mutation,omitempty"`
-	SSHAccessID     string                             `json:"ssh_access_id,omitempty"`
-	Version         int                                `json:"version"`
-	Operation       string                             `json:"operation"`
-	Target          TargetRef                          `json:"target"`
-	Task            *guesttask.Request                 `json:"task,omitempty"`
-	Handle          substrate.ExecutionHandle          `json:"handle,omitempty"`
-	Grant           *controlplane.SignedExecutionGrant `json:"grant,omitempty"`
-	Power           *controlplane.NodePowerRequest     `json:"power,omitempty"`
-	FileRequest     *substrate.FileInstallRequest      `json:"file_request,omitempty"`
-	FileHandle      substrate.FileInstallHandle        `json:"file_handle,omitempty"`
-	RunRequest      *RunRequest                        `json:"run_request,omitempty"`
-	RecoveryRequest *RunRecoveryRequest                `json:"recovery_request,omitempty"`
-	AdoptionRequest *controlplane.AdoptionRequest      `json:"adoption_request,omitempty"`
-	GCCandidate     *GCCandidate                       `json:"gc_candidate,omitempty"`
-	Stream          string                             `json:"stream,omitempty"`
-	Cursor          int64                              `json:"cursor,omitempty"`
-	Limit           int                                `json:"limit,omitempty"`
+	AdoptionInspection *controlplane.AdoptionInspectionRequest `json:"adoption_inspection,omitempty"`
+	SSHMutation        *substrate.SSHAccessMutation            `json:"ssh_mutation,omitempty"`
+	SSHAccessID        string                                  `json:"ssh_access_id,omitempty"`
+	Version            int                                     `json:"version"`
+	Operation          string                                  `json:"operation"`
+	Target             TargetRef                               `json:"target"`
+	Task               *guesttask.Request                      `json:"task,omitempty"`
+	Handle             substrate.ExecutionHandle               `json:"handle,omitempty"`
+	Grant              *controlplane.SignedExecutionGrant      `json:"grant,omitempty"`
+	Power              *controlplane.NodePowerRequest          `json:"power,omitempty"`
+	FileRequest        *substrate.FileInstallRequest           `json:"file_request,omitempty"`
+	FileHandle         substrate.FileInstallHandle             `json:"file_handle,omitempty"`
+	RunRequest         *RunRequest                             `json:"run_request,omitempty"`
+	RecoveryRequest    *RunRecoveryRequest                     `json:"recovery_request,omitempty"`
+	AdoptionRequest    *controlplane.AdoptionRequest           `json:"adoption_request,omitempty"`
+	GCCandidate        *GCCandidate                            `json:"gc_candidate,omitempty"`
+	Stream             string                                  `json:"stream,omitempty"`
+	Cursor             int64                                   `json:"cursor,omitempty"`
+	Limit              int                                     `json:"limit,omitempty"`
 }
 type Response struct {
 	SSHDiscovery     *substrate.SSHAccessDiscovery      `json:"ssh_discovery,omitempty"`

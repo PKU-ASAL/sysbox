@@ -99,7 +99,7 @@ func (s *Server) handleGetStateLock(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	info, err := s.workspaceService().LockInfo(r.Context(), topology)
+	info, err := s.inspectTopologyAuthority(r.Context(), topology)
 	if err != nil {
 		writeError(w, stateOperationErrorStatus(err), err)
 		return
@@ -111,6 +111,19 @@ func (s *Server) handleForceUnlockState(w http.ResponseWriter, r *http.Request) 
 	topology := r.PathValue("topology")
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		result, err := s.forceUnlockAuthority(r.Context(), topology, key)
+		if err != nil {
+			writeError(w, stateOperationErrorStatus(err), err)
+			return
+		}
+		status := http.StatusAccepted
+		if result.Status == "unlocked" {
+			status = http.StatusOK
+		}
+		writeJSON(w, status, result)
 		return
 	}
 	if err := s.workspaceService().ForceUnlock(r.Context(), topology); err != nil {

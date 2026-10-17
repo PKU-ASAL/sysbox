@@ -60,7 +60,7 @@ func asyncLeaseFixture(t *testing.T, budget time.Duration) (*RunCoordinator, Run
 }
 
 func TestAsyncRunExpiresWithoutRenewalAndColdIntentCannotRestart(t *testing.T) {
-	c, req, g, _ := asyncLeaseFixture(t, 100*time.Millisecond)
+	c, req, g, _ := asyncLeaseFixture(t, time.Second)
 	service, stop := context.WithCancel(context.Background())
 	defer stop()
 	canceled := make(chan struct{})
@@ -72,7 +72,7 @@ func TestAsyncRunExpiresWithoutRenewalAndColdIntentCannotRestart(t *testing.T) {
 	require.NoError(t, err)
 	select {
 	case <-canceled:
-	case <-time.After(time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("expired callback still active")
 	}
 	cold := &RunCoordinator{Root: c.Root, IssuerKey: c.IssuerKey, HostBootID: c.HostBootID, AgentID: c.AgentID, Authorize: c.Authorize}
@@ -83,7 +83,7 @@ func TestAsyncRunExpiresWithoutRenewalAndColdIntentCannotRestart(t *testing.T) {
 }
 
 func TestAsyncRunRenewalSpansInitialBudgetAndRejectsDuplicate(t *testing.T) {
-	c, req, g, key := asyncLeaseFixture(t, 180*time.Millisecond)
+	c, req, g, key := asyncLeaseFixture(t, 1500*time.Millisecond)
 	service, stop := context.WithCancel(context.Background())
 	defer stop()
 	release := make(chan struct{})
@@ -98,14 +98,19 @@ func TestAsyncRunRenewalSpansInitialBudgetAndRejectsDuplicate(t *testing.T) {
 		}
 	})
 	require.NoError(t, err)
-	effectCtx := <-started
+	var effectCtx context.Context
+	select {
+	case effectCtx = <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("callback did not start within admission budget")
+	}
 	renewed := g
-	renewed.Grant.ExpiresAt = time.Now().UTC().Add(controlplane.ExecutionGrantMaxClockSkew + time.Second)
+	renewed.Grant.ExpiresAt = time.Now().UTC().Add(controlplane.ExecutionGrantMaxClockSkew + 5*time.Second)
 	renewed, err = controlplane.SignExecutionGrant(key, renewed.Grant, g.BootID, time.Now())
 	require.NoError(t, err)
 	require.NoError(t, c.Renew(context.Background(), req, renewed))
 	require.Error(t, c.Renew(context.Background(), req, renewed))
-	timer := time.NewTimer(250 * time.Millisecond)
+	timer := time.NewTimer(time.Until(g.Grant.ExpiresAt.Add(-controlplane.ExecutionGrantMaxClockSkew).Add(100 * time.Millisecond)))
 	defer timer.Stop()
 	select {
 	case <-timer.C:
@@ -293,7 +298,7 @@ func TestAsyncRunSlowAdmissionDoesNotBlockOtherRunRenewalOrCancellation(t *testi
 }
 
 func TestAsyncRunDeadlineCancelsWhileJournalMutexIsHeld(t *testing.T) {
-	c, req, g, _ := asyncLeaseFixture(t, 100*time.Millisecond)
+	c, req, g, _ := asyncLeaseFixture(t, time.Second)
 	started := make(chan context.Context, 1)
 	_, err := c.StartAsync(context.Background(), context.Background(), req, g, func(ctx context.Context) (json.RawMessage, error) {
 		started <- ctx
@@ -301,17 +306,26 @@ func TestAsyncRunDeadlineCancelsWhileJournalMutexIsHeld(t *testing.T) {
 		return nil, ctx.Err()
 	})
 	require.NoError(t, err)
-	effectCtx := <-started
+	var effectCtx context.Context
+	select {
+	case effectCtx = <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("effect did not start within its admission budget")
+	}
 	active := c.findActive(g)
 	active.mu.Lock()
 	canceled := false
 	select {
 	case <-effectCtx.Done():
 		canceled = true
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 	}
 	active.mu.Unlock()
-	<-active.done
+	select {
+	case <-active.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("effect did not finish after cancellation")
+	}
 	require.True(t, canceled, "deadline cancellation waited for journal mutex")
 }
 

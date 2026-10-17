@@ -118,40 +118,18 @@ func (s *Server) handleGCGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	manager, err := s.stateManager(request.Topology)
-	if err != nil {
-		writeError(w, http.StatusConflict, err)
-		return
-	}
-	canonical, err := manager.LoadWithContext(r.Context())
-	if err != nil || canonical == nil || canonical.TopologyUID != request.Candidate.TopologyUID {
+	// Compatibility endpoint only proves an existing server-issued delivery.
+	// Workers cannot synthesize leases or overwrite the reserved outbox seed.
+	record, err := readFailureCommand(r.Context(), s.apiStore, request.CommandID)
+	if err != nil || record == nil || record.Retired {
 		writeError(w, http.StatusConflict, persistence.ErrConflict)
 		return
 	}
-	if canonical.Meta.Serial < 0 {
+	cmd := record.Command
+	topology, err := grantCommandTopology(record)
+	candidate := controlplane.GCCandidate{Kind: cmd.GCKind, ExternalID: cmd.GCExternalID, TopologyUID: cmd.TopologyUID, OwnerUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, InventoryDigest: cmd.GCInventoryDigest}
+	if err != nil || topology != request.Topology || cmd.Type != "gc_delete" || cmd.AgentID != r.PathValue("agent") || cmd.ActionID != cmd.ID || cmd.ActionID != request.ActionID || candidate != request.Candidate {
 		writeError(w, http.StatusConflict, persistence.ErrConflict)
-		return
-	}
-	if request.Candidate.InventoryDigest == "" {
-		writeError(w, http.StatusConflict, persistence.ErrConflict)
-		return
-	}
-	// GC grants are backed by a durable leased command. This binds the signed
-	// grant to the worker's lease/session and gives host authorization a
-	// persisted candidate from which to re-derive the digest.
-	leaseUntil := time.Now().UTC().Add(2 * time.Minute)
-	gcSession := &controlplane.ConsoleSession{ID: request.SessionID, Topology: request.Topology, AgentID: r.PathValue("agent")}
-	command := controlplane.AgentCommand{
-		ID: request.CommandID, AgentID: r.PathValue("agent"), Type: "gc_delete",
-		Status: controlplane.AgentCommandStatusLeased, Protocol: controlplane.AgentProtocolVersion,
-		TopologyUID: request.Candidate.TopologyUID, ActionID: request.ActionID,
-		ResourceUID: request.Candidate.ResourceUID, Generation: request.Candidate.Generation,
-		Session: gcSession, LeaseOwner: request.LeaseOwner, LeaseUntil: leaseUntil,
-		Attempt: request.Attempt, GCKind: request.Candidate.Kind, GCExternalID: request.Candidate.ExternalID,
-		GCInventoryDigest: request.Candidate.InventoryDigest, CreatedAt: time.Now().UTC(),
-	}
-	if err := s.apiStore.SaveAgentCommand(r.Context(), command); err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
 	issued, err := s.issueCommandGrant(r.Context(), r.PathValue("agent"), request.CommandID, ExecutionGrantRequest{SessionID: request.SessionID, LeaseOwner: request.LeaseOwner, Attempt: request.Attempt, BootID: request.BootID})
@@ -394,7 +372,15 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 		writeError(w, 401, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
-	if receipt.Grant.Operation == "adoption_apply" || controlplane.IsRunExecutionOperation(receipt.Grant.Operation) || receipt.Grant.Operation == "ssh_access_apply" || receipt.Grant.Operation == "ssh_access_delete" || controlplane.IsGuestSSHAccessOperation(receipt.Grant.Operation) {
+	if receipt.Grant.Operation == "gc_delete" {
+		if err := s.completeGCFromHost(r.Context(), receipt, key); err != nil {
+			writeError(w, agentRepositoryErrorStatus(err), err)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"stopped": true, "completed": true})
+		return
+	}
+	if receipt.Grant.Operation == "adoption_inspect" || receipt.Grant.Operation == "adoption_apply" || controlplane.IsRunExecutionOperation(receipt.Grant.Operation) || receipt.Grant.Operation == "ssh_access_apply" || receipt.Grant.Operation == "ssh_access_delete" || controlplane.IsGuestSSHAccessOperation(receipt.Grant.Operation) {
 		// Adoption, Run and SSH completion must durably commit their result
 		// before releasing this scope. Dedicated completion routes own that order.
 		writeError(w, 409, persistence.ErrConflict)
@@ -457,6 +443,10 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 	var body HostNodeOperationCompletion
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768)).Decode(&body); err != nil {
 		writeError(w, 400, err)
+		return
+	}
+	if body.Receipt.Grant.Operation == "adoption_inspect" {
+		s.completeHostInspection(w, r, body)
 		return
 	}
 	if body.Receipt.Grant.Operation == "ssh_access_apply" || body.Receipt.Grant.Operation == "ssh_access_delete" {
@@ -691,6 +681,18 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	lifecycleRun := false
 	switch cmd.Type {
 	case "node_operation":
+		if cmd.Operation.Operation == "adoption_inspect" {
+			request, err := controlplane.FromAdoptionInspectionCommand(cmd)
+			if err != nil {
+				return controlplane.ExecutionGrant{}, err
+			}
+			digest, err = request.Digest()
+			if err != nil {
+				return controlplane.ExecutionGrant{}, err
+			}
+			operation = "adoption_inspect"
+			break
+		}
 		if controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) {
 			request, err := controlplane.FromGuestSSHAccessCommand(cmd)
 			if err != nil {
@@ -779,7 +781,7 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 		operation = "run_" + action
 		lifecycleRun = true
 	case "gc_delete":
-		if cmd.Session == nil || cmd.Session.ID == "" || cmd.Session.ID != proof.SessionID || cmd.GCKind == "" || cmd.GCExternalID == "" || cmd.GCInventoryDigest == "" {
+		if cmd.Session == nil || (cmd.Session.ID != "" && cmd.Session.ID != proof.SessionID) || cmd.GCKind == "" || cmd.GCExternalID == "" || cmd.GCInventoryDigest == "" {
 			return controlplane.ExecutionGrant{}, persistence.ErrCorruptRecord
 		}
 		candidate := hostsupervisor.GCCandidate{Kind: cmd.GCKind, ExternalID: cmd.GCExternalID, TopologyUID: cmd.TopologyUID, OwnerUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, InventoryDigest: cmd.GCInventoryDigest}

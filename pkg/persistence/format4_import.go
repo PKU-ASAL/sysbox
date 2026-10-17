@@ -61,12 +61,19 @@ func decodeFormat4(raw []byte) (*aggregate, error) {
 }
 
 func convertFormat4(raw []byte, topology string, snapshot bool) (*aggregate, error) {
-	a, err := decodeFormat4(raw)
+	return convertLegacyAggregate(raw, topology, snapshot, decodeFormat4)
+}
+
+func convertLegacyAggregate(raw []byte, topology string, snapshot bool, decode func([]byte) (*aggregate, error)) (*aggregate, error) {
+	a, err := decode(raw)
 	if err != nil {
 		return nil, err
 	}
+	a.GC = map[string]GCReservation{}
 	a.Format = FormatVersion
-	a.ResetContinuations = map[string]runtime.ResetContinuationReceipt{}
+	if a.ResetContinuations == nil {
+		a.ResetContinuations = map[string]runtime.ResetContinuationReceipt{}
+	}
 	if err := validateAggregate(a, topology); err != nil {
 		return nil, err
 	}
@@ -77,7 +84,7 @@ func convertFormat4(raw []byte, topology string, snapshot bool) (*aggregate, err
 		if id == "" || id != snap.Metadata.ID || snap.Metadata.CreatedAt.IsZero() || snap.Metadata.Size != int64(len(snap.Data)) || snap.Digest != fmt.Sprintf("%x", sha256.Sum256(snap.Data)) {
 			return nil, ErrCorruptRecord
 		}
-		inner, err := convertFormat4(snap.Data, topology, true)
+		inner, err := convertLegacyAggregate(snap.Data, topology, true, decode)
 		if err != nil {
 			return nil, err
 		}
@@ -96,10 +103,13 @@ func convertFormat4(raw []byte, topology string, snapshot bool) (*aggregate, err
 }
 
 func PrepareFormat4Import(raw []byte, topology string) (*Format4ImportPlan, error) {
+	return prepareLegacyImport(raw, topology, decodeFormat4)
+}
+func prepareLegacyImport(raw []byte, topology string, decode func([]byte) (*aggregate, error)) (*Format4ImportPlan, error) {
 	if !topologyName.MatchString(topology) {
 		return nil, ErrInvalidRecord
 	}
-	a, err := convertFormat4(raw, topology, false)
+	a, err := convertLegacyAggregate(raw, topology, false, decode)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +121,9 @@ func PrepareFormat4Import(raw []byte, topology string) (*Format4ImportPlan, erro
 }
 
 func (r *Repository) PlanFormat4Import(ctx context.Context, topology string) (*Format4ImportPlan, error) {
+	return r.planLegacyImport(ctx, topology, decodeFormat4)
+}
+func (r *Repository) planLegacyImport(ctx context.Context, topology string, decode func([]byte) (*aggregate, error)) (*Format4ImportPlan, error) {
 	if !topologyName.MatchString(topology) || r.boundTopology != "" && r.boundTopology != topology {
 		return nil, ErrConflict
 	}
@@ -134,7 +147,7 @@ func (r *Repository) PlanFormat4Import(ctx context.Context, topology string) (*F
 	if err != nil {
 		return nil, err
 	}
-	return PrepareFormat4Import(raw, topology)
+	return prepareLegacyImport(raw, topology, decode)
 }
 
 // ImportFormat4 performs only a verified metadata conversion. Administrators
@@ -143,6 +156,9 @@ func (r *Repository) PlanFormat4Import(ctx context.Context, topology string) (*F
 // The exact old record (including original snapshot bytes/restore receipts) is
 // durably archived before replacing it. A failed commit may leave that archive.
 func (r *Repository) ImportFormat4(ctx context.Context, topology, expectedSHA256, archive string) (*Format4ImportPlan, error) {
+	return r.importLegacy(ctx, topology, expectedSHA256, archive, decodeFormat4)
+}
+func (r *Repository) importLegacy(ctx context.Context, topology, expectedSHA256, archive string, decodeOld func([]byte) (*aggregate, error)) (*Format4ImportPlan, error) {
 	if archive == "" {
 		return nil, ErrInvalidRecord
 	}
@@ -176,14 +192,14 @@ func (r *Repository) ImportFormat4(ctx context.Context, topology, expectedSHA256
 			return nil, ErrConflict
 		}
 		source = append([]byte(nil), raw...)
-		return decodeFormat4(raw)
+		return decodeOld(raw)
 	}
 	commit := func(a *aggregate) error {
 		if len(source) == 0 {
 			return ErrNotFound
 		}
 		var err error
-		plan, err = PrepareFormat4Import(source, topology)
+		plan, err = prepareLegacyImport(source, topology, decodeOld)
 		if err != nil {
 			return err
 		}

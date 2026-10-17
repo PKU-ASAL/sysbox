@@ -128,6 +128,9 @@ func (s *Supervisor) Scan(ctx context.Context) {
 }
 
 func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
+	if err := s.server.reconcileGCOutbox(ctx, topology); err != nil {
+		return err
+	}
 	if err := s.server.finishCommittedRestores(ctx, topology); err != nil {
 		return err
 	}

@@ -434,6 +434,9 @@ func (s *Substrate) destroyManifestNode(ctx context.Context, h substrate.NodeHan
 	if _, err := s.loadManifest(ctx, h); err != nil {
 		return err
 	}
+	if err := s.recordStoppedDeletion(ctx, h, m); err != nil {
+		return err
+	}
 	for _, path := range []string{m.Handle.Socket, m.Handle.VsockUDS} {
 		if path != "" {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

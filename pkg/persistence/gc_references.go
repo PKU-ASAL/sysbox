@@ -90,7 +90,9 @@ func gcReferences(a *aggregate) (GCReferenceSnapshot, error) {
 		sort.Slice(out.References, func(i, j int) bool { return out.References[i].Source < out.References[j].Source })
 		// Bind all journal revisions and retained snapshots, even those without
 		// resource handles. A reference-only hash would miss pending plan changes.
-		raw, err := json.Marshal(a)
+		content := *a
+		content.GC = map[string]GCReservation{}
+		raw, err := json.Marshal(&content)
 		if err != nil {
 			return err
 		}

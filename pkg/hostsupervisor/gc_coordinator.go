@@ -12,35 +12,8 @@ import (
 	"time"
 )
 
-type GCCandidate struct {
-	Kind            string `json:"kind"`
-	ExternalID      string `json:"external_id"`
-	TopologyUID     string `json:"topology_uid"`
-	OwnerUID        string `json:"owner_uid"`
-	ResourceUID     string `json:"resource_uid"`
-	Generation      int64  `json:"generation"`
-	InventoryDigest string `json:"inventory_digest"`
-}
+type GCCandidate = controlplane.GCCandidate
 
-func (c GCCandidate) Validate() error {
-	if c.Kind != "container" && c.Kind != "network" && c.Kind != "domain" && c.Kind != "firecracker" {
-		return fmt.Errorf("invalid GC candidate kind")
-	}
-	if c.ExternalID == "" || c.TopologyUID == "" || c.OwnerUID == "" || c.ResourceUID == "" || c.Generation < 1 || c.InventoryDigest == "" {
-		return fmt.Errorf("incomplete GC candidate identity")
-	}
-	if c.TopologyUID != c.OwnerUID {
-		return fmt.Errorf("GC owner and topology identity differ")
-	}
-	return nil
-}
-func (c GCCandidate) Digest() (string, error) {
-	if err := c.Validate(); err != nil {
-		return "", err
-	}
-	raw, _ := json.Marshal(c)
-	return digestHex(raw), nil
-}
 func digestHex(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
 
 type GCCoordinator struct {
@@ -52,7 +25,8 @@ type GCCoordinator struct {
 	Authorize           func(context.Context, controlplane.SignedExecutionGrant) error
 	// ValidateInventory re-reads the canonical host inventory under the same
 	// coordinator boundary. A dry-run digest is never sufficient authorization.
-	ValidateInventory func(context.Context, GCCandidate) error
+	ValidateInventory   func(context.Context, GCCandidate) error
+	ValidateReservation func(context.Context, GCCandidate, controlplane.SignedExecutionGrant) error
 }
 
 // Recover replays only durable completed GC outcomes. It never invokes a
@@ -63,9 +37,26 @@ func (c *GCCoordinator) Recover(ctx context.Context) error {
 		return effectgate.ErrFenced
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
-	return gate.RecoverStops(ctx, func(grant controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
-		return controlplane.SignExecutionStopReceipt(c.HostKey, grant, c.HostBootID, digestHex([]byte(fmt.Sprintf("%s/%d", grant.ActionID, time.Now().UnixNano()))), time.Now().UTC())
-	}, c.ReportStop)
+	return gate.RecoverCompleted(ctx, func(ctx context.Context, grant controlplane.ExecutionGrant, id string) error {
+		raw, err := gate.ReadOutcome(ctx, grant, id)
+		if err != nil {
+			return err
+		}
+		var outcome gcOutcome
+		if err := json.Unmarshal(raw, &outcome); err != nil {
+			return err
+		}
+		digest, err := outcome.Candidate.Digest()
+		if err != nil || digest != grant.Digest || outcome.Candidate.ExternalID != id || !gcDeleted(outcome.Result) {
+			return effectgate.ErrUncertain
+		}
+		if _, err = gate.SealStop(ctx, grant, id, func(g controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
+			return controlplane.SignGCDeletionReceipt(c.HostKey, g, g.TargetBootID, digestHex([]byte(fmt.Sprintf("%s/%d", id, time.Now().UnixNano()))), outcome.Candidate, time.Now().UTC())
+		}); err != nil {
+			return err
+		}
+		return gate.ReportStop(ctx, grant, id, c.ReportStop)
+	})
 }
 
 func (c *GCCoordinator) Delete(ctx context.Context, candidate GCCandidate, g controlplane.SignedExecutionGrant, deleteEffect func(context.Context) (json.RawMessage, error)) (json.RawMessage, error) {
@@ -79,7 +70,7 @@ func (c *GCCoordinator) Delete(ctx context.Context, candidate GCCandidate, g con
 	if err = controlplane.VerifyExecutionGrant(c.IssuerKey, g, c.HostBootID, time.Now()); err != nil {
 		return nil, err
 	}
-	if c.ValidateInventory == nil {
+	if c.ValidateInventory == nil && c.ValidateReservation == nil {
 		return nil, fmt.Errorf("%w: complete GC reference validator unavailable", effectgate.ErrFenced)
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID, Authorize: func(ctx context.Context, _ controlplane.ExecutionGrant) error {
@@ -89,17 +80,28 @@ func (c *GCCoordinator) Delete(ctx context.Context, candidate GCCandidate, g con
 		return c.Authorize(ctx, g)
 	}}
 	raw, err := gate.Execute(ctx, g, candidate.ExternalID, func(effectCtx context.Context) (json.RawMessage, error) {
-		if err := c.ValidateInventory(effectCtx, candidate); err != nil {
+		if c.ValidateReservation != nil {
+			if err := c.ValidateReservation(effectCtx, candidate, g); err != nil {
+				return nil, err
+			}
+		} else if err := c.ValidateInventory(effectCtx, candidate); err != nil {
 			return nil, err
 		}
-		return deleteEffect(effectCtx)
+		result, err := deleteEffect(effectCtx)
+		if err != nil {
+			return nil, err
+		}
+		if !gcDeleted(result) {
+			return nil, effectgate.ErrUncertain
+		}
+		return json.Marshal(gcOutcome{Candidate: candidate, Result: result})
 	})
 	if err != nil {
 		return nil, err
 	}
 	if len(c.HostKey) == ed25519.PrivateKeySize {
 		receipt, sealErr := gate.SealStop(ctx, g.Grant, candidate.ExternalID, func(grant controlplane.ExecutionGrant) (controlplane.SignedExecutionStopReceipt, error) {
-			return controlplane.SignExecutionStopReceipt(c.HostKey, grant, c.HostBootID, digestHex([]byte(fmt.Sprintf("%s/%d", candidate.ExternalID, time.Now().UnixNano()))), time.Now().UTC())
+			return controlplane.SignGCDeletionReceipt(c.HostKey, grant, c.HostBootID, digestHex([]byte(fmt.Sprintf("%s/%d", candidate.ExternalID, time.Now().UnixNano()))), candidate, time.Now().UTC())
 		})
 		if sealErr != nil {
 			return nil, sealErr
@@ -112,7 +114,7 @@ func (c *GCCoordinator) Delete(ctx context.Context, candidate GCCandidate, g con
 			}
 		}
 	}
-	return raw, nil
+	return decodeGCOutcome(raw, candidate)
 }
 func (c *GCCoordinator) Observe(ctx context.Context, candidate GCCandidate, g controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 	digest, err := candidate.Digest()
@@ -126,5 +128,28 @@ func (c *GCCoordinator) Observe(ctx context.Context, candidate GCCandidate, g co
 		return nil, err
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
-	return gate.ReadOutcome(ctx, g.Grant, candidate.ExternalID)
+	raw, err := gate.ReadOutcome(ctx, g.Grant, candidate.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+	return decodeGCOutcome(raw, candidate)
+}
+
+type gcOutcome struct {
+	Candidate GCCandidate     `json:"candidate"`
+	Result    json.RawMessage `json:"result"`
+}
+
+func gcDeleted(raw json.RawMessage) bool {
+	var result struct {
+		Deleted bool `json:"deleted"`
+	}
+	return json.Unmarshal(raw, &result) == nil && result.Deleted
+}
+func decodeGCOutcome(raw json.RawMessage, candidate GCCandidate) (json.RawMessage, error) {
+	var outcome gcOutcome
+	if json.Unmarshal(raw, &outcome) != nil || outcome.Candidate != candidate || !gcDeleted(outcome.Result) {
+		return nil, effectgate.ErrUncertain
+	}
+	return outcome.Result, nil
 }

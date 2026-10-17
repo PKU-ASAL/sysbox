@@ -100,7 +100,7 @@ func (c *AdoptionCoordinator) Recover(ctx context.Context) error {
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
 	return gate.RecoverCompleted(ctx, func(ctx context.Context, g controlplane.ExecutionGrant, effectID string) error {
-		if g.AgentID != c.AgentID || g.Operation != "adoption_apply" {
+		if g.AgentID != c.AgentID || (g.Operation != "adoption_apply" && g.Operation != "adoption_inspect") {
 			return effectgate.ErrFenced
 		}
 		raw, err := gate.ReadOutcome(ctx, g, effectID)

@@ -300,6 +300,12 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 	defer r.untrack(tracked)
 	emit("started", "command started", nil)
 	switch cmd.Type {
+	case "gc_delete":
+		if err := runGrantedGC(runCtx, r.opts, *cmd); err != nil {
+			emit("failed", "GC outcome unconfirmed", err)
+			return
+		}
+		emit("completed", "host GC completion reported", nil)
 	case controlplane.RunRecoveryCommand:
 		if !cmd.LeaseUntil.After(time.Now()) {
 			emit("failed", "recovery delivery lease expired", context.DeadlineExceeded)
@@ -378,7 +384,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		cmd.Operation.ActionID, cmd.Operation.ResourceUID, cmd.Operation.Generation = cmd.ActionID, cmd.ResourceUID, cmd.Generation
 		cmd.Operation.LeaseOwner, cmd.Operation.LeaseEpoch, cmd.Operation.Attempt = cmd.LeaseOwner, cmd.LeaseEpoch, cmd.Attempt
 		completed := executeGrantedNodeOperation(runCtx, r.opts, *cmd)
-		if cmd.Operation.Operation == "adoption_apply" || controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) {
+		if cmd.Operation.Operation == "adoption_inspect" || cmd.Operation.Operation == "adoption_apply" || controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) {
 			// The host signer owns canonical completion. Worker events report
 			// delivery/execution progress only, never a substitute result.
 			if completed.Status == controlplane.NodeOperationStatusFailed {
@@ -509,6 +515,27 @@ func authorizeAgentCommand(policy config.AgentPolicyConfig, cmd *controlplane.Ag
 			return fmt.Errorf("missing run")
 		}
 		if err := allowWorkspace(policy, cmd.Run.Workspace, cmd.Run.Topology); err != nil {
+			return err
+		}
+	case "gc_delete":
+		if cmd.Session == nil || cmd.Session.Topology == "" {
+			return fmt.Errorf("GC topology required")
+		}
+		if err := allowWorkspace(policy, cmd.Session.Topology, cmd.Session.Topology); err != nil {
+			return err
+		}
+		provider := ""
+		switch cmd.GCKind {
+		case "container", "network":
+			provider = "docker"
+		case "domain":
+			provider = "libvirt"
+		case "firecracker":
+			provider = "firecracker"
+		default:
+			return fmt.Errorf("invalid GC provider kind")
+		}
+		if err := allowSubstrate(policy, provider); err != nil {
 			return err
 		}
 	case "session_open":

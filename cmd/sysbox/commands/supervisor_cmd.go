@@ -124,6 +124,13 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	server.SSHGuest = &hostsupervisor.SSHGuestDispatcher{Dispatcher: &sshDispatcher, Report: authority.ReportNodeOperation, ReportDerived: authority.ReportDerivedSSHAccess}
 	hostRun.SSH = server.SSHGuest
 	server.Adoption = &hostsupervisor.AdoptionCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "adoption"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Report: authority.ReportNodeOperation, Authorize: authority.Authorize}
+	server.AdoptionInspect = func(ctx context.Context, req controlplane.AdoptionInspectionRequest) (substrate.AdoptionEvidence, error) {
+		provider, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider)
+		if err != nil {
+			return substrate.AdoptionEvidence{}, err
+		}
+		return provider.InspectAdoption(ctx, req.ExternalID, substrate.NodeSpec{})
+	}
 	server.AdoptionApply = func(ctx context.Context, req controlplane.AdoptionRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 		p, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider)
 		if err != nil {
@@ -152,13 +159,23 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		return evidence, nil
 	}
 	// Recovery and observation do not depend on a provider client. Production
-	// deletion remains fenced until a complete reference validator is wired in;
-	// a no-op validator would mistake a worker's digest for deletion authority.
+	// deletion revalidates the exact command and its durable reference reservation.
 	server.GC = &hostsupervisor.GCCoordinator{
 		Root: filepath.Join(cfg.HostSupervisor.Root, "gc"), AgentID: ident.ID,
 		HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key,
 		Authorize: authority.Authorize, ReportStop: authority.ReportStop,
+		ValidateReservation: func(ctx context.Context, candidate hostsupervisor.GCCandidate, grant controlplane.SignedExecutionGrant) error {
+			digest, err := candidate.Digest()
+			if err != nil {
+				return err
+			}
+			if digest != grant.Grant.Digest {
+				return controlplane.ErrInvalidExecutionGrant
+			}
+			return authority.Authorize(ctx, grant)
+		},
 	}
+	server.GCValidateTarget = supervisorGCReferenceValidator(runBridge.ActionRepository)
 	server.GCEffect = newSupervisorGCEffect(cfg)
 	return server.Serve(cmd.Context())
 }}

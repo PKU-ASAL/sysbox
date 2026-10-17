@@ -75,7 +75,8 @@ func (s *Substrate) InspectAdoption(ctx context.Context, id string, spec substra
 		return substrate.AdoptionEvidence{}, err
 	}
 	sum := sha256.Sum256(raw)
-	return substrate.AdoptionEvidence{Provider: "firecracker", ExternalID: m.VMID, Fingerprint: "sha256:" + hex.EncodeToString(sum[:]), State: raw}, nil
+	identity := substrate.OperationIdentity{ActionID: m.ActionID, OwnerUID: m.OwnerUID, TopologyUID: m.TopologyUID, ResourceUID: m.ResourceUID, Generation: m.Generation}
+	return substrate.AdoptionEvidence{ManagedIdentity: &identity, Provider: "firecracker", ExternalID: m.VMID, Fingerprint: "sha256:" + hex.EncodeToString(sum[:]), State: raw}, nil
 }
 func (s *Substrate) adoptionManifest(ctx context.Context, e substrate.AdoptionEvidence, id substrate.OperationIdentity) (substrate.NodeHandle, error) {
 	if id.Validate() != nil || e.Provider != "firecracker" {
@@ -109,8 +110,8 @@ func (s *Substrate) verifiedAdoptionManifest(ctx context.Context, m vmManifest, 
 	if sha256.Sum256(current) != sha256.Sum256(raw) {
 		return substrate.NodeHandle{}, fmt.Errorf("adoption manifest changed during verification")
 	}
-	if err := recoverLaunch(verified); err != nil {
-		return substrate.NodeHandle{}, err
+	if verified.Phase == "attaching" || (verified.Phase == "starting" && verified.Process.PID == 0) {
+		return substrate.NodeHandle{}, fmt.Errorf("read-only inspection cannot repair unresolved launch or attachment")
 	}
 	if _, _, err := probeProcess(verified.Process); err != nil {
 		return substrate.NodeHandle{}, err

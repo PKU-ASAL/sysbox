@@ -325,7 +325,11 @@ func (r *CommandRepository) DeleteAgentCommand(ctx context.Context, agent, id st
 		if next.Command.Type != "run_assigned" {
 			next.Command.Run = nil
 		}
-		next.Command.Session = nil
+		if next.Command.Type == "gc_delete" && current.Command.Session != nil {
+			next.Command.Session = &controlplane.ConsoleSession{Topology: current.Command.Session.Topology, AgentID: current.Command.AgentID}
+		} else {
+			next.Command.Session = nil
+		}
 		next.Command.Request = controlplane.ConsoleRequest{}
 		next.Command.Operation = controlplane.NodeOperation{}
 		next.Command.Execution = nil

@@ -46,7 +46,7 @@ func validStopReceipt(r SignedExecutionStopReceipt) bool {
 	if r.ObservedGuestBootID != "" && (g.Operation != "guest_task" || r.ObservedGuestBootID == r.GuestBootID || r.GuestResult == nil || r.GuestResult.ExitCodeKnown || r.GuestResult.ResultClass != "unknown" || r.GuestResult.Result.Stdout != "" || r.GuestResult.Result.Stderr != "") {
 		return false
 	}
-	if (g.Operation == "adoption_apply" || g.Operation == "ssh_access_apply" || g.Operation == "ssh_access_delete") && (len(r.EvidenceDigest) != 64 || g.Scope.ResourceUID == "") {
+	if (g.Operation == "adoption_apply" || g.Operation == "adoption_inspect" || g.Operation == "ssh_access_apply" || g.Operation == "ssh_access_delete") && (len(r.EvidenceDigest) != 64 || g.Scope.ResourceUID == "") {
 		return false
 	}
 	if g.Operation == "guest_file_install" {

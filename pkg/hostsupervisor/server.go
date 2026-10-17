@@ -23,18 +23,20 @@ import (
 // which worker may submit requests; issuer signatures and canonical resource
 // identity still authorize every effect. Private keys never cross this socket.
 type Server struct {
-	Socket        string
-	GroupID       int
-	Dispatcher    *Dispatcher
-	Power         *PowerDispatcher
-	Files         *FileDispatcher
-	Runs          *RunCoordinator
-	RunEffect     func(context.Context, RunRequest) (json.RawMessage, error)
-	RunRecovery   func(context.Context, RunRecoveryRequest) (*controlplane.RunRecoveryReport, error)
-	SSHGuest      *SSHGuestDispatcher
-	Adoption      *AdoptionCoordinator
-	AdoptionApply func(context.Context, controlplane.AdoptionRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
-	GC            *GCCoordinator
+	AdoptionInspect  func(context.Context, controlplane.AdoptionInspectionRequest) (substrate.AdoptionEvidence, error)
+	Socket           string
+	GroupID          int
+	Dispatcher       *Dispatcher
+	Power            *PowerDispatcher
+	Files            *FileDispatcher
+	Runs             *RunCoordinator
+	RunEffect        func(context.Context, RunRequest) (json.RawMessage, error)
+	RunRecovery      func(context.Context, RunRecoveryRequest) (*controlplane.RunRecoveryReport, error)
+	SSHGuest         *SSHGuestDispatcher
+	Adoption         *AdoptionCoordinator
+	AdoptionApply    func(context.Context, controlplane.AdoptionRequest, controlplane.SignedExecutionGrant) (json.RawMessage, error)
+	GC               *GCCoordinator
+	GCValidateTarget func(context.Context, TargetRef, GCCandidate, controlplane.SignedExecutionGrant) error
 	// GCEffect runs inside GC.Delete; it must never invoke another coordinator.
 	GCEffect        func(context.Context, GCCandidate) (json.RawMessage, error)
 	OnRecoveryError func(error)
@@ -229,6 +231,18 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 			response.Error = "guest SSH mutation and grant required"
 			return response
 		}
+	case "gc-delete", "gc-observe":
+		c := request.GCCandidate
+		if c == nil || c.TopologyUID != request.Target.Scope.TopologyUID || c.ResourceUID != request.Target.Scope.ResourceUID || c.Generation != request.Target.Scope.Generation {
+			response.Error = "GC target mismatch"
+			return response
+		}
+	case "adoption-inspect":
+		r := request.AdoptionInspection
+		if r == nil || r.Topology != request.Target.Topology || r.TopologyUID != request.Target.Scope.TopologyUID || r.ResourceUID != request.Target.Scope.ResourceUID || r.Generation != request.Target.Scope.Generation {
+			response.Error = "adoption inspection target mismatch"
+			return response
+		}
 	case "adoption-apply", "adoption-observe":
 		r := request.AdoptionRequest
 		if r == nil {
@@ -269,6 +283,12 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 		if err == nil {
 			response.SSHDiscovery = &result
 		}
+	case "gc-info":
+		if s.GC == nil || s.GC.HostBootID == "" {
+			err = fmt.Errorf("host GC coordinator unavailable")
+			break
+		}
+		response.BootID = s.GC.HostBootID
 	case "adoption-info":
 		// This target does not exist in canonical state until adoption commits.
 		// Return only the configured host boot; this read grants no authority.
@@ -358,6 +378,14 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 		} else {
 			response.SSHEvidence, err = json.Marshal(result)
 		}
+	case "adoption-inspect":
+		if s.Adoption == nil || s.AdoptionInspect == nil || request.AdoptionInspection == nil || request.Grant == nil {
+			err = fmt.Errorf("adoption inspection unavailable")
+			break
+		}
+		response.AdoptionEvidence, err = s.Adoption.Inspect(ctx, *request.AdoptionInspection, *request.Grant, func(ctx context.Context) (substrate.AdoptionEvidence, error) {
+			return s.AdoptionInspect(ctx, *request.AdoptionInspection)
+		})
 	case "adoption-apply":
 		if s.Adoption == nil || s.AdoptionApply == nil || request.AdoptionRequest == nil || request.Grant == nil {
 			err = fmt.Errorf("host adoption coordinator unavailable")
@@ -376,6 +404,11 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 		if s.GC == nil || s.GCEffect == nil || request.GCCandidate == nil || request.Grant == nil {
 			err = fmt.Errorf("host GC coordinator unavailable")
 			break
+		}
+		if s.GCValidateTarget != nil {
+			if err = s.GCValidateTarget(ctx, request.Target, *request.GCCandidate, *request.Grant); err != nil {
+				break
+			}
 		}
 		response.GCResult, err = s.GC.Delete(ctx, *request.GCCandidate, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
 			return s.GCEffect(effectCtx, *request.GCCandidate)

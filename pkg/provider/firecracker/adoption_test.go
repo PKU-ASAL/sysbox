@@ -32,3 +32,20 @@ func TestAdoptionValidatesConfigBeyondManifestFingerprint(t *testing.T) {
 	_, err = s.InspectAdoption(ctx, "node", substrate.NodeSpec{})
 	require.Error(t, err)
 }
+
+func TestAdoptionInspectionNeverRepairsLaunchManifest(t *testing.T) {
+	s, h, _, cleanup := quiescenceFixture(t)
+	defer cleanup()
+	m, err := s.loadManifest(context.Background(), h)
+	require.NoError(t, err)
+	m.Phase = "starting"
+	m.Process.PID = 0
+	require.NoError(t, saveManifest(m))
+	before, err := os.ReadFile(m.Handle.ManifestPath)
+	require.NoError(t, err)
+	_, err = s.InspectAdoption(context.Background(), h.ID, substrate.NodeSpec{})
+	require.ErrorContains(t, err, "read-only inspection")
+	after, err := os.ReadFile(m.Handle.ManifestPath)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}

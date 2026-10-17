@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
@@ -76,6 +77,24 @@ func TestHostResetFailureUsesReturnedExecutorAndDurablePhases(t *testing.T) {
 			require.NoError(t, err)
 			c := &hostsupervisor.RunCoordinator{Root: t.TempDir(), IssuerKey: issuer, HostKey: hostPrivate, AgentID: "agent", HostBootID: "host", Authorize: func(context.Context, controlplane.SignedExecutionGrant) error { return nil }}
 			require.NoError(t, os.Chmod(c.Root, 0700))
+			service, stopService := context.WithCancel(ctx)
+			t.Cleanup(func() {
+				stopService()
+				// ObserveAsync may publish a completed receipt before the executor's
+				// final ReportStop fsync. Drain its process-independent execution lock
+				// before TempDir removal; do not race a background writer with cleanup.
+				paths, err := filepath.Glob(filepath.Join(c.Root, "executor-*.lock"))
+				require.NoError(t, err)
+				bounded, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				for _, path := range paths {
+					lock := flock.New(path)
+					held, err := lock.TryLockContext(bounded, 5*time.Millisecond)
+					require.NoError(t, err)
+					require.True(t, held)
+					require.NoError(t, lock.Close())
+				}
+			})
 			reported := make(chan controlplane.Run, 1)
 			var reportMu sync.Mutex
 			var receiptID string
@@ -96,7 +115,7 @@ func TestHostResetFailureUsesReturnedExecutorAndDurablePhases(t *testing.T) {
 				return nil
 			}
 			h := &HostRunExecutor{Bridge: b, Tasks: &hostsupervisor.Dispatcher{AgentID: "agent"}}
-			_, err = c.StartAsync(ctx, ctx, req, g, func(callback context.Context) (json.RawMessage, error) { return h.Execute(callback, req) })
+			_, err = c.StartAsync(ctx, service, req, g, func(callback context.Context) (json.RawMessage, error) { return h.Execute(callback, req) })
 			require.NoError(t, err)
 			require.Eventually(t, func() bool {
 				obs, err := c.ObserveAsync(ctx, req, g)

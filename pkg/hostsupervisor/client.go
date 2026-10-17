@@ -226,3 +226,13 @@ func (c *TaskClient) ObserveAdoption(ctx context.Context, req controlplane.Adopt
 	r, err := c.call(ctx, Request{Operation: "adoption-observe", AdoptionRequest: &req, Grant: &g})
 	return r.AdoptionEvidence, err
 }
+
+func (c *TaskClient) GCHostBootID(ctx context.Context) (string, error) {
+	r, err := c.call(ctx, Request{Operation: "gc-info"})
+	return r.BootID, err
+}
+
+func (c *TaskClient) InspectAdoption(ctx context.Context, req controlplane.AdoptionInspectionRequest, g controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+	r, err := c.call(ctx, Request{Operation: "adoption-inspect", AdoptionInspection: &req, Grant: &g})
+	return r.AdoptionEvidence, err
+}

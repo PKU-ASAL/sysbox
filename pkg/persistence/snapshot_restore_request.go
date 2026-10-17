@@ -129,6 +129,9 @@ func (r *Repository) CommitSnapshotRestore(ctx context.Context, topology string,
 }
 
 func applySnapshotRestore(a *aggregate, request SnapshotRestoreRequest) (SnapshotRestoreReceipt, error) {
+	if gcPending(a) {
+		return SnapshotRestoreReceipt{}, ErrConflict
+	}
 	if prior, ok := a.Restores[request.ID]; ok {
 		if prior.Request != request {
 			return SnapshotRestoreReceipt{}, ErrConflict

@@ -17,6 +17,8 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,4 +111,24 @@ func TestSupervisorGCWithoutReferenceValidatorDoesNotWriteIntent(t *testing.T) {
 	files, err := os.ReadDir(root)
 	require.NoError(t, err)
 	require.Empty(t, files)
+}
+
+func TestSupervisorGCRequiresReservationInHostCanonicalRepository(t *testing.T) {
+	ctx := context.Background()
+	repo, err := persistence.OpenFilesystem(t.TempDir())
+	require.NoError(t, err)
+	defer repo.Close()
+	refs, err := repo.LoadGCReferences(ctx, "lab")
+	require.NoError(t, err)
+	candidate := controlplane.GCCandidate{Kind: "container", ExternalID: "orphan", TopologyUID: refs.TopologyUID, OwnerUID: refs.TopologyUID, ResourceUID: "resource", Generation: 1, InventoryDigest: refs.Digest}
+	digest, err := candidate.Digest()
+	require.NoError(t, err)
+	grant := controlplane.SignedExecutionGrant{Grant: controlplane.ExecutionGrant{CommandID: "gc", AgentID: "agent", Digest: digest}}
+	ref := hostsupervisor.TargetRef{Topology: "lab", Scope: controlplane.ExecutionScope{TopologyUID: refs.TopologyUID, ResourceUID: "resource", Generation: 1}}
+	check := supervisorGCReferenceValidator(func(string) (runtime.ActionRepository, error) { return repo, nil })
+	require.Error(t, check(ctx, ref, candidate, grant), "API-only reservation cannot freeze a different host repository")
+	require.NoError(t, repo.ReserveGC(ctx, "lab", persistence.GCReservation{ID: "gc", AgentID: "agent", Candidate: candidate}))
+	require.NoError(t, check(ctx, ref, candidate, grant))
+	candidate.InventoryDigest = "stale"
+	require.Error(t, check(ctx, ref, candidate, grant))
 }

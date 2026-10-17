@@ -6,10 +6,13 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/persistence"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	firecrackerprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
+	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 // The RPC server owns the coordinator/gate. This callback only dispatches an
@@ -47,5 +50,35 @@ func newSupervisorGCEffect(cfg config.ServiceConfig) func(context.Context, hosts
 			return nil, fmt.Errorf("host supervisor GC provider kind %q is not configured", candidate.Kind)
 		}
 		return json.RawMessage(`{"deleted":true}`), nil
+	}
+}
+
+// The host must observe the reservation in its own canonical repository. An
+// API with an independent state copy cannot authorize deletion of host resources.
+func supervisorGCReferenceValidator(repository func(string) (runtime.ActionRepository, error)) func(context.Context, hostsupervisor.TargetRef, hostsupervisor.GCCandidate, controlplane.SignedExecutionGrant) error {
+	return func(ctx context.Context, ref hostsupervisor.TargetRef, candidate hostsupervisor.GCCandidate, grant controlplane.SignedExecutionGrant) error {
+		actions, err := repository(ref.Topology)
+		if err != nil {
+			return err
+		}
+		repo, ok := actions.(*persistence.Repository)
+		if !ok {
+			return fmt.Errorf("canonical GC reservation repository unavailable")
+		}
+		reservation, err := repo.LoadGCReservation(ctx, ref.Topology, grant.Grant.CommandID)
+		if err != nil {
+			return err
+		}
+		if reservation.AgentID != grant.Grant.AgentID || reservation.Candidate != candidate || reservation.ReceiptHash != "" {
+			return persistence.ErrConflict
+		}
+		digest, err := candidate.Digest()
+		if err != nil {
+			return err
+		}
+		if digest != grant.Grant.Digest {
+			return persistence.ErrConflict
+		}
+		return nil
 	}
 }

@@ -25,11 +25,21 @@ func ValidateCommandLifecycle(raw []byte, topology string, command controlplane.
 }
 
 func validateCommandLifecycle(a *aggregate, command controlplane.AgentCommand) error {
+	if err := checkGCCommand(a, command); err != nil {
+		return err
+	}
 	if a.State.TopologyUID != command.TopologyUID {
 		return ErrConflict
 	}
 	if command.Type != "gc_delete" {
 		return nil
+	}
+	return validateGCReferences(a, command)
+}
+
+func validateGCReferences(a *aggregate, command controlplane.AgentCommand) error {
+	if a.State.TopologyUID != command.TopologyUID {
+		return ErrConflict
 	}
 	inventory, err := gcReferences(a)
 	if err != nil {

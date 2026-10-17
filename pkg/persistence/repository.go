@@ -27,11 +27,12 @@ var (
 	ErrUnsupportedVersion = errors.New("unsupported repository version")
 )
 
-const FormatVersion = 5
+const FormatVersion = 6
 
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
+	GC                 map[string]GCReservation                    `json:"gc_reservations"`
 	ResetContinuations map[string]runtime.ResetContinuationReceipt `json:"reset_continuations"`
 	Restores           map[string]SnapshotRestoreReceipt           `json:"restores"`
 	Snapshots          map[string]aggregateSnapshot                `json:"snapshots"`
@@ -80,7 +81,7 @@ func (r *Repository) ListTopologies(ctx context.Context) ([]state.TopologyMetada
 	return out, nil
 }
 func newAggregate() *aggregate {
-	return &aggregate{Format: FormatVersion, State: &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}, Actions: map[string]runtime.ActionRecord{}, Snapshots: map[string]aggregateSnapshot{}, Restores: map[string]SnapshotRestoreReceipt{}, ResetContinuations: map[string]runtime.ResetContinuationReceipt{}}
+	return &aggregate{GC: map[string]GCReservation{}, Format: FormatVersion, State: &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}, Actions: map[string]runtime.ActionRecord{}, Snapshots: map[string]aggregateSnapshot{}, Restores: map[string]SnapshotRestoreReceipt{}, ResetContinuations: map[string]runtime.ResetContinuationReceipt{}}
 }
 func decodeAggregate(raw []byte) (*aggregate, error) {
 	var header struct {
@@ -108,8 +109,11 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 // Validate both loaded records and proposed mutations. JSON syntax alone does
 // not make identity, journal revision, or recovery evidence trustworthy.
 func validateAggregate(a *aggregate, topology string) error {
-	if a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Restores == nil || a.ResetContinuations == nil || a.Serial < 0 {
+	if a.GC == nil || a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Restores == nil || a.ResetContinuations == nil || a.Serial < 0 {
 		return ErrCorruptRecord
+	}
+	if err := validateGCReservations(a); err != nil {
+		return err
 	}
 	for id, receipt := range a.Restores {
 		if id != receipt.Request.ID || !validSnapshotRestoreRequest(receipt.Request) || receipt.Request.TopologyUID != a.State.TopologyUID || receipt.Serial != receipt.Request.ExpectedSerial+1 || receipt.Serial > a.Serial || receipt.CompletedAt.IsZero() {
@@ -192,6 +196,10 @@ func validateAggregate(a *aggregate, topology string) error {
 	return nil
 }
 func (r *Repository) update(ctx context.Context, topology string, fn func(*aggregate) error) error {
+	return r.updateGC(ctx, topology, false, fn)
+}
+
+func (r *Repository) updateGC(ctx context.Context, topology string, gcTransition bool, fn func(*aggregate) error) error {
 	if r.boundTopology != "" && topology != r.boundTopology {
 		return fmt.Errorf("backend topology %q does not match requested topology %q", r.boundTopology, topology)
 	}
@@ -205,8 +213,25 @@ func (r *Repository) update(ctx context.Context, topology string, fn func(*aggre
 		if err := validateAggregate(a, topology); err != nil {
 			return err
 		}
+		var before []byte
+		if !gcTransition && gcPending(a) {
+			raw, err := json.Marshal(a)
+			if err != nil {
+				return err
+			}
+			before = raw
+		}
 		if err := fn(a); err != nil {
 			return err
+		}
+		if before != nil {
+			after, err := json.Marshal(a)
+			if err != nil {
+				return err
+			}
+			if string(before) != string(after) {
+				return fmt.Errorf("%w: GC reservation freezes lifecycle references", ErrConflict)
+			}
 		}
 		return validateAggregate(a, topology)
 	})
@@ -329,6 +354,9 @@ func (r *Repository) CommitActionIntent(ctx context.Context, action runtime.Acti
 }
 
 func commitActionIntent(a *aggregate, action runtime.ActionRecord) error {
+	if gcPending(a) {
+		return ErrConflict
+	}
 	if old, exists := a.Actions[action.ID]; exists {
 		if sameIntent(old, action) {
 			return nil
@@ -380,6 +408,9 @@ func (r *Repository) CommitActionOutcomeWithGuard(ctx context.Context, action ru
 }
 
 func applyActionOutcome(a *aggregate, action runtime.ActionRecord, patch *runtime.StatePatch) error {
+	if gcPending(a) {
+		return ErrConflict
+	}
 	old, exists := a.Actions[action.ID]
 	if !exists {
 		return ErrNotFound
@@ -632,6 +663,9 @@ func (b *stateBackend) DeleteVersioned(ctx context.Context, expectedSerial int64
 	})
 }
 func resetAggregate(a *aggregate) error {
+	if gcPending(a) {
+		return ErrConflict
+	}
 	for _, action := range a.Actions {
 		if action.Status != runtime.ActionSucceeded {
 			return ErrConflict
@@ -642,6 +676,7 @@ func resetAggregate(a *aggregate) error {
 	a.Snapshots = map[string]aggregateSnapshot{}
 	a.Restores = map[string]SnapshotRestoreReceipt{}
 	a.ResetContinuations = map[string]runtime.ResetContinuationReceipt{}
+	a.GC = map[string]GCReservation{}
 	a.Serial = 0
 	a.UpdatedAt = time.Now().UTC()
 	return nil

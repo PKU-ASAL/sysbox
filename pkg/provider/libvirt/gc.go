@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"github.com/google/uuid"
 	"os/exec"
 	"strings"
 
@@ -17,11 +18,18 @@ func (s *Substrate) DeleteManagedExternal(ctx context.Context, externalID, owner
 	if externalID == "" || ownerUID == "" || resourceUID == "" || generation < 1 {
 		return driver.Wrap(driver.ErrorInvalidState, subName, "incomplete GC domain ownership identity", nil)
 	}
+	if _, err := uuid.Parse(externalID); err != nil {
+		return fmt.Errorf("GC requires exact domain UUID: %w", err)
+	}
+	present, err := gcDomainPresent(ctx, externalID)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return nil
+	}
 	raw, err := virshQuery(ctx, "dumpxml", externalID)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "not found") {
-			return nil
-		}
 		return err
 	}
 	var domain domainXML
@@ -47,7 +55,31 @@ func (s *Substrate) DeleteManagedExternal(ctx context.Context, externalID, owner
 	if out, err := exec.CommandContext(ctx, "virsh", "undefine", externalID).CombinedOutput(); err != nil {
 		return fmt.Errorf("libvirt GC undefine domain: %w\n%s", err, out)
 	}
+	present, err = gcDomainPresent(ctx, externalID)
+	if err != nil {
+		return err
+	}
+	if present {
+		return fmt.Errorf("libvirt GC domain remains present after undefine")
+	}
 	return nil
+}
+
+func gcDomainPresent(ctx context.Context, externalID string) (bool, error) {
+	raw, err := virshQuery(ctx, "list", "--all", "--uuid")
+	if err != nil {
+		return false, err
+	}
+	present := false
+	for _, id := range strings.Fields(string(raw)) {
+		if _, err := uuid.Parse(id); err != nil {
+			return false, fmt.Errorf("invalid libvirt UUID inventory")
+		}
+		if id == externalID {
+			present = true
+		}
+	}
+	return present, nil
 }
 
 var _ interface {

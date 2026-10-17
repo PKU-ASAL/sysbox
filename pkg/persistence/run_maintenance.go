@@ -27,7 +27,7 @@ func ValidateRunMaintenance(authorityRaw, lifecycleRaw []byte, topology string) 
 	if err = validateAggregate(lifecycle, topology); err != nil {
 		return err
 	}
-	if authority.maintenanceBlocks(lifecycle.State.TopologyUID) {
+	if gcPending(lifecycle) || authority.maintenanceBlocks(lifecycle.State.TopologyUID) {
 		return ErrConflict
 	}
 	return nil

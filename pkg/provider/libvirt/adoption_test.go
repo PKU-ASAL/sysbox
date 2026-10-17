@@ -2,6 +2,7 @@ package libvirt
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,6 +26,9 @@ func TestAdoptionRestoresFullManagedProviderState(t *testing.T) {
 	ctx := substrate.WithOperationIdentity(context.Background(), id)
 	proof, err := s.InspectAdoption(ctx, hs.DomainUUID, substrate.NodeSpec{})
 	require.NoError(t, err)
+	_, err = json.Marshal(proof)
+	require.NoError(t, err, "inspection evidence must cross JSON RPC")
+	require.NotContains(t, string(proof.State), "/keys/owned")
 	cold := New(s.vmDirRoot())
 	handle, err := cold.ObserveAdoption(ctx, proof)
 	require.NoError(t, err)

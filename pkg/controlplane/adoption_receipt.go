@@ -24,7 +24,7 @@ func executionEvidenceDigest(raw json.RawMessage) (string, error) {
 // SignAdoptionStopReceipt binds the exact provider codec output as well as
 // the original grant. Transport whitespace compaction cannot change the proof.
 func SignAdoptionStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, boot, id string, evidence json.RawMessage, now time.Time) (SignedExecutionStopReceipt, error) {
-	if g.Operation != "adoption_apply" {
+	if g.Operation != "adoption_apply" && g.Operation != "adoption_inspect" {
 		return SignedExecutionStopReceipt{}, ErrInvalidExecutionGrant
 	}
 	digest, err := executionEvidenceDigest(evidence)
@@ -35,7 +35,7 @@ func SignAdoptionStopReceipt(key ed25519.PrivateKey, g ExecutionGrant, boot, id 
 }
 
 func VerifyAdoptionStopReceipt(key ed25519.PublicKey, r SignedExecutionStopReceipt, evidence json.RawMessage) error {
-	if r.Grant.Operation != "adoption_apply" {
+	if r.Grant.Operation != "adoption_apply" && r.Grant.Operation != "adoption_inspect" {
 		return ErrInvalidExecutionGrant
 	}
 	if err := VerifyExecutionStopReceipt(key, r); err != nil {

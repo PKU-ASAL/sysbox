@@ -21,6 +21,7 @@ func format4TestBytes(t *testing.T, a *aggregate) []byte {
 	require.NoError(t, json.Unmarshal(raw, &object))
 	object["format"] = json.RawMessage("4")
 	delete(object, "reset_continuations")
+	delete(object, "gc_reservations")
 	raw, err = json.Marshal(object)
 	require.NoError(t, err)
 	return raw

@@ -1,5 +1,54 @@
 # P9 real acceptance
 
+## Additional verification and adoption inspection (2026-10-18, working tree)
+
+The pre-existing `make test-p9-real` gate passed end-to-end on the working tree
+before the subsequent adoption-inspection slice: real Docker recovery/reset/SSH,
+OpenSSH deployment, Firecracker/KVM controller crash and cross-process recovery,
+and libvirt generation lifecycle. The new GC full dispatch test passed separately
+under race and is now part of that gate. The full ordinary suite exposed a test
+fixture hang: a 100ms admission lease could expire before callback start while
+`TestAsyncRunDeadlineCancelsWhileJournalMutexIsHeld` waited without a deadline.
+The short-lease fixtures now permit startup and bound waits while retaining the
+mutex/deadline assertion and explicitly waiting beyond the original expiry in the
+renewal test. The mutex/deadline focused repeated race verification passed.
+
+`TestRemoteDockerAdoptionInspectionE2E` passed under race: real Docker inspection
+through API/Agent/host signature, durable evidence, unchanged state and container
+ownership, followed by explicit confirmation dispatch. This test does not execute
+the confirmed adoption. Managed libvirt evidence now serializes as JSON identity /
+XML digest without private paths. Firecracker inspection rejects unresolved
+launch/attachment instead of mutating its manifest. Managed confirmation preserves
+existing UID/generation only for the same topology owner. Unowned libvirt adoption
+and the complete adoption-through-Destroy fault matrix remain open.
+
+## GC dispatch and recovery changes (2026-10-18, working tree)
+
+New single-candidate dispatch connects API reservation/outbox, Agent command,
+privileged host RPC and candidate-bound signed completion. The real Docker test
+`TestRemoteDockerGCDispatchAndLostReceiptE2E` passed: a concurrent state save and
+snapshot were rejected while deletion was paused, API reconstruction recovered
+the original host receipt, exactly one provider delete occurred, and an independent
+Docker inspect confirmed absence. This is one-process reconstruction with real
+Docker and HTTP/Unix RPC, not a two-host or arbitrary daemon-crash claim.
+
+File/SQLite/PostgreSQL GC and authority-unlock tests passed under race using a
+new disposable PostgreSQL16 container. Firecracker stopped-deletion receipts,
+corrupt/missing evidence, unrelated operations, recreated generation and a child
+process exiting before runtime receipt publication have regression coverage.
+The Firecracker package race suite passed. Libvirt GC now checks a bounded exact
+UUID inventory before and after undefine; failed inventory is not absence.
+
+Canonical force-unlock supports an explicit idempotency key, persistent revoke /
+wait-for-host-stops / release, and coherent execution-authority inspection. Format5
+has an explicit archive-and-compare conversion to aggregate6. These slices do not
+close unowned libvirt adoption, full P6 acceptance, automatic
+GC inventory/batches, historical unknown intents or the overall P9/upgrade matrix.
+The historical sections below describe their recorded commits, not current
+unsupported declarations. New source changes remain under review until the final
+commit and all corresponding test evidence are recorded.
+
+
 ## GC execution boundary (2026-10-14)
 
 GC grant admission now accepts opaque resource UIDs and Docker provider deletion
@@ -3648,3 +3697,35 @@ bound into the leased `gc_delete` command/grant, checked against the canonical
 lifecycle aggregate, and revalidated by the owning host before the provider
 effect. A new state or snapshot reference, UID/generation replacement, or
 provider external-ID mismatch rejects the old plan without extending authority.
+
+## PostgreSQL evidence checks for current changes
+
+The new inspection completion test passed with file/SQLite/PostgreSQL under race,
+including host receipt tampering rejection and replay after worker-command retirement.
+A JSONB key-order regression was reproduced and fixed: signed original evidence is
+still authenticated byte-for-byte according to its signature contract, while the
+stored terminal JSON payload is compared canonically during replay. The explicit
+format5-to-format6 importer also passed with all three backends, preserving unknown
+actions and archiving the exact original database representation before conversion.
+
+A second pre-existing fixture cleanup race was reproduced in
+`TestHostResetFailureUsesReturnedExecutorAndDurablePhases`: observing completion
+could precede the asynchronous ReportStop fsync, so TempDir deletion raced the
+writer. Cleanup now cancels its private service and waits on its execution lock
+before removing files. Five focused race repetitions passed. This changes test
+lifetime management, not provider-stop evidence or runtime effect semantics.
+
+Final ordinary gate: `GOCACHE=/tmp/sysbox-gocache go test -p 1 ./... -count=1 -timeout=240s` passed. Complete hostsupervisor/agentexec/Firecracker/libvirt/CLI
+race packages passed, as did vet, docscheck (67 docs), build and release-workflow
+contracts. The legacy `/gc-grant` endpoint now validates an existing dispatched
+command rather than accepting worker-invented leases; the regression reproduced
+an arbitrary action grant before the fix and rejects it afterward. Final GC race
+checks passed. Independent reviews found no outstanding blocker in the delivered
+slices; remaining whole-project work is explicitly listed above.
+
+The final expanded `make test-p9-real` rerun also passed after P5 inspection was
+added: API/Agent GC and inspection, Docker recovery/reset/SSH, CLI SSH file/SQLite,
+real sshd validation, Docker adoption/absence checks, Firecracker/KVM controller
+crash/lifecycle/reset/cross-process recovery and libvirt generation effects. The
+GC compatibility endpoint was separately tightened and its focused race gate
+passed. These are the implemented P9 gates, not the unimplemented full matrix.

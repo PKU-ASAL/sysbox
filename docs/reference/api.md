@@ -143,7 +143,15 @@ GET /v1/topologies/{name}/status/stream
 GET /v1/topologies/{name}/resources/{resource}/health
 ```
 
-The lifecycle aggregate currently does not implement snapshots/restore or lease inspection/force-unlock. These management endpoints return501 rather than an empty successful result.
+Canonical aggregates support snapshots and the explicit restore-plan/restore workflow.
+`GET .../state/lock` reports execution-authority grants and maintenance barriers,
+including revoked or expired executions without confirmed host stops. It does not
+claim to inspect transient database mutexes. `POST .../state/force-unlock` with an
+`Idempotency-Key` persistently revokes authority and returns 202 `waiting_for_stop`
+until activity and host-stop evidence allow release; retry the same key after
+restart. 200 `unlocked` includes the original durable barrier/audit identity and
+does not remove flock files. Calls without a key retain the conservative legacy
+behavior; canonical backend raw force-unlock is unsupported.
 
 ## Runs
 
@@ -382,7 +390,7 @@ POST /v1/policies
 
 ### Guest completion evidence format
 
-Lifecycle aggregates now require format 5 for immutable reset continuation
+Lifecycle aggregates now require format 6 for GC reservations and immutable reset continuation
 receipts. Format 4 is rejected by normal lifecycle access. The explicit
 `sysbox state import-format4` tool previews by default; applying requires stopped
 writers, an exact source digest and a durable original-byte archive. Preserve
@@ -408,3 +416,42 @@ at the storage boundary; callers cannot bypass this by invoking a backend adapte
 directly. Their operation record and authority release remain a separate
 retryable commit boundary until the operation mutation is migrated to the shared
 atomic completion adapter.
+
+### GC dispatch and evidence
+
+`GET /v1/topologies/{name}/gc/references` returns the coherent lifecycle reference
+digest and retained resource identities. It is not a provider inventory or deletion
+authorization. `POST /v1/topologies/{name}/gc` takes one candidate (kind, external_id,
+topology_uid, owner_uid, resource_uid, generation, inventory_digest) and requires
+`Idempotency-Key`. It binds the existing owning-Agent placement, checks complete
+activity and stopped authority under storage exclusion, and reserves the lifecycle
+reference set before publishing `gc_delete`. 202 returns the reservation/command
+identity. Same-key retries cannot change the candidate or restart a completed delete.
+
+The reservation remains across lease expiry and process restart. Lifecycle,
+snapshot and adoption writes cannot introduce references during deletion. The
+host must read the identical reservation from its canonical repository and verify
+exact provider identity and post-delete absence. Only a candidate-bound enrolled
+host receipt can complete the reservation. Completion retires the command before
+stopping authority and reopening writes; exact receipt replay repairs interrupted
+completion. Worker terminal events and generic quiescence receipts do not prove
+deletion. Unknown effects keep the reservation; automatic uncertain-intent
+reconciliation and full batch inventory/retention are not yet implemented.
+
+### Owning-agent adoption inspection
+
+`POST /v1/topologies/{name}/adoption-inspections` accepts `type`, `name`, `id` and
+`substrate`, requires `Idempotency-Key`, and returns202 with a durable
+`adoption_inspect` NodeOperation. The owning host performs bounded read-only
+inspection and signs the exact result. Successful operations expose
+`inspection_evidence`; failed inspection is a known signed read-only failure.
+Worker reports cannot supply or replace the host evidence. Source validation
+rejects further grants once the operation is terminal.
+
+`POST /v1/topologies/{name}/adoption-inspections/{inspection}/confirm` requires a
+separate `Idempotency-Key` and consumes only the stored successful evidence. It
+returns202 with the separate adoption operation. Current topology UID/serial,
+placement and provider fingerprint are checked before mutation. Managed evidence
+must belong to this topology; its existing resource UID/generation is preserved.
+This supplies the public inspection/confirmation route, but does not add unowned
+libvirt adoption or close the full P5 cold-fault matrix.

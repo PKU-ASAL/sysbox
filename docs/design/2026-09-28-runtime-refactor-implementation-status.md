@@ -1,5 +1,17 @@
 # Sysbox 生命周期重构：当前实施状态
 
+2026-10-18 实施更新：单候选 GC 已接 API reservation/outbox → owning Agent →
+host supervisor → 精确缺失签名回执，CLI `gc submit` 可提交显式计划。
+P5 新增 owning-agent 只读 inspection 和基于已保存宿主证据的公开 confirm，
+CLI `import inspect/confirm` 已接入。P6 新增 execution-authority 检查与带幂等键的
+revoke/wait/release force-unlock。Aggregate 当前为6，format5 有显式离线归档转换。
+Firecracker 删除前停止证据保存在 generation 外，普通未锁 manifest 不再证明
+未知 VMM 请求已停止。最新验证见 [P9记录](../operations/p9-real-acceptance.md)。
+
+本次仍未关闭：自动 GC 完整 inventory/retention/batch、无主 libvirt adoption、
+Docker/libvirt 未知 daemon 请求 fencing、历史 intent 显式处置、完整双宿主故障/
+升级矩阵、最新 main 整合。下方旧阶段条目与版本号仅是历史基线，不能覆盖本更新。
+
 更新：2026-10-07。工作分支：`refactor/observation-driven-runtime`。未合入 main、未推送。
 
 **正在实施P0–P9：** 下文是此前已提交基线。当前改动的完成/未完成项、API schema 13 与 aggregate 4、任务与跨宿主交付进度，以[并行集成跟踪](2026-10-07-parallel-implementation-tracker.md)为准；不能将部分库和分项测试通过解读为分布式执行闭环已经完成。

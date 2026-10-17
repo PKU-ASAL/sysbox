@@ -26,7 +26,20 @@ func (s *Substrate) InspectAdoption(ctx context.Context, id string, spec substra
 		return substrate.AdoptionEvidence{}, fmt.Errorf("libvirt adoption requires managed domain metadata")
 	}
 	sum := sha256.Sum256(raw)
-	return substrate.AdoptionEvidence{Provider: subName, ExternalID: domain.UUID, Fingerprint: "sha256:" + hex.EncodeToString(sum[:]), State: raw}, nil
+	evidence, err := json.Marshal(struct {
+		Version   int    `json:"version"`
+		UUID      string `json:"uuid"`
+		XMLSHA256 string `json:"xml_sha256"`
+	}{1, domain.UUID, hex.EncodeToString(sum[:])})
+	if err != nil {
+		return substrate.AdoptionEvidence{}, err
+	}
+	managed := domain.Metadata.Managed
+	identity := substrate.OperationIdentity{ActionID: managed.ActionID, OwnerUID: managed.OwnerUID, TopologyUID: managed.TopologyUID, ResourceUID: managed.ResourceUID, Generation: managed.Generation}
+	if err := identity.Validate(); err != nil {
+		return substrate.AdoptionEvidence{}, err
+	}
+	return substrate.AdoptionEvidence{ManagedIdentity: &identity, Provider: subName, ExternalID: domain.UUID, Fingerprint: "sha256:" + hex.EncodeToString(sum[:]), State: evidence}, nil
 }
 func (s *Substrate) adoptionDomain(ctx context.Context, e substrate.AdoptionEvidence, id substrate.OperationIdentity) (substrate.NodeHandle, error) {
 	if err := id.Validate(); err != nil {

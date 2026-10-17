@@ -28,7 +28,8 @@ func TestGCReferencesProtectUIDAndProviderExternalIDIndependently(t *testing.T) 
 			raw, err := json.Marshal(a)
 			require.NoError(t, err)
 			command := controlplane.AgentCommand{Type: "gc_delete", TopologyUID: a.State.TopologyUID, ResourceUID: "target", Generation: 1, GCKind: "container", GCExternalID: "external", GCInventoryDigest: inventory.Digest}
-			err = ValidateCommandLifecycle(raw, "lab", command)
+			_ = raw
+			err = validateGCReferences(a, command)
 			if test.blocked {
 				require.ErrorIs(t, err, ErrConflict)
 			} else {

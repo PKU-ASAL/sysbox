@@ -43,6 +43,7 @@ func TestStateImportFormat4PreviewAndApply(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &legacy))
 	legacy["format"] = json.RawMessage("4")
 	delete(legacy, "reset_continuations")
+	delete(legacy, "gc_reservations")
 	raw, err = json.Marshal(legacy)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(source, raw, 0600))

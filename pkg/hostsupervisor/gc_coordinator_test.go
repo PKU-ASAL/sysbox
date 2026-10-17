@@ -93,3 +93,21 @@ func TestGCInventoryValidationFollowsAuthorization(t *testing.T) {
 	_, err := c.Delete(context.Background(), candidate, g, func(context.Context) (json.RawMessage, error) { t.Fatal("effect"); return nil, nil })
 	require.ErrorContains(t, err, "revoked")
 }
+
+func TestGCColdRecoveryReportsCandidateBoundDeletion(t *testing.T) {
+	c, candidate, g := gcFixture(t)
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	c.HostKey = key
+	c.ReportStop = func(_ context.Context, receipt controlplane.SignedExecutionStopReceipt) error {
+		require.NoError(t, controlplane.VerifyGCDeletionReceipt(pub, receipt, candidate))
+		return errors.New("response lost")
+	}
+	_, err = c.Delete(context.Background(), candidate, g, func(context.Context) (json.RawMessage, error) { return json.RawMessage(`{"deleted":true}`), nil })
+	require.Error(t, err)
+	c.ReportStop = func(_ context.Context, receipt controlplane.SignedExecutionStopReceipt) error {
+		require.NoError(t, controlplane.VerifyGCDeletionReceipt(pub, receipt, candidate))
+		return nil
+	}
+	require.NoError(t, c.Recover(context.Background()))
+}

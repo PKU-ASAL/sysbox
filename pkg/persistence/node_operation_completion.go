@@ -9,7 +9,7 @@ import (
 // Called only while the adapter holds both the command and operation write
 // boundary. Lease acquisition and completion must not race across this check.
 func CompleteNodeOperation(current controlplane.NodeOperation, command *CommandRecord, agent, id string, report controlplane.NodeOperation, now time.Time) (controlplane.NodeOperation, error) {
-	if current.Operation == "adoption_apply" || current.Operation == "ssh_access_apply" || current.Operation == "ssh_access_delete" || controlplane.IsGuestSSHAccessOperation(current.Operation) {
+	if current.Operation == "adoption_inspect" || current.Operation == "adoption_apply" || current.Operation == "ssh_access_apply" || current.Operation == "ssh_access_delete" || controlplane.IsGuestSSHAccessOperation(current.Operation) {
 		return current, ErrConflict // Only authenticated host evidence can finish these effects.
 	}
 	if report.ID != id || current.ID != id || agent != current.AgentID || report.AgentID != agent || current.CommandID == "" {

@@ -7,7 +7,7 @@ import (
 )
 
 func EncodeNodeOperation(x controlplane.NodeOperation) ([]byte, error) {
-	if !topologyName.MatchString(x.ID) || x.AgentID == "" || x.Topology == "" || !validNodeOperationStatus(x.Status) || !validSSHResultState(x) {
+	if !topologyName.MatchString(x.ID) || x.AgentID == "" || x.Topology == "" || !validNodeOperationStatus(x.Status) || !validSSHResultState(x) || !validInspectionState(x) {
 		return nil, ErrInvalidRecord
 	}
 	return json.Marshal(struct {
@@ -30,7 +30,7 @@ func DecodeNodeOperation(raw []byte) (*controlplane.NodeOperation, error) {
 	if record.Version != 1 {
 		return nil, ErrUnsupportedVersion
 	}
-	if !topologyName.MatchString(x.ID) || x.AgentID == "" || x.Topology == "" || !validNodeOperationStatus(x.Status) || !validSSHResultState(x) {
+	if !topologyName.MatchString(x.ID) || x.AgentID == "" || x.Topology == "" || !validNodeOperationStatus(x.Status) || !validSSHResultState(x) || !validInspectionState(x) {
 		return nil, ErrCorruptRecord
 	}
 	return &x, nil
@@ -60,4 +60,14 @@ func SameNodeOperation(a, b controlplane.NodeOperation) bool {
 		return false
 	}
 	return bytes.Equal(aa, bb)
+}
+
+func validInspectionState(x controlplane.NodeOperation) bool {
+	if x.Inspection != nil && (x.Operation != "adoption_inspect" || x.Inspection.Validate() != nil) {
+		return false
+	}
+	if x.InspectionEvidence != nil {
+		return x.Operation == "adoption_inspect" && x.Inspection != nil && x.Status == controlplane.NodeOperationStatusDone && x.InspectionEvidence.Provider == x.Inspection.Provider && x.InspectionEvidence.ExternalID != "" && x.InspectionEvidence.Fingerprint != "" && json.Valid(x.InspectionEvidence.State)
+	}
+	return x.Operation != "adoption_inspect" || x.Status != controlplane.NodeOperationStatusDone
 }

@@ -11,6 +11,17 @@ import (
 // The caller reads the current operation inside the authority/command write
 // boundary. A retained queued dispatch is not proof its operation is live.
 func (b apiExecutionGrantStorage) checkGuestSSHSource(record *persistence.CommandRecord, read func(string) (*controlplane.NodeOperation, error)) error {
+	if record != nil && record.Command.Type == "node_operation" && record.Command.Operation.Operation == "adoption_inspect" {
+		cmd := record.Command
+		current, err := read(cmd.ActionID)
+		if err != nil {
+			return err
+		}
+		if current == nil || current.CommandID != cmd.ID || current.AgentID != cmd.AgentID || current.Inspection == nil || !reflect.DeepEqual(current.Inspection, cmd.Operation.Inspection) || current.InspectionEvidence != nil || (current.Status != controlplane.NodeOperationStatusQueued && current.Status != controlplane.NodeOperationStatusRunning) {
+			return persistence.ErrConflict
+		}
+		return nil
+	}
 	if record == nil || record.Command.Type != "node_operation" || !controlplane.IsGuestSSHAccessOperation(record.Command.Operation.Operation) || b.sourceErr != nil && *b.sourceErr != nil {
 		return nil
 	}

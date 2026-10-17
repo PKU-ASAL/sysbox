@@ -17,7 +17,9 @@ func executeGrantedNodeOperation(ctx context.Context, opts Options, cmd controlp
 	op.StartedAt = time.Now().UTC()
 	op.Audit = append(op.Audit, nodeOperationEvent(op, "start", op.Status, "node operation started"))
 	var err error
-	if controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) || cmd.Operation.Operation == "adoption_apply" {
+	if cmd.Operation.Operation == "adoption_inspect" {
+		err = runGrantedInspection(ctx, opts, cmd)
+	} else if controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) || cmd.Operation.Operation == "adoption_apply" {
 		if cmd.Operation.Operation == "adoption_apply" {
 			err = runGrantedAdoption(ctx, opts, cmd)
 		} else {

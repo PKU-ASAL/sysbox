@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // DeleteManagedExternal is the Firecracker provider primitive used by the
@@ -27,5 +28,16 @@ func (s *Substrate) DeleteManagedExternal(ctx context.Context, externalID, owner
 	if m.Version != manifestVersion {
 		return driver.Wrap(driver.ErrorUnsupported, "firecracker", "GC requires manifest v2", nil)
 	}
-	return s.DestroyNode(ctx, manifestHandle(&m))
+	handle := manifestHandle(&m)
+	if err := s.DestroyNode(ctx, handle); err != nil {
+		return err
+	}
+	observed, err := s.ObserveNode(ctx, handle)
+	if err != nil {
+		return err
+	}
+	if observed.Exists || observed.Status != substrate.NodeStatusMissing {
+		return fmt.Errorf("firecracker GC absence not confirmed")
+	}
+	return nil
 }

@@ -5,16 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-// ProveQuiescence waits for the durable per-VM host operation lock and then
-// validates the generation manifest. Firecracker requests are synchronous;
-// the lock is held for the complete host-side transition, so acquiring it is
-// the durable anchor that proves no controller transition for this VM remains
-// in flight. Resource observation is intentionally not used as the proof.
+// ProveQuiescence excludes cooperating controllers, then requires durable
+// evidence. A free controller lock does not prove that an interrupted request
+// stopped inside the VMM. Only an unlaunched prepared generation or a stopped
+// deletion receipt can establish quiescence here.
 func (s *Substrate) ProveQuiescence(ctx context.Context, handle substrate.NodeHandle, operationID string, identity substrate.OperationIdentity) (substrate.QuiescenceProof, error) {
 	if operationID == "" {
 		return substrate.QuiescenceProof{}, fmt.Errorf("firecracker quiescence requires operation identity")
@@ -32,8 +32,20 @@ func (s *Substrate) ProveQuiescence(ctx context.Context, handle substrate.NodeHa
 	defer release()
 	manifestCtx := substrate.WithOperationIdentity(ctx, identity)
 	m, err := s.loadManifest(manifestCtx, handle)
+	if errors.Is(err, errGenerationAbsent) {
+		return s.proveDeletedQuiescence(handle, operationID, identity)
+	}
 	if err != nil {
 		return substrate.QuiescenceProof{}, fmt.Errorf("firecracker quiescence manifest verification failed: %w", err)
+	}
+	if operationID != identity.ActionID || m.ActionID != identity.ActionID {
+		return substrate.QuiescenceProof{}, fmt.Errorf("firecracker quiescence operation identity conflict")
+	}
+	if m.Phase != "prepared" || m.Process.PID != 0 {
+		return substrate.QuiescenceProof{}, substrate.ErrQuiescenceUnsupported
+	}
+	if residue, err := hasLaunchResidue(m.Handle.ConfigPath); err != nil || residue {
+		return substrate.QuiescenceProof{}, fmt.Errorf("firecracker launch quiescence unconfirmed: %v", err)
 	}
 	evidence := map[string]any{
 		"provider":        "firecracker",

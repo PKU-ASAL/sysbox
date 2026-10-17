@@ -8,12 +8,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newStateImportFormat4Command() *cobra.Command {
+func newStateImportFormat4Command() *cobra.Command { return newStateImportCommand(4) }
+func newStateImportFormat5Command() *cobra.Command { return newStateImportCommand(5) }
+func newStateImportCommand(format int) *cobra.Command {
 	var apply, offline bool
 	var sourceSHA256, archive string
 	cmd := &cobra.Command{
-		Use:   "import-format4",
-		Short: "Preview or explicitly import a stopped format 4 lifecycle repository",
+		Use:   fmt.Sprintf("import-format%d", format),
+		Short: fmt.Sprintf("Preview or explicitly import a stopped format %d lifecycle repository", format),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if apply && (!offline || sourceSHA256 == "" || archive == "") {
@@ -30,7 +32,13 @@ func newStateImportFormat4Command() *cobra.Command {
 			}
 			defer repo.Close()
 			var plan *persistence.Format4ImportPlan
-			if apply {
+			if format == 5 {
+				if apply {
+					plan, err = repo.ImportFormat5(cmd.Context(), topology, sourceSHA256, archive)
+				} else {
+					plan, err = repo.PlanFormat5Import(cmd.Context(), topology)
+				}
+			} else if apply {
 				plan, err = repo.ImportFormat4(cmd.Context(), topology, sourceSHA256, archive)
 			} else {
 				plan, err = repo.PlanFormat4Import(cmd.Context(), topology)
@@ -48,4 +56,4 @@ func newStateImportFormat4Command() *cobra.Command {
 	return cmd
 }
 
-func init() { stateCmd.AddCommand(newStateImportFormat4Command()) }
+func init() { stateCmd.AddCommand(newStateImportFormat4Command(), newStateImportFormat5Command()) }

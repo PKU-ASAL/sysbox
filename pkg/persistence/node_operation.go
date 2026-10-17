@@ -16,6 +16,12 @@ func validateNodeOperationTransition(current, next controlplane.NodeOperation, h
 	}
 	// These payloads define the signed effect. Status/lease CAS must never
 	// rewrite them, including after the command payload has been retired.
+	if !reflect.DeepEqual(current.Inspection, next.Inspection) {
+		return ErrConflict
+	}
+	if !hostSSHCompletion && !reflect.DeepEqual(current.InspectionEvidence, next.InspectionEvidence) {
+		return ErrConflict
+	}
 	if !reflect.DeepEqual(current.Adoption, next.Adoption) || !reflect.DeepEqual(current.SSHAccess, next.SSHAccess) || !reflect.DeepEqual(current.SSHMutation, next.SSHMutation) {
 		return ErrConflict
 	}
