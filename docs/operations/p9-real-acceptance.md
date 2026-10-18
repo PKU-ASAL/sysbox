@@ -3864,3 +3864,40 @@ PostgreSQL enabled. Logs are `/tmp/sysbox-fence-full-final.log`,
 The full regression also exposed an SSH test fixture that assumed umask022;
 explicitly setting the source fixture mode now makes its preservation assertion
 valid under umask077 without changing transfer behavior.
+
+### Post-fence observation and disposition plan (2026-10-18)
+
+The next slice connects an accepted fence to the existing owning-Agent read-only
+observation protocol. `recovery-plan` compares the original Run/journal hash and
+lists remaining per-action blockers. `observe` uses a request-digest/key-derived
+command ID and an atomic create-once outbox; concurrent or terminal retries do
+not modify command leases, resurrect commands or rerun effects. Existing keys
+still return the original command after metadata drift; new observations are
+rejected. A known fence-bound report whose snapshot changed is reported as stale.
+
+Contract tests across filesystem, SQLite and isolated PostgreSQL cover missing
+fence receipt, administrative access, concurrent request replay, claimed and
+retired command replay, normal production recovery authorization, exact report
+binding, wrong resource identity, stale observation time, wrong serial, unknown
+presence, API reconstruction and journal drift. State/action/Run snapshots are
+unchanged by plan reads and observation/report intake. Drift is injected directly
+into the test repository only to verify refusal; no historical data is modified.
+
+The existing Agent/supervisor test now gives the observation command a fence
+ActionID and checks that its completion event preserves it. This exposed and
+fixed the Agent recovery-completion path dropping command proof fields. The test
+uses the real local supervisor socket and owning-host read-only observation
+executor; it does not require a VM reboot or execute a provider mutation.
+
+This is observation and triage, not reconciliation/release acceptance. Reports
+still lack new-boot host signatures, so `observation_not_host_boot_attested`
+remains explicit; provider/guest/reset blockers are not cleared by reported
+presence. No Run/action is completed and no stop receipt or host release is
+created. The previous physical fencing evidence remains unchanged; this slice
+does not claim a second real Docker/libvirt recovery run.
+
+Verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`, and
+`go test -race ./pkg/api ./pkg/agentexec -run 'HostFence|RecoveryRunner|RemoteRecovery|HostRecovery'`
+with isolated PostgreSQL enabled. Logs: `/tmp/sysbox-post-fence-full.log` and
+`/tmp/sysbox-post-fence-race.log`. Independent read-only review found no blocking
+issues; its stale-plan diagnostic recommendation was implemented and tested.

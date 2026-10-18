@@ -10,11 +10,9 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"sort"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 type hostFenceTarget struct {
@@ -117,31 +115,13 @@ func (s *Server) handleBeginHostFence(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
-	selected := []runtime.ActionRecord{}
-	for _, a := range actions {
-		if a.RunID == run.ID {
-			if !a.RunQueuedAt.Equal(run.QueuedAt) || a.RunRevision != run.Revision {
-				writeError(w, 409, fmt.Errorf("historical action lacks original Run incarnation evidence"))
-				return
-			}
-			selected = append(selected, a)
-		}
-	}
-	if len(selected) == 0 {
-		writeError(w, 409, fmt.Errorf("canonical original action journal required"))
-		return
-	}
-	sort.Slice(selected, func(i, j int) bool { return selected[i].ID < selected[j].ID })
-	raw, err := json.Marshal(struct {
-		Run     controlplane.Run
-		Serial  int64
-		Actions []runtime.ActionRecord
-	}{persistence.DurableRun(*run), st.Meta.Serial, selected})
+	_, journal, err := hostFenceJournal(*run, st.Meta.Serial, actions)
 	if err != nil {
-		writeError(w, 503, err)
+		writeError(w, 409, err)
 		return
 	}
-	request := controlplane.HostFenceRequest{Version: 1, ID: id, Topology: topology, RunID: run.ID, LabID: target.LabID, ControllerKey: target.PublicKey, JournalSHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Grant: body.Grant}
+
+	request := controlplane.HostFenceRequest{Version: 1, ID: id, Topology: topology, RunID: run.ID, LabID: target.LabID, ControllerKey: target.PublicKey, JournalSHA256: journal, Grant: body.Grant}
 	// Validate the retained immutable dispatch under the same storage lock as
 	// the freeze. The journal above remains an observed snapshot, not release authority.
 	bound := s.commandGrantStorage(body.Grant.CommandID, func(record *persistence.CommandRecord) error {

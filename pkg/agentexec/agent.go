@@ -324,7 +324,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			return
 		}
 		if report != nil {
-			report(controlplane.AgentCommandEvent{AgentID: r.opts.ID, CommandID: cmd.ID, Type: cmd.Type, Status: "completed", LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, Recovery: result})
+			report(controlplane.AgentCommandEvent{AgentID: r.opts.ID, CommandID: cmd.ID, Type: cmd.Type, Status: "completed", ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, Recovery: result})
 		}
 	case "run_assigned":
 		if cmd.Run == nil {

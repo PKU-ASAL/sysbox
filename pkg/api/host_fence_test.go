@@ -116,6 +116,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string) {
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &accepted))
 				require.Equal(t, labID, accepted.Request.LabID)
 				require.Len(t, accepted.Request.JournalSHA256, 64)
+				checkFenceBeforeReceipt(t, s, accepted)
 				digest, err := accepted.Request.Digest()
 				require.NoError(t, err)
 				receipt, err := controlplane.SignHostFenceReceipt(key, accepted.Request, controlplane.HostFenceReceipt{Version: 1, RequestSHA256: digest, LabID: accepted.Request.LabID, OldBootID: grant.TargetBootID, NewBootID: "22222222-2222-4222-8222-222222222222", ControllerBootID: "33333333-3333-4333-8333-333333333333", ControllerBootUnchanged: true, QEMUPID: 42, QEMUStart: "123", QEMUExited: true, DiskDevice: 1, DiskInode: 2, ProviderScope: "local-only", OperationResult: "unknown", ObservedAt: time.Now().UTC()})
@@ -173,6 +174,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string) {
 				cold.ServeHTTP(read, httptest.NewRequest("GET", "/v1/topologies/lab/host-fences/"+accepted.Request.ID, nil))
 				require.Equal(t, 200, read.Code)
 				require.Contains(t, read.Body.String(), "receipt")
+				checkFenceObservationContract(t, s, store, accepted)
 			})
 		})
 	}

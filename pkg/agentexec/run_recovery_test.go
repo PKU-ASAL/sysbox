@@ -76,12 +76,13 @@ func TestAgentRecoveryRunnerReturnsGenerationWithoutRunningEffects(t *testing.T)
 	}, time.Second, time.Millisecond)
 	// No bridge at all on the worker: provider/state access belongs to host.
 	runner := newCommandRunner(NewExecutorWithBridge(nil), Options{HostSupervisorSocket: socket, APIURL: server.URL, ID: "agent", Policy: config.DefaultServiceConfig().Agent.Policy})
-	cmd := controlplane.AgentCommand{ID: "observe", AgentID: "agent", Type: controlplane.RunRecoveryCommand, Run: &run, RecoveryMode: "observe", LeaseOwner: "delivery", Attempt: 1, LeaseUntil: time.Now().Add(time.Minute)}
+	cmd := controlplane.AgentCommand{ID: "observe", AgentID: "agent", ActionID: "fence-request", Type: controlplane.RunRecoveryCommand, Run: &run, RecoveryMode: "observe", LeaseOwner: "delivery", Attempt: 1, LeaseUntil: time.Now().Add(time.Minute)}
 	var events []controlplane.AgentCommandEvent
 	runner.Execute(context.Background(), &cmd, func(e controlplane.AgentCommandEvent) { events = append(events, e) })
 	require.Len(t, events, 2)
 	last := events[1]
 	require.Equal(t, "completed", last.Status, last.Error)
+	require.Equal(t, cmd.ActionID, last.ActionID)
 	require.NotNil(t, last.Recovery)
 	require.Len(t, last.Recovery.Resources, 1)
 	require.EqualValues(t, 7, last.Recovery.Resources[0].Generation)

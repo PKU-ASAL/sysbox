@@ -8,6 +8,10 @@
 CLI 和验收脚本在断电前绑定请求，真实 Docker/libvirt canary 断电重启与 API
 证据接入已有验收入口。authority 升为 format3；旧账本明确拒绝，不自动迁移。
 
+后续已接通 fencing 后的只读 recovery-plan 与 owning-Agent observe 派发；请求并发、
+领取后重试与终态重试保留同一 command，报告按原始身份/serial/时间/覆盖范围校验，
+journal 漂移显示 stale。Agent 的观察完成回报现在保留完整命令证明。
+
 这一步尚未闭合 unknown 恢复：回执不完成 Run/action，不产生 stop receipt，
 没有解除宿主 hold 的生产流程。历史 intent 仍只读处置；P5/P6/P8/P9 的完整故障
 矩阵与升级整合仍未关闭。当前接口及限制以 [API](../reference/api.md)、

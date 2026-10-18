@@ -77,3 +77,21 @@ ledger 明确拒绝，新 ledger 也不能交给旧 writer。当前没有 format
 不把未知请求认定成功，也不允许重放。冻结覆盖该 Agent 的其他 topology，且跨
 重启保留；普通 maintenance release 无法解除它。后续仍需实现独立 observation、
 原始 intent 处置与显式释放流程，因此不要把真实历史现场登记到这个验收接口。
+
+## Fencing 后的只读观察
+
+对已登记的可丢弃验收宿主，先读取
+`GET /v1/topologies/{name}/host-fences/{id}/recovery-plan`。收到 fencing 回执且
+原始 Run/journal 摘要未变后，可向同一路径下的 `observe` 发 POST，带固定
+`Idempotency-Key`，取得 owning Agent 的观察 command ID；再用
+`recovery-plan?observation={command_id}` 查看关联报告和剩余阻断项。
+
+该流程只派发 observe，不派发 recover。命令重试不会覆盖旧租约或复活终态命令。
+若 journal 已漂移，原 key 仍可查询原命令，新观察请求返回冲突；处置计划将旧报告
+标为 stale。API 重启后继续读取同一 durable report。此步不需要新增存储格式，仍用
+authority format3 与现有 command/report schema。
+
+观察到 present/absent 不足以证明旧副作用的完成结果。当前报告尚缺新 host boot 的
+签名绑定，原 operation anchor、guest completion 或 reset phase 缺失也继续阻断。
+不得通过修改 journal 或删除 authority 来绕过阻断。真实历史现场仍只生成只读计划，
+不纳入可丢弃宿主的准入、重启或处置执行。

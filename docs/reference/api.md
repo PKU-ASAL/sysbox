@@ -519,3 +519,36 @@ receipt or change any Run/action/resource outcome. **There is currently no
 release workflow for this hold**, even after receipt acceptance; ordinary
 maintenance release is rejected. This is an acceptance/evidence interface, not
 production unknown-effect recovery. See [upgrade boundaries](../operations/upgrades-and-recovery.md).
+
+#### Observation after a host fence
+
+`GET /v1/topologies/{name}/host-fences/{id}/recovery-plan` returns a read-only
+triage plan. It checks the current original Run/journal against the admission
+hash, distinguishes verified host process exclusion from provider operation
+completion, and lists action identity/anchor, external identity, guest effect and
+reset-continuation blockers. It does not create a missing lifecycle or write
+Run/action/state records. `release_allowed` and `replay_allowed` remain false.
+
+After a receipt is accepted, `POST .../host-fences/{id}/observe` with
+`Idempotency-Key` dispatches `run_recovery` in **observe** mode to the original
+owning Agent. No request body is needed. New requests require the original
+journal snapshot to match and the Agent to advertise `run-recovery.v1`. The
+request digest and key determine one durable command. Concurrent retries,
+retries after delivery, and terminal retries return the same `command_id`
+without resetting its lease or rerunning the command. An existing key remains
+readable after journal drift; a new key is rejected. Use a new key only for a
+new observation of the still-matching snapshot.
+
+Read `GET .../recovery-plan?observation={command_id}` for the associated result.
+The command must belong to this fence. The plan checks Run incarnation/attempt,
+Agent, topology, state serial, observation time after fencing, and exact action
+identity/coverage before displaying the reported presence. Status is `pending`,
+`failed`, `matched`, `mismatched`, or `stale`; changed current metadata produces
+`stale` with blockers, while a foreign command is rejected. The new endpoints
+require an administrative role, like the existing remote recovery endpoints.
+
+These reports pass through the owning host's read-only observation path and
+normal command lease validation. They are still worker-delivered evidence,
+without a cryptographic binding to the new host boot; the plan explicitly retains
+`observation_not_host_boot_attested`. A matching `absent` report cannot complete
+a delete, replay a create, manufacture a stop receipt or release the host hold.

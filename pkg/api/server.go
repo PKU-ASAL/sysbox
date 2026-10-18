@@ -369,6 +369,8 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/agents/{agent}/commands/{command}/recovery-authorize", s.handleAuthorizeRunRecovery)
 
 	// Topologies
+	m.HandleFunc("GET /v1/topologies/{topology}/host-fences/{fence}/recovery-plan", s.handleHostFenceRecoveryPlan)
+	m.HandleFunc("POST /v1/topologies/{topology}/host-fences/{fence}/observe", s.handleHostFenceObserve)
 	m.HandleFunc("POST /v1/topologies/{topology}/host-fences", s.handleBeginHostFence)
 	m.HandleFunc("GET /v1/topologies/{topology}/host-fences/{fence}", s.handleGetHostFence)
 	m.HandleFunc("POST /v1/topologies/{topology}/host-fences/{fence}/receipt", s.handleRecordHostFence)
