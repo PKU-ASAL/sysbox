@@ -4176,3 +4176,29 @@ current-build gate. New-round preflight also rejects owned networks and unresolv
 host intents even if no container survived. The confirmed-failure failover topology
 was normally destroyed and metadata-deleted with zero exact-owner residue;
 `p9-135f615b0b64` remains preserved as unknown. No new fault was injected into it.
+
+### Child observation timeout handling (continuation)
+
+Investigation found a reproducible supervisor control-flow defect: the first
+read-side `Dispatcher.Observe` deadline caused `RunChildren.watch` to cancel the
+task, despite the timeout not proving authority revocation. The new path retries
+only observation deadlines, at most twice after the initial read, with a fresh
+check of the exact existing grant before each retry and an unlocked100ms interval.
+Each read retains its2s budget; all retries are bounded by the original parent
+context and monotonic grant deadline. Only successful signed renewal advances
+that deadline. Identity errors, explicit authorization rejection and parent
+cancellation still fail closed. Start and Renew are never retried by this path.
+
+Regression tests first failed on the old implementation, then passed for a real
+2s read timeout followed by completion, three-attempt limit, identity conflict,
+revocation before retry and parent cancellation. Host supervisor race tests passed.
+This is a demonstrated code defect consistent with the observed timeout logs,
+not proof of the unique cause of the earlier live failover failure. The failed
+round's unknown create is unchanged; P9.4 remains open pending clean current-build
+live fault revalidation.
+
+Validation: full `go test -p 1 ./...` passed (log
+`/tmp/sysbox-observation-retry-full.log`); host supervisor race suite and focused
+real-timeout/revocation/caller-budget tests passed. `go vet ./pkg/hostsupervisor`,
+docs checks and independent code review passed. No live VM effect was invoked by
+this fix's validation, and no historical or retained unknown record was altered.

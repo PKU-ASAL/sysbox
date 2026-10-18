@@ -165,13 +165,14 @@ func (r *RunChildren) observe(ctx context.Context, record TaskRecord) error {
 	if err != nil {
 		return err
 	}
+	grantDeadline := time.Now().Add(budget)
 	renew := time.NewTimer(budget / 3)
 	defer renew.Stop()
 	poll := time.NewTimer(100 * time.Millisecond)
 	defer poll.Stop()
 	for {
-		call, cancel := context.WithTimeout(ctx, recoveryTaskBudget)
-		current, err := r.Dispatcher.Observe(call, record.Ref, record.Handle)
+		call, cancel := context.WithDeadline(ctx, grantDeadline)
+		current, err := r.observeWithTimeoutRetry(call, record)
 		cancel()
 		if err != nil {
 			return err
@@ -185,6 +186,7 @@ func (r *RunChildren) observe(ctx context.Context, record TaskRecord) error {
 			}
 			return nil
 		}
+		record = current
 		// Measure the polling interval after releasing the task lock. A fixed
 		// ticker is already readable after a slow Docker/SSH observation and
 		// causes immediate lock reacquisition, starving recovery and renewal.
@@ -211,6 +213,7 @@ func (r *RunChildren) observe(ctx context.Context, record TaskRecord) error {
 			if err != nil {
 				return err
 			}
+			grantDeadline = time.Now().Add(budget)
 			renew.Reset(budget / 3)
 		}
 	}
@@ -290,4 +293,47 @@ func (r *RunChildren) Finish(ctx context.Context, run *controlplane.Run) error {
 	}
 	run.EndedAt = time.Now().UTC()
 	return nil
+}
+
+// A read timeout is not revocation. Retry only that failure, under the original
+// caller budget, and reauthorize before each retry. Never retry Start or Renew.
+func (r *RunChildren) observeWithTimeoutRetry(ctx context.Context, record TaskRecord) (TaskRecord, error) {
+	var current TaskRecord
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return current, err
+		}
+		call, cancel := context.WithTimeout(ctx, recoveryTaskBudget)
+		observed, err := r.Dispatcher.Observe(call, record.Ref, record.Handle)
+		cancel()
+		current = observed
+		if ctx.Err() != nil {
+			return current, ctx.Err()
+		}
+		if err == nil || !errors.Is(err, context.DeadlineExceeded) || attempt == 2 {
+			return current, err
+		}
+		// Use the exact original envelope. If renewal raced this read, stale
+		// authority fails closed rather than extending or replacing a grant.
+		if r.Dispatcher.Authorize == nil {
+			return current, guesttask.ErrUnauthorized
+		}
+		check, stop := context.WithTimeout(ctx, recoveryAuthorizationBudget)
+		err = r.Dispatcher.Authorize(check, record.Grant)
+		if check.Err() != nil {
+			err = check.Err()
+		}
+		stop()
+		if err != nil {
+			return current, err
+		}
+		delay := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			delay.Stop()
+			return current, ctx.Err()
+		case <-delay.C:
+		}
+	}
+	return current, context.DeadlineExceeded
 }

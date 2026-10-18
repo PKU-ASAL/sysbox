@@ -442,3 +442,115 @@ func TestRunChildrenRenewUsesCurrentParent(t *testing.T) {
 	require.True(t, errors.Is(children.Wait(context.Background()), context.Canceled))
 	require.Positive(t, conn.renewCount.Load())
 }
+
+func TestRunChildObservationTimeoutRetriesWithoutCancellingTask(t *testing.T) {
+	d, req, conn := taskFixture(t)
+	record, err := d.Start(context.Background(), testRef(req), req)
+	require.NoError(t, err)
+	calls := 0
+	conn.observe = func(context.Context, substrate.ExecutionHandle) (substrate.ExecResult, error) {
+		calls++
+		if calls == 1 {
+			return substrate.ExecResult{}, context.DeadlineExceeded
+		}
+		return substrate.ExecResult{ExitCodeKnown: true, ExitCode: 0, RemoteTermination: substrate.RemoteTerminationConfirmed}, nil
+	}
+	children := &RunChildren{Dispatcher: d}
+	require.NoError(t, children.observe(context.Background(), record))
+	require.Equal(t, 2, calls)
+	require.Zero(t, conn.cancels)
+	require.Equal(t, 1, conn.starts)
+}
+
+func TestRunChildObservationRetriesAreBoundedAndDoNotHideConflicts(t *testing.T) {
+	for _, failure := range []error{context.DeadlineExceeded, errors.New("identity conflict")} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			d, req, conn := taskFixture(t)
+			record, err := d.Start(context.Background(), testRef(req), req)
+			require.NoError(t, err)
+			calls := 0
+			conn.observe = func(context.Context, substrate.ExecutionHandle) (substrate.ExecResult, error) {
+				calls++
+				return substrate.ExecResult{}, failure
+			}
+			children := &RunChildren{Dispatcher: d}
+			require.ErrorIs(t, children.observe(context.Background(), record), failure)
+			if errors.Is(failure, context.DeadlineExceeded) {
+				require.Equal(t, 3, calls)
+			} else {
+				require.Equal(t, 1, calls)
+			}
+			require.Zero(t, conn.cancels)
+		})
+	}
+}
+func TestRunChildCancelledParentNeverRetriesObservation(t *testing.T) {
+	d, req, conn := taskFixture(t)
+	record, err := d.Start(context.Background(), testRef(req), req)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	conn.observe = func(context.Context, substrate.ExecutionHandle) (substrate.ExecResult, error) {
+		calls++
+		cancel()
+		return substrate.ExecResult{}, context.DeadlineExceeded
+	}
+	children := &RunChildren{Dispatcher: d}
+	require.ErrorIs(t, children.observe(ctx, record), context.Canceled)
+	require.Equal(t, 1, calls)
+}
+
+func TestRunChildRealObservationDeadlineCanRecoverWithinGrantBudget(t *testing.T) {
+	d, req, conn := taskFixture(t)
+	record, err := d.Start(context.Background(), testRef(req), req)
+	require.NoError(t, err)
+	calls, checks := 0, 0
+	d.Authorize = func(context.Context, controlplane.SignedExecutionGrant) error { checks++; return nil }
+	conn.observe = func(ctx context.Context, _ substrate.ExecutionHandle) (substrate.ExecResult, error) {
+		calls++
+		if calls == 1 {
+			<-ctx.Done()
+			return substrate.ExecResult{}, ctx.Err()
+		}
+		return substrate.ExecResult{ExitCodeKnown: true, RemoteTermination: substrate.RemoteTerminationConfirmed}, nil
+	}
+	children := &RunChildren{Dispatcher: d}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	require.NoError(t, children.observe(ctx, record))
+	require.Equal(t, 2, calls)
+	require.Equal(t, 1, checks)
+	require.Zero(t, conn.cancels)
+}
+func TestRunChildRetryCannotBypassRevokedAuthority(t *testing.T) {
+	d, req, conn := taskFixture(t)
+	record, err := d.Start(context.Background(), testRef(req), req)
+	require.NoError(t, err)
+	denied := errors.New("grant revoked")
+	d.Authorize = func(context.Context, controlplane.SignedExecutionGrant) error { return denied }
+	calls := 0
+	conn.observe = func(context.Context, substrate.ExecutionHandle) (substrate.ExecResult, error) {
+		calls++
+		return substrate.ExecResult{}, context.DeadlineExceeded
+	}
+	children := &RunChildren{Dispatcher: d}
+	require.ErrorIs(t, children.observe(context.Background(), record), denied)
+	require.Equal(t, 1, calls)
+}
+
+func TestRunChildObservationRetryCannotExtendCallerBudget(t *testing.T) {
+	d, req, conn := taskFixture(t)
+	record, err := d.Start(context.Background(), testRef(req), req)
+	require.NoError(t, err)
+	calls := 0
+	conn.observe = func(context.Context, substrate.ExecutionHandle) (substrate.ExecResult, error) {
+		calls++
+		return substrate.ExecResult{}, context.DeadlineExceeded
+	}
+	children := &RunChildren{Dispatcher: d}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err = children.observeWithTimeoutRetry(ctx, record)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, 1, calls, "retry delay cannot outlive caller budget")
+}
