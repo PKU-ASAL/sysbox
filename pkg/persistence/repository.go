@@ -49,8 +49,21 @@ type backend interface {
 	name() string
 }
 type Repository struct {
-	backend       backend
-	boundTopology string
+	backend             backend
+	boundTopology       string
+	externalGCInventory func(context.Context, string) (map[string][]string, error)
+}
+
+// SetExternalGCInventoryProvider installs the explicit producer used to
+// account for references that live outside this lifecycle repository (for
+// example another host's revision, artifact, cache, or placement catalog).
+// A producer error makes GC reference loading fail closed.
+func (r *Repository) SetExternalGCInventoryProvider(provider func(context.Context, string) (map[string][]string, error)) error {
+	if provider == nil {
+		return fmt.Errorf("%w: nil external GC inventory provider", ErrCorruptRecord)
+	}
+	r.externalGCInventory = provider
+	return nil
 }
 
 func (r *Repository) Close() error { return r.backend.close() }

@@ -51,7 +51,39 @@ func (r *Repository) LoadGCReferences(ctx context.Context, topology string) (GCR
 	if err != nil {
 		return GCReferenceSnapshot{}, err
 	}
+	if r.externalGCInventory != nil {
+		external, err := r.externalGCInventory(ctx, topology)
+		if err != nil {
+			return GCReferenceSnapshot{}, fmt.Errorf("external GC inventory: %w", err)
+		}
+		if err := mergeExternalDomains(&out, external); err != nil {
+			return GCReferenceSnapshot{}, err
+		}
+		bound, _ := json.Marshal(out.Domains)
+		sum := sha256.Sum256(append([]byte(out.Digest+"\x00"), bound...))
+		out.Digest = fmt.Sprintf("%x", sum[:])
+	}
 	return out, nil
+}
+
+func mergeExternalDomains(out *GCReferenceSnapshot, external map[string][]string) error {
+	allowed := map[string]bool{"revision": true, "artifact": true, "cache": true, "placement": true}
+	for domain, values := range external {
+		if !allowed[domain] || len(values) == 0 {
+			return fmt.Errorf("%w: invalid external GC domain %q", ErrCorruptRecord, domain)
+		}
+		clean := append([]string(nil), values...)
+		for _, value := range clean {
+			if value == "" {
+				return fmt.Errorf("%w: empty external GC reference in %s", ErrCorruptRecord, domain)
+			}
+		}
+		sort.Strings(clean)
+		raw, _ := json.Marshal(clean)
+		sum := sha256.Sum256(raw)
+		out.Domains[domain] = GCReferenceDomain{Status: "complete", Digest: fmt.Sprintf("%x", sum[:]), Count: len(clean)}
+	}
+	return nil
 }
 
 func gcReferences(a *aggregate) (GCReferenceSnapshot, error) {

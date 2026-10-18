@@ -614,7 +614,9 @@
       "package": "./pkg/persistence",
       "tests": [
         "TestGCReferenceDomainsDeclareCompleteOrNotApplicable",
-        "TestGCReferenceDomainsRejectMalformedDomainAttributes"
+        "TestGCReferenceDomainsRejectMalformedDomainAttributes",
+        "TestGCReferencesRequireExplicitExternalInventoryProducer",
+        "TestGCReferencesFailClosedWhenExternalInventoryUnavailable"
       ],
       "kind": "contract",
       "race": true,
