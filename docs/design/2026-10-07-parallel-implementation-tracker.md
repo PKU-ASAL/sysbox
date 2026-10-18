@@ -783,3 +783,21 @@ terminal replay；改变结果或旧租约不能重写 operation。
 
 main 为 `b1cc43d`，仍有 PR43/44/45 对应的 keyed apply/claim replay/crash fencing 历史差异待集中整合；重构已有对应合同，不能简单 cherry-pick 覆盖。
 本轮未合并 main、未推送、未发布。对账发现的未完成项保持 open；以上内容不能当作交付全部完成凭据。
+
+## 后续进展与新失败（2026-10-18）
+
+- P6.2 已完成能力盘点：main 与重构三个内置 provider 均未实现 VM/磁盘 Snapshot
+  SPI；metadata snapshot 不代表外部快照。新增能力回归门禁，移除此项待盘点标记。
+- P9.4 首轮运行中 failover、数据库中断、LAN分区均完成原任务证明和正常清理，
+  但重复 failover 出现任务取消，下一轮在故障注入前产生 unknown create。该项
+  继续 open，不能以首次成功代替稳定性闭合。
+- 新验收脚本验证 disposable scope、活跃任务+checkpoint、结果身份、服务恢复、
+  exact-owner零残留；新增二进制前后摘要和当前源码构建比对，防止旧执行证据被
+  新验证器重新标为当前通过。
+- 升级演练只完成专用部署停写/DB+目录归档/服务恢复；完整升级重建仍 open。
+- 新 unknown 现场保留在 disposable lab，原历史环境仍未触碰。
+
+当前验收工具还绑定运行服务的 `/proc/<MainPID>/exe`，不是安装路径；缺绑定的旧
+round不能计当前通过。重复失败的 known-failed topology 已正常销毁/metadata删除；
+后续 `p9-135f615b0b64` unknown 创建保留，没有绕过恢复合同。P9.4 根因与稳定重验
+仍待完成，机器总账明确维持 open。

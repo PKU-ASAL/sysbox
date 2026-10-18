@@ -675,3 +675,22 @@ edited IDs with409. A successful response lists removed snapshot metadata and
 `resources_deleted=false`; no provider objects are deleted. Replan after a
 successful batch or a lost-response conflict. Pending GC reservations block
 retention, and state/action serials and contents remain unchanged.
+
+### Provider snapshot capability boundary
+
+Aggregate snapshots cover metadata (state and action journal), not VM memory,
+container filesystems or provider disks. At the migration baseline `main=b1cc43d`
+and current refactor, Docker, Firecracker and libvirt do **not** implement the
+`driver.Snapshot` SPI; the interface alone does not advertise a usable capability.
+There is therefore no existing provider snapshot operation to claim migrated.
+
+| Provider | Metadata aggregate snapshots | VM/memory/disk snapshot via Sysbox |
+|---|---|---|
+| Docker | Supported by the chosen state backend | Not implemented |
+| Firecracker | Supported by the chosen state backend | Not implemented |
+| libvirt | Supported by the chosen state backend | Not implemented |
+
+`TestBuiltinProvidersDoNotAdvertiseVMSnapshotFromMetadataSupport` pins this
+boundary. Any future provider snapshot implementation needs separate grant,
+identity, storage and restore acceptance; metadata restore never substitutes for
+that acceptance or rewinds external resource generations.

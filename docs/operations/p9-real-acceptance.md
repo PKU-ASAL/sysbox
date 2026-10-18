@@ -4100,3 +4100,79 @@ The execution VM was restarted only to reestablish its QEMU socket LAN connectio
 before Agent registration/work began. No historical VM or database was touched.
 This validates the new baseline deployment, not live failover during work or a
 complete upgrade of a retained historical incident. Main remains unmerged.
+
+### Live fault campaign continuation (2026-10-18)
+
+A new bounded `fault_campaign.py` wrapper checks the disposable lab scope before
+any service action, requires an actual running child and matching parent resource
+checkpoint, then invokes the existing fault injectors. Cleanup is ordinary
+Destroy plus exact-owner container/network absence and metadata DELETE; no force
+cleanup or unknown-intent clearing is used. All rounds use the existing isolated
+`sysboxp9_final_1018` deployment and a current helper image with its enrolled issuer
+public key. Historical labs/resources remain untouched.
+
+- Primary API failover: `/tmp/sb-fence-1018/fault-failover-6813a3da69b2`.
+  Original guest child and parent completed on backup while primary remained
+  stopped, then primary was restored. Original identities and signed completion
+  were retained; cleanup finished with zero owned residue.
+- Database outage: `/tmp/sb-fence-1018/fault-database-64ec62da4c6e`.
+  Guest watchdog confirmed cancellation in24.51seconds while PostgreSQL was down;
+  DB process changed from1447 to5992 after restart. Original stop receipt was
+  acknowledged, confirmed-failure parent cleanup finished normally.
+- Private-network partition: `/tmp/sb-fence-1018/fault-private-network-40349e9ede7f`.
+  Test LAN was disconnected while NAT management stayed usable; the original
+  task stopped, the same database process remained alive, connectivity restored,
+  and normal cleanup/metadata deletion completed.
+
+Each directory retains `summary.json`, `fault.json`, `cleanup.json`. The wrapper's
+verifier rejects changed task identities, absent stop signatures, missing service
+restoration, missing confirmed termination, or nonempty provider residue. This
+extends P9.4 live evidence; it does not substitute for the entire provider/transport
+and injection-boundary matrix.
+
+P6.2 migration inventory was checked against `main=b1cc43d`: the Snapshot SPI
+exists, but Docker/Firecracker/libvirt implement no `CreateSnapshot` provider
+method or descriptor snapshot capability. The new provider capability regression
+pins that fact. Metadata snapshots are supported; VM/memory/disk snapshots were
+not existing implemented functionality and are explicitly reported unsupported.
+
+#### Repeatability failure and evidence provenance correction
+
+The first three live rounds above passed, but a repeated primary failover did
+**not**: `/tmp/sb-fence-1018/fault-failover-9b102f2a2e22` records cancellation of
+the original child and confirmed failed parent. Primary service was restored.
+The next workload (`p9-135f615b0b64`, Run
+`request-4450307e3bc4c74668dd6ae69e64d4291d1154f74564f1aa7b9fa6bb43108bb6`)
+timed out during Docker start before fault injection and remains unknown; the
+container exists. Further local fault dispatch was stopped. This newly created
+acceptance incident is preserved; it is not force-cleaned or declared complete.
+The earlier confirmed-failure topology is cleaned only through normal recovery
+Destroy and exact-owner absence verification.
+
+These rounds ran deployed CLI SHA256
+`af3637dac22ba25dfa33f6915f0408a5a911226021bb9ab5115e3a2d7e4716b6`.
+A current source rebuild produced
+`d0d2e0ba30d401113dd64c8820ec5e7c20b7d29ac4c73b8cd677e8cc4f8a775d`;
+therefore they cannot be relabeled current-source execution. The fault wrapper
+now records both deployed binaries before and after, and the strict recorded-
+evidence gate rebuilds the current CLI and rejects a different digest. It also
+refuses prior managed containers before creating another workload. P9.4 remains
+open until the failed repeat is diagnosed and a clean current deployment passes.
+Hashing old JSON alone is not proof that current code executed.
+
+The upgrade preservation phase `/tmp/sb-fence-1018/upgrade-fca4fd13322e` archived
+the quiescent test DB and host directories and verified both service groups
+restored. Evidence SHA256:
+`67c968fe20755ac7df1af6ce650bb7b44c6352ba39086d1749339b46eecea6a8`.
+This is only stop-writer/backup/restoration rehearsal, not full old-version
+migration or rebuilt-deployment acceptance. Archive restoration attempts both
+roles even if one fails, and records errors before returning failure.
+
+Final verifier hardening reads each API/Agent/supervisor systemd MainPID and hashes
+`/proc/<pid>/exe`, requiring `binary_identity_kind=service-proc-exe-v1`; an installed
+file hash cannot masquerade as the running build. Older successful/failed rounds
+without this binding remain historical diagnostics and cannot pass the new
+current-build gate. New-round preflight also rejects owned networks and unresolved
+host intents even if no container survived. The confirmed-failure failover topology
+was normally destroyed and metadata-deleted with zero exact-owner residue;
+`p9-135f615b0b64` remains preserved as unknown. No new fault was injected into it.

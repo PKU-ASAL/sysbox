@@ -79,11 +79,10 @@
       "id": "P6.2",
       "text": "区分“元数据恢复”和“VM/磁盘快照”。恢复 state 不宣称真实 VM 或文件回到了过去；provider snapshot 若属于原功能需单列矩阵验收。",
       "gates": [
-        "snapshot-storage"
+        "snapshot-storage",
+        "provider-snapshot-boundary"
       ],
-      "remaining": [
-        "Provider disk/VM snapshot equivalence inventory must distinguish historical capabilities and not infer from metadata restore."
-      ]
+      "remaining": []
     },
     {
       "id": "P6.3",
@@ -224,10 +223,11 @@
       "gates": [
         "upgrade-api",
         "snapshot-api",
-        "gc-api"
+        "gc-api",
+        "live-fault-evidence"
       ],
       "remaining": [
-        "Current live PostgreSQL dual-API failover/database-outage acceptance remains required; contract tests are not live failover."
+        "Repeated live primary failover cancelled the original child; subsequent test create remained unknown. Earlier successful rounds do not close repeatability; source-bound clean-deployment rerun and root-cause fix remain required."
       ]
     },
     {
@@ -565,6 +565,49 @@
         "SYSBOX_FIRECRACKER_BIN",
         "SYSBOX_FIRECRACKER_KERNEL",
         "SYSBOX_FIRECRACKER_ROOTFS"
+      ]
+    },
+    {
+      "id": "provider-snapshot-boundary",
+      "package": "./pkg/driver",
+      "tests": [
+        "TestBuiltinProvidersDoNotAdvertiseVMSnapshotFromMetadataSupport"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "live-fault-evidence",
+      "package": "./scripts/acceptance",
+      "tests": [
+        "TestDisposableLiveFaultEvidence"
+      ],
+      "kind": "real-provider",
+      "race": false,
+      "timeout": "1m",
+      "requires_env": [
+        "SYSBOX_FAILOVER_SUMMARY",
+        "SYSBOX_FAILOVER_FAULT",
+        "SYSBOX_FAILOVER_CLEANUP",
+        "SYSBOX_DATABASE_SUMMARY",
+        "SYSBOX_DATABASE_FAULT",
+        "SYSBOX_DATABASE_CLEANUP",
+        "SYSBOX_PARTITION_SUMMARY",
+        "SYSBOX_PARTITION_FAULT",
+        "SYSBOX_PARTITION_CLEANUP"
+      ],
+      "artifact_env": [
+        "SYSBOX_FAILOVER_SUMMARY",
+        "SYSBOX_FAILOVER_FAULT",
+        "SYSBOX_FAILOVER_CLEANUP",
+        "SYSBOX_DATABASE_SUMMARY",
+        "SYSBOX_DATABASE_FAULT",
+        "SYSBOX_DATABASE_CLEANUP",
+        "SYSBOX_PARTITION_SUMMARY",
+        "SYSBOX_PARTITION_FAULT",
+        "SYSBOX_PARTITION_CLEANUP"
       ]
     }
   ]
