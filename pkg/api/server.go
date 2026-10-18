@@ -21,6 +21,7 @@ import (
 
 // Server holds all API state and registers HTTP routes.
 type Server struct {
+	fenceTargets  map[string]hostFenceTarget
 	grantSigner   ed25519.PrivateKey
 	grantHostKeys map[string]ed25519.PublicKey
 	repositoryMu  sync.Mutex
@@ -101,6 +102,9 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 	}
 	if s.initErr == nil && s.consoles.initErr != nil {
 		s.initErr = fmt.Errorf("initialize console registry: %w", s.consoles.initErr)
+	}
+	if err := s.loadHostFenceTargets(); err != nil && s.initErr == nil {
+		s.initErr = err
 	}
 	s.agentSvc = newAgentService(s)
 	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
@@ -365,6 +369,9 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/agents/{agent}/commands/{command}/recovery-authorize", s.handleAuthorizeRunRecovery)
 
 	// Topologies
+	m.HandleFunc("POST /v1/topologies/{topology}/host-fences", s.handleBeginHostFence)
+	m.HandleFunc("GET /v1/topologies/{topology}/host-fences/{fence}", s.handleGetHostFence)
+	m.HandleFunc("POST /v1/topologies/{topology}/host-fences/{fence}/receipt", s.handleRecordHostFence)
 	m.HandleFunc("POST /v1/topologies/{topology}/adoption-inspections", s.handleAdoptionInspection)
 	m.HandleFunc("POST /v1/topologies/{topology}/adoption-inspections/{inspection}/confirm", s.handleConfirmAdoptionInspection)
 	m.HandleFunc("POST /v1/topologies/{topology}/gc", s.handleGC)

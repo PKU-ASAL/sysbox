@@ -43,3 +43,25 @@ class FenceSafetyTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'identity mismatch'):
                     host_fencing.capture_vm(root, {'id':'isolated'})
                 monitor.assert_not_called()
+
+class FenceAdmissionTests(unittest.TestCase):
+    def test_request_matches_lab_and_original_kernel_before_actuation(self):
+        from unittest import mock
+        import json
+        import base64
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'admission.json'
+            key = Path(tmp) / 'key'
+            key.write_bytes(b'a' * 64)
+            value = {'request': {'lab_id': 'isolated', 'grant': {'target_boot_id': 'old'}, 'controller_key': base64.b64encode(b'a' * 32).decode()}}
+            path.write_text(json.dumps(value))
+            with mock.patch.object(host_fencing.subprocess, 'run') as signer:
+                signer.return_value.stdout = 'a' * 64 + '\n'
+                record, digest = host_fencing.check_admission(path, {'id': 'isolated'}, 'old', '/signer', key)
+                self.assertEqual(digest, 'a' * 64)
+                for lab, boot in [('historical', 'old'), ('isolated', 'new')]:
+                    with self.assertRaises(ValueError):
+                        host_fencing.check_admission(path, {'id': lab}, boot, '/signer', key)
+                key.write_bytes(b'b' * 64)
+                with self.assertRaises(ValueError):
+                    host_fencing.check_admission(path, {'id': 'isolated'}, 'old', '/signer', key)

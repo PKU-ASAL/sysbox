@@ -40,13 +40,18 @@ func (r *ExecutionGrantRepository) InspectMaintenance(ctx context.Context, id st
 // ValidateMaintenanceWrite checks an authority snapshot while its storage lock
 // is held through metadata commit. Nil means no authority has yet been issued.
 // This does not permit provider effects or substitute for command validation.
-func ValidateMaintenanceWrite(raw []byte, topologyUID string) error {
+func ValidateMaintenanceWrite(raw []byte, topologyUID string, agents ...string) error {
 	if topologyUID == "" {
 		return ErrInvalidRecord
 	}
 	authority, err := decodeExecutionAuthority(raw)
 	if err != nil {
 		return err
+	}
+	for _, agent := range agents {
+		if authority.hostFenceBlocks(agent) {
+			return ErrConflict
+		}
 	}
 	if authority.maintenanceBlocks(topologyUID) {
 		return ErrConflict
@@ -139,6 +144,11 @@ func (r *ExecutionGrantRepository) EndMaintenance(ctx context.Context, proof Mai
 		}
 		if current.Released {
 			return nil
+		}
+		for _, record := range a.Fences {
+			if record.BarrierID == current.ID {
+				return ErrConflict
+			}
 		}
 		for _, grant := range a.Grants {
 			if grant.Scope.TopologyUID == current.TopologyUID && grant.State != controlplane.GrantStopped {

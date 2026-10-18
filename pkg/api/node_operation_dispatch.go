@@ -27,7 +27,7 @@ func (s *localAPIStore) CreateNodeOperationDispatch(ctx context.Context, op cont
 		return err
 	}
 	return persistence.FilesystemExecutionGrantStorage(s.runsDir).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-		if err := persistence.ValidateMaintenanceWrite(raw, cmd.TopologyUID); err != nil {
+		if err := persistence.ValidateMaintenanceWrite(raw, cmd.TopologyUID, cmd.AgentID); err != nil {
 			return nil, err
 		}
 		return nil, repo.CreateFilesystemDispatchUnderAuthority(ctx, op, cmd)

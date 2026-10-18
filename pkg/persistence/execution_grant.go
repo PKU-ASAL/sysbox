@@ -16,15 +16,16 @@ import (
 const executionAuthorityKind guestKind = "sysbox_execution_authority"
 const MaxExecutionGrantTTL = controlplane.ExecutionGrantMaxTTL
 
-// Version 2 includes maintenance barriers. Old writers must reject this ledger
-// rather than ignore and overwrite a freeze. Version 1 requires explicit rebuild.
-const executionAuthorityVersion = 2
+// Version 3 adds immutable externally attested fencing evidence. Older writers
+// must reject this ledger rather than discard its pinned requests and receipts.
+const executionAuthorityVersion = 3
 
 // One authority ledger serializes session changes and overlapping scopes in
 // the same storage transaction. Epoch tombstones are never deleted. This is
 // intentionally a single writer boundary until a sharded authority can preserve
 // topology-versus-resource exclusion and session CAS in one transaction.
 type executionAuthority struct {
+	Fences       map[string]HostFenceRecord             `json:"host_fences,omitempty"`
 	Maintenance  map[string]MaintenanceBarrier          `json:"maintenance,omitempty"`
 	Stops        map[uint64]stoppedExecutionGrant       `json:"stops,omitempty"`
 	Observations map[string]ExecutionObservation        `json:"observations"`
@@ -226,7 +227,7 @@ func (r *ExecutionGrantRepository) Issue(ctx context.Context, request controlpla
 	}
 	var result controlplane.ExecutionGrant
 	err := r.update(ctx, func(a *executionAuthority) error {
-		if a.maintenanceBlocks(request.Scope.TopologyUID) {
+		if a.hostFenceBlocks(request.AgentID) || a.maintenanceBlocks(request.Scope.TopologyUID) {
 			return ErrConflict
 		}
 		if a.Sessions[request.AgentID].ID != request.SessionID {

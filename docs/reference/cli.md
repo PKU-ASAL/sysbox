@@ -227,3 +227,23 @@ Its proof distinguishes `host process exclusion` from `operation_result=unknown`
 It never targets an existing lab or historical resource. Remote daemon jobs,
 external storage, migrated domains and business-result success require separate
 proofs and remain outside this acceptance command.
+
+### Signed disposable fencing evidence
+
+`sysbox host-fence request-digest <admission.json>` validates the API admission
+record and prints its request digest. On the trusted external controller,
+`sysbox host-fence attest <admission.json> <evidence.json> --key <controller.key>`
+validates the exact request binding and local-provider acceptance evidence, then
+prints an Ed25519-signed receipt. The key must be a private regular file containing
+64 raw bytes and match the admission's pinned public key. Protect the controller
+and its input files: the signer validates evidence structure and identity; it
+cannot independently establish the physical truth of arbitrary JSON assertions.
+
+For an already scoped disposable acceptance lab, pass `--admission`, `--attestor`
+and `--controller-key` together to `host_fencing.py fence`. Before canary creation
+or power-off the script checks the lab, original execution boot and controller
+key. It snapshots the admission and produces `.receipt.json` only after pidfd
+exit, new kernel boot, unchanged external controller boot and provider readback.
+Submit that receipt to the API endpoint documented in [API](api.md). Existing
+unsigned reports lack this pre-actuation binding and cannot be attested by this
+flow. Receipt acceptance leaves the persistent host hold in place.

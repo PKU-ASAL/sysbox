@@ -47,9 +47,14 @@ type APIConfig struct {
 	Evaluation     APIEvaluationConfig     `yaml:"evaluation" json:"evaluation,omitempty"`
 }
 
+type DisposableFenceTarget struct {
+	LabID                   string `yaml:"lab_id" json:"lab_id"`
+	ControllerPublicKeyFile string `yaml:"controller_public_key_file" json:"controller_public_key_file"`
+}
 type APIExecutionGrantConfig struct {
-	SigningKeyFile     string            `yaml:"signing_key_file" json:"signing_key_file,omitempty"`
-	HostPublicKeyFiles map[string]string `yaml:"host_public_key_files" json:"host_public_key_files,omitempty"`
+	DisposableFenceTargets map[string]DisposableFenceTarget `yaml:"disposable_fence_targets" json:"disposable_fence_targets,omitempty"`
+	SigningKeyFile         string                           `yaml:"signing_key_file" json:"signing_key_file,omitempty"`
+	HostPublicKeyFiles     map[string]string                `yaml:"host_public_key_files" json:"host_public_key_files,omitempty"`
 }
 
 type APIEvaluationConfig struct {

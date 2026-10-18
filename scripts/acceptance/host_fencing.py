@@ -5,6 +5,8 @@ This establishes kernel/process exclusion only. It cannot produce a successful
 Run, delete receipt or recovery authorization for arbitrary historical effects.
 """
 import argparse
+import base64
+from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
@@ -173,7 +175,24 @@ def install_canaries(root, manifest, request_id):
     return {'docker_id': container, 'domain_uuid': domain_id, 'docker_exec_inflight': True, 'libvirt_endpoint': 'qemu:///system', 'external_storage': False}
 
 
-def fence(root):
+def check_admission(path, manifest, old_boot, attestor, key):
+    record = json.loads(Path(path).read_text())
+    request = record['request']
+    if (request.get('lab_id') != manifest['id']
+            or request.get('grant', {}).get('target_boot_id') != old_boot):
+        raise ValueError('admitted request does not match disposable lab and original kernel')
+    private = Path(key).read_bytes()
+    if len(private) != 64 or private[32:] != base64.b64decode(request['controller_key'], validate=True):
+        raise ValueError('controller key differs from pinned admission')
+    result = subprocess.run([str(attestor), 'host-fence', 'request-digest', str(path)],
+                            capture_output=True, text=True, check=True)
+    digest = result.stdout.strip()
+    if len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+        raise ValueError('invalid admitted request digest')
+    return record, digest
+
+
+def fence(root, admission=None, attestor=None, controller_key=None):
     if not hasattr(os, 'pidfd_open'):
         raise RuntimeError('pidfd-capable Python required; use /usr/bin/python3 on this host')
     root, manifest = two_vms.load(root)
@@ -184,6 +203,13 @@ def fence(root):
         path = root / ('fence-' + request_id + '.json')
         old_boot = wait_boot(root, manifest, 'execution')
         control_boot = wait_boot(root, manifest, 'control')
+        controller_boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        admitted_digest = None
+        if admission:
+            record, admitted_digest = check_admission(admission, manifest, old_boot, attestor, controller_key)
+            # Preserve the exact pre-actuation input for the final signature.
+            admission = root / ('fence-' + request_id + '.admission.json')
+            two_vms.save(admission, record)
         provider = install_canaries(root, manifest, request_id)
         descriptor, pid, start, args = capture_vm(root, manifest)
         evidence = dict(lab_id=manifest['id'], role='execution', request_id=request_id,
@@ -191,6 +217,8 @@ def fence(root):
                         operation_result='unknown', provider=provider, old_qemu_pid=pid,
                         old_qemu_start=start, status='intent', qemu_exited=False)
         disk_before = (root / 'execution' / 'disk.qcow2').stat()
+        evidence['controller_boot'] = controller_boot
+        evidence['request_sha256'] = admitted_digest
         evidence['disk_device_inode'] = [disk_before.st_dev, disk_before.st_ino]
         two_vms.save(path, evidence)
         try:
@@ -231,9 +259,18 @@ def fence(root):
         if state != ['false', 'shut off']:
             raise RuntimeError('provider workload restarted unexpectedly: ' + repr(state))
         evidence['post_boot_provider_state'] = state
+        evidence['controller_boot_unchanged'] = Path('/proc/sys/kernel/random/boot_id').read_text().strip() == controller_boot
+        if not evidence['controller_boot_unchanged']:
+            raise RuntimeError('external controller kernel changed')
+        evidence['observed_at'] = datetime.now(timezone.utc).isoformat()
         evidence['status'] = 'fenced'
         validate_proof(evidence)
         two_vms.save(path, evidence)
+        if admission:
+            result = subprocess.run([str(attestor), 'host-fence', 'attest', str(admission),
+                                     str(path), '--key', str(controller_key)],
+                                    capture_output=True, text=True, check=True)
+            two_vms.save(root / ('fence-' + request_id + '.receipt.json'), json.loads(result.stdout))
         # Cleaning only the two random test identities, after independent stops.
         guest(root, manifest, 'execution',
               'sudo docker rm ' + provider['docker_id'] + ' >/dev/null; sudo virsh undefine ' +
@@ -250,11 +287,16 @@ def main():
     parser.add_argument('operation', choices=['create', 'prepare', 'fence'])
     parser.add_argument('--root', required=True)
     parser.add_argument('--base')
+    parser.add_argument('--admission')
+    parser.add_argument('--attestor')
+    parser.add_argument('--controller-key')
     args = parser.parse_args()
+    if any((args.admission, args.attestor, args.controller_key)) and not all((args.admission, args.attestor, args.controller_key)):
+        parser.error('--admission, --attestor and --controller-key must be supplied together')
     if args.operation == 'create':
         if not args.base: parser.error('--base required')
         create(args.root, args.base)
     elif args.operation == 'prepare': prepare(args.root)
-    else: fence(args.root)
+    else: fence(args.root, args.admission, args.attestor, args.controller_key)
 
 if __name__ == '__main__': main()

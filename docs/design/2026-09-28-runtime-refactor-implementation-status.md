@@ -1,5 +1,20 @@
 # Sysbox 生命周期重构：当前实施状态
 
+## 2026-10-18 补充：宿主 fencing 证据接入
+
+新增可丢弃验收宿主的请求准入、外部控制器 Ed25519 签名与持久回执。
+准入绑定原始 command/Run incarnation、生产 grant 摘要及 journal 观察摘要，
+冻结 topology 并阻止同 Agent 跨 topology 的 grant、派发与 Run 领取。
+CLI 和验收脚本在断电前绑定请求，真实 Docker/libvirt canary 断电重启与 API
+证据接入已有验收入口。authority 升为 format3；旧账本明确拒绝，不自动迁移。
+
+这一步尚未闭合 unknown 恢复：回执不完成 Run/action，不产生 stop receipt，
+没有解除宿主 hold 的生产流程。历史 intent 仍只读处置；P5/P6/P8/P9 的完整故障
+矩阵与升级整合仍未关闭。当前接口及限制以 [API](../reference/api.md)、
+[升级说明](../operations/upgrades-and-recovery.md) 和
+[验收记录](../operations/p9-real-acceptance.md) 为准。下文保留此前阶段状态。
+
+
 2026-10-18 后续切片：GC 新增 filesystem/shared SQL catalog 的完整范围盘点、
 两次观察保留期、预算上限和原子批次顺序调度；无主 libvirt 停止的持久 domain
 支持显式 metadata 接管与冷生命周期（外部磁盘保留，reset 不隐式认领磁盘）。

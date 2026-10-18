@@ -762,23 +762,15 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 		}
 		operation = "guest_file_install"
 	case "run_assigned":
-		action := ""
-		if cmd.Run != nil {
-			action = cmd.Run.Op
-			if action == "" {
-				action = cmd.Run.Operation
-			}
+		req, err := canonicalRunGrantRequest(cmd)
+		if err != nil {
+			return controlplane.ExecutionGrant{}, err
 		}
-		if cmd.Run == nil || !controlplane.IsRunExecutionOperation("run_"+action) || cmd.Run.Topology == "" || cmd.Run.Revision == "" {
-			return controlplane.ExecutionGrant{}, persistence.ErrCorruptRecord
-		}
-		req := hostsupervisor.RunRequest{RunID: cmd.Run.ID, Topology: cmd.Run.Topology, TopologyUID: cmd.TopologyUID, Revision: cmd.Run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: cmd.Run.Target, ExpectedSerial: cmd.ExpectedSerial}
-		var err error
 		digest, err = req.Digest()
 		if err != nil {
 			return controlplane.ExecutionGrant{}, err
 		}
-		operation = "run_" + action
+		operation = "run_" + req.Action
 		lifecycleRun = true
 	case "gc_delete":
 		if cmd.Session == nil || (cmd.Session.ID != "" && cmd.Session.ID != proof.SessionID) || cmd.GCKind == "" || cmd.GCExternalID == "" || cmd.GCInventoryDigest == "" {

@@ -20,10 +20,10 @@ func checkLocalRunMaintenance(ctx context.Context, runsDir string, authority []b
 	if run.Status.IsTerminal() {
 		return nil
 	}
-	return checkLocalTopologyMaintenance(ctx, runsDir, authority, run.Topology)
+	return checkLocalTopologyMaintenance(ctx, runsDir, authority, run.Topology, run.AgentID)
 }
 
-func checkLocalTopologyMaintenance(ctx context.Context, runsDir string, authority []byte, topology string) error {
+func checkLocalTopologyMaintenance(ctx context.Context, runsDir string, authority []byte, topology string, agents ...string) error {
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
 	}
@@ -35,7 +35,7 @@ func checkLocalTopologyMaintenance(ctx context.Context, runsDir string, authorit
 	} else if err != nil {
 		return err
 	}
-	return persistence.ValidateRunMaintenance(authority, raw, topology)
+	return persistence.ValidateRunMaintenance(authority, raw, topology, agents...)
 }
 
 func checkSQLiteRunMaintenance(ctx context.Context, conn interface {
@@ -44,12 +44,12 @@ func checkSQLiteRunMaintenance(ctx context.Context, conn interface {
 	if run.Status.IsTerminal() {
 		return nil
 	}
-	return checkSQLiteTopologyMaintenance(ctx, conn, run.Topology)
+	return checkSQLiteTopologyMaintenance(ctx, conn, run.Topology, run.AgentID)
 }
 
 func checkSQLiteTopologyMaintenance(ctx context.Context, conn interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, topology string) error {
+}, topology string, agents ...string) error {
 	authority, err := readSQLiteAuthority(ctx, conn)
 	if err != nil {
 		return err
@@ -69,7 +69,7 @@ func checkSQLiteTopologyMaintenance(ctx context.Context, conn interface {
 			return persistence.ErrCorruptRecord
 		}
 	}
-	return persistence.ValidateRunMaintenance(authority, raw, topology)
+	return persistence.ValidateRunMaintenance(authority, raw, topology, agents...)
 }
 
 func readSQLiteAuthority(ctx context.Context, conn interface {
@@ -90,10 +90,10 @@ func checkPostgresRunMaintenance(ctx context.Context, tx pgx.Tx, authority []byt
 	if run.Status.IsTerminal() {
 		return nil
 	}
-	return checkPostgresTopologyMaintenance(ctx, tx, authority, run.Topology)
+	return checkPostgresTopologyMaintenance(ctx, tx, authority, run.Topology, run.AgentID)
 }
 
-func checkPostgresTopologyMaintenance(ctx context.Context, tx pgx.Tx, authority []byte, topology string) error {
+func checkPostgresTopologyMaintenance(ctx context.Context, tx pgx.Tx, authority []byte, topology string, agents ...string) error {
 	var exists bool
 	if err := tx.QueryRow(ctx, "SELECT to_regclass('sysbox_lifecycle_aggregates') IS NOT NULL").Scan(&exists); err != nil {
 		return err
@@ -107,5 +107,5 @@ func checkPostgresTopologyMaintenance(ctx context.Context, tx pgx.Tx, authority 
 			return err
 		}
 	}
-	return persistence.ValidateRunMaintenance(authority, raw, topology)
+	return persistence.ValidateRunMaintenance(authority, raw, topology, agents...)
 }

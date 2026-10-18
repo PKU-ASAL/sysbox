@@ -27,6 +27,9 @@ func ValidateCommandMaintenance(raw []byte, old *CommandRecord, next CommandReco
 		return err
 	}
 	c := next.Command
+	if authority.hostFenceBlocks(c.AgentID) {
+		return ErrConflict
+	}
 	if c.TopologyUID != "" {
 		if authority.maintenanceBlocks(c.TopologyUID) {
 			return ErrConflict

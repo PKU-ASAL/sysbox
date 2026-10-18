@@ -4,13 +4,18 @@ package persistence
 // through Run publication. It validates the complete records, never a guessed
 // UID. Before lifecycle initialization, an active barrier conservatively blocks
 // admission because the new Run's ownership cannot yet be established.
-func ValidateRunMaintenance(authorityRaw, lifecycleRaw []byte, topology string) error {
+func ValidateRunMaintenance(authorityRaw, lifecycleRaw []byte, topology string, agents ...string) error {
 	if !topologyName.MatchString(topology) {
 		return ErrInvalidRecord
 	}
 	authority, err := decodeExecutionAuthority(authorityRaw)
 	if err != nil {
 		return err
+	}
+	for _, agent := range agents {
+		if authority.hostFenceBlocks(agent) {
+			return ErrConflict
+		}
 	}
 	if lifecycleRaw == nil {
 		for _, barrier := range authority.Maintenance {

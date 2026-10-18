@@ -64,3 +64,16 @@ Firecracker 删除现在在移除 generation 前，将绑定原 action 的进程
 受管根目录的 `.locks` 下。冷恢复还需核验同一身份、无目录/socket/进程残留。
 普通 unlocked manifest 不再证明 VMM 内未知请求已经结束；跨宿主 reboot/PID 身份
 冲突仍保守拒绝。缺旧证据的历史 intent 不能自动升级为成功。
+
+## Execution authority format 3
+
+宿主 fencing 请求、固定控制器公钥与签名回执进入 execution authority format3；
+它与 aggregate format6、API database schema14 是不同的版本边界。旧 format2
+ledger 明确拒绝，新 ledger 也不能交给旧 writer。当前没有 format2→3 自动转换。
+升级前停写并保留完整旧账本；仅对明确可丢弃的项目建立新的 authority 存储。
+不得通过删除 ledger 或修改 version 来解除旧 grant、未知 intent 或宿主冻结。
+
+新增 fencing API 仅用于显式登记的隔离验收宿主。收到有效签名只保存停止证据，
+不把未知请求认定成功，也不允许重放。冻结覆盖该 Agent 的其他 topology，且跨
+重启保留；普通 maintenance release 无法解除它。后续仍需实现独立 observation、
+原始 intent 处置与显式释放流程，因此不要把真实历史现场登记到这个验收接口。

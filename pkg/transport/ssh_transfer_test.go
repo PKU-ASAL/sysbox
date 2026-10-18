@@ -15,6 +15,8 @@ func TestSSHCopyVerifiesContentBeforeAtomicReplacement(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "source")
 	dst := filepath.Join(t.TempDir(), "target with 'quotes'")
 	require.NoError(t, os.WriteFile(src, []byte("payload\x00\n"), 0640))
+	// The transfer preserves source mode; make the fixture independent of umask.
+	require.NoError(t, os.Chmod(src, 0640))
 	require.NoError(t, os.WriteFile(dst, []byte("old"), 0600))
 	conn := NewSSHConnectionSecure("unused", "22", "root", "", "")
 	conn.runCommand = func(cmd *exec.Cmd) error {

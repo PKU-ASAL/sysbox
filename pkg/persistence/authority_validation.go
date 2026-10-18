@@ -23,6 +23,9 @@ func decodeExecutionAuthority(raw []byte) (*executionAuthority, error) {
 	if err := validateMaintenance(a); err != nil {
 		return nil, err
 	}
+	if err := validateHostFences(a); err != nil {
+		return nil, err
+	}
 	for key, session := range a.Sessions {
 		if key == "" || key != session.AgentID || session.ID == "" || session.IncarnationID == "" || session.CreatedAt.IsZero() {
 			return nil, ErrCorruptRecord

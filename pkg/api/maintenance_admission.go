@@ -13,7 +13,7 @@ import (
 // ledger is safe only while first barrier creation uses the same exclusion.
 func checkSQLiteMaintenanceAdmission(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, uid string) error {
+}, uid string, agents ...string) error {
 	var raw []byte
 	err := q.QueryRowContext(ctx, "SELECT data FROM sysbox_execution_authority WHERE id='authority'").Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -23,10 +23,10 @@ func checkSQLiteMaintenanceAdmission(ctx context.Context, q interface {
 	} else if len(raw) == 0 {
 		return persistence.ErrCorruptRecord
 	}
-	return persistence.ValidateMaintenanceWrite(raw, uid)
+	return persistence.ValidateMaintenanceWrite(raw, uid, agents...)
 }
 
-func checkPostgresMaintenanceAdmission(ctx context.Context, tx pgx.Tx, uid string) error {
+func checkPostgresMaintenanceAdmission(ctx context.Context, tx pgx.Tx, uid string, agents ...string) error {
 	if uid == "" {
 		return persistence.ErrInvalidRecord
 	}
@@ -34,7 +34,7 @@ func checkPostgresMaintenanceAdmission(ctx context.Context, tx pgx.Tx, uid strin
 	if err != nil {
 		return err
 	}
-	return persistence.ValidateMaintenanceWrite(raw, uid)
+	return persistence.ValidateMaintenanceWrite(raw, uid, agents...)
 }
 
 func lockPostgresExecutionAuthority(ctx context.Context, tx pgx.Tx) ([]byte, error) {

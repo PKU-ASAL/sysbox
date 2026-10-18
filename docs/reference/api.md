@@ -476,3 +476,46 @@ reset continuation requirements remain distinct. Returned evidence is classified
 as requiring authorized observation; it is not automatically declared complete.
 Unknown records are not force-cleared. This endpoint is a disposition report,
 not physical host fencing or permission to replay an old request.
+
+### Disposable host fencing evidence
+
+This opt-in interface records externally signed process-exclusion evidence. It
+never reboots a host or completes/replays an interrupted operation. Enroll only
+isolated disposable acceptance Agents in API configuration:
+
+```yaml
+api:
+  execution_grant:
+    disposable_fence_targets:
+      disposable-agent:
+        lab_id: sysbox-p9-example
+        controller_public_key_file: /etc/sysbox/fence-controller.pub
+```
+
+The raw Ed25519 public key must differ from the API issuer and every enrolled
+host key. Keep its private key exclusively on the external controller.
+
+- `POST /v1/topologies/{name}/host-fences` requires `Idempotency-Key` and
+  `{"run_id":"...","grant":{...}}`, containing the exact retained parent Run
+  grant. It checks the original durable command, Run incarnation and production
+  request digest, requires an anchored nonempty action journal, and returns202
+  with a `HostFenceRecord`.
+- `GET /v1/topologies/{name}/host-fences/{id}` reads that record after restart.
+- `POST /v1/topologies/{name}/host-fences/{id}/receipt` accepts the signed receipt
+  and returns200. Conflicting receipt retries or invalid signatures return409.
+
+Admission atomically freezes the topology, revokes its active grants and places
+a persistent hold on the Agent across topologies. Another non-stopped topology
+grant on that Agent prevents admission. New grants, command delivery, dispatch,
+and nonterminal Run claims/writes are blocked; observation, stop and completion
+evidence remain available. The journal hash binds an observed snapshot, not an
+atomic cross-repository recovery decision. Request replay uses its original
+pinned controller key and journal hash, including after configuration rotation.
+
+Receipts bind the request digest, lab, original/new execution kernel boots,
+external controller boot continuity, original QEMU process exit, disk identity
+and `operation_result=unknown`. Receipt acceptance does not synthesize a stop
+receipt or change any Run/action/resource outcome. **There is currently no
+release workflow for this hold**, even after receipt acceptance; ordinary
+maintenance release is rejected. This is an acceptance/evidence interface, not
+production unknown-effect recovery. See [upgrade boundaries](../operations/upgrades-and-recovery.md).

@@ -31,7 +31,7 @@ func (s *postgresAPIStore) createPostgresGuestDispatch(ctx context.Context, tabl
 	if err != nil {
 		return err
 	}
-	if err = checkPostgresMaintenanceAdmission(ctx, tx, cmd.TopologyUID); err != nil {
+	if err = checkPostgresMaintenanceAdmission(ctx, tx, cmd.TopologyUID, cmd.AgentID); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, "INSERT INTO "+table+"(id,data) VALUES($1,$2::jsonb)", id, string(raw)); err != nil {

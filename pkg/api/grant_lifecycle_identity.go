@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) issueCommandGrant(ctx context.Context, agentID, commandID string, proof ExecutionGrantRequest) (*controlplane.ExecutionGrant, error) {
@@ -92,4 +94,18 @@ func grantCommandTopology(record *persistence.CommandRecord) (string, error) {
 		return "", persistence.ErrConflict
 	}
 	return topology, nil
+}
+
+// canonicalRunGrantRequest is shared by issuance and historical fence intake.
+// Its wire encoding must remain exactly the host supervisor protocol encoding.
+func canonicalRunGrantRequest(cmd controlplane.AgentCommand) (hostsupervisor.RunRequest, error) {
+	if cmd.Type != "run_assigned" || cmd.Run == nil {
+		return hostsupervisor.RunRequest{}, persistence.ErrCorruptRecord
+	}
+	action := cmd.Run.Op
+	if action == "" {
+		action = cmd.Run.Operation
+	}
+	req := hostsupervisor.RunRequest{RunID: cmd.Run.ID, Topology: cmd.Run.Topology, TopologyUID: cmd.TopologyUID, Revision: cmd.Run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: cmd.Run.Target, ExpectedSerial: cmd.ExpectedSerial}
+	return req, req.Validate()
 }

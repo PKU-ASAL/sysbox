@@ -3811,3 +3811,56 @@ historical incident was not restarted, cleaned, or rewritten. Its read-only
 fencing/continuation plan is `/tmp/sysbox-historical-intent-plan-20261018.json`
 (SHA256 `f266a01f9ba69f7c532cea1eb2d5cd3b5eb5938c3c38f332bf61fba2bc77e52b`),
 with `historical_vm_touched=false`.
+
+### Authenticated evidence intake (2026-10-18)
+
+The follow-up adds a production API admission/receipt path and the external
+`sysbox host-fence` attestor. Authority format3 pins the exact original grant,
+immutable command/Run incarnation, observed journal hash, disposable lab and
+controller public key. It freezes the topology and holds the Agent across other
+topologies. Issuance and intake share the host-supervisor request encoding;
+nonterminal Run claims and all command/dispatch admission boundaries honor the
+hold. Receipt acceptance preserves unknown Run/action outcomes and cannot release
+maintenance, even after independent stop evidence.
+
+The real round reused only the explicitly disposable `/tmp/sb-fence-1018` lab
+created for this acceptance. `TestHostFenceDisposableVMIntake` constructs an
+anchored canonical interrupted Run/action fixture, derives its request via the
+production grant-source path, admits it through HTTP, and invokes the real
+Docker/libvirt canary fence script with that admission. The script verifies the
+external controller boot as well as the unchanged control-VM boot, signs only
+post-exit/new-boot evidence, and returns it through the production HTTP receipt
+route. The test then checks exact replay, API reconstruction, revoked original
+grant with no stop receipt, unchanged Run/action and rejected maintenance release.
+This is a synthetic interrupted Run plus real provider canaries, not proof of
+recovering an arbitrary original production workload.
+
+Evidence: `/tmp/sb-fence-1018/fence-2b7f3081f69842bc99e2553a508dc5ec.json`, SHA256
+`de763a8307ed574c91901e671f2248460e3d036f848eb21544c41dc354a0c311`.
+The adjacent `.receipt.json` contains the signed receipt, and
+`/tmp/sb-fence-1018/api-fence-accepted.json` records API acceptance. The final
+receipt still says `operation_result=unknown`; canary cleanup is limited to the
+two randomly named test resources. Historical VM/resources remain untouched.
+
+Reproduction (only with a lab explicitly created for disposable fencing):
+
+```bash
+GOCACHE=/tmp/sysbox-gocache go build -buildvcs=false -o /tmp/sysbox-fence-attestor ./cmd/sysbox
+SYSBOX_HOST_FENCE_ACCEPTANCE_ROOT=/tmp/sb-fence-1018 GOCACHE=/tmp/sysbox-gocache \
+  go test ./pkg/api -run '^TestHostFenceDisposableVMIntake$' -count=1 -v -timeout=8m
+/usr/bin/python3 -m unittest discover -s scripts/acceptance -p test_host_fencing.py
+```
+
+File/SQLite/isolated PostgreSQL race regressions cover request/receipt intake,
+incarnation mismatch, cross-topology claim/dispatch exclusion, forged receipt,
+exact replay and cold reads. There is no production reconciliation/release
+workflow yet; P5/P6/P8/P9 are not declared closed by this evidence intake slice.
+
+Final verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`,
+the five system-Python fencing tests, and `go test -race` for
+`HostFence|Maintenance` across API/persistence/controlplane/CLI with isolated
+PostgreSQL enabled. Logs are `/tmp/sysbox-fence-full-final.log`,
+`/tmp/sysbox-fence-race-final.log` and `/tmp/sysbox-fence-real-final.log`.
+The full regression also exposed an SSH test fixture that assumed umask022;
+explicitly setting the source fixture mode now makes its preservation assertion
+valid under umask077 without changing transfer behavior.
