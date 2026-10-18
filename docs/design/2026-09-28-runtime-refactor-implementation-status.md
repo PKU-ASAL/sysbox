@@ -12,6 +12,10 @@ CLI 和验收脚本在断电前绑定请求，真实 Docker/libvirt canary 断�
 领取后重试与终态重试保留同一 command，报告按原始身份/serial/时间/覆盖范围校验，
 journal 漂移显示 stale。Agent 的观察完成回报现在保留完整命令证明。
 
+现已补齐新 boot 的宿主签名观察：API 下发 fence 摘要/新 boot 绑定，supervisor
+核对 boot、只读观察并重新授权后签名完整报告和投递租约，API 冷读验签。
+合法签名仅消除宿主证明缺失项，未知结果和原 operation/guest/reset 阻断仍保留。
+
 这一步尚未闭合 unknown 恢复：回执不完成 Run/action，不产生 stop receipt，
 没有解除宿主 hold 的生产流程。历史 intent 仍只读处置；P5/P6/P8/P9 的完整故障
 矩阵与升级整合仍未关闭。当前接口及限制以 [API](../reference/api.md)、

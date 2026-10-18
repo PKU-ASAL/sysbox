@@ -2,8 +2,11 @@ package agentexec
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
@@ -17,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,17 +54,21 @@ func (r *recoveryTestRepo) CommitActionOutcome(context.Context, runtime.ActionRe
 	return errors.New("unexpected write")
 }
 func TestAgentRecoveryRunnerReturnsGenerationWithoutRunningEffects(t *testing.T) {
-	run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Status: controlplane.RunRunning, QueuedAt: time.Now().UTC(), Revision: "pinned"}
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	binding := controlplane.FenceObservationBinding{RequestSHA256: strings.Repeat("a", 64), HostBootID: "11111111-1111-4111-8111-111111111111"}
+
+	run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Status: controlplane.RunRunning, Attempt: 1, QueuedAt: time.Now().UTC(), Revision: "pinned"}
 	repo := &recoveryTestRepo{st: &state.State{TopologyUID: "owner"}, actions: []runtime.ActionRecord{{ID: "action", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "web"), OwnerUID: "owner", ResourceUID: "resource", Generation: 7, Status: runtime.ActionUncertain}}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/agents/agent/commands/observe/recovery-authorize", r.URL.Path)
-		_ = json.NewEncoder(w).Encode(controlplane.RunRecoveryAuthorization{Run: run, Mode: "observe", LeaseUntil: time.Now().Add(time.Minute)})
+		_ = json.NewEncoder(w).Encode(controlplane.RunRecoveryAuthorization{Run: run, Mode: "observe", FenceObservation: &binding, LeaseUntil: time.Now().Add(time.Minute)})
 	}))
 	defer server.Close()
 	dir := t.TempDir()
 	require.NoError(t, os.Chmod(dir, 0700))
 	socket := filepath.Join(dir, "host.sock")
-	host := &HostRunExecutor{Bridge: recoveryTestBridge{repo: repo}, Tasks: &hostsupervisor.Dispatcher{AgentID: "agent"}, Authority: hostsupervisor.AuthorityClient{Identity: agent.Identity{ID: "agent", APIURL: server.URL}}}
+	host := &HostRunExecutor{Bridge: recoveryTestBridge{repo: repo}, Tasks: &hostsupervisor.Dispatcher{AgentID: "agent", HostBootID: binding.HostBootID, HostKey: key}, Authority: hostsupervisor.AuthorityClient{Identity: agent.Identity{ID: "agent", APIURL: server.URL}}}
 	supervisor := &hostsupervisor.Server{Socket: socket, GroupID: -1, RunRecovery: host.Recover}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -84,13 +92,17 @@ func TestAgentRecoveryRunnerReturnsGenerationWithoutRunningEffects(t *testing.T)
 	require.Equal(t, "completed", last.Status, last.Error)
 	require.Equal(t, cmd.ActionID, last.ActionID)
 	require.NotNil(t, last.Recovery)
+	require.NoError(t, controlplane.VerifyFenceObservation(pub, *last.Recovery, binding, cmd.LeaseOwner, cmd.Attempt))
 	require.Len(t, last.Recovery.Resources, 1)
 	require.EqualValues(t, 7, last.Recovery.Resources[0].Generation)
 	require.Equal(t, "unknown", last.Recovery.Resources[0].Status)
+	host.Tasks.HostBootID = "22222222-2222-4222-8222-222222222222"
+	_, err = host.Recover(context.Background(), hostsupervisor.RunRecoveryRequest{CommandID: cmd.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt})
+	require.ErrorContains(t, err, "boot")
 	// Reusing the same Run ID must not relabel an older journal incarnation.
 	run.QueuedAt = run.QueuedAt.Add(time.Hour)
 	cmd.Run = &run
-	_, err := NewExecutorWithBridge(recoveryTestBridge{repo: repo}).ObserveRecoverRun(context.Background(), "agent", cmd, controlplane.RunRecoveryAuthorization{Run: run, Mode: "observe"})
+	_, err = NewExecutorWithBridge(recoveryTestBridge{repo: repo}).ObserveRecoverRun(context.Background(), "agent", cmd, controlplane.RunRecoveryAuthorization{Run: run, Mode: "observe"})
 	require.ErrorContains(t, err, "incarnation")
 }
 
@@ -121,4 +133,36 @@ func TestHostRecoveryRejectsRevocationAfterObservation(t *testing.T) {
 	report, err := host.Recover(context.Background(), hostsupervisor.RunRecoveryRequest{CommandID: "observe", LeaseOwner: "delivery", Attempt: 1})
 	require.ErrorContains(t, err, "HTTP 409")
 	require.Nil(t, report)
+}
+
+func TestHostFenceObservationRejectsChangedBindingAfterRead(t *testing.T) {
+	for _, drop := range []bool{false, true} {
+		t.Run(fmt.Sprint("drop-", drop), func(t *testing.T) {
+			_, key, err := ed25519.GenerateKey(rand.Reader)
+			require.NoError(t, err)
+			binding := controlplane.FenceObservationBinding{RequestSHA256: strings.Repeat("a", 64), HostBootID: "11111111-1111-4111-8111-111111111111"}
+			run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Status: controlplane.RunRunning, Attempt: 1, QueuedAt: time.Now().UTC(), Revision: "revision"}
+			repo := &recoveryTestRepo{st: &state.State{TopologyUID: "owner"}, actions: []runtime.ActionRecord{{ID: "action", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "web"), OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Status: runtime.ActionUncertain}}}
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				current := binding
+				auth := controlplane.RunRecoveryAuthorization{Run: run, Mode: controlplane.RunRecoveryObserve, LeaseUntil: time.Now().Add(time.Minute), FenceObservation: &current}
+				if calls > 1 {
+					if drop {
+						auth.FenceObservation = nil
+					} else {
+						current.RequestSHA256 = strings.Repeat("b", 64)
+					}
+				}
+				require.NoError(t, json.NewEncoder(w).Encode(auth))
+			}))
+			defer server.Close()
+			host := HostRunExecutor{Bridge: recoveryTestBridge{repo: repo}, Tasks: &hostsupervisor.Dispatcher{AgentID: "agent", HostBootID: binding.HostBootID, HostKey: key}, Authority: hostsupervisor.AuthorityClient{Identity: agent.Identity{ID: "agent", APIURL: server.URL}}}
+			report, err := host.Recover(context.Background(), hostsupervisor.RunRecoveryRequest{CommandID: "observe", LeaseOwner: "worker", Attempt: 1})
+			require.ErrorContains(t, err, "authorization changed")
+			require.Nil(t, report)
+			require.Equal(t, 2, calls)
+		})
+	}
 }

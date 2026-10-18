@@ -548,7 +548,21 @@ identity/coverage before displaying the reported presence. Status is `pending`,
 require an administrative role, like the existing remote recovery endpoints.
 
 These reports pass through the owning host's read-only observation path and
-normal command lease validation. They are still worker-delivered evidence,
-without a cryptographic binding to the new host boot; the plan explicitly retains
-`observation_not_host_boot_attested`. A matching `absent` report cannot complete
+normal command lease validation. For a fence-bound command, recovery authorization
+includes `fence_observation` with the admitted request digest and the receipt's
+new host boot ID. The host supervisor checks its own kernel boot, observes, then
+revalidates the authorization before signing the complete report with its host
+Ed25519 key. The optional `host_observation` proof also binds the command delivery
+owner/attempt; the worker forwards it unchanged.
+
+The plan verifies that proof with `api.execution_grant.host_public_key_files`
+for the owning Agent, the exact fence request/new boot, and the retained command
+lease. `observation_attestation=verified` removes only
+`observation_not_host_boot_attested`. Unsigned reports remain `unverified` and
+informational. A supplied but invalid signature produces `invalid`, retains a
+`host_observation_signature_invalid` blocker, and exposes presence as unknown.
+Missing/rotated host keys cannot establish verification; retain the enrolled key
+when auditing existing evidence. A matching signed `absent` report cannot complete
 a delete, replay a create, manufacture a stop receipt or release the host hold.
+The signature proves who observed which data on which boot, not original operation
+success or provider request quiescence.

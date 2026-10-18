@@ -3901,3 +3901,38 @@ Verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`, and
 with isolated PostgreSQL enabled. Logs: `/tmp/sysbox-post-fence-full.log` and
 `/tmp/sysbox-post-fence-race.log`. Independent read-only review found no blocking
 issues; its stale-plan diagnostic recommendation was implemented and tested.
+
+### New-boot host-signed observation (2026-10-18)
+
+Fence-bound recovery authorization now includes the admitted request digest and
+accepted receipt's new boot ID. The production HostRunExecutor checks its trusted
+supervisor boot/key before observation, performs the existing read-only resource
+reads, repeats canonical API authorization, and signs the complete report with a
+domain-separated Ed25519 message. The proof binds command delivery owner/attempt,
+Run incarnation, topology/serial, observation time and every resource result.
+
+The recovery plan validates against the configured owning-host public key,
+retained command lease and original fence binding. Valid proof changes only
+`observation_attestation` to verified and removes the missing-attestation blocker.
+Unsigned reports remain informational; invalid signatures leave presence unknown.
+No grant stop, Run/action outcome, replay or hold-release transition is added.
+
+File/SQLite/isolated PostgreSQL contracts exercise persisted/cold-read signed
+reports, wrong keys, old boots, changed delivery attempts, payload tampering,
+original-journal drift and refused reauthorization. A production API HTTP to
+HostRunExecutor to report persistence to recovery-plan test produces a signed
+unknown result when the journal lacks a candidate identity; it cannot infer
+absence. The supervisor socket test checks proof forwarding by the Agent and
+rejects a mismatched boot. Separate tests change/drop the binding after provider
+reads and verify that no signed report escapes.
+
+These are protocol, storage and host-executor tests. They do not constitute a new
+real Docker/libvirt recovery or VM power-cycle acceptance. Historical VMs and
+journals remain untouched. Original intent reconciliation and explicit host
+release, plus the broader P5/P6/P8/P9 fault matrix, remain open.
+
+Verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`, and
+`go test -race ./pkg/api ./pkg/agentexec ./pkg/controlplane -run 'HostFence|FenceObservation|RecoveryRunner|RemoteRecovery|HostRecovery'`
+with isolated PostgreSQL enabled. Logs: `/tmp/sysbox-signed-observation-full.log`
+and `/tmp/sysbox-signed-observation-race.log`. Independent read-only review found
+no blocking correctness or security defects.

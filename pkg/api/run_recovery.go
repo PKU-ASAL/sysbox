@@ -153,6 +153,14 @@ func (s *Server) handleAuthorizeRunRecovery(w http.ResponseWriter, r *http.Reque
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
+	if cmd.ActionID != "" {
+		binding, err := s.authorizeFenceObservation(r.Context(), cmd, *run)
+		if err != nil {
+			writeError(w, agentRepositoryErrorStatus(err), err)
+			return
+		}
+		auth.FenceObservation = &binding
+	}
 	auth.Run = persistence.DurableRun(auth.Run)
 	auth.LeaseUntil = cmd.LeaseUntil
 	writeJSON(w, 200, auth)
@@ -183,4 +191,24 @@ func (b *ExecutionBridge) PinnedRevisionWorkspace(ctx context.Context, run contr
 		return "", persistence.ErrConflict
 	}
 	return b.server.workspaceService().MaterializeRevision(run.Topology, run.Revision, revision.Files)
+}
+
+// Only a retained fence with an unchanged original snapshot can bind an
+// observation to a reboot. This check is repeated after host provider reads.
+func (s *Server) authorizeFenceObservation(ctx context.Context, cmd controlplane.AgentCommand, run controlplane.Run) (controlplane.FenceObservationBinding, error) {
+	fence, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ReadHostFence(ctx, cmd.ActionID)
+	if err != nil {
+		return controlplane.FenceObservationBinding{}, err
+	}
+	if fence.Receipt == nil || !fenceObservationMatches(&persistence.CommandRecord{Command: cmd}, fence.Request, run, cmd.ExpectedSerial) {
+		return controlplane.FenceObservationBinding{}, persistence.ErrConflict
+	}
+	plan, _, serial, err := s.fenceRecoveryPlan(ctx, fence, "")
+	if err != nil {
+		return controlplane.FenceObservationBinding{}, err
+	}
+	if !plan.JournalMatches || serial != cmd.ExpectedSerial {
+		return controlplane.FenceObservationBinding{}, persistence.ErrConflict
+	}
+	return controlplane.FenceObservationBinding{RequestSHA256: plan.RequestSHA256, HostBootID: fence.Receipt.NewBootID}, nil
 }

@@ -2,6 +2,7 @@ package agentexec
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
@@ -23,6 +24,11 @@ func (h *HostRunExecutor) Recover(ctx context.Context, proof hostsupervisor.RunR
 	}
 	if auth.Run.AgentID != h.Tasks.AgentID || !auth.LeaseUntil.After(time.Now()) {
 		return nil, fmt.Errorf("host recovery authorization expired or owner changed")
+	}
+	if auth.FenceObservation != nil {
+		if auth.Mode != controlplane.RunRecoveryObserve || auth.FenceObservation.Validate() != nil || auth.FenceObservation.HostBootID != h.Tasks.HostBootID || len(h.Tasks.HostKey) != ed25519.PrivateKeySize {
+			return nil, fmt.Errorf("fence observation host boot or signing key mismatch")
+		}
 	}
 	bounded, cancel := context.WithDeadline(ctx, auth.LeaseUntil)
 	defer cancel()
@@ -50,6 +56,16 @@ func (h *HostRunExecutor) Recover(ctx context.Context, proof hostsupervisor.RunR
 	}
 	if current.Mode != auth.Mode || !persistence.SameRunIncarnation(current.Run, auth.Run) || current.Run.Attempt != auth.Run.Attempt || current.Run.LeaseOwner != auth.Run.LeaseOwner || !current.LeaseUntil.After(time.Now()) {
 		return nil, fmt.Errorf("host recovery authorization changed")
+	}
+	if (current.FenceObservation == nil) != (auth.FenceObservation == nil) || (auth.FenceObservation != nil && *current.FenceObservation != *auth.FenceObservation) {
+		return nil, fmt.Errorf("host fence observation authorization changed")
+	}
+	if auth.FenceObservation != nil {
+		signed, err := controlplane.SignFenceObservation(h.Tasks.HostKey, *report, *auth.FenceObservation, proof.LeaseOwner, proof.Attempt)
+		if err != nil {
+			return nil, err
+		}
+		return &signed, nil
 	}
 	return report, nil
 }

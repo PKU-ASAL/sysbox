@@ -26,20 +26,21 @@ type hostFenceRecoveryAction struct {
 	Blockers         []string             `json:"blockers"`
 }
 type hostFenceRecoveryPlan struct {
-	FenceID              string                    `json:"fence_id"`
-	RunID                string                    `json:"run_id"`
-	AgentID              string                    `json:"agent_id"`
-	RequestSHA256        string                    `json:"request_sha256"`
-	CurrentJournalSHA256 string                    `json:"current_journal_sha256,omitempty"`
-	JournalMatches       bool                      `json:"journal_matches"`
-	HostProcessExclusion string                    `json:"host_process_exclusion"`
-	ObservationStatus    string                    `json:"observation_status"`
-	ObservationCommandID string                    `json:"observation_command_id,omitempty"`
-	ReadOnly             bool                      `json:"read_only"`
-	ReleaseAllowed       bool                      `json:"release_allowed"`
-	ReplayAllowed        bool                      `json:"replay_allowed"`
-	Blockers             []string                  `json:"blockers"`
-	Actions              []hostFenceRecoveryAction `json:"actions"`
+	ObservationAttestation string                    `json:"observation_attestation"`
+	FenceID                string                    `json:"fence_id"`
+	RunID                  string                    `json:"run_id"`
+	AgentID                string                    `json:"agent_id"`
+	RequestSHA256          string                    `json:"request_sha256"`
+	CurrentJournalSHA256   string                    `json:"current_journal_sha256,omitempty"`
+	JournalMatches         bool                      `json:"journal_matches"`
+	HostProcessExclusion   string                    `json:"host_process_exclusion"`
+	ObservationStatus      string                    `json:"observation_status"`
+	ObservationCommandID   string                    `json:"observation_command_id,omitempty"`
+	ReadOnly               bool                      `json:"read_only"`
+	ReleaseAllowed         bool                      `json:"release_allowed"`
+	ReplayAllowed          bool                      `json:"replay_allowed"`
+	Blockers               []string                  `json:"blockers"`
+	Actions                []hostFenceRecoveryAction `json:"actions"`
 }
 
 // Preserve admission's original wire hash. The snapshot is diagnostic evidence;
@@ -89,7 +90,7 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 	if err != nil {
 		return hostFenceRecoveryPlan{}, nil, 0, err
 	}
-	plan := hostFenceRecoveryPlan{FenceID: req.ID, RunID: req.RunID, AgentID: req.Grant.AgentID, RequestSHA256: digest, ReadOnly: true, HostProcessExclusion: "unproven", ObservationStatus: "not_requested", Blockers: []string{"explicit_reconciliation_and_release_required"}, Actions: []hostFenceRecoveryAction{}}
+	plan := hostFenceRecoveryPlan{FenceID: req.ID, RunID: req.RunID, AgentID: req.Grant.AgentID, RequestSHA256: digest, ReadOnly: true, ObservationAttestation: "unverified", HostProcessExclusion: "unproven", ObservationStatus: "not_requested", Blockers: []string{"explicit_reconciliation_and_release_required"}, Actions: []hostFenceRecoveryAction{}}
 	if fence.Receipt == nil {
 		plan.Blockers = append(plan.Blockers, "fence_receipt_missing")
 	} else {
@@ -201,8 +202,18 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 		return plan, run, st.Meta.Serial, nil
 	}
 	plan.ObservationStatus = "matched"
-	// Existing recovery reports are worker observations, not new-boot host proofs.
-	plan.Blockers = append(plan.Blockers, "observation_not_host_boot_attested")
+	if report.HostObservation == nil {
+		plan.Blockers = append(plan.Blockers, "observation_not_host_boot_attested")
+	} else {
+		binding := controlplane.FenceObservationBinding{RequestSHA256: digest, HostBootID: fence.Receipt.NewBootID}
+		if err := controlplane.VerifyFenceObservation(s.grantHostKeys[req.Grant.AgentID], *report, binding, cmd.Command.LeaseOwner, cmd.Command.Attempt); err != nil {
+			plan.ObservationAttestation = "invalid"
+			plan.ObservationStatus = "mismatched"
+			plan.Blockers = append(plan.Blockers, "host_observation_signature_invalid")
+			return plan, run, st.Meta.Serial, nil
+		}
+		plan.ObservationAttestation = "verified"
+	}
 	byID := map[string]string{}
 	for _, r := range report.Resources {
 		byID[r.ActionID] = r.Status

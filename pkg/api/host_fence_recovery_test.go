@@ -2,13 +2,18 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/stretchr/testify/require"
@@ -84,6 +89,12 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 	authorization := remoteRecoveryRequest(t, s, "POST", "/v1/agents/agent/commands/"+claim.ID+"/recovery-authorize", controlplane.AgentCommandEvent{CommandID: claim.ID, LeaseOwner: claim.LeaseOwner, Attempt: claim.Attempt})
 	require.Equal(t, 200, authorization.Code, authorization.Body.String())
 	require.Contains(t, authorization.Body.String(), "\"mode\":\"observe\"")
+	var auth controlplane.RunRecoveryAuthorization
+	require.NoError(t, json.Unmarshal(authorization.Body.Bytes(), &auth))
+	require.NotNil(t, auth.FenceObservation)
+	digest, err := fence.Request.Digest()
+	require.NoError(t, err)
+	require.Equal(t, digest, auth.FenceObservation.RequestSHA256)
 	require.Equal(t, 202, fenceRecoveryRequest(s, "POST", path+"/observe", "first").Code, "retry after lease must not replace command")
 	report := &controlplane.RunRecoveryReport{CommandID: claim.ID, RunID: run.ID, AgentID: "agent", QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, Mode: controlplane.RunRecoveryObserve, TopologyUID: before.TopologyUID, StateSerial: before.Meta.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: actions[0].ID, Resource: actions[0].Resource.String(), OwnerUID: actions[0].OwnerUID, ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, Status: "absent", JournalStatus: string(actions[0].Status)}}}
 	_, err = store.ApplyAgentCommandEvent(ctx, controlplane.AgentCommandEvent{CommandID: claim.ID, AgentID: "agent", Type: claim.Type, ActionID: claim.ActionID, Status: "completed", LeaseOwner: claim.LeaseOwner, Attempt: claim.Attempt, Recovery: report})
@@ -147,6 +158,83 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 			require.False(t, current.ReplayAllowed)
 		})
 	}
+	// A host signature binds the new boot, complete report and exact delivery.
+	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	cold.grantHostKeys = map[string]ed25519.PublicKey{"agent": hostPub}
+	for _, variant := range []string{"valid", "host-executor", "tampered", "wrong-boot", "wrong-lease", "foreign-key"} {
+		t.Run("signed-"+variant, func(t *testing.T) {
+			got := fenceRecoveryRequest(s, "POST", path+"/observe", "signed-"+variant)
+			require.Equal(t, 202, got.Code, got.Body.String())
+			var next struct {
+				CommandID string `json:"command_id"`
+			}
+			require.NoError(t, json.Unmarshal(got.Body.Bytes(), &next))
+			lease, ok, err := store.AcquireAgentCommandLease(ctx, "agent", next.CommandID, "sign-observer", time.Minute)
+			require.NoError(t, err)
+			require.True(t, ok)
+			current := *report
+			current.CommandID = lease.ID
+			current.ObservedAt = time.Now().UTC()
+			current.Resources = append([]controlplane.RecoveredResource(nil), report.Resources...)
+			binding := *auth.FenceObservation
+			owner, attempt := lease.LeaseOwner, lease.Attempt
+			key := hostKey
+			switch variant {
+			case "wrong-boot":
+				binding.HostBootID = fence.Request.Grant.TargetBootID
+			case "wrong-lease":
+				attempt++
+			case "foreign-key":
+				_, key, err = ed25519.GenerateKey(rand.Reader)
+				require.NoError(t, err)
+			}
+			signed, err := controlplane.SignFenceObservation(key, current, binding, owner, attempt)
+			require.NoError(t, err)
+			if variant == "host-executor" {
+				server := httptest.NewServer(s)
+				defer server.Close()
+				host := agentexec.HostRunExecutor{Bridge: fenceObservationBridge{repository: repo}, Tasks: &hostsupervisor.Dispatcher{AgentID: "agent", HostBootID: binding.HostBootID, HostKey: hostKey}, Authority: hostsupervisor.AuthorityClient{Identity: agent.Identity{ID: "agent", APIURL: server.URL}}}
+				observed, err := host.Recover(ctx, hostsupervisor.RunRecoveryRequest{CommandID: lease.ID, LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt})
+				require.NoError(t, err)
+				signed = *observed
+				require.Equal(t, "unknown", signed.Resources[0].Status, "no candidate identity means no provider absence claim")
+			}
+			if variant == "tampered" {
+				signed.Resources[0].Status = "present"
+			}
+			_, err = store.ApplyAgentCommandEvent(ctx, controlplane.AgentCommandEvent{CommandID: lease.ID, AgentID: "agent", ActionID: lease.ActionID, Type: lease.Type, Status: "completed", LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt, Recovery: &signed})
+			require.NoError(t, err)
+			got = fenceRecoveryRequest(cold, "GET", path+"/recovery-plan?observation="+lease.ID, "")
+			require.Equal(t, 200, got.Code, got.Body.String())
+			var result hostFenceRecoveryPlan
+			require.NoError(t, json.Unmarshal(got.Body.Bytes(), &result))
+			if variant == "valid" || variant == "host-executor" {
+				require.Equal(t, "verified", result.ObservationAttestation)
+				require.NotContains(t, result.Blockers, "observation_not_host_boot_attested")
+				if variant == "host-executor" {
+					require.Equal(t, "unknown", result.Actions[0].ObservedPresence)
+				} else {
+					require.Equal(t, "absent", result.Actions[0].ObservedPresence)
+				}
+			} else {
+				require.Equal(t, "invalid", result.ObservationAttestation)
+				require.Equal(t, "unknown", result.Actions[0].ObservedPresence)
+				require.Contains(t, result.Blockers, "host_observation_signature_invalid")
+			}
+			require.False(t, result.ReleaseAllowed)
+			require.False(t, result.ReplayAllowed)
+		})
+	}
+	pendingResponse := fenceRecoveryRequest(s, "POST", path+"/observe", "before-drift")
+	require.Equal(t, 202, pendingResponse.Code, pendingResponse.Body.String())
+	var pending struct {
+		CommandID string `json:"command_id"`
+	}
+	require.NoError(t, json.Unmarshal(pendingResponse.Body.Bytes(), &pending))
+	pendingLease, ok, err := store.AcquireAgentCommandLease(ctx, "agent", pending.CommandID, "worker", time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
 	// A later journal observation cannot be silently rebound to the original fence.
 	changed := actions[0]
 	changed.Status = runtime.ActionUncertain
@@ -155,10 +243,23 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 	got = fenceRecoveryRequest(cold, "GET", path+"/recovery-plan?observation="+claim.ID, "")
 	require.Equal(t, 200, got.Code, got.Body.String())
 	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &plan))
+	driftAuthorization := remoteRecoveryRequest(t, s, "POST", "/v1/agents/agent/commands/"+pendingLease.ID+"/recovery-authorize", controlplane.AgentCommandEvent{LeaseOwner: pendingLease.LeaseOwner, Attempt: pendingLease.Attempt})
+	require.Equal(t, 409, driftAuthorization.Code, driftAuthorization.Body.String())
 	require.False(t, plan.JournalMatches)
 	require.Equal(t, "stale", plan.ObservationStatus)
 	require.Contains(t, plan.Blockers, "observation_snapshot_changed")
 	require.Contains(t, plan.Blockers, "original_journal_changed")
 	require.Equal(t, 202, fenceRecoveryRequest(cold, "POST", path+"/observe", "first").Code, "existing idempotency outcome remains readable after journal drift")
 	require.Equal(t, 409, fenceRecoveryRequest(cold, "POST", path+"/observe", "second").Code)
+}
+
+// The real host executor uses this canonical repository for observation only.
+// All other bridge capabilities deliberately remain unavailable.
+type fenceObservationBridge struct {
+	agentexec.HostRunBridge
+	repository runtime.ActionRepository
+}
+
+func (b fenceObservationBridge) ActionRepository(string) (runtime.ActionRepository, error) {
+	return b.repository, nil
 }

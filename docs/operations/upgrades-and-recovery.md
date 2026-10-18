@@ -91,7 +91,16 @@ ledger 明确拒绝，新 ledger 也不能交给旧 writer。当前没有 format
 标为 stale。API 重启后继续读取同一 durable report。此步不需要新增存储格式，仍用
 authority format3 与现有 command/report schema。
 
-观察到 present/absent 不足以证明旧副作用的完成结果。当前报告尚缺新 host boot 的
-签名绑定，原 operation anchor、guest completion 或 reset phase 缺失也继续阻断。
+观察到 present/absent 不足以证明旧副作用的完成结果。新版 supervisor 会对绑定 fence 新 boot 的观察报告签名；API 验证宿主公钥、
+fence 摘要、新 boot、完整报告及投递租约后，只消除缺少宿主签名这一项阻断。
+旧无签名报告仍只作信息性观察；缺失或轮换宿主公钥会使已有证明无法验证。
+原 operation anchor、guest completion 或 reset phase 缺失仍继续阻断。
 不得通过修改 journal 或删除 authority 来绕过阻断。真实历史现场仍只生成只读计划，
 不纳入可丢弃宿主的准入、重启或处置执行。
+
+
+签名观察在现有 report JSON 中增加可选 `host_observation`，未改变 authority3、
+aggregate6 或 API schema14。请同步升级 API、Agent 和 supervisor；旧 writer 可能
+忽略或丢弃该可选字段，因此不要把签名记录交给旧 writer 重写。旧报告不补造签名，
+缺证明时继续保留冻结。宿主私钥只由 supervisor 持有，API 配置对应公钥；fencing
+外部控制器密钥与宿主密钥仍是两个不同的信任来源。
