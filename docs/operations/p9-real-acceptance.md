@@ -1,5 +1,59 @@
 # P9 real acceptance
 
+## Bounded batches, unowned libvirt and historical audit (2026-10-18)
+
+The next slice adds strict resource-host inventory planning over filesystem or
+shared SQLite/PostgreSQL catalogs. Docker/container networks, libvirt definitions
+and Firecracker manifests are enumerated; failed provider inventories reject the
+plan. Unknown owners are excluded explicitly. Selection defaults to two complete
+observations at least24 hours apart,32 candidates (maximum128), nodes before
+networks, and retained resource UID/provider-ID protection. This is scoped to the
+selected host/catalog, not a global cross-host or orphan TAP/nft inventory claim.
+
+GC batch admission atomically validates/reserves the whole normalized candidate
+list. Key, topology, Agent and entire payload are bound; raw transitions reject
+altered hashes, duplicate identities and noncanonical ordering. Only the first
+unfinished item is issuable; host completion releases it and publishes the next.
+File/SQLite/Postgres race contracts passed using a disposable test PostgreSQL16.
+`TestRemoteDockerGCBatchSequentialRecoveryE2E` passed under race with two real
+containers, reference-write exclusion, lost completion acknowledgement and API
+reconstruction; both objects were deleted once and independently confirmed absent.
+
+Unowned libvirt adoption is limited to stopped persistent definitions. Current and
+inactive XML fingerprints are compared before metadata publication. Recovery
+accepts only the original adoption identity and fingerprint; Observe performs no
+write. External-definition handles own no storage path. Exact UUID start refuses
+recreation, unsupported reset requires explicit baseline replacement, and Destroy
+preserves external disks. `TestLibvirtUnownedAdoptionColdLifecycleE2E` passed under
+race: real metadata publication, cold recovery, foreign-owner rejection, normal
+start/pause/resume/Destroy and independent absence. Fault regressions verify lost
+metadata replies, unchanged source on observation, changed inactive XML rejection
+and preservation of external disk bytes. External administrator writers must be
+excluded because libvirt metadata has no compare-and-swap primitive.
+
+Historical incident reinspection was read-only. Execution VM boot remains
+`431164b2-2191-43d1-bebf-2154f4f96c3e`; original container
+`7c7bb3e764fd3c36c88adc6554fd07b10bb61e020c8e7da261662acf574c54fc`
+is still exited/PID0. Original Run
+`op-f03427da1f549134953b257295f39c8af37305770354447e78673f7d72dba0b0`
+has host ledger outcome `30/<Run>` in `intent`, without result, admission or
+run checkpoint. Original target boot is `5ca09ca7-b83e-41c1-aedd-c1937d95d1c0`.
+The host ledger SHA256 is
+`226c4e397d52e4e9ea35a2a047c77f9711bbea1de05e09e89214d19a6e4b0c44`.
+The separate diagnostic checkpoint SHA256 is
+`4f5bcd9547ca9805828ce827344dc5f2685e621240541f7657d51e358bb1e7a6`;
+it does not replace missing authoritative admission/return evidence. Neither
+record nor container was modified.
+
+`state audit-intents` now inspects legacy aggregates and host ledgers without
+migration, outputting only source hashes and minimal identities/blockers. The
+API intent report supplies coherent action/state evidence and explicit blockers.
+Ordinary Docker/libvirt requests remain quiescence-unsupported: daemon restart,
+resource absence and expired leases do not fence surviving shims/QEMU/storage
+work. An isolated-host fencing protocol and actual historical continuation are
+still outstanding, pending the execution-host scope decision; no successful stop
+receipt is fabricated by these diagnostics.
+
 ## Additional verification and adoption inspection (2026-10-18, working tree)
 
 The pre-existing `make test-p9-real` gate passed end-to-end on the working tree
@@ -3729,3 +3783,31 @@ real sshd validation, Docker adoption/absence checks, Firecracker/KVM controller
 crash/lifecycle/reset/cross-process recovery and libvirt generation effects. The
 GC compatibility endpoint was separately tightened and its focused race gate
 passed. These are the implemented P9 gates, not the unimplemented full matrix.
+
+## Isolated execution-host fencing (2026-10-18 continuation)
+
+The user-approved fencing boundary is limited to newly created disposable
+acceptance VMs. `scripts/acceptance/host_fencing.py` creates a private two-VM
+lab, pins both guest SSH identities and disks, and marks the execution VM as the
+only disposable fencing target. Preparation installs Docker/libvirt inside that
+new VM and starts two provider canaries: an in-flight Docker `exec` child and a
+local-only persistent libvirt definition without external storage.
+
+The fencing run validates the exact QEMU PID/start-time, executable/argv, disk
+path, QMP peer credentials and VM name. It records an intent, issues QMP power
+off, waits on a pidfd for the original QEMU to exit, reuses the same disk, and
+requires a different execution kernel boot ID while the control VM boot ID stays
+unchanged. After restart it independently observes Docker `Running=false` and
+libvirt `shut off`, verifies the disk device inode is unchanged, and cleans only
+the random canary container/domain. Final proof:
+`/tmp/sb-fence-1018/fence-b4f79330729a4beaa50b69346df50c32.json` (SHA256
+`01f27cd35a6bd2c970be4bd9308cd59cb7d87bdbc35a8afce3e44f906f440898`). It records
+`fencing_claim=host process exclusion only` and `operation_result=unknown`.
+
+This proves whole-host process exclusion for local Docker/libvirt endpoints in a
+new disposable VM. It does not prove an interrupted business operation completed,
+provide remote storage/plugin fencing, or authorize old resources. The retained
+historical incident was not restarted, cleaned, or rewritten. Its read-only
+fencing/continuation plan is `/tmp/sysbox-historical-intent-plan-20261018.json`
+(SHA256 `f266a01f9ba69f7c532cea1eb2d5cd3b5eb5938c3c38f332bf61fba2bc77e52b`),
+with `historical_vm_touched=false`.

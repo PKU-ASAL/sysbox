@@ -81,18 +81,20 @@ func runGc(cmd *cobra.Command, _ []string) error {
 }
 
 type activeIDs struct {
-	owners      map[string]bool
-	inventories map[string]string
-	containers  map[string]bool
-	networks    map[string]bool
-	domains     map[string]bool
-	firecracker map[string]bool
+	topologies   map[string]string
+	resourceUIDs map[string]bool
+	owners       map[string]bool
+	inventories  map[string]string
+	containers   map[string]bool
+	networks     map[string]bool
+	domains      map[string]bool
+	firecracker  map[string]bool
 }
 
 // collectActiveIDsChecked consumes a coherent lifecycle reference snapshot per
 // topology. API activity references and deletion fencing are separate gates.
 func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
-	active := activeIDs{owners: map[string]bool{}, inventories: map[string]string{}, containers: map[string]bool{}, networks: map[string]bool{}, domains: map[string]bool{}, firecracker: map[string]bool{}}
+	active := activeIDs{topologies: map[string]string{}, resourceUIDs: map[string]bool{}, owners: map[string]bool{}, inventories: map[string]string{}, containers: map[string]bool{}, networks: map[string]bool{}, domains: map[string]bool{}, firecracker: map[string]bool{}}
 	if _, err := os.ReadDir(runsDir); err != nil {
 		if os.IsNotExist(err) {
 			return active, nil
@@ -130,8 +132,10 @@ func collectActiveIDsChecked(runsDir string) (activeIDs, error) {
 			return active, fmt.Errorf("duplicate canonical topology owner %s", inventory.TopologyUID)
 		}
 		active.owners[inventory.TopologyUID] = true
+		active.topologies[inventory.TopologyUID] = topology
 		active.inventories[inventory.TopologyUID] = inventory.Digest
 		for _, ref := range inventory.References {
+			active.resourceUIDs[inventory.TopologyUID+"\x00"+ref.ResourceUID] = true
 			switch ref.ResourceType {
 			case "sysbox_network":
 				active.networks[ref.ExternalID] = true
@@ -249,7 +253,13 @@ func findOrphansWithReport(ctx context.Context, active activeIDs, report io.Writ
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return out, nil
+	filtered := out[:0]
+	for _, item := range out {
+		if !active.resourceUIDs[item.OwnerUID+"\x00"+item.ResourceUID] {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, nil
 }
 
 type gcDomain struct {

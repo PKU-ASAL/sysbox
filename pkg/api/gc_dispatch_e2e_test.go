@@ -31,7 +31,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRemoteDockerGCDispatchAndLostReceiptE2E(t *testing.T) {
+func TestRemoteDockerGCDispatchAndLostReceiptE2E(t *testing.T)  { testRemoteDockerGCDispatch(t, false) }
+func TestRemoteDockerGCBatchSequentialRecoveryE2E(t *testing.T) { testRemoteDockerGCDispatch(t, true) }
+func testRemoteDockerGCDispatch(t *testing.T, batch bool) {
 	if os.Getenv("SYSBOX_REMOTE_DOCKER_E2E") != "1" {
 		t.Skip("requires isolated real Docker resources")
 	}
@@ -70,6 +72,14 @@ func TestRemoteDockerGCDispatchAndLostReceiptE2E(t *testing.T) {
 	created, err := cli.ContainerCreate(ctx, &container.Config{Image: "alpine:3.22", Cmd: []string{"true"}, Labels: labels}, &container.HostConfig{NetworkMode: "none"}, nil, nil, "")
 	require.NoError(t, err)
 	defer cli.ContainerRemove(context.Background(), created.ID, container.RemoveOptions{Force: true})
+	secondID := ""
+	if batch {
+		labels["sysbox.resource_uid"] = "orphan-two"
+		second, err := cli.ContainerCreate(ctx, &container.Config{Image: "alpine:3.22", Cmd: []string{"true"}, Labels: labels}, &container.HostConfig{NetworkMode: "none"}, nil, nil, "")
+		require.NoError(t, err)
+		secondID = second.ID
+		defer cli.ContainerRemove(context.Background(), secondID, container.RemoveOptions{Force: true})
+	}
 	provider, err := dockerprovider.New()
 	require.NoError(t, err)
 	defer provider.Close()
@@ -140,13 +150,29 @@ func TestRemoteDockerGCDispatchAndLostReceiptE2E(t *testing.T) {
 	candidate := controlplane.GCCandidate{Kind: "container", ExternalID: created.ID, TopologyUID: refs.TopologyUID, OwnerUID: refs.TopologyUID, ResourceUID: "orphan-uid", Generation: 1, InventoryDigest: refs.Digest}
 	raw, err := json.Marshal(candidate)
 	require.NoError(t, err)
-	req := httptest.NewRequest("POST", "/v1/topologies/gc-lab/gc", bytes.NewReader(raw))
+	endpoint := "/v1/topologies/gc-lab/gc"
+	if batch {
+		other := candidate
+		other.ExternalID = secondID
+		other.ResourceUID = "orphan-two"
+		raw, err = json.Marshal(gcBatchRequest{Candidates: []controlplane.GCCandidate{candidate, other}})
+		require.NoError(t, err)
+		endpoint += "/batch"
+	}
+	req := httptest.NewRequest("POST", endpoint, bytes.NewReader(raw))
 	req.Header.Set("Idempotency-Key", "delete-one")
 	response := httptest.NewRecorder()
 	first.ServeHTTP(response, req)
 	require.Equal(t, 202, response.Code, response.Body.String())
 	var reservation persistence.GCReservation
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &reservation))
+	if batch {
+		var accepted gcBatchResponse
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &accepted))
+		require.Len(t, accepted.Reservations, 2)
+		reservation = accepted.Reservations[0]
+	} else {
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &reservation))
+	}
 	select {
 	case <-entered:
 	case <-ctx.Done():
@@ -179,7 +205,25 @@ func TestRemoteDockerGCDispatchAndLostReceiptE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, command.Retired)
 	require.Equal(t, controlplane.AgentCommandStatusCompleted, command.Command.Status)
-	require.EqualValues(t, 1, deletes.Load())
+	if batch {
+		require.Eventually(t, func() bool {
+			all, err := reopenedRepo.ListGCReservations(ctx, "gc-lab")
+			if err != nil || len(all) != 2 {
+				return false
+			}
+			for _, r := range all {
+				if r.ReceiptHash == "" {
+					return false
+				}
+			}
+			return true
+		}, 10*time.Second, 20*time.Millisecond)
+		require.EqualValues(t, 2, deletes.Load())
+		_, err = cli.ContainerInspect(ctx, secondID)
+		require.True(t, errdefs.IsNotFound(err))
+	} else {
+		require.EqualValues(t, 1, deletes.Load())
+	}
 	_, err = cli.ContainerInspect(ctx, created.ID)
 	require.True(t, errdefs.IsNotFound(err), "%v", err)
 	require.NoError(t, manager.Save(st))

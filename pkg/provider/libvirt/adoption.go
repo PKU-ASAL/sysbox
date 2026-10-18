@@ -22,6 +22,17 @@ func (s *Substrate) InspectAdoption(ctx context.Context, id string, spec substra
 	if err := xml.Unmarshal(raw, &domain); err != nil {
 		return substrate.AdoptionEvidence{}, err
 	}
+	if domain.UUID != "" && (domain.Metadata == nil || domain.Metadata.Managed == nil) {
+		if err := validateUnownedDomain(ctx, domain, fmt.Sprintf("sha256:%x", sha256.Sum256(raw))); err != nil {
+			return substrate.AdoptionEvidence{}, err
+		}
+		sum := sha256.Sum256(raw)
+		payload, err := json.Marshal(unownedAdoptionEvidence{Version: 1, UUID: domain.UUID, Unowned: true})
+		if err != nil {
+			return substrate.AdoptionEvidence{}, err
+		}
+		return substrate.AdoptionEvidence{Provider: subName, ExternalID: domain.UUID, Fingerprint: "sha256:" + hex.EncodeToString(sum[:]), State: payload}, nil
+	}
 	if domain.UUID == "" || domain.Metadata == nil || domain.Metadata.Managed == nil {
 		return substrate.AdoptionEvidence{}, fmt.Errorf("libvirt adoption requires managed domain metadata")
 	}
@@ -56,6 +67,9 @@ func (s *Substrate) adoptionDomain(ctx context.Context, e substrate.AdoptionEvid
 		return substrate.NodeHandle{}, err
 	}
 	sum := sha256.Sum256(raw)
+	if isUnownedEvidence(e) {
+		return s.observeExternalAdoption(ctx, raw, e, id)
+	}
 	if "sha256:"+hex.EncodeToString(sum[:]) != e.Fingerprint {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt domain changed since inspection")
 	}
@@ -76,6 +90,12 @@ func (s *Substrate) adoptionDomain(ctx context.Context, e substrate.AdoptionEvid
 	if err := json.Unmarshal([]byte(m.State), &hs); err != nil {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt adoption recovery state invalid: %w", err)
 	}
+	if hs.ExternalDefinition {
+		if hs.Identity == nil || !sameGeneration(*hs.Identity, id) || hs.DomainUUID != domain.UUID || hs.DomainName != domain.Name || hs.VMDir != "" || hs.DiskPath != "" || hs.AdoptionFingerprint == "" {
+			return substrate.NodeHandle{}, fmt.Errorf("external adoption identity conflict")
+		}
+		return managedNodeHandle(&hs), nil
+	}
 	dir, err := s.managedVMDir(id, domain.Name)
 	if err != nil {
 		return substrate.NodeHandle{}, err
@@ -89,6 +109,9 @@ func (s *Substrate) ApplyAdoption(ctx context.Context, e substrate.AdoptionEvide
 	id, ok := substrate.OperationIdentityFromContext(ctx)
 	if !ok {
 		return substrate.NodeHandle{}, fmt.Errorf("adoption requires operation identity")
+	}
+	if isUnownedEvidence(e) {
+		return s.applyExternalAdoption(ctx, e, id)
 	}
 	return s.adoptionDomain(ctx, e, id)
 }

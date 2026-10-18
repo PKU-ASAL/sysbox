@@ -1,5 +1,11 @@
 # Sysbox 生命周期重构：当前实施状态
 
+2026-10-18 后续切片：GC 新增 filesystem/shared SQL catalog 的完整范围盘点、
+两次观察保留期、预算上限和原子批次顺序调度；无主 libvirt 停止的持久 domain
+支持显式 metadata 接管与冷生命周期（外部磁盘保留，reset 不隐式认领磁盘）。
+新增历史 aggregate/host ledger 的只读摘要审计。强制宿主 fencing、历史 unknown
+处置闭环、跨主机/TAP/nft 全局库存仍未宣称完成；见最新 P9 记录。
+
 2026-10-18 实施更新：单候选 GC 已接 API reservation/outbox → owning Agent →
 host supervisor → 精确缺失签名回执，CLI `gc submit` 可提交显式计划。
 P5 新增 owning-agent 只读 inspection 和基于已保存宿主证据的公开 confirm，

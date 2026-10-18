@@ -77,5 +77,8 @@ func (s *Server) completeGCFromHost(ctx context.Context, receipt controlplane.Si
 	if err := authority.AcceptHostStop(ctx, receipt.Grant, hex.EncodeToString(sum[:])); err != nil {
 		return err
 	}
-	return repo.CompleteGC(ctx, topology, receipt, key)
+	if err := repo.CompleteGC(ctx, topology, receipt, key); err != nil {
+		return err
+	}
+	return s.reconcileGCOutbox(ctx, topology)
 }

@@ -95,6 +95,12 @@ func existingDomainUUID(ctx context.Context, h substrate.NodeHandle) (string, bo
 					return "", false, driver.Wrap(driver.ErrorInvalidState, subName, "domain ownership metadata missing or UUID mismatch", nil)
 				}
 				m := domain.Metadata.Managed
+				if hsFrom(h).ExternalDefinition {
+					var stored HandleState
+					if json.Unmarshal([]byte(m.State), &stored) != nil || !stored.ExternalDefinition || stored.AdoptionFingerprint != hsFrom(h).AdoptionFingerprint || stored.VMDir != "" || stored.DiskPath != "" {
+						return "", false, fmt.Errorf("adopted domain recovery binding changed")
+					}
+				}
 				actual := substrate.OperationIdentity{OwnerUID: m.OwnerUID, ResourceUID: m.ResourceUID, TopologyUID: m.TopologyUID, Generation: m.Generation}
 				if !sameGeneration(actual, *hsFrom(h).Identity) {
 					return "", false, driver.Wrap(driver.ErrorInvalidState, subName, "domain ownership or generation conflict", nil)
@@ -112,6 +118,9 @@ func validateHandleIdentity(ctx context.Context, h substrate.NodeHandle) error {
 	expected, supplied := substrate.OperationIdentityFromContext(ctx)
 	if hs.Identity == nil || hs.Identity.Validate() != nil || h.Generation != hs.Identity.Generation || h.ID != hs.DomainUUID {
 		return driver.Wrap(driver.ErrorInvalidState, subName, "managed handle identity mismatch", nil)
+	}
+	if hs.ExternalDefinition && (hs.VMDir != "" || hs.DiskPath != "" || hs.AdoptionFingerprint == "") {
+		return fmt.Errorf("adopted definition must not own storage paths")
 	}
 	if supplied && (expected.Validate() != nil || !sameGeneration(expected, *hs.Identity)) {
 		return driver.Wrap(driver.ErrorInvalidState, subName, "operation generation does not own domain", nil)
@@ -182,7 +191,7 @@ func (s *Substrate) DiscoverManagedNode(ctx context.Context, id substrate.Operat
 		if err := json.Unmarshal([]byte(metadata.State), &hs); err != nil {
 			return substrate.NodeHandle{}, driver.Wrap(driver.ErrorUnavailable, subName, "managed domain recovery state unavailable", err)
 		}
-		if hs.Identity == nil || !sameGeneration(*hs.Identity, id) || hs.DomainUUID != domain.UUID || hs.DomainName != name || domain.Name != name || hs.VMDir != dir || hs.DiskPath != filepath.Join(dir, "disk.qcow2") {
+		if hs.Identity == nil || !sameGeneration(*hs.Identity, id) || hs.DomainUUID != domain.UUID || hs.DomainName != name || domain.Name != name || (!hs.ExternalDefinition && (hs.VMDir != dir || hs.DiskPath != filepath.Join(dir, "disk.qcow2"))) || (hs.ExternalDefinition && (hs.VMDir != "" || hs.DiskPath != "" || hs.AdoptionFingerprint == "")) {
 			return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, subName, "managed domain recovery identity mismatch", nil)
 		}
 		if _, err := uuid.Parse(domain.UUID); err != nil {

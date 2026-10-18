@@ -32,17 +32,19 @@ func gcPending(a *aggregate) bool {
 
 func validateGCReservations(a *aggregate) error {
 	pending := 0
+	groups := map[string]bool{}
 	for id, r := range a.GC {
 		if id == "" || id != r.ID || r.AgentID == "" || r.Candidate.Validate() != nil || r.Candidate.TopologyUID != a.State.TopologyUID {
 			return ErrCorruptRecord
 		}
 		if r.ReceiptHash == "" {
 			pending++
+			groups[batchPrefix(r.ID)] = true
 		} else if len(r.ReceiptHash) != 64 {
 			return ErrCorruptRecord
 		}
 	}
-	if pending > 1 {
+	if pending > MaxGCBatch || (pending > 1 && (len(groups) != 1 || groups[""])) {
 		return ErrCorruptRecord
 	}
 	return nil
@@ -92,20 +94,20 @@ func (r *Repository) LoadGCReservation(ctx context.Context, topology, id string)
 }
 
 func checkGCCommand(a *aggregate, command controlplane.AgentCommand) error {
-	if command.Type == "gc_delete" {
-		r, ok := a.GC[command.ID]
-		if !ok || r.ReceiptHash != "" {
+	next := nextGC(a)
+	if command.Type != "gc_delete" {
+		if next != "" {
 			return ErrConflict
 		}
+		return nil
 	}
-	for _, reservation := range a.GC {
-		if reservation.ReceiptHash != "" {
-			continue
-		}
-		c := reservation.Candidate
-		if command.Type != "gc_delete" || command.ActionID != reservation.ID || command.ID != reservation.ID || command.AgentID != reservation.AgentID || command.TopologyUID != c.TopologyUID || command.ResourceUID != c.ResourceUID || command.Generation != c.Generation || command.GCKind != c.Kind || command.GCExternalID != c.ExternalID || command.GCInventoryDigest != c.InventoryDigest {
-			return fmt.Errorf("%w: GC reservation excludes command", ErrConflict)
-		}
+	r, ok := a.GC[command.ID]
+	if !ok || r.ReceiptHash != "" || command.ID != next {
+		return ErrConflict
+	}
+	c := r.Candidate
+	if command.ActionID != r.ID || command.AgentID != r.AgentID || command.TopologyUID != c.TopologyUID || command.ResourceUID != c.ResourceUID || command.Generation != c.Generation || command.GCKind != c.Kind || command.GCExternalID != c.ExternalID || command.GCInventoryDigest != c.InventoryDigest {
+		return ErrConflict
 	}
 	return nil
 }

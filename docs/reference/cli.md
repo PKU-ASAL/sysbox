@@ -174,3 +174,56 @@ format 6 添加持久 GC reservation；旧 writer 必须保持停止，不能手
 检查成功不等于认领成功。Provider 在认领时再次比较指纹；拓扑 serial 或归属变化
 会拒绝。已受管 Firecracker/libvirt 的恢复使用证据中的原 UID/generation，其他
 topology 的归属不能转移。无主 libvirt 域的普通导入仍未实现，不能视为完成支持。
+
+## Complete local inventory and bounded GC batches
+
+`sysbox gc plan --runs <dir> --output gc-plan.json` inventories Docker containers /
+networks, libvirt domains and Firecracker manifests against every canonical
+filesystem aggregate under the selected directory, including retained journals
+and snapshots. It runs on the resource host. Use `--catalog <sqlite-or-postgres-url>` to enumerate every topology in a shared
+canonical database instead. Credentials are not written to the plan; a catalog
+fingerprint prevents mixing earlier observations from another backend. A fixed
+topology selector or templated storage path is rejected as an incomplete catalog.
+Other runs directories, databases and execution hosts remain outside the selected
+scope and cannot be implicitly covered.
+A failed provider query or corrupt canonical inventory rejects the plan, rather
+than producing deletion candidates from a partial result. Unknown owners are
+reported as excluded and never adopted or deleted.
+
+Plans retain raw inventory plus selected candidates. Default selection requires
+an earlier complete `--previous-plan <file>` at least `--min-age 24h` old containing
+the same owner/resource/generation/external identity. A first plan is an inventory
+baseline with no age-qualified candidates. `--min-age 0` explicitly selects newly
+observed candidates. `--limit` defaults to32 and is capped at128. Nodes/VMs precede
+networks. Any retained resource UID or matching provider external ID protects the
+object. This is an observation interval policy, not a claim about creation time.
+
+`sysbox gc batch-submit gc-plan.json --api <url> --topology lab --key batch-1`
+submits one topology's selected batch. The latest plan must be complete and no
+more than15 minutes old. API admission revalidates references and actual host
+ownership, so possession of a plan is not authorization by itself. A retry keeps
+the same plan/key. Batches are durably reserved atomically, execute one item at a
+time, and retain exclusion after unknown effects. No local raw deletion is used.
+
+The API `GET /v1/topologies/{name}/recovery/intent-only` exposes a read-only
+historical disposition report with journal hashes and evidence blockers. It does
+not authorize forced success or arbitrary old-request replay.
+
+`sysbox state audit-intents <aggregate.json>` reads a legacy format4/5/6 aggregate or host-effect-v2 ledger
+without opening its backend, migrating it or changing version fields. It emits
+source and per-record SHA256 plus minimal action identifiers; provider-private
+state and credentials are not returned. Keep the original source alongside the
+audit. This provides reproducible incident triage, not a new execution receipt.
+
+
+## Isolated host fencing acceptance
+
+`python3 scripts/acceptance/host_fencing.py create --root <new-lab> --base <pinned-cloud-image>`
+creates a fresh private two-VM test lab. Run `prepare`, then `fence`. The script
+only accepts a lab with an explicit disposable scope marker. It fingerprints the
+exact execution QEMU and disk, uses pidfd/QMP fencing, verifies a new execution
+boot ID and unchanged control boot ID, and checks local Docker/libvirt canaries.
+Its proof distinguishes `host process exclusion` from `operation_result=unknown`.
+It never targets an existing lab or historical resource. Remote daemon jobs,
+external storage, migrated domains and business-result success require separate
+proofs and remain outside this acceptance command.

@@ -177,3 +177,36 @@ func TestGCGrantRequestCannotInventDispatchOrPoisonReservation(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, commands)
 }
+
+func TestGCBatchReservesMultipleCandidatesUnderOneFreeze(t *testing.T) {
+	s := guestExecutionTestServer(t)
+	_, issuer, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	require.NoError(t, s.ConfigureExecutionGrantSigner(issuer))
+	host, _, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	s.grantHostKeys["host-a"] = host
+	require.NoError(t, s.workspaceService().bindPlacement("lab", "host-a", controlplane.AgentProtocolVersion))
+	ctx := context.Background()
+	repo, err := s.actionRepository("lab")
+	require.NoError(t, err)
+	refs, err := repo.LoadGCReferences(ctx, "lab")
+	require.NoError(t, err)
+	candidates := []controlplane.GCCandidate{{Kind: "container", ExternalID: "one", TopologyUID: refs.TopologyUID, OwnerUID: refs.TopologyUID, ResourceUID: "one", Generation: 1, InventoryDigest: refs.Digest}, {Kind: "container", ExternalID: "two", TopologyUID: refs.TopologyUID, OwnerUID: refs.TopologyUID, ResourceUID: "two", Generation: 1, InventoryDigest: refs.Digest}}
+	raw, _ := json.Marshal(gcBatchRequest{Candidates: candidates})
+	r := httptest.NewRequest("POST", "/v1/topologies/lab/gc/batch", bytes.NewReader(raw))
+	r.Header.Set("Idempotency-Key", "batch")
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	require.Equal(t, 202, w.Code, w.Body.String())
+	var response gcBatchResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Len(t, response.Reservations, 2)
+	require.NotEqual(t, response.Reservations[0].ID, response.Reservations[1].ID)
+	st, err := s.stateManager("lab")
+	require.NoError(t, err)
+	state, err := st.Load()
+	require.NoError(t, err)
+	require.ErrorIs(t, st.Save(state), persistence.ErrConflict)
+	_ = ctx
+}

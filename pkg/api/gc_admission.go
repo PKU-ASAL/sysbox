@@ -13,6 +13,13 @@ import (
 // reserveGCWithAuthority validates activity and stopped authority under the
 // same locks as the reference reservation. No provider mutation runs here.
 func (s *Server) reserveGCWithAuthority(ctx context.Context, topology string, request persistence.GCReservation) error {
+	return s.reserveGCBatchWithAuthority(ctx, topology, []persistence.GCReservation{request})
+}
+func (s *Server) reserveGCBatchWithAuthority(ctx context.Context, topology string, requests []persistence.GCReservation) error {
+	if len(requests) == 0 {
+		return persistence.ErrInvalidRecord
+	}
+	request := requests[0]
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
 	}
@@ -31,18 +38,19 @@ func (s *Server) reserveGCWithAuthority(ctx context.Context, topology string, re
 			if err := checkLocalGCActivity(ctx, store, repo, topology, request); err != nil {
 				return nil, err
 			}
-			return nil, repo.ReserveGCWithAuthority(ctx, topology, request, authority)
+			return nil, repo.ReserveGCBatchWithAuthority(ctx, topology, requests, authority)
 		})
 	case *sqliteAPIStore:
-		return reserveSQLiteGCWithAuthority(ctx, store, topology, request)
+		return reserveSQLiteGCWithAuthority(ctx, store, topology, requests)
 	case *postgresAPIStore:
-		return reservePostgresGCWithAuthority(ctx, store, topology, request)
+		return reservePostgresGCWithAuthority(ctx, store, topology, requests)
 	default:
 		return persistence.ErrUnsupportedVersion
 	}
 }
 
-func reserveSQLiteGCWithAuthority(ctx context.Context, store *sqliteAPIStore, topology string, request persistence.GCReservation) error {
+func reserveSQLiteGCWithAuthority(ctx context.Context, store *sqliteAPIStore, topology string, requests []persistence.GCReservation) error {
+	request := requests[0]
 	db, err := store.open()
 	if err != nil {
 		return err
@@ -81,7 +89,7 @@ func reserveSQLiteGCWithAuthority(ctx context.Context, store *sqliteAPIStore, to
 	if err := checkSQLiteGCActivity(ctx, conn, raw, topology, request); err != nil {
 		return err
 	}
-	next, err := persistence.ApplyGCReservation(raw, authority, topology, request)
+	next, err := persistence.ApplyGCReservations(raw, authority, topology, requests)
 	if err != nil {
 		return err
 	}
@@ -95,7 +103,8 @@ func reserveSQLiteGCWithAuthority(ctx context.Context, store *sqliteAPIStore, to
 	return nil
 }
 
-func reservePostgresGCWithAuthority(ctx context.Context, store *postgresAPIStore, topology string, request persistence.GCReservation) error {
+func reservePostgresGCWithAuthority(ctx context.Context, store *postgresAPIStore, topology string, requests []persistence.GCReservation) error {
+	request := requests[0]
 	pool, err := store.poolFor(ctx)
 	if err != nil {
 		return err
@@ -132,7 +141,7 @@ func reservePostgresGCWithAuthority(ctx context.Context, store *postgresAPIStore
 	if err := checkPostgresGCActivity(ctx, tx, raw, topology, request); err != nil {
 		return err
 	}
-	next, err := persistence.ApplyGCReservation(raw, authority, topology, request)
+	next, err := persistence.ApplyGCReservations(raw, authority, topology, requests)
 	if err != nil {
 		return err
 	}

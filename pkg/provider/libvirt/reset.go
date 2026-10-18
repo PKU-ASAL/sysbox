@@ -42,6 +42,9 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset requires a pinned qcow2 baseline")
 	}
 	current := hsFrom(request.Current)
+	if current.ExternalDefinition {
+		return substrate.ResetHandle{}, fmt.Errorf("adopted external definition has no immutable reset baseline; explicit replacement required")
+	}
 	identity, ok := substrate.OperationIdentityFromContext(ctx)
 	if !ok || identity.Validate() != nil || current.Identity == nil || current.Identity.Validate() != nil || request.Current.Generation != current.Identity.Generation || identity.Generation <= request.Current.Generation {
 		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset requires durable old and target generation identities")

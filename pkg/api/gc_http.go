@@ -107,9 +107,13 @@ func (s *Server) reconcileGCOutbox(ctx context.Context, topology string) error {
 		return err
 	}
 	for _, reservation := range reservations {
+		if reservation.ReceiptHash != "" {
+			continue
+		}
 		if err := s.publishGCReservation(ctx, topology, reservation); err != nil {
 			return err
 		}
+		return nil
 	}
 	return nil
 }

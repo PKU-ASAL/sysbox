@@ -455,3 +455,24 @@ placement and provider fingerprint are checked before mutation. Managed evidence
 must belong to this topology; its existing resource UID/generation is preserved.
 This supplies the public inspection/confirmation route, but does not add unowned
 libvirt adoption or close the full P5 cold-fault matrix.
+
+### GC batch plans and historical intents
+
+`POST /v1/topologies/{name}/gc/batch` accepts 1–128 distinct candidates and an
+`Idempotency-Key`. The entire normalized batch is reserved in one authority /
+activity / aggregate transaction; a bad later candidate leaves no partial batch.
+The key binds topology, owning Agent and all candidate identities. Changing,
+truncating or appending candidates on replay conflicts. Containers and VMs precede
+networks. Only the first unfinished reservation can receive execution authority;
+its verified host completion publishes the next. Unknown outcomes stop progress
+and keep all lifecycle references frozen. Batch metadata uses the existing
+format6 reservation map; older code rejects multiple pending reservations.
+
+`GET /v1/topologies/{name}/recovery/intent-only` reports unfinished journal actions
+without provider effects or journal changes. Each entry includes the Run, exact
+resource identity, journal revision/SHA256, quiescence and specific blockers.
+Missing old operation anchors, unknown daemon calls, incomplete guest effects and
+reset continuation requirements remain distinct. Returned evidence is classified
+as requiring authorized observation; it is not automatically declared complete.
+Unknown records are not force-cleared. This endpoint is a disposition report,
+not physical host fencing or permission to replay an old request.

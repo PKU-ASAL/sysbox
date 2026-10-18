@@ -22,22 +22,24 @@ import (
 
 // HandleState is the libvirt substrate's typed NodeHandle.Provider payload.
 type HandleState struct {
-	Identity         *substrate.OperationIdentity   `json:"identity,omitempty"`
-	DomainName       string                         `json:"domain_name"`
-	DomainUUID       string                         `json:"domain_uuid,omitempty"`
-	VMDir            string                         `json:"vm_dir"`
-	DiskPath         string                         `json:"disk_path"`
-	VCPUs            int                            `json:"vcpus"`
-	MemoryMiB        int                            `json:"memory_mib"`
-	MachineType      string                         `json:"machine_type"`
-	Bridges          []BridgeAttach                 `json:"bridges,omitempty"`
-	SSHIP            string                         `json:"ssh_ip,omitempty"`
-	SSHUser          string                         `json:"ssh_user,omitempty"`
-	SSHPass          string                         `json:"-"`
-	SSHKey           string                         `json:"ssh_key,omitempty"`
-	SSHAuthorizedKey string                         `json:"-"`
-	NetworkInit      substrate.GuestNetworkInitMode `json:"network_init"`
-	SeedISO          string                         `json:"seed_iso,omitempty"`
+	ExternalDefinition  bool                           `json:"external_definition,omitempty"`
+	AdoptionFingerprint string                         `json:"adoption_fingerprint,omitempty"`
+	Identity            *substrate.OperationIdentity   `json:"identity,omitempty"`
+	DomainName          string                         `json:"domain_name"`
+	DomainUUID          string                         `json:"domain_uuid,omitempty"`
+	VMDir               string                         `json:"vm_dir"`
+	DiskPath            string                         `json:"disk_path"`
+	VCPUs               int                            `json:"vcpus"`
+	MemoryMiB           int                            `json:"memory_mib"`
+	MachineType         string                         `json:"machine_type"`
+	Bridges             []BridgeAttach                 `json:"bridges,omitempty"`
+	SSHIP               string                         `json:"ssh_ip,omitempty"`
+	SSHUser             string                         `json:"ssh_user,omitempty"`
+	SSHPass             string                         `json:"-"`
+	SSHKey              string                         `json:"ssh_key,omitempty"`
+	SSHAuthorizedKey    string                         `json:"-"`
+	NetworkInit         substrate.GuestNetworkInitMode `json:"network_init"`
+	SeedISO             string                         `json:"seed_iso,omitempty"`
 }
 
 func (s *Substrate) ResolveImage(_ context.Context, source substrate.ArtifactSource) (substrate.ArtifactHandle, error) {
@@ -195,6 +197,17 @@ func stageBaseImage(ctx context.Context, source, destination string) error {
 }
 
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
+	if hsFrom(h).ExternalDefinition {
+		target, exists, err := existingDomainUUID(ctx, h)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("adopted domain definition missing")
+		}
+		return startExternalDomain(ctx, target)
+	}
+
 	if err := validateHandleIdentity(ctx, h); err != nil {
 		return err
 	}
@@ -342,6 +355,16 @@ func (s *Substrate) DestroyNode(ctx context.Context, h substrate.NodeHandle) err
 		if _, err := exec.CommandContext(ctx, "virsh", "undefine", target).CombinedOutput(); err != nil {
 			return driver.Wrap(driver.ErrorUnavailable, subName, "undefine domain failed", err)
 		}
+	}
+	if hs.ExternalDefinition {
+		present, err := gcDomainPresent(ctx, hs.DomainUUID)
+		if err != nil {
+			return err
+		}
+		if present {
+			return fmt.Errorf("adopted domain deletion not confirmed")
+		}
+		return nil
 	}
 	if hs.VMDir != "" {
 		if _, err := os.Lstat(hs.VMDir); os.IsNotExist(err) {
