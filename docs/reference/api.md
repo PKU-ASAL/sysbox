@@ -694,3 +694,17 @@ There is therefore no existing provider snapshot operation to claim migrated.
 boundary. Any future provider snapshot implementation needs separate grant,
 identity, storage and restore acceptance; metadata restore never substitutes for
 that acceptance or rewinds external resource generations.
+
+### GC reference domains
+
+A GC reference snapshot now carries explicit `domains` for `revision`, `artifact`,
+`cache` and `placement`. Each domain is `complete` with a digest/count when
+references are present, or `not_applicable` when the canonical lifecycle has no
+reference in that domain. Malformed domain attributes are corrupt evidence.
+Catalog collection rejects any other status before producing candidates.
+
+This prevents an incomplete domain from being treated as an empty domain. The
+cross-host catalog still needs an external producer for revision/artifact/cache
+inventory; until that is supplied, that requirement remains open and GC stays
+fail-closed. Snapshot/journal/state references continue to be collected in the
+same aggregate transaction.

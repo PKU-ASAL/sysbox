@@ -138,10 +138,11 @@
       "gates": [
         "gc-cli",
         "gc-api",
-        "gc-storage"
+        "gc-storage",
+        "gc-domain-coverage"
       ],
       "remaining": [
-        "All project revision/artifact/cache reference domains and cross-host offline catalog completeness are not fully covered."
+        "Cross-host offline catalogs still require explicit external revision/artifact/cache inventory producers; current domain statuses are fail-closed and not_applicable when no lifecycle references exist."
       ]
     },
     {
@@ -607,6 +608,18 @@
         "SYSBOX_PARTITION_FAULT",
         "SYSBOX_PARTITION_CLEANUP"
       ]
+    },
+    {
+      "id": "gc-domain-coverage",
+      "package": "./pkg/persistence",
+      "tests": [
+        "TestGCReferenceDomainsDeclareCompleteOrNotApplicable",
+        "TestGCReferenceDomainsRejectMalformedDomainAttributes"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
     }
   ]
 }

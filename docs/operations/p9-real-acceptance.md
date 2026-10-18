@@ -4267,3 +4267,12 @@ unknown create was never force-cleaned. The repaired rounds do not retroactively
 rewrite or erase that failure. P9.4 live-fault scope is now verified for the
 current build; full P9 still has other open cells (DB/API failover combinations,
 disk-full, upgrade, broader provider/transport fault matrix).
+
+### GC domain coverage (2026-10-19)
+
+GC reference snapshots now report revision/artifact/cache/placement domains with
+explicit complete/not_applicable status, digest and count. Malformed attributes
+are rejected; catalog collection rejects incomplete status. Contract tests pass
+on persistence and CLI paths. This closes the silent “domain absent means empty”
+case. Cross-host offline catalogs still lack an external revision/artifact/cache
+producer, so P8.2 remains open for that environment rather than being overclaimed.

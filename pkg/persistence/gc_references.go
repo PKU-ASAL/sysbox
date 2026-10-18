@@ -14,11 +14,17 @@ import (
 // GCReferenceSnapshot is a coherent observation of one lifecycle aggregate.
 // It excludes the separate API activity/authority registries and is therefore
 // only one input to GC planning, never a deletion authorization.
+type GCReferenceDomain struct {
+	Status string `json:"status"`
+	Digest string `json:"digest,omitempty"`
+	Count  int    `json:"count"`
+}
 type GCReferenceSnapshot struct {
-	TopologyUID string                `json:"topology_uid"`
-	Serial      int64                 `json:"serial"`
-	Digest      string                `json:"digest"`
-	References  []GCResourceReference `json:"references"`
+	TopologyUID string                       `json:"topology_uid"`
+	Serial      int64                        `json:"serial"`
+	Digest      string                       `json:"digest"`
+	References  []GCResourceReference        `json:"references"`
+	Domains     map[string]GCReferenceDomain `json:"domains"`
 }
 
 // GCResourceReference deliberately contains no provider private state or keys.
@@ -52,7 +58,24 @@ func gcReferences(a *aggregate) (GCReferenceSnapshot, error) {
 	var out GCReferenceSnapshot
 	err := func() error {
 		out.TopologyUID, out.Serial = a.State.TopologyUID, a.Serial
+		out.Domains = map[string]GCReferenceDomain{"revision": {Status: "not_applicable"}, "artifact": {Status: "not_applicable"}, "cache": {Status: "not_applicable"}, "placement": {Status: "not_applicable"}}
+		domainValues := map[string][]string{"revision": {}, "artifact": {}, "cache": {}, "placement": {}}
+		var domainErr error
+		appendDomain := func(resource state.Resource) {
+			attrs := resource.Attributes
+			for domain, key := range map[string]string{"revision": "revision", "artifact": "artifact_digest", "cache": "cache_key", "placement": "placement_agent"} {
+				if value, ok := attrs[key]; ok {
+					v, ok := value.(string)
+					if !ok || v == "" {
+						domainErr = ErrCorruptRecord
+						continue
+					}
+					domainValues[domain] = append(domainValues[domain], v)
+				}
+			}
+		}
 		appendResource := func(source string, resource state.Resource) {
+			appendDomain(resource)
 			out.References = append(out.References, GCResourceReference{Source: source, ResourceType: resource.Address.Type, Driver: resource.Driver, ExternalID: resource.ExternalID, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation})
 		}
 		collect := func(prefix string, content *aggregate) error {
@@ -77,6 +100,17 @@ func gcReferences(a *aggregate) (GCReferenceSnapshot, error) {
 		}
 		if err := collect("", a); err != nil {
 			return err
+		}
+		if domainErr != nil {
+			return domainErr
+		}
+		for domain, values := range domainValues {
+			if len(values) > 0 {
+				sort.Strings(values)
+				raw, _ := json.Marshal(values)
+				sum := sha256.Sum256(raw)
+				out.Domains[domain] = GCReferenceDomain{Status: "complete", Digest: fmt.Sprintf("%x", sum[:]), Count: len(values)}
+			}
 		}
 		for id, snapshot := range a.Snapshots {
 			content, err := decodeSnapshot(id, snapshot)

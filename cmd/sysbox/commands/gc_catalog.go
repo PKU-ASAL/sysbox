@@ -64,6 +64,11 @@ func collectCatalogIDs(ctx context.Context, location string) (activeIDs, error) 
 		}
 		active.owners[refs.TopologyUID] = true
 		active.topologies[refs.TopologyUID] = entry.Name
+		for domain, state := range refs.Domains {
+			if state.Status != "complete" && state.Status != "not_applicable" {
+				return active, fmt.Errorf("incomplete %s reference domain for %s", domain, entry.Name)
+			}
+		}
 		active.inventories[refs.TopologyUID] = refs.Digest
 		for _, ref := range refs.References {
 			active.resourceUIDs[refs.TopologyUID+"\x00"+ref.ResourceUID] = true
