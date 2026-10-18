@@ -4202,3 +4202,68 @@ Validation: full `go test -p 1 ./...` passed (log
 real-timeout/revocation/caller-budget tests passed. `go vet ./pkg/hostsupervisor`,
 docs checks and independent code review passed. No live VM effect was invoked by
 this fix's validation, and no historical or retained unknown record was altered.
+
+### Current-build live fault revalidation after observation retry fix (2026-10-18)
+
+A fresh disposable lab `/tmp/sb-retry-1018` was created after the observation
+retry fix; its control/execution boots are `d29128e1-2481-48cd-976e-7532ba797a1e`
+and `c1052abd-f50d-41b0-bd19-81045d42cee6`. Current source binary SHA256 on all
+four running API/Agent/supervisor MainPIDs was
+`5f86af09989f4764f5f8905cab66d604e2ac757e100db43d3c18f7cf9f952d64`.
+
+Two independent live primary failovers passed. The second round included recovery
+observation deadline logs but the original task completed with exit code0; no
+cancellation was invented. Both rounds verified backup parent completion while
+primary stayed stopped, service restoration, normal Destroy, exact-owner provider
+absence and metadata DELETE:
+
+| Round | Summary | Fault | Cleanup |
+|---|---|---|---|
+| `fault-failover-0a2eaa781b50` | `88cc9c2fc3dc742891e866fc3fecbd38ded33f6d1bb616d99ceee492639c554b` | `c05e0742e639648f2bc918134300f4c81ca0d2b3b5f4748b86c9c4a9bf405eb6` | `727e52e7bf9cbd369b66c8ea3b927c8fd834edc1a099d423d506db73fccd94da` |
+| `fault-failover-a7fd2f9e0ebc` | `aab4cfa3c223d4ebf10231e8625178045fb1643af17d41bfb66289714f18c5a6` | `61194b1c00978778d1a47c8f8900fbb662bdbd6a960bedf333aa5c0b6ac9cc01` | `a0d9a19ecce5ca40b94647f32fd61893d88960d9e66160d371aa912fe7f59abf` |
+
+Database outage passed in `fault-database-b037987c4c63`: guest cancellation was
+confirmed in24.36 seconds, PostgreSQL PID changed after restoration, original
+stop evidence was acknowledged and cleanup/metadata deletion completed. SHA256:
+summary `4ec77fcea04da9aef9c66f9e04e0e6a9e00ed0aed81fef5c604a83ee17075721`,
+fault `c3d814ad756d172f69607136228194610f0f3877ef61590d59edbafc705e46e8`,
+cleanup `b56abaad84d739ab48e96a8b8090135b4848e4c08ddb25586cbb0c62d61c8bf2`.
+
+Private LAN partition passed in `fault-private-network-222f567bca56`, preserving
+NAT management while stopping the private link and restoring it before cleanup.
+SHA256: summary `540ba441627f31864fa5b3baa2c710317a84ed720d61bdc411477df44581419e`,
+fault `1b76e30eedb74ec6956ee59b5593fb7e5c28ec8610e4e1143b9f58ab4e4d3670`,
+cleanup `ec5a004db2620ea1b339dd8e2de0816e26030225b6d2ac499ef16ccca862d00f`.
+
+Strict current-source `live-fault-evidence` passed after rebuilding the CLI inside
+the Go gate with `GOCACHE=/tmp/sysbox-gocache`; it compared all three rounds'
+service-proc-exe-v1 identities and exact task/parent/cleanup evidence. The prior
+failed round in `/tmp/sb-fence-1018` remains preserved and is not used as positive
+proof. The earlier unknown create remains untouched in its disposable lab.
+This closes the current P9.4 live fault campaign scope, not every possible fault
+injection or the remaining P5/P6/P8/P9 open rows.
+
+### Retry-fix current-build revalidation (2026-10-18)
+
+The bounded child-observation retry fix was deployed to a fresh lab
+`/tmp/sb-retry-1018` (binary SHA256
+`5f86af09989f4764f5f8905cab66d604e2ac757e100db43d3c18f7cf9f952d64`). It requires
+an exact running task, parent checkpoint and clean provider scope before each
+round. Two primary API failovers passed, including one with recovery-observation
+deadline logs: the original child completed with exit code0, the backup parent
+completed while primary stayed stopped, and normal cleanup removed exact-owner
+resources. Database outage passed with guest stop in24.36s and a changed database
+PID after restore. Private LAN partition passed while preserving NAT management.
+
+The final strict live-fault gate passed using service-proc-exe-v1 fingerprints and
+all nine evidence files. Evidence directories:
+
+- `fault-failover-0a2eaa781b50` and `fault-failover-a7fd2f9e0ebc`
+- `fault-database-b037987c4c63`
+- `fault-private-network-222f567bca56`
+
+The earlier failure remains in `/tmp/sb-fence-1018` as a diagnostic incident; its
+unknown create was never force-cleaned. The repaired rounds do not retroactively
+rewrite or erase that failure. P9.4 live-fault scope is now verified for the
+current build; full P9 still has other open cells (DB/API failover combinations,
+disk-full, upgrade, broader provider/transport fault matrix).

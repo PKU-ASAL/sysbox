@@ -106,6 +106,17 @@ def running_builds(execute):
     return result
 
 
+def failure_diagnostics(execute):
+    result={}
+    for role,units in (('control','-u sysbox-api1 -u sysbox-api2'),
+                       ('execution','-u sysbox-supervisor -u sysbox-agent')):
+        try:
+            result[role]=execute(role,"sudo journalctl "+units+" --since '10 minutes ago' --no-pager -n 80")[-32768:]
+        except Exception as error:
+            result[role+'_error']=str(error)[:2048]
+    return result
+
+
 def run(root, fault):
     root,manifest=lab.load(root)
     host_fencing.check_scope(root,manifest)
@@ -172,6 +183,7 @@ def run(root, fault):
         verify_round(summary,json.loads((directory/'fault.json').read_text()),workload)
     except BaseException as error:
         summary.update(phase='failed',error=str(error))
+        lab.save(directory/'diagnostics.json',failure_diagnostics(execute))
         raise
     finally:
         lab.save(directory/'summary.json',summary)

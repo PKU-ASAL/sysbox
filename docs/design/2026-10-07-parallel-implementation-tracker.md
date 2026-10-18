@@ -801,3 +801,15 @@ main 为 `b1cc43d`，仍有 PR43/44/45 对应的 keyed apply/claim replay/crash 
 round不能计当前通过。重复失败的 known-failed topology 已正常销毁/metadata删除；
 后续 `p9-135f615b0b64` unknown 创建保留，没有绕过恢复合同。P9.4 根因与稳定重验
 仍待完成，机器总账明确维持 open。
+
+## 修复版 P9.4 重验结果（2026-10-18）
+
+新 disposable lab `/tmp/sb-retry-1018` 使用当前二进制 SHA256
+`5f86af09989f4764f5f8905cab66d604e2ac757e100db43d3c18f7cf9f952d64`，四个运行服务
+通过 `/proc/<MainPID>/exe` 绑定。两轮独立 API failover、数据库中断、私有 LAN
+分区均通过，保存原 task/parent/receipt、service restore、exact-owner residue
+和 metadata delete 证据；观察超时日志未再取消成功任务。严格 live-fault gate
+在最终源码上通过。此前失败轮次保留为诊断，不被覆盖或重标为成功。
+
+这关闭 P9.4 的当前 live-fault campaign 范围，但仍不关闭 P9 的全部 fault matrix、
+disk-full、upgrade/rebuild、全部 transport/provider 组合或 main 整合。

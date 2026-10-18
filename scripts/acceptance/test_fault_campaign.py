@@ -50,3 +50,15 @@ class FaultCampaignTests(unittest.TestCase):
         self.assertEqual(result,{'control':'a'*64,'execution':'a'*64})
         self.assertEqual(sum('/proc/42/exe' in command for command in calls),4)
         self.assertFalse(any('/usr/local/bin/sysbox' in command for command in calls))
+
+    def test_failed_round_keeps_bounded_service_diagnostics(self):
+        calls=[]
+        def execute(role,command):
+            calls.append((role,command))
+            if role=='control':raise RuntimeError('API unreachable')
+            return 'host diagnostic'
+        result=fault_campaign.failure_diagnostics(execute)
+        self.assertIn('control_error',result)
+        self.assertEqual(result['execution'],'host diagnostic')
+        self.assertEqual(len(calls),2)
+        self.assertTrue(all('journalctl' in cmd and '-n 80' in cmd for _,cmd in calls))

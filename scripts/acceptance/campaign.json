@@ -226,9 +226,7 @@
         "gc-api",
         "live-fault-evidence"
       ],
-      "remaining": [
-        "Repeated live primary failover cancelled the original child; subsequent test create remained unknown. Earlier successful rounds do not close repeatability; source-bound clean-deployment rerun and root-cause fix remain required."
-      ]
+      "remaining": []
     },
     {
       "id": "P9.5",

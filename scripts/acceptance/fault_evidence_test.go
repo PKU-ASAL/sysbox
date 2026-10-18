@@ -21,7 +21,7 @@ func TestDisposableLiveFaultEvidence(t *testing.T) {
 	}
 	binary := filepath.Join(t.TempDir(), "sysbox")
 	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "../../cmd/sysbox")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOCACHE=/tmp/sysbox-gocache")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build current binary: %v %s", err, out)
 	}
