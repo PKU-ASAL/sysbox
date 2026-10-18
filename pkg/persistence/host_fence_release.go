@@ -84,6 +84,12 @@ func ApplyHostFenceRelease(authorityRaw, lifecycleRaw []byte, run controlplane.R
 	if run.ID != fence.Request.RunID || run.Topology != fence.Request.Topology || run.AgentID != fence.Request.Grant.AgentID || !run.Status.IsTerminal() || run.QueuedAt.IsZero() || run.EndedAt.Before(run.QueuedAt) || run.EndedAt.IsZero() || uint64(run.Attempt) != fence.Request.Grant.Attempt || run.Op != "destroy" {
 		return nil, zero, ErrConflict
 	}
+	if rec := fence.Reconciliation; rec != nil {
+		if !rec.Completed || evidenceHash(lifecycle) != rec.AfterLifecycle || evidenceHash(DurableRun(run)) != rec.AfterRun || request.ObservationCommandID != rec.ObservationCommandID || command.Recovery == nil || evidenceHash(*command.Recovery) != evidenceHash(rec.Observation) || !command.Retired || command.Command.Status != controlplane.AgentCommandStatusCompleted {
+			return nil, zero, ErrConflict
+		}
+		return commitFenceRelease(a, fence, lifecycleRaw, request, rec.HostPublicKey, rec.Observation, now)
+	}
 	c := command.Command
 	if !command.Retired || c.Status != controlplane.AgentCommandStatusCompleted || c.ID != request.ObservationCommandID || c.Type != controlplane.RunRecoveryCommand || c.RecoveryMode != controlplane.RunRecoveryObserve || c.ActionID != request.FenceID || c.AgentID != run.AgentID || c.TopologyUID != lifecycle.State.TopologyUID || c.ExpectedSerial != lifecycle.Serial || c.Run == nil || !SameRunIncarnation(*c.Run, run) || c.Run.Attempt != run.Attempt || c.Run.LeaseOwner != run.LeaseOwner || validateRecoveryReport(c, command.Recovery) != nil {
 		return nil, zero, ErrConflict
@@ -126,17 +132,21 @@ func ApplyHostFenceRelease(authorityRaw, lifecycleRaw []byte, run controlplane.R
 	if len(selected) != 0 {
 		return nil, zero, ErrConflict
 	}
+	return commitFenceRelease(a, fence, lifecycleRaw, request, hostKey, *report, now)
+}
+func commitFenceRelease(a *executionAuthority, fence HostFenceRecord, lifecycleRaw []byte, request HostFenceReleaseRequest, hostKey ed25519.PublicKey, report controlplane.RunRecoveryReport, now time.Time) ([]byte, HostFenceRelease, error) {
+	var zero HostFenceRelease
 	// Receipt is exclusion evidence, never an invented grant stop.
 	stopped, ok := a.Stops[fence.Request.Grant.Epoch]
 	if !ok || !sameGrantEpoch(stopped.Grant, fence.Request.Grant) {
 		return nil, zero, ErrConflict
 	}
 	for _, g := range a.Grants {
-		if (g.Scope.TopologyUID == fence.Request.Grant.Scope.TopologyUID || g.AgentID == run.AgentID) && g.State != controlplane.GrantStopped {
+		if (g.Scope.TopologyUID == fence.Request.Grant.Scope.TopologyUID || g.AgentID == fence.Request.Grant.AgentID) && g.State != controlplane.GrantStopped {
 			return nil, zero, ErrConflict
 		}
 	}
-	result := HostFenceRelease{Key: request.Key, ObservationCommandID: c.ID, LifecycleSHA256: fmt.Sprintf("%x", sha256.Sum256(lifecycleRaw)), ReleasedAt: now.UTC(), HostPublicKey: append([]byte(nil), hostKey...), Observation: *report}
+	result := HostFenceRelease{Key: request.Key, ObservationCommandID: request.ObservationCommandID, LifecycleSHA256: fmt.Sprintf("%x", sha256.Sum256(lifecycleRaw)), ReleasedAt: now.UTC(), HostPublicKey: append([]byte(nil), hostKey...), Observation: report}
 	fence.Release = &result
 	a.Fences[request.FenceID] = fence
 	barrier := a.Maintenance[fence.BarrierID]
@@ -165,9 +175,14 @@ func validateFenceRelease(record HostFenceRecord) error {
 	if err != nil || len(hash) != sha256.Size {
 		return ErrCorruptRecord
 	}
+	if rec := record.Reconciliation; rec != nil {
+		if !rec.Completed || evidenceHash(release.Observation) != evidenceHash(rec.Observation) {
+			return ErrCorruptRecord
+		}
+	}
 	seen := map[string]bool{}
 	for _, resource := range release.Observation.Resources {
-		if resource.ActionID == "" || seen[resource.ActionID] || resource.Status != "absent" || resource.JournalStatus != "succeeded" || resource.OwnerUID != release.Observation.TopologyUID || resource.ExternalID == "" {
+		if resource.ActionID == "" || seen[resource.ActionID] || resource.Status != "absent" || (record.Reconciliation == nil && resource.JournalStatus != "succeeded") || resource.OwnerUID != release.Observation.TopologyUID || resource.ExternalID == "" {
 			return ErrCorruptRecord
 		}
 		seen[resource.ActionID] = true

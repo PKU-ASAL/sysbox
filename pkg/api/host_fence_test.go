@@ -36,7 +36,8 @@ func TestHostFenceDisposableVMIntake(t *testing.T) {
 	runHostFenceAPIContract(t, root, false)
 }
 
-func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bool) {
+func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bool, reconcileCase ...bool) {
+	reconcile := len(reconcileCase) > 0 && reconcileCase[0]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -68,7 +69,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				st, err := repo.LoadState(ctx, "lab")
 				require.NoError(t, err)
 				run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Op: "destroy", Operation: "destroy", Status: controlplane.RunRunning, QueuedAt: time.Now().UTC(), Revision: "revision", Attempt: 1, LeaseOwner: "owner"}
-				if releaseCase {
+				if releaseCase && !reconcile {
 					run.Status = controlplane.RunFailed
 					run.EndedAt = time.Now().UTC()
 				}
@@ -79,7 +80,35 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, OwnerUID: st.TopologyUID, ResourceUID: "resource", Generation: 1, Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted}
 				if releaseCase {
 					action.Action = controlplane.PlanActionDelete
-					action.Candidate = &state.Resource{Address: action.Resource, OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: action.Generation, ExternalID: "external"}
+					action.ProviderOperationID = action.ID
+					action.ProviderOperationAnchor = "action:" + action.ID
+					action.Quiescence = "unknown"
+					action.Candidate = &state.Resource{Driver: "docker", Address: action.Resource, OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: action.Generation, ExternalID: "external"}
+					if reconcile && acceptanceRoot != "" {
+						provider := os.Getenv("SYSBOX_DELETE_CLOSURE_PROVIDER")
+						if provider == "" {
+							provider = "docker"
+						}
+						output, err := exec.Command("/usr/bin/python3", "../../scripts/acceptance/delete_closure.py", "fixture", "--root", acceptanceRoot, "--provider", provider).CombinedOutput()
+						require.NoError(t, err, string(output))
+						var fixture struct {
+							Driver        string          `json:"driver"`
+							ExternalID    string          `json:"external_id"`
+							ProviderState json.RawMessage `json:"provider_state"`
+						}
+						require.NoError(t, json.Unmarshal(output, &fixture))
+						action.Candidate.Driver = fixture.Driver
+						action.Candidate.ExternalID = fixture.ExternalID
+						if len(fixture.ProviderState) > 0 {
+							var providerState map[string]any
+							require.NoError(t, json.Unmarshal(fixture.ProviderState, &providerState))
+							providerState["identity"] = map[string]any{"action_id": action.ID, "owner_uid": action.OwnerUID, "topology_uid": action.OwnerUID, "resource_uid": action.ResourceUID, "generation": action.Generation}
+							encoded, err := json.Marshal(providerState)
+							require.NoError(t, err)
+							require.NoError(t, action.Candidate.SetProviderState(encoded))
+						}
+					}
+
 					seed := action
 					seed.ID = "seed"
 					seed.RunID = "older-run"
@@ -97,7 +126,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 
 				}
 				require.NoError(t, repo.CommitActionIntent(ctx, action))
-				if releaseCase {
+				if releaseCase && !reconcile {
 					records, err := repo.LoadActions(ctx, "lab")
 					require.NoError(t, err)
 					completed := records[0]
@@ -193,7 +222,11 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				}
 				require.Equal(t, 200, post(receipt).Code)
 				if releaseCase {
-					checkCompletedFenceRelease(t, s, store, accepted)
+					if reconcile {
+						checkFenceDeleteClosure(t, s, store, accepted, acceptanceRoot)
+					} else {
+						checkCompletedFenceRelease(t, s, store, accepted)
+					}
 					return
 				}
 				current, err := store.GetRun(ctx, run.ID)
@@ -231,3 +264,13 @@ func TestHostFenceControllerCannotReuseAnyHostKey(t *testing.T) {
 }
 
 func TestHostFenceReleaseAPI(t *testing.T) { runHostFenceAPIContract(t, "", true) }
+
+func TestHostFenceDeleteClosureAPI(t *testing.T) { runHostFenceAPIContract(t, "", true, true) }
+
+func TestHostFenceDeleteClosureDisposableVM(t *testing.T) {
+	root := os.Getenv("SYSBOX_HOST_FENCE_ACCEPTANCE_ROOT")
+	if root == "" {
+		t.Skip("explicit disposable lab required")
+	}
+	runHostFenceAPIContract(t, root, true, true)
+}

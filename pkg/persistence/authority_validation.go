@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
@@ -34,6 +35,19 @@ func decodeExecutionAuthority(raw []byte) (*executionAuthority, error) {
 	for epoch, stop := range a.Stops {
 		if epoch == 0 || epoch > a.Epoch || stop.Grant.Epoch != epoch || !validGrant(stop.Grant) || stop.Grant.State != controlplane.GrantStopped || stop.Receipt == "" || stop.Grant.StopReceipt != stop.Receipt {
 			return nil, ErrCorruptRecord
+		}
+	}
+	for epoch, stop := range a.Stops {
+		if strings.HasPrefix(stop.Receipt, "fence-delete:") {
+			matched := false
+			for _, fence := range a.Fences {
+				if fence.Request.Grant.Epoch == epoch && fence.Reconciliation != nil && fence.Reconciliation.Completed && stop.Receipt == fenceDeleteStopID(fence) {
+					matched = true
+				}
+			}
+			if !matched {
+				return nil, ErrCorruptRecord
+			}
 		}
 	}
 	for key, grant := range a.Grants {

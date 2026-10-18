@@ -602,7 +602,53 @@ requests and reauthorization against the released fence are rejected. Plans expo
 `release_status=held|released`; `release_allowed=false` on the read-only plan is
 not a substitute for the atomic endpoint checks.
 
-Release receipts require execution authority **format4**. There is no automatic
-conversion from format3; see [upgrade boundaries](../operations/upgrades-and-recovery.md).
-This narrow path does not reconcile an uncertain delete, adopt an uncertain create,
-resume an incomplete reset, or manufacture missing historical stop evidence.
+Release and reconciliation records require execution authority **format5**. There is no automatic
+conversion from format3/4; see [upgrade boundaries](../operations/upgrades-and-recovery.md).
+The release endpoint itself does not reconcile an uncertain delete; the separate
+transition below handles only the explicitly supported case. It cannot adopt an
+uncertain create, resume an incomplete reset, or manufacture missing history.
+
+#### Reconcile a fenced unknown deletion
+
+`POST /v1/topologies/{name}/host-fences/{id}/reconcile-delete` requires an
+administrative role, `Idempotency-Key` and `{"observation_command_id":"..."}`.
+This narrow transition applies only to explicitly enrolled disposable hosts and
+anchored, topology-wide destroy Runs. It invokes no provider effects.
+
+The original fence journal hash, Run incarnation/attempt, original command and
+revoked parent grant must still match. Every selected action must be an unresolved
+`sysbox_node` delete with its original operation ID, `action:{id}` anchor, exact
+candidate and state identity, Docker/libvirt driver, and no attachments/reset
+work. The host-signed report must cover all selected actions with `absent`,
+`provider_scope=local-only` and `delete_residue_absent=true`. The actual Docker
+client must use the default local Unix socket; libvirt must report `qemu:///system`.
+Libvirt also checks that a managed VM directory is absent; externally adopted
+storage remains intentionally preserved. Other outstanding grants, child effects,
+remaining resources or unresolved topology activity block the transaction.
+
+On success the response contains the durable reconciliation decision. The
+transaction commits the delete outcomes and removes exactly the matching state
+resources, retires the original command, and closes the interrupted Run as
+**failed, nonrecoverable** with an explicit reconciliation reason. It does not
+claim that the interrupted execution returned success. The parent grant stop
+references the authenticated fence/reconciliation evidence (`fence-delete:`),
+not a fabricated host stop signature. The host hold remains until an explicit
+`release` request passes its activity checks.
+
+Execution authority format5 records preimage/postimage hashes, pinned verifier
+key, signed observation and decision time. SQL commits lifecycle, Run, command
+and authority atomically. Filesystem storage persists a prepared decision before
+postimages; retries accept only the original or planned snapshots, finish the
+remaining writes, then publish completion/stop evidence. Run history uses atomic
+replacement, avoiding a torn append that would prevent recovery. A pending decision
+blocks new observations and never releases the hold. Same-key completed retries
+return the original decision; another key/report conflicts.
+
+Release after reconciliation consumes the retained signed **pre-reconciliation**
+report plus the exact committed postimages. The signature is never rewritten to
+pretend it observed the new journal status/serial. Plans expose
+`reconciliation_status=none|prepared|completed`. A stale original-journal label
+after reconciliation does not negate the separately retained decision.
+
+This does not cover create/reset, absent original anchors, remote daemons, unknown
+external storage effects, composite guest work or arbitrary historical incidents.

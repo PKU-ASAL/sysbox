@@ -57,7 +57,7 @@ func TestHostFenceReceiptSurvivesRestartWithoutReleasingAuthority(t *testing.T) 
 	var ledger executionAuthority
 	require.NoError(t, json.Unmarshal(raw, &ledger))
 	oldVersion := ledger
-	oldVersion.Version = 3
+	oldVersion.Version = 4
 	oldRaw, err := json.Marshal(oldVersion)
 	require.NoError(t, err)
 	_, err = decodeExecutionAuthority(oldRaw)

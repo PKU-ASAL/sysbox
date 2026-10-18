@@ -65,10 +65,10 @@ Firecracker 删除现在在移除 generation 前，将绑定原 action 的进程
 普通 unlocked manifest 不再证明 VMM 内未知请求已经结束；跨宿主 reboot/PID 身份
 冲突仍保守拒绝。缺旧证据的历史 intent 不能自动升级为成功。
 
-## Execution authority format 4
+## Execution authority format 5
 
-宿主 fencing 请求、固定控制器公钥、签名回执与显式释放记录使用 execution authority format4；
-它与 aggregate format6、API database schema14 是不同的版本边界。旧 format2/3
+宿主 fencing 请求、固定控制器公钥、签名回执、显式释放和删除处置记录使用 execution authority format5；
+它与 aggregate format6、API database schema14 是不同的版本边界。旧 format2/3/4
 ledger 明确拒绝，新 ledger 也不能交给旧 writer。当前没有自动转换。
 升级前停写并保留完整旧账本；仅对明确可丢弃的项目建立新的 authority 存储。
 不得通过删除 ledger 或修改 version 来解除旧 grant、未知 intent 或宿主冻结。
@@ -76,8 +76,8 @@ ledger 明确拒绝，新 ledger 也不能交给旧 writer。当前没有自动�
 新增 fencing API 仅用于显式登记的隔离验收宿主。收到有效签名只保存停止证据，
 不把未知请求认定成功，也不允许重放。冻结覆盖该 Agent 的其他 topology，且跨
 重启保留；普通 maintenance release 无法解除它。显式 release 仅支持已独立完成
-删除、全 grant 已停止且签名观察证明 absent 的空 topology；原始 unknown intent
-处置仍未自动化。不要把真实历史现场登记到这个验收接口。
+删除、全 grant 已停止且签名观察证明 absent 的空 topology；完整锚定的本地 Docker/libvirt 未知删除可走下述 reconcile-delete；其他未知 intent
+仍不能自动处置。不要把真实历史现场登记到这个验收接口。
 
 ## Fencing 后的只读观察
 
@@ -90,7 +90,7 @@ ledger 明确拒绝，新 ledger 也不能交给旧 writer。当前没有自动�
 该流程只派发 observe，不派发 recover。命令重试不会覆盖旧租约或复活终态命令。
 若 journal 已漂移，原 key 仍可查询原命令，新观察请求返回冲突；处置计划将旧报告
 标为 stale。API 重启后继续读取同一 durable report。此步不需要新增存储格式，仍用
-现有 command/report schema；显式释放新增 authority format4。
+现有 command/report schema；显式释放及删除处置使用 authority format5。
 
 观察到 present/absent 不足以证明旧副作用的完成结果。新版 supervisor 会对绑定 fence 新 boot 的观察报告签名；API 验证宿主公钥、
 fence 摘要、新 boot、完整报告及投递租约后，只消除缺少宿主签名这一项阻断。
@@ -113,7 +113,21 @@ host stop receipts 齐备时，才可 POST `.../host-fences/{id}/release`，正�
 `observation_command_id`，请求头携固定 `Idempotency-Key`。接口同时检查 pending
 GC/reset、Run/guest/node/console/command；任一条件不满足则409并保留冻结。
 
-释放回执保存到 authority format4，记录观察报告、公钥、lifecycle 摘要与时间。
+释放回执保存到 authority format5，记录观察报告、公钥、lifecycle 摘要与时间。
 同 key 重试只读回原结果，不影响新工作或后续冻结。释放不改写 intent、Run、state，
 也不会伪造 grant stop。缺停止证明的旧 unknown intent 仍不能走这条路径。该路径
 当前只覆盖已完成删除的空 topology；有存活资源的恢复释放仍不支持。
+
+
+## 已 fencing 的未知删除闭环
+
+限定隔离验收宿主、原始删除锚点完整、候选与 state 身份精确匹配、无子任务/其他
+未完成操作、Docker/libvirt 本地 endpoint、宿主签名确认 absent 且删除残留已消失。
+先取得 `observe` 的签名报告，再 POST `.../reconcile-delete`，携固定 key 与
+`observation_command_id`。完成后再单独调用 `release`；不能省略任何证据步骤。
+
+处置提交删除 action/state 结果，但将中断 Run 保留为 failed/nonrecoverable，
+不会伪装原执行成功。停止记录明确引用 fence-delete 证据。文件后端可能返回错误
+但已有 prepared 决策：保留同 key/报告重试，不能删除记录或改版本；只允许原始或
+已计划 postimage 继续。SQL 后端在一个事务内完成。authority5 不能由旧 writer 打开，
+当前没有旧账本自动迁移。历史现场仍只读，缺原始锚点的 intent 不能补造证明。

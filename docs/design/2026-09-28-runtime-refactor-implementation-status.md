@@ -1,5 +1,15 @@
 # Sysbox 生命周期重构：当前实施状态
 
+## 2026-10-18 补充：隔离宿主未知删除闭环
+
+已接通 `reconcile-delete`：完整原始删除锚点 + 整机 fencing + 新 boot 宿主签名
+absent/残留消失证明 → 原子提交删除结果 → 终结中断 Run/command 与父 grant →
+显式 release。Run 保留 failed/nonrecoverable，不伪装原执行成功。文件后端有
+prepared 决策和 pre/post hash 恢复，SQL 一次事务；authority 升至 format5。
+范围仅本地 Docker/libvirt、无附件/子任务的节点删除；真实历史现场只读，create、
+reset、缺锚点和非空恢复仍未闭合。以下是此前各阶段边界，当前验收见运维记录。
+
+
 ## 2026-10-18 补充：宿主 fencing 证据接入
 
 新增可丢弃验收宿主的请求准入、外部控制器 Ed25519 签名与持久回执。

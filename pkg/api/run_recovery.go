@@ -200,7 +200,7 @@ func (s *Server) authorizeFenceObservation(ctx context.Context, cmd controlplane
 	if err != nil {
 		return controlplane.FenceObservationBinding{}, err
 	}
-	if fence.Release != nil || fence.Receipt == nil || !fenceObservationMatches(&persistence.CommandRecord{Command: cmd}, fence.Request, run, cmd.ExpectedSerial) {
+	if fence.Reconciliation != nil || fence.Release != nil || fence.Receipt == nil || !fenceObservationMatches(&persistence.CommandRecord{Command: cmd}, fence.Request, run, cmd.ExpectedSerial) {
 		return controlplane.FenceObservationBinding{}, persistence.ErrConflict
 	}
 	plan, _, serial, err := s.fenceRecoveryPlan(ctx, fence, "")

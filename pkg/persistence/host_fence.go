@@ -12,11 +12,12 @@ import (
 )
 
 type HostFenceRecord struct {
-	Release    *HostFenceRelease              `json:"release,omitempty"`
-	Request    controlplane.HostFenceRequest  `json:"request"`
-	BarrierID  string                         `json:"barrier_id"`
-	AcceptedAt time.Time                      `json:"accepted_at"`
-	Receipt    *controlplane.HostFenceReceipt `json:"receipt,omitempty"`
+	Reconciliation *FenceDeleteReconciliation     `json:"delete_reconciliation,omitempty"`
+	Release        *HostFenceRelease              `json:"release,omitempty"`
+	Request        controlplane.HostFenceRequest  `json:"request"`
+	BarrierID      string                         `json:"barrier_id"`
+	AcceptedAt     time.Time                      `json:"accepted_at"`
+	Receipt        *controlplane.HostFenceReceipt `json:"receipt,omitempty"`
 }
 
 func cloneFence(record HostFenceRecord) (HostFenceRecord, error) {
@@ -144,6 +145,9 @@ func validateHostFences(a *executionAuthority) error {
 			if !ok || !sameGrantEpoch(stop.Grant, record.Request.Grant) || record.Release.ReleasedAt.After(a.ObservedAt) {
 				return ErrCorruptRecord
 			}
+		}
+		if err := validateFenceDelete(record, a); err != nil {
+			return err
 		}
 		if err := validateFenceRelease(record); err != nil {
 			return err

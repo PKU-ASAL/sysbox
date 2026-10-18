@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -37,11 +38,35 @@ func ObserveRunActions(ctx context.Context, repo ActionRepository, topology, run
 		}
 		if candidate != nil && candidate.OwnerUID == record.OwnerUID && candidate.ResourceUID == record.ResourceUID && candidate.Generation == record.Generation {
 			item.ExternalID = candidate.ExternalID
+			if record.Resource.Type == "sysbox_node" {
+				if node, err := driver.DefaultRegistry.RequireNode(candidate.Driver); err == nil {
+					if local, ok := node.(interface {
+						HostFenceScope(context.Context) (string, error)
+					}); ok {
+						if scope, err := local.HostFenceScope(ctx); err == nil {
+							item.ProviderScope = scope
+						}
+					}
+				}
+			}
 			if handler, ok := GetResourceHandler(record.Resource.Type); ok {
 				observed, err := checkedRead(substrate.WithOperationIdentity(ctx, actionIdentity(record)), handler, *candidate, st)
 				if err == nil && (observed.Status == state.ResourcePresent || observed.Status == state.ResourceAbsent) {
 					if observed.Status == state.ResourceAbsent || observed.Resource.OwnerUID == candidate.OwnerUID && observed.Resource.ResourceUID == candidate.ResourceUID && observed.Resource.Generation == candidate.Generation {
 						item.Status = string(observed.Status)
+					}
+				}
+			}
+			if item.Status == "absent" && item.ProviderScope == "local-only" && record.Action == controlplane.PlanActionDelete {
+				node, err := driver.DefaultRegistry.RequireNode(candidate.Driver)
+				codec, codecErr := driver.DefaultRegistry.RequireNodeState(candidate.Driver)
+				if err == nil && codecErr == nil {
+					if proof, ok := node.(interface {
+						HostFenceDeletionAbsent(context.Context, substrate.NodeHandle) error
+					}); ok {
+						if handle, err := candidate.ReconstructHandle(codec); err == nil && proof.HostFenceDeletionAbsent(ctx, handle) == nil {
+							item.DeleteResidueAbsent = true
+						}
 					}
 				}
 			}

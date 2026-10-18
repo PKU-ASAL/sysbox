@@ -16,9 +16,9 @@ import (
 const executionAuthorityKind guestKind = "sysbox_execution_authority"
 const MaxExecutionGrantTTL = controlplane.ExecutionGrantMaxTTL
 
-// Version 4 adds explicit audited fence release; older writers must not
-// discard release evidence or resurrect a released host hold.
-const executionAuthorityVersion = 4
+// Version 5 retains write-ahead unknown-delete reconciliation and stop provenance.
+// Older writers must reject rather than discard a pending recovery decision.
+const executionAuthorityVersion = 5
 
 // One authority ledger serializes session changes and overlapping scopes in
 // the same storage transaction. Epoch tombstones are never deleted. This is

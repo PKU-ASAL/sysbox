@@ -3977,3 +3977,73 @@ Verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`, and
 with isolated PostgreSQL enabled. Logs: `/tmp/sysbox-fence-release-full.log` and
 `/tmp/sysbox-fence-release-race.log`. The final focused persistence rerun also
 passed after replacing mutex-copy test fixtures with independent state values.
+
+### Unknown-delete closure on disposable Docker/libvirt hosts (2026-10-18)
+
+`reconcile-delete` now connects original anchored intent, whole-host fencing,
+new-boot host-signed absence and deletion-residue evidence to lifecycle metadata
+commit. It never replays provider delete. The interrupted Run remains failed and
+nonrecoverable with an explicit reconciliation reason; the original command is
+retired and the parent grant stop references the completed fence decision. The
+hold remains until explicit release, which checks the retained signed preimage
+against the exact committed postimages without rewriting the signed report.
+
+Authority format5 stores the prepared decision and hashes of lifecycle/Run/command
+preimages and postimages. File tests interrupt after lifecycle, Run and command
+writes; cold retries finish the same decision while grant/hold remain exclusive.
+Run history is atomically replaced under its stable lock, avoiding a torn JSONL
+append that would strand recovery. SQL commits all postimages and authority in one
+transaction. Cold validation rejects illegal hashes and orphaned fence-delete
+stops. Historical ledgers are not migrated or modified.
+
+Real acceptance used only the explicitly disposable `/tmp/sb-fence-1018` lab.
+For each provider the fixture creates a random container/domain, deletes it, and
+leaves a synthetic canonical original deletion intent without a result. After
+pre-admitted execution-VM power-off/reboot, a compiled observer runs inside that
+VM using production HostRunExecutor and actual local Docker/libvirt providers.
+It calls the production API for authorization, signs exact absence/residue
+observations with the independently enrolled host key, and sends the report back
+through the normal persistence path. The API reconciles, cold-replays, explicitly
+releases, and confirms new host work can be claimed. Both provider rounds passed.
+This is a lost-deletion-result scenario with a synthetic journal; it is not a
+kill injected into a live production delete syscall or every provider fault mode.
+
+Evidence under `/tmp/sb-fence-1018/`:
+
+| Artifact | SHA256 |
+|---|---|
+| `delete-closure-host-observation-docker.json` | `3e886bd35951246c9ae63d528cdfe657cb6985142eb447da154707cd5a2a5d2a` |
+| `delete-closure-reconciled-docker.json` | `a888caa520f7f740454d8da2953f4b125629412dfb3ba7bcdeb2101264aec728` |
+| `delete-closure-released-docker.json` | `0b744ecc181c5f1449c695b3ae93ec1f88945eb8cf10af7ef61612d553acd112` |
+| `delete-closure-host-observation-libvirt.json` | `5c80ae029fefbf9a2c8c9b00eda23c670dd2d6e36a0fb08ed1a5b5188c175dde` |
+| `delete-closure-reconciled-libvirt.json` | `49261c44f1ff9576a0383ab8a0e42da69dd2f2d6cf653416fb76f9b57afd1de8` |
+| `delete-closure-released-libvirt.json` | `05dc17a7bb3003cfcf34efc9bdb1c76a7c2bac14f83b089b25ee863e5a9983cd` |
+
+Docker power proof: `fence-2e1514fa429746d5b28a86cc54771751.json`, SHA256
+`0f0e2882ce7f835961c1139f4d93be1be31ce36d2df5eb725bf52e2a41175093`.
+Libvirt power proof: `fence-736aa087865244aba7c665b0b677085d.json`, SHA256
+`2a29c0176deb4da1711aaf8e330ed5cbd0ae0353a8f85764391541bae79dd2d7`.
+The first libvirt fixture omitted its managed identity and was rejected; the
+fixture was corrected without weakening production identity validation.
+
+Reproduce only with an explicitly scoped disposable lab:
+
+```bash
+CGO_ENABLED=0 GOCACHE=/tmp/sysbox-gocache go test -c -o /tmp/sysbox-fence-observer.test ./pkg/agentexec
+GOCACHE=/tmp/sysbox-gocache go build -buildvcs=false -o /tmp/sysbox-fence-attestor ./cmd/sysbox
+SYSBOX_HOST_FENCE_ACCEPTANCE_ROOT=/tmp/sb-fence-1018 SYSBOX_DELETE_CLOSURE_PROVIDER=docker \
+  GOCACHE=/tmp/sysbox-gocache go test ./pkg/api -run '^TestHostFenceDeleteClosureDisposableVM$' -count=1 -v -timeout=8m
+```
+
+Repeat with `SYSBOX_DELETE_CLOSURE_PROVIDER=libvirt`. No real historical VM or
+resource is targeted. Missing original anchors, remote daemons, attachments,
+child effects, create/reset/composite work and nonempty results still fail closed.
+
+Validation passed: full `go test -p 1 ./...`, `go vet ./...`, docs checks,
+three-backend race suite with isolated PostgreSQL, provider locality/residue
+regressions, and both real VM rounds. Logs: `/tmp/sysbox-delete-closure-full.log`,
+`/tmp/sysbox-delete-closure-race.log`, `/tmp/sysbox-delete-closure-docker.log`,
+`/tmp/sysbox-delete-closure-libvirt.log`. Independent review found no remaining
+blockers after the atomic history fix; its cold-provenance suggestions were also
+implemented and tested. This closes the supported unknown-delete path, not the
+whole P5/P6/P8/P9 matrix.
