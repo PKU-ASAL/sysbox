@@ -65,18 +65,19 @@ Firecracker 删除现在在移除 generation 前，将绑定原 action 的进程
 普通 unlocked manifest 不再证明 VMM 内未知请求已经结束；跨宿主 reboot/PID 身份
 冲突仍保守拒绝。缺旧证据的历史 intent 不能自动升级为成功。
 
-## Execution authority format 3
+## Execution authority format 4
 
-宿主 fencing 请求、固定控制器公钥与签名回执进入 execution authority format3；
-它与 aggregate format6、API database schema14 是不同的版本边界。旧 format2
-ledger 明确拒绝，新 ledger 也不能交给旧 writer。当前没有 format2→3 自动转换。
+宿主 fencing 请求、固定控制器公钥、签名回执与显式释放记录使用 execution authority format4；
+它与 aggregate format6、API database schema14 是不同的版本边界。旧 format2/3
+ledger 明确拒绝，新 ledger 也不能交给旧 writer。当前没有自动转换。
 升级前停写并保留完整旧账本；仅对明确可丢弃的项目建立新的 authority 存储。
 不得通过删除 ledger 或修改 version 来解除旧 grant、未知 intent 或宿主冻结。
 
 新增 fencing API 仅用于显式登记的隔离验收宿主。收到有效签名只保存停止证据，
 不把未知请求认定成功，也不允许重放。冻结覆盖该 Agent 的其他 topology，且跨
-重启保留；普通 maintenance release 无法解除它。后续仍需实现独立 observation、
-原始 intent 处置与显式释放流程，因此不要把真实历史现场登记到这个验收接口。
+重启保留；普通 maintenance release 无法解除它。显式 release 仅支持已独立完成
+删除、全 grant 已停止且签名观察证明 absent 的空 topology；原始 unknown intent
+处置仍未自动化。不要把真实历史现场登记到这个验收接口。
 
 ## Fencing 后的只读观察
 
@@ -89,7 +90,7 @@ ledger 明确拒绝，新 ledger 也不能交给旧 writer。当前没有 format
 该流程只派发 observe，不派发 recover。命令重试不会覆盖旧租约或复活终态命令。
 若 journal 已漂移，原 key 仍可查询原命令，新观察请求返回冲突；处置计划将旧报告
 标为 stale。API 重启后继续读取同一 durable report。此步不需要新增存储格式，仍用
-authority format3 与现有 command/report schema。
+现有 command/report schema；显式释放新增 authority format4。
 
 观察到 present/absent 不足以证明旧副作用的完成结果。新版 supervisor 会对绑定 fence 新 boot 的观察报告签名；API 验证宿主公钥、
 fence 摘要、新 boot、完整报告及投递租约后，只消除缺少宿主签名这一项阻断。
@@ -99,8 +100,20 @@ fence 摘要、新 boot、完整报告及投递租约后，只消除缺少宿主
 不纳入可丢弃宿主的准入、重启或处置执行。
 
 
-签名观察在现有 report JSON 中增加可选 `host_observation`，未改变 authority3、
-aggregate6 或 API schema14。请同步升级 API、Agent 和 supervisor；旧 writer 可能
+签名观察在现有 report JSON 中增加可选 `host_observation`，本身不改变 aggregate6 或 API schema14。请同步升级 API、Agent 和 supervisor；旧 writer 可能
 忽略或丢弃该可选字段，因此不要把签名记录交给旧 writer 重写。旧报告不补造签名，
 缺证明时继续保留冻结。宿主私钥只由 supervisor 持有，API 配置对应公钥；fencing
 外部控制器密钥与宿主密钥仍是两个不同的信任来源。
+
+
+## 显式解除已清理 topology 的 fencing
+
+只有已终态 destroy Run、全 succeeded journal、空 state、签名 absent 报告和独立
+host stop receipts 齐备时，才可 POST `.../host-fences/{id}/release`，正文指定
+`observation_command_id`，请求头携固定 `Idempotency-Key`。接口同时检查 pending
+GC/reset、Run/guest/node/console/command；任一条件不满足则409并保留冻结。
+
+释放回执保存到 authority format4，记录观察报告、公钥、lifecycle 摘要与时间。
+同 key 重试只读回原结果，不影响新工作或后续冻结。释放不改写 intent、Run、state，
+也不会伪造 grant stop。缺停止证明的旧 unknown intent 仍不能走这条路径。该路径
+当前只覆盖已完成删除的空 topology；有存活资源的恢复释放仍不支持。

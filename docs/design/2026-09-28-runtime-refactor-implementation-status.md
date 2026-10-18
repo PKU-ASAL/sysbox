@@ -6,7 +6,8 @@
 准入绑定原始 command/Run incarnation、生产 grant 摘要及 journal 观察摘要，
 冻结 topology 并阻止同 Agent 跨 topology 的 grant、派发与 Run 领取。
 CLI 和验收脚本在断电前绑定请求，真实 Docker/libvirt canary 断电重启与 API
-证据接入已有验收入口。authority 升为 format3；旧账本明确拒绝，不自动迁移。
+证据接入已有验收入口。初始证据接入使用 authority format3，显式释放扩展到
+下述 format4；旧账本明确拒绝，不自动迁移。
 
 后续已接通 fencing 后的只读 recovery-plan 与 owning-Agent observe 派发；请求并发、
 领取后重试与终态重试保留同一 command，报告按原始身份/serial/时间/覆盖范围校验，
@@ -16,8 +17,12 @@ journal 漂移显示 stale。Agent 的观察完成回报现在保留完整命令
 核对 boot、只读观察并重新授权后签名完整报告和投递租约，API 冷读验签。
 合法签名仅消除宿主证明缺失项，未知结果和原 operation/guest/reset 阻断仍保留。
 
+新增严格的显式 release：仅对已终态 destroy、全 succeeded journal、空 state、
+精确宿主签名 absent 报告、所有独立 grant stop 及零未完成活动齐备的 topology，
+原子释放 barrier 与宿主 hold。authority 升为 format4；不迁移真实历史账本。
+
 这一步尚未闭合 unknown 恢复：回执不完成 Run/action，不产生 stop receipt，
-没有解除宿主 hold 的生产流程。历史 intent 仍只读处置；P5/P6/P8/P9 的完整故障
+未知/有存活资源的恢复仍没有解除 hold 的流程。历史 intent 仍只读处置；P5/P6/P8/P9 的完整故障
 矩阵与升级整合仍未关闭。当前接口及限制以 [API](../reference/api.md)、
 [升级说明](../operations/upgrades-and-recovery.md) 和
 [验收记录](../operations/p9-real-acceptance.md) 为准。下文保留此前阶段状态。

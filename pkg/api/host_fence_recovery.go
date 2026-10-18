@@ -26,6 +26,7 @@ type hostFenceRecoveryAction struct {
 	Blockers         []string             `json:"blockers"`
 }
 type hostFenceRecoveryPlan struct {
+	ReleaseStatus          string                    `json:"release_status"`
 	ObservationAttestation string                    `json:"observation_attestation"`
 	FenceID                string                    `json:"fence_id"`
 	RunID                  string                    `json:"run_id"`
@@ -91,6 +92,11 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 		return hostFenceRecoveryPlan{}, nil, 0, err
 	}
 	plan := hostFenceRecoveryPlan{FenceID: req.ID, RunID: req.RunID, AgentID: req.Grant.AgentID, RequestSHA256: digest, ReadOnly: true, ObservationAttestation: "unverified", HostProcessExclusion: "unproven", ObservationStatus: "not_requested", Blockers: []string{"explicit_reconciliation_and_release_required"}, Actions: []hostFenceRecoveryAction{}}
+	plan.ReleaseStatus = "held"
+	if fence.Release != nil {
+		plan.ReleaseStatus = "released"
+		plan.Blockers = []string{}
+	}
 	if fence.Receipt == nil {
 		plan.Blockers = append(plan.Blockers, "fence_receipt_missing")
 	} else {
@@ -322,7 +328,7 @@ func (s *Server) handleHostFenceObserve(w http.ResponseWriter, r *http.Request) 
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	if fence.Receipt == nil || !plan.JournalMatches || run == nil {
+	if fence.Release != nil || fence.Receipt == nil || !plan.JournalMatches || run == nil {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}

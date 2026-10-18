@@ -16,9 +16,9 @@ import (
 const executionAuthorityKind guestKind = "sysbox_execution_authority"
 const MaxExecutionGrantTTL = controlplane.ExecutionGrantMaxTTL
 
-// Version 3 adds immutable externally attested fencing evidence. Older writers
-// must reject this ledger rather than discard its pinned requests and receipts.
-const executionAuthorityVersion = 3
+// Version 4 adds explicit audited fence release; older writers must not
+// discard release evidence or resurrect a released host hold.
+const executionAuthorityVersion = 4
 
 // One authority ledger serializes session changes and overlapping scopes in
 // the same storage transaction. Epoch tombstones are never deleted. This is

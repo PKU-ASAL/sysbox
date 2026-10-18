@@ -3936,3 +3936,44 @@ Verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`, and
 with isolated PostgreSQL enabled. Logs: `/tmp/sysbox-signed-observation-full.log`
 and `/tmp/sysbox-signed-observation-race.log`. Independent read-only review found
 no blocking correctness or security defects.
+
+### Explicit release for independently completed deletion (2026-10-18)
+
+The explicit release endpoint now closes the hold only for an already-reconciled
+empty delete topology: terminal original destroy Run, all actions succeeded,
+retained delete identities, exact signed absent report on the fenced new boot,
+no pending GC/reset continuation, no unresolved topology activity, and independent
+stop receipts for the original parent plus every retained host/topology grant.
+It never converts unknown into success and never synthesizes a stop receipt.
+
+Authority format4 retains the immutable release key, observation ID, signed
+report, verifier public key, lifecycle SHA256 and release time. Release and barrier
+state publish together. Same-key retries survive restart and key configuration
+changes, and cannot clear a later independent barrier. Other retries conflict.
+New fence observations/reauthorization are disabled after release; existing
+observation/report and release evidence remain readable.
+
+Persistence tests reject unknown actions, running Runs, missing candidates,
+residue, missing action coverage, unsigned/tampered reports, foreign keys,
+wrong scope and absent independent stops. File/SQLite/PostgreSQL API contracts
+check pending command rejection, concurrent exact retries, unchanged state/action/
+Run contents, cold replay, new host work after release and a later barrier that
+survives stale release retries. These tests construct already-completed delete
+records and independent stop evidence; they do not recover a real old intent.
+
+Review identified a file publication gap between releasing the lifecycle lock
+and committing authority. The fix writes/fsyncs authority inside the lifecycle
+callback while retaining record→authority→lifecycle lock order. A deterministic
+test observes the ledger before lifecycle unlock; it failed with the old delayed
+publication order and passes with the compound commit. SQL adapters hold their
+transaction locks through commit. Independent review found no remaining blockers.
+
+This slice does not reboot VMs, mutate historical resources or complete the
+unknown-effect reconciliation path. Nonempty topologies and unknown old intents
+remain held; P5/P6/P8/P9 are not declared fully closed.
+
+Verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`, and
+`go test -race ./pkg/api ./pkg/persistence ./pkg/agentexec ./pkg/controlplane -run 'HostFence|FenceObservation|Maintenance|RecoveryRunner'`
+with isolated PostgreSQL enabled. Logs: `/tmp/sysbox-fence-release-full.log` and
+`/tmp/sysbox-fence-release-race.log`. The final focused persistence rerun also
+passed after replacing mutex-copy test fixtures with independent state values.

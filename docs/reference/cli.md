@@ -246,4 +246,6 @@ key. It snapshots the admission and produces `.receipt.json` only after pidfd
 exit, new kernel boot, unchanged external controller boot and provider readback.
 Submit that receipt to the API endpoint documented in [API](api.md). Existing
 unsigned reports lack this pre-actuation binding and cannot be attested by this
-flow. Receipt acceptance leaves the persistent host hold in place.
+flow. Receipt acceptance leaves the persistent host hold in place. The API explicit
+release endpoint is available only after independently completed deletion,
+verified absent observation and all original grant stops; see [API](api.md).

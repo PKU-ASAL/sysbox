@@ -515,10 +515,10 @@ pinned controller key and journal hash, including after configuration rotation.
 Receipts bind the request digest, lab, original/new execution kernel boots,
 external controller boot continuity, original QEMU process exit, disk identity
 and `operation_result=unknown`. Receipt acceptance does not synthesize a stop
-receipt or change any Run/action/resource outcome. **There is currently no
-release workflow for this hold**, even after receipt acceptance; ordinary
-maintenance release is rejected. This is an acceptance/evidence interface, not
-production unknown-effect recovery. See [upgrade boundaries](../operations/upgrades-and-recovery.md).
+receipt or change any Run/action/resource outcome. It leaves the hold intact;
+ordinary maintenance release is rejected. The explicit release endpoint below supports
+only independently reconciled empty delete topologies; it does not resolve
+unknown effects. See [upgrade boundaries](../operations/upgrades-and-recovery.md).
 
 #### Observation after a host fence
 
@@ -566,3 +566,43 @@ when auditing existing evidence. A matching signed `absent` report cannot comple
 a delete, replay a create, manufacture a stop receipt or release the host hold.
 The signature proves who observed which data on which boot, not original operation
 success or provider request quiescence.
+
+
+#### Explicit release after completed deletion
+
+`POST /v1/topologies/{name}/host-fences/{id}/release` requires an administrative
+role, `Idempotency-Key`, and `{"observation_command_id":"..."}`. It returns200
+with an immutable release receipt only after **all** checks pass in the storage
+transaction:
+
+- The original destroy Run is terminal and its incarnation/attempt still matches
+  the retired observation command.
+- The current topology state is empty, every journal action is succeeded, no GC
+  batch is pending, and no reset continuation remains. Every action belonging to
+  the original Run is a completed delete with a retained external identity.
+- The host-signed report matches the current topology UID/serial, full original
+  delete-action coverage, exact external identities and new fence boot, and says
+  absent for every selected action.
+- The original parent grant has an independently authenticated stop receipt.
+  All retained grants for this host or topology are stopped; expired or revoked
+  grants are insufficient.
+- No unresolved Run, guest operation, node operation, console session or command
+  remains for the topology.
+
+The endpoint releases the barrier and host hold in one authority write, retaining
+all fence/observation/stop evidence. It does not modify state, action outcomes,
+Run status or grant stops. Failed checks return409 without releasing anything.
+File storage holds lifecycle exclusion through authority publication; SQLite and
+PostgreSQL retain transaction locks through commit.
+
+Same-key/same-observation retries return the original receipt, even after API
+restart, key configuration changes or subsequent work. A different key or
+observation conflicts. Old retries cannot release a later barrier. New observation
+requests and reauthorization against the released fence are rejected. Plans expose
+`release_status=held|released`; `release_allowed=false` on the read-only plan is
+not a substitute for the atomic endpoint checks.
+
+Release receipts require execution authority **format4**. There is no automatic
+conversion from format3; see [upgrade boundaries](../operations/upgrades-and-recovery.md).
+This narrow path does not reconcile an uncertain delete, adopt an uncertain create,
+resume an incomplete reset, or manufacture missing historical stop evidence.

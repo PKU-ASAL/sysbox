@@ -20,11 +20,12 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
 )
 
 func TestHostFenceAPIRecordsEvidenceWithoutCompletingRun(t *testing.T) {
-	runHostFenceAPIContract(t, "")
+	runHostFenceAPIContract(t, "", false)
 }
 
 func TestHostFenceDisposableVMIntake(t *testing.T) {
@@ -32,10 +33,10 @@ func TestHostFenceDisposableVMIntake(t *testing.T) {
 	if root == "" {
 		t.Skip("requires explicitly scoped disposable acceptance lab")
 	}
-	runHostFenceAPIContract(t, root)
+	runHostFenceAPIContract(t, root, false)
 }
 
-func runHostFenceAPIContract(t *testing.T, acceptanceRoot string) {
+func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bool) {
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -67,12 +68,47 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string) {
 				st, err := repo.LoadState(ctx, "lab")
 				require.NoError(t, err)
 				run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Op: "destroy", Operation: "destroy", Status: controlplane.RunRunning, QueuedAt: time.Now().UTC(), Revision: "revision", Attempt: 1, LeaseOwner: "owner"}
+				if releaseCase {
+					run.Status = controlplane.RunFailed
+					run.EndedAt = time.Now().UTC()
+				}
 				require.NoError(t, store.SaveRun(ctx, run))
 				grantTestTopologyUID(t, s, "another")
 				pending := controlplane.Run{ID: "pending-other", Topology: "another", AgentID: "agent", Op: "apply", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
 				require.NoError(t, store.SaveRun(ctx, pending))
 				action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, OwnerUID: st.TopologyUID, ResourceUID: "resource", Generation: 1, Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted}
+				if releaseCase {
+					action.Action = controlplane.PlanActionDelete
+					action.Candidate = &state.Resource{Address: action.Resource, OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: action.Generation, ExternalID: "external"}
+					seed := action
+					seed.ID = "seed"
+					seed.RunID = "older-run"
+					seed.Action = controlplane.PlanActionCreate
+					require.NoError(t, repo.CommitActionIntent(ctx, seed))
+					records, err := repo.LoadActions(ctx, "lab")
+					require.NoError(t, err)
+					seed = records[0]
+					seed.Status = runtime.ActionSucceeded
+					require.NoError(t, repo.CommitActionOutcome(ctx, seed, &runtime.StatePatch{Resource: seed.Resource.String(), Action: seed.Action, Op: runtime.StatePatchUpsert}))
+					current, err := repo.LoadState(ctx, "lab")
+					require.NoError(t, err)
+					action.StateSerial = current.Meta.Serial
+					action.ExpectedSerial = current.Meta.Serial
+
+				}
 				require.NoError(t, repo.CommitActionIntent(ctx, action))
+				if releaseCase {
+					records, err := repo.LoadActions(ctx, "lab")
+					require.NoError(t, err)
+					completed := records[0]
+					for _, record := range records {
+						if record.ID == action.ID {
+							completed = record
+						}
+					}
+					completed.Status = runtime.ActionSucceeded
+					require.NoError(t, repo.CommitActionOutcome(ctx, completed, &runtime.StatePatch{Resource: completed.Resource.String(), Action: completed.Action, Op: runtime.StatePatchDelete}))
+				}
 				authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
 				session, err := authority.OpenSession(ctx, "agent", "process", "")
 				require.NoError(t, err)
@@ -156,6 +192,10 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string) {
 					require.NoError(t, os.WriteFile(filepath.Join(acceptanceRoot, "api-fence-accepted.json"), got.Body.Bytes(), 0600))
 				}
 				require.Equal(t, 200, post(receipt).Code)
+				if releaseCase {
+					checkCompletedFenceRelease(t, s, store, accepted)
+					return
+				}
 				current, err := store.GetRun(ctx, run.ID)
 				require.NoError(t, err)
 				require.Equal(t, controlplane.RunRunning, current.Status)
@@ -189,3 +229,5 @@ func TestHostFenceControllerCannotReuseAnyHostKey(t *testing.T) {
 	s.cfg.API.ExecutionGrant.DisposableFenceTargets = map[string]config.DisposableFenceTarget{"agent": {LabID: "isolated", ControllerPublicKeyFile: path}}
 	require.Error(t, s.loadHostFenceTargets())
 }
+
+func TestHostFenceReleaseAPI(t *testing.T) { runHostFenceAPIContract(t, "", true) }

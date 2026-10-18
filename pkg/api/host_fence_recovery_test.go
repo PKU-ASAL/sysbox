@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -109,6 +110,15 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 	require.False(t, plan.ReleaseAllowed)
 	require.False(t, plan.ReplayAllowed)
 	require.Contains(t, plan.Blockers, "observation_not_host_boot_attested")
+	// Existing unresolved Run and intent must never be released by observation.
+	releaseBody, _ := json.Marshal(map[string]string{"observation_command_id": claim.ID})
+	releaseRequest := httptest.NewRequest("POST", path+"/release", bytes.NewReader(releaseBody))
+	releaseRequest.Header.Set("X-Sysbox-Roles", "admin")
+	releaseRequest.Header.Set("Idempotency-Key", "blocked-release")
+	releaseResponse := httptest.NewRecorder()
+	s.ServeHTTP(releaseResponse, releaseRequest)
+	require.Equal(t, 409, releaseResponse.Code, releaseResponse.Body.String())
+
 	after, afterActions, err := repo.LoadStateAndActions(ctx, "lab")
 	require.NoError(t, err)
 	require.Equal(t, before, after)

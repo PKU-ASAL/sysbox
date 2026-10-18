@@ -12,6 +12,7 @@ import (
 )
 
 type HostFenceRecord struct {
+	Release    *HostFenceRelease              `json:"release,omitempty"`
 	Request    controlplane.HostFenceRequest  `json:"request"`
 	BarrierID  string                         `json:"barrier_id"`
 	AcceptedAt time.Time                      `json:"accepted_at"`
@@ -135,8 +136,17 @@ func validateHostFences(a *executionAuthority) error {
 	for id, record := range a.Fences {
 		digest, err := record.Request.Digest()
 		barrier, ok := a.Maintenance[record.BarrierID]
-		if err != nil || id != record.Request.ID || record.AcceptedAt.IsZero() || !ok || barrier.Released || record.BarrierID != "fence-"+record.Request.ID || barrier.TopologyUID != record.Request.Grant.Scope.TopologyUID || barrier.RequestDigest != digest || !barrier.CreatedAt.Equal(record.AcceptedAt) {
+		if err != nil || id != record.Request.ID || record.AcceptedAt.IsZero() || !ok || barrier.Released != (record.Release != nil) || record.BarrierID != "fence-"+record.Request.ID || barrier.TopologyUID != record.Request.Grant.Scope.TopologyUID || barrier.RequestDigest != digest || !barrier.CreatedAt.Equal(record.AcceptedAt) {
 			return ErrCorruptRecord
+		}
+		if record.Release != nil {
+			stop, ok := a.Stops[record.Request.Grant.Epoch]
+			if !ok || !sameGrantEpoch(stop.Grant, record.Request.Grant) || record.Release.ReleasedAt.After(a.ObservedAt) {
+				return ErrCorruptRecord
+			}
+		}
+		if err := validateFenceRelease(record); err != nil {
+			return err
 		}
 		if record.Receipt != nil && (controlplane.VerifyHostFenceReceipt(record.Request, *record.Receipt) != nil || record.Receipt.ObservedAt.Before(record.AcceptedAt)) {
 			return ErrCorruptRecord
@@ -145,12 +155,11 @@ func validateHostFences(a *executionAuthority) error {
 	return nil
 }
 
-// Evidence acceptance never resumes a host. A future release workflow must
-// prove explicit reconciliation; changed sessions or another topology cannot
-// bypass the fencing hold in the meantime.
+// Evidence acceptance never resumes a host. Only an explicit validated release
+// lifts the host hold; session changes and unrelated topologies cannot bypass it.
 func (a *executionAuthority) hostFenceBlocks(agent string) bool {
 	for _, record := range a.Fences {
-		if record.Request.Grant.AgentID == agent {
+		if record.Request.Grant.AgentID == agent && record.Release == nil {
 			return true
 		}
 	}
