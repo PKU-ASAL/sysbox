@@ -131,3 +131,11 @@ GC/reset、Run/guest/node/console/command；任一条件不满足则409并保留
 但已有 prepared 决策：保留同 key/报告重试，不能删除记录或改版本；只允许原始或
 已计划 postimage 继续。SQL 后端在一个事务内完成。authority5 不能由旧 writer 打开，
 当前没有旧账本自动迁移。历史现场仍只读，缺原始锚点的 intent 不能补造证明。
+
+快照元数据恢复现在允许保留完全相同的未完成 journal：快照与当前双方的 unresolved
+记录必须逐字段一致，当前 journal 不变，serial 只增不减。新增、缺失或发生变化的
+未完成证据仍拒绝恢复。恢复不证明外部资源状态，也不解除独立 fencing hold。
+
+保留策略通过 `state/snapshots/retention-plan` 预览与 `retention-apply` 提交；每批
+最多128项，至少保留最新一项，保留未完成 journal/workflow 和 restore 回执引用。
+完整 catalog 摘要变化使计划失效；删除只影响快照元数据，不执行 provider GC。

@@ -144,8 +144,7 @@ def deploy(root, binary, database="sysboxp9", deployment="deployment"):
         stage("execution", name + ".service", unit(command, user, f"/etc/sysbox/{name}.json"))
         remote(root, manifest, "execution", f"sudo install -m 0644 /home/p9/{name}.service /etc/systemd/system/sysbox-{name}.service && sudo systemctl daemon-reload && sudo systemctl restart sysbox-{name}")
     remote(root, manifest, "execution", "sudo systemctl is-active sysbox-agent sysbox-supervisor")
-    with binary.open("rb") as artifact:
-        binary_digest = hashlib.file_digest(artifact, "sha256").hexdigest()
+    binary_digest = lab.file_sha256(binary)
     services = {"lab_id": manifest["id"], "binary_sha256": binary_digest, "database": database,
              "api_url": "http://10.77.0.10:19870", "agent_id": "execution-p9",
              "lifecycle_acceptance": "required"}

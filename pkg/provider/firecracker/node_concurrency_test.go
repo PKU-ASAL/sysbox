@@ -197,6 +197,11 @@ func TestDestroyWaitCancellationPreservesTrackedProcessForRetry(t *testing.T) {
 	seedOwnedManifest(t, s, h.ID, h.Provider.(*HandleState), cmd)
 	reap := func() { once.Do(func() { go reapVMProcess(vm, cmd) }) }
 	t.Cleanup(reap)
+	// Isolate the delayed-reaper case from the separate procfs exit race:
+	// a dying process may temporarily have no cmdline before becoming a zombie,
+	// and production correctly treats that incomplete identity as uncertainty.
+	require.NoError(t, cmd.Process.Kill())
+	require.Eventually(t, func() bool { return processIsZombie(cmd.Process.Pid) }, time.Second, time.Millisecond)
 	// Delay only the fixture's reaper to expose the destroy wait deterministically.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()

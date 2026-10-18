@@ -42,3 +42,23 @@ Matrix 验证 Docker、Firecracker 和 libvirt 节点共用 IPv4 网络的六个
 ## Evidence Standard
 
 验收报告至少记录 commit、宿主机能力、artifact digest、运行命令、通过断言和 residue audit。结果必须来自同一 release commit，不能以服务端口开放代替完整生命周期验证。
+
+## Requirement reconciliation campaign
+
+`scripts/acceptance/campaign.json` maps every original P5/P6/P8/P9 checklist item
+and stage acceptance criterion to exact test gates and explicit remaining work.
+Run `/usr/bin/python3 scripts/acceptance/campaign.py check` to detect missing
+requirements, changed wording and nonexistent tests. `run --gate <id> --output
+<new-directory>` writes raw Go JSON events, stderr, exit codes, source/embedded
+binary digest and external artifact fingerprints. Database gate variables are
+listed explicitly; API uses `SYSBOX_TEST_DATABASE_URL`, persistence uses
+`SYSBOX_TEST_POSTGRES_DSN`. Configure both for a shared isolated test server.
+
+`reconcile --evidence <directory>` validates those artifacts against current
+source and returns2 while any requirement is open/unverified. A test skip,
+unmatched test/package, nonzero exit, unfinished event stream, changed source or
+changed helper/kernel/rootfs is never a pass. Passing a contract gate does not
+close a row with declared remaining provider/fault coverage. Keep the output
+outside the source tree so evidence files cannot recursively change the source
+identity. This tool records acceptance; it does not merge, publish, migrate old
+ledgers or authorize operations against historical environments.

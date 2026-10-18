@@ -1,0 +1,571 @@
+{
+  "version": 1,
+  "requirements": [
+    {
+      "id": "P5.1",
+      "text": "新增只读 InspectAdoption、生成 AdoptPlan、显式 ApplyAdoption；检查当前 ownership、外部不可变身份、配置、依赖、冲突及能力。",
+      "gates": [
+        "adoption-api",
+        "adoption-libvirt",
+        "adoption-firecracker"
+      ],
+      "remaining": []
+    },
+    {
+      "id": "P5.2",
+      "text": "认领经过 grant+journal，先保存意图，再写 provider ownership，再验证并提交 state；任意阶段崩溃后能发现本次认领结果。",
+      "gates": [
+        "adoption-api",
+        "real-docker-api",
+        "real-libvirt"
+      ],
+      "remaining": [
+        "Complete provider ownership-write/observe/state-commit OS-kill matrix across all providers."
+      ]
+    },
+    {
+      "id": "P5.3",
+      "text": "无 owner 的资源可按计划认领；已有不同 owner 不允许隐式抢占，转移须独立明确授权和旧 owner 退休证明。",
+      "gates": [
+        "adoption-api",
+        "adoption-libvirt"
+      ],
+      "remaining": [
+        "Explicit transfer of resources already owned by a different owner remains unsupported; refusal is implemented."
+      ]
+    },
+    {
+      "id": "P5.4",
+      "text": "Docker labels 不可原地更新等 provider 限制必须形成可验证的持久绑定模型或显式替换计划，不能伪称已经写入标签。",
+      "gates": [
+        "real-docker-provider"
+      ],
+      "remaining": []
+    },
+    {
+      "id": "P5.5",
+      "text": "首先恢复 Docker/libvirt 原有可导入能力；Firecracker 不具备可核验启动/进程材料的任意进程不算可认领，给出具体缺失证据，已具备完整 manifest 的资源支持正式接管流程。",
+      "gates": [
+        "adoption-firecracker",
+        "real-docker-provider",
+        "real-libvirt",
+        "real-firecracker"
+      ],
+      "remaining": []
+    },
+    {
+      "id": "P5.acceptance",
+      "text": "认领后冷恢复、更新、Destroy 全部可用；同名替代对象不能被采用；一半成功时恢复不重复认领、不删除外部原资源。",
+      "gates": [
+        "real-docker-api",
+        "real-docker-provider",
+        "real-libvirt",
+        "real-firecracker"
+      ],
+      "remaining": [
+        "Full interrupted-adoption recovery acceptance, including control-plane publication windows, is not closed."
+      ]
+    },
+    {
+      "id": "P6.1",
+      "text": "三后端实现一致快照、列表、校验、保留策略、删除；snapshot 覆盖 state+journal 的同一事务视图，不持久化明文 inputs 或凭据。",
+      "gates": [
+        "snapshot-api",
+        "snapshot-storage"
+      ],
+      "remaining": []
+    },
+    {
+      "id": "P6.2",
+      "text": "区分“元数据恢复”和“VM/磁盘快照”。恢复 state 不宣称真实 VM 或文件回到了过去；provider snapshot 若属于原功能需单列矩阵验收。",
+      "gates": [
+        "snapshot-storage"
+      ],
+      "remaining": [
+        "Provider disk/VM snapshot equivalence inventory must distinguish historical capabilities and not infer from metadata restore."
+      ]
+    },
+    {
+      "id": "P6.3",
+      "text": "restore 在冻结新受理、撤销当前授权后执行；保留原拓扑身份、提升 metadata revision/epoch，禁止 serial/generation 回退授权，随后强制真实观察与重规划。",
+      "gates": [
+        "snapshot-api",
+        "snapshot-storage"
+      ],
+      "remaining": []
+    },
+    {
+      "id": "P6.4",
+      "text": "snapshot 中带未完成 action 时必须保留为 unresolved，不绕过 journal；不同 lineage 的恢复作为单独导入/灾备流程，不能默认覆盖。",
+      "gates": [
+        "snapshot-api",
+        "snapshot-storage"
+      ],
+      "remaining": []
+    },
+    {
+      "id": "P6.5",
+      "text": "lock/lease inspection 返回实际 owner/epoch/到期/在途情况；force-unlock 变成撤销并等待 gate 停止的审计操作，不 unlink flock 或直接清空 lease。",
+      "gates": [
+        "authority-api"
+      ],
+      "remaining": []
+    },
+    {
+      "id": "P6.acceptance",
+      "text": "并发快照、restore 崩溃、旧 worker 恢复、错误 lineage、旧 snapshot 与较新资源冲突全部拒绝或进入需观察状态；三后端恢复语义一致。",
+      "gates": [
+        "snapshot-api",
+        "snapshot-storage",
+        "authority-api"
+      ],
+      "remaining": [
+        "Full independent-process crash/restore/old-worker matrix is not closed."
+      ]
+    },
+    {
+      "id": "P8.1",
+      "text": "GC 分 Inventory→Candidate→Plan→AuthorizedDelete→Verify；每个候选有 owner/resource/generation、外部 ID、来源、保留期、依赖与引用证据。",
+      "gates": [
+        "gc-cli",
+        "gc-api",
+        "gc-host"
+      ],
+      "remaining": []
+    },
+    {
+      "id": "P8.2",
+      "text": "聚合所有 state/journal/task/snapshot/revision/placement 引用，未知、离线、未完整枚举、正在认领/恢复的对象不进入删除计划。",
+      "gates": [
+        "gc-cli",
+        "gc-api",
+        "gc-storage"
+      ],
+      "remaining": [
+        "All project revision/artifact/cache reference domains and cross-host offline catalog completeness are not fully covered."
+      ]
+    },
+    {
+      "id": "P8.3",
+      "text": "真正删除前重验 epoch、身份、引用和计划版本，走既有 provider Delete+journal，不新增裸路径/名字删除链。",
+      "gates": [
+        "gc-api",
+        "gc-host"
+      ],
+      "remaining": []
+    },
+    {
+      "id": "P8.4",
+      "text": "删除中断可恢复，按依赖逆序，小批量、限制预算；provider inventory 和本地 artifact/cache GC 分清权限范围。",
+      "gates": [
+        "gc-cli",
+        "gc-api",
+        "gc-host",
+        "real-docker-api"
+      ],
+      "remaining": [
+        "Non-Docker batch execution interruption matrix and artifact/cache GC remain open."
+      ]
+    },
+    {
+      "id": "P8.acceptance",
+      "text": "dry-run 与执行目标一致；计划后新引用、同名替换、旧 epoch、部分查询失败均不误删；自动清理真实测试孤儿后无受管对象受损。",
+      "gates": [
+        "gc-cli",
+        "gc-api",
+        "gc-storage",
+        "gc-host",
+        "real-docker-api",
+        "real-docker-provider"
+      ],
+      "remaining": [
+        "Real orphan cleanup and zero-managed-damage matrix across all providers remains open."
+      ]
+    },
+    {
+      "id": "P9.1",
+      "text": "至少两个独立内核/宿主环境，API 与 Agent 不共享工作目录；KVM/libvirt 场景运行在实际支持这些 provider 的 Agent 上。",
+      "gates": [
+        "fence-api"
+      ],
+      "remaining": [
+        "Current whole-deployment two-kernel lifecycle evidence is historical; new current-binary no-shared-workdir deployment round is required."
+      ]
+    },
+    {
+      "id": "P9.2",
+      "text": "Docker/Firecracker/libvirt 分别完成 Apply→Observe→Reset→Exec/File→Cancel→Recover→Destroy→receipt→metadata DELETE，另验收 adoption、snapshot、GC、SSH access。",
+      "gates": [
+        "real-docker-api",
+        "real-docker-provider",
+        "real-libvirt",
+        "real-firecracker"
+      ],
+      "remaining": [
+        "Full Apply/Observe/Reset/Exec/File/Cancel/Recover/Destroy/receipt/metadata-delete lifecycle per provider/transport is not covered by layer tests."
+      ]
+    },
+    {
+      "id": "P9.3",
+      "text": "在准入提交、effect 前后、journal提交前后、回报前后逐点 kill API/Agent/helper；增加断网、延迟、重复/乱序消息、磁盘满、DB重启、不可取消调用。",
+      "gates": [
+        "fence-api",
+        "fence-storage",
+        "real-docker-api",
+        "real-firecracker"
+      ],
+      "remaining": [
+        "All API/Agent/helper crash boundaries, transport faults, disk-full and uncancellable requests are not fully covered."
+      ]
+    },
+    {
+      "id": "P9.4",
+      "text": "Postgres 双 API 切换和服务故障矩阵；文件/SQLite 验证各自支持的独立进程范围，不把共享文件锁描述成跨宿主仲裁。",
+      "gates": [
+        "upgrade-api",
+        "snapshot-api",
+        "gc-api"
+      ],
+      "remaining": [
+        "Current live PostgreSQL dual-API failover/database-outage acceptance remains required; contract tests are not live failover."
+      ]
+    },
+    {
+      "id": "P9.5",
+      "text": "真实更新/重建演练：停止旧 writer、保留证据、精确处置资源、重建不兼容数据、同步 guest/helper/Agent/API；禁止手改version和共享库整体清空。",
+      "gates": [
+        "upgrade-api",
+        "upgrade-aggregate"
+      ],
+      "remaining": [
+        "Real deployment upgrade/rebuild rehearsal preserving old evidence and synchronizing all binaries remains required."
+      ]
+    },
+    {
+      "id": "P9.6",
+      "text": "整合最新 main、消除能力表与文档矛盾；独立架构/代码审查，测试产物记录 commit、镜像digest、协议/schema、环境与清理结果。",
+      "gates": [],
+      "remaining": [
+        "Latest main integration, final release build/architecture review and same-revision full acceptance remain pending. No merge/push authorization inferred."
+      ]
+    },
+    {
+      "id": "P9.acceptance",
+      "text": "总验收的缺环境不能以 skip 算通过。发布、推送、合并仍按明确授权进行；实现计划本身不授权删除现有项目或重建用户共享数据库。",
+      "gates": [],
+      "remaining": [
+        "Every uncovered required environment/fault cell must have current evidence; skips are not passes. Publication/merge remains separately scoped."
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "id": "adoption-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestAdoptionInspectionAdmissionIsReadOnlyAndAgentBound",
+        "TestInspectionHostCompletionRejectsForgedEvidenceAndColdReplays",
+        "TestAdoptionCompletionRejectsTamperedEvidenceBeforeStateWrite",
+        "TestAdoptionConfirmRejectsMissingEvidenceBeforeDispatch"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "adoption-libvirt",
+      "package": "./pkg/provider/libvirt",
+      "tests": [
+        "TestUnownedLibvirtAdoptionBindsMetadataAndPreservesExternalDisk",
+        "TestUnownedLibvirtRejectsChangedInactiveDefinition",
+        "TestAdoptionRestoresFullManagedProviderState"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "adoption-firecracker",
+      "package": "./pkg/provider/firecracker",
+      "tests": [
+        "TestAdoptionValidatesConfigBeyondManifestFingerprint",
+        "TestAdoptionInspectionNeverRepairsLaunchManifest",
+        "TestManagedInventoryReturnsVerifiedManifestIdentity",
+        "TestManagedInventoryRejectsCorruptAndDuplicateRecords"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "snapshot-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestSnapshotRestoreTransactionRequiresBarrierAndReplaysReceipt",
+        "TestSnapshotRestoreWorkflowReplaysAfterAPIReconstruction",
+        "TestSnapshotRestoreWorkflowWaitsForStopAcrossRestart",
+        "TestSnapshotRestoreSupervisorFinishesCommittedReleaseAfterRestart",
+        "TestCommittedRestoreRecoveryNeverInventsMissingAuthority",
+        "TestSnapshotRestorePreservesIdenticalUnresolvedJournal",
+        "TestSnapshotRetentionPlanPreservesEvidenceAndRejectsChangedCatalog"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "snapshot-storage",
+      "package": "./pkg/persistence",
+      "tests": [
+        "TestAggregateSnapshotRestorePreservesIdentityAndAdvancesSerial",
+        "TestSnapshotRejectsCorruptionUnresolvedWorkAndDifferentLineage",
+        "TestSnapshotRestoreRejectsChangedInterpretation",
+        "TestSnapshotRestoreRequestColdReplayDoesNotRewindSuccessor",
+        "TestAuthorizedSnapshotRestoreRequiresFrozenStoppedScope"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "authority-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestCanonicalUnlockRevokesAndWaitsForHostStopsAcrossRestart",
+        "TestCanonicalLockHTTPReportsExecutionAuthority",
+        "TestStateMaintenanceRejectsIncompleteActivityRegistry"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "gc-cli",
+      "package": "./cmd/sysbox/commands",
+      "tests": [
+        "TestGCPlanIsMachineReadableAndDoesNotDelete",
+        "TestGCPlanRejectsPartialProviderInventory",
+        "TestGCSelectionRequiresRetentionAndBoundedNodesBeforeNetworks",
+        "TestGCBatchSubmitRequiresCompleteFreshPlanAndOneTopology",
+        "TestGCCatalogCollectsAllTopologiesAndResourceUIDs",
+        "TestGCProtectsResourcesReferencedOnlyBySnapshot",
+        "TestGCFirecrackerCandidatesRequireCompleteOwnedUnreferencedInventory",
+        "TestGCProtectsFirecrackerStateAndSnapshotReferences"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "gc-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestGCBatchReservesMultipleCandidatesUnderOneFreeze",
+        "TestGCHTTPDispatchUsesOwningAgentAndReplaysOriginalCommand",
+        "TestGCCompletionCannotReleaseReservationFromWorkerOrGenericStop",
+        "TestGCCompletionRetirementSurvivesInterruptedAuthorityRelease",
+        "TestGCGrantCannotAuthorizeOrRenewAfterReferenceChange"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "gc-storage",
+      "package": "./pkg/persistence",
+      "tests": [
+        "TestGCReferencesRetainJournalAndSnapshotSources",
+        "TestGCReferencesUseOneTransactionAndRejectUnresolvedJournal",
+        "TestGCReferencesRejectInvalidRetainedEvidenceWithoutPartialResult",
+        "TestGCReferencesProtectUIDAndProviderExternalIDIndependently",
+        "TestGCBatchAdmissionIsAtomicAndOrdered"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_POSTGRES_DSN"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "gc-host",
+      "package": "./pkg/hostsupervisor",
+      "tests": [
+        "TestGCDeleteRequiresFreshInventoryRevalidation",
+        "TestGCDeleteLostReplyObservesWithoutReplay",
+        "TestGCObserveHistoricalOutcomeDoesNotRequireCurrentInventory",
+        "TestGCColdRecoveryReportsCandidateBoundDeletion"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "fence-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestHostFenceAPIRecordsEvidenceWithoutCompletingRun",
+        "TestHostFenceReleaseAPI",
+        "TestHostFenceDeleteClosureAPI",
+        "TestFenceDeleteRunHistoryUsesAtomicReplacement"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "fence-storage",
+      "package": "./pkg/persistence",
+      "tests": [
+        "TestFenceDeleteReconciliationClosesOnlyAnchoredAbsentNodes",
+        "TestHostFenceReleaseRequiresIndependentStopsAndCompletedDeletes",
+        "TestHostFenceReceiptSurvivesRestartWithoutReleasingAuthority"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "upgrade-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestSQLiteSchemaRejectsUnsupportedVersionWithoutMutation",
+        "TestSQLiteSchemaConcurrentFreshOpenAndStrictReopen",
+        "TestPostgresSchemaRejectsUnsupportedWithoutMutation",
+        "TestPostgresSchemaConcurrentFreshOpenAndReopen"
+      ],
+      "kind": "upgrade",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "upgrade-aggregate",
+      "package": "./pkg/persistence",
+      "tests": [
+        "TestFormat5ImportIsExplicitAndPreservesUnknownActions"
+      ],
+      "kind": "upgrade",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_POSTGRES_DSN"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "real-docker-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestRemoteDockerGCBatchSequentialRecoveryE2E",
+        "TestRemoteDockerAdoptionInspectionE2E",
+        "TestRemoteDockerGCDispatchAndLostReceiptE2E",
+        "TestRemoteDockerCompletionLossRecoveryE2E",
+        "TestRemoteDockerReturnedDestroyRecoveryE2E",
+        "TestRemoteDockerColdReturnedDestroyRecoveryE2E",
+        "TestRemoteDockerColdResetContinuationE2E",
+        "TestRemoteDockerRepeatedResetContinuationE2E"
+      ],
+      "kind": "real-provider",
+      "race": false,
+      "timeout": "8m",
+      "requires_env": [
+        "SYSBOX_REMOTE_DOCKER_E2E",
+        "SYSBOX_GUESTTASK_HELPER"
+      ],
+      "tags": "e2e",
+      "artifact_env": [
+        "SYSBOX_GUESTTASK_HELPER"
+      ]
+    },
+    {
+      "id": "real-docker-provider",
+      "package": "./pkg/provider/docker",
+      "tests": [
+        "TestDockerAdoptionColdLifecycleE2E",
+        "TestDockerRealLostDeleteResponseE2E",
+        "TestDockerRealGCExactAbsenceE2E"
+      ],
+      "kind": "real-provider",
+      "race": false,
+      "timeout": "8m",
+      "requires_env": [
+        "SYSBOX_DOCKER_ADOPTION_E2E",
+        "SYSBOX_REMOTE_DOCKER_E2E"
+      ],
+      "tags": "e2e",
+      "artifact_env": []
+    },
+    {
+      "id": "real-libvirt",
+      "package": "./pkg/provider/libvirt",
+      "tests": [
+        "TestLibvirtUnownedAdoptionColdLifecycleE2E",
+        "TestLibvirtRealGenerationEffectsE2E"
+      ],
+      "kind": "real-provider",
+      "race": false,
+      "timeout": "8m",
+      "requires_env": [
+        "SYSBOX_LIBVIRT_E2E",
+        "LIBVIRT_DEFAULT_URI"
+      ],
+      "tags": "e2e",
+      "artifact_env": []
+    },
+    {
+      "id": "real-firecracker",
+      "package": "./pkg/provider/firecracker",
+      "tests": [
+        "TestFirecrackerRealGenerationLifecycleE2E",
+        "TestFirecrackerRealResetGenerationAndColdAdoptionE2E",
+        "TestFirecrackerRealCrossProcessRecoveryE2E",
+        "TestFirecrackerRealControllerCrashRecoveryE2E"
+      ],
+      "kind": "real-provider",
+      "race": false,
+      "timeout": "8m",
+      "requires_env": [
+        "SYSBOX_FIRECRACKER_BIN",
+        "SYSBOX_FIRECRACKER_KERNEL",
+        "SYSBOX_FIRECRACKER_ROOTFS"
+      ],
+      "tags": "e2e",
+      "artifact_env": [
+        "SYSBOX_FIRECRACKER_BIN",
+        "SYSBOX_FIRECRACKER_KERNEL",
+        "SYSBOX_FIRECRACKER_ROOTFS"
+      ]
+    }
+  ]
+}

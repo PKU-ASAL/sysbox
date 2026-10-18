@@ -727,3 +727,59 @@ crash/generation/reset/cross-process recovery、libvirt generation effects 全�
 补充 lease completion fencing：local worker completion 在 adapter 入口先核对当前
 command lease owner/attempt/epoch/deadline，并允许 retired command 只做完全相同的
 terminal replay；改变结果或旧租约不能重写 operation。
+
+
+## P5/P6/P8/P9 逐条对账（2026-10-18）
+
+对账基线：`f4e59e1` 之后本轮修改。原始要求来自 [完整实施计划](2026-10-07-full-migration-distributed-execution-plan.md)。这不是完成声明；“门禁通过”仅覆盖列出的测试边界。
+
+本轮补齐 P6 相同 unresolved journal 的保留恢复、摘要绑定的有界 snapshot retention；新增严格验收总账和原始事件归档；修复验收脚本 Python 3.10 兼容。Docker/Firecracker/libvirt 分项真实门禁通过；专用双 VM 当前二进制的 Docker Apply→Reset→Destroy→receipt→metadata DELETE 通过且按 owner 验证零残留。
+
+## 逐项状态
+
+| 条目 | 已具备的实现/证据入口 | 尚未关闭的范围 |
+|---|---|---|
+| P5.1 | Inspect/plan/confirm，身份、依赖、冲突和能力检查；`adoption-api`, `adoption-libvirt`, `adoption-firecracker` | 本项已具备列出的合同/分项门禁；最终证据以 campaign 核验结果为准 |
+| P5.2 | grant+journal、签名接管回执、冷读与丢回报合同；`adoption-api`, `real-docker-api`, `real-libvirt` | 所有 provider 在 ownership write/observe/state commit 各点的 OS kill 矩阵 |
+| P5.3 | 无主资源显式接管；不同 owner 拒绝；`adoption-api`, `adoption-libvirt` | 跨 owner 显式转移及旧 owner 退休证明流程未实现 |
+| P5.4 | Docker 独立持久 ownership 绑定及真实冷生命周期；`real-docker-provider` | 本项已具备列出的合同/分项门禁；最终证据以 campaign 核验结果为准 |
+| P5.5 | Docker/libvirt 导入；Firecracker 完整 manifest 冷接管；`adoption-firecracker`, `real-docker-provider`, `real-libvirt`, `real-firecracker` | 本项已具备列出的合同/分项门禁；最终证据以 campaign 核验结果为准 |
+| P5.acceptance | 真实 provider 冷恢复/生命周期分项；`real-docker-api`, `real-docker-provider`, `real-libvirt`, `real-firecracker` | 控制面发布中断与完整接管故障组合尚未全部验收 |
+| P6.1 | 三后端快照/校验/删除；新增有界保留策略；`snapshot-api`, `snapshot-storage` | 本项已具备列出的合同/分项门禁；最终证据以 campaign 核验结果为准 |
+| P6.2 | 明确 metadata restore 不回滚 VM/磁盘；`snapshot-storage` | 原功能的 VM/磁盘 snapshot 等价清单仍需逐 provider 对账 |
+| P6.3 | 冻结、撤销、独立 stop、CAS、幂等 restore 与 serial 递增；`snapshot-api`, `snapshot-storage` | 本项已具备列出的合同/分项门禁；最终证据以 campaign 核验结果为准 |
+| P6.4 | 新增双方完全一致 unresolved journal 原样保留；漂移拒绝；`snapshot-api`, `snapshot-storage` | 本项已具备列出的合同/分项门禁；最终证据以 campaign 核验结果为准 |
+| P6.5 | 权威 grant/barrier inspection；force-unlock 等待停止证明；`authority-api` | 本项已具备列出的合同/分项门禁；最终证据以 campaign 核验结果为准 |
+| P6.acceptance | 三后端事务/冷重试/代际/lineage 拒绝合同；`snapshot-api`, `snapshot-storage`, `authority-api` | 独立进程 restore/crash/旧 worker 全组合未关闭 |
+| P8.1 | inventory→candidate→plan→owning-Agent delete→verify；`gc-cli`, `gc-api`, `gc-host` | 本项已具备列出的合同/分项门禁；最终证据以 campaign 核验结果为准 |
+| P8.2 | state/journal/snapshot/资源身份引用保护与不完整盘点拒绝；`gc-cli`, `gc-api`, `gc-storage` | revision/artifact/cache 全引用域、离线跨宿主全量 catalog 尚未覆盖 |
+| P8.3 | API/宿主两端重验 grant、inventory digest、代际与引用；`gc-api`, `gc-host` | 本项已具备列出的合同/分项门禁；最终证据以 campaign 核验结果为准 |
+| P8.4 | 1–128批量、节点先于网络、queue-head、丢回执恢复；`gc-cli`, `gc-api`, `gc-host`, `real-docker-api` | 非 Docker 批量执行故障矩阵、artifact/cache GC 未关闭 |
+| P8.acceptance | Docker 真实 GC、旧计划/新引用/错误身份拒绝；`gc-cli`, `gc-api`, `gc-storage`, `gc-host`, `real-docker-api`, `real-docker-provider` | 所有 provider 的真实孤儿清理与受管对象无损矩阵 |
+| P9.1 | 本轮双独立 kernel、无共享目录、当前二进制 Docker 生命周期；`fence-api` | 本轮 Docker 双 VM 已通过；机读 campaign 尚仅覆盖 Go gates，跨 VM 证据另列 |
+| P9.2 | 三 provider 分项真实门禁；Docker 双 VM 完整基础生命周期；`real-docker-api`, `real-docker-provider`, `real-libvirt`, `real-firecracker` | 每个 provider × transport 的全生命周期组合仍不完整 |
+| P9.3 | 部分 crash/丢回报/取消/unknown-delete fencing 验收；`fence-api`, `fence-storage`, `real-docker-api`, `real-firecracker` | 全注入点、乱序、磁盘满、不可取消调用的完整矩阵 |
+| P9.4 | PG 双 API 部署与三后端合同；当前 live failover 尚未重验；`upgrade-api`, `snapshot-api`, `gc-api` | 当前版本运行中任务的双 API failover、DB/network outage 尚未重验 |
+| P9.5 | 旧 schema 拒绝不变性、空库重建、显式 aggregate import 合同；`upgrade-api`, `upgrade-aggregate` | 停旧 writer→保留证据→资源处置→全组件升级/重建的完整真实演练 |
+| P9.6 | 当前源码构建双架构 helper、发布脚本门禁、独立审查；`` | main 差异整合、最终全量同版本验收；未合并、未推送 |
+| P9.acceptance | 严格总账拒绝 skip、缺项、包错配、源/产物变化；`` | 有 open 项，不能宣布 P5/P6/P8/P9 全部完成 |
+
+## 可重复核验
+
+目录与原始要求：`scripts/acceptance/campaign.json`（24条，18组门禁）。
+运行结果：`/tmp/sysbox-campaign-final2-1018/`，每组保存原始 `go test -json`、stderr、退出码、源/嵌入二进制摘要及外部 helper/kernel/rootfs 摘要。
+命令：`/usr/bin/python3 scripts/acceptance/campaign.py reconcile --evidence /tmp/sysbox-campaign-final2-1018`。返回2表示仍有 open/unverified，不是测试全通过即完成。
+
+## 当前双 VM 证据
+
+专用 lab `/tmp/sb-fence-1018`，新数据库 `sysboxp9_final_1018`，与历史 `/tmp/sysbox-p9-lab-current` 完全分离。
+控制 boot `90339cd8-746f-490c-9fe6-9129b25958e4`；执行 boot `428d0093-1eaa-45e0-9e9b-28c91d0df3e9`；独立文件系统、嵌套 KVM 检查通过。
+当前部署二进制 SHA256 `af3637dac22ba25dfa33f6915f0408a5a911226021bb9ab5115e3a2d7e4716b6`。
+生命周期文件 `/tmp/sb-fence-1018/final-1018/lifecycle.json`，SHA256 `af9b8191248b64d58af2a7c8f317f1c8b3c605223c27ab9dc134fecee8043ddb`，phase=`metadata_deleted`。
+隔离证据 `/tmp/sb-fence-1018/isolation.json`，SHA256 `f8c5f07b9f690c7098d226385176242d0bf2193c23570c3cd3a1ccd899b048a9`。
+原部署在384MiB控制 VM 软件包安装时 soft lockup；只扩容专用控制 VM至1024MiB，保留旧新库和日志。QEMU socket LAN重连后注册/服务启动成功。历史现场未改变。
+
+## Main 差异与未授权动作
+
+main 为 `b1cc43d`，仍有 PR43/44/45 对应的 keyed apply/claim replay/crash fencing 历史差异待集中整合；重构已有对应合同，不能简单 cherry-pick 覆盖。
+本轮未合并 main、未推送、未发布。对账发现的未完成项保持 open；以上内容不能当作交付全部完成凭据。

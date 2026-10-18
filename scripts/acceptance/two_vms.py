@@ -96,10 +96,17 @@ def ssh(root, manifest, role, command, timeout=30, retry_ready=False):
     raise RuntimeError(f"SSH {role} did not become ready: {last}")
 
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def up(root, base):
     base = Path(base).resolve(strict=True)
-    with base.open("rb") as f:
-        digest = hashlib.file_digest(f, "sha256").hexdigest()
+    digest = file_sha256(base)
     if digest != BASE_SHA256:
         raise RuntimeError("cloud image checksum mismatch")
     if not os.access("/dev/kvm", os.R_OK | os.W_OK):

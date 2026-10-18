@@ -121,10 +121,17 @@ func prepareSnapshotRestore(a *aggregate, id string) (*state.State, error) {
 	if restored.State.TopologyUID != a.State.TopologyUID || restored.State.Lineage != a.State.Lineage || restored.Serial > a.Serial {
 		return nil, ErrConflict
 	}
-	for _, journal := range []map[string]runtime.ActionRecord{a.Actions, restored.Actions} {
-		for _, action := range journal {
-			if action.Status != runtime.ActionSucceeded {
-				return nil, fmt.Errorf("%w: unresolved journal cannot be restored", ErrConflict)
+	// An unresolved intent may be retained, never introduced, discarded,
+	// rewritten or resolved by metadata restoration. Compare both directions;
+	// keep the current journal (including all newer completed history).
+	for _, pair := range [][2]map[string]runtime.ActionRecord{{a.Actions, restored.Actions}, {restored.Actions, a.Actions}} {
+		for id, action := range pair[0] {
+			if action.Status == runtime.ActionSucceeded {
+				continue
+			}
+			other, ok := pair[1][id]
+			if !ok || !reflect.DeepEqual(action, other) {
+				return nil, fmt.Errorf("%w: unresolved journal differs from snapshot", ErrConflict)
 			}
 		}
 	}

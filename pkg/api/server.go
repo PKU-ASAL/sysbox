@@ -388,6 +388,8 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/state/metadata", s.handleGetStateMetadata)
 	m.HandleFunc("GET /v1/topologies/{topology}/state/lock", s.handleGetStateLock)
 	m.HandleFunc("POST /v1/topologies/{topology}/state/force-unlock", s.handleForceUnlockState)
+	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots/retention-plan", s.handleSnapshotRetentionPlan)
+	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots/retention-apply", s.handleSnapshotRetentionApply)
 	m.HandleFunc("GET /v1/topologies/{topology}/state/snapshots", s.handleListStateSnapshots)
 	m.HandleFunc("POST /v1/topologies/{topology}/state/snapshots", s.handleCreateStateSnapshot)
 	m.HandleFunc("DELETE /v1/topologies/{topology}/state/snapshots/{snapshot}", s.handleDeleteStateSnapshot)

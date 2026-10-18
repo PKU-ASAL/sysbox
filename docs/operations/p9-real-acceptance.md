@@ -4047,3 +4047,56 @@ regressions, and both real VM rounds. Logs: `/tmp/sysbox-delete-closure-full.log
 blockers after the atomic history fix; its cold-provenance suggestions were also
 implemented and tested. This closes the supported unknown-delete path, not the
 whole P5/P6/P8/P9 matrix.
+
+### Requirement reconciliation and current-build rerun (2026-10-18)
+
+The new strict campaign inventories all 20 original P5/P6/P8/P9 implementation
+bullets plus four stage acceptance criteria, preserving their exact wording.
+Its 18 gates specify exact Go packages/tests, required database variables and
+external artifacts. A skip, missing test, unfinished stream, changed package,
+nonzero exit, changed source/embedded binary or changed helper/kernel/rootfs fails
+verification. Declared remaining scope cannot be cleared by a passing contract.
+
+Final gate directory: `/tmp/sysbox-campaign-final2-1018/`; reconciliation output:
+`/tmp/sysbox-reconciliation-final-1018.json`. All 18 gates passed. Source/build-input
+SHA256: `a53309e1d9eeddeecc22b1ee539dac09729eccae01948431f520b7cf07eebd4b`.
+The requirement result is **9 verified within declared scope, 15 open**, not full
+P5/P6/P8/P9 completion. See the row-by-row table in the implementation tracker.
+The first campaign correctly failed PostgreSQL subtest skips because persistence
+requires `SYSBOX_TEST_POSTGRES_DSN`, whereas API uses `SYSBOX_TEST_DATABASE_URL`;
+both were explicitly configured for the final isolated database run.
+
+P6 fixes include preserving identical unresolved snapshot/current journal entries
+without resolving/rewinding them, and bounded catalog-digest-based retention.
+Retention protects unresolved/workflow/restore references and applies only an
+unchanged computed deletion list; it never deletes provider resources. Large
+catalog plans remain below the HTTP body bound. Filesystem, SQLite and PostgreSQL
+contract gates passed, including replay and changed-catalog rejection.
+
+`make test-p9-real` also passed on the current build: Docker remote lifecycle,
+GC/adoption/SSH/file/power, Firecracker generation/reset/cold adoption/cross-process
+and controller crash, and libvirt generation/unowned adoption. Both amd64/arm64
+embedded helpers were rebuilt from current source. Python acceptance tests now
+run on system Python3.10 after replacing `hashlib.file_digest` and fixing a nested
+f-string quoting incompatibility; all 57 tests passed. Release/archive/OCI/workflow
+gates passed. A Firecracker delayed-reaper fixture was separated from a legitimate
+procfs process-exit uncertainty window; 30 focused repeats passed without changing
+production process-identity checks.
+
+A new deployment inside the explicitly disposable `/tmp/sb-fence-1018` used fresh
+DB `sysboxp9_final_1018`, two API services and the owning execution Agent/supervisor,
+without shared guest filesystems. Binary SHA256:
+`af3637dac22ba25dfa33f6915f0408a5a911226021bb9ab5115e3a2d7e4716b6`.
+Docker Apply→Observe→Reset→Destroy→cleanup receipt→ordinary metadata DELETE passed;
+independent exact-owner Docker container/network queries returned no residue.
+Evidence: `/tmp/sb-fence-1018/final-1018/lifecycle.json`, SHA256
+`af9b8191248b64d58af2a7c8f317f1c8b3c605223c27ab9dc134fecee8043ddb`.
+Isolation evidence SHA256:
+`f8c5f07b9f690c7098d226385176242d0bf2193c23570c3cd3a1ccd899b048a9`.
+
+The 384MiB disposable control VM initially soft-locked during package deployment.
+It alone was expanded to1024MiB; its disk and first deployment DB were preserved.
+The execution VM was restarted only to reestablish its QEMU socket LAN connection,
+before Agent registration/work began. No historical VM or database was touched.
+This validates the new baseline deployment, not live failover during work or a
+complete upgrade of a retained historical incident. Main remains unmerged.

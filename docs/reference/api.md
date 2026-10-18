@@ -652,3 +652,26 @@ after reconciliation does not negate the separately retained decision.
 
 This does not cover create/reset, absent original anchors, remote daemons, unknown
 external storage effects, composite guest work or arbitrary historical incidents.
+
+### Snapshot preservation and bounded retention
+
+Metadata restore may retain unresolved actions only when every unresolved entry
+is identical in the snapshot and current journal in both directions. It keeps
+the current journal unchanged and advances metadata serial; it cannot introduce,
+erase, rewind or complete an intent. Changed/missing unresolved evidence remains a
+conflict. Existing activity, maintenance and grant-stop requirements still apply.
+
+`POST /v1/topologies/{name}/state/snapshots/retention-plan` accepts an admin request
+such as `{"keep_last":3,"older_than":"2026-10-01T00:00:00Z","limit":32}`.
+Keep-last must be at least one; batch limit is 1–128. The read-only plan binds the
+full aggregate/catalog SHA256, lists oldest eligible snapshot IDs, and reports
+protected entries (a compact summary for large catalogs). It preserves snapshots
+with unresolved journal or unfinished workflows, committed restore references,
+newest retained snapshots and snapshots newer than the cutoff.
+
+Submit the unchanged plan to `POST .../snapshots/retention-apply`. The same
+aggregate transaction recomputes eligibility and rejects changed catalogs or
+edited IDs with409. A successful response lists removed snapshot metadata and
+`resources_deleted=false`; no provider objects are deleted. Replan after a
+successful batch or a lost-response conflict. Pending GC reservations block
+retention, and state/action serials and contents remain unchanged.

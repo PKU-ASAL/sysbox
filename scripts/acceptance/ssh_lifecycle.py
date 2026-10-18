@@ -123,7 +123,8 @@ def acceptance(root, binary, helper, reboot_vms=False):
     remote("control", f"sudo -u postgres psql -v ON_ERROR_STOP=1 -f {remote_root}/database.sql")
     # A separate included HBA rule affects this new role/database only.
     stage("control", "database.conf", f"host {name} {name} 10.77.0.0/24 scram-sha-256\n", remote_root + "/database.conf", "0644")
-    remote("control", f"sudo sh -c {shlex.quote('printf "\\ninclude '+remote_root+'/database.conf\\n" >> /etc/postgresql/16/main/pg_hba.conf')} && sudo -u postgres psql -Atc 'SELECT pg_reload_conf()'")
+    append_hba = "printf '\\ninclude " + remote_root + "/database.conf\\n' >> /etc/postgresql/16/main/pg_hba.conf"
+    remote("control", "sudo sh -c " + shlex.quote(append_hba) + " && sudo -u postgres psql -Atc 'SELECT pg_reload_conf()'")
     for role, config_name, user in (("control", "api", "sysboxapi"), ("execution", "host", "root"), ("execution", "agent", "sysboxagent")):
         remote(role, f"sudo install -d -m 0700 -o {user} -g {user} {remote_root}/{config_name}")
         stage(role, config_name + ".json", json.dumps(configs[config_name]), remote_root + "/" + config_name + ".json", owner=user)

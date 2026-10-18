@@ -142,3 +142,13 @@ keyed Apply 后 workspace 当前指针可以不存在；活跃操作列表从 du
 本轮KVM恢复测试通过。曾观察到文件安装偶发失败，已定位为 guest RPC 过早可用：sysbox-init 在 systemd/tmpfiles 初始化完成前启动 vsock，tmpfiles 删除上传暂存目录，随后 chmod 报 ENOENT。现在 `ready.v1` 将 liveness 与 initialized 分离：systemd 同时要求 `sysinit.target` 和 `systemd-tmpfiles-setup.service` active/success；自定义 init 必须发布匹配当前 boot ID 的 `/run/sysbox/boot-ready`。Exec/write_file 在 ready 前拒绝；真实延迟 tmpfiles KVM 测试验证 ready 前无副作用、ready 后20次安装成功。
 
 后续必达范围：资源端同代租约撤销、多宿主故障矩阵、durable guest task协议、显式ownership adoption、自动GC、aggregate snapshot/lease运维、完整guest SSH access及网络能力迁移。它们属于用户确认的“完整能力迁移与分布式执行闭环”，不再默认排除在目标之外；实施顺序与验收门槛见[完整迁移实施计划](2026-10-07-full-migration-distributed-execution-plan.md)。当前Unsupported仅是尚未完成状态。
+
+## 2026-10-18 原始要求逐条对账
+
+当前逐项状态见 [P5/P6/P8/P9 对账](2026-10-07-parallel-implementation-tracker.md#p5p6p8p9-逐条对账2026-10-18)。
+严格机器总账覆盖原计划20个实施条目及4个阶段验收标准，源码、嵌入helper和外部
+artifact 摘要变化会使旧证据失效；测试 skip 不计通过。新增 P6 相同 unresolved
+journal 保留恢复和有界 snapshot retention 已实现。当前双 VM Docker
+Apply/Reset/Destroy/receipt/metadata DELETE 与 exact-owner 零残留验收通过。
+跨 owner 转移、全引用域GC、完整故障矩阵、真实升级整合仍有 open 项；不能宣布
+全部重构完成。历史现场未改动，未合并、推送或发布。
