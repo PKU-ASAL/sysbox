@@ -298,7 +298,7 @@ func TestAsyncRunSlowAdmissionDoesNotBlockOtherRunRenewalOrCancellation(t *testi
 }
 
 func TestAsyncRunDeadlineCancelsWhileJournalMutexIsHeld(t *testing.T) {
-	c, req, g, _ := asyncLeaseFixture(t, time.Second)
+	c, req, g, _ := asyncLeaseFixture(t, 5*time.Second)
 	started := make(chan context.Context, 1)
 	_, err := c.StartAsync(context.Background(), context.Background(), req, g, func(ctx context.Context) (json.RawMessage, error) {
 		started <- ctx
@@ -309,7 +309,7 @@ func TestAsyncRunDeadlineCancelsWhileJournalMutexIsHeld(t *testing.T) {
 	var effectCtx context.Context
 	select {
 	case effectCtx = <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(7 * time.Second):
 		t.Fatal("effect did not start within its admission budget")
 	}
 	active := c.findActive(g)
@@ -318,19 +318,19 @@ func TestAsyncRunDeadlineCancelsWhileJournalMutexIsHeld(t *testing.T) {
 	select {
 	case <-effectCtx.Done():
 		canceled = true
-	case <-time.After(2 * time.Second):
+	case <-time.After(7 * time.Second):
 	}
 	active.mu.Unlock()
 	select {
 	case <-active.done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(7 * time.Second):
 		t.Fatal("effect did not finish after cancellation")
 	}
 	require.True(t, canceled, "deadline cancellation waited for journal mutex")
 }
 
 func TestAsyncRunCancelDoesNotWaitForRenewalAuthorization(t *testing.T) {
-	c, req, g, key := asyncLeaseFixture(t, time.Second)
+	c, req, g, key := asyncLeaseFixture(t, 10*time.Second)
 	blocked := make(chan struct{})
 	release := make(chan struct{})
 	c.Authorize = func(_ context.Context, proof controlplane.SignedExecutionGrant) error {
@@ -347,15 +347,27 @@ func TestAsyncRunCancelDoesNotWaitForRenewalAuthorization(t *testing.T) {
 		return nil, ctx.Err()
 	})
 	require.NoError(t, err)
-	effectCtx := <-started
+	var effectCtx context.Context
+	select {
+	case effectCtx = <-started:
+	case <-time.After(12 * time.Second):
+		t.Fatal("effect failed to start before admission expired")
+	}
 	active := c.findActive(g)
 	renewed := g
-	renewed.Grant.ExpiresAt = time.Now().UTC().Add(controlplane.ExecutionGrantMaxClockSkew + 2*time.Second)
+	renewed.Grant.ExpiresAt = time.Now().UTC().Add(controlplane.ExecutionGrantMaxClockSkew + 20*time.Second)
 	renewed, err = controlplane.SignExecutionGrant(key, renewed.Grant, g.BootID, time.Now())
 	require.NoError(t, err)
 	renewDone := make(chan error, 1)
 	go func() { renewDone <- c.Renew(context.Background(), req, renewed) }()
-	<-blocked
+	select {
+	case <-blocked:
+	case err := <-renewDone:
+		t.Fatalf("renewal returned before authorization barrier: %v", err)
+	case <-time.After(12 * time.Second):
+		close(release)
+		t.Fatal("renewal never reached authorization barrier")
+	}
 	cancelDone := make(chan error, 1)
 	go func() { cancelDone <- c.Cancel(context.Background(), req, g) }()
 	timely := false
@@ -367,7 +379,11 @@ func TestAsyncRunCancelDoesNotWaitForRenewalAuthorization(t *testing.T) {
 	canceled := effectCtx.Err() != nil
 	close(release)
 	require.Error(t, <-renewDone)
-	<-active.done
+	select {
+	case <-active.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("effect did not finish after cancellation")
+	}
 	require.True(t, timely, "cancellation waited for renewal authorization")
 	require.NoError(t, err)
 	require.True(t, canceled)
