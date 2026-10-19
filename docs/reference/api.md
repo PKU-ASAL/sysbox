@@ -813,3 +813,22 @@ an untouched empty successor and stopped authority for both identities. New
 state, actions, snapshots or source enrollment blocks old cleanup; an unrelated
 reset clears the old receipt. The receipt is retry evidence, not execution or
 provider deletion authority.
+
+### Global revision retention preview
+
+`POST /v1/revisions/retention-plan` accepts `keep_last` (0–10000),
+`older_than` (a past RFC3339 timestamp), and `limit` (1–128). It returns
+`candidates`, `retained` reasons, a source digest and
+`deletion_authorized:false`. There is no apply operation. Registry, lifecycle
+and Run observations are separate: this preview is not a transaction or a
+permission to delete. Any eventual executor must revalidate admission atomically.
+
+The preview supports file, SQLite and PostgreSQL registries, validates revision
+content digests and protects historical Run references plus current and retained
+snapshot lifecycle evidence. Fixed topology selectors and legacy local state
+are rejected instead of silently omitting references. Registry collection is
+limited to 10000 records / 64 MiB; Run-reference collection limits count to
+100000 and local history bytes to 64 MiB. Lifecycle aggregates use the existing
+repository reader and its locking; its decoded aggregate size is not yet bounded
+by this endpoint. Large lifecycle snapshots remain an operational limitation.
+Global revision objects and historical Run evidence are never deleted here.

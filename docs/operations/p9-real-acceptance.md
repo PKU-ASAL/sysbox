@@ -4520,3 +4520,19 @@ real race-enabled batch rounds passed after this test-only correction. The prior
 failed strict gate and the intermediate double-wait timeout remain recorded at
 `/tmp/sysbox-stage2-nondocker-gates/` and
 `/tmp/sysbox-stage2-fc-cold-fixed.log`; production authority behavior is unchanged.
+
+### Global revision retention preview continuation
+
+A read-only retention endpoint now enumerates global revisions on file, SQLite
+and PostgreSQL and computes keep-last/age/batch candidates. All historical Run
+references and decoded snapshot-only lifecycle references protect revisions.
+Corrupt revision content, scoped catalog configuration and legacy local state
+reject the observation. Review reproduced two initially missing reference sets
+(fixed topology selector and legacy state) and regressions now enforce refusal.
+Run references are streamed with budgets and the final digest is encoded into a
+hash rather than a second full combined allocation. Lifecycle aggregate size
+still follows the existing repository reader and remains a documented limit.
+
+This is preview only. Revision deletion is deliberately not exposed before the
+Run admission/reference race is closed transactionally. It does not close stage
+2 global revision retention/deletion acceptance.

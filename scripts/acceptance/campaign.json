@@ -139,7 +139,8 @@
         "gc-cli",
         "gc-api",
         "gc-storage",
-        "gc-domain-coverage"
+        "gc-domain-coverage",
+        "revision-retention-preview"
       ],
       "remaining": [
         "Same-database global revision content now participates in cache protection and PostgreSQL publication fencing. Separate registries/filesystem global inventories and global revision object retention/deletion remain open."
@@ -742,6 +743,26 @@
         "SYSBOX_FIRECRACKER_KERNEL",
         "SYSBOX_FIRECRACKER_ROOTFS"
       ]
+    },
+    {
+      "id": "revision-retention-preview",
+      "package": "./pkg/api",
+      "tests": [
+        "TestRevisionRetentionProtectsHistoricalRunsAndKeepsNewest",
+        "TestRevisionRetentionRejectsCorruptContent",
+        "TestRevisionRetentionProtectsSnapshotOnlyAndNestedRevision",
+        "TestRevisionRetentionHTTPIsStrictAndPreviewOnly",
+        "TestRevisionRetentionRejectsLegacyAndScopedCatalog",
+        "TestRevisionRetentionRejectsOversizedRunHistory",
+        "TestRevisionRetentionRejectsNullRunHistory"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "artifact_env": []
     }
   ]
 }
