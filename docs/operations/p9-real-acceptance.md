@@ -4343,3 +4343,41 @@ enables production publication and rejects a concurrent actual workspace upsert.
 This does not close deployment-wide enrollment or global registry/shared-cache
 GC. The opt-in deployment boundary requires old writers stopped and all relevant
 writers configured. No historical environment was enrolled or modified.
+
+### Retirement and two-kernel publisher enablement (2026-10-19)
+
+`/tmp/sb-retry-1018/gc-rollout-1019/` records publisher enablement after checking
+that no managed execution resources or unresolved journals remained. All four
+old service processes were stopped and MainPID=0 verified before installation.
+Distinct producer IDs were configured for both APIs, the execution supervisor,
+and worker. Original binaries/configuration are retained in each guest's
+`/var/tmp/gc-rollout-1019/`. The rollout script initially failed during staging;
+services remained stopped, and staging resumed without replacing original
+backups. No historical lab was changed.
+
+With publisher configuration enabled, topology `p9-d8e1e2bb2f4c` completed real
+Apply, Reset, and Destroy across the two kernels. Provider absence was verified.
+The control-plane catalog contained execution-host workspace/artifact sources
+and placement sources. Retiring its completed artifact source preserved its
+manifest and rejected another begin request with HTTP 409. Metadata remains
+retained because source retirement deliberately does not erase references.
+
+Reset cancellation investigation added exact authority failure timing and earlier
+boundary diagnostics. Eight ordinary and twelve concurrently loaded repetitions
+passed, which does not establish the original failure's cause. Host execution
+now retains cancellation causes for watchdog rejection, grant expiry, and
+explicit cancellation instead of collapsing them all to context canceled.
+The watchdog cause regression failed before this change and passed afterward.
+No authority timeout or uncertain-result recovery rule was relaxed.
+
+### Local shared-catalog cache deletion boundary
+
+Cache plans now bind content SHA-256, inode/device/size/mtime, private root,
+relative path and the entire SQL catalog. Real-file SQLite tests cover exact
+unlink, references, stale plans, recreated-file rejection, symlink/hardlink
+refusal and unresolved intent refusal. SQLite and PostgreSQL tests verify the
+catalog lock also excludes new topology creation. PostgreSQL apply is refused:
+review identified that a dropped remote transaction can release its lock before
+local unlink, so a durable global reservation is required before enabling it.
+SQLite apply keeps the local write lock through intent fsync, revalidation,
+unlink and receipt fsync. No production cache was deleted in this acceptance.

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
@@ -42,5 +43,30 @@ func TestGCSourceHTTPPublicationIsDurableAndStrict(t *testing.T) {
 		require.Contains(t, list.Body.String(), "remote")
 		begin["unexpected"] = true
 		require.Equal(t, 400, call("POST", base+"/sources/remote/begin", begin).Code)
+	})
+}
+
+func TestGCSourceHTTPRetirementFencesFuturePublication(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		ctx := context.Background()
+		s := stateDeleteTestServer(t, store)
+		repo, err := s.actionRepository("lab")
+		require.NoError(t, err)
+		refs, err := repo.LoadGCReferences(ctx, "lab")
+		require.NoError(t, err)
+		v, err := repo.BeginGCSource(ctx, "lab", "remote", refs.TopologyUID, 0)
+		require.NoError(t, err)
+		m := persistence.GCSourceManifest{Domains: map[string][]string{"revision": {"retained"}, "artifact": {}, "cache": {}, "placement": {}}, ValidUntil: time.Now().Add(time.Hour)}
+		require.NoError(t, repo.CompleteGCSource(ctx, "lab", "remote", refs.TopologyUID, v, m))
+		raw, err := json.Marshal(map[string]any{"topology_uid": refs.TopologyUID, "expected_version": 2})
+		require.NoError(t, err)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, httptest.NewRequest("POST", "/v1/topologies/lab/gc/sources/remote/retire", bytes.NewReader(raw)))
+		require.Equal(t, 200, w.Code, w.Body.String())
+		sources, err := repo.LoadGCSources(ctx, "lab")
+		require.NoError(t, err)
+		require.True(t, sources["remote"].Retired)
+		_, err = repo.BeginGCSource(ctx, "lab", "remote", refs.TopologyUID, 3)
+		require.ErrorIs(t, err, persistence.ErrConflict)
 	})
 }

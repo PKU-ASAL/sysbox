@@ -56,9 +56,10 @@ func (s *Server) handleGCSourcePublication(w http.ResponseWriter, r *http.Reques
 		writeError(w, 400, fmt.Errorf("topology_uid and nonnegative expected_version required"))
 		return
 	}
-	begin := r.PathValue("operation") == "begin"
-	if (!begin && r.PathValue("operation") != "complete") || (begin && request.Manifest != nil) || (!begin && request.Manifest == nil) {
-		writeError(w, 400, fmt.Errorf("begin requires no manifest; complete requires a manifest"))
+	operation := r.PathValue("operation")
+	begin := operation == "begin"
+	if (operation != "begin" && operation != "complete" && operation != "retire") || (operation == "complete" && request.Manifest == nil) || (operation != "complete" && request.Manifest != nil) {
+		writeError(w, 400, fmt.Errorf("only complete accepts and requires a manifest"))
 		return
 	}
 	repo, err := s.actionRepository(topology)
@@ -69,6 +70,8 @@ func (s *Server) handleGCSourcePublication(w http.ResponseWriter, r *http.Reques
 	version := *request.ExpectedVersion + 1
 	if begin {
 		version, err = repo.BeginGCSource(r.Context(), topology, source, request.TopologyUID, *request.ExpectedVersion)
+	} else if operation == "retire" {
+		err = repo.RetireGCSource(r.Context(), topology, source, request.TopologyUID, *request.ExpectedVersion)
 	} else {
 		err = repo.CompleteGCSource(r.Context(), topology, source, request.TopologyUID, *request.ExpectedVersion, *request.Manifest)
 	}
@@ -76,5 +79,5 @@ func (s *Server) handleGCSourcePublication(w http.ResponseWriter, r *http.Reques
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"source": source, "version": version, "updating": begin})
+	writeJSON(w, 200, map[string]any{"source": source, "version": version, "updating": begin, "retired": operation == "retire"})
 }

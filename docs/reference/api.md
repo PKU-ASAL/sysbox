@@ -778,3 +778,18 @@ prior entries rather than evicting evidence automatically; exceeding the limit
 leaves publication incomplete and requires operator investigation. Concurrent
 operations on one source may receive a version conflict and must retry after the
 winning operation completes. They must not clear an updating record themselves.
+
+A source with a complete manifest can be permanently retired with
+`POST /v1/topologies/{topology}/gc/sources/{source}/retire`, sending
+`topology_uid` and its `expected_version` (no manifest). The transaction refuses
+in-progress publication and active GC reservations. Retirement increments the
+source version, keeps the complete manifest, and rejects subsequent begin or
+complete calls, including old completion replay. Repeating the same retirement
+request returns the existing result.
+
+Retired sources do not need freshness renewal: their references are immutable
+and continue to protect resources and caches indefinitely. Retirement upgrades
+only the affected aggregate to format 8, which older writers reject. It is not
+proof that a host process stopped, does not discard references, and does not
+permit metadata deletion or shared cache deletion. A failed/incomplete publisher
+cannot be retired to bypass its unresolved operation.

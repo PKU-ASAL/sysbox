@@ -23,6 +23,7 @@ type GCSourceManifest struct {
 	ValidUntil time.Time             `json:"valid_until"`
 }
 type GCSource struct {
+	Retired  bool             `json:"retired,omitempty"`
 	Version  int64            `json:"version"`
 	Updating bool             `json:"updating"`
 	Manifest GCSourceManifest `json:"manifest"`
@@ -72,10 +73,13 @@ func validateGCSources(a *aggregate) error {
 		}
 		return nil
 	}
-	if a.Format != GCSourceFormatVersion || a.GCSources == nil || len(a.GCSources) == 0 || len(a.GCSources) > 128 {
+	if (a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion) || a.GCSources == nil || len(a.GCSources) == 0 || len(a.GCSources) > 128 {
 		return ErrCorruptRecord
 	}
 	for id, s := range a.GCSources {
+		if s.Retired && (a.Format != GCSourceRetirementFormatVersion || s.Updating) {
+			return ErrCorruptRecord
+		}
 		if !topologyName.MatchString(id) || len(id) > 128 || s.Version < 1 {
 			return ErrCorruptRecord
 		}
@@ -106,7 +110,7 @@ func (r *Repository) BeginGCSource(ctx context.Context, topology, source, owner 
 			return ErrConflict
 		}
 		current, exists := a.GCSources[source]
-		if current.Version != expected || (exists && current.Updating) {
+		if current.Retired || current.Version != expected || (exists && current.Updating) {
 			return ErrConflict
 		}
 		if !exists && len(a.GCSources) >= 128 {
@@ -118,7 +122,9 @@ func (r *Repository) BeginGCSource(ctx context.Context, topology, source, owner 
 		current.Version++
 		current.Updating = true
 		a.GCSources[source] = current
-		a.Format = GCSourceFormatVersion
+		if a.Format == FormatVersion {
+			a.Format = GCSourceFormatVersion
+		}
 		version = current.Version
 		return nil
 	})
@@ -148,6 +154,9 @@ func (r *Repository) CompleteGCSource(ctx context.Context, topology, source, own
 		current, ok := a.GCSources[source]
 		if !ok {
 			return ErrNotFound
+		}
+		if current.Retired {
+			return ErrConflict
 		}
 		if !current.Updating && current.Version == expected+1 && reflect.DeepEqual(current.Manifest, detached) {
 			return nil
@@ -180,7 +189,7 @@ func (r *Repository) LoadGCSources(ctx context.Context, topology string) (map[st
 
 func collectGCSources(a *aggregate, current bool, prefix string, out *GCReferenceSnapshot, values map[string][]string, now time.Time) error {
 	for id, source := range a.GCSources {
-		if current && (source.Updating || (!gcPending(a) && !source.Manifest.ValidUntil.After(now))) {
+		if current && !source.Retired && (source.Updating || (!gcPending(a) && !source.Manifest.ValidUntil.After(now))) {
 			return fmt.Errorf("%w: external source %s incomplete or expired", ErrConflict, id)
 		}
 		for domain, refs := range source.Manifest.Domains {

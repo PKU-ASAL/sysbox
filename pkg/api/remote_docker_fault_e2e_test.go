@@ -319,8 +319,16 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 		require.NoError(t, err)
 		require.NoError(t, bridge.BindHostIdentity("fault-agent", hostPub))
 		resolver := hostsupervisor.CanonicalResolver{RunsDir: hostCfg.Paths.RunsDir, Backend: cfg.State.Backend, AgentID: "fault-agent"}
-		tasks := &hostsupervisor.Dispatcher{Root: root, AgentID: "fault-agent", HostBootID: strings.TrimSpace(string(boot)), IssuerKey: pub, HostKey: hostKey, Authorize: authority.Authorize, ReportStop: authority.ReportStop, Resolve: resolver.Resolve, ResolveRun: resolver.ResolveRunTask}
-		runs := &hostsupervisor.RunCoordinator{Root: filepath.Join(root, "runs"), AgentID: tasks.AgentID, HostBootID: tasks.HostBootID, IssuerKey: pub, HostKey: hostKey, Authorize: authority.Authorize, ReportRunID: authority.ReportRun, Tasks: tasks,
+		checkedAuthorize := func(ctx context.Context, g controlplane.SignedExecutionGrant) error {
+			start := time.Now()
+			err := authority.Authorize(ctx, g)
+			if err != nil {
+				t.Logf("authorize run=%s action=%s elapsed=%s ctx=%v error=%v", g.Grant.CommandID, g.Grant.ActionID, time.Since(start), ctx.Err(), err)
+			}
+			return err
+		}
+		tasks := &hostsupervisor.Dispatcher{Root: root, AgentID: "fault-agent", HostBootID: strings.TrimSpace(string(boot)), IssuerKey: pub, HostKey: hostKey, Authorize: checkedAuthorize, ReportStop: authority.ReportStop, Resolve: resolver.Resolve, ResolveRun: resolver.ResolveRunTask}
+		runs := &hostsupervisor.RunCoordinator{Root: filepath.Join(root, "runs"), AgentID: tasks.AgentID, HostBootID: tasks.HostBootID, IssuerKey: pub, HostKey: hostKey, Authorize: checkedAuthorize, ReportRunID: authority.ReportRun, Tasks: tasks,
 			OnExecutionError: func(req hostsupervisor.RunRequest, err error) {
 				t.Logf("host %s: %v", req.RunID, err)
 				select {
@@ -586,6 +594,12 @@ resource "sysbox_node" "%s" {
 			t.Log("cold reset at prepared boundary signed failure; explicit continuation admitted")
 		}
 		if resetDestroyed != nil {
+			defer func() {
+				if t.Failed() {
+					events, err := current.Load().apiStore.ListAgentCommandEvents(context.Background(), opts.ID)
+					t.Logf("reset boundary dispatch events (%v): %+v", err, events)
+				}
+			}()
 			select {
 			case <-resetDestroyed:
 			case <-ctx.Done():

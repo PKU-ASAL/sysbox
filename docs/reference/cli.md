@@ -249,3 +249,22 @@ unsigned reports lack this pre-actuation binding and cannot be attested by this
 flow. Receipt acceptance leaves the persistent host hold in place. The API explicit
 release endpoint is available only after independently completed deletion,
 verified absent observation and all original grant stops; see [API](api.md).
+
+### Scoped cache GC
+
+`sysbox gc cache --catalog sqlite:///absolute/catalog.db --cache-root /absolute/private/cache --path <64-hex-key>/<file>`
+outputs a JSON plan without deleting. Save that plan and use
+`sysbox gc cache --catalog sqlite:///absolute/catalog.db --apply-plan plan.json`
+to remove the exact file after revalidation. This requires a private, current-user
+owned cache exclusively used by writers enrolled in this catalog. Stop and enroll
+old writers before use. The whole catalog is frozen through deletion, including
+new topology insertions. Filesystem catalogs, topology-selected catalogs,
+unregistered/incomplete/expired sources, symlinks, hardlinks, writable targets,
+retained references and stale file/catalog identities are rejected.
+
+PostgreSQL supports planning and rejects apply: losing a remote database lock
+cannot authorize a local unlink. This is not cluster-wide shared-cache deletion.
+The cache root retains `.sysbox-gc/<id>.intent` before unlink and `.done` afterward.
+An interrupted intent blocks further deletion and is never automatically replayed;
+manual investigation is required. A receipt does not authorize deleting a recreated
+file. Each invocation handles one file and never recursively removes directories.

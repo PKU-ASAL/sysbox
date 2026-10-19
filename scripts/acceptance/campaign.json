@@ -142,7 +142,7 @@
         "gc-domain-coverage"
       ],
       "remaining": [
-        "Configured workspace/materialization, placement, file artifact/cache and OCI producers participate in begin-before-use; independent process kill and three-store producer tests exist. Whole-deployment multi-host rollout, existing writer enrollment barrier, global unbound revision registry, source retirement and shared artifact/cache deletion remain open."
+        "Dedicated two-kernel publisher enablement and retained-reference retirement have live evidence. Global unbound revisions and removal of retired references remain open; enrollment of arbitrary existing deployments is not inferred."
       ]
     },
     {
@@ -164,7 +164,7 @@
         "real-docker-api"
       ],
       "remaining": [
-        "Non-Docker batch execution interruption matrix and artifact/cache GC remain open."
+        "Local SQLite catalog/private-cache exact deletion is implemented. PostgreSQL execution is explicitly refused until durable global reservation/fencing exists. Cache deletion interruption reconciliation and non-Docker batch interruption matrix remain open."
       ]
     },
     {
@@ -364,7 +364,8 @@
         "TestGCCatalogCollectsAllTopologiesAndResourceUIDs",
         "TestGCProtectsResourcesReferencedOnlyBySnapshot",
         "TestGCFirecrackerCandidatesRequireCompleteOwnedUnreferencedInventory",
-        "TestGCProtectsFirecrackerStateAndSnapshotReferences"
+        "TestGCProtectsFirecrackerStateAndSnapshotReferences",
+        "TestGCCacheCLIPlanApplyUsesCanonicalCatalog"
       ],
       "kind": "contract",
       "race": true,
@@ -385,7 +386,8 @@
         "TestGCProductionArtifactResolutionPublishesAndFencesCache",
         "TestGCProductionPublisherCrashRemainsIncomplete",
         "TestGCProductionMissingConfigurationCannotBypassEnrollment",
-        "TestGCProductionIndependentWorkspacesSharePublicationAuthority"
+        "TestGCProductionIndependentWorkspacesSharePublicationAuthority",
+        "TestGCSourceHTTPRetirementFencesFuturePublication"
       ],
       "kind": "contract",
       "race": true,
@@ -409,7 +411,13 @@
         "TestGCSourceEnrollmentRemainsVisibleAndCannotBeErased",
         "TestGCSourceReservationPinsFreshnessUntilReceipt",
         "TestGCSourceRejectsCorruptInitialManifest",
-        "TestGCSourceSnapshotRetainsReferencesAfterSourceUpdate"
+        "TestGCSourceSnapshotRetainsReferencesAfterSourceUpdate",
+        "TestGCSourceRetirementPreservesReferencesAndFencesPublisher",
+        "TestGlobalCacheGCProtectsReferencesAndRejectsStalePlan",
+        "TestGlobalCacheGCDeletesExactUnreferencedFileAndRetainsReceipt",
+        "TestGlobalCacheGCFreezesNewTopologyPublication",
+        "TestGlobalCacheGCRejectsUnsafeTargetsAndIncompleteIntent",
+        "TestGlobalCacheGCRejectsRemoteTransactionDeletion"
       ],
       "kind": "contract",
       "race": true,

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,7 @@ type activeRun struct {
 	ctx            context.Context
 	serviceCtx     context.Context
 	cancel         context.CancelFunc
+	cancelCause    context.CancelCauseFunc
 	changed        chan struct{}
 	done           chan struct{}
 }
@@ -203,8 +205,9 @@ func (c *RunCoordinator) StartAsync(requestCtx, serviceCtx context.Context, req 
 	if err := gate.MarkRunStarted(requestCtx, g, req.ActionID); err != nil {
 		return RunObservation{}, err
 	}
-	effectCtx, cancel := context.WithCancel(serviceCtx)
-	active := &activeRun{grant: g, deadline: deadline, ctx: effectCtx, serviceCtx: serviceCtx, cancel: cancel, changed: make(chan struct{}, 1), done: make(chan struct{})}
+	effectCtx, cancelCause := context.WithCancelCause(serviceCtx)
+	cancel := func() { cancelCause(context.Canceled) }
+	active := &activeRun{grant: g, deadline: deadline, ctx: effectCtx, serviceCtx: serviceCtx, cancel: cancel, cancelCause: cancelCause, changed: make(chan struct{}, 1), done: make(chan struct{})}
 	active.safetyDeadline.Store(&deadline)
 	registry.mu.Lock()
 	registry.active[runIdentity(g)] = active
@@ -256,7 +259,7 @@ func (c *RunCoordinator) watchRun(active *activeRun) {
 				active.mu.Lock()
 				// A response about a replaced envelope cannot revoke its successor.
 				if active.grant.Grant.ExpiresAt.Equal(grant.Grant.ExpiresAt) || !time.Now().Before(active.deadline) {
-					active.cancel()
+					active.cancelCause(fmt.Errorf("run authorization watchdog: %w", err))
 				}
 				active.mu.Unlock()
 			}
@@ -281,7 +284,7 @@ func watchRunDeadline(active *activeRun) {
 			timer.Stop()
 		case <-timer.C:
 			if !time.Now().Before(*active.safetyDeadline.Load()) {
-				active.cancel()
+				active.cancelCause(fmt.Errorf("run grant deadline: %w", context.DeadlineExceeded))
 				return
 			}
 		}
@@ -313,6 +316,9 @@ func (c *RunCoordinator) executeRun(req RunRequest, active *activeRun, effect fu
 	})
 	effectCtx = c.checkpointContext(effectCtx, req, active)
 	raw, err := effect(effectCtx)
+	if err != nil && effectCtx.Err() != nil {
+		err = errors.Join(err, context.Cause(effectCtx))
+	}
 	var stoppedFailure *quiescentRunFailure
 	if errors.As(err, &stoppedFailure) {
 		active.mu.Lock()
@@ -497,7 +503,7 @@ func (c *RunCoordinator) Cancel(ctx context.Context, req RunRequest, g controlpl
 		return err
 	}
 	if active := c.findActive(g); active != nil {
-		active.cancel()
+		active.cancelCause(fmt.Errorf("explicit run cancel request: %w", context.Canceled))
 		return nil
 	}
 	gate, err := c.asyncGate(g)

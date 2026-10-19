@@ -388,3 +388,36 @@ func TestAsyncRunCancelDoesNotWaitForRenewalAuthorization(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, canceled)
 }
+
+func TestAsyncRunCancellationRetainsWatchdogCause(t *testing.T) {
+	c, req, g, _ := asyncLeaseFixture(t, 5*time.Second)
+	var revoked atomic.Bool
+	denied := errors.New("authority revoked")
+	c.AuthorizationInterval = time.Millisecond
+	c.Authorize = func(context.Context, controlplane.SignedExecutionGrant) error {
+		if revoked.Load() {
+			return denied
+		}
+		return nil
+	}
+	entered := make(chan context.Context, 1)
+	_, err := c.StartAsync(context.Background(), context.Background(), req, g, func(ctx context.Context) (json.RawMessage, error) {
+		entered <- ctx
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	require.NoError(t, err)
+	var effect context.Context
+	select {
+	case effect = <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("effect not started")
+	}
+	revoked.Store(true)
+	select {
+	case <-effect.Done():
+	case <-time.After(time.Second):
+		t.Fatal("watchdog not canceled")
+	}
+	require.ErrorIs(t, context.Cause(effect), denied)
+}
