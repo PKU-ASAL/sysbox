@@ -142,7 +142,7 @@
         "gc-domain-coverage"
       ],
       "remaining": [
-        "Cross-host offline catalogs still require explicit external revision/artifact/cache inventory producers; current domain statuses are fail-closed and not_applicable when no lifecycle references exist."
+        "External inventory callbacks are read-only planning adapters, not deployed cross-host producers. Durable external catalog fencing and revalidation at reserve/grant/delete remain open; external planning digests cannot authorize local deletion."
       ]
     },
     {
@@ -616,7 +616,11 @@
         "TestGCReferenceDomainsDeclareCompleteOrNotApplicable",
         "TestGCReferenceDomainsRejectMalformedDomainAttributes",
         "TestGCReferencesRequireExplicitExternalInventoryProducer",
-        "TestGCReferencesFailClosedWhenExternalInventoryUnavailable"
+        "TestGCReferencesFailClosedWhenExternalInventoryUnavailable",
+        "TestGCReferenceDomainsIncludeRetainedSnapshots",
+        "TestGCExternalDomainsRejectIncompleteEnumeration",
+        "TestGCExternalDomainsPreserveLocalEvidence",
+        "TestGCExternalInventoryCannotAuthorizeLocalDeletion"
       ],
       "kind": "contract",
       "race": true,

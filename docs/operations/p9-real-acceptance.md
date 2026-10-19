@@ -4276,3 +4276,26 @@ are rejected; catalog collection rejects incomplete status. Contract tests pass
 on persistence and CLI paths. This closes the silent “domain absent means empty”
 case. Cross-host offline catalogs still lack an external revision/artifact/cache
 producer, so P8.2 remains open for that environment rather than being overclaimed.
+
+### GC domain correction and verification (2026-10-19)
+
+The external inventory callback introduced in `8c85991` is a read-only
+planning adapter, not a deployed cross-host catalog producer. Its extended
+inventory digest is deliberately rejected by local reservation and grant
+validation. Cross-host deletion still requires durable catalog fencing and
+revalidation; a callback and a hash do not establish that authority.
+
+Regression tests exposed two omissions: snapshot-only domain references were
+collected after domain finalization, and external domains overwrote local
+summaries. Domain validation and hashing now run after retained snapshots are
+collected. External inventory must explicitly enumerate all four known domains
+(empty lists represent an observed empty domain); missing/unknown domains or
+empty reference values fail closed. Combined domain hashes and counts retain
+local evidence. Concurrent provider access is synchronized.
+
+The Python acceptance suite was rerun using system Python with loopback
+listeners permitted: all 67 tests passed, with no skips. The earlier socket
+failure was a sandbox restriction, not a reason to leave the authorized check
+unfinished. The GC tests include explicit rejection of local deletion using an
+external planning digest. P8.2 remains open for actual cross-host publication,
+fencing, and deletion-time revalidation.

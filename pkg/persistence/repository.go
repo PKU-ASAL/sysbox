@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -51,17 +52,24 @@ type backend interface {
 type Repository struct {
 	backend             backend
 	boundTopology       string
+	externalGCMu        sync.RWMutex
 	externalGCInventory func(context.Context, string) (map[string][]string, error)
 }
 
 // SetExternalGCInventoryProvider installs the explicit producer used to
 // account for references that live outside this lifecycle repository (for
 // example another host's revision, artifact, cache, or placement catalog).
-// A producer error makes GC reference loading fail closed.
+// Configure before exposing the repository to callers. This is a read-only
+// planning adapter: external snapshots deliberately have a different digest
+// from the local authority snapshot, so they cannot authorize ReserveGC.
+// Cross-host deletion requires durable catalog fencing, which this callback
+// does not provide. A producer error makes GC reference loading fail closed.
 func (r *Repository) SetExternalGCInventoryProvider(provider func(context.Context, string) (map[string][]string, error)) error {
 	if provider == nil {
 		return fmt.Errorf("%w: nil external GC inventory provider", ErrCorruptRecord)
 	}
+	r.externalGCMu.Lock()
+	defer r.externalGCMu.Unlock()
 	r.externalGCInventory = provider
 	return nil
 }

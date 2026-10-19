@@ -51,8 +51,11 @@ func (r *Repository) LoadGCReferences(ctx context.Context, topology string) (GCR
 	if err != nil {
 		return GCReferenceSnapshot{}, err
 	}
-	if r.externalGCInventory != nil {
-		external, err := r.externalGCInventory(ctx, topology)
+	r.externalGCMu.RLock()
+	provider := r.externalGCInventory
+	r.externalGCMu.RUnlock()
+	if provider != nil {
+		external, err := provider(ctx, topology)
 		if err != nil {
 			return GCReferenceSnapshot{}, fmt.Errorf("external GC inventory: %w", err)
 		}
@@ -68,8 +71,11 @@ func (r *Repository) LoadGCReferences(ctx context.Context, topology string) (GCR
 
 func mergeExternalDomains(out *GCReferenceSnapshot, external map[string][]string) error {
 	allowed := map[string]bool{"revision": true, "artifact": true, "cache": true, "placement": true}
+	if len(external) != len(allowed) {
+		return fmt.Errorf("%w: external GC inventory must enumerate all four domains", ErrCorruptRecord)
+	}
 	for domain, values := range external {
-		if !allowed[domain] || len(values) == 0 {
+		if !allowed[domain] {
 			return fmt.Errorf("%w: invalid external GC domain %q", ErrCorruptRecord, domain)
 		}
 		clean := append([]string(nil), values...)
@@ -79,9 +85,13 @@ func mergeExternalDomains(out *GCReferenceSnapshot, external map[string][]string
 			}
 		}
 		sort.Strings(clean)
-		raw, _ := json.Marshal(clean)
-		sum := sha256.Sum256(raw)
-		out.Domains[domain] = GCReferenceDomain{Status: "complete", Digest: fmt.Sprintf("%x", sum[:]), Count: len(clean)}
+		local := out.Domains[domain]
+		raw, _ := json.Marshal(struct {
+			Local    GCReferenceDomain `json:"local"`
+			External []string          `json:"external"`
+		}{local, clean})
+		sum := sha256.Sum256(append([]byte("sysbox.gc-domains.v1\x00"), raw...))
+		out.Domains[domain] = GCReferenceDomain{Status: "complete", Digest: fmt.Sprintf("%x", sum[:]), Count: local.Count + len(clean)}
 	}
 	return nil
 }
@@ -133,6 +143,15 @@ func gcReferences(a *aggregate) (GCReferenceSnapshot, error) {
 		if err := collect("", a); err != nil {
 			return err
 		}
+		for id, snapshot := range a.Snapshots {
+			content, err := decodeSnapshot(id, snapshot)
+			if err != nil {
+				return err
+			}
+			if err := collect("snapshot/"+id+"/", content); err != nil {
+				return err
+			}
+		}
 		if domainErr != nil {
 			return domainErr
 		}
@@ -142,15 +161,6 @@ func gcReferences(a *aggregate) (GCReferenceSnapshot, error) {
 				raw, _ := json.Marshal(values)
 				sum := sha256.Sum256(raw)
 				out.Domains[domain] = GCReferenceDomain{Status: "complete", Digest: fmt.Sprintf("%x", sum[:]), Count: len(values)}
-			}
-		}
-		for id, snapshot := range a.Snapshots {
-			content, err := decodeSnapshot(id, snapshot)
-			if err != nil {
-				return err
-			}
-			if err := collect("snapshot/"+id+"/", content); err != nil {
-				return err
 			}
 		}
 		sort.Slice(out.References, func(i, j int) bool { return out.References[i].Source < out.References[j].Source })
