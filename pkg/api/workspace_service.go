@@ -15,6 +15,8 @@ import (
 )
 
 type WorkspaceService struct {
+	gcSourceID          string
+	gcRepository        func(string) (*persistence.Repository, error)
 	runsDir             string
 	workspacesDir       string
 	stateBackend        string
@@ -80,6 +82,17 @@ func (s *WorkspaceService) StateFile(topology string) string {
 // the workspace pointer. Existing readers retain their pinned revision. Old
 // revisions are retained for runs and recovery; publishing does not perform GC.
 func (s *WorkspaceService) UpsertProject(ctx context.Context, topology string, files map[string][]byte) error {
+	finish, err := s.beginGCProductionWrite(ctx, topology, "workspace")
+	if err != nil {
+		return err
+	}
+	if err = s.upsertProject(ctx, topology, files); err != nil {
+		return err
+	}
+	return finish(map[string][]string{"revision": {controlplane.ComputeRevisionDigest(files)}})
+}
+
+func (s *WorkspaceService) upsertProject(ctx context.Context, topology string, files map[string][]byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

@@ -48,6 +48,9 @@ func testRemoteDockerGCDispatch(t *testing.T, batch bool, external ...bool) {
 	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	cfg := config.DefaultServiceConfig()
+	if len(external) > 0 {
+		cfg.GCPublicationSource = "gc-fixture-api"
+	}
 	cfg.Paths.RunsDir = private()
 	cfg.Paths.WorkspacesDir = private()
 	cfg.State.Backend = "sqlite://" + filepath.Join(private(), "api.db")
@@ -68,6 +71,8 @@ func testRemoteDockerGCDispatch(t *testing.T, batch bool, external ...bool) {
 	refs, err := repo.LoadGCReferences(ctx, "gc-lab")
 	require.NoError(t, err)
 	require.NoError(t, first.workspaceService().bindPlacement("gc-lab", "gc-agent", controlplane.AgentProtocolVersion))
+	refs, err = repo.LoadGCReferences(ctx, "gc-lab")
+	require.NoError(t, err)
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	require.NoError(t, err)
 	defer cli.Close()
@@ -215,6 +220,7 @@ func testRemoteDockerGCDispatch(t *testing.T, batch bool, external ...bool) {
 	require.ErrorIs(t, err, persistence.ErrConflict)
 
 	if len(external) > 0 {
+		require.ErrorIs(t, first.workspaceService().UpsertProject(ctx, "gc-lab", map[string][]byte{"field.sysbox.hcl": []byte("# concurrent publication")}), persistence.ErrConflict)
 		_, err = repo.BeginGCSource(ctx, "gc-lab", "remote", refs.TopologyUID, 4)
 		require.ErrorIs(t, err, persistence.ErrConflict)
 	}

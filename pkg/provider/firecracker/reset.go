@@ -104,7 +104,7 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 	if err != nil {
 		return substrate.NodeHandle{}, err
 	}
-	resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactRootFS, Source: state.BaselinePath, ExpectedDigest: state.BaselineDigest, Architecture: request.Baseline.Architecture, GuestFamily: request.Baseline.GuestFamily})
+	resolved, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactRootFS, Source: state.BaselinePath, ExpectedDigest: state.BaselineDigest, Architecture: request.Baseline.Architecture, GuestFamily: request.Baseline.GuestFamily})
 	if err != nil || resolved.Identity.Digest != state.BaselineDigest {
 		return substrate.NodeHandle{}, fmt.Errorf("firecracker reset baseline changed: %w", err)
 	}

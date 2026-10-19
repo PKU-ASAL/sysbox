@@ -149,7 +149,7 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 	if err := domainNameAvailable(ctx, state.DomainName); err != nil {
 		return substrate.NodeHandle{}, err
 	}
-	resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactQCow2, Source: state.BaselinePath, ExpectedDigest: state.BaselineDigest, Architecture: request.Baseline.Architecture, GuestFamily: request.Baseline.GuestFamily})
+	resolved, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactQCow2, Source: state.BaselinePath, ExpectedDigest: state.BaselineDigest, Architecture: request.Baseline.Architecture, GuestFamily: request.Baseline.GuestFamily})
 	if err != nil || resolved.Identity.Digest != state.BaselineDigest {
 		return substrate.NodeHandle{}, fmt.Errorf("libvirt reset baseline changed: %w", err)
 	}

@@ -79,7 +79,7 @@ func (KernelResourceHandler) Create(ctx context.Context, pc *ProviderContext, n 
 	if err != nil {
 		return state.Resource{}, err
 	}
-	res, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamilyUnknown})
+	res, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamilyUnknown})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}

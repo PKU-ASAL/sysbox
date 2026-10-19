@@ -944,3 +944,12 @@ func decodeHostRunEvidence(raw json.RawMessage) (*controlplane.Run, error) {
 	}
 	return nil, fmt.Errorf("host supervisor returned non-terminal run evidence")
 }
+
+func (b remoteBridge) PrepareExecution(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
+	if provider, ok := b.Bridge.(interface {
+		PrepareExecution(context.Context, *controlplane.Run) (context.Context, func(), error)
+	}); ok {
+		return provider.PrepareExecution(ctx, run)
+	}
+	return ctx, func() {}, nil
+}

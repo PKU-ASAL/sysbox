@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io/fs"
 	"os"
@@ -15,6 +16,20 @@ import (
 // run-scoped immutable directory for legacy destroy operations without a
 // content-addressed revision.
 func (s *WorkspaceService) MaterializeWorkspaceSnapshot(topology, runID string) (string, error) {
+	finish, err := s.beginGCProductionWrite(context.Background(), topology, "workspace")
+	if err != nil {
+		return "", err
+	}
+	result, err := s.materializeWorkspaceSnapshot(topology, runID)
+	if err != nil {
+		return "", err
+	}
+	if err = finish(map[string][]string{"cache": {fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(result)))}}); err != nil {
+		return "", err
+	}
+	return result, nil
+}
+func (s *WorkspaceService) materializeWorkspaceSnapshot(topology, runID string) (string, error) {
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return "", err
 	}
@@ -69,6 +84,20 @@ func copySnapshotTree(source, destination string) error {
 // Concurrent publishers use distinct staging directories; an existing tree
 // must match the digest rather than being modified in place.
 func (s *WorkspaceService) MaterializeRevision(topology, revision string, files map[string][]byte) (string, error) {
+	finish, err := s.beginGCProductionWrite(context.Background(), topology, "workspace")
+	if err != nil {
+		return "", err
+	}
+	result, err := s.materializePublishedRevision(topology, revision, files)
+	if err != nil {
+		return "", err
+	}
+	if err = finish(map[string][]string{"revision": {revision}}); err != nil {
+		return "", err
+	}
+	return result, nil
+}
+func (s *WorkspaceService) materializePublishedRevision(topology, revision string, files map[string][]byte) (string, error) {
 	unlock, err := s.lockPublication(context.Background(), topology)
 	if err != nil {
 		return "", err

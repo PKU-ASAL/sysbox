@@ -199,3 +199,16 @@ run:
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "run.lease.renew_interval")
 }
+
+func TestGCPublicationSourceIdentifierValidation(t *testing.T) {
+	for _, source := range []string{"api-a", "host_1", "", "bad/path", "bad source"} {
+		cfg := DefaultServiceConfig()
+		cfg.GCPublicationSource = source
+		err := cfg.Validate()
+		if source == "bad/path" || source == "bad source" {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+	}
+}

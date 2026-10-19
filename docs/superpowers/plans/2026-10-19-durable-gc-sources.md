@@ -37,3 +37,15 @@ Review caught post-reservation expiry deadlock; the immutable reservation now
 pins freshness until receipt while continuing to reject updating sources.
 Independent review found no remaining blockers. Real Docker source publication
 and single-delete/cold-receipt recovery passed.
+
+## Production integration continuation
+
+- [x] Install stable per-service source configuration and cumulative immutable
+  reference publication in workspace/materialization and placement writes.
+- [x] Carry publication context through host/remote execution into runtime and
+  provider artifact resolution, including OCI and mutable URL invalidation.
+- [x] Reject missing configuration and unsupported local CLI for enrolled state.
+- [x] Verify actual download intent, concurrent GC refusal, independent-process
+  kill, cold fail-closed reading, and independent workspaces on three stores.
+- [ ] Deployment-wide enrollment and global registry/shared-cache deletion are
+  separate remaining requirements; metadata retirement is not implemented.

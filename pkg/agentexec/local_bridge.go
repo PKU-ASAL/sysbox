@@ -72,6 +72,18 @@ func (b *LocalBridge) AttachRun(run *controlplane.Run) {
 }
 
 func (b *LocalBridge) PrepareExecution(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
+	repo, err := b.repository(run.Topology)
+	if err != nil {
+		return ctx, nil, err
+	}
+	sources, err := repo.LoadGCSources(ctx, run.Topology)
+	if err != nil {
+		return ctx, nil, err
+	}
+	if len(sources) > 0 {
+		return ctx, nil, fmt.Errorf("enrolled GC topology requires configured host executor; local CLI publication is unsupported")
+	}
+
 	if b.opts.PrepareExecution == nil {
 		return ctx, func() {}, nil
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,16 +17,17 @@ import (
 const DefaultConfigPath = "/etc/sysbox/sysbox.yaml"
 
 type ServiceConfig struct {
-	HostSupervisor HostSupervisorConfig `yaml:"host_supervisor" json:"host_supervisor,omitempty"`
-	Version        int                  `yaml:"version" json:"version"`
-	API            APIConfig            `yaml:"api" json:"api"`
-	Agent          AgentConfig          `yaml:"agent" json:"agent,omitempty"`
-	Run            RunConfig            `yaml:"run" json:"run,omitempty"`
-	Paths          PathsConfig          `yaml:"paths" json:"paths"`
-	State          StateConfig          `yaml:"state" json:"state"`
-	Supervisor     SupervisorConfig     `yaml:"supervisor" json:"supervisor"`
-	Providers      ProvidersConfig      `yaml:"providers" json:"providers"`
-	Artifacts      ArtifactsConfig      `yaml:"artifacts" json:"artifacts"`
+	GCPublicationSource string               `yaml:"gc_publication_source" json:"gc_publication_source,omitempty"`
+	HostSupervisor      HostSupervisorConfig `yaml:"host_supervisor" json:"host_supervisor,omitempty"`
+	Version             int                  `yaml:"version" json:"version"`
+	API                 APIConfig            `yaml:"api" json:"api"`
+	Agent               AgentConfig          `yaml:"agent" json:"agent,omitempty"`
+	Run                 RunConfig            `yaml:"run" json:"run,omitempty"`
+	Paths               PathsConfig          `yaml:"paths" json:"paths"`
+	State               StateConfig          `yaml:"state" json:"state"`
+	Supervisor          SupervisorConfig     `yaml:"supervisor" json:"supervisor"`
+	Providers           ProvidersConfig      `yaml:"providers" json:"providers"`
+	Artifacts           ArtifactsConfig      `yaml:"artifacts" json:"artifacts"`
 }
 
 type HostSupervisorConfig struct {
@@ -451,6 +453,9 @@ func applyDerivedDefaults(c *ServiceConfig) {
 }
 
 func (c ServiceConfig) Validate() error {
+	if c.GCPublicationSource != "" && !regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`).MatchString(c.GCPublicationSource) {
+		return fmt.Errorf("gc_publication_source must be a stable 1-64 character identifier")
+	}
 	if c.Version != 1 {
 		return fmt.Errorf("unsupported sysbox config version %d", c.Version)
 	}

@@ -18,6 +18,17 @@ type durablePlacementStore interface {
 }
 
 func (s *WorkspaceService) deletePlacement(ctx context.Context, topology string) error {
+	finish, err := s.beginGCProductionWrite(ctx, topology, "placement")
+	if err != nil {
+		return err
+	}
+	if err = s.deletePlacementUnpublished(ctx, topology); err != nil {
+		return err
+	}
+	// Retain historical placement evidence until explicit source retirement.
+	return finish(nil)
+}
+func (s *WorkspaceService) deletePlacementUnpublished(ctx context.Context, topology string) error {
 	if s.placementStore != nil {
 		if err := s.placementStore.DeleteTopologyPlacement(ctx, topology); err != nil {
 			return err
@@ -67,6 +78,16 @@ func (s *WorkspaceService) loadPlacement(topology string) (*topologyPlacement, e
 }
 
 func (s *WorkspaceService) bindPlacement(topology, agentID, protocol string) error {
+	finish, err := s.beginGCProductionWrite(context.Background(), topology, "placement")
+	if err != nil {
+		return err
+	}
+	if err = s.bindPlacementUnpublished(topology, agentID, protocol); err != nil {
+		return err
+	}
+	return finish(map[string][]string{"placement": {agentID}})
+}
+func (s *WorkspaceService) bindPlacementUnpublished(topology, agentID, protocol string) error {
 	p := topologyPlacement{Topology: topology, AgentID: agentID, Protocol: protocol, BoundAt: time.Now().UTC()}
 	if s.placementStore != nil {
 		return s.placementStore.SaveTopologyPlacement(context.Background(), p)

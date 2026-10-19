@@ -744,3 +744,37 @@ snapshots also protect their source references. Metadata DELETE refuses enrolled
 sources. Source deregistration and nonparticipating external writers are not
 supported by this protocol. Operators must enroll every required producer;
 this API does not discover arbitrary external stores or make them transactional.
+
+Production publishers opt in with the service-level `gc_publication_source`
+setting (1–64 letters, digits, `_` or `-`). Give each independently writing
+API/host a stable unique ID. The service registers separate `-workspace`,
+`-placement`, and `-artifacts` sources. Workspace upserts, immutable revision
+materialization and legacy workspace snapshots publish before changing files;
+placement writes publish before changing affinity. Host execution installs the
+publisher context in artifact resolution, including local files, HTTP cache
+hits/downloads, mutable-URL invalidation, and Docker OCI inspect/pull.
+
+Contributions retain earlier revision digests, artifact digests and hashed cache
+locations. An inventory is fresh for 24 hours after a successful write; an idle
+source that expires blocks new GC until its publisher performs a successful
+publication. This is deliberately conservative; there is no automatic stale
+source removal or timer-based unknown-operation recovery.
+
+Enable producers while old writers are stopped, then start all writers with
+consistent configuration. Already enrolled topologies reject a current service
+with missing configuration. Local CLI execution against an enrolled topology is
+rejected; use the configured host executor. Initial enrollment is not a substitute
+for stopping unconfigured/old writer processes. A source left `updating` after a
+crash requires explicit investigation and completion using the existing protocol;
+cold startup neither resumes its mutation nor clears its record.
+
+The global revision registry (`POST /v1/revisions`) has no topology identity and
+is retained outside this per-topology publisher protocol. There is no global
+revision, shared artifact/cache deletion, or source retirement authorization in
+this change. Topology metadata DELETE remains blocked while sources are enrolled.
+
+A source manifest is bounded to 4,096 entries per domain. Publishers retain
+prior entries rather than evicting evidence automatically; exceeding the limit
+leaves publication incomplete and requires operator investigation. Concurrent
+operations on one source may receive a version conflict and must retry after the
+winning operation completes. They must not clear an updating record themselves.

@@ -142,7 +142,7 @@
         "gc-domain-coverage"
       ],
       "remaining": [
-        "Durable source publication now fences reservation/grant/delete and has real Docker acceptance. Production revision/artifact/cache/placement writers still need begin-before-mutation integration and source enrollment coverage; independent-process publisher crash and multi-host rollout remain open."
+        "Configured workspace/materialization, placement, file artifact/cache and OCI producers participate in begin-before-use; independent process kill and three-store producer tests exist. Whole-deployment multi-host rollout, existing writer enrollment barrier, global unbound revision registry, source retirement and shared artifact/cache deletion remain open."
       ]
     },
     {
@@ -380,7 +380,12 @@
         "TestGCCompletionCannotReleaseReservationFromWorkerOrGenericStop",
         "TestGCCompletionRetirementSurvivesInterruptedAuthorityRelease",
         "TestGCGrantCannotAuthorizeOrRenewAfterReferenceChange",
-        "TestGCSourceHTTPPublicationIsDurableAndStrict"
+        "TestGCSourceHTTPPublicationIsDurableAndStrict",
+        "TestGCProductionWorkspaceAndPlacementPublishBeforeUse",
+        "TestGCProductionArtifactResolutionPublishesAndFencesCache",
+        "TestGCProductionPublisherCrashRemainsIncomplete",
+        "TestGCProductionMissingConfigurationCannotBypassEnrollment",
+        "TestGCProductionIndependentWorkspacesSharePublicationAuthority"
       ],
       "kind": "contract",
       "race": true,
@@ -521,7 +526,8 @@
       "tests": [
         "TestDockerAdoptionColdLifecycleE2E",
         "TestDockerRealLostDeleteResponseE2E",
-        "TestDockerRealGCExactAbsenceE2E"
+        "TestDockerRealGCExactAbsenceE2E",
+        "TestOCIResolutionRequiresPublicationBeforeDaemonAccess"
       ],
       "kind": "real-provider",
       "race": false,

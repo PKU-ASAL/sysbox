@@ -4322,3 +4322,24 @@ revision/artifact/cache/placement integrations remain required for P8.2 closure.
 Enrollment opts the aggregate into format 7 so old writers cannot ignore the
 new protections. Format 6 aggregates continue working until explicitly enrolled.
 There is no implicit migration or change to historical lab data.
+
+### Production GC publisher integration (2026-10-19)
+
+Opt-in service publishers now wrap real workspace/revision materialization,
+placement, HTTP/local artifact cache and Docker OCI resolution paths. Artifact
+publication contexts reach runtime kernel and plan resolution as well as
+Firecracker/libvirt image/reset resolution. Remote execution bridges forward
+that context hook. A missing source configuration is refused for an already
+enrolled topology; local CLI execution is also refused for enrolled topology.
+
+`TestGCProductionPublisherCrashRemainsIncomplete` starts an independent process,
+waits for an actual HTTP download, kills that process, then opens a fresh bridge.
+The persisted source stays updating; GC and another download are rejected.
+Other regressions prove intent exists while downloading, mutable URL invalidation
+cannot precede permission, and two independent workspaces retain separate source
+records on file/SQLite/PostgreSQL. The real Docker external-source GC fixture now
+enables production publication and rejects a concurrent actual workspace upsert.
+
+This does not close deployment-wide enrollment or global registry/shared-cache
+GC. The opt-in deployment boundary requires old writers stopped and all relevant
+writers configured. No historical environment was enrolled or modified.

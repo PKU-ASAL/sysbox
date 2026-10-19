@@ -33,7 +33,7 @@ func ResolvePlanArtifactDigests(ctx context.Context, topology *graph.Graph) (map
 				digests[node.Address.String()] = "sha256:" + hex.EncodeToString(sum[:])
 				continue
 			}
-			resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: kind, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamily(cfg.GuestFamily)})
+			resolved, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: kind, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamily(cfg.GuestFamily)})
 			if err != nil {
 				return nil, fmt.Errorf("resolve plan artifact %s: %w", node.Address, err)
 			}
@@ -47,7 +47,7 @@ func ResolvePlanArtifactDigests(ctx context.Context, topology *graph.Graph) (map
 			if architecture == "" {
 				architecture = goruntime.GOARCH
 			}
-			resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: architecture, GuestFamily: substrate.GuestFamilyUnknown})
+			resolved, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: architecture, GuestFamily: substrate.GuestFamilyUnknown})
 			if err != nil {
 				return nil, fmt.Errorf("resolve plan artifact %s: %w", node.Address, err)
 			}

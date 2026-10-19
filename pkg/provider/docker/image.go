@@ -8,6 +8,7 @@ import (
 
 	"github.com/docker/docker/api/types/image"
 
+	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -22,6 +23,10 @@ func (s *Substrate) ResolveImage(ctx context.Context, source substrate.ArtifactS
 	reference := source.ResolvedSource
 	if reference == "" {
 		reference = source.Source
+	}
+	complete, err := artifact.BeginPublication(ctx, artifact.Spec{Source: reference, SHA256: source.ExpectedDigest})
+	if err != nil {
+		return substrate.ArtifactHandle{}, err
 	}
 	img, _, err := s.cli.ImageInspectWithRaw(ctx, reference)
 	if err != nil {
@@ -47,6 +52,9 @@ func (s *Substrate) ResolveImage(ctx context.Context, source substrate.ArtifactS
 		GuestFamily: source.GuestFamily, Metadata: source.Metadata,
 	}, ID: img.ID}
 	if err := handle.Validate(); err != nil {
+		return substrate.ArtifactHandle{}, err
+	}
+	if err := complete(artifact.Result{Path: "oci:" + img.ID, Source: reference, SHA256: strings.TrimPrefix(digest, "sha256:")}); err != nil {
 		return substrate.ArtifactHandle{}, err
 	}
 	return handle, nil

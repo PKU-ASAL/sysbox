@@ -21,6 +21,7 @@
 package artifact
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -59,6 +60,8 @@ type Result struct {
 
 // Resolver fetches artifacts on demand.
 type Resolver struct {
+	ctx     context.Context
+	publish Publication
 	// CacheDir holds downloaded artifacts. Defaults to the configured sysbox
 	// cache root, then the user cache fallback.
 	CacheDir string
@@ -94,6 +97,20 @@ func DefaultCacheDir() string {
 // Resolve returns the local path of the artifact described by spec,
 // downloading it into the cache when necessary.
 func (r *Resolver) Resolve(spec Spec) (Result, error) {
+	complete, err := r.beginPublication(spec)
+	if err != nil {
+		return Result{}, err
+	}
+	result, err := r.resolve(spec)
+	if err != nil {
+		return Result{}, err
+	}
+	if err = complete(result); err != nil {
+		return Result{}, err
+	}
+	return result, nil
+}
+func (r *Resolver) resolve(spec Spec) (Result, error) {
 	if spec.Source == "" {
 		return Result{}, fmt.Errorf("artifact: empty source")
 	}
@@ -180,7 +197,15 @@ func (r *Resolver) resolveHTTP(spec Spec) (Result, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Get(spec.Source)
+	ctx := r.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, spec.Source, nil)
+	if err != nil {
+		return Result{}, err
+	}
+	resp, err := client.Do(request)
 	if err != nil {
 		return Result{}, fmt.Errorf("artifact: GET %s: %w", spec.Source, err)
 	}

@@ -108,6 +108,8 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 	}
 	s.agentSvc = newAgentService(s)
 	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
+	s.workspaces.gcSourceID = s.cfg.GCPublicationSource
+	s.workspaces.gcRepository = s.actionRepository
 	s.workspaces.loadRuns = s.apiStore.LoadRuns
 	s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
 	s.workspaces.loadGuestActivity = s.apiStore.ListGuestActivity
@@ -157,6 +159,14 @@ func (s *Server) actionRepository(topology string) (*persistence.Repository, err
 	if err != nil {
 		return nil, err
 	}
+	// A cached pool must not hide newly discovered legacy state corruption.
+	if raw == "" {
+		if _, statErr := os.Stat(path); statErr == nil {
+			return nil, fmt.Errorf("%w: standalone state requires explicit rebuild", persistence.ErrUnsupportedVersion)
+		} else if !os.IsNotExist(statErr) {
+			return nil, statErr
+		}
+	}
 	key := raw
 	if key == "" {
 		key = path
@@ -196,6 +206,8 @@ func (s *Server) scheduling() *SchedulerService {
 func (s *Server) workspaceService() *WorkspaceService {
 	if s.workspaces == nil {
 		s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
+		s.workspaces.gcSourceID = s.cfg.GCPublicationSource
+		s.workspaces.gcRepository = s.actionRepository
 		s.workspaces.loadRuns = s.apiStore.LoadRuns
 		s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
 		s.workspaces.loadGuestActivity = s.apiStore.ListGuestActivity
