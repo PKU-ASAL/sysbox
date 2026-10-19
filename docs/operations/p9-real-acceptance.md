@@ -4536,3 +4536,18 @@ still follows the existing repository reader and remains a documented limit.
 This is preview only. Revision deletion is deliberately not exposed before the
 Run admission/reference race is closed transactionally. It does not close stage
 2 global revision retention/deletion acceptance.
+
+### Revision deletion versus new Run reference admission
+
+SQLite and PostgreSQL now retire a selected global revision and establish Run
+admission guards in the same transaction. Independent-connection race tests run
+simultaneous deletion and Run insertion: both cannot commit. Existing historical
+Run references prevent deletion; deletion winning causes subsequent SaveRun and
+independent SaveAgentCommand publication to fail without a durable Run.
+PostgreSQL transactions explicitly request READ COMMITTED regardless of pool
+default, addressing the stale-snapshot interleaving found during review.
+
+Retained commands/checkpoints/plans and decoded lifecycle/snapshot evidence are
+checked while locked. Durable revision retirement markers fence new auxiliary
+references after deletion commits. File registry deletion remains unsupported.
+HTTP tests exercise production persistence APIs with real SQLite/PostgreSQL.

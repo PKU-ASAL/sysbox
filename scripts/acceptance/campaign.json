@@ -140,7 +140,9 @@
         "gc-api",
         "gc-storage",
         "gc-domain-coverage",
-        "revision-retention-preview"
+        "revision-retention-preview",
+        "revision-delete-storage",
+        "revision-delete-api"
       ],
       "remaining": [
         "Same-database global revision content now participates in cache protection and PostgreSQL publication fencing. Separate registries/filesystem global inventories and global revision object retention/deletion remain open."
@@ -755,6 +757,36 @@
         "TestRevisionRetentionRejectsLegacyAndScopedCatalog",
         "TestRevisionRetentionRejectsOversizedRunHistory",
         "TestRevisionRetentionRejectsNullRunHistory"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "revision-delete-storage",
+      "package": "./pkg/persistence",
+      "tests": [
+        "TestRevisionDeletionAndRunAdmissionShareTransaction",
+        "TestRevisionDeletionRacesIndependentRunWriter",
+        "TestRevisionDeletionForcesReadCommittedCatalog"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_POSTGRES_DSN"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "revision-delete-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestGlobalRevisionDeleteHTTPFencesRunAdmission"
       ],
       "kind": "contract",
       "race": true,

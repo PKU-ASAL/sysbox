@@ -50,7 +50,7 @@ func (r *Repository) cacheCatalogTransaction(ctx context.Context, commit bool, f
 	defer conn.Close()
 	begin := "BEGIN IMMEDIATE"
 	if b.postgres {
-		begin = "BEGIN"
+		begin = "BEGIN ISOLATION LEVEL READ COMMITTED"
 	}
 	if _, err = conn.ExecContext(ctx, begin); err != nil {
 		return err

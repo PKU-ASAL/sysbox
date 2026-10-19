@@ -832,3 +832,24 @@ limited to 10000 records / 64 MiB; Run-reference collection limits count to
 repository reader and its locking; its decoded aggregate size is not yet bounded
 by this endpoint. Large lifecycle snapshots remain an operational limitation.
 Global revision objects and historical Run evidence are never deleted here.
+
+### Atomic SQL revision deletion
+
+`POST /v1/revisions/delete` accepts `revision` and a past RFC3339 `older_than`.
+It explicitly deletes one revision, independently revalidating references; a
+retention preview digest is not authorization. Only an unscoped shared SQLite or
+PostgreSQL registry/lifecycle deployment is supported. File registries reject.
+
+Deletion locks lifecycle/global revision/Run evidence in one transaction, rejects
+historical Run, snapshot, source, other revision content, command, checkpoint or
+plan references, checks age and content digest, then installs admission guards
+and deletes before commit. PostgreSQL explicitly uses READ COMMITTED. New nonempty
+Run revisions must exist; auxiliary and lifecycle writers reject durable retired
+revision references. Republishing identical bytes does not remove the retirement
+marker or silently reenable auxiliary references. Administrative DDL is trusted.
+Large/unresolved lifecycle catalogs remain fail-closed under existing GC rules.
+
+The delete operation is single-object and does not remove provider resources or
+local materialized trees. Missing revisions return conflict rather than inferring
+that a previous request succeeded. It is not a bulk application of keep-last
+policy; policy candidates must be individually and explicitly selected.
