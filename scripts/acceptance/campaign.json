@@ -162,10 +162,12 @@
         "gc-api",
         "gc-host",
         "real-docker-api",
-        "real-libvirt-gc-api"
+        "real-libvirt-gc-api",
+        "real-firecracker-gc-api",
+        "non-docker-gc-process-crash"
       ],
       "remaining": [
-        "Exact absent-file intents can now complete receipts after original-host lock verification; present/replaced/missing-evidence cases remain blocked. Unbound/global cache coverage and non-Docker batch interruption matrix remain open."
+        "Batch recovery and independent process exit at coordinator effect/report boundaries are covered for libvirt/Firecracker. Provider-internal interruption, missing/corrupt evidence manual disposition, and separate registry/global revision retention remain outside these gates."
       ]
     },
     {
@@ -180,10 +182,12 @@
         "real-docker-provider",
         "real-libvirt",
         "real-firecracker",
-        "real-libvirt-gc-api"
+        "real-libvirt-gc-api",
+        "real-firecracker-gc-api",
+        "non-docker-gc-process-crash"
       ],
       "remaining": [
-        "Provider exact-target deletion and unaffected survivor tests cover Docker/libvirt/Firecracker. Complete owning-agent non-Docker batch interruption and recovery matrix remains open."
+        "Real provider exact deletion/survivor protection, non-Docker batch lost-receipt/cold API recovery, and child process exit before/after effect/before reporting are covered. Full API/Agent OS-kill and provider-internal interruption matrix remains open."
       ]
     },
     {
@@ -694,6 +698,50 @@
         "LIBVIRT_DEFAULT_URI"
       ],
       "artifact_env": []
+    },
+    {
+      "id": "real-firecracker-gc-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestRemoteFirecrackerGCBatchRecoveryE2E"
+      ],
+      "kind": "real-provider",
+      "race": true,
+      "timeout": "4m",
+      "tags": "e2e",
+      "requires_env": [
+        "SYSBOX_FIRECRACKER_BIN",
+        "SYSBOX_FIRECRACKER_KERNEL",
+        "SYSBOX_FIRECRACKER_ROOTFS"
+      ],
+      "artifact_env": [
+        "SYSBOX_FIRECRACKER_BIN",
+        "SYSBOX_FIRECRACKER_KERNEL",
+        "SYSBOX_FIRECRACKER_ROOTFS"
+      ]
+    },
+    {
+      "id": "non-docker-gc-process-crash",
+      "package": "./pkg/api",
+      "tests": [
+        "TestNonDockerGCProcessCrashBoundariesE2E"
+      ],
+      "kind": "real-provider",
+      "race": true,
+      "timeout": "8m",
+      "tags": "e2e",
+      "requires_env": [
+        "SYSBOX_LIBVIRT_E2E",
+        "LIBVIRT_DEFAULT_URI",
+        "SYSBOX_FIRECRACKER_BIN",
+        "SYSBOX_FIRECRACKER_KERNEL",
+        "SYSBOX_FIRECRACKER_ROOTFS"
+      ],
+      "artifact_env": [
+        "SYSBOX_FIRECRACKER_BIN",
+        "SYSBOX_FIRECRACKER_KERNEL",
+        "SYSBOX_FIRECRACKER_ROOTFS"
+      ]
     }
   ]
 }

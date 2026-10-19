@@ -4482,3 +4482,32 @@ completion acknowledgement, reconstructs the API, and recovers receipts without
 a second provider deletion. An unrelated domain remains defined. This covers
 batch sequencing and lost-receipt/cold-API recovery; it is not an OS-kill matrix
 at every provider effect boundary and does not cover Firecracker batch dispatch.
+
+### Firecracker batch and non-Docker process exit acceptance
+
+`TestRemoteFirecrackerGCBatchRecoveryE2E` creates three real VMs. Two are removed
+through API/Agent/host batch dispatch; state and snapshot writes conflict during
+the reservation. The test deterministically loses a completed receipt response,
+reconstructs the API and cold coordinator, and verifies a receipt is actually
+replayed with its original hash. Exactly two provider deletions occur and the
+third VM remains running. This extends the libvirt batch recovery fixture.
+
+`TestNonDockerGCProcessCrashBoundariesE2E` runs six real scenarios: libvirt and
+Firecracker each exit an independent deletion process before provider effect,
+after successful provider deletion but before outcome persistence, and before
+reporting the already sealed completion. The process calls `os.Exit` at exact
+boundaries (no deferred cleanup); this is not a random SIGKILL timing test.
+Cold recovery never invokes provider deletion again. Before outcome commit it
+retains uncertain and emits no completion, even if the provider target is absent.
+After outcome/seal commit it reports the signed receipt, historical observation
+returns deletion, and reuse of the stopped grant is fenced. Survivor objects
+remain present. These gates do not cover every provider-internal call, API/Agent
+process kill, or separate global revision registry/retention.
+
+Review tightened the Firecracker batch fixture so both distinct batch receipts
+must hit the loss boundary before recovery begins, and both exact signed structs
+must replay through the cold coordinator. Firecracker evidence captures PID/start
+identity and socket before deletion; afterward it independently checks the
+original process is gone and the socket removed, rather than relying only on a
+missing provider manifest. The survivor is explicitly required to remain running.
+The reviewed batch and all six process-exit cases passed together.
