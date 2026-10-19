@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -96,7 +97,9 @@ func mergeExternalDomains(out *GCReferenceSnapshot, external map[string][]string
 	return nil
 }
 
-func gcReferences(a *aggregate) (GCReferenceSnapshot, error) {
+func gcReferences(a *aggregate) (GCReferenceSnapshot, error) { return gcReferencesAt(a, time.Now()) }
+
+func gcReferencesAt(a *aggregate, now time.Time) (GCReferenceSnapshot, error) {
 	var out GCReferenceSnapshot
 	err := func() error {
 		out.TopologyUID, out.Serial = a.State.TopologyUID, a.Serial
@@ -123,6 +126,9 @@ func gcReferences(a *aggregate) (GCReferenceSnapshot, error) {
 		collect := func(prefix string, content *aggregate) error {
 			if content.State.TopologyUID != a.State.TopologyUID {
 				return ErrCorruptRecord
+			}
+			if err := collectGCSources(content, prefix == "", prefix, &out, domainValues, now); err != nil {
+				return err
 			}
 			for _, resource := range content.State.Resources {
 				appendResource(prefix+"state/"+resource.Address.String(), resource)

@@ -76,6 +76,7 @@ var expectedDocs = []string{
 	"docs/superpowers/plans/2026-10-07-destroy-receipt.md",
 	"docs/superpowers/plans/2026-10-07-guest-readiness.md",
 	"docs/superpowers/plans/2026-10-14-provider-quiescence.md",
+	"docs/superpowers/plans/2026-10-19-durable-gc-sources.md",
 	"docs/superpowers/specs/2026-09-13-lifecycle-closure-design.md",
 	"docs/superpowers/specs/2026-09-28-sysbox-architecture-refactor-design.md",
 }

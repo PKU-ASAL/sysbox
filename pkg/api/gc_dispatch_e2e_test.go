@@ -33,7 +33,10 @@ import (
 
 func TestRemoteDockerGCDispatchAndLostReceiptE2E(t *testing.T)  { testRemoteDockerGCDispatch(t, false) }
 func TestRemoteDockerGCBatchSequentialRecoveryE2E(t *testing.T) { testRemoteDockerGCDispatch(t, true) }
-func testRemoteDockerGCDispatch(t *testing.T, batch bool) {
+func TestRemoteDockerGCExternalSourceFencingE2E(t *testing.T) {
+	testRemoteDockerGCDispatch(t, false, true)
+}
+func testRemoteDockerGCDispatch(t *testing.T, batch bool, external ...bool) {
 	if os.Getenv("SYSBOX_REMOTE_DOCKER_E2E") != "1" {
 		t.Skip("requires isolated real Docker resources")
 	}
@@ -79,6 +82,31 @@ func testRemoteDockerGCDispatch(t *testing.T, batch bool) {
 		require.NoError(t, err)
 		secondID = second.ID
 		defer cli.ContainerRemove(context.Background(), secondID, container.RemoveOptions{Force: true})
+	}
+
+	if len(external) > 0 {
+		publish := func(operation string, expected int64, manifest *persistence.GCSourceManifest) {
+			raw, err := json.Marshal(gcSourcePublication{TopologyUID: refs.TopologyUID, ExpectedVersion: &expected, Manifest: manifest})
+			require.NoError(t, err)
+			response, err := http.Post(httpServer.URL+"/v1/topologies/gc-lab/gc/sources/remote/"+operation, "application/json", bytes.NewReader(raw))
+			require.NoError(t, err)
+			defer response.Body.Close()
+			require.Equal(t, 200, response.StatusCode)
+		}
+		publish("begin", 0, nil)
+		manifest := persistence.GCSourceManifest{Domains: map[string][]string{"revision": {"fixture-revision"}, "artifact": {}, "cache": {}, "placement": {"gc-agent"}}, ValidUntil: time.Now().Add(time.Hour), References: []persistence.GCResourceReference{{Source: "revision/node", ResourceType: "sysbox_node", Driver: "docker", ExternalID: created.ID, OwnerUID: refs.TopologyUID, ResourceUID: "orphan-uid", Generation: 1}}}
+		publish("complete", 1, &manifest)
+		protected, err := repo.LoadGCReferences(ctx, "gc-lab")
+		require.NoError(t, err)
+		candidate := controlplane.GCCandidate{Kind: "container", ExternalID: created.ID, TopologyUID: refs.TopologyUID, OwnerUID: refs.TopologyUID, ResourceUID: "orphan-uid", Generation: 1, InventoryDigest: protected.Digest}
+		require.ErrorIs(t, repo.ReserveGC(ctx, "gc-lab", persistence.GCReservation{ID: "protected", AgentID: "gc-agent", Candidate: candidate}), persistence.ErrConflict)
+		_, err = cli.ContainerInspect(ctx, created.ID)
+		require.NoError(t, err)
+		publish("begin", 2, nil)
+		manifest.References = nil
+		publish("complete", 3, &manifest)
+		refs, err = repo.LoadGCReferences(ctx, "gc-lab")
+		require.NoError(t, err)
 	}
 	provider, err := dockerprovider.New()
 	require.NoError(t, err)
@@ -185,6 +213,11 @@ func testRemoteDockerGCDispatch(t *testing.T, batch bool) {
 	require.ErrorIs(t, manager.Save(st), persistence.ErrConflict)
 	_, err = manager.Snapshot(ctx, "new reference while deleting")
 	require.ErrorIs(t, err, persistence.ErrConflict)
+
+	if len(external) > 0 {
+		_, err = repo.BeginGCSource(ctx, "gc-lab", "remote", refs.TopologyUID, 4)
+		require.ErrorIs(t, err, persistence.ErrConflict)
+	}
 	close(proceed)
 	select {
 	case <-receiptSent:
@@ -226,6 +259,11 @@ func testRemoteDockerGCDispatch(t *testing.T, batch bool) {
 	}
 	_, err = cli.ContainerInspect(ctx, created.ID)
 	require.True(t, errdefs.IsNotFound(err), "%v", err)
+
 	require.NoError(t, manager.Save(st))
+	if len(external) > 0 {
+		_, err = reopenedRepo.BeginGCSource(ctx, "gc-lab", "remote", refs.TopologyUID, 4)
+		require.NoError(t, err)
+	}
 	t.Log("real Docker GC dispatched through API/Agent/host; concurrent references blocked; exact signed receipt recovered after API reconstruction; one delete and independent absence")
 }

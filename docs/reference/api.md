@@ -708,3 +708,39 @@ cross-host catalog still needs an external producer for revision/artifact/cache
 inventory; until that is supplied, that requirement remains open and GC stays
 fail-closed. Snapshot/journal/state references continue to be collected in the
 same aggregate transaction.
+
+### Durable external GC reference sources
+
+Topology-scoped publication uses the existing API administrator authentication:
+
+- `GET /v1/topologies/{topology}/gc/sources` reads source versions and manifests.
+- `POST /v1/topologies/{topology}/gc/sources/{source}/begin` accepts
+  `{"topology_uid":"...","expected_version":0}` for first enrollment.
+  The response contains the new `version` and `updating:true`.
+- `POST /v1/topologies/{topology}/gc/sources/{source}/complete` accepts the same
+  topology identity, the version returned by begin, and a `manifest`.
+
+A manifest contains `domains` with all four keys (`revision`, `artifact`,
+`cache`, `placement`), each a string array; `references` with exact
+`source/resource_type/driver/external_id/owner_uid/resource_uid/generation`;
+and an RFC3339 `valid_until`. An empty array declares an observed empty domain.
+Opaque domain values are retained evidence; resource deletion protection needs
+an explicit resource reference. Unknown domains and malformed references fail.
+
+A participating publisher must successfully begin **before** changing or using
+external references, and complete only after the entire inventory is durable.
+No new publication may reuse an earlier completed version. Complete supports
+exact replay after a lost response. A lost begin response can be inspected with
+GET; it does not permit another writer to assume ownership of that publication.
+An incomplete source blocks new GC. Offline/expired inventories are retained
+and block new reservations. A reservation pins its immutable directory through
+signed deletion completion, so expiry during deletion does not strand recovery.
+All publication writes share the reservation transaction lock.
+
+First enrollment explicitly upgrades that aggregate to format 7; other format 6
+aggregates remain unchanged. Older writers reject the enrolled aggregate.
+Current source registration is not rewound by snapshot restore; retained
+snapshots also protect their source references. Metadata DELETE refuses enrolled
+sources. Source deregistration and nonparticipating external writers are not
+supported by this protocol. Operators must enroll every required producer;
+this API does not discover arbitrary external stores or make them transactional.

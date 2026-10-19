@@ -4299,3 +4299,26 @@ failure was a sandbox restriction, not a reason to leave the authorized check
 unfinished. The GC tests include explicit rejection of local deletion using an
 external planning digest. P8.2 remains open for actual cross-host publication,
 fencing, and deletion-time revalidation.
+
+### Durable external GC source publication (2026-10-19)
+
+External sources can now publish through a durable begin/complete protocol.
+Incomplete publication, stale CAS, missing domains, and expired inventory block
+new GC reservations. The reservation pins a complete inventory and freezes
+source writes until an independently verified deletion receipt. Its digest and
+resource references flow through the existing reservation, batch, grant, and
+host authorization path; there is no new provider deletion implementation.
+
+The regression matrix covers independent file/SQLite connections and real
+PostgreSQL, topology identity/version binding, cold reading, retained snapshots,
+reference-source-only catalog visibility, metadata deletion refusal, and expiry
+before/after reservation. HTTP tests run on all three stores. The real Docker
+gate `TestRemoteDockerGCExternalSourceFencingE2E` publishes an external reference,
+proves the exact container is protected, removes the reference under publication
+fencing, and verifies one deletion plus cold receipt recovery through the owning
+Agent/host chain. This is a participating publisher fixture; production external
+revision/artifact/cache/placement integrations remain required for P8.2 closure.
+
+Enrollment opts the aggregate into format 7 so old writers cannot ignore the
+new protections. Format 6 aggregates continue working until explicitly enrolled.
+There is no implicit migration or change to historical lab data.

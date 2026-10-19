@@ -142,7 +142,7 @@
         "gc-domain-coverage"
       ],
       "remaining": [
-        "External inventory callbacks are read-only planning adapters, not deployed cross-host producers. Durable external catalog fencing and revalidation at reserve/grant/delete remain open; external planning digests cannot authorize local deletion."
+        "Durable source publication now fences reservation/grant/delete and has real Docker acceptance. Production revision/artifact/cache/placement writers still need begin-before-mutation integration and source enrollment coverage; independent-process publisher crash and multi-host rollout remain open."
       ]
     },
     {
@@ -379,7 +379,8 @@
         "TestGCHTTPDispatchUsesOwningAgentAndReplaysOriginalCommand",
         "TestGCCompletionCannotReleaseReservationFromWorkerOrGenericStop",
         "TestGCCompletionRetirementSurvivesInterruptedAuthorityRelease",
-        "TestGCGrantCannotAuthorizeOrRenewAfterReferenceChange"
+        "TestGCGrantCannotAuthorizeOrRenewAfterReferenceChange",
+        "TestGCSourceHTTPPublicationIsDurableAndStrict"
       ],
       "kind": "contract",
       "race": true,
@@ -397,7 +398,13 @@
         "TestGCReferencesUseOneTransactionAndRejectUnresolvedJournal",
         "TestGCReferencesRejectInvalidRetainedEvidenceWithoutPartialResult",
         "TestGCReferencesProtectUIDAndProviderExternalIDIndependently",
-        "TestGCBatchAdmissionIsAtomicAndOrdered"
+        "TestGCBatchAdmissionIsAtomicAndOrdered",
+        "TestGCSourcePublicationFencesDeletionAcrossReopen",
+        "TestGCSourceRejectsIncompleteExpiredAndReferencedDeletion",
+        "TestGCSourceEnrollmentRemainsVisibleAndCannotBeErased",
+        "TestGCSourceReservationPinsFreshnessUntilReceipt",
+        "TestGCSourceRejectsCorruptInitialManifest",
+        "TestGCSourceSnapshotRetainsReferencesAfterSourceUpdate"
       ],
       "kind": "contract",
       "race": true,
@@ -493,7 +500,8 @@
         "TestRemoteDockerReturnedDestroyRecoveryE2E",
         "TestRemoteDockerColdReturnedDestroyRecoveryE2E",
         "TestRemoteDockerColdResetContinuationE2E",
-        "TestRemoteDockerRepeatedResetContinuationE2E"
+        "TestRemoteDockerRepeatedResetContinuationE2E",
+        "TestRemoteDockerGCExternalSourceFencingE2E"
       ],
       "kind": "real-provider",
       "race": false,

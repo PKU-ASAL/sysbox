@@ -33,6 +33,7 @@ const FormatVersion = 6
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
+	GCSources          map[string]GCSource                         `json:"gc_sources,omitempty"`
 	GC                 map[string]GCReservation                    `json:"gc_reservations"`
 	ResetContinuations map[string]runtime.ResetContinuationReceipt `json:"reset_continuations"`
 	Restores           map[string]SnapshotRestoreReceipt           `json:"restores"`
@@ -90,7 +91,7 @@ func (r *Repository) ListTopologies(ctx context.Context) ([]state.TopologyMetada
 			return nil, ErrCorruptRecord
 		}
 		err := r.update(ctx, key, func(a *aggregate) error {
-			if a.Serial > 0 || len(a.Actions) > 0 {
+			if a.Serial > 0 || len(a.Actions) > 0 || len(a.GCSources) > 0 {
 				out = append(out, state.TopologyMetadata{Name: key, HasState: true, ResourceCount: len(a.State.Resources), Serial: a.Serial, Backend: r.backend.name(), UpdatedAt: a.UpdatedAt})
 			}
 			return nil
@@ -111,14 +112,14 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if header.Format != FormatVersion {
+	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, header.Format, FormatVersion)
 	}
 	var a aggregate
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if a.Format != FormatVersion {
+	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, a.Format, FormatVersion)
 	}
 	if err := validateAggregate(&a, ""); err != nil {
@@ -132,6 +133,9 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 func validateAggregate(a *aggregate, topology string) error {
 	if a.GC == nil || a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Restores == nil || a.ResetContinuations == nil || a.Serial < 0 {
 		return ErrCorruptRecord
+	}
+	if err := validateGCSources(a); err != nil {
+		return err
 	}
 	if err := validateGCReservations(a); err != nil {
 		return err
@@ -684,6 +688,9 @@ func (b *stateBackend) DeleteVersioned(ctx context.Context, expectedSerial int64
 	})
 }
 func resetAggregate(a *aggregate) error {
+	if len(a.GCSources) > 0 {
+		return ErrConflict
+	}
 	if gcPending(a) {
 		return ErrConflict
 	}

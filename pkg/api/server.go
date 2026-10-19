@@ -381,6 +381,8 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/topologies/{topology}/gc", s.handleGC)
 	m.HandleFunc("POST /v1/topologies/{topology}/gc/batch", s.handleGCBatch)
 	m.HandleFunc("GET /v1/topologies/{topology}/gc/references", s.handleGCReferences)
+	m.HandleFunc("GET /v1/topologies/{topology}/gc/sources", s.handleGCSources)
+	m.HandleFunc("POST /v1/topologies/{topology}/gc/sources/{source}/{operation}", s.handleGCSourcePublication)
 	m.HandleFunc("GET /v1/topologies", s.handleListTopologies)
 	m.HandleFunc("GET /v1/topologies/{topology}", s.handleGetTopology)
 	m.HandleFunc("GET /v1/topologies/{topology}/hcl", s.handleGetHCL)
