@@ -150,7 +150,12 @@ func TestRemoteFirecrackerGCBatchRecoveryE2E(t *testing.T) {
 	hostCtx, stopHost := context.WithCancel(ctx)
 	hostDone := make(chan error, 1)
 	go func() { hostDone <- host.Serve(hostCtx) }()
-	defer func() { stopHost(); require.NoError(t, <-hostDone) }()
+	defer func() {
+		stopHost()
+		if hostDone != nil {
+			require.NoError(t, <-hostDone)
+		}
+	}()
 	require.Eventually(t, func() bool { _, err := os.Stat(socket); return err == nil }, time.Second, 10*time.Millisecond)
 	workerCfg := cfg
 	workerCfg.Paths.RunsDir = private()
@@ -222,6 +227,10 @@ func TestRemoteFirecrackerGCBatchRecoveryE2E(t *testing.T) {
 		}
 	}
 
+	stopHost()
+	hostErr := <-hostDone
+	hostDone = nil
+	require.NoError(t, hostErr)
 	reopened := newAPI()
 	current.Store(reopened)
 	hold.Store(false)

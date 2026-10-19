@@ -4511,3 +4511,12 @@ identity and socket before deletion; afterward it independently checks the
 original process is gone and the socket removed, rather than relying only on a
 missing provider manifest. The survivor is explicitly required to remain running.
 The reviewed batch and all six process-exit cases passed together.
+
+Final cold-recovery validation stops and joins the old Firecracker host service
+before clearing acknowledgement loss and invoking the cold coordinator. This
+prevents its background recovery loop from consuming the very receipts the test
+must demonstrate replaying. Cleanup joins the service only once. Two consecutive
+real race-enabled batch rounds passed after this test-only correction. The prior
+failed strict gate and the intermediate double-wait timeout remain recorded at
+`/tmp/sysbox-stage2-nondocker-gates/` and
+`/tmp/sysbox-stage2-fc-cold-fixed.log`; production authority behavior is unchanged.
