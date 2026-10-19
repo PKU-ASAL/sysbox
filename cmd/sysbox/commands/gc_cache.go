@@ -11,12 +11,13 @@ import (
 )
 
 func newGCCacheCommand() *cobra.Command {
-	var catalog, root, path, apply string
-	cmd := &cobra.Command{Use: "cache", Short: "Plan cache GC; execute one private-cache deletion with local SQLite", Args: cobra.NoArgs}
+	var catalog, root, path, apply, reconcile string
+	cmd := &cobra.Command{Use: "cache", Short: "Plan or execute one fenced private-cache deletion", Args: cobra.NoArgs}
 	cmd.Flags().StringVar(&catalog, "catalog", "", "exclusive shared SQLite/PostgreSQL lifecycle catalog for this cache")
 	cmd.Flags().StringVar(&root, "cache-root", "", "absolute private host cache root (all writers must be enrolled)")
 	cmd.Flags().StringVar(&path, "path", "", "relative cache key/file to inspect")
 	cmd.Flags().StringVar(&apply, "apply-plan", "", "execute exact JSON plan file; default is read-only planning")
+	cmd.Flags().StringVar(&reconcile, "reconcile-plan", "", "release PostgreSQL reservation from exact durable done receipt; never delete")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		location, _, err := gcCatalogLocation(catalog)
 		if err != nil {
@@ -27,11 +28,18 @@ func newGCCacheCommand() *cobra.Command {
 			return err
 		}
 		defer repo.Close()
-		if apply != "" {
+		if apply != "" && reconcile != "" {
+			return fmt.Errorf("apply-plan and reconcile-plan are mutually exclusive")
+		}
+		if apply != "" || reconcile != "" {
 			if root != "" || path != "" {
 				return fmt.Errorf("apply-plan cannot override root or path")
 			}
-			f, err := os.Open(apply)
+			planFile := apply
+			if reconcile != "" {
+				planFile = reconcile
+			}
+			f, err := os.Open(planFile)
 			if err != nil {
 				return err
 			}
@@ -45,10 +53,15 @@ func newGCCacheCommand() *cobra.Command {
 			if err = decoder.Decode(new(any)); err != io.EOF {
 				return fmt.Errorf("one plan required")
 			}
-			if err = repo.ApplyCacheGC(cmd.Context(), plan); err != nil {
+			if reconcile != "" {
+				err = repo.ReconcileCacheGC(cmd.Context(), plan)
+			} else {
+				err = repo.ApplyCacheGC(cmd.Context(), plan)
+			}
+			if err != nil {
 				return err
 			}
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"id": plan.ID, "deleted": true, "receipt": plan.Root + "/.sysbox-gc/" + plan.ID + ".done"})
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"id": plan.ID, "deleted": true, "reconciled": reconcile != "", "receipt": plan.Root + "/.sysbox-gc/" + plan.ID + ".done"})
 		}
 		plan, err := repo.PlanCacheGC(cmd.Context(), root, path)
 		if err != nil {

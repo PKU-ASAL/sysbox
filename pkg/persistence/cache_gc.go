@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
@@ -35,6 +36,9 @@ type CacheGCPlan struct {
 // withCacheCatalog prevents even new topology insertion through the complete
 // check/delete interval. Per-row locks alone would miss phantom enrollment.
 func (r *Repository) withCacheCatalog(ctx context.Context, fn func([]*aggregate, string) error) error {
+	return r.cacheCatalogTransaction(ctx, false, func(_ *sql.Conn, all []*aggregate, digest string) error { return fn(all, digest) })
+}
+func (r *Repository) cacheCatalogTransaction(ctx context.Context, commit bool, fn func(*sql.Conn, []*aggregate, string) error) error {
 	b, ok := r.backend.(*sqlBackend)
 	if !ok || r.boundTopology != "" {
 		return ErrUnsupportedVersion
@@ -51,7 +55,11 @@ func (r *Repository) withCacheCatalog(ctx context.Context, fn func([]*aggregate,
 	if _, err = conn.ExecContext(ctx, begin); err != nil {
 		return err
 	}
+	committed := false
 	defer func() {
+		if committed {
+			return
+		}
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if _, err := conn.ExecContext(cleanup, "ROLLBACK"); err != nil {
@@ -116,7 +124,16 @@ func (r *Repository) withCacheCatalog(ctx context.Context, fn func([]*aggregate,
 	if err = rows.Close(); err != nil {
 		return err
 	}
-	return fn(all, fmt.Sprintf("%x", digest.Sum(nil)))
+	if err = fn(conn, all, fmt.Sprintf("%x", digest.Sum(nil))); err != nil {
+		return err
+	}
+	if commit {
+		if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+			return err
+		}
+		committed = true
+	}
+	return nil
 }
 func privateCacheFile(root, relative string) (string, os.FileInfo, error) {
 	if !filepath.IsAbs(root) || filepath.Clean(root) != root || !filepath.IsLocal(relative) {
@@ -244,7 +261,7 @@ func syncCacheDir(path string) error {
 }
 func (r *Repository) ApplyCacheGC(ctx context.Context, plan CacheGCPlan) error {
 	b, ok := r.backend.(*sqlBackend)
-	if !ok || b.postgres {
+	if !ok {
 		return ErrUnsupportedVersion
 	}
 	if _, _, err := privateCacheFile(plan.Root, plan.Path); err != nil {
@@ -271,7 +288,7 @@ func (r *Repository) ApplyCacheGC(ctx context.Context, plan CacheGCPlan) error {
 	if !locked {
 		return ErrConflict
 	}
-	return r.withCacheCatalog(ctx, func(all []*aggregate, digest string) error {
+	deleteFile := func(all []*aggregate, digest string) error {
 		current, err := cachePlan(all, digest, plan.Root, plan.Path)
 		if err != nil {
 			return err
@@ -337,5 +354,17 @@ func (r *Repository) ApplyCacheGC(ctx context.Context, plan CacheGCPlan) error {
 			return err
 		}
 		return syncCacheDir(journal)
-	})
+	}
+	if b.postgres {
+		if err := r.reservePostgresCache(ctx, plan); err != nil {
+			return err
+		}
+		// No write can resume after this committed reservation even if this
+		// connection disappears. Never replay an existing pending reservation.
+		if err := deleteFile(nil, plan.CatalogSHA256); err != nil {
+			return err
+		}
+		return r.releasePostgresCache(ctx, plan)
+	}
+	return r.withCacheCatalog(ctx, deleteFile)
 }

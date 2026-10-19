@@ -4381,3 +4381,37 @@ review identified that a dropped remote transaction can release its lock before
 local unlink, so a durable global reservation is required before enabling it.
 SQLite apply keeps the local write lock through intent fsync, revalidation,
 unlink and receipt fsync. No production cache was deleted in this acceptance.
+
+### PostgreSQL durable cache reservation continuation
+
+The earlier PostgreSQL apply refusal is superseded by durable database fencing.
+An exclusive catalog transaction validates the full inventory and plan, installs
+statement-level guards, and commits a machine-bound pending reservation before
+local deletion. Pending reservations block even direct SQL lifecycle writes and
+new topology insertion. READ COMMITTED trigger reads observe a reservation that
+committed while a writer waited for the table lock; other isolation levels are
+explicitly rejected. A disconnected remote transaction is no longer the sole
+protection around local unlink.
+
+Real PostgreSQL regressions terminate a test backend, exit an independent process
+after committing the reservation, test raw update/delete/truncate rejection, and
+queue a writer before the reservation commits. The pending row survives and
+prevents publication. Exact local done receipts support cold reconciliation after
+lost completion, with no second unlink. Recreated files are preserved. No
+incomplete intent is automatically cleared and no generic force-unfreeze exists.
+
+These tests use isolated schemas and private temporary host caches. The cache
+must be exclusively used by enrolled publishers from that catalog; enrollment of
+unrelated writers/global registries is not inferred. Administrative DDL access
+remains trusted. The historical intermittent Reset cancellation is deferred at
+user request, with diagnostics and original failed evidence retained.
+
+
+### Cross-kernel PostgreSQL cache reservation evidence
+
+`/tmp/sb-retry-1018/pg-cache-reservation/summary.json` records the current
+binary and two distinct kernel boot IDs. The test binary ran on the execution
+VM while connecting to the isolated PostgreSQL catalog on the control VM.
+Connection termination, independent process exit after reservation, queued
+writer fencing, old isolation rejection and exact done-receipt reconciliation
+all passed. No host cache outside the temporary test root was touched.

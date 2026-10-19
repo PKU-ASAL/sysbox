@@ -262,9 +262,20 @@ new topology insertions. Filesystem catalogs, topology-selected catalogs,
 unregistered/incomplete/expired sources, symlinks, hardlinks, writable targets,
 retained references and stale file/catalog identities are rejected.
 
-PostgreSQL supports planning and rejects apply: losing a remote database lock
-cannot authorize a local unlink. This is not cluster-wide shared-cache deletion.
+PostgreSQL apply commits a durable reservation before local unlink. A database
+statement trigger blocks lifecycle INSERT, UPDATE, DELETE and TRUNCATE while any
+reservation is pending, including statements issued by older writers. This
+protection survives connection/process loss. The trigger requires READ COMMITTED
+isolation; transactions using snapshot isolation are refused. The executing
+role needs permission to install the table, function and trigger on first use.
+Only trusted operators may alter these guards or write the reservation table.
+
 The cache root retains `.sysbox-gc/<id>.intent` before unlink and `.done` afterward.
-An interrupted intent blocks further deletion and is never automatically replayed;
-manual investigation is required. A receipt does not authorize deleting a recreated
-file. Each invocation handles one file and never recursively removes directories.
+A pending reservation has no timeout. If local deletion finished but database
+release failed, run `sysbox gc cache --catalog <postgres-url> --reconcile-plan
+plan.json` on the same machine. It checks the exact private local done receipt,
+absence of the intent and target, and the database's machine/plan binding before
+releasing the reservation. It never unlinks or replays deletion. Missing or partial
+receipts require investigation and leave all catalog writers blocked. A receipt
+does not authorize deleting a recreated file. Each invocation handles one private
+host-cache file, never recursive directories or arbitrary shared/global caches.

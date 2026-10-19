@@ -164,7 +164,7 @@
         "real-docker-api"
       ],
       "remaining": [
-        "Local SQLite catalog/private-cache exact deletion is implemented. PostgreSQL execution is explicitly refused until durable global reservation/fencing exists. Cache deletion interruption reconciliation and non-Docker batch interruption matrix remain open."
+        "Private-cache PostgreSQL deletion now uses durable catalog reservation and trigger-enforced write fencing; exact done-receipt reconciliation is implemented. Incomplete-intent reconciliation without a done receipt, unbound/global cache coverage and non-Docker batch interruption matrix remain open."
       ]
     },
     {
@@ -365,7 +365,8 @@
         "TestGCProtectsResourcesReferencedOnlyBySnapshot",
         "TestGCFirecrackerCandidatesRequireCompleteOwnedUnreferencedInventory",
         "TestGCProtectsFirecrackerStateAndSnapshotReferences",
-        "TestGCCacheCLIPlanApplyUsesCanonicalCatalog"
+        "TestGCCacheCLIPlanApplyUsesCanonicalCatalog",
+        "TestGCCacheCLIRefusesConflictingApplyAndReconcile"
       ],
       "kind": "contract",
       "race": true,
@@ -417,7 +418,13 @@
         "TestGlobalCacheGCDeletesExactUnreferencedFileAndRetainsReceipt",
         "TestGlobalCacheGCFreezesNewTopologyPublication",
         "TestGlobalCacheGCRejectsUnsafeTargetsAndIncompleteIntent",
-        "TestGlobalCacheGCRejectsRemoteTransactionDeletion"
+        "TestGlobalCacheGCRejectsInvalidRemoteDeletion",
+        "TestPostgresCacheReservationSurvivesConnectionLoss",
+        "TestPostgresCacheApplyReleasesOnlyAfterDurableReceipt",
+        "TestPostgresCacheReconcilesLostCompletionWithoutDeletingAgain",
+        "TestPostgresCacheFenceRejectsOldSnapshotWriters",
+        "TestPostgresCacheQueuedWriterSeesCommittedFence",
+        "TestPostgresCacheProcessCrashNeverReplaysUnlink"
       ],
       "kind": "contract",
       "race": true,

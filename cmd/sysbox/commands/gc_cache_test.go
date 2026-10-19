@@ -51,3 +51,13 @@ func TestGCCacheCLIPlanApplyUsesCanonicalCatalog(t *testing.T) {
 	require.NoError(t, err)
 	require.NoFileExists(t, target)
 }
+
+func TestGCCacheCLIRefusesConflictingApplyAndReconcile(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	r, err := persistence.OpenSQLite(db)
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+	cmd := newGCCacheCommand()
+	cmd.SetArgs([]string{"--catalog", "sqlite://" + db, "--apply-plan", "a", "--reconcile-plan", "b"})
+	require.ErrorContains(t, cmd.Execute(), "mutually exclusive")
+}

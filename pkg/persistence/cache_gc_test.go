@@ -133,7 +133,7 @@ func TestGlobalCacheGCRejectsUnsafeTargetsAndIncompleteIntent(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestGlobalCacheGCRejectsRemoteTransactionDeletion(t *testing.T) {
+func TestGlobalCacheGCRejectsInvalidRemoteDeletion(t *testing.T) {
 	r := resetTestRepository(t, "postgres")
-	require.ErrorIs(t, r.ApplyCacheGC(context.Background(), CacheGCPlan{}), ErrUnsupportedVersion)
+	require.ErrorIs(t, r.ApplyCacheGC(context.Background(), CacheGCPlan{}), ErrInvalidRecord)
 }
