@@ -460,7 +460,7 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := s.deletePlacement(ctx, topology); err != nil {
+	if err := s.deletePlacementUnpublished(ctx, topology); err != nil {
 		return fmt.Errorf("remove topology placement: %w", err)
 	}
 	if s.health != nil {

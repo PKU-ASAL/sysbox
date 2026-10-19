@@ -4415,3 +4415,33 @@ VM while connecting to the isolated PostgreSQL catalog on the control VM.
 Connection termination, independent process exit after reservation, queued
 writer fencing, old isolation rejection and exact done-receipt reconciliation
 all passed. No host cache outside the temporary test root was touched.
+
+### GC lifecycle tail: intent receipt recovery and retired domains
+
+A real independent subprocess exits immediately after unlink with an exact
+intent and no completion receipt. Recovery takes the original host flock,
+verifies absence, syncs the directory and publishes completion without another
+unlink. Tests reject a paused deleter holding the lock, present target, and
+foreign PostgreSQL host binding. Missing/corrupt evidence remains fail-closed.
+
+Metadata DELETE now releases fully retired domain-only sources after all
+existing execution-stop/activity checks, empty state, no snapshots, no explicit
+external source resource references, no pending GC and no unresolved actions.
+Raw Delete remains forbidden. File/SQLite/PostgreSQL race regressions verify
+fresh identity and no accidental placement source reenrollment during cleanup.
+Independent review found no blocking issue in these transitions.
+
+The new two-kernel topology `p9-5380fcb5d859` completed Apply/Reset/Destroy,
+source retirement, explicit removal of its three automatic metadata snapshots,
+and metadata DELETE. The first DELETE correctly returned 409 while snapshots
+remained. The snapshot API's 204 response required correcting the test script's
+JSON-only response handling; no server behavior was weakened. Final evidence is
+`/tmp/sb-retry-1018/gc-tail-1019/`, including the old/new running binary hashes,
+provider absence, retired source manifests, and metadata deletion. The final
+retry removed two snapshots after the first had already returned 204.
+
+New provider gates create two isolated objects per provider and test stale
+generation rejection, exact target deletion, independent absence, and survivor
+preservation. Libvirt additionally retains sentinel disk files; Firecracker
+verifies the other VM is still running. This closes the primitive zero-damage
+cell, not the full non-Docker owning-agent batch interruption matrix.

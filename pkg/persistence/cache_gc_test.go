@@ -3,7 +3,9 @@ package persistence
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
@@ -136,4 +138,31 @@ func TestGlobalCacheGCRejectsUnsafeTargetsAndIncompleteIntent(t *testing.T) {
 func TestGlobalCacheGCRejectsInvalidRemoteDeletion(t *testing.T) {
 	r := resetTestRepository(t, "postgres")
 	require.ErrorIs(t, r.ApplyCacheGC(context.Background(), CacheGCPlan{}), ErrInvalidRecord)
+}
+
+func TestCacheIntentRecoveryWaitsForOriginalDeleter(t *testing.T) {
+	ctx := context.Background()
+	r := resetTestRepository(t, "sqlite")
+	root := t.TempDir()
+	require.NoError(t, os.Chmod(root, 0700))
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte("orphan")))
+	require.NoError(t, os.Mkdir(filepath.Join(root, key), 0700))
+	journal := filepath.Join(root, ".sysbox-gc")
+	require.NoError(t, os.Mkdir(journal, 0700))
+	plan := CacheGCPlan{ID: key, Root: root, Path: key + "/blob"}
+	raw, err := json.Marshal(plan)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(journal, key+".intent"), raw, 0600))
+	lock := flock.New(filepath.Join(journal, "lock"))
+	defer lock.Close()
+	held, err := lock.TryLock()
+	require.NoError(t, err)
+	require.True(t, held)
+	bounded, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	require.Error(t, r.RecoverCacheGCIntent(bounded, plan))
+	require.NoFileExists(t, filepath.Join(journal, key+".done"))
+	require.NoError(t, lock.Unlock())
+	require.NoError(t, r.RecoverCacheGCIntent(ctx, plan))
+	require.FileExists(t, filepath.Join(journal, key+".done"))
 }

@@ -142,7 +142,7 @@
         "gc-domain-coverage"
       ],
       "remaining": [
-        "Dedicated two-kernel publisher enablement and retained-reference retirement have live evidence. Global unbound revisions and removal of retired references remain open; enrollment of arbitrary existing deployments is not inferred."
+        "Retired domain references can now release atomically during quiescent metadata DELETE; external resource references and snapshots still require explicit cleanup. Global unbound revision registry coverage and enrollment of arbitrary deployments remain open."
       ]
     },
     {
@@ -164,7 +164,7 @@
         "real-docker-api"
       ],
       "remaining": [
-        "Private-cache PostgreSQL deletion now uses durable catalog reservation and trigger-enforced write fencing; exact done-receipt reconciliation is implemented. Incomplete-intent reconciliation without a done receipt, unbound/global cache coverage and non-Docker batch interruption matrix remain open."
+        "Exact absent-file intents can now complete receipts after original-host lock verification; present/replaced/missing-evidence cases remain blocked. Unbound/global cache coverage and non-Docker batch interruption matrix remain open."
       ]
     },
     {
@@ -176,10 +176,12 @@
         "gc-storage",
         "gc-host",
         "real-docker-api",
-        "real-docker-provider"
+        "real-docker-provider",
+        "real-libvirt",
+        "real-firecracker"
       ],
       "remaining": [
-        "Real orphan cleanup and zero-managed-damage matrix across all providers remains open."
+        "Provider exact-target deletion and unaffected survivor tests cover Docker/libvirt/Firecracker. Complete owning-agent non-Docker batch interruption and recovery matrix remains open."
       ]
     },
     {
@@ -388,7 +390,8 @@
         "TestGCProductionPublisherCrashRemainsIncomplete",
         "TestGCProductionMissingConfigurationCannotBypassEnrollment",
         "TestGCProductionIndependentWorkspacesSharePublicationAuthority",
-        "TestGCSourceHTTPRetirementFencesFuturePublication"
+        "TestGCSourceHTTPRetirementFencesFuturePublication",
+        "TestMetadataDeleteRetiredPublishersDoesNotReenroll"
       ],
       "kind": "contract",
       "race": true,
@@ -424,7 +427,11 @@
         "TestPostgresCacheReconcilesLostCompletionWithoutDeletingAgain",
         "TestPostgresCacheFenceRejectsOldSnapshotWriters",
         "TestPostgresCacheQueuedWriterSeesCommittedFence",
-        "TestPostgresCacheProcessCrashNeverReplaysUnlink"
+        "TestPostgresCacheProcessCrashNeverReplaysUnlink",
+        "TestPostgresCacheIntentRecoveryRequiresAbsenceAndOriginalHost",
+        "TestCacheIntentRecoveryWaitsForOriginalDeleter",
+        "TestCacheRecoveryAfterProcessExitAtUnlinkBoundary",
+        "TestQuiescentDeleteReleasesOnlyFullyRetiredSourceDomains"
       ],
       "kind": "contract",
       "race": true,
@@ -559,7 +566,8 @@
       "package": "./pkg/provider/libvirt",
       "tests": [
         "TestLibvirtUnownedAdoptionColdLifecycleE2E",
-        "TestLibvirtRealGenerationEffectsE2E"
+        "TestLibvirtRealGenerationEffectsE2E",
+        "TestLibvirtRealGCExactOwnerAndSurvivorE2E"
       ],
       "kind": "real-provider",
       "race": false,
@@ -578,7 +586,8 @@
         "TestFirecrackerRealGenerationLifecycleE2E",
         "TestFirecrackerRealResetGenerationAndColdAdoptionE2E",
         "TestFirecrackerRealCrossProcessRecoveryE2E",
-        "TestFirecrackerRealControllerCrashRecoveryE2E"
+        "TestFirecrackerRealControllerCrashRecoveryE2E",
+        "TestFirecrackerRealGCExactOwnerAndSurvivorE2E"
       ],
       "kind": "real-provider",
       "race": false,

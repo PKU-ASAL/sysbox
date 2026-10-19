@@ -70,7 +70,7 @@ func (s *WorkspaceService) finishDeletionIntent(ctx context.Context, intent dele
 	if err := os.RemoveAll(filepath.Join(s.workspacesDir, intent.Topology)); err != nil {
 		return err
 	}
-	if err := s.deletePlacement(ctx, intent.Topology); err != nil {
+	if err := s.deletePlacementUnpublished(ctx, intent.Topology); err != nil {
 		return err
 	}
 	if s.health != nil {

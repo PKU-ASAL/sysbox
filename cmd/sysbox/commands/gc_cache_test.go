@@ -50,6 +50,14 @@ func TestGCCacheCLIPlanApplyUsesCanonicalCatalog(t *testing.T) {
 	_, err = run("--catalog", "sqlite://"+db, "--apply-plan", path)
 	require.NoError(t, err)
 	require.NoFileExists(t, target)
+	// Simulate an interrupted receipt publication with target already absent.
+	journal := filepath.Join(root, ".sysbox-gc")
+	require.NoError(t, os.Rename(filepath.Join(journal, plan.ID+".done"), filepath.Join(journal, plan.ID+".intent")))
+	_, err = run("--catalog", "sqlite://"+db, "--recover-intent-plan", path)
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(journal, plan.ID+".done"))
+	require.NoFileExists(t, target)
+
 }
 
 func TestGCCacheCLIRefusesConflictingApplyAndReconcile(t *testing.T) {

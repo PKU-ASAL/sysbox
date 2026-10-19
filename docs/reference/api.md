@@ -793,3 +793,15 @@ only the affected aggregate to format 8, which older writers reject. It is not
 proof that a host process stopped, does not discard references, and does not
 permit metadata deletion or shared cache deletion. A failed/incomplete publisher
 cannot be retired to bypass its unresolved operation.
+
+Quiescent topology metadata DELETE can now release **domain-only** source
+references in the same authority/aggregate transaction. Every source must be
+retired and complete, state must have no resources, no snapshot may remain,
+no source may carry explicit external resource references, and pending GC or
+unresolved actions still block deletion. Existing API activity and grant-stop
+checks remain mandatory. Raw state deletion cannot release sources.
+
+The operation resets the topology UID, rejecting publication under the old
+identity. Placement cleanup does not create a new publisher. Immutable files
+retained for run history remain on disk; this operation does not delete their
+contents or claim provider absence independently of existing cleanup evidence.

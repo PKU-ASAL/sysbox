@@ -38,6 +38,21 @@ func ApplyQuiescentLifecycleDelete(raw, authorityRaw []byte, topology string, ex
 			return nil, fmt.Errorf("%w: execution %s awaits host stop", ErrConflict, grant.ActionID)
 		}
 	}
+	if len(a.GCSources) > 0 {
+		// Only this authority-locked path may release retired domain references.
+		// Raw state Delete remains forbidden; retained snapshots and resource
+		// references require their own explicit cleanup first.
+		if len(a.State.Resources) > 0 || len(a.Snapshots) > 0 || gcPending(a) {
+			return nil, ErrConflict
+		}
+		for _, source := range a.GCSources {
+			if !source.Retired || source.Updating || len(source.Manifest.References) > 0 {
+				return nil, ErrConflict
+			}
+		}
+		a.GCSources = nil
+		a.Format = FormatVersion
+	}
 	if err := resetAggregate(a); err != nil {
 		return nil, err
 	}

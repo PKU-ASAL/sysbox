@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
@@ -192,4 +193,71 @@ func TestPostgresCacheProcessCrashNeverReplaysUnlink(t *testing.T) {
 	require.Error(t, r.ApplyCacheGC(ctx, plan))
 	require.Error(t, r.ReconcileCacheGC(ctx, plan))
 	require.FileExists(t, filepath.Join(plan.Root, plan.Path))
+}
+
+func TestPostgresCacheIntentRecoveryRequiresAbsenceAndOriginalHost(t *testing.T) {
+	r, plan := cachePGFixture(t)
+	ctx := context.Background()
+	require.NoError(t, r.reservePostgresCache(ctx, plan))
+	journal := filepath.Join(plan.Root, ".sysbox-gc")
+	require.NoError(t, os.Mkdir(journal, 0700))
+	raw, err := json.Marshal(plan)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(journal, plan.ID+".intent"), raw, 0600))
+	require.Error(t, r.RecoverCacheGCIntent(ctx, plan), "present file is not deletion completion")
+	require.FileExists(t, filepath.Join(plan.Root, plan.Path))
+	require.NoError(t, os.Remove(filepath.Join(plan.Root, plan.Path)))
+	b := r.backend.(*sqlBackend)
+	_, err = b.db.ExecContext(ctx, "UPDATE sysbox_cache_deletions SET host='foreign' WHERE id=$1", plan.ID)
+	require.NoError(t, err)
+	require.Error(t, r.RecoverCacheGCIntent(ctx, plan))
+	require.NoFileExists(t, filepath.Join(journal, plan.ID+".done"))
+	host, err := cacheHostID()
+	require.NoError(t, err)
+	_, err = b.db.ExecContext(ctx, "UPDATE sysbox_cache_deletions SET host=$1 WHERE id=$2", host, plan.ID)
+	require.NoError(t, err)
+	require.NoError(t, r.RecoverCacheGCIntent(ctx, plan))
+	require.FileExists(t, filepath.Join(journal, plan.ID+".done"))
+	require.NoFileExists(t, filepath.Join(journal, plan.ID+".intent"))
+	_, err = r.LoadState(ctx, "new-after-recovery")
+	require.NoError(t, err)
+	require.NoError(t, r.RecoverCacheGCIntent(ctx, plan), "exact receipt replay only releases, never deletes")
+}
+
+func TestCacheRecoveryAfterProcessExitAtUnlinkBoundary(t *testing.T) {
+	if os.Getenv("SYSBOX_CACHE_UNLINK_CHILD") == "1" {
+		var plan CacheGCPlan
+		require.NoError(t, json.Unmarshal([]byte(os.Getenv("SYSBOX_CACHE_UNLINK_PLAN")), &plan))
+		lock := flock.New(filepath.Join(plan.Root, ".sysbox-gc", "lock"))
+		held, err := lock.TryLock()
+		require.NoError(t, err)
+		require.True(t, held)
+		raw, err := json.Marshal(plan)
+		require.NoError(t, err)
+		f, err := os.OpenFile(filepath.Join(plan.Root, ".sysbox-gc", plan.ID+".intent"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		require.NoError(t, err)
+		_, err = f.Write(raw)
+		require.NoError(t, err)
+		require.NoError(t, f.Sync())
+		require.NoError(t, f.Close())
+		require.NoError(t, syncCacheDir(filepath.Join(plan.Root, ".sysbox-gc")))
+		require.NoError(t, os.Remove(filepath.Join(plan.Root, plan.Path)))
+		os.Exit(72)
+	}
+	r, plan := cachePGFixture(t)
+	ctx := context.Background()
+	require.NoError(t, r.reservePostgresCache(ctx, plan))
+	require.NoError(t, os.Mkdir(filepath.Join(plan.Root, ".sysbox-gc"), 0700))
+	raw, err := json.Marshal(plan)
+	require.NoError(t, err)
+	child := exec.Command(os.Args[0], "-test.run=^TestCacheRecoveryAfterProcessExitAtUnlinkBoundary$")
+	child.Env = append(os.Environ(), "SYSBOX_CACHE_UNLINK_CHILD=1", "SYSBOX_CACHE_UNLINK_PLAN="+string(raw))
+	out, err := child.CombinedOutput()
+	var exit *exec.ExitError
+	require.ErrorAs(t, err, &exit, string(out))
+	require.Equal(t, 72, exit.ExitCode())
+	require.NoError(t, r.RecoverCacheGCIntent(ctx, plan))
+	require.FileExists(t, filepath.Join(plan.Root, ".sysbox-gc", plan.ID+".done"))
+	_, err = r.LoadState(ctx, "new")
+	require.NoError(t, err)
 }

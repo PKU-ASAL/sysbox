@@ -279,3 +279,13 @@ releasing the reservation. It never unlinks or replays deletion. Missing or part
 receipts require investigation and leave all catalog writers blocked. A receipt
 does not authorize deleting a recreated file. Each invocation handles one private
 host-cache file, never recursive directories or arbitrary shared/global caches.
+
+For an interrupted unlink with an exact `.intent` but no `.done`, use
+`sysbox gc cache --catalog <url> --recover-intent-plan plan.json` on the original
+host. It acquires the same exclusive deletion lock, verifies the private journal
+and exact PostgreSQL host/plan binding, requires the target to be absent, syncs
+its parent directory and promotes the intent to a durable completion receipt.
+It then releases the database reservation. It never performs unlink. A present
+or replaced file, missing/partial intent, unsafe path, foreign host, or still-held
+lock prevents recovery. This differs from `--reconcile-plan`, which requires an
+already completed receipt. These operations are mutually exclusive with apply.
