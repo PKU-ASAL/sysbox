@@ -145,7 +145,7 @@
         "revision-delete-api"
       ],
       "remaining": [
-        "Same-database global revision content now participates in cache protection and PostgreSQL publication fencing. Separate registries/filesystem global inventories and global revision object retention/deletion remain open."
+        "Implemented: same-SQL global revision protection, three-backend retention preview, and single-object SQL retirement with new-Run/auxiliary-reference admission fencing. Unsupported: file-registry deletion and separate/unregistered registry federation. Their inventories cannot authorize SQL deletion; complete cross-registry coverage remains outside supported scope."
       ]
     },
     {
@@ -170,7 +170,7 @@
         "non-docker-gc-process-crash"
       ],
       "remaining": [
-        "Batch recovery and independent process exit at coordinator effect/report boundaries are covered for libvirt/Firecracker. Provider-internal interruption, missing/corrupt evidence manual disposition, and separate registry/global revision retention remain outside these gates."
+        "Implemented: 1–128 ordered provider batch, single-file cache deletion/disposition, single-revision SQL retirement, and libvirt/Firecracker batch receipt recovery. No automatic application of retention-preview batches. Provider-internal interruptions and arbitrary shared-cache/federated-registry execution remain unverified/unsupported respectively. Missing/corrupt non-Docker provider journal evidence remains uncertain/manual investigation; the complete provider-specific disposition matrix is not claimed by these gates."
       ]
     },
     {
@@ -190,7 +190,7 @@
         "non-docker-gc-process-crash"
       ],
       "remaining": [
-        "Real provider exact deletion/survivor protection, non-Docker batch lost-receipt/cold API recovery, and child process exit before/after effect/before reporting are covered. Full API/Agent OS-kill and provider-internal interruption matrix remains open."
+        "Real Docker/libvirt/Firecracker target deletion and survivor protection, non-Docker batch lost-receipt/cold-API recovery, and process exit before effect/after effect/before report are verified per gate. Full API/Agent SIGKILL and provider-internal fault matrices remain P9.3 work; this requirement is not globally closed by the scoped stage-2 delivery."
       ]
     },
     {
@@ -452,7 +452,8 @@
         "TestCacheDispositionConflictingTerminalsNeverUnlock",
         "TestCacheGCProtectsUnboundGlobalRevisionContent",
         "TestPostgresCacheFencesGlobalRevisionPublication",
-        "TestGlobalRevisionInventoryRejectsCorruptAndIncludesTextReferences"
+        "TestGlobalRevisionInventoryRejectsCorruptAndIncludesTextReferences",
+        "TestStage2ProviderBatchLimitAndRegistryDeletionBoundary"
       ],
       "kind": "contract",
       "race": true,
@@ -786,7 +787,9 @@
       "id": "revision-delete-api",
       "package": "./pkg/api",
       "tests": [
-        "TestGlobalRevisionDeleteHTTPFencesRunAdmission"
+        "TestGlobalRevisionDeleteHTTPFencesRunAdmission",
+        "TestStage2RevisionDeletionRejectsFileScopedAndBulkRequests",
+        "TestStage2RevisionDeletionRetainsSnapshotAndHistoricalRun"
       ],
       "kind": "contract",
       "race": true,

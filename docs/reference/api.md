@@ -819,9 +819,10 @@ provider deletion authority.
 `POST /v1/revisions/retention-plan` accepts `keep_last` (0–10000),
 `older_than` (a past RFC3339 timestamp), and `limit` (1–128). It returns
 `candidates`, `retained` reasons, a source digest and
-`deletion_authorized:false`. There is no apply operation. Registry, lifecycle
-and Run observations are separate: this preview is not a transaction or a
-permission to delete. Any eventual executor must revalidate admission atomically.
+`deletion_authorized:false`. There is no bulk apply-preview operation. Registry,
+lifecycle and Run observations are separate: this preview is not a transaction
+or permission to delete. The separate single-object SQL deletion endpoint below
+revalidates references and admission in its own transaction.
 
 The preview supports file, SQLite and PostgreSQL registries, validates revision
 content digests and protects historical Run references plus current and retained

@@ -4551,3 +4551,17 @@ Retained commands/checkpoints/plans and decoded lifecycle/snapshot evidence are
 checked while locked. Durable revision retirement markers fence new auxiliary
 references after deletion commits. File registry deletion remains unsupported.
 HTTP tests exercise production persistence APIs with real SQLite/PostgreSQL.
+
+### Stage 2 consolidated scope verification
+
+The current delivery matrix lives in
+`docs/design/2026-10-07-parallel-implementation-tracker.md` (Stage 2 section).
+It replaces stale historical statements without erasing earlier evidence.
+`scripts/acceptance/stage2.json` selects all 15 P8-related gates for one-source
+verification, and separately states unsupported file-registry deletion, federated
+catalogs, automatic bulk retention apply, and unverified full P9 fault matrices.
+
+Additional tests exercise file/scoped-catalog and bulk-request refusal without
+mutating registry data, snapshot-only and historical Run retention during actual
+SQL deletion, exact 128-member batch acceptance and 129-member rejection. This
+consolidation cannot close original P8/P9 gaps merely by changing the stage label.

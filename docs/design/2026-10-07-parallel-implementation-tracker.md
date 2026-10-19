@@ -813,3 +813,53 @@ round不能计当前通过。重复失败的 known-failed topology 已正常销�
 
 这关闭 P9.4 的当前 live-fault campaign 范围，但仍不关闭 P9 的全部 fault matrix、
 disk-full、upgrade/rebuild、全部 transport/provider 组合或 main 整合。
+
+## 第 2 阶段当前逐项对账（2026-10-19，覆盖前文历史状态）
+
+本节是当前状态；前文按时间记录的“revision 删除未实现”“非 Docker 批量
+尚未接入”等描述不再代表当前代码。机器清单为
+`scripts/acceptance/stage2.json`，从原始 P8 条目汇总 15 组门禁。
+阶段交付必须在同一源码摘要和提交上全部通过；不能拼接旧版本证据。
+当前验证状态：等待本轮统一门禁结果，下方是已实现边界而非提前通过声明。
+
+### 后端与删除范围
+
+| 对象／后端 | 已实施 | 明确边界与验收 |
+|---|---|---|
+| 文件全局 revision registry | 内容摘要校验、历史 Run 和解码快照引用盘点、保留预览 | 删除返回冲突，不声称跨文件事务；拒绝旧格式 state 和不完整 catalog |
+| SQLite 全局 revision | 同库盘点、保留预览、单对象退休删除 | 同一写事务检查历史 Run／lifecycle／快照／其他 revision／命令／检查点／计划，并安装新引用拒绝守卫 |
+| PostgreSQL 全局 revision | 与 SQLite 等价的单对象退休，显式 READ COMMITTED | 删除与 Run 引用竞争不能都提交；退休标记永久阻止重新发布后恢复新引用 |
+| 独立 registry／另一个数据库／任意共享缓存 | 未实现联邦盘点和删除协议 | 不属于可执行范围，不能以本库无引用推断另一 registry 无引用；原始 P8.2 保留开放 |
+| 私有宿主缓存 | SQLite 锁内精确删除；PostgreSQL 持久化 reservation＋触发器冻结；完成／终止／恢复处置 | 必须全部写入方已登记并受同一 catalog 约束；文件 catalog 不授权缓存删除 |
+
+### 批量策略
+
+| 操作 | 实际策略 | 不支持的推断 |
+|---|---|---|
+| provider GC | 1–128 个候选原子 reservation，节点先于网络，逐个队首授权及签名回执；失败／未知不越过 | 不是并发裸删除，不因租约到期认定前项停止 |
+| 缓存 GC | 每次一份精确文件计划，重验路径、inode、内容和 catalog，写 intent 后 unlink | 不递归删目录、不把单对象回执用于重建文件 |
+| revision retention preview | keep_last 0–10000、older_than、limit 1–128，`deletion_authorized:false` | 非原子观察，不是批量删除许可 |
+| revision delete | 显式 revision＋older_than，每次一个 SQL 对象，事务内重验引用 | 不自动执行保留计划；不是原子批量 keep-last，文件后端不可执行 |
+
+### 故障与真实资源矩阵
+
+| 验收点 | Docker | libvirt | Firecracker | 结论范围 |
+|---|---|---|---|---|
+| owning-Agent 批次顺序、丢回执、冷 API／coordinator 恢复 | 已有真实 gate | 已有真实 gate | 已有真实 gate，两个成员均验证精确回执重报 | 同一进程内 API 重建／冷实例恢复，不冒充 API 进程 kill |
+| 精确目标删除、过时代际拒绝、旁路对象无损 | 真实 provider gate | 旁路域与磁盘 sentinel 保留 | 旁路 VM 仍运行，原 PID/start identity 消失、socket 删除 | 独立验收只覆盖测试拥有资源 |
+| provider effect 前子进程退出 | 既有门禁范围单列 | 保留 uncertain，不重放 | 保留 uncertain，不重放 | 精确 `os.Exit` 无 defer 边界，不声称随机 SIGKILL |
+| effect 已返回、journal outcome 未提交时退出 | 既有门禁范围单列 | 目标已删但仍 uncertain，无成功回执 | 同左，额外核对进程／socket | 不把 absence 当作原请求成功 |
+| outcome 已封存、回报前退出 | 既有门禁范围单列 | 冷恢复签名回执，旧 grant fenced | 同左 | 读取历史结果，无第二次 provider 删除 |
+| provider journal 丢失／损坏后的完整处置矩阵 | 未完整验收 | 未完整验收 | 未完整验收 | 保留 unknown；缓存文件的阶段 1 manual review 流程不能代替全部 provider 处置证明 |
+| API／Agent 各点 SIGKILL、provider 内部调用半完成、磁盘满与乱序完整矩阵 | 未完成 | 未完成 | 未完成 | 仍属原始 P9.3 等开放项，不能标已验收 |
+
+### 阶段交付与原始总验收的区别
+
+本轮可关闭的交付是：**同 catalog 的全局 revision 保护／SQL 单对象删除，
+加上述非 Docker 批量与 coordinator 边界恢复验收，以及不支持范围的拒绝行为**。
+这不是“所有后端都能删除”或“全部故障矩阵完成”。文件后端删除、独立 registry
+联邦覆盖、自动批量 revision retention 没有被悄悄变成已完成事项。
+
+原始 P8.2、P8.4、P8.acceptance 的 `remaining` 已改为上述真实未覆盖范围；
+P9.3、P9.acceptance 继续开放。只有相同提交的 15 组严格门禁、边界测试、
+独立审查及常规检查通过后，才能在本节记录“支持范围交付关闭”。

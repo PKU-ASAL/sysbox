@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "id": "stage2-supported-delivery",
+  "title": "Global revision coverage and non-Docker GC acceptance",
+  "scope": "Same-catalog enrolled deployment; file registry preview only; single SQL revision retirement; bounded provider batch and coordinator process-exit recovery",
+  "gates": [
+    "gc-cli",
+    "gc-api",
+    "gc-host",
+    "gc-storage",
+    "gc-domain-coverage",
+    "revision-retention-preview",
+    "revision-delete-storage",
+    "revision-delete-api",
+    "real-docker-api",
+    "real-libvirt-gc-api",
+    "real-firecracker-gc-api",
+    "non-docker-gc-process-crash",
+    "real-docker-provider",
+    "real-libvirt",
+    "real-firecracker"
+  ],
+  "boundaries": {
+    "file_registry": "inventory and retention preview; deletion rejected",
+    "sql_registry": "unscoped same-catalog SQLite/PostgreSQL; explicit single-revision retirement",
+    "provider_batch": "1..128 candidates; ordered, each receipt required",
+    "cache_batch": "one exact private host file per apply",
+    "revision_batch": "preview limit 1..128; explicit single-object delete only; no apply-preview endpoint",
+    "faults": "libvirt/Firecracker process exits before effect, after effect before outcome commit, before sealed receipt report; cold API/coordinator and lost acknowledgements"
+  },
+  "not_closed": [
+    "separate/unregistered global registry federation and file registry deletion",
+    "full API/Agent SIGKILL matrix and provider-internal partial calls",
+    "automatic bulk revision retention execution",
+    "full P8/P9 original acceptance",
+    "complete provider-specific disposition matrix for missing/corrupt non-Docker journal evidence"
+  ],
+  "evidence_rule": "all selected strict gates must pass on the same source digest and commit; failure/skip/missing environment does not close scope; original requirement remaining items stay open"
+}

@@ -322,4 +322,5 @@ Inventory is bounded to 10,000 revisions / 64 MiB of encoded records; exceeding
 limits rejects the plan. PostgreSQL apply requires the global revision table to
 already exist and fences writes to it for the lifetime of the reservation.
 Independent registries and filesystem global revision stores are not implied to
-be covered. Global revision objects themselves are retained, not deleted.
+be covered by cache deletion. Cache GC never deletes revision objects; the API
+provides a separate, explicit single-object SQL revision retirement endpoint.
