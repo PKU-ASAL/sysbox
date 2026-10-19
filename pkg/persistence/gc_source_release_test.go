@@ -57,3 +57,40 @@ func TestQuiescentDeleteReleasesOnlyFullyRetiredSourceDomains(t *testing.T) {
 		})
 	}
 }
+
+func TestMetadataDeleteReceiptSurvivesLostCommitResponse(t *testing.T) {
+	for _, kind := range []string{"filesystem", "sqlite", "postgres"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			r := resetTestRepository(t, kind)
+			st, err := r.LoadState(ctx, "lab")
+			require.NoError(t, err)
+			require.NoError(t, r.DeleteQuiescentLifecycle(ctx, "lab", st.Meta.Serial, st.TopologyUID, nil))
+			after, err := r.LoadState(ctx, "lab")
+			require.NoError(t, err)
+			require.NoError(t, r.DeleteQuiescentLifecycle(ctx, "lab", st.Meta.Serial, st.TopologyUID, nil), "lost commit response must not strand filesystem cleanup")
+			again, err := r.LoadState(ctx, "lab")
+			require.NoError(t, err)
+			require.Equal(t, after.TopologyUID, again.TopologyUID)
+			_, err = r.BeginGCSource(ctx, "lab", "new", after.TopologyUID, 0)
+			require.NoError(t, err)
+			require.ErrorIs(t, r.DeleteQuiescentLifecycle(ctx, "lab", st.Meta.Serial, st.TopologyUID, nil), ErrConflict, "old cleanup may not remove a reused topology")
+		})
+	}
+}
+
+func TestUnrelatedResetClearsPriorDeletionReceipt(t *testing.T) {
+	a := newAggregate()
+	old := a.State.TopologyUID
+	raw, err := json.Marshal(a)
+	require.NoError(t, err)
+	next, err := ApplyQuiescentLifecycleDelete(raw, nil, "lab", 0, old)
+	require.NoError(t, err)
+	a, err = decodeAggregate(next)
+	require.NoError(t, err)
+	require.NoError(t, resetAggregate(a))
+	raw, err = json.Marshal(a)
+	require.NoError(t, err)
+	_, err = ApplyQuiescentLifecycleDelete(raw, nil, "lab", 0, old)
+	require.ErrorIs(t, err, ErrConflict)
+}

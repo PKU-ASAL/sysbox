@@ -4445,3 +4445,22 @@ generation rejection, exact target deletion, independent absence, and survivor
 preservation. Libvirt additionally retains sentinel disk files; Firecracker
 verifies the other VM is still running. This closes the primitive zero-damage
 cell, not the full non-Docker owning-agent batch interruption matrix.
+
+### Stage 1 final disposition matrix
+
+The stage boundary is GC lifecycle completion for enrolled private caches and
+retired domain-only topology sources. It includes: absent-file receipt recovery;
+exact-present-file abort with file preserved; PostgreSQL reservation-before-intent
+abort; completed receipt reconciliation; original deleter still holding the lock;
+foreign machine, replacement, invalid and contradictory receipt quarantine.
+Inspection exposes a machine-readable disposition. Manual quarantine preserves
+evidence and moves new work to a separately enrolled catalog rather than forcing
+an unverifiable old catalog open.
+
+A new three-backend regression found metadata reset could commit before local
+cleanup and then strand replay on the changed UID. Exact UID/serial deletion
+receipts now allow only unchanged empty successor cleanup, with old/new authority
+checked. Old receipts are cleared by unrelated resets. Cold service cleanup tests
+pass on file, SQLite and PostgreSQL. Review additionally found and fixed invalid
+abort evidence falling through to a valid intent; conflicting receipts now retain
+the reservation. Abort is audited locally and in PostgreSQL as `outcome=aborted`.

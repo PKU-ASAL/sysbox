@@ -308,6 +308,9 @@ func (r *Repository) ApplyCacheGC(ctx context.Context, plan CacheGCPlan) error {
 		if _, err = os.Stat(filepath.Join(journal, plan.ID+".done")); !os.IsNotExist(err) {
 			return ErrConflict
 		}
+		if _, err = os.Lstat(filepath.Join(journal, plan.ID+".aborted")); !os.IsNotExist(err) {
+			return ErrConflict
+		}
 		intent := filepath.Join(journal, plan.ID+".intent")
 		f, err := os.OpenFile(intent, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {

@@ -805,3 +805,11 @@ The operation resets the topology UID, rejecting publication under the old
 identity. Placement cleanup does not create a new publisher. Immutable files
 retained for run history remain on disk; this operation does not delete their
 contents or claim provider absence independently of existing cleanup evidence.
+
+Metadata reset now commits an exact old-topology UID/serial deletion receipt.
+If the process exits after reset but before workspace cleanup, the same request
+can complete cleanup without creating another topology identity. Replay requires
+an untouched empty successor and stopped authority for both identities. New
+state, actions, snapshots or source enrollment blocks old cleanup; an unrelated
+reset clears the old receipt. The receipt is retry evidence, not execution or
+provider deletion authority.

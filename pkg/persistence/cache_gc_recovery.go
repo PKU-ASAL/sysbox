@@ -80,6 +80,9 @@ func (r *Repository) RecoverCacheGCIntent(ctx context.Context, plan CacheGCPlan)
 			return ErrConflict
 		}
 	}
+	if _, err = os.Lstat(filepath.Join(journal, plan.ID+".aborted")); !os.IsNotExist(err) {
+		return ErrConflict
+	}
 	done := filepath.Join(journal, plan.ID+".done")
 	if _, err = os.Lstat(done); err == nil {
 		if err = verifyCacheDone(plan); err != nil {

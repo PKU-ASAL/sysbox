@@ -289,3 +289,28 @@ It then releases the database reservation. It never performs unlink. A present
 or replaced file, missing/partial intent, unsafe path, foreign host, or still-held
 lock prevents recovery. This differs from `--reconcile-plan`, which requires an
 already completed receipt. These operations are mutually exclusive with apply.
+
+### Cache intent disposition
+
+Use `gc cache --catalog <url> --inspect-plan plan.json` first. Its machine-readable
+`action` is `wait`, `recover`, `reconcile`, `abort`, or `manual_review`. Inspection
+acquires the original deletion lock without waiting and does not alter receipts.
+`--abort-plan plan.json` preserves the exact original inode/content, durably
+archives the intent as `.aborted`, and releases the PostgreSQL reservation with
+`outcome=aborted`. It never claims resource deletion. A PostgreSQL reservation
+committed before any intent may also be aborted, but only with exact original
+host/plan binding, original file identity and the host lock. A recreated/modified
+file is not eligible. Applying the old plan after abort is rejected.
+
+For `manual_review`, preserve the plan, all `.sysbox-gc/<id>.*` files, target
+stat/hash, and (for PostgreSQL) the exact reservation row before intervention.
+Do not remove a lock, edit a reservation, synthesize a receipt, or retry unlink.
+Identify the original machine and stop the exact original deleter; acquire its
+lock through inspection. If the original target or intact original journal can
+be recovered from retained evidence, restore that evidence on the original host
+and inspect again. Then use the indicated exact abort/recover/reconcile command.
+If identity or journal authenticity cannot be established, keep the reservation
+quarantined and migrate new work to a separately enrolled cache/catalog; retain
+the old catalog as evidence. This is the supported terminal manual disposition,
+not a force-unfreeze operation. Foreign host, corrupted receipts, unsafe paths,
+and conflicting terminal records must never be accepted as deletion success.

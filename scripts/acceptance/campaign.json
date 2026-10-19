@@ -368,7 +368,8 @@
         "TestGCFirecrackerCandidatesRequireCompleteOwnedUnreferencedInventory",
         "TestGCProtectsFirecrackerStateAndSnapshotReferences",
         "TestGCCacheCLIPlanApplyUsesCanonicalCatalog",
-        "TestGCCacheCLIRefusesConflictingApplyAndReconcile"
+        "TestGCCacheCLIRefusesConflictingApplyAndReconcile",
+        "TestGCCacheCLIInspectsAndAbortsWithoutDeleting"
       ],
       "kind": "contract",
       "race": true,
@@ -391,7 +392,8 @@
         "TestGCProductionMissingConfigurationCannotBypassEnrollment",
         "TestGCProductionIndependentWorkspacesSharePublicationAuthority",
         "TestGCSourceHTTPRetirementFencesFuturePublication",
-        "TestMetadataDeleteRetiredPublishersDoesNotReenroll"
+        "TestMetadataDeleteRetiredPublishersDoesNotReenroll",
+        "TestMetadataDeletionCleanupResumesAfterCommittedReset"
       ],
       "kind": "contract",
       "race": true,
@@ -431,7 +433,14 @@
         "TestPostgresCacheIntentRecoveryRequiresAbsenceAndOriginalHost",
         "TestCacheIntentRecoveryWaitsForOriginalDeleter",
         "TestCacheRecoveryAfterProcessExitAtUnlinkBoundary",
-        "TestQuiescentDeleteReleasesOnlyFullyRetiredSourceDomains"
+        "TestQuiescentDeleteReleasesOnlyFullyRetiredSourceDomains",
+        "TestCacheDispositionAbortsExactPresentIntentWithoutDeleting",
+        "TestCacheDispositionRejectsChangedTarget",
+        "TestCacheDispositionRejectsConflictingReceipt",
+        "TestCacheDispositionAbortsBeforeIntentPublication",
+        "TestMetadataDeleteReceiptSurvivesLostCommitResponse",
+        "TestUnrelatedResetClearsPriorDeletionReceipt",
+        "TestCacheDispositionConflictingTerminalsNeverUnlock"
       ],
       "kind": "contract",
       "race": true,

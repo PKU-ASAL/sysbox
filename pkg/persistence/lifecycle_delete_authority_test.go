@@ -60,8 +60,9 @@ func TestQuiescentLifecycleDeleteRejectsExpiredAndMalformedAuthority(t *testing.
 	reset, err := decodeAggregate(next)
 	require.NoError(t, err)
 	require.NotEqual(t, a.State.TopologyUID, reset.State.TopologyUID)
-	_, err = ApplyQuiescentLifecycleDelete(next, nil, "lab", 0, a.State.TopologyUID)
-	require.ErrorIs(t, err, ErrConflict, "old identity cannot reset its successor")
+	replayed, err := ApplyQuiescentLifecycleDelete(next, nil, "lab", 0, a.State.TopologyUID)
+	require.NoError(t, err)
+	require.JSONEq(t, string(next), string(replayed), "exact retry cannot reset its successor")
 }
 
 func TestQuiescentLifecycleDeleteRejectsMissingAuthorityFields(t *testing.T) {

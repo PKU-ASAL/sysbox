@@ -8,6 +8,14 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
+// LifecycleDeletionReceipt is retry evidence, never execution authority.
+// Readers that do not know this optional field fail the old-UID CAS rather
+// than accepting a broader deletion. No provider effect is replayed.
+type LifecycleDeletionReceipt struct {
+	TopologyUID string `json:"topology_uid"`
+	Serial      int64  `json:"serial"`
+}
+
 // ApplyQuiescentLifecycleDelete checks persisted stop evidence, maintenance and
 // lifecycle CAS together. The caller must hold authority and aggregate locks
 // through commit. Nil authority is allowed only when absence was checked under
@@ -23,20 +31,27 @@ func ApplyQuiescentLifecycleDelete(raw, authorityRaw []byte, topology string, ex
 	if err = validateAggregate(a, topology); err != nil {
 		return nil, err
 	}
-	if a.Serial != expectedSerial || a.State.TopologyUID != topologyUID {
+	replay := a.DeletedFrom != nil && a.DeletedFrom.TopologyUID == topologyUID && a.DeletedFrom.Serial == expectedSerial
+	if replay && (a.Serial != 0 || len(a.State.Resources) > 0 || len(a.Actions) > 0 || len(a.GCSources) > 0 || len(a.Snapshots) > 0) {
+		return nil, ErrConflict
+	}
+	if !replay && (a.Serial != expectedSerial || a.State.TopologyUID != topologyUID) {
 		return nil, ErrConflict
 	}
 	authority, err := decodeExecutionAuthority(authorityRaw)
 	if err != nil {
 		return nil, err
 	}
-	if authority.maintenanceBlocks(topologyUID) {
+	if authority.maintenanceBlocks(topologyUID) || authority.maintenanceBlocks(a.State.TopologyUID) {
 		return nil, fmt.Errorf("%w: maintenance prevents metadata deletion", ErrConflict)
 	}
 	for _, grant := range authority.Grants {
-		if grant.Scope.TopologyUID == topologyUID && grant.State != controlplane.GrantStopped {
+		if (grant.Scope.TopologyUID == topologyUID || grant.Scope.TopologyUID == a.State.TopologyUID) && grant.State != controlplane.GrantStopped {
 			return nil, fmt.Errorf("%w: execution %s awaits host stop", ErrConflict, grant.ActionID)
 		}
+	}
+	if replay {
+		return append([]byte(nil), raw...), nil
 	}
 	if len(a.GCSources) > 0 {
 		// Only this authority-locked path may release retired domain references.
@@ -56,6 +71,7 @@ func ApplyQuiescentLifecycleDelete(raw, authorityRaw []byte, topology string, ex
 	if err := resetAggregate(a); err != nil {
 		return nil, err
 	}
+	a.DeletedFrom = &LifecycleDeletionReceipt{TopologyUID: topologyUID, Serial: expectedSerial}
 	return json.Marshal(a)
 }
 

@@ -32,6 +32,7 @@ func cacheHostID() (string, error) {
 func installCacheFence(ctx context.Context, c *sql.Conn) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS sysbox_cache_deletions (id TEXT PRIMARY KEY, host TEXT NOT NULL, plan JSONB NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','done')))`,
+		`ALTER TABLE sysbox_cache_deletions ADD COLUMN IF NOT EXISTS outcome TEXT`,
 		`CREATE OR REPLACE FUNCTION sysbox_cache_write_guard() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE blocked boolean; BEGIN IF current_setting('transaction_isolation') <> 'read committed' THEN RAISE EXCEPTION 'cache publication requires read committed isolation' USING ERRCODE='55000'; END IF; EXECUTE format('SELECT EXISTS(SELECT 1 FROM %I.sysbox_cache_deletions WHERE state = %L)', TG_TABLE_SCHEMA, 'pending') INTO blocked; IF blocked THEN RAISE EXCEPTION 'cache deletion reservation freezes lifecycle catalog' USING ERRCODE='55000'; END IF; RETURN NULL; END $$`,
 		`DROP TRIGGER IF EXISTS sysbox_cache_write_guard ON sysbox_lifecycle_aggregates`,
 		`CREATE TRIGGER sysbox_cache_write_guard BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON sysbox_lifecycle_aggregates FOR EACH STATEMENT EXECUTE FUNCTION sysbox_cache_write_guard()`,
@@ -87,6 +88,9 @@ func verifyCacheDone(plan CacheGCPlan) error {
 		return ErrConflict
 	}
 	journal := filepath.Join(plan.Root, ".sysbox-gc")
+	if _, err = os.Lstat(filepath.Join(journal, plan.ID+".aborted")); !os.IsNotExist(err) {
+		return ErrConflict
+	}
 	for _, path := range []string{plan.Root, journal, filepath.Join(journal, plan.ID+".done")} {
 		info, err := os.Lstat(path)
 		if err != nil {
@@ -135,7 +139,11 @@ func (r *Repository) releasePostgresCache(ctx context.Context, plan CacheGCPlan)
 	if err != nil {
 		return err
 	}
-	result, err := b.db.ExecContext(ctx, "UPDATE sysbox_cache_deletions SET state='done' WHERE id=$1 AND host=$2 AND plan=$3::jsonb", plan.ID, host, string(raw))
+	_, err = b.db.ExecContext(ctx, "ALTER TABLE sysbox_cache_deletions ADD COLUMN IF NOT EXISTS outcome TEXT")
+	if err != nil {
+		return err
+	}
+	result, err := b.db.ExecContext(ctx, "UPDATE sysbox_cache_deletions SET state='done',outcome='deleted' WHERE id=$1 AND host=$2 AND plan=$3::jsonb AND (outcome IS NULL OR outcome='deleted')", plan.ID, host, string(raw))
 	if err != nil {
 		return err
 	}

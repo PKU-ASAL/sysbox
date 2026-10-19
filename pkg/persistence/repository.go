@@ -33,6 +33,7 @@ const FormatVersion = 6
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
+	DeletedFrom        *LifecycleDeletionReceipt                   `json:"deleted_from,omitempty"`
 	GCSources          map[string]GCSource                         `json:"gc_sources,omitempty"`
 	GC                 map[string]GCReservation                    `json:"gc_reservations"`
 	ResetContinuations map[string]runtime.ResetContinuationReceipt `json:"reset_continuations"`
@@ -132,6 +133,9 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 // not make identity, journal revision, or recovery evidence trustworthy.
 func validateAggregate(a *aggregate, topology string) error {
 	if a.GC == nil || a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Restores == nil || a.ResetContinuations == nil || a.Serial < 0 {
+		return ErrCorruptRecord
+	}
+	if a.DeletedFrom != nil && (a.DeletedFrom.TopologyUID == "" || a.DeletedFrom.TopologyUID == a.State.TopologyUID || a.DeletedFrom.Serial < 0) {
 		return ErrCorruptRecord
 	}
 	if err := validateGCSources(a); err != nil {
@@ -699,6 +703,7 @@ func resetAggregate(a *aggregate) error {
 			return ErrConflict
 		}
 	}
+	a.DeletedFrom = nil
 	a.State = &state.State{Version: state.SchemaVersion, TopologyUID: uuid.NewString()}
 	a.Actions = map[string]runtime.ActionRecord{}
 	a.Snapshots = map[string]aggregateSnapshot{}
