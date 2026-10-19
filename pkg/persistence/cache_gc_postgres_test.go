@@ -18,6 +18,8 @@ func cachePGFixture(t *testing.T) (*Repository, CacheGCPlan) {
 	t.Helper()
 	ctx := context.Background()
 	r := resetTestRepository(t, "postgres")
+	_, schemaErr := r.backend.(*sqlBackend).db.Exec(`CREATE TABLE sysbox_global_revisions(workspace TEXT NOT NULL DEFAULT '',id TEXT PRIMARY KEY,data JSONB NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now())`)
+	require.NoError(t, schemaErr)
 	st, err := r.LoadState(ctx, "lab")
 	require.NoError(t, err)
 	v, err := r.BeginGCSource(ctx, "lab", "host", st.TopologyUID, 0)

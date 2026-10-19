@@ -4464,3 +4464,21 @@ checked. Old receipts are cleared by unrelated resets. Cold service cleanup test
 pass on file, SQLite and PostgreSQL. Review additionally found and fixed invalid
 abort evidence falling through to a valid intent; conflicting receipts now retain
 the reservation. Abort is audited locally and in PostgreSQL as `outcome=aborted`.
+
+### Stage 2: same-catalog global revisions and libvirt batch recovery
+
+Cache inventory now scans the same database's unbound global revision registry.
+It verifies each content-addressed tree and decodes file bytes, protecting both
+embedded artifacts by content hash and textual digest/path references. Invalid
+rows fail the entire inventory. SQLite uses its catalog write transaction;
+PostgreSQL also locks the revision table and installs the durable cache guard
+on revision INSERT/UPDATE/DELETE/TRUNCATE. PostgreSQL apply requires an already
+initialized revision registry, avoiding a future-table publication gap. Separate
+registries and global revision object deletion are outside this slice.
+
+The libvirt batch API fixture routes two exact UUIDs through API/owning Agent/
+host signed grants, blocks state/snapshot publication during deletion, loses a
+completion acknowledgement, reconstructs the API, and recovers receipts without
+a second provider deletion. An unrelated domain remains defined. This covers
+batch sequencing and lost-receipt/cold-API recovery; it is not an OS-kill matrix
+at every provider effect boundary and does not cover Firecracker batch dispatch.

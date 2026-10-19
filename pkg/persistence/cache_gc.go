@@ -124,6 +124,11 @@ func (r *Repository) cacheCatalogTransaction(ctx context.Context, commit bool, f
 	if err = rows.Close(); err != nil {
 		return err
 	}
+	globals, err := collectGlobalCacheReferences(ctx, conn, b.postgres, digest)
+	if err != nil {
+		return err
+	}
+	all = append(all, globals...)
 	if err = fn(conn, all, fmt.Sprintf("%x", digest.Sum(nil))); err != nil {
 		return err
 	}

@@ -42,6 +42,21 @@ func installCacheFence(ctx context.Context, c *sql.Conn) error {
 			return err
 		}
 	}
+	var exists bool
+	if err := c.QueryRowContext(ctx, "SELECT to_regclass('sysbox_global_revisions') IS NOT NULL").Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("%w: global revision registry must be initialized before PostgreSQL cache apply", ErrConflict)
+	}
+	for _, statement := range []string{
+		"DROP TRIGGER IF EXISTS sysbox_cache_write_guard ON sysbox_global_revisions",
+		"CREATE TRIGGER sysbox_cache_write_guard BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON sysbox_global_revisions FOR EACH STATEMENT EXECUTE FUNCTION sysbox_cache_write_guard()",
+	} {
+		if _, err := c.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 func (r *Repository) reservePostgresCache(ctx context.Context, plan CacheGCPlan) error {

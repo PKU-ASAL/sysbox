@@ -142,7 +142,7 @@
         "gc-domain-coverage"
       ],
       "remaining": [
-        "Retired domain references can now release atomically during quiescent metadata DELETE; external resource references and snapshots still require explicit cleanup. Global unbound revision registry coverage and enrollment of arbitrary deployments remain open."
+        "Same-database global revision content now participates in cache protection and PostgreSQL publication fencing. Separate registries/filesystem global inventories and global revision object retention/deletion remain open."
       ]
     },
     {
@@ -161,7 +161,8 @@
         "gc-cli",
         "gc-api",
         "gc-host",
-        "real-docker-api"
+        "real-docker-api",
+        "real-libvirt-gc-api"
       ],
       "remaining": [
         "Exact absent-file intents can now complete receipts after original-host lock verification; present/replaced/missing-evidence cases remain blocked. Unbound/global cache coverage and non-Docker batch interruption matrix remain open."
@@ -178,7 +179,8 @@
         "real-docker-api",
         "real-docker-provider",
         "real-libvirt",
-        "real-firecracker"
+        "real-firecracker",
+        "real-libvirt-gc-api"
       ],
       "remaining": [
         "Provider exact-target deletion and unaffected survivor tests cover Docker/libvirt/Firecracker. Complete owning-agent non-Docker batch interruption and recovery matrix remains open."
@@ -440,7 +442,10 @@
         "TestCacheDispositionAbortsBeforeIntentPublication",
         "TestMetadataDeleteReceiptSurvivesLostCommitResponse",
         "TestUnrelatedResetClearsPriorDeletionReceipt",
-        "TestCacheDispositionConflictingTerminalsNeverUnlock"
+        "TestCacheDispositionConflictingTerminalsNeverUnlock",
+        "TestCacheGCProtectsUnboundGlobalRevisionContent",
+        "TestPostgresCacheFencesGlobalRevisionPublication",
+        "TestGlobalRevisionInventoryRejectsCorruptAndIncludesTextReferences"
       ],
       "kind": "contract",
       "race": true,
@@ -672,6 +677,22 @@
       "kind": "contract",
       "race": true,
       "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "real-libvirt-gc-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestRemoteLibvirtGCBatchRecoveryE2E"
+      ],
+      "kind": "real-provider",
+      "race": true,
+      "timeout": "3m",
+      "tags": "e2e",
+      "requires_env": [
+        "SYSBOX_LIBVIRT_E2E",
+        "LIBVIRT_DEFAULT_URI"
+      ],
       "artifact_env": []
     }
   ]

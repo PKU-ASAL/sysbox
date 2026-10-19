@@ -314,3 +314,12 @@ quarantined and migrate new work to a separately enrolled cache/catalog; retain
 the old catalog as evidence. This is the supported terminal manual disposition,
 not a force-unfreeze operation. Foreign host, corrupted receipts, unsafe paths,
 and conflicting terminal records must never be accepted as deletion success.
+
+Cache planning includes global revisions in the same SQL catalog, even before
+binding to a topology. Revision content is decoded and its tree digest verified;
+embedded-file hashes and text references conservatively protect cache entries.
+Inventory is bounded to 10,000 revisions / 64 MiB of encoded records; exceeding
+limits rejects the plan. PostgreSQL apply requires the global revision table to
+already exist and fences writes to it for the lifetime of the reservation.
+Independent registries and filesystem global revision stores are not implied to
+be covered. Global revision objects themselves are retained, not deleted.
