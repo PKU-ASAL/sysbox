@@ -820,7 +820,7 @@ disk-full、upgrade/rebuild、全部 transport/provider 组合或 main 整合。
 尚未接入”等描述不再代表当前代码。机器清单为
 `scripts/acceptance/stage2.json`，从原始 P8 条目汇总 15 组门禁。
 阶段交付必须在同一源码摘要和提交上全部通过；不能拼接旧版本证据。
-当前验证状态：等待本轮统一门禁结果，下方是已实现边界而非提前通过声明。
+当前验证状态：支持范围交付已于实现提交 `f5a7fd9` 完成统一验收；原始 P8/P9 总验收仍开放。
 
 ### 后端与删除范围
 
@@ -863,3 +863,17 @@ disk-full、upgrade/rebuild、全部 transport/provider 组合或 main 整合。
 原始 P8.2、P8.4、P8.acceptance 的 `remaining` 已改为上述真实未覆盖范围；
 P9.3、P9.acceptance 继续开放。只有相同提交的 15 组严格门禁、边界测试、
 独立审查及常规检查通过后，才能在本节记录“支持范围交付关闭”。
+
+### 本轮集中验收结果
+
+实现提交：`f5a7fd9`。统一门禁：`/tmp/sysbox-stage2-unified-acceptance/`。
+15/15 组全部通过，无跳过；已逐组重验原始 Go 事件、源码摘要和外部产物摘要。
+机器结果：同目录 `stage2-result.json`，明确
+`supported_scope_verified=true`、`original_P8_P9_complete=false`。
+同源码全仓 Go 回归 `/tmp/sysbox-stage2-unified-full.log` 通过；vet、68 篇文档
+检查、Python 67 项通过。独立审查对保留开放项和边界测试的意见已修正。
+
+结论：本节列出的支持范围交付关闭，可进入下一阶段；不以此关闭独立 registry、
+文件 registry 删除、自动 bulk retention 或完整 P9 故障矩阵。原始总清单继续
+保留这些差距。后续若决定支持这些范围，必须新增实现和门禁，不得复用本轮
+“支持范围交付关闭”作为验收证据。
