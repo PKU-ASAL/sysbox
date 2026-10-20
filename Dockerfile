@@ -30,6 +30,7 @@ RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -o /out/sysbox-netns ./cmd/sysbox-netns
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+FROM docker:29-cli AS dockercli
 FROM debian:bookworm-slim
 
 ARG VERSION
@@ -80,6 +81,10 @@ RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
 
 COPY --from=builder /out/sysbox       /usr/local/bin/sysbox
 COPY --from=builder /out/sysbox-init  /usr/local/bin/sysbox-init
+
+# Docker 29 daemons require client API >= 1.44; Debian's docker.io ships 20.10.
+# Override its CLI with a modern one (dockerd stays available for test rigs).
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 
 # sysbox-netns is the firewall's shim over nsenter+nft. It isolates each nft
 # operation into a killable subprocess (with pdeathsig) so a wedged netfilter
