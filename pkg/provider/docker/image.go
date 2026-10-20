@@ -44,19 +44,14 @@ func (s *Substrate) ResolveImage(ctx context.Context, source substrate.ArtifactS
 		}
 	}
 	digest := strings.ToLower(img.ID)
+	candidates := imageDigestCandidates(img.ID, img.RepoDigests)
 	if expected := normalizeDigest(source.ExpectedDigest); expected != "" {
-		matched := expected == digest
-		for _, ref := range img.RepoDigests {
-			_, candidate, ok := strings.Cut(ref, "@")
-			if ok && normalizeDigest(candidate) == expected {
-				matched = true
-			}
+		if !digestMatches(candidates, expected) {
+			return substrate.ArtifactHandle{}, fmt.Errorf("docker image digest mismatch for %s: have %s, want %s", source.Source, strings.Join(candidates, ", "), expected)
 		}
-		if !matched {
-			return substrate.ArtifactHandle{}, fmt.Errorf("docker image digest mismatch for %s: have ID %s and repo digests %v, want %s", source.Source, digest, img.RepoDigests, expected)
-		}
-		// Keep the verified lock as the portable artifact identity. Container
-		// creation still uses the daemon's local image ID below.
+		// Record the locked identity, not the daemon-local one: Docker 20.10
+		// reports the config digest as ID while Docker 29 reports the manifest
+		// digest, and state must compare equal across daemon versions.
 		digest = expected
 	}
 	handle := substrate.ArtifactHandle{Identity: substrate.ArtifactIdentity{
@@ -78,4 +73,31 @@ func normalizeDigest(digest string) string {
 		digest = "sha256:" + digest
 	}
 	return digest
+}
+
+// imageDigestCandidates returns every immutable identity a daemon may mean by
+// "this image": the ID it reports (config digest on Docker 20.10, manifest
+// digest on Docker 29) plus every repo digest (manifest references).
+func imageDigestCandidates(id string, repoDigests []string) []string {
+	candidates := make([]string, 0, 1+len(repoDigests))
+	if id = strings.ToLower(id); id != "" {
+		candidates = append(candidates, id)
+	}
+	for _, ref := range repoDigests {
+		at := strings.LastIndex(ref, "@")
+		if at < 0 {
+			continue
+		}
+		candidates = append(candidates, normalizeDigest(ref[at+1:]))
+	}
+	return candidates
+}
+
+func digestMatches(candidates []string, expected string) bool {
+	for _, candidate := range candidates {
+		if candidate == expected {
+			return true
+		}
+	}
+	return false
 }
