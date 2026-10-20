@@ -82,8 +82,8 @@ RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
 COPY --from=builder /out/sysbox       /usr/local/bin/sysbox
 COPY --from=builder /out/sysbox-init  /usr/local/bin/sysbox-init
 
-# Preflight invokes the CLI separately from the Go SDK. Debian 20.10 cannot
-# negotiate with daemons requiring a newer minimum API. Keep dockerd for labs.
+# Docker 29 daemons require client API >= 1.44; Debian's docker.io ships 20.10.
+# Override its CLI with a modern one (dockerd stays available for test rigs).
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 
 # sysbox-netns is the firewall's shim over nsenter+nft. It isolates each nft
