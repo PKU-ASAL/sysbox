@@ -223,3 +223,59 @@ func TestDockerResetCannotDropOldOwnershipConstraints(t *testing.T) {
 	require.Error(t, sub.DestroyReset(ctx, handle))
 	require.NotNil(t, api.containers["old-id"])
 }
+
+func TestDockerResetManifestBaselineUsesPinnedLocalImage(t *testing.T) {
+	sub, api, ctx, request := resetFixture(t)
+	localID := request.Node.Image.ID
+	manifest := "sha256:" + strings.Repeat("b", 64)
+	request.Baseline.Digest = manifest
+	request.Node.Image.Identity.Digest = manifest
+	handle, err := sub.PrepareReset(ctx, request)
+	require.NoError(t, err)
+	require.NoError(t, sub.DestroyReset(ctx, handle))
+	_, err = sub.ApplyReset(ctx, handle)
+	require.NoError(t, err)
+	raw, err := sub.MarshalResetHandle(handle)
+	require.NoError(t, err)
+	cold, err := sub.UnmarshalResetHandle(raw)
+	require.NoError(t, err)
+	cold.Request = request
+	_, err = sub.ApplyReset(ctx, cold)
+	require.NoError(t, err)
+	observed, err := sub.ObserveReset(ctx, cold)
+	require.NoError(t, err)
+	require.True(t, observed.Converged)
+	require.Equal(t, manifest, observed.BaselineDigest)
+	require.Equal(t, localID, api.containers["new-id"].image)
+	api.containers["new-id"].image = "sha256:" + strings.Repeat("c", 64)
+	_, err = sub.ApplyReset(ctx, cold)
+	require.Error(t, err)
+	observed, err = sub.ObserveReset(ctx, cold)
+	require.NoError(t, err)
+	require.False(t, observed.Converged)
+	cold.Request.Node.Image.ID = api.containers["new-id"].image
+	_, err = sub.ApplyReset(ctx, cold)
+	require.Error(t, err, "injected request cannot change prepared local image")
+}
+
+func TestDockerResetRejectsMutableLocalImage(t *testing.T) {
+	sub, _, ctx, request := resetFixture(t)
+	request.Node.Image.ID = "repo:latest"
+	_, err := sub.PrepareReset(ctx, request)
+	require.Error(t, err)
+}
+func TestDockerResetLegacyHandleRetainsExactImageBinding(t *testing.T) {
+	sub, _, ctx, request := resetFixture(t)
+	handle, err := sub.PrepareReset(ctx, request)
+	require.NoError(t, err)
+	handle.Provider.(*resetHandleState).LocalImageID = ""
+	raw, err := sub.MarshalResetHandle(handle)
+	require.NoError(t, err)
+	cold, err := sub.UnmarshalResetHandle(raw)
+	require.NoError(t, err)
+	cold.Request = request
+	_, err = sub.ObserveReset(ctx, cold)
+	require.NoError(t, err)
+	cold.Request.Node.Image.ID = "sha256:" + strings.Repeat("d", 64)
+	require.Error(t, sub.DestroyReset(ctx, cold))
+}

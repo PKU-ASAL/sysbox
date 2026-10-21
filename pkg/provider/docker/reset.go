@@ -2,9 +2,11 @@ package docker
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/errdefs"
@@ -22,6 +24,7 @@ type resetHandleState struct {
 	Version             int                         `json:"version"`
 	OldContainerID      string                      `json:"old_container_id"`
 	ContainerName       string                      `json:"container_name"`
+	LocalImageID        string                      `json:"local_image_id,omitempty"`
 	BaselineDigest      string                      `json:"baseline_digest"`
 	Ownership           map[string]string           `json:"ownership"`
 	ImageCmd            []string                    `json:"image_cmd,omitempty"`
@@ -47,7 +50,7 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 	state := &resetHandleState{
 		Identity: identity, OldGeneration: request.Current.Generation, ResetToken: uuid.NewString(),
 		Version: dockerResetHandleVersion, OldContainerID: request.Current.ID,
-		ContainerName: request.Node.Name, BaselineDigest: request.Baseline.Digest,
+		ContainerName: request.Node.Name, BaselineDigest: request.Baseline.Digest, LocalImageID: request.Node.Image.ID,
 		Ownership: ownership,
 	}
 	_, portBindings, err := dockerPortConfig(request.Node.Ports)
@@ -114,8 +117,8 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 		if inspected.ID == state.OldContainerID {
 			return substrate.NodeHandle{}, fmt.Errorf("docker reset old container %s still occupies %q", state.OldContainerID, state.ContainerName)
 		}
-		if normalizeDigest(inspected.Image) != normalizeDigest(state.BaselineDigest) {
-			return substrate.NodeHandle{}, fmt.Errorf("docker reset container %s uses image %s, want %s", inspected.ID, inspected.Image, state.BaselineDigest)
+		if normalizeDigest(inspected.Image) != normalizeDigest(state.LocalImageID) {
+			return substrate.NodeHandle{}, fmt.Errorf("docker reset container %s uses image %s, want %s", inspected.ID, inspected.Image, state.LocalImageID)
 		}
 		state.NewContainerID = inspected.ID
 		return managedHandle(inspected, state.Identity.Generation)
@@ -176,8 +179,8 @@ func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHand
 		return observation, fmt.Errorf("docker reset replacement exact ID mismatch")
 	}
 	observation.NewExternalID = replacement.ID
-	if normalizeDigest(replacement.Image) != normalizeDigest(state.BaselineDigest) {
-		observation.Reason = fmt.Sprintf("replacement image %s does not match baseline %s", replacement.Image, state.BaselineDigest)
+	if normalizeDigest(replacement.Image) != normalizeDigest(state.LocalImageID) {
+		observation.Reason = fmt.Sprintf("replacement image %s does not match baseline %s", replacement.Image, state.LocalImageID)
 		return observation, nil
 	}
 	if len(observation.Residue) == 0 {
@@ -247,6 +250,17 @@ func dockerResetState(handle substrate.ResetHandle) (*resetHandleState, substrat
 	if handle.Request.Node.Name == "" {
 		return nil, substrate.ResetRequest{}, fmt.Errorf("docker reset request was not injected by runtime")
 	}
+	if err := validateDockerResetRequest(handle.Request); err != nil {
+		return nil, substrate.ResetRequest{}, err
+	}
+	// Older version-2 handles only supported image ID == baseline digest.
+	// Preserve that exact binding; never infer a different ID from a new request.
+	if state.LocalImageID == "" {
+		state.LocalImageID = state.BaselineDigest
+	}
+	if handle.Request.Node.Name != state.ContainerName || normalizeDigest(handle.Request.Node.Image.ID) != normalizeDigest(state.LocalImageID) || normalizeDigest(handle.Request.Baseline.Digest) != normalizeDigest(state.BaselineDigest) {
+		return nil, substrate.ResetRequest{}, fmt.Errorf("docker reset request changed prepared image binding")
+	}
 	return state, handle.Request, nil
 }
 
@@ -288,7 +302,12 @@ func validateDockerResetRequest(request substrate.ResetRequest) error {
 	if request.Node.Name == "" || request.Node.Image.ID == "" {
 		return fmt.Errorf("docker reset requires node name and immutable image ID")
 	}
-	if normalizeDigest(request.Node.Image.Identity.Digest) != normalizeDigest(request.Baseline.Digest) || normalizeDigest(request.Node.Image.ID) != normalizeDigest(request.Baseline.Digest) {
+	rawID := strings.TrimPrefix(request.Node.Image.ID, "sha256:")
+	decoded, err := hex.DecodeString(rawID)
+	if err != nil || len(decoded) != 32 || request.Node.Image.ID != "sha256:"+hex.EncodeToString(decoded) {
+		return fmt.Errorf("docker reset requires a canonical immutable image ID")
+	}
+	if normalizeDigest(request.Node.Image.Identity.Digest) != normalizeDigest(request.Baseline.Digest) {
 		return fmt.Errorf("docker reset node image does not match pinned baseline %s", request.Baseline.Digest)
 	}
 	return requireResetOwnership(request.Node.Labels, request.Node.Labels)

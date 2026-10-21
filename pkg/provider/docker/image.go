@@ -44,8 +44,20 @@ func (s *Substrate) ResolveImage(ctx context.Context, source substrate.ArtifactS
 		}
 	}
 	digest := strings.ToLower(img.ID)
-	if expected := normalizeDigest(source.ExpectedDigest); expected != "" && expected != digest {
-		return substrate.ArtifactHandle{}, fmt.Errorf("docker image digest mismatch for %s: have %s, want %s", source.Source, digest, expected)
+	if expected := normalizeDigest(source.ExpectedDigest); expected != "" {
+		matched := expected == digest
+		for _, ref := range img.RepoDigests {
+			_, candidate, ok := strings.Cut(ref, "@")
+			if ok && normalizeDigest(candidate) == expected {
+				matched = true
+			}
+		}
+		if !matched {
+			return substrate.ArtifactHandle{}, fmt.Errorf("docker image digest mismatch for %s: have ID %s and repo digests %v, want %s", source.Source, digest, img.RepoDigests, expected)
+		}
+		// Keep the verified lock as the portable artifact identity. Container
+		// creation still uses the daemon's local image ID below.
+		digest = expected
 	}
 	handle := substrate.ArtifactHandle{Identity: substrate.ArtifactIdentity{
 		Kind: source.Kind, Source: source.Source, Digest: digest, Architecture: source.Architecture,
