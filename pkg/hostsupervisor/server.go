@@ -23,6 +23,7 @@ import (
 // which worker may submit requests; issuer signatures and canonical resource
 // identity still authorize every effect. Private keys never cross this socket.
 type Server struct {
+	GCFencedEffect   func(context.Context, GCCandidate, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	AdoptionInspect  func(context.Context, controlplane.AdoptionInspectionRequest) (substrate.AdoptionEvidence, error)
 	Socket           string
 	GroupID          int
@@ -424,6 +425,9 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 			}
 		}
 		response.GCResult, err = s.GC.Delete(ctx, *request.GCCandidate, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
+			if s.GCFencedEffect != nil {
+				return s.GCFencedEffect(effectCtx, *request.GCCandidate, *request.Grant)
+			}
 			return s.GCEffect(effectCtx, *request.GCCandidate)
 		})
 	case "gc-observe":

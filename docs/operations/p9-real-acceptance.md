@@ -4645,3 +4645,17 @@ existing Firecracker process-exit race in
 `TestDestroyNodeDoesNotWaitOnProcessAlreadyOwnedByReaper` (identity changed during
 probe). Its isolated race rerun passed 10 times. This is retained as a failed
 full-run result, not claimed as a root-cause fix or a clean total acceptance.
+
+### Firecracker fenced residue cleanup with a new GC grant
+
+The follow-up whole-VM round now performs the full sequence: unknown disposition,
+new reference inventory/reservation, fresh post-reboot session/grant, original
+manifest-byte archival, residual removal and a new signed success receipt.
+`/tmp/sysbox-gc-fresh-cleanup-real.log` passed with race detection in 52.756s.
+The original reservation still has no deletion receipt and retains its disposition
+hash. The new reservation has the success receipt; repeating its grant never
+invokes cleanup twice. History is selected by the manifest's original boot, so
+an intervening later reboot does not erase independently verified stop evidence.
+Prepared never-started manifests continue through normal GC rather than requiring
+a reboot proof. Wrong owner, old grant, current-boot manifest and bad signatures
+are rejected. The lab was stopped with all disks and evidence retained.

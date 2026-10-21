@@ -81,6 +81,33 @@ func TestGCFenceGuestProbe(t *testing.T) {
 	}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	if cfg.Mode == "fresh-cleanup" {
+		c.ReportStop = authority.ReportStop
+		provider := fcprovider.New(cfg.Kernel, cfg.Root+"-fc")
+		originalBoot, err := provider.FencedGCManifestBoot(ctx, cfg.Candidate)
+		require.NoError(t, err)
+		proof, err := authority.GCFencedCleanupProof(ctx, cfg.Candidate, cfg.Grant, originalBoot)
+		require.NoError(t, err)
+		require.NotNil(t, proof)
+		calls := 0
+		effect := func(ctx context.Context) (json.RawMessage, error) {
+			calls++
+			if err := provider.DeleteFencedGCResidue(ctx, cfg.Candidate, *proof, cfg.Grant, cfg.IssuerKey, cfg.HostKey.Public().(ed25519.PublicKey)); err != nil {
+				return nil, err
+			}
+			return json.RawMessage(`{"deleted":true}`), nil
+		}
+		_, err = c.Delete(ctx, cfg.Candidate, cfg.Grant, effect)
+		require.NoError(t, err)
+		require.Equal(t, 1, calls)
+		_, err = c.Delete(ctx, cfg.Candidate, cfg.Grant, effect)
+		require.Error(t, err)
+		require.Equal(t, 1, calls)
+		presence, err := provider.InspectFencedGC(ctx, cfg.Candidate.ExternalID, cfg.Candidate.OwnerUID, cfg.Candidate.ResourceUID, cfg.Candidate.Generation)
+		require.NoError(t, err)
+		require.Equal(t, "absent", presence)
+		return
+	}
 	if cfg.Mode == "intent" {
 		_, err = c.Delete(ctx, cfg.Candidate, cfg.Grant, func(context.Context) (json.RawMessage, error) {
 			return nil, fmt.Errorf("deliberately unknown before provider call")

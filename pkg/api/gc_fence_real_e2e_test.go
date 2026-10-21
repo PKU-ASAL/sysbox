@@ -190,9 +190,35 @@ func TestGCFenceWholeVMDispositionE2E(t *testing.T) {
 	if providerKind == "domain" {
 		ssh("sudo virsh -c qemu:///system undefine " + candidate.ExternalID)
 	} else {
-		// The disposed operation remains unknown and the manifest is retained.
-		// Normal deletion correctly refuses an old-boot process anchor; later
-		// fenced residue cleanup is a distinct explicitly authorized operation.
-		t.Log("Firecracker manifest/disk retained in disposable VM after fenced disposition")
+		refs, err := repo.LoadGCReferences(ctx, "gc-lab")
+		require.NoError(t, err)
+		candidate.InventoryDigest = refs.Digest
+		nextReservation := persistence.GCReservation{ID: "gc-cleanup-new", AgentID: "gc-host", Candidate: candidate}
+		require.NoError(t, s.reserveGCWithAuthority(ctx, "gc-lab", nextReservation))
+		require.NoError(t, s.publishGCReservation(ctx, "gc-lab", nextReservation))
+		nextSession, err := authority.OpenSession(ctx, "gc-host", "post-fence-process", session.ID)
+		require.NoError(t, err)
+		nextCommand, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, "gc-host", nextReservation.ID, "new-worker", time.Minute)
+		require.NoError(t, err)
+		require.True(t, ok)
+		nextGrant, err := s.issueCommandGrant(ctx, "gc-host", nextCommand.ID, ExecutionGrantRequest{SessionID: nextSession.ID, LeaseOwner: nextCommand.LeaseOwner, Attempt: nextCommand.Attempt, BootID: receipt.NewBootID})
+		require.NoError(t, err)
+		nextSigned, err := controlplane.SignExecutionGrant(issuer, *nextGrant, receipt.NewBootID, time.Now())
+		require.NoError(t, err)
+		probe["mode"] = "fresh-cleanup"
+		probe["candidate"] = candidate
+		probe["grant"] = nextSigned
+		save(probePath, probe)
+		upload(probePath, "/var/tmp/sysbox-gc-probe.json")
+		ssh("sudo env SYSBOX_GC_FENCE_PROBE=/var/tmp/sysbox-gc-probe.json /var/tmp/sysbox-gc-probe.test -test.run=^TestGCFenceGuestProbe$ -test.v")
+		completed, err := repo.LoadGCReservation(ctx, "gc-lab", nextReservation.ID)
+		require.NoError(t, err)
+		require.NotEmpty(t, completed.ReceiptHash)
+		original, err := repo.LoadGCReservation(ctx, "gc-lab", reservation.ID)
+		require.NoError(t, err)
+		require.Empty(t, original.ReceiptHash)
+		require.NotEmpty(t, original.DispositionHash)
+		save(filepath.Join(round, "gc-fresh-cleanup.json"), map[string]any{"original": original, "cleanup": completed, "fresh_epoch": nextGrant.Epoch})
+
 	}
 }
