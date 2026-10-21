@@ -4854,3 +4854,32 @@ was reconciled through authenticated host/API requests, and the preserved VM was
 started again, observed running, and destroyed. Original result remained unknown.
 Source/unowned/absent/conflict disposition and pre-existing canonical unknown
 actions remain separate functional work.
+
+### Explicit cancellation of fenced adoption unknowns
+
+A fenced adoption may now be explicitly cancelled when the fresh host
+observation proves one of three exact outcomes: `cancel-source` (the original
+transfer source is still inactive and owns the object), `cancel-unowned` (the
+inactive object has no ownership identity), or `cancel-absent` (the exact
+external object is gone). Source and unowned objects remain in the reference
+inventory and are never deleted by cancellation. Target-owned or conflicting
+objects are rejected and retain the hold.
+
+Use `sysbox host-fence inspect-adoption --cancel <fence-id> --socket <socket>`
+and submit the resulting signed proof to the same
+`/v1/topologies/{topology}/host-fences/{fence}/reconcile-adoption` endpoint.
+The decision preserves the original operation as unknown, retires its dispatch,
+releases the exact fence and (for transfer) the exact source barrier. It does
+not add a resource to state or restore old ownership. A matching canonical
+adoption action is archived with a disposition ID; its original status and
+result remain unchanged, old run replay is rejected, and new reset/adoption
+requests may proceed. GC reference snapshots include the archived candidate and
+cancelled source/unowned object identity.
+
+The cancellation and settled-action paths pass file, SQLite and PostgreSQL
+contract/race tests. Affected-package full regression with an isolated PostgreSQL
+instance passed. Real provider cancellation observations pass for temporary
+libvirt and Docker objects. The disposable whole-VM cancellation run was
+requested but the environment approval stream disconnected; no production or
+historical scene was used. Firecracker cancellation remains fail-closed pending
+an equivalent provider-specific source/absent fixture.
