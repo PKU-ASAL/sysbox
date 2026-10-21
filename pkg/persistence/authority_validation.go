@@ -18,7 +18,7 @@ func decodeExecutionAuthority(raw []byte) (*executionAuthority, error) {
 	if json.Unmarshal(raw, a) != nil || a.Sessions == nil || a.Grants == nil || a.ObservedAt.IsZero() {
 		return nil, ErrCorruptRecord
 	}
-	if a.Version != executionAuthorityVersion && a.Version != gcDispositionAuthorityVersion {
+	if a.Version != executionAuthorityVersion && a.Version != gcDispositionAuthorityVersion && a.Version != adoptionDispositionAuthorityVersion {
 		return nil, ErrUnsupportedVersion
 	}
 	if err := validateMaintenance(a); err != nil {
@@ -38,6 +38,17 @@ func decodeExecutionAuthority(raw []byte) (*executionAuthority, error) {
 		}
 	}
 	for _, stop := range a.Stops {
+		if strings.HasPrefix(stop.Receipt, "adoption-fenced:") {
+			found := false
+			for _, f := range a.Fences {
+				if f.AdoptionDisposition != nil && !f.AdoptionDisposition.ReleasedAt.IsZero() && stop.Receipt == "adoption-fenced:"+AdoptionDispositionHash(f.AdoptionDisposition.Proof) && sameGrantEpoch(stop.Grant, f.Request.Grant) {
+					found = true
+				}
+			}
+			if !found {
+				return nil, ErrCorruptRecord
+			}
+		}
 		if strings.HasPrefix(stop.Receipt, "gc-fenced:") {
 			matched := false
 			for _, f := range a.Fences {

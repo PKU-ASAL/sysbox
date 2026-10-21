@@ -219,6 +219,19 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 		return response
 	}
 
+	if request.Operation == "adoption-disposition" {
+		if request.Version != 1 || request.Target != (TargetRef{}) || !recoveryCommandID.MatchString(request.AdoptionFenceID) || s.Adoption == nil {
+			response.Error = "valid canonical GC fence required"
+			return response
+		}
+		proof, err := s.Adoption.Disposition(ctx, request.AdoptionFenceID)
+		if err != nil {
+			response.Error = err.Error()
+		} else {
+			response.AdoptionDisposition = &proof
+		}
+		return response
+	}
 	if request.Operation == "gc-disposition" {
 		if request.Version != 1 || request.Target != (TargetRef{}) || !recoveryCommandID.MatchString(request.GCFenceID) || s.GC == nil {
 			response.Error = "valid canonical GC fence required"

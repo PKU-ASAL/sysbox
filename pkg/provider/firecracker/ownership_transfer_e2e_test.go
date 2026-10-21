@@ -62,6 +62,10 @@ func TestFirecrackerOwnershipTransferColdLifecycleE2E(t *testing.T) {
 	var exited *exec.ExitError
 	require.ErrorAs(t, childErr, &exited, string(output))
 	require.Equal(t, 77, exited.ExitCode(), string(output))
+	recovered, recoveryErr := s.InspectAdoptionRecovery(scoped, controlplane.AdoptionRequest{ExternalID: h.ID})
+	require.NoError(t, recoveryErr, "read-only ownership recovery after lost provider return")
+	require.Equal(t, h.ID, recovered.ID)
+	require.Equal(t, p.Target.Generation, recovered.Generation)
 	transferred, err := s.ApplyOwnershipTransfer(scoped, proof, pub)
 	require.NoError(t, err)
 	t.Cleanup(func() {

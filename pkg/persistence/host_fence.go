@@ -12,13 +12,14 @@ import (
 )
 
 type HostFenceRecord struct {
-	GCDisposition  *GCFenceDisposition            `json:"gc_disposition,omitempty"`
-	Reconciliation *FenceDeleteReconciliation     `json:"delete_reconciliation,omitempty"`
-	Release        *HostFenceRelease              `json:"release,omitempty"`
-	Request        controlplane.HostFenceRequest  `json:"request"`
-	BarrierID      string                         `json:"barrier_id"`
-	AcceptedAt     time.Time                      `json:"accepted_at"`
-	Receipt        *controlplane.HostFenceReceipt `json:"receipt,omitempty"`
+	AdoptionDisposition *AdoptionFenceDisposition      `json:"adoption_disposition,omitempty"`
+	GCDisposition       *GCFenceDisposition            `json:"gc_disposition,omitempty"`
+	Reconciliation      *FenceDeleteReconciliation     `json:"delete_reconciliation,omitempty"`
+	Release             *HostFenceRelease              `json:"release,omitempty"`
+	Request             controlplane.HostFenceRequest  `json:"request"`
+	BarrierID           string                         `json:"barrier_id"`
+	AcceptedAt          time.Time                      `json:"accepted_at"`
+	Receipt             *controlplane.HostFenceReceipt `json:"receipt,omitempty"`
 }
 
 func cloneFence(record HostFenceRecord) (HostFenceRecord, error) {
@@ -53,7 +54,7 @@ func (r *ExecutionGrantRepository) BeginHostFence(ctx context.Context, request c
 			return ErrConflict
 		}
 		for _, other := range a.Grants {
-			if other.AgentID == g.AgentID && other.State != controlplane.GrantStopped && (other.Scope.TopologyUID != g.Scope.TopologyUID || (g.Operation == "gc_delete" && !sameGrantEpoch(other, g))) {
+			if other.AgentID == g.AgentID && other.State != controlplane.GrantStopped && (other.Scope.TopologyUID != g.Scope.TopologyUID || ((g.Operation == "gc_delete" || g.Operation == "adoption_apply") && !sameGrantEpoch(other, g))) {
 				return ErrConflict
 			}
 		}
@@ -148,6 +149,9 @@ func validateHostFences(a *executionAuthority) error {
 			}
 		}
 		if err := validateFenceDelete(record, a); err != nil {
+			return err
+		}
+		if err := validateAdoptionDisposition(record, a); err != nil {
 			return err
 		}
 		if err := validateGCDisposition(record, a); err != nil {

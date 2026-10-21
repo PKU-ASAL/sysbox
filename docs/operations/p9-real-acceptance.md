@@ -4778,3 +4778,54 @@ callback; libvirt/Firecracker host tests keep the API alive. Pre-return adoption
 without durable return evidence remains unknown and cannot replay or release its
 source barrier. Provider-internal partial-write recovery and the broader P9
 provider/transport/upgrade matrix remain open.
+
+### Explicit recovery of adoption ownership after unknown return
+
+The recovered-owned path is now implemented. An adoption whose provider wrote
+ownership but whose callback never returned can be explicitly reconciled after
+an enrolled whole-execution-VM fence. The host archives the original intent as
+fenced/unknown and signs a fresh observation of exact target ownership and
+provider recovery state. The API commits that observed resource once with status
+unknown, records an independent recovery receipt, retires the old dispatch and
+releases the exact holds. It does not mark the original operation successful.
+Existing failed operations retain their original error and timestamps.
+
+Operator flow:
+
+1. POST `/v1/topologies/{topology}/adoptions/{operation}/host-fences` with an
+   `Idempotency-Key` and the original issued `grant`. The admitted request binds
+   the complete canonical adoption digest and the enrolled controller.
+2. Fence only the enrolled disposable execution VM and submit its signed receipt
+   to the existing `/v1/topologies/{topology}/host-fences/{fence}/receipt` endpoint.
+3. On the restarted host, run `sysbox host-fence inspect-adoption <fence-id>
+   --socket <host-supervisor-socket>` to obtain the signed disposition JSON.
+4. POST that JSON to
+   `/v1/topologies/{topology}/host-fences/{fence}/reconcile-adoption`. Exact retry
+   preserves the first recovery and never overwrites successor state.
+
+The host authorizes through
+`/v1/agents/{agent}/adoption-fences/{fence}/authorize`. Docker/libvirt must be
+local to the fenced execution host; libvirt fencing requires qemu:///system.
+Provider lookup uses immutable external identity, not a logical node name.
+Normal adoption completion and recovery serialize authority and lifecycle
+commits; a late success receipt cannot overtake an admitted fence. GC reference
+freezes remain effective. Transfer recovery records a separate disposition hash,
+retains source retirement/preparation, and releases its exact source barrier.
+
+Compatibility: authority format 7 and aggregate format 13 require draining old
+writers. Recovery proofs and disposition history survive metadata resets.
+Historical production scenes remain read-only under the agreed rollout boundary.
+
+Verified functionality includes authenticated host/API recovery on file, SQLite
+(including topology-selector URLs) and PostgreSQL, existing failed operation
+preservation, transfer target/source release, and late completion/GC exclusion.
+Real provider read-only recovery was exercised for Docker, libvirt and
+Firecracker. `/tmp/sysbox-adoption-fence-whole-vm4.log` verifies an actual unowned
+libvirt domain, real ownership mutation, injected lost callback, whole-VM
+power fencing and recovery without deleting the domain or inventing success.
+
+Remaining functional cases: source-owned, unowned, absent or conflicting objects
+keep their holds; they need a separate explicit cancel/retry disposition. Existing
+canonical runtime unknown actions require dedicated reconciliation. Firecracker
+manifests retaining previous-boot process anchors still fail closed. The recovered-
+owned path does not close those cases or the full P9 transport/upgrade matrix.

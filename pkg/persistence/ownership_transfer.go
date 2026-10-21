@@ -73,7 +73,7 @@ func retireOwnership(a *aggregate, plan controlplane.OwnershipTransferPlan, auth
 	a.State.RemoveResource(addr)
 	a.Serial++
 	a.UpdatedAt = time.Now().UTC()
-	if a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion {
+	if a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
 		a.Format = OwnershipRetirementFormatVersion
 	}
 	stateRaw, err := json.Marshal(a.State)
@@ -92,7 +92,7 @@ func retireOwnership(a *aggregate, plan controlplane.OwnershipTransferPlan, auth
 // binds the retired owner; current state may have a new UID but may never
 // reclaim the same external object or old resource identity.
 func validateOwnershipRetirements(a *aggregate) error {
-	if len(a.OwnershipRetirements) > 0 && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion {
+	if len(a.OwnershipRetirements) > 0 && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
 		return ErrCorruptRecord
 	}
 	for id, proof := range a.OwnershipRetirements {

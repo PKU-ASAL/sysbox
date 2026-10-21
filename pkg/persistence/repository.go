@@ -33,6 +33,7 @@ const FormatVersion = 6
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
+	AdoptionRecoveries   map[string]AdoptionRecoveryRecord                `json:"adoption_recoveries,omitempty"`
 	GCReferenceFormat    int                                              `json:"gc_reference_format,omitempty"`
 	OwnershipTargets     map[string]OwnershipTargetReservation            `json:"ownership_targets,omitempty"`
 	OwnershipRetirements map[string]controlplane.OwnershipRetirementProof `json:"ownership_retirements,omitempty"`
@@ -116,14 +117,14 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion && header.Format != OwnershipRetirementFormatVersion && header.Format != OwnershipTargetFormatVersion && header.Format != GCAdmissionFormatVersion {
+	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion && header.Format != OwnershipRetirementFormatVersion && header.Format != OwnershipTargetFormatVersion && header.Format != GCAdmissionFormatVersion && header.Format != AdoptionRecoveryFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, header.Format, FormatVersion)
 	}
 	var a aggregate
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion {
+	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, a.Format, FormatVersion)
 	}
 	if err := validateAggregate(&a, ""); err != nil {
@@ -135,6 +136,9 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 // Validate both loaded records and proposed mutations. JSON syntax alone does
 // not make identity, journal revision, or recovery evidence trustworthy.
 func validateAggregate(a *aggregate, topology string) error {
+	if err := validateAdoptionRecoveries(a); err != nil {
+		return err
+	}
 	if a.GC == nil || a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Restores == nil || a.ResetContinuations == nil || a.Serial < 0 {
 		return ErrCorruptRecord
 	}
@@ -564,51 +568,56 @@ func (r *Repository) CommitAdoptionEvidenceAtomic(ctx context.Context, runID, to
 		return err
 	}
 	return r.update(ctx, topology, func(a *aggregate) error {
-		if old, ok := a.Actions[action.ID]; ok {
-			if old.Candidate == nil || old.DesiredDigest != digest || old.ID != action.ID || old.Topology != action.Topology || old.RunID != action.RunID || !old.Resource.Equal(action.Resource) || old.Action != action.Action || old.OwnerUID != action.OwnerUID || old.ResourceUID != action.ResourceUID || old.Generation != action.Generation || old.StateSerial != action.StateSerial || !old.RunQueuedAt.Equal(action.RunQueuedAt) || old.RunRevision != action.RunRevision {
-				return ErrConflict
-			}
-			if old.Status == runtime.ActionSucceeded {
-				oldCandidate, newCandidate := *old.Candidate, *action.Candidate
-				oldCandidate.CreatedAt, oldCandidate.UpdatedAt = time.Time{}, time.Time{}
-				newCandidate.CreatedAt, newCandidate.UpdatedAt = time.Time{}, time.Time{}
-				oldRaw, _ := json.Marshal(oldCandidate)
-				newRaw, _ := json.Marshal(newCandidate)
-				if string(oldRaw) != string(newRaw) {
-					return ErrConflict
-				}
-				return nil
-			}
-			// A durable intent is the authority after an interrupted host
-			// response. Compare its canonical candidate, while retaining the
-			// original digest (timestamps are intentionally non-authoritative).
-			action = old
-		}
-		if a.State.TopologyUID != identity.TopologyUID || a.Serial != expectedSerial {
-			return fmt.Errorf("%w: adoption serial/topology mismatch got serial=%d want=%d", runtime.ErrPlanStale, a.Serial, expectedSerial)
-		}
-		if a.State.FindResource(addr) != nil {
-			return fmt.Errorf("%w: adoption resource already present", runtime.ErrPlanStale)
-		}
-		for _, old := range a.Actions {
-			if old.ID != action.ID && old.Status != runtime.ActionSucceeded && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
-				return ErrConflict
-			}
-		}
-		action.Revision = 1
-		a.Actions[action.ID] = action
-		candidate := *action.Candidate
-		candidate.OwnerUID, candidate.ResourceUID, candidate.Generation = action.OwnerUID, action.ResourceUID, action.Generation
-		a.State.RemoveResource(addr)
-		a.State.AddResource(candidate)
-		a.Serial++
-		action.Status = runtime.ActionSucceeded
-		action.EffectComplete = true
-		action.Revision++
-		a.Actions[action.ID] = action
-		a.UpdatedAt = time.Now().UTC()
-		return nil
+		return commitAdoptionEvidence(a, action, addr, identity, expectedSerial, digest)
 	})
+}
+func commitAdoptionEvidence(a *aggregate, action runtime.ActionRecord, addr address.Address, identity substrate.OperationIdentity, expectedSerial int64, digest string) error {
+
+	if old, ok := a.Actions[action.ID]; ok {
+		if old.Candidate == nil || old.DesiredDigest != digest || old.ID != action.ID || old.Topology != action.Topology || old.RunID != action.RunID || !old.Resource.Equal(action.Resource) || old.Action != action.Action || old.OwnerUID != action.OwnerUID || old.ResourceUID != action.ResourceUID || old.Generation != action.Generation || old.StateSerial != action.StateSerial || !old.RunQueuedAt.Equal(action.RunQueuedAt) || old.RunRevision != action.RunRevision {
+			return ErrConflict
+		}
+		if old.Status == runtime.ActionSucceeded {
+			oldCandidate, newCandidate := *old.Candidate, *action.Candidate
+			oldCandidate.CreatedAt, oldCandidate.UpdatedAt = time.Time{}, time.Time{}
+			newCandidate.CreatedAt, newCandidate.UpdatedAt = time.Time{}, time.Time{}
+			oldRaw, _ := json.Marshal(oldCandidate)
+			newRaw, _ := json.Marshal(newCandidate)
+			if string(oldRaw) != string(newRaw) {
+				return ErrConflict
+			}
+			return nil
+		}
+		// A durable intent is the authority after an interrupted host
+		// response. Compare its canonical candidate, while retaining the
+		// original digest (timestamps are intentionally non-authoritative).
+		action = old
+	}
+	if a.State.TopologyUID != identity.TopologyUID || a.Serial != expectedSerial {
+		return fmt.Errorf("%w: adoption serial/topology mismatch got serial=%d want=%d", runtime.ErrPlanStale, a.Serial, expectedSerial)
+	}
+	if a.State.FindResource(addr) != nil {
+		return fmt.Errorf("%w: adoption resource already present", runtime.ErrPlanStale)
+	}
+	for _, old := range a.Actions {
+		if old.ID != action.ID && old.Status != runtime.ActionSucceeded && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
+			return ErrConflict
+		}
+	}
+	action.Revision = 1
+	a.Actions[action.ID] = action
+	candidate := *action.Candidate
+	candidate.OwnerUID, candidate.ResourceUID, candidate.Generation = action.OwnerUID, action.ResourceUID, action.Generation
+	a.State.RemoveResource(addr)
+	a.State.AddResource(candidate)
+	a.Serial++
+	action.Status = runtime.ActionSucceeded
+	action.EffectComplete = true
+	action.Revision++
+	a.Actions[action.ID] = action
+	a.UpdatedAt = time.Now().UTC()
+	return nil
+
 }
 
 func resetPhaseOrder(phase string) int {

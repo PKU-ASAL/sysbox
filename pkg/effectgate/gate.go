@@ -28,17 +28,19 @@ type Gate struct {
 	Authorize func(context.Context, controlplane.ExecutionGrant) error
 }
 type outcome struct {
-	GCFence     *controlplane.GCDispositionProof         `json:"gc_fence,omitempty"`
-	GCFenceKey  []byte                                   `json:"gc_fence_key,omitempty"`
-	Grant       controlplane.ExecutionGrant              `json:"grant"`
-	SignedGrant *controlplane.SignedExecutionGrant       `json:"signed_grant,omitempty"`
-	State       string                                   `json:"state"`
-	Result      json.RawMessage                          `json:"result,omitempty"`
-	Checkpoint  json.RawMessage                          `json:"run_checkpoint,omitempty"`
-	Receipt     *controlplane.SignedExecutionStopReceipt `json:"receipt,omitempty"`
-	Reported    bool                                     `json:"reported"`
-	Started     bool                                     `json:"started,omitempty"`
-	Admission   json.RawMessage                          `json:"run_admission,omitempty"`
+	AdoptionFence    *controlplane.AdoptionDispositionProof   `json:"adoption_fence,omitempty"`
+	AdoptionFenceKey []byte                                   `json:"adoption_fence_key,omitempty"`
+	GCFence          *controlplane.GCDispositionProof         `json:"gc_fence,omitempty"`
+	GCFenceKey       []byte                                   `json:"gc_fence_key,omitempty"`
+	Grant            controlplane.ExecutionGrant              `json:"grant"`
+	SignedGrant      *controlplane.SignedExecutionGrant       `json:"signed_grant,omitempty"`
+	State            string                                   `json:"state"`
+	Result           json.RawMessage                          `json:"result,omitempty"`
+	Checkpoint       json.RawMessage                          `json:"run_checkpoint,omitempty"`
+	Receipt          *controlplane.SignedExecutionStopReceipt `json:"receipt,omitempty"`
+	Reported         bool                                     `json:"reported"`
+	Started          bool                                     `json:"started,omitempty"`
+	Admission        json.RawMessage                          `json:"run_admission,omitempty"`
 }
 type ledger struct {
 	TopologyUID string             `json:"topology_uid"`

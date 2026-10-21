@@ -40,8 +40,9 @@ func validFenceBoot(s string) bool {
 func (r HostFenceRequest) Validate() error {
 	g := r.Grant
 	runScope := IsRunExecutionOperation(g.Operation) && g.Scope.ResourceUID == "" && g.Scope.Generation == 0
+	adoptionScope := g.Operation == "adoption_apply" && g.Scope.ResourceUID != "" && g.Scope.Generation > 0
 	gcScope := g.Operation == "gc_delete" && g.Scope.ResourceUID != "" && g.Scope.Generation > 0 && g.CommandID == r.RunID
-	if r.Version != 1 || !fenceName.MatchString(r.ID) || !fenceName.MatchString(r.Topology) || !fenceName.MatchString(r.RunID) || !fenceName.MatchString(r.LabID) || len(r.ControllerKey) != ed25519.PublicKeySize || !validFenceDigest(r.JournalSHA256) || !validFenceDigest(g.Digest) || !validFenceBoot(g.TargetBootID) || g.Scope.TopologyUID == "" || g.ActionID != r.RunID || g.AgentID == "" || g.SessionID == "" || g.CommandID == "" || g.Epoch == 0 || g.Attempt == 0 || g.ParentEpoch != 0 || g.ExpiresAt.IsZero() || g.StopReceipt != "" || (g.State != GrantActive && g.State != GrantRevoked) || (!runScope && !gcScope) {
+	if r.Version != 1 || !fenceName.MatchString(r.ID) || !fenceName.MatchString(r.Topology) || !fenceName.MatchString(r.RunID) || !fenceName.MatchString(r.LabID) || len(r.ControllerKey) != ed25519.PublicKeySize || !validFenceDigest(r.JournalSHA256) || !validFenceDigest(g.Digest) || !validFenceBoot(g.TargetBootID) || g.Scope.TopologyUID == "" || g.ActionID != r.RunID || g.AgentID == "" || g.SessionID == "" || g.CommandID == "" || g.Epoch == 0 || g.Attempt == 0 || g.ParentEpoch != 0 || g.ExpiresAt.IsZero() || g.StopReceipt != "" || (g.State != GrantActive && g.State != GrantRevoked) || (!runScope && !gcScope && !adoptionScope) {
 		return fmt.Errorf("invalid host fence request")
 	}
 	return nil

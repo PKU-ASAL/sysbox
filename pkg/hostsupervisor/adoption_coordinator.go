@@ -8,18 +8,21 @@ import (
 	"errors"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/effectgate"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"time"
 )
 
 type AdoptionRequest = controlplane.AdoptionRequest
 
 type AdoptionCoordinator struct {
-	Root                string
-	IssuerKey           ed25519.PublicKey
-	HostBootID, AgentID string
-	Authorize           func(context.Context, controlplane.SignedExecutionGrant) error
-	HostKey             ed25519.PrivateKey
-	Report              func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error
+	AuthorizeFence        func(context.Context, string) (controlplane.AdoptionDispositionProof, error)
+	InspectFencedAdoption func(context.Context, controlplane.AdoptionRequest) (substrate.NodeObservation, json.RawMessage, error)
+	Root                  string
+	IssuerKey             ed25519.PublicKey
+	HostBootID, AgentID   string
+	Authorize             func(context.Context, controlplane.SignedExecutionGrant) error
+	HostKey               ed25519.PrivateKey
+	Report                func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error
 }
 
 func (c *AdoptionCoordinator) validate(req AdoptionRequest, g controlplane.SignedExecutionGrant, now time.Time) error {

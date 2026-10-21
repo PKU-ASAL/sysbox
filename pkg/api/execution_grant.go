@@ -9,14 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"io"
 	"net/http"
 	"os"
@@ -523,25 +519,13 @@ func (s *Server) commitAdoptionState(ctx context.Context, op controlplane.NodeOp
 	if op.Adoption == nil {
 		return persistence.ErrConflict
 	}
-	req := op.Adoption
-	addr, err := address.Parse(req.Address)
-	if err != nil {
-		return err
+	var key ed25519.PublicKey
+	if len(s.grantSigner) == ed25519.PrivateKeySize {
+		key = s.grantSigner.Public().(ed25519.PublicKey)
 	}
-	repo, err := s.actionRepository(req.Topology)
-	if err != nil {
-		return err
-	}
-	// The server owns this cached repository across requests. Closing it here
-	// breaks receipt retries and subsequent lifecycle operations on SQL stores.
-	resource := state.Resource{Address: addr, ResourceType: addr.Type, Driver: req.Provider, ExternalID: req.ExternalID, OwnerUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation, Private: append(json.RawMessage(nil), evidence...), Status: state.ResourcePresent, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
-	if req.Transfer != nil {
-		if len(s.grantSigner) != ed25519.PrivateKeySize {
-			return persistence.ErrConflict
-		}
-		return repo.CommitOwnershipTarget(ctx, *req.Transfer, s.grantSigner.Public().(ed25519.PublicKey), resource)
-	}
-	return runtime.CommitAdoptionEvidence(ctx, repo, op.ID, req.Topology, addr, req.Evidence, resource, substrate.OperationIdentity{ActionID: op.ID, OwnerUID: req.TopologyUID, TopologyUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation}, req.ExpectedSerial)
+	return s.commitAdoptionWithAuthority(ctx, op.Adoption.Topology, func(raw, authority []byte) ([]byte, error) {
+		return persistence.ApplyHostAdoptionState(raw, authority, op, evidence, key)
+	})
 }
 func (s *Server) authenticatedGrantAgent(r *http.Request) error {
 	id := r.PathValue("agent")

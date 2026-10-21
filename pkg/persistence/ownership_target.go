@@ -15,39 +15,54 @@ import (
 const OwnershipTargetFormatVersion = 11
 
 type OwnershipTargetReservation struct {
-	Aborted        bool                               `json:"aborted,omitempty"`
-	Preparation    *controlplane.OwnershipPreparation `json:"preparation,omitempty"`
-	PreparationKey []byte                             `json:"preparation_key,omitempty"`
-	Plan           controlplane.OwnershipTransferPlan `json:"plan"`
-	CompletedHash  string                             `json:"completed_hash,omitempty"`
+	DispositionHash string                             `json:"disposition_hash,omitempty"`
+	Aborted         bool                               `json:"aborted,omitempty"`
+	Preparation     *controlplane.OwnershipPreparation `json:"preparation,omitempty"`
+	PreparationKey  []byte                             `json:"preparation_key,omitempty"`
+	Plan            controlplane.OwnershipTransferPlan `json:"plan"`
+	CompletedHash   string                             `json:"completed_hash,omitempty"`
 }
 
 func ownershipPending(a *aggregate) bool {
 	for _, v := range a.OwnershipTargets {
-		if v.CompletedHash == "" && !v.Aborted {
+		if v.CompletedHash == "" && v.DispositionHash == "" && !v.Aborted {
 			return true
 		}
 	}
 	return false
 }
 func validateOwnershipTargets(a *aggregate) error {
-	if len(a.OwnershipTargets) > 0 && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion {
+	if len(a.OwnershipTargets) > 0 && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
 		return ErrCorruptRecord
 	}
 	pending := 0
 	for id, v := range a.OwnershipTargets {
+		if v.DispositionHash != "" {
+			if a.Format != AdoptionRecoveryFormatVersion || v.CompletedHash != "" || v.Aborted {
+				return ErrCorruptRecord
+			}
+			found := false
+			for _, r := range a.AdoptionRecoveries {
+				if r.Proof.Adoption.ID == id && AdoptionDispositionHash(r.Proof) == v.DispositionHash {
+					found = true
+				}
+			}
+			if !found {
+				return ErrCorruptRecord
+			}
+		}
 		if id != v.Plan.ID || v.Plan.Validate() != nil {
 			return ErrCorruptRecord
 		}
 		if v.Preparation != nil && (controlplane.VerifyOwnershipPreparation(v.PreparationKey, *v.Preparation) != nil || evidenceHash(v.Preparation.Plan) != evidenceHash(v.Plan)) {
 			return ErrCorruptRecord
 		}
-		if v.CompletedHash == "" && !v.Aborted {
+		if v.CompletedHash == "" && v.DispositionHash == "" && !v.Aborted {
 			pending++
 			if a.State.TopologyUID != v.Plan.Target.TopologyUID || a.Serial != v.Plan.TargetSerial {
 				return ErrCorruptRecord
 			}
-		} else if !v.Aborted && len(v.CompletedHash) != 64 {
+		} else if !v.Aborted && len(v.CompletedHash) != 64 && len(v.DispositionHash) != 64 {
 			return ErrCorruptRecord
 		}
 	}
@@ -94,7 +109,7 @@ func (r *Repository) ReserveOwnershipTarget(ctx context.Context, p controlplane.
 			a.OwnershipTargets = map[string]OwnershipTargetReservation{}
 		}
 		a.OwnershipTargets[p.ID] = OwnershipTargetReservation{Plan: p}
-		if a.Format != GCAdmissionFormatVersion {
+		if a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
 			a.Format = OwnershipTargetFormatVersion
 		}
 		return nil
@@ -122,28 +137,32 @@ func (r *Repository) CommitOwnershipTarget(ctx context.Context, proof controlpla
 		Proof    controlplane.OwnershipRetirementProof
 		Resource state.Resource
 	}{proof, stable})
-	return r.updateOwnership(ctx, p.TargetTopology, func(a *aggregate) error {
-		reservation, ok := a.OwnershipTargets[p.ID]
-		if !ok || reservation.Aborted || evidenceHash(reservation.Plan) != evidenceHash(p) {
-			return ErrConflict
-		}
-		if reservation.CompletedHash != "" {
-			if reservation.CompletedHash != completion {
-				return ErrConflict
-			}
-			return nil
-		}
-		if a.State.TopologyUID != p.Target.TopologyUID || a.Serial != p.TargetSerial || a.State.FindResource(addr) != nil || gcPending(a) {
-			return ErrConflict
-		}
-		a.State.AddResource(resource)
-		a.Serial++
-		a.UpdatedAt = time.Now().UTC()
-		reservation.CompletedHash = completion
-		a.OwnershipTargets[p.ID] = reservation
-		return nil
-	})
+	return r.updateOwnership(ctx, p.TargetTopology, func(a *aggregate) error { return commitOwnershipTarget(a, p, addr, resource, completion) })
 }
+func commitOwnershipTarget(a *aggregate, p controlplane.OwnershipTransferPlan, addr address.Address, resource state.Resource, completion string) error {
+
+	reservation, ok := a.OwnershipTargets[p.ID]
+	if !ok || reservation.Aborted || reservation.DispositionHash != "" || evidenceHash(reservation.Plan) != evidenceHash(p) {
+		return ErrConflict
+	}
+	if reservation.CompletedHash != "" {
+		if reservation.CompletedHash != completion {
+			return ErrConflict
+		}
+		return nil
+	}
+	if a.State.TopologyUID != p.Target.TopologyUID || a.Serial != p.TargetSerial || a.State.FindResource(addr) != nil || gcPending(a) {
+		return ErrConflict
+	}
+	a.State.AddResource(resource)
+	a.Serial++
+	a.UpdatedAt = time.Now().UTC()
+	reservation.CompletedHash = completion
+	a.OwnershipTargets[p.ID] = reservation
+	return nil
+
+}
+
 func (r *Repository) updateOwnership(ctx context.Context, topology string, fn func(*aggregate) error) error {
 	if !topologyName.MatchString(topology) || (r.boundTopology != "" && r.boundTopology != topology) {
 		return ErrInvalidRecord

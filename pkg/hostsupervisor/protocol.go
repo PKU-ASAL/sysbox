@@ -15,6 +15,7 @@ type TargetRef struct {
 	Scope    controlplane.ExecutionScope `json:"scope"`
 }
 type Request struct {
+	AdoptionFenceID    string                                  `json:"adoption_fence_id,omitempty"`
 	OwnershipPlan      *controlplane.OwnershipTransferPlan     `json:"ownership_plan,omitempty"`
 	GCFenceID          string                                  `json:"gc_fence_id,omitempty"`
 	AdoptionInspection *controlplane.AdoptionInspectionRequest `json:"adoption_inspection,omitempty"`
@@ -38,21 +39,22 @@ type Request struct {
 	Limit              int                                     `json:"limit,omitempty"`
 }
 type Response struct {
-	OwnershipPreparation *controlplane.OwnershipPreparation `json:"ownership_preparation,omitempty"`
-	GCDisposition        *controlplane.GCDispositionProof   `json:"gc_disposition,omitempty"`
-	SSHDiscovery         *substrate.SSHAccessDiscovery      `json:"ssh_discovery,omitempty"`
-	FileInspection       *substrate.InstalledFileInspection `json:"file_inspection,omitempty"`
-	InspectedFile        *substrate.FileInstallHandle       `json:"inspected_file,omitempty"`
-	Version              int                                `json:"version"`
-	BootID               string                             `json:"boot_id,omitempty"`
-	Handle               substrate.ExecutionHandle          `json:"handle,omitempty"`
-	Result               substrate.ExecResult               `json:"result,omitempty"`
-	Output               substrate.ExecutionOutput          `json:"output,omitempty"`
-	Error                string                             `json:"error,omitempty"`
-	FileResult           substrate.FileInstallResult        `json:"file_result,omitempty"`
-	RunObservation       *RunObservation                    `json:"run_observation,omitempty"`
-	RecoveryReport       *controlplane.RunRecoveryReport    `json:"recovery_report,omitempty"`
-	SSHEvidence          json.RawMessage                    `json:"ssh_evidence,omitempty"`
-	AdoptionEvidence     json.RawMessage                    `json:"adoption_evidence,omitempty"`
-	GCResult             json.RawMessage                    `json:"gc_result,omitempty"`
+	AdoptionDisposition  *controlplane.AdoptionDispositionProof `json:"adoption_disposition,omitempty"`
+	OwnershipPreparation *controlplane.OwnershipPreparation     `json:"ownership_preparation,omitempty"`
+	GCDisposition        *controlplane.GCDispositionProof       `json:"gc_disposition,omitempty"`
+	SSHDiscovery         *substrate.SSHAccessDiscovery          `json:"ssh_discovery,omitempty"`
+	FileInspection       *substrate.InstalledFileInspection     `json:"file_inspection,omitempty"`
+	InspectedFile        *substrate.FileInstallHandle           `json:"inspected_file,omitempty"`
+	Version              int                                    `json:"version"`
+	BootID               string                                 `json:"boot_id,omitempty"`
+	Handle               substrate.ExecutionHandle              `json:"handle,omitempty"`
+	Result               substrate.ExecResult                   `json:"result,omitempty"`
+	Output               substrate.ExecutionOutput              `json:"output,omitempty"`
+	Error                string                                 `json:"error,omitempty"`
+	FileResult           substrate.FileInstallResult            `json:"file_result,omitempty"`
+	RunObservation       *RunObservation                        `json:"run_observation,omitempty"`
+	RecoveryReport       *controlplane.RunRecoveryReport        `json:"recovery_report,omitempty"`
+	SSHEvidence          json.RawMessage                        `json:"ssh_evidence,omitempty"`
+	AdoptionEvidence     json.RawMessage                        `json:"adoption_evidence,omitempty"`
+	GCResult             json.RawMessage                        `json:"gc_result,omitempty"`
 }

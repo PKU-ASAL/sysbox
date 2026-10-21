@@ -64,6 +64,10 @@ func TestLibvirtOwnershipTransferColdReadbackE2E(t *testing.T) {
 	var exited *exec.ExitError
 	require.ErrorAs(t, childErr, &exited, string(output))
 	require.Equal(t, 77, exited.ExitCode(), string(output))
+	recovered, recoveryErr := provider.InspectAdoptionRecovery(scoped, controlplane.AdoptionRequest{ExternalID: id})
+	require.NoError(t, recoveryErr, "read-only ownership recovery after lost provider return")
+	require.Equal(t, id, recovered.ID)
+	require.Equal(t, plan.Target.Generation, recovered.Generation)
 	h, err := provider.ApplyOwnershipTransfer(scoped, proof, pub)
 	require.NoError(t, err)
 	require.Equal(t, id, h.ID)

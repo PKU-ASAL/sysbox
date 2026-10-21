@@ -47,12 +47,15 @@ func validateLedger(record *ledger) error {
 			return ErrUncertain
 		}
 		if prior.State == "fenced" {
-			if prior.GCFence == nil || controlplane.VerifyGCDisposition(prior.GCFenceKey, *prior.GCFence) != nil || !sameGrant(prior.GCFence.Request.Grant, prior.Grant) || !record.Stopped[prior.Grant.Epoch] || len(prior.Result) != 0 || prior.Receipt != nil {
+			gcValid := prior.GCFence != nil && prior.AdoptionFence == nil && controlplane.VerifyGCDisposition(prior.GCFenceKey, *prior.GCFence) == nil && sameGrant(prior.GCFence.Request.Grant, prior.Grant)
+			adoptionValid := prior.AdoptionFence != nil && prior.GCFence == nil && controlplane.VerifyAdoptionDisposition(prior.AdoptionFenceKey, *prior.AdoptionFence) == nil && sameGrant(prior.AdoptionFence.Request.Grant, prior.Grant)
+			if (!gcValid && !adoptionValid) || !record.Stopped[prior.Grant.Epoch] || len(prior.Result) != 0 || prior.Receipt != nil {
 				return ErrUncertain
 			}
-		} else if prior.GCFence != nil || len(prior.GCFenceKey) != 0 {
+		} else if prior.GCFence != nil || len(prior.GCFenceKey) != 0 || prior.AdoptionFence != nil || len(prior.AdoptionFenceKey) != 0 {
 			return ErrUncertain
 		}
+
 		if prior.State != "intent" && prior.State != "complete" && prior.State != "fenced" {
 			return ErrUncertain
 		}

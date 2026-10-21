@@ -21,10 +21,11 @@
         "adoption-returned-recovery",
         "ownership-transfer-libvirt-host-sigkill",
         "ownership-transfer-firecracker-host-sigkill",
-        "ownership-transfer-docker-host-sigkill"
+        "ownership-transfer-docker-host-sigkill",
+        "adoption-fenced-recovery"
       ],
       "remaining": [
-        "Real host SIGKILL covers six libvirt/Firecracker and five Docker boundaries; complete provider-internal ownership-write interruption and integrated publication fault coverage remain open."
+        "Explicit fenced recovery is implemented for exact target ownership after a lost adoption return; historical operation stays unknown. Source/unowned/absent/conflict disposition, pre-existing canonical unknown actions and Firecracker previous-boot process anchors remain unresolved; full provider-internal/transport acceptance stays open."
       ]
     },
     {
@@ -41,10 +42,11 @@
         "ownership-transfer-libvirt",
         "ownership-transfer-libvirt-host-sigkill",
         "ownership-transfer-firecracker-host-sigkill",
-        "ownership-transfer-docker-host-sigkill"
+        "ownership-transfer-docker-host-sigkill",
+        "adoption-fenced-recovery"
       ],
       "remaining": [
-        "Prepared transfer, signed source retirement, target reservation and real host SIGKILL recovery are implemented. Final combined acceptance and provider-internal partial writes remain open."
+        "Explicit fenced recovery is implemented for exact target ownership after a lost adoption return; historical operation stays unknown. Source/unowned/absent/conflict disposition, pre-existing canonical unknown actions and Firecracker previous-boot process anchors remain unresolved; full provider-internal/transport acceptance stays open."
       ]
     },
     {
@@ -76,10 +78,11 @@
         "real-firecracker",
         "ownership-transfer-libvirt-host-sigkill",
         "ownership-transfer-firecracker-host-sigkill",
-        "ownership-transfer-docker-host-sigkill"
+        "ownership-transfer-docker-host-sigkill",
+        "adoption-fenced-recovery"
       ],
       "remaining": [
-        "Full interrupted-adoption recovery acceptance, including control-plane publication windows, is not closed."
+        "Explicit fenced recovery is implemented for exact target ownership after a lost adoption return; historical operation stays unknown. Source/unowned/absent/conflict disposition, pre-existing canonical unknown actions and Firecracker previous-boot process anchors remain unresolved; full provider-internal/transport acceptance stays open."
       ]
     },
     {
@@ -1166,6 +1169,22 @@
       "timeout": "5m",
       "requires_env": [
         "SYSBOX_DOCKER_TRANSFER_E2E"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "adoption-fenced-recovery",
+      "package": "./pkg/api",
+      "tests": [
+        "TestAdoptionFenceRecoversObservedOwnerWithoutInventingSuccess",
+        "TestOwnershipTransferFencedRecoveryPreservesUnknown",
+        "TestLateAdoptionCompletionCannotBypassGCFrozenReferences"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
       ],
       "artifact_env": []
     }

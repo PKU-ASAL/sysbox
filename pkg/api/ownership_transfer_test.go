@@ -24,6 +24,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestOwnershipTransferFencedRecoveryPreservesUnknown(t *testing.T) {
+	testOwnershipTransferFlow(t, "fenced-recovery")
+}
+
 func TestOwnershipTransferPreparationRetiresSourceAndReservesTarget(t *testing.T) {
 	testOwnershipTransferFlow(t, "")
 }
@@ -149,9 +153,24 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 		cmd, ok, err := store.AcquireAgentCommandLease(ctx, "host", op.CommandID, "transfer-worker", time.Minute)
 		require.NoError(t, err)
 		require.True(t, ok)
-		transferGrant, err := s.issueCommandGrant(ctx, "host", cmd.ID, ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, BootID: "boot"})
+		transferBoot := "boot"
+		if phase == "fenced-recovery" {
+			transferBoot = "11111111-1111-4111-8111-111111111111"
+		}
+		transferGrant, err := s.issueCommandGrant(ctx, "host", cmd.ID, ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, BootID: transferBoot})
 		require.NoError(t, err)
 		evidence := json.RawMessage(`{"domain_uuid":"external"}`)
+		if phase == "fenced-recovery" {
+			testFencedTransferCompletion(t, s, authority, op, *transferGrant, hostKey, evidence)
+			targetRecord, err := targetRepo.ReadOwnershipTarget(ctx, "target", plan.ID)
+			require.NoError(t, err)
+			require.Empty(t, targetRecord.CompletedHash, "old transfer was never proven successful")
+			require.NotEmpty(t, targetRecord.DispositionHash)
+			barrier, err := authority.InspectMaintenance(ctx, plan.ID)
+			require.NoError(t, err)
+			require.True(t, barrier.Released)
+			return
+		}
 		crash("target-committed", op, evidence)
 		receipt, err := controlplane.SignAdoptionStopReceipt(hostKey, *transferGrant, "boot", "transfer-receipt", evidence, time.Now())
 		require.NoError(t, err)

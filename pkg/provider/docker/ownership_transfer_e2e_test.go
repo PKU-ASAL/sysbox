@@ -159,6 +159,10 @@ func testDockerTransferHostBoundary(t *testing.T, phase string) {
 			return
 		}
 	}
+	recovered, recoveryErr := s.InspectAdoptionRecovery(scoped, controlplane.AdoptionRequest{ExternalID: created.ID})
+	require.NoError(t, recoveryErr, "read-only ownership recovery after lost provider return")
+	require.Equal(t, created.ID, recovered.ID)
+	require.Equal(t, p.Target.Generation, recovered.Generation)
 	h, err := s.ApplyOwnershipTransfer(scoped, proof, pub)
 	require.NoError(t, err)
 	cold := &Substrate{cli: s.cli, adoptionRoot: s.adoptionRoot}

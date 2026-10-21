@@ -125,6 +125,53 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	server.SSHGuest = &hostsupervisor.SSHGuestDispatcher{Dispatcher: &sshDispatcher, Report: authority.ReportNodeOperation, ReportDerived: authority.ReportDerivedSSHAccess}
 	hostRun.SSH = server.SSHGuest
 	server.Adoption = &hostsupervisor.AdoptionCoordinator{Root: filepath.Join(cfg.HostSupervisor.Root, "adoption"), AgentID: ident.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key, Report: authority.ReportNodeOperation, Authorize: authority.Authorize}
+	server.Adoption.AuthorizeFence = authority.AuthorizeAdoptionFence
+	server.Adoption.InspectFencedAdoption = func(ctx context.Context, req controlplane.AdoptionRequest) (substrate.NodeObservation, json.RawMessage, error) {
+		node, err := driver.DefaultRegistry.RequireNode(req.Provider)
+		if err != nil {
+			return substrate.NodeObservation{}, nil, err
+		}
+		if req.Provider != "firecracker" {
+			locality, ok := node.(interface {
+				HostFenceScope(context.Context) (string, error)
+			})
+			if !ok {
+				return substrate.NodeObservation{}, nil, fmt.Errorf("provider fencing locality unavailable")
+			}
+			scope, err := locality.HostFenceScope(ctx)
+			if err != nil {
+				return substrate.NodeObservation{}, nil, err
+			}
+			if scope != "local-only" {
+				return substrate.NodeObservation{}, nil, fmt.Errorf("provider is outside fenced host")
+			}
+		}
+		inspector, ok := node.(interface {
+			InspectAdoptionRecovery(context.Context, controlplane.AdoptionRequest) (substrate.NodeHandle, error)
+		})
+		if !ok {
+			return substrate.NodeObservation{}, nil, fmt.Errorf("provider ownership recovery unavailable")
+		}
+		identity := substrate.OperationIdentity{ActionID: req.ID, OwnerUID: req.TopologyUID, TopologyUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation}
+		scoped := substrate.WithOperationIdentity(ctx, identity)
+		handle, err := inspector.InspectAdoptionRecovery(scoped, req)
+		if err != nil {
+			return substrate.NodeObservation{}, nil, err
+		}
+		if handle.ID != req.ExternalID || handle.Generation != req.Generation {
+			return substrate.NodeObservation{}, nil, fmt.Errorf("recovery external identity mismatch")
+		}
+		observed, err := node.ObserveNode(scoped, handle)
+		if err != nil {
+			return substrate.NodeObservation{}, nil, err
+		}
+		codec, err := driver.DefaultRegistry.RequireNodeState(req.Provider)
+		if err != nil {
+			return substrate.NodeObservation{}, nil, err
+		}
+		private, err := codec.MarshalProviderState(handle)
+		return observed, private, err
+	}
 	server.AdoptionInspect = func(ctx context.Context, req controlplane.AdoptionInspectionRequest) (substrate.AdoptionEvidence, error) {
 		provider, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider)
 		if err != nil {
