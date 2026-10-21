@@ -4645,3 +4645,17 @@ existing Firecracker process-exit race in
 `TestDestroyNodeDoesNotWaitOnProcessAlreadyOwnedByReaper` (identity changed during
 probe). Its isolated race rerun passed 10 times. This is retained as a failed
 full-run result, not claimed as a root-cause fix or a clean total acceptance.
+
+### P6 independent-process restore boundaries (2026-10-21)
+
+`TestSnapshotRestoreIndependentProcessCrashMatrix` covers file, SQLite and
+PostgreSQL with child process exit after the durable maintenance barrier, after
+restore commit and after barrier release. A cold workflow finishes the exact
+request, rejects the old grant and stale state serial, and historical retry
+cannot rewind a subsequent state mutation. All nine cases passed with race
+detection; the strengthened resource-observation assertions passed in
+`/tmp/sysbox-p6-process-final.log` (5.198 seconds). The grant was explicitly
+stopped before these crash cases; the assertion checks non-resurrection, not
+the separate active-worker stop protocol. This adds actual
+process-exit evidence to earlier in-process reconstruction tests; it does not
+claim every state operation or random instruction-level SIGKILL is covered.

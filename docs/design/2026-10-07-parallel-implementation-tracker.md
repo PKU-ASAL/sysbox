@@ -940,3 +940,15 @@ materialized revision 目录同样保留引用。新隔离执行 VM 的 HTTPS �
 不共享工作目录，覆盖登记、引用保护、释放与退休后晚到引用拒绝。
 SQL consumer 仍拒绝配置；跨独立 SQL 数据库的同等协议未实现，不能据此关闭
 全部联邦覆盖。完整 API/Agent/provider 故障矩阵仍单列，不缩减为单个协议测试。
+
+## 阶段 3 退休基础与 P6 进程边界（2026-10-21）
+
+P6 增加 file/SQLite/PostgreSQL 的独立子进程退出矩阵：维护屏障、restore 已提交、
+屏障已释放三个边界，冷 workflow 重试不覆盖后继状态；旧 serial 拒绝，已停止旧
+grant 不会复活。实际资源观测状态恢复后置为 unknown。此项不代表完整 P6 关闭。
+
+ownership transfer 新增不可变双方计划及签名旧 owner 退休证明的数据合同，
+source retirement 要求匹配维护屏障和所有旧 grant 停止，原子移除旧 state 资源并
+保留 format10 retirement 历史。旧资源 UID／同 provider 外部 ID 不能重新写回，
+metadata reset 后也保留保护。当前仅基础层，未接通 target CAS、provider 改绑、
+owning-agent 调度或完整恢复 API，不可作为正式 transfer 使用。

@@ -33,17 +33,18 @@ const FormatVersion = 6
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
-	DeletedFrom        *LifecycleDeletionReceipt                   `json:"deleted_from,omitempty"`
-	GCSources          map[string]GCSource                         `json:"gc_sources,omitempty"`
-	GC                 map[string]GCReservation                    `json:"gc_reservations"`
-	ResetContinuations map[string]runtime.ResetContinuationReceipt `json:"reset_continuations"`
-	Restores           map[string]SnapshotRestoreReceipt           `json:"restores"`
-	Snapshots          map[string]aggregateSnapshot                `json:"snapshots"`
-	Format             int                                         `json:"format"`
-	Serial             int64                                       `json:"serial"`
-	State              *state.State                                `json:"state"`
-	Actions            map[string]runtime.ActionRecord             `json:"actions"`
-	UpdatedAt          time.Time                                   `json:"updated_at"`
+	OwnershipRetirements map[string]controlplane.OwnershipRetirementProof `json:"ownership_retirements,omitempty"`
+	DeletedFrom          *LifecycleDeletionReceipt                        `json:"deleted_from,omitempty"`
+	GCSources            map[string]GCSource                              `json:"gc_sources,omitempty"`
+	GC                   map[string]GCReservation                         `json:"gc_reservations"`
+	ResetContinuations   map[string]runtime.ResetContinuationReceipt      `json:"reset_continuations"`
+	Restores             map[string]SnapshotRestoreReceipt                `json:"restores"`
+	Snapshots            map[string]aggregateSnapshot                     `json:"snapshots"`
+	Format               int                                              `json:"format"`
+	Serial               int64                                            `json:"serial"`
+	State                *state.State                                     `json:"state"`
+	Actions              map[string]runtime.ActionRecord                  `json:"actions"`
+	UpdatedAt            time.Time                                        `json:"updated_at"`
 }
 type backend interface {
 	update(context.Context, string, func(*aggregate) error) error
@@ -113,14 +114,14 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion {
+	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion && header.Format != OwnershipRetirementFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, header.Format, FormatVersion)
 	}
 	var a aggregate
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion {
+	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, a.Format, FormatVersion)
 	}
 	if err := validateAggregate(&a, ""); err != nil {
@@ -139,6 +140,9 @@ func validateAggregate(a *aggregate, topology string) error {
 		return ErrCorruptRecord
 	}
 	if err := validateGCSources(a); err != nil {
+		return err
+	}
+	if err := validateOwnershipRetirements(a); err != nil {
 		return err
 	}
 	if err := validateGCReservations(a); err != nil {

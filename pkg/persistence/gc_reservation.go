@@ -35,7 +35,7 @@ func validateGCReservations(a *aggregate) error {
 	pending := 0
 	groups := map[string]bool{}
 	for id, r := range a.GC {
-		if r.DispositionHash != "" && a.Format != GCDispositionFormatVersion {
+		if r.DispositionHash != "" && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion {
 			return ErrCorruptRecord
 		}
 		if id == "" || id != r.ID || r.AgentID == "" || r.Candidate.Validate() != nil || r.Candidate.TopologyUID != a.State.TopologyUID {
