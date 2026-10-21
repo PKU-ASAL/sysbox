@@ -4692,3 +4692,14 @@ prepared-generation transfer followed by real KVM cold start/observe/destroy
 (`/tmp/sysbox-firecracker-transfer-real.log`, 9.425s). Signed original manifest
 history retains the physical artifact path while old ownership is rejected.
 These runs do not substitute for every provider-internal OS-kill permutation.
+
+### Independent SQLite/PostgreSQL revision consumers
+
+Both SQL backends passed real HTTP consumer retirement and late-Run rejection,
+lost durable acknowledgment retry, mixed referenced/unreferenced batch rollback,
+and enrollment-loss refusal. A separate multi-peer transport test confirms the
+central registry retains its object and intent when a later peer fails after an
+earlier acknowledgment. `/tmp/sysbox-sql-federation-final.log` records the SQL
+race regressions; socket-sandbox failure logs are not counted as acceptance.
+The protocol deliberately retains irreversible consumer fences on partial
+failure instead of claiming a distributed atomic rollback.
