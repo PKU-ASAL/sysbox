@@ -4716,3 +4716,16 @@ Authorize/Renew both before and after confirmed-stop restoration. Original
 lineage/resource-incarnation conflicts, unresolved journal preservation and
 force-unlock stop evidence remain covered by the same run. This reconciles P6's
 listed acceptance criteria; it does not close P9's broader upgrade/fault matrix.
+
+### Returned adoption callback recovery
+
+Adoption now persists a host-owned returned-result proof after a successful,
+uncancelled provider callback and before updating the main effect ledger. Failure
+of the latter can be recovered from the exact grant/effect/result proof without
+calling the provider again. Independent process exit after the proof boundary is
+covered. Missing/invalid proofs, callback errors and cancellation retain unknown;
+this does not authorize recovery of arbitrary old daemon requests. Proof size is
+bounded to 16 MiB on both publication and recovery. Local and remote revision
+scans retain references in `returned-*.proof.json`; ledger scanning skips these
+auxiliary records. Result integrity uses the protected host directory, while the
+original authorization envelope is signature-verified.

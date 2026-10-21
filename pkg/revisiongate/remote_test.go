@@ -182,3 +182,14 @@ func TestExplicitCatalogGuardCannotBypassLostRemoteBinding(t *testing.T) {
 	_, err = GuardCatalog(ctx, catalog, []byte(`{"revision":"sha256:`+strings.Repeat("a", 64)+`"}`))
 	require.Error(t, err)
 }
+
+func TestRemoteSyncRetainsReturnedProviderProof(t *testing.T) {
+	root := t.TempDir()
+	catalog := filepath.Join(root, "global-revisions")
+	require.NoError(t, os.Mkdir(catalog, 0700))
+	id := "sha256:" + strings.Repeat("b", 64)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "returned-operation.proof.json"), []byte(`{"result":{"revision":"`+id+`"}}`), 0600))
+	refs, err := scanRemoteReferences(root, catalog)
+	require.NoError(t, err)
+	require.Contains(t, refs, id)
+}

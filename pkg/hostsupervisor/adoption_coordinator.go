@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/effectgate"
 	"time"
@@ -67,7 +68,7 @@ func (c *AdoptionCoordinator) Apply(ctx context.Context, req AdoptionRequest, g 
 		}
 		return c.Authorize(ctx, g)
 	}}
-	raw, err := gate.Execute(ctx, g, req.ExternalID, effect)
+	raw, err := gate.ExecuteWithReturnProof(ctx, g, req.ExternalID, effect)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +86,9 @@ func (c *AdoptionCoordinator) Observe(ctx context.Context, req AdoptionRequest, 
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
 	raw, err := gate.ReadOutcome(ctx, g.Grant, req.ExternalID)
+	if errors.Is(err, effectgate.ErrUncertain) {
+		raw, err = gate.RecoverReturnedOutcome(ctx, g.Grant, req.ExternalID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +103,9 @@ func (c *AdoptionCoordinator) Recover(ctx context.Context) error {
 		return err
 	}
 	gate := &effectgate.Gate{Root: c.Root, PublicKey: c.IssuerKey, BootID: c.HostBootID}
+	if err := gate.RecoverReturned(ctx); err != nil {
+		return err
+	}
 	return gate.RecoverCompleted(ctx, func(ctx context.Context, g controlplane.ExecutionGrant, effectID string) error {
 		if g.AgentID != c.AgentID || (g.Operation != "adoption_apply" && g.Operation != "adoption_inspect") {
 			return effectgate.ErrFenced

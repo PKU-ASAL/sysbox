@@ -227,3 +227,14 @@ func TestFileRevisionRetainsResetReturnEvidence(t *testing.T) {
 	require.NoError(t, writeLocalObject(filepath.Join(store.runsDir, "lab", "old.checkpoint.json.returned"), map[string]string{"revision": id}))
 	require.Error(t, store.DeleteGlobalRevisionAtomic(ctx, id, time.Now()))
 }
+
+func TestFileRevisionRetainsReturnedProviderProof(t *testing.T) {
+	ctx := context.Background()
+	s := NewServer(t.TempDir(), t.TempDir())
+	store := s.apiStore.(*localAPIStore)
+	files := map[string][]byte{"field.sysbox.hcl": []byte("returned provider")}
+	id := controlplane.ComputeRevisionDigest(files)
+	require.NoError(t, store.SaveGlobalRevision(ctx, controlplane.GlobalRevision{Revision: id, Files: files, CreatedAt: time.Now().Add(-time.Hour)}))
+	require.NoError(t, writeLocalObject(filepath.Join(store.runsDir, "host", "returned-operation.proof.json"), map[string]any{"result": map[string]string{"revision": id}}))
+	require.Error(t, store.DeleteGlobalRevisionAtomic(ctx, id, time.Now()))
+}

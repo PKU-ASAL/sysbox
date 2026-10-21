@@ -125,6 +125,9 @@ func save(path string, value *ledger) error {
 // an untrusted remote client; its operation and digest are selected by a fixed
 // provider dispatcher. The topology lock spans authorization and the effect.
 func (g *Gate) Execute(ctx context.Context, signed controlplane.SignedExecutionGrant, effectID string, effect func(context.Context) (json.RawMessage, error)) (json.RawMessage, error) {
+	return g.execute(ctx, signed, effectID, effect, false)
+}
+func (g *Gate) execute(ctx context.Context, signed controlplane.SignedExecutionGrant, effectID string, effect func(context.Context) (json.RawMessage, error), returnProof bool) (json.RawMessage, error) {
 	if effectID == "" || effect == nil || g.Authorize == nil {
 		return nil, ErrFenced
 	}
@@ -184,6 +187,11 @@ func (g *Gate) Execute(ctx context.Context, signed controlplane.SignedExecutionG
 	}
 	if !json.Valid(result) {
 		return nil, ErrUncertain
+	}
+	if returnProof {
+		if err := g.saveReturned(signed, effectID, result); err != nil {
+			return nil, err
+		}
 	}
 	record.Outcomes[key] = outcome{Grant: grant, State: "complete", Result: result}
 	if err := save(path, record); err != nil {

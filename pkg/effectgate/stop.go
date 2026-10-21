@@ -243,7 +243,7 @@ func (g *Gate) recoverOutcomes(ctx context.Context, budget time.Duration, select
 	}
 	var failures []error
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" || (strings.HasPrefix(entry.Name(), "returned-") && strings.HasSuffix(entry.Name(), ".proof.json")) {
 			continue
 		}
 		if ctx.Err() != nil {

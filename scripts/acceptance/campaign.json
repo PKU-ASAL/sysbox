@@ -17,7 +17,8 @@
       "gates": [
         "adoption-api",
         "real-docker-api",
-        "real-libvirt"
+        "real-libvirt",
+        "adoption-returned-recovery"
       ],
       "remaining": [
         "Complete provider ownership-write/observe/state-commit OS-kill matrix across all providers."
@@ -840,7 +841,8 @@
         "TestFileRevisionColdProcessCannotReviveRetirement",
         "TestDefaultRegistryMissingEnrollmentNeverMeansEmpty",
         "TestIndependentRegistryMissingManifestCannotRepublish",
-        "TestFileRevisionRetainsResetReturnEvidence"
+        "TestFileRevisionRetainsResetReturnEvidence",
+        "TestFileRevisionRetainsReturnedProviderProof"
       ],
       "kind": "contract",
       "race": true,
@@ -950,7 +952,8 @@
         "TestRemoteSyncRejectsTruncatedJSONWithoutReleasingPins",
         "TestRemoteMissingCatalogCannotBypassPinAdmission",
         "TestRemoteConsumerCannotSilentlyReenrollAfterBindingLoss",
-        "TestExplicitCatalogGuardCannotBypassLostRemoteBinding"
+        "TestExplicitCatalogGuardCannotBypassLostRemoteBinding",
+        "TestRemoteSyncRetainsReturnedProviderProof"
       ],
       "kind": "contract",
       "race": true,
@@ -1089,6 +1092,19 @@
       "requires_env": [
         "SYSBOX_TEST_DATABASE_URL"
       ],
+      "artifact_env": []
+    },
+    {
+      "id": "adoption-returned-recovery",
+      "package": "./pkg/effectgate",
+      "tests": [
+        "TestReturnedOutcomeSurvivesInterruptedLedgerPublication",
+        "TestErroredOrCancelledAdoptionNeverCreatesReturnProof",
+        "TestReturnedProofCorruptionCannotCompleteIntent"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
       "artifact_env": []
     }
   ]

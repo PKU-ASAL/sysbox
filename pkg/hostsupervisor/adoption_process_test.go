@@ -23,7 +23,7 @@ type adoptionCrashInput struct {
 }
 
 func TestAdoptionIndependentProcessCrashBoundaries(t *testing.T) {
-	for _, phase := range []string{"before-effect", "after-effect", "before-report"} {
+	for _, phase := range []string{"before-effect", "after-effect", "after-return-proof", "before-report"} {
 		t.Run(phase, func(t *testing.T) {
 			c, req, g := adoptionFixture(t)
 			// The generic coordinator boundary is the same for every provider. This
@@ -46,7 +46,7 @@ func TestAdoptionIndependentProcessCrashBoundaries(t *testing.T) {
 			}
 			require.NoError(t, c.Recover(context.Background()))
 			result, err := c.Observe(context.Background(), req, g)
-			if phase == "before-report" {
+			if phase == "before-report" || phase == "after-return-proof" {
 				require.NoError(t, err)
 				require.JSONEq(t, `{"external_id":"external"}`, string(result))
 				require.Greater(t, reports, 0)
@@ -80,6 +80,20 @@ func TestAdoptionProcessCrashChild(t *testing.T) {
 		os.Exit(75)
 		return nil
 	}}
+	if input.Phase == "after-return-proof" {
+		ledger := filepath.Join(input.Root, digestHex([]byte(input.Request.TopologyUID))+".json")
+		gate := effectgate.Gate{Root: input.Root, PublicKey: input.Issuer, BootID: input.Grant.BootID, Authorize: func(context.Context, controlplane.ExecutionGrant) error { return nil }}
+		_, err := gate.ExecuteWithReturnProof(context.Background(), input.Grant, input.Request.ExternalID, func(context.Context) (json.RawMessage, error) {
+			require.NoError(t, os.WriteFile(filepath.Join(input.Root, "provider-effect"), []byte("owned"), 0600))
+			require.NoError(t, os.Rename(ledger, ledger+".intent"))
+			require.NoError(t, os.Mkdir(ledger, 0700))
+			return json.RawMessage(`{"external_id":"external"}`), nil
+		})
+		require.Error(t, err)
+		require.NoError(t, os.Remove(ledger))
+		require.NoError(t, os.Rename(ledger+".intent", ledger))
+		os.Exit(75)
+	}
 	_, err = c.Apply(context.Background(), input.Request, input.Grant, func(context.Context) (json.RawMessage, error) {
 		if input.Phase == "before-effect" {
 			os.Exit(75)
