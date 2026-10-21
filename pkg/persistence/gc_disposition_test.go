@@ -58,10 +58,39 @@ func TestGCDispositionRetainsUnknownAndReleasesOnlyAfterFencing(t *testing.T) {
 	require.NoError(t, cold.FinishGCDisposition(ctx, proof, stored.DispositionHash))
 	require.NoError(t, cold.FinishGCDisposition(ctx, proof, stored.DispositionHash))
 	require.Error(t, cold.Authorize(ctx, *grant))
+	next := *grant
+	next.Epoch += 2
+	next.CommandID = "fresh"
+	next.TargetBootID = "44444444-4444-4444-8444-444444444444"
+	freshCandidate := c
+	freshCandidate.InventoryDigest = "new"
+	next.Digest, _ = freshCandidate.Digest()
+	// An absent historical target does not authorize residue deletion.
+	selected, err := cold.ReleasedGCDisposition(ctx, freshCandidate, next, grant.TargetBootID)
+	require.NoError(t, err)
+	require.Nil(t, selected)
+
 	changed := proof
 	changed.Presence = "present"
 	changed, err = controlplane.SignGCDisposition(key, changed)
 	require.NoError(t, err)
 	require.Error(t, cold.PrepareGCDisposition(ctx, changed, pub))
 	require.Error(t, repo.CompleteGCDisposition(ctx, "lab", changed, pub))
+}
+
+func TestReleasedGCProofSelectsManifestBootAcrossLaterReboots(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	repo := NewFilesystemExecutionGrantRepository(root)
+	// Reuse a fully exercised disposition fixture by testing selection's rejection
+	// independently: no proof is synthesized for a missing historical fence.
+	c := controlplane.GCCandidate{Kind: "firecracker", ExternalID: "vm", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "resource", Generation: 1, InventoryDigest: "fresh"}
+	digest, _ := c.Digest()
+	g := controlplane.ExecutionGrant{Operation: "gc_delete", Digest: digest, AgentID: "agent", Scope: controlplane.ExecutionScope{TopologyUID: "owner", ResourceUID: "resource", Generation: 1}, Epoch: 3, CommandID: "fresh", TargetBootID: "new"}
+	p, err := repo.ReleasedGCDisposition(ctx, c, g, "old")
+	require.NoError(t, err)
+	require.Nil(t, p)
+	g.Digest = "other"
+	_, err = repo.ReleasedGCDisposition(ctx, c, g, "old")
+	require.Error(t, err)
 }

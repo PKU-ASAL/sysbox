@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
@@ -180,4 +182,49 @@ func (s *Server) reconcileGCFence(ctx context.Context, p controlplane.GCDisposit
 		return fmt.Errorf("release GC disposition: %w", err)
 	}
 	return s.reconcileGCOutbox(ctx, p.Request.Topology)
+}
+
+func (s *Server) handleGCCleanupProof(w http.ResponseWriter, r *http.Request) {
+	if err := s.authenticatedGrantAgent(r); err != nil {
+		writeError(w, 401, err)
+		return
+	}
+	var input struct {
+		OriginalBoot string                            `json:"original_boot"`
+		Candidate    controlplane.GCCandidate          `json:"candidate"`
+		Grant        controlplane.SignedExecutionGrant `json:"grant"`
+	}
+	if err := decodeFenceBody(w, r, &input); err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	g := input.Grant.Grant
+	if len(s.grantSigner) != ed25519.PrivateKeySize || g.AgentID != r.PathValue("agent") || controlplane.VerifyExecutionGrant(s.grantSigner.Public().(ed25519.PublicKey), input.Grant, g.TargetBootID, time.Now()) != nil {
+		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
+	bound := s.commandGrantStorage(g.CommandID, func(record *persistence.CommandRecord) error {
+		if record == nil {
+			return persistence.ErrConflict
+		}
+		current, err := s.sourceGrant(r.Context(), g.AgentID, ExecutionGrantRequest{SessionID: g.SessionID, LeaseOwner: record.Command.LeaseOwner, Attempt: int(g.Attempt), BootID: g.TargetBootID}, record)
+		if err != nil {
+			return err
+		}
+		if current.Scope != g.Scope || current.Digest != g.Digest || current.Operation != g.Operation || current.CommandID != g.CommandID || current.ActionID != g.ActionID {
+			return persistence.ErrConflict
+		}
+		return nil
+	})
+	authority := persistence.NewExecutionGrantRepository(bound)
+	if err := authority.Authorize(r.Context(), g); err != nil {
+		writeError(w, 409, err)
+		return
+	}
+	p, err := authority.ReleasedGCDisposition(r.Context(), input.Candidate, g, input.OriginalBoot)
+	if err != nil {
+		writeError(w, 409, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"proof": p})
 }

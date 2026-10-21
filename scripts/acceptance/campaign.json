@@ -176,7 +176,8 @@
         "non-docker-gc-process-crash",
         "gc-fenced-disposition-api",
         "gc-fenced-disposition-host",
-        "gc-fenced-disposition-storage"
+        "gc-fenced-disposition-storage",
+        "firecracker-fenced-cleanup"
       ],
       "remaining": [
         "SQL atomic retention batches and file single-object retirement implemented. Non-Docker missing/corrupt ledger and uncancellable-return/outcome-publication contracts are tested; full provider-internal/API/Agent fault disposition, all-evidence-loss recovery and remote registry federation remain open."
@@ -970,6 +971,18 @@
       "requires_env": [
         "SYSBOX_TEST_DATABASE_URL"
       ],
+      "artifact_env": []
+    },
+    {
+      "id": "firecracker-fenced-cleanup",
+      "package": "./pkg/provider/firecracker",
+      "tests": [
+        "TestFencedResidueCleanupRequiresFreshGrantAndOldBootAnchor",
+        "TestPreparedGCManifestNeedsNormalDeletionNotFenceProof"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
       "artifact_env": []
     }
   ]

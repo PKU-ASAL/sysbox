@@ -92,3 +92,11 @@ func (c *TaskClient) InspectGCDisposition(ctx context.Context, id string) (contr
 	}
 	return *response.GCDisposition, nil
 }
+
+func (c AuthorityClient) GCFencedCleanupProof(ctx context.Context, candidate GCCandidate, g controlplane.SignedExecutionGrant, originalBoot string) (*controlplane.GCDispositionProof, error) {
+	var result struct {
+		Proof *controlplane.GCDispositionProof `json:"proof"`
+	}
+	err := c.postJSON(ctx, "/v1/agents/"+url.PathEscape(c.Identity.ID)+"/gc-cleanup-proof", map[string]any{"candidate": candidate, "grant": g, "original_boot": originalBoot}, &result)
+	return result.Proof, err
+}

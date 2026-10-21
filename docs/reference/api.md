@@ -985,3 +985,13 @@ This implementation supports explicit file-backend consumers over HTTPS; SQL
 consumers and arbitrary unregistered databases remain rejected, not inferred
 empty. Real isolated-VM HTTPS admission/release/late-reference refusal was tested
 without shared work directories.
+
+After a `present` Firecracker disposition, a newly planned GC reservation on the
+same immutable generation may reclaim old-boot residue. The supervisor reads the
+manifest's original boot and asks the authenticated
+`POST /v1/agents/{agent}/gc-cleanup-proof` route for matching released history.
+The old proof establishes process exclusion only; the current command/grant and
+fresh reference reservation authorize this new deletion. Full original manifest
+bytes, proof and new grant are durably archived outside the removed directory.
+No old PID is signalled. Current-boot and never-started generations use ordinary
+GC. A new successful receipt belongs only to the new reservation.

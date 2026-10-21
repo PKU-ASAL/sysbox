@@ -153,3 +153,34 @@ func validateGCDisposition(f HostFenceRecord, a *executionAuthority) error {
 func (f HostFenceRecord) released() bool {
 	return f.Release != nil || (f.GCDisposition != nil && !f.GCDisposition.ReleasedAt.IsZero())
 }
+
+// ReleasedGCDisposition exposes historical stop evidence for a newly admitted
+// cleanup, never mutation authority for the old execution.
+func (r *ExecutionGrantRepository) ReleasedGCDisposition(ctx context.Context, c controlplane.GCCandidate, g controlplane.ExecutionGrant, originalBoot string) (*controlplane.GCDispositionProof, error) {
+	var result *controlplane.GCDispositionProof
+	err := r.read(ctx, func(a *executionAuthority) error {
+		if g.Operation != "gc_delete" || c.Validate() != nil {
+			return ErrConflict
+		}
+		digest, _ := c.Digest()
+		if g.Digest != digest {
+			return ErrConflict
+		}
+		for _, f := range a.Fences {
+			if f.GCDisposition == nil || f.GCDisposition.ReleasedAt.IsZero() {
+				continue
+			}
+			p := f.GCDisposition.Proof
+			old := p.Candidate
+			if p.Presence != "present" || p.Request.Grant.AgentID != g.AgentID || p.Fence.OldBootID != originalBoot || originalBoot == g.TargetBootID || old.Kind != c.Kind || old.ExternalID != c.ExternalID || old.OwnerUID != c.OwnerUID || old.ResourceUID != c.ResourceUID || old.Generation != c.Generation || p.Request.Grant.Scope != g.Scope || p.Request.Grant.Epoch >= g.Epoch || p.Request.Grant.CommandID == g.CommandID {
+				continue
+			}
+			if result == nil || result.Request.Grant.Epoch < p.Request.Grant.Epoch {
+				copy := p
+				result = &copy
+			}
+		}
+		return nil
+	})
+	return result, err
+}

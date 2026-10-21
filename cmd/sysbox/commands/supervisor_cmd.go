@@ -13,6 +13,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/spf13/cobra"
 	"io"
@@ -178,6 +179,32 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	}
 	server.GCValidateTarget = supervisorGCReferenceValidator(runBridge.ActionRepository)
 	server.GCEffect = newSupervisorGCEffect(cfg)
+	server.GCFencedEffect = func(ctx context.Context, candidate hostsupervisor.GCCandidate, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
+		if candidate.Kind != "firecracker" {
+			return server.GCEffect(ctx, candidate)
+		}
+		fc := firecracker.New(cfg.Providers.Firecracker.Kernel, cfg.Providers.Firecracker.Workdir)
+		originalBoot, err := fc.FencedGCManifestBoot(ctx, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if originalBoot == "" || originalBoot == grant.Grant.TargetBootID {
+			return server.GCEffect(ctx, candidate)
+		}
+		proof, err := authority.GCFencedCleanupProof(ctx, candidate, grant, originalBoot)
+		if err != nil {
+			return nil, err
+		}
+		if proof == nil {
+			return server.GCEffect(ctx, candidate)
+		}
+
+		if err = fc.DeleteFencedGCResidue(ctx, candidate, *proof, grant, public, ed25519.PrivateKey(key).Public().(ed25519.PublicKey)); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{"deleted":true}`), nil
+	}
+
 	return server.Serve(cmd.Context())
 }}
 
