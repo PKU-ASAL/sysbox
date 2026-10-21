@@ -140,7 +140,7 @@ func (s *Server) beginOwnershipMaintenance(ctx context.Context, p controlplane.O
 				return nil, err
 			}
 			v, err := target.ReadOwnershipTarget(ctx, p.TargetTopology, p.ID)
-			if err != nil || v.Aborted || gcEvidenceHash(v.Plan) != gcEvidenceHash(p) {
+			if err != nil || v.Aborted || v.DispositionHash != "" || gcEvidenceHash(v.Plan) != gcEvidenceHash(p) {
 				return nil, persistence.ErrConflict
 			}
 			next, b, err := beginOwnershipAuthority(ctx, raw, p)

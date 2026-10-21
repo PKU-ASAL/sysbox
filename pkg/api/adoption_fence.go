@@ -107,7 +107,7 @@ func (s *Server) handleAdoptionFenceDisposition(w http.ResponseWriter, r *http.R
 		writeError(w, 409, err)
 		return
 	}
-	writeJSON(w, 200, map[string]string{"operation_result": "unknown", "disposition": "recovered-owned", "fence": proof.Request.ID})
+	writeJSON(w, 200, map[string]string{"operation_result": "unknown", "disposition": proof.Disposition(), "fence": proof.Request.ID})
 }
 func (s *Server) reconcileAdoptionFence(ctx context.Context, p controlplane.AdoptionDispositionProof) error {
 	hostKey := s.grantHostKeys[p.Request.Grant.AgentID]

@@ -74,7 +74,7 @@ func (e *Executor) PrepareResetContinuation(ctx context.Context, cp *OperationCh
 	byAddress := map[string]ActionRecord{}
 	for _, action := range prior {
 		if action.RunID != cp.RunID {
-			if action.Status != ActionSucceeded {
+			if !ActionSettled(action) {
 				return nil, fmt.Errorf("%w: another Run is unresolved", ErrPlanStale)
 			}
 			continue

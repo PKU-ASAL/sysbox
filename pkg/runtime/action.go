@@ -25,6 +25,7 @@ const (
 // ActionRecord preserves authorized identity and the best available recovery
 // evidence. A provider error is not proof that its effect did not happen.
 type ActionRecord struct {
+	DispositionID  string                      `json:"disposition_id,omitempty"`
 	RunQueuedAt    time.Time                   `json:"run_queued_at,omitempty"`
 	RunRevision    string                      `json:"run_revision,omitempty"`
 	Revision       int64                       `json:"revision"`
@@ -105,3 +106,8 @@ type ResourceDiscoverer interface {
 }
 
 func (e *Executor) SetActionRepository(repository ActionRepository) { e.actions = repository }
+
+// ActionSettled permits new work after explicit fenced disposition without
+// reclassifying the historical operation as successful. Repositories validate
+// the disposition against their retained proof and original action archive.
+func ActionSettled(a ActionRecord) bool { return a.Status == ActionSucceeded || a.DispositionID != "" }

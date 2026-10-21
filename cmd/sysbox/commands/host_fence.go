@@ -83,13 +83,22 @@ func newHostFenceCommand() *cobra.Command {
 	inspectGC.Flags().StringVar(&gcSocket, "socket", "", "local host-supervisor Unix socket")
 	_ = inspectGC.MarkFlagRequired("socket")
 	root.AddCommand(inspectGC)
-	inspectAdoption := &cobra.Command{Use: "inspect-adoption <fence-id>", Short: "Obtain a signed read-only GC observation after admitted host fencing", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		proof, err := hostsupervisor.NewTaskClient(gcSocket, hostsupervisor.TargetRef{}).InspectAdoptionDisposition(cmd.Context(), args[0])
+	var cancelAdoption bool
+	inspectAdoption := &cobra.Command{Use: "inspect-adoption <fence-id>", Short: "Obtain a signed adoption recovery or explicit cancellation proof", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		var proof controlplane.AdoptionDispositionProof
+		var err error
+		client := hostsupervisor.NewTaskClient(gcSocket, hostsupervisor.TargetRef{})
+		if cancelAdoption {
+			proof, err = client.InspectAdoptionCancellation(cmd.Context(), args[0])
+		} else {
+			proof, err = client.InspectAdoptionDisposition(cmd.Context(), args[0])
+		}
 		if err != nil {
 			return err
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(proof)
 	}}
+	inspectAdoption.Flags().BoolVar(&cancelAdoption, "cancel", false, "cancel only after exact inactive source/unowned/absent observation")
 	inspectAdoption.Flags().StringVar(&gcSocket, "socket", "", "local host-supervisor Unix socket")
 	_ = inspectAdoption.MarkFlagRequired("socket")
 	root.AddCommand(inspectAdoption)

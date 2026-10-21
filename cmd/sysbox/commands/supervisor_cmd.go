@@ -198,6 +198,41 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		private, err := codec.MarshalProviderState(h)
 		return obs, private, err
 	}
+	server.Adoption.InspectAdoptionCancellation = func(ctx context.Context, p controlplane.AdoptionDispositionProof) (substrate.NodeObservation, error) {
+		node, err := driver.DefaultRegistry.RequireNode(p.Adoption.Provider)
+		if err != nil {
+			return substrate.NodeObservation{}, err
+		}
+		if p.Adoption.Provider == "firecracker" {
+			inspector, ok := node.(interface {
+				InspectAdoptionCancellation(context.Context, controlplane.AdoptionDispositionProof) (substrate.NodeObservation, error)
+			})
+			if !ok {
+				return substrate.NodeObservation{}, fmt.Errorf("provider cancellation observation unavailable")
+			}
+			return inspector.InspectAdoptionCancellation(ctx, p)
+		}
+		locality, ok := node.(interface {
+			HostFenceScope(context.Context) (string, error)
+		})
+		if !ok {
+			return substrate.NodeObservation{}, fmt.Errorf("provider locality unavailable")
+		}
+		scope, err := locality.HostFenceScope(ctx)
+		if err != nil {
+			return substrate.NodeObservation{}, err
+		}
+		if scope != "local-only" {
+			return substrate.NodeObservation{}, fmt.Errorf("provider outside fenced host")
+		}
+		inspector, ok := node.(interface {
+			InspectAdoptionCancellation(context.Context, controlplane.AdoptionRequest) (substrate.NodeObservation, error)
+		})
+		if !ok {
+			return substrate.NodeObservation{}, fmt.Errorf("provider cancellation observation unavailable")
+		}
+		return inspector.InspectAdoptionCancellation(ctx, p.Adoption)
+	}
 	server.AdoptionInspect = func(ctx context.Context, req controlplane.AdoptionInspectionRequest) (substrate.AdoptionEvidence, error) {
 		provider, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider)
 		if err != nil {

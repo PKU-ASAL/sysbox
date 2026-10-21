@@ -37,7 +37,7 @@ func DestroyFailureEvidence(run *controlplane.Run, actions []runtime.ActionRecor
 	found := false
 	for _, action := range actions {
 		if action.RunID != run.ID {
-			if action.Status != runtime.ActionSucceeded {
+			if !runtime.ActionSettled(action) {
 				return nil, fmt.Errorf("another Run remains unresolved")
 			}
 			continue

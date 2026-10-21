@@ -136,7 +136,7 @@ func (m *memoryActions) CommitActionIntent(ctx context.Context, r ActionRecord) 
 		return m.intentErr
 	}
 	for _, old := range m.actions {
-		if old.Resource.Equal(r.Resource) && old.Status != ActionSucceeded {
+		if old.Resource.Equal(r.Resource) && !ActionSettled(old) {
 			return errors.New("unresolved action")
 		}
 	}

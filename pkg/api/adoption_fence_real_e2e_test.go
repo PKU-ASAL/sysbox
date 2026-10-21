@@ -18,10 +18,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,6 +93,7 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 	st, err := repo.LoadState(ctx, "gc-lab")
 	require.NoError(t, err)
 	id := uuid.NewString()
+	cancelKind := os.Getenv("SYSBOX_ADOPTION_FENCE_CANCEL")
 	providerKind := os.Getenv("SYSBOX_ADOPTION_FENCE_PROVIDER")
 	if providerKind == "" {
 		providerKind = "libvirt"
@@ -141,7 +145,16 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 	probe["Adoption"] = adopt
 	probe["Grant"] = signed
 	probe["Mode"] = "unknown"
+	if cancelKind != "" {
+		require.Equal(t, "libvirt", providerKind)
+		require.Contains(t, []string{"unowned", "absent"}, cancelKind)
+		probe["Mode"] = "unknown-cancel"
+	}
 	runProbe()
+	if cancelKind != "" {
+		old := runtime.ActionRecord{ID: "canonical-unknown", RunID: adopt.ID, Topology: adopt.Topology, Resource: address.Resource("sysbox_node", "adopted"), Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, DesiredDigest: "old-intent", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "adopted"), Driver: adopt.Provider, ExternalID: id, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
+		require.NoError(t, repo.CommitActionIntent(ctx, old))
+	}
 	digest, err := adopt.Digest()
 	require.NoError(t, err)
 	request := controlplane.HostFenceRequest{Version: 1, ID: "adoption-fence", Topology: adopt.Topology, RunID: adopt.ID, LabID: lab.ID, ControllerKey: controllerPub, JournalSHA256: digest, Grant: *grant}
@@ -169,6 +182,12 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 	require.NotEmpty(t, receipt.Signature)
 	require.NoError(t, authority.RecordHostFence(ctx, request.ID, receipt))
 	probe["Mode"] = "recover"
+	if cancelKind != "" {
+		probe["Mode"] = "cancel"
+	}
+	if cancelKind == "absent" {
+		ssh("sudo virsh -c qemu:///system undefine " + id)
+	}
 	probe["FenceID"] = request.ID
 	runProbe()
 	var proof controlplane.AdoptionDispositionProof
@@ -177,18 +196,37 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 	require.NoError(t, s.reconcileAdoptionFence(ctx, proof))
 	recovered, err := repo.LoadState(ctx, adopt.Topology)
 	require.NoError(t, err)
-	require.Len(t, recovered.Resources, 1)
-	require.Equal(t, id, recovered.Resources[0].ExternalID)
+	if cancelKind == "" {
+		require.Len(t, recovered.Resources, 1)
+		require.Equal(t, id, recovered.Resources[0].ExternalID)
+	} else {
+		require.Empty(t, recovered.Resources)
+		actions, err := repo.LoadActions(ctx, adopt.Topology)
+		require.NoError(t, err)
+		require.Len(t, actions, 1)
+		require.NotEmpty(t, actions[0].DispositionID)
+		require.Equal(t, runtime.ActionIntentCommitted, actions[0].Status)
+		next := actions[0]
+		next.ID = "fresh-action"
+		next.RunID = "fresh-run"
+		next.DispositionID = ""
+		next.Revision = 0
+		next.ExpectedSerial = recovered.Meta.Serial
+		next.StateSerial = recovered.Meta.Serial
+		require.NoError(t, repo.CommitActionIntent(ctx, next))
+	}
 	ended, err := s.apiStore.GetNodeOperation(ctx, adopt.ID)
 	require.NoError(t, err)
 	require.Equal(t, controlplane.NodeOperationStatusFailed, ended.Status)
 	require.Contains(t, ended.Err, "original result unknown")
-	if providerKind == "libvirt" {
+	if providerKind == "libvirt" && cancelKind != "absent" {
 		require.Contains(t, ssh("sudo virsh -c qemu:///system list --all --uuid"), id)
 	}
 	save(filepath.Join(round, "result.json"), map[string]any{"proof": proof, "state": recovered, "operation": ended, "old_boot": oldBoot, "new_boot": receipt.NewBootID})
 	if providerKind == "libvirt" {
-		ssh("sudo virsh -c qemu:///system undefine " + id)
+		if cancelKind != "absent" {
+			ssh("sudo virsh -c qemu:///system undefine " + id)
+		}
 	} else {
 		probe["Mode"] = "verify-restart-cleanup"
 		runProbe()

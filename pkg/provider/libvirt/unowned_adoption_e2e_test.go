@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/xml"
 	"github.com/google/uuid"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"os"
@@ -55,6 +56,12 @@ func TestLibvirtUnownedAdoptionColdLifecycleE2E(t *testing.T) {
 	require.Nil(t, evidence.ManagedIdentity)
 	_, err = s.ObserveAdoption(owned, evidence)
 	require.Error(t, err, "observe cannot manufacture ownership")
+	cancellation := controlplane.AdoptionRequest{ExternalID: external}
+	observed, err := s.InspectAdoptionCancellation(ctx, cancellation)
+	require.NoError(t, err)
+	resolution, err := controlplane.AdoptionCancellationResolution(cancellation, observed)
+	require.NoError(t, err)
+	require.Equal(t, "cancel-unowned", resolution)
 	h, err := s.ApplyAdoption(owned, evidence)
 	require.NoError(t, err)
 	cold := New(root)
@@ -79,5 +86,10 @@ func TestLibvirtUnownedAdoptionColdLifecycleE2E(t *testing.T) {
 	present, err := gcDomainPresent(ctx, external)
 	require.NoError(t, err)
 	require.False(t, present)
+	observed, err = s.InspectAdoptionCancellation(ctx, cancellation)
+	require.NoError(t, err)
+	resolution, err = controlplane.AdoptionCancellationResolution(cancellation, observed)
+	require.NoError(t, err)
+	require.Equal(t, "cancel-absent", resolution)
 	require.Error(t, cold.StartNode(owned, recovered), "absent adopted domain cannot be recreated")
 }

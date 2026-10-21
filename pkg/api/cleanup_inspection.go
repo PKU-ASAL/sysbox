@@ -80,7 +80,7 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 	sort.Slice(resources, func(i, j int) bool { return resources[i]["resource"].(string) < resources[j]["resource"].(string) })
 	actions := []map[string]any{}
 	for _, a := range snapshot.Actions {
-		if a.Status == runtime.ActionSucceeded {
+		if runtime.ActionSettled(a) {
 			continue
 		}
 		actions = append(actions, map[string]any{"id": a.ID, "run_id": a.RunID, "resource": a.Resource.String(), "action": a.Action, "status": a.Status, "owner_uid": a.OwnerUID, "resource_uid": a.ResourceUID, "generation": a.Generation, "revision": a.Revision})

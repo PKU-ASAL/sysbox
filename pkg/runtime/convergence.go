@@ -218,7 +218,7 @@ func (e *Executor) observeTarget(ctx context.Context, id address.Address) (Resou
 				if a.Resource.Equal(id) && a.Generation >= identity.Generation {
 					identity.Generation = a.Generation
 					identity.ResourceUID = a.ResourceUID
-					if a.Status == ActionSucceeded {
+					if ActionSettled(a) {
 						identity.Generation++
 					}
 				}

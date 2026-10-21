@@ -224,7 +224,13 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 			response.Error = "valid canonical GC fence required"
 			return response
 		}
-		proof, err := s.Adoption.Disposition(ctx, request.AdoptionFenceID)
+		var proof controlplane.AdoptionDispositionProof
+		var err error
+		if request.AdoptionCancel {
+			proof, err = s.Adoption.CancelDisposition(ctx, request.AdoptionFenceID)
+		} else {
+			proof, err = s.Adoption.Disposition(ctx, request.AdoptionFenceID)
+		}
 		if err != nil {
 			response.Error = err.Error()
 		} else {

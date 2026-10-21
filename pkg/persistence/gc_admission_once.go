@@ -27,7 +27,7 @@ func claimGCExecution(a *aggregate, c controlplane.GCCandidate, g controlplane.E
 	if !ok || !reservation.Pending() || reservation.Candidate != c || reservation.AgentID != g.AgentID || reservation.AdmissionDigest != "" || nextGC(a) != g.CommandID {
 		return ErrConflict
 	}
-	if a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
+	if a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
 		a.GCReferenceFormat = a.Format
 		a.Format = GCAdmissionFormatVersion
 	}

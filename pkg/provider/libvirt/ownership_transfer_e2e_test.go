@@ -54,6 +54,12 @@ func TestLibvirtOwnershipTransferColdReadbackE2E(t *testing.T) {
 	digest, _ := plan.Digest()
 	proof, err := controlplane.SignOwnershipRetirement(key, controlplane.OwnershipRetirementProof{Plan: plan, PlanDigest: digest, SourceEpoch: 1, SourceStateDigest: strings.Repeat("a", 64), RetiredAt: time.Now().UTC()})
 	require.NoError(t, err)
+	cancelRequest := controlplane.AdoptionRequest{ExternalID: id, Transfer: &proof}
+	sourceObservation, cancelErr := provider.InspectAdoptionCancellation(ctx, cancelRequest)
+	require.NoError(t, cancelErr)
+	resolution, cancelErr := controlplane.AdoptionCancellationResolution(cancelRequest, sourceObservation)
+	require.NoError(t, cancelErr)
+	require.Equal(t, "cancel-source", resolution)
 	scoped := substrate.WithOperationIdentity(ctx, next)
 	inputPath := filepath.Join(t.TempDir(), "child.json")
 	childRaw, _ := json.Marshal(libvirtTransferChildInput{Root: provider.vmDirRoot(), Proof: proof, Key: pub})

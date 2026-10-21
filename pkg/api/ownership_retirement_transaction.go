@@ -37,7 +37,7 @@ func (s *Server) commitOwnershipRetirement(ctx context.Context, topology string,
 				return nil, e
 			}
 			reserved, e := target.ReadOwnershipTarget(ctx, request.TargetTopology, request.ID)
-			if e != nil || reserved.Aborted || gcEvidenceHash(reserved.Plan) != gcEvidenceHash(request) {
+			if e != nil || reserved.Aborted || reserved.DispositionHash != "" || gcEvidenceHash(reserved.Plan) != gcEvidenceHash(request) {
 				return nil, persistence.ErrConflict
 			}
 			receipt, err = repo.RetireOwnership(ctx, request, authority)

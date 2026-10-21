@@ -28,6 +28,11 @@ func TestOwnershipTransferFencedRecoveryPreservesUnknown(t *testing.T) {
 	testOwnershipTransferFlow(t, "fenced-recovery")
 }
 
+func TestOwnershipTransferFencedCancellation(t *testing.T) {
+	for _, phase := range []string{"fenced-cancel-source", "fenced-cancel-absent"} {
+		t.Run(phase, func(t *testing.T) { testOwnershipTransferFlow(t, phase) })
+	}
+}
 func TestOwnershipTransferPreparationRetiresSourceAndReservesTarget(t *testing.T) {
 	testOwnershipTransferFlow(t, "")
 }
@@ -154,14 +159,14 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 		require.NoError(t, err)
 		require.True(t, ok)
 		transferBoot := "boot"
-		if phase == "fenced-recovery" {
+		if phase == "fenced-recovery" || strings.HasPrefix(phase, "fenced-cancel-") {
 			transferBoot = "11111111-1111-4111-8111-111111111111"
 		}
 		transferGrant, err := s.issueCommandGrant(ctx, "host", cmd.ID, ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, BootID: transferBoot})
 		require.NoError(t, err)
 		evidence := json.RawMessage(`{"domain_uuid":"external"}`)
-		if phase == "fenced-recovery" {
-			testFencedTransferCompletion(t, s, authority, op, *transferGrant, hostKey, evidence)
+		if phase == "fenced-recovery" || strings.HasPrefix(phase, "fenced-cancel-") {
+			testFencedTransferCompletion(t, s, authority, op, *transferGrant, hostKey, evidence, phase)
 			targetRecord, err := targetRepo.ReadOwnershipTarget(ctx, "target", plan.ID)
 			require.NoError(t, err)
 			require.Empty(t, targetRecord.CompletedHash, "old transfer was never proven successful")
@@ -169,6 +174,20 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 			barrier, err := authority.InspectMaintenance(ctx, plan.ID)
 			require.NoError(t, err)
 			require.True(t, barrier.Released)
+			_, err = s.beginOwnershipMaintenance(ctx, plan)
+			require.Error(t, err, "disposed transfer cannot refreeze source")
+			require.Error(t, targetRepo.ReserveOwnershipTarget(ctx, plan))
+			refs, err := targetRepo.LoadGCReferences(ctx, "target")
+			require.NoError(t, err)
+			if phase == "fenced-cancel-source" {
+				found := false
+				for _, r := range refs.References {
+					if r.ExternalID == plan.ExternalID && r.OwnerUID == plan.Source.OwnerUID {
+						found = true
+					}
+				}
+				require.True(t, found, "cancelled source object must remain protected from GC")
+			}
 			return
 		}
 		crash("target-committed", op, evidence)

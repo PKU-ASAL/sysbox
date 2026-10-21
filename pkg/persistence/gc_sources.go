@@ -73,14 +73,14 @@ func validateGCSources(a *aggregate) error {
 		}
 		return nil
 	}
-	if (a.Format == GCDispositionFormatVersion || a.Format == OwnershipRetirementFormatVersion || a.Format == OwnershipTargetFormatVersion || a.Format == GCAdmissionFormatVersion || a.Format == AdoptionRecoveryFormatVersion) && len(a.GCSources) == 0 {
+	if (a.Format == GCDispositionFormatVersion || a.Format == OwnershipRetirementFormatVersion || a.Format == OwnershipTargetFormatVersion || a.Format == GCAdmissionFormatVersion || a.Format == AdoptionRecoveryFormatVersion || a.Format == LegacyAdoptionRecoveryFormatVersion) && len(a.GCSources) == 0 {
 		return nil
 	}
-	if (a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion) || a.GCSources == nil || len(a.GCSources) == 0 || len(a.GCSources) > 128 {
+	if (a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion) || a.GCSources == nil || len(a.GCSources) == 0 || len(a.GCSources) > 128 {
 		return ErrCorruptRecord
 	}
 	for id, s := range a.GCSources {
-		if s.Retired && ((a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion) || s.Updating) {
+		if s.Retired && ((a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion) || s.Updating) {
 			return ErrCorruptRecord
 		}
 		if !topologyName.MatchString(id) || len(id) > 128 || s.Version < 1 {

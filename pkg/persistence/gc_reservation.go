@@ -36,16 +36,16 @@ func validateGCReservations(a *aggregate) error {
 	if a.Format == GCAdmissionFormatVersion && (a.GCReferenceFormat < FormatVersion || a.GCReferenceFormat >= GCAdmissionFormatVersion) {
 		return ErrCorruptRecord
 	}
-	if a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.GCReferenceFormat != 0 {
+	if a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion && a.GCReferenceFormat != 0 {
 		return ErrCorruptRecord
 	}
 	pending := 0
 	groups := map[string]bool{}
 	for id, r := range a.GC {
-		if r.AdmissionDigest != "" && (len(r.AdmissionDigest) != 64 || a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion) {
+		if r.AdmissionDigest != "" && (len(r.AdmissionDigest) != 64 || a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion) {
 			return ErrCorruptRecord
 		}
-		if r.DispositionHash != "" && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
+		if r.DispositionHash != "" && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
 			return ErrCorruptRecord
 		}
 		if id == "" || id != r.ID || r.AgentID == "" || r.Candidate.Validate() != nil || r.Candidate.TopologyUID != a.State.TopologyUID {

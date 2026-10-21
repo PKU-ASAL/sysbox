@@ -87,7 +87,10 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 		allowed[change.Address.String()] = change
 	}
 	for _, record := range actions {
-		if record.Status == ActionSucceeded {
+		if record.DispositionID != "" && (record.RunID == e.runID || record.RunID == e.resumeRunID) {
+			return ErrActionUncertain
+		}
+		if ActionSettled(record) {
 			continue
 		}
 		if record.Action == controlplane.PlanActionReset && !record.EffectComplete {

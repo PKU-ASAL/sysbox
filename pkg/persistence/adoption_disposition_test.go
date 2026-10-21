@@ -8,12 +8,20 @@ import (
 	"time"
 
 	"encoding/json"
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAdoptionDispositionAuthorityPreservesUnknownAndRequiresDecision(t *testing.T) {
+	for _, mode := range []string{"recover-owned", "cancel-unowned", "cancel-absent"} {
+		t.Run(mode, func(t *testing.T) { testAdoptionDispositionWithAction(t, mode) })
+	}
+}
+func testAdoptionDispositionWithAction(t *testing.T, mode string) {
 	ctx := context.Background()
 	root := t.TempDir()
 	authority := NewFilesystemExecutionGrantRepository(root)
@@ -23,6 +31,10 @@ func TestAdoptionDispositionAuthorityPreservesUnknownAndRequiresDecision(t *test
 	refs, err := repo.LoadGCReferences(ctx, "lab")
 	require.NoError(t, err)
 	adopt := controlplane.AdoptionRequest{ID: "adopt", Topology: "lab", TopologyUID: refs.TopologyUID, Address: "sysbox_node.test", Provider: "libvirt", AgentID: "agent", ExternalID: "external", ResourceUID: "resource", Generation: 1, Evidence: substrate.AdoptionEvidence{Provider: "libvirt", ExternalID: "external", Fingerprint: "before"}}
+	action := runtime.ActionRecord{ID: "old-action", RunID: adopt.ID, Topology: "lab", Resource: address.Resource("sysbox_node", "test"), Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, DesiredDigest: "original", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "test"), Driver: "libvirt", ExternalID: adopt.ExternalID, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
+	require.NoError(t, repo.CommitActionIntent(ctx, action))
+	original, err := repo.LoadActions(ctx, "lab")
+	require.NoError(t, err)
 	session, err := authority.OpenSession(ctx, "agent", "process", "")
 	require.NoError(t, err)
 	digest, err := adopt.Digest()
@@ -42,21 +54,42 @@ func TestAdoptionDispositionAuthorityPreservesUnknownAndRequiresDecision(t *test
 	require.NoError(t, err)
 	proof, err := controlplane.SignAdoptionDisposition(key, controlplane.AdoptionDispositionProof{Request: req, Fence: fence, Adoption: adopt, HostBootID: fence.NewBootID, ObservedAt: time.Now().UTC(), Observation: substrate.NodeObservation{Exists: true, ExternalID: adopt.ExternalID, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}, Private: json.RawMessage(`{"domain_uuid":"external"}`)})
 	require.NoError(t, err)
+	if mode != "recover-owned" {
+		proof.Resolution = mode
+		proof.Private = nil
+		proof.Observation = substrate.NodeObservation{ExternalID: adopt.ExternalID, Exists: mode == "cancel-unowned"}
+		proof, err = controlplane.SignAdoptionDisposition(key, proof)
+		require.NoError(t, err)
+	}
 	require.Error(t, authority.PrepareAdoptionDisposition(ctx, proof, pub), "unrecorded reboot cannot prepare")
 	require.NoError(t, authority.RecordHostFence(ctx, req.ID, fence))
 	require.NoError(t, authority.PrepareAdoptionDisposition(ctx, proof, pub))
 	require.Error(t, authority.FinishAdoptionDisposition(ctx, proof, "not-committed"))
-    rawAuthority,err:=authority.storage.ReadExecutionAuthority(ctx)
-    require.NoError(t,err)
-    require.NoError(t,repo.CommitFencedAdoption(ctx,proof,pub,nil,rawAuthority))
-    recovered,err:=repo.LoadState(ctx,"lab")
-    require.NoError(t,err)
-    require.Len(t,recovered.Resources,1)
-    require.Equal(t,int64(1),recovered.Meta.Serial)
-    require.NoError(t,repo.CommitFencedAdoption(ctx,proof,pub,nil,rawAuthority))
-    again,err:=repo.LoadState(ctx,"lab")
-    require.NoError(t,err)
-    require.Equal(t,recovered.Meta.Serial,again.Meta.Serial)
+	rawAuthority, err := authority.storage.ReadExecutionAuthority(ctx)
+	require.NoError(t, err)
+	require.NoError(t, repo.CommitFencedAdoption(ctx, proof, pub, nil, rawAuthority))
+	recovered, err := repo.LoadState(ctx, "lab")
+	require.NoError(t, err)
+	if mode == "recover-owned" {
+		require.Len(t, recovered.Resources, 1)
+	} else {
+		require.Empty(t, recovered.Resources)
+	}
+	require.Equal(t, int64(1), recovered.Meta.Serial)
+	require.NoError(t, repo.CommitFencedAdoption(ctx, proof, pub, nil, rawAuthority))
+	again, err := repo.LoadState(ctx, "lab")
+	require.NoError(t, err)
+	require.Equal(t, recovered.Meta.Serial, again.Meta.Serial)
+	actions, err := repo.LoadActions(ctx, "lab")
+	require.NoError(t, err)
+	require.Equal(t, original[0].Status, actions[0].Status)
+	require.NotEmpty(t, actions[0].DispositionID)
+	require.False(t, actions[0].EffectComplete)
+	manager := state.NewManagerWithBackend(repo.StateBackend("lab"))
+	require.NoError(t, manager.Save(recovered), "settled unknown must not block new state admission")
+	require.Error(t, repo.CommitActionOutcome(ctx, original[0], nil), "old journal cannot resume")
+	_, err = repo.LoadGCReferences(ctx, "lab")
+	require.NoError(t, err)
 
 	require.NoError(t, authority.FinishAdoptionDisposition(ctx, proof, AdoptionDispositionHash(proof)))
 	cold := NewFilesystemExecutionGrantRepository(root)

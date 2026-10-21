@@ -11,20 +11,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAdoptionFenceRecoversObservedOwnerWithoutInventingSuccess(t *testing.T) {
 	for _, failed := range []bool{false, true} {
-		t.Run(fmt.Sprint(failed), func(t *testing.T) { testAdoptionFenceRecovery(t, failed) })
+		t.Run(fmt.Sprint(failed), func(t *testing.T) { testAdoptionFenceRecovery(t, failed, "") })
 	}
 }
-func testAdoptionFenceRecovery(t *testing.T, failed bool) {
+func TestAdoptionFenceCancellationClosesUnknownActions(t *testing.T) {
+	for _, mode := range []string{"cancel-unowned", "cancel-absent"} {
+		t.Run(mode, func(t *testing.T) { testAdoptionFenceRecovery(t, true, mode) })
+	}
+}
+func testAdoptionFenceRecovery(t *testing.T, failed bool, mode string) {
 	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
@@ -69,6 +77,10 @@ func testAdoptionFenceRecovery(t *testing.T, failed bool) {
 			return nil, fmt.Errorf("provider mutated, callback return lost")
 		})
 		require.Error(t, err)
+		if mode != "" {
+			action := runtime.ActionRecord{ID: "unknown-adoption", RunID: adopt.ID, Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, DesiredDigest: "original", OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: adopt.Provider, ExternalID: adopt.ExternalID, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
+			require.NoError(t, repo.CommitActionIntent(ctx, action))
+		}
 		if failed {
 			current, err := store.GetNodeOperation(ctx, adopt.ID)
 			require.NoError(t, err)
@@ -97,7 +109,15 @@ func testAdoptionFenceRecovery(t *testing.T, failed bool) {
 		after := hostsupervisor.AdoptionCoordinator{Root: ledger, IssuerKey: issuerPub, HostKey: key, AgentID: "host", HostBootID: fence.NewBootID, AuthorizeFence: client.AuthorizeAdoptionFence, InspectFencedAdoption: func(context.Context, controlplane.AdoptionRequest) (substrate.NodeObservation, json.RawMessage, error) {
 			return substrate.NodeObservation{Exists: true, ExternalID: adopt.ExternalID, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}, json.RawMessage(`{"domain_uuid":"immutable"}`), nil
 		}}
-		proof, err := after.Disposition(ctx, record.Request.ID)
+		var proof controlplane.AdoptionDispositionProof
+		if mode != "" {
+			after.InspectAdoptionCancellation = func(context.Context, controlplane.AdoptionDispositionProof) (substrate.NodeObservation, error) {
+				return substrate.NodeObservation{ExternalID: adopt.ExternalID, Exists: mode == "cancel-unowned"}, nil
+			}
+			proof, err = after.CancelDisposition(ctx, record.Request.ID)
+		} else {
+			proof, err = after.Disposition(ctx, record.Request.ID)
+		}
 		require.NoError(t, err)
 		require.NoError(t, authority.PrepareAdoptionDisposition(ctx, proof, host))
 		require.Error(t, s.commitAdoptionState(ctx, op, proof.Private), "late normal commit cannot race prepared recovery")
@@ -110,7 +130,24 @@ func testAdoptionFenceRecovery(t *testing.T, failed bool) {
 		}
 		recovered, err := repo.LoadState(ctx, "lab")
 		require.NoError(t, err)
-		require.Len(t, recovered.Resources, 1)
+		if mode == "" {
+			require.Len(t, recovered.Resources, 1)
+		} else {
+			require.Empty(t, recovered.Resources)
+			actions, err := repo.LoadActions(ctx, "lab")
+			require.NoError(t, err)
+			require.Len(t, actions, 1)
+			require.NotEmpty(t, actions[0].DispositionID)
+			require.Equal(t, runtime.ActionIntentCommitted, actions[0].Status)
+			next := actions[0]
+			next.ID = "new-action"
+			next.RunID = "new-run"
+			next.DispositionID = ""
+			next.Revision = 0
+			next.ExpectedSerial = recovered.Meta.Serial
+			next.StateSerial = recovered.Meta.Serial
+			require.NoError(t, repo.CommitActionIntent(ctx, next), "cancelled unknown no longer blocks new request")
+		}
 		require.Equal(t, int64(1), recovered.Meta.Serial)
 		ended, err := store.GetNodeOperation(ctx, adopt.ID)
 		require.NoError(t, err)
@@ -124,16 +161,16 @@ func testAdoptionFenceRecovery(t *testing.T, failed bool) {
 		record, err = authority.ReadHostFence(ctx, record.Request.ID)
 		require.NoError(t, err)
 		require.False(t, record.AdoptionDisposition.ReleasedAt.IsZero())
-		late, err := controlplane.SignAdoptionStopReceipt(key, *grant, grant.TargetBootID, "late", proof.Private, time.Now())
+		late, err := controlplane.SignAdoptionStopReceipt(key, *grant, grant.TargetBootID, "late", json.RawMessage(`{"domain_uuid":"immutable"}`), time.Now())
 		require.NoError(t, err)
-		raw, _ := json.Marshal(HostNodeOperationCompletion{Receipt: late, Evidence: proof.Private})
+		raw, _ := json.Marshal(HostNodeOperationCompletion{Receipt: late, Evidence: json.RawMessage(`{"domain_uuid":"immutable"}`)})
 		w = httptest.NewRecorder()
 		s.ServeHTTP(w, httptest.NewRequest("POST", "/v1/hosts/host/node-operations/adopt/completed", bytes.NewReader(raw)))
 		require.Equal(t, 409, w.Code, w.Body.String())
 	})
 }
 
-func testFencedTransferCompletion(t *testing.T, s *Server, authority *persistence.ExecutionGrantRepository, op controlplane.NodeOperation, g controlplane.ExecutionGrant, hostKey ed25519.PrivateKey, private json.RawMessage) {
+func testFencedTransferCompletion(t *testing.T, s *Server, authority *persistence.ExecutionGrantRepository, op controlplane.NodeOperation, g controlplane.ExecutionGrant, hostKey ed25519.PrivateKey, private json.RawMessage, phase string) {
 	ctx := context.Background()
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -149,13 +186,32 @@ func testFencedTransferCompletion(t *testing.T, s *Server, authority *persistenc
 	require.NoError(t, authority.RecordHostFence(ctx, req.ID, receipt))
 	p, err := controlplane.SignAdoptionDisposition(hostKey, controlplane.AdoptionDispositionProof{Request: req, Fence: receipt, Adoption: *op.Adoption, HostBootID: receipt.NewBootID, ObservedAt: time.Now().UTC(), Observation: substrate.NodeObservation{Exists: true, ExternalID: op.Adoption.ExternalID, OwnerUID: op.Adoption.TopologyUID, ResourceUID: op.Adoption.ResourceUID, Generation: op.Adoption.Generation}, Private: private})
 	require.NoError(t, err)
+	if phase != "fenced-recovery" {
+		p.Resolution = "cancel-absent"
+		p.Private = nil
+		p.Observation = substrate.NodeObservation{ExternalID: op.Adoption.ExternalID}
+		if phase == "fenced-cancel-source" {
+			source := op.Adoption.Transfer.Plan.Source
+			p.Resolution = "cancel-source"
+			p.Observation.Exists = true
+			p.Observation.OwnerUID = source.OwnerUID
+			p.Observation.ResourceUID = source.ResourceUID
+			p.Observation.Generation = source.Generation
+		}
+		p, err = controlplane.SignAdoptionDisposition(hostKey, p)
+		require.NoError(t, err)
+	}
 	require.NoError(t, s.reconcileAdoptionFence(ctx, p))
 	require.NoError(t, s.reconcileAdoptionFence(ctx, p))
 	repo, err := s.actionRepository(op.Topology)
 	require.NoError(t, err)
 	state, err := repo.LoadState(ctx, op.Topology)
 	require.NoError(t, err)
-	require.Len(t, state.Resources, 1)
+	if phase == "fenced-recovery" {
+		require.Len(t, state.Resources, 1)
+	} else {
+		require.Empty(t, state.Resources)
+	}
 	require.Equal(t, op.Adoption.ExpectedSerial+1, state.Meta.Serial)
 	ended, err := s.apiStore.GetNodeOperation(ctx, op.ID)
 	require.NoError(t, err)

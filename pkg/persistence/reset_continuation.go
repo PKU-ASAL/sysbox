@@ -92,7 +92,7 @@ func (r *Repository) CommitResetContinuation(ctx context.Context, req runtime.Re
 		}
 		for id, old := range a.Actions {
 			if old.RunID != req.Checkpoint.RunID {
-				if old.Status != runtime.ActionSucceeded {
+				if !runtime.ActionSettled(old) {
 					return ErrConflict
 				}
 				continue

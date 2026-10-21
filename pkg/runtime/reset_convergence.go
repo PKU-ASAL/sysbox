@@ -59,6 +59,12 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 		permitted[change.Address.String()] = true
 	}
 	for _, record := range prior {
+		if record.DispositionID != "" {
+			if record.RunID == e.runID || record.RunID == e.resumeRunID {
+				return ErrActionUncertain
+			}
+			continue
+		}
 		if record.Status == ActionSucceeded {
 			if record.Action != controlplane.PlanActionReset || record.RunID != e.resumeRunID || !permitted[record.Resource.String()] {
 				continue

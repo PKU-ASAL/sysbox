@@ -107,10 +107,13 @@ func (s *Server) loadRecoveryExecution(ctx context.Context, topology, runID stri
 	chosen := map[string]runtime.ActionRecord{}
 	for _, action := range all {
 		if action.RunID != runID {
-			if action.Status != runtime.ActionSucceeded {
+			if !runtime.ActionSettled(action) {
 				return nil, fmt.Errorf("%w: another unfinished run owns this topology", runtime.ErrActionUncertain)
 			}
 			continue
+		}
+		if action.DispositionID != "" {
+			return nil, runtime.ErrActionUncertain
 		}
 		actions = append(actions, action)
 		key := action.Resource.String()

@@ -92,7 +92,7 @@ func (s *Server) handleOwnershipTransfer(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	reserved, err := target.ReadOwnershipTarget(r.Context(), p.TargetTopology, p.ID)
-	if err != nil || reserved.Aborted || reserved.Preparation == nil || gcEvidenceHash(reserved.Plan) != gcEvidenceHash(p) {
+	if err != nil || reserved.Aborted || reserved.DispositionHash != "" || reserved.Preparation == nil || gcEvidenceHash(reserved.Plan) != gcEvidenceHash(p) {
 		writeError(w, 409, fmt.Errorf("host ownership preparation required before retirement"))
 		return
 	}
@@ -180,7 +180,7 @@ func (s *Server) handleAuthorizeOwnershipPreparation(w http.ResponseWriter, r *h
 		return
 	}
 	v, err := target.ReadOwnershipTarget(r.Context(), p.TargetTopology, p.ID)
-	if err != nil || v.Aborted || v.CompletedHash != "" || gcEvidenceHash(v.Plan) != gcEvidenceHash(p) {
+	if err != nil || v.Aborted || v.DispositionHash != "" || v.CompletedHash != "" || gcEvidenceHash(v.Plan) != gcEvidenceHash(p) {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}

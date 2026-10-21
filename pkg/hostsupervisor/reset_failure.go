@@ -40,7 +40,7 @@ func ResetFailureEvidence(execution, original *controlplane.Run, actions []runti
 	found := false
 	for _, action := range actions {
 		if action.RunID != original.ID {
-			if action.Status != runtime.ActionSucceeded {
+			if !runtime.ActionSettled(action) {
 				return nil, fmt.Errorf("another Run remains unresolved")
 			}
 			continue

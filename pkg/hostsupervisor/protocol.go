@@ -15,6 +15,7 @@ type TargetRef struct {
 	Scope    controlplane.ExecutionScope `json:"scope"`
 }
 type Request struct {
+	AdoptionCancel     bool                                    `json:"adoption_cancel,omitempty"`
 	AdoptionFenceID    string                                  `json:"adoption_fence_id,omitempty"`
 	OwnershipPlan      *controlplane.OwnershipTransferPlan     `json:"ownership_plan,omitempty"`
 	GCFenceID          string                                  `json:"gc_fence_id,omitempty"`

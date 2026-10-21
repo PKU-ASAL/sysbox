@@ -17,7 +17,7 @@ func FinishReturnedRunWithoutActions(ctx context.Context, children *RunChildren,
 		return fmt.Errorf("returned failed lifecycle execution required")
 	}
 	for _, action := range actions {
-		if action.RunID == run.ID || action.Status != runtime.ActionSucceeded {
+		if action.RunID == run.ID || !runtime.ActionSettled(action) {
 			return fmt.Errorf("resource action evidence prevents no-effect completion")
 		}
 	}

@@ -49,4 +49,19 @@ func TestAdoptionDispositionRequiresFencedFreshExactOwnership(t *testing.T) {
 		}
 		require.Error(t, VerifyAdoptionDisposition(pub, bad), field)
 	}
+	for _, resolution := range []string{"cancel-unowned", "cancel-absent"} {
+		cancelled := proof
+		cancelled.Resolution = resolution
+		cancelled.Private = nil
+		cancelled.Observation = substrate.NodeObservation{Exists: resolution == "cancel-unowned", ExternalID: adopt.ExternalID}
+		signed, err := SignAdoptionDisposition(key, cancelled)
+		require.NoError(t, err)
+		require.NoError(t, VerifyAdoptionDisposition(pub, signed))
+		signed.Resolution = "recover-owned"
+		require.Error(t, VerifyAdoptionDisposition(pub, signed), "cancellation cannot be upgraded to success")
+		cancelled.Observation.OwnerUID = "foreign"
+		_, err = SignAdoptionDisposition(key, cancelled)
+		require.Error(t, err, "conflicting ownership retains hold")
+	}
+
 }

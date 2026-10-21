@@ -68,6 +68,12 @@ func testDockerTransferHostBoundary(t *testing.T, phase string) {
 	digest, _ := p.Digest()
 	proof, err := controlplane.SignOwnershipRetirement(key, controlplane.OwnershipRetirementProof{Plan: p, PlanDigest: digest, SourceEpoch: 1, SourceStateDigest: strings.Repeat("a", 64), RetiredAt: time.Now().UTC()})
 	require.NoError(t, err)
+	cancelRequest := controlplane.AdoptionRequest{ExternalID: created.ID, Transfer: &proof}
+	sourceObservation, cancelErr := s.InspectAdoptionCancellation(ctx, cancelRequest)
+	require.NoError(t, cancelErr)
+	resolution, cancelErr := controlplane.AdoptionCancellationResolution(cancelRequest, sourceObservation)
+	require.NoError(t, cancelErr)
+	require.Equal(t, "cancel-source", resolution)
 	scoped := substrate.WithOperationIdentity(ctx, next)
 	require.NoError(t, s.InspectOwnershipTransfer(ctx, p))
 	inputPath := filepath.Join(t.TempDir(), "child.json")

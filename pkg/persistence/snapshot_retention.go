@@ -48,7 +48,7 @@ func planSnapshotRetention(a *aggregate, topology string, policy SnapshotRetenti
 		}
 		reason := "eligible"
 		for _, action := range content.Actions {
-			if action.Status != runtime.ActionSucceeded {
+			if !runtime.ActionSettled(action) {
 				reason = "unresolved_journal"
 				break
 			}

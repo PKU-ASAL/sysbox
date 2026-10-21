@@ -99,8 +99,11 @@ func TestAdoptionFenceGuestProbe(t *testing.T) {
 	require.NoError(t, err)
 	authority := AuthorityClient{Identity: cfg.Identity}
 	c := AdoptionCoordinator{Root: cfg.Root, IssuerKey: cfg.Issuer, HostKey: cfg.Host, AgentID: cfg.Identity.ID, HostBootID: strings.TrimSpace(string(boot)), Authorize: authority.Authorize, AuthorizeFence: authority.AuthorizeAdoptionFence, Report: authority.ReportNodeOperation}
-	if cfg.Mode == "unknown" {
+	if cfg.Mode == "unknown" || cfg.Mode == "unknown-cancel" {
 		_, err = c.Apply(ctx, cfg.Adoption, cfg.Grant, func(context.Context) (json.RawMessage, error) {
+			if cfg.Mode == "unknown-cancel" {
+				return nil, fmt.Errorf("injected lost return before ownership write")
+			}
 			_, err := provider.ApplyAdoption(scoped, cfg.Adoption.Evidence)
 			if err != nil {
 				return nil, err
@@ -109,8 +112,10 @@ func TestAdoptionFenceGuestProbe(t *testing.T) {
 		})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "injected lost return", "must reach real provider ownership write")
-		_, err = provider.InspectAdoptionRecovery(scoped, cfg.Adoption)
-		require.NoError(t, err)
+		if cfg.Mode != "unknown-cancel" {
+			_, err = provider.InspectAdoptionRecovery(scoped, cfg.Adoption)
+			require.NoError(t, err)
+		}
 		return
 	}
 	c.InspectFencedAdoption = func(context.Context, controlplane.AdoptionRequest) (substrate.NodeObservation, json.RawMessage, error) {
@@ -139,7 +144,15 @@ func TestAdoptionFenceGuestProbe(t *testing.T) {
 			return obs, raw, err
 		}
 	}
-	proof, err := c.Disposition(ctx, cfg.FenceID)
+	var proof controlplane.AdoptionDispositionProof
+	if cfg.Mode == "cancel" {
+		c.InspectAdoptionCancellation = func(ctx context.Context, p controlplane.AdoptionDispositionProof) (substrate.NodeObservation, error) {
+			return libvirtprovider.New(cfg.Root+"-provider").InspectAdoptionCancellation(ctx, p.Adoption)
+		}
+		proof, err = c.CancelDisposition(ctx, cfg.FenceID)
+	} else {
+		proof, err = c.Disposition(ctx, cfg.FenceID)
+	}
 	require.NoError(t, err)
 	save(proof)
 }

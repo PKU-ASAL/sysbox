@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/address"
 	"sort"
 	"time"
 
@@ -133,8 +134,24 @@ func gcReferencesAt(a *aggregate, now time.Time) (GCReferenceSnapshot, error) {
 			for _, resource := range content.State.Resources {
 				appendResource(prefix+"state/"+resource.Address.String(), resource)
 			}
+			for id, recovery := range content.AdoptionRecoveries {
+				for actionID, old := range recovery.Actions {
+					if old.Candidate != nil {
+						appendResource(prefix+"adoption-history/"+id+"/"+actionID, *old.Candidate)
+					}
+				}
+				proof := recovery.Proof
+				if proof.Disposition() == "cancel-source" || proof.Disposition() == "cancel-unowned" {
+					addr, err := address.Parse(proof.Adoption.Address)
+					if err != nil {
+						return err
+					}
+					o := proof.Observation
+					appendResource(prefix+"adoption-cancel/"+id, state.Resource{Address: addr, Driver: proof.Adoption.Provider, ExternalID: o.ExternalID, OwnerUID: o.OwnerUID, ResourceUID: o.ResourceUID, Generation: o.Generation})
+				}
+			}
 			for id, action := range content.Actions {
-				if action.Status != runtime.ActionSucceeded {
+				if !runtime.ActionSettled(action) {
 					return fmt.Errorf("%w: unresolved action %s%s", ErrConflict, prefix, id)
 				}
 				if action.Candidate != nil {

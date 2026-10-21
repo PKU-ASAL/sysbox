@@ -67,6 +67,9 @@ func CommitAdoption(ctx context.Context, actions ActionRepository, runID, topolo
 	}
 	recovering := false
 	for _, old := range journal {
+		if old.RunID == runID && old.DispositionID != "" {
+			return ErrPlanStale
+		}
 		if old.ID == action.ID {
 			if old.DesiredDigest != digest || old.OwnerUID != identity.OwnerUID || old.ResourceUID != identity.ResourceUID || old.Generation != identity.Generation || old.StateSerial != expectedSerial {
 				return fmt.Errorf("adoption journal identity conflict")
@@ -166,6 +169,9 @@ func CommitAdoptionEvidence(ctx context.Context, actions ActionRepository, runID
 	}
 	recovering := false
 	for _, old := range journal {
+		if old.RunID == runID && old.DispositionID != "" {
+			return ErrPlanStale
+		}
 		if old.ID != action.ID {
 			continue
 		}

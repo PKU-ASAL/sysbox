@@ -15,15 +15,16 @@ import (
 type AdoptionRequest = controlplane.AdoptionRequest
 
 type AdoptionCoordinator struct {
-	RecoverFencedAdoption func(context.Context, controlplane.AdoptionDispositionProof, func(context.Context) error) (substrate.NodeObservation, json.RawMessage, error)
-	AuthorizeFence        func(context.Context, string) (controlplane.AdoptionDispositionProof, error)
-	InspectFencedAdoption func(context.Context, controlplane.AdoptionRequest) (substrate.NodeObservation, json.RawMessage, error)
-	Root                  string
-	IssuerKey             ed25519.PublicKey
-	HostBootID, AgentID   string
-	Authorize             func(context.Context, controlplane.SignedExecutionGrant) error
-	HostKey               ed25519.PrivateKey
-	Report                func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error
+	InspectAdoptionCancellation func(context.Context, controlplane.AdoptionDispositionProof) (substrate.NodeObservation, error)
+	RecoverFencedAdoption       func(context.Context, controlplane.AdoptionDispositionProof, func(context.Context) error) (substrate.NodeObservation, json.RawMessage, error)
+	AuthorizeFence              func(context.Context, string) (controlplane.AdoptionDispositionProof, error)
+	InspectFencedAdoption       func(context.Context, controlplane.AdoptionRequest) (substrate.NodeObservation, json.RawMessage, error)
+	Root                        string
+	IssuerKey                   ed25519.PublicKey
+	HostBootID, AgentID         string
+	Authorize                   func(context.Context, controlplane.SignedExecutionGrant) error
+	HostKey                     ed25519.PrivateKey
+	Report                      func(context.Context, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) error
 }
 
 func (c *AdoptionCoordinator) validate(req AdoptionRequest, g controlplane.SignedExecutionGrant, now time.Time) error {

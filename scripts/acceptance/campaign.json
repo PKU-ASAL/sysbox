@@ -22,7 +22,9 @@
         "ownership-transfer-libvirt-host-sigkill",
         "ownership-transfer-firecracker-host-sigkill",
         "ownership-transfer-docker-host-sigkill",
-        "adoption-fenced-recovery"
+        "adoption-fenced-recovery",
+        "adoption-cancellation",
+        "adoption-reset-settled"
       ],
       "remaining": [
         "Explicit fenced recovery is implemented for exact target ownership after a lost adoption return; historical operation stays unknown. Source/unowned/absent/conflict disposition, pre-existing canonical unknown actions and Firecracker previous-boot process anchors remain unresolved; full provider-internal/transport acceptance stays open."
@@ -43,7 +45,9 @@
         "ownership-transfer-libvirt-host-sigkill",
         "ownership-transfer-firecracker-host-sigkill",
         "ownership-transfer-docker-host-sigkill",
-        "adoption-fenced-recovery"
+        "adoption-fenced-recovery",
+        "adoption-cancellation",
+        "adoption-reset-settled"
       ],
       "remaining": [
         "Explicit fenced recovery is implemented for exact target ownership after a lost adoption return; historical operation stays unknown. Source/unowned/absent/conflict disposition, pre-existing canonical unknown actions and Firecracker previous-boot process anchors remain unresolved; full provider-internal/transport acceptance stays open."
@@ -79,7 +83,9 @@
         "ownership-transfer-libvirt-host-sigkill",
         "ownership-transfer-firecracker-host-sigkill",
         "ownership-transfer-docker-host-sigkill",
-        "adoption-fenced-recovery"
+        "adoption-fenced-recovery",
+        "adoption-cancellation",
+        "adoption-reset-settled"
       ],
       "remaining": [
         "Explicit fenced recovery is implemented for exact target ownership after a lost adoption return; historical operation stays unknown. Source/unowned/absent/conflict disposition, pre-existing canonical unknown actions and Firecracker previous-boot process anchors remain unresolved; full provider-internal/transport acceptance stays open."
@@ -1186,6 +1192,32 @@
       "requires_env": [
         "SYSBOX_TEST_DATABASE_URL"
       ],
+      "artifact_env": []
+    },
+    {
+      "id": "adoption-cancellation",
+      "package": "./pkg/api",
+      "tests": [
+        "TestAdoptionFenceRecoversObservedOwnerWithoutInventingSuccess"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "adoption-reset-settled",
+      "package": "./pkg/runtime",
+      "tests": [
+        "TestNewResetSkipsDisposedAdoptionButOldRequestCannotResume"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [],
       "artifact_env": []
     }
   ]

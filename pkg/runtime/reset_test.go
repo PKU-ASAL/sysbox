@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -700,4 +701,33 @@ func TestResetRecoveryRejectsChangedBaseline(t *testing.T) {
 	changed, err := BuildResetPlan(g, st, "sysbox_node.first")
 	require.NoError(t, err)
 	require.ErrorIs(t, e.Reset(context.Background(), changed), ErrPlanStale)
+}
+
+func TestNewResetSkipsDisposedAdoptionButOldRequestCannotResume(t *testing.T) {
+	for _, oldRequest := range []bool{false, true} {
+		t.Run(fmt.Sprint(oldRequest), func(t *testing.T) {
+			sub := &portTestSubstrate{name: "fake", coldPlug: true}
+			registerPortTestDriver(t, sub)
+			g, st := configuredResetTestState(t, sub, "first")
+			e := testActionExecutor(t, g, st)
+			e.runID = "new-run"
+			old := ActionRecord{ID: "disposed-adoption", RunID: "old-adoption", Action: controlplane.PlanActionAdopt, Status: ActionUncertain, DispositionID: "fence-receipt", Resource: address.Resource("sysbox_node", "first")}
+			m := e.actions.(*memoryActions)
+			m.actions = append(m.actions, old)
+			if oldRequest {
+				e.runID = old.RunID
+			}
+			plan, err := BuildResetPlan(g, st, "sysbox_node.first")
+			require.NoError(t, err)
+			err = e.Reset(context.Background(), plan)
+			if oldRequest {
+				require.Error(t, err)
+				require.Empty(t, sub.resetLifecycle)
+			} else {
+				require.NoError(t, err)
+				require.NotEmpty(t, sub.resetLifecycle)
+			}
+			require.Equal(t, old, m.actions[0], "history remains unknown")
+		})
+	}
 }

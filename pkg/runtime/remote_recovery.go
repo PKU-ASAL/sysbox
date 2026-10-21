@@ -105,14 +105,17 @@ func (e *Executor) RecoverRunActions(ctx context.Context, runID string) error {
 	seen := map[string]bool{}
 	count := 0
 	for _, record := range all {
+		if record.RunID == runID && record.DispositionID != "" {
+			return ErrActionUncertain
+		}
 		if record.RunID != runID {
-			if record.Status != ActionSucceeded {
+			if !ActionSettled(record) {
 				return ErrActionUncertain
 			}
 			continue
 		}
 		count++
-		if record.Status == ActionSucceeded {
+		if ActionSettled(record) {
 			continue
 		}
 		if seen[record.Resource.String()] {
@@ -157,7 +160,7 @@ func (r *runRecoveryRepository) LoadActions(ctx context.Context, topology string
 	out := []ActionRecord{}
 	for _, record := range records {
 		if record.RunID != r.runID {
-			if record.Status != ActionSucceeded {
+			if !ActionSettled(record) {
 				return nil, ErrActionUncertain
 			}
 			continue

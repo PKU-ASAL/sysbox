@@ -24,8 +24,14 @@ func (c AuthorityClient) AuthorizeAdoptionFence(ctx context.Context, id string) 
 }
 
 func (c *AdoptionCoordinator) Disposition(ctx context.Context, id string) (controlplane.AdoptionDispositionProof, error) {
+	return c.disposition(ctx, id, false)
+}
+func (c *AdoptionCoordinator) CancelDisposition(ctx context.Context, id string) (controlplane.AdoptionDispositionProof, error) {
+	return c.disposition(ctx, id, true)
+}
+func (c *AdoptionCoordinator) disposition(ctx context.Context, id string, cancel bool) (controlplane.AdoptionDispositionProof, error) {
 	var zero controlplane.AdoptionDispositionProof
-	if c.AuthorizeFence == nil || (c.InspectFencedAdoption == nil && c.RecoverFencedAdoption == nil) || len(c.HostKey) != ed25519.PrivateKeySize {
+	if c.AuthorizeFence == nil || (!cancel && c.InspectFencedAdoption == nil && c.RecoverFencedAdoption == nil) || (cancel && c.InspectAdoptionCancellation == nil) || len(c.HostKey) != ed25519.PrivateKeySize {
 		return zero, effectgate.ErrFenced
 	}
 	proof, err := c.AuthorizeFence(ctx, id)
@@ -46,6 +52,9 @@ func (c *AdoptionCoordinator) Disposition(ctx context.Context, id string) (contr
 		if controlplane.VerifyAdoptionDisposition(pub, prior) != nil {
 			return zero, effectgate.ErrUncertain
 		}
+		if (prior.Disposition() != "recover-owned") != cancel {
+			return zero, effectgate.ErrFenced
+		}
 		return prior, nil
 	}
 	if !errors.Is(priorErr, effectgate.ErrNotFound) && !errors.Is(priorErr, effectgate.ErrUncertain) {
@@ -54,7 +63,12 @@ func (c *AdoptionCoordinator) Disposition(ctx context.Context, id string) (contr
 	if len(proof.Signature) == 0 {
 		var observation substrate.NodeObservation
 		var private json.RawMessage
-		if c.RecoverFencedAdoption != nil && proof.Adoption.Provider == "firecracker" {
+		if cancel {
+			observation, err = c.InspectAdoptionCancellation(ctx, proof)
+			if err == nil {
+				proof.Resolution, err = controlplane.AdoptionCancellationResolution(proof.Adoption, observation)
+			}
+		} else if c.RecoverFencedAdoption != nil && proof.Adoption.Provider == "firecracker" {
 			observation, private, err = c.RecoverFencedAdoption(ctx, proof, func(ctx context.Context) error {
 				current, err := c.AuthorizeFence(ctx, id)
 				if err != nil {
@@ -83,6 +97,8 @@ func (c *AdoptionCoordinator) Disposition(ctx context.Context, id string) (contr
 		if err != nil {
 			return zero, err
 		}
+	} else if (proof.Disposition() != "recover-owned") != cancel {
+		return zero, effectgate.ErrFenced
 	} else if err = controlplane.VerifyAdoptionDisposition(pub, proof); err != nil {
 		return zero, err
 	}
@@ -111,6 +127,17 @@ func (c *TaskClient) InspectAdoptionDisposition(ctx context.Context, id string) 
 	}
 	if response.AdoptionDisposition == nil {
 		return controlplane.AdoptionDispositionProof{}, fmt.Errorf("missing GC disposition proof")
+	}
+	return *response.AdoptionDisposition, nil
+}
+
+func (c *TaskClient) InspectAdoptionCancellation(ctx context.Context, id string) (controlplane.AdoptionDispositionProof, error) {
+	response, err := c.call(ctx, Request{Operation: "adoption-disposition", AdoptionFenceID: id, AdoptionCancel: true})
+	if err != nil {
+		return controlplane.AdoptionDispositionProof{}, err
+	}
+	if response.AdoptionDisposition == nil {
+		return controlplane.AdoptionDispositionProof{}, fmt.Errorf("missing cancellation proof")
 	}
 	return *response.AdoptionDisposition, nil
 }

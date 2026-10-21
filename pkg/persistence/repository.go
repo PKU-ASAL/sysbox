@@ -117,14 +117,14 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion && header.Format != OwnershipRetirementFormatVersion && header.Format != OwnershipTargetFormatVersion && header.Format != GCAdmissionFormatVersion && header.Format != AdoptionRecoveryFormatVersion {
+	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion && header.Format != OwnershipRetirementFormatVersion && header.Format != OwnershipTargetFormatVersion && header.Format != GCAdmissionFormatVersion && header.Format != AdoptionRecoveryFormatVersion && header.Format != LegacyAdoptionRecoveryFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, header.Format, FormatVersion)
 	}
 	var a aggregate
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
+	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, a.Format, FormatVersion)
 	}
 	if err := validateAggregate(&a, ""); err != nil {
@@ -384,7 +384,7 @@ func (r *Repository) CommitActionIntent(ctx context.Context, action runtime.Acti
 	if err := validateAction(action); err != nil {
 		return err
 	}
-	if action.Status != runtime.ActionIntentCommitted || action.Revision != 0 {
+	if action.DispositionID != "" || action.Status != runtime.ActionIntentCommitted || action.Revision != 0 {
 		return fmt.Errorf("new action must be intent_committed")
 	}
 	if action.Action == controlplane.PlanActionReset && (action.Phase != "accepted" || action.EffectComplete) {
@@ -400,6 +400,9 @@ func commitActionIntent(a *aggregate, action runtime.ActionRecord) error {
 		return ErrConflict
 	}
 	if old, exists := a.Actions[action.ID]; exists {
+		if old.DispositionID != "" {
+			return ErrConflict
+		}
 		if sameIntent(old, action) {
 			return nil
 		}
@@ -412,7 +415,10 @@ func commitActionIntent(a *aggregate, action runtime.ActionRecord) error {
 		return ErrConflict
 	}
 	for _, old := range a.Actions {
-		if old.ID != action.ID && old.Status != runtime.ActionSucceeded && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
+		if old.RunID == action.RunID && old.DispositionID != "" {
+			return ErrConflict
+		}
+		if old.ID != action.ID && !runtime.ActionSettled(old) && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
 			return fmt.Errorf("%w: unresolved action %s", ErrConflict, old.ID)
 		}
 	}
@@ -458,6 +464,9 @@ func applyActionOutcome(a *aggregate, action runtime.ActionRecord, patch *runtim
 		return ErrNotFound
 	}
 	if !sameIntent(old, action) {
+		return ErrConflict
+	}
+	if old.DispositionID != "" || action.DispositionID != "" {
 		return ErrConflict
 	}
 	if old.Status == runtime.ActionSucceeded {
@@ -574,6 +583,9 @@ func (r *Repository) CommitAdoptionEvidenceAtomic(ctx context.Context, runID, to
 func commitAdoptionEvidence(a *aggregate, action runtime.ActionRecord, addr address.Address, identity substrate.OperationIdentity, expectedSerial int64, digest string) error {
 
 	if old, ok := a.Actions[action.ID]; ok {
+		if old.DispositionID != "" {
+			return ErrConflict
+		}
 		if old.Candidate == nil || old.DesiredDigest != digest || old.ID != action.ID || old.Topology != action.Topology || old.RunID != action.RunID || !old.Resource.Equal(action.Resource) || old.Action != action.Action || old.OwnerUID != action.OwnerUID || old.ResourceUID != action.ResourceUID || old.Generation != action.Generation || old.StateSerial != action.StateSerial || !old.RunQueuedAt.Equal(action.RunQueuedAt) || old.RunRevision != action.RunRevision {
 			return ErrConflict
 		}
@@ -600,7 +612,10 @@ func commitAdoptionEvidence(a *aggregate, action runtime.ActionRecord, addr addr
 		return fmt.Errorf("%w: adoption resource already present", runtime.ErrPlanStale)
 	}
 	for _, old := range a.Actions {
-		if old.ID != action.ID && old.Status != runtime.ActionSucceeded && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
+		if old.RunID == action.RunID && old.DispositionID != "" {
+			return ErrConflict
+		}
+		if old.ID != action.ID && !runtime.ActionSettled(old) && (old.RunID != action.RunID || old.Resource.Equal(action.Resource)) {
 			return ErrConflict
 		}
 	}
@@ -720,7 +735,7 @@ func resetAggregate(a *aggregate) error {
 		return ErrConflict
 	}
 	for _, action := range a.Actions {
-		if action.Status != runtime.ActionSucceeded {
+		if !runtime.ActionSettled(action) {
 			return ErrConflict
 		}
 	}
@@ -788,7 +803,7 @@ func (b *stateBackend) SaveVersioned(ctx context.Context, raw []byte, options st
 			return ErrConflict
 		}
 		for _, action := range a.Actions {
-			if action.Status != runtime.ActionSucceeded {
+			if !runtime.ActionSettled(action) {
 				return fmt.Errorf("%w: unfinished action prevents standalone state save", ErrConflict)
 			}
 		}

@@ -21,7 +21,7 @@ func (r *Repository) ProveCleanup(ctx context.Context, run controlplane.Run) (*c
 			return fmt.Errorf("%w: managed resources remain after destroy", ErrConflict)
 		}
 		for _, action := range a.Actions {
-			if action.Status != runtime.ActionSucceeded {
+			if !runtime.ActionSettled(action) {
 				return fmt.Errorf("%w: unfinished action %s", ErrConflict, action.ID)
 			}
 			if action.RunQueuedAt.After(run.QueuedAt) || action.RunID == run.ID && (!action.RunQueuedAt.Equal(run.QueuedAt) || action.RunRevision != run.Revision) {
