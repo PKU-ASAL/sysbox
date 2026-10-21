@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,6 +53,15 @@ func TestFirecrackerOwnershipTransferColdLifecycleE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.InspectOwnershipTransfer(ctx, p))
 	scoped := substrate.WithOperationIdentity(ctx, next)
+	inputPath := filepath.Join(t.TempDir(), "child.json")
+	childRaw, _ := json.Marshal(fcTransferChildInput{Root: s.rootfsDir, Kernel: kernel, Proof: proof, Key: pub})
+	require.NoError(t, os.WriteFile(inputPath, childRaw, 0600))
+	child := exec.Command(os.Args[0], "-test.run=^TestFirecrackerTransferCrashChild$")
+	child.Env = append(os.Environ(), "SYSBOX_FC_TRANSFER_CHILD="+inputPath)
+	output, childErr := child.CombinedOutput()
+	var exited *exec.ExitError
+	require.ErrorAs(t, childErr, &exited, string(output))
+	require.Equal(t, 77, exited.ExitCode(), string(output))
 	transferred, err := s.ApplyOwnershipTransfer(scoped, proof, pub)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -70,4 +80,24 @@ func TestFirecrackerOwnershipTransferColdLifecycleE2E(t *testing.T) {
 	require.Greater(t, observed.PID, 0)
 	require.NoError(t, cold.DestroyNode(scoped, found))
 	require.NoDirExists(t, transferred.Provider.(*HandleState).VMDir)
+}
+
+type fcTransferChildInput struct {
+	Root, Kernel string
+	Proof        controlplane.OwnershipRetirementProof
+	Key          ed25519.PublicKey
+}
+
+func TestFirecrackerTransferCrashChild(t *testing.T) {
+	path := os.Getenv("SYSBOX_FC_TRANSFER_CHILD")
+	if path == "" {
+		t.Skip("child only")
+	}
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var input fcTransferChildInput
+	require.NoError(t, json.Unmarshal(raw, &input))
+	_, err = New(input.Kernel, input.Root).ApplyOwnershipTransfer(substrate.WithOperationIdentity(context.Background(), input.Proof.Plan.Target), input.Proof, input.Key)
+	require.NoError(t, err)
+	os.Exit(77)
 }

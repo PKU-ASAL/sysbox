@@ -4703,3 +4703,16 @@ earlier acknowledgment. `/tmp/sysbox-sql-federation-final.log` records the SQL
 race regressions; socket-sandbox failure logs are not counted as acceptance.
 The protocol deliberately retains irreversible consumer fences on partial
 failure instead of claiming a distributed atomic rollback.
+
+### P6 final requirement reconciliation
+
+The final P6 run `/tmp/sysbox-p6-final-unified/run.json` passed all five selected
+gates on one source digest: snapshot-api, snapshot-storage, authority-api,
+provider-snapshot-boundary and state-restore-process-matrix. Required PostgreSQL
+variables were present; no selected test skipped. Added coverage includes all
+three backends for concurrent state+journal snapshots, child-process exit after
+freeze/commit/release, and an independently reopened live old worker rejecting
+Authorize/Renew both before and after confirmed-stop restoration. Original
+lineage/resource-incarnation conflicts, unresolved journal preservation and
+force-unlock stop evidence remain covered by the same run. This reconciles P6's
+listed acceptance criteria; it does not close P9's broader upgrade/fault matrix.

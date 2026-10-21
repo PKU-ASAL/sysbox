@@ -125,9 +125,7 @@
         "authority-api",
         "state-restore-process-matrix"
       ],
-      "remaining": [
-        "Full independent-process crash/restore/old-worker matrix is not closed."
-      ]
+      "remaining": []
     },
     {
       "id": "P8.1",
@@ -358,12 +356,16 @@
         "TestSnapshotRejectsCorruptionUnresolvedWorkAndDifferentLineage",
         "TestSnapshotRestoreRejectsChangedInterpretation",
         "TestSnapshotRestoreRequestColdReplayDoesNotRewindSuccessor",
-        "TestAuthorizedSnapshotRestoreRequiresFrozenStoppedScope"
+        "TestAuthorizedSnapshotRestoreRequiresFrozenStoppedScope",
+        "TestConcurrentSnapshotNeverSplitsStateAndJournalAcrossBackends"
       ],
       "kind": "contract",
       "race": true,
       "timeout": "3m",
-      "artifact_env": []
+      "artifact_env": [],
+      "requires_env": [
+        "SYSBOX_TEST_POSTGRES_DSN"
+      ]
     },
     {
       "id": "authority-api",
@@ -970,7 +972,8 @@
       "id": "state-restore-process-matrix",
       "package": "./pkg/api",
       "tests": [
-        "TestSnapshotRestoreIndependentProcessCrashMatrix"
+        "TestSnapshotRestoreIndependentProcessCrashMatrix",
+        "TestSnapshotRestoreRevokesLiveWorkerAcrossIndependentRestart"
       ],
       "kind": "contract",
       "race": true,

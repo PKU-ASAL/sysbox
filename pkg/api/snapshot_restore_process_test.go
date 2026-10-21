@@ -136,3 +136,89 @@ func TestSnapshotRestoreCrashChild(t *testing.T) {
 	require.NoError(t, authority.EndMaintenance(ctx, *barrier))
 	os.Exit(74)
 }
+
+func TestSnapshotRestoreRevokesLiveWorkerAcrossIndependentRestart(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		ctx := context.Background()
+		s := stateDeleteTestServer(t, store)
+		repo, err := s.actionRepository("lab")
+		require.NoError(t, err)
+		snapshot, err := repo.StateBackend("lab").(state.SnapshotBackend).Snapshot(ctx, "before")
+		require.NoError(t, err)
+		plan, err := repo.PlanSnapshotRestore(ctx, "lab", snapshot.ID, "restore-live", 0)
+		require.NoError(t, err)
+		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		session, err := authority.OpenSession(ctx, "agent", "old-process", "")
+		require.NoError(t, err)
+		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: plan.TopologyUID}, AgentID: "agent", SessionID: session.ID, ActionID: "active", CommandID: "active", Attempt: 1, Operation: "run_apply", Digest: "active", TargetBootID: "boot"}, time.Minute)
+		require.NoError(t, err)
+		result, err := s.restoreSnapshotWorkflow(ctx, "lab", plan)
+		require.NoError(t, err)
+		require.Nil(t, result.Receipt)
+		require.Equal(t, "waiting_for_stop_or_reconciliation", result.Status)
+		input := restoreOldWorkerInput{Grant: *grant}
+		switch v := store.(type) {
+		case *localAPIStore:
+			input.Kind = "file"
+			input.Path = v.runsDir
+		case *sqliteAPIStore:
+			input.Kind = "sqlite"
+			input.Path = v.dbPath
+		case *postgresAPIStore:
+			input.Kind = "postgres"
+			input.Path = v.dsn
+		}
+		raw, err := json.Marshal(input)
+		require.NoError(t, err)
+		path := filepath.Join(t.TempDir(), "old-worker.json")
+		require.NoError(t, os.WriteFile(path, raw, 0600))
+		check := func() {
+			child := exec.Command(os.Args[0], "-test.run=^TestRestoreOldWorkerChild$")
+			child.Env = append(os.Environ(), "SYSBOX_RESTORE_OLD_WORKER="+path)
+			output, err := child.CombinedOutput()
+			require.NoError(t, err, string(output))
+		}
+		check()
+		cold := stateDeleteTestServer(t, store)
+		pending, err := cold.restoreSnapshotWorkflow(ctx, "lab", result.Request)
+		require.NoError(t, err)
+		require.Nil(t, pending.Receipt)
+		require.NoError(t, authority.AcceptHostStop(ctx, *grant, "verified-independent-stop"))
+		completed, err := cold.restoreSnapshotWorkflow(ctx, "lab", result.Request)
+		require.NoError(t, err)
+		require.Equal(t, "restored", completed.Status)
+		require.NotNil(t, completed.Receipt)
+		check()
+	})
+}
+
+type restoreOldWorkerInput struct {
+	Kind, Path string
+	Grant      controlplane.ExecutionGrant
+}
+
+func TestRestoreOldWorkerChild(t *testing.T) {
+	path := os.Getenv("SYSBOX_RESTORE_OLD_WORKER")
+	if path == "" {
+		t.Skip("old worker child only")
+	}
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var input restoreOldWorkerInput
+	require.NoError(t, json.Unmarshal(raw, &input))
+	var store apiStore
+	switch input.Kind {
+	case "file":
+		store = &localAPIStore{runsDir: input.Path}
+	case "sqlite":
+		store = &sqliteAPIStore{dbPath: input.Path, runsDir: t.TempDir()}
+	case "postgres":
+		store = &postgresAPIStore{dsn: input.Path}
+	default:
+		t.Fatal("invalid backend")
+	}
+	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+	require.Error(t, authority.Authorize(context.Background(), input.Grant))
+	_, err = authority.Renew(context.Background(), input.Grant, time.Minute)
+	require.Error(t, err)
+}

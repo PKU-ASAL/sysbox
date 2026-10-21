@@ -7,22 +7,13 @@ import (
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
-	"path/filepath"
 	"testing"
 )
 
 func TestAggregateSnapshotRestorePreservesIdentityAndAdvancesSerial(t *testing.T) {
-	for _, kind := range []string{"file", "sqlite"} {
+	for _, kind := range []string{"filesystem", "sqlite", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
-			var r *Repository
-			var err error
-			if kind == "file" {
-				r, err = OpenFilesystem(t.TempDir())
-			} else {
-				r, err = OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
-			}
-			require.NoError(t, err)
-			defer r.Close()
+			r := resetTestRepository(t, kind)
 			ctx := context.Background()
 			m := state.NewManagerWithBackend(r.StateBackend("lab"))
 			st, err := m.Load()
@@ -85,19 +76,11 @@ func TestSnapshotRejectsCorruptionUnresolvedWorkAndDifferentLineage(t *testing.T
 }
 
 func TestSnapshotRestoreRejectsChangedInterpretation(t *testing.T) {
-	for _, kind := range []string{"file", "sqlite"} {
+	for _, kind := range []string{"filesystem", "sqlite", "postgres"} {
 		for _, field := range []string{"lineage", "schema", "resource_type"} {
 			t.Run(kind+"/"+field, func(t *testing.T) {
 				ctx := context.Background()
-				var repo *Repository
-				var err error
-				if kind == "file" {
-					repo, err = OpenFilesystem(t.TempDir())
-				} else {
-					repo, err = OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
-				}
-				require.NoError(t, err)
-				defer repo.Close()
+				repo := resetTestRepository(t, kind)
 				manager := state.NewManagerWithBackend(repo.StateBackend("lab"))
 				current, err := manager.Load()
 				require.NoError(t, err)

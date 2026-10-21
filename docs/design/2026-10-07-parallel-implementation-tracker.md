@@ -967,3 +967,11 @@ Docker signed sidecar 与Firecracker原manifest签名链支持连续转移，旧
 本次全量Go（含PostgreSQL）通过，日志 `/tmp/sysbox-ownership-final-full.log`；
 vet及四组严格门禁通过。尚未据此关闭完整provider内部OS-kill与升级整合矩阵；
 阶段2的SQL远端consumer接入亦仍需继续实施，两个WIP PR保持真实剩余项。
+
+## P6 原始验收逐项收敛（2026-10-21）
+
+补齐 PostgreSQL 错误 lineage/schema/resource-type 与较新 generation 冲突拒绝
+恢复的测试，沿用 file/SQLite 相同断言；新增三后端并发快照同事务视图、真实
+独立旧 worker Authorize/Renew 拒绝、restore barrier/commit/release 三个进程
+退出窗口。P6 原始验收条目现均有对应门禁，最终统一运行无 skip 才计关闭。
+不以此关闭 P5 的 provider 内部恢复或 P9 升级/全故障矩阵。

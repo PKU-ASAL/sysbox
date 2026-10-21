@@ -6,7 +6,10 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +50,15 @@ func TestDockerOwnershipTransferColdLifecycleE2E(t *testing.T) {
 	require.NoError(t, err)
 	scoped := substrate.WithOperationIdentity(ctx, next)
 	require.NoError(t, s.InspectOwnershipTransfer(ctx, p))
+	inputPath := filepath.Join(t.TempDir(), "child.json")
+	childRaw, _ := json.Marshal(dockerTransferChildInput{Root: s.adoptionRoot, Proof: proof, Key: pub})
+	require.NoError(t, os.WriteFile(inputPath, childRaw, 0600))
+	child := exec.Command(os.Args[0], "-test.run=^TestDockerTransferCrashChild$")
+	child.Env = append(os.Environ(), "SYSBOX_DOCKER_TRANSFER_CHILD="+inputPath)
+	output, childErr := child.CombinedOutput()
+	var exited *exec.ExitError
+	require.ErrorAs(t, childErr, &exited, string(output))
+	require.Equal(t, 77, exited.ExitCode(), string(output))
 	h, err := s.ApplyOwnershipTransfer(scoped, proof, pub)
 	require.NoError(t, err)
 	cold := &Substrate{cli: s.cli, adoptionRoot: s.adoptionRoot}
@@ -61,4 +73,27 @@ func TestDockerOwnershipTransferColdLifecycleE2E(t *testing.T) {
 	require.NoError(t, cold.DestroyNode(scoped, h))
 	_, err = s.cli.ContainerInspect(ctx, created.ID)
 	require.Error(t, err)
+}
+
+type dockerTransferChildInput struct {
+	Root  string
+	Proof controlplane.OwnershipRetirementProof
+	Key   ed25519.PublicKey
+}
+
+func TestDockerTransferCrashChild(t *testing.T) {
+	path := os.Getenv("SYSBOX_DOCKER_TRANSFER_CHILD")
+	if path == "" {
+		t.Skip("child only")
+	}
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var input dockerTransferChildInput
+	require.NoError(t, json.Unmarshal(raw, &input))
+	s, err := New()
+	require.NoError(t, err)
+	s.adoptionRoot = input.Root
+	_, err = s.ApplyOwnershipTransfer(substrate.WithOperationIdentity(context.Background(), input.Proof.Plan.Target), input.Proof, input.Key)
+	require.NoError(t, err)
+	os.Exit(77)
 }

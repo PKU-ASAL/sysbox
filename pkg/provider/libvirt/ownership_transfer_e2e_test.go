@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -54,6 +55,15 @@ func TestLibvirtOwnershipTransferColdReadbackE2E(t *testing.T) {
 	proof, err := controlplane.SignOwnershipRetirement(key, controlplane.OwnershipRetirementProof{Plan: plan, PlanDigest: digest, SourceEpoch: 1, SourceStateDigest: strings.Repeat("a", 64), RetiredAt: time.Now().UTC()})
 	require.NoError(t, err)
 	scoped := substrate.WithOperationIdentity(ctx, next)
+	inputPath := filepath.Join(t.TempDir(), "child.json")
+	childRaw, _ := json.Marshal(libvirtTransferChildInput{Root: provider.vmDirRoot(), Proof: proof, Key: pub})
+	require.NoError(t, os.WriteFile(inputPath, childRaw, 0600))
+	child := exec.Command(os.Args[0], "-test.run=^TestLibvirtTransferCrashChild$")
+	child.Env = append(os.Environ(), "SYSBOX_LIBVIRT_TRANSFER_CHILD="+inputPath)
+	output, childErr := child.CombinedOutput()
+	var exited *exec.ExitError
+	require.ErrorAs(t, childErr, &exited, string(output))
+	require.Equal(t, 77, exited.ExitCode(), string(output))
 	h, err := provider.ApplyOwnershipTransfer(scoped, proof, pub)
 	require.NoError(t, err)
 	require.Equal(t, id, h.ID)
@@ -70,4 +80,24 @@ func TestLibvirtOwnershipTransferColdReadbackE2E(t *testing.T) {
 	present, err := gcDomainPresent(ctx, id)
 	require.NoError(t, err)
 	require.False(t, present)
+}
+
+type libvirtTransferChildInput struct {
+	Root  string
+	Proof controlplane.OwnershipRetirementProof
+	Key   ed25519.PublicKey
+}
+
+func TestLibvirtTransferCrashChild(t *testing.T) {
+	path := os.Getenv("SYSBOX_LIBVIRT_TRANSFER_CHILD")
+	if path == "" {
+		t.Skip("child only")
+	}
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var input libvirtTransferChildInput
+	require.NoError(t, json.Unmarshal(raw, &input))
+	_, err = New(input.Root).ApplyOwnershipTransfer(substrate.WithOperationIdentity(context.Background(), input.Proof.Plan.Target), input.Proof, input.Key)
+	require.NoError(t, err)
+	os.Exit(77)
 }
