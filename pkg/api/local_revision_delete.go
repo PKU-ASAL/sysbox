@@ -80,6 +80,9 @@ func (s *localAPIStore) DeleteGlobalRevisionAtomic(ctx context.Context, id strin
 }
 
 func (s *localAPIStore) validateLocalRevisionRetirement(ctx context.Context, root, id string, olderThan time.Time) error {
+	if err := revisiongate.ValidateRemoteConsumers(root, id, time.Now()); err != nil {
+		return err
+	}
 	rev, err := s.GetGlobalRevision(ctx, id)
 	if err != nil {
 		return err
@@ -142,7 +145,7 @@ func (s *localAPIStore) validateLocalRevisionRetirement(ctx context.Context, roo
 				parts = bytes.Split(raw, []byte{'\n'})
 			}
 			for _, part := range parts {
-				if len(bytes.TrimSpace(part)) == 0 {
+				if strings.HasSuffix(path, ".jsonl") && len(bytes.TrimSpace(part)) == 0 {
 					continue
 				}
 				refs, err := revisiongate.References(part)

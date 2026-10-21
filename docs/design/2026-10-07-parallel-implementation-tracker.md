@@ -930,3 +930,13 @@ Firecracker 整机 fencing 已通过；FC 旧 boot 残留仍保留，不以普�
 https://git.pku.edu.cn/oslab/sysbox/pulls/50 。本地镜像 `sysbox:stage1-c0281c6`
 ID 为 `sha256:8d774515d74d3b92c6b022e17fd4397e7e5d2f82febd36bce0bf1c2422e56fff`。
 Docker 20.10.24／29.9.1 真实摘要核验与 CLI29.9.1 连接通过，未部署生产。
+
+## 远端文件 registry 消费者协议（2026-10-21）
+
+新增显式 token 认证的 HTTPS consumer pin：本地发布前先持久登记远端引用，
+全量扫描及引用释放共用本地 catalog 锁；持久单调 sequence 拒绝晚到的旧释放
+请求。离线、未初始化、超时、目录/绑定/清单丢失、空/损坏 JSON 不推断为空。
+materialized revision 目录同样保留引用。新隔离执行 VM 的 HTTPS 实测通过，
+不共享工作目录，覆盖登记、引用保护、释放与退休后晚到引用拒绝。
+SQL consumer 仍拒绝配置；跨独立 SQL 数据库的同等协议未实现，不能据此关闭
+全部联邦覆盖。完整 API/Agent/provider 故障矩阵仍单列，不缩减为单个协议测试。

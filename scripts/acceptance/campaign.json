@@ -145,7 +145,9 @@
         "revision-delete-api",
         "file-registry-retirement",
         "file-revision-gate",
-        "file-revision-batch"
+        "file-revision-batch",
+        "remote-revision-protocol",
+        "remote-revision-api"
       ],
       "remaining": [
         "File single-object and atomic batch retirement support explicitly enrolled local/shared-visible roots. Remote/unregistered registry federation remains open."
@@ -919,6 +921,36 @@
       "package": "./pkg/persistence",
       "tests": [
         "TestGCDispositionRetainsUnknownAndReleasesOnlyAfterFencing"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "remote-revision-protocol",
+      "package": "./pkg/revisiongate",
+      "tests": [
+        "TestRemoteConsumerPinsBeforePublicationAndRetirementFencesReplay",
+        "TestRemoteConsumerAuthAndUnavailableNeverAdmit",
+        "TestRemoteDelayedReleaseCannotOverwriteNewerPin",
+        "TestRemoteMissingEnrollmentNeverMeansEmpty",
+        "TestRemoteSyncRetainsMaterializedRevisionDirectory",
+        "TestRemoteSyncRejectsTruncatedJSONWithoutReleasingPins",
+        "TestRemoteMissingCatalogCannotBypassPinAdmission",
+        "TestRemoteConsumerCannotSilentlyReenrollAfterBindingLoss",
+        "TestExplicitCatalogGuardCannotBypassLostRemoteBinding"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "remote-revision-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestRemoteRegistryProtectsSeparateConsumerRoot"
       ],
       "kind": "contract",
       "race": true,

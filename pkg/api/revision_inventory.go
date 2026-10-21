@@ -62,7 +62,7 @@ func (s *Server) globalRevisionInventoryWithFileLock(ctx context.Context, lock b
 			if err = ctx.Err(); err != nil {
 				return nil, err
 			}
-			if entry.Name() == "consumers.json" || revisiongate.IsRetirementMetadata(entry.Name()) || !strings.HasSuffix(entry.Name(), ".json") {
+			if entry.Name() == "consumers.json" || revisiongate.IsRemoteMetadata(entry.Name()) || revisiongate.IsRetirementMetadata(entry.Name()) || !strings.HasSuffix(entry.Name(), ".json") {
 				continue
 			}
 			retired, err := revisiongate.Retired(root, strings.TrimSuffix(entry.Name(), ".json"))

@@ -22,31 +22,32 @@ import (
 
 // Server holds all API state and registers HTTP routes.
 type Server struct {
-	fenceTargets  map[string]hostFenceTarget
-	grantSigner   ed25519.PrivateKey
-	grantHostKeys map[string]ed25519.PublicKey
-	repositoryMu  sync.Mutex
-	repositories  map[string]*persistence.Repository
-	runsDir       string
-	workspacesDir string
-	stateBackend  string
-	cfg           config.ServiceConfig
-	apiStore      apiStore
-	initErr       error
-	agents        *agentRegistry
-	agentSvc      *AgentService
-	agentStream   *AgentStreamService
-	jobs          *Jobs
-	runService    *RunService
-	scheduler     *SchedulerService
-	workspaces    *WorkspaceService
-	nodeService   *NodeOperationService
-	consoleSvc    *ConsoleService
-	guestExecSvc  *GuestExecutionService
-	consoles      *consoleSessionHub
-	nodeOps       *nodeOperationStore
-	supervisor    *Supervisor
-	mux           *http.ServeMux
+	remoteRegistry *revisiongate.RemoteRegistry
+	fenceTargets   map[string]hostFenceTarget
+	grantSigner    ed25519.PrivateKey
+	grantHostKeys  map[string]ed25519.PublicKey
+	repositoryMu   sync.Mutex
+	repositories   map[string]*persistence.Repository
+	runsDir        string
+	workspacesDir  string
+	stateBackend   string
+	cfg            config.ServiceConfig
+	apiStore       apiStore
+	initErr        error
+	agents         *agentRegistry
+	agentSvc       *AgentService
+	agentStream    *AgentStreamService
+	jobs           *Jobs
+	runService     *RunService
+	scheduler      *SchedulerService
+	workspaces     *WorkspaceService
+	nodeService    *NodeOperationService
+	consoleSvc     *ConsoleService
+	guestExecSvc   *GuestExecutionService
+	consoles       *consoleSessionHub
+	nodeOps        *nodeOperationStore
+	supervisor     *Supervisor
+	mux            *http.ServeMux
 }
 
 // NewServer creates a Server rooted at runsDir (state files) and
@@ -87,12 +88,31 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 			initErr = revisiongate.Enroll(context.Background(), runsDir, cfg.RevisionRegistry)
 		}
 	}
+	if initErr == nil && cfg.RevisionRemote != nil {
+		if stateBackend != "" || cfg.RevisionRegistry != "" || len(cfg.RevisionConsumers) > 0 {
+			initErr = fmt.Errorf("remote registry consumer requires exclusive local metadata backend")
+		} else {
+			initErr = revisiongate.BindRemote(context.Background(), runsDir, revisiongate.RemoteBinding{URL: cfg.RevisionRemote.URL, Consumer: cfg.RevisionRemote.Consumer, TokenFile: cfg.RevisionRemote.TokenFile})
+		}
+	}
+	var remoteRegistry *revisiongate.RemoteRegistry
+	if initErr == nil && len(cfg.RevisionConsumers) > 0 {
+		if stateBackend != "" {
+			initErr = fmt.Errorf("remote registry service requires local registry backend")
+		} else {
+			var catalog string
+			catalog, initErr = revisiongate.Catalog(runsDir)
+			if initErr == nil {
+				remoteRegistry, initErr = revisiongate.NewRemoteRegistry(catalog, cfg.RevisionConsumers)
+			}
+		}
+	}
 	if initErr != nil {
 		// Keep construction safe for non-Start consumers; Start reports the
 		// error so the API server refuses to bind.
 		apiStore = &localAPIStore{runsDir: runsDir}
 	}
-	s := &Server{
+	s := &Server{remoteRegistry: remoteRegistry,
 		runsDir:       runsDir,
 		workspacesDir: workspacesDir,
 		stateBackend:  stateBackend,
@@ -386,6 +406,11 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/revisions", s.handlePublishRevision)
 	m.HandleFunc("POST /v1/revisions/retention-plan", s.handleRevisionRetention)
 	m.HandleFunc("POST /v1/revisions/retention-apply", s.handleRevisionRetentionApply)
+	if s.remoteRegistry != nil {
+		m.Handle("/v1/revision-registry/", http.StripPrefix("/v1/revision-registry", s.remoteRegistry))
+	}
+	m.HandleFunc("POST /v1/revisions/remote-sync", s.handleRemoteRevisionSync)
+
 	m.HandleFunc("POST /v1/revisions/retired-cleanup", s.handleRevisionRetiredCleanup)
 	m.HandleFunc("POST /v1/revisions/delete", s.handleRevisionDelete)
 	m.HandleFunc("POST /v1/runs/{id}/remote/{mode}", s.handleRequestRunRecovery)

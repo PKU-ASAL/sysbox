@@ -4627,3 +4627,21 @@ retirement and reservation disposition. The child exits without defers; restart
 must finish the exact decision while old grants remain rejected. Final release
 checks the retired command under authority locking. These tests do not yet cover
 every provider-internal partial call or all random API/Agent SIGKILL windows.
+
+### Remote file-registry consumer acceptance (2026-10-21)
+
+A separate execution VM connected over verified HTTPS using a dedicated test CA
+and private per-consumer token. No work directory was shared with the registry.
+`TestRemoteRegistryAcrossIsolatedVMHTTPS` passed in 4.279 seconds; evidence is in
+`/tmp/sysbox-remote-registry-vm.log` and the lab's `remote-registry-*` directories.
+The sequence was uninitialized rejection, full enrollment, pin-before-publication,
+retained-reference rejection, explicit complete-scan release, retirement and
+late-reference rejection. Root/catalog/binding loss, stale request ordering,
+malformed/empty JSON and materialized-directory references have race regressions.
+SQL consumers are not covered by this file consumer protocol.
+
+The remote-registry full run passed the API and PostgreSQL suites but hit one
+existing Firecracker process-exit race in
+`TestDestroyNodeDoesNotWaitOnProcessAlreadyOwnedByReaper` (identity changed during
+probe). Its isolated race rerun passed 10 times. This is retained as a failed
+full-run result, not claimed as a root-cause fix or a clean total acceptance.

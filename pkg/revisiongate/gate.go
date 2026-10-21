@@ -119,6 +119,22 @@ func Guard(ctx context.Context, path string, raw []byte) (func(), error) {
 		return nil
 	}
 	for dir := parent; ; dir = filepath.Dir(dir) {
+		if info, e := os.Lstat(filepath.Join(dir, remoteRootAnchor)); e == nil {
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("unsafe remote root marker")
+			}
+			candidate := filepath.Join(dir, "global-revisions")
+			_, exists, e := readRemoteBinding(candidate)
+			if e != nil || !exists {
+				return nil, fmt.Errorf("required remote registry catalog unavailable")
+			}
+			if e = choose(candidate); e != nil {
+				return nil, e
+			}
+		} else if !os.IsNotExist(e) {
+			return nil, e
+		}
+
 		if _, e := os.Lstat(filepath.Join(dir, "consumers.json")); e == nil {
 			roots, e := Consumers(dir)
 			if e != nil {
@@ -192,5 +208,31 @@ func GuardCatalog(ctx context.Context, catalog string, raw []byte) (func(), erro
 		}
 	}
 
+	binding, remote, err := readRemoteBinding(catalog)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if filepath.Base(catalog) == "global-revisions" {
+		info, e := os.Lstat(filepath.Join(filepath.Dir(catalog), remoteRootAnchor))
+		if e == nil && (!info.Mode().IsRegular() || !remote) {
+			unlock()
+			return nil, fmt.Errorf("required remote registry binding missing")
+		}
+		if e != nil && !os.IsNotExist(e) {
+			unlock()
+			return nil, e
+		}
+	}
+	if remote && len(refs) > 0 {
+		ids := []string{}
+		for id := range refs {
+			ids = append(ids, id)
+		}
+		if err = postRemote(ctx, binding, ids, false); err != nil {
+			unlock()
+			return nil, err
+		}
+	}
 	return unlock, nil
 }

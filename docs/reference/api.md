@@ -952,3 +952,36 @@ GC disposition upgrades the affected authority record to version 6 and lifecycle
 aggregate to format 9. Older versions must be drained before rollout; they reject
 these records rather than silently interpreting the new terminal state. Existing
 version-5 authority and format-6/7/8 aggregates remain readable before transition.
+
+### Remote revision consumer pins
+
+A file registry service may set `revision_consumers` to an explicit map of
+consumer IDs to private token-file paths. This creates a monotonic durable
+consumer catalog; unknown, uninitialized and stale consumers block deletion.
+Removing a consumer from configuration does not delete its retained pins.
+The service exposes authenticated `POST /v1/revision-registry/{consumer}/pins`.
+
+A separate file-backend consumer sets `revision_remote` with `url` (the service
+URL ending `/v1/revision-registry`), `consumer`, and absolute `token_file`.
+HTTPS is required outside loopback. The binding is persistent and cannot be
+silently switched; the incarnation is unique and a durable sequence is advanced
+before sending requests. Registry sequence checks reject delayed older releases.
+Every participating local publisher pins revisions remotely before publishing
+bytes. A lost acknowledgement leaves conservative pins; unavailability rejects
+new referenced writes. Existing cached revision bytes remain local metadata.
+
+`POST /v1/revisions/remote-sync` performs a full bounded local reference scan under
+the same local catalog lock and replaces the remote pin set. Only such a complete
+scan refreshes the one-hour completeness window. Schedule this endpoint before
+that window expires; otherwise retirement remains blocked. Materialized revision
+directories, decoded snapshots, lifecycle and return receipts retain pins. Empty
+or corrupt JSON, symlinks, old state and incomplete scans never release pins.
+After retiring local evidence, sync explicitly before deleting the upstream
+revision. Token files must be private regular files; redirects are rejected.
+
+Roll out only after draining older publishers. Remote consumer mode cannot be
+combined with shared-path registry binding or downstream registry service mode.
+This implementation supports explicit file-backend consumers over HTTPS; SQL
+consumers and arbitrary unregistered databases remain rejected, not inferred
+empty. Real isolated-VM HTTPS admission/release/late-reference refusal was tested
+without shared work directories.

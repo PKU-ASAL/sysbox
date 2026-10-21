@@ -16,7 +16,16 @@ import (
 
 const DefaultConfigPath = "/etc/sysbox/sysbox.yaml"
 
+type RevisionRemoteConfig struct {
+	URL       string `yaml:"url" json:"url"`
+	Consumer  string `yaml:"consumer" json:"consumer"`
+	TokenFile string `yaml:"token_file" json:"token_file"`
+}
+
 type ServiceConfig struct {
+	RevisionRemote    *RevisionRemoteConfig `yaml:"revision_remote" json:"revision_remote,omitempty"`
+	RevisionConsumers map[string]string     `yaml:"revision_consumers" json:"revision_consumers,omitempty"`
+
 	RevisionRegistry    string               `yaml:"revision_registry" json:"revision_registry,omitempty"`
 	GCPublicationSource string               `yaml:"gc_publication_source" json:"gc_publication_source,omitempty"`
 	HostSupervisor      HostSupervisorConfig `yaml:"host_supervisor" json:"host_supervisor,omitempty"`
