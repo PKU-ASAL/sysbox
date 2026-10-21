@@ -18,7 +18,7 @@ func decodeExecutionAuthority(raw []byte) (*executionAuthority, error) {
 	if json.Unmarshal(raw, a) != nil || a.Sessions == nil || a.Grants == nil || a.ObservedAt.IsZero() {
 		return nil, ErrCorruptRecord
 	}
-	if a.Version != executionAuthorityVersion {
+	if a.Version != executionAuthorityVersion && a.Version != gcDispositionAuthorityVersion {
 		return nil, ErrUnsupportedVersion
 	}
 	if err := validateMaintenance(a); err != nil {
@@ -35,6 +35,19 @@ func decodeExecutionAuthority(raw []byte) (*executionAuthority, error) {
 	for epoch, stop := range a.Stops {
 		if epoch == 0 || epoch > a.Epoch || stop.Grant.Epoch != epoch || !validGrant(stop.Grant) || stop.Grant.State != controlplane.GrantStopped || stop.Receipt == "" || stop.Grant.StopReceipt != stop.Receipt {
 			return nil, ErrCorruptRecord
+		}
+	}
+	for _, stop := range a.Stops {
+		if strings.HasPrefix(stop.Receipt, "gc-fenced:") {
+			matched := false
+			for _, f := range a.Fences {
+				if f.GCDisposition != nil && !f.GCDisposition.ReleasedAt.IsZero() && stop.Receipt == "gc-fenced:"+GCDispositionHash(f.GCDisposition.Proof) && sameGrantEpoch(stop.Grant, f.Request.Grant) {
+					matched = true
+				}
+			}
+			if !matched {
+				return nil, ErrCorruptRecord
+			}
 		}
 	}
 	for epoch, stop := range a.Stops {

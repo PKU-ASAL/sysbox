@@ -203,6 +203,19 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 
 func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Response {
 	response := Response{Version: 1}
+	if request.Operation == "gc-disposition" {
+		if request.Version != 1 || request.Target != (TargetRef{}) || !recoveryCommandID.MatchString(request.GCFenceID) || s.GC == nil {
+			response.Error = "valid canonical GC fence required"
+			return response
+		}
+		proof, err := s.GC.Disposition(ctx, request.GCFenceID)
+		if err != nil {
+			response.Error = err.Error()
+		} else {
+			response.GCDisposition = &proof
+		}
+		return response
+	}
 	if request.Operation == "run-recovery" {
 		// Scope comes from canonical command authorization, not worker input.
 		if request.Version != 1 || request.Target != (TargetRef{}) || s.RunRecovery == nil || request.RecoveryRequest == nil || request.RecoveryRequest.Validate() != nil {

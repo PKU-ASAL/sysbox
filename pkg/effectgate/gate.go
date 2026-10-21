@@ -28,6 +28,8 @@ type Gate struct {
 	Authorize func(context.Context, controlplane.ExecutionGrant) error
 }
 type outcome struct {
+	GCFence     *controlplane.GCDispositionProof         `json:"gc_fence,omitempty"`
+	GCFenceKey  []byte                                   `json:"gc_fence_key,omitempty"`
 	Grant       controlplane.ExecutionGrant              `json:"grant"`
 	SignedGrant *controlplane.SignedExecutionGrant       `json:"signed_grant,omitempty"`
 	State       string                                   `json:"state"`
@@ -152,7 +154,7 @@ func (g *Gate) Execute(ctx context.Context, signed controlplane.SignedExecutionG
 		return append(json.RawMessage(nil), prior.Result...), nil
 	}
 	for _, prior := range record.Outcomes {
-		if prior.State != "complete" {
+		if prior.State != "complete" && prior.State != "fenced" {
 			return nil, ErrUncertain
 		}
 	}

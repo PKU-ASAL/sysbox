@@ -915,3 +915,18 @@ index 检出 proof 丢失。提交前冲突不退休任何成员；提交后崩�
 payload，可通过 retired-cleanup 重复回收。盘点与新引用准入共用 catalog 锁。
 独立登记且共享可见路径的文件 registry 同样使用该协议；任意远端联邦仍开放。
 此子项完成不代表阶段 2 整体关闭，unknown GC fencing 后的处置释放仍在实施。
+
+## 非 Docker unknown GC 处置链（2026-10-21）
+
+新增显式 GC fence admission、宿主签名 present/absent 观察、旧 journal 归档及
+prepare→原命令退休→reservation disposition→最终屏障释放。原结果保留 unknown，
+不生成删除成功回执；释放后的旧 fence 不再授权重建 journal。最终授权在宿主
+journal flock 内，防止并发新工作被旧处置覆盖。authority v6／aggregate v9 拒绝
+旧 reader 静默忽略新终态。三后端独立进程退出矩阵及真实隔离 VM 的 libvirt、
+Firecracker 整机 fencing 已通过；FC 旧 boot 残留仍保留，不以普通 Delete 冒充
+后续残留处置。完整 provider 内部分步故障与远端 registry 联邦仍开放。
+
+阶段 1 Docker 兼容交付已提交 `c0281c6`，PR #50 基于重构分支：
+https://git.pku.edu.cn/oslab/sysbox/pulls/50 。本地镜像 `sysbox:stage1-c0281c6`
+ID 为 `sha256:8d774515d74d3b92c6b022e17fd4397e7e5d2f82febd36bce0bf1c2422e56fff`。
+Docker 20.10.24／29.9.1 真实摘要核验与 CLI29.9.1 连接通过，未部署生产。

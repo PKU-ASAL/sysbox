@@ -161,6 +161,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	// Recovery and observation do not depend on a provider client. Production
 	// deletion revalidates the exact command and its durable reference reservation.
 	server.GC = &hostsupervisor.GCCoordinator{
+		AuthorizeFence: authority.AuthorizeGCFence, InspectFencedCandidate: newSupervisorGCInspection(cfg),
 		Root: filepath.Join(cfg.HostSupervisor.Root, "gc"), AgentID: ident.ID,
 		HostBootID: strings.TrimSpace(string(boot)), IssuerKey: public, HostKey: key,
 		Authorize: authority.Authorize, ReportStop: authority.ReportStop,

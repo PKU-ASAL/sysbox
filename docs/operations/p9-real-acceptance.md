@@ -4609,3 +4609,21 @@ The real 10-case non-Docker process suite passed with race detection
 (`/tmp/sysbox-nondocker-reviewed-faults.log`, 201.401 seconds). Earlier concurrent
 full-run timeouts were rerun in isolation and passed; the final full run passed.
 No root-cause fix for unrelated intermittent timeouts is claimed.
+
+### Unknown GC fencing disposition (2026-10-21, implementation in progress)
+
+The new lab `/tmp/sysbox-gc-fencing-20261021` is independently marked disposable;
+no historical lab was changed. Real libvirt and Firecracker rounds prove whole
+execution-VM power-off/restart, old QEMU exclusion, distinct new boot, unchanged
+control guest, corrupt GC journal archival, signed fresh presence observation,
+command retirement and reservation release with historical result still unknown.
+Logs: `/tmp/sysbox-gc-whole-vm-retry.log` (libvirt) and
+`/tmp/sysbox-gc-whole-vm-firecracker-final.log` (Firecracker). Firecracker target
+manifest/disk is deliberately retained; ordinary cleanup rejected its old boot
+anchor in an earlier round, whose failure evidence remains.
+
+File/SQLite/PostgreSQL tests cover interruption after prepared decision, command
+retirement and reservation disposition. The child exits without defers; restart
+must finish the exact decision while old grants remain rejected. Final release
+checks the retired command under authority locking. These tests do not yet cover
+every provider-internal partial call or all random API/Agent SIGKILL windows.

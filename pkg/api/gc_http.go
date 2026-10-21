@@ -73,7 +73,7 @@ func (s *Server) handleGC(w http.ResponseWriter, r *http.Request) {
 // The reservation is the outbox seed. Publication may be retried after process
 // failure; an existing or retired command is never reset to queued.
 func (s *Server) publishGCReservation(ctx context.Context, topology string, reservation persistence.GCReservation) error {
-	if reservation.ReceiptHash != "" {
+	if !reservation.Pending() {
 		return nil
 	}
 	prior, err := readFailureCommand(ctx, s.apiStore, reservation.ID)
@@ -107,7 +107,7 @@ func (s *Server) reconcileGCOutbox(ctx context.Context, topology string) error {
 		return err
 	}
 	for _, reservation := range reservations {
-		if reservation.ReceiptHash != "" {
+		if !reservation.Pending() {
 			continue
 		}
 		if err := s.publishGCReservation(ctx, topology, reservation); err != nil {

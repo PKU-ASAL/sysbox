@@ -15,7 +15,7 @@ func gcReplay(prior persistence.GCReservation, err error, request persistence.GC
 	if err != nil {
 		return false, err
 	}
-	if prior.ID != request.ID || prior.AgentID != request.AgentID || prior.Candidate != request.Candidate || request.ReceiptHash != "" {
+	if prior.ID != request.ID || prior.AgentID != request.AgentID || prior.Candidate != request.Candidate || !request.Pending() {
 		return false, persistence.ErrConflict
 	}
 	return true, nil

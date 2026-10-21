@@ -17,12 +17,14 @@ type GCCandidate = controlplane.GCCandidate
 func digestHex(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
 
 type GCCoordinator struct {
-	Root                string
-	IssuerKey           ed25519.PublicKey
-	HostBootID, AgentID string
-	HostKey             ed25519.PrivateKey
-	ReportStop          func(context.Context, controlplane.SignedExecutionStopReceipt) error
-	Authorize           func(context.Context, controlplane.SignedExecutionGrant) error
+	AuthorizeFence         func(context.Context, string) (controlplane.GCDispositionProof, error)
+	InspectFencedCandidate func(context.Context, GCCandidate) (string, error)
+	Root                   string
+	IssuerKey              ed25519.PublicKey
+	HostBootID, AgentID    string
+	HostKey                ed25519.PrivateKey
+	ReportStop             func(context.Context, controlplane.SignedExecutionStopReceipt) error
+	Authorize              func(context.Context, controlplane.SignedExecutionGrant) error
 	// ValidateInventory re-reads the canonical host inventory under the same
 	// coordinator boundary. A dry-run digest is never sufficient authorization.
 	ValidateInventory   func(context.Context, GCCandidate) error

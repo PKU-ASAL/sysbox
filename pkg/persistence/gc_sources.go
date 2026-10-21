@@ -73,11 +73,14 @@ func validateGCSources(a *aggregate) error {
 		}
 		return nil
 	}
-	if (a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion) || a.GCSources == nil || len(a.GCSources) == 0 || len(a.GCSources) > 128 {
+	if a.Format == GCDispositionFormatVersion && len(a.GCSources) == 0 {
+		return nil
+	}
+	if (a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion) || a.GCSources == nil || len(a.GCSources) == 0 || len(a.GCSources) > 128 {
 		return ErrCorruptRecord
 	}
 	for id, s := range a.GCSources {
-		if s.Retired && (a.Format != GCSourceRetirementFormatVersion || s.Updating) {
+		if s.Retired && ((a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion) || s.Updating) {
 			return ErrCorruptRecord
 		}
 		if !topologyName.MatchString(id) || len(id) > 128 || s.Version < 1 {

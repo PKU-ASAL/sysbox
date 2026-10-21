@@ -30,7 +30,9 @@ func (r *Repository) RetireGCSource(ctx context.Context, topology, source, owner
 		s.Retired = true
 		s.Version++
 		a.GCSources[source] = s
-		a.Format = GCSourceRetirementFormatVersion
+		if a.Format != GCDispositionFormatVersion {
+			a.Format = GCSourceRetirementFormatVersion
+		}
 		return nil
 	})
 }

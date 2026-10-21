@@ -69,7 +69,7 @@ func supervisorGCReferenceValidator(repository func(string) (runtime.ActionRepos
 		if err != nil {
 			return err
 		}
-		if reservation.AgentID != grant.Grant.AgentID || reservation.Candidate != candidate || reservation.ReceiptHash != "" {
+		if reservation.AgentID != grant.Grant.AgentID || reservation.Candidate != candidate || !reservation.Pending() {
 			return persistence.ErrConflict
 		}
 		digest, err := candidate.Digest()
@@ -80,5 +80,18 @@ func supervisorGCReferenceValidator(repository func(string) (runtime.ActionRepos
 			return persistence.ErrConflict
 		}
 		return nil
+	}
+}
+
+func newSupervisorGCInspection(cfg config.ServiceConfig) func(context.Context, hostsupervisor.GCCandidate) (string, error) {
+	return func(ctx context.Context, c hostsupervisor.GCCandidate) (string, error) {
+		switch c.Kind {
+		case "domain":
+			return libvirtprovider.New(cfg.Providers.Libvirt.Workdir).InspectFencedGC(ctx, c.ExternalID, c.OwnerUID, c.ResourceUID, c.Generation)
+		case "firecracker":
+			return firecrackerprovider.New(cfg.Providers.Firecracker.Kernel, cfg.Providers.Firecracker.Workdir).InspectFencedGC(ctx, c.ExternalID, c.OwnerUID, c.ResourceUID, c.Generation)
+		default:
+			return "", fmt.Errorf("fenced GC inspection unsupported for %s", c.Kind)
+		}
 	}
 }

@@ -68,7 +68,7 @@ func batchPrefix(id string) string {
 func nextGC(a *aggregate) string {
 	next := ""
 	for id, r := range a.GC {
-		if r.ReceiptHash == "" && (next == "" || id < next) {
+		if r.Pending() && (next == "" || id < next) {
 			next = id
 		}
 	}
@@ -111,7 +111,7 @@ func ApplyGCReservations(raw, authority []byte, topology string, requests []GCRe
 	}
 	seen := map[string]bool{}
 	for i, r := range requests {
-		if r.ID != fmt.Sprintf("%s-%03d", group, i) || r.ReceiptHash != "" || r.AgentID != requests[0].AgentID || r.Candidate.Validate() != nil || r.Candidate.TopologyUID != a.State.TopologyUID {
+		if r.ID != fmt.Sprintf("%s-%03d", group, i) || !r.Pending() || r.AgentID != requests[0].AgentID || r.Candidate.Validate() != nil || r.Candidate.TopologyUID != a.State.TopologyUID {
 			return nil, ErrInvalidRecord
 		}
 		seen[r.ID] = true

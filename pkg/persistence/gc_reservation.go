@@ -15,15 +15,16 @@ import (
 // no expiry: losing a worker/lease cannot establish that deletion stopped.
 // ID is the durable command ID. Completed entries retain exact replay identity.
 type GCReservation struct {
-	ID          string                   `json:"id"`
-	AgentID     string                   `json:"agent_id"`
-	Candidate   controlplane.GCCandidate `json:"candidate"`
-	ReceiptHash string                   `json:"receipt_hash,omitempty"`
+	DispositionHash string                   `json:"disposition_hash,omitempty"`
+	ID              string                   `json:"id"`
+	AgentID         string                   `json:"agent_id"`
+	Candidate       controlplane.GCCandidate `json:"candidate"`
+	ReceiptHash     string                   `json:"receipt_hash,omitempty"`
 }
 
 func gcPending(a *aggregate) bool {
 	for _, r := range a.GC {
-		if r.ReceiptHash == "" {
+		if r.Pending() {
 			return true
 		}
 	}
@@ -34,13 +35,16 @@ func validateGCReservations(a *aggregate) error {
 	pending := 0
 	groups := map[string]bool{}
 	for id, r := range a.GC {
+		if r.DispositionHash != "" && a.Format != GCDispositionFormatVersion {
+			return ErrCorruptRecord
+		}
 		if id == "" || id != r.ID || r.AgentID == "" || r.Candidate.Validate() != nil || r.Candidate.TopologyUID != a.State.TopologyUID {
 			return ErrCorruptRecord
 		}
-		if r.ReceiptHash == "" {
+		if r.Pending() {
 			pending++
 			groups[batchPrefix(r.ID)] = true
-		} else if len(r.ReceiptHash) != 64 {
+		} else if (len(r.ReceiptHash) != 64 && len(r.DispositionHash) != 64) || (r.ReceiptHash != "" && r.DispositionHash != "") {
 			return ErrCorruptRecord
 		}
 	}
@@ -51,14 +55,14 @@ func validateGCReservations(a *aggregate) error {
 }
 
 func (r *Repository) ReserveGC(ctx context.Context, topology string, request GCReservation) error {
-	if !topologyName.MatchString(request.ID) || request.AgentID == "" || request.ReceiptHash != "" || request.Candidate.Validate() != nil {
+	if !topologyName.MatchString(request.ID) || request.AgentID == "" || !request.Pending() || request.Candidate.Validate() != nil {
 		return ErrInvalidRecord
 	}
 	return r.updateGC(ctx, topology, true, func(a *aggregate) error { return reserveGC(a, request) })
 }
 
 func reserveGC(a *aggregate, request GCReservation) error {
-	if !topologyName.MatchString(request.ID) || request.AgentID == "" || request.ReceiptHash != "" || request.Candidate.Validate() != nil {
+	if !topologyName.MatchString(request.ID) || request.AgentID == "" || !request.Pending() || request.Candidate.Validate() != nil {
 		return ErrInvalidRecord
 	}
 
@@ -102,7 +106,7 @@ func checkGCCommand(a *aggregate, command controlplane.AgentCommand) error {
 		return nil
 	}
 	r, ok := a.GC[command.ID]
-	if !ok || r.ReceiptHash != "" || command.ID != next {
+	if !ok || !r.Pending() || command.ID != next {
 		return ErrConflict
 	}
 	c := r.Candidate
@@ -121,7 +125,7 @@ func (r *Repository) CompleteGC(ctx context.Context, topology string, receipt co
 		if !ok {
 			return ErrNotFound
 		}
-		if stored.AgentID != receipt.Grant.AgentID || receipt.Grant.ActionID != stored.ID {
+		if stored.DispositionHash != "" || stored.AgentID != receipt.Grant.AgentID || receipt.Grant.ActionID != stored.ID {
 			return ErrConflict
 		}
 		if err := controlplane.VerifyGCDeletionReceipt(key, receipt, stored.Candidate); err != nil {
@@ -152,7 +156,7 @@ func ApplyGCReservation(raw, authorityRaw []byte, topology string, request GCRes
 		return nil, err
 	}
 	if prior, ok := a.GC[request.ID]; ok {
-		if prior.AgentID != request.AgentID || prior.Candidate != request.Candidate || request.ReceiptHash != "" {
+		if prior.AgentID != request.AgentID || prior.Candidate != request.Candidate || !request.Pending() {
 			return nil, ErrConflict
 		}
 		return append([]byte(nil), raw...), nil

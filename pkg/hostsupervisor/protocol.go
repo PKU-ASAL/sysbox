@@ -15,6 +15,7 @@ type TargetRef struct {
 	Scope    controlplane.ExecutionScope `json:"scope"`
 }
 type Request struct {
+	GCFenceID          string                                  `json:"gc_fence_id,omitempty"`
 	AdoptionInspection *controlplane.AdoptionInspectionRequest `json:"adoption_inspection,omitempty"`
 	SSHMutation        *substrate.SSHAccessMutation            `json:"ssh_mutation,omitempty"`
 	SSHAccessID        string                                  `json:"ssh_access_id,omitempty"`
@@ -36,6 +37,7 @@ type Request struct {
 	Limit              int                                     `json:"limit,omitempty"`
 }
 type Response struct {
+	GCDisposition    *controlplane.GCDispositionProof   `json:"gc_disposition,omitempty"`
 	SSHDiscovery     *substrate.SSHAccessDiscovery      `json:"ssh_discovery,omitempty"`
 	FileInspection   *substrate.InstalledFileInspection `json:"file_inspection,omitempty"`
 	InspectedFile    *substrate.FileInstallHandle       `json:"inspected_file,omitempty"`

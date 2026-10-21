@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/spf13/cobra"
 )
@@ -71,6 +72,17 @@ func newHostFenceCommand() *cobra.Command {
 	attest.Flags().StringVar(&keyPath, "key", "", "raw Ed25519 controller private key (0600)")
 	_ = attest.MarkFlagRequired("key")
 	root.AddCommand(attest)
+	var gcSocket string
+	inspectGC := &cobra.Command{Use: "inspect-gc <fence-id>", Short: "Obtain a signed read-only GC observation after admitted host fencing", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		proof, err := hostsupervisor.NewTaskClient(gcSocket, hostsupervisor.TargetRef{}).InspectGCDisposition(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(proof)
+	}}
+	inspectGC.Flags().StringVar(&gcSocket, "socket", "", "local host-supervisor Unix socket")
+	_ = inspectGC.MarkFlagRequired("socket")
+	root.AddCommand(inspectGC)
 	return root
 }
 

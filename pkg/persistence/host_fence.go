@@ -12,6 +12,7 @@ import (
 )
 
 type HostFenceRecord struct {
+	GCDisposition  *GCFenceDisposition            `json:"gc_disposition,omitempty"`
 	Reconciliation *FenceDeleteReconciliation     `json:"delete_reconciliation,omitempty"`
 	Release        *HostFenceRelease              `json:"release,omitempty"`
 	Request        controlplane.HostFenceRequest  `json:"request"`
@@ -52,7 +53,7 @@ func (r *ExecutionGrantRepository) BeginHostFence(ctx context.Context, request c
 			return ErrConflict
 		}
 		for _, other := range a.Grants {
-			if other.AgentID == g.AgentID && other.State != controlplane.GrantStopped && other.Scope.TopologyUID != g.Scope.TopologyUID {
+			if other.AgentID == g.AgentID && other.State != controlplane.GrantStopped && (other.Scope.TopologyUID != g.Scope.TopologyUID || (g.Operation == "gc_delete" && !sameGrantEpoch(other, g))) {
 				return ErrConflict
 			}
 		}
@@ -137,7 +138,7 @@ func validateHostFences(a *executionAuthority) error {
 	for id, record := range a.Fences {
 		digest, err := record.Request.Digest()
 		barrier, ok := a.Maintenance[record.BarrierID]
-		if err != nil || id != record.Request.ID || record.AcceptedAt.IsZero() || !ok || barrier.Released != (record.Release != nil) || record.BarrierID != "fence-"+record.Request.ID || barrier.TopologyUID != record.Request.Grant.Scope.TopologyUID || barrier.RequestDigest != digest || !barrier.CreatedAt.Equal(record.AcceptedAt) {
+		if err != nil || id != record.Request.ID || record.AcceptedAt.IsZero() || !ok || barrier.Released != record.released() || record.BarrierID != "fence-"+record.Request.ID || barrier.TopologyUID != record.Request.Grant.Scope.TopologyUID || barrier.RequestDigest != digest || !barrier.CreatedAt.Equal(record.AcceptedAt) {
 			return ErrCorruptRecord
 		}
 		if record.Release != nil {
@@ -147,6 +148,9 @@ func validateHostFences(a *executionAuthority) error {
 			}
 		}
 		if err := validateFenceDelete(record, a); err != nil {
+			return err
+		}
+		if err := validateGCDisposition(record, a); err != nil {
 			return err
 		}
 		if err := validateFenceRelease(record); err != nil {
@@ -163,7 +167,7 @@ func validateHostFences(a *executionAuthority) error {
 // lifts the host hold; session changes and unrelated topologies cannot bypass it.
 func (a *executionAuthority) hostFenceBlocks(agent string) bool {
 	for _, record := range a.Fences {
-		if record.Request.Grant.AgentID == agent && record.Release == nil {
+		if record.Request.Grant.AgentID == agent && !record.released() {
 			return true
 		}
 	}

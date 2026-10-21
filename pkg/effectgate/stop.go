@@ -46,7 +46,14 @@ func validateLedger(record *ledger) error {
 		if prior.Grant.Scope.TopologyUID != record.TopologyUID || prior.Grant.Epoch == 0 || !strings.HasPrefix(key, prefix) || len(key) == len(prefix) {
 			return ErrUncertain
 		}
-		if prior.State != "intent" && prior.State != "complete" {
+		if prior.State == "fenced" {
+			if prior.GCFence == nil || controlplane.VerifyGCDisposition(prior.GCFenceKey, *prior.GCFence) != nil || !sameGrant(prior.GCFence.Request.Grant, prior.Grant) || !record.Stopped[prior.Grant.Epoch] || len(prior.Result) != 0 || prior.Receipt != nil {
+				return ErrUncertain
+			}
+		} else if prior.GCFence != nil || len(prior.GCFenceKey) != 0 {
+			return ErrUncertain
+		}
+		if prior.State != "intent" && prior.State != "complete" && prior.State != "fenced" {
 			return ErrUncertain
 		}
 		if prior.State == "complete" && (len(prior.Result) == 0 || !json.Valid(prior.Result)) {
@@ -114,7 +121,7 @@ func (g *Gate) SealStop(ctx context.Context, grant controlplane.ExecutionGrant, 
 			if !sameGrant(other.Grant, grant) {
 				return zero, ErrFenced
 			}
-			if other.State != "complete" {
+			if other.State != "complete" && other.State != "fenced" {
 				return zero, ErrUncertain
 			}
 		}

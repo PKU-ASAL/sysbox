@@ -920,3 +920,35 @@ reclaims only already-retired `.json` object payloads and is safely repeatable.
 It returns `reclaimed_objects` and `retirement_proofs_preserved:true`; it never
 removes index, anchor or batch proofs. Restore all of these together from backups.
 Drain writer binaries predating this batch protocol before enabling it.
+
+### Fenced disposition of unknown non-Docker GC
+
+`POST /v1/topologies/{topology}/gc/{reservation}/host-fences` accepts the exact
+retained `grant` and an `Idempotency-Key`. Only a configured disposable fencing
+host is eligible. It binds the candidate/reservation digest and retires active
+authority into a hold; lease expiry is not stop evidence. Record the independent
+controller receipt through the existing host-fence receipt endpoint.
+
+After whole-execution-VM fencing, run `sysbox host-fence inspect-gc <fence-id>
+--socket <supervisor-socket>` in the enrolled execution host. The supervisor
+obtains canonical authorization, checks the new boot and local provider scope,
+observes the exact libvirt definition or Firecracker manifest, archives the old
+journal and returns a signed disposition proof. Missing/corrupt journals are
+retained as explicit evidence; no provider deletion is replayed. Final authority
+validation runs under the topology journal lock. Released fences cannot authorize
+journal rebuilding. Firecracker unmanifested scoped directory residue rejects.
+
+Submit that proof to
+`POST /v1/topologies/{topology}/host-fences/{fence}/reconcile-gc`.
+The API persists the decision, retires the old command, marks the reservation
+with a disposition hash, then releases authority and the host hold. Repeating the
+same proof finishes an interrupted transition; different proofs conflict. The
+response always retains `operation_result:unknown`, with independently observed
+`present` or `absent`. It is not a deletion-success receipt. Present targets need
+fresh planning; old-boot Firecracker residual cleanup remains distinct from
+ordinary deletion, which continues to reject stale process anchors.
+
+GC disposition upgrades the affected authority record to version 6 and lifecycle
+aggregate to format 9. Older versions must be drained before rollout; they reject
+these records rather than silently interpreting the new terminal state. Existing
+version-5 authority and format-6/7/8 aggregates remain readable before transition.
