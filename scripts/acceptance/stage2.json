@@ -2,7 +2,7 @@
   "version": 1,
   "id": "stage2-supported-delivery",
   "title": "Global revision coverage and non-Docker GC acceptance",
-  "scope": "Same-catalog SQL retirement and retention batches; file retirement with participating writers; explicitly enrolled independent file registry; bounded provider batch and coordinator process-exit recovery",
+  "scope": "SQL and file atomic retirement batches; shared-path and HTTPS file consumers; explicit SQL downstream federation; provider GC and fenced unknown disposition",
   "gates": [
     "gc-cli",
     "gc-api",
@@ -23,21 +23,28 @@
     "file-revision-gate",
     "file-effect-ledger",
     "file-reset-return",
-    "file-revision-batch"
+    "file-revision-batch",
+    "remote-revision-protocol",
+    "remote-revision-api",
+    "sql-revision-federation",
+    "gc-fenced-disposition-api",
+    "gc-fenced-disposition-host",
+    "gc-fenced-disposition-storage",
+    "firecracker-fenced-cleanup"
   ],
   "boundaries": {
     "file_registry": "single and atomic batch retirement under shared catalog flock; committed proof index and required anchor protect late admission; explicit retired-payload cleanup; old writers must be drained",
-    "sql_registry": "unscoped same-catalog SQLite/PostgreSQL; explicit single-revision retirement",
+    "sql_registry": "same-catalog SQLite/PostgreSQL atomic retirement; explicit enrolled downstream federation installs permanent guards and collects all durable acknowledgements before central retirement; partial downstream retirement is not rolled back",
     "provider_batch": "1..128 candidates; ordered, each receipt required",
     "cache_batch": "one exact private host file per apply",
-    "revision_batch": "preview limit1..128; SQL retention-apply validates exact preview and independently rechecks policy/references in one all-or-none transaction",
-    "faults": "libvirt/Firecracker coordinator process exits before effect, after effect, before report; missing/corrupt journal; cancellation, failed outcome persistence, queued-request journal loss; no automatic unknown resolution"
+    "revision_batch": "preview limit 1..128; file committed proof index or SQL transaction provides atomic local retirement; policy and references are rechecked",
+    "faults": "coordinator process crashes and journal loss refuse replay; canonical single-use claim survives all host-local evidence loss; explicit whole-VM fencing and fresh signed observation dispose unknown libvirt/Firecracker GC without inventing success",
+    "unenrolled_registry": "unregistered repositories are outside federation; they cannot be treated as empty consumers or receive deletion guarantees"
   },
   "not_closed": [
-    "unregistered or remote registry federation",
     "full API/Agent SIGKILL matrix and provider-internal partial calls",
     "full P8/P9 original acceptance",
-    "non-Docker unknown GC reservation reconciliation/release after explicit fencing"
+    "final same-commit combined stage-2 strict acceptance"
   ],
   "evidence_rule": "all selected strict gates must pass on the same source digest and commit; failure/skip/missing environment does not close scope; original requirement remaining items stay open"
 }

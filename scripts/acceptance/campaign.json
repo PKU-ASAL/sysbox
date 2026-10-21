@@ -19,10 +19,12 @@
         "real-docker-api",
         "real-libvirt",
         "adoption-returned-recovery",
-        "ownership-transfer-libvirt-host-sigkill"
+        "ownership-transfer-libvirt-host-sigkill",
+        "ownership-transfer-firecracker-host-sigkill",
+        "ownership-transfer-docker-host-sigkill"
       ],
       "remaining": [
-        "Complete provider ownership-write/observe/state-commit OS-kill matrix across all providers."
+        "Real host SIGKILL covers six libvirt/Firecracker and five Docker boundaries; complete provider-internal ownership-write interruption and integrated publication fault coverage remain open."
       ]
     },
     {
@@ -37,10 +39,12 @@
         "ownership-transfer-docker",
         "ownership-transfer-firecracker",
         "ownership-transfer-libvirt",
-        "ownership-transfer-libvirt-host-sigkill"
+        "ownership-transfer-libvirt-host-sigkill",
+        "ownership-transfer-firecracker-host-sigkill",
+        "ownership-transfer-docker-host-sigkill"
       ],
       "remaining": [
-        "Explicit transfer is implemented with preparation/retirement/target reservation and provider rebinding; final same-source full acceptance and provider-internal crash recovery matrix remain open."
+        "Prepared transfer, signed source retirement, target reservation and real host SIGKILL recovery are implemented. Final combined acceptance and provider-internal partial writes remain open."
       ]
     },
     {
@@ -70,7 +74,9 @@
         "real-docker-provider",
         "real-libvirt",
         "real-firecracker",
-        "ownership-transfer-libvirt-host-sigkill"
+        "ownership-transfer-libvirt-host-sigkill",
+        "ownership-transfer-firecracker-host-sigkill",
+        "ownership-transfer-docker-host-sigkill"
       ],
       "remaining": [
         "Full interrupted-adoption recovery acceptance, including control-plane publication windows, is not closed."
@@ -189,7 +195,7 @@
         "firecracker-fenced-cleanup"
       ],
       "remaining": [
-        "SQL atomic retention batches and file single-object retirement implemented. Non-Docker missing/corrupt ledger and uncancellable-return/outcome-publication contracts are tested; full provider-internal/API/Agent fault disposition, all-evidence-loss recovery and remote registry federation remain open."
+        "SQL/file atomic retirement batches, remote federation, canonical single-use GC and explicit VM-fenced disposition are implemented. Full provider-internal/API/Agent fault coverage and final combined acceptance remain open."
       ]
     },
     {
@@ -1128,6 +1134,38 @@
       "timeout": "4m",
       "requires_env": [
         "SYSBOX_LIBVIRT_E2E"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "ownership-transfer-firecracker-host-sigkill",
+      "package": "./pkg/api",
+      "tests": [
+        "TestFirecrackerOwnershipTransferHostSIGKILLMatrixE2E"
+      ],
+      "kind": "real-provider",
+      "tags": "e2e",
+      "race": true,
+      "timeout": "5m",
+      "requires_env": [
+        "SYSBOX_FIRECRACKER_BIN",
+        "SYSBOX_FIRECRACKER_KERNEL",
+        "SYSBOX_FIRECRACKER_ROOTFS"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "ownership-transfer-docker-host-sigkill",
+      "package": "./pkg/provider/docker",
+      "tests": [
+        "TestDockerOwnershipTransferHostSIGKILLMatrixE2E"
+      ],
+      "kind": "real-provider",
+      "tags": "e2e",
+      "race": true,
+      "timeout": "5m",
+      "requires_env": [
+        "SYSBOX_DOCKER_TRANSFER_E2E"
       ],
       "artifact_env": []
     }

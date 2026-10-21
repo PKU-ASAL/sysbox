@@ -46,7 +46,15 @@ Final P9 deployment-wide upgrade and release matrix stays separately tracked.
   after-observe, before-report, after-state and after-report boundaries.
 - [x] Recover through the coordinator and API: pre-return intents stay unknown
   with source barrier retained; durable returned outcomes complete state once.
-- [ ] Register the matrix as a strict real-provider gate and obtain review.
+- [x] Register the matrix as a strict real-provider gate and obtain review.
 - [ ] Extend real host interruption coverage to Docker and Firecracker and
   separately exercise API process interruption. A live API plus killed host
   cannot be counted as an API-process crash test.
+
+- [x] Firecracker: six host SIGKILL boundaries after real KVM start/stop.
+- [x] Docker: five host SIGKILL boundaries with effective ownership sidecar
+  checks; callback reporting is not API persistence evidence.
+- [x] API storage workflow: four independent-process SIGKILL boundaries across
+  file, SQLite and PostgreSQL, including completed HTTP handler response loss.
+- [ ] Provider-internal partial writes and every completion-handler intermediate
+  boundary still require separate evidence; do not infer them from callback kills.

@@ -21,10 +21,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/effectgate"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+	fcprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -34,20 +36,34 @@ import (
 )
 
 func TestLibvirtOwnershipTransferAPIHostCommitE2E(t *testing.T) {
-	testLibvirtTransferHostBoundary(t, "normal")
+	testTransferHostBoundary(t, "libvirt", "normal")
 }
 
 func TestLibvirtOwnershipTransferHostSIGKILLMatrixE2E(t *testing.T) {
 	for _, phase := range []string{"before-effect", "after-ownership", "after-observe", "before-report", "after-state", "after-report"} {
-		t.Run(phase, func(t *testing.T) { testLibvirtTransferHostBoundary(t, phase) })
+		t.Run(phase, func(t *testing.T) { testTransferHostBoundary(t, "libvirt", phase) })
 	}
 }
 
-func testLibvirtTransferHostBoundary(t *testing.T, phase string) {
-	if os.Getenv("SYSBOX_LIBVIRT_E2E") != "1" {
+func TestFirecrackerOwnershipTransferHostSIGKILLMatrixE2E(t *testing.T) {
+	for _, phase := range []string{"before-effect", "after-ownership", "after-observe", "before-report", "after-state", "after-report"} {
+		t.Run(phase, func(t *testing.T) { testTransferHostBoundary(t, "firecracker", phase) })
+	}
+}
+
+type transferTestProvider interface {
+	InspectOwnershipTransfer(context.Context, controlplane.OwnershipTransferPlan) error
+	ApplyOwnershipTransfer(context.Context, controlplane.OwnershipRetirementProof, ed25519.PublicKey) (substrate.NodeHandle, error)
+	MarshalProviderState(substrate.NodeHandle) (json.RawMessage, error)
+	ObserveNode(context.Context, substrate.NodeHandle) (substrate.NodeObservation, error)
+	InspectAdoption(context.Context, string, substrate.NodeSpec) (substrate.AdoptionEvidence, error)
+}
+
+func testTransferHostBoundary(t *testing.T, providerName, phase string) {
+	if providerName == "libvirt" && os.Getenv("SYSBOX_LIBVIRT_E2E") != "1" {
 		t.Skip("requires disposable libvirt session")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	s := NewServer(t.TempDir(), t.TempDir())
 	var commitState func(json.RawMessage) error
@@ -87,32 +103,83 @@ func testLibvirtTransferHostBoundary(t *testing.T, phase string) {
 	require.NoError(t, err)
 	old := substrate.OperationIdentity{ActionID: "create", OwnerUID: source.TopologyUID, TopologyUID: source.TopologyUID, ResourceUID: "old", Generation: 1}
 	next := substrate.OperationIdentity{ActionID: "transfer", OwnerUID: target.TopologyUID, TopologyUID: target.TopologyUID, ResourceUID: "new", Generation: 2}
-	id := uuid.NewString()
-	name := "sysbox-transfer-api-" + id
-	provider := libvirtprovider.New(t.TempDir())
-	hs := &libvirtprovider.HandleState{Identity: &old, DomainName: name, DomainUUID: id, ExternalDefinition: true, AdoptionFingerprint: "original", NetworkInit: substrate.GuestNetworkInitPreconfigured}
-	definition, err := libvirtprovider.GenerateDomainXML(libvirtprovider.DomainSpec{Name: name, UUID: id, VCPUs: 1, MemoryMiB: 128, MachineType: "q35", Identity: &old, ManagedState: hs})
-	require.NoError(t, err)
-	definition = regexp.MustCompile(`(?s)<disk\b.*?</disk>`).ReplaceAllString(definition, "")
-	xmlPath := filepath.Join(t.TempDir(), "domain.xml")
-	require.NoError(t, os.WriteFile(xmlPath, []byte(definition), 0600))
-	output, err := exec.CommandContext(ctx, "virsh", "define", xmlPath).CombinedOutput()
-	require.NoError(t, err, string(output))
-	t.Cleanup(func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		out, err := exec.CommandContext(cleanup, "virsh", "undefine", id).CombinedOutput()
-		if err != nil {
-			t.Errorf("cleanup disposable domain %s: %v: %s", id, err, out)
+	var provider transferTestProvider
+	providerRoot := t.TempDir()
+	var id string
+	var raw []byte
+	if providerName == "libvirt" {
+		id = uuid.NewString()
+		name := "sysbox-transfer-api-" + id
+		provider = libvirtprovider.New(providerRoot)
+		hs := &libvirtprovider.HandleState{Identity: &old, DomainName: name, DomainUUID: id, ExternalDefinition: true, AdoptionFingerprint: "original", NetworkInit: substrate.GuestNetworkInitPreconfigured}
+		definition, err := libvirtprovider.GenerateDomainXML(libvirtprovider.DomainSpec{Name: name, UUID: id, VCPUs: 1, MemoryMiB: 128, MachineType: "q35", Identity: &old, ManagedState: hs})
+		require.NoError(t, err)
+		definition = regexp.MustCompile(`(?s)<disk\b.*?</disk>`).ReplaceAllString(definition, "")
+		xmlPath := filepath.Join(t.TempDir(), "domain.xml")
+		require.NoError(t, os.WriteFile(xmlPath, []byte(definition), 0600))
+		output, err := exec.CommandContext(ctx, "virsh", "define", xmlPath).CombinedOutput()
+		require.NoError(t, err, string(output))
+		t.Cleanup(func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(cleanup, "virsh", "undefine", id).CombinedOutput()
+			if err != nil {
+				t.Errorf("cleanup disposable domain %s: %v: %s", id, err, out)
+			}
+		})
+		raw, err = exec.CommandContext(ctx, "virsh", "dumpxml", id).Output()
+		require.NoError(t, err)
+	} else {
+		binary, kernel, rootfs := os.Getenv("SYSBOX_FIRECRACKER_BIN"), os.Getenv("SYSBOX_FIRECRACKER_KERNEL"), os.Getenv("SYSBOX_FIRECRACKER_ROOTFS")
+		if binary == "" || kernel == "" || rootfs == "" {
+			t.Skip("requires isolated Firecracker artifacts")
 		}
-	})
-	raw, err := exec.CommandContext(ctx, "virsh", "dumpxml", id).Output()
-	require.NoError(t, err)
-	source.Resources = []state.Resource{{Address: address.Resource("sysbox_node", "old"), ResourceType: "sysbox_node", Driver: "libvirt", ExternalID: id, OwnerUID: old.OwnerUID, ResourceUID: old.ResourceUID, Generation: 1}}
+		cfg := config.DefaultServiceConfig()
+		cfg.Providers.Firecracker.Binary = binary
+		cfgRaw, err := json.Marshal(cfg)
+		require.NoError(t, err)
+		cfgPath := filepath.Join(t.TempDir(), "config.json")
+		require.NoError(t, os.WriteFile(cfgPath, cfgRaw, 0600))
+		t.Setenv("SYSBOX_CONFIG", cfgPath)
+		fc := fcprovider.New(kernel, providerRoot)
+		provider = fc
+		scopedOld := substrate.WithOperationIdentity(ctx, old)
+		handle, err := fc.CreateNode(scopedOld, substrate.NodeSpec{Name: "transfer", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &fcprovider.Config{Kernel: kernel, AllowDirect: true}})
+		require.NoError(t, err)
+		id = handle.ID
+		t.Cleanup(func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			identity := old
+			if phase != "before-effect" {
+				identity = next
+			}
+			scoped := substrate.WithOperationIdentity(cleanup, identity)
+			owned, err := fc.DiscoverManagedNode(scoped, identity, "new")
+			if err != nil {
+				// Setup failure may precede the transfer; cleanup still requires
+				// the original exact ownership and handle.
+				err = fc.DestroyNode(substrate.WithOperationIdentity(cleanup, old), handle)
+			} else {
+				err = fc.DestroyNode(scoped, owned)
+			}
+			if err != nil {
+				t.Errorf("cleanup disposable Firecracker %s: %v", id, err)
+			}
+		})
+		require.NoError(t, fc.StartNode(scopedOld, handle))
+		observed, err := fc.ObserveNode(scopedOld, handle)
+		require.NoError(t, err)
+		require.True(t, observed.Running)
+		require.NoError(t, fc.StopNode(scopedOld, handle))
+		raw, err = os.ReadFile(handle.Provider.(*fcprovider.HandleState).ManifestPath)
+		require.NoError(t, err)
+	}
+	source.Resources = []state.Resource{{Address: address.Resource("sysbox_node", "old"), ResourceType: "sysbox_node", Driver: providerName, ExternalID: id, OwnerUID: old.OwnerUID, ResourceUID: old.ResourceUID, Generation: 1}}
 	require.NoError(t, manager.Save(source))
 	source, err = manager.Load()
 	require.NoError(t, err)
-	plan := controlplane.OwnershipTransferPlan{Version: 1, ID: "transfer", SourceTopology: "source", TargetTopology: "target", SourceAddress: "sysbox_node.old", TargetAddress: "sysbox_node.new", AgentID: "host", Provider: "libvirt", ExternalID: id, Source: old, Target: next, SourceSerial: source.Meta.Serial, TargetSerial: target.Meta.Serial, Fingerprint: fmt.Sprintf("sha256:%x", sha256.Sum256(raw))}
+	plan := controlplane.OwnershipTransferPlan{Version: 1, ID: "transfer", SourceTopology: "source", TargetTopology: "target", SourceAddress: "sysbox_node.old", TargetAddress: "sysbox_node.new", AgentID: "host", Provider: providerName, ExternalID: id, Source: old, Target: next, SourceSerial: source.Meta.Serial, TargetSerial: target.Meta.Serial, Fingerprint: fmt.Sprintf("sha256:%x", sha256.Sum256(raw))}
 	require.NoError(t, targetRepo.ReserveOwnershipTarget(ctx, plan))
 	barrier, err := s.beginOwnershipMaintenance(ctx, plan)
 	require.NoError(t, err)
@@ -123,7 +190,7 @@ func testLibvirtTransferHostBoundary(t *testing.T, phase string) {
 	require.NoError(t, targetRepo.RecordOwnershipPreparation(ctx, preparation, host))
 	proof, err := s.prepareOwnershipTransfer(ctx, plan)
 	require.NoError(t, err)
-	req := controlplane.AdoptionRequest{Transfer: &proof, ID: plan.ID, Topology: "target", TopologyUID: next.TopologyUID, Address: plan.TargetAddress, Provider: "libvirt", AgentID: "host", ExternalID: id, ResourceUID: next.ResourceUID, Generation: 2, ExpectedSerial: plan.TargetSerial, Evidence: substrate.AdoptionEvidence{Provider: "libvirt", ExternalID: id, Fingerprint: plan.Fingerprint}}
+	req := controlplane.AdoptionRequest{Transfer: &proof, ID: plan.ID, Topology: "target", TopologyUID: next.TopologyUID, Address: plan.TargetAddress, Provider: providerName, AgentID: "host", ExternalID: id, ResourceUID: next.ResourceUID, Generation: 2, ExpectedSerial: plan.TargetSerial, Evidence: substrate.AdoptionEvidence{Provider: providerName, ExternalID: id, Fingerprint: plan.Fingerprint}}
 	op := prepareNodeOperation(controlplane.NodeOperation{ID: plan.ID, Topology: "target", Node: "new", AgentID: "host", Operation: "adoption_apply", ResourceUID: next.ResourceUID, Generation: 2, Adoption: &req})
 	op, err = (&NodeOperationService{operations: newNodeOperationStore(s.apiStore)}).enqueue(ctx, next.TopologyUID, op)
 	require.NoError(t, err)
@@ -149,7 +216,7 @@ func testLibvirtTransferHostBoundary(t *testing.T, phase string) {
 		})
 		require.NoError(t, err)
 	} else {
-		input := transferHostCrashInput{Phase: phase, Root: coordinator.Root, ProviderRoot: t.TempDir(), Request: req, Grant: signed, Issuer: issuerPub, Host: hostKey, Identity: authorityClient.Identity, Ready: filepath.Join(t.TempDir(), "ready")}
+		input := transferHostCrashInput{Phase: phase, Root: coordinator.Root, ProviderRoot: providerRoot, Request: req, Grant: signed, Issuer: issuerPub, Host: hostKey, Identity: authorityClient.Identity, Ready: filepath.Join(t.TempDir(), "ready")}
 		inputPath := filepath.Join(t.TempDir(), "input.json")
 		raw, err := json.Marshal(input)
 		require.NoError(t, err)
@@ -257,7 +324,15 @@ func TestOwnershipTransferHostSIGKILLChild(t *testing.T) {
 	}
 	ctx := context.Background()
 	client := hostsupervisor.AuthorityClient{Identity: in.Identity}
-	provider := libvirtprovider.New(in.ProviderRoot)
+	var provider transferTestProvider
+	switch in.Request.Provider {
+	case "libvirt":
+		provider = libvirtprovider.New(in.ProviderRoot)
+	case "firecracker":
+		provider = fcprovider.New(os.Getenv("SYSBOX_FIRECRACKER_KERNEL"), in.ProviderRoot)
+	default:
+		t.Fatal("unsupported test provider")
+	}
 	coordinator := hostsupervisor.AdoptionCoordinator{Root: in.Root, IssuerKey: in.Issuer, HostKey: in.Host, AgentID: in.Request.AgentID, HostBootID: in.Grant.BootID, Authorize: client.Authorize}
 	coordinator.Report = func(ctx context.Context, id string, r controlplane.SignedExecutionStopReceipt, evidence json.RawMessage) error {
 		boundary("before-report")

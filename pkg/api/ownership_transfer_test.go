@@ -26,7 +26,7 @@ func TestOwnershipTransferPreparationRetiresSourceAndReservesTarget(t *testing.T
 	testOwnershipTransferFlow(t, "")
 }
 func TestOwnershipTransferProcessCrashMatrix(t *testing.T) {
-	for _, phase := range []string{"prepared", "retired", "target-committed"} {
+	for _, phase := range []string{"prepared", "retired", "target-committed", "completion-response"} {
 		t.Run(phase, func(t *testing.T) { testOwnershipTransferFlow(t, phase) })
 	}
 }
@@ -84,11 +84,13 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 		unprepared := httptest.NewRecorder()
 		s.ServeHTTP(unprepared, unpreparedRequest)
 		require.Equal(t, 409, unprepared.Code)
+		var completion *HostNodeOperationCompletion
+		var completionKey ed25519.PublicKey
 		crash := func(stage string, op controlplane.NodeOperation, evidence json.RawMessage) {
 			if phase != stage {
 				return
 			}
-			input := ownershipCrashInput{Phase: stage, Plan: plan, Issuer: key, Operation: op, Evidence: evidence}
+			input := ownershipCrashInput{Phase: stage, Plan: plan, Issuer: key, Operation: op, Evidence: evidence, Completion: completion, HostKey: completionKey, Ready: filepath.Join(t.TempDir(), "ready")}
 			switch typed := store.(type) {
 			case *localAPIStore:
 				input.Kind = "file"
@@ -106,10 +108,17 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 			require.NoError(t, os.WriteFile(path, raw, 0600))
 			child := exec.Command(os.Args[0], "-test.run=^TestOwnershipTransferCrashChild$")
 			child.Env = append(os.Environ(), "SYSBOX_TRANSFER_CRASH_CHILD="+path)
-			output, err := child.CombinedOutput()
+			log, err := os.Create(filepath.Join(t.TempDir(), "child.log"))
+			require.NoError(t, err)
+			defer log.Close()
+			child.Stdout, child.Stderr = log, log
+			require.NoError(t, child.Start())
+			defer child.Process.Kill()
+			require.Eventually(t, func() bool { _, err := os.Stat(input.Ready); return err == nil }, 20*time.Second, 20*time.Millisecond, "child log: %s", log.Name())
+			require.NoError(t, child.Process.Kill())
 			var exited *exec.ExitError
-			require.ErrorAs(t, err, &exited, string(output))
-			require.Equal(t, 76, exited.ExitCode(), string(output))
+			require.ErrorAs(t, child.Wait(), &exited)
+			require.Equal(t, -1, exited.ExitCode(), "requires OS SIGKILL")
 		}
 		crash("prepared", controlplane.NodeOperation{}, nil)
 		crash("retired", controlplane.NodeOperation{}, nil)
@@ -144,7 +153,19 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 		crash("target-committed", op, evidence)
 		receipt, err := controlplane.SignAdoptionStopReceipt(hostKey, *transferGrant, "boot", "transfer-receipt", evidence, time.Now())
 		require.NoError(t, err)
-		raw, err := json.Marshal(HostNodeOperationCompletion{Receipt: receipt, Evidence: evidence})
+		completion = &HostNodeOperationCompletion{Receipt: receipt, Evidence: evidence}
+		completionKey = host
+		crash("completion-response", op, evidence)
+		if phase == "target-committed" || phase == "completion-response" {
+			committed, err := targetRepo.LoadState(ctx, "target")
+			require.NoError(t, err)
+			require.Equal(t, target.Meta.Serial+1, committed.Meta.Serial)
+		}
+		// A fresh API instance handles the retry after the child API died.
+		s = stateDeleteTestServer(t, store)
+		require.NoError(t, s.ConfigureExecutionGrantSigner(key))
+		s.grantHostKeys = map[string]ed25519.PublicKey{"host": host}
+		raw, err := json.Marshal(*completion)
 		require.NoError(t, err)
 		for range 2 {
 			response := httptest.NewRecorder()
@@ -154,6 +175,7 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 		afterTarget, err := targetRepo.LoadState(ctx, "target")
 		require.NoError(t, err)
 		require.Len(t, afterTarget.Resources, 1)
+		require.Equal(t, target.Meta.Serial+1, afterTarget.Meta.Serial)
 		barrier, err := authority.InspectMaintenance(ctx, plan.ID)
 		require.NoError(t, err)
 		require.True(t, barrier.Released)
@@ -194,11 +216,13 @@ func TestOwnershipAbortCannotReleaseForeignMaintenanceID(t *testing.T) {
 }
 
 type ownershipCrashInput struct {
-	Phase, Kind, Path string
-	Plan              controlplane.OwnershipTransferPlan
-	Issuer            ed25519.PrivateKey
-	Operation         controlplane.NodeOperation
-	Evidence          json.RawMessage
+	Phase, Kind, Path, Ready string
+	Completion               *HostNodeOperationCompletion
+	HostKey                  ed25519.PublicKey
+	Plan                     controlplane.OwnershipTransferPlan
+	Issuer                   ed25519.PrivateKey
+	Operation                controlplane.NodeOperation
+	Evidence                 json.RawMessage
 }
 
 func TestOwnershipTransferCrashChild(t *testing.T) {
@@ -236,8 +260,17 @@ func TestOwnershipTransferCrashChild(t *testing.T) {
 		require.NoError(t, err)
 	case "target-committed":
 		require.NoError(t, s.commitAdoptionState(ctx, input.Operation, input.Evidence))
+	case "completion-response":
+		require.NotNil(t, input.Completion)
+		s.grantHostKeys = map[string]ed25519.PublicKey{"host": input.HostKey}
+		raw, err := json.Marshal(input.Completion)
+		require.NoError(t, err)
+		response := httptest.NewRecorder()
+		s.ServeHTTP(response, httptest.NewRequest("POST", "/v1/hosts/host/node-operations/"+input.Plan.ID+"/completed", bytes.NewReader(raw)))
+		require.Equal(t, 200, response.Code, response.Body.String())
 	default:
 		t.Fatal("invalid crash phase")
 	}
-	os.Exit(76)
+	require.NoError(t, os.WriteFile(input.Ready, []byte(input.Phase), 0600))
+	select {}
 }
