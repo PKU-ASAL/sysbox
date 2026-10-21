@@ -25,13 +25,12 @@
     "sql_registry": "unscoped same-catalog SQLite/PostgreSQL; explicit single-revision retirement",
     "provider_batch": "1..128 candidates; ordered, each receipt required",
     "cache_batch": "one exact private host file per apply",
-    "revision_batch": "preview limit 1..128; explicit single-object delete only; no apply-preview endpoint",
+    "revision_batch": "preview limit1..128; SQL retention-apply validates exact preview and independently rechecks policy/references in one all-or-none transaction",
     "faults": "libvirt/Firecracker process exits before effect, after effect before outcome commit, before sealed receipt report; cold API/coordinator and lost acknowledgements"
   },
   "not_closed": [
     "separate/unregistered global registry federation and file registry deletion",
     "full API/Agent SIGKILL matrix and provider-internal partial calls",
-    "automatic bulk revision retention execution",
     "full P8/P9 original acceptance",
     "complete provider-specific disposition matrix for missing/corrupt non-Docker journal evidence"
   ],

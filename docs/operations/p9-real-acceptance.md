@@ -4565,3 +4565,14 @@ Additional tests exercise file/scoped-catalog and bulk-request refusal without
 mutating registry data, snapshot-only and historical Run retention during actual
 SQL deletion, exact 128-member batch acceptance and 129-member rejection. This
 consolidation cannot close original P8/P9 gaps merely by changing the stage label.
+
+
+### Atomic retention batch execution (2026-10-21)
+
+SQLite/PostgreSQL retention-apply now executes the requested policy candidates
+in one catalog transaction. Tests reject selecting the newest keep-last entry,
+prove a later referenced member rolls back earlier deletions and guard DDL,
+and verify actual late Run admission invalidates the preview. The HTTP path
+applies a two-member batch while preserving the newest revision and refuses
+old preview replay. File execution remains explicitly rejected while writer
+coordination is implemented separately; this slice does not close stage 2.

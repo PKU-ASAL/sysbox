@@ -170,7 +170,7 @@
         "non-docker-gc-process-crash"
       ],
       "remaining": [
-        "Implemented: 1–128 ordered provider batch, single-file cache deletion/disposition, single-revision SQL retirement, and libvirt/Firecracker batch receipt recovery. No automatic application of retention-preview batches. Provider-internal interruptions and arbitrary shared-cache/federated-registry execution remain unverified/unsupported respectively. Missing/corrupt non-Docker provider journal evidence remains uncertain/manual investigation; the complete provider-specific disposition matrix is not claimed by these gates."
+        "Implemented: 1–128 ordered provider batch, single-file cache disposition, SQL revision retirement and atomic retention batch apply with keep-last/age/reference revalidation and full rollback. Remaining: file/independent registry deletion, provider-internal interruption, and complete missing/corrupt non-Docker journal disposition matrix."
       ]
     },
     {
@@ -773,7 +773,9 @@
       "tests": [
         "TestRevisionDeletionAndRunAdmissionShareTransaction",
         "TestRevisionDeletionRacesIndependentRunWriter",
-        "TestRevisionDeletionForcesReadCommittedCatalog"
+        "TestRevisionDeletionForcesReadCommittedCatalog",
+        "TestRevisionRetentionBatchIsAtomicAndKeepsNewest",
+        "TestRevisionRetentionBatchRejectsInvalidBoundsBeforeStorage"
       ],
       "kind": "contract",
       "race": true,
@@ -789,7 +791,9 @@
       "tests": [
         "TestGlobalRevisionDeleteHTTPFencesRunAdmission",
         "TestStage2RevisionDeletionRejectsFileScopedAndBulkRequests",
-        "TestStage2RevisionDeletionRetainsSnapshotAndHistoricalRun"
+        "TestStage2RevisionDeletionRetainsSnapshotAndHistoricalRun",
+        "TestRevisionRetentionApplyDeletesBatchAndRejectsChangedPreview",
+        "TestRevisionRetentionApplyRechecksActualLateRun"
       ],
       "kind": "contract",
       "race": true,

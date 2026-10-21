@@ -377,6 +377,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/policies", s.handleCreatePolicy)
 	m.HandleFunc("POST /v1/revisions", s.handlePublishRevision)
 	m.HandleFunc("POST /v1/revisions/retention-plan", s.handleRevisionRetention)
+	m.HandleFunc("POST /v1/revisions/retention-apply", s.handleRevisionRetentionApply)
 	m.HandleFunc("POST /v1/revisions/delete", s.handleRevisionDelete)
 	m.HandleFunc("POST /v1/runs/{id}/remote/{mode}", s.handleRequestRunRecovery)
 	m.HandleFunc("GET /v1/runs/{id}/remote-reports/{command}", s.handleGetRunRecovery)

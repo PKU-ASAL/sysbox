@@ -819,10 +819,9 @@ provider deletion authority.
 `POST /v1/revisions/retention-plan` accepts `keep_last` (0–10000),
 `older_than` (a past RFC3339 timestamp), and `limit` (1–128). It returns
 `candidates`, `retained` reasons, a source digest and
-`deletion_authorized:false`. There is no bulk apply-preview operation. Registry,
-lifecycle and Run observations are separate: this preview is not a transaction
-or permission to delete. The separate single-object SQL deletion endpoint below
-revalidates references and admission in its own transaction.
+`deletion_authorized:false`. Registry, lifecycle and Run observations are separate:
+this preview is not deletion authority. The SQL `retention-apply` endpoint below
+revalidates the policy and references inside its deletion transaction.
 
 The preview supports file, SQLite and PostgreSQL registries, validates revision
 content digests and protects historical Run references plus current and retained
@@ -852,5 +851,21 @@ Large/unresolved lifecycle catalogs remain fail-closed under existing GC rules.
 
 The delete operation is single-object and does not remove provider resources or
 local materialized trees. Missing revisions return conflict rather than inferring
-that a previous request succeeded. It is not a bulk application of keep-last
-policy; policy candidates must be individually and explicitly selected.
+that a previous request succeeded. For keep-last policy batches use the separately validated retention-apply endpoint.
+
+
+### Atomic retention policy application
+
+`POST /v1/revisions/retention-apply` accepts the full JSON plan returned by
+`retention-plan`. It rejects altered or stale previews and empty batches.
+SQLite/PostgreSQL execute 1–128 unique candidates atomically. The deletion
+transaction independently recalculates the newest `keep_last` set, validates
+`older_than`, and rechecks all Run/lifecycle/snapshot/auxiliary references per
+candidate. Any conflict rolls back all deletions, retirement markers and guard
+installation; there is no partial successful batch. The preview comparison is
+an early stale-plan check, not the concurrency protection.
+
+The response lists deleted revision IDs and `atomic:true`. Replaying an applied
+preview returns conflict, and a disconnected response requires a new inspection;
+it does not authorize repeating the old batch blindly. File registry execution
+is still unsupported pending the cross-record writer-fencing implementation.

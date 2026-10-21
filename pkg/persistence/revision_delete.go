@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,106 +16,127 @@ import (
 // derived from a non-atomic preview. It rechecks all references under SQL locks.
 // No filesystem registry deletion is supported by this transactional path.
 func (r *Repository) DeleteGlobalRevision(ctx context.Context, id string, olderThan time.Time) error {
-	if !retainedRevisionDigest.MatchString(id) || len(id) != 71 || olderThan.IsZero() || olderThan.After(time.Now()) {
+	return r.DeleteGlobalRevisionBatch(ctx, []string{id}, olderThan, 0)
+}
+
+// DeleteGlobalRevisionBatch commits every member or none. Retention is checked
+// under the same catalog transaction as new-reference exclusion and deletion.
+func (r *Repository) DeleteGlobalRevisionBatch(ctx context.Context, ids []string, olderThan time.Time, keepLast int) error {
+	if len(ids) < 1 || len(ids) > 128 || keepLast < 0 || keepLast > 10000 || olderThan.IsZero() || olderThan.After(time.Now()) {
 		return ErrInvalidRecord
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if len(id) != 71 || !retainedRevisionDigest.MatchString(id) || seen[id] {
+			return ErrInvalidRecord
+		}
+		seen[id] = true
 	}
 	b, ok := r.backend.(*sqlBackend)
 	if !ok || r.boundTopology != "" {
 		return ErrUnsupportedVersion
 	}
 	return r.cacheCatalogTransaction(ctx, true, func(c *sql.Conn, all []*aggregate, _ string) error {
-		// cacheCatalogTransaction already locks lifecycle and global revisions.
-		// Run publishers may already hold their table lock; this is why the guard
-		// uses statement triggers with a fresh READ COMMITTED visibility check.
 		if b.postgres {
 			if _, err := c.ExecContext(ctx, "LOCK TABLE sysbox_runs IN SHARE ROW EXCLUSIVE MODE"); err != nil {
 				return err
 			}
 		}
-		query := "SELECT files,created_at FROM sysbox_global_revisions WHERE revision=?"
-		var rev controlplane.GlobalRevision
-		if b.postgres {
-			var raw []byte
-			if err := c.QueryRowContext(ctx, "SELECT data FROM sysbox_global_revisions WHERE id=$1", id).Scan(&raw); err != nil {
-				return err
-			}
-			if err := json.Unmarshal(raw, &rev); err != nil {
-				return err
-			}
-		} else {
-			var raw []byte
-			var at string
-			if err := c.QueryRowContext(ctx, query, id).Scan(&raw, &at); err != nil {
-				return err
-			}
-			if err := json.Unmarshal(raw, &rev.Files); err != nil {
-				return err
-			}
-			parsed, err := time.Parse(time.RFC3339Nano, at)
-			if err != nil {
-				return err
-			}
-			rev.CreatedAt = parsed
-			rev.Revision = id
-		}
-		if rev.Revision != id || controlplane.ComputeRevisionDigest(rev.Files) != id || !rev.CreatedAt.Before(olderThan) {
-			return ErrConflict
-		}
-		var referenced bool
-		query = "SELECT EXISTS(SELECT 1 FROM sysbox_runs WHERE revision=?)"
-		if b.postgres {
-			query = "SELECT EXISTS(SELECT 1 FROM sysbox_runs WHERE data->>'revision'=$1)"
-		}
-		if err := c.QueryRowContext(ctx, query, id).Scan(&referenced); err != nil {
+		if err := checkRevisionBatchRetention(ctx, c, b.postgres, ids, keepLast); err != nil {
 			return err
 		}
-		if referenced {
-			return fmt.Errorf("%w: revision retained by Run history", ErrConflict)
-		}
-		for _, a := range all {
-			// Synthetic global content protects other objects, but a revision's own
-			// registry record cannot count as its own lifecycle reference.
-			if a.GCSources != nil {
-				if _, synthetic := a.GCSources["global"]; synthetic && a.Serial == 0 && len(a.State.Resources) == 0 && a.Format == FormatVersion {
-					if source := a.GCSources["global"]; len(source.Manifest.Domains["revision"]) == 1 && source.Manifest.Domains["revision"][0] == id {
-						continue
-					}
-				}
-			}
-			yes, err := cacheReferenced(a, []string{id})
-			if err != nil {
+		for _, id := range ids {
+			if err := deleteGlobalRevisionLocked(ctx, c, b.postgres, all, id, olderThan); err != nil {
 				return err
 			}
-			if yes {
-				return fmt.Errorf("%w: retained lifecycle revision", ErrConflict)
-			}
-		}
-		if err := retainedAPIRevision(ctx, c, b.postgres, id); err != nil {
-			return err
-		}
-		if err := installRevisionAdmissionGuard(ctx, c, b.postgres); err != nil {
-			return err
-		}
-		if err := installRevisionRetirementGuards(ctx, c, b.postgres, id); err != nil {
-			return err
-		}
-		query = "DELETE FROM sysbox_global_revisions WHERE revision=?"
-		if b.postgres {
-			query = "DELETE FROM sysbox_global_revisions WHERE id=$1"
-		}
-		result, err := c.ExecContext(ctx, query, id)
-		if err != nil {
-			return err
-		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			return ErrConflict
 		}
 		return nil
 	})
+}
+func deleteGlobalRevisionLocked(ctx context.Context, c *sql.Conn, postgres bool, all []*aggregate, id string, olderThan time.Time) error {
+	query := "SELECT files,created_at FROM sysbox_global_revisions WHERE revision=?"
+	var rev controlplane.GlobalRevision
+	if postgres {
+		var raw []byte
+		if err := c.QueryRowContext(ctx, "SELECT data FROM sysbox_global_revisions WHERE id=$1", id).Scan(&raw); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &rev); err != nil {
+			return err
+		}
+	} else {
+		var raw []byte
+		var at string
+		if err := c.QueryRowContext(ctx, query, id).Scan(&raw, &at); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &rev.Files); err != nil {
+			return err
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, at)
+		if err != nil {
+			return err
+		}
+		rev.CreatedAt = parsed
+		rev.Revision = id
+	}
+	if rev.Revision != id || controlplane.ComputeRevisionDigest(rev.Files) != id || !rev.CreatedAt.Before(olderThan) {
+		return ErrConflict
+	}
+	var referenced bool
+	query = "SELECT EXISTS(SELECT 1 FROM sysbox_runs WHERE revision=?)"
+	if postgres {
+		query = "SELECT EXISTS(SELECT 1 FROM sysbox_runs WHERE data->>'revision'=$1)"
+	}
+	if err := c.QueryRowContext(ctx, query, id).Scan(&referenced); err != nil {
+		return err
+	}
+	if referenced {
+		return fmt.Errorf("%w: revision retained by Run history", ErrConflict)
+	}
+	for _, a := range all {
+		// Synthetic global content protects other objects, but a revision's own
+		// registry record cannot count as its own lifecycle reference.
+		if a.GCSources != nil {
+			if _, synthetic := a.GCSources["global"]; synthetic && a.Serial == 0 && len(a.State.Resources) == 0 && a.Format == FormatVersion {
+				if source := a.GCSources["global"]; len(source.Manifest.Domains["revision"]) == 1 && source.Manifest.Domains["revision"][0] == id {
+					continue
+				}
+			}
+		}
+		yes, err := cacheReferenced(a, []string{id})
+		if err != nil {
+			return err
+		}
+		if yes {
+			return fmt.Errorf("%w: retained lifecycle revision", ErrConflict)
+		}
+	}
+	if err := retainedAPIRevision(ctx, c, postgres, id); err != nil {
+		return err
+	}
+	if err := installRevisionAdmissionGuard(ctx, c, postgres); err != nil {
+		return err
+	}
+	if err := installRevisionRetirementGuards(ctx, c, postgres, id); err != nil {
+		return err
+	}
+	query = "DELETE FROM sysbox_global_revisions WHERE revision=?"
+	if postgres {
+		query = "DELETE FROM sysbox_global_revisions WHERE id=$1"
+	}
+	result, err := c.ExecContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrConflict
+	}
+	return nil
 }
 func installRevisionAdmissionGuard(ctx context.Context, c *sql.Conn, postgres bool) error {
 	var statements []string
@@ -269,6 +291,72 @@ func installRevisionRetirementGuards(ctx context.Context, c *sql.Conn, postgres 
 					return err
 				}
 			}
+		}
+	}
+	return nil
+}
+
+func checkRevisionBatchRetention(ctx context.Context, c *sql.Conn, postgres bool, ids []string, keepLast int) error {
+	query := "SELECT revision,created_at FROM sysbox_global_revisions LIMIT 10001"
+	if postgres {
+		query = "SELECT id,data FROM sysbox_global_revisions LIMIT 10001"
+	}
+	rows, err := c.QueryContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type entry struct {
+		id string
+		at time.Time
+	}
+	entries := []entry{}
+	for rows.Next() {
+		if len(entries) == 10000 {
+			return ErrConflict
+		}
+		var id string
+		var raw []byte
+		if err = rows.Scan(&id, &raw); err != nil {
+			return err
+		}
+		var at time.Time
+		if postgres {
+			var rev controlplane.GlobalRevision
+			if err = json.Unmarshal(raw, &rev); err != nil {
+				return err
+			}
+			at = rev.CreatedAt
+		} else {
+			at, err = time.Parse(time.RFC3339Nano, string(raw))
+			if err != nil {
+				return err
+			}
+		}
+		if at.IsZero() {
+			return ErrCorruptRecord
+		}
+		entries = append(entries, entry{id, at})
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].at.Equal(entries[j].at) {
+			return entries[i].id < entries[j].id
+		}
+		return entries[i].at.After(entries[j].at)
+	})
+	protected := map[string]bool{}
+	for i := 0; i < len(entries) && i < keepLast; i++ {
+		protected[entries[i].id] = true
+	}
+	for _, id := range ids {
+		if protected[id] {
+			return fmt.Errorf("%w: keep_last protects %s", ErrConflict, id)
 		}
 	}
 	return nil
