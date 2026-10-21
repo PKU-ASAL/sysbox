@@ -59,6 +59,9 @@ func (s *Server) deleteLocalRevisionBatch(ctx context.Context, ids []string, pol
 	if err = ctx.Err(); err != nil {
 		return err
 	}
+	if err = s.retireSQLConsumers(ctx, root, ids, policy.OlderThan); err != nil {
+		return err
+	}
 	if err = revisiongate.RetireBatch(root, ids); err != nil {
 		return err
 	}

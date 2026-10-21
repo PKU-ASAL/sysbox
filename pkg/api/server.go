@@ -131,6 +131,27 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 	if s.initErr == nil && s.consoles.initErr != nil {
 		s.initErr = fmt.Errorf("initialize console registry: %w", s.consoles.initErr)
 	}
+	if s.initErr == nil && (len(cfg.RevisionSQLConsumers) > 0 || cfg.RevisionRegistryID != "") {
+		if stateBackend != "" {
+			s.initErr = fmt.Errorf("federated coordinator requires file registry")
+		} else {
+			catalog, err := revisiongate.Catalog(runsDir)
+			if err == nil {
+				err = os.MkdirAll(catalog, 0700)
+			}
+			if err == nil {
+				var release func()
+				release, err = revisiongate.Lock(context.Background(), catalog)
+				if err == nil {
+					_, err = s.enrolledSQLConsumers(catalog)
+					release()
+				}
+			}
+			if err != nil {
+				s.initErr = err
+			}
+		}
+	}
 	if err := s.loadHostFenceTargets(); err != nil && s.initErr == nil {
 		s.initErr = err
 	}
@@ -410,6 +431,7 @@ func (s *Server) registerRoutes() {
 		m.Handle("/v1/revision-registry/", http.StripPrefix("/v1/revision-registry", s.remoteRegistry))
 	}
 	m.HandleFunc("POST /v1/revisions/remote-sync", s.handleRemoteRevisionSync)
+	m.HandleFunc("POST /v1/revisions/federated-retire", s.handleFederatedRetirement)
 
 	m.HandleFunc("POST /v1/revisions/retired-cleanup", s.handleRevisionRetiredCleanup)
 	m.HandleFunc("POST /v1/revisions/delete", s.handleRevisionDelete)

@@ -26,8 +26,8 @@ func (s *Server) handleRevisionDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if store, ok := s.apiStore.(*localAPIStore); ok && s.stateBackend == "" {
-		if err := store.DeleteGlobalRevisionAtomic(r.Context(), input.Revision, input.OlderThan); err != nil {
+	if _, ok := s.apiStore.(*localAPIStore); ok && s.stateBackend == "" {
+		if err := s.deleteLocalRevisionBatch(r.Context(), []string{input.Revision}, RevisionRetentionPolicy{OlderThan: input.OlderThan, Limit: 1}); err != nil {
 			writeError(w, 409, err)
 			return
 		}

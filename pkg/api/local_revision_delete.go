@@ -73,6 +73,12 @@ func (s *localAPIStore) DeleteGlobalRevisionAtomic(ctx context.Context, id strin
 		return err
 	}
 	defer unlock()
+	if _, e := os.Lstat(filepath.Join(filepath.Dir(root), ".sysbox-sql-consumers.required")); !os.IsNotExist(e) {
+		return fmt.Errorf("federated registry requires coordinator retirement")
+	}
+	if _, e := os.Lstat(filepath.Join(root, ".sql-consumers.json")); !os.IsNotExist(e) {
+		return fmt.Errorf("federated registry requires coordinator retirement")
+	}
 	if err := s.validateLocalRevisionRetirement(ctx, root, id, olderThan); err != nil {
 		return err
 	}
@@ -112,7 +118,7 @@ func (s *localAPIStore) validateLocalRevisionRetirement(ctx context.Context, roo
 				}
 				return nil
 			}
-			if path == target || (filepath.Dir(path) == root && revisiongate.IsRetirementMetadata(filepath.Base(path))) || path == filepath.Join(root, "consumers.json") || filepath.Base(path) == ".sysbox-revision-registry.json" || strings.HasSuffix(path, ".lock") {
+			if path == target || (filepath.Dir(path) == root && revisiongate.IsRetirementMetadata(filepath.Base(path))) || path == filepath.Join(root, "consumers.json") || path == filepath.Join(root, ".sql-consumers.json") || filepath.Base(path) == ".sysbox-revision-registry.json" || strings.HasSuffix(path, ".lock") {
 				return nil
 			}
 			if strings.HasSuffix(path, ".retired") {

@@ -22,9 +22,16 @@ type RevisionRemoteConfig struct {
 	TokenFile string `yaml:"token_file" json:"token_file"`
 }
 
+type RevisionSQLConsumer struct {
+	URL       string `yaml:"url" json:"url"`
+	TokenFile string `yaml:"token_file" json:"token_file"`
+}
 type ServiceConfig struct {
-	RevisionRemote    *RevisionRemoteConfig `yaml:"revision_remote" json:"revision_remote,omitempty"`
-	RevisionConsumers map[string]string     `yaml:"revision_consumers" json:"revision_consumers,omitempty"`
+	RevisionRegistryID   string                         `yaml:"revision_registry_id" json:"revision_registry_id,omitempty"`
+	RevisionUpstreams    map[string]string              `yaml:"revision_upstreams" json:"revision_upstreams,omitempty"`
+	RevisionSQLConsumers map[string]RevisionSQLConsumer `yaml:"revision_sql_consumers" json:"revision_sql_consumers,omitempty"`
+	RevisionRemote       *RevisionRemoteConfig          `yaml:"revision_remote" json:"revision_remote,omitempty"`
+	RevisionConsumers    map[string]string              `yaml:"revision_consumers" json:"revision_consumers,omitempty"`
 
 	RevisionRegistry    string               `yaml:"revision_registry" json:"revision_registry,omitempty"`
 	GCPublicationSource string               `yaml:"gc_publication_source" json:"gc_publication_source,omitempty"`
