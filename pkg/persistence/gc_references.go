@@ -174,6 +174,10 @@ func gcReferencesAt(a *aggregate, now time.Time) (GCReferenceSnapshot, error) {
 		// resource handles. A reference-only hash would miss pending plan changes.
 		content := *a
 		content.GC = map[string]GCReservation{}
+		if content.Format == GCAdmissionFormatVersion {
+			content.Format = content.GCReferenceFormat
+		}
+		content.GCReferenceFormat = 0
 		raw, err := json.Marshal(&content)
 		if err != nil {
 			return err

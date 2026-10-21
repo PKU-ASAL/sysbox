@@ -17,6 +17,7 @@ type GCCandidate = controlplane.GCCandidate
 func digestHex(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
 
 type GCCoordinator struct {
+	ClaimExecution         func(context.Context, GCCandidate, controlplane.SignedExecutionGrant) error
 	AuthorizeFence         func(context.Context, string) (controlplane.GCDispositionProof, error)
 	InspectFencedCandidate func(context.Context, GCCandidate) (string, error)
 	Root                   string
@@ -98,6 +99,11 @@ func (c *GCCoordinator) Delete(ctx context.Context, candidate GCCandidate, g con
 		}
 		if err := c.anchorGCAdmission(g); err != nil {
 			return nil, err
+		}
+		if c.ClaimExecution != nil {
+			if err := c.ClaimExecution(effectCtx, candidate, g); err != nil {
+				return nil, err
+			}
 		}
 		result, err := deleteEffect(effectCtx)
 		if err != nil {

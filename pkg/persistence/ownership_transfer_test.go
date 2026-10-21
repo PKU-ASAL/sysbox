@@ -88,3 +88,19 @@ func TestOwnershipRetirementHistorySurvivesMetadataReset(t *testing.T) {
 	a.State.Resources = []state.Resource{{Address: address.Resource("sysbox_node", "reclaimed"), Driver: "docker", ExternalID: "external", OwnerUID: a.State.TopologyUID, ResourceUID: "another", Generation: 1}}
 	require.Error(t, validateAggregate(a, "source"))
 }
+func TestGCAdmissionResetPreservesLaterOwnershipHistory(t *testing.T) {
+	a := newAggregate()
+	old := a.State.TopologyUID
+	plan := controlplane.OwnershipTransferPlan{Version: 1, ID: "transfer", SourceTopology: "source", TargetTopology: "target", SourceAddress: "sysbox_node.old", TargetAddress: "sysbox_node.new", AgentID: "host", Provider: "docker", ExternalID: "external", Source: substrate.OperationIdentity{ActionID: "old", OwnerUID: old, TopologyUID: old, ResourceUID: "old-resource", Generation: 1}, Target: substrate.OperationIdentity{ActionID: "transfer", OwnerUID: "target", TopologyUID: "target", ResourceUID: "new-resource", Generation: 2}, Fingerprint: "sha256:" + strings.Repeat("a", 64)}
+	digest, err := plan.Digest()
+	require.NoError(t, err)
+	a.Format = GCAdmissionFormatVersion
+	a.GCReferenceFormat = FormatVersion
+	a.OwnershipRetirements = map[string]controlplane.OwnershipRetirementProof{plan.ID: {Plan: plan, PlanDigest: digest, SourceEpoch: 1, SourceStateDigest: strings.Repeat("b", 64), RetiredAt: time.Now().UTC()}}
+	require.NoError(t, resetAggregate(a))
+	require.NotEqual(t, old, a.State.TopologyUID)
+	require.NoError(t, validateAggregate(a, "source"))
+	require.Len(t, a.OwnershipRetirements, 1)
+	a.State.Resources = []state.Resource{{Address: address.Resource("sysbox_node", "reclaimed"), Driver: "docker", ExternalID: "external", OwnerUID: a.State.TopologyUID, ResourceUID: "another", Generation: 1}}
+	require.Error(t, validateAggregate(a, "source"))
+}

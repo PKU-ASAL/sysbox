@@ -9,7 +9,7 @@ import (
 )
 
 func TestQuiescentDeleteReleasesOnlyFullyRetiredSourceDomains(t *testing.T) {
-	for _, scenario := range []string{"ready", "active-source", "resource-reference", "snapshot", "raw-delete"} {
+	for _, scenario := range []string{"ready", "completed-admission", "active-source", "resource-reference", "snapshot", "raw-delete"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
 			r, err := OpenFilesystem(t.TempDir())
@@ -37,6 +37,10 @@ func TestQuiescentDeleteReleasesOnlyFullyRetiredSourceDomains(t *testing.T) {
 			}
 			var next []byte
 			err = r.update(ctx, "lab", func(a *aggregate) error {
+				if scenario == "completed-admission" {
+					a.GCReferenceFormat = a.Format
+					a.Format = GCAdmissionFormatVersion
+				}
 				raw, err := json.Marshal(a)
 				if err != nil {
 					return err
@@ -44,7 +48,7 @@ func TestQuiescentDeleteReleasesOnlyFullyRetiredSourceDomains(t *testing.T) {
 				next, err = ApplyQuiescentLifecycleDelete(raw, nil, "lab", a.Serial, st.TopologyUID)
 				return err
 			})
-			if scenario != "ready" {
+			if scenario != "ready" && scenario != "completed-admission" {
 				require.ErrorIs(t, err, ErrConflict)
 				return
 			}

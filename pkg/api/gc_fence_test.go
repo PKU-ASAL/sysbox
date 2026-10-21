@@ -183,3 +183,62 @@ func TestGCDispositionCrashChild(t *testing.T) {
 	require.NoError(t, repo.CompleteGCDisposition(ctx, p.Request.Topology, p, input.HostKey))
 	os.Exit(73)
 }
+
+func TestCanonicalGCClaimSurvivesLostHostJournal(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		ctx := context.Background()
+		s := stateDeleteTestServer(t, store)
+		s.agentSvc = newAgentService(s)
+		secret := "claim-secret"
+		require.NoError(t, store.SaveAgent(ctx, controlplane.Agent{ID: "host", AuthSecret: secret, SecretHash: agent.SecretHash(secret)}))
+		_, issuer, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+		require.NoError(t, s.ConfigureExecutionGrantSigner(issuer))
+		repo, err := s.actionRepository("lab")
+		require.NoError(t, err)
+		refs, err := repo.LoadGCReferences(ctx, "lab")
+		require.NoError(t, err)
+		c := controlplane.GCCandidate{Kind: "firecracker", ExternalID: "external", OwnerUID: refs.TopologyUID, TopologyUID: refs.TopologyUID, ResourceUID: "resource", Generation: 1, InventoryDigest: refs.Digest}
+		rsv := persistence.GCReservation{ID: "gc-once", AgentID: "host", Candidate: c}
+		require.NoError(t, s.reserveGCWithAuthority(ctx, "lab", rsv))
+		require.NoError(t, s.publishGCReservation(ctx, "lab", rsv))
+		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		session, err := authority.OpenSession(ctx, "host", "worker", "")
+		require.NoError(t, err)
+		cmd, ok, err := store.AcquireAgentCommandLease(ctx, "host", rsv.ID, "worker", time.Minute)
+		require.NoError(t, err)
+		require.True(t, ok)
+		grant, err := s.issueCommandGrant(ctx, "host", cmd.ID, ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, BootID: "boot"})
+		require.NoError(t, err)
+		signed, err := controlplane.SignExecutionGrant(issuer, *grant, "boot", time.Now())
+		require.NoError(t, err)
+		claim := func() *httptest.ResponseRecorder {
+			raw, _ := json.Marshal(map[string]any{"candidate": c, "grant": signed})
+			request := httptest.NewRequest("POST", "/v1/agents/host/gc-claim", bytes.NewReader(raw))
+			require.NoError(t, agent.SignRequest(request, "host", secret, time.Now()))
+			w := httptest.NewRecorder()
+			s.ServeHTTP(w, request)
+			return w
+		}
+		first := claim()
+		require.Equal(t, 200, first.Code, first.Body.String())
+		require.Equal(t, 409, claim().Code)
+		cold := stateDeleteTestServer(t, store)
+		cold.agentSvc = newAgentService(cold)
+		require.NoError(t, cold.ConfigureExecutionGrantSigner(issuer))
+		s = cold
+		require.Equal(t, 409, claim().Code)
+		retained, err := repo.LoadGCReservation(ctx, "lab", rsv.ID)
+		require.NoError(t, err)
+		require.NotEmpty(t, retained.AdmissionDigest)
+		require.Empty(t, retained.ReceiptHash)
+		require.True(t, retained.Pending())
+		controllerPub, _, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+		s.fenceTargets = map[string]hostFenceTarget{"host": {LabID: "isolated", PublicKey: controllerPub}}
+		// A revoked command cannot acquire the one-shot execution after freeze.
+		require.NoError(t, authority.Revoke(ctx, *grant))
+		require.Error(t, s.claimGCExecution(ctx, "lab", c, *grant))
+
+	})
+}

@@ -4729,3 +4729,19 @@ bounded to 16 MiB on both publication and recovery. Local and remote revision
 scans retain references in `returned-*.proof.json`; ledger scanning skips these
 auxiliary records. Result integrity uses the protected host directory, while the
 original authorization envelope is signature-verified.
+
+### Canonical single-use GC admission
+
+Before invoking provider deletion, the owning agent must consume
+`POST /v1/agents/{agent}/gc-claim`. The canonical reservation records the exact
+execution grant once. Claim validates the current session, active epoch, fresh
+expiry and maintenance/fencing barriers in the authority/lifecycle transaction.
+A lost claim response is unknown: retry is rejected even for an identical grant.
+Deleting both the local journal and its anchor cannot reopen a consumed claim.
+Recovery requires the explicit host-fence disposition; it does not infer success.
+This guarantee assumes the canonical authority and lifecycle storage survive.
+
+Aggregate format 12 records admission while retaining the inventory's prior
+format for digest stability. Metadata reset clears admission history only after
+quiescence and preserves ownership retirement/target tombstones. Older writers
+must be drained before enabling this format.

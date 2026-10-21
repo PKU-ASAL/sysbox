@@ -152,3 +152,31 @@ func TestGCJournalLossWhileWaitingCannotReplay(t *testing.T) {
 	require.ErrorIs(t, <-second, effectgate.ErrUncertain)
 	require.False(t, replayed)
 }
+
+func TestGCTotalLocalEvidenceLossCannotReplayCanonicalClaim(t *testing.T) {
+	c, candidate, g := gcFixture(t)
+	claimed := false
+	effects := 0
+	c.ClaimExecution = func(context.Context, GCCandidate, controlplane.SignedExecutionGrant) error {
+		if claimed {
+			return fmt.Errorf("canonical execution already claimed")
+		}
+		claimed = true
+		return nil
+	}
+	_, err := c.Delete(context.Background(), candidate, g, func(context.Context) (json.RawMessage, error) { effects++; return nil, fmt.Errorf("unknown") })
+	require.ErrorIs(t, err, effectgate.ErrUncertain)
+	entries, err := os.ReadDir(c.Root)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) != ".lock" {
+			require.NoError(t, os.Remove(filepath.Join(c.Root, entry.Name())))
+		}
+	}
+	_, err = c.Delete(context.Background(), candidate, g, func(context.Context) (json.RawMessage, error) {
+		effects++
+		return json.RawMessage(`{"deleted":true}`), nil
+	})
+	require.ErrorIs(t, err, effectgate.ErrUncertain)
+	require.Equal(t, 1, effects)
+}

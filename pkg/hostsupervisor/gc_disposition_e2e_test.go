@@ -73,7 +73,7 @@ func TestGCFenceGuestProbe(t *testing.T) {
 		}
 	}
 	authority := AuthorityClient{Identity: cfg.Identity}
-	c := GCCoordinator{Root: cfg.Root, AgentID: cfg.Identity.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: cfg.IssuerKey, HostKey: cfg.HostKey, Authorize: authority.Authorize, AuthorizeFence: authority.AuthorizeGCFence, ValidateInventory: func(context.Context, GCCandidate) error { return nil }, InspectFencedCandidate: func(ctx context.Context, candidate GCCandidate) (string, error) {
+	c := GCCoordinator{ClaimExecution: authority.ClaimGCExecution, Root: cfg.Root, AgentID: cfg.Identity.ID, HostBootID: strings.TrimSpace(string(boot)), IssuerKey: cfg.IssuerKey, HostKey: cfg.HostKey, Authorize: authority.Authorize, AuthorizeFence: authority.AuthorizeGCFence, ValidateInventory: func(context.Context, GCCandidate) error { return nil }, InspectFencedCandidate: func(ctx context.Context, candidate GCCandidate) (string, error) {
 		if candidate.Kind == "firecracker" {
 			return fcprovider.New(cfg.Kernel, cfg.Root+"-fc").InspectFencedGC(ctx, candidate.ExternalID, candidate.OwnerUID, candidate.ResourceUID, candidate.Generation)
 		}

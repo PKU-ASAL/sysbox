@@ -473,7 +473,11 @@
         "TestCacheGCProtectsUnboundGlobalRevisionContent",
         "TestPostgresCacheFencesGlobalRevisionPublication",
         "TestGlobalRevisionInventoryRejectsCorruptAndIncludesTextReferences",
-        "TestStage2ProviderBatchLimitAndRegistryDeletionBoundary"
+        "TestStage2ProviderBatchLimitAndRegistryDeletionBoundary",
+        "TestGCExecutionAdmissionIsDurableSingleUse",
+        "TestGCClaimPreservesRemainingBatchAdmission",
+        "TestGCClaimRechecksSessionAndClockAtCommit",
+        "TestGCAdmissionResetPreservesLaterOwnershipHistory"
       ],
       "kind": "contract",
       "race": true,
@@ -494,7 +498,8 @@
         "TestNonDockerGCCancellationAndCorruptJournalNeverReplay",
         "TestNonDockerGCOutcomePersistenceFailureNeverReportsSuccess",
         "TestGCMissingJournalWithAdmissionEvidenceCannotReplay",
-        "TestGCJournalLossWhileWaitingCannotReplay"
+        "TestGCJournalLossWhileWaitingCannotReplay",
+        "TestGCTotalLocalEvidenceLossCannotReplayCanonicalClaim"
       ],
       "kind": "contract",
       "race": true,
@@ -908,7 +913,8 @@
       "id": "gc-fenced-disposition-api",
       "package": "./pkg/api",
       "tests": [
-        "TestGCFenceDispositionClosesUnknownWithoutDeletingAgain"
+        "TestGCFenceDispositionClosesUnknownWithoutDeletingAgain",
+        "TestCanonicalGCClaimSurvivesLostHostJournal"
       ],
       "kind": "contract",
       "race": true,

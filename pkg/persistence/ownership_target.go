@@ -31,7 +31,7 @@ func ownershipPending(a *aggregate) bool {
 	return false
 }
 func validateOwnershipTargets(a *aggregate) error {
-	if len(a.OwnershipTargets) > 0 && a.Format != OwnershipTargetFormatVersion {
+	if len(a.OwnershipTargets) > 0 && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion {
 		return ErrCorruptRecord
 	}
 	pending := 0
@@ -94,7 +94,9 @@ func (r *Repository) ReserveOwnershipTarget(ctx context.Context, p controlplane.
 			a.OwnershipTargets = map[string]OwnershipTargetReservation{}
 		}
 		a.OwnershipTargets[p.ID] = OwnershipTargetReservation{Plan: p}
-		a.Format = OwnershipTargetFormatVersion
+		if a.Format != GCAdmissionFormatVersion {
+			a.Format = OwnershipTargetFormatVersion
+		}
 		return nil
 	})
 }

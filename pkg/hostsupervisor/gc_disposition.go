@@ -100,3 +100,7 @@ func (c AuthorityClient) GCFencedCleanupProof(ctx context.Context, candidate GCC
 	err := c.postJSON(ctx, "/v1/agents/"+url.PathEscape(c.Identity.ID)+"/gc-cleanup-proof", map[string]any{"candidate": candidate, "grant": g, "original_boot": originalBoot}, &result)
 	return result.Proof, err
 }
+
+func (c AuthorityClient) ClaimGCExecution(ctx context.Context, candidate GCCandidate, g controlplane.SignedExecutionGrant) error {
+	return c.post(ctx, "/v1/agents/"+url.PathEscape(c.Identity.ID)+"/gc-claim", map[string]any{"candidate": candidate, "grant": g}, true)
+}

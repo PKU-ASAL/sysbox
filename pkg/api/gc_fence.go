@@ -56,7 +56,7 @@ func (s *Server) handleBeginGCFence(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
-	request := controlplane.HostFenceRequest{Version: 1, ID: fmt.Sprintf("gcf-%x", sha256.Sum256([]byte(topology+"\x00"+key))), Topology: topology, RunID: id, LabID: target.LabID, ControllerKey: target.PublicKey, JournalSHA256: gcEvidenceHash(stored), Grant: g}
+	request := controlplane.HostFenceRequest{Version: 1, ID: fmt.Sprintf("gcf-%x", sha256.Sum256([]byte(topology+"\x00"+key))), Topology: topology, RunID: id, LabID: target.LabID, ControllerKey: target.PublicKey, JournalSHA256: persistence.GCReservationDigest(stored), Grant: g}
 	bound := s.commandGrantStorage(id, func(record *persistence.CommandRecord) error {
 		if record == nil || record.Retired || !gcCommandMatches(record.Command, stored) {
 			return persistence.ErrConflict
@@ -103,7 +103,7 @@ func (s *Server) handleAuthorizeGCFence(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	stored, err := repo.LoadGCReservation(r.Context(), f.Request.Topology, f.Request.Grant.CommandID)
-	if err != nil || !stored.Pending() || gcEvidenceHash(stored) != f.Request.JournalSHA256 {
+	if err != nil || !stored.Pending() || persistence.GCReservationDigest(stored) != f.Request.JournalSHA256 {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
@@ -185,6 +185,12 @@ func (s *Server) reconcileGCFence(ctx context.Context, p controlplane.GCDisposit
 }
 
 func (s *Server) handleGCCleanupProof(w http.ResponseWriter, r *http.Request) {
+	s.handleGCGrantAction(w, r, false)
+}
+func (s *Server) handleGCClaimExecution(w http.ResponseWriter, r *http.Request) {
+	s.handleGCGrantAction(w, r, true)
+}
+func (s *Server) handleGCGrantAction(w http.ResponseWriter, r *http.Request, claim bool) {
 	if err := s.authenticatedGrantAgent(r); err != nil {
 		writeError(w, 401, err)
 		return
@@ -219,6 +225,24 @@ func (s *Server) handleGCCleanupProof(w http.ResponseWriter, r *http.Request) {
 	authority := persistence.NewExecutionGrantRepository(bound)
 	if err := authority.Authorize(r.Context(), g); err != nil {
 		writeError(w, 409, err)
+		return
+	}
+	if claim {
+		record, err := readFailureCommand(r.Context(), s.apiStore, g.CommandID)
+		if err != nil {
+			writeError(w, 409, err)
+			return
+		}
+		topology, err := grantCommandTopology(record)
+		if err != nil {
+			writeError(w, 409, err)
+			return
+		}
+		if err = s.claimGCExecution(r.Context(), topology, input.Candidate, g); err != nil {
+			writeError(w, 409, err)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"claimed": true})
 		return
 	}
 	p, err := authority.ReleasedGCDisposition(r.Context(), input.Candidate, g, input.OriginalBoot)

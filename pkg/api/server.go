@@ -444,6 +444,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/topologies/{topology}/gc/{reservation}/host-fences", s.handleBeginGCFence)
 	m.HandleFunc("POST /v1/agents/{agent}/gc-fences/{fence}/authorize", s.handleAuthorizeGCFence)
 	m.HandleFunc("POST /v1/agents/{agent}/gc-cleanup-proof", s.handleGCCleanupProof)
+	m.HandleFunc("POST /v1/agents/{agent}/gc-claim", s.handleGCClaimExecution)
 	m.HandleFunc("POST /v1/topologies/{topology}/host-fences/{fence}/reconcile-gc", s.handleGCFenceDisposition)
 	m.HandleFunc("POST /v1/topologies/{topology}/ownership-transfers", s.handleOwnershipTransfer)
 	m.HandleFunc("POST /v1/topologies/{topology}/ownership-transfers/prepare", s.handleBeginOwnershipPreparation)

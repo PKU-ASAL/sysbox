@@ -88,3 +88,55 @@ func TestGCReservationRejectsStalePlanWithoutFreezingLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, m.Save(st))
 }
+
+func TestGCExecutionAdmissionIsDurableSingleUse(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenFilesystem(t.TempDir())
+	require.NoError(t, err)
+	defer repo.Close()
+	refs, err := repo.LoadGCReferences(ctx, "lab")
+	require.NoError(t, err)
+	c := controlplane.GCCandidate{Kind: "domain", ExternalID: "domain", OwnerUID: refs.TopologyUID, TopologyUID: refs.TopologyUID, ResourceUID: "resource", Generation: 1, InventoryDigest: refs.Digest}
+	r := GCReservation{ID: "gc-once", AgentID: "host", Candidate: c}
+	require.NoError(t, repo.ReserveGC(ctx, "lab", r))
+	digest, _ := c.Digest()
+	grant := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: c.TopologyUID, ResourceUID: c.ResourceUID, Generation: 1}, AgentID: "host", CommandID: r.ID, ActionID: r.ID, Epoch: 1, Operation: "gc_delete", Digest: digest, TargetBootID: "boot"}
+	require.NoError(t, repo.ClaimGCExecution(ctx, "lab", c, grant))
+	after, err := repo.LoadGCReferences(ctx, "lab")
+	require.NoError(t, err)
+	require.Equal(t, refs.Digest, after.Digest, "claim metadata must not invalidate frozen inventory")
+	require.Error(t, repo.ClaimGCExecution(ctx, "lab", c, grant), "lost host ledger cannot replay a consumed canonical admission")
+	retained, err := repo.LoadGCReservation(ctx, "lab", r.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, retained.AdmissionDigest)
+	require.True(t, retained.Pending())
+	changed := grant
+	changed.Epoch++
+	require.Error(t, repo.ClaimGCExecution(ctx, "lab", c, changed))
+}
+
+func TestGCClaimPreservesRemainingBatchAdmission(t *testing.T) {
+	ctx := context.Background()
+	repo := resetTestRepository(t, "filesystem")
+	refs, err := repo.LoadGCReferences(ctx, "lab")
+	require.NoError(t, err)
+	first := controlplane.GCCandidate{Kind: "domain", ExternalID: "first", OwnerUID: refs.TopologyUID, TopologyUID: refs.TopologyUID, ResourceUID: "first", Generation: 1, InventoryDigest: refs.Digest}
+	second := first
+	second.ExternalID = "second"
+	second.ResourceUID = "second"
+	batch, err := NewGCBatch("lab", "batch", "host", []controlplane.GCCandidate{first, second})
+	require.NoError(t, err)
+	require.NoError(t, repo.ReserveGCBatchWithAuthority(ctx, "lab", batch, nil))
+	c := batch[0].Candidate
+	digest, _ := c.Digest()
+	grant := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: c.TopologyUID, ResourceUID: c.ResourceUID, Generation: 1}, AgentID: "host", SessionID: "session", Attempt: 1, CommandID: batch[0].ID, ActionID: batch[0].ID, Epoch: 1, Operation: "gc_delete", Digest: digest, TargetBootID: "boot"}
+	require.NoError(t, repo.ClaimGCExecution(ctx, "lab", c, grant))
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	receipt, err := controlplane.SignGCDeletionReceipt(key, grant, "boot", "done", c, time.Now())
+	require.NoError(t, err)
+	require.NoError(t, repo.CompleteGC(ctx, "lab", receipt, pub))
+	q := batch[1]
+	command := controlplane.AgentCommand{ID: q.ID, ActionID: q.ID, AgentID: q.AgentID, Type: "gc_delete", TopologyUID: q.Candidate.TopologyUID, ResourceUID: q.Candidate.ResourceUID, Generation: 1, GCKind: q.Candidate.Kind, GCExternalID: q.Candidate.ExternalID, GCInventoryDigest: q.Candidate.InventoryDigest}
+	require.NoError(t, repo.ValidateCommandLifecycle(ctx, "lab", command))
+}

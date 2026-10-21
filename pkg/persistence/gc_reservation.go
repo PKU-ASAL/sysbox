@@ -15,6 +15,7 @@ import (
 // no expiry: losing a worker/lease cannot establish that deletion stopped.
 // ID is the durable command ID. Completed entries retain exact replay identity.
 type GCReservation struct {
+	AdmissionDigest string                   `json:"admission_digest,omitempty"`
 	DispositionHash string                   `json:"disposition_hash,omitempty"`
 	ID              string                   `json:"id"`
 	AgentID         string                   `json:"agent_id"`
@@ -32,10 +33,19 @@ func gcPending(a *aggregate) bool {
 }
 
 func validateGCReservations(a *aggregate) error {
+	if a.Format == GCAdmissionFormatVersion && (a.GCReferenceFormat < FormatVersion || a.GCReferenceFormat >= GCAdmissionFormatVersion) {
+		return ErrCorruptRecord
+	}
+	if a.Format != GCAdmissionFormatVersion && a.GCReferenceFormat != 0 {
+		return ErrCorruptRecord
+	}
 	pending := 0
 	groups := map[string]bool{}
 	for id, r := range a.GC {
-		if r.DispositionHash != "" && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion {
+		if r.AdmissionDigest != "" && (len(r.AdmissionDigest) != 64 || a.Format != GCAdmissionFormatVersion) {
+			return ErrCorruptRecord
+		}
+		if r.DispositionHash != "" && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion {
 			return ErrCorruptRecord
 		}
 		if id == "" || id != r.ID || r.AgentID == "" || r.Candidate.Validate() != nil || r.Candidate.TopologyUID != a.State.TopologyUID {
@@ -55,14 +65,14 @@ func validateGCReservations(a *aggregate) error {
 }
 
 func (r *Repository) ReserveGC(ctx context.Context, topology string, request GCReservation) error {
-	if !topologyName.MatchString(request.ID) || request.AgentID == "" || !request.Pending() || request.Candidate.Validate() != nil {
+	if !topologyName.MatchString(request.ID) || request.AgentID == "" || (!request.Pending() || request.AdmissionDigest != "") || request.Candidate.Validate() != nil {
 		return ErrInvalidRecord
 	}
 	return r.updateGC(ctx, topology, true, func(a *aggregate) error { return reserveGC(a, request) })
 }
 
 func reserveGC(a *aggregate, request GCReservation) error {
-	if !topologyName.MatchString(request.ID) || request.AgentID == "" || !request.Pending() || request.Candidate.Validate() != nil {
+	if !topologyName.MatchString(request.ID) || request.AgentID == "" || (!request.Pending() || request.AdmissionDigest != "") || request.Candidate.Validate() != nil {
 		return ErrInvalidRecord
 	}
 

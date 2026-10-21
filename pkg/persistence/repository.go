@@ -33,6 +33,7 @@ const FormatVersion = 6
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
+	GCReferenceFormat    int                                              `json:"gc_reference_format,omitempty"`
 	OwnershipTargets     map[string]OwnershipTargetReservation            `json:"ownership_targets,omitempty"`
 	OwnershipRetirements map[string]controlplane.OwnershipRetirementProof `json:"ownership_retirements,omitempty"`
 	DeletedFrom          *LifecycleDeletionReceipt                        `json:"deleted_from,omitempty"`
@@ -115,14 +116,14 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion && header.Format != OwnershipRetirementFormatVersion && header.Format != OwnershipTargetFormatVersion {
+	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion && header.Format != OwnershipRetirementFormatVersion && header.Format != OwnershipTargetFormatVersion && header.Format != GCAdmissionFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, header.Format, FormatVersion)
 	}
 	var a aggregate
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion {
+	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, a.Format, FormatVersion)
 	}
 	if err := validateAggregate(&a, ""); err != nil {
@@ -721,6 +722,17 @@ func resetAggregate(a *aggregate) error {
 	a.Restores = map[string]SnapshotRestoreReceipt{}
 	a.ResetContinuations = map[string]runtime.ResetContinuationReceipt{}
 	a.GC = map[string]GCReservation{}
+	if a.Format == GCAdmissionFormatVersion {
+		switch {
+		case len(a.OwnershipTargets) > 0:
+			a.Format = OwnershipTargetFormatVersion
+		case len(a.OwnershipRetirements) > 0:
+			a.Format = OwnershipRetirementFormatVersion
+		default:
+			a.Format = a.GCReferenceFormat
+		}
+	}
+	a.GCReferenceFormat = 0
 	a.Serial = 0
 	a.UpdatedAt = time.Now().UTC()
 	return nil
