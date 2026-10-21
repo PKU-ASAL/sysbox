@@ -83,6 +83,20 @@ func newHostFenceCommand() *cobra.Command {
 	inspectGC.Flags().StringVar(&gcSocket, "socket", "", "local host-supervisor Unix socket")
 	_ = inspectGC.MarkFlagRequired("socket")
 	root.AddCommand(inspectGC)
+	prepareTransfer := &cobra.Command{Use: "prepare-transfer <plan.json>", Short: "Check stopped ownership transfer source under canonical freeze", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		var plan controlplane.OwnershipTransferPlan
+		if err := readFenceJSON(args[0], &plan); err != nil {
+			return err
+		}
+		proof, err := hostsupervisor.NewTaskClient(gcSocket, hostsupervisor.TargetRef{}).PrepareOwnershipTransfer(cmd.Context(), plan)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(proof)
+	}}
+	prepareTransfer.Flags().StringVar(&gcSocket, "socket", "", "host supervisor socket")
+	_ = prepareTransfer.MarkFlagRequired("socket")
+	root.AddCommand(prepareTransfer)
 	return root
 }
 

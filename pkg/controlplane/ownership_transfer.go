@@ -112,3 +112,55 @@ func VerifyOwnershipRetirement(key ed25519.PublicKey, p OwnershipRetirementProof
 	}
 	return nil
 }
+
+// OwnershipPreparation proves a host has checked the exact stopped provider
+// object after the source was frozen. It does not retire either owner.
+type OwnershipPreparation struct {
+	Plan        OwnershipTransferPlan `json:"plan"`
+	SourceEpoch uint64                `json:"source_epoch"`
+	HostBootID  string                `json:"host_boot_id"`
+	ObservedAt  time.Time             `json:"observed_at"`
+	Signature   []byte                `json:"signature"`
+}
+
+func (p OwnershipPreparation) validate() error {
+	if err := p.Plan.Validate(); err != nil {
+		return err
+	}
+	if p.SourceEpoch == 0 || p.HostBootID == "" || p.ObservedAt.IsZero() {
+		return fmt.Errorf("incomplete ownership preparation")
+	}
+	return nil
+}
+func ownershipPreparationMessage(p OwnershipPreparation) ([]byte, error) {
+	p.Signature = nil
+	raw, err := json.Marshal(p)
+	return append([]byte("sysbox.ownership-preparation.v1\x00"), raw...), err
+}
+func SignOwnershipPreparation(key ed25519.PrivateKey, p OwnershipPreparation) (OwnershipPreparation, error) {
+	if len(key) != ed25519.PrivateKeySize {
+		return OwnershipPreparation{}, fmt.Errorf("invalid host key")
+	}
+	if err := p.validate(); err != nil {
+		return OwnershipPreparation{}, err
+	}
+	raw, err := ownershipPreparationMessage(p)
+	if err != nil {
+		return OwnershipPreparation{}, err
+	}
+	p.Signature = ed25519.Sign(key, raw)
+	return p, nil
+}
+func VerifyOwnershipPreparation(key ed25519.PublicKey, p OwnershipPreparation) error {
+	if err := p.validate(); err != nil {
+		return err
+	}
+	raw, err := ownershipPreparationMessage(p)
+	if err != nil {
+		return err
+	}
+	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, raw, p.Signature) {
+		return fmt.Errorf("invalid ownership preparation signature")
+	}
+	return nil
+}

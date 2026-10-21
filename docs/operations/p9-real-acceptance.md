@@ -4673,3 +4673,22 @@ an intervening later reboot does not erase independently verified stop evidence.
 Prepared never-started manifests continue through normal GC rather than requiring
 a reboot proof. Wrong owner, old grant, current-boot manifest and bad signatures
 are rejected. The lab was stopped with all disks and evidence retained.
+
+### Ownership transfer implementation and acceptance extension
+
+The control-plane contract now exercises source retirement, target reservation,
+new command grant, authenticated host completion and exact result replay across
+file/SQLite/PostgreSQL. Independent child-process exits after reservation/freeze,
+source retirement and target state commit recover without reissuing the old
+provider effect (`/tmp/sysbox-transfer-process-matrix.log`). This complements the
+coordinator boundary test, which explicitly uses a marker rather than claiming
+real provider execution in each crash cell.
+
+Real provider evidence: libvirt cold transfer/new-owner observation/old-owner
+refusal/destroy (`/tmp/sysbox-libvirt-transfer-real.log`); actual API-host-provider
+commit/release (`/tmp/sysbox-transfer-api-real.log`, 1.844s); Docker cold transfer,
+start/observe/destroy (`/tmp/sysbox-docker-transfer-real.log`, 1.763s); Firecracker
+prepared-generation transfer followed by real KVM cold start/observe/destroy
+(`/tmp/sysbox-firecracker-transfer-real.log`, 9.425s). Signed original manifest
+history retains the physical artifact path while old ownership is rejected.
+These runs do not substitute for every provider-internal OS-kill permutation.

@@ -28,10 +28,16 @@
       "text": "无 owner 的资源可按计划认领；已有不同 owner 不允许隐式抢占，转移须独立明确授权和旧 owner 退休证明。",
       "gates": [
         "adoption-api",
-        "adoption-libvirt"
+        "adoption-libvirt",
+        "ownership-transfer-foundation",
+        "ownership-transfer-api",
+        "ownership-transfer-host",
+        "ownership-transfer-docker",
+        "ownership-transfer-firecracker",
+        "ownership-transfer-libvirt"
       ],
       "remaining": [
-        "Explicit transfer of resources already owned by a different owner remains unsupported; refusal is implemented."
+        "Explicit transfer is implemented with preparation/retirement/target reservation and provider rebinding; final same-source full acceptance and provider-internal crash recovery matrix remain open."
       ]
     },
     {
@@ -979,6 +985,84 @@
       "tests": [
         "TestFencedResidueCleanupRequiresFreshGrantAndOldBootAnchor",
         "TestPreparedGCManifestNeedsNormalDeletionNotFenceProof"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "ownership-transfer-foundation",
+      "package": "./pkg/persistence",
+      "tests": [
+        "TestOwnershipRetirementRequiresStoppedSourceAndCannotRestoreOldOwner",
+        "TestOwnershipTargetReservationFencesWritesAndBindsCompletion"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "ownership-transfer-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestOwnershipTransferPreparationRetiresSourceAndReservesTarget",
+        "TestOwnershipAbortCannotReleaseForeignMaintenanceID",
+        "TestOwnershipTransferProcessCrashMatrix"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "artifact_env": []
+    },
+    {
+      "id": "ownership-transfer-host",
+      "package": "./pkg/hostsupervisor",
+      "tests": [
+        "TestOwnershipPreparationRequiresStableCanonicalFreeze",
+        "TestAdoptionIndependentProcessCrashBoundaries"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "ownership-transfer-docker",
+      "package": "./pkg/provider/docker",
+      "tests": [
+        "TestDockerOwnershipTransferOverridesLabelsAndFencesOldGC",
+        "TestMissingTransferBindingCannotReviveOriginalLabels",
+        "TestTransferDiscoveryRejectsOrphanRequiredAnchor",
+        "TestRecreatedTransferDirectoryCannotRestoreLabelAuthority",
+        "TestDockerOwnershipCanTransferAgainWithoutRevivingFirstOwner"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "ownership-transfer-firecracker",
+      "package": "./pkg/provider/firecracker",
+      "tests": [
+        "TestFirecrackerOwnershipTransferPreservesStoppedArtifacts"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "ownership-transfer-libvirt",
+      "package": "./pkg/provider/libvirt",
+      "tests": [
+        "TestOwnershipTransferPreservesExternalDomainAndFencesOldOwner",
+        "TestOwnershipPreparationRejectsCorruptRecoveryState"
       ],
       "kind": "contract",
       "race": true,

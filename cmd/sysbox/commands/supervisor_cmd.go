@@ -132,6 +132,21 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		}
 		return provider.InspectAdoption(ctx, req.ExternalID, substrate.NodeSpec{})
 	}
+	server.OwnershipPrepare = func(ctx context.Context, plan controlplane.OwnershipTransferPlan) (controlplane.OwnershipPreparation, error) {
+		return hostsupervisor.PrepareOwnership(ctx, plan, ident.ID, strings.TrimSpace(string(boot)), key, authority.AuthorizeOwnershipPreparation, func(ctx context.Context, p controlplane.OwnershipTransferPlan) error {
+			provider, err := driver.DefaultRegistry.RequireOwnershipAdoption(p.Provider)
+			if err != nil {
+				return err
+			}
+			inspector, ok := provider.(interface {
+				InspectOwnershipTransfer(context.Context, controlplane.OwnershipTransferPlan) error
+			})
+			if !ok {
+				return fmt.Errorf("provider transfer preparation unavailable")
+			}
+			return inspector.InspectOwnershipTransfer(ctx, p)
+		})
+	}
 	server.AdoptionApply = func(ctx context.Context, req controlplane.AdoptionRequest, grant controlplane.SignedExecutionGrant) (json.RawMessage, error) {
 		p, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider)
 		if err != nil {
@@ -139,10 +154,24 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		}
 		identity := substrate.OperationIdentity{ActionID: req.ID, OwnerUID: req.TopologyUID, TopologyUID: req.TopologyUID, ResourceUID: req.ResourceUID, Generation: req.Generation}
 		ctx = substrate.WithOperationIdentity(ctx, identity)
-		if _, err := p.ApplyAdoption(ctx, req.Evidence); err != nil {
-			return nil, err
+		var h substrate.NodeHandle
+		if req.Transfer != nil {
+			transfer, ok := p.(interface {
+				ApplyOwnershipTransfer(context.Context, controlplane.OwnershipRetirementProof, ed25519.PublicKey) (substrate.NodeHandle, error)
+			})
+			if !ok {
+				return nil, fmt.Errorf("provider ownership transfer unavailable")
+			}
+			if err := controlplane.VerifyOwnershipRetirement(public, *req.Transfer); err != nil {
+				return nil, err
+			}
+			h, err = transfer.ApplyOwnershipTransfer(ctx, *req.Transfer, public)
+		} else {
+			if _, err = p.ApplyAdoption(ctx, req.Evidence); err != nil {
+				return nil, err
+			}
+			h, err = p.ObserveAdoption(ctx, req.Evidence)
 		}
-		h, err := p.ObserveAdoption(ctx, req.Evidence)
 		if err != nil {
 			return nil, err
 		}

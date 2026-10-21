@@ -995,3 +995,40 @@ fresh reference reservation authorize this new deletion. Full original manifest
 bytes, proof and new grant are durably archived outside the removed directory.
 No old PID is signalled. Current-boot and never-started generations use ordinary
 GC. A new successful receipt belongs only to the new reservation.
+
+### Explicit ownership transfer
+
+`POST /v1/topologies/{target}/ownership-transfers/prepare` accepts an immutable
+`OwnershipTransferPlan`: source/target topology UIDs, resource UIDs/generations,
+addresses and serials, exact external ID/provider, owning Agent and inspection
+fingerprint. Both placements must use that Agent. The target is durably reserved;
+the source maintenance barrier revokes grants and waits for verified stops. A
+stale source plan is rejected before target reservation.
+
+On the owning host, `sysbox host-fence prepare-transfer <plan.json> --socket ...`
+asks canonical authority, verifies the stopped provider object and recovery state,
+then rechecks the freeze and signs the preparation. Submit the proof to
+`POST /v1/topologies/{target}/ownership-transfers/prepared`. Confirm with the same
+plan at `POST /v1/topologies/{target}/ownership-transfers`. Confirmation requires
+that stored host preparation, commits source retirement under authority exclusion,
+and queues a normal signed host adoption command carrying the retirement proof.
+Target completion consumes the host receipt, commits target state, stops the new
+grant and releases the source barrier. Matching completed POSTs return the
+original operation instead of reapplying.
+
+Before source retirement, `POST .../ownership-transfers/abort` permanently marks
+the target reservation aborted. A delayed preparation cannot reopen it. Release
+of the source hold still waits for stop evidence and checks the exact plan;
+retirement cannot be silently rolled back through abort. After retirement, any
+external administrator modification that invalidates provider evidence retains
+the hold for explicit reconciliation.
+
+Docker uses a signed durable transfer sidecar because its original labels are
+immutable. Policy, GC, lifecycle, reset-old-object and discovery consult effective
+ownership; missing required bindings fail closed. Successive transfers preserve
+an atomic signature chain. Firecracker requires a stopped VMM with no unresolved
+launch/attachment; the original artifacts stay in place and signed manifest
+history validates the new ownership at the original physical path. libvirt
+requires a stopped persistent definition and exact metadata readback; storage
+and networking remain external and are not deleted as source-owned disk paths.
+Transfer reservations use aggregate format 11; old readers must be drained.

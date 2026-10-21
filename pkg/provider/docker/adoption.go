@@ -31,6 +31,9 @@ func (s *Substrate) managedOwnershipLabels(ctx context.Context, ins container.In
 	if ins.Config == nil {
 		return nil, fmt.Errorf("docker inspection lacks config")
 	}
+	if labels, exists, err := s.transferredLabels(ins); exists || err != nil {
+		return labels, err
+	}
 	labels := ins.Config.Labels
 	if labels["sysbox.managed"] == "true" && labels["sysbox.owner_uid"] != "" && labels["sysbox.resource_uid"] != "" && labels["sysbox.topology_uid"] != "" {
 		return labels, nil
@@ -94,6 +97,9 @@ func (s *Substrate) ApplyAdoption(ctx context.Context, e substrate.AdoptionEvide
 		return substrate.NodeHandle{}, fmt.Errorf("invalid adoption evidence")
 	}
 	path := s.adoptionPath(e.ExternalID)
+	if err := validateTransferCatalog(filepath.Dir(path)); err != nil {
+		return substrate.NodeHandle{}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return substrate.NodeHandle{}, err
 	}

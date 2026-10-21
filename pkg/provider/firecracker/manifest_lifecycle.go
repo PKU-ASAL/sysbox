@@ -468,6 +468,19 @@ func (s *Substrate) DiscoverManagedNode(ctx context.Context, identity substrate.
 		return substrate.NodeHandle{}, err
 	}
 	dir := filepath.Join(root, identity.TopologyUID, identity.ResourceUID, strconv.FormatInt(identity.Generation, 10))
+	if _, err := os.Lstat(dir); os.IsNotExist(err) {
+		handles, e := s.ListManagedNodes(ctx)
+		if e != nil {
+			return substrate.NodeHandle{}, e
+		}
+		for _, h := range handles {
+			hs, _ := h.Provider.(*HandleState)
+			if hs != nil && hs.OwnerUID == identity.OwnerUID && hs.TopologyUID == identity.TopologyUID && hs.ResourceUID == identity.ResourceUID && hs.Generation == identity.Generation {
+				dir = hs.VMDir
+				break
+			}
+		}
+	}
 	// VM ID is stored inside the controlled generation, and validated independently.
 	raw, err := readRegularFile(filepath.Join(dir, "manifest.json"))
 	if err != nil {

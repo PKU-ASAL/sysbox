@@ -23,6 +23,7 @@ import (
 // which worker may submit requests; issuer signatures and canonical resource
 // identity still authorize every effect. Private keys never cross this socket.
 type Server struct {
+	OwnershipPrepare func(context.Context, controlplane.OwnershipTransferPlan) (controlplane.OwnershipPreparation, error)
 	GCFencedEffect   func(context.Context, GCCandidate, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	AdoptionInspect  func(context.Context, controlplane.AdoptionInspectionRequest) (substrate.AdoptionEvidence, error)
 	Socket           string
@@ -204,6 +205,20 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 
 func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Response {
 	response := Response{Version: 1}
+	if request.Operation == "ownership-prepare" {
+		if request.Version != 1 || request.Target != (TargetRef{}) || request.OwnershipPlan == nil || s.OwnershipPrepare == nil {
+			response.Error = "ownership preparation unavailable"
+			return response
+		}
+		proof, err := s.OwnershipPrepare(ctx, *request.OwnershipPlan)
+		if err != nil {
+			response.Error = err.Error()
+		} else {
+			response.OwnershipPreparation = &proof
+		}
+		return response
+	}
+
 	if request.Operation == "gc-disposition" {
 		if request.Version != 1 || request.Target != (TargetRef{}) || !recoveryCommandID.MatchString(request.GCFenceID) || s.GC == nil {
 			response.Error = "valid canonical GC fence required"

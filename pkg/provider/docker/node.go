@@ -46,7 +46,11 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 		if strictName || !managed || existing.Config == nil {
 			return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", fmt.Sprintf("container name %q already exists; refusing replacement", spec.Name), nil)
 		}
-		if err := verifyLabels(existing.Config.Labels, operationLabels(identity)); err != nil {
+		actual, verifyErr := s.managedOwnershipLabels(ctx, existing)
+		if verifyErr != nil {
+			return substrate.NodeHandle{}, verifyErr
+		}
+		if err := verifyLabels(actual, operationLabels(identity)); err != nil {
 			return substrate.NodeHandle{}, err
 		}
 		return managedHandle(existing, identity.Generation)

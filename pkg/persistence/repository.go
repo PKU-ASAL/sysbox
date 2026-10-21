@@ -33,6 +33,7 @@ const FormatVersion = 6
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
+	OwnershipTargets     map[string]OwnershipTargetReservation            `json:"ownership_targets,omitempty"`
 	OwnershipRetirements map[string]controlplane.OwnershipRetirementProof `json:"ownership_retirements,omitempty"`
 	DeletedFrom          *LifecycleDeletionReceipt                        `json:"deleted_from,omitempty"`
 	GCSources            map[string]GCSource                              `json:"gc_sources,omitempty"`
@@ -114,14 +115,14 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion && header.Format != OwnershipRetirementFormatVersion {
+	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion && header.Format != OwnershipRetirementFormatVersion && header.Format != OwnershipTargetFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, header.Format, FormatVersion)
 	}
 	var a aggregate
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion {
+	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, a.Format, FormatVersion)
 	}
 	if err := validateAggregate(&a, ""); err != nil {
@@ -140,6 +141,9 @@ func validateAggregate(a *aggregate, topology string) error {
 		return ErrCorruptRecord
 	}
 	if err := validateGCSources(a); err != nil {
+		return err
+	}
+	if err := validateOwnershipTargets(a); err != nil {
 		return err
 	}
 	if err := validateOwnershipRetirements(a); err != nil {
@@ -247,7 +251,7 @@ func (r *Repository) updateGC(ctx context.Context, topology string, gcTransition
 			return err
 		}
 		var before []byte
-		if !gcTransition && gcPending(a) {
+		if (!gcTransition && gcPending(a)) || ownershipPending(a) {
 			raw, err := json.Marshal(a)
 			if err != nil {
 				return err
@@ -696,6 +700,9 @@ func (b *stateBackend) DeleteVersioned(ctx context.Context, expectedSerial int64
 	})
 }
 func resetAggregate(a *aggregate) error {
+	if ownershipPending(a) {
+		return ErrConflict
+	}
 	if len(a.GCSources) > 0 {
 		return ErrConflict
 	}

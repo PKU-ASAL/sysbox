@@ -85,7 +85,11 @@ func (s *Substrate) DestroyReset(ctx context.Context, handle substrate.ResetHand
 			if inspected.ID != state.OldContainerID || inspected.Config == nil {
 				return fmt.Errorf("docker reset old container exact identity mismatch")
 			}
-			if err := requireResetOwnership(inspected.Config.Labels, resetOldLabels(state)); err != nil {
+			actual, e := s.managedOwnershipLabels(ctx, inspected)
+			if e != nil {
+				return e
+			}
+			if err := requireResetOwnership(actual, resetOldLabels(state)); err != nil {
 				return err
 			}
 			if err := s.cli.ContainerRemove(ctx, state.OldContainerID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
@@ -165,7 +169,11 @@ func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHand
 		if state.NewContainerID != "" {
 			return observation, fmt.Errorf("docker reset old container reappeared after replacement")
 		}
-		if err := requireResetOwnership(replacement.Config.Labels, resetOldLabels(state)); err != nil {
+		actual, e := s.managedOwnershipLabels(ctx, replacement)
+		if e != nil {
+			return observation, e
+		}
+		if err := requireResetOwnership(actual, resetOldLabels(state)); err != nil {
 			return observation, err
 		}
 		observation.Phase = substrate.ResetPhasePrepared
@@ -211,7 +219,11 @@ func (s *Substrate) CleanupReset(ctx context.Context, handle substrate.ResetHand
 	if old.ID != state.OldContainerID || old.Config == nil {
 		return fmt.Errorf("docker reset old container exact identity mismatch")
 	}
-	if err := requireResetOwnership(old.Config.Labels, resetOldLabels(state)); err != nil {
+	actual, e := s.managedOwnershipLabels(ctx, old)
+	if e != nil {
+		return e
+	}
+	if err := requireResetOwnership(actual, resetOldLabels(state)); err != nil {
 		return err
 	}
 	return s.cli.ContainerRemove(ctx, state.OldContainerID, container.RemoveOptions{Force: true})

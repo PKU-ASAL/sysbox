@@ -85,7 +85,7 @@ func (r *Repository) CompleteGCDisposition(ctx context.Context, topology string,
 		if evidenceHash(stored) != p.Request.JournalSHA256 {
 			return ErrConflict
 		}
-		if a.Format != OwnershipRetirementFormatVersion {
+		if a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion {
 			a.Format = GCDispositionFormatVersion
 		}
 		stored.DispositionHash = hash

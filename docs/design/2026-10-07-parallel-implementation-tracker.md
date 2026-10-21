@@ -952,3 +952,18 @@ source retirement 要求匹配维护屏障和所有旧 grant 停止，原子移�
 保留 format10 retirement 历史。旧资源 UID／同 provider 外部 ID 不能重新写回，
 metadata reset 后也保留保护。当前仅基础层，未接通 target CAS、provider 改绑、
 owning-agent 调度或完整恢复 API，不可作为正式 transfer 使用。
+
+## ownership transfer 链路接通（2026-10-21）
+
+源退休基础之后已接通目标 reservation、退休前 host preparation、显式确认、
+签名 owning-host grant/provider 改绑、目标 state 与回执提交、源屏障释放。
+准备前拒绝 stale source；退休前 abort 与 begin/retire 同 authority 锁串行，
+不能释放其他维护 hold，已取消计划不能重新创建 hold；完成POST返回原operation。
+三后端 prepared/retired/target-committed 独立进程退出矩阵通过。Docker/libvirt/
+Firecracker 均有provider实现和真实冷生命周期验证；libvirt还有API-host整链验证。
+Docker signed sidecar 与Firecracker原manifest签名链支持连续转移，旧owner始终拒绝。
+目标reservation使用format11，旧reader明确拒绝，不允许混合旧二进制发布。
+
+本次全量Go（含PostgreSQL）通过，日志 `/tmp/sysbox-ownership-final-full.log`；
+vet及四组严格门禁通过。尚未据此关闭完整provider内部OS-kill与升级整合矩阵；
+阶段2的SQL远端consumer接入亦仍需继续实施，两个WIP PR保持真实剩余项。

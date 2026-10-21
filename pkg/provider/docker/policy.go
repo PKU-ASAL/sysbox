@@ -254,7 +254,11 @@ func (s *Substrate) policyTargetPID(ctx context.Context, target dockerPolicyTarg
 	if container.ID != containerID || container.Config == nil {
 		return 0, driver.Wrap(driver.ErrorInvalidState, "docker", "policy target exact ID or metadata mismatch", nil)
 	}
-	if err := verifyLabels(container.Config.Labels, operationLabels(target.Identity)); err != nil {
+	labels, e := s.managedOwnershipLabels(substrate.WithOperationIdentity(ctx, target.Identity), container)
+	if e != nil {
+		return 0, e
+	}
+	if err := verifyLabels(labels, operationLabels(target.Identity)); err != nil {
 		return 0, err
 	}
 	if container.State == nil || !container.State.Running || container.State.Pid == 0 {

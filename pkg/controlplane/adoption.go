@@ -9,6 +9,7 @@ import (
 )
 
 type AdoptionRequest struct {
+	Transfer       *OwnershipRetirementProof  `json:"transfer,omitempty"`
 	ID             string                     `json:"id"`
 	Topology       string                     `json:"topology"`
 	TopologyUID    string                     `json:"topology_uid"`
@@ -28,6 +29,15 @@ func (r AdoptionRequest) Validate() error {
 	}
 	if r.Evidence.Provider != r.Provider || r.Evidence.ExternalID != r.ExternalID || r.Evidence.Fingerprint == "" {
 		return fmt.Errorf("adoption evidence mismatch")
+	}
+	if r.Transfer != nil {
+		if err := r.Transfer.validate(); err != nil {
+			return err
+		}
+		p := r.Transfer.Plan
+		if r.ID != p.ID || r.Topology != p.TargetTopology || r.TopologyUID != p.Target.TopologyUID || r.ResourceUID != p.Target.ResourceUID || r.Generation != p.Target.Generation || r.AgentID != p.AgentID || r.Address != p.TargetAddress || r.Provider != p.Provider || r.ExternalID != p.ExternalID || r.ExpectedSerial != p.TargetSerial || r.Evidence.Fingerprint != p.Fingerprint {
+			return fmt.Errorf("transfer adoption binding mismatch")
+		}
 	}
 	return nil
 }

@@ -64,7 +64,17 @@ func (s *Substrate) DiscoverManagedNode(ctx context.Context, id substrate.Operat
 		return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", "multiple containers match managed generation", nil)
 	}
 	target := name
+	transferred, err := s.transferredContainerFor(id)
+	if err != nil {
+		return substrate.NodeHandle{}, err
+	}
+	if transferred != "" {
+		target = transferred
+	}
 	if len(candidates) == 1 {
+		if transferred != "" && transferred != candidates[0].ID {
+			return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", "conflicting transferred generation", nil)
+		}
 		target = candidates[0].ID
 	}
 	inspected, err := s.cli.ContainerInspect(ctx, target)
@@ -77,8 +87,15 @@ func (s *Substrate) DiscoverManagedNode(ctx context.Context, id substrate.Operat
 	if inspected.Config == nil {
 		return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", "container lacks ownership metadata", nil)
 	}
-	if err := verifyLabels(inspected.Config.Labels, labels); err != nil {
+	actual, e := s.managedOwnershipLabels(substrate.WithOperationIdentity(ctx, id), inspected)
+	if e != nil {
+		return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", "managed ownership evidence invalid", e)
+	}
+	if err := verifyLabels(actual, labels); err != nil {
 		return substrate.NodeHandle{}, err
+	}
+	if transferred != "" {
+		return s.adoptHandle(ctx, inspected, id), nil
 	}
 	return managedHandle(inspected, id.Generation)
 }
@@ -101,7 +118,11 @@ func (s *Substrate) DeleteManagedExternal(ctx context.Context, externalID, owner
 		return driver.Wrap(driver.ErrorInvalidState, "docker", "GC container lacks ownership labels", nil)
 	}
 	expected := map[string]string{"sysbox.managed": "true", "sysbox.owner_uid": ownerUID, "sysbox.topology_uid": ownerUID, "sysbox.resource_uid": resourceUID, "sysbox.generation": strconv.FormatInt(generation, 10)}
-	if err := verifyLabels(inspected.Config.Labels, expected); err != nil {
+	actual, err := s.managedOwnershipLabels(substrate.WithOperationIdentity(ctx, substrate.OperationIdentity{ActionID: "gc", OwnerUID: ownerUID, TopologyUID: ownerUID, ResourceUID: resourceUID, Generation: generation}), inspected)
+	if err != nil {
+		return err
+	}
+	if err := verifyLabels(actual, expected); err != nil {
 		return err
 	}
 	if err := s.cli.ContainerRemove(ctx, externalID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {

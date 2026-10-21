@@ -31,6 +31,16 @@ func validateCommandLifecycle(a *aggregate, command controlplane.AgentCommand) e
 	if a.State.TopologyUID != command.TopologyUID {
 		return ErrConflict
 	}
+	if ownershipPending(a) {
+		req, err := controlplane.FromAdoptionCommand(command)
+		if err != nil || req.Transfer == nil {
+			return ErrConflict
+		}
+		target, ok := a.OwnershipTargets[req.ID]
+		if !ok || target.CompletedHash != "" || evidenceHash(target.Plan) != evidenceHash(req.Transfer.Plan) {
+			return ErrConflict
+		}
+	}
 	if command.Type != "gc_delete" {
 		return nil
 	}

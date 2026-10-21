@@ -36,20 +36,21 @@ type processIdentity struct {
 // vmManifest is the sole durable authority for provider identity and recovery.
 // Phase and Ready describe past observations; neither is evidence of liveness.
 type vmManifest struct {
-	Version      int             `json:"version"`
-	VMID         string          `json:"vm_id"`
-	RuntimeRoot  string          `json:"runtime_root"`
-	OwnerUID     string          `json:"owner_uid"`
-	ResourceUID  string          `json:"resource_uid"`
-	TopologyUID  string          `json:"topology_uid,omitempty"`
-	Generation   int64           `json:"generation"`
-	ActionID     string          `json:"action_id"`
-	ConfigSHA256 string          `json:"config_sha256"`
-	ImageDigest  string          `json:"image_digest,omitempty"`
-	Phase        string          `json:"phase"`
-	ObservedAt   time.Time       `json:"observed_at"`
-	Process      processIdentity `json:"process"`
-	Handle       HandleState     `json:"handle"`
+	Transfer     *manifestOwnershipTransfer `json:"ownership_transfer,omitempty"`
+	Version      int                        `json:"version"`
+	VMID         string                     `json:"vm_id"`
+	RuntimeRoot  string                     `json:"runtime_root"`
+	OwnerUID     string                     `json:"owner_uid"`
+	ResourceUID  string                     `json:"resource_uid"`
+	TopologyUID  string                     `json:"topology_uid,omitempty"`
+	Generation   int64                      `json:"generation"`
+	ActionID     string                     `json:"action_id"`
+	ConfigSHA256 string                     `json:"config_sha256"`
+	ImageDigest  string                     `json:"image_digest,omitempty"`
+	Phase        string                     `json:"phase"`
+	ObservedAt   time.Time                  `json:"observed_at"`
+	Process      processIdentity            `json:"process"`
+	Handle       HandleState                `json:"handle"`
 }
 
 func validIdentityPart(value string) bool {
@@ -306,6 +307,12 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 			return nil, fmt.Errorf("invalid manifest topology identity")
 		}
 		expected = filepath.Join(root, m.TopologyUID, m.ResourceUID, strconv.FormatInt(m.Generation, 10))
+	}
+	if m.Transfer != nil {
+		expected, err = transferManifestDirectory(root, &m)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if dir != expected {
 		return nil, fmt.Errorf("firecracker manifest directory identity conflict")
