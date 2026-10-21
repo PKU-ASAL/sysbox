@@ -18,6 +18,10 @@ const maxRevisionInventory = 10000
 const maxRevisionInventoryBytes = 64 << 20
 
 func (s *Server) globalRevisionInventory(ctx context.Context) ([]controlplane.GlobalRevision, error) {
+	return s.globalRevisionInventoryWithFileLock(ctx, true)
+}
+
+func (s *Server) globalRevisionInventoryWithFileLock(ctx context.Context, lock bool) ([]controlplane.GlobalRevision, error) {
 	out := []controlplane.GlobalRevision{}
 	total := 0
 	appendRevision := func(id string, rev controlplane.GlobalRevision, rawSize int) error {
@@ -37,6 +41,16 @@ func (s *Server) globalRevisionInventory(ctx context.Context) ([]controlplane.Gl
 		if err != nil {
 			return nil, err
 		}
+		if lock {
+			release, e := revisiongate.Lock(ctx, root)
+			if os.IsNotExist(e) {
+				return out, nil
+			}
+			if e != nil {
+				return nil, e
+			}
+			defer release()
+		}
 		entries, err := os.ReadDir(root)
 		if os.IsNotExist(err) {
 			return out, nil
@@ -48,7 +62,14 @@ func (s *Server) globalRevisionInventory(ctx context.Context) ([]controlplane.Gl
 			if err = ctx.Err(); err != nil {
 				return nil, err
 			}
-			if entry.Name() == "consumers.json" || !strings.HasSuffix(entry.Name(), ".json") {
+			if entry.Name() == "consumers.json" || revisiongate.IsRetirementMetadata(entry.Name()) || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			retired, err := revisiongate.Retired(root, strings.TrimSuffix(entry.Name(), ".json"))
+			if err != nil {
+				return nil, err
+			}
+			if retired {
 				continue
 			}
 			info, err := entry.Info()

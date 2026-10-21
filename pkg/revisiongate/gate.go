@@ -181,15 +181,16 @@ func GuardCatalog(ctx context.Context, catalog string, raw []byte) (func(), erro
 		return nil, err
 	}
 	for id := range refs {
-		_, err := os.Lstat(filepath.Join(catalog, id+".json.retired"))
-		if err == nil {
-			unlock()
-			return nil, fmt.Errorf("revision %s is retired", id)
-		}
-		if !os.IsNotExist(err) {
+		retired, err := Retired(catalog, id)
+		if err != nil {
 			unlock()
 			return nil, err
 		}
+		if retired {
+			unlock()
+			return nil, fmt.Errorf("revision %s is retired", id)
+		}
 	}
+
 	return unlock, nil
 }

@@ -22,10 +22,11 @@
     "file-registry-retirement",
     "file-revision-gate",
     "file-effect-ledger",
-    "file-reset-return"
+    "file-reset-return",
+    "file-revision-batch"
   ],
   "boundaries": {
-    "file_registry": "single revision deletion under shared catalog flock; permanent retirement proof; all enrolled local/shared-visible roots required; old writers must be drained; file retention batch apply unavailable",
+    "file_registry": "single and atomic batch retirement under shared catalog flock; committed proof index and required anchor protect late admission; explicit retired-payload cleanup; old writers must be drained",
     "sql_registry": "unscoped same-catalog SQLite/PostgreSQL; explicit single-revision retirement",
     "provider_batch": "1..128 candidates; ordered, each receipt required",
     "cache_batch": "one exact private host file per apply",
@@ -33,7 +34,7 @@
     "faults": "libvirt/Firecracker coordinator process exits before effect, after effect, before report; missing/corrupt journal; cancellation, failed outcome persistence, queued-request journal loss; no automatic unknown resolution"
   },
   "not_closed": [
-    "unregistered or remote registry federation and file retention batch apply",
+    "unregistered or remote registry federation",
     "full API/Agent SIGKILL matrix and provider-internal partial calls",
     "full P8/P9 original acceptance",
     "non-Docker unknown GC reservation reconciliation/release after explicit fencing"

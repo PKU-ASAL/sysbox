@@ -144,10 +144,11 @@
         "revision-delete-storage",
         "revision-delete-api",
         "file-registry-retirement",
-        "file-revision-gate"
+        "file-revision-gate",
+        "file-revision-batch"
       ],
       "remaining": [
-        "File single-object retirement and explicitly enrolled independent local registry consumers are implemented. Arbitrary remote/unregistered registry federation and atomic file-retention batches remain open."
+        "File single-object and atomic batch retirement support explicitly enrolled local/shared-visible roots. Remote/unregistered registry federation remains open."
       ]
     },
     {
@@ -838,7 +839,8 @@
         "TestNestedCatalogCannotShadowRetirement",
         "TestIndependentRegistryRejectsLateReferencesAcrossConsumers",
         "TestEnrollmentNeverForgetsExistingConsumers",
-        "TestReferenceDecodeIncludesEscapedMapKeys"
+        "TestReferenceDecodeIncludesEscapedMapKeys",
+        "TestBatchIndexCommitsWholeProofAndDetectsMissingIndex"
       ],
       "kind": "contract",
       "race": true,
@@ -861,6 +863,23 @@
       "package": "./pkg/agentexec",
       "tests": [
         "TestResetReturnCannotPublishRetiredRevision"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "file-revision-batch",
+      "package": "./pkg/api",
+      "tests": [
+        "TestFileRevisionBatchConflictRollsBackAll",
+        "TestFileRevisionBatchCommitSurvivesUnremovedPayloads",
+        "TestFileRevisionBatchRacesRun",
+        "TestFileRevisionBatchCleanupAfterInterruptedCommit",
+        "TestBatchProofFilenameOutsideCatalogCannotHideReference",
+        "TestFileRevisionMissingBatchProofNeverReopensAdmission",
+        "TestRetiredCleanupPreservesNonPayloadFile"
       ],
       "kind": "contract",
       "race": true,

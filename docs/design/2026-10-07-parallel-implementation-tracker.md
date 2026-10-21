@@ -906,3 +906,12 @@ consumer、清单丢失、旧格式证据及不完整扫描均拒绝删除。升
 在显式宿主 fencing 后的核验、处置与释放链；现有 Run fence-delete/release 不能
 代替 GC reservation 的协议。完整 API/Agent SIGKILL 和 provider 内部分步故障矩阵
 也不能由 coordinator 子进程退出用例代替。原始 P8/P9 清单继续保持开放。
+
+## 阶段 2 文件批量退休补齐（2026-10-21）
+
+文件 retention-apply 已增加 1–128 对象的同锁策略／引用重验与整批逻辑提交。
+退休 proof 先落盘，index 原子替换为提交点；required anchor 检出 index 丢失，
+index 检出 proof 丢失。提交前冲突不退休任何成员；提交后崩溃只可能留下已退休
+payload，可通过 retired-cleanup 重复回收。盘点与新引用准入共用 catalog 锁。
+独立登记且共享可见路径的文件 registry 同样使用该协议；任意远端联邦仍开放。
+此子项完成不代表阶段 2 整体关闭，unknown GC fencing 后的处置释放仍在实施。

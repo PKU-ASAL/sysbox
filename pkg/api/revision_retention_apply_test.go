@@ -46,10 +46,6 @@ func TestRevisionRetentionApplyDeletesBatchAndRejectsChangedPreview(t *testing.T
 		changed.Digest = "changed"
 		require.Equal(t, 409, apply(changed).Code)
 		response := apply(plan)
-		if _, local := store.(*localAPIStore); local {
-			require.Equal(t, 409, response.Code)
-			return
-		}
 		require.Equal(t, 200, response.Code, response.Body.String())
 		for _, id := range ids[:2] {
 			_, err = store.GetGlobalRevision(ctx, id)

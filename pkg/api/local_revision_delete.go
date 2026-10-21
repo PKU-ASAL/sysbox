@@ -73,6 +73,13 @@ func (s *localAPIStore) DeleteGlobalRevisionAtomic(ctx context.Context, id strin
 		return err
 	}
 	defer unlock()
+	if err := s.validateLocalRevisionRetirement(ctx, root, id, olderThan); err != nil {
+		return err
+	}
+	return compactLocalRevisionRetirement(ctx, root, id)
+}
+
+func (s *localAPIStore) validateLocalRevisionRetirement(ctx context.Context, root, id string, olderThan time.Time) error {
 	rev, err := s.GetGlobalRevision(ctx, id)
 	if err != nil {
 		return err
@@ -102,7 +109,7 @@ func (s *localAPIStore) DeleteGlobalRevisionAtomic(ctx context.Context, id strin
 				}
 				return nil
 			}
-			if path == target || path == filepath.Join(root, "consumers.json") || filepath.Base(path) == ".sysbox-revision-registry.json" || strings.HasSuffix(path, ".lock") {
+			if path == target || (filepath.Dir(path) == root && revisiongate.IsRetirementMetadata(filepath.Base(path))) || path == filepath.Join(root, "consumers.json") || filepath.Base(path) == ".sysbox-revision-registry.json" || strings.HasSuffix(path, ".lock") {
 				return nil
 			}
 			if strings.HasSuffix(path, ".retired") {
@@ -183,6 +190,11 @@ func (s *localAPIStore) DeleteGlobalRevisionAtomic(ctx context.Context, id strin
 			return err
 		}
 	}
+	return nil
+}
+func compactLocalRevisionRetirement(ctx context.Context, root, id string) error {
+	target := filepath.Join(root, id+".json")
+	var err error
 	tomb := target + ".retired"
 	if _, err = os.Lstat(tomb); !os.IsNotExist(err) {
 		return persistence.ErrConflict

@@ -230,6 +230,13 @@ func (s *localAPIStore) GetGlobalRevision(_ context.Context, revision string) (*
 	if err != nil {
 		return nil, err
 	}
+	retired, err := revisiongate.Retired(root, revision)
+	if err != nil {
+		return nil, err
+	}
+	if retired {
+		return nil, errGlobalRevisionNotFound
+	}
 	rev, err := readLocalObject[controlplane.GlobalRevision](filepath.Join(root, revision+".json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, errGlobalRevisionNotFound

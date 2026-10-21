@@ -867,8 +867,8 @@ an early stale-plan check, not the concurrency protection.
 
 The response lists deleted revision IDs and `atomic:true`. Replaying an applied
 preview returns conflict, and a disconnected response requires a new inspection;
-it does not authorize repeating the old batch blindly. File registry execution
-remains unsupported: file retirement is currently explicit and single-object.
+it does not authorize repeating the old batch blindly. File registry execution also supports this endpoint, with an atomic retirement
+index commit and recoverable physical payload cleanup.
 
 
 ### File and independent registry retirement
@@ -901,5 +901,22 @@ or offline consumers block deletion. This option rejects SQL state backends.
 Drain old writer binaries before enrolling or enabling retirement. Arbitrary
 unregistered writers, independent databases, and remote registry federation do
 not participate in this file protocol. Keep the catalog, binding, manifest and
-retirement proofs in backups; never delete them to unblock a request. File
-retention batch application is not implemented by this endpoint.
+retirement proofs in backups; never delete them to unblock a request. File batches use the retention-apply endpoint and its independent policy checks.
+
+
+### File retention batch recovery
+
+File `retention-apply` validates all 1–128 candidates, keep-last policy and every
+registered consumer reference under the catalog lock. No retirement is published
+if any candidate conflicts. The batch proof is durable before an atomic index
+replacement commits the entire batch; all readers and writers consult this index.
+A proof left before index commit does not retire anything. Missing committed
+proofs, index or required anchor block admission. Inventory holds the same lock.
+
+Physical object removal follows the index commit. A crash or removal error can
+leave retired bytes, but never authorize a late Run or expose a subset of the
+batch after recovery. `POST /v1/revisions/retired-cleanup` on the local backend
+reclaims only already-retired `.json` object payloads and is safely repeatable.
+It returns `reclaimed_objects` and `retirement_proofs_preserved:true`; it never
+removes index, anchor or batch proofs. Restore all of these together from backups.
+Drain writer binaries predating this batch protocol before enabling it.
