@@ -4659,3 +4659,14 @@ an intervening later reboot does not erase independently verified stop evidence.
 Prepared never-started manifests continue through normal GC rather than requiring
 a reboot proof. Wrong owner, old grant, current-boot manifest and bad signatures
 are rejected. The lab was stopped with all disks and evidence retained.
+
+### Independent SQLite/PostgreSQL revision consumers
+
+Both SQL backends passed real HTTP consumer retirement and late-Run rejection,
+lost durable acknowledgment retry, mixed referenced/unreferenced batch rollback,
+and enrollment-loss refusal. A separate multi-peer transport test confirms the
+central registry retains its object and intent when a later peer fails after an
+earlier acknowledgment. `/tmp/sysbox-sql-federation-final.log` records the SQL
+race regressions; socket-sandbox failure logs are not counted as acceptance.
+The protocol deliberately retains irreversible consumer fences on partial
+failure instead of claiming a distributed atomic rollback.

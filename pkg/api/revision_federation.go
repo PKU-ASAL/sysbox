@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -101,7 +102,13 @@ func (s *Server) retireSQLConsumers(ctx context.Context, root string, ids []stri
 	if err := writeLocalObjectWithoutGate(filepath.Join(root, request+".intent"), input); err != nil {
 		return err
 	}
-	for name, consumer := range consumers {
+	names := make([]string, 0, len(consumers))
+	for name := range consumers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		consumer := consumers[name]
 		if err := revisiongate.PostRetirement(ctx, consumer.URL, consumer.TokenFile, input); err != nil {
 			return fmt.Errorf("consumer %s retirement pending: %w", name, err)
 		}

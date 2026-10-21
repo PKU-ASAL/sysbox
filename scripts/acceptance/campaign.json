@@ -147,10 +147,11 @@
         "file-revision-gate",
         "file-revision-batch",
         "remote-revision-protocol",
-        "remote-revision-api"
+        "remote-revision-api",
+        "sql-revision-federation"
       ],
       "remaining": [
-        "File single-object and atomic batch retirement support explicitly enrolled local/shared-visible roots. Remote/unregistered registry federation remains open."
+        "Explicit file/shared-path/HTTPS consumer pins and SQL downstream retirement are implemented. Final same-source combined federation fault acceptance remains required; unregistered repositories never count as empty."
       ]
     },
     {
@@ -968,6 +969,24 @@
       "kind": "contract",
       "race": true,
       "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "sql-revision-federation",
+      "package": "./pkg/api",
+      "tests": [
+        "TestSQLFederatedRetirementRejectsLateRunAndLostConsumer",
+        "TestSQLFederationLostAcknowledgementResumesWithoutPrematureCentralDelete",
+        "TestSQLFederationCorruptMembershipAndRawBypassRejected",
+        "TestSQLFederationRetainsEntireCentralBatchOnConsumerConflict",
+        "TestSQLFederationUnavailablePeerKeepsCentralObject"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
       "artifact_env": []
     }
   ]

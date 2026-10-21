@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -167,4 +168,33 @@ func TestSQLFederationRetainsEntireCentralBatchOnConsumerConflict(t *testing.T) 
 		}
 		require.NoError(t, store.SaveRun(ctx, controlplane.Run{ID: "first-still-admissible", Topology: "lab", Revision: ids[0], Status: controlplane.RunQueued, QueuedAt: time.Now()}))
 	})
+}
+
+func TestSQLFederationUnavailablePeerKeepsCentralObject(t *testing.T) {
+	ctx := context.Background()
+	central := NewServer(t.TempDir(), t.TempDir())
+	token := filepath.Join(t.TempDir(), "token")
+	require.NoError(t, os.WriteFile(token, []byte("federation-test-secret"), 0600))
+	firstCalls := 0
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstCalls++
+		var input revisionFederationRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&input))
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"retired": input.Revisions, "request": input.Request}))
+	}))
+	defer first.Close()
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "offline", 503) }))
+	defer unavailable.Close()
+	central.cfg.RevisionRegistryID = "central"
+	central.cfg.RevisionSQLConsumers = map[string]config.RevisionSQLConsumer{"a": {URL: first.URL, TokenFile: token}, "b": {URL: unavailable.URL, TokenFile: token}}
+	files := map[string][]byte{"field.sysbox.hcl": []byte("partial")}
+	id := controlplane.ComputeRevisionDigest(files)
+	require.NoError(t, central.apiStore.SaveGlobalRevision(ctx, controlplane.GlobalRevision{Revision: id, Files: files, CreatedAt: time.Now().Add(-time.Hour)}))
+	require.Error(t, central.deleteLocalRevisionBatch(ctx, []string{id}, RevisionRetentionPolicy{OlderThan: time.Now(), Limit: 1}))
+	require.Equal(t, 1, firstCalls)
+	_, err := central.apiStore.GetGlobalRevision(ctx, id)
+	require.NoError(t, err)
+	intents, err := filepath.Glob(filepath.Join(central.runsDir, "global-revisions", "federated-*.intent"))
+	require.NoError(t, err)
+	require.Len(t, intents, 1)
 }

@@ -995,3 +995,29 @@ fresh reference reservation authorize this new deletion. Full original manifest
 bytes, proof and new grant are durably archived outside the removed directory.
 No old PID is signalled. Current-boot and never-started generations use ordinary
 GC. A new successful receipt belongs only to the new reservation.
+
+### Independent SQL consumer retirement
+
+A file-registry coordinator can configure `revision_registry_id` and
+`revision_sql_consumers` (consumer name → `url`, `token_file`). Each SQLite or
+PostgreSQL consumer configures `revision_upstreams` (registry ID → private token
+file). The consumer endpoint `POST /v1/revisions/federated-retire` accepts the
+registry/request ID, exact revision batch and cutoff; it revalidates its entire
+enrolled catalog and commits retirement guards and an idempotent acknowledgment
+in the same local SQL transaction. Unknown/unenrolled catalogs are rejected.
+
+The coordinator keeps a durable consumer manifest and a parent enrollment marker;
+removing a configured peer or losing/truncating that manifest blocks deletion.
+It persists the retirement intent and holds its local publication lock while
+collecting every consumer acknowledgment. Only then does it commit its own atomic
+retirement. A missing local SQL object still requires reference validation and
+permanent retirement fencing before acknowledgment. Batch conflicts roll back
+all local SQL changes. HTTP retries verify the same request and revision list;
+HTTPS is required outside loopback and redirects are refused.
+
+This is conservative distributed retirement, not a cross-database rollback
+transaction. If some consumers retire and another is offline, the central object
+remains and the completed consumers stay fenced. Retry the same request after
+resolving the blocker; never remove their tombstones or drop the offline peer.
+Existing required Run/auxiliary writer guards remain active. All participating
+repositories must be explicitly enrolled before retirement is enabled.
