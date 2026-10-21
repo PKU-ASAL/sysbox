@@ -18,7 +18,8 @@
         "adoption-api",
         "real-docker-api",
         "real-libvirt",
-        "adoption-returned-recovery"
+        "adoption-returned-recovery",
+        "ownership-transfer-libvirt-host-sigkill"
       ],
       "remaining": [
         "Complete provider ownership-write/observe/state-commit OS-kill matrix across all providers."
@@ -35,7 +36,8 @@
         "ownership-transfer-host",
         "ownership-transfer-docker",
         "ownership-transfer-firecracker",
-        "ownership-transfer-libvirt"
+        "ownership-transfer-libvirt",
+        "ownership-transfer-libvirt-host-sigkill"
       ],
       "remaining": [
         "Explicit transfer is implemented with preparation/retirement/target reservation and provider rebinding; final same-source full acceptance and provider-internal crash recovery matrix remain open."
@@ -67,7 +69,8 @@
         "real-docker-api",
         "real-docker-provider",
         "real-libvirt",
-        "real-firecracker"
+        "real-firecracker",
+        "ownership-transfer-libvirt-host-sigkill"
       ],
       "remaining": [
         "Full interrupted-adoption recovery acceptance, including control-plane publication windows, is not closed."
@@ -1111,6 +1114,21 @@
       "kind": "contract",
       "race": true,
       "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "ownership-transfer-libvirt-host-sigkill",
+      "package": "./pkg/api",
+      "tests": [
+        "TestLibvirtOwnershipTransferHostSIGKILLMatrixE2E"
+      ],
+      "kind": "real-provider",
+      "tags": "e2e",
+      "race": true,
+      "timeout": "4m",
+      "requires_env": [
+        "SYSBOX_LIBVIRT_E2E"
+      ],
       "artifact_env": []
     }
   ]
