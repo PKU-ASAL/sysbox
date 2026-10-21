@@ -29,11 +29,11 @@ import (
 )
 
 type gcCrashInput struct {
-	Kind, Phase, Root, ProviderRoot, Kernel string
-	Candidate                               controlplane.GCCandidate
-	Grant                                   controlplane.SignedExecutionGrant
-	Issuer                                  ed25519.PublicKey
-	HostKey                                 ed25519.PrivateKey
+	Kind, Phase, Root, ProviderRoot, Kernel, Ready string
+	Candidate                                      controlplane.GCCandidate
+	Grant                                          controlplane.SignedExecutionGrant
+	Issuer                                         ed25519.PublicKey
+	HostKey                                        ed25519.PrivateKey
 }
 
 func crashCoordinator(input gcCrashInput) *hostsupervisor.GCCoordinator {
@@ -48,11 +48,15 @@ func TestGCProviderCrashProcess(t *testing.T) {
 	require.NoError(t, err)
 	var input gcCrashInput
 	require.NoError(t, json.Unmarshal(raw, &input))
+	boundary := func() {
+		require.NoError(t, os.WriteFile(input.Ready, []byte(input.Phase), 0600))
+		select {}
+	}
 	c := crashCoordinator(input)
-	c.ReportStop = func(context.Context, controlplane.SignedExecutionStopReceipt) error { os.Exit(74); return nil }
+	c.ReportStop = func(context.Context, controlplane.SignedExecutionStopReceipt) error { boundary(); return nil }
 	_, err = c.Delete(context.Background(), input.Candidate, input.Grant, func(ctx context.Context) (json.RawMessage, error) {
 		if input.Phase == "before-effect" {
-			os.Exit(72)
+			boundary()
 		}
 		var err error
 		target := input.Candidate
@@ -69,10 +73,10 @@ func TestGCProviderCrashProcess(t *testing.T) {
 			} else {
 				require.NoError(t, os.WriteFile(path, []byte(`{"broken":`), 0600))
 			}
-			os.Exit(75)
+			boundary()
 		}
 		if input.Phase == "after-effect" {
-			os.Exit(73)
+			boundary()
 		}
 		return json.RawMessage(`{"deleted":true}`), nil
 	})
@@ -182,17 +186,24 @@ func TestNonDockerGCProcessCrashBoundariesE2E(t *testing.T) {
 					require.NoError(t, err)
 					grant, err := controlplane.SignExecutionGrant(key, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: owner, ResourceUID: "target", Generation: 1}, AgentID: "host", SessionID: "session", CommandID: "gc", ActionID: "gc", Attempt: 1, Epoch: 1, Operation: "gc_delete", Digest: digest, TargetBootID: "boot", State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}, "boot", time.Now())
 					require.NoError(t, err)
-					input := gcCrashInput{Kind: kind, Phase: phase, Root: private(), ProviderRoot: providerRoot, Kernel: kernel, Candidate: candidate, Grant: grant, Issuer: pub, HostKey: hostKey}
+					input := gcCrashInput{Kind: kind, Phase: phase, Root: private(), ProviderRoot: providerRoot, Kernel: kernel, Candidate: candidate, Grant: grant, Issuer: pub, HostKey: hostKey, Ready: filepath.Join(private(), "ready")}
 					raw, err := json.Marshal(input)
 					require.NoError(t, err)
 					path := filepath.Join(private(), "input.json")
 					require.NoError(t, os.WriteFile(path, raw, 0600))
 					child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestGCProviderCrashProcess$")
 					child.Env = append(os.Environ(), "SYSBOX_GC_CRASH_INPUT="+path)
-					out, err := child.CombinedOutput()
-					var exit *exec.ExitError
-					require.ErrorAs(t, err, &exit, string(out))
-					require.Equal(t, map[string]int{"before-effect": 72, "after-effect": 73, "before-report": 74, "missing-journal": 75, "corrupt-journal": 75}[phase], exit.ExitCode())
+					log, err := os.Create(filepath.Join(private(), "child.log"))
+					require.NoError(t, err)
+					defer log.Close()
+					child.Stdout, child.Stderr = log, log
+					require.NoError(t, child.Start())
+					defer child.Process.Kill()
+					require.Eventually(t, func() bool { _, err := os.Stat(input.Ready); return err == nil }, 30*time.Second, 20*time.Millisecond, "child log: %s", log.Name())
+					require.NoError(t, child.Process.Kill())
+					var exited *exec.ExitError
+					require.ErrorAs(t, child.Wait(), &exited)
+					require.Equal(t, -1, exited.ExitCode(), "requires OS SIGKILL")
 					cold := crashCoordinator(input)
 					reports := 0
 					cold.ReportStop = func(_ context.Context, receipt controlplane.SignedExecutionStopReceipt) error {

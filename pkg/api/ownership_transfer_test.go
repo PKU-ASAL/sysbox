@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
@@ -26,7 +28,7 @@ func TestOwnershipTransferPreparationRetiresSourceAndReservesTarget(t *testing.T
 	testOwnershipTransferFlow(t, "")
 }
 func TestOwnershipTransferProcessCrashMatrix(t *testing.T) {
-	for _, phase := range []string{"prepared", "retired", "target-committed", "completion-response"} {
+	for _, phase := range []string{"prepared", "retired", "target-committed", "operation-committed", "stop-retried", "barrier-released", "completion-response"} {
 		t.Run(phase, func(t *testing.T) { testOwnershipTransferFlow(t, phase) })
 	}
 }
@@ -155,11 +157,28 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 		require.NoError(t, err)
 		completion = &HostNodeOperationCompletion{Receipt: receipt, Evidence: evidence}
 		completionKey = host
-		crash("completion-response", op, evidence)
-		if phase == "target-committed" || phase == "completion-response" {
+		for _, boundary := range []string{"operation-committed", "stop-retried", "barrier-released", "completion-response"} {
+			crash(boundary, op, evidence)
+		}
+		if phase == "target-committed" || phase == "operation-committed" || phase == "stop-retried" || phase == "barrier-released" || phase == "completion-response" {
 			committed, err := targetRepo.LoadState(ctx, "target")
 			require.NoError(t, err)
 			require.Equal(t, target.Meta.Serial+1, committed.Meta.Serial)
+		}
+		if phase == "operation-committed" || phase == "stop-retried" || phase == "barrier-released" || phase == "completion-response" {
+			currentOp, err := store.GetNodeOperation(ctx, plan.ID)
+			require.NoError(t, err)
+			require.Equal(t, controlplane.NodeOperationStatusDone, currentOp.Status)
+			currentGrant, err := authority.InspectGrant(ctx, "host", transferGrant.Scope)
+			require.NoError(t, err)
+			// CompleteAdoptionFromHost already stores the stop receipt
+			// (in the same SQL transaction as operation completion). The
+			// handler's later AcceptHostStop is an idempotent retry.
+			require.Equal(t, controlplane.GrantStopped, currentGrant.State)
+			require.NotEmpty(t, currentGrant.StopReceipt)
+			currentBarrier, err := authority.InspectMaintenance(ctx, plan.ID)
+			require.NoError(t, err)
+			require.Equal(t, phase == "barrier-released" || phase == "completion-response", currentBarrier.Released)
 		}
 		// A fresh API instance handles the retry after the child API died.
 		s = stateDeleteTestServer(t, store)
@@ -260,6 +279,25 @@ func TestOwnershipTransferCrashChild(t *testing.T) {
 		require.NoError(t, err)
 	case "target-committed":
 		require.NoError(t, s.commitAdoptionState(ctx, input.Operation, input.Evidence))
+	case "operation-committed", "stop-retried", "barrier-released":
+		// Execute the production workflow's durable boundaries, then kill the
+		// process. The retry below enters the public completion handler.
+		require.NotNil(t, input.Completion)
+		require.NoError(t, s.commitAdoptionState(ctx, input.Operation, input.Evidence))
+		_, err := store.CompleteAdoptionFromHost(ctx, "host", input.Plan.ID, input.Completion.Receipt)
+		require.NoError(t, err)
+		if input.Phase != "operation-committed" {
+			authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+			raw, err := json.Marshal(input.Completion.Receipt)
+			require.NoError(t, err)
+			sum := sha256.Sum256(raw)
+			require.NoError(t, authority.AcceptHostStop(ctx, input.Completion.Receipt.Grant, hex.EncodeToString(sum[:])))
+			if input.Phase == "barrier-released" {
+				barrier, err := authority.InspectMaintenance(ctx, input.Plan.ID)
+				require.NoError(t, err)
+				require.NoError(t, authority.EndMaintenance(ctx, *barrier))
+			}
+		}
 	case "completion-response":
 		require.NotNil(t, input.Completion)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"host": input.HostKey}

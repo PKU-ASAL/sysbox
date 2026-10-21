@@ -4745,3 +4745,36 @@ Aggregate format 12 records admission while retaining the inventory's prior
 format for digest stability. Metadata reset clears admission history only after
 quiescence and preserves ownership retirement/target tombstones. Older writers
 must be drained before enabling this format.
+
+
+### 2026-10-21 fixed-revision combined acceptance
+
+All 31 selected stage-2/P5 strict gates passed at e5ddeee, with no selected
+skips: /tmp/sysbox-stage23-e5ddeee-combined/run.json. This covers file atomic
+batches, HTTPS pins, SQL federation, canonical single-use GC, fenced disposition,
+real provider lifecycle/GC, and ownership recovery. Source SHA256:
+daf2beef111de41b384644905bf247db70f71e1730de853922d373ff577fcdff.
+The ordinary full Go suite also passed: /tmp/sysbox-stage23-e5ddeee-full.log.
+
+Current helpers passed real whole-VM fencing in both non-Docker cases:
+/tmp/sysbox-stage23-e5ddeee-libvirt-vm-fence-corrected.log and
+/tmp/sysbox-stage23-e5ddeee-firecracker-vm-fence.log. An initial invocation used
+invalid GC kind libvirt; its exact disposable domain was removed before rerunning
+with the correct kind domain. Historical labs were untouched.
+
+The subsequent test-only follow-up replaces all ten non-Docker GC process exits
+with parent-driven SIGKILL. Strict evidence:
+/tmp/sysbox-gc-provider-sigkill-strict/run.json. Ownership workflow SIGKILL now
+covers seven paths on file/SQLite/PostgreSQL, including operation completion,
+idempotent stop retry and barrier release. Strict evidence:
+/tmp/sysbox-p5-api-intermediate-verified/run.json. Completion already stores the
+grant stop; the later handler stop call is a retry. Tests check persisted stop
+receipts and barriers before recovery and exactly one target serial increment.
+
+These tests kill after production persistence functions return, or after the HTTP
+handler completes with its response discarded. They do not simulate arbitrary
+kills inside provider calls or database commits. Docker host reporting uses a
+callback; libvirt/Firecracker host tests keep the API alive. Pre-return adoption
+without durable return evidence remains unknown and cannot replay or release its
+source barrier. Provider-internal partial-write recovery and the broader P9
+provider/transport/upgrade matrix remain open.
