@@ -2,7 +2,7 @@
   "version": 1,
   "id": "stage2-supported-delivery",
   "title": "Global revision coverage and non-Docker GC acceptance",
-  "scope": "Same-catalog enrolled deployment; file registry preview only; single SQL revision retirement; bounded provider batch and coordinator process-exit recovery",
+  "scope": "Same-catalog SQL retirement and retention batches; file retirement with participating writers; explicitly enrolled independent file registry; bounded provider batch and coordinator process-exit recovery",
   "gates": [
     "gc-cli",
     "gc-api",
@@ -18,21 +18,25 @@
     "non-docker-gc-process-crash",
     "real-docker-provider",
     "real-libvirt",
-    "real-firecracker"
+    "real-firecracker",
+    "file-registry-retirement",
+    "file-revision-gate",
+    "file-effect-ledger",
+    "file-reset-return"
   ],
   "boundaries": {
-    "file_registry": "inventory and retention preview; deletion rejected",
+    "file_registry": "single revision deletion under shared catalog flock; permanent retirement proof; all enrolled local/shared-visible roots required; old writers must be drained; file retention batch apply unavailable",
     "sql_registry": "unscoped same-catalog SQLite/PostgreSQL; explicit single-revision retirement",
     "provider_batch": "1..128 candidates; ordered, each receipt required",
     "cache_batch": "one exact private host file per apply",
     "revision_batch": "preview limit1..128; SQL retention-apply validates exact preview and independently rechecks policy/references in one all-or-none transaction",
-    "faults": "libvirt/Firecracker process exits before effect, after effect before outcome commit, before sealed receipt report; cold API/coordinator and lost acknowledgements"
+    "faults": "libvirt/Firecracker coordinator process exits before effect, after effect, before report; missing/corrupt journal; cancellation, failed outcome persistence, queued-request journal loss; no automatic unknown resolution"
   },
   "not_closed": [
-    "separate/unregistered global registry federation and file registry deletion",
+    "unregistered or remote registry federation and file retention batch apply",
     "full API/Agent SIGKILL matrix and provider-internal partial calls",
     "full P8/P9 original acceptance",
-    "complete provider-specific disposition matrix for missing/corrupt non-Docker journal evidence"
+    "non-Docker unknown GC reservation reconciliation/release after explicit fencing"
   ],
   "evidence_rule": "all selected strict gates must pass on the same source digest and commit; failure/skip/missing environment does not close scope; original requirement remaining items stay open"
 }

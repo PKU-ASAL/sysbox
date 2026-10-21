@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -124,6 +126,12 @@ func (s *WorkspaceService) materializeRevision(ctx context.Context, topology, re
 		}
 	}
 	root := filepath.Join(s.runsDir, topology, "revisions")
+	protection, _ := json.Marshal(map[string]string{"revision": revision})
+	release, err := revisiongate.Guard(ctx, filepath.Join(root, revision, "field.sysbox.hcl"), protection)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	base := filepath.Join(root, revision)
 	hcl := filepath.Join(base, "field.sysbox.hcl")
 	if _, err := os.Lstat(base); err == nil {

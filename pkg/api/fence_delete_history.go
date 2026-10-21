@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"io"
 	"os"
 	"path/filepath"
@@ -42,6 +43,11 @@ func (s *localAPIStore) saveFenceDeleteRun(ctx context.Context, run controlplane
 		return err
 	}
 	payload := append(append(raw, encoded...), byte('\n'))
+	release, err := revisiongate.Guard(ctx, path, encoded)
+	if err != nil {
+		return err
+	}
+	defer release()
 	file, err := os.CreateTemp(filepath.Dir(path), ".fence-run-")
 	if err != nil {
 		return err

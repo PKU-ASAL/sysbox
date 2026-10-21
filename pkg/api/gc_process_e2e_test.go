@@ -6,7 +6,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,6 +62,15 @@ func TestGCProviderCrashProcess(t *testing.T) {
 			err = fc.New(input.Kernel, input.ProviderRoot).DeleteManagedExternal(ctx, target.ExternalID, target.OwnerUID, target.ResourceUID, target.Generation)
 		}
 		require.NoError(t, err)
+		if input.Phase == "missing-journal" || input.Phase == "corrupt-journal" {
+			path := filepath.Join(input.Root, fmt.Sprintf("%x.json", sha256.Sum256([]byte(input.Candidate.TopologyUID))))
+			if input.Phase == "missing-journal" {
+				require.NoError(t, os.Remove(path))
+			} else {
+				require.NoError(t, os.WriteFile(path, []byte(`{"broken":`), 0600))
+			}
+			os.Exit(75)
+		}
 		if input.Phase == "after-effect" {
 			os.Exit(73)
 		}
@@ -80,7 +91,7 @@ func TestNonDockerGCProcessCrashBoundariesE2E(t *testing.T) {
 					}
 				}
 			}
-			for _, phase := range []string{"before-effect", "after-effect", "before-report"} {
+			for _, phase := range []string{"before-effect", "after-effect", "before-report", "missing-journal", "corrupt-journal"} {
 				t.Run(phase, func(t *testing.T) {
 					ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 					defer cancel()
@@ -181,7 +192,7 @@ func TestNonDockerGCProcessCrashBoundariesE2E(t *testing.T) {
 					out, err := child.CombinedOutput()
 					var exit *exec.ExitError
 					require.ErrorAs(t, err, &exit, string(out))
-					require.Equal(t, map[string]int{"before-effect": 72, "after-effect": 73, "before-report": 74}[phase], exit.ExitCode())
+					require.Equal(t, map[string]int{"before-effect": 72, "after-effect": 73, "before-report": 74, "missing-journal": 75, "corrupt-journal": 75}[phase], exit.ExitCode())
 					cold := crashCoordinator(input)
 					reports := 0
 					cold.ReportStop = func(_ context.Context, receipt controlplane.SignedExecutionStopReceipt) error {
@@ -189,7 +200,12 @@ func TestNonDockerGCProcessCrashBoundariesE2E(t *testing.T) {
 						reports++
 						return nil
 					}
-					require.NoError(t, cold.Recover(ctx))
+					recoverErr := cold.Recover(ctx)
+					if phase == "corrupt-journal" {
+						require.Error(t, recoverErr)
+					} else {
+						require.NoError(t, recoverErr)
+					}
 					_, err = cold.Delete(ctx, candidate, grant, func(context.Context) (json.RawMessage, error) {
 						t.Fatal("provider must never replay after crash")
 						return nil, nil

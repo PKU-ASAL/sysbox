@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"os"
 	"path/filepath"
 	"sync"
@@ -481,6 +482,11 @@ func WriteCheckpoint(path string, cp OperationCheckpoint) error {
 	if err != nil {
 		return err
 	}
+	release, err := revisiongate.Guard(context.Background(), path, data)
+	if err != nil {
+		return err
+	}
+	defer release()
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err

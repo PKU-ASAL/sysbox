@@ -97,7 +97,7 @@ func TestGlobalRevisionStoreRoundTrip(t *testing.T) {
 				size += len(content)
 			}
 			rev := controlplane.GlobalRevision{
-				Revision:  "sha256:deadbeef",
+				Revision:  controlplane.ComputeRevisionDigest(files),
 				Files:     files,
 				Size:      size,
 				CreatedAt: time.Now().UTC(),

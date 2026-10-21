@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -64,6 +65,11 @@ func (b *LocalBridge) recordResetReturn(run *controlplane.Run) error {
 	if err != nil {
 		return err
 	}
+	release, err := revisiongate.Guard(context.Background(), path+".returned", encoded)
+	if err != nil {
+		return err
+	}
+	defer release()
 	f, err := os.CreateTemp(filepath.Dir(path), ".reset-return-")
 	if err != nil {
 		return err

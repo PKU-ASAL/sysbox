@@ -77,14 +77,24 @@ func (c *GCCoordinator) Delete(ctx context.Context, candidate GCCandidate, g con
 		if c.Authorize == nil {
 			return effectgate.ErrFenced
 		}
+		// Recheck under the topology lock before any fresh intent is written.
+		if err := c.checkGCJournalAnchor(g); err != nil {
+			return err
+		}
 		return c.Authorize(ctx, g)
 	}}
+	if err := c.checkGCJournalAnchor(g); err != nil {
+		return nil, err
+	}
 	raw, err := gate.Execute(ctx, g, candidate.ExternalID, func(effectCtx context.Context) (json.RawMessage, error) {
 		if c.ValidateReservation != nil {
 			if err := c.ValidateReservation(effectCtx, candidate, g); err != nil {
 				return nil, err
 			}
 		} else if err := c.ValidateInventory(effectCtx, candidate); err != nil {
+			return nil, err
+		}
+		if err := c.anchorGCAdmission(g); err != nil {
 			return nil, err
 		}
 		result, err := deleteEffect(effectCtx)

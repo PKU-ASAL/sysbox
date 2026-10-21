@@ -4576,3 +4576,36 @@ and verify actual late Run admission invalidates the preview. The HTTP path
 applies a two-member batch while preserving the newest revision and refuses
 old preview replay. File execution remains explicitly rejected while writer
 coordination is implemented separately; this slice does not close stage 2.
+
+
+### File registry retirement and non-Docker journal faults (2026-10-21)
+
+The implementation now includes explicit file retirement and enrolled independent
+file registries. Contract gates cover Run/deletion races, encoded snapshots,
+lifecycle writes, cold-process refusal, payload reclamation, offline consumers,
+manifest loss at both default and external registry paths, execution ledger and
+reset-return publication, and rejection of enrollment that would forget peers.
+The protocol and upgrade boundary are documented in `docs/reference/api.md`.
+
+The real libvirt/Firecracker coordinator process suite now contains five phases
+per provider: before effect, after effect, before receipt report, missing journal,
+and corrupt journal. It preserves an independent survivor and checks provider
+absence/process identity where applicable. Unit fault tests additionally cover
+uncancellable callbacks, outcome publication failure and concurrent waiters
+when a journal disappears. A durable admission anchor blocks missing-ledger
+replay, with validation repeated under the topology lock before intent publication.
+
+These cases do not close unknown GC reservation reconciliation after host fencing,
+full API/Agent SIGKILL, or every provider-internal partial call. Preserve unknown
+and the reservation; do not erase anchors, reconstruct an empty journal, infer
+success from absence, or reuse the cache-only abort workflow for provider GC.
+The historical lab remains read-only.
+
+Validation for this implementation: `go test -p 1 ./...` passed
+(`/tmp/sysbox-registry-final-full.log`); `go vet ./...` and the focused final
+vet pass succeeded; docscheck passed for 68 canonical documents. Python acceptance
+tool tests passed (67 run, one skipped; not evidence of the skipped scenario).
+The real 10-case non-Docker process suite passed with race detection
+(`/tmp/sysbox-nondocker-reviewed-faults.log`, 201.401 seconds). Earlier concurrent
+full-run timeouts were rerun in isolation and passed; the final full run passed.
+No root-cause fix for unrelated intermittent timeouts is claimed.

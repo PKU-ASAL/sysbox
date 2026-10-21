@@ -16,6 +16,7 @@ import (
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -79,6 +80,13 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 	}
 	stateBackend := cfg.State.Backend
 	apiStore, initErr := newAPIStore(runsDir, stateBackend)
+	if initErr == nil && cfg.RevisionRegistry != "" {
+		if stateBackend != "" {
+			initErr = fmt.Errorf("revision_registry requires local metadata backend")
+		} else {
+			initErr = revisiongate.Enroll(context.Background(), runsDir, cfg.RevisionRegistry)
+		}
+	}
 	if initErr != nil {
 		// Keep construction safe for non-Start consumers; Start reports the
 		// error so the API server refuses to bind.

@@ -25,6 +25,15 @@ func (s *Server) handleRevisionDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, fmt.Errorf("one JSON object required"))
 		return
 	}
+
+	if store, ok := s.apiStore.(*localAPIStore); ok && s.stateBackend == "" {
+		if err := store.DeleteGlobalRevisionAtomic(r.Context(), input.Revision, input.OlderThan); err != nil {
+			writeError(w, 409, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"revision": input.Revision, "deleted": true, "backend": "file"})
+		return
+	}
 	u, err := url.Parse(s.stateBackend)
 	if err != nil || !(u.Scheme == "sqlite" || u.Scheme == "postgres" || u.Scheme == "postgresql") {
 		writeError(w, 409, fmt.Errorf("revision deletion requires shared SQL registry and lifecycle catalog"))

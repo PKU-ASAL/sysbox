@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"errors"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,6 +134,11 @@ func writePrivateGuestRecord(ctx context.Context, path string, raw []byte) error
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	release, err := revisiongate.Guard(ctx, path, raw)
+	if err != nil {
+		return err
+	}
+	defer release()
 	dir := filepath.Dir(path)
 	file, err := os.CreateTemp(dir, ".record-")
 	if err != nil {

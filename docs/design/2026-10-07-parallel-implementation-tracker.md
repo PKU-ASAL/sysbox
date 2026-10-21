@@ -886,3 +886,23 @@ P9.3、P9.acceptance 继续开放。只有相同提交的 15 组严格门禁、�
 年龄和引用，失败整批回滚（含退休标记与触发器）。预览变化或真实晚到 Run
 会拒绝执行。单对象退休复用同一事务内删除函数。文件／独立 registry 删除与
 完整非 Docker 故障处置仍需继续实现，原始总要求没有缩减。
+
+
+## 文件 registry 与非 Docker 故障补强（2026-10-21，覆盖前述对应条目）
+
+文件 revision 单对象删除已实现：共享 catalog flock 将退休与 Run、生命周期、
+checkpoint、宿主 effect ledger、reset 返回回执等最终写入串行化；完整扫描所有
+已登记的 consumer 根目录及解码快照。退休先原子重命名，再压缩永久 tombstone，
+释放项目内容并阻止冷进程重新发布。同目录默认 registry 与独立 registry 均支持。
+独立 registry 使用显式 `revision_registry` 绑定和单调 consumer 清单；缺失或离线
+consumer、清单丢失、旧格式证据及不完整扫描均拒绝删除。升级前须排空旧写入方。
+文件批量 retention apply 和未登记的远端联邦 registry 仍未实现。
+
+非 Docker 新增取消但 provider 不返回、outcome 落盘失败、journal 丢失／损坏的
+故障验证。准入 anchor 在 provider 副作用之前持久化；journal 丢失检查在 topology
+锁内再次执行，防止已排队请求重放。完整回执仍可冷恢复补报；unknown 不伪造成功。
+
+**两项总要求尚不能一起标为完成。** 当前还缺非 Docker unknown GC reservation
+在显式宿主 fencing 后的核验、处置与释放链；现有 Run fence-delete/release 不能
+代替 GC reservation 的协议。完整 API/Agent SIGKILL 和 provider 内部分步故障矩阵
+也不能由 coordinator 子进程退出用例代替。原始 P8/P9 清单继续保持开放。

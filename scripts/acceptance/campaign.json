@@ -142,10 +142,12 @@
         "gc-domain-coverage",
         "revision-retention-preview",
         "revision-delete-storage",
-        "revision-delete-api"
+        "revision-delete-api",
+        "file-registry-retirement",
+        "file-revision-gate"
       ],
       "remaining": [
-        "Implemented: same-SQL global revision protection, three-backend retention preview, and single-object SQL retirement with new-Run/auxiliary-reference admission fencing. Unsupported: file-registry deletion and separate/unregistered registry federation. Their inventories cannot authorize SQL deletion; complete cross-registry coverage remains outside supported scope."
+        "File single-object retirement and explicitly enrolled independent local registry consumers are implemented. Arbitrary remote/unregistered registry federation and atomic file-retention batches remain open."
       ]
     },
     {
@@ -170,7 +172,7 @@
         "non-docker-gc-process-crash"
       ],
       "remaining": [
-        "Implemented: 1–128 ordered provider batch, single-file cache disposition, SQL revision retirement and atomic retention batch apply with keep-last/age/reference revalidation and full rollback. Remaining: file/independent registry deletion, provider-internal interruption, and complete missing/corrupt non-Docker journal disposition matrix."
+        "SQL atomic retention batches and file single-object retirement implemented. Non-Docker missing/corrupt ledger and uncancellable-return/outcome-publication contracts are tested; full provider-internal/API/Agent fault disposition, all-evidence-loss recovery and remote registry federation remain open."
       ]
     },
     {
@@ -470,7 +472,11 @@
         "TestGCDeleteRequiresFreshInventoryRevalidation",
         "TestGCDeleteLostReplyObservesWithoutReplay",
         "TestGCObserveHistoricalOutcomeDoesNotRequireCurrentInventory",
-        "TestGCColdRecoveryReportsCandidateBoundDeletion"
+        "TestGCColdRecoveryReportsCandidateBoundDeletion",
+        "TestNonDockerGCCancellationAndCorruptJournalNeverReplay",
+        "TestNonDockerGCOutcomePersistenceFailureNeverReportsSuccess",
+        "TestGCMissingJournalWithAdmissionEvidenceCannotReplay",
+        "TestGCJournalLossWhileWaitingCannotReplay"
       ],
       "kind": "contract",
       "race": true,
@@ -801,6 +807,64 @@
       "requires_env": [
         "SYSBOX_TEST_DATABASE_URL"
       ],
+      "artifact_env": []
+    },
+    {
+      "id": "file-registry-retirement",
+      "package": "./pkg/api",
+      "tests": [
+        "TestFileRevisionRetirementFencesAllRecordWriters",
+        "TestFileRevisionDeletionRacesRun",
+        "TestIndependentFileRegistryProtectsAllEnrolledConsumers",
+        "TestFileRevisionProtectsEncodedSnapshotAndLifecycleWrites",
+        "TestFileRevisionLifecycleMutationCannotBypassRetirement",
+        "TestIndependentRegistryMissingEnrollmentNeverMeansEmpty",
+        "TestFileRevisionRetirementReclaimsPayloadAndKeepsProof",
+        "TestFileRevisionColdProcessCannotReviveRetirement",
+        "TestDefaultRegistryMissingEnrollmentNeverMeansEmpty",
+        "TestIndependentRegistryMissingManifestCannotRepublish",
+        "TestFileRevisionRetainsResetReturnEvidence"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "file-revision-gate",
+      "package": "./pkg/revisiongate",
+      "tests": [
+        "TestReferenceDecodeHandlesEscapesAndArbitraryFiles",
+        "TestNestedCatalogCannotShadowRetirement",
+        "TestIndependentRegistryRejectsLateReferencesAcrossConsumers",
+        "TestEnrollmentNeverForgetsExistingConsumers",
+        "TestReferenceDecodeIncludesEscapedMapKeys"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "2m",
+      "artifact_env": []
+    },
+    {
+      "id": "file-effect-ledger",
+      "package": "./pkg/effectgate",
+      "tests": [
+        "TestLedgerCannotPublishRetiredRevision"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
+      "artifact_env": []
+    },
+    {
+      "id": "file-reset-return",
+      "package": "./pkg/agentexec",
+      "tests": [
+        "TestResetReturnCannotPublishRetiredRevision"
+      ],
+      "kind": "contract",
+      "race": true,
+      "timeout": "3m",
       "artifact_env": []
     }
   ]

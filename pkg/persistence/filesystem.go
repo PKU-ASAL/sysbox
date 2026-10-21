@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gofrs/flock"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"os"
 	"path/filepath"
 	"time"
@@ -82,6 +83,11 @@ func (b *fileBackend) updateDecoded(ctx context.Context, key string, decode func
 	if string(next) == string(raw) {
 		return nil
 	}
+	release, err := revisiongate.Guard(ctx, path, next)
+	if err != nil {
+		return err
+	}
+	defer release()
 	tmp, err := os.CreateTemp(b.root, ".aggregate-")
 	if err != nil {
 		return err

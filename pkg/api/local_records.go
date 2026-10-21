@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"io"
 	"os"
 	"path/filepath"
@@ -99,6 +100,11 @@ func appendLocalHistory(ctx context.Context, path string, value any) (err error)
 			err = unlockErr
 		}
 	}()
+	release, err := revisiongate.Guard(ctx, path, raw)
+	if err != nil {
+		return err
+	}
+	defer release()
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
@@ -197,6 +203,17 @@ func writeLocalObject(path string, value any) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
+	release, err := revisiongate.Guard(context.Background(), path, raw)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return publishLocalObject(path, raw)
+}
+
+// Caller holds the revision catalog guard across publication.
+func publishLocalObject(path string, raw []byte) error {
+	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, ".record-")
 	if err != nil {
 		return err

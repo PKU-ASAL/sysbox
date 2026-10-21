@@ -837,8 +837,8 @@ Global revision objects and historical Run evidence are never deleted here.
 
 `POST /v1/revisions/delete` accepts `revision` and a past RFC3339 `older_than`.
 It explicitly deletes one revision, independently revalidating references; a
-retention preview digest is not authorization. Only an unscoped shared SQLite or
-PostgreSQL registry/lifecycle deployment is supported. File registries reject.
+retention preview digest is not authorization. Unscoped shared SQLite/PostgreSQL catalogs and participating local file
+registries are supported. See the file registry protocol below.
 
 Deletion locks lifecycle/global revision/Run evidence in one transaction, rejects
 historical Run, snapshot, source, other revision content, command, checkpoint or
@@ -868,4 +868,38 @@ an early stale-plan check, not the concurrency protection.
 The response lists deleted revision IDs and `atomic:true`. Replaying an applied
 preview returns conflict, and a disconnected response requires a new inspection;
 it does not authorize repeating the old batch blindly. File registry execution
-is still unsupported pending the cross-record writer-fencing implementation.
+remains unsupported: file retirement is currently explicit and single-object.
+
+
+### File and independent registry retirement
+
+For the local metadata backend, `POST /v1/revisions/delete` also retires one file
+revision. The same catalog `flock` spans final reference publication and deletion.
+The inventory includes enrolled consumer roots, historical Runs, lifecycle and
+snapshot data, decoded JSON/base64 fields, commands, checkpoints, execution
+ledgers, reset return receipts, and materialized revision directories. Missing
+roots, malformed evidence, symlinks, nonregular JSON records, legacy `state.json`,
+and inventory budget overflow reject deletion. The scan is conservative: unrelated
+content containing the digest can retain the revision.
+
+Deletion renames the object to `<revision>.json.retired`, fsyncs the directory,
+then replaces its payload with a small durable proof. The permanent filename
+fences late Run, lifecycle, checkpoint, execution-ledger and registry writes,
+including a cold process. A crash between retirement and compaction may retain
+project bytes; it never permits republication. An interrupted response requires
+inspection, not removal of the tombstone or blind replay.
+
+Set top-level service configuration `revision_registry` to an absolute canonical
+path to enroll a local metadata root in an independent file registry. Every
+consumer must see the same registry and consumer paths, with reliable `flock`
+and atomic rename semantics. `consumers.json` is a monotonic consumer manifest;
+`.sysbox-revision-registry.json` binds each root. Enrollment into a populated
+unmanifested registry, switching an existing nonempty local registry, or loss of
+an already-bound manifest rejects rather than silently dropping peers. Missing
+or offline consumers block deletion. This option rejects SQL state backends.
+
+Drain old writer binaries before enrolling or enabling retirement. Arbitrary
+unregistered writers, independent databases, and remote registry federation do
+not participate in this file protocol. Keep the catalog, binding, manifest and
+retirement proofs in backups; never delete them to unblock a request. File
+retention batch application is not implemented by this endpoint.

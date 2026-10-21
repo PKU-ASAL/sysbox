@@ -17,6 +17,7 @@ import (
 const DefaultConfigPath = "/etc/sysbox/sysbox.yaml"
 
 type ServiceConfig struct {
+	RevisionRegistry    string               `yaml:"revision_registry" json:"revision_registry,omitempty"`
 	GCPublicationSource string               `yaml:"gc_publication_source" json:"gc_publication_source,omitempty"`
 	HostSupervisor      HostSupervisorConfig `yaml:"host_supervisor" json:"host_supervisor,omitempty"`
 	Version             int                  `yaml:"version" json:"version"`

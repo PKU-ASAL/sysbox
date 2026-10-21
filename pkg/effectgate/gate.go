@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/gofrs/flock"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"os"
 	"path/filepath"
 	"time"
@@ -87,6 +88,11 @@ func save(path string, value *ledger) error {
 	if err != nil {
 		return err
 	}
+	release, err := revisiongate.Guard(context.Background(), path, raw)
+	if err != nil {
+		return err
+	}
+	defer release()
 	file, err := os.CreateTemp(filepath.Dir(path), ".effect-")
 	if err != nil {
 		return err

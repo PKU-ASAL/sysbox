@@ -17,6 +17,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -220,12 +221,16 @@ func (s *localAPIStore) checkpointFile(topology, runID string) string {
 	return filepath.Join(s.runsDir, topology, "runs", runID+".checkpoint.json")
 }
 
-func (s *localAPIStore) SaveGlobalRevision(_ context.Context, rev controlplane.GlobalRevision) error {
-	return writeLocalObject(filepath.Join(s.runsDir, "global-revisions", rev.Revision+".json"), rev)
+func (s *localAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {
+	return s.SaveGlobalRevisionAtomic(ctx, rev)
 }
 
 func (s *localAPIStore) GetGlobalRevision(_ context.Context, revision string) (*controlplane.GlobalRevision, error) {
-	rev, err := readLocalObject[controlplane.GlobalRevision](filepath.Join(s.runsDir, "global-revisions", revision+".json"))
+	root, err := revisiongate.Catalog(s.runsDir)
+	if err != nil {
+		return nil, err
+	}
+	rev, err := readLocalObject[controlplane.GlobalRevision](filepath.Join(root, revision+".json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, errGlobalRevisionNotFound
 	}

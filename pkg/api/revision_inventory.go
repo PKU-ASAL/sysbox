@@ -11,6 +11,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 )
 
 const maxRevisionInventory = 10000
@@ -32,7 +33,10 @@ func (s *Server) globalRevisionInventory(ctx context.Context) ([]controlplane.Gl
 	}
 	switch store := s.apiStore.(type) {
 	case *localAPIStore:
-		root := filepath.Join(store.runsDir, "global-revisions")
+		root, err := revisiongate.Catalog(store.runsDir)
+		if err != nil {
+			return nil, err
+		}
 		entries, err := os.ReadDir(root)
 		if os.IsNotExist(err) {
 			return out, nil
@@ -44,7 +48,7 @@ func (s *Server) globalRevisionInventory(ctx context.Context) ([]controlplane.Gl
 			if err = ctx.Err(); err != nil {
 				return nil, err
 			}
-			if !strings.HasSuffix(entry.Name(), ".json") {
+			if entry.Name() == "consumers.json" || !strings.HasSuffix(entry.Name(), ".json") {
 				continue
 			}
 			info, err := entry.Info()

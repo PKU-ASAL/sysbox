@@ -33,9 +33,9 @@ func TestStage2RevisionDeletionRejectsFileScopedAndBulkRequests(t *testing.T) {
 	}
 	raw, err := json.Marshal(map[string]any{"revision": id, "older_than": time.Now()})
 	require.NoError(t, err)
-	require.Equal(t, 409, post(string(raw)))
+	require.Equal(t, 200, post(string(raw)))
 	_, err = s.apiStore.GetGlobalRevision(ctx, id)
-	require.NoError(t, err, "unsupported file deletion must preserve the object")
+	require.Error(t, err, "retired file is no longer visible")
 	require.Equal(t, 400, post(`{"revisions":["`+id+`"],"older_than":"2000-01-01T00:00:00Z"}`))
 	path := filepath.Join(t.TempDir(), "uncreated.db")
 	s.stateBackend = "sqlite://" + path + "?topology=lab"

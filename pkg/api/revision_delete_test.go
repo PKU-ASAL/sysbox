@@ -31,7 +31,8 @@ func TestGlobalRevisionDeleteHTTPFencesRunAdmission(t *testing.T) {
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, httptest.NewRequest("POST", "/v1/revisions/delete", strings.NewReader(string(body))))
 		if _, local := store.(*localAPIStore); local {
-			require.Equal(t, 409, w.Code)
+			require.Equal(t, 200, w.Code, w.Body.String())
+			require.Error(t, store.SaveRun(ctx, controlplane.Run{ID: "late", Topology: "lab", Revision: id, Status: controlplane.RunQueued, QueuedAt: time.Now()}))
 			return
 		}
 		require.Equal(t, 200, w.Code, w.Body.String())
