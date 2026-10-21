@@ -4827,5 +4827,30 @@ power fencing and recovery without deleting the domain or inventing success.
 Remaining functional cases: source-owned, unowned, absent or conflicting objects
 keep their holds; they need a separate explicit cancel/retry disposition. Existing
 canonical runtime unknown actions require dedicated reconciliation. Firecracker
-manifests retaining previous-boot process anchors still fail closed. The recovered-
+previous-boot process anchors are now handled by the fenced recovery described below. The recovered-
 owned path does not close those cases or the full P9 transport/upgrade matrix.
+
+
+### Firecracker adoption recovery across execution-host reboot
+
+The host coordinator now passes the admitted fence and a canonical reauthorization
+callback to Firecracker recovery. Under the generation lock, the provider verifies
+exact target ownership, current/new boot, signed whole-VM stop evidence, original
+process boot and absence of current-kernel launch references. Unresolved attachment
+intent is refused. The original manifest bytes and controller proof are fsynced to
+a content-addressed archive before old process/PID fields are cleared and the
+existing generation becomes stopped. No old PID is signaled and no disk or
+ownership is recreated. Retry requires the matching archive and an unadvanced
+generation; a newly launched process cannot be cleared by replaying the old fence.
+The trusted host must retain full process visibility for the residue inspection.
+
+Cold Start now recreates validated owner-controlled socket parent directories;
+these can disappear when ephemeral storage is cleared at host reboot. This fixed
+an actual recovered-VM restart failure found during acceptance.
+
+Real evidence: /tmp/sysbox-fc-adoption-recovery-whole-vm2.log. A running KVM VMM
+was fenced by restarting the enclosing execution VM, its old-boot adoption intent
+was reconciled through authenticated host/API requests, and the preserved VM was
+started again, observed running, and destroyed. Original result remained unknown.
+Source/unowned/absent/conflict disposition and pre-existing canonical unknown
+actions remain separate functional work.

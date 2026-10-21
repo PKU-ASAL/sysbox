@@ -3,8 +3,10 @@ package hostsupervisor
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"net/url"
 	"time"
 
@@ -23,7 +25,7 @@ func (c AuthorityClient) AuthorizeAdoptionFence(ctx context.Context, id string) 
 
 func (c *AdoptionCoordinator) Disposition(ctx context.Context, id string) (controlplane.AdoptionDispositionProof, error) {
 	var zero controlplane.AdoptionDispositionProof
-	if c.AuthorizeFence == nil || c.InspectFencedAdoption == nil || len(c.HostKey) != ed25519.PrivateKeySize {
+	if c.AuthorizeFence == nil || (c.InspectFencedAdoption == nil && c.RecoverFencedAdoption == nil) || len(c.HostKey) != ed25519.PrivateKeySize {
 		return zero, effectgate.ErrFenced
 	}
 	proof, err := c.AuthorizeFence(ctx, id)
@@ -50,7 +52,26 @@ func (c *AdoptionCoordinator) Disposition(ctx context.Context, id string) (contr
 		return zero, priorErr
 	}
 	if len(proof.Signature) == 0 {
-		observation, private, err := c.InspectFencedAdoption(ctx, proof.Adoption)
+		var observation substrate.NodeObservation
+		var private json.RawMessage
+		if c.RecoverFencedAdoption != nil && proof.Adoption.Provider == "firecracker" {
+			observation, private, err = c.RecoverFencedAdoption(ctx, proof, func(ctx context.Context) error {
+				current, err := c.AuthorizeFence(ctx, id)
+				if err != nil {
+					return err
+				}
+				oldDigest, _ := proof.Request.Digest()
+				newDigest, _ := current.Request.Digest()
+				if oldDigest != newDigest {
+					return effectgate.ErrFenced
+				}
+				return nil
+			})
+		} else if c.InspectFencedAdoption != nil {
+			observation, private, err = c.InspectFencedAdoption(ctx, proof.Adoption)
+		} else {
+			return zero, effectgate.ErrFenced
+		}
 		if err != nil {
 			return zero, err
 		}

@@ -153,6 +153,15 @@ func (s *Substrate) startManifestNode(ctx context.Context, h substrate.NodeHandl
 	} else {
 		cmd = exec.Command(executable, args...)
 	}
+	// Short socket parents may live on ephemeral storage and disappear at
+	// reboot. Recreate only validated owner-controlled directories before intent.
+	for _, path := range []string{m.Handle.Socket, m.Handle.VsockUDS} {
+		if path != "" {
+			if err := ensureOwnedSocketDirectory(path); err != nil {
+				return err
+			}
+		}
+	}
 	boot, err := currentBootID()
 	if err != nil {
 		return err

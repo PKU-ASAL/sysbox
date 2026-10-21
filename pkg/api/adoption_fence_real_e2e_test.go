@@ -90,16 +90,23 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 	st, err := repo.LoadState(ctx, "gc-lab")
 	require.NoError(t, err)
 	id := uuid.NewString()
-	definition, err := libvirtprovider.GenerateDomainXML(libvirtprovider.DomainSpec{Name: "sysbox-adoption-fence-" + id, UUID: id, VCPUs: 1, MemoryMiB: 128})
-	require.NoError(t, err)
-	definition = regexp.MustCompile(`(?s)<disk\b.*?</disk>`).ReplaceAllString(definition, "")
-	xmlPath := filepath.Join(round, "domain.xml")
-	require.NoError(t, os.WriteFile(xmlPath, []byte(definition), 0600))
-	upload(xmlPath, "/var/tmp/adoption-domain.xml")
-	ssh("sudo virsh -c qemu:///system define /var/tmp/adoption-domain.xml")
+	providerKind := os.Getenv("SYSBOX_ADOPTION_FENCE_PROVIDER")
+	if providerKind == "" {
+		providerKind = "libvirt"
+	}
+	require.Contains(t, []string{"libvirt", "firecracker"}, providerKind)
+	if providerKind == "libvirt" {
+		definition, err := libvirtprovider.GenerateDomainXML(libvirtprovider.DomainSpec{Name: "sysbox-adoption-fence-" + id, UUID: id, VCPUs: 1, MemoryMiB: 128})
+		require.NoError(t, err)
+		definition = regexp.MustCompile(`(?s)<disk\b.*?</disk>`).ReplaceAllString(definition, "")
+		xmlPath := filepath.Join(round, "domain.xml")
+		require.NoError(t, os.WriteFile(xmlPath, []byte(definition), 0600))
+		upload(xmlPath, "/var/tmp/adoption-domain.xml")
+		ssh("sudo virsh -c qemu:///system define /var/tmp/adoption-domain.xml")
+	}
 	upload(os.Getenv("SYSBOX_GC_FENCE_PROBE_BINARY"), "/var/tmp/sysbox-adoption-probe.test")
 	ssh("chmod 700 /var/tmp/sysbox-adoption-probe.test")
-	adopt := controlplane.AdoptionRequest{ID: "adopt-fenced", Topology: "gc-lab", TopologyUID: st.TopologyUID, Address: "sysbox_node.adopted", Provider: "libvirt", AgentID: "gc-host", ExternalID: id, ResourceUID: "adopted", Generation: 1, ExpectedSerial: st.Meta.Serial}
+	adopt := controlplane.AdoptionRequest{ID: "adopt-fenced", Topology: "gc-lab", TopologyUID: st.TopologyUID, Address: "sysbox_node.adopted", Provider: providerKind, AgentID: "gc-host", ExternalID: id, ResourceUID: "adopted", Generation: 1, ExpectedSerial: st.Meta.Serial}
 	ssh("sudo install -d -m 0700 /var/lib/sysbox/adoption-fence-lab")
 	probe := map[string]any{"Identity": agent.Identity{ID: "gc-host", Secret: secret, APIURL: strings.Replace(server.URL, "127.0.0.1", "10.0.2.2", 1)}, "Issuer": issuerPub, "Host": hostKey, "Root": "/var/lib/sysbox/adoption-fence-lab/" + id, "Mode": "inspect", "Adoption": adopt, "Output": "/var/tmp/adoption-output.json"}
 	probePath := filepath.Join(round, "probe.json")
@@ -108,8 +115,15 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 		upload(probePath, "/var/tmp/adoption-probe.json")
 		ssh("sudo env SYSBOX_ADOPTION_FENCE_PROBE=/var/tmp/adoption-probe.json /var/tmp/sysbox-adoption-probe.test -test.run=^TestAdoptionFenceGuestProbe$ -test.v")
 	}
+	if providerKind == "firecracker" {
+		probe["Mode"] = "create-firecracker"
+	}
 	runProbe()
 	require.NoError(t, json.Unmarshal([]byte(ssh("sudo cat /var/tmp/adoption-output.json")), &adopt.Evidence))
+	if providerKind == "firecracker" {
+		id = adopt.Evidence.ExternalID
+		adopt.ExternalID = id
+	}
 	op := prepareNodeOperation(controlplane.NodeOperation{ID: adopt.ID, Topology: adopt.Topology, Node: "adopted", AgentID: adopt.AgentID, Operation: "adoption_apply", ResourceUID: adopt.ResourceUID, Generation: 1, Adoption: &adopt})
 	op, err = (&NodeOperationService{operations: newNodeOperationStore(s.apiStore)}).enqueue(ctx, st.TopologyUID, op)
 	require.NoError(t, err)
@@ -169,7 +183,14 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, controlplane.NodeOperationStatusFailed, ended.Status)
 	require.Contains(t, ended.Err, "original result unknown")
-	require.Contains(t, ssh("sudo virsh -c qemu:///system list --all --uuid"), id)
+	if providerKind == "libvirt" {
+		require.Contains(t, ssh("sudo virsh -c qemu:///system list --all --uuid"), id)
+	}
 	save(filepath.Join(round, "result.json"), map[string]any{"proof": proof, "state": recovered, "operation": ended, "old_boot": oldBoot, "new_boot": receipt.NewBootID})
-	ssh("sudo virsh -c qemu:///system undefine " + id)
+	if providerKind == "libvirt" {
+		ssh("sudo virsh -c qemu:///system undefine " + id)
+	} else {
+		probe["Mode"] = "verify-restart-cleanup"
+		runProbe()
+	}
 }

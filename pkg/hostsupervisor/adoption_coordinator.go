@@ -15,6 +15,7 @@ import (
 type AdoptionRequest = controlplane.AdoptionRequest
 
 type AdoptionCoordinator struct {
+	RecoverFencedAdoption func(context.Context, controlplane.AdoptionDispositionProof, func(context.Context) error) (substrate.NodeObservation, json.RawMessage, error)
 	AuthorizeFence        func(context.Context, string) (controlplane.AdoptionDispositionProof, error)
 	InspectFencedAdoption func(context.Context, controlplane.AdoptionRequest) (substrate.NodeObservation, json.RawMessage, error)
 	Root                  string

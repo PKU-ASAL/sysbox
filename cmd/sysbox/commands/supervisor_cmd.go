@@ -172,6 +172,32 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		private, err := codec.MarshalProviderState(handle)
 		return observed, private, err
 	}
+	server.Adoption.RecoverFencedAdoption = func(ctx context.Context, proof controlplane.AdoptionDispositionProof, authorize func(context.Context) error) (substrate.NodeObservation, json.RawMessage, error) {
+		node, err := driver.DefaultRegistry.RequireNode(proof.Adoption.Provider)
+		if err != nil {
+			return substrate.NodeObservation{}, nil, err
+		}
+		recoverer, ok := node.(interface {
+			RecoverFencedAdoption(context.Context, controlplane.AdoptionDispositionProof, func(context.Context) error) (substrate.NodeHandle, error)
+		})
+		if !ok {
+			return substrate.NodeObservation{}, nil, fmt.Errorf("provider fenced recovery unavailable")
+		}
+		h, err := recoverer.RecoverFencedAdoption(ctx, proof, authorize)
+		if err != nil {
+			return substrate.NodeObservation{}, nil, err
+		}
+		obs, err := node.ObserveNode(ctx, h)
+		if err != nil {
+			return obs, nil, err
+		}
+		codec, err := driver.DefaultRegistry.RequireNodeState(proof.Adoption.Provider)
+		if err != nil {
+			return obs, nil, err
+		}
+		private, err := codec.MarshalProviderState(h)
+		return obs, private, err
+	}
 	server.AdoptionInspect = func(ctx context.Context, req controlplane.AdoptionInspectionRequest) (substrate.AdoptionEvidence, error) {
 		provider, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider)
 		if err != nil {
