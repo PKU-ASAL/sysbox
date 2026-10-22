@@ -43,6 +43,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 	incompleteCreate := len(reconcileCase) > 4 && reconcileCase[4]
 	incompleteReplacement := len(reconcileCase) > 5 && reconcileCase[5]
 	withChild := len(reconcileCase) > 6 && reconcileCase[6]
+	verifiedSSH := len(reconcileCase) > 7 && reconcileCase[7]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -153,11 +154,21 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 					action.Phase = "accepted"
 					action.ReplayForbidden = true
 				}
+				var sshDependency runtime.ResetSSHDependency
+				if verifiedSSH {
+					sshDependency = seedResetSSHAPI(t, repo, &action)
+					admitted := sshDependency
+					admitted.Result = nil
+					action.ResetSSH = []runtime.ResetSSHDependency{admitted}
+				}
 				require.NoError(t, repo.CommitActionIntent(ctx, action))
 				if resetIntent {
 					phases := []string{"preparing", "prepared", "destroying"}
-					if incompleteReplacement {
+					if incompleteReplacement || verifiedSSH {
 						phases = append(phases, "destroy_returned", "destroyed", "applying")
+					}
+					if verifiedSSH {
+						phases = append(phases, "verifying")
 					}
 					for _, phase := range phases {
 						records, err := repo.LoadActions(ctx, "lab")
@@ -166,7 +177,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 							if current.ID == action.ID {
 								current.Phase = phase
 								current.Status = runtime.ActionUncertain
-								if incompleteReplacement && phase == "applying" {
+								if (incompleteReplacement || verifiedSSH) && phase == "applying" {
 									replacement := *current.Candidate
 									replacement.Generation = current.Generation
 									replacement.ExternalID = "replacement"
@@ -174,6 +185,12 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 										replacement = createIntentReplacementFixture(t, acceptanceRoot, current)
 									}
 									current.Replacement = &replacement
+								}
+								if verifiedSSH && phase == "verifying" {
+									current.Candidate = current.Replacement
+									current.EffectComplete = true
+									sshDependency.Started = true
+									current.ResetSSH = []runtime.ResetSSHDependency{sshDependency}
 								}
 								require.NoError(t, repo.CommitActionOutcome(ctx, current, nil))
 							}

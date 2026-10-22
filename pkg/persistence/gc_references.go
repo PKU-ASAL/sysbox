@@ -136,6 +136,12 @@ func gcReferencesAt(a *aggregate, now time.Time) (GCReferenceSnapshot, error) {
 			}
 			for id, record := range content.IntentDispositions {
 				for actionID, old := range record.Actions {
+					for _, dep := range old.ResetSSH {
+						appendResource(prefix+"intent-ssh-previous/"+id+"/"+actionID+"/"+dep.ActionID, dep.Previous)
+						if dep.Result != nil {
+							appendResource(prefix+"intent-ssh-result/"+id+"/"+actionID+"/"+dep.ActionID, *dep.Result)
+						}
+					}
 					if old.Candidate != nil {
 						appendResource(prefix+"intent-history/"+id+"/"+actionID, *old.Candidate)
 					}
@@ -161,6 +167,12 @@ func gcReferencesAt(a *aggregate, now time.Time) (GCReferenceSnapshot, error) {
 				}
 			}
 			for id, action := range content.Actions {
+				for _, dep := range action.ResetSSH {
+					appendResource(prefix+"action-ssh-previous/"+id+"/"+dep.ActionID, dep.Previous)
+					if dep.Result != nil {
+						appendResource(prefix+"action-ssh-result/"+id+"/"+dep.ActionID, *dep.Result)
+					}
+				}
 				if !runtime.ActionSettled(action) {
 					return fmt.Errorf("%w: unresolved action %s%s", ErrConflict, prefix, id)
 				}

@@ -98,7 +98,20 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	digest, err := fence.Request.Digest()
 	require.NoError(t, err)
 	report := controlplane.RunRecoveryReport{CommandID: lease.ID, RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, Mode: controlplane.RunRecoveryObserve, TopologyUID: before.TopologyUID, StateSerial: before.Meta.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: actions[0].ID, Resource: actions[0].Resource.String(), OwnerUID: actions[0].OwnerUID, ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, ExternalID: actions[0].Candidate.ExternalID, Status: "present", ProviderScope: "local-only", DeleteResidueAbsent: true, JournalStatus: string(actions[0].Status)}}}
-	if actions[0].Action == controlplane.PlanActionReset {
+	verifiedSSH := actions[0].ResetSSHResultsRecorded()
+	if verifiedSSH {
+		source := before.FindResource(actions[0].Resource)
+		old := report.Resources[0]
+		old.Generation = source.Generation
+		old.ExternalID = source.ExternalID
+		old.Status = "absent"
+		old.DeleteResidueAbsent = true
+		report.Resources[0].ResetSource = &old
+		for _, dep := range actions[0].ResetSSH {
+			r := dep.Result
+			report.Resources[0].ResetSSH = append(report.Resources[0].ResetSSH, controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, Status: "present", JournalStatus: string(actions[0].Status)})
+		}
+	} else if actions[0].Action == controlplane.PlanActionReset {
 		old := report.Resources[0]
 		old.Generation = actions[0].Candidate.Generation
 		if actions[0].Replacement != nil {
@@ -156,11 +169,11 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	if absent {
 		d.Actions[0].Decision = "absent"
 	}
-	incomplete := actions[0].ReplayForbidden && !actions[0].ResetBeforeReplacement()
+	incomplete := actions[0].ReplayForbidden && !actions[0].ResetBeforeReplacement() && !verifiedSSH
 	if incomplete {
 		d.Actions[0].Decision = "retain-incomplete"
 	}
-	if actions[0].Replacement != nil {
+	if actions[0].Replacement != nil && !verifiedSSH {
 		d.Actions[0].Decision = "retain-replacement-incomplete"
 		d.Actions[0].ExternalID = actions[0].Replacement.ExternalID
 	}
@@ -203,8 +216,17 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	if absent {
 		require.Empty(t, after.Resources)
 	} else {
-		require.Len(t, after.Resources, 1)
-		require.Equal(t, d.Actions[0].ExternalID, after.Resources[0].ExternalID)
+		count := 1
+		if verifiedSSH {
+			count += len(actions[0].ResetSSH)
+		}
+		require.Len(t, after.Resources, count)
+		require.Equal(t, d.Actions[0].ExternalID, after.FindResource(actions[0].Resource).ExternalID)
+		if verifiedSSH {
+			for _, dep := range actions[0].ResetSSH {
+				require.Equal(t, dep.Result.Generation, after.FindResource(dep.Previous.Address).Generation)
+			}
+		}
 	}
 	for _, action := range afterActions {
 		if action.ID == actions[0].ID {
@@ -247,6 +269,8 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	next.StateSerial = after.Meta.Serial
 	next.ExpectedSerial = after.Meta.Serial
 	next.Action = controlplane.PlanActionRead
+	next.ResetSSH = nil
+	next.Replacement = nil
 	if actions[0].Action == controlplane.PlanActionReset {
 		next.Generation = actions[0].Candidate.Generation
 		next.Phase = ""

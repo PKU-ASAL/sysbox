@@ -83,3 +83,18 @@ PR 2 and PR 3 have not started. Existing PRs #50–52 and this PR are not merged
 Still required: started ResetSSH inventory reconciliation in the parent
 transaction; this child-stop proof is necessary but does not settle that metadata.
 The other first-stage remaining items above retain their scope.
+
+
+## Committed ResetSSH publication slice (2026-10-23)
+
+- [x] Read-only observation of old node absence/residue, replacement presence and
+  each journal-recorded SSH result against the staged replacement.
+- [x] Evidence-bound planner and atomic node/SSH publication on file/SQLite/PG;
+  preserve uncertain archive/outcome and exact previous/result GC references.
+- [x] Prepared-write recovery, exact retry, changed canonical state rejection;
+  independent review and three same-source contract gates with no skips.
+
+The old "started ResetSSH" gap now splits into recorded-result publication
+(implemented) and missing-result recovery/unknown residue accounting (open).
+This does not close PR 1 or its broad checkboxes. No real full Reset acceptance
+or other remaining first-stage functionality is implied by backend contracts.

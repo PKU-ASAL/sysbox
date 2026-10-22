@@ -268,3 +268,26 @@ this receipt alone cannot complete a Reset or discard its old SSH dependencies.
 Upgrade controller and host before using new guest stop support. Older controllers
 reject the new receipt, retaining the hold. This protocol addition does not claim
 stop proof for arbitrary remote persistent storage or missing authoritative identity.
+
+
+### Reset after committed SSH setup but before metadata publication
+
+The explicit intent-disposition path supports a Reset journal in `verifying` with
+node effects complete and every started SSH dependency's exact committed result
+already recorded. The owning host must freshly observe the replacement node and
+all recorded SSH results present, plus exact old-node absence and deletion-residue
+absence. Canonical child-stop checks still precede publication.
+
+The signed observation adds optional nested `reset_ssh` records. The host reads
+these against the staged replacement node, without changing canonical state or
+replaying SSH mutations. An older host that omits these records cannot satisfy
+this disposition; upgrade the observing host and controller together.
+
+After all evidence is checked, one transaction (or the file backend's prepared
+write) publishes the replacement and every SSH result as `unknown`, clears the
+live node's obsolete reset handle, archives the original uncertain journal and
+preserves both previous/result SSH GC references. It ends the parent as failed
+with an unknown outcome, never as successful. Exact retries recover the same
+postimage before authority release. Missing results, attachments, changed old
+state, or incomplete resource obligations block this bounded path. A child stop
+receipt alone still cannot invent a missing SSH result.

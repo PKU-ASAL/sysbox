@@ -31,6 +31,18 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 	addresses := map[string]bool{}
 	for _, choice := range d.Actions {
 		action, ok := next.Actions[choice.ActionID]
+		if ok && action.ResetSSHResultsRecorded() && choice.Decision == "retain" {
+			if choice.ResourceUID != action.ResourceUID || choice.Generation != action.Generation || choice.ExternalID != action.Candidate.ExternalID {
+				return nil, ErrConflict
+			}
+			if err := publishResetSSHDisposition(&next, action, at, addresses); err != nil {
+				return nil, err
+			}
+			archive[action.ID] = action
+			action.DispositionID = "intent:" + d.ID
+			next.Actions[action.ID] = action
+			continue
+		}
 		incomplete := choice.Decision == "retain-incomplete" || choice.Decision == "retain-replacement-incomplete"
 		replacement := choice.Decision == "retain-replacement-incomplete" && action.ResetReplacementRecorded()
 		if !ok || runtime.ActionSettled(action) || action.OwnerUID != next.State.TopologyUID || action.Candidate == nil || (action.Replacement != nil && !replacement) || (action.Action == controlplane.PlanActionReset && !action.ResetBeforeReplacement() && !replacement) || (len(action.ResetSSH) > 0 && (!action.ResetBeforeReplacement() || choice.Decision != "retain")) || (action.ReplayForbidden && !action.EffectComplete && !action.ResetBeforeReplacement() && !incomplete) || addresses[action.Resource.String()] {

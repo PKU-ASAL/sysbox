@@ -2,7 +2,10 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"testing"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -117,4 +120,105 @@ func TestResetSSHRejectsLostAdmissionAndForeignResult(t *testing.T) {
 			require.Empty(t, conn.calls)
 		})
 	}
+}
+
+func TestResetSSHDispositionRequiresObservedCommittedDependencies(t *testing.T) {
+	e, a, _ := resetSSHFixture(t)
+	require.NoError(t, e.reconcileResetSSH(context.Background(), &a))
+	source := e.state.FindResource(a.Resource)
+	source.ExternalID = "old-provider"
+	previous := &a.ResetSSH[0].Previous
+	saved, err := decodeSSHState(*previous, e.state)
+	require.NoError(t, err)
+	saved.Handle.NodeID = source.ExternalID
+	previous.Attributes = state.MustAttributes(map[string]any{"ssh_access": saved})
+	old := controlplane.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: source.Generation, ExternalID: source.ExternalID, Status: "absent", JournalStatus: string(a.Status), ProviderScope: "local-only", DeleteResidueAbsent: true}
+	o := controlplane.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation, ExternalID: a.Candidate.ExternalID, Status: "present", JournalStatus: string(a.Status), ProviderScope: "local-only", ResetSource: &old}
+	dep := a.ResetSSH[0]
+	r := dep.Result
+	child := controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, Status: "present", JournalStatus: string(a.Status)}
+	o.ResetSSH = []controlplane.RecoveredResource{child}
+	p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+	require.Equal(t, "retain-managed", p.ResourceDecision)
+	require.Equal(t, []string{"effect_stop_proof_required"}, p.Blockers)
+	for _, variant := range []string{"missing", "unknown", "old-source", "foreign", "duplicate", "no-result"} {
+		t.Run(variant, func(t *testing.T) {
+			aa := a
+			aa.ResetSSH = append([]ResetSSHDependency(nil), a.ResetSSH...)
+			obs := o
+			obs.ResetSSH = append([]controlplane.RecoveredResource(nil), o.ResetSSH...)
+			oldCopy := old
+			obs.ResetSource = &oldCopy
+			switch variant {
+			case "missing":
+				obs.ResetSSH = nil
+			case "unknown":
+				obs.ResetSSH[0].Status = "unknown"
+			case "old-source":
+				obs.ResetSource.Status = "present"
+			case "foreign":
+				obs.ResetSSH[0].ResourceUID = "foreign"
+			case "duplicate":
+				obs.ResetSSH = append(obs.ResetSSH, child)
+			case "no-result":
+				aa.ResetSSH[0].Result = nil
+			}
+			require.NotEqual(t, "retain-managed", PlanIntentDisposition(aa, []controlplane.RecoveredResource{obs}).ResourceDecision)
+		})
+	}
+}
+
+type resetSSHDispositionDriver struct {
+	*nodeGuardDriver
+	oldID    string
+	residual []string
+}
+
+func (d *resetSSHDispositionDriver) HostFenceScope(context.Context) (string, error) {
+	return "local-only", nil
+}
+func (d *resetSSHDispositionDriver) HostFenceDeletionAbsent(_ context.Context, h substrate.NodeHandle) error {
+	d.residual = append(d.residual, h.ID)
+	if h.ID != d.oldID {
+		return errors.New("unexpected source")
+	}
+	return nil
+}
+func TestResetSSHDispositionObserverUsesReplacementForChildReads(t *testing.T) {
+	e, a, conn := resetSSHFixture(t)
+	require.NoError(t, e.reconcileResetSSH(context.Background(), &a))
+	source := e.state.FindResource(a.Resource)
+	source.ExternalID = "old-provider"
+	previous := &a.ResetSSH[0].Previous
+	saved, err := decodeSSHState(*previous, e.state)
+	require.NoError(t, err)
+	saved.Handle.NodeID = source.ExternalID
+	previous.Attributes = state.MustAttributes(map[string]any{"ssh_access": saved})
+	*e.state.FindResource(previous.Address) = *previous
+	base, err := driver.DefaultRegistry.RequireNode(a.Candidate.Driver)
+	require.NoError(t, err)
+	wrapper := &resetSSHDispositionDriver{nodeGuardDriver: base.(*nodeGuardDriver), oldID: source.ExternalID}
+	wrapper.resetDeleted = map[string]bool{source.ExternalID: true}
+	prior := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = prior })
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: wrapper.name, Version: "test", Node: wrapper, NIC: wrapper, NodeState: wrapper, GuestNetwork: wrapper, GuestNetworkInit: wrapper, ImageEntry: wrapper}))
+	// Provider state is reconstructed by actual readers, not a synthetic report.
+	require.NoError(t, source.SetProviderState(json.RawMessage(`{}`)))
+	require.NoError(t, a.Candidate.SetProviderState(json.RawMessage(`{}`)))
+	repo := &memoryActions{state: e.state, actions: []ActionRecord{a}}
+	before, _ := json.Marshal(e.state)
+	_, items, err := ObserveRunActions(context.Background(), repo, "lab", a.RunID)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.NotNil(t, items[0].ResetSource)
+	require.Equal(t, "absent", items[0].ResetSource.Status)
+	require.True(t, items[0].ResetSource.DeleteResidueAbsent)
+	require.Len(t, items[0].ResetSSH, 1)
+	require.Equal(t, "present", items[0].ResetSSH[0].Status)
+	require.Equal(t, "retain-managed", PlanIntentDisposition(a, items).ResourceDecision)
+	after, _ := json.Marshal(e.state)
+	require.JSONEq(t, string(before), string(after))
+	require.Equal(t, []string{source.ExternalID}, wrapper.residual)
+	require.Len(t, conn.calls, 1, "read-only observation cannot replay SSH mutation")
 }

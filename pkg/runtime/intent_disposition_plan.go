@@ -46,6 +46,9 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 		p.Blockers = []string{}
 		return p
 	}
+	if a.Action == controlplane.PlanActionReset && a.Phase == "verifying" && len(a.ResetSSH) > 0 {
+		return planResetSSHDisposition(a, observations, p)
+	}
 	if a.Action == controlplane.PlanActionReset && a.Candidate != nil && a.Candidate.Generation != a.Generation {
 		p.ResourceDecision = "review-reset"
 		if !a.ResetBeforeReplacement() && !a.ResetReplacementRecorded() {

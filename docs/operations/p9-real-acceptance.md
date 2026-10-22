@@ -5127,3 +5127,32 @@ without skips in `/tmp/sysbox-ssh-stop-campaign-20261023/run.json`:
 `6c7a42434aa68f7472d7c09698e4265370bfa0b4474222375cc8158c4468b2ef`.
 Independent review found and verified fixes for mixed-old-helper replay and
 mistaking transient authority failures for revocation.
+
+
+### PR #53: atomic post-setup Reset/SSH publication (2026-10-23)
+
+The public host-fence API now retains a verified replacement node together with
+all journal-recorded committed SSH results in one metadata transition. Exact old
+node absence includes the provider residue proof; nested SSH observations use the
+replacement node rather than canonical old-node state. The immutable original
+journal remains uncertain and the resulting Run is failed/unknown. Archive GC
+references retain each old SSH record and each committed result.
+
+Three same-source machine gates passed with zero skips, including file, SQLite
+and dedicated PostgreSQL public API contracts, prepared-write crash/retry and
+actual runtime observer coverage: `reset-ssh-disposition-api`,
+`reset-ssh-disposition-transaction`, `reset-ssh-disposition-observer`.
+Report: `/tmp/sysbox-reset-ssh-publish-campaign-20261023-final/run.json`.
+Source SHA256:
+`9807cf9391c43d44863ab87396777f2ec1643e6fec63fa72070c38d9c7ea7082`.
+All four affected packages (API, persistence, runtime, controlplane) passed full
+race regression in `/tmp/sysbox-reset-ssh-publish-full.log` (API 308.137s).
+PostgreSQL used the disposable container's inspected port 33481. Independent
+review found no blocking issue. The public API fixture supplies synthetic
+committed provider/SSH observations; it is a backend/protocol contract, not real
+full Reset acceptance or evidence for the remaining provider/transport matrix.
+
+This closes only the recorded-results publication window. A started child with
+no durable result remains blocked. Attachment absence, composite generations,
+unrecorded creation identity, persistent-file/vsock stop proofs, and complete
+repeated operator recovery still remain first-stage work.
