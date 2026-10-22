@@ -45,3 +45,21 @@ func TestResetSourceAbsenceUsesProviderResidualProof(t *testing.T) {
 	require.Equal(t, []string{"source"}, sub.checked)
 	require.Equal(t, "confirm-absence", PlanIntentDisposition(action, items).ResourceDecision)
 }
+
+func TestIntentObservationDistinguishesStoppedPresenceFromHealth(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	sub := &resetDispositionObserver{portTestSubstrate: &portTestSubstrate{name: "stopped-intent", nodeObservation: substrate.NodeObservation{Exists: true, Status: substrate.NodeStatusExited, ExternalID: "source", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}}}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: sub.name, Version: "test", Node: sub, NodeState: sub}))
+	addr := address.Resource("sysbox_node", "node")
+	source := state.Resource{Address: addr, Driver: sub.name, ExternalID: "source", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}
+	require.NoError(t, source.SetProviderState(json.RawMessage(`{}`)))
+	action := ActionRecord{ID: "a", RunID: "run", Resource: addr, Action: controlplane.PlanActionCreate, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Candidate: &source, ReplayForbidden: true}
+	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner"}
+	observed := observeIntentResource(context.Background(), action, &source, st)
+	require.Equal(t, "present", observed.Status)
+	require.Equal(t, ActionUncertain, action.Status)
+	sub.nodeObservation.OwnerUID = "foreign"
+	require.Equal(t, "unknown", observeIntentResource(context.Background(), action, &source, st).Status)
+}

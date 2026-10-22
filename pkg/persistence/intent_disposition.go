@@ -51,18 +51,28 @@ func ValidateIntentDispositionChoice(d controlplane.IntentDispositionDecision, r
 			continue
 		}
 		choice, ok := choices[a.ID]
-		if !ok || choice.ResourceUID != a.ResourceUID || choice.Generation != a.Generation || a.Candidate == nil || choice.ExternalID != a.Candidate.ExternalID {
+		candidate := a.Candidate
+		incomplete := choice.Decision == "retain-incomplete" || choice.Decision == "retain-replacement-incomplete"
+		if choice.Decision == "retain-replacement-incomplete" {
+			if !a.ResetReplacementRecorded() {
+				return ErrConflict
+			}
+			candidate = a.Replacement
+		} else if choice.Decision == "retain-incomplete" && a.Action == controlplane.PlanActionReset {
+			return ErrConflict
+		}
+		if !ok || choice.ResourceUID != a.ResourceUID || choice.Generation != a.Generation || candidate == nil || choice.ExternalID != candidate.ExternalID {
 			return ErrConflict
 		}
 		plan := runtime.PlanIntentDisposition(a, report.Resources)
 		// Stop proof is checked by the transaction's authority verifier, not by
 		// resource observation. All other blockers require their own resolution.
 		for _, blocker := range plan.Blockers {
-			if blocker != "effect_stop_proof_required" {
+			if blocker != "effect_stop_proof_required" && !(incomplete && blocker == "guest_effect_disposition_required") {
 				return ErrConflict
 			}
 		}
-		if (choice.Decision == "retain" && plan.ResourceDecision != "retain-managed") || (choice.Decision == "absent" && plan.ResourceDecision != "confirm-absence") {
+		if (choice.Decision == "retain" && plan.ResourceDecision != "retain-managed") || (choice.Decision == "absent" && plan.ResourceDecision != "confirm-absence") || (choice.Decision == "retain-incomplete" && plan.ResourceDecision != "retain-managed") || (choice.Decision == "retain-replacement-incomplete" && plan.ResourceDecision != "retain-incomplete-replacement") {
 			return ErrConflict
 		}
 		delete(choices, a.ID)

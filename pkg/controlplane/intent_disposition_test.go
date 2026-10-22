@@ -49,3 +49,12 @@ func repeatDigest(s string) string {
 	}
 	return v
 }
+
+func TestIntentDispositionRequiresExplicitIncompleteChoice(t *testing.T) {
+	p := IntentDispositionDecision{Version: 1, ID: "dispose", FenceID: "fence", Topology: "lab", RunID: "run", RunQueuedAt: time.Now().UTC(), RunRevision: "revision", JournalSHA256: repeatDigest("a"), ObservationSHA256: repeatDigest("b"), Reason: "preserve for explicit rebuild", Actions: []IntentDispositionAction{{ActionID: "a", Decision: "retain-incomplete", ResourceUID: "resource", Generation: 2, ExternalID: "replacement"}}}
+	_, err := p.Digest()
+	require.NoError(t, err)
+	p.Actions[0].Decision = "retain-replacement-incomplete"
+	_, err = p.Digest()
+	require.NoError(t, err)
+}

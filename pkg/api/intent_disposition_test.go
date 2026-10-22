@@ -12,6 +12,7 @@ import (
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"os"
@@ -24,6 +25,12 @@ import (
 
 func TestHostFenceIntentDispositionAPI(t *testing.T) {
 	runHostFenceAPIContract(t, "", true, true, true)
+}
+func TestHostFenceIncompleteCreateAPI(t *testing.T) {
+	runHostFenceAPIContract(t, "", true, true, true, false, false, true)
+}
+func TestHostFenceIncompleteReplacementAPI(t *testing.T) {
+	runHostFenceAPIContract(t, "", true, true, true, false, true, false, true)
 }
 func TestHostFenceResetSourceDispositionAPI(t *testing.T) {
 	runHostFenceAPIContract(t, "", true, true, true, false, true)
@@ -47,6 +54,14 @@ func TestHostFenceResetSourceAbsenceDisposableVM(t *testing.T) {
 		t.Skip("requires enrolled disposable VM fencing lab")
 	}
 	runHostFenceAPIContract(t, root, true, true, true, true, true)
+}
+func TestHostFenceIncompleteReplacementDisposableVM(t *testing.T) {
+	root := os.Getenv("SYSBOX_GC_FENCE_LAB")
+	if root == "" {
+		t.Skip("requires enrolled disposable VM fencing lab")
+	}
+	require.Equal(t, "libvirt", os.Getenv("SYSBOX_DELETE_CLOSURE_PROVIDER"))
+	runHostFenceAPIContract(t, root, true, true, true, false, true, false, true)
 }
 func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord, absent bool, acceptanceRoot string) {
 	t.Helper()
@@ -86,6 +101,15 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	if actions[0].Action == controlplane.PlanActionReset {
 		old := report.Resources[0]
 		old.Generation = actions[0].Candidate.Generation
+		if actions[0].Replacement != nil {
+			old.Status = "absent"
+			replacement := old
+			replacement.Generation = actions[0].Replacement.Generation
+			replacement.ExternalID = actions[0].Replacement.ExternalID
+			replacement.Status = "present"
+			replacement.DeleteResidueAbsent = false
+			report.Resources[0].ResetReplacement = &replacement
+		}
 		report.Resources[0].ResetSource = &old
 		report.Resources[0].Status = "unknown"
 	}
@@ -132,6 +156,15 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	if absent {
 		d.Actions[0].Decision = "absent"
 	}
+	incomplete := actions[0].ReplayForbidden && !actions[0].ResetBeforeReplacement()
+	if incomplete {
+		d.Actions[0].Decision = "retain-incomplete"
+	}
+	if actions[0].Replacement != nil {
+		d.Actions[0].Decision = "retain-replacement-incomplete"
+		d.Actions[0].ExternalID = actions[0].Replacement.ExternalID
+	}
+
 	post := func(server *Server, decision controlplane.IntentDispositionDecision, admin bool) *httptest.ResponseRecorder {
 		raw, err := json.Marshal(map[string]any{"decision": decision, "observation_command_id": lease.ID})
 		require.NoError(t, err)
@@ -156,7 +189,7 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 		require.Empty(t, after.Resources)
 	} else {
 		require.Len(t, after.Resources, 1)
-		require.Equal(t, actions[0].Candidate.ExternalID, after.Resources[0].ExternalID)
+		require.Equal(t, d.Actions[0].ExternalID, after.Resources[0].ExternalID)
 	}
 	for _, action := range afterActions {
 		if action.ID == actions[0].ID {
@@ -183,6 +216,15 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	changed := d
 	changed.Reason = "different"
 	require.Equal(t, 409, post(cold, changed, true).Code)
+	if incomplete {
+		require.True(t, after.Resources[0].RecoveryRequired())
+		proposed := *after
+		proposed.Resources = nil
+		manager := state.NewManagerWithBackend(repo.StateBackend("lab"))
+		require.Error(t, manager.Save(&proposed))
+		require.Equal(t, 200, post(cold, d, true).Code)
+		return
+	}
 	next := actions[0]
 	next.ID = "new-action"
 	next.RunID = "new-run"

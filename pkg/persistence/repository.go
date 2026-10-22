@@ -553,6 +553,9 @@ func applyActionOutcome(a *aggregate, action runtime.ActionRecord, patch *runtim
 	}
 	action.Revision++
 	a.Actions[action.ID] = action
+	if patch != nil {
+		resolveIntentRecoveryRequirements(a, action)
+	}
 	a.UpdatedAt = time.Now().UTC()
 	return nil
 }

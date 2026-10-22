@@ -39,7 +39,7 @@ func (p IntentDispositionDecision) Digest() (string, error) {
 	}
 	seen := map[string]bool{}
 	for _, a := range p.Actions {
-		if a.ActionID == "" || seen[a.ActionID] || a.ResourceUID == "" || a.Generation <= 0 || a.ExternalID == "" || (a.Decision != "retain" && a.Decision != "absent") {
+		if a.ActionID == "" || seen[a.ActionID] || a.ResourceUID == "" || a.Generation <= 0 || a.ExternalID == "" || (a.Decision != "retain" && a.Decision != "absent" && a.Decision != "retain-incomplete" && a.Decision != "retain-replacement-incomplete") {
 			return "", fmt.Errorf("invalid or duplicate intent disposition action")
 		}
 		seen[a.ActionID] = true

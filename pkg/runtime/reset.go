@@ -508,6 +508,9 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 	if err := e.recordSubstep(item.step, "cleanup_reset", nil, func() error { return item.resetDriver.CleanupReset(ctx, item.handle) }); err != nil {
 		return fmt.Errorf("cleanup reset %s: %w", item.action.Address, err)
 	}
+	if err := updated.ClearRecoveryRequirement(); err != nil {
+		return err
+	}
 	if err := updated.SetRuntimeValue("reset_handle", ""); err != nil {
 		return err
 	}

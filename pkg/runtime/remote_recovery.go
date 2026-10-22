@@ -48,7 +48,7 @@ func ObserveRunActions(ctx context.Context, repo ActionRepository, topology, run
 				// The original phase proves replacement creation was not admitted. Read
 				// the old generation using the same residual-absence SPI as deletion;
 				// this changes no journal and invokes no provider effect.
-				if record.ResetBeforeReplacement() {
+				if record.ResetBeforeReplacement() || record.ResetReplacementRecorded() {
 					source.Action = controlplane.PlanActionDelete
 				}
 				observed := observeIntentResource(ctx, source, record.Candidate, st)
@@ -99,6 +99,12 @@ func observeIntentResource(ctx context.Context, record ActionRecord, candidate *
 		}
 		if handler, ok := GetResourceHandler(record.Resource.Type); ok {
 			observed, err := checkedRead(substrate.WithOperationIdentity(ctx, actionIdentity(record)), handler, *candidate, st)
+			if err == nil && observed.Observation != nil {
+				o := observed.Observation
+				if o.Exists && o.ExternalID == candidate.ExternalID && o.OwnerUID == candidate.OwnerUID && o.ResourceUID == candidate.ResourceUID && o.Generation == candidate.Generation {
+					item.Status = "present"
+				}
+			}
 			if err == nil && (observed.Status == state.ResourcePresent || observed.Status == state.ResourceAbsent) {
 				if observed.Status == state.ResourceAbsent || observed.Resource.OwnerUID == candidate.OwnerUID && observed.Resource.ResourceUID == candidate.ResourceUID && observed.Resource.Generation == candidate.Generation {
 					item.Status = string(observed.Status)

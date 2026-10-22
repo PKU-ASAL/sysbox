@@ -4988,3 +4988,27 @@ report and explicit disposition/new admission. Earlier attempts exposed obsolete
 fixture assertions and JSON decoding into a nonzero synthetic report; both were
 corrected without weakening signature or identity checks. This is not a running
 replacement or incomplete guest-configuration recovery claim.
+
+### Retained incomplete resources and repeated recovery (2026-10-22)
+
+`retain-incomplete` and `retain-replacement-incomplete` preserve original unknown
+results while restricting retained resources to explicit rebuild/destruction.
+The archive retains a recovery obligation independent of editable live metadata.
+Successful reset/delete action evidence resolves it; a strictly later signed
+fenced disposition can transfer it to the next generation. Removing/reidentifying
+resources, changing provider/private identity or retiring metadata cannot bypass
+an unresolved obligation. Exact JSON identity comparisons preserve large integers.
+
+Evidence: `/tmp/sysbox-incomplete-chain-verified.log` (three-backend incomplete API
+and two successive signed fence/disposition decisions followed by journaled Delete
+and metadata retirement); `/tmp/sysbox-incomplete-affected-full.log` (full API,
+persistence, runtime, state and controlplane suites with isolated PostgreSQL).
+`/tmp/sysbox-incomplete-replacement-libvirt-vm2.log` verifies old-generation absence
+and retained exact replacement after actual enclosing-VM power fencing. The fixture
+is a stopped diskless libvirt domain, not a real running guest configuration fault.
+Its exact UUID is removed by cleanup after the assertions.
+
+A real failure revealed presence/health conflation: a stopped domain was reported
+unknown because the normal health read returned drift. Intent observation now
+accepts independently verified exact provider presence without claiming healthy
+configuration or action success. The first failed run remains recorded.

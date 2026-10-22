@@ -169,3 +169,15 @@ This path writes aggregate format 15 and authority format 8. Drain old writers a
 synchronize API/Agent/CLI before use; old readers must reject the new format.
 Previous format 13/14 recovery records remain readable. This branch is not a
 production upgrade or a declaration that all Run/Reset/Guest recovery is closed.
+
+Incomplete guest initialization can be explicitly retained with
+`retain-incomplete`; an interrupted reset with both identities may use
+`retain-replacement-incomplete` only after exact old-generation residual absence
+and new-generation presence. These decisions retain a durable recovery obligation,
+not permission for normal use. Ordinary Apply and guest/node effects are blocked;
+explicit Reset or Destroy remains available. Successful journaled reset/deletion
+resolves the obligation. A later independently verified disposition can move the
+obligation forward after another failed rebuild; original evidence remains.
+Metadata removal, resource reidentification and provider-state substitution cannot
+clear this obligation. This does not undo or prove the result of external guest
+service requests.

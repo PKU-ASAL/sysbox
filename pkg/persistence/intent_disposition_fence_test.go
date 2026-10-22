@@ -19,12 +19,34 @@ import (
 )
 
 func TestFencedIntentDispositionRequiresCanonicalStopAndSignedObservation(t *testing.T) {
+	testFencedIntentDisposition(t, "")
+}
+func TestFencedIncompleteResourceDispositionRequiresRebuild(t *testing.T) {
+	for _, mode := range []string{"create", "replacement"} {
+		t.Run(mode, func(t *testing.T) { testFencedIntentDisposition(t, mode) })
+	}
+}
+func testFencedIntentDisposition(t *testing.T, mode string) {
 	ctx := context.Background()
 	authority := NewFilesystemExecutionGrantRepository(t.TempDir())
 	session, err := authority.OpenSession(ctx, "agent", "process", "")
 	require.NoError(t, err)
 	run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Op: "apply", Operation: "apply", Status: controlplane.RunRunning, Attempt: 1, QueuedAt: time.Now().UTC(), Revision: "revision"}
 	a := runtime.ActionRecord{ID: "action", Topology: "lab", Revision: 1, ExpectedSerial: 3, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "node"), Action: controlplane.PlanActionCreate, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", Private: json.RawMessage(`{"identity":"fixture"}`), ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}}
+	if mode != "" {
+		a.Candidate.Private = nil
+		require.NoError(t, a.Candidate.SetProviderState(json.RawMessage(`{"identity":"fixture"}`)))
+		a.ReplayForbidden = true
+		if mode == "replacement" {
+			a.Action = controlplane.PlanActionReset
+			a.Phase = "applying"
+			a.Generation = 2
+			replacement := *a.Candidate
+			replacement.Generation = 2
+			replacement.ExternalID = "replacement"
+			a.Replacement = &replacement
+		}
+	}
 	actions := []runtime.ActionRecord{a}
 	_, journal, err := FenceJournal(run, 3, actions)
 	require.NoError(t, err)
@@ -45,6 +67,20 @@ func TestFencedIntentDispositionRequiresCanonicalStopAndSignedObservation(t *tes
 	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: 3, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: 1, ExternalID: "external", Status: "present", JournalStatus: "uncertain", ProviderScope: "local-only"}}}
+	if mode == "replacement" {
+		old := report.Resources[0]
+		old.Status = "absent"
+		old.DeleteResidueAbsent = true
+		replacement := old
+		replacement.ExternalID = "replacement"
+		replacement.Generation = 2
+		replacement.Status = "present"
+		replacement.DeleteResidueAbsent = false
+		report.Resources[0].Generation = 2
+		report.Resources[0].Status = "unknown"
+		report.Resources[0].ResetSource = &old
+		report.Resources[0].ResetReplacement = &replacement
+	}
 	report, err = controlplane.SignFenceObservation(hostKey, report, controlplane.FenceObservationBinding{RequestSHA256: digest, HostBootID: receipt.NewBootID}, "observer", 1)
 	require.NoError(t, err)
 	observation := CommandRecord{Retired: true, Command: controlplane.AgentCommand{ID: report.CommandID, AgentID: run.AgentID, ActionID: request.ID, Type: controlplane.RunRecoveryCommand, RecoveryMode: controlplane.RunRecoveryObserve, TopologyUID: "owner", ExpectedSerial: 3, Run: &run, Status: controlplane.AgentCommandStatusCompleted, LeaseOwner: "observer", Attempt: 1}, Recovery: &report}
@@ -52,6 +88,92 @@ func TestFencedIntentDispositionRequiresCanonicalStopAndSignedObservation(t *tes
 	raw, err := authority.storage.ReadExecutionAuthority(ctx)
 	require.NoError(t, err)
 	now := time.Now().UTC()
+	if mode != "" {
+		decision.Actions[0].Generation = a.Generation
+		if mode == "replacement" {
+			decision.Actions[0].ExternalID = "replacement"
+		}
+		require.Error(t, ValidateFencedIntentDisposition(raw, decision, run, 3, actions, observation, hostPub, now), "ordinary retention must not accept incomplete guest effects")
+		decision.Actions[0].Decision = "retain-incomplete"
+		if mode == "replacement" {
+			decision.Actions[0].Decision = "retain-replacement-incomplete"
+		}
+		require.NoError(t, ValidateFencedIntentDisposition(raw, decision, run, 3, actions, observation, hostPub, now))
+		life := newAggregate()
+		life.State.TopologyUID = "owner"
+		life.Serial = 3
+		life.Actions[a.ID] = a
+		before, err := json.Marshal(life)
+		require.NoError(t, err)
+		next, err := PrepareIntentDispositionLifecycle(raw, before, decision, run, observation, hostPub, now)
+		require.NoError(t, err)
+		result, err := decodeAggregate(next)
+		require.NoError(t, err)
+		require.Len(t, result.State.Resources, 1)
+		resource := result.State.Resources[0]
+		require.True(t, resource.RecoveryRequired())
+		require.Equal(t, a.Generation, resource.Generation)
+		require.Equal(t, decision.Actions[0].ExternalID, resource.ExternalID)
+		require.Equal(t, runtime.ActionUncertain, result.Actions[a.ID].Status)
+		require.ErrorIs(t, ValidateCommandLifecycle(next, "lab", controlplane.AgentCommand{Type: "run_assigned", TopologyUID: "owner", Run: &controlplane.Run{Op: "apply"}}), ErrConflict)
+		require.NoError(t, ValidateCommandLifecycle(next, "lab", controlplane.AgentCommand{Type: "run_assigned", TopologyUID: "owner", Run: &controlplane.Run{Op: "reset"}}))
+		for _, kind := range []string{"clear", "remove", "generation", "uid", "topology", "driver", "provider-state"} {
+			var changed aggregate
+			require.NoError(t, json.Unmarshal(next, &changed))
+			switch kind {
+			case "clear":
+				require.NoError(t, changed.State.Resources[0].ClearRecoveryRequirement())
+			case "remove":
+				changed.State.Resources = nil
+			case "generation":
+				changed.State.Resources[0].Generation++
+			case "uid":
+				changed.State.Resources[0].ResourceUID = "other"
+			case "driver":
+				changed.State.Resources[0].Driver = "libvirt"
+			case "provider-state":
+				require.NoError(t, changed.State.Resources[0].SetProviderState(json.RawMessage(`{"identity":"foreign"}`)))
+			case "topology":
+				changed.State.TopologyUID = "other"
+				changed.State.Resources = nil
+				changed.Actions = map[string]runtime.ActionRecord{}
+			}
+			tampered, err := json.Marshal(changed)
+			require.NoError(t, err)
+			_, err = decodeAggregate(tampered)
+			require.Error(t, err, kind+" must not erase recovery obligation")
+		}
+		repo, err := OpenFilesystem(t.TempDir())
+		require.NoError(t, err)
+		defer repo.Close()
+		require.NoError(t, repo.backend.update(ctx, "lab", func(a *aggregate) error { *a = *result; return nil }))
+		manager := state.NewManagerWithBackend(repo.StateBackend("lab"))
+		changed, err := manager.Load()
+		require.NoError(t, err)
+		changed.Resources = nil
+		require.Error(t, manager.Save(changed), "CAS state save must not erase pending obligation")
+		require.Error(t, repo.StateBackend("lab").(*stateBackend).Delete(ctx), "metadata deletion must not erase pending obligation")
+		retained, err := manager.Load()
+		require.NoError(t, err)
+		require.Len(t, retained.Resources, 1)
+		cleanup := runtime.ActionRecord{ID: "cleanup", Topology: "lab", RunID: "new-run", Resource: resource.Address, Action: controlplane.PlanActionDelete, Status: runtime.ActionIntentCommitted, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation, StateSerial: result.Serial, ExpectedSerial: result.Serial, Candidate: &resource}
+		require.NoError(t, commitActionIntent(result, cleanup))
+		cleanup = result.Actions[cleanup.ID]
+		cleanup.Status = runtime.ActionSucceeded
+		cleanup.EffectComplete = true
+		require.NoError(t, applyActionOutcome(result, cleanup, &runtime.StatePatch{Resource: resource.Address.String(), Action: controlplane.PlanActionDelete, Op: runtime.StatePatchDelete}))
+		resolved, err := json.Marshal(result)
+		require.NoError(t, err)
+		_, err = decodeAggregate(resolved)
+		require.NoError(t, err, "successful explicit deletion resolves the obligation")
+		require.NoError(t, resetAggregate(result))
+		resolved, err = json.Marshal(result)
+		require.NoError(t, err)
+		_, err = decodeAggregate(resolved)
+		require.NoError(t, err, "resolved proof survives metadata retirement")
+
+		return
+	}
 	require.NoError(t, ValidateFencedIntentDisposition(raw, decision, run, 3, actions, observation, hostPub, now))
 	require.Error(t, ValidateFencedIntentDisposition(missingReceipt, decision, run, 3, actions, observation, hostPub, now))
 	for _, kind := range []string{"signature", "delivery", "time", "unretired", "active-grant", "other-grant", "scope", "original-attempt"} {

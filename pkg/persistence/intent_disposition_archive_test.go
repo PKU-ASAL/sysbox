@@ -111,3 +111,12 @@ func TestResetSourceDispositionPreservesOldGenerationAndReservesTargetHistory(t 
 	require.Nil(t, a.State.Resources[0].RuntimeValue("reset_handle"))
 	require.Equal(t, "old-action-handle", archive["reset"].Candidate.RuntimeValue("reset_handle"))
 }
+
+func TestIntentProviderStateComparisonPreservesIntegerIdentity(t *testing.T) {
+	left, right := state.Resource{}, state.Resource{}
+	require.NoError(t, left.SetProviderState(json.RawMessage(`{"identity":9007199254740992}`)))
+	require.NoError(t, right.SetProviderState(json.RawMessage(`{"identity":9007199254740993}`)))
+	require.False(t, sameIntentProviderState(left, right))
+	require.NoError(t, right.SetProviderState(json.RawMessage(`{ "identity" : 9007199254740992 }`)))
+	require.True(t, sameIntentProviderState(left, right))
+}

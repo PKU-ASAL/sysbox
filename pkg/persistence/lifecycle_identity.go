@@ -31,6 +31,24 @@ func validateCommandLifecycle(a *aggregate, command controlplane.AgentCommand) e
 	if a.State.TopologyUID != command.TopologyUID {
 		return ErrConflict
 	}
+	for _, resource := range a.State.Resources {
+		if !resource.RecoveryRequired() {
+			continue
+		}
+		if command.Type == "run_assigned" && command.Run != nil {
+			op := command.Run.Op
+			if op == "" {
+				op = command.Run.Operation
+			}
+			if op == "reset" || op == "destroy" {
+				continue
+			}
+			return ErrConflict
+		}
+		if command.ResourceUID == "" || command.ResourceUID == resource.ResourceUID {
+			return ErrConflict
+		}
+	}
 	if ownershipPending(a) {
 		req, err := controlplane.FromAdoptionCommand(command)
 		if err != nil || req.Transfer == nil {

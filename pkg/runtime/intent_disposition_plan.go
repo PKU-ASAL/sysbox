@@ -48,7 +48,7 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 	}
 	if a.Action == controlplane.PlanActionReset && a.Candidate != nil && a.Candidate.Generation != a.Generation {
 		p.ResourceDecision = "review-reset"
-		if !a.ResetBeforeReplacement() {
+		if !a.ResetBeforeReplacement() && !a.ResetReplacementRecorded() {
 			p.Blockers = append(p.Blockers, "reset_generation_reconciliation_required")
 			return p
 		}
@@ -58,7 +58,7 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 			if o.ActionID != a.ID {
 				continue
 			}
-			if original != nil || o.Resource != a.Resource.String() || o.OwnerUID != a.OwnerUID || o.ResourceUID != a.ResourceUID || o.Generation != a.Generation || o.ExternalID != a.Candidate.ExternalID || o.JournalStatus != string(a.Status) || o.ResetReplacement != nil {
+			if original != nil || o.Resource != a.Resource.String() || o.OwnerUID != a.OwnerUID || o.ResourceUID != a.ResourceUID || o.Generation != a.Generation || o.ExternalID != a.Candidate.ExternalID || o.JournalStatus != string(a.Status) || (a.ResetBeforeReplacement() && o.ResetReplacement != nil) {
 				p.Blockers = append(p.Blockers, "observation_identity_or_coverage_mismatch")
 				return p
 			}
@@ -78,6 +78,26 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 			return p
 		}
 		result := PlanIntentDisposition(source, []controlplane.RecoveredResource{*old})
+		if a.ResetReplacementRecorded() {
+			if result.ResourceDecision != "confirm-absence" || len(result.Blockers) != 1 || original.ResetReplacement == nil {
+				p.Blockers = append(p.Blockers, "reset_old_absence_and_replacement_observation_required")
+				return p
+			}
+			observed := original.ResetReplacement
+			if observed.ResetSource != nil || observed.ResetReplacement != nil {
+				p.Blockers = append(p.Blockers, "observation_identity_or_coverage_mismatch")
+				return p
+			}
+			target := a
+			target.Action = controlplane.PlanActionRead
+			target.Candidate = a.Replacement
+			target.Replacement = nil
+			target.ReplayForbidden = true
+			result = PlanIntentDisposition(target, []controlplane.RecoveredResource{*observed})
+			if result.ResourceDecision == "retain-managed" {
+				result.ResourceDecision = "retain-incomplete-replacement"
+			}
+		}
 		result.Identities = p.Identities
 		return result
 	}
@@ -160,4 +180,10 @@ func (a ActionRecord) ResetBeforeReplacement() bool {
 		return true
 	}
 	return false
+}
+
+// ResetReplacementRecorded is the uncertain guest-setup window with both
+// generation identities durably retained. A new reset is still required.
+func (a ActionRecord) ResetReplacementRecorded() bool {
+	return a.Action == controlplane.PlanActionReset && a.Phase == "applying" && !a.EffectComplete && len(a.ResetSSH) == 0 && a.Candidate != nil && a.Replacement != nil && a.Generation > 1 && a.Candidate.Generation == a.Generation-1 && a.Replacement.Generation == a.Generation && a.Replacement.OwnerUID == a.OwnerUID && a.Replacement.ResourceUID == a.ResourceUID && a.Replacement.Driver == a.Candidate.Driver && a.Replacement.Address.Equal(a.Resource)
 }

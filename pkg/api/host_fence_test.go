@@ -40,6 +40,8 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 	reconcile := len(reconcileCase) > 0 && reconcileCase[0]
 	intentCase := len(reconcileCase) > 1 && reconcileCase[1]
 	resetIntent := len(reconcileCase) > 3 && reconcileCase[3]
+	incompleteCreate := len(reconcileCase) > 4 && reconcileCase[4]
+	incompleteReplacement := len(reconcileCase) > 5 && reconcileCase[5]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -71,6 +73,10 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				st, err := repo.LoadState(ctx, "lab")
 				require.NoError(t, err)
 				run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Op: "destroy", Operation: "destroy", Status: controlplane.RunRunning, QueuedAt: time.Now().UTC(), Revision: "revision", Attempt: 1, LeaseOwner: "owner"}
+				if incompleteCreate {
+					run.Op = "apply"
+					run.Operation = "apply"
+				}
 				if resetIntent {
 					run.Op = "reset"
 					run.Operation = "reset"
@@ -118,21 +124,27 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 						}
 					}
 
-					seed := action
-					seed.ID = "seed"
-					seed.RunID = "older-run"
-					seed.Action = controlplane.PlanActionCreate
-					require.NoError(t, repo.CommitActionIntent(ctx, seed))
-					records, err := repo.LoadActions(ctx, "lab")
-					require.NoError(t, err)
-					seed = records[0]
-					seed.Status = runtime.ActionSucceeded
-					require.NoError(t, repo.CommitActionOutcome(ctx, seed, &runtime.StatePatch{Resource: seed.Resource.String(), Action: seed.Action, Op: runtime.StatePatchUpsert}))
-					current, err := repo.LoadState(ctx, "lab")
-					require.NoError(t, err)
-					action.StateSerial = current.Meta.Serial
-					action.ExpectedSerial = current.Meta.Serial
+					if !incompleteCreate {
+						seed := action
+						seed.ID = "seed"
+						seed.RunID = "older-run"
+						seed.Action = controlplane.PlanActionCreate
+						require.NoError(t, repo.CommitActionIntent(ctx, seed))
+						records, err := repo.LoadActions(ctx, "lab")
+						require.NoError(t, err)
+						seed = records[0]
+						seed.Status = runtime.ActionSucceeded
+						require.NoError(t, repo.CommitActionOutcome(ctx, seed, &runtime.StatePatch{Resource: seed.Resource.String(), Action: seed.Action, Op: runtime.StatePatchUpsert}))
+						current, err := repo.LoadState(ctx, "lab")
+						require.NoError(t, err)
+						action.StateSerial = current.Meta.Serial
+						action.ExpectedSerial = current.Meta.Serial
+					}
 
+				}
+				if incompleteCreate {
+					action.Action = controlplane.PlanActionCreate
+					action.ReplayForbidden = true
 				}
 				if resetIntent {
 					action.Action = controlplane.PlanActionReset
@@ -142,13 +154,26 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				}
 				require.NoError(t, repo.CommitActionIntent(ctx, action))
 				if resetIntent {
-					for _, phase := range []string{"preparing", "prepared", "destroying"} {
+					phases := []string{"preparing", "prepared", "destroying"}
+					if incompleteReplacement {
+						phases = append(phases, "destroy_returned", "destroyed", "applying")
+					}
+					for _, phase := range phases {
 						records, err := repo.LoadActions(ctx, "lab")
 						require.NoError(t, err)
 						for _, current := range records {
 							if current.ID == action.ID {
 								current.Phase = phase
 								current.Status = runtime.ActionUncertain
+								if incompleteReplacement && phase == "applying" {
+									replacement := *current.Candidate
+									replacement.Generation = current.Generation
+									replacement.ExternalID = "replacement"
+									if acceptanceRoot != "" {
+										replacement = createIntentReplacementFixture(t, acceptanceRoot, current)
+									}
+									current.Replacement = &replacement
+								}
 								require.NoError(t, repo.CommitActionOutcome(ctx, current, nil))
 							}
 						}

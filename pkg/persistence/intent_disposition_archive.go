@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -30,15 +31,24 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 	addresses := map[string]bool{}
 	for _, choice := range d.Actions {
 		action, ok := next.Actions[choice.ActionID]
-		if !ok || runtime.ActionSettled(action) || action.OwnerUID != next.State.TopologyUID || action.Candidate == nil || action.Replacement != nil || (action.Action == controlplane.PlanActionReset && !action.ResetBeforeReplacement()) || len(action.ResetSSH) > 0 || (action.ReplayForbidden && !action.EffectComplete && !action.ResetBeforeReplacement()) || addresses[action.Resource.String()] {
+		incomplete := choice.Decision == "retain-incomplete" || choice.Decision == "retain-replacement-incomplete"
+		replacement := choice.Decision == "retain-replacement-incomplete" && action.ResetReplacementRecorded()
+		if !ok || runtime.ActionSettled(action) || action.OwnerUID != next.State.TopologyUID || action.Candidate == nil || (action.Replacement != nil && !replacement) || (action.Action == controlplane.PlanActionReset && !action.ResetBeforeReplacement() && !replacement) || len(action.ResetSSH) > 0 || (action.ReplayForbidden && !action.EffectComplete && !action.ResetBeforeReplacement() && !incomplete) || addresses[action.Resource.String()] {
 			return nil, ErrConflict
 		}
 		candidate := action.Candidate
+		if replacement {
+			candidate = action.Replacement
+		}
 		if choice.ResourceUID != action.ResourceUID || choice.Generation != action.Generation || choice.ExternalID != candidate.ExternalID || candidate.ExternalID == "" || len(candidate.Attachments) > 0 {
 			return nil, ErrConflict
 		}
 		current := next.State.FindResource(action.Resource)
-		if current != nil && (current.OwnerUID != candidate.OwnerUID || current.ResourceUID != candidate.ResourceUID || current.Generation != candidate.Generation || current.Driver != candidate.Driver || current.ExternalID != candidate.ExternalID || len(current.Attachments) > 0) {
+		expectedCurrent := candidate
+		if replacement && current != nil && current.Generation == action.Candidate.Generation {
+			expectedCurrent = action.Candidate
+		}
+		if current != nil && (current.OwnerUID != expectedCurrent.OwnerUID || current.ResourceUID != expectedCurrent.ResourceUID || current.Generation != expectedCurrent.Generation || current.Driver != expectedCurrent.Driver || current.ExternalID != expectedCurrent.ExternalID || len(current.Attachments) > 0) {
 			return nil, ErrConflict
 		}
 		for _, resource := range next.State.Resources {
@@ -47,17 +57,22 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 			}
 		}
 		switch choice.Decision {
-		case "retain":
+		case "retain", "retain-incomplete", "retain-replacement-incomplete":
 			retained := *candidate
-			if current != nil {
+			if current != nil && !replacement {
 				retained = *current
 			}
 			var private map[string]json.RawMessage
 			if json.Unmarshal(retained.Private, &private) != nil || len(private) == 0 {
 				return nil, ErrConflict
 			}
-			if action.ResetBeforeReplacement() {
+			if action.ResetBeforeReplacement() || incomplete {
 				if err := retained.DeleteRuntimeValue("reset_handle"); err != nil {
+					return nil, err
+				}
+			}
+			if incomplete {
+				if err := retained.RequireRecovery(d.ID, retained.ResourceUID, retained.Generation); err != nil {
 					return nil, err
 				}
 			}
@@ -85,6 +100,8 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 }
 
 type IntentDispositionArchive struct {
+	Transfers   map[string]IntentRecoveryTransfer      `json:"transfers,omitempty"`
+	Resolutions map[string]runtime.ActionRecord        `json:"resolutions,omitempty"`
 	Decision    controlplane.IntentDispositionDecision `json:"decision"`
 	Run         controlplane.Run                       `json:"run"`
 	Actions     map[string]runtime.ActionRecord        `json:"actions"`
@@ -135,6 +152,7 @@ func prepareIntentDispositionLifecycle(authorityRaw, lifecycleRaw []byte, d cont
 		a.IntentDispositions = map[string]IntentDispositionArchive{}
 	}
 	a.IntentDispositions[d.ID] = IntentDispositionArchive{Decision: d, Run: DurableRun(run), Actions: archive, Request: f.Request, Fence: *f.Receipt, Observation: *observation.Recovery, HostKey: append([]byte(nil), key...), CommittedAt: decidedAt}
+	migrateIntentRecoveryRequirements(a, d.ID)
 	a.Format = IntentDispositionFormatVersion
 	if err = validateAggregate(a, d.Topology); err != nil {
 		return nil, err
@@ -171,8 +189,61 @@ func validateIntentDispositionArchives(a *aggregate) error {
 		if ValidateIntentDispositionChoice(d, record.Run, d.ExpectedSerial, actions, record.Observation) != nil {
 			return ErrCorruptRecord
 		}
+		for actionID, transfer := range record.Transfers {
+			if _, also := record.Resolutions[actionID]; also {
+				return ErrCorruptRecord
+			}
+			target, ok := a.IntentDispositions[transfer.DispositionID]
+			if !ok {
+				return ErrCorruptRecord
+			}
+			matched := false
+			for _, choice := range d.Actions {
+				for _, next := range target.Decision.Actions {
+					if choice.ActionID == actionID && next.ActionID == transfer.ActionID && validIntentRecoveryTransfer(record, choice, target, next) {
+						matched = true
+					}
+				}
+			}
+			if !matched {
+				return ErrCorruptRecord
+			}
+		}
+		for actionID := range record.Resolutions {
+			found := false
+			for _, choice := range d.Actions {
+				if choice.ActionID == actionID && (choice.Decision == "retain-incomplete" || choice.Decision == "retain-replacement-incomplete") {
+					found = true
+				}
+			}
+			if !found {
+				return ErrCorruptRecord
+			}
+		}
 		for _, choice := range d.Actions {
 			old, ok := record.Actions[choice.ActionID]
+			if choice.Decision == "retain-incomplete" || choice.Decision == "retain-replacement-incomplete" {
+				if _, transferred := record.Transfers[choice.ActionID]; transferred {
+					// Target proof was checked above and its obligation is checked in this
+					// same aggregate; increasing serials make this a finite chain.
+				} else if resolution, resolved := record.Resolutions[choice.ActionID]; resolved {
+					if !validIntentRecoveryResolution(record, choice, resolution) {
+						return ErrCorruptRecord
+					}
+					if current, exists := a.Actions[resolution.ID]; exists && evidenceHash(current) != evidenceHash(resolution) {
+						return ErrCorruptRecord
+					}
+				} else {
+					resource := a.State.FindResource(old.Resource)
+					expected := old.Candidate
+					if choice.Decision == "retain-replacement-incomplete" {
+						expected = old.Replacement
+					}
+					if resource == nil || a.State.TopologyUID != record.Observation.TopologyUID || resource.OwnerUID != record.Observation.TopologyUID || resource.ResourceUID != choice.ResourceUID || resource.Generation != choice.Generation || resource.ExternalID != choice.ExternalID || expected == nil || resource.Driver != expected.Driver || !sameIntentProviderState(*resource, *expected) || !resource.RecoveryRequired() {
+						return ErrCorruptRecord
+					}
+				}
+			}
 			if !ok || old.DispositionID != "" {
 				return ErrCorruptRecord
 			}
@@ -206,4 +277,73 @@ func validateIntentDispositionArchives(a *aggregate) error {
 		}
 	}
 	return nil
+}
+
+func validIntentRecoveryResolution(record IntentDispositionArchive, choice controlplane.IntentDispositionAction, action runtime.ActionRecord) bool {
+	old, ok := record.Actions[choice.ActionID]
+	if !ok || validateAction(action) != nil || action.Revision < 1 || action.Status != runtime.ActionSucceeded || action.DispositionID != "" || action.OwnerUID != record.Observation.TopologyUID || action.ResourceUID != choice.ResourceUID || !action.Resource.Equal(old.Resource) || action.ExpectedSerial < record.Decision.ExpectedSerial+1 || action.Candidate == nil || action.Candidate.OwnerUID != action.OwnerUID || action.Candidate.ResourceUID != action.ResourceUID {
+		return false
+	}
+	expected := old.Candidate
+	if choice.Decision == "retain-replacement-incomplete" {
+		expected = old.Replacement
+	}
+	if expected == nil || action.Candidate.Driver != expected.Driver {
+		return false
+	}
+	switch action.Action {
+	case controlplane.PlanActionDelete:
+		return action.Generation == choice.Generation && action.Candidate.Generation == choice.Generation && action.Candidate.ExternalID == choice.ExternalID && sameIntentProviderState(*action.Candidate, *expected)
+	case controlplane.PlanActionReset:
+		return action.Generation > choice.Generation && action.Candidate.Generation == action.Generation && action.Phase == "verifying" && action.EffectComplete && !action.Candidate.RecoveryRequired()
+	}
+	return false
+}
+
+// Called only by the atomic successful journal/resource-patch transition.
+// Metadata writers cannot manufacture this resolution by removing a resource.
+func resolveIntentRecoveryRequirements(a *aggregate, action runtime.ActionRecord) {
+	if action.Status != runtime.ActionSucceeded {
+		return
+	}
+	for id, record := range a.IntentDispositions {
+		for _, choice := range record.Decision.Actions {
+			if choice.Decision != "retain-incomplete" && choice.Decision != "retain-replacement-incomplete" {
+				continue
+			}
+			if _, done := record.Resolutions[choice.ActionID]; done {
+				continue
+			}
+			if _, done := record.Transfers[choice.ActionID]; done {
+				continue
+			}
+			if validIntentRecoveryResolution(record, choice, action) {
+				if record.Resolutions == nil {
+					record.Resolutions = map[string]runtime.ActionRecord{}
+				}
+				record.Resolutions[choice.ActionID] = action
+			}
+		}
+		a.IntentDispositions[id] = record
+	}
+}
+
+func sameIntentProviderState(left, right state.Resource) bool {
+	a, err := left.ProviderState()
+	if err != nil {
+		return false
+	}
+	b, err := right.ProviderState()
+	if err != nil {
+		return false
+	}
+	var first, second any
+	firstDecoder := json.NewDecoder(bytes.NewReader(a))
+	firstDecoder.UseNumber()
+	secondDecoder := json.NewDecoder(bytes.NewReader(b))
+	secondDecoder.UseNumber()
+	if firstDecoder.Decode(&first) != nil || secondDecoder.Decode(&second) != nil {
+		return false
+	}
+	return evidenceHash(first) == evidenceHash(second)
 }

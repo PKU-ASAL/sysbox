@@ -52,7 +52,11 @@ func TestFenceObservationAcceptance(t *testing.T) {
 	for _, r := range report.Resources {
 		if r.ResetSource != nil {
 			require.Equal(t, "unknown", r.Status, "resource absence is not composite reset success")
-			require.Nil(t, r.ResetReplacement)
+			if r.ResetReplacement != nil {
+				require.Equal(t, "present", r.ResetReplacement.Status)
+				require.Equal(t, "local-only", r.ResetReplacement.ProviderScope)
+				require.Greater(t, r.ResetReplacement.Generation, r.ResetSource.Generation)
+			}
 			r = *r.ResetSource
 		}
 		require.Equal(t, "absent", r.Status)

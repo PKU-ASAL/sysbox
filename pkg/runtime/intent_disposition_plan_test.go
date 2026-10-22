@@ -138,3 +138,38 @@ func TestResetDispositionNeverInfersUnrecordedReplacementAbsence(t *testing.T) {
 	require.NotEqual(t, "retain-managed", p.ResourceDecision)
 	require.Contains(t, p.Blockers, "reset_generation_reconciliation_required")
 }
+
+func TestResetReplacementDispositionRequiresOldAbsenceAndNewExactIdentity(t *testing.T) {
+	a := dispositionAction()
+	a.Action = controlplane.PlanActionReset
+	a.Generation = 2
+	a.Phase = "applying"
+	a.ReplayForbidden = true
+	replacement := *a.Candidate
+	replacement.Generation = 2
+	replacement.ExternalID = "new"
+	a.Replacement = &replacement
+	old := dispositionObservation(a)
+	old.Generation = 1
+	old.Status = "absent"
+	old.DeleteResidueAbsent = true
+	current := old
+	current.Generation = 2
+	current.ExternalID = "new"
+	current.Status = "present"
+	current.DeleteResidueAbsent = false
+	o := dispositionObservation(a)
+	o.Status = "unknown"
+	o.ResetSource = &old
+	o.ResetReplacement = &current
+	p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+	require.Equal(t, "retain-incomplete-replacement", p.ResourceDecision)
+	require.Equal(t, []string{"effect_stop_proof_required", "guest_effect_disposition_required"}, p.Blockers)
+	old.Status = "present"
+	p = PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+	require.NotEqual(t, "retain-incomplete-replacement", p.ResourceDecision)
+	old.Status = "absent"
+	current.OwnerUID = "foreign"
+	p = PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+	require.NotEqual(t, "retain-incomplete-replacement", p.ResourceDecision)
+}
