@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,15 +16,17 @@ import (
 )
 
 type hostFenceRecoveryAction struct {
-	ID               string               `json:"id"`
-	Resource         string               `json:"resource"`
-	ResourceUID      string               `json:"resource_uid"`
-	Generation       int64                `json:"generation"`
-	Status           runtime.ActionStatus `json:"status"`
-	ObservedPresence string               `json:"observed_presence"`
-	Blockers         []string             `json:"blockers"`
+	Disposition      runtime.IntentDispositionPlan `json:"disposition"`
+	ID               string                        `json:"id"`
+	Resource         string                        `json:"resource"`
+	ResourceUID      string                        `json:"resource_uid"`
+	Generation       int64                         `json:"generation"`
+	Status           runtime.ActionStatus          `json:"status"`
+	ObservedPresence string                        `json:"observed_presence"`
+	Blockers         []string                      `json:"blockers"`
 }
 type hostFenceRecoveryPlan struct {
+	ObservationSHA256      string                    `json:"observation_sha256,omitempty"`
 	ReconciliationStatus   string                    `json:"reconciliation_status"`
 	ReleaseStatus          string                    `json:"release_status"`
 	ObservationAttestation string                    `json:"observation_attestation"`
@@ -128,7 +131,7 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 		plan.Blockers = append(plan.Blockers, "original_journal_changed")
 	}
 	for _, a := range selected {
-		item := hostFenceRecoveryAction{ID: a.ID, Resource: a.Resource.String(), ResourceUID: a.ResourceUID, Generation: a.Generation, Status: a.Status, ObservedPresence: "unknown", Blockers: []string{}}
+		item := hostFenceRecoveryAction{Disposition: runtime.PlanIntentDisposition(a, nil), ID: a.ID, Resource: a.Resource.String(), ResourceUID: a.ResourceUID, Generation: a.Generation, Status: a.Status, ObservedPresence: "unknown", Blockers: []string{}}
 		if a.Status != runtime.ActionSucceeded {
 			if a.ProviderOperationID == "" || a.ProviderOperationAnchor == "" {
 				item.Blockers = append(item.Blockers, "missing_original_operation_anchor")
@@ -203,6 +206,11 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 			return plan, run, st.Meta.Serial, nil
 		}
 		plan.ObservationAttestation = "verified"
+		encoded, err := json.Marshal(report)
+		if err != nil {
+			return plan, nil, 0, err
+		}
+		plan.ObservationSHA256 = fmt.Sprintf("%x", sha256.Sum256(encoded))
 	}
 	byID := map[string]string{}
 	for _, r := range report.Resources {
@@ -210,6 +218,11 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 	}
 	for i := range plan.Actions {
 		plan.Actions[i].ObservedPresence = byID[plan.Actions[i].ID]
+		// Unverified observations remain diagnostic only and cannot improve a
+		// disposition decision. The plan itself never authorizes release.
+		if plan.ObservationAttestation == "verified" {
+			plan.Actions[i].Disposition = runtime.PlanIntentDisposition(selected[i], report.Resources)
+		}
 	}
 	return plan, run, st.Meta.Serial, nil
 }

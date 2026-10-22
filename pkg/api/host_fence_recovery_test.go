@@ -61,6 +61,9 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 	require.False(t, plan.ReleaseAllowed)
 	require.False(t, plan.ReplayAllowed)
 	require.Len(t, plan.Actions, 1)
+	require.Equal(t, plan.Actions[0].ID, plan.Actions[0].Disposition.ActionID)
+	require.False(t, plan.Actions[0].Disposition.ReplayAllowed)
+	require.Contains(t, plan.Actions[0].Disposition.Blockers, "effect_stop_proof_required")
 	require.Contains(t, plan.Actions[0].Blockers, "missing_original_operation_anchor")
 	require.Equal(t, 400, fenceRecoveryRequest(s, "POST", path+"/observe", "").Code)
 	var workers sync.WaitGroup
@@ -221,6 +224,7 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 			require.NoError(t, json.Unmarshal(got.Body.Bytes(), &result))
 			if variant == "valid" || variant == "host-executor" {
 				require.Equal(t, "verified", result.ObservationAttestation)
+				require.NotEmpty(t, result.ObservationSHA256)
 				require.NotContains(t, result.Blockers, "observation_not_host_boot_attested")
 				if variant == "host-executor" {
 					require.Equal(t, "unknown", result.Actions[0].ObservedPresence)
@@ -229,6 +233,7 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 				}
 			} else {
 				require.Equal(t, "invalid", result.ObservationAttestation)
+				require.Empty(t, result.ObservationSHA256)
 				require.Equal(t, "unknown", result.Actions[0].ObservedPresence)
 				require.Contains(t, result.Blockers, "host_observation_signature_invalid")
 			}
