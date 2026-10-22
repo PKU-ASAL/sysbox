@@ -3,6 +3,9 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
@@ -19,12 +22,12 @@ func (a ActionRecord) ResetSSHResultsRecorded() bool {
 	}
 	seen := map[string]bool{}
 	for _, dep := range a.ResetSSH {
-		if !dep.Started || dep.Result == nil || dep.ActionID != resetSSHActionID(a.ID, dep.Previous.Address.String()) || seen[dep.Previous.Address.String()] || dep.Previous.Generation < 1 || dep.Previous.Generation == int64(^uint64(0)>>1) {
+		if !dep.Started || dep.Result == nil || len(dep.Previous.Attachments) > 0 || dep.Previous.RecoveryRequired() || dep.ActionID != resetSSHActionID(a.ID, dep.Previous.Address.String()) || seen[dep.Previous.Address.String()] || dep.Previous.Generation < 1 || dep.Previous.Generation == int64(^uint64(0)>>1) {
 			return false
 		}
 		seen[dep.Previous.Address.String()] = true
 		r := dep.Result
-		if r.OwnerUID != a.OwnerUID || r.ResourceUID != dep.Previous.ResourceUID || r.Generation != dep.Previous.Generation+1 || !r.Address.Equal(dep.Previous.Address) || r.Driver != "managed" || len(r.Attachments) > 0 {
+		if r.OwnerUID != a.OwnerUID || r.ResourceUID != dep.Previous.ResourceUID || r.Generation != dep.Previous.Generation+1 || !r.Address.Equal(dep.Previous.Address) || r.Driver != "managed" || len(r.Attachments) > 0 || r.RecoveryRequired() {
 			return false
 		}
 		saved, err := decodeSSHState(*r, &state.State{TopologyUID: a.OwnerUID})
@@ -42,6 +45,10 @@ func (a ActionRecord) ResetSSHResultsRecorded() bool {
 
 func planResetSSHDisposition(a ActionRecord, observations []controlplane.RecoveredResource, p IntentDispositionPlan) IntentDispositionPlan {
 	p.ResourceDecision = "review-reset"
+	resolved, err := ResetSSHWithObservedResults(a, observations)
+	if err == nil {
+		a = resolved
+	}
 	if !a.ResetSSHResultsRecorded() {
 		p.Blockers = append(p.Blockers, "reset_ssh_committed_results_required")
 		return p
@@ -102,7 +109,7 @@ func resetObservedIdentity(o controlplane.RecoveredResource, id string, r state.
 }
 
 func observeResetSSHDisposition(ctx context.Context, a ActionRecord, st *state.State, item *controlplane.RecoveredResource) {
-	if !a.ResetSSHResultsRecorded() || a.ValidateResetSSH(st) != nil {
+	if a.Action != controlplane.PlanActionReset || a.Phase != "verifying" || !a.EffectComplete || a.Candidate == nil || len(a.ResetSSH) == 0 || a.ValidateResetSSH(st) != nil {
 		return
 	}
 	source := st.FindResource(a.Resource)
@@ -123,8 +130,102 @@ func observeResetSSHDisposition(ctx context.Context, a ActionRecord, st *state.S
 	staged.AddResource(*a.Candidate)
 	for _, dep := range a.ResetSSH {
 		r := dep.Result
+		var committed *substrate.SSHAccessResult
+		if r == nil && dep.Started {
+			id := substrate.OperationIdentity{ActionID: dep.ActionID, OwnerUID: a.OwnerUID, TopologyUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation}
+			childCtx := substrate.WithOperationIdentity(ctx, id)
+			readCtx, connection, query, err := sshNodeConnection(childCtx, staged, a.Resource.String(), dep.Config.AccessID)
+			if err == nil {
+				found, err := connection.DiscoverSSHAccess(readCtx, query)
+				if err == nil && found.Validate(query) == nil && found.Status == "present" && found.Current != nil {
+					recovered, err := recoverResetSSHResult(a, dep, *found.Current)
+					if err == nil {
+						r = &recovered
+						committed = found.Current
+					}
+				}
+			}
+		}
+		if r == nil {
+			continue
+		}
 		child := ActionRecord{ID: dep.ActionID, Resource: r.Address, OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, Status: a.Status, Action: controlplane.PlanActionRead, Candidate: r}
 		observed := observeIntentResource(ctx, child, r, staged)
+		observed.SSHCommitted = committed
 		item.ResetSSH = append(item.ResetSSH, observed)
 	}
+}
+
+// ResetSSHWithObservedResults builds a detached publication candidate from exact
+// committed read evidence. It never fills the original journal's missing Result.
+// Configuration changes need their original desired metadata and remain blocked.
+func ResetSSHWithObservedResults(a ActionRecord, observations []controlplane.RecoveredResource) (ActionRecord, error) {
+	out := a
+	out.ResetSSH = append([]ResetSSHDependency(nil), a.ResetSSH...)
+	var observed *controlplane.RecoveredResource
+	for i := range observations {
+		if observations[i].ActionID != a.ID {
+			continue
+		}
+		if observed != nil {
+			return a, ErrObservationUnknown
+		}
+		observed = &observations[i]
+	}
+	for i, dep := range out.ResetSSH {
+		if dep.Result != nil {
+			continue
+		}
+		if !dep.Started || observed == nil {
+			return a, ErrObservationUnknown
+		}
+		var child *controlplane.RecoveredResource
+		for j := range observed.ResetSSH {
+			if observed.ResetSSH[j].ActionID != dep.ActionID {
+				continue
+			}
+			if child != nil {
+				return a, ErrObservationUnknown
+			}
+			child = &observed.ResetSSH[j]
+		}
+		if child == nil || child.SSHCommitted == nil {
+			return a, ErrObservationUnknown
+		}
+		result, err := recoverResetSSHResult(a, dep, *child.SSHCommitted)
+		if err != nil || !resetObservedIdentity(*child, dep.ActionID, result, a.Status) || child.Status != "present" {
+			return a, ErrObservationUnknown
+		}
+		out.ResetSSH[i].Result = &result
+	}
+	if !out.ResetSSHResultsRecorded() {
+		return a, ErrObservationUnknown
+	}
+	return out, nil
+}
+
+func recoverResetSSHResult(a ActionRecord, dep ResetSSHDependency, committed substrate.SSHAccessResult) (state.Resource, error) {
+	if a.Candidate == nil || !dep.Started || dep.Result != nil || dep.Previous.RecoveryRequired() || len(dep.Previous.Attachments) > 0 || committed.Handle.Revision == 0 {
+		return state.Resource{}, ErrObservationUnknown
+	}
+	previous, err := decodeSSHState(dep.Previous, &state.State{TopologyUID: a.OwnerUID})
+	if err != nil {
+		return state.Resource{}, err
+	}
+	x, _ := json.Marshal(previous.Config)
+	y, _ := json.Marshal(dep.Config)
+	if string(x) != string(y) {
+		return state.Resource{}, fmt.Errorf("%w: missing changed SSH desired metadata", ErrObservationUnknown)
+	}
+	req := substrate.SSHAccessMutation{ID: dep.ActionID, ExpectedRevision: committed.Handle.Revision - 1, Config: dep.Config}
+	q := substrate.SSHAccessQuery{NodeID: a.Candidate.ExternalID, User: dep.Config.User, AccessID: dep.Config.AccessID, TopologyUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation}
+	if validateSSHMutationResult(q, req, committed) != nil {
+		return state.Resource{}, ErrObservationUnknown
+	}
+	result := cloneResetStateResource(dep.Previous)
+	result.Generation++
+	result.Status = state.ResourceUnknown
+	result.CreatedAt, result.UpdatedAt = time.Time{}, time.Time{}
+	result.Attributes["ssh_access"] = persistedSSHAccess{Version: 1, Node: a.Resource.String(), Config: dep.Config, Handle: committed.Handle}
+	return result, nil
 }

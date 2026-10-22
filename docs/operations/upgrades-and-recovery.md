@@ -291,3 +291,24 @@ with an unknown outcome, never as successful. Exact retries recover the same
 postimage before authority release. Missing results, attachments, changed old
 state, or incomplete resource obligations block this bounded path. A child stop
 receipt alone still cannot invent a missing SSH result.
+
+
+### Lost parent SSH Result with a discoverable committed guest receipt
+
+A started ResetSSH child may have committed on the guest while its parent's
+Result write was lost. The observing host now uses read-only SSH discovery against
+the staged replacement, checks the exact request ID, digest, account, node UID,
+generation, revision and epoch, then inspects current presence. The nested signed
+observation carries optional `ssh_committed` evidence. Missing or changed receipts
+remain blockers; discovery never authorizes another SSH mutation.
+
+For unchanged pinned configuration, the controller can construct a detached
+publication candidate using the canonical previous SSH metadata and this exact
+receipt. It still requires the full Reset source/replacement observation and
+canonical stop ledger. The atomic disposition publishes unknown metadata but
+leaves the original action and archive with `Result` missing; it never changes
+that history into success. GC retains the recovered result identity from archived
+signed evidence even after live metadata changes. Changed configuration without
+its original desired metadata remains blocked, as do missing committed receipts.
+Older observing hosts omit this new field and cannot satisfy the lost-result
+path; older controllers cannot validate archives that require this evidence.

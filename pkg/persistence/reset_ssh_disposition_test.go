@@ -98,8 +98,19 @@ func TestResetSSHDispositionPublishesNodeAndSSHAtomically(t *testing.T) {
 }
 
 func TestResetSSHDispositionBindsWholeSignedSnapshotAndRecoversPreparedWrite(t *testing.T) {
+	testResetSSHSignedDisposition(t, false)
+}
+func TestResetSSHDispositionPublishesLostCommittedResultFromSignedObservation(t *testing.T) {
+	testResetSSHSignedDisposition(t, true)
+}
+func testResetSSHSignedDisposition(t *testing.T, lost bool) {
 	ctx := context.Background()
 	a, action, decision := resetSSHDispositionFixture(t)
+	recorded := action.ResetSSH[0].Result
+	if lost {
+		action.ResetSSH[0].Result = nil
+		a.Actions[action.ID] = action
+	}
 	run := controlplane.Run{ID: action.RunID, Topology: action.Topology, Revision: action.RunRevision, QueuedAt: action.RunQueuedAt, AgentID: "agent", Attempt: 1, Status: controlplane.RunRunning, Op: "reset", Operation: "reset"}
 	_, journal, err := FenceJournal(run, a.Serial, actionValues(a))
 	require.NoError(t, err)
@@ -131,7 +142,19 @@ func TestResetSSHDispositionBindsWholeSignedSnapshotAndRecoversPreparedWrite(t *
 	o.ResetSource = &old
 	for _, dep := range action.ResetSSH {
 		r := dep.Result
+		if lost {
+			r = recorded
+		}
 		o.ResetSSH = append(o.ResetSSH, controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, JournalStatus: string(action.Status), Status: "present"})
+	}
+	if lost {
+		var saved struct {
+			Handle substrate.SSHAccessHandle `json:"handle"`
+		}
+		raw, err := json.Marshal(recorded.Attributes["ssh_access"])
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(raw, &saved))
+		o.ResetSSH[0].SSHCommitted = &substrate.SSHAccessResult{Handle: saved.Handle, Present: true}
 	}
 	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: a.State.TopologyUID, StateSerial: a.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{o}}
 	report, err = controlplane.SignFenceObservation(hostKey, report, controlplane.FenceObservationBinding{RequestSHA256: digest, HostBootID: receipt.NewBootID}, "observer", 1)
@@ -154,6 +177,11 @@ func TestResetSSHDispositionBindsWholeSignedSnapshotAndRecoversPreparedWrite(t *
 	require.NoError(t, err)
 	result, err := decodeAggregate(first.Lifecycle)
 	require.NoError(t, err)
+	if lost {
+		require.Nil(t, result.Actions[action.ID].ResetSSH[0].Result)
+		require.Nil(t, result.IntentDispositions[decision.ID].Actions[action.ID].ResetSSH[0].Result)
+		require.Equal(t, int64(2), result.State.FindResource(action.ResetSSH[0].Previous.Address).Generation)
+	}
 	refs, err := gcReferences(result)
 	require.NoError(t, err)
 	sources := map[string]bool{}

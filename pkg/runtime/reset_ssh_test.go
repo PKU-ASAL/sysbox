@@ -141,7 +141,7 @@ func TestResetSSHDispositionRequiresObservedCommittedDependencies(t *testing.T) 
 	p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
 	require.Equal(t, "retain-managed", p.ResourceDecision)
 	require.Equal(t, []string{"effect_stop_proof_required"}, p.Blockers)
-	for _, variant := range []string{"missing", "unknown", "old-source", "foreign", "duplicate", "no-result"} {
+	for _, variant := range []string{"missing", "unknown", "old-source", "foreign", "duplicate", "no-result", "previous-attachment", "previous-obligation", "result-obligation"} {
 		t.Run(variant, func(t *testing.T) {
 			aa := a
 			aa.ResetSSH = append([]ResetSSHDependency(nil), a.ResetSSH...)
@@ -162,6 +162,15 @@ func TestResetSSHDispositionRequiresObservedCommittedDependencies(t *testing.T) 
 				obs.ResetSSH = append(obs.ResetSSH, child)
 			case "no-result":
 				aa.ResetSSH[0].Result = nil
+			case "previous-attachment":
+				aa.ResetSSH[0].Previous.Attachments = []state.Attachment{{}}
+			case "previous-obligation":
+				aa.ResetSSH[0].Previous = cloneResetStateResource(aa.ResetSSH[0].Previous)
+				require.NoError(t, aa.ResetSSH[0].Previous.RequireRecovery("older", aa.ResetSSH[0].Previous.ResourceUID, aa.ResetSSH[0].Previous.Generation))
+			case "result-obligation":
+				r := cloneResetStateResource(*aa.ResetSSH[0].Result)
+				require.NoError(t, r.RequireRecovery("older", r.ResourceUID, r.Generation))
+				aa.ResetSSH[0].Result = &r
 			}
 			require.NotEqual(t, "retain-managed", PlanIntentDisposition(aa, []controlplane.RecoveredResource{obs}).ResourceDecision)
 		})
@@ -215,6 +224,100 @@ func TestResetSSHDispositionObserverUsesReplacementForChildReads(t *testing.T) {
 	require.Equal(t, "absent", items[0].ResetSource.Status)
 	require.True(t, items[0].ResetSource.DeleteResidueAbsent)
 	require.Len(t, items[0].ResetSSH, 1)
+	require.Equal(t, "present", items[0].ResetSSH[0].Status)
+	require.Equal(t, "retain-managed", PlanIntentDisposition(a, items).ResourceDecision)
+	after, _ := json.Marshal(e.state)
+	require.JSONEq(t, string(before), string(after))
+	require.Equal(t, []string{source.ExternalID}, wrapper.residual)
+	require.Len(t, conn.calls, 1, "read-only observation cannot replay SSH mutation")
+}
+
+func TestResetSSHDispositionRecoversLostResultWithoutChangingJournal(t *testing.T) {
+	e, a, _ := resetSSHFixture(t)
+	require.NoError(t, e.reconcileResetSSH(context.Background(), &a))
+	dep := &a.ResetSSH[0]
+	saved, err := decodeSSHState(*dep.Result, e.state)
+	require.NoError(t, err)
+	committed := substrate.SSHAccessResult{Handle: saved.Handle, Present: true}
+	dep.Result = nil
+	before, _ := json.Marshal(a)
+	child := controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "present", JournalStatus: string(a.Status), SSHCommitted: &committed}
+	observation := controlplane.RecoveredResource{ActionID: a.ID, ResetSSH: []controlplane.RecoveredResource{child}}
+	for _, variant := range []string{"exact", "missing", "foreign-action", "foreign-node", "digest", "not-present", "duplicate", "not-started", "changed-config"} {
+		t.Run(variant, func(t *testing.T) {
+			aa := a
+			aa.ResetSSH = append([]ResetSSHDependency(nil), a.ResetSSH...)
+			o := observation
+			o.ResetSSH = append([]controlplane.RecoveredResource(nil), observation.ResetSSH...)
+			r := committed
+			o.ResetSSH[0].SSHCommitted = &r
+			switch variant {
+			case "missing":
+				o.ResetSSH[0].SSHCommitted = nil
+			case "foreign-action":
+				r.Handle.ID = "foreign"
+			case "foreign-node":
+				r.Handle.NodeID = "foreign"
+			case "digest":
+				r.Handle.Digest = "foreign"
+			case "not-present":
+				r.Present = false
+			case "duplicate":
+				o.ResetSSH = append(o.ResetSSH, child)
+			case "not-started":
+				aa.ResetSSH[0].Started = false
+			case "changed-config":
+				aa.ResetSSH[0].Config.Port++
+			}
+			resolved, err := ResetSSHWithObservedResults(aa, []controlplane.RecoveredResource{o})
+			if variant != "exact" {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, resolved.ResetSSH[0].Result)
+			require.True(t, resolved.ResetSSHResultsRecorded())
+			require.NoError(t, resolved.ValidateResetSSH(e.state))
+		})
+	}
+	after, _ := json.Marshal(a)
+	require.JSONEq(t, string(before), string(after))
+}
+
+func TestResetSSHDispositionObserverDiscoversLostCommittedResult(t *testing.T) {
+	e, a, conn := resetSSHFixture(t)
+	require.NoError(t, e.reconcileResetSSH(context.Background(), &a))
+	source := e.state.FindResource(a.Resource)
+	source.ExternalID = "old-provider"
+	previous := &a.ResetSSH[0].Previous
+	saved, err := decodeSSHState(*previous, e.state)
+	require.NoError(t, err)
+	saved.Handle.NodeID = source.ExternalID
+	previous.Attributes = state.MustAttributes(map[string]any{"ssh_access": saved})
+	*e.state.FindResource(previous.Address) = *previous
+	base, err := driver.DefaultRegistry.RequireNode(a.Candidate.Driver)
+	require.NoError(t, err)
+	wrapper := &resetSSHDispositionDriver{nodeGuardDriver: base.(*nodeGuardDriver), oldID: source.ExternalID}
+	wrapper.resetDeleted = map[string]bool{source.ExternalID: true}
+	prior := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = prior })
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: wrapper.name, Version: "test", Node: wrapper, NIC: wrapper, NodeState: wrapper, GuestNetwork: wrapper, GuestNetworkInit: wrapper, ImageEntry: wrapper}))
+	// Provider state is reconstructed by actual readers, not a synthetic report.
+	require.NoError(t, source.SetProviderState(json.RawMessage(`{}`)))
+	require.NoError(t, a.Candidate.SetProviderState(json.RawMessage(`{}`)))
+	a.ResetSSH[0].Result = nil
+	repo := &memoryActions{state: e.state, actions: []ActionRecord{a}}
+	before, _ := json.Marshal(e.state)
+	_, items, err := ObserveRunActions(context.Background(), repo, "lab", a.RunID)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.NotNil(t, items[0].ResetSource)
+	require.Equal(t, "absent", items[0].ResetSource.Status)
+	require.True(t, items[0].ResetSource.DeleteResidueAbsent)
+	require.Len(t, items[0].ResetSSH, 1)
+	require.NotNil(t, items[0].ResetSSH[0].SSHCommitted)
+	require.Nil(t, repo.actions[0].ResetSSH[0].Result)
 	require.Equal(t, "present", items[0].ResetSSH[0].Status)
 	require.Equal(t, "retain-managed", PlanIntentDisposition(a, items).ResourceDecision)
 	after, _ := json.Marshal(e.state)

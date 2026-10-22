@@ -1375,7 +1375,8 @@
       "id": "reset-ssh-disposition-api",
       "package": "./pkg/api",
       "tests": [
-        "TestHostFenceResetSSHCommittedDispositionAPI"
+        "TestHostFenceResetSSHCommittedDispositionAPI",
+        "TestHostFenceResetSSHLostCommittedDispositionAPI"
       ],
       "kind": "contract",
       "race": true,
@@ -1389,7 +1390,8 @@
       "package": "./pkg/persistence",
       "tests": [
         "TestResetSSHDispositionPublishesNodeAndSSHAtomically",
-        "TestResetSSHDispositionBindsWholeSignedSnapshotAndRecoversPreparedWrite"
+        "TestResetSSHDispositionBindsWholeSignedSnapshotAndRecoversPreparedWrite",
+        "TestResetSSHDispositionPublishesLostCommittedResultFromSignedObservation"
       ],
       "kind": "contract",
       "race": true,
@@ -1401,7 +1403,9 @@
       "package": "./pkg/runtime",
       "tests": [
         "TestResetSSHDispositionRequiresObservedCommittedDependencies",
-        "TestResetSSHDispositionObserverUsesReplacementForChildReads"
+        "TestResetSSHDispositionObserverUsesReplacementForChildReads",
+        "TestResetSSHDispositionRecoversLostResultWithoutChangingJournal",
+        "TestResetSSHDispositionObserverDiscoversLostCommittedResult"
       ],
       "kind": "contract",
       "race": true,

@@ -5156,3 +5156,66 @@ This closes only the recorded-results publication window. A started child with
 no durable result remains blocked. Attachment absence, composite generations,
 unrecorded creation identity, persistent-file/vsock stop proofs, and complete
 repeated operator recovery still remain first-stage work.
+
+
+### PR #53: discoverable lost SSH Result (2026-10-23)
+
+A started ResetSSH dependency with no parent Result can now be explicitly
+published when the guest still holds its exact committed receipt, pinned
+configuration is unchanged, and the complete signed source/replacement/child
+observation and stop ledger pass. Discovery and inspection are read-only. The
+original journal/archive keep nil Result and unknown status; publication uses a
+detached candidate. GC reconstructs its reference from archived signed evidence.
+
+Four same-source machine gates passed with zero skips:
+`reset-ssh-disposition-api`, `reset-ssh-disposition-transaction`,
+`reset-ssh-disposition-observer`, `ssh-stop-real-helper`.
+Report: `/tmp/sysbox-reset-ssh-lost-campaign-20261023-guards/run.json`.
+Source SHA256:
+`9c72a9c0cecb3c60422659e2ed21666d747bd585708aacff5d02cc04da0d0fb4`.
+Backend contracts include file/SQLite/dedicated PostgreSQL, original-history
+preservation, exact prepared-write recovery, stale/missing/foreign result rejection
+and archive references. Independent production review found no blocking issue.
+
+The real SSH/helper test committed a fresh epoch-3 SSH result, used a cold
+transport client to discover and validate that exact receipt/configuration, then
+verified the old epoch-2 stop retry preserved the successor. It also rejected the
+delayed old mutation. Guest boot: `c936a74a-a607-4c71-ba53-d24d7ff3c32d`.
+The unique root-private test directory and tmpfs mount were cleaned by the fixture.
+This proves the real receipt-discovery protocol; the enclosing Reset disposition
+is still a synthetic public API/backend contract, not a full real Reset round.
+
+No committed receipt, changed configuration without original desired metadata,
+attachments/composite generations, unrecorded create identities, persistent-file
+and vsock stop proofs, and the full repeated operator flow remain open. Neither
+this slice nor its passing gates closes the first-stage checklist.
+
+
+Final guard review added refusal of old SSH attachments and unresolved recovery
+obligations on previous/result records; three regression counterexamples failed
+against the earlier guard and pass after the correction. The final runtime and
+persistence packages passed full race regression in
+`/tmp/sysbox-reset-ssh-lost-guards-full.log` (2.332s/68.806s). These guards apply to
+both recorded and discovered-result paths; they never discard the obligation.
+
+
+A concurrent full four-package race run passed persistence/runtime/controlplane
+but failed API in existing `TestGuestDeliveryFailureWithAuthorityWaitsForHost`
+(`stopped/local`): its bounded two-second reconciliation returned context deadline
+exceeded. Log: `/tmp/sysbox-reset-ssh-lost-full.log`. It is not counted as a pass.
+Without concurrent VM/campaign load, the exact case passed five consecutive
+three-backend race rounds with unchanged limits:
+`/tmp/sysbox-reset-ssh-guest-failure-repro.log`. This supports load sensitivity but
+does not establish a specific filesystem or scheduler root cause. No production
+limit or fail-closed behavior was weakened.
+
+
+The final-source serial full API race recheck passed (397.894s):
+`/tmp/sysbox-reset-ssh-lost-api-recheck.jsonl`; stderr is empty. The previously
+failing guest-delivery case passed within that full run (1.81s). Together with
+final runtime/persistence race and controlplane race above, all four affected
+packages have passing full regression; the earlier loaded failure remains logged.
+Host SSH discovery socket/canonical-identity race contracts also passed in
+`/tmp/sysbox-reset-ssh-lost-host-contract.log`. Disposable VMs were stopped with
+disks retained after acceptance; the dedicated PostgreSQL container was stopped
+only after all database verification completed.

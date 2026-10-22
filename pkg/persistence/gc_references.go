@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -136,6 +137,11 @@ func gcReferencesAt(a *aggregate, now time.Time) (GCReferenceSnapshot, error) {
 			}
 			for id, record := range content.IntentDispositions {
 				for actionID, old := range record.Actions {
+					if old.Action == controlplane.PlanActionReset && len(old.ResetSSH) > 0 {
+						if resolved, err := runtime.ResetSSHWithObservedResults(old, record.Observation.Resources); err == nil {
+							old = resolved
+						}
+					}
 					for _, dep := range old.ResetSSH {
 						appendResource(prefix+"intent-ssh-previous/"+id+"/"+actionID+"/"+dep.ActionID, dep.Previous)
 						if dep.Result != nil {

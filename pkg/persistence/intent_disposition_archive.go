@@ -15,7 +15,7 @@ import (
 // intentDispositionPostimage builds a candidate lifecycle postimage after the
 // caller authenticates and prepares the exact fenced decision. It is not an
 // independently callable repository mutation and does not release authority.
-func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDecision, at time.Time) (map[string]runtime.ActionRecord, error) {
+func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDecision, at time.Time, observations ...controlplane.RecoveredResource) (map[string]runtime.ActionRecord, error) {
 	if a == nil || a.State == nil || d.ID == "" || d.ExpectedSerial != a.Serial || a.Serial == math.MaxInt64 || at.IsZero() || len(d.Actions) == 0 {
 		return nil, ErrConflict
 	}
@@ -31,6 +31,12 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 	addresses := map[string]bool{}
 	for _, choice := range d.Actions {
 		action, ok := next.Actions[choice.ActionID]
+		original := action
+		if ok && action.Action == controlplane.PlanActionReset && action.Phase == "verifying" && len(action.ResetSSH) > 0 {
+			if resolved, err := runtime.ResetSSHWithObservedResults(action, observations); err == nil {
+				action = resolved
+			}
+		}
 		if ok && action.ResetSSHResultsRecorded() && choice.Decision == "retain" {
 			if choice.ResourceUID != action.ResourceUID || choice.Generation != action.Generation || choice.ExternalID != action.Candidate.ExternalID {
 				return nil, ErrConflict
@@ -38,7 +44,8 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 			if err := publishResetSSHDisposition(&next, action, at, addresses); err != nil {
 				return nil, err
 			}
-			archive[action.ID] = action
+			archive[action.ID] = original
+			action = original
 			action.DispositionID = "intent:" + d.ID
 			next.Actions[action.ID] = action
 			continue
@@ -156,7 +163,7 @@ func prepareIntentDispositionLifecycle(authorityRaw, lifecycleRaw []byte, d cont
 	}
 	f := auth.Fences[d.FenceID]
 	original := actionValues(a)
-	if _, err = intentDispositionPostimage(a, d, decidedAt); err != nil {
+	if _, err = intentDispositionPostimage(a, d, decidedAt, observation.Recovery.Resources...); err != nil {
 		return nil, err
 	}
 	archive := map[string]runtime.ActionRecord{}

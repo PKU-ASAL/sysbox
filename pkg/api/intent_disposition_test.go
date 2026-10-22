@@ -13,6 +13,7 @@ import (
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"os"
@@ -98,7 +99,7 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	digest, err := fence.Request.Digest()
 	require.NoError(t, err)
 	report := controlplane.RunRecoveryReport{CommandID: lease.ID, RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, Mode: controlplane.RunRecoveryObserve, TopologyUID: before.TopologyUID, StateSerial: before.Meta.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: actions[0].ID, Resource: actions[0].Resource.String(), OwnerUID: actions[0].OwnerUID, ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, ExternalID: actions[0].Candidate.ExternalID, Status: "present", ProviderScope: "local-only", DeleteResidueAbsent: true, JournalStatus: string(actions[0].Status)}}}
-	verifiedSSH := actions[0].ResetSSHResultsRecorded()
+	verifiedSSH := actions[0].Phase == "verifying" && actions[0].EffectComplete && len(actions[0].ResetSSH) > 0
 	if verifiedSSH {
 		source := before.FindResource(actions[0].Resource)
 		old := report.Resources[0]
@@ -109,7 +110,24 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 		report.Resources[0].ResetSource = &old
 		for _, dep := range actions[0].ResetSSH {
 			r := dep.Result
-			report.Resources[0].ResetSSH = append(report.Resources[0].ResetSSH, controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, Status: "present", JournalStatus: string(actions[0].Status)})
+			var committed *substrate.SSHAccessResult
+			if r == nil {
+				var previous struct {
+					Handle substrate.SSHAccessHandle `json:"handle"`
+				}
+				raw, err := json.Marshal(dep.Previous.Attributes["ssh_access"])
+				require.NoError(t, err)
+				require.NoError(t, json.Unmarshal(raw, &previous))
+				h := previous.Handle
+				h.ID, h.NodeID, h.Generation = dep.ActionID, actions[0].Candidate.ExternalID, actions[0].Generation
+				h.Digest, err = (substrate.SSHAccessMutation{ID: dep.ActionID, ExpectedRevision: h.Revision - 1, Config: dep.Config}).Digest()
+				require.NoError(t, err)
+				committed = &substrate.SSHAccessResult{Handle: h, Present: true}
+				result := dep.Previous
+				result.Generation++
+				r = &result
+			}
+			report.Resources[0].ResetSSH = append(report.Resources[0].ResetSSH, controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, Status: "present", JournalStatus: string(actions[0].Status), SSHCommitted: committed})
 		}
 	} else if actions[0].Action == controlplane.PlanActionReset {
 		old := report.Resources[0]
@@ -224,13 +242,14 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 		require.Equal(t, d.Actions[0].ExternalID, after.FindResource(actions[0].Resource).ExternalID)
 		if verifiedSSH {
 			for _, dep := range actions[0].ResetSSH {
-				require.Equal(t, dep.Result.Generation, after.FindResource(dep.Previous.Address).Generation)
+				require.Equal(t, dep.Previous.Generation+1, after.FindResource(dep.Previous.Address).Generation)
 			}
 		}
 	}
 	for _, action := range afterActions {
 		if action.ID == actions[0].ID {
 			require.Equal(t, actions[0].Status, action.Status)
+			require.Equal(t, actions[0].ResetSSH, action.ResetSSH)
 			require.Equal(t, "intent:decision", action.DispositionID)
 		}
 	}

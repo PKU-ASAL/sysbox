@@ -50,8 +50,8 @@ PR 1 checkboxes above stay open where only bounded slices have shipped.
 | Deliverable | Implemented | Still required |
 | --- | --- | --- |
 | Evidence-bound plan | Candidate/source/replacement inventory, signed observation digest, Run incarnation and serial bindings, blocker diagnostics | Broader composite-action coverage |
-| Run disposition | Public reconcile-intents, immutable archive/GC references, file write-ahead and SQL transactions, exact-image retries | Guest-task child stop → parent disposition now verified on three backends; derived SSH unknown-result linkage remains |
-| Reset disposition | Exact source retain/absence before replacement; absent old source plus incomplete replacement retention | Unstarted SSH dependencies can be retained with exact old source; started SSH, source absence with SSH, missing creation identity and composite cases remain |
+| Run disposition | Public reconcile-intents, immutable archive/GC references, file write-ahead and SQL transactions, exact-image retries | Guest-task child stop → parent disposition now verified on three backends; derived SSH child stop and committed/lost-result publication are implemented; genuinely unknown-result residue accounting remains |
+| Reset disposition | Exact source retain/absence before replacement; absent old source plus incomplete replacement retention | Unstarted SSH dependencies can be retained with exact old source; recorded and discoverable lost committed SSH result publication implemented; no-receipt SSH, attachment absence, missing creation identity and composite cases remain |
 | Incomplete-resource obligations | Durable archive-backed rebuild/delete requirements, guarded admission/state edits, verified obligation transfer and resolution | Attachment inventory now preserved under rebuild/delete obligation; attachment absence and full real repeated recovery integration remain |
 | Guest termination | Existing signed task reboot completion; scoped guest-tmpfs install reboot stops with unknown result | Real in-flight tmpfs install → VM power-off/reboot → delayed SSH callback verified; vsock and persistent storage stop proofs remain |
 | Operator CLI | recovery-plan, observe, reconcile-intents; exact scope/key validation and existing proxy authentication | End-to-end operator flow in isolated lab |
@@ -98,3 +98,30 @@ The old "started ResetSSH" gap now splits into recorded-result publication
 (implemented) and missing-result recovery/unknown residue accounting (open).
 This does not close PR 1 or its broad checkboxes. No real full Reset acceptance
 or other remaining first-stage functionality is implied by backend contracts.
+
+### Lost committed SSH result implementation boundary
+
+Continue the approved read-only evidence path: discover exact committed guest
+receipts, bind them into signed nested observations, construct a detached
+publication candidate, and keep the original journal's missing Result unchanged.
+Reuse the preceding atomic Reset publication and authority checks. A missing
+receipt is never an absence proof. Initially accept only unchanged pinned SSH
+configuration, for which old desired metadata is still authoritative; changed
+configuration without original metadata remains blocked. Tests cover identity,
+no mutation/replay, signed snapshot/crash recovery and retained GC references.
+
+
+The lost-result boundary above is implemented: exact guest receipt discovery,
+signed nested evidence, detached candidate publication and archive-based GC
+references. Runtime observation, signed prepared-write crash/retry, and public
+file/SQLite/PostgreSQL API contracts pass. Original journal and archive keep nil
+Result. Changed configuration without original metadata and genuinely unknown
+SSH results are still open, as are the other PR 1 integration requirements.
+
+
+Next functional gaps, in order: account for stopped SSH children with no committed
+receipt and changed-config metadata loss; cover old/new attachment absence and
+composite Reset generation inventory; discover unrecorded creation identities;
+then persistent-file/vsock cessation and repeated full operator integration.
+Each requires its own evidence and implementation; none is declared closed by
+the recorded/discoverable-result work.

@@ -44,6 +44,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 	incompleteReplacement := len(reconcileCase) > 5 && reconcileCase[5]
 	withChild := len(reconcileCase) > 6 && reconcileCase[6]
 	verifiedSSH := len(reconcileCase) > 7 && reconcileCase[7]
+	lostSSH := len(reconcileCase) > 8 && reconcileCase[8]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -190,6 +191,9 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 									current.Candidate = current.Replacement
 									current.EffectComplete = true
 									sshDependency.Started = true
+									if lostSSH {
+										sshDependency.Result = nil
+									}
 									current.ResetSSH = []runtime.ResetSSHDependency{sshDependency}
 								}
 								require.NoError(t, repo.CommitActionOutcome(ctx, current, nil))

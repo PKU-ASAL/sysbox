@@ -210,11 +210,21 @@ func TestSSHStopRealGuestProtocol(t *testing.T) {
 	created, err := conn.MutateSSHAccess(transport.WithTaskGrant(ctx, next.ID, nextGrant), next)
 	require.NoError(t, err)
 	require.True(t, created.Present)
+	// A cold reader can recover this exact committed result without retaining
+	// the mutation response or replaying the original request.
+	cold := transport.NewTaskClient(base, "provider-node", 1)
+	query := substrate.SSHAccessQuery{NodeID: "provider-node", User: next.Config.User, AccessID: next.Config.AccessID, TopologyUID: session, ResourceUID: "node", Generation: 1}
+	discovered, err := cold.DiscoverSSHAccess(ctx, query)
+	require.NoError(t, err)
+	require.NoError(t, discovered.Validate(query))
+	require.NotNil(t, discovered.Current)
+	require.Equal(t, created, *discovered.Current)
+	require.Equal(t, next.Config, *discovered.Config)
 	again, err := conn.StopSSHAccess(transport.WithTaskGrant(ctx, req.ID, grant), req)
 	require.NoError(t, err)
 	require.Equal(t, stopped, again)
 	found, err := conn.InspectSSHAccess(ctx, created.Handle)
 	require.NoError(t, err)
 	require.Equal(t, "present", found.Status)
-	t.Logf("real SSH/helper: stopped unknown original epoch2, rejected delayed mutation, admitted epoch3 and preserved successor on old-stop retry; guest boot %s", boot)
+	t.Logf("real SSH/helper: stopped unknown original epoch2, rejected delayed mutation, admitted epoch3, recovered exact committed result by cold discovery, and preserved successor on old-stop retry; guest boot %s", boot)
 }

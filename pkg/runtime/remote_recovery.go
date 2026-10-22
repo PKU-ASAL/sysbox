@@ -37,7 +37,7 @@ func ObserveRunActions(ctx context.Context, repo ActionRepository, topology, run
 			candidate = st.FindResource(record.Resource)
 		}
 		item := observeIntentResource(ctx, record, candidate, st)
-		if record.ResetSSHResultsRecorded() {
+		if record.Action == controlplane.PlanActionReset && record.Phase == "verifying" && record.EffectComplete && len(record.ResetSSH) > 0 {
 			observeResetSSHDisposition(ctx, record, st, &item)
 		} else if record.Action == controlplane.PlanActionReset {
 			item.Status = "unknown"
