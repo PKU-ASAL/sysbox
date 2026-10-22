@@ -43,14 +43,28 @@ func validStopReceipt(r SignedExecutionStopReceipt) bool {
 	} else if r.SSHResult != nil {
 		return false
 	}
-	if r.ObservedGuestBootID != "" && (g.Operation != "guest_task" || r.ObservedGuestBootID == r.GuestBootID || r.GuestResult == nil || r.GuestResult.ExitCodeKnown || r.GuestResult.ResultClass != "unknown" || r.GuestResult.Result.Stdout != "" || r.GuestResult.Result.Stderr != "") {
-		return false
+	if r.ObservedGuestBootID != "" {
+		if r.ObservedGuestBootID == r.GuestBootID {
+			return false
+		}
+		switch g.Operation {
+		case "guest_task":
+			if r.GuestResult == nil || r.GuestResult.ExitCodeKnown || r.GuestResult.ResultClass != "unknown" || r.GuestResult.Result.Stdout != "" || r.GuestResult.Result.Stderr != "" {
+				return false
+			}
+		case "guest_file_install":
+			if r.FileResult == nil || r.FileResult.Outcome != substrate.FileInstallUnknown || !r.FileResult.Quiescent || r.FileResult.SHA256 != "" || r.FileResult.Size != 0 || r.FileResult.Mode != 0 {
+				return false
+			}
+		default:
+			return false
+		}
 	}
 	if (g.Operation == "adoption_apply" || g.Operation == "adoption_inspect" || g.Operation == "ssh_access_apply" || g.Operation == "ssh_access_delete") && (len(r.EvidenceDigest) != 64 || g.Scope.ResourceUID == "") {
 		return false
 	}
 	if g.Operation == "guest_file_install" {
-		if r.GuestBootID == "" || r.GuestBootID != g.TargetBootID || r.InstallID != g.ActionID || r.InstallDigest != g.Digest || r.FileResult == nil || !r.FileResult.Quiescent || (r.FileResult.Outcome != substrate.FileInstallCommitted && r.FileResult.Outcome != substrate.FileInstallCancelled) {
+		if r.GuestBootID == "" || r.GuestBootID != g.TargetBootID || r.InstallID != g.ActionID || r.InstallDigest != g.Digest || r.FileResult == nil || !r.FileResult.Quiescent || (r.FileResult.Outcome != substrate.FileInstallCommitted && r.FileResult.Outcome != substrate.FileInstallCancelled && !(r.ObservedGuestBootID != "" && r.FileResult.Outcome == substrate.FileInstallUnknown)) {
 			return false
 		}
 	}

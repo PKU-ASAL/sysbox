@@ -181,3 +181,21 @@ obligation forward after another failed rebuild; original evidence remains.
 Metadata removal, resource reidentification and provider-state substitution cannot
 clear this obligation. This does not undo or prove the result of external guest
 service requests.
+
+Guest file installation can opt into `reboot_scope=guest-tmpfs` on the file PUT
+endpoint. This scope is part of the immutable signed installation digest. The
+guest helper verifies TMPFS on the actual opened parent descriptor before any
+installation effect and again during recovery. Ordinary disk filesystems,
+overlay, FUSE, NFS and unknown filesystem types cannot use this proof: even a
+local-looking block filesystem may use external storage.
+
+For a scoped installation with a lost result, a canonical host may observe a
+changed guest boot and sign quiescent/unknown rather than committed or cancelled.
+The API records failed with unknown file outcome and retires only the matching
+grant. Unscoped historical requests remain unknown. This does not recover the
+file contents or imply persistence across reboot.
+
+Upgrade controller and host before using this scope, then deploy the new guest
+helper. Old helpers drop the unknown scope field, derive a different request
+digest, and reject before writing; old controllers reject the new reboot receipt.
+Downgrade is not supported for journals already containing these receipts.

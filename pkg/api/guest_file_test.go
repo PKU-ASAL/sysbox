@@ -236,3 +236,28 @@ func TestGuestFileFailedCommandEventReconcilesDurableOperation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, controlplane.GuestExecutionRunning, got.Status)
 }
+
+func TestGuestFilePutBindsOptionalRebootScope(t *testing.T) {
+	s := guestExecutionTestServer(t)
+	for _, scope := range []string{"guest-tmpfs", "unknown"} {
+		req := httptest.NewRequest("PUT", "/v1/topologies/lab/nodes/web/files?path=/opt/private/file&mode=0600&reboot_scope="+scope, bytes.NewReader([]byte("data")))
+		req.Header.Set("X-Sysbox-Roles", "admin")
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		if scope == "unknown" {
+			require.Equal(t, 400, w.Code)
+			continue
+		}
+		require.Equal(t, 202, w.Code, w.Body.String())
+		var result controlplane.GuestFileOperation
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		stored, err := s.apiStore.GetGuestFileOperation(context.Background(), result.ID)
+		require.NoError(t, err)
+		cmd, ok, err := s.apiStore.AcquireAgentCommandLease(context.Background(), "host-a", stored.CommandID, "worker", time.Minute)
+		require.NoError(t, err)
+		require.True(t, ok)
+		spec, err := controlplane.FromFileInstallCommand(*cmd)
+		require.NoError(t, err)
+		require.Equal(t, scope, spec.RebootScope)
+	}
+}

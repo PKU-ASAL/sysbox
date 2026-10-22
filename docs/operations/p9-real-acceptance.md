@@ -5012,3 +5012,21 @@ A real failure revealed presence/health conflation: a stopped domain was reporte
 unknown because the normal health read returned drift. Intent observation now
 accepts independently verified exact provider presence without claiming healthy
 configuration or action success. The first failed run remains recorded.
+
+### Scoped guest file reboot termination (2026-10-22)
+
+A file result lost across guest reboot can now be terminal unknown, but only for
+an installation originally signed with `guest-tmpfs` scope. Host identity and
+old/new guest boot are bound in the receipt; guest filesystem validation uses the
+same parent FD as staging/link/rename. Unscoped requests and non-tmpfs filesystems
+remain blocked. This restriction fixes the review finding that remote filesystem
+writes may outlive the guest process and cannot be fenced by reboot alone.
+
+`/tmp/sysbox-guest-file-scoped-verified.log` passes scope binding, non-tmpfs refusal,
+unscoped reboot refusal, host journal recovery, signature checks and the three
+backend API failed/unknown-to-successor flow. `/tmp/sysbox-file-real-tmpfs-vm.log`
+passes actual installation in a new tmpfs mounted only in the enrolled disposable
+execution VM; the mount, test directory and binary were removed afterward.
+The boot-change unit fixture does not by itself claim a full real guest reboot
+with an in-flight file write. Complete guest/provider/transport integration remains
+tracked in the three-PR execution ledger.

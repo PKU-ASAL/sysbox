@@ -269,14 +269,15 @@ type GuestExecutionResult struct {
 }
 
 type GuestFilePut struct {
-	ID       string `json:"id"`
-	Topology string `json:"topology"`
-	Node     string `json:"node"`
-	Path     string `json:"path"`
-	Mode     uint32 `json:"mode,omitempty"`
-	Size     int64  `json:"size"`
-	SHA256   string `json:"sha256"`
-	FetchRef string `json:"fetch_ref,omitempty"`
+	RebootScope string `json:"reboot_scope,omitempty"`
+	ID          string `json:"id"`
+	Topology    string `json:"topology"`
+	Node        string `json:"node"`
+	Path        string `json:"path"`
+	Mode        uint32 `json:"mode,omitempty"`
+	Size        int64  `json:"size"`
+	SHA256      string `json:"sha256"`
+	FetchRef    string `json:"fetch_ref,omitempty"`
 }
 
 type GuestFileOperation struct {

@@ -38,10 +38,13 @@ func (c *fileConnection) CancelFileInstall(context.Context, substrate.FileInstal
 	return c.result, nil
 }
 func fileFixture(t *testing.T) (*FileDispatcher, TargetRef, substrate.FileInstallRequest, controlplane.SignedExecutionGrant, *fileConnection) {
+	return scopedFileFixture(t, "")
+}
+func scopedFileFixture(t *testing.T, scope string) (*FileDispatcher, TargetRef, substrate.FileInstallRequest, controlplane.SignedExecutionGrant, *fileConnection) {
 	d, old, conn, key := taskFixtureWithIssuer(t)
 	data := []byte("payload")
 	hash := sha256.Sum256(data)
-	req := substrate.FileInstallRequest{ID: "install", Path: "/tmp/managed-file", Mode: 0600, Size: int64(len(data)), SHA256: hex.EncodeToString(hash[:])}
+	req := substrate.FileInstallRequest{RebootScope: scope, ID: "install", Path: "/tmp/managed-file", Mode: 0600, Size: int64(len(data)), SHA256: hex.EncodeToString(hash[:])}
 	digest, err := req.Digest()
 	require.NoError(t, err)
 	g := old.Grant.Grant
@@ -137,4 +140,54 @@ func TestFileCancelReachesGuestWhileInstallInFlight(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Quiescent)
 	require.Equal(t, substrate.FileInstallCancelled, result.Outcome)
+}
+
+type rebootedFileConnection struct {
+	*fileConnection
+	boot string
+}
+
+func (c *rebootedFileConnection) GuestFileBootID(context.Context) (string, error) { return c.boot, nil }
+func TestFileGuestRebootRetiresUnknownWithoutReinstall(t *testing.T) {
+	d, ref, req, g, base := scopedFileFixture(t, "guest-tmpfs")
+	base.lost = true
+	conn := &rebootedFileConnection{fileConnection: base, boot: g.BootID}
+	d.Resolve = func(context.Context, TargetRef) (Target, error) {
+		return Target{Scope: ref.Scope, AgentID: d.AgentID, NodeID: "node", Connection: conn}, nil
+	}
+	h, _, err := d.Install(context.Background(), ref, req, g)
+	require.Error(t, err)
+	conn.boot = "new-guest"
+	var receipt controlplane.SignedExecutionStopReceipt
+	d.ReportStop = func(_ context.Context, r controlplane.SignedExecutionStopReceipt) error { receipt = r; return nil }
+	got, err := d.Cancel(context.Background(), ref, h)
+	require.NoError(t, err)
+	require.True(t, got.Quiescent)
+	require.Equal(t, substrate.FileInstallUnknown, got.Outcome)
+	require.Equal(t, "new-guest", receipt.ObservedGuestBootID)
+	require.Equal(t, 1, base.installs)
+	cold := *d
+	again, err := cold.Observe(context.Background(), ref, h)
+	require.NoError(t, err)
+	require.Equal(t, got, again)
+}
+
+func TestUnscopedFileGuestRebootRemainsUnknown(t *testing.T) {
+	d, ref, req, g, base := fileFixture(t)
+	base.lost = true
+	conn := &rebootedFileConnection{fileConnection: base, boot: g.BootID}
+	d.Resolve = func(context.Context, TargetRef) (Target, error) {
+		return Target{Scope: ref.Scope, AgentID: d.AgentID, NodeID: "node", Connection: conn}, nil
+	}
+	h, _, err := d.Install(context.Background(), ref, req, g)
+	require.Error(t, err)
+	conn.boot = "new-guest"
+	reported := false
+	d.ReportStop = func(context.Context, controlplane.SignedExecutionStopReceipt) error { reported = true; return nil }
+	_, err = d.Cancel(context.Background(), ref, h)
+	require.Error(t, err)
+	require.False(t, reported)
+	record, err := d.loadFile(h)
+	require.NoError(t, err)
+	require.Nil(t, record.Receipt)
 }

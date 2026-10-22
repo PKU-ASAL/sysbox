@@ -199,6 +199,9 @@ func (e *Engine) InstallFile(ctx context.Context, req substrate.FileInstallReque
 		return empty, err
 	}
 	defer parent.Close()
+	if err = validateFileRebootScope(parent, req.RebootScope); err != nil {
+		return empty, err
+	}
 	epochPath, epoch, scopeUnlock, err := e.lockScope(ctx, grant.Grant)
 	if err != nil {
 		return empty, err
@@ -568,6 +571,9 @@ func (e *Engine) recoverInstall(ctx context.Context, r FileInstallRecord) (FileI
 		return unknown(err)
 	}
 	defer parent.Close()
+	if err = validateFileRebootScope(parent, r.Request.RebootScope); err != nil {
+		return unknown(err)
+	}
 	identity, err := installFDIdentity(parent)
 	if err != nil || identity != r.Parent {
 		return unknown(ErrConflict)

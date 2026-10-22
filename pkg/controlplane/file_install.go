@@ -10,6 +10,6 @@ func FromFileInstallCommand(cmd AgentCommand) (substrate.FileInstallRequest, err
 		return substrate.FileInstallRequest{}, fmt.Errorf("file install requires complete dispatch binding")
 	}
 	p := cmd.FilePut
-	r := substrate.FileInstallRequest{ID: p.ID, Path: p.Path, Mode: p.Mode, Size: p.Size, SHA256: p.SHA256}
+	r := substrate.FileInstallRequest{RebootScope: p.RebootScope, ID: p.ID, Path: p.Path, Mode: p.Mode, Size: p.Size, SHA256: p.SHA256}
 	return r, r.Validate()
 }

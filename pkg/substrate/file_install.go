@@ -20,16 +20,20 @@ const (
 )
 
 type FileInstallRequest struct {
-	ID     string `json:"id"`
-	Path   string `json:"path"`
-	Mode   uint32 `json:"mode"`
-	Size   int64  `json:"size"`
-	SHA256 string `json:"sha256"`
+	RebootScope string `json:"reboot_scope,omitempty"`
+	ID          string `json:"id"`
+	Path        string `json:"path"`
+	Mode        uint32 `json:"mode"`
+	Size        int64  `json:"size"`
+	SHA256      string `json:"sha256"`
 }
 
 var fileInstallID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 func (r FileInstallRequest) Validate() error {
+	if r.RebootScope != "" && r.RebootScope != "guest-tmpfs" {
+		return fmt.Errorf("unsupported file reboot scope")
+	}
 	if !fileInstallID.MatchString(r.ID) || !path.IsAbs(r.Path) || path.Clean(r.Path) != r.Path || r.Path == "/" || strings.ContainsRune(r.Path, 0) || r.Mode&^uint32(0777) != 0 || r.Size < 0 || r.Size > MaxFileInstallSize || len(r.SHA256) != 64 || strings.ToLower(r.SHA256) != r.SHA256 {
 		return fmt.Errorf("invalid file installation request")
 	}

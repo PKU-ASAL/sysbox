@@ -279,6 +279,39 @@ func (d *FileDispatcher) observeFile(ctx context.Context, ref TargetRef, h subst
 	if target.NodeID != r.ProviderNodeID {
 		return r.Result, guesttask.ErrConflict
 	}
+	if info, ok := target.Connection.(interface {
+		GuestFileBootID(context.Context) (string, error)
+	}); ok {
+		boot, err := info.GuestFileBootID(ctx)
+		if err != nil {
+			return r.Result, err
+		}
+		if boot == "" {
+			return r.Result, guesttask.ErrUnknown
+		}
+		if boot != h.BootID {
+			if r.Request.RebootScope != "guest-tmpfs" {
+				return r.Result, guesttask.ErrUnknown
+			}
+			current, err := d.target(ctx, ref, r.Grant.Grant)
+			if err != nil {
+				return r.Result, err
+			}
+			if current.NodeID != r.ProviderNodeID {
+				return r.Result, guesttask.ErrConflict
+			}
+			receipt, err := controlplane.SignRebootedFileStopReceipt(d.HostKey, r.Grant.Grant, d.HostBootID, boot, rand.Text(), time.Now())
+			if err != nil {
+				return r.Result, err
+			}
+			r.Result = *receipt.FileResult
+			r.Receipt = &receipt
+			if err = d.saveFile(r); err != nil {
+				return r.Result, err
+			}
+			return r.Result, d.reportFile(ctx, r)
+		}
+	}
 	installer, ok := target.Connection.(substrate.ConnectionFileInstaller)
 	if !ok {
 		return r.Result, substrate.ErrNotSupported

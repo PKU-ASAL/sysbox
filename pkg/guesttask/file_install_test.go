@@ -346,3 +346,56 @@ func TestFileInstallRealProcessCrashRecovery(t *testing.T) {
 		})
 	}
 }
+
+func TestScopedFileInstallRejectsNonTmpfsBeforeWriting(t *testing.T) {
+	e, req, g, key, body := installFixture(t)
+	parent, err := os.Open(filepath.Dir(req.Path))
+	require.NoError(t, err)
+	defer parent.Close()
+	if validateFileRebootScope(parent, "guest-tmpfs") == nil {
+		t.Skip("fixture filesystem is tmpfs")
+	}
+	req.RebootScope = "guest-tmpfs"
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	grant := g.Grant
+	grant.Digest = digest
+	signed, err := controlplane.SignExecutionGrant(key, grant, g.BootID, time.Now())
+	require.NoError(t, err)
+	_, err = e.InstallFile(context.Background(), req, signed, bytes.NewReader(body))
+	require.ErrorContains(t, err, "tmpfs")
+	_, err = os.Stat(req.Path)
+	require.True(t, os.IsNotExist(err))
+}
+
+func TestScopedFileInstallOnRealTmpfs(t *testing.T) {
+	if os.Getenv("SYSBOX_TMPFS_ACCEPTANCE") != "1" {
+		t.Skip("explicit real tmpfs acceptance required")
+	}
+	root, err := os.MkdirTemp(os.Getenv("SYSBOX_TMPFS_ACCEPTANCE_ROOT"), "sysbox-file-reboot-")
+	require.NoError(t, err)
+	defer os.RemoveAll(root)
+	e, req, g, key, body := installFixture(t)
+	e.AllowedInstallRoots = []string{root}
+	req.Path = filepath.Join(root, "target")
+	req.RebootScope = "guest-tmpfs"
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	grant := g.Grant
+	grant.Digest = digest
+	signed, err := controlplane.SignExecutionGrant(key, grant, g.BootID, time.Now())
+	require.NoError(t, err)
+	record, err := e.InstallFile(context.Background(), req, signed, bytes.NewReader(body))
+	require.NoError(t, err)
+	require.Equal(t, substrate.FileInstallCommitted, record.Result.Outcome)
+	got, err := os.ReadFile(req.Path)
+	require.NoError(t, err)
+	require.Equal(t, body, got)
+	require.Equal(t, "guest-tmpfs", record.Request.RebootScope)
+	// Old helper decoding strips the scope, so its digest cannot authorize this request.
+	legacy := req
+	legacy.RebootScope = ""
+	legacyDigest, err := legacy.Digest()
+	require.NoError(t, err)
+	require.NotEqual(t, digest, legacyDigest)
+}

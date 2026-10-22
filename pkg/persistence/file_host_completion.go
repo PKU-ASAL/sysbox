@@ -34,7 +34,8 @@ func CompleteFileFromHost(raw []byte, record *CommandRecord, agent, id string, r
 	if x.ID != id || x.AgentID != agent || x.CommandID != cmd.ID || cmd.AgentID != agent || g.AgentID != agent || g.CommandID != cmd.ID || g.ActionID != id || receipt.InstallID != id || receipt.InstallDigest != digest || g.Digest != digest || g.Scope.TopologyUID != cmd.TopologyUID || g.Scope.ResourceUID != cmd.ResourceUID || g.Scope.Generation != cmd.Generation || cmd.FilePut.Topology != x.Topology || cmd.FilePut.Node != x.Node {
 		return nil, ErrConflict
 	}
-	if r.Outcome != substrate.FileInstallCommitted && r.Outcome != substrate.FileInstallCancelled {
+	rebootUnknown := req.RebootScope == "guest-tmpfs" && r.Outcome == substrate.FileInstallUnknown && receipt.ObservedGuestBootID != "" && receipt.GuestBootID == g.TargetBootID && receipt.ObservedGuestBootID != receipt.GuestBootID && r.SHA256 == "" && r.Size == 0 && r.Mode == 0
+	if r.Outcome != substrate.FileInstallCommitted && r.Outcome != substrate.FileInstallCancelled && !rebootUnknown {
 		return nil, ErrConflict
 	}
 	if r.Outcome == substrate.FileInstallCommitted && (r.SHA256 != req.SHA256 || r.Size != req.Size || r.Mode != req.Mode) {
@@ -61,6 +62,10 @@ func CompleteFileFromHost(raw []byte, record *CommandRecord, agent, id string, r
 		return nil, ErrConflict
 	}
 	x.Status = controlplane.GuestExecutionCompleted
+	if rebootUnknown {
+		x.Status = controlplane.GuestExecutionFailed
+		x.Error = "guest reboot confirmed; original file result unknown"
+	}
 	if r.Outcome == substrate.FileInstallCancelled {
 		x.Status = controlplane.GuestExecutionCancelled
 	}

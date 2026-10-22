@@ -80,8 +80,8 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("content digest mismatch"))
 		return
 	}
-	put := controlplane.GuestFilePut{ID: id, Topology: topology, Node: node, Path: dst, Mode: uint32(mode64), Size: n, SHA256: digest, FetchRef: "/v1/agents/" + agentID + "/guest-files/" + id}
-	if err := (substrate.FileInstallRequest{ID: id, Path: dst, Mode: put.Mode, Size: n, SHA256: digest}).Validate(); err != nil {
+	put := controlplane.GuestFilePut{RebootScope: r.URL.Query().Get("reboot_scope"), ID: id, Topology: topology, Node: node, Path: dst, Mode: uint32(mode64), Size: n, SHA256: digest, FetchRef: "/v1/agents/" + agentID + "/guest-files/" + id}
+	if err := (substrate.FileInstallRequest{RebootScope: put.RebootScope, ID: id, Path: dst, Mode: put.Mode, Size: n, SHA256: digest}).Validate(); err != nil {
 		_ = os.Remove(tmp.Name())
 		writeError(w, 400, err)
 		return
