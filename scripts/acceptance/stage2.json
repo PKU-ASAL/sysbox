@@ -44,7 +44,7 @@
   "not_closed": [
     "full API/Agent SIGKILL matrix and provider-internal partial calls",
     "full P8/P9 original acceptance",
-    "final same-commit combined stage-2 strict acceptance"
+    "latest-release same-revision final integration (P9); the historical e5ddeee combined 31-gate run passed and is not current-release evidence"
   ],
   "evidence_rule": "all selected strict gates must pass on the same source digest and commit; failure/skip/missing environment does not close scope; original requirement remaining items stay open"
 }

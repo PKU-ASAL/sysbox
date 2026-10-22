@@ -25,6 +25,7 @@ func TestAdoptionFenceGuestProbe(t *testing.T) {
 		t.Skip("disposable execution VM only")
 	}
 	var cfg struct {
+		SourceIdentity              substrate.OperationIdentity
 		Identity                    agent.Identity
 		Issuer                      ed25519.PublicKey
 		Host                        ed25519.PrivateKey
@@ -66,14 +67,31 @@ func TestAdoptionFenceGuestProbe(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(cfg.Output, raw, 0600))
 	}
+	if cfg.Mode == "cleanup-source" {
+		sourceCtx := substrate.WithOperationIdentity(ctx, cfg.SourceIdentity)
+		m, err := fc.InspectAdoptionRecovery(sourceCtx, controlplane.AdoptionRequest{ExternalID: cfg.Adoption.ExternalID})
+		require.NoError(t, err)
+		require.NoError(t, fc.DestroyNode(sourceCtx, m))
+		return
+	}
 	if cfg.Mode == "create-firecracker" {
-		h, err := fc.CreateNode(scoped, substrate.NodeSpec{Name: "adoption-recovery", Image: substrate.ArtifactHandle{ID: "/var/tmp/gc-rootfs.ext4"}, ProviderConfig: &fcprovider.Config{Kernel: "/var/tmp/gc-vmlinux", AllowDirect: true}})
+		createCtx := scoped
+		if cfg.SourceIdentity.OwnerUID != "" {
+			createCtx = substrate.WithOperationIdentity(ctx, cfg.SourceIdentity)
+		}
+		h, err := fc.CreateNode(createCtx, substrate.NodeSpec{Name: "adoption-recovery", Image: substrate.ArtifactHandle{ID: "/var/tmp/gc-rootfs.ext4"}, ProviderConfig: &fcprovider.Config{Kernel: "/var/tmp/gc-vmlinux", AllowDirect: true}})
 		require.NoError(t, err)
-		require.NoError(t, fc.StartNode(scoped, h))
-		obs, err := fc.ObserveNode(scoped, h)
+		if cfg.SourceIdentity.OwnerUID == "" {
+			require.NoError(t, fc.StartNode(createCtx, h))
+		}
+		obs, err := fc.ObserveNode(createCtx, h)
 		require.NoError(t, err)
-		require.True(t, obs.Running)
-		evidence, err := fc.InspectAdoption(scoped, h.ID, substrate.NodeSpec{})
+		if cfg.SourceIdentity.OwnerUID == "" {
+			require.True(t, obs.Running)
+		} else {
+			require.False(t, obs.Running)
+		}
+		evidence, err := fc.InspectAdoption(createCtx, h.ID, substrate.NodeSpec{})
 		require.NoError(t, err)
 		save(evidence)
 		return
@@ -91,7 +109,11 @@ func TestAdoptionFenceGuestProbe(t *testing.T) {
 	if cfg.Mode == "inspect" {
 		e, err := provider.InspectAdoption(ctx, cfg.Adoption.ExternalID, substrate.NodeSpec{})
 		require.NoError(t, err)
-		require.Nil(t, e.ManagedIdentity)
+		if cfg.SourceIdentity.OwnerUID == "" {
+			require.Nil(t, e.ManagedIdentity)
+		} else {
+			require.Equal(t, &cfg.SourceIdentity, e.ManagedIdentity)
+		}
 		save(e)
 		return
 	}
@@ -147,6 +169,9 @@ func TestAdoptionFenceGuestProbe(t *testing.T) {
 	var proof controlplane.AdoptionDispositionProof
 	if cfg.Mode == "cancel" {
 		c.InspectAdoptionCancellation = func(ctx context.Context, p controlplane.AdoptionDispositionProof) (substrate.NodeObservation, error) {
+			if fc != nil {
+				return fc.InspectAdoptionCancellation(ctx, p)
+			}
 			return libvirtprovider.New(cfg.Root+"-provider").InspectAdoptionCancellation(ctx, p.Adoption)
 		}
 		proof, err = c.CancelDisposition(ctx, cfg.FenceID)

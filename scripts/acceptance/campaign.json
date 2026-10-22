@@ -24,10 +24,11 @@
         "ownership-transfer-docker-host-sigkill",
         "adoption-fenced-recovery",
         "adoption-cancellation",
-        "adoption-reset-settled"
+        "adoption-reset-settled",
+        "adoption-whole-vm-cancellation"
       ],
       "remaining": [
-        "Explicit fenced recovery is implemented for exact target ownership after a lost adoption return; historical operation stays unknown. Source/unowned/absent/conflict disposition, pre-existing canonical unknown actions and Firecracker previous-boot process anchors remain unresolved; full provider-internal/transport acceptance stays open."
+        "Exact target recovery, source/unowned/absent cancellation, matching canonical adoption-action disposition and Firecracker previous-boot recovery are implemented. Conflict/partial evidence deliberately retains holds; arbitrary run/reset/guest intents are not covered by adoption disposition. Full provider-internal/transport acceptance remains open."
       ]
     },
     {
@@ -47,11 +48,10 @@
         "ownership-transfer-docker-host-sigkill",
         "adoption-fenced-recovery",
         "adoption-cancellation",
-        "adoption-reset-settled"
+        "adoption-reset-settled",
+        "adoption-whole-vm-cancellation"
       ],
-      "remaining": [
-        "Explicit fenced recovery is implemented for exact target ownership after a lost adoption return; historical operation stays unknown. Source/unowned/absent/conflict disposition, pre-existing canonical unknown actions and Firecracker previous-boot process anchors remain unresolved; full provider-internal/transport acceptance stays open."
-      ]
+      "remaining": []
     },
     {
       "id": "P5.4",
@@ -85,10 +85,11 @@
         "ownership-transfer-docker-host-sigkill",
         "adoption-fenced-recovery",
         "adoption-cancellation",
-        "adoption-reset-settled"
+        "adoption-reset-settled",
+        "adoption-whole-vm-cancellation"
       ],
       "remaining": [
-        "Explicit fenced recovery is implemented for exact target ownership after a lost adoption return; historical operation stays unknown. Source/unowned/absent/conflict disposition, pre-existing canonical unknown actions and Firecracker previous-boot process anchors remain unresolved; full provider-internal/transport acceptance stays open."
+        "Exact target recovery, source/unowned/absent cancellation, matching canonical adoption-action disposition and Firecracker previous-boot recovery are implemented. Conflict/partial evidence deliberately retains holds; arbitrary run/reset/guest intents are not covered by adoption disposition. Full provider-internal/transport acceptance remains open."
       ]
     },
     {
@@ -174,9 +175,7 @@
         "remote-revision-api",
         "sql-revision-federation"
       ],
-      "remaining": [
-        "Explicit file/shared-path/HTTPS consumer pins and SQL downstream retirement are implemented. Final same-source combined federation fault acceptance remains required; unregistered repositories never count as empty."
-      ]
+      "remaining": []
     },
     {
       "id": "P8.3",
@@ -290,7 +289,7 @@
       "text": "整合最新 main、消除能力表与文档矛盾；独立架构/代码审查，测试产物记录 commit、镜像digest、协议/schema、环境与清理结果。",
       "gates": [],
       "remaining": [
-        "Latest main integration, final release build/architecture review and same-revision full acceptance remain pending. No merge/push authorization inferred."
+        "Latest main integration, final release build/architecture review and same-revision full acceptance remain pending. Branch pushes and PR delivery are authorized; main merge and production deployment are not included."
       ]
     },
     {
@@ -1198,7 +1197,8 @@
       "id": "adoption-cancellation",
       "package": "./pkg/api",
       "tests": [
-        "TestAdoptionFenceRecoversObservedOwnerWithoutInventingSuccess"
+        "TestAdoptionFenceCancellationClosesUnknownActions",
+        "TestOwnershipTransferFencedCancellation"
       ],
       "kind": "contract",
       "race": true,
@@ -1219,6 +1219,26 @@
       "timeout": "3m",
       "requires_env": [],
       "artifact_env": []
+    },
+    {
+      "id": "adoption-whole-vm-cancellation",
+      "package": "./pkg/api",
+      "tests": [
+        "TestAdoptionFenceWholeVMCancellationMatrixE2E"
+      ],
+      "kind": "real-provider",
+      "race": true,
+      "tags": "e2e",
+      "timeout": "12m",
+      "requires_env": [
+        "SYSBOX_GC_FENCE_LAB",
+        "SYSBOX_GC_FENCE_PROBE_BINARY",
+        "SYSBOX_GC_FENCE_ATTESTOR"
+      ],
+      "artifact_env": [
+        "SYSBOX_GC_FENCE_PROBE_BINARY",
+        "SYSBOX_GC_FENCE_ATTESTOR"
+      ]
     }
   ]
 }

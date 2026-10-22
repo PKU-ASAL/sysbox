@@ -4824,9 +4824,9 @@ Firecracker. `/tmp/sysbox-adoption-fence-whole-vm4.log` verifies an actual unown
 libvirt domain, real ownership mutation, injected lost callback, whole-VM
 power fencing and recovery without deleting the domain or inventing success.
 
-Remaining functional cases: source-owned, unowned, absent or conflicting objects
-keep their holds; they need a separate explicit cancel/retry disposition. Existing
-canonical runtime unknown actions require dedicated reconciliation. Firecracker
+Historical boundary of the initial owned-recovery slice (superseded below):
+source/unowned/absent cancellation and matching canonical adoption actions were
+not yet supported. Conflicting evidence still deliberately retains holds. Firecracker
 previous-boot process anchors are now handled by the fenced recovery described below. The recovered-
 owned path does not close those cases or the full P9 transport/upgrade matrix.
 
@@ -4852,8 +4852,9 @@ Real evidence: /tmp/sysbox-fc-adoption-recovery-whole-vm2.log. A running KVM VMM
 was fenced by restarting the enclosing execution VM, its old-boot adoption intent
 was reconciled through authenticated host/API requests, and the preserved VM was
 started again, observed running, and destroyed. Original result remained unknown.
-Source/unowned/absent/conflict disposition and pre-existing canonical unknown
-actions remain separate functional work.
+Source/unowned/absent disposition and matching canonical adoption actions are
+now implemented below. Conflicts retain holds; arbitrary run/reset/guest actions
+are outside adoption disposition.
 
 ### Explicit cancellation of fenced adoption unknowns
 
@@ -4879,7 +4880,52 @@ cancelled source/unowned object identity.
 The cancellation and settled-action paths pass file, SQLite and PostgreSQL
 contract/race tests. Affected-package full regression with an isolated PostgreSQL
 instance passed. Real provider cancellation observations pass for temporary
-libvirt and Docker objects. The disposable whole-VM cancellation run was
-requested but the environment approval stream disconnected; no production or
-historical scene was used. Firecracker cancellation remains fail-closed pending
-an equivalent provider-specific source/absent fixture.
+libvirt and Docker objects. The earlier blocked whole-VM attempt is superseded by the 2026-10-22 run:
+`/tmp/sysbox-cancel-verified-matrix.json` records five passing real whole-VM
+cases: libvirt unowned/absent/source and Firecracker source/source-absent.
+Only the enrolled disposable execution VM was power-fenced. No production or
+historical scene was changed.
+
+The strengthened reproducible gate is `adoption-whole-vm-cancellation`, selecting
+`TestAdoptionFenceWholeVMCancellationMatrixE2E`; it fixes all five scenarios
+explicitly and checks the retained provider identity in `adoption-cancel/`
+references, old-grant rejection, source retirement, exact release and fresh
+admission. `adoption-cancellation` now selects the actual cancellation tests,
+instead of accidentally repeating the owned-recovery test. Run artifacts go to
+`/tmp/sysbox-cancel-closure-gates`; only a passed run.json establishes success.
+Build the probe with `go test -c -tags=e2e ./pkg/hostsupervisor`, and the attestor
+with `go build -buildvcs=false ./cmd/sysbox`. Set `SYSBOX_GC_FENCE_LAB`,
+`SYSBOX_GC_FENCE_PROBE_BINARY`, `SYSBOX_GC_FENCE_ATTESTOR`, and the isolated
+`SYSBOX_TEST_DATABASE_URL`; select the cancellation, reset-settled and whole-VM
+gates with `python3 scripts/acceptance/campaign.py run --gate <id> --output <new-dir>`.
+The gate fingerprints the helper/attestor; signed per-round evidence is retained
+under the lab's `adoption-round-*` directories. Failed rounds retain exact fixture
+identities for diagnosis and explicit cleanup, never broad provider deletion.
+
+Scope: transfer preparation uses the internal prepare helper, not the entire
+public preparation/confirmation protocol. Firecracker source fixtures are real
+prepared manifests, not running KVM VMMs. The separate running-KVM recovery
+record above remains the evidence for old-boot process cleanup and cold restart.
+Aggregate format is 14 (legacy 13 readable); authority format is 7. Older format
+numbers elsewhere in this chronological record describe historical slices.
+
+P5.3 and P8.2 no longer list obsolete implementation blockers in campaign.json.
+This closes those functional subitems, not their complete current-release gate
+set. Historical e5ddeee combined 31-gate evidence remains historical; P5 full
+provider/transport faults and P9 final upgrade/integration acceptance stay open.
+
+2026-10-22 strict follow-up result: all three selected gates passed without skips
+(`adoption-cancellation`, `adoption-reset-settled`,
+`adoption-whole-vm-cancellation`). The latter ran all five fixed real scenarios.
+Recorded source SHA256:
+`5bffa73c35ea777b7f731ee933a4dc5b9f04ba379b8b1ab7ace1b9968e096393`;
+base HEAD was `692c853` plus the recorded working-tree changes. Do not describe
+this as testing the unmodified base commit or the full campaign. Reconciliation
+in `/tmp/sysbox-cancel-closure-reconciliation.json` deliberately remains incomplete:
+P5.3/P8.2 are unverified until their complete same-source gate sets are supplied.
+
+Cleanup: successful rounds removed their precise fixtures. The failed source
+preparation round's inactive libvirt UUID was checked against its recorded XML
+and removed; `/tmp/sysbox-gc-fencing-20261021/cancellation-fixture-cleanup.json`
+records the identity. Both isolated VMs and the test PostgreSQL container were
+stopped; disks and failure/success evidence remain for audit.

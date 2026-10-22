@@ -1,5 +1,30 @@
 # P0–P9 并行实施：集成跟踪
 
+## 2026-10-22 当前对账（优先于下方历史记录）
+
+本次收尾范围是 adoption 取消真实验收与清单纠偏，不是 P0–P9 全部发布完成。
+
+| 项目 | 当前实施状态 | 验收边界 |
+| --- | --- | --- |
+| P5.3 显式接管／转移授权 | 功能剩余项关闭：无主接管、旧 owner 退休证明、显式 transfer、取消后精确释放均已实现 | 全部关联门槛须由 campaign 同源码证据核验；本次取消 fixture 直接调用内部 transfer 准备，不能代替公开准备／确认全流程 |
+| P5.2／P5 总验收 | 已实现目标归属恢复、source/unowned/absent 取消、匹配 canonical adoption action 处置、FC 旧 boot 恢复 | provider 内部部分执行及完整 transport 故障矩阵未关闭；冲突或不完整证据应继续阻塞 |
+| P6 原始 state 运维范围 | 三后端快照、restore、撤权及恢复语义已实现，已有对应验收 | 不等于所有 provider 快照或完整 P9 发布验收 |
+| P8.2 全局引用覆盖 | 功能剩余项关闭：file/shared-path/HTTPS consumer 与 SQL downstream federation 已实现 | 仅已登记消费者；未知／离线不视为空。e5ddeee 的 31 门槛组合验收通过，不冒充当前版本 |
+| P8.4／P8 总验收 | 批量 GC、revision 退休、未知删除 fenced disposition 已实现 | 完整 API/Agent SIGKILL 和 provider 内部故障仍归 P9.3；当前发布同版本整合尚待完成 |
+| P9 最终整合 | 未关闭 | 双宿主完整生命周期、provider/transport 全矩阵、升级重建、最新 main 整合与发布审查 |
+
+真实整机取消覆盖 libvirt unowned/absent/source、Firecracker source/source-absent。
+保留原 unknown 事实，不创建虚假的目标 state；源 state 不回滚退休；保留对象进入
+`adoption-cancel/` GC 引用；旧授权被拒绝，新 action 可准入。
+Firecracker 此次 source 是 provider 创建的 prepared manifest，未启动 KVM；
+运行中 KVM 旧 boot 恢复及再次启动是此前独立验收，不能混称同一个场景。
+匹配 adoption action 可处置，不意味着任意历史 run/reset/guest intent 自动解锁。
+
+阶段交付仍为未合并的 PR #50、#51、#52；已授权分支推送，不包含 main 合并或生产部署。
+清单 `remaining=[]` 表示无已知功能剩余项，只有所有关联门槛的当前同源码证据齐备
+才标记 verified，不能直接视为总验收通过。详见 [验收记录](../operations/p9-real-acceptance.md)。
+
+
 初始集成基线：`566268e`；后续进展按下方条目记录。本文不能作为P0–P9全部验收通过声明。
 
 2026-10-13 SSH 当前切片收尾：新增可信 profile 的容器 sshd 进程适配器及镜像启动
