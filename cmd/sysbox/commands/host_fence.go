@@ -116,6 +116,9 @@ func newHostFenceCommand() *cobra.Command {
 	prepareTransfer.Flags().StringVar(&gcSocket, "socket", "", "host supervisor socket")
 	_ = prepareTransfer.MarkFlagRequired("socket")
 	root.AddCommand(prepareTransfer)
+	for _, operation := range []string{"recovery-plan", "observe", "reconcile-intents"} {
+		root.AddCommand(newHostFenceRemoteCommand(operation))
+	}
 	return root
 }
 

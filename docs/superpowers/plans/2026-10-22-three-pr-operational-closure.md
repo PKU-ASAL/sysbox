@@ -42,37 +42,27 @@ independent review at each delivery boundary.
 - [ ] Commit/push and open stacked PR; report all original requirements without
   implying authorization to merge or deploy production.
 
-## Foundation progress (2026-10-22)
+## Delivery ledger (2026-10-22, PR #53)
 
-Implemented the diagnostic per-action plan, including candidate/replacement
-identity inventory, exact observation binding, residual/attachment/guest blockers,
-and authenticated observation digest in the existing recovery-plan API.
-Added the explicit operator-choice contract and canonical fence verifier. Neither
-validator mutates state or releases authority; no disposition commit endpoint is
-claimed yet. A signed mixed report must bind settled as well as unsettled actions.
+This replaces the earlier foundation-only status. PR #53 remains WIP; the broad
+PR 1 checkboxes above stay open where only bounded slices have shipped.
 
-Guest task reboot termination already has a production path and API regression:
-`TestHostGuestRebootReceiptClosesOldEpochWithUnknownResult`. Reuse it. Missing
-original evidence, guest file outcomes and parent/reset linkage still need audit.
+| Deliverable | Implemented | Still required |
+| --- | --- | --- |
+| Evidence-bound plan | Candidate/source/replacement inventory, signed observation digest, Run incarnation and serial bindings, blocker diagnostics | Broader composite-action coverage |
+| Run disposition | Public reconcile-intents, immutable archive/GC references, file write-ahead and SQL transactions, exact-image retries | Parent/child operational linkage |
+| Reset disposition | Exact source retain/absence before replacement; absent old source plus incomplete replacement retention | Attachments, ResetSSH, missing creation identity and composite cases |
+| Incomplete-resource obligations | Durable archive-backed rebuild/delete requirements, guarded admission/state edits, verified obligation transfer and resolution | Full real repeated recovery integration |
+| Guest termination | Existing signed task reboot completion; scoped guest-tmpfs install reboot stops with unknown result | Real in-flight file reboot/delayed callback over SSH/vsock; persistent storage stop proofs |
+| Operator CLI | recovery-plan, observe, reconcile-intents; exact scope/key validation and existing proxy authentication | End-to-end operator flow in isolated lab |
+| Validation | Focused backend/crash tests; real Docker/libvirt whole-VM rounds; actual tmpfs install | Current-source complete PR 1 campaign and final review |
 
-Actual create-absence observation currently does not emit residual coverage;
-synthetic validator acceptance is not real provider acceptance. Extend the
-provider observation path before exposing create-absence mutation.
+Committed slices: edf582b (plan), 4fb0975 (Run commit), c59ec2b (Reset source),
+e553d78 (incomplete resource obligations), 8af890a (scoped tmpfs guest reboot).
+See docs/operations/p9-real-acceptance.md for the exact real acceptance boundaries.
+The libvirt incomplete fixture is a stopped diskless domain; the tmpfs installation
+and simulated reboot regression are separate evidence, not a real in-flight reboot.
 
-The next slice adds lifecycle format 15 and authority format 8: archived action
-history/GC references, deterministic resource postimages, prepared authority and
-exact-image recovery, file multi-record commit and SQLite/PostgreSQL transactions.
-The public reconcile-intents API supports precise retain/absence choices for the
-bounded non-composite/no-child case. Reset/guest/attachments remain rejected, not
-silently considered completed. CLI and real-provider integration are still pending.
-
-Fixed during review: settled-action identity coverage, JSONB RawMessage formatting
-comparison, file observation-ID race, and prepared recovery after authority clock
-advancement. Existing guest reboot-unknown completion is reused, not reimplemented.
-
-Reset follow-up: source and replacement observations are separate. Pre-replacement
-phase disposal now preserves the exact old source or accepts proven source absence;
-new Read/Delete/Reset generation selection no longer consumes the never-created
-target. Clear live reset_handle while keeping the archive. Three-backend tests and
-real isolated libvirt source-absence fencing passed. Applying/replacement/composite
-and guest/file linkage remain required work in PR #53.
+Historical incidents lacking authoritative identity/stop evidence remain read-only
+and unresolved. This is not permission to infer absence, replay or discard journals.
+PR 2 and PR 3 have not started. Existing PRs #50–52 and this PR are not merged.

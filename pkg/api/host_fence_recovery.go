@@ -26,6 +26,10 @@ type hostFenceRecoveryAction struct {
 	Blockers         []string                      `json:"blockers"`
 }
 type hostFenceRecoveryPlan struct {
+	Topology               string                    `json:"topology"`
+	RunQueuedAt            time.Time                 `json:"run_queued_at"`
+	RunRevision            string                    `json:"run_revision"`
+	ExpectedSerial         *int64                    `json:"expected_serial,omitempty"`
 	ObservationSHA256      string                    `json:"observation_sha256,omitempty"`
 	ReconciliationStatus   string                    `json:"reconciliation_status"`
 	ReleaseStatus          string                    `json:"release_status"`
@@ -72,6 +76,7 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 		return hostFenceRecoveryPlan{}, nil, 0, err
 	}
 	plan := hostFenceRecoveryPlan{FenceID: req.ID, RunID: req.RunID, AgentID: req.Grant.AgentID, RequestSHA256: digest, ReadOnly: true, ObservationAttestation: "unverified", HostProcessExclusion: "unproven", ObservationStatus: "not_requested", Blockers: []string{"explicit_reconciliation_and_release_required"}, Actions: []hostFenceRecoveryAction{}}
+	plan.Topology = req.Topology
 	plan.ReconciliationStatus = "none"
 	if rec := fence.Reconciliation; rec != nil {
 		plan.ReconciliationStatus = "prepared"
@@ -83,6 +88,9 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 	if rec := fence.IntentDisposition; rec != nil {
 		plan.ReconciliationStatus = "prepared"
 		if !rec.ReleasedAt.IsZero() {
+			plan.RunQueuedAt = rec.Decision.RunQueuedAt
+			plan.RunRevision = rec.Decision.RunRevision
+			plan.ExpectedSerial = &rec.Decision.ExpectedSerial
 			plan.ReconciliationStatus = "completed"
 			plan.ReleaseStatus = "released"
 			plan.HostProcessExclusion = "verified"
@@ -135,6 +143,9 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 	if err != nil {
 		return plan, nil, 0, err
 	}
+	plan.RunQueuedAt = run.QueuedAt
+	plan.RunRevision = run.Revision
+	plan.ExpectedSerial = &st.Meta.Serial
 	selected, journal, err := hostFenceJournal(*run, st.Meta.Serial, actions)
 	if err != nil {
 		plan.Blockers = append(plan.Blockers, "original_journal_unavailable")

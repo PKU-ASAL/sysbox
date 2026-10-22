@@ -57,6 +57,18 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 	var plan hostFenceRecoveryPlan
 	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &plan))
 	require.True(t, plan.JournalMatches)
+	var snapshot struct {
+		Topology       string    `json:"topology"`
+		RunQueuedAt    time.Time `json:"run_queued_at"`
+		RunRevision    string    `json:"run_revision"`
+		ExpectedSerial *int64    `json:"expected_serial"`
+	}
+	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &snapshot))
+	require.Equal(t, run.Topology, snapshot.Topology)
+	require.Equal(t, run.QueuedAt.UTC(), snapshot.RunQueuedAt.UTC())
+	require.Equal(t, run.Revision, snapshot.RunRevision)
+	require.NotNil(t, snapshot.ExpectedSerial)
+	require.Equal(t, before.Meta.Serial, *snapshot.ExpectedSerial)
 	require.Equal(t, "verified", plan.HostProcessExclusion)
 	require.False(t, plan.ReleaseAllowed)
 	require.False(t, plan.ReplayAllowed)

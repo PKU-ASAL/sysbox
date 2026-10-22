@@ -199,3 +199,40 @@ Upgrade controller and host before using this scope, then deploy the new guest
 helper. Old helpers drop the unknown scope field, derive a different request
 digest, and reject before writing; old controllers reject the new reboot receipt.
 Downgrade is not supported for journals already containing these receipts.
+
+### Explicit intent recovery from the CLI
+
+Use the existing API authentication boundary: `--api` should point to the trusted
+proxy that authenticates the operator and supplies the configured admin-role
+headers. `SYSBOX_API_TOKEN` (or `--token`) supplies a bearer credential when that
+endpoint requires one. The CLI does not invent a role or an authenticated user;
+a direct API call without the required subject remains HTTP 403.
+
+After the enrolled controller's host-fence receipt has been admitted:
+
+```sh
+sysbox host-fence observe fence-id --topology lab --api "$SYSBOX_API_URL" --key observation-1
+sysbox host-fence recovery-plan fence-id --topology lab --api "$SYSBOX_API_URL" --observation returned-command-id > recovery-plan.json
+sysbox host-fence reconcile-intents fence-id --topology lab --api "$SYSBOX_API_URL" --decision decision.json
+```
+
+An observation can remain pending; repeat the GET until the owning agent's signed
+observation is available. Reading the plan does not authorize release. The plan
+exports `topology`, `run_id`, `run_queued_at`, `run_revision`, `expected_serial`,
+`current_journal_sha256`, `observation_sha256` and each action's identities and
+blockers. Missing lifecycle evidence omits `expected_serial`, rather than implying
+serial zero. For an already disposed fence these snapshot fields describe the
+archived decision, not a newer Run.
+
+`decision.json` is the public API body: `decision` is an
+`IntentDispositionDecision` and `observation_command_id` identifies the observation.
+Set decision `version` to 1, choose a unique `id` and a nonempty `reason`, copy the
+snapshot bindings (using `current_journal_sha256` as `journal_sha256`), and explicitly
+choose each supported action's decision and exact identity. Supported decision
+values are `retain`, `absent`, `retain-incomplete` and
+`retain-replacement-incomplete`; their prerequisites are still checked by the
+controller. Do not infer a choice from a provider's mere presence or absence.
+The command binds topology/fence before submission and uses `decision.id` as the
+idempotency key. After a lost response, resend the unchanged file. Changed or stale
+evidence is rejected; no CLI path rewrites the old result or automatically retries
+an unknown effect. Redirects are refused and JSON input/output sizes are bounded.
