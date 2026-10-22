@@ -100,3 +100,41 @@ func TestIntentDispositionPlanRejectsUnboundCandidate(t *testing.T) {
 	require.Equal(t, "unresolved", p.ResourceDecision)
 	require.Contains(t, p.Blockers, "candidate_identity_mismatch")
 }
+
+func TestResetDispositionBeforeReplacementPreservesSource(t *testing.T) {
+	for _, phase := range []string{"accepted", "preparing", "prepared", "destroying", "destroy_returned", "destroyed"} {
+		t.Run(phase, func(t *testing.T) {
+			a := dispositionAction()
+			a.Action = controlplane.PlanActionReset
+			a.Phase = phase
+			a.Generation = 2
+			a.ReplayForbidden = true
+			o := dispositionObservation(a)
+			o.Status = "unknown"
+			old := o
+			old.Generation = 1
+			old.Status = "present"
+			o.ResetSource = &old
+			p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+			require.Equal(t, "retain-managed", p.ResourceDecision)
+			require.Equal(t, []string{"effect_stop_proof_required"}, p.Blockers)
+			require.False(t, p.ReplayAllowed)
+			require.Equal(t, int64(1), p.Identities[0].Generation)
+		})
+	}
+}
+func TestResetDispositionNeverInfersUnrecordedReplacementAbsence(t *testing.T) {
+	a := dispositionAction()
+	a.Action = controlplane.PlanActionReset
+	a.Phase = "applying"
+	a.Generation = 2
+	a.ReplayForbidden = true
+	o := dispositionObservation(a)
+	old := o
+	old.Generation = 1
+	old.Status = "present"
+	o.ResetSource = &old
+	p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+	require.NotEqual(t, "retain-managed", p.ResourceDecision)
+	require.Contains(t, p.Blockers, "reset_generation_reconciliation_required")
+}

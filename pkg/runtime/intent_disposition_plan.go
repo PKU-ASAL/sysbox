@@ -46,6 +46,41 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 		p.Blockers = []string{}
 		return p
 	}
+	if a.Action == controlplane.PlanActionReset && a.Candidate != nil && a.Candidate.Generation != a.Generation {
+		p.ResourceDecision = "review-reset"
+		if !a.ResetBeforeReplacement() {
+			p.Blockers = append(p.Blockers, "reset_generation_reconciliation_required")
+			return p
+		}
+		var original *controlplane.RecoveredResource
+		for i := range observations {
+			o := &observations[i]
+			if o.ActionID != a.ID {
+				continue
+			}
+			if original != nil || o.Resource != a.Resource.String() || o.OwnerUID != a.OwnerUID || o.ResourceUID != a.ResourceUID || o.Generation != a.Generation || o.ExternalID != a.Candidate.ExternalID || o.JournalStatus != string(a.Status) || o.ResetReplacement != nil {
+				p.Blockers = append(p.Blockers, "observation_identity_or_coverage_mismatch")
+				return p
+			}
+			original = o
+		}
+		if original == nil || original.ResetSource == nil {
+			p.Blockers = append(p.Blockers, "reset_source_observation_required")
+			return p
+		}
+		source := a
+		source.Action = controlplane.PlanActionRead
+		source.Generation = a.Candidate.Generation
+		source.ReplayForbidden = false
+		old := original.ResetSource
+		if old.ResetSource != nil || old.ResetReplacement != nil {
+			p.Blockers = append(p.Blockers, "observation_identity_or_coverage_mismatch")
+			return p
+		}
+		result := PlanIntentDisposition(source, []controlplane.RecoveredResource{*old})
+		result.Identities = p.Identities
+		return result
+	}
 	if a.ReplayForbidden && !a.EffectComplete {
 		p.Blockers = append(p.Blockers, "guest_effect_disposition_required")
 	}
@@ -112,4 +147,17 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 
 func dispositionIdentity(role string, r *state.Resource) IntentDispositionIdentity {
 	return IntentDispositionIdentity{Role: role, Provider: r.Driver, ExternalID: r.ExternalID, OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation}
+}
+
+// ResetBeforeReplacement identifies a durably recorded phase before any new
+// generation creation was admitted. It never proves cessation by itself.
+func (a ActionRecord) ResetBeforeReplacement() bool {
+	if a.Action != controlplane.PlanActionReset || a.Candidate == nil || a.Replacement != nil || a.EffectComplete || len(a.ResetSSH) > 0 || a.Generation <= 1 || a.Candidate.Generation != a.Generation-1 {
+		return false
+	}
+	switch a.Phase {
+	case "accepted", "preparing", "prepared", "destroying", "destroy_returned", "destroyed":
+		return true
+	}
+	return false
 }

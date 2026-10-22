@@ -69,3 +69,10 @@ silently considered completed. CLI and real-provider integration are still pendi
 Fixed during review: settled-action identity coverage, JSONB RawMessage formatting
 comparison, file observation-ID race, and prepared recovery after authority clock
 advancement. Existing guest reboot-unknown completion is reused, not reimplemented.
+
+Reset follow-up: source and replacement observations are separate. Pre-replacement
+phase disposal now preserves the exact old source or accepts proven source absence;
+new Read/Delete/Reset generation selection no longer consumes the never-created
+target. Clear live reset_handle while keeping the archive. Three-backend tests and
+real isolated libvirt source-absence fencing passed. Applying/replacement/composite
+and guest/file linkage remain required work in PR #53.

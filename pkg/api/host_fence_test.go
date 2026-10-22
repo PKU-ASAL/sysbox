@@ -39,6 +39,7 @@ func TestHostFenceDisposableVMIntake(t *testing.T) {
 func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bool, reconcileCase ...bool) {
 	reconcile := len(reconcileCase) > 0 && reconcileCase[0]
 	intentCase := len(reconcileCase) > 1 && reconcileCase[1]
+	resetIntent := len(reconcileCase) > 3 && reconcileCase[3]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -70,6 +71,10 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				st, err := repo.LoadState(ctx, "lab")
 				require.NoError(t, err)
 				run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Op: "destroy", Operation: "destroy", Status: controlplane.RunRunning, QueuedAt: time.Now().UTC(), Revision: "revision", Attempt: 1, LeaseOwner: "owner"}
+				if resetIntent {
+					run.Op = "reset"
+					run.Operation = "reset"
+				}
 				if releaseCase && !reconcile {
 					run.Status = controlplane.RunFailed
 					run.EndedAt = time.Now().UTC()
@@ -86,7 +91,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 					action.Quiescence = "unknown"
 					action.Candidate = &state.Resource{Driver: "docker", Address: action.Resource, OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: action.Generation, ExternalID: "external"}
 					if intentCase && acceptanceRoot == "" {
-						action.Candidate.Private = json.RawMessage(`{"identity":"fixture"}`)
+						require.NoError(t, action.Candidate.SetProviderState(json.RawMessage(`{"identity":"fixture"}`)))
 					}
 					if reconcile && acceptanceRoot != "" {
 						provider := os.Getenv("SYSBOX_DELETE_CLOSURE_PROVIDER")
@@ -129,7 +134,27 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 					action.ExpectedSerial = current.Meta.Serial
 
 				}
+				if resetIntent {
+					action.Action = controlplane.PlanActionReset
+					action.Generation = 2
+					action.Phase = "accepted"
+					action.ReplayForbidden = true
+				}
 				require.NoError(t, repo.CommitActionIntent(ctx, action))
+				if resetIntent {
+					for _, phase := range []string{"preparing", "prepared", "destroying"} {
+						records, err := repo.LoadActions(ctx, "lab")
+						require.NoError(t, err)
+						for _, current := range records {
+							if current.ID == action.ID {
+								current.Phase = phase
+								current.Status = runtime.ActionUncertain
+								require.NoError(t, repo.CommitActionOutcome(ctx, current, nil))
+							}
+						}
+					}
+				}
+
 				if releaseCase && !reconcile {
 					records, err := repo.LoadActions(ctx, "lab")
 					require.NoError(t, err)

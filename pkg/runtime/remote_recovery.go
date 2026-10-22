@@ -31,44 +31,32 @@ func ObserveRunActions(ctx context.Context, repo ActionRepository, topology, run
 		if record.OwnerUID == "" || record.OwnerUID != st.TopologyUID || record.ResourceUID == "" || record.Generation < 1 {
 			return nil, nil, fmt.Errorf("%w: recovery journal identity", ErrObservationUnknown)
 		}
-		item := controlplane.RecoveredResource{ActionID: record.ID, Resource: record.Resource.String(), OwnerUID: record.OwnerUID, ResourceUID: record.ResourceUID, Generation: record.Generation, Status: "unknown", JournalStatus: string(record.Status)}
+
 		candidate := record.Candidate
 		if candidate == nil {
 			candidate = st.FindResource(record.Resource)
 		}
-		if candidate != nil && candidate.OwnerUID == record.OwnerUID && candidate.ResourceUID == record.ResourceUID && candidate.Generation == record.Generation {
-			item.ExternalID = candidate.ExternalID
-			if record.Resource.Type == "sysbox_node" {
-				if node, err := driver.DefaultRegistry.RequireNode(candidate.Driver); err == nil {
-					if local, ok := node.(interface {
-						HostFenceScope(context.Context) (string, error)
-					}); ok {
-						if scope, err := local.HostFenceScope(ctx); err == nil {
-							item.ProviderScope = scope
-						}
-					}
-				}
+		item := observeIntentResource(ctx, record, candidate, st)
+		if record.Action == controlplane.PlanActionReset {
+			item.Status = "unknown"
+			if candidate != nil {
+				item.ExternalID = candidate.ExternalID
 			}
-			if handler, ok := GetResourceHandler(record.Resource.Type); ok {
-				observed, err := checkedRead(substrate.WithOperationIdentity(ctx, actionIdentity(record)), handler, *candidate, st)
-				if err == nil && (observed.Status == state.ResourcePresent || observed.Status == state.ResourceAbsent) {
-					if observed.Status == state.ResourceAbsent || observed.Resource.OwnerUID == candidate.OwnerUID && observed.Resource.ResourceUID == candidate.ResourceUID && observed.Resource.Generation == candidate.Generation {
-						item.Status = string(observed.Status)
-					}
+			if record.Candidate != nil && record.Candidate.OwnerUID == record.OwnerUID && record.Candidate.ResourceUID == record.ResourceUID && record.Candidate.Generation > 0 && record.Candidate.Generation <= record.Generation {
+				source := record
+				source.Generation = record.Candidate.Generation
+				// The original phase proves replacement creation was not admitted. Read
+				// the old generation using the same residual-absence SPI as deletion;
+				// this changes no journal and invokes no provider effect.
+				if record.ResetBeforeReplacement() {
+					source.Action = controlplane.PlanActionDelete
 				}
+				observed := observeIntentResource(ctx, source, record.Candidate, st)
+				item.ResetSource = &observed
 			}
-			if item.Status == "absent" && item.ProviderScope == "local-only" && record.Action == controlplane.PlanActionDelete {
-				node, err := driver.DefaultRegistry.RequireNode(candidate.Driver)
-				codec, codecErr := driver.DefaultRegistry.RequireNodeState(candidate.Driver)
-				if err == nil && codecErr == nil {
-					if proof, ok := node.(interface {
-						HostFenceDeletionAbsent(context.Context, substrate.NodeHandle) error
-					}); ok {
-						if handle, err := candidate.ReconstructHandle(codec); err == nil && proof.HostFenceDeletionAbsent(ctx, handle) == nil {
-							item.DeleteResidueAbsent = true
-						}
-					}
-				}
+			if record.Replacement != nil && record.Replacement.OwnerUID == record.OwnerUID && record.Replacement.ResourceUID == record.ResourceUID && record.Replacement.Generation == record.Generation {
+				observed := observeIntentResource(ctx, record, record.Replacement, st)
+				item.ResetReplacement = &observed
 			}
 		}
 		out = append(out, item)
@@ -89,6 +77,49 @@ func ObserveRunActions(ctx context.Context, repo ActionRepository, topology, run
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ActionID < out[j].ActionID })
 	return st, out, nil
+}
+
+// observeIntentResource reads one immutable generation; it does not infer the
+// outcome of the composite action containing it.
+func observeIntentResource(ctx context.Context, record ActionRecord, candidate *state.Resource, st *state.State) controlplane.RecoveredResource {
+	item := controlplane.RecoveredResource{ActionID: record.ID, Resource: record.Resource.String(), OwnerUID: record.OwnerUID, ResourceUID: record.ResourceUID, Generation: record.Generation, Status: "unknown", JournalStatus: string(record.Status)}
+
+	if candidate != nil && candidate.OwnerUID == record.OwnerUID && candidate.ResourceUID == record.ResourceUID && candidate.Generation == record.Generation {
+		item.ExternalID = candidate.ExternalID
+		if record.Resource.Type == "sysbox_node" {
+			if node, err := driver.DefaultRegistry.RequireNode(candidate.Driver); err == nil {
+				if local, ok := node.(interface {
+					HostFenceScope(context.Context) (string, error)
+				}); ok {
+					if scope, err := local.HostFenceScope(ctx); err == nil {
+						item.ProviderScope = scope
+					}
+				}
+			}
+		}
+		if handler, ok := GetResourceHandler(record.Resource.Type); ok {
+			observed, err := checkedRead(substrate.WithOperationIdentity(ctx, actionIdentity(record)), handler, *candidate, st)
+			if err == nil && (observed.Status == state.ResourcePresent || observed.Status == state.ResourceAbsent) {
+				if observed.Status == state.ResourceAbsent || observed.Resource.OwnerUID == candidate.OwnerUID && observed.Resource.ResourceUID == candidate.ResourceUID && observed.Resource.Generation == candidate.Generation {
+					item.Status = string(observed.Status)
+				}
+			}
+		}
+		if item.Status == "absent" && item.ProviderScope == "local-only" && record.Action == controlplane.PlanActionDelete {
+			node, err := driver.DefaultRegistry.RequireNode(candidate.Driver)
+			codec, codecErr := driver.DefaultRegistry.RequireNodeState(candidate.Driver)
+			if err == nil && codecErr == nil {
+				if proof, ok := node.(interface {
+					HostFenceDeletionAbsent(context.Context, substrate.NodeHandle) error
+				}); ok {
+					if handle, err := candidate.ReconstructHandle(codec); err == nil && proof.HostFenceDeletionAbsent(ctx, handle) == nil {
+						item.DeleteResidueAbsent = true
+					}
+				}
+			}
+		}
+	}
+	return item
 }
 
 // RecoverRunActions restricts the existing observation-only recovery engine to

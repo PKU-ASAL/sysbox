@@ -4963,3 +4963,28 @@ Compatibility: this slice writes aggregate 15 and authority 8; existing adoption
 and GC histories remain valid. Independent review caught and fixed JSONB private
 JSON formatting comparisons, file observation-ID retry binding, and prepared
 recovery after unrelated authority clock advancement.
+
+### Reset source disposition before replacement admission (2026-10-22)
+
+Reset observations now report the source and any recorded replacement separately;
+the composite reset status remains unknown. For accepted/preparing/prepared/
+destroying/destroy_returned/destroyed phases, with no replacement, EffectComplete,
+ResetSSH, active child or attachment, an exact post-fence source observation can
+support explicit retention or proven residual absence. Applying and ambiguous
+replacement windows still refuse disposition.
+
+Source retention keeps the actual old generation and archives the unused target
+generation. Later Read/Delete use the actual retained generation; a fresh Reset
+uses its next actual generation only when the previous decision proves creation
+was never admitted. Old Run replay remains rejected. The retained live resource
+loses its old reset_handle; the original archive keeps it. Otherwise a fresh
+Reset would mistakenly resume a token tied to the old action.
+
+Evidence: `/tmp/sysbox-reset-source-verified.log` covers file/SQLite/PostgreSQL
+retain/absence APIs, residual SPI calls, generation selection and handle archival.
+`/tmp/sysbox-reset-source-libvirt-whole-vm3.log` passes real isolated libvirt source
+absence after whole-VM fencing, nested old-generation observation, authenticated
+report and explicit disposition/new admission. Earlier attempts exposed obsolete
+fixture assertions and JSON decoding into a nonzero synthetic report; both were
+corrected without weakening signature or identity checks. This is not a running
+replacement or incomplete guest-configuration recovery claim.

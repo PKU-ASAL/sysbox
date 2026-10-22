@@ -89,3 +89,25 @@ func TestIntentDispositionPostimageRetainsOneExistingResourceDeterministically(t
 	require.Equal(t, resource.CreatedAt, a.State.Resources[0].CreatedAt)
 	require.Equal(t, at, a.State.Resources[0].UpdatedAt)
 }
+
+func TestResetSourceDispositionPreservesOldGenerationAndReservesTargetHistory(t *testing.T) {
+	a := newAggregate()
+	a.State.TopologyUID = "owner"
+	a.Serial = 1
+	source := state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", Private: json.RawMessage(`{"identity":"fixture"}`), ExternalID: "source", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}
+	source.Private = nil
+	require.NoError(t, source.SetProviderState(json.RawMessage(`{"identity":"fixture"}`)))
+	require.NoError(t, source.SetRuntimeValue("reset_handle", "old-action-handle"))
+	a.State.Resources = []state.Resource{source}
+	a.Actions["reset"] = runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", Resource: source.Address, Action: controlplane.PlanActionReset, Phase: "destroying", ReplayForbidden: true, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, ExpectedSerial: 1, Candidate: &source}
+	d := controlplane.IntentDispositionDecision{ID: "decision", ExpectedSerial: 1, Actions: []controlplane.IntentDispositionAction{{ActionID: "reset", Decision: "retain", ResourceUID: "resource", Generation: 2, ExternalID: "source"}}}
+	archive, err := intentDispositionPostimage(a, d, time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), a.State.Resources[0].Generation)
+	require.Equal(t, int64(2), archive["reset"].Generation)
+	require.Equal(t, runtime.ActionUncertain, a.Actions["reset"].Status)
+	require.True(t, a.Actions["reset"].ReplayForbidden)
+	require.Equal(t, "intent:decision", a.Actions["reset"].DispositionID)
+	require.Nil(t, a.State.Resources[0].RuntimeValue("reset_handle"))
+	require.Equal(t, "old-action-handle", archive["reset"].Candidate.RuntimeValue("reset_handle"))
+}

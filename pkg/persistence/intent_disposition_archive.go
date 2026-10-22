@@ -30,7 +30,7 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 	addresses := map[string]bool{}
 	for _, choice := range d.Actions {
 		action, ok := next.Actions[choice.ActionID]
-		if !ok || runtime.ActionSettled(action) || action.OwnerUID != next.State.TopologyUID || action.Candidate == nil || action.Replacement != nil || action.Action == controlplane.PlanActionReset || len(action.ResetSSH) > 0 || (action.ReplayForbidden && !action.EffectComplete) || addresses[action.Resource.String()] {
+		if !ok || runtime.ActionSettled(action) || action.OwnerUID != next.State.TopologyUID || action.Candidate == nil || action.Replacement != nil || (action.Action == controlplane.PlanActionReset && !action.ResetBeforeReplacement()) || len(action.ResetSSH) > 0 || (action.ReplayForbidden && !action.EffectComplete && !action.ResetBeforeReplacement()) || addresses[action.Resource.String()] {
 			return nil, ErrConflict
 		}
 		candidate := action.Candidate
@@ -55,6 +55,11 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 			var private map[string]json.RawMessage
 			if json.Unmarshal(retained.Private, &private) != nil || len(private) == 0 {
 				return nil, ErrConflict
+			}
+			if action.ResetBeforeReplacement() {
+				if err := retained.DeleteRuntimeValue("reset_handle"); err != nil {
+					return nil, err
+				}
 			}
 			retained.Status = state.ResourceUnknown
 			if retained.CreatedAt.IsZero() {

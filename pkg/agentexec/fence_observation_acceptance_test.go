@@ -50,6 +50,11 @@ func TestFenceObservationAcceptance(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, report.HostObservation)
 	for _, r := range report.Resources {
+		if r.ResetSource != nil {
+			require.Equal(t, "unknown", r.Status, "resource absence is not composite reset success")
+			require.Nil(t, r.ResetReplacement)
+			r = *r.ResetSource
+		}
 		require.Equal(t, "absent", r.Status)
 		require.Equal(t, "local-only", r.ProviderScope)
 		require.True(t, r.DeleteResidueAbsent)

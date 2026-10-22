@@ -25,6 +25,12 @@ import (
 func TestHostFenceIntentDispositionAPI(t *testing.T) {
 	runHostFenceAPIContract(t, "", true, true, true)
 }
+func TestHostFenceResetSourceDispositionAPI(t *testing.T) {
+	runHostFenceAPIContract(t, "", true, true, true, false, true)
+}
+func TestHostFenceResetSourceAbsenceAPI(t *testing.T) {
+	runHostFenceAPIContract(t, "", true, true, true, true, true)
+}
 func TestHostFenceIntentAbsenceAPI(t *testing.T) {
 	runHostFenceAPIContract(t, "", true, true, true, true)
 }
@@ -34,6 +40,13 @@ func TestHostFenceIntentAbsenceDisposableVM(t *testing.T) {
 		t.Skip("requires enrolled disposable VM fencing lab")
 	}
 	runHostFenceAPIContract(t, root, true, true, true, true)
+}
+func TestHostFenceResetSourceAbsenceDisposableVM(t *testing.T) {
+	root := os.Getenv("SYSBOX_GC_FENCE_LAB")
+	if root == "" {
+		t.Skip("requires enrolled disposable VM fencing lab")
+	}
+	runHostFenceAPIContract(t, root, true, true, true, true, true)
 }
 func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord, absent bool, acceptanceRoot string) {
 	t.Helper()
@@ -70,8 +83,18 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	digest, err := fence.Request.Digest()
 	require.NoError(t, err)
 	report := controlplane.RunRecoveryReport{CommandID: lease.ID, RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, Mode: controlplane.RunRecoveryObserve, TopologyUID: before.TopologyUID, StateSerial: before.Meta.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: actions[0].ID, Resource: actions[0].Resource.String(), OwnerUID: actions[0].OwnerUID, ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, ExternalID: actions[0].Candidate.ExternalID, Status: "present", ProviderScope: "local-only", DeleteResidueAbsent: true, JournalStatus: string(actions[0].Status)}}}
+	if actions[0].Action == controlplane.PlanActionReset {
+		old := report.Resources[0]
+		old.Generation = actions[0].Candidate.Generation
+		report.Resources[0].ResetSource = &old
+		report.Resources[0].Status = "unknown"
+	}
 	if absent {
-		report.Resources[0].Status = "absent"
+		if report.Resources[0].ResetSource != nil {
+			report.Resources[0].ResetSource.Status = "absent"
+		} else {
+			report.Resources[0].Status = "absent"
+		}
 	}
 	report, err = controlplane.SignFenceObservation(key, report, controlplane.FenceObservationBinding{RequestSHA256: digest, HostBootID: fence.Receipt.NewBootID}, lease.LeaseOwner, lease.Attempt)
 	require.NoError(t, err)
@@ -97,6 +120,7 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 		require.NoError(t, err, string(output))
 		encoded, err = os.ReadFile(outputPath)
 		require.NoError(t, err)
+		report = controlplane.RunRecoveryReport{}
 		require.NoError(t, json.Unmarshal(encoded, &report))
 		require.NoError(t, controlplane.VerifyFenceObservation(pub, report, controlplane.FenceObservationBinding{RequestSHA256: digest, HostBootID: fence.Receipt.NewBootID}, lease.LeaseOwner, lease.Attempt))
 	}
@@ -166,6 +190,11 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	next.StateSerial = after.Meta.Serial
 	next.ExpectedSerial = after.Meta.Serial
 	next.Action = controlplane.PlanActionRead
+	if actions[0].Action == controlplane.PlanActionReset {
+		next.Generation = actions[0].Candidate.Generation
+		next.Phase = ""
+		next.ReplayForbidden = false
+	}
 	if absent {
 		next.Action = controlplane.PlanActionCreate
 	}

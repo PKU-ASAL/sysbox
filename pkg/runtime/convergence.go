@@ -360,6 +360,12 @@ func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedCha
 	}
 	maxGeneration := int64(0)
 	for _, old := range actions {
+		// A fenced reset retired before replacement admission reserved a generation
+		// but never created it. New operations use the retained source generation (or its
+		// next generation for reset); the old request remains disposition-blocked.
+		if (change.Action == controlplane.PlanActionReset || change.Action == controlplane.PlanActionRead || change.Action == controlplane.PlanActionDelete) && old.DispositionID != "" && old.ResetBeforeReplacement() && old.Resource.Equal(change.Address) && record.Candidate != nil && old.OwnerUID == record.OwnerUID && old.ResourceUID == record.ResourceUID && old.Candidate.ExternalID == record.Candidate.ExternalID && old.Candidate.Driver == record.Candidate.Driver && old.Candidate.Generation == record.Candidate.Generation {
+			continue
+		}
 		if old.Resource.Equal(change.Address) && old.Generation > maxGeneration {
 			maxGeneration = old.Generation
 			record.ResourceUID = old.ResourceUID
