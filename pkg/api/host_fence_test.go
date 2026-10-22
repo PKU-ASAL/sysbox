@@ -42,6 +42,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 	resetIntent := len(reconcileCase) > 3 && reconcileCase[3]
 	incompleteCreate := len(reconcileCase) > 4 && reconcileCase[4]
 	incompleteReplacement := len(reconcileCase) > 5 && reconcileCase[5]
+	withChild := len(reconcileCase) > 6 && reconcileCase[6]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -206,6 +207,12 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				require.NoError(t, err)
 				grant, err := authority.Issue(ctx, source, time.Minute)
 				require.NoError(t, err)
+				var children []controlplane.ExecutionGrant
+				if withChild {
+					child, err := authority.DeriveGuestTask(ctx, *grant, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: grant.Scope.TopologyUID, ResourceUID: "resource", Generation: 1}, AgentID: grant.AgentID, SessionID: grant.SessionID, CommandID: grant.CommandID, ActionID: "setup-task", Attempt: grant.Attempt, Operation: "guest_task", Digest: "task-digest", TargetBootID: "old-guest-boot"}, time.Minute)
+					require.NoError(t, err)
+					children = append(children, *child)
+				}
 				raw, err := json.Marshal(map[string]any{"run_id": "run", "grant": grant})
 				require.NoError(t, err)
 				request := httptest.NewRequest("POST", "/v1/topologies/lab/host-fences", bytes.NewReader(raw))
@@ -277,7 +284,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				require.Equal(t, 200, post(receipt).Code)
 				if releaseCase {
 					if intentCase {
-						checkFenceIntentClosure(t, s, store, accepted, len(reconcileCase) > 2 && reconcileCase[2], acceptanceRoot)
+						checkFenceIntentClosure(t, s, store, accepted, len(reconcileCase) > 2 && reconcileCase[2], acceptanceRoot, children...)
 						return
 					}
 					if reconcile {

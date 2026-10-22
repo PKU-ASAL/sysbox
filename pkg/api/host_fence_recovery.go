@@ -25,7 +25,17 @@ type hostFenceRecoveryAction struct {
 	ObservedPresence string                        `json:"observed_presence"`
 	Blockers         []string                      `json:"blockers"`
 }
+type hostFenceRecoveryChild struct {
+	ActionID    string `json:"action_id"`
+	Operation   string `json:"operation"`
+	ResourceUID string `json:"resource_uid"`
+	Generation  int64  `json:"generation"`
+	Epoch       uint64 `json:"epoch"`
+	GuestBootID string `json:"guest_boot_id"`
+	StopRoute   string `json:"stop_route"`
+}
 type hostFenceRecoveryPlan struct {
+	Children               []hostFenceRecoveryChild  `json:"children,omitempty"`
 	Topology               string                    `json:"topology"`
 	RunQueuedAt            time.Time                 `json:"run_queued_at"`
 	RunRevision            string                    `json:"run_revision"`
@@ -111,6 +121,36 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 		plan.Blockers = append(plan.Blockers, "fence_receipt_missing")
 	} else {
 		plan.HostProcessExclusion = "verified"
+	}
+	grants, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ListActiveGrants(ctx)
+	if err != nil {
+		return plan, nil, 0, err
+	}
+	for _, g := range grants {
+		if g.State == controlplane.GrantStopped || g.Epoch == req.Grant.Epoch || (g.AgentID != req.Grant.AgentID && g.Scope.TopologyUID != req.Grant.Scope.TopologyUID) {
+			continue
+		}
+		if g.ParentEpoch != req.Grant.Epoch || g.AgentID != req.Grant.AgentID || g.SessionID != req.Grant.SessionID || g.CommandID != req.Grant.CommandID || g.Attempt != req.Grant.Attempt || g.Scope.TopologyUID != req.Grant.Scope.TopologyUID {
+			plan.Blockers = append(plan.Blockers, "other_effect_stop_required")
+			continue
+		}
+		route := "host-journal-recovery"
+		if g.Operation == "guest_task" {
+			route = "guest-task-stops"
+		}
+		plan.Children = append(plan.Children, hostFenceRecoveryChild{ActionID: g.ActionID, Operation: g.Operation, ResourceUID: g.Scope.ResourceUID, Generation: g.Scope.Generation, Epoch: g.Epoch, GuestBootID: g.TargetBootID, StopRoute: route})
+	}
+	if len(plan.Children) > 0 {
+		slices.SortFunc(plan.Children, func(a, b hostFenceRecoveryChild) int {
+			if a.Epoch < b.Epoch {
+				return -1
+			}
+			if a.Epoch > b.Epoch {
+				return 1
+			}
+			return 0
+		})
+		plan.Blockers = append(plan.Blockers, "child_stop_required")
 	}
 	run, err := s.apiStore.GetRun(ctx, req.RunID)
 	if errors.Is(err, persistence.ErrNotFound) {

@@ -173,3 +173,41 @@ func TestResetReplacementDispositionRequiresOldAbsenceAndNewExactIdentity(t *tes
 	p = PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
 	require.NotEqual(t, "retain-incomplete-replacement", p.ResourceDecision)
 }
+
+func TestResetSourceDispositionPreservesUnstartedSSHDependencies(t *testing.T) {
+	a := dispositionAction()
+	a.Action = controlplane.PlanActionReset
+	a.Generation = 2
+	a.Phase = "destroying"
+	a.ReplayForbidden = true
+	a.ResetSSH = []ResetSSHDependency{{Previous: state.Resource{Address: address.Resource("sysbox_ssh_access", "login"), OwnerUID: "owner", ResourceUID: "ssh", Generation: 1}}}
+	old := dispositionObservation(a)
+	old.Generation = 1
+	o := dispositionObservation(a)
+	o.Status = "unknown"
+	o.ResetSource = &old
+	p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+	require.Equal(t, "retain-managed", p.ResourceDecision)
+	require.Equal(t, []string{"effect_stop_proof_required"}, p.Blockers)
+	// An admitted guest mutation is not covered by the pre-replacement path.
+	a.ResetSSH[0].Started = true
+	require.False(t, a.ResetBeforeReplacement())
+	require.NotEqual(t, "retain-managed", PlanIntentDisposition(a, []controlplane.RecoveredResource{o}).ResourceDecision)
+	// Losing the source would leave SSH metadata pointing at a deleted node.
+	a.ResetSSH[0].Started = false
+	old.Status = "absent"
+	old.DeleteResidueAbsent = true
+	require.Contains(t, PlanIntentDisposition(a, []controlplane.RecoveredResource{o}).Blockers, "reset_ssh_source_absence_requires_disposition")
+}
+
+func TestAttachmentRetentionRequiresDurableRebuildDisposition(t *testing.T) {
+	a := dispositionAction()
+	a.Candidate.Attachments = []state.Attachment{{Name: "eth0", Node: a.Resource, Network: address.Resource("sysbox_network", "lan"), Driver: "docker", MAC: "02:00:00:00:00:01"}}
+	o := dispositionObservation(a)
+	p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+	require.Equal(t, "retain-managed", p.ResourceDecision)
+	require.Contains(t, p.Blockers, "attachment_rebuild_required")
+	o.Status = "absent"
+	o.DeleteResidueAbsent = true
+	require.Contains(t, PlanIntentDisposition(a, []controlplane.RecoveredResource{o}).Blockers, "attachment_absence_proof_required")
+}

@@ -63,7 +63,7 @@ func TestHostFenceIncompleteReplacementDisposableVM(t *testing.T) {
 	require.Equal(t, "libvirt", os.Getenv("SYSBOX_DELETE_CLOSURE_PROVIDER"))
 	runHostFenceAPIContract(t, root, true, true, true, false, true, false, true)
 }
-func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord, absent bool, acceptanceRoot string) {
+func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord, absent bool, acceptanceRoot string, children ...controlplane.ExecutionGrant) {
 	t.Helper()
 	ctx := context.Background()
 	path := "/v1/topologies/lab/host-fences/" + fence.Request.ID
@@ -181,6 +181,21 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	stale := d
 	stale.ExpectedSerial++
 	require.Equal(t, 409, post(s, stale, true).Code)
+	if len(children) > 0 {
+		require.Equal(t, 409, post(s, d, true).Code, "parent disposition must remain held while child result is unknown")
+		planReply := fenceRecoveryRequest(s, "GET", path+"/recovery-plan?observation="+lease.ID, "")
+		require.Contains(t, planReply.Body.String(), "child_stop_required")
+		require.Contains(t, planReply.Body.String(), "setup-task")
+		for _, child := range children {
+			stop, err := controlplane.SignRebootedTaskStopReceipt(key, child, fence.Receipt.NewBootID, "new-guest-boot", "child-stop", time.Now().UTC())
+			require.NoError(t, err)
+			encoded, err := json.Marshal(stop)
+			require.NoError(t, err)
+			stopped := httptest.NewRecorder()
+			s.ServeHTTP(stopped, httptest.NewRequest("POST", "/v1/hosts/agent/execution-grants/stopped", bytes.NewReader(encoded)))
+			require.Equal(t, 200, stopped.Code, stopped.Body.String())
+		}
+	}
 	result := post(s, d, true)
 	require.Equal(t, 200, result.Code, result.Body.String())
 	after, afterActions, err := repo.LoadStateAndActions(ctx, "lab")
@@ -243,4 +258,8 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	next.Status = runtime.ActionIntentCommitted
 	require.NoError(t, repo.CommitActionIntent(ctx, next))
 	require.Equal(t, 200, post(cold, d, true).Code, "old decision replay must not rewrite successor")
+}
+
+func TestHostFenceParentDispositionWaitsForGuestChild(t *testing.T) {
+	runHostFenceAPIContract(t, "", true, true, true, false, false, false, false, true)
 }

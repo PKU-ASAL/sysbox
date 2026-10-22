@@ -1,12 +1,19 @@
 package persistence
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,4 +126,70 @@ func TestIntentProviderStateComparisonPreservesIntegerIdentity(t *testing.T) {
 	require.False(t, sameIntentProviderState(left, right))
 	require.NoError(t, right.SetProviderState(json.RawMessage(`{ "identity" : 9007199254740992 }`)))
 	require.True(t, sameIntentProviderState(left, right))
+}
+
+func TestIncompleteDispositionRetainsAttachmentEvidence(t *testing.T) {
+	a := newAggregate()
+	a.State.TopologyUID = "owner"
+	a.Serial = 1
+	r := state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Attachments: []state.Attachment{{Name: "eth0", Driver: "docker", Node: address.Resource("sysbox_node", "node"), Network: address.Resource("sysbox_network", "lan"), MAC: "02:00:00:00:00:01"}}}
+	require.NoError(t, r.SetProviderState(json.RawMessage(`{"identity":"fixture"}`)))
+	a.Actions["action"] = runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "run", Resource: r.Address, Action: controlplane.PlanActionCreate, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExpectedSerial: 1, Candidate: &r}
+	d := controlplane.IntentDispositionDecision{ID: "decision", ExpectedSerial: 1, Actions: []controlplane.IntentDispositionAction{{ActionID: "action", Decision: "retain-incomplete", ResourceUID: "resource", Generation: 1, ExternalID: "external"}}}
+	_, err := intentDispositionPostimage(a, d, time.Now().UTC())
+	require.NoError(t, err)
+	retained := a.State.Resources[0]
+	require.Equal(t, r.Attachments, retained.Attachments)
+	require.True(t, retained.RecoveryRequired())
+	changed := retained
+	changed.Attachments = nil
+	require.False(t, sameIntentProviderState(changed, retained), "metadata cannot discard attachment cleanup obligations")
+}
+
+func TestResetSourceDispositionKeepsPinnedSSHAndRejectsChangedDependency(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	sshKey, err := ssh.NewPublicKey(pub)
+	require.NoError(t, err)
+	cfg := substrate.SSHAccessConfig{User: "root", AccessID: "login", AuthorizedKeys: []string{strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshKey)))}}
+	digest, err := (substrate.SSHAccessMutation{ID: "original-ssh", Config: cfg}).Digest()
+	require.NoError(t, err)
+	source := state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", ExternalID: "source", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}
+	require.NoError(t, source.SetProviderState(json.RawMessage(`{"identity":"fixture"}`)))
+	previous := state.Resource{Address: address.Resource("sysbox_ssh_access", "login"), Driver: "managed", SchemaVersion: 2, OwnerUID: "owner", ResourceUID: "ssh", Generation: 1, ExternalID: "login", Attributes: state.MustAttributes(map[string]any{"ssh_access": map[string]any{"version": 1, "node": source.Address.String(), "config": cfg, "handle": substrate.SSHAccessHandle{NodeID: source.ExternalID, ID: "original-ssh", Digest: digest, User: "root", AccessID: "login", Revision: 1, BootID: "guest", TopologyUID: "owner", ResourceUID: "resource", Generation: 1, Epoch: 1}}})}
+	depID := fmt.Sprintf("%x", sha256.Sum256([]byte("reset-ssh\x00reset\x00"+previous.Address.String())))
+	for _, mode := range []string{"retain", "changed", "missing", "started", "absence"} {
+		t.Run(mode, func(t *testing.T) {
+			a := newAggregate()
+			a.State.TopologyUID = "owner"
+			a.Serial = 1
+			a.State.Resources = []state.Resource{source, previous}
+			action := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", Resource: source.Address, Action: controlplane.PlanActionReset, Phase: "destroying", ReplayForbidden: true, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, ExpectedSerial: 1, Candidate: &source, ResetSSH: []runtime.ResetSSHDependency{{Previous: previous, DesiredDigest: "desired", ActionID: depID, Config: cfg}}}
+			require.NoError(t, action.ValidateResetSSH(a.State))
+			switch mode {
+			case "changed":
+				a.State.Resources[1].Generation++
+			case "missing":
+				a.State.Resources = a.State.Resources[:1]
+			case "started":
+				action.ResetSSH[0].Started = true
+			}
+			a.Actions[action.ID] = action
+			d := controlplane.IntentDispositionDecision{ID: "decision", ExpectedSerial: 1, Actions: []controlplane.IntentDispositionAction{{ActionID: "reset", Decision: "retain", ResourceUID: "resource", Generation: 2, ExternalID: "source"}}}
+			if mode == "absence" {
+				d.Actions[0].Decision = "absent"
+			}
+			before, _ := json.Marshal(a)
+			archive, err := intentDispositionPostimage(a, d, time.Now().UTC())
+			if mode != "retain" {
+				require.Error(t, err)
+				after, _ := json.Marshal(a)
+				require.JSONEq(t, string(before), string(after))
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, evidenceHash(previous), evidenceHash(*a.State.FindResource(previous.Address)))
+			require.Equal(t, evidenceHash(action.ResetSSH), evidenceHash(archive[action.ID].ResetSSH))
+		})
+	}
 }

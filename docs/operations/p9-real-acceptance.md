@@ -5030,3 +5030,63 @@ execution VM; the mount, test directory and binary were removed afterward.
 The boot-change unit fixture does not by itself claim a full real guest reboot
 with an in-flight file write. Complete guest/provider/transport integration remains
 tracked in the three-PR execution ledger.
+
+### PR #53: parent linkage, retained dependencies and real file reboot
+
+The parent/child API contract now admits a derived guest task before host fencing,
+refuses parent intent disposition while the child is unresolved, exposes the
+child's exact epoch/boot/resource in recovery-plan, accepts a signed unknown-result
+reboot stop receipt, and then commits the original parent disposition. File,
+SQLite and isolated PostgreSQL passed under the race detector
+(`/tmp/sysbox-parent-link-green.log`). No grant is released by plan inspection.
+
+Pre-replacement Reset may retain its original node with unstarted, unchanged
+pinned SSH dependencies. The disposition transaction validates the dependencies
+against canonical state and retains their exact inventory; changed, missing or
+started dependencies and source-absence disposition are rejected. Incomplete
+non-reset/replacement retention can preserve attachments under the existing
+archive-backed rebuild/delete obligation; metadata writers cannot drop or
+substitute attachment evidence. Attachment absence is still not inferred from
+node absence.
+
+`TestFileInstallRealGuestRebootUnknown` runs the real guest installer through the
+SSH helper protocol in the enrolled disposable VM. A test-only installer hook
+pauses after `prepared` on a verified tmpfs target. The existing fencing controller
+then powers off the exact QEMU process, verifies its exit, restarts the same disk,
+and verifies a new boot and unchanged control VM. The host records a signed
+quiescent **unknown** result. The old SSH reply is held until that receipt is
+persisted, then released; it cannot overwrite the receipt. Cold observation
+preserves it, without reinstalling.
+
+Actual run: `/tmp/sysbox-file-reboot-ssh-real2.log`, race detector enabled.
+Controller evidence:
+`/tmp/sysbox-gc-fencing-20261021/fence-377b22e8d15044bbb481510ae95d4010.json`,
+SHA256 `c4e10a6e4bd947358cf7c97378b9174a7bb7ff2c6af03915f153aab347dda665`.
+Guest boot changed from `e13c017b-2088-4ad8-8ca7-9f283ee640c6` to
+`759f38d0-359c-4404-91b8-ae9d7441cdf0`. The unique test mount/directory was cleaned.
+An earlier setup-only attempt used an invalid oversized test grant; its precise
+session directory was subsequently removed as well. The test probe is a current
+static `pkg/guesttask` test binary, not a production helper replacement.
+
+Reproduction (only an enrolled disposable lab):
+
+```sh
+CGO_ENABLED=0 go test -c -o /tmp/sysbox-file-fence-probe.test ./pkg/guesttask
+SYSBOX_GC_FENCE_LAB=/path/to/enrolled-lab \
+SYSBOX_FILE_FENCE_PROBE=/tmp/sysbox-file-fence-probe.test \
+go test -race ./pkg/hostsupervisor -run '^TestFileInstallRealGuestRebootUnknown$' -count=1 -timeout=12m
+```
+
+This is SSH and tmpfs evidence. It does not prove vsock reboot transport, persistent
+or remote filesystem cessation, started ResetSSH disposition, attachment absence,
+or discovery of an unrecorded creation identity. These remain first-stage gaps;
+none is counted as passed or moved out of scope by this acceptance entry.
+
+This slice's same-source campaign passed all four new gates with zero skips:
+`intent-operational-api`, `intent-operational-cli`,
+`intent-composite-obligations`, `file-ssh-whole-vm-reboot`.
+Machine report: `/tmp/sysbox-stage1-campaign-20261022-r1/run.json`.
+Source SHA256: `1c65d204a9b341eb3a13ac2fea1f7d6df37d48ee3b008837371d3e6f6201a130`.
+All six affected packages passed full race regression in
+`/tmp/sysbox-stage1-full-regression.log`: API, runtime, persistence,
+hostsupervisor, guesttask, CLI. This is slice validation, not the full PR 1 gate.

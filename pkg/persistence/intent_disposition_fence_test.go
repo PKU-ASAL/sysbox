@@ -22,7 +22,7 @@ func TestFencedIntentDispositionRequiresCanonicalStopAndSignedObservation(t *tes
 	testFencedIntentDisposition(t, "")
 }
 func TestFencedIncompleteResourceDispositionRequiresRebuild(t *testing.T) {
-	for _, mode := range []string{"create", "replacement"} {
+	for _, mode := range []string{"create", "replacement", "attachments"} {
 		t.Run(mode, func(t *testing.T) { testFencedIntentDisposition(t, mode) })
 	}
 }
@@ -37,6 +37,9 @@ func testFencedIntentDisposition(t *testing.T, mode string) {
 		a.Candidate.Private = nil
 		require.NoError(t, a.Candidate.SetProviderState(json.RawMessage(`{"identity":"fixture"}`)))
 		a.ReplayForbidden = true
+		if mode == "attachments" {
+			a.Candidate.Attachments = []state.Attachment{{Name: "eth0", Node: a.Resource, Network: address.Resource("sysbox_network", "lan"), Driver: "docker", MAC: "02:00:00:00:00:01"}}
+		}
 		if mode == "replacement" {
 			a.Action = controlplane.PlanActionReset
 			a.Phase = "applying"
@@ -117,10 +120,12 @@ func testFencedIntentDisposition(t *testing.T, mode string) {
 		require.Equal(t, runtime.ActionUncertain, result.Actions[a.ID].Status)
 		require.ErrorIs(t, ValidateCommandLifecycle(next, "lab", controlplane.AgentCommand{Type: "run_assigned", TopologyUID: "owner", Run: &controlplane.Run{Op: "apply"}}), ErrConflict)
 		require.NoError(t, ValidateCommandLifecycle(next, "lab", controlplane.AgentCommand{Type: "run_assigned", TopologyUID: "owner", Run: &controlplane.Run{Op: "reset"}}))
-		for _, kind := range []string{"clear", "remove", "generation", "uid", "topology", "driver", "provider-state"} {
+		for _, kind := range []string{"clear", "remove", "generation", "uid", "topology", "driver", "provider-state", "attachments"} {
 			var changed aggregate
 			require.NoError(t, json.Unmarshal(next, &changed))
 			switch kind {
+			case "attachments":
+				changed.State.Resources[0].Attachments = []state.Attachment{{Name: "substituted"}}
 			case "clear":
 				require.NoError(t, changed.State.Resources[0].ClearRecoveryRequirement())
 			case "remove":

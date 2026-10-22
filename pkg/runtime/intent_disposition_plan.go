@@ -72,6 +72,7 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 		source.Action = controlplane.PlanActionRead
 		source.Generation = a.Candidate.Generation
 		source.ReplayForbidden = false
+		source.ResetSSH = nil
 		old := original.ResetSource
 		if old.ResetSource != nil || old.ResetReplacement != nil {
 			p.Blockers = append(p.Blockers, "observation_identity_or_coverage_mismatch")
@@ -98,6 +99,9 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 				result.ResourceDecision = "retain-incomplete-replacement"
 			}
 		}
+		if len(a.ResetSSH) > 0 && result.ResourceDecision == "confirm-absence" {
+			result.Blockers = append(result.Blockers, "reset_ssh_source_absence_requires_disposition")
+		}
 		result.Identities = p.Identities
 		return result
 	}
@@ -115,9 +119,6 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 	if a.OwnerUID == "" || a.ResourceUID == "" || a.Generation <= 0 || c.Driver == "" || c.OwnerUID != a.OwnerUID || c.ResourceUID != a.ResourceUID || c.Generation != a.Generation || !c.Address.Equal(a.Resource) {
 		p.Blockers = append(p.Blockers, "candidate_identity_mismatch")
 		return p
-	}
-	if len(c.Attachments) > 0 {
-		p.Blockers = append(p.Blockers, "attachment_disposition_required")
 	}
 	var observed *controlplane.RecoveredResource
 	for i := range observations {
@@ -144,8 +145,14 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 		}
 		switch o.Status {
 		case "present":
+			if len(c.Attachments) > 0 {
+				p.Blockers = append(p.Blockers, "attachment_rebuild_required")
+			}
 			p.ResourceDecision = "retain-managed"
 		case "absent":
+			if len(c.Attachments) > 0 {
+				p.Blockers = append(p.Blockers, "attachment_absence_proof_required")
+			}
 			if o.ProviderScope != "local-only" || !o.DeleteResidueAbsent {
 				p.Blockers = append(p.Blockers, "residual_absence_unproven")
 			} else {
@@ -172,8 +179,13 @@ func dispositionIdentity(role string, r *state.Resource) IntentDispositionIdenti
 // ResetBeforeReplacement identifies a durably recorded phase before any new
 // generation creation was admitted. It never proves cessation by itself.
 func (a ActionRecord) ResetBeforeReplacement() bool {
-	if a.Action != controlplane.PlanActionReset || a.Candidate == nil || a.Replacement != nil || a.EffectComplete || len(a.ResetSSH) > 0 || a.Generation <= 1 || a.Candidate.Generation != a.Generation-1 {
+	if a.Action != controlplane.PlanActionReset || a.Candidate == nil || a.Replacement != nil || a.EffectComplete || a.Generation <= 1 || a.Candidate.Generation != a.Generation-1 {
 		return false
+	}
+	for _, dep := range a.ResetSSH {
+		if dep.Started || dep.Result != nil {
+			return false
+		}
 	}
 	switch a.Phase {
 	case "accepted", "preparing", "prepared", "destroying", "destroy_returned", "destroyed":

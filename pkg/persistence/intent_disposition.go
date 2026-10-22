@@ -68,7 +68,7 @@ func ValidateIntentDispositionChoice(d controlplane.IntentDispositionDecision, r
 		// Stop proof is checked by the transaction's authority verifier, not by
 		// resource observation. All other blockers require their own resolution.
 		for _, blocker := range plan.Blockers {
-			if blocker != "effect_stop_proof_required" && !(incomplete && blocker == "guest_effect_disposition_required") {
+			if blocker != "effect_stop_proof_required" && !(incomplete && (blocker == "guest_effect_disposition_required" || blocker == "attachment_rebuild_required")) {
 				return ErrConflict
 			}
 		}

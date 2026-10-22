@@ -50,10 +50,10 @@ PR 1 checkboxes above stay open where only bounded slices have shipped.
 | Deliverable | Implemented | Still required |
 | --- | --- | --- |
 | Evidence-bound plan | Candidate/source/replacement inventory, signed observation digest, Run incarnation and serial bindings, blocker diagnostics | Broader composite-action coverage |
-| Run disposition | Public reconcile-intents, immutable archive/GC references, file write-ahead and SQL transactions, exact-image retries | Parent/child operational linkage |
-| Reset disposition | Exact source retain/absence before replacement; absent old source plus incomplete replacement retention | Attachments, ResetSSH, missing creation identity and composite cases |
-| Incomplete-resource obligations | Durable archive-backed rebuild/delete requirements, guarded admission/state edits, verified obligation transfer and resolution | Full real repeated recovery integration |
-| Guest termination | Existing signed task reboot completion; scoped guest-tmpfs install reboot stops with unknown result | Real in-flight file reboot/delayed callback over SSH/vsock; persistent storage stop proofs |
+| Run disposition | Public reconcile-intents, immutable archive/GC references, file write-ahead and SQL transactions, exact-image retries | Guest-task child stop → parent disposition now verified on three backends; derived SSH unknown-result linkage remains |
+| Reset disposition | Exact source retain/absence before replacement; absent old source plus incomplete replacement retention | Unstarted SSH dependencies can be retained with exact old source; started SSH, source absence with SSH, missing creation identity and composite cases remain |
+| Incomplete-resource obligations | Durable archive-backed rebuild/delete requirements, guarded admission/state edits, verified obligation transfer and resolution | Attachment inventory now preserved under rebuild/delete obligation; attachment absence and full real repeated recovery integration remain |
+| Guest termination | Existing signed task reboot completion; scoped guest-tmpfs install reboot stops with unknown result | Real in-flight tmpfs install → VM power-off/reboot → delayed SSH callback verified; vsock and persistent storage stop proofs remain |
 | Operator CLI | recovery-plan, observe, reconcile-intents; exact scope/key validation and existing proxy authentication | End-to-end operator flow in isolated lab |
 | Validation | Focused backend/crash tests; real Docker/libvirt whole-VM rounds; actual tmpfs install | Current-source complete PR 1 campaign and final review |
 
