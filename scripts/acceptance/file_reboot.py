@@ -26,6 +26,7 @@ def main():
     target = '/var/tmp/sysbox-file-fence-' + a.session
     quote = shlex.quote
     if a.operation == 'setup':
+        h.wait_boot(root, manifest, 'execution')
         if not a.probe or not a.public_key:
             raise ValueError('probe and public key required')
         h.guest(root, manifest, 'execution', 'sudo mkdir -m 700 ' + quote(target))
@@ -59,8 +60,8 @@ def main():
         h.fence(root)
     elif a.operation == 'cleanup':
         h.guest(root, manifest, 'execution',
-                'if mountpoint -q ' + quote(target + '/target') + '; then sudo umount ' +
-                quote(target + '/target') + '; fi; sudo rm -rf -- ' + quote(target))
+                'if sudo mountpoint -q ' + quote(target + '/target') + '; then sudo umount ' +
+                quote(target + '/target') + ' || exit; fi; sudo rm -rf -- ' + quote(target))
 
 
 if __name__ == '__main__':

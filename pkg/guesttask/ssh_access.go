@@ -139,6 +139,11 @@ func (e *Engine) MutateSSHAccess(ctx context.Context, req substrate.SSHAccessMut
 		return empty, err
 	}
 	defer unlockScope()
+	if _, err := e.loadSSHStop(req, grant); err == nil {
+		return empty, ErrUnauthorized
+	} else if !os.IsNotExist(err) {
+		return empty, err
+	}
 	store := e.sshAccessStore()
 	unlock, err := store.lock(ctx, "access")
 	if err != nil {

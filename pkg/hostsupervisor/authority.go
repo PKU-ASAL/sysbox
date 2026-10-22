@@ -19,6 +19,14 @@ import (
 
 // AuthorityClient authenticates read-side authorization checks as this Agent.
 // Stop reports carry the separately signed host receipt, never a worker claim.
+var ErrGrantObsolete = errors.New("authority rejected obsolete execution grant")
+
+type authorityHTTPError struct{ status int }
+
+func (e authorityHTTPError) Error() string {
+	return fmt.Sprintf("host authority request rejected (HTTP %d)", e.status)
+}
+
 type AuthorityClient struct {
 	Identity agent.Identity
 	HTTP     *http.Client
@@ -73,7 +81,7 @@ func (c AuthorityClient) postJSONLimit(ctx context.Context, path string, value a
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("host authority request rejected (HTTP %d)", resp.StatusCode)
+		return authorityHTTPError{status: resp.StatusCode}
 	}
 	if out != nil {
 		if err := json.NewDecoder(io.LimitReader(resp.Body, responseLimit)).Decode(out); err != nil {
@@ -89,6 +97,10 @@ func (c AuthorityClient) Authorize(ctx context.Context, grant controlplane.Signe
 	for attempt := 0; ; attempt++ {
 		err := c.post(ctx, "/v1/agents/"+c.Identity.ID+"/execution-grants/authorize", grant, true)
 		var transport *url.Error
+		var response authorityHTTPError
+		if errors.As(err, &response) && response.status == http.StatusConflict {
+			return fmt.Errorf("%w: %v", ErrGrantObsolete, err)
+		}
 		if err == nil || attempt == 2 || ctx.Err() != nil || !errors.As(err, &transport) {
 			return err
 		}

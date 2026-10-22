@@ -104,8 +104,14 @@ func (d *SSHGuestDispatcher) loadSSH(path string) (sshGuestRecord, error) {
 	if err = controlplane.VerifyExecutionGrant(d.IssuerKey, r.Grant, h.BootID, r.Grant.IssuedAt); err != nil {
 		return r, err
 	}
-	if r.Receipt != nil && (controlplane.VerifyGuestSSHAccessStopReceipt(d.HostKey.Public().(ed25519.PublicKey), *r.Receipt, r.Request, r.Ref.Node) != nil || r.Receipt.Grant != r.Grant.Grant || r.Receipt.SSHResult == nil || *r.Receipt.SSHResult != r.Result) {
-		return r, guesttask.ErrConflict
+	if r.Receipt != nil {
+		if r.Receipt.SSHStop != nil {
+			if r.RunID == "" || controlplane.VerifyGuestSSHUnknownStopReceipt(d.HostKey.Public().(ed25519.PublicKey), *r.Receipt, r.Request, r.Ref.Node) != nil || r.Receipt.Grant != r.Grant.Grant || r.Result.Handle != r.Handle || r.Result.Present {
+				return r, guesttask.ErrConflict
+			}
+		} else if controlplane.VerifyGuestSSHAccessStopReceipt(d.HostKey.Public().(ed25519.PublicKey), *r.Receipt, r.Request, r.Ref.Node) != nil || r.Receipt.Grant != r.Grant.Grant || r.Receipt.SSHResult == nil || *r.Receipt.SSHResult != r.Result {
+			return r, guesttask.ErrConflict
+		}
 	}
 	return r, nil
 }
@@ -214,7 +220,13 @@ func (d *SSHGuestDispatcher) Observe(ctx context.Context, ref TargetRef, req sub
 }
 func (d *SSHGuestDispatcher) observeSSH(ctx context.Context, r *sshGuestRecord) (substrate.SSHAccessResult, error) {
 	if r.Receipt != nil {
-		return r.Result, d.reportSSH(ctx, r)
+		if err := d.reportSSH(ctx, r); err != nil {
+			return r.Result, err
+		}
+		if r.Receipt.SSHStop != nil {
+			return r.Result, guesttask.ErrUnknown
+		}
+		return r.Result, nil
 	}
 	target, err := d.targetRecord(ctx, TaskRecord{RunID: r.RunID, Ref: r.Ref, Grant: r.Grant})
 	if err != nil {
@@ -231,7 +243,44 @@ func (d *SSHGuestDispatcher) observeSSH(ctx context.Context, r *sshGuestRecord) 
 	h.NodeID = r.ProviderNodeID
 	result, err := access.ObserveSSHAccess(sshOperationContext(ctx, *r), h)
 	if err != nil {
-		return r.Result, err
+		// Only an obsolete derived request can be retired by this path. Active
+		// requests keep running; unavailable issuer is never permission to replay.
+		stopper, ok := target.Connection.(substrate.ConnectionSSHStopper)
+		if r.RunID == "" || !ok || d.Authorize == nil || !errors.Is(d.Authorize(ctx, r.Grant), ErrGrantObsolete) {
+			return r.Result, err
+		}
+		stopped, stopErr := stopper.StopSSHAccess(transport.WithTaskGrant(sshOperationContext(ctx, *r), r.Request.ID, r.Grant), r.Request)
+		if stopErr != nil {
+			return r.Result, stopErr
+		}
+		if stopped.Handle != h || stopped.Validate(r.Grant.Grant.Epoch, r.Handle.BootID, r.Request) != nil {
+			return r.Result, guesttask.ErrConflict
+		}
+		// Revalidate canonical identity after the potentially slow guest lock.
+		current, resolveErr := d.targetRecord(ctx, TaskRecord{RunID: r.RunID, Ref: r.Ref, Grant: r.Grant})
+		if resolveErr != nil {
+			return r.Result, resolveErr
+		}
+		if current.NodeID != r.ProviderNodeID || current.User != r.Request.Config.User {
+			return r.Result, guesttask.ErrConflict
+		}
+		if stopped.Outcome == "committed" {
+			return d.completeSSH(ctx, r, *stopped.Result)
+		}
+		stopped.Handle.NodeID = r.Ref.Node
+		receipt, signErr := controlplane.SignGuestSSHUnknownStopReceipt(d.HostKey, r.Grant.Grant, d.HostBootID, r.Request, stopped, rand.Text(), time.Now())
+		if signErr != nil {
+			return r.Result, signErr
+		}
+		r.Result = substrate.SSHAccessResult{Handle: r.Handle}
+		r.Receipt = &receipt
+		if saveErr := d.saveSSH(*r); saveErr != nil {
+			return r.Result, saveErr
+		}
+		if reportErr := d.reportSSH(ctx, r); reportErr != nil {
+			return r.Result, reportErr
+		}
+		return r.Result, guesttask.ErrUnknown
 	}
 	return d.completeSSH(ctx, r, result)
 }
@@ -301,6 +350,12 @@ func (d *SSHGuestDispatcher) Recover(ctx context.Context) error {
 		if err == nil {
 			operation, cancel := context.WithTimeout(ctx, recoveryTaskBudget)
 			_, err = d.Observe(operation, r.Ref, r.Request, r.Grant)
+			if errors.Is(err, guesttask.ErrUnknown) {
+				saved, loadErr := d.loadSSH(filepath.Join(d.Root, entry.Name()))
+				if loadErr == nil && saved.Reported && saved.Receipt != nil && saved.Receipt.SSHStop != nil {
+					err = nil
+				}
+			}
 			cancel()
 		}
 		if err != nil {

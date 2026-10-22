@@ -366,6 +366,14 @@ func (e *Engine) Handle(ctx context.Context, call Call) Response {
 			}
 			response.FileRecord = &record
 		}
+	case "ssh-stop":
+		if call.SSHMutation == nil || call.Grant == nil {
+			err = ErrConflict
+		} else {
+			var stop substrate.SSHAccessStop
+			stop, err = e.StopSSHAccess(ctx, *call.SSHMutation, *call.Grant)
+			response.SSHStop = &stop
+		}
 	case "ssh-access":
 		if call.SSHMutation == nil || call.Grant == nil {
 			err = ErrConflict

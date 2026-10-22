@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -179,4 +180,101 @@ func TestSSHAccessEndpointAndRequestIdentity(t *testing.T) {
 	keys, err := e.SSHAuthorizedKeys(ctx, "ubuntu", "127.0.0.1", 2222)
 	require.NoError(t, err)
 	require.NotContains(t, string(keys), req.Config.AuthorizedKeys[0])
+}
+
+func TestSSHStopUnknownBlocksDelayedMutationAndPreservesSuccessor(t *testing.T) {
+	e, key, req := sshAccessFixture(t)
+	ctx := context.Background()
+	grant := sshAccessGrant(t, key, req, 1)
+	call := Call{Version: Version, Operation: "ssh-stop", SSHMutation: &req, Grant: &grant}
+	stopped := e.Handle(ctx, call)
+	require.Empty(t, stopped.Error)
+	require.NotNil(t, stopped.SSHStop)
+	require.True(t, stopped.SSHStop.Quiescent)
+	require.Equal(t, "unknown", stopped.SSHStop.Outcome)
+	_, err := e.MutateSSHAccess(ctx, req, grant)
+	require.Error(t, err, "delayed original cannot mutate after stop")
+	next := req
+	next.ID = "successor"
+	result, err := e.MutateSSHAccess(ctx, next, sshAccessGrant(t, key, next, 2))
+	require.NoError(t, err)
+	again := e.Handle(ctx, call)
+	require.Empty(t, again.Error)
+	require.Equal(t, stopped.SSHStop, again.SSHStop)
+	observed, err := e.ObserveSSHAccess(ctx, result.Handle)
+	require.NoError(t, err)
+	require.True(t, observed.Present)
+}
+
+func TestSSHStopRetainsOriginalCommittedResult(t *testing.T) {
+	e, key, req := sshAccessFixture(t)
+	ctx := context.Background()
+	grant := sshAccessGrant(t, key, req, 1)
+	original, err := e.MutateSSHAccess(ctx, req, grant)
+	require.NoError(t, err)
+	stopped := e.Handle(ctx, Call{Version: Version, Operation: "ssh-stop", SSHMutation: &req, Grant: &grant})
+	require.Empty(t, stopped.Error)
+	require.NotNil(t, stopped.SSHStop)
+	require.Equal(t, "committed", stopped.SSHStop.Outcome)
+	require.Equal(t, original, *stopped.SSHStop.Result)
+	// Stop-only evidence may not authorize an ordinary retry, even if committed.
+	_, err = e.MutateSSHAccess(ctx, req, grant)
+	require.Error(t, err)
+}
+
+func TestSSHStopWaitsForMutationLockAndRejectsForgedInput(t *testing.T) {
+	e, key, req := sshAccessFixture(t)
+	grant := sshAccessGrant(t, key, req, 1)
+	ctx := context.Background()
+	store := e.sshAccessStore()
+	unlock, err := store.lock(ctx, "access")
+	require.NoError(t, err)
+	blocked, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	_, err = e.StopSSHAccess(blocked, req, grant)
+	cancel()
+	require.Error(t, err)
+	unlock()
+	// A timed-out stop has not silently prohibited the original effect.
+	original, err := e.MutateSSHAccess(ctx, req, grant)
+	require.NoError(t, err)
+	require.True(t, original.Present)
+	forged := grant
+	forged.Grant.Scope.ResourceUID = "foreign"
+	_, err = e.StopSSHAccess(ctx, req, forged)
+	require.Error(t, err)
+	changed := req
+	changed.Config.User = "root"
+	_, err = e.StopSSHAccess(ctx, changed, grant)
+	require.Error(t, err)
+	stop, err := e.StopSSHAccess(ctx, req, grant)
+	require.NoError(t, err)
+	require.Equal(t, "committed", stop.Outcome)
+}
+
+func TestSSHStopUpgradesScopeBeforeAcknowledgingCessation(t *testing.T) {
+	e, key, req := sshAccessFixture(t)
+	grant := sshAccessGrant(t, key, req, 1)
+	ctx := context.Background()
+	_, err := e.StopSSHAccess(ctx, req, grant)
+	require.NoError(t, err)
+	// An already dispatched old helper checks format 2 under the same lock.
+	// Format 3 ensures it fails closed instead of ignoring the new tombstone.
+	var scopes []string
+	require.NoError(t, filepath.WalkDir(filepath.Join(e.Root, ".scopes"), func(path string, d os.DirEntry, err error) error {
+		if err == nil && strings.HasSuffix(path, ".json") {
+			scopes = append(scopes, path)
+		}
+		return err
+	}))
+	require.Len(t, scopes, 1)
+	var record scopeRecord
+	require.NoError(t, readJSON(scopes[0], &record))
+	require.Equal(t, 3, record.Version)
+	// Simulate crash after scope fence but before the dedicated receipt write.
+	require.NoError(t, os.Remove(filepath.Join(e.Root, ".ssh-stops", req.ID+".json")))
+	stop, err := e.StopSSHAccess(ctx, req, grant)
+	require.NoError(t, err)
+	require.Equal(t, "unknown", stop.Outcome)
+	_, err = e.MutateSSHAccess(ctx, req, grant)
+	require.Error(t, err)
 }

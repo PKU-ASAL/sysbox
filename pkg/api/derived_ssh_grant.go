@@ -79,7 +79,14 @@ func (s *Server) handleDerivedSSHCompletion(w http.ResponseWriter, r *http.Reque
 	}
 	receipt := body.Receipt
 	g := receipt.Grant
-	if g.AgentID != r.PathValue("agent") || g.ActionID != r.PathValue("operation") || g.ParentEpoch == 0 || !controlplane.IsGuestSSHAccessOperation(g.Operation) || receipt.SSHResult == nil || controlplane.VerifyGuestSSHAccessStopReceipt(s.grantHostKeys[g.AgentID], receipt, body.Request, receipt.SSHResult.Handle.NodeID) != nil {
+	unknown := receipt.SSHStop != nil
+	valid := false
+	if unknown {
+		valid = controlplane.VerifyGuestSSHUnknownStopReceipt(s.grantHostKeys[g.AgentID], receipt, body.Request, receipt.SSHStop.Handle.NodeID) == nil
+	} else if receipt.SSHResult != nil {
+		valid = controlplane.VerifyGuestSSHAccessStopReceipt(s.grantHostKeys[g.AgentID], receipt, body.Request, receipt.SSHResult.Handle.NodeID) == nil
+	}
+	if g.AgentID != r.PathValue("agent") || g.ActionID != r.PathValue("operation") || g.ParentEpoch == 0 || !controlplane.IsGuestSSHAccessOperation(g.Operation) || !valid {
 		writeError(w, http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
@@ -96,5 +103,5 @@ func (s *Server) handleDerivedSSHCompletion(w http.ResponseWriter, r *http.Reque
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"completed": true})
+	writeJSON(w, http.StatusOK, map[string]bool{"completed": !unknown, "stopped": true})
 }

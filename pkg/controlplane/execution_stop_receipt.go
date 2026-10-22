@@ -11,6 +11,7 @@ import (
 // it has proved that the grant cannot create further effects. Its signing key
 // is distinct from both worker authentication and API issuer credentials.
 type SignedExecutionStopReceipt struct {
+	SSHStop             *substrate.SSHAccessStop     `json:"ssh_stop,omitempty"`
 	SSHResult           *substrate.SSHAccessResult   `json:"ssh_result,omitempty"`
 	ObservedGuestBootID string                       `json:"observed_guest_boot_id,omitempty"`
 	EvidenceDigest      string                       `json:"evidence_digest,omitempty"`
@@ -37,10 +38,10 @@ func stopReceiptMessage(r SignedExecutionStopReceipt) ([]byte, error) {
 func validStopReceipt(r SignedExecutionStopReceipt) bool {
 	g := r.Grant
 	if IsGuestSSHAccessOperation(g.Operation) {
-		if !validGuestSSHResult(g, r.GuestBootID, r.SSHResult) {
+		if (r.SSHStop == nil && !validGuestSSHResult(g, r.GuestBootID, r.SSHResult)) || (r.SSHStop != nil && (r.SSHResult != nil || !validSSHUnknownStop(g, r.GuestBootID, r.SSHStop))) {
 			return false
 		}
-	} else if r.SSHResult != nil {
+	} else if r.SSHResult != nil || r.SSHStop != nil {
 		return false
 	}
 	if r.ObservedGuestBootID != "" {

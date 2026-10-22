@@ -236,3 +236,35 @@ The command binds topology/fence before submission and uses `decision.id` as the
 idempotency key. After a lost response, resend the unchanged file. Changed or stale
 evidence is rejected; no CLI path rewrites the old result or automatically retries
 an unknown effect. Redirects are refused and JSON input/output sizes are bounded.
+
+### Derived SSH requests with no committed result
+
+A new `ssh-stop` helper operation serializes with the original SSH mutation under
+the same resource-scope and SSH-store locks. It returns a committed result only
+when the exact original signed request exists in the atomic history. Otherwise
+it records cessation with an unknown result; it never deletes keys, fabricates a
+revision, or reruns the original request.
+
+Before acknowledging stop, the guest writes scope format **3**, with the exact
+stopped epoch, then its dedicated stop record. Earlier helpers reject format 3
+under the same lock, including old calls already queued before upgrade. New
+helpers accept scope formats 2/3 and retain format 3 for successor epochs. If a
+crash occurs between these two writes, stop-only recovery may complete the record;
+ordinary mutation of the stopped epoch remains refused. Do not hand-edit the scope
+version, remove stop records or downgrade guests that have accepted this operation.
+
+The host attempts this only for a derived request whose normal result observation
+failed and whose canonical authority check explicitly returns HTTP 409. Network
+errors, HTTP 401/403/500/503 and other temporary failures keep the request pending.
+The host rechecks canonical resource/user identity after the guest lock returns,
+persists a signed unknown-stop receipt, and retries reporting without mutation.
+`Observe` still returns an unknown error for this record; recovery/reporting can
+succeed without declaring a successful SSH configuration.
+
+The derived SSH API accepts this distinct signed receipt, validates its exact
+request/parent epoch, and returns `stopped:true, completed:false`. It releases only
+the child grant. The enclosing Reset still needs resource/SSH inventory disposition;
+this receipt alone cannot complete a Reset or discard its old SSH dependencies.
+Upgrade controller and host before using new guest stop support. Older controllers
+reject the new receipt, retaining the hold. This protocol addition does not claim
+stop proof for arbitrary remote persistent storage or missing authoritative identity.

@@ -161,3 +161,77 @@ func TestDerivedSSHColdRecoveryUsesPersistedRunAndDedicatedReport(t *testing.T) 
 	require.NoError(t, cold.Recover(context.Background()))
 	require.Equal(t, 1, reports)
 }
+
+type stopManagedSSHConn struct {
+	*managedSSHTestConn
+	stops int
+}
+
+func (c *stopManagedSSHConn) StopSSHAccess(ctx context.Context, req substrate.SSHAccessMutation) (substrate.SSHAccessStop, error) {
+	c.stops++
+	_, g, _ := transport.TaskGrantFromContext(ctx)
+	return substrate.SSHAccessStop{Handle: sshMutationHandle(TargetRef{Node: "provider", Scope: g.Grant.Scope}, req, g), Quiescent: true, Outcome: "unknown"}, nil
+}
+func TestDerivedSSHUnknownRecoveryStopsWithoutReplay(t *testing.T) {
+	d, _, _, issuer := taskFixtureWithIssuer(t)
+	d.RunID = "run"
+	req := substrate.SSHAccessMutation{ID: "ssh-stop", Delete: true, ExpectedRevision: 1, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}}
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	ref := TargetRef{Topology: "lab", Node: "web", Scope: controlplane.ExecutionScope{TopologyUID: "owner", ResourceUID: "node", Generation: 1}}
+	grant, err := controlplane.SignExecutionGrant(issuer, controlplane.ExecutionGrant{Scope: ref.Scope, TargetBootID: "guest-boot", AgentID: d.AgentID, SessionID: "session", CommandID: "command", ActionID: req.ID, Attempt: 1, Epoch: 7, ParentEpoch: 3, Operation: "guest_ssh_access_delete", Digest: digest, State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}, "guest-boot", time.Now())
+	require.NoError(t, err)
+	conn := &stopManagedSSHConn{managedSSHTestConn: &managedSSHTestConn{lost: true, unknown: true}}
+	d.ResolveRun = func(context.Context, TargetRef, string) (Target, error) {
+		return Target{Scope: ref.Scope, AgentID: d.AgentID, NodeID: "provider", User: "ubuntu", Connection: conn}, nil
+	}
+	reports := 0
+	var receipt controlplane.SignedExecutionStopReceipt
+	dispatcher := &SSHGuestDispatcher{Dispatcher: d, ReportDerived: func(_ context.Context, got substrate.SSHAccessMutation, r controlplane.SignedExecutionStopReceipt) error {
+		reports++
+		receipt = r
+		return controlplane.VerifyGuestSSHUnknownStopReceipt(d.HostKey.Public().(ed25519.PublicKey), r, got, "web")
+	}}
+	_, err = dispatcher.Mutate(context.Background(), ref, req, grant)
+	require.Error(t, err)
+	d.Authorize = func(context.Context, controlplane.SignedExecutionGrant) error { return ErrGrantObsolete }
+	cold := *dispatcher
+	require.NoError(t, cold.Recover(context.Background()))
+	require.Equal(t, 1, conn.stops)
+	require.Equal(t, 1, conn.mutations)
+	require.Equal(t, 1, reports)
+	require.NotNil(t, receipt.SSHStop)
+	require.Nil(t, receipt.SSHResult)
+	require.NoError(t, cold.Recover(context.Background()))
+	require.Equal(t, 1, reports)
+	_, err = cold.Observe(context.Background(), ref, req, grant)
+	require.ErrorIs(t, err, guesttask.ErrUnknown)
+}
+
+func TestSSHAuthorityUnavailableDoesNotRetireDerivedRequest(t *testing.T) {
+	d, _, _, issuer := taskFixtureWithIssuer(t)
+	d.RunID = "run"
+	req := substrate.SSHAccessMutation{ID: "unavailable", Delete: true, ExpectedRevision: 1, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}}
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	ref := TargetRef{Topology: "lab", Node: "web", Scope: controlplane.ExecutionScope{TopologyUID: "owner", ResourceUID: "node", Generation: 1}}
+	grant, err := controlplane.SignExecutionGrant(issuer, controlplane.ExecutionGrant{Scope: ref.Scope, TargetBootID: "guest-boot", AgentID: d.AgentID, SessionID: "session", CommandID: "command", ActionID: req.ID, Attempt: 1, Epoch: 7, ParentEpoch: 3, Operation: "guest_ssh_access_delete", Digest: digest, State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}, "guest-boot", time.Now())
+	require.NoError(t, err)
+	conn := &stopManagedSSHConn{managedSSHTestConn: &managedSSHTestConn{lost: true, unknown: true}}
+	d.ResolveRun = func(context.Context, TargetRef, string) (Target, error) {
+		return Target{Scope: ref.Scope, AgentID: d.AgentID, NodeID: "provider", User: "ubuntu", Connection: conn}, nil
+	}
+	reports := 0
+	dispatcher := &SSHGuestDispatcher{Dispatcher: d, ReportDerived: func(context.Context, substrate.SSHAccessMutation, controlplane.SignedExecutionStopReceipt) error {
+		reports++
+		return nil
+	}}
+	_, err = dispatcher.Mutate(context.Background(), ref, req, grant)
+	require.Error(t, err)
+	d.Authorize = func(context.Context, controlplane.SignedExecutionGrant) error {
+		return errors.New("authority HTTP 500 unavailable")
+	}
+	require.Error(t, dispatcher.Recover(context.Background()))
+	require.Zero(t, conn.stops)
+	require.Zero(t, reports)
+}

@@ -70,3 +70,17 @@ func TestAuthorityCheckRetriesAreBoundedAndStopOnRejection(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthorityObsoleteRequiresExplicitConflict(t *testing.T) {
+	for _, status := range []int{401, 403, 409, 500, 503} {
+		c := AuthorityClient{Identity: agent.Identity{ID: "agent", Secret: "secret", APIURL: "http://api"}, HTTP: &http.Client{Transport: authorityTransport(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+		})}}
+		err := c.Authorize(context.Background(), controlplane.SignedExecutionGrant{})
+		if status == 409 {
+			require.ErrorIs(t, err, ErrGrantObsolete)
+		} else {
+			require.NotErrorIs(t, err, ErrGrantObsolete)
+		}
+	}
+}

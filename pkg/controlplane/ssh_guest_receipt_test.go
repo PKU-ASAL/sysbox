@@ -68,3 +68,25 @@ func TestGuestSSHStopRequiresBoundCommittedResult(t *testing.T) {
 		require.Error(t, VerifyGuestSSHAccessStopReceipt(pub, receipt, altered, "web"))
 	}
 }
+
+func TestDerivedSSHUnknownStopIsNotConfigurationSuccess(t *testing.T) {
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	req := substrate.SSHAccessMutation{ID: "stop", Delete: true, ExpectedRevision: 1, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}}
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	g := ExecutionGrant{Scope: ExecutionScope{TopologyUID: "owner", ResourceUID: "node", Generation: 1}, TargetBootID: "guest", AgentID: "agent", SessionID: "session", CommandID: "command", ActionID: req.ID, Attempt: 1, Epoch: 3, ParentEpoch: 1, Operation: "guest_ssh_access_delete", Digest: digest, State: GrantRevoked, ExpiresAt: time.Now()}
+	stop := substrate.SSHAccessStop{Handle: substrate.SSHAccessHandle{NodeID: "web", ID: req.ID, Digest: digest, User: "ubuntu", AccessID: "admin", Revision: 2, BootID: "guest", Epoch: 3, TopologyUID: "owner", ResourceUID: "node", Generation: 1}, Quiescent: true, Outcome: "unknown"}
+	receipt, err := SignGuestSSHUnknownStopReceipt(key, g, "host", req, stop, "stop-receipt", time.Now())
+	require.NoError(t, err)
+	require.NoError(t, VerifyGuestSSHUnknownStopReceipt(pub, receipt, req, "web"))
+	require.Error(t, VerifyGuestSSHAccessStopReceipt(pub, receipt, req, "web"))
+	require.Error(t, ValidateGuestSSHCompletion(receipt, req, "web"))
+	require.Nil(t, receipt.SSHResult)
+	changed := req
+	changed.ExpectedRevision++
+	require.Error(t, VerifyGuestSSHUnknownStopReceipt(pub, receipt, changed, "web"))
+	stop.Handle.Generation++
+	_, err = SignGuestSSHUnknownStopReceipt(key, g, "host", req, stop, "bad", time.Now())
+	require.Error(t, err)
+}

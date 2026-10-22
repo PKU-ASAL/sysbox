@@ -100,3 +100,38 @@ func TestSSHAccessTransportSeparatesHistoricalResultAndCurrentInspection(t *test
 	require.NoError(t, err)
 	require.Equal(t, "absent", current.Status)
 }
+
+func TestSSHStopTransportRequiresExactScopeAndCessation(t *testing.T) {
+	req := substrate.SSHAccessMutation{ID: "stop", Delete: true, ExpectedRevision: 1, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}}
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	g := controlplane.SignedExecutionGrant{BootID: "guest", Grant: controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "owner", ResourceUID: "node", Generation: 1}, Epoch: 2, TargetBootID: "guest", Operation: "guest_ssh_access_delete", ActionID: req.ID, Digest: digest}}
+	for _, variant := range []string{"exact", "scope", "epoch", "not-stopped", "success"} {
+		t.Run(variant, func(t *testing.T) {
+			caller := sshAccessCaller(func(call guesttask.Call) guesttask.Response {
+				require.Equal(t, "ssh-stop", call.Operation)
+				require.Equal(t, &g, call.Grant)
+				h := substrate.SSHAccessHandle{ID: req.ID, Digest: digest, User: "ubuntu", AccessID: "admin", Revision: 2, BootID: "guest", Epoch: 2, TopologyUID: "owner", ResourceUID: "node", Generation: 1}
+				stop := substrate.SSHAccessStop{Handle: h, Quiescent: true, Outcome: "unknown"}
+				switch variant {
+				case "scope":
+					stop.Handle.ResourceUID = "other"
+				case "epoch":
+					stop.Handle.Epoch++
+				case "not-stopped":
+					stop.Quiescent = false
+				case "success":
+					stop.Outcome = "committed"
+				}
+				return guesttask.Response{Version: guesttask.Version, SSHStop: &stop}
+			})
+			stop, err := stopSSHAccess(WithTaskGrant(context.Background(), req.ID, g), caller, executionIdentity{nodeID: "provider", generation: 1}, req)
+			if variant != "exact" {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "provider", stop.Handle.NodeID)
+		})
+	}
+}

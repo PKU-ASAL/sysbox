@@ -119,6 +119,7 @@ type Call struct {
 	Limit        int                                       `json:"limit,omitempty"`
 }
 type Response struct {
+	SSHStop        *substrate.SSHAccessStop           `json:"ssh_stop,omitempty"`
 	SSHDiscovery   *substrate.SSHAccessDiscovery      `json:"ssh_discovery,omitempty"`
 	FileInspection *substrate.InstalledFileInspection `json:"file_inspection,omitempty"`
 	FileHandle     *substrate.FileInstallHandle       `json:"file_handle,omitempty"`

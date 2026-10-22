@@ -19,6 +19,7 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 )
 
 type fileFenceSSHConnection struct {
@@ -155,4 +156,65 @@ func TestFileInstallRealGuestRebootUnknown(t *testing.T) {
 	require.Equal(t, receipt, *record.Receipt)
 	require.Equal(t, 1, reports)
 	t.Logf("SSH installer paused prepared on real tmpfs; boot %s -> %s; late old callback preserved unknown receipt", boot, receipt.ObservedGuestBootID)
+}
+
+func TestSSHStopRealGuestProtocol(t *testing.T) {
+	lab, probe := os.Getenv("SYSBOX_GC_FENCE_LAB"), os.Getenv("SYSBOX_FILE_FENCE_PROBE")
+	if lab == "" || probe == "" {
+		t.Skip("requires enrolled disposable VM and current guesttask test probe")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	t.Cleanup(cancel)
+	raw, err := exec.Command("cat", "/proc/sys/kernel/random/uuid").Output()
+	require.NoError(t, err)
+	session := strings.TrimSpace(string(raw))
+	run := func(operation string, extra ...string) (string, error) {
+		args := append([]string{"../../scripts/acceptance/file_reboot.py", operation, "--root", lab, "--session", session}, extra...)
+		out, err := exec.CommandContext(ctx, "/usr/bin/python3", args...).CombinedOutput()
+		return string(out), err
+	}
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	keyPath := filepath.Join(t.TempDir(), "issuer.pub")
+	require.NoError(t, os.WriteFile(keyPath, pub, 0600))
+	out, err := run("setup", "--probe", probe, "--public-key", keyPath)
+	require.NoError(t, err, out)
+	t.Cleanup(func() { out, err := run("cleanup"); require.NoError(t, err, out) })
+	base := fileFenceSSHConnection{root: lab, session: session}
+	conn := transport.NewTaskClient(base, "provider-node", 1)
+	boot, err := conn.GuestFileBootID(ctx)
+	require.NoError(t, err)
+	req := substrate.SSHAccessMutation{ID: "obsolete-ssh", Delete: true, ExpectedRevision: 1, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "acceptance"}}
+	grantFor := func(req substrate.SSHAccessMutation, epoch uint64) controlplane.SignedExecutionGrant {
+		digest, err := req.Digest()
+		require.NoError(t, err)
+		op := "guest_ssh_access_apply"
+		if req.Delete {
+			op = "guest_ssh_access_delete"
+		}
+		g, err := controlplane.SignExecutionGrant(key, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: session, ResourceUID: "node", Generation: 1}, TargetBootID: boot, AgentID: "agent", SessionID: "session", CommandID: "command", ActionID: req.ID, Attempt: 1, Epoch: epoch, ParentEpoch: 1, Operation: op, Digest: digest, State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}, boot, time.Now())
+		require.NoError(t, err)
+		return g
+	}
+	grant := grantFor(req, 2)
+	stopped, err := conn.StopSSHAccess(transport.WithTaskGrant(ctx, req.ID, grant), req)
+	require.NoError(t, err)
+	require.Equal(t, "unknown", stopped.Outcome)
+	require.True(t, stopped.Quiescent)
+	_, err = conn.MutateSSHAccess(transport.WithTaskGrant(ctx, req.ID, grant), req)
+	require.Error(t, err)
+	publicKey, err := ssh.NewPublicKey(pub)
+	require.NoError(t, err)
+	next := substrate.SSHAccessMutation{ID: "fresh-ssh", Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "acceptance", AuthorizedKeys: []string{strings.TrimSpace(string(ssh.MarshalAuthorizedKey(publicKey)))}}}
+	nextGrant := grantFor(next, 3)
+	created, err := conn.MutateSSHAccess(transport.WithTaskGrant(ctx, next.ID, nextGrant), next)
+	require.NoError(t, err)
+	require.True(t, created.Present)
+	again, err := conn.StopSSHAccess(transport.WithTaskGrant(ctx, req.ID, grant), req)
+	require.NoError(t, err)
+	require.Equal(t, stopped, again)
+	found, err := conn.InspectSSHAccess(ctx, created.Handle)
+	require.NoError(t, err)
+	require.Equal(t, "present", found.Status)
+	t.Logf("real SSH/helper: stopped unknown original epoch2, rejected delayed mutation, admitted epoch3 and preserved successor on old-stop retry; guest boot %s", boot)
 }

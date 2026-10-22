@@ -5090,3 +5090,40 @@ Source SHA256: `1c65d204a9b341eb3a13ac2fea1f7d6df37d48ee3b008837371d3e6f6201a130
 All six affected packages passed full race regression in
 `/tmp/sysbox-stage1-full-regression.log`: API, runtime, persistence,
 hostsupervisor, guesttask, CLI. This is slice validation, not the full PR 1 gate.
+
+### PR #53: derived SSH cessation without inventing a result (2026-10-23)
+
+Implemented helper `ssh-stop`, scope-format-3 fencing against both current and
+older helper processes, exact stop retry after a partial write, host cold recovery,
+and distinct signed SSH unknown-stop receipts. API completion distinguishes
+cessation from successful key mutation and accepts exact historical retry.
+A typed authorization-conflict error permits stop on HTTP 409 only; outages do
+not permanently retire an active request.
+
+Focused five-package race contracts passed in
+`/tmp/sysbox-ssh-stop-final-contract.log`, including file/SQLite/PostgreSQL API
+contracts. The isolated test PostgreSQL container was restarted with an actual
+mapped port of 33478; stale port 33454 was connection-refused, not counted as pass.
+
+`TestSSHStopRealGuestProtocol` passed using the current static guesttask test
+probe and the pinned SSH host identity of the enrolled disposable VM:
+`/tmp/sysbox-ssh-stop-real-guest3.log`. It stopped an unknown original request at
+epoch 2, rejected its delayed mutation, admitted a fresh epoch-3 SSH configuration,
+retried the epoch-2 stop and verified the successor still present. Guest boot:
+`9101565b-e11d-4905-8ecb-08308339d974`. The unique test directory and tmpfs mount
+were removed. The initial cleanup detected root-private traversal denial; the
+script now checks mountpoint with sudo and refuses deletion after failed unmount.
+
+This closes the derived child-authorization cessation slice, not started ResetSSH
+metadata reconciliation or the full first-stage acceptance gate. The original
+unknown remains unknown and its enclosing Reset stays held until independently
+accounted for.
+
+All five affected packages passed full race regression in
+`/tmp/sysbox-ssh-stop-full.log` (API 182.580s). Four same-source machine gates passed
+without skips in `/tmp/sysbox-ssh-stop-campaign-20261023/run.json`:
+`derived-ssh-stop-api`, `ssh-stop-guest-contract`, `ssh-stop-host-contract`,
+`ssh-stop-real-helper`. Source SHA256:
+`6c7a42434aa68f7472d7c09698e4265370bfa0b4474222375cc8158c4468b2ef`.
+Independent review found and verified fixes for mixed-old-helper replay and
+mistaking transient authority failures for revocation.

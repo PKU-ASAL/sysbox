@@ -11,12 +11,16 @@ import (
 )
 
 type scopeRecord struct {
+	Stopped bool   `json:"stopped,omitempty"`
 	Version int    `json:"version"`
 	Epoch   uint64 `json:"epoch"`
 	Session string `json:"session"`
 }
 
 func (e *Engine) lockScope(ctx context.Context, grant controlplane.ExecutionGrant) (string, scopeRecord, func(), error) {
+	return e.lockScopeMode(ctx, grant, false)
+}
+func (e *Engine) lockScopeMode(ctx context.Context, grant controlplane.ExecutionGrant, stopping bool) (string, scopeRecord, func(), error) {
 	name := fmt.Sprintf("scope-%x", sha256.Sum256([]byte(grant.Scope.TopologyUID+"\x00"+grant.Scope.ResourceUID)))
 	scopes := Engine{Root: filepath.Join(e.Root, ".scopes")}
 	unlock, err := scopes.lock(ctx, name)
@@ -33,13 +37,20 @@ func (e *Engine) lockScope(ctx context.Context, grant controlplane.ExecutionGran
 	if os.IsNotExist(err) {
 		record.Version = 2
 	}
-	if err == nil && (record.Version != 2 || record.Epoch == 0 || record.Session == "") {
+	if err == nil && ((record.Version != 2 && record.Version != 3) || (record.Version == 2 && record.Stopped) || record.Epoch == 0 || record.Session == "") {
 		unlock()
 		return "", record, nil, fmt.Errorf("guest scope version requires explicit rebuild")
 	}
 	if grant.Epoch < record.Epoch || grant.Epoch == record.Epoch && record.Session != "" && record.Session != grant.SessionID {
 		unlock()
 		return "", record, nil, ErrUnauthorized
+	}
+	if record.Stopped && grant.Epoch == record.Epoch && !stopping {
+		unlock()
+		return "", record, nil, ErrUnauthorized
+	}
+	if grant.Epoch > record.Epoch {
+		record.Stopped = false
 	}
 	return path, record, unlock, nil
 }

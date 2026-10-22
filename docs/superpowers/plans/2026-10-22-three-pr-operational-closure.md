@@ -66,3 +66,20 @@ and simulated reboot regression are separate evidence, not a real in-flight rebo
 Historical incidents lacking authoritative identity/stop evidence remain read-only
 and unresolved. This is not permission to infer absence, replay or discard journals.
 PR 2 and PR 3 have not started. Existing PRs #50–52 and this PR are not merged.
+
+## Derived SSH cessation slice (2026-10-23)
+
+- [x] Guest scope/store locked stop, exact committed-history check and durable
+  unknown stop with no old request replay.
+- [x] Scope format 3 blocks old helpers already queued on the same lock; current
+  helper supports stop retry after scope-fence/tombstone crash and next epoch.
+- [x] Distinct host signed unknown stop, canonical target revalidation and
+  release of exact derived child grant, without declaring SSH configuration success.
+- [x] Temporary authority failures remain pending; only HTTP 409 grants the host
+  the obsolete-request stop path.
+- [x] Independent review, five-package full race regression, four same-source
+  machine gates, and real SSH/helper delayed-original/successor acceptance.
+
+Still required: started ResetSSH inventory reconciliation in the parent
+transaction; this child-stop proof is necessary but does not settle that metadata.
+The other first-stage remaining items above retain their scope.
