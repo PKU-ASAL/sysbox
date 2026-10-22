@@ -38,7 +38,7 @@ func (r *ExecutionGrantRepository) PrepareAdoptionDisposition(ctx context.Contex
 			}
 			return nil
 		}
-		if f.GCDisposition != nil || f.Release != nil || f.Reconciliation != nil || p.ObservedAt.After(a.ObservedAt) || p.ObservedAt.Before(f.AcceptedAt) {
+		if f.IntentDisposition != nil || f.GCDisposition != nil || f.Release != nil || f.Reconciliation != nil || p.ObservedAt.After(a.ObservedAt) || p.ObservedAt.Before(f.AcceptedAt) {
 			return ErrConflict
 		}
 		g, ok := a.Grants[grantScopeKey(p.Request.Grant.Scope)]
@@ -50,7 +50,9 @@ func (r *ExecutionGrantRepository) PrepareAdoptionDisposition(ctx context.Contex
 				return ErrConflict
 			}
 		}
-		a.Version = adoptionDispositionAuthorityVersion
+		if a.Version != intentDispositionAuthorityVersion {
+			a.Version = adoptionDispositionAuthorityVersion
+		}
 		f.AdoptionDisposition = &AdoptionFenceDisposition{OperationResult: "unknown", Proof: p, HostPublicKey: append([]byte(nil), key...), PreparedAt: a.ObservedAt}
 		a.Fences[p.Request.ID] = f
 		return nil
@@ -99,10 +101,10 @@ func validateAdoptionDisposition(f HostFenceRecord, a *executionAuthority) error
 	if d == nil {
 		return nil
 	}
-	if a.Version != adoptionDispositionAuthorityVersion || d.OperationResult != "unknown" {
+	if (a.Version != intentDispositionAuthorityVersion && a.Version != adoptionDispositionAuthorityVersion) || d.OperationResult != "unknown" {
 		return ErrCorruptRecord
 	}
-	if f.GCDisposition != nil || f.Release != nil || f.Reconciliation != nil || f.Receipt == nil || evidenceHash(d.Proof.Request) != evidenceHash(f.Request) || evidenceHash(d.Proof.Fence) != evidenceHash(*f.Receipt) || controlplane.VerifyAdoptionDisposition(d.HostPublicKey, d.Proof) != nil || d.PreparedAt.Before(d.Proof.ObservedAt) || d.PreparedAt.After(a.ObservedAt) {
+	if f.IntentDisposition != nil || f.GCDisposition != nil || f.Release != nil || f.Reconciliation != nil || f.Receipt == nil || evidenceHash(d.Proof.Request) != evidenceHash(f.Request) || evidenceHash(d.Proof.Fence) != evidenceHash(*f.Receipt) || controlplane.VerifyAdoptionDisposition(d.HostPublicKey, d.Proof) != nil || d.PreparedAt.Before(d.Proof.ObservedAt) || d.PreparedAt.After(a.ObservedAt) {
 		return ErrCorruptRecord
 	}
 	if !d.ReleasedAt.IsZero() {

@@ -12,6 +12,7 @@ import (
 )
 
 type HostFenceRecord struct {
+	IntentDisposition   *FenceIntentReconciliation     `json:"intent_disposition,omitempty"`
 	AdoptionDisposition *AdoptionFenceDisposition      `json:"adoption_disposition,omitempty"`
 	GCDisposition       *GCFenceDisposition            `json:"gc_disposition,omitempty"`
 	Reconciliation      *FenceDeleteReconciliation     `json:"delete_reconciliation,omitempty"`
@@ -147,6 +148,9 @@ func validateHostFences(a *executionAuthority) error {
 			if !ok || !sameGrantEpoch(stop.Grant, record.Request.Grant) || record.Release.ReleasedAt.After(a.ObservedAt) {
 				return ErrCorruptRecord
 			}
+		}
+		if err := validateIntentDispositionAuthority(record, a); err != nil {
+			return err
 		}
 		if err := validateFenceDelete(record, a); err != nil {
 			return err

@@ -131,7 +131,7 @@ func PrepareFenceDelete(authorityRaw, lifecycleRaw []byte, run controlplane.Run,
 		raw, err := json.Marshal(a)
 		return FenceDeleteTransition{PreparedAuthority: authorityRaw, Lifecycle: raw, Run: run, Command: original}, err
 	}
-	if fence.Release != nil || fence.Receipt == nil || now.IsZero() || now.Before(ledger.ObservedAt) || now.Before(fence.Receipt.ObservedAt) {
+	if fence.IntentDisposition != nil || fence.Release != nil || fence.Receipt == nil || now.IsZero() || now.Before(ledger.ObservedAt) || now.Before(fence.Receipt.ObservedAt) {
 		return out, ErrConflict
 	}
 	a, err := decodeAggregate(lifecycleRaw)

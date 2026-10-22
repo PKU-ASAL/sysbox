@@ -32,13 +32,13 @@ func ownershipPending(a *aggregate) bool {
 	return false
 }
 func validateOwnershipTargets(a *aggregate) error {
-	if len(a.OwnershipTargets) > 0 && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
+	if len(a.OwnershipTargets) > 0 && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
 		return ErrCorruptRecord
 	}
 	pending := 0
 	for id, v := range a.OwnershipTargets {
 		if v.DispositionHash != "" {
-			if (a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion) || v.CompletedHash != "" || v.Aborted {
+			if (a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion) || v.CompletedHash != "" || v.Aborted {
 				return ErrCorruptRecord
 			}
 			found := false
@@ -109,7 +109,7 @@ func (r *Repository) ReserveOwnershipTarget(ctx context.Context, p controlplane.
 			a.OwnershipTargets = map[string]OwnershipTargetReservation{}
 		}
 		a.OwnershipTargets[p.ID] = OwnershipTargetReservation{Plan: p}
-		if a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
+		if a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
 			a.Format = OwnershipTargetFormatVersion
 		}
 		return nil

@@ -80,6 +80,21 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 		}
 	}
 	plan.ReleaseStatus = "held"
+	if rec := fence.IntentDisposition; rec != nil {
+		plan.ReconciliationStatus = "prepared"
+		if !rec.ReleasedAt.IsZero() {
+			plan.ReconciliationStatus = "completed"
+			plan.ReleaseStatus = "released"
+			plan.HostProcessExclusion = "verified"
+			plan.ObservationAttestation = "verified"
+			plan.ObservationStatus = "reconciled"
+			plan.ObservationSHA256 = rec.Decision.ObservationSHA256
+			plan.ObservationCommandID = rec.Observation.Command.ID
+			plan.Blockers = []string{}
+			return plan, nil, rec.Decision.ExpectedSerial, nil
+		}
+	}
+
 	if fence.Release != nil {
 		plan.ReleaseStatus = "released"
 		plan.Blockers = []string{}
@@ -325,7 +340,7 @@ func (s *Server) handleHostFenceObserve(w http.ResponseWriter, r *http.Request) 
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	if fence.Reconciliation != nil || fence.Release != nil || fence.Receipt == nil || !plan.JournalMatches || run == nil {
+	if fence.IntentDisposition != nil || fence.Reconciliation != nil || fence.Release != nil || fence.Receipt == nil || !plan.JournalMatches || run == nil {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}

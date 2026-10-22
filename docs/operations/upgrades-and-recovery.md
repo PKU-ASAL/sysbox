@@ -139,3 +139,33 @@ GC/reset、Run/guest/node/console/command；任一条件不满足则409并保留
 保留策略通过 `state/snapshots/retention-plan` 预览与 `retention-apply` 提交；每批
 最多128项，至少保留最新一项，保留未完成 journal/workflow 和 restore 回执引用。
 完整 catalog 摘要变化使计划失效；删除只影响快照元数据，不执行 provider GC。
+
+### Explicit fenced intent disposition (development branch)
+
+`POST /v1/topologies/{topology}/host-fences/{fence}/reconcile-intents` accepts an
+explicit `decision` plus `observation_command_id`; `Idempotency-Key` must equal
+`decision.id`. Obtain the original journal digest and verified observation digest
+from the existing `recovery-plan` endpoint. The decision binds Run incarnation,
+revision, expected state serial, both digests, reason and exact action/resource
+choices (`retain` or `absent`). Only admitted whole-host fencing and fresh signed
+local-provider observation can validate it; operator acknowledgement alone cannot.
+
+The current slice supports non-composite actions with complete candidate identity,
+no unresolved attachments, no replacement/reset continuation and no active child
+or unrelated operation. Retention needs usable provider private state. Missing
+create identity, Reset, incomplete guest initialization and external effects remain
+blocked pending their dedicated disposition protocols. A remote daemon is outside
+a local-host fence's cessation scope.
+
+On commit, the original Run fails with its unknown result stated explicitly. Old
+action status/result remain unchanged; a separate disposition archive prevents
+replay and retains GC references. A retained resource is unknown, not initialized
+or healthy. File storage persists its decision before lifecycle/dispatch writes;
+SQL commits atomically. Release occurs only after exact postimages are durable.
+Retries cannot rewrite a successor. Recovery-plan reports the completed disposition
+without describing the historical journal as a currently executable plan.
+
+This path writes aggregate format 15 and authority format 8. Drain old writers and
+synchronize API/Agent/CLI before use; old readers must reject the new format.
+Previous format 13/14 recovery records remain readable. This branch is not a
+production upgrade or a declaration that all Run/Reset/Guest recovery is closed.

@@ -58,3 +58,14 @@ original evidence, guest file outcomes and parent/reset linkage still need audit
 Actual create-absence observation currently does not emit residual coverage;
 synthetic validator acceptance is not real provider acceptance. Extend the
 provider observation path before exposing create-absence mutation.
+
+The next slice adds lifecycle format 15 and authority format 8: archived action
+history/GC references, deterministic resource postimages, prepared authority and
+exact-image recovery, file multi-record commit and SQLite/PostgreSQL transactions.
+The public reconcile-intents API supports precise retain/absence choices for the
+bounded non-composite/no-child case. Reset/guest/attachments remain rejected, not
+silently considered completed. CLI and real-provider integration are still pending.
+
+Fixed during review: settled-action identity coverage, JSONB RawMessage formatting
+comparison, file observation-ID race, and prepared recovery after authority clock
+advancement. Existing guest reboot-unknown completion is reused, not reimplemented.

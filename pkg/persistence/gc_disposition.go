@@ -39,7 +39,7 @@ func (r *ExecutionGrantRepository) PrepareGCDisposition(ctx context.Context, p c
 			}
 			return nil
 		}
-		if f.AdoptionDisposition != nil || f.Release != nil || f.Reconciliation != nil || p.ObservedAt.After(a.ObservedAt) || p.ObservedAt.Before(f.AcceptedAt) {
+		if f.IntentDisposition != nil || f.AdoptionDisposition != nil || f.Release != nil || f.Reconciliation != nil || p.ObservedAt.After(a.ObservedAt) || p.ObservedAt.Before(f.AcceptedAt) {
 			return ErrConflict
 		}
 		g, ok := a.Grants[grantScopeKey(p.Request.Grant.Scope)]
@@ -87,7 +87,7 @@ func (r *Repository) CompleteGCDisposition(ctx context.Context, topology string,
 		if GCReservationDigest(stored) != p.Request.JournalSHA256 {
 			return ErrConflict
 		}
-		if a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
+		if a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
 			a.Format = GCDispositionFormatVersion
 		}
 		stored.DispositionHash = hash
@@ -138,10 +138,10 @@ func validateGCDisposition(f HostFenceRecord, a *executionAuthority) error {
 	if d == nil {
 		return nil
 	}
-	if a.Version != gcDispositionAuthorityVersion && a.Version != adoptionDispositionAuthorityVersion {
+	if a.Version != intentDispositionAuthorityVersion && a.Version != gcDispositionAuthorityVersion && a.Version != adoptionDispositionAuthorityVersion {
 		return ErrCorruptRecord
 	}
-	if f.AdoptionDisposition != nil || f.Release != nil || f.Reconciliation != nil || f.Receipt == nil || evidenceHash(d.Proof.Request) != evidenceHash(f.Request) || evidenceHash(d.Proof.Fence) != evidenceHash(*f.Receipt) || controlplane.VerifyGCDisposition(d.HostPublicKey, d.Proof) != nil || d.PreparedAt.Before(d.Proof.ObservedAt) || d.PreparedAt.After(a.ObservedAt) {
+	if f.IntentDisposition != nil || f.AdoptionDisposition != nil || f.Release != nil || f.Reconciliation != nil || f.Receipt == nil || evidenceHash(d.Proof.Request) != evidenceHash(f.Request) || evidenceHash(d.Proof.Fence) != evidenceHash(*f.Receipt) || controlplane.VerifyGCDisposition(d.HostPublicKey, d.Proof) != nil || d.PreparedAt.Before(d.Proof.ObservedAt) || d.PreparedAt.After(a.ObservedAt) {
 		return ErrCorruptRecord
 	}
 	if !d.ReleasedAt.IsZero() {
@@ -153,7 +153,7 @@ func validateGCDisposition(f HostFenceRecord, a *executionAuthority) error {
 	return nil
 }
 func (f HostFenceRecord) released() bool {
-	return (f.AdoptionDisposition != nil && !f.AdoptionDisposition.ReleasedAt.IsZero()) || f.Release != nil || (f.GCDisposition != nil && !f.GCDisposition.ReleasedAt.IsZero())
+	return (f.IntentDisposition != nil && !f.IntentDisposition.ReleasedAt.IsZero()) || (f.AdoptionDisposition != nil && !f.AdoptionDisposition.ReleasedAt.IsZero()) || f.Release != nil || (f.GCDisposition != nil && !f.GCDisposition.ReleasedAt.IsZero())
 }
 
 // ReleasedGCDisposition exposes historical stop evidence for a newly admitted

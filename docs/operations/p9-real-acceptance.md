@@ -4929,3 +4929,37 @@ preparation round's inactive libvirt UUID was checked against its recorded XML
 and removed; `/tmp/sysbox-gc-fencing-20261021/cancellation-fixture-cleanup.json`
 records the identity. Both isolated VMs and the test PostgreSQL container were
 stopped; disks and failure/success evidence remain for audit.
+
+### Explicit Run intent disposition: first operational slice (2026-10-22)
+
+The new `reconcile-intents` endpoint performs evidence-bound retain/absence
+choices for exact non-composite actions. It preserves original action outcomes,
+archives all matching Run actions, keeps candidate references in GC inventory,
+ends the original Run as failed/unknown and retires its command. File prepared
+writes and SQL transactions release the exact authority barrier last. Successor
+admission and old-decision replay are verified without rewriting successors.
+
+This is PR #53's first mutation slice, not completion of all Run/reset/guest
+recovery. Reset, unresolved attachments/children, incomplete composite guest effects
+and missing immutable candidate identity remain blocked. Retention requires
+provider private state. No arbitrary external command is replayed.
+
+Evidence: `/tmp/sysbox-intent-api-contract-fixed.log` (three-backend new/old fence
+API race regression), `/tmp/sysbox-intent-retain-absent-api.log` (both choices,
+current completion reporting and successor protection),
+`/tmp/sysbox-intent-persistence-full.log` (complete persistence race suite), and
+`/tmp/sysbox-intent-api-full-fixed.log` (complete API suite with PostgreSQL).
+The first full API run exhausted connections because the shared test fixture did
+not close cached lifecycle pools; test cleanup was fixed and the rerun passed.
+
+Real libvirt: `/tmp/sysbox-intent-libvirt-whole-vm3.log` passed using a real exact
+UUID fixture, enclosing execution-VM power fence/reboot, current agentexec host
+observer, authenticated report, explicit absence disposition and fresh admission.
+Only `changed-incarnation-false/local` is selected for the real-VM round; backend
+coverage comes from separate contract tests. Initial fixture/private-version and
+incorrect observer-binary attempts are retained as failures, not passes.
+
+Compatibility: this slice writes aggregate 15 and authority 8; existing adoption
+and GC histories remain valid. Independent review caught and fixed JSONB private
+JSON formatting comparisons, file observation-ID retry binding, and prepared
+recovery after unrelated authority clock advancement.

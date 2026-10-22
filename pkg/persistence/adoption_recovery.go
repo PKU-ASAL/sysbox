@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -98,7 +99,9 @@ func ApplyFencedAdoption(raw, authorityRaw []byte, p controlplane.AdoptionDispos
 		action.DispositionID = p.Request.ID
 		a.Actions[id] = action
 	}
-	a.Format = AdoptionRecoveryFormatVersion
+	if a.Format != IntentDispositionFormatVersion {
+		a.Format = AdoptionRecoveryFormatVersion
+	}
 	a.Serial++
 	a.UpdatedAt = time.Now().UTC()
 	if err = validateAggregate(a, req.Topology); err != nil {
@@ -125,11 +128,11 @@ func (r *Repository) CommitFencedAdoption(ctx context.Context, p controlplane.Ad
 	})
 }
 func validateAdoptionRecoveries(a *aggregate) error {
-	if len(a.AdoptionRecoveries) > 0 && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
+	if len(a.AdoptionRecoveries) > 0 && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
 		return ErrCorruptRecord
 	}
 	for id, r := range a.AdoptionRecoveries {
-		if (len(r.Actions) > 0 || r.Proof.Disposition() != "recover-owned") && a.Format != AdoptionRecoveryFormatVersion {
+		if (len(r.Actions) > 0 || r.Proof.Disposition() != "recover-owned") && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
 			return ErrCorruptRecord
 		}
 		for actionID, old := range r.Actions {
@@ -156,7 +159,7 @@ func validateAdoptionRecoveries(a *aggregate) error {
 		}
 	}
 	for id, action := range a.Actions {
-		if action.DispositionID == "" {
+		if action.DispositionID == "" || strings.HasPrefix(action.DispositionID, "intent:") {
 			continue
 		}
 		r, ok := a.AdoptionRecoveries[action.DispositionID]

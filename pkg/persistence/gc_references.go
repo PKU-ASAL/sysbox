@@ -134,6 +134,16 @@ func gcReferencesAt(a *aggregate, now time.Time) (GCReferenceSnapshot, error) {
 			for _, resource := range content.State.Resources {
 				appendResource(prefix+"state/"+resource.Address.String(), resource)
 			}
+			for id, record := range content.IntentDispositions {
+				for actionID, old := range record.Actions {
+					if old.Candidate != nil {
+						appendResource(prefix+"intent-history/"+id+"/"+actionID, *old.Candidate)
+					}
+					if old.Replacement != nil {
+						appendResource(prefix+"intent-replacement/"+id+"/"+actionID, *old.Replacement)
+					}
+				}
+			}
 			for id, recovery := range content.AdoptionRecoveries {
 				for actionID, old := range recovery.Actions {
 					if old.Candidate != nil {

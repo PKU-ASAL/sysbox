@@ -16,7 +16,7 @@ func ValidateFencedIntentDisposition(raw []byte, d controlplane.IntentDispositio
 		return err
 	}
 	f, ok := ledger.Fences[d.FenceID]
-	if !ok || f.Receipt == nil || f.released() || f.Reconciliation != nil || f.AdoptionDisposition != nil || f.GCDisposition != nil {
+	if !ok || f.Receipt == nil || f.IntentDisposition != nil || f.released() || f.Reconciliation != nil || f.AdoptionDisposition != nil || f.GCDisposition != nil {
 		return ErrConflict
 	}
 	if now.IsZero() || now.Before(ledger.ObservedAt) || now.Before(f.Receipt.ObservedAt) || d.Topology != f.Request.Topology || d.RunID != f.Request.RunID || d.JournalSHA256 != f.Request.JournalSHA256 {

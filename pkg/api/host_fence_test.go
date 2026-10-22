@@ -38,6 +38,7 @@ func TestHostFenceDisposableVMIntake(t *testing.T) {
 
 func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bool, reconcileCase ...bool) {
 	reconcile := len(reconcileCase) > 0 && reconcileCase[0]
+	intentCase := len(reconcileCase) > 1 && reconcileCase[1]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -84,6 +85,9 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 					action.ProviderOperationAnchor = "action:" + action.ID
 					action.Quiescence = "unknown"
 					action.Candidate = &state.Resource{Driver: "docker", Address: action.Resource, OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: action.Generation, ExternalID: "external"}
+					if intentCase && acceptanceRoot == "" {
+						action.Candidate.Private = json.RawMessage(`{"identity":"fixture"}`)
+					}
 					if reconcile && acceptanceRoot != "" {
 						provider := os.Getenv("SYSBOX_DELETE_CLOSURE_PROVIDER")
 						if provider == "" {
@@ -222,6 +226,10 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				}
 				require.Equal(t, 200, post(receipt).Code)
 				if releaseCase {
+					if intentCase {
+						checkFenceIntentClosure(t, s, store, accepted, len(reconcileCase) > 2 && reconcileCase[2], acceptanceRoot)
+						return
+					}
 					if reconcile {
 						checkFenceDeleteClosure(t, s, store, accepted, acceptanceRoot)
 					} else {

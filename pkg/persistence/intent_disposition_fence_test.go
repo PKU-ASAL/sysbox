@@ -1,10 +1,12 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +24,7 @@ func TestFencedIntentDispositionRequiresCanonicalStopAndSignedObservation(t *tes
 	session, err := authority.OpenSession(ctx, "agent", "process", "")
 	require.NoError(t, err)
 	run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Op: "apply", Operation: "apply", Status: controlplane.RunRunning, Attempt: 1, QueuedAt: time.Now().UTC(), Revision: "revision"}
-	a := runtime.ActionRecord{ID: "action", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "node"), Action: controlplane.PlanActionCreate, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}}
+	a := runtime.ActionRecord{ID: "action", Topology: "lab", Revision: 1, ExpectedSerial: 3, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "node"), Action: controlplane.PlanActionCreate, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", Private: json.RawMessage(`{"identity":"fixture"}`), ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}}
 	actions := []runtime.ActionRecord{a}
 	_, journal, err := FenceJournal(run, 3, actions)
 	require.NoError(t, err)
@@ -96,5 +98,131 @@ func TestFencedIntentDispositionRequiresCanonicalStopAndSignedObservation(t *tes
 			require.Error(t, ValidateFencedIntentDisposition(altered, d, originalRun, 3, actions, o, signingKey, clock))
 		})
 	}
+	t.Run("file-commit-resumes-after-dispatch-write-failure", func(t *testing.T) {
+		repo, err := OpenFilesystem(t.TempDir())
+		require.NoError(t, err)
+		defer repo.Close()
+		require.NoError(t, repo.backend.update(ctx, "lab", func(life *aggregate) error {
+			life.State.TopologyUID = "owner"
+			life.Serial = 3
+			life.Actions[a.ID] = a
+			return nil
+		}))
+		runsDir := t.TempDir()
+		records := &fileGuestRecords{root: runsDir}
+		require.NoError(t, records.updateRecord(ctx, executionAuthorityKind, "authority", func([]byte) ([]byte, error) { return raw, nil }))
+		currentRun := run
+		currentCommand := CommandRecord{Command: controlplane.AgentCommand{ID: grant.CommandID, AgentID: run.AgentID, ActionID: run.ID, Type: "run_assigned", TopologyUID: "owner", Run: &run, Attempt: 1, Status: controlplane.AgentCommandStatusRunning}}
+		load := func() (controlplane.Run, CommandRecord, CommandRecord, error) {
+			return currentRun, currentCommand, observation, nil
+		}
+		fail := true
+		persist := func(r controlplane.Run, c CommandRecord) error {
+			currentRun = r
+			if fail {
+				return fmt.Errorf("injected dispatch write failure")
+			}
+			currentCommand = c
+			return nil
+		}
+		_, err = repo.CommitFilesystemFenceIntent(ctx, runsDir, "lab", observation.Command.ID, decision, hostPub, load, persist)
+		require.ErrorContains(t, err, "injected")
+		fail = false
+		result, err := repo.CommitFilesystemFenceIntent(ctx, runsDir, "lab", observation.Command.ID, decision, hostPub, load, persist)
+		require.NoError(t, err)
+		require.False(t, result.ReleasedAt.IsZero())
+		st, actions, err := repo.LoadStateAndActions(ctx, "lab")
+		require.NoError(t, err)
+		require.Len(t, st.Resources, 1)
+		require.Equal(t, int64(4), st.Meta.Serial)
+		require.Equal(t, runtime.ActionUncertain, actions[0].Status)
+		require.True(t, currentCommand.Retired)
+		again, err := repo.CommitFilesystemFenceIntent(ctx, runsDir, "lab", observation.Command.ID, decision, hostPub, load, persist)
+		require.NoError(t, err)
+		require.Equal(t, result, again)
+		_, err = repo.CommitFilesystemFenceIntent(ctx, runsDir, "lab", "wrong-observation", decision, hostPub, load, persist)
+		require.ErrorIs(t, err, ErrConflict)
+	})
+
+	t.Run("transaction-order", func(t *testing.T) {
+		life := newAggregate()
+		life.State.TopologyUID = "owner"
+		life.Serial = 3
+		life.Actions[a.ID] = a
+		before, err := json.Marshal(life)
+		require.NoError(t, err)
+		original := CommandRecord{Command: controlplane.AgentCommand{ID: grant.CommandID, AgentID: run.AgentID, ActionID: run.ID, Type: "run_assigned", TopologyUID: "owner", Run: &run, Attempt: 1, Status: controlplane.AgentCommandStatusRunning}}
+		transition, err := PrepareFenceIntent(raw, before, decision, run, original, observation, hostPub, now)
+		require.NoError(t, err)
+		prepared, err := decodeExecutionAuthority(transition.Authority)
+		require.NoError(t, err)
+		require.True(t, prepared.hostFenceBlocks(run.AgentID))
+		require.Equal(t, controlplane.GrantRevoked, prepared.Grants[grantScopeKey(grant.Scope)].State)
+		require.Equal(t, controlplane.RunFailed, transition.Run.Status)
+		require.Contains(t, transition.Run.Err, "unknown")
+		require.True(t, transition.Command.Retired)
+		_, err = FinishFenceIntent(transition.Authority, before, transition.Run, transition.Command, decision)
+		require.Error(t, err)
+		finished, err := FinishFenceIntent(transition.Authority, transition.Lifecycle, transition.Run, transition.Command, decision)
+		require.NoError(t, err)
+		final, err := decodeExecutionAuthority(finished)
+		require.NoError(t, err)
+		require.False(t, final.hostFenceBlocks(run.AgentID))
+		require.Equal(t, controlplane.GrantStopped, final.Grants[grantScopeKey(grant.Scope)].State)
+		preparedLedger, err := decodeExecutionAuthority(transition.Authority)
+		require.NoError(t, err)
+		preparedLedger.ObservedAt = now.Add(500 * time.Millisecond)
+		advanced, err := json.Marshal(preparedLedger)
+		require.NoError(t, err)
+		for _, post := range []bool{false, true} {
+			currentLife, currentRun, currentCmd := before, run, original
+			if post {
+				currentLife, currentRun, currentCmd = transition.Lifecycle, transition.Run, transition.Command
+			}
+			retry, err := PrepareFenceIntent(advanced, currentLife, decision, currentRun, currentCmd, observation, hostPub, now.Add(time.Second))
+			require.NoError(t, err)
+			require.JSONEq(t, string(transition.Lifecycle), string(retry.Lifecycle))
+			require.Equal(t, transition.Run, retry.Run)
+			require.Equal(t, transition.Command, retry.Command)
+		}
+	})
+
+	t.Run("durable-archive", func(t *testing.T) {
+		life := newAggregate()
+		life.State.TopologyUID = "owner"
+		life.Serial = 3
+		life.Actions[a.ID] = a
+		before, err := json.Marshal(life)
+		require.NoError(t, err)
+		var pretty bytes.Buffer
+		require.NoError(t, json.Indent(&pretty, before, "", "  "))
+		before = pretty.Bytes()
+		next, err := PrepareIntentDispositionLifecycle(raw, before, decision, run, observation, hostPub, now)
+		require.NoError(t, err)
+		decoded, err := decodeAggregate(next)
+		require.NoError(t, err)
+		require.Equal(t, runtime.ActionUncertain, decoded.Actions[a.ID].Status)
+		require.Equal(t, "intent:decision", decoded.Actions[a.ID].DispositionID)
+		require.Len(t, decoded.State.Resources, 1)
+		require.Equal(t, state.ResourceUnknown, decoded.State.Resources[0].Status)
+		require.Len(t, decoded.IntentDispositions, 1)
+		refs, err := gcReferences(decoded)
+		require.NoError(t, err)
+		protected := false
+		for _, ref := range refs.References {
+			if ref.Source == "intent-history/decision/action" && ref.ExternalID == "external" {
+				protected = true
+			}
+		}
+		require.True(t, protected)
+		altered := decoded.Actions[a.ID]
+		altered.Status = runtime.ActionSucceeded
+		decoded.Actions[a.ID] = altered
+		corrupt, err := json.Marshal(decoded)
+		require.NoError(t, err)
+		_, err = decodeAggregate(corrupt)
+		require.Error(t, err)
+	})
+
 	require.Error(t, authority.Authorize(ctx, *grant), "validation cannot release revoked authority")
 }

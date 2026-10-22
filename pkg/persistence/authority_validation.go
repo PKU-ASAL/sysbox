@@ -18,7 +18,7 @@ func decodeExecutionAuthority(raw []byte) (*executionAuthority, error) {
 	if json.Unmarshal(raw, a) != nil || a.Sessions == nil || a.Grants == nil || a.ObservedAt.IsZero() {
 		return nil, ErrCorruptRecord
 	}
-	if a.Version != executionAuthorityVersion && a.Version != gcDispositionAuthorityVersion && a.Version != adoptionDispositionAuthorityVersion {
+	if a.Version != intentDispositionAuthorityVersion && a.Version != executionAuthorityVersion && a.Version != gcDispositionAuthorityVersion && a.Version != adoptionDispositionAuthorityVersion {
 		return nil, ErrUnsupportedVersion
 	}
 	if err := validateMaintenance(a); err != nil {
@@ -38,6 +38,20 @@ func decodeExecutionAuthority(raw []byte) (*executionAuthority, error) {
 		}
 	}
 	for _, stop := range a.Stops {
+		if strings.HasPrefix(stop.Receipt, "intent-fenced:") {
+			matched := false
+			for _, f := range a.Fences {
+				if f.IntentDisposition != nil && !f.IntentDisposition.ReleasedAt.IsZero() {
+					hash, err := f.IntentDisposition.Decision.Digest()
+					if err == nil && stop.Receipt == "intent-fenced:"+hash && sameGrantEpoch(stop.Grant, f.Request.Grant) {
+						matched = true
+					}
+				}
+			}
+			if !matched {
+				return nil, ErrCorruptRecord
+			}
+		}
 		if strings.HasPrefix(stop.Receipt, "adoption-fenced:") {
 			found := false
 			for _, f := range a.Fences {
