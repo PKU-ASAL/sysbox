@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
@@ -143,6 +144,28 @@ func TestMissingCreateIdentityUsesPinnedReadOnlyDiscovery(t *testing.T) {
 	require.Nil(t, e.state.FindResource(addr))
 	require.Zero(t, base.creates)
 	require.Zero(t, base.starts)
+	cfg := n.Data.(*config.NodeConfig)
+	cfg.Routes = []config.RouteConfig{{Destination: "10.0.1.0/24", Via: "10.0.0.1"}}
+	cfg.Provisioners = []config.ProvisionerConfig{{Type: "file", Source: "source", Destination: "destination"}}
+	a.DesiredDigest, err = desiredHash(n)
+	require.NoError(t, err)
+	repo.actions = []ActionRecord{a}
+	_, composite, err := ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+	require.NoError(t, err)
+	require.NotNil(t, composite[0].Discovered, "identity is discoverable even when guest setup outcome is unknown")
+	plan := PlanIntentDisposition(a, composite)
+	require.Equal(t, "retain-managed", plan.ResourceDecision)
+	require.Contains(t, plan.Blockers, "guest_effect_disposition_required")
+	_, err = (NodeResourceHandler{}).Discover(substrate.WithOperationIdentity(context.Background(), actionIdentity(a)), &ProviderContext{exec: e}, n)
+	require.Error(t, err, "ordinary recovery must not infer completion from this identity")
+	require.Nil(t, repo.actions[0].Candidate)
+	cfg.Links = []config.LinkConfig{{Name: "eth0", Network: "sysbox_network.lan"}}
+	a.DesiredDigest, err = desiredHash(n)
+	require.NoError(t, err)
+	repo.actions = []ActionRecord{a}
+	_, linked, err := ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+	require.NoError(t, err)
+	require.Nil(t, linked[0].Discovered, "missing attachment inventory remains unresolved")
 	a.DesiredDigest = "changed"
 	repo.actions = []ActionRecord{a}
 	_, obs, err = ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)

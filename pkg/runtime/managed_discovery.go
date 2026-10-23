@@ -90,6 +90,11 @@ func (RouterResourceHandler) Discover(ctx context.Context, pc *ProviderContext, 
 }
 
 func discoverNode(ctx context.Context, pc *ProviderContext, n *graph.Node, substrateRef, kind string) (ResourceReadResult, error) {
+	return discoverNodeIdentity(ctx, pc, n, substrateRef, kind, false)
+}
+
+// incomplete is reserved for explicit intent disposition, never ordinary recovery.
+func discoverNodeIdentity(ctx context.Context, pc *ProviderContext, n *graph.Node, substrateRef, kind string, incomplete bool) (ResourceReadResult, error) {
 	provider, err := resolveSubstrateRef(substrateRef)
 	if err != nil {
 		return ResourceReadResult{}, err
@@ -121,7 +126,7 @@ func discoverNode(ctx context.Context, pc *ProviderContext, n *graph.Node, subst
 	attrs["container_id"] = handle.ID
 	// Discovery does not claim that guest configuration or provisioners ran.
 	// A candidate persisted after the complete effect carries that evidence.
-	if cfg, ok := n.Data.(*config.NodeConfig); ok && (len(cfg.Links) > 0 || len(cfg.Routes) > 0 || len(cfg.Provisioners) > 0) {
+	if cfg, ok := n.Data.(*config.NodeConfig); ok && (len(cfg.Links) > 0 || !incomplete && (len(cfg.Routes) > 0 || len(cfg.Provisioners) > 0)) {
 		return ResourceReadResult{Status: state.ResourceUnknown}, fmt.Errorf("%w: discovered node lacks complete attachment/guest action evidence", ErrActionUncertain)
 	}
 	if kind == "router" {

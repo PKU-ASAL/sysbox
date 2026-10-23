@@ -376,3 +376,10 @@ Disposable-lab manifests now persist CPU/memory budgets. Retained lab restart
 requires explicit `resources` for both roles; older manifests must be inspected
 and assigned their known original budgets before restart. It must not substitute
 current defaults, which previously expanded a 1 GiB fencing VM to 6 GiB.
+
+For a lost create identity, explicit intent discovery can now locate a node with
+routes/provisioners when no links require separate attachment inventory. This
+only enables `retain-incomplete`: the original guest setup outcome stays unknown,
+all child stop checks still apply, and ordinary work remains blocked until an
+explicit rebuild/delete resolves the obligation. Ordinary discovery continues to
+reject incomplete setup; linked-node discovery still requires complete inventory.

@@ -208,3 +208,16 @@ Item 3 adds Firecracker exact generation/socket/TAP residue SPI and runtime
 identity propagation. Real TAP hold/deletion and file-stop each passed twice on
 the enrolled execution VM. Independent review fixed the missing-directory identity
 substitution bug. Enclosing full operator/reboot and composite discovery remain.
+
+Composite discovery proceeds by separating identity from completion. For nodes
+with routes/provisioners but no links, owning-provider identity discovery can
+produce only an explicit retain-incomplete candidate: it must retain original
+unknown history and child authority checks. Ordinary discovery must keep its
+existing incomplete-effect rejection. Nodes with links need complete attachment
+inventory before this path can admit disposition; do not remove that guard.
+
+The no-link routes/provisioners identity path is implemented and independently
+reviewed. Focused runtime, signed persistence and public three-backend API checks
+passed; full runtime race passed. This is only identity retention under the
+existing recovery obligation, not successful guest configuration or arbitrary
+external-effect cessation. Linked nodes and routers still need full inventory.

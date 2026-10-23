@@ -5355,3 +5355,13 @@ Final reviewed source rerun passed both real tests twice with cleanup passed:
 Final hardened runtime/Firecracker full race regression passed:
 `/tmp/sysbox-firecracker-fence-core-final-20261023.log` (Firecracker 10.993s).
 Independent final review found no remaining blocker in this slice.
+
+### Composite guest setup identity discovery (2026-10-23)
+
+Explicit missing-create intent discovery now accepts routes/provisioners without
+links. The read-only path discovers ownership identity only; it forces replay
+forbidden/incomplete, while ordinary discovery still rejects the same configuration.
+Runtime negative/positive tests, signed disposition preserving original journal,
+and three-backend public API disposition passed; full runtime race regression
+passed in `/tmp/sysbox-composite-identity-runtime-20261023.log`. Independent review
+found no blocker. Links without complete inventory remain unresolved.

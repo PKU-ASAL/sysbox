@@ -20,7 +20,7 @@ func discoverIntentIdentity(ctx context.Context, a ActionRecord, st *state.State
 		return nil
 	}
 	cfg, ok := n.Data.(*config.NodeConfig)
-	if !ok || len(cfg.Links) > 0 || len(cfg.Routes) > 0 || len(cfg.Provisioners) > 0 {
+	if !ok || len(cfg.Links) > 0 {
 		return nil
 	}
 	digest, err := desiredHash(n)
@@ -29,7 +29,7 @@ func discoverIntentIdentity(ctx context.Context, a ActionRecord, st *state.State
 	}
 	e := NewExecutor(g, st)
 	e.SetRunContext(topology, a.RunID)
-	observed, err := (NodeResourceHandler{}).Discover(substrate.WithOperationIdentity(ctx, actionIdentity(a)), &ProviderContext{exec: e}, n)
+	observed, err := discoverNodeIdentity(substrate.WithOperationIdentity(ctx, actionIdentity(a)), &ProviderContext{exec: e}, n, cfg.Substrate, "node", true)
 	if err != nil || (observed.Status != state.ResourcePresent && observed.Observation == nil) || observed.Resource.ExternalID == "" {
 		return nil
 	}
