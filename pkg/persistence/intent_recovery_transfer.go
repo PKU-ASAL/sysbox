@@ -1,6 +1,9 @@
 package persistence
 
-import "github.com/oslab/sysbox/pkg/controlplane"
+import (
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/runtime"
+)
 
 // A later independently verified fenced disposition can transfer an unresolved
 // rebuild obligation to its new generation or prove the old resource absent.
@@ -42,6 +45,9 @@ func validIntentRecoveryTransfer(old IntentDispositionArchive, choice controlpla
 	original, ok := old.Actions[choice.ActionID]
 	if !ok {
 		return false
+	}
+	if resolved, err := runtime.IntentWithDiscoveredIdentity(original, old.Observation.Resources); err == nil {
+		original = resolved
 	}
 	expected := original.Candidate
 	if choice.Decision == "retain-replacement-incomplete" {

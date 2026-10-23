@@ -37,6 +37,9 @@ func ValidateIntentDispositionChoice(d controlplane.IntentDispositionDecision, r
 		byID[o.ActionID] = o
 	}
 	for _, a := range selected {
+		if resolved, err := runtime.IntentWithDiscoveredIdentity(a, report.Resources); err == nil {
+			a = resolved
+		}
 		if a.OwnerUID != report.TopologyUID || !seen[a.ID] {
 			return ErrConflict
 		}

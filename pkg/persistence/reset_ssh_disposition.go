@@ -16,7 +16,7 @@ func publishResetSSHDisposition(a *aggregate, action runtime.ActionRecord, at ti
 		return ErrConflict
 	}
 	source := a.State.FindResource(action.Resource)
-	if source == nil || source.OwnerUID != action.OwnerUID || source.ResourceUID != action.ResourceUID || source.Generation != action.Generation-1 || source.Driver != action.Candidate.Driver || source.ExternalID == "" || source.ExternalID == action.Candidate.ExternalID || len(source.Attachments) > 0 || source.RecoveryRequired() || action.Candidate.RecoveryRequired() {
+	if source == nil || source.OwnerUID != action.OwnerUID || source.ResourceUID != action.ResourceUID || source.Generation != action.Generation-1 || source.Driver != action.Candidate.Driver || source.ExternalID == "" || source.ExternalID == action.Candidate.ExternalID || source.RecoveryRequired() || action.Candidate.RecoveryRequired() {
 		return ErrConflict
 	}
 	// The pinned SSH records bind the old provider identity even though the

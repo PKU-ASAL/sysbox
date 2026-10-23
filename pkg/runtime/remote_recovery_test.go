@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -91,4 +93,72 @@ func TestReadAndDeleteAfterResetDispositionUseActualSourceGeneration(t *testing.
 			require.Equal(t, next.Candidate.Generation, next.Generation)
 		})
 	}
+}
+
+func TestMissingCreateIdentityUsesPinnedReadOnlyDiscovery(t *testing.T) {
+	e, base, _, addr := nodeGuardExecutor(t, nil)
+	n := e.graph.Get(addr)
+	digest, err := desiredHash(n)
+	require.NoError(t, err)
+	baseDriver := base
+	wrapper := &missingIdentityDriver{nodeGuardDriver: baseDriver}
+	prior := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = prior })
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: base.name, Version: "test", Node: wrapper, NodeState: wrapper}))
+	e.state.TopologyUID = "owner"
+	a := ActionRecord{ID: "create", RunID: "run", Resource: addr, Action: controlplane.PlanActionCreate, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "node", Generation: 1, DesiredDigest: digest, ReplayForbidden: true}
+	repo := &memoryActions{state: e.state, actions: []ActionRecord{a}}
+	_, obs, err := ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	require.NotNil(t, obs[0].Discovered)
+	require.Equal(t, "found", obs[0].Discovered.ExternalID)
+	require.Equal(t, "present", obs[0].Status)
+	p := PlanIntentDisposition(a, obs)
+	require.Equal(t, "retain-managed", p.ResourceDecision)
+	require.Contains(t, p.Blockers, "guest_effect_disposition_required")
+	for _, mode := range []string{"foreign-owner", "wrong-digest", "missing", "duplicate", "not-present"} {
+		t.Run(mode, func(t *testing.T) {
+			copies := append([]controlplane.RecoveredResource(nil), obs...)
+			candidate := *copies[0].Discovered
+			copies[0].Discovered = &candidate
+			switch mode {
+			case "foreign-owner":
+				candidate.OwnerUID = "foreign"
+			case "wrong-digest":
+				candidate.Attributes = state.MustAttributes(map[string]any{"desired_hash": "wrong"})
+			case "missing":
+				copies[0].Discovered = nil
+			case "duplicate":
+				copies = append(copies, copies[0])
+			case "not-present":
+				copies[0].Status = "unknown"
+			}
+			_, err := IntentWithDiscoveredIdentity(a, copies)
+			require.Error(t, err)
+		})
+	}
+	require.Nil(t, repo.actions[0].Candidate)
+	require.Nil(t, e.state.FindResource(addr))
+	require.Zero(t, base.creates)
+	require.Zero(t, base.starts)
+	a.DesiredDigest = "changed"
+	repo.actions = []ActionRecord{a}
+	_, obs, err = ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+	require.NoError(t, err)
+	require.Nil(t, obs[0].Discovered)
+}
+
+type missingIdentityDriver struct{ *nodeGuardDriver }
+
+func (d *missingIdentityDriver) DiscoverManagedNode(_ context.Context, id substrate.OperationIdentity, _ string) (substrate.NodeHandle, error) {
+	return substrate.NodeHandle{ID: "found", Generation: id.Generation}, nil
+}
+func (d *missingIdentityDriver) HostFenceScope(context.Context) (string, error) {
+	return "local-only", nil
+}
+func (d *missingIdentityDriver) ObserveNode(ctx context.Context, h substrate.NodeHandle) (substrate.NodeObservation, error) {
+	id, _ := substrate.OperationIdentityFromContext(ctx)
+	return substrate.NodeObservation{Exists: true, ExternalID: h.ID, OwnerUID: id.OwnerUID, ResourceUID: id.ResourceUID, Generation: id.Generation, Status: substrate.NodeStatusExited}, nil
 }

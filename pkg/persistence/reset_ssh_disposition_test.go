@@ -108,13 +108,43 @@ func TestResetSSHUnknownDispositionSignedCrashRecovery(t *testing.T) {
 }
 func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) {
 	unknown := len(quarantine) > 0 && quarantine[0]
+	attached := len(quarantine) > 1 && quarantine[1]
+	missingCreate := len(quarantine) > 2 && quarantine[2]
 	ctx := context.Background()
 	a, action, decision := resetSSHDispositionFixture(t)
-	recorded := action.ResetSSH[0].Result
+	if attached {
+		oldAttachment := state.Attachment{Name: "lan", Node: action.Resource, Network: address.Resource("sysbox_network", "lan"), Driver: action.Candidate.Driver, DriverState: json.RawMessage(`{"generation":1}`)}
+		a.State.Resources[0].Attachments = []state.Attachment{oldAttachment}
+		candidate := *action.Candidate
+		nextAttachment := oldAttachment
+		nextAttachment.DriverState = json.RawMessage(`{"generation":2}`)
+		candidate.Attachments = []state.Attachment{nextAttachment}
+		action.Candidate = &candidate
+		action.Replacement = &candidate
+	}
+	discovered := action.Candidate
+	if missingCreate {
+		candidate := *discovered
+		candidate.Attributes = state.MustAttributes(map[string]any{"desired_hash": "desired"})
+		discovered = &candidate
+		action.Action = controlplane.PlanActionCreate
+		action.Phase = ""
+		action.EffectComplete = false
+		action.DesiredDigest = "desired"
+		action.Candidate = nil
+		action.Replacement = nil
+		action.ResetSSH = nil
+		a.State.Resources = nil
+		a.Actions[action.ID] = action
+	}
+	var recorded *state.Resource
+	if len(action.ResetSSH) > 0 {
+		recorded = action.ResetSSH[0].Result
+	}
 	if unknown {
 		decision.Actions[0].Decision = "retain-incomplete"
 	}
-	if lost {
+	if lost && !missingCreate {
 		action.ResetSSH[0].Result = nil
 		a.Actions[action.ID] = action
 	}
@@ -140,13 +170,22 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	source := a.State.FindResource(action.Resource)
-	o := controlplane.RecoveredResource{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: action.Generation, ExternalID: action.Candidate.ExternalID, JournalStatus: string(action.Status), Status: "present", ProviderScope: "local-only"}
+	if missingCreate {
+		source = discovered
+	}
+	o := controlplane.RecoveredResource{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: action.Generation, ExternalID: discovered.ExternalID, JournalStatus: string(action.Status), Status: "present", ProviderScope: "local-only"}
 	old := o
 	old.Generation = source.Generation
 	old.ExternalID = source.ExternalID
 	old.Status = "absent"
 	old.DeleteResidueAbsent = true
+	old.AttachmentResidueAbsent = true
+	old.AttachmentCount = len(source.Attachments)
 	o.ResetSource = &old
+	if missingCreate {
+		o.ResetSource = nil
+		o.Discovered = discovered
+	}
 	for _, dep := range action.ResetSSH {
 		r := dep.Result
 		if lost {
@@ -163,7 +202,7 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 		require.NoError(t, json.Unmarshal(raw, &saved))
 		o.ResetSSH[0].SSHCommitted = &substrate.SSHAccessResult{Handle: saved.Handle, Present: true}
 	}
-	if unknown {
+	if unknown && !missingCreate {
 		o.ResetSSH[0].Status = "unknown"
 	}
 	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: a.State.TopologyUID, StateSerial: a.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{o}}
@@ -187,12 +226,16 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 	require.NoError(t, err)
 	result, err := decodeAggregate(first.Lifecycle)
 	require.NoError(t, err)
-	if lost {
+	if lost && !missingCreate {
 		require.Nil(t, result.Actions[action.ID].ResetSSH[0].Result)
 		require.Nil(t, result.IntentDispositions[decision.ID].Actions[action.ID].ResetSSH[0].Result)
 		if unknown {
 			require.Nil(t, result.State.FindResource(action.ResetSSH[0].Previous.Address))
 			require.True(t, result.State.FindResource(action.Resource).RecoveryRequired())
+			if attached {
+				require.Equal(t, action.Candidate.Attachments, result.State.FindResource(action.Resource).Attachments)
+				require.Equal(t, action.Candidate.Attachments, result.IntentDispositions[decision.ID].Actions[action.ID].Candidate.Attachments)
+			}
 			for _, op := range []string{"apply", "reset", "destroy"} {
 				err := ValidateCommandLifecycle(first.Lifecycle, "lab", controlplane.AgentCommand{Type: "run_assigned", TopologyUID: "owner", Run: &controlplane.Run{Op: op}})
 				if op == "apply" {
@@ -211,8 +254,15 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 	for _, ref := range refs.References {
 		sources[ref.Source] = true
 	}
-	require.True(t, sources["intent-ssh-previous/decision/reset/"+action.ResetSSH[0].ActionID])
-	require.Equal(t, !unknown, sources["intent-ssh-result/decision/reset/"+action.ResetSSH[0].ActionID])
+	if missingCreate {
+		require.Nil(t, result.Actions[action.ID].Candidate)
+		require.Nil(t, result.IntentDispositions[decision.ID].Actions[action.ID].Candidate)
+		require.True(t, result.State.FindResource(action.Resource).RecoveryRequired())
+		require.True(t, sources["intent-history/decision/reset"])
+	} else {
+		require.True(t, sources["intent-ssh-previous/decision/reset/"+action.ResetSSH[0].ActionID])
+		require.Equal(t, !unknown, sources["intent-ssh-result/decision/reset/"+action.ResetSSH[0].ActionID])
+	}
 	require.Equal(t, controlplane.RunFailed, first.Run.Status)
 	require.Contains(t, first.Run.Err, "unknown")
 	require.Equal(t, runtime.ActionUncertain, result.Actions[action.ID].Status)
@@ -223,6 +273,9 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 	changed := report
 	changed.Resources = append([]controlplane.RecoveredResource(nil), report.Resources...)
 	changed.Resources[0].ResetSSH = nil
+	if missingCreate {
+		changed.Resources[0].Discovered = nil
+	}
 	decision.ObservationSHA256 = evidenceHash(changed)
 	require.Error(t, ValidateIntentDispositionChoice(decision, run, a.Serial, actionValues(a), changed))
 }
@@ -245,4 +298,12 @@ func TestResetSSHUnknownDispositionQuarantinesNodeAndArchivesChildren(t *testing
 	require.JSONEq(t, string(original), string(after))
 	require.Nil(t, a.Actions[action.ID].ResetSSH[0].Result)
 	require.Equal(t, runtime.ActionUncertain, a.Actions[action.ID].Status)
+}
+
+func TestResetSSHCompositeAttachmentsRetainReplacementObligation(t *testing.T) {
+	testResetSSHSignedDisposition(t, true, true, true)
+}
+
+func TestMissingCreateIdentitySignedDispositionPreservesOriginalJournal(t *testing.T) {
+	testResetSSHSignedDisposition(t, false, true, false, true)
 }

@@ -193,3 +193,34 @@ func TestResetSourceDispositionKeepsPinnedSSHAndRejectsChangedDependency(t *test
 		})
 	}
 }
+
+func TestAbsentDispositionCanRemoveAttachmentMetadataOnlyWithSignedCoverage(t *testing.T) {
+	a, action, d := resetSSHDispositionFixture(t)
+	action.Action = controlplane.PlanActionDelete
+	action.Generation = 1
+	action.Phase = ""
+	action.EffectComplete = false
+	action.ReplayForbidden = false
+	action.Candidate = &a.State.Resources[0]
+	action.Candidate.Attachments = []state.Attachment{{Name: "lan", Node: action.Resource, Network: address.Resource("sysbox_network", "lan"), Driver: action.Candidate.Driver, DriverState: json.RawMessage(`{"exact":true}`)}}
+	action.ResetSSH = nil
+	action.Replacement = nil
+	a.Actions = map[string]runtime.ActionRecord{action.ID: action}
+	d.Actions[0].Decision = "absent"
+	d.Actions[0].Generation = 1
+	d.Actions[0].ExternalID = action.Candidate.ExternalID
+	run := controlplane.Run{ID: action.RunID, Topology: action.Topology, QueuedAt: action.RunQueuedAt, Revision: action.RunRevision, AgentID: "agent", Attempt: 1}
+	_, journal, err := FenceJournal(run, a.Serial, actionValues(a))
+	require.NoError(t, err)
+	d.JournalSHA256 = journal
+	report := controlplane.RunRecoveryReport{RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: a.Serial, Resources: []controlplane.RecoveredResource{{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: 1, ExternalID: action.Candidate.ExternalID, JournalStatus: string(action.Status), Status: "absent", ProviderScope: "local-only", DeleteResidueAbsent: true}}}
+	d.ObservationSHA256 = evidenceHash(report)
+	require.Error(t, ValidateIntentDispositionChoice(d, run, a.Serial, actionValues(a), report))
+	report.Resources[0].AttachmentResidueAbsent = true
+	report.Resources[0].AttachmentCount = 1
+	d.ObservationSHA256 = evidenceHash(report)
+	require.NoError(t, ValidateIntentDispositionChoice(d, run, a.Serial, actionValues(a), report))
+	_, err = intentDispositionPostimage(a, d, time.Now().UTC())
+	require.NoError(t, err)
+	require.Nil(t, a.State.FindResource(action.Resource))
+}

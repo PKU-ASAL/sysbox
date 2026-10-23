@@ -5241,3 +5241,44 @@ Full API race: `/tmp/sysbox-reset-ssh-unknown-api-full.jsonl` (all passed).
 The focused three-backend API round also passed in
 `/tmp/sysbox-reset-ssh-unknown-api.log`. These are backend/protocol contracts,
 not a full real Reset/operator round. Remaining fixed stage-1 checklist stays open.
+
+
+### PR #53: attachment residue and missing create identity
+
+Implemented signed attachment count/residue coverage, explicit absent metadata
+commit, independent old/new ResetSSH attachment accounting, and read-only
+immutable-graph discovery for a lost create ID. Only exact discovered identities
+can be retained under a node rebuild/delete requirement; original journal and
+archive keep nil Candidate. File/SQLite/PostgreSQL API tests cover child cessation,
+canonical publication, metadata-removal refusal, successful explicit destroy,
+fresh admission and old-decision retry. Pinned input loading and immutable digest
+mismatch are covered separately. Composite discovery with links/routes/provisioners
+and providers without complete residue evidence remain unresolved.
+
+Seven same-source contract gates passed with no skips:
+`/tmp/sysbox-attachment-discovery-campaign-20261023/run.json`.
+Source SHA256: `b3caa6f3c57b69bebcbb31697e39b6786cddb666aa64dbabce323039802a0a53`.
+Runtime/persistence/controlplane full race passed in
+`/tmp/sysbox-attachment-discovery-core-full.log`; agentexec initially could not
+listen inside the sandbox, then passed with local sockets allowed in
+`/tmp/sysbox-attachment-discovery-agent-full.log` (8.065s). The preceding attachment
+API full race passed in `/tmp/sysbox-attachment-absence-api-full.jsonl` (292.281s).
+Current discovery API full regression is recorded separately below.
+
+Real enrolled execution-VM Docker validation passed:
+`/tmp/sysbox-attachment-discovery-real-20261023.log`: NAT endpoint cleanup,
+independent veth residue, exact disappearance, same-name replacement rejection,
+and cold owner/UID/generation discovery after discarding a create response.
+The exact test container/network/veth and uploaded probe were cleaned.
+`/tmp/sysbox-network-attachment-real-20261023.log` passed empty bridge, retained
+port, **detached but present** veth refusal and exact disappearance. This last
+case was added after independent review found a bridge-only check insufficient.
+Review also caught a missing AttachmentCount in actual nested observation; the
+real observer regression now asserts it. Both blockers were corrected and reviewed.
+These are real protocol/SPI tests plus synthetic enclosing API contracts, not yet
+the full repeated real Reset/operator integration gate.
+
+Current attachment/discovery API full race passed (376.837s):
+`/tmp/sysbox-attachment-discovery-api-full.jsonl`; stderr empty. The final source
+matches the seven-gate report. Missing-create observation, signed-crash history/GC
+and three-backend public disposition were also independently focused-race checked.

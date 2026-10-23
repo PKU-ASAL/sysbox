@@ -137,6 +137,9 @@ func gcReferencesAt(a *aggregate, now time.Time) (GCReferenceSnapshot, error) {
 			}
 			for id, record := range content.IntentDispositions {
 				for actionID, old := range record.Actions {
+					if resolved, err := runtime.IntentWithDiscoveredIdentity(old, record.Observation.Resources); err == nil {
+						old = resolved
+					}
 					if old.Action == controlplane.PlanActionReset && len(old.ResetSSH) > 0 {
 						if resolved, err := runtime.ResetSSHWithObservedResults(old, record.Observation.Resources); err == nil {
 							old = resolved

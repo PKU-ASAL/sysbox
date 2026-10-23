@@ -32,6 +32,12 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 	for _, choice := range d.Actions {
 		action, ok := next.Actions[choice.ActionID]
 		original := action
+		if resolved, err := runtime.IntentWithDiscoveredIdentity(action, observations); err == nil && action.Candidate == nil {
+			if choice.Decision != "retain-incomplete" {
+				return nil, ErrConflict
+			}
+			action = resolved
+		}
 		if ok && action.Action == controlplane.PlanActionReset && action.Phase == "verifying" && len(action.ResetSSH) > 0 {
 			if resolved, err := runtime.ResetSSHWithObservedResults(action, observations); err == nil {
 				action = resolved
@@ -41,6 +47,18 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 		if ok && (action.ResetSSHResultsRecorded() && choice.Decision == "retain" || quarantine) {
 			if choice.ResourceUID != action.ResourceUID || choice.Generation != action.Generation || choice.ExternalID != action.Candidate.ExternalID {
 				return nil, ErrConflict
+			}
+			source := next.State.FindResource(action.Resource)
+			if source != nil && len(source.Attachments) > 0 {
+				covered := false
+				for _, o := range observations {
+					if o.ActionID == action.ID && o.ResetSource != nil && o.ResetSource.ExternalID == source.ExternalID && o.ResetSource.Generation == source.Generation && o.ResetSource.AttachmentCount == len(source.Attachments) && o.ResetSource.AttachmentResidueAbsent {
+						covered = true
+					}
+				}
+				if !covered {
+					return nil, ErrConflict
+				}
 			}
 			decision := ""
 			if quarantine {
@@ -69,7 +87,7 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 		if replacement {
 			candidate = action.Replacement
 		}
-		if choice.ResourceUID != action.ResourceUID || choice.Generation != action.Generation || choice.ExternalID != candidate.ExternalID || candidate.ExternalID == "" || (len(candidate.Attachments) > 0 && !incomplete) {
+		if choice.ResourceUID != action.ResourceUID || choice.Generation != action.Generation || choice.ExternalID != candidate.ExternalID || candidate.ExternalID == "" || (len(candidate.Attachments) > 0 && !incomplete && choice.Decision != "absent") {
 			return nil, ErrConflict
 		}
 		current := next.State.FindResource(action.Resource)
@@ -77,7 +95,7 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 		if replacement && current != nil && current.Generation == action.Candidate.Generation {
 			expectedCurrent = action.Candidate
 		}
-		if current != nil && (current.OwnerUID != expectedCurrent.OwnerUID || current.ResourceUID != expectedCurrent.ResourceUID || current.Generation != expectedCurrent.Generation || current.Driver != expectedCurrent.Driver || current.ExternalID != expectedCurrent.ExternalID || (len(current.Attachments) > 0 && (!incomplete || evidenceHash(current.Attachments) != evidenceHash(expectedCurrent.Attachments)))) {
+		if current != nil && (current.OwnerUID != expectedCurrent.OwnerUID || current.ResourceUID != expectedCurrent.ResourceUID || current.Generation != expectedCurrent.Generation || current.Driver != expectedCurrent.Driver || current.ExternalID != expectedCurrent.ExternalID || (len(current.Attachments) > 0 && ((!incomplete && choice.Decision != "absent") || evidenceHash(current.Attachments) != evidenceHash(expectedCurrent.Attachments)))) {
 			return nil, ErrConflict
 		}
 		for _, resource := range next.State.Resources {
@@ -118,7 +136,8 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 			return nil, ErrConflict
 		}
 		addresses[action.Resource.String()] = true
-		archive[action.ID] = action
+		archive[action.ID] = original
+		action = original
 		action.DispositionID = "intent:" + d.ID
 		next.Actions[action.ID] = action
 	}
@@ -265,6 +284,9 @@ func validateIntentDispositionArchives(a *aggregate) error {
 				} else {
 					resource := a.State.FindResource(old.Resource)
 					expected := old.Candidate
+					if resolved, err := runtime.IntentWithDiscoveredIdentity(old, record.Observation.Resources); err == nil {
+						expected = resolved.Candidate
+					}
 					if choice.Decision == "retain-replacement-incomplete" {
 						expected = old.Replacement
 					}
@@ -312,6 +334,9 @@ func validIntentRecoveryResolution(record IntentDispositionArchive, choice contr
 	old, ok := record.Actions[choice.ActionID]
 	if !ok || validateAction(action) != nil || action.Revision < 1 || action.Status != runtime.ActionSucceeded || action.DispositionID != "" || action.OwnerUID != record.Observation.TopologyUID || action.ResourceUID != choice.ResourceUID || !action.Resource.Equal(old.Resource) || action.ExpectedSerial < record.Decision.ExpectedSerial+1 || action.Candidate == nil || action.Candidate.OwnerUID != action.OwnerUID || action.Candidate.ResourceUID != action.ResourceUID {
 		return false
+	}
+	if resolved, err := runtime.IntentWithDiscoveredIdentity(old, record.Observation.Resources); err == nil {
+		old = resolved
 	}
 	expected := old.Candidate
 	if choice.Decision == "retain-replacement-incomplete" {

@@ -349,3 +349,45 @@ func TestNetworkBridgeReplacementRejectedE2E(t *testing.T) {
 		})
 	}
 }
+
+func TestOwnedBridgeEmptyProofRejectsAttachmentResidueE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_NETWORK_E2E") != "1" {
+		t.Skip("requires isolated namespace privileges")
+	}
+	name := "sbempty-" + uuid.NewString()[:8]
+	id := substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: name, Generation: 1}
+	ctx := substrate.WithOperationIdentity(context.Background(), id)
+	require.NoError(t, (Driver{}).CreateIsolated(ctx, driver.IsolatedNetworkSpec{Name: name, Bridge: "br0", CIDR: "10.253.19.1/24"}))
+	t.Cleanup(func() { require.NoError(t, DeleteNetns(name)); require.NoError(t, (Driver{}).removeOwnership(name)) })
+	target := BridgeTarget{Identity: id, NetworkNamespace: name, Bridge: "br0"}
+	b, err := OpenOwnedBridge(ctx, target)
+	require.NoError(t, err)
+	require.NoError(t, b.RequireNoAttachmentPorts(ctx))
+	b.Close()
+	node := substrate.OperationIdentity{ActionID: "attach", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "node", Generation: 1}
+	alias, err := AttachmentAlias(node, "lan")
+	require.NoError(t, err)
+	_, err = CreateVethPair(ctx, target, VethSpec{HostEnd: "host", GuestEnd: "peer", OwnerAlias: alias})
+	require.NoError(t, err)
+	b, err = OpenOwnedBridge(ctx, target)
+	require.NoError(t, err)
+	require.Error(t, b.RequireNoAttachmentPorts(ctx))
+	b.Close()
+	handle, err := (Driver{}).openNetlink(name)
+	require.NoError(t, err)
+	link, err := handle.LinkByName("host")
+	require.NoError(t, err)
+	require.NoError(t, handle.LinkSetNoMaster(link))
+	handle.Close()
+	b, err = OpenOwnedBridge(ctx, target)
+	require.NoError(t, err)
+	require.Error(t, b.RequireNoAttachmentPorts(ctx), "detached veth residue must remain blocked")
+	b.Close()
+	proof, err := CaptureAttachmentLink(ctx, name, "host", alias)
+	require.NoError(t, err)
+	require.NoError(t, DeleteOwnedAttachment(ctx, proof, alias))
+	b, err = OpenOwnedBridge(ctx, target)
+	require.NoError(t, err)
+	require.NoError(t, b.RequireNoAttachmentPorts(ctx))
+	b.Close()
+}

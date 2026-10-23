@@ -29,6 +29,9 @@ type IntentDispositionPlan struct {
 }
 
 func PlanIntentDisposition(a ActionRecord, observations []controlplane.RecoveredResource) IntentDispositionPlan {
+	if resolved, err := IntentWithDiscoveredIdentity(a, observations); err == nil {
+		a = resolved
+	}
 	p := IntentDispositionPlan{ActionID: a.ID, OriginalStatus: a.Status, ResourceDecision: "unresolved", Identities: []IntentDispositionIdentity{}, Blockers: []string{"effect_stop_proof_required"}}
 	if a.Candidate != nil {
 		p.Identities = append(p.Identities, dispositionIdentity("candidate", a.Candidate))
@@ -153,7 +156,7 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 			}
 			p.ResourceDecision = "retain-managed"
 		case "absent":
-			if len(c.Attachments) > 0 {
+			if len(c.Attachments) > 0 && (!o.AttachmentResidueAbsent || o.AttachmentCount != len(c.Attachments)) {
 				p.Blockers = append(p.Blockers, "attachment_absence_proof_required")
 			}
 			if o.ProviderScope != "local-only" || !o.DeleteResidueAbsent {

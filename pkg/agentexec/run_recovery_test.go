@@ -11,7 +11,9 @@ import (
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
@@ -165,4 +167,41 @@ func TestHostFenceObservationRejectsChangedBindingAfterRead(t *testing.T) {
 			require.Equal(t, 2, calls)
 		})
 	}
+}
+
+func TestMissingIdentityObservationLoadsOnlyPinnedWorkspace(t *testing.T) {
+	prior := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = prior })
+	d, err := docker.New()
+	require.NoError(t, err)
+	defer d.Close()
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Node: d, NIC: d, NodeState: d}))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "field.sysbox.hcl")
+	hcl := []byte("resource \"sysbox_node\" \"node\" {\n image=\"\"\n substrate=\"docker\"\n}\n")
+	require.NoError(t, os.WriteFile(path, hcl, 0600))
+	files := map[string][]byte{"field.sysbox.hcl": hcl}
+	revision := controlplane.GlobalRevision{Files: files, Revision: controlplane.ComputeRevisionDigest(files)}
+	local := NewLocalBridge(LocalOptions{Topology: "lab", ConfigFile: path, StatePath: filepath.Join(dir, "state.json"), RunsDir: dir})
+	repo, err := local.ActionRepository("lab")
+	require.NoError(t, err)
+	st, err := repo.LoadState(context.Background(), "lab")
+	require.NoError(t, err)
+	run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", QueuedAt: time.Now().UTC(), Revision: revision.Revision, Attempt: 1}
+	action := runtime.ActionRecord{ID: "missing", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "node"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1, DesiredDigest: "pinned", StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial}
+	require.NoError(t, repo.CommitActionIntent(context.Background(), action))
+	bridge := &pinnedHostRecoveryBridge{observedAgentBridge: &observedAgentBridge{LocalBridge: local, repository: repo}, path: path, revision: revision.Revision}
+	cmd := controlplane.AgentCommand{ID: "observe", AgentID: "agent", Run: &run, RecoveryMode: controlplane.RunRecoveryObserve}
+	report, err := NewExecutorWithBridge(bridge).ObserveRecoverRun(context.Background(), "agent", cmd, controlplane.RunRecoveryAuthorization{Run: run, Mode: controlplane.RunRecoveryObserve, Revision: &revision})
+	require.NoError(t, err)
+	require.True(t, bridge.materialized)
+	require.Equal(t, "unknown", report.Resources[0].Status, "missing driver/digest never proves absence")
+	records, err := repo.LoadActions(context.Background(), "lab")
+	require.NoError(t, err)
+	require.Nil(t, records[0].Candidate)
+	bridge.materialized = false
+	_, err = NewExecutorWithBridge(bridge).ObserveRecoverRun(context.Background(), "agent", cmd, controlplane.RunRecoveryAuthorization{Run: run, Mode: controlplane.RunRecoveryObserve})
+	require.NoError(t, err)
+	require.False(t, bridge.materialized, "legacy observation does not invent pinned inputs")
 }

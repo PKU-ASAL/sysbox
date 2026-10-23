@@ -2,19 +2,21 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // ObserveRunActions never mutates state or calls a provider effect. A missing
 // candidate is unknown, not proof that an external resource is absent.
-func ObserveRunActions(ctx context.Context, repo ActionRepository, topology, runID string) (*state.State, []controlplane.RecoveredResource, error) {
+func ObserveRunActions(ctx context.Context, repo ActionRepository, topology, runID string, graphs ...*graph.Graph) (*state.State, []controlplane.RecoveredResource, error) {
 	st, err := repo.LoadState(ctx, topology)
 	if err != nil {
 		return nil, nil, err
@@ -36,13 +38,20 @@ func ObserveRunActions(ctx context.Context, repo ActionRepository, topology, run
 		if candidate == nil {
 			candidate = st.FindResource(record.Resource)
 		}
+		var discovered *state.Resource
+		if candidate == nil && len(graphs) == 1 && graphs[0] != nil {
+			discovered = discoverIntentIdentity(ctx, record, st, graphs[0], topology)
+			candidate = discovered
+		}
 		item := observeIntentResource(ctx, record, candidate, st)
+		item.Discovered = discovered
 		if record.Action == controlplane.PlanActionReset && record.Phase == "verifying" && record.EffectComplete && len(record.ResetSSH) > 0 {
 			observeResetSSHDisposition(ctx, record, st, &item)
 		} else if record.Action == controlplane.PlanActionReset {
 			item.Status = "unknown"
 			if candidate != nil {
 				item.ExternalID = candidate.ExternalID
+				item.AttachmentCount = len(candidate.Attachments)
 			}
 			if record.Candidate != nil && record.Candidate.OwnerUID == record.OwnerUID && record.Candidate.ResourceUID == record.ResourceUID && record.Candidate.Generation > 0 && record.Candidate.Generation <= record.Generation {
 				source := record
@@ -88,6 +97,7 @@ func observeIntentResource(ctx context.Context, record ActionRecord, candidate *
 
 	if candidate != nil && candidate.OwnerUID == record.OwnerUID && candidate.ResourceUID == record.ResourceUID && candidate.Generation == record.Generation {
 		item.ExternalID = candidate.ExternalID
+		item.AttachmentCount = len(candidate.Attachments)
 		if record.Resource.Type == "sysbox_node" {
 			if node, err := driver.DefaultRegistry.RequireNode(candidate.Driver); err == nil {
 				if local, ok := node.(interface {
@@ -122,6 +132,7 @@ func observeIntentResource(ctx context.Context, record ActionRecord, candidate *
 				}); ok {
 					if handle, err := candidate.ReconstructHandle(codec); err == nil && proof.HostFenceDeletionAbsent(ctx, handle) == nil {
 						item.DeleteResidueAbsent = true
+						item.AttachmentResidueAbsent = observeAttachmentAbsence(ctx, record, *candidate, handle, node)
 					}
 				}
 			}
@@ -207,4 +218,29 @@ func (r *runRecoveryRepository) LoadActions(ctx context.Context, topology string
 		out = append(out, record)
 	}
 	return out, nil
+}
+
+// Node absence and attachment residue are independent. Only a provider-specific
+// proof covering every exact persisted attachment can discharge the latter.
+func observeAttachmentAbsence(ctx context.Context, record ActionRecord, candidate state.Resource, handle substrate.NodeHandle, node driver.Node) bool {
+	if len(candidate.Attachments) == 0 {
+		return true
+	}
+	checker, ok := node.(interface {
+		HostFenceAttachmentAbsent(context.Context, substrate.NodeHandle, string, json.RawMessage) error
+	})
+	if !ok {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, attachment := range candidate.Attachments {
+		if attachment.Name == "" || seen[attachment.Name] || attachment.Driver != candidate.Driver || !attachment.Node.Equal(candidate.Address) || len(attachment.DriverState) == 0 {
+			return false
+		}
+		seen[attachment.Name] = true
+		if checker.HostFenceAttachmentAbsent(substrate.WithOperationIdentity(ctx, actionIdentity(record)), handle, attachment.Name, attachment.DriverState) != nil {
+			return false
+		}
+	}
+	return true
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/secret"
 	"path/filepath"
@@ -78,7 +79,35 @@ func (e *Executor) ObserveRecoverRun(ctx context.Context, agentID string, cmd co
 	} else if auth.Mode != controlplane.RunRecoveryObserve {
 		return nil, fmt.Errorf("unsupported recovery mode")
 	}
-	st, resources, err := runtime.ObserveRunActions(ctx, repo, run.Topology, run.ID)
+	var observedGraph *graph.Graph
+	if auth.Mode == controlplane.RunRecoveryObserve && auth.Revision != nil {
+		needsDiscovery := false
+		for _, a := range journal {
+			if a.RunID == run.ID && a.Action == controlplane.PlanActionCreate && a.Candidate == nil {
+				needsDiscovery = true
+			}
+		}
+		if needsDiscovery {
+			workspace, ok := e.bridge.(RevisionWorkspaceProvider)
+			if !ok {
+				return nil, runtime.ErrConvergenceUnsupported
+			}
+			path, err := workspace.PinnedRevisionWorkspace(ctx, run, auth.Revision)
+			if err != nil {
+				return nil, err
+			}
+			mgr, err := e.bridge.StateManager(run.Topology)
+			if err != nil {
+				return nil, err
+			}
+			g, _, _, _, _, err := runtime.LoadWorkspaceWithInputs(path, mgr, nil)
+			if err != nil {
+				return nil, err
+			}
+			observedGraph = g
+		}
+	}
+	st, resources, err := runtime.ObserveRunActions(ctx, repo, run.Topology, run.ID, observedGraph)
 	if err != nil {
 		return nil, err
 	}

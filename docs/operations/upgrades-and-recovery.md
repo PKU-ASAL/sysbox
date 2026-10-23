@@ -332,3 +332,28 @@ For a lost committed result with changed configuration, recovery can reconstruct
 SSH desired metadata from the original node reference and admitted configuration
 only when its hash exactly matches the immutable dependency DesiredDigest.
 A missing or mismatched digest cannot be replaced by observed configuration.
+
+
+### Attachment absence and unrecorded create identity
+
+Signed recovery observations now carry an attachment count and a separate
+attachment-residue absence bit. Node absence is insufficient: every canonical
+attachment must have exact provider residue coverage before absent disposition.
+Docker checks exact NAT network endpoints or generation-bound link proofs;
+missing/replaced/unknown links do not all mean the same thing. Libvirt legacy
+state without TAP identity uses a conservative pinned-namespace check: any
+bridge port, veth or TAP, including detached/unrelated links, blocks absence.
+No proof operation deletes devices. ResetSSH can retain replacement attachments
+under a recovery requirement only after independently proving old-source residue
+absence; canonical old count and replacement attachment inventory are preserved.
+
+For a create journal without Candidate, default immutable Run inputs can supply
+an optional pinned graph for read-only owning-provider discovery. Desired hash
+must match original intent. Only unique, exact owner/UID/generation presence on a
+fenced local provider can enter the signed `discovered` field. The controller
+permits only retain-incomplete; it never fills the original nil Candidate or
+claims successful initialization. Archived signed discovery supplies GC and
+obligation resolution identities. Legacy/non-default-input observations without
+an exact graph remain unknown. Links/routes/provisioners and ambiguous or
+missing provider matches still require further inventory implementation; zero
+matches never authorize absent disposition for an unknown external identity.

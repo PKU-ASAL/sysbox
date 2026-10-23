@@ -2,6 +2,7 @@ package libvirt
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"os"
@@ -34,4 +35,11 @@ func TestFenceDeleteAbsenceRejectsRetainedManagedDisk(t *testing.T) {
 	require.Error(t, s.HostFenceDeletionAbsent(context.Background(), h))
 	require.NoError(t, os.Remove(dir))
 	require.NoError(t, s.HostFenceDeletionAbsent(context.Background(), h))
+}
+
+func TestFenceAttachmentAbsenceRejectsIncompleteBridgeIdentity(t *testing.T) {
+	virshFixture(t, "#!/bin/sh\ncase \"$1\" in uri) printf 'qemu:///system\\n';;list) exit 0;;esac\n")
+	h := substrate.NodeHandle{ID: "11111111-1111-4111-8111-111111111111", Provider: &HandleState{DomainUUID: "11111111-1111-4111-8111-111111111111", ExternalDefinition: true}}
+	err := New().HostFenceAttachmentAbsent(context.Background(), h, "lan", json.RawMessage(`{"bridge":"br0","mac":"02:00:00:00:00:01"}`))
+	require.Error(t, err)
 }

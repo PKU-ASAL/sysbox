@@ -2,7 +2,9 @@ package libvirt
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"os"
 	"path/filepath"
@@ -50,4 +52,37 @@ func (s *Substrate) HostFenceDeletionAbsent(ctx context.Context, h substrate.Nod
 		return fmt.Errorf("managed VM residue not proven absent")
 	}
 	return nil
+}
+
+// A missing domain does not by itself prove the absence of host TAP residue.
+// Legacy state lacks a TAP ifindex; require the pinned owned bridge to have no
+// ports at all. Shared bridges remain unresolved rather than guessing a device.
+func (s *Substrate) HostFenceAttachmentAbsent(ctx context.Context, h substrate.NodeHandle, name string, raw json.RawMessage) error {
+	if err := s.HostFenceDeletionAbsent(ctx, h); err != nil {
+		return err
+	}
+	var st attachmentState
+	if json.Unmarshal(raw, &st) != nil || name == "" || st.Bridge == "" || st.MAC == "" {
+		return fmt.Errorf("attachment bridge/MAC identity missing")
+	}
+	var target *network.BridgeTarget
+	for _, attachment := range hsFrom(h).Bridges {
+		if attachment.Name != name {
+			continue
+		}
+		if target != nil || attachment.Bridge != st.Bridge || attachment.MAC != st.MAC || attachment.Target.Bridge != st.Bridge {
+			return fmt.Errorf("attachment bridge identity conflicts")
+		}
+		copy := attachment.Target
+		target = &copy
+	}
+	if target == nil {
+		return fmt.Errorf("owned attachment bridge proof missing")
+	}
+	bridge, err := network.OpenOwnedBridge(ctx, *target)
+	if err != nil {
+		return err
+	}
+	defer bridge.Close()
+	return bridge.RequireNoAttachmentPorts(ctx)
 }

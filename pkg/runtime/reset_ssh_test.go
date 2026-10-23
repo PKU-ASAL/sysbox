@@ -343,7 +343,7 @@ func TestResetSSHUnknownDispositionRetainsRebuildObligation(t *testing.T) {
 	p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
 	require.Equal(t, "retain-incomplete-reset", p.ResourceDecision)
 	require.Equal(t, []string{"effect_stop_proof_required"}, p.Blockers)
-	for _, variant := range []string{"missing-child", "foreign-child", "source-present", "residue", "attachment"} {
+	for _, variant := range []string{"missing-child", "foreign-child", "source-present", "residue"} {
 		t.Run(variant, func(t *testing.T) {
 			aa := a
 			oo := o

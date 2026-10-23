@@ -22,7 +22,7 @@ func (a ActionRecord) ResetSSHResultsRecorded() bool { return a.resetSSHDisposit
 func (a ActionRecord) ResetSSHIncompleteSupported() bool { return a.resetSSHDispositionShape(true) }
 
 func (a ActionRecord) resetSSHDispositionShape(incomplete bool) bool {
-	if a.Action != controlplane.PlanActionReset || a.Phase != "verifying" || !a.EffectComplete || len(a.ResetSSH) == 0 || a.Generation < 2 || a.Candidate == nil || a.Candidate.Generation != a.Generation || a.Candidate.OwnerUID != a.OwnerUID || a.Candidate.ResourceUID != a.ResourceUID || !a.Candidate.Address.Equal(a.Resource) || a.Candidate.ExternalID == "" || len(a.Candidate.Attachments) > 0 {
+	if a.Action != controlplane.PlanActionReset || a.Phase != "verifying" || !a.EffectComplete || len(a.ResetSSH) == 0 || a.Generation < 2 || a.Candidate == nil || a.Candidate.Generation != a.Generation || a.Candidate.OwnerUID != a.OwnerUID || a.Candidate.ResourceUID != a.ResourceUID || !a.Candidate.Address.Equal(a.Resource) || a.Candidate.ExternalID == "" || (!incomplete && len(a.Candidate.Attachments) > 0) {
 		return false
 	}
 	if a.Replacement != nil && (a.Replacement.ExternalID != a.Candidate.ExternalID || a.Replacement.Generation != a.Generation || a.Replacement.OwnerUID != a.OwnerUID || a.Replacement.ResourceUID != a.ResourceUID || a.Replacement.Driver != a.Candidate.Driver || !a.Replacement.Address.Equal(a.Resource)) {
@@ -85,7 +85,7 @@ func planResetSSHDisposition(a ActionRecord, observations []controlplane.Recover
 		return p
 	}
 	old := o.ResetSource
-	if old == nil || old.ActionID != a.ID || old.Resource != a.Resource.String() || old.OwnerUID != a.OwnerUID || old.ResourceUID != a.ResourceUID || old.Generation != a.Generation-1 || old.ExternalID == "" || old.ExternalID == a.Candidate.ExternalID || old.Status != "absent" || old.ProviderScope != "local-only" || !old.DeleteResidueAbsent || old.JournalStatus != string(a.Status) || old.ResetSource != nil || old.ResetReplacement != nil || len(old.ResetSSH) != 0 {
+	if old == nil || old.ActionID != a.ID || old.Resource != a.Resource.String() || old.OwnerUID != a.OwnerUID || old.ResourceUID != a.ResourceUID || old.Generation != a.Generation-1 || old.ExternalID == "" || old.ExternalID == a.Candidate.ExternalID || old.Status != "absent" || old.ProviderScope != "local-only" || !old.DeleteResidueAbsent || (old.AttachmentCount > 0 && !old.AttachmentResidueAbsent) || old.JournalStatus != string(a.Status) || old.ResetSource != nil || old.ResetReplacement != nil || len(old.ResetSSH) != 0 {
 		p.Blockers = append(p.Blockers, "reset_ssh_old_source_absence_required")
 		return p
 	}

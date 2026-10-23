@@ -163,3 +163,25 @@ Items 1–2 passed independent review, same-source contracts and complete affect
 package race regression. Item 1 includes actual backend obligation resolution by
 successful delete, fresh admission and unchanged old-decision retry. Real enclosing
 Reset/operator acceptance remains item 6; it is not implied by these contracts.
+
+
+Items 3–4 implementation now includes attachment-count/residue coverage, old
+source proof versus retained replacement attachments, and exact missing-create
+identity discovery from pinned default immutable inputs. Independent review found
+and verified fixes for omitted nested count and detached link residue. Contract
+and isolated real Docker/network evidence passed. Remaining boundaries are
+composite missing-create inventory, provider cells without exact residue proof,
+and full repeated operator integration; keep the broad items open until those
+cells have explicit evidence. Missing IDs without authoritative evidence remain
+unknown by contract, never automatically absent or replayable.
+
+
+Persistent file cessation implementation path: same-boot, exact signed request,
+durable cancellation of commit, scope-format-3 fence and exclusive writer-lock
+handoff; preserve original uncertain install record and a separate stop tombstone.
+Only guest-kernel-local tmpfs/ext4 syscall scope may use it. No NFS/FUSE/overlay
+or changed-boot stop inference. Host/API receipts must distinguish stopped-unknown
+from committed/cancelled. Verify delayed originals, crash-between-writes, active
+writer timeout, exact cold retry, successor and SSH/vsock transport equivalence.
+This is an additional stop route within item 5, not its reboot/remote-storage
+completion. Historical scenes remain untouched.

@@ -64,7 +64,7 @@ func TestHostFenceIncompleteReplacementDisposableVM(t *testing.T) {
 	require.Equal(t, "libvirt", os.Getenv("SYSBOX_DELETE_CLOSURE_PROVIDER"))
 	runHostFenceAPIContract(t, root, true, true, true, false, true, false, true)
 }
-func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord, absent bool, acceptanceRoot string, unknownSSH bool, children ...controlplane.ExecutionGrant) {
+func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord, absent bool, acceptanceRoot string, unknownSSH bool, discovered *state.Resource, children ...controlplane.ExecutionGrant) {
 	t.Helper()
 	ctx := context.Background()
 	path := "/v1/topologies/lab/host-fences/" + fence.Request.ID
@@ -98,7 +98,12 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	require.NoError(t, err)
 	digest, err := fence.Request.Digest()
 	require.NoError(t, err)
-	report := controlplane.RunRecoveryReport{CommandID: lease.ID, RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, Mode: controlplane.RunRecoveryObserve, TopologyUID: before.TopologyUID, StateSerial: before.Meta.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: actions[0].ID, Resource: actions[0].Resource.String(), OwnerUID: actions[0].OwnerUID, ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, ExternalID: actions[0].Candidate.ExternalID, Status: "present", ProviderScope: "local-only", DeleteResidueAbsent: true, JournalStatus: string(actions[0].Status)}}}
+	candidate := actions[0].Candidate
+	if discovered != nil {
+		candidate = discovered
+	}
+	report := controlplane.RunRecoveryReport{CommandID: lease.ID, RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, Mode: controlplane.RunRecoveryObserve, TopologyUID: before.TopologyUID, StateSerial: before.Meta.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: actions[0].ID, Resource: actions[0].Resource.String(), OwnerUID: actions[0].OwnerUID, ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, ExternalID: candidate.ExternalID, Status: "present", ProviderScope: "local-only", DeleteResidueAbsent: true, JournalStatus: string(actions[0].Status)}}}
+	report.Resources[0].Discovered = discovered
 	verifiedSSH := actions[0].Phase == "verifying" && actions[0].EffectComplete && len(actions[0].ResetSSH) > 0
 	if verifiedSSH {
 		source := before.FindResource(actions[0].Resource)
@@ -107,6 +112,7 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 		old.ExternalID = source.ExternalID
 		old.Status = "absent"
 		old.DeleteResidueAbsent = true
+		old.AttachmentResidueAbsent = true
 		report.Resources[0].ResetSource = &old
 		for _, dep := range actions[0].ResetSSH {
 			r := dep.Result
@@ -151,6 +157,12 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 		report.Resources[0].Status = "unknown"
 	}
 	if absent {
+		report.Resources[0].AttachmentResidueAbsent = true
+		report.Resources[0].AttachmentCount = len(actions[0].Candidate.Attachments)
+		if report.Resources[0].ResetSource != nil {
+			report.Resources[0].ResetSource.AttachmentResidueAbsent = true
+			report.Resources[0].ResetSource.AttachmentCount = len(actions[0].Candidate.Attachments)
+		}
 		if report.Resources[0].ResetSource != nil {
 			report.Resources[0].ResetSource.Status = "absent"
 		} else {
@@ -189,7 +201,7 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	require.NoError(t, err)
 	raw, err := json.Marshal(report)
 	require.NoError(t, err)
-	d := controlplane.IntentDispositionDecision{Version: 1, ID: "decision", FenceID: fence.Request.ID, Topology: run.Topology, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, ExpectedSerial: before.Meta.Serial, JournalSHA256: fence.Request.JournalSHA256, ObservationSHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Reason: "retain exact resource after failed deletion", Actions: []controlplane.IntentDispositionAction{{ActionID: actions[0].ID, Decision: "retain", ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, ExternalID: actions[0].Candidate.ExternalID}}}
+	d := controlplane.IntentDispositionDecision{Version: 1, ID: "decision", FenceID: fence.Request.ID, Topology: run.Topology, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, ExpectedSerial: before.Meta.Serial, JournalSHA256: fence.Request.JournalSHA256, ObservationSHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Reason: "retain exact resource after failed deletion", Actions: []controlplane.IntentDispositionAction{{ActionID: actions[0].ID, Decision: "retain", ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, ExternalID: candidate.ExternalID}}}
 	if absent {
 		d.Actions[0].Decision = "absent"
 	}
@@ -256,6 +268,9 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 		if action.ID == actions[0].ID {
 			require.Equal(t, actions[0].Status, action.Status)
 			require.Equal(t, actions[0].ResetSSH, action.ResetSSH)
+			if discovered != nil {
+				require.Nil(t, action.Candidate)
+			}
 			require.Equal(t, "intent:decision", action.DispositionID)
 		}
 	}
@@ -296,7 +311,7 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 		manager := state.NewManagerWithBackend(repo.StateBackend("lab"))
 		require.Error(t, manager.Save(&proposed))
 		require.Equal(t, 200, post(cold, d, true).Code)
-		if unknownSSH {
+		if unknownSSH || discovered != nil {
 			node := *after.FindResource(actions[0].Resource)
 			cleanup := runtime.ActionRecord{ID: "explicit-cleanup", Topology: "lab", RunID: "cleanup-run", Resource: node.Address, Action: controlplane.PlanActionDelete, Status: runtime.ActionIntentCommitted, OwnerUID: node.OwnerUID, ResourceUID: node.ResourceUID, Generation: node.Generation, StateSerial: after.Meta.Serial, ExpectedSerial: after.Meta.Serial, Candidate: &node}
 			require.NoError(t, repo.CommitActionIntent(ctx, cleanup))
@@ -342,4 +357,12 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 
 func TestHostFenceParentDispositionWaitsForGuestChild(t *testing.T) {
 	runHostFenceAPIContract(t, "", true, true, true, false, false, false, false, true)
+}
+
+func TestHostFenceAttachmentAbsenceDispositionAPI(t *testing.T) {
+	runHostFenceAPIContract(t, "", true, true, true, true, true, false, false, false, false, false, false, true)
+}
+
+func TestHostFenceMissingCreateIdentityDispositionAPI(t *testing.T) {
+	runHostFenceAPIContract(t, "", true, true, true, false, false, true, false, true, false, false, false, true)
 }

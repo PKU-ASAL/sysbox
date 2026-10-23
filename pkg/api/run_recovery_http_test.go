@@ -122,3 +122,25 @@ func TestRecoveryAuthorizationRejectsDifferentExecutionAndCapability(t *testing.
 	rec = remoteRecoveryRequest(t, s, "POST", "/v1/agents/owner/commands/stale/recovery-authorize", controlplane.AgentCommandEvent{LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt})
 	require.Equal(t, 409, rec.Code)
 }
+
+func TestRecoveryObservationPinsOnlyDefaultImmutableInputs(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		ctx := context.Background()
+		s := stateDeleteTestServer(t, store)
+		files := map[string][]byte{"field.sysbox.hcl": []byte("# immutable\n")}
+		rev := controlplane.GlobalRevision{Files: files, Revision: controlplane.ComputeRevisionDigest(files), CreatedAt: time.Now().UTC()}
+		require.NoError(t, store.SaveGlobalRevision(ctx, rev))
+		run := controlplane.Run{Revision: rev.Revision, Op: "apply"}
+		for _, key := range []string{"", applyOperationKey(rev.Revision, nil, false), "non-default-inputs"} {
+			run.OperationKey = key
+			auth, err := s.recoveryAuthorization(ctx, run, controlplane.RunRecoveryObserve)
+			require.NoError(t, err)
+			if key == "non-default-inputs" {
+				require.Nil(t, auth.Revision)
+			} else {
+				require.NotNil(t, auth.Revision)
+				require.Equal(t, rev.Revision, auth.Revision.Revision)
+			}
+		}
+	})
+}

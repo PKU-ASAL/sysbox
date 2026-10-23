@@ -102,3 +102,23 @@ func (b *OwnedBridge) CaptureAttachment(ctx context.Context, name, alias string)
 	}
 	return networkLinkProof(b.ns, b.proof.Namespace, link, alias)
 }
+
+// RequireNoAttachmentPorts is a conservative absence proof for legacy NIC state
+// without an exact TAP identity. Any bridge port or namespace veth/TAP, including detached or unrelated links,
+// blocks it.
+// It never detaches ports or assumes bridge ownership implies port ownership.
+func (b *OwnedBridge) RequireNoAttachmentPorts(ctx context.Context) error {
+	if err := b.Check(ctx); err != nil {
+		return err
+	}
+	links, err := b.handle.LinkList()
+	if err != nil {
+		return err
+	}
+	for _, link := range links {
+		if link.Attrs().MasterIndex == b.bridge.Attrs().Index || link.Type() == "veth" || link.Type() == "tuntap" {
+			return fmt.Errorf("attachment port remains on proven bridge")
+		}
+	}
+	return b.Check(ctx)
+}

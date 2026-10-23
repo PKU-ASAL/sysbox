@@ -267,7 +267,13 @@
         "ssh-stop-real-helper",
         "reset-ssh-disposition-api",
         "reset-ssh-disposition-transaction",
-        "reset-ssh-disposition-observer"
+        "reset-ssh-disposition-observer",
+        "intent-attachment-absence-provider",
+        "intent-attachment-absence-runtime",
+        "intent-attachment-absence-api",
+        "intent-create-identity-runtime",
+        "intent-create-identity-agent",
+        "intent-create-identity-api"
       ],
       "remaining": [
         "All API/Agent/helper crash boundaries, transport faults, disk-full and uncancellable requests are not fully covered."
@@ -1394,7 +1400,10 @@
         "TestResetSSHDispositionBindsWholeSignedSnapshotAndRecoversPreparedWrite",
         "TestResetSSHDispositionPublishesLostCommittedResultFromSignedObservation",
         "TestResetSSHUnknownDispositionQuarantinesNodeAndArchivesChildren",
-        "TestResetSSHUnknownDispositionSignedCrashRecovery"
+        "TestResetSSHUnknownDispositionSignedCrashRecovery",
+        "TestResetSSHCompositeAttachmentsRetainReplacementObligation",
+        "TestAbsentDispositionCanRemoveAttachmentMetadataOnlyWithSignedCoverage",
+        "TestMissingCreateIdentitySignedDispositionPreservesOriginalJournal"
       ],
       "kind": "contract",
       "race": true,
@@ -1416,6 +1425,67 @@
       "race": true,
       "timeout": "2m",
       "requires_env": []
+    },
+    {
+      "id": "intent-attachment-absence-provider",
+      "package": "./pkg/provider/docker",
+      "tests": [
+        "TestFenceAttachmentAbsenceChecksEndpointAndRejectsUnknownState"
+      ],
+      "kind": "contract",
+      "race": true
+    },
+    {
+      "id": "intent-attachment-absence-runtime",
+      "package": "./pkg/runtime",
+      "tests": [
+        "TestAttachmentAbsenceRequiresExactProviderResidueProof"
+      ],
+      "kind": "contract",
+      "race": true
+    },
+    {
+      "id": "intent-attachment-absence-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestHostFenceAttachmentAbsenceDispositionAPI"
+      ],
+      "kind": "contract",
+      "race": true,
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ]
+    },
+    {
+      "id": "intent-create-identity-runtime",
+      "package": "./pkg/runtime",
+      "tests": [
+        "TestMissingCreateIdentityUsesPinnedReadOnlyDiscovery"
+      ],
+      "kind": "contract",
+      "race": true
+    },
+    {
+      "id": "intent-create-identity-agent",
+      "package": "./pkg/agentexec",
+      "tests": [
+        "TestMissingIdentityObservationLoadsOnlyPinnedWorkspace"
+      ],
+      "kind": "contract",
+      "race": true
+    },
+    {
+      "id": "intent-create-identity-api",
+      "package": "./pkg/api",
+      "tests": [
+        "TestHostFenceMissingCreateIdentityDispositionAPI",
+        "TestRecoveryObservationPinsOnlyDefaultImmutableInputs"
+      ],
+      "kind": "contract",
+      "race": true,
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ]
     }
   ]
 }

@@ -46,6 +46,8 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 	verifiedSSH := len(reconcileCase) > 7 && reconcileCase[7]
 	lostSSH := len(reconcileCase) > 8 && reconcileCase[8]
 	unknownSSH := len(reconcileCase) > 9 && reconcileCase[9]
+	attached := len(reconcileCase) > 10 && reconcileCase[10]
+	missingCreate := len(reconcileCase) > 11 && reconcileCase[11]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -93,6 +95,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				grantTestTopologyUID(t, s, "another")
 				pending := controlplane.Run{ID: "pending-other", Topology: "another", AgentID: "agent", Op: "apply", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
 				require.NoError(t, store.SaveRun(ctx, pending))
+				var discovered *state.Resource
 				action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, OwnerUID: st.TopologyUID, ResourceUID: "resource", Generation: 1, Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted}
 				if releaseCase {
 					action.Action = controlplane.PlanActionDelete
@@ -128,6 +131,9 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 						}
 					}
 
+					if attached {
+						action.Candidate.Attachments = []state.Attachment{{Name: "lan", Node: action.Resource, Network: address.Resource("sysbox_network", "lan"), Driver: action.Candidate.Driver, DriverState: json.RawMessage(`{"proof":"exact"}`)}}
+					}
 					if !incompleteCreate {
 						seed := action
 						seed.ID = "seed"
@@ -162,6 +168,12 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 					admitted := sshDependency
 					admitted.Result = nil
 					action.ResetSSH = []runtime.ResetSSHDependency{admitted}
+				}
+				if missingCreate {
+					discovered = action.Candidate
+					discovered.Attributes = state.MustAttributes(map[string]any{"desired_hash": "desired"})
+					action.DesiredDigest = "desired"
+					action.Candidate = nil
 				}
 				require.NoError(t, repo.CommitActionIntent(ctx, action))
 				if resetIntent {
@@ -306,7 +318,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				require.Equal(t, 200, post(receipt).Code)
 				if releaseCase {
 					if intentCase {
-						checkFenceIntentClosure(t, s, store, accepted, len(reconcileCase) > 2 && reconcileCase[2], acceptanceRoot, unknownSSH, children...)
+						checkFenceIntentClosure(t, s, store, accepted, len(reconcileCase) > 2 && reconcileCase[2], acceptanceRoot, unknownSSH, discovered, children...)
 						return
 					}
 					if reconcile {

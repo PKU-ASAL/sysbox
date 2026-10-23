@@ -17,6 +17,14 @@ import (
 func (s *Server) recoveryAuthorization(ctx context.Context, run controlplane.Run, mode string) (controlplane.RunRecoveryAuthorization, error) {
 	result := controlplane.RunRecoveryAuthorization{Run: run, Mode: mode}
 	if mode == controlplane.RunRecoveryObserve {
+		// Optional immutable input supports exact read-only provider discovery.
+		// Historical/non-default-input observations retain their existing no-graph path.
+		if globalRevisionPattern.MatchString(run.Revision) && (run.Op != "apply" || run.OperationKey == "" || run.OperationKey == applyOperationKey(run.Revision, nil, run.UnsafeState)) {
+			revision, err := s.apiStore.GetGlobalRevision(ctx, run.Revision)
+			if err == nil && controlplane.ComputeRevisionDigest(revision.Files) == run.Revision {
+				result.Revision = revision
+			}
+		}
 		return result, nil
 	}
 	if mode != controlplane.RunRecoveryRecover {
