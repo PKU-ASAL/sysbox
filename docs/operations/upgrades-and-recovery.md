@@ -357,3 +357,12 @@ obligation resolution identities. Legacy/non-default-input observations without
 an exact graph remain unknown. Links/routes/provisioners and ambiguous or
 missing provider matches still require further inventory implementation; zero
 matches never authorize absent disposition for an unknown external identity.
+
+Unknown local persistent file installations can now be explicitly cancelled via
+the owning host's `file-stop` helper fallback. It waits for the exact original
+writer, durably blocks old admission, and reports stopped/unknown rather than
+success or cancellation. Both target and guest journal/lock directories must use
+tmpfs/ext4 on the unchanged guest boot. Earlier helpers fail closed on scope
+format 3; deploy matching API, host and guest helpers before using this route.
+Changed-boot persistent files and remote filesystem effects still require an
+independent storage cessation proof or explicit rebuild; reboot alone is not one.

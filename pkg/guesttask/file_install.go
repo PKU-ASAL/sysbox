@@ -549,6 +549,12 @@ func (e *Engine) observeInstall(ctx context.Context, h substrate.FileInstallHand
 	if r.Phase == "cancelled-before-start" {
 		return r, nil
 	}
+	if stopped, err := e.loadFileStop(h); err == nil {
+		r.Result = stopped.Result
+		return r, nil
+	} else if !os.IsNotExist(err) {
+		return r, err
+	}
 	return e.recoverInstall(ctx, r)
 }
 

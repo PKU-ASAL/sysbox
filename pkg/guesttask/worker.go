@@ -354,6 +354,14 @@ func (e *Engine) Handle(ctx context.Context, call Call) Response {
 				response.FileHandle = &copy
 			}
 		}
+	case "file-stop":
+		if call.FileHandle == nil || call.Grant == nil {
+			err = ErrUnauthorized
+		} else {
+			var record FileInstallRecord
+			record, err = e.StopFileInstall(ctx, *call.FileHandle, *call.Grant)
+			response.FileRecord = &record
+		}
 	case "file-cancel":
 		if call.FileHandle == nil {
 			err = ErrConflict

@@ -46,3 +46,28 @@ func TestFileHostCompletionAcceptsConfirmedCommitAfterCancelAndLeaseExpiry(t *te
 	_, err = CompleteFileFromHost(raw, &CommandRecord{Command: cmd}, "agent", x.ID, receipt, time.Now())
 	require.Error(t, err)
 }
+
+func TestFileScopeStopCompletesAsFailedUnknownAndBindsEpoch(t *testing.T) {
+	x := controlplane.GuestFileOperation{ID: "install", Version: 1, AgentID: "agent", CommandID: "command", Topology: "lab", Node: "vm", Status: controlplane.GuestExecutionRunning, CancelRequested: true}
+	cmd := controlplane.AgentCommand{ID: x.CommandID, AgentID: x.AgentID, Type: "guest_file_put", TopologyUID: "owner", ResourceUID: "node", Generation: 1, ActionID: x.ID, FilePut: &controlplane.GuestFilePut{ID: x.ID, Topology: x.Topology, Node: x.Node, Path: "/tmp/file", Size: 3, Mode: 0600, SHA256: strings.Repeat("a", 64)}}
+	req, err := controlplane.FromFileInstallCommand(cmd)
+	require.NoError(t, err)
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	r := substrate.FileInstallResult{Outcome: substrate.FileInstallUnknown, Quiescent: true, StoppedEpoch: 4, SHA256: req.SHA256, Size: req.Size, Mode: req.Mode}
+	receipt := controlplane.SignedExecutionStopReceipt{InstallID: x.ID, InstallDigest: digest, GuestBootID: "boot", Grant: controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "owner", ResourceUID: "node", Generation: 1}, AgentID: x.AgentID, CommandID: cmd.ID, ActionID: x.ID, Operation: "guest_file_install", Digest: digest, Epoch: 4, TargetBootID: "boot"}, FileResult: &r}
+	raw, err := fileOperationCodec.encode(x)
+	require.NoError(t, err)
+	completed, err := CompleteFileFromHost(raw, &CommandRecord{Command: cmd}, x.AgentID, x.ID, receipt, time.Now())
+	require.NoError(t, err)
+	got, err := fileOperationCodec.decode(completed)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.GuestExecutionFailed, got.Status)
+	require.Equal(t, substrate.FileInstallUnknown, got.Result.Outcome)
+	again, err := CompleteFileFromHost(completed, &CommandRecord{Command: cmd}, x.AgentID, x.ID, receipt, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, string(completed), string(again))
+	r.StoppedEpoch++
+	_, err = CompleteFileFromHost(raw, &CommandRecord{Command: cmd}, x.AgentID, x.ID, receipt, time.Now())
+	require.Error(t, err)
+}

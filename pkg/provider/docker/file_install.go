@@ -22,3 +22,7 @@ func (c *dockerConn) InspectInstalledFile(ctx context.Context, h substrate.FileI
 func (c *dockerConn) CancelFileInstall(ctx context.Context, h substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
 	return c.tasks().CancelFileInstall(ctx, h)
 }
+
+func (c *dockerConn) StopFileInstall(ctx context.Context, h substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	return c.tasks().StopFileInstall(ctx, h)
+}

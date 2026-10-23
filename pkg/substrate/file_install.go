@@ -72,11 +72,12 @@ type FileInstallHandle struct {
 	Epoch       uint64 `json:"epoch"`
 }
 type FileInstallResult struct {
-	Outcome   string `json:"outcome"`
-	Quiescent bool   `json:"quiescent"`
-	SHA256    string `json:"sha256"`
-	Size      int64  `json:"size"`
-	Mode      uint32 `json:"mode"`
+	StoppedEpoch uint64 `json:"stopped_epoch,omitempty"`
+	Outcome      string `json:"outcome"`
+	Quiescent    bool   `json:"quiescent"`
+	SHA256       string `json:"sha256"`
+	Size         int64  `json:"size"`
+	Mode         uint32 `json:"mode"`
 }
 type ConnectionFileInstaller interface {
 	InstallFile(context.Context, FileInstallRequest, io.Reader) (FileInstallHandle, FileInstallResult, error)

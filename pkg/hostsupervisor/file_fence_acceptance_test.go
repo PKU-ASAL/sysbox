@@ -228,3 +228,99 @@ func TestSSHStopRealGuestProtocol(t *testing.T) {
 	require.Equal(t, "present", found.Status)
 	t.Logf("real SSH/helper: stopped unknown original epoch2, rejected delayed mutation, admitted epoch3, recovered exact committed result by cold discovery, and preserved successor on old-stop retry; guest boot %s", boot)
 }
+
+func TestPersistentFileStopRealGuestProtocol(t *testing.T) {
+	lab, probe := os.Getenv("SYSBOX_GC_FENCE_LAB"), os.Getenv("SYSBOX_FILE_FENCE_PROBE")
+	if lab == "" || probe == "" {
+		t.Skip("requires enrolled disposable VM and current guesttask test probe")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	t.Cleanup(cancel)
+	raw, err := exec.Command("cat", "/proc/sys/kernel/random/uuid").Output()
+	require.NoError(t, err)
+	session := strings.TrimSpace(string(raw))
+	run := func(op string, extra ...string) (string, error) {
+		args := append([]string{"../../scripts/acceptance/file_reboot.py", op, "--root", lab, "--session", session}, extra...)
+		out, err := exec.CommandContext(ctx, "/usr/bin/python3", args...).CombinedOutput()
+		return string(out), err
+	}
+	d, ref, req, _, _ := scopedFileFixture(t, "")
+	pub, issuer, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	d.IssuerKey = pub
+	keyPath := filepath.Join(t.TempDir(), "issuer.pub")
+	require.NoError(t, os.WriteFile(keyPath, pub, 0600))
+	out, err := run("setup", "--probe", probe, "--public-key", keyPath, "--storage", "persistent", "--lost-outcome")
+	require.NoError(t, err, out)
+	t.Cleanup(func() { out, err := run("cleanup"); require.NoError(t, err, out) })
+	var fixture struct {
+		Target string `json:"target"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &fixture))
+	req.Path = fixture.Target
+	base := fileFenceSSHConnection{root: lab, session: session}
+	conn := fileFenceProvider{TaskClient: transport.NewTaskClient(base, "node", 1), fileFenceSSHConnection: base}
+	boot, err := conn.GuestFileBootID(ctx)
+	require.NoError(t, err)
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	grant := controlplane.ExecutionGrant{Scope: ref.Scope, AgentID: d.AgentID, SessionID: "session", CommandID: "command", ActionID: req.ID, Attempt: 1, Epoch: 2, Operation: "guest_file_install", Digest: digest, TargetBootID: boot, State: controlplane.GrantActive, ExpiresAt: time.Now().Add(time.Minute)}
+	g, err := controlplane.SignExecutionGrant(issuer, grant, boot, time.Now())
+	require.NoError(t, err)
+	d.Resolve = func(context.Context, TargetRef) (Target, error) {
+		return Target{Scope: ref.Scope, AgentID: d.AgentID, NodeID: "node", Connection: conn}, nil
+	}
+	var receipt controlplane.SignedExecutionStopReceipt
+	d.ReportStop = func(_ context.Context, r controlplane.SignedExecutionStopReceipt) error { receipt = r; return nil }
+	h, _, err := d.Install(ctx, ref, req, g)
+	require.Error(t, err, "real persistent writer must lose its final outcome")
+	result, err := d.Cancel(ctx, ref, h)
+	require.NoError(t, err)
+	require.Equal(t, substrate.FileInstallUnknown, result.Outcome)
+	require.True(t, result.Quiescent)
+	require.Equal(t, grant.Epoch, result.StoppedEpoch)
+	require.Empty(t, receipt.ObservedGuestBootID)
+	require.NoError(t, controlplane.VerifyExecutionStopReceipt(d.HostKey.Public().(ed25519.PublicKey), receipt))
+	afterBoot, err := conn.GuestFileBootID(ctx)
+	require.NoError(t, err)
+	require.Equal(t, boot, afterBoot)
+	cold := *d
+	observed, err := cold.Observe(ctx, ref, h)
+	require.NoError(t, err)
+	require.Equal(t, result, observed)
+	guestH := h
+	guestH.NodeID = "node"
+	// A delayed request uses the original signature and must be refused by the
+	// real helper scope fence, without dispatch through the host journal cache.
+	payload, err := d.Fetch(ctx, req.ID)
+	require.NoError(t, err)
+	defer payload.Close()
+	_, _, err = conn.InstallFile(transport.WithTaskGrant(ctx, req.ID, g), req, payload)
+	require.Error(t, err)
+	again, err := conn.ObserveFileInstall(ctx, guestH)
+	require.NoError(t, err)
+	require.Equal(t, result, again)
+	next := req
+	next.ID = "successor"
+	ng := grant
+	ng.ActionID = next.ID
+	ng.CommandID = "next-command"
+	ng.Epoch++
+	ng.Digest, err = next.Digest()
+	require.NoError(t, err)
+	signedNext, err := controlplane.SignExecutionGrant(issuer, ng, boot, time.Now())
+	require.NoError(t, err)
+	payload, err = d.Fetch(ctx, req.ID)
+	require.NoError(t, err)
+	defer payload.Close()
+	nextH, committed, err := conn.InstallFile(transport.WithTaskGrant(ctx, next.ID, signedNext), next, payload)
+	require.NoError(t, err)
+	require.Equal(t, substrate.FileInstallCommitted, committed.Outcome)
+	repeated, err := conn.StopFileInstall(transport.WithTaskGrant(ctx, req.ID, g), guestH)
+	require.NoError(t, err)
+	require.Equal(t, result, repeated)
+	nextObserved, err := conn.ObserveFileInstall(ctx, nextH)
+	require.NoError(t, err)
+	require.Equal(t, committed, nextObserved)
+	t.Logf("real ext4 SSH/helper: lost commit result, stopped original writer at epoch %d on unchanged boot %s, cold unknown receipt, delayed request refused", grant.Epoch, boot)
+}

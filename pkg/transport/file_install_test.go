@@ -83,3 +83,36 @@ func TestHelperFileInfoUsesFixedProtocol(t *testing.T) {
 	require.Equal(t, "fileboot", boot)
 	require.Equal(t, "file-info", conn.seen.Operation)
 }
+
+func TestFileStopProtocolCarriesGrantAndStoppedUnknown(t *testing.T) {
+	data := []byte("payload")
+	sum := sha256.Sum256(data)
+	req := substrate.FileInstallRequest{ID: "file", Path: "/tmp/installed", Mode: 0600, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	h := substrate.FileInstallHandle{ID: req.ID, Digest: digest, BootID: "boot", NodeID: "node", TopologyUID: "topology", ResourceUID: "resource", Generation: 2, Epoch: 3}
+	grant := controlplane.SignedExecutionGrant{BootID: h.BootID, Grant: controlplane.ExecutionGrant{ActionID: h.ID, Scope: controlplane.ExecutionScope{TopologyUID: h.TopologyUID, ResourceUID: h.ResourceUID, Generation: h.Generation}, Operation: "guest_file_install", Digest: digest, Epoch: h.Epoch}}
+	result := substrate.FileInstallResult{Outcome: substrate.FileInstallUnknown, Quiescent: true, StoppedEpoch: h.Epoch, SHA256: req.SHA256, Size: req.Size, Mode: req.Mode}
+	seen := make(chan guesttask.Call, 1)
+	conn := transferPeer(t, func(c net.Conn, r *bufio.Reader, wire vsockrpc.Request) {
+		raw, _ := io.ReadAll(io.LimitReader(r, wire.Size))
+		var call guesttask.Call
+		if json.Unmarshal(raw, &call) != nil {
+			return
+		}
+		seen <- call
+		guest := h
+		guest.NodeID = ""
+		response, _ := json.Marshal(guesttask.Response{Version: 1, FileRecord: &guesttask.FileInstallRecord{Handle: guest, Request: req, Result: result}})
+		json.NewEncoder(c).Encode(vsockrpc.Frame{Done: true, Task: response})
+	})
+	conn.BindExecutionIdentity("node", 2)
+	got, err := conn.StopFileInstall(WithTaskGrant(context.Background(), h.ID, grant), h)
+	require.NoError(t, err)
+	require.Equal(t, result, got)
+	call := <-seen
+	require.Equal(t, "file-stop", call.Operation)
+	require.Equal(t, grant, *call.Grant)
+	require.Empty(t, call.FileHandle.NodeID)
+	require.Equal(t, h.Epoch, call.FileHandle.Epoch)
+}

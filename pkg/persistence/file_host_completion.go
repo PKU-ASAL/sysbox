@@ -35,7 +35,8 @@ func CompleteFileFromHost(raw []byte, record *CommandRecord, agent, id string, r
 		return nil, ErrConflict
 	}
 	rebootUnknown := req.RebootScope == "guest-tmpfs" && r.Outcome == substrate.FileInstallUnknown && receipt.ObservedGuestBootID != "" && receipt.GuestBootID == g.TargetBootID && receipt.ObservedGuestBootID != receipt.GuestBootID && r.SHA256 == "" && r.Size == 0 && r.Mode == 0
-	if r.Outcome != substrate.FileInstallCommitted && r.Outcome != substrate.FileInstallCancelled && !rebootUnknown {
+	scopedUnknown := r.Outcome == substrate.FileInstallUnknown && r.StoppedEpoch == g.Epoch && g.Epoch > 0 && receipt.ObservedGuestBootID == "" && receipt.GuestBootID == g.TargetBootID && r.SHA256 == req.SHA256 && r.Size == req.Size && r.Mode == req.Mode
+	if r.Outcome != substrate.FileInstallCommitted && r.Outcome != substrate.FileInstallCancelled && !rebootUnknown && !scopedUnknown {
 		return nil, ErrConflict
 	}
 	if r.Outcome == substrate.FileInstallCommitted && (r.SHA256 != req.SHA256 || r.Size != req.Size || r.Mode != req.Mode) {
@@ -62,9 +63,12 @@ func CompleteFileFromHost(raw []byte, record *CommandRecord, agent, id string, r
 		return nil, ErrConflict
 	}
 	x.Status = controlplane.GuestExecutionCompleted
-	if rebootUnknown {
+	if rebootUnknown || scopedUnknown {
 		x.Status = controlplane.GuestExecutionFailed
 		x.Error = "guest reboot confirmed; original file result unknown"
+		if scopedUnknown {
+			x.Error = "guest writer scope stopped; original file result unknown"
+		}
 	}
 	if r.Outcome == substrate.FileInstallCancelled {
 		x.Status = controlplane.GuestExecutionCancelled

@@ -65,7 +65,11 @@ func validStopReceipt(r SignedExecutionStopReceipt) bool {
 		return false
 	}
 	if g.Operation == "guest_file_install" {
-		if r.GuestBootID == "" || r.GuestBootID != g.TargetBootID || r.InstallID != g.ActionID || r.InstallDigest != g.Digest || r.FileResult == nil || !r.FileResult.Quiescent || (r.FileResult.Outcome != substrate.FileInstallCommitted && r.FileResult.Outcome != substrate.FileInstallCancelled && !(r.ObservedGuestBootID != "" && r.FileResult.Outcome == substrate.FileInstallUnknown)) {
+		scopedUnknown := r.FileResult != nil && r.FileResult.Outcome == substrate.FileInstallUnknown && r.FileResult.StoppedEpoch == g.Epoch && g.Epoch > 0 && r.ObservedGuestBootID == ""
+		if r.FileResult != nil && r.FileResult.StoppedEpoch != 0 && !scopedUnknown {
+			return false
+		}
+		if r.GuestBootID == "" || r.GuestBootID != g.TargetBootID || r.InstallID != g.ActionID || r.InstallDigest != g.Digest || r.FileResult == nil || !r.FileResult.Quiescent || (r.FileResult.Outcome != substrate.FileInstallCommitted && r.FileResult.Outcome != substrate.FileInstallCancelled && !(r.ObservedGuestBootID != "" && r.FileResult.Outcome == substrate.FileInstallUnknown) && !scopedUnknown) {
 			return false
 		}
 	}

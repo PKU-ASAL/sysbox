@@ -210,3 +210,54 @@ func TestRebootedFileReceiptEndsUnknownAndAllowsSuccessor(t *testing.T) {
 		require.NoError(t, authority.Authorize(ctx, *successor))
 	})
 }
+
+func TestSameBootFileScopeStopEndsUnknownAndAllowsSuccessor(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		ctx := context.Background()
+		s := stateDeleteTestServer(t, store)
+		pub, key, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
+		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		session, err := authority.OpenSession(ctx, "agent", "host", "")
+		require.NoError(t, err)
+		op := controlplane.GuestFileOperation{ID: "file", Version: 1, AgentID: "agent", CommandID: "command", Topology: "lab", Node: "node", Status: controlplane.GuestExecutionQueued, CreatedAt: time.Now().UTC()}
+		cmd := controlplane.AgentCommand{ID: op.CommandID, AgentID: op.AgentID, Type: "guest_file_put", TopologyUID: "owner", ResourceUID: "resource", Generation: 1, ActionID: op.ID, FilePut: &controlplane.GuestFilePut{ID: op.ID, Topology: "lab", Node: "node", Path: "/tmp/file", Mode: 0600, SHA256: strings.Repeat("a", 64)}}
+		require.NoError(t, store.CreateGuestFileDispatch(ctx, op, cmd))
+		request, err := controlplane.FromFileInstallCommand(cmd)
+		require.NoError(t, err)
+		digest, err := request.Digest()
+		require.NoError(t, err)
+		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "owner", ResourceUID: "resource", Generation: 1}, AgentID: "agent", SessionID: session.ID, CommandID: cmd.ID, ActionID: op.ID, Attempt: 1, Operation: "guest_file_install", Digest: digest, TargetBootID: "old-guest"}, time.Minute)
+		require.NoError(t, err)
+		require.NoError(t, authority.Revoke(ctx, *grant))
+		receipt, err := controlplane.SignExecutionFileStopReceipt(key, *grant, "host", "old-guest", op.ID, digest, substrate.FileInstallResult{Outcome: substrate.FileInstallUnknown, Quiescent: true, StoppedEpoch: grant.Epoch, SHA256: request.SHA256, Size: request.Size, Mode: request.Mode}, "receipt", time.Now())
+		require.NoError(t, err)
+		post := func(r controlplane.SignedExecutionStopReceipt) *httptest.ResponseRecorder {
+			raw, err := json.Marshal(r)
+			require.NoError(t, err)
+			w := httptest.NewRecorder()
+			s.ServeHTTP(w, httptest.NewRequest("POST", "/v1/hosts/agent/execution-grants/stopped", bytes.NewReader(raw)))
+			return w
+		}
+		wrong := receipt
+		wrong.ObservedGuestBootID = "old-guest"
+		require.Equal(t, 401, post(wrong).Code)
+		response := post(receipt)
+		require.Equal(t, 200, response.Code, response.Body.String())
+		ended, err := store.GetGuestFileOperation(ctx, op.ID)
+		require.NoError(t, err)
+		require.Equal(t, controlplane.GuestExecutionFailed, ended.Status)
+		require.Equal(t, substrate.FileInstallUnknown, ended.Result.Outcome)
+		require.Contains(t, ended.Error, "unknown")
+		require.True(t, ended.Result.Quiescent)
+		next := *grant
+		next.ActionID = "next"
+		next.CommandID = "next-command"
+		next.TargetBootID = "old-guest"
+		successor, err := authority.Issue(ctx, next, time.Minute)
+		require.NoError(t, err)
+		require.Equal(t, 200, post(receipt).Code)
+		require.NoError(t, authority.Authorize(ctx, *successor))
+	})
+}

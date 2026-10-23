@@ -212,10 +212,10 @@ func (d *FileDispatcher) Install(ctx context.Context, ref TargetRef, req substra
 }
 func (d *FileDispatcher) finishFile(ctx context.Context, r *FileRecord, result substrate.FileInstallResult) error {
 	if result.Quiescent {
-		if result.Outcome != substrate.FileInstallCommitted && result.Outcome != substrate.FileInstallCancelled {
+		if result.Outcome != substrate.FileInstallCommitted && result.Outcome != substrate.FileInstallCancelled && !(result.Outcome == substrate.FileInstallUnknown && result.StoppedEpoch == r.Grant.Grant.Epoch) {
 			return guesttask.ErrConflict
 		}
-		if result.Outcome == substrate.FileInstallCommitted && (result.SHA256 != r.Request.SHA256 || result.Size != r.Request.Size || result.Mode != r.Request.Mode) {
+		if (result.Outcome == substrate.FileInstallCommitted || result.StoppedEpoch != 0) && (result.SHA256 != r.Request.SHA256 || result.Size != r.Request.Size || result.Mode != r.Request.Mode) {
 			return guesttask.ErrConflict
 		}
 		receipt, err := controlplane.SignExecutionFileStopReceipt(d.HostKey, r.Grant.Grant, d.HostBootID, r.Handle.BootID, r.Handle.ID, r.Handle.Digest, result, rand.Text(), time.Now())
@@ -327,6 +327,29 @@ func (d *FileDispatcher) observeFile(ctx context.Context, ref TargetRef, h subst
 		unlock()
 		unlock = func() {}
 		result, err = installer.CancelFileInstall(transport.WithTaskGrant(ctx, h.ID, r.Grant), providerHandle)
+		if err != nil {
+			if stopper, ok := target.Connection.(interface {
+				StopFileInstall(context.Context, substrate.FileInstallHandle) (substrate.FileInstallResult, error)
+			}); ok {
+				current, checkErr := d.target(ctx, ref, r.Grant.Grant)
+				if checkErr != nil {
+					return r.Result, checkErr
+				}
+				if current.NodeID != r.ProviderNodeID {
+					return r.Result, guesttask.ErrConflict
+				}
+				result, err = stopper.StopFileInstall(transport.WithTaskGrant(ctx, h.ID, r.Grant), providerHandle)
+				if err == nil {
+					current, checkErr = d.target(ctx, ref, r.Grant.Grant)
+					if checkErr != nil {
+						return r.Result, checkErr
+					}
+					if current.NodeID != r.ProviderNodeID {
+						return r.Result, guesttask.ErrConflict
+					}
+				}
+			}
+		}
 	} else {
 		unlock()
 		unlock = func() {}

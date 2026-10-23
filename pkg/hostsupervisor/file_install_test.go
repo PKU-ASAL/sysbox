@@ -3,6 +3,7 @@ package hostsupervisor
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 )
@@ -190,4 +192,44 @@ func TestUnscopedFileGuestRebootRemainsUnknown(t *testing.T) {
 	record, err := d.loadFile(h)
 	require.NoError(t, err)
 	require.Nil(t, record.Receipt)
+}
+
+type scopeStopFileConnection struct {
+	*fileConnection
+	stops int
+}
+
+func (c *scopeStopFileConnection) CancelFileInstall(context.Context, substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	return substrate.FileInstallResult{}, guesttask.ErrUnknown
+}
+func (c *scopeStopFileConnection) StopFileInstall(_ context.Context, h substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	c.stops++
+	r := c.result
+	r.Outcome = substrate.FileInstallUnknown
+	r.Quiescent = true
+	r.StoppedEpoch = h.Epoch
+	return r, nil
+}
+func TestFileCancellationCanStopPersistentUnknownWithoutInventingOutcome(t *testing.T) {
+	d, ref, req, g, base := fileFixture(t)
+	base.result = substrate.FileInstallResult{Outcome: substrate.FileInstallUnknown, SHA256: req.SHA256, Size: req.Size, Mode: req.Mode}
+	c := &scopeStopFileConnection{fileConnection: base}
+	d.Resolve = func(context.Context, TargetRef) (Target, error) {
+		return Target{Scope: ref.Scope, AgentID: d.AgentID, NodeID: "node", Connection: c}, nil
+	}
+	var receipt controlplane.SignedExecutionStopReceipt
+	d.ReportStop = func(_ context.Context, r controlplane.SignedExecutionStopReceipt) error { receipt = r; return nil }
+	h, _, err := d.Install(context.Background(), ref, req, g)
+	require.NoError(t, err)
+	r, err := d.Cancel(context.Background(), ref, h)
+	require.NoError(t, err)
+	require.Equal(t, substrate.FileInstallUnknown, r.Outcome)
+	require.True(t, r.Quiescent)
+	require.Equal(t, 1, c.stops)
+	require.NoError(t, controlplane.VerifyExecutionStopReceipt(d.HostKey.Public().(ed25519.PublicKey), receipt))
+	cold := *d
+	r, err = cold.Observe(context.Background(), ref, h)
+	require.NoError(t, err)
+	require.Equal(t, 1, c.stops)
+	require.Equal(t, substrate.FileInstallUnknown, r.Outcome)
 }

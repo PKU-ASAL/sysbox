@@ -3,6 +3,7 @@ package controlplane
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -46,4 +47,20 @@ func TestRebootedFileReceiptProvesStopWithoutInventingCommit(t *testing.T) {
 	require.Error(t, err)
 	_, err = SignExecutionFileStopReceipt(key, g, "host", "old", g.ActionID, g.Digest, *receipt.FileResult, "no-reboot", time.Now())
 	require.Error(t, err)
+}
+
+func TestSameBootUnknownFileStopRequiresExactFencedEpoch(t *testing.T) {
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	g := ExecutionGrant{Scope: ExecutionScope{TopologyUID: "owner", ResourceUID: "node", Generation: 1}, AgentID: "agent", SessionID: "session", CommandID: "command", ActionID: "file", Attempt: 1, Epoch: 2, Operation: "guest_file_install", Digest: "digest", TargetBootID: "same", State: GrantRevoked}
+	result := substrate.FileInstallResult{Outcome: substrate.FileInstallUnknown, Quiescent: true, StoppedEpoch: g.Epoch}
+	receipt, err := SignExecutionFileStopReceipt(key, g, "host", "same", g.ActionID, g.Digest, result, "fenced", time.Now())
+	require.NoError(t, err)
+	require.NoError(t, VerifyExecutionStopReceipt(pub, receipt))
+	require.Empty(t, receipt.ObservedGuestBootID)
+	for _, epoch := range []uint64{0, 1, 3} {
+		result.StoppedEpoch = epoch
+		_, err = SignExecutionFileStopReceipt(key, g, "host", "same", g.ActionID, g.Digest, result, "bad", time.Now())
+		require.Error(t, err)
+	}
 }

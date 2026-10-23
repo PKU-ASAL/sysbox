@@ -84,7 +84,7 @@ func fileRecord(ctx context.Context, conn taskCaller, identity executionIdentity
 	guest := handle
 	guest.NodeID = ""
 	call := guesttask.Call{Version: guesttask.Version, Operation: operation, FileHandle: &guest}
-	if operation == "file-cancel" {
+	if operation == "file-cancel" || operation == "file-stop" {
 		if auth, ok := ctx.Value(taskAuthorizationKey{}).(taskAuthorization); ok && auth.ID == handle.ID {
 			call.Grant = &auth.Grant
 		}
@@ -139,4 +139,14 @@ func (c *VsockConnection) CancelFileInstall(ctx context.Context, h substrate.Fil
 }
 func (c *TaskClient) CancelFileInstall(ctx context.Context, h substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
 	return fileRecord(ctx, c, c.identity, h, "file-cancel")
+}
+
+func (c *SSHConnection) StopFileInstall(ctx context.Context, h substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	return fileRecord(ctx, c, c.executionIdentity, h, "file-stop")
+}
+func (c *VsockConnection) StopFileInstall(ctx context.Context, h substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	return fileRecord(ctx, c, c.executionIdentity, h, "file-stop")
+}
+func (c *TaskClient) StopFileInstall(ctx context.Context, h substrate.FileInstallHandle) (substrate.FileInstallResult, error) {
+	return fileRecord(ctx, c, c.identity, h, "file-stop")
 }

@@ -5282,3 +5282,35 @@ Current attachment/discovery API full race passed (376.837s):
 `/tmp/sysbox-attachment-discovery-api-full.jsonl`; stderr empty. The final source
 matches the seven-gate report. Missing-create observation, signed-crash history/GC
 and three-backend public disposition were also independently focused-race checked.
+
+### Persistent-file same-boot cessation (2026-10-23)
+
+`file-stop` now fences an exact unknown file installation without inventing its
+outcome: durable cancellation, exclusive writer-lock handoff, scope-format-3
+admission fence, then a separate stopped-unknown tombstone. The original install
+journal stays unknown/nonquiescent. The target parent and control directory must
+both be guest-kernel-local tmpfs/ext4, and the guest boot must still match.
+NFS/FUSE/overlay and changed-boot persistent-file requests remain unresolved.
+
+The isolated enrolled execution VM passed actual ext4/SSH/helper lost commit
+outcome recovery, cold observation, delayed-original rejection, successful next
+epoch, and old-stop retry preserving the successor. Evidence:
+`/tmp/sysbox-persistent-file-real-final-20261023.log`. Full affected six-package
+race regression passed in `/tmp/sysbox-persistent-file-full-20261023.log`;
+complete API race regression with PostgreSQL passed in 235.154s:
+`/tmp/sysbox-persistent-file-api-full-20261023.jsonl`. Independent review found
+and verified fixes for prior-boot tombstone reuse and control-directory FS scope;
+additional negative testing fixed foreign agent/session grant acceptance.
+
+The API records the result as Failed/unknown and seals only the exact stopped
+grant. Exact receipt retry after successor admission preserves the successor.
+This closes the same-boot local persistent-file path; it does not claim the full
+stage-1 operator campaign or true vsock reboot acceptance.
+
+Final same-source five-gate campaign passed with zero skips:
+`/tmp/sysbox-persistent-file-campaign-final-20261023/run.json`. The earlier
+campaign `/tmp/sysbox-persistent-file-campaign-20261023/run.json` retains a failed
+real SSH setup: execution guest serial showed RCU stalls/CPU soft lockups while
+QMP remained running. Stopping/restarting the exact enrolled disposable lab,
+retaining disk/logs, restored SSH and the unchanged-source campaign passed. This
+failed environment run is not counted as acceptance.

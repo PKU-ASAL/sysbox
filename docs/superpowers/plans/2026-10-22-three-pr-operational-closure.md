@@ -185,3 +185,11 @@ from committed/cancelled. Verify delayed originals, crash-between-writes, active
 writer timeout, exact cold retry, successor and SSH/vsock transport equivalence.
 This is an additional stop route within item 5, not its reboot/remote-storage
 completion. Historical scenes remain untouched.
+
+Item 5 now has an implemented same-boot local persistent-file cessation route,
+with exact original grant, local target/control FS validation, separate unknown
+stop history, and delayed-original/successor proof on real isolated ext4/SSH.
+Independent review corrections and three-backend API acceptance passed. Full
+API race regression passed (235.154s), along with six affected core packages.
+True vsock/reboot and repeated enclosing operator acceptance remain open; the
+isolated execution VM has KVM/vhost-vsock available for the next acceptance step.

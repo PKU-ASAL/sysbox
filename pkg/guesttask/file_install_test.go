@@ -399,3 +399,104 @@ func TestScopedFileInstallOnRealTmpfs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, digest, legacyDigest)
 }
+
+func TestPersistentFileStopKeepsUnknownHistoryAndRejectsReplay(t *testing.T) {
+	e, req, g, key, body := installFixture(t)
+	e.installHook = func(phase string) error {
+		if phase == "commit_intent" {
+			return fmt.Errorf("lost outcome")
+		}
+		return nil
+	}
+	original, err := e.InstallFile(context.Background(), req, g, bytes.NewReader(body))
+	require.Error(t, err)
+	require.NoError(t, os.Remove(filepath.Join(filepath.Dir(req.Path), original.StageName, "anchor")))
+	e.installHook = nil
+	foreignGrant := g.Grant
+	foreignGrant.AgentID = "other-agent"
+	foreign, err := controlplane.SignExecutionGrant(key, foreignGrant, g.BootID, time.Now())
+	require.NoError(t, err)
+	_, err = e.StopFileInstall(context.Background(), original.Handle, foreign)
+	require.Error(t, err, "same handle must not authorize a different original grant")
+	stopped, err := e.StopFileInstall(context.Background(), original.Handle, g)
+	require.NoError(t, err)
+	require.True(t, stopped.Result.Quiescent)
+	require.Equal(t, substrate.FileInstallUnknown, stopped.Result.Outcome)
+	require.Equal(t, g.Grant.Epoch, stopped.Result.StoppedEpoch)
+	archived, err := e.loadInstall(req.ID)
+	require.NoError(t, err)
+	require.False(t, archived.Result.Quiescent)
+	require.Equal(t, substrate.FileInstallUnknown, archived.Result.Outcome)
+	_, err = e.InstallFile(context.Background(), req, g, bytes.NewReader(body))
+	require.Error(t, err)
+	cold := &Engine{Root: e.Root, PublicKey: e.PublicKey, AllowedInstallRoots: e.AllowedInstallRoots}
+	observed, err := cold.ObserveFileInstall(context.Background(), original.Handle)
+	require.NoError(t, err)
+	require.Equal(t, stopped.Result, observed.Result)
+	next := req
+	next.ID = "successor"
+	ng := g.Grant
+	ng.ActionID = next.ID
+	ng.Epoch++
+	ng.Digest, err = next.Digest()
+	require.NoError(t, err)
+	signed, err := controlplane.SignExecutionGrant(key, ng, g.BootID, time.Now())
+	require.NoError(t, err)
+	result, err := cold.InstallFile(context.Background(), next, signed, bytes.NewReader(body))
+	require.NoError(t, err)
+	require.Equal(t, substrate.FileInstallCommitted, result.Result.Outcome)
+	again, err := cold.StopFileInstall(context.Background(), original.Handle, g)
+	require.NoError(t, err)
+	require.Equal(t, stopped.Result, again.Result)
+	raw, err := os.ReadFile(req.Path)
+	require.NoError(t, err)
+	require.Equal(t, body, raw)
+}
+
+func TestPersistentFileStopWaitsForWriterAndRetriesPartialFence(t *testing.T) {
+	e, req, g, _, body := installFixture(t)
+	e.installHook = func(phase string) error {
+		if phase == "commit_intent" {
+			return fmt.Errorf("lost outcome")
+		}
+		return nil
+	}
+	original, err := e.InstallFile(context.Background(), req, g, bytes.NewReader(body))
+	require.Error(t, err)
+	store := e.installStore()
+	unlock, err := store.lock(context.Background(), req.ID)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err = e.StopFileInstall(ctx, original.Handle, g)
+	require.Error(t, err)
+	_, err = os.Stat(filepath.Join(e.Root, ".file-stops", req.ID+".json"))
+	require.True(t, os.IsNotExist(err))
+	unlock()
+	stopped, err := e.StopFileInstall(context.Background(), original.Handle, g)
+	require.NoError(t, err)
+	require.True(t, stopped.Result.Quiescent)
+	// Crash boundary: scope3 durable but the per-install stop write was lost.
+	require.NoError(t, os.Remove(filepath.Join(e.Root, ".file-stops", req.ID+".json")))
+	_, err = e.InstallFile(context.Background(), req, g, bytes.NewReader(body))
+	require.Error(t, err)
+	again, err := e.StopFileInstall(context.Background(), original.Handle, g)
+	require.NoError(t, err)
+	require.Equal(t, stopped.Result, again.Result)
+	wrong := original.Handle
+	wrong.Epoch++
+	_, err = e.StopFileInstall(context.Background(), wrong, g)
+	require.Error(t, err)
+}
+
+func TestPersistentFileStopRejectsPriorBootTombstone(t *testing.T) {
+	e, req, g, key, _ := installFixture(t)
+	h := substrate.FileInstallHandle{ID: req.ID, Digest: g.Grant.Digest, BootID: "previous-guest-boot", TopologyUID: g.Grant.Scope.TopologyUID, ResourceUID: g.Grant.Scope.ResourceUID, Generation: g.Grant.Scope.Generation, Epoch: g.Grant.Epoch}
+	grant := g.Grant
+	grant.TargetBootID = h.BootID
+	historical, err := controlplane.SignExecutionGrant(key, grant, h.BootID, g.IssuedAt)
+	require.NoError(t, err)
+	require.NoError(t, atomicJSON(filepath.Join(e.Root, ".file-stops", h.ID+".json"), fileStopRecord{Version: 1, Grant: historical, Handle: h, Result: substrate.FileInstallResult{Outcome: substrate.FileInstallUnknown, Quiescent: true, StoppedEpoch: h.Epoch}}))
+	_, err = e.loadFileStop(h)
+	require.ErrorIs(t, err, ErrUnknown, "a prior-boot tombstone is historical evidence, not a new same-boot proof")
+}

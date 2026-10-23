@@ -76,6 +76,11 @@ func (e *Engine) scopeQuiescentExcept(grant controlplane.ExecutionGrant, absent 
 	}
 	for _, file := range files {
 		if sameScope(file.Grant.Grant.Scope, grant.Scope) && !file.Result.Quiescent {
+			if stopped, err := e.loadFileStop(file.Handle); err == nil && stopped.Result.Quiescent {
+				continue
+			} else if !os.IsNotExist(err) {
+				return err
+			}
 			return fmt.Errorf("previous guest file install is not quiescent")
 		}
 	}
