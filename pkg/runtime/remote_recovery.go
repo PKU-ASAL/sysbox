@@ -130,7 +130,7 @@ func observeIntentResource(ctx context.Context, record ActionRecord, candidate *
 				if proof, ok := node.(interface {
 					HostFenceDeletionAbsent(context.Context, substrate.NodeHandle) error
 				}); ok {
-					if handle, err := candidate.ReconstructHandle(codec); err == nil && proof.HostFenceDeletionAbsent(ctx, handle) == nil {
+					if handle, err := candidate.ReconstructHandle(codec); err == nil && proof.HostFenceDeletionAbsent(substrate.WithOperationIdentity(ctx, actionIdentity(record)), handle) == nil {
 						item.DeleteResidueAbsent = true
 						item.AttachmentResidueAbsent = observeAttachmentAbsence(ctx, record, *candidate, handle, node)
 					}

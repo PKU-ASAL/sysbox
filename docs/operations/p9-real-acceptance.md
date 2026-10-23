@@ -5314,3 +5314,44 @@ real SSH setup: execution guest serial showed RCU stalls/CPU soft lockups while
 QMP remained running. Stopping/restarting the exact enrolled disposable lab,
 retaining disk/logs, restored SSH and the unchanged-source campaign passed. This
 failed environment run is not counted as acceptance.
+
+### Real vsock unknown stop and Firecracker residue boundary (2026-10-23)
+
+The enrolled execution VM exposes KVM/vhost-vsock even though the outer workspace
+host lacks vhost-vsock. `scripts/acceptance/vsock_file_stop.py` builds the current
+helper, guest probe and provider test itself; a Go build overlay embeds that
+helper without changing tracked release binaries. The test checks its embedded
+helper hash. The wrapper rejects skips/failures, requires exactly two runs and
+passes per named test, records artifact hashes, and writes passed only after
+cleanup. Failed/timeout scenes retain their exact UUID directory for inspection.
+
+The real KVM/vsock test injects a commit-intent unknown state using the production
+Engine and original signed request, then asks the production vsock helper to
+stop it. Original journal remains unknown, delayed request is rejected, distinct
+successor content is installed and read back after an old-stop retry. It does
+not claim simultaneous active-writer stopping or changed-boot storage cessation.
+
+Firecracker now implements local-only generation/attachment residue observation.
+It binds topology/resource/generation directory, manifest/config and both sockets;
+foreign identity and an unrelated missing directory are rejected. Real owned TAP
+acceptance proves that missing VMM artifacts cannot discharge a retained TAP,
+and exact TAP absence is required. Transfer paths differing from the generation
+creation path remain unresolved. Full runtime/Firecracker race passed in
+`/tmp/sysbox-firecracker-fence-core-20261023.log` before the final directory-binding
+hardening; focused hardened tests also passed.
+
+The first combined rerun lost its outer execution VM: workspace kernel OOM logs
+identify registered QEMU PID 2713380 as the victim. Restart had expanded the
+original 1 GiB execution budget to the two-VM default 6 GiB (plus 3 GiB control).
+The lab now persists/requires explicit budgets; its known original 384 MiB/1 GiB
+budget was restored. `test_two_vms` and `test_host_fencing` pass; the latter has an
+existing opt-in real-enrollment skip, which is not claimed as real acceptance.
+The combined budgeted real run passed two rounds of each test, with cleanup:
+`/tmp/sysbox-vsock-fence-budgeted-20261023/run.json`. Earlier failed runs remain.
+
+Final reviewed source rerun passed both real tests twice with cleanup passed:
+`/tmp/sysbox-vsock-fence-reviewed-20261023/run.json`, source SHA256
+`17038723cf954a0f70fb1d0d7956e5c31791656f4eb5db94ede994925318ee48`.
+Final hardened runtime/Firecracker full race regression passed:
+`/tmp/sysbox-firecracker-fence-core-final-20261023.log` (Firecracker 10.993s).
+Independent final review found no remaining blocker in this slice.

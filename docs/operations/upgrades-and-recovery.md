@@ -366,3 +366,13 @@ tmpfs/ext4 on the unchanged guest boot. Earlier helpers fail closed on scope
 format 3; deploy matching API, host and guest helpers before using this route.
 Changed-boot persistent files and remote filesystem effects still require an
 independent storage cessation proof or explicit rebuild; reboot alone is not one.
+
+Firecracker intent absence observation now verifies the exact local generation
+storage directory and both API/vsock endpoints, plus each generation-bound owned
+TAP. Different physical paths after ownership transfer and remote storage remain
+unresolved by this entrypoint. A missing VM does not establish missing TAPs.
+
+Disposable-lab manifests now persist CPU/memory budgets. Retained lab restart
+requires explicit `resources` for both roles; older manifests must be inspected
+and assigned their known original budgets before restart. It must not substitute
+current defaults, which previously expanded a 1 GiB fencing VM to 6 GiB.

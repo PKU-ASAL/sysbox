@@ -121,6 +121,7 @@ def up(root, base):
     ports = free_ports(3)
     manifest = {"format": 1, "root": str(root), "id": lab_id, "base_sha256": digest,
                 "ports": {"control": ports[0], "execution": ports[1], "lan": ports[2]},
+                "resources": {role: {"cpus": values[0], "memory_mib": values[1]} for role, values in ROLES.items()},
                 "created_at": time.time(), "commit": run("git", "rev-parse", "HEAD", capture_output=True).stdout.strip()}
     save(root / "lab.json", manifest)
     run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / "client"))
@@ -226,6 +227,14 @@ def _start_retained(root, manifest):
             any(type(port) is not int or not 1024 <= port <= 65535 for port in ports.values()) or
             len(set(ports.values())) != 3):
         raise RuntimeError("invalid retained lab ports")
+    resources = manifest.get('resources')
+    if not isinstance(resources, dict) or set(resources) != set(ROLES):
+        raise RuntimeError('invalid retained VM resources')
+    for value in resources.values():
+        if (not isinstance(value, dict) or set(value) != {'cpus', 'memory_mib'} or
+                type(value['cpus']) is not int or not 1 <= value['cpus'] <= 64 or
+                type(value['memory_mib']) is not int or not 128 <= value['memory_mib'] <= 65536):
+            raise RuntimeError('invalid retained VM resources')
     # Validate both guests before starting either. An unreadable/still-existing
     # PID is uncertainty, not permission to launch another writer of its disk.
     for role in ROLES:
@@ -264,7 +273,8 @@ def _start_retained(root, manifest):
             else:
                 raise RuntimeError(f"{role} monitor is still live")
     attempt = "restart-" + uuid.uuid4().hex[:12]
-    for index, (role, (cpus, memory, _)) in enumerate(ROLES.items(), 1):
+    for index, role in enumerate(ROLES, 1):
+        cpus, memory = resources[role]["cpus"], resources[role]["memory_mib"]
         directory = root / role
         # Preserve old process files even after they have been proven stale.
         for name in ("pid", "qmp"):

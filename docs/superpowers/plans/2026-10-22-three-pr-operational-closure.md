@@ -193,3 +193,18 @@ Independent review corrections and three-backend API acceptance passed. Full
 API race regression passed (235.154s), along with six affected core packages.
 True vsock/reboot and repeated enclosing operator acceptance remain open; the
 isolated execution VM has KVM/vhost-vsock available for the next acceptance step.
+
+Next provider coverage gap: Firecracker has exact durable local manifests and
+attachment identities, but no host-fence locality/residue SPI, so intent
+observation cannot release even a fully absent generation. Reuse its existing
+canonical path/process checks; require local tmpfs/ext4 runtime storage, exact
+persisted generation identity, and absence of both API/vsock sockets. TAP proof
+must match the persisted owned link and generation alias, never infer link
+absence solely from VMM exit. Do not add a destructive recovery operation.
+
+Item 5 now additionally has repeated real KVM/vsock same-boot persistent-file
+unknown cessation, with current-helper provenance and distinct successor bytes.
+Item 3 adds Firecracker exact generation/socket/TAP residue SPI and runtime
+identity propagation. Real TAP hold/deletion and file-stop each passed twice on
+the enrolled execution VM. Independent review fixed the missing-directory identity
+substitution bug. Enclosing full operator/reboot and composite discovery remain.

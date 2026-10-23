@@ -13,6 +13,7 @@ class LabTests(unittest.TestCase):
     def retained_lab(self, root):
         manifest = self.manifest(root)
         manifest["ports"] = {"control": 30001, "execution": 30002, "lan": 30003}
+        manifest["resources"] = {role: {"cpus": value[0], "memory_mib": value[1]} for role, value in two_vms.ROLES.items()}
         two_vms.save(root / "lab.json", manifest)
         for role in two_vms.ROLES:
             directory = root / role
@@ -34,6 +35,32 @@ class LabTests(unittest.TestCase):
                 self.assertNotIn("qemu-img", call.args)
             for role in two_vms.ROLES:
                 self.assertEqual((root / role / "disk.qcow2").read_bytes(), b"retained-disk")
+
+    def test_restart_requires_explicit_legacy_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.retained_lab(root)
+            del manifest['resources']
+            two_vms.save(root / 'lab.json', manifest)
+            with mock.patch.object(two_vms.os, 'access', return_value=True), \
+                 mock.patch.object(two_vms, 'run') as launch:
+                with self.assertRaisesRegex(RuntimeError, 'resources'):
+                    two_vms.start(root)
+            launch.assert_not_called()
+
+    def test_restart_preserves_recorded_cpu_and_memory_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.retained_lab(root)
+            manifest['resources'] = {'control': {'cpus': 1, 'memory_mib': 384},
+                                     'execution': {'cpus': 2, 'memory_mib': 1024}}
+            two_vms.save(root / 'lab.json', manifest)
+            with mock.patch.object(two_vms.os, 'access', return_value=True), \
+                 mock.patch.object(two_vms, 'run') as launch:
+                two_vms.start(root)
+            for role, call in zip(two_vms.ROLES, launch.call_args_list):
+                self.assertEqual(call.args[call.args.index('-m') + 1], str(manifest['resources'][role]['memory_mib']))
+                self.assertEqual(call.args[call.args.index('-smp') + 1], str(manifest['resources'][role]['cpus']))
 
     def test_start_checks_both_old_processes_before_launch(self):
         with tempfile.TemporaryDirectory() as directory:
