@@ -25,6 +25,9 @@ func TestHostFenceResetSSHCommittedDispositionAPI(t *testing.T) {
 func TestHostFenceResetSSHLostCommittedDispositionAPI(t *testing.T) {
 	runHostFenceAPIContract(t, "", true, true, true, false, true, false, false, false, true, true)
 }
+func TestHostFenceResetSSHUnknownDispositionAPI(t *testing.T) {
+	runHostFenceAPIContract(t, "", true, true, true, false, true, false, false, true, true, false, true)
+}
 func seedResetSSHAPI(t *testing.T, repo *persistence.Repository, action *runtime.ActionRecord) runtime.ResetSSHDependency {
 	t.Helper()
 	ctx := context.Background()

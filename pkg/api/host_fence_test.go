@@ -45,6 +45,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 	withChild := len(reconcileCase) > 6 && reconcileCase[6]
 	verifiedSSH := len(reconcileCase) > 7 && reconcileCase[7]
 	lostSSH := len(reconcileCase) > 8 && reconcileCase[8]
+	unknownSSH := len(reconcileCase) > 9 && reconcileCase[9]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -191,7 +192,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 									current.Candidate = current.Replacement
 									current.EffectComplete = true
 									sshDependency.Started = true
-									if lostSSH {
+									if lostSSH || unknownSSH {
 										sshDependency.Result = nil
 									}
 									current.ResetSSH = []runtime.ResetSSHDependency{sshDependency}
@@ -305,7 +306,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				require.Equal(t, 200, post(receipt).Code)
 				if releaseCase {
 					if intentCase {
-						checkFenceIntentClosure(t, s, store, accepted, len(reconcileCase) > 2 && reconcileCase[2], acceptanceRoot, children...)
+						checkFenceIntentClosure(t, s, store, accepted, len(reconcileCase) > 2 && reconcileCase[2], acceptanceRoot, unknownSSH, children...)
 						return
 					}
 					if reconcile {

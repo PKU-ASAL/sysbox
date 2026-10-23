@@ -1376,7 +1376,8 @@
       "package": "./pkg/api",
       "tests": [
         "TestHostFenceResetSSHCommittedDispositionAPI",
-        "TestHostFenceResetSSHLostCommittedDispositionAPI"
+        "TestHostFenceResetSSHLostCommittedDispositionAPI",
+        "TestHostFenceResetSSHUnknownDispositionAPI"
       ],
       "kind": "contract",
       "race": true,
@@ -1391,7 +1392,9 @@
       "tests": [
         "TestResetSSHDispositionPublishesNodeAndSSHAtomically",
         "TestResetSSHDispositionBindsWholeSignedSnapshotAndRecoversPreparedWrite",
-        "TestResetSSHDispositionPublishesLostCommittedResultFromSignedObservation"
+        "TestResetSSHDispositionPublishesLostCommittedResultFromSignedObservation",
+        "TestResetSSHUnknownDispositionQuarantinesNodeAndArchivesChildren",
+        "TestResetSSHUnknownDispositionSignedCrashRecovery"
       ],
       "kind": "contract",
       "race": true,
@@ -1405,7 +1408,9 @@
         "TestResetSSHDispositionRequiresObservedCommittedDependencies",
         "TestResetSSHDispositionObserverUsesReplacementForChildReads",
         "TestResetSSHDispositionRecoversLostResultWithoutChangingJournal",
-        "TestResetSSHDispositionObserverDiscoversLostCommittedResult"
+        "TestResetSSHDispositionObserverDiscoversLostCommittedResult",
+        "TestResetSSHUnknownDispositionRetainsRebuildObligation",
+        "TestResetSSHChangedConfigurationLostResultUsesAdmittedDesiredDigest"
       ],
       "kind": "contract",
       "race": true,

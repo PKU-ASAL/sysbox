@@ -125,3 +125,41 @@ composite Reset generation inventory; discover unrecorded creation identities;
 then persistent-file/vsock cessation and repeated full operator integration.
 Each requires its own evidence and implementation; none is declared closed by
 the recorded/discoverable-result work.
+
+## Fixed stage 1 closure checklist (2026-10-23)
+
+These are the remaining approved goals, not new delivery stages. Commits are
+checkpoints; implementation continues until this checklist passes or an external
+blocker is established. Historical evidence must never be fabricated.
+
+1. [x] Unknown ResetSSH: retain the exact replacement under a rebuild/delete
+   obligation; archive old SSH records and any results; remove stale live SSH
+   metadata atomically. Require old source/residue absence, complete child
+   inventory and canonical cessation of every grant. Test postimage, signed
+   prepared retry, all backends, refusal of ordinary work, then explicit recovery.
+2. [x] Changed-config lost SSH Result: recover original desired metadata from
+   immutable admitted intent/revision rather than infer it from an older resource.
+3. [ ] Attachment/composite Reset inventory: account independently for both
+   generations and every attachment; verify actual provider absence/residue SPI.
+4. [ ] Missing creation identity: owning-provider discovery with exact ownership;
+   ambiguous/legacy scenes remain unresolved, with actionable diagnostics.
+5. [ ] Persistent-file and vsock cessation: enrolled isolated execution-VM fence,
+   exact storage/process boundary and delayed-call rejection; no remote-storage
+   claims from mere guest reboot.
+6. [ ] Full repeated operator flow: public CLI/API observation/disposition,
+   rebuild/delete and fresh work; retain unknown history across repeated crashes.
+7. [ ] Current-source stage 1 campaign, independent review and accurate PR scope.
+
+Unknown SSH uses the existing `retain-incomplete` decision and node recovery
+requirement. It does not fabricate SSH handles. Old SSH metadata is removed only
+with an exact absent old node; archived dependencies keep their GC references.
+The replacement, including all potentially unknown local SSH configuration, is
+retained and cannot serve ordinary work until verified reset/destroy. Original
+Result/status remain unchanged. This follows the approved incomplete-resource
+contract; no new workflow engine or historical destructive action is introduced.
+
+
+Items 1–2 passed independent review, same-source contracts and complete affected
+package race regression. Item 1 includes actual backend obligation resolution by
+successful delete, fresh admission and unchanged old-decision retry. Real enclosing
+Reset/operator acceptance remains item 6; it is not implied by these contracts.

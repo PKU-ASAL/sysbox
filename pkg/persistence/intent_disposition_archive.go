@@ -37,11 +37,16 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 				action = resolved
 			}
 		}
-		if ok && action.ResetSSHResultsRecorded() && choice.Decision == "retain" {
+		quarantine := ok && action.ResetSSHIncompleteSupported() && choice.Decision == "retain-incomplete"
+		if ok && (action.ResetSSHResultsRecorded() && choice.Decision == "retain" || quarantine) {
 			if choice.ResourceUID != action.ResourceUID || choice.Generation != action.Generation || choice.ExternalID != action.Candidate.ExternalID {
 				return nil, ErrConflict
 			}
-			if err := publishResetSSHDisposition(&next, action, at, addresses); err != nil {
+			decision := ""
+			if quarantine {
+				decision = d.ID
+			}
+			if err := publishResetSSHDisposition(&next, action, at, addresses, decision); err != nil {
 				return nil, err
 			}
 			archive[action.ID] = original

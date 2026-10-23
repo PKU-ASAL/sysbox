@@ -58,7 +58,7 @@ func ValidateIntentDispositionChoice(d controlplane.IntentDispositionDecision, r
 				return ErrConflict
 			}
 			candidate = a.Replacement
-		} else if choice.Decision == "retain-incomplete" && a.Action == controlplane.PlanActionReset {
+		} else if choice.Decision == "retain-incomplete" && a.Action == controlplane.PlanActionReset && !a.ResetSSHIncompleteSupported() {
 			return ErrConflict
 		}
 		if !ok || choice.ResourceUID != a.ResourceUID || choice.Generation != a.Generation || candidate == nil || choice.ExternalID != candidate.ExternalID {
@@ -72,7 +72,7 @@ func ValidateIntentDispositionChoice(d controlplane.IntentDispositionDecision, r
 				return ErrConflict
 			}
 		}
-		if (choice.Decision == "retain" && plan.ResourceDecision != "retain-managed") || (choice.Decision == "absent" && plan.ResourceDecision != "confirm-absence") || (choice.Decision == "retain-incomplete" && plan.ResourceDecision != "retain-managed") || (choice.Decision == "retain-replacement-incomplete" && plan.ResourceDecision != "retain-incomplete-replacement") {
+		if (choice.Decision == "retain" && plan.ResourceDecision != "retain-managed") || (choice.Decision == "absent" && plan.ResourceDecision != "confirm-absence") || (choice.Decision == "retain-incomplete" && plan.ResourceDecision != "retain-managed" && plan.ResourceDecision != "retain-incomplete-reset") || (choice.Decision == "retain-replacement-incomplete" && plan.ResourceDecision != "retain-incomplete-replacement") {
 			return ErrConflict
 		}
 		delete(choices, a.ID)

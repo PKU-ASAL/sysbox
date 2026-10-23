@@ -103,10 +103,17 @@ func TestResetSSHDispositionBindsWholeSignedSnapshotAndRecoversPreparedWrite(t *
 func TestResetSSHDispositionPublishesLostCommittedResultFromSignedObservation(t *testing.T) {
 	testResetSSHSignedDisposition(t, true)
 }
-func testResetSSHSignedDisposition(t *testing.T, lost bool) {
+func TestResetSSHUnknownDispositionSignedCrashRecovery(t *testing.T) {
+	testResetSSHSignedDisposition(t, true, true)
+}
+func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) {
+	unknown := len(quarantine) > 0 && quarantine[0]
 	ctx := context.Background()
 	a, action, decision := resetSSHDispositionFixture(t)
 	recorded := action.ResetSSH[0].Result
+	if unknown {
+		decision.Actions[0].Decision = "retain-incomplete"
+	}
 	if lost {
 		action.ResetSSH[0].Result = nil
 		a.Actions[action.ID] = action
@@ -147,7 +154,7 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool) {
 		}
 		o.ResetSSH = append(o.ResetSSH, controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, JournalStatus: string(action.Status), Status: "present"})
 	}
-	if lost {
+	if lost && !unknown {
 		var saved struct {
 			Handle substrate.SSHAccessHandle `json:"handle"`
 		}
@@ -155,6 +162,9 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool) {
 		require.NoError(t, err)
 		require.NoError(t, json.Unmarshal(raw, &saved))
 		o.ResetSSH[0].SSHCommitted = &substrate.SSHAccessResult{Handle: saved.Handle, Present: true}
+	}
+	if unknown {
+		o.ResetSSH[0].Status = "unknown"
 	}
 	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: a.State.TopologyUID, StateSerial: a.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{o}}
 	report, err = controlplane.SignFenceObservation(hostKey, report, controlplane.FenceObservationBinding{RequestSHA256: digest, HostBootID: receipt.NewBootID}, "observer", 1)
@@ -180,7 +190,20 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool) {
 	if lost {
 		require.Nil(t, result.Actions[action.ID].ResetSSH[0].Result)
 		require.Nil(t, result.IntentDispositions[decision.ID].Actions[action.ID].ResetSSH[0].Result)
-		require.Equal(t, int64(2), result.State.FindResource(action.ResetSSH[0].Previous.Address).Generation)
+		if unknown {
+			require.Nil(t, result.State.FindResource(action.ResetSSH[0].Previous.Address))
+			require.True(t, result.State.FindResource(action.Resource).RecoveryRequired())
+			for _, op := range []string{"apply", "reset", "destroy"} {
+				err := ValidateCommandLifecycle(first.Lifecycle, "lab", controlplane.AgentCommand{Type: "run_assigned", TopologyUID: "owner", Run: &controlplane.Run{Op: op}})
+				if op == "apply" {
+					require.ErrorIs(t, err, ErrConflict)
+				} else {
+					require.NoError(t, err)
+				}
+			}
+		} else {
+			require.Equal(t, int64(2), result.State.FindResource(action.ResetSSH[0].Previous.Address).Generation)
+		}
 	}
 	refs, err := gcReferences(result)
 	require.NoError(t, err)
@@ -189,7 +212,7 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool) {
 		sources[ref.Source] = true
 	}
 	require.True(t, sources["intent-ssh-previous/decision/reset/"+action.ResetSSH[0].ActionID])
-	require.True(t, sources["intent-ssh-result/decision/reset/"+action.ResetSSH[0].ActionID])
+	require.Equal(t, !unknown, sources["intent-ssh-result/decision/reset/"+action.ResetSSH[0].ActionID])
 	require.Equal(t, controlplane.RunFailed, first.Run.Status)
 	require.Contains(t, first.Run.Err, "unknown")
 	require.Equal(t, runtime.ActionUncertain, result.Actions[action.ID].Status)
@@ -202,4 +225,24 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool) {
 	changed.Resources[0].ResetSSH = nil
 	decision.ObservationSHA256 = evidenceHash(changed)
 	require.Error(t, ValidateIntentDispositionChoice(decision, run, a.Serial, actionValues(a), changed))
+}
+
+func TestResetSSHUnknownDispositionQuarantinesNodeAndArchivesChildren(t *testing.T) {
+	a, action, d := resetSSHDispositionFixture(t)
+	action.ResetSSH[0].Result = nil
+	a.Actions[action.ID] = action
+	d.Actions[0].Decision = "retain-incomplete"
+	original, _ := json.Marshal(action)
+	archived, err := intentDispositionPostimage(a, d, time.Now().UTC())
+	require.NoError(t, err)
+	require.Len(t, a.State.Resources, 1)
+	node := a.State.FindResource(action.Resource)
+	require.Equal(t, "replacement", node.ExternalID)
+	require.True(t, node.RecoveryRequired())
+	require.Equal(t, state.ResourceUnknown, node.Status)
+	require.Nil(t, a.State.FindResource(action.ResetSSH[0].Previous.Address))
+	after, _ := json.Marshal(archived[action.ID])
+	require.JSONEq(t, string(original), string(after))
+	require.Nil(t, a.Actions[action.ID].ResetSSH[0].Result)
+	require.Equal(t, runtime.ActionUncertain, a.Actions[action.ID].Status)
 }

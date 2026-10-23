@@ -5219,3 +5219,25 @@ Host SSH discovery socket/canonical-identity race contracts also passed in
 `/tmp/sysbox-reset-ssh-lost-host-contract.log`. Disposable VMs were stopped with
 disks retained after acceptance; the dedicated PostgreSQL container was stopped
 only after all database verification completed.
+
+
+### PR #53: unknown SSH node obligation and changed desired metadata
+
+Unknown ResetSSH can now use explicit retain-incomplete: exact replacement node
+retained unknown with a rebuild/delete requirement, stale old-node SSH metadata
+removed atomically, original journal/archive untouched, and old SSH identities
+retained for GC. Signed prepared-write retries preserve the same postimage.
+Three-backend public API coverage includes child-stop-before-parent ordering,
+refused ordinary work/metadata removal, successful explicit deletion resolving
+the requirement, fresh admission, and old-decision retry preserving the deletion.
+Changed-config lost-result recovery reconstructs desired metadata only under the
+immutable admitted digest. Independent review found no blocking issue.
+
+Three same-source gates passed without skips:
+`/tmp/sysbox-reset-ssh-unknown-campaign-20261023/run.json`; source SHA256
+`bdfc1f4dda4c9be0adb72176dab905abc1bc8eb3932debd2bd41ffdf3846b435`.
+Full runtime/persistence/controlplane race: `/tmp/sysbox-reset-ssh-unknown-full.log`.
+Full API race: `/tmp/sysbox-reset-ssh-unknown-api-full.jsonl` (all passed).
+The focused three-backend API round also passed in
+`/tmp/sysbox-reset-ssh-unknown-api.log`. These are backend/protocol contracts,
+not a full real Reset/operator round. Remaining fixed stage-1 checklist stays open.

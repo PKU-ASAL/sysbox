@@ -10,8 +10,9 @@ import (
 
 // This transition is used only after the complete signed observation and child
 // stop ledger have been checked. It publishes no successful Run outcome.
-func publishResetSSHDisposition(a *aggregate, action runtime.ActionRecord, at time.Time, addresses map[string]bool) error {
-	if !action.ResetSSHResultsRecorded() || action.ValidateResetSSH(a.State) != nil || addresses[action.Resource.String()] {
+func publishResetSSHDisposition(a *aggregate, action runtime.ActionRecord, at time.Time, addresses map[string]bool, decision ...string) error {
+	incomplete := len(decision) > 0 && decision[0] != ""
+	if (!incomplete && !action.ResetSSHResultsRecorded()) || (incomplete && !action.ResetSSHIncompleteSupported()) || action.ValidateResetSSH(a.State) != nil || addresses[action.Resource.String()] {
 		return ErrConflict
 	}
 	source := a.State.FindResource(action.Resource)
@@ -36,7 +37,7 @@ func publishResetSSHDisposition(a *aggregate, action runtime.ActionRecord, at ti
 			}
 		}
 		for _, resource := range a.State.Resources {
-			if !resource.Address.Equal(dep.Result.Address) && resource.ResourceUID == dep.Result.ResourceUID {
+			if !resource.Address.Equal(dep.Previous.Address) && resource.ResourceUID == dep.Previous.ResourceUID {
 				return ErrConflict
 			}
 		}
@@ -50,6 +51,11 @@ func publishResetSSHDisposition(a *aggregate, action runtime.ActionRecord, at ti
 	if err := retained.DeleteRuntimeValue("reset_handle"); err != nil {
 		return err
 	}
+	if incomplete {
+		if err := retained.RequireRecovery(decision[0], retained.ResourceUID, retained.Generation); err != nil {
+			return err
+		}
+	}
 	retained.Status = state.ResourceUnknown
 	if retained.CreatedAt.IsZero() {
 		retained.CreatedAt = at
@@ -59,6 +65,11 @@ func publishResetSSHDisposition(a *aggregate, action runtime.ActionRecord, at ti
 	a.State.FindResource(action.Resource).UpdatedAt = at
 	addresses[action.Resource.String()] = true
 	for _, dep := range action.ResetSSH {
+		if incomplete {
+			a.State.RemoveResource(dep.Previous.Address)
+			addresses[dep.Previous.Address.String()] = true
+			continue
+		}
 		result := *dep.Result
 		result.Status = state.ResourceUnknown
 		if result.CreatedAt.IsZero() {

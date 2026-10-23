@@ -64,7 +64,7 @@ func TestHostFenceIncompleteReplacementDisposableVM(t *testing.T) {
 	require.Equal(t, "libvirt", os.Getenv("SYSBOX_DELETE_CLOSURE_PROVIDER"))
 	runHostFenceAPIContract(t, root, true, true, true, false, true, false, true)
 }
-func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord, absent bool, acceptanceRoot string, children ...controlplane.ExecutionGrant) {
+func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord, absent bool, acceptanceRoot string, unknownSSH bool, children ...controlplane.ExecutionGrant) {
 	t.Helper()
 	ctx := context.Background()
 	path := "/v1/topologies/lab/host-fences/" + fence.Request.ID
@@ -129,6 +129,12 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 			}
 			report.Resources[0].ResetSSH = append(report.Resources[0].ResetSSH, controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, Status: "present", JournalStatus: string(actions[0].Status), SSHCommitted: committed})
 		}
+		if unknownSSH {
+			for i := range report.Resources[0].ResetSSH {
+				report.Resources[0].ResetSSH[i].SSHCommitted = nil
+				report.Resources[0].ResetSSH[i].Status = "unknown"
+			}
+		}
 	} else if actions[0].Action == controlplane.PlanActionReset {
 		old := report.Resources[0]
 		old.Generation = actions[0].Candidate.Generation
@@ -187,7 +193,7 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	if absent {
 		d.Actions[0].Decision = "absent"
 	}
-	incomplete := actions[0].ReplayForbidden && !actions[0].ResetBeforeReplacement() && !verifiedSSH
+	incomplete := actions[0].ReplayForbidden && !actions[0].ResetBeforeReplacement() && (!verifiedSSH || unknownSSH)
 	if incomplete {
 		d.Actions[0].Decision = "retain-incomplete"
 	}
@@ -235,12 +241,12 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 		require.Empty(t, after.Resources)
 	} else {
 		count := 1
-		if verifiedSSH {
+		if verifiedSSH && !unknownSSH {
 			count += len(actions[0].ResetSSH)
 		}
 		require.Len(t, after.Resources, count)
 		require.Equal(t, d.Actions[0].ExternalID, after.FindResource(actions[0].Resource).ExternalID)
-		if verifiedSSH {
+		if verifiedSSH && !unknownSSH {
 			for _, dep := range actions[0].ResetSSH {
 				require.Equal(t, dep.Previous.Generation+1, after.FindResource(dep.Previous.Address).Generation)
 			}
@@ -272,6 +278,17 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	changed := d
 	changed.Reason = "different"
 	require.Equal(t, 409, post(cold, changed, true).Code)
+	if unknownSSH {
+		require.Nil(t, after.FindResource(actions[0].ResetSSH[0].Previous.Address))
+		for _, op := range []string{"apply", "reset", "destroy"} {
+			err := repo.ValidateCommandLifecycle(ctx, "lab", controlplane.AgentCommand{Type: "run_assigned", TopologyUID: after.TopologyUID, Run: &controlplane.Run{Op: op}})
+			if op == "apply" {
+				require.ErrorIs(t, err, persistence.ErrConflict)
+			} else {
+				require.NoError(t, err)
+			}
+		}
+	}
 	if incomplete {
 		require.True(t, after.Resources[0].RecoveryRequired())
 		proposed := *after
@@ -279,6 +296,26 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 		manager := state.NewManagerWithBackend(repo.StateBackend("lab"))
 		require.Error(t, manager.Save(&proposed))
 		require.Equal(t, 200, post(cold, d, true).Code)
+		if unknownSSH {
+			node := *after.FindResource(actions[0].Resource)
+			cleanup := runtime.ActionRecord{ID: "explicit-cleanup", Topology: "lab", RunID: "cleanup-run", Resource: node.Address, Action: controlplane.PlanActionDelete, Status: runtime.ActionIntentCommitted, OwnerUID: node.OwnerUID, ResourceUID: node.ResourceUID, Generation: node.Generation, StateSerial: after.Meta.Serial, ExpectedSerial: after.Meta.Serial, Candidate: &node}
+			require.NoError(t, repo.CommitActionIntent(ctx, cleanup))
+			records, err := repo.LoadActions(ctx, "lab")
+			require.NoError(t, err)
+			for _, record := range records {
+				if record.ID == cleanup.ID {
+					cleanup = record
+				}
+			}
+			cleanup.Status = runtime.ActionSucceeded
+			cleanup.EffectComplete = true
+			require.NoError(t, repo.CommitActionOutcome(ctx, cleanup, &runtime.StatePatch{Resource: node.Address.String(), Action: cleanup.Action, Op: runtime.StatePatchDelete}))
+			cleaned, err := repo.LoadState(ctx, "lab")
+			require.NoError(t, err)
+			require.Empty(t, cleaned.Resources)
+			require.NoError(t, repo.ValidateCommandLifecycle(ctx, "lab", controlplane.AgentCommand{Type: "run_assigned", TopologyUID: after.TopologyUID, Run: &controlplane.Run{Op: "apply"}}))
+			require.Equal(t, 200, post(cold, d, true).Code, "old retry must not restore deleted metadata")
+		}
 		return
 	}
 	next := actions[0]

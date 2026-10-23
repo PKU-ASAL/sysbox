@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"testing"
@@ -324,4 +325,73 @@ func TestResetSSHDispositionObserverDiscoversLostCommittedResult(t *testing.T) {
 	require.JSONEq(t, string(before), string(after))
 	require.Equal(t, []string{source.ExternalID}, wrapper.residual)
 	require.Len(t, conn.calls, 1, "read-only observation cannot replay SSH mutation")
+}
+
+func TestResetSSHUnknownDispositionRetainsRebuildObligation(t *testing.T) {
+	e, a, _ := resetSSHFixture(t)
+	dep := &a.ResetSSH[0]
+	dep.Started = true
+	source := e.state.FindResource(a.Resource)
+	source.ExternalID = "old-provider"
+	saved, err := decodeSSHState(dep.Previous, e.state)
+	require.NoError(t, err)
+	saved.Handle.NodeID = source.ExternalID
+	dep.Previous.Attributes = state.MustAttributes(map[string]any{"ssh_access": saved})
+	old := controlplane.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation - 1, ExternalID: source.ExternalID, Status: "absent", JournalStatus: string(a.Status), ProviderScope: "local-only", DeleteResidueAbsent: true}
+	child := controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "unknown", JournalStatus: string(a.Status)}
+	o := controlplane.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation, ExternalID: a.Candidate.ExternalID, Status: "present", JournalStatus: string(a.Status), ProviderScope: "local-only", ResetSource: &old, ResetSSH: []controlplane.RecoveredResource{child}}
+	p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+	require.Equal(t, "retain-incomplete-reset", p.ResourceDecision)
+	require.Equal(t, []string{"effect_stop_proof_required"}, p.Blockers)
+	for _, variant := range []string{"missing-child", "foreign-child", "source-present", "residue", "attachment"} {
+		t.Run(variant, func(t *testing.T) {
+			aa := a
+			oo := o
+			src := old
+			oo.ResetSource = &src
+			oo.ResetSSH = append([]controlplane.RecoveredResource(nil), o.ResetSSH...)
+			switch variant {
+			case "missing-child":
+				oo.ResetSSH = nil
+			case "foreign-child":
+				oo.ResetSSH[0].ResourceUID = "foreign"
+			case "source-present":
+				src.Status = "present"
+			case "residue":
+				src.DeleteResidueAbsent = false
+			case "attachment":
+				c := cloneResetStateResource(*aa.Candidate)
+				c.Attachments = []state.Attachment{{}}
+				aa.Candidate = &c
+			}
+			require.NotEqual(t, "retain-incomplete-reset", PlanIntentDisposition(aa, []controlplane.RecoveredResource{oo}).ResourceDecision)
+		})
+	}
+}
+
+func TestResetSSHChangedConfigurationLostResultUsesAdmittedDesiredDigest(t *testing.T) {
+	e, a, conn := resetSSHFixture(t)
+	n := e.graph.Get(a.ResetSSH[0].Previous.Address)
+	cfg := n.Data.(*config.SSHAccessConfig)
+	cfg.Port = 2222
+	a.ResetSSH = nil
+	// Admission pins the changed desired config while canonical old SSH remains.
+	require.NoError(t, e.pinResetSSH(&a))
+	require.NoError(t, e.reconcileResetSSH(context.Background(), &a))
+	saved, err := decodeSSHState(*a.ResetSSH[0].Result, e.state)
+	require.NoError(t, err)
+	committed := substrate.SSHAccessResult{Handle: saved.Handle, Present: true}
+	dep := &a.ResetSSH[0]
+	dep.Result = nil
+	child := controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "present", JournalStatus: string(a.Status), SSHCommitted: &committed}
+	resolved, err := ResetSSHWithObservedResults(a, []controlplane.RecoveredResource{{ActionID: a.ID, ResetSSH: []controlplane.RecoveredResource{child}}})
+	require.NoError(t, err)
+	require.Equal(t, dep.DesiredDigest, resolved.ResetSSH[0].Result.Str("desired_hash"))
+	require.EqualValues(t, 2222, resolved.ResetSSH[0].Result.Attributes["desired"].(map[string]any)["port"])
+	require.Nil(t, a.ResetSSH[0].Result)
+	require.Len(t, conn.calls, 1)
+	// A mismatched immutable digest cannot be replaced by the observed config.
+	a.ResetSSH[0].DesiredDigest = "foreign"
+	_, err = ResetSSHWithObservedResults(a, []controlplane.RecoveredResource{{ActionID: a.ID, ResetSSH: []controlplane.RecoveredResource{child}}})
+	require.Error(t, err)
 }

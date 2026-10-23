@@ -312,3 +312,23 @@ signed evidence even after live metadata changes. Changed configuration without
 its original desired metadata remains blocked, as do missing committed receipts.
 Older observing hosts omit this new field and cannot satisfy the lost-result
 path; older controllers cannot validate archives that require this evidence.
+
+
+### Unknown ResetSSH retained for explicit node rebuild/delete
+
+When no exact committed child receipt is available, `retain-incomplete` can retain
+an exactly observed replacement under a durable recovery requirement. It requires
+exact old source absence and provider residue absence, complete signed child
+inventory, and the same canonical host-fence/child-stop checks as other decisions.
+It removes stale old-node SSH live metadata in the same transition, preserving
+all original dependencies and any results in the archive and GC references.
+No SSH handle or success result is invented. Unknown local SSH configuration
+remains the retained node's responsibility; ordinary apply and guest admission
+are refused until a verified explicit reset or destroy resolves that obligation.
+Metadata removal cannot release it; old decision retries cannot restore a deleted
+node. Historical remote effects and missing stop evidence remain blocked.
+
+For a lost committed result with changed configuration, recovery can reconstruct
+SSH desired metadata from the original node reference and admitted configuration
+only when its hash exactly matches the immutable dependency DesiredDigest.
+A missing or mismatched digest cannot be replaced by observed configuration.

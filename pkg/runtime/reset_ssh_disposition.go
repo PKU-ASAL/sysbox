@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"time"
 
@@ -13,7 +15,13 @@ import (
 
 // ResetSSHResultsRecorded is a journal shape, not evidence of cessation or
 // current presence. It covers only the post-setup/pre-publication Reset window.
-func (a ActionRecord) ResetSSHResultsRecorded() bool {
+func (a ActionRecord) ResetSSHResultsRecorded() bool { return a.resetSSHDispositionShape(false) }
+
+// ResetSSHIncompleteSupported identifies replacement-local SSH uncertainty that
+// can be retained under a mandatory node rebuild/delete obligation.
+func (a ActionRecord) ResetSSHIncompleteSupported() bool { return a.resetSSHDispositionShape(true) }
+
+func (a ActionRecord) resetSSHDispositionShape(incomplete bool) bool {
 	if a.Action != controlplane.PlanActionReset || a.Phase != "verifying" || !a.EffectComplete || len(a.ResetSSH) == 0 || a.Generation < 2 || a.Candidate == nil || a.Candidate.Generation != a.Generation || a.Candidate.OwnerUID != a.OwnerUID || a.Candidate.ResourceUID != a.ResourceUID || !a.Candidate.Address.Equal(a.Resource) || a.Candidate.ExternalID == "" || len(a.Candidate.Attachments) > 0 {
 		return false
 	}
@@ -22,11 +30,14 @@ func (a ActionRecord) ResetSSHResultsRecorded() bool {
 	}
 	seen := map[string]bool{}
 	for _, dep := range a.ResetSSH {
-		if !dep.Started || dep.Result == nil || len(dep.Previous.Attachments) > 0 || dep.Previous.RecoveryRequired() || dep.ActionID != resetSSHActionID(a.ID, dep.Previous.Address.String()) || seen[dep.Previous.Address.String()] || dep.Previous.Generation < 1 || dep.Previous.Generation == int64(^uint64(0)>>1) {
+		if (!incomplete && (!dep.Started || dep.Result == nil)) || dep.Previous.OwnerUID != a.OwnerUID || dep.Previous.Driver != "managed" || len(dep.Previous.Attachments) > 0 || dep.Previous.RecoveryRequired() || dep.ActionID != resetSSHActionID(a.ID, dep.Previous.Address.String()) || seen[dep.Previous.Address.String()] || dep.Previous.Generation < 1 || dep.Previous.Generation == int64(^uint64(0)>>1) {
 			return false
 		}
 		seen[dep.Previous.Address.String()] = true
 		r := dep.Result
+		if r == nil && incomplete {
+			continue
+		}
 		if r.OwnerUID != a.OwnerUID || r.ResourceUID != dep.Previous.ResourceUID || r.Generation != dep.Previous.Generation+1 || !r.Address.Equal(dep.Previous.Address) || r.Driver != "managed" || len(r.Attachments) > 0 || r.RecoveryRequired() {
 			return false
 		}
@@ -49,7 +60,8 @@ func planResetSSHDisposition(a ActionRecord, observations []controlplane.Recover
 	if err == nil {
 		a = resolved
 	}
-	if !a.ResetSSHResultsRecorded() {
+	incomplete := !a.ResetSSHResultsRecorded()
+	if incomplete && !a.ResetSSHIncompleteSupported() {
 		p.Blockers = append(p.Blockers, "reset_ssh_committed_results_required")
 		return p
 	}
@@ -89,7 +101,14 @@ func planResetSSHDisposition(a ActionRecord, observations []controlplane.Recover
 			if child.ActionID != dep.ActionID {
 				continue
 			}
-			if seen[child.ActionID] || !resetObservedIdentity(child, dep.ActionID, *dep.Result, a.Status) || child.Status != "present" || child.ResetSource != nil || child.ResetReplacement != nil || len(child.ResetSSH) != 0 {
+			expected := dep.Result
+			if expected == nil {
+				r := dep.Previous
+				r.Generation++
+				r.ExternalID = dep.Config.AccessID
+				expected = &r
+			}
+			if seen[child.ActionID] || !resetObservedIdentity(child, dep.ActionID, *expected, a.Status) || (!incomplete && child.Status != "present") || (child.Status != "present" && child.Status != "unknown" && child.Status != "absent") || child.ResetSource != nil || child.ResetReplacement != nil || len(child.ResetSSH) != 0 {
 				p.Blockers = append(p.Blockers, "reset_ssh_observation_required")
 				return p
 			}
@@ -102,6 +121,9 @@ func planResetSSHDisposition(a ActionRecord, observations []controlplane.Recover
 		}
 	}
 	p.ResourceDecision = "retain-managed"
+	if incomplete {
+		p.ResourceDecision = "retain-incomplete-reset"
+	}
 	return p
 }
 func resetObservedIdentity(o controlplane.RecoveredResource, id string, r state.Resource, status ActionStatus) bool {
@@ -147,6 +169,7 @@ func observeResetSSHDisposition(ctx context.Context, a ActionRecord, st *state.S
 			}
 		}
 		if r == nil {
+			item.ResetSSH = append(item.ResetSSH, controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "unknown", JournalStatus: string(a.Status)})
 			continue
 		}
 		child := ActionRecord{ID: dep.ActionID, Resource: r.Address, OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, Status: a.Status, Action: controlplane.PlanActionRead, Candidate: r}
@@ -158,7 +181,8 @@ func observeResetSSHDisposition(ctx context.Context, a ActionRecord, st *state.S
 
 // ResetSSHWithObservedResults builds a detached publication candidate from exact
 // committed read evidence. It never fills the original journal's missing Result.
-// Configuration changes need their original desired metadata and remain blocked.
+// Configuration changes require reconstructed desired metadata to match the
+// immutable admitted digest; the previous node reference alone grants nothing.
 func ResetSSHWithObservedResults(a ActionRecord, observations []controlplane.RecoveredResource) (ActionRecord, error) {
 	out := a
 	out.ResetSSH = append([]ResetSSHDependency(nil), a.ResetSSH...)
@@ -214,7 +238,16 @@ func recoverResetSSHResult(a ActionRecord, dep ResetSSHDependency, committed sub
 	}
 	x, _ := json.Marshal(previous.Config)
 	y, _ := json.Marshal(dep.Config)
-	if string(x) != string(y) {
+	desired := map[string]any{}
+	if old, ok := dep.Previous.Attributes[desiredPayloadKey].(map[string]any); ok {
+		node, _ := old["node"].(string)
+		cfg := &config.SSHAccessConfig{Node: node, AuthorizedKeys: append([]string(nil), dep.Config.AuthorizedKeys...), BindIP: dep.Config.BindIP, Port: dep.Config.Port}
+		n := &graph.Node{Address: dep.Previous.Address, Data: cfg}
+		ref, _, err := sshDesired(n, dep.Config.User, dep.ActionID)
+		if err != nil || ref != a.Resource.String() || setDesiredHash(n, desired) != nil || desired[desiredHashKey] != dep.DesiredDigest {
+			return state.Resource{}, fmt.Errorf("%w: admitted SSH desired digest mismatch", ErrObservationUnknown)
+		}
+	} else if string(x) != string(y) {
 		return state.Resource{}, fmt.Errorf("%w: missing changed SSH desired metadata", ErrObservationUnknown)
 	}
 	req := substrate.SSHAccessMutation{ID: dep.ActionID, ExpectedRevision: committed.Handle.Revision - 1, Config: dep.Config}
@@ -226,6 +259,9 @@ func recoverResetSSHResult(a ActionRecord, dep ResetSSHDependency, committed sub
 	result.Generation++
 	result.Status = state.ResourceUnknown
 	result.CreatedAt, result.UpdatedAt = time.Time{}, time.Time{}
+	for key, value := range desired {
+		result.Attributes[key] = value
+	}
 	result.Attributes["ssh_access"] = persistedSSHAccess{Version: 1, Node: a.Resource.String(), Config: dep.Config, Handle: committed.Handle}
 	return result, nil
 }
