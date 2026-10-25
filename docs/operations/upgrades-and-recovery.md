@@ -383,3 +383,11 @@ only enables `retain-incomplete`: the original guest setup outcome stays unknown
 all child stop checks still apply, and ordinary work remains blocked until an
 explicit rebuild/delete resolves the obligation. Ordinary discovery continues to
 reject incomplete setup; linked-node discovery still requires complete inventory.
+
+Linked node/router missing-create discovery uses complete provider attachment
+inventory and only enables `retain-incomplete`. An empty desired attachment list
+is not proof of an empty actual inventory. Providers lacking inventory support,
+Docker raw-veth reconstruction or unavailable kernel namespaces remain unknown.
+Routers with recovery obligations require explicit destroy and recreation, not
+node-only targeted reset. This new inventory path still awaits real-provider
+acceptance; do not treat local contracts as deployment certification.

@@ -126,16 +126,22 @@ func discoverNodeIdentity(ctx context.Context, pc *ProviderContext, n *graph.Nod
 	attrs["container_id"] = handle.ID
 	// Discovery does not claim that guest configuration or provisioners ran.
 	// A candidate persisted after the complete effect carries that evidence.
-	if cfg, ok := n.Data.(*config.NodeConfig); ok && (len(cfg.Links) > 0 || !incomplete && (len(cfg.Routes) > 0 || len(cfg.Provisioners) > 0)) {
+	if cfg, ok := n.Data.(*config.NodeConfig); ok && !incomplete && (len(cfg.Links) > 0 || len(cfg.Routes) > 0 || len(cfg.Provisioners) > 0) {
 		return ResourceReadResult{Status: state.ResourceUnknown}, fmt.Errorf("%w: discovered node lacks complete attachment/guest action evidence", ErrActionUncertain)
 	}
-	if kind == "router" {
+	if kind == "router" && !incomplete {
 		return ResourceReadResult{Status: state.ResourceUnknown}, fmt.Errorf("%w: discovered router lacks policy action evidence", ErrActionUncertain)
 	}
 	if err := setDesiredHash(n, attrs); err != nil {
 		return ResourceReadResult{}, err
 	}
 	r := state.Resource{Address: n.Address, Driver: provider, ExternalID: handle.ID, Attributes: state.MustAttributes(attrs), OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation}
+	if incomplete {
+		r.Attachments, err = discoverIntentAttachments(ctx, pc, n, handle, provider, nodeDriver)
+		if err != nil {
+			return ResourceReadResult{}, err
+		}
+	}
 	blob, err := stateDriver.MarshalProviderState(handle)
 	if err != nil {
 		return ResourceReadResult{}, err

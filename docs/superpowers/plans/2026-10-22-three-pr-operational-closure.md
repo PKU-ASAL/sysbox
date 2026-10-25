@@ -221,3 +221,28 @@ reviewed. Focused runtime, signed persistence and public three-backend API check
 passed; full runtime race passed. This is only identity retention under the
 existing recovery obligation, not successful guest configuration or arbitrary
 external-effect cessation. Linked nodes and routers still need full inventory.
+
+2026-10-25 implementation in progress: complete attachment inventory SPI for
+explicit linked-node/router identity disposition; ordinary convergence remains
+unchanged. Empty desired attachment sets must also pass actual provider inventory.
+Firecracker validates locked manifest/config, network generation and owned TAP;
+libvirt validates full XML interface set and owned bridges; Docker NAT cross-checks
+daemon endpoints against a pinned container kernel namespace. Missing SPI or
+unprovable inventory stays unknown. Router obligations are resolved by explicit
+destroy followed by recreate, not unsupported targeted router reset.
+
+Review corrected two inventory omissions (empty desired and Docker raw-veth
+visibility) and added sandbox/PID namespace dev/inode checks before/after queries.
+Signed detached attachments also require unique nonempty names, exact node/driver
+and opaque provider state. Runtime, persistence and local/SQLite public API
+contracts pass. Isolated real VM startup and elevated full regression have been
+blocked by automatic permission-review timeouts; those commands were not executed.
+PostgreSQL, actual provider inventory, reboot and full operator campaigns are not
+claimed passed by local contracts. No stage closure is claimed yet.
+
+Final local verification for this increment: focused six-package contracts passed;
+full runtime/persistence race passed (1.705s/22.770s); current Docker/Firecracker
+E2E probes compile. Final independent review found no code blocker. No real
+provider/PG/full operator result is claimed. Concrete resumed commands and evidence
+paths are recorded in p9-real-acceptance.md. Docker raw-veth reconstruction remains
+a functional gap, alongside whole-VM vsock/repeated enclosing operator acceptance.

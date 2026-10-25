@@ -98,7 +98,7 @@ func observeIntentResource(ctx context.Context, record ActionRecord, candidate *
 	if candidate != nil && candidate.OwnerUID == record.OwnerUID && candidate.ResourceUID == record.ResourceUID && candidate.Generation == record.Generation {
 		item.ExternalID = candidate.ExternalID
 		item.AttachmentCount = len(candidate.Attachments)
-		if record.Resource.Type == "sysbox_node" {
+		if record.Resource.Type == "sysbox_node" || record.Resource.Type == "sysbox_router" {
 			if node, err := driver.DefaultRegistry.RequireNode(candidate.Driver); err == nil {
 				if local, ok := node.(interface {
 					HostFenceScope(context.Context) (string, error)

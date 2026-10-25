@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	dockernet "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
+	"github.com/oslab/sysbox/pkg/driver"
 	ownednetwork "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
@@ -46,6 +47,19 @@ func TestDockerFencedAttachmentResidueE2E(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, s.cli.NetworkRemove(context.Background(), netw.ID)) })
 	require.NoError(t, s.cli.NetworkConnect(ctx, netw.ID, h.ID, nil))
 	raw, _ := json.Marshal(attachmentState{Kind: substrate.NICKindDockerNAT, NetworkID: netw.ID})
+	require.NoError(t, s.cli.ContainerStart(ctx, h.ID, container.StartOptions{}))
+	// Remove the initial default bridge before complete managed endpoint discovery.
+	require.NoError(t, s.cli.NetworkDisconnect(ctx, "bridge", h.ID, true))
+	request := driver.AttachmentRequest{Name: "nat", NetworkIdentity: id, NetworkState: json.RawMessage(`{"nat":true,"docker_network_id":"` + netw.ID + `"}`)}
+	found, err := s.DiscoverManagedAttachments(ctx, h, []driver.AttachmentRequest{request})
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	_, err = s.DiscoverManagedAttachments(ctx, h, nil)
+	require.Error(t, err, "empty desired cannot omit actual endpoint")
+	wrong := request
+	wrong.NetworkIdentity.Generation++
+	_, err = s.DiscoverManagedAttachments(ctx, h, []driver.AttachmentRequest{wrong})
+	require.Error(t, err)
 	require.Error(t, s.HostFenceAttachmentAbsent(ctx, h, "nat", raw), "live container is not absence")
 	require.NoError(t, s.cli.ContainerRemove(ctx, h.ID, container.RemoveOptions{Force: true}))
 	require.NoError(t, s.HostFenceAttachmentAbsent(ctx, h, "nat", raw))

@@ -110,6 +110,7 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 	unknown := len(quarantine) > 0 && quarantine[0]
 	attached := len(quarantine) > 1 && quarantine[1]
 	missingCreate := len(quarantine) > 2 && quarantine[2]
+	router := len(quarantine) > 3 && quarantine[3]
 	ctx := context.Background()
 	a, action, decision := resetSSHDispositionFixture(t)
 	if attached {
@@ -126,6 +127,13 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 	if missingCreate {
 		candidate := *discovered
 		candidate.Attributes = state.MustAttributes(map[string]any{"desired_hash": "desired"})
+		if router {
+			candidate.Address = address.Resource("sysbox_router", "edge")
+			action.Resource = candidate.Address
+			for i := range candidate.Attachments {
+				candidate.Attachments[i].Node = candidate.Address
+			}
+		}
 		discovered = &candidate
 		action.Action = controlplane.PlanActionCreate
 		action.Phase = ""
@@ -185,6 +193,7 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 	if missingCreate {
 		o.ResetSource = nil
 		o.Discovered = discovered
+		o.AttachmentCount = len(discovered.Attachments)
 	}
 	for _, dep := range action.ResetSSH {
 		r := dep.Result
@@ -306,4 +315,8 @@ func TestResetSSHCompositeAttachmentsRetainReplacementObligation(t *testing.T) {
 
 func TestMissingCreateIdentitySignedDispositionPreservesOriginalJournal(t *testing.T) {
 	testResetSSHSignedDisposition(t, false, true, false, true)
+}
+
+func TestLinkedRouterIdentitySignedDispositionPreservesInventory(t *testing.T) {
+	testResetSSHSignedDisposition(t, false, true, true, true, true)
 }

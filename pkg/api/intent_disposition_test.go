@@ -104,6 +104,9 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	}
 	report := controlplane.RunRecoveryReport{CommandID: lease.ID, RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, Mode: controlplane.RunRecoveryObserve, TopologyUID: before.TopologyUID, StateSerial: before.Meta.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: actions[0].ID, Resource: actions[0].Resource.String(), OwnerUID: actions[0].OwnerUID, ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, ExternalID: candidate.ExternalID, Status: "present", ProviderScope: "local-only", DeleteResidueAbsent: true, JournalStatus: string(actions[0].Status)}}}
 	report.Resources[0].Discovered = discovered
+	if discovered != nil {
+		report.Resources[0].AttachmentCount = len(discovered.Attachments)
+	}
 	verifiedSSH := actions[0].Phase == "verifying" && actions[0].EffectComplete && len(actions[0].ResetSSH) > 0
 	if verifiedSSH {
 		source := before.FindResource(actions[0].Resource)
@@ -365,4 +368,8 @@ func TestHostFenceAttachmentAbsenceDispositionAPI(t *testing.T) {
 
 func TestHostFenceMissingCreateIdentityDispositionAPI(t *testing.T) {
 	runHostFenceAPIContract(t, "", true, true, true, false, false, true, false, true, false, false, false, true)
+}
+
+func TestHostFenceLinkedRouterIdentityDispositionAPI(t *testing.T) {
+	runHostFenceAPIContract(t, "", true, true, true, false, false, true, false, true, false, false, false, false, true, true)
 }

@@ -35,6 +35,15 @@ func TestFirecrackerFenceRequiresExactTapAbsenceE2E(t *testing.T) {
 	req := driver.AttachmentRequest{Name: "nic", NetworkIdentity: netID, IPPrefixes: []string{"10.45.0.2/24"}, NetworkState: json.RawMessage(`{"netns":"` + name + `","bridge":"br0"}`)}
 	attached, err := s.Attach(ctx, h, req)
 	require.NoError(t, err)
+	recovered, err := s.DiscoverManagedAttachments(ctx, h, []driver.AttachmentRequest{req})
+	require.NoError(t, err)
+	require.JSONEq(t, string(attached.State), string(recovered[req.Name].State))
+	_, err = s.DiscoverManagedAttachments(ctx, h, nil)
+	require.Error(t, err, "unaccounted TAP blocks discovery")
+	wrong := req
+	wrong.NetworkIdentity.Generation++
+	_, err = s.DiscoverManagedAttachments(ctx, h, []driver.AttachmentRequest{wrong})
+	require.Error(t, err)
 	var st attachmentState
 	require.NoError(t, json.Unmarshal(attached.State, &st))
 	require.NotNil(t, st.Link)

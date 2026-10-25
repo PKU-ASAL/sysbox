@@ -5365,3 +5365,41 @@ Runtime negative/positive tests, signed disposition preserving original journal,
 and three-backend public API disposition passed; full runtime race regression
 passed in `/tmp/sysbox-composite-identity-runtime-20261023.log`. Independent review
 found no blocker. Links without complete inventory remain unresolved.
+
+### Linked-node/router identity inventory (2026-10-25, not real-accepted)
+
+Explicit incomplete intent recovery now asks the owning provider for a complete
+attachment inventory, including when desired inputs contain no attachments. No
+SPI means unknown. Firecracker compares locked manifest/config/TAP/target identity;
+libvirt compares the full domain XML interface set, bridges and network generation;
+Docker NAT compares daemon endpoints with every non-loopback link in the pinned
+container network namespace. Namespace FD, sandbox path and current PID namespace
+must retain the same dev/inode before and after inspection. Null network exceptions
+require actual null driver and network mode. Raw-veth request reconstruction in
+Docker remains unsupported/unknown, not silently omitted.
+
+Signed discovered attachments bind count, unique names, node, driver and opaque
+state. Both nodes and routers can be retained only as incomplete, preserving
+original nil Candidate/unknown history and references. Router recovery uses
+explicit destroy followed by recreation; targeted router reset is not implemented.
+
+Focused race contracts passed for runtime, persistence, API (file/SQLite), Docker,
+Firecracker and libvirt: `/tmp/sysbox-linked-contracts-20261025.log`. Full runtime
+and persistence race passed in `/tmp/sysbox-linked-runtime-persistence-20261025.log`
+(1.705s and 22.770s). Independent final review found no remaining code blocker.
+The changed Docker/Firecracker real acceptance probes compile. Actual provider,
+PostgreSQL and whole-VM/repeated operator integration have NOT run: automatic
+permission review timed out twice for VM startup and twice for elevated regression;
+those commands were not executed. No skip or local contract substitutes for these.
+
+Prepared next checks after permission service recovery:
+
+- Start the enrolled `/tmp/sysbox-gc-fencing-20261021` using its recorded budgets;
+  start dedicated PostgreSQL and inspect its current port before setting test DSN.
+- Run `scripts/acceptance/vsock_file_stop.py` with the existing local Firecracker,
+  kernel and rootfs assets; its TAP test now includes read-only exact attachment
+  discovery and empty/foreign generation rejection. It builds current helpers.
+- Run current Docker `TestDockerFencedAttachmentResidueE2E` in the execution VM;
+  it now validates full NAT inventory and rejects omitted/foreign endpoints.
+- Run full provider/API race including PostgreSQL, then finish raw-veth discovery,
+  vsock whole-VM reboot and repeated public operator disposition/destroy/fresh work.

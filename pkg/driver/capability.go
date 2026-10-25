@@ -259,3 +259,10 @@ func (d Descriptor) capability(capability Capability) any {
 		return nil
 	}
 }
+
+// ManagedAttachmentDiscovery returns the complete generation inventory keyed by
+// logical attachment name. It must reject unaccounted attachments and uncertain
+// ownership; it never creates, repairs or infers successful guest configuration.
+type ManagedAttachmentDiscovery interface {
+	DiscoverManagedAttachments(context.Context, substrate.NodeHandle, []AttachmentRequest) (map[string]AttachmentResult, error)
+}

@@ -48,6 +48,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 	unknownSSH := len(reconcileCase) > 9 && reconcileCase[9]
 	attached := len(reconcileCase) > 10 && reconcileCase[10]
 	missingCreate := len(reconcileCase) > 11 && reconcileCase[11]
+	linkedRouter := len(reconcileCase) > 12 && reconcileCase[12]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
 			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
@@ -168,6 +169,11 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 					admitted := sshDependency
 					admitted.Result = nil
 					action.ResetSSH = []runtime.ResetSSHDependency{admitted}
+				}
+				if linkedRouter {
+					action.Resource = address.Resource("sysbox_router", "edge")
+					action.Candidate.Address = action.Resource
+					action.Candidate.Attachments = []state.Attachment{{Name: "lan", Node: action.Resource, Network: address.Resource("sysbox_network", "lan"), Driver: action.Candidate.Driver, DriverState: json.RawMessage(`{"exact":true}`)}}
 				}
 				if missingCreate {
 					discovered = action.Candidate
