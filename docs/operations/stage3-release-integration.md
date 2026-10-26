@@ -55,3 +55,22 @@ the verified digest lock.
 - Record candidate commit, archive hashes, OCI manifest identity and deployment
   evidence, then submit the final integration PR for review. Production rollout
   and main merge are separate actions.
+
+## Runtime candidate evidence
+
+Local candidate `/tmp/sysbox-stage3-36dfad7-verified` was assembled from the
+verified release archive, rather than rebuilt in a second Go toolchain. Evidence
+was recorded in `/tmp/sysbox-stage3-36dfad7/runtime-evidence.json`:
+
+- version commit `36dfad78bb3ec6cef53e60c2ba4dc5e75d422d43` and build time matched
+  archive metadata;
+- runtime Docker CLI reported `Docker version 29.9.1`;
+- `sysbox`, `sysbox-init`, and `sysbox-netns` hashes matched the amd64 archive;
+- the scope was local amd64 image assembly. No registry push or production
+  service restart was performed.
+
+The OCI publisher now verifies the archive directory and supplies it as the
+`release` named build context. The Dockerfile validates archive checksums,
+metadata, and target executable hashes before assembling the runtime layer.
+A future multi-platform registry run must prove the manifest digest and both
+child-platform labels with `oci.sh verify`.

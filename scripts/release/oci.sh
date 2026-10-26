@@ -128,8 +128,9 @@ case "${operation}" in
     commit="$(release_commit)"
     created="$(release_time)"
     release_fingerprint="$(jq -er '.release_fingerprint' "${BUILD_METADATA:?release: BUILD_METADATA is required}")"
+    "${repo_root}/scripts/release/verify.sh" "$(dirname "${BUILD_METADATA}")"
     docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
-      --file "${repo_root}/Dockerfile" \
+      --file "${repo_root}/Dockerfile" --build-arg BINARY_SOURCE=release --build-context "release=$(dirname "${BUILD_METADATA}")" \
       --build-arg "VERSION=${tag}" --build-arg "REVISION=${commit}" \
       --build-arg "CREATED=${created}" --build-arg "SOURCE_URL=${SOURCE_URL:-https://github.com/PKU-ASAL/sysbox}" \
       --build-arg "RELEASE_FINGERPRINT=${release_fingerprint}" \
@@ -154,8 +155,9 @@ case "${operation}" in
           commit="$(release_commit)"
           created="$(release_time)"
           release_fingerprint="$(jq -er '.release_fingerprint' "${BUILD_METADATA:?release: BUILD_METADATA is required}")"
+          "${repo_root}/scripts/release/verify.sh" "$(dirname "${BUILD_METADATA}")"
           docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
-            --file "${repo_root}/Dockerfile" \
+            --file "${repo_root}/Dockerfile" --build-arg BINARY_SOURCE=release --build-context "release=$(dirname "${BUILD_METADATA}")" \
             --build-arg "VERSION=${tag}" --build-arg "REVISION=${commit}" \
             --build-arg "CREATED=${created}" --build-arg "SOURCE_URL=${SOURCE_URL:-https://github.com/PKU-ASAL/sysbox}" \
             --build-arg "RELEASE_FINGERPRINT=${release_fingerprint}" \
