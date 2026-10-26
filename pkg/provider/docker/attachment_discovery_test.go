@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"github.com/oslab/sysbox/pkg/driver"
+	ownednetwork "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
@@ -63,4 +64,33 @@ func TestDiscoveryNamespaceBindingRejectsSubstitution(t *testing.T) {
 	require.NoError(t, os.Remove(process))
 	require.NoError(t, os.WriteFile(process, []byte("other pid namespace"), 0600))
 	require.Error(t, validateDiscoveryNamespaceBinding(sandbox, process, int(fd.Fd())), "sandbox must match current container namespace")
+}
+
+func TestRawVethDiscoveryRequiresExactOwnedPeer(t *testing.T) {
+	proof := ownednetwork.AttachmentLink{Index: 123, Alias: "owned", Kind: "veth"}
+	mac, _ := net.ParseMAC("02:00:00:00:00:02")
+	for _, mode := range []string{"exact", "alias", "peer", "name", "kind", "mac"} {
+		t.Run(mode, func(t *testing.T) {
+			attrs := netlink.LinkAttrs{Name: "eth1", Index: 456, ParentIndex: 123, Alias: "owned", HardwareAddr: mac}
+			var link netlink.Link = &netlink.Veth{LinkAttrs: attrs}
+			switch mode {
+			case "alias":
+				link.Attrs().Alias = "foreign"
+			case "peer":
+				link.Attrs().ParentIndex++
+			case "name":
+				link.Attrs().Name = "other"
+			case "kind":
+				link = &netlink.Dummy{LinkAttrs: attrs}
+			case "mac":
+				link.Attrs().HardwareAddr = nil
+			}
+			err := validateDiscoveredRawPeer(link, proof, "eth1", mac.String())
+			if mode == "exact" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
 }

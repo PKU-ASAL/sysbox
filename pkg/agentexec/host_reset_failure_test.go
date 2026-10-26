@@ -47,7 +47,7 @@ func TestHostResetFailureUsesReturnedExecutorAndDurablePhases(t *testing.T) {
 			hcl := filepath.Join(root, "field.sysbox.hcl")
 			require.NoError(t, os.WriteFile(hcl, []byte("invalid HCL !"), 0600))
 			now := time.Now().UTC()
-			run := &controlplane.Run{ID: "run", Topology: "lab", Op: "reset", Revision: "revision", AgentID: "agent", Status: controlplane.RunRunning, LeaseOwner: "owner", LeaseUntil: now.Add(time.Minute), QueuedAt: now}
+			run := &controlplane.Run{ID: "run", Topology: "lab", Op: "reset", Revision: "revision", AgentID: "agent", Status: controlplane.RunRunning, LeaseOwner: "owner", LeaseUntil: now.Add(time.Minute), QueuedAt: now, StartedAt: now}
 			b := &returnedResetBridge{LocalBridge: NewLocalBridge(LocalOptions{Topology: "lab", ConfigFile: hcl, StatePath: filepath.Join(root, "state.json"), RunsDir: root, Log: io.Discard}), run: run}
 			mgr, err := b.StateManager("lab")
 			require.NoError(t, err)

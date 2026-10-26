@@ -109,6 +109,8 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 			if current != nil && !replacement {
 				retained = *current
 			}
+			// AddResource normalizes runtime attributes; keep journal maps immutable.
+			retained.Attributes = state.MustAttributes(retained.AttributeMap())
 			var private map[string]json.RawMessage
 			if json.Unmarshal(retained.Private, &private) != nil || len(private) == 0 {
 				return nil, ErrConflict

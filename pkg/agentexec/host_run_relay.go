@@ -93,6 +93,12 @@ func awaitHostRun(ctx context.Context, client hostRunClient, req hostsupervisor.
 			renewCtx, cancel := context.WithDeadline(ctx, deadline)
 			next, renewErr := renew(renewCtx, grant)
 			if renewErr == nil {
+				renewErr = controlplane.VerifyExecutionGrant(key, next, initial.BootID, next.IssuedAt)
+			}
+			if renewErr == nil {
+				renewErr = waitForCanonicalRunStart(renewCtx, next.IssuedAt)
+			}
+			if renewErr == nil {
 				renewErr = controlplane.VerifyExecutionGrant(key, next, initial.BootID, time.Now())
 			}
 			if renewErr == nil {

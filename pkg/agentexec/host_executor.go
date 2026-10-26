@@ -44,6 +44,9 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 	if run == nil || run.Topology != req.Topology || run.Revision != req.Revision || run.Op != req.Action || run.Target != req.Target || run.AgentID != h.Tasks.AgentID || run.Status != controlplane.RunRunning || run.LeaseOwner == "" || !run.LeaseUntil.After(time.Now()) {
 		return nil, fmt.Errorf("host run canonical claim changed")
 	}
+	if err := waitForCanonicalRunStart(ctx, run.StartedAt); err != nil {
+		return nil, err
+	}
 	path, err := h.Bridge.MaterializeRunRevision(ctx, req.Topology, req.Revision)
 	if err != nil {
 		return nil, fmt.Errorf("materialize immutable host revision: %w", err)

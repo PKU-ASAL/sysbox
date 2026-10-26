@@ -67,6 +67,21 @@ func (e *Engine) scopeQuiescentExcept(grant controlplane.ExecutionGrant, absent 
 	}
 	for _, task := range tasks {
 		if sameScope(task.Grant.Grant.Scope, grant.Scope) && !task.TerminationConfirmed {
+			// A freshly authorized current-boot request cannot overlap a local
+			// process from a different kernel. Verify the historical signature
+			// before using that fact; preserve its original unknown result.
+			boot, err := BootID()
+			if err != nil {
+				return err
+			}
+			g := task.Grant
+			if task.BootID != boot && grant.TargetBootID == boot &&
+				task.BootID == g.BootID && task.BootID == g.Grant.TargetBootID &&
+				task.ID == g.Grant.ActionID && task.Digest == g.Grant.Digest &&
+				g.Grant.Operation == "guest_task" &&
+				controlplane.VerifyExecutionGrant(e.PublicKey, g, task.BootID, g.IssuedAt) == nil {
+				continue
+			}
 			return fmt.Errorf("previous guest task is not quiescent")
 		}
 	}

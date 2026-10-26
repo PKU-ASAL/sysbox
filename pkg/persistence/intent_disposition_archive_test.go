@@ -224,3 +224,23 @@ func TestAbsentDispositionCanRemoveAttachmentMetadataOnlyWithSignedCoverage(t *t
 	require.NoError(t, err)
 	require.Nil(t, a.State.FindResource(action.Resource))
 }
+
+func TestIncompleteDispositionDoesNotNormalizeOriginalCandidate(t *testing.T) {
+	a, action, d := resetSSHDispositionFixture(t)
+	action.Action = controlplane.PlanActionCreate
+	action.ResetSSH = nil
+	action.Replacement = nil
+	action.Phase = ""
+	action.EffectComplete = false
+	action.ReplayForbidden = true
+	action.Candidate.Attributes = state.MustAttributes(map[string]any{"container_id": action.Candidate.ExternalID})
+	a.State.Resources = nil
+	a.Actions = map[string]runtime.ActionRecord{action.ID: action}
+	d.Actions[0].Decision = "retain-incomplete"
+	original := evidenceHash(action)
+	_, err := intentDispositionPostimage(a, d, time.Now().UTC())
+	require.NoError(t, err)
+	current := a.Actions[action.ID]
+	current.DispositionID = ""
+	require.Equal(t, original, evidenceHash(current), "state normalization must not delete runtime attributes from original journal")
+}

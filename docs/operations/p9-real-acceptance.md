@@ -5403,3 +5403,56 @@ Prepared next checks after permission service recovery:
   it now validates full NAT inventory and rejects omitted/foreign endpoints.
 - Run full provider/API race including PostgreSQL, then finish raw-veth discovery,
   vsock whole-VM reboot and repeated public operator disposition/destroy/fresh work.
+
+### Stage 1 frozen-scope closure — 2026-10-26
+
+All three remaining groups frozen on 2026-10-25 are implemented and accepted.
+Unified report: /tmp/sysbox-stage1-closure-20261026.json, SHA256
+05cb1a93e991c51f0853c33c0214342c3cfa7ecf0a2cafb1f09d7dc38c88519d.
+Implementation source SHA256:
+176e631866236d66378f0632e798ce02b9838fb70f888a715497b385f2087bd2.
+
+Docker raw-veth and NAT inventory passed twice, including omitted links, foreign
+network generation, substituted peer and actual detached extra veth rejection.
+Both kernel NSIDs and reciprocal peer indices bind the endpoints. Real libvirt
+XML/owned bridge inventory passed twice. Real Firecracker manifest/config/TAP
+inventory passed twice. Linked router signed disposition passed file/SQLite/PG,
+preserving unknown history and archive-backed obligations.
+
+Public CLI recovery passed twice (68.048s total): real execution-host QEMU
+power-off/restart, actual signed host observation, retain-incomplete, production
+independent UID 65534 Agent/root supervisor Destroy, fresh Apply, old-decision
+retry and final Destroy. Initial interrupted Run/action is a seeded fixture;
+subsequent provider operations/completion are real. Separately, whole guest
+microVM kernel reboot while a real vsock task runs passed twice: old request is
+refused, unknown stop is signed, successor executes and old-stop retry preserves
+it. Persistent-file same-boot stop and TAP residue also passed twice.
+
+Final evidence:
+- /tmp/sysbox-stage1-contract-final-20261026/run.json: 19 gates, zero skips.
+- /tmp/sysbox-stage1-added-contracts-20261026.log: new linked/router, JSONB,
+  original-journal and raw peer contracts including PostgreSQL.
+- /tmp/sysbox-stage1-vsock-final-20261026/run.json: three tests, two rounds each,
+  wrapper-built current helper provenance and successful cleanup.
+- /tmp/sysbox-stage1-operator-renew-final-20261026.jsonl: two public operator rounds.
+- /tmp/sysbox-stage1-raw-final-20261026.log: two actual Docker inventory rounds.
+- /tmp/sysbox-libvirt-inventory-real-20261025.log: two actual libvirt rounds.
+- /tmp/sysbox-stage1-api-full-20261025.jsonl: full API race, 245.779s.
+- /tmp/sysbox-stage1-full-core-20261026.log: affected core race; initial Agent
+  failure was an old fixture lacking StartedAt, corrected and followed by full
+  passing /tmp/sysbox-stage1-agent-renew-final-20261026.log.
+
+Integration found and fixed JSONB reordering of embedded provider evidence,
+shallow resource-copy mutation of original journal, and prior-boot guest tasks
+blocking successor admission. Clock lag required bounded waiting before effects
+and use of newly signed/renewed grants: authenticate signature/boot first, verify
+again at actual current time, retain old monotonic renewal deadline. No timestamp
+is fabricated or authorization extended. v1 observation verification remains
+unchanged; deploy API v2 verification before hosts emitting v2 reports.
+
+Failed fixture permissions, disk exhaustion, archive and clock/renewal runs are
+retained and not counted as passes. Failed operator UUID journals/schemas remain
+bound for inspection; service processes were stopped. Unknown/ambiguous identity,
+unaccounted shared namespace links and remote storage effects stay fail-closed.
+Router uses explicit destroy/recreate. Whole P5/P8/P9 fault permutations and
+release/upgrade integration remain stages 2/3, not extra stage-1 conditions.

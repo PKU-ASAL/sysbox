@@ -922,6 +922,15 @@ func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlp
 	if err := post(ctx, r.opts, endpoint, map[string]any{"session_id": r.opts.ExecutionSessionID, "lease_owner": cmd.LeaseOwner, "attempt": cmd.Attempt, "boot_id": boot}, &grant); err != nil {
 		return nil, err
 	}
+	// Authenticate before waiting for a freshly issued future timestamp. A
+	// rebooted host can briefly lag the issuer; waiting does not extend expiry
+	// or relax the normal current-time verification below.
+	if err := controlplane.VerifyExecutionGrant(ed25519.PublicKey(key), grant, boot, grant.IssuedAt); err != nil {
+		return nil, err
+	}
+	if err := waitForCanonicalRunStart(ctx, grant.IssuedAt); err != nil {
+		return nil, err
+	}
 	if err := controlplane.VerifyExecutionGrant(ed25519.PublicKey(key), grant, boot, time.Now()); err != nil {
 		return nil, err
 	}

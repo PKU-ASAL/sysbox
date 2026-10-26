@@ -4,6 +4,7 @@ package libvirt
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/driver"
+	ownednetwork "github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 )
@@ -35,11 +37,20 @@ func TestLibvirtRealGenerationEffectsE2E(t *testing.T) {
 	dir, err := sub.managedVMDir(id, name)
 	require.NoError(t, err)
 	hs := &HandleState{DomainName: name, DomainUUID: uuid.NewString(), Identity: &id, VMDir: dir, DiskPath: filepath.Join(dir, "disk.qcow2")}
+	netID := id
+	netID.ResourceUID = "network"
+	suffix := uuid.NewString()[:8]
+	networkSpec := driver.IsolatedNetworkSpec{Name: "sblv-" + suffix, Bridge: "br0", CIDR: "10.47.0.1/24", RootBridge: "br" + suffix, RootEnd: "vr" + suffix, NamespaceEnd: "vn" + suffix}
+	netCtx := substrate.WithOperationIdentity(context.Background(), netID)
+	require.NoError(t, (ownednetwork.Driver{}).CreateIsolated(netCtx, networkSpec))
+	t.Cleanup(func() { require.NoError(t, (ownednetwork.Driver{}).DeleteIsolated(netCtx, networkSpec)) })
+	hs.Bridges = []BridgeAttach{{Name: "lan", Bridge: networkSpec.RootBridge, Netns: networkSpec.Name, MAC: "02:00:00:00:47:02", Target: ownednetwork.BridgeTarget{Identity: netID, NetworkNamespace: networkSpec.Name, Bridge: networkSpec.RootBridge, Root: true}}}
 	raw, err := GenerateDomainXML(DomainSpec{Name: name, UUID: hs.DomainUUID, VCPUs: 1, MemoryMiB: 128, MachineType: "q35", Identity: &id, ManagedState: hs})
 	require.NoError(t, err)
 	var domain domainXML
 	require.NoError(t, xml.Unmarshal([]byte(raw), &domain))
 	domain.Devices.Disks = nil
+	domain.Devices.Interfaces = []domIface{{Type: "bridge", Source: domIfaceSrc{Bridge: networkSpec.RootBridge}, Model: domIfaceMod{Type: "virtio"}, MAC: &domIfaceMAC{Address: hs.Bridges[0].MAC}}}
 	definition, err := xml.Marshal(domain)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "domain.xml")
@@ -78,6 +89,18 @@ func TestLibvirtRealGenerationEffectsE2E(t *testing.T) {
 	require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "%v", err)
 	require.Equal(t, "running", run("domstate", h.ID))
 	current := substrate.WithOperationIdentity(ctx, id)
+	targetRaw, err := json.Marshal(map[string]any{"netns": networkSpec.Name, "libvirt_bridge": networkSpec.RootBridge})
+	require.NoError(t, err)
+	request := driver.AttachmentRequest{Name: "lan", NetworkIdentity: netID, MAC: hs.Bridges[0].MAC, NetworkState: targetRaw}
+	inventory, err := sub.DiscoverManagedAttachments(current, h, []driver.AttachmentRequest{request})
+	require.NoError(t, err)
+	require.Len(t, inventory, 1)
+	_, err = sub.DiscoverManagedAttachments(current, h, nil)
+	require.Error(t, err, "unaccounted real interface must block")
+	wrong := request
+	wrong.NetworkIdentity.Generation++
+	_, err = sub.DiscoverManagedAttachments(current, h, []driver.AttachmentRequest{wrong})
+	require.Error(t, err)
 	require.NoError(t, sub.Pause(current, h))
 	require.Equal(t, "paused", run("domstate", h.ID))
 	observed, err := sub.ObserveNode(current, h)
@@ -116,7 +139,7 @@ func TestLibvirtRealGenerationEffectsE2E(t *testing.T) {
 	// Preserve ownership metadata but inject an unproven inactive interface.
 	// Start must reject before the daemon can attempt to use this target.
 	run("destroy", h.ID)
-	domain.Devices.Interfaces = []domIface{{Type: "bridge", Source: domIfaceSrc{Bridge: "sb-unproven"}, Model: domIfaceMod{Type: "virtio"}}}
+	domain.Devices.Interfaces = append(domain.Devices.Interfaces, domIface{Type: "bridge", Source: domIfaceSrc{Bridge: "sb-unproven"}, Model: domIfaceMod{Type: "virtio"}})
 	drifted, err := xml.Marshal(domain)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, drifted, 0600))

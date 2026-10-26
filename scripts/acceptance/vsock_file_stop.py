@@ -17,7 +17,7 @@ import campaign
 import host_fencing as h
 import two_vms
 
-TESTS = ['TestFirecrackerUnknownPersistentFileStopE2E', 'TestFirecrackerFenceRequiresExactTapAbsenceE2E']
+TESTS = ['TestFirecrackerUnknownPersistentFileStopE2E', 'TestFirecrackerFenceRequiresExactTapAbsenceE2E', 'TestFirecrackerVsockWholeGuestRebootStopE2E']
 PACKAGE = 'github.com/oslab/sysbox/pkg/provider/firecracker'
 
 

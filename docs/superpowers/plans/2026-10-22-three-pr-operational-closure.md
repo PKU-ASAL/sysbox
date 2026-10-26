@@ -1,5 +1,35 @@
 # Three-PR execution ledger
 
+## Current closure decision — 2026-10-26
+
+Stage 1 is closed against the three groups explicitly frozen by the user on
+2026-10-25. Historical unchecked entries below describe earlier delivery states;
+they do not add requirements to this closure. Stages 2 and 3 remain open.
+
+| Fixed remaining group | Closure result | Evidence |
+| --- | --- | --- |
+| Docker raw-veth reconstruction | Complete owned bridge/namespace and reciprocal peer NSID/ifindex proof; extra detached links refuse disposition | Real NAT/raw-veth two rounds |
+| Linked node/router inventory | Docker/libvirt/Firecracker actual inventory verified; file/SQLite/PostgreSQL signed disposition preserves original unknown and references | Libvirt and FC two rounds; added contracts and 19-gate campaign |
+| Repeated public recovery and vsock reboot | Real execution-host fence, CLI observe/plan/disposition, independent unprivileged Agent/root supervisor Destroy, fresh Apply, old-decision retry and final Destroy, twice. Separately, real running vsock task across whole guest kernel reboot, unknown stop and successful successor, twice | Operator and vsock final reports |
+
+Unified report: /tmp/sysbox-stage1-closure-20261026.json; SHA256
+05cb1a93e991c51f0853c33c0214342c3cfa7ecf0a2cafb1f09d7dc38c88519d.
+Final implementation source SHA256:
+176e631866236d66378f0632e798ce02b9838fb70f888a715497b385f2087bd2.
+19 strict contract gates passed without skips. All affected core packages have
+full race passes; final Agent rerun follows its time-wait change. Full API race
+passed (245.779s), followed by final public integration and PostgreSQL contracts.
+Independent review found no remaining blocker in the frozen scope.
+
+Boundaries: missing/ambiguous historical identity is never invented; remote
+storage cessation is not inferred from reboot; shared namespaces with unaccounted
+attachments are refused. Router recovery is destroy/recreate, not targeted reset.
+The public test starts from a seeded interrupted Run/action, not a claimed actual
+in-flight crash. All subsequent fencing and provider operations are real.
+
+Full P5/P8/P9 fault permutations, release/main integration and synchronized upgrade
+rehearsal remain stages 2/3. No main merge or production deployment is included.
+
 Approved design: ../specs/2026-10-22-operational-recovery-closure-design.md.
 Base: 7b23a06, existing PR #52. Execute inline, using test-first changes and
 independent review at each delivery boundary.
@@ -246,3 +276,20 @@ E2E probes compile. Final independent review found no code blocker. No real
 provider/PG/full operator result is claimed. Concrete resumed commands and evidence
 paths are recorded in p9-real-acceptance.md. Docker raw-veth reconstruction remains
 a functional gap, alongside whole-VM vsock/repeated enclosing operator acceptance.
+
+## Frozen stage-1 remaining delivery (user confirmed 2026-10-25)
+
+Only these three remaining groups determine stage-1 closure:
+1. Docker raw-veth identity reconstruction with exact owned bridge/namespace,
+   host link and container peer inventory. Query failure, ambiguity or missing
+   authoritative identity remains unknown; no recreation or historical replay.
+2. Real linked-node/router recovery inventory and disposition acceptance for
+   Docker/libvirt/Firecracker plus current PostgreSQL contracts. Router recovery
+   is explicit destroy/recreate. Prove old unknown history and references survive.
+3. Repeated public observe/disposition/destroy-or-rebuild/fresh-admission chain,
+   including real vsock whole-execution-VM reboot, then final reviewed current
+   source campaign and PR delivery.
+
+Full P5/P8/P9 fault permutations and final release upgrade/main integration stay
+in the agreed second/third closing stages. No extra matrix dimension may silently
+become a first-stage blocker. Safety defects inside the three groups must be fixed.

@@ -391,3 +391,18 @@ Docker raw-veth reconstruction or unavailable kernel namespaces remain unknown.
 Routers with recovery obligations require explicit destroy and recreation, not
 node-only targeted reset. This new inventory path still awaits real-provider
 acceptance; do not treat local contracts as deployment certification.
+# Stage-1 closure update (2026-10-26)
+
+The frozen operational-recovery stage is closed; full fault-matrix and release
+upgrade work remain stages 2/3. Docker raw-veth reconstruction now requires exact
+owned bridge, pinned namespace, reciprocal kernel peer identity and complete
+inventory. Older unsupported notes below describe prior implementation states.
+Unaccounted shared namespace attachments and missing historical evidence remain
+unknown. Router obligations resolve through destroy/recreate, not targeted reset.
+
+Fence observation v2 canonicalizes embedded JSON keys and exact decimals for
+PostgreSQL signature/digest stability. Existing v1 verification remains unchanged;
+deploy API verification support before hosts emitting v2. Valid signed old-boot
+local guest tasks do not block new-boot admission, but original outcomes remain
+unknown; file and remote-effect cessation retain their separate requirements.
+
