@@ -48,7 +48,8 @@ func TestHostRecoveryCommitsProvenJournalThroughSocketWithoutReplay(t *testing.T
 	dir := t.TempDir()
 	require.NoError(t, os.Chmod(dir, 0700))
 	path := filepath.Join(dir, "field.sysbox.hcl")
-	hcl := []byte(fmt.Sprintf(`resource %q "node" {}`, handler.kind))
+	hcl := []byte(fmt.Sprintf(`variable "replicas" { type = number }
+resource %q "node" { count = var.replicas }`, handler.kind))
 	require.NoError(t, os.WriteFile(path, hcl, 0600))
 	files := map[string][]byte{"field.sysbox.hcl": hcl}
 	revision := controlplane.GlobalRevision{Files: files, Revision: controlplane.ComputeRevisionDigest(files)}
@@ -57,7 +58,7 @@ func TestHostRecoveryCommitsProvenJournalThroughSocketWithoutReplay(t *testing.T
 	require.NoError(t, err)
 	fault := &responseLostRepository{ActionRepository: repo, failPatch: true}
 	bridge := &pinnedHostRecoveryBridge{observedAgentBridge: &observedAgentBridge{LocalBridge: local, repository: fault}, path: path, revision: revision.Revision}
-	run := &controlplane.Run{ID: "run", AgentID: "agent", Topology: "lab", Op: "apply", Revision: revision.Revision, QueuedAt: time.Now().UTC()}
+	run := &controlplane.Run{ID: "run", Inputs: map[string]string{"replicas": "1"}, AgentID: "agent", Topology: "lab", Op: "apply", Revision: revision.Revision, QueuedAt: time.Now().UTC()}
 	NewExecutorWithBridge(bridge).ExecuteContext(context.Background(), run)
 	require.Equal(t, controlplane.RunFailed, run.Status)
 	require.Equal(t, 1, handler.creates)
@@ -69,7 +70,7 @@ func TestHostRecoveryCommitsProvenJournalThroughSocketWithoutReplay(t *testing.T
 	run.LeaseUntil = time.Now().Add(-time.Minute)
 	authority := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/agents/agent/commands/recover/recovery-authorize", r.URL.Path)
-		_ = json.NewEncoder(w).Encode(controlplane.RunRecoveryAuthorization{Run: *run, Mode: controlplane.RunRecoveryRecover, Revision: &revision, LeaseUntil: time.Now().Add(time.Minute)})
+		_ = json.NewEncoder(w).Encode(controlplane.RunRecoveryAuthorization{Inputs: map[string]string{"replicas": "1"}, Run: *run, Mode: controlplane.RunRecoveryRecover, Revision: &revision, LeaseUntil: time.Now().Add(time.Minute)})
 	}))
 	defer authority.Close()
 	host := &HostRunExecutor{Bridge: bridge, Tasks: &hostsupervisor.Dispatcher{AgentID: "agent"}, Authority: hostsupervisor.AuthorityClient{Identity: agent.Identity{ID: "agent", APIURL: authority.URL}}}

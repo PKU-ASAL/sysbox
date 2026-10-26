@@ -19,6 +19,7 @@ import (
 
 func main() {
 	statePath := flag.String("state", "", "sysbox state path")
+	topology := flag.String("topology", "heterogeneous-matrix", "canonical test topology")
 	nodeName := flag.String("node", "firecracker", "sysbox_node name")
 	target := flag.String("target", "", "IPv4 address to ping")
 	query := flag.String("query", "", "state query: netns, libvirt_bridge, root_veth, or libvirt_vm_dir")
@@ -29,7 +30,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-state and an operation are required")
 		os.Exit(2)
 	}
-	st, err := loadMatrixState(*statePath)
+	st, err := loadTopologyState(*statePath, *topology)
 	if err != nil {
 		fatal(err)
 	}
@@ -49,6 +50,7 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	ctx = substrate.WithOperationIdentity(ctx, substrate.OperationIdentity{ActionID: "matrix-probe", OwnerUID: resource.OwnerUID, TopologyUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation})
 	request := substrate.ExecRequest{Program: "ping", Args: []string{"-c", "3", "-W", "2", *target}, Shell: substrate.ShellNone}
 	if *touchPath != "" {
 		request = substrate.ExecRequest{Program: "touch", Args: []string{*touchPath}, Shell: substrate.ShellNone}
@@ -72,7 +74,9 @@ func main() {
 }
 
 func loadMatrixState(path string) (*state.State, error) {
-	const topology = "heterogeneous-matrix"
+	return loadTopologyState(path, "heterogeneous-matrix")
+}
+func loadTopologyState(path, topology string) (*state.State, error) {
 	backend, resolved, err := persistence.ResolveLocation("", path, topology)
 	if err != nil {
 		return nil, err

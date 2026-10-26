@@ -32,7 +32,10 @@ func (c AuthorityClient) AuthorizeRunRecovery(ctx context.Context, proof RunReco
 	}
 	// Revision uploads permit 8 MiB JSON. Re-encoding the complete file tree
 	// as base64 plus the Run envelope needs a larger, still bounded response.
-	err := c.postJSONLimit(ctx, "/v1/agents/"+c.Identity.ID+"/commands/"+proof.CommandID+"/recovery-authorize", proof, &out, 16<<20)
+	err := c.postJSONLimit(ctx, "/v1/agents/"+c.Identity.ID+"/commands/"+proof.CommandID+"/recovery-authorize", struct {
+		RunRecoveryRequest
+		InputsProtocol int `json:"inputs_protocol"`
+	}{proof, 1}, &out, 16<<20)
 	return out, err
 }
 

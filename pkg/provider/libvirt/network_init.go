@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -41,7 +42,14 @@ func (s *Substrate) PrepareGuestNetwork(ctx context.Context, handle substrate.No
 func (s *Substrate) ObserveGuestNetwork(ctx context.Context, handle substrate.NodeHandle) (substrate.GuestNetworkInitObservation, error) {
 	hs := hsFrom(handle)
 	observation := substrate.GuestNetworkInitObservation{Mode: hs.NetworkInit, Converged: len(hs.Bridges) == 0}
+	var managedTargets []network.BridgeTarget
 	for _, bridge := range hs.Bridges {
+		if bridge.Netns == "" {
+			if bridge.Target.Managed == nil || bridge.Target.Bridge != bridge.Bridge {
+				return observation, fmt.Errorf("libvirt attachment %s: missing namespace or managed root bridge proof", bridge.Name)
+			}
+			managedTargets = append(managedTargets, bridge.Target)
+		}
 		for _, prefix := range bridge.IPPrefixes {
 			ip, _, err := net.ParseCIDR(prefix)
 			if err != nil {
@@ -53,6 +61,13 @@ func (s *Substrate) ObserveGuestNetwork(ctx context.Context, handle substrate.No
 		}
 	}
 
+	if len(managedTargets) > 0 {
+		_, unlock, err := network.LockBridgeTargets(ctx, managedTargets)
+		if err != nil {
+			return observation, err
+		}
+		defer unlock()
+	}
 	deadline := time.Now().Add(guestNetworkReadyTimeout)
 	for {
 		observation.Interfaces = observation.Interfaces[:0]
@@ -84,10 +99,12 @@ func (s *Substrate) ObserveGuestNetwork(ctx context.Context, handle substrate.No
 }
 
 func probeGuestIPv4(ctx context.Context, namespace, ip string) error {
-	if namespace == "" {
-		return fmt.Errorf("isolated network namespace is missing")
+	program, args := "ping", []string{"-c", "1", "-W", "1", ip}
+	if namespace != "" {
+		program = "ip"
+		args = append([]string{"netns", "exec", namespace, "ping"}, args...)
 	}
-	output, err := exec.CommandContext(ctx, "ip", "netns", "exec", namespace, "ping", "-c", "1", "-W", "1", ip).CombinedOutput()
+	output, err := exec.CommandContext(ctx, program, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ping: %w (%s)", err, strings.TrimSpace(string(output)))
 	}

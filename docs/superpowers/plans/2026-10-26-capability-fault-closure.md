@@ -112,3 +112,16 @@ The precise next scope is docs/operations/stage2-capability-fault-ledger.md.
 Stage 2 remains open: full mixed guest NAT/reset, complete original requirement
 mapping and remaining fault cells. Test-only temporary user groups and private
 sshd instances did not modify the host SSH service or persistent user membership.
+
+## Recovery input handoff implementation boundary
+
+Reuse the existing fingerprint-validated keyed Apply resubmission and incarnation
+bound in-memory inputs. Permit hydration for failed recoverable Runs, but never
+for completed/cancelled or nonrecoverable terminal Runs. GET keeps an explicit
+inputs_required state after API restart/failover. Recheck the canonical Run and
+command lease before returning transient inputs in recovery authorization;
+command/outbox/journal persistence still excludes input values. Agent workspace
+reconstruction must consume those authorized values instead of defaults.
+An API without the rehydrated inputs returns conflict and requires resubmission;
+no session affinity or durable secret storage is inferred. Legacy requests without
+a verifiable request fingerprint keep the existing conservative refusal.

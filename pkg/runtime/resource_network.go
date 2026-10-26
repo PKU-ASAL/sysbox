@@ -195,20 +195,19 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 		"docker_net_name":   info.Name,
 		"cidr":              cfg.CIDR,
 	}
-	if info.BridgeTarget != nil {
-		natInst["managed_bridge"] = info.BridgeTarget
-	}
 	if lc := cfg.Lifecycle; lc != nil {
 		natInst["lifecycle_prevent_destroy"] = lc.PreventDestroy
 	}
 	if err := setDesiredHash(n, natInst); err != nil {
 		return state.Resource{}, err
 	}
-	return state.Resource{
-		Address:    n.Address,
-		Driver:     "docker",
-		Attributes: state.MustAttributes(natInst),
-	}, nil
+	result := state.Resource{Address: n.Address, Driver: "docker", Attributes: state.MustAttributes(natInst)}
+	if info.BridgeTarget != nil {
+		if err := result.SetRuntimeValue("managed_bridge", info.BridgeTarget); err != nil {
+			return state.Resource{}, err
+		}
+	}
+	return result, nil
 }
 
 func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r state.Resource) error {

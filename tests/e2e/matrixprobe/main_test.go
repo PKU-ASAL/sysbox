@@ -24,3 +24,18 @@ func TestMatrixReadsCanonicalRepository(t *testing.T) {
 	require.Equal(t, st.TopologyUID, got.TopologyUID)
 	require.NotNil(t, got.FindResource(address.Resource("sysbox_network", "matrix")))
 }
+
+func TestMatrixReadsExplicitTopologyWithoutInitializingDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	repo, err := persistence.OpenFilesystem(path + ".lifecycle")
+	require.NoError(t, err)
+	defer repo.Close()
+	st, err := repo.LoadState(context.Background(), "nat-matrix")
+	require.NoError(t, err)
+	st.Resources = []state.Resource{{Address: address.Resource("sysbox_network", "matrix"), OwnerUID: st.TopologyUID, ResourceUID: "network", Generation: 1}}
+	require.NoError(t, state.NewManagerWithBackend(repo.StateBackend("nat-matrix")).Save(st))
+	got, err := loadTopologyState(path, "nat-matrix")
+	require.NoError(t, err)
+	require.Equal(t, st.TopologyUID, got.TopologyUID)
+	require.NoFileExists(t, filepath.Join(path+".lifecycle", "heterogeneous-matrix.json"))
+}

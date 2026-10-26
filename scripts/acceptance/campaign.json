@@ -4,7 +4,9 @@
     {
       "id": "P0.1",
       "text": "列出 CLI/API × Docker/Firecracker/libvirt × 文件/SQLite/Postgres 的能力矩阵；每格必须是通过、有明确故障、尚未实现或不适用。",
-      "gates": [],
+      "gates": [
+        "docker-deployed-adoption-capability"
+      ],
       "remaining": [
         "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
       ]
@@ -68,9 +70,12 @@
     {
       "id": "P1.4",
       "text": "敏感输入不进持久日志/快照；API 重启或转移实例后的补交有明确操作状态，Agent 不靠 session affinity 猜测授权。",
-      "gates": [],
+      "gates": [
+        "recovery-inputs-api",
+        "recovery-inputs-host"
+      ],
       "remaining": [
-        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+        "Keyed failed/recoverable Run inputs now support fingerprint-checked resubmission and transient host recovery authorization. Unverifiable legacy non-default requests remain blocked; full dual-API deployment evidence remains in the combined fault campaign."
       ]
     },
     {
@@ -324,7 +329,8 @@
         "adoption-whole-vm-cancellation",
         "ownership-transfer-public",
         "ownership-transfer-cli",
-        "ownership-transfer-docker-public"
+        "ownership-transfer-docker-public",
+        "docker-deployed-adoption-capability"
       ],
       "remaining": [
         "All three providers now exercise public prepare/prepared/submit and host completion/crash boundaries. Deployed CLI/proxy/host-supervisor integration remains distinct from direct subject injection and host preparation calls in these fixtures."
@@ -478,10 +484,13 @@
         "network-libvirt-attachment-retry",
         "network-libvirt-docker-nat",
         "network-firecracker-docker-nat",
-        "ssh-access-real-rotation"
+        "ssh-access-real-rotation",
+        "mixed-nat-proof-publication",
+        "managed-bridge-private-precision",
+        "libvirt-root-network-probe"
       ],
       "remaining": [
-        "Real Docker NAT target with libvirt domain restart and Firecracker TAP/cold-start preflight verified. Three-provider guest traffic, outbound NAT, reset and same-name network replacement in the enclosing lifecycle remain unverified; diskless libvirt/TAP fixtures do not prove these."
+        "Real CLI three-guest NAT Apply, six-way traffic, cross-host masquerade and whole-topology Reset now have scoped evidence. Register reproducible enclosing campaign, final exact Destroy verification and current-source same-name target replacement/fault reconciliation remain required."
       ]
     },
     {
@@ -491,10 +500,13 @@
         "network-libvirt-attachment-retry",
         "network-libvirt-docker-nat",
         "network-firecracker-docker-nat",
-        "ssh-access-real-rotation"
+        "ssh-access-real-rotation",
+        "mixed-nat-proof-publication",
+        "managed-bridge-private-precision",
+        "libvirt-root-network-probe"
       ],
       "remaining": [
-        "Real Docker NAT target with libvirt domain restart and Firecracker TAP/cold-start preflight verified. Three-provider guest traffic, outbound NAT, reset and same-name network replacement in the enclosing lifecycle remain unverified; diskless libvirt/TAP fixtures do not prove these."
+        "Real CLI three-guest NAT Apply, six-way traffic, cross-host masquerade and whole-topology Reset now have scoped evidence. Register reproducible enclosing campaign, final exact Destroy verification and current-source same-name target replacement/fault reconciliation remain required."
       ]
     },
     {
@@ -504,10 +516,13 @@
         "network-libvirt-attachment-retry",
         "network-libvirt-docker-nat",
         "network-firecracker-docker-nat",
-        "ssh-access-real-rotation"
+        "ssh-access-real-rotation",
+        "mixed-nat-proof-publication",
+        "managed-bridge-private-precision",
+        "libvirt-root-network-probe"
       ],
       "remaining": [
-        "Real Docker NAT target with libvirt domain restart and Firecracker TAP/cold-start preflight verified. Three-provider guest traffic, outbound NAT, reset and same-name network replacement in the enclosing lifecycle remain unverified; diskless libvirt/TAP fixtures do not prove these."
+        "Real CLI three-guest NAT Apply, six-way traffic, cross-host masquerade and whole-topology Reset now have scoped evidence. Register reproducible enclosing campaign, final exact Destroy verification and current-source same-name target replacement/fault reconciliation remain required."
       ]
     },
     {
@@ -2041,6 +2056,68 @@
         "TestRealSSHDEffectiveConfigurationConflictE2E"
       ],
       "tags": "e2e"
+    },
+    {
+      "id": "docker-deployed-adoption-capability",
+      "kind": "contract",
+      "package": "./cmd/sysbox",
+      "tests": [
+        "TestDockerRegistrationExposesImplementedOwnershipAdoption"
+      ],
+      "race": true
+    },
+    {
+      "id": "mixed-nat-proof-publication",
+      "kind": "contract",
+      "package": "./pkg/runtime",
+      "tests": [
+        "TestNATCreationPersistsManagedBridgeProof",
+        "TestNATDiscoveryPersistsManagedBridgeProof"
+      ],
+      "race": true
+    },
+    {
+      "id": "managed-bridge-private-precision",
+      "kind": "contract",
+      "package": "./pkg/state",
+      "tests": [
+        "TestManagedBridgePrivateIdentitySurvivesUnrelatedWrites"
+      ],
+      "race": true
+    },
+    {
+      "id": "libvirt-root-network-probe",
+      "kind": "contract",
+      "package": "./pkg/provider/libvirt",
+      "tests": [
+        "TestGuestNetworkProbeSupportsRootNamespace",
+        "TestGuestNetworkRejectsMissingNamespaceWithoutManagedProof",
+        "TestObserveGuestNetworkConvergesIPv4",
+        "TestObserveGuestNetworkReportsFailureAndRejectsIPv6"
+      ],
+      "race": true
+    },
+    {
+      "id": "recovery-inputs-api",
+      "kind": "contract",
+      "package": "./pkg/api",
+      "tests": [
+        "TestRecoveryInputsRequireExactResubmissionAfterAPIRestart",
+        "TestKeyedApplyImmutableReplayAndHydration"
+      ],
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ],
+      "race": true
+    },
+    {
+      "id": "recovery-inputs-host",
+      "kind": "contract",
+      "package": "./pkg/agentexec",
+      "tests": [
+        "TestHostRecoveryCommitsProvenJournalThroughSocketWithoutReplay"
+      ],
+      "race": true
     }
   ]
 }

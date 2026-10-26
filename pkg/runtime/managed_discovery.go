@@ -35,13 +35,15 @@ func (NetworkResourceHandler) Discover(ctx context.Context, pc *ProviderContext,
 		return ResourceReadResult{}, fmt.Errorf("missing discovery ownership")
 	}
 	attrs := map[string]any{"nat": true, "docker_network_id": info.ID, "docker_net_name": info.Name, "cidr": cfg.CIDR}
-	if info.BridgeTarget != nil {
-		attrs["managed_bridge"] = info.BridgeTarget
-	}
 	if err := setDesiredHash(n, attrs); err != nil {
 		return ResourceReadResult{}, err
 	}
 	r := state.Resource{Address: n.Address, Driver: "docker", ExternalID: info.ID, Attributes: state.MustAttributes(attrs), OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation}
+	if info.BridgeTarget != nil {
+		if err := r.SetRuntimeValue("managed_bridge", info.BridgeTarget); err != nil {
+			return ResourceReadResult{}, err
+		}
+	}
 	return ResourceReadResult{Status: state.ResourcePresent, Resource: r}, nil
 }
 

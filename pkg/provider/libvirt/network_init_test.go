@@ -3,6 +3,8 @@ package libvirt
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -88,4 +90,21 @@ func TestObserveGuestNetworkReportsFailureAndRejectsIPv6(t *testing.T) {
 	hs.Bridges[0].IPPrefixes = []string{"2001:db8::30/64"}
 	_, err = New().ObserveGuestNetwork(context.Background(), substrate.NodeHandle{ID: "vm", Provider: hs})
 	require.ErrorContains(t, err, "IPv6")
+}
+
+func TestGuestNetworkProbeSupportsRootNamespace(t *testing.T) {
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "ping.log")
+	writeExecutable(t, filepath.Join(bin, "ping"), "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$SYSBOX_PING_LOG\"\n")
+	t.Setenv("PATH", bin)
+	t.Setenv("SYSBOX_PING_LOG", log)
+	require.NoError(t, probeGuestIPv4(context.Background(), "", "10.48.0.30"))
+	raw, err := os.ReadFile(log)
+	require.NoError(t, err)
+	require.Equal(t, "-c 1 -W 1 10.48.0.30\n", string(raw))
+}
+func TestGuestNetworkRejectsMissingNamespaceWithoutManagedProof(t *testing.T) {
+	hs := &HandleState{NetworkInit: substrate.GuestNetworkInitCloudInit, Bridges: []BridgeAttach{{Name: "missing", IPPrefixes: []string{"10.48.0.30/24"}}}}
+	_, err := New().ObserveGuestNetwork(context.Background(), substrate.NodeHandle{ID: "vm", Provider: hs})
+	require.ErrorContains(t, err, "namespace")
 }

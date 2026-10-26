@@ -7,6 +7,7 @@ import (
 )
 
 const RunRecoveryCapability = "run-recovery.v1"
+const RunRecoveryInputsCapability = "run-recovery-inputs.v1"
 const RunRecoveryCommand = "run_recovery"
 const RunRecoveryObserve = "observe"
 const RunRecoveryRecover = "recover"
@@ -47,6 +48,8 @@ type RecoveredResource struct {
 	JournalStatus           string                     `json:"journal_status"`
 }
 type RunRecoveryAuthorization struct {
+	// Inputs are transient, fingerprint-validated values; never part of command persistence.
+	Inputs           map[string]string        `json:"inputs"`
 	FenceObservation *FenceObservationBinding `json:"fence_observation,omitempty"`
 	LeaseUntil       time.Time                `json:"lease_until"`
 	Run              Run                      `json:"run"`

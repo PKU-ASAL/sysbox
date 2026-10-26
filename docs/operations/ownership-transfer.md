@@ -64,3 +64,8 @@ Validation boundaries: public-route contracts cover file/SQLite/Postgres,
 forged-proof rejection and cold API submission retry. CLI tests cover explicit
 steps, bearer forwarding, redirect refusal and invalid plan refusal. These alone
 do not establish actual provider effects or production proxy authentication.
+
+The deployed Docker registration now advertises its implemented adoption
+capability. Older binaries omitted that registration even though provider-level
+tests passed; use the binary containing this entry-point fix when exercising
+public Docker transfer.

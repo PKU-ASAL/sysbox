@@ -103,7 +103,7 @@ func (s *RunService) hydrateApply(run *controlplane.Run, inputs map[string]strin
 		snapshot = runRecord(*current)
 	}
 	snapshot.Inputs = nil
-	if !snapshot.Status.IsTerminal() {
+	if !snapshot.Status.IsTerminal() || (snapshot.Status == controlplane.RunFailed && snapshot.Recoverable) {
 		snapshot.Inputs = cloneInputs(inputs)
 		if snapshot.Inputs == nil {
 			snapshot.Inputs = map[string]string{}
@@ -123,11 +123,11 @@ func (j *Jobs) inputsRequired(run *controlplane.Run) bool {
 	if run == nil {
 		return false
 	}
-	return keyedInputsRequired(run, inputsForRun(j.runs[run.ID], run))
+	return keyedInputsRequired(run, inputsForRecovery(j.runs[run.ID], run))
 }
 
 func keyedInputsRequired(run *controlplane.Run, inputs map[string]string) bool {
-	return run != nil && run.Status.IsActive() && strings.HasPrefix(run.RequestFingerprint, "apply-request:") && inputs == nil
+	return run != nil && (run.Status.IsActive() || (run.Status == controlplane.RunFailed && run.Recoverable)) && strings.HasPrefix(run.RequestFingerprint, "apply-request:") && inputs == nil
 }
 
 func validateTopologyAdmission(runs []controlplane.Run, next controlplane.Run) error {
@@ -140,4 +140,19 @@ func validateTopologyAdmission(runs []controlplane.Run, next controlplane.Run) e
 		}
 	}
 	return nil
+}
+
+// Failed recoverable Runs may receive an explicit, fingerprint-checked
+// resubmission. Ordinary claims still use inputsForRun and reject terminal Runs.
+func inputsForRecovery(cached, current *controlplane.Run) map[string]string {
+	if current == nil {
+		return nil
+	}
+	if current.Status != controlplane.RunFailed || !current.Recoverable {
+		return inputsForRun(cached, current)
+	}
+	if cached == nil || !persistence.SameRunIncarnation(*cached, *current) {
+		return nil
+	}
+	return cloneInputs(cached.Inputs)
 }

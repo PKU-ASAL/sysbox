@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -66,4 +67,62 @@ func TestManagedBridgeExposureFollowsConsumers(t *testing.T) {
 			require.False(t, requiresManagedBridge(g, address.Resource("sysbox_network", "other")))
 		})
 	}
+}
+
+type bridgePublicationDriver struct {
+	recordingNetworkDriver
+	proof *substrate.ManagedBridgeTarget
+}
+
+func (d *bridgePublicationDriver) CreateManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
+	return substrate.ManagedNetworkInfo{ID: "network-id", Name: "network-name", BridgeTarget: d.proof}, nil
+}
+func TestNATCreationPersistsManagedBridgeProof(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	defer func() { driver.DefaultRegistry = previous }()
+	proof := substrate.ManagedBridgeTarget{Version: 1, Provider: "docker", NetworkID: "network-id", Bridge: "sb-owned", Index: 42, Device: 4, Inode: 9007199254740993, Alias: "owned", Identity: substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "network", Generation: 9007199254740993}}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Network: &bridgePublicationDriver{proof: &proof}}))
+	executor := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	node := &graph.Node{Address: address.Resource("sysbox_network", "nat"), Data: &config.NetworkConfig{CIDR: "10.44.0.0/24", NAT: true, ExposeBridge: true}}
+	result, err := (NetworkResourceHandler{}).Create(context.Background(), &ProviderContext{exec: executor}, node)
+	require.NoError(t, err)
+	saved := &state.State{Version: state.SchemaVersion}
+	saved.AddResource(result)
+	raw, err := json.Marshal(saved)
+	require.NoError(t, err)
+	var restored state.State
+	require.NoError(t, json.Unmarshal(raw, &restored))
+	cold := restored.Resources[0]
+	encoded, err := networkAttachmentState(cold)
+	require.NoError(t, err)
+	var decoded struct {
+		Proof substrate.ManagedBridgeTarget `json:"managed_bridge"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	require.Equal(t, proof, decoded.Proof)
+}
+
+func (d *bridgePublicationDriver) ReadManagedNetwork(context.Context, substrate.ManagedNetworkSpec) (substrate.ManagedNetworkInfo, error) {
+	return substrate.ManagedNetworkInfo{ID: "network-id", Name: "network-name", BridgeTarget: d.proof}, nil
+}
+func TestNATDiscoveryPersistsManagedBridgeProof(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	defer func() { driver.DefaultRegistry = previous }()
+	identity := substrate.OperationIdentity{ActionID: "discover", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "network", Generation: 9007199254740993}
+	proof := substrate.ManagedBridgeTarget{Version: 1, Provider: "docker", NetworkID: "network-id", Bridge: "sb-owned", Index: 42, Device: 4, Inode: 9007199254740993, Alias: "owned", Identity: identity}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Network: &bridgePublicationDriver{proof: &proof}}))
+	executor := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	node := &graph.Node{Address: address.Resource("sysbox_network", "nat"), Data: &config.NetworkConfig{CIDR: "10.44.0.0/24", NAT: true, ExposeBridge: true}}
+	result, err := (NetworkResourceHandler{}).Discover(substrate.WithOperationIdentity(context.Background(), identity), &ProviderContext{exec: executor}, node)
+	require.NoError(t, err)
+	require.Equal(t, state.ResourcePresent, result.Status)
+	raw, err := networkAttachmentState(result.Resource)
+	require.NoError(t, err)
+	var decoded struct {
+		Proof substrate.ManagedBridgeTarget `json:"managed_bridge"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	require.Equal(t, proof, decoded.Proof)
 }

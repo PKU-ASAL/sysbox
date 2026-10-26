@@ -8,6 +8,7 @@ import (
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"maps"
 	"time"
 )
 
@@ -54,7 +55,7 @@ func (h *HostRunExecutor) Recover(ctx context.Context, proof hostsupervisor.RunR
 	if err != nil {
 		return nil, err
 	}
-	if current.Mode != auth.Mode || !persistence.SameRunIncarnation(current.Run, auth.Run) || current.Run.Attempt != auth.Run.Attempt || current.Run.LeaseOwner != auth.Run.LeaseOwner || !current.LeaseUntil.After(time.Now()) {
+	if !maps.Equal(current.Inputs, auth.Inputs) || current.Mode != auth.Mode || !persistence.SameRunIncarnation(current.Run, auth.Run) || current.Run.Attempt != auth.Run.Attempt || current.Run.LeaseOwner != auth.Run.LeaseOwner || !current.LeaseUntil.After(time.Now()) {
 		return nil, fmt.Errorf("host recovery authorization changed")
 	}
 	if (current.FenceObservation == nil) != (auth.FenceObservation == nil) || (auth.FenceObservation != nil && *current.FenceObservation != *auth.FenceObservation) {

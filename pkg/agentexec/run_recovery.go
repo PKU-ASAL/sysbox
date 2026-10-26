@@ -9,6 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/secret"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -45,6 +46,9 @@ func (e *Executor) ObserveRecoverRun(ctx context.Context, agentID string, cmd co
 		}
 	}
 	if auth.Mode == controlplane.RunRecoveryRecover {
+		if strings.HasPrefix(run.RequestFingerprint, "apply-request:") && auth.Inputs == nil {
+			return nil, fmt.Errorf("recovery authorization lacks resubmitted inputs")
+		}
 		if run.Status != controlplane.RunFailed || !run.Recoverable || run.LeaseUntil.After(time.Now()) {
 			return nil, fmt.Errorf("live execution cannot be recovered")
 		}
@@ -61,7 +65,7 @@ func (e *Executor) ObserveRecoverRun(ctx context.Context, agentID string, cmd co
 		if err != nil {
 			return nil, err
 		}
-		g, _, st, _, _, err := runtime.LoadWorkspaceWithInputs(path, mgr, nil)
+		g, _, st, _, _, err := runtime.LoadWorkspaceWithInputs(path, mgr, auth.Inputs)
 		if err != nil {
 			return nil, err
 		}

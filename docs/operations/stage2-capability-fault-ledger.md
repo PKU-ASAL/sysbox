@@ -11,15 +11,14 @@ No omitted requirement, skipped test or previously successful source closes a ce
 | Public ownership transfer | Explicit CLI prepare/prepared/submit/abort; file/SQLite/Postgres public route contracts and cold retries; Docker/libvirt/Firecracker real host completion and crash chains | Deployed CLI/proxy/supervisor integration; fixtures supply admin subject and invoke host preparation directly |
 | Transfer fault positions | Before effect, after ownership, after observation, before report, after state commit, after report, for all three providers | These are host process SIGKILL positions; do not imply every provider-internal write or API/helper process position |
 | Libvirt attachment retry | Same logical attachment is idempotent; changed MAC, address, gateway, target or generation is rejected; persisted cold retry and corrupt duplicate record refusal | Existing corrupt duplicate records remain rejected; no silent rewrite |
-| Docker NAT attachment | Real libvirt domain start/stop/restart with one interface; real Firecracker TAP, cold inventory and start preflight; stale target refusal | Diskless libvirt and manifest/TAP fixtures do not prove guest traffic or Firecracker boot |
+| Docker NAT lifecycle | Actual CLI Apply and whole-topology Reset with all three running guests; six directional pings before/after; NAT to a separate VM with observed masqueraded source; Destroy and exact absence | Register repeatable enclosing campaign and complete same-name replacement/fault cells |
 | SSH access | Real sshd key rotation/delete, endpoint restrictions, administrator and independent managed access preservation; staged config validation, drop-in/reload/cold service recovery | Combined provider guest service and enclosing topology reset remain separate |
 
 ## Fixed next completion items
 
-1. P7 enclosing lifecycle: three running provider guests on a Docker NAT network,
-   pairwise traffic and outbound NAT, reset/recovery with refreshed target proof,
-   old target/same-name replacement refusal, exact no-residue destruction. The
-   existing heterogeneous matrix uses an isolated network, not Docker NAT.
+1. P7 normal mixed NAT lifecycle now passes end to end. Remaining: turn the
+   scoped recorded run into the repeatable campaign and attach the existing
+   same-name target replacement/fault gates to that enclosing lifecycle.
 2. Complete the 41 newly inventoried P0–P4/P7 requirement mappings. Attach precise
    implementation and test entries; retain pending current evidence. Do not
    report the current 65-entry inventory as 65 completed requirements.
@@ -46,3 +45,57 @@ normal primary group plus a temporary docker supplementary group; the test does
 not alter persistent user groups or the host's production sshd. Firecracker NAT
 fixture initially used an invalid manifest directory; corrected to the existing
 owner/node/generation layout, retaining production identity validation.
+
+## Real CLI integration defects fixed
+
+The actual deployed Docker registration omitted OwnershipAdoption, although
+provider implementations and test registries exposed it. Register the capability
+at the real entry point and cover it with a regression.
+
+Runtime NAT Create and Discover passed a ManagedBridgeTarget pointer through
+MustAttributes and panicked after the network effect. Write the proof directly
+to private state; preserve its raw JSON through later private-state writes so
+uint64 namespace inode and int64 generation above 2^53 remain exact.
+
+Libvirt guest network convergence assumed an isolated namespace. Managed Docker
+NAT bridges use the root namespace: require and lock the exact managed target
+proof, then probe from the corresponding namespace. No proof still means refusal.
+
+Evidence: /tmp/sysbox-stage2-mixed-reset-states.json (all three generations and
+external IDs changed, logical NIC coordinates/network identity preserved),
+/tmp/sysbox-stage2-mixed-reset-verified.json (old markers absent and six-way
+traffic), /tmp/sysbox-stage2-nat-egress-20261026.json and
+/tmp/sysbox-stage2-nat-egress-after-reset-20261026.json (all three guests reached
+the independent control VM, echo source 10.77.0.20 instead of guest addresses),
+/tmp/sysbox-stage2-mixed-cleanup-verified.json (successful mixed-nat-v6 only).
+Current guest helper was embedded via a build overlay, not the tracked old bin.
+
+Earlier failed test incarnations are NOT declared clean. Their state/journals and
+small provider evidence were archived at /tmp/sysbox-stage2-mixed-failures.tar.gz.
+Exact provider teardown removed the verified same-boot instances. A previous-boot
+FC directory and stale bridge anchors correctly refused ordinary deletion and
+remain retained with their original unknown journals. This is test-fixture
+cleanup, not operational disposition of historical Runs.
+
+## Recovery inputs now implemented
+
+For keyed failed/recoverable Apply, resubmit the original Apply request and key to
+the API serving recovery. Request fingerprint validation rejects changed values.
+GET run reports inputs_required after restart; successful hydration stays only
+in memory. Recovery authorization returns transient inputs under the exact
+canonical incarnation and active command lease. Agent/host reconstruct the graph
+with those values; ordinary terminal Run execution remains prohibited.
+
+Both run-recovery-inputs.v1 Agent capability and host inputs_protocol=1 are
+required, so an old host cannot silently recover with default values. Empty keyed
+input maps also require explicit resubmission/new protocol. API failover to an
+instance without hydration requires resubmission, not session-affinity guessing.
+Unverifiable legacy inputs remain blocked. No new secret persistence is added.
+
+Three-backend public authorization, malformed/changed inputs, old Agent/host,
+new API, changed incarnation and no persisted canary checks pass. Real local
+host-supervisor socket recovery uses a required non-default variable and proves
+the already-returned provider result is committed without replay.
+Full race: /tmp/sysbox-stage2-recovery-inputs-full-race-20261026.log
+(API 186.073s, agentexec 5.493s, hostsupervisor 31.805s, controlplane 1.154s).
+Independent review found no blocker.

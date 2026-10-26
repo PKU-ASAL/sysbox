@@ -91,6 +91,9 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	if opts.HostSupervisorSocket != "" && !slices.Contains(opts.Capabilities, controlplane.RunRecoveryCapability) {
 		opts.Capabilities = append(opts.Capabilities, controlplane.RunRecoveryCapability)
 	}
+	if opts.HostSupervisorSocket != "" && !slices.Contains(opts.Capabilities, controlplane.RunRecoveryInputsCapability) {
+		opts.Capabilities = append(opts.Capabilities, controlplane.RunRecoveryInputsCapability)
+	}
 	if err := post(ctx, opts, opts.APIURL+"/v1/agents", controlplane.Agent{
 		ID:           opts.ID,
 		Name:         opts.Name,

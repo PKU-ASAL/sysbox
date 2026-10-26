@@ -9,6 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/persistence"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -47,7 +48,14 @@ func (s *Server) recoveryAuthorization(ctx context.Context, run controlplane.Run
 	}
 	// Non-default inputs are intentionally not persisted. Do not silently
 	// reconstruct them as defaults while authorizing recovery.
-	if run.Op == "apply" && run.OperationKey != "" && run.OperationKey != applyOperationKey(run.Revision, nil, run.UnsafeState) {
+	if run.Op == "apply" && strings.HasPrefix(run.RequestFingerprint, "apply-request:") {
+		s.jobs.mu.RLock()
+		result.Inputs = inputsForRecovery(s.jobs.runs[run.ID], &run)
+		s.jobs.mu.RUnlock()
+		if result.Inputs == nil {
+			return result, fmt.Errorf("%w: recovery inputs unavailable; resubmit the original keyed apply request to this API", persistence.ErrConflict)
+		}
+	} else if run.Op == "apply" && run.OperationKey != "" && run.OperationKey != applyOperationKey(run.Revision, nil, run.UnsafeState) {
 		return result, fmt.Errorf("%w: recovery inputs must be resubmitted", persistence.ErrConflict)
 	}
 	revision, err := s.apiStore.GetGlobalRevision(ctx, run.Revision)
@@ -103,6 +111,10 @@ func (s *Server) handleRequestRunRecovery(w http.ResponseWriter, r *http.Request
 		writeError(w, 409, fmt.Errorf("owning agent does not support run recovery"))
 		return
 	}
+	if mode == controlplane.RunRecoveryRecover && strings.HasPrefix(run.RequestFingerprint, "apply-request:") && !slices.Contains(agent.Capabilities, controlplane.RunRecoveryInputsCapability) {
+		writeError(w, 409, fmt.Errorf("owning agent requires input-aware recovery protocol"))
+		return
+	}
 	if _, err = s.recoveryAuthorization(r.Context(), *run, mode); err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
@@ -133,7 +145,10 @@ func (s *Server) handleAuthorizeRunRecovery(w http.ResponseWriter, r *http.Reque
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
-	var proof controlplane.AgentCommandEvent
+	var proof struct {
+		controlplane.AgentCommandEvent
+		InputsProtocol int `json:"inputs_protocol"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&proof); err != nil {
 		writeError(w, 400, fmt.Errorf("decode recovery proof"))
 		return
@@ -154,6 +169,10 @@ func (s *Server) handleAuthorizeRunRecovery(w http.ResponseWriter, r *http.Reque
 	}
 	if !persistence.SameRunIncarnation(*run, *cmd.Run) || run.Attempt != cmd.Run.Attempt || run.LeaseOwner != cmd.Run.LeaseOwner {
 		writeError(w, 409, persistence.ErrConflict)
+		return
+	}
+	if cmd.RecoveryMode == controlplane.RunRecoveryRecover && strings.HasPrefix(run.RequestFingerprint, "apply-request:") && (!slices.Contains(owner.Capabilities, controlplane.RunRecoveryInputsCapability) || proof.InputsProtocol != 1) {
+		writeError(w, 409, fmt.Errorf("owning agent requires input-aware recovery protocol"))
 		return
 	}
 	auth, err := s.recoveryAuthorization(r.Context(), *run, cmd.RecoveryMode)
