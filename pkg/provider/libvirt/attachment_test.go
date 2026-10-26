@@ -52,3 +52,56 @@ func TestBuildNoCloudNetworkConfigUsesMACAndStaticIPv4(t *testing.T) {
 	require.Contains(t, string(data), "to: 0.0.0.0/0")
 	require.Contains(t, string(data), "via: 10.20.0.1")
 }
+
+func TestAttachmentRetryDoesNotDuplicateOrReplaceLogicalInterface(t *testing.T) {
+	id := managedOperation()
+	hs := &HandleState{Identity: &id, DomainUUID: "vm"}
+	h := managedNodeHandle(hs)
+	s := New()
+	req := driver.AttachmentRequest{NetworkIdentity: id, Name: "lan", MAC: "02:00:00:00:00:01", IPPrefixes: []string{"10.20.0.2/24"}, Gateway: "10.20.0.1", NetworkState: json.RawMessage("{\"netns\":\"owned\",\"libvirt_bridge\":\"br0\"}")}
+	original, err := s.Attach(context.Background(), h, req)
+	require.NoError(t, err)
+	again, err := s.Attach(context.Background(), h, req)
+	require.NoError(t, err)
+	require.Equal(t, original, again)
+	require.Len(t, hs.Bridges, 1, "same logical attachment must not emit duplicate NICs on restart")
+	for _, change := range []func(*driver.AttachmentRequest){
+		func(r *driver.AttachmentRequest) { r.MAC = "02:00:00:00:00:02" },
+		func(r *driver.AttachmentRequest) { r.NetworkIdentity.Generation++ },
+		func(r *driver.AttachmentRequest) { r.IPPrefixes = []string{"10.20.0.3/24"} },
+		func(r *driver.AttachmentRequest) { r.Gateway = "10.20.0.254" },
+		func(r *driver.AttachmentRequest) {
+			r.NetworkState = json.RawMessage("{\"netns\":\"replacement\",\"libvirt_bridge\":\"br1\"}")
+		},
+	} {
+		altered := req
+		change(&altered)
+		_, err = s.Attach(context.Background(), h, altered)
+		require.Error(t, err, "same logical interface cannot silently change identity/configuration")
+		require.Len(t, hs.Bridges, 1)
+	}
+}
+
+func TestAttachmentColdRetryAndDuplicateRecordRefusal(t *testing.T) {
+	id := managedOperation()
+	hs := &HandleState{Identity: &id, DomainUUID: "vm"}
+	req := driver.AttachmentRequest{NetworkIdentity: id, Name: "lan", MAC: "02:00:00:00:00:01", NetworkState: json.RawMessage("{\"netns\":\"owned\",\"libvirt_bridge\":\"br0\"}")}
+	original, err := New().Attach(context.Background(), managedNodeHandle(hs), req)
+	require.NoError(t, err)
+	raw, err := json.Marshal(hs)
+	require.NoError(t, err)
+	var cold HandleState
+	require.NoError(t, json.Unmarshal(raw, &cold))
+	again, err := New().Attach(context.Background(), managedNodeHandle(&cold), req)
+	require.NoError(t, err)
+	require.Equal(t, original, again)
+	require.Len(t, cold.Bridges, 1)
+	cold.Bridges = append(cold.Bridges, cold.Bridges[0])
+	before, err := json.Marshal(cold)
+	require.NoError(t, err)
+	_, err = New().Attach(context.Background(), managedNodeHandle(&cold), req)
+	require.Error(t, err)
+	after, err := json.Marshal(cold)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}

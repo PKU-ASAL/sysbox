@@ -29,6 +29,7 @@ import (
 	"github.com/oslab/sysbox/pkg/effectgate"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	fcprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/state"
@@ -38,6 +39,15 @@ import (
 	"net/http"
 	"strings"
 )
+
+func TestDockerOwnershipTransferPublicLifecycleE2E(t *testing.T) {
+	testTransferHostBoundary(t, "docker", "normal")
+}
+func TestDockerOwnershipTransferPublicSIGKILLMatrixE2E(t *testing.T) {
+	for _, phase := range []string{"before-effect", "after-ownership", "after-observe", "before-report", "after-state", "after-report"} {
+		t.Run(phase, func(t *testing.T) { testTransferHostBoundary(t, "docker", phase) })
+	}
+}
 
 func TestLibvirtOwnershipTransferAPIHostCommitE2E(t *testing.T) {
 	testTransferHostBoundary(t, "libvirt", "normal")
@@ -66,6 +76,9 @@ type transferTestProvider interface {
 func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	if providerName == "libvirt" && os.Getenv("SYSBOX_LIBVIRT_E2E") != "1" {
 		t.Skip("requires disposable libvirt session")
+	}
+	if providerName == "docker" && os.Getenv("SYSBOX_DOCKER_TRANSFER_E2E") != "1" {
+		t.Skip("requires explicitly authorized disposable Docker host")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -117,7 +130,30 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	providerRoot := t.TempDir()
 	var id string
 	var raw []byte
-	if providerName == "libvirt" {
+	if providerName == "docker" {
+		docker, err := dockerprovider.New()
+		require.NoError(t, err)
+		defer docker.Close()
+		provider = docker
+		handle, err := docker.CreateNode(substrate.WithOperationIdentity(ctx, old), substrate.NodeSpec{Name: "sysbox-public-transfer-" + uuid.NewString(), Image: substrate.ArtifactHandle{ID: "alpine:3.22"}, ManagedNetwork: true})
+		require.NoError(t, err)
+		id = handle.ID
+		t.Cleanup(func() {
+			cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)
+			defer stop()
+			identity := next
+			if phase == "before-effect" {
+				identity = old
+			}
+			owned, err := docker.DiscoverManagedNode(substrate.WithOperationIdentity(cleanup, identity), identity, "new")
+			if err != nil {
+				identity = old
+				owned, err = docker.DiscoverManagedNode(substrate.WithOperationIdentity(cleanup, identity), identity, "old")
+			}
+			require.NoError(t, err)
+			require.NoError(t, docker.DestroyNode(substrate.WithOperationIdentity(cleanup, identity), owned))
+		})
+	} else if providerName == "libvirt" {
 		id = uuid.NewString()
 		name := "sysbox-transfer-api-" + id
 		provider = libvirtprovider.New(providerRoot)
@@ -197,6 +233,11 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	adopter, ok := provider.(driver.OwnershipAdoption)
 	require.True(t, ok)
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: providerName, Version: "acceptance", OwnershipAdoption: adopter}))
+	if providerName == "docker" {
+		inspected, err := provider.InspectAdoption(ctx, id, substrate.NodeSpec{})
+		require.NoError(t, err)
+		plan.Fingerprint = inspected.Fingerprint
+	}
 	post := func(suffix string, body any, expected int) []byte {
 		t.Helper()
 		raw, err := json.Marshal(body)
@@ -230,6 +271,9 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	var retried controlplane.NodeOperation
 	require.NoError(t, json.Unmarshal(post("", plan, 202), &retried))
 	require.Equal(t, op.ID, retried.ID)
+	retriedStored, err := s.apiStore.GetNodeOperation(ctx, retried.ID)
+	require.NoError(t, err)
+	require.Equal(t, op.CommandID, retriedStored.CommandID)
 	cmd, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, "host", op.CommandID, "worker", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -290,7 +334,13 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 		if phase == "before-effect" {
 			expectedOwner = old
 		}
-		require.Equal(t, &expectedOwner, providerBefore.ManagedIdentity)
+		if providerName == "docker" {
+			docker := provider.(*dockerprovider.Substrate)
+			_, err := docker.DiscoverManagedNode(substrate.WithOperationIdentity(ctx, expectedOwner), expectedOwner, "new")
+			require.NoError(t, err)
+		} else {
+			require.Equal(t, &expectedOwner, providerBefore.ManagedIdentity)
+		}
 		require.NoError(t, coordinator.Recover(ctx))
 		_, err = coordinator.Observe(ctx, req, signed)
 		if phase == "before-effect" || phase == "after-ownership" || phase == "after-observe" {
@@ -369,6 +419,11 @@ func TestOwnershipTransferHostSIGKILLChild(t *testing.T) {
 	client := hostsupervisor.AuthorityClient{Identity: in.Identity}
 	var provider transferTestProvider
 	switch in.Request.Provider {
+	case "docker":
+		docker, err := dockerprovider.New()
+		require.NoError(t, err)
+		defer docker.Close()
+		provider = docker
 	case "libvirt":
 		provider = libvirtprovider.New(in.ProviderRoot)
 	case "firecracker":

@@ -90,3 +90,25 @@ Full commands race: /tmp/sysbox-stage2-cli-full-20261026.log.
 Independent review of CLI, catalog, public contracts and real-provider rewiring
 found no blocker. Docker public-route execution and the rest of stage 2 remain
 open; this is a delivery checkpoint, not stage closure.
+
+## Second delivery: Docker public transfer and P7 defect
+
+- [x] Docker now follows public prepare/prepared/submit into the real provider;
+  normal lifecycle and all six host SIGKILL positions pass twice, preserving
+  unknown outcomes and exact command identity on submission retry.
+- [x] Fixed libvirt Attach retry duplicating a logical NIC. Exact retries and
+  persisted cold retries preserve one interface; changed identity/configuration
+  and pre-existing duplicate logical records are refused without rewriting state.
+- [x] Real Docker NAT/libvirt domain restart and Firecracker TAP/cold start
+  preflight pass twice. No guest traffic or Firecracker guest boot is implied.
+- [x] Current helper with real sshd rotation/delete/endpoint restrictions and
+  independent administrator access passes twice. Real drop-in/reload/cold service
+  recovery and configuration conflict scenarios pass twice.
+- [x] Full libvirt race, strict selected contracts, independent review. Final
+  real report: /tmp/sysbox-stage2-real-final-20261026/run.json, source SHA256
+  ad6f9ad8eb738935eb95a3401af08c2c4b5c3cc3b6bd6148a1e44d2d4b3b56b3.
+
+The precise next scope is docs/operations/stage2-capability-fault-ledger.md.
+Stage 2 remains open: full mixed guest NAT/reset, complete original requirement
+mapping and remaining fault cells. Test-only temporary user groups and private
+sshd instances did not modify the host SSH service or persistent user membership.

@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os/exec"
+	"reflect"
 
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/provider/network"
@@ -56,7 +57,20 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 	if bridge == "" || (target.Netns == "" && target.ManagedBridge == nil) {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "libvirt", "owned root bridge target required; rebuild network", nil)
 	}
-	hs.Bridges = append(hs.Bridges, BridgeAttach{Target: bridgeTarget, Name: req.Name, Netns: target.Netns, Bridge: bridge, MAC: req.MAC, IPPrefixes: append([]string(nil), req.IPPrefixes...), Gateway: req.Gateway})
+	desired := BridgeAttach{Target: bridgeTarget, Name: req.Name, Netns: target.Netns, Bridge: bridge, MAC: req.MAC, IPPrefixes: append([]string(nil), req.IPPrefixes...), Gateway: req.Gateway}
+	found := false
+	for _, existing := range hs.Bridges {
+		if existing.Name != req.Name {
+			continue
+		}
+		if found || !reflect.DeepEqual(existing, desired) {
+			return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, subName, "logical attachment conflicts with existing configuration", nil)
+		}
+		found = true
+	}
+	if !found {
+		hs.Bridges = append(hs.Bridges, desired)
+	}
 	raw, _ := json.Marshal(attachmentState{Bridge: bridge, MAC: req.MAC})
 	return driver.AttachmentResult{Driver: "libvirt", State: raw}, nil
 }

@@ -323,10 +323,11 @@
         "adoption-reset-settled",
         "adoption-whole-vm-cancellation",
         "ownership-transfer-public",
-        "ownership-transfer-cli"
+        "ownership-transfer-cli",
+        "ownership-transfer-docker-public"
       ],
       "remaining": [
-        "Public protocol contracts cover preparation, submission and cold API retry; real provider public-route completion and fault coverage still require current-source acceptance."
+        "All three providers now exercise public prepare/prepared/submit and host completion/crash boundaries. Deployed CLI/proxy/host-supervisor integration remains distinct from direct subject injection and host preparation calls in these fixtures."
       ]
     },
     {
@@ -426,17 +427,27 @@
     {
       "id": "P7.1",
       "text": "`ssh_access` 通过版本化 guest 配置 SPI：Discover/Observe/Apply/Delete；持久独立配置文件及 ownership/digest，读取实际 keys/config/service/监听状态。",
-      "gates": [],
+      "gates": [
+        "ssh-access-guest-integrity",
+        "ssh-access-transport-recovery",
+        "ssh-access-real-rotation",
+        "ssh-access-real-service"
+      ],
       "remaining": [
-        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+        "Real isolated sshd/helper rotation and independent access preservation are covered. Full provider guest service reload/observation and enclosing reset lifecycle require separate current-source acceptance."
       ]
     },
     {
       "id": "P7.2",
       "text": "只修改自己管理的 drop-in/授权 key 文件；删除只撤销自己的访问配置，不删除其他 SSH 用户或停掉共享 sshd。",
-      "gates": [],
+      "gates": [
+        "ssh-access-guest-integrity",
+        "ssh-access-transport-recovery",
+        "ssh-access-real-rotation",
+        "ssh-access-real-service"
+      ],
       "remaining": [
-        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+        "Real isolated sshd/helper rotation and independent access preservation are covered. Full provider guest service reload/observation and enclosing reset lifecycle require separate current-source acceptance."
       ]
     },
     {
@@ -450,33 +461,53 @@
     {
       "id": "P7.4",
       "text": "用 grant+journal 和任务回执处理配置、reload、观察的崩溃窗口；相同请求可收敛，外部修改报告 drift/conflict。",
-      "gates": [],
+      "gates": [
+        "ssh-access-guest-integrity",
+        "ssh-access-transport-recovery",
+        "ssh-access-real-rotation",
+        "ssh-access-real-service"
+      ],
       "remaining": [
-        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+        "Real isolated sshd/helper rotation and independent access preservation are covered. Full provider guest service reload/observation and enclosing reset lifecycle require separate current-source acceptance."
       ]
     },
     {
       "id": "P7.5",
       "text": "网络 provider 正式输出可消费的 managed attachment target，包含网络 UID/generation、真实 bridge/namespace 证明与刷新方式；NIC provider 不推导 Docker `br-<id>` 名称。",
-      "gates": [],
+      "gates": [
+        "network-libvirt-attachment-retry",
+        "network-libvirt-docker-nat",
+        "network-firecracker-docker-nat",
+        "ssh-access-real-rotation"
+      ],
       "remaining": [
-        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+        "Real Docker NAT target with libvirt domain restart and Firecracker TAP/cold-start preflight verified. Three-provider guest traffic, outbound NAT, reset and same-name network replacement in the enclosing lifecycle remain unverified; diskless libvirt/TAP fixtures do not prove these."
       ]
     },
     {
       "id": "P7.6",
       "text": "恢复 Firecracker/libvirt 对受支持 Docker NAT 网络的接入；在创建、启动、Observe、Delete 全链路验证 target。混合 topology 的 reset/恢复重新取得并核对该证明。",
-      "gates": [],
+      "gates": [
+        "network-libvirt-attachment-retry",
+        "network-libvirt-docker-nat",
+        "network-firecracker-docker-nat",
+        "ssh-access-real-rotation"
+      ],
       "remaining": [
-        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+        "Real Docker NAT target with libvirt domain restart and Firecracker TAP/cold-start preflight verified. Three-provider guest traffic, outbound NAT, reset and same-name network replacement in the enclosing lifecycle remain unverified; diskless libvirt/TAP fixtures do not prove these."
       ]
     },
     {
       "id": "P7.acceptance",
       "text": "SSH 访问实际成功、轮换后旧 key 失效、Delete 后自己的 key 失效且其他访问不受损；三 provider 混合网络通信、NAT、同名替换、reset 和无残留销毁实测。",
-      "gates": [],
+      "gates": [
+        "network-libvirt-attachment-retry",
+        "network-libvirt-docker-nat",
+        "network-firecracker-docker-nat",
+        "ssh-access-real-rotation"
+      ],
       "remaining": [
-        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+        "Real Docker NAT target with libvirt domain restart and Firecracker TAP/cold-start preflight verified. Three-provider guest traffic, outbound NAT, reset and same-name network replacement in the enclosing lifecycle remain unverified; diskless libvirt/TAP fixtures do not prove these."
       ]
     },
     {
@@ -1909,6 +1940,107 @@
         "TestOwnershipTransferCLIRejectsRedirectAndInvalidInput"
       ],
       "requires_env": []
+    },
+    {
+      "id": "ownership-transfer-docker-public",
+      "kind": "real-provider",
+      "package": "./pkg/api",
+      "tests": [
+        "TestDockerOwnershipTransferPublicLifecycleE2E",
+        "TestDockerOwnershipTransferPublicSIGKILLMatrixE2E"
+      ],
+      "tags": "e2e",
+      "requires_env": [
+        "SYSBOX_DOCKER_TRANSFER_E2E"
+      ],
+      "timeout": "5m"
+    },
+    {
+      "id": "network-libvirt-attachment-retry",
+      "kind": "contract",
+      "package": "./pkg/provider/libvirt",
+      "tests": [
+        "TestAttachmentRetryDoesNotDuplicateOrReplaceLogicalInterface",
+        "TestAttachmentColdRetryAndDuplicateRecordRefusal"
+      ],
+      "race": true
+    },
+    {
+      "id": "network-libvirt-docker-nat",
+      "kind": "real-provider",
+      "package": "./pkg/provider/libvirt",
+      "tests": [
+        "TestLibvirtDockerNATLifecycleE2E"
+      ],
+      "tags": "e2e",
+      "requires_env": [
+        "SYSBOX_LIBVIRT_E2E",
+        "SYSBOX_MANAGED_BRIDGE_E2E"
+      ]
+    },
+    {
+      "id": "network-firecracker-docker-nat",
+      "kind": "real-provider",
+      "package": "./pkg/provider/firecracker",
+      "tests": [
+        "TestFirecrackerDockerNATAttachmentE2E"
+      ],
+      "tags": "e2e",
+      "requires_env": [
+        "SYSBOX_MANAGED_BRIDGE_E2E"
+      ]
+    },
+    {
+      "id": "ssh-access-real-rotation",
+      "kind": "real-provider",
+      "package": "./pkg/transport",
+      "tests": [
+        "TestSSHAccessRealRotationAndSharedLoginE2E"
+      ],
+      "tags": "e2e",
+      "requires_env": [
+        "SYSBOX_GUESTTASK_HELPER"
+      ],
+      "artifact_env": [
+        "SYSBOX_GUESTTASK_HELPER"
+      ]
+    },
+    {
+      "id": "ssh-access-guest-integrity",
+      "kind": "contract",
+      "package": "./pkg/guesttask",
+      "tests": [
+        "TestSSHAccessRotationRejectsOldDeleteAndPreservesOtherAccess",
+        "TestSSHAccessConcurrentCASHasOneWinner",
+        "TestSSHAccessCorruptionNeverAuthorizesKeysOrDeletesRecord",
+        "TestSSHAccessColdRetryAfterEpochPublicationBeforeKeyCommit",
+        "TestSSHDiscoveryIsReadOnlyAndPreservesTombstoneRevision",
+        "TestSSHDiscoveryRejectsForeignIdentityAndCorruption",
+        "TestSSHAccessGrantAndOwnerBoundaries"
+      ],
+      "race": true
+    },
+    {
+      "id": "ssh-access-transport-recovery",
+      "kind": "contract",
+      "package": "./pkg/transport",
+      "tests": [
+        "TestSSHAccessTransportBindsMutationAndResponse",
+        "TestSSHAccessTransportSeparatesHistoricalResultAndCurrentInspection",
+        "TestSSHAccessLostReplyRecoversOriginalResultWithoutMutation",
+        "TestSSHStopTransportRequiresExactScopeAndCessation"
+      ],
+      "race": true
+    },
+    {
+      "id": "ssh-access-real-service",
+      "kind": "real-provider",
+      "package": "./pkg/sshaccess",
+      "tests": [
+        "TestRealSSHDDeploymentReloadRecoveryE2E",
+        "TestRealSSHDEffectiveConfigurationConflictE2E"
+      ],
+      "tags": "e2e"
     }
   ]
 }
