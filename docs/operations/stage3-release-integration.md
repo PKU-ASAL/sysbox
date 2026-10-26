@@ -12,7 +12,8 @@ through a Go build overlay when compiling `sysbox`. It does not overwrite the
 checkout's embedded helper files. API, agent and host supervisor are subcommands
 of that same `sysbox` executable.
 
-Both the release archive builder and Dockerfile use this entry point. Archives
+The release archive builder and default source Docker build use this entry point.
+Release OCI builds instead consume these verified archives directly. Archives
 include `sysbox`, `sysbox-init`, and `sysbox-netns`; their hashes participate in
 the release fingerprint. `make release-test` checks that the shipped helper's
 exact bytes occur in the CLI and that repeated builds produce identical archives.
@@ -44,8 +45,9 @@ the verified digest lock.
   conflicting paths and was aborted; no main merge has been completed.
   Audit the durable admission, claim replay and execution-fencing requirements
   against the replacement architecture before resolving that ancestry.
-- Build and inspect the actual runtime image. Sharing the executable build
-  script is not evidence that an OCI image has been built or deployed.
+- Publish and verify the multi-platform runtime manifest. Local amd64 runtime
+  assembly and executable identity passed; arm64 runtime and registry delivery
+  have not yet been exercised.
 - Run upgrade/rebuild on an isolated deployment with archived authority and
   journals, then run the supported provider/transport matrix from the exact
   candidate artifacts. Existing stage 2 reports are layered evidence, not a
@@ -58,7 +60,7 @@ the verified digest lock.
 
 ## Runtime candidate evidence
 
-Local candidate `/tmp/sysbox-stage3-36dfad7-verified` was assembled from the
+Local image candidate `sysbox:stage3-36dfad7-verified` was assembled from the
 verified release archive, rather than rebuilt in a second Go toolchain. Evidence
 was recorded in `/tmp/sysbox-stage3-36dfad7/runtime-evidence.json`:
 
