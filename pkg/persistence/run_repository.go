@@ -12,6 +12,18 @@ import (
 // RunStorage must lock/read/transform/write a complete current run in one
 // critical section. A nil replacement leaves the run unchanged. No callback
 // result may be published if the transaction or filesystem write fails.
+// LiveRunLeaseRequired marks worker-authorized transitions. Storage must
+// recheck the original lease at its write boundary; controller expiry is separate.
+type liveRunLeaseKey struct{}
+
+func LiveRunLeaseRequired(ctx context.Context) bool {
+	required, _ := ctx.Value(liveRunLeaseKey{}).(bool)
+	return required
+}
+func requireLiveRunLease(ctx context.Context) context.Context {
+	return context.WithValue(ctx, liveRunLeaseKey{}, true)
+}
+
 type RunStorage interface {
 	UpdateRun(context.Context, string, func(*controlplane.Run) (*controlplane.Run, error)) (*controlplane.Run, error)
 }
@@ -260,6 +272,7 @@ func (r *RunRepository) ClaimRun(ctx context.Context, id, agent, owner string, t
 	return out, claimed, nil
 }
 func (r *RunRepository) RenewRunLease(ctx context.Context, id, agent, owner string, ttl time.Duration) (*controlplane.Run, bool, error) {
+	ctx = requireLiveRunLease(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}

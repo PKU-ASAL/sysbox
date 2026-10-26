@@ -236,6 +236,17 @@ func (r *ExecutionGrantRepository) Issue(ctx context.Context, request controlpla
 		if !request.ExpiresAt.IsZero() && !request.ExpiresAt.After(a.ObservedAt) {
 			return ErrConflict
 		}
+		// A stopped power action cannot be turned into a fresh effect by
+		// redelivering its command with a new attempt, session, or epoch.
+		// Stops outlive the latest grant for this scope.
+		if request.Operation == "node_power" {
+			for _, stop := range a.Stops {
+				old := stop.Grant
+				if old.Operation == "node_power" && old.Scope.TopologyUID == request.Scope.TopologyUID && old.ActionID == request.ActionID {
+					return ErrConflict
+				}
+			}
+		}
 		// Match the existing scope before scanning overlapping child scopes;
 		// map iteration order must not change exact parent retry behavior.
 		if g, ok := a.Grants[grantScopeKey(request.Scope)]; ok && sameGrant(g, request) && g.State == controlplane.GrantActive && a.ObservedAt.Before(g.ExpiresAt) {

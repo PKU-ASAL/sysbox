@@ -351,17 +351,39 @@ func (s *AgentService) ReconcileCommandState(ctx context.Context, cmd controlpla
 	if !ok {
 		return cmd, false
 	}
+	original := cmd
 	cmd.Status = status
 	cmd.EndedAt = endedAt
 	if cmd.EndedAt.IsZero() {
 		cmd.EndedAt = time.Now().UTC()
 	}
-	_ = s.store.SaveAgentCommand(ctx, cmd)
-	return cmd, true
+	if err := s.store.SaveAgentCommand(ctx, cmd); err != nil {
+		return original, false
+	}
+	// Save can preserve an already-terminal concurrent winner. Return its
+	// canonical status rather than the stale status we tried to publish.
+	stored, err := s.FindCommand(ctx, cmd.AgentID, cmd.ID)
+	if err != nil {
+		return original, false
+	}
+	return stored, stored.IsTerminal()
 }
 
 func (s *AgentService) guestCommandTerminalState(ctx context.Context, cmd controlplane.AgentCommand) (string, time.Time, bool) {
 	switch cmd.Type {
+	case "node_operation":
+		op, err := s.store.GetNodeOperation(ctx, cmd.Operation.ID)
+		if err != nil || !nodeCommandMatchesOperation(cmd, op) {
+			return "", time.Time{}, false
+		}
+		switch op.Status {
+		case controlplane.NodeOperationStatusDone:
+			return controlplane.AgentCommandStatusCompleted, op.EndedAt, true
+		case controlplane.NodeOperationStatusFailed:
+			return controlplane.AgentCommandStatusFailed, op.EndedAt, true
+		default:
+			return "", time.Time{}, false
+		}
 	case "guest_execution":
 		if cmd.Execution == nil || cmd.Execution.ID == "" {
 			return "", time.Time{}, false

@@ -27,8 +27,9 @@ func TestNodePowerGrantBindsPersistedOperationAndLiveSession(t *testing.T) {
 		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
 		session, err := repo.OpenSession(ctx, "agent", "first", "")
 		require.NoError(t, err)
-		command := controlplane.AgentCommand{ID: "power-command", AgentID: "agent", Type: "node_operation", TopologyUID: grantTestTopologyUID(t, s, "lab"), ResourceUID: "resource", Generation: 2, ActionID: "action", Operation: controlplane.NodeOperation{Topology: "lab", Node: "vm", Operation: "pause"}}
-		require.NoError(t, store.SaveAgentCommand(ctx, command))
+		op, command := nodeDispatchFixture()
+		command.TopologyUID = grantTestTopologyUID(t, s, op.Topology)
+		require.NoError(t, store.CreateNodeOperationDispatch(ctx, op, command))
 		leased, ok, err := store.AcquireAgentCommandLease(ctx, "agent", command.ID, "worker", time.Minute)
 		require.NoError(t, err)
 		require.True(t, ok)

@@ -41,10 +41,8 @@ the verified digest lock.
 
 ## Remaining closure gates
 
-- Main `b1cc43d` has diverged from the refactor. A trial merge produced
-  conflicting paths and was aborted; no main merge has been completed.
-  Audit the durable admission, claim replay and execution-fencing requirements
-  against the replacement architecture before resolving that ancestry.
+- Main `b1cc43d` semantics are reconciled below. The feature branch retains the
+  replacement architecture; production main is not updated by this integration.
 - Publish and verify the multi-platform runtime manifest. Local amd64 runtime
   assembly and executable identity passed; arm64 runtime and registry delivery
   have not yet been exercised.
@@ -100,15 +98,52 @@ receipt tests failed before implementation. Evidence logs:
 - `/tmp/sysbox-stage3-replay-race.log`
 - `/tmp/sysbox-stage3-postgres-replay.log`
 
-The main ancestry gate is still open for two explicit semantic decisions:
-application-clock lease checks after acquiring the storage lock versus main's
-database write-time clock checks; and generic legacy node-operation unknown
-commands versus current signed host-operation recovery. Do not restore a generic
-timeout/replay path that bypasses host stop evidence. Keyed admission and canonical
-action recovery already have replacement implementations and should be retained.
+The two remaining semantic differences were resolved in the following audit.
+Keyed admission and canonical action recovery retain their replacement
+implementations instead of restoring the old checkpoint-based execution path.
 
 The earlier runtime image evidence applies to executable commit `36dfad7`, not
 the newer receipt changes. Final release acceptance must rebuild the candidate.
 The old upgrade archive script still hardcodes `final-1018` and is not a completed
 rebuild rehearsal for the current lab; that missing deployment was detected before
 any service mutation.
+
+
+## Main integration decisions
+
+The reviewed upstream range is `8628abb..b1cc43d` (PRs #43, #44, #45).
+The feature branch records upstream ancestry while retaining its audited tree:
+upstream fixes are ported through the new repositories and host authority, rather
+than reintroducing the replaced persistence/execution implementations.
+
+| Upstream behavior | Integrated implementation and boundary |
+| --- | --- |
+| Durable keyed admission and input hydration | Existing `keyed_apply.go`, atomic revision dispatch and hydration tests retained. |
+| Lost claim response and completion projection | `1479638` adds stable claim receipts, startup projection recovery, bounded claim bodies and proof mutation guards. |
+| Lease valid when writing | Worker renewal/completion carry an explicit live-lease requirement. SQLite INSERT predicates and PostgreSQL UPDATE predicates recheck the original lease and deadline using database time. File storage rechecks under its write lock. Controller expiry and signed host recovery remain separate. |
+| Unknown command never replayed | Aged running/acknowledged commands stay non-leasable. No timeout fabricates a stop or terminal operation. Signed stop tombstones forbid a stopped power action from acquiring another epoch, including after a later action replaced the latest scope grant. |
+| Lost terminal node delivery | Canonical operation identity/status gates power grant issuance. Command reconciliation reads the canonical terminal operation, preserves lease CAS, and reloads the persisted winner. |
+| Interrupted effects | Canonical action intents and signed stop evidence replace old checkpoint replay. Existing supervisor approval and effectgate tests retained. |
+| Protocol advertisement | `sysbox-runtime-v1` retained intentionally; `claim_replay` restored. Rebuild/upgrade requires coordinated API/Agent versions, not silent legacy fallback. |
+
+A generic power stop receipt proves cessation, not a durable operation result.
+If worker completion was lost, the operation stays unconfirmed and cannot mint
+a new epoch. Its evidence must remain available for explicit disposition; do not
+infer pause/resume success from the stop receipt alone.
+
+Verification: delayed-write tests first reproduced expired renewal/completion
+on file and SQLite, then passed on all three backends, including dedicated
+PostgreSQL. Signed real Docker pause/resume, lost-acknowledgement and cold-host
+recovery acceptance passed. Independent review found no blocking issues.
+The old power-grant fixture was corrected to persist the canonical operation
+through atomic dispatch, rather than creating only a command.
+
+Evidence:
+
+- `/tmp/sysbox-stage3-postgres-write-power.log`
+- `/tmp/sysbox-stage3-power-real.log`
+- `/tmp/sysbox-stage3-write-power-race.log`
+- `/tmp/sysbox-stage3-api-final.log`
+
+These are main-integration checks, not a same-artifact deployment acceptance or
+an upgrade/rebuild rehearsal. The final candidate still needs rebuilding.

@@ -108,6 +108,9 @@ func (b localRunStorage) updateRunWithCommand(ctx context.Context, id, commandID
 		if err := checkLocalRunMaintenance(ctx, b.store.runsDir, authority, *next); err != nil {
 			return nil, err
 		}
+		if persistence.LiveRunLeaseRequired(ctx) && (current == nil || !current.LeaseUntil.After(time.Now()) || !current.DeadlineAt.IsZero() && !current.DeadlineAt.After(time.Now())) {
+			return nil, persistence.ErrConflict
+		}
 		return nil, b.store.saveRunUnlocked(ctx, *next)
 	})
 	if err != nil {
@@ -324,7 +327,11 @@ func (b postgresRunStorage) updateRunWithCommand(ctx context.Context, id, comman
 				err = persistence.ErrConflict
 			}
 		} else {
-			_, err = tx.Exec(ctx, `UPDATE sysbox_runs SET topology=$2,status=$3,agent_id=$4,lease_owner=$5,lease_until=$6,attempt=$7,data=$8::jsonb,updated_at=now() WHERE id=$1`, id, durable.Topology, durable.Status, durable.AgentID, durable.LeaseOwner, nullableTime(durable.LeaseUntil), durable.Attempt, string(raw))
+			tag, updateErr := tx.Exec(ctx, `UPDATE sysbox_runs SET topology=$2,status=$3,agent_id=$4,lease_owner=$5,lease_until=$6,attempt=$7,data=$8::jsonb,updated_at=now() WHERE id=$1 AND (NOT $9 OR (status='running' AND lease_until>clock_timestamp() AND ($10::timestamptz IS NULL OR $10::timestamptz>clock_timestamp())))`, id, durable.Topology, durable.Status, durable.AgentID, durable.LeaseOwner, nullableTime(durable.LeaseUntil), durable.Attempt, string(raw), persistence.LiveRunLeaseRequired(ctx), nullableTime(current.DeadlineAt))
+			err = updateErr
+			if err == nil && tag.RowsAffected() != 1 {
+				err = persistence.ErrConflict
+			}
 		}
 		if err != nil {
 			return nil, err

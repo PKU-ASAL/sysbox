@@ -11,6 +11,16 @@ import (
 // The caller reads the current operation inside the authority/command write
 // boundary. A retained queued dispatch is not proof its operation is live.
 func (b apiExecutionGrantStorage) checkGuestSSHSource(record *persistence.CommandRecord, read func(string) (*controlplane.NodeOperation, error)) error {
+	if record != nil && record.Command.Type == "node_operation" && (record.Command.Operation.Operation == "pause" || record.Command.Operation.Operation == "resume") {
+		current, err := read(record.Command.Operation.ID)
+		if err != nil {
+			return err
+		}
+		if !nodeCommandMatchesOperation(record.Command, current) || (current.Status != controlplane.NodeOperationStatusQueued && current.Status != controlplane.NodeOperationStatusRunning) {
+			return persistence.ErrConflict
+		}
+		return nil
+	}
 	if record != nil && record.Command.Type == "node_operation" && record.Command.Operation.Operation == "adoption_inspect" {
 		cmd := record.Command
 		current, err := read(cmd.ActionID)
@@ -43,4 +53,8 @@ func (b apiExecutionGrantStorage) checkGuestSSHSource(record *persistence.Comman
 	// continue to fn(raw) after recording sourceErr, which could accidentally
 	// issue a grant before the clock-floor fallback runs.
 	return err
+}
+
+func nodeCommandMatchesOperation(cmd controlplane.AgentCommand, op *controlplane.NodeOperation) bool {
+	return op != nil && op.ID == cmd.Operation.ID && op.ID == cmd.ActionID && op.ActionID == cmd.ActionID && op.CommandID == cmd.ID && op.AgentID == cmd.AgentID && op.Topology == cmd.Operation.Topology && op.Node == cmd.Operation.Node && op.Operation == cmd.Operation.Operation && op.ResourceUID == cmd.ResourceUID && op.Generation == cmd.Generation && op.CreatedAt.Equal(cmd.Operation.CreatedAt)
 }

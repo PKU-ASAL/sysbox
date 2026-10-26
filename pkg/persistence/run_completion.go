@@ -10,6 +10,7 @@ import (
 // CompleteRun merges only result fields under the same lock that checks the
 // active execution grant. Controller expiry/cancellation use separate operations.
 func (r *RunRepository) CompleteRun(ctx context.Context, agent, id string, report controlplane.RunCompletion) (*controlplane.Run, bool, error) {
+	ctx = requireLiveRunLease(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}

@@ -167,3 +167,26 @@ func TestConcurrentGrantIssueHasOneWinner(t *testing.T) {
 	}
 	require.Equal(t, 1, won)
 }
+
+func TestStoppedPowerActionCannotMintAnotherEpoch(t *testing.T) {
+	root := t.TempDir()
+	r := NewFilesystemExecutionGrantRepository(root)
+	ctx := context.Background()
+	session, err := r.OpenSession(ctx, "agent", "boot", "")
+	require.NoError(t, err)
+	request := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1}, AgentID: "agent", SessionID: session.ID, ActionID: "power-action", CommandID: "power-command", Attempt: 1, Operation: "node_power", Digest: "digest"}
+	first, err := r.Issue(ctx, request, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, r.AcceptHostStop(ctx, *first, "authenticated-stop"))
+	request.Attempt++
+	_, err = r.Issue(ctx, request, time.Minute)
+	require.ErrorIs(t, err, ErrConflict)
+	successor := request
+	successor.ActionID = "new-action"
+	successor.CommandID = "new-command"
+	next, err := r.Issue(ctx, successor, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, r.AcceptHostStop(ctx, *next, "successor-stop"))
+	_, err = NewFilesystemExecutionGrantRepository(root).Issue(ctx, request, time.Minute)
+	require.ErrorIs(t, err, ErrConflict)
+}

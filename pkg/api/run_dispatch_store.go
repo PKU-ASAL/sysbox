@@ -294,8 +294,17 @@ func insertSQLiteRun(ctx context.Context, tx sqliteRunWriter, run controlplane.R
 	if run.UnsafeState {
 		unsafeState = 1
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO sysbox_runs (`+sqliteRunColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.Topology, run.Operation, run.Op, run.Status, run.Err, run.ParentID, run.Revision, run.Target, run.AgentID, recoverable, unsafeState, run.OperationKey, run.RequestFingerprint, run.Protocol, run.LeaseOwner, formatSQLiteTime(run.LeaseUntil), run.Attempt, formatSQLiteTime(run.QueuedAt), formatSQLiteTime(run.AssignedAt), formatSQLiteTime(run.StartedAt), formatSQLiteTime(run.EndedAt), formatSQLiteTime(run.DeadlineAt), run.SnapshotPath, raw)
+	result, err := tx.ExecContext(ctx, `INSERT INTO sysbox_runs (`+sqliteRunColumns+`) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT ? OR EXISTS (SELECT 1 FROM (SELECT * FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1) WHERE status='running' AND julianday(lease_until)>julianday('now') AND (deadline_at='' OR julianday(deadline_at)>julianday('now')))`,
+		run.ID, run.Topology, run.Operation, run.Op, run.Status, run.Err, run.ParentID, run.Revision, run.Target, run.AgentID, recoverable, unsafeState, run.OperationKey, run.RequestFingerprint, run.Protocol, run.LeaseOwner, formatSQLiteTime(run.LeaseUntil), run.Attempt, formatSQLiteTime(run.QueuedAt), formatSQLiteTime(run.AssignedAt), formatSQLiteTime(run.StartedAt), formatSQLiteTime(run.EndedAt), formatSQLiteTime(run.DeadlineAt), run.SnapshotPath, raw, persistence.LiveRunLeaseRequired(ctx), run.ID)
+	if err == nil {
+		count, countErr := result.RowsAffected()
+		if countErr != nil {
+			return countErr
+		}
+		if count != 1 {
+			return persistence.ErrConflict
+		}
+	}
 	return err
 }
 
