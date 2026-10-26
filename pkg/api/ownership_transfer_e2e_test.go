@@ -3,12 +3,15 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/driver"
+	"io"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -30,6 +33,7 @@ import (
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"strings"
@@ -91,7 +95,7 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	require.NoError(t, err)
 	s.grantHostKeys = map[string]ed25519.PublicKey{"host": host}
 	secret := "transfer-test-secret"
-	require.NoError(t, s.apiStore.SaveAgent(ctx, controlplane.Agent{ID: "host", AuthSecret: secret, SecretHash: agent.SecretHash(secret)}))
+	require.NoError(t, s.apiStore.SaveAgent(ctx, controlplane.Agent{ID: "host", AuthSecret: secret, SecretHash: agent.SecretHash(secret), Status: controlplane.AgentStatusOnline, Protocol: controlplane.AgentProtocolVersion, Capabilities: []string{providerName}, LastHeartbeat: time.Now().UTC()}))
 	sourceRepo, err := s.actionRepository("source")
 	require.NoError(t, err)
 	targetRepo, err := s.actionRepository("target")
@@ -101,6 +105,12 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	require.NoError(t, err)
 	target, err := targetRepo.LoadState(ctx, "target")
 	require.NoError(t, err)
+	require.NoError(t, state.NewManagerWithBackend(targetRepo.StateBackend("target")).Save(target))
+	target, err = targetRepo.LoadState(ctx, "target")
+	require.NoError(t, err)
+	for _, name := range []string{"source", "target"} {
+		require.NoError(t, s.workspaceService().bindPlacement(name, "host", controlplane.AgentProtocolVersion))
+	}
 	old := substrate.OperationIdentity{ActionID: "create", OwnerUID: source.TopologyUID, TopologyUID: source.TopologyUID, ResourceUID: "old", Generation: 1}
 	next := substrate.OperationIdentity{ActionID: "transfer", OwnerUID: target.TopologyUID, TopologyUID: target.TopologyUID, ResourceUID: "new", Generation: 2}
 	var provider transferTestProvider
@@ -180,20 +190,46 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	source, err = manager.Load()
 	require.NoError(t, err)
 	plan := controlplane.OwnershipTransferPlan{Version: 1, ID: "transfer", SourceTopology: "source", TargetTopology: "target", SourceAddress: "sysbox_node.old", TargetAddress: "sysbox_node.new", AgentID: "host", Provider: providerName, ExternalID: id, Source: old, Target: next, SourceSerial: source.Meta.Serial, TargetSerial: target.Meta.Serial, Fingerprint: fmt.Sprintf("sha256:%x", sha256.Sum256(raw))}
-	require.NoError(t, targetRepo.ReserveOwnershipTarget(ctx, plan))
-	barrier, err := s.beginOwnershipMaintenance(ctx, plan)
-	require.NoError(t, err)
+
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	defer func() { driver.DefaultRegistry = previous }()
+	adopter, ok := provider.(driver.OwnershipAdoption)
+	require.True(t, ok)
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: providerName, Version: "acceptance", OwnershipAdoption: adopter}))
+	post := func(suffix string, body any, expected int) []byte {
+		t.Helper()
+		raw, err := json.Marshal(body)
+		require.NoError(t, err)
+		request, err := http.NewRequestWithContext(ctx, "POST", server.URL+"/v1/topologies/target/ownership-transfers"+suffix, bytes.NewReader(raw))
+		require.NoError(t, err)
+		request.Header.Set("X-Sysbox-Roles", "admin")
+		response, err := http.DefaultClient.Do(request)
+		require.NoError(t, err)
+		defer response.Body.Close()
+		data, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.Equal(t, expected, response.StatusCode, string(data))
+		return data
+	}
+	post("", plan, 409)
+	post("/prepare", plan, 202)
 	authorityClient := hostsupervisor.AuthorityClient{Identity: agent.Identity{ID: "host", Secret: secret, APIURL: server.URL}}
 	preparation, err := hostsupervisor.PrepareOwnership(ctx, plan, "host", "boot", hostKey, authorityClient.AuthorizeOwnershipPreparation, provider.InspectOwnershipTransfer)
 	require.NoError(t, err)
-	require.Equal(t, barrier.Epoch, preparation.SourceEpoch)
-	require.NoError(t, targetRepo.RecordOwnershipPreparation(ctx, preparation, host))
-	proof, err := s.prepareOwnershipTransfer(ctx, plan)
+	post("/prepared", preparation, 200)
+	var submitted controlplane.NodeOperation
+	require.NoError(t, json.Unmarshal(post("", plan, 202), &submitted))
+	require.NotNil(t, submitted.Adoption)
+	require.NotNil(t, submitted.Adoption.Transfer)
+	req := *submitted.Adoption
+	proof := *req.Transfer
+	persisted, err := s.apiStore.GetNodeOperation(ctx, submitted.ID)
 	require.NoError(t, err)
-	req := controlplane.AdoptionRequest{Transfer: &proof, ID: plan.ID, Topology: "target", TopologyUID: next.TopologyUID, Address: plan.TargetAddress, Provider: providerName, AgentID: "host", ExternalID: id, ResourceUID: next.ResourceUID, Generation: 2, ExpectedSerial: plan.TargetSerial, Evidence: substrate.AdoptionEvidence{Provider: providerName, ExternalID: id, Fingerprint: plan.Fingerprint}}
-	op := prepareNodeOperation(controlplane.NodeOperation{ID: plan.ID, Topology: "target", Node: "new", AgentID: "host", Operation: "adoption_apply", ResourceUID: next.ResourceUID, Generation: 2, Adoption: &req})
-	op, err = (&NodeOperationService{operations: newNodeOperationStore(s.apiStore)}).enqueue(ctx, next.TopologyUID, op)
-	require.NoError(t, err)
+	op := *persisted
+	var retried controlplane.NodeOperation
+	require.NoError(t, json.Unmarshal(post("", plan, 202), &retried))
+	require.Equal(t, op.ID, retried.ID)
 	cmd, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, "host", op.CommandID, "worker", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -205,6 +241,9 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	signed, err := controlplane.SignExecutionGrant(issuer, *grant, "boot", time.Now())
 	require.NoError(t, err)
 	coordinator := hostsupervisor.AdoptionCoordinator{Root: t.TempDir(), IssuerKey: issuerPub, HostKey: hostKey, AgentID: "host", HostBootID: "boot", Authorize: authorityClient.Authorize, Report: authorityClient.ReportNodeOperation}
+	// Coordinator storage is a root-owned private trust boundary, including
+	// when Go creates temporary directories under a permissive process umask.
+	require.NoError(t, os.Chmod(coordinator.Root, 0700))
 	commitState = func(evidence json.RawMessage) error { return s.commitAdoptionState(ctx, op, evidence) }
 	if phase == "normal" {
 		_, err = coordinator.Apply(ctx, req, signed, func(ctx context.Context) (json.RawMessage, error) {
@@ -229,7 +268,11 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 		child.Stdout, child.Stderr = logFile, logFile
 		require.NoError(t, child.Start())
 		defer child.Process.Kill()
-		require.Eventually(t, func() bool { _, err := os.Stat(input.Ready); return err == nil }, 20*time.Second, 20*time.Millisecond, "child boundary log: %s", logFile.Name())
+		if !assert.Eventually(t, func() bool { _, err := os.Stat(input.Ready); return err == nil }, 20*time.Second, 20*time.Millisecond) {
+			log, readErr := os.ReadFile(logFile.Name())
+			require.NoError(t, readErr)
+			t.Fatalf("child did not reach %s: %s", phase, log)
+		}
 		require.NoError(t, child.Process.Kill())
 		var exited *exec.ExitError
 		require.ErrorAs(t, child.Wait(), &exited)
@@ -289,7 +332,7 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	require.NoError(t, err)
 	require.Len(t, newState.Resources, 1)
 	require.Equal(t, id, newState.Resources[0].ExternalID)
-	barrier, err = authority.InspectMaintenance(ctx, plan.ID)
+	barrier, err := authority.InspectMaintenance(ctx, plan.ID)
 	require.NoError(t, err)
 	require.True(t, barrier.Released)
 	require.Error(t, authority.Authorize(ctx, *grant))

@@ -24,7 +24,11 @@ class CampaignTests(unittest.TestCase):
     def test_catalog_covers_every_original_requirement_exactly(self):
         root=Path(__file__).resolve().parents[2]
         catalog=campaign.load_catalog(root/'scripts/acceptance/campaign.json',root)
-        self.assertEqual(len(catalog['requirements']),24)
+        self.assertEqual(len(catalog['requirements']),65)
+        self.assertEqual({r['id'].split('.')[0] for r in catalog['requirements']},
+                         {f'P{i}' for i in range(10)})
+        copied=json.loads(json.dumps(catalog));copied['requirements'][0]['text'] += ' changed'
+        with self.assertRaises(ValueError): campaign.validate_catalog(copied,root)
         copied=json.loads(json.dumps(catalog));copied['requirements'].pop()
         with self.assertRaises(ValueError): campaign.validate_catalog(copied,root)
         copied=json.loads(json.dumps(catalog));copied['gates'][0]['tests']=['TestDoesNotExist']

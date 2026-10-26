@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run exact acceptance gates and reconcile original P5/P6/P8/P9 requirements.
+"""Run exact acceptance gates and reconcile original P0–P9 requirements.
 
 A passed contract gate is evidence only for its declared scope. Missing gates,
 skips, changed source and explicitly remaining work never count as completion.
@@ -14,7 +14,8 @@ import re
 import subprocess
 import sys
 
-STAGES = {'P5': 5, 'P6': 5, 'P8': 4, 'P9': 6}
+STAGES = {'P0': 4, 'P1': 5, 'P2': 7, 'P3': 7, 'P4': 6,
+          'P5': 5, 'P6': 5, 'P7': 6, 'P8': 4, 'P9': 6}
 
 
 def sha256(raw):

@@ -2,6 +2,278 @@
   "version": 1,
   "requirements": [
     {
+      "id": "P0.1",
+      "text": "列出 CLI/API × Docker/Firecracker/libvirt × 文件/SQLite/Postgres 的能力矩阵；每格必须是通过、有明确故障、尚未实现或不适用。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P0.2",
+      "text": "复核最新 readiness guest 二进制确实由当前源码构建；amd64/arm64 的构建依赖和测试入口不能漏掉新增源文件。补旧 guest 拒绝和自定义 init marker 验收。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P0.3",
+      "text": "把后续总验收拆成可执行目标：本地合同、双进程、双宿主、故障注入、完整业务拓扑生命周期。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P0.4",
+      "text": "记录主线分支差异，但不边开发边覆盖重构合同；最终集中整合。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P0.acceptance",
+      "text": "clean build 可重复，版本/capability 与二进制一致；本计划所有缺口都有具体测试入口/阶段负责人。不能仅凭历史测试宣布当前提交通过。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P1.1",
+      "text": "command/run 只携不可变 revision/artifact 身份与授权下载信息；SnapshotPath 仅为执行宿主本地细节，不作跨宿主位置合同。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P1.2",
+      "text": "Agent 下载并核对整棵 revision tree digest，拒绝路径穿越/不受控 symlink；临时目录完整落盘后原子发布，创建与恢复共用物化函数。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P1.3",
+      "text": "artifact 使用 digest/架构/guest family，支持 Agent 缓存与可靠来源；配置中的本地路径明确归属，不能把 API 主机路径当作 Agent 可读文件。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P1.4",
+      "text": "敏感输入不进持久日志/快照；API 重启或转移实例后的补交有明确操作状态，Agent 不靠 session affinity 猜测授权。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P1.5",
+      "text": "在没有共享挂载的独立主机上跑第一条 Apply→Observe→Destroy→receipt→metadata DELETE。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P1.acceptance",
+      "text": "API 的绝对路径在 Agent 上不存在也能完成；错误 digest、下载中断、缺失输入不触发 provider effect；Agent 缓存重建不改变 revision。真正双宿主环境由测试设施提供，未配置时报告“未验收”，不能以 skip 算通过。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P2.1",
+      "text": "在共享 repository 中原子分配 scope epoch、绑定 Agent session、签发/续租/撤销 grant；epoch 不随数据库记录删除而回退。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P2.2",
+      "text": "同一资源上的 Run、NodeOperation、guest exec/file、adoption、GC 都经过同一冲突规则；不能只在 API 进程内 mutex 下互斥。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P2.3",
+      "text": "资源宿主由常驻 supervisor/gateway 独占受管 provider 凭据和 effect 通道；worker 只提交带 grant 的请求。绕过该边界的运行模式不能宣称同代 fencing。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P2.4",
+      "text": "gate 在效果开始前核验 grant，持久记录 action 去重、最小 epoch 和在途效果；lease 无法刷新时先停止新效果，再由 watchdog 终止可控任务。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P2.5",
+      "text": "epoch只由持久授权事务推进；本机到期使用单调时钟预算，进程/宿主重启后旧grant不能按旧倒计时复活。协议定义最大有效期、时钟偏差及断网停止预算，并测试时钟回拨。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P2.6",
+      "text": "新 owner 不能仅凭 API lease 超时就与旧 owner 并发执行。必须取得旧 gate 撤销/到期停止证明，或对旧宿主实施可验证 fencing；无法证明时保持 blocked。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P2.7",
+      "text": "对不可取消的 daemon 调用记录 uncertain，在它返回或经观察澄清前不发互斥替代动作；API completion 拒绝只是最后一道校验，不能当作执行中止。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P2.acceptance",
+      "text": "暂停旧 worker、过期 grant、启用新 epoch、再恢复旧 worker，旧者不能发新 effect；gate 重启不忘记 epoch；数据库/网络不可达期间不无限续权。记录并实测停止上界、时钟偏差假设和强制终止后的残留处理。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P3.1",
+      "text": "实现 Start/Observe/Cancel/List/ReadOutput 的版本化协议；request/task ID 在发出前持久化，相同 ID+摘要重复请求返回原任务，摘要不同冲突。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P3.2",
+      "text": "guest supervisor 持久任务 manifest、请求摘要、boot/process/cgroup 锚点与退出结果；helper 重启能发现原任务，输出支持配额、截断标志和游标。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P3.3",
+      "text": "SSH 通过预装并验证版本的受管 helper 接入，移除 nohup+echo PID 作为正式后台能力的实现；helper 不可用必须在 effect 前说明如何安装。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P3.4",
+      "text": "Cancel 先持久取消意图，定位同一 boot/进程/cgroup 后终止整棵任务，核验退出再返回 confirmed；PID 被复用不能误杀。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P3.5",
+      "text": "guest helper保存可接受的最小epoch并独立执行到期watchdog；暂停旧Agent或断开vsock/SSH时，guest任务不能因上游不再发消息而无限继续获授权。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P3.6",
+      "text": "guest 重启时旧任务标记为 boot-changed/未知退出结果，不伪造 exit code；启动窗口丢失回执通过 task ID 恢复，不重放任意命令。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P3.7",
+      "text": "API guest execution/file、provisioner、后台 Start 与 reset/destroy 任务清理统一消费同一模型；移除 PID-only transitional adapter。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P3.acceptance",
+      "text": "启动结果丢失、helper/Agent/API 各自重启、guest reboot、进程树派生、输出超限、PID 复用、取消与完成并发均有确定测试；SSH/vsock 返回一致语义。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P4.1",
+      "text": "grant 到期/显式 cancel 经 owning Agent gate 传播到 guest task；API 分别显示 requested、stopping、confirmed、unknown，断开 SSH/vsock 不等于已终止。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P4.2",
+      "text": "续租与 cancellation 全部受当前 epoch/session 约束；旧任务允许只读观察，但不能获新授权继续执行。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P4.3",
+      "text": "inventory/projection 携 producer epoch+sequence，以共享规则原子拒绝倒序；只读快照不授予 ownership。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P4.4",
+      "text": "活跃操作索引包含 Run、NodeOperation、guest exec/file、adoption/GC/恢复任务；Destroy 与 metadata 删除检查该完整索引。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P4.5",
+      "text": "receipt 加入执行/placement epoch 与观测序号，验证没有随后被准入的任务；API 切换后仍可判定有效性，不能只靠 wall-clock 排序。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P4.6",
+      "text": "两个 API 共用 Postgres 的准入、outbox、取消、完成、接管实测；配置/秘密交付不能依赖某一个 API 内存才能保持正确性（等待补交可以，但状态必须明确）。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P4.acceptance",
+      "text": "断网、lease 到期、API failover、Agent crash 后任务按合同停止/隔离；重复完成及取消回报幂等；没有新旧执行者同时获得同一互斥 effect 权限。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
       "id": "P5.1",
       "text": "新增只读 InspectAdoption、生成 AdoptPlan、显式 ApplyAdoption；检查当前 ownership、外部不可变身份、配置、依赖、冲突及能力。",
       "gates": [
@@ -49,9 +321,13 @@
         "adoption-fenced-recovery",
         "adoption-cancellation",
         "adoption-reset-settled",
-        "adoption-whole-vm-cancellation"
+        "adoption-whole-vm-cancellation",
+        "ownership-transfer-public",
+        "ownership-transfer-cli"
       ],
-      "remaining": []
+      "remaining": [
+        "Public protocol contracts cover preparation, submission and cold API retry; real provider public-route completion and fault coverage still require current-source acceptance."
+      ]
     },
     {
       "id": "P5.4",
@@ -146,6 +422,62 @@
         "state-restore-process-matrix"
       ],
       "remaining": []
+    },
+    {
+      "id": "P7.1",
+      "text": "`ssh_access` 通过版本化 guest 配置 SPI：Discover/Observe/Apply/Delete；持久独立配置文件及 ownership/digest，读取实际 keys/config/service/监听状态。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P7.2",
+      "text": "只修改自己管理的 drop-in/授权 key 文件；删除只撤销自己的访问配置，不删除其他 SSH 用户或停掉共享 sshd。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P7.3",
+      "text": "软件包/发行版能力明确声明；运行时不可恢复 apt/apk 猜测链。凭据/密钥引用保留安全属性，输出和 journal 不记录秘密。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P7.4",
+      "text": "用 grant+journal 和任务回执处理配置、reload、观察的崩溃窗口；相同请求可收敛，外部修改报告 drift/conflict。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P7.5",
+      "text": "网络 provider 正式输出可消费的 managed attachment target，包含网络 UID/generation、真实 bridge/namespace 证明与刷新方式；NIC provider 不推导 Docker `br-<id>` 名称。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P7.6",
+      "text": "恢复 Firecracker/libvirt 对受支持 Docker NAT 网络的接入；在创建、启动、Observe、Delete 全链路验证 target。混合 topology 的 reset/恢复重新取得并核对该证明。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
+    },
+    {
+      "id": "P7.acceptance",
+      "text": "SSH 访问实际成功、轮换后旧 key 失效、Delete 后自己的 key 失效且其他访问不受损；三 provider 混合网络通信、NAT、同名替换、reset 和无残留销毁实测。",
+      "gates": [],
+      "remaining": [
+        "Original requirement newly inventoried: map implementation and current-source acceptance before closing."
+      ]
     },
     {
       "id": "P8.1",
@@ -1556,6 +1888,27 @@
       "artifact_env": [
         "SYSBOX_FILE_FENCE_PROBE"
       ]
+    },
+    {
+      "id": "ownership-transfer-public",
+      "kind": "contract",
+      "package": "./pkg/api",
+      "tests": [
+        "TestOwnershipTransferPublicPreparationAndSubmission"
+      ],
+      "requires_env": [
+        "SYSBOX_TEST_DATABASE_URL"
+      ]
+    },
+    {
+      "id": "ownership-transfer-cli",
+      "kind": "contract",
+      "package": "./cmd/sysbox/commands",
+      "tests": [
+        "TestOwnershipTransferCLIUsesPublicProtocol",
+        "TestOwnershipTransferCLIRejectsRedirectAndInvalidInput"
+      ],
+      "requires_env": []
     }
   ]
 }
