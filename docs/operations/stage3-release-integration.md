@@ -191,3 +191,21 @@ container failed with exec-format error. Arm64 emulation was installed only in
 the new disposable execution VM; it has not yet been used for a successful OCI
 build. VM Docker Hub access timed out, so its Docker lifecycle used an image
 transferred from the local cache. No production rollout or stable tag publication.
+
+## Multi-platform OCI archive evidence
+
+The shared Docker daemon lacked arm64 execution support initially. After enabling
+arm64 emulation and using the configured internal mirror for base images, the
+isolated `sysbox-stage3-multi` builder produced
+`/tmp/sysbox-stage3-runtime-index.tar`. The archive contains linux/amd64 and
+linux/arm64 child manifests. `scripts/release/verify-oci-archive.py` verified
+both children carry version `v0.1.0`, commit `b80e23136159586806f6b4ab82fa9c5845c7b931`,
+MulanPSL-2.0, and fingerprint
+d816f6742b7faaf3a94a653757720fad91631c0237608ade5cbe2331c03fbe28. Output is
+recorded at `/tmp/sysbox-stage3-oci-archive-evidence.json`.
+
+Dockerfile base references are now build arguments, allowing CI or an approved
+registry mirror to supply reachable multi-platform bases without changing the
+release executable identity. The registry publisher still requires its own
+preflight and immutable tag reconciliation. No registry push or stable tag
+publication was performed.

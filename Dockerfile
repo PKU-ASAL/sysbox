@@ -1,4 +1,8 @@
 ARG BINARY_SOURCE=source
+ARG GO_BUILDER_IMAGE=golang:1.26-alpine
+ARG ALPINE_IMAGE=alpine:3.22
+ARG DOCKER_CLI_IMAGE=docker:29-cli
+ARG DEBIAN_IMAGE=debian:bookworm-slim
 ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED=unknown
@@ -6,7 +10,7 @@ ARG SOURCE_URL=https://github.com/PKU-ASAL/sysbox
 ARG RELEASE_FINGERPRINT=unknown
 
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM golang:1.26-alpine AS builder
+FROM ${GO_BUILDER_IMAGE} AS builder
 
 ARG VERSION
 ARG REVISION
@@ -27,7 +31,7 @@ RUN bash scripts/release/build-binaries.sh /out \
 
 # Release images consume the verified archive through a named build context.
 FROM builder AS binaries-source
-FROM alpine:3.22 AS binaries-release
+FROM ${ALPINE_IMAGE} AS binaries-release
 RUN apk add --no-cache jq ca-certificates
 ARG TARGETARCH
 ARG VERSION
@@ -44,8 +48,8 @@ RUN cd /release && sha256sum -c SHA256SUMS && \
 FROM binaries-${BINARY_SOURCE} AS binaries
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
-FROM docker:29-cli AS dockercli
-FROM debian:bookworm-slim
+FROM ${DOCKER_CLI_IMAGE} AS dockercli
+FROM ${DEBIAN_IMAGE}
 
 ARG VERSION
 ARG REVISION

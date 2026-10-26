@@ -18,6 +18,9 @@ done
 
 expected_tags=$'registry.example/oslab/sysbox:v0.3.4\nregistry.example/oslab/sysbox:0.3.4\nregistry.example/oslab/sysbox:0.3\nregistry.example/oslab/sysbox:0\nregistry.example/oslab/sysbox:latest'
 [[ "$(oci_tags v0.3.4 registry.example/oslab/sysbox)" == "${expected_tags}" ]] || fail "OCI tag set is incorrect"
+for arg in GO_BUILDER_IMAGE ALPINE_IMAGE DOCKER_CLI_IMAGE DEBIAN_IMAGE; do
+  grep -Eq "^ARG ${arg}(=|$)" "${repo_root}/Dockerfile" || fail "Dockerfile is missing ${arg}"
+done
 for arg in VERSION REVISION CREATED SOURCE_URL; do
   grep -Eq "^ARG ${arg}(=|$)" "${repo_root}/Dockerfile" || fail "Dockerfile is missing ARG ${arg}"
 done
