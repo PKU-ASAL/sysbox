@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
@@ -761,14 +762,17 @@ func retryGuestFileReport(ctx context.Context, report func() error) error {
 }
 
 func claim(ctx context.Context, opts Options, expected controlplane.Run) (*controlplane.Run, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	request := controlplane.RunClaim{QueuedAt: expected.QueuedAt, Revision: expected.Revision, ClaimID: uuid.NewString()}
 	for {
 		var run controlplane.Run
-		err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+expected.ID+"/claim", controlplane.RunClaim{QueuedAt: expected.QueuedAt, Revision: expected.Revision}, &run)
+		err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+expected.ID+"/claim", request, &run)
 		if err == nil {
 			return &run, nil
 		}
 		var responseErr *httpStatusError
-		if !errors.As(err, &responseErr) || responseErr.status != http.StatusServiceUnavailable {
+		if errors.As(err, &responseErr) && responseErr.status != http.StatusServiceUnavailable && responseErr.status != http.StatusBadGateway && responseErr.status != http.StatusGatewayTimeout {
 			return nil, err
 		}
 		select {

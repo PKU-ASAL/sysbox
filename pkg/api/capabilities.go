@@ -3,6 +3,7 @@ package api
 // Protocol capabilities describe this API's guarantees, independently of host
 // provider preflight. No downstream application's business policy belongs here.
 type runtimeCapabilities struct {
+	ClaimReplay            bool   `json:"claim_replay"`
 	MultiAPIExecution      bool   `json:"multi_api_execution"`
 	ExecutionStoreScope    string `json:"execution_store_scope"`
 	RecoveryInputsProtocol int    `json:"recovery_inputs_protocol"`
@@ -23,5 +24,5 @@ func (s *Server) runtimeCapabilities(preflight preflightResult) runtimeCapabilit
 	if shared {
 		scope = "shared-postgres"
 	}
-	return runtimeCapabilities{MultiAPIExecution: durable && shared, ExecutionStoreScope: scope, RecoveryInputsProtocol: 1, preflightResult: preflight, Protocol: "sysbox-runtime-v1", DurableApply: durable, KeyedDestroy: durable, CleanupInspection: true, SingleAPIExecution: true}
+	return runtimeCapabilities{ClaimReplay: durable, MultiAPIExecution: durable && shared, ExecutionStoreScope: scope, RecoveryInputsProtocol: 1, preflightResult: preflight, Protocol: "sysbox-runtime-v1", DurableApply: durable, KeyedDestroy: durable, CleanupInspection: true, SingleAPIExecution: true}
 }

@@ -132,7 +132,7 @@ func (s *AgentService) CompleteRun(agentID, runID string, completion controlplan
 	if s.store == nil {
 		return completion, fmt.Errorf("run store not configured")
 	}
-	stored, changed, err := s.store.CompleteRun(context.Background(), agentID, runID, completion)
+	stored, _, err := s.store.CompleteRun(context.Background(), agentID, runID, completion)
 	if err != nil {
 		return completion, err
 	}
@@ -141,23 +141,14 @@ func (s *AgentService) CompleteRun(agentID, runID string, completion controlplan
 		s.jobs.remember(stored)
 		s.jobs.logs.Close(stored.ID)
 	}
-	if !changed {
-		return completion, nil
-	}
-	if completion.Projection.AgentID == "" {
-		completion.Projection.AgentID = agentID
-	}
-	if completion.Projection.Topology == "" {
-		completion.Projection.Topology = stored.Topology
-	}
-	if completion.Projection.Workspace == "" {
-		completion.Projection.Workspace = stored.Workspace
-	}
-	if completion.Projection.UpdatedAt.IsZero() {
-		completion.Projection.UpdatedAt = time.Now().UTC()
-	}
-	if s.registry != nil {
-		s.registry.SaveProjection(completion.Projection)
+	// The committed receipt is authoritative even after response loss/restart.
+	// Old terminal records have no projection proof; never invent one on replay.
+	completion.Projection = controlplane.Projection{}
+	if stored.CompletionProjection != nil {
+		completion.Projection = *stored.CompletionProjection
+		if s.registry != nil {
+			s.registry.RestoreCompletionProjection(completion.Projection)
+		}
 	}
 	return completion, nil
 }

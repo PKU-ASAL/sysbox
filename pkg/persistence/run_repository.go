@@ -44,6 +44,10 @@ func NormalizeRun(run *controlplane.Run) {
 func DurableRun(run controlplane.Run) controlplane.Run {
 	NormalizeRun(&run)
 	run.Inputs = nil
+	if run.CompletionProjection != nil {
+		projection := *run.CompletionProjection
+		run.CompletionProjection = &projection
+	}
 	if run.HostCompletion != nil {
 		proof := *run.HostCompletion
 		proof.Evidence = append([]byte(nil), proof.Evidence...)
@@ -110,7 +114,7 @@ func (r *RunRepository) SaveRun(ctx context.Context, run controlplane.Run) error
 	}
 	_, err := r.storage.UpdateRun(ctx, run.ID, func(current *controlplane.Run) (*controlplane.Run, error) {
 		if current == nil {
-			if run.Cleanup != nil || run.HostCompletion != nil {
+			if run.Cleanup != nil || run.HostCompletion != nil || run.CompletionProjection != nil {
 				return nil, ErrConflict
 			}
 			return &run, nil
@@ -122,6 +126,9 @@ func (r *RunRepository) SaveRun(ctx context.Context, run controlplane.Run) error
 		beforeProof, _ := json.Marshal(old.HostCompletion)
 		afterProof, _ := json.Marshal(run.HostCompletion)
 		if string(beforeProof) != string(afterProof) {
+			return nil, ErrConflict
+		}
+		if (old.CompletionProjection == nil) != (run.CompletionProjection == nil) || old.CompletionProjection != nil && *old.CompletionProjection != *run.CompletionProjection {
 			return nil, ErrConflict
 		}
 		if !sameCleanupReceipt(old.Cleanup, run.Cleanup) {
@@ -172,7 +179,7 @@ func (r *RunRepository) RestartRun(ctx context.Context, next controlplane.Run) (
 		return nil, err
 	}
 	next = DurableRun(next)
-	if next.Cleanup != nil || next.HostCompletion != nil {
+	if next.Cleanup != nil || next.HostCompletion != nil || next.CompletionProjection != nil {
 		return nil, ErrConflict
 	}
 	if validateLeaseRun(next.ID, next) != nil || next.Status != controlplane.RunQueued || next.Operation != "apply" || next.OperationKey == "" || next.QueuedAt.IsZero() || next.Attempt != 0 || !next.LeaseUntil.IsZero() {
@@ -231,6 +238,11 @@ func (r *RunRepository) ClaimRun(ctx context.Context, id, agent, owner string, t
 			return nil, ErrConflict
 		}
 		now := r.now()
+		// A lost response may recover the exact live claim, never renew it.
+		if run.Status == controlplane.RunRunning && run.AgentID == agent && run.LeaseOwner == owner && run.LeaseUntil.After(now) && !deadlinePassed(run, now) {
+			claimed = true
+			return nil, nil
+		}
 		if deadlinePassed(run, now) || !run.CanBeClaimedBy(agent, now) {
 			return nil, nil
 		}

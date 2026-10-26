@@ -30,7 +30,7 @@ func validateDispatchReplay(current controlplane.Run, request RunDispatchRequest
 }
 
 func validateRunDispatchPayload(request RunDispatchRequest) error {
-	if request.Run.Cleanup != nil {
+	if request.Run.Cleanup != nil || request.Run.CompletionProjection != nil || request.Command.Run != nil && request.Command.Run.CompletionProjection != nil {
 		return persistence.ErrConflict
 	}
 	if !strings.HasPrefix(request.Fingerprint, "run-dispatch:") {

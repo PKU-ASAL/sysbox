@@ -156,6 +156,18 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 		s.initErr = err
 	}
 	s.agentSvc = newAgentService(s)
+	if s.initErr == nil {
+		runs, err := s.apiStore.LoadRuns(context.Background())
+		if err != nil {
+			s.initErr = fmt.Errorf("restore completion projections: %w", err)
+		} else {
+			for _, run := range runs {
+				if run.Status.IsTerminal() && run.CompletionProjection != nil {
+					s.agents.RestoreCompletionProjection(*run.CompletionProjection)
+				}
+			}
+		}
+	}
 	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
 	s.workspaces.gcSourceID = s.cfg.GCPublicationSource
 	s.workspaces.gcRepository = s.actionRepository

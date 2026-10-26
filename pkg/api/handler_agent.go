@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"net/http"
 	"time"
@@ -77,6 +78,7 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 }
 
 func (s *Server) handleClaimAgentRun(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
 	agentID := r.PathValue("agent")
 	if err := s.verifyAgentRequest(r, agentID); err != nil {
 		writeError(w, http.StatusUnauthorized, err)
@@ -86,6 +88,13 @@ func (s *Server) handleClaimAgentRun(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&expected); err != nil || expected.QueuedAt.IsZero() {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("run claim requires queued_at and revision from dispatched run"))
 		return
+	}
+	if expected.ClaimID != "" {
+		parsed, err := uuid.Parse(expected.ClaimID)
+		if err != nil || parsed == uuid.Nil || parsed.String() != expected.ClaimID {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("claim_id must be a canonical nonzero UUID"))
+			return
+		}
 	}
 	s.handleClaimAgentRunByID(w, agentID, r.PathValue("id"), expected)
 }

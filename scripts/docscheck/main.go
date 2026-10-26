@@ -11,6 +11,11 @@ import (
 )
 
 var expectedDocs = []string{
+	"docs/operations/ownership-transfer.md",
+	"docs/operations/stage2-capability-fault-ledger.md",
+	"docs/operations/stage2-closure.md",
+	"docs/operations/stage3-release-integration.md",
+	"docs/superpowers/plans/2026-10-26-capability-fault-closure.md",
 	"docs/architecture.md",
 	"docs/design-principles.md",
 	"docs/design/2026-09-06-cidr-functions-var-prescan-design.md",

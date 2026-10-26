@@ -104,6 +104,19 @@ func (r *agentRegistry) SaveProjection(proj controlplane.Projection) {
 	r.projections[key] = proj
 }
 
+// RestoreCompletionProjection repairs a lost cache update without rolling back
+// a newer observation from another completed run or inventory report.
+func (r *agentRegistry) RestoreCompletionProjection(proj controlplane.Projection) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := proj.AgentID + "/" + proj.Workspace + "/" + proj.Topology
+	old, exists := r.projections[key]
+	if exists && (old.Serial > proj.Serial || old.UpdatedAt.After(proj.UpdatedAt) || old.Serial == proj.Serial && old.UpdatedAt.Equal(proj.UpdatedAt)) {
+		return
+	}
+	r.projections[key] = proj
+}
+
 func (r *agentRegistry) ListProjections(agentID string) []controlplane.Projection {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

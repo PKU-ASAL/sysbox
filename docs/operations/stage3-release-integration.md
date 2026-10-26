@@ -76,3 +76,39 @@ The OCI publisher now verifies the archive directory and supplies it as the
 metadata, and target executable hashes before assembling the runtime layer.
 A future multi-platform registry run must prove the manifest digest and both
 child-platform labels with `oci.sh verify`.
+
+## Main behavior audit and receipt recovery
+
+A source review against main `b1cc43d` found three concrete omissions in the
+refactor, now implemented:
+
+- Run claims carry a stable per-execution UUID across retries. Live identical
+  retries recover the existing lease without renewal or attempt increment.
+  Incarnation checks, missing-input refusal and expired-lease rejection remain.
+- Completion projections persist atomically with the terminal Run. Both replay
+  and API startup restore the original receipt; a modified retry cannot replace
+  it. Publication preserves newer observations. Ordinary save/restart/dispatch
+  cannot inject a completion projection.
+- Claim request bodies are bounded before signature verification.
+
+Validation includes the API, agentexec, persistence and controlplane package
+suites; targeted race tests; and real dedicated PostgreSQL tests using isolated
+schemas, alongside file and SQLite backends. The response-loss and projection
+receipt tests failed before implementation. Evidence logs:
+
+- `/tmp/sysbox-stage3-main-regressions-final.log`
+- `/tmp/sysbox-stage3-replay-race.log`
+- `/tmp/sysbox-stage3-postgres-replay.log`
+
+The main ancestry gate is still open for two explicit semantic decisions:
+application-clock lease checks after acquiring the storage lock versus main's
+database write-time clock checks; and generic legacy node-operation unknown
+commands versus current signed host-operation recovery. Do not restore a generic
+timeout/replay path that bypasses host stop evidence. Keyed admission and canonical
+action recovery already have replacement implementations and should be retained.
+
+The earlier runtime image evidence applies to executable commit `36dfad7`, not
+the newer receipt changes. Final release acceptance must rebuild the candidate.
+The old upgrade archive script still hardcodes `final-1018` and is not a completed
+rebuild rehearsal for the current lab; that missing deployment was detected before
+any service mutation.

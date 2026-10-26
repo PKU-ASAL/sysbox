@@ -77,8 +77,9 @@ type Run struct {
 	// Assertion is the outcome of the check/assert evaluation this run performed
 	// (nil when the run evaluated no checks). It is in-memory state feeding the
 	// topology's Asserted condition; it is recomputed by the next apply.
-	Assertion *AssertionResult `json:"assertion,omitempty"`
-	Cleanup   *CleanupReceipt  `json:"cleanup,omitempty"`
+	Assertion            *AssertionResult `json:"assertion,omitempty"`
+	Cleanup              *CleanupReceipt  `json:"cleanup,omitempty"`
+	CompletionProjection *Projection      `json:"completion_projection,omitempty"`
 	// Inputs are the apply-time variable values. They are transient: carried in
 	// the run dispatch so the agent can bind var.<name>, but not durably
 	// persisted, so a sensitive input's plaintext does not survive the run.
@@ -391,6 +392,7 @@ type NodeOperation struct {
 type RunClaim struct {
 	QueuedAt time.Time `json:"queued_at"`
 	Revision string    `json:"revision"`
+	ClaimID  string    `json:"claim_id,omitempty"`
 }
 
 type NodeOperationCommand struct {

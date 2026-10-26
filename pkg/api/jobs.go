@@ -377,6 +377,12 @@ func (j *Jobs) claimExpected(runID, agentID string, expected *controlplane.RunCl
 	}
 	claimCtx := persistence.WithRunClaimIdentity(context.Background(), *intent)
 	owner := fmt.Sprintf("%s:%s:%d", agentID, runID, time.Now().UnixNano())
+	if expected != nil && expected.ClaimID != "" {
+		if parsed, err := uuid.Parse(expected.ClaimID); err != nil || parsed == uuid.Nil || parsed.String() != expected.ClaimID {
+			return nil, persistence.ErrInvalidRecord
+		}
+		owner = fmt.Sprintf("%s:%s:%s", agentID, runID, expected.ClaimID)
+	}
 	ttl := j.runLeaseTTL
 	if ttl <= 0 {
 		ttl = 30 * time.Minute

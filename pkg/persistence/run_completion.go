@@ -59,6 +59,19 @@ func (r *RunRepository) CompleteRun(ctx context.Context, agent, id string, repor
 		if current.Status != controlplane.RunRunning || !current.LeaseUntil.After(now) || !current.DeadlineAt.IsZero() && !current.DeadlineAt.After(now) {
 			return nil, ErrConflict
 		}
+		if p.AgentID == "" {
+			p.AgentID = agent
+		}
+		if p.Topology == "" {
+			p.Topology = current.Topology
+		}
+		if p.Workspace == "" {
+			p.Workspace = current.Workspace
+		}
+		if p.UpdatedAt.IsZero() {
+			p.UpdatedAt = now
+		}
+		current.CompletionProjection = &p
 		changed = true
 		current.Status = incoming.Status
 		current.Err = incoming.Err

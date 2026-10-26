@@ -94,3 +94,37 @@ func TestRunRepositoryCapsLeaseAtDeadline(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, claimed.LeaseUntil, renewed.LeaseUntil)
 }
+
+func TestClaimReceiptReplayDoesNotRenewOrChangeAttempt(t *testing.T) {
+	now := time.Now().UTC()
+	original := controlplane.Run{ID: "replay", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
+	storage := &runStorageFixture{record: &original}
+	repo := NewRunRepository(storage)
+	repo.now = func() time.Time { return now }
+	first, ok, err := repo.ClaimRun(context.Background(), original.ID, "agent", "execution-one", time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	now = now.Add(time.Second)
+	replay, ok, err := repo.ClaimRun(context.Background(), original.ID, "agent", "execution-one", time.Hour)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, first, replay)
+	_, ok, err = repo.ClaimRun(context.Background(), original.ID, "agent", "execution-two", time.Hour)
+	require.NoError(t, err)
+	require.False(t, ok)
+	now = now.Add(time.Minute)
+	_, ok, err = repo.ClaimRun(context.Background(), original.ID, "agent", "execution-one", time.Hour)
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+func TestRunCompletionProjectionCannotBeInjected(t *testing.T) {
+	storage := &runStorageFixture{}
+	repo := NewRunRepository(storage)
+	run := controlplane.Run{ID: "injected", Topology: "lab", Status: controlplane.RunQueued, CompletionProjection: &controlplane.Projection{Serial: 999}}
+	require.ErrorIs(t, repo.SaveRun(context.Background(), run), ErrConflict)
+	run.CompletionProjection = nil
+	require.NoError(t, repo.SaveRun(context.Background(), run))
+	run.CompletionProjection = &controlplane.Projection{Serial: 999}
+	require.ErrorIs(t, repo.SaveRun(context.Background(), run), ErrConflict)
+}
