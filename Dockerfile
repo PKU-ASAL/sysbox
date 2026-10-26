@@ -11,7 +11,7 @@ ARG VERSION
 ARG REVISION
 ARG CREATED
 
-RUN apk add --no-cache git
+RUN apk add --no-cache git jq bash
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -20,14 +20,9 @@ RUN go mod download
 
 COPY . .
 
-# Build sysbox and sysbox-init.
-RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
-    -ldflags="-s -w -X github.com/oslab/sysbox/pkg/buildinfo.Version=${VERSION} -X github.com/oslab/sysbox/pkg/buildinfo.Commit=${REVISION} -X github.com/oslab/sysbox/pkg/buildinfo.BuildTime=${CREATED}" \
-    -o /out/sysbox ./cmd/sysbox
-RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
-    -ldflags="-s -w -X github.com/oslab/sysbox/pkg/buildinfo.Version=${VERSION} -X github.com/oslab/sysbox/pkg/buildinfo.Commit=${REVISION} -X github.com/oslab/sysbox/pkg/buildinfo.BuildTime=${CREATED}" \
-    -o /out/sysbox-init ./cmd/sysbox-init
-RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -o /out/sysbox-netns ./cmd/sysbox-netns
+# Use the same build order as the release archives; never embed checkout helpers.
+RUN bash scripts/release/build-binaries.sh /out \
+    "-s -w -X github.com/oslab/sysbox/pkg/buildinfo.Version=${VERSION} -X github.com/oslab/sysbox/pkg/buildinfo.Commit=${REVISION} -X github.com/oslab/sysbox/pkg/buildinfo.BuildTime=${CREATED}"
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM docker:29-cli AS dockercli

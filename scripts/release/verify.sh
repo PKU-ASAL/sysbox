@@ -27,16 +27,19 @@ for arch in amd64 arm64; do
     "-rw-r--r-- 0/0 ${expected_time} README.md" \
     "-rw-r--r-- 0/0 ${expected_time} build-metadata.json" \
     "-rwxr-xr-x 0/0 ${expected_time} sysbox" \
-    "-rwxr-xr-x 0/0 ${expected_time} sysbox-init")"
+    "-rwxr-xr-x 0/0 ${expected_time} sysbox-init" \
+    "-rwxr-xr-x 0/0 ${expected_time} sysbox-netns")"
   [[ "${expected_listing}" == "${expected_headers}" ]] || { echo "release: archive header contract mismatch for ${arch}" >&2; exit 1; }
   tar -xzf "${dist}/${archive}" -C "${tmp}"
   members="$(find "${tmp}" -maxdepth 1 -type f -printf '%f\n' | sort)"
-  required=$'LICENSE\nREADME.md\nbuild-metadata.json\nsysbox\nsysbox-init'
+  required=$'LICENSE\nREADME.md\nbuild-metadata.json\nsysbox\nsysbox-init\nsysbox-netns'
   [[ "${members}" == "${required}" ]] || { echo "release: unexpected archive members for ${arch}" >&2; rm -rf "${tmp}"; exit 1; }
   expected_sysbox_sha="$(jq -er --arg arch "${arch}" '.targets[] | select(.architecture == $arch) | .sysbox_sha256' "${dist}/build-metadata.json")"
   expected_init_sha="$(jq -er --arg arch "${arch}" '.targets[] | select(.architecture == $arch) | .sysbox_init_sha256' "${dist}/build-metadata.json")"
   [[ "$(sha256sum "${tmp}/sysbox" | awk '{print $1}')" == "${expected_sysbox_sha}" ]] || { echo "release: sysbox binary checksum mismatch for ${arch}" >&2; rm -rf "${tmp}"; exit 1; }
   [[ "$(sha256sum "${tmp}/sysbox-init" | awk '{print $1}')" == "${expected_init_sha}" ]] || { echo "release: sysbox-init binary checksum mismatch for ${arch}" >&2; rm -rf "${tmp}"; exit 1; }
+  expected_netns_sha="$(jq -er --arg arch "${arch}" '.targets[] | select(.architecture == $arch) | .sysbox_netns_sha256' "${dist}/build-metadata.json")"
+  [[ "$(sha256sum "${tmp}/sysbox-netns" | awk '{print $1}')" == "${expected_netns_sha}" ]] || { echo "release: sysbox-netns checksum mismatch for ${arch}" >&2; exit 1; }
   jq -e --arg tag "${tag}" --arg commit "${commit}" --arg build_time "${build_time}" --arg arch "${arch}" \
     '.version == $tag and .commit == $commit and .build_time == $build_time and .architecture == $arch and .license == "MulanPSL-2.0"' \
     "${tmp}/build-metadata.json" >/dev/null
