@@ -41,7 +41,19 @@ def database_config(database, password):
     return dsn, sql
 
 
-def deploy(root, binary, database="sysboxp9", deployment="deployment"):
+def release_files(binary, metadata_path):
+    target, = [row for row in json.loads(Path(metadata_path).read_text())['targets'] if row['architecture']=='amd64']
+    files = {}
+    for name in ('sysbox','sysbox-init','sysbox-netns'):
+        path=Path(binary) if name=='sysbox' else Path(binary).parent/name
+        if lab.file_sha256(path) != target[name.replace('-','_')+'_sha256']:
+            raise ValueError('release executable checksum mismatch: '+name)
+        files[name]=path.resolve(strict=True)
+    return files
+
+
+def deploy(root, binary, database="sysboxp9", deployment="deployment", release_metadata=None):
+    binaries=release_files(binary,release_metadata) if release_metadata else {"sysbox":binary}
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", deployment):
         raise ValueError("deployment must be a simple directory name")
     database_config(database, "validation")
@@ -98,8 +110,9 @@ def deploy(root, binary, database="sysboxp9", deployment="deployment"):
     # database is already present. Interrupted deployments require inspection.
     remote(root, manifest, "control", "sudo -u postgres psql -v ON_ERROR_STOP=1 < /home/p9/p9-db.sql")
     for role in lab.ROLES:
-        lab.upload(root, manifest, role, binary, "/home/p9/sysbox")
-        remote(root, manifest, role, "sudo install -m 0755 /home/p9/sysbox /usr/local/bin/sysbox")
+        for name, executable in binaries.items():
+            lab.upload(root, manifest, role, executable, "/home/p9/"+name)
+            remote(root, manifest, role, "sudo install -m 0755 /home/p9/"+name+" /usr/local/bin/"+name)
     remote(root, manifest, "control", "sudo apt-get install -y -qq haproxy >/tmp/p9-proxy-packages.log 2>&1; id sysboxapi >/dev/null 2>&1 || sudo useradd --system --create-home sysboxapi")
     remote(root, manifest, "control",
            f"sudo sh -c 'grep -q \"host {database} {database} 10.77.0.0/24 scram-sha-256\" /etc/postgresql/16/main/pg_hba.conf || echo \"host {database} {database} 10.77.0.0/24 scram-sha-256\" >> /etc/postgresql/16/main/pg_hba.conf' && "
@@ -145,7 +158,7 @@ def deploy(root, binary, database="sysboxp9", deployment="deployment"):
         remote(root, manifest, "execution", f"sudo install -m 0644 /home/p9/{name}.service /etc/systemd/system/sysbox-{name}.service && sudo systemctl daemon-reload && sudo systemctl restart sysbox-{name}")
     remote(root, manifest, "execution", "sudo systemctl is-active sysbox-agent sysbox-supervisor")
     binary_digest = lab.file_sha256(binary)
-    services = {"lab_id": manifest["id"], "binary_sha256": binary_digest, "database": database,
+    services = {"executables": {name: lab.file_sha256(path) for name,path in binaries.items()}, "lab_id": manifest["id"], "binary_sha256": binary_digest, "database": database,
              "api_url": "http://10.77.0.10:19870", "agent_id": "execution-p9",
              "lifecycle_acceptance": "required"}
     lab.save(secret_dir / "services.json", services)
@@ -159,5 +172,6 @@ if __name__ == "__main__":
     parser.add_argument("--binary", required=True)
     parser.add_argument("--database", default="sysboxp9")
     parser.add_argument("--deployment", default="deployment")
+    parser.add_argument("--release-metadata", type=Path)
     args = parser.parse_args()
-    deploy(args.root, Path(args.binary).resolve(strict=True), args.database, args.deployment)
+    deploy(args.root, Path(args.binary).resolve(strict=True), args.database, args.deployment, args.release_metadata)

@@ -44,3 +44,23 @@ class MixedEvidenceTests(unittest.TestCase):
                        dict(observations, libvirt=[])):
             with self.assertRaises(ValueError):
                 verify_translated_sources(broken, '10.77.0.20')
+
+class ReleaseArtifactTests(unittest.TestCase):
+    def test_release_selection_rejects_changed_helper(self):
+        import tempfile
+        import json
+        import hashlib
+        from pathlib import Path
+        from mixed_lifecycle import release_inputs
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root/'sysbox').write_bytes(b'cli')
+            (root/'sysbox-init').write_bytes(b'helper')
+            target = dict(architecture='amd64', sysbox_sha256=hashlib.sha256(b'cli').hexdigest(),
+                          sysbox_init_sha256=hashlib.sha256(b'helper').hexdigest())
+            (root/'build-metadata.json').write_text(json.dumps(dict(commit='candidate',targets=[target])))
+            binary, helper, metadata = release_inputs(root/'build-metadata.json', root/'sysbox', root/'sysbox-init')
+            self.assertEqual('candidate',metadata['commit'])
+            (root/'sysbox-init').write_bytes(b'changed')
+            with self.assertRaises(ValueError):
+                release_inputs(root/'build-metadata.json', binary, helper)

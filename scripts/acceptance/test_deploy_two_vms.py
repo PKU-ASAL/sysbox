@@ -16,3 +16,19 @@ class DeploymentTests(unittest.TestCase):
         for name in ("../old", "has space", "x;drop", "x'", ""):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 deploy_two_vms.database_config(name, "password")
+
+    def test_release_files_reject_tampered_network_executable(self):
+        import tempfile,json,hashlib
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            target={'architecture':'amd64'}
+            for name in ('sysbox','sysbox-init','sysbox-netns'):
+                (root/name).write_bytes(name.encode())
+                target[name.replace('-','_')+'_sha256']=hashlib.sha256(name.encode()).hexdigest()
+            metadata=root/'metadata.json'
+            metadata.write_text(json.dumps({'targets':[target]}))
+            files=deploy_two_vms.release_files(root/'sysbox',metadata)
+            self.assertEqual(3,len(files))
+            (root/'sysbox-netns').write_bytes(b'wrong')
+            with self.assertRaises(ValueError):deploy_two_vms.release_files(root/'sysbox',metadata)

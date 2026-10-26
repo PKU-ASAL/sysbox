@@ -147,3 +147,47 @@ Evidence:
 
 These are main-integration checks, not a same-artifact deployment acceptance or
 an upgrade/rebuild rehearsal. The final candidate still needs rebuilding.
+
+## Candidate b80e231 deployment acceptance
+
+The release archives for `b80e231` were built and verified for amd64 and arm64
+in `/tmp/sysbox-stage3-b80e231`. Acceptance/deployment tooling now accepts release
+metadata and validates executable hashes. The mixed lifecycle runner uses the
+supplied CLI/helper without recompiling them; its independent probe is still
+built from the recorded harness source. Deployment installs and records all three
+executables, including `sysbox-netns`.
+
+Completed evidence:
+
+- `/tmp/sysbox-stage3-mixed-b80e231/run.json`: release CLI/helper passed real
+  Docker/Firecracker/libvirt Apply, Reset, Destroy, six-direction communication,
+  cross-host NAT, and exact absence for both node generations.
+- `/tmp/sysbox-gc-fencing-20261021/upgrade-286925cc7d41/evidence.json`: old API,
+  Agent and supervisor were already inactive; selected database dump and control /
+  execution archives were hashed. The unresolved journal remains unchanged in
+  the original disk and archive. Old VMs were stopped and their disks retained.
+- `/tmp/sysbox-stage3-rebuild-20261026/stage3/services.json`: a separate clean VM
+  pair and dedicated `sysboxstage3rebuild` database received the release binaries.
+- `stage3/lifecycle.json`, `stage3/provider-absence.json`, and
+  `stage3/restart-check.json` under that new lab: API-to-Agent Apply/Reset/Destroy,
+  both Docker incarnation absences, metadata DELETE, and persisted terminal Runs
+  after API restart passed. Host executable hash files match the release metadata.
+
+This is explicit fresh-deployment rebuild, not old-state migration or resolution
+of historical unknowns. Old schema rejection has existing repository tests; this
+live rehearsal did not import an old schema into the new deployment. Likewise,
+the provider matrix is CLI-driven while the fresh API deployment lifecycle uses
+Docker; do not describe this as every provider over every transport in one run.
+
+The archive helper now supports `--deployment` and `--archive-only`. Archive-only
+requires both hosts' service pairs to already be inactive and never starts them.
+Malformed or foreign journals are recorded as unknown and archived raw. Normal
+service-upgrade mode still refuses unresolved journals. This also removes the
+broken `find -exec`/jq placeholder substitution in the old journal scanner.
+
+Remaining delivery boundary: multi-platform OCI manifest build/push/verification
+has not passed. The shared host's builders only support amd64/386 and an arm64
+container failed with exec-format error. Arm64 emulation was installed only in
+the new disposable execution VM; it has not yet been used for a successful OCI
+build. VM Docker Hub access timed out, so its Docker lifecycle used an image
+transferred from the local cache. No production rollout or stable tag publication.

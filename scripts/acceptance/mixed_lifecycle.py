@@ -55,10 +55,24 @@ def verify_translated_sources(observations, expected):
             raise ValueError('cross-host NAT source not proven')
 
 
+def release_inputs(metadata_path, binary, helper):
+    metadata = json.loads(Path(metadata_path).read_text())
+    targets = [target for target in metadata['targets'] if target['architecture'] == 'amd64']
+    if len(targets) != 1 or not metadata.get('commit'):
+        raise ValueError('one amd64 release target and commit required')
+    for path, key in ((binary, 'sysbox_sha256'), (helper, 'sysbox_init_sha256')):
+        if lab.file_sha256(Path(path)) != targets[0][key]:
+            raise ValueError('release executable checksum mismatch: ' + key)
+    return Path(binary).resolve(strict=True), Path(helper).resolve(strict=True), metadata
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--release-metadata', type=Path)
+    parser.add_argument('--binary', type=Path)
+    parser.add_argument('--helper', type=Path)
     parser.add_argument('--cidr', default='10.59.0.0/24')
     for name in ('firecracker', 'kernel', 'rootfs', 'cloud'):
         parser.add_argument('--' + name, type=Path, required=True)
@@ -89,15 +103,26 @@ def main():
         return result.stdout.strip()
     build_env = dict(os.environ, CGO_ENABLED='0')
     helper, binary, probe = [args.output.resolve() / name for name in ('helper', 'sysbox', 'probe')]
-    subprocess.run(['go', 'build', '-buildvcs=false', '-o', str(helper), './cmd/sysbox-init'],
-                   cwd=source, env=build_env, check=True)
-    overlay = args.output.resolve() / 'overlay.json'
-    overlay.write_text(json.dumps({'Replace': {
-        str(source / 'pkg/provider/firecracker/initbin/sysbox-init.linux-amd64.bin'): str(helper)}}))
-    for target, package, extra in ((binary, './cmd/sysbox', ['-overlay=' + str(overlay)]),
-                                   (probe, './tests/e2e/matrixprobe', [])):
-        subprocess.run(['go', 'build', '-buildvcs=false', *extra, '-o', str(target), package],
+    if args.release_metadata:
+        if not args.binary or not args.helper:
+            raise ValueError('release metadata requires binary and helper')
+        binary, helper, metadata = release_inputs(args.release_metadata, args.binary, args.helper)
+        report['release_commit'] = metadata['commit']
+        report['release_fingerprint'] = metadata.get('release_fingerprint')
+        subprocess.run(['go', 'build', '-buildvcs=false', '-o', str(probe), './tests/e2e/matrixprobe'],
                        cwd=source, env=build_env, check=True)
+    else:
+        if args.binary or args.helper:
+            raise ValueError('external executables require release metadata')
+        subprocess.run(['go', 'build', '-buildvcs=false', '-o', str(helper), './cmd/sysbox-init'],
+                       cwd=source, env=build_env, check=True)
+        overlay = args.output.resolve() / 'overlay.json'
+        overlay.write_text(json.dumps({'Replace': {
+            str(source / 'pkg/provider/firecracker/initbin/sysbox-init.linux-amd64.bin'): str(helper)}}))
+        for target, package, extra in ((binary, './cmd/sysbox', ['-overlay=' + str(overlay)]),
+                                       (probe, './tests/e2e/matrixprobe', [])):
+            subprocess.run(['go', 'build', '-buildvcs=false', *extra, '-o', str(target), package],
+                           cwd=source, env=build_env, check=True)
     save()
     try:
         h.wait_boot(root, manifest, 'execution')
