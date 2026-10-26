@@ -125,3 +125,28 @@ reconstruction must consume those authorized values instead of defaults.
 An API without the rehydrated inputs returns conflict and requires resubmission;
 no session affinity or durable secret storage is inferred. Legacy requests without
 a verifiable request fingerprint keep the existing conservative refusal.
+
+## Third delivery: actual mixed lifecycle and remaining functional gaps
+
+- [x] Fixed deployed Docker adoption registration, runtime NAT proof panic and
+  large-integer proof corruption, plus libvirt default-namespace convergence.
+- [x] Actual CLI three-provider NAT Apply, all six guest directions, cross-host
+  NAT verified at the receiving control VM, whole-topology Reset, marker absence,
+  all six directions/NAT again, formal Destroy and exact successful-owner absence.
+- [x] Keyed failed/recoverable input resubmission with transient exact-incarnation
+  handoff, legacy host/Agent protocol refusal and no provider replay; all three
+  backends plus host socket and full API/Agent/host/protocol race verified.
+- [x] Real kernel ENOSPC after effect, stop receipt and report ack, two rounds;
+  repeatable private-tmpfs runner. Unknown outcomes never become successful merely
+  because space is available; a committed receipt retries unchanged.
+- [x] Explicit capability store scopes and recovery input protocol.
+- [x] P0–P4 all 34 original requirements mapped to specific existing gates/tests
+  and finite remaining evidence; P7 mappings updated. Entries remain open until
+  their exact current-source acceptance is reconciled.
+
+Normal mixed lifecycle is verified, not the entire closing stage. Remaining:
+repeatable enclosing mixed deployment/fault campaign, combined current-source
+P0–P9 evidence (including relevant dual-API/guest/transport cells), and final review.
+First-stage historic recovery guarantees and stage-3 release/main integration are
+not reopened or silently claimed complete. Earlier failed isolated incarnations
+remain archived with unknown journals; successful mixed-nat-v6 has no residue.

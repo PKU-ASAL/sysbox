@@ -99,3 +99,22 @@ the already-returned provider result is committed without replay.
 Full race: /tmp/sysbox-stage2-recovery-inputs-full-race-20261026.log
 (API 186.073s, agentexec 5.493s, hostsupervisor 31.805s, controlplane 1.154s).
 Independent review found no blocker.
+
+## Host persistence ENOSPC and capability scope
+
+Actual kernel ENOSPC was injected on a dedicated 1MiB tmpfs in the isolated VM's
+private mount namespace, twice per cell. After effect success but outcome write
+failure, cold recovery keeps unknown and refuses replay or a stop receipt even
+after space is released. Unpersisted stop receipts cannot report/release authority.
+Failure to persist report acknowledgement retries the identical durable receipt
+without repeating the effect.
+
+Reproducible entry: scripts/acceptance/enospc.py --root LAB --output NEW_DIRECTORY.
+Evidence: /tmp/sysbox-stage2-enospc-final-20261026/run.json. These cells cover the
+host effect ledger, not every guest-task or SQL transaction failure point.
+
+Capabilities explicitly identify shared-postgres versus host-local store scope
+and PostgreSQL multi-API support. Existing unconditional absence/revocation
+booleans stay false. Recovery input protocol is explicitly advertised; actual
+recovery also checks Agent and host capabilities. Three-backend capability tests
+pass. Reading a capability endpoint does not authorize effects or prove absence.
