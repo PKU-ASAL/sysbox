@@ -43,9 +43,9 @@ the verified digest lock.
 
 - Main `b1cc43d` semantics are reconciled below. The feature branch retains the
   replacement architecture; production main is not updated by this integration.
-- Publish and verify the multi-platform runtime manifest. Local amd64 runtime
-  assembly and executable identity passed; arm64 runtime and registry delivery
-  have not yet been exercised.
+- Publish and reconcile the multi-platform runtime manifest in a registry. Local
+  amd64/arm64 OCI assembly and child-label verification now pass; registry
+  delivery remains unperformed.
 - Run upgrade/rebuild on an isolated deployment with archived authority and
   journals, then run the supported provider/transport matrix from the exact
   candidate artifacts. Existing stage 2 reports are layered evidence, not a
@@ -185,12 +185,11 @@ Malformed or foreign journals are recorded as unknown and archived raw. Normal
 service-upgrade mode still refuses unresolved journals. This also removes the
 broken `find -exec`/jq placeholder substitution in the old journal scanner.
 
-Remaining delivery boundary: multi-platform OCI manifest build/push/verification
-has not passed. The shared host's builders only support amd64/386 and an arm64
-container failed with exec-format error. Arm64 emulation was installed only in
-the new disposable execution VM; it has not yet been used for a successful OCI
-build. VM Docker Hub access timed out, so its Docker lifecycle used an image
-transferred from the local cache. No production rollout or stable tag publication.
+Local multi-platform OCI archive assembly and label verification now pass after
+arm64 emulation and internal mirror bases were enabled. Registry push, immutable
+tag reconciliation, and production rollout remain unperformed. The VM Docker Hub
+timeout was handled by transferring the cached acceptance image; it did not
+affect the release archive or OCI index verification.
 
 ## Multi-platform OCI archive evidence
 
