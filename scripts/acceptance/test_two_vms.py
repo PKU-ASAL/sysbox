@@ -33,6 +33,7 @@ class LabTests(unittest.TestCase):
             for call in launch.call_args_list:
                 self.assertEqual(call.args[0], "qemu-system-x86_64")
                 self.assertNotIn("qemu-img", call.args)
+                self.assertTrue(any("disk.qcow2,format=qcow2,if=virtio,discard=unmap" in str(arg) for arg in call.args))
             for role in two_vms.ROLES:
                 self.assertEqual((root / role / "disk.qcow2").read_bytes(), b"retained-disk")
 

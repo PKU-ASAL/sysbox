@@ -460,6 +460,10 @@ func currentBootID() (string, error) {
 	return strings.TrimSpace(string(raw)), err
 }
 
+// Empty cmdline can occur during exit before procfs publishes Z/X. This is
+// uncertainty, not absence; only a bounded post-signal waiter may recheck it.
+var errProcessIdentityTransition = errors.New("firecracker process identity changed during probe")
+
 func captureProcessIdentity(pid int) (processIdentity, error) {
 	boot, err := currentBootID()
 	if err != nil {
@@ -479,7 +483,7 @@ func captureProcessIdentity(pid int) (processIdentity, error) {
 	}
 	argv := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
 	if len(raw) == 0 {
-		return processIdentity{}, fmt.Errorf("firecracker process identity changed during probe")
+		return processIdentity{}, errProcessIdentityTransition
 	}
 	return processIdentity{PID: pid, StartTime: start, BootID: boot, Executable: exe, Argv: argv}, nil
 }
@@ -490,6 +494,9 @@ func probeProcess(anchor processIdentity) (bool, bool, error) {
 	return probeProcessWithStat(anchor, os.ReadFile)
 }
 func probeProcessWithStat(anchor processIdentity, readStat func(string) ([]byte, error)) (bool, bool, error) {
+	return probeProcessWithReaders(anchor, readStat, captureProcessIdentity)
+}
+func probeProcessWithReaders(anchor processIdentity, readStat func(string) ([]byte, error), capture func(int) (processIdentity, error)) (bool, bool, error) {
 	if anchor.PID <= 0 {
 		return false, false, nil
 	}
@@ -531,14 +538,29 @@ func probeProcessWithStat(anchor processIdentity, readStat func(string) ([]byte,
 	if state == 'Z' || state == 'X' {
 		return false, false, nil
 	}
-	actual, err := captureProcessIdentity(anchor.PID)
+	actual, err := capture(anchor.PID)
 	if err != nil {
-		// Exit may race the /proc stat, exe and argv reads. Confirm disappearance
-		// or a zombie before classifying this as an exited owned process.
-		if _, statErr := os.Stat(fmt.Sprintf("/proc/%d", anchor.PID)); os.IsNotExist(statErr) {
+		// Exit/reaping can race exe/cmdline. Use one final stat snapshot:
+		// separate start-time and zombie reads can themselves race the reaper.
+		final, statErr := readStat(fmt.Sprintf("/proc/%d/stat", anchor.PID))
+		if os.IsNotExist(statErr) || errors.Is(statErr, syscall.ESRCH) {
 			return false, false, nil
 		}
-		if processStartTime(anchor.PID) == anchor.StartTime && processIsZombie(anchor.PID) {
+		if statErr != nil {
+			return false, false, statErr
+		}
+		end := strings.LastIndexByte(string(final), ')')
+		if end < 0 || len(final) <= end+2 {
+			return false, false, fmt.Errorf("firecracker invalid final process stat")
+		}
+		fields := strings.Fields(string(final[end+1:]))
+		if len(fields) < 20 {
+			return false, false, fmt.Errorf("firecracker invalid final process stat")
+		}
+		if fields[19] != anchor.StartTime {
+			return false, false, fmt.Errorf("firecracker final process start identity conflict")
+		}
+		if fields[0] == "Z" || fields[0] == "X" {
 			return false, false, nil
 		}
 		return false, false, err

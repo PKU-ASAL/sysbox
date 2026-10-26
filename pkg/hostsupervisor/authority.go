@@ -11,6 +11,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -102,6 +103,9 @@ func (c AuthorityClient) Authorize(ctx context.Context, grant controlplane.Signe
 			return fmt.Errorf("%w: %v", ErrGrantObsolete, err)
 		}
 		if err == nil || attempt == 2 || ctx.Err() != nil || !errors.As(err, &transport) {
+			if err != nil {
+				slog.Warn("host authority check failed", "agent", c.Identity.ID, "attempts", attempt+1, "error_type", fmt.Sprintf("%T", err), "http_status", response.status, "deadline_exceeded", errors.Is(ctx.Err(), context.DeadlineExceeded))
+			}
 			return err
 		}
 		delay := time.NewTimer(100 * time.Millisecond)

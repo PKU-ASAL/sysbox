@@ -1,5 +1,9 @@
 # Stage 2 capability and fault closure
 
+Closed against the approved three-PR design; final exit-window revalidation and independent review passed. See
+[stage 2 closure](../../operations/stage2-closure.md) for requirement reconciliation,
+actual evidence boundaries and the remaining stage-3 release obligations.
+
 Execute inline under the approved three-PR design. Base: bb20bb2; branch:
 feat/capability-fault-closure. Stage 1 remains closed.
 

@@ -41,6 +41,14 @@ class FaultCampaignTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'unresolved host'):
             fault_campaign.require_clean_execution(execute)
 
+    def test_guest_image_is_checked_before_workload_submission(self):
+        execute=mock.Mock(return_value="")
+        with self.assertRaisesRegex(RuntimeError,"guest image"):
+            fault_campaign.require_guest_image(execute)
+        execute.return_value='sha256:'+'a'*64
+        fault_campaign.require_guest_image(execute)
+        self.assertIn("image inspect", execute.call_args.args[1])
+
     def test_running_builds_uses_service_executable_not_installed_file(self):
         calls=[]
         def execute(role,command):

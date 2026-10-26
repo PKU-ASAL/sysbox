@@ -91,6 +91,14 @@ def require_clean_execution(execute):
         raise RuntimeError('prior unresolved host journal remains')
 
 
+
+def require_guest_image(execute):
+    image = execute('execution', "sudo docker image inspect --format '{{.Id}}' sysbox-p9-guest:local").strip()
+    if not re.fullmatch(r'sha256:[a-f0-9]{64}', image):
+        raise RuntimeError('current acceptance guest image must be built before submitting workload')
+    return image
+
+
 def running_builds(execute):
     result = {}
     for role, services in (('control',('sysbox-api1','sysbox-api2')),
@@ -132,6 +140,7 @@ def run(root, fault):
     builds=running_builds(execute)
     if len(set(builds.values()))!=1:raise RuntimeError('deployed API/Agent binaries differ')
     require_clean_execution(execute)
+    guest_image = require_guest_image(execute)
     # Both APIs must be healthy before starting a fresh workload.
     execute('control','sudo systemctl is-active --quiet sysbox-api1 sysbox-api2 postgresql@16-main')
     execute('execution','sudo systemctl is-active --quiet sysbox-agent sysbox-supervisor')
@@ -143,7 +152,7 @@ def run(root, fault):
                 ' --evidence '+remote+'.json > '+remote+'.log 2>&1 </dev/null & echo $!'))
     pid=execute('control',command).strip()
     if not pid.isdigit():raise RuntimeError('workload process identity unavailable')
-    summary={'lab_id':manifest['id'],'fault':fault,'workload_pid':int(pid),'phase':'submitted','binary_sha256':builds,'binary_identity_kind':'service-proc-exe-v1'}
+    summary={'lab_id':manifest['id'],'fault':fault,'workload_pid':int(pid),'phase':'submitted','binary_sha256':builds,'binary_identity_kind':'service-proc-exe-v1','guest_image_id':guest_image}
     lab.save(directory/'summary.json',summary)
     deadline=time.monotonic()+60
     while time.monotonic()<deadline:
@@ -152,10 +161,10 @@ def run(root, fault):
         time.sleep(1)
     else:raise RuntimeError('workload evidence missing')
     workload=json.loads(raw);topology=workload['topology'];summary['topology']=topology
-    wait_live(execute,topology)
-    summary['phase']='live';lab.save(directory/'summary.json',summary)
     def save(value):lab.save(directory/'fault.json',{'lab_id':manifest['id'],**value})
     try:
+        wait_live(execute,topology)
+        summary['phase']='live';lab.save(directory/'summary.json',summary)
         if fault=='failover':live_failover.inject(execute,topology,save)
         else:database_outage.inject(topology,execute,save,fault)
         summary['phase']='fault_verified';lab.save(directory/'summary.json',summary)

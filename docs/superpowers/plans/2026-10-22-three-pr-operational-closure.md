@@ -1,5 +1,13 @@
 # Three-PR execution ledger
 
+## Latest decision — 2026-10-26
+
+Closing stages 1 and 2 are closed. Stage 2 evidence, exact limits and original
+requirement reconciliation are recorded in `docs/operations/stage2-closure.md`.
+Stage 3 remains latest-main integration, synchronized release artifacts and
+upgrade/rebuild. Earlier entries below are historical delivery states.
+
+
 ## Current closure decision — 2026-10-26
 
 Stage 1 is closed against the three groups explicitly frozen by the user on

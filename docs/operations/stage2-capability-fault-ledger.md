@@ -1,5 +1,8 @@
 # Stage 2 capability and fault ledger
 
+Stage 2 closure decision: see [stage2-closure.md](stage2-closure.md).
+Entries below retain implementation history; the closure document takes precedence.
+
 This is closing stage 2, stacked PR #54, not the earlier GC stage2 selector.
 Original wording remains authoritative in campaign.json (65 P0–P9 entries).
 No omitted requirement, skipped test or previously successful source closes a cell.

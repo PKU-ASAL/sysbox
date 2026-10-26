@@ -413,7 +413,11 @@ func TestOwnershipTransferHostSIGKILLChild(t *testing.T) {
 			return
 		}
 		require.NoError(t, os.WriteFile(in.Ready, []byte(phase), 0600))
-		select {}
+		// A timer keeps the child alive without Go deadlock detection exiting
+		// before the parent can deliver the required OS SIGKILL.
+		for {
+			time.Sleep(time.Hour)
+		}
 	}
 	ctx := context.Background()
 	client := hostsupervisor.AuthorityClient{Identity: in.Identity}

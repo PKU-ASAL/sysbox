@@ -555,3 +555,50 @@ func TestManifestMissingConfigIsUnknownAndRetained(t *testing.T) {
 	require.Error(t, s.DestroyNode(context.Background(), h))
 	require.DirExists(t, hs.VMDir)
 }
+
+func TestProbeProcessExitBetweenIdentityReads(t *testing.T) {
+	boot, err := currentBootID()
+	require.NoError(t, err)
+	anchor := processIdentity{PID: 123, StartTime: "77", BootID: boot, Executable: "/test", Argv: []string{"/test"}}
+	snapshot := func(status string, start string) []byte {
+		fields := make([]string, 20)
+		for i := range fields {
+			fields[i] = "0"
+		}
+		fields[0] = status
+		fields[19] = start
+		return []byte("123 (test) " + strings.Join(fields, " "))
+	}
+	for _, mode := range []string{"zombie", "gone", "reused", "denied", "still-live", "malformed"} {
+		t.Run(mode, func(t *testing.T) {
+			calls := 0
+			read := func(string) ([]byte, error) {
+				calls++
+				if calls == 1 {
+					return snapshot("R", "77"), nil
+				}
+				switch mode {
+				case "zombie":
+					return snapshot("Z", "77"), nil
+				case "gone":
+					return nil, syscall.ESRCH
+				case "reused":
+					return snapshot("Z", "78"), nil
+				case "still-live":
+					return snapshot("R", "77"), nil
+				case "malformed":
+					return []byte("broken"), nil
+				default:
+					return nil, syscall.EACCES
+				}
+			}
+			live, _, err := probeProcessWithReaders(anchor, read, func(int) (processIdentity, error) { return processIdentity{}, fmt.Errorf("empty cmdline during exit") })
+			require.False(t, live)
+			if mode == "zombie" || mode == "gone" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}

@@ -414,7 +414,7 @@ func (s *Substrate) destroyManifestNode(ctx context.Context, h substrate.NodeHan
 	defer deadline.Stop()
 	for {
 		live, _, err := probeProcess(m.Process)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, errProcessIdentityTransition) {
 			return err
 		}
 		reaped := true
