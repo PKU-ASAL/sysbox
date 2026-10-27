@@ -14,7 +14,10 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-const guestOutputLimit = 1024 * 1024
+const (
+	guestOutputLimit             = 1024 * 1024
+	guestExecutionMaxOutputLimit = 48 << 20
+)
 
 type guestOperationCompletion struct {
 	Result      controlplane.GuestExecutionResult
@@ -37,10 +40,13 @@ var (
 // wrapped so callers can distinguish resolution failures (node not found,
 // capability unavailable) from a failed exec.
 func runGuestExec(ctx context.Context, st *state.State, node string, argv []string, env map[string]string, workingDir string) (substrate.ExecResult, error) {
+	return runGuestExecCapture(ctx, st, node, argv, env, workingDir, false)
+}
+func runGuestExecCapture(ctx context.Context, st *state.State, node string, argv []string, env map[string]string, workingDir string, capture bool) (substrate.ExecResult, error) {
 	if len(argv) == 0 {
 		return substrate.ExecResult{}, fmt.Errorf("exec program is required")
 	}
-	request := substrate.ExecRequest{Program: argv[0], Args: argv[1:], Environment: env, WorkingDir: workingDir, Shell: substrate.ShellNone, OutputLimitBytes: guestOutputLimit}
+	request := substrate.ExecRequest{Program: argv[0], Args: argv[1:], Environment: env, WorkingDir: workingDir, Shell: substrate.ShellNone, OutputLimitBytes: guestOutputLimit, CaptureViaFile: capture}
 	if err := request.Validate(); err != nil {
 		return substrate.ExecResult{}, err
 	}
@@ -106,7 +112,7 @@ func executeGuestOperation(ctx context.Context, st *state.State, node string, re
 	ctx, cancel := guestOperationContext(ctx, req)
 	defer cancel()
 
-	result, err := runGuestExec(ctx, st, node, req.Argv, req.Environment, req.WorkingDirectory)
+	result, err := runGuestExecCapture(ctx, st, node, req.Argv, req.Environment, req.WorkingDirectory, req.CaptureViaFile)
 	if err != nil {
 		class := classifyGuestExecError(ctx, err)
 		switch class {
@@ -137,8 +143,24 @@ func encodeGuestResult(result substrate.ExecResult) controlplane.GuestExecutionR
 // applies here, at the boundary, because the provider may hand back more than
 // the agent is willing to carry.
 func encodeGuestOutput(stdout, stderr string) controlplane.GuestExecutionResult {
-	out, outTruncated := boundedString(stdout)
-	errOut, errTruncated := boundedString(stderr)
+	return encodeGuestOutputWithLimit(stdout, stderr, 0)
+}
+
+func encodeGuestOutputWithLimit(stdout, stderr string, limit int) controlplane.GuestExecutionResult {
+	if limit <= 0 {
+		limit = guestOutputLimit
+	}
+	if limit > guestExecutionMaxOutputLimit {
+		limit = guestExecutionMaxOutputLimit
+	}
+	bound := func(s string) (string, bool) {
+		if len(s) > limit {
+			return s[:limit], true
+		}
+		return s, false
+	}
+	out, outTruncated := bound(stdout)
+	errOut, errTruncated := bound(stderr)
 	return controlplane.GuestExecutionResult{
 		Stdout:    base64.StdEncoding.EncodeToString([]byte(out)),
 		Stderr:    base64.StdEncoding.EncodeToString([]byte(errOut)),

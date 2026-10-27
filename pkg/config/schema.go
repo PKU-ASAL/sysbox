@@ -355,6 +355,7 @@ type ImageConfig struct {
 	Substrate    string `hcl:"substrate"`
 	Kind         string `hcl:"kind"`
 	Source       string `hcl:"source"`
+	PullSource   string `hcl:"pull_source,optional"`
 	SHA256       string `hcl:"sha256,optional"`
 	Architecture string `hcl:"architecture"`
 	GuestFamily  string `hcl:"guest_family"`
@@ -383,6 +384,8 @@ type KernelConfig struct {
 	//   - "/abs/path"                    (local file, no copy)
 	//   - "relative/path"                (resolved against cwd)
 	Source string `hcl:"source"`
+	// PullSource is an optional HTTP(S) fallback used only when Source is a missing local file.
+	PullSource string `hcl:"pull_source,optional"`
 	// SHA256 is the expected hex digest of the kernel image (optional).
 	// When set, the resolver verifies and the cache key becomes
 	// content-addressed.

@@ -22,6 +22,8 @@ Firecracker currently runs as a direct child process because jailer integration 
 
 需要 uncompressed `vmlinux` 和 ext4 rootfs。Provider 配置 chain init、SSH/vsock 和 machine 参数。Guest network configuration 通过声明的 network-init capability 完成，不由 runtime 猜测发行版配置文件。
 
+Firecracker 节点可在 `provider "firecracker"` 中设置 `sysarmor = true`，按需在 VM 创建和 reset 后先安装固定版本的 SysArmor，再执行赛题 provisioner。需要先在 VM artifact mount 中准备 agent archive、安装脚本和独立配置；guest 必须支持 systemd 和 BTF。省略该字段时不安装，Docker 节点不受影响。
+
 ## libvirt
 
 使用 immutable qcow2 baseline 和 generation overlay。Provider 配置 machine、disk、SSH 与 network init。Domain UUID 和 owned overlay path 是 reset/destroy 的关键 identity。
@@ -71,3 +73,12 @@ replacement from an immutable baseline and is rejected for an external definitio
 Guest connectivity and NIC migration are not inferred from arbitrary external XML.
 Libvirt metadata updates have no administrator-proof CAS: external writers must be
 excluded during the explicit adoption operation; Sysbox serializes its own claims.
+
+### dev 集成能力边界
+
+Windows QGA 的本地命令、文件传输及启动后网络配置保留 UUID 校验；
+远程 guest execution 仍要求持久 Start/Observe/Cancel 和签名停止证明，
+QGA 尚未实现该协议，因此远程 Windows ETW/file capture 不对外启用。
+Firecracker guest firewall 的旧版裸 nft 命令路径不具备策略代际、删除墓碑和
+原子替换证据，当前不注册 Policy 能力，调用旧适配器返回 unsupported。
+这两项不因历史 PR 合入 dev 而视为通过真实环境验收。

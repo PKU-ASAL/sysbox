@@ -33,18 +33,120 @@ func (s *Server) handleListResources(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authoritativeTopologyHealth(ctx context.Context, topology string, st *state.State) controlplane.TopologyHealth {
-	if proj, err := s.apiStore.LoadResourceProjection(ctx, topology); err == nil && proj != nil {
-		if len(proj.Resources) > 0 {
-			return topologyHealthFromResources(proj.Resources)
+	projection, projectionErr := s.apiStore.LoadResourceProjection(ctx, topology)
+	usesVM := stateHasVM(st) || (projectionErr == nil && projectionHasVM(projection))
+	if usesVM {
+		// VM agent observations can outlive a guest/agent restart. Trust only a snapshot
+		// that matches the current VM state and agent process; otherwise report pending.
+		if st == nil || len(st.Resources) == 0 {
+			return topologyHealthFromResources(nil)
 		}
-		if len(proj.Health.Resources) > 0 {
-			return proj.Health
+		if projectionErr == nil && projection != nil {
+			resources := projection.Resources
+			if len(resources) == 0 {
+				resources = projection.Health.Resources
+			}
+			if resourceProjectionMatchesState(projection, resources, st) {
+				return topologyHealthFromResources(resources)
+			}
+			return topologyHealthFromResources(pendingStateResources(st))
+		}
+		return runtime.EvaluateTopologyHealth(ctx, st)
+	}
+
+	// Keep the original Docker health projection semantics unchanged.
+	if projectionErr == nil && projection != nil {
+		if len(projection.Resources) > 0 {
+			return topologyHealthFromResources(projection.Resources)
+		}
+		if len(projection.Health.Resources) > 0 {
+			return projection.Health
 		}
 	}
 	if st == nil {
 		return controlplane.TopologyHealth{Status: controlplane.ResourceHealthUnknown}
 	}
 	return runtime.EvaluateTopologyHealth(ctx, st)
+}
+
+func stateHasVM(st *state.State) bool {
+	if st == nil {
+		return false
+	}
+	for _, resource := range st.Resources {
+		if resource.Driver == "firecracker" || resource.Driver == "libvirt" {
+			return true
+		}
+	}
+	return false
+}
+
+func projectionHasVM(projection *controlplane.ResourceProjection) bool {
+	if projection == nil {
+		return false
+	}
+	for _, resource := range append(append([]controlplane.ResourceHealth{}, projection.Resources...), projection.Health.Resources...) {
+		if resource.Provider == "firecracker" || resource.Provider == "libvirt" {
+			return true
+		}
+	}
+	return false
+}
+
+func resourceProjectionMatchesState(proj *controlplane.ResourceProjection, resources []controlplane.ResourceHealth, st *state.State) bool {
+	if proj.Serial != st.Meta.Serial || len(resources) != len(st.Resources) {
+		return false
+	}
+	byID := make(map[string]controlplane.ResourceHealth, len(resources))
+	for _, resource := range resources {
+		if _, duplicate := byID[resource.Resource]; duplicate {
+			return false
+		}
+		byID[resource.Resource] = resource
+	}
+	for _, resource := range st.Resources {
+		observed, ok := byID[resource.Address.String()]
+		if !ok || observed.Type != resource.Address.Type || observed.Name != resource.Address.Name || observed.Provider != resource.Driver {
+			return false
+		}
+		if id := stateResourceExternalID(resource); (resource.Address.Type == "node" || resource.Address.Type == "sysbox_node") && id != "" {
+			if observed.Observation == nil || observed.Observation.ExternalID == "" {
+				// Legacy unversioned agents did not always send observations.
+				// Keep that contract only for serial-zero state; versioned state
+				// requires an identity, and an explicit mismatch is never accepted.
+				if proj.Serial != 0 {
+					return false
+				}
+			} else if observed.Observation.ExternalID != id {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func stateResourceExternalID(resource state.Resource) string {
+	if resource.ExternalID != "" {
+		return resource.ExternalID
+	}
+	if handler, ok := runtime.GetResourceHandler(resource.Address.Type); ok {
+		return handler.ExternalID(resource)
+	}
+	return ""
+}
+
+func pendingStateResources(st *state.State) []controlplane.ResourceHealth {
+	out := make([]controlplane.ResourceHealth, 0, len(st.Resources))
+	for _, resource := range st.Resources {
+		out = append(out, controlplane.ResourceHealth{
+			Resource: resource.Address.String(), Type: resource.Address.Type,
+			Name: resource.Address.Name, Provider: resource.Driver,
+			Status:   controlplane.ResourceHealthUnknown,
+			Reason:   "waiting for an agent observation matching current state",
+			Decision: controlplane.RecoveryDecisionUnknown,
+		})
+	}
+	return out
 }
 
 func topologyHealthFromResources(resources []controlplane.ResourceHealth) controlplane.TopologyHealth {

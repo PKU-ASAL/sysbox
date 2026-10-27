@@ -58,6 +58,16 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("image %s source: %w", n.Address.Name, err)
 	}
+	pullSource := ""
+	if cfg.PullSource != "" {
+		pullSource, err = secret.ResolveString(ctx, pc.exec.resolver(), cfg.PullSource)
+		if err != nil {
+			return state.Resource{}, err
+		}
+		if substrate.ArtifactKind(cfg.Kind) == substrate.ArtifactOCI {
+			return state.Resource{}, fmt.Errorf("pull_source is only supported for VM artifacts")
+		}
+	}
 	if substrate.ArtifactKind(cfg.Kind) != substrate.ArtifactOCI {
 		resolvedSource, err = artifact.ResolveSource(ctx, resolvedSource, cfg.SHA256, pc.exec.workspaceDir)
 		if err != nil {
@@ -66,7 +76,7 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 	}
 	handle, err := artifactDriver.ResolveImage(ctx, substrate.ArtifactSource{
 		Kind: substrate.ArtifactKind(cfg.Kind), Source: cfg.Source, ResolvedSource: resolvedSource,
-		ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture,
+		PullSource: pullSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture,
 		GuestFamily: substrate.GuestFamily(cfg.GuestFamily), Size: cfg.Size,
 	})
 	if err != nil {
@@ -143,11 +153,27 @@ func (ImageResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.E
 		return []substrate.PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
 	}
 	var checks []substrate.PreflightCheck
-	if substrate.ArtifactKind(cfg.Kind) != substrate.ArtifactOCI {
-		if check := ArtifactPreflightCheck("image:"+r.Name+":"+cfg.Kind, cfg.Source, cfg.SHA256, filepath.Dir(r.Remain.MissingItemRange().Filename)); check != nil {
+	if substrate.ArtifactKind(cfg.Kind) == substrate.ArtifactOCI {
+		if cfg.PullSource != "" {
+			checks = append(checks, substrate.PreflightCheck{Name: "image:" + r.Name, Severity: "error", Message: "pull_source is only supported for VM artifacts"})
+		}
+	} else {
+		source := cfg.Source
+		base := filepath.Dir(r.Remain.MissingItemRange().Filename)
+		var check *substrate.PreflightCheck
+		if cfg.PullSource != "" {
+			if !artifact.IsURL(source) && !filepath.IsAbs(source) {
+				source = filepath.Join(base, source)
+			}
+			check = VMArtifactPreflightCheck("image:"+r.Name+":"+cfg.Kind, source, cfg.PullSource, cfg.SHA256)
+		} else {
+			check = ArtifactPreflightCheck("image:"+r.Name+":"+cfg.Kind, source, cfg.SHA256, base)
+		}
+		if check != nil {
 			checks = append(checks, *check)
 		}
 	}
+
 	return checks
 }
 

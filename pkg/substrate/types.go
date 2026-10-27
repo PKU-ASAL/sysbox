@@ -177,6 +177,7 @@ const (
 	ConnKindSSH    ConnectionKind = "ssh"
 	ConnKindVsock  ConnectionKind = "vsock"
 	ConnKindWinRM  ConnectionKind = "winrm"
+	ConnKindQGA    ConnectionKind = "qga"
 )
 
 // ConnInfo carries the preferred control-plane channel coordinates for a node.

@@ -151,3 +151,22 @@ func TestImageResourceHandlerPlanDiff(t *testing.T) {
 	_, ok := fieldChangeAt(action.Changes, "source")
 	require.True(t, ok)
 }
+
+func TestImageResourceHandlerPassesVMPullSource(t *testing.T) {
+	sub := &imageArtifactDriver{}
+	registerImageArtifactDriver(t, sub)
+	rootfs := filepath.Join(t.TempDir(), "rootfs.ext4")
+	require.NoError(t, os.WriteFile(rootfs, []byte("rootfs"), 0o644))
+	pullURL := "https://example.invalid/rootfs.ext4"
+	n := &graph.Node{
+		Address: address.Resource("sysbox_image", "rootfs"),
+		Data: &config.ImageConfig{
+			Substrate: "image-test", Kind: "rootfs", Source: rootfs,
+			PullSource: pullURL, Architecture: "amd64", GuestFamily: "linux",
+		},
+	}
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	_, err := ImageResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+	require.NoError(t, err)
+	require.Equal(t, pullURL, sub.lastSource.PullSource)
+}

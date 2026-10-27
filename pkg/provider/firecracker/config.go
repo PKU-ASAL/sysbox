@@ -37,6 +37,22 @@ type Config struct {
 	// AllowDirect explicitly opts into running Firecracker without jailer.
 	// It is unsafe and should only be used for trusted local experiments.
 	AllowDirect bool `hcl:"allow_direct,optional"`
+	// SysArmor installs the pinned standalone agent before scenario provisioners.
+	SysArmor bool `hcl:"sysarmor,optional" json:"SysArmor,omitempty"`
+}
+
+// BootstrapProvisioners runs only for an explicitly opted-in Firecracker VM.
+func (c *Config) BootstrapProvisioners() []config.ProvisionerConfig {
+	if c == nil || !c.SysArmor {
+		return nil
+	}
+	const base = "/var/lib/sysbox/vm-artifacts/sysarmor/"
+	return []config.ProvisionerConfig{
+		{Type: "file", Source: base + "sysarmor-agent-deploy-76263fca.tar.gz", Destination: "/tmp/sysarmor-agent-deploy.tar.gz"},
+		{Type: "file", Source: base + "standalone-vm.yaml", Destination: "/tmp/sysarmor-standalone-vm.yaml"},
+		{Type: "file", Source: base + "install-sysarmor-vm.sh", Destination: "/tmp/install-sysarmor-vm.sh"},
+		{Type: "exec", Program: "/bin/bash", Args: []string{"/tmp/install-sysarmor-vm.sh", "/tmp/sysarmor-agent-deploy.tar.gz", "/tmp/sysarmor-standalone-vm.yaml"}, Shell: "none"},
+	}
 }
 
 func parseMemoryMiB(value string) (int, error) {

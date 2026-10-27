@@ -75,11 +75,15 @@ func (KernelResourceHandler) Create(ctx context.Context, pc *ProviderContext, n 
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}
+	pullSource, err := secret.ResolveString(ctx, pc.exec.resolver(), cfg.PullSource)
+	if err != nil {
+		return state.Resource{}, err
+	}
 	resolvedSource, err = artifact.ResolveSource(ctx, resolvedSource, cfg.SHA256, pc.exec.workspaceDir)
 	if err != nil {
 		return state.Resource{}, err
 	}
-	res, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamilyUnknown})
+	res, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, PullSource: pullSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamilyUnknown})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}
@@ -134,7 +138,18 @@ func (KernelResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return []substrate.PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
 	}
-	if check := ArtifactPreflightCheck("kernel:"+r.Name, cfg.Source, cfg.SHA256, filepath.Dir(r.Remain.MissingItemRange().Filename)); check != nil {
+	source := cfg.Source
+	base := filepath.Dir(r.Remain.MissingItemRange().Filename)
+	var check *substrate.PreflightCheck
+	if cfg.PullSource != "" {
+		if !artifact.IsURL(source) && !filepath.IsAbs(source) {
+			source = filepath.Join(base, source)
+		}
+		check = VMArtifactPreflightCheck("kernel:"+r.Name, source, cfg.PullSource, cfg.SHA256)
+	} else {
+		check = ArtifactPreflightCheck("kernel:"+r.Name, source, cfg.SHA256, base)
+	}
+	if check != nil {
 		return []substrate.PreflightCheck{*check}
 	}
 	return nil

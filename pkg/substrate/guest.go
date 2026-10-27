@@ -55,7 +55,8 @@ type ExecRequest struct {
 	// OutputLimitBytes bounds each captured and forwarded stream. Zero uses the default.
 	OutputLimitBytes int
 	// Timeout bounds local waiting; expiration does not confirm remote termination.
-	Timeout time.Duration
+	Timeout        time.Duration
+	CaptureViaFile bool
 }
 
 func (r ExecRequest) Validate() error {

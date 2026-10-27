@@ -248,7 +248,11 @@ func managedNodeHandle(hs *HandleState) substrate.NodeHandle {
 	if hs.Identity != nil {
 		generation = hs.Identity.Generation
 	}
-	return substrate.NodeHandle{ID: hs.DomainUUID, Generation: generation, Provider: hs, Net: substrate.NetInfo{PrimaryIP: hs.SSHIP}, Conn: substrate.ConnInfo{Kind: substrate.ConnKindSSH, User: hs.SSHUser}}
+	kind := substrate.ConnKindSSH
+	if hs.GuestFamily == substrate.GuestFamilyWindows {
+		kind = substrate.ConnKindQGA
+	}
+	return substrate.NodeHandle{ID: hs.DomainUUID, Generation: generation, Provider: hs, Net: substrate.NetInfo{PrimaryIP: hs.SSHIP}, Conn: substrate.ConnInfo{Kind: kind, User: hs.SSHUser}}
 }
 func persistManagedRecord(hs *HandleState, ready bool) error {
 	if hs.Identity == nil {

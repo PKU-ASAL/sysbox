@@ -350,6 +350,9 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		"ports":        resolvedPorts,
 		"guest_family": string(guestFamily),
 	}
+	if source, ok := providerConfig.(interface{ ObservationSource() string }); ok && source.ObservationSource() != "" {
+		nodeInstance["observation_source"] = source.ObservationSource()
+	}
 	// Persist lifecycle flags so ComputePlan can honour them on future runs
 	// even if the resource is removed from HCL.
 	if lc := cfg.Lifecycle; lc != nil {
@@ -459,7 +462,8 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	}
 
 	// Run provisioners after node is up and wired.
-	if len(cfg.Provisioners) > 0 {
+	provisioners := nodeProvisioners(providerConfig, cfg.Provisioners)
+	if len(provisioners) > 0 {
 		conn, err := e.connectionForNode(ctx, nodeDriver, handle, cfg.Connections)
 		if err != nil {
 			cleanupNode("destroy node on connection setup failure")
@@ -475,7 +479,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 				return state.Resource{}, fmt.Errorf("connection not ready on node %s: %w", n.Address.Name, err)
 			}
 		}
-		if err := e.runProvisioners(ctx, conn, cfg.Provisioners); err != nil {
+		if err := e.runProvisioners(ctx, conn, provisioners); err != nil {
 			// Retain the uncertain node; guest setup must not be blindly replayed.
 			cleanupNode("destroy node on provisioner failure")
 			return state.Resource{}, fmt.Errorf("provisioner on node %s: %w", n.Address.Name, err)

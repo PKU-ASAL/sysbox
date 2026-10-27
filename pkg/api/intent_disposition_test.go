@@ -309,10 +309,13 @@ func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence pers
 	}
 	if incomplete {
 		require.True(t, after.Resources[0].RecoveryRequired())
-		proposed := *after
+		rawState, err := after.Marshal()
+		require.NoError(t, err)
+		proposed, err := state.Unmarshal(rawState)
+		require.NoError(t, err)
 		proposed.Resources = nil
 		manager := state.NewManagerWithBackend(repo.StateBackend("lab"))
-		require.Error(t, manager.Save(&proposed))
+		require.Error(t, manager.Save(proposed))
 		require.Equal(t, 200, post(cold, d, true).Code)
 		if unknownSSH || discovered != nil {
 			node := *after.FindResource(actions[0].Resource)

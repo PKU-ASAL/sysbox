@@ -61,3 +61,46 @@ Run `TestDockerDigestCompatibilityE2E` with the `e2e` tag,
 `SYSBOX_DOCKER_COMPAT_E2E=1`, an explicit disposable `DOCKER_HOST`, and optionally
 `SYSBOX_DOCKER_COMPAT_IMAGE`. This test does not authorize use of a production
 daemon. Existing artifact publication admission/completion remains mandatory.
+
+## VM local check and remote pull
+
+For Firecracker rootfs and kernel files, and for libvirt qcow2 files, `source`
+may be a local path or a direct HTTP(S) URL. A pinned URL is inspected in
+Sysbox's artifact cache first. On a cache miss, the Agent downloads it at apply
+time, verifies SHA-256, and atomically installs the cached file. Planning and
+preflight do not download pinned VM files. An unpinned URL retains its older
+mutable-source behavior and may be fetched during planning.
+
+To preserve an existing local path while allowing a remote fallback, set
+`pull_source` to the URL of the same bytes and pin `sha256`:
+
+~~~hcl
+resource "sysbox_kernel" "boot" {
+  substrate    = substrate.firecracker.fc
+  source       = "/var/lib/sysbox/vm-artifacts/vmlinux"
+  pull_source  = "https://artifacts.example.org/vm/vmlinux"
+  sha256       = "<kernel file SHA-256>"
+  architecture = "amd64"
+}
+
+resource "sysbox_image" "app" {
+  substrate    = substrate.firecracker.fc
+  kind         = "rootfs"
+  source       = "/var/lib/sysbox/vm-artifacts/app.ext4"
+  pull_source  = "https://artifacts.example.org/vm/app.ext4"
+  sha256       = "<rootfs file SHA-256>"
+  architecture = "amd64"
+  guest_family = "linux"
+}
+~~~
+
+Sysbox checks the local file first. If it exists, its digest must match;
+a mismatch fails without contacting the remote source. If it is absent, Sysbox
+uses a verified cache entry or downloads `pull_source`. Firecracker copies the
+resolved rootfs for each VM; libvirt creates an overlay from the resolved qcow2.
+The same fallback works for `sysbox_kernel`. Docker `oci` images keep their
+existing inspect-then-pull flow and do not use `pull_source`.
+
+The remote endpoint must serve the raw ext4, qcow2, or vmlinux bytes named in
+the HCL. This flow does not create or publish those artifacts; their URLs and
+digests must be supplied when authoring a topology.

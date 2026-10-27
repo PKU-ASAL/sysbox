@@ -31,9 +31,11 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type nodeInfo struct {
-		Name      string `json:"name"`
-		Provider  string `json:"provider"`
-		PrimaryIP string `json:"primary_ip,omitempty"`
+		Name              string `json:"name"`
+		Provider          string `json:"provider"`
+		PrimaryIP         string `json:"primary_ip,omitempty"`
+		GuestFamily       string `json:"guest_family,omitempty"`
+		ObservationSource string `json:"observation_source,omitempty"`
 	}
 	var nodes []nodeInfo
 	for _, res := range st.Resources {
@@ -41,9 +43,11 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		nodes = append(nodes, nodeInfo{
-			Name:      res.Address.Name,
-			Provider:  res.Driver,
-			PrimaryIP: res.PrimaryIP(),
+			Name:              res.Address.Name,
+			Provider:          res.Driver,
+			PrimaryIP:         res.PrimaryIP(),
+			GuestFamily:       res.Str("guest_family"),
+			ObservationSource: res.Str("observation_source"),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes})

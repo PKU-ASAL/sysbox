@@ -42,12 +42,13 @@ const (
 )
 
 type State struct {
-	mu          sync.RWMutex `json:"-"`
-	Version     int          `json:"version"`
-	Lineage     string       `json:"lineage"`
-	TopologyUID string       `json:"topology_uid,omitempty"`
-	Resources   []Resource   `json:"resources"`
-	Meta        StateMeta    `json:"-"`
+	mu               sync.RWMutex      `json:"-"`
+	Version          int               `json:"version"`
+	Lineage          string            `json:"lineage"`
+	TopologyUID      string            `json:"topology_uid,omitempty"`
+	Resources        []Resource        `json:"resources"`
+	Meta             StateMeta         `json:"-"`
+	AppliedVariables map[string]string `json:"applied_variables,omitempty"`
 }
 
 type StateMeta struct {

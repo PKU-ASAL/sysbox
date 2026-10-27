@@ -174,7 +174,6 @@ func (s *Server) handleCancelGuestExecution(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusAccepted, publicGuestExecution(execution))
 }
 
-
 func (s *Server) handleStartGuestExecution(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
 	if err := s.verifyAgentRequest(r, agentID); err != nil {

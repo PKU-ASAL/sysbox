@@ -123,7 +123,15 @@ func (e *Executor) resolveFirewallResource(ctx context.Context, n *graph.Node, d
 	if err := targetIdentity.Validate(); err != nil {
 		return state.Resource{}, fmt.Errorf("firewall target lacks durable identity: %w", err)
 	}
-	targetRaw, err := json.Marshal(map[string]any{"container_id": targetResource.ContainerID(), "bindings": bindings, "attachment_ips": attachmentIPs})
+	targetState := map[string]any{"container_id": targetResource.ContainerID(), "bindings": bindings, "attachment_ips": attachmentIPs}
+	if targetResource.Driver == "firecracker" {
+		providerState, err := targetResource.ProviderState()
+		if err != nil {
+			return state.Resource{}, fmt.Errorf("firewall %s: read target provider state: %w", n.Address.Name, err)
+		}
+		targetState["provider_state"] = json.RawMessage(providerState)
+	}
+	targetRaw, err := json.Marshal(targetState)
 	if err != nil {
 		return state.Resource{}, err
 	}

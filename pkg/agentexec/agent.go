@@ -27,7 +27,10 @@ import (
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
-const DefaultAgentID = "local"
+const (
+	DefaultAgentID                 = "local"
+	agentCommandWebSocketReadLimit = 4 << 20
+)
 
 type Options struct {
 	HostSupervisorSocket string
@@ -213,10 +216,11 @@ func commandWebSocketAndExecute(ctx context.Context, runner *commandRunner, opts
 	if err != nil {
 		return err
 	}
+	conn.SetReadLimit(agentCommandWebSocketReadLimit)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	reporter := &commandEventReporter{conn: conn, opts: opts}
 	for {
-		_, data, err := conn.Read(ctx)
+		data, err := readAgentCommandMessage(ctx, conn)
 		if err != nil {
 			return err
 		}
@@ -242,6 +246,12 @@ func commandWebSocketAndExecute(ctx context.Context, runner *commandRunner, opts
 			reporter.Report(ctx, event)
 		})
 	}
+}
+
+func readAgentCommandMessage(ctx context.Context, conn *websocket.Conn) ([]byte, error) {
+	conn.SetReadLimit(agentCommandWebSocketReadLimit)
+	_, data, err := conn.Read(ctx)
+	return data, err
 }
 
 type commandRunner struct {
@@ -665,7 +675,28 @@ type remoteBridge struct {
 }
 
 func (b remoteBridge) ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error {
+	if run != nil && b.reporter.APIURL != "" && b.reporter.ID != "" && topologyHasVM(ctx, b.Bridge, run.Topology) {
+		resources, err := observeTopology(ctx, b.reporter.ID, b.Bridge, run.Topology)
+		if err != nil {
+			return err
+		}
+		if err := b.reporter.ReportResourceProjection(ctx, resources); err != nil {
+			return err
+		}
+	}
 	return b.reporter.ReportRunComplete(ctx, run, projection)
+}
+
+func topologyHasVM(ctx context.Context, bridge Bridge, topology string) bool {
+	if bridge == nil || topology == "" {
+		return false
+	}
+	mgr, err := bridge.StateManager(topology)
+	if err != nil {
+		return false
+	}
+	st, err := mgr.LoadWithContext(ctx)
+	return err == nil && stateHasVM(st)
 }
 
 func (opts Options) ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error {

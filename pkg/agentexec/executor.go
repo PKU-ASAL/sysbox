@@ -9,6 +9,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -457,6 +458,24 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
+	// Reload canonical state after journal commits: the executor's working copy
+	// must never overwrite resources committed by the action repository.
+	latest, err := mgr.LoadWithContext(ctx)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	if latest.TopologyUID != st.TopologyUID || latest.Meta.Serial != st.Meta.Serial {
+		e.bridge.Finish(run, fmt.Errorf("applied variables: canonical state changed"))
+		return
+	}
+	latest.AppliedVariables = config.NonSensitiveInputValues(root.Variables, run.Inputs)
+	if err := mgr.SaveWithLease(ctx, latest, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	st = latest
+
 	recorder.SetStateSerialAfter(st.Meta.Serial)
 	recorder.MarkResourceStateRecorded()
 	if err := recorder.Err(); err != nil {

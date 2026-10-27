@@ -2,6 +2,11 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -104,4 +109,35 @@ func TestKernelResourceHandlerRegistered(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "sysbox_kernel", p.Type())
 	require.Equal(t, "sysbox_kernel", p.Schema().Type)
+}
+
+func TestKernelResourceHandlerPullsMissingPinnedKernel(t *testing.T) {
+	cacheRoot := filepath.Join(t.TempDir(), "cache")
+	configPath := filepath.Join(t.TempDir(), "sysbox.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(fmt.Sprintf("version: 1\npaths:\n  cache: %q\n", cacheRoot)), 0o600))
+	t.Setenv("SYSBOX_CONFIG", configPath)
+
+	content := []byte("kernel bytes")
+	hash := sha256.Sum256(content)
+	pin := hex.EncodeToString(hash[:])
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	defer server.Close()
+	localPath := filepath.Join(t.TempDir(), "missing-vmlinux")
+	n := &graph.Node{
+		Address: address.Resource("sysbox_kernel", "boot"),
+		Data: &config.KernelConfig{
+			Substrate: "firecracker", Source: localPath,
+			PullSource: server.URL + "/vmlinux", SHA256: pin, Architecture: "amd64",
+		},
+	}
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	res, err := KernelResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
+	require.NoError(t, err)
+	require.Equal(t, localPath, res.Str("source"))
+	require.Equal(t, "sha256:"+pin, res.Str("sha256"))
+	got, err := os.ReadFile(res.Str("path"))
+	require.NoError(t, err)
+	require.Equal(t, content, got)
 }

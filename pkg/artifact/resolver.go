@@ -117,7 +117,7 @@ func (r *Resolver) resolve(spec Spec) (Result, error) {
 
 	switch scheme(spec.Source) {
 	case "http", "https":
-		return r.resolveHTTP(spec)
+		return r.resolveHTTP(r.ctx, spec)
 	case "file", "":
 		return r.resolveLocal(spec)
 	default:
@@ -151,7 +151,7 @@ func (r *Resolver) resolveLocal(spec Spec) (Result, error) {
 	return Result{Path: p, Source: spec.Source, SHA256: sum, FromCache: false}, nil
 }
 
-func (r *Resolver) resolveHTTP(spec Spec) (Result, error) {
+func (r *Resolver) resolveHTTP(ctx context.Context, spec Spec) (Result, error) {
 	key := spec.SHA256
 	if key == "" {
 		// URL-derived key: deterministic but not content-addressed. When the
@@ -197,7 +197,6 @@ func (r *Resolver) resolveHTTP(spec Spec) (Result, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	ctx := r.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -279,4 +278,10 @@ func sha256File(path string) (string, error) {
 func IsURL(src string) bool {
 	s := scheme(src)
 	return s == "http" || s == "https"
+}
+
+func (r *Resolver) ResolveContext(ctx context.Context, spec Spec) (Result, error) {
+	copy := *r
+	copy.ctx = ctx
+	return copy.Resolve(spec)
 }

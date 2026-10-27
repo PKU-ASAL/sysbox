@@ -300,6 +300,12 @@ Execution creation accepts `argv`, optional `environment`,
 durable `queued` resource. The owning Agent reports `running`; the host's signed
 receipt establishes `completed`, `failed`, or `cancelled`. A non-zero guest exit is `completed`
 with `result_class: exit`; stdout and stderr are base64 encoded and bounded.
+Durable execution currently uses the default 1 MiB bound per stream.
+`output_limit_bytes` may be omitted, zero, or the default; custom bounds and
+`capture_via_file` are rejected explicitly. The local Windows QGA adapter can
+capture through files, but does not implement the durable Start/Observe/Cancel
+protocol required by remote executions. Remote Windows ETW execution remains
+unsupported until that protocol is available.
 The private request and output payload expire 15 minutes after completion,
 while the sanitized lifecycle metadata remains available.
 

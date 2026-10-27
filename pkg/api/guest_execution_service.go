@@ -61,6 +61,12 @@ func validateGuestExecutionRequest(req controlplane.GuestExecutionRequest) error
 	if req.TimeoutSeconds < 0 || req.TimeoutSeconds > guestExecutionMaxTimeout {
 		return fmt.Errorf("%w: timeout_seconds must be between 0 and %d", errInvalidGuestExecution, guestExecutionMaxTimeout)
 	}
+	if req.OutputLimitBytes < 0 || req.OutputLimitBytes > 48<<20 {
+		return fmt.Errorf("%w: output_limit_bytes must be between 0 and 50331648", errInvalidGuestExecution)
+	}
+	if req.CaptureViaFile || (req.OutputLimitBytes != 0 && req.OutputLimitBytes != substrate.DefaultExecOutputLimit) {
+		return fmt.Errorf("%w: durable guest tasks do not support file capture or custom output quotas", errInvalidGuestExecution)
+	}
 	for name := range req.Environment {
 		if !guestEnvironmentName.MatchString(name) {
 			return fmt.Errorf("%w: invalid environment name %q", errInvalidGuestExecution, name)

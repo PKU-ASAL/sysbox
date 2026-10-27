@@ -12,6 +12,9 @@ func FromExecutionCommand(cmd controlplane.AgentCommand) (Request, error) {
 	if cmd.Type != "guest_execution" || cmd.Execution == nil || cmd.ActionID == "" {
 		return Request{}, fmt.Errorf("command is not a bound guest execution")
 	}
+	if cmd.ExecutionRequest.CaptureViaFile || (cmd.ExecutionRequest.OutputLimitBytes != 0 && cmd.ExecutionRequest.OutputLimitBytes != substrate.DefaultExecOutputLimit) {
+		return Request{}, fmt.Errorf("durable guest tasks do not support file capture or custom output quotas")
+	}
 	r := Request{UserID: 65534, ID: cmd.ActionID, Args: cmd.ExecutionRequest.Argv, Environment: cmd.ExecutionRequest.Environment, WorkingDir: cmd.ExecutionRequest.WorkingDirectory, OutputLimit: substrate.DefaultExecOutputLimit}
 	return r, r.Validate()
 }

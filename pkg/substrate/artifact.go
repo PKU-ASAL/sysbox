@@ -41,6 +41,7 @@ type ArtifactSource struct {
 	Kind           ArtifactKind
 	Source         string
 	ResolvedSource string
+	PullSource     string
 	ExpectedDigest string
 	Architecture   string
 	GuestFamily    GuestFamily

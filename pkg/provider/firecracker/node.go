@@ -189,7 +189,7 @@ func (s *Substrate) ResolveImage(ctx context.Context, source substrate.ArtifactS
 	if effective == "" {
 		effective = source.Source
 	}
-	resolved, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: source.Kind, Source: effective, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily, Metadata: source.Metadata})
+	resolved, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: source.Kind, Source: effective, PullSource: source.PullSource, ExpectedDigest: source.ExpectedDigest, Architecture: source.Architecture, GuestFamily: source.GuestFamily, Metadata: source.Metadata})
 	if err != nil {
 		return substrate.ArtifactHandle{}, fmt.Errorf("firecracker: resolve rootfs: %w", err)
 	}
@@ -298,9 +298,8 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 		fmt.Printf("[firecracker] sysbox-init disabled for %s: %v\n", vmID, err)
 		sysboxInitEnabled = false
 	} else {
-		nodeName := strings.TrimPrefix(spec.Name, "sysbox-")
 		initCfg := vsockrpc.VMConfig{
-			Hostname:  nodeName,
+			Hostname:  guestHostname(spec.Name),
 			Env:       spec.Env,
 			ChainInit: pc.ChainInit,
 		}

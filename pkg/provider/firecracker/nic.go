@@ -236,7 +236,7 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 
 	// Phase A: kernel cmdline IP autoconfig for the first interface.
 	if req.IP != "" {
-		hostname := strings.TrimPrefix(h.ID, "sysbox-")
+		hostname := guestHostname(h.ID)
 		if err := injectKernelIPArg(cfgPath, ifaceID, hostname, req.IP, req.Gateway); err != nil {
 			return attachedNIC{}, fmt.Errorf("inject kernel ip= arg: %w", err)
 		}

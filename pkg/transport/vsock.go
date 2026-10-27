@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/util"
 	"io"
 	"net"
 	"os"
@@ -351,3 +352,12 @@ type bufferedConn struct {
 }
 
 func (b *bufferedConn) Read(p []byte) (int, error) { return b.br.Read(p) }
+
+// Retained command quoting helper; production background execution uses durable tasks.
+func backgroundShellCommand(req substrate.ExecRequest) (string, error) {
+	command, err := RemoteCommand(req)
+	if err != nil {
+		return "", err
+	}
+	return "nohup sh -c " + util.ShellQuote(command) + " >/dev/null 2>&1 & echo $!", nil
+}

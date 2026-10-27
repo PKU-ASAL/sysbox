@@ -55,7 +55,7 @@ func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetReq
 		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset old generation ownership mismatch")
 	}
 	if current.DomainName == "" || current.DomainName != request.Node.Name {
-		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset domain identity mismatch")
+		return substrate.ResetHandle{}, fmt.Errorf("libvirt reset domain identity mismatch: current=%q requested=%q", current.DomainName, request.Node.Name)
 	}
 	if err := validateOwnedVMDirInRoot(s.vmDirRoot(), current.DomainName, request.Current.ID, current.VMDir, current.DiskPath); err != nil {
 		return substrate.ResetHandle{}, err
@@ -334,8 +334,9 @@ func resetLibvirtHandleState(request substrate.ResetRequest, state *resetHandleS
 		machine = "q35"
 	}
 	return &HandleState{
-		Identity:   &state.Identity,
-		DomainName: state.DomainName, DomainUUID: state.NewDomainUUID, VMDir: state.NewVMDir, DiskPath: diskPath,
+		GuestFamily: request.Node.Image.Identity.GuestFamily,
+		Identity:    &state.Identity,
+		DomainName:  state.DomainName, DomainUUID: state.NewDomainUUID, VMDir: state.NewVMDir, DiskPath: diskPath,
 		VCPUs: cfg.VCPUs, MemoryMiB: memory, MachineType: machine,
 		SSHUser: cfg.SSHUser, SSHPass: cfg.SSHPass, SSHKey: cfg.SSHKey, SSHAuthorizedKey: cfg.SSHAuthorizedKey,
 		NetworkInit: cfg.NetworkInit,

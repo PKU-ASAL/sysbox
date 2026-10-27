@@ -261,7 +261,15 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 		if targetIdentity.Generation != handle.Generation {
 			return state.Resource{}, fmt.Errorf("router policy requires durable target identity matching node generation")
 		}
-		targetRaw, err := json.Marshal(map[string]any{"container_id": handle.ID, "bindings": bindings, "attachment_ips": attachmentIPs})
+		targetState := map[string]any{"container_id": handle.ID, "bindings": bindings, "attachment_ips": attachmentIPs}
+		if subName == "firecracker" {
+			providerState, err := stateDriver.MarshalProviderState(handle)
+			if err != nil {
+				return state.Resource{}, fmt.Errorf("router %s: marshal provider state: %w", n.Address.Name, err)
+			}
+			targetState["provider_state"] = json.RawMessage(providerState)
+		}
+		targetRaw, err := json.Marshal(targetState)
 		if err != nil {
 			return state.Resource{}, err
 		}

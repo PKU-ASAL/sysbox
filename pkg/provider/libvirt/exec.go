@@ -13,6 +13,9 @@ import (
 
 // ExecInNode runs a command in the VM through its declared SSH connection.
 func (s *Substrate) ExecInNode(ctx context.Context, handle substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
+	if req.CaptureViaFile && hsFrom(handle).GuestFamily != substrate.GuestFamilyWindows {
+		return substrate.ExecResult{}, fmt.Errorf("libvirt: file capture requires Windows")
+	}
 	conn, err := s.Connection(handle, nil)
 	if err != nil {
 		return substrate.ExecResult{}, err
@@ -26,6 +29,13 @@ func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle,
 	if err != nil {
 		return err
 	}
+	if hsFrom(handle).GuestFamily == substrate.GuestFamilyWindows {
+		copier, ok := conn.(substrate.ConnectionFileCopier)
+		if !ok {
+			return substrate.ErrNotSupported
+		}
+		return copier.CopyFile(ctx, src, dst)
+	}
 	return transport.InstallFile(ctx, conn, src, dst, mode)
 }
 
@@ -34,6 +44,9 @@ func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle,
 // If SSHIP is empty, provisioners cannot run via SSH.
 func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.ConnectionHint) (substrate.Connection, error) {
 	hs := hsFrom(handle)
+	if hs.GuestFamily == substrate.GuestFamilyWindows {
+		return &qgaDomainConnection{handle: handle, qga: &qgaConnection{domain: hs.DomainUUID}}, nil
+	}
 
 	host := handle.Net.PrimaryIP
 	if hs.SSHIP != "" {
@@ -198,6 +211,9 @@ func (c *domainConnection) WaitReady(ctx context.Context, timeout time.Duration)
 }
 
 func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
+	if hsFrom(handle).GuestFamily == substrate.GuestFamilyWindows {
+		return nil, substrate.ErrNotSupported
+	}
 	conn, err := s.Connection(handle, nil)
 	if err != nil {
 		return nil, err
@@ -219,3 +235,34 @@ func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle
 }
 
 var _ substrate.ConsoleProvider = (*Substrate)(nil)
+
+// QGA calls always address the immutable domain UUID and validate its binding.
+// QGA does not claim durable task Start/Cancel capabilities.
+type qgaDomainConnection struct {
+	handle substrate.NodeHandle
+	qga    *qgaConnection
+}
+
+func (c *qgaDomainConnection) validate(ctx context.Context) error {
+	return (&domainConnection{handle: c.handle}).validate(ctx)
+}
+func (c *qgaDomainConnection) Exec(ctx context.Context, req substrate.ExecRequest, out, errOut io.Writer) (substrate.ExecResult, error) {
+	ctx, cancel := req.Context(ctx)
+	defer cancel()
+	if err := c.validate(ctx); err != nil {
+		return substrate.ExecResult{}, err
+	}
+	return c.qga.Exec(ctx, req, out, errOut)
+}
+func (c *qgaDomainConnection) CopyFile(ctx context.Context, src, dst string) error {
+	if err := c.validate(ctx); err != nil {
+		return err
+	}
+	return c.qga.CopyFile(ctx, src, dst)
+}
+func (c *qgaDomainConnection) WaitReady(ctx context.Context, timeout time.Duration) error {
+	if err := c.validate(ctx); err != nil {
+		return err
+	}
+	return c.qga.WaitReady(ctx, timeout)
+}

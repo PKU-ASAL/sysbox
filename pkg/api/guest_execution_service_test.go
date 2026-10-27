@@ -20,15 +20,26 @@ func TestGuestExecutionCreateValidatesRequest(t *testing.T) {
 		name string
 		req  controlplane.GuestExecutionRequest
 	}{
+		{"file capture unsupported", controlplane.GuestExecutionRequest{Argv: []string{"true"}, CaptureViaFile: true}},
 		{"argv required", controlplane.GuestExecutionRequest{}},
 		{"environment name", controlplane.GuestExecutionRequest{Argv: []string{"true"}, Environment: map[string]string{"BAD-NAME": "secret"}}},
 		{"timeout bounded", controlplane.GuestExecutionRequest{Argv: []string{"true"}, TimeoutSeconds: 86401}},
+		{"output negative", controlplane.GuestExecutionRequest{Argv: []string{"true"}, OutputLimitBytes: -1}},
+		{"output bounded", controlplane.GuestExecutionRequest{Argv: []string{"true"}, OutputLimitBytes: (48 << 20) + 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := svc.Create(context.Background(), "lab", "web", "host-a", tc.req)
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestGuestExecutionCreateRejectsUnsupportedCaptureBound(t *testing.T) {
+	svc := newGuestExecutionService(&localAPIStore{runsDir: t.TempDir()}, nil, nil)
+	_, err := svc.Create(context.Background(), "lab", "windows", "host-a", controlplane.GuestExecutionRequest{
+		Argv: []string{"powershell.exe", "-NoProfile"}, OutputLimitBytes: 8 << 20,
+	})
+	require.Error(t, err)
 }
 
 func TestGuestExecutionLifecyclePreservesNonZeroExit(t *testing.T) {

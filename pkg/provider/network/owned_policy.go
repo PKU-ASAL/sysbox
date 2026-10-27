@@ -113,6 +113,21 @@ func ApplyRulesetInNetNS(ctx context.Context, ns *os.File, spec driver.RulesetSp
 	return driver.RulesetObservation{Table: plan.Table, Digest: plan.Digest}, nil
 }
 
+// CompileRulesetScript shares Docker's tested nftables rule compiler with
+// guests whose network namespace is not visible to the host (microVMs).
+func CompileRulesetScript(spec driver.RulesetSpec, bindings map[string]string) (driver.RulesetObservation, string, error) {
+	plan, err := compileRuleset(spec, bindings)
+	if err != nil {
+		return driver.RulesetObservation{}, "", err
+	}
+	return driver.RulesetObservation{Table: plan.Table, Digest: plan.Digest}, nftScript(plan), nil
+}
+
+// ObserveRulesetText verifies owned markers from a guest's nft list ruleset.
+func ObserveRulesetText(output, owner string) (driver.RulesetObservation, error) {
+	return observeFromNFTList(output, owner)
+}
+
 // ObserveRulesetInNetNS borrows an open namespace file for the bounded query.
 func ObserveRulesetInNetNS(ctx context.Context, ns *os.File, owner string) (driver.RulesetObservation, error) {
 	out, err := runNFT(ctx, ns, "", "list", "ruleset")
